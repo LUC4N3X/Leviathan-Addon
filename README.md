@@ -69,9 +69,7 @@ risultati semanticamente validati, immediati e affidabili, con supporto nativo a
 
 <hr style="width: 50%; border: 0; height: 1px; background: linear-gradient(90deg, transparent, #00eaff, transparent); margin-top: 25px; margin-bottom: 10px; opacity: 0.3;">
 
-  <a href="https://t.me/Stremio_ITA/7153" target="_blank">
-    <img src="https://img.shields.io/badge/TELEGRAM-Direct_Support_Uplink-0088CC?style=social&logo=telegram" alt="Telegram Support">
-  </a>
+  
 
 </div>
 
