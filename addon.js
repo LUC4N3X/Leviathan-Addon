@@ -1001,48 +1001,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   // Se è Kitsu, non cerchiamo di convertire in tmdbId per evitare conflitti
   const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
   
-  // =========================================================================================
-  // ⛩️ EXCLUSIVE KITSU MODE ⛩️
-  // Se è Anime (Kitsu), usiamo SOLO ExternalAddons e blocchiamo tutto il resto
-  // =========================================================================================
-  if (type === 'anime' || id.includes('kitsu:')) {
-      logger.info(`⛩️ [KITSU MODE] Attivata modalità esclusiva External per: ${meta.title}`);
-      
-      // 1. Fetch SOLO External
-      let externalResults = await fetchExternalResults(type, finalId);
-      
-      // 2. Pulizia minima (Deduplica + Hash check) senza filtri aggressivi (prendiamo tutto)
-      let cleanResults = deduplicateResults(externalResults);
-      logger.info(`✅ [KITSU RESULTS] Trovati ${cleanResults.length} risultati validi.`);
-
-      // 3. Risoluzione Link (Debrid / P2P)
-      let finalStreams = [];
-
-      if (cleanResults.length > 0 && hasDebridKey) {
-          // Processa per Debrid
-          const immediatePromises = cleanResults.map(item => {
-              item.season = meta.season;
-              item.episode = meta.episode;
-              config.rawConf = userConfStr; 
-              return LIMITERS.rd.schedule(() => resolveDebridLink(config, item, config.filters?.showFake, reqHost, meta));
-          });
-          const resolved = (await Promise.all(immediatePromises)).filter(Boolean);
-          finalStreams = resolved;
-      } else if (cleanResults.length > 0 && isP2PEnabled) {
-          // Processa per P2P diretto
-          finalStreams = cleanResults.map(item => P2P.formatP2PStream(item, config));
-      }
-
-      // Cache e Return immediato
-      const resultObj = { streams: finalStreams };
-      if (finalStreams.length > 0) {
-          await Cache.cacheStream(cacheKey, resultObj, 1800);
-          logger.info(`💾 SAVED TO CACHE (KITSU): ${cacheKey}`);
-      }
-      return resultObj;
-  }
-  // =========================================================================================
-
+  // 🔥 RIMOSSO BLOCCO EXCLUSIVE KITSU MODE CHE IMPEDIVA AD ANIMEWORLD DI FUNZIONARE 🔥
 
   const dbOnlyMode = config.filters?.dbOnly === true; 
   const langMode = config.filters?.language || (config.filters?.allowEng ? "all" : "ita");
@@ -1102,6 +1061,17 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           const s = meta.season;
           const e = meta.episode;
           
+          // 🔥 FIX ANIME / KITSU: Supporto Numerazione Assoluta + Prefissi 🔥
+          // Accetta: "Naruto - 001", "Naruto.EP001", "Naruto [01]", etc.
+          if (meta.kitsu_id || type === 'anime') {
+              const absoluteEpRegex = new RegExp(`(?:^|\\s|[.\\-_\\[\\(])(?:e|ep|episode)?\\s*0*${e}(?:$|\\s|[.\\-_\\]\\)]|v\\d)`, 'i');
+              
+              if (absoluteEpRegex.test(tLower)) {
+                   // Se il titolo del file contiene il numero episodio in formato assoluto, è valido.
+                   return true;
+              }
+          }
+
           const wrongSeasonRegex = /(?:s|stagione|season)\s*0?(\d+)(?!\d)/gi;
           let match;
           while ((match = wrongSeasonRegex.exec(tLower)) !== null) {
@@ -1124,11 +1094,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           const isExplicitPack = /(?:complete|pack|stagione\s*\d+\s*$|season\s*\d+\s*$|tutta|completa)/i.test(tLower);
           
           if (hasRightSeason && hasRightEpisode) return true;
-
-          // 🔥 MODIFICA AGGRESSIVE FILTER: Supporto Absolute Numbering per Kitsu (Anime) 🔥
-          // Se è un Anime/Kitsu e abbiamo l'episodio corretto, accettiamo anche se manca "S01"
-          if (meta.kitsu_id && hasRightEpisode) return true; 
-
+          
           if (hasRightSeason && (isExplicitPack || !hasAnyEpisodeTag)) {
               item._isPack = true; 
               return true;
