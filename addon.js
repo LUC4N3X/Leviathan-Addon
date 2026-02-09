@@ -78,7 +78,7 @@ const TB = require("./debrid/torbox");
 const dbHelper = require("./db-helper"); 
 const { getManifest } = require("./manifest");
 
-// Inizializza DB Locale
+// Inizializza DB Locale (Solo per scrittura/backup, lettura disabilitata)
 dbHelper.initDatabase();
 
 // --- CONFIGURAZIONE CENTRALE ---
@@ -851,91 +851,6 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
     }
 }
 
-async function queryLocalIndexer(meta, config) { 
-    try {
-        if (dbHelper && typeof dbHelper.getTorrents === 'function') {
-            const s = parseInt(meta.season) || 0;
-            const e = parseInt(meta.episode) || 0;
-            const results = await dbHelper.getTorrents(meta.imdb_id, s, e);
-            if (results && Array.isArray(results) && results.length > 0) {
-                const cleanMeta = meta.title.toLowerCase().replace(/[\.\_\-\(\)\[\]]/g, " ").replace(/\s{2,}/g, " ").trim();
-                const metaTitleShort = meta.title.split(/ - |: /)[0].toLowerCase().trim();
-                
-                const langMode = config && config.filters ? (config.filters.language || (config.filters.allowEng ? "all" : "ita")) : "ita";
-                
-                return results.map(t => {
-                    let finalHash = t.info_hash ? t.info_hash.trim().toUpperCase() : "";
-                    if ((!finalHash || finalHash.length !== 40) && t.magnet) {
-                          const extracted = extractInfoHash(t.magnet);
-                          if (extracted) finalHash = extracted.toUpperCase();
-                    }
-                    let magnetLink = t.magnet || `magnet:?xt=urn:btih:${finalHash}&dn=${encodeURIComponent(t.title || 'video')}`;
-                    return {
-                        title: t.title || t.name || "Unknown Title",
-                        magnet: magnetLink,
-                        hash: finalHash,       
-                        infoHash: finalHash,  
-                        size: "💾 DB", 
-                        sizeBytes: parseInt(t.size) || 0,
-                        seeders: t.seeders || 0,
-                        source: t.provider || 'External', 
-                        fileIdx: t.file_index,
-                        isExternal: false 
-                    };
-                }).filter(item => {
-                    if (!item.hash || item.hash.length !== 40) return false;
-                    const cleanFile = item.title.toLowerCase().replace(/[\.\_\-\(\)\[\]]/g, " ").replace(/\s{2,}/g, " ").trim();
-                    const isCorsaro = /corsaro/i.test(item.source);
-                    
-                    const isItalianTitle = isSafeForItalian(item);
-                    
-                    if (langMode === 'ita') {
-                         if (!isItalianTitle && !isCorsaro) return false;
-                    }
-                    else if (langMode === 'eng') {
-                         if (isItalianTitle) return false;
-                    }
-
-                    if (/[а-яА-ЯёЁ]/.test(item.title)) return false;
-
-                    if (meta.isSeries) {
-                        const wrongSeasonRegex = /(?:s|stagione|season)\s*0?(\d+)(?!\d)/gi;
-                        let match;
-                        while ((match = wrongSeasonRegex.exec(cleanFile)) !== null) {
-                            const foundSeason = parseInt(match[1]);
-                            if (foundSeason !== s) return false; 
-                        }
-                        const hasRightSeason = new RegExp(`(?:s|stagione|season|^)\\s*0?${s}(?!\\d)`, 'i').test(cleanFile);
-                        const hasXFormat = new RegExp(`\\b${s}x0?${e}\\b`, 'i').test(cleanFile);
-                        if (hasXFormat) return true;
-                        const isExplicitPack = /(?:complete|pack|stagione\s*\d+\s*$|season\s*\d+\s*$|tutta|completa)/i.test(cleanFile);
-                        const hasAnyEpisodeTag = /(?:e|x|ep|episode)\s*0?\d+/i.test(cleanFile);
-                        const hasRightEpisode = new RegExp(`(?:e|x|ep|episode|^)\\s*0?${e}(?!\\d)`, 'i').test(cleanFile);
-                        if (hasRightSeason && (hasRightEpisode || isExplicitPack || !hasAnyEpisodeTag)) {
-                            // OK
-                        } else {
-                            return false; 
-                        }
-                    }
-                    let searchKeyword = cleanMeta.replace(/^(the|a|an|il|lo|la|i|gli|le)\s+/i, "").trim();
-                    if (searchKeyword === "rip") {
-                          const strictStartRegex = /^(the\s+|il\s+)?rip\b/i;
-                          if (!strictStartRegex.test(cleanFile)) return false; 
-                          return true; 
-                    }
-                    if (cleanFile.includes(cleanMeta)) return true;
-                    if (cleanFile.includes(metaTitleShort)) return true;
-                    return false;
-                });
-            }
-        }
-        return [];
-    } catch (e) {
-        logger.error(`❌ [LOCAL DB] Errore lettura: ${e.message}`);
-        return [];
-    }
-}
-
 async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, config) { 
     if (!CONFIG.INDEXER_URL) return [];
     try {
@@ -1248,27 +1163,21 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       return [];
   });
 
-  const localPromise = withTimeout(
-      queryLocalIndexer(meta, config),
-      CONFIG.TIMEOUTS.LOCAL_DB,
-      'Local DB'
-  ).catch(err => {
-      logger.warn('Local DB fallito', { error: err.message });
-      return [];
-  });
+  // 🔥 RIMOSSA LOGICA LETTURA LOCAL DB 🔥
+  // L'addon ora legge SOLO dal Remote Indexer (e dagli external addons/scraper se necessari)
 
   let externalPromise = Promise.resolve([]);
   if (!dbOnlyMode) {
       externalPromise = fetchExternalResults(type, finalId);
   }
 
-  const [remoteResults, localResults, externalResults] = await Promise.all([remotePromise, localPromise, externalPromise]);
-  logger.info(`📊 [STATS] Remote: ${remoteResults.length} | Local: ${localResults.length} | External: ${externalResults.length}`);
+  const [remoteResults, externalResults] = await Promise.all([remotePromise, externalPromise]);
+  logger.info(`📊 [STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
 
-  let fastResults = [...remoteResults, ...localResults, ...externalResults].filter(aggressiveFilter);
+  let fastResults = [...remoteResults, ...externalResults].filter(aggressiveFilter);
   let cleanResults = deduplicateResults(fastResults);
   const validFastCount = cleanResults.length;
-  logger.info(`⚡ [FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+Local+Ext).`);
+  logger.info(`⚡ [FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+Ext).`);
 
   if (!dbOnlyMode && validFastCount < 3) {
       logger.info(`⚠️ [HEAVY] Meno di 3 risultati (${validFastCount}). Attivazione Scraper Locali...`);
@@ -1741,7 +1650,7 @@ app.get("/health", async (req, res) => {
   const checks = { status: "ok", timestamp: new Date().toISOString(), services: {} };
   try {
     if (dbHelper.healthCheck) await withTimeout(dbHelper.healthCheck(), 1000, "DB Health");
-    checks.services.database = "ok";
+    checks.services.database = "ok (Write-Only)";
   } catch (err) {
     checks.services.database = "down";
     checks.status = "degraded";
@@ -1859,7 +1768,7 @@ app.listen(PORT, () => {
     console.log(`📡 INDEXER URL (ENV): ${CONFIG.INDEXER_URL}`);
     console.log(`🎬 METADATA: TMDB Primary (User Key Priority)`);
     console.log(`💾 SCRITTURA: DB Locale (Auto-Learning attivo)`);
-    console.log(`🏠 LETTURA: DB Locale Integrato in Search`);
+    console.log(`❌ LETTURA DB LOCALE: DISABILITATA (Only Remote URL)`);
     console.log(`👁️ SPETTRO VISIVO: Modulo Attivo (Esclusioni 4K/1080/720/SD)`);
     console.log(`⚖️ SIZE LIMITER: Modulo Attivo (GB Filter)`);
     console.log(`🦁 GUARDA HD: Modulo Integrato e Pronto`);
