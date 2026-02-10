@@ -1211,11 +1211,14 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           if (config.filters.no4k && REGEX_QUALITY_FILTER["4K"].test(t)) return false;
           if (config.filters.no1080 && REGEX_QUALITY_FILTER["1080p"].test(t)) return false;
           if (config.filters.no720 && REGEX_QUALITY_FILTER["720p"].test(t)) return false;
-          if (config.filters.noScr) {
+         if (config.filters.noScr) {
+                // Filtra SD
                 if (REGEX_QUALITY_FILTER["SD"].test(t)) return false;
-                if (/cam|hdcam|ts|telesync|screener|scr\b/i.test(t)) return false;
+                // FIX: Aggiunto \b all'inizio e alla fine per evitare match parziali su "Nights"
+                if (/\b(?:cam|hdcam|ts|telesync|screener|scr)\b/i.test(t)) return false;
           }
-          if (config.filters.noCam && /cam|hdcam|ts|telesync|screener|scr\b/i.test(t)) return false;
+          // FIX: Anche qui aggiungiamo i confini \b
+          if (config.filters.noCam && /\b(?:cam|hdcam|ts|telesync|screener|scr)\b/i.test(t)) return false;
           return true;
       });
   }
