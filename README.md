@@ -1,7 +1,7 @@
 <div align="center">
 
   <!-- Logo -->
-  <img src="https://i.ibb.co/j9tSSy7f/Gemini-Generated-Image-xep84gxep84gxep8-Photoroom.png" 
+  <img src="https://i.ibb.co/DHf6Fk7n/image-29.png" 
        alt="Leviathan Logo"
        style="width: 200px; border-radius: 30px; filter: drop-shadow(0 0 30px rgba(0, 234, 255, 0.7)); margin-bottom: 20px;" />
 
