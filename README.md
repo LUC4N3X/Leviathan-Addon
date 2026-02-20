@@ -3,7 +3,7 @@
   <!-- Logo -->
   <img src="https://i.ibb.co/vgBfk3Z/file-000000000aa4720a9afe541936642509.png" 
        alt="Leviathan Logo"
-       style="width: 200px; border-radius: 30px; filter: drop-shadow(0 0 30px rgba(0, 234, 255, 0.7)); margin-bottom: 20px;" />
+       style="width: 250px; border-radius: 30px; filter: drop-shadow(0 0 30px rgba(0, 234, 255, 0.7)); margin-bottom: 20px;" />
 
   <!-- Titolo + Slogan nello stesso blocco -->
   <h1 style="background: linear-gradient(180deg, #fff 30%, #00eaff 100%);
