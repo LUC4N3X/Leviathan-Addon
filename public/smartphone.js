@@ -876,7 +876,7 @@ const mobileHTML = `
         <div class="m-content">
             <div class="m-hero">
                 <div class="logo-container">
-                    <img src="https://i.ibb.co/j9tSSy7f/Gemini-Generated-Image-xep84gxep84gxep8-Photoroom.png" alt="Leviathan Logo" class="logo-image">
+                    <img src="https://i.ibb.co/svvMzzWq/68747470733a2f2f692e6962622e636f2f766742666b335a2f66696c652d3030303030303030306161343732306139616665.png" alt="Leviathan Logo" class="logo-image">
                     <div class="logo-particles" id="logoParticles"></div>
                 </div>
                 
