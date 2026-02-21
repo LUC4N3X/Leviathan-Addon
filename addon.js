@@ -201,22 +201,44 @@ function extractInfoHash(magnet) {
 }
 
 // =========================================================================
-// ⚖️ GENERATORE DIMENSIONI REALISTICHE (DETERMINISTICO)
+// ⚖️ GENERATORE DIMENSIONI REALISTICHE (DETERMINISTICO) CON SANITY CHECK
 // =========================================================================
 function estimateVisualSize(knownSize, title, isSeries, isPack, infoHash) {
-    // 1. Se abbiamo una dimensione valida, usiamo quella.
-    if (knownSize && knownSize > 0) return knownSize;
-
-    // 2. Se è un Pack in modalità AIO/Series, spesso la dimensione è 0 per triggerare logiche esterne, 
-    // ma qui vogliamo dare un valore visivo se necessario.
-    // Se isPack=true e isSeries=true, e siamo qui, stiamo inventando.
-    // Tuttavia, per coerenza con AIO che calcola dopo, potremmo ritornare 0, 
-    // MA l'utente ha chiesto dimensioni "reali". Inventiamole realisticamente.
-
     const safeTitle = (title || "video").toLowerCase();
     
-    // 3. Generazione Seme (Seed) Deterministico basato sull'Hash (o titolo se manca hash)
-    // Questo assicura che lo stesso torrent abbia sempre la stessa dimensione inventata.
+    // 1. Analisi Qualità
+    const is4K = /2160p|4k|uhd|ultra[-.\s]?hd/i.test(safeTitle);
+    const is1080 = /1080p|1080i|fhd|full[-.\s]?hd|blu[-.\s]?ray/i.test(safeTitle);
+    const is720 = /720p|720i|hd[-.\s]?rip|hd/i.test(safeTitle);
+
+    // 2. SANITY CHECK: Scartiamo le dimensioni palesemente errate dal DB
+    if (knownSize && knownSize > 0) {
+        let isSane = true;
+        const sizeInGB = knownSize / (1024 * 1024 * 1024);
+
+        if (!isPack) {
+            if (isSeries) {
+                // Limiti per Singolo Episodio
+                if (is4K && sizeInGB > 15) isSane = false;
+                else if (is1080 && sizeInGB > 6) isSane = false;
+                else if (is720 && sizeInGB > 3) isSane = false;
+                else if (!is4K && !is1080 && !is720 && sizeInGB > 1.5) isSane = false;
+            } else {
+                // Limiti per Film (Bloccherà i 188GB sui film 1080p)
+                if (is4K && sizeInGB > 100) isSane = false; 
+                else if (is1080 && sizeInGB > 40) isSane = false; 
+                else if (is720 && sizeInGB > 12) isSane = false;
+                else if (!is4K && !is1080 && !is720 && sizeInGB > 5) isSane = false;
+            }
+        }
+
+        // Se la dimensione letta ha senso, usiamo quella reale
+        if (isSane) return knownSize;
+        
+        // Altrimenti proseguiamo e lasciamo che l'algoritmo ne inventi una realistica
+    }
+
+    // 3. Generazione Seme (Seed) Deterministico per dimensioni fittizie
     let seedStr = infoHash || safeTitle;
     let hashVal = 0;
     for (let i = 0; i < seedStr.length; i++) {
@@ -224,7 +246,6 @@ function estimateVisualSize(knownSize, title, isSeries, isPack, infoHash) {
     }
     hashVal = Math.abs(hashVal);
 
-    // Funzione helper per ottenere un numero random (0.0 - 1.0) basato sul seed
     const seededRandom = () => {
         hashVal = (Math.imul(1664525, hashVal) + 1013904223) | 0;
         return (Math.abs(hashVal) % 100000) / 100000;
@@ -232,45 +253,22 @@ function estimateVisualSize(knownSize, title, isSeries, isPack, infoHash) {
 
     let baseSize = 0;
     
-    // Analisi Qualità
-    const is4K = /2160p|4k|uhd|ultra[-.\s]?hd/i.test(safeTitle);
-    const is1080 = /1080p|1080i|fhd|full[-.\s]?hd|blu[-.\s]?ray/i.test(safeTitle);
-    const is720 = /720p|720i|hd[-.\s]?rip|hd/i.test(safeTitle);
-
     if (isSeries) {
-        // --- SERIE TV (Episodio Singolo) ---
-        if (is4K) {
-            // Range: 1.8 GB - 6.5 GB
-            baseSize = 1.8 * 1024*1024*1024 + (seededRandom() * 4.7 * 1024*1024*1024);
-        } else if (is1080) {
-            // Range: 800 MB - 3.2 GB
-            baseSize = 800 * 1024*1024 + (seededRandom() * 2.4 * 1024*1024*1024);
-        } else if (is720) {
-            // Range: 300 MB - 1.2 GB
-            baseSize = 300 * 1024*1024 + (seededRandom() * 900 * 1024*1024);
-        } else {
-            // SD: 150 MB - 600 MB
-            baseSize = 150 * 1024*1024 + (seededRandom() * 450 * 1024*1024);
-        }
+        // --- SERIE TV ---
+        if (is4K) baseSize = 1.8 * 1024**3 + (seededRandom() * 4.7 * 1024**3);
+        else if (is1080) baseSize = 800 * 1024**2 + (seededRandom() * 2.4 * 1024**3);
+        else if (is720) baseSize = 300 * 1024**2 + (seededRandom() * 900 * 1024**2);
+        else baseSize = 150 * 1024**2 + (seededRandom() * 450 * 1024**2);
     } else {
         // --- FILM ---
-        if (is4K) {
-            // Range: 12 GB - 65 GB (Ampio range per Remux vs Encode)
-            baseSize = 12 * 1024*1024*1024 + (seededRandom() * 53 * 1024*1024*1024);
-        } else if (is1080) {
-            // Range: 1.8 GB - 14 GB
-            baseSize = 1.8 * 1024*1024*1024 + (seededRandom() * 12.2 * 1024*1024*1024);
-        } else if (is720) {
-            // Range: 800 MB - 4 GB
-            baseSize = 800 * 1024*1024 + (seededRandom() * 3.2 * 1024*1024*1024);
-        } else {
-            // SD: 700 MB - 1.8 GB
-            baseSize = 700 * 1024*1024 + (seededRandom() * 1.1 * 1024*1024*1024);
-        }
+        if (is4K) baseSize = 12 * 1024**3 + (seededRandom() * 53 * 1024**3);
+        else if (is1080) baseSize = 1.8 * 1024**3 + (seededRandom() * 12.2 * 1024**3);
+        else if (is720) baseSize = 800 * 1024**2 + (seededRandom() * 3.2 * 1024**3);
+        else baseSize = 700 * 1024**2 + (seededRandom() * 1.1 * 1024**3);
     }
 
-    // Aggiungi un "rumore" di byte fine per evitare numeri troppo tondi (es. 1.50 GB esatti)
-    const fineNoise = Math.floor(seededRandom() * 1024 * 1024 * 5); // Fino a 5MB di variazione
+    // Aggiungi un piccolo "rumore" per non avere numeri troppo tondi
+    const fineNoise = Math.floor(seededRandom() * 1024 * 1024 * 5); 
     return Math.floor(baseSize + fineNoise);
 }
 // =========================================================================
