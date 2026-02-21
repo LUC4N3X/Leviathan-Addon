@@ -1,13 +1,12 @@
 const axios = require("axios");
 const https = require("https");
 
-
 const RD_API_BASE = "https://api.real-debrid.com/rest/1.0";
 const RD_TIMEOUT = 30000; // 30 Secondi timeout
 const MAX_POLL = 30;      // Più tentativi di attesa (per file grossi/conversioni)
 const POLL_DELAY = 1000;  // 1 secondo tra i check
 
-// HTTP AGENT 
+// HTTP AGENT per ottimizzare le performance delle richieste
 const httpsAgent = new https.Agent({ 
     keepAlive: true, 
     maxSockets: 64, 
@@ -42,35 +41,36 @@ const Status = {
 };
 
 /* =========================================================================
-   MATCHING LEVIATHAN (Logica Serie TV Blindata)
+   MATCHING LEVIATHAN (Fix Episodi Sbagliati & Supporto FileIdx)
    ========================================================================= */
-function matchFile(files, season, episode) {
+function matchFile(files, season, episode, fileIdx) {
     if (!files || files.length === 0) return null;
 
     // 1. Filtra solo video e rimuovi sample/trailer
     const videoFiles = files.filter(f => isVideo(f.path) && !/sample|trailer|featurette/i.test(f.path));
-
     if (videoFiles.length === 0) return null;
     
+    // 2. PRIORITÀ ASSOLUTA: Se abbiamo un fileIdx numerico valido dal DB, usiamo quello bypassando le regex
+    if (fileIdx !== undefined && fileIdx !== null && String(fileIdx) !== "-1") {
+        const exactMatch = videoFiles.find(v => String(v.id) === String(fileIdx));
+        if (exactMatch) return exactMatch.id;
+    }
+
     // CASO A: FILM (Nessuna Stagione/Episodio) -> Prendi il file più grande (Main Movie)
     if (!season && !episode) {
         return videoFiles.sort((a,b) => b.bytes - a.bytes)[0].id;
     }
 
-    // CASO B: SERIE TV
+    // CASO B: SERIE TV & ANIME
     const s = parseInt(season);
     const e = parseInt(episode);
     
     // Regex rigorose (dalla più precisa alla più generica)
     const strictRegex = [
-        // S01E01, S1E1 (Case Insensitive)
-        new RegExp(`\\bS0?${s}\\s*E0?${e}\\b`, "i"),
-        // 1x01
-        new RegExp(`\\b${s}x0?${e}\\b`, "i"),
-        // Stagione 1 Episodio 1 (ITA/ENG)
-        new RegExp(`(?:Stagione|Season)\\s*0?${s}.*?(?:Episodio|Episode|Ep)\\s*0?${e}\\b`, "i"),
-        // 101, 105 (Rischioso, solo se delimitato bene)
-        new RegExp(`\\b${s}${e.toString().padStart(2, '0')}\\b`) 
+        new RegExp(`\\bs0?${s}\\s*e0?${e}\\b`, "i"), // S01E01
+        new RegExp(`\\b${s}x0?${e}\\b`, "i"), // 1x01
+        new RegExp(`(?:Stagione|Season)\\s*0?${s}.*?(?:Episodio|Episode|Ep)\\s*0?${e}\\b`, "i"), // Stagione 1 Episodio 1
+        new RegExp(`\\b(?:ep|episode|e)\\s*0*${e}\\b`, "i") // Numerazione assoluta (Anime)
     ];
 
     // 1. Cerca match esatto
@@ -79,34 +79,32 @@ function matchFile(files, season, episode) {
         if (found) return found.id;
     }
 
-    // 2. Logic "Single File Safety":
-    // Se c'è UN SOLO file video nel torrent, probabilmente è l'episodio giusto
-    // (es. magnet specifico per un episodio).
+    // 2. Logic "Single File Safety": Se c'è UN SOLO file video
     if (videoFiles.length === 1) {
         return videoFiles[0].id;
     }
 
-    // 3. Fallback "Smart Match" per Pack complessi:
-    // A volte i file si chiamano solo "01.mkv" dentro una cartella "Season 1".
-    // Controllo se il path contiene il riferimento alla stagione E il numero episodio.
+    // 3. Fallback "Smart Match" per Pack complessi
     const looseMatch = videoFiles.find(v => {
-        const pathLower = v.path.toLowerCase();
-        const hasSeason = pathLower.includes(`season ${s}`) || pathLower.includes(`stagione ${s}`) || pathLower.includes(`s${s}`);
-        // Cerca il numero episodio isolato (es. " 01 ", "_01_", "[01]")
-        const hasEpisode = new RegExp(`[\\W_]0?${e}[\\W_]`).test(pathLower);
+        let pathLower = v.path.toLowerCase();
+        
+        // 🔥 FONDAMENTALE: Rimuoviamo i tag audio/video che causano i falsi positivi (es. 5.1 per Ep 1)
+        pathLower = pathLower.replace(/5\.1|7\.1|2\.0|h264|x264|h265|x265/gi, "");
+
+        const hasSeason = new RegExp(`\\b(?:season|stagione|s)0?${s}\\b`, 'i').test(pathLower);
+        const hasEpisode = new RegExp(`(?:ep|e)?[\\s\\_\\-]*\\b0?${e}\\b`).test(pathLower);
+        
         return hasSeason && hasEpisode;
     });
 
     if (looseMatch) return looseMatch.id;
 
-    // SE FALLISCE TUTTO:
-    // Non ritornare il file più grande a caso (rischia di essere l'Episodio 1 di un Pack).
-    // Ritorna null per forzare un errore piuttosto che streammare l'episodio sbagliato.
+    // Se fallisce tutto, ritorna null (meglio errore che episodio sbagliato)
     return null; 
 }
 
 /* =========================================================================
-   RICHIESTA HTTP ROBUSTA (Anti-Ban & Retry)
+   RICHIESTA HTTP ROBUSTA (Anti-Ban & Retry con Log)
    ========================================================================= */
 async function rdRequest(method, endpoint, token, data = null) {
     let attempt = 0;
@@ -213,9 +211,9 @@ const RD = {
     },
 
     /**
-     * GET STREAM LINK (Engine Principale)
+     * GET STREAM LINK (Engine Principale - Patchato)
      */
-    getStreamLink: async (token, magnet, season = null, episode = null) => {
+    getStreamLink: async (token, magnet, season = null, episode = null, fileIdx = undefined) => {
         let torrentId = null;
         let requiresDelete = true; 
 
@@ -257,14 +255,12 @@ const RD = {
             if (Status.WAITING_SELECTION(info.status)) {
                 let fileId = "all";
                 
-                // USIAMO IL MATCH FILE AGGIORNATO
+                // USIAMO IL MATCH FILE AGGIORNATO (ora accetta fileIdx)
                 if (info.files) {
-                    const m = matchFile(info.files, season, episode);
+                    const m = matchFile(info.files, season, episode, fileIdx);
                     if (m) fileId = m;
                     else if (season && episode) {
-                        // Se cerco un episodio e non lo trovo, seleziono 'all' sperando nel manuale, 
-                        // ma per lo stream automatico fallirà dopo.
-                        // Meglio selezionare "all" per cacheare tutto il pack per il futuro.
+                        // Se cerco un episodio e non lo trovo, seleziono 'all' per cacheare tutto il pack
                         fileId = "all";
                     }
                 }
@@ -289,7 +285,7 @@ const RD = {
 
             /* 5️⃣ IDENTIFICAZIONE LINK TARGET */
             // Usiamo di nuovo matchFile per trovare il link esatto tra quelli pronti
-            const targetFileId = matchFile(info.files, season, episode);
+            const targetFileId = matchFile(info.files, season, episode, fileIdx);
             let targetLink = null;
 
             if (targetFileId) {
@@ -330,6 +326,9 @@ const RD = {
         }
     },
 
+    /**
+     * CONTROLLO DISPONIBILITÀ ISTANTANEA 
+     */
     checkInstantAvailability: async (token, hashes) => {
         try {
             return await rdRequest("GET", `/torrents/instantAvailability/${hashes.join("/")}`, token) || {};
