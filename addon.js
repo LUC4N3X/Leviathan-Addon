@@ -912,11 +912,13 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
     }
 }
 
-async function fetchExternalResults(type, finalId) {
+// Aggiunto 'config' nei parametri per passarlo agli external addons
+async function fetchExternalResults(type, finalId, config) {
     logger.info(`🌐 [EXTERNAL] Start Parallel Fetch...`);
     try {
         const externalResults = await withTimeout(
-            fetchExternalAddonsFlat(type, finalId).then(items => {
+            // Ora passiamo l'opzione { userConfig: config }
+            fetchExternalAddonsFlat(type, finalId, { userConfig: config }).then(items => {
                 return items.map(i => {
                     const title = i.title || i.filename;
                     let finalSeeders = i.seeders;
@@ -1144,7 +1146,8 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
   let externalPromise = Promise.resolve([]);
   if (!dbOnlyMode) {
-      externalPromise = fetchExternalResults(type, finalId);
+      // Modifica qui: aggiungi 'config'
+      externalPromise = fetchExternalResults(type, finalId, config);
   }
 
   const [remoteResults, externalResults] = await Promise.all([remotePromise, externalPromise]);
