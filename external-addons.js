@@ -1,22 +1,10 @@
-/**
- * External Addon Integration Module
- * Integra Torrentio e MediaFusion per aggregare risultati da addon esterni.
- * Gestisce chiamate parallele, normalizzazione e deduplicazione.
- * FILTRO ATTIVO: Solo risultati in Italiano (ITA).
- */
+const axios = require("axios"); 
 
-const axios = require("axios"); // Mantenuto per compatibilità con il tuo progetto
 
-// ✅ VERBOSE LOGGING - configurabile via ENV
 const DEBUG_MODE = process.env.DEBUG_MODE === 'true';
-
-// ============================================================================
-// CONFIGURATION - URL completi degli addon esterni
-// ============================================================================
 
 const EXTERNAL_ADDONS = {
     torrentio: {
-        // URL aggiornato (senza /manifest.json alla fine)
         baseUrl: 'https://thorrentan.elninhostre.dpdns.org/e30',
         name: 'Torrentio',
         emoji: '🅣',
@@ -30,11 +18,8 @@ const EXTERNAL_ADDONS = {
     }
 };
 
-// ============================================================================
-// HELPER FUNCTIONS & ITA FILTER
-// ============================================================================
 
-// Regex per rilevare contenuto Italiano
+
 const REGEX_STRICT_ITA = /\b(ITA|ITALIAN|ITALY|IT|SUB\s*ITA|VOST|VOSTIT)\b/i;
 
 function isItalianContent(stream) {
@@ -142,18 +127,40 @@ function extractFilename(stream) {
     return stream.name || '';
 }
 
-// ============================================================================
-// MAIN FUNCTIONS
-// ============================================================================
 
-async function fetchExternalAddon(addonKey, type, id) {
+async function fetchExternalAddon(addonKey, type, id, options = {}) {
     const addon = EXTERNAL_ADDONS[addonKey];
     if (!addon) {
         console.error(`❌ [External] Unknown addon: ${addonKey}`);
         return [];
     }
 
-    if (!addon.baseUrl) {
+    let baseUrl = addon.baseUrl;
+
+    
+    if (addonKey === 'torrentio' && options.userConfig) {
+        const conf = options.userConfig;
+        const apiKey = conf.key || conf.rd || conf.torbox || conf.alldebrid;
+        const service = conf.service;
+
+        if (apiKey && service) {
+            let torrentioConf = {};
+            
+            if (service === 'rd') torrentioConf.realdebrid = apiKey;
+            else if (service === 'ad') torrentioConf.alldebrid = apiKey;
+            else if (service === 'tb') torrentioConf.torbox = apiKey; 
+
+            if (Object.keys(torrentioConf).length > 0) {
+                const base64Conf = Buffer.from(JSON.stringify(torrentioConf)).toString('base64');
+                const nakedUrl = baseUrl.replace(/\/e30\/?$/, '');
+                baseUrl = `${nakedUrl}/${base64Conf}`;
+                
+                if (DEBUG_MODE) console.log(`🔑 Iniezione Configurazione Torrentio: ${base64Conf}`);
+            }
+        }
+    }
+
+    if (!baseUrl) {
         if (DEBUG_MODE) console.log(`⏭️ [${addon.name}] Skipped - base URL not configured`);
         return [];
     }
@@ -163,8 +170,8 @@ async function fetchExternalAddon(addonKey, type, id) {
         if (fetchType === 'anime') fetchType = 'series';
     }
 
-    const url = `${addon.baseUrl}/stream/${fetchType}/${id}.json`;
-    if (DEBUG_MODE) console.log(`🌐 [${addon.name}] Fetching: ${fetchType}/${id}`);
+    const url = `${baseUrl}/stream/${fetchType}/${id}.json`;
+    if (DEBUG_MODE) console.log(`🌐 [${addon.name}] Fetching: ${fetchType}/${id} | URL: ${url}`);
 
     try {
         const controller = new AbortController();
@@ -188,7 +195,7 @@ async function fetchExternalAddon(addonKey, type, id) {
         const data = await response.json();
         let streams = data.streams || [];
 
-        // --- FILTRO RIGIDO SOLO ITA ---
+       
         const countBefore = streams.length;
         streams = streams.filter(isItalianContent);
         if (DEBUG_MODE) console.log(`🇮🇹 [${addon.name}] Strict ITA Filter: ${countBefore} -> ${streams.length}`);
@@ -288,7 +295,7 @@ async function fetchAllExternalAddons(type, id, options = {}) {
     const startTime = Date.now();
 
     const promises = enabledAddons.map(async (addonKey) => {
-        const results = await fetchExternalAddon(addonKey, type, id);
+        const results = await fetchExternalAddon(addonKey, type, id, options);
         return { addonKey, results };
     });
 
