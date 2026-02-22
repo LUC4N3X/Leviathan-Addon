@@ -2,9 +2,8 @@ const titleParser = require('parse-torrent-title');
 
 const UNITS = ["B", "KB", "MB", "GB", "TB"];
 
-// =========================================================================
-// 1. CONFIGURAZIONE & COSTANTI
 
+// 1. CONFIGURAZIONE & COSTANTI
 
 // CONFIGURAZIONE SEPARATORE LINGUE
 const LANG_SEP = " / "; 
@@ -376,28 +375,25 @@ function extractStreamInfo(title, source) {
   };
 }
 
-// =========================================================================
+/
 // 4. STILI DI FORMATTAZIONE
 
-
-// --- 1. NUOVO FORMATTER COMPLEX (Sostituito con Template Custom) ---
+// --- 1.FORMATTER COMPLEX  ---
 function styleComplex(p) {
-    // --- Costruzione Header (Name) ---
-    // Logica: {service.cached::istrue["🔲 "||"🔳 "]}
     const isCached = ["RD", "TB", "AD"].includes(p.serviceTag);
     const statusIcon = isCached ? "🔲" : "🔳";
 
-    // Logica: {stream.resolution::=2160p["4K "||""]}{stream.resolution::=1440p["QHD "||""]}{stream.resolution::=1080p["HD "||""]}...
+    
     let res = "SD";
     if (p.quality.includes("2160") || p.quality.includes("4K")) res = "4K";
     else if (p.quality.includes("1440")) res = "QHD";
     else if (p.quality.includes("1080")) res = "HD";
     
 
-    // Logica: {stream.size::>0[" │ ⛁ {stream.size::bytes}"||""]}
+    
     let sizePart = p.sizeString ? ` │ ⛁ ${p.sizeString}` : "";
 
-    // Logica: {service.cached::istrue[""||" · ⇋ {stream.seeders}"]}
+    
     let seedPart = "";
     if (!isCached && p.seeders !== null) {
         seedPart = ` · ⇋ ${p.seeders}`;
@@ -408,22 +404,22 @@ function styleComplex(p) {
     // --- Costruzione Body (Title) ---
     const lines = [];
 
-    // Riga 1: ☰ {stream.languageCodes} • {stream.audioTags} • {stream.audioChannels}
+    
     const line1Parts = [];
     if (p.lang) line1Parts.push(p.lang);
     if (p.audioTag) line1Parts.push(p.audioTag);
     if (p.audioChannels) line1Parts.push(p.audioChannels);
     lines.push(`☰ ${line1Parts.join(' · ')}`);
 
-    // Riga 2: ☲ {stream.quality} · {stream.encode} • {stream.visualTags}
+    
     const line2Parts = [];
     line2Parts.push(p.quality);
     if (p.codec) line2Parts.push(p.codec);
     if (p.cleanTags.length > 0) line2Parts.push(p.cleanTags.join(' · '));
     lines.push(`☲ ${line2Parts.join(' · ')}`);
 
-    // Riga 3: ☵ {addon.name} · {stream.releaseGroup} · {source} · {service.shortName}
-    // Riconoscimento Source dal filename come da template
+    
+    
     const fn = p.fileTitle.toUpperCase();
     let sourceName = "";
     if (fn.includes("AMZN")) sourceName = "Amazon";
@@ -440,7 +436,7 @@ function styleComplex(p) {
     else if (fn.includes("STZ")) sourceName = "Starz";
     else if (fn.includes("DSCV")) sourceName = "Discovery+";
 
-    const line3Parts = ["Leviathan"]; // {addon.name}
+    const line3Parts = ["Leviathan"]; 
     if (p.releaseGroup) line3Parts.push(p.releaseGroup);
     if (sourceName) line3Parts.push(sourceName);
     if (isCached) line3Parts.push(`[${p.serviceTag}]`);
@@ -448,10 +444,9 @@ function styleComplex(p) {
     
     lines.push(`☵ ${line3Parts.join(' · ')}`);
 
-    // Riga 4: ☶ {stream.title} · {stream.seasonEpisode}
+    
     const line4Parts = [p.cleanName];
     if (p.epTag) line4Parts.push(p.epTag);
-    // {stream.year} e {stream.duration} non sono estratti affidabilmente qui, omettiamo per pulizia
     lines.push(`☶ ${line4Parts.join(' · ')}`);
 
     
@@ -490,12 +485,8 @@ function styleAndroidTV(p) {
     return { name, title: lines.join("\n") };
 }
 
-// --- 3. NUOVO FORMATTER "IN FOTO" (Stile Jurassic) ---
+// --- 3. NUOVO FORMATTER ---
 function stylePicture(p) {
-    // Tentativo di replicare il layout Comet/MediaFusion della foto
-    // La parte sinistra (spunte verdi) la simuliamo nel name o nella prima riga
-    // Poiché Stremio non supporta colonne, usiamo emoji per fare un elenco compatto
-    
     const isCached = ["RD", "TB", "AD"].includes(p.serviceTag);
     const cacheIcon = isCached ? "✅" : "⏳";
     const tierIcon = "✅"; // Simulato
@@ -752,17 +743,15 @@ function styleCustom(p, template) {
     return { name: `Leviathan ${p.quality}`, title: userString };
 }
 
-// =========================================================================
-// 5. MAIN DISPATCHER
-// =========================================================================
 
+// 5. MAIN DISPATCHER
 function formatStreamSelector(fileTitle, source, size, seeders, serviceTag = "RD", config = {}, infoHash = null, isLazy = false, isPackItem = false) {
     let { quality, qDetails, qIcon, videoTags, cleanTags, lang, codec, audioTag, audioChannels, rawInfo, releaseGroup } = extractStreamInfo(fileTitle, source);
     
     let serviceIconTitle = "🦈"; // Default P2P
-    if (serviceTag === "RD") { qIcon = "🐬"; serviceIconTitle = "🐬"; }     // RD = Delfino
-    else if (serviceTag === "TB") { qIcon = "⚓"; serviceIconTitle = "⚓"; } // TB = Ancora
-    else if (serviceTag === "AD") { qIcon = "🐚"; serviceIconTitle = "🐚"; } // AD = Conchiglia
+    if (serviceTag === "RD") { qIcon = "🐬"; serviceIconTitle = "🐬"; }    
+    else if (serviceTag === "TB") { qIcon = "⚓"; serviceIconTitle = "⚓"; } 
+    else if (serviceTag === "AD") { qIcon = "🐚"; serviceIconTitle = "🐚"; } 
     
     let sizeString = size ? formatBytes(size) : "";
     if (!sizeString || size === 0) {
@@ -784,7 +773,7 @@ function formatStreamSelector(fileTitle, source, size, seeders, serviceTag = "RD
     else if (/corsaro/i.test(displaySource)) displaySource = "ilCorSaRoNeRo";
     else if (/knaben/i.test(displaySource)) displaySource = "Knaben";
     else if (/comet|stremthru/i.test(displaySource)) displaySource = "StremThru";
-    else displaySource = displaySource.replace(/MediaFusion|Torrentio|Fallback/gi, '').trim() || "P2P";
+    else displaySource = displaySource.replace(/MediaFusion|Torrentio|Fallback/gi, '').trim() || "✨ MediaFusion";
 
     const sourceLine = `${serviceIconTitle} [${serviceTag}] ${displaySource}`;
     const sizeStr = `🧲 ${sizeString}`;
