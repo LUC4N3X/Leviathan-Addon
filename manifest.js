@@ -4,7 +4,7 @@ function getManifest() {
         version: "2.7.0",
         name: "Leviathan",
         description: "Motore di ricerca parallelo ad alte prestazioni. Include integrazione Web (StreamingCommunity, GuardaHD, GuardaSerie) e Scraper Torrent Multi-Source: Corsaro Nero, Knaben, 1337x, RARBG, TGx, Nyaa, TPB, Lime, Solid, BitSearch e altri. Supporto nativo Debrid per garantire streaming 4K/HDR fluido e senza buffering.",
-        logo: "https://i.ibb.co/fd1QvgKg/Gemini-Generated-Image-gbzq9wgbzq9wgbzq-Photoroom.png",
+        logo: "https://i.ibb.co/MD2nhh2t/file-00000000cbac72439c017448279652ab.png",
         resources: ["catalog", "stream"],
         types: ["movie", "series"],
         catalogs: [],
