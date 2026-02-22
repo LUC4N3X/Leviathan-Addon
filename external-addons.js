@@ -180,7 +180,7 @@ async function fetchExternalAddon(addonKey, type, id, options = {}) {
         const response = await fetch(url, {
             signal: controller.signal,
             headers: {
-                'User-Agent': 'IlCorsaroViola/1.0 (Stremio Addon)',
+                'User-Agent': 'Leviathan/1.0 (Stremio Addon)',
                 'Accept': 'application/json'
             }
         });
