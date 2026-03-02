@@ -101,7 +101,12 @@ function cleanFilename(filename) {
     return clean;
 }
 
-function getEpisodeTag(filename) {
+function getEpisodeTag(filename, config = {}) {
+    // Se l'addon passa esplicitamente stagione ed episodio, li usa subito
+    if (config.season && config.episode) {
+        return `🍿 S${String(config.season).padStart(2, '0')}E${String(config.episode).padStart(2, '0')}`;
+    }
+
     const f = filename.toLowerCase();
 
     const matchMulti = f.match(/s(\d+)[ex](\d+)\s*-\s*(?:[ex]?(\d+))/i) || f.match(/(\d+)x(\d+)\s*-\s*(\d+)/i);
@@ -125,10 +130,14 @@ function getEpisodeTag(filename) {
     const matchX = f.match(/(\d+)x(\d+)/i);
     if (matchX) return `🍿 S${matchX[1].padStart(2, '0')}E${matchX[2].padStart(2, '0')}`;
     
+    // Novità: Estrae elegantemente la stagione se manca l'episodio
     if (/(?:complete|season|stagione|tutta)\s+(\d+)/i.test(f)) {
         const num = f.match(/(?:complete|season|stagione|tutta)\s+(\d+)/i)[1];
-        return `📦 STAGIONE ${num.padStart(2, '0')}`;
+        return `🍿 S${num.padStart(2, '0')}`;
     }
+
+    const matchS = f.match(/s(\d+)\b/i);
+    if (matchS) return `🍿 S${matchS[1].padStart(2, '0')}`;
 
     return "";
 }
@@ -168,7 +177,7 @@ function toStylized(text, type = 'std') {
 // =========================================================================
 // 3. ESTRAZIONE DATI PRINCIPALE
 
-function extractStreamInfo(title, source) {
+function extractStreamInfo(title, source, config = {}) {
   const t = String(title);
   const info = titleParser.parse(t);
   
@@ -371,11 +380,11 @@ function extractStreamInfo(title, source) {
   return { 
       quality: q, qDetails, qIcon, videoTags, cleanTags, lang, 
       codec: foundCodec || info.codec || "", audioTag, audioChannels, rawInfo: info,
-      releaseGroup, cleanName: cleanFilename(t), epTag: getEpisodeTag(t)
+      releaseGroup, cleanName: cleanFilename(t), epTag: getEpisodeTag(t, config)
   };
 }
 
-/
+// =========================================================================
 // 4. STILI DI FORMATTAZIONE
 
 // --- 1.FORMATTER COMPLEX  ---
@@ -456,10 +465,8 @@ function styleComplex(p) {
 
 // --- 2. NUOVO FORMATTER ANDROID TV ---
 function styleAndroidTV(p) {
-    // Header: Res | HDR/DV | Quality | Size | Service
     const qDisp = p.quality.replace('2160p','4K').replace('1440p','2K');
     
-    // Filtro Visual Tags per header
     let vTags = p.cleanTags.filter(t => /HDR|DV|10\+/i.test(t)).join(' | ')
         .replace('HDR | DV', 'DV').replace('DV | HDR', 'DV').replace('HDR10+ | DV', 'DV');
     
@@ -467,19 +474,10 @@ function styleAndroidTV(p) {
     const name = headerParts.join(" | ");
 
     const lines = [];
-    // Riga 1: Codec
     if (p.codec) lines.push(`🎞️ ${p.codec}`);
-    
-    // Riga 2: Audio
     if (p.audioTag) lines.push(`🎧 ${p.audioTag} ${p.audioChannels}`);
-    
-    // Riga 3: Indexer/Source
     lines.push(`⚙️ ${p.displaySource}`);
-    
-    // Riga 4: Lingue (solo bandiere)
     lines.push(p.lang);
-    
-    // Riga 5: Filename
     lines.push(p.fileTitle);
 
     return { name, title: lines.join("\n") };
@@ -489,46 +487,36 @@ function styleAndroidTV(p) {
 function stylePicture(p) {
     const isCached = ["RD", "TB", "AD"].includes(p.serviceTag);
     const cacheIcon = isCached ? "✅" : "⏳";
-    const tierIcon = "✅"; // Simulato
     
     let feat = [];
     if (p.quality === "4K") feat.push("UHD");
     if (p.cleanTags.some(t => /HDR|DV/i.test(t))) feat.push("HDR");
     if (p.audioTag.includes("Atmos")) feat.push("ATMOS");
     
-    // Costruzione Name (Simula la colonna sinistra della foto)
     const name = `${cacheIcon} ${feat.join(" ")} ${p.quality}`;
 
     const lines = [];
-    // Riga 1: Titolo
     lines.push(`🎬 ${p.cleanName} ${p.epTag}`);
     
-    // Riga 2: Video Tech
     let vidLine = `✨ ${p.quality}`;
     const hdrTags = p.cleanTags.filter(t => /HDR|DV|10\+/i.test(t)).join(" | ");
     if (hdrTags) vidLine += ` 🔆 ${hdrTags}`;
     lines.push(vidLine);
 
-    // Riga 3: Audio Tech
     let audLine = `🎧 ${p.audioTag}`;
     if (p.audioChannels) audLine += ` 🔊 ${p.audioChannels}`;
     lines.push(audLine);
 
-    // Riga 4: Source Type
     let typeText = "Web-DL";
     if (p.cleanTags.some(t => /Remux/i.test(t))) typeText = "Blu-ray Remux";
     else if (p.cleanTags.some(t => /BluRay/i.test(t))) typeText = "Blu-ray";
     lines.push(`💿 ${typeText}`);
-
-    // Riga 5: Size
     lines.push(`📦 ${p.sizeString}`);
 
-    // Riga 6: Group/Tier (Simulato)
     let groupLine = `🏷️ ${typeText} T1`; 
     if (p.releaseGroup) groupLine += ` (${p.releaseGroup})`;
     lines.push(groupLine);
 
-    // Riga 7: Service Provider
     lines.push(`⚡ Comet ${p.serviceTag}`);
 
     return { name, title: lines.join("\n") };
@@ -746,7 +734,7 @@ function styleCustom(p, template) {
 
 // 5. MAIN DISPATCHER
 function formatStreamSelector(fileTitle, source, size, seeders, serviceTag = "RD", config = {}, infoHash = null, isLazy = false, isPackItem = false) {
-    let { quality, qDetails, qIcon, videoTags, cleanTags, lang, codec, audioTag, audioChannels, rawInfo, releaseGroup } = extractStreamInfo(fileTitle, source);
+    let { quality, qDetails, qIcon, videoTags, cleanTags, lang, codec, audioTag, audioChannels, rawInfo, releaseGroup } = extractStreamInfo(fileTitle, source, config);
     
     let serviceIconTitle = "🦈"; // Default P2P
     if (serviceTag === "RD") { qIcon = "🐬"; serviceIconTitle = "🐬"; }    
@@ -765,8 +753,15 @@ function formatStreamSelector(fileTitle, source, size, seeders, serviceTag = "RD
         sizeString = `${gb.toFixed(2)} GB`;
     }
 
-    const cleanName = cleanFilename(fileTitle);
-    const epTag = isPackItem ? "📦 SEASON PACK" : getEpisodeTag(fileTitle);
+    let cleanName = cleanFilename(fileTitle);
+    // Rimuove eventuali S01, S01E01 o "Season 1" rimasti attaccati al titolo principale
+    cleanName = cleanName.replace(/\s+(?:S\d+(?:E\d+)?\b.*|\d+x\d+\b.*|(?:Season|Stagione)\s*\d+\b.*)$/i, "").trim();
+    
+    const baseEpTag = getEpisodeTag(fileTitle, config);
+    const styledPack = toStylized("Season Pack", "small");
+    const epTag = isPackItem 
+        ? (baseEpTag ? `${baseEpTag}  ✦  📦 ${styledPack}` : `📦 ꜱᴇᴀꜱᴏɴ ᴘᴀᴄᴋ`) 
+        : baseEpTag;
 
     let displaySource = source || "P2P";
     if (/1337/i.test(displaySource)) displaySource = "1337x"; 
