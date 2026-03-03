@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="google" content="notranslate" /> 
     <title>LEVIATHAN - Deep Sea Protocol</title>
+    
+    <link rel="preload" as="image" href="https://i.ibb.co/svvMzzWq/68747470733a2f2f692e6962622e636f2f766742666b335a2f66696c652d3030303030303030306161343732306139616665.png">
+    
     <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700;800&family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -1000,7 +1003,7 @@
     <div class="main-wrapper">
         <header>
             <div class="logo-container">
-                <img src="https://i.ibb.co/svvMzzWq/68747470733a2f2f692e6962622e636f2f766742666b335a2f66696c652d3030303030303030306161343732306139616665.png" alt="Leviathan Logo" class="logo-image">
+                <img src="https://i.ibb.co/svvMzzWq/68747470733a2f2f692e6962622e636f2f766742666b335a2f66696c652d3030303030303030306161343732306139616665.png" alt="Leviathan Logo" class="logo-image" fetchpriority="high" decoding="sync">
                 <div class="logo-particles" id="logoParticles"></div>
             </div>
             <h1 class="brand-title notranslate" translate="no">LEVIATHAN</h1>
@@ -1138,10 +1141,22 @@
                             </div>
                             <label class="switch mf-switch"><input type="checkbox" id="enableAnimeWorld" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
                         </div>
+
+                        <div class="control-row">
+                            <div class="control-info">
+                                <div class="control-title notranslate" translate="no">
+                                    <i class="fas fa-play" style="color: #00e676"></i> GuardaFlix
+                                    <span class="proxy-tag tag-mfp">MFP</span>
+                                </div>
+                                <span class="control-desc">Catalogo esclusivo per i Film. Richiede MediaFlow Proxy configurato.</span>
+                            </div>
+                            <label class="switch mf-switch"><input type="checkbox" id="enableGf" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
+                        </div>
+
                         <div class="control-row sub-row" id="webPriorityRow" style="display:none; margin-top:15px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top:10px;">
                              <div class="control-info">
                                  <div class="control-title"><i class="fas fa-sort-amount-down"></i> Gerarchia Sorgenti</div>
-                                 <span class="control-desc">Sposta i risultati Web (SC, GHD, GS, AW) dopo i Torrent.</span>
+                                 <span class="control-desc">Sposta i risultati Web (SC, GHD, GS, AW, GF) dopo i Torrent.</span>
                              </div>
                              <label class="switch mf-switch"><input type="checkbox" id="vixLast" onchange="updateFluxStream()"><span class="slider"></span></label>
                          </div>
@@ -1969,12 +1984,14 @@
             const ghd = document.getElementById('enableGhd').checked;
             const gs = document.getElementById('enableGs').checked;
             const aw = document.getElementById('enableAnimeWorld').checked; // AGGIUNTO
+            const gf = document.getElementById('enableGf').checked; // AGGIUNTO GUARDAFLIX
+            
             const qContainer = document.getElementById('scQualityContainer');
             if(qContainer) qContainer.style.display = sc ? 'block' : 'none';
             const pRow = document.getElementById('webPriorityRow');
             if(pRow) {
-                // Aggiunto controllo AW
-                if(sc || ghd || gs || aw) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; } 
+                // Aggiunto controllo AW e GF
+                if(sc || ghd || gs || aw || gf) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; } 
                 else { pRow.style.display = 'none'; }
             }
         }
@@ -2056,8 +2073,9 @@
                         document.getElementById('vixLast').checked = config.filters.vixLast || false;
                         document.getElementById('enableGhd').checked = config.filters.enableGhd || false;
                         document.getElementById('enableGs').checked = config.filters.enableGs || false;
-                        // AGGIUNTO LOADER ANIMEWORLD
+                        // AGGIUNTO LOADER ANIMEWORLD E GUARDAFLIX
                         document.getElementById('enableAnimeWorld').checked = config.filters.enableAnimeWorld || false;
+                        document.getElementById('enableGf').checked = config.filters.enableGf || false;
 
                         document.getElementById('enableWebStreamr').checked = config.filters.enableWebStreamr !== false;
                         document.getElementById('enableTrailers').checked = config.filters.enableTrailers || false; 
@@ -2149,9 +2167,10 @@
             const ghdActive = document.getElementById('enableGhd').checked;
             const gsActive = document.getElementById('enableGs').checked;
             const awActive = document.getElementById('enableAnimeWorld').checked; // AGGIUNTO
+            const gfActive = document.getElementById('enableGf').checked; // AGGIUNTO GUARDAFLIX
             const isP2P = currentService === 'p2p';
-            // Aggiunto awActive al controllo
-            const isWebEnabled = scActive || ghdActive || gsActive || awActive || isP2P; 
+            // Aggiunto awActive e gfActive al controllo
+            const isWebEnabled = scActive || ghdActive || gsActive || awActive || gfActive || isP2P; 
             
             const el = document.getElementById('apiKey');
             const value = el.value.trim();
@@ -2198,6 +2217,7 @@
                     enableGhd: document.getElementById('enableGhd').checked,
                     enableGs: document.getElementById('enableGs').checked,
                     enableAnimeWorld: document.getElementById('enableAnimeWorld').checked, // AGGIUNTO
+                    enableGf: document.getElementById('enableGf').checked, // AGGIUNTO GUARDAFLIX
                     enableWebStreamr: document.getElementById('enableWebStreamr').checked,
                     enableTrailers: document.getElementById('enableTrailers').checked, 
                     vixLast: document.getElementById('vixLast').checked,
@@ -2251,6 +2271,7 @@
             let ghdText = c.filters.enableGhd ? 'ATTIVO 🦁' : 'NO';
             let gsText = c.filters.enableGs ? 'ATTIVO 🛡️' : 'NO';
             let awText = c.filters.enableAnimeWorld ? 'ATTIVO ⛩️' : 'NO'; // AGGIUNTO
+            let gfText = c.filters.enableGf ? 'ATTIVO 🎥' : 'NO'; // AGGIUNTO GUARDAFLIX
             let webStreamrText = c.filters.enableWebStreamr ? 'ATTIVO 🕷️' : 'DISATTIVATO';
             let exclText = [];
             if(c.filters.no4k) exclText.push("4K");
@@ -2273,12 +2294,12 @@
             let serviceDisplay = c.service ? c.service.toUpperCase() : "NESSUNO (P2P/WEB)";
             if (c.filters.enableP2P && !c.service) serviceDisplay = "P2P MODE 🦈";
 
-            // AGGIORNATO CON ANIMEWORLD (AW)
+            // AGGIORNATO CON ANIMEWORLD (AW) E GUARDAFLIX (GF)
             list.innerHTML = `
                 <li>Servizio Debrid <span>${serviceDisplay}</span></li>
                 <li>Visual Skin <span>${skinText}</span></li>
                 <li>Swarm P2P <span>${p2pText}</span></li>
-                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | AW: ${awText}</span></li>
+                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | AW: ${awText} | GF: ${gfText}</span></li>
                 <li>Fallback WebStreamr <span>${webStreamrText}</span></li>
                 <li>Flux Priority <span>${sortText}</span></li>
                 <li>Proxy Bridge <span>${c.mediaflow.url ? 'CONFIGURATO' : 'NON ATTIVO'}</span></li>
