@@ -271,6 +271,22 @@ function estimateVisualSize(knownSize, title, isSeries, isPack, infoHash) {
     const fineNoise = Math.floor(seededRandom() * 1024 * 1024 * 5); 
     return Math.floor(baseSize + fineNoise);
 }
+
+// =========================================================================
+// 👥 GENERATORE SEEDERS REALISTICI (Solo Estetica per Debrid)
+// =========================================================================
+function estimateSeeders(knownSeeders, infoHash) {
+    if (knownSeeders && knownSeeders > 0) return knownSeeders;
+    
+    // Se non ci sono seeders, generiamo un numero deterministico basato sull'hash
+    let seedStr = infoHash || "seeders_fallback";
+    let hashVal = 0;
+    for (let i = 0; i < seedStr.length; i++) {
+        hashVal = (Math.imul(31, hashVal) + seedStr.charCodeAt(i)) | 0;
+    }
+    // Restituisce un numero credibile tra 8 e 67
+    return (Math.abs(hashVal) % 60) + 8;
+}
 // =========================================================================
 
 const LIMITERS = {
@@ -691,6 +707,8 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
                 let realSize = item._size || item.sizeBytes || 0;
                 realSize = estimateVisualSize(realSize, item.title, isSeries, isPack, item.hash);
 
+                const finalSeeders = estimateSeeders(item.seeders, item.hash);
+
                 const fIdx = (item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1;
                 const proxyUrl = `${reqHost}/${config.rawConf}/play_tb/${item.hash}?s=${item.season || 0}&e=${item.episode || 0}&f=${fIdx}`;
 
@@ -709,7 +727,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
                             size: formatBytes(realSize),
                             language: isSafeForItalian(item) ? "🇮🇹 ITA" : (details.languages.join('/') || "🇬🇧/Unknown"),
                             source: item.source,
-                            seeders: item.seeders,
+                            seeders: finalSeeders,
                             infoHash: item.hash, 
                             techInfo: `🎞️ ${quality} ${details.tags}`
                         }),
@@ -719,7 +737,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
                     };
                 } else {
                     const { name, title, bingeGroup } = formatStreamSelector(
-                        item.title, item.source, realSize, item.seeders, "TB", config, item.hash, false, item._isPack
+                        item.title, item.source, realSize, finalSeeders, "TB", config, item.hash, false, item._isPack
                     );
                     return { name, title, url: proxyUrl, behaviorHints: { notWebReady: false, bingieGroup: bingeGroup } };
                 }
@@ -735,6 +753,8 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
         // USA NUOVA LOGICA ESTIMATE SIZE
         let finalSize = streamData.size || item._size || item.sizeBytes || 0;
         finalSize = estimateVisualSize(finalSize, streamData.filename || item.title, isSeries, isPack, item.hash);
+
+        const finalSeeders = estimateSeeders(item.seeders, item.hash);
 
         const fileDetails = parseTitleDetails(streamData.filename || item.title);
 
@@ -758,7 +778,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
                     size: formatBytes(finalSize),
                     language: isSafeForItalian(item) ? "🇮🇹 ITA" : (fileDetails.languages.join('/') || "🇬🇧/Unknown"),
                     source: item.source,
-                    seeders: item.seeders,
+                    seeders: finalSeeders,
                     infoHash: item.hash,
                     techInfo: `🎞️ ${quality} ${fileDetails.tags}`
                 }),
@@ -769,7 +789,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
         } else {
             const serviceTag = service.toUpperCase();
             const { name, title, bingeGroup } = formatStreamSelector(
-                streamData.filename || item.title, item.source, finalSize, item.seeders, serviceTag, config, item.hash, false, item._isPack
+                streamData.filename || item.title, item.source, finalSize, finalSeeders, serviceTag, config, item.hash, false, item._isPack
             );
             return { name, title, url: streamData.url, behaviorHints: { notWebReady: false, bingieGroup: bingeGroup } };
         }
@@ -803,6 +823,8 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
     // Applica stima intelligente se la dimensione è 0
     realSize = estimateVisualSize(realSize, displayTitle, isSeries, isPack, item.hash);
 
+    const finalSeeders = estimateSeeders(item.seeders, item.hash);
+
     if (isAIOActive) {
         const details = parseTitleDetails(item.title);
         let quality = details.quality || "SD";
@@ -826,7 +848,7 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
             size: formatBytes(realSize),
             language: isSafeForItalian(item) ? "🇮🇹 ITA" : (details.languages.join('/') || "🇬🇧/Unknown"), 
             source: item.source,
-            seeders: item.seeders,
+            seeders: finalSeeders,
             infoHash: item.hash,
             techInfo: `🎞️ ${quality} ${details.tags}`
         });
@@ -847,7 +869,7 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
     } 
     else {
         const { name, title, bingeGroup } = formatStreamSelector(
-            item.title, item.source, realSize, item.seeders, serviceTag, config, item.hash, isLazy, item._isPack 
+            item.title, item.source, realSize, finalSeeders, serviceTag, config, item.hash, isLazy, item._isPack 
         );
         const fileIdxParam = (item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1;
         const lazyUrl = `${reqHost}/${userConfStr}/play_lazy/${service}/${item.hash}/${fileIdxParam}?s=${meta.season || 0}&e=${meta.episode || 0}`;
