@@ -1146,20 +1146,12 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
   let externalPromise = Promise.resolve([]);
   if (!dbOnlyMode) {
-      // Modifica qui: aggiungi 'config'
       externalPromise = fetchExternalResults(type, finalId, config);
   }
 
-  const [remoteResults, externalResults] = await Promise.all([remotePromise, externalPromise]);
-  logger.info(`📊 [STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
-
-  let fastResults = [...remoteResults, ...externalResults].filter(aggressiveFilter);
-  let cleanResults = deduplicateResults(fastResults);
-  const validFastCount = cleanResults.length;
-  logger.info(`⚡ [FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+Ext).`);
-
-  if (!dbOnlyMode && validFastCount < 3) {
-      logger.info(`⚠️ [HEAVY] Meno di 3 risultati (${validFastCount}). Attivazione Scraper Locali...`);
+  // 🔥 NUOVA LOGICA SCRAPER IN PARALLELO 🔥
+  let scraperPromise = Promise.resolve([]);
+  if (!dbOnlyMode) {
       let dynamicTitles = [];
       try {
           if (tmdbIdLookup) dynamicTitles = await getTmdbAltTitles(tmdbIdLookup, type, userTmdbKey);
@@ -1168,7 +1160,6 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       const allowEngScraper = (langMode === "all" || langMode === "eng");
       const queries = generateSmartQueries(meta, dynamicTitles, allowEngScraper);
       
-      let scrapedResults = [];
       if (queries.length > 0) {
           const allScraperTasks = [];
           queries.forEach(q => {
@@ -1190,12 +1181,23 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
                   }
               });
           });
-          scrapedResults = await Promise.all(allScraperTasks).then(results => results.flat());
-          const filteredScraped = scrapedResults.filter(aggressiveFilter);
-          const combined = [...cleanResults, ...filteredScraped];
-          cleanResults = deduplicateResults(combined);
+          scraperPromise = Promise.all(allScraperTasks).then(results => results.flat());
       }
   }
+
+  // Risolvo tutto contemporaneamente
+  const [remoteResults, externalResults, scrapedResults] = await Promise.all([
+      remotePromise, 
+      externalPromise,
+      scraperPromise
+  ]);
+  
+  logger.info(`📊 [STATS] Remote: ${remoteResults.length} | External: ${externalResults.length} | Scraper: ${scrapedResults.length}`);
+
+  let fastResults = [...remoteResults, ...externalResults, ...scrapedResults].filter(aggressiveFilter);
+  let cleanResults = deduplicateResults(fastResults);
+  const validFastCount = cleanResults.length;
+  logger.info(`⚡ [FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+Ext+Scraper).`);
 
   if (!dbOnlyMode) {
       saveResultsToDbBackground(meta, cleanResults);
@@ -1762,5 +1764,6 @@ app.listen(PORT, () => {
     console.log(`📝 PARSER: ENHANCED (Smart Extraction Active)`); 
     console.log(`⚡ P2P: HANDLER ATTIVO (Graphic Skin + Tracker Fix)`);
     console.log(`🦑 LEVIATHAN CORE: Optimized for High Reliability`);
+    console.log(`⚡ SCRAPERS: Eseguiti in parallelo (No Fallback Limit)`);
     console.log(`-----------------------------------------------------`);
 });
