@@ -29,11 +29,12 @@ const P2P = require("./p2p_handler");
 // --- IMPORT GESTORE TRAILER (YouTube/Invidious) ---
 const { getTrailerStreams } = require("./trailerProvider"); 
 
-// --- IMPORT GESTORI WEB (Vix, GuardaHD, GuardaSerie & AnimeWorld) ---
+// --- IMPORT GESTORI WEB (Vix, GuardaHD, GuardaSerie, AnimeWorld & GuardaFlix) ---
 const { searchVix } = require("./vix/vix_handler");
 const { searchGuardaHD } = require("./guardahd/ghd_handler"); 
 const { searchGuardaserie } = require("./guardaserie/gs_handler"); 
 const { searchAnimeWorld } = require("./animeworld/aw_handler"); 
+const { searchGuardaFlix } = require("./guardaflix/gf_handler"); 
 
 // --- 1. CONFIGURAZIONE LOGGER (Winston) ---
 const logger = winston.createLogger({
@@ -469,7 +470,7 @@ function applyWebFormatter(streamList, sourceName, meta, config) {
         if (stream.title) {
             let rawLines = stream.title.split('\n');
             let rawTitle = rawLines[0]; // Prende la prima riga
-            let cleanRaw = rawTitle.replace(/[🎬⚡🌪️⛩️🍿🦁🌐]/g, '').trim();
+            let cleanRaw = rawTitle.replace(/[🎬⚡🌪️⛩️🍿🦁🎥🌐]/g, '').trim();
             if (cleanRaw.length > 2) {
                 fileTitle = cleanRaw;
             }
@@ -499,6 +500,8 @@ function applyWebFormatter(streamList, sourceName, meta, config) {
             providerIcon = "🍿"; 
         } else if (sLower.includes("guardahd")) {
             providerIcon = "🦁"; 
+        } else if (sLower.includes("guardaflix")) {
+            providerIcon = "🎥";
         }
 
         // 4. Creazione "Nome File" fittizio con la lingua corretta
@@ -985,7 +988,7 @@ async function fetchExternalResults(type, finalId, config) {
 // --- GENERATE STREAM ---
 async function generateStream(type, id, config, userConfStr, reqHost) {
   const hasDebridKey = (config.key && config.key.length > 0) || (config.rd && config.rd.length > 0);
-  const isWebEnabled = config.filters && (config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld);
+  const isWebEnabled = config.filters && (config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableGf);
   
   const isP2PEnabled = config.filters && config.filters.enableP2P === true;
 
@@ -1348,7 +1351,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       debridStreams = ranked.map(item => P2P.formatP2PStream(item, config));
   }
 
-  let rawVix = [], formattedGhd = [], formattedGs = [], formattedVix = [], formattedAw = [];
+  let rawVix = [], formattedGhd = [], formattedGs = [], formattedVix = [], formattedAw = [], formattedGf = [];
 
   if (!dbOnlyMode) {
        const vixPromise = searchVix(meta, config, reqHost);
@@ -1376,7 +1379,15 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
            });
        }
 
-       [rawVix, formattedGhd, formattedGs, formattedAw] = await Promise.all([vixPromise, ghdPromise, gsPromise, awPromise]);
+       let gfPromise = Promise.resolve([]);
+       if (config.filters && config.filters.enableGf) {
+           gfPromise = searchGuardaFlix(meta, config).catch(err => {
+               logger.warn(`GuardaFlix Error: ${err.message}`);
+               return [];
+           });
+       }
+
+       [rawVix, formattedGhd, formattedGs, formattedAw, formattedGf] = await Promise.all([vixPromise, ghdPromise, gsPromise, awPromise, gfPromise]);
        
        if (aioFormatter && aioFormatter.isAIOStreamsEnabled(config)) {
            const applyAioStyle = (streamList, sourceName) => {
@@ -1389,7 +1400,8 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
                        .replace("GUARDAHD", "")
                        .replace("STREAMINGCOMMUNITY", "")
                        .replace("LEVIATHAN", "")
-                       .replace("VIX", "");
+                       .replace("VIX", "")
+                       .replace("GUARDAFLIX", "");
                    const regex4k = /\b(4K|2160P|UHD)\b/;
                    const regex1080 = /\b(1080P|FHD|FULLHD)\b/;
                    const regex720 = /\b(720P|HD)\b/;
@@ -1426,6 +1438,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
            if (typeof rawVix !== 'undefined') applyAioStyle(rawVix, "StreamingCommunity");
            if (typeof formattedGhd !== 'undefined') applyAioStyle(formattedGhd, "GuardaHD");
            if (typeof formattedGs !== 'undefined') applyAioStyle(formattedGs, "GuardaSerie");
+           if (typeof formattedGf !== 'undefined') applyAioStyle(formattedGf, "GuardaFlix");
            
            if (typeof formattedAw !== 'undefined' && formattedAw.length > 0) {
                formattedAw.forEach(stream => {
@@ -1455,14 +1468,17 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
            
            if (formattedAw && formattedAw.length > 0) 
                formattedAw = applyWebFormatter(formattedAw, "AnimeWorld", meta, config);
+
+           if (formattedGf && formattedGf.length > 0) 
+               formattedGf = applyWebFormatter(formattedGf, "GuardaFlix", meta, config);
        }
   }
 
   let finalStreams = [];
   if (config.filters && config.filters.vixLast === true) {
-      finalStreams = [...debridStreams, ...formattedGhd, ...formattedGs, ...formattedAw, ...formattedVix];
+      finalStreams = [...debridStreams, ...formattedGhd, ...formattedGs, ...formattedAw, ...formattedGf, ...formattedVix];
   } else {
-      finalStreams = [...formattedGhd, ...formattedGs, ...formattedAw, ...formattedVix, ...debridStreams];
+      finalStreams = [...formattedGhd, ...formattedGs, ...formattedAw, ...formattedGf, ...formattedVix, ...debridStreams];
   }
 
   if (config.filters) {
@@ -1780,6 +1796,7 @@ app.listen(PORT, () => {
     console.log(`🦁 GUARDA HD: Modulo Integrato e Pronto`);
     console.log(`🛡️ GUARDA SERIE: Modulo Integrato e Pronto`);
     console.log(`⛩️ ANIMEWORLD: Modulo Integrato e Pronto`); 
+    console.log(`🎥 GUARDA FLIX: Modulo Integrato (Richiede MFP)`);
     console.log(`🕷️ WEBSTREAMR: Fallback Attivo (Su 0 Risultati)`);
     console.log(`🎬 TRAILER: Attivabile da Config (Default: OFF, Primo Risultato se ON)`);
     console.log(`📦 TORBOX: ADVANCED SMART CACHE + ID GRABBER ENABLED`);
