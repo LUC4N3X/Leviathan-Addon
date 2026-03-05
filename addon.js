@@ -1,3 +1,4 @@
+
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -72,7 +73,6 @@ const { generateSmartQueries } = require("./ai_query");
 const { smartMatch } = require("./smart_parser");
 const { rankAndFilterResults } = require("./ranking");
 const { tmdbToImdb, imdbToTmdb, getTmdbAltTitles } = require("./id_converter");
-// const kitsuHandler = require("./kitsu_handler"); // RIMOSSO: USIAMO LOGICA INTERNA
 const RD = require("./debrid/realdebrid");
 const AD = require("./debrid/alldebrid");
 const TB = require("./debrid/torbox");
@@ -82,22 +82,22 @@ const { getManifest } = require("./manifest");
 // Inizializza DB Locale (Solo per scrittura/backup, lettura disabilitata)
 dbHelper.initDatabase();
 
-// --- CONFIGURAZIONE CENTRALE ---
+// --- CONFIGURAZIONE CENTRALE CON TIMEOUT RIDOTTI ---
 const CONFIG = {
   INDEXER_URL: process.env.INDEXER_URL || "", 
   CINEMETA_URL: "https://v3-cinemeta.strem.io",
-  KITSU_URL: "https://anime-kitsu.strem.fun", // 🆕 URL KITSU AGGIUNTO
+  KITSU_URL: "https://anime-kitsu.strem.fun", 
   REAL_SIZE_FILTER: 80 * 1024 * 1024,
   MAX_RESULTS: 70,
   TIMEOUTS: {
     TMDB: 2000,
-    SCRAPER: 6000,
-    REMOTE_INDEXER: 2500, 
+    SCRAPER: 4000,          // Abbassato da 6000
+    REMOTE_INDEXER: 1500,   // Abbassato da 2500
     LOCAL_DB: 1500, 
-    DB_QUERY: 3000,
-    DEBRID: 10000, 
-    PACK_RESOLVER: 4000,
-    EXTERNAL: 20000 
+    DB_QUERY: 2000,         // Abbassato da 3000
+    DEBRID: 8000,           // Abbassato da 10000
+    PACK_RESOLVER: 3000,    // Abbassato da 4000
+    EXTERNAL: 8000          // Drasticamente abbassato da 20000
   }
 };
 
@@ -174,7 +174,6 @@ function parseTitleDetails(filename) {
 }
 // =========================================================================
 
-
 function base32ToHex(base32) {
     const base32chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     let bits = "";
@@ -219,24 +218,18 @@ function estimateVisualSize(knownSize, title, isSeries, isPack, infoHash) {
 
         if (!isPack) {
             if (isSeries) {
-                // Limiti per Singolo Episodio
                 if (is4K && sizeInGB > 15) isSane = false;
                 else if (is1080 && sizeInGB > 6) isSane = false;
                 else if (is720 && sizeInGB > 3) isSane = false;
                 else if (!is4K && !is1080 && !is720 && sizeInGB > 1.5) isSane = false;
             } else {
-                // Limiti per Film (Bloccherà i 188GB sui film 1080p)
                 if (is4K && sizeInGB > 100) isSane = false; 
                 else if (is1080 && sizeInGB > 40) isSane = false; 
                 else if (is720 && sizeInGB > 12) isSane = false;
                 else if (!is4K && !is1080 && !is720 && sizeInGB > 5) isSane = false;
             }
         }
-
-        // Se la dimensione letta ha senso, usiamo quella reale
         if (isSane) return knownSize;
-        
-        // Altrimenti proseguiamo e lasciamo che l'algoritmo ne inventi una realistica
     }
 
     // 3. Generazione Seme (Seed) Deterministico per dimensioni fittizie
@@ -255,20 +248,17 @@ function estimateVisualSize(knownSize, title, isSeries, isPack, infoHash) {
     let baseSize = 0;
     
     if (isSeries) {
-        // --- SERIE TV ---
         if (is4K) baseSize = 1.8 * 1024**3 + (seededRandom() * 4.7 * 1024**3);
         else if (is1080) baseSize = 800 * 1024**2 + (seededRandom() * 2.4 * 1024**3);
         else if (is720) baseSize = 300 * 1024**2 + (seededRandom() * 900 * 1024**2);
         else baseSize = 150 * 1024**2 + (seededRandom() * 450 * 1024**2);
     } else {
-        // --- FILM ---
         if (is4K) baseSize = 12 * 1024**3 + (seededRandom() * 53 * 1024**3);
         else if (is1080) baseSize = 1.8 * 1024**3 + (seededRandom() * 12.2 * 1024**3);
         else if (is720) baseSize = 800 * 1024**2 + (seededRandom() * 3.2 * 1024**3);
         else baseSize = 700 * 1024**2 + (seededRandom() * 1.1 * 1024**3);
     }
 
-    // Aggiungi un piccolo "rumore" per non avere numeri troppo tondi
     const fineNoise = Math.floor(seededRandom() * 1024 * 1024 * 5); 
     return Math.floor(baseSize + fineNoise);
 }
@@ -278,14 +268,11 @@ function estimateVisualSize(knownSize, title, isSeries, isPack, infoHash) {
 // =========================================================================
 function estimateSeeders(knownSeeders, infoHash) {
     if (knownSeeders && knownSeeders > 0) return knownSeeders;
-    
-    // Se non ci sono seeders, generiamo un numero deterministico basato sull'hash
     let seedStr = infoHash || "seeders_fallback";
     let hashVal = 0;
     for (let i = 0; i < seedStr.length; i++) {
         hashVal = (Math.imul(31, hashVal) + seedStr.charCodeAt(i)) | 0;
     }
-    // Restituisce un numero credibile tra 8 e 67
     return (Math.abs(hashVal) % 60) + 8;
 }
 // =========================================================================
@@ -420,7 +407,6 @@ function isSafeForItalian(item) {
 }
 
 function validateStreamRequest(type, id) {
-  // 🔥 Aggiunto 'anime' ai tipi validi
   const validTypes = ['movie', 'series', 'anime']; 
   if (!validTypes.includes(type)) {
     throw new Error(`Tipo non valido: ${type}`);
@@ -448,12 +434,11 @@ async function withTimeout(promise, ms, operation = 'Operation') {
   }
 }
 
-// --- HELPER PER APPLICARE LE SKIN AI RISULTATI WEB (ICONE PERSONALIZZATE + FIX TITOLI + LINGUA DINAMICA) ---
+// --- HELPER PER APPLICARE LE SKIN AI RISULTATI WEB ---
 function applyWebFormatter(streamList, sourceName, meta, config) {
     if (!streamList || !Array.isArray(streamList)) return [];
     
     return streamList.map(stream => {
-        // 1. Determina la qualità
         let quality = "HD";
         const upperName = (stream.name || "").toUpperCase();
         
@@ -462,21 +447,18 @@ function applyWebFormatter(streamList, sourceName, meta, config) {
         else if (upperName.includes("720P")) quality = "720p";
         else if (upperName.includes("SD") || upperName.includes("480P")) quality = "SD";
 
-        // 2. RECUPERO TITOLO REALE (FIX "ONE PIECE")
-        // Recuperiamo il titolo per due motivi: fixare il nome e controllare la lingua
         let fileTitle = meta.title; 
-        let rawTitleToCheck = (stream.title || "").toUpperCase(); // Salviamo il titolo grezzo per l'analisi lingua
+        let rawTitleToCheck = (stream.title || "").toUpperCase(); 
 
         if (stream.title) {
             let rawLines = stream.title.split('\n');
-            let rawTitle = rawLines[0]; // Prende la prima riga
+            let rawTitle = rawLines[0]; 
             let cleanRaw = rawTitle.replace(/[🎬⚡🌪️⛩️🍿🦁🎥🌐]/g, '').trim();
             if (cleanRaw.length > 2) {
                 fileTitle = cleanRaw;
             }
         }
 
-        // 3. LOGICA LINGUA & ICONA PROVIDER
         let langTag = "ITA"; 
         let providerIcon = "🌐"; 
 
@@ -484,16 +466,11 @@ function applyWebFormatter(streamList, sourceName, meta, config) {
         
         if (sLower.includes("animeworld")) {
             providerIcon = "⛩️"; 
-            
-            // 🔥 LOGICA DINAMICA JPN vs ITA 🔥
-            // Se nel titolo c'è "JPN", "SUB" o "VOST", usiamo la bandiera del Giappone.
-            // Altrimenti (es. se c'è "ITA" o nulla), usiamo la bandiera dell'Italia.
             if (rawTitleToCheck.includes("JPN") || rawTitleToCheck.includes("SUB") || rawTitleToCheck.includes("VOST")) {
-                langTag = "JPN"; // Bandiera 🇯🇵
+                langTag = "JPN"; 
             } else {
-                langTag = "ITA"; // Bandiera 🇮🇹
+                langTag = "ITA"; 
             }
-
         } else if (sLower.includes("streamingcommunity")) {
             providerIcon = "🌪️"; 
         } else if (sLower.includes("guardaserie")) {
@@ -504,15 +481,12 @@ function applyWebFormatter(streamList, sourceName, meta, config) {
             providerIcon = "🎥";
         }
 
-        // 4. Creazione "Nome File" fittizio con la lingua corretta
         const fakeFilename = `${fileTitle} ${quality} ${langTag} WEB-DL AAC`;
 
-        // 5. Chiamata al formatter grafico
         const formatted = formatStreamSelector(
             fakeFilename, sourceName, 0, null, "WEB", config, null, false, false
         );
 
-        // --- 6. SOSTITUZIONE ICONE E PULIZIA ---
         let cleanTitle = formatted.title;
         cleanTitle = cleanTitle.replace(/🦑/g, "⛵");
         cleanTitle = cleanTitle.replace(/🦈/g, providerIcon);
@@ -533,7 +507,6 @@ function applyWebFormatter(streamList, sourceName, meta, config) {
     });
 }
 
-
 async function fetchTmdbMeta(tmdbId, type, userApiKey) {
     if (!tmdbId) return null;
     const apiKey = (userApiKey && userApiKey.length > 1) ? userApiKey : "4b9dfb8b1c9f1720b5cd1d7efea1d845";
@@ -550,25 +523,19 @@ async function fetchTmdbMeta(tmdbId, type, userApiKey) {
 
 async function getMetadata(id, type, config = {}) {
   try {
-    // 🆕 GESTIONE KITSU DEDICATA (Priorità su ID 'kitsu:' o type 'anime')
     if (type === 'anime' || id.toString().startsWith('kitsu:')) {
         let kitsuId = id.toString();
         let season = 0;
         let episode = 0;
         
-        // Parse ID se composto (kitsu:123:1)
         if (kitsuId.includes(':')) {
             const parts = kitsuId.split(':');
-            kitsuId = parts[1]; // Prende l'ID numerico
+            kitsuId = parts[1]; 
             if (parts.length > 2) {
-                // Kitsu episodes are usually absolute, but stremio convention sometimes varies.
-                // Generally passed as index. For simplicity we map roughly.
                 episode = parseInt(parts[2]);
             }
         }
         
-        // 🔥 LOGICA KITSU DEDICATA (Using anime-kitsu.strem.fun)
-        // La logica si basa su metadata.js fornito: url + axios
         const kitsuUrl = `${CONFIG.KITSU_URL}/meta/anime/kitsu:${kitsuId}.json`;
         logger.info(`⛩️ [META] Fetching Kitsu (Direct): ${kitsuUrl}`);
 
@@ -583,9 +550,9 @@ async function getMetadata(id, type, config = {}) {
                     originalTitle: kMeta.name,
                     year: year,
                     imdb_id: kMeta.imdb_id || null, 
-                    kitsu_id: kitsuId, // Importante per il filtro
-                    isSeries: true, // Anime su Kitsu è trattato come serie
-                    season: 1, // Kitsu usa spesso stagioni assolute o singole
+                    kitsu_id: kitsuId, 
+                    isSeries: true, 
+                    season: 1, 
                     episode: episode
                 };
             }
@@ -594,7 +561,6 @@ async function getMetadata(id, type, config = {}) {
         }
     }
 
-    // --- LOGICA STANDARD (TMDB / CINEMETA) ---
     const allowedTypes = ["movie", "series"];
     const cleanType = (type === 'anime') ? 'series' : type;
 
@@ -706,12 +672,9 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
 
         if (service === 'tb') {
             if (item._tbCached) {
-                // USA NUOVA LOGICA ESTIMATE SIZE
                 let realSize = item._size || item.sizeBytes || 0;
                 realSize = estimateVisualSize(realSize, item.title, isSeries, isPack, item.hash);
-
                 const finalSeeders = estimateSeeders(item.seeders, item.hash);
-
                 const fIdx = (item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1;
                 const proxyUrl = `${reqHost}/${config.rawConf}/play_tb/${item.hash}?s=${item.season || 0}&e=${item.episode || 0}&f=${fIdx}`;
 
@@ -753,12 +716,10 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
 
         if (!streamData || (streamData.type === "ready" && streamData.size < CONFIG.REAL_SIZE_FILTER)) return null;
 
-        // USA NUOVA LOGICA ESTIMATE SIZE
         let finalSize = streamData.size || item._size || item.sizeBytes || 0;
         finalSize = estimateVisualSize(finalSize, streamData.filename || item.title, isSeries, isPack, item.hash);
 
         const finalSeeders = estimateSeeders(item.seeders, item.hash);
-
         const fileDetails = parseTitleDetails(streamData.filename || item.title);
 
         if (isAIOActive) {
@@ -810,8 +771,6 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
     const isSeries = (meta.season > 0 || meta.episode > 0);
 
     let displayTitle = item.title;
-    
-    // USA NUOVA LOGICA ESTIMATE SIZE
     let realSize = item._size || item.sizeBytes || 0;
     
     if (isAIOActive) {
@@ -823,9 +782,7 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
         }
     }
 
-    // Applica stima intelligente se la dimensione è 0
     realSize = estimateVisualSize(realSize, displayTitle, isSeries, isPack, item.hash);
-
     const finalSeeders = estimateSeeders(item.seeders, item.hash);
 
     if (isAIOActive) {
@@ -937,12 +894,10 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
     }
 }
 
-// Aggiunto 'config' nei parametri per passarlo agli external addons
 async function fetchExternalResults(type, finalId, config) {
     logger.info(`🌐 [EXTERNAL] Start Parallel Fetch...`);
     try {
         const externalResults = await withTimeout(
-            // Ora passiamo l'opzione { userConfig: config }
             fetchExternalAddonsFlat(type, finalId, { userConfig: config }).then(items => {
                 return items.map(i => {
                     const title = i.title || i.filename;
@@ -985,7 +940,7 @@ async function fetchExternalResults(type, finalId, config) {
     }
 }
 
-// --- GENERATE STREAM ---
+// --- GENERATE STREAM PRINCIPALE ---
 async function generateStream(type, id, config, userConfStr, reqHost) {
   const hasDebridKey = (config.key && config.key.length > 0) || (config.rd && config.rd.length > 0);
   const isWebEnabled = config.filters && (config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableGf);
@@ -1015,19 +970,13 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           }
       } catch (err) {}
   }
-  
-  // NOTE: La logica Kitsu ora è gestita interamente da getMetadata per evitare conversioni errate
 
   const meta = await getMetadata(finalId, type, config);
   if (!meta) return { streams: [] };
 
   logger.info(`🚀 [SPEED] Start search for: ${meta.title}`);
   
-  // Se è Kitsu, non cerchiamo di convertire in tmdbId per evitare conflitti
   const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
-  
-  // 🔥 RIMOSSO BLOCCO EXCLUSIVE KITSU MODE CHE IMPEDIVA AD ANIMEWORLD DI FUNZIONARE 🔥
-
   const dbOnlyMode = config.filters?.dbOnly === true; 
   const langMode = config.filters?.language || (config.filters?.allowEng ? "all" : "ita");
 
@@ -1086,22 +1035,15 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           const s = meta.season;
           const e = meta.episode;
           
-          // 🔥 FIX ANIME / KITSU: Supporto Numerazione Assoluta + Prefissi 🔥
-          // Accetta: "Naruto - 001", "Naruto.EP001", "Naruto [01]", etc.
           if (meta.kitsu_id || type === 'anime') {
               const absoluteEpRegex = new RegExp(`(?:^|\\s|[.\\-_\\[\\(])(?:e|ep|episode)?\\s*0*${e}(?:$|\\s|[.\\-_\\]\\)]|v\\d)`, 'i');
-              
-              if (absoluteEpRegex.test(tLower)) {
-                   // Se il titolo del file contiene il numero episodio in formato assoluto, è valido.
-                   return true;
-              }
+              if (absoluteEpRegex.test(tLower)) return true;
           }
 
           const wrongSeasonRegex = /(?:s|stagione|season)\s*0?(\d+)(?!\d)/gi;
           let match;
           while ((match = wrongSeasonRegex.exec(tLower)) !== null) {
               const foundSeason = parseInt(match[1]);
-              // Se troviamo una stagione esplicita DIVERSA da quella richiesta, scartiamo (a meno che non sia Kitsu)
               if (foundSeason !== s && !meta.kitsu_id) return false; 
           }
 
@@ -1157,6 +1099,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       return false;
   };
 
+  // 1. RICERCA DA FONTI VELOCI (INDEXER + EXTERNAL)
   const remotePromise = withTimeout(
       queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config),
       CONFIG.TIMEOUTS.REMOTE_INDEXER,
@@ -1166,17 +1109,26 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       return [];
   });
 
-  // 🔥 RIMOSSA LOGICA LETTURA LOCAL DB 🔥
-  // L'addon ora legge SOLO dal Remote Indexer (e dagli external addons/scraper se necessari)
-
   let externalPromise = Promise.resolve([]);
   if (!dbOnlyMode) {
       externalPromise = fetchExternalResults(type, finalId, config);
   }
 
-  // 🔥 NUOVA LOGICA SCRAPER IN PARALLELO 🔥
-  let scraperPromise = Promise.resolve([]);
-  if (!dbOnlyMode) {
+  const [remoteResults, externalResults] = await Promise.all([
+      remotePromise, 
+      externalPromise
+  ]);
+  
+  logger.info(`📊 [STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
+
+  let fastResults = [...remoteResults, ...externalResults].filter(aggressiveFilter);
+  let cleanResults = deduplicateResults(fastResults);
+  let validFastCount = cleanResults.length;
+  logger.info(`⚡ [FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
+
+  // 2. FALLBACK AGLI SCRAPER SOLO SE I RISULTATI SONO 0
+  if (validFastCount === 0 && !dbOnlyMode) {
+      logger.info(`⚠️ [FALLBACK] 0 risultati utili da Indexer/External. Avvio Scrapers in background...`);
       let dynamicTitles = [];
       try {
           if (tmdbIdLookup) dynamicTitles = await getTmdbAltTitles(tmdbIdLookup, type, userTmdbKey);
@@ -1206,28 +1158,22 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
                   }
               });
           });
-          scraperPromise = Promise.all(allScraperTasks).then(results => results.flat());
+          
+          const scrapedResultsRaw = await Promise.all(allScraperTasks).then(results => results.flat());
+          const scrapedResultsFiltered = scrapedResultsRaw.filter(aggressiveFilter);
+          
+          cleanResults = deduplicateResults([...cleanResults, ...scrapedResultsFiltered]);
+          validFastCount = cleanResults.length;
+          
+          logger.info(`📊 [STATS SCRAPER] Trovati e filtrati ${validFastCount} risultati aggiuntivi dagli Scraper.`);
       }
   }
-
-  // Risolvo tutto contemporaneamente
-  const [remoteResults, externalResults, scrapedResults] = await Promise.all([
-      remotePromise, 
-      externalPromise,
-      scraperPromise
-  ]);
-  
-  logger.info(`📊 [STATS] Remote: ${remoteResults.length} | External: ${externalResults.length} | Scraper: ${scrapedResults.length}`);
-
-  let fastResults = [...remoteResults, ...externalResults, ...scrapedResults].filter(aggressiveFilter);
-  let cleanResults = deduplicateResults(fastResults);
-  const validFastCount = cleanResults.length;
-  logger.info(`⚡ [FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+Ext+Scraper).`);
 
   if (!dbOnlyMode) {
       saveResultsToDbBackground(meta, cleanResults);
   }
 
+  // FILTRI DI CONFIGURAZIONE UTENTE
   if (config.filters) {
       cleanResults = cleanResults.filter(item => {
           const t = (item.title || "").toLowerCase();
@@ -1239,13 +1185,10 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           if (config.filters.no4k && REGEX_QUALITY_FILTER["4K"].test(t)) return false;
           if (config.filters.no1080 && REGEX_QUALITY_FILTER["1080p"].test(t)) return false;
           if (config.filters.no720 && REGEX_QUALITY_FILTER["720p"].test(t)) return false;
-         if (config.filters.noScr) {
-                // Filtra SD
+          if (config.filters.noScr) {
                 if (REGEX_QUALITY_FILTER["SD"].test(t)) return false;
-                // FIX: Aggiunto \b all'inizio e alla fine per evitare match parziali su "Nights"
                 if (/\b(?:cam|hdcam|ts|telesync|screener|scr)\b/i.test(t)) return false;
           }
-          // FIX: Anche qui aggiungiamo i confini \b
           if (config.filters.noCam && /\b(?:cam|hdcam|ts|telesync|screener|scr)\b/i.test(t)) return false;
           return true;
       });
@@ -1280,7 +1223,6 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       rankedList = filterByQualityLimit(rankedList, config.filters.maxPerQuality);
   }
 
-  // LOGICA TORBOX
   if (config.service === 'tb' && hasDebridKey) {
       const apiKey = config.key || config.rd; 
       const checkLimit = 30; 
@@ -1323,7 +1265,6 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
   let debridStreams = [];
   
-  // CASO 1: DEBRID
   if (ranked.length > 0 && hasDebridKey) {
       let TOP_LIMIT = 0; 
       
@@ -1344,8 +1285,6 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       const resolvedInstant = (await Promise.all(immediatePromises)).filter(Boolean);
       debridStreams = [...resolvedInstant, ...lazyStreams];
   } 
-  
-  // CASO 2: P2P
   else if (ranked.length > 0 && isP2PEnabled) {
       logger.info(`⚡ [P2P MODE] Generating direct streams for ${meta.title}`);
       debridStreams = ranked.map(item => P2P.formatP2PStream(item, config));
@@ -1456,7 +1395,6 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
            }
            formattedVix = rawVix; 
        } else {
-           // 🔥 APPLICAZIONE SKIN SE AIO È DISATTIVO
            if (rawVix && rawVix.length > 0) 
                formattedVix = applyWebFormatter(rawVix, "StreamingCommunity", meta, config);
            
@@ -1630,7 +1568,6 @@ app.get("/:conf/add_to_cloud/:hash", async (req, res) => {
             });
         }
         else if (service === 'tb') {
-             // 🛠️ CORREZIONE API TORBOX (Errore 404 Fix)
              await axios.post("https://api.torbox.app/v1/api/torrents/createtorrent", 
                 { magnet: `magnet:?xt=urn:btih:${hash}`, seed: '1', allow_zip: 'false' }, 
                 {
@@ -1700,20 +1637,18 @@ app.get("/:conf/manifest.json", (req, res) => {
         const { conf } = req.params;
         const config = getConfig(conf);
         
-        // --- 1. LOGICA BANDIERE DINAMICHE ---
         const filters = config.filters || {};
         const langMode = filters.language || (filters.allowEng ? "all" : "ita");
 
         let flag = "";
         if (langMode === "ita") {
-            flag = " 🇮🇹";        // Solo Italiano
+            flag = " 🇮🇹";        
         } else if (langMode === "eng") {
-            flag = " 🇬🇧";        // Solo Inglese
+            flag = " 🇬🇧";        
         } else {
-            flag = " 🇮🇹🇬🇧";      // Misto (Doppia bandiera)
+            flag = " 🇮🇹🇬🇧";      
         }
 
-        // --- 2. NOME "SPAZIATO" (COMPATIBILE TV) ---
         const appName = "L E V I A T H A N";
 
         const hasRDKey = (config.service === 'rd' && config.key) || config.rd;
@@ -1721,7 +1656,6 @@ app.get("/:conf/manifest.json", (req, res) => {
         const hasADKey = (config.service === 'ad' && config.key) || config.alldebrid;
         const isP2P = filters.enableP2P === true;
 
-        // --- 3. ASSEMBLAGGIO FINALE ---
         if (hasRDKey) {
             manifest.name = `${appName}${flag} 🔱 RD`;
             manifest.id += ".rd"; 
@@ -1735,7 +1669,6 @@ app.get("/:conf/manifest.json", (req, res) => {
             manifest.id += ".ad";
         }
         else if (isP2P) {
-             //   LOGICA P2P
             manifest.name = `${appName}${flag} 🦈 P2P`;
             manifest.id += ".p2p";
             manifest.description += " | ⚠️ P2P Mode (IP Visible)";
@@ -1803,6 +1736,6 @@ app.listen(PORT, () => {
     console.log(`📝 PARSER: ENHANCED (Smart Extraction Active)`); 
     console.log(`⚡ P2P: HANDLER ATTIVO (Graphic Skin + Tracker Fix)`);
     console.log(`🦑 LEVIATHAN CORE: Optimized for High Reliability`);
-    console.log(`⚡ SCRAPERS: Eseguiti in parallelo (No Fallback Limit)`);
+    console.log(`⚡ SCRAPERS: Eseguiti come Fallback se l'Indexer fallisce!`);
     console.log(`-----------------------------------------------------`);
 });
