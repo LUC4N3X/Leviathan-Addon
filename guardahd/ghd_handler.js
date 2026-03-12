@@ -1,308 +1,419 @@
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const https = require('https');
 
-// ==============================================================================
-// 1. HELPER & UTILITIES
-// ==============================================================================
+// ====================== CONFIGURAZIONE NUCLEARE ======================
+const CACHE_FILE = path.join(__dirname, '..', 'config', 'guardahd_cache.json');
+const CACHE_TTL = 12 * 60 * 60 * 1000; // 12 ore in millisecondi
+const TMDB_API_KEY = "5bae8d11f2a7bc7a95c6d040a31d2163";
 
-const CACHE_FILE = path.join(__dirname, '..', 'config', 'guardahd_embeds.json');
-const CACHE_TTL = 12 * 60 * 60 * 1000; // 12 Ore
+const MAX_CONCURRENT_EMBEDS = 8;
+const REQUEST_TIMEOUT = 12000;
 const BASE_URL = 'https://mostraguarda.stream';
 
-const insecureAgent = new https.Agent({ rejectUnauthorized: false });
-
-const HEADERS_DEF = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-    'Referer': 'https://google.com/',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+const insecureAgent = new https.Agent({ rejectUnauthorized: false, keepAlive: true });
+const HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Referer': BASE_URL
 };
+
+// ====================== UTILITIES & SEMAFORO ======================
+class AsyncSemaphore {
+    constructor(max) {
+        this.max = max;
+        this.active = 0;
+        this.queue = [];
+    }
+    async acquire() {
+        if (this.active < this.max) {
+            this.active++;
+            return;
+        }
+        return new Promise(resolve => this.queue.push(resolve));
+    }
+    release() {
+        this.active--;
+        if (this.queue.length > 0) {
+            this.active++;
+            const resolve = this.queue.shift();
+            resolve();
+        }
+    }
+}
+const embedSemaphore = new AsyncSemaphore(MAX_CONCURRENT_EMBEDS);
 
 function normalizeUrl(url) {
     if (!url) return '';
     return url.startsWith('//') ? 'https:' + url : url;
 }
 
-// --- GENERATORE DESCRIZIONE DETTAGLIATA (Stile SC) ---
-function generateRichDescription(title) {
-    const lines = [];
-    lines.push(`🎬 ${title || "Video"}`);
-    lines.push(`🇮🇹 ITA • 🔊 AAC`);
-    lines.push(`🎞️ HLS/MP4 • Streaming Web`);
-    lines.push(`☁️ Web Stream • ⚡ Instant`);
-    lines.push(`🦁 GuardaHD`); 
-    return lines.join("\n");
+function buildMediaflowUrl(config, targetUrl, type = 'hls') {
+    if (!config?.mediaflow?.url) return normalizeUrl(targetUrl);
+    const mfp = config.mediaflow.url.replace(/\/$/, '');
+    const encoded = encodeURIComponent(normalizeUrl(targetUrl));
+    const pass = config.mediaflow.pass ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}` : '';
+
+    if (type === 'hls') return `${mfp}/hls?url=${encoded}${pass}&ext=.m3u8`;
+    // Usa redirect_stream=true come richiesto dalla tua nuova logica
+    return `${mfp}/extractor/video?host=Mixdrop${pass}&d=${encoded}&redirect_stream=true`;
 }
 
-// Funzione Unpack (P.A.C.K.E.D decoder per SuperVideo)
+// Generatore titoli dinamico (supporta grandezza file se disponibile)
+function generateRichDescription(title, quality = 'Unknown', size = '') {
+    let secondLine = `📺 ${quality}`;
+    if (size) secondLine = `💾 ${size} • ` + secondLine;
+    return `🎬 ${title}\n${secondLine} • 🇮🇹 ITA\n⚡ GuardaHD (WebStream)`;
+}
+
+// ====================== CACHE MANAGER ======================
+class CacheManager {
+    constructor() {
+        this.file = CACHE_FILE;
+        this.cache = {};
+        this.loaded = false;
+    }
+
+    async init() {
+        if (this.loaded) return;
+        try {
+            const data = await fs.readFile(this.file, 'utf8');
+            const raw = JSON.parse(data);
+            const now = Date.now();
+            for (const key in raw) {
+                if (now - raw[key].timestamp < CACHE_TTL) {
+                    this.cache[key] = raw[key];
+                }
+            }
+            console.log(`[GHD Cache] ${Object.keys(this.cache).length} entries caricate`);
+        } catch (e) {
+            // File non esiste o corrotto
+        }
+        this.loaded = true;
+    }
+
+    async save() {
+        try {
+            const dir = path.dirname(this.file);
+            await fs.mkdir(dir, { recursive: true });
+            await fs.writeFile(this.file, JSON.stringify(this.cache, null, 2), 'utf8');
+        } catch (e) {
+            console.warn(`[GHD Cache] Errore salvataggio: ${e.message}`);
+        }
+    }
+
+    async get(key) {
+        await this.init();
+        const entry = this.cache[key];
+        if (entry && Date.now() - entry.timestamp < CACHE_TTL) return entry;
+        if (entry) {
+            delete this.cache[key];
+            await this.save();
+        }
+        return null;
+    }
+
+    async set(key, embeds, title) {
+        await this.init();
+        this.cache[key] = { timestamp: Date.now(), embeds, title };
+        await this.save();
+    }
+}
+const cacheManager = new CacheManager();
+
+// ====================== HOSTER REGISTRY (Plugin System) ======================
+const HosterRegistry = {
+    registry: [],
+    
+    register(name, regex, extractFn) {
+        this.registry.push({ name, regex, extractFn });
+        console.log(`[GHD] Hoster registrato → ${name}`);
+    },
+
+    getExtractor(url) {
+        for (const host of this.registry) {
+            if (host.regex.test(url)) return host;
+        }
+        return null;
+    }
+};
+
 function detectAndUnpack(html) {
-    const evalMatch = html.match(/eval\(function\(p,a,c,k,e,d\).*?\)\)/s);
-    if (!evalMatch) return null;
-    
+    const packedMatch = html.match(/eval\(function\(p,a,c,k,e,d\).*?\)\)/s);
+    if (!packedMatch) return null;
     try {
-        let p, a, c, k, e, d;
-        const packed = evalMatch[0];
-        const regex = /}\('(.+?)',(\d+),(\d+),'(.+?)'\.split\('\|'\)/;
-        const m = packed.match(regex);
-        if (m) {
-            p = m[1];
-            a = parseInt(m[2]);
-            c = parseInt(m[3]);
-            k = m[4].split('|');
-            
-            const decode = function(c) {
-                return (c < a ? '' : decode(parseInt(c / a))) + ((c = c % a) > 35 ? String.fromCharCode(c + 29) : c.toString(36));
-            };
-            
-            while (c--) {
-                if (k[c]) {
-                    p = p.replace(new RegExp('\\b' + decode(c) + '\\b', 'g'), k[c]);
-                }
-            }
-            return p;
-        }
-    } catch (err) {
-        console.log(`[GHD-DEBUG] ⚠️ Errore unpacking: ${err.message}`);
-    }
-    return null;
+        const script = packedMatch[0];
+        const params = script.match(/}\('(.+?)',(\d+),(\d+),'(.+?)'\.split\('\|'\)/);
+        if (!params) return null;
+        let p = params[1], a = parseInt(params[2]), c = parseInt(params[3]), k = params[4].split('|');
+        const decode = (c) => (c < a ? '' : decode(Math.floor(c / a))) + ((c = c % a) > 35 ? String.fromCharCode(c + 29) : c.toString(36));
+        while (c--) if (k[c]) p = p.replace(new RegExp('\\b' + decode(c) + '\\b', 'g'), k[c]);
+        return p;
+    } catch { return null; }
 }
 
-async function fetchText(url, referer, extraHeaders = {}) {
+// 1. Registra Mixdrop (Logica aggiornata: varianti regex + metadati /f/ + MediaFlow redirect)
+HosterRegistry.register('MixDrop', /mixdrop|m1xdrop|m[i1]xdr[o0]p/i, async (url, config) => {
+    if (!config?.mediaflow?.url) {
+        console.log(`[GHD-DEBUG] ⚠️ Ignoro MixDrop: Proxy Mediaflow non configurato.`);
+        return [];
+    }
+
+    let embedUrl = normalizeUrl(url).replace('/f/', '/e/');
+    if (!/\/e\//.test(embedUrl)) embedUrl = embedUrl.replace('/f/', '/e/');
+
+    let sizePart = '';
+    let resPart = '';
+
+    // Tenta di estrarre metadati dalla pagina /f/
     try {
-        // console.log(`[GHD] Fetching: ${url}`);
-        const headers = { ...HEADERS_DEF, ...extraHeaders };
-        if (referer) headers.Referer = referer;
-        
-        const response = await axios.get(url, { 
-            headers, 
-            httpsAgent: insecureAgent,
-            timeout: 10000, 
-            validateStatus: () => true,
-            maxRedirects: 5
-        });
-        
-        if (response.status >= 200 && response.status < 400) {
-            return typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+        const fileUrl = embedUrl.replace('/e/', '/f/');
+        const res = await axios.get(fileUrl, { headers: HEADERS, httpsAgent: insecureAgent, timeout: 5000, validateStatus: () => true });
+        const html = res.data;
+
+        if (html && !/can't find the (file|video)/i.test(html)) {
+            const sizeMatch = html.match(/([\d.,]+ ?[GM]B)/i);
+            if (sizeMatch) sizePart = sizeMatch[1];
+
+            const resMatch = html.match(/(\b[1-9]\d{2,3}p\b)/i);
+            if (resMatch) resPart = resMatch[1].toLowerCase();
+        } else {
+            console.log(`[GHD-DEBUG] Mixdrop: Pagina /f/ non trovata, procedo con proxy MFP`);
         }
-        return null;
     } catch (e) {
-        console.error(`[GHD] Errore Fetch su ${url}: ${e.message}`);
-        return null;
+        console.log(`[GHD-DEBUG] Mixdrop: Errore scraping pagina /f/`);
     }
-}
 
-// ==============================================================================
-// 2. ESTRATTORI (SOLO MIXDROP & SUPERVIDEO)
-// ==============================================================================
+    const finalUrl = buildMediaflowUrl(config, embedUrl, 'mixdrop');
+    
+    return [{ 
+        url: finalUrl, 
+        quality: resPart || '720p', 
+        size: sizePart,
+        name: 'MixDrop' 
+    }];
+});
 
-// --- MIXDROP EXTRACTOR ---
-const MixdropExtractor = {
-    id: 'mixdrop',
-    supports: (url) => /mixdrop/i.test(url),
-    extract: async (rawUrl, config, titleHint) => {
-        if (!config.mediaflow || !config.mediaflow.url) return [];
-
-        let embedUrl = normalizeUrl(rawUrl).replace('/f/', '/e/');
-        if (!/\/e\//.test(embedUrl)) embedUrl = embedUrl.replace('/f/', '/e/');
+// 2. Registra SuperVideo (Fix 403 Forbidden Anti-Bot)
+HosterRegistry.register('SuperVideo', /supervideo/i, async (url, config) => {
+    try {
+        const urlObj = new URL(url);
+        const id = url.split('/').pop().replace('.html', '');
+        const embedUrl = `${urlObj.origin}/e/${id}`; 
         
-        const encoded = encodeURIComponent(embedUrl);
-        const mfpUrl = config.mediaflow.url.replace(/\/$/, '');
-        const passwordParam = config.mediaflow.pass ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}` : '';
-        const finalUrl = `${mfpUrl}/extractor/video?host=Mixdrop${passwordParam}&d=${encoded}&redirect_stream=true`;
-        
-        const richTitle = generateRichDescription(titleHint);
+        const customHeaders = {
+            ...HEADERS,
+            'Referer': urlObj.origin + '/',
+            'Origin': urlObj.origin,
+            'Sec-Fetch-Dest': 'iframe',
+            'Sec-Fetch-Mode': 'navigate'
+        };
 
-        return [{
-            name: `🦁 GuardaHD\n⚡ MixDrop`, // Stile SC: Provider sopra, Dettaglio sotto
-            title: richTitle,
-            url: finalUrl,
-            behaviorHints: { notWebReady: true }
-        }];
-    }
-};
+        const res = await axios.get(embedUrl, { headers: customHeaders, httpsAgent: insecureAgent, timeout: 8000 });
+        const html = res.data;
+        let m3u8 = '';
 
-// --- SUPERVIDEO EXTRACTOR ---
-const SuperVideoExtractor = {
-    id: 'supervideo',
-    supports: (url) => /supervideo/i.test(url),
-    extract: async (rawUrl, config, titleHint) => {
-        try {
-            const normalized = normalizeUrl(rawUrl);
-            const id = normalized.split('/').pop().replace('.html', '');
-            const embedUrl = `https://supervideo.tv/e/${id}`;
+        const direct = html.match(/["'](https?:\/\/[^\s"']+\.m3u8[^"']*)["']/i) || html.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i);
+        if (direct?.[1]) m3u8 = direct[1];
 
-            const html = await fetchText(embedUrl, normalized);
-            if (!html) return [];
-
-            let m3u8 = '';
-
-            // TENTATIVO 1: Unpacking
-            const packedMatch = html.match(/}\('(.+?)',.+,'(.+?)'\.split/);
-            if (packedMatch) {
-                try {
-                    const terms = packedMatch[2].split('|');
-                    const hfs = terms.find(t => t.includes('hfs'));
-                    const urlsetIndex = terms.indexOf('urlset');
-                    const hlsIndex = terms.indexOf('hls');
-                    
-                    if (hfs && urlsetIndex !== -1 && hlsIndex !== -1 && hlsIndex > urlsetIndex) {
-                        const slice = terms.slice(urlsetIndex + 1, hlsIndex);
-                        const reversed = slice.reverse();
-                        
-                        let base = `https://${hfs}.serversicuro.cc/hls/`;
-                        let pathPart = '';
-                        if (reversed.length === 1) pathPart = reversed[0];
-                        else pathPart = reversed.join(',');
-                        
-                        m3u8 = `${base}${pathPart}.urlset/master.m3u8`;
-                    }
-                } catch (e) {
-                    console.log(`[GHD] Errore Unpack SuperVideo: ${e.message}`);
-                }
+        if (!m3u8) {
+            const unpacked = detectAndUnpack(html);
+            if (unpacked) {
+                const m = unpacked.match(/(https?:\/\/[^\s"']+\.m3u8[^\s"']*)/i);
+                if (m) m3u8 = m[1];
             }
+        }
 
-            // TENTATIVO 2: Regex Fallback
-            if (!m3u8) {
-                const sourceMatch = html.match(/sources:\s*\[\s*\{.*?file:\s*["'](.*?)["']/);
-                if (sourceMatch) m3u8 = sourceMatch[1];
-            }
-            if (!m3u8) {
-                const fileMatch = html.match(/file:\s*["'](http[^"']+)["']/);
-                if (fileMatch) m3u8 = fileMatch[1];
-            }
-
-            if (!m3u8) return [];
-
-            const richTitle = generateRichDescription(titleHint);
-
-            return [{
-                name: `🦁 GuardaHD\n⚡ SuperVideo`, // Stile SC
-                title: richTitle,
-                url: m3u8,
-                behaviorHints: { notWebReady: true }
-            }];
-
-        } catch (e) {
-            console.error(`[GHD] Errore SuperVideo: ${e.message}`);
+        if (!m3u8 || !m3u8.includes('.m3u8')) {
+            console.log(`[GHD-DEBUG] SuperVideo fallito: Nessun file .m3u8 trovato in ${embedUrl}`);
             return [];
         }
+        
+        m3u8 = m3u8.startsWith('http') ? m3u8 : 'https:' + m3u8;
+
+        return [{ url: buildMediaflowUrl(config, m3u8, 'hls'), quality: '1080p', name: 'SuperVideo' }];
+    } catch (e) {
+        console.error(`[GHD-DEBUG] Errore SuperVideo estrazione: ${e.message}`);
+        return [];
     }
-};
+});
 
-const EXTRACTORS = [MixdropExtractor, SuperVideoExtractor];
-
-// ==============================================================================
-// 3. LOGICA PRINCIPALE
-// ==============================================================================
-
-function readEmbedCache() {
+// 3. Registra Dropload
+HosterRegistry.register('Dropload', /dropload/i, async (url, config) => {
     try {
-        const dir = path.dirname(CACHE_FILE);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        if (!fs.existsSync(CACHE_FILE)) fs.writeFileSync(CACHE_FILE, '{}');
-        return JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-    } catch (e) { return {}; }
+        let embedUrl = url;
+        if (url.includes('/d/')) embedUrl = url.replace('/d/', '/e/');
+        
+        const urlObj = new URL(embedUrl);
+        const customHeaders = {
+            ...HEADERS,
+            'Referer': urlObj.origin + '/',
+            'Origin': urlObj.origin
+        };
+
+        const res = await axios.get(embedUrl, { headers: customHeaders, httpsAgent: insecureAgent, timeout: 8000 });
+        const html = res.data;
+        let m3u8 = '';
+
+        const unpacked = detectAndUnpack(html);
+        const sourceRegex = /sources:\s*\[\s*\{\s*file\s*:\s*["'](.*?)["']/i;
+
+        if (unpacked) {
+            const match = unpacked.match(sourceRegex);
+            if (match) m3u8 = match[1];
+        }
+
+        if (!m3u8) {
+            const match = html.match(sourceRegex);
+            if (match) m3u8 = match[1];
+        }
+
+        if (!m3u8 || !m3u8.includes('.m3u8')) {
+            console.log(`[GHD-DEBUG] Dropload fallito: Nessun file .m3u8 trovato in ${embedUrl}`);
+            return [];
+        }
+
+        m3u8 = m3u8.startsWith('http') ? m3u8 : 'https:' + (m3u8.startsWith('//') ? m3u8.substring(2) : m3u8);
+        return [{ url: buildMediaflowUrl(config, m3u8, 'hls'), quality: '1080p', name: 'Dropload' }];
+    } catch (e) {
+        console.error(`[GHD-DEBUG] Errore Dropload estrazione: ${e.message}`);
+        return [];
+    }
+});
+
+// ====================== CORE FUNZIONI ======================
+async function get_tmdb_title(imdb_id, fallbackTitle) {
+    try {
+        const findUrl = `https://api.themoviedb.org/3/find/${imdb_id}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
+        const res = await axios.get(findUrl, { timeout: 5000 });
+        const movie = res.data.movie_results?.[0];
+        if (movie && movie.title) {
+            const year = movie.release_date ? movie.release_date.substring(0, 4) : '';
+            return year ? `${movie.title} (${year})` : movie.title;
+        }
+    } catch (e) {
+        console.warn(`[GHD] Errore TMDB per ${imdb_id}`);
+    }
+    return fallbackTitle || "Film HD";
 }
 
-function writeEmbedCache(cache) {
+async function scrape_embed_urls(imdb_id) {
     try {
-        const dir = path.dirname(CACHE_FILE);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
-    } catch (e) { /* ignore */ }
+        const url = `${BASE_URL}/set-movie-a/${imdb_id}`;
+        const res = await axios.get(url, { headers: HEADERS, httpsAgent: insecureAgent, timeout: REQUEST_TIMEOUT });
+        
+        const $ = cheerio.load(res.data);
+        const embeds = [];
+
+        $('li').each((i, el) => {
+            let dataLink = $(el).attr('data-link');
+            if (dataLink) {
+                dataLink = normalizeUrl(dataLink);
+                if (dataLink.includes('http') && !embeds.includes(dataLink)) {
+                    embeds.push(dataLink);
+                }
+            }
+        });
+
+        console.log(`[GHD] Trovati ${embeds.length} raw embed per ${imdb_id}`);
+        return embeds;
+    } catch (e) {
+        console.error(`[GHD] Errore scrape URL ${imdb_id}: ${e.message}`);
+        return [];
+    }
 }
 
-function purgeOldEmbeds(cache) {
-    const now = Date.now();
-    let changed = false;
-    for (const k of Object.keys(cache)) {
-        if (now - cache[k].timestamp > CACHE_TTL) {
-            delete cache[k];
-            changed = true;
+class GuardaHDScraper {
+    constructor(config) {
+        this.config = config;
+        this.metrics = { startTime: Date.now(), embedsFound: 0, streamsExtracted: 0 };
+    }
+
+    async processSingleEmbed(embed_url, title) {
+        await embedSemaphore.acquire();
+        try {
+            console.log(`[GHD-DEBUG] Analizzo URL estratto: ${embed_url}`);
+            
+            const hoster = HosterRegistry.getExtractor(embed_url);
+            if (!hoster) {
+                console.log(`[GHD-DEBUG] ❌ Nessun estrattore compatibile per l'host: ${embed_url}`);
+                return [];
+            }
+
+            const rawStreams = await hoster.extractFn(embed_url, this.config);
+            
+            if (!rawStreams || rawStreams.length === 0) {
+                console.log(`[GHD-DEBUG] ⚠️ L'estrattore ${hoster.name} ha fallito o restituito 0 stream per: ${embed_url}`);
+                return [];
+            }
+
+            return rawStreams.map(s => ({
+                name: `🦁 GHD\n⚡ ${hoster.name}`,
+                title: generateRichDescription(title, s.quality, s.size),
+                url: s.url,
+                // ASSOLUTAMENTE NESSUN notWebReady: true QUI!
+                behaviorHints: { bingeWatching: true } 
+            }));
+        } catch (e) {
+            console.error(`[GHD-DEBUG] ❌ Errore critico in processamento ${embed_url}: ${e.message}`);
+            return [];
+        } finally {
+            embedSemaphore.release();
         }
     }
-    if (changed) writeEmbedCache(cache);
-}
 
-// Risolutore Stream
-async function resolveUrlToStream(url, config, titleHint) {
-    for (const extractor of EXTRACTORS) {
-        if (extractor.supports(url)) {
-            const results = await extractor.extract(url, config, titleHint);
-            if (results && results.length > 0) return results;
+    async getStreams(meta) {
+        const imdb_id = meta.imdb_id;
+        if (!imdb_id || meta.isSeries) return [];
+
+        let embedUrls = [];
+        let officialTitle = meta.title;
+        
+        const cached = await cacheManager.get(imdb_id);
+        
+        if (cached) {
+            console.log(`[GHD] CACHE HIT 🔥 ${imdb_id}`);
+            embedUrls = cached.embeds;
+            officialTitle = cached.title || officialTitle;
+        } else {
+            console.log(`[GHD] CACHE MISS → scraping ${imdb_id}`);
+            embedUrls = await scrape_embed_urls(imdb_id);
+            if (embedUrls.length > 0) {
+                officialTitle = await get_tmdb_title(imdb_id, officialTitle);
+                await cacheManager.set(imdb_id, embedUrls, officialTitle);
+            }
         }
+
+        if (embedUrls.length === 0) return [];
+        this.metrics.embedsFound = embedUrls.length;
+
+        const tasks = embedUrls.map(url => this.processSingleEmbed(url, officialTitle));
+        const results = await Promise.allSettled(tasks);
+        
+        let finalStreams = [];
+        for (const res of results) {
+            if (res.status === 'fulfilled' && res.value.length > 0) {
+                finalStreams.push(...res.value);
+            }
+        }
+
+        finalStreams = Array.from(new Map(finalStreams.map(s => [s.url, s])).values());
+        
+        this.metrics.streamsExtracted = finalStreams.length;
+        const timeTaken = ((Date.now() - this.metrics.startTime) / 1000).toFixed(2);
+        const successRate = this.metrics.embedsFound > 0 ? ((finalStreams.length / this.metrics.embedsFound) * 100).toFixed(1) : 0;
+
+        console.log(`[GHD] ${finalStreams.length} stream | Tempo: ${timeTaken}s | Success: ${successRate}% 🔥`);
+        return finalStreams;
     }
-    return [];
 }
 
-// Estrattore URL
-function extractEmbedUrlsFromHtml(html) {
-    const $ = cheerio.load(html);
-    const urls = $('[data-link]').map((_, el) => {
-        let u = ($(el).attr('data-link') || '').trim();
-        if (u.startsWith('//')) u = 'https:' + u;
-        return u;
-    }).get();
-
-    const supportedDomains = ['mixdrop', 'supervideo'];
-    const filtered = [...new Set(urls.filter(u => {
-        if (!u || !/^https?:/i.test(u) || u.includes('mostraguarda')) return false;
-        return supportedDomains.some(d => u.includes(d));
-    }))];
-    
-    return filtered;
-}
-
-// --- ENTRY POINT ---
+// ====================== EXPORT PER L'ADDON ======================
 async function searchGuardaHD(meta, config) {
-    if (meta.isSeries) return [];
-
-    const imdbId = meta.imdb_id;
-    if (!imdbId) return [];
-
-    // console.log(`[GHD] Ricerca per ${imdbId}`);
-
-    const cache = readEmbedCache();
-    purgeOldEmbeds(cache);
-    
-    let embedUrls = [];
-    let realTitle = meta.title;
-    
-    if (cache[imdbId] && (Date.now() - cache[imdbId].timestamp < CACHE_TTL)) {
-        embedUrls = cache[imdbId].embedUrls;
-        realTitle = cache[imdbId].title || meta.title;
-    } else {
-        try {
-            const html = await fetchText(`${BASE_URL}/movie/${imdbId}`, null);
-            if (html) {
-                const $ = cheerio.load(html);
-                const pageTitle = $('h1').first().text().trim();
-                if (pageTitle) realTitle = pageTitle.replace(/Streaming.*$/i, '').trim();
-
-                embedUrls = extractEmbedUrlsFromHtml(html);
-                
-                if (embedUrls.length > 0) {
-                    cache[imdbId] = { timestamp: Date.now(), embedUrls, title: realTitle };
-                    writeEmbedCache(cache);
-                }
-            }
-        } catch (e) {
-            console.error(`[GHD] Scraping error: ${e.message}`);
-            return [];
-        }
-    }
-
-    const finalStreams = [];
-    const promises = embedUrls.map(async (url) => {
-        return resolveUrlToStream(url, config, realTitle);
-    });
-
-    const results = await Promise.all(promises);
-    results.forEach(arr => finalStreams.push(...arr));
-
-    return finalStreams;
+    const scraper = new GuardaHDScraper(config);
+    return await scraper.getStreams(meta);
 }
 
 module.exports = { searchGuardaHD };
