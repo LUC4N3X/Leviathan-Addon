@@ -1,4 +1,3 @@
-
 require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
@@ -12,32 +11,25 @@ const winston = require('winston');
 const NodeCache = require("node-cache");
 const ptt = require('parse-torrent-title'); 
 
-// --- IMPORT ESTERNI ---
 const { fetchExternalAddonsFlat } = require("./external-addons");
 const PackResolver = require("./leviathan-pack-resolver");
 const aioFormatter = require("./aiostreams-formatter.cjs");
 const { searchWebStreamr } = require("./webstreamr_handler");
 
-// --- IMPORT NUOVO MODULO CACHE TORBOX ---
 const TbCache = require("./debrid/tb_cache.js");
 
-// --- IMPORT NUOVO FORMATTER (Skins & Logic) ---
 const { formatStreamSelector, cleanFilename, formatBytes } = require("./formatter");
 
-// ---  IMPORT GESTORE P2P  ---
 const P2P = require("./p2p_handler");
 
-// --- IMPORT GESTORE TRAILER (YouTube/Invidious) ---
 const { getTrailerStreams } = require("./trailerProvider"); 
 
-// --- IMPORT GESTORI WEB (Vix, GuardaHD, GuardaSerie, AnimeWorld & GuardaFlix) ---
 const { searchVix } = require("./vix/vix_handler");
 const { searchGuardaHD } = require("./guardahd/ghd_handler"); 
 const { searchGuardaserie } = require("./guardaserie/gs_handler"); 
 const { searchAnimeWorld } = require("./animeworld/aw_handler"); 
 const { searchGuardaFlix } = require("./guardaflix/gf_handler"); 
 
-// --- 1. CONFIGURAZIONE LOGGER (Winston) ---
 const logger = winston.createLogger({
   level: 'debug',
   format: winston.format.combine(
@@ -51,21 +43,47 @@ const logger = winston.createLogger({
   ]
 });
 
-// --- CACHE OTTIMIZZATA (NODE-CACHE) ---
 const myCache = new NodeCache({ stdTTL: 1800, checkperiod: 120, maxKeys: 5000 });
+const rawCache = new NodeCache({ stdTTL: 43200, checkperiod: 600, maxKeys: 15000 });
 
 const Cache = {
     getCachedMagnets: async (key) => { return myCache.get(`magnets:${key}`) || null; },
     cacheMagnets: async (key, value, ttl = 3600) => { myCache.set(`magnets:${key}`, value, ttl); },
     getCachedStream: async (key) => {
         const data = myCache.get(`stream:${key}`);
-        if (data) logger.info(`⚡ CACHE HIT: ${key}`);
+        if (data) logger.info(`⚡ CACHE HIT (USER): ${key}`);
         return data || null;
     },
     cacheStream: async (key, value, ttl = 1800) => { myCache.set(`stream:${key}`, value, ttl); },
     listKeys: async () => myCache.keys(),
     deleteKey: async (key) => myCache.del(key),
-    flushAll: async () => myCache.flushAll()
+    flushAll: async () => { myCache.flushAll(); rawCache.flushAll(); },
+
+    getRaw: (provider, id) => {
+        const data = rawCache.get(`raw:${provider}:${id}`);
+        if (data) logger.info(`🌍 GLOBAL CACHE HIT [${provider}]: ${id}`);
+        return data || null;
+    },
+    setRaw: (provider, id, value, ttl = 43200) => {
+        rawCache.set(`raw:${provider}:${id}`, value, ttl);
+        logger.info(`💾 GLOBAL CACHE SET [${provider}]: ${id}`);
+    },
+    
+    fetchWithCache: async (provider, id, ttl, fetcherFunc) => {
+        const cached = Cache.getRaw(provider, id);
+        if (cached) return cached;
+
+        try {
+            const freshData = await fetcherFunc();
+            if (freshData && freshData.length > 0) {
+                Cache.setRaw(provider, id, freshData, ttl);
+            }
+            return freshData || [];
+        } catch (error) {
+            logger.warn(`⚠️ Errore Fetching [${provider}] per ${id}: ${error.message}`);
+            return []; 
+        }
+    }
 };
 
 const { handleVixSynthetic } = require("./vix/vix_proxy");
@@ -79,10 +97,8 @@ const TB = require("./debrid/torbox");
 const dbHelper = require("./db-helper"); 
 const { getManifest } = require("./manifest");
 
-// Inizializza DB Locale (Solo per scrittura/backup, lettura disabilitata)
 dbHelper.initDatabase();
 
-// --- CONFIGURAZIONE CENTRALE CON TIMEOUT RIDOTTI ---
 const CONFIG = {
   INDEXER_URL: process.env.INDEXER_URL || "", 
   CINEMETA_URL: "https://v3-cinemeta.strem.io",
@@ -91,13 +107,13 @@ const CONFIG = {
   MAX_RESULTS: 70,
   TIMEOUTS: {
     TMDB: 2000,
-    SCRAPER: 4000,          // Abbassato da 6000
-    REMOTE_INDEXER: 1500,   // Abbassato da 2500
+    SCRAPER: 4000,          
+    REMOTE_INDEXER: 1500,   
     LOCAL_DB: 1500, 
-    DB_QUERY: 2000,         // Abbassato da 3000
-    DEBRID: 8000,           // Abbassato da 10000
-    PACK_RESOLVER: 3000,    // Abbassato da 4000
-    EXTERNAL: 8000          // Drasticamente abbassato da 20000
+    DB_QUERY: 2000,         
+    DEBRID: 8000,           
+    PACK_RESOLVER: 3000,    
+    EXTERNAL: 8000          
   }
 };
 
@@ -110,34 +126,21 @@ const REGEX_QUALITY_FILTER = {
     "SD": /\b(?:480p|576p|sd|dvd|dvd[-.\s]?rip|dvd[-.\s]?scr|cd)\b/i
 };
 
-// =========================================================================
-// 🔥 SISTEMA DI RICONOSCIMENTO LINGUA (STRICT MODE) 🔥
-// =========================================================================
-
-// 1. ITA/ITALIAN: Sicuri al 100% (3 lettere o più)
 const REGEX_STRONG_ITA = /\b(ITA|ITALIAN|ITALIANO)\b/i;
 
-// 2. CONTEXT IT: "IT" (2 lettere) accettato SOLO se preceduto da keyword audio
 const REGEX_CONTEXT_IT = /\b(AUDIO|LINGUA|LANG|VO|AC-?3|AAC|MP3|DDP|DTS|TRUEHD)\W+(IT)\b/i;
 
-// 3. ISOLATED IT: "IT" accettato SOLO se tra delimitatori molto specifici
 const REGEX_ISOLATED_IT = /(?:^|[_\-.])(IT)(?:$|[_\-.])/;
 
-// 4. MULTI/DUAL: Se dice Multi/Dual, controlliamo che ci sia ITA dentro
 const REGEX_MULTI_ITA = /\b(MULTI|DUAL|TRIPLE).*(ITA|ITALIAN)\b/i;
 
-// 5. RELEASE GROUPS NOTI ITALIANI
 const REGEX_TRUSTED_GROUPS = /\b(iDN_CreW|CORSARO|MUX|WMS|TRIDIM|SPEEDVIDEO|EAGLE|TRL|MEA|LUX|DNA|LEST|GHIZZO|USAbit|Bric|Dtone|Gaiage|BlackBit|Pantry|Vics|Papeete|Lidri|MirCrew)\b/i;
 
-// 6. FALSE POSITIVE CHECK
 const REGEX_FALSE_IT = /\b(10BIT|BIT|WIT|HIT|FIT|KIT|SIT|LIT|PIT)\b/i;
 
 const REGEX_SUB_ONLY = /\b(SUB|SUBS|SUBBED|SOTTOTITOLI|VOST|VOSTIT)\s*[:.\-_]?\s*(ITA|IT|ITALIAN)\b/i;
 const REGEX_AUDIO_CONFIRM = /\b(AUDIO|AC3|AAC|DTS|MD|LD|DDP|MP3|LINGUA)[\s.\-_]+(ITA|IT)\b/i;
 
-// =========================================================================
-// 🆕 PARSER HELPER (INTEGRATO)
-// =========================================================================
 const languageMapping = {
   'english': '🇬🇧 ENG',
   'japanese': '🇯🇵 JPN',
@@ -172,7 +175,6 @@ function parseTitleDetails(filename) {
         return { quality: 'SD', tags: '', languages: [] };
     }
 }
-// =========================================================================
 
 function base32ToHex(base32) {
     const base32chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -200,18 +202,13 @@ function extractInfoHash(magnet) {
     return hash.toUpperCase();
 }
 
-// =========================================================================
-// ⚖️ GENERATORE DIMENSIONI REALISTICHE (DETERMINISTICO) CON SANITY CHECK
-// =========================================================================
 function estimateVisualSize(knownSize, title, isSeries, isPack, infoHash) {
     const safeTitle = (title || "video").toLowerCase();
     
-    // 1. Analisi Qualità
     const is4K = /2160p|4k|uhd|ultra[-.\s]?hd/i.test(safeTitle);
     const is1080 = /1080p|1080i|fhd|full[-.\s]?hd|blu[-.\s]?ray/i.test(safeTitle);
     const is720 = /720p|720i|hd[-.\s]?rip|hd/i.test(safeTitle);
 
-    // 2. SANITY CHECK: Scartiamo le dimensioni palesemente errate dal DB
     if (knownSize && knownSize > 0) {
         let isSane = true;
         const sizeInGB = knownSize / (1024 * 1024 * 1024);
@@ -232,7 +229,6 @@ function estimateVisualSize(knownSize, title, isSeries, isPack, infoHash) {
         if (isSane) return knownSize;
     }
 
-    // 3. Generazione Seme (Seed) Deterministico per dimensioni fittizie
     let seedStr = infoHash || safeTitle;
     let hashVal = 0;
     for (let i = 0; i < seedStr.length; i++) {
@@ -263,9 +259,6 @@ function estimateVisualSize(knownSize, title, isSeries, isPack, infoHash) {
     return Math.floor(baseSize + fineNoise);
 }
 
-// =========================================================================
-// 👥 GENERATORE SEEDERS REALISTICI (Solo Estetica per Debrid)
-// =========================================================================
 function estimateSeeders(knownSeeders, infoHash) {
     if (knownSeeders && knownSeeders > 0) return knownSeeders;
     let seedStr = infoHash || "seeders_fallback";
@@ -275,7 +268,6 @@ function estimateSeeders(knownSeeders, infoHash) {
     }
     return (Math.abs(hashVal) % 60) + 8;
 }
-// =========================================================================
 
 const LIMITERS = {
   scraper: new Bottleneck({ maxConcurrent: 40, minTime: 10 }),
@@ -307,8 +299,6 @@ app.use(limiter);
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
-
-// --- HELPER FUNZIONALI ---
 
 function parseSize(sizeText) {
   if (!sizeText) return 0;
@@ -434,7 +424,6 @@ async function withTimeout(promise, ms, operation = 'Operation') {
   }
 }
 
-// --- HELPER PER APPLICARE LE SKIN AI RISULTATI WEB ---
 function applyWebFormatter(streamList, sourceName, meta, config) {
     if (!streamList || !Array.isArray(streamList)) return [];
     
@@ -649,7 +638,6 @@ function saveResultsToDbBackground(meta, results) {
     })().catch(err => console.error("❌ Errore background save:", err.message));
 }
 
-// --- RISOLUZIONE DEBRID E FORMATTAZIONE ---
 async function resolveDebridLink(config, item, showFake, reqHost, meta) {
     try {
         const service = config.service || 'rd';
@@ -940,7 +928,6 @@ async function fetchExternalResults(type, finalId, config) {
     }
 }
 
-// --- GENERATE STREAM PRINCIPALE ---
 async function generateStream(type, id, config, userConfStr, reqHost) {
   const hasDebridKey = (config.key && config.key.length > 0) || (config.rd && config.rd.length > 0);
   const isWebEnabled = config.filters && (config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableGf);
@@ -1099,19 +1086,19 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       return false;
   };
 
-  // 1. RICERCA DA FONTI VELOCI (INDEXER + EXTERNAL)
-  const remotePromise = withTimeout(
-      queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config),
-      CONFIG.TIMEOUTS.REMOTE_INDEXER,
-      'Remote Indexer'
-  ).catch(err => {
-      logger.warn('Remote indexer fallito/timeout', { error: err.message });
-      return [];
-  });
+  const remotePromise = Cache.fetchWithCache('RemoteIndexer', `${type}:${tmdbIdLookup || finalId}:${meta.season}:${meta.episode}`, 43200, () =>
+      withTimeout(
+          queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config),
+          CONFIG.TIMEOUTS.REMOTE_INDEXER,
+          'Remote Indexer'
+      )
+  );
 
   let externalPromise = Promise.resolve([]);
   if (!dbOnlyMode) {
-      externalPromise = fetchExternalResults(type, finalId, config);
+      externalPromise = Cache.fetchWithCache('ExternalAddons', `${type}:${finalId}`, 43200, () =>
+          fetchExternalResults(type, finalId, config)
+      );
   }
 
   const [remoteResults, externalResults] = await Promise.all([
@@ -1126,7 +1113,6 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   let validFastCount = cleanResults.length;
   logger.info(`⚡ [FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
 
-  // 2. FALLBACK AGLI SCRAPER SOLO SE I RISULTATI SONO 0
   if (validFastCount === 0 && !dbOnlyMode) {
       logger.info(`⚠️ [FALLBACK] 0 risultati utili da Indexer/External. Avvio Scrapers in background...`);
       let dynamicTitles = [];
@@ -1173,7 +1159,6 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       saveResultsToDbBackground(meta, cleanResults);
   }
 
-  // FILTRI DI CONFIGURAZIONE UTENTE
   if (config.filters) {
       cleanResults = cleanResults.filter(item => {
           const t = (item.title || "").toLowerCase();
@@ -1293,37 +1278,29 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   let rawVix = [], formattedGhd = [], formattedGs = [], formattedVix = [], formattedAw = [], formattedGf = [];
 
   if (!dbOnlyMode) {
-       const vixPromise = searchVix(meta, config, reqHost);
+       const rawId = `${type}:${finalId}:${meta.season || 0}:${meta.episode || 0}`;
+
+       // RICERCA WEB - ORA CACHED GLOBALE 🌍
+       const vixPromise = Cache.fetchWithCache('Vix', rawId, 43200, () => searchVix(meta, config, reqHost));
+       
        let ghdPromise = Promise.resolve([]);
        if (config.filters && config.filters.enableGhd) {
-           ghdPromise = searchGuardaHD(meta, config).catch(err => {
-               logger.warn(`GuardaHD Error: ${err.message}`);
-               return [];
-           });
+           ghdPromise = Cache.fetchWithCache('GuardaHD', rawId, 43200, () => searchGuardaHD(meta, config));
        }
 
        let gsPromise = Promise.resolve([]);
        if (config.filters && config.filters.enableGs) {
-           gsPromise = searchGuardaserie(meta, config).catch(err => {
-               logger.warn(`GuardaSerie Error: ${err.message}`);
-               return [];
-           });
+           gsPromise = Cache.fetchWithCache('GuardaSerie', rawId, 43200, () => searchGuardaserie(meta, config));
        }
 
        let awPromise = Promise.resolve([]);
        if (config.filters && config.filters.enableAnimeWorld) {
-           awPromise = searchAnimeWorld(id, meta, config).catch(err => {
-               logger.warn(`AnimeWorld Error: ${err.message}`);
-               return [];
-           });
+           awPromise = Cache.fetchWithCache('AnimeWorld', rawId, 43200, () => searchAnimeWorld(id, meta, config));
        }
 
        let gfPromise = Promise.resolve([]);
        if (config.filters && config.filters.enableGf) {
-           gfPromise = searchGuardaFlix(meta, config).catch(err => {
-               logger.warn(`GuardaFlix Error: ${err.message}`);
-               return [];
-           });
+           gfPromise = Cache.fetchWithCache('GuardaFlix', rawId, 43200, () => searchGuardaFlix(meta, config));
        }
 
        [rawVix, formattedGhd, formattedGs, formattedAw, formattedGf] = await Promise.all([vixPromise, ghdPromise, gsPromise, awPromise, gfPromise]);
@@ -1736,6 +1713,7 @@ app.listen(PORT, () => {
     console.log(`📝 PARSER: ENHANCED (Smart Extraction Active)`); 
     console.log(`⚡ P2P: HANDLER ATTIVO (Graphic Skin + Tracker Fix)`);
     console.log(`🦑 LEVIATHAN CORE: Optimized for High Reliability`);
+    console.log(`🌍 LAYERED CACHING: GLOBAL RAW + USER LEVEL ACTIVE`);
     console.log(`⚡ SCRAPERS: Eseguiti come Fallback se l'Indexer fallisce!`);
     console.log(`-----------------------------------------------------`);
 });
