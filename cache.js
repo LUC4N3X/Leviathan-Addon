@@ -8,7 +8,7 @@ console.log(`🔑 [REDIS INIT] Password configurata: ${process.env.REDIS_PASS ? 
 const redis = new Redis({
     host: process.env.REDIS_HOST,      // IP VPS A
     port: process.env.REDIS_PORT || 6379,
-    password: process.env.REDIS_PASS,  // Password "1996"
+    password: process.env.REDIS_PASS,  
     family: 4,                         // Forza IPv4
     maxRetriesPerRequest: null,
     retryStrategy: function(times) {
