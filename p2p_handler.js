@@ -1,82 +1,95 @@
 const { formatStreamSelector, formatBytes } = require("./formatter");
 const ptt = require('parse-torrent-title');
 
-// === TRACKER NUCLEARE 2026 (testati oggi) ===
 const BEST_TRACKERS = [
     "udp://tracker.opentrackr.org:1337/announce",
     "udp://open.stealth.si:80/announce",
-    "udp://tracker.torrent.eu.org:451/announce",
     "udp://open.demonii.com:1337/announce",
     "udp://exodus.desync.com:6969/announce",
-    "udp://tracker.moeking.me:6969/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
     "udp://tracker-udp.gbitt.info:80/announce",
     "udp://retracker.lanta.me:2710/announce",
-    "udp://tracker1.bt.moack.co.kr:80/announce",
-    "http://tracker.opentrackr.org:1337/announce"
+    "udp://tracker.dler.org:6969/announce",
+    "udp://t.overflow.biz:6969/announce",
+    "udp://explodie.org:6969/announce",
+    "udp://evan.im:6969/announce",
+    "udp://tracker.alaskantf.com:6969/announce",
+    "udp://tracker.theoks.net:6969/announce",
+    "udp://tracker.srv00.com:6969/announce",
+    "udp://tracker.fnix.net:6969/announce",
+    "udp://ns575949.ip-51-222-82.net:6969/announce",
+    "udp://tracker.filemail.com:6969/announce",
+    "udp://bittorrent-tracker.e-n-c-r-y-p-t.net:1337/announce",
+    "https://tracker.pmman.tech:443/announce",
+    "https://tracker.zhuqiy.com:443/announce"
 ];
 
 const TRACKER_STRING = BEST_TRACKERS.map(t => `&tr=${encodeURIComponent(t)}`).join("");
 
-const languageMapping = {
-  'english': '🇬🇧 ENG', 'japanese': '🇯🇵 JPN', 'italian': '🇮🇹 ITA',
-  'french': '🇫🇷 FRA', 'german': '🇩🇪 GER', 'spanish': '🇪🇸 ESP',
-  'russian': '🇷🇺 RUS', 'multi audio': '🌍 MULTI'
-};
+function getRealSize(item) {
+    if (item._size > 100 * 1024 * 1024) return item._size;
+    if (item.sizeBytes > 100 * 1024 * 1024) return item.sizeBytes;
 
-// === STIMA SIZE AUTOMATICA (fix per i tuoi "0 B") ===
-function estimateP2PSize(title) {
-    const t = (title || "").toLowerCase();
-    if (t.includes("2160p") || t.includes("4k") || t.includes("uhd")) return 8500 * 1024 * 1024;
-    if (t.includes("1080p") || t.includes("fhd")) return 2200 * 1024 * 1024;
-    if (t.includes("720p") || t.includes("hd")) return 1100 * 1024 * 1024;
-    return 1800 * 1024 * 1024; // default ~1.8 GB
+    const t = (item.title || "").toLowerCase();
+    let size = 0;
+
+    const match = t.match(/(\d+(?:\.\d+)?)\s*(gb|mb)/i);
+    if (match) {
+        let val = parseFloat(match[1]);
+        size = match[2].toLowerCase().startsWith('g') ? val * 1024**3 : val * 1024**2;
+    }
+
+    if (size < 200 * 1024 * 1024) {
+        if (t.includes("2160p") || t.includes("4k") || t.includes("uhd")) size = 12500 * 1024 * 1024;
+        else if (t.includes("1080p")) size = 2600 * 1024 * 1024;
+        else if (t.includes("720p")) size = 1300 * 1024 * 1024;
+        else size = 2200 * 1024 * 1024;
+    }
+
+    const maxAllowed = (t.includes("2160p") || t.includes("4k")) ? 35 * 1024**3 : 9 * 1024**3;
+    if (size > maxAllowed) {
+        size = (t.includes("2160p") || t.includes("4k")) ? 12500 * 1024 * 1024 : 2600 * 1024 * 1024;
+        console.warn(`[P2P SIZE FIX] Dimensione assurda bloccata → fallback realistico`);
+    }
+
+    return Math.floor(size);
 }
 
 function constructRobustMagnet(item) {
-    let hash = item.hash || item.infoHash;
-    if (!hash && item.magnet) {
-        const match = item.magnet.match(/btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})/i);
-        if (match) hash = match[1];
-    }
-    if (!hash) {
-        console.error(`[P2P ERROR] Nessun hash trovato per: ${item.title}`);
-        return { magnet: null, hash: null };
-    }
+    let hash = item.hash || item.infoHash || (item.magnet && item.magnet.match(/btih:([a-f0-9]{40})/i)?.[1]);
+    if (!hash) return { magnet: null, hash: null };
+    hash = hash.toLowerCase();
 
-    const cleanTitle = encodeURIComponent(item.title.replace(/[^a-zA-Z0-9\.\-_ ]/g, '').trim().substring(0, 80));
-    const finalMagnet = `magnet:?xt=urn:btih:${hash}&dn=${cleanTitle}${TRACKER_STRING}`;
-    
-    console.log(`[P2P MAGNET] Costruito → Hash: ${hash.toLowerCase()} | Title: ${item.title.substring(0,55)}...`);
-    return { magnet: finalMagnet, hash: hash.toLowerCase() };
+    const safeTitle = item.title || "Unknown_Video";
+    const shortDn = encodeURIComponent(safeTitle.replace(/[^a-zA-Z0-9\.\-_ ]/g, '').trim().substring(0, 80));
+    const size = getRealSize(item);
+
+    const magnet = `magnet:?xt=urn:btih:${hash}&dn=${shortDn}&xl=${size}&so=0${TRACKER_STRING}`;
+
+    console.log(`[P2P MAGNET MAX] ${hash} | xl=${formatBytes(size)} | 20 best trackers`);
+    return { magnet, hash };
 }
 
 module.exports = {
     formatP2PStream: (item, config) => {
-        console.log(`[P2P START] "${item.title.substring(0,70)}..." | Raw Seeders: ${item.seeders || 0} | Raw Size: ${formatBytes(item._size || item.sizeBytes || 0)}`);
+        console.log(`[P2P START] "${item.title?.substring(0,68)}..." | Seeders: ${item.seeders || 0}`);
 
-        // STIMA SIZE se troppo bassa o zero (come fai già nei debrid)
-        let displaySize = item._size || item.sizeBytes || 0;
-        if (displaySize < 100 * 1024 * 1024) {
-            displaySize = estimateP2PSize(item.title);
-            console.log(`[P2P SIZE STIMATO] ${formatBytes(displaySize)} (era troppo basso/zero)`);
-        }
-
+        const displaySize = getRealSize(item);
         const { magnet, hash } = constructRobustMagnet(item);
         if (!magnet) return null;
 
         const { name, title, bingeGroup } = formatStreamSelector(
-            item.title,             
-            item.source || "P2P",   
-            displaySize, 
-            item.seeders || 0,      
-            "P2P",                  
-            config,                 
-            hash,                   
-            false,                  
-            item._isPack || false   
+            item.title,
+            item.source || "P2P",
+            displaySize,
+            item.seeders || 0,
+            "P2P",
+            config,
+            hash,
+            false,
+            item._isPack || false
         );
 
-        // === STREAM FINALE (PERFETTO PER STREMIO) ===
         const streamObj = {
             name: name,
             title: title,
@@ -86,20 +99,18 @@ module.exports = {
             behaviorHints: {
                 bingieGroup: bingeGroup,
                 notWebReady: true,
-                filename: item.title.substring(0, 120)   // ← AIUTA STREMIO NEI PACK
+                filename: item.title.substring(0, 110)
             }
         };
 
-        if (item.fileIdx !== undefined && item.fileIdx !== null && !isNaN(parseInt(item.fileIdx))) {
+        if (item.fileIdx != null && !isNaN(parseInt(item.fileIdx))) {
             streamObj.fileIdx = parseInt(item.fileIdx);
-            console.log(`[P2P] FileIdx impostato: ${streamObj.fileIdx}`);
         }
 
-        console.log(`[P2P SUCCESS] Stream pronto → Hash: ${hash} | Size: ${formatBytes(displaySize)} | Seeders: ${item.seeders || 0} | notWebReady: true`);
-        
-        // AVVISO SE IL TORRENT È DEBOLE
-        if ((item.seeders || 0) < 3) {
-            console.warn(`[P2P ATTENZIONE] Solo ${item.seeders || 0} seeders → potrebbe rimanere in caricamento`);
+        console.log(`[P2P SUCCESS] Hash: ${hash} | Size: ${formatBytes(displaySize)} | 20 elite trackers`);
+
+        if ((item.seeders || 0) === 0) {
+            console.warn(`[P2P WARN] 0 seeders rilevati in cache per questo torrent. Potrebbe non partire. Il DHT tenterà la connessione.`);
         }
 
         return streamObj;
