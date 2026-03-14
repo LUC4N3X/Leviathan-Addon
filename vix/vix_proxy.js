@@ -1,101 +1,217 @@
 const axios = require("axios");
 
-const HEADERS_VIX = {
-    'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    'Referer': "https://vixsrc.to/",
-    'Origin': "https://vixsrc.to"
-};
+const DEFAULT_REFERER = "https://vixsrc.to/";
+const DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-async function handleVixSynthetic(req, res) {
-    const masterUrl = req.query.src;
-    const forceMax = req.query.max === "1"; 
-    const customReferer = req.query.referer; 
+function getSelfBase(req) {
+    const forwarded = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+    const protocol = forwarded || req.protocol || "https";
+    return `${protocol}://${req.get("host")}`;
+}
 
-    if (!masterUrl) return res.status(400).send("Missing src");
+function safeUrl(value, base) {
+    try {
+        if (!value) return null;
+        if (/^https?:\/\//i.test(value)) return new URL(value).toString();
+        if (value.startsWith("//")) return `https:${value}`;
+        return new URL(value, base).toString();
+    } catch {
+        return null;
+    }
+}
+
+function buildRequestHeaders(targetUrl, explicitReferer) {
+    const target = new URL(targetUrl);
+    let referer = explicitReferer || `${target.origin}/`;
+    let origin = target.origin;
 
     try {
-        
-        const requestHeaders = { ...HEADERS_VIX };
-        if (customReferer) {
-            requestHeaders['Referer'] = customReferer;
+        if (explicitReferer) {
+            origin = new URL(explicitReferer).origin;
+            referer = explicitReferer;
+        }
+    } catch {}
+
+    return {
+        "User-Agent": DEFAULT_UA,
+        "Accept": "*/*",
+        "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Referer": referer,
+        "Origin": origin,
+    };
+}
+
+function isManifest(targetUrl, contentType) {
+    return /mpegurl|x-mpegurl|application\/vnd\.apple\.mpegurl/i.test(contentType || "")
+        || /\.m3u8($|\?)/i.test(targetUrl || "");
+}
+
+function getResolutionScore(infoLine) {
+    const resMatch = infoLine.match(/RESOLUTION=(\d+)x(\d+)/i);
+    if (resMatch) {
+        return Number(resMatch[1]) * Number(resMatch[2]);
+    }
+    const bandwidthMatch = infoLine.match(/BANDWIDTH=(\d+)/i);
+    return bandwidthMatch ? Number(bandwidthMatch[1]) : 0;
+}
+
+function selectVariant(variants, forceMax) {
+    if (!variants.length) return null;
+
+    const sorted = [...variants].sort((a, b) => b.score - a.score);
+    if (forceMax || sorted.length === 1) return sorted[0];
+
+    const target = sorted.find((v) => v.score > 400000 && v.score < 2000000 && v.score !== sorted[0].score);
+    return target || sorted[1] || sorted[0];
+}
+
+function buildProxyUrl(req, absoluteUrl, pageReferer) {
+    const selfBase = getSelfBase(req);
+    const url = new URL(`${selfBase}/vixsynthetic.m3u8`);
+    url.searchParams.set("src", absoluteUrl);
+    if (pageReferer) {
+        url.searchParams.set("referer", pageReferer);
+    }
+    return url.toString();
+}
+
+function rewriteDirectiveUri(line, baseUrl, req, pageReferer) {
+    return line.replace(/URI="([^"]+)"/i, (_, uri) => {
+        const absolute = safeUrl(uri, baseUrl);
+        return absolute ? `URI="${buildProxyUrl(req, absolute, pageReferer)}"` : `URI="${uri}"`;
+    });
+}
+
+function rewriteLeafManifest(lines, baseUrl, req, pageReferer) {
+    const out = [];
+
+    for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) {
+            out.push("");
+            continue;
         }
 
-        const response = await axios.get(masterUrl, { 
-            headers: requestHeaders,
-            timeout: 6000 
-        });
-
-        const manifest = response.data;
-        const lines = manifest.split("\n");
-        let filteredLines = [];
-
-        // Inizio Ricostruzione Manifest
-        filteredLines.push("#EXTM3U");
-        if (manifest.includes("#EXT-X-VERSION")) filteredLines.push("#EXT-X-VERSION:3");
-
-        // 1. Preserviamo Audio e Sottotitoli
-        for (let line of lines) {
-            if (line.startsWith("#EXT-X-MEDIA:TYPE=AUDIO") || line.startsWith("#EXT-X-MEDIA:TYPE=SUBTITLES")) {
-                filteredLines.push(line);
-            }
+        if (line.startsWith("#EXT-X-KEY") || line.startsWith("#EXT-X-MAP") || line.startsWith("#EXT-X-MEDIA")) {
+            out.push(rewriteDirectiveUri(line, baseUrl, req, pageReferer));
+            continue;
         }
 
-        // 2. Analizziamo le Varianti Video
-        let variants = [];
-        for (let i = 0; i < lines.length; i++) {
-            if (lines[i].startsWith("#EXT-X-STREAM-INF")) {
-                const infoLine = lines[i];
-                const urlLine = lines[i + 1];
-                
-                let resolution = 0;
-                const resMatch = infoLine.match(/RESOLUTION=(\d+)x(\d+)/);
-                if (resMatch) resolution = parseInt(resMatch[1]) * parseInt(resMatch[2]); 
-
-                variants.push({ info: infoLine, url: urlLine, resolution: resolution || 0 });
-            }
+        if (line.startsWith("#")) {
+            out.push(line);
+            continue;
         }
 
-        // 3. Logica di Selezione e Ricostruzione
-        if (variants.length > 0) {
-            // Ordiniamo per qualità
-            variants.sort((a, b) => b.resolution - a.resolution);
+        const absolute = safeUrl(line, baseUrl);
+        out.push(absolute ? buildProxyUrl(req, absolute, pageReferer) : line);
+    }
 
-            let selected = null;
+    return out.join("\n");
+}
 
-            if (forceMax) {
-                // Selettore 1080p: Prendi il primo (il più alto)
-                selected = variants[0];
-            } else {
-                // Selettore 720p: Cerca risoluzione HD o fai fallback intelligente
-                const target720 = variants.find(v => v.resolution > 400000 && v.resolution < 2000000 && v.resolution !== variants[0].resolution);
-                
-                if (target720) {
-                    selected = target720;
-                } else if (variants.length > 1) {
-                    selected = variants[1];
-                } else {
-                    selected = variants[0];
-                }
-            }
+function rewriteMasterManifest(lines, baseUrl, req, pageReferer, forceMax) {
+    const output = [];
+    const variants = [];
 
-            if (selected) {
-                filteredLines.push(selected.info);
-                filteredLines.push(selected.url);
-            }
-        } else {
-            // Fallback diretto se la playlist non ha varianti
-            const contentLines = lines.filter(l => !l.startsWith("#EXTM3U") && !l.startsWith("#EXT-X-VERSION"));
-            filteredLines.push(...contentLines);
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = (lines[i] || "").trim();
+        if (!line) {
+            output.push("");
+            continue;
         }
+
+        if (line.startsWith("#EXT-X-MEDIA")) {
+            output.push(rewriteDirectiveUri(line, baseUrl, req, pageReferer));
+            continue;
+        }
+
+        if (line.startsWith("#EXT-X-STREAM-INF")) {
+            const nextLine = (lines[i + 1] || "").trim();
+            const absolute = safeUrl(nextLine, baseUrl);
+            variants.push({
+                info: line,
+                url: absolute,
+                score: getResolutionScore(line),
+            });
+            i += 1;
+            continue;
+        }
+
+        if (!line.startsWith("#")) {
+            const absolute = safeUrl(line, baseUrl);
+            output.push(absolute ? buildProxyUrl(req, absolute, pageReferer) : line);
+            continue;
+        }
+
+        output.push(line);
+    }
+
+    if (!variants.length) {
+        return output.join("\n");
+    }
+
+    const selected = selectVariant(variants, forceMax);
+    if (!selected || !selected.url) {
+        return output.join("\n");
+    }
+
+    output.push(selected.info);
+    output.push(buildProxyUrl(req, selected.url, pageReferer));
+    return output.join("\n");
+}
+
+async function fetchUpstream(targetUrl, referer) {
+    return axios.get(targetUrl, {
+        headers: buildRequestHeaders(targetUrl, referer),
+        timeout: 10000,
+        maxRedirects: 5,
+        responseType: "arraybuffer",
+        validateStatus: () => true,
+    });
+}
+
+async function handleVixSynthetic(req, res) {
+    const sourceUrl = safeUrl(req.query.src);
+    const forceMax = req.query.max === "1";
+    const pageReferer = req.query.referer || DEFAULT_REFERER;
+
+    if (!sourceUrl) {
+        return res.status(400).send("Missing src");
+    }
+
+    try {
+        const upstream = await fetchUpstream(sourceUrl, pageReferer);
+        if (upstream.status >= 400) {
+            console.error(`[VIX PROXY] Upstream ${upstream.status} for ${sourceUrl}`);
+            return res.status(upstream.status).send(`Vix upstream error ${upstream.status}`);
+        }
+
+        const contentType = String(upstream.headers["content-type"] || "");
+        const buffer = Buffer.isBuffer(upstream.data) ? upstream.data : Buffer.from(upstream.data || "");
+
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Cache-Control", "public, max-age=30");
+
+        if (!isManifest(sourceUrl, contentType)) {
+            if (contentType) res.setHeader("Content-Type", contentType);
+            return res.send(buffer);
+        }
+
+        const manifest = buffer.toString("utf8");
+        const lines = manifest.replace(/\r\n/g, "\n").split("\n");
+        const hasVariants = lines.some((line) => String(line).trim().startsWith("#EXT-X-STREAM-INF"));
+
+        const rewritten = hasVariants
+            ? rewriteMasterManifest(lines, sourceUrl, req, pageReferer, forceMax)
+            : rewriteLeafManifest(lines, sourceUrl, req, pageReferer);
 
         res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        res.send(filteredLines.join("\n"));
-
+        return res.send(rewritten);
     } catch (error) {
-        // Loggare l'errore aiuta a capire se è un 403 (Forbidden)
         console.error("Vix Proxy Error:", error.message);
-        res.status(500).send("Vix Proxy Error");
+        return res.status(500).send("Vix Proxy Error");
     }
 }
 
