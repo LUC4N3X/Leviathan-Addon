@@ -127,17 +127,11 @@ const REGEX_QUALITY_FILTER = {
 };
 
 const REGEX_STRONG_ITA = /\b(ITA|ITALIAN|ITALIANO)\b/i;
-
 const REGEX_CONTEXT_IT = /\b(AUDIO|LINGUA|LANG|VO|AC-?3|AAC|MP3|DDP|DTS|TRUEHD)\W+(IT)\b/i;
-
 const REGEX_ISOLATED_IT = /(?:^|[_\-.])(IT)(?:$|[_\-.])/;
-
 const REGEX_MULTI_ITA = /\b(MULTI|DUAL|TRIPLE).*(ITA|ITALIAN)\b/i;
-
 const REGEX_TRUSTED_GROUPS = /\b(iDN_CreW|CORSARO|MUX|WMS|TRIDIM|SPEEDVIDEO|EAGLE|TRL|MEA|LUX|DNA|LEST|GHIZZO|USAbit|Bric|Dtone|Gaiage|BlackBit|Pantry|Vics|Papeete|Lidri|MirCrew)\b/i;
-
 const REGEX_FALSE_IT = /\b(10BIT|BIT|WIT|HIT|FIT|KIT|SIT|LIT|PIT)\b/i;
-
 const REGEX_SUB_ONLY = /\b(SUB|SUBS|SUBBED|SOTTOTITOLI|VOST|VOSTIT)\s*[:.\-_]?\s*(ITA|IT|ITALIAN)\b/i;
 const REGEX_AUDIO_CONFIRM = /\b(AUDIO|AC3|AAC|DTS|MD|LD|DDP|MP3|LINGUA)[\s.\-_]+(ITA|IT)\b/i;
 
@@ -346,13 +340,18 @@ function deduplicateResults(results) {
     const rawHash = item.infoHash || item.hash || extractInfoHash(item.magnet);
     const finalHash = rawHash ? rawHash.toUpperCase() : null;
     if (!finalHash || finalHash.length !== 40) continue;
+    
     item.hash = finalHash;
     item.infoHash = finalHash;
-    
     item._size = parseSize(item.sizeBytes || item.size);
 
+    const currentSeeders = parseInt(item.seeders, 10) || 0;
+    item.seeders = currentSeeders;
+
     const existing = hashMap.get(finalHash);
-    if (!existing || (item.seeders || 0) > (existing.seeders || 0)) {
+    const existingSeeders = existing ? (parseInt(existing.seeders, 10) || 0) : -1;
+
+    if (!existing || currentSeeders > existingSeeders) {
       hashMap.set(finalHash, item);
     }
   }
@@ -857,7 +856,7 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
                 infoHash: finalHash,
                 size: "💾 DB",
                 sizeBytes: parseInt(t.size),
-                seeders: t.seeders,
+                seeders: parseInt(t.seeders, 10) || 0,
                 source: providerName,
                 fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined
             };
@@ -889,7 +888,7 @@ async function fetchExternalResults(type, finalId, config) {
             fetchExternalAddonsFlat(type, finalId, { userConfig: config }).then(items => {
                 return items.map(i => {
                     const title = i.title || i.filename;
-                    let finalSeeders = i.seeders;
+                    let finalSeeders = parseInt(i.seeders, 10) || 0;
                     if (!finalSeeders && title) finalSeeders = extractSeeders(title);
                     
                     let finalSize = i.mainFileSize;
@@ -1280,7 +1279,6 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   if (!dbOnlyMode) {
        const rawId = `${type}:${finalId}:${meta.season || 0}:${meta.episode || 0}`;
 
-       // RICERCA WEB - ORA CACHED GLOBALE 🌍
        const vixPromise = Cache.fetchWithCache('Vix', rawId, 43200, () => searchVix(meta, config, reqHost));
        
        let ghdPromise = Promise.resolve([]);
@@ -1695,25 +1693,25 @@ const PUBLIC_PORT = process.env.PUBLIC_PORT || PORT;
 app.listen(PORT, () => {
     console.log(`🚀 Leviathan (God Tier) attivo su porta interna ${PORT}`);
     console.log(`-----------------------------------------------------`);
-    console.log(`⚡ MODE: FULL LAZY (All items Lazy)`);
-    console.log(`🎬 SERIES: Full Lazy Mode (Pack Support Active)`);
-    console.log(`📡 INDEXER URL (ENV): ${CONFIG.INDEXER_URL}`);
-    console.log(`🎬 METADATA: TMDB Primary (User Key Priority)`);
-    console.log(`💾 SCRITTURA: DB Locale (Auto-Learning attivo)`);
-    console.log(`❌ LETTURA DB LOCALE: DISABILITATA (Only Remote URL)`);
-    console.log(`👁️ SPETTRO VISIVO: Modulo Attivo (Esclusioni 4K/1080/720/SD)`);
-    console.log(`⚖️ SIZE LIMITER: Modulo Attivo (GB Filter)`);
+    console.log(`⚡ MODE: FULL LAZY`);
+    console.log(`🎬 SERIES: Full Lazy Mode`);
+    console.log(`📡 INDEXER URL: ${CONFIG.INDEXER_URL}`);
+    console.log(`🎬 METADATA: TMDB Primary`);
+    console.log(`💾 SCRITTURA: DB Locale`);
+    console.log(`❌ LETTURA DB LOCALE: DISABILITATA`);
+    console.log(`👁️ SPETTRO VISIVO: Modulo Attivo`);
+    console.log(`⚖️ SIZE LIMITER: Modulo Attivo`);
     console.log(`🦁 GUARDA HD: Modulo Integrato e Pronto`);
     console.log(`🛡️ GUARDA SERIE: Modulo Integrato e Pronto`);
     console.log(`⛩️ ANIMEWORLD: Modulo Integrato e Pronto`); 
-    console.log(`🎥 GUARDA FLIX: Modulo Integrato (Richiede MFP)`);
-    console.log(`🕷️ WEBSTREAMR: Fallback Attivo (Su 0 Risultati)`);
-    console.log(`🎬 TRAILER: Attivabile da Config (Default: OFF, Primo Risultato se ON)`);
-    console.log(`📦 TORBOX: ADVANCED SMART CACHE + ID GRABBER ENABLED`);
-    console.log(`📝 PARSER: ENHANCED (Smart Extraction Active)`); 
-    console.log(`⚡ P2P: HANDLER ATTIVO (Graphic Skin + Tracker Fix)`);
+    console.log(`🎥 GUARDA FLIX: Modulo Integrato`);
+    console.log(`🕷️ WEBSTREAMR: Fallback Attivo`);
+    console.log(`🎬 TRAILER: Attivabile da Config`);
+    console.log(`📦 TORBOX: ADVANCED SMART CACHE`);
+    console.log(`📝 PARSER: ENHANCED`); 
+    console.log(`⚡ P2P: HANDLER ATTIVO`);
     console.log(`🦑 LEVIATHAN CORE: Optimized for High Reliability`);
     console.log(`🌍 LAYERED CACHING: GLOBAL RAW + USER LEVEL ACTIVE`);
-    console.log(`⚡ SCRAPERS: Eseguiti come Fallback se l'Indexer fallisce!`);
+    console.log(`⚡ SCRAPERS: Fallback Scrapers Ready!`);
     console.log(`-----------------------------------------------------`);
 });
