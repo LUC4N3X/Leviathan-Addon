@@ -1,8 +1,3 @@
-// ==========================================
-// 1. CONFIGURAZIONE & LISTE ULTRA
-// ==========================================
-
-// Token tecnici (Riferimento per pulizia)
 const ULTRA_JUNK_TOKENS = new Set([
     "ita", "eng", "sub", "subita", "dub", "multi", "dual", "audio",
     "x264", "x265", "h264", "hevc", "divx", "xvid", "av1", "vp9",
@@ -11,7 +6,6 @@ const ULTRA_JUNK_TOKENS = new Set([
     "extended", "director", "unrated", "uncut", "repack"
 ]);
 
-// Dizionario Alias Statici
 const ULTRA_SEMANTIC_ALIASES = {
     "harry potter": ["hp", "pietra filosofale", "camera segreti", "prigioniero azkaban", "calice fuoco", "ordine fenice", "principe mezzosangue", "doni morte"],
     "il signore degli anelli": ["lord of the rings", "lotr", "compagnia anello", "due torri", "ritorno re"],
@@ -27,10 +21,6 @@ const ULTRA_SEMANTIC_ALIASES = {
     "the avengers": ["avengers"]
 };
 
-// ==========================================
-// 2. FUNZIONI DI SUPPORTO
-// ==========================================
-
 function ultraNormalizeTitle(t) {
     if (!t) return "";
     return t.toLowerCase()
@@ -41,7 +31,6 @@ function ultraNormalizeTitle(t) {
         .replace(/\s+/g, " ").trim(); 
 }
 
-// Converte Romani <-> Arabi (Fondamentale per Black Phone 2 vs II)
 function getNumericVariants(title) {
     const romanMap = { " 1 ": " i ", " 2 ": " ii ", " 3 ": " iii ", " 4 ": " iv ", " 5 ": " v ", " 6 ": " vi ", " 7 ": " vii " };
     const arabicMap = { " i ": " 1 ", " ii ": " 2 ", " iii ": " 3 ", " iv ": " 4 ", " v ": " 5 ", " vi ": " 6 ", " vii ": " 7 " };
@@ -81,26 +70,18 @@ function commonWordsOnly(text) {
     return text.split(" ").every(w => commons.includes(w.toLowerCase()));
 }
 
-// ==========================================
-// 3. GENERATORE QUERY ULTRA (LOGICA IBRIDA)
-// ==========================================
-
 function generateSmartQueries(meta, dynamicAliases = [], allowEng = false) {
     const { title, originalTitle, year, season, episode, isSeries } = meta;
     
-    // Normalizzazione
     const cleanTitle = ultraNormalizeTitle(title);
     const cleanOriginal = originalTitle ? ultraNormalizeTitle(originalTitle) : "";
     
-    // Set separati per garantire priorità
     let itaTitles = new Set();
     let engTitles = new Set();
     
-    // Funzione helper per aggiungere ai set corretti
     const addVariants = (t) => {
         if (!t || t.length < 2) return;
         
-        // Varianti base
         itaTitles.add(t);
         if (allowEng) engTitles.add(t);
 
@@ -128,7 +109,6 @@ function generateSmartQueries(meta, dynamicAliases = [], allowEng = false) {
     addVariants(cleanTitle);
     addVariants(cleanOriginal);
 
-    // Dynamic Aliases
     if (dynamicAliases && dynamicAliases.length > 0) {
         dynamicAliases.forEach(alias => {
             const ca = ultraNormalizeTitle(alias);
@@ -136,18 +116,15 @@ function generateSmartQueries(meta, dynamicAliases = [], allowEng = false) {
         });
     }
 
-    // Static Aliases
     [...itaTitles].forEach(t => {
         autoExpandAliases(t).forEach(a => addVariants(a));
     });
 
-    // --- GENERAZIONE QUERY ---
     let finalQueries = [];
     const sStr = season ? String(season).padStart(2, "0") : "";
     const eStr = episode ? String(episode).padStart(2, "0") : "";
     const langSuffix = "ITA"; 
 
-    // 1. GENERIAMO PRIMA TUTTE LE QUERY ITA (PRIORITÀ ASSOLUTA)
     let itaQueries = new Set();
     itaTitles.forEach(t => {
         if (isSeries) {
@@ -161,7 +138,7 @@ function generateSmartQueries(meta, dynamicAliases = [], allowEng = false) {
             itaQueries.add(`${t} S${sStr} ${langSuffix}`);
         } else {
             itaQueries.add(`${t} ${year} ${langSuffix}`);
-            itaQueries.add(`${t} ${langSuffix}`); // Black Phone ITA
+            itaQueries.add(`${t} ${langSuffix}`); 
             if (year) {
                 const yNum = parseInt(year);
                 itaQueries.add(`${t} ${yNum - 1} ${langSuffix}`);
@@ -169,10 +146,8 @@ function generateSmartQueries(meta, dynamicAliases = [], allowEng = false) {
             }
         }
     });
-    // Converti e ordina ITA
     finalQueries.push(...Array.from(itaQueries).sort((a, b) => b.length - a.length));
 
-    // 2. SE L'UTENTE VUOLE INGLESE
     if (allowEng) {
         let engQueries = new Set();
         engTitles.forEach(t => {
@@ -188,7 +163,7 @@ function generateSmartQueries(meta, dynamicAliases = [], allowEng = false) {
                 if (t.length >= 3 && !commonWordsOnly(t)) engQueries.add(t);
             }
         });
-        // Aggiungiamo le query ENG alla fine della lista
+
         finalQueries.push(...Array.from(engQueries).sort((a, b) => b.length - a.length));
     }
 
