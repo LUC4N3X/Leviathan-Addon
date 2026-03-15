@@ -5,7 +5,6 @@ const cloudscraper = require("cloudscraper");
 const pLimit = require("p-limit");
 const he = require("he"); 
 
-// --- CONFIGURAZIONE AVANZATA BROWSER (FOCUS SAFARI) ---
 const BROWSER_PROFILES = [
     {
         name: "Safari macOS",
@@ -48,7 +47,6 @@ const BROWSER_PROFILES = [
     }
 ];
 
-// --- CONFIGURAZIONE CENTRALE ---
 const CONFIG = {
     TIMEOUT: 12000,      
     TIMEOUT_API: 8000,   
@@ -69,7 +67,6 @@ const CONFIG = {
     HTTPS_AGENT_OPTIONS: { rejectUnauthorized: false, keepAlive: true } 
 };
 
-// --- UTILS & HELPERS ---
 const httpsAgent = new https.Agent(CONFIG.HTTPS_AGENT_OPTIONS);
 
 const withTimeout = (promise, ms) => Promise.race([
@@ -188,10 +185,6 @@ async function requestHtml(url, config = {}, retries = 1) {
     }
 }
 
-// ==========================================
-//  MOTORI DI RICERCA
-// ==========================================
-
 async function searchCorsaro(title, year, type, reqSeason, reqEpisode, options = {}) {
     console.log(`[IlCorsaroNero] Avvio ricerca per: ${title}...`);
     try {
@@ -242,30 +235,28 @@ async function searchCorsaro(title, year, type, reqSeason, reqEpisode, options =
     } catch { return []; }
 }
 
-// === AGGIORNATA COME AIOSTREAMS (index.js) ===
 async function searchKnaben(title, year, type, reqSeason, reqEpisode, options = {}) {
     console.log(`[Knaben] Avvio ricerca per: ${title}...`);
     try {
         let query = clean(title);
         if (!options.allowEng && !query.toUpperCase().includes("ITA")) query += " ITA";
 
-        // Determina le categorie in base al tipo come AIOStreams
         const categories = [];
         if (type === 'movie') {
-            categories.push(3000000); // Movies
+            categories.push(3000000); 
         } else if (type === 'series' || type === 'tv') {
             categories.push(2000000); // TV
         } else if (type === 'anime') {
-            categories.push(6000000, 2000000); // Anime & TV
+            categories.push(6000000, 2000000); 
         }
 
         const payload = { 
             "query": query, 
-            "search_type": "100%", // <-- FORZA LA QUALITÀ DEI MATCH
+            "search_type": "100%", 
             "search_field": "title", 
-            "size": 300,           // <-- MAX RISULTATI
+            "size": 300,           
             "from": 0,
-            "hide_unsafe": false,  // <-- NON FILTRARE TROPPO RIGIDAMENTE
+            "hide_unsafe": false,  
             "hide_xxx": true 
         };
 
@@ -280,29 +271,24 @@ async function searchKnaben(title, year, type, reqSeason, reqEpisode, options = 
             return [];
         }
         
-        // Categorie da escludere (blacklist identica a AIOStreams)
-        const KNABEN_BLACKLISTED_CATEGORIES = [6006000, 6007000, 6005000]; // AnimeLiterature, AnimeMusic, AnimeMusicVideo
+        const KNABEN_BLACKLISTED_CATEGORIES = [6006000, 6007000, 6005000]; 
 
         const results = data.hits.map(hit => {
             if (!hit.title) return null;
 
-            // Salta categorie blacklistate
             if (hit.categoryId && KNABEN_BLACKLISTED_CATEGORIES.some(cat => hit.categoryId.includes(cat))) {
                 return null;
             }
 
-            // Estrai hash (come AIOStreams: usa hash o magnetUrl)
             let hash = hit.hash?.toLowerCase() || (hit.magnetUrl ? hit.magnetUrl.match(/btih:([a-fA-F0-9]{40})/i)?.[1]?.toLowerCase() : null);
             let magnetLink = hit.magnetUrl;
 
-            // Se non c'è magnetUrl ma c'è l'hash, lo costruiamo (comune in Knaben)
             if (!magnetLink && hash) {
                 magnetLink = `magnet:?xt=urn:btih:${hash}`;
             }
 
             if (!magnetLink) return null;
 
-            // Validazione ITA e anno
             if (isValidResult(hit.title, options.allowEng) && checkYear(hit.title, year, type) && isCorrectFormat(hit.title, reqSeason, reqEpisode)) {
                 const sizeInBytes = hit.bytes || 0;
                 return { 
@@ -573,10 +559,6 @@ async function searchUindex(title, year, type, reqSeason, reqEpisode, options = 
         return results;
     } catch { return []; }
 }
-
-// ==========================================
-//  MAIN AGGREGATOR
-// ==========================================
 
 const ACTIVE_ENGINES = [
     searchCorsaro,
