@@ -45,6 +45,8 @@ const logger = winston.createLogger({
 
 const myCache = new NodeCache({ stdTTL: 1800, checkperiod: 120, maxKeys: 5000 });
 const rawCache = new NodeCache({ stdTTL: 43200, checkperiod: 600, maxKeys: 15000 });
+const cloudBuildCache = new NodeCache({ stdTTL: 900, checkperiod: 60, maxKeys: 5000 });
+const cloudBuildInflight = new Map();
 
 const Cache = {
     getCachedMagnets: async (key) => { return myCache.get(`magnets:${key}`) || null; },
@@ -55,6 +57,10 @@ const Cache = {
         return data || null;
     },
     cacheStream: async (key, value, ttl = 1800) => { myCache.set(`stream:${key}`, value, ttl); },
+    getLazyLink: async (key) => myCache.get(`lazy:${key}`) || null,
+    cacheLazyLink: async (key, value, ttl = 120) => { myCache.set(`lazy:${key}`, value, ttl); },
+    getCloudBuild: async (key) => cloudBuildCache.get(`cloud:${key}`) || null,
+    setCloudBuild: async (key, value, ttl = 900) => { cloudBuildCache.set(`cloud:${key}`, value, ttl); },
     listKeys: async () => myCache.keys(),
     deleteKey: async (key) => myCache.del(key),
     flushAll: async () => { myCache.flushAll(); rawCache.flushAll(); },
@@ -698,8 +704,8 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
         }
 
         let streamData = null;
-        if (service === 'rd') streamData = await RD.getStreamLink(apiKey, item.magnet, item.season, item.episode);
-        else if (service === 'ad') streamData = await AD.getStreamLink(apiKey, item.magnet, item.season, item.episode);
+        if (service === 'rd') streamData = await RD.getStreamLink(apiKey, item.magnet, item.season, item.episode, item.fileIdx);
+        else if (service === 'ad') streamData = await AD.getStreamLink(apiKey, item.magnet, item.season, item.episode, item.fileIdx);
 
         if (!streamData || (streamData.type === "ready" && streamData.size < CONFIG.REAL_SIZE_FILTER)) return null;
 
@@ -1482,6 +1488,12 @@ app.get("/:conf/play_lazy/:service/:hash/:fileIdx", async (req, res) => {
             fileIdx: parseInt(fileIdx) === -1 ? undefined : parseInt(fileIdx),
             magnet: magnet 
         };
+        const lazyCacheKey = `${service}:${item.hash}:${item.season || 0}:${item.episode || 0}:${item.fileIdx !== undefined ? item.fileIdx : -1}`;
+        const cachedLazy = await Cache.getLazyLink(lazyCacheKey);
+        if (cachedLazy && cachedLazy.url) {
+            return res.redirect(cachedLazy.url);
+        }
+
         let streamData = null;
         if (service === 'tb') {
              const tbFileIdx = item.fileIdx !== undefined ? String(item.fileIdx) : undefined;
@@ -1490,13 +1502,14 @@ app.get("/:conf/play_lazy/:service/:hash/:fileIdx", async (req, res) => {
              streamData = await TB.getStreamLink(apiKey, item.magnet, tbS, tbE, item.hash, tbFileIdx);
         }
         else if (service === 'rd') {
-            streamData = await RD.getStreamLink(apiKey, item.magnet, item.season, item.episode);
+            streamData = await LIMITERS.rd.schedule(() => RD.getStreamLink(apiKey, item.magnet, item.season, item.episode, item.fileIdx));
         }
         else if (service === 'ad') {
             const safeFileIdx = item.fileIdx !== undefined ? item.fileIdx : 0;
-            streamData = await AD.getStreamLink(apiKey, item.magnet, item.season, item.episode, safeFileIdx);
+            streamData = await LIMITERS.rd.schedule(() => AD.getStreamLink(apiKey, item.magnet, item.season, item.episode, safeFileIdx));
         }
         if (streamData && streamData.url) {
+            await Cache.cacheLazyLink(lazyCacheKey, streamData, 180);
             if (config.mediaflow && config.mediaflow.proxyDebrid && config.mediaflow.url) {
                 try {
                     const mfpBase = config.mediaflow.url.replace(/\/$/, '');
@@ -1528,31 +1541,21 @@ app.get("/:conf/add_to_cloud/:hash", async (req, res) => {
     try {
         const config = getConfig(conf);
         const apiKey = config.key || config.rd;
-        const service = config.service || 'rd';
+        const service = String(config.service || 'rd').toLowerCase();
         if (!apiKey) return res.status(400).send("API Key mancante.");
-        logger.info(`📥 [CACHE BUILDER] Richiesta aggiunta hash ${hash} su ${service.toUpperCase()}`);
-        if (service === 'rd') {
-            await axios.post("https://api.real-debrid.com/rest/1.0/torrents/addMagnet", 
-                `magnet=magnet:?xt=urn:btih:${hash}`, {
-                headers: { "Authorization": `Bearer ${apiKey}` }
-            });
-        } 
-        else if (service === 'ad') {
-            await axios.get("https://api.alldebrid.com/v4/magnet/upload", {
-                params: { agent: "leviathan", apikey: apiKey, magnet: `magnet:?xt=urn:btih:${hash}` }
-            });
+
+        const buildKey = getBuildKey(service, hash, apiKey);
+        const recentBuild = await Cache.getCloudBuild(buildKey);
+        const now = Date.now();
+        const isRecent = recentBuild && (now - Number(recentBuild.queuedAt || 0) < 120000) && ['queued', 'submitted'].includes(recentBuild.status);
+
+        if (isRecent) {
+            logger.info(`📥 [CACHE BUILDER] Già in coda ${hash} su ${service.toUpperCase()} - salto duplicato`);
+        } else {
+            logger.info(`📥 [CACHE BUILDER] Richiesta aggiunta hash ${hash} su ${service.toUpperCase()}`);
+            await queueCloudBuild(service, hash, apiKey);
         }
-        else if (service === 'tb') {
-             await axios.post("https://api.torbox.app/v1/api/torrents/createtorrent", 
-                { magnet: `magnet:?xt=urn:btih:${hash}`, seed: '1', allow_zip: 'false' }, 
-                {
-                    headers: { 
-                        "Authorization": `Bearer ${apiKey}`,
-                        "Content-Type": "application/x-www-form-urlencoded"
-                    }
-                }
-            );
-        }
+
         const protocol = req.headers['x-forwarded-proto'] || req.protocol;
         const host = `${protocol}://${req.get('host')}`;
         const feedbackVideoUrl = `${host}/confirmed.mp4`;
@@ -1676,6 +1679,76 @@ app.get("/:conf/stream/:type/:id.json", async (req, res) => {
         return res.status(400).json({ streams: [] });
     }
 });
+
+function getBuildKey(service, hash, apiKey) {
+    const tokenSig = crypto.createHash("sha1").update(String(apiKey || "")).digest("hex").slice(0, 12);
+    return `${String(service || "").toLowerCase()}:${String(hash || "").toUpperCase()}:${tokenSig}`;
+}
+
+function buildTrackerMagnet(hash) {
+    const trackers = [
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://open.demonoid.ch:6969/announce",
+        "udp://open.demonii.com:1337/announce",
+        "udp://open.stealth.si:80/announce",
+        "udp://tracker.torrent.eu.org:451/announce",
+        "udp://tracker.therarbg.to:6969/announce",
+        "udp://tracker.doko.moe:6969/announce",
+        "udp://opentracker.i2p.rocks:6969/announce",
+        "udp://exodus.desync.com:6969/announce",
+        "udp://tracker.moeking.me:6969/announce"
+    ];
+    const trackerStr = trackers.map(tr => `&tr=${encodeURIComponent(tr)}`).join("");
+    return `magnet:?xt=urn:btih:${String(hash || "").toUpperCase()}${trackerStr}`;
+}
+
+async function queueCloudBuild(service, hash, apiKey) {
+    const buildKey = getBuildKey(service, hash, apiKey);
+    const existingPromise = cloudBuildInflight.get(buildKey);
+    if (existingPromise) return existingPromise;
+
+    const task = (async () => {
+        const magnet = buildTrackerMagnet(hash);
+        await Cache.setCloudBuild(buildKey, { status: 'queued', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now() }, 900);
+
+        if (service === 'rd') {
+            await axios.post("https://api.real-debrid.com/rest/1.0/torrents/addMagnet", `magnet=${encodeURIComponent(magnet)}`, {
+                headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/x-www-form-urlencoded" }
+            });
+        } else if (service === 'ad') {
+            await axios.get("https://api.alldebrid.com/v4/magnet/upload", {
+                params: { agent: "leviathan", apikey: apiKey, magnet }
+            });
+        } else if (service === 'tb') {
+            const body = new URLSearchParams();
+            body.append('magnet', magnet);
+            body.append('seed', '1');
+            body.append('allow_zip', 'false');
+            await axios.post("https://api.torbox.app/v1/api/torrents/createtorrent", body.toString(), {
+                headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/x-www-form-urlencoded" }
+            });
+        }
+
+        await Cache.setCloudBuild(buildKey, { status: 'submitted', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now() }, 900);
+        return { ok: true, duplicate: false };
+    })().catch(async (err) => {
+        const status = err?.response?.status;
+        const body = err?.response?.data;
+        const msg = typeof body === 'string' ? body : JSON.stringify(body || {});
+        const duplicateLike = status === 409 || /already|duplicate|exists|same magnet|in progress/i.test(`${err.message} ${msg}`);
+        if (duplicateLike) {
+            await Cache.setCloudBuild(buildKey, { status: 'submitted', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now(), duplicate: true }, 900);
+            return { ok: true, duplicate: true };
+        }
+        await Cache.setCloudBuild(buildKey, { status: 'error', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now(), error: err.message }, 120);
+        throw err;
+    }).finally(() => {
+        cloudBuildInflight.delete(buildKey);
+    });
+
+    cloudBuildInflight.set(buildKey, task);
+    return task;
+}
 
 function getConfig(configStr) {
   try {
