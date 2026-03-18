@@ -152,28 +152,285 @@ const languageMapping = {
   'multi audio': '🌍 MULTI'
 };
 
+
+function normalizeLanguageName(lang) {
+    const value = String(lang || '').trim().toLowerCase();
+    if (!value) return null;
+    const aliasMap = {
+        'ita': 'Italian',
+        'it': 'Italian',
+        'italian': 'Italian',
+        'italiano': 'Italian',
+        'eng': 'English',
+        'en': 'English',
+        'english': 'English',
+        'jpn': 'Japanese',
+        'jp': 'Japanese',
+        'ja': 'Japanese',
+        'japanese': 'Japanese',
+        'fra': 'French',
+        'fre': 'French',
+        'fr': 'French',
+        'french': 'French',
+        'ger': 'German',
+        'deu': 'German',
+        'de': 'German',
+        'german': 'German',
+        'esp': 'Spanish',
+        'spa': 'Spanish',
+        'es': 'Spanish',
+        'spanish': 'Spanish',
+        'rus': 'Russian',
+        'ru': 'Russian',
+        'russian': 'Russian',
+        'multi': 'Multi',
+        'multi audio': 'Multi',
+        'dual audio': 'Dual Audio',
+        'dual': 'Dual Audio'
+    };
+    return aliasMap[value] || (value.charAt(0).toUpperCase() + value.slice(1));
+}
+
 function parseTitleDetails(filename) {
-    if (!filename) return { quality: 'SD', tags: '', languages: [] };
+    if (!filename) {
+        return { quality: 'SD', tags: '', languages: [], rawLanguages: [], cleanTitle: '' };
+    }
     try {
         const info = ptt.parse(filename);
         const codec = info.codec ? info.codec.toUpperCase() : '';
         const audio = info.audio ? info.audio.toUpperCase() : '';
         const source = info.source ? info.source.toUpperCase() : '';
-        
-        let languages = [];
-        if (info.languages && Array.isArray(info.languages)) {
-            languages = info.languages.map(l => languageMapping[l] || l.substring(0,3).toUpperCase());
-        }
+
+        const rawLanguages = Array.isArray(info.languages)
+            ? Array.from(new Set(info.languages.map(normalizeLanguageName).filter(Boolean)))
+            : [];
+
+        const displayLanguages = rawLanguages.map(l => languageMapping[l.toLowerCase()] || l.substring(0, 3).toUpperCase());
 
         return {
             quality: info.resolution || 'SD',
-            tags: [source, codec, audio].filter(x => x).join(' '),
-            languages: languages,
-            cleanTitle: info.title
+            tags: [source, codec, audio].filter(Boolean).join(' '),
+            languages: displayLanguages,
+            rawLanguages,
+            cleanTitle: info.title || ''
         };
     } catch (e) {
-        return { quality: 'SD', tags: '', languages: [] };
+        return { quality: 'SD', tags: '', languages: [], rawLanguages: [], cleanTitle: '' };
     }
+}
+
+function stripVisualPrefixes(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/^[^a-zA-Z0-9]+/, '')
+        .replace(/[\u{1F300}-\u{1FAFF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '')
+        .trim();
+}
+
+function normalizeSearchText(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s.-]/gu, ' ')
+        .replace(/[\._\-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function isItalianByTitleMatch(title, italianMovieTitle = null) {
+    if (!title || !italianMovieTitle) return false;
+    const normalizedTorrentTitle = normalizeSearchText(title);
+    const italianWords = normalizeSearchText(italianMovieTitle)
+        .split(' ')
+        .filter(word => word.length > 2)
+        .filter(word => !['del', 'al', 'dal', 'nel', 'sul', 'un', 'il', 'lo', 'la', 'gli', 'le', 'con', 'per', 'che', 'non'].includes(word));
+
+    if (italianWords.length === 0) return false;
+    const matchingWords = italianWords.filter(word => normalizedTorrentTitle.includes(word));
+    return (matchingWords.length / italianWords.length) > 0.6;
+}
+
+function isTrustedSource(source, provider = null) {
+    const stripPrefix = (str) => stripVisualPrefixes(str || '').toLowerCase();
+    const s = stripPrefix(source);
+    const p = stripPrefix(provider);
+
+    if (/\bcustom\b/i.test(s) || /\bcustom\b/i.test(p)) return true;
+    if (/corsaro/i.test(s) || /corsaro/i.test(p)) return true;
+
+    const mainSource = s.split('(')[0].trim();
+    const mainProvider = p.split('(')[0].trim();
+
+    if (/^torrentio$/i.test(mainSource) || /^torrentio$/i.test(mainProvider)) return true;
+    return false;
+}
+
+function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedInfo = null) {
+    if (!title) {
+        return { icon: '', isItalian: false, isMulti: false, displayLabel: '', detectedLanguages: [] };
+    }
+
+    const detectedLanguages = [];
+    const pushLanguage = (lang) => {
+        const normalized = normalizeLanguageName(lang);
+        if (normalized && !detectedLanguages.includes(normalized)) {
+            detectedLanguages.push(normalized);
+        }
+    };
+
+    if (parsedInfo?.rawLanguages?.length > 0) {
+        parsedInfo.rawLanguages.forEach(pushLanguage);
+    } else {
+        if (/\b(ita|italian|italiano)\b/i.test(title) && !REGEX_SUB_ONLY.test(title)) pushLanguage('Italian');
+        if (/\b(eng|english)\b/i.test(title) && !/\b(eng|english)[.\s\-_]?sub/i.test(title)) pushLanguage('English');
+        if (/\b(multi)\b/i.test(title) && !/\b(multi)[.\s\-_]?sub/i.test(title)) pushLanguage('Multi');
+        if (/\b(dual)\b/i.test(title) && !/\b(dual)[.\s\-_]?sub/i.test(title)) pushLanguage('Dual Audio');
+        if (/\b(jpn|japanese)\b/i.test(title)) pushLanguage('Japanese');
+        if (/\b(fra|french)\b/i.test(title)) pushLanguage('French');
+        if (/\b(ger|german)\b/i.test(title)) pushLanguage('German');
+        if (/\b(esp|spanish)\b/i.test(title)) pushLanguage('Spanish');
+    }
+
+    let hasIta = detectedLanguages.includes('Italian');
+    const hasEng = detectedLanguages.includes('English');
+    const hasMulti = detectedLanguages.includes('Multi') || detectedLanguages.includes('Dual Audio');
+
+    if (!hasIta && (REGEX_TRUSTED_GROUPS.test(title) || REGEX_STRONG_ITA.test(title) || REGEX_MULTI_ITA.test(title) || REGEX_CONTEXT_IT.test(title))) {
+        hasIta = true;
+    }
+    if (!hasIta && REGEX_ISOLATED_IT.test(title) && !REGEX_FALSE_IT.test(title)) {
+        hasIta = true;
+    }
+    if (!hasIta && italianMovieTitle) {
+        hasIta = isItalianByTitleMatch(title, italianMovieTitle);
+    }
+    if (source && isTrustedSource(source, null)) {
+        hasIta = true;
+    }
+
+    if (hasIta && hasEng) {
+        return { icon: '🇮🇹 🇬🇧', isItalian: true, isMulti: true, displayLabel: '🇮🇹 🇬🇧', detectedLanguages };
+    }
+    if (hasIta) {
+        return { icon: '🇮🇹', isItalian: true, isMulti: hasMulti, displayLabel: '🇮🇹', detectedLanguages };
+    }
+    if (hasMulti) {
+        return { icon: '🌈', isItalian: false, isMulti: true, displayLabel: '🌈 MULTI', detectedLanguages };
+    }
+    if (hasEng) {
+        return { icon: '🇬🇧', isItalian: false, isMulti: false, displayLabel: '🇬🇧', detectedLanguages };
+    }
+    if (detectedLanguages.length > 0) {
+        return { icon: '🌐', isItalian: false, isMulti: false, displayLabel: '🌐', detectedLanguages };
+    }
+    return { icon: '', isItalian: false, isMulti: false, displayLabel: '', detectedLanguages };
+}
+
+function formatLanguageLabel(languageInfo, fallbackLanguages = []) {
+    if (languageInfo?.isItalian && languageInfo?.isMulti) return '🇮🇹/🌍 MULTI';
+    if (languageInfo?.isItalian) return '🇮🇹 ITA';
+    if (languageInfo?.isMulti) return '🌍 MULTI';
+    if (languageInfo?.displayLabel === '🇬🇧') return '🇬🇧 ENG';
+    if (languageInfo?.displayLabel) return languageInfo.displayLabel;
+    return (fallbackLanguages && fallbackLanguages.length > 0) ? fallbackLanguages.join('/') : '🇬🇧/Unknown';
+}
+
+function isSeasonPack(title) {
+    if (!title) return false;
+    const lowerTitle = String(title).toLowerCase();
+
+    if (/s\d{1,2}e\d{1,2}/i.test(lowerTitle)) return false;
+
+    const packPatterns = [
+        /stagion[ei]\s*\d+\s*[-–—]\s*\d+/i,
+        /season\s*\d+\s*[-–—]\s*\d+/i,
+        /s\d+\s*[-–—]\s*s?\d+/i,
+        /completa/i,
+        /complete/i,
+        /integrale/i,
+        /collection/i,
+        /\bpack\b/i,
+        /stagion[ei]\s*\d+/i,
+        /season\s*\d+/i,
+        /\.s\d{1,2}\./i,
+        /\.s\d{1,2}$/i,
+        /\bs\d{1,2}(?!e)\b/i,
+        /\bs\d{1,2}\./i,
+        /\btutta\b/i
+    ];
+
+    return packPatterns.some(pattern => pattern.test(lowerTitle));
+}
+
+function isGoodShortQueryMatch(torrentTitle, searchQuery) {
+    const cleanedSearchQuery = normalizeSearchText(searchQuery).replace(/\s\(\d{4}\)$/, '').trim();
+
+    if (cleanedSearchQuery.length > 8 || cleanedSearchQuery.length < 2) {
+        return true;
+    }
+
+    const normalizedTorrentTitle = normalizeSearchText(torrentTitle);
+    const searchWords = new Set(cleanedSearchQuery.split(' ').filter(Boolean));
+
+    for (const word of searchWords) {
+        const wordRegex = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+        if (!wordRegex.test(normalizedTorrentTitle)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function chooseBestPackTitle(item, resolvedPackName = null, siblingStreams = []) {
+    const sameHashStreams = siblingStreams.filter(stream =>
+        (stream.hash || stream.infoHash || '').toLowerCase() === (item.hash || item.infoHash || '').toLowerCase()
+    );
+
+    const torrentioStream = sameHashStreams.find(stream =>
+        (stream.source || stream.name || '').includes('Torrentio') && String(stream.title || '').includes('📁')
+    );
+    if (torrentioStream) {
+        const firstLine = String(torrentioStream.title || '').split('\n')[0] || '';
+        const clean = stripVisualPrefixes(firstLine);
+        if (clean && clean.length > 5) return { title: clean, source: 'Torrentio' };
+    }
+
+    const mediafusionStream = sameHashStreams.find(stream =>
+        (stream.source || stream.name || '').includes('MediaFusion') && String(stream.title || '').includes('┈➤')
+    );
+    if (mediafusionStream) {
+        const packPart = String(mediafusionStream.title || '').split('┈➤')[0].replace('📂', '').trim();
+        const clean = stripVisualPrefixes(packPart);
+        if (clean && clean.length > 5) return { title: clean, source: 'MediaFusion' };
+    }
+
+    const scraperTitle = stripVisualPrefixes(item.title || '');
+    if (scraperTitle && scraperTitle.length > 5 && !/^Season \d+$/i.test(scraperTitle) && !/^Stagione \d+$/i.test(scraperTitle)) {
+        return { title: scraperTitle, source: 'Scraper' };
+    }
+
+    if (resolvedPackName && resolvedPackName.length > 5) {
+        return { title: stripVisualPrefixes(resolvedPackName), source: 'Debrid' };
+    }
+
+    return { title: scraperTitle || stripVisualPrefixes(resolvedPackName) || item.title || 'Unknown Pack', source: 'Fallback' };
+}
+
+function shouldUpdatePackTitle(currentTitle, nextTitle) {
+    const curr = stripVisualPrefixes(currentTitle || '').toLowerCase();
+    const next = stripVisualPrefixes(nextTitle || '').toLowerCase();
+
+    if (!next || curr === next) {
+        return !!currentTitle && currentTitle !== nextTitle;
+    }
+    if (!/ita|multi/.test(next)) return false;
+    if (!/ita|multi/.test(curr)) return true;
+
+    const hasSeasonInfo = /s\d+|season|stagion|complete|episod/i.test(curr);
+    const isGenericRd = /^[\w\s]+\s*\[\d{4}[-–]\d{4}\]$/.test(stripVisualPrefixes(currentTitle || ''));
+    if (hasSeasonInfo && !isGenericRd) return false;
+
+    return true;
 }
 
 function base32ToHex(base32) {
@@ -272,7 +529,183 @@ function estimateSeeders(knownSeeders, infoHash) {
 const LIMITERS = {
   scraper: new Bottleneck({ maxConcurrent: 40, minTime: 10 }),
   rd: new Bottleneck({ maxConcurrent: 15, minTime: 200 }),
+  packResolver: new Bottleneck({ maxConcurrent: 1, minTime: 2000 }),
+  bgPackJobs: new Bottleneck({ maxConcurrent: 2, minTime: 25 }),
 };
+
+async function resolvePackWithBestEffort(item, config, meta, siblingStreams = []) {
+    if (!item || !item.hash) return null;
+
+    const resolverCalls = [];
+    const resolverContext = {
+        item,
+        config,
+        meta,
+        siblingStreams,
+        dbHelper,
+        logger,
+        RD,
+        TB
+    };
+
+    if (PackResolver && typeof PackResolver.resolvePackData === 'function') {
+        resolverCalls.push(() => PackResolver.resolvePackData(resolverContext));
+    }
+    if (PackResolver && typeof PackResolver.resolvePack === 'function') {
+        resolverCalls.push(() => PackResolver.resolvePack(resolverContext));
+    }
+    if (PackResolver && typeof PackResolver.resolve === 'function') {
+        resolverCalls.push(() => PackResolver.resolve(resolverContext));
+        resolverCalls.push(() => PackResolver.resolve(item, config, meta));
+    }
+    if (PackResolver && typeof PackResolver.getPackData === 'function') {
+        resolverCalls.push(() => PackResolver.getPackData(item.hash, config, meta));
+    }
+
+    for (const call of resolverCalls) {
+        try {
+            const resolved = await LIMITERS.packResolver.schedule(() => Promise.resolve(call()));
+            if (!resolved) continue;
+
+            const packName = resolved.filename || resolved.packName || resolved.pack_name || resolved.title || resolved.name || null;
+            const files = Array.isArray(resolved.files) ? resolved.files : (Array.isArray(resolved.videoFiles) ? resolved.videoFiles : []);
+            const bestTitleData = chooseBestPackTitle(item, packName, siblingStreams);
+
+            return {
+                title: bestTitleData.title,
+                titleSource: bestTitleData.source,
+                packName,
+                files,
+                raw: resolved
+            };
+        } catch (err) {
+            logger.warn(`⚠️ [PACK] Resolver error for ${item.hash}: ${err.message}`);
+        }
+    }
+
+    return null;
+}
+
+function extractSeasonEpisodeFromFilename(filename, defaultSeason = 1) {
+    const name = String(filename || '');
+    let match = name.match(/\bS(\d{1,2})E(\d{1,3})\b/i);
+    if (match) {
+        return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+    }
+
+    match = name.match(/\b(\d{1,2})x(\d{1,3})\b/i);
+    if (match) {
+        return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+    }
+
+    match = name.match(/\bE(?:P(?:ISODE)?)?\s*0?(\d{1,3})\b/i);
+    if (match) {
+        return { season: defaultSeason, episode: parseInt(match[1], 10) };
+    }
+
+    return null;
+}
+
+async function persistPackResolution(meta, item, resolved) {
+    if (!resolved || !dbHelper) return;
+
+    const infoHash = item.hash || item.infoHash;
+    if (!infoHash) return;
+
+    try {
+        if (resolved.title && resolved.title !== item.title && shouldUpdatePackTitle(item.title, resolved.title)) {
+            if (typeof dbHelper.updateTorrentTitle === 'function') {
+                await dbHelper.updateTorrentTitle(infoHash, resolved.title);
+            }
+        }
+    } catch (err) {
+        logger.warn(`⚠️ [PACK] updateTorrentTitle failed for ${infoHash}: ${err.message}`);
+    }
+
+    const files = Array.isArray(resolved.files) ? resolved.files : [];
+    if (files.length === 0) return;
+
+    const seasonFallback = Number(meta?.season) > 0 ? Number(meta.season) : 1;
+    const episodeFiles = [];
+    const packFiles = [];
+
+    for (const file of files) {
+        const filePath = file.path || file.filename || file.name || '';
+        const fileSize = Number(file.bytes || file.size || file.file_size || 0);
+        if (!filePath || fileSize < 50 * 1024 * 1024) continue;
+
+        const fileIndexRaw = file.id ?? file.file_index ?? file.index ?? file.fileIdx;
+        const fileIndex = fileIndexRaw !== undefined && fileIndexRaw !== null ? parseInt(fileIndexRaw, 10) : undefined;
+        const filename = filePath.split('/').pop();
+        const parsedEpisode = extractSeasonEpisodeFromFilename(filename, seasonFallback);
+
+        if (parsedEpisode && Number.isInteger(fileIndex)) {
+            episodeFiles.push({
+                info_hash: infoHash,
+                file_index: fileIndex,
+                title: filename,
+                size: fileSize,
+                imdb_id: meta?.imdb_id || null,
+                imdb_season: parsedEpisode.season,
+                imdb_episode: parsedEpisode.episode
+            });
+        } else if (Number.isInteger(fileIndex)) {
+            packFiles.push({
+                info_hash: infoHash,
+                file_index: fileIndex,
+                file_title: filename,
+                size: fileSize,
+                imdb_id: meta?.imdb_id || null,
+                title: resolved.title || item.title
+            });
+        }
+    }
+
+    try {
+        if (episodeFiles.length > 0 && typeof dbHelper.insertEpisodeFiles === 'function') {
+            await dbHelper.insertEpisodeFiles(episodeFiles);
+        }
+    } catch (err) {
+        logger.warn(`⚠️ [PACK] insertEpisodeFiles failed for ${infoHash}: ${err.message}`);
+    }
+
+    try {
+        if (packFiles.length > 0 && typeof dbHelper.insertPackFiles === 'function') {
+            await dbHelper.insertPackFiles(packFiles);
+        }
+    } catch (err) {
+        logger.warn(`⚠️ [PACK] insertPackFiles failed for ${infoHash}: ${err.message}`);
+    }
+}
+
+function resolvePackNamesInBackground(meta, results, config) {
+    if (!meta || !config || !Array.isArray(results) || results.length === 0) return;
+    const hasResolvableService = !!(
+        (config.service === 'rd' && (config.key || config.rd)) ||
+        (config.service === 'tb' && (config.key || config.rd || config.torbox || config.tb))
+    );
+    if (!hasResolvableService) return;
+
+    const packCandidates = results.filter(item => item && (item._isPack || isSeasonPack(item.title)));
+    if (packCandidates.length === 0) return;
+
+    LIMITERS.bgPackJobs.schedule(async () => {
+        for (const item of packCandidates) {
+            try {
+                const resolved = await resolvePackWithBestEffort(item, config, meta, results);
+                if (resolved) {
+                    await persistPackResolution(meta, item, resolved);
+                }
+            } catch (err) {
+                logger.warn(`⚠️ [PACK] Background processing failed for ${item.hash || item.infoHash}: ${err.message}`);
+            }
+        }
+    }).catch(err => {
+        logger.warn(`⚠️ [PACK] Background queue failed: ${err.message}`);
+    });
+}
+
+
 
 const SCRAPER_MODULES = [ require("./engines") ];
 
@@ -386,19 +819,9 @@ function filterByQualityLimit(results, limit) {
 
 function isSafeForItalian(item) {
   if (!item || !item.title) return false;
-  const t = item.title;
-  
-  if (REGEX_TRUSTED_GROUPS.test(t)) return true;
-  if (REGEX_STRONG_ITA.test(t)) return true;
-  if (REGEX_MULTI_ITA.test(t)) return true;
-  if (REGEX_CONTEXT_IT.test(t)) return true;
-  
-  if (REGEX_ISOLATED_IT.test(t)) {
-      if (REGEX_FALSE_IT.test(t)) return false;
-      return true;
-  }
-  
-  return false;
+  const parsedInfo = parseTitleDetails(item.title);
+  const langInfo = getLanguageInfo(item.title, null, item.source || item.provider || null, parsedInfo);
+  return !!langInfo.isItalian;
 }
 
 function validateStreamRequest(type, id) {
@@ -621,7 +1044,7 @@ async function getMetadata(id, type, config = {}) {
   }
 }
 
-function saveResultsToDbBackground(meta, results) {
+function saveResultsToDbBackground(meta, results, config = null) {
     if (!results || results.length === 0) return;
     (async () => {
         let savedCount = 0;
@@ -631,7 +1054,9 @@ function saveResultsToDbBackground(meta, results) {
                 title: item.title,
                 size: item._size || item.sizeBytes || 0,
                 seeders: item.seeders || 0,
-                provider: item.source || 'External'
+                provider: item.source || 'External',
+                file_index: item.fileIdx !== undefined ? item.fileIdx : undefined,
+                is_pack: item._isPack || isSeasonPack(item.title)
             };
             if (!torrentObj.info_hash) continue;
             const success = await dbHelper.insertTorrent(meta, torrentObj);
@@ -640,6 +1065,7 @@ function saveResultsToDbBackground(meta, results) {
         if (savedCount > 0) {
             console.log(`💾 [AUTO-LEARN] Salvati ${savedCount} nuovi torrent nel DB per ${meta.imdb_id}`);
         }
+        resolvePackNamesInBackground(meta, results, config);
     })().catch(err => console.error("❌ Errore background save:", err.message));
 }
 
@@ -652,7 +1078,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
         const isAIOActive = aioFormatter.isAIOStreamsEnabled(config);
 
         let displayTitle = item.title;
-        let isPack = item._isPack || /(?:complete|pack|season|stagione|tutta)/i.test(item.title);
+        let isPack = item._isPack || isSeasonPack(item.title);
         const isSeries = (meta?.season > 0 || meta?.episode > 0);
 
         if (isAIOActive && isPack && isSeries && meta) {
@@ -662,6 +1088,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
         }
 
         const details = parseTitleDetails(item.title);
+        const titleLanguage = getLanguageInfo(item.title, meta?.title, item.source, details);
 
         if (service === 'tb') {
             if (item._tbCached) {
@@ -684,7 +1111,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
                         title: aioFormatter.formatStreamTitle({
                             title: displayTitle,
                             size: formatBytes(realSize),
-                            language: isSafeForItalian(item) ? "🇮🇹 ITA" : (details.languages.join('/') || "🇬🇧/Unknown"),
+                            language: formatLanguageLabel(titleLanguage, details.languages),
                             source: item.source,
                             seeders: finalSeeders,
                             infoHash: item.hash, 
@@ -714,6 +1141,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
 
         const finalSeeders = estimateSeeders(item.seeders, item.hash);
         const fileDetails = parseTitleDetails(streamData.filename || item.title);
+        const fileLanguage = getLanguageInfo(streamData.filename || item.title, meta?.title, item.source, fileDetails);
 
         if (isAIOActive) {
              let quality = fileDetails.quality || "SD";
@@ -733,7 +1161,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
                 title: aioFormatter.formatStreamTitle({
                     title: displayTitle,
                     size: formatBytes(finalSize),
-                    language: isSafeForItalian(item) ? "🇮🇹 ITA" : (fileDetails.languages.join('/') || "🇬🇧/Unknown"),
+                    language: formatLanguageLabel(fileLanguage, fileDetails.languages),
                     source: item.source,
                     seeders: finalSeeders,
                     infoHash: item.hash,
@@ -760,7 +1188,7 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
     const service = config.service || 'rd';
     const serviceTag = service.toUpperCase();
     const isAIOActive = aioFormatter.isAIOStreamsEnabled(config); 
-    const isPack = item._isPack || /(?:complete|pack|season|stagione|tutta)/i.test(item.title);
+    const isPack = item._isPack || isSeasonPack(item.title);
     const isSeries = (meta.season > 0 || meta.episode > 0);
 
     let displayTitle = item.title;
@@ -780,6 +1208,7 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
 
     if (isAIOActive) {
         const details = parseTitleDetails(item.title);
+        const lazyLanguage = getLanguageInfo(item.title, meta?.title, item.source, details);
         let quality = details.quality || "SD";
         
         if (/4k|2160p/i.test(item.title)) quality = "4K";
@@ -799,7 +1228,7 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
         const titleStr = aioFormatter.formatStreamTitle({
             title: displayTitle, 
             size: formatBytes(realSize),
-            language: isSafeForItalian(item) ? "🇮🇹 ITA" : (details.languages.join('/') || "🇬🇧/Unknown"), 
+            language: formatLanguageLabel(lazyLanguage, details.languages), 
             source: item.source,
             seeders: finalSeeders,
             infoHash: item.hash,
@@ -864,20 +1293,21 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
                 sizeBytes: parseInt(t.size),
                 seeders: parseInt(t.seeders, 10) || 0,
                 source: providerName,
-                fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined
+                fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined,
+                _isPack: isSeasonPack(t.title)
             };
         });
 
         const langMode = config && config.filters ? (config.filters.language || (config.filters.allowEng ? "all" : "ita")) : "ita";
         
         return mapped.filter(item => {
-             const isCorsaro = /corsaro/i.test(item.source);
-             const isItalian = isSafeForItalian(item);
+             const parsedInfo = parseTitleDetails(item.title);
+             const langInfo = getLanguageInfo(item.title, null, item.source, parsedInfo);
 
              if (langMode === 'ita') {
-                 if (!isItalian && !isCorsaro) return false;
+                 if (!langInfo.isItalian) return false;
              } else if (langMode === 'eng') {
-                 if (isItalian) return false;
+                 if (langInfo.isItalian) return false;
              }
              return true;
         });
@@ -913,7 +1343,8 @@ async function fetchExternalResults(type, finalId, config) {
                         hash: i.infoHash || extractInfoHash(i.magnetLink),
                         infoHash: i.infoHash || extractInfoHash(i.magnetLink),
                         fileIdx: i.fileIdx,
-                        isExternal: true
+                        isExternal: true,
+                        _isPack: isSeasonPack(title)
                     };
                 });
             }),
@@ -980,34 +1411,21 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       const t = item.title; 
       const tLower = t.toLowerCase();
       
+      const parsedLangInfo = getLanguageInfo(t, meta.title, item.source, parseTitleDetails(t));
+
       if (langMode === "ita") {
-           const isTrustedGroup = REGEX_TRUSTED_GROUPS.test(t) || /\bcorsaro\b/i.test(source);
-           if (!isTrustedGroup) {
-               const hasStrongIta = REGEX_STRONG_ITA.test(t) || REGEX_MULTI_ITA.test(t);
-               const hasContextIt = REGEX_CONTEXT_IT.test(t);
-               let hasIsolatedIt = false;
-               if (REGEX_ISOLATED_IT.test(t)) {
-                   if (!REGEX_FALSE_IT.test(t)) hasIsolatedIt = true; 
-               }
+           if (!parsedLangInfo.isItalian) return false;
 
-               if (!hasStrongIta && !hasContextIt && !hasIsolatedIt) return false;
-
-               const looksLikeSubOnly = REGEX_SUB_ONLY.test(t);
-               const hasConfirmedAudio = REGEX_AUDIO_CONFIRM.test(t);
-               if (looksLikeSubOnly && !hasConfirmedAudio) {
-                   const cleanTitleNoSub = t.replace(REGEX_SUB_ONLY, ""); 
-                   const stillHasStrong = REGEX_STRONG_ITA.test(cleanTitleNoSub);
-                   const stillHasContext = REGEX_CONTEXT_IT.test(cleanTitleNoSub);
-                   if (!stillHasStrong && !stillHasContext) return false; 
-               }
+           const looksLikeSubOnly = REGEX_SUB_ONLY.test(t);
+           const hasConfirmedAudio = REGEX_AUDIO_CONFIRM.test(t);
+           if (looksLikeSubOnly && !hasConfirmedAudio) {
+               const cleanTitleNoSub = t.replace(REGEX_SUB_ONLY, "");
+               const langWithoutSub = getLanguageInfo(cleanTitleNoSub, meta.title, item.source, parseTitleDetails(cleanTitleNoSub));
+               if (!langWithoutSub.isItalian) return false;
            }
       }
       else if (langMode === "eng") {
-           const hasStrongIta = REGEX_STRONG_ITA.test(t) || REGEX_MULTI_ITA.test(t);
-           const hasContextIt = REGEX_CONTEXT_IT.test(t);
-           const isTrustedItaGroup = REGEX_TRUSTED_GROUPS.test(t);
-
-           if (hasStrongIta || hasContextIt || isTrustedItaGroup) return false;
+           if (parsedLangInfo.isItalian) return false;
       }
       
       const metaYear = parseInt(meta.year);
@@ -1021,6 +1439,18 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
                const fileYear = parseInt(fileYearMatch[0]);
                if (Math.abs(fileYear - metaYear) > 1) return false; 
            }
+      }
+
+      if (!meta.isSeries) {
+          const shortQueries = [meta.title, meta.originalTitle]
+              .filter(Boolean)
+              .map(q => normalizeSearchText(q))
+              .filter(q => q.length >= 2 && q.length <= 8);
+
+          if (shortQueries.length > 0) {
+              const matchedShortQuery = shortQueries.some(q => isGoodShortQueryMatch(item.title, q));
+              if (!matchedShortQuery) return false;
+          }
       }
 
       if (meta.isSeries) {
@@ -1050,7 +1480,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           const hasRightEpisode = new RegExp(`(?:e|x|ep|episode|^)\\s*0?${e}(?!\\d)`, 'i').test(tLower);
           
           const hasAnyEpisodeTag = /(?:e|x|ep|episode)\s*0?\d+/i.test(tLower);
-          const isExplicitPack = /(?:complete|pack|stagione\s*\d+\s*$|season\s*\d+\s*$|tutta|completa)/i.test(tLower);
+          const isExplicitPack = isSeasonPack(tLower);
           
           if (hasRightSeason && hasRightEpisode) return true;
           
@@ -1076,8 +1506,10 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
                const strictStartRegex = /^(the\s+|il\s+)?rip\b/i;
                return strictStartRegex.test(cleanFile);
           }
+          if (!isGoodShortQueryMatch(cleanFile, searchKeyword)) return false;
           if (searchKeyword.length <= 3) {
-              const regexShort = new RegExp(`\\b${searchKeyword}\\b`, 'i');
+              const escaped = searchKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const regexShort = new RegExp(`\\b${escaped}\\b`, 'i');
               return regexShort.test(cleanFile);
           }
           return cleanFile.includes(searchKeyword);
@@ -1161,7 +1593,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   }
 
   if (!dbOnlyMode) {
-      saveResultsToDbBackground(meta, cleanResults);
+      saveResultsToDbBackground(meta, cleanResults, config);
   }
 
   if (config.filters) {
