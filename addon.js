@@ -10,6 +10,16 @@ const rateLimit = require("express-rate-limit");
 const winston = require('winston');
 const NodeCache = require("node-cache");
 const ptt = require('parse-torrent-title'); 
+const http = require("http");
+const https = require("https");
+
+const DEFAULT_HTTP_TIMEOUT = Math.max(parseInt(process.env.HTTP_TIMEOUT_MS || "10000", 10) || 10000, 1000);
+const HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 128, maxFreeSockets: 32 });
+const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 128, maxFreeSockets: 32 });
+
+axios.defaults.timeout = DEFAULT_HTTP_TIMEOUT;
+axios.defaults.httpAgent = HTTP_AGENT;
+axios.defaults.httpsAgent = HTTPS_AGENT;
 
 const { fetchExternalAddonsFlat } = require("./external-addons");
 const PackResolver = require("./leviathan-pack-resolver");
@@ -47,6 +57,32 @@ const myCache = new NodeCache({ stdTTL: 1800, checkperiod: 120, maxKeys: 5000 })
 const rawCache = new NodeCache({ stdTTL: 43200, checkperiod: 600, maxKeys: 15000 });
 const cloudBuildCache = new NodeCache({ stdTTL: 900, checkperiod: 60, maxKeys: 5000 });
 const cloudBuildInflight = new Map();
+const sharedFetchInflight = new Map();
+const streamInflight = new Map();
+const metadataInflight = new Map();
+
+const EMPTY_FETCH_TTL = Math.max(parseInt(process.env.EMPTY_FETCH_TTL || "90", 10) || 90, 15);
+const EMPTY_STREAM_TTL = Math.max(parseInt(process.env.EMPTY_STREAM_TTL || "60", 10) || 60, 15);
+const METADATA_CACHE_TTL = Math.max(parseInt(process.env.METADATA_CACHE_TTL || "1800", 10) || 1800, 60);
+const MAX_CONFIG_LENGTH = Math.max(parseInt(process.env.MAX_CONFIG_LENGTH || "16384", 10) || 16384, 2048);
+const ADMIN_PASS = String(process.env.ADMIN_PASS || "").trim();
+
+function safeCompare(secretA, secretB) {
+    const a = Buffer.from(String(secretA || ""));
+    const b = Buffer.from(String(secretB || ""));
+    if (a.length === 0 || b.length === 0 || a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+}
+
+async function withSharedPromise(map, key, factory) {
+    if (map.has(key)) return map.get(key);
+    const task = Promise.resolve().then(factory).finally(() => {
+        map.delete(key);
+    });
+    map.set(key, task);
+    return task;
+}
+
 
 const Cache = {
     getCachedMagnets: async (key) => { return myCache.get(`magnets:${key}`) || null; },
@@ -57,6 +93,8 @@ const Cache = {
         return data || null;
     },
     cacheStream: async (key, value, ttl = 1800) => { myCache.set(`stream:${key}`, value, ttl); },
+    getMetadata: async (key) => myCache.get(`meta:${key}`) || null,
+    cacheMetadata: async (key, value, ttl = METADATA_CACHE_TTL) => { myCache.set(`meta:${key}`, value, ttl); },
     getLazyLink: async (key) => myCache.get(`lazy:${key}`) || null,
     cacheLazyLink: async (key, value, ttl = 120) => { myCache.set(`lazy:${key}`, value, ttl); },
     getCloudBuild: async (key) => cloudBuildCache.get(`cloud:${key}`) || null,
@@ -74,23 +112,29 @@ const Cache = {
         rawCache.set(`raw:${provider}:${id}`, value, ttl);
         logger.info(`💾 GLOBAL CACHE SET [${provider}]: ${id}`);
     },
-    
+
     fetchWithCache: async (provider, id, ttl, fetcherFunc) => {
         const cached = Cache.getRaw(provider, id);
-        if (cached) return cached;
+        if (cached !== null) return cached;
 
-        try {
-            const freshData = await fetcherFunc();
-            if (freshData && freshData.length > 0) {
-                Cache.setRaw(provider, id, freshData, ttl);
+        const inflightKey = `${provider}:${id}`;
+        return withSharedPromise(sharedFetchInflight, inflightKey, async () => {
+            const secondCacheHit = Cache.getRaw(provider, id);
+            if (secondCacheHit !== null) return secondCacheHit;
+
+            try {
+                const freshData = await fetcherFunc();
+                const normalized = Array.isArray(freshData) ? freshData : (freshData ? [freshData] : []);
+                Cache.setRaw(provider, id, normalized, normalized.length > 0 ? ttl : EMPTY_FETCH_TTL);
+                return normalized;
+            } catch (error) {
+                logger.warn(`⚠️ Errore Fetching [${provider}] per ${id}: ${error.message}`);
+                Cache.setRaw(provider, id, [], EMPTY_FETCH_TTL);
+                return [];
             }
-            return freshData || [];
-        } catch (error) {
-            logger.warn(`⚠️ Errore Fetching [${provider}] per ${id}: ${error.message}`);
-            return []; 
-        }
+        });
     }
-};
+}
 
 const { handleVixSynthetic } = require("./vix/vix_proxy");
 const { generateSmartQueries } = require("./ai_query");
@@ -730,7 +774,14 @@ const limiter = rateLimit({
 app.use(limiter);
 
 app.use(cors());
-app.use(express.json());
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  next();
+});
+app.use(express.json({ limit: process.env.JSON_LIMIT || "64kb" }));
+app.use(express.urlencoded({ extended: false, limit: process.env.URLENCODED_LIMIT || "32kb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 function parseSize(sizeText) {
@@ -926,7 +977,7 @@ function applyWebFormatter(streamList, sourceName, meta, config) {
 
 async function fetchTmdbMeta(tmdbId, type, userApiKey) {
     if (!tmdbId) return null;
-    const apiKey = (userApiKey && userApiKey.length > 1) ? userApiKey : "4b9dfb8b1c9f1720b5cd1d7efea1d845";
+    const apiKey = (userApiKey && userApiKey.length > 1) ? userApiKey : (process.env.TMDB_API_KEY || "4b9dfb8b1c9f1720b5cd1d7efea1d845");
     const endpoint = type === 'series' || type === 'tv' ? 'tv' : 'movie';
     const url = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${apiKey}&language=it-IT`;
     try {
@@ -939,109 +990,130 @@ async function fetchTmdbMeta(tmdbId, type, userApiKey) {
 }
 
 async function getMetadata(id, type, config = {}) {
-  try {
-    if (type === 'anime' || id.toString().startsWith('kitsu:')) {
-        let kitsuId = id.toString();
-        let season = 0;
-        let episode = 0;
-        
-        if (kitsuId.includes(':')) {
-            const parts = kitsuId.split(':');
-            kitsuId = parts[1]; 
-            if (parts.length > 2) {
-                episode = parseInt(parts[2]);
-            }
-        }
-        
-        const kitsuUrl = `${CONFIG.KITSU_URL}/meta/anime/kitsu:${kitsuId}.json`;
-        logger.info(`⛩️ [META] Fetching Kitsu (Direct): ${kitsuUrl}`);
+  const userTmdbKey = String(config?.tmdb || '');
+  const metadataCacheKey = `${type}:${id}:${userTmdbKey}`;
+  const cachedMeta = await Cache.getMetadata(metadataCacheKey);
+  if (cachedMeta) {
+    logger.info(`⚡ META CACHE HIT: ${metadataCacheKey}`);
+    return cachedMeta;
+  }
 
-        try {
-            const { data } = await axios.get(kitsuUrl, { timeout: CONFIG.TIMEOUTS.TMDB });
-            if (data && data.meta) {
-                const kMeta = data.meta;
-                const year = kMeta.year ? kMeta.year.split("–")[0] : (kMeta.releaseInfo ? kMeta.releaseInfo.substring(0,4) : "");
-                
-                return {
-                    title: kMeta.name,
-                    originalTitle: kMeta.name,
-                    year: year,
-                    imdb_id: kMeta.imdb_id || null, 
-                    kitsu_id: kitsuId, 
-                    isSeries: true, 
-                    season: 1, 
-                    episode: episode
-                };
-            }
-        } catch (e) {
-            logger.warn(`⚠️ Errore Metadata Kitsu: ${e.message} - Fallback sconsigliato ma tentiamo clean`);
-        }
-    }
+  return withSharedPromise(metadataInflight, metadataCacheKey, async () => {
+    const secondCacheHit = await Cache.getMetadata(metadataCacheKey);
+    if (secondCacheHit) return secondCacheHit;
 
-    const allowedTypes = ["movie", "series"];
-    const cleanType = (type === 'anime') ? 'series' : type;
-
-    if (!allowedTypes.includes(cleanType)) return null;
-
-    let imdbId = id; 
-    let season = 0; 
-    let episode = 0;
-
-    if (cleanType === "series" && id.includes(":")) {
-        const parts = id.split(":");
-        imdbId = parts[0];
-        season = parseInt(parts[1]);
-        episode = parseInt(parts[2]);
-    }
-    
-    const cleanId = imdbId.match(/^(tt\d+|\d+)$/i)?.[0] || imdbId;
-    if (!cleanId) return null;
+    let finalMeta = null;
 
     try {
-        const userTmdbKey = config.tmdb; 
-        const { tmdbId } = await imdbToTmdb(cleanId, userTmdbKey);
+      if (type === 'anime' || id.toString().startsWith('kitsu:')) {
+          let kitsuId = id.toString();
+          let episode = 0;
 
-        if (tmdbId) {
-            const tmdbData = await fetchTmdbMeta(tmdbId, cleanType, userTmdbKey);
-            if (tmdbData) {
-                const title = tmdbData.title || tmdbData.name;
-                const originalTitle = tmdbData.original_title || tmdbData.original_name;
-                const releaseDate = tmdbData.release_date || tmdbData.first_air_date;
-                const year = releaseDate ? releaseDate.split("-")[0] : "";
-                logger.info(`✅ [META] Usato TMDB (UserKey: ${!!userTmdbKey}): ${title} (${year}) [ID: ${tmdbId}] Orig: ${originalTitle}`);
-                return {
-                    title: title,
-                    originalTitle: originalTitle, 
-                    year: year,
-                    imdb_id: cleanId,
-                    tmdb_id: tmdbId, 
-                    isSeries: cleanType === "series",
-                    season: season,
-                    episode: episode
-                };
-            }
+          if (kitsuId.includes(':')) {
+              const parts = kitsuId.split(':');
+              kitsuId = parts[1];
+              if (parts.length > 2) {
+                  episode = parseInt(parts[2]);
+              }
+          }
+
+          const kitsuUrl = `${CONFIG.KITSU_URL}/meta/anime/kitsu:${kitsuId}.json`;
+          logger.info(`⛩️ [META] Fetching Kitsu (Direct): ${kitsuUrl}`);
+
+          try {
+              const { data } = await axios.get(kitsuUrl, { timeout: CONFIG.TIMEOUTS.TMDB });
+              if (data && data.meta) {
+                  const kMeta = data.meta;
+                  const year = kMeta.year ? kMeta.year.split("–")[0] : (kMeta.releaseInfo ? kMeta.releaseInfo.substring(0, 4) : "");
+
+                  finalMeta = {
+                      title: kMeta.name,
+                      originalTitle: kMeta.name,
+                      year: year,
+                      imdb_id: kMeta.imdb_id || null,
+                      kitsu_id: kitsuId,
+                      isSeries: true,
+                      season: 1,
+                      episode: episode
+                  };
+              }
+          } catch (e) {
+              logger.warn(`⚠️ Errore Metadata Kitsu: ${e.message} - Fallback sconsigliato ma tentiamo clean`);
+          }
+      }
+
+      if (!finalMeta) {
+        const allowedTypes = ["movie", "series"];
+        const cleanType = (type === 'anime') ? 'series' : type;
+
+        if (!allowedTypes.includes(cleanType)) return null;
+
+        let imdbId = id;
+        let season = 0;
+        let episode = 0;
+
+        if (cleanType === "series" && id.includes(":")) {
+            const parts = id.split(":");
+            imdbId = parts[0];
+            season = parseInt(parts[1]);
+            episode = parseInt(parts[2]);
         }
+
+        const cleanId = imdbId.match(/^(tt\d+|\d+)$/i)?.[0] || imdbId;
+        if (!cleanId) return null;
+
+        try {
+            const { tmdbId } = await imdbToTmdb(cleanId, userTmdbKey);
+
+            if (tmdbId) {
+                const tmdbData = await fetchTmdbMeta(tmdbId, cleanType, userTmdbKey);
+                if (tmdbData) {
+                    const title = tmdbData.title || tmdbData.name;
+                    const originalTitle = tmdbData.original_title || tmdbData.original_name;
+                    const releaseDate = tmdbData.release_date || tmdbData.first_air_date;
+                    const year = releaseDate ? releaseDate.split("-")[0] : "";
+                    logger.info(`✅ [META] Usato TMDB (UserKey: ${!!userTmdbKey}): ${title} (${year}) [ID: ${tmdbId}] Orig: ${originalTitle}`);
+                    finalMeta = {
+                        title: title,
+                        originalTitle: originalTitle,
+                        year: year,
+                        imdb_id: cleanId,
+                        tmdb_id: tmdbId,
+                        isSeries: cleanType === "series",
+                        season: season,
+                        episode: episode
+                    };
+                }
+            }
+        } catch (err) {
+            logger.warn(`⚠️ Errore Metadata TMDB, fallback a Cinemeta: ${err.message}`);
+        }
+
+        if (!finalMeta) {
+          logger.info(`ℹ️ [META] Fallback a Cinemeta per ${cleanId}`);
+          const { data: cData } = await axios.get(`${CONFIG.CINEMETA_URL}/meta/${cleanType}/${cleanId}.json`, { timeout: CONFIG.TIMEOUTS.TMDB }).catch(() => ({ data: {} }));
+
+          finalMeta = cData?.meta ? {
+            title: cData.meta.name,
+            originalTitle: cData.meta.name,
+            year: cData.meta.year?.split("–")[0],
+            imdb_id: cleanId,
+            isSeries: cleanType === "series",
+            season: season,
+            episode: episode
+          } : null;
+        }
+      }
     } catch (err) {
-        logger.warn(`⚠️ Errore Metadata TMDB, fallback a Cinemeta: ${err.message}`);
+      logger.error(`Errore getMetadata Critical: ${err.message}`);
+      finalMeta = null;
     }
 
-    logger.info(`ℹ️ [META] Fallback a Cinemeta per ${cleanId}`);
-    const { data: cData } = await axios.get(`${CONFIG.CINEMETA_URL}/meta/${cleanType}/${cleanId}.json`, { timeout: CONFIG.TIMEOUTS.TMDB }).catch(() => ({ data: {} }));
-    
-    return cData?.meta ? {
-      title: cData.meta.name,
-      originalTitle: cData.meta.name, 
-      year: cData.meta.year?.split("–")[0],
-      imdb_id: cleanId,
-      isSeries: cleanType === "series",
-      season: season,
-      episode: episode
-    } : null;
-
-  } catch (err) {
-    logger.error(`Errore getMetadata Critical: ${err.message}`);
-    return null;
-  }
+    if (finalMeta) {
+      await Cache.cacheMetadata(metadataCacheKey, finalMeta, METADATA_CACHE_TTL);
+    }
+    return finalMeta;
+  });
 }
 
 function saveResultsToDbBackground(meta, results, config = null) {
@@ -1380,6 +1452,10 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const cachedResult = await Cache.getCachedStream(cacheKey);
   if (cachedResult) return cachedResult;
 
+  return withSharedPromise(streamInflight, `stream:${cacheKey}`, async () => {
+  const cachedAgain = await Cache.getCachedStream(cacheKey);
+  if (cachedAgain) return cachedAgain;
+
   const userTmdbKey = config.tmdb; 
   let finalId = id.replace('ai-recs:', '');
   
@@ -1688,7 +1764,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   let debridStreams = [];
   
   if (ranked.length > 0 && hasDebridKey) {
-      let TOP_LIMIT = 0; 
+      const TOP_LIMIT = Math.max(0, Math.min(10, parseInt(config.filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0)); 
       
       const topItems = ranked.slice(0, TOP_LIMIT);
       const lazyItems = ranked.slice(TOP_LIMIT);
@@ -1880,11 +1956,11 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   }
   
   const resultObj = { streams: finalStreams };
-  if (finalStreams.length > 0) {
-      await Cache.cacheStream(cacheKey, resultObj, 1800);
-      logger.info(`💾 SAVED TO CACHE: ${cacheKey}`);
-  }
+  const streamTtl = finalStreams.length > 0 ? 1800 : EMPTY_STREAM_TTL;
+  await Cache.cacheStream(cacheKey, resultObj, streamTtl);
+  logger.info(`💾 SAVED TO CACHE: ${cacheKey} (ttl=${streamTtl}s, streams=${finalStreams.length})`);
   return resultObj;
+  });
 }
 
 app.get("/api/stats", (req, res) => res.json({ status: "ok" }));
@@ -1999,10 +2075,18 @@ app.get("/:conf/add_to_cloud/:hash", async (req, res) => {
 });
 
 const authMiddleware = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const validPass = process.env.ADMIN_PASS || "GodTierAccess2024";
-    if (authHeader === validPass) next();
-    else res.status(403).json({ error: "Password errata" });
+    if (!ADMIN_PASS) {
+        logger.warn("Tentativo di accesso admin con ADMIN_PASS non configurata");
+        return res.status(503).json({ error: "Admin disabilitato: configura ADMIN_PASS nell'ambiente" });
+    }
+
+    const rawAuthHeader = String(req.headers['authorization'] || '').trim();
+    const authHeader = rawAuthHeader.toLowerCase().startsWith('bearer ')
+        ? rawAuthHeader.slice(7).trim()
+        : rawAuthHeader;
+
+    if (safeCompare(authHeader, ADMIN_PASS)) return next();
+    return res.status(403).json({ error: "Password errata" });
 };
 app.get("/admin/keys", authMiddleware, async (req, res) => { res.json(await Cache.listKeys()); });
 app.delete("/admin/key", authMiddleware, async (req, res) => {
@@ -2026,10 +2110,15 @@ app.get("/health", async (req, res) => {
     logger.error("Health Check DB Fail", { error: err.message });
   }
   try {
-    await withTimeout(axios.get(`${CONFIG.INDEXER_URL}/health`), 1000, "Indexer Health");
-    checks.services.indexer = "ok";
+    if (!CONFIG.INDEXER_URL) {
+      checks.services.indexer = "disabled";
+    } else {
+      await withTimeout(axios.get(`${CONFIG.INDEXER_URL}/health`, { timeout: 1000 }), 1000, "Indexer Health");
+      checks.services.indexer = "ok";
+    }
   } catch (err) {
     checks.services.indexer = "down";
+    checks.status = "degraded";
   }
   checks.services.cache = myCache.keys().length > 0 ? "active" : "empty";
   res.status(checks.status === "ok" ? 200 : 503).json(checks);
@@ -2182,9 +2271,26 @@ async function queueCloudBuild(service, hash, apiKey) {
     return task;
 }
 
+function decodeConfigBase64(configStr) {
+  const normalized = String(configStr || "")
+    .trim()
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+  const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4));
+  return Buffer.from(normalized + padding, "base64").toString("utf8");
+}
+
 function getConfig(configStr) {
   try {
-    return JSON.parse(Buffer.from(configStr, "base64").toString());
+    if (!configStr || typeof configStr !== "string") return {};
+    if (configStr.length > MAX_CONFIG_LENGTH) {
+      throw new Error(`Config troppo grande (${configStr.length})`);
+    }
+    const parsed = JSON.parse(decodeConfigBase64(configStr));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Config non valida");
+    }
+    return parsed;
   } catch (err) {
     logger.error(`Errore parsing config: ${err.message}`);
     return {};
@@ -2195,7 +2301,7 @@ const PORT = process.env.PORT || 7000;
 const PUBLIC_IP = process.env.PUBLIC_IP || "127.0.0.1";
 const PUBLIC_PORT = process.env.PUBLIC_PORT || PORT;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`🚀 Leviathan (God Tier) attivo su porta interna ${PORT}`);
     console.log(`-----------------------------------------------------`);
     console.log(`⚡ MODE: FULL LAZY`);
@@ -2219,4 +2325,29 @@ app.listen(PORT, () => {
     console.log(`🌍 LAYERED CACHING: GLOBAL RAW + USER LEVEL ACTIVE`);
     console.log(`⚡ SCRAPERS: Fallback Scrapers Ready!`);
     console.log(`-----------------------------------------------------`);
+});
+
+
+function gracefulShutdown(signal) {
+    logger.info(`🛑 Ricevuto ${signal}, chiusura server in corso...`);
+    server.close(() => {
+        logger.info("✅ Server HTTP chiuso correttamente.");
+        process.exit(0);
+    });
+
+    setTimeout(() => {
+        logger.error("⏱️ Shutdown forzato per timeout.");
+        process.exit(1);
+    }, 10000).unref();
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+process.on('unhandledRejection', (reason) => {
+    logger.error('Unhandled Promise Rejection', { reason: reason instanceof Error ? reason.message : String(reason) });
+});
+
+process.on('uncaughtException', (error) => {
+    logger.error('Uncaught Exception', { error: error.message, stack: error.stack });
 });
