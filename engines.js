@@ -1,139 +1,273 @@
+
 const axios = require("axios");
 const cheerio = require("cheerio");
 const https = require("https");
 const cloudscraper = require("cloudscraper");
 const pLimit = require("p-limit");
-const he = require("he"); 
+const he = require("he");
 
 const BROWSER_PROFILES = [
     {
         name: "Safari macOS",
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15',
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
         headers: {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            Connection: "keep-alive",
+            "Upgrade-Insecure-Requests": "1"
         }
     },
     {
-        name: "Safari iOS (iPhone)",
-        userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+        name: "Safari iOS",
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
         headers: {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            Connection: "keep-alive",
+            "Upgrade-Insecure-Requests": "1"
         }
     },
     {
-        name: "Safari iPadOS",
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15',
+        name: "Chrome Windows",
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
         headers: {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+            Connection: "keep-alive",
+            "Upgrade-Insecure-Requests": "1"
+        }
+    },
+    {
+        name: "Firefox Linux",
+        userAgent: "Mozilla/5.0 (X11; Linux x86_64; rv:136.0) Gecko/20100101 Firefox/136.0",
+        headers: {
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+            DNT: "1",
+            Connection: "keep-alive",
+            "Upgrade-Insecure-Requests": "1"
         }
     }
 ];
 
+const DEFAULT_TRACKERS = [
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.demonoid.ch:6969/announce",
+    "udp://open.demonii.com:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://tracker.therarbg.to:6969/announce",
+    "udp://tracker.doko.moe:6969/announce",
+    "udp://opentracker.i2p.rocks:6969/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://tracker.moeking.me:6969/announce"
+];
+
 const CONFIG = {
-    TIMEOUT: 12000,      
-    TIMEOUT_API: 8000,   
-    MAX_CONCURRENCY: 25, 
+    TIMEOUT: Number(process.env.ENGINES_TIMEOUT || 12000),
+    TIMEOUT_API: Number(process.env.ENGINES_TIMEOUT_API || 8000),
+    ENGINE_TIMEOUT: Number(process.env.ENGINES_ENGINE_TIMEOUT || 9000),
+    MAX_CONCURRENCY: Number(process.env.ENGINES_MAX_CONCURRENCY || 24),
+    ENGINE_CONCURRENCY: Number(process.env.ENGINES_ENGINE_CONCURRENCY || 5),
+    DETAIL_FETCH_CONCURRENCY: Number(process.env.ENGINES_DETAIL_CONCURRENCY || 12),
+    RESULT_LIMIT_PER_ENGINE: Number(process.env.ENGINES_RESULT_LIMIT_PER_ENGINE || 120),
+    FINAL_RESULT_LIMIT: Number(process.env.ENGINES_FINAL_RESULT_LIMIT || 300),
+    MAX_QUERY_VARIANTS_PER_ENGINE: Number(process.env.ENGINES_MAX_QUERY_VARIANTS || 4),
+    SEARCH_CACHE_TTL: Number(process.env.ENGINES_SEARCH_CACHE_TTL || 180000),
+    HTML_CACHE_TTL: Number(process.env.ENGINES_HTML_CACHE_TTL || 45000),
+    NEGATIVE_CACHE_TTL: Number(process.env.ENGINES_NEGATIVE_CACHE_TTL || 20000),
+    RETRIES: Number(process.env.ENGINES_RETRIES || 2),
+    RETRY_BACKOFF_MS: Number(process.env.ENGINES_RETRY_BACKOFF_MS || 350),
     KNABEN_API: "https://api.knaben.org/v1",
-    TRACKERS: [
-        "udp://tracker.opentrackr.org:1337/announce",
-        "udp://open.demonoid.ch:6969/announce",
-        "udp://open.demonii.com:1337/announce",
-        "udp://open.stealth.si:80/announce",
-        "udp://tracker.torrent.eu.org:451/announce",
-        "udp://tracker.therarbg.to:6969/announce",
-        "udp://tracker.doko.moe:6969/announce",
-        "udp://opentracker.i2p.rocks:6969/announce",
-        "udp://exodus.desync.com:6969/announce", 
-        "udp://tracker.moeking.me:6969/announce"
-    ],
-    HTTPS_AGENT_OPTIONS: { rejectUnauthorized: false, keepAlive: true } 
+    TRACKERS: [...DEFAULT_TRACKERS],
+    HTTPS_AGENT_OPTIONS: {
+        rejectUnauthorized: false,
+        keepAlive: true,
+        keepAliveMsecs: 10000,
+        maxSockets: 64,
+        maxFreeSockets: 16
+    }
 };
 
 const httpsAgent = new https.Agent(CONFIG.HTTPS_AGENT_OPTIONS);
+const detailLimit = pLimit(CONFIG.DETAIL_FETCH_CONCURRENCY);
+const engineLimit = pLimit(CONFIG.ENGINE_CONCURRENCY);
+const searchCache = new Map();
+const htmlCache = new Map();
+const inflightRequests = new Map();
 
-const withTimeout = (promise, ms) => Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(`timeout of ${ms}ms exceeded`)), ms))
-]);
+const ITALIAN_AUDIO_REGEX = /\b(?:ITA(?:LIAN(?:O)?)?(?:\s*(?:AUDIO|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?))?|MULTI\s*ITA|DUAL\s*AUDIO\s*ITA|TRUE\s*ITALIAN|AUDIO\s*ITA|ITA\s*AC3|ITA\s*AAC|ITA\s*DDP|ITA\s*DTS|ITA\s*TRUEHD)\b/i;
+const ITALIAN_SUB_REGEX = /\b(?:SUB[-.\s_]*ITA|SOFTSUB[-.\s_]*ITA|VOST(?:ITA)?|ITALIAN\s*SUBS?)\b/i;
+const TRUSTED_ITALIAN_REGEX = /\b(?:CORSARO|ICV|MEGAPHONE|IDN[_\s-]*CREW|DDN|MUX(?:\s*ITA)?|TRIDIM|LUX|WMS|CiNEFiLE|SPEEDVIDEO|CORSARO(?:NERO)?)\b/i;
+const NEGATIVE_LANGUAGE_REGEX = /\b(?:TRUEFRENCH|FRENCH|GERMAN|SPANISH|LATINO|RUSSIAN|POLISH|TAMIL|TELUGU|HINDI|KOREAN|JAPANESE|ENG(?:LISH)?\s*ONLY|DUBBED\s*ENG)\b/i;
+const NOISY_TITLE_REGEX = /\b(?:x265\s*meets|sample|trailer|soundtrack|ebook|audiobook|xxx|porn)\b/i;
+const QUALITY_SCORES = [
+    { regex: /\b(?:2160p|4k|uhd)\b/i, value: 4 },
+    { regex: /\b1080p\b/i, value: 3 },
+    { regex: /\b720p\b/i, value: 2 },
+    { regex: /\b(?:480p|sd)\b/i, value: 1 }
+];
+const SOURCE_WEIGHTS = {
+    Corsaro: 28,
+    Knaben: 26,
+    "1337x": 23,
+    BitSearch: 22,
+    RARBG: 21,
+    LimeTorrents: 19,
+    "TPB Mirror": 18,
+    TPB: 17,
+    UIndex: 14
+};
+const ENGINE_BLACKLISTED_CATEGORIES = new Set([6006000, 6007000, 6005000]);
+
+function now() {
+    return Date.now();
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getCache(map, key) {
+    const hit = map.get(key);
+    if (!hit) return null;
+    if (hit.expiresAt <= now()) {
+        map.delete(key);
+        return null;
+    }
+    return hit.value;
+}
+
+function setCache(map, key, value, ttl) {
+    if (!ttl || ttl <= 0) return value;
+    map.set(key, { value, expiresAt: now() + ttl });
+    if (map.size > 800) pruneCache(map);
+    return value;
+}
+
+function pruneCache(map) {
+    const ts = now();
+    for (const [key, entry] of map.entries()) {
+        if (!entry || entry.expiresAt <= ts) map.delete(key);
+    }
+    while (map.size > 600) {
+        const firstKey = map.keys().next().value;
+        if (firstKey === undefined) break;
+        map.delete(firstKey);
+    }
+}
+
+function withTimeout(promise, ms) {
+    let timer = null;
+    return new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`timeout of ${ms}ms exceeded`)), ms);
+        Promise.resolve(promise)
+            .then(value => resolve(value))
+            .catch(error => reject(error))
+            .finally(() => clearTimeout(timer));
+    });
+}
 
 function clean(title) {
     if (!title) return "";
-    let decoded = he.decode(title);
+    const decoded = he.decode(String(title));
     return decoded
-        .replace(/[:"'’]/g, "")
-        .replace(/[^a-zA-Z0-9\s\-.\[\]()]/g, " ")
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[:"'’`´]/g, "")
+        .replace(/[^a-zA-Z0-9\s\-.\[\]()/]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
 }
 
+function normalizeSpaces(value) {
+    return String(value || "")
+        .replace(/[\u2010-\u2015]/g, "-")
+        .replace(/[|_]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function tokenizeTitle(value) {
+    return clean(value)
+        .toLowerCase()
+        .replace(/\b(?:the|a|an|un|una|il|lo|la|gli|le|di|de|del|della|season|stagione|episode|episodio|part)\b/g, " ")
+        .replace(/\b(?:2160p|1080p|720p|480p|x264|x265|h264|h265|hevc|hdr|dv|ddp|aac|ac3|remux|webdl|webrip|bluray|brrip|dvdrip)\b/g, " ")
+        .replace(/\b(19\d{2}|20\d{2})\b/g, " ")
+        .split(/\s+/)
+        .filter(token => token && token.length > 1);
+}
+
+function titleMatchScore(candidate, expectedTitle) {
+    const candTokens = tokenizeTitle(candidate);
+    const expectedTokens = tokenizeTitle(expectedTitle);
+    if (!expectedTokens.length || !candTokens.length) return 0;
+    const candSet = new Set(candTokens);
+    const expectedSet = new Set(expectedTokens);
+    let hits = 0;
+    for (const token of expectedSet) {
+        if (candSet.has(token)) hits += 1;
+    }
+    return hits / Math.max(expectedSet.size, 1);
+}
+
 function parseSize(sizeStr) {
     if (!sizeStr) return 0;
-    const match = sizeStr.toString().match(/([\d.,]+)\s*(TB|GB|MB|KB|GiB|MiB|KiB|B)/i);
+    const normalized = String(sizeStr).replace(",", ".");
+    const match = normalized.match(/([\d.]+)\s*(PB|TB|GB|MB|KB|B|PIB|TIB|GIB|MIB|KIB)/i);
     if (!match) return 0;
-    let val = parseFloat(match[1].replace(',', '.'));
+    const value = parseFloat(match[1]);
+    if (!Number.isFinite(value) || value <= 0) return 0;
     const unit = match[2].toUpperCase();
-    
-    const mult = { 
-        TB: 1099511627776, TiB: 1099511627776,
-        GB: 1073741824, GiB: 1073741824,
-        MB: 1048576, MiB: 1048576,
-        KB: 1024, KiB: 1024, B: 1 
+    const multipliers = {
+        B: 1,
+        KB: 1024,
+        KIB: 1024,
+        MB: 1024 ** 2,
+        MIB: 1024 ** 2,
+        GB: 1024 ** 3,
+        GIB: 1024 ** 3,
+        TB: 1024 ** 4,
+        TIB: 1024 ** 4,
+        PB: 1024 ** 5,
+        PIB: 1024 ** 5
     };
-    return Math.round(val * (mult[unit] || 1));
+    return Math.round(value * (multipliers[unit] || 1));
 }
 
 function bytesToSize(bytes) {
-    if (!bytes || isNaN(bytes)) return "?? GB";
-    return (bytes / 1073741824).toFixed(2) + " GB";
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value <= 0) return "?? GB";
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), sizes.length - 1);
+    const normalized = value / (1024 ** index);
+    return `${normalized.toFixed(index === 0 ? 0 : 2)} ${sizes[index]}`;
 }
 
-function isValidResult(name, allowEng = false) {
-    if (!name) return false;
-    const nameUpper = name.toUpperCase();
-    
-    const ITA_REGEX = /\b(ITA(LIANO)?|MULTI|DUAL|MD|SUB\.?ITA|SUB-?ITA|ITALUB|AC3\.?ITA|DTS\.?ITA|AUDIO\.?ITA|ITA\.?AC3|ITA\.?HD|BDMUX|DVDRIP\.?ITA|STAGIONE|EPISODIO|SERIE|COMPLETA|CiNEFiLE|iDN_CreW|CORSARO|SPEEDVIDEO|WMS|TRIDIM|LUX|MUX)\b/i;
-    
-    if (ITA_REGEX.test(nameUpper)) return true;
-    if (!allowEng) return false;
-    
-    const FOREIGN_REGEX = /\b(FRENCH|GERMAN|SPANISH|LATINO|RUSSIAN|HINDI|TAMIL|TELUGU|KOREAN)\b/i;
-    if (FOREIGN_REGEX.test(nameUpper) && !/MULTI/i.test(nameUpper)) return false;
-    
-    return true; 
+function extractEpisodeContext(imdbId) {
+    if (!imdbId || typeof imdbId !== "string") return {};
+    const parts = imdbId.split(":");
+    if (parts.length < 3) return {};
+    const season = parseInt(parts[1], 10);
+    const episode = parseInt(parts[2], 10);
+    return {
+        season: Number.isInteger(season) ? season : undefined,
+        episode: Number.isInteger(episode) ? episode : undefined
+    };
 }
 
-function checkYear(name, year, type) {
-    if (!year || type === 'tv' || type === 'series') return true;
-    const y = parseInt(year);
-    return name.includes(String(y)) || name.includes(String(y - 1)) || name.includes(String(y + 1));
-}
-
-function isCorrectFormat(name, reqSeason, reqEpisode) {
-    if (!reqSeason && !reqEpisode) return true;
-    const sMatch = name.match(/S(\d{1,2})/i);
-    const eMatch = name.match(/E(\d{1,3})/i);
-    
-    if (reqSeason && sMatch && parseInt(sMatch[1]) !== reqSeason) return false;
-    if (reqEpisode && eMatch && parseInt(eMatch[1]) !== reqEpisode) return false;
-    return true;
+function normalizeType(type) {
+    const raw = String(type || "").toLowerCase();
+    if (raw === "tv" || raw === "series" || raw === "anime") return "series";
+    return "movie";
 }
 
 function getStealthHeaders(url) {
@@ -142,489 +276,909 @@ function getStealthHeaders(url) {
     return {
         profileName: profile.name,
         headers: {
-            'User-Agent': profile.userAgent,
-            'Referer': urlObj.origin + '/',
-            'Origin': urlObj.origin,
-            ...profile.headers 
+            "User-Agent": profile.userAgent,
+            Referer: `${urlObj.origin}/`,
+            Origin: urlObj.origin,
+            ...profile.headers
         }
     };
 }
 
-async function requestHtml(url, config = {}, retries = 1) {
+function isCloudflareResponse(data) {
+    if (typeof data !== "string") return false;
+    return /cloudflare|verify you are human|attention required|cf-browser-verification/i.test(data);
+}
+
+function mergeHeaders(url, customHeaders = {}) {
     const { headers: stealthHeaders } = getStealthHeaders(url);
-    const finalHeaders = { ...stealthHeaders, ...config.headers };
-    
-    for (let i = 0; i <= retries; i++) {
-        try {
-            const response = await axios({
-                url,
-                method: config.method || 'GET',
-                headers: finalHeaders,
-                data: config.data,
-                httpsAgent,
-                timeout: config.timeout || CONFIG.TIMEOUT,
-                validateStatus: s => s < 500
-            });
-            
-            if (typeof response.data === 'string' && (response.data.includes("Cloudflare") || response.data.includes("Verify you are human"))) {
-                throw new Error("CF");
-            }
-            return response;
-        } catch (err) {
-            if (config.method !== 'POST') {
-                try {
-                    const html = await cloudscraper.get(url, { headers: finalHeaders });
-                    return { data: html };
-                } catch (e) { 
-                    if (i === retries) return { data: "" };
-                }
-            } else if (i === retries) {
-                return { data: "" };
-            }
-        }
-    }
+    return { ...stealthHeaders, ...customHeaders };
 }
 
-async function searchCorsaro(title, year, type, reqSeason, reqEpisode, options = {}) {
-    console.log(`[IlCorsaroNero] Avvio ricerca per: ${title}...`);
-    try {
-        const url = `https://ilcorsaronero.link/search?q=${encodeURIComponent(clean(title))}`;
-        const { data } = await requestHtml(url);
-        if (!data || data.includes("Cloudflare")) return [];
-        
-        const $ = cheerio.load(data);
-        let candidates = [];
+async function requestHtml(url, config = {}, retries = CONFIG.RETRIES) {
+    const method = String(config.method || "GET").toUpperCase();
+    const timeout = config.timeout || CONFIG.TIMEOUT;
+    const cacheKey = `${method}:${url}:${method === "POST" ? JSON.stringify(config.data || {}) : ""}`;
 
-        $('table tr, tbody tr').each((i, row) => {
-            const $row = $(row);
-            const linkTag = $row.find('a[href*="/torrent/"]').first();
-            if (!linkTag.length) return;
-            
-            const name = linkTag.text().trim();
-            const href = linkTag.attr('href');
-            
-            const seedersText = $row.find('.green, font[color="#008000"], td.text-green-500').text().trim();
-            const seeders = parseInt(seedersText.replace(/,/g, '')) || 0;
-            
-            let sizeStr = "";
-            $row.find('td.tabular-nums').each((idx, td) => {
-                const text = $(td).text().trim();
-                if (/GiB|MiB|KiB|TiB|GB|MB|KB|TB/i.test(text)) {
-                    sizeStr = text.replace('GiB', 'GB').replace('MiB', 'MB').replace('KiB', 'KB').replace('TiB', 'TB');
-                }
-            });
-            if (!sizeStr) sizeStr = $row.find('td').eq(4).text().trim();
+    if (method === "GET" && !config.skipCache) {
+        const cached = getCache(htmlCache, cacheKey);
+        if (cached) return cached;
+    }
 
-            if (isValidResult(name, options.allowEng) && checkYear(name, year, type) && isCorrectFormat(name, reqSeason, reqEpisode)) {
-                candidates.push({ name, url: href.startsWith('http') ? href : `https://ilcorsaronero.link${href}`, sizeStr, seeders });
-            }
-        });
+    const inflight = inflightRequests.get(cacheKey);
+    if (inflight) return inflight;
 
-        const limit = pLimit(CONFIG.MAX_CONCURRENCY);
-        const results = await Promise.all(candidates.map(c => limit(async () => {
+    const requestPromise = (async () => {
+        const headers = mergeHeaders(url, config.headers);
+        let lastError = null;
+
+        for (let attempt = 0; attempt <= retries; attempt += 1) {
             try {
-                const html = (await requestHtml(c.url, { timeout: 4000 })).data;
-                let magnet = cheerio.load(html)('a[href^="magnet:"]').attr('href') || html.match(/magnet:\?xt=urn:btih:[a-zA-Z0-9]{40}/i)?.[0];
-                if (magnet) return { title: c.name, magnet, size: c.sizeStr, sizeBytes: parseSize(c.sizeStr), seeders: c.seeders, source: "Corsaro" };
-            } catch {}
-            return null;
-        })));
-        const final = results.filter(Boolean);
-        console.log(`[IlCorsaroNero] Trovati ${final.length} risultati validi.`);
-        return final;
-    } catch { return []; }
-}
-
-async function searchKnaben(title, year, type, reqSeason, reqEpisode, options = {}) {
-    console.log(`[Knaben] Avvio ricerca per: ${title}...`);
-    try {
-        let query = clean(title);
-        if (!options.allowEng && !query.toUpperCase().includes("ITA")) query += " ITA";
-
-        const categories = [];
-        if (type === 'movie') {
-            categories.push(3000000); 
-        } else if (type === 'series' || type === 'tv') {
-            categories.push(2000000); // TV
-        } else if (type === 'anime') {
-            categories.push(6000000, 2000000); 
-        }
-
-        const payload = { 
-            "query": query, 
-            "search_type": "100%", 
-            "search_field": "title", 
-            "size": 300,           
-            "from": 0,
-            "hide_unsafe": false,  
-            "hide_xxx": true 
-        };
-
-        if (categories.length > 0) {
-            payload.categories = categories;
-        }
-
-        const { data } = await requestHtml(CONFIG.KNABEN_API, { method: 'POST', data: payload, timeout: CONFIG.TIMEOUT_API });
-
-        if (!data?.hits) {
-            console.log(`[Knaben] Nessun risultato.`);
-            return [];
-        }
-        
-        const KNABEN_BLACKLISTED_CATEGORIES = [6006000, 6007000, 6005000]; 
-
-        const results = data.hits.map(hit => {
-            if (!hit.title) return null;
-
-            if (hit.categoryId && KNABEN_BLACKLISTED_CATEGORIES.some(cat => hit.categoryId.includes(cat))) {
-                return null;
-            }
-
-            let hash = hit.hash?.toLowerCase() || (hit.magnetUrl ? hit.magnetUrl.match(/btih:([a-fA-F0-9]{40})/i)?.[1]?.toLowerCase() : null);
-            let magnetLink = hit.magnetUrl;
-
-            if (!magnetLink && hash) {
-                magnetLink = `magnet:?xt=urn:btih:${hash}`;
-            }
-
-            if (!magnetLink) return null;
-
-            if (isValidResult(hit.title, options.allowEng) && checkYear(hit.title, year, type) && isCorrectFormat(hit.title, reqSeason, reqEpisode)) {
-                const sizeInBytes = hit.bytes || 0;
-                return { 
-                    title: hit.title, 
-                    magnet: magnetLink, 
-                    size: bytesToSize(sizeInBytes), 
-                    sizeBytes: parseInt(sizeInBytes), 
-                    seeders: parseInt(hit.seeders) || 0, 
-                    source: "Knaben" 
-                };
-            }
-            return null;
-        }).filter(Boolean);
-        
-        console.log(`[Knaben] Trovati ${results.length} risultati validi.`);
-        return results;
-    } catch (e) { 
-        console.log(`[Knaben] Errore durante la ricerca: ${e.message}`);
-        return []; 
-    }
-}
-
-async function searchTPB(title, year, type, reqSeason, reqEpisode, options = {}) {
-    console.log(`[TPB (ApiBay)] Avvio ricerca per: ${title}...`);
-    try {
-        let q = clean(title);
-        if (!options.allowEng && !q.toUpperCase().includes("ITA")) q += " ITA";
-        
-        const { data } = await axios.get(`https://apibay.org/q.php?q=${encodeURIComponent(q)}&cat=${type==='tv'?0:200}`, { timeout: CONFIG.TIMEOUT_API });
-        if (!Array.isArray(data) || data[0]?.id === '0') return [];
-
-        const results = data.map(i => {
-            if (isValidResult(i.name, options.allowEng) && checkYear(i.name, year, type) && isCorrectFormat(i.name, reqSeason, reqEpisode)) {
-                return { title: i.name, magnet: `magnet:?xt=urn:btih:${i.info_hash}&dn=${encodeURIComponent(i.name)}`, size: bytesToSize(i.size), sizeBytes: parseInt(i.size), seeders: parseInt(i.seeders) || 0, source: "TPB" };
-            }
-            return null;
-        }).filter(Boolean);
-        console.log(`[TPB (ApiBay)] Trovati ${results.length} risultati validi.`);
-        return results;
-    } catch { return []; }
-}
-
-async function searchTPBMirror(title, year, type, reqSeason, reqEpisode, options = {}) {
-    console.log(`[TPB Mirror] Avvio ricerca per: ${title}...`);
-    try {
-        let query = clean(title) + (options.allowEng ? "" : " ITA");
-        const url = `https://thepibay.site/search/${encodeURIComponent(query)}/1/99/0`;
-        const { data } = await requestHtml(url, { timeout: 6000 });
-        if (!data) return [];
-
-        const $ = cheerio.load(data);
-        const results = [];
-
-        $('table#searchResult tr').each((i, row) => {
-            const titleEl = $(row).find('.detName a.detLink');
-            if (!titleEl.length) return;
-            const name = titleEl.text().trim();
-            const magnet = $(row).find('a[href^="magnet:"]').attr('href');
-            if (!magnet) return;
-
-            let sizeBytes = 0;
-            const sizeMatch = $(row).find('.detDesc').text().match(/Size\s+([\d.,]+\s*[A-Za-z]+)/i);
-            if (sizeMatch) sizeBytes = parseSize(sizeMatch[1]);
-            const tds = $(row).find('td[align="right"]');
-            const seeders = tds.length > 0 ? (parseInt($(tds[0]).text().trim()) || 0) : 0;
-
-            if (isValidResult(name, options.allowEng) && checkYear(name, year, type) && isCorrectFormat(name, reqSeason, reqEpisode)) {
-                results.push({ title: name, magnet, size: bytesToSize(sizeBytes), sizeBytes, seeders, source: "TPB Mirror" });
-            }
-        });
-        console.log(`[TPB Mirror] Trovati ${results.length} risultati validi.`);
-        return results;
-    } catch { return []; }
-}
-
-async function searchLime(title, year, type, reqSeason, reqEpisode, options = {}) {
-    console.log(`[LimeTorrents] Avvio ricerca per: ${title}...`);
-    try {
-        let query = clean(title) + (options.allowEng ? "" : " ITA");
-        const baseUrl = "https://limetorrents.org";
-        const { data } = await requestHtml(`${baseUrl}/search?q=${encodeURIComponent(query)}`, { timeout: 7000 });
-        if (!data) return [];
-        
-        const $ = cheerio.load(data);
-        const items = [];
-        
-        $('table.table2 tbody.torsearch tr').each((i, row) => {
-            const tds = $(row).find('td');
-            if (tds.length < 5) return;
-
-            const titleEl = tds.eq(0).find('.tt-name a').last();
-            const name = titleEl.text().trim();
-            let detailUrl = titleEl.attr('href');
-            
-            if (!detailUrl) return;
-            if (!detailUrl.startsWith('http')) detailUrl = baseUrl + detailUrl;
-
-            const size = tds.eq(2).text().trim();
-            const seeders = parseInt(tds.eq(3).text().trim()) || 0;
-            
-            if (name && detailUrl && isValidResult(name, options.allowEng) && checkYear(name, year, type) && isCorrectFormat(name, reqSeason, reqEpisode)) {
-                items.push({ title: name, url: detailUrl, size: size, seeders: seeders });
-            }
-        });
-
-        const limit = pLimit(CONFIG.MAX_CONCURRENCY);
-        const results = (await Promise.all(items.map(item => limit(async () => {
-            try {
-                const { data: d } = await requestHtml(item.url, { timeout: 4000 });
-                const magnet = cheerio.load(d)('a[href^="magnet:"]').first().attr('href');
-                if (magnet) return { title: item.title, magnet, size: item.size, sizeBytes: parseSize(item.size), seeders: item.seeders, source: "LimeTorrents" };
-            } catch {}
-            return null;
-        })))).filter(Boolean);
-        console.log(`[LimeTorrents] Trovati ${results.length} risultati validi.`);
-        return results;
-    } catch (e) { 
-        console.log(`[LimeTorrents] Errore: ${e.message}`);
-        return []; 
-    }
-}
-
-async function searchRARBG(title, year, type, reqSeason, reqEpisode, options = {}) {
-    console.log(`[RARBG] Avvio ricerca per: ${title}...`);
-    const mirror = "https://www.rarbgproxy.to";
-    let query = clean(title);
-    if (!options.allowEng && !query.toUpperCase().includes("ITA")) query += " ITA";
-
-    try {
-        const { data } = await requestHtml(`${mirror}/search/?search=${encodeURIComponent(query)}`, { timeout: 7000 });
-        if (!data) {
-            console.log(`[RARBG] Nessun dato ricevuto dal proxy.`);
-            return [];
-        }
-
-        const $ = cheerio.load(data);
-        const candidates = [];
-
-        $('tr.table2ta_rarbgproxy, table.lista2 tr').each((i, row) => {
-            const tds = $(row).find('td');
-            if (tds.length < 5) return;
-
-            let linkTag, size, seeders;
-            if ($(row).hasClass('table2ta_rarbgproxy')) {
-                linkTag = tds.eq(1).find('a').first();
-                size = tds.eq(4).text().trim();
-                seeders = parseInt(tds.eq(5).text().trim()) || 0;
-            } else {
-                linkTag = tds.eq(1).find('a').first();
-                size = tds.eq(3).text().trim();
-                seeders = parseInt(tds.eq(4).text().trim()) || 0;
-            }
-
-            const name = linkTag.text().trim() || linkTag.attr('title');
-            let detailHref = linkTag.attr('href');
-
-            if (name && detailHref && isValidResult(name, options.allowEng) && checkYear(name, year, type) && isCorrectFormat(name, reqSeason, reqEpisode)) {
-                candidates.push({
-                    name,
-                    detailUrl: detailHref.startsWith('http') ? detailHref : `${mirror}${detailHref.startsWith('/') ? '' : '/'}${detailHref}`,
-                    size: size,
-                    seeders: seeders
+                const response = await axios({
+                    url,
+                    method,
+                    headers,
+                    data: config.data,
+                    httpsAgent,
+                    timeout,
+                    maxRedirects: config.maxRedirects ?? 5,
+                    validateStatus: config.validateStatus || (status => status >= 200 && status < 500)
                 });
-            }
-        });
 
-        if (candidates.length === 0) {
-            console.log(`[RARBG] Nessun risultato trovato.`);
-            return [];
+                if (method === "GET" && isCloudflareResponse(response.data)) {
+                    throw new Error("CF challenge");
+                }
+
+                if (method === "GET" && !config.skipCache) {
+                    setCache(htmlCache, cacheKey, response, CONFIG.HTML_CACHE_TTL);
+                }
+                return response;
+            } catch (error) {
+                lastError = error;
+                const canTryCloudscraper = method === "GET";
+                if (canTryCloudscraper) {
+                    try {
+                        const html = await cloudscraper.get({
+                            uri: url,
+                            headers,
+                            timeout
+                        });
+                        const response = { data: html, status: 200, headers: {} };
+                        if (!config.skipCache) {
+                            setCache(htmlCache, cacheKey, response, CONFIG.HTML_CACHE_TTL);
+                        }
+                        return response;
+                    } catch (cloudError) {
+                        lastError = cloudError;
+                    }
+                }
+
+                if (attempt < retries) {
+                    await sleep(CONFIG.RETRY_BACKOFF_MS * (attempt + 1));
+                }
+            }
         }
 
-        const limit = pLimit(CONFIG.MAX_CONCURRENCY);
-        const results = await Promise.all(candidates.map(c => limit(async () => {
-            try {
-                const { data: detailHtml } = await requestHtml(c.detailUrl, { timeout: 4000 });
-                let magnet = cheerio.load(detailHtml)('a[href^="magnet:"]').first().attr('href') || detailHtml?.match(/magnet:\?xt=urn:btih:[a-zA-Z0-9]+[^"'\s]*/)?.[0];
-                if (magnet) return { title: c.name, magnet, size: c.size, sizeBytes: parseSize(c.size), seeders: c.seeders, source: "RARBG" };
-            } catch {}
-            return null;
-        })));
+        return { data: "", status: 599, headers: {}, error: lastError };
+    })();
 
-        const finalResults = results.filter(Boolean);
-        console.log(`[RARBG] Trovati ${finalResults.length} risultati validi.`);
+    inflightRequests.set(cacheKey, requestPromise);
+    try {
+        return await requestPromise;
+    } finally {
+        inflightRequests.delete(cacheKey);
+    }
+}
+
+function buildMagnetFromHash(hash, name = "") {
+    if (!hash) return null;
+    const dn = name ? `&dn=${encodeURIComponent(name)}` : "";
+    return `magnet:?xt=urn:btih:${hash}${dn}`;
+}
+
+function extractInfoHash(magnet) {
+    if (!magnet) return null;
+    const match = String(magnet).match(/btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})/i);
+    return match ? match[1].toLowerCase() : null;
+}
+
+function appendTrackers(magnet) {
+    if (!magnet) return null;
+    if (magnet.includes("&tr=") || magnet.includes("?tr=")) return magnet;
+    const trackers = [...new Set(CONFIG.TRACKERS.filter(Boolean))].slice(0, 20);
+    if (!trackers.length) return magnet;
+    return `${magnet}${magnet.includes("?") ? "&" : "?"}${trackers.map(tracker => `tr=${encodeURIComponent(tracker)}`).join("&")}`;
+}
+
+function getResolutionScore(text) {
+    const normalized = normalizeSpaces(text).toLowerCase();
+    for (const item of QUALITY_SCORES) {
+        if (item.regex.test(normalized)) return item.value;
+    }
+    return 0;
+}
+
+function getLanguageScore(name, allowEng = false) {
+    const normalized = normalizeSpaces(name).toUpperCase();
+    const hasItalianAudio = ITALIAN_AUDIO_REGEX.test(normalized);
+    const hasItalianSubs = ITALIAN_SUB_REGEX.test(normalized);
+    const isTrustedItalian = TRUSTED_ITALIAN_REGEX.test(normalized);
+    const hasNegativeLanguage = NEGATIVE_LANGUAGE_REGEX.test(normalized);
+
+    if (hasItalianAudio) return 30;
+    if (isTrustedItalian && !hasNegativeLanguage) return 22;
+    if (hasItalianSubs) return 12;
+    if (!allowEng && hasNegativeLanguage) return -40;
+    return allowEng ? 2 : -8;
+}
+
+function isValidResult(name, allowEng = false) {
+    if (!name) return false;
+    const normalized = normalizeSpaces(name);
+    if (NOISY_TITLE_REGEX.test(normalized)) return false;
+    if (getLanguageScore(normalized, allowEng) < 0) return false;
+    return true;
+}
+
+function checkYear(name, year, type) {
+    if (!year || normalizeType(type) !== "movie") return true;
+    const yearValue = parseInt(year, 10);
+    if (!Number.isInteger(yearValue)) return true;
+    const matches = [...String(name).matchAll(/\b(19\d{2}|20\d{2})\b/g)].map(match => parseInt(match[1], 10));
+    if (!matches.length) return true;
+    return matches.some(candidate => Math.abs(candidate - yearValue) <= 1);
+}
+
+function isCorrectFormat(name, reqSeason, reqEpisode) {
+    if (!reqSeason && !reqEpisode) return true;
+    const normalized = normalizeSpaces(name).toUpperCase();
+
+    const seasonEpisodePatterns = [
+        /S(\d{1,2})E(\d{1,3})/i,
+        /\b(\d{1,2})x(\d{1,3})\b/i,
+        /SEASON[ ._-]?(\d{1,2})[ ._-]?EP(?:ISODE)?[ ._-]?(\d{1,3})/i,
+        /STAGIONE[ ._-]?(\d{1,2})[ ._-]?EP(?:ISODIO)?[ ._-]?(\d{1,3})/i
+    ];
+
+    for (const pattern of seasonEpisodePatterns) {
+        const match = normalized.match(pattern);
+        if (!match) continue;
+        const season = parseInt(match[1], 10);
+        const episode = parseInt(match[2], 10);
+        if (reqSeason && Number.isInteger(season) && season !== reqSeason) return false;
+        if (reqEpisode && Number.isInteger(episode) && episode !== reqEpisode) return false;
+        return true;
+    }
+
+    if (reqSeason) {
+        const seasonMatch = normalized.match(/(?:\bS(?:EASON)?[ ._-]?|STAGIONE[ ._-]?)(\d{1,2})\b/i);
+        if (seasonMatch) {
+            const season = parseInt(seasonMatch[1], 10);
+            if (Number.isInteger(season) && season !== reqSeason) return false;
+        }
+    }
+
+    return true;
+}
+
+function buildSearchQueries(context) {
+    const base = clean(context.title);
+    if (!base) return [];
+    const queries = new Set();
+    const push = value => {
+        const normalized = clean(value);
+        if (normalized) queries.add(normalized);
+    };
+
+    const isSeries = normalizeType(context.type) === "series";
+    const reqSeason = context.reqSeason;
+    const reqEpisode = context.reqEpisode;
+
+    push(base);
+
+    if (context.year && !isSeries) {
+        push(`${base} ${context.year}`);
+    }
+
+    if (isSeries && reqSeason && reqEpisode) {
+        const s = String(reqSeason).padStart(2, "0");
+        const e = String(reqEpisode).padStart(2, "0");
+        push(`${base} S${s}E${e}`);
+        push(`${base} ${reqSeason}x${reqEpisode}`);
+        push(`${base} stagione ${reqSeason} episodio ${reqEpisode}`);
+    } else if (isSeries && reqSeason) {
+        const s = String(reqSeason).padStart(2, "0");
+        push(`${base} S${s}`);
+        push(`${base} stagione ${reqSeason}`);
+    }
+
+    if (!context.allowEng) {
+        const existing = [...queries];
+        for (const query of existing) {
+            push(`${query} ITA`);
+            push(`${query} MULTI`);
+        }
+    }
+
+    return [...queries].slice(0, CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE);
+}
+
+function buildSearchContext(title, year, type, imdbId, options = {}) {
+    const episodeContext = extractEpisodeContext(imdbId);
+    return {
+        title,
+        cleanTitle: clean(title),
+        year,
+        type,
+        normalizedType: normalizeType(type),
+        reqSeason: episodeContext.season,
+        reqEpisode: episodeContext.episode,
+        imdbId,
+        allowEng: Boolean(options.allowEng),
+        options
+    };
+}
+
+function passesResultFilters(name, context) {
+    if (!isValidResult(name, context.allowEng)) return false;
+    if (!checkYear(name, context.year, context.type)) return false;
+    if (!isCorrectFormat(name, context.reqSeason, context.reqEpisode)) return false;
+
+    const matchScore = titleMatchScore(name, context.title);
+    if (context.normalizedType === "movie" && matchScore < 0.34) return false;
+    if (context.normalizedType === "series" && matchScore < 0.30) return false;
+    return true;
+}
+
+function computeResultScore(result, context) {
+    const seeders = Math.max(0, Number(result.seeders) || 0);
+    const sizeBytes = Math.max(0, Number(result.sizeBytes) || 0);
+    const languageScore = getLanguageScore(result.title, context.allowEng);
+    const resolutionScore = getResolutionScore(result.title) * 8;
+    const yearScore = checkYear(result.title, context.year, context.type) ? 8 : -30;
+    const formatScore = isCorrectFormat(result.title, context.reqSeason, context.reqEpisode) ? 18 : -60;
+    const overlapScore = Math.round(titleMatchScore(result.title, context.title) * 40);
+    const sourceScore = SOURCE_WEIGHTS[result.source] || 10;
+    const sizeScore = sizeBytes > 0 ? Math.min(20, Math.round(Math.log10(sizeBytes + 1))) : 0;
+    const seederScore = Math.min(35, Math.round(Math.log2(seeders + 1) * 4));
+    return languageScore + resolutionScore + yearScore + formatScore + overlapScore + sourceScore + sizeScore + seederScore;
+}
+
+function normalizeResult(raw, context, source) {
+    if (!raw) return null;
+    const title = normalizeSpaces(raw.title || raw.name || "");
+    const magnet = appendTrackers(raw.magnet || raw.magnetLink || "");
+    const hash = extractInfoHash(magnet);
+    if (!title || !magnet || !hash) return null;
+    if (!passesResultFilters(title, context)) return null;
+
+    let sizeBytes = Number(raw.sizeBytes) || 0;
+    if (!sizeBytes && raw.size) sizeBytes = parseSize(raw.size);
+    let size = raw.size || "";
+    if (!size && sizeBytes > 0) size = bytesToSize(sizeBytes);
+
+    const normalized = {
+        title,
+        magnet,
+        size,
+        sizeBytes,
+        seeders: Math.max(0, parseInt(raw.seeders, 10) || 0),
+        source: source || raw.source || "Unknown"
+    };
+    normalized._score = computeResultScore(normalized, context);
+    return normalized;
+}
+
+function dedupeResults(results) {
+    const bestByKey = new Map();
+
+    for (const result of results) {
+        if (!result) continue;
+        const hash = extractInfoHash(result.magnet);
+        const fallbackKey = `${clean(result.title).toLowerCase()}|${result.sizeBytes || 0}`;
+        const key = hash || fallbackKey;
+        const existing = bestByKey.get(key);
+        if (!existing) {
+            bestByKey.set(key, result);
+            continue;
+        }
+
+        const currentScore = Number(result._score) || 0;
+        const existingScore = Number(existing._score) || 0;
+        const currentSeeders = Number(result.seeders) || 0;
+        const existingSeeders = Number(existing.seeders) || 0;
+
+        if (
+            currentScore > existingScore ||
+            (currentScore === existingScore && currentSeeders > existingSeeders) ||
+            (currentScore === existingScore && currentSeeders === existingSeeders && (result.sizeBytes || 0) > (existing.sizeBytes || 0))
+        ) {
+            bestByKey.set(key, result);
+        }
+    }
+
+    return [...bestByKey.values()];
+}
+
+async function fetchJsonApi(url, payload, timeout = CONFIG.TIMEOUT_API) {
+    const { data } = await requestHtml(url, {
+        method: "POST",
+        data: payload,
+        headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json"
+        },
+        timeout
+    });
+    if (!data) return null;
+    return data;
+}
+
+async function collectQueryResults(context, handler, { maxQueries = CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE } = {}) {
+    const queries = buildSearchQueries(context).slice(0, maxQueries);
+    const all = [];
+    const seen = new Set();
+
+    for (const query of queries) {
+        const results = await handler(query);
+        for (const item of results || []) {
+            const key = item.detailUrl || item.url || item.magnet || item.title;
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            all.push(item);
+        }
+        if (all.length >= CONFIG.RESULT_LIMIT_PER_ENGINE) break;
+    }
+
+    return all;
+}
+
+async function searchCorsaro(context) {
+    console.log(`[IlCorsaroNero] Avvio ricerca per: ${context.title}...`);
+    try {
+        const candidates = await collectQueryResults(context, async query => {
+            const url = `https://ilcorsaronero.link/search?q=${encodeURIComponent(query)}`;
+            const { data } = await requestHtml(url);
+            if (!data || isCloudflareResponse(data)) return [];
+
+            const $ = cheerio.load(data);
+            const items = [];
+
+            $("table tr, tbody tr").each((_, row) => {
+                const $row = $(row);
+                const linkTag = $row.find('a[href*="/torrent/"]').first();
+                if (!linkTag.length) return;
+
+                const name = normalizeSpaces(linkTag.text());
+                const href = linkTag.attr("href");
+                if (!name || !href || !passesResultFilters(name, context)) return;
+
+                const seedersText = $row.find('.green, font[color="#008000"], td.text-green-500').text().trim();
+                const seeders = parseInt(seedersText.replace(/,/g, ""), 10) || 0;
+
+                let sizeStr = "";
+                $row.find("td").each((__, cell) => {
+                    const text = normalizeSpaces($(cell).text());
+                    if (!sizeStr && /\b(?:GiB|MiB|KiB|TiB|GB|MB|KB|TB)\b/i.test(text)) {
+                        sizeStr = text.replace(/([GMTK])iB/gi, "$1B");
+                    }
+                });
+
+                items.push({
+                    title: name,
+                    detailUrl: href.startsWith("http") ? href : `https://ilcorsaronero.link${href}`,
+                    size: sizeStr || "",
+                    seeders
+                });
+            });
+
+            return items;
+        });
+
+        const results = await Promise.all(
+            candidates.slice(0, 30).map(candidate =>
+                detailLimit(async () => {
+                    try {
+                        const html = (await requestHtml(candidate.detailUrl, { timeout: 4500 })).data;
+                        if (!html) return null;
+                        const magnet =
+                            cheerio.load(html)('a[href^="magnet:"]').attr("href") ||
+                            html.match(/magnet:\?xt=urn:btih:[A-Za-z0-9]{32,40}[^"'\s]*/i)?.[0];
+                        return normalizeResult({ ...candidate, magnet }, context, "Corsaro");
+                    } catch {
+                        return null;
+                    }
+                })
+            )
+        );
+
+        const finalResults = dedupeResults(results.filter(Boolean)).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[IlCorsaroNero] Trovati ${finalResults.length} risultati validi.`);
         return finalResults;
-    } catch (e) {
-        console.log(`[RARBG] Errore di connessione al proxy: ${e.message}`);
+    } catch (error) {
+        console.log(`[IlCorsaroNero] Errore: ${error.message}`);
         return [];
     }
 }
 
-async function search1337x(title, year, type, reqSeason, reqEpisode, options = {}) {
-    console.log(`[1337x] Avvio ricerca per: ${title}...`);
-    try {
-        let query = clean(title) + (options.allowEng ? "" : " ITA");
-        const baseUrl = "https://1337x.bz";
-        const pagePromises = [];
-
-        for (let page = 1; page <= 3; page++) {
-            const searchUrl = page === 1 ? `${baseUrl}/get-posts/keywords:${encodeURIComponent(query)}:format:json:ncategory:XXX/` : `${baseUrl}/get-posts/keywords:${encodeURIComponent(query)}:format:json:ncategory:XXX/?page=${page}`;
-            pagePromises.push(
-                axios.get(searchUrl, {
-                    timeout: CONFIG.TIMEOUT_API * 2,
-                    headers: { 'User-Agent': BROWSER_PROFILES[0].userAgent, 'Accept': 'application/json, text/plain, */*', 'Referer': `${baseUrl}/home/` }
-                }).then(res => res.data).catch(() => null)
-            );
-        }
-
-        const allPageResults = await Promise.all(pagePromises);
-        const results = [];
-        const seen = new Set();
-
-        for (const data of allPageResults) {
-            if (!data || !data.results || !Array.isArray(data.results)) continue;
-            for (const item of data.results) {
-                let infoHash = (item.h || String(item.pk || '')).replace(/[^A-Za-z0-9]/g, '').toLowerCase();
-                if (!infoHash || infoHash.length < 40 || seen.has(infoHash)) continue;
-                seen.add(infoHash);
-
-                const name = item.n || 'Unknown Title';
-                const sizeBytes = parseInt(item.s) || 0; 
-                if (isValidResult(name, options.allowEng) && checkYear(name, year, type) && isCorrectFormat(name, reqSeason, reqEpisode)) {
-                    results.push({ title: name, magnet: `magnet:?xt=urn:btih:${infoHash}`, size: bytesToSize(sizeBytes), sizeBytes: sizeBytes, seeders: parseInt(item.se) || 0, source: "1337x" });
-                }
-            }
-        }
-        console.log(`[1337x] Trovati ${results.length} risultati validi.`);
-        return results;
-    } catch { return []; }
+function getKnabenCategories(type) {
+    const normalizedType = normalizeType(type);
+    if (normalizedType === "movie") return [3000000];
+    if (normalizedType === "series") return [2000000, 6000000];
+    return [];
 }
 
-async function searchBitSearch(title, year, type, reqSeason, reqEpisode, options = {}) {
-    console.log(`[BitSearch] Avvio ricerca per: ${title}...`);
-    try {
-        let query = clean(title) + (options.allowEng ? "" : " ITA");
-        const { data } = await axios.get(`https://bitsearch.to/api/v1/search?q=${encodeURIComponent(query)}&limit=50`, { timeout: CONFIG.TIMEOUT_API });
-        if (!data?.data) return [];
+function isBlacklistedCategory(categoryId) {
+    if (categoryId === undefined || categoryId === null) return false;
+    if (Array.isArray(categoryId)) return categoryId.some(isBlacklistedCategory);
+    const numeric = parseInt(String(categoryId), 10);
+    return ENGINE_BLACKLISTED_CATEGORIES.has(numeric);
+}
 
-        const results = data.data.map(i => {
-            if (isValidResult(i.name, options.allowEng) && checkYear(i.name, year, type) && isCorrectFormat(i.name, reqSeason, reqEpisode)) {
-                return { title: i.name, magnet: `magnet:?xt=urn:btih:${i.infohash}&dn=${encodeURIComponent(i.name)}`, size: bytesToSize(i.size), sizeBytes: parseInt(i.size) || 0, seeders: parseInt(i.seeders) || 0, source: "BitSearch" };
-            }
-            return null;
-        }).filter(Boolean);
-        console.log(`[BitSearch] Trovati ${results.length} risultati validi.`);
-        return results;
-    } catch (e) { 
-        console.log(`[BitSearch] Errore durante la ricerca: ${e.message}`);
-        return []; 
+async function searchKnaben(context) {
+    console.log(`[Knaben] Avvio ricerca per: ${context.title}...`);
+    try {
+        const categories = getKnabenCategories(context.type);
+        const results = await collectQueryResults(context, async query => {
+            const payload = {
+                query,
+                search_type: "100%",
+                search_field: "title",
+                size: 250,
+                from: 0,
+                hide_unsafe: false,
+                hide_xxx: true
+            };
+            if (categories.length) payload.categories = categories;
+
+            const data = await fetchJsonApi(CONFIG.KNABEN_API, payload, CONFIG.TIMEOUT_API);
+            if (!data?.hits || !Array.isArray(data.hits)) return [];
+
+            return data.hits.map(hit => {
+                if (!hit?.title || isBlacklistedCategory(hit.categoryId)) return null;
+                const magnet = hit.magnetUrl || buildMagnetFromHash(hit.hash, hit.title);
+                if (!magnet) return null;
+                return normalizeResult({
+                    title: hit.title,
+                    magnet,
+                    sizeBytes: Number(hit.bytes) || 0,
+                    size: hit.bytes ? bytesToSize(hit.bytes) : "",
+                    seeders: parseInt(hit.seeders, 10) || 0
+                }, context, "Knaben");
+            }).filter(Boolean);
+        }, { maxQueries: 3 });
+
+        const finalResults = dedupeResults(results).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[Knaben] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[Knaben] Errore durante la ricerca: ${error.message}`);
+        return [];
     }
 }
 
-async function searchUindex(title, year, type, reqSeason, reqEpisode, options = {}) {
-    console.log(`[UIndex] Avvio ricerca per: ${title}...`);
+async function searchTPB(context) {
+    console.log(`[TPB (ApiBay)] Avvio ricerca per: ${context.title}...`);
     try {
-        let q = clean(title) + (options.allowEng ? "" : " ITA");
-        const { data } = await requestHtml(`https://uindex.org/search.php?search=${encodeURIComponent(q)}&c=0`, { timeout: 4000 });
-        if (!data) return [];
-        
-        const results = data.split(/<tr[^>]*>/gi).filter(row => row.includes('magnet:')).map(row => {
-            const magnet = row.match(/href=["'](magnet:[^"']+)["']/i)?.[1].replace(/&amp;/g, '&');
-            const name = row.match(/<td[^>]*><a[^>]*>([^<]+)/i)?.[1];
-            if(magnet && name && isValidResult(name, options.allowEng) && checkYear(name, year, type) && isCorrectFormat(name, reqSeason, reqEpisode)) {
-                return { title: name, magnet, size: "??", sizeBytes: 0, seeders: 0, source: "UIndex" };
+        const results = await collectQueryResults(context, async query => {
+            const { data } = await axios.get(`https://apibay.org/q.php?q=${encodeURIComponent(query)}&cat=0`, {
+                timeout: CONFIG.TIMEOUT_API,
+                httpsAgent
+            });
+
+            if (!Array.isArray(data) || data[0]?.id === "0") return [];
+            return data.map(item => normalizeResult({
+                title: item.name,
+                magnet: buildMagnetFromHash(item.info_hash, item.name),
+                sizeBytes: parseInt(item.size, 10) || 0,
+                size: (parseInt(item.size, 10) || 0) > 0 ? bytesToSize(parseInt(item.size, 10) || 0) : "",
+                seeders: parseInt(item.seeders, 10) || 0
+            }, context, "TPB")).filter(Boolean);
+        }, { maxQueries: 3 });
+
+        const finalResults = dedupeResults(results).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[TPB (ApiBay)] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[TPB (ApiBay)] Errore: ${error.message}`);
+        return [];
+    }
+}
+
+async function searchTPBMirror(context) {
+    console.log(`[TPB Mirror] Avvio ricerca per: ${context.title}...`);
+    try {
+        const results = await collectQueryResults(context, async query => {
+            const url = `https://thepibay.site/search/${encodeURIComponent(query)}/1/99/0`;
+            const { data } = await requestHtml(url, { timeout: 6500 });
+            if (!data) return [];
+
+            const $ = cheerio.load(data);
+            const rows = [];
+
+            $("table#searchResult tr").each((_, row) => {
+                const titleEl = $(row).find(".detName a.detLink");
+                const magnet = $(row).find('a[href^="magnet:"]').attr("href");
+                if (!titleEl.length || !magnet) return;
+
+                const name = normalizeSpaces(titleEl.text());
+                if (!passesResultFilters(name, context)) return;
+
+                let sizeBytes = 0;
+                const detDesc = $(row).find(".detDesc").text();
+                const sizeMatch = detDesc.match(/Size\s+([\d.,]+\s*[A-Za-z]+)/i);
+                if (sizeMatch) sizeBytes = parseSize(sizeMatch[1]);
+                const tds = $(row).find('td[align="right"]');
+                const seeders = tds.length > 0 ? (parseInt($(tds[0]).text().trim(), 10) || 0) : 0;
+
+                rows.push(normalizeResult({
+                    title: name,
+                    magnet,
+                    sizeBytes,
+                    size: sizeBytes > 0 ? bytesToSize(sizeBytes) : "",
+                    seeders
+                }, context, "TPB Mirror"));
+            });
+
+            return rows.filter(Boolean);
+        }, { maxQueries: 2 });
+
+        const finalResults = dedupeResults(results).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[TPB Mirror] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[TPB Mirror] Errore: ${error.message}`);
+        return [];
+    }
+}
+
+async function searchLime(context) {
+    console.log(`[LimeTorrents] Avvio ricerca per: ${context.title}...`);
+    try {
+        const candidates = await collectQueryResults(context, async query => {
+            const baseUrl = "https://limetorrents.org";
+            const { data } = await requestHtml(`${baseUrl}/search?q=${encodeURIComponent(query)}`, { timeout: 7000 });
+            if (!data) return [];
+
+            const $ = cheerio.load(data);
+            const items = [];
+
+            $("table.table2 tbody.torsearch tr").each((_, row) => {
+                const tds = $(row).find("td");
+                if (tds.length < 5) return;
+
+                const titleEl = tds.eq(0).find(".tt-name a").last();
+                const name = normalizeSpaces(titleEl.text());
+                let detailUrl = titleEl.attr("href");
+                if (!name || !detailUrl || !passesResultFilters(name, context)) return;
+
+                if (!detailUrl.startsWith("http")) detailUrl = `${baseUrl}${detailUrl}`;
+                const size = normalizeSpaces(tds.eq(2).text());
+                const seeders = parseInt(tds.eq(3).text().trim(), 10) || 0;
+
+                items.push({ title: name, detailUrl, size, seeders });
+            });
+
+            return items;
+        }, { maxQueries: 2 });
+
+        const results = await Promise.all(
+            candidates.slice(0, 25).map(candidate =>
+                detailLimit(async () => {
+                    try {
+                        const html = (await requestHtml(candidate.detailUrl, { timeout: 4500 })).data;
+                        const magnet = html ? cheerio.load(html)('a[href^="magnet:"]').first().attr("href") : null;
+                        return normalizeResult({ ...candidate, magnet }, context, "LimeTorrents");
+                    } catch {
+                        return null;
+                    }
+                })
+            )
+        );
+
+        const finalResults = dedupeResults(results.filter(Boolean)).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[LimeTorrents] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[LimeTorrents] Errore: ${error.message}`);
+        return [];
+    }
+}
+
+async function searchRARBG(context) {
+    console.log(`[RARBG] Avvio ricerca per: ${context.title}...`);
+    const baseUrl = "https://www.rarbgproxy.to";
+    try {
+        const candidates = await collectQueryResults(context, async query => {
+            const { data } = await requestHtml(`${baseUrl}/search/?search=${encodeURIComponent(query)}`, { timeout: 7000 });
+            if (!data) return [];
+
+            const $ = cheerio.load(data);
+            const items = [];
+
+            $("tr.table2ta_rarbgproxy, table.lista2 tr").each((_, row) => {
+                const tds = $(row).find("td");
+                if (tds.length < 4) return;
+
+                const linkTag = tds.eq(1).find("a").first();
+                const name = normalizeSpaces(linkTag.text() || linkTag.attr("title"));
+                let detailHref = linkTag.attr("href");
+                if (!name || !detailHref || !passesResultFilters(name, context)) return;
+
+                if (!detailHref.startsWith("http")) {
+                    detailHref = `${baseUrl}${detailHref.startsWith("/") ? "" : "/"}${detailHref}`;
+                }
+
+                let size = normalizeSpaces(tds.eq(3).text());
+                let seeders = parseInt(tds.eq(4).text().trim(), 10) || 0;
+                if ($(row).hasClass("table2ta_rarbgproxy")) {
+                    size = normalizeSpaces(tds.eq(4).text()) || size;
+                    seeders = parseInt(tds.eq(5).text().trim(), 10) || seeders;
+                }
+
+                items.push({ title: name, detailUrl: detailHref, size, seeders });
+            });
+
+            return items;
+        }, { maxQueries: 2 });
+
+        const results = await Promise.all(
+            candidates.slice(0, 25).map(candidate =>
+                detailLimit(async () => {
+                    try {
+                        const detailHtml = (await requestHtml(candidate.detailUrl, { timeout: 4500 })).data;
+                        if (!detailHtml) return null;
+                        const magnet =
+                            cheerio.load(detailHtml)('a[href^="magnet:"]').first().attr("href") ||
+                            detailHtml.match(/magnet:\?xt=urn:btih:[A-Za-z0-9]{32,40}[^"'\s]*/i)?.[0];
+                        return normalizeResult({ ...candidate, magnet }, context, "RARBG");
+                    } catch {
+                        return null;
+                    }
+                })
+            )
+        );
+
+        const finalResults = dedupeResults(results.filter(Boolean)).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[RARBG] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[RARBG] Errore di connessione al proxy: ${error.message}`);
+        return [];
+    }
+}
+
+async function search1337x(context) {
+    console.log(`[1337x] Avvio ricerca per: ${context.title}...`);
+    try {
+        const queries = buildSearchQueries(context).slice(0, 2);
+        const baseUrl = "https://1337x.bz";
+        const headers = {
+            "User-Agent": BROWSER_PROFILES[2].userAgent,
+            Accept: "application/json, text/plain, */*",
+            Referer: `${baseUrl}/home/`
+        };
+
+        const pageJobs = [];
+        for (const query of queries) {
+            for (let page = 1; page <= 3; page += 1) {
+                const url = page === 1
+                    ? `${baseUrl}/get-posts/keywords:${encodeURIComponent(query)}:format:json:ncategory:XXX/`
+                    : `${baseUrl}/get-posts/keywords:${encodeURIComponent(query)}:format:json:ncategory:XXX/?page=${page}`;
+                pageJobs.push(
+                    axios.get(url, { timeout: CONFIG.TIMEOUT_API * 2, headers, httpsAgent })
+                        .then(response => response.data)
+                        .catch(() => null)
+                );
             }
-            return null;
-        }).filter(Boolean);
-        console.log(`[UIndex] Trovati ${results.length} risultati validi.`);
-        return results;
-    } catch { return []; }
+        }
+
+        const pageResults = await Promise.all(pageJobs);
+        const normalized = [];
+        const seenHashes = new Set();
+
+        for (const data of pageResults) {
+            if (!data?.results || !Array.isArray(data.results)) continue;
+            for (const item of data.results) {
+                const infoHash = (item.h || String(item.pk || "")).replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+                if (!infoHash || infoHash.length < 32 || seenHashes.has(infoHash)) continue;
+                seenHashes.add(infoHash);
+
+                const result = normalizeResult({
+                    title: item.n || "Unknown Title",
+                    magnet: buildMagnetFromHash(infoHash, item.n),
+                    sizeBytes: parseInt(item.s, 10) || 0,
+                    size: (parseInt(item.s, 10) || 0) > 0 ? bytesToSize(parseInt(item.s, 10) || 0) : "",
+                    seeders: parseInt(item.se, 10) || 0
+                }, context, "1337x");
+
+                if (result) normalized.push(result);
+            }
+        }
+
+        const finalResults = dedupeResults(normalized).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[1337x] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[1337x] Errore: ${error.message}`);
+        return [];
+    }
+}
+
+async function searchBitSearch(context) {
+    console.log(`[BitSearch] Avvio ricerca per: ${context.title}...`);
+    try {
+        const results = await collectQueryResults(context, async query => {
+            const { data } = await axios.get(`https://bitsearch.to/api/v1/search?q=${encodeURIComponent(query)}&limit=50`, {
+                timeout: CONFIG.TIMEOUT_API,
+                httpsAgent
+            });
+
+            if (!data?.data || !Array.isArray(data.data)) return [];
+            return data.data.map(item => normalizeResult({
+                title: item.name,
+                magnet: buildMagnetFromHash(item.infohash, item.name),
+                sizeBytes: parseInt(item.size, 10) || 0,
+                size: (parseInt(item.size, 10) || 0) > 0 ? bytesToSize(parseInt(item.size, 10) || 0) : "",
+                seeders: parseInt(item.seeders, 10) || 0
+            }, context, "BitSearch")).filter(Boolean);
+        }, { maxQueries: 3 });
+
+        const finalResults = dedupeResults(results).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[BitSearch] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[BitSearch] Errore durante la ricerca: ${error.message}`);
+        return [];
+    }
+}
+
+async function searchUindex(context) {
+    console.log(`[UIndex] Avvio ricerca per: ${context.title}...`);
+    try {
+        const results = await collectQueryResults(context, async query => {
+            const { data } = await requestHtml(`https://uindex.org/search.php?search=${encodeURIComponent(query)}&c=0`, { timeout: 5000 });
+            if (!data) return [];
+
+            return data
+                .split(/<tr[^>]*>/gi)
+                .map(row => {
+                    const magnet = row.match(/href=["'](magnet:[^"']+)["']/i)?.[1]?.replace(/&amp;/g, "&");
+                    const name = row.match(/<td[^>]*><a[^>]*>([^<]+)/i)?.[1];
+                    return normalizeResult({
+                        title: name,
+                        magnet,
+                        size: "",
+                        sizeBytes: 0,
+                        seeders: 0
+                    }, context, "UIndex");
+                })
+                .filter(Boolean);
+        }, { maxQueries: 2 });
+
+        const finalResults = dedupeResults(results).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[UIndex] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[UIndex] Errore: ${error.message}`);
+        return [];
+    }
 }
 
 const ACTIVE_ENGINES = [
-    searchCorsaro,
-    searchKnaben,
-    searchTPB,        
-    searchTPBMirror,  
-    search1337x,      
-    searchBitSearch,  
-    searchLime,       
-    searchRARBG,
-    searchUindex
+    { name: "Corsaro", fn: searchCorsaro, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "Knaben", fn: searchKnaben, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "TPB", fn: searchTPB, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "TPB Mirror", fn: searchTPBMirror, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "1337x", fn: search1337x, timeout: CONFIG.ENGINE_TIMEOUT + 2000 },
+    { name: "BitSearch", fn: searchBitSearch, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "LimeTorrents", fn: searchLime, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "RARBG", fn: searchRARBG, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "UIndex", fn: searchUindex, timeout: CONFIG.ENGINE_TIMEOUT }
 ];
+
+function buildSearchCacheKey(context) {
+    return JSON.stringify({
+        title: context.cleanTitle.toLowerCase(),
+        year: context.year || "",
+        type: context.normalizedType,
+        reqSeason: context.reqSeason || 0,
+        reqEpisode: context.reqEpisode || 0,
+        allowEng: context.allowEng
+    });
+}
+
+async function runEngine(engine, context) {
+    return engineLimit(async () => {
+        try {
+            const startedAt = now();
+            const results = await withTimeout(engine.fn(context), engine.timeout);
+            console.log(`[${engine.name}] completato in ${now() - startedAt}ms con ${results.length} risultati.`);
+            return results;
+        } catch (error) {
+            console.log(`[TIMEOUT/CRITICAL] ${engine.name} interrotto: ${error.message}`);
+            return [];
+        }
+    });
+}
 
 async function searchMagnet(title, year, type, imdbId, options = {}) {
     console.log(`\n======================================================`);
-    console.log(`🚀 AVVIO RICERCA GLOBALE: "${title}" (Anno: ${year || 'N/D'})`);
+    console.log(`🚀 AVVIO RICERCA GLOBALE: "${title}" (Anno: ${year || "N/D"})`);
     console.log(`======================================================\n`);
-    
-    const { season: reqSeason, episode: reqEpisode } = imdbId ? 
-        (imdbId.split(':').length > 2 ? { season: parseInt(imdbId.split(':')[1]), episode: parseInt(imdbId.split(':')[2]) } : {}) : {};
 
-    const searchOpts = { allowEng: false, imdbId, ...options };
-    
-    const promises = ACTIVE_ENGINES.map(engine => 
-        withTimeout(engine(title, year, type, reqSeason, reqEpisode, searchOpts), CONFIG.TIMEOUT).catch(e => {
-            console.log(`[TIMEOUT/CRITICAL] Motore interrotto per limite di tempo o crash: ${e.message}`);
-            return [];
-        })
+    const context = buildSearchContext(title, year, type, imdbId, options);
+    const cacheKey = buildSearchCacheKey(context);
+    const cached = getCache(searchCache, cacheKey);
+    if (cached) {
+        console.log(`⚡ [CACHE] Hit per "${title}" -> ${cached.length} risultati.`);
+        return cached;
+    }
+
+    const settledResults = await Promise.allSettled(
+        ACTIVE_ENGINES.map(engine => runEngine(engine, context))
     );
 
-    const resultsRaw = await Promise.allSettled(promises);
-    let allResults = resultsRaw.map(r => r.status === 'fulfilled' ? r.value : []).flat();
+    const rawResults = settledResults
+        .filter(item => item.status === "fulfilled")
+        .flatMap(item => item.value);
 
-    const seenHashes = new Set();
-    let uniqueResults = [];
-    allResults.forEach(r => {
-        const hashMatch = r.magnet.match(/btih:([a-f0-9]{40})/i);
-        const hash = hashMatch ? hashMatch[1].toLowerCase() : null;
-        if (hash && !seenHashes.has(hash)) {
-            seenHashes.add(hash);
-            uniqueResults.push(r);
-        }
-    });
+    const uniqueResults = dedupeResults(rawResults)
+        .sort((a, b) => {
+            if ((b._score || 0) !== (a._score || 0)) return (b._score || 0) - (a._score || 0);
+            if ((b.seeders || 0) !== (a.seeders || 0)) return (b.seeders || 0) - (a.seeders || 0);
+            return (b.sizeBytes || 0) - (a.sizeBytes || 0);
+        })
+        .slice(0, CONFIG.FINAL_RESULT_LIMIT)
+        .map(result => ({
+            title: result.title,
+            magnet: appendTrackers(result.magnet),
+            size: result.size || bytesToSize(result.sizeBytes),
+            sizeBytes: result.sizeBytes || 0,
+            seeders: result.seeders || 0,
+            source: result.source
+        }));
 
-    const finalResults = uniqueResults
-        .sort((a, b) => b.seeders - a.seeders)
-        .slice(0, 300)
-        .map(r => {
-            if (!r.magnet.includes("tr=")) {
-                r.magnet += "&" + CONFIG.TRACKERS.map(t => `tr=${encodeURIComponent(t)}`).join('&');
-            }
-            return r;
-        });
-        
-    console.log(`\n✅ RICERCA CONCLUSA. Trovati ${finalResults.length} risultati unici totali per "${title}".\n`);
-    return finalResults;
+    const ttl = uniqueResults.length > 0 ? CONFIG.SEARCH_CACHE_TTL : CONFIG.NEGATIVE_CACHE_TTL;
+    setCache(searchCache, cacheKey, uniqueResults, ttl);
+
+    console.log(`\n✅ RICERCA CONCLUSA. Trovati ${uniqueResults.length} risultati unici totali per "${title}".\n`);
+    return uniqueResults;
 }
 
 async function updateTrackers() {
     try {
-        const { data } = await axios.get("https://ngosang.github.io/trackerslist/trackers_best.txt", { timeout: 4000 });
-        if(data) CONFIG.TRACKERS = data.split('\n').filter(l => l.trim());
-        console.log(`[Trackers] Aggiornati correttamente. Totale tracker: ${CONFIG.TRACKERS.length}`);
+        const { data } = await axios.get("https://ngosang.github.io/trackerslist/trackers_best.txt", {
+            timeout: 4000,
+            httpsAgent
+        });
+        const trackers = String(data || "")
+            .split("\n")
+            .map(line => line.trim())
+            .filter(Boolean)
+            .filter(line => /^udp:\/\/|^https?:\/\//i.test(line));
+
+        if (trackers.length) {
+            CONFIG.TRACKERS = [...new Set(trackers)].slice(0, 40);
+            console.log(`[Trackers] Aggiornati correttamente. Totale tracker: ${CONFIG.TRACKERS.length}`);
+            return CONFIG.TRACKERS;
+        }
     } catch {
         console.log(`[Trackers] Impossibile aggiornare i tracker dal master list.`);
     }
+
+    CONFIG.TRACKERS = [...DEFAULT_TRACKERS];
+    return CONFIG.TRACKERS;
 }
 
-module.exports = { searchMagnet, updateTrackers, CONFIG, requestHtml };
+module.exports = {
+    searchMagnet,
+    updateTrackers,
+    CONFIG,
+    requestHtml,
+    clean,
+    parseSize,
+    bytesToSize,
+    isValidResult,
+    checkYear,
+    isCorrectFormat
+};
