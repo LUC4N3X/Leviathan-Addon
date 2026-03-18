@@ -1,820 +1,947 @@
-const titleParser = require('parse-torrent-title'); 
+function basicParseTitle(title) {
+  const source = String(title || '');
+  const cleaned = source
+    .replace(/\.(?:mkv|mp4|avi|iso|wmv|ts|flv|mov|m2ts|m4v|mpg|mpeg)$/i, '')
+    .replace(/[._]+/g, ' ')
+    .trim();
 
-const UNITS = ["B", "KB", "MB", "GB", "TB"];
+  const titlePart = cleaned
+    .replace(/\b(?:2160p|1440p|1080p|1080i|720p|480p|x264|x265|h264|h265|hevc|av1|bluray|blu-ray|bdrip|brrip|webrip|web-dl|hdtv|ddp|aac|ac3|dts|truehd|atmos|dv|dovi|hdr10\+?|remux)\b.*$/i, '')
+    .trim();
 
+  const resolution = source.match(/\b(2160p|1440p|1080p|1080i|720p|480p)\b/i)?.[1] || '';
+  const codec = source.match(/\b(x265|x264|h265|h264|hevc|av1|vvc|h266)\b/i)?.[1] || '';
+  const group = source.match(/[-_]\s?([a-zA-Z0-9@.]+)$/)?.[1] || '';
+  const channels = source.match(/\b([1-7][ .][01])\b/i)?.[1]?.replace(' ', '.') || '';
+  const hdr = [];
+  if (/\b(?:dv|dovi|dolby\s*vision)\b/i.test(source)) hdr.push('DV');
+  if (/\b(?:hdr10\+|hdr10plus)\b/i.test(source)) hdr.push('HDR10+');
+  else if (/\bhdr\b/i.test(source)) hdr.push('HDR');
 
-// 1. CONFIGURAZIONE & COSTANTI
-
-// CONFIGURAZIONE SEPARATORE LINGUE
-const LANG_SEP = " / "; 
-
-// Mappa Lingue Estesa
-const LANG_FLAGS = [
-    { id: "ita", flag: "🇮🇹", label: "ITA", regex: /\b(ita|italian|italiano|it)\b/i },
-    { id: "eng", flag: "🇬🇧", label: "ENG", regex: /\b(eng|english|en)\b/i },
-    { id: "jpn", flag: "🇯🇵", label: "JPN", regex: /\b(jap|jpn|japanese|jp)\b/i },
-    { id: "fra", flag: "🇫🇷", label: "FRA", regex: /\b(fra|french|fre|fr)\b/i },
-    { id: "deu", flag: "🇩🇪", label: "DEU", regex: /\b(ger|german|deu|de|deutsch)\b/i },
-    { id: "esp", flag: "🇪🇸", label: "ESP", regex: /\b(spa|spanish|esp|es|español)\b/i },
-    { id: "rus", flag: "🇷🇺", label: "RUS", regex: /\b(rus|russian|ru)\b/i },
-    { id: "por", flag: "🇵🇹", label: "POR", regex: /\b(por|portuguese|pt|br)\b/i },
-    { id: "ukr", flag: "🇺🇦", label: "UKR", regex: /\b(ukr|ukrainian)\b/i },
-    { id: "kor", flag: "🇰🇷", label: "KOR", regex: /\b(kor|korean)\b/i },
-    { id: "chi", flag: "🇨🇳", label: "CHI", regex: /\b(chi|chinese)\b/i },
-    { id: "hin", flag: "🇮🇳", label: "HIN", regex: /\b(hin|hindi)\b/i }
-];
-
-const REGEX_EXTRA = {
-    contextIt: /\b(ac-?3|aac|mp3|ddp|dts|truehd|audio|lingua)\W+(it)\b/i,
-    dualAudio: /\b(dual[\s\.-]*audio)\b/i,
-    multiAudio: /\b(multi[\s\.-]*audio|multi)\b/i
-};
-
-// Icone Qualità
-const QUALITY_ICONS = {
-    "8k": "🪐",
-    "4k": "🔥",
-    "2160p": "🔥",
-    "1440p": "🖥️",
-    "1080p": "👑",
-    "720p": "⚡",
-    "480p": "📼",
-    "dvd": "💿",
-    "sd": "📼",
-    "cam": "💩",
-    "scr": "👀"
-};
-
-// Lista nera ESTESA per evitare falsi positivi 
-const GROUP_BLACKLIST = new Set([
-    "mkv", "mp4", "avi", "wmv", "iso", "flv", "mov", "ts", "m2ts",
-    "h264", "h265", "x264", "x265", "hevc", "av1", "divx", "xvid", "mpeg", "avc", "vp9",
-    "4k", "2160p", "1080p", "1080i", "720p", "576p", "480p", "sd", "hd", "uhd", "fhd",
-    "aac", "ac3", "mp3", "dts", "dtshd", "dts-ma", "truehd", "atmos", "ddp", "dd", "flac", "opus", "pcm", "stereo", "5.1", "7.1", "2.0", "dual", "audio",
-    "bluray", "bd", "bdrip", "brrip", "web", "web-dl", "webrip", "hdtv", "tvrip", "dvd", "dvdrip", "scr", "screener", "cam", "tc", "telesync", "remux", "iso",
-    "ita", "eng", "jpa", "chn", "kor", "rus", "spa", "fre", "ger", "multi", "multisub", "sub", "dub", "ita-eng", "eng-ita",
-    "repack", "proper", "internal", "readnfo", "extended", "cut", "director", "unrated", "complete", "season", "episode", "ep", "s01", "e01"
-]);
-
-// =========================================================================
-// 2. FUNZIONI UTILI
-// =========================================================================
-
-function formatBytes(bytes) {
-  if (!+bytes) return "0 B";
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${UNITS[i]}`;
-}
-
-function cleanFilename(filename) {
-    if (!filename) return "";
-    let clean = "";
-    
-    try {
-        const info = titleParser.parse(filename);
-        clean = info.title || filename;
-    } catch (e) {
-        clean = filename.replace(/\./g, " ").trim();
-    }
-
-    if (/Fratelli demolitori/i.test(clean) && /The Wrecking Crew/i.test(clean)) {
-        return "Fratelli demolitori";
-    }
-
-    if (/\s+-\s+/.test(clean)) {
-        const parts = clean.split(/\s+-\s+/);
-        if (parts[0] && parts[0].trim().length > 2) {
-            clean = parts[0].trim();
-        }
-    }
-    
-    const words = clean.split(/\s+/);
-    if (words.length >= 2 && words.length % 2 === 0) {
-        const mid = words.length / 2;
-        const p1 = words.slice(0, mid).join(" ");
-        const p2 = words.slice(mid).join(" ");
-        if (p1.toLowerCase() === p2.toLowerCase()) {
-            return p1;
-        }
-    }
-
-    return clean;
-}
-
-function getEpisodeTag(filename, config = {}) {
-    // Se l'addon passa esplicitamente stagione ed episodio, li usa subito
-    if (config.season && config.episode) {
-        return `🍿 S${String(config.season).padStart(2, '0')}E${String(config.episode).padStart(2, '0')}`;
-    }
-
-    const f = filename.toLowerCase();
-
-    const matchMulti = f.match(/s(\d+)[ex](\d+)\s*-\s*(?:[ex]?(\d+))/i) || f.match(/(\d+)x(\d+)\s*-\s*(\d+)/i);
-    if (matchMulti) {
-        const s = matchMulti[1].padStart(2, '0');
-        const eStart = matchMulti[2].padStart(2, '0');
-        const eEnd = matchMulti[3].padStart(2, '0');
-        return `🍿 S${s} E${eStart}-${eEnd}`;
-    }
-
-    const matchAnimeBatch = f.match(/(?:ep|eps|episode|^|\s)\[?(\d{1,3})\s*-\s*(\d{1,3})\]?(?:\s|$)/i);
-    if (matchAnimeBatch) {
-        if (parseInt(matchAnimeBatch[1]) < 1900) { 
-             return `🍿 Ep ${matchAnimeBatch[1].padStart(2, '0')}-${matchAnimeBatch[2].padStart(2, '0')}`;
-        }
-    }
-
-    const matchEp = f.match(/s(\d+)[ex](\d+)/i);
-    if (matchEp) return `🍿 S${matchEp[1].padStart(2, '0')}E${matchEp[2].padStart(2, '0')}`;
-    
-    const matchX = f.match(/(\d+)x(\d+)/i);
-    if (matchX) return `🍿 S${matchX[1].padStart(2, '0')}E${matchX[2].padStart(2, '0')}`;
-    
-    // Novità: Estrae elegantemente la stagione se manca l'episodio
-    if (/(?:complete|season|stagione|tutta)\s+(\d+)/i.test(f)) {
-        const num = f.match(/(?:complete|season|stagione|tutta)\s+(\d+)/i)[1];
-        return `🍿 S${num.padStart(2, '0')}`;
-    }
-
-    const matchS = f.match(/s(\d+)\b/i);
-    if (matchS) return `🍿 S${matchS[1].padStart(2, '0')}`;
-
-    return "";
-}
-
-function toStylized(text, type = 'std') {
-    if (!text) return "";
-    text = String(text);
-    const maps = {
-        'bold': {
-            nums: {'0':'𝟬','1':'𝟭','2':'𝟮','3':'𝟯','4':'𝟰','5':'𝟱','6':'𝟲','7':'𝟳','8':'𝟴','9':'𝟵'},
-            chars: {
-                'A':'𝗔','B':'𝗕','C':'𝗖','D':'𝗗','E':'𝗘','F':'𝗙','G':'𝗚','H':'𝗛','I':'𝗜','J':'𝗝','K':'𝗞','L':'𝗟','M':'𝗠','N':'𝗡','O':'𝗢','P':'𝗣','Q':'𝗤','R':'𝗥','S':'𝗦','T':'𝗧','U':'𝗨','V':'𝗩','W':'𝗪','X':'𝗫','Y':'𝗬','Z':'𝗭',
-                'a':'𝗮','b':'𝗯','c':'𝗰','d':'𝗱','e':'𝗲','f':'𝗳','g':'𝗴','h':'𝗵','i':'𝗶','j':'𝗷','k':'𝗸','l':'𝗹','m':'𝗺','n':'𝗻','o':'𝗼','p':'𝗽','q':'𝗾','r':'𝗿','s':'𝘀','t':'𝘁','u':'𝘂','v':'𝘃','w':'𝘄','x':'𝘅','y':'𝘆','z':'𝘇'
-            }
-        },
-        'small': {
-            nums: {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9'},
-            chars: {'A':'ᴀ','B':'ʙ','C':'ᴄ','D':'ᴅ','E':'ᴇ','F':'ꜰ','G':'ɢ','H':'ʜ','I':'ɪ','J':'ᴊ','K':'ᴋ','L':'ʟ','M':'ᴍ','N':'ɴ','O':'ᴏ','P':'ᴘ','Q':'ǫ','R':'ʀ','S':'ꜱ','T':'ᴛ','U':'ᴜ','V':'ᴠ','W':'ᴡ','X':'x','Y':'ʏ','Z':'ᴢ','a':'ᴀ','b':'ʙ','c':'ᴄ','d':'ᴅ','e':'ᴇ','f':'ꜰ','g':'ɢ','h':'ʜ','i':'ɪ','j':'ᴊ','k':'ᴋ','l':'ʟ','m':'ᴍ','n':'ɴ','o':'ᴏ','p':'ᴘ','q':'ǫ','r':'ʀ','s':'ꜱ','t':'ᴛ','u':'ᴜ','v':'ᴠ','w':'ᴡ','x':'x','y':'ʏ','z':'ᴢ'}
-        },
-    };
-
-    if (type === 'spaced') {
-        return text.split('').map(c => {
-            const map = maps['bold'];
-            const char = (/[0-9]/.test(c) ? map.nums[c] : map.chars[c]) || c;
-            return char + ' ';
-        }).join('').trim();
-    }
-
-    const map = maps[type] || maps['bold'];
-    return text.split('').map(c => {
-        if (/[0-9]/.test(c)) return map.nums[c] || c;
-        return map.chars[c] || c;
-    }).join('');
-}
-
-// =========================================================================
-// 3. ESTRAZIONE DATI PRINCIPALE
-
-function extractStreamInfo(title, source, config = {}) {
-  const t = String(title);
-  const info = titleParser.parse(t);
-  
-  const cleanForRegex = t.toUpperCase().replace(/[\.\-_\[\]\(\)\s]+/g, ' '); 
-
-  let releaseGroup = info.group || "";
-  const cleanT = t.replace(/\.(mkv|mp4|avi|iso|wmv|ts|flv|mov)$/i, "").trim();
-
-  if (!releaseGroup) {
-      const endHyphen = cleanT.match(/[-_]\s?([a-zA-Z0-9@\.]+)$/);
-      const endBracket = cleanT.match(/\[([a-zA-Z0-9_\-\.\s]+)\]$/);
-      const startBracket = t.match(/^\[([a-zA-Z0-9_\-\.\s]+)\]/);
-
-      if (endHyphen) releaseGroup = endHyphen[1];
-      else if (endBracket) releaseGroup = endBracket[1];
-      else if (startBracket) releaseGroup = startBracket[1];
-      else {
-          const tokens = cleanT.split(/[\s\.]+/);
-          const candidate = tokens[tokens.length - 1]; 
-          if (candidate && candidate.length > 2 && !GROUP_BLACKLIST.has(candidate.toLowerCase()) && !/^\d+$/.test(candidate)) {
-              releaseGroup = candidate;
-          }
-      }
-  }
-
-  if (releaseGroup) {
-      releaseGroup = releaseGroup.replace(/^(-|_|\[|\]|\s|\.)+|(-|_|\[|\]|\s|\.)+$/g, "").trim();
-      if (GROUP_BLACKLIST.has(releaseGroup.toLowerCase()) || releaseGroup.length > 25 || releaseGroup.length < 2) {
-          releaseGroup = "";
-      }
-  }
-
-  // A. Qualità
-  let q = "SD";
-  let qDetails = "SD";
-  
-  if (info.resolution) {
-      q = info.resolution.toUpperCase();
-      if (q === "2160P") q = "4K";
-      else if (q === "4320P") q = "8K";
-      qDetails = q;
-  } else if (info.source) {
-      const camSources = ['CAM', 'TeleSync', 'TeleCine', 'SCR', 'Screener'];
-      if (camSources.some(s => info.source.includes(s))) {
-          q = "CAM";
-          qDetails = "CAM";
-      } else if (info.source.includes('BluRay') || info.source.includes('BD')) {
-          q = "1080p";
-      }
-  }
-
-  const qIcon = QUALITY_ICONS[q.toLowerCase()] || (q.includes('4K') ? "🔥" : "📺");
-
-  // B. Tags Video
-  const videoTags = [];
-  const cleanTags = [];
-
-  let isRemux = info.remux;
-  let isWeb = (info.source && /web|hdtv/i.test(info.source)) || /WEB/i.test(cleanForRegex);
-  let isBluRay = (info.source && /bluray|bd/i.test(info.source)) || /BLURAY|BD/i.test(cleanForRegex);
-  let sourceFound = false;
-
-  if (isRemux) {
-      videoTags.push(`💎 ${toStylized("REMUX")}`);
-      cleanTags.push("Remux");
-      sourceFound = true;
-  } else if (isBluRay) {
-      videoTags.push(`💿 ${toStylized("BluRay")}`);
-      cleanTags.push("BluRay");
-      sourceFound = true;
-  } else if (isWeb) {
-      videoTags.push(`☁️ ${toStylized("WEB")}`);
-      cleanTags.push("WEB");
-      sourceFound = true;
-  } 
-
-  if (!sourceFound) {
-      videoTags.push(`🎞️ ${toStylized("RIP")}`);
-      cleanTags.push("Rip");
-  }
-
-  if (/\bIMAX\b/i.test(t)) {
-      videoTags.push(`📏 ${toStylized("IMAX")}`);
-      cleanTags.push("IMAX");
-  }
-
-  if (info.codec) {
-      const codec = info.codec.toUpperCase();
-      let icon = "📼";
-      let stylCodec = codec;
-
-      if (/AV1/i.test(codec)) {
-          icon = "🪐";
-          stylCodec = "AV1";
-      } else if (/VVC|H266/i.test(codec)) {
-          icon = "⚡";
-          stylCodec = "VVC";
-      } else if (/265|HEVC/i.test(codec)) {
-          icon = "⚙️";
-      }
-
-      videoTags.push(`${icon} ${toStylized(stylCodec)}`);
-      cleanTags.push(stylCodec);
-  }
-
-  const rawT = String(title).toUpperCase();
-  const isDV = /\b(DV|DOLBY\s*VISION|DOVI)\b/.test(rawT) || (info.hdr && (/dolby|vision/i.test(info.hdr.toString())));
-  const isHDR10Plus = /\b(HDR10\+|HDR10PLUS)\b/.test(rawT) || (info.hdr && (/hdr10\+|plus/i.test(info.hdr.toString())));
-  const isHDR = /\b(HDR|HDR10|UHD\s*HDR)\b/.test(rawT) || (info.hdr && (/hdr/i.test(info.hdr.toString())));
-
-  if (isDV && (isHDR || isHDR10Plus)) {
-      videoTags.push(`👁️ ${toStylized("DV+HDR")}`);
-      cleanTags.push("DV+HDR");
-  } else if (isDV) {
-      videoTags.push(`👁️ ${toStylized("DV")}`);
-      cleanTags.push("DV");
-  } else if (isHDR10Plus) {
-      videoTags.push(`🔥 ${toStylized("HDR10+")}`);
-      cleanTags.push("HDR10+");
-  } else if (isHDR) {
-      videoTags.push(`🔥 ${toStylized("HDR")}`);
-      cleanTags.push("HDR");
-  }
-
-  // C. Lingue
-  let detectedLangs = [];
-  LANG_FLAGS.forEach(l => {
-      if (l.regex.test(t)) detectedLangs.push(l);
-  });
-
-  const uniqueLangs = [...new Map(detectedLangs.map(item => [item.id, item])).values()];
-  let lang = "🇬🇧 ENG"; 
-
-  if (source && /nyaasi/i.test(source)) {
-      lang = "🇮🇹" + LANG_SEP + "🇬🇧";
-  } 
-  else if (uniqueLangs.length > 0) {
-      uniqueLangs.sort((a, b) => (a.id === 'ita' ? -1 : (b.id === 'ita' ? 1 : 0)));
-      if (uniqueLangs.length === 1) {
-          lang = `${uniqueLangs[0].flag} ${uniqueLangs[0].label}`;
-      } else if (uniqueLangs.length <= 3) {
-          lang = uniqueLangs.map(l => l.flag).join(LANG_SEP);
-      } else {
-          lang = `${uniqueLangs[0].flag}${LANG_SEP}🌐`;
-      }
-  } else {
-      if (REGEX_EXTRA.multiAudio.test(t)) lang = `🌐${LANG_SEP}MULTI`;
-      else if (REGEX_EXTRA.dualAudio.test(t)) lang = `🌐${LANG_SEP}DUAL`;
-      else if (REGEX_EXTRA.contextIt.test(t) || /corsaro/i.test(source)) lang = "🇮🇹 ITA";
-  }
-
-  // D. AUDIO
-  let audioTag = "";
-  let audioChannels = "";
-
-  const channelMatch = cleanForRegex.match(/\b([1-7]\s[0-1])\b/) || cleanForRegex.match(/\b([1-7]\.[0-1])\b/);
-  if (channelMatch) audioChannels = channelMatch[1].replace(' ', '.');
-  else if (info.channels) audioChannels = info.channels;
-  
-  if(audioChannels.includes("7.1")) audioChannels = "7.1";
-  else if(audioChannels.includes("5.1")) audioChannels = "5.1";
-  else if(audioChannels.includes("2.0")) audioChannels = "2.0";
-  else if(audioChannels.includes("1.0")) audioChannels = "1.0";
-
-  let foundCodec = "";
-  if (/\b(ATMOS)\b/.test(cleanForRegex)) foundCodec = "ATMOS";
-  else if (/\b(DTS\s?X|DTS\:X)\b/.test(cleanForRegex)) foundCodec = "DTS:X";
-  else if (/\b(DTS\s?HD\s?MA|DTS\s?MA)\b/.test(cleanForRegex)) foundCodec = "DTS-HD MA";
-  else if (/\b(DTS\s?HD\s?HRA)\b/.test(cleanForRegex)) foundCodec = "DTS-HD HRA";
-  else if (/\b(DTS\s?HD)\b/.test(cleanForRegex)) foundCodec = "DTS-HD";
-  else if (/\b(TRUEHD|THD)\b/.test(cleanForRegex)) foundCodec = "TrueHD";
-  else if (/\b(DTS)\b/.test(cleanForRegex)) foundCodec = "DTS";
-  else if (/\b(DDP|EAC3|E\s?AC3|DD\+|DDPLUS|DIGITAL\s?PLUS)\b/.test(cleanForRegex)) foundCodec = "DDP";
-  else if (/\b(AC3|AC\s?3|DD|DOLBY\s?DIGITAL)\b/.test(cleanForRegex)) foundCodec = "AC3";
-  else if (/\b(AAC)\b/.test(cleanForRegex)) foundCodec = "AAC";
-  else if (/\b(OPUS)\b/.test(cleanForRegex)) foundCodec = "OPUS";
-  else if (/\b(FLAC)\b/.test(cleanForRegex)) foundCodec = "FLAC";
-  else if (/\b(PCM|LPCM)\b/.test(cleanForRegex)) foundCodec = "LPCM";
-  else if (/\b(MP3)\b/.test(cleanForRegex)) foundCodec = "MP3";
-
-  if (!foundCodec) {
-      if (isWeb) foundCodec = "AAC";
-      else if (isBluRay) foundCodec = "AC3";
-  }
-
-  if (foundCodec === "ATMOS") {
-      if (/\b(TRUEHD)\b/.test(cleanForRegex)) audioTag = "Atmos TrueHD";
-      else if (/\b(DDP|EAC3)\b/.test(cleanForRegex)) audioTag = "Atmos DDP";
-      else audioTag = "Dolby Atmos";
-  } 
-  else if (foundCodec === "DDP") audioTag = "Dolby DDP";
-  else if (foundCodec === "AC3") audioTag = "Dolby Digital";
-  else if (foundCodec) audioTag = foundCodec;
-  else {
-      if (audioChannels.includes("5.1") || audioChannels.includes("7.1")) audioTag = "Surround";
-      else if (audioChannels.includes("2.0")) audioTag = "Stereo";
-      else audioTag = "AAC"; 
-  }
-  
-  return { 
-      quality: q, qDetails, qIcon, videoTags, cleanTags, lang, 
-      codec: foundCodec || info.codec || "", audioTag, audioChannels, rawInfo: info,
-      releaseGroup, cleanName: cleanFilename(t), epTag: getEpisodeTag(t, config)
+  return {
+    title: titlePart || cleaned,
+    resolution,
+    codec,
+    group,
+    channels,
+    hdr,
+    source: /\b(?:bluray|blu-ray|bd)\b/i.test(source)
+      ? 'BluRay'
+      : (/\b(?:web-dl|webrip|web|hdtv)\b/i.test(source) ? 'WEB' : ''),
+    remux: /\bremux\b/i.test(source),
+    audio: source.match(/\b(?:ddp|aac|ac3|dts|truehd|opus|flac|pcm|lpcm|mp3)\b/i)?.[0] || '',
   };
 }
 
-// =========================================================================
-// 4. STILI DI FORMATTAZIONE
+function loadTitleParser() {
+  try {
+    return require('parse-torrent-title');
+  } catch (_error) {
+    return { parse: basicParseTitle };
+  }
+}
 
-// --- 1.FORMATTER COMPLEX  ---
-function styleComplex(p) {
-    const isCached = ["RD", "TB", "AD"].includes(p.serviceTag);
-    const statusIcon = isCached ? "🔲" : "🔳";
+const titleParser = loadTitleParser();
 
-    
-    let res = "SD";
-    if (p.quality.includes("2160") || p.quality.includes("4K")) res = "4K";
-    else if (p.quality.includes("1440")) res = "QHD";
-    else if (p.quality.includes("1080")) res = "HD";
-    
+const UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+const LANG_SEP = ' / ';
+const DEFAULT_SERVICE_TAG = 'RD';
+const DEFAULT_SOURCE_LABEL = 'P2P';
+const TITLE_PARSE_CACHE_LIMIT = 1200;
+const EXTRACT_CACHE_LIMIT = 1200;
 
-    
-    let sizePart = p.sizeString ? ` │ ⛁ ${p.sizeString}` : "";
+const TITLE_PARSE_CACHE = new Map();
+const EXTRACT_CACHE = new Map();
 
-    
-    let seedPart = "";
-    if (!isCached && p.seeders !== null) {
-        seedPart = ` · ⇋ ${p.seeders}`;
+const LANG_FLAGS = [
+  { id: 'ita', flag: '🇮🇹', label: 'ITA', regex: /\b(?:ita|italian|italiano|it)\b/i, priority: 100 },
+  { id: 'eng', flag: '🇬🇧', label: 'ENG', regex: /\b(?:eng|english|en)\b/i, priority: 80 },
+  { id: 'jpn', flag: '🇯🇵', label: 'JPN', regex: /\b(?:jap|jpn|japanese|jp)\b/i, priority: 70 },
+  { id: 'fra', flag: '🇫🇷', label: 'FRA', regex: /\b(?:fra|french|fre|fr)\b/i, priority: 60 },
+  { id: 'deu', flag: '🇩🇪', label: 'DEU', regex: /\b(?:ger|german|deu|de|deutsch)\b/i, priority: 60 },
+  { id: 'esp', flag: '🇪🇸', label: 'ESP', regex: /\b(?:spa|spanish|esp|es|español)\b/i, priority: 60 },
+  { id: 'rus', flag: '🇷🇺', label: 'RUS', regex: /\b(?:rus|russian|ru)\b/i, priority: 50 },
+  { id: 'por', flag: '🇵🇹', label: 'POR', regex: /\b(?:por|portuguese|pt|br)\b/i, priority: 50 },
+  { id: 'ukr', flag: '🇺🇦', label: 'UKR', regex: /\b(?:ukr|ukrainian)\b/i, priority: 50 },
+  { id: 'kor', flag: '🇰🇷', label: 'KOR', regex: /\b(?:kor|korean)\b/i, priority: 50 },
+  { id: 'chi', flag: '🇨🇳', label: 'CHI', regex: /\b(?:chi|chinese|mandarin)\b/i, priority: 50 },
+  { id: 'hin', flag: '🇮🇳', label: 'HIN', regex: /\b(?:hin|hindi)\b/i, priority: 40 },
+];
+
+const REGEX_EXTRA = {
+  contextIt: /\b(?:ac-?3|aac|mp3|ddp|dts|truehd|audio|lingua)\W+(?:it|ita|italiano)\b/i,
+  dualAudio: /\bdual[\s._-]*audio\b/i,
+  multiAudio: /\b(?:multi[\s._-]*audio|multi)\b/i,
+  seasonPack: /\b(?:season|stagione|complete|complete season|full season|tutta)\s*(\d{1,2})\b/i,
+  completeSeries: /\b(?:complete\s+series|serie\s+completa|full\s+series)\b/i,
+  quality4k: /\b(?:2160p|4k|uhd)\b/i,
+  quality1440: /\b(?:1440p|2k|qhd)\b/i,
+  quality1080: /\b(?:1080p|1080i|fhd)\b/i,
+  quality720: /\b(?:720p|hd)\b/i,
+  cam: /\b(?:cam|hdcam|ts|telesync|tc|telecine|scr|screener)\b/i,
+  remux: /\bremux\b/i,
+  bluray: /\b(?:bluray|blu-ray|bd(?:rip)?|brrip)\b/i,
+  web: /\b(?:web[- .]?dl|webrip|web|hdtv)\b/i,
+  imax: /\bimax\b/i,
+  atmos: /\b(?:atmos)\b/i,
+  dtsx: /\b(?:dts\s?x|dts:x)\b/i,
+  dtshdma: /\b(?:dts\s?hd\s?ma|dts\s?ma)\b/i,
+  dtshdhra: /\b(?:dts\s?hd\s?hra)\b/i,
+  dtshd: /\b(?:dts\s?hd)\b/i,
+  truehd: /\b(?:truehd|thd)\b/i,
+  dts: /\b(?:dts)\b/i,
+  ddp: /\b(?:ddp|eac3|e\s?ac3|dd\+|ddplus|digital\s?plus)\b/i,
+  ac3: /\b(?:ac3|ac\s?3|dd|dolby\s?digital)\b/i,
+  aac: /\b(?:aac)\b/i,
+  opus: /\b(?:opus)\b/i,
+  flac: /\b(?:flac)\b/i,
+  lpcm: /\b(?:pcm|lpcm)\b/i,
+  mp3: /\b(?:mp3)\b/i,
+  dv: /\b(?:dv|dovi|dolby\s*vision)\b/i,
+  hdr10plus: /\b(?:hdr10\+|hdr10plus)\b/i,
+  hdr: /\b(?:hdr|hdr10|uhd\s*hdr)\b/i,
+  channels: /\b([1-7][ .][01])\b/i,
+  providerAmazon: /\bAMZN\b/i,
+  providerNetflix: /\bNF\b/i,
+  providerDisney: /\bDSNP\b/i,
+  providerHbo: /\bHMAX\b/i,
+  providerApple: /\bAPTV\b/i,
+  providerHulu: /\bHULU\b/i,
+  providerPrime: /\bPRME\b/i,
+  providerParamount: /\bPMTP\b/i,
+  providerPeacock: /\bPCKK\b/i,
+  providerCrunchyroll: /\bCRTC\b/i,
+  providerAnimePlex: /\bANPX\b/i,
+  providerStarz: /\bSTZ\b/i,
+  providerDiscovery: /\bDSCV\b/i,
+};
+
+const QUALITY_ICONS = {
+  '8k': '🪐',
+  '4k': '🔥',
+  '2160p': '🔥',
+  '1440p': '🖥️',
+  '1080p': '👑',
+  '720p': '⚡',
+  '480p': '📼',
+  dvd: '💿',
+  sd: '📼',
+  cam: '💩',
+  scr: '👀',
+};
+
+const GROUP_BLACKLIST = new Set([
+  'mkv', 'mp4', 'avi', 'wmv', 'iso', 'flv', 'mov', 'ts', 'm2ts',
+  'h264', 'h265', 'x264', 'x265', 'hevc', 'av1', 'divx', 'xvid', 'mpeg', 'avc', 'vp9', 'vvc',
+  '4k', '2160p', '1080p', '1080i', '720p', '576p', '480p', 'sd', 'hd', 'uhd', 'fhd', 'qhd',
+  'aac', 'ac3', 'mp3', 'dts', 'dtshd', 'dts-ma', 'truehd', 'atmos', 'ddp', 'dd', 'flac', 'opus', 'pcm', 'stereo', '5.1', '7.1', '2.0', 'dual', 'audio',
+  'bluray', 'bd', 'bdrip', 'brrip', 'web', 'web-dl', 'webrip', 'hdtv', 'tvrip', 'dvd', 'dvdrip', 'scr', 'screener', 'cam', 'tc', 'telesync', 'remux',
+  'ita', 'eng', 'jpn', 'jpa', 'chn', 'kor', 'rus', 'spa', 'fre', 'ger', 'fra', 'deu', 'esp', 'por', 'multi', 'multisub', 'sub', 'dub', 'ita-eng', 'eng-ita',
+  'repack', 'proper', 'internal', 'readnfo', 'extended', 'cut', 'director', 'unrated', 'complete', 'season', 'episode', 'series', 'ep', 's01', 'e01'
+]);
+
+const SERVICE_ICON_BY_TAG = {
+  RD: '🐬',
+  TB: '⚓',
+  AD: '🐚',
+};
+
+const DISPLAY_SOURCE_MAP = [
+  { regex: /1337/i, value: '1337x' },
+  { regex: /corsaro/i, value: 'ilCorSaRoNeRo' },
+  { regex: /knaben/i, value: 'Knaben' },
+  { regex: /comet|stremthru/i, value: 'StremThru' },
+];
+
+const PROVIDER_LABELS = [
+  [REGEX_EXTRA.providerAmazon, 'Amazon'],
+  [REGEX_EXTRA.providerNetflix, 'Netflix'],
+  [REGEX_EXTRA.providerDisney, 'Disney+'],
+  [REGEX_EXTRA.providerHbo, 'HBO Max'],
+  [REGEX_EXTRA.providerApple, 'Apple TV+'],
+  [REGEX_EXTRA.providerHulu, 'Hulu'],
+  [REGEX_EXTRA.providerPrime, 'Prime'],
+  [REGEX_EXTRA.providerParamount, 'Paramount+'],
+  [REGEX_EXTRA.providerPeacock, 'Peacock'],
+  [REGEX_EXTRA.providerCrunchyroll, 'Crunchyroll'],
+  [REGEX_EXTRA.providerAnimePlex, 'Anime Plex'],
+  [REGEX_EXTRA.providerStarz, 'Starz'],
+  [REGEX_EXTRA.providerDiscovery, 'Discovery+'],
+];
+
+const STYLIZED_MAPS = {
+  bold: {
+    nums: { '0': '𝟬', '1': '𝟭', '2': '𝟮', '3': '𝟯', '4': '𝟰', '5': '𝟱', '6': '𝟲', '7': '𝟳', '8': '𝟴', '9': '𝟵' },
+    chars: {
+      A: '𝗔', B: '𝗕', C: '𝗖', D: '𝗗', E: '𝗘', F: '𝗙', G: '𝗚', H: '𝗛', I: '𝗜', J: '𝗝', K: '𝗞', L: '𝗟', M: '𝗠', N: '𝗡', O: '𝗢', P: '𝗣', Q: '𝗤', R: '𝗥', S: '𝗦', T: '𝗧', U: '𝗨', V: '𝗩', W: '𝗪', X: '𝗫', Y: '𝗬', Z: '𝗭',
+      a: '𝗮', b: '𝗯', c: '𝗰', d: '𝗱', e: '𝗲', f: '𝗳', g: '𝗴', h: '𝗵', i: '𝗶', j: '𝗷', k: '𝗸', l: '𝗹', m: '𝗺', n: '𝗻', o: '𝗼', p: '𝗽', q: '𝗾', r: '𝗿', s: '𝘀', t: '𝘁', u: '𝘂', v: '𝘃', w: '𝘄', x: '𝘅', y: '𝘆', z: '𝘇',
+    },
+  },
+  small: {
+    nums: { '0': '0', '1': '1', '2': '2', '3': '3', '4': '4', '5': '5', '6': '6', '7': '7', '8': '8', '9': '9' },
+    chars: {
+      A: 'ᴀ', B: 'ʙ', C: 'ᴄ', D: 'ᴅ', E: 'ᴇ', F: 'ꜰ', G: 'ɢ', H: 'ʜ', I: 'ɪ', J: 'ᴊ', K: 'ᴋ', L: 'ʟ', M: 'ᴍ', N: 'ɴ', O: 'ᴏ', P: 'ᴘ', Q: 'ǫ', R: 'ʀ', S: 'ꜱ', T: 'ᴛ', U: 'ᴜ', V: 'ᴠ', W: 'ᴡ', X: 'x', Y: 'ʏ', Z: 'ᴢ',
+      a: 'ᴀ', b: 'ʙ', c: 'ᴄ', d: 'ᴅ', e: 'ᴇ', f: 'ꜰ', g: 'ɢ', h: 'ʜ', i: 'ɪ', j: 'ᴊ', k: 'ᴋ', l: 'ʟ', m: 'ᴍ', n: 'ɴ', o: 'ᴏ', p: 'ᴘ', q: 'ǫ', r: 'ʀ', s: 'ꜱ', t: 'ᴛ', u: 'ᴜ', v: 'ᴠ', w: 'ᴡ', x: 'x', y: 'ʏ', z: 'ᴢ',
+    },
+  },
+};
+
+function getCached(map, key) {
+  if (!map.has(key)) return null;
+  const value = map.get(key);
+  map.delete(key);
+  map.set(key, value);
+  return value;
+}
+
+function setCached(map, key, value, limit) {
+  if (map.has(key)) map.delete(key);
+  map.set(key, value);
+  if (map.size > limit) {
+    const oldestKey = map.keys().next().value;
+    map.delete(oldestKey);
+  }
+  return value;
+}
+
+function safeString(value) {
+  if (value === null || value === undefined) return '';
+  return String(value);
+}
+
+function normalizeSpaces(value) {
+  return safeString(value).replace(/[\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function stripExtension(value) {
+  return safeString(value).replace(/\.(?:mkv|mp4|avi|iso|wmv|ts|flv|mov|m2ts|m4v|mpg|mpeg)$/i, '');
+}
+
+function compactTitleForRegex(value) {
+  return safeString(value).toUpperCase().replace(/[.\-_[\]()]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function uniqueBy(items, getKey) {
+  const seen = new Set();
+  const results = [];
+  for (const item of items) {
+    const key = getKey(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    results.push(item);
+  }
+  return results;
+}
+
+function normalizeServiceTag(serviceTag) {
+  const normalized = safeString(serviceTag).toUpperCase().trim();
+  return normalized || DEFAULT_SERVICE_TAG;
+}
+
+function isDebridService(serviceTag) {
+  return ['RD', 'TB', 'AD'].includes(normalizeServiceTag(serviceTag));
+}
+
+function deterministicHash(value) {
+  const text = safeString(value);
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = text.charCodeAt(i) + ((hash << 5) - hash);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return '0 B';
+  const unitIndex = Math.min(Math.floor(Math.log(value) / Math.log(1024)), UNITS.length - 1);
+  const size = value / Math.pow(1024, unitIndex);
+  const decimals = unitIndex === 0 ? 0 : 2;
+  return `${size.toFixed(decimals)} ${UNITS[unitIndex]}`;
+}
+
+function pseudoSizeFromTitle(title, quality) {
+  const seed = deterministicHash(title);
+  let gb = 1;
+  if (/4k|2160/i.test(quality)) gb = 12 + (seed % 1000) / 100;
+  else if (/1440/i.test(quality)) gb = 5 + (seed % 500) / 100;
+  else if (/1080/i.test(quality)) gb = 1.8 + (seed % 270) / 100;
+  else if (/720/i.test(quality)) gb = 0.9 + (seed % 180) / 100;
+  else gb = 0.6 + (seed % 80) / 100;
+  return `${gb.toFixed(2)} GB`;
+}
+
+function parseTitleCached(title) {
+  const key = normalizeSpaces(title);
+  const cached = getCached(TITLE_PARSE_CACHE, key);
+  if (cached) return cached;
+
+  let parsed;
+  try {
+    parsed = titleParser.parse(key);
+  } catch (_error) {
+    parsed = { title: key };
+  }
+
+  if (!parsed || typeof parsed !== 'object') parsed = { title: key };
+  return setCached(TITLE_PARSE_CACHE, key, parsed, TITLE_PARSE_CACHE_LIMIT);
+}
+
+function cleanFilename(filename) {
+  const original = normalizeSpaces(filename);
+  if (!original) return '';
+
+  let clean = original;
+  const parsed = parseTitleCached(original);
+  if (parsed && parsed.title) clean = normalizeSpaces(parsed.title);
+
+  if (!clean) clean = normalizeSpaces(stripExtension(original).replace(/[._]+/g, ' '));
+
+  if (/Fratelli demolitori/i.test(clean) && /The Wrecking Crew/i.test(clean)) {
+    return 'Fratelli demolitori';
+  }
+
+  if (/\s+-\s+/.test(clean)) {
+    const [firstChunk] = clean.split(/\s+-\s+/);
+    if (firstChunk && firstChunk.trim().length > 2) clean = firstChunk.trim();
+  }
+
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length >= 2 && words.length % 2 === 0) {
+    const mid = words.length / 2;
+    const left = words.slice(0, mid).join(' ');
+    const right = words.slice(mid).join(' ');
+    if (left.toLowerCase() === right.toLowerCase()) return left;
+  }
+
+  return clean.trim();
+}
+
+function getEpisodeTag(filename, config = {}) {
+  const explicitSeason = Number(config.season);
+  const explicitEpisode = Number(config.episode);
+  if (Number.isInteger(explicitSeason) && explicitSeason > 0 && Number.isInteger(explicitEpisode) && explicitEpisode > 0) {
+    return `🍿 S${String(explicitSeason).padStart(2, '0')}E${String(explicitEpisode).padStart(2, '0')}`;
+  }
+
+  const text = safeString(filename).toLowerCase();
+  if (!text) return '';
+
+  const multiEpisode = text.match(/s(\d{1,2})[ex](\d{1,3})\s*-\s*(?:[ex]?(\d{1,3}))/i) || text.match(/(\d{1,2})x(\d{1,3})\s*-\s*(\d{1,3})/i);
+  if (multiEpisode) {
+    const season = multiEpisode[1].padStart(2, '0');
+    const start = multiEpisode[2].padStart(2, '0');
+    const end = multiEpisode[3].padStart(2, '0');
+    return `🍿 S${season} E${start}-${end}`;
+  }
+
+  const animeBatch = text.match(/(?:ep|eps|episode|^|\s)\[?(\d{1,3})\s*-\s*(\d{1,3})\]?(?:\s|$)/i);
+  if (animeBatch && Number(animeBatch[1]) < 1900) {
+    return `🍿 Ep ${animeBatch[1].padStart(2, '0')}-${animeBatch[2].padStart(2, '0')}`;
+  }
+
+  const sxe = text.match(/s(\d{1,2})[ex](\d{1,3})/i);
+  if (sxe) return `🍿 S${sxe[1].padStart(2, '0')}E${sxe[2].padStart(2, '0')}`;
+
+  const classic = text.match(/(\d{1,2})x(\d{1,3})/i);
+  if (classic) return `🍿 S${classic[1].padStart(2, '0')}E${classic[2].padStart(2, '0')}`;
+
+  const seasonPack = text.match(REGEX_EXTRA.seasonPack);
+  if (seasonPack) return `🍿 S${seasonPack[1].padStart(2, '0')}`;
+
+  const seasonOnly = text.match(/s(\d{1,2})\b/i);
+  if (seasonOnly) return `🍿 S${seasonOnly[1].padStart(2, '0')}`;
+
+  if (REGEX_EXTRA.completeSeries.test(text)) return '🍿 Complete Series';
+  return '';
+}
+
+function toStylized(text, type = 'std') {
+  if (!text) return '';
+  const input = safeString(text);
+  if (type === 'spaced') {
+    return input.split('').map((char) => {
+      const map = STYLIZED_MAPS.bold;
+      const converted = /[0-9]/.test(char) ? map.nums[char] : map.chars[char];
+      return `${converted || char} `;
+    }).join('').trim();
+  }
+
+  const map = STYLIZED_MAPS[type] || STYLIZED_MAPS.bold;
+  return input.split('').map((char) => {
+    if (/[0-9]/.test(char)) return map.nums[char] || char;
+    return map.chars[char] || char;
+  }).join('');
+}
+
+function normalizeReleaseGroup(group) {
+  const normalized = normalizeSpaces(group).replace(/^[-_\[\].\s]+|[-_\[\].\s]+$/g, '');
+  if (!normalized) return '';
+  const lower = normalized.toLowerCase();
+  if (normalized.length < 2 || normalized.length > 25) return '';
+  if (GROUP_BLACKLIST.has(lower)) return '';
+  if (/^\d+$/.test(normalized)) return '';
+  return normalized;
+}
+
+function deriveReleaseGroup(title, info) {
+  const cleanTitle = normalizeSpaces(stripExtension(title));
+  const candidates = [
+    info.group,
+    cleanTitle.match(/[-_]\s?([a-zA-Z0-9@.]+)$/)?.[1],
+    cleanTitle.match(/\[([a-zA-Z0-9_\-.\s]+)\]$/)?.[1],
+    safeString(title).match(/^\[([a-zA-Z0-9_\-.\s]+)\]/)?.[1],
+  ].filter(Boolean);
+
+  const tokens = cleanTitle.split(/[\s.]+/).filter(Boolean);
+  if (tokens.length) candidates.push(tokens[tokens.length - 1]);
+
+  for (const candidate of candidates) {
+    const normalized = normalizeReleaseGroup(candidate);
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
+function deriveQuality(info, upperTitle) {
+  let quality = 'SD';
+  let qDetails = 'SD';
+
+  if (info.resolution) {
+    const res = safeString(info.resolution).toUpperCase();
+    if (res === '2160P') quality = '4K';
+    else if (res === '4320P') quality = '8K';
+    else quality = res;
+    qDetails = quality;
+  } else if (REGEX_EXTRA.quality4k.test(upperTitle)) {
+    quality = '4K';
+    qDetails = '4K';
+  } else if (REGEX_EXTRA.quality1440.test(upperTitle)) {
+    quality = '1440p';
+    qDetails = '1440p';
+  } else if (REGEX_EXTRA.quality1080.test(upperTitle)) {
+    quality = '1080p';
+    qDetails = '1080p';
+  } else if (REGEX_EXTRA.quality720.test(upperTitle)) {
+    quality = '720p';
+    qDetails = '720p';
+  }
+
+  const source = safeString(info.source);
+  if (REGEX_EXTRA.cam.test(upperTitle) || REGEX_EXTRA.cam.test(source)) {
+    quality = 'CAM';
+    qDetails = 'CAM';
+  }
+
+  const qIcon = QUALITY_ICONS[quality.toLowerCase()] || (quality.includes('4K') ? '🔥' : '📺');
+  return { quality, qDetails, qIcon };
+}
+
+function deriveVideoTags(info, upperTitle) {
+  const tags = [];
+  const cleanTags = [];
+
+  const sourceText = `${safeString(info.source)} ${upperTitle}`;
+  const addTag = (icon, label, cleanLabel = label) => {
+    if (!cleanLabel) return;
+    if (cleanTags.includes(cleanLabel)) return;
+    tags.push(`${icon} ${toStylized(label)}`);
+    cleanTags.push(cleanLabel);
+  };
+
+  const isRemux = Boolean(info.remux) || REGEX_EXTRA.remux.test(sourceText);
+  const isBluRay = REGEX_EXTRA.bluray.test(sourceText);
+  const isWeb = REGEX_EXTRA.web.test(sourceText);
+
+  if (isRemux) addTag('💎', 'REMUX', 'Remux');
+  else if (isBluRay) addTag('💿', 'BluRay', 'BluRay');
+  else if (isWeb) addTag('☁️', 'WEB', 'WEB');
+  else addTag('🎞️', 'RIP', 'Rip');
+
+  if (REGEX_EXTRA.imax.test(sourceText)) addTag('📏', 'IMAX', 'IMAX');
+
+  if (info.codec) {
+    const codec = safeString(info.codec).toUpperCase();
+    let icon = '📼';
+    let label = codec;
+    if (/AV1/.test(codec)) {
+      icon = '🪐';
+      label = 'AV1';
+    } else if (/VVC|H266/.test(codec)) {
+      icon = '⚡';
+      label = 'VVC';
+    } else if (/265|HEVC/.test(codec)) {
+      icon = '⚙️';
     }
+    addTag(icon, label, label);
+  }
 
-    const name = `${statusIcon} ${res}${sizePart}${seedPart}`;
+  const hdrText = `${upperTitle} ${safeString(info.hdr)}`;
+  const isDV = REGEX_EXTRA.dv.test(hdrText);
+  const isHDR10Plus = REGEX_EXTRA.hdr10plus.test(hdrText);
+  const isHDR = REGEX_EXTRA.hdr.test(hdrText);
 
-    // --- Costruzione Body (Title) ---
-    const lines = [];
+  if (isDV && (isHDR || isHDR10Plus)) addTag('👁️', 'DV+HDR', 'DV+HDR');
+  else if (isDV) addTag('👁️', 'DV', 'DV');
+  else if (isHDR10Plus) addTag('🔥', 'HDR10+', 'HDR10+');
+  else if (isHDR) addTag('🔥', 'HDR', 'HDR');
 
-    
-    const line1Parts = [];
-    if (p.lang) line1Parts.push(p.lang);
-    if (p.audioTag) line1Parts.push(p.audioTag);
-    if (p.audioChannels) line1Parts.push(p.audioChannels);
-    lines.push(`☰ ${line1Parts.join(' · ')}`);
-
-    
-    const line2Parts = [];
-    line2Parts.push(p.quality);
-    if (p.codec) line2Parts.push(p.codec);
-    if (p.cleanTags.length > 0) line2Parts.push(p.cleanTags.join(' · '));
-    lines.push(`☲ ${line2Parts.join(' · ')}`);
-
-    
-    
-    const fn = p.fileTitle.toUpperCase();
-    let sourceName = "";
-    if (fn.includes("AMZN")) sourceName = "Amazon";
-    else if (fn.includes("NF")) sourceName = "Netflix";
-    else if (fn.includes("DSNP")) sourceName = "Disney+";
-    else if (fn.includes("HMAX")) sourceName = "HBO Max";
-    else if (fn.includes("APTV")) sourceName = "Apple TV+";
-    else if (fn.includes("HULU")) sourceName = "Hulu";
-    else if (fn.includes("PRME")) sourceName = "Prime";
-    else if (fn.includes("PMTP")) sourceName = "Paramount+";
-    else if (fn.includes("PCKK")) sourceName = "Peacock";
-    else if (fn.includes("CRTC")) sourceName = "Crunchyroll";
-    else if (fn.includes("ANPX")) sourceName = "Anime Plex";
-    else if (fn.includes("STZ")) sourceName = "Starz";
-    else if (fn.includes("DSCV")) sourceName = "Discovery+";
-
-    const line3Parts = ["Leviathan"]; 
-    if (p.releaseGroup) line3Parts.push(p.releaseGroup);
-    if (sourceName) line3Parts.push(sourceName);
-    if (isCached) line3Parts.push(`[${p.serviceTag}]`);
-    
-    
-    lines.push(`☵ ${line3Parts.join(' · ')}`);
-
-    
-    const line4Parts = [p.cleanName];
-    if (p.epTag) line4Parts.push(p.epTag);
-    lines.push(`☶ ${line4Parts.join(' · ')}`);
-
-    
-    
-    return { name, title: lines.join("\n") };
+  return { videoTags: tags, cleanTags };
 }
 
-// --- 2. NUOVO FORMATTER ANDROID TV ---
+function deriveLanguages(title, source) {
+  const text = `${safeString(title)} ${safeString(source)}`;
+  const matches = LANG_FLAGS.filter((lang) => lang.regex.test(text));
+  const unique = uniqueBy(matches.sort((a, b) => b.priority - a.priority), (item) => item.id);
+
+  if (/nyaasi/i.test(source)) return '🇮🇹 / 🇬🇧';
+
+  if (unique.length === 1) return `${unique[0].flag} ${unique[0].label}`;
+  if (unique.length > 1 && unique.length <= 3) return unique.map((item) => item.flag).join(LANG_SEP);
+  if (unique.length > 3) return `${unique[0].flag}${LANG_SEP}🌐`;
+
+  if (REGEX_EXTRA.multiAudio.test(text)) return `🌐${LANG_SEP}MULTI`;
+  if (REGEX_EXTRA.dualAudio.test(text)) return `🌐${LANG_SEP}DUAL`;
+  if (REGEX_EXTRA.contextIt.test(text) || /corsaro/i.test(source)) return '🇮🇹 ITA';
+
+  return '🇬🇧 ENG';
+}
+
+function deriveAudio(info, upperTitle, quality, cleanTags) {
+  let audioChannels = '';
+  const channelMatch = upperTitle.match(REGEX_EXTRA.channels);
+  if (channelMatch) audioChannels = channelMatch[1].replace(' ', '.');
+  else if (info.channels) audioChannels = safeString(info.channels);
+
+  if (audioChannels.includes('7.1')) audioChannels = '7.1';
+  else if (audioChannels.includes('5.1')) audioChannels = '5.1';
+  else if (audioChannels.includes('2.0')) audioChannels = '2.0';
+  else if (audioChannels.includes('1.0')) audioChannels = '1.0';
+
+  let foundCodec = '';
+  if (REGEX_EXTRA.atmos.test(upperTitle)) foundCodec = 'ATMOS';
+  else if (REGEX_EXTRA.dtsx.test(upperTitle)) foundCodec = 'DTS:X';
+  else if (REGEX_EXTRA.dtshdma.test(upperTitle)) foundCodec = 'DTS-HD MA';
+  else if (REGEX_EXTRA.dtshdhra.test(upperTitle)) foundCodec = 'DTS-HD HRA';
+  else if (REGEX_EXTRA.dtshd.test(upperTitle)) foundCodec = 'DTS-HD';
+  else if (REGEX_EXTRA.truehd.test(upperTitle)) foundCodec = 'TrueHD';
+  else if (REGEX_EXTRA.dts.test(upperTitle)) foundCodec = 'DTS';
+  else if (REGEX_EXTRA.ddp.test(upperTitle)) foundCodec = 'DDP';
+  else if (REGEX_EXTRA.ac3.test(upperTitle)) foundCodec = 'AC3';
+  else if (REGEX_EXTRA.aac.test(upperTitle)) foundCodec = 'AAC';
+  else if (REGEX_EXTRA.opus.test(upperTitle)) foundCodec = 'OPUS';
+  else if (REGEX_EXTRA.flac.test(upperTitle)) foundCodec = 'FLAC';
+  else if (REGEX_EXTRA.lpcm.test(upperTitle)) foundCodec = 'LPCM';
+  else if (REGEX_EXTRA.mp3.test(upperTitle)) foundCodec = 'MP3';
+  else if (info.audio) foundCodec = safeString(info.audio).toUpperCase();
+
+  if (!foundCodec) {
+    if (cleanTags.includes('WEB')) foundCodec = 'AAC';
+    else if (cleanTags.includes('BluRay') || /4k|1080/i.test(quality)) foundCodec = 'AC3';
+  }
+
+  let audioTag = '';
+  if (foundCodec === 'ATMOS') {
+    if (REGEX_EXTRA.truehd.test(upperTitle)) audioTag = 'Atmos TrueHD';
+    else if (REGEX_EXTRA.ddp.test(upperTitle)) audioTag = 'Atmos DDP';
+    else audioTag = 'Dolby Atmos';
+  } else if (foundCodec === 'DDP') audioTag = 'Dolby DDP';
+  else if (foundCodec === 'AC3') audioTag = 'Dolby Digital';
+  else if (foundCodec) audioTag = foundCodec;
+  else if (audioChannels.includes('5.1') || audioChannels.includes('7.1')) audioTag = 'Surround';
+  else if (audioChannels.includes('2.0')) audioTag = 'Stereo';
+  else audioTag = 'AAC';
+
+  return { codec: foundCodec || safeString(info.codec).toUpperCase(), audioTag, audioChannels };
+}
+
+function extractProviderLabel(fileTitle) {
+  const upper = safeString(fileTitle).toUpperCase();
+  for (const [regex, label] of PROVIDER_LABELS) {
+    if (regex.test(upper)) return label;
+  }
+  return '';
+}
+
+function normalizeDisplaySource(source) {
+  const raw = normalizeSpaces(source);
+  if (!raw) return '✨ MediaFusion';
+  for (const entry of DISPLAY_SOURCE_MAP) {
+    if (entry.regex.test(raw)) return entry.value;
+  }
+  const normalized = raw.replace(/MediaFusion|Torrentio|Fallback/gi, '').trim();
+  return normalized || '✨ MediaFusion';
+}
+
+function stripEpisodeFromCleanName(cleanName) {
+  return normalizeSpaces(cleanName.replace(/\s+(?:S\d+(?:E\d+)?\b.*|\d+x\d+\b.*|(?:Season|Stagione)\s*\d+\b.*)$/i, ''));
+}
+
+function buildBingeGroup(quality, rawInfo, serviceTag, infoHash) {
+  const hdrPart = Array.isArray(rawInfo?.hdr)
+    ? rawInfo.hdr.join('')
+    : safeString(rawInfo?.hdr || '');
+  return `Leviathan|${quality}|${hdrPart}|${serviceTag}|${infoHash || 'no-hash'}`;
+}
+
+function createStyleParams(fileTitle, source, size, seeders, serviceTag, config, infoHash, isLazy, isPackItem) {
+  const extracted = extractStreamInfo(fileTitle, source, config);
+  const normalizedServiceTag = normalizeServiceTag(serviceTag);
+  const serviceIconTitle = SERVICE_ICON_BY_TAG[normalizedServiceTag] || '🦈';
+  const qIcon = SERVICE_ICON_BY_TAG[normalizedServiceTag] || extracted.qIcon;
+  const sizeString = Number(size) > 0 ? formatBytes(size) : pseudoSizeFromTitle(fileTitle, extracted.quality);
+  const cleanedName = stripEpisodeFromCleanName(extracted.cleanName);
+  const baseEpTag = getEpisodeTag(fileTitle, config);
+  const styledPack = toStylized('Season Pack', 'small');
+  const epTag = isPackItem
+    ? (baseEpTag ? `${baseEpTag}  ✦  📦 ${styledPack}` : '📦 ꜱᴇᴀꜱᴏɴ ᴘᴀᴄᴋ')
+    : baseEpTag;
+  const displaySource = normalizeDisplaySource(source || DEFAULT_SOURCE_LABEL);
+  const seedersValue = seeders === null || seeders === undefined || Number.isNaN(Number(seeders)) ? null : Number(seeders);
+  const seedersStr = seedersValue !== null ? `👥 ${seedersValue}` : '';
+
+  return {
+    ...extracted,
+    fileTitle: safeString(fileTitle),
+    source: safeString(source) || DEFAULT_SOURCE_LABEL,
+    displaySource,
+    size: Number(size) || 0,
+    sizeString,
+    sizeStr: `🧲 ${sizeString}`,
+    seeders: seedersValue,
+    seedersStr,
+    qIcon,
+    serviceTag: normalizedServiceTag,
+    serviceIconTitle,
+    cleanName: cleanedName,
+    epTag,
+    sourceLine: `${serviceIconTitle} [${normalizedServiceTag}] ${displaySource}`,
+    audioInfo: [extracted.audioTag, extracted.audioChannels].filter(Boolean).join(' ┃ '),
+    bingeGroup: buildBingeGroup(extracted.quality, extracted.rawInfo, normalizedServiceTag, infoHash),
+    providerLabel: extractProviderLabel(fileTitle),
+    isLazy: Boolean(isLazy),
+    isPackItem: Boolean(isPackItem),
+    config,
+  };
+}
+
+function joinNonEmpty(parts, separator = ' · ') {
+  return parts.filter((value) => Boolean(normalizeSpaces(value))).join(separator);
+}
+
+function removeEmoji(text) {
+  return safeString(text).replace(/[\u{1F300}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '').trim();
+}
+
+function styleComplex(p) {
+  const isCached = isDebridService(p.serviceTag);
+  const statusIcon = isCached ? '🔲' : '🔳';
+  let res = 'SD';
+  if (/2160|4k/i.test(p.quality)) res = '4K';
+  else if (/1440/i.test(p.quality)) res = 'QHD';
+  else if (/1080/i.test(p.quality)) res = 'HD';
+
+  const sizePart = p.sizeString ? ` │ ⛁ ${p.sizeString}` : '';
+  const seedPart = !isCached && p.seeders !== null ? ` · ⇋ ${p.seeders}` : '';
+  const name = `${statusIcon} ${res}${sizePart}${seedPart}`;
+
+  const line1 = `☰ ${joinNonEmpty([p.lang, p.audioTag, p.audioChannels])}`;
+  const line2 = `☲ ${joinNonEmpty([p.quality, p.codec, p.cleanTags.join(' · ')])}`;
+
+  const line3Parts = ['Leviathan'];
+  if (p.releaseGroup) line3Parts.push(p.releaseGroup);
+  if (p.providerLabel) line3Parts.push(p.providerLabel);
+  if (isCached) line3Parts.push(`[${p.serviceTag}]`);
+  const line3 = `☵ ${line3Parts.join(' · ')}`;
+
+  const line4 = `☶ ${joinNonEmpty([p.cleanName, p.epTag])}`;
+  return { name, title: [line1, line2, line3, line4].join('\n') };
+}
+
 function styleAndroidTV(p) {
-    const qDisp = p.quality.replace('2160p','4K').replace('1440p','2K');
-    
-    let vTags = p.cleanTags.filter(t => /HDR|DV|10\+/i.test(t)).join(' | ')
-        .replace('HDR | DV', 'DV').replace('DV | HDR', 'DV').replace('HDR10+ | DV', 'DV');
-    
-    const headerParts = [qDisp, vTags, p.serviceTag].filter(Boolean);
-    const name = headerParts.join(" | ");
-
-    const lines = [];
-    if (p.codec) lines.push(`🎞️ ${p.codec}`);
-    if (p.audioTag) lines.push(`🎧 ${p.audioTag} ${p.audioChannels}`);
-    lines.push(`⚙️ ${p.displaySource}`);
-    lines.push(p.lang);
-    lines.push(p.fileTitle);
-
-    return { name, title: lines.join("\n") };
+  const qDisp = p.quality.replace(/2160p/i, '4K').replace(/1440p/i, '2K');
+  const visualTags = p.cleanTags.filter((tag) => /HDR|DV|10\+/i.test(tag)).join(' | ')
+    .replace('HDR | DV', 'DV')
+    .replace('DV | HDR', 'DV')
+    .replace('HDR10+ | DV', 'DV');
+  const name = [qDisp, visualTags, p.serviceTag].filter(Boolean).join(' | ');
+  const lines = [
+    p.codec ? `🎞️ ${p.codec}` : '',
+    p.audioTag ? `🎧 ${joinNonEmpty([p.audioTag, p.audioChannels], ' ')}` : '',
+    `⚙️ ${p.displaySource}`,
+    p.lang,
+    p.fileTitle,
+  ].filter(Boolean);
+  return { name, title: lines.join('\n') };
 }
 
-// --- 3. NUOVO FORMATTER ---
 function stylePicture(p) {
-    const isCached = ["RD", "TB", "AD"].includes(p.serviceTag);
-    const cacheIcon = isCached ? "✅" : "⏳";
-    
-    let feat = [];
-    if (p.quality === "4K") feat.push("UHD");
-    if (p.cleanTags.some(t => /HDR|DV/i.test(t))) feat.push("HDR");
-    if (p.audioTag.includes("Atmos")) feat.push("ATMOS");
-    
-    const name = `${cacheIcon} ${feat.join(" ")} ${p.quality}`;
+  const isCached = isDebridService(p.serviceTag);
+  const cacheIcon = isCached ? '✅' : '⏳';
+  const features = [];
+  if (p.quality === '4K') features.push('UHD');
+  if (p.cleanTags.some((tag) => /HDR|DV/i.test(tag))) features.push('HDR');
+  if (/atmos/i.test(p.audioTag)) features.push('ATMOS');
+  const name = `${cacheIcon} ${features.join(' ')} ${p.quality}`.trim();
 
-    const lines = [];
-    lines.push(`🎬 ${p.cleanName} ${p.epTag}`);
-    
-    let vidLine = `✨ ${p.quality}`;
-    const hdrTags = p.cleanTags.filter(t => /HDR|DV|10\+/i.test(t)).join(" | ");
-    if (hdrTags) vidLine += ` 🔆 ${hdrTags}`;
-    lines.push(vidLine);
+  let typeText = 'Web-DL';
+  if (p.cleanTags.some((tag) => /Remux/i.test(tag))) typeText = 'Blu-ray Remux';
+  else if (p.cleanTags.some((tag) => /BluRay/i.test(tag))) typeText = 'Blu-ray';
 
-    let audLine = `🎧 ${p.audioTag}`;
-    if (p.audioChannels) audLine += ` 🔊 ${p.audioChannels}`;
-    lines.push(audLine);
-
-    let typeText = "Web-DL";
-    if (p.cleanTags.some(t => /Remux/i.test(t))) typeText = "Blu-ray Remux";
-    else if (p.cleanTags.some(t => /BluRay/i.test(t))) typeText = "Blu-ray";
-    lines.push(`💿 ${typeText}`);
-    lines.push(`📦 ${p.sizeString}`);
-
-    let groupLine = `🏷️ ${typeText} T1`; 
-    if (p.releaseGroup) groupLine += ` (${p.releaseGroup})`;
-    lines.push(groupLine);
-
-    lines.push(`⚡ Comet ${p.serviceTag}`);
-
-    return { name, title: lines.join("\n") };
+  const hdrTags = p.cleanTags.filter((tag) => /HDR|DV|10\+/i.test(tag)).join(' | ');
+  const lines = [
+    `🎬 ${joinNonEmpty([p.cleanName, p.epTag], ' ')}`,
+    `✨ ${p.quality}${hdrTags ? ` 🔆 ${hdrTags}` : ''}`,
+    `🎧 ${p.audioTag}${p.audioChannels ? ` 🔊 ${p.audioChannels}` : ''}`,
+    `💿 ${typeText}`,
+    `📦 ${p.sizeString}`,
+    `🏷️ ${typeText} T1${p.releaseGroup ? ` (${p.releaseGroup})` : ''}`,
+    `⚡ Comet ${p.serviceTag}`,
+  ];
+  return { name, title: lines.join('\n') };
 }
-
-// --- STILI PREESISTENTI ---
 
 function styleLeviathan(p) {
-    let cleanAudio = p.audioTag.replace(/[\u{1F300}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, "").trim();
-    if (!cleanAudio) cleanAudio = p.audioTag; 
-    
-    let serviceIcon = "🦈"; 
-    if (p.serviceTag === "RD") serviceIcon = "🐬";
-    else if (p.serviceTag === "TB") serviceIcon = "⚓";
-    else if (p.serviceTag === "AD") serviceIcon = "🐚";
+  const cleanAudio = removeEmoji(p.audioTag) || p.audioTag;
+  const statusIcon = isDebridService(p.serviceTag) ? (SERVICE_ICON_BY_TAG[p.serviceTag] || '🦈') : '⏳';
+  const brandName = toStylized('LEVIATHAN', 'small');
+  const serviceStyled = toStylized(p.serviceTag, 'bold');
+  const name = `${statusIcon} ${serviceStyled} 🦑 ${brandName}`;
 
-    const isCached = ["RD", "AD", "TB"].includes(p.serviceTag);
-    const statusIcon = isCached ? serviceIcon : "⏳";
-
-    const brandName = toStylized("LEVIATHAN", "small"); 
-    const serviceStyled = toStylized(p.serviceTag, "bold");
-    
-    const name = `${statusIcon} ${serviceStyled} 🦑 ${brandName}`;
-
-    let techSpecs = [p.quality, ...p.cleanTags].filter(Boolean);
-    techSpecs = [...new Set(techSpecs)]; 
-    let techLine = techSpecs.map(t => toStylized(t, 'small')).join(" • ");
-
-    const lines = [];
-    lines.push(`▶️ ${toStylized(p.cleanName, "bold")} ${p.epTag}`);
-    if (techLine) lines.push(`🔱 ${techLine}`);
-    
-    let audioPart = [cleanAudio, p.audioChannels].filter(Boolean).join(" ");
-    lines.push(`🗣️ ${p.lang}  |  🫧 ${audioPart}`);
-
-    let fileInfo = `🧲 ${p.sizeString}`;
-    if (p.seedersStr) fileInfo += `  |  ${p.seedersStr}`;
-    lines.push(fileInfo);
-
-    let sourceRow = `${p.serviceIconTitle} ${p.displaySource}`;
-    if (p.releaseGroup) {
-        const styledGroup = toStylized(p.releaseGroup, 'small');
-        sourceRow += ` | 🏷️ ${styledGroup}`;
-    }
-    lines.push(sourceRow);
-
-    return { name, title: lines.join("\n") };
+  const techSpecs = uniqueBy([p.quality, ...p.cleanTags].filter(Boolean), (item) => item.toLowerCase());
+  const techLine = techSpecs.map((item) => toStylized(item, 'small')).join(' • ');
+  const lines = [
+    `▶️ ${toStylized(p.cleanName, 'bold')} ${p.epTag}`.trim(),
+    techLine ? `🔱 ${techLine}` : '',
+    `🗣️ ${p.lang}  |  🫧 ${joinNonEmpty([cleanAudio, p.audioChannels], ' ')}`,
+    `🧲 ${p.sizeString}${p.seedersStr ? `  |  ${p.seedersStr}` : ''}`,
+    `${p.serviceIconTitle} ${p.displaySource}${p.releaseGroup ? ` | 🏷️ ${toStylized(p.releaseGroup, 'small')}` : ''}`,
+  ].filter(Boolean);
+  return { name, title: lines.join('\n') };
 }
 
 function styleLeviathanTwo(p) {
-    const levText = toStylized("LEVIATHAN", "small");
-    const name = `🦑 ${levText} ${p.serviceIconTitle} │ ${p.quality}`;
-    const lines = [];
-    lines.push(`🎬 ${toStylized(p.cleanName, "bold")}`);
-    lines.push(`📦 ${p.sizeString} │ ${p.codec} ${p.videoTags.filter(x=>!x.includes(p.codec)).join(" ")}`);
-    lines.push(`🔊 ${p.audioTag} ${p.audioChannels} • ${p.lang}`);
-    
-    let sourceRow = `🔗 ${p.sourceLine}`;
-    if (p.seedersStr) sourceRow += ` ${p.seedersStr}`;
-    lines.push(sourceRow);
-    
-    return { name, title: lines.join("\n") };
+  const levText = toStylized('LEVIATHAN', 'small');
+  const name = `🦑 ${levText} ${p.serviceIconTitle} │ ${p.quality}`;
+  const lines = [
+    `🎬 ${toStylized(p.cleanName, 'bold')}`,
+    `📦 ${p.sizeString} │ ${joinNonEmpty([p.codec, p.videoTags.filter((item) => !item.includes(p.codec)).join(' ')])}`,
+    `🔊 ${joinNonEmpty([p.audioTag, p.audioChannels], ' ')} • ${p.lang}`,
+    `🔗 ${p.sourceLine}${p.seedersStr ? ` ${p.seedersStr}` : ''}`,
+  ];
+  return { name, title: lines.join('\n') };
 }
 
 function styleFra(p) {
-    let qShort = p.quality === "1080p" ? "FHD" : (p.quality === "4K" ? "4K" : "HD");
-    const name = `⚡️ Leviathan ${qShort}`;
-    const tagString = p.cleanTags.join(' • ');
-    const lines = [
-        `📄 ❯ ${p.fileTitle}`, 
-        `🌎 ❯ ${p.lang} • ${p.audioTag}`, 
-        `✨ ❯ ${p.serviceTag} • ${p.displaySource}`, 
-        `🔥 ❯ ${p.quality} • ${tagString}`, 
-        `💾 ❯ ${p.sizeString} / 👥 ❯ ${p.seeders}`
-    ];
-    return { name, title: lines.join("\n") };
+  const qShort = p.quality === '1080p' ? 'FHD' : (p.quality === '4K' ? '4K' : 'HD');
+  const lines = [
+    `📄 ❯ ${p.fileTitle}`,
+    `🌎 ❯ ${joinNonEmpty([p.lang, p.audioTag])}`,
+    `✨ ❯ ${p.serviceTag} • ${p.displaySource}`,
+    `🔥 ❯ ${joinNonEmpty([p.quality, p.cleanTags.join(' • ')])}`,
+    `💾 ❯ ${p.sizeString}${p.seeders !== null ? ` / 👥 ❯ ${p.seeders}` : ''}`,
+  ];
+  return { name: `⚡️ Leviathan ${qShort}`, title: lines.join('\n') };
 }
 
 function styleDav(p) {
-    let header = p.quality === "4K" ? "🎥 4K UHD" : (p.quality === "1080p" ? "📀 FHD" : "💿 HD");
-    const name = `${header} ${p.codec}`;
-    const lines = [];
-    lines.push(`📺 ${p.cleanName} ${p.epTag}`);
-    lines.push(`🎧 ${p.audioTag} ${p.audioChannels} | 🎞️ ${p.codec}`);
-    lines.push(`🗣️ ${p.lang} | 📦 ${p.sizeString}`);
-    lines.push(`⏱️ ${p.seeders} Seeds | 🏷️ ${p.displaySource}`);
-    lines.push(`${p.serviceIconTitle} Leviathan 📡 ${p.serviceTag}`);
-    lines.push(`📂 ${p.fileTitle}`);
-    return { name, title: lines.join("\n") };
+  const header = p.quality === '4K' ? '🎥 4K UHD' : (p.quality === '1080p' ? '📀 FHD' : '💿 HD');
+  const lines = [
+    `📺 ${joinNonEmpty([p.cleanName, p.epTag], ' ')}`,
+    `🎧 ${joinNonEmpty([p.audioTag, p.audioChannels], ' ')} | 🎞️ ${p.codec}`,
+    `🗣️ ${p.lang} | 📦 ${p.sizeString}`,
+    `⏱️ ${p.seeders !== null ? p.seeders : '?'} Seeds | 🏷️ ${p.displaySource}`,
+    `${p.serviceIconTitle} Leviathan 📡 ${p.serviceTag}`,
+    `📂 ${p.fileTitle}`,
+  ];
+  return { name: `${header} ${p.codec}`.trim(), title: lines.join('\n') };
 }
 
 function styleAnd(p) {
-    const name = `🎬 ${p.cleanName} ${p.epTag}`;
-    const lines = [];
-    const cachedIcon = p.serviceTag === "RD" ? "⚡" : "⏳";
-    lines.push(`${p.quality} ${cachedIcon}`);
-    lines.push(`─ ─ ─ ─ ─ ─ ─ ─ ─ ─`);
-    lines.push(`Lingue: ${p.lang}`);
-    lines.push(`Specifiche: ${p.quality} | 📺 ${p.cleanTags.join(' ')} | 🔊 ${p.audioTag}`);
-    lines.push(`─ ─ ─ ─ ─ ─ ─ ─ ─ ─`);
-    lines.push(`📂 ${p.sizeString} | ☁️ ${p.serviceTag} | 🛰️ Leviathan`);
-    return { name, title: lines.join("\n") };
+  const cachedIcon = p.serviceTag === 'RD' ? '⚡' : '⏳';
+  const lines = [
+    `${p.quality} ${cachedIcon}`,
+    '─ ─ ─ ─ ─ ─ ─ ─ ─ ─',
+    `Lingue: ${p.lang}`,
+    `Specifiche: ${p.quality} | 📺 ${p.cleanTags.join(' ')} | 🔊 ${p.audioTag}`,
+    '─ ─ ─ ─ ─ ─ ─ ─ ─ ─',
+    `📂 ${p.sizeString} | ☁️ ${p.serviceTag} | 🛰️ Leviathan`,
+  ];
+  return { name: `🎬 ${joinNonEmpty([p.cleanName, p.epTag], ' ')}`, title: lines.join('\n') };
 }
 
 function styleLad(p) {
-    const name = `🖥️ ${p.quality} ${p.serviceTag}`;
-    const lines = [];
-    lines.push(`🎟️ ${p.cleanName}`);
-    lines.push(`📜 ${p.epTag || "Movie"}`);
-    lines.push(`🎥 ${p.quality} 🎞️ ${p.codec} 🎧 ${p.audioTag}`);
-    lines.push(`📦 ${p.sizeString} • 🔗 Leviathan`);
-    lines.push(`🌐 ${p.lang}`);
-    return { name, title: lines.join("\n") };
+  const lines = [
+    `🎟️ ${p.cleanName}`,
+    `📜 ${p.epTag || 'Movie'}`,
+    `🎥 ${joinNonEmpty([p.quality, `🎞️ ${p.codec}`, `🎧 ${p.audioTag}`], ' ')}`,
+    `📦 ${p.sizeString} • 🔗 Leviathan`,
+    `🌐 ${p.lang}`,
+  ];
+  return { name: `🖥️ ${p.quality} ${p.serviceTag}`, title: lines.join('\n') };
 }
 
 function stylePri(p) {
-    let resIcon = p.quality === "4K" ? "4K🔥UHD" : (p.quality === "1080p" ? "FHD🚀1080p" : "HD💿720p");
-    const name = `[${p.serviceTag}]⚡️☁️\n${resIcon}\n[Leviathan]`;
-    const lines = [];
-    lines.push(`🎬 ${p.cleanName} ${p.epTag}`);
-    lines.push(`${p.cleanTags.join(" ")}`);
-    lines.push(`🎧 ${p.audioTag} | 🔊 ${p.audioChannels} | 🗣️ ${p.lang}`);
-    lines.push(`📁 ${p.sizeString} | 🏷️ ${p.displaySource}`);
-    lines.push(`📄 ▶️ ${p.fileTitle} ◀️`);
-    return { name, title: lines.join("\n") };
+  const resIcon = p.quality === '4K' ? '4K🔥UHD' : (p.quality === '1080p' ? 'FHD🚀1080p' : 'HD💿720p');
+  const lines = [
+    `🎬 ${joinNonEmpty([p.cleanName, p.epTag], ' ')}`,
+    p.cleanTags.join(' '),
+    `🎧 ${p.audioTag} | 🔊 ${p.audioChannels} | 🗣️ ${p.lang}`,
+    `📁 ${p.sizeString} | 🏷️ ${p.displaySource}`,
+    `📄 ▶️ ${p.fileTitle} ◀️`,
+  ].filter(Boolean);
+  return { name: `[${p.serviceTag}]⚡️☁️\n${resIcon}\n[Leviathan]`, title: lines.join('\n') };
 }
 
 function styleComet(p) {
-    const name = `[${p.serviceTag} ⚡]\nLeviathan\n${p.quality}`;
-    const lines = [];
-    lines.push(`📄 ${p.fileTitle}`);
-    const techStack = [p.codec, ...p.cleanTags].filter(Boolean).join(" • ");
-    const videoPart = techStack ? techStack : "Video";
-    lines.push(`📹 ${videoPart} | ${p.audioTag}`);
-    lines.push(`⭐ ${p.displaySource}`);
-    const provider = p.seeders != null ? `👥 ${p.seeders}` : "🔎 Leviathan";
-    lines.push(`💾 ${p.sizeString} ${provider}`);
-    lines.push(`🌍 ${p.lang}`);
-    return { name, title: lines.join("\n") };
+  const techStack = [p.codec, ...p.cleanTags].filter(Boolean).join(' • ');
+  const lines = [
+    `📄 ${p.fileTitle}`,
+    `📹 ${techStack || 'Video'} | ${p.audioTag}`,
+    `⭐ ${p.displaySource}`,
+    `💾 ${p.sizeString} ${p.seeders !== null ? `👥 ${p.seeders}` : '🔎 Leviathan'}`,
+    `🌍 ${p.lang}`,
+  ];
+  return { name: `[${p.serviceTag} ⚡]\nLeviathan\n${p.quality}`, title: lines.join('\n') };
 }
 
 function styleStremioIta(p) {
-    const isCached = ["RD", "TB", "AD"].includes(p.serviceTag);
-    const statusIcon = isCached ? "⚡️" : "⏳";
-    const name = `${statusIcon} Leviathan ${p.qDetails}`;
-    const lines = [];
-    lines.push(`📄 ❯ ${p.fileTitle}`);
-    lines.push(`🌎 ❯ ${p.lang.replace(/ITA/i, "ita").replace(/ENG/i, "eng").replace(/MULTI/i, "multi")}`);
-    let typeIcon = "✨";
-    if (!isCached) typeIcon = "⬇️"; 
-    lines.push(`${typeIcon} ❯ ${p.serviceTag} • ${p.displaySource}`);
-    
-    let qualIcon = "📀";
-    if (p.cleanTags.some(t => /bluray|web|hdr|dv/i.test(t)) || p.quality === "4K") qualIcon = "🔥";
-    
-    const tagsJoined = p.cleanTags.join(' • ');
-    const qualLine = tagsJoined ? `${p.quality} • ${tagsJoined}` : p.quality;
-    lines.push(`${qualIcon} ❯ ${qualLine}`);
-    
-    let sizeLine = `💾 ❯ ${p.sizeString}`;
-    if (!isCached && p.seeders !== null) {
-        sizeLine += ` / 👥 ❯ ${p.seeders}`;
-    }
-    lines.push(sizeLine);
-    const audioLine = [p.audioTag, p.audioChannels].filter(Boolean).join(" • ");
-    if (audioLine) lines.push(`🔉 ❯ ${audioLine}`);
-    return { name, title: lines.join("\n") };
+  const isCached = isDebridService(p.serviceTag);
+  const statusIcon = isCached ? '⚡️' : '⏳';
+  const langText = p.lang.replace(/ITA/i, 'ita').replace(/ENG/i, 'eng').replace(/MULTI/i, 'multi');
+  const qualIcon = p.cleanTags.some((tag) => /bluray|web|hdr|dv/i.test(tag)) || p.quality === '4K' ? '🔥' : '📀';
+  const lines = [
+    `📄 ❯ ${p.fileTitle}`,
+    `🌎 ❯ ${langText}`,
+    `${isCached ? '✨' : '⬇️'} ❯ ${p.serviceTag} • ${p.displaySource}`,
+    `${qualIcon} ❯ ${joinNonEmpty([p.quality, p.cleanTags.join(' • ')])}`,
+    `💾 ❯ ${p.sizeString}${!isCached && p.seeders !== null ? ` / 👥 ❯ ${p.seeders}` : ''}`,
+  ];
+  const audioLine = joinNonEmpty([p.audioTag, p.audioChannels], ' • ');
+  if (audioLine) lines.push(`🔉 ❯ ${audioLine}`);
+  return { name: `${statusIcon} Leviathan ${p.qDetails}`, title: lines.join('\n') };
 }
 
 function styleTorrentio(p) {
-    const name = `[${p.serviceTag}]\n${p.quality}`;
-    const lines = [];
-    lines.push(`📄 ${p.fileTitle}`);
-    let sizeLine = `📦 ${p.sizeString}`;
-    if (p.seeders !== null && p.seeders !== undefined) {
-        sizeLine += ` 👤 ${p.seeders}`;
-    }
-    lines.push(sizeLine);
-    lines.push(`🔍 ${p.displaySource}`);
-    let cleanLang = p.lang.replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "").trim(); 
-    if (!cleanLang.replace(/[^a-zA-Z]/g, "")) cleanLang = p.lang; 
-    lines.push(`🔊 ${cleanLang}`);
-    return { name, title: lines.join("\n") };
+  let cleanLang = p.lang.replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, '').trim();
+  if (!cleanLang.replace(/[^a-zA-Z]/g, '')) cleanLang = p.lang;
+  const lines = [
+    `📄 ${p.fileTitle}`,
+    `📦 ${p.sizeString}${p.seeders !== null ? ` 👤 ${p.seeders}` : ''}`,
+    `🔍 ${p.displaySource}`,
+    `🔊 ${cleanLang}`,
+  ];
+  return { name: `[${p.serviceTag}]\n${p.quality}`, title: lines.join('\n') };
 }
 
 function styleVertical(p) {
-    const isCached = ["RD", "TB", "AD"].includes(p.serviceTag);
-    const cacheIcon = isCached ? "⚡" : "☁️";
-    const name = `🦑 Leviathan ${p.quality} ${cacheIcon} Cached`;
-    const lines = [];
-    lines.push(`🍿 ${p.cleanName}`);
-    const videoInfo = p.cleanTags.length > 0 ? `📼 WEB-DL • ${p.cleanTags[0]}` : `📼 WEB-DL`;
-    lines.push(videoInfo);
-    lines.push(`⚙️ ${p.codec}`);
-    lines.push(`🔊 ${p.audioTag} (${p.audioChannels})`);
-    lines.push(`💬 ${p.lang}`);
-    lines.push(`🧲 ${p.sizeString}`);
-    return { name, title: lines.join("\n") };
+  const cacheLabel = isDebridService(p.serviceTag) ? '⚡ Cached' : '☁️ Live';
+  const type = p.cleanTags.some((tag) => /Remux/i.test(tag)) ? 'Remux' : 'WEB-DL';
+  const lines = [
+    `🍿 ${p.cleanName}`,
+    `📼 ${type}${p.cleanTags[0] ? ` • ${p.cleanTags[0]}` : ''}`,
+    `⚙️ ${p.codec}`,
+    `🔊 ${p.audioTag}${p.audioChannels ? ` (${p.audioChannels})` : ''}`,
+    `💬 ${p.lang}`,
+    `🧲 ${p.sizeString}`,
+  ];
+  return { name: `🦑 Leviathan ${p.quality} ${cacheLabel}`, title: lines.join('\n') };
 }
 
 function styleCustom(p, template) {
-    if (!template) return styleLeviathan(p); 
-    const vars = {
-        "{title}": p.cleanName, "{originalTitle}": p.fileTitle, "{ep}": p.epTag || "",
-        "{quality}": p.quality, "{quality_bold}": toStylized(p.quality, 'bold'),
-        "{size}": p.sizeString, "{source}": p.displaySource, "{service}": p.serviceTag,
-        "{lang}": p.lang, "{audio}": p.audioInfo, "{seeders}": p.seedersStr, "{n}": "\n" 
-    };
-    let userString = template;
-    Object.keys(vars).forEach(key => { userString = userString.replace(new RegExp(key, "g"), vars[key]); });
-    userString = userString.replace(/\\n/g, "\n");
-    return { name: `Leviathan ${p.quality}`, title: userString };
+  if (!template) return styleLeviathan(p);
+  const vars = {
+    '{title}': p.cleanName,
+    '{originalTitle}': p.fileTitle,
+    '{ep}': p.epTag || '',
+    '{quality}': p.quality,
+    '{quality_bold}': toStylized(p.quality, 'bold'),
+    '{size}': p.sizeString,
+    '{source}': p.displaySource,
+    '{service}': p.serviceTag,
+    '{lang}': p.lang,
+    '{audio}': p.audioInfo,
+    '{seeders}': p.seedersStr,
+    '{codec}': p.codec,
+    '{group}': p.releaseGroup,
+    '{n}': '\n',
+  };
+  let output = safeString(template);
+  for (const [key, value] of Object.entries(vars)) {
+    output = output.replace(new RegExp(key.replace(/[{}]/g, '\\$&'), 'g'), value);
+  }
+  output = output.replace(/\\n/g, '\n');
+  return { name: `Leviathan ${p.quality}`, title: output };
 }
 
+const STYLE_BUILDERS = {
+  complex: styleComplex,
+  android: styleAndroidTV,
+  picture: stylePicture,
+  leviathan: styleLeviathan,
+  lev2: styleLeviathanTwo,
+  fra: styleFra,
+  dav: styleDav,
+  and: styleAnd,
+  lad: styleLad,
+  pri: stylePri,
+  comet: styleComet,
+  stremio_ita: styleStremioIta,
+  torrentio: styleTorrentio,
+  vertical: styleVertical,
+  custom: (params, config) => styleCustom(params, config.customTemplate || ''),
+};
 
-// 5. MAIN DISPATCHER
-function formatStreamSelector(fileTitle, source, size, seeders, serviceTag = "RD", config = {}, infoHash = null, isLazy = false, isPackItem = false) {
-    let { quality, qDetails, qIcon, videoTags, cleanTags, lang, codec, audioTag, audioChannels, rawInfo, releaseGroup } = extractStreamInfo(fileTitle, source, config);
-    
-    let serviceIconTitle = "🦈"; // Default P2P
-    if (serviceTag === "RD") { qIcon = "🐬"; serviceIconTitle = "🐬"; }    
-    else if (serviceTag === "TB") { qIcon = "⚓"; serviceIconTitle = "⚓"; } 
-    else if (serviceTag === "AD") { qIcon = "🐚"; serviceIconTitle = "🐚"; } 
-    
-    let sizeString = size ? formatBytes(size) : "";
-    if (!sizeString || size === 0) {
-        let hash = 0;
-        for (let i = 0; i < fileTitle.length; i++) hash = fileTitle.charCodeAt(i) + ((hash << 5) - hash);
-        const seed = Math.abs(hash);
-        let gb = 1; 
-        if (quality.includes("4K")) gb = 12 + (seed % 1000) / 100;
-        else if (quality.includes("1080")) gb = 1.8 + (seed % 270) / 100;
-        else gb = 0.6 + (seed % 80) / 100;
-        sizeString = `${gb.toFixed(2)} GB`;
-    }
+function extractStreamInfo(title, source, config = {}) {
+  const cacheKey = JSON.stringify([title, source, config.season, config.episode]);
+  const cached = getCached(EXTRACT_CACHE, cacheKey);
+  if (cached) return cached;
 
-    let cleanName = cleanFilename(fileTitle);
-    // Rimuove eventuali S01, S01E01 o "Season 1" rimasti attaccati al titolo principale
-    cleanName = cleanName.replace(/\s+(?:S\d+(?:E\d+)?\b.*|\d+x\d+\b.*|(?:Season|Stagione)\s*\d+\b.*)$/i, "").trim();
-    
-    const baseEpTag = getEpisodeTag(fileTitle, config);
-    const styledPack = toStylized("Season Pack", "small");
-    const epTag = isPackItem 
-        ? (baseEpTag ? `${baseEpTag}  ✦  📦 ${styledPack}` : `📦 ꜱᴇᴀꜱᴏɴ ᴘᴀᴄᴋ`) 
-        : baseEpTag;
+  const rawTitle = normalizeSpaces(title);
+  const parsed = parseTitleCached(rawTitle);
+  const upperTitle = compactTitleForRegex(rawTitle);
 
-    let displaySource = source || "P2P";
-    if (/1337/i.test(displaySource)) displaySource = "1337x"; 
-    else if (/corsaro/i.test(displaySource)) displaySource = "ilCorSaRoNeRo";
-    else if (/knaben/i.test(displaySource)) displaySource = "Knaben";
-    else if (/comet|stremthru/i.test(displaySource)) displaySource = "StremThru";
-    else displaySource = displaySource.replace(/MediaFusion|Torrentio|Fallback/gi, '').trim() || "✨ MediaFusion";
+  const { quality, qDetails, qIcon } = deriveQuality(parsed, upperTitle);
+  const { videoTags, cleanTags } = deriveVideoTags(parsed, upperTitle);
+  const lang = deriveLanguages(rawTitle, source);
+  const { codec, audioTag, audioChannels } = deriveAudio(parsed, upperTitle, quality, cleanTags);
+  const releaseGroup = deriveReleaseGroup(rawTitle, parsed);
+  const cleanName = cleanFilename(rawTitle);
+  const epTag = getEpisodeTag(rawTitle, config);
 
-    const sourceLine = `${serviceIconTitle} [${serviceTag}] ${displaySource}`;
-    const sizeStr = `🧲 ${sizeString}`;
-    const seedersStr = seeders != null ? `👥 ${seeders}` : "";
-    
-    const audioInfo = [audioTag, audioChannels].filter(Boolean).join(" ┃ ");
-    const hdrPart = (rawInfo.hdr || []).join(''); 
-    
-    const bingeGroup = `Leviathan|${quality}|${hdrPart}|${serviceTag}|${infoHash || 'no-hash'}`;
+  const result = {
+    quality,
+    qDetails,
+    qIcon,
+    videoTags,
+    cleanTags,
+    lang,
+    codec,
+    audioTag,
+    audioChannels,
+    rawInfo: parsed,
+    releaseGroup,
+    cleanName,
+    epTag,
+  };
 
-    const params = {
-        fileTitle, source, displaySource, size, sizeString, sizeStr,
-        seeders, seedersStr,
-        quality, qDetails, qIcon, 
-        serviceTag, serviceIconTitle,
-        videoTags, cleanTags, codec,
-        lang, audioInfo, audioTag, audioChannels,
-        cleanName, epTag, sourceLine,
-        releaseGroup, rawInfo
-    };
-
-    let result;
-    const style = config.formatter || "leviathan"; 
-
-    switch (style) {
-        case "complex": result = styleComplex(params); break; 
-        case "android": result = styleAndroidTV(params); break; 
-        case "picture": result = stylePicture(params); break; 
-        case "lev2": result = styleLeviathanTwo(params); break;
-        case "fra": result = styleFra(params); break;
-        case "dav": result = styleDav(params); break;
-        case "and": result = styleAnd(params); break;
-        case "lad": result = styleLad(params); break;
-        case "pri": result = stylePri(params); break;
-        case "comet": result = styleComet(params); break;
-        case "stremio_ita": result = styleStremioIta(params); break;
-        case "torrentio": result = styleTorrentio(params); break; 
-        case "vertical": result = styleVertical(params); break;
-        case "custom": result = styleCustom(params, config.customTemplate || ""); break;
-        case "leviathan": 
-        default: 
-            result = styleLeviathan(params); break;
-    }
-
-    result.bingeGroup = bingeGroup;
-    return result;
+  return setCached(EXTRACT_CACHE, cacheKey, result, EXTRACT_CACHE_LIMIT);
 }
 
-module.exports = { formatStreamSelector, cleanFilename, formatBytes, extractStreamInfo, getEpisodeTag };
+function formatStreamSelector(fileTitle, source, size, seeders, serviceTag = DEFAULT_SERVICE_TAG, config = {}, infoHash = null, isLazy = false, isPackItem = false) {
+  const params = createStyleParams(fileTitle, source, size, seeders, serviceTag, config, infoHash, isLazy, isPackItem);
+  const styleName = safeString(config.formatter || 'leviathan').toLowerCase();
+  const builder = STYLE_BUILDERS[styleName] || STYLE_BUILDERS.leviathan;
+  const result = builder(params, config);
+  result.bingeGroup = params.bingeGroup;
+  return result;
+}
+
+module.exports = {
+  formatStreamSelector,
+  cleanFilename,
+  formatBytes,
+  extractStreamInfo,
+  getEpisodeTag,
+};
