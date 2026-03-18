@@ -590,7 +590,8 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
   const normalizedServiceTag = normalizeServiceTag(serviceTag);
   const serviceIconTitle = SERVICE_ICON_BY_TAG[normalizedServiceTag] || '🦈';
   const qIcon = SERVICE_ICON_BY_TAG[normalizedServiceTag] || extracted.qIcon;
-  const sizeString = Number(size) > 0 ? formatBytes(size) : pseudoSizeFromTitle(fileTitle, extracted.quality);
+  const numericSize = Number(size) || 0;
+  const sizeString = numericSize > 0 ? formatBytes(numericSize) : pseudoSizeFromTitle(fileTitle, extracted.quality);
   const cleanedName = stripEpisodeFromCleanName(extracted.cleanName);
   const baseEpTag = getEpisodeTag(fileTitle, config);
   const styledPack = toStylized('Season Pack', 'small');
@@ -600,13 +601,14 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
   const displaySource = normalizeDisplaySource(source || DEFAULT_SOURCE_LABEL);
   const seedersValue = seeders === null || seeders === undefined || Number.isNaN(Number(seeders)) ? null : Number(seeders);
   const seedersStr = seedersValue !== null ? `👥 ${seedersValue}` : '';
+  const isCached = isDebridService(normalizedServiceTag);
 
-  return {
+  const baseParams = {
     ...extracted,
     fileTitle: safeString(fileTitle),
     source: safeString(source) || DEFAULT_SOURCE_LABEL,
     displaySource,
-    size: Number(size) || 0,
+    size: numericSize,
     sizeString,
     sizeStr: `🧲 ${sizeString}`,
     seeders: seedersValue,
@@ -622,7 +624,20 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
     providerLabel: extractProviderLabel(fileTitle),
     isLazy: Boolean(isLazy),
     isPackItem: Boolean(isPackItem),
+    isCached,
+    compactLang: compactLanguageLabel(extracted.lang),
+    primarySourceTag: getPrimarySourceTag(extracted.cleanTags),
     config,
+  };
+
+  const visualScore = computeVisualScore(baseParams);
+  return {
+    ...baseParams,
+    visualScore,
+    scoreTier: scoreTier(visualScore),
+    scoreBadge: scoreBadge(visualScore),
+    premiumTags: buildPremiumTags(baseParams, Number(config?.premiumTagLimit) > 0 ? Number(config.premiumTagLimit) : 4),
+    headlineParts: buildHeadlineParts(baseParams),
   };
 }
 
@@ -632,6 +647,174 @@ function joinNonEmpty(parts, separator = ' · ') {
 
 function removeEmoji(text) {
   return safeString(text).replace(/[\u{1F300}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '').trim();
+}
+
+
+function compactLanguageLabel(lang) {
+  const text = removeEmoji(lang).replace(/\s*\/\s*/g, '/').replace(/\s+/g, ' ').trim();
+  if (!text) return 'ENG';
+  return text
+    .replace(/ITALIANO|ITALIAN/gi, 'ITA')
+    .replace(/ENGLISH/gi, 'ENG')
+    .replace(/JAPANESE/gi, 'JPN')
+    .replace(/FRENCH/gi, 'FRA')
+    .replace(/GERMAN/gi, 'DEU')
+    .replace(/SPANISH/gi, 'ESP');
+}
+
+function getPrimarySourceTag(cleanTags) {
+  if (cleanTags.includes('Remux')) return 'Remux';
+  if (cleanTags.includes('BluRay')) return 'BluRay';
+  if (cleanTags.includes('WEB')) return 'WEB';
+  if (cleanTags.includes('Rip')) return 'Rip';
+  return '';
+}
+
+function qualityScore(quality) {
+  const normalized = safeString(quality).toUpperCase();
+  if (normalized === '8K') return 100;
+  if (normalized === '4K' || normalized === '2160P') return 92;
+  if (normalized === '1440P') return 78;
+  if (normalized === '1080P') return 66;
+  if (normalized === '720P') return 48;
+  if (normalized === 'CAM') return 8;
+  if (normalized === 'SD') return 18;
+  return 28;
+}
+
+function audioScore(audioTag, channels) {
+  const text = `${safeString(audioTag)} ${safeString(channels)}`.toUpperCase();
+  let score = 0;
+  if (/ATMOS TRUEHD/.test(text)) score += 24;
+  else if (/ATMOS DDP|DOLBY ATMOS/.test(text)) score += 20;
+  else if (/DTS:X/.test(text)) score += 19;
+  else if (/DTS-HD MA/.test(text)) score += 17;
+  else if (/TRUEHD/.test(text)) score += 16;
+  else if (/DTS-HD HRA|DTS-HD/.test(text)) score += 14;
+  else if (/DTS/.test(text)) score += 12;
+  else if (/DDP/.test(text)) score += 10;
+  else if (/DOLBY DIGITAL|AC3/.test(text)) score += 8;
+  else if (/AAC|STEREO/.test(text)) score += 5;
+
+  if (/7\.1/.test(text)) score += 8;
+  else if (/5\.1/.test(text)) score += 5;
+  else if (/2\.0/.test(text)) score += 2;
+
+  return score;
+}
+
+function visualTagScore(cleanTags) {
+  const tags = new Set((cleanTags || []).map((tag) => safeString(tag)));
+  let score = 0;
+  if (tags.has('Remux')) score += 24;
+  else if (tags.has('BluRay')) score += 18;
+  else if (tags.has('WEB')) score += 12;
+  else if (tags.has('Rip')) score += 6;
+
+  if (tags.has('DV+HDR')) score += 18;
+  else if (tags.has('DV')) score += 14;
+  else if (tags.has('HDR10+')) score += 12;
+  else if (tags.has('HDR')) score += 9;
+
+  if (tags.has('IMAX')) score += 4;
+  if (tags.has('AV1')) score += 4;
+  if (tags.has('VVC')) score += 5;
+  return score;
+}
+
+function providerScore(displaySource) {
+  const src = safeString(displaySource).toLowerCase();
+  if (/stremthru|torrentio|mediafusion/.test(src)) return 4;
+  if (/1337x|knaben|corsaro/.test(src)) return 3;
+  return 2;
+}
+
+function sizeScore(sizeBytes, quality) {
+  const size = Number(sizeBytes) || 0;
+  if (size <= 0) return 0;
+  const gb = size / (1024 ** 3);
+  if (/4k|2160/i.test(quality)) {
+    if (gb >= 40) return 12;
+    if (gb >= 20) return 8;
+    if (gb >= 8) return 5;
+    return 1;
+  }
+  if (/1080/i.test(quality)) {
+    if (gb >= 20) return 10;
+    if (gb >= 8) return 7;
+    if (gb >= 3) return 4;
+    return 1;
+  }
+  if (/720/i.test(quality)) {
+    if (gb >= 4) return 6;
+    if (gb >= 2) return 4;
+    return 1;
+  }
+  return gb >= 1 ? 2 : 0;
+}
+
+function seederScore(seeders) {
+  const value = Number(seeders);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (value >= 200) return 12;
+  if (value >= 100) return 10;
+  if (value >= 50) return 8;
+  if (value >= 20) return 6;
+  if (value >= 10) return 4;
+  return 2;
+}
+
+function computeVisualScore(params) {
+  let score = 0;
+  score += qualityScore(params.quality);
+  score += visualTagScore(params.cleanTags);
+  score += audioScore(params.audioTag, params.audioChannels);
+  score += providerScore(params.displaySource);
+  score += sizeScore(params.size, params.quality);
+  score += seederScore(params.seeders);
+  if (params.isCached) score += 10;
+  if (params.releaseGroup) score += 3;
+  return Math.max(1, Math.min(99, score));
+}
+
+function scoreTier(score) {
+  if (score >= 90) return 'S+';
+  if (score >= 82) return 'S';
+  if (score >= 72) return 'A';
+  if (score >= 60) return 'B';
+  if (score >= 45) return 'C';
+  return 'D';
+}
+
+function scoreBadge(score) {
+  const tier = scoreTier(score);
+  if (tier === 'S+') return `🏆 ${tier}${score}`;
+  if (tier === 'S') return `🥇 ${tier}${score}`;
+  if (tier === 'A') return `🥈 ${tier}${score}`;
+  if (tier === 'B') return `🥉 ${tier}${score}`;
+  if (tier === 'C') return `📦 ${tier}${score}`;
+  return `🧪 ${tier}${score}`;
+}
+
+function buildPremiumTags(params, maxItems = 4) {
+  const tags = [];
+  tags.push(params.quality);
+  const primarySource = getPrimarySourceTag(params.cleanTags);
+  if (primarySource) tags.push(primarySource);
+  for (const tag of params.cleanTags) {
+    if (tags.length >= maxItems) break;
+    if (tag === primarySource || tag === params.quality) continue;
+    if (/^(WEB|Rip)$/.test(tag) && primarySource === tag) continue;
+    tags.push(tag);
+  }
+  return uniqueBy(tags, (item) => item.toLowerCase()).slice(0, maxItems);
+}
+
+function buildHeadlineParts(params) {
+  const parts = [];
+  parts.push(params.cleanName);
+  if (params.epTag) parts.push(params.epTag);
+  return parts.filter(Boolean);
 }
 
 function styleComplex(p) {
@@ -661,18 +844,28 @@ function styleComplex(p) {
 
 function styleAndroidTV(p) {
   const qDisp = p.quality.replace(/2160p/i, '4K').replace(/1440p/i, '2K');
-  const visualTags = p.cleanTags.filter((tag) => /HDR|DV|10\+/i.test(tag)).join(' | ')
-    .replace('HDR | DV', 'DV')
-    .replace('DV | HDR', 'DV')
-    .replace('HDR10+ | DV', 'DV');
-  const name = [qDisp, visualTags, p.serviceTag].filter(Boolean).join(' | ');
-  const lines = [
-    p.codec ? `🎞️ ${p.codec}` : '',
-    p.audioTag ? `🎧 ${joinNonEmpty([p.audioTag, p.audioChannels], ' ')}` : '',
-    `⚙️ ${p.displaySource}`,
-    p.lang,
-    p.fileTitle,
-  ].filter(Boolean);
+  const compact = Boolean(p.config?.androidCompact) || String(p.config?.formatter || '').toLowerCase() === 'android_compact';
+  const hdrTag = p.cleanTags.find((tag) => /DV\+HDR|DV|HDR10\+|HDR/i.test(tag)) || '';
+  const audioShort = joinNonEmpty([p.audioTag.replace(/^Dolby\s+/i, ''), p.audioChannels], ' ');
+  const name = compact
+    ? [p.scoreBadge, qDisp, hdrTag, p.serviceTag].filter(Boolean).join(' • ')
+    : [qDisp, hdrTag, p.serviceTag].filter(Boolean).join(' | ');
+
+  const lines = compact
+    ? [
+        `🎬 ${joinNonEmpty(p.headlineParts, ' ')}`,
+        joinNonEmpty([p.primarySourceTag || p.displaySource, audioShort || p.codec, p.compactLang, p.sizeString], ' • '),
+        p.seeders !== null ? `📡 ${p.seeders} seeders` : `⚙️ ${p.displaySource}`,
+      ].filter(Boolean)
+    : [
+        `🎬 ${joinNonEmpty(p.headlineParts, ' ')}`,
+        joinNonEmpty([p.scoreBadge, qDisp, hdrTag, p.codec], ' • '),
+        audioShort ? `🎧 ${audioShort}` : '',
+        `⚙️ ${p.displaySource}`,
+        p.compactLang,
+        p.fileTitle,
+      ].filter(Boolean);
+
   return { name, title: lines.join('\n') };
 }
 
@@ -849,6 +1042,42 @@ function styleVertical(p) {
   return { name: `🦑 Leviathan ${p.quality} ${cacheLabel}`, title: lines.join('\n') };
 }
 
+function stylePremium(p) {
+  const statusIcon = p.isCached ? '⚡' : '☁️';
+  const techLine = joinNonEmpty([p.scoreBadge, ...p.premiumTags], ' • ');
+  const audioLine = joinNonEmpty([p.audioTag, p.audioChannels, p.compactLang], ' • ');
+  const providerLine = joinNonEmpty([`${statusIcon} ${p.serviceTag}`, p.displaySource, p.releaseGroup ? `Grp ${p.releaseGroup}` : ''], ' • ');
+  const sizeLine = joinNonEmpty([p.sizeString, p.seeders !== null ? `${p.seeders} seeders` : '', p.primarySourceTag], ' • ');
+  const titleLines = [
+    `🎬 ${joinNonEmpty(p.headlineParts, ' ')}`,
+    techLine ? `🏷️ ${techLine}` : '',
+    audioLine ? `🎧 ${audioLine}` : '',
+    sizeLine ? `📦 ${sizeLine}` : '',
+    providerLine ? `🛰️ ${providerLine}` : '',
+  ].filter(Boolean);
+
+  return {
+    name: `${p.scoreBadge} ${p.quality} ${statusIcon} ${p.serviceTag}`.trim(),
+    title: titleLines.join('\n'),
+  };
+}
+
+function styleAndroidCompact(p) {
+  const hdrTag = p.cleanTags.find((tag) => /DV\+HDR|DV|HDR10\+|HDR/i.test(tag)) || '';
+  const techBits = joinNonEmpty([p.quality, hdrTag, p.audioChannels || p.audioTag, p.compactLang], ' • ');
+  const lowerProvider = p.primarySourceTag || p.displaySource;
+  const lines = [
+    `🎬 ${joinNonEmpty(p.headlineParts, ' ')}`,
+    joinNonEmpty([p.scoreBadge, techBits], ' • '),
+    joinNonEmpty([lowerProvider, p.sizeString, p.seeders !== null ? `${p.seeders}👤` : `${p.serviceTag}`], ' • '),
+  ].filter(Boolean);
+
+  return {
+    name: `${p.quality} • ${p.serviceTag} • ${p.scoreTier}`,
+    title: lines.join('\n'),
+  };
+}
+
 function styleCustom(p, template) {
   if (!template) return styleLeviathan(p);
   const vars = {
@@ -878,6 +1107,9 @@ function styleCustom(p, template) {
 const STYLE_BUILDERS = {
   complex: styleComplex,
   android: styleAndroidTV,
+  android_compact: styleAndroidCompact,
+  premium: stylePremium,
+  elite: stylePremium,
   picture: stylePicture,
   leviathan: styleLeviathan,
   lev2: styleLeviathanTwo,
@@ -935,6 +1167,8 @@ function formatStreamSelector(fileTitle, source, size, seeders, serviceTag = DEF
   const builder = STYLE_BUILDERS[styleName] || STYLE_BUILDERS.leviathan;
   const result = builder(params, config);
   result.bingeGroup = params.bingeGroup;
+  result.score = params.visualScore;
+  result.scoreTier = params.scoreTier;
   return result;
 }
 
