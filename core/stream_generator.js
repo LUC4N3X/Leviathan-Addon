@@ -1,7 +1,7 @@
 const axios = require("axios");
 const crypto = require("crypto");
 
-const { fetchExternalAddonsFlat } = require("../external-addons");
+const { fetchExternalAddonsFlat } = require("./nexus-bridge");
 const PackResolver = require("../leviathan-pack-resolver");
 const aioFormatter = require("../aiostreams-formatter.cjs");
 const { searchWebStreamr } = require("../webstreamr_handler");
