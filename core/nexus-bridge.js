@@ -69,21 +69,165 @@ const fetchCache = new Map();
 const inflightFetches = new Map();
 const addonHealth = new Map();
 
-function now() {
-    return Date.now();
+// ─────────────────────────────────────────────────────────────────────────────
+// Browser fingerprint pools — rotati ad ogni richiesta
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Profili browser completi con UA + header Sec-* coerenti.
+ * Ogni profilo è una combinazione realistica (stessa versione in UA e Sec-CH-UA).
+ */
+const BROWSER_PROFILES = [
+    {
+        name: "chrome-windows",
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        secChUa: '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        secChUaMobile: "?0",
+        secChUaPlatform: '"Windows"',
+        secFetchDest: "document",
+        secFetchMode: "navigate",
+        secFetchSite: "none",
+        secFetchUser: "?1",
+        acceptLanguage: "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+    },
+    {
+        name: "chrome-mac",
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        secChUa: '"Google Chrome";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
+        secChUaMobile: "?0",
+        secChUaPlatform: '"macOS"',
+        secFetchDest: "document",
+        secFetchMode: "navigate",
+        secFetchSite: "none",
+        secFetchUser: "?1",
+        acceptLanguage: "it-IT,it;q=0.9,en;q=0.8",
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+    },
+    {
+        name: "firefox-windows",
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+        secChUa: null, // Firefox non manda Sec-CH-UA
+        secChUaMobile: null,
+        secChUaPlatform: null,
+        secFetchDest: "document",
+        secFetchMode: "navigate",
+        secFetchSite: "none",
+        secFetchUser: "?1",
+        acceptLanguage: "it-IT,it;q=0.8,en-US;q=0.5,en;q=0.3",
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+    },
+    {
+        name: "safari-mac",
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
+        secChUa: null,
+        secChUaMobile: null,
+        secChUaPlatform: null,
+        secFetchDest: "document",
+        secFetchMode: "navigate",
+        secFetchSite: "none",
+        secFetchUser: "?1",
+        acceptLanguage: "it-IT,it;q=0.9",
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    },
+    {
+        name: "chrome-android",
+        userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36",
+        secChUa: '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        secChUaMobile: "?1",
+        secChUaPlatform: '"Android"',
+        secFetchDest: "document",
+        secFetchMode: "navigate",
+        secFetchSite: "none",
+        secFetchUser: "?1",
+        acceptLanguage: "it-IT,it;q=0.9,en-US;q=0.8",
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+    }
+];
+
+/**
+ * Sceglie un profilo in modo pseudo-casuale ma deterministico per addonKey+id,
+ * così la stessa risorsa usa sempre lo stesso "browser" nella stessa sessione
+ * (più naturale), ma profili diversi tra addon diversi.
+ */
+function pickBrowserProfile(addonKey, id) {
+    const seed = crypto.createHash("sha1").update(`${addonKey}:${id}`).digest("hex");
+    const idx = parseInt(seed.slice(0, 4), 16) % BROWSER_PROFILES.length;
+    return BROWSER_PROFILES[idx];
 }
 
-function debugLog(...args) {
-    if (DEBUG_MODE) console.log(...args);
+/**
+ * Costruisce un oggetto headers HTTP completo e coerente con il profilo scelto.
+ * - Aggiunge Referer plausibile (stremio.com o il dominio dell'addon stesso)
+ * - Aggiunge Connection: keep-alive
+ * - Aggiunge DNT solo per Firefox (comportamento reale)
+ * - Evita header superflui che i veri browser non mandano
+ */
+function buildBrowserHeaders(profile, targetUrl) {
+    let origin;
+    try { origin = new URL(targetUrl).origin; } catch { origin = "https://stremio.com"; }
+
+    const headers = {
+        "User-Agent": profile.userAgent,
+        "Accept": profile.accept,
+        "Accept-Language": profile.acceptLanguage,
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Sec-Fetch-Dest": profile.secFetchDest,
+        "Sec-Fetch-Mode": profile.secFetchMode,
+        "Sec-Fetch-Site": profile.secFetchSite,
+        "Sec-Fetch-User": profile.secFetchUser,
+        // Referer: simula arrivo da Stremio web o dall'addon stesso
+        "Referer": `${origin}/`
+    };
+
+    // Chromium-only: Sec-CH-UA headers
+    if (profile.secChUa) {
+        headers["Sec-CH-UA"] = profile.secChUa;
+        headers["Sec-CH-UA-Mobile"] = profile.secChUaMobile;
+        headers["Sec-CH-UA-Platform"] = profile.secChUaPlatform;
+    }
+
+    // Firefox manda DNT, Chrome no (nella maggior parte dei casi)
+    if (profile.name.startsWith("firefox")) {
+        headers["DNT"] = "1";
+        headers["Upgrade-Insecure-Requests"] = "1";
+    }
+
+    // Chrome e Safari mandano Upgrade-Insecure-Requests su navigate
+    if (profile.name.startsWith("chrome") || profile.name.startsWith("safari")) {
+        headers["Upgrade-Insecure-Requests"] = "1";
+    }
+
+    return headers;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Jitter adattivo: più lento sotto stress, più veloce in condizioni normali
+// ─────────────────────────────────────────────────────────────────────────────
+
+function computeJitter(addonKey) {
+    const state = addonHealth.get(addonKey);
+    const failures = state?.failures || 0;
+    // Base: 80–280ms. Ogni failure aggiunge 100ms fino a +500ms extra
+    const base = 80 + Math.floor(Math.random() * 200);
+    const extra = Math.min(failures * 100, 500);
+    return base + extra;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utility
+// ─────────────────────────────────────────────────────────────────────────────
+
+function now() { return Date.now(); }
+function debugLog(...args) { if (DEBUG_MODE) console.log(...args); }
 
 function getCache(map, key) {
     const hit = map.get(key);
     if (!hit) return null;
-    if (hit.expiresAt <= now()) {
-        map.delete(key);
-        return null;
-    }
+    if (hit.expiresAt <= now()) { map.delete(key); return null; }
     return hit.value;
 }
 
@@ -107,45 +251,24 @@ function pruneCache(map) {
 }
 
 function normalizeText(value) {
-    return String(value || "")
-        .replace(/[\u2010-\u2015]/g, "-")
-        .replace(/[|_]+/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+    return String(value || "").replace(/[\u2010-\u2015]/g, "-").replace(/[|_]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function normalizeForComparison(value) {
-    return normalizeText(value)
-        .normalize("NFKD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toUpperCase();
+    return normalizeText(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
 }
 
 function getStreamText(stream) {
     return normalizeText([
-        stream.title,
-        stream.name,
-        stream.description,
-        stream.behaviorHints?.filename,
-        stream.behaviorHints?.folderName,
-        stream.filename,
-        stream.provider
+        stream.title, stream.name, stream.description,
+        stream.behaviorHints?.filename, stream.behaviorHints?.folderName,
+        stream.filename, stream.provider
     ].filter(Boolean).join(" "));
 }
 
 function analyzeItalianSignals(stream) {
     const fullText = normalizeForComparison(getStreamText(stream));
-    if (!fullText) {
-        return {
-            isItalian: false,
-            hasAudioItalian: false,
-            hasSubItalian: false,
-            hasTrustedItalian: false,
-            hasNegativeLanguage: false,
-            confidence: 0,
-            reason: "empty"
-        };
-    }
+    if (!fullText) return { isItalian: false, hasAudioItalian: false, hasSubItalian: false, hasTrustedItalian: false, hasNegativeLanguage: false, confidence: 0, reason: "empty" };
 
     const hasAudioItalian = REGEX_AUDIO_ITA.test(fullText);
     const hasSubItalian = REGEX_SUB_ITA.test(fullText);
@@ -156,53 +279,26 @@ function analyzeItalianSignals(stream) {
     let confidence = 0;
     const reasons = [];
 
-    if (hasAudioItalian) {
-        confidence += 100;
-        reasons.push("audio");
-    }
-    if (hasTrustedItalian) {
-        confidence += 35;
-        reasons.push("trusted");
-    }
-    if (hasSubItalian) {
-        confidence += 18;
-        reasons.push("subs");
-    }
-    if (hasMultiLanguage && hasAudioItalian) {
-        confidence += 12;
-        reasons.push("multi");
-    }
-    if (hasNegativeLanguage && !hasAudioItalian && !hasTrustedItalian) {
-        confidence -= 70;
-        reasons.push("negative");
-    }
+    if (hasAudioItalian) { confidence += 100; reasons.push("audio"); }
+    if (hasTrustedItalian) { confidence += 35; reasons.push("trusted"); }
+    if (hasSubItalian) { confidence += 18; reasons.push("subs"); }
+    if (hasMultiLanguage && hasAudioItalian) { confidence += 12; reasons.push("multi"); }
+    if (hasNegativeLanguage && !hasAudioItalian && !hasTrustedItalian) { confidence -= 70; reasons.push("negative"); }
 
     return {
         isItalian: confidence >= 20 || hasAudioItalian || (hasTrustedItalian && !hasNegativeLanguage),
-        hasAudioItalian,
-        hasSubItalian,
-        hasTrustedItalian,
-        hasNegativeLanguage,
-        confidence,
+        hasAudioItalian, hasSubItalian, hasTrustedItalian, hasNegativeLanguage, confidence,
         reason: reasons.join("|") || "none"
     };
 }
 
-function isItalianContent(stream) {
-    return analyzeItalianSignals(stream).isItalian;
-}
+function isItalianContent(stream) { return analyzeItalianSignals(stream).isItalian; }
 
 function extractInfoHash(stream) {
     const candidates = [
-        stream.infoHash,
-        stream.behaviorHints?.infoHash,
-        stream.behaviorHints?.magnet,
-        stream.magnet,
-        stream.url,
-        ...(Array.isArray(stream.sources) ? stream.sources : [])
-    ]
-        .filter(Boolean)
-        .map(value => String(value));
+        stream.infoHash, stream.behaviorHints?.infoHash, stream.behaviorHints?.magnet,
+        stream.magnet, stream.url, ...(Array.isArray(stream.sources) ? stream.sources : [])
+    ].filter(Boolean).map(value => String(value));
 
     for (const candidate of candidates) {
         const match = candidate.match(/btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})/i);
@@ -210,7 +306,6 @@ function extractInfoHash(stream) {
         if (/^[A-Fa-f0-9]{40}$/.test(candidate)) return candidate.toUpperCase();
         if (/^[A-Za-z2-7]{32}$/.test(candidate)) return candidate.toUpperCase();
     }
-
     return null;
 }
 
@@ -227,41 +322,20 @@ function extractSeeders(text, stream = {}) {
     if (Number.isFinite(stream.peers) && stream.peers >= 0) return stream.peers;
     const normalized = normalizeText(text);
     const match = normalized.match(SEEDERS_REGEX);
-    if (!match) return 0;
-    return parseInt(match[1], 10) || 0;
+    return match ? parseInt(match[1], 10) || 0 : 0;
 }
 
 function parseSizeParts(value, unit) {
     const parsedValue = parseFloat(String(value).replace(",", "."));
     const normalizedUnit = String(unit || "").toUpperCase();
     if (!Number.isFinite(parsedValue) || parsedValue <= 0) return 0;
-
-    const multipliers = {
-        B: 1,
-        KB: 1024,
-        KIB: 1024,
-        MB: 1024 ** 2,
-        MIB: 1024 ** 2,
-        GB: 1024 ** 3,
-        GIB: 1024 ** 3,
-        TB: 1024 ** 4,
-        TIB: 1024 ** 4
-    };
-
+    const multipliers = { B: 1, KB: 1024, KIB: 1024, MB: 1024 ** 2, MIB: 1024 ** 2, GB: 1024 ** 3, GIB: 1024 ** 3, TB: 1024 ** 4, TIB: 1024 ** 4 };
     return Math.round(parsedValue * (multipliers[normalizedUnit] || 1));
 }
 
 function extractSize(text, stream = {}) {
-    const hintedSize =
-        stream.behaviorHints?.videoSize ||
-        stream.video_size ||
-        stream.videoSize ||
-        stream.mainFileSize ||
-        stream.sizeBytes;
-
-    if (Number.isFinite(hintedSize) && hintedSize > 0) {
-        return { formatted: formatBytes(hintedSize), bytes: hintedSize };
-    }
+    const hintedSize = stream.behaviorHints?.videoSize || stream.video_size || stream.videoSize || stream.mainFileSize || stream.sizeBytes;
+    if (Number.isFinite(hintedSize) && hintedSize > 0) return { formatted: formatBytes(hintedSize), bytes: hintedSize };
 
     const normalized = normalizeText(text);
     const match = normalized.match(SIZE_REGEX) || normalized.match(/([\d.,]+)\s*(TB|GB|MB|KB|TIB|GIB|MIB|KIB)\b/i);
@@ -275,13 +349,9 @@ function extractSize(text, stream = {}) {
 function extractRealProvider(text) {
     const normalized = normalizeForComparison(text);
     if (!normalized) return null;
-
     for (const provider of KNOWN_PROVIDERS) {
-        if (normalized.includes(normalizeForComparison(provider))) {
-            return provider;
-        }
+        if (normalized.includes(normalizeForComparison(provider))) return provider;
     }
-
     const tailToken = normalized.match(/\b([A-Z0-9][A-Z0-9 _-]{2,})\b$/);
     return tailToken ? tailToken[1].trim() : null;
 }
@@ -296,30 +366,23 @@ function extractPackTitle(stream) {
     const text = normalizeText(stream.title || stream.description || "");
     const match = text.match(/📁\s*([^\n]+)/);
     if (match) return match[1].trim();
-
     const folderName = normalizeText(stream.behaviorHints?.folderName || "");
-    if (folderName && !VIDEO_FILE_REGEX.test(folderName)) {
-        return folderName;
-    }
-
+    if (folderName && !VIDEO_FILE_REGEX.test(folderName)) return folderName;
     return null;
 }
 
 function extractFilename(stream) {
     const hintedFilename = normalizeText(stream.behaviorHints?.filename || stream.filename || "");
     if (hintedFilename) return hintedFilename;
-
     const text = normalizeText(stream.title || stream.description || "");
     const match = text.match(/📄\s*([^\n]+)/);
     if (match) return match[1].trim();
-
     return normalizeText(stream.name || "");
 }
 
 function maskToken(value) {
     const token = String(value || "");
-    if (token.length <= 8) return "***";
-    return `${token.slice(0, 3)}***${token.slice(-3)}`;
+    return token.length <= 8 ? "***" : `${token.slice(0, 3)}***${token.slice(-3)}`;
 }
 
 function hashConfigSignature(value) {
@@ -337,11 +400,7 @@ function getTorrentioCredential(userConfig, service) {
 }
 
 function encodeBase64Url(data) {
-    return Buffer.from(String(data || ""))
-        .toString("base64")
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_")
-        .replace(/=+$/g, "");
+    return Buffer.from(String(data || "")).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function buildTorrentioBaseUrl(baseUrl, userConfig) {
@@ -361,19 +420,15 @@ function buildTorrentioBaseUrl(baseUrl, userConfig) {
         const url = new URL(String(baseUrl || ""));
         const segments = url.pathname.split("/").filter(Boolean);
         const lastSegment = segments[segments.length - 1];
-
         if (lastSegment && /^[A-Za-z0-9_-]{2,}$/.test(lastSegment)) {
             segments[segments.length - 1] = encodedConf;
         } else {
             segments.push(encodedConf);
         }
-
         url.pathname = `/${segments.join("/")}`;
-        debugLog(`🔑 [Torrentio] Config injected for service=${service} token=${maskToken(apiKey)} sig=${hashConfigSignature(apiKey)}`);
         return url.toString().replace(/\/+$/, "");
     } catch {
         const trimmed = String(baseUrl || "").replace(/\/+$/, "");
-        debugLog(`🔑 [Torrentio] Config injected for service=${service} token=${maskToken(apiKey)} sig=${hashConfigSignature(apiKey)}`);
         return `${trimmed}/${encodedConf}`;
     }
 }
@@ -385,24 +440,8 @@ function sanitizeFetchType(type, id) {
     return rawType || "movie";
 }
 
-function sanitizePathSegment(value) {
-    return encodeURIComponent(String(value || "").trim());
-}
-
-function normalizeAddonUrl(baseUrl) {
-    if (!baseUrl) return null;
-    return String(baseUrl).replace(/\/+$/, "");
-}
-
-async function safeJsonFromResponse(response) {
-    const text = await response.text();
-    if (!text) return null;
-    try {
-        return JSON.parse(text);
-    } catch {
-        return null;
-    }
-}
+function sanitizePathSegment(value) { return encodeURIComponent(String(value || "").trim()); }
+function normalizeAddonUrl(baseUrl) { return baseUrl ? String(baseUrl).replace(/\/+$/, "") : null; }
 
 function getAddonHealth(addonKey) {
     const state = addonHealth.get(addonKey);
@@ -418,9 +457,7 @@ function registerAddonFailure(addonKey, addon, errorMessage) {
     const state = getAddonHealth(addonKey);
     state.failures += 1;
     state.lastError = errorMessage || "Unknown error";
-    if (state.failures >= (addon.maxFailures || 3)) {
-        state.cooldownUntil = now() + (addon.cooldownMs || 30000);
-    }
+    if (state.failures >= (addon.maxFailures || 3)) state.cooldownUntil = now() + (addon.cooldownMs || 30000);
     addonHealth.set(addonKey, state);
 }
 
@@ -436,7 +473,7 @@ function registerAddonSuccess(addonKey, latency) {
 function shouldSkipAddon(addonKey, addon) {
     const state = getAddonHealth(addonKey);
     if (state.cooldownUntil > now()) {
-        debugLog(`⏭️ [${addon.name}] skipped due to cooldown (${state.cooldownUntil - now()}ms left)`);
+        debugLog(`⏭️ [${addon.name}] skipped due to cooldown`);
         return true;
     }
     return false;
@@ -447,13 +484,10 @@ function buildAddonCacheKey(addonKey, type, id, options = {}) {
     const service = conf.service || "";
     const token = getTorrentioCredential(conf, service) || "";
     return JSON.stringify({
-        addonKey,
-        type: sanitizeFetchType(type, id),
-        id: String(id || ""),
+        addonKey, type: sanitizeFetchType(type, id), id: String(id || ""),
         onlyItalian: options.onlyItalian !== false,
         minConfidence: Number(options.minimumItalianConfidence || 20),
-        service,
-        tokenSig: token ? hashConfigSignature(token) : ""
+        service, tokenSig: token ? hashConfigSignature(token) : ""
     });
 }
 
@@ -469,24 +503,17 @@ function formatBytes(bytes, decimals = 2) {
 
 function buildMagnetLink(infoHash, sources, displayName = "") {
     if (!infoHash) return null;
-
     let magnet = `magnet:?xt=urn:btih:${infoHash}`;
-    if (displayName) {
-        magnet += `&dn=${encodeURIComponent(displayName)}`;
-    }
+    if (displayName) magnet += `&dn=${encodeURIComponent(displayName)}`;
 
     const trackers = Array.isArray(sources)
-        ? sources
-            .filter(source => typeof source === "string")
-            .filter(source => source.startsWith("tracker:") || source.startsWith("udp://") || source.startsWith("http://") || source.startsWith("https://"))
-            .map(source => source.replace(/^tracker:/, ""))
-            .filter(Boolean)
+        ? sources.filter(source => typeof source === "string" && /^(tracker:|udp:\/\/|http:\/\/|https:\/\/)/.test(source))
+            .map(source => source.replace(/^tracker:/, "")).filter(Boolean)
         : [];
 
     for (const tracker of [...new Set(trackers)].slice(0, MAX_TRACKERS_IN_MAGNET)) {
         magnet += `&tr=${encodeURIComponent(tracker)}`;
     }
-
     return magnet;
 }
 
@@ -536,56 +563,29 @@ function normalizeExternalStream(stream, addonKey) {
     const languageInfo = analyzeItalianSignals(stream);
 
     let originalProvider = extractRealProvider(text);
-    if (addonKey === "mediafusion") {
-        originalProvider = normalizeMediaFusionProvider(originalProvider || null);
-    }
+    if (addonKey === "mediafusion") originalProvider = normalizeMediaFusionProvider(originalProvider || null);
 
     const techTags = extractVideoTags(text);
     let sizeBytes = sizeInfo.bytes;
-    if (Number.isFinite(stream.behaviorHints?.videoSize) && stream.behaviorHints.videoSize > 0) {
-        sizeBytes = stream.behaviorHints.videoSize;
-    }
-    if (Number.isFinite(stream.video_size) && stream.video_size > 0) {
-        sizeBytes = stream.video_size;
-    }
+    if (Number.isFinite(stream.behaviorHints?.videoSize) && stream.behaviorHints.videoSize > 0) sizeBytes = stream.behaviorHints.videoSize;
+    if (Number.isFinite(stream.video_size) && stream.video_size > 0) sizeBytes = stream.video_size;
 
     const normalizedFileIdx = Number.isInteger(stream.fileIdx) ? stream.fileIdx : -1;
     const magnetLink = buildMagnetLink(infoHash, stream.sources, preferredTitle);
 
     const normalized = {
-        infoHash,
-        fileIdx: normalizedFileIdx,
-        title: preferredTitle,
-        filename,
-        websiteTitle: preferredTitle,
-        file_title: filename,
-        quality,
-        size: sizeInfo.formatted || formatBytes(sizeBytes),
-        mainFileSize: sizeBytes,
-        seeders: seeders || 0,
-        leechers: 0,
-        rawDescription: text,
+        infoHash, fileIdx: normalizedFileIdx, title: preferredTitle, filename, websiteTitle: preferredTitle,
+        file_title: filename, quality, size: sizeInfo.formatted || formatBytes(sizeBytes), mainFileSize: sizeBytes,
+        seeders: seeders || 0, leechers: 0, rawDescription: text,
         potentialPack: Boolean(packTitle) || (filename && text && !text.startsWith(filename) && text.length > filename.length + 20),
-        packTitle,
-        source: originalProvider ? `${addon.name} (${originalProvider})` : addon.name,
-        externalAddon: addonKey,
-        externalProvider: originalProvider,
-        sourceEmoji: addon.emoji,
-        magnetLink,
-        url: rawUrl,
-        pubDate: new Date().toISOString(),
-        isItalian: languageInfo.isItalian,
-        hasItalianAudio: languageInfo.hasAudioItalian,
-        hasItalianSubs: languageInfo.hasSubItalian,
-        languageInfo,
-        techTags
+        packTitle, source: originalProvider ? `${addon.name} (${originalProvider})` : addon.name,
+        externalAddon: addonKey, externalProvider: originalProvider, sourceEmoji: addon.emoji, magnetLink, url: rawUrl,
+        pubDate: new Date().toISOString(), isItalian: languageInfo.isItalian, hasItalianAudio: languageInfo.hasAudioItalian,
+        hasItalianSubs: languageInfo.hasSubItalian, languageInfo, techTags
     };
 
     normalized._score = scoreNormalizedStream(normalized);
-    normalized._dedupeKey = normalized.infoHash
-        ? `${normalized.infoHash}:${normalized.fileIdx}`
-        : `${normalizeForComparison(normalized.title)}|${normalized.url || ""}`;
-
+    normalized._dedupeKey = normalized.infoHash ? `${normalized.infoHash}:${normalized.fileIdx}` : `${normalizeForComparison(normalized.title)}|${normalized.url || ""}`;
     return normalized;
 }
 
@@ -609,33 +609,30 @@ function mergeNormalizedStream(base, candidate) {
 
 function dedupeNormalizedStreams(streams) {
     const bestByKey = new Map();
-
     for (const stream of streams) {
         if (!stream) continue;
         const key = stream._dedupeKey || `${normalizeForComparison(stream.title)}|${stream.url || ""}`;
         const existing = bestByKey.get(key);
-        if (!existing) {
-            bestByKey.set(key, stream);
-            continue;
-        }
+        if (!existing) { bestByKey.set(key, stream); continue; }
         bestByKey.set(key, mergeNormalizedStream(existing, stream));
     }
-
-    return [...bestByKey.values()]
-        .sort((a, b) => {
-            if ((b._score || 0) !== (a._score || 0)) return (b._score || 0) - (a._score || 0);
-            if ((b.seeders || 0) !== (a.seeders || 0)) return (b.seeders || 0) - (a.seeders || 0);
-            return (b.mainFileSize || 0) - (a.mainFileSize || 0);
-        });
+    return [...bestByKey.values()].sort((a, b) => {
+        if ((b._score || 0) !== (a._score || 0)) return (b._score || 0) - (a._score || 0);
+        if ((b.seeders || 0) !== (a.seeders || 0)) return (b.seeders || 0) - (a.seeders || 0);
+        return (b.mainFileSize || 0) - (a.mainFileSize || 0);
+    });
 }
 
 function passesItalianFilter(stream, options = {}) {
-    const onlyItalian = options.onlyItalian !== false;
-    if (!onlyItalian) return true;
+    if (options.onlyItalian === false) return true;
     const minimumConfidence = Number(options.minimumItalianConfidence || 20);
     const analysis = analyzeItalianSignals(stream);
     return analysis.isItalian && analysis.confidence >= minimumConfidence;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Core fetch — got-scraping + TLS fingerprint + headers browser-grade
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function fetchExternalAddon(addonKey, type, id, options = {}) {
     const addon = EXTERNAL_ADDONS[addonKey];
@@ -644,9 +641,7 @@ async function fetchExternalAddon(addonKey, type, id, options = {}) {
         return [];
     }
 
-    if (shouldSkipAddon(addonKey, addon)) {
-        return [];
-    }
+    if (shouldSkipAddon(addonKey, addon)) return [];
 
     const cacheKey = buildAddonCacheKey(addonKey, type, id, options);
     const cached = getCache(fetchCache, cacheKey);
@@ -657,47 +652,61 @@ async function fetchExternalAddon(addonKey, type, id, options = {}) {
 
     const task = fetchLimiter(async () => {
         let baseUrl = normalizeAddonUrl(addon.baseUrl);
-        if (addonKey.includes("torrentio")) {
-            baseUrl = buildTorrentioBaseUrl(baseUrl, options.userConfig || null);
-        }
-
-        if (!baseUrl) {
-            debugLog(`⏭️ [${addon.name}] Skipped - base URL not configured`);
-            return [];
-        }
+        if (addonKey.includes("torrentio")) baseUrl = buildTorrentioBaseUrl(baseUrl, options.userConfig || null);
+        if (!baseUrl) return [];
 
         const fetchType = sanitizeFetchType(type, id);
         const safeId = sanitizePathSegment(id);
         const url = `${baseUrl}/stream/${fetchType}/${safeId}.json`;
 
         debugLog(`🌐 [${addon.name}] Fetching ${fetchType}/${id}`);
-
         const startedAt = now();
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), addon.timeout);
 
         try {
-            const response = await fetch(url, {
-                signal: controller.signal,
-                headers: {
-                    "User-Agent": "Leviathan/2.0 (Stremio Addon)",
-                    Accept: "application/json,text/plain;q=0.9,*/*;q=0.8"
-                }
+            // Jitter adattivo: più failures → più attesa → meno sospetto
+            const jitter = computeJitter(addonKey);
+            await new Promise(resolve => setTimeout(resolve, jitter));
+
+            // Import ESM dinamico (got-scraping è ESM-only)
+            const { gotScraping } = await import("got-scraping");
+
+            // Fingerprint browser coerente per questo addon+id
+            const profile = pickBrowserProfile(addonKey, String(id));
+            const headers = buildBrowserHeaders(profile, url);
+
+            debugLog(`🕵️ [${addon.name}] Profile: ${profile.name}, jitter: ${jitter}ms`);
+
+            const response = await gotScraping({
+                url,
+                method: "GET",
+                headers,                          // Header browser-grade iniettati manualmente
+                timeout: { request: addon.timeout },
+                retry: { limit: 0 },              // Nessun retry automatico
+                // got-scraping gestisce internamente:
+                //   - TLS ClientHello spoofing (JA3/JA4 fingerprint)
+                //   - HTTP/2 con ALPN negotiation
+                //   - Ordine header conforme al browser scelto
+                headerGeneratorOptions: {
+                    browsers: [{ name: profile.name.startsWith("firefox") ? "firefox" : profile.name.startsWith("safari") ? "safari" : "chrome" }],
+                    devices: [profile.name.includes("android") || profile.name.includes("ios") ? "mobile" : "desktop"],
+                    locales: ["it-IT", "en-US"],
+                    operatingSystems: [
+                        profile.name.includes("windows") ? "windows" :
+                        profile.name.includes("android") ? "android" :
+                        "macos"
+                    ]
+                },
+                decompress: true  // accetta gzip/br come un browser reale
             });
 
-            clearTimeout(timeoutId);
-
-            if (!response.ok) {
-                const errorData = await safeJsonFromResponse(response);
-                const errorMessage = errorData?.message || errorData?.error || `HTTP ${response.status}`;
-                registerAddonFailure(addonKey, addon, errorMessage);
-                console.error(`❌ [${addon.name}] ${errorMessage}`);
-                const empty = [];
-                setCache(fetchCache, cacheKey, empty, NEGATIVE_CACHE_TTL);
-                return empty;
+            // Parsing sicuro
+            let data;
+            try {
+                data = JSON.parse(response.body);
+            } catch {
+                throw new Error(`Invalid JSON response (status ${response.statusCode})`);
             }
 
-            const data = await safeJsonFromResponse(response);
             const streams = Array.isArray(data?.streams) ? data.streams : [];
             const countBefore = streams.length;
 
@@ -705,40 +714,27 @@ async function fetchExternalAddon(addonKey, type, id, options = {}) {
             debugLog(`🇮🇹 [${addon.name}] Filter ${countBefore} -> ${filteredStreams.length}`);
 
             const normalized = dedupeNormalizedStreams(
-                filteredStreams
-                    .map(stream => normalizeExternalStream(stream, addonKey))
-                    .filter(Boolean)
+                filteredStreams.map(stream => normalizeExternalStream(stream, addonKey)).filter(Boolean)
             );
 
             registerAddonSuccess(addonKey, now() - startedAt);
-
-            if (DEBUG_MODE && normalized.length > 0) {
-                console.log(`🔍 [${addon.name}] First valid stream:`, JSON.stringify({
-                    title: normalized[0].title,
-                    provider: normalized[0].externalProvider,
-                    quality: normalized[0].quality,
-                    score: normalized[0]._score,
-                    italian: normalized[0].languageInfo
-                }, null, 2));
-            }
-
             const ttl = normalized.length > 0 ? FETCH_CACHE_TTL : NEGATIVE_CACHE_TTL;
             setCache(fetchCache, cacheKey, normalized, ttl);
             return normalized;
+
         } catch (error) {
-            clearTimeout(timeoutId);
-            const errorMessage = error?.name === "AbortError"
+            const isTimeout = error.name === "TimeoutError" || error.code === "ETIMEDOUT" || error.code === "ESOCKETTIMEDOUT";
+            const errorMessage = isTimeout
                 ? `Timeout after ${addon.timeout}ms`
                 : (error?.message || String(error));
+
             registerAddonFailure(addonKey, addon, errorMessage);
-            if (error?.name === "AbortError") {
-                console.error(`⏱️ [${addon.name}] ${errorMessage}`);
-            } else {
-                console.error(`❌ [${addon.name}] Error: ${errorMessage}`);
-            }
-            const empty = [];
-            setCache(fetchCache, cacheKey, empty, NEGATIVE_CACHE_TTL);
-            return empty;
+
+            if (isTimeout) console.error(`⏱️ [${addon.name}] ${errorMessage}`);
+            else console.error(`❌ [${addon.name}] Error: ${errorMessage}`);
+
+            setCache(fetchCache, cacheKey, [], NEGATIVE_CACHE_TTL);
+            return [];
         }
     });
 
@@ -750,10 +746,13 @@ async function fetchExternalAddon(addonKey, type, id, options = {}) {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Aggregatori pubblici
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function fetchAllExternalAddons(type, id, options = {}) {
     const requestedAddons = Array.isArray(options.enabledAddons) && options.enabledAddons.length > 0
-        ? options.enabledAddons
-        : Object.keys(EXTERNAL_ADDONS);
+        ? options.enabledAddons : Object.keys(EXTERNAL_ADDONS);
 
     const enabledAddons = requestedAddons
         .filter(addonKey => EXTERNAL_ADDONS[addonKey])
@@ -765,8 +764,7 @@ async function fetchAllExternalAddons(type, id, options = {}) {
     const startTime = now();
 
     const promises = enabledAddons.map(async addonKey => ({
-        addonKey,
-        results: await fetchExternalAddon(addonKey, type, id, options)
+        addonKey, results: await fetchExternalAddon(addonKey, type, id, options)
     }));
 
     const settledResults = await Promise.allSettled(promises);
