@@ -151,6 +151,10 @@ const DISPLAY_SOURCE_MAP = [
   { regex: /corsaro/i, value: 'ilCorSaRoNeRo' },
   { regex: /knaben/i, value: 'Knaben' },
   { regex: /comet|stremthru/i, value: 'StremThru' },
+  { regex: /nyaa|erai-raws|subsplease|horriblesubs|judas|moozzi2|ember/i, value: 'Nyaa' },
+  { regex: /yts|yify/i, value: 'YTS' },
+  { regex: /eztv/i, value: 'EZTV' },
+  { regex: /rarbg/i, value: 'RARBG' },
 ];
 
 const PROVIDER_LABELS = [
@@ -387,21 +391,29 @@ function normalizeReleaseGroup(group) {
 
 function deriveReleaseGroup(title, info) {
   const cleanTitle = normalizeSpaces(stripExtension(title));
+  
   const candidates = [
+    safeString(title).match(/^\[([a-zA-Z0-9_\-.\s]+)\]/)?.[1],
     info.group,
     cleanTitle.match(/[-_]\s?([a-zA-Z0-9@.]+)$/)?.[1],
     cleanTitle.match(/\[([a-zA-Z0-9_\-.\s]+)\]$/)?.[1],
-    safeString(title).match(/^\[([a-zA-Z0-9_\-.\s]+)\]/)?.[1],
   ].filter(Boolean);
 
   const tokens = cleanTitle.split(/[\s.]+/).filter(Boolean);
   if (tokens.length) candidates.push(tokens[tokens.length - 1]);
 
+  let fallback = '';
   for (const candidate of candidates) {
     const normalized = normalizeReleaseGroup(candidate);
-    if (normalized) return normalized;
+    if (normalized) {
+      if (/^[a-f0-9]{8}$/i.test(normalized)) {
+        if (!fallback) fallback = normalized;
+        continue;
+      }
+      return normalized;
+    }
   }
-  return '';
+  return fallback;
 }
 
 function deriveQuality(info, upperTitle) {
@@ -495,7 +507,10 @@ function deriveLanguages(title, source) {
   const matches = LANG_FLAGS.filter((lang) => lang.regex.test(text));
   const unique = uniqueBy(matches.sort((a, b) => b.priority - a.priority), (item) => item.id);
 
-  if (/nyaasi/i.test(source)) return '🇮🇹 / 🇬🇧';
+  // Modifica: Forza "ITA / ENG" per i noti release group di anime o sorgenti riconducibili a Nyaa
+  if (/nyaa|erai-raws|subsplease|horriblesubs|judas|moozzi2|ember/i.test(text)) {
+    return '🇮🇹 ITA / 🇬🇧 ENG';
+  }
 
   if (unique.length === 1) return `${unique[0].flag} ${unique[0].label}`;
   if (unique.length > 1 && unique.length <= 3) return unique.map((item) => item.flag).join(LANG_SEP);
@@ -648,7 +663,6 @@ function joinNonEmpty(parts, separator = ' · ') {
 function removeEmoji(text) {
   return safeString(text).replace(/[\u{1F300}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '').trim();
 }
-
 
 function compactLanguageLabel(lang) {
   const text = removeEmoji(lang).replace(/\s*\/\s*/g, '/').replace(/\s+/g, ' ').trim();
