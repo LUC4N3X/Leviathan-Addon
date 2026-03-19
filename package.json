@@ -22,6 +22,7 @@
     "express-rate-limit": "^7.2.0",
     "fs-extra": "^11.2.0",
     "fuzzyset": "^1.0.7",
+    "got-scraping": "^4.0.0",
     "he": "^1.2.0",
     "helmet": "^7.1.0",
     "https-proxy-agent": "^7.0.0",
