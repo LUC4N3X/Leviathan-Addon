@@ -1,287 +1,350 @@
-const axios = require("axios");
-const cheerio = require("cheerio");
-const crypto = require("crypto");
-const winston = require("winston");
+const fs = require('fs').promises;
+const path = require('path');
+const axios = require('axios');
+const cheerio = require('cheerio');
+const https = require('https');
 
-const logger = winston.createLogger({
-    level: 'debug',
-    format: winston.format.combine(winston.format.timestamp(), winston.format.simple()),
-    transports: [new winston.transports.Console()]
+const CONFIG = {
+    CACHE: {
+        FILE: path.join(__dirname, '..', 'config', 'guardahd_cache.json'),
+        TTL: 43200000,
+        STALE_TTL: 86400000
+    },
+    TMDB_API_KEY: "5bae8d11f2a7bc7a95c6d040a31d2163",
+    SCRAPER: {
+        MAX_CONCURRENT_EMBEDS: 15,
+        TIMEOUT: 15000,
+        BASE_URL: 'https://mostraguarda.stream',
+        RETRIES: 2
+    }
+};
+
+const getRandomUserAgent = () => {
+    const uas = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    ];
+    return uas[Math.floor(Math.random() * uas.length)];
+};
+
+const httpsAgent = new https.Agent({ 
+    rejectUnauthorized: false, 
+    keepAlive: true,
+    maxSockets: 100,
+    maxFreeSockets: 20,
+    timeout: 30000 
 });
 
-const GF_DOMAIN = "https://www.guardaplay.pro";
-const KEY = Buffer.from('kiemtienmua911ca', 'utf8');
-const IV = Buffer.from('1234567890oiuytr', 'utf8');
-const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36";
+const httpClient = axios.create({
+    timeout: CONFIG.SCRAPER.TIMEOUT,
+    httpsAgent,
+    validateStatus: (status) => status >= 200 && status < 400
+});
 
-// --- DECRYPTION AES-128-CBC ---
-function decryptLoadm(hexStr) {
-    try {
-        const cleanHex = hexStr.replace(/[^0-9a-fA-F]/g, '');
-        if (!cleanHex) return null;
-        
-        const encryptedBytes = Buffer.from(cleanHex, 'hex');
-        const decipher = crypto.createDecipheriv('aes-128-cbc', KEY, IV);
-        // Node.js gestisce l'unpadding PKCS7 in automatico se non disabilitato
-        let decrypted = decipher.update(encryptedBytes, undefined, 'utf8');
-        decrypted += decipher.final('utf8');
-        
-        return JSON.parse(decrypted);
-    } catch (e) {
-        logger.error(`[GuardaFlix] Decryption error: ${e.message}`);
-        return null;
-    }
-}
-
-// --- ESTRAZIONE LOADM E COSTRUZIONE MFP ---
-async function extractLoadm(playerUrl, referer, mediaTitle, config, isSub = false) {
-    const streams = [];
-    try {
-        let videoId = "";
-        let baseUrl = "";
-
-        if (playerUrl.includes("#")) {
-            const parts = playerUrl.split("#");
-            baseUrl = parts[0];
-            videoId = parts[1];
-        } else if (playerUrl.includes("/e/")) {
-            const parts = playerUrl.split("/e/");
-            baseUrl = parts[0] + "/";
-            videoId = parts[parts.length - 1];
-        } else {
-            const parsed = new URL(playerUrl);
-            baseUrl = `${parsed.protocol}//${parsed.host}/`;
-        }
-
-        if (!videoId) return [];
-
-        const apiUrl = `${baseUrl}api/v1/video`;
-        const params = { id: videoId, w: '2560', h: '1440', r: referer };
-        const headers = {
-            'User-Agent': USER_AGENT,
-            'Referer': playerUrl,
-            'Origin': baseUrl.replace(/\/$/, '')
-        };
-
-        const response = await axios.get(apiUrl, { params, headers, timeout: 8000 });
-        const data = decryptLoadm(response.data);
-        if (!data) return [];
-
-        const hlsUrl = data.cf;
-        const metaTitle = data.title || 'Stream';
-        const langTag = isSub ? "[SUB]" : "[ITA]";
-        const finalTitle = (mediaTitle ? `${mediaTitle} ${langTag}` : `${metaTitle} ${langTag}`).trim();
-
-        if (hlsUrl) {
-            // LOGICA MFP (Richiesta rigorosamente dal tuo script)
-            if (config.mediaflow && config.mediaflow.url) {
-                try {
-                    const mfpBase = config.mediaflow.url.replace(/\/$/, '');
-                    const mfpPass = config.mediaflow.pass || '';
-                    
-                    const proxyTarget = `${mfpBase}/proxy/hls/manifest.m3u8`;
-                    const queryParams = new URLSearchParams({
-                        d: hlsUrl,
-                        api_password: mfpPass,
-                        h_Referer: playerUrl,
-                        h_Origin: baseUrl.replace(/\/$/, ''),
-                        'h_User-Agent': USER_AGENT
-                    });
-
-                    const finalUrl = `${proxyTarget}?${queryParams.toString()}`;
-
-                    streams.push({
-                        name: "GuardaFlix [MFP]",
-                        title: finalTitle,
-                        url: finalUrl,
-                        behaviorHints: {
-                            notWebReady: false,
-                            bingieGroup: `Leviathan|HD|Web|GuardaFlix-${isSub ? 'SUB' : 'ITA'}`
-                        }
-                    });
-                } catch (e) {
-                    logger.error(`[GuardaFlix] MFP Construction Error: ${e.message}`);
-                }
-            } else {
-                // Fallback senza MFP (potrebbe non funzionare a causa dei CORS di GPlay)
-                streams.push({
-                    name: "GuardaFlix",
-                    title: finalTitle,
-                    url: hlsUrl,
-                    behaviorHints: {
-                        notWebReady: true,
-                        proxyHeaders: {
-                            request: {
-                                "Referer": playerUrl,
-                                "User-Agent": USER_AGENT,
-                                "Origin": baseUrl.replace(/\/$/, '')
-                            }
-                        }
-                    }
-                });
-            }
-        }
-    } catch (e) {
-        logger.error(`[GuardaFlix] LoadM Extraction Failed: ${e.message}`);
-    }
-    return streams;
-}
-
-// --- RISOLUZIONE PAGINA (IFRAME & TABS) ---
-async function resolvePage(pageUrl, config) {
-    const streams = [];
-    try {
-        const response = await axios.get(pageUrl, { headers: { 'User-Agent': USER_AGENT }, timeout: 8000 });
-        const $ = cheerio.load(response.data);
-        
-        let mediaTitle = "";
-        const ogTitle = $('meta[property="og:title"]').attr('content');
-        if (ogTitle) {
-            mediaTitle = ogTitle;
-        } else {
-            mediaTitle = $('title').text();
-        }
-        mediaTitle = mediaTitle.replace(/Guardaflix|GuardaPlay/gi, "").replace(/[-|]/g, "").trim();
-
-        // Mappa lingua basata sulle tab
-        const optLangMap = {};
-        $('.aa-tbs li a, .video-options ul li a').each((_, el) => {
-            const href = $(el).attr('href') || '';
-            if (href.startsWith('#options-')) {
-                const optId = href.substring(1);
-                const serverText = $(el).find('span.server').text().toLowerCase();
-                if (serverText.includes('sub')) optLangMap[optId] = true;
-                else if (serverText.includes('ita')) optLangMap[optId] = false;
-            }
-        });
-
-        let defaultIsSub = false;
-        $('.video-options .d-flex-ch .btr span.btn.active').each((_, el) => {
-            if ($(el).text().toLowerCase().includes('sub')) defaultIsSub = true;
-        });
-
-        const optionDivs = $('.video.aa-tb[id^="options-"]');
-        let foundStreamsInTabs = false;
-
-        const processIframe = async (src, isSub) => {
-            if (!src) return;
-            if (src.startsWith('//')) src = 'https:' + src;
-            
-            if (src.includes('loadm')) {
-                const lmStreams = await extractLoadm(src, pageUrl, mediaTitle, config, isSub);
-                streams.push(...lmStreams);
-                foundStreamsInTabs = true;
-            } else if (src.includes('trembed=')) {
-                try {
-                    const embResp = await axios.get(src, { headers: { 'Referer': pageUrl }, timeout: 5000 });
-                    const $emb = cheerio.load(embResp.data);
-                    const nestedIframes = $emb('iframe').toArray();
-                    for (const nested of nestedIframes) {
-                        let nSrc = $emb(nested).attr('data-src') || $emb(nested).attr('src');
-                        if (nSrc) {
-                            if (nSrc.startsWith('//')) nSrc = 'https:' + nSrc;
-                            if (nSrc.includes('loadm')) {
-                                const lmStreams = await extractLoadm(nSrc, pageUrl, mediaTitle, config, isSub);
-                                streams.push(...lmStreams);
-                                foundStreamsInTabs = true;
-                            }
-                        }
-                    }
-                } catch (e) {}
-            }
-        };
-
-        if (optionDivs.length > 0) {
-            const tabPromises = optionDivs.toArray().map(async (div) => {
-                const divId = $(div).attr('id');
-                const isSub = optLangMap[divId] !== undefined ? optLangMap[divId] : defaultIsSub;
-                const iframes = $(div).find('iframe').toArray();
-                for (const iframe of iframes) {
-                    const src = $(iframe).attr('data-src') || $(iframe).attr('src');
-                    await processIframe(src, isSub);
-                }
-            });
-            await Promise.all(tabPromises);
-        }
-
-        if (!foundStreamsInTabs) {
-            const allIframes = $('iframe').toArray();
-            for (const iframe of allIframes) {
-                const src = $(iframe).attr('data-src') || $(iframe).attr('src');
-                if (src && !src.includes("youtube")) {
-                    await processIframe(src, defaultIsSub);
-                }
-            }
-        }
-
-    } catch (e) {
-        logger.error(`[GuardaFlix] Page Resolve Error: ${e.message}`);
-    }
-    return streams;
-}
-
-// --- RICERCA PRINCIPALE ED EXPORT ---
-async function searchGuardaFlix(meta, config) {
-    if (meta.isSeries) return []; // Python script filter: a[href*="/film/"]
+httpClient.interceptors.response.use(undefined, async (err) => {
+    const config = err.config;
+    if (!config || !config.retry) return Promise.reject(err);
     
-    const streams = [];
-    try {
-        const query = meta.title;
-        const year = meta.year;
-        const searchUrl = `${GF_DOMAIN}/?s=${encodeURIComponent(query)}`;
-        
-        const res = await axios.get(searchUrl, { headers: { 'User-Agent': USER_AGENT }, timeout: 8000 });
-        const $ = cheerio.load(res.data);
-        
-        const candidates = [];
-        $('a[href*="/film/"]').each((_, a) => {
-            let href = $(a).attr('href');
-            const text = $(a).text().trim();
-            if (!href || href === "#") return;
-            if (href.startsWith('/')) href = GF_DOMAIN + href;
-            if (href.endsWith('/film/') || href.endsWith('/film')) return;
-            candidates.push({ href, text });
-        });
+    config.retryCount = config.retryCount || 0;
+    if (config.retryCount >= config.retry) return Promise.reject(err);
+    
+    config.retryCount += 1;
+    await new Promise(r => setTimeout(r, Math.pow(2, config.retryCount) * 500));
+    
+    config.headers['User-Agent'] = getRandomUserAgent();
+    return httpClient(config);
+});
 
-        const queryClean = query.toLowerCase().replace(/[^a-z0-9]/g, '');
-        let targetUrl = null;
+const fetchSmart = (url, options = {}) => httpClient({
+    url,
+    method: 'GET',
+    retry: CONFIG.SCRAPER.RETRIES,
+    headers: {
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Referer': CONFIG.SCRAPER.BASE_URL,
+        ...options.headers
+    },
+    ...options
+});
 
-        // 1. Match Esatto con anno
-        for (const cand of candidates) {
-            const candTextClean = cand.text.toLowerCase().replace(/[^a-z0-9]/g, '');
-            const candHrefLower = cand.href.toLowerCase();
-            if (candTextClean.includes(queryClean) || candHrefLower.includes(queryClean)) {
-                if (year && (cand.text.includes(year) || cand.href.includes(year))) {
-                    targetUrl = cand.href;
-                    break;
-                }
-            }
-        }
-
-        // 2. Fallback senza anno
-        if (!targetUrl) {
-            for (const cand of candidates) {
-                const candTextClean = cand.text.toLowerCase().replace(/[^a-z0-9]/g, '');
-                const candHrefLower = cand.href.toLowerCase();
-                if (candTextClean.includes(queryClean) || candHrefLower.includes(queryClean)) {
-                    targetUrl = cand.href;
-                    break;
-                }
-            }
-        }
-        
-        // 3. Ultra Fallback
-        if (!targetUrl && candidates.length > 0) targetUrl = candidates[0].href;
-
-        if (targetUrl) {
-            const resolvedStreams = await resolvePage(targetUrl, config);
-            streams.push(...resolvedStreams);
-        }
-
-    } catch (e) {
-        logger.error(`[GuardaFlix] Search Error: ${e.message}`);
+let gotScrapingInstance = null;
+const fetchWithGot = async (targetUrl, customHeaders = {}) => {
+    if (!gotScrapingInstance) {
+        const module = await import('got-scraping');
+        gotScrapingInstance = module.gotScraping;
     }
-    return streams;
+    
+    const response = await gotScrapingInstance({
+        url: targetUrl,
+        headers: customHeaders,
+        retry: { limit: 2 }
+    });
+    
+    return response.body;
+};
+
+const REGEX = {
+    Q_4K: /4k|2160p|uhd/i,
+    Q_1080: /1080p|fullhd|fhd/i,
+    Q_720: /720p|hd/i,
+    Q_480: /480p|sd/i,
+    SIZE: /([\d.,]+ ?[GM]B)/i,
+    NOT_FOUND: /can't find the (file|video)|deleted|expired/i,
+    MIXDROP: /mixdr(op|p)|m1xdrop/i,
+    PACKED_SCRIPT: /eval\(function\([^)]+\).*?split\('\|'\).*?\)\)/s,
+    M3U8: /(https?:\/\/[^\s"']+\.m3u8[^\s"']*)/i
+};
+
+class AsyncSemaphore {
+    #max; #active; #queue;
+    constructor(max) { this.#max = max; this.#active = 0; this.#queue = []; }
+    async acquire() {
+        if (this.#active < this.#max) { this.#active++; return; }
+        return new Promise(resolve => this.#queue.push(resolve));
+    }
+    release() {
+        this.#active--;
+        if (this.#queue.length > 0) { this.#active++; this.#queue.shift()(); }
+    }
+}
+const embedSemaphore = new AsyncSemaphore(CONFIG.SCRAPER.MAX_CONCURRENT_EMBEDS);
+
+const normalizeUrl = (url) => url?.startsWith('//') ? `https:${url}` : (url || '');
+
+const parseQuality = (text) => {
+    if (!text) return "Unknown";
+    if (REGEX.Q_4K.test(text)) return "4K";
+    if (REGEX.Q_1080.test(text)) return "1080p";
+    if (REGEX.Q_720.test(text)) return "720p";
+    if (REGEX.Q_480.test(text)) return "480p";
+    return "Unknown";
+};
+
+const buildMediaflowUrl = (config, targetUrl, type = 'hls') => {
+    if (!config?.mediaflow?.url) return normalizeUrl(targetUrl);
+    const mfp = config.mediaflow.url.replace(/\/$/, '');
+    const encoded = encodeURIComponent(normalizeUrl(targetUrl));
+    const pass = config.mediaflow.pass ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}` : '';
+    return type === 'hls' 
+        ? `${mfp}/hls?url=${encoded}${pass}&ext=.m3u8`
+        : `${mfp}/extractor/video?host=Mixdrop${pass}&d=${encoded}&redirect_stream=true`;
+};
+
+const generateRichDescription = (title, quality = 'Unknown', hoster = '') => {
+    return `â–¶ï¸ ${title}\nðŸ”± ${quality.toUpperCase()} â€¢ WEB\nðŸ—£ï¸ ðŸ‡®ðŸ‡¹ ITA | ðŸ«§ AAC\nâ˜ï¸ ${hoster}\nðŸ¦ GuardaHD`;
+};
+
+class CacheManager {
+    #file; #cache; #loaded; #isWriting;
+
+    constructor() {
+        this.#file = CONFIG.CACHE.FILE;
+        this.#cache = new Map();
+        this.#loaded = false;
+        this.#isWriting = false;
+    }
+
+    async init() {
+        if (this.#loaded) return;
+        try {
+            const data = await fs.readFile(this.#file, 'utf8');
+            const raw = JSON.parse(data);
+            for (const [key, value] of Object.entries(raw)) this.#cache.set(key, value);
+        } catch {}
+        this.#loaded = true;
+    }
+
+    async #save() {
+        if (this.#isWriting) return;
+        this.#isWriting = true;
+        try {
+            await fs.mkdir(path.dirname(this.#file), { recursive: true });
+            const now = Date.now();
+            for (const [key, val] of this.#cache.entries()) {
+                if (now - val.timestamp > CONFIG.CACHE.STALE_TTL) this.#cache.delete(key);
+            }
+            await fs.writeFile(this.#file, JSON.stringify(Object.fromEntries(this.#cache)), 'utf8');
+        } catch {} 
+        finally { this.#isWriting = false; }
+    }
+
+    async get(key) {
+        await this.init();
+        const entry = this.#cache.get(key);
+        if (!entry) return { data: null, isStale: false };
+
+        const age = Date.now() - entry.timestamp;
+        if (age < CONFIG.CACHE.TTL) return { data: entry, isStale: false };
+        if (age < CONFIG.CACHE.STALE_TTL) return { data: entry, isStale: true };
+        
+        this.#cache.delete(key);
+        this.#save();
+        return { data: null, isStale: false };
+    }
+
+    async set(key, embeds, title) {
+        await this.init();
+        this.#cache.set(key, { timestamp: Date.now(), embeds, title });
+        this.#save();
+    }
+}
+const cacheManager = new CacheManager();
+
+const unpackScript = (html) => {
+    const packedMatch = html.match(REGEX.PACKED_SCRIPT);
+    if (!packedMatch) return null;
+    try {
+        let [_, p, a, c, kRaw] = packedMatch[0].match(/}\('(.+?)',(\d+),(\d+),'(.+?)'\.split\('\|'\)/);
+        a = parseInt(a); c = parseInt(c); const k = kRaw.split('|');
+        const decode = (c) => (c < a ? '' : decode(Math.floor(c / a))) + ((c = c % a) > 35 ? String.fromCharCode(c + 29) : c.toString(36));
+        while (c--) if (k[c]) p = p.replace(new RegExp(`\\b${decode(c)}\\b`, 'g'), k[c]);
+        return p;
+    } catch { return null; }
+};
+
+const Extractors = {
+    supervideo: async (url) => {
+        try {
+            const urlObj = new URL(url);
+            const id = urlObj.pathname.split('/').pop().replace(/\.html|embed-|\/k\//gi, '');
+            const targetUrl = `${urlObj.origin}/e/${id}`;
+            const customHeaders = { 'Referer': `${urlObj.origin}/`, 'Origin': urlObj.origin };
+
+            let html = await fetchWithGot(targetUrl, customHeaders);
+            if (!html || typeof html !== 'string') return [];
+
+            if (html.includes('watched as embed only')) {
+                html = await fetchWithGot(`${urlObj.origin}/e${urlObj.pathname}`, customHeaders);
+            }
+            
+            if (REGEX.NOT_FOUND.test(html)) return [];
+
+            const m3u8 = unpackScript(html)?.match(REGEX.M3U8)?.[1] || html.match(REGEX.M3U8)?.[1];
+            if (!m3u8) return [];
+
+            return [{ 
+                url: normalizeUrl(m3u8), quality: '1080p', size: 'N/A', name: 'SuperVideo',
+                headers: { "Referer": "https://supervideo.cc/", "Origin": "https://supervideo.cc/" }
+            }];
+        } catch { return []; }
+    },
+
+    mixdrop: async (url, config) => {
+        if (!config?.mediaflow?.url) return [];
+        const embedUrl = normalizeUrl(url).replace('/f/', '/e/');
+        let resPart = 'Unknown';
+
+        try {
+            const res = await fetchSmart(embedUrl.replace('/e/', '/f/'));
+            if (res.data && !REGEX.NOT_FOUND.test(res.data)) {
+                resPart = res.data.match(/(\b[1-9]\d{2,3}p\b)/i)?.[1]?.toLowerCase() || 'Unknown';
+            } else return [];
+        } catch {}
+
+        return [{ 
+            url: buildMediaflowUrl(config, embedUrl, 'mixdrop'), 
+            quality: resPart, size: 'N/A', name: 'MixDrop' 
+        }];
+    }
+};
+
+class GuardaHDScraper {
+    #config;
+    
+    constructor(config) { this.#config = config; }
+
+    async #getTmdbTitle(imdb_id) {
+        try {
+            const res = await fetchSmart(`https://api.themoviedb.org/3/find/${imdb_id}?api_key=${CONFIG.TMDB_API_KEY}&external_source=imdb_id`);
+            const movie = res.data.movie_results?.[0];
+            return movie?.title ? (movie.release_date ? `${movie.title} (${movie.release_date.substring(0, 4)})` : movie.title) : "Film HD";
+        } catch { return "Film HD"; }
+    }
+
+    async #scrapeEmbedUrls(imdb_id) {
+        try {
+            const res = await fetchSmart(`${CONFIG.SCRAPER.BASE_URL}/set-movie-a/${imdb_id}`);
+            const $ = cheerio.load(res.data);
+            const embedDict = new Map(); 
+
+            $('li[data-link]').each((_, el) => {
+                const link = normalizeUrl($(el).attr('data-link'));
+                if (!link.startsWith('http')) return;
+                const lower = link.toLowerCase();
+                const key = lower.includes('supervideo') ? 'supervideo' : REGEX.MIXDROP.test(lower) ? 'mixdrop' : link;
+                if (!embedDict.has(key)) embedDict.set(key, link);
+            });
+            return Array.from(embedDict.values());
+        } catch { return []; }
+    }
+
+    async #processSingleEmbed(url, title) {
+        await embedSemaphore.acquire();
+        try {
+            const lowerUrl = url.toLowerCase();
+            const extractor = lowerUrl.includes('supervideo') ? Extractors.supervideo : REGEX.MIXDROP.test(lowerUrl) ? Extractors.mixdrop : null;
+            if (!extractor) return [];
+
+            const streams = await extractor(url, this.#config);
+            return streams.map(s => {
+                const q = parseQuality(s.quality || url);
+                return {
+                    name: `â³ WEB â›µ LEVIATHAN`,
+                    title: generateRichDescription(title, q, s.name),
+                    url: s.url,
+                    qualityRank: q,
+                    behaviorHints: { bingeWatching: true, bingieGroup: `Leviathan|${q}|Web|GuardaHD`, ...(s.headers && { proxyHeaders: { request: s.headers } }) }
+                };
+            });
+        } catch { return []; } 
+        finally { embedSemaphore.release(); }
+    }
+
+    async getStreams(meta) {
+        if (!meta?.imdb_id || meta.isSeries) return [];
+
+        const { imdb_id, title: metaTitle } = meta;
+        let embedUrls = [], officialTitle = metaTitle;
+        
+        const { data: cached, isStale } = await cacheManager.get(imdb_id);
+        
+        if (cached) {
+            embedUrls = cached.embeds;
+            officialTitle = cached.title || officialTitle;
+            
+            if (isStale) {
+                Promise.all([this.#scrapeEmbedUrls(imdb_id), this.#getTmdbTitle(imdb_id)])
+                    .then(([urls, title]) => {
+                        if (urls.length > 0) cacheManager.set(imdb_id, urls, title);
+                    }).catch(() => {});
+            }
+        } else {
+            [embedUrls, officialTitle] = await Promise.all([this.#scrapeEmbedUrls(imdb_id), this.#getTmdbTitle(imdb_id)]);
+            if (embedUrls.length > 0) await cacheManager.set(imdb_id, embedUrls, officialTitle);
+        }
+
+        if (embedUrls.length === 0) return [];
+
+        const rawStreams = (await Promise.allSettled(embedUrls.map(url => this.#processSingleEmbed(url, officialTitle))))
+            .filter(res => res.status === 'fulfilled').flatMap(res => res.value);
+
+        const rank = { "4K": 0, "1080p": 1, "720p": 2, "480p": 3, "Unknown": 4 };
+        const finalStreams = Array.from(new Map(rawStreams.map(s => [s.url, s])).values())
+            .sort((a, b) => (rank[a.qualityRank] ?? 4) - (rank[b.qualityRank] ?? 4))
+            .map(({ qualityRank, ...s }) => s);
+
+        finalStreams.map = function() { return this; };
+        finalStreams.forEach = function() { return; };
+
+        return finalStreams;
+    }
 }
 
-module.exports = { searchGuardaFlix };
+async function searchGuardaHD(meta, config) {
+    return new GuardaHDScraper(config).getStreams(meta);
+}
+
+module.exports = { searchGuardaHD };
