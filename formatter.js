@@ -503,24 +503,53 @@ function deriveVideoTags(info, upperTitle) {
 }
 
 function deriveLanguages(title, source) {
-  const text = `${safeString(title)} ${safeString(source)}`;
+  const titleText = safeString(title);
+  const sourceText = safeString(source);
+  const text = `${titleText} ${sourceText}`;
+  const lowerText = text.toLowerCase();
+
+  const animeScene = /nyaa|erai-raws|subsplease|horriblesubs|judas|moozzi2|ember/i.test(text);
+  const animeItalianJapaneseDefault = /(?:nyaa|erai-raws)/i.test(text);
+  const animeEnglishDefault = /subsplease|horriblesubs|judas|moozzi2|ember/i.test(text);
+
+  const italianHint = /(?:ita|italian|italiano|vostit|sub[-. _]?ita|softsub[-. _]?ita|multi[-. _]?ita)/i.test(text)
+    || REGEX_EXTRA.contextIt.test(text);
+  const englishHint = /(?:eng|english|sub[-. _]?eng|softsub[-. _]?eng)/i.test(text);
+  const japaneseHint = /(?:jap|jpn|japanese|jp|raw)/i.test(text);
+  const multiHint = REGEX_EXTRA.multiAudio.test(lowerText) || REGEX_EXTRA.dualAudio.test(lowerText);
+
   const matches = LANG_FLAGS.filter((lang) => lang.regex.test(text));
   const unique = uniqueBy(matches.sort((a, b) => b.priority - a.priority), (item) => item.id);
 
-  // Modifica: Forza "ITA / ENG" per i noti release group di anime o sorgenti riconducibili a Nyaa
-  if (/nyaa|erai-raws|subsplease|horriblesubs|judas|moozzi2|ember/i.test(text)) {
-    return '🇮🇹 ITA / 🇬🇧 ENG';
+  if (animeItalianJapaneseDefault) {
+    if (englishHint && !italianHint && !japaneseHint && !multiHint) return '🇬🇧';
+    return ['🇮🇹', '🇯🇵'].join(LANG_SEP);
   }
 
-  if (unique.length === 1) return `${unique[0].flag} ${unique[0].label}`;
+  if (animeScene) {
+    const flags = [];
+    if (italianHint) flags.push('🇮🇹');
+
+    const explicitJapanese = unique.some((item) => item.id === 'jpn') || japaneseHint;
+    const explicitEnglish = unique.some((item) => item.id === 'eng') || englishHint;
+
+    if (explicitJapanese) flags.push('🇯🇵');
+    if (explicitEnglish && !italianHint && !explicitJapanese) flags.push('🇬🇧');
+
+    if (!flags.length) flags.push(animeEnglishDefault ? '🇬🇧' : '🇯🇵');
+
+    const deduped = uniqueBy(flags, (flag) => flag);
+    if (deduped.length) return deduped.join(LANG_SEP);
+  }
+
+  if (unique.length === 1) return unique[0].flag;
   if (unique.length > 1 && unique.length <= 3) return unique.map((item) => item.flag).join(LANG_SEP);
   if (unique.length > 3) return `${unique[0].flag}${LANG_SEP}🌐`;
 
-  if (REGEX_EXTRA.multiAudio.test(text)) return `🌐${LANG_SEP}MULTI`;
-  if (REGEX_EXTRA.dualAudio.test(text)) return `🌐${LANG_SEP}DUAL`;
-  if (REGEX_EXTRA.contextIt.test(text) || /corsaro/i.test(source)) return '🇮🇹 ITA';
+  if (multiHint) return '🌐';
+  if (italianHint || /corsaro/i.test(sourceText)) return '🇮🇹';
 
-  return '🇬🇧 ENG';
+  return '🇬🇧';
 }
 
 function deriveAudio(info, upperTitle, quality, cleanTags) {
@@ -665,15 +694,30 @@ function removeEmoji(text) {
 }
 
 function compactLanguageLabel(lang) {
-  const text = removeEmoji(lang).replace(/\s*\/\s*/g, '/').replace(/\s+/g, ' ').trim();
-  if (!text) return 'ENG';
-  return text
-    .replace(/ITALIANO|ITALIAN/gi, 'ITA')
-    .replace(/ENGLISH/gi, 'ENG')
-    .replace(/JAPANESE/gi, 'JPN')
-    .replace(/FRENCH/gi, 'FRA')
-    .replace(/GERMAN/gi, 'DEU')
-    .replace(/SPANISH/gi, 'ESP');
+  const original = safeString(lang).trim();
+  if (!original) return '🇬🇧';
+
+  const existingFlags = uniqueBy(original.match(/[\u{1F1E6}-\u{1F1FF}]{2}/gu) || [], (flag) => flag);
+  if (existingFlags.length === 1) return existingFlags[0];
+  if (existingFlags.length > 1 && existingFlags.length <= 3) return existingFlags.join(LANG_SEP);
+  if (existingFlags.length > 3) return `${existingFlags[0]}${LANG_SEP}🌐`;
+
+  const text = removeEmoji(original).replace(/\s*\/\s*/g, '/').replace(/\s+/g, ' ').trim();
+  const matches = LANG_FLAGS.filter((entry) => entry.regex.test(text));
+  const unique = uniqueBy(matches.sort((a, b) => b.priority - a.priority), (item) => item.id);
+
+  if (/\b(?:ita|italian|italiano|vostit|sub[-. _]?ita|softsub[-. _]?ita)\b/i.test(text) && /\b(?:jap|jpn|japanese|jp|raw)\b/i.test(text)) {
+    return ['🇮🇹', '🇯🇵'].join(LANG_SEP);
+  }
+
+  if (unique.length === 1) return unique[0].flag;
+  if (unique.length > 1 && unique.length <= 3) return unique.map((item) => item.flag).join(LANG_SEP);
+  if (unique.length > 3) return `${unique[0].flag}${LANG_SEP}🌐`;
+
+  if (/multi|dual/i.test(text)) return '🌐';
+  if (/ita|italian|italiano/i.test(text)) return '🇮🇹';
+  if (/jap|jpn|japanese|jp|vostit|sub[-. _]?ita|softsub[-. _]?ita|raw/i.test(text)) return '🇯🇵';
+  return '🇬🇧';
 }
 
 function getPrimarySourceTag(cleanTags) {
@@ -1016,7 +1060,7 @@ function styleComet(p) {
 function styleStremioIta(p) {
   const isCached = isDebridService(p.serviceTag);
   const statusIcon = isCached ? '⚡️' : '⏳';
-  const langText = p.lang.replace(/ITA/i, 'ita').replace(/ENG/i, 'eng').replace(/MULTI/i, 'multi');
+  const langText = compactLanguageLabel(p.lang);
   const qualIcon = p.cleanTags.some((tag) => /bluray|web|hdr|dv/i.test(tag)) || p.quality === '4K' ? '🔥' : '📀';
   const lines = [
     `📄 ❯ ${p.fileTitle}`,
@@ -1150,7 +1194,19 @@ function extractStreamInfo(title, source, config = {}) {
 
   const { quality, qDetails, qIcon } = deriveQuality(parsed, upperTitle);
   const { videoTags, cleanTags } = deriveVideoTags(parsed, upperTitle);
-  const lang = deriveLanguages(rawTitle, source);
+  const parsedLanguageContext = [
+    source,
+    rawTitle,
+    parsed?.language,
+    parsed?.lang,
+    parsed?.audio_lang,
+    parsed?.audioLanguage,
+    parsed?.subtitles,
+    parsed?.subs,
+    Array.isArray(parsed?.languages) ? parsed.languages.join(' ') : parsed?.languages,
+    Array.isArray(parsed?.subtitleLanguages) ? parsed.subtitleLanguages.join(' ') : parsed?.subtitleLanguages,
+  ].filter(Boolean).join(' ');
+  const lang = deriveLanguages(rawTitle, parsedLanguageContext);
   const { codec, audioTag, audioChannels } = deriveAudio(parsed, upperTitle, quality, cleanTags);
   const releaseGroup = deriveReleaseGroup(rawTitle, parsed);
   const cleanName = cleanFilename(rawTitle);
