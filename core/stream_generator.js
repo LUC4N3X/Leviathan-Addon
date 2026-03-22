@@ -2,7 +2,7 @@ const axios = require("axios");
 const crypto = require("crypto");
 
 const { fetchExternalAddonsFlat } = require("./nexus-bridge");
-const PackResolver = require("../leviathan-pack-resolver");
+const PackResolver = require("./pack_intelligence");
 const aioFormatter = require("../aiostreams-formatter.cjs");
 const { searchWebStreamr } = require("../webstreamr_handler");
 const TbCache = require("../debrid/tb_cache.js");
