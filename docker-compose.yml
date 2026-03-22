@@ -1,7 +1,7 @@
 services:
   stremio-addon:
     build: .
-    container_name: my-stremio-addon
+    container_name: leviathan
     restart: always
     ports:
       - "7000:7000"
