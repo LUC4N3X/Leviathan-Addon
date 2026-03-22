@@ -1,4 +1,4 @@
-const { formatStreamSelector, formatBytes } = require('./formatter');
+const { formatStreamSelector, formatBytes } = require('./core/lib/stream_formatter');
 const ptt = require('parse-torrent-title');
 
 const BEST_TRACKERS = [
