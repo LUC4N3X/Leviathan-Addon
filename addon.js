@@ -13,7 +13,8 @@ const { handleVixSynthetic } = require("./vix/vix_proxy");
 
 const {
     logger, Cache, LIMITERS, CONFIG, ADMIN_PASS, cloudBuildInflight,
-    safeCompare, getConfig, validateStreamRequest, withTimeout
+    safeCompare, getConfig, validateStreamRequest, withTimeout, buildTrackerMagnet,
+    getStatsSnapshot, recordDuration, recordProviderMetric, incrementMetric
 } = require("./core/utils");
 
 const { generateStream, RD, AD, TB } = require("./core/stream_generator");
@@ -56,16 +57,11 @@ function getBuildKey(service, hash, apiKey) {
     return `${String(service || "").toLowerCase()}:${String(hash || "").toUpperCase()}:${tokenSig}`;
 }
 
-function buildTrackerMagnet(hash) {
-    const trackers = [
-        "udp://tracker.opentrackr.org:1337/announce", "udp://open.demonoid.ch:6969/announce",
-        "udp://open.demonii.com:1337/announce", "udp://open.stealth.si:80/announce",
-        "udp://tracker.torrent.eu.org:451/announce", "udp://tracker.therarbg.to:6969/announce",
-        "udp://tracker.doko.moe:6969/announce", "udp://opentracker.i2p.rocks:6969/announce",
-        "udp://exodus.desync.com:6969/announce", "udp://tracker.moeking.me:6969/announce"
-    ];
-    const trackerStr = trackers.map(tr => `&tr=${encodeURIComponent(tr)}`).join("");
-    return `magnet:?xt=urn:btih:${String(hash || "").toUpperCase()}${trackerStr}`;
+function getServiceResolverLimiter(service) {
+    const normalized = String(service || '').toLowerCase();
+    if (normalized === 'ad') return LIMITERS.adResolve;
+    if (normalized === 'tb') return LIMITERS.tbResolve;
+    return LIMITERS.rdResolve;
 }
 
 async function queueCloudBuild(service, hash, apiKey) {
@@ -74,28 +70,35 @@ async function queueCloudBuild(service, hash, apiKey) {
     if (existingPromise) return existingPromise;
 
     const task = (async () => {
+        const startedAt = Date.now();
         const magnet = buildTrackerMagnet(hash);
         await Cache.setCloudBuild(buildKey, { status: 'queued', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now() }, 900);
 
-        if (service === 'rd') {
-            await axios.post("https://api.real-debrid.com/rest/1.0/torrents/addMagnet", `magnet=${encodeURIComponent(magnet)}`, { headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/x-www-form-urlencoded" } });
-        } else if (service === 'ad') {
-            await axios.get("https://api.alldebrid.com/v4/magnet/upload", { params: { agent: "leviathan", apikey: apiKey, magnet } });
-        } else if (service === 'tb') {
-            const body = new URLSearchParams(); body.append('magnet', magnet); body.append('seed', '1'); body.append('allow_zip', 'false');
-            await axios.post("https://api.torbox.app/v1/api/torrents/createtorrent", body.toString(), { headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/x-www-form-urlencoded" } });
-        }
+        await LIMITERS.cloudBuild.schedule(async () => {
+            if (service === 'rd') {
+                await axios.post("https://api.real-debrid.com/rest/1.0/torrents/addMagnet", `magnet=${encodeURIComponent(magnet)}`, { headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/x-www-form-urlencoded" } });
+            } else if (service === 'ad') {
+                await axios.get("https://api.alldebrid.com/v4/magnet/upload", { params: { agent: "leviathan", apikey: apiKey, magnet } });
+            } else if (service === 'tb') {
+                const body = new URLSearchParams(); body.append('magnet', magnet); body.append('seed', '1'); body.append('allow_zip', 'false');
+                await axios.post("https://api.torbox.app/v1/api/torrents/createtorrent", body.toString(), { headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/x-www-form-urlencoded" } });
+            }
+        });
 
         await Cache.setCloudBuild(buildKey, { status: 'submitted', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now() }, 900);
+        recordDuration('cloudBuild.total', Date.now() - startedAt);
+        recordProviderMetric(`cloudBuild.${service}`, true, Date.now() - startedAt);
         return { ok: true, duplicate: false };
     })().catch(async (err) => {
         const status = err?.response?.status, body = err?.response?.data;
         const msg = typeof body === 'string' ? body : JSON.stringify(body || {});
         if (status === 409 || /already|duplicate|exists|same magnet|in progress/i.test(`${err.message} ${msg}`)) {
             await Cache.setCloudBuild(buildKey, { status: 'submitted', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now(), duplicate: true }, 900);
+            recordProviderMetric(`cloudBuild.${service}`, true, 0, { error: 'duplicate' });
             return { ok: true, duplicate: true };
         }
         await Cache.setCloudBuild(buildKey, { status: 'error', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now(), error: err.message }, 120);
+        recordProviderMetric(`cloudBuild.${service}`, false, 0, { error: err.message });
         throw err;
     }).finally(() => cloudBuildInflight.delete(buildKey));
 
@@ -103,31 +106,40 @@ async function queueCloudBuild(service, hash, apiKey) {
     return task;
 }
 
-app.get("/api/stats", (req, res) => res.json({ status: "ok" }));
+app.get("/api/stats", (req, res) => res.json(getStatsSnapshot()));
 app.get("/favicon.ico", (req, res) => res.status(204).end());
 
 app.get("/:conf/play_lazy/:service/:hash/:fileIdx", async (req, res) => {
     const { conf, service, hash, fileIdx } = req.params;
-    const { s, e } = req.query; 
+    const { s, e } = req.query;
+    const startedAt = Date.now();
     logger.info(`▶️ [LAZY PLAY] Service: ${service} | Hash: ${hash} | Idx: ${fileIdx} | S${s}E${e}`);
     try {
         const config = getConfig(conf);
         const apiKey = config.key || config.rd;
         if (!apiKey) return res.status(400).send("API Key mancante.");
-        const trackerStr = ["udp://tracker.opentrackr.org:1337/announce", "udp://open.demonoid.ch:6969/announce", "udp://open.demonii.com:1337/announce", "udp://open.stealth.si:80/announce", "udp://tracker.torrent.eu.org:451/announce", "udp://tracker.therarbg.to:6969/announce", "udp://tracker.doko.moe:6969/announce", "udp://opentracker.i2p.rocks:6969/announce", "udp://exodus.desync.com:6969/announce", "udp://tracker.moeking.me:6969/announce"].map(tr => `&tr=${tr}`).join(""); 
-        const magnet = `magnet:?xt=urn:btih:${hash}${trackerStr}`;
-        const item = { title: `Unknown Video (${hash})`, hash: hash, season: parseInt(s) || 0, episode: parseInt(e) || 0, fileIdx: parseInt(fileIdx) === -1 ? undefined : parseInt(fileIdx), magnet: magnet };
+        const magnet = buildTrackerMagnet(hash);
+        const item = { title: `Unknown Video (${hash})`, hash: String(hash || '').toUpperCase(), season: parseInt(s, 10) || 0, episode: parseInt(e, 10) || 0, fileIdx: parseInt(fileIdx, 10) === -1 ? undefined : parseInt(fileIdx, 10), magnet };
         const lazyCacheKey = `${service}:${item.hash}:${item.season || 0}:${item.episode || 0}:${item.fileIdx !== undefined ? item.fileIdx : -1}`;
         const cachedLazy = await Cache.getLazyLink(lazyCacheKey);
-        if (cachedLazy && cachedLazy.url) return res.redirect(cachedLazy.url);
+        if (cachedLazy && cachedLazy.url) {
+            incrementMetric('lazyPlay.cacheHit');
+            recordDuration('lazyPlay.total', Date.now() - startedAt);
+            return res.redirect(cachedLazy.url);
+        }
 
-        let streamData = null;
-        if (service === 'tb') streamData = await TB.getStreamLink(apiKey, item.magnet, String(item.season), String(item.episode), item.hash, item.fileIdx !== undefined ? String(item.fileIdx) : undefined);
-        else if (service === 'rd') streamData = await LIMITERS.rd.schedule(() => RD.getStreamLink(apiKey, item.magnet, item.season, item.episode, item.fileIdx));
-        else if (service === 'ad') streamData = await LIMITERS.rd.schedule(() => AD.getStreamLink(apiKey, item.magnet, item.season, item.episode, item.fileIdx !== undefined ? item.fileIdx : 0));
-        
+        const resolverLimiter = getServiceResolverLimiter(service);
+        const streamData = await LIMITERS.lazyPlay.schedule(async () => {
+            if (service === 'tb') return resolverLimiter.schedule(() => TB.getStreamLink(apiKey, item.magnet, String(item.season), String(item.episode), item.hash, item.fileIdx !== undefined ? String(item.fileIdx) : undefined));
+            if (service === 'ad') return resolverLimiter.schedule(() => AD.getStreamLink(apiKey, item.magnet, item.season, item.episode, item.fileIdx !== undefined ? item.fileIdx : 0));
+            return resolverLimiter.schedule(() => RD.getStreamLink(apiKey, item.magnet, item.season, item.episode, item.fileIdx));
+        });
+
         if (streamData && streamData.url) {
             await Cache.cacheLazyLink(lazyCacheKey, streamData, 180);
+            incrementMetric('lazyPlay.success');
+            recordDuration('lazyPlay.total', Date.now() - startedAt);
+            recordProviderMetric(`lazy.${service}`, true, Date.now() - startedAt);
             if (config.mediaflow && config.mediaflow.proxyDebrid && config.mediaflow.url) {
                 try {
                     const mfpBase = config.mediaflow.url.replace(/\/$/, '');
@@ -137,10 +149,14 @@ app.get("/:conf/play_lazy/:service/:hash/:fileIdx", async (req, res) => {
                 } catch (e) {}
             }
             return res.redirect(streamData.url);
-        } 
+        }
+        incrementMetric('lazyPlay.redirectToCloud');
+        recordDuration('lazyPlay.total', Date.now() - startedAt);
         const protocol = req.headers['x-forwarded-proto'] || req.protocol;
         return res.redirect(`${protocol}://${req.get('host')}/${conf}/add_to_cloud/${hash}`);
     } catch (err) {
+        recordDuration('lazyPlay.total', Date.now() - startedAt);
+        recordProviderMetric(`lazy.${service}`, false, Date.now() - startedAt, { error: err.message, timeout: /timeout/i.test(String(err?.message || '')) });
         logger.error(`Error Lazy Play: ${err.message}`);
         res.status(500).send("Errore nel recupero del link: " + err.message);
     }
