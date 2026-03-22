@@ -3,7 +3,7 @@ const crypto = require("crypto");
 
 const { fetchExternalAddonsFlat } = require("./nexus-bridge");
 const PackResolver = require("./pack_intelligence");
-const aioFormatter = require("../aiostreams-formatter.cjs");
+const aioFormatter = require("./lib/pulse_formatter.cjs");
 const { searchWebStreamr } = require("../webstreamr_handler");
 const TbCache = require("../debrid/tb_cache.js");
 const { formatStreamSelector, formatBytes } = require("./lib/stream_formatter");
