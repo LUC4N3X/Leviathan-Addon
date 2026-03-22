@@ -37,6 +37,89 @@ const sharedFetchInflight = new Map();
 const streamInflight = new Map();
 const metadataInflight = new Map();
 
+const TRACKERS = Object.freeze([
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.demonoid.ch:6969/announce",
+    "udp://open.demonii.com:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://tracker.therarbg.to:6969/announce",
+    "udp://tracker.doko.moe:6969/announce",
+    "udp://opentracker.i2p.rocks:6969/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://tracker.moeking.me:6969/announce"
+]);
+
+const runtimeMetrics = {
+    startedAt: Date.now(),
+    counters: Object.create(null),
+    timers: Object.create(null),
+    providers: Object.create(null),
+    cache: {
+        stream: { hit: 0, miss: 0, set: 0 },
+        metadata: { hit: 0, miss: 0, set: 0 },
+        lazy: { hit: 0, miss: 0, set: 0 },
+        cloud: { hit: 0, miss: 0, set: 0 },
+        raw: { hit: 0, miss: 0, set: 0 }
+    }
+};
+
+function incrementMetric(name, value = 1) {
+    runtimeMetrics.counters[name] = (runtimeMetrics.counters[name] || 0) + value;
+}
+
+function recordDuration(name, ms) {
+    if (!Number.isFinite(ms) || ms < 0) return;
+    const bucket = runtimeMetrics.timers[name] || { count: 0, totalMs: 0, minMs: Number.POSITIVE_INFINITY, maxMs: 0, avgMs: 0 };
+    bucket.count += 1;
+    bucket.totalMs += ms;
+    bucket.minMs = Math.min(bucket.minMs, ms);
+    bucket.maxMs = Math.max(bucket.maxMs, ms);
+    bucket.avgMs = Math.round((bucket.totalMs / bucket.count) * 100) / 100;
+    runtimeMetrics.timers[name] = bucket;
+}
+
+function recordProviderMetric(provider, ok, ms = null, extra = null) {
+    const key = String(provider || 'unknown');
+    const bucket = runtimeMetrics.providers[key] || { calls: 0, ok: 0, fail: 0, timeout: 0, totalMs: 0, avgMs: 0, lastError: null, lastSeenAt: null };
+    bucket.calls += 1;
+    if (ok) bucket.ok += 1;
+    else bucket.fail += 1;
+    if (Number.isFinite(ms) && ms >= 0) {
+        bucket.totalMs += ms;
+        bucket.avgMs = Math.round((bucket.totalMs / bucket.calls) * 100) / 100;
+    }
+    if (extra && extra.timeout) bucket.timeout += 1;
+    if (extra && extra.error) bucket.lastError = String(extra.error).slice(0, 300);
+    bucket.lastSeenAt = new Date().toISOString();
+    runtimeMetrics.providers[key] = bucket;
+}
+
+function registerCacheAccess(section, hit) {
+    const bucket = runtimeMetrics.cache[section];
+    if (!bucket) return;
+    if (hit) bucket.hit += 1;
+    else bucket.miss += 1;
+}
+
+function registerCacheSet(section) {
+    const bucket = runtimeMetrics.cache[section];
+    if (!bucket) return;
+    bucket.set += 1;
+}
+
+function getCacheSnapshot(bucket) {
+    const hits = Number(bucket?.hit || 0);
+    const misses = Number(bucket?.miss || 0);
+    const total = hits + misses;
+    return {
+        hit: hits,
+        miss: misses,
+        set: Number(bucket?.set || 0),
+        hitRate: total > 0 ? Math.round((hits / total) * 10000) / 100 : 0
+    };
+}
+
 const EMPTY_FETCH_TTL = Math.max(parseInt(process.env.EMPTY_FETCH_TTL || "90", 10) || 90, 15);
 const EMPTY_STREAM_TTL = Math.max(parseInt(process.env.EMPTY_STREAM_TTL || "60", 10) || 60, 15);
 const METADATA_CACHE_TTL = Math.max(parseInt(process.env.METADATA_CACHE_TTL || "1800", 10) || 1800, 60);
@@ -64,26 +147,29 @@ const Cache = {
     cacheMagnets: async (key, value, ttl = 3600) => { myCache.set(`magnets:${key}`, value, ttl); },
     getCachedStream: async (key) => {
         const data = myCache.get(`stream:${key}`);
+        registerCacheAccess('stream', !!data);
         if (data) logger.info(`⚡ CACHE HIT (USER): ${key}`);
         return data || null;
     },
-    cacheStream: async (key, value, ttl = 1800) => { myCache.set(`stream:${key}`, value, ttl); },
-    getMetadata: async (key) => myCache.get(`meta:${key}`) || null,
-    cacheMetadata: async (key, value, ttl = METADATA_CACHE_TTL) => { myCache.set(`meta:${key}`, value, ttl); },
-    getLazyLink: async (key) => myCache.get(`lazy:${key}`) || null,
-    cacheLazyLink: async (key, value, ttl = 120) => { myCache.set(`lazy:${key}`, value, ttl); },
-    getCloudBuild: async (key) => cloudBuildCache.get(`cloud:${key}`) || null,
-    setCloudBuild: async (key, value, ttl = 900) => { cloudBuildCache.set(`cloud:${key}`, value, ttl); },
+    cacheStream: async (key, value, ttl = 1800) => { registerCacheSet('stream'); myCache.set(`stream:${key}`, value, ttl); },
+    getMetadata: async (key) => { const data = myCache.get(`meta:${key}`) || null; registerCacheAccess('metadata', !!data); return data; },
+    cacheMetadata: async (key, value, ttl = METADATA_CACHE_TTL) => { registerCacheSet('metadata'); myCache.set(`meta:${key}`, value, ttl); },
+    getLazyLink: async (key) => { const data = myCache.get(`lazy:${key}`) || null; registerCacheAccess('lazy', !!data); return data; },
+    cacheLazyLink: async (key, value, ttl = 120) => { registerCacheSet('lazy'); myCache.set(`lazy:${key}`, value, ttl); },
+    getCloudBuild: async (key) => { const data = cloudBuildCache.get(`cloud:${key}`) || null; registerCacheAccess('cloud', !!data); return data; },
+    setCloudBuild: async (key, value, ttl = 900) => { registerCacheSet('cloud'); cloudBuildCache.set(`cloud:${key}`, value, ttl); },
     listKeys: async () => myCache.keys(),
     deleteKey: async (key) => myCache.del(key),
     flushAll: async () => { myCache.flushAll(); rawCache.flushAll(); },
 
     getRaw: (provider, id) => {
         const data = rawCache.get(`raw:${provider}:${id}`);
+        registerCacheAccess('raw', !!data);
         if (data) logger.info(`🌍 GLOBAL CACHE HIT [${provider}]: ${id}`);
         return data || null;
     },
     setRaw: (provider, id, value, ttl = 43200) => {
+        registerCacheSet('raw');
         rawCache.set(`raw:${provider}:${id}`, value, ttl);
         logger.info(`💾 GLOBAL CACHE SET [${provider}]: ${id}`);
     },
@@ -128,6 +214,16 @@ const CONFIG = {
     EXTERNAL: 8000          
   }
 };
+
+
+function buildTrackerMagnet(hash, displayName = null) {
+    const cleanHash = String(hash || '').toUpperCase().trim();
+    const params = [`xt=urn:btih:${cleanHash}`];
+    const dn = String(displayName || '').trim();
+    if (dn) params.push(`dn=${encodeURIComponent(dn)}`);
+    for (const tracker of TRACKERS) params.push(`tr=${encodeURIComponent(tracker)}`);
+    return `magnet:?${params.join('&')}`;
+}
 
 const REGEX_YEAR = /(19|20)\d{2}/;
 const REGEX_QUALITY_FILTER = {
@@ -236,7 +332,7 @@ function isTrustedSource(source, provider = null) {
 }
 
 function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedInfo = null) {
-    if (!title) return { icon: '', isItalian: false, isMulti: false, displayLabel: '', detectedLanguages: [] };
+    if (!title) return { icon: '', isItalian: false, isMaybeItalian: false, isMulti: false, displayLabel: '', detectedLanguages: [], confidence: 0 };
 
     const detectedLanguages = [];
     const pushLanguage = (lang) => {
@@ -247,31 +343,52 @@ function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedI
     if (parsedInfo?.rawLanguages?.length > 0) {
         parsedInfo.rawLanguages.forEach(pushLanguage);
     } else {
-        if (/\b(ita|italian|italiano)\b/i.test(title) && !REGEX_SUB_ONLY.test(title)) pushLanguage('Italian');
-        if (/\b(eng|english)\b/i.test(title) && !/\b(eng|english)[.\s\-_]?sub/i.test(title)) pushLanguage('English');
-        if (/\b(multi)\b/i.test(title) && !/\b(multi)[.\s\-_]?sub/i.test(title)) pushLanguage('Multi');
-        if (/\b(dual)\b/i.test(title) && !/\b(dual)[.\s\-_]?sub/i.test(title)) pushLanguage('Dual Audio');
-        if (/\b(jpn|japanese)\b/i.test(title)) pushLanguage('Japanese');
-        if (/\b(fra|french)\b/i.test(title)) pushLanguage('French');
-        if (/\b(ger|german)\b/i.test(title)) pushLanguage('German');
-        if (/\b(esp|spanish)\b/i.test(title)) pushLanguage('Spanish');
+        if (/(ita|italian|italiano)/i.test(title)) pushLanguage('Italian');
+        if (/(eng|english)/i.test(title) && !/(eng|english)[.\s\-_]?sub/i.test(title)) pushLanguage('English');
+        if (/(multi)/i.test(title) && !/(multi)[.\s\-_]?sub/i.test(title)) pushLanguage('Multi');
+        if (/(dual)/i.test(title) && !/(dual)[.\s\-_]?sub/i.test(title)) pushLanguage('Dual Audio');
+        if (/(jpn|japanese)/i.test(title)) pushLanguage('Japanese');
+        if (/(fra|french)/i.test(title)) pushLanguage('French');
+        if (/(ger|german)/i.test(title)) pushLanguage('German');
+        if (/(esp|spanish)/i.test(title)) pushLanguage('Spanish');
     }
+
+    const subOnly = REGEX_SUB_ONLY.test(title);
+    const explicitIta = /(ita|italian|italiano)/i.test(title);
+    const audioConfirmedIta = REGEX_AUDIO_CONFIRM.test(title) || REGEX_CONTEXT_IT.test(title) || /(?:dub(?:bed)?|audio|lang|lingua|doppiat[oa])(?:[\s.\-_:/-]+)(?:it|ita|italian|italiano)/i.test(title);
+    const multiIta = REGEX_MULTI_ITA.test(title);
+    const isolatedIt = REGEX_ISOLATED_IT.test(title) && !REGEX_FALSE_IT.test(title);
+    const trustedGroup = REGEX_TRUSTED_GROUPS.test(title);
+    const titleMatched = italianMovieTitle ? isItalianByTitleMatch(title, italianMovieTitle) : false;
+    const trustedSource = !!(source && isTrustedSource(source, null));
 
     let hasIta = detectedLanguages.includes('Italian');
     const hasEng = detectedLanguages.includes('English');
     const hasMulti = detectedLanguages.includes('Multi') || detectedLanguages.includes('Dual Audio');
 
-    if (!hasIta && (REGEX_TRUSTED_GROUPS.test(title) || REGEX_STRONG_ITA.test(title) || REGEX_MULTI_ITA.test(title) || REGEX_CONTEXT_IT.test(title))) hasIta = true;
-    if (!hasIta && REGEX_ISOLATED_IT.test(title) && !REGEX_FALSE_IT.test(title)) hasIta = true;
-    if (!hasIta && italianMovieTitle) hasIta = isItalianByTitleMatch(title, italianMovieTitle);
-    if (source && isTrustedSource(source, null)) hasIta = true;
+    let confidence = 0;
+    if (hasIta) confidence = Math.max(confidence, subOnly ? 4 : 9);
+    if (explicitIta) confidence = Math.max(confidence, subOnly ? 4 : 8);
+    if (audioConfirmedIta) confidence = Math.max(confidence, 9);
+    if (multiIta) confidence = Math.max(confidence, 7);
+    if (trustedGroup) confidence = Math.max(confidence, subOnly ? 4 : 6);
+    if (isolatedIt) confidence = Math.max(confidence, 4);
+    if (titleMatched) confidence = Math.max(confidence, 5);
+    if (trustedSource) confidence = Math.max(confidence, 5);
+    if (hasMulti && (explicitIta || audioConfirmedIta || trustedGroup || trustedSource || titleMatched)) confidence = Math.max(confidence, 7);
 
-    if (hasIta && hasEng) return { icon: '🇮🇹 🇬🇧', isItalian: true, isMulti: true, displayLabel: '🇮🇹 🇬🇧', detectedLanguages };
-    if (hasIta) return { icon: '🇮🇹', isItalian: true, isMulti: hasMulti, displayLabel: '🇮🇹', detectedLanguages };
-    if (hasMulti) return { icon: '🌈', isItalian: false, isMulti: true, displayLabel: '🌈 MULTI', detectedLanguages };
-    if (hasEng) return { icon: '🇬🇧', isItalian: false, isMulti: false, displayLabel: '🇬🇧', detectedLanguages };
-    if (detectedLanguages.length > 0) return { icon: '🌐', isItalian: false, isMulti: false, displayLabel: '🌐', detectedLanguages };
-    return { icon: '', isItalian: false, isMulti: false, displayLabel: '', detectedLanguages };
+    if (subOnly && !audioConfirmedIta && !multiIta && !trustedGroup && !trustedSource && !titleMatched) confidence = Math.min(confidence, 2);
+
+    hasIta = confidence >= 5;
+    const isMaybeItalian = confidence >= 3;
+
+    if (hasIta && hasEng) return { icon: '🇮🇹 🇬🇧', isItalian: true, isMaybeItalian, isMulti: true, displayLabel: '🇮🇹 🇬🇧', detectedLanguages, confidence };
+    if (hasIta) return { icon: '🇮🇹', isItalian: true, isMaybeItalian, isMulti: hasMulti, displayLabel: '🇮🇹', detectedLanguages, confidence };
+    if (hasMulti && isMaybeItalian) return { icon: '🇮🇹 🌈', isItalian: false, isMaybeItalian: true, isMulti: true, displayLabel: '🇮🇹 🌈', detectedLanguages, confidence };
+    if (hasMulti) return { icon: '🌈', isItalian: false, isMaybeItalian, isMulti: true, displayLabel: '🌈 MULTI', detectedLanguages, confidence };
+    if (hasEng) return { icon: '🇬🇧', isItalian: false, isMaybeItalian, isMulti: false, displayLabel: '🇬🇧', detectedLanguages, confidence };
+    if (detectedLanguages.length > 0) return { icon: '🌐', isItalian: false, isMaybeItalian, isMulti: false, displayLabel: '🌐', detectedLanguages, confidence };
+    return { icon: '', isItalian: false, isMaybeItalian, isMulti: false, displayLabel: '', detectedLanguages, confidence };
 }
 
 function formatLanguageLabel(languageInfo, fallbackLanguages = []) {
@@ -414,10 +531,66 @@ function estimateSeeders(knownSeeders, infoHash) {
 
 const LIMITERS = {
   scraper: new Bottleneck({ maxConcurrent: 40, minTime: 10 }),
-  rd: new Bottleneck({ maxConcurrent: 15, minTime: 200 }),
+  remoteIndexer: new Bottleneck({ maxConcurrent: 8, minTime: 25 }),
+  externalAddons: new Bottleneck({ maxConcurrent: 10, minTime: 20 }),
+  metadata: new Bottleneck({ maxConcurrent: 6, minTime: 50 }),
+  rdResolve: new Bottleneck({ maxConcurrent: 15, minTime: 180 }),
+  adResolve: new Bottleneck({ maxConcurrent: 10, minTime: 220 }),
+  tbResolve: new Bottleneck({ maxConcurrent: 8, minTime: 250 }),
+  lazyPlay: new Bottleneck({ maxConcurrent: 20, minTime: 30 }),
+  lazyWarmup: new Bottleneck({ maxConcurrent: 3, minTime: 350 }),
+  cloudBuild: new Bottleneck({ maxConcurrent: 4, minTime: 250 }),
+  webVix: new Bottleneck({ maxConcurrent: 6, minTime: 25 }),
+  webGhd: new Bottleneck({ maxConcurrent: 4, minTime: 40 }),
+  webGs: new Bottleneck({ maxConcurrent: 4, minTime: 40 }),
+  webAw: new Bottleneck({ maxConcurrent: 4, minTime: 40 }),
+  webGf: new Bottleneck({ maxConcurrent: 4, minTime: 40 }),
   packResolver: new Bottleneck({ maxConcurrent: 1, minTime: 2000 }),
   bgPackJobs: new Bottleneck({ maxConcurrent: 2, minTime: 25 }),
 };
+LIMITERS.rd = LIMITERS.rdResolve;
+LIMITERS.ad = LIMITERS.adResolve;
+LIMITERS.tb = LIMITERS.tbResolve;
+
+
+function getLimiterStats() {
+    const stats = {};
+    for (const [name, limiter] of Object.entries(LIMITERS || {})) {
+        if (!limiter || typeof limiter.counts !== 'function') continue;
+        try { stats[name] = limiter.counts(); } catch (_) {}
+    }
+    return stats;
+}
+
+function getStatsSnapshot() {
+    return {
+        status: 'ok',
+        startedAt: new Date(runtimeMetrics.startedAt).toISOString(),
+        uptimeSec: Math.round((Date.now() - runtimeMetrics.startedAt) / 1000),
+        inflight: {
+            sharedFetch: sharedFetchInflight.size,
+            streams: streamInflight.size,
+            metadata: metadataInflight.size,
+            cloudBuild: cloudBuildInflight.size
+        },
+        cache: {
+            stream: getCacheSnapshot(runtimeMetrics.cache.stream),
+            metadata: getCacheSnapshot(runtimeMetrics.cache.metadata),
+            lazy: getCacheSnapshot(runtimeMetrics.cache.lazy),
+            cloud: getCacheSnapshot(runtimeMetrics.cache.cloud),
+            raw: getCacheSnapshot(runtimeMetrics.cache.raw),
+            keys: {
+                user: myCache.keys().length,
+                raw: rawCache.keys().length,
+                cloud: cloudBuildCache.keys().length
+            }
+        },
+        counters: runtimeMetrics.counters,
+        timers: runtimeMetrics.timers,
+        providers: runtimeMetrics.providers,
+        limiters: getLimiterStats()
+    };
+}
 
 function extractSeasonEpisodeFromFilename(filename, defaultSeason = 1) {
     const name = String(filename || '');
@@ -460,27 +633,122 @@ function extractProvider(title) {
   return match?.[1] || "P2P";
 }
 
+
 function deduplicateResults(results) {
-  const hashMap = new Map();
+  const grouped = new Map();
+
+  const normalizeFileIdxValue = (value) => {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = parseInt(value, 10);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+  };
+
+  const getEpisodeContext = (item) => {
+    const directSeason = parseInt(item?.season, 10);
+    const directEpisode = parseInt(item?.episode, 10);
+    if (Number.isInteger(directSeason) && Number.isInteger(directEpisode) && directEpisode > 0) {
+      return { season: directSeason, episode: directEpisode };
+    }
+    return extractSeasonEpisodeFromFilename(item?.title || '', 1);
+  };
+
+  const getResolutionScore = (title) => {
+    const t = String(title || '').toLowerCase();
+    if (REGEX_QUALITY_FILTER["4K"].test(t)) return 4000;
+    if (REGEX_QUALITY_FILTER["1080p"].test(t)) return 3000;
+    if (REGEX_QUALITY_FILTER["720p"].test(t)) return 2000;
+    return 1000;
+  };
+
+  const buildDedupeKey = (hash, item) => {
+    const fileIdx = normalizeFileIdxValue(item?.fileIdx);
+    if (fileIdx !== null) return `${hash}:${fileIdx}`;
+    const ep = getEpisodeContext(item);
+    if (ep && Number.isInteger(ep.season) && Number.isInteger(ep.episode)) return `${hash}:s${ep.season}e${ep.episode}`;
+    if (item?._isPack || isSeasonPack(item?.title)) return `${hash}:pack`;
+    return `${hash}:base`;
+  };
+
+  const scoreResult = (item) => {
+    const title = item?.title || '';
+    const source = item?.source || item?.provider || null;
+    const parsed = parseTitleDetails(title);
+    const langInfo = getLanguageInfo(title, null, source, parsed);
+    const sizeBytes = parseSize(item._size || item.sizeBytes || item.size);
+    const seeders = parseInt(item.seeders, 10) || 0;
+    const fileIdx = normalizeFileIdxValue(item.fileIdx);
+    const episodeContext = getEpisodeContext(item);
+    const providerTrusted = source && isTrustedSource(source, null);
+
+    let score = 0;
+    if (langInfo.isItalian) score += 100000;
+    else if (langInfo.isMaybeItalian) score += 35000;
+    if (langInfo.isMulti) score += 7000;
+    if (REGEX_AUDIO_CONFIRM.test(title)) score += 18000;
+    if (REGEX_STRONG_ITA.test(title)) score += 12000;
+    if (REGEX_MULTI_ITA.test(title)) score += 9000;
+    if (REGEX_TRUSTED_GROUPS.test(title)) score += 8000;
+    if (providerTrusted) score += 6000;
+    if (fileIdx !== null) score += 4500;
+    if (episodeContext) score += 2800;
+    if (item._isPack || isSeasonPack(title)) score += 1800;
+    if (/(web[-.\s]?dl|blu[-.\s]?ray|remux|uhd|hevc|x265|x264|ddp|truehd|dts)/i.test(title)) score += 2200;
+    if (/cam|hdcam|ts|telesync|screener|scr/i.test(title)) score -= 12000;
+    if (langInfo.isSubOnly) score -= 14000;
+    score += getResolutionScore(title);
+    score += Math.min(seeders, 500) * 12;
+    score += Math.min(Math.floor(sizeBytes / (512 * 1024 * 1024)), 800);
+    score += Math.min(title.length, 400);
+    return score;
+  };
+
   for (const item of results) {
     if (!item?.magnet) continue;
     const rawHash = item.infoHash || item.hash || extractInfoHash(item.magnet);
     const finalHash = rawHash ? rawHash.toUpperCase() : null;
     if (!finalHash || finalHash.length !== 40) continue;
-    
+
     item.hash = finalHash;
     item.infoHash = finalHash;
-    item._size = parseSize(item.sizeBytes || item.size);
+    item.fileIdx = normalizeFileIdxValue(item.fileIdx);
+    item._size = parseSize(item._size || item.sizeBytes || item.size);
+    item.seeders = parseInt(item.seeders, 10) || 0;
+    item._dedupeScore = scoreResult(item);
 
-    const currentSeeders = parseInt(item.seeders, 10) || 0;
-    item.seeders = currentSeeders;
+    const dedupeKey = buildDedupeKey(finalHash, item);
+    const existing = grouped.get(dedupeKey);
+    if (!existing) {
+      grouped.set(dedupeKey, item);
+      continue;
+    }
 
-    const existing = hashMap.get(finalHash);
-    const existingSeeders = existing ? (parseInt(existing.seeders, 10) || 0) : -1;
-
-    if (!existing || currentSeeders > existingSeeders) hashMap.set(finalHash, item);
+    const existingScore = existing._dedupeScore || 0;
+    if (item._dedupeScore > existingScore) {
+      grouped.set(dedupeKey, item);
+      continue;
+    }
+    if (item._dedupeScore === existingScore) {
+      const existingSeeders = parseInt(existing.seeders, 10) || 0;
+      if (item.seeders > existingSeeders) {
+        grouped.set(dedupeKey, item);
+        continue;
+      }
+      const existingSize = parseSize(existing._size || existing.sizeBytes || existing.size);
+      const currentSize = parseSize(item._size || item.sizeBytes || item.size);
+      if (currentSize > existingSize) {
+        grouped.set(dedupeKey, item);
+        continue;
+      }
+      const existingTitleLen = String(existing.title || '').length;
+      const currentTitleLen = String(item.title || '').length;
+      if (currentTitleLen > existingTitleLen) grouped.set(dedupeKey, item);
+    }
   }
-  return Array.from(hashMap.values());
+  const deduped = Array.from(grouped.values());
+  incrementMetric('dedupe.input', Array.isArray(results) ? results.length : 0);
+  incrementMetric('dedupe.output', deduped.length);
+  incrementMetric('dedupe.removed', Math.max(0, (Array.isArray(results) ? results.length : 0) - deduped.length));
+  return deduped;
 }
 
 function filterByQualityLimit(results, limit) {
@@ -504,7 +772,7 @@ function isSafeForItalian(item) {
   if (!item || !item.title) return false;
   const parsedInfo = parseTitleDetails(item.title);
   const langInfo = getLanguageInfo(item.title, null, item.source || item.provider || null, parsedInfo);
-  return !!langInfo.isItalian;
+  return !!(langInfo.isItalian || (langInfo.confidence || 0) >= 4 || langInfo.isMaybeItalian);
 }
 
 function validateStreamRequest(type, id) {
@@ -541,7 +809,29 @@ function getConfig(configStr) {
     if (configStr.length > MAX_CONFIG_LENGTH) throw new Error(`Config troppo grande (${configStr.length})`);
     const parsed = JSON.parse(decodeConfigBase64(configStr));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Config non valida");
-    return parsed;
+
+    const config = { ...parsed };
+    config.filters = (config.filters && typeof config.filters === 'object' && !Array.isArray(config.filters)) ? { ...config.filters } : {};
+    const allowedServices = new Set(['rd', 'ad', 'tb', 'p2p', 'web']);
+    if (config.service && !allowedServices.has(String(config.service).toLowerCase())) config.service = 'rd';
+
+    const numericFilterKeys = ['maxPerQuality', 'maxSizeGB', 'instantDebridTop', 'warmupTop'];
+    for (const key of numericFilterKeys) {
+      if (config.filters[key] !== undefined && config.filters[key] !== null && config.filters[key] !== '') {
+        const value = parseInt(config.filters[key], 10);
+        if (Number.isNaN(value)) delete config.filters[key];
+        else config.filters[key] = value;
+      }
+    }
+
+    const booleanFilterKeys = ['enableVix', 'enableGhd', 'enableGs', 'enableAnimeWorld', 'enableGf', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast'];
+    for (const key of booleanFilterKeys) if (config.filters[key] !== undefined) config.filters[key] = !!config.filters[key];
+
+    if (config.filters.language && !['ita', 'eng', 'all'].includes(String(config.filters.language).toLowerCase())) {
+      config.filters.language = config.filters.allowEng ? 'all' : 'ita';
+    }
+
+    return config;
   } catch (err) {
     logger.error(`Errore parsing config: ${err.message}`);
     return {};
@@ -554,5 +844,6 @@ module.exports = {
   REGEX_YEAR, REGEX_QUALITY_FILTER, REGEX_STRONG_ITA, REGEX_CONTEXT_IT, REGEX_ISOLATED_IT, REGEX_MULTI_ITA, REGEX_TRUSTED_GROUPS, REGEX_FALSE_IT, REGEX_SUB_ONLY, REGEX_AUDIO_CONFIRM,
   languageMapping, normalizeLanguageName, parseTitleDetails, stripVisualPrefixes, normalizeSearchText, isItalianByTitleMatch, isTrustedSource, getLanguageInfo, formatLanguageLabel, isSeasonPack, isGoodShortQueryMatch, chooseBestPackTitle, shouldUpdatePackTitle, base32ToHex, extractInfoHash, estimateVisualSize, estimateSeeders,
   extractSeasonEpisodeFromFilename, parseSize, extractSeeders, extractSize, extractProvider, deduplicateResults, filterByQualityLimit, isSafeForItalian, validateStreamRequest, withTimeout,
-  safeCompare, withSharedPromise, decodeConfigBase64, getConfig
+  safeCompare, withSharedPromise, decodeConfigBase64, getConfig, TRACKERS, buildTrackerMagnet,
+  incrementMetric, recordDuration, recordProviderMetric, getStatsSnapshot
 };
