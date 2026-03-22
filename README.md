@@ -403,21 +403,17 @@ Supportare Leviathan significa rafforzare un Protocollo <b>libero, curato e orie
 
 ---
 
-<h3 align="center">
-  🧬 PROTOCOL ARCHITECTURE & ENGINEERING
-</h3>
+<h3 align="center">🧬 PROTOCOL ARCHITECTURE & ENGINEERING</h3>
 
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,100:00E0FF&height=120&section=header&text=LUC4N3X&fontSize=38&fontColor=ffffff&animation=fadeIn&fontAlignY=35" width="100%" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,100:00E0FF&height=110&section=header&text=Leviathan%20Project&fontSize=34&fontColor=ffffff&animation=fadeIn&fontAlignY=35" width="100%" />
 </p>
 
 <p align="center">
   <a href="https://github.com/LUC4N3X">
-    <img src="https://github.com/LUC4N3X.png" width="160" alt="LUC4N3X" style="border-radius: 50%;" />
+    <img src="https://github.com/LUC4N3X.png" width="140" alt="Project Lead" />
   </a>
 </p>
-
-<h1 align="center">LUC4N3X</h1>
 
 <p align="center">
   <img src="https://img.shields.io/badge/PROJECT%20LEAD-00E0FF?style=for-the-badge&labelColor=0d1117" />
@@ -425,14 +421,14 @@ Supportare Leviathan significa rafforzare un Protocollo <b>libero, curato e orie
 </p>
 
 <p align="center">
-  <b>Founder of the Protocol</b><br>
-  <sub>All credit goes entirely to <b>LUC4N3X</b>.</sub>
+  <b>LUC4N3X</b><br>
+  <sub>Founder of the Protocol • Sole Architect • Core Engineering</sub>
 </p>
 
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:00E0FF,100:0d1117&height=70&section=footer" width="100%" />
+  <sub>All credit belongs exclusively to him.</sub>
 </p>
 
 <p align="center">
-  <sub>Leviathan Project © 2025 • Evolution Guaranteed</sub>
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:00E0FF,100:0d1117&height=65&section=footer" width="100%" />
 </p>
