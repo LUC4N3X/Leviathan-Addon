@@ -28,8 +28,134 @@ const {
   logger, Cache, LIMITERS, CONFIG, REGEX_QUALITY_FILTER, REGEX_SUB_ONLY, REGEX_AUDIO_CONFIRM, REGEX_YEAR, EMPTY_STREAM_TTL, METADATA_CACHE_TTL,
   getLanguageInfo, parseTitleDetails, formatLanguageLabel, isSeasonPack, isGoodShortQueryMatch, chooseBestPackTitle, shouldUpdatePackTitle,
   extractSeasonEpisodeFromFilename, estimateVisualSize, estimateSeeders, deduplicateResults, filterByQualityLimit, extractInfoHash,
-  withTimeout, normalizeSearchText, extractSeeders, extractSize, streamInflight, metadataInflight, withSharedPromise
+  withTimeout, normalizeSearchText, extractSeeders, extractSize, streamInflight, metadataInflight, withSharedPromise, buildTrackerMagnet,
+  incrementMetric, recordDuration, recordProviderMetric
 } = require("./utils");
+
+
+function getServiceResolverLimiter(service) {
+    const normalized = String(service || '').toLowerCase();
+    if (normalized === 'ad') return LIMITERS.adResolve;
+    if (normalized === 'tb') return LIMITERS.tbResolve;
+    return LIMITERS.rdResolve;
+}
+
+function getLazyCacheKey(service, item, meta) {
+    return `${service}:${item.hash}:${meta?.season || item.season || 0}:${meta?.episode || item.episode || 0}:${item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : -1}`;
+}
+
+function getCompositeRankScore(item, meta, config) {
+    const title = String(item?.title || '');
+    const source = item?.source || item?.provider || null;
+    const parsed = parseTitleDetails(title);
+    const langInfo = getLanguageInfo(title, meta?.title, source, parsed);
+    const sizeBytes = Number(item?._size || item?.sizeBytes || 0);
+    const seeders = parseInt(item?.seeders, 10) || 0;
+    const explicitFileIdx = item?.fileIdx !== undefined && item?.fileIdx !== null;
+    const isPack = !!(item?._isPack || isSeasonPack(title));
+    const epData = meta?.isSeries ? extractSeasonEpisodeFromFilename(title, meta?.season || 1) : null;
+
+    let score = 0;
+    if (langInfo.isItalian) score += 200000;
+    else if (langInfo.isMaybeItalian) score += 70000;
+    if (langInfo.isMulti) score += 12000;
+    if (REGEX_AUDIO_CONFIRM.test(title)) score += 22000;
+    if (/(web[-.\s]?dl|blu[-.\s]?ray|remux|uhd|hevc|x265|x264|ddp|truehd|dts)/i.test(title)) score += 14000;
+    if (/(4k|2160p|uhd)/i.test(title)) score += 9000;
+    else if (/(1080p|fhd|full[-.\s]?hd)/i.test(title)) score += 7000;
+    else if (/(720p|hd[-.\s]?rip|hdtv|hd)/i.test(title)) score += 4000;
+    if (/(cam|hdcam|ts|telesync|screener|scr)/i.test(title)) score -= 30000;
+    if (langInfo.isSubOnly) score -= 25000;
+    if (explicitFileIdx) score += 7000;
+    if (source && /mircrew|corsaro|lux|wms|dn[a4]?|idn_crew|speedvideo/i.test(String(source))) score += 6000;
+    if (title && /mircrew|corsaro|lux|wms|dn[a4]?|idn_crew|speedvideo/i.test(title)) score += 5000;
+    if (meta?.isSeries) {
+        if (epData && epData.season === meta.season && epData.episode === meta.episode) score += 24000;
+        else if (isPack && new RegExp(`(?:s|season|stagione)\s*0?${meta.season}(?!\d)`, 'i').test(title)) score += 9000;
+        else if (epData && epData.episode !== meta.episode) score -= 18000;
+    }
+    if (!meta?.isSeries && /(?:S\d{2}|SEASON|STAGIONE|\d+x\d+)/i.test(title)) score -= 18000;
+    score += Math.min(seeders, 500) * 18;
+    score += Math.min(Math.floor(sizeBytes / (700 * 1024 * 1024)), 1200);
+    score += Math.min(title.length, 300);
+    if (String(config?.service || '').toLowerCase() === 'tb' && item?._tbCached) score += 15000;
+    return score;
+}
+
+function rerankCompositeResults(results, meta, config, sortMode) {
+    const ranked = Array.isArray(results) ? [...results] : [];
+    ranked.forEach(item => { item._compositeScore = getCompositeRankScore(item, meta, config); });
+    ranked.sort((a, b) => {
+        const scoreDelta = (b._compositeScore || 0) - (a._compositeScore || 0);
+        const sizeA = a._size || a.sizeBytes || 0;
+        const sizeB = b._size || b.sizeBytes || 0;
+        if (sortMode === 'size' && sizeB !== sizeA) return sizeB - sizeA || scoreDelta;
+        if (sortMode === 'resolution') {
+            const getResScore = (t) => /2160p|4k|uhd/i.test(t) ? 40 : /1080p|fhd/i.test(t) ? 30 : /720p|hd/i.test(t) ? 20 : 10;
+            const resDelta = getResScore(b.title || '') - getResScore(a.title || '');
+            if (resDelta !== 0) return resDelta || scoreDelta;
+        }
+        if (scoreDelta !== 0) return scoreDelta;
+        const seedDelta = (parseInt(b.seeders, 10) || 0) - (parseInt(a.seeders, 10) || 0);
+        if (seedDelta !== 0) return seedDelta;
+        return sizeB - sizeA;
+    });
+    return ranked;
+}
+
+async function guardedProviderCall(providerName, limiter, timeoutMs, factory) {
+    const startedAt = Date.now();
+    try {
+        const result = await limiter.schedule(() => withTimeout(Promise.resolve().then(factory), timeoutMs, providerName));
+        const duration = Date.now() - startedAt;
+        recordDuration(`provider.${providerName}`, duration);
+        recordProviderMetric(providerName, true, duration);
+        return Array.isArray(result) ? result : (result ? [result] : []);
+    } catch (err) {
+        const duration = Date.now() - startedAt;
+        const isTimeout = /timeout/i.test(String(err?.message || ''));
+        recordDuration(`provider.${providerName}`, duration);
+        recordProviderMetric(providerName, false, duration, { timeout: isTimeout, error: err?.message || err });
+        logger.warn(`⚠️ [${providerName}] failed: ${err.message}`);
+        return [];
+    }
+}
+
+function warmupLazyStreamsInBackground(config, items, meta) {
+    const service = String(config?.service || 'rd').toLowerCase();
+    const apiKey = config?.key || config?.rd;
+    if (!apiKey || !Array.isArray(items) || items.length === 0) return;
+    const maxWarmups = Math.max(0, Math.min(4, parseInt(config?.filters?.warmupTop ?? process.env.LAZY_WARMUP_TOP ?? '2', 10) || 0));
+    if (maxWarmups <= 0) return;
+
+    const resolverLimiter = getServiceResolverLimiter(service);
+    items.slice(0, maxWarmups).forEach(item => {
+        LIMITERS.lazyWarmup.schedule(async () => {
+            const lazyCacheKey = getLazyCacheKey(service, item, meta);
+            const cached = await Cache.getLazyLink(lazyCacheKey);
+            if (cached?.url) return;
+            const startedAt = Date.now();
+            try {
+                let streamData = null;
+                if (service === 'tb') {
+                    streamData = await resolverLimiter.schedule(() => TB.getStreamLink(apiKey, item.magnet, String(meta?.season || item.season || 0), String(meta?.episode || item.episode || 0), item.hash, item.fileIdx !== undefined && item.fileIdx !== null ? String(item.fileIdx) : undefined));
+                } else if (service === 'ad') {
+                    streamData = await resolverLimiter.schedule(() => AD.getStreamLink(apiKey, item.magnet, meta?.season || item.season || 0, meta?.episode || item.episode || 0, item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : 0));
+                } else {
+                    streamData = await resolverLimiter.schedule(() => RD.getStreamLink(apiKey, item.magnet, meta?.season || item.season || 0, meta?.episode || item.episode || 0, item.fileIdx));
+                }
+                if (streamData?.url) {
+                    await Cache.cacheLazyLink(lazyCacheKey, streamData, 180);
+                    incrementMetric('lazyWarmup.success');
+                }
+                recordProviderMetric(`warmup.${service}`, true, Date.now() - startedAt);
+            } catch (err) {
+                incrementMetric('lazyWarmup.fail');
+                recordProviderMetric(`warmup.${service}`, false, Date.now() - startedAt, { timeout: /timeout/i.test(String(err?.message || '')), error: err?.message || err });
+            }
+        }).catch(err => logger.warn(`⚠️ [WARMUP] Queue error: ${err.message}`));
+    });
+}
 
 async function resolvePackWithBestEffort(item, config, meta, siblingStreams = []) {
     if (!item || !item.hash) return null;
@@ -336,7 +462,7 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
     }
 }
 
-async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, config) { 
+async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, config, italianMovieTitle = null) { 
     if (!CONFIG.INDEXER_URL) return [];
     try {
         logger.info(`🌐 [REMOTE] Query VPS: ${CONFIG.INDEXER_URL} | ID: ${tmdbId} S:${season} E:${episode}`);
@@ -347,8 +473,8 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
         if (!data || !data.torrents || !Array.isArray(data.torrents)) return [];
         
         const mapped = data.torrents.map(t => {
-            let magnet = t.magnet || `magnet:?xt=urn:btih:${t.info_hash}&dn=${encodeURIComponent(t.title)}`;
-            if(!magnet.includes("tr=")) magnet += "&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fopen.demonii.com%3A1337%2Fannounce";
+            let magnet = t.magnet || buildTrackerMagnet(t.info_hash, t.title);
+            if (!String(magnet).includes("tr=")) magnet = buildTrackerMagnet(t.info_hash, t.title);
             let providerName = (t.provider || 'P2P').replace(/LeviathanDB/i, '').replace(/[()]/g, '').trim() || 'P2P';
             const finalHash = t.info_hash ? t.info_hash.toUpperCase() : extractInfoHash(magnet);
             return { title: t.title, magnet: magnet, hash: finalHash, infoHash: finalHash, size: "💾 DB", sizeBytes: parseInt(t.size), seeders: parseInt(t.seeders, 10) || 0, source: providerName, fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined, _isPack: isSeasonPack(t.title) };
@@ -356,9 +482,18 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
 
         const langMode = config && config.filters ? (config.filters.language || (config.filters.allowEng ? "all" : "ita")) : "ita";
         return mapped.filter(item => {
-             const langInfo = getLanguageInfo(item.title, null, item.source, parseTitleDetails(item.title));
-             if (langMode === 'ita') return langInfo.isItalian;
-             if (langMode === 'eng') return !langInfo.isItalian;
+             const title = item.title || '';
+             const langInfo = getLanguageInfo(title, italianMovieTitle, item.source, parseTitleDetails(title));
+             if (langMode === 'ita') {
+                 if (langInfo.isItalian || (langInfo.confidence || 0) >= 4 || langInfo.isMaybeItalian) return true;
+                 if (REGEX_SUB_ONLY.test(title) && !REGEX_AUDIO_CONFIRM.test(title)) {
+                     const stripped = title.replace(REGEX_SUB_ONLY, ' ');
+                     const strippedInfo = getLanguageInfo(stripped, italianMovieTitle, item.source, parseTitleDetails(stripped));
+                     return strippedInfo.isItalian || (strippedInfo.confidence || 0) >= 4 || strippedInfo.isMaybeItalian;
+                 }
+                 return false;
+             }
+             if (langMode === 'eng') return !langInfo.isItalian || (langInfo.confidence || 0) < 5;
              return true;
         });
     } catch (e) { logger.error("Err Remote Indexer:", { error: e.message }); return []; }
@@ -403,6 +538,8 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const cachedAgain = await Cache.getCachedStream(cacheKey);
   if (cachedAgain) return cachedAgain;
 
+  const generationStartedAt = Date.now();
+  incrementMetric('stream.generate.calls');
   const userTmdbKey = config.tmdb; 
   let finalId = id.replace('ai-recs:', '');
   
@@ -414,7 +551,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       } catch (err) {}
   }
 
-  const meta = await getMetadata(finalId, type, config);
+  const meta = await LIMITERS.metadata.schedule(() => getMetadata(finalId, type, config));
   if (!meta) return { streams: [] };
 
   logger.info(`🚀 [SPEED] Start search for: ${meta.title}`);
@@ -423,6 +560,17 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const dbOnlyMode = config.filters?.dbOnly === true; 
   const langMode = config.filters?.language || (config.filters?.allowEng ? "all" : "ita");
 
+  const keepItalianCandidate = (title, sourceName) => {
+      const langInfo = getLanguageInfo(title, meta.title, sourceName, parseTitleDetails(title));
+      if (langInfo.isItalian || (langInfo.confidence || 0) >= 4 || langInfo.isMaybeItalian) return true;
+      if (REGEX_SUB_ONLY.test(title) && !REGEX_AUDIO_CONFIRM.test(title)) {
+          const strippedTitle = title.replace(REGEX_SUB_ONLY, ' ');
+          const strippedInfo = getLanguageInfo(strippedTitle, meta.title, sourceName, parseTitleDetails(strippedTitle));
+          return strippedInfo.isItalian || (strippedInfo.confidence || 0) >= 4 || strippedInfo.isMaybeItalian;
+      }
+      return false;
+  };
+
   const aggressiveFilter = (item) => {
       if (!item?.magnet) return false;
       const source = (item.source || "").toLowerCase(), t = item.title, tLower = t.toLowerCase();
@@ -430,11 +578,8 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
       const parsedLangInfo = getLanguageInfo(t, meta.title, item.source, parseTitleDetails(t));
       if (langMode === "ita") {
-           if (!parsedLangInfo.isItalian) return false;
-           if (REGEX_SUB_ONLY.test(t) && !REGEX_AUDIO_CONFIRM.test(t)) {
-               if (!getLanguageInfo(t.replace(REGEX_SUB_ONLY, ""), meta.title, item.source, parseTitleDetails(t.replace(REGEX_SUB_ONLY, ""))).isItalian) return false;
-           }
-      } else if (langMode === "eng" && parsedLangInfo.isItalian) return false;
+           if (!keepItalianCandidate(t, item.source)) return false;
+      } else if (langMode === "eng" && parsedLangInfo.isItalian && (parsedLangInfo.confidence || 0) >= 5) return false;
       
       const metaYear = parseInt(meta.year);
       if (metaYear === 2025 && /frankenstein/i.test(meta.title) && !item.title.includes("2025")) return false;
@@ -484,13 +629,15 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   };
 
   const remotePromise = Cache.fetchWithCache('RemoteIndexer', `${type}:${tmdbIdLookup || finalId}:${meta.season}:${meta.episode}`, 43200, () =>
-      withTimeout(queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config), CONFIG.TIMEOUTS.REMOTE_INDEXER, 'Remote Indexer')
+      guardedProviderCall('RemoteIndexer', LIMITERS.remoteIndexer, CONFIG.TIMEOUTS.REMOTE_INDEXER, () => queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config, meta.title))
   );
 
   let externalPromise = Promise.resolve([]);
-  if (!dbOnlyMode) externalPromise = Cache.fetchWithCache('ExternalAddons', `${type}:${finalId}`, 43200, () => fetchExternalResults(type, finalId, config));
+  if (!dbOnlyMode) externalPromise = Cache.fetchWithCache('ExternalAddons', `${type}:${finalId}`, 43200, () => guardedProviderCall('ExternalAddons', LIMITERS.externalAddons, CONFIG.TIMEOUTS.EXTERNAL, () => fetchExternalResults(type, finalId, config)));
 
-  const [remoteResults, externalResults] = await Promise.all([remotePromise, externalPromise]);
+  const [remoteSettled, externalSettled] = await Promise.allSettled([remotePromise, externalPromise]);
+  const remoteResults = remoteSettled.status === 'fulfilled' ? remoteSettled.value : [];
+  const externalResults = externalSettled.status === 'fulfilled' ? externalSettled.value : [];
   logger.info(`📊 [STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
 
   let fastResults = [...remoteResults, ...externalResults].filter(aggressiveFilter);
@@ -516,7 +663,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
                   ));
               }
           }));
-          const scrapedResultsRaw = await Promise.all(allScraperTasks).then(results => results.flat());
+          const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks)).flatMap(result => result.status === 'fulfilled' ? result.value : []);
           cleanResults = deduplicateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)]);
           validFastCount = cleanResults.length;
           logger.info(`📊 [STATS SCRAPER] Trovati e filtrati ${validFastCount} risultati aggiuntivi dagli Scraper.`);
@@ -540,32 +687,26 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
   let rankedList = rankAndFilterResults(cleanResults, meta, config);
   const sortMode = config.sort || (config.filters && config.filters.sort) || 'balanced';
-  
-  if (sortMode !== 'balanced') {
-      rankedList.sort((a, b) => {
-          const sizeA = a._size || a.sizeBytes || 0, sizeB = b._size || b.sizeBytes || 0;
-          if (sortMode === 'size') return sizeB - sizeA;
-          if (sortMode === 'resolution') {
-              const getResScore = (t) => /2160p|4k|uhd/.test(t.toLowerCase()) ? 40 : /1080p|fhd/.test(t.toLowerCase()) ? 30 : /720p|hd/.test(t.toLowerCase()) ? 20 : 10;
-              const scoreA = getResScore(a.title), scoreB = getResScore(b.title);
-              return scoreA !== scoreB ? scoreB - scoreA : sizeB - sizeA;
-          }
-          return 0;
-      });
-  }
+  rankedList = rerankCompositeResults(rankedList, meta, config, sortMode);
 
   if (config.filters && config.filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, config.filters.maxPerQuality);
 
   if (config.service === 'tb' && hasDebridKey) {
-      const apiKey = config.key || config.rd, checkLimit = 30; 
-      const candidates = rankedList.slice(0, checkLimit), remainingItems = rankedList.slice(checkLimit);
+      const apiKey = config.key || config.rd;
+      const sourceRanked = [...rankedList];
+      const progressiveWindows = [30, 60, 90];
+      let verifiedList = [];
+      let usedWindow = 0;
 
-      if (candidates.length > 0) {
+      for (const checkLimit of progressiveWindows) {
+          const candidates = sourceRanked.slice(0, checkLimit);
+          if (candidates.length === 0) break;
           logger.info(`📦 [TB CHECK] Scansiono ${candidates.length} torrent alla ricerca di file video reali...`);
-          const cacheResults = await TbCache.checkCacheSync(candidates, apiKey, dbHelper, checkLimit);
-          const verifiedList = [];
+          const cacheResults = await LIMITERS.tbResolve.schedule(() => TbCache.checkCacheSync(candidates, apiKey, dbHelper, checkLimit));
+          verifiedList = [];
           for (const item of candidates) {
-              const hash = item.hash.toLowerCase(), result = cacheResults[hash];
+              const hash = item.hash.toLowerCase();
+              const result = cacheResults[hash];
               if (result && result.cached === true) {
                   item._tbCached = true;
                   if (result.file_size) item._size = result.file_size;
@@ -573,25 +714,38 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
                   verifiedList.push(item);
               }
           }
-          logger.info(`📦 [TB CLEANUP] Iniziali: ${candidates.length} -> Rimasti: ${verifiedList.length}`);
-          rankedList = verifiedList;
-          if (remainingItems.length > 0) TbCache.enrichCacheBackground(remainingItems, apiKey, dbHelper);
-      } else { rankedList = []; }
+          usedWindow = candidates.length;
+          if (verifiedList.length >= Math.min(12, CONFIG.MAX_RESULTS) || checkLimit === progressiveWindows[progressiveWindows.length - 1]) break;
+      }
+
+      logger.info(`📦 [TB CLEANUP] Finestra usata: ${usedWindow} -> Rimasti: ${verifiedList.length}`);
+      rankedList = verifiedList;
+      const remainingItems = sourceRanked.slice(usedWindow);
+      if (remainingItems.length > 0) TbCache.enrichCacheBackground(remainingItems, apiKey, dbHelper);
   }
 
   let finalRanked = rankedList.slice(0, CONFIG.MAX_RESULTS);
   let debridStreams = [];
   
   if (finalRanked.length > 0 && hasDebridKey) {
-      const TOP_LIMIT = Math.max(0, Math.min(10, parseInt(config.filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0)); 
+      const TOP_LIMIT = Math.max(0, Math.min(10, parseInt(config.filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0));
+      const serviceLimiter = getServiceResolverLimiter(config.service);
       const immediatePromises = finalRanked.slice(0, TOP_LIMIT).map(item => {
-          item.season = meta.season; item.episode = meta.episode; config.rawConf = userConfStr; 
-          return LIMITERS.rd.schedule(() => resolveDebridLink(config, item, config.filters?.showFake, reqHost, meta));
+          item.season = meta.season;
+          item.episode = meta.episode;
+          config.rawConf = userConfStr;
+          return serviceLimiter.schedule(() => resolveDebridLink(config, item, config.filters?.showFake, reqHost, meta));
       });
-      const lazyStreams = finalRanked.slice(TOP_LIMIT).map(item => generateLazyStream(item, config, meta, reqHost, userConfStr, true));
-      const resolvedInstant = (await Promise.all(immediatePromises)).filter(Boolean);
+      const lazyCandidates = finalRanked.slice(TOP_LIMIT).map(item => {
+          item.season = meta.season;
+          item.episode = meta.episode;
+          return item;
+      });
+      const lazyStreams = lazyCandidates.map(item => generateLazyStream(item, config, meta, reqHost, userConfStr, true));
+      const resolvedInstant = (await Promise.allSettled(immediatePromises)).flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
       debridStreams = [...resolvedInstant, ...lazyStreams];
-  } 
+      warmupLazyStreamsInBackground(config, lazyCandidates, meta);
+  }
   else if (finalRanked.length > 0 && isP2PEnabled) {
       logger.info(`⚡ [P2P MODE] Generating direct streams for ${meta.title}`);
       debridStreams = finalRanked.map(item => P2P.formatP2PStream(item, config));
@@ -601,14 +755,19 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
   if (!dbOnlyMode) {
        const rawId = `${type}:${finalId}:${meta.season || 0}:${meta.episode || 0}`;
-       const vixPromise = Cache.fetchWithCache('Vix', rawId, 43200, () => searchVix(meta, config, reqHost));
+       const vixPromise = Cache.fetchWithCache('Vix', rawId, 43200, () => guardedProviderCall('Vix', LIMITERS.webVix, CONFIG.TIMEOUTS.SCRAPER, () => searchVix(meta, config, reqHost)));
        let ghdPromise = Promise.resolve([]), gsPromise = Promise.resolve([]), awPromise = Promise.resolve([]), gfPromise = Promise.resolve([]);
-       if (config.filters?.enableGhd) ghdPromise = Cache.fetchWithCache('GuardaHD', rawId, 43200, () => searchGuardaHD(meta, config));
-       if (config.filters?.enableGs) gsPromise = Cache.fetchWithCache('GuardaSerie', rawId, 43200, () => searchGuardaserie(meta, config));
-       if (config.filters?.enableAnimeWorld) awPromise = Cache.fetchWithCache('AnimeWorld', rawId, 43200, () => searchAnimeWorld(id, meta, config));
-       if (config.filters?.enableGf) gfPromise = Cache.fetchWithCache('GuardaFlix', rawId, 43200, () => searchGuardaFlix(meta, config));
+       if (config.filters?.enableGhd) ghdPromise = Cache.fetchWithCache('GuardaHD', rawId, 43200, () => guardedProviderCall('GuardaHD', LIMITERS.webGhd, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaHD(meta, config)));
+       if (config.filters?.enableGs) gsPromise = Cache.fetchWithCache('GuardaSerie', rawId, 43200, () => guardedProviderCall('GuardaSerie', LIMITERS.webGs, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaserie(meta, config)));
+       if (config.filters?.enableAnimeWorld) awPromise = Cache.fetchWithCache('AnimeWorld', rawId, 43200, () => guardedProviderCall('AnimeWorld', LIMITERS.webAw, CONFIG.TIMEOUTS.SCRAPER, () => searchAnimeWorld(id, meta, config)));
+       if (config.filters?.enableGf) gfPromise = Cache.fetchWithCache('GuardaFlix', rawId, 43200, () => guardedProviderCall('GuardaFlix', LIMITERS.webGf, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaFlix(meta, config)));
 
-       [rawVix, formattedGhd, formattedGs, formattedAw, formattedGf] = await Promise.all([vixPromise, ghdPromise, gsPromise, awPromise, gfPromise]);
+       const webSettled = await Promise.allSettled([vixPromise, ghdPromise, gsPromise, awPromise, gfPromise]);
+       rawVix = webSettled[0].status === 'fulfilled' ? webSettled[0].value : [];
+       formattedGhd = webSettled[1].status === 'fulfilled' ? webSettled[1].value : [];
+       formattedGs = webSettled[2].status === 'fulfilled' ? webSettled[2].value : [];
+       formattedAw = webSettled[3].status === 'fulfilled' ? webSettled[3].value : [];
+       formattedGf = webSettled[4].status === 'fulfilled' ? webSettled[4].value : [];
        
        if (aioFormatter && aioFormatter.isAIOStreamsEnabled(config)) {
            const applyAioStyle = (streamList, sourceName) => {
@@ -688,6 +847,8 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const resultObj = { streams: finalStreams };
   const streamTtl = finalStreams.length > 0 ? 1800 : EMPTY_STREAM_TTL;
   await Cache.cacheStream(cacheKey, resultObj, streamTtl);
+  recordDuration('stream.generate.total', Date.now() - generationStartedAt);
+  incrementMetric(finalStreams.length > 0 ? 'stream.generate.nonEmpty' : 'stream.generate.empty');
   logger.info(`💾 SAVED TO CACHE: ${cacheKey} (ttl=${streamTtl}s, streams=${finalStreams.length})`);
   return resultObj;
   });
