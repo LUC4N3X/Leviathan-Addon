@@ -1,23 +1,26 @@
-# Usa Node 20 (necessario per supportare l'oggetto File globale)                                         M-6 Copy
-FROM node:20-slim
+FROM node:20-bookworm-slim
 
-# Imposta la directory di lavoro
+ENV NODE_ENV=production \
+    PORT=7000
+
 WORKDIR /app
 
-# Copia i file di dipendenza
 COPY package*.json ./
 
-# Installa le dipendenze
-RUN npm install --production
+RUN set -eux; \
+    if [ -f package-lock.json ]; then \
+        npm ci --omit=dev --no-audit --no-fund; \
+    else \
+        npm install --omit=dev --no-audit --no-fund; \
+    fi; \
+    npm cache clean --force
 
-# Copia il resto del codice
 COPY . .
 
-# Espone la porta
+RUN chown -R node:node /app
+
+USER node
+
 EXPOSE 7000
 
-# Comando di avvio
-CMD ["npm", "start"]
-
-
-
+CMD ["node", "addon.js"]
