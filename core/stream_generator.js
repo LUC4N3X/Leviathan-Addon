@@ -19,14 +19,15 @@ const { tmdbToImdb, imdbToTmdb, getTmdbAltTitles } = require("./media_identity_r
 const RD = require("../debrid/realdebrid");
 const AD = require("../debrid/alldebrid");
 const TB = require("../debrid/torbox");
-const dbHelper = require("../db-helper"); 
+const dbHelper = require("./storage/db_repository"); 
+const { buildMagnet: buildTrackerMagnet } = require("./storage/tracker_registry");
 const SCRAPER_MODULES = [ require("../engines") ];
 
 const {
   logger, Cache, LIMITERS, CONFIG, REGEX_QUALITY_FILTER, REGEX_SUB_ONLY, REGEX_AUDIO_CONFIRM, REGEX_YEAR, EMPTY_STREAM_TTL, METADATA_CACHE_TTL,
   getLanguageInfo, parseTitleDetails, formatLanguageLabel, isSeasonPack, isGoodShortQueryMatch, chooseBestPackTitle, shouldUpdatePackTitle,
   extractSeasonEpisodeFromFilename, estimateVisualSize, estimateSeeders, deduplicateResults, filterByQualityLimit, extractInfoHash,
-  withTimeout, normalizeSearchText, extractSeeders, extractSize, streamInflight, metadataInflight, withSharedPromise, buildTrackerMagnet,
+  withTimeout, normalizeSearchText, extractSeeders, extractSize, streamInflight, metadataInflight, withSharedPromise,
   incrementMetric, recordDuration, recordProviderMetric
 } = require("./utils");
 
