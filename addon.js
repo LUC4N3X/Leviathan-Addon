@@ -7,7 +7,7 @@ const axios = require("axios");
 const crypto = require("crypto");
 const rateLimit = require("express-rate-limit");
 
-const dbHelper = require("./db-helper");
+const dbHelper = require("./core/storage/db_repository");
 const { getManifest } = require("./manifest");
 const { handleVixSynthetic } = require("./vix/vix_proxy");
 
