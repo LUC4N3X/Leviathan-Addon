@@ -13,8 +13,7 @@ const { searchGuardaHD } = require("../guardahd/ghd_handler");
 const { searchGuardaserie } = require("../guardaserie/gs_handler"); 
 const { searchAnimeWorld } = require("../animeworld/aw_handler"); 
 const { searchGuardaFlix } = require("../guardaflix/gf_handler"); 
-const { generateSmartQueries } = require("../ai_query");
-const { smartMatch } = require("../smart_parser");
+const { generateSmartQueries, smartMatch } = require("./media_intelligence");
 const { rankAndFilterResults } = require("../ranking");
 const { tmdbToImdb, imdbToTmdb, getTmdbAltTitles } = require("./media_identity_resolver");
 const RD = require("../debrid/realdebrid");
@@ -753,8 +752,9 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
   if (!dbOnlyMode) {
        const rawId = `${type}:${finalId}:${meta.season || 0}:${meta.episode || 0}`;
-       const vixPromise = Cache.fetchWithCache('Vix', rawId, 43200, () => guardedProviderCall('Vix', LIMITERS.webVix, CONFIG.TIMEOUTS.SCRAPER, () => searchVix(meta, config, reqHost)));
+       let vixPromise = Promise.resolve([]);
        let ghdPromise = Promise.resolve([]), gsPromise = Promise.resolve([]), awPromise = Promise.resolve([]), gfPromise = Promise.resolve([]);
+       if (config.filters?.enableVix) vixPromise = Cache.fetchWithCache('Vix', rawId, 43200, () => guardedProviderCall('Vix', LIMITERS.webVix, CONFIG.TIMEOUTS.SCRAPER, () => searchVix(meta, config, reqHost)));
        if (config.filters?.enableGhd) ghdPromise = Cache.fetchWithCache('GuardaHD', rawId, 43200, () => guardedProviderCall('GuardaHD', LIMITERS.webGhd, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaHD(meta, config)));
        if (config.filters?.enableGs) gsPromise = Cache.fetchWithCache('GuardaSerie', rawId, 43200, () => guardedProviderCall('GuardaSerie', LIMITERS.webGs, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaserie(meta, config)));
        if (config.filters?.enableAnimeWorld) awPromise = Cache.fetchWithCache('AnimeWorld', rawId, 43200, () => guardedProviderCall('AnimeWorld', LIMITERS.webAw, CONFIG.TIMEOUTS.SCRAPER, () => searchAnimeWorld(id, meta, config)));
