@@ -8,7 +8,6 @@ const { searchWebStreamr } = require("../webstreamr_handler");
 const TbCache = require("../debrid/tb_cache.js");
 const { formatStreamSelector, formatBytes } = require("../formatter");
 const P2P = require("../p2p_handler");
-const { getTrailerStreams } = require("../trailerProvider"); 
 const { searchVix } = require("../vix/vix_handler");
 const { searchGuardaHD } = require("../guardahd/ghd_handler"); 
 const { searchGuardaserie } = require("../guardaserie/gs_handler"); 
@@ -31,7 +30,6 @@ const {
   withTimeout, normalizeSearchText, extractSeeders, extractSize, streamInflight, metadataInflight, withSharedPromise, buildTrackerMagnet,
   incrementMetric, recordDuration, recordProviderMetric
 } = require("./utils");
-
 
 function getServiceResolverLimiter(service) {
     const normalized = String(service || '').toLowerCase();
@@ -832,17 +830,6 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       } else { logger.info(`❌ [WEBSTREAMR] Nessun risultato trovato.`); }
   }
 
-  if (config.filters?.enableTrailers) {
-      try {
-         if (meta?.title) {
-             const trailerStreams = await getTrailerStreams(type, meta.imdb_id, meta.title, meta.season, meta.tmdb_id, 'it-IT');
-             if (trailerStreams && trailerStreams.length > 0) {
-                 finalStreams.unshift(...trailerStreams);
-                 logger.info(`🎬 [TRAILER] Aggiunto trailer in testa per: ${meta.title}`);
-             }
-         }
-      } catch (err) { logger.warn(`⚠️ Errore recupero Trailer: ${err.message}`); }
-  }
   
   const resultObj = { streams: finalStreams };
   const streamTtl = finalStreams.length > 0 ? 1800 : EMPTY_STREAM_TTL;
