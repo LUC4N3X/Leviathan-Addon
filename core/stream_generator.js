@@ -42,6 +42,85 @@ function getLazyCacheKey(service, item, meta) {
     return `${service}:${item.hash}:${meta?.season || item.season || 0}:${meta?.episode || item.episode || 0}:${item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : -1}`;
 }
 
+function getEffectiveLangMode(config) {
+    const mode = String(config?.filters?.language || '').toLowerCase();
+    if (mode === 'ita' || mode === 'eng' || mode === 'all') return mode;
+    return config?.filters?.allowEng ? 'all' : 'ita';
+}
+
+function getLanguageSignals(title, metaTitle, sourceName) {
+    const parsed = parseTitleDetails(title || '');
+    const langInfo = getLanguageInfo(title || '', metaTitle, sourceName, parsed);
+    const detected = new Set(Array.isArray(langInfo?.detectedLanguages) ? langInfo.detectedLanguages.map(v => String(v)) : []);
+    const upper = String(title || '').toUpperCase();
+
+    const explicitEng = detected.has('English') || /\b(?:ENG|ENGLISH)\b/i.test(upper);
+    const explicitIta = detected.has('Italian') || langInfo?.isItalian || (langInfo?.confidence || 0) >= 5 || /\b(?:ITA|ITALIANO|ITALIAN)\b/i.test(upper);
+    const explicitMulti = !!langInfo?.isMulti || /\b(?:MULTI|DUAL[\s.-]?AUDIO)\b/i.test(upper);
+    const explicitOther = /\b(?:FRENCH|GERMAN|SPANISH|ESP|LATINO|RUS|RUSSIAN|JPN|JAP|VOSTFR|POLISH|PORTUGUESE|PT-BR|HINDI|KOREAN|CHINESE|ARABIC|TURKISH)\b/i.test(upper);
+    const neutralScene = /\b(?:WEB[-.\s]?DL|WEBRIP|BLU[-.\s]?RAY|REMUX|BDRIP|2160P|1080P|720P|X265|X264|HEVC|DDP|DTS|TRUEHD|AAC)\b/i.test(upper);
+
+    return { langInfo, explicitEng, explicitIta, explicitMulti, explicitOther, neutralScene };
+}
+
+function keepItalianCandidate(title, sourceName, metaTitle) {
+    const signals = getLanguageSignals(title, metaTitle, sourceName);
+    if (signals.langInfo.isItalian || (signals.langInfo.confidence || 0) >= 4 || signals.langInfo.isMaybeItalian) return true;
+    if (REGEX_SUB_ONLY.test(title) && !REGEX_AUDIO_CONFIRM.test(title)) {
+        const strippedTitle = String(title || '').replace(REGEX_SUB_ONLY, ' ');
+        const strippedSignals = getLanguageSignals(strippedTitle, metaTitle, sourceName);
+        return strippedSignals.langInfo.isItalian || (strippedSignals.langInfo.confidence || 0) >= 4 || strippedSignals.langInfo.isMaybeItalian;
+    }
+    return false;
+}
+
+function keepEnglishCandidate(title, sourceName, metaTitle) {
+    const signals = getLanguageSignals(title, metaTitle, sourceName);
+    const rawTitle = String(title || '');
+    const normalizedTitle = normalizeSearchText(rawTitle);
+    const normalizedMeta = normalizeSearchText(metaTitle || '');
+    const titleYearMatch = rawTitle.match(REGEX_YEAR);
+    const metaYearMatch = String(metaTitle || '').match(REGEX_YEAR);
+    const yearMatches = !metaYearMatch || !titleYearMatch || titleYearMatch[0] === metaYearMatch[0];
+
+    if (signals.explicitIta || signals.explicitMulti) return false;
+    if (signals.explicitOther && !signals.explicitEng) return false;
+    if (REGEX_SUB_ONLY.test(rawTitle) && !signals.explicitEng) return false;
+
+    if (signals.explicitEng) return true;
+    if (signals.neutralScene && yearMatches) return true;
+    if (normalizedMeta && normalizedTitle.includes(normalizedMeta) && yearMatches) return true;
+
+    return !signals.explicitOther && !signals.explicitIta && !signals.explicitMulti && yearMatches;
+}
+
+function keepAllCandidate(title, sourceName, metaTitle) {
+    const signals = getLanguageSignals(title, metaTitle, sourceName);
+    const rawTitle = String(title || '');
+    if (keepItalianCandidate(rawTitle, sourceName, metaTitle)) return true;
+    if (signals.explicitMulti) return true;
+    if (keepEnglishCandidate(rawTitle, sourceName, metaTitle)) return true;
+    if (signals.explicitOther && !signals.explicitEng) return false;
+    return !REGEX_SUB_ONLY.test(rawTitle);
+}
+
+function filterWebFallbackStreams(streams, langMode, meta) {
+    if (!Array.isArray(streams) || streams.length === 0) return [];
+    return streams.filter(stream => {
+        const text = `${stream?.title || ''} ${stream?.name || ''}`.trim();
+        const source = stream?.name || stream?.title || '';
+        if (langMode === 'ita') return keepItalianCandidate(text, source, meta?.title);
+        if (langMode === 'eng') {
+            const signals = getLanguageSignals(text, meta?.title, source);
+            if (signals.explicitIta || signals.explicitMulti) return false;
+            if (signals.explicitEng) return true;
+            if (signals.explicitOther) return false;
+            return true;
+        }
+        return keepAllCandidate(text, source, meta?.title);
+    });
+}
+
 function getCompositeRankScore(item, meta, config) {
     const title = String(item?.title || '');
     const source = item?.source || item?.provider || null;
@@ -53,16 +132,34 @@ function getCompositeRankScore(item, meta, config) {
     const isPack = !!(item?._isPack || isSeasonPack(title));
     const epData = meta?.isSeries ? extractSeasonEpisodeFromFilename(title, meta?.season || 1) : null;
 
+    const langMode = getEffectiveLangMode(config);
+    const langSignals = getLanguageSignals(title, meta?.title, source);
     let score = 0;
-    if (langInfo.isItalian) score += 200000;
-    else if (langInfo.isMaybeItalian) score += 70000;
-    if (langInfo.isMulti) score += 12000;
+
+    if (langMode === 'eng') {
+        if (langSignals.explicitEng) score += 190000;
+        else if (keepEnglishCandidate(title, source, meta?.title)) score += 90000;
+        if (langSignals.explicitIta) score -= 220000;
+        if (langSignals.explicitMulti) score -= 70000;
+        if (langSignals.explicitOther && !langSignals.explicitEng) score -= 120000;
+    } else if (langMode === 'all') {
+        if (langSignals.explicitIta || langInfo.isItalian) score += 180000;
+        else if (langSignals.explicitEng) score += 150000;
+        else if (langSignals.explicitMulti) score += 120000;
+        else if (keepAllCandidate(title, source, meta?.title)) score += 70000;
+        if (langSignals.explicitOther && !langSignals.explicitEng && !langSignals.explicitIta && !langSignals.explicitMulti) score -= 90000;
+    } else {
+        if (langInfo.isItalian) score += 200000;
+        else if (langInfo.isMaybeItalian) score += 70000;
+        if (langInfo.isMulti) score += 12000;
+    }
+
     if (REGEX_AUDIO_CONFIRM.test(title)) score += 22000;
-    if (/(web[-.\s]?dl|blu[-.\s]?ray|remux|uhd|hevc|x265|x264|ddp|truehd|dts)/i.test(title)) score += 14000;
-    if (/(4k|2160p|uhd)/i.test(title)) score += 9000;
-    else if (/(1080p|fhd|full[-.\s]?hd)/i.test(title)) score += 7000;
-    else if (/(720p|hd[-.\s]?rip|hdtv|hd)/i.test(title)) score += 4000;
-    if (/(cam|hdcam|ts|telesync|screener|scr)/i.test(title)) score -= 30000;
+    if (/\b(web[-.\s]?dl|blu[-.\s]?ray|remux|uhd|hevc|x265|x264|ddp|truehd|dts)\b/i.test(title)) score += 14000;
+    if (/\b(4k|2160p|uhd)\b/i.test(title)) score += 9000;
+    else if (/\b(1080p|fhd|full[-.\s]?hd)\b/i.test(title)) score += 7000;
+    else if (/\b(720p|hd[-.\s]?rip|hdtv|hd)\b/i.test(title)) score += 4000;
+    if (/\b(cam|hdcam|ts|telesync|screener|scr)\b/i.test(title)) score -= 30000;
     if (langInfo.isSubOnly) score -= 25000;
     if (explicitFileIdx) score += 7000;
     if (source && /mircrew|corsaro|lux|wms|dn[a4]?|idn_crew|speedvideo/i.test(String(source))) score += 6000;
@@ -72,7 +169,7 @@ function getCompositeRankScore(item, meta, config) {
         else if (isPack && new RegExp(`(?:s|season|stagione)\s*0?${meta.season}(?!\d)`, 'i').test(title)) score += 9000;
         else if (epData && epData.episode !== meta.episode) score -= 18000;
     }
-    if (!meta?.isSeries && /(?:S\d{2}|SEASON|STAGIONE|\d+x\d+)/i.test(title)) score -= 18000;
+    if (!meta?.isSeries && /\b(?:S\d{2}|SEASON|STAGIONE|\d+x\d+)\b/i.test(title)) score -= 18000;
     score += Math.min(seeders, 500) * 18;
     score += Math.min(Math.floor(sizeBytes / (700 * 1024 * 1024)), 1200);
     score += Math.min(title.length, 300);
@@ -478,21 +575,12 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
             return { title: t.title, magnet: magnet, hash: finalHash, infoHash: finalHash, size: "💾 DB", sizeBytes: parseInt(t.size), seeders: parseInt(t.seeders, 10) || 0, source: providerName, fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined, _isPack: isSeasonPack(t.title) };
         });
 
-        const langMode = config && config.filters ? (config.filters.language || (config.filters.allowEng ? "all" : "ita")) : "ita";
+        const langMode = getEffectiveLangMode(config);
         return mapped.filter(item => {
              const title = item.title || '';
-             const langInfo = getLanguageInfo(title, italianMovieTitle, item.source, parseTitleDetails(title));
-             if (langMode === 'ita') {
-                 if (langInfo.isItalian || (langInfo.confidence || 0) >= 4 || langInfo.isMaybeItalian) return true;
-                 if (REGEX_SUB_ONLY.test(title) && !REGEX_AUDIO_CONFIRM.test(title)) {
-                     const stripped = title.replace(REGEX_SUB_ONLY, ' ');
-                     const strippedInfo = getLanguageInfo(stripped, italianMovieTitle, item.source, parseTitleDetails(stripped));
-                     return strippedInfo.isItalian || (strippedInfo.confidence || 0) >= 4 || strippedInfo.isMaybeItalian;
-                 }
-                 return false;
-             }
-             if (langMode === 'eng') return !langInfo.isItalian || (langInfo.confidence || 0) < 5;
-             return true;
+             if (langMode === 'ita') return keepItalianCandidate(title, item.source, italianMovieTitle);
+             if (langMode === 'eng') return keepEnglishCandidate(title, item.source, italianMovieTitle);
+             return keepAllCandidate(title, item.source, italianMovieTitle);
         });
     } catch (e) { logger.error("Err Remote Indexer:", { error: e.message }); return []; }
 }
@@ -557,27 +645,20 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
   const dbOnlyMode = config.filters?.dbOnly === true; 
   const langMode = config.filters?.language || (config.filters?.allowEng ? "all" : "ita");
+  const allowItalianWebProviders = langMode !== "eng";
 
-  const keepItalianCandidate = (title, sourceName) => {
-      const langInfo = getLanguageInfo(title, meta.title, sourceName, parseTitleDetails(title));
-      if (langInfo.isItalian || (langInfo.confidence || 0) >= 4 || langInfo.isMaybeItalian) return true;
-      if (REGEX_SUB_ONLY.test(title) && !REGEX_AUDIO_CONFIRM.test(title)) {
-          const strippedTitle = title.replace(REGEX_SUB_ONLY, ' ');
-          const strippedInfo = getLanguageInfo(strippedTitle, meta.title, sourceName, parseTitleDetails(strippedTitle));
-          return strippedInfo.isItalian || (strippedInfo.confidence || 0) >= 4 || strippedInfo.isMaybeItalian;
-      }
-      return false;
-  };
-
-  const aggressiveFilter = (item) => {
+const aggressiveFilter = (item) => {
       if (!item?.magnet) return false;
       const source = (item.source || "").toLowerCase(), t = item.title, tLower = t.toLowerCase();
       if (source.includes("comet") || source.includes("stremthru")) return false;
 
-      const parsedLangInfo = getLanguageInfo(t, meta.title, item.source, parseTitleDetails(t));
       if (langMode === "ita") {
-           if (!keepItalianCandidate(t, item.source)) return false;
-      } else if (langMode === "eng" && parsedLangInfo.isItalian && (parsedLangInfo.confidence || 0) >= 5) return false;
+           if (!keepItalianCandidate(t, item.source, meta.title)) return false;
+      } else if (langMode === "eng") {
+           if (!keepEnglishCandidate(t, item.source, meta.title)) return false;
+      } else {
+           if (!keepAllCandidate(t, item.source, meta.title)) return false;
+      }
       
       const metaYear = parseInt(meta.year);
       if (metaYear === 2025 && /frankenstein/i.test(meta.title) && !item.title.includes("2025")) return false;
@@ -649,14 +730,49 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       try { if (tmdbIdLookup) dynamicTitles = await getTmdbAltTitles(tmdbIdLookup, type, userTmdbKey); } catch (e) {}
       
       const allowEngScraper = (langMode === "all" || langMode === "eng");
-      const queries = generateSmartQueries(meta, dynamicTitles, allowEngScraper);
-      
+      const rawQueries = generateSmartQueries({ ...meta, langMode }, dynamicTitles, langMode);
+      const queries = (() => {
+          const deduped = [];
+          const seen = new Set();
+          for (const q of rawQueries) {
+              const key = normalizeSearchText(q);
+              if (!key || seen.has(key)) continue;
+              seen.add(key);
+              deduped.push(q);
+          }
+
+          if (langMode === "eng") {
+              const noIta = deduped.filter(q => !/\b(?:ita|multi)\b/i.test(q));
+              const yearQueries = noIta.filter(q => meta.year && new RegExp(`\\b${meta.year}\\b`).test(q));
+              const plainQueries = noIta.filter(q => !/\b(?:19|20)\d{2}\b/.test(q));
+              const selected = [];
+              for (const q of [...yearQueries, ...plainQueries, ...noIta]) {
+                  if (selected.includes(q)) continue;
+                  selected.push(q);
+                  if (selected.length >= 4) break;
+              }
+              return selected;
+          }
+
+          if (langMode === "all") {
+              return deduped.slice(0, 8);
+          }
+
+          return deduped;
+      })();
+      const scraperTimeout = langMode === "eng"
+          ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 12000)
+          : langMode === "all"
+              ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 10000)
+              : (CONFIG.TIMEOUTS.SCRAPER || 4000);
+
       if (queries.length > 0) {
+          logger.info(`🧠 [SCRAPER PLAN] lang=${langMode} queries=${queries.length} timeout=${scraperTimeout}ms`);
           const allScraperTasks = [];
           queries.forEach(q => SCRAPER_MODULES.forEach(scraper => {
               if (scraper.searchMagnet) {
-                  allScraperTasks.push(LIMITERS.scraper.schedule(() => 
-                      withTimeout(scraper.searchMagnet(q, meta.year, type, finalId, { allowEng: allowEngScraper }), CONFIG.TIMEOUTS.SCRAPER, `Scraper ${scraper.name || 'Module'}`)
+                  allScraperTasks.push(LIMITERS.scraper.schedule(() =>
+                      withTimeout(scraper.searchMagnet(q, meta.year, type, finalId, { langMode, allowEng: allowEngScraper }), scraperTimeout, `Scraper ${scraper.name || 'Module'}`)
                       .catch(err => { logger.warn(`Scraper Timeout/Error: ${err.message}`); return []; })
                   ));
               }
@@ -755,11 +871,11 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
        const rawId = `${type}:${finalId}:${meta.season || 0}:${meta.episode || 0}`;
        let vixPromise = Promise.resolve([]);
        let ghdPromise = Promise.resolve([]), gsPromise = Promise.resolve([]), awPromise = Promise.resolve([]), gfPromise = Promise.resolve([]);
-       if (config.filters?.enableVix) vixPromise = Cache.fetchWithCache('Vix', rawId, 43200, () => guardedProviderCall('Vix', LIMITERS.webVix, CONFIG.TIMEOUTS.SCRAPER, () => searchVix(meta, config, reqHost)));
-       if (config.filters?.enableGhd) ghdPromise = Cache.fetchWithCache('GuardaHD', rawId, 43200, () => guardedProviderCall('GuardaHD', LIMITERS.webGhd, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaHD(meta, config)));
-       if (config.filters?.enableGs) gsPromise = Cache.fetchWithCache('GuardaSerie', rawId, 43200, () => guardedProviderCall('GuardaSerie', LIMITERS.webGs, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaserie(meta, config)));
-       if (config.filters?.enableAnimeWorld) awPromise = Cache.fetchWithCache('AnimeWorld', rawId, 43200, () => guardedProviderCall('AnimeWorld', LIMITERS.webAw, CONFIG.TIMEOUTS.SCRAPER, () => searchAnimeWorld(id, meta, config)));
-       if (config.filters?.enableGf) gfPromise = Cache.fetchWithCache('GuardaFlix', rawId, 43200, () => guardedProviderCall('GuardaFlix', LIMITERS.webGf, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaFlix(meta, config)));
+       if (allowItalianWebProviders && config.filters?.enableVix) vixPromise = Cache.fetchWithCache('Vix', rawId, 43200, () => guardedProviderCall('Vix', LIMITERS.webVix, CONFIG.TIMEOUTS.SCRAPER, () => searchVix(meta, config, reqHost)));
+       if (allowItalianWebProviders && config.filters?.enableGhd) ghdPromise = Cache.fetchWithCache('GuardaHD', rawId, 43200, () => guardedProviderCall('GuardaHD', LIMITERS.webGhd, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaHD(meta, config)));
+       if (allowItalianWebProviders && config.filters?.enableGs) gsPromise = Cache.fetchWithCache('GuardaSerie', rawId, 43200, () => guardedProviderCall('GuardaSerie', LIMITERS.webGs, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaserie(meta, config)));
+       if (allowItalianWebProviders && config.filters?.enableAnimeWorld) awPromise = Cache.fetchWithCache('AnimeWorld', rawId, 43200, () => guardedProviderCall('AnimeWorld', LIMITERS.webAw, CONFIG.TIMEOUTS.SCRAPER, () => searchAnimeWorld(id, meta, config)));
+       if (allowItalianWebProviders && config.filters?.enableGf) gfPromise = Cache.fetchWithCache('GuardaFlix', rawId, 43200, () => guardedProviderCall('GuardaFlix', LIMITERS.webGf, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaFlix(meta, config)));
 
        const webSettled = await Promise.allSettled([vixPromise, ghdPromise, gsPromise, awPromise, gfPromise]);
        rawVix = webSettled[0].status === 'fulfilled' ? webSettled[0].value : [];
@@ -824,7 +940,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
   if (finalStreams.length === 0) {
       logger.info(`⚠️ [FALLBACK] Nessun risultato trovato (P2P/Web Locali). Attivo WebStreamr...`);
-      const webStreamrResults = await searchWebStreamr(type, finalId);
+      const webStreamrResults = filterWebFallbackStreams(await searchWebStreamr(type, finalId), langMode, meta);
       if (webStreamrResults.length > 0) {
            finalStreams.push(...webStreamrResults);
            logger.info(`🕷️ [WEBSTREAMR] Aggiunti ${webStreamrResults.length} stream di fallback.`);
