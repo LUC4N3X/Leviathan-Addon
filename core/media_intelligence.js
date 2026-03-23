@@ -173,55 +173,71 @@ function expandBaseTitles(base, originalTitle = '', dynamicAliases = []) {
   return [...titles].filter(Boolean);
 }
 
-function getTitleCandidates(meta = {}, dynamicAliases = [], allowEng = false) {
-  const primary = expandBaseTitles(meta.title || '', meta.originalTitle || '', dynamicAliases);
-  const ita = new Set(primary);
-  const eng = new Set();
-  if (allowEng) for (const title of primary) eng.add(title);
-  return { ita: [...ita], eng: [...eng] };
+function resolveLangMode(meta = {}, allowEngOrLangMode = false) {
+  if (typeof allowEngOrLangMode === 'string') {
+    const mode = allowEngOrLangMode.toLowerCase();
+    if (mode === 'ita' || mode === 'eng' || mode === 'all') return mode;
+  }
+
+  const metaMode = String(meta.langMode || meta.languageMode || meta.language || '').toLowerCase();
+  if (metaMode === 'ita' || metaMode === 'eng' || metaMode === 'all') return metaMode;
+
+  if (typeof allowEngOrLangMode === 'boolean') return allowEngOrLangMode ? 'all' : 'ita';
+  return 'ita';
 }
 
-function generateSmartQueries(meta = {}, dynamicAliases = [], allowEng = false) {
+function getTitleCandidates(meta = {}, dynamicAliases = [], allowEngOrLangMode = false) {
+  const primary = expandBaseTitles(meta.title || '', meta.originalTitle || '', dynamicAliases);
+  const langMode = resolveLangMode(meta, allowEngOrLangMode);
+  const ita = new Set(primary);
+  const eng = new Set();
+  if (langMode === 'eng' || langMode === 'all') {
+    for (const title of primary) eng.add(title);
+  }
+  return { ita: [...ita], eng: [...eng], langMode };
+}
+
+function generateSmartQueries(meta = {}, dynamicAliases = [], allowEngOrLangMode = false) {
   const { year, season, episode, isSeries } = meta || {};
-  const { ita, eng } = getTitleCandidates(meta, dynamicAliases, allowEng);
+  const { ita, eng, langMode } = getTitleCandidates(meta, dynamicAliases, allowEngOrLangMode);
   const sNum = Number(season);
   const eNum = Number(episode);
   const yNum = Number(year);
   const sStr = Number.isFinite(sNum) && sNum > 0 ? String(sNum).padStart(2, '0') : '';
   const eStr = Number.isFinite(eNum) && eNum > 0 ? String(eNum).padStart(2, '0') : '';
   const finalQueries = [];
-  const itaQueries = new Set();
 
-  for (const title of ita) {
-    if (isSeries) {
-      if (Number.isFinite(eNum) && eNum > 0) {
-        itaQueries.add(`${title} S${sStr}E${eStr} ITA`);
-        itaQueries.add(`${title} S${sStr}E${eStr}`);
-        itaQueries.add(`${title} ${sNum}x${eStr}`);
-        itaQueries.add(`${title} episodio ${eNum}`);
+  const itaQueries = new Set();
+  if (langMode === 'ita' || langMode === 'all') {
+    for (const title of ita) {
+      if (isSeries) {
+        if (Number.isFinite(eNum) && eNum > 0) {
+          itaQueries.add(`${title} S${sStr}E${eStr} ITA`);
+          itaQueries.add(`${title} S${sStr}E${eStr}`);
+          itaQueries.add(`${title} ${sNum}x${eStr}`);
+          itaQueries.add(`${title} episodio ${eNum}`);
+        }
+        if (Number.isFinite(sNum) && sNum > 0) {
+          itaQueries.add(`${title} stagione ${sNum} ITA`);
+          itaQueries.add(`${title} S${sStr} ITA`);
+          itaQueries.add(`${title} stagione ${sNum}`);
+        }
+        itaQueries.add(`${title} ITA`);
+      } else {
+        if (Number.isFinite(yNum) && yNum > 0) {
+          itaQueries.add(`${title} ${yNum} ITA`);
+          itaQueries.add(`${title} ${yNum}`);
+          itaQueries.add(`${title} ${yNum - 1} ITA`);
+          itaQueries.add(`${title} ${yNum + 1} ITA`);
+        }
+        itaQueries.add(`${title} ITA`);
+        itaQueries.add(title);
       }
-      if (Number.isFinite(sNum) && sNum > 0) {
-        itaQueries.add(`${title} stagione ${sNum} ITA`);
-        itaQueries.add(`${title} S${sStr} ITA`);
-        itaQueries.add(`${title} stagione ${sNum}`);
-      }
-      itaQueries.add(`${title} ITA`);
-    } else {
-      if (Number.isFinite(yNum) && yNum > 0) {
-        itaQueries.add(`${title} ${yNum} ITA`);
-        itaQueries.add(`${title} ${yNum}`);
-        itaQueries.add(`${title} ${yNum - 1} ITA`);
-        itaQueries.add(`${title} ${yNum + 1} ITA`);
-      }
-      itaQueries.add(`${title} ITA`);
-      itaQueries.add(title);
     }
   }
 
-  finalQueries.push(...[...itaQueries].sort((a, b) => b.length - a.length));
-
-  if (allowEng) {
-    const engQueries = new Set();
+  const engQueries = new Set();
+  if (langMode === 'eng' || langMode === 'all') {
     for (const title of eng) {
       if (isSeries) {
         if (Number.isFinite(eNum) && eNum > 0) {
@@ -234,11 +250,28 @@ function generateSmartQueries(meta = {}, dynamicAliases = [], allowEng = false) 
           engQueries.add(`${title} S${sStr}`);
         }
       } else {
-        if (Number.isFinite(yNum) && yNum > 0) engQueries.add(`${title} ${yNum}`);
+        if (Number.isFinite(yNum) && yNum > 0) {
+          engQueries.add(`${title} ${yNum}`);
+          engQueries.add(`${title} ${yNum - 1}`);
+          engQueries.add(`${title} ${yNum + 1}`);
+        }
         if (title.length >= 3 && !commonWordsOnly(title)) engQueries.add(title);
       }
     }
+  }
+
+  if (langMode === 'eng') {
     finalQueries.push(...[...engQueries].sort((a, b) => b.length - a.length));
+  } else if (langMode === 'all') {
+    const itaSorted = [...itaQueries].sort((a, b) => b.length - a.length);
+    const engSorted = [...engQueries].sort((a, b) => b.length - a.length);
+    const maxLen = Math.max(itaSorted.length, engSorted.length);
+    for (let i = 0; i < maxLen; i += 1) {
+      if (itaSorted[i]) finalQueries.push(itaSorted[i]);
+      if (engSorted[i]) finalQueries.push(engSorted[i]);
+    }
+  } else {
+    finalQueries.push(...[...itaQueries].sort((a, b) => b.length - a.length));
   }
 
   const seen = new Set();
@@ -447,6 +480,7 @@ module.exports = {
   getTitleCandidates,
   autoExpandAliases,
   commonWordsOnly,
+  resolveLangMode,
   similarityScore,
   SEMANTIC_ALIASES,
   ULTRA_SEMANTIC_ALIASES: SEMANTIC_ALIASES,
