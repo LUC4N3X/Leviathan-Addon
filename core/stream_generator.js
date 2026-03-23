@@ -8,11 +8,11 @@ const { searchWebStreamr } = require("../webstreamr_handler");
 const TbCache = require("../debrid/tb_cache.js");
 const { formatStreamSelector, formatBytes } = require("./lib/stream_formatter");
 const P2P = require("../p2p_handler");
-const { searchVix } = require("../vix/vix_handler");
-const { searchGuardaHD } = require("../guardahd/ghd_handler"); 
-const { searchGuardaserie } = require("../guardaserie/gs_handler"); 
-const { searchAnimeWorld } = require("../animeworld/aw_handler"); 
-const { searchGuardaFlix } = require("../guardaflix/gf_handler"); 
+const { searchVix: searchStreamingCommunity } = require("../providers/streamingcommunity/vix_handler");
+const { searchGuardaHD } = require("../providers/guardahd/ghd_handler"); 
+const { searchGuardaserie } = require("../providers/guardaserie/gs_handler"); 
+const { searchAnimeWorld } = require("../providers/animeworld/aw_handler"); 
+const { searchGuardaFlix } = require("../providers/guardaflix/gf_handler"); 
 const { generateSmartQueries, smartMatch } = require("./media_intelligence");
 const { rankAndFilterResults } = require("./lib/result_ranker");
 const { tmdbToImdb, imdbToTmdb, getTmdbAltTitles } = require("./media_identity_resolver");
@@ -46,6 +46,14 @@ function getEffectiveLangMode(config) {
     const mode = String(config?.filters?.language || '').toLowerCase();
     if (mode === 'ita' || mode === 'eng' || mode === 'all') return mode;
     return config?.filters?.allowEng ? 'all' : 'ita';
+}
+
+function isStreamingCommunityEnabled(filters = {}) {
+    return filters?.enableStreamingCommunity === true || filters?.enableVix === true;
+}
+
+function isStreamingCommunityLastEnabled(filters = {}) {
+    return filters?.streamingCommunityLast === true || filters?.vixLast === true;
 }
 
 function getLanguageSignals(title, metaTitle, sourceName) {
@@ -211,7 +219,7 @@ async function guardedProviderCall(providerName, limiter, timeoutMs, factory) {
         const isTimeout = /timeout/i.test(String(err?.message || ''));
         recordDuration(`provider.${providerName}`, duration);
         recordProviderMetric(providerName, false, duration, { timeout: isTimeout, error: err?.message || err });
-        logger.warn(`⚠️ [${providerName}] failed: ${err.message}`);
+        logger.warn(`âš ï¸ [${providerName}] failed: ${err.message}`);
         return [];
     }
 }
@@ -248,7 +256,7 @@ function warmupLazyStreamsInBackground(config, items, meta) {
                 incrementMetric('lazyWarmup.fail');
                 recordProviderMetric(`warmup.${service}`, false, Date.now() - startedAt, { timeout: /timeout/i.test(String(err?.message || '')), error: err?.message || err });
             }
-        }).catch(err => logger.warn(`⚠️ [WARMUP] Queue error: ${err.message}`));
+        }).catch(err => logger.warn(`âš ï¸ [WARMUP] Queue error: ${err.message}`));
     });
 }
 
@@ -273,7 +281,7 @@ async function resolvePackWithBestEffort(item, config, meta, siblingStreams = []
             const files = Array.isArray(resolved.files) ? resolved.files : (Array.isArray(resolved.videoFiles) ? resolved.videoFiles : []);
             const bestTitleData = chooseBestPackTitle(item, packName, siblingStreams);
             return { title: bestTitleData.title, titleSource: bestTitleData.source, packName, files, raw: resolved };
-        } catch (err) { logger.warn(`⚠️ [PACK] Resolver error for ${item.hash}: ${err.message}`); }
+        } catch (err) { logger.warn(`âš ï¸ [PACK] Resolver error for ${item.hash}: ${err.message}`); }
     }
     return null;
 }
@@ -286,7 +294,7 @@ async function persistPackResolution(meta, item, resolved) {
         if (resolved.title && resolved.title !== item.title && shouldUpdatePackTitle(item.title, resolved.title)) {
             if (typeof dbHelper.updateTorrentTitle === 'function') await dbHelper.updateTorrentTitle(infoHash, resolved.title);
         }
-    } catch (err) { logger.warn(`⚠️ [PACK] updateTorrentTitle failed for ${infoHash}: ${err.message}`); }
+    } catch (err) { logger.warn(`âš ï¸ [PACK] updateTorrentTitle failed for ${infoHash}: ${err.message}`); }
 
     const files = Array.isArray(resolved.files) ? resolved.files : [];
     if (files.length === 0) return;
@@ -311,9 +319,9 @@ async function persistPackResolution(meta, item, resolved) {
     }
 
     try { if (episodeFiles.length > 0 && typeof dbHelper.insertEpisodeFiles === 'function') await dbHelper.insertEpisodeFiles(episodeFiles); }
-    catch (err) { logger.warn(`⚠️ [PACK] insertEpisodeFiles failed for ${infoHash}: ${err.message}`); }
+    catch (err) { logger.warn(`âš ï¸ [PACK] insertEpisodeFiles failed for ${infoHash}: ${err.message}`); }
     try { if (packFiles.length > 0 && typeof dbHelper.insertPackFiles === 'function') await dbHelper.insertPackFiles(packFiles); }
-    catch (err) { logger.warn(`⚠️ [PACK] insertPackFiles failed for ${infoHash}: ${err.message}`); }
+    catch (err) { logger.warn(`âš ï¸ [PACK] insertPackFiles failed for ${infoHash}: ${err.message}`); }
 }
 
 function resolvePackNamesInBackground(meta, results, config) {
@@ -328,9 +336,9 @@ function resolvePackNamesInBackground(meta, results, config) {
             try {
                 const resolved = await resolvePackWithBestEffort(item, config, meta, results);
                 if (resolved) await persistPackResolution(meta, item, resolved);
-            } catch (err) { logger.warn(`⚠️ [PACK] Background processing failed for ${item.hash || item.infoHash}: ${err.message}`); }
+            } catch (err) { logger.warn(`âš ï¸ [PACK] Background processing failed for ${item.hash || item.infoHash}: ${err.message}`); }
         }
-    }).catch(err => { logger.warn(`⚠️ [PACK] Background queue failed: ${err.message}`); });
+    }).catch(err => { logger.warn(`âš ï¸ [PACK] Background queue failed: ${err.message}`); });
 }
 
 function applyWebFormatter(streamList, sourceName, meta, config) {
@@ -346,25 +354,25 @@ function applyWebFormatter(streamList, sourceName, meta, config) {
         let fileTitle = meta.title; 
         let rawTitleToCheck = (stream.title || "").toUpperCase(); 
         if (stream.title) {
-            let cleanRaw = stream.title.split('\n')[0].replace(/[🎬⚡🌪️⛩️🍿🦁🎥🌐]/g, '').trim();
+            let cleanRaw = stream.title.split('\n')[0].replace(/[ðŸŽ¬âš¡ðŸŒªï¸â›©ï¸ðŸ¿ðŸ¦ðŸŽ¥ðŸŒ]/g, '').trim();
             if (cleanRaw.length > 2) fileTitle = cleanRaw;
         }
 
-        let langTag = "ITA", providerIcon = "🌐"; 
+        let langTag = "ITA", providerIcon = "ðŸŒ"; 
         const sLower = sourceName.toLowerCase();
         if (sLower.includes("animeworld")) {
-            providerIcon = "⛩️"; 
+            providerIcon = "â›©ï¸"; 
             if (rawTitleToCheck.includes("JPN") || rawTitleToCheck.includes("SUB") || rawTitleToCheck.includes("VOST")) langTag = "JPN"; 
             else langTag = "ITA"; 
-        } else if (sLower.includes("streamingcommunity")) providerIcon = "🌪️"; 
-        else if (sLower.includes("guardaserie")) providerIcon = "🍿"; 
-        else if (sLower.includes("guardahd")) providerIcon = "🦁"; 
-        else if (sLower.includes("guardaflix")) providerIcon = "🎥";
+        } else if (sLower.includes("streamingcommunity")) providerIcon = "ðŸŒªï¸"; 
+        else if (sLower.includes("guardaserie")) providerIcon = "ðŸ¿"; 
+        else if (sLower.includes("guardahd")) providerIcon = "ðŸ¦"; 
+        else if (sLower.includes("guardaflix")) providerIcon = "ðŸŽ¥";
 
         const formatted = formatStreamSelector(`${fileTitle} ${quality} ${langTag} WEB-DL AAC`, sourceName, 0, null, "WEB", config, null, false, false);
-        let cleanTitle = formatted.title.replace(/🦑/g, "⛵").replace(/🦈/g, providerIcon).replace(/🧲\s*\d+(\.\d+)?\s*(GB|MB)/gi, "☁️ Web Stream");
+        let cleanTitle = formatted.title.replace(/ðŸ¦‘/g, "â›µ").replace(/ðŸ¦ˆ/g, providerIcon).replace(/ðŸ§²\s*\d+(\.\d+)?\s*(GB|MB)/gi, "â˜ï¸ Web Stream");
         return {
-            name: formatted.name.replace(/🦑/g, "⛵").replace(/🦈/g, providerIcon),
+            name: formatted.name.replace(/ðŸ¦‘/g, "â›µ").replace(/ðŸ¦ˆ/g, providerIcon),
             title: cleanTitle, url: stream.url,
             behaviorHints: stream.behaviorHints || { notWebReady: false, bingieGroup: `Leviathan|${quality}|Web|${sourceName}` }
         };
@@ -383,7 +391,7 @@ async function getMetadata(id, type, config = {}) {
   const userTmdbKey = String(config?.tmdb || '');
   const metadataCacheKey = `${type}:${id}:${userTmdbKey}`;
   const cachedMeta = await Cache.getMetadata(metadataCacheKey);
-  if (cachedMeta) { logger.info(`⚡ META CACHE HIT: ${metadataCacheKey}`); return cachedMeta; }
+  if (cachedMeta) { logger.info(`âš¡ META CACHE HIT: ${metadataCacheKey}`); return cachedMeta; }
 
   return withSharedPromise(metadataInflight, metadataCacheKey, async () => {
     const secondCacheHit = await Cache.getMetadata(metadataCacheKey);
@@ -398,14 +406,14 @@ async function getMetadata(id, type, config = {}) {
               if (parts.length > 2) episode = parseInt(parts[2]);
           }
           const kitsuUrl = `${CONFIG.KITSU_URL}/meta/anime/kitsu:${kitsuId}.json`;
-          logger.info(`⛩️ [META] Fetching Kitsu (Direct): ${kitsuUrl}`);
+          logger.info(`â›©ï¸ [META] Fetching Kitsu (Direct): ${kitsuUrl}`);
           try {
               const { data } = await axios.get(kitsuUrl, { timeout: CONFIG.TIMEOUTS.TMDB });
               if (data && data.meta) {
                   const kMeta = data.meta;
-                  finalMeta = { title: kMeta.name, originalTitle: kMeta.name, year: kMeta.year ? kMeta.year.split("–")[0] : (kMeta.releaseInfo ? kMeta.releaseInfo.substring(0, 4) : ""), imdb_id: kMeta.imdb_id || null, kitsu_id: kitsuId, isSeries: true, season: 1, episode: episode };
+                  finalMeta = { title: kMeta.name, originalTitle: kMeta.name, year: kMeta.year ? kMeta.year.split("â€“")[0] : (kMeta.releaseInfo ? kMeta.releaseInfo.substring(0, 4) : ""), imdb_id: kMeta.imdb_id || null, kitsu_id: kitsuId, isSeries: true, season: 1, episode: episode };
               }
-          } catch (e) { logger.warn(`⚠️ Errore Metadata Kitsu: ${e.message} - Fallback sconsigliato ma tentiamo clean`); }
+          } catch (e) { logger.warn(`âš ï¸ Errore Metadata Kitsu: ${e.message} - Fallback sconsigliato ma tentiamo clean`); }
       }
 
       if (!finalMeta) {
@@ -424,15 +432,15 @@ async function getMetadata(id, type, config = {}) {
                 const tmdbData = await fetchTmdbMeta(tmdbId, cleanType, userTmdbKey);
                 if (tmdbData) {
                     finalMeta = { title: tmdbData.title || tmdbData.name, originalTitle: tmdbData.original_title || tmdbData.original_name, year: (tmdbData.release_date || tmdbData.first_air_date) ? (tmdbData.release_date || tmdbData.first_air_date).split("-")[0] : "", imdb_id: cleanId, tmdb_id: tmdbId, isSeries: cleanType === "series", season: season, episode: episode };
-                    logger.info(`✅ [META] Usato TMDB (UserKey: ${!!userTmdbKey}): ${finalMeta.title} (${finalMeta.year}) [ID: ${tmdbId}] Orig: ${finalMeta.originalTitle}`);
+                    logger.info(`âœ… [META] Usato TMDB (UserKey: ${!!userTmdbKey}): ${finalMeta.title} (${finalMeta.year}) [ID: ${tmdbId}] Orig: ${finalMeta.originalTitle}`);
                 }
             }
-        } catch (err) { logger.warn(`⚠️ Errore Metadata TMDB, fallback a Cinemeta: ${err.message}`); }
+        } catch (err) { logger.warn(`âš ï¸ Errore Metadata TMDB, fallback a Cinemeta: ${err.message}`); }
 
         if (!finalMeta) {
-          logger.info(`ℹ️ [META] Fallback a Cinemeta per ${cleanId}`);
+          logger.info(`â„¹ï¸ [META] Fallback a Cinemeta per ${cleanId}`);
           const { data: cData } = await axios.get(`${CONFIG.CINEMETA_URL}/meta/${cleanType}/${cleanId}.json`, { timeout: CONFIG.TIMEOUTS.TMDB }).catch(() => ({ data: {} }));
-          finalMeta = cData?.meta ? { title: cData.meta.name, originalTitle: cData.meta.name, year: cData.meta.year?.split("–")[0], imdb_id: cleanId, isSeries: cleanType === "series", season: season, episode: episode } : null;
+          finalMeta = cData?.meta ? { title: cData.meta.name, originalTitle: cData.meta.name, year: cData.meta.year?.split("â€“")[0], imdb_id: cleanId, isSeries: cleanType === "series", season: season, episode: episode } : null;
         }
       }
     } catch (err) { logger.error(`Errore getMetadata Critical: ${err.message}`); finalMeta = null; }
@@ -452,9 +460,9 @@ function saveResultsToDbBackground(meta, results, config = null) {
             const success = await dbHelper.insertTorrent(meta, torrentObj);
             if (success) savedCount++;
         }
-        if (savedCount > 0) console.log(`💾 [AUTO-LEARN] Salvati ${savedCount} nuovi torrent nel DB per ${meta.imdb_id}`);
+        if (savedCount > 0) console.log(`ðŸ’¾ [AUTO-LEARN] Salvati ${savedCount} nuovi torrent nel DB per ${meta.imdb_id}`);
         resolvePackNamesInBackground(meta, results, config);
-    })().catch(err => console.error("❌ Errore background save:", err.message));
+    })().catch(err => console.error("âŒ Errore background save:", err.message));
 }
 
 async function resolveDebridLink(config, item, showFake, reqHost, meta) {
@@ -484,7 +492,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
                     let quality = /4k|2160p/i.test(item.title) ? "4K" : details.quality || "SD"; 
                     return {
                         name: aioFormatter.formatStreamName({ service: 'torbox', cached: true, quality: quality }),
-                        title: aioFormatter.formatStreamTitle({ title: displayTitle, size: formatBytes(realSize), language: formatLanguageLabel(titleLanguage, details.languages), source: item.source, seeders: finalSeeders, infoHash: item.hash, techInfo: `🎞️ ${quality} ${details.tags}` }),
+                        title: aioFormatter.formatStreamTitle({ title: displayTitle, size: formatBytes(realSize), language: formatLanguageLabel(titleLanguage, details.languages), source: item.source, seeders: finalSeeders, infoHash: item.hash, techInfo: `ðŸŽžï¸ ${quality} ${details.tags}` }),
                         url: proxyUrl, infoHash: item.hash, behaviorHints: { notWebReady: false, bingieGroup: `Leviathan|${quality}|TB|${item.hash}` }
                     };
                 } else {
@@ -510,7 +518,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
              let fullService = service === 'rd' ? 'realdebrid' : service === 'ad' ? 'alldebrid' : service === 'tb' ? 'torbox' : 'p2p';
              return {
                 name: aioFormatter.formatStreamName({ service: fullService, cached: true, quality: quality }),
-                title: aioFormatter.formatStreamTitle({ title: displayTitle, size: formatBytes(finalSize), language: formatLanguageLabel(fileLanguage, fileDetails.languages), source: item.source, seeders: finalSeeders, infoHash: item.hash, techInfo: `🎞️ ${quality} ${fileDetails.tags}` }),
+                title: aioFormatter.formatStreamTitle({ title: displayTitle, size: formatBytes(finalSize), language: formatLanguageLabel(fileLanguage, fileDetails.languages), source: item.source, seeders: finalSeeders, infoHash: item.hash, techInfo: `ðŸŽžï¸ ${quality} ${fileDetails.tags}` }),
                 url: streamData.url, infoHash: item.hash, behaviorHints: { notWebReady: false, bingieGroup: `Leviathan|${quality}|${service}|${item.hash}` }
             };
         } else {
@@ -518,7 +526,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
             return { name, title, url: streamData.url, behaviorHints: { notWebReady: false, bingieGroup: bingeGroup } };
         }
     } catch (e) {
-        if (showFake) return { name: `[P2P ⚠️]`, title: `${item.title}\n⚠️ Cache Assente`, url: item.magnet, behaviorHints: { notWebReady: true } };
+        if (showFake) return { name: `[P2P âš ï¸]`, title: `${item.title}\nâš ï¸ Cache Assente`, url: item.magnet, behaviorHints: { notWebReady: true } };
         return null;
     }
 }
@@ -548,7 +556,7 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
 
         return {
             name: aioFormatter.formatStreamName({ addonName: "Leviathan", service: fullService, cached: true, quality: quality }),
-            title: aioFormatter.formatStreamTitle({ title: displayTitle, size: formatBytes(realSize), language: formatLanguageLabel(lazyLanguage, details.languages), source: item.source, seeders: finalSeeders, infoHash: item.hash, techInfo: `🎞️ ${quality} ${details.tags}` }),
+            title: aioFormatter.formatStreamTitle({ title: displayTitle, size: formatBytes(realSize), language: formatLanguageLabel(lazyLanguage, details.languages), source: item.source, seeders: finalSeeders, infoHash: item.hash, techInfo: `ðŸŽžï¸ ${quality} ${details.tags}` }),
             url: lazyUrl, infoHash: item.hash, behaviorHints: { notWebReady: false, bingieGroup: `Leviathan|${quality}|${service}|${item.hash}` }
         };
     } else {
@@ -560,7 +568,7 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
 async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, config, italianMovieTitle = null) { 
     if (!CONFIG.INDEXER_URL) return [];
     try {
-        logger.info(`🌐 [REMOTE] Query VPS: ${CONFIG.INDEXER_URL} | ID: ${tmdbId} S:${season} E:${episode}`);
+        logger.info(`ðŸŒ [REMOTE] Query VPS: ${CONFIG.INDEXER_URL} | ID: ${tmdbId} S:${season} E:${episode}`);
         let url = `${CONFIG.INDEXER_URL}/api/get/${tmdbId}`;
         if (season) url += `?season=${season}`;
         if (episode) url += `&episode=${episode}`;
@@ -572,7 +580,7 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
             if (!String(magnet).includes("tr=")) magnet = buildTrackerMagnet(t.info_hash, t.title);
             let providerName = (t.provider || 'P2P').replace(/LeviathanDB/i, '').replace(/[()]/g, '').trim() || 'P2P';
             const finalHash = t.info_hash ? t.info_hash.toUpperCase() : extractInfoHash(magnet);
-            return { title: t.title, magnet: magnet, hash: finalHash, infoHash: finalHash, size: "💾 DB", sizeBytes: parseInt(t.size), seeders: parseInt(t.seeders, 10) || 0, source: providerName, fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined, _isPack: isSeasonPack(t.title) };
+            return { title: t.title, magnet: magnet, hash: finalHash, infoHash: finalHash, size: "ðŸ’¾ DB", sizeBytes: parseInt(t.size), seeders: parseInt(t.seeders, 10) || 0, source: providerName, fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined, _isPack: isSeasonPack(t.title) };
         });
 
         const langMode = getEffectiveLangMode(config);
@@ -586,7 +594,7 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
 }
 
 async function fetchExternalResults(type, finalId, config) {
-    logger.info(`🌐 [EXTERNAL] Start Parallel Fetch...`);
+    logger.info(`ðŸŒ [EXTERNAL] Start Parallel Fetch...`);
     try {
         const externalResults = await withTimeout(
             fetchExternalAddonsFlat(type, finalId, { userConfig: config }).then(items => items.map(i => {
@@ -598,10 +606,10 @@ async function fetchExternalResults(type, finalId, config) {
             CONFIG.TIMEOUTS.EXTERNAL, 'External Addons'
         );
         if (externalResults && externalResults.length > 0) {
-            logger.info(`✅ [EXTERNAL] Trovati ${externalResults.length} risultati`);
+            logger.info(`âœ… [EXTERNAL] Trovati ${externalResults.length} risultati`);
             return externalResults;
         } else {
-            logger.info(`❌ [EXTERNAL] Nessun risultato trovato.`);
+            logger.info(`âŒ [EXTERNAL] Nessun risultato trovato.`);
             return [];
         }
     } catch (err) { logger.warn('External Addons fallito/timeout', { error: err.message }); return []; }
@@ -609,10 +617,10 @@ async function fetchExternalResults(type, finalId, config) {
 
 async function generateStream(type, id, config, userConfStr, reqHost) {
   const hasDebridKey = (config.key && config.key.length > 0) || (config.rd && config.rd.length > 0);
-  const isWebEnabled = config.filters && (config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableGf);
+  const isWebEnabled = config.filters && (isStreamingCommunityEnabled(config.filters) || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableGf);
   const isP2PEnabled = config.filters && config.filters.enableP2P === true;
 
-  if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: "⚠️ CONFIG", title: "Inserisci API Key, Attiva P2P o Attiva WebStream" }] };
+  if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: "âš ï¸ CONFIG", title: "Inserisci API Key, Attiva P2P o Attiva WebStream" }] };
   
   const configHash = crypto.createHash('md5').update(userConfStr || 'no-conf').digest('hex');
   const cacheKey = `${type}:${id}:${configHash}`;
@@ -640,7 +648,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const meta = await LIMITERS.metadata.schedule(() => getMetadata(finalId, type, config));
   if (!meta) return { streams: [] };
 
-  logger.info(`🚀 [SPEED] Start search for: ${meta.title}`);
+  logger.info(`ðŸš€ [SPEED] Start search for: ${meta.title}`);
   
   const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
   const dbOnlyMode = config.filters?.dbOnly === true; 
@@ -717,15 +725,15 @@ const aggressiveFilter = (item) => {
   const [remoteSettled, externalSettled] = await Promise.allSettled([remotePromise, externalPromise]);
   const remoteResults = remoteSettled.status === 'fulfilled' ? remoteSettled.value : [];
   const externalResults = externalSettled.status === 'fulfilled' ? externalSettled.value : [];
-  logger.info(`📊 [STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
+  logger.info(`ðŸ“Š [STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
 
   let fastResults = [...remoteResults, ...externalResults].filter(aggressiveFilter);
   let cleanResults = deduplicateResults(fastResults);
   let validFastCount = cleanResults.length;
-  logger.info(`⚡ [FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
+  logger.info(`âš¡ [FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
 
   if (validFastCount === 0 && !dbOnlyMode) {
-      logger.info(`⚠️ [FALLBACK] 0 risultati utili da Indexer/External. Avvio Scrapers in background...`);
+      logger.info(`âš ï¸ [FALLBACK] 0 risultati utili da Indexer/External. Avvio Scrapers in background...`);
       let dynamicTitles = [];
       try { if (tmdbIdLookup) dynamicTitles = await getTmdbAltTitles(tmdbIdLookup, type, userTmdbKey); } catch (e) {}
       
@@ -767,7 +775,7 @@ const aggressiveFilter = (item) => {
               : (CONFIG.TIMEOUTS.SCRAPER || 4000);
 
       if (queries.length > 0) {
-          logger.info(`🧠 [SCRAPER PLAN] lang=${langMode} queries=${queries.length} timeout=${scraperTimeout}ms`);
+          logger.info(`ðŸ§  [SCRAPER PLAN] lang=${langMode} queries=${queries.length} timeout=${scraperTimeout}ms`);
           const allScraperTasks = [];
           queries.forEach(q => SCRAPER_MODULES.forEach(scraper => {
               if (scraper.searchMagnet) {
@@ -780,7 +788,7 @@ const aggressiveFilter = (item) => {
           const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks)).flatMap(result => result.status === 'fulfilled' ? result.value : []);
           cleanResults = deduplicateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)]);
           validFastCount = cleanResults.length;
-          logger.info(`📊 [STATS SCRAPER] Trovati e filtrati ${validFastCount} risultati aggiuntivi dagli Scraper.`);
+          logger.info(`ðŸ“Š [STATS SCRAPER] Trovati e filtrati ${validFastCount} risultati aggiuntivi dagli Scraper.`);
       }
   }
 
@@ -815,7 +823,7 @@ const aggressiveFilter = (item) => {
       for (const checkLimit of progressiveWindows) {
           const candidates = sourceRanked.slice(0, checkLimit);
           if (candidates.length === 0) break;
-          logger.info(`📦 [TB CHECK] Scansiono ${candidates.length} torrent alla ricerca di file video reali...`);
+          logger.info(`ðŸ“¦ [TB CHECK] Scansiono ${candidates.length} torrent alla ricerca di file video reali...`);
           const cacheResults = await LIMITERS.tbResolve.schedule(() => TbCache.checkCacheSync(candidates, apiKey, dbHelper, checkLimit));
           verifiedList = [];
           for (const item of candidates) {
@@ -832,7 +840,7 @@ const aggressiveFilter = (item) => {
           if (verifiedList.length >= Math.min(12, CONFIG.MAX_RESULTS) || checkLimit === progressiveWindows[progressiveWindows.length - 1]) break;
       }
 
-      logger.info(`📦 [TB CLEANUP] Finestra usata: ${usedWindow} -> Rimasti: ${verifiedList.length}`);
+      logger.info(`ðŸ“¦ [TB CLEANUP] Finestra usata: ${usedWindow} -> Rimasti: ${verifiedList.length}`);
       rankedList = verifiedList;
       const remainingItems = sourceRanked.slice(usedWindow);
       if (remainingItems.length > 0) TbCache.enrichCacheBackground(remainingItems, apiKey, dbHelper);
@@ -861,24 +869,24 @@ const aggressiveFilter = (item) => {
       warmupLazyStreamsInBackground(config, lazyCandidates, meta);
   }
   else if (finalRanked.length > 0 && isP2PEnabled) {
-      logger.info(`⚡ [P2P MODE] Generating direct streams for ${meta.title}`);
+      logger.info(`âš¡ [P2P MODE] Generating direct streams for ${meta.title}`);
       debridStreams = finalRanked.map(item => P2P.formatP2PStream(item, config));
   }
 
-  let rawVix = [], formattedGhd = [], formattedGs = [], formattedVix = [], formattedAw = [], formattedGf = [];
+  let rawStreamingCommunity = [], formattedGhd = [], formattedGs = [], formattedStreamingCommunity = [], formattedAw = [], formattedGf = [];
 
   if (!dbOnlyMode) {
        const rawId = `${type}:${finalId}:${meta.season || 0}:${meta.episode || 0}`;
-       let vixPromise = Promise.resolve([]);
+       let streamingCommunityPromise = Promise.resolve([]);
        let ghdPromise = Promise.resolve([]), gsPromise = Promise.resolve([]), awPromise = Promise.resolve([]), gfPromise = Promise.resolve([]);
-       if (allowItalianWebProviders && config.filters?.enableVix) vixPromise = Cache.fetchWithCache('Vix', rawId, 43200, () => guardedProviderCall('Vix', LIMITERS.webVix, CONFIG.TIMEOUTS.SCRAPER, () => searchVix(meta, config, reqHost)));
+       if (allowItalianWebProviders && isStreamingCommunityEnabled(config.filters)) streamingCommunityPromise = Cache.fetchWithCache('StreamingCommunity', rawId, 43200, () => guardedProviderCall('StreamingCommunity', LIMITERS.webVix, CONFIG.TIMEOUTS.SCRAPER, () => searchStreamingCommunity(meta, config, reqHost)));
        if (allowItalianWebProviders && config.filters?.enableGhd) ghdPromise = Cache.fetchWithCache('GuardaHD', rawId, 43200, () => guardedProviderCall('GuardaHD', LIMITERS.webGhd, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaHD(meta, config)));
        if (allowItalianWebProviders && config.filters?.enableGs) gsPromise = Cache.fetchWithCache('GuardaSerie', rawId, 43200, () => guardedProviderCall('GuardaSerie', LIMITERS.webGs, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaserie(meta, config)));
        if (allowItalianWebProviders && config.filters?.enableAnimeWorld) awPromise = Cache.fetchWithCache('AnimeWorld', rawId, 43200, () => guardedProviderCall('AnimeWorld', LIMITERS.webAw, CONFIG.TIMEOUTS.SCRAPER, () => searchAnimeWorld(id, meta, config)));
        if (allowItalianWebProviders && config.filters?.enableGf) gfPromise = Cache.fetchWithCache('GuardaFlix', rawId, 43200, () => guardedProviderCall('GuardaFlix', LIMITERS.webGf, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaFlix(meta, config)));
 
-       const webSettled = await Promise.allSettled([vixPromise, ghdPromise, gsPromise, awPromise, gfPromise]);
-       rawVix = webSettled[0].status === 'fulfilled' ? webSettled[0].value : [];
+       const webSettled = await Promise.allSettled([streamingCommunityPromise, ghdPromise, gsPromise, awPromise, gfPromise]);
+       rawStreamingCommunity = webSettled[0].status === 'fulfilled' ? webSettled[0].value : [];
        formattedGhd = webSettled[1].status === 'fulfilled' ? webSettled[1].value : [];
        formattedGs = webSettled[2].status === 'fulfilled' ? webSettled[2].value : [];
        formattedAw = webSettled[3].status === 'fulfilled' ? webSettled[3].value : [];
@@ -888,36 +896,36 @@ const aggressiveFilter = (item) => {
            const applyAioStyle = (streamList, sourceName) => {
                if (!streamList || !Array.isArray(streamList)) return;
                streamList.forEach((stream) => {
-                   let quality = "HD", qIcon = "📺", textToCheck = (stream.title + " " + (stream.name || "")).toUpperCase().replace(/GUARDAHD|STREAMINGCOMMUNITY|LEVIATHAN|VIX|GUARDAFLIX/g, "");
-                   if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) { quality = "4K"; qIcon = "🔥"; }
-                   else if (/\b(1080P|FHD|FULLHD)\b/.test(textToCheck)) { quality = "1080p"; qIcon = "🔥"; }
-                   else if (/\b(720P|HD)\b/.test(textToCheck)) { quality = "720p"; qIcon = "🔥"; }
-                   else if (/\b(480P|SD)\b/.test(textToCheck)) { quality = "SD"; qIcon = "🔥"; }
+                   let quality = "HD", qIcon = "ðŸ“º", textToCheck = (stream.title + " " + (stream.name || "")).toUpperCase().replace(/GUARDAHD|STREAMINGCOMMUNITY|LEVIATHAN|VIX|GUARDAFLIX/g, "");
+                   if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) { quality = "4K"; qIcon = "ðŸ”¥"; }
+                   else if (/\b(1080P|FHD|FULLHD)\b/.test(textToCheck)) { quality = "1080p"; qIcon = "ðŸ”¥"; }
+                   else if (/\b(720P|HD)\b/.test(textToCheck)) { quality = "720p"; qIcon = "ðŸ”¥"; }
+                   else if (/\b(480P|SD)\b/.test(textToCheck)) { quality = "SD"; qIcon = "ðŸ”¥"; }
                    else { quality = "WebStreams"; }
                    if (sourceName.includes("StreamingCommunity") || sourceName.includes("Vix")) {
-                       if (quality === "SD" && !/\b(480P|SD)\b/.test(textToCheck)) { quality = "1080p"; qIcon = "🔥"; }
+                       if (quality === "SD" && !/\b(480P|SD)\b/.test(textToCheck)) { quality = "1080p"; qIcon = "ðŸ”¥"; }
                    }
                    stream.name = aioFormatter.formatStreamName({ service: "web", cached: true, quality: quality });
-                   stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: "Web", language: "🇮🇹 ITA", source: sourceName, seeders: null, techInfo: `🎞️ ${quality} ${qIcon}` });
+                   stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: "Web", language: "ðŸ‡®ðŸ‡¹ ITA", source: sourceName, seeders: null, techInfo: `ðŸŽžï¸ ${quality} ${qIcon}` });
                    if (!stream.behaviorHints) stream.behaviorHints = {};
                    stream.behaviorHints.bingieGroup = `Leviathan|${quality}|Web|${sourceName.replace(/\W/g,'')}`;
                });
            };
-           if (typeof rawVix !== 'undefined') applyAioStyle(rawVix, "StreamingCommunity");
+           if (typeof rawStreamingCommunity !== 'undefined') applyAioStyle(rawStreamingCommunity, "StreamingCommunity");
            if (typeof formattedGhd !== 'undefined') applyAioStyle(formattedGhd, "GuardaHD");
            if (typeof formattedGs !== 'undefined') applyAioStyle(formattedGs, "GuardaSerie");
            if (typeof formattedGf !== 'undefined') applyAioStyle(formattedGf, "GuardaFlix");
            if (typeof formattedAw !== 'undefined' && formattedAw.length > 0) {
                formattedAw.forEach(stream => {
                    stream.name = aioFormatter.formatStreamName({ service: "web", cached: true, quality: "HD" });
-                   stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: "Web", language: "🇯🇵 JPN/ITA", source: "AnimeWorld", techInfo: "⛩️ Anime" });
+                   stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: "Web", language: "ðŸ‡¯ðŸ‡µ JPN/ITA", source: "AnimeWorld", techInfo: "â›©ï¸ Anime" });
                    if (!stream.behaviorHints) stream.behaviorHints = {};
                    stream.behaviorHints.bingieGroup = `Leviathan|HD|Web|AnimeWorld`;
                });
            }
-           formattedVix = rawVix; 
+           formattedStreamingCommunity = rawStreamingCommunity; 
        } else {
-           if (rawVix && rawVix.length > 0) formattedVix = applyWebFormatter(rawVix, "StreamingCommunity", meta, config);
+           if (rawStreamingCommunity && rawStreamingCommunity.length > 0) formattedStreamingCommunity = applyWebFormatter(rawStreamingCommunity, "StreamingCommunity", meta, config);
            if (formattedGhd && formattedGhd.length > 0) formattedGhd = applyWebFormatter(formattedGhd, "GuardaHD", meta, config);
            if (formattedGs && formattedGs.length > 0) formattedGs = applyWebFormatter(formattedGs, "GuardaSerie", meta, config);
            if (formattedAw && formattedAw.length > 0) formattedAw = applyWebFormatter(formattedAw, "AnimeWorld", meta, config);
@@ -925,7 +933,7 @@ const aggressiveFilter = (item) => {
        }
   }
 
-  let finalStreams = (config.filters && config.filters.vixLast === true) ? [...debridStreams, ...formattedGhd, ...formattedGs, ...formattedAw, ...formattedGf, ...formattedVix] : [...formattedGhd, ...formattedGs, ...formattedAw, ...formattedGf, ...formattedVix, ...debridStreams];
+  let finalStreams = (config.filters && isStreamingCommunityLastEnabled(config.filters)) ? [...debridStreams, ...formattedGhd, ...formattedGs, ...formattedAw, ...formattedGf, ...formattedStreamingCommunity] : [...formattedGhd, ...formattedGs, ...formattedAw, ...formattedGf, ...formattedStreamingCommunity, ...debridStreams];
 
   if (config.filters) {
       finalStreams = finalStreams.filter(stream => {
@@ -939,12 +947,12 @@ const aggressiveFilter = (item) => {
   }
 
   if (finalStreams.length === 0) {
-      logger.info(`⚠️ [FALLBACK] Nessun risultato trovato (P2P/Web Locali). Attivo WebStreamr...`);
+      logger.info(`âš ï¸ [FALLBACK] Nessun risultato trovato (P2P/Web Locali). Attivo WebStreamr...`);
       const webStreamrResults = filterWebFallbackStreams(await searchWebStreamr(type, finalId), langMode, meta);
       if (webStreamrResults.length > 0) {
            finalStreams.push(...webStreamrResults);
-           logger.info(`🕷️ [WEBSTREAMR] Aggiunti ${webStreamrResults.length} stream di fallback.`);
-      } else { logger.info(`❌ [WEBSTREAMR] Nessun risultato trovato.`); }
+           logger.info(`ðŸ•·ï¸ [WEBSTREAMR] Aggiunti ${webStreamrResults.length} stream di fallback.`);
+      } else { logger.info(`âŒ [WEBSTREAMR] Nessun risultato trovato.`); }
   }
 
   
@@ -953,7 +961,7 @@ const aggressiveFilter = (item) => {
   await Cache.cacheStream(cacheKey, resultObj, streamTtl);
   recordDuration('stream.generate.total', Date.now() - generationStartedAt);
   incrementMetric(finalStreams.length > 0 ? 'stream.generate.nonEmpty' : 'stream.generate.empty');
-  logger.info(`💾 SAVED TO CACHE: ${cacheKey} (ttl=${streamTtl}s, streams=${finalStreams.length})`);
+  logger.info(`ðŸ’¾ SAVED TO CACHE: ${cacheKey} (ttl=${streamTtl}s, streams=${finalStreams.length})`);
   return resultObj;
   });
 }
