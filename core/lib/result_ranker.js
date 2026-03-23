@@ -5,7 +5,12 @@ const DEFAULT_CONFIG = {
     quality720p: 10000000,
     qualitySD: 0,
     languageITA: 500000,
+    languageENG: 500000,
     languageMULTI: 250000,
+    languageNeutral: 120000,
+    languageOtherPenalty: -300000,
+    languageItaPenaltyInEng: -700000,
+    languageMultiPenaltyInEng: -350000,
     hevcBonus: 5000,
     hdrBonus: 5000,
     exactEpisodeBoost: 20000,
@@ -43,7 +48,16 @@ const DEFAULT_CONFIG = {
       /\b(?:MULTI|DUAL|TRIPLE)[^\n]{0,24}\b(?:ITA|IT|ITALIANO)\b/i,
       /\b(?:ITA|ITA-ENG|ITA\.ENG|ITA_ENG|Ita)\b/i,
     ],
-    multiPatterns: [/\b(MULTI|MULTILANG|MULTILANGUAGE|ITA[._ -]?ENG|ITA-ENG|DUAL|DUAL[ -]?AUDIO|TRIPLE)\b/i],
+    engPatterns: [
+      /\b(?:ENG|ENGLISH)\b/i,
+      /\b(?:AUDIO|LANG(?:UAGE)?)\s*[:\-]?\s*(?:ENG|ENGLISH)\b/i,
+      /\b(?:AC-?3|AAC|DDP?|DTS(?:-HD)?|PCM|TRUEHD|ATMOS|MP3|WMA|FLAC)[^\n]{0,24}\b(?:ENG|ENGLISH)\b/i,
+      /\b(?:ENG[._ -]?SUB|SUB[._ -]?ENG|ENGLISH[._ -]?SUB)\b/i,
+    ],
+    multiPatterns: [/\b(MULTI|MULTILANG|MULTILANGUAGE|ITA[._ -]?ENG|ITA-ENG|ENG[._ -]?ITA|DUAL|DUAL[ -]?AUDIO|TRIPLE)\b/i],
+    otherLanguagePatterns: [
+      /\b(?:JAP|JPN|JAPANESE|FRE|FRENCH|FRA|GER|GERMAN|DEU|SPA|SPANISH|ESP|RUS|RUSSIAN|KOR|KOREAN|PT-?BR|PORTUGUESE|HINDI|VOSTFR|VOSTA)\b/i,
+    ],
     subtitleOnlyPatterns: [/\b(?:SUB|SUBS|SOTTOTITOLI|SUB[._ -]?ITA|SUB-?ITA|VOSTFR|VOSTA|SUBBED)\b/i],
     audioNegativePatterns: [/\b(?:ENG(?:LISH)?\s+ONLY|SUB[._ -]?ITA\s+ONLY)\b/i],
     hevcRegex: /\b(x265|h265|hevc)\b/i,
@@ -52,6 +66,13 @@ const DEFAULT_CONFIG = {
     sourceLanguageHints: {
       corsaro: 'ita',
       knaben: 'mixed',
+      rarbg: 'eng',
+      '1337x': 'eng',
+      tpb: 'eng',
+      'tpb mirror': 'eng',
+      bitsearch: 'eng',
+      limetorrents: 'eng',
+      uindex: 'eng',
     },
     releaseGroupRegexes: [
       /-(?<group>[A-Z0-9][A-Z0-9._-]{1,15})$/,
@@ -195,9 +216,25 @@ function detectQuality(title) {
   return 'SD';
 }
 
+
+function getItemText(item) {
+  return [item?.title, item?.name, item?.description].map(normalizeText).filter(Boolean).join(' ');
+}
+
+function resolveLangMode(meta = {}, config = {}) {
+  const directMeta = lowerText(meta.langMode || meta.languageMode || meta.language);
+  if (directMeta === 'ita' || directMeta === 'eng' || directMeta === 'all') return directMeta;
+
+  const filterMode = lowerText(config.filters?.language || config.langMode || config.language);
+  if (filterMode === 'ita' || filterMode === 'eng' || filterMode === 'all') return filterMode;
+
+  if (config.filters?.allowEng === true || config.allowEng === true) return 'all';
+  return 'ita';
+}
+
 function detectItalianAudio(item, config) {
   const source = lowerText(item.source || item.provider);
-  const text = [item.title, item.name, item.description].map(normalizeText).filter(Boolean).join(' ');
+  const text = getItemText(item);
 
   const hasSubtitleOnlyMarker = config.heuristics.subtitleOnlyPatterns.some((pattern) => pattern.test(text));
   const hasStrongItaMarker = config.heuristics.itaPatterns.some((pattern) => pattern.test(text));
@@ -213,10 +250,78 @@ function detectItalianAudio(item, config) {
 }
 
 function detectMultiAudio(item, config) {
-  const text = [item.title, item.name, item.description].map(normalizeText).filter(Boolean).join(' ');
+  const text = getItemText(item);
   return config.heuristics.multiPatterns.some((pattern) => pattern.test(text));
 }
 
+function detectEnglishAudio(item, config) {
+  const source = lowerText(item.source || item.provider);
+  const text = getItemText(item);
+
+  if (detectItalianAudio(item, config)) return false;
+  if (detectMultiAudio(item, config)) return false;
+  if (config.heuristics.subtitleOnlyPatterns.some((pattern) => pattern.test(text))) return false;
+  if (config.heuristics.otherLanguagePatterns.some((pattern) => pattern.test(text))) return false;
+
+  const hintedLanguage = config.heuristics.sourceLanguageHints[source] || null;
+  if (hintedLanguage === 'eng') return true;
+
+  if (config.heuristics.engPatterns.some((pattern) => pattern.test(text))) return true;
+  return /\b(?:eng|english)\b/i.test(text);
+}
+
+function detectOtherLanguage(item, config) {
+  const source = lowerText(item.source || item.provider);
+  const text = getItemText(item);
+
+  if (detectItalianAudio(item, config)) return false;
+  if (detectMultiAudio(item, config)) return false;
+  if (detectEnglishAudio(item, config)) return false;
+
+  const hintedLanguage = config.heuristics.sourceLanguageHints[source] || null;
+  if (hintedLanguage && !['ita', 'eng', 'mixed'].includes(hintedLanguage)) return true;
+
+  return config.heuristics.otherLanguagePatterns.some((pattern) => pattern.test(text));
+}
+
+function getLanguageFlags(item, meta = {}, config = DEFAULT_CONFIG) {
+  const mode = resolveLangMode(meta, config);
+  const text = getItemText(item);
+  const subtitleOnly = config.heuristics.subtitleOnlyPatterns.some((pattern) => pattern.test(text));
+  const isIta = detectItalianAudio(item, config);
+  const isMulti = detectMultiAudio(item, config);
+  const isEng = detectEnglishAudio(item, config);
+  const isOther = detectOtherLanguage(item, config);
+  const isNeutralScene = !subtitleOnly && !isIta && !isMulti && !isEng && !isOther;
+
+  return {
+    mode,
+    text,
+    subtitleOnly,
+    isIta,
+    isMulti,
+    isEng,
+    isOther,
+    isNeutralScene,
+  };
+}
+
+function shouldKeepByLanguageMode(item, meta = {}, config = DEFAULT_CONFIG) {
+  const flags = getLanguageFlags(item, meta, config);
+
+  if (flags.mode === 'eng') {
+    if (flags.isIta || flags.isMulti || flags.isOther) return false;
+    return flags.isEng || flags.isNeutralScene;
+  }
+
+  if (flags.mode === 'all') {
+    if (flags.isOther && !flags.isEng && !flags.isIta && !flags.isMulti) return false;
+    return flags.isIta || flags.isEng || flags.isMulti || flags.isNeutralScene;
+  }
+
+  if (flags.isOther || flags.isEng) return false;
+  return flags.isIta || flags.isMulti || flags.isNeutralScene;
+}
 function buildEpisodeContext(meta = {}) {
   const season = Number.isInteger(meta.season) ? meta.season : parseInt(meta.season, 10);
   const episode = Number.isInteger(meta.episode) ? meta.episode : parseInt(meta.episode, 10);
@@ -475,6 +580,7 @@ function evaluateEpisodeFit(title, meta, config) {
   return { delta, reasons };
 }
 
+
 function computeScore(item, meta = {}, configInput = {}) {
   const config = configInput.weights ? configInput : deepMergeConfig(configInput);
   let score = 0;
@@ -483,6 +589,8 @@ function computeScore(item, meta = {}, configInput = {}) {
   const loweredTitle = title.toLowerCase();
   const source = lowerText(item.source || item.provider);
   const quality = detectQuality(title);
+  const langMode = resolveLangMode(meta, config);
+  const langFlags = getLanguageFlags(item, meta, config);
 
   if (quality === '4K') {
     score += config.weights.quality4K;
@@ -498,19 +606,62 @@ function computeScore(item, meta = {}, configInput = {}) {
     reasons.push('SD');
   }
 
-  const hasSubtitleOnlyMarker = config.heuristics.subtitleOnlyPatterns.some((pattern) => pattern.test(title));
-  const isIta = detectItalianAudio(item, config);
-  const isMulti = detectMultiAudio(item, config);
-
-  if (isIta) {
-    score += config.weights.languageITA;
-    reasons.push('ITA');
-  } else if (isMulti) {
-    score += config.weights.languageMULTI;
-    reasons.push('MULTI');
+  if (langMode === 'eng') {
+    if (langFlags.isEng) {
+      score += config.weights.languageENG;
+      reasons.push('ENG');
+    } else if (langFlags.isNeutralScene) {
+      score += config.weights.languageNeutral;
+      reasons.push('NEUTRAL');
+    }
+    if (langFlags.isIta) {
+      score += config.weights.languageItaPenaltyInEng;
+      reasons.push('ITA_PENALTY');
+    }
+    if (langFlags.isMulti) {
+      score += config.weights.languageMultiPenaltyInEng;
+      reasons.push('MULTI_PENALTY');
+    }
+    if (langFlags.isOther) {
+      score += config.weights.languageOtherPenalty;
+      reasons.push('OTHER_LANG');
+    }
+  } else if (langMode === 'all') {
+    if (langFlags.isIta) {
+      score += config.weights.languageITA;
+      reasons.push('ITA');
+    } else if (langFlags.isEng) {
+      score += config.weights.languageENG;
+      reasons.push('ENG');
+    } else if (langFlags.isMulti) {
+      score += config.weights.languageMULTI;
+      reasons.push('MULTI');
+    } else if (langFlags.isNeutralScene) {
+      score += config.weights.languageNeutral;
+      reasons.push('NEUTRAL');
+    }
+    if (langFlags.isOther) {
+      score += Math.round(config.weights.languageOtherPenalty * 0.8);
+      reasons.push('OTHER_LANG');
+    }
+  } else {
+    if (langFlags.isIta) {
+      score += config.weights.languageITA;
+      reasons.push('ITA');
+    } else if (langFlags.isMulti) {
+      score += config.weights.languageMULTI;
+      reasons.push('MULTI');
+    } else if (langFlags.isNeutralScene) {
+      score += Math.round(config.weights.languageNeutral * 0.35);
+      reasons.push('NEUTRAL');
+    }
+    if (langFlags.isEng || langFlags.isOther) {
+      score += Math.round(config.weights.languageOtherPenalty * 0.65);
+      reasons.push('NON_ITA');
+    }
   }
 
-  if (hasSubtitleOnlyMarker && !isIta) {
+  if (langFlags.subtitleOnly && !langFlags.isIta) {
     score += config.weights.subtitleOnlyPenalty;
     reasons.push('SUB_ONLY');
   }
@@ -634,11 +785,15 @@ function computeScore(item, meta = {}, configInput = {}) {
     reasons,
     details: {
       quality,
-      isIta,
-      isMulti,
+      isIta: langFlags.isIta,
+      isEng: langFlags.isEng,
+      isMulti: langFlags.isMulti,
+      isOther: langFlags.isOther,
+      isNeutralScene: langFlags.isNeutralScene,
       sizeBytes,
       group,
       source,
+      langMode,
     },
   };
 }
@@ -647,33 +802,35 @@ function rankAndFilterResults(results = [], meta = {}, optConfig = {}) {
   const config = deepMergeConfig(optConfig);
   if (!Array.isArray(results)) return [];
 
-  const ranked = results.map((item, index) => {
-    const sizeBytes = parseSizeToBytes(item.sizeBytes || item.size || item._size);
-    const cloned = { ...item, _size: sizeBytes || item._size || 0 };
+  const ranked = results
+    .map((item, index) => {
+      const sizeBytes = parseSizeToBytes(item.sizeBytes || item.size || item._size);
+      const cloned = { ...item, _size: sizeBytes || item._size || 0 };
 
-    if (sizeBytes > 0 && sizeBytes < config.heuristics.minimalSizeBytes) {
+      if (sizeBytes > 0 && sizeBytes < config.heuristics.minimalSizeBytes) {
+        return {
+          ...cloned,
+          _score: -999999999,
+          _reasons: ['SIZE_TOO_SMALL'],
+          _rankMeta: {
+            quality: detectQuality(cloned.title || cloned.name || ''),
+            index,
+          },
+        };
+      }
+
+      const { score, reasons, details } = computeScore(cloned, meta, config);
       return {
         ...cloned,
-        _score: -999999999,
-        _reasons: ['SIZE_TOO_SMALL'],
+        _score: score,
+        _reasons: reasons,
         _rankMeta: {
-          quality: detectQuality(cloned.title || cloned.name || ''),
+          ...details,
           index,
         },
       };
-    }
-
-    const { score, reasons, details } = computeScore(cloned, meta, config);
-    return {
-      ...cloned,
-      _score: score,
-      _reasons: reasons,
-      _rankMeta: {
-        ...details,
-        index,
-      },
-    };
-  });
+    })
+    .filter((item) => shouldKeepByLanguageMode(item, meta, config));
 
   ranked.sort((a, b) => {
     if (b._score !== a._score) return b._score - a._score;
@@ -699,7 +856,6 @@ function rankAndFilterResults(results = [], meta = {}, optConfig = {}) {
 
   return ranked;
 }
-
 module.exports = {
   rankAndFilterResults,
   DEFAULT_CONFIG,
@@ -707,5 +863,9 @@ module.exports = {
   computeScore,
   detectQuality,
   detectItalianAudio,
+  detectEnglishAudio,
+  detectOtherLanguage,
   detectMultiAudio,
+  resolveLangMode,
+  shouldKeepByLanguageMode,
 };
