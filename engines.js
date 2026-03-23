@@ -107,6 +107,9 @@ const ITALIAN_AUDIO_REGEX = /\b(?:ITA(?:LIAN(?:O)?)?(?:\s*(?:AUDIO|DDP|AAC|AC3|E
 const ITALIAN_SUB_REGEX = /\b(?:SUB[-.\s_]*ITA|SOFTSUB[-.\s_]*ITA|VOST(?:ITA)?|ITALIAN\s*SUBS?)\b/i;
 const TRUSTED_ITALIAN_REGEX = /\b(?:CORSARO|ICV|MEGAPHONE|IDN[_\s-]*CREW|DDN|MUX(?:\s*ITA)?|TRIDIM|LUX|WMS|CiNEFiLE|SPEEDVIDEO|CORSARO(?:NERO)?)\b/i;
 const NEGATIVE_LANGUAGE_REGEX = /\b(?:TRUEFRENCH|FRENCH|GERMAN|SPANISH|LATINO|RUSSIAN|POLISH|TAMIL|TELUGU|HINDI|KOREAN|JAPANESE|ENG(?:LISH)?\s*ONLY|DUBBED\s*ENG)\b/i;
+const OTHER_LANGUAGE_REGEX = /\b(?:TRUEFRENCH|FRENCH|GERMAN|SPANISH|LATINO|RUSSIAN|POLISH|TAMIL|TELUGU|HINDI|KOREAN|JAPANESE)\b/i;
+const ENGLISH_AUDIO_REGEX = /\b(?:ENG(?:LISH)?(?:\s*(?:AUDIO|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?))?|TRUE\s*ENGLISH|AUDIO\s*ENG|ENG\s*AC3|ENG\s*AAC|ENG\s*DDP|ENG\s*DTS|ENG\s*TRUEHD|DUBBED\s*ENG|ENG(?:LISH)?\s*ONLY)\b/i;
+const MULTI_LANGUAGE_REGEX = /\b(?:MULTI(?:LANG|AUDIO)?|DUAL\s*AUDIO)\b/i;
 const NOISY_TITLE_REGEX = /\b(?:x265\s*meets|sample|trailer|soundtrack|ebook|audiobook|xxx|porn)\b/i;
 const QUALITY_SCORES = [
     { regex: /\b(?:2160p|4k|uhd)\b/i, value: 4 },
@@ -269,7 +272,20 @@ function normalizeType(type) {
     return "movie";
 }
 
-function getStealthHeaders(url) {
+function resolveLangMode(options = {}) {
+    const explicit = String(options.langMode || options.languageMode || options.language || '').toLowerCase();
+    if (explicit === 'ita' || explicit === 'eng' || explicit === 'all') return explicit;
+    if (typeof options.allowEng === 'boolean') return options.allowEng ? 'all' : 'ita';
+    return 'ita';
+}
+
+function getAcceptLanguage(langMode = 'ita') {
+    if (langMode === 'eng') return 'en-US,en;q=0.9';
+    if (langMode === 'all') return 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7';
+    return 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7';
+}
+
+function getStealthHeaders(url, langMode = 'ita') {
     const profile = BROWSER_PROFILES[Math.floor(Math.random() * BROWSER_PROFILES.length)];
     const urlObj = new URL(url);
     return {
@@ -278,7 +294,8 @@ function getStealthHeaders(url) {
             "User-Agent": profile.userAgent,
             Referer: `${urlObj.origin}/`,
             Origin: urlObj.origin,
-            ...profile.headers
+            ...profile.headers,
+            "Accept-Language": getAcceptLanguage(langMode)
         }
     };
 }
@@ -288,8 +305,8 @@ function isCloudflareResponse(data) {
     return /cloudflare|verify you are human|attention required|cf-browser-verification/i.test(data);
 }
 
-function mergeHeaders(url, customHeaders = {}) {
-    const { headers: stealthHeaders } = getStealthHeaders(url);
+function mergeHeaders(url, customHeaders = {}, langMode = 'ita') {
+    const { headers: stealthHeaders } = getStealthHeaders(url, langMode);
     return { ...stealthHeaders, ...customHeaders };
 }
 
@@ -307,7 +324,7 @@ async function requestHtml(url, config = {}, retries = CONFIG.RETRIES) {
     if (inflight) return inflight;
 
     const requestPromise = (async () => {
-        const headers = mergeHeaders(url, config.headers);
+        const headers = mergeHeaders(url, config.headers, config.langMode || 'ita');
         let lastError = null;
 
         for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -396,25 +413,45 @@ function getResolutionScore(text) {
     return 0;
 }
 
-function getLanguageScore(name, allowEng = false) {
+function getLanguageScore(name, langMode = 'ita') {
     const normalized = normalizeSpaces(name).toUpperCase();
     const hasItalianAudio = ITALIAN_AUDIO_REGEX.test(normalized);
     const hasItalianSubs = ITALIAN_SUB_REGEX.test(normalized);
     const isTrustedItalian = TRUSTED_ITALIAN_REGEX.test(normalized);
-    const hasNegativeLanguage = NEGATIVE_LANGUAGE_REGEX.test(normalized);
+    const hasEnglishAudio = ENGLISH_AUDIO_REGEX.test(normalized);
+    const hasMultiLanguage = MULTI_LANGUAGE_REGEX.test(normalized);
+    const hasOtherLanguage = OTHER_LANGUAGE_REGEX.test(normalized);
+
+    if (langMode === 'eng') {
+        if (hasItalianAudio || isTrustedItalian || hasItalianSubs) return -50;
+        if (hasMultiLanguage) return -15;
+        if (hasOtherLanguage && !hasEnglishAudio) return -45;
+        if (hasEnglishAudio) return 30;
+        return 12;
+    }
+
+    if (langMode === 'all') {
+        if (hasOtherLanguage && !hasItalianAudio && !hasEnglishAudio && !hasMultiLanguage) return -30;
+        if (hasItalianAudio) return 30;
+        if (hasEnglishAudio) return 28;
+        if (hasMultiLanguage) return 24;
+        if (isTrustedItalian) return 20;
+        if (hasItalianSubs) return 10;
+        return 6;
+    }
 
     if (hasItalianAudio) return 30;
-    if (isTrustedItalian && !hasNegativeLanguage) return 22;
+    if (isTrustedItalian && !hasOtherLanguage) return 22;
     if (hasItalianSubs) return 12;
-    if (!allowEng && hasNegativeLanguage) return -40;
-    return allowEng ? 2 : -8;
+    if (hasEnglishAudio || hasOtherLanguage) return -40;
+    return -8;
 }
 
-function isValidResult(name, allowEng = false) {
+function isValidResult(name, langMode = 'ita') {
     if (!name) return false;
     const normalized = normalizeSpaces(name);
     if (NOISY_TITLE_REGEX.test(normalized)) return false;
-    if (getLanguageScore(normalized, allowEng) < 0) return false;
+    if (getLanguageScore(normalized, langMode) < 0) return false;
     return true;
 }
 
@@ -462,47 +499,75 @@ function isCorrectFormat(name, reqSeason, reqEpisode) {
 function buildSearchQueries(context) {
     const base = clean(context.title);
     if (!base) return [];
-    const queries = new Set();
-    const push = value => {
+
+    const pushUnique = (bucket, value) => {
         const normalized = clean(value);
-        if (normalized) queries.add(normalized);
+        if (normalized) bucket.add(normalized);
     };
 
-    const isSeries = normalizeType(context.type) === "series";
-    const reqSeason = context.reqSeason;
-    const reqEpisode = context.reqEpisode;
+    const buildBaseSet = () => {
+        const bucket = new Set();
+        const isSeries = normalizeType(context.type) === 'series';
+        const reqSeason = context.reqSeason;
+        const reqEpisode = context.reqEpisode;
 
-    push(base);
+        pushUnique(bucket, base);
 
-    if (context.year && !isSeries) {
-        push(`${base} ${context.year}`);
-    }
-
-    if (isSeries && reqSeason && reqEpisode) {
-        const s = String(reqSeason).padStart(2, "0");
-        const e = String(reqEpisode).padStart(2, "0");
-        push(`${base} S${s}E${e}`);
-        push(`${base} ${reqSeason}x${reqEpisode}`);
-        push(`${base} stagione ${reqSeason} episodio ${reqEpisode}`);
-    } else if (isSeries && reqSeason) {
-        const s = String(reqSeason).padStart(2, "0");
-        push(`${base} S${s}`);
-        push(`${base} stagione ${reqSeason}`);
-    }
-
-    if (!context.allowEng) {
-        const existing = [...queries];
-        for (const query of existing) {
-            push(`${query} ITA`);
-            push(`${query} MULTI`);
+        if (context.year && !isSeries) {
+            pushUnique(bucket, `${base} ${context.year}`);
         }
+
+        if (isSeries && reqSeason && reqEpisode) {
+            const s = String(reqSeason).padStart(2, '0');
+            const e = String(reqEpisode).padStart(2, '0');
+            pushUnique(bucket, `${base} S${s}E${e}`);
+            pushUnique(bucket, `${base} ${reqSeason}x${reqEpisode}`);
+            pushUnique(bucket, `${base} stagione ${reqSeason} episodio ${reqEpisode}`);
+            pushUnique(bucket, `${base} season ${reqSeason} episode ${reqEpisode}`);
+        } else if (isSeries && reqSeason) {
+            const s = String(reqSeason).padStart(2, '0');
+            pushUnique(bucket, `${base} S${s}`);
+            pushUnique(bucket, `${base} stagione ${reqSeason}`);
+            pushUnique(bucket, `${base} season ${reqSeason}`);
+        }
+
+        return [...bucket];
+    };
+
+    const baseQueries = buildBaseSet();
+    const itaQueries = new Set();
+    const engQueries = new Set();
+
+    for (const query of baseQueries) {
+        pushUnique(itaQueries, `${query} ITA`);
+        pushUnique(itaQueries, `${query} MULTI`);
+        pushUnique(engQueries, query);
+        pushUnique(engQueries, `${query} ENG`);
+        pushUnique(engQueries, `${query} ENGLISH`);
     }
 
-    return [...queries].slice(0, CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE);
+    if (context.langMode === 'eng') {
+        return [...engQueries].slice(0, CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE);
+    }
+
+    if (context.langMode === 'all') {
+        const mixed = [];
+        const ita = [...itaQueries];
+        const eng = [...engQueries];
+        const maxLen = Math.max(ita.length, eng.length);
+        for (let i = 0; i < maxLen; i += 1) {
+            if (ita[i]) mixed.push(ita[i]);
+            if (eng[i]) mixed.push(eng[i]);
+        }
+        return mixed.slice(0, CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE);
+    }
+
+    return [...itaQueries].slice(0, CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE);
 }
 
 function buildSearchContext(title, year, type, imdbId, options = {}) {
     const episodeContext = extractEpisodeContext(imdbId);
+    const langMode = resolveLangMode(options);
     return {
         title,
         cleanTitle: clean(title),
@@ -512,13 +577,14 @@ function buildSearchContext(title, year, type, imdbId, options = {}) {
         reqSeason: episodeContext.season,
         reqEpisode: episodeContext.episode,
         imdbId,
-        allowEng: Boolean(options.allowEng),
+        langMode,
+        allowEng: langMode === 'eng' || langMode === 'all',
         options
     };
 }
 
 function passesResultFilters(name, context) {
-    if (!isValidResult(name, context.allowEng)) return false;
+    if (!isValidResult(name, context.langMode)) return false;
     if (!checkYear(name, context.year, context.type)) return false;
     if (!isCorrectFormat(name, context.reqSeason, context.reqEpisode)) return false;
 
@@ -531,7 +597,7 @@ function passesResultFilters(name, context) {
 function computeResultScore(result, context) {
     const seeders = Math.max(0, Number(result.seeders) || 0);
     const sizeBytes = Math.max(0, Number(result.sizeBytes) || 0);
-    const languageScore = getLanguageScore(result.title, context.allowEng);
+    const languageScore = getLanguageScore(result.title, context.langMode);
     const resolutionScore = getResolutionScore(result.title) * 8;
     const yearScore = checkYear(result.title, context.year, context.type) ? 8 : -30;
     const formatScore = isCorrectFormat(result.title, context.reqSeason, context.reqEpisode) ? 18 : -60;
@@ -598,7 +664,7 @@ function dedupeResults(results) {
     return [...bestByKey.values()];
 }
 
-async function fetchJsonApi(url, payload, timeout = CONFIG.TIMEOUT_API) {
+async function fetchJsonApi(url, payload, timeout = CONFIG.TIMEOUT_API, langMode = 'ita') {
     const { data } = await requestHtml(url, {
         method: "POST",
         data: payload,
@@ -606,7 +672,8 @@ async function fetchJsonApi(url, payload, timeout = CONFIG.TIMEOUT_API) {
             "Content-Type": "application/json",
             Accept: "application/json"
         },
-        timeout
+        timeout,
+        langMode
     });
     if (!data) return null;
     return data;
@@ -636,7 +703,7 @@ async function searchCorsaro(context) {
     try {
         const candidates = await collectQueryResults(context, async query => {
             const url = `https://ilcorsaronero.link/search?q=${encodeURIComponent(query)}`;
-            const { data } = await requestHtml(url);
+            const { data } = await requestHtml(url, { langMode: context.langMode });
             if (!data || isCloudflareResponse(data)) return [];
 
             const $ = cheerio.load(data);
@@ -677,7 +744,7 @@ async function searchCorsaro(context) {
             candidates.slice(0, 30).map(candidate =>
                 detailLimit(async () => {
                     try {
-                        const html = (await requestHtml(candidate.detailUrl, { timeout: 4500 })).data;
+                        const html = (await requestHtml(candidate.detailUrl, { timeout: 4500, langMode: context.langMode })).data;
                         if (!html) return null;
                         const magnet =
                             cheerio.load(html)('a[href^="magnet:"]').attr("href") ||
@@ -729,7 +796,7 @@ async function searchKnaben(context) {
             };
             if (categories.length) payload.categories = categories;
 
-            const data = await fetchJsonApi(CONFIG.KNABEN_API, payload, CONFIG.TIMEOUT_API);
+            const data = await fetchJsonApi(CONFIG.KNABEN_API, payload, CONFIG.TIMEOUT_API, context.langMode);
             if (!data?.hits || !Array.isArray(data.hits)) return [];
 
             return data.hits.map(hit => {
@@ -761,7 +828,8 @@ async function searchTPB(context) {
         const results = await collectQueryResults(context, async query => {
             const { data } = await axios.get(`https://apibay.org/q.php?q=${encodeURIComponent(query)}&cat=0`, {
                 timeout: CONFIG.TIMEOUT_API,
-                httpsAgent
+                httpsAgent,
+                headers: { "Accept-Language": getAcceptLanguage(context.langMode) }
             });
 
             if (!Array.isArray(data) || data[0]?.id === "0") return [];
@@ -788,7 +856,7 @@ async function searchTPBMirror(context) {
     try {
         const results = await collectQueryResults(context, async query => {
             const url = `https://thepibay.site/search/${encodeURIComponent(query)}/1/99/0`;
-            const { data } = await requestHtml(url, { timeout: 6500 });
+            const { data } = await requestHtml(url, { timeout: 6500, langMode: context.langMode });
             if (!data) return [];
 
             const $ = cheerio.load(data);
@@ -835,7 +903,7 @@ async function searchLime(context) {
     try {
         const candidates = await collectQueryResults(context, async query => {
             const baseUrl = "https://limetorrents.org";
-            const { data } = await requestHtml(`${baseUrl}/search?q=${encodeURIComponent(query)}`, { timeout: 7000 });
+            const { data } = await requestHtml(`${baseUrl}/search?q=${encodeURIComponent(query)}`, { timeout: 7000, langMode: context.langMode });
             if (!data) return [];
 
             const $ = cheerio.load(data);
@@ -864,7 +932,7 @@ async function searchLime(context) {
             candidates.slice(0, 25).map(candidate =>
                 detailLimit(async () => {
                     try {
-                        const html = (await requestHtml(candidate.detailUrl, { timeout: 4500 })).data;
+                        const html = (await requestHtml(candidate.detailUrl, { timeout: 4500, langMode: context.langMode })).data;
                         const magnet = html ? cheerio.load(html)('a[href^="magnet:"]').first().attr("href") : null;
                         return normalizeResult({ ...candidate, magnet }, context, "LimeTorrents");
                     } catch {
@@ -888,7 +956,7 @@ async function searchRARBG(context) {
     const baseUrl = "https://www.rarbgproxy.to";
     try {
         const candidates = await collectQueryResults(context, async query => {
-            const { data } = await requestHtml(`${baseUrl}/search/?search=${encodeURIComponent(query)}`, { timeout: 7000 });
+            const { data } = await requestHtml(`${baseUrl}/search/?search=${encodeURIComponent(query)}`, { timeout: 7000, langMode: context.langMode });
             if (!data) return [];
 
             const $ = cheerio.load(data);
@@ -954,6 +1022,7 @@ async function search1337x(context) {
         const headers = {
             "User-Agent": BROWSER_PROFILES[2].userAgent,
             Accept: "application/json, text/plain, */*",
+            "Accept-Language": getAcceptLanguage(context.langMode),
             Referer: `${baseUrl}/home/`
         };
 
@@ -1009,7 +1078,8 @@ async function searchBitSearch(context) {
         const results = await collectQueryResults(context, async query => {
             const { data } = await axios.get(`https://bitsearch.to/api/v1/search?q=${encodeURIComponent(query)}&limit=50`, {
                 timeout: CONFIG.TIMEOUT_API,
-                httpsAgent
+                httpsAgent,
+                headers: { "Accept-Language": getAcceptLanguage(context.langMode) }
             });
 
             if (!data?.data || !Array.isArray(data.data)) return [];
@@ -1035,7 +1105,7 @@ async function searchUindex(context) {
     console.log(`[UIndex] Avvio ricerca per: ${context.title}...`);
     try {
         const results = await collectQueryResults(context, async query => {
-            const { data } = await requestHtml(`https://uindex.org/search.php?search=${encodeURIComponent(query)}&c=0`, { timeout: 5000 });
+            const { data } = await requestHtml(`https://uindex.org/search.php?search=${encodeURIComponent(query)}&c=0`, { timeout: 5000, langMode: context.langMode });
             if (!data) return [];
 
             return data
@@ -1082,7 +1152,7 @@ function buildSearchCacheKey(context) {
         type: context.normalizedType,
         reqSeason: context.reqSeason || 0,
         reqEpisode: context.reqEpisode || 0,
-        allowEng: context.allowEng
+        langMode: context.langMode
     });
 }
 
@@ -1148,7 +1218,8 @@ async function updateTrackers() {
     try {
         const { data } = await axios.get("https://ngosang.github.io/trackerslist/trackers_best.txt", {
             timeout: 4000,
-            httpsAgent
+            httpsAgent,
+            headers: { "Accept-Language": getAcceptLanguage('all') }
         });
         const trackers = String(data || "")
             .split("\n")
