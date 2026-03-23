@@ -9,7 +9,7 @@ const rateLimit = require("express-rate-limit");
 
 const dbHelper = require("./core/storage/db_repository");
 const { getManifest } = require("./manifest");
-const { handleVixSynthetic } = require("./vix/vix_proxy");
+const { handleVixSynthetic } = require("./providers/streamingcommunity/vix_proxy");
 
 const {
     logger, Cache, LIMITERS, CONFIG, ADMIN_PASS, cloudBuildInflight,
@@ -37,7 +37,7 @@ const limiter = rateLimit({
     max: 350,
     standardHeaders: true,
     legacyHeaders: false,
-    message: "Troppe richieste da questo IP, riprova più tardi."
+    message: "Troppe richieste da questo IP, riprova piÃ¹ tardi."
 });
 app.use(limiter);
 
@@ -113,7 +113,7 @@ app.get("/:conf/play_lazy/:service/:hash/:fileIdx", async (req, res) => {
     const { conf, service, hash, fileIdx } = req.params;
     const { s, e } = req.query;
     const startedAt = Date.now();
-    logger.info(`▶️ [LAZY PLAY] Service: ${service} | Hash: ${hash} | Idx: ${fileIdx} | S${s}E${e}`);
+    logger.info(`â–¶ï¸ [LAZY PLAY] Service: ${service} | Hash: ${hash} | Idx: ${fileIdx} | S${s}E${e}`);
     try {
         const config = getConfig(conf);
         const apiKey = config.key || config.rd;
@@ -174,8 +174,8 @@ app.get("/:conf/add_to_cloud/:hash", async (req, res) => {
         if (!apiKey) return res.status(400).send("API Key mancante.");
         const buildKey = getBuildKey(service, hash, apiKey), recentBuild = await Cache.getCloudBuild(buildKey);
         const isRecent = recentBuild && (Date.now() - Number(recentBuild.queuedAt || 0) < 120000) && ['queued', 'submitted'].includes(recentBuild.status);
-        if (isRecent) logger.info(`📥 [CACHE BUILDER] Già in coda ${hash} su ${service.toUpperCase()} - salto duplicato`);
-        else { logger.info(`📥 [CACHE BUILDER] Richiesta aggiunta hash ${hash} su ${service.toUpperCase()}`); await queueCloudBuild(service, hash, apiKey); }
+        if (isRecent) logger.info(`ðŸ“¥ [CACHE BUILDER] GiÃ  in coda ${hash} su ${service.toUpperCase()} - salto duplicato`);
+        else { logger.info(`ðŸ“¥ [CACHE BUILDER] Richiesta aggiunta hash ${hash} su ${service.toUpperCase()}`); await queueCloudBuild(service, hash, apiKey); }
         res.redirect(`${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}/confirmed.mp4`);
     } catch (err) { logger.error(`Errore Cache Builder: ${err.message}`); res.status(500).send("Errore durante l'aggiunta al cloud: " + err.message); }
 });
@@ -212,12 +212,12 @@ app.get("/:conf/manifest.json", (req, res) => {
     const manifest = getManifest();
     try {
         const config = getConfig(req.params.conf), filters = config.filters || {}, langMode = filters.language || (filters.allowEng ? "all" : "ita");
-        const flag = langMode === "ita" ? " 🇮🇹" : (langMode === "eng" ? " 🇬🇧" : " 🇮🇹🇬🇧"), appName = "L E V I A T H A N";
-        if ((config.service === 'rd' && config.key) || config.rd) { manifest.name = `${appName}${flag} 🔱 RD`; manifest.id += ".rd"; }
-        else if ((config.service === 'tb' && config.key) || config.torbox) { manifest.name = `${appName}${flag} 🔱 TB`; manifest.id += ".tb"; }
-        else if ((config.service === 'ad' && config.key) || config.alldebrid) { manifest.name = `${appName}${flag} 🐚 AD`; manifest.id += ".ad"; }
-        else if (filters.enableP2P === true) { manifest.name = `${appName}${flag} 🦈 P2P`; manifest.id += ".p2p"; manifest.description += " | ⚠️ P2P Mode (IP Visible)"; }
-        else { manifest.name = `${appName}${flag} ⛵ Web`; manifest.id += ".web"; }
+        const flag = langMode === "ita" ? " ðŸ‡®ðŸ‡¹" : (langMode === "eng" ? " ðŸ‡¬ðŸ‡§" : " ðŸ‡®ðŸ‡¹ðŸ‡¬ðŸ‡§"), appName = "L E V I A T H A N";
+        if ((config.service === 'rd' && config.key) || config.rd) { manifest.name = `${appName}${flag} ðŸ”± RD`; manifest.id += ".rd"; }
+        else if ((config.service === 'tb' && config.key) || config.torbox) { manifest.name = `${appName}${flag} ðŸ”± TB`; manifest.id += ".tb"; }
+        else if ((config.service === 'ad' && config.key) || config.alldebrid) { manifest.name = `${appName}${flag} ðŸš AD`; manifest.id += ".ad"; }
+        else if (filters.enableP2P === true) { manifest.name = `${appName}${flag} ðŸ¦ˆ P2P`; manifest.id += ".p2p"; manifest.description += " | âš ï¸ P2P Mode (IP Visible)"; }
+        else { manifest.name = `${appName}${flag} â›µ Web`; manifest.id += ".web"; }
     } catch (e) { console.error("Errore personalizzazione manifest:", e); }
     res.json(manifest);
 });
@@ -235,35 +235,35 @@ app.get("/:conf/stream/:type/:id.json", async (req, res) => {
 
 const PORT = process.env.PORT || 7000;
 const server = app.listen(PORT, () => {
-    console.log(`🚀 Leviathan (God Tier) attivo su porta interna ${PORT}`);
+    console.log(`ðŸš€ Leviathan (God Tier) attivo su porta interna ${PORT}`);
     console.log(`-----------------------------------------------------`);
-    console.log(`⚡ MODE: FULL LAZY`);
-    console.log(`🎬 SERIES: Full Lazy Mode`);
-    console.log(`📡 INDEXER URL: ${CONFIG.INDEXER_URL}`);
-    console.log(`🎬 METADATA: TMDB Primary`);
-    console.log(`💾 SCRITTURA: DB Locale`);
-    console.log(`❌ LETTURA DB LOCALE: DISABILITATA`);
-    console.log(`👁️ SPETTRO VISIVO: Modulo Attivo`);
-    console.log(`⚖️ SIZE LIMITER: Modulo Attivo`);
-    console.log(`🦁 GUARDA HD: Modulo Integrato e Pronto`);
-    console.log(`🛡️ GUARDA SERIE: Modulo Integrato e Pronto`);
-    console.log(`⛩️ ANIMEWORLD: Modulo Integrato e Pronto`); 
-    console.log(`🎥 GUARDA FLIX: Modulo Integrato`);
-    console.log(`🕷️ WEBSTREAMR: Fallback Attivo`);
-    console.log(`🎬 TRAILER: Attivabile da Config`);
-    console.log(`📦 TORBOX: ADVANCED SMART CACHE`);
-    console.log(`📝 PARSER: ENHANCED`); 
-    console.log(`⚡ P2P: HANDLER ATTIVO`);
-    console.log(`🦑 LEVIATHAN CORE: Optimized for High Reliability`);
-    console.log(`🌍 LAYERED CACHING: GLOBAL RAW + USER LEVEL ACTIVE`);
-    console.log(`⚡ SCRAPERS: Fallback Scrapers Ready!`);
+    console.log(`âš¡ MODE: FULL LAZY`);
+    console.log(`ðŸŽ¬ SERIES: Full Lazy Mode`);
+    console.log(`ðŸ“¡ INDEXER URL: ${CONFIG.INDEXER_URL}`);
+    console.log(`ðŸŽ¬ METADATA: TMDB Primary`);
+    console.log(`ðŸ’¾ SCRITTURA: DB Locale`);
+    console.log(`âŒ LETTURA DB LOCALE: DISABILITATA`);
+    console.log(`ðŸ‘ï¸ SPETTRO VISIVO: Modulo Attivo`);
+    console.log(`âš–ï¸ SIZE LIMITER: Modulo Attivo`);
+    console.log(`ðŸ¦ GUARDA HD: Modulo Integrato e Pronto`);
+    console.log(`ðŸ›¡ï¸ GUARDA SERIE: Modulo Integrato e Pronto`);
+    console.log(`â›©ï¸ ANIMEWORLD: Modulo Integrato e Pronto`); 
+    console.log(`ðŸŽ¥ GUARDA FLIX: Modulo Integrato`);
+    console.log(`ðŸ•·ï¸ WEBSTREAMR: Fallback Attivo`);
+    console.log(`ðŸŽ¬ TRAILER: Attivabile da Config`);
+    console.log(`ðŸ“¦ TORBOX: ADVANCED SMART CACHE`);
+    console.log(`ðŸ“ PARSER: ENHANCED`); 
+    console.log(`âš¡ P2P: HANDLER ATTIVO`);
+    console.log(`ðŸ¦‘ LEVIATHAN CORE: Optimized for High Reliability`);
+    console.log(`ðŸŒ LAYERED CACHING: GLOBAL RAW + USER LEVEL ACTIVE`);
+    console.log(`âš¡ SCRAPERS: Fallback Scrapers Ready!`);
     console.log(`-----------------------------------------------------`);
 });
 
 function gracefulShutdown(signal) {
-    logger.info(`🛑 Ricevuto ${signal}, chiusura server in corso...`);
-    server.close(() => { logger.info("✅ Server HTTP chiuso correttamente."); process.exit(0); });
-    setTimeout(() => { logger.error("⏱️ Shutdown forzato per timeout."); process.exit(1); }, 10000).unref();
+    logger.info(`ðŸ›‘ Ricevuto ${signal}, chiusura server in corso...`);
+    server.close(() => { logger.info("âœ… Server HTTP chiuso correttamente."); process.exit(0); });
+    setTimeout(() => { logger.error("â±ï¸ Shutdown forzato per timeout."); process.exit(1); }, 10000).unref();
 }
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
