@@ -1,5 +1,5 @@
 const axios = require("axios");
-const { imdbToTmdb } = require("../core/media_identity_resolver");
+const mediaIdentity = require('../../core/media_identity_resolver');
 
 const VIX_BASE = "https://vixsrc.to";
 const DEFAULT_ADDON_URL = "https://leviata96n.questoleviatanormio.dpdns.org";
