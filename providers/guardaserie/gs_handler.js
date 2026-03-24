@@ -1,310 +1,423 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
-const { wrapper } = require('axios-cookiejar-support');
-const { CookieJar } = require('tough-cookie');
-const crypto = require('crypto');
 
-const jar = new CookieJar();
-
-// --- CONFIGURAZIONE ---
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+// --- 1. AGGIORNAMENTO DOMINIO ---
+const GS_DOMAIN = "https://guardaserietv.skin";
 
 function getTargetDomain(config) {
-    let domain = "guardaserietv.asia"; 
     if (config && config.mediaflow && config.mediaflow.gsUrl && config.mediaflow.gsUrl.length > 3) {
-        domain = config.mediaflow.gsUrl;
+        return `https://${config.mediaflow.gsUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')}`;
     }
-    domain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
-    return `https://${domain}`;
+    return GS_DOMAIN;
 }
 
-function createClient(targetDomain) {
-    const config = {
-        jar,
-        withCredentials: true,
-        headers: {
-            'User-Agent': UA,
-            'Origin': targetDomain,
-            'Referer': `${targetDomain}/`
-        },
-        timeout: 6000 // TIMEOUT RIDOTTO A 6 SECONDI PER VELOCITÀ
+// --- 2. PROFILI BROWSER PER STEALTH ESTREMO ---
+const BROWSER_PROFILES = [
+    {
+        ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        sec_ch_ua: '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"'
+    },
+    {
+        ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+        sec_ch_ua: '"Chromium";v="124", "Microsoft Edge";v="124", "Not-A.Brand";v="99"'
+    },
+    {
+        ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+        sec_ch_ua: null
+    }
+];
+
+function getStealthHeaders(referer) {
+    const profile = BROWSER_PROFILES[Math.floor(Math.random() * BROWSER_PROFILES.length)];
+    const headers = {
+        "User-Agent": profile.ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Referer": referer || `${GS_DOMAIN}/`
     };
-    const instance = axios.create(config);
-    return wrapper(instance);
+    if (profile.sec_ch_ua) headers["sec-ch-ua"] = profile.sec_ch_ua;
+    return headers;
 }
 
-// --- HELPER: GENERATORE DESCRIZIONI ---
-function generateRichDescription(meta, provider, quality = "HD") {
-    const lines = [];
-    let episodeInfo = "";
-    if (meta.season && meta.episode) {
-        episodeInfo = `S${meta.season} E${meta.episode}`;
-    }
-    lines.push(`🎬 ${meta.title || "Episodio"} ${episodeInfo}`);
-    lines.push(`🇮🇹 ITA • 🔊 AAC`);
-    lines.push(`🎞️ ${quality} • ⚡ Fast`);
-    lines.push(`☁️ ${provider} • 🍿 GuardaSerie`);
-    return lines.join("\n");
+function createClient() {
+    return axios.create({
+        timeout: 6000,
+        httpAgent: false,
+        httpsAgent: false,
+        proxy: false
+    });
 }
 
-// --- HELPER: UNPACKER ---
-function detectAndUnpack(html) {
+// --- 3. PRE-COMPILAZIONE REGEX & UTILS ---
+function slugify(value) {
+    return value.toString().toLowerCase().trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+}
+
+function wrapMfp(videoUrl, referer, origin, mfpUrl, mfpPass) {
+    if (!mfpUrl || !videoUrl) return videoUrl;
+    const proxyEndpoint = `${mfpUrl.replace(/\/+$/, '')}/proxy/hls/manifest.m3u8`;
+    const params = new URLSearchParams();
+    params.append('d', videoUrl);
+    params.append('h_Referer', referer);
+    params.append('h_Origin', origin);
+    params.append('h_User-Agent', getStealthHeaders()['User-Agent']);
+    if (mfpPass) params.append('api_password', mfpPass);
+    return `${proxyEndpoint}?${params.toString()}`;
+}
+
+function unpackDeanEdwards(html, regexPattern) {
     try {
-        const regex = /eval\(function\(p,a,c,k,e,d\).*?return p\}\('(.*?)',(\d+),(\d+),'(.*?)'\.split\('\|'\)/;
-        const match = html.match(regex);
-        if (!match) return null;
+        const packedMatch = html.match(/eval\(function\(p,a,c,k,e,?[rd]?\).*?\}\('(.*?)',\s*(\d+),\s*(\d+),\s*'([^']+)'\.split\('\|'\).*?\)\)/s);
+        if (!packedMatch) return null;
 
-        let [_, p, a, c, k] = match;
+        let [_, p, a, c, k] = packedMatch;
         a = parseInt(a);
         c = parseInt(c);
         k = k.split('|');
 
-        const e = (n) => (n < a ? '' : e(parseInt(n / a))) + ((n = n % a) > 35 ? String.fromCharCode(n + 29) : n.toString(36));
-        
-        const dict = {};
-        for (let i = 0; i < c; i++) dict[e(i)] = k[i] || e(i);
+        const e = (n) => {
+            const alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+            if (n === 0) return alphabet[0];
+            let res = "";
+            while (n > 0) {
+                res = alphabet[n % a] + res;
+                n = Math.floor(n / a);
+            }
+            return res;
+        };
 
-        return p.replace(/\b\w+\b/g, (w) => dict[w] || w);
-    } catch (e) { return null; }
-}
-
-// --- PROVIDER 1: DROPLOAD ---
-async function extractDropload(client, dlUrl, referer, mfpUrl, mfpPsw, meta) {
-    try {
-        const response = await client.get(dlUrl, {
-            headers: { 'User-Agent': UA, 'Referer': referer },
-            timeout: 5000 // Fail fast
-        });
-        
-        let html = response.data;
-        let streamUrl = null;
-
-        const fileRegex = /file\s*:\s*["']([^"']+)["']/;
-        let m = html.match(fileRegex);
-        if (m) streamUrl = m[1];
-
-        if (!streamUrl) {
-            const unpacked = detectAndUnpack(html);
-            if (unpacked) {
-                m = unpacked.match(fileRegex);
-                if (m) streamUrl = m[1];
+        let unpacked = p;
+        for (let i = c - 1; i >= 0; i--) {
+            if (k[i]) {
+                const regex = new RegExp(`\\b${e(i)}\\b`, 'g');
+                unpacked = unpacked.replace(regex, k[i]);
             }
         }
 
-        if (streamUrl) {
+        if (!regexPattern) return unpacked;
+        
+        const extracted = unpacked.match(regexPattern);
+        if (extracted) return extracted[1];
+        
+    } catch (e) { }
+    return null;
+}
+
+// --- ESTRATTORE SUPERVIDEO BYPASS (DALLA LOGICA GUARDAHD) ---
+async function extractSupervideo(url, client) {
+    try {
+        url = url.startsWith("//") ? `https:${url}` : url;
+        const urlObj = new URL(url);
+        
+        // Estrazione ID esatta come in GuardaHD
+        const id = urlObj.pathname.split('/').pop().replace(/\.html|embed-|\/k\//gi, '');
+        const targetUrl = `${urlObj.origin}/e/${id}`;
+        
+        const customHeaders = { 
+            'Referer': `${urlObj.origin}/`, 
+            'Origin': urlObj.origin,
+            'User-Agent': getStealthHeaders()['User-Agent']
+        };
+
+        // Uso il tuo Worker Cloudflare per bypassare il 403
+        const fetchWorker = async (target) => {
+            const workerUrl = `https://still-mode-fd28.quelladiprova96.workers.dev/?url=${encodeURIComponent(target)}`;
+            const res = await client.get(workerUrl, { headers: customHeaders, timeout: 10000 });
+            return res.data;
+        };
+
+        let html = await fetchWorker(targetUrl);
+        if (!html || typeof html !== 'string') return null;
+
+        // Gestione dell'errore "watched as embed only" tipico di Supervideo
+        if (html.includes('watched as embed only')) {
+            html = await fetchWorker(`${urlObj.origin}/e${urlObj.pathname}`);
+        }
+
+        // Estrazione M3U8 (Unpack + Regex raw come fallback)
+        const m3u8Regex = /(https?:\/\/[^\s"']+\.m3u8[^\s"']*)/i;
+        
+        const unpacked = unpackDeanEdwards(html, m3u8Regex);
+        if (unpacked) return unpacked;
+        
+        const rawMatch = html.match(m3u8Regex);
+        if (rawMatch) return rawMatch[1];
+
+    } catch (e) { 
+        console.error(`GS [Supervideo] Error: ${e.message}`); 
+    }
+    return null;
+}
+
+async function extractDropload(url, client) {
+    try {
+        url = url.startsWith("//") ? `https:${url}` : url.replace("/e/", "/").replace("/d/", "/");
+        const res = await client.get(url, { headers: getStealthHeaders(), timeout: 6000 });
+        const html = res.data;
+        
+        const dlRegex = /sources:\s*\[\s*\{\s*file\s*:\s*["'](https?:\/\/[^"']+)["']/;
+        const linkMatch = html.match(dlRegex);
+        if (linkMatch) return linkMatch[1];
+        
+        const unpacked = unpackDeanEdwards(html, dlRegex);
+        if (unpacked) return unpacked;
+    } catch (e) { console.error(`GS [Dropload] Error: ${e.message}`); }
+    return null;
+}
+
+async function extractMixdrop(url, client) {
+    try {
+        url = url.startsWith("//") ? `https:${url}` : url;
+        const res = await client.get(url, { headers: getStealthHeaders(), timeout: 6000 });
+        const html = res.data;
+        
+        const mixdropRegex = /(?:MDCore|Core|wurl)\s*(?:\.wurl)?\s*=\s*["']([^"']+)["']/;
+        const linkMatch = html.match(mixdropRegex);
+        if (linkMatch) return linkMatch[1].startsWith("//") ? `https:${linkMatch[1]}` : linkMatch[1];
+        
+        const unpackedHtml = unpackDeanEdwards(html);
+        if (unpackedHtml) {
+            const unpackedMatch = unpackedHtml.match(mixdropRegex);
+            if (unpackedMatch) return unpackedMatch[1].startsWith("//") ? `https:${unpackedMatch[1]}` : unpackedMatch[1];
+        }
+    } catch (e) { console.error(`GS [MixDrop] Error: ${e.message}`); }
+    return null;
+}
+
+// --- 4. CONTROLLO CONCORRENZA E RICERCA ---
+async function processHoster(videoLink, client, cleanTitle, mfpUrl, mfpPass) {
+    let mediaUrl = null, hostName = "Sconosciuto", priority = 9;
+    const vLinkLower = videoLink.toLowerCase();
+    
+    if (vLinkLower.includes("supervideo")) {
+        hostName = "Supervideo"; priority = 1; mediaUrl = await extractSupervideo(videoLink, client);
+    } else if (vLinkLower.includes("dropload")) {
+        hostName = "Dropload"; priority = 2; mediaUrl = await extractDropload(videoLink, client);
+    } else if (vLinkLower.includes("mixdrop")) {
+        hostName = "MixDrop"; priority = 3; mediaUrl = await extractMixdrop(videoLink, client);
+    } else {
+        return null;
+    }
+
+    if (mediaUrl) {
+        try {
+            const parsedUrl = new URL(videoLink);
+            const origin = `${parsedUrl.protocol}//${parsedUrl.host}`;
+            const finalUrl = wrapMfp(mediaUrl, videoLink, origin, mfpUrl, mfpPass);
             return {
-                name: `🍿 GuardaSerie\n📦 Dropload`,
-                title: generateRichDescription(meta, "Dropload", "FHD"),
-                url: streamUrl,
-                behaviorHints: {
-                    notWebReady: false,
-                    bingieGroup: "guardaserie-dropload",
-                    proxyHeaders: {
-                        request: { "Referer": dlUrl, "User-Agent": UA }
-                    }
-                }
+                url: finalUrl,
+                name: `🍿 GS | ${hostName}`,
+                title: `${cleanTitle}\n☁️ ${hostName} • 🇮🇹 ITA`,
+                behaviorHints: {},
+                _priority: priority
             };
+        } catch (e) { return null; }
+    }
+    return null;
+}
+
+async function checkCandidatePage(candUrl, cleanId, client) {
+    try {
+        const candRes = await client.get(candUrl, { headers: getStealthHeaders(), timeout: 6000 });
+        if (candRes.status === 200) {
+            const html = candRes.data;
+            if (html.includes(cleanId) || html.includes("themoviedb.org/tv/") || html.includes('class="mirrors"')) {
+                return { url: candUrl, html: html };
+            }
         }
     } catch (e) {}
     return null;
 }
 
-// --- PROVIDER 2: LOADM ---
-const KEY = Buffer.from('kiemtienmua911ca', 'utf-8');
-const IV = Buffer.from('1234567890oiuytr', 'utf-8');
-
-async function extractLoadM(client, playerUrl, referer, mfpUrl, mfpPsw, meta) {
-    try {
-        const parts = playerUrl.split('#');
-        const id = parts[1];
-        if (!id) return null;
-
-        const playerDomain = new URL(playerUrl).origin;
-        const apiUrl = `${playerDomain}/api/v1/video`;
-
-        const response = await client.get(apiUrl, {
-            headers: { 'Referer': playerUrl, 'User-Agent': UA },
-            params: { id, w: '2560', h: '1440', r: referer },
-            responseType: 'text',
-            timeout: 5000 // Fail fast
-        });
-
-        const hexData = response.data;
-        const cleanHex = hexData.replace(/[^0-9a-fA-F]/g, '');
-        if (!cleanHex) return null;
-
-        const encryptedBytes = Buffer.from(cleanHex, 'hex');
-        const decipher = crypto.createDecipheriv('aes-128-cbc', KEY, IV);
-        decipher.setAutoPadding(false);
-
-        let decrypted = Buffer.concat([decipher.update(encryptedBytes), decipher.final()]);
-        const padLen = decrypted[decrypted.length - 1];
-        if (padLen >= 1 && padLen <= 16) decrypted = decrypted.subarray(0, decrypted.length - padLen);
-
-        const data = JSON.parse(decrypted.toString('utf-8'));
-        const hls = data['cf'];
-        
-        if (hls) {
-            let finalUrl = hls;
-            if (mfpUrl) {
-                const proxyBase = mfpUrl.replace(/\/+$/, '');
-                const params = new URLSearchParams();
-                params.append('d', hls);
-                if (mfpPsw) params.append('api_password', mfpPsw);
-                params.append('h_Referer', playerUrl);
-                params.append('h_User-Agent', UA);
-                finalUrl = `${proxyBase}/proxy/hls/manifest.m3u8?${params.toString()}`;
-            }
-
-            return {
-                name: `🍿 GuardaSerie\n⚡ LoadM`,
-                title: generateRichDescription(meta, "LoadM", "HD"),
-                url: finalUrl,
-                behaviorHints: {
-                    notWebReady: false,
-                    bingieGroup: "guardaserie-loadm",
-                    proxyHeaders: { request: { "Referer": playerUrl } }
+// helper per simulare asyncio.as_completed (si ferma al primo URL valido)
+async function getFirstValidCandidate(tasks) {
+    return new Promise((resolve) => {
+        let pending = tasks.length;
+        let resolved = false;
+        if (pending === 0) resolve(null);
+        tasks.forEach(task => {
+            task.then(res => {
+                if (res && res.url && !resolved) {
+                    resolved = true;
+                    resolve(res);
+                } else {
+                    pending--;
+                    if (pending === 0 && !resolved) resolve(null);
                 }
-            };
-        }
-    } catch (e) { return null; }
-    return null;
-}
-
-// --- RICERCA ---
-async function searchGuardoserie(client, targetDomain, query, imdbId) {
-    if (imdbId && imdbId.startsWith('tt')) {
-        try {
-            const searchUrl = `${targetDomain}/?story=${imdbId}&do=search&subaction=search`;
-            const res = await client.get(searchUrl);
-            const $ = cheerio.load(res.data);
-            let href = null;
-            $('.mlnh-2 h2 a, .mlnew h2 a, .movie-item a').each((_, el) => {
-                if (!href) href = $(el).attr('href');
+            }).catch(() => {
+                pending--;
+                if (pending === 0 && !resolved) resolve(null);
             });
-            if (href) return href;
-        } catch (e) {}
-    }
-
-    try {
-        const simpleSearchUrl = `${targetDomain}/?s=${encodeURIComponent(query)}`;
-        const res = await client.get(simpleSearchUrl);
-        const $ = cheerio.load(res.data);
-        const candidates = [];
-        $('.mlnh-2 h2 a, .mlnew h2 a').each((_, el) => {
-            const href = $(el).attr('href');
-            const text = $(el).text().trim();
-            if (href && text) candidates.push({ href, text });
         });
-        const match = candidates.find(c => {
-            const t = c.text.toLowerCase().replace(/[^a-z0-9]/g, '');
-            const q = query.toLowerCase().replace(/[^a-z0-9]/g, '');
-            return t.includes(q) || q.includes(t);
-        });
-        return match ? match.href : null;
-    } catch (e) { return null; }
+    });
 }
 
-// --- CORE: RISOLUZIONE OTTIMIZZATA ---
-async function resolvePageStream(client, pageUrl, mfpUrl, mfpPsw, meta) {
-    const streams = [];
-    const { season, episode } = meta;
-
-    try {
-        const res = await client.get(pageUrl);
-        const $ = cheerio.load(res.data);
-        const links = new Set();
-        let foundSpecific = false;
-
-        if (season && episode) {
-            // TENTATIVO 1: ID SPECIFICO
-            const ids = [
-                `serie-${season}_${episode}`, 
-                `serie-${season}_0${episode}`,
-                `serie-${parseInt(season)}_${parseInt(episode)}`
-            ];
+// --- 5. FALLBACK AD ALBERO (DOM TRAVERSAL) ---
+function extractLinksAdvanced(html, season, episode) {
+    const $ = cheerio.load(html);
+    const links = new Set();
+    const epRegex = new RegExp(`\\b${season}x(?:${episode.toString().padStart(2, '0')}|${episode})\\b`, 'i');
+    
+    $('*').contents().filter((_, el) => el.type === 'text' && epRegex.test(el.data)).each((_, el) => {
+        let parent = $(el).parent();
+        for (let i = 0; i < 3; i++) {
+            if (!parent || parent.length === 0) break;
             
-            for (const id of ids) {
-                const targetEl = $(`#${id}`);
-                if (targetEl.length > 0) {
-                    foundSpecific = true;
-                    const direct = targetEl.attr('data-link') || targetEl.attr('href');
-                    if (direct && direct.length > 5) links.add(direct);
-                    
-                    const parentLi = targetEl.closest('li');
-                    parentLi.find('[data-link]').each((_, el) => {
-                        const l = $(el).attr('data-link');
-                        if(l) links.add(l);
-                    });
+            parent.find('[data-link]').each((_, tag) => links.add($(tag).attr('data-link')));
+            parent.find('a[href]').each((_, tag) => {
+                const href = $(tag).attr('href').toLowerCase();
+                if (href.includes('supervideo') || href.includes('dropload') || href.includes('mixdrop')) {
+                    links.add($(tag).attr('href'));
                 }
-            }
+            });
+            parent = parent.parent();
         }
-
-        // TENTATIVO 2: FALLBACK (Se non abbiamo trovato nulla con gli ID)
-        if (links.size === 0) {
-            $('iframe').each((_, el) => links.add($(el).attr('src') || $(el).attr('data-src')));
-            $('[data-link]').each((_, el) => links.add($(el).attr('data-link')));
-        }
-
-        // --- OTTIMIZZAZIONE VELOCITA' ---
-        // Convertiamo il Set in Array e prendiamo SOLO I PRIMI 6.
-        // Se non è nei primi 6, probabilmente è spazzatura o troppo in fondo.
-        // Questo evita di fare 30 richieste HTTP per una sola pagina.
-        const candidates = Array.from(links)
-            .filter(l => l && (l.includes('dropload') || l.includes('loadm')))
-            .slice(0, 6); // <--- LIMITE MASSIMO DI ANALISI
-
-        const processingPromises = candidates.map(async (link) => {
-            if (link.startsWith('//')) link = 'https:' + link;
-            if (link.startsWith('/')) link = new URL(link, pageUrl).href;
-
-            if (link.includes('dropload')) {
-                return await extractDropload(client, link, pageUrl, mfpUrl, mfpPsw, meta);
-            } else if (link.includes('loadm')) {
-                return await extractLoadM(client, link, pageUrl, mfpUrl, mfpPsw, meta);
-            }
-            return null;
-        });
-
-        const results = await Promise.allSettled(processingPromises);
-        
-        // --- DEDUPLICAZIONE ---
-        const uniqueKeys = new Set();
-        results.forEach(res => {
-            if (res.status === 'fulfilled' && res.value) {
-                const stream = res.value;
-                const uniqueKey = `${stream.name}|${stream.title}`;
-                if (!uniqueKeys.has(uniqueKey)) {
-                    uniqueKeys.add(uniqueKey);
-                    streams.push(stream);
-                }
-            }
-        });
-
-    } catch (e) {
-        console.error(`[GS] Resolve error: ${e.message}`);
-    }
-    return streams;
+    });
+    return Array.from(links);
 }
 
-// --- ENTRY POINT ---
+// --- ENTRY POINT PRINCIPALE ---
 async function searchGuardaserie(meta, config) {
     if (!meta || !meta.isSeries) return []; 
     if (!config.filters || !config.filters.enableGs) return [];
 
     const targetDomain = getTargetDomain(config);
-    const client = createClient(targetDomain);
+    const client = createClient();
     const mfpUrl = config.mediaflow ? config.mediaflow.url : null;
     const mfpPsw = config.mediaflow ? config.mediaflow.pass : null;
+    
+    const cleanId = meta.imdb_id;
+    const season = parseInt(meta.season);
+    const episode = parseInt(meta.episode);
+
+    console.log(`GS >>> Inizio estrazione per: ${cleanId}:${season}:${episode}`);
 
     try {
-        const seriesUrl = await searchGuardoserie(client, targetDomain, meta.title, meta.imdb_id);
-        if (!seriesUrl) return [];
+        let showName = meta.title || "";
+        try {
+            const metaRes = await axios.get(`https://v3-cinemeta.strem.io/meta/series/${cleanId}.json`, { timeout: 4000 });
+            if (metaRes.data && metaRes.data.meta && metaRes.data.meta.name) {
+                showName = metaRes.data.meta.name;
+            }
+        } catch (e) {}
 
-        return await resolvePageStream(client, seriesUrl, mfpUrl, mfpPsw, meta);
+        const cleanTitle = showName ? `${showName} S${season.toString().padStart(2, '0')}E${episode.toString().padStart(2, '0')}` : `S${season.toString().padStart(2, '0')}E${episode.toString().padStart(2, '0')}`;
+        let pageUrl = null;
+        let pageHtml = null;
+
+        // --- 6. URL GUESSING SUPER VELOCE ---
+        if (showName) {
+            const slug = slugify(showName);
+            const guesses = [
+                `${targetDomain}/serie/${slug}/`, 
+                `${targetDomain}/${slug}/`, 
+                `${targetDomain}/serietv/${slug}/`
+            ];
+            const tasks = guesses.map(url => checkCandidatePage(url, cleanId, client));
+            const result = await getFirstValidCandidate(tasks);
+            if (result) {
+                pageUrl = result.url;
+                pageHtml = result.html;
+                console.log(`GS URL Guessing Riuscito: ${pageUrl}`);
+            }
+        }
+
+        // --- 7. RICERCA INTERNA ASINCRONA PARALLELA ---
+        if (!pageUrl) {
+            const searchUrl = `${targetDomain}/index.php?do=search&subaction=search&story=${encodeURIComponent(showName || cleanId)}`;
+            const response = await client.get(searchUrl, { headers: getStealthHeaders(`${targetDomain}/`), timeout: 8000 });
+            
+            if (response.status === 200) {
+                const $ = cheerio.load(response.data);
+                const candidates = [];
+                
+                $('.mlnh-2').each((_, div) => {
+                    const aTag = $(div).find('h2 a');
+                    const href = aTag.attr('href');
+                    const title = aTag.attr('title') || "";
+                    if (href && !title.toUpperCase().includes('[SUB ITA]')) {
+                        candidates.push(href.startsWith('/') ? `${targetDomain}${href}` : href);
+                    }
+                });
+                
+                if (candidates.length > 0) {
+                    const tasks = candidates.map(url => checkCandidatePage(url, cleanId, client));
+                    const result = await getFirstValidCandidate(tasks);
+                    if (result) {
+                        pageUrl = result.url;
+                        pageHtml = result.html;
+                        console.log(`GS Pagina Serie Trovata da Ricerca: ${pageUrl}`);
+                    }
+                }
+            }
+        }
+
+        if (!pageUrl || !pageHtml) {
+            console.error(`GS FATAL: Nessuna pagina valida trovata per ${cleanId}`);
+            return [];
+        }
+
+        // Estrazione Link Hoster
+        let videoLinks = [];
+        const regexMatch = new RegExp(`data-num="${season}x(?:${episode}|${episode.toString().padStart(2, '0')})"`, 'i').exec(pageHtml);
+        
+        if (regexMatch) {
+            const mirrorsStart = pageHtml.indexOf('<div class="mirrors">', regexMatch.index);
+            if (mirrorsStart !== -1) {
+                const mirrorsEnd = pageHtml.indexOf('</div>', mirrorsStart);
+                const block = pageHtml.substring(mirrorsStart, mirrorsEnd);
+                const blockMatches = [...block.matchAll(/data-link="([^"]+)"/g)];
+                videoLinks = blockMatches.map(m => m[1]);
+            }
+        }
+
+        // Fallback DOM
+        if (videoLinks.length === 0) {
+            console.log("GS Regex veloce fallita. Avvio ricerca DOM avanzata...");
+            videoLinks = extractLinksAdvanced(pageHtml, season, episode);
+        }
+
+        // Deduplicazione iniziale
+        videoLinks = [...new Set(videoLinks)];
+
+        if (videoLinks.length === 0) {
+            console.warn(`GS FATAL: Nessun link trovato per S${season.toString().padStart(2, '0')}E${episode.toString().padStart(2, '0')}`);
+            return [];
+        }
+
+        console.log(`GS Trovati ${videoLinks.length} link hoster. Avvio elaborazione asincrona sicura...`);
+
+        // Esecuzione in batch per simulare il semaforo a 5
+        const results = [];
+        for (let i = 0; i < videoLinks.length; i += 5) {
+            const chunk = videoLinks.slice(i, i + 5);
+            const chunkPromises = chunk.map(link => processHoster(link, client, cleanTitle, mfpUrl, mfpPsw));
+            const chunkResults = await Promise.allSettled(chunkPromises);
+            chunkResults.forEach(res => {
+                if (res.status === 'fulfilled' && res.value) results.push(res.value);
+            });
+        }
+
+        // --- 8. DEDUPLICAZIONE E ORDINAMENTO ---
+        const streams = [];
+        const seenUrls = new Set();
+        
+        results.sort((a, b) => (a._priority || 9) - (b._priority || 9));
+
+        for (const res of results) {
+            if (!seenUrls.has(res.url)) {
+                seenUrls.add(res.url);
+                delete res._priority;
+                streams.push(res);
+            }
+        }
+
+        console.log(`GS <<< Fine. Estratti ${streams.length} flussi univoci.`);
+        return streams;
 
     } catch (e) {
-        console.error(`🍿️ [GS] Critical: ${e.message}`);
+        console.error(`GS Eccezione Critica: ${e.message}`);
         return [];
     }
 }
