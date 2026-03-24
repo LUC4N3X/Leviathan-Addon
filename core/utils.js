@@ -36,6 +36,9 @@ const cloudBuildInflight = new Map();
 const sharedFetchInflight = new Map();
 const streamInflight = new Map();
 const metadataInflight = new Map();
+const parsedTitleCache = new NodeCache({ stdTTL: 3600, checkperiod: 300, maxKeys: 20000 });
+const normalizedTextCache = new NodeCache({ stdTTL: 3600, checkperiod: 300, maxKeys: 20000 });
+const languageInfoCache = new NodeCache({ stdTTL: 1800, checkperiod: 180, maxKeys: 20000 });
 
 const TRACKERS = Object.freeze([
     "udp://tracker.opentrackr.org:1337/announce",
@@ -148,7 +151,7 @@ const Cache = {
     getCachedStream: async (key) => {
         const data = myCache.get(`stream:${key}`);
         registerCacheAccess('stream', !!data);
-        if (data) logger.info(`⚡ CACHE HIT (USER): ${key}`);
+        if (data) logger.info(`âš¡ CACHE HIT (USER): ${key}`);
         return data || null;
     },
     cacheStream: async (key, value, ttl = 1800) => { registerCacheSet('stream'); myCache.set(`stream:${key}`, value, ttl); },
@@ -165,13 +168,13 @@ const Cache = {
     getRaw: (provider, id) => {
         const data = rawCache.get(`raw:${provider}:${id}`);
         registerCacheAccess('raw', !!data);
-        if (data) logger.info(`🌍 GLOBAL CACHE HIT [${provider}]: ${id}`);
+        if (data) logger.info(`ðŸŒ GLOBAL CACHE HIT [${provider}]: ${id}`);
         return data || null;
     },
     setRaw: (provider, id, value, ttl = 43200) => {
         registerCacheSet('raw');
         rawCache.set(`raw:${provider}:${id}`, value, ttl);
-        logger.info(`💾 GLOBAL CACHE SET [${provider}]: ${id}`);
+        logger.info(`ðŸ’¾ GLOBAL CACHE SET [${provider}]: ${id}`);
     },
 
     fetchWithCache: async (provider, id, ttl, fetcherFunc) => {
@@ -189,7 +192,7 @@ const Cache = {
                 Cache.setRaw(provider, id, normalized, normalized.length > 0 ? ttl : EMPTY_FETCH_TTL);
                 return normalized;
             } catch (error) {
-                logger.warn(`⚠️ Errore Fetching [${provider}] per ${id}: ${error.message}`);
+                logger.warn(`âš ï¸ Errore Fetching [${provider}] per ${id}: ${error.message}`);
                 Cache.setRaw(provider, id, [], EMPTY_FETCH_TTL);
                 return [];
             }
@@ -243,14 +246,14 @@ const REGEX_SUB_ONLY = /\b(SUB|SUBS|SUBBED|SOTTOTITOLI|VOST|VOSTIT)\s*[:.\-_]?\s
 const REGEX_AUDIO_CONFIRM = /\b(AUDIO|AC3|AAC|DTS|MD|LD|DDP|MP3|LINGUA)[\s.\-_]+(ITA|IT)\b/i;
 
 const languageMapping = {
-  'english': '🇬🇧 ENG',
-  'japanese': '🇯🇵 JPN',
-  'italian': '🇮🇹 ITA',
-  'french': '🇫🇷 FRA',
-  'german': '🇩🇪 GER',
-  'spanish': '🇪🇸 ESP',
-  'russian': '🇷🇺 RUS',
-  'multi audio': '🌍 MULTI'
+  'english': 'ðŸ‡¬ðŸ‡§ ENG',
+  'japanese': 'ðŸ‡¯ðŸ‡µ JPN',
+  'italian': 'ðŸ‡®ðŸ‡¹ ITA',
+  'french': 'ðŸ‡«ðŸ‡· FRA',
+  'german': 'ðŸ‡©ðŸ‡ª GER',
+  'spanish': 'ðŸ‡ªðŸ‡¸ ESP',
+  'russian': 'ðŸ‡·ðŸ‡º RUS',
+  'multi audio': 'ðŸŒ MULTI'
 };
 
 function normalizeLanguageName(lang) {
@@ -271,8 +274,13 @@ function normalizeLanguageName(lang) {
 
 function parseTitleDetails(filename) {
     if (!filename) return { quality: 'SD', tags: '', languages: [], rawLanguages: [], cleanTitle: '' };
+    const cacheKey = String(filename);
+    const cached = parsedTitleCache.get(cacheKey);
+    if (cached) return cached;
+
+    let result;
     try {
-        const info = ptt.parse(filename);
+        const info = ptt.parse(cacheKey);
         const codec = info.codec ? info.codec.toUpperCase() : '';
         const audio = info.audio ? info.audio.toUpperCase() : '';
         const source = info.source ? info.source.toUpperCase() : '';
@@ -283,7 +291,7 @@ function parseTitleDetails(filename) {
 
         const displayLanguages = rawLanguages.map(l => languageMapping[l.toLowerCase()] || l.substring(0, 3).toUpperCase());
 
-        return {
+        result = {
             quality: info.resolution || 'SD',
             tags: [source, codec, audio].filter(Boolean).join(' '),
             languages: displayLanguages,
@@ -291,8 +299,11 @@ function parseTitleDetails(filename) {
             cleanTitle: info.title || ''
         };
     } catch (e) {
-        return { quality: 'SD', tags: '', languages: [], rawLanguages: [], cleanTitle: '' };
+        result = { quality: 'SD', tags: '', languages: [], rawLanguages: [], cleanTitle: '' };
     }
+
+    parsedTitleCache.set(cacheKey, result);
+    return result;
 }
 
 function stripVisualPrefixes(str) {
@@ -301,7 +312,12 @@ function stripVisualPrefixes(str) {
 }
 
 function normalizeSearchText(value) {
-    return String(value || '').toLowerCase().replace(/[^\p{L}\p{N}\s.-]/gu, ' ').replace(/[\._\-]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const cacheKey = String(value || '');
+    const cached = normalizedTextCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const normalized = cacheKey.toLowerCase().replace(/[^\p{L}\p{N}\s.-]/gu, ' ').replace(/[\._\-]+/g, ' ').replace(/\s+/g, ' ').trim();
+    normalizedTextCache.set(cacheKey, normalized);
+    return normalized;
 }
 
 function isItalianByTitleMatch(title, italianMovieTitle = null) {
@@ -333,6 +349,10 @@ function isTrustedSource(source, provider = null) {
 
 function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedInfo = null) {
     if (!title) return { icon: '', isItalian: false, isMaybeItalian: false, isMulti: false, displayLabel: '', detectedLanguages: [], confidence: 0 };
+
+    const cacheKey = `${String(title)}|${String(italianMovieTitle || '')}|${String(source || '')}`;
+    const cached = languageInfoCache.get(cacheKey);
+    if (cached) return cached;
 
     const detectedLanguages = [];
     const pushLanguage = (lang) => {
@@ -382,22 +402,26 @@ function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedI
     hasIta = confidence >= 5;
     const isMaybeItalian = confidence >= 3;
 
-    if (hasIta && hasEng) return { icon: '🇮🇹 🇬🇧', isItalian: true, isMaybeItalian, isMulti: true, displayLabel: '🇮🇹 🇬🇧', detectedLanguages, confidence };
-    if (hasIta) return { icon: '🇮🇹', isItalian: true, isMaybeItalian, isMulti: hasMulti, displayLabel: '🇮🇹', detectedLanguages, confidence };
-    if (hasMulti && isMaybeItalian) return { icon: '🇮🇹 🌈', isItalian: false, isMaybeItalian: true, isMulti: true, displayLabel: '🇮🇹 🌈', detectedLanguages, confidence };
-    if (hasMulti) return { icon: '🌈', isItalian: false, isMaybeItalian, isMulti: true, displayLabel: '🌈 MULTI', detectedLanguages, confidence };
-    if (hasEng) return { icon: '🇬🇧', isItalian: false, isMaybeItalian, isMulti: false, displayLabel: '🇬🇧', detectedLanguages, confidence };
-    if (detectedLanguages.length > 0) return { icon: '🌐', isItalian: false, isMaybeItalian, isMulti: false, displayLabel: '🌐', detectedLanguages, confidence };
-    return { icon: '', isItalian: false, isMaybeItalian, isMulti: false, displayLabel: '', detectedLanguages, confidence };
+    let result;
+    if (hasIta && hasEng) result = { icon: 'ðŸ‡®ðŸ‡¹ ðŸ‡¬ðŸ‡§', isItalian: true, isMaybeItalian, isMulti: true, displayLabel: 'ðŸ‡®ðŸ‡¹ ðŸ‡¬ðŸ‡§', detectedLanguages, confidence };
+    else if (hasIta) result = { icon: 'ðŸ‡®ðŸ‡¹', isItalian: true, isMaybeItalian, isMulti: hasMulti, displayLabel: 'ðŸ‡®ðŸ‡¹', detectedLanguages, confidence };
+    else if (hasMulti && isMaybeItalian) result = { icon: 'ðŸ‡®ðŸ‡¹ ðŸŒˆ', isItalian: false, isMaybeItalian: true, isMulti: true, displayLabel: 'ðŸ‡®ðŸ‡¹ ðŸŒˆ', detectedLanguages, confidence };
+    else if (hasMulti) result = { icon: 'ðŸŒˆ', isItalian: false, isMaybeItalian, isMulti: true, displayLabel: 'ðŸŒˆ MULTI', detectedLanguages, confidence };
+    else if (hasEng) result = { icon: 'ðŸ‡¬ðŸ‡§', isItalian: false, isMaybeItalian, isMulti: false, displayLabel: 'ðŸ‡¬ðŸ‡§', detectedLanguages, confidence };
+    else if (detectedLanguages.length > 0) result = { icon: 'ðŸŒ', isItalian: false, isMaybeItalian, isMulti: false, displayLabel: 'ðŸŒ', detectedLanguages, confidence };
+    else result = { icon: '', isItalian: false, isMaybeItalian, isMulti: false, displayLabel: '', detectedLanguages, confidence };
+
+    languageInfoCache.set(cacheKey, result);
+    return result;
 }
 
 function formatLanguageLabel(languageInfo, fallbackLanguages = []) {
-    if (languageInfo?.isItalian && languageInfo?.isMulti) return '🇮🇹/🌍 MULTI';
-    if (languageInfo?.isItalian) return '🇮🇹 ITA';
-    if (languageInfo?.isMulti) return '🌍 MULTI';
-    if (languageInfo?.displayLabel === '🇬🇧') return '🇬🇧 ENG';
+    if (languageInfo?.isItalian && languageInfo?.isMulti) return 'ðŸ‡®ðŸ‡¹/ðŸŒ MULTI';
+    if (languageInfo?.isItalian) return 'ðŸ‡®ðŸ‡¹ ITA';
+    if (languageInfo?.isMulti) return 'ðŸŒ MULTI';
+    if (languageInfo?.displayLabel === 'ðŸ‡¬ðŸ‡§') return 'ðŸ‡¬ðŸ‡§ ENG';
     if (languageInfo?.displayLabel) return languageInfo.displayLabel;
-    return (fallbackLanguages && fallbackLanguages.length > 0) ? fallbackLanguages.join('/') : '🇬🇧/Unknown';
+    return (fallbackLanguages && fallbackLanguages.length > 0) ? fallbackLanguages.join('/') : 'ðŸ‡¬ðŸ‡§/Unknown';
 }
 
 function isSeasonPack(title) {
@@ -406,7 +430,7 @@ function isSeasonPack(title) {
     if (/s\d{1,2}e\d{1,2}/i.test(lowerTitle)) return false;
 
     const packPatterns = [
-        /stagion[ei]\s*\d+\s*[-–—]\s*\d+/i, /season\s*\d+\s*[-–—]\s*\d+/i, /s\d+\s*[-–—]\s*s?\d+/i,
+        /stagion[ei]\s*\d+\s*[-â€“â€”]\s*\d+/i, /season\s*\d+\s*[-â€“â€”]\s*\d+/i, /s\d+\s*[-â€“â€”]\s*s?\d+/i,
         /completa/i, /complete/i, /integrale/i, /collection/i, /\bpack\b/i,
         /stagion[ei]\s*\d+/i, /season\s*\d+/i, /\.s\d{1,2}\./i, /\.s\d{1,2}$/i,
         /\bs\d{1,2}(?!e)\b/i, /\bs\d{1,2}\./i, /\btutta\b/i
@@ -428,14 +452,14 @@ function isGoodShortQueryMatch(torrentTitle, searchQuery) {
 
 function chooseBestPackTitle(item, resolvedPackName = null, siblingStreams = []) {
     const sameHashStreams = siblingStreams.filter(stream => (stream.hash || stream.infoHash || '').toLowerCase() === (item.hash || item.infoHash || '').toLowerCase());
-    const torrentioStream = sameHashStreams.find(stream => (stream.source || stream.name || '').includes('Torrentio') && String(stream.title || '').includes('📁'));
+    const torrentioStream = sameHashStreams.find(stream => (stream.source || stream.name || '').includes('Torrentio') && String(stream.title || '').includes('ðŸ“'));
     if (torrentioStream) {
         const clean = stripVisualPrefixes(String(torrentioStream.title || '').split('\n')[0] || '');
         if (clean && clean.length > 5) return { title: clean, source: 'Torrentio' };
     }
-    const mediafusionStream = sameHashStreams.find(stream => (stream.source || stream.name || '').includes('MediaFusion') && String(stream.title || '').includes('┈➤'));
+    const mediafusionStream = sameHashStreams.find(stream => (stream.source || stream.name || '').includes('MediaFusion') && String(stream.title || '').includes('â”ˆâž¤'));
     if (mediafusionStream) {
-        const clean = stripVisualPrefixes(String(mediafusionStream.title || '').split('┈➤')[0].replace('📂', '').trim());
+        const clean = stripVisualPrefixes(String(mediafusionStream.title || '').split('â”ˆâž¤')[0].replace('ðŸ“‚', '').trim());
         if (clean && clean.length > 5) return { title: clean, source: 'MediaFusion' };
     }
     const scraperTitle = stripVisualPrefixes(item.title || '');
@@ -451,7 +475,7 @@ function shouldUpdatePackTitle(currentTitle, nextTitle) {
     if (!/ita|multi/.test(next)) return false;
     if (!/ita|multi/.test(curr)) return true;
     const hasSeasonInfo = /s\d+|season|stagion|complete|episod/i.test(curr);
-    const isGenericRd = /^[\w\s]+\s*\[\d{4}[-–]\d{4}\]$/.test(stripVisualPrefixes(currentTitle || ''));
+    const isGenericRd = /^[\w\s]+\s*\[\d{4}[-â€“]\d{4}\]$/.test(stripVisualPrefixes(currentTitle || ''));
     if (hasSeasonInfo && !isGenericRd) return false;
     return true;
 }
@@ -619,12 +643,12 @@ function parseSize(sizeText) {
 }
 
 function extractSeeders(title) {
-  const seedersMatch = title.match(/(?:👤|👥)\s*(\d+)/);
+  const seedersMatch = title.match(/(?:ðŸ‘¤|ðŸ‘¥)\s*(\d+)/);
   return seedersMatch && parseInt(seedersMatch[1]) || 0;
 }
 
 function extractSize(title) {
-  const sizeMatch = title.match(/(?:💾|🧲|📦)\s*([\d.,]+\s*\w+)/i);
+  const sizeMatch = title.match(/(?:ðŸ’¾|ðŸ§²|ðŸ“¦)\s*([\d.,]+\s*\w+)/i);
   return sizeMatch && parseSize(sizeMatch[1]) || 0;
 }
 
@@ -812,6 +836,18 @@ function getConfig(configStr) {
 
     const config = { ...parsed };
     config.filters = (config.filters && typeof config.filters === 'object' && !Array.isArray(config.filters)) ? { ...config.filters } : {};
+
+    const aliasPairs = [
+      ['enableStreamingCommunity', 'enableVix'],
+      ['streamingCommunityLast', 'vixLast']
+    ];
+    for (const [primaryKey, legacyKey] of aliasPairs) {
+      const primaryValue = config.filters[primaryKey];
+      const legacyValue = config.filters[legacyKey];
+      if (primaryValue !== undefined && legacyValue === undefined) config.filters[legacyKey] = primaryValue;
+      if (legacyValue !== undefined && primaryValue === undefined) config.filters[primaryKey] = legacyValue;
+    }
+
     const allowedServices = new Set(['rd', 'ad', 'tb', 'p2p', 'web']);
     if (config.service && !allowedServices.has(String(config.service).toLowerCase())) config.service = 'rd';
 
@@ -824,11 +860,14 @@ function getConfig(configStr) {
       }
     }
 
-    const booleanFilterKeys = ['enableVix', 'enableGhd', 'enableGs', 'enableAnimeWorld', 'enableGf', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast'];
-    for (const key of booleanFilterKeys) if (config.filters[key] !== undefined) config.filters[key] = !!config.filters[key];
+    const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableAnimeWorld', 'enableGf', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast'];
+    for (const key of booleanFilterKeys) {
+      if (config.filters[key] !== undefined) config.filters[key] = !!config.filters[key];
+    }
 
-    if (config.filters.language && !['ita', 'eng', 'all'].includes(String(config.filters.language).toLowerCase())) {
-      config.filters.language = config.filters.allowEng ? 'all' : 'ita';
+    if (config.filters.language) {
+      const normalizedLanguage = String(config.filters.language).toLowerCase();
+      config.filters.language = ['ita', 'eng', 'all'].includes(normalizedLanguage) ? normalizedLanguage : (config.filters.allowEng ? 'all' : 'ita');
     }
 
     return config;
