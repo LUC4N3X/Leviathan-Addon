@@ -21,7 +21,7 @@ const AD = require("../debrid/alldebrid");
 const TB = require("../debrid/torbox");
 const dbHelper = require("./storage/db_repository"); 
 const { buildMagnet: buildTrackerMagnet } = require("./storage/tracker_registry");
-const SCRAPER_MODULES = [ require("../engines") ];
+const SCRAPER_MODULES = [ require("../providers/engines") ];
 
 const {
   logger, Cache, LIMITERS, CONFIG, REGEX_QUALITY_FILTER, REGEX_SUB_ONLY, REGEX_AUDIO_CONFIRM, REGEX_YEAR, EMPTY_STREAM_TTL, METADATA_CACHE_TTL,
