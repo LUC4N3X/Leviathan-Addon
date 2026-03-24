@@ -56,19 +56,119 @@ function isStreamingCommunityLastEnabled(filters = {}) {
     return filters?.streamingCommunityLast === true || filters?.vixLast === true;
 }
 
-function getLanguageSignals(title, metaTitle, sourceName) {
-    const parsed = parseTitleDetails(title || '');
-    const langInfo = getLanguageInfo(title || '', metaTitle, sourceName, parsed);
+const TITLE_SIGNAL_CACHE = new Map();
+const MAX_TITLE_SIGNAL_CACHE = 4000;
+
+function setTitleSignalCache(cacheKey, value) {
+    if (TITLE_SIGNAL_CACHE.size >= MAX_TITLE_SIGNAL_CACHE) {
+        const firstKey = TITLE_SIGNAL_CACHE.keys().next().value;
+        if (firstKey !== undefined) TITLE_SIGNAL_CACHE.delete(firstKey);
+    }
+    TITLE_SIGNAL_CACHE.set(cacheKey, value);
+    return value;
+}
+
+function getTitleDiagnostics(title, metaTitle, sourceName) {
+    const safeTitle = String(title || '');
+    const safeMetaTitle = String(metaTitle || '');
+    const safeSource = String(sourceName || '');
+    const cacheKey = `${safeTitle}Â¦${safeMetaTitle}Â¦${safeSource}`;
+    const cached = TITLE_SIGNAL_CACHE.get(cacheKey);
+    if (cached) return cached;
+
+    const parsed = parseTitleDetails(safeTitle);
+    const langInfo = getLanguageInfo(safeTitle, safeMetaTitle, safeSource, parsed);
     const detected = new Set(Array.isArray(langInfo?.detectedLanguages) ? langInfo.detectedLanguages.map(v => String(v)) : []);
-    const upper = String(title || '').toUpperCase();
+    const upper = safeTitle.toUpperCase();
 
-    const explicitEng = detected.has('English') || /\b(?:ENG|ENGLISH)\b/i.test(upper);
-    const explicitIta = detected.has('Italian') || langInfo?.isItalian || (langInfo?.confidence || 0) >= 5 || /\b(?:ITA|ITALIANO|ITALIAN)\b/i.test(upper);
-    const explicitMulti = !!langInfo?.isMulti || /\b(?:MULTI|DUAL[\s.-]?AUDIO)\b/i.test(upper);
-    const explicitOther = /\b(?:FRENCH|GERMAN|SPANISH|ESP|LATINO|RUS|RUSSIAN|JPN|JAP|VOSTFR|POLISH|PORTUGUESE|PT-BR|HINDI|KOREAN|CHINESE|ARABIC|TURKISH)\b/i.test(upper);
-    const neutralScene = /\b(?:WEB[-.\s]?DL|WEBRIP|BLU[-.\s]?RAY|REMUX|BDRIP|2160P|1080P|720P|X265|X264|HEVC|DDP|DTS|TRUEHD|AAC)\b/i.test(upper);
+    return setTitleSignalCache(cacheKey, {
+        parsed,
+        langInfo,
+        normalizedTitle: normalizeSearchText(safeTitle),
+        normalizedMeta: normalizeSearchText(safeMetaTitle),
+        explicitEng: detected.has('English') || /\b(?:ENG|ENGLISH)\b/i.test(upper),
+        explicitIta: detected.has('Italian') || langInfo?.isItalian || (langInfo?.confidence || 0) >= 5 || /\b(?:ITA|ITALIANO|ITALIAN)\b/i.test(upper),
+        explicitMulti: !!langInfo?.isMulti || /\b(?:MULTI|DUAL[\s.-]?AUDIO)\b/i.test(upper),
+        explicitOther: /\b(?:FRENCH|GERMAN|SPANISH|ESP|LATINO|RUS|RUSSIAN|JPN|JAP|VOSTFR|POLISH|PORTUGUESE|PT-BR|HINDI|KOREAN|CHINESE|ARABIC|TURKISH)\b/i.test(upper),
+        neutralScene: /\b(?:WEB[-.\s]?DL|WEBRIP|BLU[-.\s]?RAY|REMUX|BDRIP|2160P|1080P|720P|X265|X264|HEVC|DDP|DTS|TRUEHD|AAC)\b/i.test(upper)
+    });
+}
 
-    return { langInfo, explicitEng, explicitIta, explicitMulti, explicitOther, neutralScene };
+function createRuntimeItem(item, meta) {
+    return {
+        ...item,
+        season: meta?.season ?? item?.season ?? 0,
+        episode: meta?.episode ?? item?.episode ?? 0
+    };
+}
+
+function pad2(value) {
+    const num = parseInt(value, 10) || 0;
+    return num < 10 ? `0${num}` : `${num}`;
+}
+
+function getEpisodeDisplayTitle(meta, fallbackTitle) {
+    if (!meta?.title || !(meta?.season > 0 || meta?.episode > 0)) return fallbackTitle;
+    return `${meta.title} S${pad2(meta.season)}E${pad2(meta.episode)}`;
+}
+
+function detectQualityLabel(text, fallback = 'SD') {
+    const upper = String(text || '').toUpperCase();
+    if (/\b(?:4K|2160P|UHD)\b/.test(upper)) return '4K';
+    if (/\b(?:1080P|FHD|FULLHD)\b/.test(upper)) return '1080p';
+    if (/\b(?:720P|HD)\b/.test(upper)) return '720p';
+    if (/\b(?:480P|SD)\b/.test(upper)) return 'SD';
+    return fallback || 'SD';
+}
+
+function getServiceDisplayName(service) {
+    const normalized = String(service || '').toLowerCase();
+    if (normalized === 'rd') return 'realdebrid';
+    if (normalized === 'ad') return 'alldebrid';
+    if (normalized === 'tb') return 'torbox';
+    if (normalized === 'web') return 'web';
+    return 'p2p';
+}
+
+function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitle, sizeBytes, seeders, config, meta, isLazy = false, isPack = false }) {
+    const normalizedService = String(service || '').toLowerCase();
+    const isAIOActive = aioFormatter.isAIOStreamsEnabled(config);
+    const baseParseTitle = parseTitle || item?.title || displayTitle || '';
+    const details = parseTitleDetails(baseParseTitle);
+    const languageInfo = getLanguageInfo(baseParseTitle, meta?.title, item?.source, details);
+    const quality = detectQualityLabel(baseParseTitle, details.quality || 'SD');
+    const serviceLabel = normalizedService === 'tb' ? 'TB' : normalizedService.toUpperCase();
+
+    if (isAIOActive) {
+        return {
+            name: aioFormatter.formatStreamName({ addonName: "Leviathan", service: getServiceDisplayName(normalizedService), cached: true, quality }),
+            title: aioFormatter.formatStreamTitle({
+                title: displayTitle,
+                size: formatBytes(sizeBytes),
+                language: formatLanguageLabel(languageInfo, details.languages),
+                source: item?.source,
+                seeders,
+                infoHash: item?.hash,
+                techInfo: `ðŸŽžï¸ ${quality} ${details.tags}`.trim()
+            }),
+            url: streamUrl,
+            infoHash: item?.hash,
+            behaviorHints: { notWebReady: false, bingieGroup: `Leviathan|${quality}|${serviceLabel}|${item?.hash}` }
+        };
+    }
+
+    const { name, title, bingeGroup } = formatStreamSelector(parseTitle || item?.title || displayTitle, item?.source, sizeBytes, seeders, serviceLabel, config, item?.hash, isLazy, isPack);
+    return {
+        name,
+        title,
+        url: streamUrl,
+        infoHash: item?.hash,
+        behaviorHints: { notWebReady: false, bingieGroup: bingeGroup }
+    };
+}
+
+function getLanguageSignals(title, metaTitle, sourceName) {
+    return getTitleDiagnostics(title, metaTitle, sourceName);
 }
 
 function keepItalianCandidate(title, sourceName, metaTitle) {
@@ -132,8 +232,8 @@ function filterWebFallbackStreams(streams, langMode, meta) {
 function getCompositeRankScore(item, meta, config) {
     const title = String(item?.title || '');
     const source = item?.source || item?.provider || null;
-    const parsed = parseTitleDetails(title);
-    const langInfo = getLanguageInfo(title, meta?.title, source, parsed);
+    const diagnostics = getTitleDiagnostics(title, meta?.title, source);
+    const langInfo = diagnostics.langInfo;
     const sizeBytes = Number(item?._size || item?.sizeBytes || 0);
     const seeders = parseInt(item?.seeders, 10) || 0;
     const explicitFileIdx = item?.fileIdx !== undefined && item?.fileIdx !== null;
@@ -141,21 +241,20 @@ function getCompositeRankScore(item, meta, config) {
     const epData = meta?.isSeries ? extractSeasonEpisodeFromFilename(title, meta?.season || 1) : null;
 
     const langMode = getEffectiveLangMode(config);
-    const langSignals = getLanguageSignals(title, meta?.title, source);
     let score = 0;
 
     if (langMode === 'eng') {
-        if (langSignals.explicitEng) score += 190000;
+        if (diagnostics.explicitEng) score += 190000;
         else if (keepEnglishCandidate(title, source, meta?.title)) score += 90000;
-        if (langSignals.explicitIta) score -= 220000;
-        if (langSignals.explicitMulti) score -= 70000;
-        if (langSignals.explicitOther && !langSignals.explicitEng) score -= 120000;
+        if (diagnostics.explicitIta) score -= 220000;
+        if (diagnostics.explicitMulti) score -= 70000;
+        if (diagnostics.explicitOther && !diagnostics.explicitEng) score -= 120000;
     } else if (langMode === 'all') {
-        if (langSignals.explicitIta || langInfo.isItalian) score += 180000;
-        else if (langSignals.explicitEng) score += 150000;
-        else if (langSignals.explicitMulti) score += 120000;
+        if (diagnostics.explicitIta || langInfo.isItalian) score += 180000;
+        else if (diagnostics.explicitEng) score += 150000;
+        else if (diagnostics.explicitMulti) score += 120000;
         else if (keepAllCandidate(title, source, meta?.title)) score += 70000;
-        if (langSignals.explicitOther && !langSignals.explicitEng && !langSignals.explicitIta && !langSignals.explicitMulti) score -= 90000;
+        if (diagnostics.explicitOther && !diagnostics.explicitEng && !diagnostics.explicitIta && !diagnostics.explicitMulti) score -= 90000;
     } else {
         if (langInfo.isItalian) score += 200000;
         else if (langInfo.isMaybeItalian) score += 70000;
@@ -174,7 +273,7 @@ function getCompositeRankScore(item, meta, config) {
     if (title && /mircrew|corsaro|lux|wms|dn[a4]?|idn_crew|speedvideo/i.test(title)) score += 5000;
     if (meta?.isSeries) {
         if (epData && epData.season === meta.season && epData.episode === meta.episode) score += 24000;
-        else if (isPack && new RegExp(`(?:s|season|stagione)\s*0?${meta.season}(?!\d)`, 'i').test(title)) score += 9000;
+        else if (isPack && new RegExp(`(?:s|season|stagione)\\s*0?${meta.season}(?!\\d)`, 'i').test(title)) score += 9000;
         else if (epData && epData.episode !== meta.episode) score -= 18000;
     }
     if (!meta?.isSeries && /\b(?:S\d{2}|SEASON|STAGIONE|\d+x\d+)\b/i.test(title)) score -= 18000;
@@ -351,29 +450,30 @@ function applyWebFormatter(streamList, sourceName, meta, config) {
         else if (upperName.includes("720P")) quality = "720p";
         else if (upperName.includes("SD") || upperName.includes("480P")) quality = "SD";
 
-        let fileTitle = meta.title; 
-        let rawTitleToCheck = (stream.title || "").toUpperCase(); 
+        let fileTitle = meta.title;
+        const rawTitleToCheck = (stream.title || "").toUpperCase();
         if (stream.title) {
-            let cleanRaw = stream.title.split('\n')[0].replace(/[ðŸŽ¬âš¡ðŸŒªï¸â›©ï¸ðŸ¿ðŸ¦ðŸŽ¥ðŸŒ]/g, '').trim();
+            const cleanRaw = stream.title.split('\n')[0].replace(/[ðŸŽ¬âš¡ðŸŒªï¸â›©ï¸ðŸ¿ðŸ¦ðŸŽ¥ðŸŒ]/g, '').trim();
             if (cleanRaw.length > 2) fileTitle = cleanRaw;
         }
 
-        let langTag = "ITA", providerIcon = "ðŸŒ"; 
+        let langTag = "ITA";
+        let providerIcon = "ðŸŒ";
         const sLower = sourceName.toLowerCase();
         if (sLower.includes("animeworld")) {
-            providerIcon = "â›©ï¸"; 
-            if (rawTitleToCheck.includes("JPN") || rawTitleToCheck.includes("SUB") || rawTitleToCheck.includes("VOST")) langTag = "JPN"; 
-            else langTag = "ITA"; 
-        } else if (sLower.includes("streamingcommunity")) providerIcon = "ðŸŒªï¸"; 
-        else if (sLower.includes("guardaserie")) providerIcon = "ðŸ¿"; 
-        else if (sLower.includes("guardahd")) providerIcon = "ðŸ¦"; 
+            providerIcon = "â›©ï¸";
+            langTag = (rawTitleToCheck.includes("JPN") || rawTitleToCheck.includes("SUB") || rawTitleToCheck.includes("VOST")) ? "JPN" : "ITA";
+        } else if (sLower.includes("streamingcommunity")) providerIcon = "ðŸŒªï¸";
+        else if (sLower.includes("guardaserie")) providerIcon = "ðŸ¿";
+        else if (sLower.includes("guardahd")) providerIcon = "ðŸ¦";
         else if (sLower.includes("guardaflix")) providerIcon = "ðŸŽ¥";
 
         const formatted = formatStreamSelector(`${fileTitle} ${quality} ${langTag} WEB-DL AAC`, sourceName, 0, null, "WEB", config, null, false, false);
-        let cleanTitle = formatted.title.replace(/ðŸ¦‘/g, "â›µ").replace(/ðŸ¦ˆ/g, providerIcon).replace(/ðŸ§²\s*\d+(\.\d+)?\s*(GB|MB)/gi, "â˜ï¸ Web Stream");
+        const cleanTitle = formatted.title.replace(/ðŸ§²/g, "â›µ").replace(/ðŸ¦ˆ/g, providerIcon).replace(/ðŸ§²\s*\d+(\.\d+)?\s*(GB|MB)/gi, "â˜ï¸ Web Stream");
         return {
-            name: formatted.name.replace(/ðŸ¦‘/g, "â›µ").replace(/ðŸ¦ˆ/g, providerIcon),
-            title: cleanTitle, url: stream.url,
+            name: formatted.name.replace(/ðŸ§²/g, "â›µ").replace(/ðŸ¦ˆ/g, providerIcon),
+            title: cleanTitle,
+            url: stream.url,
             behaviorHints: stream.behaviorHints || { notWebReady: false, bingieGroup: `Leviathan|${quality}|Web|${sourceName}` }
         };
     });
@@ -391,7 +491,7 @@ async function getMetadata(id, type, config = {}) {
   const userTmdbKey = String(config?.tmdb || '');
   const metadataCacheKey = `${type}:${id}:${userTmdbKey}`;
   const cachedMeta = await Cache.getMetadata(metadataCacheKey);
-  if (cachedMeta) { logger.info(`âš¡ META CACHE HIT: ${metadataCacheKey}`); return cachedMeta; }
+  if (cachedMeta) { logger.info(`Ã¢Å¡Â¡ META CACHE HIT: ${metadataCacheKey}`); return cachedMeta; }
 
   return withSharedPromise(metadataInflight, metadataCacheKey, async () => {
     const secondCacheHit = await Cache.getMetadata(metadataCacheKey);
@@ -467,102 +567,101 @@ function saveResultsToDbBackground(meta, results, config = null) {
 
 async function resolveDebridLink(config, item, showFake, reqHost, meta) {
     try {
-        const service = config.service || 'rd', apiKey = config.key || config.rd;
+        const service = config.service || 'rd';
+        const apiKey = config.key || config.rd;
         if (!apiKey) return null;
-        const isAIOActive = aioFormatter.isAIOStreamsEnabled(config);
-        let displayTitle = item.title;
-        let isPack = item._isPack || isSeasonPack(item.title);
+
+        const isPack = item._isPack || isSeasonPack(item.title);
         const isSeries = (meta?.season > 0 || meta?.episode > 0);
-
-        if (isAIOActive && isPack && isSeries && meta) {
-             const s = meta.season < 10 ? `0${meta.season}` : meta.season, e = meta.episode < 10 ? `0${meta.episode}` : meta.episode;
-             displayTitle = `${meta.title} S${s}E${e}`;
-        }
-
-        const details = parseTitleDetails(item.title);
-        const titleLanguage = getLanguageInfo(item.title, meta?.title, item.source, details);
+        const displayTitle = (aioFormatter.isAIOStreamsEnabled(config) && isPack && isSeries && meta) ? getEpisodeDisplayTitle(meta, item.title) : item.title;
+        const runtimeItem = createRuntimeItem(item, meta);
+        const rawConf = config?.rawConf || '';
 
         if (service === 'tb') {
-            if (item._tbCached) {
-                let realSize = estimateVisualSize(item._size || item.sizeBytes || 0, item.title, isSeries, isPack, item.hash);
-                const finalSeeders = estimateSeeders(item.seeders, item.hash);
-                const proxyUrl = `${reqHost}/${config.rawConf}/play_tb/${item.hash}?s=${item.season || 0}&e=${item.episode || 0}&f=${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}`;
-
-                if (isAIOActive) {
-                    let quality = /4k|2160p/i.test(item.title) ? "4K" : details.quality || "SD"; 
-                    return {
-                        name: aioFormatter.formatStreamName({ service: 'torbox', cached: true, quality: quality }),
-                        title: aioFormatter.formatStreamTitle({ title: displayTitle, size: formatBytes(realSize), language: formatLanguageLabel(titleLanguage, details.languages), source: item.source, seeders: finalSeeders, infoHash: item.hash, techInfo: `ðŸŽžï¸ ${quality} ${details.tags}` }),
-                        url: proxyUrl, infoHash: item.hash, behaviorHints: { notWebReady: false, bingieGroup: `Leviathan|${quality}|TB|${item.hash}` }
-                    };
-                } else {
-                    const { name, title, bingeGroup } = formatStreamSelector(item.title, item.source, realSize, finalSeeders, "TB", config, item.hash, false, item._isPack);
-                    return { name, title, url: proxyUrl, behaviorHints: { notWebReady: false, bingieGroup: bingeGroup } };
-                }
-            } else { return null; }
+            if (!item._tbCached) return null;
+            const realSize = estimateVisualSize(item._size || item.sizeBytes || 0, item.title, isSeries, isPack, item.hash);
+            const finalSeeders = estimateSeeders(item.seeders, item.hash);
+            const proxyUrl = `${reqHost}/${rawConf}/play_tb/${item.hash}?s=${runtimeItem.season || 0}&e=${runtimeItem.episode || 0}&f=${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}`;
+            return buildPlayableStream({
+                service: 'tb',
+                item: runtimeItem,
+                streamUrl: proxyUrl,
+                displayTitle,
+                parseTitle: item.title,
+                sizeBytes: realSize,
+                seeders: finalSeeders,
+                config,
+                meta,
+                isPack
+            });
         }
 
         let streamData = null;
-        if (service === 'rd') streamData = await RD.getStreamLink(apiKey, item.magnet, item.season, item.episode, item.fileIdx);
-        else if (service === 'ad') streamData = await AD.getStreamLink(apiKey, item.magnet, item.season, item.episode, item.fileIdx);
+        if (service === 'rd') streamData = await RD.getStreamLink(apiKey, item.magnet, runtimeItem.season, runtimeItem.episode, item.fileIdx);
+        else if (service === 'ad') streamData = await AD.getStreamLink(apiKey, item.magnet, runtimeItem.season, runtimeItem.episode, item.fileIdx);
 
         if (!streamData || (streamData.type === "ready" && streamData.size < CONFIG.REAL_SIZE_FILTER)) return null;
 
-        const finalSize = estimateVisualSize(streamData.size || item._size || item.sizeBytes || 0, streamData.filename || item.title, isSeries, isPack, item.hash);
+        const parseTitle = streamData.filename || item.title;
+        const finalSize = estimateVisualSize(streamData.size || item._size || item.sizeBytes || 0, parseTitle, isSeries, isPack, item.hash);
         const finalSeeders = estimateSeeders(item.seeders, item.hash);
-        const fileDetails = parseTitleDetails(streamData.filename || item.title);
-        const fileLanguage = getLanguageInfo(streamData.filename || item.title, meta?.title, item.source, fileDetails);
 
-        if (isAIOActive) {
-             let quality = /4k|2160p/i.test(item.title) ? "4K" : fileDetails.quality || "SD"; 
-             let fullService = service === 'rd' ? 'realdebrid' : service === 'ad' ? 'alldebrid' : service === 'tb' ? 'torbox' : 'p2p';
-             return {
-                name: aioFormatter.formatStreamName({ service: fullService, cached: true, quality: quality }),
-                title: aioFormatter.formatStreamTitle({ title: displayTitle, size: formatBytes(finalSize), language: formatLanguageLabel(fileLanguage, fileDetails.languages), source: item.source, seeders: finalSeeders, infoHash: item.hash, techInfo: `ðŸŽžï¸ ${quality} ${fileDetails.tags}` }),
-                url: streamData.url, infoHash: item.hash, behaviorHints: { notWebReady: false, bingieGroup: `Leviathan|${quality}|${service}|${item.hash}` }
-            };
-        } else {
-            const { name, title, bingeGroup } = formatStreamSelector(streamData.filename || item.title, item.source, finalSize, finalSeeders, service.toUpperCase(), config, item.hash, false, item._isPack);
-            return { name, title, url: streamData.url, behaviorHints: { notWebReady: false, bingieGroup: bingeGroup } };
-        }
+        return buildPlayableStream({
+            service,
+            item: runtimeItem,
+            streamUrl: streamData.url,
+            displayTitle,
+            parseTitle,
+            sizeBytes: finalSize,
+            seeders: finalSeeders,
+            config,
+            meta,
+            isPack
+        });
     } catch (e) {
-        if (showFake) return { name: `[P2P âš ï¸]`, title: `${item.title}\nâš ï¸ Cache Assente`, url: item.magnet, behaviorHints: { notWebReady: true } };
+        if (showFake) {
+            return {
+                name: `[P2P âš ï¸]`,
+                title: `${item.title}\nâš ï¸ Cache Assente`,
+                url: item.magnet,
+                behaviorHints: { notWebReady: true }
+            };
+        }
         return null;
     }
 }
 
 function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = false) {
     const service = config.service || 'rd';
-    const isAIOActive = aioFormatter.isAIOStreamsEnabled(config); 
     const isPack = item._isPack || isSeasonPack(item.title);
     const isSeries = (meta.season > 0 || meta.episode > 0);
+    const runtimeItem = createRuntimeItem(item, meta);
 
-    let displayTitle = item.title, realSize = item._size || item.sizeBytes || 0;
-    
-    if (isAIOActive && isPack && isSeries) {
-        realSize = 0; 
-        displayTitle = `${meta.title} S${meta.season < 10 ? `0${meta.season}` : meta.season}E${meta.episode < 10 ? `0${meta.episode}` : meta.episode}`;
+    let displayTitle = item.title;
+    let realSize = item._size || item.sizeBytes || 0;
+
+    if (aioFormatter.isAIOStreamsEnabled(config) && isPack && isSeries) {
+        realSize = 0;
+        displayTitle = getEpisodeDisplayTitle(meta, item.title);
     }
 
     realSize = estimateVisualSize(realSize, displayTitle, isSeries, isPack, item.hash);
     const finalSeeders = estimateSeeders(item.seeders, item.hash);
     const lazyUrl = `${reqHost}/${userConfStr}/play_lazy/${service}/${item.hash}/${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}?s=${meta.season || 0}&e=${meta.episode || 0}`;
 
-    if (isAIOActive) {
-        const details = parseTitleDetails(item.title);
-        const lazyLanguage = getLanguageInfo(item.title, meta?.title, item.source, details);
-        let quality = /4k|2160p/i.test(item.title) ? "4K" : details.quality || "SD";
-        let fullService = service === 'rd' ? 'realdebrid' : service === 'ad' ? 'alldebrid' : service === 'tb' ? 'torbox' : 'p2p';
-
-        return {
-            name: aioFormatter.formatStreamName({ addonName: "Leviathan", service: fullService, cached: true, quality: quality }),
-            title: aioFormatter.formatStreamTitle({ title: displayTitle, size: formatBytes(realSize), language: formatLanguageLabel(lazyLanguage, details.languages), source: item.source, seeders: finalSeeders, infoHash: item.hash, techInfo: `ðŸŽžï¸ ${quality} ${details.tags}` }),
-            url: lazyUrl, infoHash: item.hash, behaviorHints: { notWebReady: false, bingieGroup: `Leviathan|${quality}|${service}|${item.hash}` }
-        };
-    } else {
-        const { name, title, bingeGroup } = formatStreamSelector(item.title, item.source, realSize, finalSeeders, service.toUpperCase(), config, item.hash, isLazy, item._isPack);
-        return { name, title, url: lazyUrl, infoHash: item.hash, behaviorHints: { notWebReady: false, bingieGroup: bingeGroup } };
-    }
+    return buildPlayableStream({
+        service,
+        item: runtimeItem,
+        streamUrl: lazyUrl,
+        displayTitle,
+        parseTitle: item.title,
+        sizeBytes: realSize,
+        seeders: finalSeeders,
+        config,
+        meta,
+        isLazy,
+        isPack
+    });
 }
 
 async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, config, italianMovieTitle = null) { 
@@ -580,7 +679,7 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
             if (!String(magnet).includes("tr=")) magnet = buildTrackerMagnet(t.info_hash, t.title);
             let providerName = (t.provider || 'P2P').replace(/LeviathanDB/i, '').replace(/[()]/g, '').trim() || 'P2P';
             const finalHash = t.info_hash ? t.info_hash.toUpperCase() : extractInfoHash(magnet);
-            return { title: t.title, magnet: magnet, hash: finalHash, infoHash: finalHash, size: "ðŸ’¾ DB", sizeBytes: parseInt(t.size), seeders: parseInt(t.seeders, 10) || 0, source: providerName, fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined, _isPack: isSeasonPack(t.title) };
+            return { title: t.title, magnet: magnet, hash: finalHash, infoHash: finalHash, size: "Ã°Å¸â€™Â¾ DB", sizeBytes: parseInt(t.size), seeders: parseInt(t.seeders, 10) || 0, source: providerName, fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined, _isPack: isSeasonPack(t.title) };
         });
 
         const langMode = getEffectiveLangMode(config);
@@ -594,7 +693,7 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
 }
 
 async function fetchExternalResults(type, finalId, config) {
-    logger.info(`ðŸŒ [EXTERNAL] Start Parallel Fetch...`);
+    logger.info(`Ã°Å¸Å’Â [EXTERNAL] Start Parallel Fetch...`);
     try {
         const externalResults = await withTimeout(
             fetchExternalAddonsFlat(type, finalId, { userConfig: config }).then(items => items.map(i => {
@@ -606,10 +705,10 @@ async function fetchExternalResults(type, finalId, config) {
             CONFIG.TIMEOUTS.EXTERNAL, 'External Addons'
         );
         if (externalResults && externalResults.length > 0) {
-            logger.info(`âœ… [EXTERNAL] Trovati ${externalResults.length} risultati`);
+            logger.info(`Ã¢Å“â€¦ [EXTERNAL] Trovati ${externalResults.length} risultati`);
             return externalResults;
         } else {
-            logger.info(`âŒ [EXTERNAL] Nessun risultato trovato.`);
+            logger.info(`Ã¢ÂÅ’ [EXTERNAL] Nessun risultato trovato.`);
             return [];
         }
     } catch (err) { logger.warn('External Addons fallito/timeout', { error: err.message }); return []; }
@@ -620,7 +719,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const isWebEnabled = config.filters && (isStreamingCommunityEnabled(config.filters) || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableGf);
   const isP2PEnabled = config.filters && config.filters.enableP2P === true;
 
-  if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: "âš ï¸ CONFIG", title: "Inserisci API Key, Attiva P2P o Attiva WebStream" }] };
+  if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: "âš ï¸ CONFIG", title: "Inserisci API Key, attiva P2P o attiva WebStream" }] };
   
   const configHash = crypto.createHash('md5').update(userConfStr || 'no-conf').digest('hex');
   const cacheKey = `${type}:${id}:${configHash}`;
@@ -852,17 +951,12 @@ const aggressiveFilter = (item) => {
   if (finalRanked.length > 0 && hasDebridKey) {
       const TOP_LIMIT = Math.max(0, Math.min(10, parseInt(config.filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0));
       const serviceLimiter = getServiceResolverLimiter(config.service);
+      const resolverConfig = { ...config, rawConf: userConfStr };
       const immediatePromises = finalRanked.slice(0, TOP_LIMIT).map(item => {
-          item.season = meta.season;
-          item.episode = meta.episode;
-          config.rawConf = userConfStr;
-          return serviceLimiter.schedule(() => resolveDebridLink(config, item, config.filters?.showFake, reqHost, meta));
+          const runtimeItem = createRuntimeItem(item, meta);
+          return serviceLimiter.schedule(() => resolveDebridLink(resolverConfig, runtimeItem, config.filters?.showFake, reqHost, meta));
       });
-      const lazyCandidates = finalRanked.slice(TOP_LIMIT).map(item => {
-          item.season = meta.season;
-          item.episode = meta.episode;
-          return item;
-      });
+      const lazyCandidates = finalRanked.slice(TOP_LIMIT).map(item => createRuntimeItem(item, meta));
       const lazyStreams = lazyCandidates.map(item => generateLazyStream(item, config, meta, reqHost, userConfStr, true));
       const resolvedInstant = (await Promise.allSettled(immediatePromises)).flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
       debridStreams = [...resolvedInstant, ...lazyStreams];
@@ -896,7 +990,9 @@ const aggressiveFilter = (item) => {
            const applyAioStyle = (streamList, sourceName) => {
                if (!streamList || !Array.isArray(streamList)) return;
                streamList.forEach((stream) => {
-                   let quality = "HD", qIcon = "ðŸ“º", textToCheck = (stream.title + " " + (stream.name || "")).toUpperCase().replace(/GUARDAHD|STREAMINGCOMMUNITY|LEVIATHAN|VIX|GUARDAFLIX/g, "");
+                   let quality = "HD";
+                   let qIcon = "ðŸ“º";
+                   const textToCheck = (stream.title + " " + (stream.name || "")).toUpperCase().replace(/GUARDAHD|STREAMINGCOMMUNITY|LEVIATHAN|VIX|GUARDAFLIX/g, "");
                    if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) { quality = "4K"; qIcon = "ðŸ”¥"; }
                    else if (/\b(1080P|FHD|FULLHD)\b/.test(textToCheck)) { quality = "1080p"; qIcon = "ðŸ”¥"; }
                    else if (/\b(720P|HD)\b/.test(textToCheck)) { quality = "720p"; qIcon = "ðŸ”¥"; }
@@ -905,7 +1001,7 @@ const aggressiveFilter = (item) => {
                    if (sourceName.includes("StreamingCommunity") || sourceName.includes("Vix")) {
                        if (quality === "SD" && !/\b(480P|SD)\b/.test(textToCheck)) { quality = "1080p"; qIcon = "ðŸ”¥"; }
                    }
-                   stream.name = aioFormatter.formatStreamName({ service: "web", cached: true, quality: quality });
+                   stream.name = aioFormatter.formatStreamName({ service: "web", cached: true, quality });
                    stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: "Web", language: "ðŸ‡®ðŸ‡¹ ITA", source: sourceName, seeders: null, techInfo: `ðŸŽžï¸ ${quality} ${qIcon}` });
                    if (!stream.behaviorHints) stream.behaviorHints = {};
                    stream.behaviorHints.bingieGroup = `Leviathan|${quality}|Web|${sourceName.replace(/\W/g,'')}`;
