@@ -1,8 +1,9 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 
-// --- 1. AGGIORNAMENTO DOMINIO ---
+// --- COSTANTI E CONFIGURAZIONE ---
 const GS_DOMAIN = "https://guardaserietv.skin";
+const TMDB_KEY = "5bae8d11f2a7bc7a95c6d040a31d2163";
 
 function getTargetDomain(config) {
     if (config && config.mediaflow && config.mediaflow.gsUrl && config.mediaflow.gsUrl.length > 3) {
@@ -11,7 +12,7 @@ function getTargetDomain(config) {
     return GS_DOMAIN;
 }
 
-// --- 2. PROFILI BROWSER PER STEALTH ESTREMO ---
+// --- PROFILI BROWSER PER STEALTH ESTREMO ---
 const BROWSER_PROFILES = [
     {
         ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -40,14 +41,79 @@ function getStealthHeaders(referer) {
 
 function createClient() {
     return axios.create({
-        timeout: 6000,
+        timeout: 8000,
         httpAgent: false,
         httpsAgent: false,
         proxy: false
     });
 }
 
-// --- 3. PRE-COMPILAZIONE REGEX & UTILS ---
+// --- HELPER: TMDB E KITSU (Tradotti dal Python) ---
+
+async function getTmdbFromImdb(imdbId, client) {
+    if (!imdbId || !imdbId.startsWith("tt")) return imdbId;
+    
+    // Metodo 1: API (Veloce)
+    try {
+        const url = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_KEY}&external_source=imdb_id`;
+        const response = await client.get(url, { timeout: 5000 });
+        const data = response.data;
+        if (data.movie_results && data.movie_results.length > 0) return data.movie_results[0].id.toString();
+        if (data.tv_results && data.tv_results.length > 0) return data.tv_results[0].id.toString();
+    } catch (e) {
+        console.debug(`GS [TMDB] API fallita per ${imdbId}: ${e.message}`);
+    }
+
+    // Metodo 2: Fallback Scraping
+    try {
+        const urlMovie = `https://www.themoviedb.org/movie/${imdbId}`;
+        const respMovie = await client.get(urlMovie, { timeout: 10000 });
+        const finalUrlM = respMovie.request?.res ? respMovie.request.res.responseUrl : respMovie.config.url;
+        let match = finalUrlM.match(/\/movie\/(\d+)/);
+        if (match) return match[1];
+
+        const urlTv = `https://www.themoviedb.org/tv/${imdbId}`;
+        const respTv = await client.get(urlTv, { timeout: 10000 });
+        const finalUrlTv = respTv.request?.res ? respTv.request.res.responseUrl : respTv.config.url;
+        match = finalUrlTv.match(/\/tv\/(\d+)/);
+        if (match) return match[1];
+    } catch (e) {
+        console.error(`GS [TMDB] Errore conversione ID per ${imdbId}: ${e.message}`);
+    }
+    return null;
+}
+
+async function getKitsuInfo(kitsuId, client) {
+    try {
+        const url = `https://kitsu.io/api/edge/anime/${kitsuId}`;
+        const response = await client.get(url, { timeout: 5000 });
+        const attr = response.data.data.attributes;
+        const title = attr.titles.en || attr.titles.en_jp || attr.canonicalTitle;
+        const date = attr.startDate ? attr.startDate.substring(0, 4) : "";
+        return { title, date };
+    } catch (e) {
+        return { title: null, date: null };
+    }
+}
+
+async function getMediaInfo(tmdbId, type, client) {
+    try {
+        const url = `https://api.themoviedb.org/3/${type}/${tmdbId}?api_key=${TMDB_KEY}&language=it-IT`;
+        const response = await client.get(url, { timeout: 5000 });
+        const data = response.data;
+        
+        if (type === 'movie') {
+            return { title: data.title, date: data.release_date ? data.release_date.substring(0, 4) : '' };
+        } else {
+            return { title: data.name, date: data.first_air_date ? data.first_air_date.substring(0, 4) : '' };
+        }
+    } catch (e) {
+        console.error(`GS [TMDB] Errore recupero info media per ${tmdbId}: ${e.message}`);
+    }
+    return { title: null, date: null };
+}
+
+// --- UTILS: STRINGHE E DECRIPTAZIONE ---
 function slugify(value) {
     return value.toString().toLowerCase().trim()
         .replace(/[^a-z0-9]+/g, '-')
@@ -104,13 +170,13 @@ function unpackDeanEdwards(html, regexPattern) {
     return null;
 }
 
-// --- ESTRATTORE SUPERVIDEO BYPASS (DALLA LOGICA GUARDAHD) ---
+// --- ESTRATTORI (CON WORKER SUPERVIDEO) ---
+
 async function extractSupervideo(url, client) {
     try {
         url = url.startsWith("//") ? `https:${url}` : url;
         const urlObj = new URL(url);
         
-        // Estrazione ID esatta come in GuardaHD
         const id = urlObj.pathname.split('/').pop().replace(/\.html|embed-|\/k\//gi, '');
         const targetUrl = `${urlObj.origin}/e/${id}`;
         
@@ -120,7 +186,6 @@ async function extractSupervideo(url, client) {
             'User-Agent': getStealthHeaders()['User-Agent']
         };
 
-        // Uso il tuo Worker Cloudflare per bypassare il 403
         const fetchWorker = async (target) => {
             const workerUrl = `https://still-mode-fd28.quelladiprova96.workers.dev/?url=${encodeURIComponent(target)}`;
             const res = await client.get(workerUrl, { headers: customHeaders, timeout: 10000 });
@@ -130,12 +195,10 @@ async function extractSupervideo(url, client) {
         let html = await fetchWorker(targetUrl);
         if (!html || typeof html !== 'string') return null;
 
-        // Gestione dell'errore "watched as embed only" tipico di Supervideo
         if (html.includes('watched as embed only')) {
             html = await fetchWorker(`${urlObj.origin}/e${urlObj.pathname}`);
         }
 
-        // Estrazione M3U8 (Unpack + Regex raw come fallback)
         const m3u8Regex = /(https?:\/\/[^\s"']+\.m3u8[^\s"']*)/i;
         
         const unpacked = unpackDeanEdwards(html, m3u8Regex);
@@ -144,9 +207,7 @@ async function extractSupervideo(url, client) {
         const rawMatch = html.match(m3u8Regex);
         if (rawMatch) return rawMatch[1];
 
-    } catch (e) { 
-        console.error(`GS [Supervideo] Error: ${e.message}`); 
-    }
+    } catch (e) { console.error(`GS [Supervideo] Error: ${e.message}`); }
     return null;
 }
 
@@ -185,7 +246,8 @@ async function extractMixdrop(url, client) {
     return null;
 }
 
-// --- 4. CONTROLLO CONCORRENZA E RICERCA ---
+// --- CONTROLLO CONCORRENZA E RICERCA ---
+
 async function processHoster(videoLink, client, cleanTitle, mfpUrl, mfpPass) {
     let mediaUrl = null, hostName = "Sconosciuto", priority = 9;
     const vLinkLower = videoLink.toLowerCase();
@@ -230,7 +292,6 @@ async function checkCandidatePage(candUrl, cleanId, client) {
     return null;
 }
 
-// helper per simulare asyncio.as_completed (si ferma al primo URL valido)
 async function getFirstValidCandidate(tasks) {
     return new Promise((resolve) => {
         let pending = tasks.length;
@@ -253,7 +314,6 @@ async function getFirstValidCandidate(tasks) {
     });
 }
 
-// --- 5. FALLBACK AD ALBERO (DOM TRAVERSAL) ---
 function extractLinksAdvanced(html, season, episode) {
     const $ = cheerio.load(html);
     const links = new Set();
@@ -278,6 +338,7 @@ function extractLinksAdvanced(html, season, episode) {
 }
 
 // --- ENTRY POINT PRINCIPALE ---
+
 async function searchGuardaserie(meta, config) {
     if (!meta || !meta.isSeries) return []; 
     if (!config.filters || !config.filters.enableGs) return [];
@@ -295,18 +356,34 @@ async function searchGuardaserie(meta, config) {
 
     try {
         let showName = meta.title || "";
-        try {
-            const metaRes = await axios.get(`https://v3-cinemeta.strem.io/meta/series/${cleanId}.json`, { timeout: 4000 });
-            if (metaRes.data && metaRes.data.meta && metaRes.data.meta.name) {
-                showName = metaRes.data.meta.name;
+        
+        // INTEGRAZIONE TMDB: Cerchiamo il titolo localizzato in Italiano
+        if (cleanId.startsWith("tt")) {
+            const tmdbId = await getTmdbFromImdb(cleanId, client);
+            if (tmdbId) {
+                const mediaInfo = await getMediaInfo(tmdbId, 'tv', client);
+                if (mediaInfo && mediaInfo.title) {
+                    showName = mediaInfo.title;
+                    console.log(`GS [TMDB] Titolo italiano recuperato: ${showName}`);
+                }
             }
-        } catch (e) {}
+        }
+        
+        // Fallback Cinemeta se TMDB fallisce
+        if (!showName || showName === meta.title) {
+            try {
+                const metaRes = await axios.get(`https://v3-cinemeta.strem.io/meta/series/${cleanId}.json`, { timeout: 4000 });
+                if (metaRes.data && metaRes.data.meta && metaRes.data.meta.name) {
+                    showName = metaRes.data.meta.name;
+                }
+            } catch (e) {}
+        }
 
         const cleanTitle = showName ? `${showName} S${season.toString().padStart(2, '0')}E${episode.toString().padStart(2, '0')}` : `S${season.toString().padStart(2, '0')}E${episode.toString().padStart(2, '0')}`;
         let pageUrl = null;
         let pageHtml = null;
 
-        // --- 6. URL GUESSING SUPER VELOCE ---
+        // --- URL GUESSING SUPER VELOCE ---
         if (showName) {
             const slug = slugify(showName);
             const guesses = [
@@ -323,7 +400,7 @@ async function searchGuardaserie(meta, config) {
             }
         }
 
-        // --- 7. RICERCA INTERNA ASINCRONA PARALLELA ---
+        // --- RICERCA INTERNA ASINCRONA ---
         if (!pageUrl) {
             const searchUrl = `${targetDomain}/index.php?do=search&subaction=search&story=${encodeURIComponent(showName || cleanId)}`;
             const response = await client.get(searchUrl, { headers: getStealthHeaders(`${targetDomain}/`), timeout: 8000 });
@@ -372,13 +449,11 @@ async function searchGuardaserie(meta, config) {
             }
         }
 
-        // Fallback DOM
         if (videoLinks.length === 0) {
             console.log("GS Regex veloce fallita. Avvio ricerca DOM avanzata...");
             videoLinks = extractLinksAdvanced(pageHtml, season, episode);
         }
 
-        // Deduplicazione iniziale
         videoLinks = [...new Set(videoLinks)];
 
         if (videoLinks.length === 0) {
@@ -388,7 +463,6 @@ async function searchGuardaserie(meta, config) {
 
         console.log(`GS Trovati ${videoLinks.length} link hoster. Avvio elaborazione asincrona sicura...`);
 
-        // Esecuzione in batch per simulare il semaforo a 5
         const results = [];
         for (let i = 0; i < videoLinks.length; i += 5) {
             const chunk = videoLinks.slice(i, i + 5);
@@ -399,7 +473,6 @@ async function searchGuardaserie(meta, config) {
             });
         }
 
-        // --- 8. DEDUPLICAZIONE E ORDINAMENTO ---
         const streams = [];
         const seenUrls = new Set();
         
@@ -423,3 +496,4 @@ async function searchGuardaserie(meta, config) {
 }
 
 module.exports = { searchGuardaserie };
+
