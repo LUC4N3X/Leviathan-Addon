@@ -17,7 +17,7 @@ const {
     getStatsSnapshot, recordDuration, recordProviderMetric, incrementMetric
 } = require("./core/utils");
 
-const { generateStream, RD, AD, TB } = require("./core/stream_generator");
+const { generateStream, resolveLazyStreamData } = require("./core/stream_generator");
 
 dbHelper.initDatabase();
 
@@ -113,7 +113,7 @@ app.get("/:conf/play_lazy/:service/:hash/:fileIdx", async (req, res) => {
     const { conf, service, hash, fileIdx } = req.params;
     const { s, e } = req.query;
     const startedAt = Date.now();
-    logger.info(`â–¶ï¸ [LAZY PLAY] Service: ${service} | Hash: ${hash} | Idx: ${fileIdx} | S${s}E${e}`);
+    logger.info(`[LAZY PLAY] Service: ${service} | Hash: ${hash} | Idx: ${fileIdx} | S${s}E${e}`);
     try {
         const config = getConfig(conf);
         const apiKey = config.key || config.rd;
@@ -128,12 +128,9 @@ app.get("/:conf/play_lazy/:service/:hash/:fileIdx", async (req, res) => {
             return res.redirect(cachedLazy.url);
         }
 
-        const resolverLimiter = getServiceResolverLimiter(service);
-        const streamData = await LIMITERS.lazyPlay.schedule(async () => {
-            if (service === 'tb') return resolverLimiter.schedule(() => TB.getStreamLink(apiKey, item.magnet, String(item.season), String(item.episode), item.hash, item.fileIdx !== undefined ? String(item.fileIdx) : undefined));
-            if (service === 'ad') return resolverLimiter.schedule(() => AD.getStreamLink(apiKey, item.magnet, item.season, item.episode, item.fileIdx !== undefined ? item.fileIdx : 0));
-            return resolverLimiter.schedule(() => RD.getStreamLink(apiKey, item.magnet, item.season, item.episode, item.fileIdx));
-        });
+        const streamData = await LIMITERS.lazyPlay.schedule(() =>
+            resolveLazyStreamData(service, apiKey, item, { season: item.season, episode: item.episode })
+        );
 
         if (streamData && streamData.url) {
             await Cache.cacheLazyLink(lazyCacheKey, streamData, 180);
@@ -215,8 +212,8 @@ app.get("/:conf/manifest.json", (req, res) => {
         const flag = langMode === "ita" ? " ðŸ‡®ðŸ‡¹" : (langMode === "eng" ? " ðŸ‡¬ðŸ‡§" : " ðŸ‡®ðŸ‡¹ðŸ‡¬ðŸ‡§"), appName = "L E V I A T H A N";
         if ((config.service === 'rd' && config.key) || config.rd) { manifest.name = `${appName}${flag} ðŸ”± RD`; manifest.id += ".rd"; }
         else if ((config.service === 'tb' && config.key) || config.torbox) { manifest.name = `${appName}${flag} ðŸ”± TB`; manifest.id += ".tb"; }
-        else if ((config.service === 'ad' && config.key) || config.alldebrid) { manifest.name = `${appName}${flag} ðŸš AD`; manifest.id += ".ad"; }
-        else if (filters.enableP2P === true) { manifest.name = `${appName}${flag} ðŸ¦ˆ P2P`; manifest.id += ".p2p"; manifest.description += " | âš ï¸ P2P Mode (IP Visible)"; }
+        else if ((config.service === 'ad' && config.key) || config.alldebrid) { manifest.name = `${appName}${flag} AD`; manifest.id += ".ad"; }
+        else if (filters.enableP2P === true) { manifest.name = `${appName}${flag} ðŸ¦ˆ P2P`; manifest.id += ".p2p"; manifest.description += " | P2P Mode (IP Visible)"; }
         else { manifest.name = `${appName}${flag} â›µ Web`; manifest.id += ".web"; }
     } catch (e) { console.error("Errore personalizzazione manifest:", e); }
     res.json(manifest);
@@ -235,35 +232,35 @@ app.get("/:conf/stream/:type/:id.json", async (req, res) => {
 
 const PORT = process.env.PORT || 7000;
 const server = app.listen(PORT, () => {
-    console.log(`ðŸš€ Leviathan (God Tier) attivo su porta interna ${PORT}`);
+    console.log(`[BOOT] Leviathan (God Tier) attivo su porta interna ${PORT}`);
     console.log(`-----------------------------------------------------`);
-    console.log(`âš¡ MODE: FULL LAZY`);
-    console.log(`ðŸŽ¬ SERIES: Full Lazy Mode`);
-    console.log(`ðŸ“¡ INDEXER URL: ${CONFIG.INDEXER_URL}`);
-    console.log(`ðŸŽ¬ METADATA: TMDB Primary`);
-    console.log(`ðŸ’¾ SCRITTURA: DB Locale`);
-    console.log(`âŒ LETTURA DB LOCALE: DISABILITATA`);
-    console.log(`ðŸ‘ï¸ SPETTRO VISIVO: Modulo Attivo`);
-    console.log(`âš–ï¸ SIZE LIMITER: Modulo Attivo`);
-    console.log(`ðŸ¦ GUARDA HD: Modulo Integrato e Pronto`);
-    console.log(`ðŸ›¡ï¸ GUARDA SERIE: Modulo Integrato e Pronto`);
-    console.log(`â›©ï¸ ANIMEWORLD: Modulo Integrato e Pronto`); 
-    console.log(`ðŸŽ¥ GUARDA FLIX: Modulo Integrato`);
-    console.log(`ðŸ•·ï¸ WEBSTREAMR: Fallback Attivo`);
-    console.log(`ðŸŽ¬ TRAILER: Attivabile da Config`);
+    console.log(`[MODE] FULL LAZY`);
+    console.log(`[SERIES] Full Lazy Mode`);
+    console.log(`[INDEXER] URL: ${CONFIG.INDEXER_URL}`);
+    console.log(`[METADATA] TMDB Primary`);
+    console.log(`[DB WRITE] Locale`);
+    console.log(`[DB READ] Locale disabilitata`);
+    console.log(`[SPETTRO] Modulo Attivo`);
+    console.log(`[SIZE LIMITER] Modulo Attivo`);
+    console.log(`[GUARDA HD] Modulo integrato e pronto`);
+    console.log(`[GUARDA SERIE] Modulo integrato e pronto`);
+    console.log(`[ANIMEWORLD] Modulo integrato e pronto`); 
+    console.log(`[GUARDAFLIX] Modulo integrato`);
+    console.log(`[WEBSTREAMR] Fallback attivo`);
+    console.log(`[TRAILER] Attivabile da config`);
     console.log(`ðŸ“¦ TORBOX: ADVANCED SMART CACHE`);
-    console.log(`ðŸ“ PARSER: ENHANCED`); 
-    console.log(`âš¡ P2P: HANDLER ATTIVO`);
-    console.log(`ðŸ¦‘ LEVIATHAN CORE: Optimized for High Reliability`);
-    console.log(`ðŸŒ LAYERED CACHING: GLOBAL RAW + USER LEVEL ACTIVE`);
-    console.log(`âš¡ SCRAPERS: Fallback Scrapers Ready!`);
+    console.log(`[PARSER] Enhanced`); 
+    console.log(`[P2P] Handler attivo`);
+    console.log(`[CORE] Optimized for High Reliability`);
+    console.log(`[CACHE] Global raw + user level active`);
+    console.log(`[SCRAPERS] Fallback scrapers ready`);
     console.log(`-----------------------------------------------------`);
 });
 
 function gracefulShutdown(signal) {
-    logger.info(`ðŸ›‘ Ricevuto ${signal}, chiusura server in corso...`);
-    server.close(() => { logger.info("âœ… Server HTTP chiuso correttamente."); process.exit(0); });
-    setTimeout(() => { logger.error("â±ï¸ Shutdown forzato per timeout."); process.exit(1); }, 10000).unref();
+    logger.info(`[SHUTDOWN] Ricevuto ${signal}, chiusura server in corso...`);
+    server.close(() => { logger.info("[SHUTDOWN] Server HTTP chiuso correttamente."); process.exit(0); });
+    setTimeout(() => { logger.error("[SHUTDOWN] Shutdown forzato per timeout."); process.exit(1); }, 10000).unref();
 }
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
