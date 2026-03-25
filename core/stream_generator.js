@@ -42,6 +42,147 @@ function getLazyCacheKey(service, item, meta) {
     return `${service}:${item.hash}:${meta?.season || item.season || 0}:${meta?.episode || item.episode || 0}:${item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : -1}`;
 }
 
+function getLazyResolveInflightKey(service, apiKey, item, meta) {
+    const tokenSig = crypto.createHash('sha1').update(String(apiKey || '')).digest('hex').slice(0, 12);
+    return `${String(service || 'rd').toLowerCase()}:${tokenSig}:${item.hash}:${meta?.season || item.season || 0}:${meta?.episode || item.episode || 0}:${item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : -1}`;
+}
+
+function getProviderBreakerState(providerName) {
+    const key = String(providerName || 'unknown');
+    let state = PROVIDER_BREAKERS.get(key);
+    if (!state) {
+        state = { consecutiveFailures: 0, openUntil: 0, status: 'closed' };
+        PROVIDER_BREAKERS.set(key, state);
+    }
+    return state;
+}
+
+function getProviderCircuitState(providerName) {
+    const state = getProviderBreakerState(providerName);
+    const now = Date.now();
+    if (state.openUntil > now) {
+        return { status: 'open', retryInMs: state.openUntil - now };
+    }
+    if (state.status === 'open' && state.openUntil <= now) {
+        state.status = 'half-open';
+    }
+    return { status: state.status || 'closed', retryInMs: 0 };
+}
+
+function recordProviderSuccess(providerName) {
+    const state = getProviderBreakerState(providerName);
+    state.consecutiveFailures = 0;
+    state.openUntil = 0;
+    state.status = 'closed';
+}
+
+function recordProviderFailure(providerName) {
+    const state = getProviderBreakerState(providerName);
+    state.consecutiveFailures += 1;
+    if (state.consecutiveFailures >= BREAKER_FAILURE_THRESHOLD) {
+        state.status = 'open';
+        state.openUntil = Date.now() + BREAKER_OPEN_MS;
+    } else if (state.status !== 'open') {
+        state.status = 'closed';
+    }
+}
+
+async function resolveLazyStreamData(service, apiKey, item, meta) {
+    if (!apiKey || !item?.hash) return null;
+    const normalizedService = String(service || 'rd').toLowerCase();
+    const resolverLimiter = getServiceResolverLimiter(normalizedService);
+    const inflightKey = getLazyResolveInflightKey(normalizedService, apiKey, item, meta);
+
+    return withSharedPromise(lazyResolveInflight, `lazy:${inflightKey}`, async () => {
+        if (normalizedService === 'tb') {
+            return resolverLimiter.schedule(() =>
+                TB.getStreamLink(
+                    apiKey,
+                    item.magnet,
+                    String(meta?.season || item.season || 0),
+                    String(meta?.episode || item.episode || 0),
+                    item.hash,
+                    item.fileIdx !== undefined && item.fileIdx !== null ? String(item.fileIdx) : undefined
+                )
+            );
+        }
+        if (normalizedService === 'ad') {
+            return resolverLimiter.schedule(() =>
+                AD.getStreamLink(
+                    apiKey,
+                    item.magnet,
+                    meta?.season || item.season || 0,
+                    meta?.episode || item.episode || 0,
+                    item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : 0
+                )
+            );
+        }
+        return resolverLimiter.schedule(() =>
+            RD.getStreamLink(
+                apiKey,
+                item.magnet,
+                meta?.season || item.season || 0,
+                meta?.episode || item.episode || 0,
+                item.fileIdx
+            )
+        );
+    });
+}
+
+function assessFastResultQuality(items, meta, langMode, config) {
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) {
+        return { shouldScrape: true, reason: 'no_fast_results', strongCount: 0, exactEpisodeCount: 0, seasonPackCount: 0, total: 0 };
+    }
+
+    let strongCount = 0;
+    let exactEpisodeCount = 0;
+    let seasonPackCount = 0;
+
+    for (const item of list) {
+        const title = String(item?.title || '');
+        const source = String(item?.source || '');
+        const sizeBytes = Number(item?._size || item?.sizeBytes || 0);
+        const seeders = parseInt(item?.seeders, 10) || 0;
+        const isPack = Boolean(item?._isPack || isSeasonPack(title));
+        const langOk = langMode === 'eng'
+            ? keepEnglishCandidate(title, source, meta?.title)
+            : langMode === 'all'
+                ? keepAllCandidate(title, source, meta?.title)
+                : keepItalianCandidate(title, source, meta?.title);
+        const hasQualitySignal = /\b(?:2160p|4k|uhd|1080p|fhd|720p|web[-.\s]?dl|blu[-.\s]?ray|remux|hevc|x265|x264)\b/i.test(title);
+        const hasWeight = hasQualitySignal || sizeBytes >= (meta?.isSeries ? 250 : 700) * 1024 * 1024 || seeders > 0;
+
+        let exactEpisode = false;
+        if (meta?.isSeries) {
+            const parsed = extractSeasonEpisodeFromFilename(title, meta.season || 1);
+            exactEpisode = Boolean(parsed && parsed.season === meta.season && parsed.episode === meta.episode);
+            if (exactEpisode) exactEpisodeCount += 1;
+            if (!exactEpisode && isPack && new RegExp(`(?:s|season|stagione)\\s*0?${meta.season}(?!\\d)`, 'i').test(title)) seasonPackCount += 1;
+        }
+
+        let strength = 0;
+        if (langOk) strength += 1;
+        if (hasWeight) strength += 1;
+        if (!meta?.isSeries || exactEpisode || isPack) strength += 1;
+        if (seeders > 0) strength += 1;
+
+        if (strength >= (meta?.isSeries ? 3 : 2)) strongCount += 1;
+    }
+
+    const minimumStrong = meta?.isSeries ? 2 : 1;
+    const shouldScrape = strongCount < minimumStrong || (meta?.isSeries && exactEpisodeCount === 0 && seasonPackCount === 0);
+    const reason = shouldScrape
+        ? (list.length === 0
+            ? 'no_fast_results'
+            : (meta?.isSeries && exactEpisodeCount === 0 && seasonPackCount === 0)
+                ? 'no_exact_episode_or_pack'
+                : `weak_fast_pool_${strongCount}_of_${minimumStrong}`)
+        : 'fast_pool_ok';
+
+    return { shouldScrape, reason, strongCount, exactEpisodeCount, seasonPackCount, total: list.length };
+}
+
 function getEffectiveLangMode(config) {
     const mode = String(config?.filters?.language || '').toLowerCase();
     if (mode === 'ita' || mode === 'eng' || mode === 'all') return mode;
@@ -58,6 +199,10 @@ function isStreamingCommunityLastEnabled(filters = {}) {
 
 const TITLE_SIGNAL_CACHE = new Map();
 const MAX_TITLE_SIGNAL_CACHE = 4000;
+const lazyResolveInflight = new Map();
+const PROVIDER_BREAKERS = new Map();
+const BREAKER_FAILURE_THRESHOLD = Math.max(2, parseInt(process.env.PROVIDER_BREAKER_THRESHOLD || '3', 10) || 3);
+const BREAKER_OPEN_MS = Math.max(5000, parseInt(process.env.PROVIDER_BREAKER_OPEN_MS || '30000', 10) || 30000);
 
 function setTitleSignalCache(cacheKey, value) {
     if (TITLE_SIGNAL_CACHE.size >= MAX_TITLE_SIGNAL_CACHE) {
@@ -72,7 +217,7 @@ function getTitleDiagnostics(title, metaTitle, sourceName) {
     const safeTitle = String(title || '');
     const safeMetaTitle = String(metaTitle || '');
     const safeSource = String(sourceName || '');
-    const cacheKey = `${safeTitle}Â¦${safeMetaTitle}Â¦${safeSource}`;
+    const cacheKey = `${safeTitle}Ã‚Â¦${safeMetaTitle}Ã‚Â¦${safeSource}`;
     const cached = TITLE_SIGNAL_CACHE.get(cacheKey);
     if (cached) return cached;
 
@@ -307,18 +452,34 @@ function rerankCompositeResults(results, meta, config, sortMode) {
 
 async function guardedProviderCall(providerName, limiter, timeoutMs, factory) {
     const startedAt = Date.now();
+    const circuit = getProviderCircuitState(providerName);
+    if (circuit.status === 'open') {
+        recordDuration(`provider.${providerName}`, 0);
+        recordProviderMetric(providerName, false, 0, { breaker: 'open', retryInMs: circuit.retryInMs });
+        logger.warn(`âš¡ [${providerName}] skipped by circuit breaker for ${circuit.retryInMs}ms`);
+        return [];
+    }
+
     try {
         const result = await limiter.schedule(() => withTimeout(Promise.resolve().then(factory), timeoutMs, providerName));
         const duration = Date.now() - startedAt;
+        recordProviderSuccess(providerName);
         recordDuration(`provider.${providerName}`, duration);
-        recordProviderMetric(providerName, true, duration);
+        recordProviderMetric(providerName, true, duration, { breaker: circuit.status });
         return Array.isArray(result) ? result : (result ? [result] : []);
     } catch (err) {
         const duration = Date.now() - startedAt;
         const isTimeout = /timeout/i.test(String(err?.message || ''));
+        recordProviderFailure(providerName);
+        const state = getProviderBreakerState(providerName);
         recordDuration(`provider.${providerName}`, duration);
-        recordProviderMetric(providerName, false, duration, { timeout: isTimeout, error: err?.message || err });
-        logger.warn(`âš ï¸ [${providerName}] failed: ${err.message}`);
+        recordProviderMetric(providerName, false, duration, {
+            timeout: isTimeout,
+            error: err?.message || err,
+            breaker: state.status,
+            consecutiveFailures: state.consecutiveFailures
+        });
+        logger.warn(`âš ï¸ [${providerName}] failed: ${err.message}${state.status === 'open' ? ` | breaker open ${BREAKER_OPEN_MS}ms` : ''}`);
         return [];
     }
 }
@@ -330,7 +491,6 @@ function warmupLazyStreamsInBackground(config, items, meta) {
     const maxWarmups = Math.max(0, Math.min(4, parseInt(config?.filters?.warmupTop ?? process.env.LAZY_WARMUP_TOP ?? '2', 10) || 0));
     if (maxWarmups <= 0) return;
 
-    const resolverLimiter = getServiceResolverLimiter(service);
     items.slice(0, maxWarmups).forEach(item => {
         LIMITERS.lazyWarmup.schedule(async () => {
             const lazyCacheKey = getLazyCacheKey(service, item, meta);
@@ -338,14 +498,7 @@ function warmupLazyStreamsInBackground(config, items, meta) {
             if (cached?.url) return;
             const startedAt = Date.now();
             try {
-                let streamData = null;
-                if (service === 'tb') {
-                    streamData = await resolverLimiter.schedule(() => TB.getStreamLink(apiKey, item.magnet, String(meta?.season || item.season || 0), String(meta?.episode || item.episode || 0), item.hash, item.fileIdx !== undefined && item.fileIdx !== null ? String(item.fileIdx) : undefined));
-                } else if (service === 'ad') {
-                    streamData = await resolverLimiter.schedule(() => AD.getStreamLink(apiKey, item.magnet, meta?.season || item.season || 0, meta?.episode || item.episode || 0, item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : 0));
-                } else {
-                    streamData = await resolverLimiter.schedule(() => RD.getStreamLink(apiKey, item.magnet, meta?.season || item.season || 0, meta?.episode || item.episode || 0, item.fileIdx));
-                }
+                const streamData = await resolveLazyStreamData(service, apiKey, item, meta);
                 if (streamData?.url) {
                     await Cache.cacheLazyLink(lazyCacheKey, streamData, 180);
                     incrementMetric('lazyWarmup.success');
@@ -380,7 +533,7 @@ async function resolvePackWithBestEffort(item, config, meta, siblingStreams = []
             const files = Array.isArray(resolved.files) ? resolved.files : (Array.isArray(resolved.videoFiles) ? resolved.videoFiles : []);
             const bestTitleData = chooseBestPackTitle(item, packName, siblingStreams);
             return { title: bestTitleData.title, titleSource: bestTitleData.source, packName, files, raw: resolved };
-        } catch (err) { logger.warn(`âš ï¸ [PACK] Resolver error for ${item.hash}: ${err.message}`); }
+        } catch (err) { logger.warn(`[PACK] Resolver error for ${item.hash}: ${err.message}`); }
     }
     return null;
 }
@@ -393,7 +546,7 @@ async function persistPackResolution(meta, item, resolved) {
         if (resolved.title && resolved.title !== item.title && shouldUpdatePackTitle(item.title, resolved.title)) {
             if (typeof dbHelper.updateTorrentTitle === 'function') await dbHelper.updateTorrentTitle(infoHash, resolved.title);
         }
-    } catch (err) { logger.warn(`âš ï¸ [PACK] updateTorrentTitle failed for ${infoHash}: ${err.message}`); }
+    } catch (err) { logger.warn(`[PACK] updateTorrentTitle failed for ${infoHash}: ${err.message}`); }
 
     const files = Array.isArray(resolved.files) ? resolved.files : [];
     if (files.length === 0) return;
@@ -418,9 +571,9 @@ async function persistPackResolution(meta, item, resolved) {
     }
 
     try { if (episodeFiles.length > 0 && typeof dbHelper.insertEpisodeFiles === 'function') await dbHelper.insertEpisodeFiles(episodeFiles); }
-    catch (err) { logger.warn(`âš ï¸ [PACK] insertEpisodeFiles failed for ${infoHash}: ${err.message}`); }
+    catch (err) { logger.warn(`[PACK] insertEpisodeFiles failed for ${infoHash}: ${err.message}`); }
     try { if (packFiles.length > 0 && typeof dbHelper.insertPackFiles === 'function') await dbHelper.insertPackFiles(packFiles); }
-    catch (err) { logger.warn(`âš ï¸ [PACK] insertPackFiles failed for ${infoHash}: ${err.message}`); }
+    catch (err) { logger.warn(`[PACK] insertPackFiles failed for ${infoHash}: ${err.message}`); }
 }
 
 function resolvePackNamesInBackground(meta, results, config) {
@@ -435,9 +588,9 @@ function resolvePackNamesInBackground(meta, results, config) {
             try {
                 const resolved = await resolvePackWithBestEffort(item, config, meta, results);
                 if (resolved) await persistPackResolution(meta, item, resolved);
-            } catch (err) { logger.warn(`âš ï¸ [PACK] Background processing failed for ${item.hash || item.infoHash}: ${err.message}`); }
+            } catch (err) { logger.warn(`[PACK] Background processing failed for ${item.hash || item.infoHash}: ${err.message}`); }
         }
-    }).catch(err => { logger.warn(`âš ï¸ [PACK] Background queue failed: ${err.message}`); });
+    }).catch(err => { logger.warn(`[PACK] Background queue failed: ${err.message}`); });
 }
 
 function applyWebFormatter(streamList, sourceName, meta, config) {
@@ -491,7 +644,7 @@ async function getMetadata(id, type, config = {}) {
   const userTmdbKey = String(config?.tmdb || '');
   const metadataCacheKey = `${type}:${id}:${userTmdbKey}`;
   const cachedMeta = await Cache.getMetadata(metadataCacheKey);
-  if (cachedMeta) { logger.info(`Ã¢Å¡Â¡ META CACHE HIT: ${metadataCacheKey}`); return cachedMeta; }
+  if (cachedMeta) { logger.info(`[META CACHE HIT] ${metadataCacheKey}`); return cachedMeta; }
 
   return withSharedPromise(metadataInflight, metadataCacheKey, async () => {
     const secondCacheHit = await Cache.getMetadata(metadataCacheKey);
@@ -513,7 +666,7 @@ async function getMetadata(id, type, config = {}) {
                   const kMeta = data.meta;
                   finalMeta = { title: kMeta.name, originalTitle: kMeta.name, year: kMeta.year ? kMeta.year.split("â€“")[0] : (kMeta.releaseInfo ? kMeta.releaseInfo.substring(0, 4) : ""), imdb_id: kMeta.imdb_id || null, kitsu_id: kitsuId, isSeries: true, season: 1, episode: episode };
               }
-          } catch (e) { logger.warn(`âš ï¸ Errore Metadata Kitsu: ${e.message} - Fallback sconsigliato ma tentiamo clean`); }
+          } catch (e) { logger.warn(`[META] Errore Kitsu: ${e.message} - fallback tentato`); }
       }
 
       if (!finalMeta) {
@@ -532,13 +685,13 @@ async function getMetadata(id, type, config = {}) {
                 const tmdbData = await fetchTmdbMeta(tmdbId, cleanType, userTmdbKey);
                 if (tmdbData) {
                     finalMeta = { title: tmdbData.title || tmdbData.name, originalTitle: tmdbData.original_title || tmdbData.original_name, year: (tmdbData.release_date || tmdbData.first_air_date) ? (tmdbData.release_date || tmdbData.first_air_date).split("-")[0] : "", imdb_id: cleanId, tmdb_id: tmdbId, isSeries: cleanType === "series", season: season, episode: episode };
-                    logger.info(`âœ… [META] Usato TMDB (UserKey: ${!!userTmdbKey}): ${finalMeta.title} (${finalMeta.year}) [ID: ${tmdbId}] Orig: ${finalMeta.originalTitle}`);
+                    logger.info(`[META] Usato TMDB (UserKey: ${!!userTmdbKey}): ${finalMeta.title} (${finalMeta.year}) [ID: ${tmdbId}] Orig: ${finalMeta.originalTitle}`);
                 }
             }
-        } catch (err) { logger.warn(`âš ï¸ Errore Metadata TMDB, fallback a Cinemeta: ${err.message}`); }
+        } catch (err) { logger.warn(`[META] Errore TMDB, fallback a Cinemeta: ${err.message}`); }
 
         if (!finalMeta) {
-          logger.info(`â„¹ï¸ [META] Fallback a Cinemeta per ${cleanId}`);
+          logger.info(`[META] Fallback a Cinemeta per ${cleanId}`);
           const { data: cData } = await axios.get(`${CONFIG.CINEMETA_URL}/meta/${cleanType}/${cleanId}.json`, { timeout: CONFIG.TIMEOUTS.TMDB }).catch(() => ({ data: {} }));
           finalMeta = cData?.meta ? { title: cData.meta.name, originalTitle: cData.meta.name, year: cData.meta.year?.split("â€“")[0], imdb_id: cleanId, isSeries: cleanType === "series", season: season, episode: episode } : null;
         }
@@ -560,9 +713,9 @@ function saveResultsToDbBackground(meta, results, config = null) {
             const success = await dbHelper.insertTorrent(meta, torrentObj);
             if (success) savedCount++;
         }
-        if (savedCount > 0) console.log(`ðŸ’¾ [AUTO-LEARN] Salvati ${savedCount} nuovi torrent nel DB per ${meta.imdb_id}`);
+        if (savedCount > 0) console.log(`[AUTO-LEARN] Salvati ${savedCount} nuovi torrent nel DB per ${meta.imdb_id}`);
         resolvePackNamesInBackground(meta, results, config);
-    })().catch(err => console.error("âŒ Errore background save:", err.message));
+    })().catch(err => console.error("[AUTO-LEARN] Errore background save:", err.message));
 }
 
 async function resolveDebridLink(config, item, showFake, reqHost, meta) {
@@ -621,7 +774,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
     } catch (e) {
         if (showFake) {
             return {
-                name: `[P2P âš ï¸]`,
+                name: `[P2P WARNING]`,
                 title: `${item.title}\nâš ï¸ Cache Assente`,
                 url: item.magnet,
                 behaviorHints: { notWebReady: true }
@@ -667,7 +820,7 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
 async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, config, italianMovieTitle = null) { 
     if (!CONFIG.INDEXER_URL) return [];
     try {
-        logger.info(`ðŸŒ [REMOTE] Query VPS: ${CONFIG.INDEXER_URL} | ID: ${tmdbId} S:${season} E:${episode}`);
+        logger.info(`[REMOTE] Query VPS: ${CONFIG.INDEXER_URL} | ID: ${tmdbId} S:${season} E:${episode}`);
         let url = `${CONFIG.INDEXER_URL}/api/get/${tmdbId}`;
         if (season) url += `?season=${season}`;
         if (episode) url += `&episode=${episode}`;
@@ -679,7 +832,7 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
             if (!String(magnet).includes("tr=")) magnet = buildTrackerMagnet(t.info_hash, t.title);
             let providerName = (t.provider || 'P2P').replace(/LeviathanDB/i, '').replace(/[()]/g, '').trim() || 'P2P';
             const finalHash = t.info_hash ? t.info_hash.toUpperCase() : extractInfoHash(magnet);
-            return { title: t.title, magnet: magnet, hash: finalHash, infoHash: finalHash, size: "Ã°Å¸â€™Â¾ DB", sizeBytes: parseInt(t.size), seeders: parseInt(t.seeders, 10) || 0, source: providerName, fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined, _isPack: isSeasonPack(t.title) };
+            return { title: t.title, magnet: magnet, hash: finalHash, infoHash: finalHash, size: "DB Cache", sizeBytes: parseInt(t.size), seeders: parseInt(t.seeders, 10) || 0, source: providerName, fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined, _isPack: isSeasonPack(t.title) };
         });
 
         const langMode = getEffectiveLangMode(config);
@@ -693,7 +846,7 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
 }
 
 async function fetchExternalResults(type, finalId, config) {
-    logger.info(`Ã°Å¸Å’Â [EXTERNAL] Start Parallel Fetch...`);
+    logger.info(`[EXTERNAL] Start Parallel Fetch...`);
     try {
         const externalResults = await withTimeout(
             fetchExternalAddonsFlat(type, finalId, { userConfig: config }).then(items => items.map(i => {
@@ -705,10 +858,10 @@ async function fetchExternalResults(type, finalId, config) {
             CONFIG.TIMEOUTS.EXTERNAL, 'External Addons'
         );
         if (externalResults && externalResults.length > 0) {
-            logger.info(`Ã¢Å“â€¦ [EXTERNAL] Trovati ${externalResults.length} risultati`);
+            logger.info(`[EXTERNAL] Trovati ${externalResults.length} risultati`);
             return externalResults;
         } else {
-            logger.info(`Ã¢ÂÅ’ [EXTERNAL] Nessun risultato trovato.`);
+            logger.info(`[EXTERNAL] Nessun risultato trovato.`);
             return [];
         }
     } catch (err) { logger.warn('External Addons fallito/timeout', { error: err.message }); return []; }
@@ -719,7 +872,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const isWebEnabled = config.filters && (isStreamingCommunityEnabled(config.filters) || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableGf);
   const isP2PEnabled = config.filters && config.filters.enableP2P === true;
 
-  if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: "âš ï¸ CONFIG", title: "Inserisci API Key, attiva P2P o attiva WebStream" }] };
+  if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: "CONFIG", title: "Inserisci API Key, attiva P2P o attiva WebStream" }] };
   
   const configHash = crypto.createHash('md5').update(userConfStr || 'no-conf').digest('hex');
   const cacheKey = `${type}:${id}:${configHash}`;
@@ -747,7 +900,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const meta = await LIMITERS.metadata.schedule(() => getMetadata(finalId, type, config));
   if (!meta) return { streams: [] };
 
-  logger.info(`ðŸš€ [SPEED] Start search for: ${meta.title}`);
+  logger.info(`[SPEED] Start search for: ${meta.title}`);
   
   const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
   const dbOnlyMode = config.filters?.dbOnly === true; 
@@ -824,15 +977,16 @@ const aggressiveFilter = (item) => {
   const [remoteSettled, externalSettled] = await Promise.allSettled([remotePromise, externalPromise]);
   const remoteResults = remoteSettled.status === 'fulfilled' ? remoteSettled.value : [];
   const externalResults = externalSettled.status === 'fulfilled' ? externalSettled.value : [];
-  logger.info(`ðŸ“Š [STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
+  logger.info(`[STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
 
   let fastResults = [...remoteResults, ...externalResults].filter(aggressiveFilter);
   let cleanResults = deduplicateResults(fastResults);
   let validFastCount = cleanResults.length;
-  logger.info(`âš¡ [FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
+  logger.info(`[FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
 
-  if (validFastCount === 0 && !dbOnlyMode) {
-      logger.info(`âš ï¸ [FALLBACK] 0 risultati utili da Indexer/External. Avvio Scrapers in background...`);
+  const fastPoolAssessment = assessFastResultQuality(cleanResults, meta, langMode, config);
+  if (fastPoolAssessment.shouldScrape && !dbOnlyMode) {
+      logger.info(`âš ï¸ [FALLBACK] Fast pool debole (${fastPoolAssessment.reason}) | total=${fastPoolAssessment.total} strong=${fastPoolAssessment.strongCount} exact=${fastPoolAssessment.exactEpisodeCount} pack=${fastPoolAssessment.seasonPackCount}. Avvio Scrapers...`);
       let dynamicTitles = [];
       try { if (tmdbIdLookup) dynamicTitles = await getTmdbAltTitles(tmdbIdLookup, type, userTmdbKey); } catch (e) {}
       
@@ -874,7 +1028,7 @@ const aggressiveFilter = (item) => {
               : (CONFIG.TIMEOUTS.SCRAPER || 4000);
 
       if (queries.length > 0) {
-          logger.info(`ðŸ§  [SCRAPER PLAN] lang=${langMode} queries=${queries.length} timeout=${scraperTimeout}ms`);
+          logger.info(`[SCRAPER PLAN] lang=${langMode} queries=${queries.length} timeout=${scraperTimeout}ms`);
           const allScraperTasks = [];
           queries.forEach(q => SCRAPER_MODULES.forEach(scraper => {
               if (scraper.searchMagnet) {
@@ -887,7 +1041,7 @@ const aggressiveFilter = (item) => {
           const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks)).flatMap(result => result.status === 'fulfilled' ? result.value : []);
           cleanResults = deduplicateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)]);
           validFastCount = cleanResults.length;
-          logger.info(`ðŸ“Š [STATS SCRAPER] Trovati e filtrati ${validFastCount} risultati aggiuntivi dagli Scraper.`);
+          logger.info(`[STATS SCRAPER] Trovati e filtrati ${validFastCount} risultati aggiuntivi dagli Scraper.`);
       }
   }
 
@@ -963,7 +1117,7 @@ const aggressiveFilter = (item) => {
       warmupLazyStreamsInBackground(config, lazyCandidates, meta);
   }
   else if (finalRanked.length > 0 && isP2PEnabled) {
-      logger.info(`âš¡ [P2P MODE] Generating direct streams for ${meta.title}`);
+      logger.info(`[P2P MODE] Generating direct streams for ${meta.title}`);
       debridStreams = finalRanked.map(item => P2P.formatP2PStream(item, config));
   }
 
@@ -1043,12 +1197,12 @@ const aggressiveFilter = (item) => {
   }
 
   if (finalStreams.length === 0) {
-      logger.info(`âš ï¸ [FALLBACK] Nessun risultato trovato (P2P/Web Locali). Attivo WebStreamr...`);
+      logger.info(`[FALLBACK] Nessun risultato trovato (P2P/Web Locali). Attivo WebStreamr...`);
       const webStreamrResults = filterWebFallbackStreams(await searchWebStreamr(type, finalId), langMode, meta);
       if (webStreamrResults.length > 0) {
            finalStreams.push(...webStreamrResults);
-           logger.info(`ðŸ•·ï¸ [WEBSTREAMR] Aggiunti ${webStreamrResults.length} stream di fallback.`);
-      } else { logger.info(`âŒ [WEBSTREAMR] Nessun risultato trovato.`); }
+           logger.info(`[WEBSTREAMR] Aggiunti ${webStreamrResults.length} stream di fallback.`);
+      } else { logger.info(`[WEBSTREAMR] Nessun risultato trovato.`); }
   }
 
   
@@ -1057,9 +1211,9 @@ const aggressiveFilter = (item) => {
   await Cache.cacheStream(cacheKey, resultObj, streamTtl);
   recordDuration('stream.generate.total', Date.now() - generationStartedAt);
   incrementMetric(finalStreams.length > 0 ? 'stream.generate.nonEmpty' : 'stream.generate.empty');
-  logger.info(`ðŸ’¾ SAVED TO CACHE: ${cacheKey} (ttl=${streamTtl}s, streams=${finalStreams.length})`);
+  logger.info(`[CACHE] SAVED: ${cacheKey} (ttl=${streamTtl}s, streams=${finalStreams.length})`);
   return resultObj;
   });
 }
 
-module.exports = { generateStream, getMetadata, resolveDebridLink, RD, AD, TB };
+module.exports = { generateStream, getMetadata, resolveDebridLink, resolveLazyStreamData, RD, AD, TB };
