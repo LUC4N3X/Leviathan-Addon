@@ -1,7 +1,7 @@
 const { Pool } = require('pg');
 const trackerRegistry = require('./tracker_registry');
 
-console.log('📂 Caricamento modulo storage/db_helper (PRO)...');
+console.log('ðŸ“‚ Caricamento modulo storage/db_helper (PRO)...');
 
 let pool = null;
 
@@ -45,7 +45,7 @@ function sanitizeText(value, fallback = '') {
 function extractOriginalProvider(text) {
   if (!text) return null;
   const content = String(text);
-  const iconPatterns = [/🔍\s*([^\n]+)/, /🔗\s*([^\n]+)/, /🔎\s*([^\n]+)/];
+  const iconPatterns = [/ðŸ”\s*([^\n]+)/, /ðŸ”—\s*([^\n]+)/, /ðŸ”Ž\s*([^\n]+)/];
   for (const pattern of iconPatterns) {
     const match = content.match(pattern);
     if (match && match[1]) return match[1].trim();
@@ -78,9 +78,10 @@ function buildPoolConfig(config = {}) {
   };
 }
 
+
 function initDatabase(config = {}) {
   if (pool) {
-    console.log('♻️ DB Pool già inizializzato.');
+    console.log('â™»ï¸ DB Pool giÃ  inizializzato.');
     return pool;
   }
 
@@ -94,12 +95,36 @@ function initDatabase(config = {}) {
   });
 
   pool.on('error', (err) => {
-    console.error(`❌ Unexpected idle client error: ${err.message}`);
+    console.error(`âŒ Unexpected idle client error: ${err.message}`);
   });
 
   trackerRegistry.initTrackerRegistry();
-  console.log(`✅ DB Pool Inizializzato (Target: ${poolConfig.host || 'Cloud'})`);
+  ensureDatabaseOptimizations().catch((error) => console.warn(`âš ï¸ DB optimization bootstrap failed: ${error.message}`));
+  console.log(`âœ… DB Pool Inizializzato (Target: ${poolConfig.host || 'Cloud'})`);
   return pool;
+}
+
+async function ensureDatabaseOptimizations() {
+  if (!pool) return;
+
+  const statements = [
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
+    `ALTER TABLE files ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
+    `UPDATE torrents SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
+    `UPDATE files SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
+    `CREATE INDEX IF NOT EXISTS idx_torrents_info_hash_norm_file_idx ON torrents (info_hash_norm, COALESCE(file_index, -1))`,
+    `CREATE INDEX IF NOT EXISTS idx_files_info_hash_norm ON files (info_hash_norm)`,
+    `CREATE INDEX IF NOT EXISTS idx_files_lookup_episode ON files (imdb_id, imdb_season, imdb_episode, info_hash_norm)`,
+    `CREATE INDEX IF NOT EXISTS idx_files_lookup_movie ON files (imdb_id, info_hash_norm) WHERE imdb_season IS NULL OR imdb_season = 0`
+  ];
+
+  for (const sql of statements) {
+    try {
+      await pool.query(sql);
+    } catch (error) {
+      console.warn(`âš ï¸ DB optimization skipped: ${error.message}`);
+    }
+  }
 }
 
 async function shutdownDatabase() {
@@ -130,7 +155,7 @@ async function getTorrents(imdbId, season, episode) {
       const isSeriesEpisode = normalizedSeason !== null && normalizedSeason > 0 && normalizedEpisode !== null && normalizedEpisode > 0;
 
       const selectFields = `
-        SELECT DISTINCT ON (TRIM(t.info_hash), COALESCE(t.file_index, -1))
+        SELECT DISTINCT ON (COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))), COALESCE(t.file_index, -1))
           t.title,
           TRIM(t.info_hash) AS info_hash,
           t.size,
@@ -138,7 +163,7 @@ async function getTorrents(imdbId, season, episode) {
           t.provider,
           t.file_index
         FROM files f
-        JOIN torrents t ON LOWER(TRIM(f.info_hash)) = LOWER(TRIM(t.info_hash))
+        JOIN torrents t ON COALESCE(f.info_hash_norm, LOWER(TRIM(f.info_hash))) = COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash)))
       `;
 
       let query;
@@ -150,7 +175,7 @@ async function getTorrents(imdbId, season, episode) {
           WHERE f.imdb_id = $1
             AND f.imdb_season = $2
             AND f.imdb_episode = $3
-          ORDER BY TRIM(t.info_hash), COALESCE(t.file_index, -1), COALESCE(t.seeders, 0) DESC, COALESCE(t.size, 0) DESC
+          ORDER BY COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))), COALESCE(t.file_index, -1), COALESCE(t.seeders, 0) DESC, COALESCE(t.size, 0) DESC
         `;
         params = [imdbId, normalizedSeason, normalizedEpisode];
       } else {
@@ -158,7 +183,7 @@ async function getTorrents(imdbId, season, episode) {
           ${selectFields}
           WHERE f.imdb_id = $1
             AND (f.imdb_season IS NULL OR f.imdb_season = 0)
-          ORDER BY TRIM(t.info_hash), COALESCE(t.file_index, -1), COALESCE(t.seeders, 0) DESC, COALESCE(t.size, 0) DESC
+          ORDER BY COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))), COALESCE(t.file_index, -1), COALESCE(t.seeders, 0) DESC, COALESCE(t.size, 0) DESC
         `;
         params = [imdbId];
       }
@@ -180,84 +205,81 @@ async function getTorrents(imdbId, season, episode) {
         .filter((row) => row.info_hash);
     });
   } catch (error) {
-    console.error(`❌ DB Read Error (${imdbId}): ${error.message}`);
+    console.error(`âŒ DB Read Error (${imdbId}): ${error.message}`);
     return [];
   }
 }
 
 async function upsertTorrentRow(client, { infoHash, providerName, title, size, seeders, fileIndex }) {
-  const existing = await client.query(
+  const normalizedHashExpr = `COALESCE(info_hash_norm, LOWER(TRIM(info_hash)))`;
+  const sameHashWhere = `${normalizedHashExpr} = $1`;
+  const exactFileWhere = `(
+    COALESCE(file_index, -1) = COALESCE($2, -1)
+    OR ($2 IS NULL AND (file_index IS NULL OR file_index = 0))
+  )`;
+
+  const params = [infoHash, fileIndex, providerName, title, size, seeders];
+
+  const exactUpdateQuery = `
+    UPDATE torrents
+    SET provider = COALESCE(NULLIF($3, ''), provider),
+        title = CASE
+          WHEN title IS NULL OR title = '' THEN $4
+          WHEN LENGTH($4) > LENGTH(title) THEN $4
+          ELSE title
+        END,
+        size = GREATEST(COALESCE(size, 0), $5),
+        seeders = GREATEST(COALESCE(seeders, 0), $6),
+        file_index = COALESCE($2, file_index),
+        info_hash_norm = $1
+    WHERE ${sameHashWhere}
+      AND ${exactFileWhere}
+    RETURNING 1
+  `;
+
+  const exactUpdated = await client.query(exactUpdateQuery, params);
+  if (exactUpdated.rowCount > 0) return false;
+
+  const sameHashRow = await client.query(
     `
-      SELECT info_hash, file_index, title, provider, size, seeders
+      SELECT info_hash, file_index
       FROM torrents
-      WHERE LOWER(TRIM(info_hash)) = $1
-        AND COALESCE(file_index, -1) = COALESCE($2, -1)
+      WHERE ${sameHashWhere}
       LIMIT 1
       FOR UPDATE
     `,
-    [infoHash, fileIndex]
+    [infoHash]
   );
 
-  if (existing.rows.length > 0) {
-    const row = existing.rows[0];
-    const nextProvider = sanitizeText(providerName) || sanitizeText(row.provider);
-    const currentTitle = sanitizeText(row.title);
-    const nextTitle = !currentTitle || title.length > currentTitle.length ? title : currentTitle;
-    const nextSize = Math.max(toSafeNumber(row.size, 0), size);
-    const nextSeeders = Math.max(toSafeNumber(row.seeders, 0), seeders);
-
+  if (sameHashRow.rowCount > 0) {
     await client.query(
       `
         UPDATE torrents
-        SET provider = $3,
-            title = $4,
-            size = $5,
-            seeders = $6,
-            file_index = COALESCE($2, file_index)
-        WHERE LOWER(TRIM(info_hash)) = $1
-          AND COALESCE(file_index, -1) = COALESCE($2, -1)
-      `,
-      [infoHash, fileIndex, nextProvider, nextTitle, nextSize, nextSeeders]
-    );
-    return false;
-  }
-
-  try {
-    await client.query(
-      `
-        INSERT INTO torrents (info_hash, provider, title, size, seeders, file_index)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        SET provider = COALESCE(NULLIF($2, ''), provider),
+            title = CASE
+              WHEN title IS NULL OR title = '' THEN $3
+              WHEN LENGTH($3) > LENGTH(title) THEN $3
+              ELSE title
+            END,
+            size = GREATEST(COALESCE(size, 0), $4),
+            seeders = GREATEST(COALESCE(seeders, 0), $5),
+            file_index = COALESCE(file_index, $6),
+            info_hash_norm = $1
+        WHERE ${sameHashWhere}
       `,
       [infoHash, providerName, title, size, seeders, fileIndex]
     );
-    return true;
-  } catch (error) {
-    const code = error && error.code ? String(error.code) : '';
-    if (code !== '23505') throw error;
-
-    await client.query(
-      `
-        UPDATE torrents
-        SET provider = COALESCE(NULLIF($3, ''), provider),
-            title = CASE
-              WHEN title IS NULL OR title = '' THEN $4
-              WHEN LENGTH($4) > LENGTH(title) THEN $4
-              ELSE title
-            END,
-            size = GREATEST(COALESCE(size, 0), $5),
-            seeders = GREATEST(COALESCE(seeders, 0), $6),
-            file_index = COALESCE($2, file_index)
-        WHERE LOWER(TRIM(info_hash)) = $1
-          AND (
-            COALESCE(file_index, -1) = COALESCE($2, -1)
-            OR ($2 IS NULL AND (file_index IS NULL OR file_index = 0))
-            OR ($2 IS NOT NULL AND (file_index IS NULL OR LOWER(TRIM(info_hash)) = $1))
-          )
-      `,
-      [infoHash, fileIndex, providerName, title, size, seeders]
-    );
     return false;
   }
+
+  await client.query(
+    `
+      INSERT INTO torrents (info_hash, info_hash_norm, provider, title, size, seeders, file_index)
+      VALUES ($1, $1, $2, $3, $4, $5, $6)
+    `,
+    [infoHash, providerName, title, size, seeders, fileIndex]
+  );
+  return true;
 }
 
 async function insertTorrent(meta, torrent) {
@@ -308,8 +330,8 @@ async function insertTorrent(meta, torrent) {
 
         await client.query(
           `
-            INSERT INTO files (info_hash, imdb_id, imdb_season, imdb_episode, title)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO files (info_hash, info_hash_norm, imdb_id, imdb_season, imdb_episode, title)
+            VALUES ($1, $1, $2, $3, $4, $5)
             ON CONFLICT DO NOTHING
           `,
           [cleanHash, imdbId, s, e, title]
@@ -323,7 +345,7 @@ async function insertTorrent(meta, torrent) {
       }
     });
   } catch (error) {
-    console.error(`❌ DB Save Error: ${error.message}`);
+    console.error(`âŒ DB Save Error: ${error.message}`);
     return false;
   }
 }
@@ -358,7 +380,7 @@ async function updateRdCacheStatus(cacheResults) {
           SET cached_rd = v.cached,
               last_cached_check = NOW()
           FROM (VALUES ${placeholders}) AS v(info_hash, cached)
-          WHERE LOWER(TRIM(t.info_hash)) = v.info_hash
+          WHERE COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))) = v.info_hash
         `;
 
         const result = await client.query(query, values);
@@ -370,7 +392,7 @@ async function updateRdCacheStatus(cacheResults) {
       }
     });
   } catch (error) {
-    console.error(`❌ DB Error updateCache: ${error.message}`);
+    console.error(`âŒ DB Error updateCache: ${error.message}`);
     return 0;
   }
 }
