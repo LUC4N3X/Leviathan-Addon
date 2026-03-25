@@ -1,387 +1,538 @@
 <div align="center">
 
-  <!-- Logo -->
-  <img src="https://i.ibb.co/MbmdvP6/file-0000000018387243a2da8535139f6423.png" 
-       alt="Leviathan Logo"
-       style="width: 250px; border-radius: 30px; filter: drop-shadow(0 0 30px rgba(0, 234, 255, 0.7)); margin-bottom: 20px;" />
+<img src="https://i.ibb.co/MbmdvP6/file-0000000018387243a2da8535139f6423.png"
+     alt="Leviathan Logo"
+     width="240"
+     style="border-radius: 30px; filter: drop-shadow(0 0 34px rgba(0, 234, 255, 0.34));" />
 
-  <!-- Titolo + Slogan nello stesso blocco -->
-  <h1 style="background: linear-gradient(180deg, #fff 30%, #00eaff 100%);
-             -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-             font-size: 6rem; font-weight: 900; margin: 0; line-height: 1;
-             letter-spacing: -5px; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-             text-transform: uppercase;
-             filter: drop-shadow(0 8px 20px rgba(0, 234, 255, 0.5));">
-    𝗟𝗘𝗩𝗜𝗔𝗧𝗛𝗔𝗡<br>
-    <span style="font-size: 1.5rem; letter-spacing: 2px; text-shadow: 0 0 10px rgba(0, 234, 255, 0.5);">
-      ⚡ L'abisso si risveglia ⚡
-    </span>
-  </h1>
+<br><br>
 
+<h1 style="
+  margin: 0;
+  font-size: 5.9rem;
+  line-height: 0.95;
+  letter-spacing: -4px;
+  font-weight: 900;
+  text-transform: uppercase;
+  font-family: Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  background: linear-gradient(180deg, #ffffff 0%, #d7fcff 32%, #00eaff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 10px 28px rgba(0, 234, 255, 0.25));
+">
+LEVIATHAN
+</h1>
 
+<p style="
+  margin-top: 12px;
+  font-size: 1.05rem;
+  letter-spacing: 2.3px;
+  color: #9fefff;
+  text-transform: uppercase;
+">
+Italy-First Aggregation Protocol for Stremio
+</p>
 
-<br>
-
-<div style="display: flex; justify-content: center; gap: 5px; flex-wrap: wrap; margin-bottom: 5px;">
-    <img src="https://img.shields.io/badge/Node.js-v18_LTS-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" height="25">
-    <img src="https://img.shields.io/badge/Architecture-HyperMode-8A2BE2?style=for-the-badge&logo=dependabot&logoColor=white" height="25">
-    <img src="https://img.shields.io/badge/Status-OPERATIONAL-00eaff?style=for-the-badge&logo=githubactions&logoColor=black" height="25">
-  </div>
-  <div style="display: flex; justify-content: center; gap: 5px; flex-wrap: wrap; margin-bottom: 20px;">
-    <img src="https://img.shields.io/badge/Real_Debrid-NATIVE-A2B9F0?style=for-the-badge&logo=realdebrid&logoColor=black" height="22">
-    <img src="https://img.shields.io/badge/TorBox-READY-7A4EE3?style=for-the-badge&logo=torbox&logoColor=white" height="22">
-    <img src="https://img.shields.io/badge/P2P-DIRECT_SWARM-ff0055?style=for-the-badge&logo=qbittorrent&logoColor=white" height="22">
-  </div>
-
-<br>
-
-<div style="background: #050a10; border: 1px solid rgba(0, 234, 255, 0.15); border-radius: 8px; padding: 25px; width: 85%; max-width: 800px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
-  <strong style="font-size: 1.3rem; color: #00eaff; display: block; margin-bottom: 10px;">
-    🇮🇹 Engineered for Italian Content Precision 🇬🇧
-
-Leviathan è un metamotore torrent Italy-First, progettato per offrire
-risultati semanticamente validati, immediati e affidabili, con supporto nativo anche per contenuti in lingua inglese 🇬🇧 (ENG).
-
-🔹 Validazione intelligente dei titoli (ITA 🇮🇹 / ENG 🇬🇧)
-🔹 Gestione automatica WAF & challenge
-🔹 Routing a bassa latenza
-🔹 Aggregazione ibrida DHT + Provider 
-  </span>
-</div>
-
-<br>
-
-<div style="margin-bottom: 25px;">
-    <img src="https://img.shields.io/badge/⚡_Adaptive-Latency_Scaling-161b22?style=flat-square&labelColor=0d1117&color=00eaff" />
-    <img src="https://img.shields.io/badge/🛡️_WAF-Bypass_Protocol-161b22?style=flat-square&labelColor=0d1117&color=00eaff" />
-    <img src="https://img.shields.io/badge/🔗_Magnet-Fusion_Engine-161b22?style=flat-square&labelColor=0d1117&color=00eaff" />
-  </div>
-
-
-<div align="center">
-  <a href="https://leviathanaddon.dpdns.org" target="_blank">
-    <img src="public/button5.svg" width="350" alt="Installa Leviathan">
-  </a>
-
-
-  
-  <br>
-
-<hr style="width: 50%; border: 0; height: 1px; background: linear-gradient(90deg, transparent, #00eaff, transparent); margin-top: 25px; margin-bottom: 10px; opacity: 0.3;">
-
-  
-
-</div>
-
-
-
-
-## ⚡ Architettura del Sistema
-
-> **Leviathan trascende il concetto di scraper tradizionale.** È un motore di aggregazione predittivo progettato per navigare ecosistemi torrent complessi, restituendo dataset puliti, validati e ordinati per rilevanza.
-
-Il core, sviluppato in **Node.js**, orchestra scansioni parallele sui principali index mondiali e italiani. Utilizza una logica proprietaria per distinguere le sorgenti in base alla latenza di risposta, applicando timeout dinamici e tecniche di evasione anti-bot.
-
-### 🔥 Release 2.7 Highlights
-
-* 🚀 **Core Refactoring:** Motore riscritto per massimizzare stabilità e concorrenza.
-* 🕷️ **WebStreams Fallback:** Attivazione automatica intelligente delle sorgenti Web se il P2P non ha risultati (Disattivabile).
-* 🎨 **Polymorphic Formatter:** Engine di formattazione avanzato. Scegli tra preset grafici o inietta il tuo stile custom.
-* 🗣️ **Tri-Scope Language:** Selettore di perimetro: Solo ITA, ITA+ENG (Hybrid) o Solo ENG.
-* 🎬 **Trailer Bridge:** Reindirizzamento nativo verso YouTube per anteprime istantanee.
-* 🌪️ **VIX Hybrid Module:** Integrazione diretta con **StreamingCommunity**, **GuardaHD** e **GuardaSerie**.
-* 📱 **Mobile UX:** Implementazione di `smartphone.js` per una GUI ottimizzata mobile.
-* 👻 **Ghost Proxying:** Supporto nativo a **MediaFlow** per l'uso sicuro di Account Debrid condivisi.
-* 🔗 **AIOStreams:** Supporto nativo per flussi AIOStreams integrato nel motore.
-* 🛡️ **Cloudscraper Integration:** Ottimizzazione avanzata per il superamento dei controlli Cloudflare.
-* 📡 **Direct Swarm Protocol:** Supporto nativo per la riproduzione P2P diretta (senza Debrid) con download sequenziale ottimizzato.
-
-
----
-
-## 🔱 Core Capabilities
-
-<div align="center">
-  <div style="background: linear-gradient(180deg, rgba(3,10,18,0.96) 0%, rgba(5,16,28,0.98) 100%); border: 1px solid rgba(0,234,255,0.20); border-radius: 18px; padding: 30px; width: 92%; max-width: 980px; box-shadow: 0 18px 50px rgba(0,0,0,0.45);">
-    <div style="letter-spacing: 2px; text-transform: uppercase; color: #8be9ff; font-size: 0.9rem; margin-bottom: 14px;">
-      Operational Capability Matrix
-    </div>
-    <h3 style="margin-top: 0; margin-bottom: 18px; color: #ffffff; font-size: 1.7rem;">
-      Un unico layer, più motori sincronizzati
-    </h3>
-    <p style="margin: 0 auto 18px auto; max-width: 860px; color: #c7d6e2; line-height: 1.9; font-size: 1.02rem;">
-      <b>Leviathan</b> concentra l’intera logica operativa in una pipeline unica che combina <b>validazione semantica Italy-First</b>, <b>routing a latenza adattiva</b>, <b>resilienza contro challenge e nodi degradati</b>, <b>fusione intelligente dei metadati</b> e <b>delivery ibrido torrent + web</b>. In termini pratici questo significa che il protocollo analizza pattern come <code>MULTI</code>, <code>SUB-ITA</code>, <code>AC3</code> e <code>DTS</code>, riduce i falsi positivi, ordina le release con priorità più sensate e decide dinamicamente quali sorgenti meritano la corsia veloce e quali richiedono una scansione più profonda.
-    </p>
-    <p style="margin: 0 auto 18px auto; max-width: 860px; color: #c7d6e2; line-height: 1.9; font-size: 1.02rem;">
-      Sul piano infrastrutturale, il motore integra <b>WAF handling</b>, <b>identity rotation</b>, <b>failover automatici</b> e <b>tracker/magnet enrichment</b> per migliorare continuità operativa, avvio dello stream e stabilità complessiva. A questo si affianca il layer ibrido con <b>StreamingCommunity</b>, <b>GuardaHD</b> e <b>GuardaSerie</b>, che permette di passare in modo trasparente dal percorso torrent a quello web quando serve velocità immediata o quando il P2P non restituisce un risultato solido.
-    </p>
-    <p style="margin: 0 auto 22px auto; max-width: 860px; color: #c7d6e2; line-height: 1.9; font-size: 1.02rem;">
-      Il blocco viene completato da <b>Debrid Ghost Shell</b> per gli scenari proxy-based, da <b>WebStreams Auto-Failover</b> per evitare vicoli ciechi, da un <b>Polymorphic Formatter Engine</b> per una resa visiva superiore dentro Stremio, dal <b>Linguistic Scope Control</b> per gestire ITA / ENG / Hybrid, dal <b>Trailer Bridge</b> per l’anteprima contestuale e dal <b>Direct Swarm Access</b> per la riproduzione P2P pura. Il risultato finale non è una collezione di feature isolate, ma un sistema coerente progettato per restituire output più puliti, più rapidi, più credibili e molto più leggibili.
-    </p>
-    <p align="center">
-      <img src="https://img.shields.io/badge/ITALIAN%20SEMANTICS-STRICT-00eaff?style=for-the-badge&labelColor=061018" />
-      <img src="https://img.shields.io/badge/HYBRID%20DELIVERY-TORRENT%20%2B%20WEB-7c3aed?style=for-the-badge&labelColor=061018" />
-      <img src="https://img.shields.io/badge/ADAPTIVE%20LATENCY-ROUTING-00c2ff?style=for-the-badge&labelColor=061018" />
-    </p>
-    <p align="center" style="margin-top: 8px;">
-      <img src="https://img.shields.io/badge/FAILOVER-AUTOMATIC-ff335f?style=flat-square&labelColor=0d1117" />
-      <img src="https://img.shields.io/badge/WAF-RESILIENCE-ff9f1a?style=flat-square&labelColor=0d1117" />
-      <img src="https://img.shields.io/badge/FORMATTER-POLYMORPHIC-2ee6a6?style=flat-square&labelColor=0d1117" />
-      <img src="https://img.shields.io/badge/LANGUAGE-ITA%20%7C%20ENG%20%7C%20HYBRID-00eaff?style=flat-square&labelColor=0d1117" />
-    </p>
-  </div>
-</div>
+<p style="
+  max-width: 920px;
+  margin: 20px auto 0 auto;
+  font-size: 1.05rem;
+  line-height: 1.9;
+  color: #c7d6e2;
+">
+<b>Leviathan</b> è un motore di aggregazione progettato per unire <b>torrent intelligence</b>,
+<b>web extraction</b>, <b>routing adattivo</b> e <b>presentazione premium dei risultati</b>
+in un’unica pipeline costruita per Stremio. L’obiettivo non è soltanto trovare release:
+è restituire output <b>più puliti</b>, <b>più coerenti</b>, <b>più rapidi</b> e davvero leggibili.
+</p>
 
 <br>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/⚙️_Auto--WebStreams-ACTIVE-FF0000?style=for-the-badge&labelColor=black" />
-  <img src="https://img.shields.io/badge/🎨_Custom--UI-FORMATTER-FFD700?style=for-the-badge&labelColor=black" />
-  <img src="https://img.shields.io/badge/🗣️_Lang--Scope-ITA%2FENG-00eaff?style=for-the-badge&labelColor=black" />
+  <img src="https://img.shields.io/badge/Node.js-v18_LTS-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" />
+  <img src="https://img.shields.io/badge/Architecture-HyperMode-7c3aed?style=for-the-badge&logo=dependabot&logoColor=white" />
+  <img src="https://img.shields.io/badge/Status-Operational-00eaff?style=for-the-badge&logo=githubactions&logoColor=081018" />
 </p>
 
----
-
-<div align="center">
-
-<br>
-
-<div align="center">
-  <div style="background: rgba(245, 166, 35, 0.1); border: 1px solid rgba(245, 166, 35, 0.3); border-radius: 6px; padding: 15px; width: 90%; max-width: 800px;">
-    <strong style="color: #F5A623; font-size: 0.9rem; display: block; margin-bottom: 5px;">
-      <div align="center" style="margin-top: 25px;">
-  
-  <div style="
-      display: inline-flex;
-      gap: 20px;
-      background: rgba(0, 0, 0, 0.6);
-      border: 1px solid #334155;
-      padding: 10px 25px;
-      border-radius: 8px;
-      font-family: 'Courier New', monospace;
-      font-size: 0.9rem;
-      color: #94a3b8;
-      backdrop-filter: blur(4px);
-      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-  ">
-    
-<div align="center">
-  <table>
-    <tr>
-      <td align="center"><b>SYSTEM</b></td>
-      <td align="center"><b>STATUS</b></td>
-      <td align="center"><b>LICENSE</b></td>
-    </tr>
-    <tr>
-      <td align="center"><code>v.2.7.0</code></td>
-      <td align="center"><code>ONLINE 🟢</code></td>
-      <td align="center"><code>MIT</code></td>
-    </tr>
-  </table>
-</div>
-
-
-
-## 🌐 LEVIATHAN NETWORK NODES
-
-<br>
-
-| **TARGET ENGINE** | **REGION** | **LATENCY** | **MODE** | **STATUS** |
-| :--- | :---: | :---: | :---: | :---: |
-| **StreamingCommunity** | 🇮🇹 ITA | ![](https://img.shields.io/badge/⏱️_INSTANT-ULTRA-FF0000?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🌪️_HLS-Stream-red?style=flat-square&labelColor=black) | 🟢 |
-| **GuardaHD** | 🇮🇹 ITA | ![](https://img.shields.io/badge/⏱️_INSTANT-PREMIUM-00ff00?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🦁_HLS-Stream-red?style=flat-square&labelColor=black) | 🟢 |
-| **GuardaSerie** | 🇮🇹 ITA | ![](https://img.shields.io/badge/⏱️_INSTANT-HQ-00ff00?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🍿_HLS-Stream-red?style=flat-square&labelColor=black) | 🟢 |
-| **Il Corsaro Nero** | 🇮🇹 ITA | ![](https://img.shields.io/badge/⏱️_3000ms-HQ-00eaff?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/⚡_Fast-Lane-00eaff?style=flat-square&labelColor=black) | 🟢 |
-| **Knaben** | 🌍 GLB | ![](https://img.shields.io/badge/⏱️_3000ms-HQ-00eaff?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🔌_API-JSON-blueviolet?style=flat-square&labelColor=black) | 🟢 |
-| **The Pirate Bay** | 🌍 GLB | ![](https://img.shields.io/badge/⏱️_3000ms-HQ-00eaff?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🔌_API-JSON-blueviolet?style=flat-square&labelColor=black) | 🟢 |
-| **UIndex** | 🌍 GLB | ![](https://img.shields.io/badge/⏱️_4000ms-MED-yellow?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🔹_Aggregator-Hybrid-blue?style=flat-square&labelColor=black) | 🟢 |
-| **SolidTorrents** | 🌍 GLB | ![](https://img.shields.io/badge/⏱️_4000ms-MED-yellow?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🔹_Aggregator-Hybrid-blue?style=flat-square&labelColor=black) | 🟢 |
-| **Nyaa** | 🇯🇵 JPN | ![](https://img.shields.io/badge/⏱️_5000ms-DEEP-orange?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🐢_Deep-Scan-lightgrey?style=flat-square&labelColor=black) | 🟢 |
-| **TorrentGalaxy** | 🌍 GLB | ![](https://img.shields.io/badge/⏱️_5000ms-DEEP-orange?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🐢_Deep-Scan-lightgrey?style=flat-square&labelColor=black) | 🟢 |
-| **BitSearch** | 🌍 GLB | ![](https://img.shields.io/badge/⏱️_5000ms-DEEP-orange?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🐢_Deep-Scan-lightgrey?style=flat-square&labelColor=black) | 🟢 |
-| **LimeTorrents** | 🌍 GLB | ![](https://img.shields.io/badge/⏱️_5000ms-DEEP-orange?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🐢_Deep-Scan-lightgrey?style=flat-square&labelColor=black) | 🟢 |
-| **Torrentz2** | 🌍 GLB | ![](https://img.shields.io/badge/⏱️_5000ms-DEEP-orange?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🐢_Deep-Scan-lightgrey?style=flat-square&labelColor=black) | 🟢 |
-| **RARBG** | 🌍 GLB | ![](https://img.shields.io/badge/⏱️_5000ms-DEEP-orange?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🪞_Mirror-Cluster-ff69b4?style=flat-square&labelColor=black) | 🟢 |
-| **1337x** | 🌍 GLB | ![](https://img.shields.io/badge/⏱️_5000ms-DEEP-orange?style=flat-square&labelColor=black) | ![](https://img.shields.io/badge/🛡️_Cloudflare-Protected-f38020?style=flat-square&labelColor=black) | 🟢 |
-
-<br>
-
-
-
-
----
-# 🐳 PROTOCOLLO DI DISTRIBUZIONE
-
-<div align="center">
-
-<p style="font-size: 1.1rem; color: #cbd5e1;">
-  Procedura standardizzata per il deploy di infrastrutture <b>Leviathan Standalone</b>.
+<p align="center">
+  <img src="https://img.shields.io/badge/RealDebrid-Native-a5bdf8?style=for-the-badge&logoColor=black" />
+  <img src="https://img.shields.io/badge/TorBox-Ready-7A4EE3?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/P2P-Direct_Swarm-ff0055?style=for-the-badge&logo=qbittorrent&logoColor=white" />
 </p>
 
-[![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker&logoColor=white)](https://www.docker.com/)
-[![Stremio Addon](https://img.shields.io/badge/Stremio-Addon-green?logo=stremio&logoColor=white)](https://www.stremio.com/)
-
-</div>
-
-<br>
-
-<div align="center">
-  <div style="background: rgba(255, 69, 58, 0.08); border: 1px solid rgba(255, 69, 58, 0.4); border-radius: 8px; padding: 20px; width: 90%; max-width: 800px; text-align: left;">
-    <strong style="color: #ff453a; font-size: 1rem; display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-      ⚠️ LIMITAZIONE ARCHITETTURALE: SELF-HOSTING
-    </strong>
-    <span style="color: #cbd5e1; font-size: 0.9rem; line-height: 1.6;">
-      L'architettura <b>Leviathan</b> è composta da due layer. Eseguendo il deploy locale (Self-Hosting), opererai in modalità <b>"Decentralized Computation"</b>.
-      <br><br>
-      ❌ <b>Esclusione Database Proprietario:</b> Il database di indicizzazione istantanea e caching predittivo è un asset privato lato server dell'istanza pubblica. Non è incluso nel codice sorgente open-source.
-      <br>
-      🔄 <b>Conseguenza Operativa:</b> La tua istanza locale eseguirà lo <b>scraping in tempo reale</b> per ogni singola richiesta, senza attingere alla cache centrale. Le prestazioni dipenderanno esclusivamente dalla potenza della tua CPU e dalla latenza della tua rete.
-    </span>
-  </div>
-</div>
-
-<br>
-
-### 💠 Sequenza di Inizializzazione (Docker)
-
-Eseguire la seguente catena di comandi per il provisioning immediato del container:
-
-```bash
-                        git clone https://github.com/LUC4N3X/stremio-leviathan-addon
-                     cd stremio-leviathan-addon
-                     docker compose up -d --build
-```
-✅ Fatto! Leviathan sarà raggiungibile su:
-http://localhost:7000
-
-
-> [!TIP]
-> **Status Operativo:**
-> * ✔️ **Full Auto:** Avvio completamente automatizzato senza intervento umano.
-> * ✔️ **Zero Config:** Nessuna configurazione manuale complessa richiesta.
-> * ✔️ **High Performance:** Ideale per Server VPS, NAS e ambienti Home Lab 24/7.
-
----
-
-## ⚖️ Disclaimer Legale & Termini di Servizio (EULA)
-
-> [!CAUTION]
-> **AVVISO CRITICO DI CONFORMITÀ LEGALE**
-> L'accesso, l'installazione e l'esecuzione del codice contenuto in questo repository costituiscono l'accettazione incondizionata delle seguenti clausole di esclusione della responsabilità.
-
-### 1. 🛡️ Natura Agnostica e Neutralità Tecnologica
-**Leviathan** è definito tecnicamente come un *Web Scraper User-Agent* e un *Framework di Indicizzazione Distribuita*.
-Il software opera secondo il principio della **Neutralità Tecnologica**:
-* **Funzione Esclusiva:** Il codice agisce come un interprete automatizzato di linguaggi di markup (HTML/XML/JSON). La sua funzione è limitata all'estrazione di stringhe di testo (metadati) da sorgenti pubbliche definite dall'utente.
-* **Assenza di Hosting:** Leviathan **NON** ospita, **NON** trasmette, **NON** memorizza e **NON** indicizza sui propri server alcun contenuto protetto da diritto d'autore (Video, Audio, Binari).
-* **Non-Interferenza:** Il software non possiede capacità intrinseche di decriptazione (DRM bypass), elusione di misure tecnologiche di protezione o accesso abusivo a sistemi informatici.
-
-### 2. 🧪 Finalità di Ricerca e Sviluppo (R&D)
-Il presente repository è pubblicato sotto licenza Open Source con finalità strettamente limitate a:
-* **Proof of Concept (PoC):** Dimostrazione teorica di algoritmi di scraping ed estrazione dati.
-* **Interoperabilità:** Studio delle interazioni tra protocolli di rete decentralizzati e client multimediali.
-* **Analisi Forense:** Test di sicurezza e analisi del traffico web in ambienti controllati (Sandboxed Environment).
-
-### 3. 🚫 Limitazione di Responsabilità e Manleva (Indemnification)
-L'autore (**LUC4N3X**), i contributori e i maintainer del progetto non esercitano alcun controllo, monitoraggio o supervisione sull'utilizzo del software da parte dell'utente finale.
-
-**L'Utente Finale dichiara e garantisce che:**
-1.  **Utilizzo Autonomo:** L'utilizzo del software avviene a proprio esclusivo rischio e pericolo su infrastrutture locali o private.
-2.  **Conformità Giurisdizionale:** L'utente si assume l'onere di verificare che l'uso di Leviathan sia conforme alle leggi vigenti nel proprio territorio (inclusi, ma non limitati a: DMCA 17 U.S.C. § 512, Direttiva Copyright UE 2019/790).
-3.  **Esonero di Responsabilità:** L'utente accetta di manlevare, indennizzare e tenere indenne lo sviluppatore da qualsiasi rivendicazione, azione legale, sanzione o richiesta di risarcimento danni derivante dall'uso improprio, illecito o non autorizzato del codice.
-
-### 4. 🏴‍☠️ Politica Zero-Tolerance sulla Pirateria
-Il software è progettato per l'indicizzazione di contenuti di pubblico dominio (Public Domain) o licenziati liberamente (Creative Commons).
-**Qualsiasi utilizzo volto alla violazione del copyright, alla pirateria digitale o alla distribuzione non autorizzata di proprietà intellettuale è severamente proibito.**
-Lo sviluppatore condanna fermamente la pirateria e non fornirà supporto tecnico a configurazioni volte a tale scopo.
-
----
-
-> **CLAUSOLA RISOLUTIVA ESPRESSA**
-> Se non concordi con anche solo una delle clausole sopra esposte, o se la legislazione del tuo paese non consente tale limitazione di responsabilità, non sei autorizzato a utilizzare questo software.
->
-> **⚠️ INTERROMPI L'ESECUZIONE, ELIMINA IL CONTAINER E DISTRUGGI IL CODICE SORGENTE IMMEDIATAMENTE.**
->
-> ... altrimenti ...
-
-👁‍🗨 BENVENUTO NELL'ABISSO.
----
-
-<h3 align="center">🜂 LEVIATHAN · SUPPORTO & CORE SIGNALS</h3>
-
-<p align="center" style="color:#8b949e; font-size:14px; max-width:740px;">
-<b>Leviathan</b> è un <b>Protocollo open-source</b> progettato per essere <b>preciso, indipendente e scalabile</b>.<br>
-Ogni forma di supporto rafforza la sua <b>stabilità, visibilità e continuità evolutiva</b>.
+<p align="center">
+  <img src="https://img.shields.io/badge/Semantic-Validation-111827?style=flat-square&labelColor=0b1220&color=00eaff" />
+  <img src="https://img.shields.io/badge/Adaptive-Latency_Routing-111827?style=flat-square&labelColor=0b1220&color=00eaff" />
+  <img src="https://img.shields.io/badge/Hybrid-Delivery-111827?style=flat-square&labelColor=0b1220&color=00eaff" />
+  <img src="https://img.shields.io/badge/Language-ITA%20%7C%20ENG%20%7C%20Hybrid-111827?style=flat-square&labelColor=0b1220&color=00eaff" />
 </p>
 
 <br>
 
-<div align="center">
-
-<h4>💠 CORE SUPPORT · Donazione Diretta</h4>
-<p style="font-size:13px; color:#c9d1d9; max-width:540px;">
-Il supporto diretto accelera lo sviluppo, mantiene il Protocollo libero<br>
-e consente iterazioni rapide senza compromessi
-</p>
-
-<a href="https://ko-fi.com/luc4n3x" target="_blank">
-  <img src="https://img.shields.io/badge/Core%20Support-Ko--fi-ff5f5f?style=for-the-badge&logo=ko-fi&logoColor=white">
+<a href="https://leviathanaddon.dpdns.org" target="_blank">
+  <img src="public/button5.svg" width="340" alt="Install Leviathan" />
 </a>
 
 <br><br>
 
-<h4>⭐ VISIBILITY SIGNAL · Supporto Gratuito</h4>
-<p style="font-size:13px; color:#c9d1d9; max-width:560px;">
-Lasciare una ⭐ è il segnale più potente:<br>
-aumenta la visibilità del Protocollo e ne rafforza l’autorevolezza
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:061018,100:00E0FF&height=2&section=header" width="72%" />
+
+</div>
+
+---
+
+# ⚡ Executive Overview
+
+> **Leviathan non è un semplice addon.**
+> È un layer operativo che aggrega, filtra, ordina e presenta risultati con una logica molto più vicina a un protocollo che a uno scraper tradizionale.
+
+Il progetto nasce per risolvere un problema semplice ma reale: molti addon trovano risultati, pochi li trattano bene.
+Leviathan prova a farlo in modo diverso.
+
+Invece di limitarsi a raccogliere release, il motore cerca di:
+
+- capire meglio il contenuto trovato
+- distinguere le sorgenti utili da quelle deboli
+- adattare il routing in base a latenza e affidabilità
+- fare fallback in modo intelligente quando il percorso principale fallisce
+- presentare l’output in una forma più chiara e più utile dentro Stremio
+
+In pratica, Leviathan è pensato per chi vuole un comportamento più selettivo, più stabile e più leggibile rispetto a un flusso di scraping tradizionale.
+
+---
+
+# 🔥 Release Highlights
+
+## 2.7 Core Evolution
+
+- 🚀 **Core Refactoring**  
+  Riorganizzazione del motore per migliorare stabilità, concorrenza e coerenza interna.
+
+- 🌐 **WebStreams Auto-Failover**  
+  Attivazione automatica delle sorgenti web quando il layer torrent non produce un output utile.
+
+- 🎨 **Polymorphic Formatter Engine**  
+  Sistema di formattazione visiva progettato per una resa più pulita, riconoscibile e premium dentro Stremio.
+
+- 🗣️ **Tri-Scope Language Control**  
+  Modalità dedicate per **ITA**, **ENG** e **Hybrid**.
+
+- 🌪️ **VIX Hybrid Module**  
+  Supporto a sorgenti web ad avvio rapido per fallback immediati.
+
+- 👻 **Ghost Proxy Compatibility**  
+  Supporto a scenari proxy-based e routing protetti.
+
+- 📡 **Direct Swarm Protocol**  
+  Percorso P2P diretto per scenari senza debrid.
+
+---
+
+# 🧠 What Leviathan Actually Does
+
+<div align="center">
+  <div style="background: linear-gradient(180deg, rgba(4,11,19,0.96) 0%, rgba(5,16,28,0.99) 100%); border: 1px solid rgba(0,234,255,0.18); border-radius: 20px; padding: 30px; width: 94%; max-width: 1020px; box-shadow: 0 18px 50px rgba(0,0,0,0.42); text-align: left;">
+
+<b style="display:block; color:#8be9ff; letter-spacing:2px; text-transform:uppercase; margin-bottom:14px;">Unified Operational Block</b>
+
+<p style="margin:0 0 16px 0; color:#c7d6e2; line-height:1.95; font-size:1.02rem;">
+<b>Leviathan</b> concentra in un unico flusso operativo una serie di funzioni che normalmente vivono scollegate: <b>validazione semantica del titolo</b>, <b>scoring delle release</b>, <b>routing a latenza adattiva</b>, <b>gestione delle challenge</b>, <b>fusione dei metadati</b>, <b>fallback web</b>, <b>supporto debrid / proxy</b> e <b>formattazione finale orientata all’utente</b>. Questo significa che il motore non si limita a leggere una stringa e a restituirla così com’è: prova a capirne il valore reale prima di mostrarla.
 </p>
 
-<a href="https://stremio-addons.net/addons/leviathan">
-  <img src="https://img.shields.io/badge/Attiva%20il%20Segnale-⭐%20Lascia%20una%20Stella-2ea043?style=for-the-badge&logo=github">
+<p style="margin:0 0 16px 0; color:#c7d6e2; line-height:1.95; font-size:1.02rem;">
+Nel concreto, il protocollo analizza segnali come <code>MULTI</code>, <code>SUB-ITA</code>, <code>AC3</code>, <code>DTS</code>, pattern stagioni/episodi, naming della release, struttura della sorgente e qualità del percorso disponibile. In parallelo decide quali provider meritano una corsia veloce, quali richiedono una scansione più profonda e quando conviene abbandonare la strada torrent per passare a un layer web come <b>StreamingCommunity</b>, <b>GuardaHD</b> o <b>GuardaSerie</b>.
+</p>
+
+<p style="margin:0 0 16px 0; color:#c7d6e2; line-height:1.95; font-size:1.02rem;">
+Sul piano infrastrutturale, Leviathan integra <b>failover automatici</b>, <b>identity rotation</b>, <b>resilienza a nodi degradati</b>, <b>tracker / magnet enrichment</b> e <b>supporto proxy-based</b> per aumentare continuità operativa e qualità del playback. Sul piano dell’esperienza, completa il tutto con un <b>formatter premium</b>, un <b>controllo linguistico a tre scope</b> e percorsi opzionali come <b>Trailer Bridge</b> e <b>Direct Swarm Access</b>.
+</p>
+
+<p style="margin:0; color:#c7d6e2; line-height:1.95; font-size:1.02rem;">
+Il risultato finale non è una lista di feature sparse. È un sistema coerente costruito per restituire output <b>più puliti</b>, <b>più rapidi</b>, <b>più credibili</b> e molto più comprensibili dentro Stremio.
+</p>
+
+<br>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/SEMANTIC%20VALIDATION-STRICT-00eaff?style=for-the-badge&labelColor=061018" />
+  <img src="https://img.shields.io/badge/HYBRID%20DELIVERY-TORRENT%20%2B%20WEB-7c3aed?style=for-the-badge&labelColor=061018" />
+  <img src="https://img.shields.io/badge/ADAPTIVE%20ROUTING-LATENCY%20AWARE-00c2ff?style=for-the-badge&labelColor=061018" />
+</p>
+
+<p align="center" style="margin-top:8px;">
+  <img src="https://img.shields.io/badge/FAILOVER-AUTOMATIC-ff335f?style=flat-square&labelColor=0d1117" />
+  <img src="https://img.shields.io/badge/WAF-RESILIENCE-ff9f1a?style=flat-square&labelColor=0d1117" />
+  <img src="https://img.shields.io/badge/FORMATTER-POLYMORPHIC-2ee6a6?style=flat-square&labelColor=0d1117" />
+  <img src="https://img.shields.io/badge/LANGUAGE-ITA%20%7C%20ENG%20%7C%20HYBRID-00eaff?style=flat-square&labelColor=0d1117" />
+  <img src="https://img.shields.io/badge/DEBRID-PROXY%20READY-a5bdf8?style=flat-square&labelColor=0d1117" />
+</p>
+
+  </div>
+</div>
+
+---
+
+# 🧭 How the Protocol Works
+
+| Stage | What happens | Why it matters |
+| :-- | :-- | :-- |
+| **1. Query Interpretation** | Il contenuto richiesto viene normalizzato e tradotto in un profilo di ricerca utile. | Riduce mismatch e ricerca sporca. |
+| **2. Source Orchestration** | I provider vengono attivati secondo priorità, latenza e affidabilità stimata. | Evita sprechi di tempo e migliora il primo risultato utile. |
+| **3. Semantic Filtering** | Le release vengono lette, classificate e ripulite tramite pattern linguistici e tecnici. | Migliora precisione e qualità del ranking. |
+| **4. Hybrid Fallback** | Se il percorso torrent non è sufficiente, Leviathan attiva il layer web. | Riduce i vicoli ciechi. |
+| **5. Delivery Preparation** | Magnet, stream, metadati e label vengono rifiniti per la resa finale. | L’output risulta più chiaro e più pronto all’uso. |
+| **6. Stremio Presentation** | Il formatter costruisce una resa leggibile, consistente e riconoscibile. | L’utente sceglie più facilmente. |
+
+---
+
+# 🔬 Architectural Breakdown
+
+## Semantic Validation
+
+Leviathan applica una lettura semantica ai risultati invece di fidarsi del solo nome file.
+
+Questo serve a:
+
+- distinguere release italiane reali da release ambigue
+- leggere indicatori come `MULTI`, `SUB-ITA`, `AC3`, `DTS`
+- interpretare meglio pattern episodici e naming irregolari
+- ridurre pack sporchi, mismatch e falsi positivi
+
+## Adaptive Latency Routing
+
+Non tutte le sorgenti vengono trattate allo stesso modo.
+
+Il protocollo applica:
+
+- corsie veloci per indexer e endpoint più puliti
+- scansioni più profonde per portali lenti o HTML-heavy
+- timeout sensati in base al valore potenziale della sorgente
+- priorità dinamica per massimizzare il primo output utile
+
+## Web Resilience & Challenge Handling
+
+L’ecosistema reale è instabile, protetto e spesso degradato.
+
+Per questo Leviathan integra:
+
+- gestione challenge / WAF
+- rotazione controllata delle identità HTTP
+- esclusione dei nodi peggiori
+- fallback automatici quando il percorso iniziale degrada
+
+## Metadata Fusion
+
+Una parte importante del valore di Leviathan arriva dalla sua capacità di rendere il dato più leggibile.
+
+Questo include:
+
+- normalizzazione Stagione/Episodio
+- arricchimento magnet / tracker
+- miglioramento del ranking attraverso segnali contestuali
+- output finale più coerente nel formatter
+
+## Hybrid Delivery Layer
+
+Leviathan non vive solo nel mondo torrent.
+
+Integra anche un layer web per:
+
+- streaming HLS ad avvio rapido
+- fallback immediato quando il P2P non basta
+- migliore copertura in scenari dove la velocità di avvio conta più del resto
+
+---
+
+# 🌐 Network Matrix
+
+| Target Engine | Region | Mode | Priority | Status |
+| :-- | :--: | :--: | :--: | :--: |
+| **StreamingCommunity** | 🇮🇹 ITA | HLS Stream | Ultra | 🟢 |
+| **GuardaHD** | 🇮🇹 ITA | HLS / MP4 | High | 🟢 |
+| **GuardaSerie** | 🇮🇹 ITA | HLS / MP4 | High | 🟢 |
+| **Il Corsaro Nero** | 🇮🇹 ITA | Torrent Fast Lane | High | 🟢 |
+| **Knaben** | 🌍 GLB | API JSON | High | 🟢 |
+| **The Pirate Bay** | 🌍 GLB | API JSON | High | 🟢 |
+| **UIndex** | 🌍 GLB | Hybrid Aggregator | Medium | 🟢 |
+| **SolidTorrents** | 🌍 GLB | Hybrid Aggregator | Medium | 🟢 |
+| **Nyaa** | 🇯🇵 JPN | Deep Scan | Medium | 🟢 |
+| **TorrentGalaxy** | 🌍 GLB | Deep Scan | Medium | 🟢 |
+| **BitSearch** | 🌍 GLB | Deep Scan | Medium | 🟢 |
+| **LimeTorrents** | 🌍 GLB | Deep Scan | Medium | 🟢 |
+| **Torrentz2** | 🌍 GLB | Deep Scan | Medium | 🟢 |
+| **RARBG Mirrors** | 🌍 GLB | Mirror Cluster | Medium | 🟢 |
+| **1337x** | 🌍 GLB | Protected HTML | Medium | 🟢 |
+
+---
+
+# 🧱 Public Instance vs Self-Hosted Instance
+
+| Aspect | Public Instance | Self-Hosted Instance |
+| :-- | :-- | :-- |
+| **Ready-to-use experience** | Ottimizzata | Variabile |
+| **Operational data layer** | Presente | Non incluso nel repository |
+| **Warm cache / server-side tuning** | Presente | Assente o da ricostruire da zero |
+| **Real-world convenience** | Alta | Più bassa |
+| **Best choice for end-user usage** | Sì | In genere no |
+| **Best choice for study / custom fork** | Non necessario | Sì |
+
+---
+
+# 🐳 Deployment Protocol
+
+<div align="center">
+
+### Leviathan Standalone · Bootstrap Sequence
+
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+[![Stremio Addon](https://img.shields.io/badge/Stremio-Addon-7cf29c?style=for-the-badge&logo=stremio&logoColor=081018)](https://www.stremio.com/)
+
+</div>
+
+## Quick Start
+
+```bash
+git clone https://github.com/LUC4N3X/stremio-leviathan-addon
+cd stremio-leviathan-addon
+docker compose up -d --build
+```
+
+## Local Endpoint
+
+```txt
+http://localhost:7000
+```
+
+## What this gives you
+
+- una istanza locale autonoma
+- un ambiente adatto a sviluppo, test e modifiche
+- un punto di partenza solido per fork e sperimentazione
+- un deploy semplice su VPS, NAS o home lab
+
+---
+
+# ⚠️ Self-Hosting Reality Check
+
+> [!IMPORTANT]
+> **Leviathan può essere self-hostato, ma il self-hosting non replica l’esperienza della public instance.**
+
+Questa è la parte che deve essere chiarissima.
+
+Il repository open-source contiene il **motore**, la **pipeline**, la **logica dei provider** e la **base del protocollo**.
+Non contiene però necessariamente l’intero ecosistema operativo usato da una deployment pubblica ottimizzata.
+
+## Cosa non hai in self-hosting
+
+Quando esegui Leviathan in locale o su una tua VPS, in genere **non hai**:
+
+- il database operativo usato dalla istanza pubblica
+- eventuali cache server-side già calde
+- eventuali layer privati di tuning, ranking o pre-processing
+- la stessa quantità di contesto storico accumulato dalla deployment live
+
+In altre parole:
+
+> il codice open-source ti dà il protocollo,  
+> ma **non ti consegna automaticamente tutta l’infrastruttura dati della public instance**.
+
+## Cosa comporta davvero
+
+In self-hosting il motore lavora in condizioni più “nude”.
+
+Questo significa:
+
+- più scraping live
+- meno vantaggio da dati già pronti
+- più dipendenza dalla tua rete e dal tuo hardware
+- maggiore variabilità nei tempi di risposta
+- più differenza tra “funziona” e “rende al massimo”
+
+## Conviene self-hostarlo?
+
+### Se il tuo obiettivo è usare Leviathan al meglio:
+**no, normalmente non conviene.**
+
+### Se il tuo obiettivo è:
+
+- studiare il progetto
+- fare sviluppo
+- modificare il codice
+- testare provider e pipeline
+- creare una tua build personalizzata
+
+allora il self-hosting ha assolutamente senso.
+
+## Risposta semplice
+
+| Goal | Best choice |
+| :-- | :-- |
+| Vuoi l’esperienza più comoda e ottimizzata | **Public instance** |
+| Vuoi analizzare o modificare il progetto | **Self-hosting** |
+| Vuoi una replica perfetta della live instance | **Non la otterrai dal solo repository** |
+| Vuoi il database della deployment pubblica | **Non è incluso** |
+
+## Self-Hosting Notes
+
+> [!WARNING]
+> Il repository è una base tecnica seria e completa, ma non va letto come una copia integrale della deployment pubblica.
+
+> [!TIP]
+> Per capire Leviathan, self-hostarlo è ottimo.  
+> Per usare Leviathan nel modo più semplice, stabile e rifinito possibile, la public instance resta in genere la scelta migliore.
+
+---
+
+# 🧪 Recommended Use Cases
+
+## Use the public instance if you want
+
+- la via più semplice
+- l’esperienza più comoda
+- meno manutenzione
+- una resa già pronta per l’uso
+
+## Self-host it if you want
+
+- studiare l’architettura
+- fare debug
+- modificare formatter, provider o pipeline
+- sperimentare con una tua build
+- lavorare in ambiente isolato
+
+---
+
+# ⚖️ Legal Notice & Terms
+
+> [!CAUTION]
+> L’installazione e l’utilizzo del repository implicano l’accettazione delle seguenti condizioni.
+
+## 1. Neutralità Tecnologica
+
+Leviathan è un framework di aggregazione e parsing.
+Non ospita contenuti: processa metadati, segnali, risultati e percorsi provenienti da fonti configurate dall’utente.
+
+## 2. Finalità del Repository
+
+Il codice viene pubblicato per finalità tecniche e di ricerca, tra cui:
+
+- studio di pipeline di aggregazione
+- interoperabilità tra provider, client e layer di rete
+- sperimentazione su parsing, ranking e delivery logic
+
+## 3. Responsabilità dell’Utente
+
+L’utente è l’unico responsabile della propria configurazione, del proprio ambiente e del rispetto delle leggi applicabili nel proprio territorio.
+
+## 4. Uso Improprio
+
+Qualsiasi utilizzo illecito o lesivo di diritti di terzi ricade esclusivamente sotto la responsabilità dell’utente finale.
+
+> [!WARNING]
+> Se non accetti anche una sola di queste condizioni, non utilizzare il software.
+
+---
+
+# 🜂 Support the Protocol
+
+<div align="center">
+
+<h3>Core Signals</h3>
+
+<p>
+<b>Leviathan</b> è un progetto open-source costruito con attenzione a precisione, continuità evolutiva e qualità del risultato finale.<br>
+Ogni forma di supporto contribuisce direttamente alla sua crescita.
+</p>
+
+<br>
+
+### 💠 Direct Support
+
+<a href="https://ko-fi.com/luc4n3x" target="_blank">
+  <img src="https://img.shields.io/badge/Core%20Support-Ko--fi-ff5f5f?style=for-the-badge&logo=ko-fi&logoColor=white" />
 </a>
 
-<p style="font-size:11px; color:#6e7681; margin-top:8px;">
-⏱️ Richiede meno di 5 secondi · impatto reale sul progetto
+<br><br>
+
+### ⭐ Visibility Signal
+
+<a href="https://stremio-addons.net/addons/leviathan" target="_blank">
+  <img src="https://img.shields.io/badge/Leave%20a%20Star-Boost%20the%20Protocol-2ea043?style=for-the-badge&logo=github" />
+</a>
+
+<p style="color:#8b949e; font-size:12px; margin-top:10px;">
+Un piccolo gesto può aumentare visibilità, autorevolezza e continuità del progetto.
 </p>
 
 </div>
 
-<br>
+---
 
-<p align="center" style="font-size:12px; color:#6e7681;">
-Supportare Leviathan significa rafforzare un Protocollo <b>libero, curato e orientato alla qualità</b>.
+# 🧬 Credits
+
+<div align="center">
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,100:00E0FF&height=130&section=header&text=Credits&fontSize=40&fontColor=ffffff&animation=fadeIn&fontAlignY=35" width="100%" />
+
+<br><br>
+
+<a href="https://github.com/LUC4N3X">
+  <img src="https://github.com/LUC4N3X.png" width="150" alt="Project Lead" style="border-radius:50%;" />
+</a>
+
+<br><br>
+
+<h2 style="margin:0; color:#ffffff;">LUC4N3X</h2>
+<p style="margin-top:8px; color:#8be9ff; letter-spacing:2px; text-transform:uppercase;">
+Founder · Sole Architect · Core Engineering
 </p>
 
+<br>
 
+<p style="max-width:800px; color:#c7d6e2; line-height:1.95; font-size:1.04rem;">
+Ideazione del progetto, architettura del protocollo, direzione tecnica, organizzazione della pipeline,
+infrastruttura logica, identità del sistema, design operativo e visione evolutiva del framework.
+</p>
+
+<p style="max-width:760px; color:#8b949e; line-height:1.85; font-size:0.98rem;">
+Leviathan nasce come un sistema con una firma precisa: non soltanto un addon per Stremio,
+ma un layer operativo riconoscibile, costruito per unire potenza tecnica, selettività e identità.
+</p>
+
+<br>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Protocol-Creator-00eaff?style=for-the-badge&labelColor=0d1117" />
+  <img src="https://img.shields.io/badge/Core-Engineering-ffffff?style=for-the-badge&labelColor=0d1117&color=ffffff" />
+  <img src="https://img.shields.io/badge/Stremio-Ecosystem-7cf29c?style=for-the-badge&labelColor=0d1117" />
+</p>
+
+<br>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:00E0FF&height=2&section=header" width="68%" />
+
+<br><br>
+
+<h3 style="margin-bottom:8px; color:#ffffff;">Leviathan Protocol</h3>
+
+<p style="color:#8b949e; font-size:1rem; max-width:780px; line-height:1.9;">
+Not a simple addon.  
+Not a simple scraper.  
+But an operational layer designed to push Stremio beyond standard behavior.
+</p>
+
+<br><br>
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:00E0FF,100:0d1117&height=100&section=footer" width="100%" />
+
+</div>
 
 ---
 
-<h3 align="center">🧬 PROTOCOL ARCHITECTURE & ENGINEERING</h3>
+<div align="center">
 
-<p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,100:00E0FF&height=110&section=header&text=Leviathan%20Project&fontSize=34&fontColor=ffffff&animation=fadeIn&fontAlignY=35" width="100%" />
-</p>
+## 👁‍🗨 Welcome to the Abyss
 
-<p align="center">
-  <a href="https://github.com/LUC4N3X">
-    <img src="https://github.com/LUC4N3X.png" width="140" alt="Project Lead" />
-  </a>
-</p>
+<sub>Leviathan is not a simple addon.<br>It is an operational layer.</sub>
 
-<p align="center">
-  <img src="https://img.shields.io/badge/PROJECT%20LEAD-00E0FF?style=for-the-badge&labelColor=0d1117" />
-  <img src="https://img.shields.io/badge/ARCHITECT%20%26%20CORE-ffffff?style=for-the-badge&labelColor=0d1117" />
-</p>
-
-<p align="center">
-  <b>LUC4N3X</b><br>
-  <sub>Founder of the Protocol • Sole Architect • Core Engineering</sub>
-</p>
-
-<p align="center">
-  <sub>All credit belongs exclusively to him.</sub>
-</p>
-
-<p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:00E0FF,100:0d1117&height=65&section=footer" width="100%" />
-</p>
+</div>
