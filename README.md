@@ -37,7 +37,7 @@
 <br>
 
 <a href="https://leviathanaddon.dpdns.org" target="_blank">
-  <img src="assets/install-leviathan.png" alt="Install Leviathan" width="340" />
+  <img alt="Installa Leviathan" src="https://img.shields.io/badge/INSTALLA-LEVIATHAN-00E7FF?style=for-the-badge&labelColor=07111f&color=00E7FF&logo=stremio&logoColor=ffffff" />
 </a>
 
 <br>
