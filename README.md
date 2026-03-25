@@ -37,7 +37,7 @@
 <br>
 
 <a href="https://leviathanaddon.dpdns.org" target="_blank">
-  <img src="https://capsule-render.vercel.app/api?type=rounded&color=0:00d8ff,50:0078ff,100:00d8ff&height=92&section=header&text=Install%20Leviathan&fontSize=34&fontColor=ffffff&animation=fadeIn&fontAlignY=53&stroke=0b1220&strokeWidth=2" alt="Install Leviathan" />
+  <img src="assets/install-leviathan.svg" alt="Install Leviathan" width="360" />
 </a>
 
 <br>
