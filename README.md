@@ -37,7 +37,7 @@
 <br>
 
 <a href="https://leviathanaddon.dpdns.org" target="_blank">
-  <img src="assets/install-leviathan.svg" alt="Install Leviathan" width="360" />
+  <img src="assets/install-leviathan.png" alt="Install Leviathan" width="340" />
 </a>
 
 <br>
