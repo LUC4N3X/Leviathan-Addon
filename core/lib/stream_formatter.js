@@ -250,6 +250,7 @@ function normalizeCacheState(cacheState, serviceTag) {
   const normalized = safeString(cacheState).toLowerCase().trim();
   if (normalized === 'cached') return 'cached';
   if (normalized === 'uncached') return 'uncached';
+  if (normalized === 'probing') return 'probing';
   if (normalized === 'unknown') return 'unknown';
   if (!isDebridService(serviceTag)) return 'unknown';
   return 'unknown';
@@ -258,6 +259,7 @@ function normalizeCacheState(cacheState, serviceTag) {
 function getCacheIcon(cacheState) {
   if (cacheState === 'cached') return '⚡';
   if (cacheState === 'uncached') return '☁️';
+  if (cacheState === 'probing') return '🔄';
   return '⏳';
 }
 

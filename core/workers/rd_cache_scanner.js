@@ -20,7 +20,8 @@ const scannerState = {
     totalScanned: 0,
     totalUpdated: 0,
     lastActivityAt: null,
-    lastBatchAt: null
+    lastBatchAt: null,
+    lastProgress: null
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -100,7 +101,7 @@ function getRdCacheScannerStatus() {
     return { ...scannerState };
 }
 
-function startRdCacheScanner({ dbHelper, logger = console } = {}) {
+function startRdCacheScanner({ dbHelper, logger = console, onBatchUpdated = null } = {}) {
     const enabled = String(process.env.RD_CACHE_SCANNER_ENABLED || '').toLowerCase() === 'true';
     const token = process.env.RD_SCAN_TOKEN || process.env.RD_API_KEY || '';
 
@@ -152,6 +153,7 @@ function startRdCacheScanner({ dbHelper, logger = console } = {}) {
         logger.info?.(`[RD SCANNER] Avvio completato | batch=${batchSize} sleep=${sleepMs}ms idle=${idleMs}ms`);
         if (typeof dbHelper.getRdScanProgress === 'function') {
             const progress = await dbHelper.getRdScanProgress();
+            scannerState.lastProgress = progress || null;
             logger.info?.(`[RD SCANNER] Stato iniziale | ${formatProgress(progress)}`);
         }
         while (true) {
@@ -189,9 +191,21 @@ function startRdCacheScanner({ dbHelper, logger = console } = {}) {
                     scannerState.currentTitle = null;
                     if (typeof dbHelper.getRdScanProgress === 'function') {
                         const progress = await dbHelper.getRdScanProgress();
+                        scannerState.lastProgress = progress || null;
                         logger.info?.(`[RD SCANNER] Batch completato | scansiti=${results.length} aggiornati=${updated} | ${formatProgress(progress)}`);
                     } else {
                         logger.info?.(`[RD SCANNER] Batch completato | scansiti=${results.length} aggiornati=${updated}`);
+                    }
+                    if (typeof onBatchUpdated === 'function') {
+                        try {
+                            await onBatchUpdated({
+                                updated,
+                                hashes: results.map((entry) => entry.hash).filter(Boolean),
+                                results
+                            });
+                        } catch (callbackError) {
+                            logger.warn?.(`[RD SCANNER] Callback post-batch fallita: ${callbackError.message}`);
+                        }
                     }
                 }
             } catch (err) {

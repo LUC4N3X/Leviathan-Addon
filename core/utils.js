@@ -39,6 +39,9 @@ const metadataInflight = new Map();
 const parsedTitleCache = new NodeCache({ stdTTL: 3600, checkperiod: 300, maxKeys: 20000 });
 const normalizedTextCache = new NodeCache({ stdTTL: 3600, checkperiod: 300, maxKeys: 20000 });
 const languageInfoCache = new NodeCache({ stdTTL: 1800, checkperiod: 180, maxKeys: 20000 });
+const streamCacheTags = new Map();
+const streamCacheKeysByHash = new Map();
+const streamCacheKeysByImdb = new Map();
 
 const TRACKERS = Object.freeze([
     "udp://tracker.opentrackr.org:1337/announce",
@@ -145,16 +148,101 @@ async function withSharedPromise(map, key, factory) {
     return task;
 }
 
+function getStreamCacheStorageKey(key) {
+    return `stream:${String(key || '').trim()}`;
+}
+
+function normalizeHashTag(hash) {
+    const normalized = String(hash || '').trim().toUpperCase();
+    return /^[A-F0-9]{40}$/.test(normalized) ? normalized : null;
+}
+
+function normalizeImdbTag(imdbId) {
+    const normalized = String(imdbId || '').trim().toLowerCase();
+    return /^tt\d+$/.test(normalized) ? normalized : null;
+}
+
+function addTaggedCacheKey(indexMap, tag, cacheKey) {
+    if (!tag || !cacheKey) return;
+    let keys = indexMap.get(tag);
+    if (!keys) {
+        keys = new Set();
+        indexMap.set(tag, keys);
+    }
+    keys.add(cacheKey);
+}
+
+function removeTaggedCacheKey(indexMap, tag, cacheKey) {
+    if (!tag || !cacheKey) return;
+    const keys = indexMap.get(tag);
+    if (!keys) return;
+    keys.delete(cacheKey);
+    if (keys.size === 0) indexMap.delete(tag);
+}
+
+function unregisterStreamCacheKey(cacheKey) {
+    const normalizedKey = String(cacheKey || '').trim();
+    if (!normalizedKey) return;
+    const tags = streamCacheTags.get(normalizedKey);
+    if (!tags) return;
+
+    for (const hash of tags.hashes || []) {
+        removeTaggedCacheKey(streamCacheKeysByHash, hash, normalizedKey);
+    }
+    if (tags.imdbId) removeTaggedCacheKey(streamCacheKeysByImdb, tags.imdbId, normalizedKey);
+    streamCacheTags.delete(normalizedKey);
+}
+
+function registerStreamCacheKey(cacheKey, tags = {}) {
+    const normalizedKey = String(cacheKey || '').trim();
+    if (!normalizedKey) return;
+
+    unregisterStreamCacheKey(normalizedKey);
+
+    const uniqueHashes = [...new Set((Array.isArray(tags?.hashes) ? tags.hashes : [])
+        .map(normalizeHashTag)
+        .filter(Boolean))];
+    const imdbId = normalizeImdbTag(tags?.imdbId);
+
+    streamCacheTags.set(normalizedKey, { hashes: uniqueHashes, imdbId });
+    for (const hash of uniqueHashes) addTaggedCacheKey(streamCacheKeysByHash, hash, normalizedKey);
+    if (imdbId) addTaggedCacheKey(streamCacheKeysByImdb, imdbId, normalizedKey);
+}
+
+function deleteStreamCacheKey(cacheKey) {
+    const normalizedKey = String(cacheKey || '').trim();
+    if (!normalizedKey) return 0;
+    unregisterStreamCacheKey(normalizedKey);
+    return myCache.del(getStreamCacheStorageKey(normalizedKey));
+}
+
+function collectTaggedStreamKeys(indexMap, tags) {
+    const keys = new Set();
+    for (const tag of tags) {
+        const bucket = indexMap.get(tag);
+        if (!bucket) continue;
+        for (const cacheKey of bucket) keys.add(cacheKey);
+    }
+    return keys;
+}
+
 const Cache = {
     getCachedMagnets: async (key) => { return myCache.get(`magnets:${key}`) || null; },
     cacheMagnets: async (key, value, ttl = 3600) => { myCache.set(`magnets:${key}`, value, ttl); },
     getCachedStream: async (key) => {
-        const data = myCache.get(`stream:${key}`);
+        const normalizedKey = String(key || '').trim();
+        const data = myCache.get(getStreamCacheStorageKey(normalizedKey));
         registerCacheAccess('stream', !!data);
         if (data) logger.info(`⚡ CACHE HIT (USER): ${key}`);
+        else unregisterStreamCacheKey(normalizedKey);
         return data || null;
     },
-    cacheStream: async (key, value, ttl = 1800) => { registerCacheSet('stream'); myCache.set(`stream:${key}`, value, ttl); },
+    cacheStream: async (key, value, ttl = 1800, tags = {}) => {
+        const normalizedKey = String(key || '').trim();
+        registerCacheSet('stream');
+        registerStreamCacheKey(normalizedKey, tags);
+        myCache.set(getStreamCacheStorageKey(normalizedKey), value, ttl);
+    },
     getMetadata: async (key) => { const data = myCache.get(`meta:${key}`) || null; registerCacheAccess('metadata', !!data); return data; },
     cacheMetadata: async (key, value, ttl = METADATA_CACHE_TTL) => { registerCacheSet('metadata'); myCache.set(`meta:${key}`, value, ttl); },
     getLazyLink: async (key) => { const data = myCache.get(`lazy:${key}`) || null; registerCacheAccess('lazy', !!data); return data; },
@@ -162,8 +250,64 @@ const Cache = {
     getCloudBuild: async (key) => { const data = cloudBuildCache.get(`cloud:${key}`) || null; registerCacheAccess('cloud', !!data); return data; },
     setCloudBuild: async (key, value, ttl = 900) => { registerCacheSet('cloud'); cloudBuildCache.set(`cloud:${key}`, value, ttl); },
     listKeys: async () => myCache.keys(),
-    deleteKey: async (key) => myCache.del(key),
-    flushAll: async () => { myCache.flushAll(); rawCache.flushAll(); },
+    deleteKey: async (key) => {
+        const normalizedKey = String(key || '').trim();
+        if (normalizedKey.startsWith('stream:')) {
+            return deleteStreamCacheKey(normalizedKey.slice('stream:'.length));
+        }
+        return myCache.del(normalizedKey);
+    },
+    flushAll: async () => {
+        myCache.flushAll();
+        rawCache.flushAll();
+        cloudBuildCache.flushAll();
+        sharedFetchInflight.clear();
+        streamInflight.clear();
+        metadataInflight.clear();
+        streamCacheTags.clear();
+        streamCacheKeysByHash.clear();
+        streamCacheKeysByImdb.clear();
+    },
+    invalidateStreamsByHashes: async (hashes, reason = 'hash_update') => {
+        const normalizedHashes = [...new Set((Array.isArray(hashes) ? hashes : [])
+            .map(normalizeHashTag)
+            .filter(Boolean))];
+        if (normalizedHashes.length === 0) return { invalidated: 0, hashes: 0 };
+
+        const keys = collectTaggedStreamKeys(streamCacheKeysByHash, normalizedHashes);
+        let deleted = 0;
+        for (const cacheKey of keys) deleted += deleteStreamCacheKey(cacheKey);
+
+        if (keys.size > 0) {
+            incrementMetric('cache.stream.invalidations');
+            incrementMetric('cache.stream.invalidatedKeys', keys.size);
+            logger.info(`[CACHE] Stream invalidation by hash | reason=${reason} | hashes=${normalizedHashes.length} | keys=${keys.size}`);
+        }
+
+        return { invalidated: keys.size, hashes: normalizedHashes.length, deleted };
+    },
+    invalidateStreamsByImdb: async (imdbId, reason = 'imdb_update') => {
+        const normalizedImdb = normalizeImdbTag(imdbId);
+        if (!normalizedImdb) return { invalidated: 0, imdbId: null };
+
+        const keys = collectTaggedStreamKeys(streamCacheKeysByImdb, [normalizedImdb]);
+        let deleted = 0;
+        for (const cacheKey of keys) deleted += deleteStreamCacheKey(cacheKey);
+
+        if (keys.size > 0) {
+            incrementMetric('cache.stream.invalidations');
+            incrementMetric('cache.stream.invalidatedKeys', keys.size);
+            logger.info(`[CACHE] Stream invalidation by imdb | reason=${reason} | imdb=${normalizedImdb} | keys=${keys.size}`);
+        }
+
+        return { invalidated: keys.size, imdbId: normalizedImdb, deleted };
+    },
+    getStreamCacheIndexStats: () => ({
+        trackedKeys: streamCacheTags.size,
+        hashBuckets: streamCacheKeysByHash.size,
+        imdbBuckets: streamCacheKeysByImdb.size,
+        cachedEntries: myCache.keys().filter((key) => String(key).startsWith('stream:')).length
+    }),
 
     getRaw: (provider, id) => {
         const data = rawCache.get(`raw:${provider}:${id}`);
@@ -603,6 +747,7 @@ function getStatsSnapshot() {
             lazy: getCacheSnapshot(runtimeMetrics.cache.lazy),
             cloud: getCacheSnapshot(runtimeMetrics.cache.cloud),
             raw: getCacheSnapshot(runtimeMetrics.cache.raw),
+            streamIndex: Cache.getStreamCacheIndexStats(),
             keys: {
                 user: myCache.keys().length,
                 raw: rawCache.keys().length,
@@ -668,7 +813,7 @@ function getKnownCacheState(item) {
     ? item._rdCacheState
     : (typeof item?.rdCacheState === 'string' ? item.rdCacheState : '');
   const normalizedState = rawState.trim().toLowerCase();
-  if (normalizedState === 'cached' || normalizedState === 'uncached' || normalizedState === 'unknown') {
+  if (normalizedState === 'cached' || normalizedState === 'uncached' || normalizedState === 'unknown' || normalizedState === 'probing') {
     return normalizedState;
   }
 

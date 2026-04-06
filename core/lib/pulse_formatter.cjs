@@ -54,6 +54,7 @@ function getCacheBadge(cacheState, cached) {
     const normalized = compactSpaces(cacheState).toLowerCase();
     if (normalized === 'cached') return '⚡';
     if (normalized === 'uncached') return '☁️';
+    if (normalized === 'probing') return '🔄';
     if (normalized === 'unknown') return '⏳';
     return cached ? '⚡' : '⏳';
 }

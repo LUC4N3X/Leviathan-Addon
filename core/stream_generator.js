@@ -332,7 +332,7 @@ function getRdCacheVisualState(service, item) {
     const explicitState = typeof item?._rdCacheState === 'string'
         ? String(item._rdCacheState).trim().toLowerCase()
         : (typeof item?.rdCacheState === 'string' ? String(item.rdCacheState).trim().toLowerCase() : '');
-    if (explicitState === 'cached' || explicitState === 'uncached' || explicitState === 'unknown') {
+    if (explicitState === 'cached' || explicitState === 'uncached' || explicitState === 'unknown' || explicitState === 'probing') {
         return explicitState;
     }
 
@@ -408,13 +408,20 @@ async function hydrateRdForegroundCacheState(items, apiKey) {
         if (dbUpdates.length > 0 && typeof dbHelper.updateRdCacheStatus === 'function') {
             try {
                 await dbHelper.updateRdCacheStatus(dbUpdates);
+                await Cache.invalidateStreamsByHashes(dbUpdates.map((row) => row.hash), 'rd_foreground_live_check');
             } catch (err) {
                 logger.warn(`[RD FAST] Persistenza stato cache fallita: ${err.message}`);
             }
         }
 
         if (Array.isArray(deferred) && deferred.length > 0) {
-            RdCache.enrichCacheBackground(deferred, apiKey, dbHelper);
+            for (const item of deferred) {
+                item._rdCacheState = 'probing';
+                item.rdCacheState = 'probing';
+            }
+            RdCache.enrichCacheBackground(deferred, apiKey, dbHelper, async (updates) => {
+                await Cache.invalidateStreamsByHashes((updates || []).map((entry) => entry.hash), 'rd_background_backfill');
+            });
         }
 
         logger.info(`[RD FAST] Live check completato | cached=${dbUpdates.filter(row => row.cached).length} | uncached=${dbUpdates.filter(row => !row.cached).length} | deferred=${Array.isArray(deferred) ? deferred.length : 0}`);
@@ -423,6 +430,37 @@ async function hydrateRdForegroundCacheState(items, apiKey) {
     }
 
     return list;
+}
+
+function queueRdPriorityScan(meta, results, config, reason = 'visible_results') {
+    if (String(config?.service || 'rd').toLowerCase() !== 'rd') return;
+    if (!dbHelper || typeof dbHelper.prioritizeRdHashes !== 'function') return;
+
+    const maxPriority = Math.max(1, Math.min(30, parseInt(process.env.RD_PRIORITY_TOP || '18', 10) || 18));
+    const priorityMinutes = Math.max(0, Math.min(120, parseInt(process.env.RD_PRIORITY_WINDOW_MIN || '5', 10) || 5));
+    const candidateHashes = [...new Set((Array.isArray(results) ? results : [])
+        .filter((item) => getRdCacheVisualState('rd', item) === 'unknown' && item?.hash)
+        .slice(0, maxPriority)
+        .map((item) => item.hash))];
+
+    if (candidateHashes.length === 0) return;
+
+    incrementMetric('rdPriority.requested', candidateHashes.length);
+
+    setTimeout(() => {
+        (async () => {
+            let updated = 0;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                const outcome = await dbHelper.prioritizeRdHashes(candidateHashes, { limit: maxPriority, priorityMinutes });
+                updated = Number(outcome?.updated || 0);
+                if (updated > 0) break;
+                await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+            }
+
+            incrementMetric(updated > 0 ? 'rdPriority.applied' : 'rdPriority.noop', candidateHashes.length);
+            logger.info(`[RD PRIORITY] reason=${reason} | imdb=${meta?.imdb_id || 'n/a'} | hashes=${candidateHashes.length} | updated=${updated}`);
+        })().catch((err) => logger.warn(`[RD PRIORITY] Errore scheduling: ${err.message}`));
+    }, 0);
 }
 
 function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitle, sizeBytes, seeders, config, meta, isLazy = false, isPack = false }) {
@@ -858,13 +896,21 @@ function saveResultsToDbBackground(meta, results, config = null) {
     if (!results || results.length === 0) return;
     (async () => {
         let savedCount = 0;
+        const prioritizedHashes = [];
         for (const item of results) {
             const torrentObj = { info_hash: item.hash || item.infoHash, title: item.title, size: item._size || item.sizeBytes || 0, seeders: item.seeders || 0, provider: item.source || 'External', file_index: item.fileIdx !== undefined ? item.fileIdx : undefined, is_pack: item._isPack || isSeasonPack(item.title) };
             if (!torrentObj.info_hash) continue;
             const success = await dbHelper.insertTorrent(meta, torrentObj);
             if (success) savedCount++;
+            if (String(config?.service || 'rd').toLowerCase() === 'rd' && prioritizedHashes.length < 18 && getRdCacheVisualState('rd', item) === 'unknown') {
+                prioritizedHashes.push(torrentObj.info_hash);
+            }
         }
         if (savedCount > 0) console.log(`[AUTO-LEARN] Salvati ${savedCount} nuovi torrent nel DB per ${meta.imdb_id}`);
+        if (prioritizedHashes.length > 0 && typeof dbHelper.prioritizeRdHashes === 'function') {
+            const outcome = await dbHelper.prioritizeRdHashes(prioritizedHashes, { limit: 18, priorityMinutes: Math.max(0, Math.min(120, parseInt(process.env.RD_PRIORITY_WINDOW_MIN || '5', 10) || 5)) });
+            logger.info(`[RD PRIORITY] reason=db_save | imdb=${meta.imdb_id || 'n/a'} | hashes=${prioritizedHashes.length} | updated=${outcome?.updated || 0}`);
+        }
         resolvePackNamesInBackground(meta, results, config);
     })().catch(err => console.error("[AUTO-LEARN] Errore background save:", err.message));
 }
@@ -1252,6 +1298,7 @@ const aggressiveFilter = (item) => {
       const apiKey = config.key || config.rd;
       await hydrateRdForegroundCacheState(rankedList, apiKey);
       rankedList = applyRdDbCachePriority(rankedList, config);
+      queueRdPriorityScan(meta, rankedList, config, 'stream_open');
   }
 
   if (config.service === 'tb' && hasDebridKey) {
@@ -1396,7 +1443,10 @@ const aggressiveFilter = (item) => {
   
   const resultObj = { streams: finalStreams };
   const streamTtl = finalStreams.length > 0 ? 1800 : EMPTY_STREAM_TTL;
-  await Cache.cacheStream(cacheKey, resultObj, streamTtl);
+  await Cache.cacheStream(cacheKey, resultObj, streamTtl, {
+      imdbId: meta?.imdb_id || null,
+      hashes: cleanResults.map((item) => item?.hash || item?.infoHash).filter(Boolean)
+  });
   recordDuration('stream.generate.total', Date.now() - generationStartedAt);
   incrementMetric(finalStreams.length > 0 ? 'stream.generate.nonEmpty' : 'stream.generate.empty');
   logger.info(`[CACHE] SAVED: ${cacheKey} (ttl=${streamTtl}s, streams=${finalStreams.length})`);

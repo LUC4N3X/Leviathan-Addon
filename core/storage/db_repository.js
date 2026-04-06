@@ -520,6 +520,50 @@ async function getRdScanProgress() {
   }
 }
 
+async function prioritizeRdHashes(hashes, options = {}) {
+  if (!pool) return { requested: 0, updated: 0 };
+
+  const normalizedHashes = [...new Set((Array.isArray(hashes) ? hashes : [])
+    .map((hash) => normalizeInfoHash(hash))
+    .filter(Boolean))]
+    .slice(0, Math.max(1, Math.min(100, toSafeNumber(options.limit, 30))));
+
+  if (normalizedHashes.length === 0) return { requested: 0, updated: 0 };
+
+  const priorityMinutes = Math.max(0, Math.min(24 * 60, toSafeNumber(options.priorityMinutes, 5)));
+
+  try {
+    return await withClient(async (client) => {
+      const values = [];
+      const placeholders = normalizedHashes
+        .map((hash, index) => {
+          values.push(hash, priorityMinutes);
+          const base = index * 2;
+          return `($${base + 1}::text, $${base + 2}::integer)`;
+        })
+        .join(', ');
+
+      const query = `
+        UPDATE torrents AS t
+        SET next_cached_check = NOW() - make_interval(mins => GREATEST(0, v.priority_minutes)),
+            cache_check_failures = CASE
+              WHEN COALESCE(t.cached_rd, FALSE) IS TRUE THEN COALESCE(t.cache_check_failures, 0)
+              ELSE LEAST(COALESCE(t.cache_check_failures, 0), 1)
+            END
+        FROM (VALUES ${placeholders}) AS v(info_hash, priority_minutes)
+        WHERE COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))) = v.info_hash
+          AND COALESCE(t.cached_rd, FALSE) IS NOT TRUE
+      `;
+
+      const result = await client.query(query, values);
+      return { requested: normalizedHashes.length, updated: Number(result.rowCount || 0) };
+    });
+  } catch (error) {
+    console.error(`❌ DB Error prioritizeRdHashes: ${error.message}`);
+    return { requested: normalizedHashes.length, updated: 0, error: error.message };
+  }
+}
+
 
 async function normalizePendingRdCacheState(options = {}) {
   if (!pool) return { applied: false, updated: 0, reason: 'pool_missing' };
@@ -602,6 +646,7 @@ module.exports = {
   insertTorrent,
   updateRdCacheStatus,
   getRdScanProgress,
+  prioritizeRdHashes,
   normalizePendingRdCacheState,
   updateTrackers: trackerRegistry.updateTrackers,
   getActiveTrackers: trackerRegistry.getActiveTrackers,

@@ -19,7 +19,29 @@ const {
 
 const { generateStream, resolveLazyStreamData } = require("./core/stream_generator");
 
+let rdCacheScannerBoot = { enabled: false, started: false, reason: 'disabled' };
+let getRdCacheScannerStatus = () => ({ ...rdCacheScannerBoot });
+
 dbHelper.initDatabase();
+
+if (String(process.env.RD_CACHE_SCANNER_ENABLED || '').toLowerCase() === 'true') {
+    try {
+        const { startRdCacheScanner, getRdCacheScannerStatus: workerStatusGetter } = require('./core/workers/rd_cache_scanner');
+        rdCacheScannerBoot = startRdCacheScanner({
+            dbHelper,
+            logger,
+            onBatchUpdated: async ({ hashes }) => {
+                if (Array.isArray(hashes) && hashes.length > 0) {
+                    await Cache.invalidateStreamsByHashes(hashes, 'rd_scanner_batch');
+                }
+            }
+        });
+        if (typeof workerStatusGetter === 'function') getRdCacheScannerStatus = workerStatusGetter;
+    } catch (err) {
+        rdCacheScannerBoot = { enabled: true, started: false, reason: err.message || 'boot_error' };
+        logger.error(`[RD SCANNER] Boot fallito: ${err.message}`);
+    }
+}
 
 const app = express();
 app.set('trust proxy', 1);
@@ -37,7 +59,7 @@ const limiter = rateLimit({
     max: 350,
     standardHeaders: true,
     legacyHeaders: false,
-    message: "Troppe richieste da questo IP, riprova piÃ¹ tardi."
+    message: "Troppe richieste da questo IP, riprova più tardi."
 });
 app.use(limiter);
 
@@ -62,6 +84,38 @@ function getServiceResolverLimiter(service) {
     if (normalized === 'ad') return LIMITERS.adResolve;
     if (normalized === 'tb') return LIMITERS.tbResolve;
     return LIMITERS.rdResolve;
+}
+
+async function markPlayableResultAsCached(dbHelper, service, item, streamData, logger) {
+    const normalizedService = String(service || '').toLowerCase();
+    if (!dbHelper || typeof dbHelper.updateRdCacheStatus !== 'function') return false;
+    if (!item?.hash) return false;
+    if (!['rd', 'ad'].includes(normalizedService)) return false;
+
+    const rawFileIndex = streamData?.rd_file_index ?? streamData?.file_index ?? streamData?.fileIdx ?? item?.fileIdx;
+    const rawFileSize = streamData?.rd_file_size ?? streamData?.file_size ?? streamData?.filesize ?? streamData?.size ?? null;
+    const parsedFileIndex = Number(rawFileIndex);
+    const parsedFileSize = Number(rawFileSize);
+
+    try {
+        const updated = await dbHelper.updateRdCacheStatus([{
+            hash: item.hash,
+            cached: true,
+            rd_file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
+            rd_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
+            failures: 0,
+            next_hours: Math.max(24, parseInt(process.env.RD_LAZY_SUCCESS_NEXT_HOURS || String(24 * 30), 10) || (24 * 30))
+        }]);
+        if (updated > 0) {
+            await Cache.invalidateStreamsByHashes([item.hash], 'lazy_play_cached');
+            logger.info(`[LAZY PLAY] Stato cache aggiornato a CACHED | service=${normalizedService} | hash=${item.hash} | fileIdx=${Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : 'n/a'} | updated=${updated}`);
+            return true;
+        }
+    } catch (err) {
+        logger.warn(`[LAZY PLAY] Impossibile aggiornare stato cache | service=${normalizedService} | hash=${item.hash} | error=${err.message}`);
+    }
+
+    return false;
 }
 
 async function queueCloudBuild(service, hash, apiKey) {
@@ -107,6 +161,24 @@ async function queueCloudBuild(service, hash, apiKey) {
 }
 
 app.get("/api/stats", (req, res) => res.json(getStatsSnapshot()));
+app.get("/api/rd-scanner-status", (req, res) => res.json(getRdCacheScannerStatus()));
+app.get("/api/rd-scanner-dashboard", async (req, res) => {
+    let progress = null;
+    try {
+        if (typeof dbHelper.getRdScanProgress === 'function') progress = await dbHelper.getRdScanProgress();
+    } catch (err) {
+        progress = { error: err.message };
+    }
+
+    res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        scanner: getRdCacheScannerStatus(),
+        progress,
+        runtime: getStatsSnapshot(),
+        streamCache: typeof Cache.getStreamCacheIndexStats === 'function' ? Cache.getStreamCacheIndexStats() : null
+    });
+});
 app.get("/favicon.ico", (req, res) => res.status(204).end());
 
 app.get("/:conf/play_lazy/:service/:hash/:fileIdx", async (req, res) => {
@@ -123,6 +195,7 @@ app.get("/:conf/play_lazy/:service/:hash/:fileIdx", async (req, res) => {
         const lazyCacheKey = `${service}:${item.hash}:${item.season || 0}:${item.episode || 0}:${item.fileIdx !== undefined ? item.fileIdx : -1}`;
         const cachedLazy = await Cache.getLazyLink(lazyCacheKey);
         if (cachedLazy && cachedLazy.url) {
+            await markPlayableResultAsCached(dbHelper, service, item, cachedLazy, logger);
             incrementMetric('lazyPlay.cacheHit');
             recordDuration('lazyPlay.total', Date.now() - startedAt);
             return res.redirect(cachedLazy.url);
@@ -134,6 +207,7 @@ app.get("/:conf/play_lazy/:service/:hash/:fileIdx", async (req, res) => {
 
         if (streamData && streamData.url) {
             await Cache.cacheLazyLink(lazyCacheKey, streamData, 180);
+            await markPlayableResultAsCached(dbHelper, service, item, streamData, logger);
             incrementMetric('lazyPlay.success');
             recordDuration('lazyPlay.total', Date.now() - startedAt);
             recordProviderMetric(`lazy.${service}`, true, Date.now() - startedAt);
@@ -171,8 +245,8 @@ app.get("/:conf/add_to_cloud/:hash", async (req, res) => {
         if (!apiKey) return res.status(400).send("API Key mancante.");
         const buildKey = getBuildKey(service, hash, apiKey), recentBuild = await Cache.getCloudBuild(buildKey);
         const isRecent = recentBuild && (Date.now() - Number(recentBuild.queuedAt || 0) < 120000) && ['queued', 'submitted'].includes(recentBuild.status);
-        if (isRecent) logger.info(`ðŸ“¥ [CACHE BUILDER] GiÃ  in coda ${hash} su ${service.toUpperCase()} - salto duplicato`);
-        else { logger.info(`ðŸ“¥ [CACHE BUILDER] Richiesta aggiunta hash ${hash} su ${service.toUpperCase()}`); await queueCloudBuild(service, hash, apiKey); }
+        if (isRecent) logger.info(`📥 [CACHE BUILDER] Già in coda ${hash} su ${service.toUpperCase()} - salto duplicato`);
+        else { logger.info(`📥 [CACHE BUILDER] Richiesta aggiunta hash ${hash} su ${service.toUpperCase()}`); await queueCloudBuild(service, hash, apiKey); }
         res.redirect(`${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}/confirmed.mp4`);
     } catch (err) { logger.error(`Errore Cache Builder: ${err.message}`); res.status(500).send("Errore durante l'aggiunta al cloud: " + err.message); }
 });
@@ -202,19 +276,41 @@ app.get("/health", async (req, res) => {
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 app.get("/:conf/configure", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 app.get("/configure", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
-app.get("/manifest.json", (req, res) => { res.setHeader("Access-Control-Allow-Origin", "*"); res.json(getManifest()); });
+app.get("/rd-scanner", (req, res) => res.sendFile(path.join(__dirname, "public", "rd-scanner.html")));
+app.get("/manifest.json", (req, res) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.json(getManifest());
+});
 
 app.get("/:conf/manifest.json", (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
     const manifest = getManifest();
     try {
         const config = getConfig(req.params.conf), filters = config.filters || {}, langMode = filters.language || (filters.allowEng ? "all" : "ita");
-        const flag = langMode === "ita" ? " ðŸ‡®ðŸ‡¹" : (langMode === "eng" ? " ðŸ‡¬ðŸ‡§" : " ðŸ‡®ðŸ‡¹ðŸ‡¬ðŸ‡§"), appName = "L E V I A T H A N";
-        if ((config.service === 'rd' && config.key) || config.rd) { manifest.name = `${appName}${flag} ðŸ”± RD`; manifest.id += ".rd"; }
-        else if ((config.service === 'tb' && config.key) || config.torbox) { manifest.name = `${appName}${flag} ðŸ”± TB`; manifest.id += ".tb"; }
-        else if ((config.service === 'ad' && config.key) || config.alldebrid) { manifest.name = `${appName}${flag} AD`; manifest.id += ".ad"; }
-        else if (filters.enableP2P === true) { manifest.name = `${appName}${flag} ðŸ¦ˆ P2P`; manifest.id += ".p2p"; manifest.description += " | P2P Mode (IP Visible)"; }
-        else { manifest.name = `${appName}${flag} â›µ Web`; manifest.id += ".web"; }
+        const flag = langMode === "ita"
+            ? " 🇮🇹"
+            : (langMode === "eng" ? " 🇬🇧" : " 🇮🇹🇬🇧");
+        const appName = "LEVIATHAN";
+
+        if ((config.service === 'rd' && config.key) || config.rd) {
+            manifest.name = `${appName}${flag} 🔱 RD`;
+            manifest.id += ".rd";
+        } else if ((config.service === 'tb' && config.key) || config.torbox) {
+            manifest.name = `${appName}${flag} 🔱 TB`;
+            manifest.id += ".tb";
+        } else if ((config.service === 'ad' && config.key) || config.alldebrid) {
+            manifest.name = `${appName}${flag} 🔱 AD`;
+            manifest.id += ".ad";
+        } else if (filters.enableP2P === true) {
+            manifest.name = `${appName}${flag} 🦈 P2P`;
+            manifest.id += ".p2p";
+            manifest.description += " | P2P Mode (IP Visible)";
+        } else {
+            manifest.name = `${appName}${flag} ⛵ Web`;
+            manifest.id += ".web";
+        }
     } catch (e) { console.error("Errore personalizzazione manifest:", e); }
     res.json(manifest);
 });
@@ -239,7 +335,7 @@ const server = app.listen(PORT, () => {
     console.log(`[INDEXER] URL: ${CONFIG.INDEXER_URL}`);
     console.log(`[METADATA] TMDB Primary`);
     console.log(`[DB WRITE] Locale`);
-    console.log(`[DB READ] Locale disabilitata`);
+    console.log(`[DB READ] Locale attiva`);
     console.log(`[SPETTRO] Modulo Attivo`);
     console.log(`[SIZE LIMITER] Modulo Attivo`);
     console.log(`[GUARDA HD] Modulo integrato e pronto`);
@@ -248,7 +344,7 @@ const server = app.listen(PORT, () => {
     console.log(`[GUARDAFLIX] Modulo integrato`);
     console.log(`[WEBSTREAMR] Fallback attivo`);
     console.log(`[TRAILER] Attivabile da config`);
-    console.log(`ðŸ“¦ TORBOX: ADVANCED SMART CACHE`);
+    console.log(`📦 TORBOX: ADVANCED SMART CACHE`);
     console.log(`[PARSER] Enhanced`); 
     console.log(`[P2P] Handler attivo`);
     console.log(`[CORE] Optimized for High Reliability`);
