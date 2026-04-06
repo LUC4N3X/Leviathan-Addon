@@ -247,6 +247,8 @@ const Cache = {
     cacheMetadata: async (key, value, ttl = METADATA_CACHE_TTL) => { registerCacheSet('metadata'); myCache.set(`meta:${key}`, value, ttl); },
     getLazyLink: async (key) => { const data = myCache.get(`lazy:${key}`) || null; registerCacheAccess('lazy', !!data); return data; },
     cacheLazyLink: async (key, value, ttl = 120) => { registerCacheSet('lazy'); myCache.set(`lazy:${key}`, value, ttl); },
+    getLazyMeta: async (key) => { const data = myCache.get(`lazy_meta:${key}`) || null; registerCacheAccess('lazy', !!data); return data; },
+    cacheLazyMeta: async (key, value, ttl = 43200) => { registerCacheSet('lazy'); myCache.set(`lazy_meta:${key}`, value, ttl); },
     getCloudBuild: async (key) => { const data = cloudBuildCache.get(`cloud:${key}`) || null; registerCacheAccess('cloud', !!data); return data; },
     setCloudBuild: async (key, value, ttl = 900) => { registerCacheSet('cloud'); cloudBuildCache.set(`cloud:${key}`, value, ttl); },
     listKeys: async () => myCache.keys(),

@@ -164,6 +164,63 @@ async function fetchLocalDbResults(meta) {
     }
 }
 
+async function hydrateRdDbStatesByHash(items) {
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return list;
+    if (!dbHelper || typeof dbHelper.getRdCacheStatusByHashes !== 'function') return list;
+
+    const hashes = [...new Set(list
+        .map((item) => String(item?.hash || item?.infoHash || '').trim().toLowerCase())
+        .filter((hash) => /^[a-f0-9]{40}$/.test(hash)))];
+
+    if (hashes.length === 0) return list;
+
+    try {
+        const rows = await dbHelper.getRdCacheStatusByHashes(hashes);
+        const byHash = new Map((Array.isArray(rows) ? rows : [])
+            .filter((row) => row?.hash)
+            .map((row) => [String(row.hash).trim().toLowerCase(), row]));
+
+        for (const item of list) {
+            const hash = String(item?.hash || item?.infoHash || '').trim().toLowerCase();
+            if (!hash) continue;
+            const row = byHash.get(hash);
+            if (!row) continue;
+
+            if (row.cached_rd === true || row.cached_rd === false) {
+                item._dbCachedRd = row.cached_rd;
+                item.cached_rd = row.cached_rd;
+                item._dbLastCachedCheck = row.last_cached_check || item._dbLastCachedCheck || null;
+                item._dbNextCachedCheck = row.next_cached_check || item._dbNextCachedCheck || null;
+                item._dbFailures = Number(row.cache_check_failures || item._dbFailures || 0);
+
+                const currentState = getRdCacheVisualState('rd', item);
+                if (currentState === 'unknown') {
+                    const state = row.cached_rd === true ? 'cached' : 'uncached';
+                    item._rdCacheState = state;
+                    item.rdCacheState = state;
+                }
+            }
+
+            if (!(Number(item?._size || item?.sizeBytes || 0) > 0)) {
+                const knownSize = Number(row.rd_file_size || row.size || 0);
+                if (knownSize > 0) {
+                    item._size = knownSize;
+                    item.sizeBytes = knownSize;
+                }
+            }
+
+            if ((item?.fileIdx === undefined || item?.fileIdx === null) && Number.isInteger(row?.rd_file_index) && row.rd_file_index >= 0) {
+                item.fileIdx = row.rd_file_index;
+            }
+        }
+    } catch (err) {
+        logger.warn(`[DB READ] Overlay stato RD per hash fallito: ${err.message}`);
+    }
+
+    return propagateRdKnownStatesByHash(list);
+}
+
 function applyRdDbCachePriority(items, config) {
     const list = Array.isArray(items) ? items : [];
     const cachedOnly = config?.filters?.rdCachedOnly === true;
@@ -178,6 +235,63 @@ function applyRdDbCachePriority(items, config) {
     }
 
     return cachedOnly ? [...cached] : [...cached, ...unknown, ...uncached];
+}
+
+function propagateRdKnownStatesByHash(items) {
+    const list = Array.isArray(items) ? items : [];
+    const stateByHash = new Map();
+
+    const stateRank = (state) => {
+        if (state === 'cached') return 3;
+        if (state === 'uncached') return 2;
+        if (state === 'probing') return 1;
+        return 0;
+    };
+
+    for (const item of list) {
+        const hash = String(item?.hash || item?.infoHash || '').trim().toUpperCase();
+        if (!/^[A-F0-9]{40}$/.test(hash)) continue;
+        const state = getRdCacheVisualState('rd', item);
+        if (state === 'unknown') continue;
+
+        const current = stateByHash.get(hash);
+        if (!current || stateRank(state) > stateRank(current.state)) {
+            stateByHash.set(hash, {
+                state,
+                cached: state === 'cached' ? true : state === 'uncached' ? false : null,
+                sizeBytes: Number(item?._size || item?.sizeBytes || 0) || 0
+            });
+        }
+    }
+
+    if (stateByHash.size === 0) return list;
+
+    for (const item of list) {
+        const hash = String(item?.hash || item?.infoHash || '').trim().toUpperCase();
+        const known = stateByHash.get(hash);
+        if (!known) continue;
+
+        const currentState = getRdCacheVisualState('rd', item);
+        if (currentState === 'unknown') {
+            item._rdCacheState = known.state;
+            item.rdCacheState = known.state;
+            if (known.cached === true || known.cached === false) {
+                item._dbCachedRd = known.cached;
+                item.cached_rd = known.cached;
+            }
+        }
+
+        if (known.sizeBytes > 0 && !(Number(item?._size || item?.sizeBytes || 0) > 0)) {
+            item._size = known.sizeBytes;
+            item.sizeBytes = known.sizeBytes;
+        }
+    }
+
+    return list;
+}
+
+function isGuaranteedCachedExternal(item) {
+    return Boolean(item?.isExternal || item?.externalAddon);
 }
 
 function assessFastResultQuality(items, meta, langMode, config) {
@@ -353,20 +467,45 @@ function getRdCacheVisualState(service, item) {
     return 'unknown';
 }
 
-async function hydrateRdForegroundCacheState(items, apiKey) {
+async function hydrateRdForegroundCacheState(items, apiKey, options = {}) {
     const list = Array.isArray(items) ? items : [];
     if (!apiKey || list.length === 0) return list;
 
-    const probeLimit = Math.max(
+    const visibleWindow = Math.max(
         1,
         Math.min(
             CONFIG.MAX_RESULTS || 70,
-            parseInt(process.env.RD_FOREGROUND_CACHE_LIMIT || '12', 10) || 12
+            parseInt(options.visibleWindow ?? process.env.RD_FOREGROUND_VISIBLE_WINDOW ?? '9', 10) || 9
+        )
+    );
+    const probeLimit = Math.max(
+        1,
+        Math.min(
+            visibleWindow,
+            parseInt(options.probeLimit ?? process.env.RD_FOREGROUND_CACHE_LIMIT ?? '9', 10) || 9
+        )
+    );
+    const minKnownStates = Math.max(
+        1,
+        Math.min(
+            visibleWindow,
+            parseInt(options.minKnownStates ?? process.env.RD_FOREGROUND_MIN_KNOWN ?? '4', 10) || 4
         )
     );
 
-    const unknownCandidates = list
-        .filter(item => getRdCacheVisualState('rd', item) === 'unknown' && item?.hash && item?.magnet)
+    const visibleSlice = list.slice(0, visibleWindow);
+    const knownStates = visibleSlice.filter((item) => {
+        const state = getRdCacheVisualState('rd', item);
+        return state === 'cached' || state === 'uncached' || state === 'probing';
+    }).length;
+
+    if (knownStates >= minKnownStates) {
+        logger.info(`[RD FAST] Skip live check | known=${knownStates}/${visibleSlice.length} | threshold=${minKnownStates}`);
+        return list;
+    }
+
+    const unknownCandidates = visibleSlice
+        .filter(item => !isGuaranteedCachedExternal(item) && getRdCacheVisualState('rd', item) === 'unknown' && item?.hash && item?.magnet)
         .slice(0, probeLimit);
 
     if (unknownCandidates.length === 0) return list;
@@ -439,7 +578,7 @@ function queueRdPriorityScan(meta, results, config, reason = 'visible_results') 
     const maxPriority = Math.max(1, Math.min(30, parseInt(process.env.RD_PRIORITY_TOP || '18', 10) || 18));
     const priorityMinutes = Math.max(0, Math.min(120, parseInt(process.env.RD_PRIORITY_WINDOW_MIN || '5', 10) || 5));
     const candidateHashes = [...new Set((Array.isArray(results) ? results : [])
-        .filter((item) => getRdCacheVisualState('rd', item) === 'unknown' && item?.hash)
+        .filter((item) => !isGuaranteedCachedExternal(item) && getRdCacheVisualState('rd', item) === 'unknown' && item?.hash)
         .slice(0, maxPriority)
         .map((item) => item.hash))];
 
@@ -897,22 +1036,95 @@ function saveResultsToDbBackground(meta, results, config = null) {
     (async () => {
         let savedCount = 0;
         const prioritizedHashes = [];
+        const guaranteedCachedUpdates = [];
         for (const item of results) {
             const torrentObj = { info_hash: item.hash || item.infoHash, title: item.title, size: item._size || item.sizeBytes || 0, seeders: item.seeders || 0, provider: item.source || 'External', file_index: item.fileIdx !== undefined ? item.fileIdx : undefined, is_pack: item._isPack || isSeasonPack(item.title) };
             if (!torrentObj.info_hash) continue;
             const success = await dbHelper.insertTorrent(meta, torrentObj);
             if (success) savedCount++;
+            if (isGuaranteedCachedExternal(item)) {
+                guaranteedCachedUpdates.push({
+                    hash: torrentObj.info_hash,
+                    cached: true,
+                    rd_file_size: Number(item?._size || item?.sizeBytes || 0) > 0 ? Number(item._size || item.sizeBytes) : null,
+                    failures: 0,
+                    next_hours: 24 * 30
+                });
+                continue;
+            }
             if (String(config?.service || 'rd').toLowerCase() === 'rd' && prioritizedHashes.length < 18 && getRdCacheVisualState('rd', item) === 'unknown') {
                 prioritizedHashes.push(torrentObj.info_hash);
             }
         }
         if (savedCount > 0) console.log(`[AUTO-LEARN] Salvati ${savedCount} nuovi torrent nel DB per ${meta.imdb_id}`);
+        if (guaranteedCachedUpdates.length > 0 && typeof dbHelper.updateRdCacheStatus === 'function') {
+            await dbHelper.updateRdCacheStatus(guaranteedCachedUpdates);
+            await Cache.invalidateStreamsByHashes(guaranteedCachedUpdates.map((entry) => entry.hash), 'external_cached_seed');
+            logger.info(`[RD CACHE] Marked guaranteed external results as cached | imdb=${meta.imdb_id || 'n/a'} | hashes=${guaranteedCachedUpdates.length}`);
+        }
         if (prioritizedHashes.length > 0 && typeof dbHelper.prioritizeRdHashes === 'function') {
             const outcome = await dbHelper.prioritizeRdHashes(prioritizedHashes, { limit: 18, priorityMinutes: Math.max(0, Math.min(120, parseInt(process.env.RD_PRIORITY_WINDOW_MIN || '5', 10) || 5)) });
             logger.info(`[RD PRIORITY] reason=db_save | imdb=${meta.imdb_id || 'n/a'} | hashes=${prioritizedHashes.length} | updated=${outcome?.updated || 0}`);
         }
         resolvePackNamesInBackground(meta, results, config);
     })().catch(err => console.error("[AUTO-LEARN] Errore background save:", err.message));
+}
+
+async function persistResolvedDebridCacheHit(meta, item, streamData, service, reason = 'direct_resolve') {
+    const normalizedService = String(service || '').toLowerCase();
+    if (!item?.hash) return false;
+    if (!['rd', 'ad'].includes(normalizedService)) return false;
+    if (!dbHelper || typeof dbHelper.updateRdCacheStatus !== 'function') return false;
+
+    const rawFileIndex = streamData?.rd_file_index ?? streamData?.file_index ?? streamData?.fileIdx ?? item?.fileIdx;
+    const rawFileSize = streamData?.rd_file_size ?? streamData?.file_size ?? streamData?.filesize ?? streamData?.size ?? item?._size ?? item?.sizeBytes ?? null;
+    const parsedFileIndex = Number(rawFileIndex);
+    const parsedFileSize = Number(rawFileSize);
+    const resolvedTitle = streamData?.filename || item?.title || String(item.hash);
+
+    try {
+        if ((!meta?.imdb_id) && typeof dbHelper.ensureTorrentRecord === 'function') {
+            await dbHelper.ensureTorrentRecord({
+                info_hash: item.hash,
+                title: resolvedTitle,
+                size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : Number(item?._size || item?.sizeBytes || 0),
+                seeders: Number(item?.seeders || 0) || 0,
+                provider: item?.source || normalizedService.toUpperCase(),
+                file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : (item?.fileIdx !== undefined ? item.fileIdx : undefined)
+            });
+        }
+        if (meta?.imdb_id && typeof dbHelper.insertTorrent === 'function') {
+            await dbHelper.insertTorrent(meta, {
+                info_hash: item.hash,
+                title: resolvedTitle,
+                size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : Number(item?._size || item?.sizeBytes || 0),
+                seeders: Number(item?.seeders || 0) || 0,
+                provider: item?.source || normalizedService.toUpperCase(),
+                file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : (item?.fileIdx !== undefined ? item.fileIdx : undefined),
+                is_pack: Boolean(item?._isPack || isSeasonPack(resolvedTitle))
+            });
+        }
+
+        const updated = await dbHelper.updateRdCacheStatus([{
+            hash: item.hash,
+            cached: true,
+            rd_file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
+            rd_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
+            failures: 0,
+            permanent: true
+        }]);
+
+        if (updated > 0) {
+            await Cache.invalidateStreamsByHashes([item.hash], `${reason}_cached`);
+            if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, `${reason}_cached`);
+            logger.info(`[RD CACHE] Persisted cached hit | reason=${reason} | service=${normalizedService} | hash=${item.hash} | updated=${updated}`);
+            return true;
+        }
+    } catch (err) {
+        logger.warn(`[RD CACHE] Persist cached hit fallita | reason=${reason} | service=${normalizedService} | hash=${item.hash} | error=${err.message}`);
+    }
+
+    return false;
 }
 
 async function resolveDebridLink(config, item, showFake, reqHost, meta) {
@@ -963,6 +1175,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
             runtimeItem._size = Number(streamData.size);
             runtimeItem.sizeBytes = Number(streamData.size);
         }
+        await persistResolvedDebridCacheHit(meta, runtimeItem, streamData, service, 'direct_resolve');
 
         return buildPlayableStream({
             service,
@@ -1005,7 +1218,20 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
 
     realSize = estimateVisualSize(realSize, displayTitle, isSeries, isPack, item.hash);
     const finalSeeders = estimateSeeders(item.seeders, item.hash);
-    const lazyUrl = `${reqHost}/${userConfStr}/play_lazy/${service}/${item.hash}/${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}?s=${meta.season || 0}&e=${meta.episode || 0}`;
+    const imdbParam = meta?.imdb_id ? `&imdb=${encodeURIComponent(meta.imdb_id)}` : '';
+    const lazyUrl = `${reqHost}/${userConfStr}/play_lazy/${service}/${item.hash}/${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}?s=${meta.season || 0}&e=${meta.episode || 0}${imdbParam}`;
+    const lazyCacheKey = `${service}:${item.hash}:${meta.season || 0}:${meta.episode || 0}:${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}`;
+    Cache.cacheLazyMeta(lazyCacheKey, {
+        imdb_id: meta?.imdb_id || null,
+        season: meta?.season || 0,
+        episode: meta?.episode || 0,
+        type: isSeries ? 'series' : 'movie',
+        title: item?.title || displayTitle || null,
+        source: item?.source || null,
+        seeders: Number(item?.seeders || 0) || 0,
+        size: Number(realSize || item?._size || item?.sizeBytes || 0) || 0,
+        fileIdx: (item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1
+    }, 43200).catch(() => {});
 
     return buildPlayableStream({
         service,
@@ -1205,6 +1431,8 @@ const aggressiveFilter = (item) => {
 
   let fastResults = [...localDbResults, ...remoteResults, ...externalResults].filter(aggressiveFilter);
   let cleanResults = deduplicateResults(fastResults);
+  cleanResults = propagateRdKnownStatesByHash(cleanResults);
+  cleanResults = await hydrateRdDbStatesByHash(cleanResults);
   let validFastCount = cleanResults.length;
   logger.info(`[FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
 
@@ -1264,6 +1492,8 @@ const aggressiveFilter = (item) => {
           }));
           const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks)).flatMap(result => result.status === 'fulfilled' ? result.value : []);
           cleanResults = deduplicateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)]);
+          cleanResults = propagateRdKnownStatesByHash(cleanResults);
+          cleanResults = await hydrateRdDbStatesByHash(cleanResults);
           validFastCount = cleanResults.length;
           logger.info(`[STATS SCRAPER] Trovati e filtrati ${validFastCount} risultati aggiuntivi dagli Scraper.`);
       }
@@ -1441,7 +1671,7 @@ const aggressiveFilter = (item) => {
   }
 
   
-  const resultObj = { streams: finalStreams };
+  const resultObj = { streams: finalStreams, cacheMaxAge: 0, staleRevalidate: 0, staleError: 0 };
   const streamTtl = finalStreams.length > 0 ? 1800 : EMPTY_STREAM_TTL;
   await Cache.cacheStream(cacheKey, resultObj, streamTtl, {
       imdbId: meta?.imdb_id || null,

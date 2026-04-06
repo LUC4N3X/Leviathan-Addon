@@ -124,7 +124,8 @@ async function ensureDatabaseOptimizations() {
     `CREATE INDEX IF NOT EXISTS idx_torrents_rd_scan_queue ON torrents (next_cached_check NULLS FIRST, last_cached_check NULLS FIRST)`,
     `CREATE INDEX IF NOT EXISTS idx_files_info_hash_norm ON files (info_hash_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_files_lookup_episode ON files (imdb_id, imdb_season, imdb_episode, info_hash_norm)`,
-    `CREATE INDEX IF NOT EXISTS idx_files_lookup_movie ON files (imdb_id, info_hash_norm) WHERE imdb_season IS NULL OR imdb_season = 0`
+    `CREATE INDEX IF NOT EXISTS idx_files_lookup_movie ON files (imdb_id, info_hash_norm) WHERE imdb_season IS NULL OR imdb_season = 0`,
+    `UPDATE torrents SET next_cached_check = TIMESTAMPTZ '9999-12-31 00:00:00+00' WHERE cached_rd IS TRUE AND (next_cached_check IS NULL OR next_cached_check < TIMESTAMPTZ '9999-12-31 00:00:00+00')`
   ];
 
   for (const sql of statements) {
@@ -371,6 +372,51 @@ async function insertTorrent(meta, torrent) {
   }
 }
 
+async function ensureTorrentRecord(torrent) {
+  if (!pool) return false;
+
+  const cleanHash = normalizeInfoHash(torrent?.info_hash || torrent?.infoHash || torrent?.hash);
+  if (!cleanHash) return false;
+
+  try {
+    return await withClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        const seeders = Math.max(0, toSafeNumber(torrent?.seeders, 0));
+        const size = Math.max(0, toSafeNumber(torrent?.size, 0));
+        const fileIndex = toNullableInt(torrent?.file_index ?? torrent?.fileIdx);
+        const title = sanitizeText(torrent?.title, cleanHash);
+
+        let providerName = sanitizeText(torrent?.provider);
+        const extracted = extractOriginalProvider(title);
+        if (extracted) {
+          providerName = extracted;
+        } else if (!providerName || providerName === 'Torrentio' || providerName === 'P2P') {
+          providerName = 'External';
+        }
+
+        const inserted = await upsertTorrentRow(client, {
+          infoHash: cleanHash,
+          providerName,
+          title,
+          size,
+          seeders,
+          fileIndex
+        });
+
+        await client.query('COMMIT');
+        return inserted;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      }
+    });
+  } catch (error) {
+    console.error(`❌ DB Error ensureTorrentRecord: ${error.message}`);
+    return false;
+  }
+}
+
 async function getRdScanBatch(limit = 5) {
   if (!pool) return [];
 
@@ -431,20 +477,90 @@ async function getRdScanBatch(limit = 5) {
   }
 }
 
+async function getRdCacheStatusByHashes(hashes) {
+  if (!pool) return [];
+
+  const normalizedHashes = [...new Set((Array.isArray(hashes) ? hashes : [])
+    .map((hash) => normalizeInfoHash(hash))
+    .filter(Boolean))]
+    .slice(0, 500);
+
+  if (normalizedHashes.length === 0) return [];
+
+  try {
+    return await withClient(async (client) => {
+      const query = `
+        SELECT DISTINCT ON (COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))))
+          TRIM(t.info_hash) AS info_hash,
+          t.title,
+          t.provider,
+          t.seeders,
+          t.size,
+          t.file_index,
+          t.cached_rd,
+          t.rd_file_index,
+          t.rd_file_size,
+          t.last_cached_check,
+          t.next_cached_check,
+          t.cache_check_failures
+        FROM torrents t
+        WHERE COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))) = ANY($1::text[])
+        ORDER BY
+          COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))),
+          CASE
+            WHEN t.cached_rd IS TRUE THEN 0
+            WHEN t.cached_rd IS FALSE THEN 1
+            ELSE 2
+          END ASC,
+          t.last_cached_check DESC NULLS LAST,
+          t.next_cached_check DESC NULLS LAST,
+          COALESCE(t.rd_file_size, t.size, 0) DESC,
+          COALESCE(t.seeders, 0) DESC,
+          COALESCE(t.file_index, -1) ASC
+      `;
+
+      const res = await client.query(query, [normalizedHashes]);
+      return (res.rows || [])
+        .map((row) => ({
+          hash: normalizeInfoHash(row.info_hash),
+          title: sanitizeText(row.title),
+          provider: sanitizeText(row.provider),
+          seeders: toSafeNumber(row.seeders, 0),
+          size: toSafeNumber(row.size, 0),
+          file_index: toNullableInt(row.file_index),
+          cached_rd: row.cached_rd === null || row.cached_rd === undefined ? null : Boolean(row.cached_rd),
+          rd_file_index: toNullableInt(row.rd_file_index),
+          rd_file_size: toSafeNumber(row.rd_file_size, 0),
+          last_cached_check: row.last_cached_check || null,
+          next_cached_check: row.next_cached_check || null,
+          cache_check_failures: toSafeNumber(row.cache_check_failures, 0)
+        }))
+        .filter((row) => row.hash);
+    });
+  } catch (error) {
+    console.error(`❌ DB Error getRdCacheStatusByHashes: ${error.message}`);
+    return [];
+  }
+}
+
 async function updateRdCacheStatus(cacheResults) {
   if (!pool || !Array.isArray(cacheResults) || cacheResults.length === 0) return 0;
 
   const normalizedRows = cacheResults
     .map((entry) => {
       const hasCached = typeof entry?.cached === 'boolean';
-      const nextHours = Math.max(1, Math.min(24 * 90, toSafeNumber(entry?.next_hours, hasCached ? (entry.cached ? 24 * 30 : 24 * 7) : 12)));
+      const permanent = hasCached && entry.cached === true && entry?.permanent !== false;
+      const nextHours = permanent
+        ? null
+        : Math.max(1, Math.min(24 * 365 * 10, toSafeNumber(entry?.next_hours, hasCached ? (entry.cached ? 24 * 30 : 24 * 7) : 12)));
       return {
         hash: normalizeInfoHash(entry?.hash),
         cached: hasCached ? entry.cached : null,
         rd_file_index: toNullableInt(entry?.rd_file_index),
         rd_file_size: entry?.rd_file_size === null || entry?.rd_file_size === undefined ? null : toSafeNumber(entry?.rd_file_size, 0),
         failures: Math.max(0, toSafeNumber(entry?.failures, 0)),
-        next_hours: nextHours
+        next_hours: nextHours,
+        permanent
       };
     })
     .filter((entry) => entry.hash);
@@ -458,9 +574,9 @@ async function updateRdCacheStatus(cacheResults) {
         const values = [];
         const placeholders = normalizedRows
           .map((row, index) => {
-            const base = index * 6;
-            values.push(row.hash, row.cached, row.rd_file_index, row.rd_file_size, row.failures, row.next_hours);
-            return `($${base + 1}::text, $${base + 2}::boolean, $${base + 3}::integer, $${base + 4}::bigint, $${base + 5}::integer, $${base + 6}::integer)`;
+            const base = index * 7;
+            values.push(row.hash, row.cached, row.rd_file_index, row.rd_file_size, row.failures, row.next_hours, row.permanent);
+            return `($${base + 1}::text, $${base + 2}::boolean, $${base + 3}::integer, $${base + 4}::bigint, $${base + 5}::integer, $${base + 6}::integer, $${base + 7}::boolean)`;
           })
           .join(', ');
 
@@ -477,11 +593,14 @@ async function updateRdCacheStatus(cacheResults) {
               rd_file_size = CASE
                 WHEN v.rd_file_size IS NULL OR v.rd_file_size <= 0 THEN t.rd_file_size
                 ELSE v.rd_file_size
-              END,
-              cache_check_failures = GREATEST(0, COALESCE(v.failures, 0)),
-              last_cached_check = NOW(),
-              next_cached_check = NOW() + make_interval(hours => GREATEST(1, COALESCE(v.next_hours, 12)))
-          FROM (VALUES ${placeholders}) AS v(info_hash, cached, rd_file_index, rd_file_size, failures, next_hours)
+                END,
+                cache_check_failures = GREATEST(0, COALESCE(v.failures, 0)),
+                last_cached_check = NOW(),
+                next_cached_check = CASE
+                  WHEN COALESCE(v.permanent, FALSE) IS TRUE THEN TIMESTAMPTZ '9999-12-31 00:00:00+00'
+                  ELSE NOW() + make_interval(hours => GREATEST(1, COALESCE(v.next_hours, 12)))
+                END
+          FROM (VALUES ${placeholders}) AS v(info_hash, cached, rd_file_index, rd_file_size, failures, next_hours, permanent)
           WHERE COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))) = v.info_hash
         `;
 
@@ -640,12 +759,14 @@ async function healthCheck() {
 module.exports = {
   initDatabase,
   shutdownDatabase,
-  healthCheck,
-  getTorrents,
-  getRdScanBatch,
-  insertTorrent,
-  updateRdCacheStatus,
-  getRdScanProgress,
+    healthCheck,
+    getTorrents,
+    getRdScanBatch,
+    insertTorrent,
+    ensureTorrentRecord,
+    getRdCacheStatusByHashes,
+    updateRdCacheStatus,
+    getRdScanProgress,
   prioritizeRdHashes,
   normalizePendingRdCacheState,
   updateTrackers: trackerRegistry.updateTrackers,

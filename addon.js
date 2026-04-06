@@ -86,7 +86,7 @@ function getServiceResolverLimiter(service) {
     return LIMITERS.rdResolve;
 }
 
-async function markPlayableResultAsCached(dbHelper, service, item, streamData, logger) {
+async function markPlayableResultAsCached(dbHelper, service, item, streamData, logger, meta = null) {
     const normalizedService = String(service || '').toLowerCase();
     if (!dbHelper || typeof dbHelper.updateRdCacheStatus !== 'function') return false;
     if (!item?.hash) return false;
@@ -96,18 +96,41 @@ async function markPlayableResultAsCached(dbHelper, service, item, streamData, l
     const rawFileSize = streamData?.rd_file_size ?? streamData?.file_size ?? streamData?.filesize ?? streamData?.size ?? null;
     const parsedFileIndex = Number(rawFileIndex);
     const parsedFileSize = Number(rawFileSize);
+    const resolvedTitle = streamData?.filename || item?.title || String(item.hash);
 
     try {
+        if ((!meta?.imdb_id) && typeof dbHelper.ensureTorrentRecord === 'function') {
+            await dbHelper.ensureTorrentRecord({
+                info_hash: item.hash,
+                title: resolvedTitle,
+                size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : Number(item?._size || item?.sizeBytes || 0),
+                seeders: Number(item?.seeders || 0) || 0,
+                provider: item?.source || normalizedService.toUpperCase(),
+                file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : (item?.fileIdx !== undefined ? item.fileIdx : undefined)
+            });
+        }
+        if (meta?.imdb_id && typeof dbHelper.insertTorrent === 'function') {
+            await dbHelper.insertTorrent(meta, {
+                info_hash: item.hash,
+                title: resolvedTitle,
+                size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : 0,
+                seeders: Number(item?.seeders || 0) || 0,
+                provider: item?.source || normalizedService.toUpperCase(),
+                file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : (item?.fileIdx !== undefined ? item.fileIdx : undefined)
+            });
+        }
+
         const updated = await dbHelper.updateRdCacheStatus([{
             hash: item.hash,
             cached: true,
             rd_file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
             rd_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
             failures: 0,
-            next_hours: Math.max(24, parseInt(process.env.RD_LAZY_SUCCESS_NEXT_HOURS || String(24 * 30), 10) || (24 * 30))
+            permanent: true
         }]);
         if (updated > 0) {
             await Cache.invalidateStreamsByHashes([item.hash], 'lazy_play_cached');
+            if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, 'lazy_play_cached');
             logger.info(`[LAZY PLAY] Stato cache aggiornato a CACHED | service=${normalizedService} | hash=${item.hash} | fileIdx=${Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : 'n/a'} | updated=${updated}`);
             return true;
         }
@@ -183,7 +206,7 @@ app.get("/favicon.ico", (req, res) => res.status(204).end());
 
 app.get("/:conf/play_lazy/:service/:hash/:fileIdx", async (req, res) => {
     const { conf, service, hash, fileIdx } = req.params;
-    const { s, e } = req.query;
+    const { s, e, imdb } = req.query;
     const startedAt = Date.now();
     logger.info(`[LAZY PLAY] Service: ${service} | Hash: ${hash} | Idx: ${fileIdx} | S${s}E${e}`);
     try {
@@ -193,9 +216,36 @@ app.get("/:conf/play_lazy/:service/:hash/:fileIdx", async (req, res) => {
         const magnet = buildTrackerMagnet(hash);
         const item = { title: `Unknown Video (${hash})`, hash: String(hash || '').toUpperCase(), season: parseInt(s, 10) || 0, episode: parseInt(e, 10) || 0, fileIdx: parseInt(fileIdx, 10) === -1 ? undefined : parseInt(fileIdx, 10), magnet };
         const lazyCacheKey = `${service}:${item.hash}:${item.season || 0}:${item.episode || 0}:${item.fileIdx !== undefined ? item.fileIdx : -1}`;
+        const cachedPlaybackMeta = await Cache.getLazyMeta(lazyCacheKey);
+        const playbackMeta = imdb ? {
+            imdb_id: String(imdb),
+            season: item.season || 0,
+            episode: item.episode || 0,
+            type: (item.season || 0) > 0 || (item.episode || 0) > 0 ? 'series' : 'movie',
+            title: cachedPlaybackMeta?.title || item.title,
+            source: cachedPlaybackMeta?.source || null,
+            seeders: Number(cachedPlaybackMeta?.seeders || 0) || 0,
+            size: Number(cachedPlaybackMeta?.size || 0) || 0
+        } : (cachedPlaybackMeta?.imdb_id ? {
+            imdb_id: String(cachedPlaybackMeta.imdb_id),
+            season: item.season || cachedPlaybackMeta.season || 0,
+            episode: item.episode || cachedPlaybackMeta.episode || 0,
+            type: cachedPlaybackMeta.type || ((item.season || 0) > 0 || (item.episode || 0) > 0 ? 'series' : 'movie'),
+            title: cachedPlaybackMeta.title || item.title,
+            source: cachedPlaybackMeta.source || null,
+            seeders: Number(cachedPlaybackMeta?.seeders || 0) || 0,
+            size: Number(cachedPlaybackMeta?.size || 0) || 0
+        } : null);
+        if (playbackMeta?.title) item.title = playbackMeta.title;
+        if (playbackMeta?.source) item.source = playbackMeta.source;
+        if (Number(playbackMeta?.seeders || 0) > 0) item.seeders = Number(playbackMeta.seeders);
+        if (Number(playbackMeta?.size || 0) > 0) {
+            item._size = Number(playbackMeta.size);
+            item.sizeBytes = Number(playbackMeta.size);
+        }
         const cachedLazy = await Cache.getLazyLink(lazyCacheKey);
         if (cachedLazy && cachedLazy.url) {
-            await markPlayableResultAsCached(dbHelper, service, item, cachedLazy, logger);
+            await markPlayableResultAsCached(dbHelper, service, item, cachedLazy, logger, playbackMeta);
             incrementMetric('lazyPlay.cacheHit');
             recordDuration('lazyPlay.total', Date.now() - startedAt);
             return res.redirect(cachedLazy.url);
@@ -207,7 +257,7 @@ app.get("/:conf/play_lazy/:service/:hash/:fileIdx", async (req, res) => {
 
         if (streamData && streamData.url) {
             await Cache.cacheLazyLink(lazyCacheKey, streamData, 180);
-            await markPlayableResultAsCached(dbHelper, service, item, streamData, logger);
+            await markPlayableResultAsCached(dbHelper, service, item, streamData, logger, playbackMeta);
             incrementMetric('lazyPlay.success');
             recordDuration('lazyPlay.total', Date.now() - startedAt);
             recordProviderMetric(`lazy.${service}`, true, Date.now() - startedAt);
@@ -320,6 +370,9 @@ app.get("/vixsynthetic.m3u8", handleVixSynthetic);
 
 app.get("/:conf/stream/:type/:id.json", async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     try {
         validateStreamRequest(req.params.type, req.params.id.replace('.json', ''));
         res.json(await generateStream(req.params.type, req.params.id.replace(".json", ""), getConfig(req.params.conf), req.params.conf, `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`));
