@@ -363,7 +363,7 @@ function isPackTitle(title) {
 /**
  * Enrich cache in background (non-blocking)
  */
-async function enrichCacheBackground(items, token, dbHelper) {
+async function enrichCacheBackground(items, token, dbHelper, onUpdated = null) {
     if (!items || items.length === 0) return;
 
     setTimeout(() => {
@@ -395,6 +395,11 @@ async function enrichCacheBackground(items, token, dbHelper) {
                         file_size: r.file_size || null
                     }));
                     await dbHelper.updateRdCacheStatus(cacheUpdates);
+                    if (typeof onUpdated === 'function' && cacheUpdates.length > 0) {
+                        try {
+                            await onUpdated(cacheUpdates);
+                        } catch (_) {}
+                    }
                 }
 
                 if (dbHelper && typeof dbHelper.insertPackFiles === 'function') {
