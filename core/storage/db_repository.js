@@ -4,6 +4,9 @@ const trackerRegistry = require('./tracker_registry');
 console.log('ðŸ“‚ Caricamento modulo storage/db_helper (PRO)...');
 
 let pool = null;
+const DB_POOL_MAX = Math.max(10, Math.min(120, parseInt(process.env.DB_POOL_MAX || '40', 10) || 40));
+const DB_POOL_IDLE_TIMEOUT_MS = Math.max(5000, Math.min(120000, parseInt(process.env.DB_POOL_IDLE_TIMEOUT_MS || '30000', 10) || 30000));
+const DB_POOL_CONNECT_TIMEOUT_MS = Math.max(1000, Math.min(30000, parseInt(process.env.DB_POOL_CONNECT_TIMEOUT_MS || '5000', 10) || 5000));
 
 const KNOWN_PROVIDERS = [
   'ilCorSaRoNeRo', 'Corsaro', '1337x', '1337X', 'TorrentGalaxy', 'TGX', 'GalaxyRG',
@@ -88,9 +91,9 @@ function initDatabase(config = {}) {
   const poolConfig = buildPoolConfig(config);
   pool = new Pool({
     ...poolConfig,
-    max: 40,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000,
+    max: DB_POOL_MAX,
+    idleTimeoutMillis: DB_POOL_IDLE_TIMEOUT_MS,
+    connectionTimeoutMillis: DB_POOL_CONNECT_TIMEOUT_MS,
     allowExitOnIdle: true
   });
 

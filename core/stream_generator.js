@@ -155,9 +155,22 @@ function normalizeDbResultItem(row) {
 
 async function fetchLocalDbResults(meta) {
     if (!dbHelper || typeof dbHelper.getTorrents !== 'function' || !meta?.imdb_id) return [];
+    const cacheKey = getMetaDbLookupKey(meta);
+    if (!cacheKey) return [];
+
+    const cachedRows = await Cache.getDbTorrents(cacheKey);
+    if (cachedRows !== null) return Array.isArray(cachedRows) ? cachedRows : [];
+
     try {
-        const rows = await dbHelper.getTorrents(meta.imdb_id, meta.season, meta.episode);
-        return (Array.isArray(rows) ? rows : []).map(normalizeDbResultItem).filter(Boolean);
+        return await withSharedPromise(localDbLookupInflight, `db_lookup:${cacheKey}`, async () => {
+            const cachedAgain = await Cache.getDbTorrents(cacheKey);
+            if (cachedAgain !== null) return Array.isArray(cachedAgain) ? cachedAgain : [];
+
+            const rows = await dbHelper.getTorrents(meta.imdb_id, meta.season, meta.episode);
+            const normalizedRows = (Array.isArray(rows) ? rows : []).map(normalizeDbResultItem).filter(Boolean);
+            await Cache.cacheDbTorrents(cacheKey, normalizedRows, LOCAL_DB_CACHE_TTL);
+            return normalizedRows;
+        });
     } catch (err) {
         logger.warn(`[DB READ] Lookup locale fallito: ${err.message}`);
         return [];
@@ -365,9 +378,65 @@ function isStreamingCommunityLastEnabled(filters = {}) {
 const TITLE_SIGNAL_CACHE = new Map();
 const MAX_TITLE_SIGNAL_CACHE = 4000;
 const lazyResolveInflight = new Map();
+const localDbLookupInflight = new Map();
+const backgroundDbSaveInflight = new Map();
+const recentBackgroundDbSaves = new Map();
+const recentRdPriorityRequests = new Map();
 const PROVIDER_BREAKERS = new Map();
 const BREAKER_FAILURE_THRESHOLD = Math.max(2, parseInt(process.env.PROVIDER_BREAKER_THRESHOLD || '3', 10) || 3);
 const BREAKER_OPEN_MS = Math.max(5000, parseInt(process.env.PROVIDER_BREAKER_OPEN_MS || '30000', 10) || 30000);
+const STREAM_STALE_LOAD_THRESHOLD = Math.max(1, Math.min(200, parseInt(process.env.STREAM_STALE_LOAD_THRESHOLD || '18', 10) || 18));
+const LOCAL_DB_CACHE_TTL = Math.max(5, Math.min(300, parseInt(process.env.LOCAL_DB_CACHE_TTL || '25', 10) || 25));
+const BACKGROUND_DB_SAVE_DEDUP_MS = Math.max(1000, Math.min(120000, parseInt(process.env.BACKGROUND_DB_SAVE_DEDUP_MS || '15000', 10) || 15000));
+const RD_PRIORITY_DEDUP_MS = Math.max(1000, Math.min(120000, parseInt(process.env.RD_PRIORITY_DEDUP_MS || '15000', 10) || 15000));
+const LAZY_WARMUP_LOAD_THRESHOLD = Math.max(1, Math.min(200, parseInt(process.env.LAZY_WARMUP_LOAD_THRESHOLD || '14', 10) || 14));
+
+function cleanupRecentMap(map, ttlMs, maxEntries = 2000) {
+    if (!(map instanceof Map) || map.size === 0) return;
+    const now = Date.now();
+    for (const [key, ts] of map) {
+        if ((now - Number(ts || 0)) > ttlMs) map.delete(key);
+    }
+    while (map.size > maxEntries) {
+        const oldestKey = map.keys().next().value;
+        if (oldestKey === undefined) break;
+        map.delete(oldestKey);
+    }
+}
+
+function shouldSkipRecentWork(map, key, ttlMs) {
+    if (!key) return false;
+    cleanupRecentMap(map, ttlMs);
+    const now = Date.now();
+    const previous = Number(map.get(key) || 0);
+    if (previous > 0 && (now - previous) < ttlMs) return true;
+    map.set(key, now);
+    return false;
+}
+
+function getMetaDbLookupKey(meta) {
+    const imdbId = String(meta?.imdb_id || '').trim().toLowerCase();
+    if (!/^tt\d+$/.test(imdbId)) return null;
+    const season = Number(meta?.season || 0) || 0;
+    const episode = Number(meta?.episode || 0) || 0;
+    return `${imdbId}:${season}:${episode}`;
+}
+
+function buildResultsSignature(results) {
+    const tokens = [...new Set((Array.isArray(results) ? results : [])
+        .map((item) => {
+            const hash = extractInfoHash(item?.hash || item?.infoHash || item?.magnet || '');
+            if (!hash) return null;
+            const fileIdx = Number.isInteger(item?.fileIdx) ? item.fileIdx : -1;
+            return `${hash}:${fileIdx}`;
+        })
+        .filter(Boolean))]
+        .sort()
+        .slice(0, 80);
+
+    if (tokens.length === 0) return null;
+    return crypto.createHash('sha1').update(tokens.join('|')).digest('hex').slice(0, 20);
+}
 
 function setTitleSignalCache(cacheKey, value) {
     if (TITLE_SIGNAL_CACHE.size >= MAX_TITLE_SIGNAL_CACHE) {
@@ -583,6 +652,13 @@ function queueRdPriorityScan(meta, results, config, reason = 'visible_results') 
         .map((item) => item.hash))];
 
     if (candidateHashes.length === 0) return;
+
+    const prioritySig = crypto.createHash('sha1').update(candidateHashes.slice(0, 12).join('|')).digest('hex').slice(0, 12);
+    const priorityKey = `${getMetaDbLookupKey(meta) || meta?.imdb_id || 'n/a'}:${reason}:${prioritySig}`;
+    if (shouldSkipRecentWork(recentRdPriorityRequests, priorityKey, RD_PRIORITY_DEDUP_MS)) {
+        incrementMetric('rdPriority.skippedCooldown', candidateHashes.length);
+        return;
+    }
 
     incrementMetric('rdPriority.requested', candidateHashes.length);
 
@@ -818,6 +894,11 @@ function warmupLazyStreamsInBackground(config, items, meta) {
     if (!apiKey || !Array.isArray(items) || items.length === 0) return;
     const maxWarmups = Math.max(0, Math.min(4, parseInt(config?.filters?.warmupTop ?? process.env.LAZY_WARMUP_TOP ?? '2', 10) || 0));
     if (maxWarmups <= 0) return;
+    if (streamInflight.size >= LAZY_WARMUP_LOAD_THRESHOLD) {
+        incrementMetric('lazyWarmup.skippedLoad', Math.min(items.length, maxWarmups));
+        logger.info(`[LAZY WARMUP] Skip sotto carico | inflight=${streamInflight.size} | threshold=${LAZY_WARMUP_LOAD_THRESHOLD}`);
+        return;
+    }
 
     items.slice(0, maxWarmups).forEach(item => {
         LIMITERS.lazyWarmup.schedule(async () => {
@@ -1033,7 +1114,15 @@ async function getMetadata(id, type, config = {}) {
 
 function saveResultsToDbBackground(meta, results, config = null) {
     if (!results || results.length === 0) return;
-    (async () => {
+    const metaCacheKey = getMetaDbLookupKey(meta);
+    const resultsSignature = buildResultsSignature(results);
+    const saveKey = `${metaCacheKey || meta?.imdb_id || 'n/a'}:${resultsSignature || 'empty'}`;
+    if (shouldSkipRecentWork(recentBackgroundDbSaves, saveKey, BACKGROUND_DB_SAVE_DEDUP_MS)) {
+        incrementMetric('dbSave.skippedRecent');
+        return;
+    }
+
+    withSharedPromise(backgroundDbSaveInflight, `db_save:${saveKey}`, async () => {
         let savedCount = 0;
         const prioritizedHashes = [];
         const guaranteedCachedUpdates = [];
@@ -1066,8 +1155,9 @@ function saveResultsToDbBackground(meta, results, config = null) {
             const outcome = await dbHelper.prioritizeRdHashes(prioritizedHashes, { limit: 18, priorityMinutes: Math.max(0, Math.min(120, parseInt(process.env.RD_PRIORITY_WINDOW_MIN || '5', 10) || 5)) });
             logger.info(`[RD PRIORITY] reason=db_save | imdb=${meta.imdb_id || 'n/a'} | hashes=${prioritizedHashes.length} | updated=${outcome?.updated || 0}`);
         }
+        if (metaCacheKey) await Cache.invalidateDbTorrents(metaCacheKey, 'db_save');
         resolvePackNamesInBackground(meta, results, config);
-    })().catch(err => console.error("[AUTO-LEARN] Errore background save:", err.message));
+    }).catch(err => console.error("[AUTO-LEARN] Errore background save:", err.message));
 }
 
 async function persistResolvedDebridCacheHit(meta, item, streamData, service, reason = 'direct_resolve') {
@@ -1117,6 +1207,8 @@ async function persistResolvedDebridCacheHit(meta, item, streamData, service, re
         if (updated > 0) {
             await Cache.invalidateStreamsByHashes([item.hash], `${reason}_cached`);
             if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, `${reason}_cached`);
+            const dbLookupKey = getMetaDbLookupKey(meta);
+            if (dbLookupKey) await Cache.invalidateDbTorrents(dbLookupKey, `${reason}_cached`);
             logger.info(`[RD CACHE] Persisted cached hit | reason=${reason} | service=${normalizedService} | hash=${item.hash} | updated=${updated}`);
             return true;
         }
@@ -1323,11 +1415,23 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   
   const configHash = crypto.createHash('md5').update(userConfStr || 'no-conf').digest('hex');
   const cacheKey = `${type}:${id}:${configHash}`;
+  const inflightKey = `stream:${cacheKey}`;
   
   const cachedResult = await Cache.getCachedStream(cacheKey);
   if (cachedResult) return cachedResult;
 
-  return withSharedPromise(streamInflight, `stream:${cacheKey}`, async () => {
+  if (streamInflight.has(inflightKey)) {
+      const staleResult = await Cache.getStaleStream(cacheKey);
+      if (staleResult) {
+          incrementMetric('stream.generate.staleWhileRefresh');
+          if (streamInflight.size >= STREAM_STALE_LOAD_THRESHOLD) {
+              incrementMetric('stream.generate.staleLoadShield');
+          }
+          return staleResult;
+      }
+  }
+
+  return withSharedPromise(streamInflight, inflightKey, async () => {
   const cachedAgain = await Cache.getCachedStream(cacheKey);
   if (cachedAgain) return cachedAgain;
 

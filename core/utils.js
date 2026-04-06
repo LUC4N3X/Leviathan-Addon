@@ -9,8 +9,10 @@ const http = require("http");
 const https = require("https");
 
 const DEFAULT_HTTP_TIMEOUT = Math.max(parseInt(process.env.HTTP_TIMEOUT_MS || "10000", 10) || 10000, 1000);
-const HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 128, maxFreeSockets: 32 });
-const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 128, maxFreeSockets: 32 });
+const HTTP_MAX_SOCKETS = Math.max(32, Math.min(512, parseInt(process.env.HTTP_MAX_SOCKETS || "128", 10) || 128));
+const HTTP_MAX_FREE_SOCKETS = Math.max(8, Math.min(128, parseInt(process.env.HTTP_MAX_FREE_SOCKETS || "32", 10) || 32));
+const HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: HTTP_MAX_SOCKETS, maxFreeSockets: HTTP_MAX_FREE_SOCKETS });
+const HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: HTTP_MAX_SOCKETS, maxFreeSockets: HTTP_MAX_FREE_SOCKETS });
 
 axios.defaults.timeout = DEFAULT_HTTP_TIMEOUT;
 axios.defaults.httpAgent = HTTP_AGENT;
@@ -66,7 +68,8 @@ const runtimeMetrics = {
         metadata: { hit: 0, miss: 0, set: 0 },
         lazy: { hit: 0, miss: 0, set: 0 },
         cloud: { hit: 0, miss: 0, set: 0 },
-        raw: { hit: 0, miss: 0, set: 0 }
+        raw: { hit: 0, miss: 0, set: 0 },
+        dbLookup: { hit: 0, miss: 0, set: 0 }
     }
 };
 
@@ -128,9 +131,11 @@ function getCacheSnapshot(bucket) {
 
 const EMPTY_FETCH_TTL = Math.max(parseInt(process.env.EMPTY_FETCH_TTL || "90", 10) || 90, 15);
 const EMPTY_STREAM_TTL = Math.max(parseInt(process.env.EMPTY_STREAM_TTL || "60", 10) || 60, 15);
+const STREAM_STALE_GRACE_TTL = Math.max(parseInt(process.env.STREAM_STALE_GRACE_TTL || "180", 10) || 180, 30);
 const METADATA_CACHE_TTL = Math.max(parseInt(process.env.METADATA_CACHE_TTL || "1800", 10) || 1800, 60);
 const MAX_CONFIG_LENGTH = Math.max(parseInt(process.env.MAX_CONFIG_LENGTH || "16384", 10) || 16384, 2048);
 const ADMIN_PASS = String(process.env.ADMIN_PASS || "").trim();
+const VERBOSE_CACHE_LOGS = String(process.env.VERBOSE_CACHE_LOGS || "false").toLowerCase() === 'true';
 
 function safeCompare(secretA, secretB) {
     const a = Buffer.from(String(secretA || ""));
@@ -150,6 +155,14 @@ async function withSharedPromise(map, key, factory) {
 
 function getStreamCacheStorageKey(key) {
     return `stream:${String(key || '').trim()}`;
+}
+
+function getStreamShadowStorageKey(key) {
+    return `stream_shadow:${String(key || '').trim()}`;
+}
+
+function getDbLookupStorageKey(key) {
+    return `dblookup:${String(key || '').trim()}`;
 }
 
 function normalizeHashTag(hash) {
@@ -213,7 +226,9 @@ function deleteStreamCacheKey(cacheKey) {
     const normalizedKey = String(cacheKey || '').trim();
     if (!normalizedKey) return 0;
     unregisterStreamCacheKey(normalizedKey);
-    return myCache.del(getStreamCacheStorageKey(normalizedKey));
+    const deletedPrimary = myCache.del(getStreamCacheStorageKey(normalizedKey));
+    rawCache.del(getStreamShadowStorageKey(normalizedKey));
+    return deletedPrimary;
 }
 
 function collectTaggedStreamKeys(indexMap, tags) {
@@ -233,7 +248,7 @@ const Cache = {
         const normalizedKey = String(key || '').trim();
         const data = myCache.get(getStreamCacheStorageKey(normalizedKey));
         registerCacheAccess('stream', !!data);
-        if (data) logger.info(`⚡ CACHE HIT (USER): ${key}`);
+        if (data && VERBOSE_CACHE_LOGS) logger.info(`⚡ CACHE HIT (USER): ${key}`);
         else unregisterStreamCacheKey(normalizedKey);
         return data || null;
     },
@@ -242,6 +257,16 @@ const Cache = {
         registerCacheSet('stream');
         registerStreamCacheKey(normalizedKey, tags);
         myCache.set(getStreamCacheStorageKey(normalizedKey), value, ttl);
+        rawCache.set(getStreamShadowStorageKey(normalizedKey), {
+            value,
+            freshUntil: Date.now() + (Math.max(1, Number(ttl) || 1) * 1000)
+        }, Math.max(ttl + STREAM_STALE_GRACE_TTL, STREAM_STALE_GRACE_TTL));
+    },
+    getStaleStream: async (key) => {
+        const normalizedKey = String(key || '').trim();
+        const shadow = rawCache.get(getStreamShadowStorageKey(normalizedKey)) || null;
+        if (!shadow || typeof shadow !== 'object' || !('value' in shadow)) return null;
+        return shadow.value || null;
     },
     getMetadata: async (key) => { const data = myCache.get(`meta:${key}`) || null; registerCacheAccess('metadata', !!data); return data; },
     cacheMetadata: async (key, value, ttl = METADATA_CACHE_TTL) => { registerCacheSet('metadata'); myCache.set(`meta:${key}`, value, ttl); },
@@ -249,6 +274,26 @@ const Cache = {
     cacheLazyLink: async (key, value, ttl = 120) => { registerCacheSet('lazy'); myCache.set(`lazy:${key}`, value, ttl); },
     getLazyMeta: async (key) => { const data = myCache.get(`lazy_meta:${key}`) || null; registerCacheAccess('lazy', !!data); return data; },
     cacheLazyMeta: async (key, value, ttl = 43200) => { registerCacheSet('lazy'); myCache.set(`lazy_meta:${key}`, value, ttl); },
+    getDbTorrents: async (key) => {
+        const data = rawCache.get(getDbLookupStorageKey(key));
+        const hit = data !== undefined;
+        registerCacheAccess('dbLookup', hit);
+        return hit ? data : null;
+    },
+    cacheDbTorrents: async (key, value, ttl = 30) => {
+        registerCacheSet('dbLookup');
+        rawCache.set(getDbLookupStorageKey(key), Array.isArray(value) ? value : [], ttl);
+    },
+    invalidateDbTorrents: async (key, reason = 'db_update') => {
+        const normalizedKey = String(key || '').trim();
+        if (!normalizedKey) return { deleted: 0, key: null };
+        const deleted = rawCache.del(getDbLookupStorageKey(normalizedKey));
+        if (deleted > 0) {
+            incrementMetric('cache.db.invalidations');
+            logger.info(`[CACHE] DB lookup invalidation | reason=${reason} | key=${normalizedKey}`);
+        }
+        return { deleted, key: normalizedKey };
+    },
     getCloudBuild: async (key) => { const data = cloudBuildCache.get(`cloud:${key}`) || null; registerCacheAccess('cloud', !!data); return data; },
     setCloudBuild: async (key, value, ttl = 900) => { registerCacheSet('cloud'); cloudBuildCache.set(`cloud:${key}`, value, ttl); },
     listKeys: async () => myCache.keys(),
@@ -308,19 +353,21 @@ const Cache = {
         trackedKeys: streamCacheTags.size,
         hashBuckets: streamCacheKeysByHash.size,
         imdbBuckets: streamCacheKeysByImdb.size,
-        cachedEntries: myCache.keys().filter((key) => String(key).startsWith('stream:')).length
+        cachedEntries: myCache.keys().filter((key) => String(key).startsWith('stream:')).length,
+        staleEntries: rawCache.keys().filter((key) => String(key).startsWith('stream_shadow:')).length,
+        dbLookupEntries: rawCache.keys().filter((key) => String(key).startsWith('dblookup:')).length
     }),
 
     getRaw: (provider, id) => {
         const data = rawCache.get(`raw:${provider}:${id}`);
         registerCacheAccess('raw', !!data);
-        if (data) logger.info(`🌍 GLOBAL CACHE HIT [${provider}]: ${id}`);
+        if (data && VERBOSE_CACHE_LOGS) logger.info(`🌍 GLOBAL CACHE HIT [${provider}]: ${id}`);
         return data || null;
     },
     setRaw: (provider, id, value, ttl = 43200) => {
         registerCacheSet('raw');
         rawCache.set(`raw:${provider}:${id}`, value, ttl);
-        logger.info(`💾 GLOBAL CACHE SET [${provider}]: ${id}`);
+        if (VERBOSE_CACHE_LOGS) logger.info(`💾 GLOBAL CACHE SET [${provider}]: ${id}`);
     },
 
     fetchWithCache: async (provider, id, ttl, fetcherFunc) => {
@@ -749,6 +796,7 @@ function getStatsSnapshot() {
             lazy: getCacheSnapshot(runtimeMetrics.cache.lazy),
             cloud: getCacheSnapshot(runtimeMetrics.cache.cloud),
             raw: getCacheSnapshot(runtimeMetrics.cache.raw),
+            dbLookup: getCacheSnapshot(runtimeMetrics.cache.dbLookup),
             streamIndex: Cache.getStreamCacheIndexStats(),
             keys: {
                 user: myCache.keys().length,
