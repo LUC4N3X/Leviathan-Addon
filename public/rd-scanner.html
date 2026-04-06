@@ -1,398 +1,91 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Leviathan RD Scanner</title>
-    <style>
-        :root {
-            --bg: #07111d;
-            --panel: rgba(9, 22, 38, 0.9);
-            --panel-2: rgba(14, 34, 56, 0.9);
-            --border: rgba(102, 214, 255, 0.18);
-            --text: #e8f4ff;
-            --muted: #8ea8c1;
-            --cyan: #5ce1ff;
-            --green: #58e07d;
-            --amber: #ffcb57;
-            --red: #ff6b6b;
-            --shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
-        }
-
-        * { box-sizing: border-box; }
-        body {
-            margin: 0;
-            min-height: 100vh;
-            font-family: "Segoe UI", system-ui, sans-serif;
-            background:
-                radial-gradient(circle at top, rgba(92, 225, 255, 0.09), transparent 35%),
-                linear-gradient(180deg, #0a1829 0%, var(--bg) 100%);
-            color: var(--text);
-        }
-
-        .wrap {
-            max-width: 1180px;
-            margin: 0 auto;
-            padding: 28px 18px 42px;
-        }
-
-        .hero {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-end;
-            gap: 16px;
-            margin-bottom: 22px;
-        }
-
-        .title {
-            margin: 0;
-            font-size: clamp(2rem, 5vw, 3.4rem);
-            letter-spacing: 0.04em;
-        }
-
-        .subtitle {
-            margin-top: 8px;
-            color: var(--muted);
-            max-width: 760px;
-        }
-
-        .refresh {
-            border: 1px solid var(--border);
-            background: rgba(92, 225, 255, 0.08);
-            color: var(--text);
-            border-radius: 999px;
-            padding: 10px 16px;
-            cursor: pointer;
-        }
-
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(12, 1fr);
-            gap: 16px;
-        }
-
-        .panel {
-            grid-column: span 12;
-            background: var(--panel);
-            border: 1px solid var(--border);
-            border-radius: 18px;
-            padding: 18px;
-            box-shadow: var(--shadow);
-            backdrop-filter: blur(12px);
-        }
-
-        .panel.half { grid-column: span 6; }
-        .panel.third { grid-column: span 4; }
-
-        .panel h2, .panel h3 {
-            margin: 0 0 14px;
-            font-size: 1rem;
-            letter-spacing: 0.04em;
-            color: var(--cyan);
-            text-transform: uppercase;
-        }
-
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
-            gap: 12px;
-        }
-
-        .card {
-            background: var(--panel-2);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 14px;
-            padding: 14px;
-        }
-
-        .label {
-            font-size: 0.8rem;
-            color: var(--muted);
-            margin-bottom: 6px;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-        }
-
-        .value {
-            font-size: 1.55rem;
-            font-weight: 700;
-        }
-
-        .pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            border-radius: 999px;
-            padding: 8px 12px;
-            font-size: 0.9rem;
-            font-weight: 600;
-            background: rgba(255, 255, 255, 0.05);
-        }
-
-        .pill.ok { color: var(--green); }
-        .pill.warn { color: var(--amber); }
-        .pill.bad { color: var(--red); }
-
-        .row {
-            display: grid;
-            grid-template-columns: 170px 1fr;
-            gap: 10px;
-            padding: 8px 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        .row:last-child { border-bottom: 0; }
-        .key { color: var(--muted); }
-        .mono {
-            font-family: Consolas, "SFMono-Regular", monospace;
-            word-break: break-word;
-        }
-
-        .progress {
-            width: 100%;
-            height: 10px;
-            border-radius: 999px;
-            background: rgba(255, 255, 255, 0.06);
-            overflow: hidden;
-            margin-top: 14px;
-        }
-
-        .progress-bar {
-            height: 100%;
-            width: 0%;
-            background: linear-gradient(90deg, var(--cyan), var(--green));
-            transition: width 0.3s ease;
-        }
-
-        .mini-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 12px;
-        }
-
-        .error {
-            color: var(--red);
-            white-space: pre-wrap;
-        }
-
-        @media (max-width: 900px) {
-            .panel.half, .panel.third { grid-column: span 12; }
-            .hero { flex-direction: column; align-items: flex-start; }
-            .row { grid-template-columns: 1fr; }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leviathan RD Control Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#071018;--bg2:#101d2b;--panel:rgba(10,18,28,.78);--line:rgba(117,222,255,.16);--text:#eef8ff;--muted:#88a7c3;--teal:#67e7ff;--teal2:#2ea8ff;--lime:#74f59c;--amber:#ffb44c;--rose:#ff7d7d;--gold:#ffe29a;--shadow:0 28px 80px rgba(0,0,0,.42);--progress:0}
+*{box-sizing:border-box}html{color-scheme:dark}body{margin:0;min-height:100vh;font-family:"Space Grotesk","Segoe UI",sans-serif;color:var(--text);background:radial-gradient(circle at 14% 18%,rgba(103,231,255,.18),transparent 24%),radial-gradient(circle at 86% 12%,rgba(255,180,76,.14),transparent 24%),linear-gradient(145deg,#06090d 0%,#0d141d 35%,#070c12 100%)}
+.page{max-width:1440px;margin:0 auto;padding:26px 18px 38px}.topbar,.brand,.top-actions,.hero-grid,.metrics,.dash,.hero-lines,.mini-grid,.flow{display:grid;gap:16px}.topbar{grid-template-columns:minmax(0,1fr) auto;align-items:start;margin-bottom:18px}.brand{grid-template-columns:56px minmax(0,1fr);align-items:start}.brand-mark{width:56px;height:56px;border-radius:18px;position:relative;overflow:hidden;background:linear-gradient(135deg,rgba(103,231,255,.42),rgba(255,180,76,.24));border:1px solid rgba(255,255,255,.14);box-shadow:0 18px 46px rgba(0,0,0,.34)}
+.brand-mark:before{content:"";position:absolute;inset:14px 19px;background:linear-gradient(180deg,var(--gold),var(--amber));clip-path:polygon(45% 0%,100% 0%,61% 51%,82% 51%,0% 100%,35% 57%,15% 57%)}.eyebrow,.label,.mini,.panel-title,.chip{font-family:"IBM Plex Mono",monospace;text-transform:uppercase;letter-spacing:.16em}.eyebrow{margin:0;color:var(--teal);font-size:.74rem}.brand h1{margin:4px 0 0;font-family:"Bebas Neue",sans-serif;font-size:clamp(2.4rem,4vw,3.5rem);line-height:.9;letter-spacing:.04em}.sub{margin:8px 0 0;color:var(--muted);max-width:760px}
+.top-actions{grid-auto-flow:column;grid-auto-columns:max-content;align-items:center}.live,.ghost,.refresh{min-height:44px;padding:0 16px;border-radius:999px;border:1px solid rgba(255,255,255,.1);display:inline-flex;align-items:center;gap:10px;background:rgba(255,255,255,.05)}.dot{width:10px;height:10px;border-radius:999px;background:var(--teal);box-shadow:0 0 0 0 rgba(103,231,255,.5);animation:pulse 1.8s infinite}.live.warn .dot{background:var(--amber);box-shadow:0 0 0 0 rgba(255,180,76,.45)}.live.bad .dot{background:var(--rose);box-shadow:0 0 0 0 rgba(255,125,125,.45)}@keyframes pulse{70%{box-shadow:0 0 0 12px rgba(103,231,255,0)}100%{box-shadow:0 0 0 0 rgba(103,231,255,0)}}
+.refresh{cursor:pointer;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.04));font-size:.78rem}.refresh:hover:not(:disabled){border-color:rgba(103,231,255,.38)}.refresh:disabled{opacity:.65;cursor:progress}.hero-grid{grid-template-columns:minmax(0,1.25fr) minmax(300px,.85fr);margin-bottom:18px}.card,.panel{position:relative;overflow:hidden;background:linear-gradient(180deg,rgba(18,28,42,.78),rgba(9,14,20,.96));border:1px solid rgba(255,255,255,.08);box-shadow:var(--shadow);backdrop-filter:blur(18px)}.card:before,.panel:before{content:"";position:absolute;inset:0;background:linear-gradient(135deg,rgba(103,231,255,.1),transparent 42%),linear-gradient(315deg,rgba(255,180,76,.08),transparent 26%);pointer-events:none}.card{border-radius:30px;padding:26px}.hero-copy{min-height:320px;display:flex;flex-direction:column;justify-content:space-between}.hero-copy h2{margin:0;font-family:"Bebas Neue",sans-serif;font-size:clamp(2.7rem,7vw,5.1rem);line-height:.88;letter-spacing:.04em}.hero-copy p{margin:14px 0 0;color:var(--muted)}.hero-lines{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:24px}.signal,.metric,.tile,.strip,.step,.event-focus,.event-meta,.diag{padding:15px;border-radius:18px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07)}.signal{position:relative}.signal:before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:999px;background:linear-gradient(180deg,var(--teal),transparent)}.signal strong,.metric .value,.tile strong,.strip strong,.step strong{display:block;margin-top:8px}.signal strong{font-size:1.25rem}.hero-orbit{min-height:320px;display:flex;flex-direction:column;justify-content:space-between}.orbit-wrap{display:grid;place-items:center;padding-top:4px}.orbit{width:min(280px,60vw);aspect-ratio:1;border-radius:50%;display:grid;place-items:center;position:relative;background:conic-gradient(from -90deg,var(--teal),var(--teal2) calc(var(--progress)*3.6deg),rgba(255,255,255,.08) 0deg);box-shadow:inset 0 0 30px rgba(0,0,0,.35),0 0 0 1px rgba(255,255,255,.08)}.orbit:before{content:"";position:absolute;inset:22px;border-radius:50%;background:linear-gradient(180deg,#0a121a,#121c2a);border:1px solid rgba(255,255,255,.07)}.orbit-core{position:relative;z-index:1;text-align:center;width:70%}.orbit-core .big{margin-top:8px;font-family:"Bebas Neue",sans-serif;font-size:clamp(3rem,10vw,5rem);line-height:.88;letter-spacing:.04em}.orbit-core p{margin:10px 0 0;color:var(--muted);font-size:.92rem}.mini-grid{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:14px}.metrics{grid-template-columns:repeat(6,minmax(0,1fr));margin-bottom:18px}.metric{min-height:126px}.metric .value{font-family:"Bebas Neue",sans-serif;font-size:clamp(2.1rem,5vw,3rem);line-height:.9;letter-spacing:.04em}.metric small{display:block;margin-top:12px;color:var(--muted)}.ok .value,.ok .status{color:var(--lime)}.warn .value,.warn .status{color:var(--amber)}.bad .value,.bad .status{color:var(--rose)}
+.dash{grid-template-columns:repeat(12,minmax(0,1fr))}.panel{padding:22px;border-radius:30px}.span-7{grid-column:span 7}.span-5{grid-column:span 5}.span-4{grid-column:span 4}.span-6{grid-column:span 6}.span-12{grid-column:span 12}.panel-title{margin:0 0 16px;color:var(--teal);font-size:.78rem}.banner{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:18px;border-radius:22px;background:linear-gradient(135deg,rgba(103,231,255,.12),rgba(255,180,76,.06));border:1px solid rgba(255,255,255,.08);margin-bottom:14px}.banner h3{margin:0;font-family:"Bebas Neue",sans-serif;font-size:clamp(2.1rem,5vw,3.2rem);line-height:.9;letter-spacing:.05em}.banner p{margin:6px 0 0;color:var(--muted)}.bar{height:22px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);margin-bottom:14px}.seg{height:100%;float:left;transition:width .35s ease}.cached{background:linear-gradient(90deg,rgba(116,245,156,.92),rgba(116,245,156,.58))}.uncached{background:linear-gradient(90deg,rgba(255,180,76,.92),rgba(255,180,76,.56))}.pending{background:linear-gradient(90deg,rgba(103,231,255,.92),rgba(46,168,255,.48))}.rest{background:linear-gradient(90deg,rgba(255,255,255,.14),rgba(255,255,255,.04))}.event-shell{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}.event-focus h4,.diag h4{margin:0;font-family:"Bebas Neue",sans-serif;font-size:2rem;letter-spacing:.04em}.event-focus p{margin:12px 0 0;color:var(--muted);line-height:1.55}.rows{display:grid;gap:10px}.row{display:flex;justify-content:space-between;gap:16px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.05)}.row:last-child{border-bottom:0;padding-bottom:0}.row .k{color:var(--muted);font-size:.86rem}.row .v{text-align:right;max-width:65%}.chip{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:8px 12px;font-size:.74rem;background:rgba(255,255,255,.06)}.chip.ok{color:var(--lime);background:rgba(116,245,156,.09)}.chip.warn{color:var(--amber);background:rgba(255,180,76,.09)}.chip.bad{color:var(--rose);background:rgba(255,125,125,.09)}.mono{font-family:"IBM Plex Mono",monospace;word-break:break-word}pre{margin:16px 0 0;padding:16px;border-radius:18px;background:rgba(6,11,18,.88);border:1px solid rgba(255,255,255,.07);color:#d8ecff;font-family:"IBM Plex Mono",monospace;font-size:.82rem;line-height:1.5;white-space:pre-wrap;max-height:360px;overflow:auto}.err{margin-top:16px;padding:16px;border-radius:18px;background:rgba(255,125,125,.08);border:1px solid rgba(255,125,125,.18);color:#ffdede;white-space:pre-wrap}.empty{padding:24px;border-radius:18px;border:1px dashed rgba(255,255,255,.12);color:var(--muted);text-align:center;background:rgba(255,255,255,.03)}.flow{grid-template-columns:repeat(4,minmax(0,1fr))}.step{min-height:124px;position:relative}.step:after{content:"";position:absolute;left:16px;right:16px;bottom:14px;height:4px;border-radius:999px;background:linear-gradient(90deg,rgba(103,231,255,.7),rgba(255,180,76,.2))}
+@media (max-width:1180px){.hero-grid,.metrics,.flow,.mini-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.span-7,.span-5,.span-4,.span-6,.span-12{grid-column:span 12}.topbar{grid-template-columns:1fr}.top-actions{grid-auto-flow:row;justify-content:start}.event-shell{grid-template-columns:1fr}}
+@media (max-width:760px){.page{padding:20px 14px 30px}.hero-grid,.metrics,.hero-lines,.mini-grid,.flow{grid-template-columns:1fr}.brand{grid-template-columns:1fr}.top-actions{width:100%}.live,.ghost,.refresh{width:100%;justify-content:center}.banner,.row{flex-direction:column}.row .v{max-width:100%;text-align:left}.card,.panel{padding:18px}}
+body{position:relative;overflow-x:hidden}
+body:before,body:after{content:"";position:fixed;inset:auto;pointer-events:none;z-index:0;filter:blur(18px);opacity:.55}
+body:before{width:42vw;height:42vw;left:-10vw;top:-12vw;border-radius:50%;background:radial-gradient(circle,rgba(103,231,255,.22),transparent 64%);animation:drift 14s ease-in-out infinite}
+body:after{width:34vw;height:34vw;right:-8vw;top:6vh;border-radius:50%;background:radial-gradient(circle,rgba(255,180,76,.16),transparent 62%);animation:drift 18s ease-in-out infinite reverse}
+.page{position:relative;z-index:1}
+.page:before{content:"";position:fixed;inset:0;pointer-events:none;background:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:48px 48px;mask-image:radial-gradient(circle at center,black 38%,transparent 92%);opacity:.22}
+.card,.panel,.metric,.signal,.tile,.strip,.step,.event-focus,.event-meta,.diag,.ghost,.live,.refresh{transition:transform .28s ease,border-color .28s ease,box-shadow .28s ease,background .28s ease}
+.card:hover,.panel:hover{transform:translateY(-4px);border-color:rgba(103,231,255,.18);box-shadow:0 36px 90px rgba(0,0,0,.48)}
+.metric,.signal,.tile,.strip,.step{position:relative;overflow:hidden}
+.metric:after,.signal:after,.tile:after,.strip:after,.step:before{content:"";position:absolute;inset:auto;pointer-events:none}
+.metric:after,.signal:after,.tile:after,.strip:after{left:-30%;top:0;bottom:0;width:36%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.1),transparent);transform:skewX(-24deg);opacity:0;transition:opacity .28s ease,left .65s ease}
+.metric:hover:after,.signal:hover:after,.tile:hover:after,.strip:hover:after{left:118%;opacity:.9}
+.hero-copy h2,.orbit-core .big,.metric .value,.banner h3{text-shadow:0 0 24px rgba(103,231,255,.12)}
+.brand-mark,.orbit,.live,.ghost,.refresh{backdrop-filter:blur(18px)}
+.orbit{animation:orbitFloat 7s ease-in-out infinite}
+.panel-title{display:flex;align-items:center;gap:10px}
+.panel-title:before{content:"";width:10px;height:10px;border-radius:999px;background:radial-gradient(circle,var(--teal),transparent 72%);box-shadow:0 0 18px rgba(103,231,255,.45)}
+.live,.ghost,.refresh{box-shadow:0 14px 32px rgba(0,0,0,.24)}
+.live{background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.04))}
+.banner{position:relative;overflow:hidden}
+.banner:after{content:"";position:absolute;inset:0;background:linear-gradient(115deg,transparent 12%,rgba(255,255,255,.08) 32%,transparent 52%);transform:translateX(-120%);animation:sweep 9s linear infinite}
+pre{box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+@keyframes drift{0%,100%{transform:translate3d(0,0,0) scale(1)}50%{transform:translate3d(2vw,2vh,0) scale(1.08)}}
+@keyframes orbitFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@keyframes sweep{0%{transform:translateX(-120%)}55%,100%{transform:translateX(120%)}}
+</style>
 </head>
 <body>
-    <div class="wrap">
-        <div class="hero">
-            <div>
-                <h1 class="title">Leviathan RD Scanner</h1>
-                <div class="subtitle">Monitor live di scanner RD, invalidazione cache stream e priorita di pre-scan sui risultati visibili.</div>
-            </div>
-            <button class="refresh" id="refreshBtn">Aggiorna ora</button>
-        </div>
-
-        <div class="grid">
-            <section class="panel">
-                <h2>Panoramica</h2>
-                <div class="stats" id="summaryCards"></div>
-                <div class="progress"><div class="progress-bar" id="scanProgressBar"></div></div>
-            </section>
-
-            <section class="panel half">
-                <h3>Worker</h3>
-                <div id="workerDetails"></div>
-            </section>
-
-            <section class="panel half">
-                <h3>Database</h3>
-                <div id="dbDetails"></div>
-            </section>
-
-            <section class="panel third">
-                <h3>Cache Stream</h3>
-                <div id="cacheDetails"></div>
-            </section>
-
-            <section class="panel third">
-                <h3>Metriche Runtime</h3>
-                <div id="runtimeDetails"></div>
-            </section>
-
-            <section class="panel third">
-                <h3>Ultimo Evento</h3>
-                <div id="eventDetails"></div>
-            </section>
-
-            <section class="panel">
-                <h3>Errore / Diagnostica</h3>
-                <div id="diagDetails"></div>
-            </section>
-        </div>
-    </div>
-
-    <script>
-        const summaryCards = document.getElementById('summaryCards');
-        const workerDetails = document.getElementById('workerDetails');
-        const dbDetails = document.getElementById('dbDetails');
-        const cacheDetails = document.getElementById('cacheDetails');
-        const runtimeDetails = document.getElementById('runtimeDetails');
-        const eventDetails = document.getElementById('eventDetails');
-        const diagDetails = document.getElementById('diagDetails');
-        const scanProgressBar = document.getElementById('scanProgressBar');
-        const refreshBtn = document.getElementById('refreshBtn');
-
-        function fmt(value) {
-            const num = Number(value || 0);
-            return Number.isFinite(num) ? num.toLocaleString('it-IT') : String(value ?? '-');
-        }
-
-        function esc(value) {
-            return String(value ?? '-')
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;');
-        }
-
-        function renderRows(target, rows) {
-            target.innerHTML = rows.map(({ key, value, cls = '' }) => `
-                <div class="row">
-                    <div class="key">${esc(key)}</div>
-                    <div class="${cls}">${esc(value)}</div>
-                </div>
-            `).join('');
-        }
-
-        function renderSummary(scanner, progress, runtime) {
-            const total = Number(progress?.total_with_hash || 0);
-            const scanned = Number(progress?.already_scanned || 0);
-            const cached = Number(progress?.cached_true || 0);
-            const uncached = Number(progress?.cached_false || 0);
-            const dueNow = Number(progress?.due_now || 0);
-            const invalidateCount = Number(runtime?.counters?.['cache.stream.invalidations'] || 0);
-
-            const stateClass = scanner?.running ? 'ok' : (scanner?.enabled ? 'warn' : 'bad');
-            const stateText = scanner?.running ? 'Attivo' : (scanner?.enabled ? 'In attesa' : 'Disabilitato');
-
-            summaryCards.innerHTML = `
-                <div class="card">
-                    <div class="label">Stato</div>
-                    <div class="pill ${stateClass}">${esc(stateText)}</div>
-                </div>
-                <div class="card">
-                    <div class="label">Totale Hash</div>
-                    <div class="value">${fmt(total)}</div>
-                </div>
-                <div class="card">
-                    <div class="label">Gia Scansionati</div>
-                    <div class="value">${fmt(scanned)}</div>
-                </div>
-                <div class="card">
-                    <div class="label">Cached</div>
-                    <div class="value">${fmt(cached)}</div>
-                </div>
-                <div class="card">
-                    <div class="label">Uncached</div>
-                    <div class="value">${fmt(uncached)}</div>
-                </div>
-                <div class="card">
-                    <div class="label">Due Now</div>
-                    <div class="value">${fmt(dueNow)}</div>
-                </div>
-                <div class="card">
-                    <div class="label">Invalidazioni</div>
-                    <div class="value">${fmt(invalidateCount)}</div>
-                </div>
-            `;
-
-            const progressPct = total > 0 ? Math.max(0, Math.min(100, (scanned / total) * 100)) : 0;
-            scanProgressBar.style.width = `${progressPct}%`;
-        }
-
-        function renderDashboard(data) {
-            const scanner = data?.scanner || {};
-            const progress = data?.progress || {};
-            const runtime = data?.runtime || {};
-            const streamCache = data?.streamCache || {};
-
-            renderSummary(scanner, progress, runtime);
-
-            renderRows(workerDetails, [
-                { key: 'Reason', value: scanner.reason || '-' },
-                { key: 'Batch size', value: scanner.batchSize ?? '-' },
-                { key: 'Sleep ms', value: scanner.sleepMs ?? '-' },
-                { key: 'Idle ms', value: scanner.idleMs ?? '-' },
-                { key: 'Hash corrente', value: scanner.currentHash || '-' , cls: 'mono' },
-                { key: 'Titolo corrente', value: scanner.currentTitle || '-' },
-                { key: 'Ultima attivita', value: scanner.lastActivityAt || '-' },
-                { key: 'Ultimo batch', value: scanner.lastBatchAt || '-' },
-                { key: 'Total scanned', value: fmt(scanner.totalScanned) },
-                { key: 'Total updated', value: fmt(scanner.totalUpdated) }
-            ]);
-
-            renderRows(dbDetails, [
-                { key: 'Totale con hash', value: fmt(progress.total_with_hash) },
-                { key: 'Pending first scan', value: fmt(progress.pending_first_scan) },
-                { key: 'Gia scansionati', value: fmt(progress.already_scanned) },
-                { key: 'Cached true', value: fmt(progress.cached_true) },
-                { key: 'Cached false', value: fmt(progress.cached_false) },
-                { key: 'Due now', value: fmt(progress.due_now) }
-            ]);
-
-            renderRows(cacheDetails, [
-                { key: 'Tracked stream keys', value: fmt(streamCache.trackedKeys) },
-                { key: 'Hash buckets', value: fmt(streamCache.hashBuckets) },
-                { key: 'IMDB buckets', value: fmt(streamCache.imdbBuckets) },
-                { key: 'Cached entries', value: fmt(streamCache.cachedEntries) },
-                { key: 'Stream hit rate', value: `${fmt(runtime?.cache?.stream?.hitRate || 0)}%` }
-            ]);
-
-            renderRows(runtimeDetails, [
-                { key: 'Pre-scan richiesti', value: fmt(runtime?.counters?.['rdPriority.requested']) },
-                { key: 'Pre-scan applicati', value: fmt(runtime?.counters?.['rdPriority.applied']) },
-                { key: 'Pre-scan noop', value: fmt(runtime?.counters?.['rdPriority.noop']) },
-                { key: 'Invalidated keys', value: fmt(runtime?.counters?.['cache.stream.invalidatedKeys']) },
-                { key: 'Lazy warmup ok', value: fmt(runtime?.counters?.['lazyWarmup.success']) },
-                { key: 'Lazy warmup fail', value: fmt(runtime?.counters?.['lazyWarmup.fail']) }
-            ]);
-
-            const lastOutcome = scanner?.lastOutcome || {};
-            renderRows(eventDetails, [
-                { key: 'Hash', value: lastOutcome.hash || '-', cls: 'mono' },
-                { key: 'Cached', value: String(lastOutcome.cached ?? '-') },
-                { key: 'Reason', value: lastOutcome.reason || '-' },
-                { key: 'File', value: lastOutcome.rd_file_index ?? '-' },
-                { key: 'Size', value: lastOutcome.rd_file_size ?? '-' },
-                { key: 'At', value: lastOutcome.at || '-' }
-            ]);
-
-            const error = scanner?.lastError || progress?.error || '';
-            diagDetails.innerHTML = error
-                ? `<div class="error">${esc(error)}</div>`
-                : `<div class="mini-grid">
-                        <div class="card"><div class="label">Timestamp</div><div class="value" style="font-size:1rem;">${esc(data?.timestamp || '-')}</div></div>
-                        <div class="card"><div class="label">Worker progress snapshot</div><div class="value" style="font-size:1rem;">${esc(JSON.stringify(scanner?.lastProgress || progress || {}, null, 2))}</div></div>
-                   </div>`;
-        }
-
-        async function loadDashboard() {
-            refreshBtn.disabled = true;
-            refreshBtn.textContent = 'Aggiorno...';
-            try {
-                const response = await fetch('/api/rd-scanner-dashboard', { cache: 'no-store' });
-                const data = await response.json();
-                renderDashboard(data);
-            } catch (error) {
-                diagDetails.innerHTML = `<div class="error">${esc(error.message || error)}</div>`;
-            } finally {
-                refreshBtn.disabled = false;
-                refreshBtn.textContent = 'Aggiorna ora';
-            }
-        }
-
-        refreshBtn.addEventListener('click', loadDashboard);
-        loadDashboard();
-        setInterval(loadDashboard, 8000);
-    </script>
+<div class="page">
+<div class="topbar">
+<div class="brand"><div class="brand-mark"></div><div><p class="eyebrow">Leviathan Monitoring Surface</p><h1>RD Scanner Control Room</h1><p class="sub">Una vista molto piu scenica e leggibile del motore RD: scanner, coda, cache invalidation e ultimi esiti tutti nello stesso colpo d occhio.</p></div></div>
+<div class="top-actions"><div class="live" id="liveChip"><span class="dot"></span><span id="liveLabel">Waiting for telemetry</span></div><div class="ghost"><span class="eyebrow" style="margin:0;letter-spacing:.12em">Last refresh</span><strong id="lastRefresh">--:--:--</strong></div><button class="refresh" id="refreshBtn">Refresh now</button></div>
+</div>
+<div class="hero-grid">
+<section class="card hero-copy" id="heroMain"></section>
+<section class="card hero-orbit" id="heroOrbit"></section>
+</div>
+<section class="metrics" id="summaryCards"></section>
+<section class="dash">
+<div class="panel span-7"><p class="panel-title">Worker Pulse</p><div id="workerDetails"></div></div>
+<div class="panel span-5"><p class="panel-title">Queue Geometry</p><div id="queueDetails"></div></div>
+<div class="panel span-4"><p class="panel-title">Cache Matrix</p><div id="cacheDetails"></div></div>
+<div class="panel span-4"><p class="panel-title">Runtime Telemetry</p><div id="runtimeDetails"></div></div>
+<div class="panel span-4"><p class="panel-title">Priority Engine</p><div id="priorityDetails"></div></div>
+<div class="panel span-6"><p class="panel-title">Last Outcome</p><div id="eventDetails"></div></div>
+<div class="panel span-6"><p class="panel-title">Diagnostics</p><div id="diagDetails"></div></div>
+<div class="panel span-12"><p class="panel-title">Flow Architecture</p><div id="flowDetails"></div></div>
+</section>
+<script>
+const $=id=>document.getElementById(id),els={summary:$('summaryCards'),heroMain:$('heroMain'),heroOrbit:$('heroOrbit'),worker:$('workerDetails'),queue:$('queueDetails'),cache:$('cacheDetails'),runtime:$('runtimeDetails'),priority:$('priorityDetails'),event:$('eventDetails'),diag:$('diagDetails'),flow:$('flowDetails'),refresh:$('refreshBtn'),live:$('liveChip'),liveLabel:$('liveLabel'),lastRefresh:$('lastRefresh')};
+const n=v=>{const x=Number(v);return Number.isFinite(x)?x:0},fmt=v=>{const x=Number(v);return Number.isFinite(x)?x.toLocaleString('it-IT'):String(v??'-')},pct=v=>{const x=Number(v);return Number.isFinite(x)?`${x.toFixed(x>=10?0:1)}%`:'-'},esc=v=>String(v??'-').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const when=v=>{if(!v)return'--';const d=new Date(v);return Number.isNaN(d.getTime())?String(v):new Intl.DateTimeFormat('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(d)};
+const tone=s=>s?.running?'ok':s?.enabled?'warn':'bad',label=s=>s?.running?'Scanner online':s?.enabled?'Scanner idle':'Scanner offline';
+const seg=(w,c)=>`<div class="seg ${c}" style="width:${Math.max(0,Math.min(100,w))}%"></div>`;
+function hero(scanner,progress,runtime,streamCache){const total=Math.max(1,n(progress?.total_with_hash)),scanned=n(progress?.already_scanned),cached=n(progress?.cached_true),due=n(progress?.due_now),inv=n(runtime?.counters?.['cache.stream.invalidations']),done=scanned/total*100;els.heroMain.innerHTML=`<div><p class="eyebrow">Scanner heartbeat</p><h2>${esc(label(scanner))}</h2><p>Qui vedi subito se il motore sta macinando davvero, se la coda e in ritardo e se la cache stream si sta riallineando dopo i nuovi esiti salvati.</p><div class="hero-lines"><div class="signal"><div class="mini">Current hash</div><strong class="mono">${esc(scanner?.currentHash||scanner?.lastOutcome?.hash||'-')}</strong></div><div class="signal"><div class="mini">Invalidations</div><strong>${fmt(inv)}</strong></div><div class="signal"><div class="mini">Due now</div><strong>${fmt(due)}</strong></div></div></div><div class="ghost"><span class="eyebrow" style="margin:0;letter-spacing:.12em">Reason</span><strong class="status ${tone(scanner)}">${esc(scanner?.reason||'-')}</strong></div>`;els.heroOrbit.style.setProperty('--progress',String(Math.max(0,Math.min(100,done))));els.heroOrbit.innerHTML=`<div class="orbit-wrap"><div class="orbit"><div class="orbit-core"><div class="mini">Scan completion</div><div class="big">${pct(done)}</div><p>${fmt(scanned)} di ${fmt(total)} hash hanno gia uno stato persistito nel DB.</p></div></div></div><div class="mini-grid"><div class="strip"><div class="mini">Cached</div><strong>${fmt(cached)}</strong></div><div class="strip"><div class="mini">Tracked keys</div><strong>${fmt(streamCache?.trackedKeys)}</strong></div><div class="strip"><div class="mini">Last activity</div><strong>${esc(when(scanner?.lastActivityAt))}</strong></div></div>`}
+function summary(scanner,progress,runtime){const total=n(progress?.total_with_hash),scanned=n(progress?.already_scanned),cached=n(progress?.cached_true),uncached=n(progress?.cached_false),pending=n(progress?.pending_first_scan),hit=Number(runtime?.cache?.stream?.hitRate||0);els.summary.innerHTML=`<div class="metric ${tone(scanner)}"><div class="label">Worker state</div><div class="value">${esc(label(scanner))}</div><small>${esc(scanner?.running?'Il loop worker sta consumando batch in questo momento.':scanner?.enabled?'Configurato ma senza batch pronti adesso.':'Disabilitato o non partito.')}</small></div><div class="metric"><div class="label">Total hashes</div><div class="value">${fmt(total)}</div><small>Base totale con info hash valido</small></div><div class="metric"><div class="label">Scanned</div><div class="value">${fmt(scanned)}</div><small>${total>0?pct(scanned/total*100):'0%'} del totale</small></div><div class="metric"><div class="label">Cached</div><div class="value">${fmt(cached)}</div><small>${scanned>0?pct(cached/scanned*100):'0%'} dei gia lavorati</small></div><div class="metric"><div class="label">Uncached</div><div class="value">${fmt(uncached)}</div><small>${scanned>0?pct(uncached/scanned*100):'0%'} dei gia lavorati</small></div><div class="metric"><div class="label">Stream hit rate</div><div class="value">${pct(hit)}</div><small>Pending first scan: ${fmt(pending)}</small></div>`}
+function worker(scanner,progress){els.worker.innerHTML=`<div class="banner"><div><h3>${esc(label(scanner))}</h3><p>${esc(scanner?.currentTitle||'Nessun titolo in lavorazione in questo momento.')}</p></div><div class="ghost"><span class="eyebrow" style="margin:0;letter-spacing:.12em">Last batch</span><strong>${esc(when(scanner?.lastBatchAt))}</strong></div></div><div class="mini-grid"><div class="tile"><div class="mini">Batch size</div><strong>${fmt(scanner?.batchSize)}</strong></div><div class="tile"><div class="mini">Sleep cadence</div><strong>${fmt(scanner?.sleepMs)} ms</strong></div><div class="tile"><div class="mini">Idle cadence</div><strong>${fmt(scanner?.idleMs)} ms</strong></div></div><div class="mini-grid" style="margin-top:12px"><div class="tile"><div class="mini">Current hash</div><strong class="mono">${esc(scanner?.currentHash||'-')}</strong></div><div class="tile"><div class="mini">Total scanned</div><strong>${fmt(scanner?.totalScanned)}</strong></div><div class="tile"><div class="mini">Total updated</div><strong>${fmt(scanner?.totalUpdated)}</strong></div></div>`}
+function queue(progress){const total=Math.max(1,n(progress?.total_with_hash)),cached=n(progress?.cached_true),uncached=n(progress?.cached_false),pending=n(progress?.pending_first_scan),rest=Math.max(0,total-cached-uncached-pending);els.queue.innerHTML=`<div class="bar">${seg(cached/total*100,'cached')}${seg(uncached/total*100,'uncached')}${seg(pending/total*100,'pending')}${seg(rest/total*100,'rest')}</div><div class="mini-grid"><div class="strip"><div class="mini">Cached true</div><strong>${fmt(cached)}</strong></div><div class="strip"><div class="mini">Cached false</div><strong>${fmt(uncached)}</strong></div><div class="strip"><div class="mini">Pending first scan</div><strong>${fmt(pending)}</strong></div><div class="strip"><div class="mini">Already scanned</div><strong>${fmt(progress?.already_scanned)}</strong></div><div class="strip"><div class="mini">Due now</div><strong>${fmt(progress?.due_now)}</strong></div><div class="strip"><div class="mini">Backlog residue</div><strong>${fmt(rest)}</strong></div></div>`}
+function cards(target,list){target.innerHTML=`<div class="mini-grid">${list.map(x=>`<div class="strip"><div class="mini">${esc(x.k)}</div><strong>${esc(x.v)}</strong></div>`).join('')}</div>`}
+function cache(streamCache,runtime){cards(els.cache,[{k:'Tracked stream keys',v:fmt(streamCache?.trackedKeys)},{k:'Hash buckets',v:fmt(streamCache?.hashBuckets)},{k:'IMDB buckets',v:fmt(streamCache?.imdbBuckets)},{k:'Cached entries',v:fmt(streamCache?.cachedEntries)},{k:'Invalidations',v:fmt(runtime?.counters?.['cache.stream.invalidations'])},{k:'Invalidated keys',v:fmt(runtime?.counters?.['cache.stream.invalidatedKeys'])}])}
+function runtimePanel(runtime){cards(els.runtime,[{k:'Priority requested',v:fmt(runtime?.counters?.['rdPriority.requested'])},{k:'Priority applied',v:fmt(runtime?.counters?.['rdPriority.applied'])},{k:'Priority noop',v:fmt(runtime?.counters?.['rdPriority.noop'])},{k:'Lazy warmup success',v:fmt(runtime?.counters?.['lazyWarmup.success'])},{k:'Lazy warmup fail',v:fmt(runtime?.counters?.['lazyWarmup.fail'])},{k:'Stream hit rate',v:pct(runtime?.cache?.stream?.hitRate||0)}])}
+function priority(scanner,runtime,progress){const req=Math.max(1,n(runtime?.counters?.['rdPriority.requested'])),app=n(runtime?.counters?.['rdPriority.applied']),noop=n(runtime?.counters?.['rdPriority.noop']);els.priority.innerHTML=`<div class="bar">${seg(app/req*100,'cached')}${seg(noop/req*100,'uncached')}${seg(Math.max(0,100-app/req*100-noop/req*100),'pending')}</div><div class="mini-grid"><div class="strip"><div class="mini">Requested</div><strong>${fmt(req===1&&n(runtime?.counters?.['rdPriority.requested'])===0?0:req)}</strong></div><div class="strip"><div class="mini">Applied</div><strong>${fmt(app)}</strong></div><div class="strip"><div class="mini">Noop</div><strong>${fmt(noop)}</strong></div><div class="strip"><div class="mini">Reason</div><strong>${esc(scanner?.reason||'-')}</strong></div><div class="strip"><div class="mini">Pending first scan</div><strong>${fmt(progress?.pending_first_scan)}</strong></div><div class="strip"><div class="mini">Due now</div><strong>${fmt(progress?.due_now)}</strong></div></div>`}
+function eventPanel(scanner){const o=scanner?.lastOutcome;if(!o){els.event.innerHTML='<div class="empty">Nessun outcome registrato ancora. Appena worker o playback salva un hash, questa sezione si popola.</div>';return}const t=o.cached===true?'ok':o.cached===false?'warn':'bad',title=o.cached===true?'Cached confirmation':o.cached===false?'Negative cache result':'Unresolved probe',msg=o.cached===true?'L ultimo hash lavorato e stato confermato disponibile e ora dovrebbe restare persistito come cached nel database.':o.cached===false?'L ultimo hash e stato verificato ma non risulta cached. Il dato resta comunque persistito per evitare controlli ravvicinati inutili.':'L ultimo hash non ha ancora prodotto una risposta finale stabile.';els.event.innerHTML=`<div class="event-shell"><div class="event-focus"><div class="chip ${t}">${esc(title)}</div><h4>${esc(o.reason||'No explicit reason')}</h4><p>${esc(msg)}</p></div><div class="event-meta"><div class="rows"><div class="row"><div class="k">Hash</div><div class="v mono">${esc(o.hash||'-')}</div></div><div class="row"><div class="k">Cached</div><div class="v">${esc(String(o.cached??'-'))}</div></div><div class="row"><div class="k">File index</div><div class="v">${esc(o.rd_file_index??'-')}</div></div><div class="row"><div class="k">File size</div><div class="v">${esc(o.rd_file_size??'-')}</div></div><div class="row"><div class="k">Timestamp</div><div class="v">${esc(when(o.at))}</div></div></div></div></div>`}
+function diag(data){const s=data?.scanner||{},p=data?.progress||{},r=data?.runtime||{},err=s?.lastError||p?.error||'',state=err?'bad':s?.running?'ok':s?.enabled?'warn':'bad',label=err?'Error captured':s?.running?'Telemetry healthy':s?.enabled?'Idle telemetry':'Scanner disabled',snap={scanner:{reason:s?.reason||null,currentHash:s?.currentHash||null,currentTitle:s?.currentTitle||null,lastBatchSize:s?.lastBatchSize||0,totalScanned:s?.totalScanned||0,totalUpdated:s?.totalUpdated||0},progress:p,streamCache:data?.streamCache||{},counters:r?.counters||{}};els.diag.innerHTML=`<div class="diag"><div class="chip ${state}">${esc(label)}</div><h4>Diagnostic Snapshot</h4><pre>${esc(JSON.stringify(snap,null,2))}</pre>${err?`<div class="err">${esc(err)}</div>`:''}</div>`}
+function flow(runtime,progress){els.flow.innerHTML=`<div class="flow"><div class="step"><div class="mini">01 Stream open</div><strong>Visible results enter the foreground window</strong><p>Quando apri un titolo, i primi risultati diventano subito candidati a probe live o boost di priorita.</p></div><div class="step"><div class="mini">02 Priority push</div><strong>${fmt(runtime?.counters?.['rdPriority.requested'])} requested, ${fmt(runtime?.counters?.['rdPriority.applied'])} applied</strong><p>Gli hash unknown vengono spinti avanti nella coda del worker in base a cio che stai guardando.</p></div><div class="step"><div class="mini">03 Persisted knowledge</div><strong>${fmt(progress?.pending_first_scan)} first scans still pending</strong><p>Ogni risultato verificato o partito in playback salva lo stato nel DB per evitare lavoro duplicato.</p></div><div class="step"><div class="mini">04 Cache invalidation</div><strong>${fmt(runtime?.counters?.['cache.stream.invalidations'])} stream invalidations</strong><p>Quando uno stato cambia, la lista stream viene forzata a rigenerarsi cosi il fulmine puo comparire subito.</p></div></div>`}
+function chrome(scanner,ts){const t=tone(scanner);els.live.className=`live ${t}`;els.liveLabel.textContent=label(scanner);els.lastRefresh.textContent=when(ts||new Date().toISOString());document.title=`${label(scanner)} | Leviathan RD Control Room`}
+function render(data){const s=data?.scanner||{},p=data?.progress||{},r=data?.runtime||{},c=data?.streamCache||{};chrome(s,data?.timestamp);hero(s,p,r,c);summary(s,p,r);worker(s,p);queue(p);cache(c,r);runtimePanel(r);priority(s,r,p);eventPanel(s);diag(data);flow(r,p)}
+async function load(){els.refresh.disabled=true;els.refresh.textContent='Refreshing...';try{const res=await fetch('/api/rd-scanner-dashboard',{cache:'no-store'});if(!res.ok)throw new Error(`HTTP ${res.status}`);render(await res.json())}catch(error){els.live.className='live bad';els.liveLabel.textContent='Telemetry request failed';els.lastRefresh.textContent=when(new Date().toISOString());els.diag.innerHTML=`<div class="diag"><div class="chip bad">Fetch error</div><h4>Unable to refresh control room</h4><div class="err">${esc(error.message||error)}</div></div>`}finally{els.refresh.disabled=false;els.refresh.textContent='Refresh now'}}
+els.refresh.addEventListener('click',load);load();setInterval(load,8000);
+</script>
 </body>
 </html>
