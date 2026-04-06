@@ -246,6 +246,21 @@ function isDebridService(serviceTag) {
   return ['RD', 'TB', 'AD'].includes(normalizeServiceTag(serviceTag));
 }
 
+function normalizeCacheState(cacheState, serviceTag) {
+  const normalized = safeString(cacheState).toLowerCase().trim();
+  if (normalized === 'cached') return 'cached';
+  if (normalized === 'uncached') return 'uncached';
+  if (normalized === 'unknown') return 'unknown';
+  if (!isDebridService(serviceTag)) return 'unknown';
+  return 'unknown';
+}
+
+function getCacheIcon(cacheState) {
+  if (cacheState === 'cached') return '⚡';
+  if (cacheState === 'uncached') return '☁️';
+  return '⏳';
+}
+
 function deterministicHash(value) {
   const text = safeString(value);
   let hash = 0;
@@ -509,13 +524,13 @@ function deriveLanguages(title, source) {
   const lowerText = text.toLowerCase();
 
   const animeScene = /nyaa|erai-raws|subsplease|horriblesubs|judas|moozzi2|ember/i.test(text);
-  const animeItalianJapaneseDefault = /(?:nyaa|erai-raws)/i.test(text);
+  const animeItalianJapaneseDefault = /(?:nyaa|erai-raws)/i.test(text);
   const animeEnglishDefault = /subsplease|horriblesubs|judas|moozzi2|ember/i.test(text);
 
-  const italianHint = /(?:ita|italian|italiano|vostit|sub[-. _]?ita|softsub[-. _]?ita|multi[-. _]?ita)/i.test(text)
+  const italianHint = /(?:ita|italian|italiano|vostit|sub[-. _]?ita|softsub[-. _]?ita|multi[-. _]?ita)/i.test(text)
     || REGEX_EXTRA.contextIt.test(text);
-  const englishHint = /(?:eng|english|sub[-. _]?eng|softsub[-. _]?eng)/i.test(text);
-  const japaneseHint = /(?:jap|jpn|japanese|jp|raw)/i.test(text);
+  const englishHint = /(?:eng|english|sub[-. _]?eng|softsub[-. _]?eng)/i.test(text);
+  const japaneseHint = /(?:jap|jpn|japanese|jp|raw)/i.test(text);
   const multiHint = REGEX_EXTRA.multiAudio.test(lowerText) || REGEX_EXTRA.dualAudio.test(lowerText);
 
   const matches = LANG_FLAGS.filter((lang) => lang.regex.test(text));
@@ -629,9 +644,11 @@ function buildBingeGroup(quality, rawInfo, serviceTag, infoHash) {
   return `Leviathan|${quality}|${hdrPart}|${serviceTag}|${infoHash || 'no-hash'}`;
 }
 
-function createStyleParams(fileTitle, source, size, seeders, serviceTag, config, infoHash, isLazy, isPackItem) {
+function createStyleParams(fileTitle, source, size, seeders, serviceTag, config, infoHash, isLazy, isPackItem, cacheState = 'unknown') {
   const extracted = extractStreamInfo(fileTitle, source, config);
   const normalizedServiceTag = normalizeServiceTag(serviceTag);
+  const normalizedCacheState = normalizeCacheState(cacheState, normalizedServiceTag);
+  const cacheIcon = getCacheIcon(normalizedCacheState);
   const serviceIconTitle = SERVICE_ICON_BY_TAG[normalizedServiceTag] || '🦈';
   const qIcon = SERVICE_ICON_BY_TAG[normalizedServiceTag] || extracted.qIcon;
   const numericSize = Number(size) || 0;
@@ -645,7 +662,7 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
   const displaySource = normalizeDisplaySource(source || DEFAULT_SOURCE_LABEL);
   const seedersValue = seeders === null || seeders === undefined || Number.isNaN(Number(seeders)) ? null : Number(seeders);
   const seedersStr = seedersValue !== null ? `👥 ${seedersValue}` : '';
-  const isCached = isDebridService(normalizedServiceTag);
+  const isCached = normalizedCacheState === 'cached';
 
   const baseParams = {
     ...extracted,
@@ -668,6 +685,8 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
     providerLabel: extractProviderLabel(fileTitle),
     isLazy: Boolean(isLazy),
     isPackItem: Boolean(isPackItem),
+    cacheState: normalizedCacheState,
+    cacheIcon,
     isCached,
     compactLang: compactLanguageLabel(extracted.lang),
     primarySourceTag: getPrimarySourceTag(extracted.cleanTags),
@@ -876,8 +895,8 @@ function buildHeadlineParts(params) {
 }
 
 function styleComplex(p) {
-  const isCached = isDebridService(p.serviceTag);
-  const statusIcon = isCached ? '🔲' : '🔳';
+  const isCached = p.isCached;
+  const statusIcon = p.cacheIcon;
   let res = 'SD';
   if (/2160|4k/i.test(p.quality)) res = '4K';
   else if (/1440/i.test(p.quality)) res = 'QHD';
@@ -928,8 +947,8 @@ function styleAndroidTV(p) {
 }
 
 function stylePicture(p) {
-  const isCached = isDebridService(p.serviceTag);
-  const cacheIcon = isCached ? '✅' : '⏳';
+  const isCached = p.isCached;
+  const cacheIcon = p.cacheIcon;
   const features = [];
   if (p.quality === '4K') features.push('UHD');
   if (p.cleanTags.some((tag) => /HDR|DV/i.test(tag))) features.push('HDR');
@@ -955,7 +974,7 @@ function stylePicture(p) {
 
 function styleLeviathan(p) {
   const cleanAudio = removeEmoji(p.audioTag) || p.audioTag;
-  const statusIcon = isDebridService(p.serviceTag) ? (SERVICE_ICON_BY_TAG[p.serviceTag] || '🦈') : '⏳';
+  const statusIcon = p.cacheIcon;
   const brandName = toStylized('LEVIATHAN', 'small');
   const serviceStyled = toStylized(p.serviceTag, 'bold');
   const name = `${statusIcon} ${serviceStyled} 🦑 ${brandName}`;
@@ -1010,7 +1029,7 @@ function styleDav(p) {
 }
 
 function styleAnd(p) {
-  const cachedIcon = p.serviceTag === 'RD' ? '⚡' : '⏳';
+  const cachedIcon = p.cacheIcon;
   const lines = [
     `${p.quality} ${cachedIcon}`,
     '─ ─ ─ ─ ─ ─ ─ ─ ─ ─',
@@ -1058,14 +1077,14 @@ function styleComet(p) {
 }
 
 function styleStremioIta(p) {
-  const isCached = isDebridService(p.serviceTag);
-  const statusIcon = isCached ? '⚡️' : '⏳';
+  const isCached = p.isCached;
+  const statusIcon = p.cacheIcon;
   const langText = compactLanguageLabel(p.lang);
   const qualIcon = p.cleanTags.some((tag) => /bluray|web|hdr|dv/i.test(tag)) || p.quality === '4K' ? '🔥' : '📀';
   const lines = [
     `📄 ❯ ${p.fileTitle}`,
     `🌎 ❯ ${langText}`,
-    `${isCached ? '✨' : '⬇️'} ❯ ${p.serviceTag} • ${p.displaySource}`,
+    `${p.cacheIcon} ❯ ${p.serviceTag} • ${p.displaySource}`,
     `${qualIcon} ❯ ${joinNonEmpty([p.quality, p.cleanTags.join(' • ')])}`,
     `💾 ❯ ${p.sizeString}${!isCached && p.seeders !== null ? ` / 👥 ❯ ${p.seeders}` : ''}`,
   ];
@@ -1087,7 +1106,7 @@ function styleTorrentio(p) {
 }
 
 function styleVertical(p) {
-  const cacheLabel = isDebridService(p.serviceTag) ? '⚡ Cached' : '☁️ Live';
+  const cacheLabel = p.cacheIcon;
   const type = p.cleanTags.some((tag) => /Remux/i.test(tag)) ? 'Remux' : 'WEB-DL';
   const lines = [
     `🍿 ${p.cleanName}`,
@@ -1101,7 +1120,7 @@ function styleVertical(p) {
 }
 
 function stylePremium(p) {
-  const statusIcon = p.isCached ? '⚡' : '☁️';
+  const statusIcon = p.cacheIcon;
   const techLine = joinNonEmpty([p.scoreBadge, ...p.premiumTags], ' • ');
   const audioLine = joinNonEmpty([p.audioTag, p.audioChannels, p.compactLang], ' • ');
   const providerLine = joinNonEmpty([`${statusIcon} ${p.serviceTag}`, p.displaySource, p.releaseGroup ? `Grp ${p.releaseGroup}` : ''], ' • ');
@@ -1231,8 +1250,8 @@ function extractStreamInfo(title, source, config = {}) {
   return setCached(EXTRACT_CACHE, cacheKey, result, EXTRACT_CACHE_LIMIT);
 }
 
-function formatStreamSelector(fileTitle, source, size, seeders, serviceTag = DEFAULT_SERVICE_TAG, config = {}, infoHash = null, isLazy = false, isPackItem = false) {
-  const params = createStyleParams(fileTitle, source, size, seeders, serviceTag, config, infoHash, isLazy, isPackItem);
+function formatStreamSelector(fileTitle, source, size, seeders, serviceTag = DEFAULT_SERVICE_TAG, config = {}, infoHash = null, isLazy = false, isPackItem = false, cacheState = 'unknown') {
+  const params = createStyleParams(fileTitle, source, size, seeders, serviceTag, config, infoHash, isLazy, isPackItem, cacheState);
   const styleName = safeString(config.formatter || 'leviathan').toLowerCase();
   const builder = STYLE_BUILDERS[styleName] || STYLE_BUILDERS.leviathan;
   const result = builder(params, config);

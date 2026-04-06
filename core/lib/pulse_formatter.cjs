@@ -50,10 +50,19 @@ function cleanFileNameForDisplay(filename, options = {}) {
     return name;
 }
 
+function getCacheBadge(cacheState, cached) {
+    const normalized = compactSpaces(cacheState).toLowerCase();
+    if (normalized === 'cached') return '⚡';
+    if (normalized === 'uncached') return '☁️';
+    if (normalized === 'unknown') return '⏳';
+    return cached ? '⚡' : '⏳';
+}
+
 function formatStreamName({
     addonName,
     service,
     cached,
+    cacheState,
     quality,
     hasError = false
 } = {}) {
@@ -67,7 +76,8 @@ function formatStreamName({
 
     const serviceKey = String(service || 'p2p').toLowerCase();
     const srv = serviceAbbr[serviceKey] || '[P2P';
-    const bolt = cached ? '⚡]' : ']';
+    const badge = getCacheBadge(cacheState, cached);
+    const bolt = `${badge}]`;
     const safeAddonName = compactSpaces(addonName || 'Leviathan');
     const safeQuality = compactSpaces(quality || '');
     const safeError = hasError ? ' ⚠️' : '';

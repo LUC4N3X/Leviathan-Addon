@@ -21,7 +21,9 @@ const EXTERNAL_ADDONS = {
         priority: 2,
         maxFailures: 3,
         cooldownMs: Number(process.env.EXT_ADDON_COOLDOWN_MS || 30000)
-    },
+    }
+    /* === MediaFusion disattivato ===
+    ,
     mediafusion: {
         baseUrl: "https://mediafusionfortheweebs.midnightignite.me/D-FCO8JXfrGOKFpP-Rim96nHZU9epOb5RPbSpgkgVbYoR1NRJNR1C-9X4VDrUSJJNEvp5pk7CGvSLN7cUHUrth3QG8e3mSPa8Ind2k4VzVGFEa-310EjXdsXT_uUXGri86EVnnQ6f_9b0yoVTuVu7Aqk4uY8IXZp47-0FmuxgXX6wleis_0Evllc0v2wcrWIj-D5m3IZhI18CKHr-pUL5h61ZWcaRuxGjgwYK88Xy3PIN2U3YzTi4J9pazQBpCNDH-NpZPwk2RVnjs0WF7dRU5XD_D0robmhH9q0edoqaR_71u1j2y-XnxkwPNjg-o5Yb_",
         name: "MediaFusion",
@@ -31,6 +33,7 @@ const EXTERNAL_ADDONS = {
         maxFailures: 4,
         cooldownMs: Number(process.env.EXT_ADDON_COOLDOWN_MS || 30000)
     }
+    */
 };
 
 const KNOWN_PROVIDERS = [
@@ -69,6 +72,14 @@ const fetchCache = new Map();
 const inflightFetches = new Map();
 const addonHealth = new Map();
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Browser fingerprint pools — rotati ad ogni richiesta
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Profili browser completi con UA + header Sec-* coerenti.
+ * Ogni profilo è una combinazione realistica (stessa versione in UA e Sec-CH-UA).
+ */
 const BROWSER_PROFILES = [
     {
         name: "chrome-windows",
@@ -137,12 +148,24 @@ const BROWSER_PROFILES = [
     }
 ];
 
+/**
+ * Sceglie un profilo in modo pseudo-casuale ma deterministico per addonKey+id,
+ * così la stessa risorsa usa sempre lo stesso "browser" nella stessa sessione
+ * (più naturale), ma profili diversi tra addon diversi.
+ */
 function pickBrowserProfile(addonKey, id) {
     const seed = crypto.createHash("sha1").update(`${addonKey}:${id}`).digest("hex");
     const idx = parseInt(seed.slice(0, 4), 16) % BROWSER_PROFILES.length;
     return BROWSER_PROFILES[idx];
 }
 
+/**
+ * Costruisce un oggetto headers HTTP completo e coerente con il profilo scelto.
+ * - Aggiunge Referer plausibile (stremio.com o il dominio dell'addon stesso)
+ * - Aggiunge Connection: keep-alive
+ * - Aggiunge DNT solo per Firefox (comportamento reale)
+ * - Evita header superflui che i veri browser non mandano
+ */
 function buildBrowserHeaders(profile, targetUrl) {
     let origin;
     try { origin = new URL(targetUrl).origin; } catch { origin = "https://stremio.com"; }
@@ -159,26 +182,34 @@ function buildBrowserHeaders(profile, targetUrl) {
         "Sec-Fetch-Mode": profile.secFetchMode,
         "Sec-Fetch-Site": profile.secFetchSite,
         "Sec-Fetch-User": profile.secFetchUser,
+        // Referer: simula arrivo da Stremio web o dall'addon stesso
         "Referer": `${origin}/`
     };
 
+    // Chromium-only: Sec-CH-UA headers
     if (profile.secChUa) {
         headers["Sec-CH-UA"] = profile.secChUa;
         headers["Sec-CH-UA-Mobile"] = profile.secChUaMobile;
         headers["Sec-CH-UA-Platform"] = profile.secChUaPlatform;
     }
 
+    // Firefox manda DNT, Chrome no (nella maggior parte dei casi)
     if (profile.name.startsWith("firefox")) {
         headers["DNT"] = "1";
         headers["Upgrade-Insecure-Requests"] = "1";
     }
 
+    // Chrome e Safari mandano Upgrade-Insecure-Requests su navigate
     if (profile.name.startsWith("chrome") || profile.name.startsWith("safari")) {
         headers["Upgrade-Insecure-Requests"] = "1";
     }
 
     return headers;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Jitter adattivo: più lento sotto stress, più veloce in condizioni normali
+// ─────────────────────────────────────────────────────────────────────────────
 
 function computeJitter(addonKey) {
     const state = addonHealth.get(addonKey);
@@ -188,6 +219,10 @@ function computeJitter(addonKey) {
     const extra = Math.min(failures * 100, 500);
     return base + extra;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utility
+// ─────────────────────────────────────────────────────────────────────────────
 
 function now() { return Date.now(); }
 function debugLog(...args) { if (DEBUG_MODE) console.log(...args); }
@@ -548,6 +583,7 @@ function normalizeExternalStream(stream, addonKey) {
         potentialPack: Boolean(packTitle) || (filename && text && !text.startsWith(filename) && text.length > filename.length + 20),
         packTitle, source: originalProvider ? `${addon.name} (${originalProvider})` : addon.name,
         externalAddon: addonKey, externalProvider: originalProvider, sourceEmoji: addon.emoji, magnetLink, url: rawUrl,
+        isCached: true, cacheState: "cached",
         pubDate: new Date().toISOString(), isItalian: languageInfo.isItalian, hasItalianAudio: languageInfo.hasAudioItalian,
         hasItalianSubs: languageInfo.hasSubItalian, languageInfo, techTags
     };
@@ -598,6 +634,10 @@ function passesItalianFilter(stream, options = {}) {
     return analysis.isItalian && analysis.confidence >= minimumConfidence;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Core fetch — got-scraping + TLS fingerprint + headers browser-grade
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function fetchExternalAddon(addonKey, type, id, options = {}) {
     const addon = EXTERNAL_ADDONS[addonKey];
     if (!addon) {
@@ -627,11 +667,14 @@ async function fetchExternalAddon(addonKey, type, id, options = {}) {
         const startedAt = now();
 
         try {
+            // Jitter adattivo: più failures → più attesa → meno sospetto
             const jitter = computeJitter(addonKey);
             await new Promise(resolve => setTimeout(resolve, jitter));
 
+            // Import ESM dinamico (got-scraping è ESM-only)
             const { gotScraping } = await import("got-scraping");
 
+            // Fingerprint browser coerente per questo addon+id
             const profile = pickBrowserProfile(addonKey, String(id));
             const headers = buildBrowserHeaders(profile, url);
 
@@ -640,9 +683,13 @@ async function fetchExternalAddon(addonKey, type, id, options = {}) {
             const response = await gotScraping({
                 url,
                 method: "GET",
-                headers,                         
+                headers,                         // Header browser-grade iniettati manualmente
                 timeout: { request: addon.timeout },
-                retry: { limit: 0 },              
+                retry: { limit: 0 },              // Nessun retry automatico
+                // got-scraping gestisce internamente:
+                //   - TLS ClientHello spoofing (JA3/JA4 fingerprint)
+                //   - HTTP/2 con ALPN negotiation
+                //   - Ordine header conforme al browser scelto
                 headerGeneratorOptions: {
                     browsers: [{ name: profile.name.startsWith("firefox") ? "firefox" : profile.name.startsWith("safari") ? "safari" : "chrome" }],
                     devices: [profile.name.includes("android") || profile.name.includes("ios") ? "mobile" : "desktop"],
@@ -653,9 +700,10 @@ async function fetchExternalAddon(addonKey, type, id, options = {}) {
                         "macos"
                     ]
                 },
-                decompress: true  
+                decompress: true  // accetta gzip/br come un browser reale
             });
 
+            // Parsing sicuro
             let data;
             try {
                 data = JSON.parse(response.body);
@@ -701,6 +749,10 @@ async function fetchExternalAddon(addonKey, type, id, options = {}) {
         inflightFetches.delete(cacheKey);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Aggregatori pubblici
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function fetchAllExternalAddons(type, id, options = {}) {
     const requestedAddons = Array.isArray(options.enabledAddons) && options.enabledAddons.length > 0

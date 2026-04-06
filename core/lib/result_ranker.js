@@ -209,11 +209,31 @@ function deepMergeConfig(optConfig = {}) {
   };
 }
 
-function detectQuality(title) {
-  if (/(2160p|\b4k\b|uhd)/i.test(title)) return '4K';
-  if (/(1080p|\bfhd\b)/i.test(title)) return '1080p';
-  if (/(720p|\bhd\b)/i.test(title)) return '720p';
+function detectQuality(value) {
+  const candidates = typeof value === 'object' && value !== null
+    ? [
+        value.quality,
+        value.resolution,
+        value.videoQuality,
+        value.streamQuality,
+        value.label,
+        value.title,
+        value.name,
+        value.description,
+      ]
+    : [value];
+
+  const text = candidates.map(normalizeText).filter(Boolean).join(' ');
+
+  if (/(2160p|\b2160\b|\b4k\b|uhd|ultra\s*hd)/i.test(text)) return '4K';
+  if (/(1080p|\b1080\b|\bfhd\b|full\s*hd)/i.test(text)) return '1080p';
+  if (/(720p|\b720\b|\bhd\b)/i.test(text)) return '720p';
   return 'SD';
+}
+
+function getQualityPriority(item, config = DEFAULT_CONFIG) {
+  const quality = item?._rankMeta?.quality || detectQuality(item);
+  return config.heuristics.qualityOrder[quality] || 0;
 }
 
 
@@ -813,7 +833,8 @@ function rankAndFilterResults(results = [], meta = {}, optConfig = {}) {
           _score: -999999999,
           _reasons: ['SIZE_TOO_SMALL'],
           _rankMeta: {
-            quality: detectQuality(cloned.title || cloned.name || ''),
+            quality: detectQuality(cloned),
+            invalid: true,
             index,
           },
         };
@@ -826,6 +847,7 @@ function rankAndFilterResults(results = [], meta = {}, optConfig = {}) {
         _reasons: reasons,
         _rankMeta: {
           ...details,
+          invalid: false,
           index,
         },
       };
@@ -833,11 +855,15 @@ function rankAndFilterResults(results = [], meta = {}, optConfig = {}) {
     .filter((item) => shouldKeepByLanguageMode(item, meta, config));
 
   ranked.sort((a, b) => {
-    if (b._score !== a._score) return b._score - a._score;
+    const invalidA = Boolean(a._rankMeta?.invalid);
+    const invalidB = Boolean(b._rankMeta?.invalid);
+    if (invalidA !== invalidB) return invalidA ? 1 : -1;
 
-    const qualityA = config.heuristics.qualityOrder[a._rankMeta?.quality || detectQuality(a.title || '')] || 0;
-    const qualityB = config.heuristics.qualityOrder[b._rankMeta?.quality || detectQuality(b.title || '')] || 0;
+    const qualityA = getQualityPriority(a, config);
+    const qualityB = getQualityPriority(b, config);
     if (qualityB !== qualityA) return qualityB - qualityA;
+
+    if (b._score !== a._score) return b._score - a._score;
 
     const sizeA = normalizeNumber(a._size || a.sizeBytes || 0);
     const sizeB = normalizeNumber(b._size || b.sizeBytes || 0);
@@ -862,6 +888,7 @@ module.exports = {
   parseSizeToBytes,
   computeScore,
   detectQuality,
+  getQualityPriority,
   detectItalianAudio,
   detectEnglishAudio,
   detectOtherLanguage,

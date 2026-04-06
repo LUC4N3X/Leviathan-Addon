@@ -6,6 +6,7 @@ const PackResolver = require("./pack_intelligence");
 const aioFormatter = require("./lib/pulse_formatter.cjs");
 const WebStreamr = require("./handlers/webstreamr_handler");
 const TbCache = require("../debrid/tb_cache.js");
+const RdCache = require("../debrid/rd_cache.js");
 const { formatStreamSelector, formatBytes } = require("./lib/stream_formatter");
 const P2P = require("./handlers/p2p_handler");
 const { searchVix: searchStreamingCommunity } = require("../providers/streamingcommunity/vix_handler");
@@ -127,6 +128,56 @@ async function resolveLazyStreamData(service, apiKey, item, meta) {
             )
         );
     });
+}
+
+
+function normalizeDbResultItem(row) {
+    const hash = extractInfoHash(row?.info_hash || row?.hash || row?.infoHash || '');
+    if (!hash) return null;
+    const fileIdx = row?.rd_file_index !== null && row?.rd_file_index !== undefined
+        ? Number(row.rd_file_index)
+        : (row?.file_index !== null && row?.file_index !== undefined ? Number(row.file_index) : undefined);
+    return {
+        hash,
+        title: row?.title || `DB Torrent ${hash}`,
+        source: row?.provider || 'LocalDB',
+        seeders: Number(row?.seeders || 0),
+        magnet: row?.magnet || buildTrackerMagnet(hash),
+        fileIdx: Number.isInteger(fileIdx) && fileIdx >= 0 ? fileIdx : undefined,
+        _size: Number(row?.rd_file_size || row?.size || row?.sizeBytes || 0),
+        sizeBytes: Number(row?.rd_file_size || row?.size || row?.sizeBytes || 0),
+        _dbCachedRd: row?.cached_rd === null || row?.cached_rd === undefined ? null : Boolean(row.cached_rd),
+        _dbLastCachedCheck: row?.last_cached_check || null,
+        _dbNextCachedCheck: row?.next_cached_check || null,
+        _dbFailures: Number(row?.cache_check_failures || 0)
+    };
+}
+
+async function fetchLocalDbResults(meta) {
+    if (!dbHelper || typeof dbHelper.getTorrents !== 'function' || !meta?.imdb_id) return [];
+    try {
+        const rows = await dbHelper.getTorrents(meta.imdb_id, meta.season, meta.episode);
+        return (Array.isArray(rows) ? rows : []).map(normalizeDbResultItem).filter(Boolean);
+    } catch (err) {
+        logger.warn(`[DB READ] Lookup locale fallito: ${err.message}`);
+        return [];
+    }
+}
+
+function applyRdDbCachePriority(items, config) {
+    const list = Array.isArray(items) ? items : [];
+    const cachedOnly = config?.filters?.rdCachedOnly === true;
+    const cached = [];
+    const unknown = [];
+    const uncached = [];
+
+    for (const item of list) {
+        if (item?._dbCachedRd === true) cached.push(item);
+        else if (item?._dbCachedRd === false) uncached.push(item);
+        else unknown.push(item);
+    }
+
+    return cachedOnly ? [...cached] : [...cached, ...unknown, ...uncached];
 }
 
 function assessFastResultQuality(items, meta, langMode, config) {
@@ -275,6 +326,105 @@ function getServiceDisplayName(service) {
     return 'p2p';
 }
 
+function getRdCacheVisualState(service, item) {
+    const normalizedService = String(service || '').toLowerCase();
+
+    const explicitState = typeof item?._rdCacheState === 'string'
+        ? String(item._rdCacheState).trim().toLowerCase()
+        : (typeof item?.rdCacheState === 'string' ? String(item.rdCacheState).trim().toLowerCase() : '');
+    if (explicitState === 'cached' || explicitState === 'uncached' || explicitState === 'unknown') {
+        return explicitState;
+    }
+
+    if (normalizedService === 'tb') {
+        return item?._tbCached ? 'cached' : 'unknown';
+    }
+
+    if (normalizedService !== 'rd' && normalizedService !== 'ad') {
+        return 'unknown';
+    }
+
+    if (item?._rdCacheState) return String(item._rdCacheState);
+    if (item?.rdCacheState) return String(item.rdCacheState);
+
+    if (item?._dbCachedRd === true || item?.cached_rd === true) return 'cached';
+    if (item?._dbCachedRd === false || item?.cached_rd === false) return 'uncached';
+
+    return 'unknown';
+}
+
+async function hydrateRdForegroundCacheState(items, apiKey) {
+    const list = Array.isArray(items) ? items : [];
+    if (!apiKey || list.length === 0) return list;
+
+    const probeLimit = Math.max(
+        1,
+        Math.min(
+            CONFIG.MAX_RESULTS || 70,
+            parseInt(process.env.RD_FOREGROUND_CACHE_LIMIT || '12', 10) || 12
+        )
+    );
+
+    const unknownCandidates = list
+        .filter(item => getRdCacheVisualState('rd', item) === 'unknown' && item?.hash && item?.magnet)
+        .slice(0, probeLimit);
+
+    if (unknownCandidates.length === 0) return list;
+
+    logger.info(`[RD FAST] Verifico cache live per ${unknownCandidates.length} risultati unknown...`);
+
+    try {
+        const { results = {}, deferred = [] } = await LIMITERS.rdResolve.schedule(() =>
+            RdCache.checkCacheSyncFast(unknownCandidates, apiKey, unknownCandidates.length)
+        );
+
+        const dbUpdates = [];
+
+        for (const item of unknownCandidates) {
+            const hash = String(item?.hash || '').trim().toLowerCase();
+            const result = results[hash];
+            if (!result) continue;
+
+            const cacheState = result.cached === true ? 'cached' : 'uncached';
+            item._rdCacheState = cacheState;
+            item.rdCacheState = cacheState;
+            item._dbCachedRd = result.cached === true;
+            item.cached_rd = result.cached === true;
+
+            if (Number.isFinite(result.file_size) && result.file_size > 0) {
+                item._size = Math.max(Number(item._size || item.sizeBytes || 0), Number(result.file_size));
+                item.sizeBytes = Math.max(Number(item.sizeBytes || item._size || 0), Number(result.file_size));
+            }
+
+            dbUpdates.push({
+                hash: item.hash,
+                cached: result.cached === true,
+                rd_file_size: Number.isFinite(result.file_size) && result.file_size > 0 ? Number(result.file_size) : null,
+                failures: 0,
+                next_hours: result.cached === true ? (24 * 30) : (24 * 7)
+            });
+        }
+
+        if (dbUpdates.length > 0 && typeof dbHelper.updateRdCacheStatus === 'function') {
+            try {
+                await dbHelper.updateRdCacheStatus(dbUpdates);
+            } catch (err) {
+                logger.warn(`[RD FAST] Persistenza stato cache fallita: ${err.message}`);
+            }
+        }
+
+        if (Array.isArray(deferred) && deferred.length > 0) {
+            RdCache.enrichCacheBackground(deferred, apiKey, dbHelper);
+        }
+
+        logger.info(`[RD FAST] Live check completato | cached=${dbUpdates.filter(row => row.cached).length} | uncached=${dbUpdates.filter(row => !row.cached).length} | deferred=${Array.isArray(deferred) ? deferred.length : 0}`);
+    } catch (err) {
+        logger.warn(`[RD FAST] Verifica cache live fallita: ${err.message}`);
+    }
+
+    return list;
+}
+
 function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitle, sizeBytes, seeders, config, meta, isLazy = false, isPack = false }) {
     const normalizedService = String(service || '').toLowerCase();
     const isAIOActive = aioFormatter.isAIOStreamsEnabled(config);
@@ -283,10 +433,11 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
     const languageInfo = getLanguageInfo(baseParseTitle, meta?.title, item?.source, details);
     const quality = detectQualityLabel(baseParseTitle, details.quality || 'SD');
     const serviceLabel = normalizedService === 'tb' ? 'TB' : normalizedService.toUpperCase();
+    const rdCacheState = getRdCacheVisualState(normalizedService, item);
 
     if (isAIOActive) {
         return {
-            name: aioFormatter.formatStreamName({ addonName: "Leviathan", service: getServiceDisplayName(normalizedService), cached: true, quality }),
+            name: aioFormatter.formatStreamName({ addonName: "Leviathan", service: getServiceDisplayName(normalizedService), cached: rdCacheState === 'cached', cacheState: rdCacheState, quality }),
             title: aioFormatter.formatStreamTitle({
                 title: displayTitle,
                 size: formatBytes(sizeBytes),
@@ -302,7 +453,7 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         };
     }
 
-    const { name, title, bingeGroup } = formatStreamSelector(parseTitle || item?.title || displayTitle, item?.source, sizeBytes, seeders, serviceLabel, config, item?.hash, isLazy, isPack);
+    const { name, title, bingeGroup } = formatStreamSelector(parseTitle || item?.title || displayTitle, item?.source, sizeBytes, seeders, serviceLabel, config, item?.hash, isLazy, isPack, rdCacheState);
     return {
         name,
         title,
@@ -758,6 +909,14 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
         const parseTitle = streamData.filename || item.title;
         const finalSize = estimateVisualSize(streamData.size || item._size || item.sizeBytes || 0, parseTitle, isSeries, isPack, item.hash);
         const finalSeeders = estimateSeeders(item.seeders, item.hash);
+        runtimeItem._rdCacheState = 'cached';
+        runtimeItem.rdCacheState = 'cached';
+        runtimeItem._dbCachedRd = true;
+        runtimeItem.cached_rd = true;
+        if (Number.isFinite(Number(streamData.size)) && Number(streamData.size) > 0) {
+            runtimeItem._size = Number(streamData.size);
+            runtimeItem.sizeBytes = Number(streamData.size);
+        }
 
         return buildPlayableStream({
             service,
@@ -853,7 +1012,23 @@ async function fetchExternalResults(type, finalId, config) {
                 const title = i.title || i.filename;
                 let finalSeeders = parseInt(i.seeders, 10) || (title ? extractSeeders(title) : 0);
                 let finalSize = i.mainFileSize || (title ? extractSize(title) : 0);
-                return { title: title, magnet: i.magnetLink, size: i.size || (finalSize > 0 ? formatBytes(finalSize) : null), sizeBytes: finalSize, seeders: finalSeeders, source: i.externalProvider || i.source.replace(/\[EXT\]\s*/, ''), hash: i.infoHash || extractInfoHash(i.magnetLink), infoHash: i.infoHash || extractInfoHash(i.magnetLink), fileIdx: i.fileIdx, isExternal: true, _isPack: isSeasonPack(title) };
+                return {
+                    title: title,
+                    magnet: i.magnetLink,
+                    size: i.size || (finalSize > 0 ? formatBytes(finalSize) : null),
+                    sizeBytes: finalSize,
+                    seeders: finalSeeders,
+                    source: i.externalProvider || i.source.replace(/\[EXT\]\s*/, ''),
+                    hash: i.infoHash || extractInfoHash(i.magnetLink),
+                    infoHash: i.infoHash || extractInfoHash(i.magnetLink),
+                    fileIdx: i.fileIdx,
+                    isExternal: true,
+                    _isPack: isSeasonPack(title),
+                    _rdCacheState: 'cached',
+                    rdCacheState: 'cached',
+                    _dbCachedRd: true,
+                    cached_rd: true
+                };
             })),
             CONFIG.TIMEOUTS.EXTERNAL, 'External Addons'
         );
@@ -901,6 +1076,9 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   if (!meta) return { streams: [] };
 
   logger.info(`[SPEED] Start search for: ${meta.title}`);
+
+  const localDbResults = await fetchLocalDbResults(meta);
+  if (localDbResults.length > 0) logger.info(`[DB READ] Trovati ${localDbResults.length} torrent dal DB locale.`);
   
   const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
   const dbOnlyMode = config.filters?.dbOnly === true; 
@@ -979,7 +1157,7 @@ const aggressiveFilter = (item) => {
   const externalResults = externalSettled.status === 'fulfilled' ? externalSettled.value : [];
   logger.info(`[STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
 
-  let fastResults = [...remoteResults, ...externalResults].filter(aggressiveFilter);
+  let fastResults = [...localDbResults, ...remoteResults, ...externalResults].filter(aggressiveFilter);
   let cleanResults = deduplicateResults(fastResults);
   let validFastCount = cleanResults.length;
   logger.info(`[FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
@@ -1065,6 +1243,16 @@ const aggressiveFilter = (item) => {
   rankedList = rerankCompositeResults(rankedList, meta, config, sortMode);
 
   if (config.filters && config.filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, config.filters.maxPerQuality);
+
+  if (String(config.service || 'rd').toLowerCase() === 'rd' && hasDebridKey) {
+      rankedList = applyRdDbCachePriority(rankedList, config);
+  }
+
+  if (String(config.service || 'rd').toLowerCase() === 'rd' && hasDebridKey) {
+      const apiKey = config.key || config.rd;
+      await hydrateRdForegroundCacheState(rankedList, apiKey);
+      rankedList = applyRdDbCachePriority(rankedList, config);
+  }
 
   if (config.service === 'tb' && hasDebridKey) {
       const apiKey = config.key || config.rd;

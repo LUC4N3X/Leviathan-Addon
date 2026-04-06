@@ -110,9 +110,18 @@ async function ensureDatabaseOptimizations() {
   const statements = [
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
     `ALTER TABLE files ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS cached_rd BOOLEAN`,
+    `ALTER TABLE torrents ALTER COLUMN cached_rd DROP DEFAULT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS rd_file_index INTEGER`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS rd_file_size BIGINT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS last_cached_check TIMESTAMPTZ`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS next_cached_check TIMESTAMPTZ`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS cache_check_failures INTEGER DEFAULT 0`,
     `UPDATE torrents SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE files SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_info_hash_norm_file_idx ON torrents (info_hash_norm, COALESCE(file_index, -1))`,
+    `CREATE INDEX IF NOT EXISTS idx_torrents_cached_rd ON torrents (cached_rd, next_cached_check NULLS FIRST)`,
+    `CREATE INDEX IF NOT EXISTS idx_torrents_rd_scan_queue ON torrents (next_cached_check NULLS FIRST, last_cached_check NULLS FIRST)`,
     `CREATE INDEX IF NOT EXISTS idx_files_info_hash_norm ON files (info_hash_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_files_lookup_episode ON files (imdb_id, imdb_season, imdb_episode, info_hash_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_files_lookup_movie ON files (imdb_id, info_hash_norm) WHERE imdb_season IS NULL OR imdb_season = 0`
@@ -161,7 +170,13 @@ async function getTorrents(imdbId, season, episode) {
           t.size,
           t.seeders,
           t.provider,
-          t.file_index
+          t.file_index,
+          t.cached_rd,
+          t.rd_file_index,
+          t.rd_file_size,
+          t.last_cached_check,
+          t.next_cached_check,
+          t.cache_check_failures
         FROM files f
         JOIN torrents t ON COALESCE(f.info_hash_norm, LOWER(TRIM(f.info_hash))) = COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash)))
       `;
@@ -199,7 +214,13 @@ async function getTorrents(imdbId, season, episode) {
             seeders: toSafeNumber(row.seeders, 0),
             provider: sanitizeText(row.provider, 'Unknown'),
             magnet: trackerRegistry.buildMagnet(infoHash),
-            file_index: toNullableInt(row.file_index)
+            file_index: toNullableInt(row.file_index),
+            cached_rd: row.cached_rd === null || row.cached_rd === undefined ? null : Boolean(row.cached_rd),
+            rd_file_index: toNullableInt(row.rd_file_index),
+            rd_file_size: toSafeNumber(row.rd_file_size, 0),
+            last_cached_check: row.last_cached_check || null,
+            next_cached_check: row.next_cached_check || null,
+            cache_check_failures: toSafeNumber(row.cache_check_failures, 0)
           };
         })
         .filter((row) => row.info_hash);
@@ -350,14 +371,82 @@ async function insertTorrent(meta, torrent) {
   }
 }
 
+async function getRdScanBatch(limit = 5) {
+  if (!pool) return [];
+
+  const normalizedLimit = Math.max(1, Math.min(250, toSafeNumber(limit, 5)));
+
+  try {
+    return await withClient(async (client) => {
+      const query = `
+        SELECT DISTINCT ON (COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))))
+          TRIM(t.info_hash) AS info_hash,
+          t.title,
+          t.file_index,
+          t.seeders,
+          t.size,
+          t.cached_rd,
+          t.rd_file_index,
+          t.last_cached_check,
+          t.next_cached_check,
+          t.cache_check_failures
+        FROM torrents t
+        WHERE t.info_hash IS NOT NULL
+          AND COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))) IS NOT NULL
+          AND (
+            t.last_cached_check IS NULL
+            OR t.next_cached_check IS NULL
+            OR t.next_cached_check <= NOW()
+          )
+        ORDER BY
+          COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))),
+          CASE WHEN t.last_cached_check IS NULL THEN 0 ELSE 1 END ASC,
+          t.next_cached_check NULLS FIRST,
+          t.last_cached_check NULLS FIRST,
+          COALESCE(t.seeders, 0) DESC,
+          COALESCE(t.size, 0) DESC,
+          COALESCE(t.file_index, -1) ASC
+        LIMIT $1
+      `;
+
+      const res = await client.query(query, [normalizedLimit]);
+      return res.rows
+        .map((row) => ({
+          hash: normalizeInfoHash(row.info_hash),
+          title: sanitizeText(row.title),
+          file_index: toNullableInt(row.file_index),
+          seeders: toSafeNumber(row.seeders, 0),
+          size: toSafeNumber(row.size, 0),
+          cached_rd: row.cached_rd === null || row.cached_rd === undefined ? null : Boolean(row.cached_rd),
+          rd_file_index: toNullableInt(row.rd_file_index),
+          last_cached_check: row.last_cached_check || null,
+          next_cached_check: row.next_cached_check || null,
+          cache_check_failures: toSafeNumber(row.cache_check_failures, 0)
+        }))
+        .filter((row) => row.hash);
+    });
+  } catch (error) {
+    console.error(`❌ DB Error getRdScanBatch: ${error.message}`);
+    return [];
+  }
+}
+
 async function updateRdCacheStatus(cacheResults) {
   if (!pool || !Array.isArray(cacheResults) || cacheResults.length === 0) return 0;
 
   const normalizedRows = cacheResults
-    .map((entry) => ({
-      hash: normalizeInfoHash(entry?.hash),
-      cached: Boolean(entry?.cached)
-    }))
+    .map((entry) => {
+      const hasCached = typeof entry?.cached === 'boolean';
+      const nextHours = Math.max(1, Math.min(24 * 90, toSafeNumber(entry?.next_hours, hasCached ? (entry.cached ? 24 * 30 : 24 * 7) : 12)));
+      return {
+        hash: normalizeInfoHash(entry?.hash),
+        cached: hasCached ? entry.cached : null,
+        rd_file_index: toNullableInt(entry?.rd_file_index),
+        rd_file_size: entry?.rd_file_size === null || entry?.rd_file_size === undefined ? null : toSafeNumber(entry?.rd_file_size, 0),
+        failures: Math.max(0, toSafeNumber(entry?.failures, 0)),
+        next_hours: nextHours
+      };
+    })
     .filter((entry) => entry.hash);
 
   if (normalizedRows.length === 0) return 0;
@@ -369,17 +458,30 @@ async function updateRdCacheStatus(cacheResults) {
         const values = [];
         const placeholders = normalizedRows
           .map((row, index) => {
-            const base = index * 2;
-            values.push(row.hash, row.cached);
-            return `($${base + 1}, $${base + 2})`;
+            const base = index * 6;
+            values.push(row.hash, row.cached, row.rd_file_index, row.rd_file_size, row.failures, row.next_hours);
+            return `($${base + 1}::text, $${base + 2}::boolean, $${base + 3}::integer, $${base + 4}::bigint, $${base + 5}::integer, $${base + 6}::integer)`;
           })
           .join(', ');
 
         const query = `
           UPDATE torrents AS t
-          SET cached_rd = v.cached,
-              last_cached_check = NOW()
-          FROM (VALUES ${placeholders}) AS v(info_hash, cached)
+          SET cached_rd = CASE
+                WHEN v.cached IS NULL THEN t.cached_rd
+                ELSE v.cached
+              END,
+              rd_file_index = CASE
+                WHEN v.rd_file_index IS NULL OR v.rd_file_index < 0 THEN t.rd_file_index
+                ELSE v.rd_file_index
+              END,
+              rd_file_size = CASE
+                WHEN v.rd_file_size IS NULL OR v.rd_file_size <= 0 THEN t.rd_file_size
+                ELSE v.rd_file_size
+              END,
+              cache_check_failures = GREATEST(0, COALESCE(v.failures, 0)),
+              last_cached_check = NOW(),
+              next_cached_check = NOW() + make_interval(hours => GREATEST(1, COALESCE(v.next_hours, 12)))
+          FROM (VALUES ${placeholders}) AS v(info_hash, cached, rd_file_index, rd_file_size, failures, next_hours)
           WHERE COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))) = v.info_hash
         `;
 
@@ -392,8 +494,96 @@ async function updateRdCacheStatus(cacheResults) {
       }
     });
   } catch (error) {
-    console.error(`âŒ DB Error updateCache: ${error.message}`);
+    console.error(`❌ DB Error updateCache: ${error.message}`);
     return 0;
+  }
+}
+
+async function getRdScanProgress() {
+  if (!pool) return null;
+
+  try {
+    const res = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE info_hash IS NOT NULL) AS total_with_hash,
+        COUNT(*) FILTER (WHERE info_hash IS NOT NULL AND last_cached_check IS NULL) AS pending_first_scan,
+        COUNT(*) FILTER (WHERE info_hash IS NOT NULL AND last_cached_check IS NOT NULL) AS already_scanned,
+        COUNT(*) FILTER (WHERE info_hash IS NOT NULL AND last_cached_check IS NOT NULL AND cached_rd IS TRUE) AS cached_true,
+        COUNT(*) FILTER (WHERE info_hash IS NOT NULL AND last_cached_check IS NOT NULL AND cached_rd IS FALSE) AS cached_false,
+        COUNT(*) FILTER (WHERE info_hash IS NOT NULL AND next_cached_check IS NOT NULL AND next_cached_check <= NOW()) AS due_now
+      FROM torrents
+    `);
+    return res.rows?.[0] || null;
+  } catch (error) {
+    console.error(`❌ DB Error getRdScanProgress: ${error.message}`);
+    return null;
+  }
+}
+
+
+async function normalizePendingRdCacheState(options = {}) {
+  if (!pool) return { applied: false, updated: 0, reason: 'pool_missing' };
+
+  const chunkSize = Math.max(500, Math.min(50000, toSafeNumber(options.chunkSize, 10000)));
+  const lockKey = 884421337;
+  let lockAcquired = false;
+
+  try {
+    return await withClient(async (client) => {
+      const lockRes = await client.query('SELECT pg_try_advisory_lock($1) AS locked', [lockKey]);
+      lockAcquired = Boolean(lockRes.rows?.[0]?.locked);
+      if (!lockAcquired) {
+        return { applied: false, updated: 0, reason: 'lock_not_acquired' };
+      }
+
+      let totalUpdated = 0;
+      await client.query(`
+        ALTER TABLE torrents
+        ALTER COLUMN cached_rd DROP DEFAULT
+      `);
+
+      while (true) {
+        const updateRes = await client.query(`
+          WITH target AS (
+            SELECT ctid
+            FROM torrents
+            WHERE info_hash IS NOT NULL
+              AND last_cached_check IS NULL
+              AND (
+                cached_rd IS NOT NULL
+                OR rd_file_index IS NOT NULL
+                OR rd_file_size IS NOT NULL
+                OR COALESCE(cache_check_failures, 0) <> 0
+                OR next_cached_check IS NOT NULL
+              )
+            LIMIT $1
+          )
+          UPDATE torrents AS t
+          SET cached_rd = NULL,
+              rd_file_index = NULL,
+              rd_file_size = NULL,
+              cache_check_failures = 0,
+              next_cached_check = NULL
+          FROM target
+          WHERE t.ctid = target.ctid
+        `, [chunkSize]);
+
+        const changed = Number(updateRes.rowCount || 0);
+        totalUpdated += changed;
+        if (changed === 0) break;
+      }
+
+      return { applied: true, updated: totalUpdated, reason: 'normalized' };
+    });
+  } catch (error) {
+    console.error(`❌ DB Error normalizePendingRdCacheState: ${error.message}`);
+    return { applied: false, updated: 0, reason: error.message };
+  } finally {
+    if (lockAcquired) {
+      try {
+        await pool.query('SELECT pg_advisory_unlock($1)', [lockKey]);
+      } catch (_) {}
+    }
   }
 }
 
@@ -408,8 +598,11 @@ module.exports = {
   shutdownDatabase,
   healthCheck,
   getTorrents,
+  getRdScanBatch,
   insertTorrent,
   updateRdCacheStatus,
+  getRdScanProgress,
+  normalizePendingRdCacheState,
   updateTrackers: trackerRegistry.updateTrackers,
   getActiveTrackers: trackerRegistry.getActiveTrackers,
   buildMagnet: trackerRegistry.buildMagnet,

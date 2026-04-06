@@ -3,13 +3,14 @@ const axios = require("axios");
 
 const WEBSTREAMR_BASE = "https://webstreamr.hayd.uk/%7B%22it%22%3A%22on%22%2C%22mediaFlowProxyUrl%22%3A%22%22%2C%22mediaFlowProxyPassword%22%3A%22%22%7D";
 
+// Helper per determinare la qualità dal titolo
 function detectQuality(title) {
     const t = (title || "").toLowerCase();
     if (/2160p|4k|uhd/i.test(t)) return { q: "4K", icon: "🔥" };
     if (/1080p|fhd/i.test(t)) return { q: "1080p", icon: "✨" };
     if (/720p|hd/i.test(t)) return { q: "720p", icon: "📺" };
     if (/480p|sd/i.test(t)) return { q: "SD", icon: "🐢" };
-    return { q: "HD", icon: "🎞️" }; 
+    return { q: "HD", icon: "🎞️" }; // Default se non trova nulla
 }
 
 async function searchWebStreamr(type, id) {
@@ -24,11 +25,13 @@ async function searchWebStreamr(type, id) {
             return [];
         }
 
+        // 1. FILTRO: Cerchiamo file con tag esplicitamente "ITA"
         const explicitItalianStreams = data.streams.filter(stream => {
             const t = (stream.title || "").toLowerCase();
             return /\b(ita|italian|italiano)\b/i.test(t);
         });
 
+        // 2. LOGICA DI SELEZIONE
         let resultsToProcess = [];
         let isFallbackMode = false;
 
@@ -41,15 +44,20 @@ async function searchWebStreamr(type, id) {
             isFallbackMode = true;
         }
 
+        // 3. FORMATTAZIONE RISULTATI
         return resultsToProcess.map(stream => {
             const rawTitle = stream.title || "Unknown Stream";
+            // Pulizia titolo dai nomi dei provider
             const cleanTitle = rawTitle.replace(/WebStreamr|Hayd/gi, "").trim();
             const { q, icon } = detectQuality(cleanTitle);
 
+            // Costruzione righe visuali
             const lines = [];
             
+            // RIGA 1: Titolo pulito
             lines.push(`🎬 ${cleanTitle}`);
             
+            // RIGA 2: Determinazione Lingua
             let langInfo = "🇮🇹 ITA"; 
 
             if (isFallbackMode) {
@@ -58,7 +66,7 @@ async function searchWebStreamr(type, id) {
                 if (/\b(eng|english|en)\b/i.test(rawTitle)) {
                     langInfo = "🇬🇧 ENG";
                 } 
-
+                // Se è un anime o subbato
                 else if (/\b(sub|subbed|jap)\b/i.test(rawTitle)) {
                     langInfo = "🇯🇵 Sub ITA"; 
                 }
@@ -67,6 +75,7 @@ async function searchWebStreamr(type, id) {
             
             lines.push(`${langInfo} • 🌐 Web-DL`);
 
+            // RIGA 3: Info Provider
             lines.push(`⚡ [Web] WebStreamr Fallback`);
 
             return {
