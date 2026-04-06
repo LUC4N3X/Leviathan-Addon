@@ -45,6 +45,8 @@ if (String(process.env.RD_CACHE_SCANNER_ENABLED || '').toLowerCase() === 'true')
 
 const app = express();
 app.set('trust proxy', 1);
+const RATE_LIMIT_WINDOW_MS = Math.max(60 * 1000, parseInt(process.env.RATE_LIMIT_WINDOW_MS || String(15 * 60 * 1000), 10) || (15 * 60 * 1000));
+const RATE_LIMIT_MAX = Math.max(50, parseInt(process.env.RATE_LIMIT_MAX || "350", 10) || 350);
 
 app.use(compression({
   filter: (req, res) => {
@@ -55,8 +57,8 @@ app.use(compression({
 }));
 
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 350,
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    max: RATE_LIMIT_MAX,
     standardHeaders: true,
     legacyHeaders: false,
     message: "Troppe richieste da questo IP, riprova più tardi."
@@ -84,6 +86,14 @@ function getServiceResolverLimiter(service) {
     if (normalized === 'ad') return LIMITERS.adResolve;
     if (normalized === 'tb') return LIMITERS.tbResolve;
     return LIMITERS.rdResolve;
+}
+
+function getDbLookupCacheKey(meta) {
+    const imdbId = String(meta?.imdb_id || '').trim().toLowerCase();
+    if (!/^tt\d+$/.test(imdbId)) return null;
+    const season = Number(meta?.season || 0) || 0;
+    const episode = Number(meta?.episode || 0) || 0;
+    return `${imdbId}:${season}:${episode}`;
 }
 
 async function markPlayableResultAsCached(dbHelper, service, item, streamData, logger, meta = null) {
@@ -131,6 +141,8 @@ async function markPlayableResultAsCached(dbHelper, service, item, streamData, l
         if (updated > 0) {
             await Cache.invalidateStreamsByHashes([item.hash], 'lazy_play_cached');
             if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, 'lazy_play_cached');
+            const dbLookupKey = getDbLookupCacheKey(meta);
+            if (dbLookupKey) await Cache.invalidateDbTorrents(dbLookupKey, 'lazy_play_cached');
             logger.info(`[LAZY PLAY] Stato cache aggiornato a CACHED | service=${normalizedService} | hash=${item.hash} | fileIdx=${Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : 'n/a'} | updated=${updated}`);
             return true;
         }
