@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leviathan RD Scanner</title>
+    <style>
+        :root {
+            --bg: #07111d;
+            --panel: rgba(9, 22, 38, 0.9);
+            --panel-2: rgba(14, 34, 56, 0.9);
+            --border: rgba(102, 214, 255, 0.18);
+            --text: #e8f4ff;
+            --muted: #8ea8c1;
+            --cyan: #5ce1ff;
+            --green: #58e07d;
+            --amber: #ffcb57;
+            --red: #ff6b6b;
+            --shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Segoe UI", system-ui, sans-serif;
+            background:
+                radial-gradient(circle at top, rgba(92, 225, 255, 0.09), transparent 35%),
+                linear-gradient(180deg, #0a1829 0%, var(--bg) 100%);
+            color: var(--text);
+        }
+
+        .wrap {
+            max-width: 1180px;
+            margin: 0 auto;
+            padding: 28px 18px 42px;
+        }
+
+        .hero {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            gap: 16px;
+            margin-bottom: 22px;
+        }
+
+        .title {
+            margin: 0;
+            font-size: clamp(2rem, 5vw, 3.4rem);
+            letter-spacing: 0.04em;
+        }
+
+        .subtitle {
+            margin-top: 8px;
+            color: var(--muted);
+            max-width: 760px;
+        }
+
+        .refresh {
+            border: 1px solid var(--border);
+            background: rgba(92, 225, 255, 0.08);
+            color: var(--text);
+            border-radius: 999px;
+            padding: 10px 16px;
+            cursor: pointer;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 16px;
+        }
+
+        .panel {
+            grid-column: span 12;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 18px;
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(12px);
+        }
+
+        .panel.half { grid-column: span 6; }
+        .panel.third { grid-column: span 4; }
+
+        .panel h2, .panel h3 {
+            margin: 0 0 14px;
+            font-size: 1rem;
+            letter-spacing: 0.04em;
+            color: var(--cyan);
+            text-transform: uppercase;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+            gap: 12px;
+        }
+
+        .card {
+            background: var(--panel-2);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 14px;
+            padding: 14px;
+        }
+
+        .label {
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .value {
+            font-size: 1.55rem;
+            font-weight: 700;
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            border-radius: 999px;
+            padding: 8px 12px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .pill.ok { color: var(--green); }
+        .pill.warn { color: var(--amber); }
+        .pill.bad { color: var(--red); }
+
+        .row {
+            display: grid;
+            grid-template-columns: 170px 1fr;
+            gap: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .row:last-child { border-bottom: 0; }
+        .key { color: var(--muted); }
+        .mono {
+            font-family: Consolas, "SFMono-Regular", monospace;
+            word-break: break-word;
+        }
+
+        .progress {
+            width: 100%;
+            height: 10px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.06);
+            overflow: hidden;
+            margin-top: 14px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--cyan), var(--green));
+            transition: width 0.3s ease;
+        }
+
+        .mini-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+        }
+
+        .error {
+            color: var(--red);
+            white-space: pre-wrap;
+        }
+
+        @media (max-width: 900px) {
+            .panel.half, .panel.third { grid-column: span 12; }
+            .hero { flex-direction: column; align-items: flex-start; }
+            .row { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="hero">
+            <div>
+                <h1 class="title">Leviathan RD Scanner</h1>
+                <div class="subtitle">Monitor live di scanner RD, invalidazione cache stream e priorita di pre-scan sui risultati visibili.</div>
+            </div>
+            <button class="refresh" id="refreshBtn">Aggiorna ora</button>
+        </div>
+
+        <div class="grid">
+            <section class="panel">
+                <h2>Panoramica</h2>
+                <div class="stats" id="summaryCards"></div>
+                <div class="progress"><div class="progress-bar" id="scanProgressBar"></div></div>
+            </section>
+
+            <section class="panel half">
+                <h3>Worker</h3>
+                <div id="workerDetails"></div>
+            </section>
+
+            <section class="panel half">
+                <h3>Database</h3>
+                <div id="dbDetails"></div>
+            </section>
+
+            <section class="panel third">
+                <h3>Cache Stream</h3>
+                <div id="cacheDetails"></div>
+            </section>
+
+            <section class="panel third">
+                <h3>Metriche Runtime</h3>
+                <div id="runtimeDetails"></div>
+            </section>
+
+            <section class="panel third">
+                <h3>Ultimo Evento</h3>
+                <div id="eventDetails"></div>
+            </section>
+
+            <section class="panel">
+                <h3>Errore / Diagnostica</h3>
+                <div id="diagDetails"></div>
+            </section>
+        </div>
+    </div>
+
+    <script>
+        const summaryCards = document.getElementById('summaryCards');
+        const workerDetails = document.getElementById('workerDetails');
+        const dbDetails = document.getElementById('dbDetails');
+        const cacheDetails = document.getElementById('cacheDetails');
+        const runtimeDetails = document.getElementById('runtimeDetails');
+        const eventDetails = document.getElementById('eventDetails');
+        const diagDetails = document.getElementById('diagDetails');
+        const scanProgressBar = document.getElementById('scanProgressBar');
+        const refreshBtn = document.getElementById('refreshBtn');
+
+        function fmt(value) {
+            const num = Number(value || 0);
+            return Number.isFinite(num) ? num.toLocaleString('it-IT') : String(value ?? '-');
+        }
+
+        function esc(value) {
+            return String(value ?? '-')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
+        function renderRows(target, rows) {
+            target.innerHTML = rows.map(({ key, value, cls = '' }) => `
+                <div class="row">
+                    <div class="key">${esc(key)}</div>
+                    <div class="${cls}">${esc(value)}</div>
+                </div>
+            `).join('');
+        }
+
+        function renderSummary(scanner, progress, runtime) {
+            const total = Number(progress?.total_with_hash || 0);
+            const scanned = Number(progress?.already_scanned || 0);
+            const cached = Number(progress?.cached_true || 0);
+            const uncached = Number(progress?.cached_false || 0);
+            const dueNow = Number(progress?.due_now || 0);
+            const invalidateCount = Number(runtime?.counters?.['cache.stream.invalidations'] || 0);
+
+            const stateClass = scanner?.running ? 'ok' : (scanner?.enabled ? 'warn' : 'bad');
+            const stateText = scanner?.running ? 'Attivo' : (scanner?.enabled ? 'In attesa' : 'Disabilitato');
+
+            summaryCards.innerHTML = `
+                <div class="card">
+                    <div class="label">Stato</div>
+                    <div class="pill ${stateClass}">${esc(stateText)}</div>
+                </div>
+                <div class="card">
+                    <div class="label">Totale Hash</div>
+                    <div class="value">${fmt(total)}</div>
+                </div>
+                <div class="card">
+                    <div class="label">Gia Scansionati</div>
+                    <div class="value">${fmt(scanned)}</div>
+                </div>
+                <div class="card">
+                    <div class="label">Cached</div>
+                    <div class="value">${fmt(cached)}</div>
+                </div>
+                <div class="card">
+                    <div class="label">Uncached</div>
+                    <div class="value">${fmt(uncached)}</div>
+                </div>
+                <div class="card">
+                    <div class="label">Due Now</div>
+                    <div class="value">${fmt(dueNow)}</div>
+                </div>
+                <div class="card">
+                    <div class="label">Invalidazioni</div>
+                    <div class="value">${fmt(invalidateCount)}</div>
+                </div>
+            `;
+
+            const progressPct = total > 0 ? Math.max(0, Math.min(100, (scanned / total) * 100)) : 0;
+            scanProgressBar.style.width = `${progressPct}%`;
+        }
+
+        function renderDashboard(data) {
+            const scanner = data?.scanner || {};
+            const progress = data?.progress || {};
+            const runtime = data?.runtime || {};
+            const streamCache = data?.streamCache || {};
+
+            renderSummary(scanner, progress, runtime);
+
+            renderRows(workerDetails, [
+                { key: 'Reason', value: scanner.reason || '-' },
+                { key: 'Batch size', value: scanner.batchSize ?? '-' },
+                { key: 'Sleep ms', value: scanner.sleepMs ?? '-' },
+                { key: 'Idle ms', value: scanner.idleMs ?? '-' },
+                { key: 'Hash corrente', value: scanner.currentHash || '-' , cls: 'mono' },
+                { key: 'Titolo corrente', value: scanner.currentTitle || '-' },
+                { key: 'Ultima attivita', value: scanner.lastActivityAt || '-' },
+                { key: 'Ultimo batch', value: scanner.lastBatchAt || '-' },
+                { key: 'Total scanned', value: fmt(scanner.totalScanned) },
+                { key: 'Total updated', value: fmt(scanner.totalUpdated) }
+            ]);
+
+            renderRows(dbDetails, [
+                { key: 'Totale con hash', value: fmt(progress.total_with_hash) },
+                { key: 'Pending first scan', value: fmt(progress.pending_first_scan) },
+                { key: 'Gia scansionati', value: fmt(progress.already_scanned) },
+                { key: 'Cached true', value: fmt(progress.cached_true) },
+                { key: 'Cached false', value: fmt(progress.cached_false) },
+                { key: 'Due now', value: fmt(progress.due_now) }
+            ]);
+
+            renderRows(cacheDetails, [
+                { key: 'Tracked stream keys', value: fmt(streamCache.trackedKeys) },
+                { key: 'Hash buckets', value: fmt(streamCache.hashBuckets) },
+                { key: 'IMDB buckets', value: fmt(streamCache.imdbBuckets) },
+                { key: 'Cached entries', value: fmt(streamCache.cachedEntries) },
+                { key: 'Stream hit rate', value: `${fmt(runtime?.cache?.stream?.hitRate || 0)}%` }
+            ]);
+
+            renderRows(runtimeDetails, [
+                { key: 'Pre-scan richiesti', value: fmt(runtime?.counters?.['rdPriority.requested']) },
+                { key: 'Pre-scan applicati', value: fmt(runtime?.counters?.['rdPriority.applied']) },
+                { key: 'Pre-scan noop', value: fmt(runtime?.counters?.['rdPriority.noop']) },
+                { key: 'Invalidated keys', value: fmt(runtime?.counters?.['cache.stream.invalidatedKeys']) },
+                { key: 'Lazy warmup ok', value: fmt(runtime?.counters?.['lazyWarmup.success']) },
+                { key: 'Lazy warmup fail', value: fmt(runtime?.counters?.['lazyWarmup.fail']) }
+            ]);
+
+            const lastOutcome = scanner?.lastOutcome || {};
+            renderRows(eventDetails, [
+                { key: 'Hash', value: lastOutcome.hash || '-', cls: 'mono' },
+                { key: 'Cached', value: String(lastOutcome.cached ?? '-') },
+                { key: 'Reason', value: lastOutcome.reason || '-' },
+                { key: 'File', value: lastOutcome.rd_file_index ?? '-' },
+                { key: 'Size', value: lastOutcome.rd_file_size ?? '-' },
+                { key: 'At', value: lastOutcome.at || '-' }
+            ]);
+
+            const error = scanner?.lastError || progress?.error || '';
+            diagDetails.innerHTML = error
+                ? `<div class="error">${esc(error)}</div>`
+                : `<div class="mini-grid">
+                        <div class="card"><div class="label">Timestamp</div><div class="value" style="font-size:1rem;">${esc(data?.timestamp || '-')}</div></div>
+                        <div class="card"><div class="label">Worker progress snapshot</div><div class="value" style="font-size:1rem;">${esc(JSON.stringify(scanner?.lastProgress || progress || {}, null, 2))}</div></div>
+                   </div>`;
+        }
+
+        async function loadDashboard() {
+            refreshBtn.disabled = true;
+            refreshBtn.textContent = 'Aggiorno...';
+            try {
+                const response = await fetch('/api/rd-scanner-dashboard', { cache: 'no-store' });
+                const data = await response.json();
+                renderDashboard(data);
+            } catch (error) {
+                diagDetails.innerHTML = `<div class="error">${esc(error.message || error)}</div>`;
+            } finally {
+                refreshBtn.disabled = false;
+                refreshBtn.textContent = 'Aggiorna ora';
+            }
+        }
+
+        refreshBtn.addEventListener('click', loadDashboard);
+        loadDashboard();
+        setInterval(loadDashboard, 8000);
+    </script>
+</body>
+</html>
