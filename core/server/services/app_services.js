@@ -1,0 +1,172 @@
+'use strict';
+
+const axios = require('axios');
+const crypto = require('crypto');
+
+function createAppServices({
+    Cache,
+    LIMITERS,
+    cloudBuildInflight,
+    buildTrackerMagnet,
+    dbHelper,
+    logger,
+    recordDuration,
+    recordProviderMetric
+}) {
+    function getBuildKey(service, hash, apiKey) {
+        const tokenSig = crypto.createHash('sha1').update(String(apiKey || '')).digest('hex').slice(0, 12);
+        return `${String(service || '').toLowerCase()}:${String(hash || '').toUpperCase()}:${tokenSig}`;
+    }
+
+    function getServiceResolverLimiter(service) {
+        const normalized = String(service || '').toLowerCase();
+        if (normalized === 'ad') return LIMITERS.adResolve;
+        if (normalized === 'tb') return LIMITERS.tbResolve;
+        return LIMITERS.rdResolve;
+    }
+
+    function getDbLookupCacheKey(meta) {
+        const imdbId = String(meta?.imdb_id || '').trim().toLowerCase();
+        if (!/^tt\d+$/.test(imdbId)) return null;
+        const season = Number(meta?.season || 0) || 0;
+        const episode = Number(meta?.episode || 0) || 0;
+        return `${imdbId}:${season}:${episode}`;
+    }
+
+    function cloneManifest(manifest) {
+        if (!manifest || typeof manifest !== 'object') return manifest;
+        if (typeof structuredClone === 'function') return structuredClone(manifest);
+        return JSON.parse(JSON.stringify(manifest));
+    }
+
+    function getCacheHealthStatus() {
+        if (!Cache || typeof Cache !== 'object') return 'unavailable';
+        const requiredMethods = ['getCloudBuild', 'setCloudBuild', 'getLazyLink', 'cacheLazyLink'];
+        const missing = requiredMethods.filter((method) => typeof Cache[method] !== 'function');
+        if (missing.length > 0) return `degraded (missing:${missing.join(',')})`;
+        if (typeof Cache.getStreamCacheIndexStats === 'function') {
+            try {
+                const stats = Cache.getStreamCacheIndexStats();
+                if (stats && typeof stats === 'object') return 'ok';
+            } catch (err) {
+                return `degraded (${err.message})`;
+            }
+        }
+        return 'ok';
+    }
+
+    async function markPlayableResultAsCached(service, item, streamData, meta = null) {
+        const normalizedService = String(service || '').toLowerCase();
+        if (!dbHelper || typeof dbHelper.updateRdCacheStatus !== 'function') return false;
+        if (!item?.hash) return false;
+        if (!['rd', 'ad'].includes(normalizedService)) return false;
+
+        const rawFileIndex = streamData?.rd_file_index ?? streamData?.file_index ?? streamData?.fileIdx ?? item?.fileIdx;
+        const rawFileSize = streamData?.rd_file_size ?? streamData?.file_size ?? streamData?.filesize ?? streamData?.size ?? null;
+        const parsedFileIndex = Number(rawFileIndex);
+        const parsedFileSize = Number(rawFileSize);
+        const resolvedTitle = streamData?.filename || item?.title || String(item.hash);
+
+        try {
+            if ((!meta?.imdb_id) && typeof dbHelper.ensureTorrentRecord === 'function') {
+                await dbHelper.ensureTorrentRecord({
+                    info_hash: item.hash,
+                    title: resolvedTitle,
+                    size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : Number(item?._size || item?.sizeBytes || 0),
+                    seeders: Number(item?.seeders || 0) || 0,
+                    provider: item?.source || normalizedService.toUpperCase(),
+                    file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : (item?.fileIdx !== undefined ? item.fileIdx : undefined)
+                });
+            }
+            if (meta?.imdb_id && typeof dbHelper.insertTorrent === 'function') {
+                await dbHelper.insertTorrent(meta, {
+                    info_hash: item.hash,
+                    title: resolvedTitle,
+                    size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : 0,
+                    seeders: Number(item?.seeders || 0) || 0,
+                    provider: item?.source || normalizedService.toUpperCase(),
+                    file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : (item?.fileIdx !== undefined ? item.fileIdx : undefined)
+                });
+            }
+
+            const updated = await dbHelper.updateRdCacheStatus([{
+                hash: item.hash,
+                cached: true,
+                rd_file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
+                rd_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
+                failures: 0,
+                permanent: true
+            }]);
+            if (updated > 0) {
+                await Cache.invalidateStreamsByHashes([item.hash], 'lazy_play_cached');
+                if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, 'lazy_play_cached');
+                const dbLookupKey = getDbLookupCacheKey(meta);
+                if (dbLookupKey) await Cache.invalidateDbTorrents(dbLookupKey, 'lazy_play_cached');
+                logger.info(`[LAZY PLAY] Stato cache aggiornato a CACHED | service=${normalizedService} | hash=${item.hash} | fileIdx=${Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : 'n/a'} | updated=${updated}`);
+                return true;
+            }
+        } catch (err) {
+            logger.warn(`[LAZY PLAY] Impossibile aggiornare stato cache | service=${normalizedService} | hash=${item.hash} | error=${err.message}`);
+        }
+
+        return false;
+    }
+
+    async function queueCloudBuild(service, hash, apiKey) {
+        const buildKey = getBuildKey(service, hash, apiKey);
+        const existingPromise = cloudBuildInflight.get(buildKey);
+        if (existingPromise) return existingPromise;
+
+        const task = (async () => {
+            const startedAt = Date.now();
+            const magnet = buildTrackerMagnet(hash);
+            await Cache.setCloudBuild(buildKey, { status: 'queued', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now() }, 900);
+
+            await LIMITERS.cloudBuild.schedule(async () => {
+                if (service === 'rd') {
+                    await axios.post('https://api.real-debrid.com/rest/1.0/torrents/addMagnet', `magnet=${encodeURIComponent(magnet)}`, { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' } });
+                } else if (service === 'ad') {
+                    await axios.get('https://api.alldebrid.com/v4/magnet/upload', { params: { agent: 'leviathan', apikey: apiKey, magnet } });
+                } else if (service === 'tb') {
+                    const body = new URLSearchParams();
+                    body.append('magnet', magnet);
+                    body.append('seed', '1');
+                    body.append('allow_zip', 'false');
+                    await axios.post('https://api.torbox.app/v1/api/torrents/createtorrent', body.toString(), { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' } });
+                }
+            });
+
+            await Cache.setCloudBuild(buildKey, { status: 'submitted', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now() }, 900);
+            recordDuration('cloudBuild.total', Date.now() - startedAt);
+            recordProviderMetric(`cloudBuild.${service}`, true, Date.now() - startedAt);
+            return { ok: true, duplicate: false };
+        })().catch(async (err) => {
+            const status = err?.response?.status;
+            const body = err?.response?.data;
+            const msg = typeof body === 'string' ? body : JSON.stringify(body || {});
+            if (status === 409 || /already|duplicate|exists|same magnet|in progress/i.test(`${err.message} ${msg}`)) {
+                await Cache.setCloudBuild(buildKey, { status: 'submitted', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now(), duplicate: true }, 900);
+                recordProviderMetric(`cloudBuild.${service}`, true, 0, { error: 'duplicate' });
+                return { ok: true, duplicate: true };
+            }
+            await Cache.setCloudBuild(buildKey, { status: 'error', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now(), error: err.message }, 120);
+            recordProviderMetric(`cloudBuild.${service}`, false, 0, { error: err.message });
+            throw err;
+        }).finally(() => cloudBuildInflight.delete(buildKey));
+
+        cloudBuildInflight.set(buildKey, task);
+        return task;
+    }
+
+    return {
+        getBuildKey,
+        getServiceResolverLimiter,
+        getDbLookupCacheKey,
+        cloneManifest,
+        getCacheHealthStatus,
+        markPlayableResultAsCached,
+        queueCloudBuild
+    };
+}
+
+module.exports = { createAppServices };
