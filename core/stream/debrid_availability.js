@@ -265,6 +265,13 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 parseInt(options.minKnownStates ?? process.env.RD_FOREGROUND_MIN_KNOWN ?? '4', 10) || 4
             )
         );
+        const fallbackProbeLimit = Math.max(
+            0,
+            Math.min(
+                probeLimit,
+                parseInt(options.fallbackProbeLimit ?? process.env.RD_FOREGROUND_FALLBACK_PROBE_LIMIT ?? '3', 10) || 3
+            )
+        );
 
         const visibleSlice = list.slice(0, visibleWindow);
         const knownStates = visibleSlice.filter((item) => {
@@ -272,18 +279,22 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             return state === 'cached' || state === 'uncached' || state === 'probing';
         }).length;
 
-        if (knownStates >= minKnownStates) {
-            logger.info(`[RD PROBE] Skip live check | known=${knownStates}/${visibleSlice.length} | threshold=${minKnownStates}`);
-            return list;
-        }
+        const allUnknownCandidates = visibleSlice
+            .filter((item) => !isGuaranteedCachedExternal(item) && getRdAvailabilityState('rd', item) === 'unknown' && item?.hash && item?.magnet);
 
-        const unknownCandidates = visibleSlice
-            .filter((item) => !isGuaranteedCachedExternal(item) && getRdAvailabilityState('rd', item) === 'unknown' && item?.hash && item?.magnet)
-            .slice(0, probeLimit);
+        if (allUnknownCandidates.length === 0) return list;
+
+        const shouldReduceProbe = knownStates >= minKnownStates;
+        const unknownCandidates = allUnknownCandidates
+            .slice(0, shouldReduceProbe ? fallbackProbeLimit : probeLimit);
 
         if (unknownCandidates.length === 0) return list;
 
-        logger.info(`[RD PROBE] Verifico disponibilita live per ${unknownCandidates.length} risultati unknown...`);
+        if (shouldReduceProbe) {
+            logger.info(`[RD PROBE] Live check ridotto | known=${knownStates}/${visibleSlice.length} | probing=${unknownCandidates.length}/${allUnknownCandidates.length}`);
+        } else {
+            logger.info(`[RD PROBE] Verifico disponibilita live per ${unknownCandidates.length} risultati unknown...`);
+        }
 
         try {
             const { results = {}, deferred = [] } = await LIMITERS.rdResolve.schedule(() =>
