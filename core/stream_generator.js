@@ -785,7 +785,11 @@ async function resolvePackWithBestEffort(item, config, meta, siblingStreams = []
             const files = Array.isArray(resolved.files) ? resolved.files : (Array.isArray(resolved.videoFiles) ? resolved.videoFiles : []);
             const bestTitleData = chooseBestPackTitle(item, packName, siblingStreams);
             return { title: bestTitleData.title, titleSource: bestTitleData.source, packName, files, raw: resolved };
-        } catch (err) { logger.warn(`[PACK] Resolver error for ${item.hash}: ${err.message}`); }
+        } catch (err) {
+            const status = Number(err?.response?.status || err?.status || 0) || null;
+            if (status === 404) logger.info(`[PACK] Resolver miss for ${item.hash}: ${err.message}`);
+            else logger.warn(`[PACK] Resolver error for ${item.hash}: ${err.message}`);
+        }
     }
     return null;
 }

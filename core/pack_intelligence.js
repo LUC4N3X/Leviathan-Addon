@@ -5,6 +5,11 @@ const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mpg|mpeg|i
 const MIN_VIDEO_BYTES = 25 * 1024 * 1024;
 const RD_SCAN_DELAY_MS = Math.max(0, parseInt(process.env.PACK_RD_SCAN_DELAY_MS || '250', 10) || 250);
 const MEMORY_TTL_MS = Math.max(30_000, parseInt(process.env.PACK_RESOLVER_TTL_MS || String(10 * 60 * 1000), 10) || 10 * 60 * 1000);
+const NEGATIVE_CACHE_TTL_MS = Math.max(15_000, parseInt(process.env.PACK_RESOLVER_NEGATIVE_TTL_MS || String(2 * 60 * 1000), 10) || 2 * 60 * 1000);
+const RD_INFO_RETRY_ATTEMPTS = Math.max(2, parseInt(process.env.PACK_RD_INFO_RETRY_ATTEMPTS || '4', 10) || 4);
+const RD_INFO_RETRY_DELAY_MS = Math.max(250, parseInt(process.env.PACK_RD_INFO_RETRY_DELAY_MS || '900', 10) || 900);
+const TB_INFO_RETRY_ATTEMPTS = Math.max(2, parseInt(process.env.PACK_TB_INFO_RETRY_ATTEMPTS || '4', 10) || 4);
+const TB_INFO_RETRY_DELAY_MS = Math.max(500, parseInt(process.env.PACK_TB_INFO_RETRY_DELAY_MS || '1200', 10) || 1200);
 const MAX_MEMORY_ENTRIES = Math.max(50, parseInt(process.env.PACK_RESOLVER_CACHE_SIZE || '500', 10) || 500);
 
 class RequestQueue {
@@ -85,6 +90,41 @@ function cacheSet(key, value, ttlMs = MEMORY_TTL_MS) {
 
 function buildCacheKey(infoHash, service) {
     return `${service || 'auto'}:${normalizeInfoHash(infoHash)}`;
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getErrorStatus(err) {
+    const status = Number(err?.response?.status || err?.status || 0);
+    return Number.isInteger(status) && status > 0 ? status : null;
+}
+
+function isExpectedResolverMissError(err) {
+    return getErrorStatus(err) === 404 || err?.expectedMiss === true;
+}
+
+function buildNegativePackPayload(infoHash, service, reason, err = null) {
+    return {
+        infoHash,
+        service: service || 'unknown',
+        torrentId: null,
+        files: [],
+        packName: null,
+        scannedAt: Date.now(),
+        negative: true,
+        missReason: reason || 'unavailable',
+        errorStatus: getErrorStatus(err)
+    };
+}
+
+function createExpectedMissError(message, reason = 'unavailable', status = 404) {
+    const err = new Error(message || 'PACK_RESOLVER_MISS');
+    err.expectedMiss = true;
+    err.status = status;
+    err.reason = reason;
+    return err;
 }
 
 function isVideoFile(filename) {
@@ -218,6 +258,10 @@ function mapRawFiles(rawFiles) {
         .filter(file => file.path);
 }
 
+function hasUsablePackFiles(files) {
+    return Array.isArray(files) && files.length > 0;
+}
+
 function filterVideoFiles(files) {
     return mapRawFiles(files).filter(file => isVideoFile(file.path) && file.bytes >= MIN_VIDEO_BYTES);
 }
@@ -324,17 +368,70 @@ async function fetchFilesFromRealDebrid(infoHash, rdKey) {
     const torrentId = addResponse?.data?.id;
     if (!torrentId) throw new Error('RD_ADD_MAGNET_FAILED');
     try {
-        const infoResponse = await axios.get(`${baseUrl}/torrents/info/${torrentId}`, { headers, timeout: 30000 });
+        let infoData = null;
+        let lastError = null;
+
+        for (let attempt = 0; attempt < RD_INFO_RETRY_ATTEMPTS; attempt++) {
+            try {
+                const infoResponse = await axios.get(`${baseUrl}/torrents/info/${torrentId}`, { headers, timeout: 30000 });
+                infoData = infoResponse?.data || null;
+                if (hasUsablePackFiles(infoData?.files)) break;
+                lastError = null;
+            } catch (err) {
+                lastError = err;
+                if (!isExpectedResolverMissError(err) || attempt >= RD_INFO_RETRY_ATTEMPTS - 1) throw err;
+            }
+
+            if (attempt < RD_INFO_RETRY_ATTEMPTS - 1) {
+                await sleep(RD_INFO_RETRY_DELAY_MS * (attempt + 1));
+            }
+        }
+
+        if (!infoData) {
+            if (lastError) throw lastError;
+            throw createExpectedMissError('RD_INFO_NOT_READY', 'not_ready');
+        }
+        if (!hasUsablePackFiles(infoData?.files)) {
+            throw createExpectedMissError('RD_INFO_FILES_NOT_READY', 'files_not_ready');
+        }
+
         return {
             service: 'rd',
             infoHash,
             torrentId,
-            files: mapRawFiles(infoResponse?.data?.files),
-            packName: infoResponse?.data?.filename || null
+            files: mapRawFiles(infoData?.files),
+            packName: infoData?.filename || null
         };
     } finally {
         await axios.delete(`${baseUrl}/torrents/delete/${torrentId}`, { headers, timeout: 15000 }).catch(() => {});
     }
+}
+
+async function fetchTorboxListEntry(baseUrl, headers, torrentId) {
+    let lastError = null;
+    let torrent = null;
+
+    for (let attempt = 0; attempt < TB_INFO_RETRY_ATTEMPTS; attempt++) {
+        try {
+            const infoResponse = await axios.get(`${baseUrl}/torrents/mylist`, { headers, params: { id: torrentId }, timeout: 30000 });
+            torrent = Array.isArray(infoResponse?.data?.data)
+                ? infoResponse.data.data.find((entry) => String(entry.id) === String(torrentId))
+                : null;
+            if (torrent && hasUsablePackFiles(torrent?.files)) return torrent;
+            lastError = null;
+        } catch (err) {
+            lastError = err;
+            if (!isExpectedResolverMissError(err) || attempt >= TB_INFO_RETRY_ATTEMPTS - 1) throw err;
+        }
+
+        if (attempt < TB_INFO_RETRY_ATTEMPTS - 1) {
+            await sleep(TB_INFO_RETRY_DELAY_MS * (attempt + 1));
+        }
+    }
+
+    if (torrent && hasUsablePackFiles(torrent?.files)) return torrent;
+    if (lastError) throw lastError;
+    throw createExpectedMissError('TB_INFO_FILES_NOT_READY', 'files_not_ready');
 }
 
 async function fetchFilesFromTorbox(infoHash, torboxKey) {
@@ -367,9 +464,7 @@ async function fetchFilesFromTorbox(infoHash, torboxKey) {
     const torrentId = createResponse?.data?.data?.torrent_id;
     if (!torrentId) throw new Error('TB_CREATE_TORRENT_FAILED');
     try {
-        await new Promise(r => setTimeout(r, 2000));
-        const infoResponse = await axios.get(`${baseUrl}/torrents/mylist`, { headers, params: { id: torrentId }, timeout: 30000 });
-        const torrent = Array.isArray(infoResponse?.data?.data) ? infoResponse.data.data.find(entry => entry.id === torrentId) : null;
+        const torrent = await fetchTorboxListEntry(baseUrl, headers, torrentId);
         return {
             service: 'tb',
             infoHash,
@@ -386,30 +481,40 @@ async function scanPackFiles(infoHash, config) {
     const { service, rd, tb } = getApiKeys(config);
     const normalizedHash = normalizeInfoHash(infoHash);
     if (!normalizedHash) throw new Error('INVALID_INFO_HASH');
+    const resolvedService = service === 'tb' || (!rd && tb) ? 'tb' : 'rd';
     const cacheKey = buildCacheKey(normalizedHash, service || (rd ? 'rd' : tb ? 'tb' : 'auto'));
     const cached = cacheGet(cacheKey);
     if (cached) return cached;
     if (pendingScans.has(cacheKey)) return pendingScans.get(cacheKey);
 
     const task = (async () => {
-        let result;
-        if (service === 'tb' || (!rd && tb)) {
-            if (!tb) throw new Error('TB_KEY_MISSING');
-            result = await fetchFilesFromTorbox(normalizedHash, tb);
-        } else {
-            if (!rd) throw new Error('RD_KEY_MISSING');
-            result = await rdQueue.add(() => fetchFilesFromRealDebrid(normalizedHash, rd));
+        try {
+            let result;
+            if (resolvedService === 'tb') {
+                if (!tb) throw new Error('TB_KEY_MISSING');
+                result = await fetchFilesFromTorbox(normalizedHash, tb);
+            } else {
+                if (!rd) throw new Error('RD_KEY_MISSING');
+                result = await rdQueue.add(() => fetchFilesFromRealDebrid(normalizedHash, rd));
+            }
+            const payload = {
+                infoHash: normalizedHash,
+                service: result.service,
+                torrentId: result.torrentId,
+                files: filterVideoFiles(result.files),
+                packName: result.packName || null,
+                scannedAt: Date.now()
+            };
+            cacheSet(cacheKey, payload);
+            return payload;
+        } catch (err) {
+            if (isExpectedResolverMissError(err)) {
+                const negativePayload = buildNegativePackPayload(normalizedHash, resolvedService, err?.reason || 'http_404', err);
+                cacheSet(cacheKey, negativePayload, NEGATIVE_CACHE_TTL_MS);
+                return negativePayload;
+            }
+            throw err;
         }
-        const payload = {
-            infoHash: normalizedHash,
-            service: result.service,
-            torrentId: result.torrentId,
-            files: filterVideoFiles(result.files),
-            packName: result.packName || null,
-            scannedAt: Date.now()
-        };
-        cacheSet(cacheKey, payload);
-        return payload;
     })();
 
     pendingScans.set(cacheKey, task);
@@ -519,6 +624,7 @@ async function resolvePackData(arg1, config, meta) {
     if (!packData || !Array.isArray(packData.files) || packData.files.length === 0) {
         packData = await scanPackFiles(infoHash, context.config);
     }
+    if (packData?.negative === true) return null;
     if (!packData || !Array.isArray(packData.files) || packData.files.length === 0) return null;
 
     const resolved = context.meta?.isSeries ? buildSeriesResolution(packData, context) : buildMovieResolution(packData, context);
