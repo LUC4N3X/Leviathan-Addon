@@ -96,6 +96,28 @@ function getDbLookupCacheKey(meta) {
     return `${imdbId}:${season}:${episode}`;
 }
 
+function cloneManifest(manifest) {
+    if (!manifest || typeof manifest !== 'object') return manifest;
+    if (typeof structuredClone === 'function') return structuredClone(manifest);
+    return JSON.parse(JSON.stringify(manifest));
+}
+
+function getCacheHealthStatus() {
+    if (!Cache || typeof Cache !== 'object') return 'unavailable';
+    const requiredMethods = ['getCloudBuild', 'setCloudBuild', 'getLazyLink', 'cacheLazyLink'];
+    const missing = requiredMethods.filter((method) => typeof Cache[method] !== 'function');
+    if (missing.length > 0) return `degraded (missing:${missing.join(',')})`;
+    if (typeof Cache.getStreamCacheIndexStats === 'function') {
+        try {
+            const stats = Cache.getStreamCacheIndexStats();
+            if (stats && typeof stats === 'object') return 'ok';
+        } catch (err) {
+            return `degraded (${err.message})`;
+        }
+    }
+    return 'ok';
+}
+
 async function markPlayableResultAsCached(dbHelper, service, item, streamData, logger, meta = null) {
     const normalizedService = String(service || '').toLowerCase();
     if (!dbHelper || typeof dbHelper.updateRdCacheStatus !== 'function') return false;
@@ -331,7 +353,8 @@ app.get("/health", async (req, res) => {
     if (!CONFIG.INDEXER_URL) checks.services.indexer = "disabled";
     else { await withTimeout(axios.get(`${CONFIG.INDEXER_URL}/health`, { timeout: 1000 }), 1000, "Indexer Health"); checks.services.indexer = "ok"; }
   } catch (err) { checks.services.indexer = "down"; checks.status = "degraded"; }
-  checks.services.cache = (await Cache.listKeys()).length > 0 ? "active" : "empty";
+  checks.services.cache = getCacheHealthStatus();
+  if (String(checks.services.cache).startsWith('degraded')) checks.status = 'degraded';
   res.status(checks.status === "ok" ? 200 : 503).json(checks);
 });
 
@@ -348,7 +371,7 @@ app.get("/manifest.json", (req, res) => {
 app.get("/:conf/manifest.json", (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-    const manifest = getManifest();
+    const manifest = cloneManifest(getManifest());
     try {
         const config = getConfig(req.params.conf), filters = config.filters || {}, langMode = filters.language || (filters.allowEng ? "all" : "ita");
         const flag = langMode === "ita"
@@ -427,4 +450,7 @@ function gracefulShutdown(signal) {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('unhandledRejection', (reason) => { logger.error('Unhandled Promise Rejection', { reason: reason instanceof Error ? reason.message : String(reason) }); });
-process.on('uncaughtException', (error) => { logger.error('Uncaught Exception', { error: error.message, stack: error.stack }); });
+process.on('uncaughtException', (error) => {
+    logger.error('Uncaught Exception', { error: error.message, stack: error.stack });
+    setTimeout(() => process.exit(1), 250).unref();
+});
