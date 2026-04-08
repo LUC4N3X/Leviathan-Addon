@@ -6,14 +6,8 @@ const PackResolver = require("./pack_intelligence");
 const aioFormatter = require("./lib/pulse_formatter.cjs");
 const WebStreamr = require("./handlers/webstreamr_handler");
 const TbCache = require("../debrid/tb_cache.js");
-const RdCache = require("../debrid/rd_cache.js");
 const { formatStreamSelector, formatBytes } = require("./lib/stream_formatter");
 const P2P = require("./handlers/p2p_handler");
-const { searchVix: searchStreamingCommunity } = require("../providers/streamingcommunity/vix_handler");
-const { searchGuardaHD } = require("../providers/guardahd/ghd_handler"); 
-const { searchGuardaserie } = require("../providers/guardaserie/gs_handler"); 
-const { searchAnimeWorld } = require("../providers/animeworld/aw_handler"); 
-const { searchGuardaFlix } = require("../providers/guardaflix/gf_handler"); 
 const { generateSmartQueries, smartMatch } = require("./media_intelligence");
 const { rankAndFilterResults } = require("./lib/result_ranker");
 const { tmdbToImdb, imdbToTmdb, getTmdbAltTitles } = require("./media_identity_resolver");
@@ -22,6 +16,8 @@ const AD = require("../debrid/alldebrid");
 const TB = require("../debrid/torbox");
 const dbHelper = require("./storage/db_repository"); 
 const { buildMagnet: buildTrackerMagnet } = require("./storage/tracker_registry");
+const { createDebridAvailabilityTools } = require("./stream/debrid_availability");
+const { createWebStreamTools } = require("./stream/web_streams");
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
 const {
@@ -130,183 +126,6 @@ async function resolveLazyStreamData(service, apiKey, item, meta) {
     });
 }
 
-
-function normalizeDbResultItem(row) {
-    const hash = extractInfoHash(row?.info_hash || row?.hash || row?.infoHash || '');
-    if (!hash) return null;
-    const fileIdx = row?.rd_file_index !== null && row?.rd_file_index !== undefined
-        ? Number(row.rd_file_index)
-        : (row?.file_index !== null && row?.file_index !== undefined ? Number(row.file_index) : undefined);
-    return {
-        hash,
-        title: row?.title || `DB Torrent ${hash}`,
-        source: row?.provider || 'LocalDB',
-        seeders: Number(row?.seeders || 0),
-        magnet: row?.magnet || buildTrackerMagnet(hash),
-        fileIdx: Number.isInteger(fileIdx) && fileIdx >= 0 ? fileIdx : undefined,
-        _size: Number(row?.rd_file_size || row?.size || row?.sizeBytes || 0),
-        sizeBytes: Number(row?.rd_file_size || row?.size || row?.sizeBytes || 0),
-        _dbCachedRd: row?.cached_rd === null || row?.cached_rd === undefined ? null : Boolean(row.cached_rd),
-        _dbLastCachedCheck: row?.last_cached_check || null,
-        _dbNextCachedCheck: row?.next_cached_check || null,
-        _dbFailures: Number(row?.cache_check_failures || 0)
-    };
-}
-
-async function fetchLocalDbResults(meta) {
-    if (!dbHelper || typeof dbHelper.getTorrents !== 'function' || !meta?.imdb_id) return [];
-    const cacheKey = getMetaDbLookupKey(meta);
-    if (!cacheKey) return [];
-
-    const cachedRows = await Cache.getDbTorrents(cacheKey);
-    if (cachedRows !== null) return Array.isArray(cachedRows) ? cachedRows : [];
-
-    try {
-        return await withSharedPromise(localDbLookupInflight, `db_lookup:${cacheKey}`, async () => {
-            const cachedAgain = await Cache.getDbTorrents(cacheKey);
-            if (cachedAgain !== null) return Array.isArray(cachedAgain) ? cachedAgain : [];
-
-            const rows = await dbHelper.getTorrents(meta.imdb_id, meta.season, meta.episode);
-            const normalizedRows = (Array.isArray(rows) ? rows : []).map(normalizeDbResultItem).filter(Boolean);
-            await Cache.cacheDbTorrents(cacheKey, normalizedRows, LOCAL_DB_CACHE_TTL);
-            return normalizedRows;
-        });
-    } catch (err) {
-        logger.warn(`[DB READ] Lookup locale fallito: ${err.message}`);
-        return [];
-    }
-}
-
-async function hydrateRdDbStatesByHash(items) {
-    const list = Array.isArray(items) ? items : [];
-    if (list.length === 0) return list;
-    if (!dbHelper || typeof dbHelper.getRdCacheStatusByHashes !== 'function') return list;
-
-    const hashes = [...new Set(list
-        .map((item) => String(item?.hash || item?.infoHash || '').trim().toLowerCase())
-        .filter((hash) => /^[a-f0-9]{40}$/.test(hash)))];
-
-    if (hashes.length === 0) return list;
-
-    try {
-        const rows = await dbHelper.getRdCacheStatusByHashes(hashes);
-        const byHash = new Map((Array.isArray(rows) ? rows : [])
-            .filter((row) => row?.hash)
-            .map((row) => [String(row.hash).trim().toLowerCase(), row]));
-
-        for (const item of list) {
-            const hash = String(item?.hash || item?.infoHash || '').trim().toLowerCase();
-            if (!hash) continue;
-            const row = byHash.get(hash);
-            if (!row) continue;
-
-            if (row.cached_rd === true || row.cached_rd === false) {
-                item._dbCachedRd = row.cached_rd;
-                item.cached_rd = row.cached_rd;
-                item._dbLastCachedCheck = row.last_cached_check || item._dbLastCachedCheck || null;
-                item._dbNextCachedCheck = row.next_cached_check || item._dbNextCachedCheck || null;
-                item._dbFailures = Number(row.cache_check_failures || item._dbFailures || 0);
-
-                const currentState = getRdCacheVisualState('rd', item);
-                if (currentState === 'unknown') {
-                    const state = row.cached_rd === true ? 'cached' : 'uncached';
-                    item._rdCacheState = state;
-                    item.rdCacheState = state;
-                }
-            }
-
-            if (!(Number(item?._size || item?.sizeBytes || 0) > 0)) {
-                const knownSize = Number(row.rd_file_size || row.size || 0);
-                if (knownSize > 0) {
-                    item._size = knownSize;
-                    item.sizeBytes = knownSize;
-                }
-            }
-
-            if ((item?.fileIdx === undefined || item?.fileIdx === null) && Number.isInteger(row?.rd_file_index) && row.rd_file_index >= 0) {
-                item.fileIdx = row.rd_file_index;
-            }
-        }
-    } catch (err) {
-        logger.warn(`[DB READ] Overlay stato RD per hash fallito: ${err.message}`);
-    }
-
-    return propagateRdKnownStatesByHash(list);
-}
-
-function applyRdDbCachePriority(items, config) {
-    const list = Array.isArray(items) ? items : [];
-    const cachedOnly = config?.filters?.rdCachedOnly === true;
-    const cached = [];
-    const unknown = [];
-    const uncached = [];
-
-    for (const item of list) {
-        if (item?._dbCachedRd === true) cached.push(item);
-        else if (item?._dbCachedRd === false) uncached.push(item);
-        else unknown.push(item);
-    }
-
-    return cachedOnly ? [...cached] : [...cached, ...unknown, ...uncached];
-}
-
-function propagateRdKnownStatesByHash(items) {
-    const list = Array.isArray(items) ? items : [];
-    const stateByHash = new Map();
-
-    const stateRank = (state) => {
-        if (state === 'cached') return 3;
-        if (state === 'uncached') return 2;
-        if (state === 'probing') return 1;
-        return 0;
-    };
-
-    for (const item of list) {
-        const hash = String(item?.hash || item?.infoHash || '').trim().toUpperCase();
-        if (!/^[A-F0-9]{40}$/.test(hash)) continue;
-        const state = getRdCacheVisualState('rd', item);
-        if (state === 'unknown') continue;
-
-        const current = stateByHash.get(hash);
-        if (!current || stateRank(state) > stateRank(current.state)) {
-            stateByHash.set(hash, {
-                state,
-                cached: state === 'cached' ? true : state === 'uncached' ? false : null,
-                sizeBytes: Number(item?._size || item?.sizeBytes || 0) || 0
-            });
-        }
-    }
-
-    if (stateByHash.size === 0) return list;
-
-    for (const item of list) {
-        const hash = String(item?.hash || item?.infoHash || '').trim().toUpperCase();
-        const known = stateByHash.get(hash);
-        if (!known) continue;
-
-        const currentState = getRdCacheVisualState('rd', item);
-        if (currentState === 'unknown') {
-            item._rdCacheState = known.state;
-            item.rdCacheState = known.state;
-            if (known.cached === true || known.cached === false) {
-                item._dbCachedRd = known.cached;
-                item.cached_rd = known.cached;
-            }
-        }
-
-        if (known.sizeBytes > 0 && !(Number(item?._size || item?.sizeBytes || 0) > 0)) {
-            item._size = known.sizeBytes;
-            item.sizeBytes = known.sizeBytes;
-        }
-    }
-
-    return list;
-}
-
-function isGuaranteedCachedExternal(item) {
-    return Boolean(item?.isExternal || item?.externalAddon);
-}
-
 function assessFastResultQuality(items, meta, langMode, config) {
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
@@ -367,28 +186,16 @@ function getEffectiveLangMode(config) {
     return config?.filters?.allowEng ? 'all' : 'ita';
 }
 
-function isStreamingCommunityEnabled(filters = {}) {
-    return filters?.enableStreamingCommunity === true || filters?.enableVix === true;
-}
-
-function isStreamingCommunityLastEnabled(filters = {}) {
-    return filters?.streamingCommunityLast === true || filters?.vixLast === true;
-}
-
 const TITLE_SIGNAL_CACHE = new Map();
 const MAX_TITLE_SIGNAL_CACHE = 4000;
 const lazyResolveInflight = new Map();
-const localDbLookupInflight = new Map();
 const backgroundDbSaveInflight = new Map();
 const recentBackgroundDbSaves = new Map();
-const recentRdPriorityRequests = new Map();
 const PROVIDER_BREAKERS = new Map();
 const BREAKER_FAILURE_THRESHOLD = Math.max(2, parseInt(process.env.PROVIDER_BREAKER_THRESHOLD || '3', 10) || 3);
 const BREAKER_OPEN_MS = Math.max(5000, parseInt(process.env.PROVIDER_BREAKER_OPEN_MS || '30000', 10) || 30000);
 const STREAM_STALE_LOAD_THRESHOLD = Math.max(1, Math.min(200, parseInt(process.env.STREAM_STALE_LOAD_THRESHOLD || '18', 10) || 18));
-const LOCAL_DB_CACHE_TTL = Math.max(5, Math.min(300, parseInt(process.env.LOCAL_DB_CACHE_TTL || '25', 10) || 25));
 const BACKGROUND_DB_SAVE_DEDUP_MS = Math.max(1000, Math.min(120000, parseInt(process.env.BACKGROUND_DB_SAVE_DEDUP_MS || '15000', 10) || 15000));
-const RD_PRIORITY_DEDUP_MS = Math.max(1000, Math.min(120000, parseInt(process.env.RD_PRIORITY_DEDUP_MS || '15000', 10) || 15000));
 const LAZY_WARMUP_LOAD_THRESHOLD = Math.max(1, Math.min(200, parseInt(process.env.LAZY_WARMUP_LOAD_THRESHOLD || '14', 10) || 14));
 
 function cleanupRecentMap(map, ttlMs, maxEntries = 2000) {
@@ -421,6 +228,37 @@ function getMetaDbLookupKey(meta) {
     const episode = Number(meta?.episode || 0) || 0;
     return `${imdbId}:${season}:${episode}`;
 }
+
+const {
+    fetchLocalDbResults,
+    propagateRdKnownStatesByHash,
+    hydrateRdDbStatesByHash,
+    reprioritizeRdRankedList,
+    getRdAvailabilityState,
+    isGuaranteedCachedExternal,
+    persistResolvedDebridAvailability
+} = createDebridAvailabilityTools({
+    Cache,
+    logger,
+    LIMITERS,
+    CONFIG,
+    incrementMetric,
+    isSeasonPack,
+    getMetaDbLookupKey
+});
+
+const {
+    fetchWebProviderBuckets,
+    formatWebProviderBuckets,
+    mergeFinalStreams,
+    isStreamingCommunityEnabled,
+    isStreamingCommunityLastEnabled
+} = createWebStreamTools({
+    Cache,
+    LIMITERS,
+    CONFIG,
+    guardedProviderCall
+});
 
 function buildResultsSignature(results) {
     const tokens = [...new Set((Array.isArray(results) ? results : [])
@@ -637,18 +475,6 @@ function createAggressiveResultFilter(meta, type, langMode) {
     };
 }
 
-async function reprioritizeRdRankedList(rankedList, meta, config, hasDebridKey) {
-    const service = String(config?.service || 'rd').toLowerCase();
-    if (service !== 'rd' || !hasDebridKey) return rankedList;
-
-    let prioritized = applyRdDbCachePriority(rankedList, config);
-    const apiKey = config.key || config.rd;
-    await hydrateRdForegroundCacheState(prioritized, apiKey);
-    prioritized = applyRdDbCachePriority(prioritized, config);
-    queueRdPriorityScan(meta, prioritized, config, 'stream_open');
-    return prioritized;
-}
-
 async function resolveTorboxRankedList(rankedList, apiKey) {
     const sourceRanked = Array.isArray(rankedList) ? [...rankedList] : [];
     const progressiveWindows = [30, 60, 90];
@@ -686,155 +512,6 @@ async function resolveTorboxRankedList(rankedList, apiKey) {
     return verifiedList;
 }
 
-function applyAioWebStyle(streamList, sourceName, meta) {
-    if (!Array.isArray(streamList) || streamList.length === 0) return [];
-
-    const isAnimeWorld = sourceName.includes('AnimeWorld');
-    return streamList.map((stream) => {
-        const textToCheck = `${stream?.title || ''} ${stream?.name || ''}`.toUpperCase().replace(/GUARDAHD|STREAMINGCOMMUNITY|LEVIATHAN|VIX|GUARDAFLIX/g, '');
-        let quality = 'WebStreams';
-        let qIcon = 'ðŸ“º';
-
-        if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) {
-            quality = '4K';
-            qIcon = 'ðŸ”¥';
-        } else if (/\b(1080P|FHD|FULLHD)\b/.test(textToCheck)) {
-            quality = '1080p';
-            qIcon = 'ðŸ”¥';
-        } else if (/\b(720P|HD)\b/.test(textToCheck)) {
-            quality = '720p';
-            qIcon = 'ðŸ”¥';
-        } else if (/\b(480P|SD)\b/.test(textToCheck)) {
-            quality = 'SD';
-            qIcon = 'ðŸ”¥';
-        }
-
-        if ((sourceName.includes('StreamingCommunity') || sourceName.includes('Vix')) && quality === 'SD' && !/\b(480P|SD)\b/.test(textToCheck)) {
-            quality = '1080p';
-            qIcon = 'ðŸ”¥';
-        }
-
-        if (isAnimeWorld) {
-            stream.name = aioFormatter.formatStreamName({ service: 'web', cached: true, quality: 'HD' });
-            stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: 'Web', language: 'ðŸ‡¯ðŸ‡µ JPN/ITA', source: 'AnimeWorld', techInfo: 'â›©ï¸ Anime' });
-            stream.behaviorHints = stream.behaviorHints || {};
-            stream.behaviorHints.bingieGroup = 'Leviathan|HD|Web|AnimeWorld';
-            return stream;
-        }
-
-        stream.name = aioFormatter.formatStreamName({ service: 'web', cached: true, quality });
-        stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: 'Web', language: 'ðŸ‡®ðŸ‡¹ ITA', source: sourceName, seeders: null, techInfo: `ðŸŽžï¸ ${quality} ${qIcon}` });
-        stream.behaviorHints = stream.behaviorHints || {};
-        stream.behaviorHints.bingieGroup = `Leviathan|${quality}|Web|${sourceName.replace(/\W/g, '')}`;
-        return stream;
-    });
-}
-
-async function fetchWebProviderBuckets({ type, originalId, finalId, meta, config, reqHost, allowItalianWebProviders, dbOnlyMode }) {
-    const empty = {
-        streamingCommunity: [],
-        guardaHD: [],
-        guardaSerie: [],
-        animeWorld: [],
-        guardaFlix: []
-    };
-
-    if (dbOnlyMode || !allowItalianWebProviders) return empty;
-
-    const rawId = `${type}:${finalId}:${meta.season || 0}:${meta.episode || 0}`;
-    const providerSpecs = [
-        {
-            key: 'streamingCommunity',
-            cacheName: 'StreamingCommunity',
-            enabled: isStreamingCommunityEnabled(config.filters),
-            limiter: LIMITERS.webVix,
-            runner: () => searchStreamingCommunity(meta, config, reqHost)
-        },
-        {
-            key: 'guardaHD',
-            cacheName: 'GuardaHD',
-            enabled: config.filters?.enableGhd,
-            limiter: LIMITERS.webGhd,
-            runner: () => searchGuardaHD(meta, config)
-        },
-        {
-            key: 'guardaSerie',
-            cacheName: 'GuardaSerie',
-            enabled: config.filters?.enableGs,
-            limiter: LIMITERS.webGs,
-            runner: () => searchGuardaserie(meta, config)
-        },
-        {
-            key: 'animeWorld',
-            cacheName: 'AnimeWorld',
-            enabled: config.filters?.enableAnimeWorld,
-            limiter: LIMITERS.webAw,
-            runner: () => searchAnimeWorld(originalId, meta, config)
-        },
-        {
-            key: 'guardaFlix',
-            cacheName: 'GuardaFlix',
-            enabled: config.filters?.enableGf,
-            limiter: LIMITERS.webGf,
-            runner: () => searchGuardaFlix(meta, config)
-        }
-    ];
-
-    const settled = await Promise.allSettled(providerSpecs.map((spec) => {
-        if (!spec.enabled) return Promise.resolve([]);
-        return Cache.fetchWithCache(spec.cacheName, rawId, 43200, () =>
-            guardedProviderCall(spec.cacheName, spec.limiter, CONFIG.TIMEOUTS.SCRAPER, spec.runner)
-        );
-    }));
-
-    return providerSpecs.reduce((acc, spec, index) => {
-        acc[spec.key] = settled[index]?.status === 'fulfilled' ? settled[index].value : [];
-        return acc;
-    }, empty);
-}
-
-function formatWebProviderBuckets(webBuckets, meta, config) {
-    const buckets = {
-        streamingCommunity: Array.isArray(webBuckets?.streamingCommunity) ? [...webBuckets.streamingCommunity] : [],
-        guardaHD: Array.isArray(webBuckets?.guardaHD) ? [...webBuckets.guardaHD] : [],
-        guardaSerie: Array.isArray(webBuckets?.guardaSerie) ? [...webBuckets.guardaSerie] : [],
-        animeWorld: Array.isArray(webBuckets?.animeWorld) ? [...webBuckets.animeWorld] : [],
-        guardaFlix: Array.isArray(webBuckets?.guardaFlix) ? [...webBuckets.guardaFlix] : []
-    };
-
-    if (aioFormatter && aioFormatter.isAIOStreamsEnabled(config)) {
-        return {
-            streamingCommunity: applyAioWebStyle(buckets.streamingCommunity, 'StreamingCommunity', meta),
-            guardaHD: applyAioWebStyle(buckets.guardaHD, 'GuardaHD', meta),
-            guardaSerie: applyAioWebStyle(buckets.guardaSerie, 'GuardaSerie', meta),
-            animeWorld: applyAioWebStyle(buckets.animeWorld, 'AnimeWorld', meta),
-            guardaFlix: applyAioWebStyle(buckets.guardaFlix, 'GuardaFlix', meta)
-        };
-    }
-
-    return {
-        streamingCommunity: buckets.streamingCommunity.length > 0 ? applyWebFormatter(buckets.streamingCommunity, 'StreamingCommunity', meta, config) : [],
-        guardaHD: buckets.guardaHD.length > 0 ? applyWebFormatter(buckets.guardaHD, 'GuardaHD', meta, config) : [],
-        guardaSerie: buckets.guardaSerie.length > 0 ? applyWebFormatter(buckets.guardaSerie, 'GuardaSerie', meta, config) : [],
-        animeWorld: buckets.animeWorld.length > 0 ? applyWebFormatter(buckets.animeWorld, 'AnimeWorld', meta, config) : [],
-        guardaFlix: buckets.guardaFlix.length > 0 ? applyWebFormatter(buckets.guardaFlix, 'GuardaFlix', meta, config) : []
-    };
-}
-
-function mergeFinalStreams(debridStreams, formattedWebBuckets, filters = {}) {
-    const webStreams = [
-        ...(formattedWebBuckets?.guardaHD || []),
-        ...(formattedWebBuckets?.guardaSerie || []),
-        ...(formattedWebBuckets?.animeWorld || []),
-        ...(formattedWebBuckets?.guardaFlix || []),
-        ...(formattedWebBuckets?.streamingCommunity || [])
-    ];
-
-    return isStreamingCommunityLastEnabled(filters)
-        ? [...(debridStreams || []), ...webStreams]
-        : [...webStreams, ...(debridStreams || [])];
-}
-
 function getServiceDisplayName(service) {
     const normalized = String(service || '').toLowerCase();
     if (normalized === 'rd') return 'realdebrid';
@@ -842,175 +519,6 @@ function getServiceDisplayName(service) {
     if (normalized === 'tb') return 'torbox';
     if (normalized === 'web') return 'web';
     return 'p2p';
-}
-
-function getRdCacheVisualState(service, item) {
-    const normalizedService = String(service || '').toLowerCase();
-
-    const explicitState = typeof item?._rdCacheState === 'string'
-        ? String(item._rdCacheState).trim().toLowerCase()
-        : (typeof item?.rdCacheState === 'string' ? String(item.rdCacheState).trim().toLowerCase() : '');
-    if (explicitState === 'cached' || explicitState === 'uncached' || explicitState === 'unknown' || explicitState === 'probing') {
-        return explicitState;
-    }
-
-    if (normalizedService === 'tb') {
-        return item?._tbCached ? 'cached' : 'unknown';
-    }
-
-    if (normalizedService !== 'rd' && normalizedService !== 'ad') {
-        return 'unknown';
-    }
-
-    if (item?._rdCacheState) return String(item._rdCacheState);
-    if (item?.rdCacheState) return String(item.rdCacheState);
-
-    if (item?._dbCachedRd === true || item?.cached_rd === true) return 'cached';
-    if (item?._dbCachedRd === false || item?.cached_rd === false) return 'uncached';
-
-    return 'unknown';
-}
-
-async function hydrateRdForegroundCacheState(items, apiKey, options = {}) {
-    const list = Array.isArray(items) ? items : [];
-    if (!apiKey || list.length === 0) return list;
-
-    const visibleWindow = Math.max(
-        1,
-        Math.min(
-            CONFIG.MAX_RESULTS || 70,
-            parseInt(options.visibleWindow ?? process.env.RD_FOREGROUND_VISIBLE_WINDOW ?? '9', 10) || 9
-        )
-    );
-    const probeLimit = Math.max(
-        1,
-        Math.min(
-            visibleWindow,
-            parseInt(options.probeLimit ?? process.env.RD_FOREGROUND_CACHE_LIMIT ?? '9', 10) || 9
-        )
-    );
-    const minKnownStates = Math.max(
-        1,
-        Math.min(
-            visibleWindow,
-            parseInt(options.minKnownStates ?? process.env.RD_FOREGROUND_MIN_KNOWN ?? '4', 10) || 4
-        )
-    );
-
-    const visibleSlice = list.slice(0, visibleWindow);
-    const knownStates = visibleSlice.filter((item) => {
-        const state = getRdCacheVisualState('rd', item);
-        return state === 'cached' || state === 'uncached' || state === 'probing';
-    }).length;
-
-    if (knownStates >= minKnownStates) {
-        logger.info(`[RD FAST] Skip live check | known=${knownStates}/${visibleSlice.length} | threshold=${minKnownStates}`);
-        return list;
-    }
-
-    const unknownCandidates = visibleSlice
-        .filter(item => !isGuaranteedCachedExternal(item) && getRdCacheVisualState('rd', item) === 'unknown' && item?.hash && item?.magnet)
-        .slice(0, probeLimit);
-
-    if (unknownCandidates.length === 0) return list;
-
-    logger.info(`[RD FAST] Verifico cache live per ${unknownCandidates.length} risultati unknown...`);
-
-    try {
-        const { results = {}, deferred = [] } = await LIMITERS.rdResolve.schedule(() =>
-            RdCache.checkCacheSyncFast(unknownCandidates, apiKey, unknownCandidates.length)
-        );
-
-        const dbUpdates = [];
-
-        for (const item of unknownCandidates) {
-            const hash = String(item?.hash || '').trim().toLowerCase();
-            const result = results[hash];
-            if (!result) continue;
-
-            const cacheState = result.cached === true ? 'cached' : 'uncached';
-            item._rdCacheState = cacheState;
-            item.rdCacheState = cacheState;
-            item._dbCachedRd = result.cached === true;
-            item.cached_rd = result.cached === true;
-
-            if (Number.isFinite(result.file_size) && result.file_size > 0) {
-                item._size = Math.max(Number(item._size || item.sizeBytes || 0), Number(result.file_size));
-                item.sizeBytes = Math.max(Number(item.sizeBytes || item._size || 0), Number(result.file_size));
-            }
-
-            dbUpdates.push({
-                hash: item.hash,
-                cached: result.cached === true,
-                rd_file_size: Number.isFinite(result.file_size) && result.file_size > 0 ? Number(result.file_size) : null,
-                failures: 0,
-                next_hours: result.cached === true ? (24 * 30) : (24 * 7)
-            });
-        }
-
-        if (dbUpdates.length > 0 && typeof dbHelper.updateRdCacheStatus === 'function') {
-            try {
-                await dbHelper.updateRdCacheStatus(dbUpdates);
-                await Cache.invalidateStreamsByHashes(dbUpdates.map((row) => row.hash), 'rd_foreground_live_check');
-            } catch (err) {
-                logger.warn(`[RD FAST] Persistenza stato cache fallita: ${err.message}`);
-            }
-        }
-
-        if (Array.isArray(deferred) && deferred.length > 0) {
-            for (const item of deferred) {
-                item._rdCacheState = 'probing';
-                item.rdCacheState = 'probing';
-            }
-            RdCache.enrichCacheBackground(deferred, apiKey, dbHelper, async (updates) => {
-                await Cache.invalidateStreamsByHashes((updates || []).map((entry) => entry.hash), 'rd_background_backfill');
-            });
-        }
-
-        logger.info(`[RD FAST] Live check completato | cached=${dbUpdates.filter(row => row.cached).length} | uncached=${dbUpdates.filter(row => !row.cached).length} | deferred=${Array.isArray(deferred) ? deferred.length : 0}`);
-    } catch (err) {
-        logger.warn(`[RD FAST] Verifica cache live fallita: ${err.message}`);
-    }
-
-    return list;
-}
-
-function queueRdPriorityScan(meta, results, config, reason = 'visible_results') {
-    if (String(config?.service || 'rd').toLowerCase() !== 'rd') return;
-    if (!dbHelper || typeof dbHelper.prioritizeRdHashes !== 'function') return;
-
-    const maxPriority = Math.max(1, Math.min(30, parseInt(process.env.RD_PRIORITY_TOP || '18', 10) || 18));
-    const priorityMinutes = Math.max(0, Math.min(120, parseInt(process.env.RD_PRIORITY_WINDOW_MIN || '5', 10) || 5));
-    const candidateHashes = [...new Set((Array.isArray(results) ? results : [])
-        .filter((item) => !isGuaranteedCachedExternal(item) && getRdCacheVisualState('rd', item) === 'unknown' && item?.hash)
-        .slice(0, maxPriority)
-        .map((item) => item.hash))];
-
-    if (candidateHashes.length === 0) return;
-
-    const prioritySig = crypto.createHash('sha1').update(candidateHashes.slice(0, 12).join('|')).digest('hex').slice(0, 12);
-    const priorityKey = `${getMetaDbLookupKey(meta) || meta?.imdb_id || 'n/a'}:${reason}:${prioritySig}`;
-    if (shouldSkipRecentWork(recentRdPriorityRequests, priorityKey, RD_PRIORITY_DEDUP_MS)) {
-        incrementMetric('rdPriority.skippedCooldown', candidateHashes.length);
-        return;
-    }
-
-    incrementMetric('rdPriority.requested', candidateHashes.length);
-
-    setTimeout(() => {
-        (async () => {
-            let updated = 0;
-            for (let attempt = 0; attempt < 3; attempt += 1) {
-                const outcome = await dbHelper.prioritizeRdHashes(candidateHashes, { limit: maxPriority, priorityMinutes });
-                updated = Number(outcome?.updated || 0);
-                if (updated > 0) break;
-                await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
-            }
-
-            incrementMetric(updated > 0 ? 'rdPriority.applied' : 'rdPriority.noop', candidateHashes.length);
-            logger.info(`[RD PRIORITY] reason=${reason} | imdb=${meta?.imdb_id || 'n/a'} | hashes=${candidateHashes.length} | updated=${updated}`);
-        })().catch((err) => logger.warn(`[RD PRIORITY] Errore scheduling: ${err.message}`));
-    }, 0);
 }
 
 function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitle, sizeBytes, seeders, config, meta, isLazy = false, isPack = false }) {
@@ -1021,11 +529,11 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
     const languageInfo = getLanguageInfo(baseParseTitle, meta?.title, item?.source, details);
     const quality = detectQualityLabel(baseParseTitle, details.quality || 'SD');
     const serviceLabel = normalizedService === 'tb' ? 'TB' : normalizedService.toUpperCase();
-    const rdCacheState = getRdCacheVisualState(normalizedService, item);
+    const availabilityState = getRdAvailabilityState(normalizedService, item);
 
     if (isAIOActive) {
         return {
-            name: aioFormatter.formatStreamName({ addonName: "Leviathan", service: getServiceDisplayName(normalizedService), cached: rdCacheState === 'cached', cacheState: rdCacheState, quality }),
+            name: aioFormatter.formatStreamName({ addonName: "Leviathan", service: getServiceDisplayName(normalizedService), cached: availabilityState === 'cached', cacheState: availabilityState, quality }),
             title: aioFormatter.formatStreamTitle({
                 title: displayTitle,
                 size: formatBytes(sizeBytes),
@@ -1041,7 +549,7 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         };
     }
 
-    const { name, title, bingeGroup } = formatStreamSelector(parseTitle || item?.title || displayTitle, item?.source, sizeBytes, seeders, serviceLabel, config, item?.hash, isLazy, isPack, rdCacheState);
+    const { name, title, bingeGroup } = formatStreamSelector(parseTitle || item?.title || displayTitle, item?.source, sizeBytes, seeders, serviceLabel, config, item?.hash, isLazy, isPack, availabilityState);
     return {
         name,
         title,
@@ -1337,45 +845,6 @@ function resolvePackNamesInBackground(meta, results, config) {
     }).catch(err => { logger.warn(`[PACK] Background queue failed: ${err.message}`); });
 }
 
-function applyWebFormatter(streamList, sourceName, meta, config) {
-    if (!streamList || !Array.isArray(streamList)) return [];
-    return streamList.map(stream => {
-        let quality = "HD";
-        const upperName = (stream.name || "").toUpperCase();
-        if (upperName.includes("4K") || upperName.includes("2160P")) quality = "4K";
-        else if (upperName.includes("1080P") || upperName.includes("FHD")) quality = "1080p";
-        else if (upperName.includes("720P")) quality = "720p";
-        else if (upperName.includes("SD") || upperName.includes("480P")) quality = "SD";
-
-        let fileTitle = meta.title;
-        const rawTitleToCheck = (stream.title || "").toUpperCase();
-        if (stream.title) {
-            const cleanRaw = stream.title.split('\n')[0].replace(/[ðŸŽ¬âš¡ðŸŒªï¸â›©ï¸ðŸ¿ðŸ¦ðŸŽ¥ðŸŒ]/g, '').trim();
-            if (cleanRaw.length > 2) fileTitle = cleanRaw;
-        }
-
-        let langTag = "ITA";
-        let providerIcon = "ðŸŒ";
-        const sLower = sourceName.toLowerCase();
-        if (sLower.includes("animeworld")) {
-            providerIcon = "â›©ï¸";
-            langTag = (rawTitleToCheck.includes("JPN") || rawTitleToCheck.includes("SUB") || rawTitleToCheck.includes("VOST")) ? "JPN" : "ITA";
-        } else if (sLower.includes("streamingcommunity")) providerIcon = "ðŸŒªï¸";
-        else if (sLower.includes("guardaserie")) providerIcon = "ðŸ¿";
-        else if (sLower.includes("guardahd")) providerIcon = "ðŸ¦";
-        else if (sLower.includes("guardaflix")) providerIcon = "ðŸŽ¥";
-
-        const formatted = formatStreamSelector(`${fileTitle} ${quality} ${langTag} WEB-DL AAC`, sourceName, 0, null, "WEB", config, null, false, false);
-        const cleanTitle = formatted.title.replace(/ðŸ§²/g, "â›µ").replace(/ðŸ¦ˆ/g, providerIcon).replace(/ðŸ§²\s*\d+(\.\d+)?\s*(GB|MB)/gi, "â˜ï¸ Web Stream");
-        return {
-            name: formatted.name.replace(/ðŸ§²/g, "â›µ").replace(/ðŸ¦ˆ/g, providerIcon),
-            title: cleanTitle,
-            url: stream.url,
-            behaviorHints: stream.behaviorHints || { notWebReady: false, bingieGroup: `Leviathan|${quality}|Web|${sourceName}` }
-        };
-    });
-}
-
 async function fetchTmdbMeta(tmdbId, type, userApiKey) {
     if (!tmdbId) return null;
     const apiKey = (userApiKey && userApiKey.length > 1) ? userApiKey : (process.env.TMDB_API_KEY || "4b9dfb8b1c9f1720b5cd1d7efea1d845");
@@ -1476,7 +945,7 @@ function saveResultsToDbBackground(meta, results, config = null) {
                 });
                 continue;
             }
-            if (String(config?.service || 'rd').toLowerCase() === 'rd' && prioritizedHashes.length < 18 && getRdCacheVisualState('rd', item) === 'unknown') {
+            if (String(config?.service || 'rd').toLowerCase() === 'rd' && prioritizedHashes.length < 18 && getRdAvailabilityState('rd', item) === 'unknown') {
                 prioritizedHashes.push(torrentObj.info_hash);
             }
         }
@@ -1484,7 +953,7 @@ function saveResultsToDbBackground(meta, results, config = null) {
         if (guaranteedCachedUpdates.length > 0 && typeof dbHelper.updateRdCacheStatus === 'function') {
             await dbHelper.updateRdCacheStatus(guaranteedCachedUpdates);
             await Cache.invalidateStreamsByHashes(guaranteedCachedUpdates.map((entry) => entry.hash), 'external_cached_seed');
-            logger.info(`[RD CACHE] Marked guaranteed external results as cached | imdb=${meta.imdb_id || 'n/a'} | hashes=${guaranteedCachedUpdates.length}`);
+            logger.info(`[RD AVAILABILITY] Marked guaranteed external results as cached | imdb=${meta.imdb_id || 'n/a'} | hashes=${guaranteedCachedUpdates.length}`);
         }
         if (prioritizedHashes.length > 0 && typeof dbHelper.prioritizeRdHashes === 'function') {
             const outcome = await dbHelper.prioritizeRdHashes(prioritizedHashes, { limit: 18, priorityMinutes: Math.max(0, Math.min(120, parseInt(process.env.RD_PRIORITY_WINDOW_MIN || '5', 10) || 5)) });
@@ -1493,65 +962,6 @@ function saveResultsToDbBackground(meta, results, config = null) {
         if (metaCacheKey) await Cache.invalidateDbTorrents(metaCacheKey, 'db_save');
         resolvePackNamesInBackground(meta, results, config);
     }).catch(err => console.error("[AUTO-LEARN] Errore background save:", err.message));
-}
-
-async function persistResolvedDebridCacheHit(meta, item, streamData, service, reason = 'direct_resolve') {
-    const normalizedService = String(service || '').toLowerCase();
-    if (!item?.hash) return false;
-    if (!['rd', 'ad'].includes(normalizedService)) return false;
-    if (!dbHelper || typeof dbHelper.updateRdCacheStatus !== 'function') return false;
-
-    const rawFileIndex = streamData?.rd_file_index ?? streamData?.file_index ?? streamData?.fileIdx ?? item?.fileIdx;
-    const rawFileSize = streamData?.rd_file_size ?? streamData?.file_size ?? streamData?.filesize ?? streamData?.size ?? item?._size ?? item?.sizeBytes ?? null;
-    const parsedFileIndex = Number(rawFileIndex);
-    const parsedFileSize = Number(rawFileSize);
-    const resolvedTitle = streamData?.filename || item?.title || String(item.hash);
-
-    try {
-        if ((!meta?.imdb_id) && typeof dbHelper.ensureTorrentRecord === 'function') {
-            await dbHelper.ensureTorrentRecord({
-                info_hash: item.hash,
-                title: resolvedTitle,
-                size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : Number(item?._size || item?.sizeBytes || 0),
-                seeders: Number(item?.seeders || 0) || 0,
-                provider: item?.source || normalizedService.toUpperCase(),
-                file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : (item?.fileIdx !== undefined ? item.fileIdx : undefined)
-            });
-        }
-        if (meta?.imdb_id && typeof dbHelper.insertTorrent === 'function') {
-            await dbHelper.insertTorrent(meta, {
-                info_hash: item.hash,
-                title: resolvedTitle,
-                size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : Number(item?._size || item?.sizeBytes || 0),
-                seeders: Number(item?.seeders || 0) || 0,
-                provider: item?.source || normalizedService.toUpperCase(),
-                file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : (item?.fileIdx !== undefined ? item.fileIdx : undefined),
-                is_pack: Boolean(item?._isPack || isSeasonPack(resolvedTitle))
-            });
-        }
-
-        const updated = await dbHelper.updateRdCacheStatus([{
-            hash: item.hash,
-            cached: true,
-            rd_file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
-            rd_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
-            failures: 0,
-            permanent: true
-        }]);
-
-        if (updated > 0) {
-            await Cache.invalidateStreamsByHashes([item.hash], `${reason}_cached`);
-            if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, `${reason}_cached`);
-            const dbLookupKey = getMetaDbLookupKey(meta);
-            if (dbLookupKey) await Cache.invalidateDbTorrents(dbLookupKey, `${reason}_cached`);
-            logger.info(`[RD CACHE] Persisted cached hit | reason=${reason} | service=${normalizedService} | hash=${item.hash} | updated=${updated}`);
-            return true;
-        }
-    } catch (err) {
-        logger.warn(`[RD CACHE] Persist cached hit fallita | reason=${reason} | service=${normalizedService} | hash=${item.hash} | error=${err.message}`);
-    }
-
-    return false;
 }
 
 async function resolveDebridLink(config, item, showFake, reqHost, meta) {
@@ -1602,7 +1012,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
             runtimeItem._size = Number(streamData.size);
             runtimeItem.sizeBytes = Number(streamData.size);
         }
-        await persistResolvedDebridCacheHit(meta, runtimeItem, streamData, service, 'direct_resolve');
+        await persistResolvedDebridAvailability(meta, runtimeItem, streamData, service, 'direct_resolve');
 
         return buildPlayableStream({
             service,

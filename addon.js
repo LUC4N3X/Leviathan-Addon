@@ -19,27 +19,27 @@ const {
 
 const { generateStream, resolveLazyStreamData } = require("./core/stream_generator");
 
-let rdCacheScannerBoot = { enabled: false, started: false, reason: 'disabled' };
-let getRdCacheScannerStatus = () => ({ ...rdCacheScannerBoot });
+let rdAuditorBoot = { enabled: false, started: false, reason: 'disabled' };
+let getRdAuditorStatus = () => ({ ...rdAuditorBoot });
 
 dbHelper.initDatabase();
 
 if (String(process.env.RD_CACHE_SCANNER_ENABLED || '').toLowerCase() === 'true') {
     try {
-        const { startRdCacheScanner, getRdCacheScannerStatus: workerStatusGetter } = require('./core/workers/rd_cache_scanner');
-        rdCacheScannerBoot = startRdCacheScanner({
+        const { startRealDebridAuditor, getRealDebridAuditorStatus: workerStatusGetter } = require('./core/workers/realdebrid_auditor');
+        rdAuditorBoot = startRealDebridAuditor({
             dbHelper,
             logger,
             onBatchUpdated: async ({ hashes }) => {
                 if (Array.isArray(hashes) && hashes.length > 0) {
-                    await Cache.invalidateStreamsByHashes(hashes, 'rd_scanner_batch');
+                    await Cache.invalidateStreamsByHashes(hashes, 'rd_auditor_batch');
                 }
             }
         });
-        if (typeof workerStatusGetter === 'function') getRdCacheScannerStatus = workerStatusGetter;
+        if (typeof workerStatusGetter === 'function') getRdAuditorStatus = workerStatusGetter;
     } catch (err) {
-        rdCacheScannerBoot = { enabled: true, started: false, reason: err.message || 'boot_error' };
-        logger.error(`[RD SCANNER] Boot fallito: ${err.message}`);
+        rdAuditorBoot = { enabled: true, started: false, reason: err.message || 'boot_error' };
+        logger.error(`[RD AUDIT] Boot fallito: ${err.message}`);
     }
 }
 
@@ -218,7 +218,7 @@ async function queueCloudBuild(service, hash, apiKey) {
 }
 
 app.get("/api/stats", (req, res) => res.json(getStatsSnapshot()));
-app.get("/api/rd-scanner-status", (req, res) => res.json(getRdCacheScannerStatus()));
+app.get("/api/rd-scanner-status", (req, res) => res.json(getRdAuditorStatus()));
 app.get("/api/rd-scanner-dashboard", async (req, res) => {
     let progress = null;
     try {
@@ -230,7 +230,7 @@ app.get("/api/rd-scanner-dashboard", async (req, res) => {
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
-        scanner: getRdCacheScannerStatus(),
+        scanner: getRdAuditorStatus(),
         progress,
         runtime: getStatsSnapshot(),
         streamCache: typeof Cache.getStreamCacheIndexStats === 'function' ? Cache.getStreamCacheIndexStats() : null
