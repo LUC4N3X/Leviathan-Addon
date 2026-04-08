@@ -447,11 +447,17 @@ function setTitleSignalCache(cacheKey, value) {
     return value;
 }
 
+function getTitleSignalCacheKey(title, metaTitle, sourceName) {
+    return crypto.createHash('sha1')
+        .update(JSON.stringify([String(title || ''), String(metaTitle || ''), String(sourceName || '')]))
+        .digest('hex');
+}
+
 function getTitleDiagnostics(title, metaTitle, sourceName) {
     const safeTitle = String(title || '');
     const safeMetaTitle = String(metaTitle || '');
     const safeSource = String(sourceName || '');
-    const cacheKey = `${safeTitle}Ã‚Â¦${safeMetaTitle}Ã‚Â¦${safeSource}`;
+    const cacheKey = getTitleSignalCacheKey(safeTitle, safeMetaTitle, safeSource);
     const cached = TITLE_SIGNAL_CACHE.get(cacheKey);
     if (cached) return cached;
 
@@ -498,6 +504,335 @@ function detectQualityLabel(text, fallback = 'SD') {
     if (/\b(?:720P|HD)\b/.test(upper)) return '720p';
     if (/\b(?:480P|SD)\b/.test(upper)) return 'SD';
     return fallback || 'SD';
+}
+
+const QUALITY_CAM_REGEX = /\b(?:cam|hdcam|ts|telesync|screener|scr)\b/i;
+
+function getQualityFilterSignals(text, options = {}) {
+    const raw = String(text || '');
+    const lower = raw.toLowerCase();
+    const upper = raw.toUpperCase();
+    const has4k = REGEX_QUALITY_FILTER["4K"].test(lower);
+    const has1080 = REGEX_QUALITY_FILTER["1080p"].test(lower);
+    const has720 = REGEX_QUALITY_FILTER["720p"].test(lower)
+        || Boolean(options.treatGenericHdAs720 && /\bHD\b/.test(upper) && !/\b(?:1080P|2160P|4K|FHD|UHD|FULLHD)\b/.test(upper));
+    const hasSd = REGEX_QUALITY_FILTER["SD"].test(lower);
+    const hasCam = QUALITY_CAM_REGEX.test(raw);
+    return { has4k, has1080, has720, hasSd, hasCam };
+}
+
+function shouldDropByConfiguredQuality(text, filters = {}, options = {}) {
+    const quality = getQualityFilterSignals(text, options);
+    if (filters.no4k && quality.has4k) return true;
+    if (filters.no1080 && quality.has1080) return true;
+    if (filters.no720 && quality.has720) return true;
+    if (filters.noScr && (quality.hasSd || quality.hasCam)) return true;
+    if (filters.noCam && quality.hasCam) return true;
+    return false;
+}
+
+function applyConfiguredTorrentFilters(items, filters = {}) {
+    const list = Array.isArray(items) ? items : [];
+    if (!filters || Object.keys(filters).length === 0) return list;
+
+    return list.filter(item => {
+        const sizeBytes = Number(item?._size || item?.sizeBytes || 0);
+        if (filters.maxSizeGB && filters.maxSizeGB > 0 && sizeBytes > filters.maxSizeGB * 1024 * 1024 * 1024) return false;
+        return !shouldDropByConfiguredQuality(item?.title || '', filters);
+    });
+}
+
+function applyConfiguredStreamFilters(streams, filters = {}) {
+    const list = Array.isArray(streams) ? streams : [];
+    if (!filters || Object.keys(filters).length === 0) return list;
+    return list.filter(stream => !shouldDropByConfiguredQuality(`${stream?.title || ''} ${stream?.name || ''}`, filters, { treatGenericHdAs720: true }));
+}
+
+async function normalizeCandidateResults(items) {
+    let normalized = deduplicateResults(Array.isArray(items) ? items : []);
+    normalized = propagateRdKnownStatesByHash(normalized);
+    normalized = await hydrateRdDbStatesByHash(normalized);
+    return normalized;
+}
+
+function createAggressiveResultFilter(meta, type, langMode) {
+    return (item) => {
+        if (!item?.magnet) return false;
+
+        const source = String(item.source || '').toLowerCase();
+        const title = String(item.title || '');
+        const lowerTitle = title.toLowerCase();
+
+        if (source.includes('comet') || source.includes('stremthru')) return false;
+
+        if (langMode === 'ita') {
+            if (!keepItalianCandidate(title, item.source, meta.title)) return false;
+        } else if (langMode === 'eng') {
+            if (!keepEnglishCandidate(title, item.source, meta.title)) return false;
+        } else {
+            if (!keepAllCandidate(title, item.source, meta.title)) return false;
+        }
+
+        const metaYear = parseInt(meta.year, 10);
+        if (!Number.isNaN(metaYear)) {
+            const fileYearMatch = title.match(REGEX_YEAR);
+            if (fileYearMatch && Math.abs(parseInt(fileYearMatch[0], 10) - metaYear) > 1) return false;
+        }
+
+        if (!meta.isSeries) {
+            const shortQueries = [meta.title, meta.originalTitle]
+                .filter(Boolean)
+                .map(normalizeSearchText)
+                .filter(q => q.length >= 2 && q.length <= 8);
+            if (shortQueries.length > 0 && !shortQueries.some(q => isGoodShortQueryMatch(title, q))) return false;
+        }
+
+        if (meta.isSeries) {
+            const season = meta.season;
+            const episode = meta.episode;
+
+            if ((meta.kitsu_id || type === 'anime') && new RegExp(`(?:^|\\s|[.\\-_\\[\\(])(?:e|ep|episode)?\\s*0*${episode}(?:$|\\s|[.\\-_\\]\\)]|v\\d)`, 'i').test(lowerTitle)) {
+                return true;
+            }
+
+            const wrongSeasonRegex = /(?:s|stagione|season)\s*0?(\d+)(?!\d)/gi;
+            let match;
+            while ((match = wrongSeasonRegex.exec(lowerTitle)) !== null) {
+                if (parseInt(match[1], 10) !== season && !meta.kitsu_id) return false;
+            }
+
+            const xMatch = lowerTitle.match(/(\d+)x(\d+)/i);
+            if (xMatch) return (parseInt(xMatch[1], 10) === season || meta.kitsu_id) && parseInt(xMatch[2], 10) === episode;
+
+            const hasRightSeason = new RegExp(`(?:s|stagione|season|^)\\s*0?${season}(?!\\d)`, 'i').test(lowerTitle);
+            const hasRightEpisode = new RegExp(`(?:e|x|ep|episode|^)\\s*0?${episode}(?!\\d)`, 'i').test(lowerTitle);
+
+            if (hasRightSeason && hasRightEpisode) return true;
+            if (hasRightSeason && (isSeasonPack(lowerTitle) || !/(?:e|x|ep|episode)\s*0?\d+/i.test(lowerTitle))) {
+                item._isPack = true;
+                return true;
+            }
+            return false;
+        }
+
+        if (/\b(?:S\d{2}|SEASON|STAGIONE)\b/i.test(title) || /\b\d{1,2}x\d{1,2}\b/.test(title)) return false;
+
+        const cleanFile = lowerTitle.replace(/[\.\_\-\(\)\[\]]/g, ' ').replace(/\s{2,}/g, ' ').trim();
+        const checkMatch = (strToCheck) => {
+            if (!strToCheck) return false;
+            const searchKeyword = strToCheck.replace(/^(the|a|an|il|lo|la|i|gli|le)\s+/i, '').trim();
+            if (searchKeyword === 'rip') return /^(the\s+|il\s+)?rip\b/i.test(cleanFile);
+            if (!isGoodShortQueryMatch(cleanFile, searchKeyword)) return false;
+            return searchKeyword.length <= 3
+                ? new RegExp(`\\b${searchKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(cleanFile)
+                : cleanFile.includes(searchKeyword);
+        };
+
+        if (checkMatch(String(meta.title || '').toLowerCase().replace(/[\.\_\-\(\)\[\]]/g, ' ').replace(/\s{2,}/g, ' ').trim())) return true;
+        if (checkMatch(String(meta.title || '').split(/ - |: /)[0].toLowerCase().trim())) return true;
+        if (checkMatch(String(meta.originalTitle || '').toLowerCase().trim())) return true;
+        if (smartMatch(meta.title, title, meta.isSeries, meta.season, meta.episode)) return true;
+
+        return false;
+    };
+}
+
+async function reprioritizeRdRankedList(rankedList, meta, config, hasDebridKey) {
+    const service = String(config?.service || 'rd').toLowerCase();
+    if (service !== 'rd' || !hasDebridKey) return rankedList;
+
+    let prioritized = applyRdDbCachePriority(rankedList, config);
+    const apiKey = config.key || config.rd;
+    await hydrateRdForegroundCacheState(prioritized, apiKey);
+    prioritized = applyRdDbCachePriority(prioritized, config);
+    queueRdPriorityScan(meta, prioritized, config, 'stream_open');
+    return prioritized;
+}
+
+async function resolveTorboxRankedList(rankedList, apiKey) {
+    const sourceRanked = Array.isArray(rankedList) ? [...rankedList] : [];
+    const progressiveWindows = [30, 60, 90];
+    let verifiedList = [];
+    let usedWindow = 0;
+
+    for (const checkLimit of progressiveWindows) {
+        const candidates = sourceRanked.slice(0, checkLimit);
+        if (candidates.length === 0) break;
+
+        logger.info(`ðŸ“¦ [TB CHECK] Scansiono ${candidates.length} torrent alla ricerca di file video reali...`);
+        const cacheResults = await LIMITERS.tbResolve.schedule(() => TbCache.checkCacheSync(candidates, apiKey, dbHelper, checkLimit));
+        verifiedList = [];
+
+        for (const item of candidates) {
+            const hash = String(item?.hash || '').toLowerCase();
+            const result = cacheResults?.[hash];
+            if (result && result.cached === true) {
+                item._tbCached = true;
+                if (result.file_size) item._size = result.file_size;
+                if (result.file_id !== undefined && result.file_id !== null) item.fileIdx = result.file_id;
+                verifiedList.push(item);
+            }
+        }
+
+        usedWindow = candidates.length;
+        if (verifiedList.length >= Math.min(12, CONFIG.MAX_RESULTS) || checkLimit === progressiveWindows[progressiveWindows.length - 1]) break;
+    }
+
+    logger.info(`ðŸ“¦ [TB CLEANUP] Finestra usata: ${usedWindow} -> Rimasti: ${verifiedList.length}`);
+
+    const remainingItems = sourceRanked.slice(usedWindow);
+    if (remainingItems.length > 0) TbCache.enrichCacheBackground(remainingItems, apiKey, dbHelper);
+
+    return verifiedList;
+}
+
+function applyAioWebStyle(streamList, sourceName, meta) {
+    if (!Array.isArray(streamList) || streamList.length === 0) return [];
+
+    const isAnimeWorld = sourceName.includes('AnimeWorld');
+    return streamList.map((stream) => {
+        const textToCheck = `${stream?.title || ''} ${stream?.name || ''}`.toUpperCase().replace(/GUARDAHD|STREAMINGCOMMUNITY|LEVIATHAN|VIX|GUARDAFLIX/g, '');
+        let quality = 'WebStreams';
+        let qIcon = 'ðŸ“º';
+
+        if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) {
+            quality = '4K';
+            qIcon = 'ðŸ”¥';
+        } else if (/\b(1080P|FHD|FULLHD)\b/.test(textToCheck)) {
+            quality = '1080p';
+            qIcon = 'ðŸ”¥';
+        } else if (/\b(720P|HD)\b/.test(textToCheck)) {
+            quality = '720p';
+            qIcon = 'ðŸ”¥';
+        } else if (/\b(480P|SD)\b/.test(textToCheck)) {
+            quality = 'SD';
+            qIcon = 'ðŸ”¥';
+        }
+
+        if ((sourceName.includes('StreamingCommunity') || sourceName.includes('Vix')) && quality === 'SD' && !/\b(480P|SD)\b/.test(textToCheck)) {
+            quality = '1080p';
+            qIcon = 'ðŸ”¥';
+        }
+
+        if (isAnimeWorld) {
+            stream.name = aioFormatter.formatStreamName({ service: 'web', cached: true, quality: 'HD' });
+            stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: 'Web', language: 'ðŸ‡¯ðŸ‡µ JPN/ITA', source: 'AnimeWorld', techInfo: 'â›©ï¸ Anime' });
+            stream.behaviorHints = stream.behaviorHints || {};
+            stream.behaviorHints.bingieGroup = 'Leviathan|HD|Web|AnimeWorld';
+            return stream;
+        }
+
+        stream.name = aioFormatter.formatStreamName({ service: 'web', cached: true, quality });
+        stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: 'Web', language: 'ðŸ‡®ðŸ‡¹ ITA', source: sourceName, seeders: null, techInfo: `ðŸŽžï¸ ${quality} ${qIcon}` });
+        stream.behaviorHints = stream.behaviorHints || {};
+        stream.behaviorHints.bingieGroup = `Leviathan|${quality}|Web|${sourceName.replace(/\W/g, '')}`;
+        return stream;
+    });
+}
+
+async function fetchWebProviderBuckets({ type, originalId, finalId, meta, config, reqHost, allowItalianWebProviders, dbOnlyMode }) {
+    const empty = {
+        streamingCommunity: [],
+        guardaHD: [],
+        guardaSerie: [],
+        animeWorld: [],
+        guardaFlix: []
+    };
+
+    if (dbOnlyMode || !allowItalianWebProviders) return empty;
+
+    const rawId = `${type}:${finalId}:${meta.season || 0}:${meta.episode || 0}`;
+    const providerSpecs = [
+        {
+            key: 'streamingCommunity',
+            cacheName: 'StreamingCommunity',
+            enabled: isStreamingCommunityEnabled(config.filters),
+            limiter: LIMITERS.webVix,
+            runner: () => searchStreamingCommunity(meta, config, reqHost)
+        },
+        {
+            key: 'guardaHD',
+            cacheName: 'GuardaHD',
+            enabled: config.filters?.enableGhd,
+            limiter: LIMITERS.webGhd,
+            runner: () => searchGuardaHD(meta, config)
+        },
+        {
+            key: 'guardaSerie',
+            cacheName: 'GuardaSerie',
+            enabled: config.filters?.enableGs,
+            limiter: LIMITERS.webGs,
+            runner: () => searchGuardaserie(meta, config)
+        },
+        {
+            key: 'animeWorld',
+            cacheName: 'AnimeWorld',
+            enabled: config.filters?.enableAnimeWorld,
+            limiter: LIMITERS.webAw,
+            runner: () => searchAnimeWorld(originalId, meta, config)
+        },
+        {
+            key: 'guardaFlix',
+            cacheName: 'GuardaFlix',
+            enabled: config.filters?.enableGf,
+            limiter: LIMITERS.webGf,
+            runner: () => searchGuardaFlix(meta, config)
+        }
+    ];
+
+    const settled = await Promise.allSettled(providerSpecs.map((spec) => {
+        if (!spec.enabled) return Promise.resolve([]);
+        return Cache.fetchWithCache(spec.cacheName, rawId, 43200, () =>
+            guardedProviderCall(spec.cacheName, spec.limiter, CONFIG.TIMEOUTS.SCRAPER, spec.runner)
+        );
+    }));
+
+    return providerSpecs.reduce((acc, spec, index) => {
+        acc[spec.key] = settled[index]?.status === 'fulfilled' ? settled[index].value : [];
+        return acc;
+    }, empty);
+}
+
+function formatWebProviderBuckets(webBuckets, meta, config) {
+    const buckets = {
+        streamingCommunity: Array.isArray(webBuckets?.streamingCommunity) ? [...webBuckets.streamingCommunity] : [],
+        guardaHD: Array.isArray(webBuckets?.guardaHD) ? [...webBuckets.guardaHD] : [],
+        guardaSerie: Array.isArray(webBuckets?.guardaSerie) ? [...webBuckets.guardaSerie] : [],
+        animeWorld: Array.isArray(webBuckets?.animeWorld) ? [...webBuckets.animeWorld] : [],
+        guardaFlix: Array.isArray(webBuckets?.guardaFlix) ? [...webBuckets.guardaFlix] : []
+    };
+
+    if (aioFormatter && aioFormatter.isAIOStreamsEnabled(config)) {
+        return {
+            streamingCommunity: applyAioWebStyle(buckets.streamingCommunity, 'StreamingCommunity', meta),
+            guardaHD: applyAioWebStyle(buckets.guardaHD, 'GuardaHD', meta),
+            guardaSerie: applyAioWebStyle(buckets.guardaSerie, 'GuardaSerie', meta),
+            animeWorld: applyAioWebStyle(buckets.animeWorld, 'AnimeWorld', meta),
+            guardaFlix: applyAioWebStyle(buckets.guardaFlix, 'GuardaFlix', meta)
+        };
+    }
+
+    return {
+        streamingCommunity: buckets.streamingCommunity.length > 0 ? applyWebFormatter(buckets.streamingCommunity, 'StreamingCommunity', meta, config) : [],
+        guardaHD: buckets.guardaHD.length > 0 ? applyWebFormatter(buckets.guardaHD, 'GuardaHD', meta, config) : [],
+        guardaSerie: buckets.guardaSerie.length > 0 ? applyWebFormatter(buckets.guardaSerie, 'GuardaSerie', meta, config) : [],
+        animeWorld: buckets.animeWorld.length > 0 ? applyWebFormatter(buckets.animeWorld, 'AnimeWorld', meta, config) : [],
+        guardaFlix: buckets.guardaFlix.length > 0 ? applyWebFormatter(buckets.guardaFlix, 'GuardaFlix', meta, config) : []
+    };
+}
+
+function mergeFinalStreams(debridStreams, formattedWebBuckets, filters = {}) {
+    const webStreams = [
+        ...(formattedWebBuckets?.guardaHD || []),
+        ...(formattedWebBuckets?.guardaSerie || []),
+        ...(formattedWebBuckets?.animeWorld || []),
+        ...(formattedWebBuckets?.guardaFlix || []),
+        ...(formattedWebBuckets?.streamingCommunity || [])
+    ];
+
+    return isStreamingCommunityLastEnabled(filters)
+        ? [...(debridStreams || []), ...webStreams]
+        : [...webStreams, ...(debridStreams || [])];
 }
 
 function getServiceDisplayName(service) {
@@ -1412,11 +1747,11 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const isP2PEnabled = config.filters && config.filters.enableP2P === true;
 
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: "CONFIG", title: "Inserisci API Key, attiva P2P o attiva WebStream" }] };
-  
+
   const configHash = crypto.createHash('md5').update(userConfStr || 'no-conf').digest('hex');
   const cacheKey = `${type}:${id}:${configHash}`;
   const inflightKey = `stream:${cacheKey}`;
-  
+
   const cachedResult = await Cache.getCachedStream(cacheKey);
   if (cachedResult) return cachedResult;
 
@@ -1424,367 +1759,211 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       const staleResult = await Cache.getStaleStream(cacheKey);
       if (staleResult) {
           incrementMetric('stream.generate.staleWhileRefresh');
-          if (streamInflight.size >= STREAM_STALE_LOAD_THRESHOLD) {
-              incrementMetric('stream.generate.staleLoadShield');
-          }
+          if (streamInflight.size >= STREAM_STALE_LOAD_THRESHOLD) incrementMetric('stream.generate.staleLoadShield');
           return staleResult;
       }
   }
 
   return withSharedPromise(streamInflight, inflightKey, async () => {
-  const cachedAgain = await Cache.getCachedStream(cacheKey);
-  if (cachedAgain) return cachedAgain;
+      const cachedAgain = await Cache.getCachedStream(cacheKey);
+      if (cachedAgain) return cachedAgain;
 
-  const generationStartedAt = Date.now();
-  incrementMetric('stream.generate.calls');
-  const userTmdbKey = config.tmdb; 
-  let finalId = id.replace('ai-recs:', '');
-  
-  if (finalId.startsWith("tmdb:")) {
-      try {
-          const parts = finalId.split(":");
-          const imdbId = await tmdbToImdb(parts[1], type, userTmdbKey);
-          if (imdbId) finalId = (type === "series" && parts.length >= 4) ? `${imdbId}:${parts[2]}:${parts[3]}` : imdbId;
-      } catch (err) {}
-  }
+      const generationStartedAt = Date.now();
+      incrementMetric('stream.generate.calls');
 
-  const meta = await LIMITERS.metadata.schedule(() => getMetadata(finalId, type, config));
-  if (!meta) return { streams: [] };
+      const userTmdbKey = config.tmdb;
+      let finalId = id.replace('ai-recs:', '');
 
-  logger.info(`[SPEED] Start search for: ${meta.title}`);
-
-  const localDbResults = await fetchLocalDbResults(meta);
-  if (localDbResults.length > 0) logger.info(`[DB READ] Trovati ${localDbResults.length} torrent dal DB locale.`);
-  
-  const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
-  const dbOnlyMode = config.filters?.dbOnly === true; 
-  const langMode = config.filters?.language || (config.filters?.allowEng ? "all" : "ita");
-  const allowItalianWebProviders = langMode !== "eng";
-
-const aggressiveFilter = (item) => {
-      if (!item?.magnet) return false;
-      const source = (item.source || "").toLowerCase(), t = item.title, tLower = t.toLowerCase();
-      if (source.includes("comet") || source.includes("stremthru")) return false;
-
-      if (langMode === "ita") {
-           if (!keepItalianCandidate(t, item.source, meta.title)) return false;
-      } else if (langMode === "eng") {
-           if (!keepEnglishCandidate(t, item.source, meta.title)) return false;
-      } else {
-           if (!keepAllCandidate(t, item.source, meta.title)) return false;
-      }
-      
-      const metaYear = parseInt(meta.year);
-      if (metaYear === 2025 && /frankenstein/i.test(meta.title) && !item.title.includes("2025")) return false;
-      if (!isNaN(metaYear)) {
-           const fileYearMatch = item.title.match(REGEX_YEAR);
-           if (fileYearMatch && Math.abs(parseInt(fileYearMatch[0]) - metaYear) > 1) return false; 
+      if (finalId.startsWith('tmdb:')) {
+          try {
+              const parts = finalId.split(':');
+              const imdbId = await tmdbToImdb(parts[1], type, userTmdbKey);
+              if (imdbId) finalId = (type === 'series' && parts.length >= 4) ? `${imdbId}:${parts[2]}:${parts[3]}` : imdbId;
+          } catch (err) {}
       }
 
-      if (!meta.isSeries) {
-          const shortQueries = [meta.title, meta.originalTitle].filter(Boolean).map(normalizeSearchText).filter(q => q.length >= 2 && q.length <= 8);
-          if (shortQueries.length > 0 && !shortQueries.some(q => isGoodShortQueryMatch(item.title, q))) return false;
+      const meta = await LIMITERS.metadata.schedule(() => getMetadata(finalId, type, config));
+      if (!meta) return { streams: [] };
+
+      logger.info(`[SPEED] Start search for: ${meta.title}`);
+
+      const localDbResults = await fetchLocalDbResults(meta);
+      if (localDbResults.length > 0) logger.info(`[DB READ] Trovati ${localDbResults.length} torrent dal DB locale.`);
+
+      const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
+      const dbOnlyMode = config.filters?.dbOnly === true;
+      const langMode = config.filters?.language || (config.filters?.allowEng ? 'all' : 'ita');
+      const allowItalianWebProviders = langMode !== 'eng';
+      const aggressiveFilter = createAggressiveResultFilter(meta, type, langMode);
+
+      const remotePromise = Cache.fetchWithCache('RemoteIndexer', `${type}:${tmdbIdLookup || finalId}:${meta.season}:${meta.episode}`, 43200, () =>
+          guardedProviderCall('RemoteIndexer', LIMITERS.remoteIndexer, CONFIG.TIMEOUTS.REMOTE_INDEXER, () => queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config, meta.title))
+      );
+
+      let externalPromise = Promise.resolve([]);
+      if (!dbOnlyMode) {
+          externalPromise = Cache.fetchWithCache('ExternalAddons', `${type}:${finalId}`, 43200, () =>
+              guardedProviderCall('ExternalAddons', LIMITERS.externalAddons, CONFIG.TIMEOUTS.EXTERNAL, () => fetchExternalResults(type, finalId, config))
+          );
       }
 
-      if (meta.isSeries) {
-          const s = meta.season, e = meta.episode;
-          if ((meta.kitsu_id || type === 'anime') && new RegExp(`(?:^|\\s|[.\\-_\\[\\(])(?:e|ep|episode)?\\s*0*${e}(?:$|\\s|[.\\-_\\]\\)]|v\\d)`, 'i').test(tLower)) return true;
+      const [remoteSettled, externalSettled] = await Promise.allSettled([remotePromise, externalPromise]);
+      const remoteResults = remoteSettled.status === 'fulfilled' ? remoteSettled.value : [];
+      const externalResults = externalSettled.status === 'fulfilled' ? externalSettled.value : [];
+      logger.info(`[STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
 
-          const wrongSeasonRegex = /(?:s|stagione|season)\s*0?(\d+)(?!\d)/gi;
-          let match;
-          while ((match = wrongSeasonRegex.exec(tLower)) !== null) if (parseInt(match[1]) !== s && !meta.kitsu_id) return false;
+      const fastResults = [...localDbResults, ...remoteResults, ...externalResults].filter(aggressiveFilter);
+      let cleanResults = await normalizeCandidateResults(fastResults);
+      let validFastCount = cleanResults.length;
+      logger.info(`[FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
 
-          const xMatch = tLower.match(/(\d+)x(\d+)/i);
-          if (xMatch) return (parseInt(xMatch[1]) === s || meta.kitsu_id) && parseInt(xMatch[2]) === e;
+      const fastPoolAssessment = assessFastResultQuality(cleanResults, meta, langMode, config);
+      if (fastPoolAssessment.shouldScrape && !dbOnlyMode) {
+          logger.info(`âš ï¸ [FALLBACK] Fast pool debole (${fastPoolAssessment.reason}) | total=${fastPoolAssessment.total} strong=${fastPoolAssessment.strongCount} exact=${fastPoolAssessment.exactEpisodeCount} pack=${fastPoolAssessment.seasonPackCount}. Avvio Scrapers...`);
 
-          const hasRightSeason = new RegExp(`(?:s|stagione|season|^)\\s*0?${s}(?!\\d)`, 'i').test(tLower);
-          const hasRightEpisode = new RegExp(`(?:e|x|ep|episode|^)\\s*0?${e}(?!\\d)`, 'i').test(tLower);
-          
-          if (hasRightSeason && hasRightEpisode) return true;
-          if (hasRightSeason && (isSeasonPack(tLower) || !/(?:e|x|ep|episode)\s*0?\d+/i.test(tLower))) { item._isPack = true; return true; }
-          return false;
-      } else if (/\b(?:S\d{2}|SEASON|STAGIONE)\b/i.test(t) || /\b\d{1,2}x\d{1,2}\b/.test(t)) return false;
+          let dynamicTitles = [];
+          try {
+              if (tmdbIdLookup) dynamicTitles = await getTmdbAltTitles(tmdbIdLookup, type, userTmdbKey);
+          } catch (e) {}
 
-      const cleanFile = tLower.replace(/[\.\_\-\(\)\[\]]/g, " ").replace(/\s{2,}/g, " ").trim();
-      const checkMatch = (strToCheck) => {
-          if (!strToCheck) return false;
-          let searchKeyword = strToCheck.replace(/^(the|a|an|il|lo|la|i|gli|le)\s+/i, "").trim();
-          if (searchKeyword === "rip") return /^(the\s+|il\s+)?rip\b/i.test(cleanFile);
-          if (!isGoodShortQueryMatch(cleanFile, searchKeyword)) return false;
-          return searchKeyword.length <= 3 ? new RegExp(`\\b${searchKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(cleanFile) : cleanFile.includes(searchKeyword);
-      };
+          const allowEngScraper = (langMode === 'all' || langMode === 'eng');
+          const rawQueries = generateSmartQueries({ ...meta, langMode }, dynamicTitles, langMode);
+          const queries = (() => {
+              const deduped = [];
+              const seen = new Set();
 
-      if (checkMatch(meta.title.toLowerCase().replace(/[\.\_\-\(\)\[\]]/g, " ").replace(/\s{2,}/g, " ").trim())) return true;          
-      if (checkMatch(meta.title.split(/ - |: /)[0].toLowerCase().trim())) return true;  
-      if (checkMatch((meta.originalTitle || "").toLowerCase().trim())) return true;      
-      if (smartMatch(meta.title, item.title, meta.isSeries, meta.season, meta.episode)) return true;
-      return false;
-  };
-
-  const remotePromise = Cache.fetchWithCache('RemoteIndexer', `${type}:${tmdbIdLookup || finalId}:${meta.season}:${meta.episode}`, 43200, () =>
-      guardedProviderCall('RemoteIndexer', LIMITERS.remoteIndexer, CONFIG.TIMEOUTS.REMOTE_INDEXER, () => queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config, meta.title))
-  );
-
-  let externalPromise = Promise.resolve([]);
-  if (!dbOnlyMode) externalPromise = Cache.fetchWithCache('ExternalAddons', `${type}:${finalId}`, 43200, () => guardedProviderCall('ExternalAddons', LIMITERS.externalAddons, CONFIG.TIMEOUTS.EXTERNAL, () => fetchExternalResults(type, finalId, config)));
-
-  const [remoteSettled, externalSettled] = await Promise.allSettled([remotePromise, externalPromise]);
-  const remoteResults = remoteSettled.status === 'fulfilled' ? remoteSettled.value : [];
-  const externalResults = externalSettled.status === 'fulfilled' ? externalSettled.value : [];
-  logger.info(`[STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
-
-  let fastResults = [...localDbResults, ...remoteResults, ...externalResults].filter(aggressiveFilter);
-  let cleanResults = deduplicateResults(fastResults);
-  cleanResults = propagateRdKnownStatesByHash(cleanResults);
-  cleanResults = await hydrateRdDbStatesByHash(cleanResults);
-  let validFastCount = cleanResults.length;
-  logger.info(`[FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
-
-  const fastPoolAssessment = assessFastResultQuality(cleanResults, meta, langMode, config);
-  if (fastPoolAssessment.shouldScrape && !dbOnlyMode) {
-      logger.info(`âš ï¸ [FALLBACK] Fast pool debole (${fastPoolAssessment.reason}) | total=${fastPoolAssessment.total} strong=${fastPoolAssessment.strongCount} exact=${fastPoolAssessment.exactEpisodeCount} pack=${fastPoolAssessment.seasonPackCount}. Avvio Scrapers...`);
-      let dynamicTitles = [];
-      try { if (tmdbIdLookup) dynamicTitles = await getTmdbAltTitles(tmdbIdLookup, type, userTmdbKey); } catch (e) {}
-      
-      const allowEngScraper = (langMode === "all" || langMode === "eng");
-      const rawQueries = generateSmartQueries({ ...meta, langMode }, dynamicTitles, langMode);
-      const queries = (() => {
-          const deduped = [];
-          const seen = new Set();
-          for (const q of rawQueries) {
-              const key = normalizeSearchText(q);
-              if (!key || seen.has(key)) continue;
-              seen.add(key);
-              deduped.push(q);
-          }
-
-          if (langMode === "eng") {
-              const noIta = deduped.filter(q => !/\b(?:ita|multi)\b/i.test(q));
-              const yearQueries = noIta.filter(q => meta.year && new RegExp(`\\b${meta.year}\\b`).test(q));
-              const plainQueries = noIta.filter(q => !/\b(?:19|20)\d{2}\b/.test(q));
-              const selected = [];
-              for (const q of [...yearQueries, ...plainQueries, ...noIta]) {
-                  if (selected.includes(q)) continue;
-                  selected.push(q);
-                  if (selected.length >= 4) break;
+              for (const q of rawQueries) {
+                  const key = normalizeSearchText(q);
+                  if (!key || seen.has(key)) continue;
+                  seen.add(key);
+                  deduped.push(q);
               }
-              return selected;
-          }
 
-          if (langMode === "all") {
-              return deduped.slice(0, 8);
-          }
+              if (langMode === 'eng') {
+                  const noIta = deduped.filter(q => !/\b(?:ita|multi)\b/i.test(q));
+                  const yearQueries = noIta.filter(q => meta.year && new RegExp(`\\b${meta.year}\\b`).test(q));
+                  const plainQueries = noIta.filter(q => !/\b(?:19|20)\d{2}\b/.test(q));
+                  const selected = [];
 
-          return deduped;
-      })();
-      const scraperTimeout = langMode === "eng"
-          ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 12000)
-          : langMode === "all"
-              ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 10000)
-              : (CONFIG.TIMEOUTS.SCRAPER || 4000);
+                  for (const q of [...yearQueries, ...plainQueries, ...noIta]) {
+                      if (selected.includes(q)) continue;
+                      selected.push(q);
+                      if (selected.length >= 4) break;
+                  }
 
-      if (queries.length > 0) {
-          logger.info(`[SCRAPER PLAN] lang=${langMode} queries=${queries.length} timeout=${scraperTimeout}ms`);
-          const allScraperTasks = [];
-          queries.forEach(q => SCRAPER_MODULES.forEach(scraper => {
-              if (scraper.searchMagnet) {
-                  allScraperTasks.push(LIMITERS.scraper.schedule(() =>
-                      withTimeout(scraper.searchMagnet(q, meta.year, type, finalId, { langMode, allowEng: allowEngScraper }), scraperTimeout, `Scraper ${scraper.name || 'Module'}`)
-                      .catch(err => { logger.warn(`Scraper Timeout/Error: ${err.message}`); return []; })
-                  ));
+                  return selected;
               }
-          }));
-          const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks)).flatMap(result => result.status === 'fulfilled' ? result.value : []);
-          cleanResults = deduplicateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)]);
-          cleanResults = propagateRdKnownStatesByHash(cleanResults);
-          cleanResults = await hydrateRdDbStatesByHash(cleanResults);
-          validFastCount = cleanResults.length;
-          logger.info(`[STATS SCRAPER] Trovati e filtrati ${validFastCount} risultati aggiuntivi dagli Scraper.`);
-      }
-  }
 
-  if (!dbOnlyMode) saveResultsToDbBackground(meta, cleanResults, config);
+              if (langMode === 'all') return deduped.slice(0, 8);
+              return deduped;
+          })();
 
-  if (config.filters) {
-      cleanResults = cleanResults.filter(item => {
-          const t = (item.title || "").toLowerCase();
-          if (config.filters.maxSizeGB && config.filters.maxSizeGB > 0 && (item._size || item.sizeBytes || 0) > config.filters.maxSizeGB * 1024 * 1024 * 1024) return false;
-          if (config.filters.no4k && REGEX_QUALITY_FILTER["4K"].test(t)) return false;
-          if (config.filters.no1080 && REGEX_QUALITY_FILTER["1080p"].test(t)) return false;
-          if (config.filters.no720 && REGEX_QUALITY_FILTER["720p"].test(t)) return false;
-          if (config.filters.noScr && (REGEX_QUALITY_FILTER["SD"].test(t) || /\b(?:cam|hdcam|ts|telesync|screener|scr)\b/i.test(t))) return false;
-          if (config.filters.noCam && /\b(?:cam|hdcam|ts|telesync|screener|scr)\b/i.test(t)) return false;
-          return true;
-      });
-  }
+          const scraperTimeout = langMode === 'eng'
+              ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 12000)
+              : langMode === 'all'
+                  ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 10000)
+                  : (CONFIG.TIMEOUTS.SCRAPER || 4000);
 
-  let rankedList = rankAndFilterResults(cleanResults, meta, config);
-  const sortMode = config.sort || (config.filters && config.filters.sort) || 'balanced';
-  rankedList = rerankCompositeResults(rankedList, meta, config, sortMode);
+          if (queries.length > 0) {
+              logger.info(`[SCRAPER PLAN] lang=${langMode} queries=${queries.length} timeout=${scraperTimeout}ms`);
+              const allScraperTasks = [];
 
-  if (config.filters && config.filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, config.filters.maxPerQuality);
+              queries.forEach(q => SCRAPER_MODULES.forEach(scraper => {
+                  if (scraper.searchMagnet) {
+                      allScraperTasks.push(LIMITERS.scraper.schedule(() =>
+                          withTimeout(scraper.searchMagnet(q, meta.year, type, finalId, { langMode, allowEng: allowEngScraper }), scraperTimeout, `Scraper ${scraper.name || 'Module'}`)
+                              .catch(err => {
+                                  logger.warn(`Scraper Timeout/Error: ${err.message}`);
+                                  return [];
+                              })
+                      ));
+                  }
+              }));
 
-  if (String(config.service || 'rd').toLowerCase() === 'rd' && hasDebridKey) {
-      rankedList = applyRdDbCachePriority(rankedList, config);
-  }
-
-  if (String(config.service || 'rd').toLowerCase() === 'rd' && hasDebridKey) {
-      const apiKey = config.key || config.rd;
-      await hydrateRdForegroundCacheState(rankedList, apiKey);
-      rankedList = applyRdDbCachePriority(rankedList, config);
-      queueRdPriorityScan(meta, rankedList, config, 'stream_open');
-  }
-
-  if (config.service === 'tb' && hasDebridKey) {
-      const apiKey = config.key || config.rd;
-      const sourceRanked = [...rankedList];
-      const progressiveWindows = [30, 60, 90];
-      let verifiedList = [];
-      let usedWindow = 0;
-
-      for (const checkLimit of progressiveWindows) {
-          const candidates = sourceRanked.slice(0, checkLimit);
-          if (candidates.length === 0) break;
-          logger.info(`ðŸ“¦ [TB CHECK] Scansiono ${candidates.length} torrent alla ricerca di file video reali...`);
-          const cacheResults = await LIMITERS.tbResolve.schedule(() => TbCache.checkCacheSync(candidates, apiKey, dbHelper, checkLimit));
-          verifiedList = [];
-          for (const item of candidates) {
-              const hash = item.hash.toLowerCase();
-              const result = cacheResults[hash];
-              if (result && result.cached === true) {
-                  item._tbCached = true;
-                  if (result.file_size) item._size = result.file_size;
-                  if (result.file_id !== undefined && result.file_id !== null) item.fileIdx = result.file_id;
-                  verifiedList.push(item);
-              }
+              const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks)).flatMap(result => result.status === 'fulfilled' ? result.value : []);
+              cleanResults = await normalizeCandidateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)]);
+              validFastCount = cleanResults.length;
+              logger.info(`[STATS SCRAPER] Trovati e filtrati ${validFastCount} risultati aggiuntivi dagli Scraper.`);
           }
-          usedWindow = candidates.length;
-          if (verifiedList.length >= Math.min(12, CONFIG.MAX_RESULTS) || checkLimit === progressiveWindows[progressiveWindows.length - 1]) break;
       }
 
-      logger.info(`ðŸ“¦ [TB CLEANUP] Finestra usata: ${usedWindow} -> Rimasti: ${verifiedList.length}`);
-      rankedList = verifiedList;
-      const remainingItems = sourceRanked.slice(usedWindow);
-      if (remainingItems.length > 0) TbCache.enrichCacheBackground(remainingItems, apiKey, dbHelper);
-  }
+      if (!dbOnlyMode) saveResultsToDbBackground(meta, cleanResults, config);
 
-  let finalRanked = rankedList.slice(0, CONFIG.MAX_RESULTS);
-  let debridStreams = [];
-  
-  if (finalRanked.length > 0 && hasDebridKey) {
-      const TOP_LIMIT = Math.max(0, Math.min(10, parseInt(config.filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0));
-      const serviceLimiter = getServiceResolverLimiter(config.service);
-      const resolverConfig = { ...config, rawConf: userConfStr };
-      const immediatePromises = finalRanked.slice(0, TOP_LIMIT).map(item => {
-          const runtimeItem = createRuntimeItem(item, meta);
-          return serviceLimiter.schedule(() => resolveDebridLink(resolverConfig, runtimeItem, config.filters?.showFake, reqHost, meta));
+      cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
+
+      let rankedList = rankAndFilterResults(cleanResults, meta, config);
+      const sortMode = config.sort || (config.filters && config.filters.sort) || 'balanced';
+      rankedList = rerankCompositeResults(rankedList, meta, config, sortMode);
+
+      if (config.filters && config.filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, config.filters.maxPerQuality);
+
+      rankedList = await reprioritizeRdRankedList(rankedList, meta, config, hasDebridKey);
+
+      if (config.service === 'tb' && hasDebridKey) {
+          const apiKey = config.key || config.rd;
+          rankedList = await resolveTorboxRankedList(rankedList, apiKey);
+      }
+
+      const finalRanked = rankedList.slice(0, CONFIG.MAX_RESULTS);
+      let debridStreams = [];
+
+      if (finalRanked.length > 0 && hasDebridKey) {
+          const TOP_LIMIT = Math.max(0, Math.min(10, parseInt(config.filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0));
+          const serviceLimiter = getServiceResolverLimiter(config.service);
+          const resolverConfig = { ...config, rawConf: userConfStr };
+          const immediatePromises = finalRanked.slice(0, TOP_LIMIT).map(item => {
+              const runtimeItem = createRuntimeItem(item, meta);
+              return serviceLimiter.schedule(() => resolveDebridLink(resolverConfig, runtimeItem, config.filters?.showFake, reqHost, meta));
+          });
+          const lazyCandidates = finalRanked.slice(TOP_LIMIT).map(item => createRuntimeItem(item, meta));
+          const lazyStreams = lazyCandidates.map(item => generateLazyStream(item, config, meta, reqHost, userConfStr, true));
+          const resolvedInstant = (await Promise.allSettled(immediatePromises)).flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
+          debridStreams = [...resolvedInstant, ...lazyStreams];
+          warmupLazyStreamsInBackground(config, lazyCandidates, meta);
+      } else if (finalRanked.length > 0 && isP2PEnabled) {
+          logger.info(`[P2P MODE] Generating direct streams for ${meta.title}`);
+          debridStreams = finalRanked.map(item => P2P.formatP2PStream(item, config));
+      }
+
+      const rawWebBuckets = await fetchWebProviderBuckets({
+          type,
+          originalId: id,
+          finalId,
+          meta,
+          config,
+          reqHost,
+          allowItalianWebProviders,
+          dbOnlyMode
       });
-      const lazyCandidates = finalRanked.slice(TOP_LIMIT).map(item => createRuntimeItem(item, meta));
-      const lazyStreams = lazyCandidates.map(item => generateLazyStream(item, config, meta, reqHost, userConfStr, true));
-      const resolvedInstant = (await Promise.allSettled(immediatePromises)).flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
-      debridStreams = [...resolvedInstant, ...lazyStreams];
-      warmupLazyStreamsInBackground(config, lazyCandidates, meta);
-  }
-  else if (finalRanked.length > 0 && isP2PEnabled) {
-      logger.info(`[P2P MODE] Generating direct streams for ${meta.title}`);
-      debridStreams = finalRanked.map(item => P2P.formatP2PStream(item, config));
-  }
 
-  let rawStreamingCommunity = [], formattedGhd = [], formattedGs = [], formattedStreamingCommunity = [], formattedAw = [], formattedGf = [];
+      const formattedWebBuckets = formatWebProviderBuckets(rawWebBuckets, meta, config);
+      let finalStreams = mergeFinalStreams(debridStreams, formattedWebBuckets, config.filters || {});
+      finalStreams = applyConfiguredStreamFilters(finalStreams, config.filters || {});
 
-  if (!dbOnlyMode) {
-       const rawId = `${type}:${finalId}:${meta.season || 0}:${meta.episode || 0}`;
-       let streamingCommunityPromise = Promise.resolve([]);
-       let ghdPromise = Promise.resolve([]), gsPromise = Promise.resolve([]), awPromise = Promise.resolve([]), gfPromise = Promise.resolve([]);
-       if (allowItalianWebProviders && isStreamingCommunityEnabled(config.filters)) streamingCommunityPromise = Cache.fetchWithCache('StreamingCommunity', rawId, 43200, () => guardedProviderCall('StreamingCommunity', LIMITERS.webVix, CONFIG.TIMEOUTS.SCRAPER, () => searchStreamingCommunity(meta, config, reqHost)));
-       if (allowItalianWebProviders && config.filters?.enableGhd) ghdPromise = Cache.fetchWithCache('GuardaHD', rawId, 43200, () => guardedProviderCall('GuardaHD', LIMITERS.webGhd, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaHD(meta, config)));
-       if (allowItalianWebProviders && config.filters?.enableGs) gsPromise = Cache.fetchWithCache('GuardaSerie', rawId, 43200, () => guardedProviderCall('GuardaSerie', LIMITERS.webGs, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaserie(meta, config)));
-       if (allowItalianWebProviders && config.filters?.enableAnimeWorld) awPromise = Cache.fetchWithCache('AnimeWorld', rawId, 43200, () => guardedProviderCall('AnimeWorld', LIMITERS.webAw, CONFIG.TIMEOUTS.SCRAPER, () => searchAnimeWorld(id, meta, config)));
-       if (allowItalianWebProviders && config.filters?.enableGf) gfPromise = Cache.fetchWithCache('GuardaFlix', rawId, 43200, () => guardedProviderCall('GuardaFlix', LIMITERS.webGf, CONFIG.TIMEOUTS.SCRAPER, () => searchGuardaFlix(meta, config)));
+      if (finalStreams.length === 0) {
+          logger.info(`[FALLBACK] Nessun risultato trovato (P2P/Web Locali). Attivo WebStreamr...`);
+          const webStreamrResults = filterWebFallbackStreams(await searchWebStreamr(type, finalId), langMode, meta);
+          if (webStreamrResults.length > 0) {
+              finalStreams.push(...webStreamrResults);
+              logger.info(`[WEBSTREAMR] Aggiunti ${webStreamrResults.length} stream di fallback.`);
+          } else {
+              logger.info(`[WEBSTREAMR] Nessun risultato trovato.`);
+          }
+      }
 
-       const webSettled = await Promise.allSettled([streamingCommunityPromise, ghdPromise, gsPromise, awPromise, gfPromise]);
-       rawStreamingCommunity = webSettled[0].status === 'fulfilled' ? webSettled[0].value : [];
-       formattedGhd = webSettled[1].status === 'fulfilled' ? webSettled[1].value : [];
-       formattedGs = webSettled[2].status === 'fulfilled' ? webSettled[2].value : [];
-       formattedAw = webSettled[3].status === 'fulfilled' ? webSettled[3].value : [];
-       formattedGf = webSettled[4].status === 'fulfilled' ? webSettled[4].value : [];
-       
-       if (aioFormatter && aioFormatter.isAIOStreamsEnabled(config)) {
-           const applyAioStyle = (streamList, sourceName) => {
-               if (!streamList || !Array.isArray(streamList)) return;
-               streamList.forEach((stream) => {
-                   let quality = "HD";
-                   let qIcon = "ðŸ“º";
-                   const textToCheck = (stream.title + " " + (stream.name || "")).toUpperCase().replace(/GUARDAHD|STREAMINGCOMMUNITY|LEVIATHAN|VIX|GUARDAFLIX/g, "");
-                   if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) { quality = "4K"; qIcon = "ðŸ”¥"; }
-                   else if (/\b(1080P|FHD|FULLHD)\b/.test(textToCheck)) { quality = "1080p"; qIcon = "ðŸ”¥"; }
-                   else if (/\b(720P|HD)\b/.test(textToCheck)) { quality = "720p"; qIcon = "ðŸ”¥"; }
-                   else if (/\b(480P|SD)\b/.test(textToCheck)) { quality = "SD"; qIcon = "ðŸ”¥"; }
-                   else { quality = "WebStreams"; }
-                   if (sourceName.includes("StreamingCommunity") || sourceName.includes("Vix")) {
-                       if (quality === "SD" && !/\b(480P|SD)\b/.test(textToCheck)) { quality = "1080p"; qIcon = "ðŸ”¥"; }
-                   }
-                   stream.name = aioFormatter.formatStreamName({ service: "web", cached: true, quality });
-                   stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: "Web", language: "ðŸ‡®ðŸ‡¹ ITA", source: sourceName, seeders: null, techInfo: `ðŸŽžï¸ ${quality} ${qIcon}` });
-                   if (!stream.behaviorHints) stream.behaviorHints = {};
-                   stream.behaviorHints.bingieGroup = `Leviathan|${quality}|Web|${sourceName.replace(/\W/g,'')}`;
-               });
-           };
-           if (typeof rawStreamingCommunity !== 'undefined') applyAioStyle(rawStreamingCommunity, "StreamingCommunity");
-           if (typeof formattedGhd !== 'undefined') applyAioStyle(formattedGhd, "GuardaHD");
-           if (typeof formattedGs !== 'undefined') applyAioStyle(formattedGs, "GuardaSerie");
-           if (typeof formattedGf !== 'undefined') applyAioStyle(formattedGf, "GuardaFlix");
-           if (typeof formattedAw !== 'undefined' && formattedAw.length > 0) {
-               formattedAw.forEach(stream => {
-                   stream.name = aioFormatter.formatStreamName({ service: "web", cached: true, quality: "HD" });
-                   stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: "Web", language: "ðŸ‡¯ðŸ‡µ JPN/ITA", source: "AnimeWorld", techInfo: "â›©ï¸ Anime" });
-                   if (!stream.behaviorHints) stream.behaviorHints = {};
-                   stream.behaviorHints.bingieGroup = `Leviathan|HD|Web|AnimeWorld`;
-               });
-           }
-           formattedStreamingCommunity = rawStreamingCommunity; 
-       } else {
-           if (rawStreamingCommunity && rawStreamingCommunity.length > 0) formattedStreamingCommunity = applyWebFormatter(rawStreamingCommunity, "StreamingCommunity", meta, config);
-           if (formattedGhd && formattedGhd.length > 0) formattedGhd = applyWebFormatter(formattedGhd, "GuardaHD", meta, config);
-           if (formattedGs && formattedGs.length > 0) formattedGs = applyWebFormatter(formattedGs, "GuardaSerie", meta, config);
-           if (formattedAw && formattedAw.length > 0) formattedAw = applyWebFormatter(formattedAw, "AnimeWorld", meta, config);
-           if (formattedGf && formattedGf.length > 0) formattedGf = applyWebFormatter(formattedGf, "GuardaFlix", meta, config);
-       }
-  }
+      const resultObj = { streams: finalStreams, cacheMaxAge: 0, staleRevalidate: 0, staleError: 0 };
+      const streamTtl = finalStreams.length > 0 ? 1800 : EMPTY_STREAM_TTL;
 
-  let finalStreams = (config.filters && isStreamingCommunityLastEnabled(config.filters)) ? [...debridStreams, ...formattedGhd, ...formattedGs, ...formattedAw, ...formattedGf, ...formattedStreamingCommunity] : [...formattedGhd, ...formattedGs, ...formattedAw, ...formattedGf, ...formattedStreamingCommunity, ...debridStreams];
-
-  if (config.filters) {
-      finalStreams = finalStreams.filter(stream => {
-          const checkStr = (stream.title + " " + (stream.name || "")).toUpperCase();
-          if (config.filters.no720 && (checkStr.includes("720P") || (/\bHD\b/.test(checkStr) && !/1080|2160|4K|FHD|UHD/.test(checkStr)))) return false;
-          if (config.filters.no4k && (checkStr.includes("4K") || checkStr.includes("2160P") || checkStr.includes("UHD"))) return false;
-          if (config.filters.no1080 && (checkStr.includes("1080P") || checkStr.includes("FHD") || checkStr.includes("FULLHD"))) return false;
-          if ((config.filters.noScr || config.filters.noCam) && /CAM|SCR|TS|TELESYNC|HDCAM/.test(checkStr)) return false;
-          return true;
+      await Cache.cacheStream(cacheKey, resultObj, streamTtl, {
+          imdbId: meta?.imdb_id || null,
+          hashes: cleanResults.map((item) => item?.hash || item?.infoHash).filter(Boolean)
       });
-  }
 
-  if (finalStreams.length === 0) {
-      logger.info(`[FALLBACK] Nessun risultato trovato (P2P/Web Locali). Attivo WebStreamr...`);
-      const webStreamrResults = filterWebFallbackStreams(await searchWebStreamr(type, finalId), langMode, meta);
-      if (webStreamrResults.length > 0) {
-           finalStreams.push(...webStreamrResults);
-           logger.info(`[WEBSTREAMR] Aggiunti ${webStreamrResults.length} stream di fallback.`);
-      } else { logger.info(`[WEBSTREAMR] Nessun risultato trovato.`); }
-  }
+      recordDuration('stream.generate.total', Date.now() - generationStartedAt);
+      incrementMetric(finalStreams.length > 0 ? 'stream.generate.nonEmpty' : 'stream.generate.empty');
+      logger.info(`[CACHE] SAVED: ${cacheKey} (ttl=${streamTtl}s, streams=${finalStreams.length})`);
 
-  
-  const resultObj = { streams: finalStreams, cacheMaxAge: 0, staleRevalidate: 0, staleError: 0 };
-  const streamTtl = finalStreams.length > 0 ? 1800 : EMPTY_STREAM_TTL;
-  await Cache.cacheStream(cacheKey, resultObj, streamTtl, {
-      imdbId: meta?.imdb_id || null,
-      hashes: cleanResults.map((item) => item?.hash || item?.infoHash).filter(Boolean)
-  });
-  recordDuration('stream.generate.total', Date.now() - generationStartedAt);
-  incrementMetric(finalStreams.length > 0 ? 'stream.generate.nonEmpty' : 'stream.generate.empty');
-  logger.info(`[CACHE] SAVED: ${cacheKey} (ttl=${streamTtl}s, streams=${finalStreams.length})`);
-  return resultObj;
+      return resultObj;
   });
 }
 
