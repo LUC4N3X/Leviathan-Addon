@@ -4,6 +4,7 @@ const trackerRegistry = require('./tracker_registry');
 console.log('ðŸ“‚ Caricamento modulo storage/db_helper (PRO)...');
 
 let pool = null;
+let databaseOptimizationsPromise = null;
 const DB_POOL_MAX = Math.max(10, Math.min(120, parseInt(process.env.DB_POOL_MAX || '40', 10) || 40));
 const DB_POOL_IDLE_TIMEOUT_MS = Math.max(5000, Math.min(120000, parseInt(process.env.DB_POOL_IDLE_TIMEOUT_MS || '30000', 10) || 30000));
 const DB_POOL_CONNECT_TIMEOUT_MS = Math.max(1000, Math.min(30000, parseInt(process.env.DB_POOL_CONNECT_TIMEOUT_MS || '5000', 10) || 5000));
@@ -125,9 +126,40 @@ function initDatabase(config = {}) {
   });
 
   trackerRegistry.initTrackerRegistry();
-  ensureDatabaseOptimizations().catch((error) => console.warn(`âš ï¸ DB optimization bootstrap failed: ${error.message}`));
+  if (!databaseOptimizationsPromise) {
+    databaseOptimizationsPromise = ensureDatabaseOptimizations()
+      .catch((error) => {
+        console.warn(`âš ï¸ DB optimization bootstrap failed: ${error.message}`);
+        throw error;
+      })
+      .finally(() => {
+        if (!pool) databaseOptimizationsPromise = null;
+      });
+  }
   console.log(`âœ… DB Pool Inizializzato (Target: ${poolConfig.host || 'Cloud'})`);
   return pool;
+}
+
+async function awaitDatabaseOptimizations() {
+  if (!pool) return false;
+  if (!databaseOptimizationsPromise) {
+    databaseOptimizationsPromise = ensureDatabaseOptimizations()
+      .catch((error) => {
+        console.warn(`âš ï¸ DB optimization bootstrap failed: ${error.message}`);
+        throw error;
+      })
+      .finally(() => {
+        if (!pool) databaseOptimizationsPromise = null;
+      });
+  }
+
+  try {
+    await databaseOptimizationsPromise;
+    return true;
+  } catch (error) {
+    console.warn(`âš ï¸ DB optimization await failed: ${error.message}`);
+    return false;
+  }
 }
 
 async function ensureDatabaseOptimizations() {
@@ -170,6 +202,7 @@ async function shutdownDatabase() {
   if (!pool) return;
   const currentPool = pool;
   pool = null;
+  databaseOptimizationsPromise = null;
   await currentPool.end();
 }
 
@@ -185,6 +218,7 @@ async function withClient(fn) {
 
 async function getTorrents(imdbId, season, episode) {
   if (!pool || !imdbId) return [];
+  await awaitDatabaseOptimizations();
 
   try {
     return await withClient(async (client) => {
@@ -449,6 +483,7 @@ async function ensureTorrentRecord(torrent) {
 
 async function getRdScanBatch(limit = 5) {
   if (!pool) return [];
+  await awaitDatabaseOptimizations();
 
   const normalizedLimit = Math.max(1, Math.min(250, toSafeNumber(limit, 5)));
 
@@ -511,6 +546,7 @@ async function getRdScanBatch(limit = 5) {
 
 async function getRdCacheStatusByHashes(hashes) {
   if (!pool) return [];
+  await awaitDatabaseOptimizations();
 
   const normalizedHashes = [...new Set((Array.isArray(hashes) ? hashes : [])
     .map((hash) => normalizeInfoHash(hash))
@@ -586,6 +622,7 @@ async function getRdCacheStatusByHashes(hashes) {
 
 async function updateRdCacheStatus(cacheResults) {
   if (!pool || !Array.isArray(cacheResults) || cacheResults.length === 0) return 0;
+  await awaitDatabaseOptimizations();
 
   const normalizedRows = cacheResults
     .map((entry) => {
@@ -671,6 +708,7 @@ async function updateRdCacheStatus(cacheResults) {
 
 async function getRdScanProgress() {
   if (!pool) return null;
+  await awaitDatabaseOptimizations();
 
   try {
     const res = await pool.query(`
@@ -692,6 +730,7 @@ async function getRdScanProgress() {
 
 async function prioritizeRdHashes(hashes, options = {}) {
   if (!pool) return { requested: 0, updated: 0 };
+  await awaitDatabaseOptimizations();
 
   const normalizedHashes = [...new Set((Array.isArray(hashes) ? hashes : [])
     .map((hash) => normalizeInfoHash(hash))
@@ -737,6 +776,8 @@ async function prioritizeRdHashes(hashes, options = {}) {
 
 async function normalizePendingRdCacheState(options = {}) {
   if (!pool) return { applied: false, updated: 0, reason: 'pool_missing' };
+  const schemaReady = await awaitDatabaseOptimizations();
+  if (!schemaReady) return { applied: false, updated: 0, reason: 'schema_not_ready' };
 
   const chunkSize = Math.max(500, Math.min(50000, toSafeNumber(options.chunkSize, 10000)));
   const lockKey = 884421337;
@@ -812,14 +853,16 @@ async function healthCheck() {
 module.exports = {
   initDatabase,
   shutdownDatabase,
-    healthCheck,
-    getTorrents,
-    getRdScanBatch,
-    insertTorrent,
-    ensureTorrentRecord,
-    getRdCacheStatusByHashes,
-    updateRdCacheStatus,
-    getRdScanProgress,
+  getPool: () => pool,
+  withClient,
+  healthCheck,
+  getTorrents,
+  getRdScanBatch,
+  insertTorrent,
+  ensureTorrentRecord,
+  getRdCacheStatusByHashes,
+  updateRdCacheStatus,
+  getRdScanProgress,
   prioritizeRdHashes,
   normalizePendingRdCacheState,
   updateTrackers: trackerRegistry.updateTrackers,

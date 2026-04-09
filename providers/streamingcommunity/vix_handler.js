@@ -166,7 +166,7 @@ async function resolveTmdbId(meta) {
     if (!rawId) return null;
 
     if (typeof rawId === "string" && rawId.startsWith("tt")) {
-        const converted = await imdbToTmdb(rawId);
+        const converted = await mediaIdentity.imdbToTmdb(rawId);
         return converted && converted.tmdbId ? String(converted.tmdbId) : null;
     }
 

@@ -28,6 +28,14 @@ const {
   incrementMetric, recordDuration, recordProviderMetric
 } = require("./utils");
 
+const REGEX_FAST_QUALITY_SIGNAL = /\b(?:2160p|4k|uhd|1080p|fhd|720p|web[-.\s]?dl|blu[-.\s]?ray|remux|hevc|x265|x264)\b/i;
+const REGEX_TITLE_EXPLICIT_ENG = /\b(?:ENG|ENGLISH)\b/i;
+const REGEX_TITLE_EXPLICIT_ITA = /\b(?:ITA|ITALIANO|ITALIAN)\b/i;
+const REGEX_TITLE_EXPLICIT_MULTI = /\b(?:MULTI|DUAL[\s.-]?AUDIO)\b/i;
+const REGEX_TITLE_EXPLICIT_OTHER = /\b(?:FRENCH|GERMAN|SPANISH|ESP|LATINO|RUS|RUSSIAN|JPN|JAP|VOSTFR|POLISH|PORTUGUESE|PT-BR|HINDI|KOREAN|CHINESE|ARABIC|TURKISH)\b/i;
+const REGEX_TITLE_NEUTRAL_SCENE = /\b(?:WEB[-.\s]?DL|WEBRIP|BLU[-.\s]?RAY|REMUX|BDRIP|2160P|1080P|720P|X265|X264|HEVC|DDP|DTS|TRUEHD|AAC)\b/i;
+const PROVIDER_BREAKER_DEFAULT_STATE = Object.freeze({ consecutiveFailures: 0, openUntil: 0, status: 'closed', version: 0 });
+
 function getServiceResolverLimiter(service) {
     const normalized = String(service || '').toLowerCase();
     if (normalized === 'ad') return LIMITERS.adResolve;
@@ -48,40 +56,86 @@ function getProviderBreakerState(providerName) {
     const key = String(providerName || 'unknown');
     let state = PROVIDER_BREAKERS.get(key);
     if (!state) {
-        state = { consecutiveFailures: 0, openUntil: 0, status: 'closed' };
+        state = { ...PROVIDER_BREAKER_DEFAULT_STATE };
         PROVIDER_BREAKERS.set(key, state);
     }
     return state;
 }
 
+function cloneProviderBreakerState(state) {
+    return {
+        consecutiveFailures: Number(state?.consecutiveFailures || 0) || 0,
+        openUntil: Number(state?.openUntil || 0) || 0,
+        status: String(state?.status || 'closed'),
+        version: Number(state?.version || 0) || 0
+    };
+}
+
+function updateProviderBreakerState(providerName, reducer, options = {}) {
+    const key = String(providerName || 'unknown');
+    const retryOnConflict = options.retryOnConflict === true;
+    const expectedVersion = options.expectedVersion;
+    const maxAttempts = retryOnConflict ? 4 : 1;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        const current = cloneProviderBreakerState(getProviderBreakerState(key));
+        if (expectedVersion !== undefined && expectedVersion !== null && current.version !== expectedVersion) {
+            if (!retryOnConflict) return { applied: false, state: current };
+        }
+
+        const latest = cloneProviderBreakerState(getProviderBreakerState(key));
+        if (latest.version !== current.version) continue;
+
+        const next = reducer(current) || current;
+        const nextState = {
+            ...latest,
+            ...next,
+            version: current.version + 1
+        };
+        PROVIDER_BREAKERS.set(key, nextState);
+        return { applied: true, state: cloneProviderBreakerState(nextState) };
+    }
+
+    return { applied: false, state: cloneProviderBreakerState(getProviderBreakerState(key)) };
+}
+
 function getProviderCircuitState(providerName) {
-    const state = getProviderBreakerState(providerName);
+    const state = cloneProviderBreakerState(getProviderBreakerState(providerName));
     const now = Date.now();
     if (state.openUntil > now) {
-        return { status: 'open', retryInMs: state.openUntil - now };
+        return { status: 'open', retryInMs: state.openUntil - now, version: state.version };
     }
     if (state.status === 'open' && state.openUntil <= now) {
-        state.status = 'half-open';
+        const transition = updateProviderBreakerState(providerName, (current) => ({
+            ...current,
+            status: 'half-open',
+            openUntil: 0
+        }), { expectedVersion: state.version });
+        return { status: transition.state.status || 'closed', retryInMs: 0, version: transition.state.version };
     }
-    return { status: state.status || 'closed', retryInMs: 0 };
+    return { status: state.status || 'closed', retryInMs: 0, version: state.version };
 }
 
-function recordProviderSuccess(providerName) {
-    const state = getProviderBreakerState(providerName);
-    state.consecutiveFailures = 0;
-    state.openUntil = 0;
-    state.status = 'closed';
+function recordProviderSuccess(providerName, expectedVersion = null) {
+    return updateProviderBreakerState(providerName, (state) => ({
+        ...state,
+        consecutiveFailures: 0,
+        openUntil: 0,
+        status: 'closed'
+    }), { expectedVersion, retryOnConflict: false }).state;
 }
 
-function recordProviderFailure(providerName) {
-    const state = getProviderBreakerState(providerName);
-    state.consecutiveFailures += 1;
-    if (state.consecutiveFailures >= BREAKER_FAILURE_THRESHOLD) {
-        state.status = 'open';
-        state.openUntil = Date.now() + BREAKER_OPEN_MS;
-    } else if (state.status !== 'open') {
-        state.status = 'closed';
-    }
+function recordProviderFailure(providerName, expectedVersion = null) {
+    return updateProviderBreakerState(providerName, (state) => {
+        const consecutiveFailures = Number(state.consecutiveFailures || 0) + 1;
+        const isOpen = consecutiveFailures >= BREAKER_FAILURE_THRESHOLD;
+        return {
+            ...state,
+            consecutiveFailures,
+            status: isOpen ? 'open' : 'closed',
+            openUntil: isOpen ? Date.now() + BREAKER_OPEN_MS : 0
+        };
+    }, { expectedVersion, retryOnConflict: true }).state;
 }
 
 async function resolveLazyStreamData(service, apiKey, item, meta) {
@@ -147,7 +201,7 @@ function assessFastResultQuality(items, meta, langMode, config) {
             : langMode === 'all'
                 ? keepAllCandidate(title, source, meta?.title)
                 : keepItalianCandidate(title, source, meta?.title);
-        const hasQualitySignal = /\b(?:2160p|4k|uhd|1080p|fhd|720p|web[-.\s]?dl|blu[-.\s]?ray|remux|hevc|x265|x264)\b/i.test(title);
+        const hasQualitySignal = REGEX_FAST_QUALITY_SIGNAL.test(title);
         const hasWeight = hasQualitySignal || sizeBytes >= (meta?.isSeries ? 250 : 700) * 1024 * 1024 || seeders > 0;
 
         let exactEpisode = false;
@@ -309,11 +363,11 @@ function getTitleDiagnostics(title, metaTitle, sourceName) {
         langInfo,
         normalizedTitle: normalizeSearchText(safeTitle),
         normalizedMeta: normalizeSearchText(safeMetaTitle),
-        explicitEng: detected.has('English') || /\b(?:ENG|ENGLISH)\b/i.test(upper),
-        explicitIta: detected.has('Italian') || langInfo?.isItalian || (langInfo?.confidence || 0) >= 5 || /\b(?:ITA|ITALIANO|ITALIAN)\b/i.test(upper),
-        explicitMulti: !!langInfo?.isMulti || /\b(?:MULTI|DUAL[\s.-]?AUDIO)\b/i.test(upper),
-        explicitOther: /\b(?:FRENCH|GERMAN|SPANISH|ESP|LATINO|RUS|RUSSIAN|JPN|JAP|VOSTFR|POLISH|PORTUGUESE|PT-BR|HINDI|KOREAN|CHINESE|ARABIC|TURKISH)\b/i.test(upper),
-        neutralScene: /\b(?:WEB[-.\s]?DL|WEBRIP|BLU[-.\s]?RAY|REMUX|BDRIP|2160P|1080P|720P|X265|X264|HEVC|DDP|DTS|TRUEHD|AAC)\b/i.test(upper)
+        explicitEng: detected.has('English') || REGEX_TITLE_EXPLICIT_ENG.test(upper),
+        explicitIta: detected.has('Italian') || langInfo?.isItalian || (langInfo?.confidence || 0) >= 5 || REGEX_TITLE_EXPLICIT_ITA.test(upper),
+        explicitMulti: !!langInfo?.isMulti || REGEX_TITLE_EXPLICIT_MULTI.test(upper),
+        explicitOther: REGEX_TITLE_EXPLICIT_OTHER.test(upper),
+        neutralScene: REGEX_TITLE_NEUTRAL_SCENE.test(upper)
     });
 }
 
@@ -386,8 +440,8 @@ function applyConfiguredStreamFilters(streams, filters = {}) {
     return list.filter(stream => !shouldDropByConfiguredQuality(`${stream?.title || ''} ${stream?.name || ''}`, filters, { treatGenericHdAs720: true }));
 }
 
-async function normalizeCandidateResults(items) {
-    let normalized = deduplicateResults(Array.isArray(items) ? items : []);
+async function normalizeCandidateResults(items, meta, config) {
+    let normalized = deduplicateResults(Array.isArray(items) ? items : [], meta, config);
     normalized = propagateRdKnownStatesByHash(normalized);
     normalized = await hydrateRdDbStatesByHash(normalized);
     return normalized;
@@ -621,82 +675,6 @@ function filterWebFallbackStreams(streams, langMode, meta) {
     });
 }
 
-function getCompositeRankScore(item, meta, config) {
-    const title = String(item?.title || '');
-    const source = item?.source || item?.provider || null;
-    const diagnostics = getTitleDiagnostics(title, meta?.title, source);
-    const langInfo = diagnostics.langInfo;
-    const sizeBytes = Number(item?._size || item?.sizeBytes || 0);
-    const seeders = parseInt(item?.seeders, 10) || 0;
-    const explicitFileIdx = item?.fileIdx !== undefined && item?.fileIdx !== null;
-    const isPack = !!(item?._isPack || isSeasonPack(title));
-    const epData = meta?.isSeries ? extractSeasonEpisodeFromFilename(title, meta?.season || 1) : null;
-
-    const langMode = getEffectiveLangMode(config);
-    let score = 0;
-
-    if (langMode === 'eng') {
-        if (diagnostics.explicitEng) score += 190000;
-        else if (keepEnglishCandidate(title, source, meta?.title)) score += 90000;
-        if (diagnostics.explicitIta) score -= 220000;
-        if (diagnostics.explicitMulti) score -= 70000;
-        if (diagnostics.explicitOther && !diagnostics.explicitEng) score -= 120000;
-    } else if (langMode === 'all') {
-        if (diagnostics.explicitIta || langInfo.isItalian) score += 180000;
-        else if (diagnostics.explicitEng) score += 150000;
-        else if (diagnostics.explicitMulti) score += 120000;
-        else if (keepAllCandidate(title, source, meta?.title)) score += 70000;
-        if (diagnostics.explicitOther && !diagnostics.explicitEng && !diagnostics.explicitIta && !diagnostics.explicitMulti) score -= 90000;
-    } else {
-        if (langInfo.isItalian) score += 200000;
-        else if (langInfo.isMaybeItalian) score += 70000;
-        if (langInfo.isMulti) score += 12000;
-    }
-
-    if (REGEX_AUDIO_CONFIRM.test(title)) score += 22000;
-    if (/\b(web[-.\s]?dl|blu[-.\s]?ray|remux|uhd|hevc|x265|x264|ddp|truehd|dts)\b/i.test(title)) score += 14000;
-    if (/\b(4k|2160p|uhd)\b/i.test(title)) score += 9000;
-    else if (/\b(1080p|fhd|full[-.\s]?hd)\b/i.test(title)) score += 7000;
-    else if (/\b(720p|hd[-.\s]?rip|hdtv|hd)\b/i.test(title)) score += 4000;
-    if (/\b(cam|hdcam|ts|telesync|screener|scr)\b/i.test(title)) score -= 30000;
-    if (langInfo.isSubOnly) score -= 25000;
-    if (explicitFileIdx) score += 7000;
-    if (source && /mircrew|corsaro|lux|wms|dn[a4]?|idn_crew|speedvideo/i.test(String(source))) score += 6000;
-    if (title && /mircrew|corsaro|lux|wms|dn[a4]?|idn_crew|speedvideo/i.test(title)) score += 5000;
-    if (meta?.isSeries) {
-        if (epData && epData.season === meta.season && epData.episode === meta.episode) score += 24000;
-        else if (isPack && new RegExp(`(?:s|season|stagione)\\s*0?${meta.season}(?!\\d)`, 'i').test(title)) score += 9000;
-        else if (epData && epData.episode !== meta.episode) score -= 18000;
-    }
-    if (!meta?.isSeries && /\b(?:S\d{2}|SEASON|STAGIONE|\d+x\d+)\b/i.test(title)) score -= 18000;
-    score += Math.min(seeders, 500) * 18;
-    score += Math.min(Math.floor(sizeBytes / (700 * 1024 * 1024)), 1200);
-    score += Math.min(title.length, 300);
-    if (String(config?.service || '').toLowerCase() === 'tb' && item?._tbCached) score += 15000;
-    return score;
-}
-
-function rerankCompositeResults(results, meta, config, sortMode) {
-    const ranked = Array.isArray(results) ? [...results] : [];
-    ranked.forEach(item => { item._compositeScore = getCompositeRankScore(item, meta, config); });
-    ranked.sort((a, b) => {
-        const scoreDelta = (b._compositeScore || 0) - (a._compositeScore || 0);
-        const sizeA = a._size || a.sizeBytes || 0;
-        const sizeB = b._size || b.sizeBytes || 0;
-        if (sortMode === 'size' && sizeB !== sizeA) return sizeB - sizeA || scoreDelta;
-        if (sortMode === 'resolution') {
-            const getResScore = (t) => /2160p|4k|uhd/i.test(t) ? 40 : /1080p|fhd/i.test(t) ? 30 : /720p|hd/i.test(t) ? 20 : 10;
-            const resDelta = getResScore(b.title || '') - getResScore(a.title || '');
-            if (resDelta !== 0) return resDelta || scoreDelta;
-        }
-        if (scoreDelta !== 0) return scoreDelta;
-        const seedDelta = (parseInt(b.seeders, 10) || 0) - (parseInt(a.seeders, 10) || 0);
-        if (seedDelta !== 0) return seedDelta;
-        return sizeB - sizeA;
-    });
-    return ranked;
-}
-
 async function guardedProviderCall(providerName, limiter, timeoutMs, factory) {
     const startedAt = Date.now();
     const circuit = getProviderCircuitState(providerName);
@@ -710,15 +688,17 @@ async function guardedProviderCall(providerName, limiter, timeoutMs, factory) {
     try {
         const result = await limiter.schedule(() => withTimeout(Promise.resolve().then(factory), timeoutMs, providerName));
         const duration = Date.now() - startedAt;
-        recordProviderSuccess(providerName);
+        const state = recordProviderSuccess(providerName, circuit.version);
         recordDuration(`provider.${providerName}`, duration);
-        recordProviderMetric(providerName, true, duration, { breaker: circuit.status });
+        recordProviderMetric(providerName, true, duration, {
+            breaker: state.status,
+            consecutiveFailures: state.consecutiveFailures
+        });
         return Array.isArray(result) ? result : (result ? [result] : []);
     } catch (err) {
         const duration = Date.now() - startedAt;
         const isTimeout = /timeout/i.test(String(err?.message || ''));
-        recordProviderFailure(providerName);
-        const state = getProviderBreakerState(providerName);
+        const state = recordProviderFailure(providerName, circuit.version);
         recordDuration(`provider.${providerName}`, duration);
         recordProviderMetric(providerName, false, duration, {
             timeout: isTimeout,
@@ -1227,7 +1207,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       logger.info(`[STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
 
       const fastResults = [...localDbResults, ...remoteResults, ...externalResults].filter(aggressiveFilter);
-      let cleanResults = await normalizeCandidateResults(fastResults);
+      let cleanResults = await normalizeCandidateResults(fastResults, meta, config);
       let validFastCount = cleanResults.length;
       logger.info(`[FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
 
@@ -1295,7 +1275,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
               }));
 
               const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks)).flatMap(result => result.status === 'fulfilled' ? result.value : []);
-              cleanResults = await normalizeCandidateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)]);
+              cleanResults = await normalizeCandidateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)], meta, config);
               validFastCount = cleanResults.length;
               logger.info(`[STATS SCRAPER] Trovati e filtrati ${validFastCount} risultati aggiuntivi dagli Scraper.`);
           }
@@ -1306,8 +1286,6 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
 
       let rankedList = rankAndFilterResults(cleanResults, meta, config);
-      const sortMode = config.sort || (config.filters && config.filters.sort) || 'balanced';
-      rankedList = rerankCompositeResults(rankedList, meta, config, sortMode);
 
       if (config.filters && config.filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, config.filters.maxPerQuality);
 

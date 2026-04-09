@@ -125,7 +125,7 @@ function isTrustedSource(source, provider = null) {
 }
 
 function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedInfo = null) {
-    if (!title) return { icon: '', isItalian: false, isMaybeItalian: false, isMulti: false, displayLabel: '', detectedLanguages: [], confidence: 0 };
+    if (!title) return { icon: '', isItalian: false, isMaybeItalian: false, isMulti: false, isSubOnly: false, displayLabel: '', detectedLanguages: [], confidence: 0 };
 
     const cacheKey = `${String(title)}|${String(italianMovieTitle || '')}|${String(source || '')}`;
     const cached = languageInfoCache.get(cacheKey);
@@ -180,13 +180,13 @@ function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedI
     const isMaybeItalian = confidence >= 3;
 
     let result;
-    if (hasIta && hasEng) result = { icon: '🇮🇹 🇬🇧', isItalian: true, isMaybeItalian, isMulti: true, displayLabel: '🇮🇹 🇬🇧', detectedLanguages, confidence };
-    else if (hasIta) result = { icon: '🇮🇹', isItalian: true, isMaybeItalian, isMulti: hasMulti, displayLabel: '🇮🇹', detectedLanguages, confidence };
-    else if (hasMulti && isMaybeItalian) result = { icon: '🇮🇹 🌈', isItalian: false, isMaybeItalian: true, isMulti: true, displayLabel: '🇮🇹 🌈', detectedLanguages, confidence };
-    else if (hasMulti) result = { icon: '🌈', isItalian: false, isMaybeItalian, isMulti: true, displayLabel: '🌈 MULTI', detectedLanguages, confidence };
-    else if (hasEng) result = { icon: '🇬🇧', isItalian: false, isMaybeItalian, isMulti: false, displayLabel: '🇬🇧', detectedLanguages, confidence };
-    else if (detectedLanguages.length > 0) result = { icon: '🌐', isItalian: false, isMaybeItalian, isMulti: false, displayLabel: '🌐', detectedLanguages, confidence };
-    else result = { icon: '', isItalian: false, isMaybeItalian, isMulti: false, displayLabel: '', detectedLanguages, confidence };
+    if (hasIta && hasEng) result = { icon: '🇮🇹 🇬🇧', isItalian: true, isMaybeItalian, isMulti: true, isSubOnly: subOnly, displayLabel: '🇮🇹 🇬🇧', detectedLanguages, confidence };
+    else if (hasIta) result = { icon: '🇮🇹', isItalian: true, isMaybeItalian, isMulti: hasMulti, isSubOnly: subOnly, displayLabel: '🇮🇹', detectedLanguages, confidence };
+    else if (hasMulti && isMaybeItalian) result = { icon: '🇮🇹 🌈', isItalian: false, isMaybeItalian: true, isMulti: true, isSubOnly: subOnly, displayLabel: '🇮🇹 🌈', detectedLanguages, confidence };
+    else if (hasMulti) result = { icon: '🌈', isItalian: false, isMaybeItalian, isMulti: true, isSubOnly: subOnly, displayLabel: '🌈 MULTI', detectedLanguages, confidence };
+    else if (hasEng) result = { icon: '🇬🇧', isItalian: false, isMaybeItalian, isMulti: false, isSubOnly: subOnly, displayLabel: '🇬🇧', detectedLanguages, confidence };
+    else if (detectedLanguages.length > 0) result = { icon: '🌐', isItalian: false, isMaybeItalian, isMulti: false, isSubOnly: subOnly, displayLabel: '🌐', detectedLanguages, confidence };
+    else result = { icon: '', isItalian: false, isMaybeItalian, isMulti: false, isSubOnly: subOnly, displayLabel: '', detectedLanguages, confidence };
 
     languageInfoCache.set(cacheKey, result);
     return result;

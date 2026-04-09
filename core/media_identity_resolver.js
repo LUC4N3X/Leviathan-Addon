@@ -1,9 +1,7 @@
 const axios = require("axios");
-const Database = require("better-sqlite3");
-const path = require("path");
-const fs = require("fs-extra");
 const http = require("http");
 const https = require("https");
+const dbRepository = require("./storage/db_repository");
 
 const CONFIG = {
     DEFAULT_TMDB_KEY: "4b9dfb8b1c9f1720b5cd1d7efea1d845",
@@ -48,7 +46,7 @@ const stats = {
     resolveCalls: 0,
     altTitleCalls: 0,
     inflightHits: 0,
-    cache: { memoryHit: 0, sqliteHit: 0, negativeMemoryHit: 0, negativeSqliteHit: 0, miss: 0, writes: 0, negativeWrites: 0 },
+    cache: { memoryHit: 0, persistentHit: 0, negativeMemoryHit: 0, negativePersistentHit: 0, miss: 0, writes: 0, negativeWrites: 0 },
     providers: {},
     prune: { runs: 0, lastRunAt: null },
     memory: { lastIdentitySize: 0, lastNegativeSize: 0 }
@@ -78,45 +76,136 @@ const log = (level, message, meta) => {
     else console.log(`[IdentityResolver] ${entry}`);
 };
 
-const DATA_DIR = path.join(__dirname, "data");
-fs.ensureDirSync(DATA_DIR);
-const dbPath = path.join(DATA_DIR, "media_identity_cache.db");
-const db = new Database(dbPath);
-db.pragma("journal_mode = WAL");
-db.pragma("synchronous = NORMAL");
-db.exec(`
-  CREATE TABLE IF NOT EXISTS identity_cache (
-    cache_key TEXT PRIMARY KEY,
-    payload TEXT NOT NULL,
-    expires_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_identity_expires_at ON identity_cache(expires_at);
-  CREATE TABLE IF NOT EXISTS negative_cache (
-    cache_key TEXT PRIMARY KEY,
-    payload TEXT NOT NULL,
-    expires_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_negative_expires_at ON negative_cache(expires_at);
-`);
-
-const stmtGetIdentity = db.prepare("SELECT payload, expires_at FROM identity_cache WHERE cache_key = ?");
-const stmtSetIdentity = db.prepare("INSERT OR REPLACE INTO identity_cache (cache_key, payload, expires_at, updated_at) VALUES (?, ?, ?, ?)");
-const stmtGetNegative = db.prepare("SELECT payload, expires_at FROM negative_cache WHERE cache_key = ?");
-const stmtSetNegative = db.prepare("INSERT OR REPLACE INTO negative_cache (cache_key, payload, expires_at, updated_at) VALUES (?, ?, ?, ?)");
-const stmtPruneIdentity = db.prepare("DELETE FROM identity_cache WHERE expires_at <= ?");
-const stmtPruneNegative = db.prepare("DELETE FROM negative_cache WHERE expires_at <= ?");
-
+const IDENTITY_CACHE_TABLE = "media_identity_cache";
+const NEGATIVE_CACHE_TABLE = "media_identity_negative_cache";
+let persistentSchemaReady = false;
+let persistentSchemaPromise = null;
 let lastPruneAt = 0;
+const identityMemoryCache = new Map();
+const negativeMemoryCache = new Map();
+const inflight = new Map();
 
-const maybePrune = () => {
+const ensurePersistentStore = async () => {
+    if (persistentSchemaReady) return true;
+    if (persistentSchemaPromise) return persistentSchemaPromise;
+    const pool = dbRepository.getPool ? dbRepository.getPool() : null;
+    if (!pool) return false;
+
+    persistentSchemaPromise = (async () => {
+        try {
+            await pool.query(`
+              CREATE TABLE IF NOT EXISTS ${IDENTITY_CACHE_TABLE} (
+                cache_key TEXT PRIMARY KEY,
+                payload JSONB NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+              )
+            `);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_${IDENTITY_CACHE_TABLE}_expires_at ON ${IDENTITY_CACHE_TABLE}(expires_at)`);
+            await pool.query(`
+              CREATE TABLE IF NOT EXISTS ${NEGATIVE_CACHE_TABLE} (
+                cache_key TEXT PRIMARY KEY,
+                payload JSONB NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL
+              )
+            `);
+            await pool.query(`CREATE INDEX IF NOT EXISTS idx_${NEGATIVE_CACHE_TABLE}_expires_at ON ${NEGATIVE_CACHE_TABLE}(expires_at)`);
+            persistentSchemaReady = true;
+            return true;
+        } catch (error) {
+            log("warn", "persistent_schema_failed", { message: error.message });
+            return false;
+        } finally {
+            persistentSchemaPromise = null;
+        }
+    })();
+
+    return persistentSchemaPromise;
+};
+
+const withPersistentStore = async (worker) => {
+    const storeReady = await ensurePersistentStore();
+    if (!storeReady || typeof dbRepository.withClient !== "function") return null;
+    try {
+        return await dbRepository.withClient(worker);
+    } catch (error) {
+        log("warn", "persistent_store_failed", { message: error.message });
+        return null;
+    }
+};
+
+const readPersistentEntry = async (tableName, cacheKey, metricKey, errorLabel) => {
+    try {
+        const row = await withPersistentStore(async (client) => {
+            const res = await client.query(
+                `SELECT payload FROM ${tableName} WHERE cache_key = $1 AND expires_at > NOW() LIMIT 1`,
+                [cacheKey]
+            );
+            return res.rows?.[0] || null;
+        });
+        if (!row) return null;
+        const payload = row.payload && typeof row.payload === "object" ? row.payload : safeJsonParse(row.payload);
+        if (!payload) return null;
+        stats.cache[metricKey] += 1;
+        return payload;
+    } catch (error) {
+        log("warn", errorLabel, { cacheKey, message: error.message });
+        return null;
+    }
+};
+
+const writePersistentEntries = async (tableName, cacheKeys, payload, ttlMs, metricKey, errorLabel) => {
+    const keys = Array.isArray(cacheKeys) ? cacheKeys.filter(Boolean) : [];
+    if (keys.length === 0) return 0;
+    const expiresAt = new Date(now() + ttlMs);
+    const updatedAt = new Date();
+
+    try {
+        const written = await withPersistentStore(async (client) => {
+            await client.query("BEGIN");
+            try {
+                for (const key of keys) {
+                    await client.query(
+                        `INSERT INTO ${tableName} (cache_key, payload, expires_at, updated_at)
+                         VALUES ($1, $2::jsonb, $3, $4)
+                         ON CONFLICT (cache_key)
+                         DO UPDATE SET payload = EXCLUDED.payload, expires_at = EXCLUDED.expires_at, updated_at = EXCLUDED.updated_at`,
+                        [key, JSON.stringify(payload), expiresAt, updatedAt]
+                    );
+                }
+                await client.query("COMMIT");
+                return keys.length;
+            } catch (error) {
+                await client.query("ROLLBACK");
+                throw error;
+            }
+        });
+
+        const applied = Number(written || 0);
+        if (applied > 0) stats.cache[metricKey] += applied;
+        return applied;
+    } catch (error) {
+        log("warn", errorLabel, { message: error.message });
+        return 0;
+    }
+};
+
+const prunePersistentStore = async () => {
+    await withPersistentStore(async (client) => {
+        await Promise.all([
+            client.query(`DELETE FROM ${IDENTITY_CACHE_TABLE} WHERE expires_at <= NOW()`),
+            client.query(`DELETE FROM ${NEGATIVE_CACHE_TABLE} WHERE expires_at <= NOW()`)
+        ]);
+    });
+};
+
+const maybePrune = async () => {
     const ts = now();
     if (ts - lastPruneAt < CONFIG.PRUNE_INTERVAL_MS) return;
     lastPruneAt = ts;
     try {
-        stmtPruneIdentity.run(ts);
-        stmtPruneNegative.run(ts);
+        await prunePersistentStore();
         for (const [key, value] of identityMemoryCache.entries()) {
             if (!value || value.expiresAt <= ts) identityMemoryCache.delete(key);
         }
@@ -131,10 +220,6 @@ const maybePrune = () => {
         log("warn", "prune_failed", { message: error.message });
     }
 };
-
-const identityMemoryCache = new Map();
-const negativeMemoryCache = new Map();
-const inflight = new Map();
 
 const lruGet = (map, key) => {
     const entry = map.get(key);
@@ -232,61 +317,21 @@ const normalizeLookup = (input, typeHint = null) => {
     return normalized;
 };
 
-const readSqliteIdentity = (cacheKey) => {
-    try {
-        const row = stmtGetIdentity.get(cacheKey);
-        if (!row) return null;
-        if (row.expires_at <= now()) return null;
-        const payload = safeJsonParse(row.payload);
-        if (!payload) return null;
-        stats.cache.sqliteHit += 1;
-        return payload;
-    } catch (error) {
-        log("warn", "sqlite_identity_read_failed", { cacheKey, message: error.message });
-        return null;
-    }
-};
+const readPersistentIdentity = async (cacheKey) => (
+    readPersistentEntry(IDENTITY_CACHE_TABLE, cacheKey, "persistentHit", "persistent_identity_read_failed")
+);
 
-const readSqliteNegative = (cacheKey) => {
-    try {
-        const row = stmtGetNegative.get(cacheKey);
-        if (!row) return null;
-        if (row.expires_at <= now()) return null;
-        const payload = safeJsonParse(row.payload);
-        if (!payload) return null;
-        stats.cache.negativeSqliteHit += 1;
-        return payload;
-    } catch (error) {
-        log("warn", "sqlite_negative_read_failed", { cacheKey, message: error.message });
-        return null;
-    }
-};
+const readPersistentNegative = async (cacheKey) => (
+    readPersistentEntry(NEGATIVE_CACHE_TABLE, cacheKey, "negativePersistentHit", "persistent_negative_read_failed")
+);
 
-const writeSqliteIdentity = (cacheKeys, payload, ttlMs) => {
-    const ts = now();
-    const expiresAt = ts + ttlMs;
-    const body = JSON.stringify(payload);
-    try {
-        const tx = db.transaction((keys) => {
-            for (const key of keys) stmtSetIdentity.run(key, body, expiresAt, ts);
-        });
-        tx(cacheKeys);
-        stats.cache.writes += cacheKeys.length;
-    } catch (error) {
-        log("warn", "sqlite_identity_write_failed", { message: error.message });
-    }
-};
+const writePersistentIdentity = async (cacheKeys, payload, ttlMs) => (
+    writePersistentEntries(IDENTITY_CACHE_TABLE, cacheKeys, payload, ttlMs, "writes", "persistent_identity_write_failed")
+);
 
-const writeSqliteNegative = (cacheKey, payload, ttlMs) => {
-    const ts = now();
-    const expiresAt = ts + ttlMs;
-    try {
-        stmtSetNegative.run(cacheKey, JSON.stringify(payload), expiresAt, ts);
-        stats.cache.negativeWrites += 1;
-    } catch (error) {
-        log("warn", "sqlite_negative_write_failed", { message: error.message });
-    }
-};
+const writePersistentNegative = async (cacheKey, payload, ttlMs) => (
+    writePersistentEntries(NEGATIVE_CACHE_TABLE, [cacheKey], payload, ttlMs, "negativeWrites", "persistent_negative_write_failed")
+);
 
 const getCacheAliases = (normalized, identity) => {
     const aliases = new Set([normalized.cacheKey]);
@@ -567,47 +612,47 @@ const searchOmdb = async (imdbId) => {
     };
 };
 
-const getCachedIdentity = (normalized) => {
+const getCachedIdentity = async (normalized) => {
     const memoryHit = lruGet(identityMemoryCache, normalized.cacheKey);
     if (memoryHit) {
         stats.cache.memoryHit += 1;
         return memoryHit;
     }
-    const sqliteHit = readSqliteIdentity(normalized.cacheKey);
-    if (sqliteHit) {
-        lruSet(identityMemoryCache, CONFIG.MEMORY_CACHE_MAX, normalized.cacheKey, sqliteHit, Math.max(1000, sqliteHit._ttlMs || CONFIG.CACHE_TTL_MS));
+    const persistentHit = await readPersistentIdentity(normalized.cacheKey);
+    if (persistentHit) {
+        lruSet(identityMemoryCache, CONFIG.MEMORY_CACHE_MAX, normalized.cacheKey, persistentHit, Math.max(1000, persistentHit._ttlMs || CONFIG.CACHE_TTL_MS));
         stats.memory.lastIdentitySize = identityMemoryCache.size;
-        return sqliteHit;
+        return persistentHit;
     }
     return null;
 };
 
-const getCachedNegative = (normalized) => {
+const getCachedNegative = async (normalized) => {
     const memoryHit = lruGet(negativeMemoryCache, normalized.cacheKey);
     if (memoryHit) {
         stats.cache.negativeMemoryHit += 1;
         return memoryHit;
     }
-    const sqliteHit = readSqliteNegative(normalized.cacheKey);
-    if (sqliteHit) {
-        lruSet(negativeMemoryCache, CONFIG.MEMORY_NEGATIVE_MAX, normalized.cacheKey, sqliteHit, Math.max(1000, sqliteHit._ttlMs || CONFIG.NEGATIVE_CACHE_TTL_MS));
+    const persistentHit = await readPersistentNegative(normalized.cacheKey);
+    if (persistentHit) {
+        lruSet(negativeMemoryCache, CONFIG.MEMORY_NEGATIVE_MAX, normalized.cacheKey, persistentHit, Math.max(1000, persistentHit._ttlMs || CONFIG.NEGATIVE_CACHE_TTL_MS));
         stats.memory.lastNegativeSize = negativeMemoryCache.size;
-        return sqliteHit;
+        return persistentHit;
     }
     return null;
 };
 
-const persistIdentity = (normalized, identity) => {
+const persistIdentity = async (normalized, identity) => {
     const payload = { ...clone(identity), _ttlMs: CONFIG.CACHE_TTL_MS };
     const aliases = getCacheAliases(normalized, identity);
-    writeSqliteIdentity(aliases, payload, CONFIG.CACHE_TTL_MS);
+    await writePersistentIdentity(aliases, payload, CONFIG.CACHE_TTL_MS);
     for (const alias of aliases) lruSet(identityMemoryCache, CONFIG.MEMORY_CACHE_MAX, alias, payload, CONFIG.CACHE_TTL_MS);
     stats.memory.lastIdentitySize = identityMemoryCache.size;
 };
 
-const persistNegative = (normalized, payload) => {
+const persistNegative = async (normalized, payload) => {
     const body = { ...clone(payload), _ttlMs: CONFIG.NEGATIVE_CACHE_TTL_MS };
-    writeSqliteNegative(normalized.cacheKey, body, CONFIG.NEGATIVE_CACHE_TTL_MS);
+    await writePersistentNegative(normalized.cacheKey, body, CONFIG.NEGATIVE_CACHE_TTL_MS);
     lruSet(negativeMemoryCache, CONFIG.MEMORY_NEGATIVE_MAX, normalized.cacheKey, body, CONFIG.NEGATIVE_CACHE_TTL_MS);
     stats.memory.lastNegativeSize = negativeMemoryCache.size;
 };
@@ -659,13 +704,13 @@ const resolveFresh = async (normalized, userKey = null) => {
 
 async function resolveIds(id, typeHint = null, userKey = null) {
     stats.resolveCalls += 1;
-    maybePrune();
+    await maybePrune();
     const normalized = normalizeLookup(id, typeHint);
 
-    const cachedIdentity = getCachedIdentity(normalized);
+    const cachedIdentity = await getCachedIdentity(normalized);
     if (cachedIdentity) return cachedIdentity;
 
-    const cachedNegative = getCachedNegative(normalized);
+    const cachedNegative = await getCachedNegative(normalized);
     if (cachedNegative) return cachedNegative;
 
     stats.cache.miss += 1;
@@ -679,7 +724,7 @@ async function resolveIds(id, typeHint = null, userKey = null) {
     const job = (async () => {
         const identity = await resolveFresh(normalized, userKey);
         if (hasUsefulIdentity(identity)) {
-            persistIdentity(normalized, identity);
+            await persistIdentity(normalized, identity);
             return identity;
         }
         const negative = {
@@ -690,7 +735,7 @@ async function resolveIds(id, typeHint = null, userKey = null) {
             confidence: 0,
             notFound: true
         };
-        persistNegative(normalized, negative);
+        await persistNegative(normalized, negative);
         return negative;
     })().finally(() => {
         inflight.delete(normalized.cacheKey);
@@ -702,7 +747,7 @@ async function resolveIds(id, typeHint = null, userKey = null) {
 
 async function getTmdbAltTitles(tmdbId, type, userKey = null) {
     stats.altTitleCalls += 1;
-    maybePrune();
+    await maybePrune();
     const cleanTmdb = asInt(tmdbId);
     const normalizedType = normalizeType(type) === "series" ? "series" : "movie";
     if (!cleanTmdb) return [];
@@ -714,7 +759,7 @@ async function getTmdbAltTitles(tmdbId, type, userKey = null) {
         return Array.isArray(mem.titles) ? mem.titles : [];
     }
 
-    const row = readSqliteIdentity(cacheKey);
+    const row = await readPersistentIdentity(cacheKey);
     if (row && Array.isArray(row.titles)) {
         lruSet(identityMemoryCache, CONFIG.MEMORY_CACHE_MAX, cacheKey, row, Math.max(1000, row._ttlMs || CONFIG.ALT_TITLES_TTL_MS));
         stats.memory.lastIdentitySize = identityMemoryCache.size;
@@ -753,7 +798,7 @@ async function getTmdbAltTitles(tmdbId, type, userKey = null) {
 
     if (!payload || !Array.isArray(payload.titles)) return [];
 
-    writeSqliteIdentity([cacheKey], payload, CONFIG.ALT_TITLES_TTL_MS);
+    await writePersistentIdentity([cacheKey], payload, CONFIG.ALT_TITLES_TTL_MS);
     lruSet(identityMemoryCache, CONFIG.MEMORY_CACHE_MAX, cacheKey, payload, CONFIG.ALT_TITLES_TTL_MS);
     stats.memory.lastIdentitySize = identityMemoryCache.size;
     return payload.titles;
@@ -785,7 +830,11 @@ function getResolverStats() {
         inflightSize: inflight.size,
         memoryIdentityEntries: identityMemoryCache.size,
         memoryNegativeEntries: negativeMemoryCache.size,
-        dbPath
+        storage: {
+            type: "postgres",
+            poolReady: Boolean(dbRepository.getPool && dbRepository.getPool()),
+            schemaReady: persistentSchemaReady
+        }
     };
 }
 
@@ -793,7 +842,7 @@ function resetResolverStats() {
     stats.resolveCalls = 0;
     stats.altTitleCalls = 0;
     stats.inflightHits = 0;
-    stats.cache = { memoryHit: 0, sqliteHit: 0, negativeMemoryHit: 0, negativeSqliteHit: 0, miss: 0, writes: 0, negativeWrites: 0 };
+    stats.cache = { memoryHit: 0, persistentHit: 0, negativeMemoryHit: 0, negativePersistentHit: 0, miss: 0, writes: 0, negativeWrites: 0 };
     stats.providers = {};
     stats.prune = { runs: 0, lastRunAt: null };
     stats.memory = { lastIdentitySize: identityMemoryCache.size, lastNegativeSize: negativeMemoryCache.size };

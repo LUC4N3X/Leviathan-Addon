@@ -56,6 +56,7 @@ const {
     shouldUpdatePackTitle
 } = require("./utils_text");
 const { LIMITERS, getLimiterStats } = require("./utils_limits");
+const { annotateResult, compareRankedItems } = require("./lib/result_ranker");
 
 const CONFIG = {
   INDEXER_URL: process.env.INDEXER_URL || "", 
@@ -278,7 +279,7 @@ function mergeDuplicateSignals(preferredItem, alternateItem) {
 }
 
 
-function deduplicateResults(results) {
+function deduplicateResults(results, meta = {}, config = {}) {
   const grouped = new Map();
 
   const normalizeFileIdxValue = (value) => {
@@ -296,14 +297,6 @@ function deduplicateResults(results) {
     return extractSeasonEpisodeFromFilename(item?.title || '', 1);
   };
 
-  const getResolutionScore = (title) => {
-    const t = String(title || '').toLowerCase();
-    if (REGEX_QUALITY_FILTER["4K"].test(t)) return 4000;
-    if (REGEX_QUALITY_FILTER["1080p"].test(t)) return 3000;
-    if (REGEX_QUALITY_FILTER["720p"].test(t)) return 2000;
-    return 1000;
-  };
-
   const buildDedupeKey = (hash, item) => {
     const fileIdx = normalizeFileIdxValue(item?.fileIdx);
     if (fileIdx !== null) return `${hash}:${fileIdx}`;
@@ -311,39 +304,6 @@ function deduplicateResults(results) {
     if (ep && Number.isInteger(ep.season) && Number.isInteger(ep.episode)) return `${hash}:s${ep.season}e${ep.episode}`;
     if (item?._isPack || isSeasonPack(item?.title)) return `${hash}:pack`;
     return `${hash}:base`;
-  };
-
-  const scoreResult = (item) => {
-    const title = item?.title || '';
-    const source = item?.source || item?.provider || null;
-    const parsed = parseTitleDetails(title);
-    const langInfo = getLanguageInfo(title, null, source, parsed);
-    const sizeBytes = parseSize(item._size || item.sizeBytes || item.size);
-    const seeders = parseInt(item.seeders, 10) || 0;
-    const fileIdx = normalizeFileIdxValue(item.fileIdx);
-    const episodeContext = getEpisodeContext(item);
-    const providerTrusted = source && isTrustedSource(source, null);
-
-    let score = 0;
-    if (langInfo.isItalian) score += 100000;
-    else if (langInfo.isMaybeItalian) score += 35000;
-    if (langInfo.isMulti) score += 7000;
-    if (REGEX_AUDIO_CONFIRM.test(title)) score += 18000;
-    if (REGEX_STRONG_ITA.test(title)) score += 12000;
-    if (REGEX_MULTI_ITA.test(title)) score += 9000;
-    if (REGEX_TRUSTED_GROUPS.test(title)) score += 8000;
-    if (providerTrusted) score += 6000;
-    if (fileIdx !== null) score += 4500;
-    if (episodeContext) score += 2800;
-    if (item._isPack || isSeasonPack(title)) score += 1800;
-    if (/(web[-.\s]?dl|blu[-.\s]?ray|remux|uhd|hevc|x265|x264|ddp|truehd|dts)/i.test(title)) score += 2200;
-    if (/cam|hdcam|ts|telesync|screener|scr/i.test(title)) score -= 12000;
-    if (langInfo.isSubOnly) score -= 14000;
-    score += getResolutionScore(title);
-    score += Math.min(seeders, 500) * 12;
-    score += Math.min(Math.floor(sizeBytes / (512 * 1024 * 1024)), 800);
-    score += Math.min(title.length, 400);
-    return score;
   };
 
   for (const item of results) {
@@ -357,7 +317,17 @@ function deduplicateResults(results) {
     item.fileIdx = normalizeFileIdxValue(item.fileIdx);
     item._size = parseSize(item._size || item.sizeBytes || item.size);
     item.seeders = parseInt(item.seeders, 10) || 0;
-    item._dedupeScore = scoreResult(item);
+    const rankedItem = annotateResult(item, meta, {
+      ...config,
+      profile: 'dedupe',
+      keepByLanguage: false,
+      sortMode: 'balanced'
+    });
+    item._score = rankedItem._score;
+    item._reasons = rankedItem._reasons;
+    item._rankMeta = rankedItem._rankMeta;
+    item._rankProfile = rankedItem._rankProfile;
+    item._dedupeScore = rankedItem._score;
 
     const dedupeKey = buildDedupeKey(finalHash, item);
     const existing = grouped.get(dedupeKey);
@@ -366,35 +336,21 @@ function deduplicateResults(results) {
       continue;
     }
 
-    const mergedCurrent = mergeDuplicateSignals(item, existing);
-    const mergedExisting = mergeDuplicateSignals(existing, item);
-
-    const existingScore = mergedExisting._dedupeScore || 0;
-    if (mergedCurrent._dedupeScore > existingScore) {
-      grouped.set(dedupeKey, mergedCurrent);
-      continue;
-    }
-    if (mergedCurrent._dedupeScore === existingScore) {
-      const existingSeeders = parseInt(mergedExisting.seeders, 10) || 0;
-      if (mergedCurrent.seeders > existingSeeders) {
-        grouped.set(dedupeKey, mergedCurrent);
-        continue;
-      }
-      const existingSize = parseSize(mergedExisting._size || mergedExisting.sizeBytes || mergedExisting.size);
-      const currentSize = parseSize(mergedCurrent._size || mergedCurrent.sizeBytes || mergedCurrent.size);
-      if (currentSize > existingSize) {
-        grouped.set(dedupeKey, mergedCurrent);
-        continue;
-      }
-      const existingTitleLen = String(mergedExisting.title || '').length;
-      const currentTitleLen = String(mergedCurrent.title || '').length;
-      if (currentTitleLen > existingTitleLen) {
-        grouped.set(dedupeKey, mergedCurrent);
-        continue;
-      }
-    }
-
-    grouped.set(dedupeKey, mergedExisting);
+    const comparison = compareRankedItems(item, existing, meta, {
+      ...config,
+      profile: 'dedupe',
+      keepByLanguage: false,
+      sortMode: 'balanced'
+    });
+    const winner = comparison < 0 ? item : existing;
+    const loser = winner === item ? existing : item;
+    const mergedWinner = mergeDuplicateSignals(winner, loser);
+    mergedWinner._score = winner._score;
+    mergedWinner._reasons = winner._reasons;
+    mergedWinner._rankMeta = winner._rankMeta;
+    mergedWinner._rankProfile = winner._rankProfile;
+    mergedWinner._dedupeScore = winner._dedupeScore || winner._score || 0;
+    grouped.set(dedupeKey, mergedWinner);
   }
   const deduped = Array.from(grouped.values());
   incrementMetric('dedupe.input', Array.isArray(results) ? results.length : 0);

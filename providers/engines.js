@@ -1,7 +1,6 @@
 const axios = require("axios");
 const cheerio = require("cheerio");
 const https = require("https");
-const cloudscraper = require("cloudscraper");
 const pLimit = require("p-limit");
 const he = require("he");
 
@@ -102,6 +101,41 @@ const engineLimit = pLimit(CONFIG.ENGINE_CONCURRENCY);
 const searchCache = new Map();
 const htmlCache = new Map();
 const inflightRequests = new Map();
+let gotScrapingLoader = null;
+
+async function getGotScrapingClient() {
+    if (!gotScrapingLoader) {
+        gotScrapingLoader = import("got-scraping")
+            .then((mod) => mod.gotScraping || mod.default?.gotScraping || mod.default || mod)
+            .catch((error) => {
+                gotScrapingLoader = null;
+                throw error;
+            });
+    }
+    return gotScrapingLoader;
+}
+
+async function requestWithGotScraping(url, config = {}) {
+    const gotScraping = await getGotScrapingClient();
+    const response = await gotScraping({
+        url,
+        method: "GET",
+        headers: config.headers,
+        timeout: { request: config.timeout || CONFIG.TIMEOUT },
+        https: { rejectUnauthorized: false },
+        followRedirect: (config.maxRedirects ?? 5) > 0,
+        maxRedirects: config.maxRedirects ?? 5,
+        throwHttpErrors: false,
+        retry: { limit: 0 },
+        responseType: "text"
+    });
+
+    return {
+        data: response.body,
+        status: response.statusCode,
+        headers: response.headers || {}
+    };
+}
 
 const ITALIAN_AUDIO_REGEX = /\b(?:ITA(?:LIAN(?:O)?)?(?:\s*(?:AUDIO|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?))?|MULTI\s*ITA|DUAL\s*AUDIO\s*ITA|TRUE\s*ITALIAN|AUDIO\s*ITA|ITA\s*AC3|ITA\s*AAC|ITA\s*DDP|ITA\s*DTS|ITA\s*TRUEHD)\b/i;
 const ITALIAN_SUB_REGEX = /\b(?:SUB[-.\s_]*ITA|SOFTSUB[-.\s_]*ITA|VOST(?:ITA)?|ITALIAN\s*SUBS?)\b/i;
@@ -350,21 +384,23 @@ async function requestHtml(url, config = {}, retries = CONFIG.RETRIES) {
                 return response;
             } catch (error) {
                 lastError = error;
-                const canTryCloudscraper = method === "GET";
-                if (canTryCloudscraper) {
+                const canTryGotScraping = method === "GET";
+                if (canTryGotScraping) {
                     try {
-                        const html = await cloudscraper.get({
-                            uri: url,
+                        const response = await requestWithGotScraping(url, {
                             headers,
-                            timeout
+                            timeout,
+                            maxRedirects: config.maxRedirects
                         });
-                        const response = { data: html, status: 200, headers: {} };
+                        if (isCloudflareResponse(response.data)) {
+                            throw new Error("CF challenge");
+                        }
                         if (!config.skipCache) {
                             setCache(htmlCache, cacheKey, response, CONFIG.HTML_CACHE_TTL);
                         }
                         return response;
-                    } catch (cloudError) {
-                        lastError = cloudError;
+                    } catch (scrapingError) {
+                        lastError = scrapingError;
                     }
                 }
 
