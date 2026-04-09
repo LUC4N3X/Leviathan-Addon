@@ -52,8 +52,9 @@ function cleanFileNameForDisplay(filename, options = {}) {
 
 function getCacheBadge(cacheState, cached) {
     const normalized = compactSpaces(cacheState).toLowerCase();
-    if (normalized === 'cached') return '⚡';
-    if (normalized === 'uncached') return '☁️';
+    if (normalized === 'cached' || normalized === 'likely_cached') return '⚡';
+    if (normalized === 'uncached' || normalized === 'likely_uncached') return '⏳';
+    if (normalized === 'uncached_terminal') return '☁️';
     if (normalized === 'probing') return '🔄';
     if (normalized === 'unknown') return '⏳';
     return cached ? '⚡' : '⏳';

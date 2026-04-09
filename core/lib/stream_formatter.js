@@ -249,7 +249,10 @@ function isDebridService(serviceTag) {
 function normalizeCacheState(cacheState, serviceTag) {
   const normalized = safeString(cacheState).toLowerCase().trim();
   if (normalized === 'cached') return 'cached';
-  if (normalized === 'uncached') return 'uncached';
+  if (normalized === 'likely_cached') return 'likely_cached';
+  if (normalized === 'uncached') return 'likely_uncached';
+  if (normalized === 'likely_uncached') return 'likely_uncached';
+  if (normalized === 'uncached_terminal') return 'uncached_terminal';
   if (normalized === 'probing') return 'probing';
   if (normalized === 'unknown') return 'unknown';
   if (!isDebridService(serviceTag)) return 'unknown';
@@ -257,9 +260,10 @@ function normalizeCacheState(cacheState, serviceTag) {
 }
 
 function getCacheIcon(cacheState) {
-  if (cacheState === 'cached') return '⚡';
-  if (cacheState === 'uncached') return '☁️';
+  if (cacheState === 'cached' || cacheState === 'likely_cached') return '⚡';
+  if (cacheState === 'uncached_terminal') return '☁️';
   if (cacheState === 'probing') return '🔄';
+  if (cacheState === 'likely_uncached') return '⏳';
   return '⏳';
 }
 

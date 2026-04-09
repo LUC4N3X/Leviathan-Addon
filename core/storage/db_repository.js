@@ -45,6 +45,29 @@ function sanitizeText(value, fallback = '') {
   return String(value).trim();
 }
 
+function normalizeRdCacheState(value) {
+  const normalized = sanitizeText(value).toLowerCase();
+  if (['cached', 'likely_cached', 'probing', 'likely_uncached', 'uncached_terminal', 'unknown'].includes(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+function deriveStoredCacheState(entry) {
+  const explicitState = normalizeRdCacheState(entry?.state || entry?.rd_cache_state);
+  if (explicitState) return explicitState;
+  if (entry?.cached === true) return 'cached';
+  if (entry?.cached === false) return 'uncached_terminal';
+  return null;
+}
+
+function deriveCachedBooleanFromState(state, cachedValue) {
+  if (typeof cachedValue === 'boolean') return cachedValue;
+  if (state === 'cached') return true;
+  if (state === 'uncached_terminal') return false;
+  return null;
+}
+
 function extractOriginalProvider(text) {
   if (!text) return null;
   const content = String(text);
@@ -114,6 +137,7 @@ async function ensureDatabaseOptimizations() {
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
     `ALTER TABLE files ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS cached_rd BOOLEAN`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS rd_cache_state TEXT`,
     `ALTER TABLE torrents ALTER COLUMN cached_rd DROP DEFAULT`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS rd_file_index INTEGER`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS rd_file_size BIGINT`,
@@ -124,6 +148,7 @@ async function ensureDatabaseOptimizations() {
     `UPDATE files SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_info_hash_norm_file_idx ON torrents (info_hash_norm, COALESCE(file_index, -1))`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_cached_rd ON torrents (cached_rd, next_cached_check NULLS FIRST)`,
+    `CREATE INDEX IF NOT EXISTS idx_torrents_rd_cache_state ON torrents (rd_cache_state, next_cached_check NULLS FIRST)`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_rd_scan_queue ON torrents (next_cached_check NULLS FIRST, last_cached_check NULLS FIRST)`,
     `CREATE INDEX IF NOT EXISTS idx_files_info_hash_norm ON files (info_hash_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_files_lookup_episode ON files (imdb_id, imdb_season, imdb_episode, info_hash_norm)`,
@@ -176,6 +201,7 @@ async function getTorrents(imdbId, season, episode) {
           t.provider,
           t.file_index,
           t.cached_rd,
+          t.rd_cache_state,
           t.rd_file_index,
           t.rd_file_size,
           t.last_cached_check,
@@ -220,6 +246,7 @@ async function getTorrents(imdbId, season, episode) {
             magnet: trackerRegistry.buildMagnet(infoHash),
             file_index: toNullableInt(row.file_index),
             cached_rd: row.cached_rd === null || row.cached_rd === undefined ? null : Boolean(row.cached_rd),
+            rd_cache_state: normalizeRdCacheState(row.rd_cache_state),
             rd_file_index: toNullableInt(row.rd_file_index),
             rd_file_size: toSafeNumber(row.rd_file_size, 0),
             last_cached_check: row.last_cached_check || null,
@@ -435,6 +462,7 @@ async function getRdScanBatch(limit = 5) {
           t.seeders,
           t.size,
           t.cached_rd,
+          t.rd_cache_state,
           t.rd_file_index,
           t.last_cached_check,
           t.next_cached_check,
@@ -467,6 +495,7 @@ async function getRdScanBatch(limit = 5) {
           seeders: toSafeNumber(row.seeders, 0),
           size: toSafeNumber(row.size, 0),
           cached_rd: row.cached_rd === null || row.cached_rd === undefined ? null : Boolean(row.cached_rd),
+          rd_cache_state: normalizeRdCacheState(row.rd_cache_state),
           rd_file_index: toNullableInt(row.rd_file_index),
           last_cached_check: row.last_cached_check || null,
           next_cached_check: row.next_cached_check || null,
@@ -501,6 +530,7 @@ async function getRdCacheStatusByHashes(hashes) {
           t.size,
           t.file_index,
           t.cached_rd,
+          t.rd_cache_state,
           t.rd_file_index,
           t.rd_file_size,
           t.last_cached_check,
@@ -510,10 +540,17 @@ async function getRdCacheStatusByHashes(hashes) {
         WHERE COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))) = ANY($1::text[])
         ORDER BY
           COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))),
-          CASE
-            WHEN t.cached_rd IS TRUE THEN 0
-            WHEN t.cached_rd IS FALSE THEN 1
-            ELSE 2
+          CASE COALESCE(t.rd_cache_state, '')
+            WHEN 'cached' THEN 0
+            WHEN 'likely_cached' THEN 1
+            WHEN 'probing' THEN 2
+            WHEN 'likely_uncached' THEN 3
+            WHEN 'uncached_terminal' THEN 4
+            ELSE CASE
+              WHEN t.cached_rd IS TRUE THEN 0
+              WHEN t.cached_rd IS FALSE THEN 3
+              ELSE 5
+            END
           END ASC,
           t.last_cached_check DESC NULLS LAST,
           t.next_cached_check DESC NULLS LAST,
@@ -532,6 +569,7 @@ async function getRdCacheStatusByHashes(hashes) {
           size: toSafeNumber(row.size, 0),
           file_index: toNullableInt(row.file_index),
           cached_rd: row.cached_rd === null || row.cached_rd === undefined ? null : Boolean(row.cached_rd),
+          rd_cache_state: normalizeRdCacheState(row.rd_cache_state),
           rd_file_index: toNullableInt(row.rd_file_index),
           rd_file_size: toSafeNumber(row.rd_file_size, 0),
           last_cached_check: row.last_cached_check || null,
@@ -556,9 +594,12 @@ async function updateRdCacheStatus(cacheResults) {
       const nextHours = permanent
         ? null
         : Math.max(1, Math.min(24 * 365 * 10, toSafeNumber(entry?.next_hours, hasCached ? (entry.cached ? 24 * 30 : 24 * 7) : 12)));
+      const state = deriveStoredCacheState(entry);
+      const cached = deriveCachedBooleanFromState(state, hasCached ? entry.cached : null);
       return {
         hash: normalizeInfoHash(entry?.hash),
-        cached: hasCached ? entry.cached : null,
+        cached,
+        rd_cache_state: state,
         rd_file_index: toNullableInt(entry?.rd_file_index),
         rd_file_size: entry?.rd_file_size === null || entry?.rd_file_size === undefined ? null : toSafeNumber(entry?.rd_file_size, 0),
         failures: Math.max(0, toSafeNumber(entry?.failures, 0)),
@@ -577,15 +618,22 @@ async function updateRdCacheStatus(cacheResults) {
         const values = [];
         const placeholders = normalizedRows
           .map((row, index) => {
-            const base = index * 7;
-            values.push(row.hash, row.cached, row.rd_file_index, row.rd_file_size, row.failures, row.next_hours, row.permanent);
-            return `($${base + 1}::text, $${base + 2}::boolean, $${base + 3}::integer, $${base + 4}::bigint, $${base + 5}::integer, $${base + 6}::integer, $${base + 7}::boolean)`;
+            const base = index * 8;
+            values.push(row.hash, row.cached, row.rd_cache_state, row.rd_file_index, row.rd_file_size, row.failures, row.next_hours, row.permanent);
+            return `($${base + 1}::text, $${base + 2}::boolean, $${base + 3}::text, $${base + 4}::integer, $${base + 5}::bigint, $${base + 6}::integer, $${base + 7}::integer, $${base + 8}::boolean)`;
           })
           .join(', ');
 
         const query = `
           UPDATE torrents AS t
-          SET cached_rd = CASE
+          SET rd_cache_state = CASE
+                WHEN v.rd_cache_state IS NULL OR v.rd_cache_state = '' THEN t.rd_cache_state
+                ELSE v.rd_cache_state
+              END,
+              cached_rd = CASE
+                WHEN v.rd_cache_state = 'cached' THEN TRUE
+                WHEN v.rd_cache_state = 'uncached_terminal' THEN FALSE
+                WHEN v.rd_cache_state IN ('likely_cached', 'probing', 'likely_uncached', 'unknown') THEN NULL
                 WHEN v.cached IS NULL THEN t.cached_rd
                 ELSE v.cached
               END,
@@ -603,7 +651,7 @@ async function updateRdCacheStatus(cacheResults) {
                   WHEN COALESCE(v.permanent, FALSE) IS TRUE THEN TIMESTAMPTZ '9999-12-31 00:00:00+00'
                   ELSE NOW() + make_interval(hours => GREATEST(1, COALESCE(v.next_hours, 12)))
                 END
-          FROM (VALUES ${placeholders}) AS v(info_hash, cached, rd_file_index, rd_file_size, failures, next_hours, permanent)
+          FROM (VALUES ${placeholders}) AS v(info_hash, cached, rd_cache_state, rd_file_index, rd_file_size, failures, next_hours, permanent)
           WHERE COALESCE(t.info_hash_norm, LOWER(TRIM(t.info_hash))) = v.info_hash
         `;
 
@@ -717,6 +765,7 @@ async function normalizePendingRdCacheState(options = {}) {
               AND last_cached_check IS NULL
               AND (
                 cached_rd IS NOT NULL
+                OR rd_cache_state IS NOT NULL
                 OR rd_file_index IS NOT NULL
                 OR rd_file_size IS NOT NULL
                 OR COALESCE(cache_check_failures, 0) <> 0
@@ -726,6 +775,7 @@ async function normalizePendingRdCacheState(options = {}) {
           )
           UPDATE torrents AS t
           SET cached_rd = NULL,
+              rd_cache_state = NULL,
               rd_file_index = NULL,
               rd_file_size = NULL,
               cache_check_failures = 0,

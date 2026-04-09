@@ -232,13 +232,13 @@ function getKnownCacheState(item) {
     ? item._rdCacheState
     : (typeof item?.rdCacheState === 'string' ? item.rdCacheState : '');
   const normalizedState = rawState.trim().toLowerCase();
-  if (normalizedState === 'cached' || normalizedState === 'uncached' || normalizedState === 'unknown' || normalizedState === 'probing') {
+  if (normalizedState === 'cached' || normalizedState === 'likely_cached' || normalizedState === 'unknown' || normalizedState === 'probing' || normalizedState === 'likely_uncached' || normalizedState === 'uncached_terminal') {
     return normalizedState;
   }
 
   const booleanState = getKnownCacheBoolean(item);
   if (booleanState === true) return 'cached';
-  if (booleanState === false) return 'uncached';
+  if (booleanState === false) return 'likely_uncached';
   return undefined;
 }
 
@@ -249,7 +249,7 @@ function mergeDuplicateSignals(preferredItem, alternateItem) {
   if (mergedCacheState) {
     merged._rdCacheState = mergedCacheState;
     merged.rdCacheState = mergedCacheState;
-    if (mergedCacheState === 'cached' || mergedCacheState === 'uncached') {
+    if (mergedCacheState === 'cached' || mergedCacheState === 'uncached_terminal') {
       const cacheBool = mergedCacheState === 'cached';
       merged._dbCachedRd = cacheBool;
       merged.cached_rd = cacheBool;

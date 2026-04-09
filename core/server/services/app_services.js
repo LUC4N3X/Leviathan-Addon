@@ -3,6 +3,8 @@
 const axios = require('axios');
 const crypto = require('crypto');
 
+const RD = require('../../../debrid/realdebrid');
+
 function createAppServices({
     Cache,
     LIMITERS,
@@ -91,6 +93,7 @@ function createAppServices({
 
             const updated = await dbHelper.updateRdCacheStatus([{
                 hash: item.hash,
+                state: 'cached',
                 cached: true,
                 rd_file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
                 rd_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
@@ -124,7 +127,38 @@ function createAppServices({
 
             await LIMITERS.cloudBuild.schedule(async () => {
                 if (service === 'rd') {
-                    await axios.post('https://api.real-debrid.com/rest/1.0/torrents/addMagnet', `magnet=${encodeURIComponent(magnet)}`, { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' } });
+                    const rdBuild = await RD.prepareTorrentForCloud(apiKey, magnet, {
+                        selectAll: true,
+                        poll: true,
+                        pollAttempts: 3,
+                        pollDelayMs: 900
+                    });
+
+                    if (!rdBuild) throw new Error('RD cloud build failed');
+
+                    const rdState = rdBuild.ready ? 'cached' : 'probing';
+                    if (dbHelper && typeof dbHelper.updateRdCacheStatus === 'function') {
+                        try {
+                            await dbHelper.updateRdCacheStatus([{
+                                hash,
+                                state: rdState,
+                                cached: rdBuild.ready ? true : null,
+                                rd_file_index: Number.isInteger(rdBuild.selectedFileId) ? rdBuild.selectedFileId : null,
+                                rd_file_size: Number.isFinite(Number(rdBuild.selectedFileSize)) && Number(rdBuild.selectedFileSize) > 0 ? Number(rdBuild.selectedFileSize) : null,
+                                failures: 0,
+                                next_hours: rdBuild.ready ? (24 * 30) : 4,
+                                permanent: rdBuild.ready === true
+                            }]);
+                        } catch (dbErr) {
+                            logger.warn(`[CACHE BUILDER] Persistenza stato RD fallita | hash=${hash} | error=${dbErr.message}`);
+                        }
+                    }
+
+                    if (Cache && typeof Cache.invalidateStreamsByHashes === 'function') {
+                        try {
+                            await Cache.invalidateStreamsByHashes([hash], rdBuild.ready ? 'cloud_build_cached' : 'cloud_build_probing');
+                        } catch (_) {}
+                    }
                 } else if (service === 'ad') {
                     await axios.get('https://api.alldebrid.com/v4/magnet/upload', { params: { agent: 'leviathan', apikey: apiKey, magnet } });
                 } else if (service === 'tb') {

@@ -61,6 +61,7 @@ async function auditHashSlow(http, hash) {
             if (status === 'downloaded' || status === 'waiting_files_selection') {
                 return {
                     hash,
+                    state: 'cached',
                     cached: true,
                     rd_file_index: biggest?.id ?? null,
                     rd_file_size: biggest?.bytes ?? null,
@@ -71,11 +72,11 @@ async function auditHashSlow(http, hash) {
             }
 
             if (['error', 'magnet_error', 'virus', 'dead'].includes(status)) {
-                return { hash, cached: false, failures: 0, next_hours: 24 * 7, reason: status };
+                return { hash, state: 'uncached_terminal', cached: false, failures: 0, next_hours: 24 * 7, reason: status };
             }
         }
 
-        return { hash, cached: false, failures: 0, next_hours: 24 * 3, reason: 'poll_exhausted' };
+        return { hash, state: 'likely_uncached', cached: null, failures: 1, next_hours: 12, reason: 'poll_exhausted' };
     } catch (err) {
         const status = Number(err?.response?.status || 0);
         const retryHours = status === 429 || status === 503 ? 24 : 12;

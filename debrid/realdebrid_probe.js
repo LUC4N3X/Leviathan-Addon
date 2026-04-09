@@ -429,11 +429,14 @@ async function backfillAvailabilityInBackground(items, token, dbHelper, onUpdate
                 if (dbHelper && typeof dbHelper.updateRdCacheStatus === 'function') {
                     const availabilityUpdates = results.map((result) => ({
                         hash: normalizeHash(result.hash),
-                        cached: result.cached,
+                        state: result.cached ? 'cached' : (isTerminalUncachedStatus(result.rd_status) ? 'uncached_terminal' : 'likely_uncached'),
+                        cached: result.cached ? true : (isTerminalUncachedStatus(result.rd_status) ? false : null),
                         torrent_title: result.torrent_title || null,
                         size: result.size || null,
                         file_title: result.file_title || null,
-                        file_size: result.file_size || null
+                        file_size: result.file_size || null,
+                        next_hours: result.cached ? (24 * 30) : (isTerminalUncachedStatus(result.rd_status) ? (24 * 7) : 12),
+                        failures: result.cached ? 0 : 1
                     }));
 
                     await dbHelper.updateRdCacheStatus(availabilityUpdates);
