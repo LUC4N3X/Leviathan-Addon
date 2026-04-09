@@ -6,6 +6,10 @@ const RD_FAST_TIMEOUT = 5000;
 const DEBUG_MODE = process.env.DEBUG_MODE === 'true';
 const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mpg|mpeg)$/i;
 const PACK_TITLE_PATTERN = /\b(trilog(?:y)?|saga|collection|collezione|pack|complete|completa|integrale|filmografia)\b/i;
+const RD_CACHED_STATUSES = new Set(['downloaded', 'waiting_files_selection']);
+const RD_TERMINAL_UNCACHED_STATUSES = new Set(['error', 'magnet_error', 'virus', 'dead']);
+const RD_SLOW_RECHECK_ATTEMPTS = Math.max(1, parseInt(process.env.RD_SLOW_RECHECK_ATTEMPTS || '2', 10));
+const RD_SLOW_RECHECK_DELAY_MS = Math.max(500, parseInt(process.env.RD_SLOW_RECHECK_DELAY_MS || '1200', 10));
 
 function isVideoFile(path) {
     return VIDEO_EXTENSIONS.test(path || '');
@@ -17,6 +21,29 @@ function sleep(ms) {
 
 function normalizeHash(hash) {
     return String(hash || '').trim().toLowerCase();
+}
+
+function normalizeStatus(status) {
+    return String(status || '').trim().toLowerCase();
+}
+
+function isCachedStatus(status) {
+    return RD_CACHED_STATUSES.has(normalizeStatus(status));
+}
+
+function isTerminalUncachedStatus(status) {
+    return RD_TERMINAL_UNCACHED_STATUSES.has(normalizeStatus(status));
+}
+
+function buildDeferredProbeResult(hash, status, reason = null) {
+    return {
+        hash: normalizeHash(hash),
+        cached: false,
+        deferred: true,
+        state: 'probing',
+        rd_status: normalizeStatus(status) || 'unknown',
+        ...(reason ? { error: reason } : {})
+    };
 }
 
 function isValidPackName(name) {
@@ -96,7 +123,7 @@ async function rdRequestCore(method, url, token, data = null, options = {}) {
         try {
             const response = await fetch(url, buildRequestConfig(method, token, data, controller.signal));
 
-            if (response.status === 204) return { success: true };
+            if (response.status === 204 || response.status === 202) return { success: true, _status: response.status };
             if (response.status === 403) return null;
 
             if (!response.ok) {
@@ -114,7 +141,8 @@ async function rdRequestCore(method, url, token, data = null, options = {}) {
                 return null;
             }
 
-            return await safeJson(response);
+            const payload = await safeJson(response);
+            return payload === null ? { success: true, _status: response.status } : payload;
         } catch (error) {
             if (deferOnTransient) {
                 if (error?.name === 'AbortError') return { _deferred: true, _reason: 'timeout' };
@@ -213,7 +241,8 @@ function buildProbeResult(infoHash, info) {
 
     return {
         hash,
-        cached: info?.status === 'downloaded',
+        cached: isCachedStatus(info?.status),
+        rd_status: normalizeStatus(info?.status),
         torrent_title: torrentTitle,
         original_filename: originalFilename,
         pack_name: validPackName,
@@ -248,55 +277,66 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
 
     try {
         const addRes = await request('POST', `${RD_BASE_URL}/torrents/addMagnet`, token, buildMagnetBody(magnet));
-        if (!addRes) return { hash, cached: false, error: 'Failed to add magnet' };
+        if (!addRes) return fast ? buildDeferredProbeResult(hash, null, 'Failed to add magnet') : { hash, cached: false, error: 'Failed to add magnet' };
         if (addRes._deferred) return { hash, cached: false, deferred: true, error: addRes._reason };
-        if (!addRes.id) return { hash, cached: false, error: 'No torrent ID' };
+        if (!addRes.id) return fast ? buildDeferredProbeResult(hash, null, 'No torrent ID') : { hash, cached: false, error: 'No torrent ID' };
 
         torrentId = addRes.id;
 
         let info = await request('GET', `${RD_BASE_URL}/torrents/info/${torrentId}`, token);
         if (!info) {
             await cleanup();
-            return { hash, cached: false, error: 'Failed to get torrent info' };
+            return fast ? buildDeferredProbeResult(hash, null, 'Failed to get torrent info') : { hash, cached: false, error: 'Failed to get torrent info' };
         }
         if (info._deferred) {
             await cleanup();
             return { hash, cached: false, deferred: true, error: info._reason };
         }
 
-        if (info.status === 'waiting_files_selection') {
-            const selectRes = await request('POST', `${RD_BASE_URL}/torrents/selectFiles/${torrentId}`, token, buildSelectAllBody());
-            if (!selectRes) {
+        const initialStatus = normalizeStatus(info?.status);
+        if (isCachedStatus(initialStatus) || isTerminalUncachedStatus(initialStatus)) {
+            const result = buildProbeResult(hash, info);
+            await cleanup();
+            return result;
+        }
+
+        if (fast) {
+            await cleanup();
+            return buildDeferredProbeResult(hash, initialStatus);
+        }
+
+        let latestInfo = info;
+        for (let attempt = 0; attempt < RD_SLOW_RECHECK_ATTEMPTS; attempt += 1) {
+            await sleep(RD_SLOW_RECHECK_DELAY_MS);
+            latestInfo = await request('GET', `${RD_BASE_URL}/torrents/info/${torrentId}`, token);
+            if (!latestInfo) {
                 await cleanup();
-                return { hash, cached: false, error: 'Failed to select files' };
+                return buildDeferredProbeResult(hash, initialStatus, 'Failed to re-fetch info');
             }
-            if (selectRes._deferred) {
+            if (latestInfo._deferred) {
                 await cleanup();
-                return { hash, cached: false, deferred: true, error: selectRes._reason };
+                return buildDeferredProbeResult(hash, latestInfo._reason || initialStatus);
             }
 
-            info = await request('GET', `${RD_BASE_URL}/torrents/info/${torrentId}`, token);
-            if (!info) {
+            const polledStatus = normalizeStatus(latestInfo?.status);
+            if (isCachedStatus(polledStatus) || isTerminalUncachedStatus(polledStatus)) {
+                const result = buildProbeResult(hash, latestInfo);
                 await cleanup();
-                return { hash, cached: false, error: 'Failed to re-fetch info' };
-            }
-            if (info._deferred) {
-                await cleanup();
-                return { hash, cached: false, deferred: true, error: info._reason };
+                return result;
             }
         }
 
-        const result = buildProbeResult(hash, info);
         await cleanup();
-        return result;
+        return buildDeferredProbeResult(hash, latestInfo?.status || initialStatus);
     } catch (error) {
         await cleanup();
-        return {
-            hash,
-            cached: false,
-            ...(fast ? { deferred: true } : {}),
-            error: error?.message || 'unknown_error'
-        };
+        return fast
+            ? buildDeferredProbeResult(hash, null, error?.message || 'unknown_error')
+            : {
+                hash,
+                cached: false,
+                error: error?.message || 'unknown_error'
+            };
     }
 }
 
@@ -380,7 +420,8 @@ async function backfillAvailabilityInBackground(items, token, dbHelper, onUpdate
                 for (const item of normalizedItems) {
                     if (knownHashes[item.hash] !== undefined) continue;
                     await sleep(1000);
-                    results.push(await inspectSingleHash(item.hash, item.magnet, token));
+                    const inspected = await inspectSingleHash(item.hash, item.magnet, token);
+                    if (!inspected?.deferred) results.push(inspected);
                 }
 
                 if (results.length === 0) return;
@@ -441,3 +482,4 @@ module.exports = {
     backfillAvailabilityInBackground,
     isValidPackName
 };
+
