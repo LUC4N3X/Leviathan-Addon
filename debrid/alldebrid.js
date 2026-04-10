@@ -72,11 +72,13 @@ const AD = {
             const unRes = await axios.get(unlockUrl);
 
             if (unRes.data.status === 'success') {
+                const resolvedSize = Number(unRes?.data?.data?.filesize) || Number(selectedFile?.size) || 0;
                 return {
                     type: 'ready',
                     url: unRes.data.data.link,
                     filename: unRes.data.data.filename,
-                    size: unRes.data.data.filesize
+                    size: resolvedSize,
+                    file_size: resolvedSize || null
                 };
             }
             return null;

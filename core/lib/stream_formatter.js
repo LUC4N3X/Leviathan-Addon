@@ -658,7 +658,7 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
   const serviceIconTitle = SERVICE_ICON_BY_TAG[normalizedServiceTag] || '🦈';
   const qIcon = SERVICE_ICON_BY_TAG[normalizedServiceTag] || extracted.qIcon;
   const numericSize = Number(size) || 0;
-  const sizeString = numericSize > 0 ? formatBytes(numericSize) : pseudoSizeFromTitle(fileTitle, extracted.quality);
+  const sizeString = numericSize > 0 ? formatBytes(numericSize) : 'Unknown';
   const cleanedName = stripEpisodeFromCleanName(extracted.cleanName);
   const baseEpTag = getEpisodeTag(fileTitle, config);
   const styledPack = toStylized('Season Pack', 'small');

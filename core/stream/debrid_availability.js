@@ -105,6 +105,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
     function normalizeDbResultItem(row) {
         const hash = extractInfoHash(row?.info_hash || row?.hash || row?.infoHash || '');
         if (!hash) return null;
+        const preferredSize = Number(row?.rd_file_size || row?.tb_file_size || row?.size || row?.sizeBytes || 0);
         const fileIdx = row?.rd_file_index !== null && row?.rd_file_index !== undefined
             ? Number(row.rd_file_index)
             : (row?.file_index !== null && row?.file_index !== undefined ? Number(row.file_index) : undefined);
@@ -115,14 +116,16 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             seeders: Number(row?.seeders || 0),
             magnet: row?.magnet || buildTrackerMagnet(hash),
             fileIdx: Number.isInteger(fileIdx) && fileIdx >= 0 ? fileIdx : undefined,
-            _size: Number(row?.rd_file_size || row?.size || row?.sizeBytes || 0),
-            sizeBytes: Number(row?.rd_file_size || row?.size || row?.sizeBytes || 0),
+            _size: preferredSize,
+            sizeBytes: preferredSize,
             _dbCachedRd: row?.cached_rd === null || row?.cached_rd === undefined ? null : Boolean(row.cached_rd),
             _rdCacheState: normalizeRdStateValue(row?.rd_cache_state) || (row?.cached_rd === true ? 'cached' : (row?.cached_rd === false ? 'likely_uncached' : null)),
             rdCacheState: normalizeRdStateValue(row?.rd_cache_state) || (row?.cached_rd === true ? 'cached' : (row?.cached_rd === false ? 'likely_uncached' : null)),
             _dbLastCachedCheck: row?.last_cached_check || null,
             _dbNextCachedCheck: row?.next_cached_check || null,
-            _dbFailures: Number(row?.cache_check_failures || 0)
+            _dbFailures: Number(row?.cache_check_failures || 0),
+            _tbCached: row?.tb_cached === true,
+            tbCached: row?.tb_cached === true
         };
     }
 
@@ -491,7 +494,9 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
 
         const rawFileIndex = streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx ?? item?.fileIdx;
         const rawFileSize = streamData?.rd_file_size ?? streamData?.tb_file_size ?? streamData?.file_size ?? streamData?.filesize ?? streamData?.size ?? item?._size ?? item?.sizeBytes ?? null;
-        const parsedFileIndex = Number(rawFileIndex);
+        const parsedFileIndex = rawFileIndex === null || rawFileIndex === undefined || rawFileIndex === ''
+            ? NaN
+            : Number(rawFileIndex);
         const parsedFileSize = Number(rawFileSize);
         const resolvedTitle = streamData?.filename || item?.title || String(item.hash);
         const scopedIdentity = meta?.imdb_id ? {
@@ -573,4 +578,3 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
 }
 
 module.exports = { createDebridAvailabilityTools };
-

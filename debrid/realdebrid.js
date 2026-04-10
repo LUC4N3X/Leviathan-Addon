@@ -214,6 +214,33 @@ function resolveSelectedLink(info, selectedFileId = null) {
     return info.links[0] || null;
 }
 
+function getSelectedFileInfo(info, selectedFileId = null, resolvedLink = null) {
+    const files = normalizeFiles(info?.files);
+    if (files.length === 0) return null;
+
+    if (Number.isInteger(selectedFileId)) {
+        const exact = files.find((file) => normalizeFileId(file) === selectedFileId);
+        if (exact) return exact;
+    }
+
+    const selectedFiles = files.filter((file) => Number(file?.selected) === 1);
+    if (selectedFiles.length === 1) return selectedFiles[0];
+
+    if (selectedFiles.length > 1 && Array.isArray(info?.links) && info.links.length === selectedFiles.length && resolvedLink) {
+        const linkIndex = info.links.findIndex((link) => String(link || "") === String(resolvedLink || ""));
+        if (linkIndex >= 0 && selectedFiles[linkIndex]) return selectedFiles[linkIndex];
+    }
+
+    return getValidVideoFiles(selectedFiles)[0] || getValidVideoFiles(files)[0] || selectedFiles[0] || files[0] || null;
+}
+
+function getSelectedFileName(file) {
+    const rawPath = String(file?.path || "").trim();
+    if (!rawPath) return null;
+    const parts = rawPath.split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] || rawPath;
+}
+
 function chooseSeriesFileId(files, season, episode, forcedFileIdx = null) {
     const matchedId = matchFile(files, season, episode);
     if (Number.isInteger(matchedId)) return matchedId;
@@ -448,12 +475,23 @@ const RD = {
                 return null;
             }
 
+            const selectedFile = getSelectedFileInfo(info, selectedFileId, linkToUnrestrict);
+            const selectedFileSize = Number(selectedFile?.bytes) || 0;
+            const resolvedFileId = Number.isInteger(selectedFileId)
+                ? selectedFileId
+                : normalizeFileId(selectedFile);
+
             return {
                 type: "ready",
                 url: unrestrictRes.download,
-                filename: unrestrictRes.filename || null,
-                size: toInt(unrestrictRes.filesize, 0),
-                selectedFileId: Number.isInteger(selectedFileId) ? selectedFileId : null
+                filename: unrestrictRes.filename || getSelectedFileName(selectedFile),
+                file_path: selectedFile?.path || null,
+                size: toInt(unrestrictRes.filesize, 0) || selectedFileSize,
+                file_size: toInt(unrestrictRes.filesize, 0) || selectedFileSize || null,
+                rd_file_size: toInt(unrestrictRes.filesize, 0) || selectedFileSize || null,
+                selectedFileId: Number.isInteger(resolvedFileId) ? resolvedFileId : null,
+                rd_file_index: Number.isInteger(resolvedFileId) ? resolvedFileId : null,
+                file_index: Number.isInteger(resolvedFileId) ? resolvedFileId : null
             };
         } catch (e) {
             console.error("RD Error:", e?.message || e);

@@ -205,6 +205,12 @@ function getFileSize(file) {
   return Math.max(0, safeNum(file?.size, 0));
 }
 
+function getFileById(files, targetId) {
+  const normalizedId = safeInt(targetId, NaN);
+  if (!Number.isFinite(normalizedId) || normalizedId < 0) return null;
+  return (Array.isArray(files) ? files : []).find((file) => getFileId(file) === normalizedId) || null;
+}
+
 function isVideoFile(file) {
   const name = getFileName(file);
   return VIDEO_EXTENSIONS.test(name) && !JUNK_PATTERN.test(name);
@@ -588,24 +594,36 @@ const TB = {
       }
 
       files = await waitForFiles(key, torrentId, files);
-      const fileId = matchFile(files, season, episode, forcedFileIdx);
+      let resolvedFileId = matchFile(files, season, episode, forcedFileIdx);
 
-      if (fileId == null) {
+      if (resolvedFileId == null) {
         throw new Error("File not found inside torrent");
       }
 
-      let linkRes = await requestDownloadLink(key, torrentId, fileId, userIp);
+      let selectedFile = getFileById(files, resolvedFileId);
+      let linkRes = await requestDownloadLink(key, torrentId, resolvedFileId, userIp);
 
       if ((!linkRes?.data?.success || !linkRes?.data?.data) && (!files || files.length === 0)) {
         files = await waitForFiles(key, torrentId, files);
         const retryFileId = matchFile(files, season, episode, forcedFileIdx);
-        if (retryFileId != null && retryFileId !== fileId) {
-          linkRes = await requestDownloadLink(key, torrentId, retryFileId, userIp);
+        if (retryFileId != null && retryFileId !== resolvedFileId) {
+          resolvedFileId = retryFileId;
+          selectedFile = getFileById(files, resolvedFileId);
+          linkRes = await requestDownloadLink(key, torrentId, resolvedFileId, userIp);
         }
       }
 
       if (linkRes?.data?.success && linkRes.data.data) {
-        return { url: linkRes.data.data };
+        const resolvedSize = getFileSize(selectedFile);
+        return {
+          url: linkRes.data.data,
+          filename: getFileName(selectedFile) || null,
+          file_size: resolvedSize || null,
+          size: resolvedSize || null,
+          tb_file_size: resolvedSize || null,
+          tb_file_id: Number.isFinite(resolvedFileId) ? resolvedFileId : null,
+          file_id: Number.isFinite(resolvedFileId) ? resolvedFileId : null
+        };
       }
 
       const detail = linkRes?.data?.detail || linkRes?.data?.error || `HTTP ${linkRes?.status || "unknown"}`;

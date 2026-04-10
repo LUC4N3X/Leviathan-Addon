@@ -59,13 +59,18 @@ function createAppServices({
 
     async function markPlayableResultAsCached(service, item, streamData, meta = null) {
         const normalizedService = String(service || '').toLowerCase();
-        if (!dbHelper || typeof dbHelper.updateRdCacheStatus !== 'function') return false;
         if (!item?.hash) return false;
-        if (!['rd', 'ad'].includes(normalizedService)) return false;
+        if (!['rd', 'ad', 'tb'].includes(normalizedService)) return false;
 
-        const rawFileIndex = streamData?.rd_file_index ?? streamData?.file_index ?? streamData?.fileIdx ?? item?.fileIdx;
-        const rawFileSize = streamData?.rd_file_size ?? streamData?.file_size ?? streamData?.filesize ?? streamData?.size ?? null;
-        const parsedFileIndex = Number(rawFileIndex);
+        const isTb = normalizedService === 'tb';
+        const updateFn = isTb ? dbHelper?.updateTbCacheStatus : dbHelper?.updateRdCacheStatus;
+        if (!dbHelper || typeof updateFn !== 'function') return false;
+
+        const rawFileIndex = streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx ?? item?.fileIdx;
+        const rawFileSize = streamData?.rd_file_size ?? streamData?.tb_file_size ?? streamData?.file_size ?? streamData?.filesize ?? streamData?.size ?? item?._size ?? item?.sizeBytes ?? null;
+        const parsedFileIndex = rawFileIndex === null || rawFileIndex === undefined || rawFileIndex === ''
+            ? NaN
+            : Number(rawFileIndex);
         const parsedFileSize = Number(rawFileSize);
         const resolvedTitle = streamData?.filename || item?.title || String(item.hash);
 
@@ -84,22 +89,32 @@ function createAppServices({
                 await dbHelper.insertTorrent(meta, {
                     info_hash: item.hash,
                     title: resolvedTitle,
-                    size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : 0,
+                    size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : Number(item?._size || item?.sizeBytes || 0),
                     seeders: Number(item?.seeders || 0) || 0,
                     provider: item?.source || normalizedService.toUpperCase(),
                     file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : (item?.fileIdx !== undefined ? item.fileIdx : undefined)
                 });
             }
 
-            const updated = await dbHelper.updateRdCacheStatus([{
-                hash: item.hash,
-                state: 'cached',
-                cached: true,
-                rd_file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
-                rd_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
-                failures: 0,
-                permanent: true
-            }]);
+            const updated = await updateFn([isTb
+                ? {
+                    hash: item.hash,
+                    cached: true,
+                    tb_file_id: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
+                    tb_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
+                    failures: 0,
+                    permanent: true
+                }
+                : {
+                    hash: item.hash,
+                    state: 'cached',
+                    cached: true,
+                    rd_file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
+                    rd_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
+                    failures: 0,
+                    permanent: true
+                }
+            ]);
             if (updated > 0) {
                 await Cache.invalidateStreamsByHashes([item.hash], 'lazy_play_cached');
                 if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, 'lazy_play_cached');

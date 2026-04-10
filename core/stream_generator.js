@@ -25,7 +25,7 @@ const SCRAPER_MODULES = [ require("../providers/engines") ];
 const {
   logger, Cache, LIMITERS, CONFIG, REGEX_QUALITY_FILTER, REGEX_SUB_ONLY, REGEX_AUDIO_CONFIRM, REGEX_YEAR, EMPTY_STREAM_TTL, METADATA_CACHE_TTL,
   getLanguageInfo, parseTitleDetails, formatLanguageLabel, isSeasonPack, isGoodShortQueryMatch, chooseBestPackTitle, shouldUpdatePackTitle,
-  extractSeasonEpisodeFromFilename, estimateVisualSize, estimateSeeders, deduplicateResults, filterByQualityLimit, extractInfoHash,
+  extractSeasonEpisodeFromFilename, deduplicateResults, filterByQualityLimit, extractInfoHash,
   withTimeout, normalizeSearchText, extractSeeders, extractSize, streamInflight, metadataInflight, withSharedPromise,
   incrementMetric, recordDuration, recordProviderMetric
 } = require("./utils");
@@ -443,6 +443,22 @@ function createRuntimeItem(item, meta) {
     };
 }
 
+function getObservedSizeBytes(...values) {
+    for (const value of values) {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    return 0;
+}
+
+function getObservedSeederCount(...values) {
+    for (const value of values) {
+        const parsed = Number.parseInt(value, 10);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    return null;
+}
+
 function pad2(value) {
     const num = parseInt(value, 10) || 0;
     return num < 10 ? `0${num}` : `${num}`;
@@ -690,7 +706,10 @@ async function resolveTorboxRankedList(rankedList, apiKey) {
             const result = cacheResults?.[hash];
             if (result && result.cached === true) {
                 item._tbCached = true;
-                if (result.file_size) item._size = result.file_size;
+                if (result.file_size) {
+                    item._size = result.file_size;
+                    item.sizeBytes = result.file_size;
+                }
                 if (result.file_id !== undefined && result.file_id !== null) item.fileIdx = result.file_id;
                 verifiedList.push(item);
             }
@@ -734,7 +753,7 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
             name: aioFormatter.formatStreamName({ addonName: "Leviathan", service: getServiceDisplayName(normalizedService), cached: availabilityState === 'cached', cacheState: availabilityState, quality }),
             title: aioFormatter.formatStreamTitle({
                 title: displayTitle,
-                size: formatBytes(sizeBytes),
+                size: Number(sizeBytes) > 0 ? formatBytes(sizeBytes) : 'Unknown',
                 language: formatLanguageLabel(languageInfo, details.languages),
                 source: item?.source,
                 seeders,
@@ -1266,8 +1285,12 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
 
         if (service === 'tb') {
             if (!item._tbCached) return null;
-            const realSize = estimateVisualSize(item._size || item.sizeBytes || 0, item.title, isSeries, isPack, item.hash);
-            const finalSeeders = estimateSeeders(item.seeders, item.hash);
+            const realSize = getObservedSizeBytes(item._size, item.sizeBytes);
+            const finalSeeders = getObservedSeederCount(item.seeders);
+            if (realSize > 0) {
+                runtimeItem._size = realSize;
+                runtimeItem.sizeBytes = realSize;
+            }
             const proxyUrl = `${reqHost}/${rawConf}/play_tb/${item.hash}?s=${runtimeItem.season || 0}&e=${runtimeItem.episode || 0}&f=${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}`;
             return buildPlayableStream({
                 service: 'tb',
@@ -1287,20 +1310,32 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
         if (service === 'rd') streamData = await RD.getStreamLink(apiKey, item.magnet, runtimeItem.season, runtimeItem.episode, item.fileIdx);
         else if (service === 'ad') streamData = await AD.getStreamLink(apiKey, item.magnet, runtimeItem.season, runtimeItem.episode, item.fileIdx);
 
-        if (!streamData || (streamData.type === "ready" && streamData.size < CONFIG.REAL_SIZE_FILTER)) return null;
+        const resolvedSize = getObservedSizeBytes(
+            streamData?.rd_file_size,
+            streamData?.file_size,
+            streamData?.filesize,
+            streamData?.size,
+            item?._size,
+            item?.sizeBytes
+        );
+        if (!streamData || (streamData.type === "ready" && resolvedSize > 0 && resolvedSize < CONFIG.REAL_SIZE_FILTER)) return null;
 
         const parseTitle = streamData.filename || item.title;
-        const finalSize = estimateVisualSize(streamData.size || item._size || item.sizeBytes || 0, parseTitle, isSeries, isPack, item.hash);
-        const finalSeeders = estimateSeeders(item.seeders, item.hash);
+        const finalSize = resolvedSize;
+        const finalSeeders = getObservedSeederCount(item.seeders);
         runtimeItem._rdCacheState = 'cached';
         runtimeItem.rdCacheState = 'cached';
         runtimeItem._dbCachedRd = true;
         runtimeItem.cached_rd = true;
-        if (Number.isFinite(Number(streamData.size)) && Number(streamData.size) > 0) {
-            runtimeItem._size = Number(streamData.size);
-            runtimeItem.sizeBytes = Number(streamData.size);
+        if (finalSize > 0) {
+            runtimeItem._size = finalSize;
+            runtimeItem.sizeBytes = finalSize;
         }
         await persistResolvedDebridAvailability(meta, runtimeItem, streamData, service, 'direct_resolve');
+        const resolvedFileIndexRaw = streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx;
+        const resolvedFileIndex = resolvedFileIndexRaw === null || resolvedFileIndexRaw === undefined || resolvedFileIndexRaw === ''
+            ? null
+            : (Number.isInteger(Number(resolvedFileIndexRaw)) ? Number(resolvedFileIndexRaw) : null);
         rememberValidatedFileSet(runtimeItem, meta, {
             title: displayTitle || parseTitle || item.title,
             titleSource: 'direct_resolve',
@@ -1310,17 +1345,13 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
                 title: displayTitle || parseTitle || item.title,
                 filename: parseTitle || item.title || null,
                 packName: parseTitle || item.title || null,
-                fileIndex: Number.isInteger(Number(streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx))
-                    ? Number(streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx)
-                    : runtimeItem.fileIdx,
-                fileIdx: Number.isInteger(Number(streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx))
-                    ? Number(streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx)
-                    : runtimeItem.fileIdx,
+                fileIndex: resolvedFileIndex ?? runtimeItem.fileIdx,
+                fileIdx: resolvedFileIndex ?? runtimeItem.fileIdx,
                 fileName: parseTitle || item.title || null,
-                fileSize: finalSize,
-                size: finalSize,
+                fileSize: finalSize || null,
+                size: finalSize || null,
                 source: service,
-                totalPackSize: finalSize
+                totalPackSize: finalSize || null
             }
         });
 
@@ -1356,15 +1387,14 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
     const runtimeItem = createRuntimeItem(item, meta);
 
     let displayTitle = item.title;
-    let realSize = item._size || item.sizeBytes || 0;
+    let realSize = getObservedSizeBytes(item._size, item.sizeBytes);
 
     if (aioFormatter.isAIOStreamsEnabled(config) && isPack && isSeries) {
         realSize = 0;
         displayTitle = getEpisodeDisplayTitle(meta, item.title);
     }
 
-    realSize = estimateVisualSize(realSize, displayTitle, isSeries, isPack, item.hash);
-    const finalSeeders = estimateSeeders(item.seeders, item.hash);
+    const finalSeeders = getObservedSeederCount(item.seeders);
     const imdbParam = meta?.imdb_id ? `&imdb=${encodeURIComponent(meta.imdb_id)}` : '';
     const lazyUrl = `${reqHost}/${userConfStr}/play_lazy/${service}/${item.hash}/${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}?s=${meta.season || 0}&e=${meta.episode || 0}${imdbParam}`;
     const lazyCacheKey = `${service}:${item.hash}:${meta.season || 0}:${meta.episode || 0}:${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}`;
@@ -1375,8 +1405,8 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
         type: isSeries ? 'series' : 'movie',
         title: item?.title || displayTitle || null,
         source: item?.source || null,
-        seeders: Number(item?.seeders || 0) || 0,
-        size: Number(realSize || item?._size || item?.sizeBytes || 0) || 0,
+        seeders: finalSeeders,
+        size: realSize > 0 ? realSize : 0,
         fileIdx: (item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1
     }, 43200).catch(() => {});
 
