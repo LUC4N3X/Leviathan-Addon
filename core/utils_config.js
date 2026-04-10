@@ -5,6 +5,21 @@ const { logger } = require('./utils_runtime');
 const MAX_CONFIG_LENGTH = Math.max(parseInt(process.env.MAX_CONFIG_LENGTH || '16384', 10) || 16384, 2048);
 const ADMIN_PASS = String(process.env.ADMIN_PASS || '').trim();
 
+function normalizeStringArray(value) {
+    if (Array.isArray(value)) {
+        return value
+            .map((entry) => String(entry || '').trim())
+            .filter(Boolean);
+    }
+    if (typeof value === 'string') {
+        return value
+            .split(/[,|;]/)
+            .map((entry) => entry.trim())
+            .filter(Boolean);
+    }
+    return value;
+}
+
 function decodeConfigBase64(configStr) {
     const normalized = String(configStr || '').trim().replace(/-/g, '+').replace(/_/g, '/');
     const padding = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
@@ -35,12 +50,33 @@ function getConfig(configStr) {
         const allowedServices = new Set(['rd', 'ad', 'tb', 'p2p', 'web']);
         if (config.service && !allowedServices.has(String(config.service).toLowerCase())) config.service = 'rd';
 
-        const numericFilterKeys = ['maxPerQuality', 'maxSizeGB', 'instantDebridTop', 'warmupTop'];
+        const numericFilterKeys = ['maxPerQuality', 'maxSizeGB', 'minSizeGB', 'maxSizeBytes', 'minSizeBytes', 'instantDebridTop', 'warmupTop', 'minSeeders', 'maxSeeders'];
         for (const key of numericFilterKeys) {
             if (config.filters[key] !== undefined && config.filters[key] !== null && config.filters[key] !== '') {
                 const value = parseInt(config.filters[key], 10);
                 if (Number.isNaN(value)) delete config.filters[key];
                 else config.filters[key] = value;
+            }
+        }
+
+        const arrayFilterKeys = [
+            'providers',
+            'providerAllow',
+            'providerInclude',
+            'providerExclude',
+            'providerDeny',
+            'providerBlock',
+            'qualityAllow',
+            'qualityInclude',
+            'qualityExclude',
+            'qualityDeny',
+            'qualityFilter',
+            'requireTags',
+            'excludeTags'
+        ];
+        for (const key of arrayFilterKeys) {
+            if (config.filters[key] !== undefined) {
+                config.filters[key] = normalizeStringArray(config.filters[key]);
             }
         }
 

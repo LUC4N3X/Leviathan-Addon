@@ -8,6 +8,7 @@ const WebStreamr = require("./handlers/webstreamr_handler");
 const TbCache = require("../debrid/tb_cache.js");
 const { scheduleKeyed } = require('./utils_limits');
 const { formatStreamSelector, formatBytes } = require("./lib/stream_formatter");
+const { applyTorrentResultFilters } = require("./lib/torrent_result_filters");
 const P2P = require("./handlers/p2p_handler");
 const { generateSmartQueries, smartMatch } = require("./media_intelligence");
 const { rankAndFilterResults } = require("./lib/result_ranker");
@@ -191,6 +192,9 @@ const TITLE_SIGNAL_CACHE = new Map();
 const MAX_TITLE_SIGNAL_CACHE = 4000;
 const lazyResolveInflight = new Map();
 const backgroundDbSaveInflight = new Map();
+const titleSearchInflight = new Map();
+const titleSearchHotCache = new Map();
+const validatedFileSetCache = new Map();
 const recentBackgroundDbSaves = new Map();
 const recentPackResolutionJobs = new Map();
 const PROVIDER_BREAKERS = new Map();
@@ -199,6 +203,118 @@ const BREAKER_OPEN_MS = Math.max(5000, parseInt(process.env.PROVIDER_BREAKER_OPE
 const STREAM_STALE_LOAD_THRESHOLD = Math.max(1, Math.min(200, parseInt(process.env.STREAM_STALE_LOAD_THRESHOLD || '18', 10) || 18));
 const BACKGROUND_DB_SAVE_DEDUP_MS = Math.max(1000, Math.min(120000, parseInt(process.env.BACKGROUND_DB_SAVE_DEDUP_MS || '15000', 10) || 15000));
 const LAZY_WARMUP_LOAD_THRESHOLD = Math.max(1, Math.min(200, parseInt(process.env.LAZY_WARMUP_LOAD_THRESHOLD || '14', 10) || 14));
+const TITLE_SEARCH_HOT_TTL_MS = Math.max(5000, Math.min(5 * 60 * 1000, parseInt(process.env.TITLE_SEARCH_HOT_TTL_MS || '45000', 10) || 45000));
+const VALIDATED_FILE_SET_TTL_MS = Math.max(30 * 1000, Math.min(60 * 60 * 1000, parseInt(process.env.VALIDATED_FILE_SET_TTL_MS || String(20 * 60 * 1000), 10) || 20 * 60 * 1000));
+const TIMED_CACHE_MAX_ENTRIES = Math.max(200, Math.min(10000, parseInt(process.env.TIMED_CACHE_MAX_ENTRIES || '3000', 10) || 3000));
+
+function cleanupTimedCache(map, maxEntries = TIMED_CACHE_MAX_ENTRIES) {
+    if (!(map instanceof Map) || map.size === 0) return;
+    const now = Date.now();
+    for (const [key, entry] of map) {
+        if (!entry || Number(entry.expiresAt || 0) <= now) map.delete(key);
+    }
+    while (map.size > maxEntries) {
+        const oldestKey = map.keys().next().value;
+        if (oldestKey === undefined) break;
+        map.delete(oldestKey);
+    }
+}
+
+function getTimedCacheValue(map, key) {
+    cleanupTimedCache(map);
+    const entry = map.get(key);
+    if (!entry) return null;
+    if (Number(entry.expiresAt || 0) <= Date.now()) {
+        map.delete(key);
+        return null;
+    }
+    return entry.value;
+}
+
+function setTimedCacheValue(map, key, value, ttlMs, maxEntries = TIMED_CACHE_MAX_ENTRIES) {
+    if (!key || ttlMs <= 0) return value;
+    cleanupTimedCache(map, maxEntries);
+    map.set(key, { value, expiresAt: Date.now() + ttlMs });
+    cleanupTimedCache(map, maxEntries);
+    return value;
+}
+
+function buildTitleSearchPipelineKey(meta, type, langMode, dbOnlyMode = false, filters = {}) {
+    const normalizeArray = (value) => Array.isArray(value)
+        ? value.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean).sort()
+        : [];
+    const titles = [meta?.title, meta?.originalTitle, meta?.name]
+        .filter(Boolean)
+        .map((value) => normalizeSearchText(value))
+        .filter(Boolean)
+        .slice(0, 6)
+        .sort();
+    const payload = {
+        type: String(type || '').toLowerCase(),
+        langMode: String(langMode || '').toLowerCase(),
+        dbOnly: dbOnlyMode === true,
+        year: Number(meta?.year || 0) || 0,
+        season: Number(meta?.season || 0) || 0,
+        episode: Number(meta?.episode || 0) || 0,
+        filters: {
+            no4k: filters?.no4k === true,
+            no1080: filters?.no1080 === true,
+            no720: filters?.no720 === true,
+            noScr: filters?.noScr === true,
+            noCam: filters?.noCam === true,
+            maxSizeGB: Number(filters?.maxSizeGB || 0) || 0,
+            minSizeGB: Number(filters?.minSizeGB || 0) || 0,
+            maxSizeBytes: Number(filters?.maxSizeBytes || 0) || 0,
+            minSizeBytes: Number(filters?.minSizeBytes || 0) || 0,
+            minSeeders: Number(filters?.minSeeders || 0) || 0,
+            maxSeeders: Number(filters?.maxSeeders || 0) || 0,
+            providers: normalizeArray(filters?.providers),
+            providerAllow: normalizeArray(filters?.providerAllow),
+            providerInclude: normalizeArray(filters?.providerInclude),
+            providerExclude: normalizeArray(filters?.providerExclude),
+            providerDeny: normalizeArray(filters?.providerDeny),
+            providerBlock: normalizeArray(filters?.providerBlock),
+            qualityAllow: normalizeArray(filters?.qualityAllow),
+            qualityInclude: normalizeArray(filters?.qualityInclude),
+            qualityExclude: normalizeArray(filters?.qualityExclude),
+            qualityDeny: normalizeArray(filters?.qualityDeny),
+            qualityFilter: normalizeArray(filters?.qualityFilter),
+            requireTags: normalizeArray(filters?.requireTags),
+            excludeTags: normalizeArray(filters?.excludeTags),
+            sizeFilter: Array.isArray(filters?.sizeFilter)
+                ? filters.sizeFilter.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean)
+                : (filters?.sizeFilter && typeof filters.sizeFilter === 'object'
+                    ? {
+                        min: String(filters.sizeFilter.min || filters.sizeFilter.from || filters.sizeFilter.gte || '').trim().toLowerCase(),
+                        max: String(filters.sizeFilter.max || filters.sizeFilter.to || filters.sizeFilter.lte || '').trim().toLowerCase()
+                    }
+                    : String(filters?.sizeFilter || '').trim().toLowerCase())
+        },
+        titles
+    };
+    return crypto.createHash('sha1').update(JSON.stringify(payload)).digest('hex').slice(0, 20);
+}
+
+function buildValidatedFileSetKey(item, meta) {
+    const hash = extractInfoHash(item?.hash || item?.infoHash || '');
+    if (!hash) return null;
+    const season = Number(meta?.season || item?.season || 0) || 0;
+    const episode = Number(meta?.episode || item?.episode || 0) || 0;
+    const mediaType = meta?.isSeries || season > 0 || episode > 0 ? 'series' : 'movie';
+    return `${hash}:${mediaType}:${season}:${episode}`;
+}
+
+function getValidatedFileSet(item, meta) {
+    const key = buildValidatedFileSetKey(item, meta);
+    if (!key) return null;
+    return getTimedCacheValue(validatedFileSetCache, key);
+}
+
+function rememberValidatedFileSet(item, meta, payload) {
+    const key = buildValidatedFileSetKey(item, meta);
+    if (!key || !payload || typeof payload !== 'object') return;
+    setTimedCacheValue(validatedFileSetCache, key, payload, VALIDATED_FILE_SET_TTL_MS);
+}
 
 function cleanupRecentMap(map, ttlMs, maxEntries = 2000) {
     if (!(map instanceof Map) || map.size === 0) return;
@@ -374,12 +490,7 @@ function shouldDropByConfiguredQuality(text, filters = {}, options = {}) {
 function applyConfiguredTorrentFilters(items, filters = {}) {
     const list = Array.isArray(items) ? items : [];
     if (!filters || Object.keys(filters).length === 0) return list;
-
-    return list.filter(item => {
-        const sizeBytes = Number(item?._size || item?.sizeBytes || 0);
-        if (filters.maxSizeGB && filters.maxSizeGB > 0 && sizeBytes > filters.maxSizeGB * 1024 * 1024 * 1024) return false;
-        return !shouldDropByConfiguredQuality(item?.title || '', filters);
-    });
+    return applyTorrentResultFilters(list, filters);
 }
 
 function applyConfiguredStreamFilters(streams, filters = {}) {
@@ -612,7 +723,9 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
     const baseParseTitle = parseTitle || item?.title || displayTitle || '';
     const details = parseTitleDetails(baseParseTitle);
     const languageInfo = getLanguageInfo(baseParseTitle, meta?.title, item?.source, details);
-    const quality = detectQualityLabel(baseParseTitle, details.quality || 'SD');
+    const quality = details.qualityLabel && details.qualityLabel !== 'Other'
+        ? details.qualityLabel
+        : detectQualityLabel(baseParseTitle, details.quality || 'SD');
     const serviceLabel = normalizedService === 'tb' ? 'TB' : normalizedService.toUpperCase();
     const availabilityState = getRdAvailabilityState(normalizedService, item);
 
@@ -851,6 +964,11 @@ function warmupLazyStreamsInBackground(config, items, meta) {
 
 async function resolvePackWithBestEffort(item, config, meta, siblingStreams = []) {
     if (!item || !item.hash) return null;
+    const cachedResolved = getValidatedFileSet(item, meta);
+    if (cachedResolved) {
+        logger.info(`[PACK CACHE] Hit per ${item.hash} S${meta?.season || 0}E${meta?.episode || 0}`);
+        return cachedResolved;
+    }
     const resolverCalls = [];
     const resolverContext = { item, config, meta, siblingStreams, dbHelper, logger, RD, TB };
 
@@ -869,7 +987,11 @@ async function resolvePackWithBestEffort(item, config, meta, siblingStreams = []
             const packName = resolved.filename || resolved.packName || resolved.pack_name || resolved.title || resolved.name || null;
             const files = Array.isArray(resolved.files) ? resolved.files : (Array.isArray(resolved.videoFiles) ? resolved.videoFiles : []);
             const bestTitleData = chooseBestPackTitle(item, packName, siblingStreams);
-            return { title: bestTitleData.title, titleSource: bestTitleData.source, packName, files, raw: resolved };
+            const payload = { title: bestTitleData.title, titleSource: bestTitleData.source, packName, files, raw: resolved };
+            if (files.length > 0 || Number.isInteger(Number(resolved?.fileIndex ?? resolved?.fileIdx))) {
+                rememberValidatedFileSet(item, meta, payload);
+            }
+            return payload;
         } catch (err) {
             const status = Number(err?.response?.status || err?.status || 0) || null;
             if (status === 404) logger.info(`[PACK] Resolver miss for ${item.hash}: ${err.message}`);
@@ -933,6 +1055,7 @@ async function persistPackResolution(meta, item, resolved) {
     catch (err) { logger.warn(`[PACK] insertEpisodeFiles failed for ${infoHash}: ${err.message}`); }
     try { if (packFiles.length > 0 && typeof dbHelper.insertPackFiles === 'function') await dbHelper.insertPackFiles(packFiles); }
     catch (err) { logger.warn(`[PACK] insertPackFiles failed for ${infoHash}: ${err.message}`); }
+    rememberValidatedFileSet(item, meta, resolved);
 }
 
 function resolvePackNamesInBackground(meta, results, config) {
@@ -1178,6 +1301,28 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
             runtimeItem.sizeBytes = Number(streamData.size);
         }
         await persistResolvedDebridAvailability(meta, runtimeItem, streamData, service, 'direct_resolve');
+        rememberValidatedFileSet(runtimeItem, meta, {
+            title: displayTitle || parseTitle || item.title,
+            titleSource: 'direct_resolve',
+            packName: parseTitle || item.title || null,
+            files: [],
+            raw: {
+                title: displayTitle || parseTitle || item.title,
+                filename: parseTitle || item.title || null,
+                packName: parseTitle || item.title || null,
+                fileIndex: Number.isInteger(Number(streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx))
+                    ? Number(streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx)
+                    : runtimeItem.fileIdx,
+                fileIdx: Number.isInteger(Number(streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx))
+                    ? Number(streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx)
+                    : runtimeItem.fileIdx,
+                fileName: parseTitle || item.title || null,
+                fileSize: finalSize,
+                size: finalSize,
+                source: service,
+                totalPackSize: finalSize
+            }
+        });
 
         return buildPlayableStream({
             service,
@@ -1316,6 +1461,120 @@ async function fetchExternalResults(type, finalId, config) {
     } catch (err) { logger.warn('External Addons fallito/timeout', { error: err.message }); return []; }
 }
 
+async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, config, dbOnlyMode, langMode, aggressiveFilter, userTmdbKey, seedResults = [] }) {
+    const titleKey = buildTitleSearchPipelineKey(meta, type, langMode, dbOnlyMode, config?.filters || {});
+    const hotCached = getTimedCacheValue(titleSearchHotCache, titleKey);
+    if (hotCached) {
+        logger.info(`[TITLE-QUEUE] Hot cache hit | key=${titleKey} | results=${hotCached.length}`);
+        return hotCached;
+    }
+
+    return withSharedPromise(titleSearchInflight, `title_search:${titleKey}`, async () => {
+        const cachedAgain = getTimedCacheValue(titleSearchHotCache, titleKey);
+        if (cachedAgain) return cachedAgain;
+
+        return scheduleKeyed('title-search', titleKey, async () => {
+            const remotePromise = Cache.fetchWithCache('RemoteIndexer', `${type}:${tmdbIdLookup || finalId}:${meta.season}:${meta.episode}`, 43200, () =>
+                guardedProviderCall('RemoteIndexer', LIMITERS.remoteIndexer, CONFIG.TIMEOUTS.REMOTE_INDEXER, () => queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config, meta.title))
+            );
+
+            let externalPromise = Promise.resolve([]);
+            if (!dbOnlyMode) {
+                externalPromise = Cache.fetchWithCache('ExternalAddons', `${type}:${finalId}`, 43200, () =>
+                    guardedProviderCall('ExternalAddons', LIMITERS.externalAddons, CONFIG.TIMEOUTS.EXTERNAL, () => fetchExternalResults(type, finalId, config))
+                );
+            }
+
+            const [remoteSettled, externalSettled] = await Promise.allSettled([remotePromise, externalPromise]);
+            const remoteResults = remoteSettled.status === 'fulfilled' ? remoteSettled.value : [];
+            const externalResults = externalSettled.status === 'fulfilled' ? externalSettled.value : [];
+            logger.info(`[STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
+
+            let cleanResults = await normalizeCandidateResults([...remoteResults, ...externalResults].filter(aggressiveFilter));
+            cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
+            logger.info(`[FAST CHECK] Trovati ${cleanResults.length} risultati validi da fonti veloci (Remote+External).`);
+
+            let assessmentPool = cleanResults;
+            if (Array.isArray(seedResults) && seedResults.length > 0) {
+                assessmentPool = await normalizeCandidateResults([...seedResults, ...cleanResults].filter(aggressiveFilter));
+                assessmentPool = applyConfiguredTorrentFilters(assessmentPool, config.filters || {});
+            }
+
+            const fastPoolAssessment = assessFastResultQuality(assessmentPool, meta, langMode, config);
+            if (fastPoolAssessment.shouldScrape && !dbOnlyMode) {
+                logger.info(`⚠️ [FALLBACK] Fast pool debole (${fastPoolAssessment.reason}) | total=${fastPoolAssessment.total} strong=${fastPoolAssessment.strongCount} exact=${fastPoolAssessment.exactEpisodeCount} pack=${fastPoolAssessment.seasonPackCount}. Avvio Scrapers...`);
+
+                let dynamicTitles = [];
+                try {
+                    if (tmdbIdLookup) dynamicTitles = await getTmdbAltTitles(tmdbIdLookup, type, userTmdbKey);
+                } catch (e) {}
+
+                const allowEngScraper = (langMode === 'all' || langMode === 'eng');
+                const rawQueries = generateSmartQueries({ ...meta, langMode }, dynamicTitles, langMode);
+                const queries = (() => {
+                    const deduped = [];
+                    const seen = new Set();
+
+                    for (const q of rawQueries) {
+                        const key = normalizeSearchText(q);
+                        if (!key || seen.has(key)) continue;
+                        seen.add(key);
+                        deduped.push(q);
+                    }
+
+                    if (langMode === 'eng') {
+                        const noIta = deduped.filter(q => !/\b(?:ita|multi)\b/i.test(q));
+                        const yearQueries = noIta.filter(q => meta.year && new RegExp(`\\b${meta.year}\\b`).test(q));
+                        const plainQueries = noIta.filter(q => !/\b(?:19|20)\d{2}\b/.test(q));
+                        const selected = [];
+
+                        for (const q of [...yearQueries, ...plainQueries, ...noIta]) {
+                            if (selected.includes(q)) continue;
+                            selected.push(q);
+                            if (selected.length >= 4) break;
+                        }
+
+                        return selected;
+                    }
+
+                    if (langMode === 'all') return deduped.slice(0, 8);
+                    return deduped;
+                })();
+
+                const scraperTimeout = langMode === 'eng'
+                    ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 12000)
+                    : langMode === 'all'
+                        ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 10000)
+                        : (CONFIG.TIMEOUTS.SCRAPER || 4000);
+
+                if (queries.length > 0) {
+                    logger.info(`[SCRAPER PLAN] lang=${langMode} queries=${queries.length} timeout=${scraperTimeout}ms | titleKey=${titleKey}`);
+                    const allScraperTasks = [];
+
+                    queries.forEach(q => SCRAPER_MODULES.forEach(scraper => {
+                        if (scraper.searchMagnet) {
+                            allScraperTasks.push(LIMITERS.scraper.schedule(() =>
+                                withTimeout(scraper.searchMagnet(q, meta.year, type, finalId, { langMode, allowEng: allowEngScraper }), scraperTimeout, `Scraper ${scraper.name || 'Module'}`)
+                                    .catch(err => {
+                                        logger.warn(`Scraper Timeout/Error: ${err.message}`);
+                                        return [];
+                                    })
+                            ));
+                        }
+                    }));
+
+                    const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks)).flatMap(result => result.status === 'fulfilled' ? result.value : []);
+                    cleanResults = await normalizeCandidateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)]);
+                    cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
+                    logger.info(`[STATS SCRAPER] Trovati e filtrati ${cleanResults.length} risultati aggiuntivi dagli Scraper.`);
+                }
+            }
+
+            return setTimedCacheValue(titleSearchHotCache, titleKey, cleanResults, TITLE_SEARCH_HOT_TTL_MS);
+        });
+    });
+}
+
 async function generateStream(type, id, config, userConfStr, reqHost) {
   const hasDebridKey = (config.key && config.key.length > 0) || (config.rd && config.rd.length > 0);
   const isWebEnabled = config.filters && (isStreamingCommunityEnabled(config.filters) || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableGf);
@@ -1371,100 +1630,24 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       const allowItalianWebProviders = langMode !== 'eng';
       const aggressiveFilter = createAggressiveResultFilter(meta, type, langMode);
 
-      const remotePromise = Cache.fetchWithCache('RemoteIndexer', `${type}:${tmdbIdLookup || finalId}:${meta.season}:${meta.episode}`, 43200, () =>
-          guardedProviderCall('RemoteIndexer', LIMITERS.remoteIndexer, CONFIG.TIMEOUTS.REMOTE_INDEXER, () => queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config, meta.title))
-      );
+      const networkResults = await fetchTitleCandidatePool({
+          type,
+          finalId,
+          tmdbIdLookup,
+          meta,
+          config,
+          dbOnlyMode,
+          langMode,
+          aggressiveFilter,
+          userTmdbKey,
+          seedResults: localDbResults
+      });
 
-      let externalPromise = Promise.resolve([]);
-      if (!dbOnlyMode) {
-          externalPromise = Cache.fetchWithCache('ExternalAddons', `${type}:${finalId}`, 43200, () =>
-              guardedProviderCall('ExternalAddons', LIMITERS.externalAddons, CONFIG.TIMEOUTS.EXTERNAL, () => fetchExternalResults(type, finalId, config))
-          );
-      }
-
-      const [remoteSettled, externalSettled] = await Promise.allSettled([remotePromise, externalPromise]);
-      const remoteResults = remoteSettled.status === 'fulfilled' ? remoteSettled.value : [];
-      const externalResults = externalSettled.status === 'fulfilled' ? externalSettled.value : [];
-      logger.info(`[STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
-
-      const fastResults = [...localDbResults, ...remoteResults, ...externalResults].filter(aggressiveFilter);
-      let cleanResults = await normalizeCandidateResults(fastResults);
-      let validFastCount = cleanResults.length;
-      logger.info(`[FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
-
-      const fastPoolAssessment = assessFastResultQuality(cleanResults, meta, langMode, config);
-      if (fastPoolAssessment.shouldScrape && !dbOnlyMode) {
-          logger.info(`âš ï¸ [FALLBACK] Fast pool debole (${fastPoolAssessment.reason}) | total=${fastPoolAssessment.total} strong=${fastPoolAssessment.strongCount} exact=${fastPoolAssessment.exactEpisodeCount} pack=${fastPoolAssessment.seasonPackCount}. Avvio Scrapers...`);
-
-          let dynamicTitles = [];
-          try {
-              if (tmdbIdLookup) dynamicTitles = await getTmdbAltTitles(tmdbIdLookup, type, userTmdbKey);
-          } catch (e) {}
-
-          const allowEngScraper = (langMode === 'all' || langMode === 'eng');
-          const rawQueries = generateSmartQueries({ ...meta, langMode }, dynamicTitles, langMode);
-          const queries = (() => {
-              const deduped = [];
-              const seen = new Set();
-
-              for (const q of rawQueries) {
-                  const key = normalizeSearchText(q);
-                  if (!key || seen.has(key)) continue;
-                  seen.add(key);
-                  deduped.push(q);
-              }
-
-              if (langMode === 'eng') {
-                  const noIta = deduped.filter(q => !/\b(?:ita|multi)\b/i.test(q));
-                  const yearQueries = noIta.filter(q => meta.year && new RegExp(`\\b${meta.year}\\b`).test(q));
-                  const plainQueries = noIta.filter(q => !/\b(?:19|20)\d{2}\b/.test(q));
-                  const selected = [];
-
-                  for (const q of [...yearQueries, ...plainQueries, ...noIta]) {
-                      if (selected.includes(q)) continue;
-                      selected.push(q);
-                      if (selected.length >= 4) break;
-                  }
-
-                  return selected;
-              }
-
-              if (langMode === 'all') return deduped.slice(0, 8);
-              return deduped;
-          })();
-
-          const scraperTimeout = langMode === 'eng'
-              ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 12000)
-              : langMode === 'all'
-                  ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 10000)
-                  : (CONFIG.TIMEOUTS.SCRAPER || 4000);
-
-          if (queries.length > 0) {
-              logger.info(`[SCRAPER PLAN] lang=${langMode} queries=${queries.length} timeout=${scraperTimeout}ms`);
-              const allScraperTasks = [];
-
-              queries.forEach(q => SCRAPER_MODULES.forEach(scraper => {
-                  if (scraper.searchMagnet) {
-                      allScraperTasks.push(LIMITERS.scraper.schedule(() =>
-                          withTimeout(scraper.searchMagnet(q, meta.year, type, finalId, { langMode, allowEng: allowEngScraper }), scraperTimeout, `Scraper ${scraper.name || 'Module'}`)
-                              .catch(err => {
-                                  logger.warn(`Scraper Timeout/Error: ${err.message}`);
-                                  return [];
-                              })
-                      ));
-                  }
-              }));
-
-              const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks)).flatMap(result => result.status === 'fulfilled' ? result.value : []);
-              cleanResults = await normalizeCandidateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)]);
-              validFastCount = cleanResults.length;
-              logger.info(`[STATS SCRAPER] Trovati e filtrati ${validFastCount} risultati aggiuntivi dagli Scraper.`);
-          }
-      }
+      let cleanResults = await normalizeCandidateResults([...localDbResults, ...networkResults].filter(aggressiveFilter));
+      cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
+      logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
 
       if (!dbOnlyMode) saveResultsToDbBackground(meta, cleanResults, config);
-
-      cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
 
       let rankedList = rankAndFilterResults(cleanResults, meta, config);
       const sortMode = config.sort || (config.filters && config.filters.sort) || 'balanced';

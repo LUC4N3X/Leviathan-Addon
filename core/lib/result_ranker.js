@@ -262,13 +262,22 @@ function extractEpisodeContext(title, defaultSeason = 1) {
 }
 
 function detectQuality(value) {
-  const text = typeof value === "object" && value !== null
-    ? [value.title, value.name, value.description, value.quality, value.resolution].map(normalizeText).filter(Boolean).join(" ")
-    : normalizeText(value);
+    const text = typeof value === "object" && value !== null
+        ? [value.title, value.name, value.description, value.quality, value.resolution].map(normalizeText).filter(Boolean).join(" ")
+        : normalizeText(value);
 
-  const lowerTextValue = text.toLowerCase();
-  if (REGEX_QUALITY_FILTER["4K"].test(lowerTextValue)) return "4K";
-  if (REGEX_QUALITY_FILTER["1080p"].test(lowerTextValue)) return "1080p";
+    const parsed = typeof value === "object" && value !== null && value._releaseDetails
+        ? value._releaseDetails
+        : parseTitleDetails(text);
+    const parsedQuality = normalizeText(parsed?.quality || parsed?.qualityLabel);
+    if (/^(?:4k|2160p|uhd)$/i.test(parsedQuality) || /\b4K\b/i.test(parsedQuality)) return "4K";
+    if (/1080/i.test(parsedQuality)) return "1080p";
+    if (/720/i.test(parsedQuality)) return "720p";
+    if (/480/i.test(parsedQuality)) return "SD";
+
+    const lowerTextValue = text.toLowerCase();
+    if (REGEX_QUALITY_FILTER["4K"].test(lowerTextValue)) return "4K";
+    if (REGEX_QUALITY_FILTER["1080p"].test(lowerTextValue)) return "1080p";
   if (REGEX_QUALITY_FILTER["720p"].test(lowerTextValue)) return "720p";
   return "SD";
 }
