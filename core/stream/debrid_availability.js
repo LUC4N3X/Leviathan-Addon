@@ -482,14 +482,23 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
     async function persistResolvedDebridAvailability(meta, item, streamData, service, reason = 'direct_resolve') {
         const normalizedService = String(service || '').toLowerCase();
         if (!item?.hash) return false;
-        if (!['rd', 'ad'].includes(normalizedService)) return false;
-        if (!dbHelper || typeof dbHelper.updateRdCacheStatus !== 'function') return false;
+        if (!['rd', 'ad', 'tb'].includes(normalizedService)) return false;
+        if (!dbHelper) return false;
 
-        const rawFileIndex = streamData?.rd_file_index ?? streamData?.file_index ?? streamData?.fileIdx ?? item?.fileIdx;
-        const rawFileSize = streamData?.rd_file_size ?? streamData?.file_size ?? streamData?.filesize ?? streamData?.size ?? item?._size ?? item?.sizeBytes ?? null;
+        const isTb = normalizedService === 'tb';
+        const updateFn = isTb ? dbHelper.updateTbCacheStatus : dbHelper.updateRdCacheStatus;
+        if (typeof updateFn !== 'function') return false;
+
+        const rawFileIndex = streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx ?? item?.fileIdx;
+        const rawFileSize = streamData?.rd_file_size ?? streamData?.tb_file_size ?? streamData?.file_size ?? streamData?.filesize ?? streamData?.size ?? item?._size ?? item?.sizeBytes ?? null;
         const parsedFileIndex = Number(rawFileIndex);
         const parsedFileSize = Number(rawFileSize);
         const resolvedTitle = streamData?.filename || item?.title || String(item.hash);
+        const scopedIdentity = meta?.imdb_id ? {
+            imdb_id: meta.imdb_id,
+            imdb_season: Number(meta?.season) > 0 ? Number(meta.season) : null,
+            imdb_episode: Number(meta?.episode) > 0 ? Number(meta.episode) : null
+        } : {};
 
         try {
             if ((!meta?.imdb_id) && typeof dbHelper.ensureTorrentRecord === 'function') {
@@ -514,15 +523,28 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 });
             }
 
-            const updated = await dbHelper.updateRdCacheStatus([{
-                hash: item.hash,
-                state: 'cached',
-                cached: true,
-                rd_file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
-                rd_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
-                failures: 0,
-                permanent: true
-            }]);
+            const updatePayload = isTb
+                ? {
+                    hash: item.hash,
+                    cached: true,
+                    tb_file_id: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
+                    tb_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
+                    failures: 0,
+                    permanent: true,
+                    ...scopedIdentity
+                }
+                : {
+                    hash: item.hash,
+                    state: 'cached',
+                    cached: true,
+                    rd_file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
+                    rd_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
+                    failures: 0,
+                    permanent: true,
+                    ...scopedIdentity
+                };
+
+            const updated = await updateFn([updatePayload]);
 
             if (updated > 0) {
                 await Cache.invalidateStreamsByHashes([item.hash], `${reason}_cached`);
