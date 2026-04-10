@@ -906,8 +906,26 @@ async function persistPackResolution(meta, item, resolved) {
 
         if (parsedEpisode && Number.isInteger(fileIndex)) {
             episodeFiles.push({ info_hash: infoHash, file_index: fileIndex, title: filename, size: fileSize, imdb_id: meta?.imdb_id || null, imdb_season: parsedEpisode.season, imdb_episode: parsedEpisode.episode });
+            packFiles.push({
+                info_hash: infoHash,
+                file_index: fileIndex,
+                file_path: filePath,
+                file_title: filename,
+                file_size: fileSize,
+                imdb_id: meta?.imdb_id || null,
+                imdb_season: parsedEpisode.season,
+                imdb_episode: parsedEpisode.episode
+            });
         } else if (Number.isInteger(fileIndex)) {
-            packFiles.push({ info_hash: infoHash, file_index: fileIndex, file_title: filename, size: fileSize, imdb_id: meta?.imdb_id || null, title: resolved.title || item.title });
+            packFiles.push({
+                info_hash: infoHash,
+                file_index: fileIndex,
+                file_path: filePath,
+                file_title: filename,
+                file_size: fileSize,
+                imdb_id: meta?.imdb_id || null,
+                title: resolved.title || item.title
+            });
         }
     }
 
