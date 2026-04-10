@@ -126,16 +126,32 @@ const server = app.listen(PORT, () => {
     console.log(`-----------------------------------------------------`);
 });
 
+let shuttingDown = false;
+
 function gracefulShutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info(`[SHUTDOWN] Ricevuto ${signal}, chiusura server in corso...`);
-    server.close(() => {
-        logger.info("[SHUTDOWN] Server HTTP chiuso correttamente.");
-        process.exit(0);
-    });
-    setTimeout(() => {
-        logger.error("[SHUTDOWN] Shutdown forzato per timeout.");
+
+    const forceTimer = setTimeout(() => {
+        logger.error('[SHUTDOWN] Shutdown forzato per timeout.');
         process.exit(1);
-    }, 10000).unref();
+    }, 10000);
+    forceTimer.unref();
+
+    server.close(async () => {
+        try {
+            if (typeof dbHelper.shutdownDatabase === 'function') {
+                await dbHelper.shutdownDatabase();
+            }
+            logger.info('[SHUTDOWN] Server HTTP e DB chiusi correttamente.');
+            clearTimeout(forceTimer);
+            process.exit(0);
+        } catch (error) {
+            logger.error('[SHUTDOWN] Errore durante la chiusura', { error: error.message });
+            process.exit(1);
+        }
+    });
 }
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

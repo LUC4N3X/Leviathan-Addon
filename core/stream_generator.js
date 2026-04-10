@@ -6,6 +6,7 @@ const PackResolver = require("./pack_intelligence");
 const aioFormatter = require("./lib/pulse_formatter.cjs");
 const WebStreamr = require("./handlers/webstreamr_handler");
 const TbCache = require("../debrid/tb_cache.js");
+const { scheduleKeyed } = require('./utils_limits');
 const { formatStreamSelector, formatBytes } = require("./lib/stream_formatter");
 const P2P = require("./handlers/p2p_handler");
 const { generateSmartQueries, smartMatch } = require("./media_intelligence");
@@ -84,6 +85,55 @@ function recordProviderFailure(providerName) {
     }
 }
 
+async function getExactEpisodeFileIndex(meta, item) {
+    if (!meta?.imdb_id || !meta?.season || !meta?.episode || !item?.hash) return null;
+    if (!dbHelper || typeof dbHelper.getEpisodeFileMappings !== 'function') return null;
+
+    try {
+        const mappings = await dbHelper.getEpisodeFileMappings(meta.imdb_id, meta.season, meta.episode);
+        if (!Array.isArray(mappings) || mappings.length === 0) return null;
+        const targetHash = String(item.hash || item.infoHash || '').trim().toLowerCase();
+        const exact = mappings.find((row) => String(row?.hash || '').trim().toLowerCase() === targetHash);
+        if (!exact) return null;
+        const fileIdx = Number(exact.file_index);
+        return Number.isInteger(fileIdx) && fileIdx >= 0 ? fileIdx : null;
+    } catch (err) {
+        logger.warn(`[DB READ] Exact episode file mapping failed for ${item?.hash || 'n/a'}: ${err.message}`);
+        return null;
+    }
+}
+
+async function overlayExactEpisodeFileIdx(items, meta) {
+    const list = Array.isArray(items) ? items : [];
+    if (!meta?.isSeries || !meta?.imdb_id || !meta?.season || !meta?.episode || list.length === 0) return list;
+    if (!dbHelper || typeof dbHelper.getEpisodeFileMappings !== 'function') return list;
+
+    try {
+        const mappings = await dbHelper.getEpisodeFileMappings(meta.imdb_id, meta.season, meta.episode);
+        if (!Array.isArray(mappings) || mappings.length === 0) return list;
+
+        const byHash = new Map(
+            mappings
+                .filter((row) => row?.hash && Number.isInteger(Number(row.file_index)))
+                .map((row) => [String(row.hash).trim().toUpperCase(), Number(row.file_index)])
+        );
+
+        if (byHash.size === 0) return list;
+
+        for (const item of list) {
+            const hash = String(item?.hash || item?.infoHash || '').trim().toUpperCase();
+            const exactFileIdx = byHash.get(hash);
+            if (Number.isInteger(exactFileIdx) && exactFileIdx >= 0) {
+                item.fileIdx = exactFileIdx;
+            }
+        }
+    } catch (err) {
+        logger.warn(`[DB READ] Exact episode overlay failed: ${err.message}`);
+    }
+
+    return list;
+}
+
 async function resolveLazyStreamData(service, apiKey, item, meta) {
     if (!apiKey || !item?.hash) return null;
     const normalizedService = String(service || 'rd').toLowerCase();
@@ -91,6 +141,11 @@ async function resolveLazyStreamData(service, apiKey, item, meta) {
     const inflightKey = getLazyResolveInflightKey(normalizedService, apiKey, item, meta);
 
     return withSharedPromise(lazyResolveInflight, `lazy:${inflightKey}`, async () => {
+        const exactEpisodeFileIdx = await getExactEpisodeFileIndex(meta, item);
+        if (Number.isInteger(exactEpisodeFileIdx) && exactEpisodeFileIdx >= 0) {
+            item.fileIdx = exactEpisodeFileIdx;
+        }
+
         if (normalizedService === 'tb') {
             return resolverLimiter.schedule(() =>
                 TB.getStreamLink(
@@ -191,6 +246,7 @@ const MAX_TITLE_SIGNAL_CACHE = 4000;
 const lazyResolveInflight = new Map();
 const backgroundDbSaveInflight = new Map();
 const recentBackgroundDbSaves = new Map();
+const recentPackResolutionJobs = new Map();
 const PROVIDER_BREAKERS = new Map();
 const BREAKER_FAILURE_THRESHOLD = Math.max(2, parseInt(process.env.PROVIDER_BREAKER_THRESHOLD || '3', 10) || 3);
 const BREAKER_OPEN_MS = Math.max(5000, parseInt(process.env.PROVIDER_BREAKER_OPEN_MS || '30000', 10) || 30000);
@@ -924,10 +980,16 @@ function resolvePackNamesInBackground(meta, results, config) {
 
     LIMITERS.bgPackJobs.schedule(async () => {
         for (const item of packCandidates) {
+            const packKey = `${String(item?.hash || item?.infoHash || '').toLowerCase()}:${Number(meta?.season || 0)}:${Number(meta?.episode || 0)}`;
+            if (!packKey || shouldSkipRecentWork(recentPackResolutionJobs, packKey, BACKGROUND_DB_SAVE_DEDUP_MS * 2)) continue;
             try {
-                const resolved = await resolvePackWithBestEffort(item, config, meta, results);
-                if (resolved) await persistPackResolution(meta, item, resolved);
-            } catch (err) { logger.warn(`[PACK] Background processing failed for ${item.hash || item.infoHash}: ${err.message}`); }
+                await scheduleKeyed('pack-resolution', packKey, async () => {
+                    const resolved = await resolvePackWithBestEffort(item, config, meta, results);
+                    if (resolved) await persistPackResolution(meta, item, resolved);
+                });
+            } catch (err) {
+                logger.warn(`[PACK] Background processing failed for ${item.hash || item.infoHash}: ${err.message}`);
+            }
         }
     }).catch(err => { logger.warn(`[PACK] Background queue failed: ${err.message}`); });
 }
@@ -1013,42 +1075,94 @@ function saveResultsToDbBackground(meta, results, config = null) {
         return;
     }
 
-    withSharedPromise(backgroundDbSaveInflight, `db_save:${saveKey}`, async () => {
-        let savedCount = 0;
-        const prioritizedHashes = [];
-        const guaranteedCachedUpdates = [];
-        for (const item of results) {
-            const torrentObj = { info_hash: item.hash || item.infoHash, title: item.title, size: item._size || item.sizeBytes || 0, seeders: item.seeders || 0, provider: item.source || 'External', file_index: item.fileIdx !== undefined ? item.fileIdx : undefined, is_pack: item._isPack || isSeasonPack(item.title) };
-            if (!torrentObj.info_hash) continue;
-            const success = await dbHelper.insertTorrent(meta, torrentObj);
-            if (success) savedCount++;
-            if (isGuaranteedCachedExternal(item)) {
-                guaranteedCachedUpdates.push({
-                    hash: torrentObj.info_hash,
-                    cached: true,
-                    rd_file_size: Number(item?._size || item?.sizeBytes || 0) > 0 ? Number(item._size || item.sizeBytes) : null,
-                    failures: 0,
-                    next_hours: 24 * 30
+    const queueKey = metaCacheKey || meta?.imdb_id || resultsSignature || 'background';
+
+    scheduleKeyed('db-save', queueKey, async () => {
+        return withSharedPromise(backgroundDbSaveInflight, `db_save:${saveKey}`, async () => {
+            let savedCount = 0;
+            const prioritizedHashes = [];
+            const prioritizedSet = new Set();
+            const guaranteedCachedUpdates = [];
+            const guaranteedSet = new Set();
+            const torrentRows = [];
+
+            for (const item of results) {
+                const infoHash = item.hash || item.infoHash;
+                if (!infoHash) continue;
+
+                const torrentObj = {
+                    info_hash: infoHash,
+                    title: item.title,
+                    size: item._size || item.sizeBytes || 0,
+                    seeders: item.seeders || 0,
+                    provider: item.source || 'External',
+                    file_index: item.fileIdx !== undefined ? item.fileIdx : undefined,
+                    is_pack: item._isPack || isSeasonPack(item.title)
+                };
+
+                torrentRows.push(torrentObj);
+
+                if (isGuaranteedCachedExternal(item)) {
+                    if (!guaranteedSet.has(infoHash)) {
+                        guaranteedSet.add(infoHash);
+                        guaranteedCachedUpdates.push({
+                            hash: infoHash,
+                            state: 'cached',
+                            cached: true,
+                            rd_file_size: Number(item?._size || item?.sizeBytes || 0) > 0 ? Number(item._size || item.sizeBytes) : null,
+                            failures: 0,
+                            next_hours: 24 * 30,
+                            permanent: true
+                        });
+                    }
+                    continue;
+                }
+
+                if (
+                    String(config?.service || 'rd').toLowerCase() === 'rd' &&
+                    prioritizedHashes.length < 18 &&
+                    getRdAvailabilityState('rd', item) === 'unknown' &&
+                    !prioritizedSet.has(infoHash)
+                ) {
+                    prioritizedSet.add(infoHash);
+                    prioritizedHashes.push(infoHash);
+                }
+            }
+
+            if (torrentRows.length > 0) {
+                if (typeof dbHelper.insertTorrentsBatch === 'function' && meta?.imdb_id) {
+                    const outcome = await dbHelper.insertTorrentsBatch(meta, torrentRows);
+                    savedCount = Number(outcome?.inserted || 0);
+                } else {
+                    for (const torrentObj of torrentRows) {
+                        const success = await dbHelper.insertTorrent(meta, torrentObj);
+                        if (success) savedCount += 1;
+                    }
+                }
+            }
+
+            if (savedCount > 0) {
+                logger.info(`[AUTO-LEARN] Salvati ${savedCount} nuovi torrent nel DB per ${meta?.imdb_id || 'n/a'}`);
+            }
+
+            if (guaranteedCachedUpdates.length > 0 && typeof dbHelper.updateRdCacheStatus === 'function') {
+                await dbHelper.updateRdCacheStatus(guaranteedCachedUpdates);
+                await Cache.invalidateStreamsByHashes(guaranteedCachedUpdates.map((entry) => entry.hash), 'external_cached_seed');
+                logger.info(`[RD AVAILABILITY] Marked guaranteed external results as cached | imdb=${meta?.imdb_id || 'n/a'} | hashes=${guaranteedCachedUpdates.length}`);
+            }
+
+            if (prioritizedHashes.length > 0 && typeof dbHelper.prioritizeRdHashes === 'function') {
+                const outcome = await dbHelper.prioritizeRdHashes(prioritizedHashes, {
+                    limit: 18,
+                    priorityMinutes: Math.max(0, Math.min(120, parseInt(process.env.RD_PRIORITY_WINDOW_MIN || '5', 10) || 5))
                 });
-                continue;
+                logger.info(`[RD PRIORITY] reason=db_save | imdb=${meta?.imdb_id || 'n/a'} | hashes=${prioritizedHashes.length} | updated=${outcome?.updated || 0}`);
             }
-            if (String(config?.service || 'rd').toLowerCase() === 'rd' && prioritizedHashes.length < 18 && getRdAvailabilityState('rd', item) === 'unknown') {
-                prioritizedHashes.push(torrentObj.info_hash);
-            }
-        }
-        if (savedCount > 0) console.log(`[AUTO-LEARN] Salvati ${savedCount} nuovi torrent nel DB per ${meta.imdb_id}`);
-        if (guaranteedCachedUpdates.length > 0 && typeof dbHelper.updateRdCacheStatus === 'function') {
-            await dbHelper.updateRdCacheStatus(guaranteedCachedUpdates);
-            await Cache.invalidateStreamsByHashes(guaranteedCachedUpdates.map((entry) => entry.hash), 'external_cached_seed');
-            logger.info(`[RD AVAILABILITY] Marked guaranteed external results as cached | imdb=${meta.imdb_id || 'n/a'} | hashes=${guaranteedCachedUpdates.length}`);
-        }
-        if (prioritizedHashes.length > 0 && typeof dbHelper.prioritizeRdHashes === 'function') {
-            const outcome = await dbHelper.prioritizeRdHashes(prioritizedHashes, { limit: 18, priorityMinutes: Math.max(0, Math.min(120, parseInt(process.env.RD_PRIORITY_WINDOW_MIN || '5', 10) || 5)) });
-            logger.info(`[RD PRIORITY] reason=db_save | imdb=${meta.imdb_id || 'n/a'} | hashes=${prioritizedHashes.length} | updated=${outcome?.updated || 0}`);
-        }
-        if (metaCacheKey) await Cache.invalidateDbTorrents(metaCacheKey, 'db_save');
-        resolvePackNamesInBackground(meta, results, config);
-    }).catch(err => console.error("[AUTO-LEARN] Errore background save:", err.message));
+
+            if (metaCacheKey) await Cache.invalidateDbTorrents(metaCacheKey, 'db_save');
+            resolvePackNamesInBackground(meta, results, config);
+        });
+    }).catch(err => console.error('[AUTO-LEARN] Errore background save:', err.message));
 }
 
 async function resolveDebridLink(config, item, showFake, reqHost, meta) {
@@ -1311,6 +1425,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
       const fastResults = [...localDbResults, ...remoteResults, ...externalResults].filter(aggressiveFilter);
       let cleanResults = await normalizeCandidateResults(fastResults);
+      cleanResults = await overlayExactEpisodeFileIdx(cleanResults, meta);
       let validFastCount = cleanResults.length;
       logger.info(`[FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
 
@@ -1379,6 +1494,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
               const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks)).flatMap(result => result.status === 'fulfilled' ? result.value : []);
               cleanResults = await normalizeCandidateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)]);
+              cleanResults = await overlayExactEpisodeFileIdx(cleanResults, meta);
               validFastCount = cleanResults.length;
               logger.info(`[STATS SCRAPER] Trovati e filtrati ${validFastCount} risultati aggiuntivi dagli Scraper.`);
           }
