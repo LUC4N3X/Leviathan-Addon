@@ -164,11 +164,13 @@ function extractItemMeta(item) {
   );
   const type = lower(item?.type || item?.media_type || item?.meta?.type || "");
   const title = String(item?.title || item?.name || item?.meta?.name || item?.meta?.title || "");
+  const imdbId = String(item?.imdb_id || item?.imdbId || item?.meta?.imdb_id || item?.meta?.imdbId || "").trim().toLowerCase();
 
   return {
     hash,
     season,
     episode,
+    imdbId: /^tt\d+$/.test(imdbId) ? imdbId : null,
     isEpisodeRequest: season > 0 || episode > 0 || type === "series" || type === "episode" || type === "anime",
     title
   };
@@ -352,7 +354,7 @@ async function checkHashes(entries, token) {
   return runInBatches(chunks, token);
 }
 
-function buildDbUpdate(hash, apiRes) {
+function buildDbUpdate(hash, apiRes, meta = null) {
   return {
     hash,
     cached: Boolean(apiRes?.cached),
@@ -360,7 +362,10 @@ function buildDbUpdate(hash, apiRes) {
     size: apiRes?.size || null,
     file_title: apiRes?.file_title || null,
     file_size: apiRes?.file_size || null,
-    file_id: apiRes?.file_id != null ? apiRes.file_id : null
+    file_id: apiRes?.file_id != null ? apiRes.file_id : null,
+    imdb_id: meta?.imdbId || null,
+    imdb_season: meta?.isEpisodeRequest && meta?.season > 0 ? meta.season : null,
+    imdb_episode: meta?.isEpisodeRequest && meta?.episode > 0 ? meta.episode : null
   };
 }
 
@@ -392,7 +397,7 @@ async function checkCacheSync(items, token, dbHelper, limit = DEFAULT_SYNC_LIMIT
       file_size: apiRes.file_size || null,
       file_id: apiRes.file_id != null ? apiRes.file_id : null
     };
-    updates.push(buildDbUpdate(entry.hash, apiRes));
+    updates.push(buildDbUpdate(entry.hash, apiRes, entry.meta));
   }
 
   await flushDbUpdates(dbHelper, updates);
