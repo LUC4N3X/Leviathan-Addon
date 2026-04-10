@@ -11,6 +11,8 @@ const RD_INFO_RETRY_DELAY_MS = Math.max(250, parseInt(process.env.PACK_RD_INFO_R
 const TB_INFO_RETRY_ATTEMPTS = Math.max(2, parseInt(process.env.PACK_TB_INFO_RETRY_ATTEMPTS || '4', 10) || 4);
 const TB_INFO_RETRY_DELAY_MS = Math.max(500, parseInt(process.env.PACK_TB_INFO_RETRY_DELAY_MS || '1200', 10) || 1200);
 const MAX_MEMORY_ENTRIES = Math.max(50, parseInt(process.env.PACK_RESOLVER_CACHE_SIZE || '500', 10) || 500);
+const DB_MOVIE_FILE_LIMIT = Math.max(10, parseInt(process.env.PACK_DB_MOVIE_LIMIT || '30', 10) || 30);
+const DB_SERIES_FILE_LIMIT = Math.max(25, parseInt(process.env.PACK_DB_SERIES_LIMIT || '400', 10) || 400);
 
 class RequestQueue {
     constructor(concurrency = 1) {
@@ -90,6 +92,10 @@ function cacheSet(key, value, ttlMs = MEMORY_TTL_MS) {
 
 function buildCacheKey(infoHash, service) {
     return `${service || 'auto'}:${normalizeInfoHash(infoHash)}`;
+}
+
+function buildDbCacheKey(infoHash, isSeries = false) {
+    return buildCacheKey(infoHash, isSeries ? 'db-series' : 'db-movie');
 }
 
 function sleep(ms) {
@@ -526,11 +532,36 @@ async function scanPackFiles(infoHash, config) {
 }
 
 async function loadSeriesFromDb(infoHash, dbHelper) {
-    if (!dbHelper || typeof dbHelper.getSeriesPackFiles !== 'function') return null;
+    if (!dbHelper) return null;
     try {
-        const files = await dbHelper.getSeriesPackFiles(infoHash);
-        const mapped = convertDbSeriesFiles(files);
-        return mapped.length > 0 ? { infoHash, service: 'db', torrentId: 'db', files: mapped, packName: getPackName(mapped, null), scannedAt: Date.now() } : null;
+        if (typeof dbHelper.getSeriesPackFiles === 'function') {
+            const files = await dbHelper.getSeriesPackFiles(infoHash);
+            const mapped = convertDbSeriesFiles(files);
+            if (mapped.length > 0) {
+                return {
+                    infoHash,
+                    service: 'db',
+                    torrentId: 'db',
+                    files: mapped,
+                    packName: getPackName(mapped, null),
+                    scannedAt: Date.now()
+                };
+            }
+        }
+
+        if (typeof dbHelper.getPackFiles !== 'function') return null;
+        const raw = await dbHelper.getPackFiles(infoHash, DB_SERIES_FILE_LIMIT);
+        const fallbackFiles = convertDbPackFiles(raw?.files || raw);
+        return fallbackFiles.length > 0
+            ? {
+                infoHash,
+                service: 'db',
+                torrentId: 'db',
+                files: fallbackFiles,
+                packName: getPackName(fallbackFiles, null),
+                scannedAt: Date.now()
+            }
+            : null;
     } catch (err) {
         return null;
     }
@@ -539,7 +570,7 @@ async function loadSeriesFromDb(infoHash, dbHelper) {
 async function loadMovieFromDb(infoHash, dbHelper) {
     if (!dbHelper || typeof dbHelper.getPackFiles !== 'function') return null;
     try {
-        const raw = await dbHelper.getPackFiles(infoHash.toLowerCase(), 30);
+        const raw = await dbHelper.getPackFiles(infoHash.toLowerCase(), DB_MOVIE_FILE_LIMIT);
         const files = convertDbPackFiles(raw?.files || raw);
         return files.length > 0 ? { infoHash, service: 'db', torrentId: 'db', files, packName: getPackName(files, null), scannedAt: Date.now() } : null;
     } catch (err) {
@@ -617,9 +648,16 @@ async function resolvePackData(arg1, config, meta) {
     const infoHash = normalizeInfoHash(item.hash || item.infoHash);
     if (!infoHash) return null;
 
-    let packData = null;
-    if (context.meta?.isSeries) packData = await loadSeriesFromDb(infoHash, context.dbHelper);
-    else packData = await loadMovieFromDb(infoHash, context.dbHelper);
+    const dbCacheKey = buildDbCacheKey(infoHash, Boolean(context.meta?.isSeries));
+    let packData = cacheGet(dbCacheKey);
+    if (!packData || !Array.isArray(packData.files) || packData.files.length === 0) {
+        if (context.meta?.isSeries) packData = await loadSeriesFromDb(infoHash, context.dbHelper);
+        else packData = await loadMovieFromDb(infoHash, context.dbHelper);
+
+        if (packData && Array.isArray(packData.files) && packData.files.length > 0) {
+            cacheSet(dbCacheKey, packData);
+        }
+    }
 
     if (!packData || !Array.isArray(packData.files) || packData.files.length === 0) {
         packData = await scanPackFiles(infoHash, context.config);
