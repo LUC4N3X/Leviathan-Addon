@@ -264,6 +264,9 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                     }
                 }
 
+                if ((item?.fileIdx === undefined || item?.fileIdx === null) && Number.isInteger(row?.rd_file_index) && row.rd_file_index >= 0) {
+                    item.fileIdx = row.rd_file_index;
+                }
             }
         } catch (err) {
             logger.warn(`[DB READ] Overlay stato RD per hash fallito: ${err.message}`);

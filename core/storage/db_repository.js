@@ -938,62 +938,6 @@ async function insertPackFiles(entries) {
   }
 }
 
-async function getEpisodeFileMappings(imdbId, season = null, episode = null) {
-  if (!pool) return [];
-  await awaitDatabaseOptimizations();
-
-  const normalizedImdb = normalizeImdbId(imdbId);
-  if (!normalizedImdb) return [];
-
-  const normalizedSeason = toNullableInt(season);
-  const normalizedEpisode = toNullableInt(episode);
-  const params = [normalizedImdb];
-
-  let query = `
-        SELECT DISTINCT ON (info_hash_norm)
-          info_hash_norm AS hash,
-          file_index,
-          title,
-          size,
-          imdb_season,
-          imdb_episode
-        FROM files
-        WHERE imdb_id = $1
-  `;
-
-  if (normalizedSeason !== null) {
-    params.push(normalizedSeason);
-    query += ` AND COALESCE(imdb_season, 0) = $${params.length}`;
-  }
-
-  if (normalizedEpisode !== null) {
-    params.push(normalizedEpisode);
-    query += ` AND COALESCE(imdb_episode, 0) = $${params.length}`;
-  }
-
-  query += `
-        ORDER BY
-          info_hash_norm,
-          COALESCE(size, 0) DESC,
-          file_index_norm ASC
-  `;
-
-  try {
-    const res = await pool.query(query, params);
-    return (res.rows || []).map((row) => ({
-      hash: normalizeInfoHash(row.hash),
-      file_index: normalizeFileIndex(row.file_index),
-      title: sanitizeText(row.title),
-      size: toSafeNumber(row.size, 0),
-      imdb_season: toNullableInt(row.imdb_season),
-      imdb_episode: toNullableInt(row.imdb_episode)
-    })).filter((row) => row.hash && row.file_index !== null);
-  } catch (error) {
-    console.error(`❌ DB Error getEpisodeFileMappings: ${error.message}`);
-    return [];
-  }
-}
-
 async function getPackFiles(infoHash, limit = 50) {
   if (!pool) return [];
   await awaitDatabaseOptimizations();
@@ -1241,47 +1185,42 @@ async function updateRdCacheStatus(cacheResults) {
             `
               UPDATE torrents
               SET rd_cache_state = CASE
-                    WHEN $3::text IS NULL OR $3::text = '' THEN rd_cache_state
-                    ELSE $3::text
+                    WHEN $3 IS NULL OR $3 = '' THEN rd_cache_state
+                    ELSE $3
                   END,
                   cached_rd = CASE
-                    WHEN $3::text = 'cached' THEN TRUE
-                    WHEN $3::text = 'uncached_terminal' THEN FALSE
-                    WHEN $3::text IN ('likely_cached', 'probing', 'likely_uncached', 'unknown') THEN NULL
-                    WHEN $2::boolean IS NULL THEN cached_rd
-                    ELSE $2::boolean
+                    WHEN $3 = 'cached' THEN TRUE
+                    WHEN $3 = 'uncached_terminal' THEN FALSE
+                    WHEN $3 IN ('likely_cached', 'probing', 'likely_uncached', 'unknown') THEN NULL
+                    WHEN $2 IS NULL THEN cached_rd
+                    ELSE $2
                   END,
                   rd_file_index = CASE
-                    WHEN $4::integer IS NULL OR $4::integer < 0 THEN rd_file_index
-                    ELSE $4::integer
+                    WHEN $4 IS NULL OR $4 < 0 THEN rd_file_index
+                    ELSE $4
                   END,
                   rd_file_size = CASE
-                    WHEN $5::bigint IS NULL OR $5::bigint <= 0 THEN rd_file_size
-                    ELSE $5::bigint
+                    WHEN $5 IS NULL OR $5 <= 0 THEN rd_file_size
+                    ELSE $5
                   END,
                   title = CASE
-                    WHEN $8::text = '' THEN title
-                    WHEN title IS NULL OR title = '' THEN $8::text
-                    WHEN LENGTH($8::text) > LENGTH(title) THEN $8::text
+                    WHEN $8 = '' THEN title
+                    WHEN title IS NULL OR title = '' THEN $8
+                    WHEN LENGTH($8) > LENGTH(title) THEN $8
                     ELSE title
                   END,
                   size = CASE
-                    WHEN $9::bigint <= 0 THEN size
-                    ELSE GREATEST(COALESCE(size, 0), $9::bigint)
+                    WHEN $9 <= 0 THEN size
+                    ELSE GREATEST(COALESCE(size, 0), $9)
                   END,
-                  cache_check_failures = GREATEST(0, COALESCE($6::integer, 0)),
+                  cache_check_failures = GREATEST(0, COALESCE($6, 0)),
                   last_cached_check = NOW(),
                   next_cached_check = CASE
-                    WHEN COALESCE($7::boolean, FALSE) IS TRUE THEN TIMESTAMPTZ '9999-12-31 00:00:00+00'
-                    ELSE NOW() + make_interval(hours => GREATEST(1, COALESCE($10::integer, 12)))
+                    WHEN COALESCE($7, FALSE) IS TRUE THEN TIMESTAMPTZ '9999-12-31 00:00:00+00'
+                    ELSE NOW() + make_interval(hours => GREATEST(1, COALESCE($10, 12)))
                   END,
                   updated_at = NOW()
               WHERE info_hash_norm = $1
-                AND (
-                  $4::integer IS NULL
-                  OR file_index_norm = COALESCE($4::integer, -1)
-                  OR file_index = $4::integer
-                )
             `,
             [row.hash, row.cached, row.rd_cache_state, row.rd_file_index, row.rd_file_size, row.failures, row.permanent, row.title, row.size, row.next_hours]
           );
@@ -1504,7 +1443,6 @@ module.exports = {
   withClient,
   healthCheck,
   getTorrents,
-  getEpisodeFileMappings,
   getPackFiles,
   getSeriesPackFiles,
   getRdScanBatch,

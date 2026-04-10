@@ -85,55 +85,6 @@ function recordProviderFailure(providerName) {
     }
 }
 
-async function getExactEpisodeFileIndex(meta, item) {
-    if (!meta?.imdb_id || !meta?.season || !meta?.episode || !item?.hash) return null;
-    if (!dbHelper || typeof dbHelper.getEpisodeFileMappings !== 'function') return null;
-
-    try {
-        const mappings = await dbHelper.getEpisodeFileMappings(meta.imdb_id, meta.season, meta.episode);
-        if (!Array.isArray(mappings) || mappings.length === 0) return null;
-        const targetHash = String(item.hash || item.infoHash || '').trim().toLowerCase();
-        const exact = mappings.find((row) => String(row?.hash || '').trim().toLowerCase() === targetHash);
-        if (!exact) return null;
-        const fileIdx = Number(exact.file_index);
-        return Number.isInteger(fileIdx) && fileIdx >= 0 ? fileIdx : null;
-    } catch (err) {
-        logger.warn(`[DB READ] Exact episode file mapping failed for ${item?.hash || 'n/a'}: ${err.message}`);
-        return null;
-    }
-}
-
-async function overlayExactEpisodeFileIdx(items, meta) {
-    const list = Array.isArray(items) ? items : [];
-    if (!meta?.isSeries || !meta?.imdb_id || !meta?.season || !meta?.episode || list.length === 0) return list;
-    if (!dbHelper || typeof dbHelper.getEpisodeFileMappings !== 'function') return list;
-
-    try {
-        const mappings = await dbHelper.getEpisodeFileMappings(meta.imdb_id, meta.season, meta.episode);
-        if (!Array.isArray(mappings) || mappings.length === 0) return list;
-
-        const byHash = new Map(
-            mappings
-                .filter((row) => row?.hash && Number.isInteger(Number(row.file_index)))
-                .map((row) => [String(row.hash).trim().toUpperCase(), Number(row.file_index)])
-        );
-
-        if (byHash.size === 0) return list;
-
-        for (const item of list) {
-            const hash = String(item?.hash || item?.infoHash || '').trim().toUpperCase();
-            const exactFileIdx = byHash.get(hash);
-            if (Number.isInteger(exactFileIdx) && exactFileIdx >= 0) {
-                item.fileIdx = exactFileIdx;
-            }
-        }
-    } catch (err) {
-        logger.warn(`[DB READ] Exact episode overlay failed: ${err.message}`);
-    }
-
-    return list;
-}
-
 async function resolveLazyStreamData(service, apiKey, item, meta) {
     if (!apiKey || !item?.hash) return null;
     const normalizedService = String(service || 'rd').toLowerCase();
@@ -141,11 +92,6 @@ async function resolveLazyStreamData(service, apiKey, item, meta) {
     const inflightKey = getLazyResolveInflightKey(normalizedService, apiKey, item, meta);
 
     return withSharedPromise(lazyResolveInflight, `lazy:${inflightKey}`, async () => {
-        const exactEpisodeFileIdx = await getExactEpisodeFileIndex(meta, item);
-        if (Number.isInteger(exactEpisodeFileIdx) && exactEpisodeFileIdx >= 0) {
-            item.fileIdx = exactEpisodeFileIdx;
-        }
-
         if (normalizedService === 'tb') {
             return resolverLimiter.schedule(() =>
                 TB.getStreamLink(
@@ -1425,7 +1371,6 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
       const fastResults = [...localDbResults, ...remoteResults, ...externalResults].filter(aggressiveFilter);
       let cleanResults = await normalizeCandidateResults(fastResults);
-      cleanResults = await overlayExactEpisodeFileIdx(cleanResults, meta);
       let validFastCount = cleanResults.length;
       logger.info(`[FAST CHECK] Trovati ${validFastCount} risultati validi da fonti veloci (Remote+External).`);
 
@@ -1494,7 +1439,6 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
               const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks)).flatMap(result => result.status === 'fulfilled' ? result.value : []);
               cleanResults = await normalizeCandidateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)]);
-              cleanResults = await overlayExactEpisodeFileIdx(cleanResults, meta);
               validFastCount = cleanResults.length;
               logger.info(`[STATS SCRAPER] Trovati e filtrati ${validFastCount} risultati aggiuntivi dagli Scraper.`);
           }

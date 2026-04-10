@@ -46,110 +46,60 @@ function getValidVideoFiles(files) {
     );
 }
 
-function pickBestMovieFileId(files) {
-    const candidates = getValidVideoFiles(files);
-    if (!candidates.length) return null;
-
-    const scored = candidates.map((file) => {
-        const path = file.path.toLowerCase();
-        let score = 0;
-
-        const size = Number(file.bytes) || 0;
-        score += size;
-
-        if (/\/extras?\//i.test(path) || /\\extras?\\/i.test(path)) score -= 5e12;
-        if (/\/specials?\//i.test(path) || /\\specials?\\/i.test(path)) score -= 5e12;
-        if (/commentary/i.test(path)) score -= 3e12;
-
-
-        const depth = path.split(/[\\/]/).length;
-        score -= depth * 1e9;
-
-        return { id: file.id, score };
-    });
-
-    scored.sort((a, b) => b.score - a.score);
-    return scored[0]?.id ?? null;
-}
-
-
 function normalizeFileId(file) {
     const rawId = file?.id ?? file?.file_index ?? file?.index ?? file?.fileIdx;
     const parsed = Number.parseInt(rawId, 10);
     return Number.isInteger(parsed) ? parsed : null;
 }
 
-function parseEpisodeSignature(filePath, defaultSeason) {
-    const value = String(filePath || "").replace(/[._-]+/g, " ");
-    const patterns = [
-        /(?:^|\b)s(\d{1,2})\s*e(\d{1,3})(?:\b|[^\d])/i,
-        /(?:^|\b)(\d{1,2})x(\d{1,3})(?:\b|[^\d])/i,
-        /season\s*(\d{1,2}).{0,20}?episode\s*(\d{1,3})/i,
-        /stagione\s*(\d{1,2}).{0,20}?episodio\s*(\d{1,3})/i,
-        /(?:^|[^a-z])ep?\.?\s*(\d{1,3})(?:[^\d]|$)/i,
-        /(?:^|[^\d])(\d{3})(?:[^\d]|$)/
-    ];
+function pickBestMovieFileId(files) {
+    const candidates = getValidVideoFiles(files);
+    if (!candidates.length) return null;
 
-    for (let index = 0; index < patterns.length; index += 1) {
-        const match = value.match(patterns[index]);
-        if (!match) continue;
-        if (index <= 3) return { season: toInt(match[1]), episode: toInt(match[2]), exact: true };
-        if (index === 4) return { season: toInt(defaultSeason || 1), episode: toInt(match[1]), exact: false };
-        const raw = toInt(match[1]);
-        if (raw >= 100) return { season: Math.floor(raw / 100), episode: raw % 100, exact: false };
-    }
+    const scored = candidates.map((file) => {
+        const path = String(file.path || "").toLowerCase();
+        let score = Number(file.bytes) || 0;
 
-    return null;
+        if (/\/extras?\//i.test(path) || /\\extras?\\/i.test(path)) score -= 5e12;
+        if (/\/specials?\//i.test(path) || /\\specials?\\/i.test(path)) score -= 5e12;
+        if (/commentary/i.test(path)) score -= 3e12;
+
+        const depth = path.split(/[\\/]/).length;
+        score -= depth * 1e9;
+
+        return { id: normalizeFileId(file), score };
+    }).filter((entry) => Number.isInteger(entry.id));
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0]?.id ?? null;
 }
 
-function matchFile(files, season, episode, forcedFileIdx = null) {
-    const targetSeason = toInt(season, 0);
-    const targetEpisode = toInt(episode, 0);
+function matchFile(files, season, episode) {
+    if (!files || !season || !episode) return null;
+
+    const s = parseInt(season, 10);
+    const e = parseInt(episode, 10);
+    if (!Number.isInteger(s) || !Number.isInteger(e) || s <= 0 || e <= 0) return null;
+
+    const eStr = String(e).padStart(2, "0");
     const videoFiles = getValidVideoFiles(files);
-    if (!videoFiles.length) return null;
+    if (videoFiles.length === 0) return null;
 
-    const forcedIndex = Number.parseInt(forcedFileIdx, 10);
-    if (Number.isInteger(forcedIndex) && forcedIndex >= 0) {
-        const forcedMatch = videoFiles.find((file) => normalizeFileId(file) === forcedIndex);
-        if (forcedMatch) return normalizeFileId(forcedMatch);
-    }
+    const regexStandard = new RegExp(`S0*${s}.*?E0*${e}\\b`, "i");
+    const regexX = new RegExp(`\\b${s}x0*${e}\\b`, "i");
+    const compactNum = `${s}${eStr}`;
+    const regexCompact = new RegExp(`(^|\\D)${compactNum}(\\D|$)`, "i");
+    const regexExplicitEp = new RegExp(`(ep|episode|episodio)[^0-9]*0*${e}\\b`, "i");
+    const regexAbsolute = new RegExp(`[ \\-\\[_]0*${e}[ \\-\\]_]`, "i");
 
-    if (!targetSeason || !targetEpisode) {
-        if (videoFiles.length === 1) return normalizeFileId(videoFiles[0]);
-        return null;
-    }
+    let found = videoFiles.find((f) => regexStandard.test(String(f.path || "")));
+    if (!found) found = videoFiles.find((f) => regexX.test(String(f.path || "")));
+    if (!found && s < 100) found = videoFiles.find((f) => regexCompact.test(String(f.path || "")));
+    if (!found) found = videoFiles.find((f) => regexExplicitEp.test(String(f.path || "")));
+    if (!found) found = videoFiles.find((f) => regexAbsolute.test(String(f.path || "")));
 
-    let best = null;
-    let bestScore = -Infinity;
-
-    for (const file of videoFiles) {
-        const fileId = normalizeFileId(file);
-        if (!Number.isInteger(fileId)) continue;
-
-        const parsed = parseEpisodeSignature(file.path, targetSeason);
-        if (!parsed) continue;
-        if (parsed.season !== targetSeason || parsed.episode !== targetEpisode) continue;
-
-        let score = 0;
-        const lowered = String(file.path || "").toLowerCase();
-        if (parsed.exact) score += 1000;
-        if (/\bs\d{1,2}\s*e\d{1,3}\b/i.test(lowered)) score += 80;
-        if (/\b\d{1,2}x\d{1,3}\b/i.test(lowered)) score += 60;
-        if (/episode|episodio|\bep\b/i.test(lowered)) score += 25;
-        if (/sample|trailer|extras?|featurettes?|behind[\s._-]?the[\s._-]?scenes|interview|preview/i.test(lowered)) score -= 500;
-        score += Math.min(Math.floor((Number(file.bytes) || 0) / (200 * 1024 * 1024)), 50);
-
-        if (score > bestScore) {
-            bestScore = score;
-            best = file;
-        }
-    }
-
-    if (best) return normalizeFileId(best);
-    return videoFiles.length === 1 ? normalizeFileId(videoFiles[0]) : null;
+    return found ? normalizeFileId(found) : null;
 }
-
-// ============================================================================
 
 function isRetryableStatus(status) {
     return status === 429 || (status >= 500 && status <= 599);
@@ -190,13 +140,8 @@ async function rdRequest(method, url, token, data = null) {
             const response = await axios(config);
             const status = response.status;
 
-            if (status >= 200 && status < 300) {
-                return response.data;
-            }
-
-            if (status === 401 || status === 403 || status === 404) {
-                return null;
-            }
+            if (status >= 200 && status < 300) return response.data;
+            if (status === 401 || status === 403 || status === 404) return null;
 
             if (isRetryableStatus(status)) {
                 const backoff = 900 + attempt * 700 + Math.floor(Math.random() * 400);
@@ -222,10 +167,10 @@ async function getTorrentInfo(token, torrentId) {
     return rdRequest("GET", `${RD_API_BASE}/torrents/info/${torrentId}`, token);
 }
 
-async function waitUntilReady(token, torrentId) {
+async function waitUntilReady(token, torrentId, attempts = RD_READY_POLL_ATTEMPTS, delayMs = RD_READY_POLL_DELAY) {
     let lastInfo = null;
 
-    for (let i = 0; i < RD_READY_POLL_ATTEMPTS; i++) {
+    for (let i = 0; i < attempts; i++) {
         lastInfo = await getTorrentInfo(token, torrentId);
         if (!lastInfo) return null;
 
@@ -246,7 +191,7 @@ async function waitUntilReady(token, torrentId) {
             return lastInfo;
         }
 
-        await sleep(RD_READY_POLL_DELAY);
+        await sleep(delayMs);
     }
 
     return lastInfo;
@@ -263,12 +208,25 @@ function resolveSelectedLink(info, selectedFileId = null) {
         const idx = selectedFiles.findIndex(
             (f) => String(f.id) === String(selectedFileId)
         );
-        if (idx >= 0 && info.links[idx]) {
-            return info.links[idx];
-        }
+        if (idx >= 0 && info.links[idx]) return info.links[idx];
     }
 
     return info.links[0] || null;
+}
+
+function chooseSeriesFileId(files, season, episode, forcedFileIdx = null) {
+    const matchedId = matchFile(files, season, episode);
+    if (Number.isInteger(matchedId)) return matchedId;
+
+    const forcedIndex = Number.parseInt(forcedFileIdx, 10);
+    if (Number.isInteger(forcedIndex) && forcedIndex >= 0) {
+        const forcedMatch = getValidVideoFiles(files).find((file) => normalizeFileId(file) === forcedIndex);
+        if (forcedMatch) return forcedIndex;
+    }
+
+    const validVideoFiles = getValidVideoFiles(files);
+    if (validVideoFiles.length === 1) return normalizeFileId(validVideoFiles[0]);
+    return null;
 }
 
 const RD = {
@@ -293,11 +251,9 @@ const RD = {
         }
     },
 
-    getStreamLink: async (token, magnet, season = null, episode = null, forcedFileIdx = null) => {
+    prepareTorrentForCloud: async (token, magnet, options = {}) => {
         let torrentId = null;
-
         try {
-
             const addBody = new URLSearchParams();
             addBody.append("magnet", magnet);
 
@@ -311,6 +267,93 @@ const RD = {
             if (!addRes || !addRes.id) return null;
             torrentId = addRes.id;
 
+            let info = await getTorrentInfo(token, torrentId);
+            if (!info) return null;
+
+            let selectedFileId = null;
+            let selectedFileSize = null;
+
+            if (info.status === "waiting_files_selection") {
+                let fileIdToSelect = options?.selectAll ? "all" : null;
+
+                if (!fileIdToSelect && Array.isArray(info.files)) {
+                    const validVideoFiles = getValidVideoFiles(info.files);
+                    if (validVideoFiles.length === 1) {
+                        const singleId = normalizeFileId(validVideoFiles[0]);
+                        if (Number.isInteger(singleId)) {
+                            selectedFileId = singleId;
+                            selectedFileSize = Number(validVideoFiles[0]?.bytes) || 0;
+                            fileIdToSelect = String(singleId);
+                        }
+                    }
+                }
+
+                if (!fileIdToSelect) fileIdToSelect = "all";
+
+                const selBody = new URLSearchParams();
+                selBody.append("files", String(fileIdToSelect));
+                await rdRequest(
+                    "POST",
+                    `${RD_API_BASE}/torrents/selectFiles/${torrentId}`,
+                    token,
+                    selBody
+                );
+
+                info = await getTorrentInfo(token, torrentId);
+                if (!info) return null;
+            }
+
+            const shouldPoll = options?.poll !== false;
+            if (shouldPoll && info.status !== "downloaded") {
+                info = await waitUntilReady(
+                    token,
+                    torrentId,
+                    Math.max(1, toInt(options?.pollAttempts, RD_READY_POLL_ATTEMPTS)),
+                    Math.max(250, toInt(options?.pollDelayMs, RD_READY_POLL_DELAY))
+                );
+            }
+
+            if (Array.isArray(info?.files) && info.files.length > 0 && !Number.isInteger(selectedFileId)) {
+                const firstVideo = getValidVideoFiles(info.files)[0];
+                const firstId = normalizeFileId(firstVideo);
+                if (Number.isInteger(firstId)) {
+                    selectedFileId = firstId;
+                    selectedFileSize = Number(firstVideo?.bytes) || selectedFileSize || 0;
+                }
+            }
+
+            return {
+                ready: info?.status === "downloaded",
+                torrentId,
+                selectedFileId: Number.isInteger(selectedFileId) ? selectedFileId : null,
+                selectedFileSize: Number.isFinite(Number(selectedFileSize)) && Number(selectedFileSize) > 0 ? Number(selectedFileSize) : null,
+                status: info?.status || null
+            };
+        } catch (e) {
+            console.error("RD Cloud Build Error:", e?.message || e);
+            if (torrentId) {
+                try { await RD.deleteTorrent(token, torrentId); } catch (_) {}
+            }
+            return null;
+        }
+    },
+
+    getStreamLink: async (token, magnet, season = null, episode = null, forcedFileIdx = null) => {
+        let torrentId = null;
+
+        try {
+            const addBody = new URLSearchParams();
+            addBody.append("magnet", magnet);
+
+            const addRes = await rdRequest(
+                "POST",
+                `${RD_API_BASE}/torrents/addMagnet`,
+                token,
+                addBody
+            );
+
+            if (!addRes || !addRes.id) return null;
+            torrentId = addRes.id;
 
             let info = await getTorrentInfo(token, torrentId);
             if (!info) {
@@ -318,38 +361,24 @@ const RD = {
                 return null;
             }
 
-
             let selectedFileId = null;
 
             if (info.status === "waiting_files_selection") {
                 let fileIdToSelect = "all";
 
- 
                 if (season && episode && info.files) {
-                    const matchedId = matchFile(info.files, season, episode, forcedFileIdx);
-                    if (matchedId) {
-                        selectedFileId = matchedId;
-                        fileIdToSelect = matchedId;
-                        console.log(
-                            `🎯 RD Match: selezionato file ID ${matchedId} per S${season}E${episode}`
-                        );
+                    const chosenId = chooseSeriesFileId(info.files, season, episode, forcedFileIdx);
+                    if (Number.isInteger(chosenId)) {
+                        selectedFileId = chosenId;
+                        fileIdToSelect = chosenId;
+                        console.log(`🎯 RD Match: selezionato file ID ${chosenId} per S${season}E${episode}`);
                     } else {
-                        const validVideoFiles = getValidVideoFiles(info.files);
-                        if (validVideoFiles.length === 1) {
-                            const singleId = normalizeFileId(validVideoFiles[0]);
-                            if (Number.isInteger(singleId)) {
-                                selectedFileId = singleId;
-                                fileIdToSelect = singleId;
-                            }
-                        } else {
-                            await RD.deleteTorrent(token, torrentId);
-                            return null;
-                        }
+                        await RD.deleteTorrent(token, torrentId);
+                        return null;
                     }
                 } else if (info.files) {
-
                     const bestMovieFileId = pickBestMovieFileId(info.files);
-                    if (bestMovieFileId) {
+                    if (Number.isInteger(bestMovieFileId)) {
                         selectedFileId = bestMovieFileId;
                         fileIdToSelect = bestMovieFileId;
                     }
@@ -366,17 +395,14 @@ const RD = {
                 );
 
                 if (!selRes && fileIdToSelect !== "all") {
-
                     const fallbackBody = new URLSearchParams();
                     fallbackBody.append("files", "all");
-
                     await rdRequest(
                         "POST",
                         `${RD_API_BASE}/torrents/selectFiles/${torrentId}`,
                         token,
                         fallbackBody
                     );
-
                     selectedFileId = null;
                 }
 
@@ -386,7 +412,6 @@ const RD = {
                     return null;
                 }
             }
-
 
             if (info.status !== "downloaded") {
                 info = await waitUntilReady(token, torrentId);
@@ -402,14 +427,12 @@ const RD = {
                 return null;
             }
 
-
             const linkToUnrestrict = resolveSelectedLink(info, selectedFileId);
             if (!linkToUnrestrict) {
                 await RD.deleteTorrent(token, torrentId);
                 return null;
             }
 
- 
             const unBody = new URLSearchParams();
             unBody.append("link", linkToUnrestrict);
 
@@ -430,7 +453,7 @@ const RD = {
                 url: unrestrictRes.download,
                 filename: unrestrictRes.filename || null,
                 size: toInt(unrestrictRes.filesize, 0),
-                rd_file_index: Number.isInteger(selectedFileId) ? selectedFileId : null
+                selectedFileId: Number.isInteger(selectedFileId) ? selectedFileId : null
             };
         } catch (e) {
             console.error("RD Error:", e?.message || e);
