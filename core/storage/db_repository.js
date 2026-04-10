@@ -234,6 +234,19 @@ async function ensureDatabaseOptimizations() {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`,
+    `CREATE TABLE IF NOT EXISTS episode_file_overrides (
+      info_hash TEXT NOT NULL,
+      info_hash_norm TEXT,
+      imdb_id TEXT NOT NULL,
+      imdb_season INTEGER NOT NULL,
+      imdb_episode INTEGER NOT NULL,
+      rd_file_index INTEGER,
+      rd_file_size BIGINT,
+      tb_file_id INTEGER,
+      tb_file_size BIGINT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS file_index INTEGER`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS file_index_norm INTEGER DEFAULT -1`,
@@ -271,12 +284,24 @@ async function ensureDatabaseOptimizations() {
     `ALTER TABLE pack_files ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
     `ALTER TABLE pack_files ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
 
+    `ALTER TABLE episode_file_overrides ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
+    `ALTER TABLE episode_file_overrides ADD COLUMN IF NOT EXISTS imdb_id TEXT`,
+    `ALTER TABLE episode_file_overrides ADD COLUMN IF NOT EXISTS imdb_season INTEGER`,
+    `ALTER TABLE episode_file_overrides ADD COLUMN IF NOT EXISTS imdb_episode INTEGER`,
+    `ALTER TABLE episode_file_overrides ADD COLUMN IF NOT EXISTS rd_file_index INTEGER`,
+    `ALTER TABLE episode_file_overrides ADD COLUMN IF NOT EXISTS rd_file_size BIGINT`,
+    `ALTER TABLE episode_file_overrides ADD COLUMN IF NOT EXISTS tb_file_id INTEGER`,
+    `ALTER TABLE episode_file_overrides ADD COLUMN IF NOT EXISTS tb_file_size BIGINT`,
+    `ALTER TABLE episode_file_overrides ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
+    `ALTER TABLE episode_file_overrides ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
+
     `UPDATE torrents SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE torrents SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
     `UPDATE files SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE files SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
     `UPDATE pack_files SET pack_hash_norm = LOWER(TRIM(pack_hash)) WHERE pack_hash IS NOT NULL AND (pack_hash_norm IS NULL OR pack_hash_norm <> LOWER(TRIM(pack_hash)))`,
     `UPDATE pack_files SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
+    `UPDATE episode_file_overrides SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
 
     `CREATE INDEX IF NOT EXISTS idx_torrents_info_hash_norm ON torrents (info_hash_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_lookup_hash_file ON torrents (info_hash_norm, file_index_norm)`,
@@ -289,7 +314,8 @@ async function ensureDatabaseOptimizations() {
     `CREATE INDEX IF NOT EXISTS idx_files_info_hash_norm ON files (info_hash_norm, file_index_norm)`,
 
     `CREATE INDEX IF NOT EXISTS idx_pack_files_hash ON pack_files (pack_hash_norm, file_index_norm)`,
-    `CREATE INDEX IF NOT EXISTS idx_pack_files_series_lookup ON pack_files (pack_hash_norm, imdb_season, imdb_episode, file_index_norm)`
+    `CREATE INDEX IF NOT EXISTS idx_pack_files_series_lookup ON pack_files (pack_hash_norm, imdb_season, imdb_episode, file_index_norm)`,
+    `CREATE INDEX IF NOT EXISTS idx_episode_file_overrides_lookup ON episode_file_overrides (info_hash_norm, imdb_id, imdb_season, imdb_episode)`
   ];
 
   for (const sql of statements) {
@@ -304,10 +330,34 @@ async function ensureDatabaseOptimizations() {
   await deduplicateTableByKey('files', 'info_hash_norm', 'file_index_norm');
   await deduplicateTableByKey('pack_files', 'pack_hash_norm', 'file_index_norm');
 
+  try {
+    await pool.query(`
+      WITH ranked AS (
+        SELECT ctid,
+               ROW_NUMBER() OVER (
+                 PARTITION BY info_hash_norm, imdb_id, imdb_season, imdb_episode
+                 ORDER BY COALESCE(updated_at, created_at, NOW()) DESC
+               ) AS rn
+        FROM episode_file_overrides
+        WHERE info_hash_norm IS NOT NULL
+          AND imdb_id IS NOT NULL
+          AND imdb_season IS NOT NULL
+          AND imdb_episode IS NOT NULL
+      )
+      DELETE FROM episode_file_overrides e
+      USING ranked r
+      WHERE e.ctid = r.ctid
+        AND r.rn > 1
+    `);
+  } catch (error) {
+    console.warn(`⚠️ DB dedupe skipped (episode_file_overrides): ${error.message}`);
+  }
+
   const uniqueStatements = [
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_torrents_hash_file_idx_norm ON torrents (info_hash_norm, file_index_norm)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_files_hash_file_idx_norm ON files (info_hash_norm, file_index_norm)`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS uq_pack_files_hash_file_idx_norm ON pack_files (pack_hash_norm, file_index_norm)`
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_pack_files_hash_file_idx_norm ON pack_files (pack_hash_norm, file_index_norm)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_episode_file_overrides_identity ON episode_file_overrides (info_hash_norm, imdb_id, imdb_season, imdb_episode)`
   ];
 
   for (const sql of uniqueStatements) {
@@ -383,6 +433,67 @@ function normalizeProviderName(providerName, title) {
   return normalized;
 }
 
+
+function normalizeEpisodeIdentity(entry) {
+  const imdbId = normalizeImdbId(entry?.imdb_id || entry?.imdbId);
+  const imdbSeason = toNullableInt(entry?.imdb_season ?? entry?.season);
+  const imdbEpisode = toNullableInt(entry?.imdb_episode ?? entry?.episode);
+  const isEpisode = Boolean(imdbId && imdbSeason !== null && imdbSeason > 0 && imdbEpisode !== null && imdbEpisode > 0);
+  return { imdbId, imdbSeason, imdbEpisode, isEpisode };
+}
+
+async function upsertEpisodeScopedOverrideRow(client, entry) {
+  const hash = normalizeInfoHash(entry?.hash || entry?.info_hash || entry?.infoHash);
+  const identity = normalizeEpisodeIdentity(entry);
+  if (!hash || !identity.isEpisode) return false;
+
+  const rdFileIndex = normalizeFileIndex(entry?.rd_file_index);
+  const rdFileSize = entry?.rd_file_size === null || entry?.rd_file_size === undefined ? null : toSafeNumber(entry?.rd_file_size, 0);
+  const tbFileId = normalizeFileIndex(entry?.tb_file_id ?? entry?.file_id);
+  const tbFileSize = entry?.tb_file_size === null || entry?.tb_file_size === undefined ? null : toSafeNumber(entry?.tb_file_size, 0);
+
+  await client.query(
+    `
+      INSERT INTO episode_file_overrides (
+        info_hash,
+        info_hash_norm,
+        imdb_id,
+        imdb_season,
+        imdb_episode,
+        rd_file_index,
+        rd_file_size,
+        tb_file_id,
+        tb_file_size,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+      ON CONFLICT (info_hash_norm, imdb_id, imdb_season, imdb_episode)
+      DO UPDATE SET
+        rd_file_index = CASE
+          WHEN EXCLUDED.rd_file_index IS NULL OR EXCLUDED.rd_file_index < 0 THEN episode_file_overrides.rd_file_index
+          ELSE EXCLUDED.rd_file_index
+        END,
+        rd_file_size = CASE
+          WHEN EXCLUDED.rd_file_size IS NULL OR EXCLUDED.rd_file_size <= 0 THEN episode_file_overrides.rd_file_size
+          ELSE EXCLUDED.rd_file_size
+        END,
+        tb_file_id = CASE
+          WHEN EXCLUDED.tb_file_id IS NULL OR EXCLUDED.tb_file_id < 0 THEN episode_file_overrides.tb_file_id
+          ELSE EXCLUDED.tb_file_id
+        END,
+        tb_file_size = CASE
+          WHEN EXCLUDED.tb_file_size IS NULL OR EXCLUDED.tb_file_size <= 0 THEN episode_file_overrides.tb_file_size
+          ELSE EXCLUDED.tb_file_size
+        END,
+        updated_at = NOW()
+    `,
+    [hash, identity.imdbId, identity.imdbSeason, identity.imdbEpisode, rdFileIndex, rdFileSize, tbFileId, tbFileSize]
+  );
+
+  return true;
+}
+
 function normalizeTorrentRow(row) {
   const infoHash = normalizeInfoHash(row?.info_hash);
   if (!infoHash) return null;
@@ -394,6 +505,8 @@ function normalizeTorrentRow(row) {
     provider: sanitizeText(row.provider, 'Unknown'),
     magnet: trackerRegistry.buildMagnet(infoHash),
     file_index: normalizeFileIndex(row.file_index),
+    matched_file_index: normalizeFileIndex(row.matched_file_index),
+    matched_file_title: sanitizeText(row.matched_file_title),
     cached_rd: row.cached_rd === null || row.cached_rd === undefined ? null : Boolean(row.cached_rd),
     rd_cache_state: normalizeRdCacheState(row.rd_cache_state),
     rd_file_index: normalizeFileIndex(row.rd_file_index),
@@ -424,43 +537,93 @@ async function getTorrents(imdbId, season, episode) {
 
   const query = isSeriesEpisode
     ? `
-      WITH matched_files AS (
-        SELECT DISTINCT info_hash_norm, file_index_norm
+      WITH episode_matches AS (
+        SELECT
+          info_hash_norm AS hash_norm,
+          file_index AS matched_file_index,
+          file_index_norm AS matched_file_index_norm,
+          title AS matched_file_title,
+          size AS matched_file_size,
+          1 AS source_rank
         FROM files
         WHERE imdb_id = $1
           AND imdb_season = $2
           AND imdb_episode = $3
+
+        UNION ALL
+
+        SELECT
+          pack_hash_norm AS hash_norm,
+          file_index AS matched_file_index,
+          file_index_norm AS matched_file_index_norm,
+          COALESCE(NULLIF(file_title, ''), NULLIF(file_path, ''), pack_hash_norm) AS matched_file_title,
+          file_size AS matched_file_size,
+          2 AS source_rank
+        FROM pack_files
+        WHERE imdb_id = $1
+          AND imdb_season = $2
+          AND imdb_episode = $3
+      ),
+      dedup_matches AS (
+        SELECT DISTINCT ON (hash_norm, matched_file_index_norm)
+          hash_norm,
+          matched_file_index,
+          matched_file_index_norm,
+          matched_file_title,
+          matched_file_size,
+          source_rank
+        FROM episode_matches
+        WHERE hash_norm IS NOT NULL
+        ORDER BY
+          hash_norm,
+          matched_file_index_norm,
+          source_rank ASC,
+          COALESCE(matched_file_size, 0) DESC,
+          LENGTH(COALESCE(matched_file_title, '')) DESC
+      ),
+      episode_overrides AS (
+        SELECT
+          info_hash_norm AS hash_norm,
+          rd_file_index,
+          rd_file_size,
+          tb_file_id,
+          tb_file_size
+        FROM episode_file_overrides
+        WHERE imdb_id = $1
+          AND imdb_season = $2
+          AND imdb_episode = $3
       )
-      SELECT DISTINCT ON (t.info_hash_norm, t.file_index_norm)
+      SELECT DISTINCT ON (t.info_hash_norm, COALESCE(m.matched_file_index_norm, t.file_index_norm))
         t.title,
         TRIM(t.info_hash) AS info_hash,
         t.size,
         t.seeders,
         t.provider,
-        t.file_index,
+        COALESCE(m.matched_file_index, t.file_index) AS file_index,
+        m.matched_file_index,
+        m.matched_file_title,
         t.cached_rd,
         t.rd_cache_state,
-        t.rd_file_index,
-        t.rd_file_size,
+        COALESCE(o.rd_file_index, t.rd_file_index) AS rd_file_index,
+        COALESCE(o.rd_file_size, t.rd_file_size) AS rd_file_size,
         t.last_cached_check,
         t.next_cached_check,
         t.cache_check_failures,
         t.tb_cached,
-        t.tb_file_id,
-        t.tb_file_size
-      FROM matched_files f
+        COALESCE(o.tb_file_id, t.tb_file_id) AS tb_file_id,
+        COALESCE(o.tb_file_size, t.tb_file_size) AS tb_file_size
+      FROM dedup_matches m
       JOIN torrents t
-        ON t.info_hash_norm = f.info_hash_norm
-       AND (
-         f.file_index_norm = -1
-         OR t.file_index_norm = f.file_index_norm
-       )
+        ON t.info_hash_norm = m.hash_norm
+      LEFT JOIN episode_overrides o
+        ON o.hash_norm = t.info_hash_norm
       ORDER BY
         t.info_hash_norm,
-        t.file_index_norm,
+        COALESCE(m.matched_file_index_norm, t.file_index_norm),
+        CASE WHEN COALESCE(o.rd_file_index, t.rd_file_index) IS NOT NULL THEN 1 ELSE 0 END DESC,
         CASE WHEN t.cached_rd IS TRUE THEN 1 ELSE 0 END DESC,
         COALESCE(t.seeders, 0) DESC,
-        COALESCE(t.size, 0) DESC
+        COALESCE(m.matched_file_size, t.rd_file_size, t.size, 0) DESC
     `
     : `
       WITH matched_files AS (
@@ -476,6 +639,8 @@ async function getTorrents(imdbId, season, episode) {
         t.seeders,
         t.provider,
         t.file_index,
+        NULL::INTEGER AS matched_file_index,
+        NULL::TEXT AS matched_file_title,
         t.cached_rd,
         t.rd_cache_state,
         t.rd_file_index,
@@ -1158,6 +1323,7 @@ async function updateRdCacheStatus(cacheResults) {
         : Math.max(1, Math.min(24 * 365 * 10, toSafeNumber(entry?.next_hours, hasCached ? (entry.cached ? 24 * 30 : 24 * 7) : 12)));
       const state = deriveStoredCacheState(entry);
       const cached = deriveCachedBooleanFromState(state, hasCached ? entry.cached : null);
+      const identity = normalizeEpisodeIdentity(entry);
       return {
         hash: normalizeInfoHash(entry?.hash),
         cached,
@@ -1168,7 +1334,11 @@ async function updateRdCacheStatus(cacheResults) {
         next_hours: nextHours,
         permanent,
         title: sanitizeText(entry?.torrent_title || entry?.title),
-        size: Math.max(0, toSafeNumber(entry?.size, 0))
+        size: Math.max(0, toSafeNumber(entry?.size, 0)),
+        imdb_id: identity.imdbId,
+        imdb_season: identity.imdbSeason,
+        imdb_episode: identity.imdbEpisode,
+        episode_scoped: identity.isEpisode
       };
     })
     .filter((entry) => entry.hash);
@@ -1181,48 +1351,62 @@ async function updateRdCacheStatus(cacheResults) {
       await client.query('BEGIN');
       try {
         for (const row of normalizedRows) {
+          if (row.episode_scoped && Number.isInteger(row.rd_file_index) && row.rd_file_index >= 0) {
+            await upsertEpisodeScopedOverrideRow(client, {
+              hash: row.hash,
+              imdb_id: row.imdb_id,
+              imdb_season: row.imdb_season,
+              imdb_episode: row.imdb_episode,
+              rd_file_index: row.rd_file_index,
+              rd_file_size: row.rd_file_size
+            });
+          }
+
+          const globalRdFileIndex = row.episode_scoped ? null : row.rd_file_index;
+          const globalRdFileSize = row.episode_scoped ? null : row.rd_file_size;
+
           const result = await client.query(
             `
               UPDATE torrents
               SET rd_cache_state = CASE
-                    WHEN $3 IS NULL OR $3 = '' THEN rd_cache_state
-                    ELSE $3
+                    WHEN $3::text IS NULL OR $3::text = '' THEN rd_cache_state
+                    ELSE $3::text
                   END,
                   cached_rd = CASE
-                    WHEN $3 = 'cached' THEN TRUE
-                    WHEN $3 = 'uncached_terminal' THEN FALSE
-                    WHEN $3 IN ('likely_cached', 'probing', 'likely_uncached', 'unknown') THEN NULL
-                    WHEN $2 IS NULL THEN cached_rd
-                    ELSE $2
+                    WHEN $3::text = 'cached' THEN TRUE
+                    WHEN $3::text = 'uncached_terminal' THEN FALSE
+                    WHEN $3::text IN ('likely_cached', 'probing', 'likely_uncached', 'unknown') THEN NULL
+                    WHEN $2::boolean IS NULL THEN cached_rd
+                    ELSE $2::boolean
                   END,
                   rd_file_index = CASE
-                    WHEN $4 IS NULL OR $4 < 0 THEN rd_file_index
-                    ELSE $4
+                    WHEN $4::integer IS NULL OR $4::integer < 0 THEN rd_file_index
+                    ELSE $4::integer
                   END,
                   rd_file_size = CASE
-                    WHEN $5 IS NULL OR $5 <= 0 THEN rd_file_size
-                    ELSE $5
+                    WHEN $5::bigint IS NULL OR $5::bigint <= 0 THEN rd_file_size
+                    ELSE $5::bigint
                   END,
                   title = CASE
-                    WHEN $8 = '' THEN title
-                    WHEN title IS NULL OR title = '' THEN $8
-                    WHEN LENGTH($8) > LENGTH(title) THEN $8
+                    WHEN $8::text = '' THEN title
+                    WHEN title IS NULL OR title = '' THEN $8::text
+                    WHEN LENGTH($8::text) > LENGTH(title) THEN $8::text
                     ELSE title
                   END,
                   size = CASE
-                    WHEN $9 <= 0 THEN size
-                    ELSE GREATEST(COALESCE(size, 0), $9)
+                    WHEN $9::bigint <= 0 THEN size
+                    ELSE GREATEST(COALESCE(size, 0), $9::bigint)
                   END,
-                  cache_check_failures = GREATEST(0, COALESCE($6, 0)),
+                  cache_check_failures = GREATEST(0, COALESCE($6::integer, 0)),
                   last_cached_check = NOW(),
                   next_cached_check = CASE
-                    WHEN COALESCE($7, FALSE) IS TRUE THEN TIMESTAMPTZ '9999-12-31 00:00:00+00'
-                    ELSE NOW() + make_interval(hours => GREATEST(1, COALESCE($10, 12)))
+                    WHEN COALESCE($7::boolean, FALSE) IS TRUE THEN TIMESTAMPTZ '9999-12-31 00:00:00+00'
+                    ELSE NOW() + make_interval(hours => GREATEST(1, COALESCE($10::integer, 12)))
                   END,
                   updated_at = NOW()
               WHERE info_hash_norm = $1
             `,
-            [row.hash, row.cached, row.rd_cache_state, row.rd_file_index, row.rd_file_size, row.failures, row.permanent, row.title, row.size, row.next_hours]
+            [row.hash, row.cached, row.rd_cache_state, globalRdFileIndex, globalRdFileSize, row.failures, row.permanent, row.title, row.size, row.next_hours]
           );
           updated += Number(result.rowCount || 0);
         }
@@ -1244,14 +1428,23 @@ async function updateTbCacheStatus(updates) {
   await awaitDatabaseOptimizations();
 
   const rows = updates
-    .map((entry) => ({
-      hash: normalizeInfoHash(entry?.hash),
-      cached: typeof entry?.cached === 'boolean' ? entry.cached : null,
-      fileId: normalizeFileIndex(entry?.file_id),
-      fileSize: entry?.file_size === null || entry?.file_size === undefined ? null : toSafeNumber(entry?.file_size, 0),
-      title: sanitizeText(entry?.torrent_title || entry?.title),
-      size: Math.max(0, toSafeNumber(entry?.size, 0))
-    }))
+    .map((entry) => {
+      const identity = normalizeEpisodeIdentity(entry);
+      return {
+        hash: normalizeInfoHash(entry?.hash),
+        cached: typeof entry?.cached === 'boolean' ? entry.cached : null,
+        fileId: normalizeFileIndex(entry?.tb_file_id ?? entry?.file_id),
+        fileSize: entry?.tb_file_size === null || entry?.tb_file_size === undefined
+          ? (entry?.file_size === null || entry?.file_size === undefined ? null : toSafeNumber(entry?.file_size, 0))
+          : toSafeNumber(entry?.tb_file_size, 0),
+        title: sanitizeText(entry?.torrent_title || entry?.title),
+        size: Math.max(0, toSafeNumber(entry?.size, 0)),
+        imdb_id: identity.imdbId,
+        imdb_season: identity.imdbSeason,
+        imdb_episode: identity.imdbEpisode,
+        episode_scoped: identity.isEpisode
+      };
+    })
     .filter((entry) => entry.hash);
 
   if (rows.length === 0) return 0;
@@ -1262,33 +1455,47 @@ async function updateTbCacheStatus(updates) {
       await client.query('BEGIN');
       try {
         for (const row of rows) {
+          if (row.episode_scoped && Number.isInteger(row.fileId) && row.fileId >= 0) {
+            await upsertEpisodeScopedOverrideRow(client, {
+              hash: row.hash,
+              imdb_id: row.imdb_id,
+              imdb_season: row.imdb_season,
+              imdb_episode: row.imdb_episode,
+              tb_file_id: row.fileId,
+              tb_file_size: row.fileSize
+            });
+          }
+
+          const globalFileId = row.episode_scoped ? null : row.fileId;
+          const globalFileSize = row.episode_scoped ? null : row.fileSize;
+
           const result = await client.query(
             `
               UPDATE torrents
-              SET tb_cached = COALESCE($2, tb_cached),
+              SET tb_cached = COALESCE($2::boolean, tb_cached),
                   tb_file_id = CASE
-                    WHEN $3 IS NULL OR $3 < 0 THEN tb_file_id
-                    ELSE $3
+                    WHEN $3::integer IS NULL OR $3::integer < 0 THEN tb_file_id
+                    ELSE $3::integer
                   END,
                   tb_file_size = CASE
-                    WHEN $4 IS NULL OR $4 <= 0 THEN tb_file_size
-                    ELSE $4
+                    WHEN $4::bigint IS NULL OR $4::bigint <= 0 THEN tb_file_size
+                    ELSE $4::bigint
                   END,
                   title = CASE
-                    WHEN $5 = '' THEN title
-                    WHEN title IS NULL OR title = '' THEN $5
-                    WHEN LENGTH($5) > LENGTH(title) THEN $5
+                    WHEN $5::text = '' THEN title
+                    WHEN title IS NULL OR title = '' THEN $5::text
+                    WHEN LENGTH($5::text) > LENGTH(title) THEN $5::text
                     ELSE title
                   END,
                   size = CASE
-                    WHEN $6 <= 0 THEN size
-                    ELSE GREATEST(COALESCE(size, 0), $6)
+                    WHEN $6::bigint <= 0 THEN size
+                    ELSE GREATEST(COALESCE(size, 0), $6::bigint)
                   END,
                   tb_last_cached_check = NOW(),
                   updated_at = NOW()
               WHERE info_hash_norm = $1
             `,
-            [row.hash, row.cached, row.fileId, row.fileSize, row.title, row.size]
+            [row.hash, row.cached, globalFileId, globalFileSize, row.title, row.size]
           );
           updated += Number(result.rowCount || 0);
         }
