@@ -214,9 +214,13 @@ function isExtraFile(file) {
   return EXTRA_PATTERN.test(getFileName(file));
 }
 
+function getVideoFiles(files) {
+  return (Array.isArray(files) ? files : []).filter((file) => isVideoFile(file) && !isExtraFile(file));
+}
+
 function isSeasonPackName(name, season) {
   if (!season) return false;
-  return new RegExp(`\bseason\s*0*${season}\b|\bcomplete\b|\bpack\b|\b全集\b|\bcollection\b|\bintegrale\b|\bstagione\s*0*${season}\b`, "i").test(name);
+  return new RegExp(`\\bseason\\s*0*${season}\\b|\\bcomplete\\b|\\bpack\\b|\\bå…¨é›†\\b|\\bcollection\\b|\\bintegrale\\b|\\bstagione\\s*0*${season}\\b`, "i").test(name);
 }
 
 function parseEpisodeRange(name) {
@@ -241,13 +245,45 @@ function buildEpisodeRegexes(season, episode) {
   const e = safeInt(episode, 0);
   const e2 = String(e).padStart(2, "0");
   return [
-    { score: 1200, regex: new RegExp(`\bS(?:eason)?\s*0*${s}\s*[-_. ]*E(?:pisode)?\s*0*${e}\b`, "i") },
-    { score: 1180, regex: new RegExp(`\b0*${s}x0*${e}\b`, "i") },
-    { score: 1140, regex: new RegExp(`\bS0*${s}[^a-z0-9]{0,4}E0*${e}\b`, "i") },
-    { score: 1090, regex: new RegExp(`\b${s}${e2}\b`) },
-    { score: 980, regex: new RegExp(`\bepisode\s*0*${e}\b|\bep\s*0*${e}\b`, "i") },
-    { score: 760, regex: new RegExp(`(?:^|\D)0*${e}(?:\D|$)`) }
+    { score: 1600, regex: new RegExp(`\\bS(?:eason)?\\s*0*${s}\\s*[-_. ]*E(?:pisode)?\\s*0*${e}\\b`, "i") },
+    { score: 1550, regex: new RegExp(`\\b0*${s}x0*${e}\\b`, "i") },
+    { score: 1500, regex: new RegExp(`\\bS0*${s}[^a-z0-9]{0,4}E0*${e}\\b`, "i") },
+    { score: 1380, regex: new RegExp(`(^|\\D)${s}${e2}(\\D|$)`, "i") },
+    { score: 1320, regex: new RegExp(`\\bepisode\\s*0*${e}\\b|\\bep\\s*0*${e}\\b`, "i") },
+    { score: 980, regex: new RegExp(`(?:^|[\\s._\\-\\[\]()])0*${e}(?:$|[\\s._\\-\\]\[()])`, "i") }
   ];
+}
+
+function parseExplicitEpisodeHints(name) {
+  const hints = new Set();
+  const patterns = [
+    /\bS(?:eason)?\s*0*(\d{1,2})\s*[-_. ]*E(?:pisode)?\s*0*(\d{1,3})\b/gi,
+    /\b(\d{1,2})x(\d{1,3})\b/gi,
+    /\b(?:episode|ep)\s*0*(\d{1,3})\b/gi
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(name)) !== null) {
+      const season = match.length >= 3 ? safeInt(match[1], 0) : 0;
+      const episode = safeInt(match[match.length - 1], 0);
+      if (episode > 0) hints.add(`${season}:${episode}`);
+    }
+  }
+  return hints;
+}
+
+function hasConflictingExplicitEpisode(name, season, episode) {
+  const hints = parseExplicitEpisodeHints(name);
+  if (hints.size === 0) return false;
+  const s = safeInt(season, 0);
+  const e = safeInt(episode, 0);
+  if (hints.has(`${s}:${e}`) || hints.has(`0:${e}`)) return false;
+  for (const hint of hints) {
+    const [hintSeason, hintEpisode] = hint.split(":").map((v) => safeInt(v, 0));
+    if (hintSeason === 0 && hintEpisode === e) return false;
+    if (hintSeason === s && hintEpisode === e) return false;
+  }
+  return true;
 }
 
 function buildMovieScore(file) {
@@ -263,35 +299,39 @@ function buildMovieScore(file) {
 }
 
 function buildEpisodeScore(file, season, episode) {
-  const name = normalizeName(getFileName(file));
+  const rawName = getFileName(file);
+  const name = normalizeName(rawName);
   const size = getFileSize(file);
   let score = 0;
 
   if (!isVideoFile(file)) return -Infinity;
+  if (isExtraFile(file)) return -Infinity;
+  if (hasConflictingExplicitEpisode(rawName, season, episode)) return -Infinity;
 
   score += 300;
   score += Math.min(size / (1024 * 1024 * 50), 150);
-  if (isExtraFile(file)) score -= 320;
 
+  let matched = false;
   for (const { score: bonus, regex } of buildEpisodeRegexes(season, episode)) {
-    if (regex.test(name)) {
+    if (regex.test(rawName) || regex.test(name)) {
       score += bonus;
+      matched = true;
       break;
     }
   }
 
-  const range = parseEpisodeRange(name);
+  const range = parseEpisodeRange(rawName) || parseEpisodeRange(name);
   const targetEpisode = safeInt(episode, 0);
   if (range) {
     if (targetEpisode >= range.start && targetEpisode <= range.end) {
-      score -= 220;
+      score -= 260;
     } else {
-      score -= 500;
+      score -= 800;
     }
   }
 
-  if (isSeasonPackName(name, season)) score -= 180;
-  if (/\b(batch|multi|全集|complete|collection|pack)\b/i.test(name)) score -= 120;
+  if (!matched && isSeasonPackName(name, season)) score -= 260;
+  if (/\b(batch|multi|å…¨é›†|complete|collection|pack)\b/i.test(name)) score -= 180;
   if (/\b(2160p|1080p|720p|bluray|bdrip|web[- ]?dl|webrip|remux)\b/i.test(name)) score += 20;
 
   return score;
@@ -316,7 +356,7 @@ function chooseBestFile(files, season, episode) {
   const list = Array.isArray(files) ? files.slice() : [];
   if (list.length === 0) return null;
 
-  const videoFiles = list.filter((file) => isVideoFile(file));
+  const videoFiles = getVideoFiles(list);
   const candidates = videoFiles.length > 0 ? videoFiles : list;
 
   const s = safeInt(season, 0);
@@ -339,10 +379,26 @@ function matchFile(files, season, episode, forcedFileIdx = null) {
   const list = Array.isArray(files) ? files : [];
   if (list.length === 0) return null;
 
+  const s = safeInt(season, 0);
+  const e = safeInt(episode, 0);
+  const isSeries = s > 0 && e > 0;
+
+  if (isSeries) {
+    const exact = chooseBestFile(list, s, e);
+    if (exact) return getFileId(exact);
+
+    const forced = resolveForcedFileId(list, forcedFileIdx);
+    if (forced != null) return forced;
+
+    const videos = getVideoFiles(list);
+    if (videos.length === 1) return getFileId(videos[0]);
+    return null;
+  }
+
   const forced = resolveForcedFileId(list, forcedFileIdx);
   if (forced != null) return forced;
 
-  const selected = chooseBestFile(list, season, episode);
+  const selected = chooseBestFile(list, s, e);
   return selected ? getFileId(selected) : null;
 }
 
@@ -492,7 +548,7 @@ const TB = {
         const existing = await findTorrentByHash(key, targetHash);
         if (existing) {
           if (shouldResetTorrent(existing)) {
-            console.log(`🧹 [TorBox:${stableKeyFingerprint(key)}] reset torrent ${existing.id} state=${lower(existing.download_state)}`);
+            console.log(`ðŸ§¹ [TorBox:${stableKeyFingerprint(key)}] reset torrent ${existing.id} state=${lower(existing.download_state)}`);
             await deleteTorrent(key, existing.id);
             await sleep(800);
           } else {
@@ -556,7 +612,7 @@ const TB = {
       const detailStr = typeof detail === "object" ? JSON.stringify(detail) : String(detail);
       throw new Error(`Link Request Failed: ${detailStr}`);
     } catch (error) {
-      console.error(`💥 [TorBox:${stableKeyFingerprint(key)}] ${error?.message || error}`);
+      console.error(`ðŸ’¥ [TorBox:${stableKeyFingerprint(key)}] ${error?.message || error}`);
       return null;
     }
   }
