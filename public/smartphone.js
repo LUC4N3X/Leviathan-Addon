@@ -500,10 +500,6 @@ body::before {
 #mod-gf { --glow-color: rgba(0, 230, 118, 0.8); --border-color: #00e676; --border-color-dim: rgba(0,230,118,0.3); --core-bg: rgba(0,230,118,0.2); }
 #mod-gf .m-core-icon { color: #00e676; }
 
-#mod-webstr { --glow-color: rgba(255, 255, 255, 0.6); --border-color: #ffffff; --border-color-dim: rgba(255,255,255,0.3); --core-bg: rgba(255,255,255,0.1); }
-#mod-webstr .m-core-icon { color: #ccc; }
-
-
 /* --- SWITCH OVERRIDE FOR REACTOR --- */
 /* Makes the switch fit the theme better */
 .m-reactor-top .m-switch { transform: scale(0.85); transform-origin: right center; }
@@ -1052,22 +1048,6 @@ const mobileHTML = `
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-mfp"><i class="fas fa-shield-alt"></i> MFP</span>
                                 </div>
-                            </div>
-                        </div>
-
-                         <div class="m-reactor-module" id="mod-webstr">
-                            <div class="m-reactor-core">
-                                <i class="fas fa-spider m-core-icon"></i>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">WebStreamr</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableWebStreamr" checked onchange="toggleModuleStyle('m-enableWebStreamr', 'mod-webstr');">
-                                        <span class="m-slider" style="background-color:#333;"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Modulo di emergenza. Si attiva automaticamente <b>solo</b> quando non ci sono altri risultati.</span>
                             </div>
                         </div>
 
@@ -2330,9 +2310,6 @@ function loadMobileConfig() {
                 document.getElementById('m-enableGf').checked = config.filters.enableGf || false;
                 toggleModuleStyle('m-enableGf', 'mod-gf');
 
-                document.getElementById('m-enableWebStreamr').checked = config.filters.enableWebStreamr !== false;
-                toggleModuleStyle('m-enableWebStreamr', 'mod-webstr');
-
                 if(config.filters.language) {
                     setLangMode(config.filters.language);
                 } else {
@@ -2426,7 +2403,6 @@ function getMobileConfig() {
             enableGs: document.getElementById('m-enableGs').checked,
             enableAnimeWorld: document.getElementById('m-enableAnimeWorld').checked,
             enableGf: document.getElementById('m-enableGf').checked,
-            enableWebStreamr: document.getElementById('m-enableWebStreamr').checked,
             enableTrailers: document.getElementById('m-enableTrailers').checked,
             vixLast: document.getElementById('m-vixLast').checked,
             scQuality: mScQuality,

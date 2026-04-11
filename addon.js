@@ -155,7 +155,6 @@ function bootstrapServer() {
         console.log(`[GUARDA SERIE] Modulo integrato e pronto`);
         console.log(`[ANIMEWORLD] Modulo integrato e pronto`);
         console.log(`[GUARDAFLIX] Modulo integrato`);
-        console.log(`[WEBSTREAMR] Fallback attivo`);
         console.log(`[TRAILER] Attivabile da config`);
         console.log(`📦 TORBOX: ADVANCED SMART CACHE`);
         console.log(`[PARSER] Enhanced`);

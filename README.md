@@ -83,7 +83,7 @@ Il progetto nasce per offrire una base tecnica capace di unire <b>sorgenti torre
 <table align="center">
 <tr>
 <td align="center" width="33%"><b>🚀 Core Refactoring</b><br><sub>Motore riorganizzato per maggiore stabilità, leggibilità e tenuta sotto carico.</sub></td>
-<td align="center" width="33%"><b>🌐 WebStreams Auto-Failover</b><br><sub>Attivazione automatica della chain web quando il layer torrent non produce output utili.</sub></td>
+<td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, GuardaHD, GuardaSerie, AnimeWorld e GuardaFlix.</sub></td>
 <td align="center" width="33%"><b>🎨 Polymorphic Formatter</b><br><sub>Rendering più pulito, gerarchico e leggibile dentro Stremio.</sub></td>
 </tr>
 <tr>
@@ -125,7 +125,7 @@ A livello infrastrutturale integra <b>WAF handling</b>, <b>identity rotation</b>
 </p>
 
 <p align="center">
-Il blocco viene completato da <b>Debrid Ghost Shell</b> per scenari proxy-based, <b>WebStreams Auto-Failover</b> per evitare vicoli ciechi, <b>Polymorphic Formatter Engine</b> per una resa visiva superiore, <b>Linguistic Scope Control</b> per gestire ITA / ENG / Hybrid, <b>Trailer Bridge</b> per le anteprime contestuali e <b>Direct Swarm Access</b> per la riproduzione P2P pura.
+Il blocco viene completato da <b>Debrid Ghost Shell</b> per scenari proxy-based, <b>Provider Web dedicati</b> per coprire i percorsi diretti, <b>Polymorphic Formatter Engine</b> per una resa visiva superiore, <b>Linguistic Scope Control</b> per gestire ITA / ENG / Hybrid, <b>Trailer Bridge</b> per le anteprime contestuali e <b>Direct Swarm Access</b> per la riproduzione P2P pura.
 </p>
 
 <p align="center">

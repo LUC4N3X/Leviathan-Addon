@@ -4,7 +4,6 @@ const crypto = require("crypto");
 const { fetchExternalAddonsFlat } = require("./nexus-bridge");
 const PackResolver = require("./pack_intelligence");
 const aioFormatter = require("./lib/pulse_formatter.cjs");
-const WebStreamr = require("./handlers/webstreamr_handler");
 const TbCache = require("../debrid/tb_cache.js");
 const { scheduleKeyed } = require('./utils_limits');
 const { formatStreamSelector, formatBytes } = require("./lib/stream_formatter");
@@ -19,7 +18,7 @@ const TB = require("../debrid/torbox");
 const dbHelper = require("./storage/db_repository"); 
 const { buildMagnet: buildTrackerMagnet } = require("./storage/tracker_registry");
 const { createDebridAvailabilityTools } = require("./stream/debrid_availability");
-const { createWebStreamTools } = require("./stream/web_streams");
+const { createWebProviderTools } = require("./stream/web_providers");
 const sourceHealth = require("./lib/source_health");
 const { createSearchPlan, evaluatePoolSatisfaction } = require("./lib/search_planner");
 const SCRAPER_MODULES = [ require("../providers/engines") ];
@@ -443,7 +442,7 @@ const {
     mergeFinalStreams,
     isStreamingCommunityEnabled,
     isStreamingCommunityLastEnabled
-} = createWebStreamTools({
+} = createWebProviderTools({
     Cache,
     LIMITERS,
     CONFIG,
@@ -891,23 +890,6 @@ function keepAllCandidate(title, sourceName, metaTitle) {
     if (keepEnglishCandidate(rawTitle, sourceName, metaTitle)) return true;
     if (signals.explicitOther && !signals.explicitEng) return false;
     return !REGEX_SUB_ONLY.test(rawTitle);
-}
-
-function filterWebFallbackStreams(streams, langMode, meta) {
-    if (!Array.isArray(streams) || streams.length === 0) return [];
-    return streams.filter(stream => {
-        const text = `${stream?.title || ''} ${stream?.name || ''}`.trim();
-        const source = stream?.name || stream?.title || '';
-        if (langMode === 'ita') return keepItalianCandidate(text, source, meta?.title);
-        if (langMode === 'eng') {
-            const signals = getLanguageSignals(text, meta?.title, source);
-            if (signals.explicitIta || signals.explicitMulti) return false;
-            if (signals.explicitEng) return true;
-            if (signals.explicitOther) return false;
-            return true;
-        }
-        return keepAllCandidate(text, source, meta?.title);
-    });
 }
 
 function getCompositeRankScore(item, meta, config) {
@@ -1697,7 +1679,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const isWebEnabled = config.filters && (isStreamingCommunityEnabled(config.filters) || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableGf);
   const isP2PEnabled = config.filters && config.filters.enableP2P === true;
 
-  if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: "CONFIG", title: "Inserisci API Key, attiva P2P o attiva WebStream" }] };
+  if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: "CONFIG", title: "Inserisci API Key, attiva P2P o attiva una sorgente Web" }] };
 
   const configHash = crypto.createHash('md5').update(userConfStr || 'no-conf').digest('hex');
   const cacheKey = `${type}:${id}:${configHash}`;
@@ -1817,17 +1799,6 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       const formattedWebBuckets = formatWebProviderBuckets(rawWebBuckets, meta, config);
       let finalStreams = mergeFinalStreams(debridStreams, formattedWebBuckets, config.filters || {});
       finalStreams = applyConfiguredStreamFilters(finalStreams, config.filters || {});
-
-      if (finalStreams.length === 0) {
-          logger.info(`[FALLBACK] Nessun risultato trovato (P2P/Web Locali). Attivo WebStreamr...`);
-          const webStreamrResults = filterWebFallbackStreams(await searchWebStreamr(type, finalId), langMode, meta);
-          if (webStreamrResults.length > 0) {
-              finalStreams.push(...webStreamrResults);
-              logger.info(`[WEBSTREAMR] Aggiunti ${webStreamrResults.length} stream di fallback.`);
-          } else {
-              logger.info(`[WEBSTREAMR] Nessun risultato trovato.`);
-          }
-      }
 
       const resultObj = { streams: finalStreams, cacheMaxAge: 0, staleRevalidate: 0, staleError: 0 };
       const streamTtl = finalStreams.length > 0 ? 1800 : EMPTY_STREAM_TTL;
