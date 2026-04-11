@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const pLimit = require("p-limit");
+const { LEGACY_BROWSER_PROFILES } = require('./browser_profiles');
 
 const DEBUG_MODE = process.env.DEBUG_MODE === "true";
 
@@ -76,77 +77,7 @@ const addonHealth = new Map();
 // Browser fingerprint pools — rotati ad ogni richiesta
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Profili browser completi con UA + header Sec-* coerenti.
- * Ogni profilo è una combinazione realistica (stessa versione in UA e Sec-CH-UA).
- */
-const BROWSER_PROFILES = [
-    {
-        name: "chrome-windows",
-        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        secChUa: '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-        secChUaMobile: "?0",
-        secChUaPlatform: '"Windows"',
-        secFetchDest: "document",
-        secFetchMode: "navigate",
-        secFetchSite: "none",
-        secFetchUser: "?1",
-        acceptLanguage: "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
-        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
-    },
-    {
-        name: "chrome-mac",
-        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        secChUa: '"Google Chrome";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
-        secChUaMobile: "?0",
-        secChUaPlatform: '"macOS"',
-        secFetchDest: "document",
-        secFetchMode: "navigate",
-        secFetchSite: "none",
-        secFetchUser: "?1",
-        acceptLanguage: "it-IT,it;q=0.9,en;q=0.8",
-        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
-    },
-    {
-        name: "firefox-windows",
-        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
-        secChUa: null, // Firefox non manda Sec-CH-UA
-        secChUaMobile: null,
-        secChUaPlatform: null,
-        secFetchDest: "document",
-        secFetchMode: "navigate",
-        secFetchSite: "none",
-        secFetchUser: "?1",
-        acceptLanguage: "it-IT,it;q=0.8,en-US;q=0.5,en;q=0.3",
-        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-    },
-    {
-        name: "safari-mac",
-        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
-        secChUa: null,
-        secChUaMobile: null,
-        secChUaPlatform: null,
-        secFetchDest: "document",
-        secFetchMode: "navigate",
-        secFetchSite: "none",
-        secFetchUser: "?1",
-        acceptLanguage: "it-IT,it;q=0.9",
-        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-    },
-    {
-        name: "chrome-android",
-        userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36",
-        secChUa: '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-        secChUaMobile: "?1",
-        secChUaPlatform: '"Android"',
-        secFetchDest: "document",
-        secFetchMode: "navigate",
-        secFetchSite: "none",
-        secFetchUser: "?1",
-        acceptLanguage: "it-IT,it;q=0.9,en-US;q=0.8",
-        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
-    }
-];
+const BROWSER_PROFILES = LEGACY_BROWSER_PROFILES;
 
 /**
  * Sceglie un profilo in modo pseudo-casuale ma deterministico per addonKey+id,

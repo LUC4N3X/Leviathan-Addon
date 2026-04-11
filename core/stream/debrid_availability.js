@@ -6,6 +6,7 @@ const dbHelper = require('../storage/db_repository');
 const RealDebridProbe = require('../../debrid/realdebrid_probe.js');
 const { buildMagnet: buildTrackerMagnet } = require('../storage/tracker_registry');
 const { extractInfoHash, withSharedPromise } = require('../utils');
+const { shouldSkipRecentWork } = require('../recent_work');
 
 const LOCAL_DB_CACHE_TTL = Math.max(5, Math.min(300, parseInt(process.env.LOCAL_DB_CACHE_TTL || '25', 10) || 25));
 const RD_PRIORITY_DEDUP_MS = Math.max(1000, Math.min(120000, parseInt(process.env.RD_PRIORITY_DEDUP_MS || '15000', 10) || 15000));
@@ -78,28 +79,6 @@ function resolveRdNegativeDecision(item, result) {
     };
 }
 
-function cleanupRecentMap(map, ttlMs, maxEntries = 2000) {
-    if (!(map instanceof Map) || map.size === 0) return;
-    const now = Date.now();
-    for (const [key, ts] of map) {
-        if ((now - Number(ts || 0)) > ttlMs) map.delete(key);
-    }
-    while (map.size > maxEntries) {
-        const oldestKey = map.keys().next().value;
-        if (oldestKey === undefined) break;
-        map.delete(oldestKey);
-    }
-}
-
-function shouldSkipRecentWork(map, key, ttlMs) {
-    if (!key) return false;
-    cleanupRecentMap(map, ttlMs);
-    const now = Date.now();
-    const previous = Number(map.get(key) || 0);
-    if (previous > 0 && (now - previous) < ttlMs) return true;
-    map.set(key, now);
-    return false;
-}
 
 function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, incrementMetric, isSeasonPack, getMetaDbLookupKey }) {
     function normalizeDbResultItem(row) {

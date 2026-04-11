@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 
 function applyCommonMiddleware(app, { staticDir }) {
     app.set('trust proxy', 1);
@@ -29,9 +30,13 @@ function applyCommonMiddleware(app, { staticDir }) {
 
     app.use(limiter);
     app.use(cors());
+    app.use(helmet({
+        contentSecurityPolicy: false,
+        crossOriginEmbedderPolicy: false,
+        crossOriginResourcePolicy: false,
+        hsts: process.env.NODE_ENV === 'production'
+    }));
     app.use((req, res, next) => {
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.setHeader('X-Frame-Options', 'DENY');
         res.setHeader('Referrer-Policy', 'no-referrer');
         next();
     });

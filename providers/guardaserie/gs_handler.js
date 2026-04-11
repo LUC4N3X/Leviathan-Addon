@@ -1,30 +1,18 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
+const { GUARDA_SERIE_BROWSER_PROFILES, pickRandomProfile } = require('../../core/browser_profiles');
 
 const GS_DOMAIN = "https://guardaserietv.skin";
 const TMDB_KEY = "5bae8d11f2a7bc7a95c6d040a31d2163";
 
-const BROWSER_PROFILES = [
-    {
-        ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        sec_ch_ua: '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"'
-    },
-    {
-        ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
-        sec_ch_ua: '"Chromium";v="124", "Microsoft Edge";v="124", "Not-A.Brand";v="99"'
-    },
-    {
-        ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
-        sec_ch_ua: null
-    }
-];
+const BROWSER_PROFILES = GUARDA_SERIE_BROWSER_PROFILES;
 
 function getTargetDomain() {
     return GS_DOMAIN;
 }
 
 function getStealthHeaders(referer) {
-    const profile = BROWSER_PROFILES[Math.floor(Math.random() * BROWSER_PROFILES.length)];
+    const profile = pickRandomProfile(BROWSER_PROFILES);
     const headers = {
         "User-Agent": profile.ua,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",

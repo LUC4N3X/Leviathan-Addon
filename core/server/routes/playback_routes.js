@@ -102,8 +102,13 @@ function registerPlaybackRoutes(app, {
 
     app.get('/:conf/play_tb/:hash', async (req, res) => {
         const { conf, hash } = req.params;
-        const { s, e, f } = req.query;
-        res.redirect(`/${conf}/play_lazy/tb/${hash}/${f || -1}?s=${s}&e=${e}`);
+        const { s, e, f, imdb } = req.query;
+        const query = new URLSearchParams();
+        if (s !== undefined) query.set('s', s);
+        if (e !== undefined) query.set('e', e);
+        if (imdb) query.set('imdb', imdb);
+        const suffix = query.toString() ? `?${query.toString()}` : '';
+        res.redirect(`/${conf}/play_lazy/tb/${hash}/${f || -1}${suffix}`);
     });
 
     app.get('/:conf/add_to_cloud/:hash', async (req, res) => {

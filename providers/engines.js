@@ -3,58 +3,9 @@ const cheerio = require("cheerio");
 const https = require("https");
 const pLimit = require("p-limit");
 const he = require("he");
+const { ENGINE_BROWSER_PROFILES } = require('../core/browser_profiles');
 
-const BROWSER_PROFILES = [
-    {
-        name: "Safari macOS",
-        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
-        headers: {
-            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            Connection: "keep-alive",
-            "Upgrade-Insecure-Requests": "1"
-        }
-    },
-    {
-        name: "Safari iOS",
-        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-        headers: {
-            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            Connection: "keep-alive",
-            "Upgrade-Insecure-Requests": "1"
-        }
-    },
-    {
-        name: "Chrome Windows",
-        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-        headers: {
-            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Cache-Control": "no-cache",
-            Pragma: "no-cache",
-            Connection: "keep-alive",
-            "Upgrade-Insecure-Requests": "1"
-        }
-    },
-    {
-        name: "Firefox Linux",
-        userAgent: "Mozilla/5.0 (X11; Linux x86_64; rv:136.0) Gecko/20100101 Firefox/136.0",
-        headers: {
-            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
-            DNT: "1",
-            Connection: "keep-alive",
-            "Upgrade-Insecure-Requests": "1"
-        }
-    }
-];
+const BROWSER_PROFILES = ENGINE_BROWSER_PROFILES;
 
 const DEFAULT_TRACKERS = [
     "udp://tracker.opentrackr.org:1337/announce",

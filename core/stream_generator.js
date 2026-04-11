@@ -21,6 +21,7 @@ const { createDebridAvailabilityTools } = require("./stream/debrid_availability"
 const { createWebProviderTools } = require("./stream/web_providers");
 const sourceHealth = require("./lib/source_health");
 const { createSearchPlan, evaluatePoolSatisfaction } = require("./lib/search_planner");
+const { shouldSkipRecentWork } = require('./recent_work');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
 const {
@@ -290,28 +291,6 @@ function rememberValidatedFileSet(item, meta, payload) {
     setTimedCacheValue(validatedFileSetCache, key, payload, VALIDATED_FILE_SET_TTL_MS);
 }
 
-function cleanupRecentMap(map, ttlMs, maxEntries = 2000) {
-    if (!(map instanceof Map) || map.size === 0) return;
-    const now = Date.now();
-    for (const [key, ts] of map) {
-        if ((now - Number(ts || 0)) > ttlMs) map.delete(key);
-    }
-    while (map.size > maxEntries) {
-        const oldestKey = map.keys().next().value;
-        if (oldestKey === undefined) break;
-        map.delete(oldestKey);
-    }
-}
-
-function shouldSkipRecentWork(map, key, ttlMs) {
-    if (!key) return false;
-    cleanupRecentMap(map, ttlMs);
-    const now = Date.now();
-    const previous = Number(map.get(key) || 0);
-    if (previous > 0 && (now - previous) < ttlMs) return true;
-    map.set(key, now);
-    return false;
-}
 
 
 function detectCodecBucket(text) {
