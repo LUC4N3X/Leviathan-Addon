@@ -56,6 +56,7 @@ const {
     shouldUpdatePackTitle
 } = require("./utils_text");
 const { LIMITERS, getLimiterStats } = require("./utils_limits");
+const sourceHealth = require('./lib/source_health');
 const { annotateResult, compareRankedItems } = require("./lib/result_ranker");
 
 const CONFIG = {
@@ -177,6 +178,7 @@ function getStatsSnapshot() {
         counters: runtimeMetrics.counters,
         timers: runtimeMetrics.timers,
         providers: runtimeMetrics.providers,
+        sourceHealth: sourceHealth.getSnapshot(),
         limiters: getLimiterStats()
     };
 }

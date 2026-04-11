@@ -2,6 +2,46 @@
 
 const axios = require('axios');
 
+
+function flattenMetricObject(prefix, value, lines) {
+    if (value === null || value === undefined) return;
+    if (typeof value === 'number') {
+        lines.push(`${prefix} ${Number.isFinite(value) ? value : 0}`);
+        return;
+    }
+    if (typeof value === 'boolean') {
+        lines.push(`${prefix} ${value ? 1 : 0}`);
+        return;
+    }
+    if (typeof value === 'string') return;
+    if (Array.isArray(value)) {
+        lines.push(`${prefix} ${value.length}`);
+        return;
+    }
+    for (const [key, child] of Object.entries(value)) {
+        const safeKey = String(key).replace(/[^a-zA-Z0-9_]/g, '_');
+        flattenMetricObject(`${prefix}_${safeKey}`, child, lines);
+    }
+}
+
+function buildPrometheusMetrics(snapshot) {
+    const lines = [];
+    const startedAt = Date.parse(snapshot?.startedAt || 0);
+    const uptimeSec = Number(snapshot?.uptimeSec || 0);
+    lines.push('# TYPE leviathan_uptime_seconds gauge');
+    lines.push(`leviathan_uptime_seconds ${Number.isFinite(uptimeSec) ? uptimeSec : 0}`);
+    if (Number.isFinite(startedAt) && startedAt > 0) {
+        lines.push('# TYPE leviathan_started_at_seconds gauge');
+        lines.push(`leviathan_started_at_seconds ${Math.floor(startedAt / 1000)}`);
+    }
+    flattenMetricObject('leviathan_counters', snapshot?.counters || {}, lines);
+    flattenMetricObject('leviathan_timers', snapshot?.timers || {}, lines);
+    flattenMetricObject('leviathan_cache', snapshot?.cache || {}, lines);
+    flattenMetricObject('leviathan_limiters', snapshot?.limiters || {}, lines);
+    flattenMetricObject('leviathan_source_health', snapshot?.sourceHealth || {}, lines);
+    return lines.join('\n') + '\n';
+}
+
 function registerApiRoutes(app, {
     getStatsSnapshot,
     getRdAuditorStatus,
@@ -13,6 +53,10 @@ function registerApiRoutes(app, {
     getCacheHealthStatus
 }) {
     app.get('/api/stats', (req, res) => res.json(getStatsSnapshot()));
+    app.get('/metrics', (req, res) => {
+        const snapshot = getStatsSnapshot();
+        res.type('text/plain').send(buildPrometheusMetrics(snapshot));
+    });
     app.get('/api/rd-scanner-status', (req, res) => res.json(getRdAuditorStatus()));
     app.get('/api/rd-scanner-dashboard', async (req, res) => {
         let progress = null;

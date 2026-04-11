@@ -20,6 +20,8 @@ const dbHelper = require("./storage/db_repository");
 const { buildMagnet: buildTrackerMagnet } = require("./storage/tracker_registry");
 const { createDebridAvailabilityTools } = require("./stream/debrid_availability");
 const { createWebStreamTools } = require("./stream/web_streams");
+const sourceHealth = require("./lib/source_health");
+const { createSearchPlan, evaluatePoolSatisfaction } = require("./lib/search_planner");
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
 const {
@@ -47,43 +49,19 @@ function getLazyResolveInflightKey(service, apiKey, item, meta) {
 }
 
 function getProviderBreakerState(providerName) {
-    const key = String(providerName || 'unknown');
-    let state = PROVIDER_BREAKERS.get(key);
-    if (!state) {
-        state = { consecutiveFailures: 0, openUntil: 0, status: 'closed' };
-        PROVIDER_BREAKERS.set(key, state);
-    }
-    return state;
+    return sourceHealth.getCircuitState(providerName);
 }
 
 function getProviderCircuitState(providerName) {
-    const state = getProviderBreakerState(providerName);
-    const now = Date.now();
-    if (state.openUntil > now) {
-        return { status: 'open', retryInMs: state.openUntil - now };
-    }
-    if (state.status === 'open' && state.openUntil <= now) {
-        state.status = 'half-open';
-    }
-    return { status: state.status || 'closed', retryInMs: 0 };
+    return sourceHealth.getCircuitState(providerName);
 }
 
-function recordProviderSuccess(providerName) {
-    const state = getProviderBreakerState(providerName);
-    state.consecutiveFailures = 0;
-    state.openUntil = 0;
-    state.status = 'closed';
+function recordProviderSuccess(providerName, meta = {}) {
+    return sourceHealth.recordSuccess(providerName, meta);
 }
 
-function recordProviderFailure(providerName) {
-    const state = getProviderBreakerState(providerName);
-    state.consecutiveFailures += 1;
-    if (state.consecutiveFailures >= BREAKER_FAILURE_THRESHOLD) {
-        state.status = 'open';
-        state.openUntil = Date.now() + BREAKER_OPEN_MS;
-    } else if (state.status !== 'open') {
-        state.status = 'closed';
-    }
+function recordProviderFailure(providerName, meta = {}) {
+    return sourceHealth.recordFailure(providerName, meta);
 }
 
 async function resolveLazyStreamData(service, apiKey, item, meta) {
@@ -197,9 +175,6 @@ const titleSearchHotCache = new Map();
 const validatedFileSetCache = new Map();
 const recentBackgroundDbSaves = new Map();
 const recentPackResolutionJobs = new Map();
-const PROVIDER_BREAKERS = new Map();
-const BREAKER_FAILURE_THRESHOLD = Math.max(2, parseInt(process.env.PROVIDER_BREAKER_THRESHOLD || '3', 10) || 3);
-const BREAKER_OPEN_MS = Math.max(5000, parseInt(process.env.PROVIDER_BREAKER_OPEN_MS || '30000', 10) || 30000);
 const STREAM_STALE_LOAD_THRESHOLD = Math.max(1, Math.min(200, parseInt(process.env.STREAM_STALE_LOAD_THRESHOLD || '18', 10) || 18));
 const BACKGROUND_DB_SAVE_DEDUP_MS = Math.max(1000, Math.min(120000, parseInt(process.env.BACKGROUND_DB_SAVE_DEDUP_MS || '15000', 10) || 15000));
 const LAZY_WARMUP_LOAD_THRESHOLD = Math.max(1, Math.min(200, parseInt(process.env.LAZY_WARMUP_LOAD_THRESHOLD || '14', 10) || 14));
@@ -337,6 +312,103 @@ function shouldSkipRecentWork(map, key, ttlMs) {
     if (previous > 0 && (now - previous) < ttlMs) return true;
     map.set(key, now);
     return false;
+}
+
+
+function detectCodecBucket(text) {
+    const raw = String(text || '').toLowerCase();
+    if (/\b(?:av1)\b/.test(raw)) return 'av1';
+    if (/\b(?:x265|h265|hevc)\b/.test(raw)) return 'hevc';
+    if (/\b(?:x264|h264|avc)\b/.test(raw)) return 'avc';
+    return 'other';
+}
+
+function detectQualityBucket(text) {
+    const raw = String(text || '').toLowerCase();
+    if (/\b(?:2160p|4k|uhd)\b/.test(raw)) return '4k';
+    if (/\b(?:1080p|fhd|full[-.\s]?hd)\b/.test(raw)) return '1080p';
+    if (/\b(?:720p|hd)\b/.test(raw)) return '720p';
+    return 'sd';
+}
+
+function detectReleaseGroupKey(item) {
+    const title = String(item?.title || '');
+    const source = String(item?.source || item?.provider || '');
+    const fromSuffix = title.match(/-(\w{2,20})$/i);
+    if (fromSuffix && fromSuffix[1]) return fromSuffix[1].toLowerCase();
+    const fromBracket = title.match(/\[(\w{2,20})\]/i);
+    if (fromBracket && fromBracket[1]) return fromBracket[1].toLowerCase();
+    const trusted = `${title} ${source}`.match(/\b(?:mircrew|corsaro|lux|wms|dn[a4]?|idn_crew|speedvideo|rarbg|yts|yify|qxr|tgx|galaxyrg|framestor|epsilon|ntb|ctrlhd|flux|playweb)\b/i);
+    return trusted && trusted[0] ? trusted[0].toLowerCase() : 'generic';
+}
+
+function buildDiversityPolicy(config = {}) {
+    const filters = config?.filters || {};
+    return {
+        enabled: filters.disablePremiumDiversity !== true,
+        maxPerCodec: Math.max(1, Math.min(6, parseInt(filters.maxPerCodec || process.env.PREMIUM_MAX_PER_CODEC || '3', 10) || 3)),
+        maxPerReleaseGroup: Math.max(1, Math.min(5, parseInt(filters.maxPerReleaseGroup || process.env.PREMIUM_MAX_PER_RELEASE_GROUP || '2', 10) || 2)),
+        maxPerQuality: Math.max(1, Math.min(8, parseInt(filters.maxPerQualityBucket || filters.maxPerQuality || process.env.PREMIUM_MAX_PER_QUALITY || '4', 10) || 4))
+    };
+}
+
+function applyPackKnowledge(items, meta) {
+    return (Array.isArray(items) ? items : []).map((item) => {
+        if (!item) return item;
+        const known = getValidatedFileSet(item, meta);
+        if (!known) return item;
+
+        const rawFileIndex = known?.raw?.fileIndex ?? known?.raw?.fileIdx;
+        const resolvedFileIndex = rawFileIndex === null || rawFileIndex === undefined || rawFileIndex === ''
+            ? null
+            : (Number.isInteger(Number(rawFileIndex)) ? Number(rawFileIndex) : null);
+
+        if ((item.fileIdx === undefined || item.fileIdx === null) && resolvedFileIndex !== null) item.fileIdx = resolvedFileIndex;
+        if (known.title && shouldUpdatePackTitle(item.title, known.title)) item.title = known.title;
+        item._packValidated = true;
+        item._packTitleSource = known.titleSource || 'validated';
+        return item;
+    });
+}
+
+function applyPremiumRankingPolicy(results, meta, config) {
+    const list = Array.isArray(results) ? results : [];
+    const policy = buildDiversityPolicy(config);
+    if (!policy.enabled || list.length <= 2) return list;
+
+    const codecCounts = new Map();
+    const groupCounts = new Map();
+    const qualityCounts = new Map();
+    const selected = [];
+    const overflow = [];
+
+    for (const item of list) {
+        const title = String(item?.title || '');
+        const codec = detectCodecBucket(title);
+        const group = detectReleaseGroupKey(item);
+        const quality = detectQualityBucket(title);
+        const mustKeep = item?._packValidated === true
+            || item?._tbCached === true
+            || item?._dbCachedRd === true
+            || item?.cached_rd === true
+            || (meta?.isSeries && Number.isInteger(item?.fileIdx));
+
+        const codecCount = codecCounts.get(codec) || 0;
+        const groupCount = groupCounts.get(group) || 0;
+        const qualityCount = qualityCounts.get(quality) || 0;
+        const overPolicy = codecCount >= policy.maxPerCodec || groupCount >= policy.maxPerReleaseGroup || qualityCount >= policy.maxPerQuality;
+
+        if (!overPolicy || mustKeep) {
+            selected.push(item);
+            codecCounts.set(codec, codecCount + 1);
+            groupCounts.set(group, groupCount + 1);
+            qualityCounts.set(quality, qualityCount + 1);
+        } else {
+            overflow.push(item);
+        }
+    }
+
+    return [...selected, ...overflow];
 }
 
 function getMetaDbLookupKey(meta) {
@@ -886,6 +958,7 @@ function getCompositeRankScore(item, meta, config) {
         else if (epData && epData.episode !== meta.episode) score -= 18000;
     }
     if (!meta?.isSeries && /\b(?:S\d{2}|SEASON|STAGIONE|\d+x\d+)\b/i.test(title)) score -= 18000;
+    if (item?._packValidated) score += 15000;
     score += Math.min(seeders, 500) * 18;
     score += Math.min(Math.floor(sizeBytes / (700 * 1024 * 1024)), 1200);
     score += Math.min(title.length, 300);
@@ -914,36 +987,47 @@ function rerankCompositeResults(results, meta, config, sortMode) {
     return ranked;
 }
 
-async function guardedProviderCall(providerName, limiter, timeoutMs, factory) {
+async function guardedProviderCall(providerName, limiter, timeoutMs, factory, meta = {}) {
     const startedAt = Date.now();
     const circuit = getProviderCircuitState(providerName);
     if (circuit.status === 'open') {
         recordDuration(`provider.${providerName}`, 0);
         recordProviderMetric(providerName, false, 0, { breaker: 'open', retryInMs: circuit.retryInMs });
-        logger.warn(`âš¡ [${providerName}] skipped by circuit breaker for ${circuit.retryInMs}ms`);
+        logger.warn(`[${providerName}] skipped by source health gate for ${circuit.retryInMs}ms`);
         return [];
     }
 
     try {
         const result = await limiter.schedule(() => withTimeout(Promise.resolve().then(factory), timeoutMs, providerName));
         const duration = Date.now() - startedAt;
-        recordProviderSuccess(providerName);
+        const normalized = Array.isArray(result) ? result : (result ? [result] : []);
+        const exactHit = meta?.meta?.isSeries
+            ? normalized.some((item) => {
+                const parsed = extractSeasonEpisodeFromFilename(String(item?.title || ''), meta?.meta?.season || 1);
+                return parsed && parsed.season === meta?.meta?.season && parsed.episode === meta?.meta?.episode;
+            })
+            : normalized.length > 0;
+        const packHit = meta?.meta?.isSeries
+            ? normalized.some((item) => Boolean(item?._isPack || isSeasonPack(item?.title || '')))
+            : false;
+
+        recordProviderSuccess(providerName, { ms: duration, empty: normalized.length === 0, exactHit, packHit });
         recordDuration(`provider.${providerName}`, duration);
-        recordProviderMetric(providerName, true, duration, { breaker: circuit.status });
-        return Array.isArray(result) ? result : (result ? [result] : []);
+        recordProviderMetric(providerName, true, duration, { breaker: circuit.status, results: normalized.length });
+        return normalized;
     } catch (err) {
         const duration = Date.now() - startedAt;
         const isTimeout = /timeout/i.test(String(err?.message || ''));
-        recordProviderFailure(providerName);
-        const state = getProviderBreakerState(providerName);
+        const state = recordProviderFailure(providerName, { ms: duration, timeout: isTimeout, error: err?.message || err });
         recordDuration(`provider.${providerName}`, duration);
         recordProviderMetric(providerName, false, duration, {
             timeout: isTimeout,
             error: err?.message || err,
             breaker: state.status,
-            consecutiveFailures: state.consecutiveFailures
+            consecutiveFailures: state.consecutiveFailures,
+            score: state.score
         });
-        logger.warn(`âš ï¸ [${providerName}] failed: ${err.message}${state.status === 'open' ? ` | breaker open ${BREAKER_OPEN_MS}ms` : ''}`);
+        logger.warn(`[${providerName}] failed: ${err.message}${state.status === 'open' ? ' | source disabled temporarily' : ''}`);
         return [];
     }
 }
@@ -1504,100 +1588,103 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
         if (cachedAgain) return cachedAgain;
 
         return scheduleKeyed('title-search', titleKey, async () => {
-            const remotePromise = Cache.fetchWithCache('RemoteIndexer', `${type}:${tmdbIdLookup || finalId}:${meta.season}:${meta.episode}`, 43200, () =>
-                guardedProviderCall('RemoteIndexer', LIMITERS.remoteIndexer, CONFIG.TIMEOUTS.REMOTE_INDEXER, () => queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config, meta.title))
-            );
+            let dynamicTitles = [];
+            try {
+                if (tmdbIdLookup) dynamicTitles = await getTmdbAltTitles(tmdbIdLookup, type, userTmdbKey);
+            } catch (_) {}
 
-            let externalPromise = Promise.resolve([]);
-            if (!dbOnlyMode) {
-                externalPromise = Cache.fetchWithCache('ExternalAddons', `${type}:${finalId}`, 43200, () =>
-                    guardedProviderCall('ExternalAddons', LIMITERS.externalAddons, CONFIG.TIMEOUTS.EXTERNAL, () => fetchExternalResults(type, finalId, config))
-                );
-            }
+            const allowEngScraper = (langMode === 'all' || langMode === 'eng');
+            const rawQueries = generateSmartQueries({ ...meta, langMode }, dynamicTitles, langMode);
+            const plan = createSearchPlan({ meta, langMode, dbOnlyMode, rawQueries });
+            const scraperTimeout = langMode === 'eng'
+                ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 12000)
+                : langMode === 'all'
+                    ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 10000)
+                    : (CONFIG.TIMEOUTS.SCRAPER || 4000);
 
-            const [remoteSettled, externalSettled] = await Promise.allSettled([remotePromise, externalPromise]);
-            const remoteResults = remoteSettled.status === 'fulfilled' ? remoteSettled.value : [];
-            const externalResults = externalSettled.status === 'fulfilled' ? externalSettled.value : [];
-            logger.info(`[STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
+            let cleanResults = [];
+            let assessmentPool = Array.isArray(seedResults) ? [...seedResults] : [];
+            let lastAssessment = { shouldScrape: true, reason: 'init', strongCount: 0, exactEpisodeCount: 0, seasonPackCount: 0, total: assessmentPool.length };
 
-            let cleanResults = await normalizeCandidateResults([...remoteResults, ...externalResults].filter(aggressiveFilter));
-            cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
-            logger.info(`[FAST CHECK] Trovati ${cleanResults.length} risultati validi da fonti veloci (Remote+External).`);
+            for (const phase of plan.phases) {
+                incrementMetric(`search.phase.${phase.key}.calls`);
 
-            let assessmentPool = cleanResults;
-            if (Array.isArray(seedResults) && seedResults.length > 0) {
-                assessmentPool = await normalizeCandidateResults([...seedResults, ...cleanResults].filter(aggressiveFilter));
-                assessmentPool = applyConfiguredTorrentFilters(assessmentPool, config.filters || {});
-            }
+                if (phase.kind === 'fast') {
+                    const remotePromise = Cache.fetchWithCache('RemoteIndexer', `${type}:${tmdbIdLookup || finalId}:${meta.season}:${meta.episode}`, 43200, () =>
+                        guardedProviderCall(
+                            'RemoteIndexer',
+                            LIMITERS.remoteIndexer,
+                            CONFIG.TIMEOUTS.REMOTE_INDEXER,
+                            () => queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config, meta.title),
+                            { meta }
+                        )
+                    );
 
-            const fastPoolAssessment = assessFastResultQuality(assessmentPool, meta, langMode, config);
-            if (fastPoolAssessment.shouldScrape && !dbOnlyMode) {
-                logger.info(`⚠️ [FALLBACK] Fast pool debole (${fastPoolAssessment.reason}) | total=${fastPoolAssessment.total} strong=${fastPoolAssessment.strongCount} exact=${fastPoolAssessment.exactEpisodeCount} pack=${fastPoolAssessment.seasonPackCount}. Avvio Scrapers...`);
+                    const externalPromise = dbOnlyMode
+                        ? Promise.resolve([])
+                        : Cache.fetchWithCache('ExternalAddons', `${type}:${finalId}`, 43200, () =>
+                            guardedProviderCall(
+                                'ExternalAddons',
+                                LIMITERS.externalAddons,
+                                CONFIG.TIMEOUTS.EXTERNAL,
+                                () => fetchExternalResults(type, finalId, config),
+                                { meta }
+                            )
+                        );
 
-                let dynamicTitles = [];
-                try {
-                    if (tmdbIdLookup) dynamicTitles = await getTmdbAltTitles(tmdbIdLookup, type, userTmdbKey);
-                } catch (e) {}
+                    const [remoteSettled, externalSettled] = await Promise.allSettled([remotePromise, externalPromise]);
+                    const remoteResults = remoteSettled.status === 'fulfilled' ? remoteSettled.value : [];
+                    const externalResults = externalSettled.status === 'fulfilled' ? externalSettled.value : [];
+                    logger.info(`[STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
 
-                const allowEngScraper = (langMode === 'all' || langMode === 'eng');
-                const rawQueries = generateSmartQueries({ ...meta, langMode }, dynamicTitles, langMode);
-                const queries = (() => {
-                    const deduped = [];
-                    const seen = new Set();
+                    cleanResults = await normalizeCandidateResults([...cleanResults, ...remoteResults, ...externalResults].filter(aggressiveFilter));
+                    cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
+                } else if (phase.kind === 'scrape' && phase.querySubset.length > 0 && !dbOnlyMode) {
+                    logger.info(`[SCRAPER PLAN] phase=${phase.key} lang=${langMode} queries=${phase.querySubset.length} timeout=${scraperTimeout}ms | titleKey=${titleKey}`);
+                    const scraperNames = sourceHealth.sortNamesByPriority(SCRAPER_MODULES.map((scraper) => scraper?.name || 'ScraperModule'));
+                    const sortedScrapers = [...SCRAPER_MODULES].sort((a, b) => {
+                        const aIdx = scraperNames.indexOf(a?.name || 'ScraperModule');
+                        const bIdx = scraperNames.indexOf(b?.name || 'ScraperModule');
+                        return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx);
+                    });
 
-                    for (const q of rawQueries) {
-                        const key = normalizeSearchText(q);
-                        if (!key || seen.has(key)) continue;
-                        seen.add(key);
-                        deduped.push(q);
-                    }
-
-                    if (langMode === 'eng') {
-                        const noIta = deduped.filter(q => !/\b(?:ita|multi)\b/i.test(q));
-                        const yearQueries = noIta.filter(q => meta.year && new RegExp(`\\b${meta.year}\\b`).test(q));
-                        const plainQueries = noIta.filter(q => !/\b(?:19|20)\d{2}\b/.test(q));
-                        const selected = [];
-
-                        for (const q of [...yearQueries, ...plainQueries, ...noIta]) {
-                            if (selected.includes(q)) continue;
-                            selected.push(q);
-                            if (selected.length >= 4) break;
-                        }
-
-                        return selected;
-                    }
-
-                    if (langMode === 'all') return deduped.slice(0, 8);
-                    return deduped;
-                })();
-
-                const scraperTimeout = langMode === 'eng'
-                    ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 12000)
-                    : langMode === 'all'
-                        ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 10000)
-                        : (CONFIG.TIMEOUTS.SCRAPER || 4000);
-
-                if (queries.length > 0) {
-                    logger.info(`[SCRAPER PLAN] lang=${langMode} queries=${queries.length} timeout=${scraperTimeout}ms | titleKey=${titleKey}`);
                     const allScraperTasks = [];
-
-                    queries.forEach(q => SCRAPER_MODULES.forEach(scraper => {
-                        if (scraper.searchMagnet) {
-                            allScraperTasks.push(LIMITERS.scraper.schedule(() =>
-                                withTimeout(scraper.searchMagnet(q, meta.year, type, finalId, { langMode, allowEng: allowEngScraper }), scraperTimeout, `Scraper ${scraper.name || 'Module'}`)
-                                    .catch(err => {
-                                        logger.warn(`Scraper Timeout/Error: ${err.message}`);
-                                        return [];
-                                    })
-                            ));
-                        }
+                    phase.querySubset.forEach((q) => sortedScrapers.forEach((scraper) => {
+                        if (!scraper.searchMagnet) return;
+                        const providerName = scraper.name || 'ScraperModule';
+                        allScraperTasks.push(
+                            guardedProviderCall(
+                                providerName,
+                                LIMITERS.scraper,
+                                scraperTimeout,
+                                () => scraper.searchMagnet(q, meta.year, type, finalId, { langMode, allowEng: allowEngScraper }),
+                                { meta }
+                            )
+                        );
                     }));
 
-                    const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks)).flatMap(result => result.status === 'fulfilled' ? result.value : []);
+                    const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks))
+                        .flatMap((result) => result.status === 'fulfilled' ? result.value : []);
                     cleanResults = await normalizeCandidateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)]);
                     cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
-                    logger.info(`[STATS SCRAPER] Trovati e filtrati ${cleanResults.length} risultati aggiuntivi dagli Scraper.`);
+                    logger.info(`[STATS SCRAPER] phase=${phase.key} total=${cleanResults.length} added=${scrapedResultsRaw.length}`);
                 }
+
+                assessmentPool = await normalizeCandidateResults([...seedResults, ...cleanResults].filter(aggressiveFilter));
+                assessmentPool = applyConfiguredTorrentFilters(assessmentPool, config.filters || {});
+                lastAssessment = assessFastResultQuality(assessmentPool, meta, langMode, config);
+                const satisfaction = evaluatePoolSatisfaction(lastAssessment, meta);
+                incrementMetric(`search.phase.${phase.key}.results`, cleanResults.length);
+                logger.info(`[SEARCH PLAN] phase=${phase.key} total=${lastAssessment.total} strong=${lastAssessment.strongCount} exact=${lastAssessment.exactEpisodeCount} pack=${lastAssessment.seasonPackCount} satisfied=${satisfaction.satisfied} reason=${satisfaction.reason}`);
+
+                if (phase.stopOnSatisfied && satisfaction.satisfied) {
+                    incrementMetric(`search.phase.${phase.key}.stopped`);
+                    break;
+                }
+            }
+
+            if (!dbOnlyMode && lastAssessment.shouldScrape && cleanResults.length === 0 && plan.broadQueries.length === 0) {
+                logger.info(`[SEARCH PLAN] exhausted with no results | reason=${lastAssessment.reason}`);
             }
 
             return setTimedCacheValue(titleSearchHotCache, titleKey, cleanResults, TITLE_SEARCH_HOT_TTL_MS);
@@ -1674,6 +1761,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       });
 
       let cleanResults = await normalizeCandidateResults([...localDbResults, ...networkResults].filter(aggressiveFilter));
+      cleanResults = applyPackKnowledge(cleanResults, meta);
       cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
       logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
 
@@ -1682,10 +1770,12 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       let rankedList = rankAndFilterResults(cleanResults, meta, config);
       const sortMode = config.sort || (config.filters && config.filters.sort) || 'balanced';
       rankedList = rerankCompositeResults(rankedList, meta, config, sortMode);
+      rankedList = applyPremiumRankingPolicy(rankedList, meta, config);
 
       if (config.filters && config.filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, config.filters.maxPerQuality);
 
       rankedList = await reprioritizeRdRankedList(rankedList, meta, config, hasDebridKey);
+      rankedList = applyPremiumRankingPolicy(rankedList, meta, config);
 
       if (config.service === 'tb' && hasDebridKey) {
           const apiKey = config.key || config.rd;

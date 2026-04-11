@@ -247,6 +247,18 @@ async function ensureDatabaseOptimizations() {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`,
+    `CREATE TABLE IF NOT EXISTS shared_stream_cache (
+      cache_key TEXT PRIMARY KEY,
+      payload_b64 TEXT NOT NULL,
+      encoding TEXT NOT NULL DEFAULT 'identity',
+      expires_at TIMESTAMPTZ NOT NULL,
+      stale_until TIMESTAMPTZ NOT NULL,
+      imdb_id TEXT,
+      hashes TEXT[] DEFAULT ARRAY[]::TEXT[],
+      hit_count BIGINT DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS file_index INTEGER`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS file_index_norm INTEGER DEFAULT -1`,
@@ -294,6 +306,15 @@ async function ensureDatabaseOptimizations() {
     `ALTER TABLE episode_file_overrides ADD COLUMN IF NOT EXISTS tb_file_size BIGINT`,
     `ALTER TABLE episode_file_overrides ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
     `ALTER TABLE episode_file_overrides ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS payload_b64 TEXT`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS encoding TEXT NOT NULL DEFAULT 'identity'`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS stale_until TIMESTAMPTZ`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS imdb_id TEXT`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS hashes TEXT[] DEFAULT ARRAY[]::TEXT[]`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS hit_count BIGINT DEFAULT 0`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
 
     `UPDATE torrents SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE torrents SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
@@ -315,7 +336,10 @@ async function ensureDatabaseOptimizations() {
 
     `CREATE INDEX IF NOT EXISTS idx_pack_files_hash ON pack_files (pack_hash_norm, file_index_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_pack_files_series_lookup ON pack_files (pack_hash_norm, imdb_season, imdb_episode, file_index_norm)`,
-    `CREATE INDEX IF NOT EXISTS idx_episode_file_overrides_lookup ON episode_file_overrides (info_hash_norm, imdb_id, imdb_season, imdb_episode)`
+    `CREATE INDEX IF NOT EXISTS idx_episode_file_overrides_lookup ON episode_file_overrides (info_hash_norm, imdb_id, imdb_season, imdb_episode)`,
+    `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_expires ON shared_stream_cache (expires_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_imdb ON shared_stream_cache (imdb_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_hashes ON shared_stream_cache USING GIN (hashes)`
   ];
 
   for (const sql of statements) {
@@ -370,6 +394,7 @@ async function ensureDatabaseOptimizations() {
 
   try {
     await pool.query(`UPDATE torrents SET next_cached_check = TIMESTAMPTZ '9999-12-31 00:00:00+00' WHERE cached_rd IS TRUE AND (next_cached_check IS NULL OR next_cached_check < TIMESTAMPTZ '9999-12-31 00:00:00+00')`);
+    await pool.query(`DELETE FROM shared_stream_cache WHERE stale_until IS NOT NULL AND stale_until < NOW()`);
   } catch (error) {
     console.warn(`⚠️ DB optimization skipped: ${error.message}`);
   }
@@ -1637,6 +1662,119 @@ async function normalizePendingRdCacheState(options = {}) {
   }
 }
 
+
+async function getSharedStreamCache(cacheKey) {
+  if (!pool || !cacheKey) return null;
+  await awaitDatabaseOptimizations();
+
+  try {
+    return await withClient(async (client) => {
+      const res = await client.query(
+        `
+          UPDATE shared_stream_cache
+          SET hit_count = COALESCE(hit_count, 0) + 1,
+              updated_at = NOW()
+          WHERE cache_key = $1
+            AND stale_until >= NOW()
+          RETURNING cache_key, payload_b64, encoding, expires_at, stale_until, imdb_id, hashes, hit_count, updated_at
+        `,
+        [String(cacheKey)]
+      );
+      return res.rows[0] || null;
+    });
+  } catch (error) {
+    console.error(`❌ DB Error getSharedStreamCache: ${error.message}`);
+    return null;
+  }
+}
+
+async function setSharedStreamCache(entry) {
+  if (!pool || !entry?.cache_key || !entry?.payload_b64) return false;
+  await awaitDatabaseOptimizations();
+
+  const cacheKey = String(entry.cache_key);
+  const encoding = sanitizeText(entry.encoding, 'identity') || 'identity';
+  const imdbId = normalizeImdbId(entry.imdb_id) || null;
+  const hashes = [...new Set((Array.isArray(entry.hashes) ? entry.hashes : [])
+    .map(normalizeInfoHash)
+    .filter(Boolean))];
+  const expiresAt = entry.expires_at instanceof Date ? entry.expires_at : new Date(entry.expires_at);
+  const staleUntil = entry.stale_until instanceof Date ? entry.stale_until : new Date(entry.stale_until);
+  if (!Number.isFinite(expiresAt.getTime()) || !Number.isFinite(staleUntil.getTime())) return false;
+
+  try {
+    await withClient(async (client) => {
+      await client.query(
+        `
+          INSERT INTO shared_stream_cache (
+            cache_key,
+            payload_b64,
+            encoding,
+            expires_at,
+            stale_until,
+            imdb_id,
+            hashes,
+            hit_count,
+            created_at,
+            updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[], 0, NOW(), NOW())
+          ON CONFLICT (cache_key)
+          DO UPDATE SET
+            payload_b64 = EXCLUDED.payload_b64,
+            encoding = EXCLUDED.encoding,
+            expires_at = EXCLUDED.expires_at,
+            stale_until = EXCLUDED.stale_until,
+            imdb_id = EXCLUDED.imdb_id,
+            hashes = EXCLUDED.hashes,
+            updated_at = NOW()
+        `,
+        [cacheKey, entry.payload_b64, encoding, expiresAt, staleUntil, imdbId, hashes]
+      );
+    });
+    return true;
+  } catch (error) {
+    console.error(`❌ DB Error setSharedStreamCache: ${error.message}`);
+    return false;
+  }
+}
+
+async function deleteSharedStreamCacheByHashes(hashes) {
+  if (!pool) return 0;
+  await awaitDatabaseOptimizations();
+  const normalized = [...new Set((Array.isArray(hashes) ? hashes : [])
+    .map(normalizeInfoHash)
+    .filter(Boolean))];
+  if (normalized.length === 0) return 0;
+  try {
+    const res = await withClient((client) => client.query(
+      `DELETE FROM shared_stream_cache WHERE hashes && $1::TEXT[]`,
+      [normalized]
+    ));
+    return res.rowCount || 0;
+  } catch (error) {
+    console.error(`❌ DB Error deleteSharedStreamCacheByHashes: ${error.message}`);
+    return 0;
+  }
+}
+
+async function deleteSharedStreamCacheByImdb(imdbId) {
+  if (!pool) return 0;
+  await awaitDatabaseOptimizations();
+  const normalizedImdb = normalizeImdbId(imdbId);
+  if (!normalizedImdb) return 0;
+  try {
+    const res = await withClient((client) => client.query(
+      `DELETE FROM shared_stream_cache WHERE imdb_id = $1`,
+      [normalizedImdb]
+    ));
+    return res.rowCount || 0;
+  } catch (error) {
+    console.error(`❌ DB Error deleteSharedStreamCacheByImdb: ${error.message}`);
+    return 0;
+  }
+}
+
 async function healthCheck() {
   if (!pool) throw new Error('Pool not initialized');
   await pool.query('SELECT 1');
@@ -1664,6 +1802,10 @@ module.exports = {
   updateRdCacheStatus,
   updateTbCacheStatus,
   getRdScanProgress,
+  getSharedStreamCache,
+  setSharedStreamCache,
+  deleteSharedStreamCacheByHashes,
+  deleteSharedStreamCacheByImdb,
   prioritizeRdHashes,
   normalizePendingRdCacheState,
   updateTrackers: trackerRegistry.updateTrackers,
