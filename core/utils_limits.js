@@ -23,7 +23,6 @@ const LIMITERS = {
     externalAddons: createLimiter({ maxConcurrent: 10, minTime: 20 }, 'EXTERNAL_ADDONS'),
     metadata: createLimiter({ maxConcurrent: 6, minTime: 50 }, 'METADATA'),
     rdResolve: createLimiter({ maxConcurrent: 15, minTime: 180 }, 'RD_RESOLVE'),
-    adResolve: createLimiter({ maxConcurrent: 10, minTime: 220 }, 'AD_RESOLVE'),
     tbResolve: createLimiter({ maxConcurrent: 8, minTime: 250 }, 'TB_RESOLVE'),
     lazyPlay: createLimiter({ maxConcurrent: 20, minTime: 30 }, 'LAZY_PLAY'),
     lazyWarmup: createLimiter({ maxConcurrent: 3, minTime: 350 }, 'LAZY_WARMUP'),
@@ -38,7 +37,6 @@ const LIMITERS = {
 };
 
 LIMITERS.rd = LIMITERS.rdResolve;
-LIMITERS.ad = LIMITERS.adResolve;
 LIMITERS.tb = LIMITERS.tbResolve;
 
 const keyedQueues = new Map();

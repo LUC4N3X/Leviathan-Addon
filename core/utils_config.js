@@ -47,8 +47,15 @@ function getConfig(configStr) {
             if (legacyValue !== undefined && primaryValue === undefined) config.filters[primaryKey] = legacyValue;
         }
 
-        const allowedServices = new Set(['rd', 'ad', 'tb', 'p2p', 'web']);
-        if (config.service && !allowedServices.has(String(config.service).toLowerCase())) config.service = 'rd';
+        const normalizedService = String(config.service || '').toLowerCase();
+        const allowedServices = new Set(['rd', 'tb', 'p2p', 'web']);
+        if (normalizedService) {
+            if (allowedServices.has(normalizedService)) config.service = normalizedService;
+            else delete config.service;
+        }
+        if (normalizedService === 'ad') delete config.key;
+        delete config.ad;
+        delete config.alldebrid;
 
         const numericFilterKeys = ['maxPerQuality', 'maxSizeGB', 'minSizeGB', 'maxSizeBytes', 'minSizeBytes', 'instantDebridTop', 'warmupTop', 'minSeeders', 'maxSeeders'];
         for (const key of numericFilterKeys) {

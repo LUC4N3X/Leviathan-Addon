@@ -18,10 +18,14 @@ function registerPlaybackRoutes(app, {
         const { conf, service, hash, fileIdx } = req.params;
         const { s, e, imdb } = req.query;
         const startedAt = Date.now();
-        logger.info(`[LAZY PLAY] Service: ${service} | Hash: ${hash} | Idx: ${fileIdx} | S${s}E${e}`);
+        const requestedService = String(service || '').toLowerCase();
+        logger.info(`[LAZY PLAY] Service: ${requestedService} | Hash: ${hash} | Idx: ${fileIdx} | S${s}E${e}`);
         try {
+            if (!['rd', 'tb'].includes(requestedService)) return res.status(400).send('Servizio Debrid non supportato.');
             const config = getConfig(conf);
-            const apiKey = config.key || config.rd;
+            const apiKey = requestedService === 'tb'
+                ? (config.key || config.tb || config.torbox || config.rd)
+                : (config.key || config.rd);
             if (!apiKey) return res.status(400).send('API Key mancante.');
             const magnet = buildTrackerMagnet(hash);
             const item = {
@@ -32,7 +36,7 @@ function registerPlaybackRoutes(app, {
                 fileIdx: parseInt(fileIdx, 10) === -1 ? undefined : parseInt(fileIdx, 10),
                 magnet
             };
-            const lazyCacheKey = `${service}:${item.hash}:${item.season || 0}:${item.episode || 0}:${item.fileIdx !== undefined ? item.fileIdx : -1}`;
+            const lazyCacheKey = `${requestedService}:${item.hash}:${item.season || 0}:${item.episode || 0}:${item.fileIdx !== undefined ? item.fileIdx : -1}`;
             const cachedPlaybackMeta = await Cache.getLazyMeta(lazyCacheKey);
             const playbackMeta = imdb ? {
                 imdb_id: String(imdb),
@@ -62,22 +66,22 @@ function registerPlaybackRoutes(app, {
             }
             const cachedLazy = await Cache.getLazyLink(lazyCacheKey);
             if (cachedLazy && cachedLazy.url) {
-                await markPlayableResultAsCached(service, item, cachedLazy, playbackMeta);
+                await markPlayableResultAsCached(requestedService, item, cachedLazy, playbackMeta);
                 incrementMetric('lazyPlay.cacheHit');
                 recordDuration('lazyPlay.total', Date.now() - startedAt);
                 return res.redirect(cachedLazy.url);
             }
 
             const streamData = await LIMITERS.lazyPlay.schedule(() =>
-                resolveLazyStreamData(service, apiKey, item, { season: item.season, episode: item.episode })
+                resolveLazyStreamData(requestedService, apiKey, item, { season: item.season, episode: item.episode })
             );
 
             if (streamData && streamData.url) {
                 await Cache.cacheLazyLink(lazyCacheKey, streamData, 180);
-                await markPlayableResultAsCached(service, item, streamData, playbackMeta);
+                await markPlayableResultAsCached(requestedService, item, streamData, playbackMeta);
                 incrementMetric('lazyPlay.success');
                 recordDuration('lazyPlay.total', Date.now() - startedAt);
-                recordProviderMetric(`lazy.${service}`, true, Date.now() - startedAt);
+                recordProviderMetric(`lazy.${requestedService}`, true, Date.now() - startedAt);
                 if (config.mediaflow && config.mediaflow.proxyDebrid && config.mediaflow.url) {
                     try {
                         const mfpBase = config.mediaflow.url.replace(/\/$/, '');
@@ -94,7 +98,7 @@ function registerPlaybackRoutes(app, {
             return res.redirect(`${protocol}://${req.get('host')}/${conf}/add_to_cloud/${hash}`);
         } catch (err) {
             recordDuration('lazyPlay.total', Date.now() - startedAt);
-            recordProviderMetric(`lazy.${service}`, false, Date.now() - startedAt, { error: err.message, timeout: /timeout/i.test(String(err?.message || '')) });
+            recordProviderMetric(`lazy.${requestedService}`, false, Date.now() - startedAt, { error: err.message, timeout: /timeout/i.test(String(err?.message || '')) });
             logger.error(`Error Lazy Play: ${err.message}`);
             res.status(500).send(`Errore nel recupero del link: ${err.message}`);
         }
@@ -115,8 +119,13 @@ function registerPlaybackRoutes(app, {
         const { conf, hash } = req.params;
         try {
             const config = getConfig(conf);
-            const apiKey = config.key || config.rd;
-            const service = String(config.service || 'rd').toLowerCase();
+            const service = String(config.service || '').toLowerCase();
+            const apiKey = service === 'tb'
+                ? (config.key || config.tb || config.torbox || config.rd)
+                : service === 'rd'
+                    ? (config.key || config.rd)
+                    : null;
+            if (!['rd', 'tb'].includes(service)) return res.status(400).send('Servizio Debrid non supportato.');
             if (!apiKey) return res.status(400).send('API Key mancante.');
             const buildKey = getBuildKey(service, hash, apiKey);
             const recentBuild = await Cache.getCloudBuild(buildKey);

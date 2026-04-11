@@ -22,7 +22,6 @@ function createAppServices({
 
     function getServiceResolverLimiter(service) {
         const normalized = String(service || '').toLowerCase();
-        if (normalized === 'ad') return LIMITERS.adResolve;
         if (normalized === 'tb') return LIMITERS.tbResolve;
         return LIMITERS.rdResolve;
     }
@@ -60,7 +59,7 @@ function createAppServices({
     async function markPlayableResultAsCached(service, item, streamData, meta = null) {
         const normalizedService = String(service || '').toLowerCase();
         if (!item?.hash) return false;
-        if (!['rd', 'ad', 'tb'].includes(normalizedService)) return false;
+        if (!['rd', 'tb'].includes(normalizedService)) return false;
 
         const isTb = normalizedService === 'tb';
         const updateFn = isTb ? dbHelper?.updateTbCacheStatus : dbHelper?.updateRdCacheStatus;
@@ -174,14 +173,14 @@ function createAppServices({
                             await Cache.invalidateStreamsByHashes([hash], rdBuild.ready ? 'cloud_build_cached' : 'cloud_build_probing');
                         } catch (_) {}
                     }
-                } else if (service === 'ad') {
-                    await axios.get('https://api.alldebrid.com/v4/magnet/upload', { params: { agent: 'leviathan', apikey: apiKey, magnet } });
                 } else if (service === 'tb') {
                     const body = new URLSearchParams();
                     body.append('magnet', magnet);
                     body.append('seed', '1');
                     body.append('allow_zip', 'false');
                     await axios.post('https://api.torbox.app/v1/api/torrents/createtorrent', body.toString(), { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' } });
+                } else {
+                    throw new Error(`Unsupported debrid service: ${service}`);
                 }
             });
 

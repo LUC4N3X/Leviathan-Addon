@@ -143,7 +143,6 @@ const GROUP_BLACKLIST = new Set([
 const SERVICE_ICON_BY_TAG = {
   RD: '🐬',
   TB: '⚓',
-  AD: '🐚',
 };
 
 const DISPLAY_SOURCE_MAP = [
@@ -243,7 +242,7 @@ function normalizeServiceTag(serviceTag) {
 }
 
 function isDebridService(serviceTag) {
-  return ['RD', 'TB', 'AD'].includes(normalizeServiceTag(serviceTag));
+  return ['RD', 'TB'].includes(normalizeServiceTag(serviceTag));
 }
 
 function normalizeCacheState(cacheState, serviceTag) {

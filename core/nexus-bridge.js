@@ -327,7 +327,6 @@ function getTorrentioCredential(userConfig, service) {
     if (!userConfig || !service) return null;
     const configByService = {
         rd: userConfig.rd || userConfig.realdebrid || userConfig.key,
-        ad: userConfig.ad || userConfig.alldebrid || userConfig.key,
         tb: userConfig.tb || userConfig.torbox || userConfig.key
     };
     return configByService[service] || null;
@@ -344,7 +343,6 @@ function buildTorrentioBaseUrl(baseUrl, userConfig) {
 
     const torrentioConf = {};
     if (service === "rd") torrentioConf.realdebrid = apiKey;
-    else if (service === "ad") torrentioConf.alldebrid = apiKey;
     else if (service === "tb") torrentioConf.torbox = apiKey;
     else return baseUrl;
 

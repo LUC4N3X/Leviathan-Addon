@@ -42,9 +42,6 @@ function registerStremioRoutes(app, {
             } else if ((config.service === 'tb' && config.key) || config.torbox) {
                 manifest.name = `${appName}${flag} 🔱 TB`;
                 manifest.id += '.tb';
-            } else if ((config.service === 'ad' && config.key) || config.alldebrid) {
-                manifest.name = `${appName}${flag} 🔱 AD`;
-                manifest.id += '.ad';
             } else if (filters.enableP2P === true) {
                 manifest.name = `${appName}${flag} 🦈 P2P`;
                 manifest.id += '.p2p';

@@ -13,7 +13,6 @@ const { generateSmartQueries, smartMatch } = require("./media_intelligence");
 const { rankAndFilterResults } = require("./lib/result_ranker");
 const { tmdbToImdb, imdbToTmdb, getTmdbAltTitles } = require("./media_identity_resolver");
 const RD = require("../debrid/realdebrid");
-const AD = require("../debrid/alldebrid");
 const TB = require("../debrid/torbox");
 const dbHelper = require("./storage/db_repository"); 
 const { buildMagnet: buildTrackerMagnet } = require("./storage/tracker_registry");
@@ -34,9 +33,22 @@ const {
 
 function getServiceResolverLimiter(service) {
     const normalized = String(service || '').toLowerCase();
-    if (normalized === 'ad') return LIMITERS.adResolve;
     if (normalized === 'tb') return LIMITERS.tbResolve;
     return LIMITERS.rdResolve;
+}
+
+function getNormalizedDebridService(configOrService) {
+    const raw = typeof configOrService === 'object' && configOrService !== null
+        ? configOrService.service
+        : configOrService;
+    const normalized = String(raw || '').toLowerCase();
+    return normalized === 'rd' || normalized === 'tb' ? normalized : null;
+}
+
+function getConfiguredDebridKey(config, service = getNormalizedDebridService(config)) {
+    if (service === 'tb') return config?.key || config?.tb || config?.torbox || config?.rd || null;
+    if (service === 'rd') return config?.key || config?.rd || config?.realdebrid || null;
+    return null;
 }
 
 function getLazyCacheKey(service, item, meta) {
@@ -66,7 +78,8 @@ function recordProviderFailure(providerName, meta = {}) {
 
 async function resolveLazyStreamData(service, apiKey, item, meta) {
     if (!apiKey || !item?.hash) return null;
-    const normalizedService = String(service || 'rd').toLowerCase();
+    const normalizedService = getNormalizedDebridService(service);
+    if (!normalizedService) return null;
     const resolverLimiter = getServiceResolverLimiter(normalizedService);
     const inflightKey = getLazyResolveInflightKey(normalizedService, apiKey, item, meta);
 
@@ -80,17 +93,6 @@ async function resolveLazyStreamData(service, apiKey, item, meta) {
                     String(meta?.episode || item.episode || 0),
                     item.hash,
                     item.fileIdx !== undefined && item.fileIdx !== null ? String(item.fileIdx) : undefined
-                )
-            );
-        }
-        if (normalizedService === 'ad') {
-            return resolverLimiter.schedule(() =>
-                AD.getStreamLink(
-                    apiKey,
-                    item.magnet,
-                    meta?.season || item.season || 0,
-                    meta?.episode || item.episode || 0,
-                    item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : 0
                 )
             );
         }
@@ -780,7 +782,6 @@ async function resolveTorboxRankedList(rankedList, apiKey) {
 function getServiceDisplayName(service) {
     const normalized = String(service || '').toLowerCase();
     if (normalized === 'rd') return 'realdebrid';
-    if (normalized === 'ad') return 'alldebrid';
     if (normalized === 'tb') return 'torbox';
     if (normalized === 'web') return 'web';
     return 'p2p';
@@ -994,8 +995,8 @@ async function guardedProviderCall(providerName, limiter, timeoutMs, factory, me
 }
 
 function warmupLazyStreamsInBackground(config, items, meta) {
-    const service = String(config?.service || 'rd').toLowerCase();
-    const apiKey = config?.key || config?.rd;
+    const service = getNormalizedDebridService(config);
+    const apiKey = getConfiguredDebridKey(config, service);
     if (!apiKey || !Array.isArray(items) || items.length === 0) return;
     const maxWarmups = Math.max(0, Math.min(4, parseInt(config?.filters?.warmupTop ?? process.env.LAZY_WARMUP_TOP ?? '2', 10) || 0));
     if (maxWarmups <= 0) return;
@@ -1318,9 +1319,9 @@ function saveResultsToDbBackground(meta, results, config = null) {
 
 async function resolveDebridLink(config, item, showFake, reqHost, meta) {
     try {
-        const service = config.service || 'rd';
-        const apiKey = config.key || config.rd;
-        if (!apiKey) return null;
+        const service = getNormalizedDebridService(config);
+        const apiKey = getConfiguredDebridKey(config, service);
+        if (!service || !apiKey) return null;
 
         const isPack = item._isPack || isSeasonPack(item.title);
         const isSeries = (meta?.season > 0 || meta?.episode > 0);
@@ -1353,7 +1354,6 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
 
         let streamData = null;
         if (service === 'rd') streamData = await RD.getStreamLink(apiKey, item.magnet, runtimeItem.season, runtimeItem.episode, item.fileIdx);
-        else if (service === 'ad') streamData = await AD.getStreamLink(apiKey, item.magnet, runtimeItem.season, runtimeItem.episode, item.fileIdx);
 
         const resolvedSize = getObservedSizeBytes(
             streamData?.rd_file_size,
@@ -1426,7 +1426,8 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
 }
 
 function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = false) {
-    const service = config.service || 'rd';
+    const service = getNormalizedDebridService(config);
+    if (!service) return null;
     const isPack = item._isPack || isSeasonPack(item.title);
     const isSeries = (meta.season > 0 || meta.episode > 0);
     const runtimeItem = createRuntimeItem(item, meta);
@@ -1654,7 +1655,9 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 }
 
 async function generateStream(type, id, config, userConfStr, reqHost) {
-  const hasDebridKey = (config.key && config.key.length > 0) || (config.rd && config.rd.length > 0);
+  const configuredDebridService = getNormalizedDebridService(config);
+  const debridApiKey = getConfiguredDebridKey(config, configuredDebridService);
+  const hasDebridKey = Boolean(debridApiKey);
   const isWebEnabled = config.filters && (isStreamingCommunityEnabled(config.filters) || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableGf);
   const isP2PEnabled = config.filters && config.filters.enableP2P === true;
 
@@ -1738,9 +1741,8 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       rankedList = await reprioritizeRdRankedList(rankedList, meta, config, hasDebridKey);
       rankedList = applyPremiumRankingPolicy(rankedList, meta, config);
 
-      if (config.service === 'tb' && hasDebridKey) {
-          const apiKey = config.key || config.rd;
-          rankedList = await resolveTorboxRankedList(rankedList, apiKey);
+      if (configuredDebridService === 'tb' && hasDebridKey) {
+          rankedList = await resolveTorboxRankedList(rankedList, debridApiKey);
       }
 
       const finalRanked = rankedList.slice(0, CONFIG.MAX_RESULTS);
@@ -1748,17 +1750,19 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
       if (finalRanked.length > 0 && hasDebridKey) {
           const TOP_LIMIT = Math.max(0, Math.min(10, parseInt(config.filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0));
-          const serviceLimiter = getServiceResolverLimiter(config.service);
-          const resolverConfig = { ...config, rawConf: userConfStr };
+          const serviceLimiter = getServiceResolverLimiter(configuredDebridService);
+          const resolverConfig = { ...config, service: configuredDebridService, rawConf: userConfStr };
           const immediatePromises = finalRanked.slice(0, TOP_LIMIT).map(item => {
               const runtimeItem = createRuntimeItem(item, meta);
               return serviceLimiter.schedule(() => resolveDebridLink(resolverConfig, runtimeItem, config.filters?.showFake, reqHost, meta));
           });
           const lazyCandidates = finalRanked.slice(TOP_LIMIT).map(item => createRuntimeItem(item, meta));
-          const lazyStreams = lazyCandidates.map(item => generateLazyStream(item, config, meta, reqHost, userConfStr, true));
+          const lazyStreams = lazyCandidates
+              .map(item => generateLazyStream(item, resolverConfig, meta, reqHost, userConfStr, true))
+              .filter(Boolean);
           const resolvedInstant = (await Promise.allSettled(immediatePromises)).flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
           debridStreams = [...resolvedInstant, ...lazyStreams];
-          warmupLazyStreamsInBackground(config, lazyCandidates, meta);
+          warmupLazyStreamsInBackground(resolverConfig, lazyCandidates, meta);
       } else if (finalRanked.length > 0 && isP2PEnabled) {
           logger.info(`[P2P MODE] Generating direct streams for ${meta.title}`);
           debridStreams = finalRanked.map(item => P2P.formatP2PStream(item, config));
@@ -1795,4 +1799,4 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   });
 }
 
-module.exports = { generateStream, getMetadata, resolveDebridLink, resolveLazyStreamData, RD, AD, TB };
+module.exports = { generateStream, getMetadata, resolveDebridLink, resolveLazyStreamData, RD, TB };

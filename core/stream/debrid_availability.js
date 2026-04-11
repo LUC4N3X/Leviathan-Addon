@@ -142,7 +142,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             return item?._tbCached ? 'cached' : 'unknown';
         }
 
-        if (normalizedService !== 'rd' && normalizedService !== 'ad') {
+        if (normalizedService !== 'rd') {
             return 'unknown';
         }
 
@@ -464,7 +464,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
     async function persistResolvedDebridAvailability(meta, item, streamData, service, reason = 'direct_resolve') {
         const normalizedService = String(service || '').toLowerCase();
         if (!item?.hash) return false;
-        if (!['rd', 'ad', 'tb'].includes(normalizedService)) return false;
+        if (!['rd', 'tb'].includes(normalizedService)) return false;
         if (!dbHelper) return false;
 
         const isTb = normalizedService === 'tb';

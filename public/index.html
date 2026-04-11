@@ -213,8 +213,6 @@
         .input-action:hover { background: var(--primary); color: #000; box-shadow: var(--glow-strong); transform: scale(1.03); }
         .error-msg { position: absolute; bottom: -25px; left: 15px; color: var(--error); font-size: 0.9rem; opacity: 0; font-family: 'Rajdhani', sans-serif; text-transform: uppercase; font-weight: 700; transition: opacity 0.3s; }
         .custom-input.input-error + .error-msg, .custom-input.input-error + .input-action + .error-msg { opacity: 1; }
-        .ad-warning-msg { color: var(--warning); font-size: 0.9rem; margin-top: 10px; display: none; font-family: 'Rajdhani', sans-serif; text-transform: uppercase; font-weight: 700; padding-left: 15px; text-shadow: 0 0 5px rgba(255, 204, 0, 0.2); }
-        
         .module-box {
             border: 1px solid rgba(112, 0, 255, 0.2); background: linear-gradient(135deg, rgba(0, 5, 10, 0.6), rgba(112, 0, 255, 0.05));
             border-radius: 20px; padding: 25px; margin-top: 30px; position: relative; box-shadow: 0 5px 15px rgba(0,0,0,0.2); transition: all 0.3s ease;
@@ -1739,11 +1737,9 @@
                 let serviceIcon = "🦈"; // Default P2P (Squalo)
                 if (p.serviceTag === "RD") serviceIcon = "🐬";      // RD = Delfino
                 else if (p.serviceTag === "TB") serviceIcon = "⚓"; // TB = Ancora
-                else if (p.serviceTag === "AD") serviceIcon = "🐚"; // AD = Conchiglia
-
                 // 2. Icona Stato (Animale se cached, Clessidra se P2P non cached/download)
                 // Nell'anteprima simuliamo che i debrid siano cached
-                const isCached = ["RD", "TB", "AD"].includes(p.serviceTag);
+                const isCached = ["RD", "TB"].includes(p.serviceTag);
                 const statusIcon = isCached ? serviceIcon : "⏳";
 
                 // 3. Header: [Icona] [SERVICE_BOLD] 🦑 ʟᴇᴠɪᴀᴛʜᴀɴ_SMALL
@@ -1854,7 +1850,7 @@
                 desc = lines.join("\n");
             }
             else if (skin === 'vertical') {
-                const isCached = ["RD", "TB", "AD"].includes(p.serviceTag);
+                const isCached = ["RD", "TB"].includes(p.serviceTag);
                 const cacheIcon = isCached ? "⚡" : "☁️";
                 name = `🦑 Leviathan ${p.quality} ${cacheIcon} Cached`;
                 const lines = [];

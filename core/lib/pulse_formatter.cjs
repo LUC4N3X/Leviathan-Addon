@@ -71,7 +71,6 @@ function formatStreamName({
     const serviceAbbr = {
         realdebrid: '[RD',
         torbox: '[TB',
-        alldebrid: '[AD',
         p2p: '[P2P',
         web: '[WEB'
     };

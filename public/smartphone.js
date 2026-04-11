@@ -576,8 +576,6 @@ body::before {
 .m-p2p-status { font-family: 'Rajdhani'; font-weight: 700; font-size: 0.65rem; padding: 3px 6px; border-radius: 4px; background: rgba(255,204,0,0.1); color: var(--m-amber); transition: all 0.3s; border: 1px solid rgba(255,204,0,0.2); }
 .m-p2p-module.active .m-p2p-status { background: var(--m-amber); color: #000; box-shadow: 0 0 10px var(--m-amber); }
 
-.m-ad-warning { display: none; background: rgba(255, 42, 109, 0.15); border: 1px solid var(--m-error); border-radius: 12px; padding: 10px; margin-bottom: 20px; text-align: center; color: var(--m-error); font-size: 0.8rem; font-weight: 700; box-shadow: 0 0 15px rgba(255,42,109,0.2); }
-.m-ad-warning i { animation: pulseWarn 1.5s infinite; }
 @keyframes pulseWarn { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 
 .m-status-text { font-size: 0.65rem; padding: 3px 6px; border-radius: 5px; background: rgba(255,255,255,0.12); color: #888; white-space: nowrap; transition: all 0.2s; }
@@ -1655,13 +1653,11 @@ function updateMobilePreview() {
 
     let serviceTag = "RD";
     if (mCurrentService === 'tb') serviceTag = 'TB';
-    if (mCurrentService === 'ad') serviceTag = 'AD';
     if (mCurrentService === 'p2p') serviceTag = 'P2P';
 
     let serviceIconTitle = '🦈';
     if (serviceTag === 'RD') serviceIconTitle = '🐬';
     else if (serviceTag === 'TB') serviceIconTitle = '⚓';
-    else if (serviceTag === 'AD') serviceIconTitle = '🐚';
 
     const p = {
         cleanName: 'Dune Parte Due',
@@ -1692,12 +1688,12 @@ function updateMobilePreview() {
         featureSummary: '4K • DV+HDR • HEVC • Atmos'
     };
 
-    const isDebrid = ['RD', 'TB', 'AD'].includes(p.serviceTag);
+    const isDebrid = ['RD', 'TB'].includes(p.serviceTag);
     const statusIcon = isDebrid ? '⚡' : '☁️';
     const qIcon = isDebrid ? p.serviceIconTitle : '🦈';
 
     const styleLeviathan = (p) => {
-        const serviceIcon = p.serviceTag === 'RD' ? '🐬' : p.serviceTag === 'TB' ? '⚓' : p.serviceTag === 'AD' ? '🐚' : '🦈';
+        const serviceIcon = p.serviceTag === 'RD' ? '🐬' : p.serviceTag === 'TB' ? '⚓' : '🦈';
         const stateIcon = isDebrid ? serviceIcon : '⏳';
         const brandName = toStylized('LEVIATHAN', 'small');
         const serviceStyled = toStylized(p.serviceTag, 'bold');
