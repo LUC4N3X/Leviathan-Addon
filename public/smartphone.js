@@ -905,15 +905,15 @@ const mobileHTML = `
 
                     <div class="m-cred-deck">
                         <div class="m-cred-opt cred-rd m-srv-btn active" onclick="setMService('rd', this)">
-                            <div class="m-cred-icon">ðŸ¬</div>
+                            <div class="m-cred-icon">🐬</div>
                             <div class="m-cred-name">REAL-DEBRID</div>
                         </div>
                         <div class="m-cred-opt cred-tb m-srv-btn" onclick="setMService('tb', this)">
-                            <div class="m-cred-icon">âš“</div>
+                            <div class="m-cred-icon">⚓</div>
                             <div class="m-cred-name">TORBOX</div>
                         </div>
                         <div class="m-cred-opt cred-p2p m-srv-btn" onclick="setMService('p2p', this)">
-                            <div class="m-cred-icon">ðŸ¦ˆ</div>
+                            <div class="m-cred-icon">🦈</div>
                             <div class="m-cred-name">P2P MODE</div>
                         </div>
                     </div>
@@ -1058,7 +1058,7 @@ const mobileHTML = `
                     <div style="margin-top:5px; padding:15px; border-radius:16px; background:linear-gradient(90deg, rgba(112,0,255,0.1), transparent); border-left:4px solid var(--m-secondary);">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <div>
-                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">PRIORITÃ€ WEB</h5>
+                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">PRIORITÀ WEB</h5>
                                 <p id="priority-desc" style="margin:5px 0 0; font-size:0.8rem; color:var(--m-dim);">Mostra Web in cima</p>
                             </div>
                             <label class="m-switch">
@@ -1115,7 +1115,7 @@ const mobileHTML = `
                      <div class="m-aio-lock" id="m-aio-lock-overlay">
                         <i class="fas fa-lock m-lock-icon"></i>
                         <div class="m-lock-text">OVERRIDDEN BY AIO CORE</div>
-                        <div class="m-lock-sub">Disabilita "CompatibilitÃ  AIO" per sbloccare le skin.</div>
+                        <div class="m-lock-sub">Disabilita "Compatibilità AIO" per sbloccare le skin.</div>
                     </div>
 
                     <div class="m-visual-preview" id="m-preview-box">
@@ -1133,97 +1133,97 @@ const mobileHTML = `
 
                     <div class="m-cortex-grid">
                         <div class="m-cortex-chip active" id="msk_leviathan" onclick="selectMobileSkin('leviathan')">
-                            <div class="m-chip-icon">ðŸ¦‘</div>
+                            <div class="m-chip-icon">🦑</div>
                             <div class="m-chip-label">Leviathan Core</div>
                             <div class="m-chip-sub">Signature</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_premium" onclick="selectMobileSkin('premium')">
-                            <div class="m-chip-icon">ðŸ†</div>
+                            <div class="m-chip-icon">🏆</div>
                             <div class="m-chip-label">Apex Prime</div>
                             <div class="m-chip-sub">Flagship</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_cinema" onclick="selectMobileSkin('cinema')">
-                            <div class="m-chip-icon">ðŸŽžï¸</div>
+                            <div class="m-chip-icon">🎞️</div>
                             <div class="m-chip-label">Velvet Cinema</div>
                             <div class="m-chip-sub">Reference</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_ultra_compact" onclick="selectMobileSkin('ultra_compact')">
-                            <div class="m-chip-icon">âš¡</div>
+                            <div class="m-chip-icon">⚡</div>
                             <div class="m-chip-label">Pulse Compact</div>
                             <div class="m-chip-sub">Dense</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_tv_compact" onclick="selectMobileSkin('tv_compact')">
-                            <div class="m-chip-icon">ðŸ“º</div>
+                            <div class="m-chip-icon">📺</div>
                             <div class="m-chip-label">Neon TV</div>
                             <div class="m-chip-sub">Big Screen</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_lev2" onclick="selectMobileSkin('lev2')">
-                            <div class="m-chip-icon">ðŸ§¬</div>
+                            <div class="m-chip-icon">🧬</div>
                             <div class="m-chip-label">Architect</div>
                             <div class="m-chip-sub">Structured</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_fra" onclick="selectMobileSkin('fra')">
-                            <div class="m-chip-icon">âš¡ï¸</div>
+                            <div class="m-chip-icon">⚡️</div>
                             <div class="m-chip-label">Horizon</div>
                             <div class="m-chip-sub">Classic</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_comet" onclick="selectMobileSkin('comet')">
-                            <div class="m-chip-icon">â˜„ï¸</div>
+                            <div class="m-chip-icon">☄️</div>
                             <div class="m-chip-label">Comet</div>
                             <div class="m-chip-sub">Scan</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_stremio_ita" onclick="selectMobileSkin('stremio_ita')">
-                            <div class="m-chip-icon">ðŸ‡®ðŸ‡¹</div>
+                            <div class="m-chip-icon">🇮🇹</div>
                             <div class="m-chip-label">ITA Mod</div>
                             <div class="m-chip-sub">Compat</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_dav" onclick="selectMobileSkin('dav')">
-                            <div class="m-chip-icon">ðŸ“¼</div>
+                            <div class="m-chip-icon">📼</div>
                             <div class="m-chip-label">Datastream</div>
                             <div class="m-chip-sub">Verbose</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_pri" onclick="selectMobileSkin('pri')">
-                            <div class="m-chip-icon">ðŸ‘‘</div>
+                            <div class="m-chip-icon">👑</div>
                             <div class="m-chip-label">Eclipse</div>
                             <div class="m-chip-sub">Hero</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_and" onclick="selectMobileSkin('and')">
-                            <div class="m-chip-icon">ðŸŽ¬</div>
+                            <div class="m-chip-icon">🎬</div>
                             <div class="m-chip-label">Matrix</div>
                             <div class="m-chip-sub">Minimal</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_lad" onclick="selectMobileSkin('lad')">
-                            <div class="m-chip-icon">ðŸŽŸï¸</div>
+                            <div class="m-chip-icon">🎟️</div>
                             <div class="m-chip-label">Compact</div>
                             <div class="m-chip-sub">Lean</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_torrentio" onclick="selectMobileSkin('torrentio')">
-                            <div class="m-chip-icon">ðŸ“œ</div>
+                            <div class="m-chip-icon">📜</div>
                             <div class="m-chip-label">Torrentio</div>
                             <div class="m-chip-sub">Familiar</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_vertical" onclick="selectMobileSkin('vertical')">
-                            <div class="m-chip-icon">ðŸ“‘</div>
+                            <div class="m-chip-icon">📑</div>
                             <div class="m-chip-label">Vertical</div>
                             <div class="m-chip-sub">Poster</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_complex" onclick="selectMobileSkin('complex')">
-                            <div class="m-chip-icon">ðŸ”²</div>
+                            <div class="m-chip-icon">🔲</div>
                             <div class="m-chip-label">Template Matrix</div>
                             <div class="m-chip-sub">Analyst</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_android" onclick="selectMobileSkin('android')">
-                            <div class="m-chip-icon">ðŸ•¹ï¸</div>
+                            <div class="m-chip-icon">🕹️</div>
                             <div class="m-chip-label">Console Grid</div>
                             <div class="m-chip-sub">Legacy TV</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_picture" onclick="selectMobileSkin('picture')">
-                            <div class="m-chip-icon">ðŸ–¼ï¸</div>
+                            <div class="m-chip-icon">🖼️</div>
                             <div class="m-chip-label">Jurassic Poster</div>
                             <div class="m-chip-sub">Artwork</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_custom" onclick="selectMobileSkin('custom')" style="grid-column: span 3; border-style: dashed; background: rgba(0,0,0,0.3);">
-                            <div class="m-chip-icon">ðŸ› ï¸</div>
+                            <div class="m-chip-icon">🛠️</div>
                             <div class="m-chip-label">Custom Builder</div>
                             <div class="m-chip-sub">Template override</div>
                         </div>
@@ -1277,7 +1277,7 @@ const mobileHTML = `
                             <i class="fas fa-info-circle m-fr-icon" id="flux-icon-display"></i>
                             <div class="m-fr-text">
                                 <span class="m-fr-title" id="flux-title-display">STANDARD MODE</span>
-                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan. Bilancia perfettamente qualitÃ  e velocitÃ .</span>
+                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan. Bilancia perfettamente qualità e velocità.</span>
                             </div>
                         </div>
                     </div>
@@ -1332,7 +1332,7 @@ const mobileHTML = `
                     <div class="m-row" style="border:none; padding: 5px 0;">
                         <div class="m-label">
                             <h4><i class="fas fa-compress-arrows-alt" style="color:var(--m-error)"></i> Signal Gate <span class="m-status-text" id="st-gate">OFF</span></h4>
-                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro QualitÃ  (Max risultati per ris.)</p>
+                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro Qualità (Max risultati per ris.)</p>
                         </div>
                         <label class="m-switch"><input type="checkbox" id="m-gateActive" onchange="toggleGate()"><span class="m-slider"></span></label>
                     </div>
@@ -1342,7 +1342,7 @@ const mobileHTML = `
                             <input type="range" min="1" max="20" value="3" class="m-range" id="m-gateVal" oninput="updateGateDisplay(this.value)">
                             <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.2rem; color:var(--m-primary); width:30px; text-align:center;" id="m-gate-display">3</span>
                         </div>
-                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualitÃ . Utile per dispositivi lenti.</p>
+                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualità. Utile per dispositivi lenti.</p>
                     </div>
 
                     <div class="m-row" style="border:none; padding: 5px 0;">
@@ -1356,7 +1356,7 @@ const mobileHTML = `
                         <div class="m-gate-control">
                             <span style="font-size:0.8rem; color:#666;">1GB</span>
                             <input type="range" min="1" max="100" step="1" value="0" class="m-range" id="m-sizeVal" oninput="updateSizeDisplay(this.value)" style="background:linear-gradient(90deg, #ff9900, #333)">
-                            <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.1rem; color:var(--m-amber); width:45px; text-align:center;" id="m-size-display">âˆž</span>
+                            <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.1rem; color:var(--m-amber); width:45px; text-align:center;" id="m-size-display">∞</span>
                         </div>
                          <p class="m-range-desc">Nasconde automaticamente tutti i file che superano la dimensione selezionata.</p>
                     </div>
@@ -1373,7 +1373,7 @@ const mobileHTML = `
                     
                     <div style="padding:0 5px;">
                         <p style="font-size:0.8rem; color:var(--m-dim); margin-bottom:20px; line-height:1.4;">
-                            Proxy Server necessario per i moduli Italiani. Se attivo, il <b>Debrid Ghost</b> userÃ  questo server per nascondere il tuo IP reale.
+                            Proxy Server necessario per i moduli Italiani. Se attivo, il <b>Debrid Ghost</b> userà questo server per nascondere il tuo IP reale.
                         </p>
 
                         <div class="m-field-group">
@@ -1389,7 +1389,7 @@ const mobileHTML = `
                             <div class="m-field-header"><span class="m-field-label">PASSWORD</span></div>
                             <div class="m-input-box">
                                 <i class="fas fa-lock m-input-ico"></i>
-                                <input type="password" id="m-mfPass" class="m-input-tech" placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" oninput="updateLinkModalContent()">
+                                <input type="password" id="m-mfPass" class="m-input-tech" placeholder="••••••••" oninput="updateLinkModalContent()">
                             </div>
                         </div>
 
@@ -1475,7 +1475,7 @@ let mLangMode = 'ita';
 const fluxData = {
     'balanced': {
         title: "STANDARD MODE",
-        desc: "L'algoritmo standard di Leviathan. Bilancia perfettamente qualitÃ , popolaritÃ  del file e velocitÃ .",
+        desc: "L'algoritmo standard di Leviathan. Bilancia perfettamente qualità, popolarità del file e velocità.",
         icon: "fa-dragon"
     },
     'resolution': {
@@ -1498,15 +1498,15 @@ const langDescriptions = {
 
 const skinMaps = {
     'bold': {
-        nums: {'0':'ðŸ¬','1':'ðŸ­','2':'ðŸ®','3':'ðŸ¯','4':'ðŸ°','5':'ðŸ±','6':'ðŸ²','7':'ðŸ³','8':'ðŸ´','9':'ðŸµ'},
+        nums: {'0':'𝟬','1':'𝟭','2':'𝟮','3':'𝟯','4':'𝟰','5':'𝟱','6':'𝟲','7':'𝟳','8':'𝟴','9':'𝟵'},
         chars: {
-            'A':'ð—”','B':'ð—•','C':'ð—–','D':'ð——','E':'ð—˜','F':'ð—™','G':'ð—š','H':'ð—›','I':'ð—œ','J':'ð—','K':'ð—ž','L':'ð—Ÿ','M':'ð— ','N':'ð—¡','O':'ð—¢','P':'ð—£','Q':'ð—¤','R':'ð—¥','S':'ð—¦','T':'ð—§','U':'ð—¨','V':'ð—©','W':'ð—ª','X':'ð—«','Y':'ð—¬','Z':'ð—­',
-            'a':'ð—®','b':'ð—¯','c':'ð—°','d':'ð—±','e':'ð—²','f':'ð—³','g':'ð—´','h':'ð—µ','i':'ð—¶','j':'ð—·','k':'ð—¸','l':'ð—¹','m':'ð—º','n':'ð—»','o':'ð—¼','p':'ð—½','q':'ð—¾','r':'ð—¿','s':'ð˜€','t':'ð˜','u':'ð˜‚','v':'ð˜ƒ','w':'á´¡','x':'ð˜…','y':'ð˜†','z':'ð˜‡'
+            'A':'𝗔','B':'𝗕','C':'𝗖','D':'𝗗','E':'𝗘','F':'𝗙','G':'𝗚','H':'𝗛','I':'𝗜','J':'𝗝','K':'𝗞','L':'𝗟','M':'𝗠','N':'𝗡','O':'𝗢','P':'𝗣','Q':'𝗤','R':'𝗥','S':'𝗦','T':'𝗧','U':'𝗨','V':'𝗩','W':'𝗪','X':'𝗫','Y':'𝗬','Z':'𝗭',
+            'a':'𝗮','b':'𝗯','c':'𝗰','d':'𝗱','e':'𝗲','f':'𝗳','g':'𝗴','h':'𝗵','i':'𝗶','j':'𝗷','k':'𝗸','l':'𝗹','m':'𝗺','n':'𝗻','o':'𝗼','p':'𝗽','q':'𝗾','r':'𝗿','s':'𝘀','t':'𝘁','u':'𝘂','v':'𝘃','w':'ᴡ','x':'𝘅','y':'𝘆','z':'𝘇'
         }
     },
     'small': {
         nums: {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9'},
-        chars: {'A':'á´€','B':'Ê™','C':'á´„','D':'á´…','E':'á´‡','F':'êœ°','G':'É¢','H':'Êœ','I':'Éª','J':'á´Š','K':'á´‹','L':'ÊŸ','M':'á´','N':'É´','O':'á´','P':'á´˜','Q':'Ç«','R':'Ê€','S':'êœ±','T':'á´›','U':'á´œ','V':'á´ ','W':'á´¡','X':'x','Y':'Ê','Z':'á´¢','a':'á´€','b':'Ê™','c':'á´„','d':'á´…','e':'á´‡','f':'êœ°','g':'É¢','h':'Êœ','i':'Éª','j':'á´Š','k':'á´‹','l':'ÊŸ','m':'á´','n':'É´','o':'á´','p':'á´˜','q':'Ç«','r':'Ê€','s':'êœ±','t':'á´›','u':'á´œ','v':'á´ ','w':'á´¡','x':'x','y':'Ê','z':'á´¢'}
+        chars: {'A':'ᴀ','B':'ʙ','C':'ᴄ','D':'ᴅ','E':'ᴇ','F':'ꜰ','G':'ɢ','H':'ʜ','I':'ɪ','J':'ᴊ','K':'ᴋ','L':'ʟ','M':'ᴍ','N':'ɴ','O':'ᴏ','P':'ᴘ','Q':'ǫ','R':'ʀ','S':'ꜱ','T':'ᴛ','U':'ᴜ','V':'ᴠ','W':'ᴡ','X':'x','Y':'ʏ','Z':'ᴢ','a':'ᴀ','b':'ʙ','c':'ᴄ','d':'ᴅ','e':'ᴇ','f':'ꜰ','g':'ɢ','h':'ʜ','i':'ɪ','j':'ᴊ','k':'ᴋ','l':'ʟ','m':'ᴍ','n':'ɴ','o':'ᴏ','p':'ᴘ','q':'ǫ','r':'ʀ','s':'ꜱ','t':'ᴛ','u':'ᴜ','v':'ᴠ','w':'ᴡ','x':'x','y':'ʏ','z':'ᴢ'}
     },
 };
 
@@ -1604,12 +1604,12 @@ function getMobileFormatterMeta(skinId) {
     return MOBILE_FORMATTER_META[resolved] || { label: resolved.toUpperCase(), preview: resolved.toUpperCase() };
 }
 
-function joinMobilePreviewParts(parts, sep = ' â€¢ ') {
+function joinMobilePreviewParts(parts, sep = ' • ') {
     return parts.filter(Boolean).join(sep);
 }
 
 function removeMobilePreviewEmoji(value = '') {
-    return String(value).replace(/[^\w\sâ€¢.\-|+()[\]]/g, '').replace(/\s+/g, ' ').trim();
+    return String(value).replace(/[^\w\s•.\-|+()[\]]/g, '').replace(/\s+/g, ' ').trim();
 }
 
 function selectMobileSkin(skinId) {
@@ -1649,19 +1649,19 @@ function selectMobileSkin(skinId) {
 
 function updateMobilePreview() {
     const skin = resolveMobileFormatterSkin(mSkin);
-    let langStr = "ðŸ‡®ðŸ‡¹ ITA";
-    if (mLangMode === 'ita-eng') langStr = "ðŸ‡®ðŸ‡¹ ITA â€¢ ðŸ‡ºðŸ‡¸ ENG";
-    if (mLangMode === 'eng') langStr = "ðŸ‡ºðŸ‡¸ ENG";
+    let langStr = "🇮🇹 ITA";
+    if (mLangMode === 'ita-eng') langStr = "🇮🇹 ITA • 🇺🇸 ENG";
+    if (mLangMode === 'eng') langStr = "🇺🇸 ENG";
 
     let serviceTag = "RD";
     if (mCurrentService === 'tb') serviceTag = 'TB';
     if (mCurrentService === 'ad') serviceTag = 'AD';
     if (mCurrentService === 'p2p') serviceTag = 'P2P';
 
-    let serviceIconTitle = 'ðŸ¦ˆ';
-    if (serviceTag === 'RD') serviceIconTitle = 'ðŸ¬';
-    else if (serviceTag === 'TB') serviceIconTitle = 'âš“';
-    else if (serviceTag === 'AD') serviceIconTitle = 'ðŸš';
+    let serviceIconTitle = '🦈';
+    if (serviceTag === 'RD') serviceIconTitle = '🐬';
+    else if (serviceTag === 'TB') serviceIconTitle = '⚓';
+    else if (serviceTag === 'AD') serviceIconTitle = '🐚';
 
     const p = {
         cleanName: 'Dune Parte Due',
@@ -1675,90 +1675,90 @@ function updateMobilePreview() {
         lang: langStr,
         audioTag: 'TrueHD Atmos',
         audioChannels: '7.1',
-        audioInfo: 'TrueHD Atmos â”ƒ 7.1',
+        audioInfo: 'TrueHD Atmos ┃ 7.1',
         codec: 'HEVC',
-        videoTags: ['ðŸ’Ž ð—¥ð—˜ð— ð—¨ð—«', 'ðŸ‘ï¸ ð——ð—©+ð—›ð——ð—¥', 'âš™ï¸ ð—›ð—˜ð—©ð—–'],
+        videoTags: ['💎 𝗥𝗘𝗠𝗨𝗫', '👁️ 𝗗𝗩+𝗛𝗗𝗥', '⚙️ 𝗛𝗘𝗩𝗖'],
         cleanTags: ['Remux', 'DV+HDR', 'HEVC'],
         seeders: 152,
-        seedersStr: 'ðŸ‘¥ 152',
+        seedersStr: '👥 152',
         epTag: '',
         releaseGroup: 'Leviathan',
         sourceLine: `${serviceIconTitle} [${serviceTag}] ilCorSaRoNeRo`,
         providerLabel: 'Netflix',
         streamScore: 94,
         scoreTier: 'S+',
-        scoreBadge: 'ðŸ† S+ 94',
-        visualMeter: 'â–°â–°â–°â–°â–°',
-        featureSummary: '4K â€¢ DV+HDR â€¢ HEVC â€¢ Atmos'
+        scoreBadge: '🏆 S+ 94',
+        visualMeter: '▰▰▰▰▰',
+        featureSummary: '4K • DV+HDR • HEVC • Atmos'
     };
 
     const isDebrid = ['RD', 'TB', 'AD'].includes(p.serviceTag);
-    const statusIcon = isDebrid ? 'âš¡' : 'â˜ï¸';
-    const qIcon = isDebrid ? p.serviceIconTitle : 'ðŸ¦ˆ';
+    const statusIcon = isDebrid ? '⚡' : '☁️';
+    const qIcon = isDebrid ? p.serviceIconTitle : '🦈';
 
     const styleLeviathan = (p) => {
-        const serviceIcon = p.serviceTag === 'RD' ? 'ðŸ¬' : p.serviceTag === 'TB' ? 'âš“' : p.serviceTag === 'AD' ? 'ðŸš' : 'ðŸ¦ˆ';
-        const stateIcon = isDebrid ? serviceIcon : 'â³';
+        const serviceIcon = p.serviceTag === 'RD' ? '🐬' : p.serviceTag === 'TB' ? '⚓' : p.serviceTag === 'AD' ? '🐚' : '🦈';
+        const stateIcon = isDebrid ? serviceIcon : '⏳';
         const brandName = toStylized('LEVIATHAN', 'small');
         const serviceStyled = toStylized(p.serviceTag, 'bold');
-        const techLine = [...new Set([p.quality, ...p.cleanTags].filter(Boolean))].map(t => toStylized(t, 'small')).join(' â€¢ ');
-        const name = `${stateIcon} ${serviceStyled} ðŸ¦‘ ${brandName}`;
+        const techLine = [...new Set([p.quality, ...p.cleanTags].filter(Boolean))].map(t => toStylized(t, 'small')).join(' • ');
+        const name = `${stateIcon} ${serviceStyled} 🦑 ${brandName}`;
         const lines = [
-            `â–¶ï¸ ${toStylized(p.cleanName, 'bold')} ${p.epTag}`.trim(),
-            techLine ? `ðŸ”± ${techLine}` : '',
-            `ðŸ—£ï¸ ${p.lang}  |  ðŸ«§ ${p.audioTag} ${p.audioChannels}`,
-            `ðŸ§² ${p.sizeString}  |  ${p.seedersStr}`,
-            `${p.serviceIconTitle} ${p.displaySource} | ðŸ·ï¸ ${toStylized(p.releaseGroup, 'small')}`
+            `▶️ ${toStylized(p.cleanName, 'bold')} ${p.epTag}`.trim(),
+            techLine ? `🔱 ${techLine}` : '',
+            `🗣️ ${p.lang}  |  🫧 ${p.audioTag} ${p.audioChannels}`,
+            `🧲 ${p.sizeString}  |  ${p.seedersStr}`,
+            `${p.serviceIconTitle} ${p.displaySource} | 🏷️ ${toStylized(p.releaseGroup, 'small')}`
         ].filter(Boolean);
         return { name, title: lines.join('\n') };
     };
 
     const styleComplex = (p) => ({
-        name: `ðŸ”² 4K â”‚ â› ${p.sizeString}`,
+        name: `🔲 4K │ ⛁ ${p.sizeString}`,
         title: [
-            `â˜° ${joinMobilePreviewParts([p.lang, p.audioTag, p.audioChannels], ' Â· ')}`,
-            `â˜² ${joinMobilePreviewParts([p.quality, p.codec, p.cleanTags.join(' Â· ')], ' Â· ')}`,
-            `â˜µ ${joinMobilePreviewParts(['Leviathan', p.releaseGroup, p.displaySource, `[${p.serviceTag}]`], ' Â· ')}`,
-            `â˜¶ ${joinMobilePreviewParts([p.cleanName, p.epTag], ' Â· ')}`
+            `☰ ${joinMobilePreviewParts([p.lang, p.audioTag, p.audioChannels], ' · ')}`,
+            `☲ ${joinMobilePreviewParts([p.quality, p.codec, p.cleanTags.join(' · ')], ' · ')}`,
+            `☵ ${joinMobilePreviewParts(['Leviathan', p.releaseGroup, p.displaySource, `[${p.serviceTag}]`], ' · ')}`,
+            `☶ ${joinMobilePreviewParts([p.cleanName, p.epTag], ' · ')}`
         ].join('\n')
     });
 
     const styleAndroid = (p) => ({
         name: joinMobilePreviewParts([p.quality, 'DV+HDR', p.serviceTag], ' | '),
-        title: [`ðŸŽžï¸ ${p.codec}`, `ðŸŽ§ ${p.audioTag} ${p.audioChannels}`, `âš™ï¸ ${p.displaySource}`, p.lang, p.fileTitle].join('\n')
+        title: [`🎞️ ${p.codec}`, `🎧 ${p.audioTag} ${p.audioChannels}`, `⚙️ ${p.displaySource}`, p.lang, p.fileTitle].join('\n')
     });
 
     const stylePicture = (p) => ({
-        name: `âœ… UHD HDR ATMOS ${p.quality}`,
-        title: [`ðŸŽ¬ ${p.cleanName}`, `âœ¨ ${p.quality} ðŸ”† DV | HDR`, `ðŸŽ§ ${p.audioTag} ðŸ”Š ${p.audioChannels}`, 'ðŸ’¿ Blu-ray Remux', `ðŸ“¦ ${p.sizeString}`, `ðŸ·ï¸ Blu-ray Remux T1 (${p.releaseGroup})`, `âš¡ Comet ${p.serviceTag}`].join('\n')
+        name: `✅ UHD HDR ATMOS ${p.quality}`,
+        title: [`🎬 ${p.cleanName}`, `✨ ${p.quality} 🔆 DV | HDR`, `🎧 ${p.audioTag} 🔊 ${p.audioChannels}`, '💿 Blu-ray Remux', `📦 ${p.sizeString}`, `🏷️ Blu-ray Remux T1 (${p.releaseGroup})`, `⚡ Comet ${p.serviceTag}`].join('\n')
     });
 
     const stylePremium = (p) => ({
         name: `${statusIcon} ${p.quality} ${p.scoreBadge}`,
         title: [
-            `ðŸŽ¬ ${toStylized(p.cleanName, 'bold')}`,
-            `ðŸ… ${p.scoreBadge}  ${p.visualMeter}`,
-            `ðŸ§ª ${[...new Set([p.quality, ...p.cleanTags, p.codec].filter(Boolean))].slice(0, 4).join(' â€¢ ')}`,
-            `ðŸ”Š ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang])}`,
-            `ðŸ“¦ ${p.sizeString} â€¢ ${p.seedersStr}`,
-            `${statusIcon} ${p.displaySource} â€¢ ${p.releaseGroup} â€¢ ${p.serviceTag}`
+            `🎬 ${toStylized(p.cleanName, 'bold')}`,
+            `🏅 ${p.scoreBadge}  ${p.visualMeter}`,
+            `🧪 ${[...new Set([p.quality, ...p.cleanTags, p.codec].filter(Boolean))].slice(0, 4).join(' • ')}`,
+            `🔊 ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang])}`,
+            `📦 ${p.sizeString} • ${p.seedersStr}`,
+            `${statusIcon} ${p.displaySource} • ${p.releaseGroup} • ${p.serviceTag}`
         ].join('\n')
     });
 
     const styleCinema = (p) => ({
         name: joinMobilePreviewParts([qIcon, p.quality, p.cleanTags.includes('Remux') ? 'Reference' : 'Cinema'], ' '),
         title: [
-            `ðŸŽžï¸ ${p.cleanName}`,
-            `ðŸŒˆ ${joinMobilePreviewParts([p.cleanTags.join(' â€¢ '), p.codec])}`,
-            `ðŸŽ§ ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang])}`,
-            `ðŸ“Š ${p.scoreBadge} â€¢ ${p.visualMeter}`,
-            `ðŸ“¦ ${p.sizeString} â€¢ ${p.seedersStr}`,
-            `ðŸ·ï¸ ${joinMobilePreviewParts([p.displaySource, p.releaseGroup, p.providerLabel])}`
+            `🎞️ ${p.cleanName}`,
+            `🌈 ${joinMobilePreviewParts([p.cleanTags.join(' • '), p.codec])}`,
+            `🎧 ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang])}`,
+            `📊 ${p.scoreBadge} • ${p.visualMeter}`,
+            `📦 ${p.sizeString} • ${p.seedersStr}`,
+            `🏷️ ${joinMobilePreviewParts([p.displaySource, p.releaseGroup, p.providerLabel])}`
         ].join('\n')
     });
 
     const styleUltraCompact = (p) => ({
-        name: joinMobilePreviewParts([statusIcon, p.quality, 'DV+HDR', p.serviceTag, `â€¢${p.scoreTier}`], ' '),
+        name: joinMobilePreviewParts([statusIcon, p.quality, 'DV+HDR', p.serviceTag, `•${p.scoreTier}`], ' '),
         title: [
             p.cleanName,
             joinMobilePreviewParts([`${p.audioTag} ${p.audioChannels}`, removeMobilePreviewEmoji(p.lang), p.sizeString]),
@@ -1768,62 +1768,62 @@ function updateMobilePreview() {
 
     const styleTVCompact = (p) => ({
         name: joinMobilePreviewParts([p.quality, 'DV+HDR', p.serviceTag], ' | '),
-        title: [`ðŸŽžï¸ ${p.codec}`, `ðŸŽ§ ${p.audioTag} ${p.audioChannels}`, `ðŸŒ ${removeMobilePreviewEmoji(p.lang) || p.lang}`, `ðŸ… ${p.scoreBadge}`, `ðŸ“¦ ${p.sizeString} â€¢ ${p.seedersStr}`, `âš™ï¸ ${p.displaySource}`, p.fileTitle].join('\n')
+        title: [`🎞️ ${p.codec}`, `🎧 ${p.audioTag} ${p.audioChannels}`, `🌐 ${removeMobilePreviewEmoji(p.lang) || p.lang}`, `🏅 ${p.scoreBadge}`, `📦 ${p.sizeString} • ${p.seedersStr}`, `⚙️ ${p.displaySource}`, p.fileTitle].join('\n')
     });
 
     const styleLeviathanTwo = (p) => ({
-        name: `ðŸ¦‘ ${toStylized('LEVIATHAN', 'small')} ${p.serviceIconTitle} â”‚ ${p.quality}`,
-        title: [`ðŸŽ¬ ${toStylized(p.cleanName, 'bold')}`, `ðŸ“¦ ${p.sizeString} â”‚ ${p.codec} ${p.cleanTags.filter(x => !String(x).includes(p.codec)).join(' ')}`, `ðŸ”Š ${p.audioTag} ${p.audioChannels} â€¢ ${p.lang}`, `ðŸ”— ${p.sourceLine} ${p.seedersStr}`].join('\n')
+        name: `🦑 ${toStylized('LEVIATHAN', 'small')} ${p.serviceIconTitle} │ ${p.quality}`,
+        title: [`🎬 ${toStylized(p.cleanName, 'bold')}`, `📦 ${p.sizeString} │ ${p.codec} ${p.cleanTags.filter(x => !String(x).includes(p.codec)).join(' ')}`, `🔊 ${p.audioTag} ${p.audioChannels} • ${p.lang}`, `🔗 ${p.sourceLine} ${p.seedersStr}`].join('\n')
     });
 
     const styleFra = (p) => ({
-        name: 'âš¡ï¸ Leviathan 4K',
-        title: [`ðŸ“„ â¯ ${p.fileTitle}`, `ðŸŒŽ â¯ ${p.lang} â€¢ ${p.audioTag}`, `âœ¨ â¯ ${p.serviceTag} â€¢ ${p.displaySource}`, `ðŸ”¥ â¯ ${p.quality} â€¢ ${p.cleanTags.join(' â€¢ ')}`, `ðŸ’¾ â¯ ${p.sizeString} / ðŸ‘¥ â¯ ${p.seeders}`].join('\n')
+        name: '⚡️ Leviathan 4K',
+        title: [`📄 ❯ ${p.fileTitle}`, `🌎 ❯ ${p.lang} • ${p.audioTag}`, `✨ ❯ ${p.serviceTag} • ${p.displaySource}`, `🔥 ❯ ${p.quality} • ${p.cleanTags.join(' • ')}`, `💾 ❯ ${p.sizeString} / 👥 ❯ ${p.seeders}`].join('\n')
     });
 
     const styleDav = (p) => ({
-        name: 'ðŸŽ¥ 4K UHD HEVC',
-        title: [`ðŸ“º ${p.cleanName}`, `ðŸŽ§ ${p.audioTag} ${p.audioChannels} | ðŸŽžï¸ ${p.codec}`, `ðŸ—£ï¸ ${p.lang} | ðŸ“¦ ${p.sizeString}`, `â±ï¸ ${p.seeders} Seeds | ðŸ·ï¸ ${p.displaySource}`, `${p.serviceIconTitle} Leviathan ðŸ“¡ ${p.serviceTag}`, `ðŸ“‚ ${p.fileTitle}`].join('\n')
+        name: '🎥 4K UHD HEVC',
+        title: [`📺 ${p.cleanName}`, `🎧 ${p.audioTag} ${p.audioChannels} | 🎞️ ${p.codec}`, `🗣️ ${p.lang} | 📦 ${p.sizeString}`, `⏱️ ${p.seeders} Seeds | 🏷️ ${p.displaySource}`, `${p.serviceIconTitle} Leviathan 📡 ${p.serviceTag}`, `📂 ${p.fileTitle}`].join('\n')
     });
 
     const styleAnd = (p) => ({
-        name: `ðŸŽ¬ ${p.cleanName}`,
-        title: [`${p.quality} ${p.serviceTag === 'RD' ? 'âš¡' : 'â³'}`, 'â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€', `Lingue: ${p.lang}`, `Specifiche: ${p.quality} | ðŸ“º ${p.cleanTags.join(' ')} | ðŸ”Š ${p.audioTag}`, 'â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€', `ðŸ“‚ ${p.sizeString} | â˜ï¸ ${p.serviceTag} | ðŸ›°ï¸ Leviathan`].join('\n')
+        name: `🎬 ${p.cleanName}`,
+        title: [`${p.quality} ${p.serviceTag === 'RD' ? '⚡' : '⏳'}`, '─ ─ ─ ─ ─ ─ ─ ─ ─ ─', `Lingue: ${p.lang}`, `Specifiche: ${p.quality} | 📺 ${p.cleanTags.join(' ')} | 🔊 ${p.audioTag}`, '─ ─ ─ ─ ─ ─ ─ ─ ─ ─', `📂 ${p.sizeString} | ☁️ ${p.serviceTag} | 🛰️ Leviathan`].join('\n')
     });
 
     const styleLad = (p) => ({
-        name: `ðŸ–¥ï¸ ${p.quality} ${p.serviceTag}`,
-        title: [`ðŸŽŸï¸ ${p.cleanName}`, `ðŸ“œ ${p.epTag || 'Movie'}`, `ðŸŽ¥ ${p.quality} ðŸŽžï¸ ${p.codec} ðŸŽ§ ${p.audioTag}`, `ðŸ“¦ ${p.sizeString} â€¢ ðŸ”— Leviathan`, `ðŸŒ ${p.lang}`].join('\n')
+        name: `🖥️ ${p.quality} ${p.serviceTag}`,
+        title: [`🎟️ ${p.cleanName}`, `📜 ${p.epTag || 'Movie'}`, `🎥 ${p.quality} 🎞️ ${p.codec} 🎧 ${p.audioTag}`, `📦 ${p.sizeString} • 🔗 Leviathan`, `🌐 ${p.lang}`].join('\n')
     });
 
     const stylePri = (p) => ({
-        name: `[${p.serviceTag}]âš¡ï¸â˜ï¸
-4KðŸ”¥UHD
+        name: `[${p.serviceTag}]⚡️☁️
+4K🔥UHD
 [Leviathan]`,
-        title: [`ðŸŽ¬ ${p.cleanName}`, `${p.cleanTags.join(' ')}`, `ðŸŽ§ ${p.audioTag} | ðŸ”Š ${p.audioChannels} | ðŸ—£ï¸ ${p.lang}`, `ðŸ“ ${p.sizeString} | ðŸ·ï¸ ${p.displaySource}`, `ðŸ“„ â–¶ï¸ ${p.fileTitle} â—€ï¸`].join('\n')
+        title: [`🎬 ${p.cleanName}`, `${p.cleanTags.join(' ')}`, `🎧 ${p.audioTag} | 🔊 ${p.audioChannels} | 🗣️ ${p.lang}`, `📁 ${p.sizeString} | 🏷️ ${p.displaySource}`, `📄 ▶️ ${p.fileTitle} ◀️`].join('\n')
     });
 
     const styleComet = (p) => ({
-        name: `[${p.serviceTag} âš¡]
+        name: `[${p.serviceTag} ⚡]
 Leviathan
 ${p.quality}`,
-        title: [`ðŸ“„ ${p.fileTitle}`, `ðŸ“¹ ${joinMobilePreviewParts([p.codec, ...p.cleanTags].filter(Boolean))} | ${p.audioTag}`, `â­ ${p.displaySource}`, `ðŸ’¾ ${p.sizeString} ðŸ‘¥ ${p.seeders}`, `ðŸŒ ${p.lang}`].join('\n')
+        title: [`📄 ${p.fileTitle}`, `📹 ${joinMobilePreviewParts([p.codec, ...p.cleanTags].filter(Boolean))} | ${p.audioTag}`, `⭐ ${p.displaySource}`, `💾 ${p.sizeString} 👥 ${p.seeders}`, `🌍 ${p.lang}`].join('\n')
     });
 
     const styleStremioIta = (p) => ({
-        name: 'âš¡ï¸ Leviathan 4K',
-        title: [`ðŸ“„ â¯ ${p.fileTitle}`, `ðŸŒŽ â¯ ${p.lang.replace(/ITA/gi, 'ita').replace(/ENG/gi, 'eng')}`, `âœ¨ â¯ ${p.serviceTag} â€¢ ${p.displaySource}`, `ðŸ”¥ â¯ ${p.quality} â€¢ ${p.cleanTags.join(' â€¢ ')}`, `ðŸ’¾ â¯ ${p.sizeString}`, `ðŸ”‰ â¯ ${p.audioTag} â€¢ ${p.audioChannels}`].join('\n')
+        name: '⚡️ Leviathan 4K',
+        title: [`📄 ❯ ${p.fileTitle}`, `🌎 ❯ ${p.lang.replace(/ITA/gi, 'ita').replace(/ENG/gi, 'eng')}`, `✨ ❯ ${p.serviceTag} • ${p.displaySource}`, `🔥 ❯ ${p.quality} • ${p.cleanTags.join(' • ')}`, `💾 ❯ ${p.sizeString}`, `🔉 ❯ ${p.audioTag} • ${p.audioChannels}`].join('\n')
     });
 
     const styleTorrentio = (p) => ({
         name: `[${p.serviceTag}]
 ${p.quality}`,
-        title: [`ðŸ“„ ${p.fileTitle}`, `ðŸ“¦ ${p.sizeString} ðŸ‘¤ ${p.seeders}`, `ðŸ” ${p.displaySource}`, `ðŸ”Š ${removeMobilePreviewEmoji(p.lang) || p.lang}`].join('\n')
+        title: [`📄 ${p.fileTitle}`, `📦 ${p.sizeString} 👤 ${p.seeders}`, `🔍 ${p.displaySource}`, `🔊 ${removeMobilePreviewEmoji(p.lang) || p.lang}`].join('\n')
     });
 
     const styleVertical = (p) => ({
-        name: `ðŸ¦‘ Leviathan ${p.quality} ${isDebrid ? 'âš¡' : 'â˜ï¸'} Cached`,
-        title: [`ðŸ¿ ${p.cleanName}`, `ðŸ“¼ WEB-DL â€¢ ${p.cleanTags[0]}`, `âš™ï¸ ${p.codec}`, `ðŸ”Š ${p.audioTag} (${p.audioChannels})`, `ðŸ’¬ ${p.lang}`, `ðŸ§² ${p.sizeString}`].join('\n')
+        name: `🦑 Leviathan ${p.quality} ${isDebrid ? '⚡' : '☁️'} Cached`,
+        title: [`🍿 ${p.cleanName}`, `📼 WEB-DL • ${p.cleanTags[0]}`, `⚙️ ${p.codec}`, `🔊 ${p.audioTag} (${p.audioChannels})`, `💬 ${p.lang}`, `🧲 ${p.sizeString}`].join('\n')
     });
 
     const styleCustom = (p) => {
@@ -2076,7 +2076,7 @@ function checkWebPriorityVisibility() {
 function updatePriorityLabel() {
     const isLast = document.getElementById('m-vixLast').checked;
     const desc = document.getElementById('priority-desc');
-    desc.innerText = isLast ? "PrioritÃ  Bassa: Risultati dopo i Torrent" : "PrioritÃ  Alta: Risultati in cima";
+    desc.innerText = isLast ? "Priorità Bassa: Risultati dopo i Torrent" : "Priorità Alta: Risultati in cima";
     desc.style.color = isLast ? "var(--m-secondary)" : "var(--m-primary)";
     updateLinkModalContent();
     if(navigator.vibrate) navigator.vibrate([15, 10, 15]);
@@ -2127,7 +2127,7 @@ function toggleSize() {
     } else { 
         wrapper.classList.remove('show'); 
         if(lbl) {lbl.innerText = "OFF"; lbl.classList.remove('on');}
-        document.getElementById('m-size-display').innerText = "âˆž";
+        document.getElementById('m-size-display').innerText = "∞";
     }
     updateLinkModalContent();
     if(navigator.vibrate) navigator.vibrate(10);
@@ -2135,7 +2135,7 @@ function toggleSize() {
 
 function updateSizeDisplay(val) {
     const display = document.getElementById('m-size-display');
-    if (val == 0) { display.innerText = "âˆž"; } else { display.innerText = val; }
+    if (val == 0) { display.innerText = "∞"; } else { display.innerText = val; }
     updateLinkModalContent();
 }
 
