@@ -1,7 +1,7 @@
 {
   "name": "leviathan",
-  "version": "32.0.7",
-  "description": "Leviathan Edition - AI Core + NLP Parser + Debrid (God Tier)",
+  "version": "33.0.0",
+  "description": "Leviathan Edition - phased search planner + shared stream cache + premium ranking",
   "main": "addon.js",
   "scripts": {
     "start": "node addon.js",
