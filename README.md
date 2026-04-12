@@ -113,9 +113,7 @@ Il progetto nasce per offrire una base tecnica capace di unire <b>sorgenti torre
 
 ## 🧠 Adaptive Cache Intelligence
 
-<table align="center">
-<tr>
-<td align="center" width="100%">
+<div align="center">
 
 ### Volatility-Aware Shared Cache Policy
 
@@ -127,17 +125,25 @@ La cache di <b>Leviathan</b> non lavora come un semplice contenitore con TTL fis
 Questo significa che un contenuto appena uscito non viene trattato come una release ormai assestata: la policy può accorciare il riuso, limitare la scrittura condivisa, favorire micro-cache locali, oppure promuovere in shared solo risultati veramente forti. L’obiettivo è semplice: evitare che output ancora acerbi diventino “verità globale” troppo presto.
 </p>
 
-<br>
+</div>
 
-<table align="center">
-<tr><th>Volatility Bucket</th><th>Logica Operativa</th><th>Obiettivo</th></tr>
-<tr><td align="center"><b>ULTRA_FRESH</b></td><td align="center">Riuso minimo, shared molto prudente, niente congelamento di risultati deboli.</td><td align="center">Proteggere release appena uscite.</td></tr>
-<tr><td align="center"><b>FRESH</b></td><td align="center">TTL corti, revalidation più frequente, scrittura condivisa solo con segnali credibili.</td><td align="center">Evitare output incompleti o instabili.</td></tr>
-<tr><td align="center"><b>SETTLING</b></td><td align="center">Riuso controllato, peso crescente alla qualità reale del risultato.</td><td align="center">Accompagnare la fase di assestamento.</td></tr>
-<tr><td align="center"><b>STABLE</b></td><td align="center">Shared cache aggressiva, stale reuse più utile, TTL più estesi.</td><td align="center">Massimizzare velocità e continuità.</td></tr>
-</table>
+### ⚡ ULTRA_FRESH
+**Logica operativa:** riuso minimo, shared molto prudente, niente congelamento di risultati deboli.  
+**Obiettivo:** proteggere release appena uscite.
 
-<br>
+### 🌊 FRESH
+**Logica operativa:** TTL corti, revalidation più frequente, scrittura condivisa solo con segnali credibili.  
+**Obiettivo:** evitare output incompleti o instabili.
+
+### 🧭 SETTLING
+**Logica operativa:** riuso controllato, peso crescente alla qualità reale del risultato.  
+**Obiettivo:** accompagnare la fase di assestamento.
+
+### 👑 STABLE
+**Logica operativa:** shared cache aggressiva, stale reuse più utile, TTL più estesi.  
+**Obiettivo:** massimizzare velocità e continuità.
+
+<div align="center">
 
 <p align="center">
 La decisione finale non dipende solo dal tempo: dipende anche da <b>confidence score</b>, <b>exact episode match</b>, <b>qualità migliore trovata</b>, <b>presenza di stream già affidabili</b>, <b>validazione pack</b> e penalizzazione dei risultati più fragili o rumorosi. In questo modo la cache diventa parte attiva del motore di ranking, non un semplice strato passivo.
@@ -148,14 +154,12 @@ La decisione finale non dipende solo dal tempo: dipende anche da <b>confidence s
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/CACHE-VOLATILITY_AWARE-00eaff?style=for-the-badge&labelColor=061018" />
-  <img src="https://img.shields.io/badge/TTL-CONFIDENCE_WEIGHTED-7c3aed?style=for-the-badge&labelColor=061018" />
+  <img src="https://img.shields.io/badge/CACHE-SMART_REUSE-00eaff?style=for-the-badge&labelColor=061018" /><br>
+  <img src="https://img.shields.io/badge/TTL-CONFIDENCE_WEIGHTED-7c3aed?style=for-the-badge&labelColor=061018" /><br>
   <img src="https://img.shields.io/badge/FRESH_RELEASES-PROTECTED-ff5a7a?style=for-the-badge&labelColor=061018" />
 </p>
 
-</td>
-</tr>
-</table>
+</div>
 
 </div>
 
