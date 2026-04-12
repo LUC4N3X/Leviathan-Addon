@@ -1526,7 +1526,10 @@
             }
         }
 
-       
+        // ═══════════════════════════════════════════════════════
+        // LEVIATHAN DEEP SEA ENGINE v3 — Living Ocean
+        // Dense, alive, coherent current — you ARE underwater
+        // ═══════════════════════════════════════════════════════
         (function() {
             if(window.innerWidth < 768) return;
 
@@ -1536,8 +1539,8 @@
             let W, H, time = 0;
             const DPR = Math.min(window.devicePixelRatio || 1, 2);
 
-           
-            let currentAngle = Math.PI * 0.15; 
+            // global ocean current — everything drifts together
+            let currentAngle = Math.PI * 0.15; // slight upward-left
             let currentStrength = 0.12;
 
             function resize() {
@@ -1552,7 +1555,7 @@
             resize();
             window.addEventListener('resize', resize);
 
-           
+            // ── GOD RAYS — visible, atmospheric, slow sway ──
             const rays = [];
             for(let i = 0; i < 6; i++) {
                 rays.push({
@@ -1588,17 +1591,17 @@
                 }
             }
 
-       
+            // ── COLOR PALETTE ──
             const bioColors = [
-                [0, 230, 255],   
-                [100, 0, 230],   
-                [0, 230, 160],   
-                [0, 160, 240],   
-                [140, 0, 220],   
-                [0, 240, 210],   
+                [0, 230, 255],   // cyan
+                [100, 0, 230],   // purple
+                [0, 230, 160],   // sea green
+                [0, 160, 240],   // ocean blue
+                [140, 0, 220],   // violet
+                [0, 240, 210],   // teal
             ];
 
-            
+            // ── MICRO-PLANKTON — tons of tiny barely-visible dots ──
             const plankton = [];
             const planktonCount = 160;
             for(let i = 0; i < planktonCount; i++) {
@@ -1608,7 +1611,7 @@
                     y: Math.random() * 2000,
                     size: 0.4 + Math.random() * 0.8,
                     alpha: 0.08 + Math.random() * 0.18 * (1 - depth * 0.5),
-                    drift: 0.6 + depth * 0.4, 
+                    drift: 0.6 + depth * 0.4, // depth affects current response
                     wobble: Math.random() * Math.PI * 2,
                     wobbleSpeed: Math.random() * 0.003 + 0.001
                 });
@@ -1635,7 +1638,7 @@
                 }
             }
 
-           
+            // ── BIOLUMINESCENT PARTICLES — medium density, soft glow, short trails ──
             const bioParticles = [];
             const bioCount = 80;
 
@@ -1664,25 +1667,25 @@
                 const cy = -Math.sin(currentAngle) * currentStrength;
 
                 for(const p of bioParticles) {
-                 
+                    // current + own movement
                     p.x += p.vx + cx * p.drift + Math.sin(time * 0.003 + p.pulse) * 0.06;
                     p.y += p.vy + cy * p.drift;
                     p.pulse += p.pulseSpeed;
                     const pulseAlpha = p.alpha * (0.45 + 0.55 * Math.sin(p.pulse));
 
-                    
+                    // short trail
                     if(time % 3 === 0) {
                         p.trail.push({x: p.x, y: p.y, a: pulseAlpha});
                         if(p.trail.length > p.maxTrail) p.trail.shift();
                     }
 
-                    
+                    // wrap
                     if(p.y < -30) { p.y = H + 30; p.x = Math.random() * W; p.trail = []; }
                     if(p.y > H + 30) { p.y = -30; p.x = Math.random() * W; p.trail = []; }
                     if(p.x < -30) p.x = W + 30;
                     if(p.x > W + 30) p.x = -30;
 
-                  
+                    // draw trail — subtle fade
                     for(let t = 0; t < p.trail.length; t++) {
                         const tp = p.trail[t];
                         const ratio = t / p.trail.length;
@@ -1692,7 +1695,7 @@
                         ctx.fill();
                     }
 
-                    
+                    // glow halo
                     const glowSize = p.size * 4.5;
                     const glowGrad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowSize);
                     glowGrad.addColorStop(0, `rgba(${p.color[0]}, ${p.color[1]}, ${p.color[2]}, ${pulseAlpha * 0.3})`);
@@ -1702,7 +1705,7 @@
                     ctx.fillStyle = glowGrad;
                     ctx.fill();
 
-                    
+                    // bright core
                     ctx.beginPath();
                     ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
                     ctx.fillStyle = `rgba(${p.color[0]}, ${p.color[1]}, ${p.color[2]}, ${pulseAlpha * 0.8})`;
@@ -1710,7 +1713,7 @@
                 }
             }
 
-           
+            // ── JELLYFISH — present but ethereal, drifting with current ──
             const jellies = [];
             for(let i = 0; i < 3; i++) {
                 jellies.push({
@@ -1757,7 +1760,7 @@
                     ctx.fillStyle = bglow;
                     ctx.fill();
 
-                   
+                    // bell dome
                     ctx.beginPath();
                     ctx.ellipse(0, -bodyH * 0.2, bodyW, bodyH, 0, Math.PI, 0);
                     const bellGrad = ctx.createRadialGradient(0, -bodyH * 0.3, 0, 0, -bodyH * 0.2, bodyW);
@@ -1767,13 +1770,13 @@
                     ctx.fillStyle = bellGrad;
                     ctx.fill();
 
-                  
+                    // inner bell highlight
                     ctx.beginPath();
                     ctx.ellipse(0, -bodyH * 0.35, bodyW * 0.4, bodyH * 0.35, 0, Math.PI, 0);
                     ctx.fillStyle = `rgba(${Math.min(j.color[0]+60,255)}, ${Math.min(j.color[1]+60,255)}, ${Math.min(j.color[2]+60,255)}, ${alpha * 0.15})`;
                     ctx.fill();
 
-                   
+                    // tentacles — flowing with current
                     ctx.lineWidth = 0.8;
                     ctx.strokeStyle = `rgba(${j.color[0]}, ${j.color[1]}, ${j.color[2]}, ${alpha * 0.35})`;
                     for(let t = 0; t < j.tentacles; t++) {
@@ -1792,7 +1795,7 @@
                 }
             }
 
-           
+            // ── CAUSTICS — slow dancing light patterns on upper area ──
             function drawCaustics() {
                 ctx.save();
                 ctx.globalCompositeOperation = 'screen';
@@ -1813,7 +1816,7 @@
                 ctx.restore();
             }
 
-            
+            // ── DEEP SEA FOG — volumetric depth layers ──
             const fogLayers = [];
             for(let i = 0; i < 5; i++) {
                 fogLayers.push({
@@ -1839,7 +1842,7 @@
                 }
             }
 
-            
+            // ── BIOLUMINESCENT FLASHES — occasional deep pulses ──
             let flashes = [];
             let nextFlash = 300;
 
@@ -1875,36 +1878,130 @@
                 }
             }
 
-          
+            // ── OCEAN SURFACE — waves seen from below ──
+            // Multiple overlapping wave layers at the top of viewport
+            const waveLayers = [
+                { amp: 8,  freq: 0.004, speed: 0.0008, yBase: 0.0,  alpha: 0.12, color: [0, 180, 240] },
+                { amp: 12, freq: 0.003, speed: 0.0006, yBase: 0.01, alpha: 0.08, color: [0, 140, 210] },
+                { amp: 6,  freq: 0.006, speed: 0.001,  yBase: 0.005,alpha: 0.06, color: [0, 200, 255] },
+                { amp: 15, freq: 0.002, speed: 0.0004, yBase: 0.015,alpha: 0.10, color: [0, 120, 190] },
+                { amp: 5,  freq: 0.008, speed: 0.0012, yBase: 0.008,alpha: 0.04, color: [80, 200, 255] },
+            ];
+
+            function drawSurfaceWaves() {
+                for(const wl of waveLayers) {
+                    const baseY = wl.yBase * H;
+                    ctx.beginPath();
+                    ctx.moveTo(0, 0);
+
+                    // draw wave curve
+                    for(let x = 0; x <= W; x += 3) {
+                        const y = baseY
+                            + Math.sin(x * wl.freq + time * wl.speed * 60) * wl.amp
+                            + Math.sin(x * wl.freq * 1.8 + time * wl.speed * 40 + 1.3) * wl.amp * 0.5
+                            + Math.sin(x * wl.freq * 0.5 + time * wl.speed * 25 + 2.7) * wl.amp * 0.3;
+                        ctx.lineTo(x, y);
+                    }
+
+                    // fill from wave line down with gradient
+                    const waveBottom = baseY + wl.amp * 3 + 60;
+                    ctx.lineTo(W, waveBottom);
+                    ctx.lineTo(0, waveBottom);
+                    ctx.closePath();
+
+                    const wGrad = ctx.createLinearGradient(0, baseY - wl.amp, 0, waveBottom);
+                    wGrad.addColorStop(0, `rgba(${wl.color[0]}, ${wl.color[1]}, ${wl.color[2]}, ${wl.alpha})`);
+                    wGrad.addColorStop(0.3, `rgba(${wl.color[0]}, ${wl.color[1]}, ${wl.color[2]}, ${wl.alpha * 0.4})`);
+                    wGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                    ctx.fillStyle = wGrad;
+                    ctx.fill();
+                }
+
+                // surface light band — the bright zone right at the surface
+                const surfGrad = ctx.createLinearGradient(0, 0, 0, H * 0.08);
+                surfGrad.addColorStop(0, 'rgba(0, 160, 220, 0.06)');
+                surfGrad.addColorStop(0.5, 'rgba(0, 100, 180, 0.025)');
+                surfGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                ctx.fillStyle = surfGrad;
+                ctx.fillRect(0, 0, W, H * 0.08);
+
+                // wave crest highlights — bright spots where light hits wave peaks
+                ctx.save();
+                ctx.globalCompositeOperation = 'screen';
+                for(let i = 0; i < 20; i++) {
+                    const wx = (Math.sin(time * 0.0005 + i * 3.1) * 0.5 + 0.5) * W;
+                    const wy = Math.sin(wx * 0.003 + time * 0.0006 * 60) * 10 + H * 0.01;
+                    const wr = 30 + Math.sin(time * 0.002 + i * 2) * 10;
+                    const flicker = 0.6 + 0.4 * Math.sin(time * 0.003 + i * 1.7);
+                    const cGrad = ctx.createRadialGradient(wx, wy, 0, wx, wy, wr);
+                    cGrad.addColorStop(0, `rgba(120, 220, 255, ${0.03 * flicker})`);
+                    cGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                    ctx.beginPath();
+                    ctx.arc(wx, wy, wr, 0, Math.PI * 2);
+                    ctx.fillStyle = cGrad;
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
+
+            // ── DEEP WATER VOLUME — subtle horizontal wave bands ──
+            // Gives the feeling of being inside water, not just looking at a backdrop
+            function drawWaterVolume() {
+                ctx.save();
+                ctx.globalCompositeOperation = 'screen';
+                for(let i = 0; i < 6; i++) {
+                    const bandY = H * (0.15 + i * 0.14);
+                    const waveOff = Math.sin(time * 0.0004 + i * 1.4) * 20;
+                    const thickness = 50 + Math.sin(time * 0.0006 + i * 2.1) * 15;
+                    const alpha = 0.008 + Math.sin(time * 0.0005 + i * 0.9) * 0.003;
+
+                    // horizontal light band that slowly undulates
+                    const bGrad = ctx.createLinearGradient(0, bandY + waveOff - thickness, 0, bandY + waveOff + thickness);
+                    bGrad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+                    bGrad.addColorStop(0.4, `rgba(0, 80, 140, ${alpha})`);
+                    bGrad.addColorStop(0.5, `rgba(0, 100, 160, ${alpha * 1.3})`);
+                    bGrad.addColorStop(0.6, `rgba(0, 80, 140, ${alpha})`);
+                    bGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                    ctx.fillStyle = bGrad;
+                    ctx.fillRect(0, bandY + waveOff - thickness, W, thickness * 2);
+                }
+                ctx.restore();
+            }
+
+            // ── CURRENT oscillation — breathes slowly ──
             function updateCurrent() {
                 currentAngle = Math.PI * 0.15 + Math.sin(time * 0.0002) * 0.1;
                 currentStrength = 0.12 + Math.sin(time * 0.0003) * 0.03;
             }
 
-            
+            // ── MAIN RENDER LOOP ──
             function render() {
                 time++;
                 updateCurrent();
                 ctx.clearRect(0, 0, W, H);
 
-                
+                // deep ocean gradient — bright surface fading to abyss
                 const bgGrad = ctx.createLinearGradient(0, 0, 0, H);
-                bgGrad.addColorStop(0, '#000a14');
-                bgGrad.addColorStop(0.12, '#00060e');
+                bgGrad.addColorStop(0, '#001420');
+                bgGrad.addColorStop(0.06, '#000d18');
+                bgGrad.addColorStop(0.15, '#00080f');
                 bgGrad.addColorStop(0.4, '#000308');
                 bgGrad.addColorStop(0.7, '#010006');
                 bgGrad.addColorStop(1, '#000002');
                 ctx.fillStyle = bgGrad;
                 ctx.fillRect(0, 0, W, H);
 
-                
-                const vig = ctx.createRadialGradient(W/2, H*0.25, W*0.15, W/2, H*0.45, W*0.85);
-                vig.addColorStop(0, 'rgba(0, 15, 30, 0.08)');
-                vig.addColorStop(1, 'rgba(0, 0, 0, 0.4)');
+                // vignette — light from above, dark at edges and bottom
+                const vig = ctx.createRadialGradient(W/2, H*0.05, W*0.2, W/2, H*0.4, W*0.9);
+                vig.addColorStop(0, 'rgba(0, 20, 40, 0.05)');
+                vig.addColorStop(0.5, 'rgba(0, 5, 15, 0.2)');
+                vig.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
                 ctx.fillStyle = vig;
                 ctx.fillRect(0, 0, W, H);
 
+                drawSurfaceWaves();
                 drawGodRays();
+                drawWaterVolume();
                 drawCaustics();
                 drawFog();
                 drawPlankton();
