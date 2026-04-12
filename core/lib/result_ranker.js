@@ -247,7 +247,11 @@ function getProfileConfig(configInput = {}) {
   };
 }
 
-function extractEpisodeContext(title, defaultSeason = 1) {
+function isAnimeMeta(meta = {}) {
+  return Boolean(meta?.kitsu_id || meta?.isAnime);
+}
+
+function extractEpisodeContext(title, defaultSeason = 1, options = {}) {
   const safeTitle = normalizeText(title);
   let match = safeTitle.match(/\bS(\d{1,2})E(\d{1,3})\b/i);
   if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
@@ -257,6 +261,25 @@ function extractEpisodeContext(title, defaultSeason = 1) {
 
   match = safeTitle.match(/\bE(?:P(?:ISODE)?)?\s*0?(\d{1,3})\b/i);
   if (match) return { season: defaultSeason, episode: parseInt(match[1], 10) };
+
+  if (options?.anime) {
+    match = safeTitle.match(/\bS(?:EASON)?\s*0?(\d{1,2})\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+    match = safeTitle.match(/\b(\d{1,2})(?:ST|ND|RD|TH)\s+SEASON\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+    match = safeTitle.match(/\b(?:EP(?:ISODE)?|EPISODIO)\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: defaultSeason, episode: parseInt(match[1], 10) };
+
+    const genericPattern = /(?:^|[\s._\-\[\(])0*([1-9]\d{0,3})(?:v\d+)?(?=$|[\s._\-\]\)])/ig;
+    for (const candidate of safeTitle.matchAll(genericPattern)) {
+      const episode = parseInt(candidate[1], 10);
+      if (!Number.isInteger(episode) || episode <= 0) continue;
+      if (episode >= 1900 && episode <= 2100) continue;
+      return { season: defaultSeason, episode };
+    }
+  }
 
   return null;
 }
@@ -299,6 +322,7 @@ function resolveLangMode(meta = {}, configInput = {}) {
   if (explicit === "ita" || explicit === "eng" || explicit === "all") return explicit;
 
   if (configInput.filters?.allowEng === true || configInput.allowEng === true) return "all";
+  if (isAnimeMeta(meta)) return "all";
   if (config.profile === "dedupe" && explicit === "") return "all";
   return "ita";
 }
@@ -321,7 +345,9 @@ function getExpectedTitles(meta = {}) {
   pushValue(meta.originalName);
   pushValue(meta.alternativeTitles);
   pushValue(meta.altTitles);
+  pushValue(meta.aka_titles);
   pushValue(meta.aliases);
+  pushValue(meta.titles);
   pushValue(meta.aka);
   return [...titles];
 }
@@ -450,7 +476,8 @@ function evaluateEpisodeFit(title, meta = {}, weights) {
   const isSeries = meta?.isSeries || (Number.isFinite(season) && Number.isFinite(episode));
   const isPack = isSeasonPack(title) || REGEX_PACK.test(title);
   const context = Number.isFinite(season) && Number.isFinite(episode) ? { season, episode } : null;
-  const episodeContext = context ? extractEpisodeContext(title, context.season || 1) : null;
+  const episodeContext = context ? extractEpisodeContext(title, context.season || 1, { anime: isAnimeMeta(meta) }) : null;
+  const ignoreAnimeSeason = isAnimeMeta(meta);
   let delta = 0;
   const reasons = [];
 
@@ -462,7 +489,7 @@ function evaluateEpisodeFit(title, meta = {}, weights) {
     return { delta, reasons, isPack, exactEpisode: false };
   }
 
-  if (episodeContext && episodeContext.season === context?.season && episodeContext.episode === context?.episode) {
+  if (episodeContext && episodeContext.episode === context?.episode && (episodeContext.season === context?.season || ignoreAnimeSeason)) {
     delta += weights.exactEpisodeBoost;
     reasons.push("EXACT_EPISODE");
     return { delta, reasons, isPack, exactEpisode: true };
@@ -478,7 +505,7 @@ function evaluateEpisodeFit(title, meta = {}, weights) {
     reasons.push("PACK");
   }
 
-  if (episodeContext && context?.season && episodeContext.season !== context.season) {
+  if (episodeContext && context?.season && episodeContext.season !== context.season && !ignoreAnimeSeason) {
     delta += weights.wrongSeasonPenalty;
     reasons.push("WRONG_SEASON");
   } else if (episodeContext && context?.episode && episodeContext.episode !== context.episode) {
