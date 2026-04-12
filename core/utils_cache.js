@@ -198,26 +198,42 @@ async function hydrateLocalFromSharedCache(key, row, options = {}) {
 const Cache = {
     getCachedMagnets: async (key) => myCache.get(`magnets:${key}`) || null,
     cacheMagnets: async (key, value, ttl = 3600) => { myCache.set(`magnets:${key}`, value, ttl); },
-    getCachedStream: async (key) => {
+    getCachedStream: async (key, options = {}) => {
         const normalizedKey = String(key || '').trim();
-        const data = myCache.get(getStreamCacheStorageKey(normalizedKey));
-        if (data) {
-            registerCacheAccess('stream', true);
-            if (VERBOSE_CACHE_LOGS) logger.info(`⚡ CACHE HIT (USER): ${key}`);
-            return data;
+        const allowLocal = options?.allowLocal !== false;
+        const allowShared = options?.allowShared !== false;
+        const evaluator = typeof options?.sharedEntryEvaluator === 'function' ? options.sharedEntryEvaluator : null;
+
+        if (allowLocal) {
+            const data = myCache.get(getStreamCacheStorageKey(normalizedKey));
+            if (data) {
+                registerCacheAccess('stream', true);
+                if (VERBOSE_CACHE_LOGS) logger.info(`⚡ CACHE HIT (USER): ${key}`);
+                return data;
+            }
+            unregisterStreamCacheKey(normalizedKey);
         }
 
-        unregisterStreamCacheKey(normalizedKey);
-        if (!supportsSharedStreamCache()) {
+        if (!allowShared || !supportsSharedStreamCache()) {
             registerCacheAccess('stream', false);
             return null;
         }
 
         try {
-            const sharedRow = await dbHelper.getSharedStreamCache(normalizedKey);
+            const sharedRow = await dbHelper.getSharedStreamCache(normalizedKey, { touchHit: false });
             const hydrated = await hydrateLocalFromSharedCache(normalizedKey, sharedRow, { onlyFresh: true });
+            if (hydrated && evaluator && evaluator(sharedRow, hydrated) !== true) {
+                incrementMetric('cache.stream.sharedRejected');
+                registerCacheAccess('stream', false);
+                return null;
+            }
             registerCacheAccess('stream', !!hydrated);
-            if (hydrated) incrementMetric('cache.stream.sharedHits');
+            if (hydrated) {
+                incrementMetric('cache.stream.sharedHits');
+                if (typeof dbHelper.touchSharedStreamCacheHit === 'function') {
+                    try { await dbHelper.touchSharedStreamCacheHit(normalizedKey); } catch (_) {}
+                }
+            }
             return hydrated;
         } catch (error) {
             registerCacheAccess('stream', false);
@@ -225,11 +241,18 @@ const Cache = {
             return null;
         }
     },
-    cacheStream: async (key, value, ttl = 1800, tags = {}) => {
+    cacheStream: async (key, value, ttl = 1800, tags = {}, options = {}) => {
         const normalizedKey = String(key || '').trim();
-        writeLocalStreamCache(normalizedKey, value, ttl, tags);
+        const sharedPolicy = options?.sharedPolicy || {};
+        const localTtl = Math.max(1, Number(sharedPolicy.localTtl || ttl) || 1);
+        writeLocalStreamCache(normalizedKey, value, localTtl, tags);
 
-        if (!supportsSharedStreamCache()) return;
+        const sharedTtl = Math.max(0, Number(sharedPolicy.sharedTtl || 0) || 0);
+        if (!supportsSharedStreamCache() || sharedPolicy.allowSharedWrite === false || sharedTtl <= 0) {
+            if (supportsSharedStreamCache()) incrementMetric('cache.stream.sharedSkipped');
+            return;
+        }
+
         const encoded = encodeSharedPayload(value);
         if (!encoded) {
             incrementMetric('cache.stream.sharedSkipped');
@@ -237,8 +260,9 @@ const Cache = {
         }
 
         try {
-            const expiresAt = new Date(Date.now() + (Math.max(1, Number(ttl) || 1) * 1000));
-            const staleUntil = new Date(expiresAt.getTime() + (STREAM_STALE_GRACE_TTL * 1000));
+            const staleGraceTtl = Math.max(0, Number(sharedPolicy.staleGraceTtl || STREAM_STALE_GRACE_TTL) || STREAM_STALE_GRACE_TTL);
+            const expiresAt = new Date(Date.now() + (sharedTtl * 1000));
+            const staleUntil = new Date(expiresAt.getTime() + (staleGraceTtl * 1000));
             const persisted = await dbHelper.setSharedStreamCache({
                 cache_key: normalizedKey,
                 payload_b64: encoded.payload_b64,
@@ -246,23 +270,46 @@ const Cache = {
                 expires_at: expiresAt,
                 stale_until: staleUntil,
                 imdb_id: tags?.imdbId || null,
-                hashes: Array.isArray(tags?.hashes) ? tags.hashes : []
+                hashes: Array.isArray(tags?.hashes) ? tags.hashes : [],
+                content_date: sharedPolicy.contentDateIso || null,
+                freshness_bucket: sharedPolicy.freshnessBucket || null,
+                confidence_score: sharedPolicy.confidenceScore,
+                result_count: sharedPolicy.streamCount,
+                cached_count: sharedPolicy.cachedCount,
+                best_quality: sharedPolicy.bestQuality || null,
+                source_mix: Array.isArray(sharedPolicy.sourceMix) ? sharedPolicy.sourceMix : [],
+                policy_version: sharedPolicy.version || null
             });
             if (persisted) incrementMetric('cache.stream.sharedSet');
         } catch (error) {
             logger.warn(`[CACHE] Shared stream cache write failed | key=${normalizedKey} | error=${error.message}`);
         }
     },
-    getStaleStream: async (key) => {
+    getStaleStream: async (key, options = {}) => {
         const normalizedKey = String(key || '').trim();
-        const shadow = rawCache.get(getStreamShadowStorageKey(normalizedKey)) || null;
-        if (shadow && typeof shadow === 'object' && 'value' in shadow) return shadow.value || null;
+        const allowLocal = options?.allowLocal !== false;
+        const allowShared = options?.allowShared !== false;
+        const evaluator = typeof options?.sharedEntryEvaluator === 'function' ? options.sharedEntryEvaluator : null;
 
-        if (!supportsSharedStreamCache()) return null;
+        if (allowLocal) {
+            const shadow = rawCache.get(getStreamShadowStorageKey(normalizedKey)) || null;
+            if (shadow && typeof shadow === 'object' && 'value' in shadow) return shadow.value || null;
+        }
+
+        if (!allowShared || !supportsSharedStreamCache()) return null;
         try {
-            const sharedRow = await dbHelper.getSharedStreamCache(normalizedKey);
+            const sharedRow = await dbHelper.getSharedStreamCache(normalizedKey, { touchHit: false });
             const hydrated = await hydrateLocalFromSharedCache(normalizedKey, sharedRow, { onlyFresh: false });
-            if (hydrated) incrementMetric('cache.stream.sharedStaleHits');
+            if (hydrated && evaluator && evaluator(sharedRow, hydrated) !== true) {
+                incrementMetric('cache.stream.sharedStaleRejected');
+                return null;
+            }
+            if (hydrated) {
+                incrementMetric('cache.stream.sharedStaleHits');
+                if (typeof dbHelper.touchSharedStreamCacheHit === 'function') {
+                    try { await dbHelper.touchSharedStreamCacheHit(normalizedKey); } catch (_) {}
+                }
+            }
             return hydrated;
         } catch (_) {
             return null;
