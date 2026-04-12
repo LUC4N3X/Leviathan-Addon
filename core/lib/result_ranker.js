@@ -407,11 +407,12 @@ function shouldKeepByLanguageMode(item, meta = {}, configInput = {}) {
   const yearMatches = matchesExpectedYear(title, meta);
 
   if (langMode === "eng") {
-    if (signals.explicitIta || signals.explicitMulti) return false;
+    if (signals.explicitEng) return true;
     if (signals.explicitOther && !signals.explicitEng) return false;
     if (signals.subOnly && !signals.explicitEng) return false;
+    if (signals.explicitIta && !signals.explicitEng) return false;
+    if (signals.explicitMulti && !signals.explicitEng) return false;
 
-    if (signals.explicitEng) return true;
     if (signals.neutralScene && yearMatches) return true;
     if (normalizedMeta && normalizedTitle.includes(normalizedMeta) && yearMatches) return true;
     return !signals.explicitOther && !signals.explicitIta && !signals.explicitMulti && yearMatches;
@@ -526,15 +527,19 @@ function computeScore(item, meta = {}, configInput = {}) {
     if (signals.explicitEng) {
       score += weights.languageEng;
       reasons.push("ENG");
+      if (signals.explicitMulti) {
+        score += Math.max(0, Math.floor(Math.abs(weights.languageMultiPenaltyInEng || 0) * 0.35));
+        reasons.push("ENG_MULTI_OK");
+      }
     } else if (signals.neutralScene) {
       score += weights.languageNeutral;
       reasons.push("NEUTRAL");
     }
-    if (signals.explicitIta) {
+    if (signals.explicitIta && !signals.explicitEng) {
       score += weights.languageItaPenaltyInEng;
       reasons.push("ITA_PENALTY");
     }
-    if (signals.explicitMulti) {
+    if (signals.explicitMulti && !signals.explicitEng) {
       score += weights.languageMultiPenaltyInEng;
       reasons.push("MULTI_PENALTY");
     }

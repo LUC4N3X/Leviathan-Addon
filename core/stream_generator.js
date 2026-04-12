@@ -837,7 +837,7 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
             title: aioFormatter.formatStreamTitle({
                 title: displayTitle,
                 size: Number(sizeBytes) > 0 ? formatBytes(sizeBytes) : 'Unknown',
-                language: formatLanguageLabel(languageInfo, details.languages),
+                language: formatLanguageLabel(languageInfo, details.languages, getEffectiveLangMode(config)),
                 source: item?.source,
                 seeders,
                 infoHash: item?.hash,
@@ -883,11 +883,12 @@ function keepEnglishCandidate(title, sourceName, metaTitle) {
     const metaYearMatch = String(metaTitle || '').match(REGEX_YEAR);
     const yearMatches = !metaYearMatch || !titleYearMatch || titleYearMatch[0] === metaYearMatch[0];
 
-    if (signals.explicitIta || signals.explicitMulti) return false;
+    if (signals.explicitEng) return true;
     if (signals.explicitOther && !signals.explicitEng) return false;
     if (REGEX_SUB_ONLY.test(rawTitle) && !signals.explicitEng) return false;
+    if (signals.explicitIta && !signals.explicitEng) return false;
+    if (signals.explicitMulti && !signals.explicitEng) return false;
 
-    if (signals.explicitEng) return true;
     if (signals.neutralScene && yearMatches) return true;
     if (normalizedMeta && normalizedTitle.includes(normalizedMeta) && yearMatches) return true;
 
@@ -921,8 +922,10 @@ function getCompositeRankScore(item, meta, config) {
     if (langMode === 'eng') {
         if (diagnostics.explicitEng) score += 190000;
         else if (keepEnglishCandidate(title, source, meta?.title)) score += 90000;
-        if (diagnostics.explicitIta) score -= 220000;
-        if (diagnostics.explicitMulti) score -= 70000;
+        if (diagnostics.explicitIta && !diagnostics.explicitEng) score -= 220000;
+        else if (diagnostics.explicitIta && diagnostics.explicitEng) score -= 12000;
+        if (diagnostics.explicitMulti && !diagnostics.explicitEng) score -= 70000;
+        else if (diagnostics.explicitMulti && diagnostics.explicitEng) score += 16000;
         if (diagnostics.explicitOther && !diagnostics.explicitEng) score -= 120000;
     } else if (langMode === 'all') {
         if (diagnostics.explicitIta || langInfo.isItalian) score += 180000;

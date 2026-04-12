@@ -408,7 +408,15 @@ function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedI
     return result;
 }
 
-function formatLanguageLabel(languageInfo, fallbackLanguages = []) {
+function getPreferredLanguageMode(preferredLanguageMode = '') {
+    const mode = String(preferredLanguageMode || '').toLowerCase();
+    return (mode === 'ita' || mode === 'eng' || mode === 'all') ? mode : '';
+}
+
+function formatLanguageLabel(languageInfo, fallbackLanguages = [], preferredLanguageMode = '') {
+    const mode = getPreferredLanguageMode(preferredLanguageMode);
+    const detected = new Set(Array.isArray(languageInfo?.detectedLanguages) ? languageInfo.detectedLanguages.map((v) => String(v)) : []);
+    if (mode === 'eng' && (detected.has('English') || languageInfo?.displayLabel === '🇬🇧')) return '🇬🇧 ENG';
     if (languageInfo?.isItalian && languageInfo?.isMulti) return '🇮🇹/🌍 MULTI';
     if (languageInfo?.isItalian) return '🇮🇹 ITA';
     if (languageInfo?.isMulti) return '🌍 MULTI';

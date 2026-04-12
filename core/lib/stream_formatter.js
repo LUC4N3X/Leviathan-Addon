@@ -236,6 +236,21 @@ function uniqueBy(items, getKey) {
   return results;
 }
 
+function resolveFormatterLangMode(config = {}) {
+  const explicit = safeString(config?.filters?.language || config?.language).toLowerCase().trim();
+  if (explicit === 'eng' || explicit === 'ita' || explicit === 'all') return explicit;
+  if (explicit === 'ita-eng') return 'all';
+  if (config?.filters?.allowEng === true || config?.allowEng === true) return 'all';
+  return 'ita';
+}
+
+function getDisplayLanguageForMode(lang, config = {}) {
+  const langMode = resolveFormatterLangMode(config);
+  if (langMode === 'eng') return '🇬🇧';
+  const normalized = safeString(lang).trim();
+  return normalized || '🇬🇧';
+}
+
 function normalizeServiceTag(serviceTag) {
   const normalized = safeString(serviceTag).toUpperCase().trim();
   return normalized || DEFAULT_SERVICE_TAG;
@@ -651,6 +666,7 @@ function buildBingeGroup(quality, rawInfo, serviceTag, infoHash) {
 
 function createStyleParams(fileTitle, source, size, seeders, serviceTag, config, infoHash, isLazy, isPackItem, cacheState = 'unknown') {
   const extracted = extractStreamInfo(fileTitle, source, config);
+  const displayLang = getDisplayLanguageForMode(extracted.lang, config);
   const normalizedServiceTag = normalizeServiceTag(serviceTag);
   const normalizedCacheState = normalizeCacheState(cacheState, normalizedServiceTag);
   const cacheIcon = getCacheIcon(normalizedCacheState);
@@ -671,6 +687,8 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
 
   const baseParams = {
     ...extracted,
+    rawLang: extracted.lang,
+    lang: displayLang,
     fileTitle: safeString(fileTitle),
     source: safeString(source) || DEFAULT_SOURCE_LABEL,
     displaySource,
@@ -693,7 +711,7 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
     cacheState: normalizedCacheState,
     cacheIcon,
     isCached,
-    compactLang: compactLanguageLabel(extracted.lang),
+    compactLang: compactLanguageLabel(displayLang),
     primarySourceTag: getPrimarySourceTag(extracted.cleanTags),
     config,
   };
