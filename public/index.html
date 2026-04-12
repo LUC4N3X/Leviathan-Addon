@@ -530,7 +530,7 @@
             transition: opacity 0.3s ease;
         }
         
-        /* Quando la custom mode è attiva, nascondiamo o attenuamo la griglia */
+        /* Quando la custom mode Ã¨ attiva, nascondiamo o attenuamo la griglia */
         .skin-selector-container.hidden-by-custom {
             opacity: 0.3; pointer-events: none; filter: blur(2px);
         }
@@ -1051,15 +1051,15 @@
                     
                     <div class="service-tabs">
                         <div class="service-tab active" onclick="selectService('rd')">
-                            <span class="tab-icon">🐬</span>
+                            <span class="tab-icon">ðŸ¬</span>
                             <span class="tab-name notranslate" translate="no">Real-Debrid</span>
                         </div>
                         <div class="service-tab" onclick="selectService('tb')">
-                            <span class="tab-icon">⚓</span>
+                            <span class="tab-icon">âš“</span>
                             <span class="tab-name notranslate" translate="no">TorBox</span>
                         </div>
                         <div class="service-tab" onclick="selectService('p2p')">
-                            <span class="tab-icon">🦈</span>
+                            <span class="tab-icon">ðŸ¦ˆ</span>
                             <span class="tab-name notranslate" translate="no">P2P Mode</span>
                         </div>
                     </div>
@@ -1070,7 +1070,7 @@
                                 <i class="fas fa-key"></i> PRELEVA KEY
                             </a>
                         </div>
-                        <span class="error-msg">⚠️ Chiave mancante</span>
+                        <span class="error-msg">âš ï¸ Chiave mancante</span>
                     </div>
                     <div class="input-group">
                         <input type="text" id="tmdbKey" class="custom-input" placeholder="CHIAVE TMDB (OPZIONALE)" oninput="clearError(this); updateFluxStream()">
@@ -1087,12 +1087,12 @@
             <i class="fas fa-play-circle" style="color: var(--secondary)"></i> StreamingCommunity
             <span class="proxy-tag tag-noproxy">NO PROXY</span>
         </div>
-        <span class="control-desc">Accesso diretto ai server di StreamingCommunity. Massima priorità e velocità.</span>
+        <span class="control-desc">Accesso diretto ai server di StreamingCommunity. Massima prioritÃ  e velocitÃ .</span>
     </div>
     <label class="switch mf-switch"><input type="checkbox" id="enableVix" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
 </div>
                         <div class="sc-quality-container" id="scQualityContainer">
-                           <div class="quality-label">Seleziona Qualità Flusso</div>
+                           <div class="quality-label">Seleziona QualitÃ  Flusso</div>
                             <div class="quality-grid">
                                 <div class="q-btn active" id="btnQ_all" onclick="setSCQuality('all')">Hybrid (Tutto)</div>
                                 <div class="q-btn" id="btnQ_1080" onclick="setSCQuality('1080')">Solo 1080p</div>
@@ -1128,7 +1128,7 @@
                                     <i class="fas fa-torii-gate" style="color: #ff6600"></i> AnimeWorld
                                     <span class="proxy-tag tag-noproxy">NO PROXY</span>
                                 </div>
-                                <span class="control-desc">Il più grande database italiano di Anime. Include gestione Cookie SecurityAW.</span>
+                                <span class="control-desc">Il piÃ¹ grande database italiano di Anime. Include gestione Cookie SecurityAW.</span>
                             </div>
                             <label class="switch mf-switch"><input type="checkbox" id="enableAnimeWorld" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
                         </div>
@@ -1182,16 +1182,16 @@
                                 <span class="spectrum-desc" style="margin:0; text-align:right; font-size: 0.85rem; opacity: 0.7;">Scegli come ordinare i risultati.</span>
                             </div>
                             <div class="spectrum-grid" style="grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 15px;">
-                                <div class="spec-btn active" id="sort_balanced" onclick="setSortMode('balanced')" style="border-color: var(--secondary);">🦑 LEVIATHAN</div>
+                                <div class="spec-btn active" id="sort_balanced" onclick="setSortMode('balanced')" style="border-color: var(--secondary);">ðŸ¦‘ LEVIATHAN</div>
                                 <div class="spec-btn" id="sort_resolution" onclick="setSortMode('resolution')" style="border-color: var(--secondary);"><i class="fas fa-eye"></i> RISOLUZIONE</div>
                                 <div class="spec-btn" id="sort_size" onclick="setSortMode('size')" style="border-color: var(--secondary);"><i class="fas fa-hdd"></i> BITRATE</div>
                             </div>
                             <div id="flux-info-box" style="background: rgba(0,0,0,0.4); border-left: 3px solid var(--secondary); padding: 12px; border-radius: 0 8px 8px 0;">
                                 <div id="flux-title" style="color: #fff; font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 1rem; margin-bottom: 4px; text-transform: uppercase;">
-                                    <i class="fas fa-info-circle"></i> MODALITÀ: LEVIATHAN (Consigliata)
+                                    <i class="fas fa-info-circle"></i> MODALITÃ€: LEVIATHAN (Consigliata)
                                 </div>
                                 <div id="flux-desc" style="color: var(--text-dim); font-size: 0.9rem; line-height: 1.4;">
-                                    L'algoritmo standard di Leviathan. Cerca il bilanciamento perfetto tra qualità, popolarità del file e velocità. Ideale per l'uso quotidiano.
+                                    L'algoritmo standard di Leviathan. Cerca il bilanciamento perfetto tra qualitÃ , popolaritÃ  del file e velocitÃ . Ideale per l'uso quotidiano.
                                 </div>
                             </div>
                             <input type="hidden" id="sortMode" value="balanced">
@@ -1199,13 +1199,13 @@
                         
                         <div class="filter-unit">
                             <div class="unit-header">
-                                <div class="unit-title"><i class="fas fa-layer-group" style="color:var(--primary)"></i> UNITÀ ELABORAZIONE SEGNALE</div>
+                                <div class="unit-title"><i class="fas fa-layer-group" style="color:var(--primary)"></i> UNITÃ€ ELABORAZIONE SEGNALE</div>
                             </div>
 
                             <div class="filter-row">
                                 <div class="header-with-desc">
                                     <span class="f-label">FILTRO RISOLUZIONE (Escludi)</span>
-                                    <span class="f-desc-mini">Rimuove le qualità selezionate dai risultati.</span>
+                                    <span class="f-desc-mini">Rimuove le qualitÃ  selezionate dai risultati.</span>
                                 </div>
                                 <div class="spectrum-grid">
                                     <div class="spec-btn active" id="btn_4k" onclick="toggleSpectrum('btn_4k')">4K UHD</div>
@@ -1221,7 +1221,7 @@
                                     <span class="f-desc-mini">Filtra i file che superano la dimensione impostata.</span>
                                 </div>
                                 <div class="gate-integrated limiter-style" id="sizeWrapper">
-                                    <div class="gate-val-box" id="sizeDisplay">∞</div>
+                                    <div class="gate-val-box" id="sizeDisplay">âˆž</div>
                                     <input type="range" min="0" max="100" step="1" value="0" class="gate-slider-new" id="maxSizeSlider" oninput="updateSizeVal(this.value); updateFluxStream()">
                                 </div>
                             </div>
@@ -1235,7 +1235,7 @@
                                     <label class="switch" style="transform:scale(0.8); margin:0;"><input type="checkbox" id="gateActive" onchange="toggleGate(); updateFluxStream()"><span class="slider"></span></label>
                                 </div>
                                 <div class="gate-integrated" id="gateWrapper">
-                                    <div class="gate-val-box" id="gateDisplay">∞</div>
+                                    <div class="gate-val-box" id="gateDisplay">âˆž</div>
                                     <input type="range" min="1" max="20" value="5" class="gate-slider-new" id="gateSlider" oninput="updateGateVal(this.value); updateFluxStream()">
                                 </div>
                             </div>
@@ -1252,11 +1252,11 @@
                                 
                                 <div class="select-wrapper">
                                     <select id="langMode" class="cyber-select" onchange="updateFluxStream()">
-                                        <option value="ita" selected>🇮🇹 ITALIANO (STRICT)</option>
-                                        <option value="all">🌍 HYBRID (ITA + ENG)</option>
-                                        <option value="eng">🇬🇧 ENGLISH (NO ITA)</option>
+                                        <option value="ita" selected>ðŸ‡®ðŸ‡¹ ITALIANO (STRICT)</option>
+                                        <option value="all">ðŸŒ HYBRID (ITA + ENG)</option>
+                                        <option value="eng">ðŸ‡¬ðŸ‡§ ENGLISH (NO ITA)</option>
                                     </select>
-                                    <div class="select-arrow">▼</div>
+                                    <div class="select-arrow">â–¼</div>
                                 </div>
                             </div>
                         
@@ -1297,7 +1297,7 @@
                 <div class="aio-lock-overlay" id="aioLockOverlay" onclick="triggerAIODenied()">
                     <i class="fas fa-lock lock-icon"></i>
                     <div class="lock-msg">OVERRIDDEN BY AIO CORE</div>
-                    <div style="color:#aaa; font-size:0.9rem; margin-top:5px;">Disabilita "Compatibilità AIO" per sbloccare le skin.</div>
+                    <div style="color:#aaa; font-size:0.9rem; margin-top:5px;">Disabilita "CompatibilitÃ  AIO" per sbloccare le skin.</div>
                 </div>
 
                 <div class="spectrum-header" style="margin-bottom:20px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 15px;">
@@ -1319,60 +1319,60 @@
                     <div class="stremio-mock-row">
                         <div class="mock-poster"><i class="fas fa-image"></i></div>
                         <div class="mock-content">
-                            <div class="mock-title" id="prev-name">🐬 𝗥𝗗 🦑 ʟᴇᴠɪᴀᴛʜᴀɴ</div>
+                            <div class="mock-title" id="prev-name">ðŸ¬ ð—¥ð—— ðŸ¦‘ ÊŸá´‡á´ Éªá´€á´›Êœá´€É´</div>
 
-                            <div class="mock-info" id="prev-desc">▶️ 𝗗𝘂𝗻𝗲 𝗣𝗮𝗿𝘁 𝗧𝘄𝗼
-🔱 𝟰𝗞 • ʀᴇᴍᴜx • ᴅᴠ+ʜᴅʀ
-🗣️ 🇮🇹 ITA  |  🫧 TrueHD 7.1
-🧲 64.20 GB  |  👥 1337
-🐬 1337x | 🏷️ ʟᴇᴠɪᴀᴛʜᴀɴ</div>
+                            <div class="mock-info" id="prev-desc">â–¶ï¸ ð——ð˜‚ð—»ð—² ð—£ð—®ð—¿ð˜ ð—§ð˜„ð—¼
+ðŸ”± ðŸ°ð—ž â€¢ Ê€á´‡á´á´œx â€¢ á´…á´ +Êœá´…Ê€
+ðŸ—£ï¸ ðŸ‡®ðŸ‡¹ ITA  |  ðŸ«§ TrueHD 7.1
+ðŸ§² 64.20 GB  |  ðŸ‘¥ 1337
+ðŸ¬ 1337x | ðŸ·ï¸ ÊŸá´‡á´ Éªá´€á´›Êœá´€É´</div>
                         </div>
                     </div>
                 </div>
 
                 <div class="skin-selector-container" id="visualCoreContainer">
                     <div class="skin-btn active" id="skin_leviathan" onclick="selectSkin('leviathan')">
-                        <span class="skin-icon">🦑</span><span class="skin-name">Leviathan</span>
+                        <span class="skin-icon">ðŸ¦‘</span><span class="skin-name">Leviathan</span>
                     </div>
                     <div class="skin-btn" id="skin_lev2" onclick="selectSkin('lev2')">
-                        <span class="skin-icon">🧬</span><span class="skin-name">Architect</span>
+                        <span class="skin-icon">ðŸ§¬</span><span class="skin-name">Architect</span>
                     </div>
                     <div class="skin-btn" id="skin_fra" onclick="selectSkin('fra')">
-                        <span class="skin-icon">⚡️</span><span class="skin-name">Horizon</span>
+                        <span class="skin-icon">âš¡ï¸</span><span class="skin-name">Horizon</span>
                     </div>
                     <div class="skin-btn" id="skin_comet" onclick="selectSkin('comet')">
-                        <span class="skin-icon">☄️</span><span class="skin-name">Comet</span>
+                        <span class="skin-icon">â˜„ï¸</span><span class="skin-name">Comet</span>
                     </div>
                     <div class="skin-btn" id="skin_stremio_ita" onclick="selectSkin('stremio_ita')">
-                        <span class="skin-icon">🇮🇹</span><span class="skin-name">ITA Mod</span>
+                        <span class="skin-icon">ðŸ‡®ðŸ‡¹</span><span class="skin-name">ITA Mod</span>
                     </div>
                     <div class="skin-btn" id="skin_dav" onclick="selectSkin('dav')">
-                        <span class="skin-icon">📼</span><span class="skin-name">Datastream</span>
+                        <span class="skin-icon">ðŸ“¼</span><span class="skin-name">Datastream</span>
                     </div>
                     <div class="skin-btn" id="skin_pri" onclick="selectSkin('pri')">
-                        <span class="skin-icon">👑</span><span class="skin-name">Eclipse</span>
+                        <span class="skin-icon">ðŸ‘‘</span><span class="skin-name">Eclipse</span>
                     </div>
                     <div class="skin-btn" id="skin_and" onclick="selectSkin('and')">
-                        <span class="skin-icon">🎬</span><span class="skin-name">Matrix</span>
+                        <span class="skin-icon">ðŸŽ¬</span><span class="skin-name">Matrix</span>
                     </div>
                     <div class="skin-btn" id="skin_lad" onclick="selectSkin('lad')">
-                        <span class="skin-icon">🎟️</span><span class="skin-name">Compact</span>
+                        <span class="skin-icon">ðŸŽŸï¸</span><span class="skin-name">Compact</span>
                     </div>
                      <div class="skin-btn" id="skin_torrentio" onclick="selectSkin('torrentio')">
-                        <span class="skin-icon">📜</span><span class="skin-name">Torrentio</span>
+                        <span class="skin-icon">ðŸ“œ</span><span class="skin-name">Torrentio</span>
                     </div>
                     <div class="skin-btn" id="skin_vertical" onclick="selectSkin('vertical')">
-                        <span class="skin-icon">📑</span><span class="skin-name">Vertical</span>
+                        <span class="skin-icon">ðŸ“‘</span><span class="skin-name">Vertical</span>
                     </div>
                     
                     <div class="skin-btn" id="skin_android" onclick="selectSkin('android')">
-                        <span class="skin-icon">📺</span><span class="skin-name">Android TV</span>
+                        <span class="skin-icon">ðŸ“º</span><span class="skin-name">Android TV</span>
                     </div>
                      <div class="skin-btn" id="skin_picture" onclick="selectSkin('picture')">
-                        <span class="skin-icon">🖼️</span><span class="skin-name">Picture</span>
+                        <span class="skin-icon">ðŸ–¼ï¸</span><span class="skin-name">Picture</span>
                     </div>
                     <div class="skin-btn" id="skin_complex" onclick="selectSkin('complex')">
-                        <span class="skin-icon">🔲</span><span class="skin-name">Template</span>
+                        <span class="skin-icon">ðŸ”²</span><span class="skin-name">Template</span>
                     </div>
                 </div>
 
@@ -1463,15 +1463,15 @@
             <div id="faqList">
                 <div class="faq-item" onclick="toggleFaq(this)">
                     <div class="faq-q">Come funziona? <i class="fas fa-chevron-down"></i></div>
-                    <div class="faq-a"><span class="notranslate" translate="no">Leviathan</span> scansiona le profondità del web per trovare Torrent (tramite Debrid) e flussi <span class="notranslate" translate="no">StreamingCommunity</span> ad alta velocità.</div>
+                    <div class="faq-a"><span class="notranslate" translate="no">Leviathan</span> scansiona le profonditÃ  del web per trovare Torrent (tramite Debrid) e flussi <span class="notranslate" translate="no">StreamingCommunity</span> ad alta velocitÃ .</div>
                 </div>
                 <div class="faq-item" onclick="toggleFaq(this)">
                     <div class="faq-q">MediaFlow & GuardaHD/GS <i class="fas fa-chevron-down"></i></div>
                     <div class="faq-a">I servizi come GuardaHD e GuardaSerie richiedono spesso un Proxy (MediaFlow) per funzionare correttamente su tutti i dispositivi.</div>
                 </div>
                 <div class="faq-item" onclick="toggleFaq(this)">
-                    <div class="faq-q">Cos'è il Cache Builder? <i class="fas fa-chevron-down"></i></div>
-                    <div class="faq-a">Se attivato, Leviathan mostrerà anche i Torrent che NON sono ancora scaricati sui server Debrid. Cliccandoli, avvierai il download per te e per gli altri utenti.</div>
+                    <div class="faq-q">Cos'Ã¨ il Cache Builder? <i class="fas fa-chevron-down"></i></div>
+                    <div class="faq-a">Se attivato, Leviathan mostrerÃ  anche i Torrent che NON sono ancora scaricati sui server Debrid. Cliccandoli, avvierai il download per te e per gli altri utenti.</div>
                 </div>
             </div>
             <div class="modal-btns" style="margin-top:20px;">
@@ -1572,8 +1572,8 @@
         }
 
         function toggleP2PStyle() {
-             // Funzione non più necessaria nel formato box separato,
-             // ma mantenuta vuota per compatibilità se richiamata.
+             // Funzione non piÃ¹ necessaria nel formato box separato,
+             // ma mantenuta vuota per compatibilitÃ  se richiamata.
         }
 
         // --- SKINS LOGIC (PREVIEW) ---
@@ -1582,17 +1582,17 @@
             text = String(text);
             const maps = {
                 'bold': {
-                    nums: {'0':'𝟬','1':'𝟭','2':'𝟮','3':'𝟯','4':'𝟰','5':'𝟱','6':'𝟲','7':'𝟳','8':'𝟴','9':'𝟵'},
-                    chars: {'A':'𝗔','B':'𝗕','C':'𝗖','D':'𝗗','E':'𝗘','F':'𝗙','G':'𝗚','H':'𝗛','I':'𝗜','J':'𝗝','K':'𝗞','L':'𝗟','M':'𝗠','N':'𝗡','O':'𝗢','P':'𝗣','Q':'𝗤','R':'𝗥','S':'𝗦','T':'𝗧','U':'𝗨','V':'𝗩','W':'𝗪','X':'𝗫','Y':'𝗬','Z':'𝗭','a':'𝗮','b':'𝗯','c':'𝗰','d':'𝗱','e':'𝗲','f':'𝗳','g':'𝗴','h':'𝗵','i':'𝗶','j':'𝗷','k':'𝗸','l':'𝗹','m':'𝗺','n':'𝗻','o':'𝗼','p':'𝗽','q':'𝗾','r':'𝗿','s':'𝘀','t':'𝘁','u':'𝘂','v':'𝘃','w':'ᴡ','x':'𝘅','y':'𝘆','z':'𝘇'}
+                    nums: {'0':'ðŸ¬','1':'ðŸ­','2':'ðŸ®','3':'ðŸ¯','4':'ðŸ°','5':'ðŸ±','6':'ðŸ²','7':'ðŸ³','8':'ðŸ´','9':'ðŸµ'},
+                    chars: {'A':'ð—”','B':'ð—•','C':'ð—–','D':'ð——','E':'ð—˜','F':'ð—™','G':'ð—š','H':'ð—›','I':'ð—œ','J':'ð—','K':'ð—ž','L':'ð—Ÿ','M':'ð— ','N':'ð—¡','O':'ð—¢','P':'ð—£','Q':'ð—¤','R':'ð—¥','S':'ð—¦','T':'ð—§','U':'ð—¨','V':'ð—©','W':'ð—ª','X':'ð—«','Y':'ð—¬','Z':'ð—­','a':'ð—®','b':'ð—¯','c':'ð—°','d':'ð—±','e':'ð—²','f':'ð—³','g':'ð—´','h':'ð—µ','i':'ð—¶','j':'ð—·','k':'ð—¸','l':'ð—¹','m':'ð—º','n':'ð—»','o':'ð—¼','p':'ð—½','q':'ð—¾','r':'ð—¿','s':'ð˜€','t':'ð˜','u':'ð˜‚','v':'ð˜ƒ','w':'á´¡','x':'ð˜…','y':'ð˜†','z':'ð˜‡'}
                 },
                 'spaced': {
                     // Mappa speciale per testo spaziato
                     nums: {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9'},
-                    chars: {'A':'𝗔','B':'𝗕','C':'𝗖','D':'𝗗','E':'𝗘','F':'𝗙','G':'𝗚','H':'𝗛','I':'𝗜','J':'𝗝','K':'𝗞','L':'𝗟','M':'𝗠','N':'𝗡','O':'𝗢','P':'𝗣','Q':'𝗤','R':'𝗥','S':'𝗦','T':'𝗧','U':'𝗨','V':'𝗩','W':'𝗪','X':'𝗫','Y':'𝗬','Z':'𝗭'}
+                    chars: {'A':'ð—”','B':'ð—•','C':'ð—–','D':'ð——','E':'ð—˜','F':'ð—™','G':'ð—š','H':'ð—›','I':'ð—œ','J':'ð—','K':'ð—ž','L':'ð—Ÿ','M':'ð— ','N':'ð—¡','O':'ð—¢','P':'ð—£','Q':'ð—¤','R':'ð—¥','S':'ð—¦','T':'ð—§','U':'ð—¨','V':'ð—©','W':'ð—ª','X':'ð—«','Y':'ð—¬','Z':'ð—­'}
                 },
                 'small': {
                     nums: {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9'},
-                    chars: {'A':'ᴀ','B':'ʙ','C':'ᴄ','D':'ᴅ','E':'ᴇ','F':'ꜰ','G':'ɢ','H':'ʜ','I':'ɪ','J':'ᴊ','K':'ᴋ','L':'ʟ','M':'ᴍ','N':'ɴ','O':'ᴏ','P':'ᴘ','Q':'ǫ','R':'ʀ','S':'ꜱ','T':'ᴛ','U':'ᴜ','V':'ᴠ','W':'ᴡ','X':'x','Y':'ʏ','Z':'ᴢ','a':'ᴀ','b':'ʙ','c':'ᴄ','d':'ᴅ','e':'ᴇ','f':'ꜰ','g':'ɢ','h':'ʜ','i':'ɪ','j':'ᴊ','k':'ᴋ','l':'ʟ','m':'ᴍ','n':'ɴ','o':'ᴏ','p':'ᴘ','q':'ǫ','r':'ʀ','s':'ꜱ','t':'ᴛ','u':'ᴜ','v':'ᴠ','w':'ᴡ','x':'x','y':'ʏ','z':'ᴢ'}
+                    chars: {'A':'á´€','B':'Ê™','C':'á´„','D':'á´…','E':'á´‡','F':'êœ°','G':'É¢','H':'Êœ','I':'Éª','J':'á´Š','K':'á´‹','L':'ÊŸ','M':'á´','N':'É´','O':'á´','P':'á´˜','Q':'Ç«','R':'Ê€','S':'êœ±','T':'á´›','U':'á´œ','V':'á´ ','W':'á´¡','X':'x','Y':'Ê','Z':'á´¢','a':'á´€','b':'Ê™','c':'á´„','d':'á´…','e':'á´‡','f':'êœ°','g':'É¢','h':'Êœ','i':'Éª','j':'á´Š','k':'á´‹','l':'ÊŸ','m':'á´','n':'É´','o':'á´','p':'á´˜','q':'Ç«','r':'Ê€','s':'êœ±','t':'á´›','u':'á´œ','v':'á´ ','w':'á´¡','x':'x','y':'Ê','z':'á´¢'}
                 }
             };
             if (type === 'spaced') {
@@ -1698,30 +1698,30 @@
                 
                 // Array tags puliti 
                 cleanTags: ["Remux", "DV+HDR"], 
-                videoTags: ["💎 REMUX", "👁️ DV+HDR"], 
+                videoTags: ["ðŸ’Ž REMUX", "ðŸ‘ï¸ DV+HDR"], 
                 
                 // Audio e Lingua
-                lang: "🇮🇹 ITA",
+                lang: "ðŸ‡®ðŸ‡¹ ITA",
                 audioTag: "TrueHD",
                 audioChannels: "7.1", 
-                audioInfo: "TrueHD ┃ 7.1", 
+                audioInfo: "TrueHD â”ƒ 7.1", 
                 
                 // Info File
                 sizeString: "64.20 GB",
                 seeders: 1337,
-                seedersStr: "👥 1337",
+                seedersStr: "ðŸ‘¥ 1337",
                 
                 // Service & Source
                 serviceTag: currentService === 'p2p' ? "P2P" : currentService.toUpperCase(), 
                 displaySource: "1337x",
                 sourceLine: "", 
-                serviceIconTitle: "⚡"
+                serviceIconTitle: "âš¡"
             };
 
             // Logica icone dinamiche (Simula formatStreamSelector)
-            if (p.serviceTag === "RD") { p.serviceIconTitle = "🐋"; }
-            else if (p.serviceTag === "TB") { p.serviceIconTitle = "⚓"; }
-            else if (p.serviceTag === "P2P") { p.serviceIconTitle = "🦈"; }
+            if (p.serviceTag === "RD") { p.serviceIconTitle = "ðŸ‹"; }
+            else if (p.serviceTag === "TB") { p.serviceIconTitle = "âš“"; }
+            else if (p.serviceTag === "P2P") { p.serviceIconTitle = "ðŸ¦ˆ"; }
             
             p.sourceLine = `${p.serviceIconTitle} [${p.serviceTag}] ${p.displaySource}`;
 
@@ -1730,22 +1730,22 @@
             if (skin === 'leviathan') {
                 // LOGICA AGGIORNATA AL NUOVO FORMATTER (Con Delfini, Tridenti e Bolle)
 
-                const titleIcon = "▶️";
-                const techIcon = "🔱"; // Tridente
+                const titleIcon = "â–¶ï¸";
+                const techIcon = "ðŸ”±"; // Tridente
 
                 // 1. Calcolo Icona Servizio (Logica "Animali")
-                let serviceIcon = "🦈"; // Default P2P (Squalo)
-                if (p.serviceTag === "RD") serviceIcon = "🐬";      // RD = Delfino
-                else if (p.serviceTag === "TB") serviceIcon = "⚓"; // TB = Ancora
+                let serviceIcon = "ðŸ¦ˆ"; // Default P2P (Squalo)
+                if (p.serviceTag === "RD") serviceIcon = "ðŸ¬";      // RD = Delfino
+                else if (p.serviceTag === "TB") serviceIcon = "âš“"; // TB = Ancora
                 // 2. Icona Stato (Animale se cached, Clessidra se P2P non cached/download)
                 // Nell'anteprima simuliamo che i debrid siano cached
                 const isCached = ["RD", "TB"].includes(p.serviceTag);
-                const statusIcon = isCached ? serviceIcon : "⏳";
+                const statusIcon = isCached ? serviceIcon : "â³";
 
-                // 3. Header: [Icona] [SERVICE_BOLD] 🦑 ʟᴇᴠɪᴀᴛʜᴀɴ_SMALL
+                // 3. Header: [Icona] [SERVICE_BOLD] ðŸ¦‘ ÊŸá´‡á´ Éªá´€á´›Êœá´€É´_SMALL
                 const brandName = toStylized("LEVIATHAN", "small");
                 const serviceStyled = toStylized(p.serviceTag, "bold");
-                name = `${statusIcon} ${serviceStyled} 🦑 ${brandName}`;
+                name = `${statusIcon} ${serviceStyled} ðŸ¦‘ ${brandName}`;
 
                 const lines = [];
 
@@ -1755,23 +1755,23 @@
                 // RIGA 2: Tech (Tridente + Info Small)
                 let techSpecs = [p.quality, ...p.cleanTags].filter(Boolean);
                 techSpecs = [...new Set(techSpecs)]; 
-                let techLine = techSpecs.map(t => toStylized(t, 'small')).join(" • ");
+                let techLine = techSpecs.map(t => toStylized(t, 'small')).join(" â€¢ ");
                 if (techLine) lines.push(`${techIcon} ${techLine}`);
 
-                // RIGA 3: Lingua/Audio (Bolle 🫧)
+                // RIGA 3: Lingua/Audio (Bolle ðŸ«§)
                 let cleanAudio = p.audioTag;
                 let audioPart = [cleanAudio, p.audioChannels].filter(Boolean).join(" ");
-                lines.push(`🗣️ ${p.lang}  |  🫧 ${audioPart}`);
+                lines.push(`ðŸ—£ï¸ ${p.lang}  |  ðŸ«§ ${audioPart}`);
 
                 // RIGA 4: Info File
-                let fileInfo = `🧲 ${p.sizeString}`;
+                let fileInfo = `ðŸ§² ${p.sizeString}`;
                 if (p.seedersStr) fileInfo += `  |  ${p.seedersStr}`;
                 lines.push(fileInfo);
 
                 // RIGA 5: Sorgente e Gruppo
                 let sourceRow = `${serviceIcon} ${p.displaySource}`;
                 const styledGroup = toStylized("LEVIATHAN", 'small'); // Gruppo simulato
-                sourceRow += ` | 🏷️ ${styledGroup}`;
+                sourceRow += ` | ðŸ·ï¸ ${styledGroup}`;
                 lines.push(sourceRow);
 
                 desc = lines.join("\n");
@@ -1779,88 +1779,88 @@
             
             else if (skin === 'complex') {
                 // NUOVO COMPLEX (TEMPLATE STYLE)
-                name = `🔲 4K │ ⛁ 64.20 GB`;
-                desc = `☰ 🇮🇹 ITA · TrueHD · 7.1\n☲ 4K · HEVC · Remux · DV+HDR\n☵ Leviathan · LEVIATHAN · 1337x · [${p.serviceTag}]\n☶ ${p.cleanName}`;
+                name = `ðŸ”² 4K â”‚ â› 64.20 GB`;
+                desc = `â˜° ðŸ‡®ðŸ‡¹ ITA Â· TrueHD Â· 7.1\nâ˜² 4K Â· HEVC Â· Remux Â· DV+HDR\nâ˜µ Leviathan Â· LEVIATHAN Â· 1337x Â· [${p.serviceTag}]\nâ˜¶ ${p.cleanName}`;
             }
 
             else if (skin === 'android') {
                 // NUOVO ANDROID TV
                 name = `4K | DV | ${p.serviceTag}`;
-                desc = `🎞️ HEVC\n🎧 TrueHD 7.1\n⚙️ 1337x\n🇮🇹 ITA\n${p.fileTitle}`;
+                desc = `ðŸŽžï¸ HEVC\nðŸŽ§ TrueHD 7.1\nâš™ï¸ 1337x\nðŸ‡®ðŸ‡¹ ITA\n${p.fileTitle}`;
             }
 
             else if (skin === 'picture') {
                 // NUOVO PICTURE (JURASSIC STYLE)
-                name = `✅ UHD HDR ATMOS 4K`;
-                desc = `🎬 ${p.cleanName}\n✨ 4K 🔆 DV | HDR\n🎧 TrueHD 🔊 7.1\n💿 Blu-ray Remux\n📦 64.20 GB\n🏷️ Blu-ray Remux T1 (LEVIATHAN)\n⚡ Comet ${p.serviceTag}`;
+                name = `âœ… UHD HDR ATMOS 4K`;
+                desc = `ðŸŽ¬ ${p.cleanName}\nâœ¨ 4K ðŸ”† DV | HDR\nðŸŽ§ TrueHD ðŸ”Š 7.1\nðŸ’¿ Blu-ray Remux\nðŸ“¦ 64.20 GB\nðŸ·ï¸ Blu-ray Remux T1 (LEVIATHAN)\nâš¡ Comet ${p.serviceTag}`;
             }
 
 			else if (skin === 'lev2') {
                 // styleLeviathanTwo
                 const levText = toStylized("LEVIATHAN", "small");
-                name = `🦑 ${levText} ${p.serviceIconTitle} │ ${p.quality}`;
+                name = `ðŸ¦‘ ${levText} ${p.serviceIconTitle} â”‚ ${p.quality}`;
                 
                 const lines = [];
-                lines.push(`🎬 ${toStylized(p.cleanName, "bold")}`);
-                lines.push(`📦 ${p.sizeString} │ ${p.codec} ${p.cleanTags.join(" ")}`);
-                lines.push(`🔊 ${p.audioTag} ${p.audioChannels} • ${p.lang}`);
-                lines.push(`🔗 ${p.sourceLine}`);
+                lines.push(`ðŸŽ¬ ${toStylized(p.cleanName, "bold")}`);
+                lines.push(`ðŸ“¦ ${p.sizeString} â”‚ ${p.codec} ${p.cleanTags.join(" ")}`);
+                lines.push(`ðŸ”Š ${p.audioTag} ${p.audioChannels} â€¢ ${p.lang}`);
+                lines.push(`ðŸ”— ${p.sourceLine}`);
                 desc = lines.join("\n");
             }
             else if (skin === 'fra') {
-                name = `⚡️ Leviathan 4K`;
-                desc = `📄 ❯ ${p.cleanName}\n🌎 ❯ 🇮🇹 ITA • TrueHD\n✨ ❯ ${p.serviceTag} • ${p.displaySource}\n🔥 ❯ 4K • ${p.cleanTags.join(' • ')}\n💾 ❯ ${p.sizeString} / 👥 ❯ 1337x`;
+                name = `âš¡ï¸ Leviathan 4K`;
+                desc = `ðŸ“„ â¯ ${p.cleanName}\nðŸŒŽ â¯ ðŸ‡®ðŸ‡¹ ITA â€¢ TrueHD\nâœ¨ â¯ ${p.serviceTag} â€¢ ${p.displaySource}\nðŸ”¥ â¯ 4K â€¢ ${p.cleanTags.join(' â€¢ ')}\nðŸ’¾ â¯ ${p.sizeString} / ðŸ‘¥ â¯ 1337x`;
             }
             else if (skin === 'comet') {
-                name = `[${p.serviceTag} ⚡]\nLeviathan\n4K`;
-                desc = `📄 ${p.cleanName}\n📹 HEVC • ${p.cleanTags.join(' • ')} | TrueHD\n⭐ ${p.displaySource}\n💾 ${p.sizeString} 👥 1337\n🌍 ITA`;
+                name = `[${p.serviceTag} âš¡]\nLeviathan\n4K`;
+                desc = `ðŸ“„ ${p.cleanName}\nðŸ“¹ HEVC â€¢ ${p.cleanTags.join(' â€¢ ')} | TrueHD\nâ­ ${p.displaySource}\nðŸ’¾ ${p.sizeString} ðŸ‘¥ 1337\nðŸŒ ITA`;
             }
             else if (skin === 'stremio_ita') {
-                name = `⚡️ Leviathan 4K`;
-                desc = `📄 ❯ ${p.cleanName}\n🌎 ❯ ita • eng\n✨ ❯ ${p.serviceTag} • ${p.displaySource}\n🔥 ❯ 4K • HEVC • ${p.cleanTags.join(' • ')}\n💾 ❯ ${p.sizeString} / 👥 ❯ 1337x\n🔉 ❯ TrueHD • 7.1`;
+                name = `âš¡ï¸ Leviathan 4K`;
+                desc = `ðŸ“„ â¯ ${p.cleanName}\nðŸŒŽ â¯ ita â€¢ eng\nâœ¨ â¯ ${p.serviceTag} â€¢ ${p.displaySource}\nðŸ”¥ â¯ 4K â€¢ HEVC â€¢ ${p.cleanTags.join(' â€¢ ')}\nðŸ’¾ â¯ ${p.sizeString} / ðŸ‘¥ â¯ 1337x\nðŸ”‰ â¯ TrueHD â€¢ 7.1`;
             }
             else if (skin === 'dav') {
-                name = `🎥 4K UHD HEVC`;
-                desc = `📺 ${p.cleanName}\n🎧 TrueHD 7.1 | 🎞️ HEVC\n🗣️ ITA | 📦 ${p.sizeString}\n⏱️ 1337 Seeds | 🏷️ ${p.displaySource}\n${p.serviceIconTitle} Leviathan 📡 ${p.serviceTag}\n📂 ${p.fileTitle}`;
+                name = `ðŸŽ¥ 4K UHD HEVC`;
+                desc = `ðŸ“º ${p.cleanName}\nðŸŽ§ TrueHD 7.1 | ðŸŽžï¸ HEVC\nðŸ—£ï¸ ITA | ðŸ“¦ ${p.sizeString}\nâ±ï¸ 1337 Seeds | ðŸ·ï¸ ${p.displaySource}\n${p.serviceIconTitle} Leviathan ðŸ“¡ ${p.serviceTag}\nðŸ“‚ ${p.fileTitle}`;
             }
             else if (skin === 'and') {
-                name = `🎬 ${p.cleanName}`;
-                desc = `4K ⚡\n─ ─ ─ ─ ─ ─ ─ ─ ─ ─\nLingue: 🇮🇹\nSpecifiche: 4K | 📺 ${p.cleanTags.join(' ')} | 🔊 TrueHD\n─ ─ ─ ─ ─ ─ ─ ─ ─ ─\n📂 ${p.sizeString} | ☁️ ${p.serviceTag} | 🛰️ Leviathan`;
+                name = `ðŸŽ¬ ${p.cleanName}`;
+                desc = `4K âš¡\nâ”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€\nLingue: ðŸ‡®ðŸ‡¹\nSpecifiche: 4K | ðŸ“º ${p.cleanTags.join(' ')} | ðŸ”Š TrueHD\nâ”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€\nðŸ“‚ ${p.sizeString} | â˜ï¸ ${p.serviceTag} | ðŸ›°ï¸ Leviathan`;
             }
             else if (skin === 'lad') {
-                name = `🖥️ 4K ${p.serviceTag}`;
-                desc = `🎟️ ${p.cleanName}\n📜 Movie\n🎥 4K 🎞️ HEVC 🎧 TrueHD\n📦 ${p.sizeString} • 🔗 Leviathan\n🌐 🇮🇹`;
+                name = `ðŸ–¥ï¸ 4K ${p.serviceTag}`;
+                desc = `ðŸŽŸï¸ ${p.cleanName}\nðŸ“œ Movie\nðŸŽ¥ 4K ðŸŽžï¸ HEVC ðŸŽ§ TrueHD\nðŸ“¦ ${p.sizeString} â€¢ ðŸ”— Leviathan\nðŸŒ ðŸ‡®ðŸ‡¹`;
             }
             else if (skin === 'pri') {
-                name = `[${p.serviceTag}]⚡️☁️\n4K🔥UHD\n[Leviathan]`;
-                desc = `🎬 ${p.cleanName}\n${p.cleanTags.join(' ')}\n🎧 TrueHD | 🔊 7.1 | 🗣️ ITA\n📁 ${p.sizeString} | 🏷️ ${p.displaySource}\n📄 ▶️ ${p.fileTitle} ◀️`;
+                name = `[${p.serviceTag}]âš¡ï¸â˜ï¸\n4KðŸ”¥UHD\n[Leviathan]`;
+                desc = `ðŸŽ¬ ${p.cleanName}\n${p.cleanTags.join(' ')}\nðŸŽ§ TrueHD | ðŸ”Š 7.1 | ðŸ—£ï¸ ITA\nðŸ“ ${p.sizeString} | ðŸ·ï¸ ${p.displaySource}\nðŸ“„ â–¶ï¸ ${p.fileTitle} â—€ï¸`;
             }
              else if (skin === 'torrentio') {
                 name = `[${p.serviceTag}]\n${p.quality}`;
                 const lines = [];
-                lines.push(`📄 ${p.fileTitle}`);
-                lines.push(`📦 ${p.sizeString} 👤 ${p.seeders}`);
-                lines.push(`🔍 ${p.displaySource}`);
+                lines.push(`ðŸ“„ ${p.fileTitle}`);
+                lines.push(`ðŸ“¦ ${p.sizeString} ðŸ‘¤ ${p.seeders}`);
+                lines.push(`ðŸ” ${p.displaySource}`);
                 
                 // Mocking clean language logic like formatter.js
                 let cleanLang = p.lang.replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "").trim(); 
                 if (!cleanLang.replace(/[^a-zA-Z]/g, "")) cleanLang = p.lang;
-                lines.push(`🔊 ${cleanLang}`);
+                lines.push(`ðŸ”Š ${cleanLang}`);
                 
                 desc = lines.join("\n");
             }
             else if (skin === 'vertical') {
                 const isCached = ["RD", "TB"].includes(p.serviceTag);
-                const cacheIcon = isCached ? "⚡" : "☁️";
-                name = `🦑 Leviathan ${p.quality} ${cacheIcon} Cached`;
+                const cacheIcon = isCached ? "âš¡" : "â˜ï¸";
+                name = `ðŸ¦‘ Leviathan ${p.quality} ${cacheIcon} Cached`;
                 const lines = [];
-                lines.push(`🍿 ${p.cleanName}`);
-                const videoInfo = p.cleanTags.length > 0 ? `📼 WEB-DL • ${p.cleanTags[0]}` : `📼 WEB-DL`;
+                lines.push(`ðŸ¿ ${p.cleanName}`);
+                const videoInfo = p.cleanTags.length > 0 ? `ðŸ“¼ WEB-DL â€¢ ${p.cleanTags[0]}` : `ðŸ“¼ WEB-DL`;
                 lines.push(videoInfo);
-                lines.push(`⚙️ ${p.codec}`);
-                lines.push(`🔊 ${p.audioTag} (${p.audioChannels})`);
-                lines.push(`💬 ${p.lang}`);
-                lines.push(`🧲 ${p.sizeString}`);
+                lines.push(`âš™ï¸ ${p.codec}`);
+                lines.push(`ðŸ”Š ${p.audioTag} (${p.audioChannels})`);
+                lines.push(`ðŸ’¬ ${p.lang}`);
+                lines.push(`ðŸ§² ${p.sizeString}`);
                 desc = lines.join("\n");
             }
             else if (skin === 'custom') {
@@ -1909,9 +1909,9 @@
         function setSortMode(mode) {
             document.getElementById('sortMode').value = mode;
             const infoData = {
-                'balanced': { title: "MODALITÀ: LEVIATHAN (Consigliata)", desc: "L'algoritmo standard di Leviathan. Cerca il bilanciamento perfetto tra qualità, popolarità del file e velocità. Ideale per l'uso quotidiano." },
-                'resolution': { title: "MODALITÀ: PRIORITÀ RISOLUZIONE", desc: "Gerarchia visiva rigida. I risultati 4K appariranno sempre per primi, seguiti dai 1080p e infine 720p, indipendentemente dalla grandezza del file." },
-                'size': { title: "MODALITÀ: PRIORITÀ BITRATE (PESO)", desc: "Ordina per grandezza del file (dal più grande al più piccolo). Ideale per chi vuole il massimo bitrate possibile e ha una connessione molto veloce." }
+                'balanced': { title: "MODALITÃ€: LEVIATHAN (Consigliata)", desc: "L'algoritmo standard di Leviathan. Cerca il bilanciamento perfetto tra qualitÃ , popolaritÃ  del file e velocitÃ . Ideale per l'uso quotidiano." },
+                'resolution': { title: "MODALITÃ€: PRIORITÃ€ RISOLUZIONE", desc: "Gerarchia visiva rigida. I risultati 4K appariranno sempre per primi, seguiti dai 1080p e infine 720p, indipendentemente dalla grandezza del file." },
+                'size': { title: "MODALITÃ€: PRIORITÃ€ BITRATE (PESO)", desc: "Ordina per grandezza del file (dal piÃ¹ grande al piÃ¹ piccolo). Ideale per chi vuole il massimo bitrate possibile e ha una connessione molto veloce." }
             };
             ['balanced', 'resolution', 'size'].forEach(m => {
                 const btn = document.getElementById('sort_' + m);
@@ -1986,7 +1986,7 @@
                 wrap.classList.add('active'); display.innerText = slider.value; 
                 showToast("SIGNAL GATE ATTIVO", "warning");
             } 
-            else { wrap.classList.remove('active'); display.innerText = "∞"; }
+            else { wrap.classList.remove('active'); display.innerText = "âˆž"; }
             updateLinkModalContent();
         }
 
@@ -1994,7 +1994,7 @@
         
         function updateSizeVal(val) { 
             const display = document.getElementById('sizeDisplay');
-            display.innerText = (val == 0) ? "∞" : val;
+            display.innerText = (val == 0) ? "âˆž" : val;
         }
 
         function toggleAuxCard(cardId) {
@@ -2127,7 +2127,7 @@
                 apiInput.classList.remove('input-error');
                 apiLink.style.pointerEvents = 'none';
                 apiLink.style.opacity = '0.5';
-                showToast("MODALITÀ P2P ATTIVA: IP VISIBILE", "warning");
+                showToast("MODALITÃ€ P2P ATTIVA: IP VISIBILE", "warning");
             }
             
             updatePreview(document.getElementById('selectedSkin').value);
@@ -2239,11 +2239,11 @@
                 else if (c.filters.scQuality === '720') scText += ' (720p)';
                 else scText += ' (Hybrid)';
             }
-            let p2pText = c.filters.enableP2P ? 'ATTIVO (⚠️)' : 'DISATTIVATO';
-            let ghdText = c.filters.enableGhd ? 'ATTIVO 🦁' : 'NO';
-            let gsText = c.filters.enableGs ? 'ATTIVO 🛡️' : 'NO';
-            let awText = c.filters.enableAnimeWorld ? 'ATTIVO ⛩️' : 'NO'; // AGGIUNTO
-            let gfText = c.filters.enableGf ? 'ATTIVO 🎥' : 'NO'; // AGGIUNTO GUARDAFLIX
+            let p2pText = c.filters.enableP2P ? 'ATTIVO (âš ï¸)' : 'DISATTIVATO';
+            let ghdText = c.filters.enableGhd ? 'ATTIVO ðŸ¦' : 'NO';
+            let gsText = c.filters.enableGs ? 'ATTIVO ðŸ›¡ï¸' : 'NO';
+            let awText = c.filters.enableAnimeWorld ? 'ATTIVO â›©ï¸' : 'NO'; // AGGIUNTO
+            let gfText = c.filters.enableGf ? 'ATTIVO ðŸŽ¥' : 'NO'; // AGGIUNTO GUARDAFLIX
             let exclText = [];
             if(c.filters.no4k) exclText.push("4K");
             if(c.filters.no1080) exclText.push("1080p");
@@ -2255,15 +2255,15 @@
             let sortText = "LEVIATHAN (Balanced)";
             if(c.sort === 'resolution') sortText = "RISOLUZIONE (4K/FHD)";
             if(c.sort === 'size') sortText = "BITRATE (Peso)";
-            let trailerText = c.filters.enableTrailers ? 'ATTIVO 🎬' : 'NO';
+            let trailerText = c.filters.enableTrailers ? 'ATTIVO ðŸŽ¬' : 'NO';
             let skinText = c.formatter.toUpperCase();
             
-            let langText = "SOLO ITA 🇮🇹";
-            if(c.filters.language === 'all') langText = "HYBRID (ITA+ENG) 🌍";
-            if(c.filters.language === 'eng') langText = "SOLO ENG (NO ITA) 🇬🇧";
+            let langText = "SOLO ITA ðŸ‡®ðŸ‡¹";
+            if(c.filters.language === 'all') langText = "HYBRID (ITA+ENG) ðŸŒ";
+            if(c.filters.language === 'eng') langText = "SOLO ENG / MULTI CON ENG ðŸ‡¬ðŸ‡§";
             
             let serviceDisplay = c.service ? c.service.toUpperCase() : "NESSUNO (P2P/WEB)";
-            if (c.filters.enableP2P && !c.service) serviceDisplay = "P2P MODE 🦈";
+            if (c.filters.enableP2P && !c.service) serviceDisplay = "P2P MODE ðŸ¦ˆ";
 
             // AGGIORNATO CON ANIMEWORLD (AW) E GUARDAFLIX (GF)
             list.innerHTML = `
@@ -2275,7 +2275,7 @@
                 <li>Proxy Bridge <span>${c.mediaflow.url ? 'CONFIGURATO' : 'NON ATTIVO'}</span></li>
                 <li>Proxy Ghost <span>${c.mediaflow.proxyDebrid ? 'ATTIVO' : 'NO'}</span></li>
                 <li>Limite Dimensione <span>${sizeText}</span></li>
-                <li>Filtro Qualità <span>${spectrumStr}</span></li>
+                <li>Filtro QualitÃ  <span>${spectrumStr}</span></li>
                 <li>Signal Gate <span>${gateText}</span></li>
                 <li>Lingua Audio <span>${langText}</span></li>
                 <li>Cinema Mode <span>${trailerText}</span></li>
