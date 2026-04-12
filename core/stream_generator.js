@@ -184,18 +184,42 @@ const LAZY_WARMUP_LOAD_THRESHOLD = Math.max(1, Math.min(200, parseInt(process.en
 const TITLE_SEARCH_HOT_TTL_MS = Math.max(5000, Math.min(5 * 60 * 1000, parseInt(process.env.TITLE_SEARCH_HOT_TTL_MS || '45000', 10) || 45000));
 const VALIDATED_FILE_SET_TTL_MS = Math.max(30 * 1000, Math.min(60 * 60 * 1000, parseInt(process.env.VALIDATED_FILE_SET_TTL_MS || String(20 * 60 * 1000), 10) || 20 * 60 * 1000));
 const TIMED_CACHE_MAX_ENTRIES = Math.max(200, Math.min(10000, parseInt(process.env.TIMED_CACHE_MAX_ENTRIES || '3000', 10) || 3000));
+const TIMED_CACHE_SWEEP_INTERVAL_MS = Math.max(1000, Math.min(60 * 1000, parseInt(process.env.TIMED_CACHE_SWEEP_INTERVAL_MS || '5000', 10) || 5000));
+const BACKGROUND_DB_SAVE_QUEUE_MAX = Math.max(10, Math.min(1000, parseInt(process.env.BACKGROUND_DB_SAVE_QUEUE_MAX || '120', 10) || 120));
+const PACK_RESOLUTION_QUEUE_MAX = Math.max(10, Math.min(1000, parseInt(process.env.PACK_RESOLUTION_QUEUE_MAX || '80', 10) || 80));
+const timedCacheSweepState = new WeakMap();
 
-function cleanupTimedCache(map, maxEntries = TIMED_CACHE_MAX_ENTRIES) {
-    if (!(map instanceof Map) || map.size === 0) return;
-    const now = Date.now();
-    for (const [key, entry] of map) {
-        if (!entry || Number(entry.expiresAt || 0) <= now) map.delete(key);
+function getTimedCacheState(map) {
+    let state = timedCacheSweepState.get(map);
+    if (!state) {
+        state = { nextSweepAt: 0 };
+        timedCacheSweepState.set(map, state);
     }
+    return state;
+}
+
+function trimTimedCacheSize(map, maxEntries = TIMED_CACHE_MAX_ENTRIES) {
     while (map.size > maxEntries) {
         const oldestKey = map.keys().next().value;
         if (oldestKey === undefined) break;
         map.delete(oldestKey);
     }
+}
+
+function cleanupTimedCache(map, maxEntries = TIMED_CACHE_MAX_ENTRIES, options = {}) {
+    if (!(map instanceof Map) || map.size === 0) return;
+    const now = Date.now();
+    const state = getTimedCacheState(map);
+    const overCapacity = map.size > maxEntries;
+    if (options.force !== true && !overCapacity && now < state.nextSweepAt) return;
+
+    state.nextSweepAt = now + TIMED_CACHE_SWEEP_INTERVAL_MS;
+
+    for (const [key, entry] of map) {
+        if (!entry || Number(entry.expiresAt || 0) <= now) map.delete(key);
+    }
+
+    trimTimedCacheSize(map, maxEntries);
 }
 
 function getTimedCacheValue(map, key) {
@@ -213,8 +237,15 @@ function setTimedCacheValue(map, key, value, ttlMs, maxEntries = TIMED_CACHE_MAX
     if (!key || ttlMs <= 0) return value;
     cleanupTimedCache(map, maxEntries);
     map.set(key, { value, expiresAt: Date.now() + ttlMs });
-    cleanupTimedCache(map, maxEntries);
+    trimTimedCacheSize(map, maxEntries);
     return value;
+}
+
+function isQueueOverflowError(error) {
+    if (!error) return false;
+    if (error.code === 'QUEUE_OVERFLOW') return true;
+    const message = String(error.message || error);
+    return /dropped by bottleneck|queue overflow|highwater/i.test(message);
 }
 
 function buildTitleSearchPipelineKey(meta, type, langMode, dbOnlyMode = false, filters = {}) {
@@ -1024,7 +1055,14 @@ function warmupLazyStreamsInBackground(config, items, meta) {
                 incrementMetric('lazyWarmup.fail');
                 recordProviderMetric(`warmup.${service}`, false, Date.now() - startedAt, { timeout: /timeout/i.test(String(err?.message || '')), error: err?.message || err });
             }
-        }).catch(err => logger.warn(`âš ï¸ [WARMUP] Queue error: ${err.message}`));
+        }).catch(err => {
+            if (isQueueOverflowError(err)) {
+                incrementMetric('lazyWarmup.droppedQueue');
+                logger.info(`[LAZY WARMUP] Drop per backlog | service=${service} | hash=${item?.hash || item?.infoHash || 'n/a'}`);
+                return;
+            }
+            logger.warn(`[WARMUP] Queue error: ${err.message}`);
+        });
     });
 }
 
@@ -1136,15 +1174,32 @@ function resolvePackNamesInBackground(meta, results, config) {
             const packKey = `${String(item?.hash || item?.infoHash || '').toLowerCase()}:${Number(meta?.season || 0)}:${Number(meta?.episode || 0)}`;
             if (!packKey || shouldSkipRecentWork(recentPackResolutionJobs, packKey, BACKGROUND_DB_SAVE_DEDUP_MS * 2)) continue;
             try {
-                await scheduleKeyed('pack-resolution', packKey, async () => {
-                    const resolved = await resolvePackWithBestEffort(item, config, meta, results);
-                    if (resolved) await persistPackResolution(meta, item, resolved);
-                });
+                await scheduleKeyed(
+                    'pack-resolution',
+                    packKey,
+                    async () => {
+                        const resolved = await resolvePackWithBestEffort(item, config, meta, results);
+                        if (resolved) await persistPackResolution(meta, item, resolved);
+                    },
+                    { maxGroupPending: PACK_RESOLUTION_QUEUE_MAX }
+                );
             } catch (err) {
+                if (isQueueOverflowError(err)) {
+                    incrementMetric('pack.backgroundDropped');
+                    logger.info(`[PACK] Background drop per backlog | hash=${item?.hash || item?.infoHash || 'n/a'}`);
+                    continue;
+                }
                 logger.warn(`[PACK] Background processing failed for ${item.hash || item.infoHash}: ${err.message}`);
             }
         }
-    }).catch(err => { logger.warn(`[PACK] Background queue failed: ${err.message}`); });
+    }).catch(err => {
+        if (isQueueOverflowError(err)) {
+            incrementMetric('pack.backgroundDropped');
+            logger.info(`[PACK] Background queue drop | candidates=${packCandidates.length}`);
+            return;
+        }
+        logger.warn(`[PACK] Background queue failed: ${err.message}`);
+    });
 }
 
 async function fetchTmdbMeta(tmdbId, type, userApiKey) {
@@ -1263,92 +1318,104 @@ function saveResultsToDbBackground(meta, results, config = null) {
 
     const queueKey = metaCacheKey || meta?.imdb_id || resultsSignature || 'background';
 
-    scheduleKeyed('db-save', queueKey, async () => {
-        return withSharedPromise(backgroundDbSaveInflight, `db_save:${saveKey}`, async () => {
-            let savedCount = 0;
-            const prioritizedHashes = [];
-            const prioritizedSet = new Set();
-            const guaranteedCachedUpdates = [];
-            const guaranteedSet = new Set();
-            const torrentRows = [];
+    scheduleKeyed(
+        'db-save',
+        queueKey,
+        async () => {
+            return withSharedPromise(backgroundDbSaveInflight, `db_save:${saveKey}`, async () => {
+                let savedCount = 0;
+                const prioritizedHashes = [];
+                const prioritizedSet = new Set();
+                const guaranteedCachedUpdates = [];
+                const guaranteedSet = new Set();
+                const torrentRows = [];
 
-            for (const item of results) {
-                const infoHash = item.hash || item.infoHash;
-                if (!infoHash) continue;
+                for (const item of results) {
+                    const infoHash = item.hash || item.infoHash;
+                    if (!infoHash) continue;
 
-                const torrentObj = {
-                    info_hash: infoHash,
-                    title: item.title,
-                    size: item._size || item.sizeBytes || 0,
-                    seeders: item.seeders || 0,
-                    provider: item.source || 'External',
-                    file_index: item.fileIdx !== undefined ? item.fileIdx : undefined,
-                    is_pack: item._isPack || isSeasonPack(item.title)
-                };
+                    const torrentObj = {
+                        info_hash: infoHash,
+                        title: item.title,
+                        size: item._size || item.sizeBytes || 0,
+                        seeders: item.seeders || 0,
+                        provider: item.source || 'External',
+                        file_index: item.fileIdx !== undefined ? item.fileIdx : undefined,
+                        is_pack: item._isPack || isSeasonPack(item.title)
+                    };
 
-                torrentRows.push(torrentObj);
+                    torrentRows.push(torrentObj);
 
-                if (isGuaranteedCachedExternal(item)) {
-                    if (!guaranteedSet.has(infoHash)) {
-                        guaranteedSet.add(infoHash);
-                        guaranteedCachedUpdates.push({
-                            hash: infoHash,
-                            state: 'cached',
-                            cached: true,
-                            rd_file_size: Number(item?._size || item?.sizeBytes || 0) > 0 ? Number(item._size || item.sizeBytes) : null,
-                            failures: 0,
-                            next_hours: 24 * 30,
-                            permanent: true
-                        });
+                    if (isGuaranteedCachedExternal(item)) {
+                        if (!guaranteedSet.has(infoHash)) {
+                            guaranteedSet.add(infoHash);
+                            guaranteedCachedUpdates.push({
+                                hash: infoHash,
+                                state: 'cached',
+                                cached: true,
+                                rd_file_size: Number(item?._size || item?.sizeBytes || 0) > 0 ? Number(item._size || item.sizeBytes) : null,
+                                failures: 0,
+                                next_hours: 24 * 30,
+                                permanent: true
+                            });
+                        }
+                        continue;
                     }
-                    continue;
-                }
 
-                if (
-                    String(config?.service || 'rd').toLowerCase() === 'rd' &&
-                    prioritizedHashes.length < 18 &&
-                    getRdAvailabilityState('rd', item) === 'unknown' &&
-                    !prioritizedSet.has(infoHash)
-                ) {
-                    prioritizedSet.add(infoHash);
-                    prioritizedHashes.push(infoHash);
-                }
-            }
-
-            if (torrentRows.length > 0) {
-                if (typeof dbHelper.insertTorrentsBatch === 'function' && meta?.imdb_id) {
-                    const outcome = await dbHelper.insertTorrentsBatch(meta, torrentRows);
-                    savedCount = Number(outcome?.inserted || 0);
-                } else {
-                    for (const torrentObj of torrentRows) {
-                        const success = await dbHelper.insertTorrent(meta, torrentObj);
-                        if (success) savedCount += 1;
+                    if (
+                        String(config?.service || 'rd').toLowerCase() === 'rd' &&
+                        prioritizedHashes.length < 18 &&
+                        getRdAvailabilityState('rd', item) === 'unknown' &&
+                        !prioritizedSet.has(infoHash)
+                    ) {
+                        prioritizedSet.add(infoHash);
+                        prioritizedHashes.push(infoHash);
                     }
                 }
-            }
 
-            if (savedCount > 0) {
-                logger.info(`[AUTO-LEARN] Salvati ${savedCount} nuovi torrent nel DB per ${meta?.imdb_id || 'n/a'}`);
-            }
+                if (torrentRows.length > 0) {
+                    if (typeof dbHelper.insertTorrentsBatch === 'function' && meta?.imdb_id) {
+                        const outcome = await dbHelper.insertTorrentsBatch(meta, torrentRows);
+                        savedCount = Number(outcome?.inserted || 0);
+                    } else {
+                        for (const torrentObj of torrentRows) {
+                            const success = await dbHelper.insertTorrent(meta, torrentObj);
+                            if (success) savedCount += 1;
+                        }
+                    }
+                }
 
-            if (guaranteedCachedUpdates.length > 0 && typeof dbHelper.updateRdCacheStatus === 'function') {
-                await dbHelper.updateRdCacheStatus(guaranteedCachedUpdates);
-                await Cache.invalidateStreamsByHashes(guaranteedCachedUpdates.map((entry) => entry.hash), 'external_cached_seed');
-                logger.info(`[RD AVAILABILITY] Marked guaranteed external results as cached | imdb=${meta?.imdb_id || 'n/a'} | hashes=${guaranteedCachedUpdates.length}`);
-            }
+                if (savedCount > 0) {
+                    logger.info(`[AUTO-LEARN] Salvati ${savedCount} nuovi torrent nel DB per ${meta?.imdb_id || 'n/a'}`);
+                }
 
-            if (prioritizedHashes.length > 0 && typeof dbHelper.prioritizeRdHashes === 'function') {
-                const outcome = await dbHelper.prioritizeRdHashes(prioritizedHashes, {
-                    limit: 18,
-                    priorityMinutes: Math.max(0, Math.min(120, parseInt(process.env.RD_PRIORITY_WINDOW_MIN || '5', 10) || 5))
-                });
-                logger.info(`[RD PRIORITY] reason=db_save | imdb=${meta?.imdb_id || 'n/a'} | hashes=${prioritizedHashes.length} | updated=${outcome?.updated || 0}`);
-            }
+                if (guaranteedCachedUpdates.length > 0 && typeof dbHelper.updateRdCacheStatus === 'function') {
+                    await dbHelper.updateRdCacheStatus(guaranteedCachedUpdates);
+                    await Cache.invalidateStreamsByHashes(guaranteedCachedUpdates.map((entry) => entry.hash), 'external_cached_seed');
+                    logger.info(`[RD AVAILABILITY] Marked guaranteed external results as cached | imdb=${meta?.imdb_id || 'n/a'} | hashes=${guaranteedCachedUpdates.length}`);
+                }
 
-            if (metaCacheKey) await Cache.invalidateDbTorrents(metaCacheKey, 'db_save');
-            resolvePackNamesInBackground(meta, results, config);
-        });
-    }).catch(err => console.error('[AUTO-LEARN] Errore background save:', err.message));
+                if (prioritizedHashes.length > 0 && typeof dbHelper.prioritizeRdHashes === 'function') {
+                    const outcome = await dbHelper.prioritizeRdHashes(prioritizedHashes, {
+                        limit: 18,
+                        priorityMinutes: Math.max(0, Math.min(120, parseInt(process.env.RD_PRIORITY_WINDOW_MIN || '5', 10) || 5))
+                    });
+                    logger.info(`[RD PRIORITY] reason=db_save | imdb=${meta?.imdb_id || 'n/a'} | hashes=${prioritizedHashes.length} | updated=${outcome?.updated || 0}`);
+                }
+
+                if (metaCacheKey) await Cache.invalidateDbTorrents(metaCacheKey, 'db_save');
+                resolvePackNamesInBackground(meta, results, config);
+            });
+        },
+        { maxGroupPending: BACKGROUND_DB_SAVE_QUEUE_MAX }
+    ).catch(err => {
+        if (isQueueOverflowError(err)) {
+            incrementMetric('dbSave.droppedQueue');
+            logger.info(`[AUTO-LEARN] Background save drop per backlog | imdb=${meta?.imdb_id || 'n/a'}`);
+            return;
+        }
+        console.error('[AUTO-LEARN] Errore background save:', err.message);
+    });
 }
 
 async function resolveDebridLink(config, item, showFake, reqHost, meta) {
