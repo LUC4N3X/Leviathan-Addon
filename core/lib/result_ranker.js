@@ -316,13 +316,15 @@ function getQualityPriority(item) {
 function resolveLangMode(meta = {}, configInput = {}) {
   const config = buildPreparedConfig(configInput);
   const directMeta = lowerText(meta.langMode || meta.languageMode || meta.language);
-  if (directMeta === "ita" || directMeta === "eng" || directMeta === "all") return directMeta;
-
   const explicit = lowerText(configInput.filters?.language || configInput.langMode || configInput.language);
+  if (isAnimeMeta(meta)) {
+    if (directMeta === "eng" || explicit === "eng") return "eng";
+    return "all";
+  }
+  if (directMeta === "ita" || directMeta === "eng" || directMeta === "all") return directMeta;
   if (explicit === "ita" || explicit === "eng" || explicit === "all") return explicit;
 
   if (configInput.filters?.allowEng === true || configInput.allowEng === true) return "all";
-  if (isAnimeMeta(meta)) return "all";
   if (config.profile === "dedupe" && explicit === "") return "all";
   return "ita";
 }

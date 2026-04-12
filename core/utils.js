@@ -183,7 +183,29 @@ function getStatsSnapshot() {
     };
 }
 
-function extractSeasonEpisodeFromFilename(filename, defaultSeason = 1) {
+function extractAnimeEpisodeFromFilename(filename, defaultSeason = 1) {
+    const name = String(filename || '');
+    let match = name.match(/\bS(?:EASON)?\s*0?(\d{1,2})\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+    match = name.match(/\b(\d{1,2})(?:ST|ND|RD|TH)\s+SEASON\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+    match = name.match(/\b(?:EP(?:ISODE)?|EPISODIO)\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: defaultSeason, episode: parseInt(match[1], 10) };
+
+    const genericPattern = /(?:^|[\s._\-\[\(])0*([1-9]\d{0,3})(?:v\d+)?(?=$|[\s._\-\]\)])/ig;
+    for (const candidate of name.matchAll(genericPattern)) {
+        const episode = parseInt(candidate[1], 10);
+        if (!Number.isInteger(episode) || episode <= 0) continue;
+        if (episode >= 1900 && episode <= 2100) continue;
+        return { season: defaultSeason, episode };
+    }
+
+    return null;
+}
+
+function extractSeasonEpisodeFromFilename(filename, defaultSeason = 1, options = {}) {
     const name = String(filename || '');
     let match = name.match(/\bS(\d{1,2})E(\d{1,3})\b/i);
     if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
@@ -191,6 +213,7 @@ function extractSeasonEpisodeFromFilename(filename, defaultSeason = 1) {
     if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
     match = name.match(/\bE(?:P(?:ISODE)?)?\s*0?(\d{1,3})\b/i);
     if (match) return { season: defaultSeason, episode: parseInt(match[1], 10) };
+    if (options?.anime) return extractAnimeEpisodeFromFilename(name, defaultSeason);
     return null;
 }
 
@@ -296,7 +319,7 @@ function deduplicateResults(results, meta = {}, config = {}) {
     if (Number.isInteger(directSeason) && Number.isInteger(directEpisode) && directEpisode > 0) {
       return { season: directSeason, episode: directEpisode };
     }
-    return extractSeasonEpisodeFromFilename(item?.title || '', 1);
+    return extractSeasonEpisodeFromFilename(item?.title || '', 1, { anime: Boolean(meta?.kitsu_id || meta?.isAnime) });
   };
 
   const buildDedupeKey = (hash, item) => {

@@ -57,13 +57,34 @@ const SEASON_EPISODE_PATTERNS = [
     { pattern: /(?:^|\b)(\d{1,2})x(\d{1,3})(?:\b|[^\d])/i, extract: m => ({ season: parseInt(m[1], 10), episode: parseInt(m[2], 10) }) },
     { pattern: /season\s*(\d{1,2}).{0,20}?episode\s*(\d{1,3})/i, extract: m => ({ season: parseInt(m[1], 10), episode: parseInt(m[2], 10) }) },
     { pattern: /stagione\s*(\d{1,2}).{0,20}?episodio\s*(\d{1,3})/i, extract: m => ({ season: parseInt(m[1], 10), episode: parseInt(m[2], 10) }) },
-    { pattern: /(?:^|[^a-z])ep?\.?\s*(\d{1,3})(?:[^\d]|$)/i, extract: (m, defaultSeason) => ({ season: defaultSeason, episode: parseInt(m[1], 10) }) },
-    { pattern: /(?:^|[^\d])(\d{2,3})(?:[^\d]|$)/, extract: (m, defaultSeason) => {
-        const raw = parseInt(m[1], 10);
-        if (raw >= 100) return { season: Math.floor(raw / 100), episode: raw % 100 };
-        return { season: defaultSeason, episode: raw };
-    } }
+    { pattern: /(?:^|[^a-z])ep?\.?\s*(\d{1,3})(?:[^\d]|$)/i, extract: (m, defaultSeason) => ({ season: defaultSeason, episode: parseInt(m[1], 10) }) }
 ];
+
+function isAnimeMeta(meta = {}) {
+    return Boolean(meta?.kitsu_id || meta?.isAnime);
+}
+
+function parseAnimeEpisode(filename, defaultSeason = 1) {
+    const value = String(filename || '');
+    let match = value.match(/\bS(?:EASON)?\s*0?(\d{1,2})\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+    match = value.match(/\b(\d{1,2})(?:ST|ND|RD|TH)\s+SEASON\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+    match = value.match(/\b(?:EP(?:ISODE)?|EPISODIO)\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: defaultSeason, episode: parseInt(match[1], 10) };
+
+    const genericPattern = /(?:^|[\s._\-\[\(])0*([1-9]\d{0,3})(?:v\d+)?(?=$|[\s._\-\]\)])/ig;
+    for (const candidate of value.matchAll(genericPattern)) {
+        const episode = parseInt(candidate[1], 10);
+        if (!Number.isInteger(episode) || episode <= 0) continue;
+        if (episode >= 1900 && episode <= 2100) continue;
+        return { season: defaultSeason, episode };
+    }
+
+    return null;
+}
 
 function normalizeInfoHash(value) {
     return String(value || '').trim().toLowerCase();
@@ -152,7 +173,7 @@ function isSeasonPack(title) {
     ].some(re => re.test(value));
 }
 
-function parseSeasonEpisode(filename, defaultSeason = 1) {
+function parseSeasonEpisode(filename, defaultSeason = 1, options = {}) {
     const value = String(filename || '');
     for (const { pattern, extract } of SEASON_EPISODE_PATTERNS) {
         const match = value.match(pattern);
@@ -161,6 +182,7 @@ function parseSeasonEpisode(filename, defaultSeason = 1) {
             if (parsed && Number.isInteger(parsed.season) && Number.isInteger(parsed.episode) && parsed.episode > 0) return parsed;
         }
     }
+    if (options?.anime) return parseAnimeEpisode(value, defaultSeason);
     return null;
 }
 
@@ -210,6 +232,7 @@ function uniqueTitles(meta, item) {
     push(item?.title);
     push(item?.name);
     if (Array.isArray(meta?.aka_titles)) meta.aka_titles.forEach(push);
+    if (Array.isArray(meta?.aliases)) meta.aliases.forEach(push);
     if (Array.isArray(meta?.titles)) meta.titles.forEach(push);
     return values;
 }
@@ -311,10 +334,11 @@ function collectSeriesMatches(videoFiles, meta, item) {
     const targetEpisode = Number(meta?.episode || item?.episode || 0) || 0;
     const seasonFromTitle = extractSeasonFromText(item?.title || meta?.title || '');
     const seasonFallback = seasonFromTitle || targetSeason || 1;
+    const parseOptions = { anime: isAnimeMeta(meta) };
     const matches = [];
     for (const file of videoFiles) {
         const name = fileName(file.path);
-        const parsed = parseSeasonEpisode(name, seasonFallback);
+        const parsed = parseSeasonEpisode(name, seasonFallback, parseOptions);
         if (!parsed) continue;
         if (parsed.season !== targetSeason) continue;
         matches.push({ file, parsed });

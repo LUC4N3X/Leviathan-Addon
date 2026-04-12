@@ -12,6 +12,7 @@ const P2P = require("./handlers/p2p_handler");
 const { generateSmartQueries, smartMatch } = require("./media_intelligence");
 const { rankAndFilterResults } = require("./lib/result_ranker");
 const { tmdbToImdb, imdbToTmdb, getTmdbAltTitles } = require("./media_identity_resolver");
+const kitsuHandler = require("./handlers/kitsu_handler");
 const RD = require("../debrid/realdebrid");
 const TB = require("../debrid/torbox");
 const dbHelper = require("./storage/db_repository"); 
@@ -32,6 +33,8 @@ const {
   incrementMetric, recordDuration, recordProviderMetric
 } = require("./utils");
 
+const { parseKitsuIdentifier } = kitsuHandler;
+
 function getServiceResolverLimiter(service) {
     const normalized = String(service || '').toLowerCase();
     if (normalized === 'tb') return LIMITERS.tbResolve;
@@ -50,6 +53,61 @@ function getConfiguredDebridKey(config, service = getNormalizedDebridService(con
     if (service === 'tb') return config?.key || config?.tb || config?.torbox || config?.rd || null;
     if (service === 'rd') return config?.key || config?.rd || config?.realdebrid || null;
     return null;
+}
+
+function uniqueTextList(values = []) {
+    const seen = new Set();
+    const output = [];
+
+    for (const value of values) {
+        const text = String(value || '').trim();
+        const key = text.toLowerCase();
+        if (!text || seen.has(key)) continue;
+        seen.add(key);
+        output.push(text);
+    }
+
+    return output;
+}
+
+function isAnimeMetaContext(meta = {}, type = '') {
+    return Boolean(meta?.kitsu_id || meta?.isAnime || String(type || '').toLowerCase() === 'anime');
+}
+
+function getEpisodeParseOptions(meta = {}, type = '') {
+    return { anime: isAnimeMetaContext(meta, type) };
+}
+
+function getEffectiveSearchLanguageMode(filters = {}, meta = {}, type = '') {
+    const explicit = String(filters?.language || '').toLowerCase();
+    if (isAnimeMetaContext(meta, type)) {
+        if (explicit === 'eng') return 'eng';
+        return 'all';
+    }
+    if (explicit === 'ita' || explicit === 'eng' || explicit === 'all') return explicit;
+    if (filters?.allowEng) return 'all';
+    return 'ita';
+}
+
+function isAnimeTmdbMetadata(tmdbData = {}, type = '') {
+    if (String(type || '').toLowerCase() !== 'series') return false;
+
+    const originalLanguage = String(tmdbData?.original_language || '').toLowerCase();
+    const genres = Array.isArray(tmdbData?.genres) ? tmdbData.genres : [];
+    const genreNames = genres.map((genre) => String(genre?.name || '').toLowerCase());
+    const genreIds = genres.map((genre) => Number(genre?.id)).filter(Number.isFinite);
+    const originCountries = [
+        ...(Array.isArray(tmdbData?.origin_country) ? tmdbData.origin_country : []),
+        ...(Array.isArray(tmdbData?.production_countries) ? tmdbData.production_countries.map((country) => country?.iso_3166_1) : []),
+        ...(Array.isArray(tmdbData?.networks) ? tmdbData.networks.map((network) => network?.origin_country) : [])
+    ]
+        .map((value) => String(value || '').toUpperCase())
+        .filter(Boolean);
+
+    const japaneseProduction = originalLanguage === 'ja' || originCountries.includes('JP');
+    const animated = genreIds.includes(16) || genreNames.some((name) => name.includes('anim'));
+
+    return japaneseProduction && animated;
 }
 
 function getLazyCacheKey(service, item, meta) {
@@ -115,6 +173,7 @@ function assessFastResultQuality(items, meta, langMode, config) {
         return { shouldScrape: true, reason: 'no_fast_results', strongCount: 0, exactEpisodeCount: 0, seasonPackCount: 0, total: 0 };
     }
 
+    const effectiveLangMode = langMode === 'ita' && isAnimeMetaContext(meta) ? 'all' : langMode;
     let strongCount = 0;
     let exactEpisodeCount = 0;
     let seasonPackCount = 0;
@@ -125,9 +184,9 @@ function assessFastResultQuality(items, meta, langMode, config) {
         const sizeBytes = Number(item?._size || item?.sizeBytes || 0);
         const seeders = parseInt(item?.seeders, 10) || 0;
         const isPack = Boolean(item?._isPack || isSeasonPack(title));
-        const langOk = langMode === 'eng'
+        const langOk = effectiveLangMode === 'eng'
             ? keepEnglishCandidate(title, source, meta?.title)
-            : langMode === 'all'
+            : effectiveLangMode === 'all'
                 ? keepAllCandidate(title, source, meta?.title)
                 : keepItalianCandidate(title, source, meta?.title);
         const hasQualitySignal = /\b(?:2160p|4k|uhd|1080p|fhd|720p|web[-.\s]?dl|blu[-.\s]?ray|remux|hevc|x265|x264)\b/i.test(title);
@@ -135,8 +194,8 @@ function assessFastResultQuality(items, meta, langMode, config) {
 
         let exactEpisode = false;
         if (meta?.isSeries) {
-            const parsed = extractSeasonEpisodeFromFilename(title, meta.season || 1);
-            exactEpisode = Boolean(parsed && parsed.season === meta.season && parsed.episode === meta.episode);
+            const parsed = extractSeasonEpisodeFromFilename(title, meta.season || 1, getEpisodeParseOptions(meta));
+            exactEpisode = Boolean(parsed && parsed.episode === meta.episode && (parsed.season === meta.season || meta?.kitsu_id));
             if (exactEpisode) exactEpisodeCount += 1;
             if (!exactEpisode && isPack && new RegExp(`(?:s|season|stagione)\\s*0?${meta.season}(?!\\d)`, 'i').test(title)) seasonPackCount += 1;
         }
@@ -163,10 +222,8 @@ function assessFastResultQuality(items, meta, langMode, config) {
     return { shouldScrape, reason, strongCount, exactEpisodeCount, seasonPackCount, total: list.length };
 }
 
-function getEffectiveLangMode(config) {
-    const mode = String(config?.filters?.language || '').toLowerCase();
-    if (mode === 'ita' || mode === 'eng' || mode === 'all') return mode;
-    return config?.filters?.allowEng ? 'all' : 'ita';
+function getEffectiveLangMode(config, meta = {}, type = '') {
+    return getEffectiveSearchLanguageMode(config?.filters || {}, meta, type);
 }
 
 const TITLE_SIGNAL_CACHE = new Map();
@@ -688,18 +745,20 @@ function hasStrongSeriesTitleMatch(title, meta) {
 }
 
 function createAggressiveResultFilter(meta, type, langMode) {
+    const effectiveLangMode = langMode === 'ita' && isAnimeMetaContext(meta, type) ? 'all' : langMode;
     return (item) => {
         if (!item?.magnet) return false;
 
         const source = String(item.source || '').toLowerCase();
         const title = String(item.title || '');
         const lowerTitle = title.toLowerCase();
+        const isPack = Boolean(item?._isPack || isSeasonPack(title));
 
         if (source.includes('comet') || source.includes('stremthru')) return false;
 
-        if (langMode === 'ita') {
+        if (effectiveLangMode === 'ita') {
             if (!keepItalianCandidate(title, item.source, meta.title)) return false;
-        } else if (langMode === 'eng') {
+        } else if (effectiveLangMode === 'eng') {
             if (!keepEnglishCandidate(title, item.source, meta.title)) return false;
         } else {
             if (!keepAllCandidate(title, item.source, meta.title)) return false;
@@ -724,8 +783,13 @@ function createAggressiveResultFilter(meta, type, langMode) {
 
             const season = meta.season;
             const episode = meta.episode;
+            const parsedEpisode = extractSeasonEpisodeFromFilename(title, season || 1, getEpisodeParseOptions(meta, type));
 
-            if ((meta.kitsu_id || type === 'anime') && new RegExp(`(?:^|\\s|[.\\-_\\[\\(])(?:e|ep|episode)?\\s*0*${episode}(?:$|\\s|[.\\-_\\]\\)]|v\\d)`, 'i').test(lowerTitle)) {
+            if (isAnimeMetaContext(meta, type) && parsedEpisode && parsedEpisode.episode === episode && (parsedEpisode.season === season || meta.kitsu_id)) {
+                return true;
+            }
+            if (isAnimeMetaContext(meta, type) && isPack) {
+                item._isPack = true;
                 return true;
             }
 
@@ -837,7 +901,7 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
             title: aioFormatter.formatStreamTitle({
                 title: displayTitle,
                 size: Number(sizeBytes) > 0 ? formatBytes(sizeBytes) : 'Unknown',
-                language: formatLanguageLabel(languageInfo, details.languages, getEffectiveLangMode(config)),
+                language: formatLanguageLabel(languageInfo, details.languages, getEffectiveLangMode(config, meta)),
                 source: item?.source,
                 seeders,
                 infoHash: item?.hash,
@@ -914,9 +978,9 @@ function getCompositeRankScore(item, meta, config) {
     const seeders = parseInt(item?.seeders, 10) || 0;
     const explicitFileIdx = item?.fileIdx !== undefined && item?.fileIdx !== null;
     const isPack = !!(item?._isPack || isSeasonPack(title));
-    const epData = meta?.isSeries ? extractSeasonEpisodeFromFilename(title, meta?.season || 1) : null;
+    const epData = meta?.isSeries ? extractSeasonEpisodeFromFilename(title, meta?.season || 1, getEpisodeParseOptions(meta)) : null;
 
-    const langMode = getEffectiveLangMode(config);
+    const langMode = getEffectiveLangMode(config, meta);
     let score = 0;
 
     if (langMode === 'eng') {
@@ -950,7 +1014,7 @@ function getCompositeRankScore(item, meta, config) {
     if (source && /mircrew|corsaro|lux|wms|dn[a4]?|idn_crew|speedvideo/i.test(String(source))) score += 6000;
     if (title && /mircrew|corsaro|lux|wms|dn[a4]?|idn_crew|speedvideo/i.test(title)) score += 5000;
     if (meta?.isSeries) {
-        if (epData && epData.season === meta.season && epData.episode === meta.episode) score += 24000;
+        if (epData && epData.episode === meta.episode && (epData.season === meta.season || meta?.kitsu_id)) score += 24000;
         else if (isPack && new RegExp(`(?:s|season|stagione)\\s*0?${meta.season}(?!\\d)`, 'i').test(title)) score += 9000;
         else if (epData && epData.episode !== meta.episode) score -= 18000;
     }
@@ -1000,8 +1064,8 @@ async function guardedProviderCall(providerName, limiter, timeoutMs, factory, me
         const normalized = Array.isArray(result) ? result : (result ? [result] : []);
         const exactHit = meta?.meta?.isSeries
             ? normalized.some((item) => {
-                const parsed = extractSeasonEpisodeFromFilename(String(item?.title || ''), meta?.meta?.season || 1);
-                return parsed && parsed.season === meta?.meta?.season && parsed.episode === meta?.meta?.episode;
+                const parsed = extractSeasonEpisodeFromFilename(String(item?.title || ''), meta?.meta?.season || 1, getEpisodeParseOptions(meta?.meta));
+                return parsed && parsed.episode === meta?.meta?.episode && (parsed.season === meta?.meta?.season || meta?.meta?.kitsu_id);
             })
             : normalized.length > 0;
         const packHit = meta?.meta?.isSeries
@@ -1131,7 +1195,7 @@ async function persistPackResolution(meta, item, resolved) {
         const fileIndexRaw = file.id ?? file.file_index ?? file.index ?? file.fileIdx;
         const fileIndex = fileIndexRaw !== undefined && fileIndexRaw !== null ? parseInt(fileIndexRaw, 10) : undefined;
         const filename = filePath.split('/').pop();
-        const parsedEpisode = extractSeasonEpisodeFromFilename(filename, seasonFallback);
+        const parsedEpisode = extractSeasonEpisodeFromFilename(filename, seasonFallback, getEpisodeParseOptions(meta));
 
         if (parsedEpisode && Number.isInteger(fileIndex)) {
             episodeFiles.push({ info_hash: infoHash, file_index: fileIndex, title: filename, size: fileSize, imdb_id: meta?.imdb_id || null, imdb_season: parsedEpisode.season, imdb_episode: parsedEpisode.episode });
@@ -1234,20 +1298,83 @@ async function getMetadata(id, type, config = {}) {
 
     try {
       if (type === 'anime' || id.toString().startsWith('kitsu:')) {
-          let kitsuId = id.toString(), episode = 0;
-          if (kitsuId.includes(':')) {
-              const parts = kitsuId.split(':'); kitsuId = parts[1];
-              if (parts.length > 2) episode = parseInt(parts[2]);
+          const parsedKitsu = parseKitsuIdentifier(id);
+          const kitsuId = parsedKitsu?.kitsuId || String(id || '').trim();
+          const season = parsedKitsu?.season || 1;
+          const episode = parsedKitsu?.episode || 0;
+          const fallbackKitsuMeta = kitsuId ? await kitsuHandler(kitsuId).catch(() => null) : null;
+
+          if (kitsuId) {
+              const kitsuUrl = `${CONFIG.KITSU_URL}/meta/anime/kitsu:${kitsuId}.json`;
+              logger.info(`â›©ï¸ [META] Fetching Kitsu (Direct): ${kitsuUrl}`);
+              try {
+                  const { data } = await axios.get(kitsuUrl, { timeout: CONFIG.TIMEOUTS.TMDB });
+                  if (data && data.meta) {
+                      const kMeta = data.meta;
+                      const titles = uniqueTextList([
+                          kMeta.name,
+                          kMeta.originalName,
+                          ...(Array.isArray(kMeta.alternativeTitles) ? kMeta.alternativeTitles : []),
+                          ...(Array.isArray(fallbackKitsuMeta?.titles) ? fallbackKitsuMeta.titles : []),
+                          ...(Array.isArray(fallbackKitsuMeta?.aliases) ? fallbackKitsuMeta.aliases : [])
+                      ]);
+                      const subtype = String(kMeta.type || fallbackKitsuMeta?.subtype || fallbackKitsuMeta?.type || '').toLowerCase();
+                      const isSeries = fallbackKitsuMeta?.type
+                          ? fallbackKitsuMeta.type === 'series'
+                          : !/\b(movie|film)\b/i.test(subtype);
+                      const year = String(kMeta.year || kMeta.releaseInfo || fallbackKitsuMeta?.year || '').match(/\b(19|20)\d{2}\b/)?.[0] || '';
+                      const primaryTitle = titles[0] || kMeta.name || kMeta.originalName || `Kitsu ${kitsuId}`;
+                      const originalTitle = kMeta.originalName || titles[1] || primaryTitle;
+                      const aliases = uniqueTextList([
+                          ...titles.slice(1),
+                          ...(Array.isArray(fallbackKitsuMeta?.aliases) ? fallbackKitsuMeta.aliases : [])
+                      ]);
+
+                      finalMeta = {
+                          title: primaryTitle,
+                          originalTitle,
+                          year,
+                          imdb_id: kMeta.imdb_id || fallbackKitsuMeta?.imdbID || null,
+                          kitsu_id: kitsuId,
+                          isSeries,
+                          season: isSeries ? season : 0,
+                          episode: isSeries ? episode : 0,
+                          releaseInfo: kMeta.releaseInfo || null,
+                          aka_titles: aliases,
+                          aliases,
+                          titles,
+                          isAnime: true,
+                          subtype: kMeta.type || fallbackKitsuMeta?.subtype || '',
+                          episodeCount: fallbackKitsuMeta?.episodeCount || null
+                      };
+                  }
+              } catch (e) { logger.warn(`[META] Errore Kitsu: ${e.message} - fallback tentato`); }
           }
-          const kitsuUrl = `${CONFIG.KITSU_URL}/meta/anime/kitsu:${kitsuId}.json`;
-          logger.info(`â›©ï¸ [META] Fetching Kitsu (Direct): ${kitsuUrl}`);
-          try {
-              const { data } = await axios.get(kitsuUrl, { timeout: CONFIG.TIMEOUTS.TMDB });
-              if (data && data.meta) {
-                  const kMeta = data.meta;
-                  finalMeta = { title: kMeta.name, originalTitle: kMeta.name, year: kMeta.year ? kMeta.year.split("â€“")[0] : (kMeta.releaseInfo ? kMeta.releaseInfo.substring(0, 4) : ""), imdb_id: kMeta.imdb_id || null, kitsu_id: kitsuId, isSeries: true, season: 1, episode: episode };
-              }
-          } catch (e) { logger.warn(`[META] Errore Kitsu: ${e.message} - fallback tentato`); }
+
+          if (!finalMeta && fallbackKitsuMeta) {
+              const titles = uniqueTextList(fallbackKitsuMeta.titles || fallbackKitsuMeta.aliases || []);
+              const primaryTitle = titles[0] || `Kitsu ${kitsuId}`;
+              const aliases = uniqueTextList([
+                  ...titles.slice(1),
+                  ...(Array.isArray(fallbackKitsuMeta.aliases) ? fallbackKitsuMeta.aliases : [])
+              ]);
+              finalMeta = {
+                  title: primaryTitle,
+                  originalTitle: titles[1] || primaryTitle,
+                  year: fallbackKitsuMeta.year || '',
+                  imdb_id: fallbackKitsuMeta.imdbID || null,
+                  kitsu_id: kitsuId,
+                  isSeries: fallbackKitsuMeta.type !== 'movie',
+                  season: fallbackKitsuMeta.type !== 'movie' ? season : 0,
+                  episode: fallbackKitsuMeta.type !== 'movie' ? episode : 0,
+                  aka_titles: aliases,
+                  aliases,
+                  titles,
+                  isAnime: true,
+                  subtype: fallbackKitsuMeta.subtype || '',
+                  episodeCount: fallbackKitsuMeta.episodeCount || null
+              };
+          }
       }
 
       if (!finalMeta) {
@@ -1265,6 +1392,7 @@ async function getMetadata(id, type, config = {}) {
             if (tmdbId) {
                 const tmdbData = await fetchTmdbMeta(tmdbId, cleanType, userTmdbKey);
                 if (tmdbData) {
+                    const isAnime = isAnimeTmdbMetadata(tmdbData, cleanType);
                     const episodeData = cleanType === "series" && season > 0 && episode > 0
                         ? await fetchTmdbEpisodeMeta(tmdbId, season, episode, userTmdbKey)
                         : null;
@@ -1275,12 +1403,14 @@ async function getMetadata(id, type, config = {}) {
                         imdb_id: cleanId,
                         tmdb_id: tmdbId,
                         isSeries: cleanType === "series",
+                        isAnime,
                         season: season,
                         episode: episode,
                         releaseDate: tmdbData.release_date || null,
                         firstAirDate: tmdbData.first_air_date || null,
                         episodeAirDate: episodeData?.air_date || null,
-                        releaseInfo: tmdbData.release_date || tmdbData.first_air_date || null
+                        releaseInfo: tmdbData.release_date || tmdbData.first_air_date || null,
+                        originalLanguage: tmdbData.original_language || null
                     };
                     logger.info(`[META] Usato TMDB (UserKey: ${!!userTmdbKey}): ${finalMeta.title} (${finalMeta.year}) [ID: ${tmdbId}] Orig: ${finalMeta.originalTitle}`);
                 }
@@ -1575,8 +1705,8 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
     });
 }
 
-async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, config, italianMovieTitle = null) { 
-    if (!CONFIG.INDEXER_URL) return [];
+async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, config, meta = {}) { 
+    if (!CONFIG.INDEXER_URL || !tmdbId) return [];
     try {
         logger.info(`[REMOTE] Query VPS: ${CONFIG.INDEXER_URL} | ID: ${tmdbId} S:${season} E:${episode}`);
         let url = `${CONFIG.INDEXER_URL}/api/get/${tmdbId}`;
@@ -1593,12 +1723,12 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
             return { title: t.title, magnet: magnet, hash: finalHash, infoHash: finalHash, size: "DB Cache", sizeBytes: parseInt(t.size), seeders: parseInt(t.seeders, 10) || 0, source: providerName, fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined, _isPack: isSeasonPack(t.title) };
         });
 
-        const langMode = getEffectiveLangMode(config);
+        const langMode = getEffectiveSearchLanguageMode(config?.filters || {}, meta, type);
         return mapped.filter(item => {
              const title = item.title || '';
-             if (langMode === 'ita') return keepItalianCandidate(title, item.source, italianMovieTitle);
-             if (langMode === 'eng') return keepEnglishCandidate(title, item.source, italianMovieTitle);
-             return keepAllCandidate(title, item.source, italianMovieTitle);
+             if (langMode === 'ita') return keepItalianCandidate(title, item.source, meta?.title);
+             if (langMode === 'eng') return keepEnglishCandidate(title, item.source, meta?.title);
+             return keepAllCandidate(title, item.source, meta?.title);
         });
     } catch (e) { logger.error("Err Remote Indexer:", { error: e.message }); return []; }
 }
@@ -1681,7 +1811,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                             'RemoteIndexer',
                             LIMITERS.remoteIndexer,
                             CONFIG.TIMEOUTS.REMOTE_INDEXER,
-                            () => queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config, meta.title),
+                                () => queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config, meta),
                             { meta }
                         )
                     );
@@ -1723,7 +1853,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                                 providerName,
                                 LIMITERS.scraper,
                                 scraperTimeout,
-                                () => scraper.searchMagnet(q, meta.year, type, finalId, { langMode, allowEng: allowEngScraper }),
+                                () => scraper.searchMagnet(q, meta.year, type, finalId, { langMode, allowEng: allowEngScraper, isAnime: isAnimeMetaContext(meta, type) }),
                                 { meta }
                             )
                         );
@@ -1838,7 +1968,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
       const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
       const dbOnlyMode = filters.dbOnly === true;
-      const langMode = filters.language || (filters.allowEng ? 'all' : 'ita');
+      const langMode = getEffectiveSearchLanguageMode(filters, meta, type);
       const allowItalianWebProviders = langMode !== 'eng';
       const aggressiveFilter = createAggressiveResultFilter(meta, type, langMode);
 
