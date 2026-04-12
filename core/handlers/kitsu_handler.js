@@ -15,10 +15,79 @@ let mappingCache = {
     isLoading: false 
 };
 
+function parsePositiveInt(value, fallback = null) {
+    const parsed = parseInt(value, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function uniqueStrings(values = []) {
+    const seen = new Set();
+    const output = [];
+
+    for (const value of values) {
+        const text = String(value || '').trim();
+        const key = text.toLowerCase();
+        if (!text || seen.has(key)) continue;
+        seen.add(key);
+        output.push(text);
+    }
+
+    return output;
+}
+
+function parseKitsuIdentifier(rawValue) {
+    const value = String(rawValue || '').trim();
+    if (!value) return null;
+
+    if (/^\d+$/.test(value)) {
+        return {
+            raw: `kitsu:${value}`,
+            kitsuId: value,
+            season: 1,
+            episode: null,
+            isEpisode: false
+        };
+    }
+
+    const parts = value.split(':').map((part) => String(part || '').trim());
+    if (parts.length < 2 || parts[0].toLowerCase() !== 'kitsu' || !/^\d+$/.test(parts[1])) {
+        return null;
+    }
+
+    let season = 1;
+    let episode = null;
+
+    if (parts.length === 3) {
+        episode = parsePositiveInt(parts[2], null);
+    } else if (parts.length >= 4) {
+        season = parsePositiveInt(parts[2], 1);
+        episode = parsePositiveInt(parts[3], null);
+    }
+
+    return {
+        raw: value,
+        kitsuId: parts[1],
+        season,
+        episode,
+        isEpisode: Number.isInteger(episode) && episode > 0
+    };
+}
+
 function normalizeType(kitsuType) {
     if (!kitsuType) return 'series';
     const t = kitsuType.toLowerCase();
     return (t === 'tv' || t === 'ova' || t === 'ona' || t === 'current') ? 'series' : 'movie';
+}
+
+function buildTitleVariants(attributes = {}) {
+    return uniqueStrings([
+        attributes?.canonicalTitle,
+        attributes?.titles?.en,
+        attributes?.titles?.en_us,
+        attributes?.titles?.en_jp,
+        attributes?.titles?.ja_jp,
+        ...(Array.isArray(attributes?.abbreviatedTitles) ? attributes.abbreviatedTitles : [])
+    ]);
 }
 
 async function updateCache() {
@@ -85,7 +154,11 @@ async function updateCache() {
 
 async function fetchKitsuLive(kitsuID) {
     try {
-        const url = `${URLS.KITSU_API}/${kitsuID}?include=mappings`;
+        const parsedIdentifier = parseKitsuIdentifier(kitsuID);
+        const normalizedId = parsedIdentifier?.kitsuId || String(kitsuID || '').trim();
+        if (!normalizedId) return null;
+
+        const url = `${URLS.KITSU_API}/${normalizedId}?include=mappings`;
         const res = await axios.get(url, { timeout: 2500 }); 
         
         const data = res.data?.data;
@@ -100,19 +173,18 @@ async function fetchKitsuLive(kitsuID) {
 
         if (imdbMapping && imdbMapping.attributes?.externalId) {
             const kType = data.attributes?.subtype || 'TV';
-            const titles = [
-                data.attributes?.canonicalTitle,
-                data.attributes?.titles?.en,
-                data.attributes?.titles?.en_jp,
-                data.attributes?.titles?.ja_jp,
-                ...(data.attributes?.abbreviatedTitles || [])
-            ].filter(Boolean);
+            const titles = buildTitleVariants(data.attributes || {});
+            const startDate = String(data.attributes?.startDate || '');
             const result = {
                 imdb_id: imdbMapping.attributes.externalId,
                 type: normalizeType(kType),
                 season: 1,
                 episode: 1,
-                titles: [...new Set(titles)],
+                titles,
+                aliases: titles,
+                year: /^\d{4}/.test(startDate) ? startDate.slice(0, 4) : '',
+                subtype: String(data.attributes?.subtype || ''),
+                episode_count: parsePositiveInt(data.attributes?.episodeCount, null),
                 source: 'kitsu-live'
             };
             return result;
@@ -124,19 +196,20 @@ async function fetchKitsuLive(kitsuID) {
 }
 
 async function kitsuHandler(kitsuID) {
-    if (!kitsuID) return null;
-    const strID = String(kitsuID);
+    const parsedIdentifier = parseKitsuIdentifier(kitsuID);
+    if (!parsedIdentifier?.kitsuId) return null;
+    const strID = parsedIdentifier.kitsuId;
 
     if (!mappingCache.isLoaded) {
         updateCache().catch(e => console.error(e));
         
-        return await fetchKitsuLive(kitsuID);
+        return await fetchKitsuLive(strID);
     }
     
     let entry = mappingCache.map.get(strID);
 
     if (!entry) {
-        entry = await fetchKitsuLive(kitsuID);
+        entry = await fetchKitsuLive(strID);
         if (entry) mappingCache.map.set(strID, entry);
     }
 
@@ -146,10 +219,17 @@ async function kitsuHandler(kitsuID) {
         imdbID: entry.imdb_id,
         season: entry.season,
         episode: entry.episode,
-        type: entry.type
+        type: entry.type,
+        titles: uniqueStrings(entry.titles || entry.aliases || []),
+        aliases: uniqueStrings(entry.aliases || entry.titles || []),
+        year: entry.year || '',
+        subtype: entry.subtype || '',
+        episodeCount: parsePositiveInt(entry.episode_count, null)
     };
 }
 
 updateCache();
 
 module.exports = kitsuHandler;
+module.exports.kitsuHandler = kitsuHandler;
+module.exports.parseKitsuIdentifier = parseKitsuIdentifier;
