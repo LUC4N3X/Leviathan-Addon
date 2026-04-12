@@ -442,7 +442,7 @@ Una valutazione positiva aumenta autorevolezza, fiducia e visibilità del protoc
 
 <br><br>
 
-## ✦ LUC4N3X, anima del progetto ✦
+## ✦ L U C 4 N 3 X ✦
 
 ### Founder · Core Architect · Lead Engineering
 
