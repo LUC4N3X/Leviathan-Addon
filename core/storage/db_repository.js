@@ -255,6 +255,14 @@ async function ensureDatabaseOptimizations() {
       stale_until TIMESTAMPTZ NOT NULL,
       imdb_id TEXT,
       hashes TEXT[] DEFAULT ARRAY[]::TEXT[],
+      content_date TIMESTAMPTZ,
+      freshness_bucket TEXT,
+      confidence_score INTEGER DEFAULT 0,
+      result_count INTEGER DEFAULT 0,
+      cached_count INTEGER DEFAULT 0,
+      best_quality TEXT,
+      source_mix TEXT[] DEFAULT ARRAY[]::TEXT[],
+      policy_version INTEGER DEFAULT 1,
       hit_count BIGINT DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -312,6 +320,14 @@ async function ensureDatabaseOptimizations() {
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS stale_until TIMESTAMPTZ`,
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS imdb_id TEXT`,
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS hashes TEXT[] DEFAULT ARRAY[]::TEXT[]`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS content_date TIMESTAMPTZ`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS freshness_bucket TEXT`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS confidence_score INTEGER DEFAULT 0`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS result_count INTEGER DEFAULT 0`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS cached_count INTEGER DEFAULT 0`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS best_quality TEXT`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS source_mix TEXT[] DEFAULT ARRAY[]::TEXT[]`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS policy_version INTEGER DEFAULT 1`,
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS hit_count BIGINT DEFAULT 0`,
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
@@ -1663,28 +1679,56 @@ async function normalizePendingRdCacheState(options = {}) {
 }
 
 
-async function getSharedStreamCache(cacheKey) {
+async function getSharedStreamCache(cacheKey, options = {}) {
   if (!pool || !cacheKey) return null;
   await awaitDatabaseOptimizations();
 
   try {
     return await withClient(async (client) => {
-      const res = await client.query(
-        `
+      const touchHit = options?.touchHit !== false;
+      const query = touchHit
+        ? `
           UPDATE shared_stream_cache
           SET hit_count = COALESCE(hit_count, 0) + 1,
               updated_at = NOW()
           WHERE cache_key = $1
             AND stale_until >= NOW()
-          RETURNING cache_key, payload_b64, encoding, expires_at, stale_until, imdb_id, hashes, hit_count, updated_at
-        `,
-        [String(cacheKey)]
-      );
+          RETURNING cache_key, payload_b64, encoding, expires_at, stale_until, imdb_id, hashes, content_date, freshness_bucket, confidence_score, result_count, cached_count, best_quality, source_mix, policy_version, hit_count, updated_at
+        `
+        : `
+          SELECT cache_key, payload_b64, encoding, expires_at, stale_until, imdb_id, hashes, content_date, freshness_bucket, confidence_score, result_count, cached_count, best_quality, source_mix, policy_version, hit_count, updated_at
+          FROM shared_stream_cache
+          WHERE cache_key = $1
+            AND stale_until >= NOW()
+          LIMIT 1
+        `;
+      const res = await client.query(query, [String(cacheKey)]);
       return res.rows[0] || null;
     });
   } catch (error) {
     console.error(`❌ DB Error getSharedStreamCache: ${error.message}`);
     return null;
+  }
+}
+
+async function touchSharedStreamCacheHit(cacheKey) {
+  if (!pool || !cacheKey) return false;
+  await awaitDatabaseOptimizations();
+  try {
+    await withClient((client) => client.query(
+      `
+        UPDATE shared_stream_cache
+        SET hit_count = COALESCE(hit_count, 0) + 1,
+            updated_at = NOW()
+        WHERE cache_key = $1
+          AND stale_until >= NOW()
+      `,
+      [String(cacheKey)]
+    ));
+    return true;
+  } catch (error) {
+    console.error(`❌ DB Error touchSharedStreamCacheHit: ${error.message}`);
+    return false;
   }
 }
 
@@ -1698,6 +1742,18 @@ async function setSharedStreamCache(entry) {
   const hashes = [...new Set((Array.isArray(entry.hashes) ? entry.hashes : [])
     .map(normalizeInfoHash)
     .filter(Boolean))];
+  const contentDate = entry.content_date instanceof Date
+    ? entry.content_date
+    : (entry.content_date ? new Date(entry.content_date) : null);
+  const freshnessBucket = sanitizeText(entry.freshness_bucket).toLowerCase();
+  const confidenceScore = clampInt(entry.confidence_score, 0, 0, 100);
+  const resultCount = clampInt(entry.result_count, 0, 0, 1000);
+  const cachedCount = clampInt(entry.cached_count, 0, 0, 1000);
+  const bestQuality = sanitizeText(entry.best_quality) || null;
+  const sourceMix = [...new Set((Array.isArray(entry.source_mix) ? entry.source_mix : [])
+    .map((value) => sanitizeText(value))
+    .filter(Boolean))].slice(0, 8);
+  const policyVersion = clampInt(entry.policy_version, 1, 1, 1000);
   const expiresAt = entry.expires_at instanceof Date ? entry.expires_at : new Date(entry.expires_at);
   const staleUntil = entry.stale_until instanceof Date ? entry.stale_until : new Date(entry.stale_until);
   if (!Number.isFinite(expiresAt.getTime()) || !Number.isFinite(staleUntil.getTime())) return false;
@@ -1714,11 +1770,19 @@ async function setSharedStreamCache(entry) {
             stale_until,
             imdb_id,
             hashes,
+            content_date,
+            freshness_bucket,
+            confidence_score,
+            result_count,
+            cached_count,
+            best_quality,
+            source_mix,
+            policy_version,
             hit_count,
             created_at,
             updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[], 0, NOW(), NOW())
+          VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[], $8, $9, $10, $11, $12, $13, $14::TEXT[], $15, 0, NOW(), NOW())
           ON CONFLICT (cache_key)
           DO UPDATE SET
             payload_b64 = EXCLUDED.payload_b64,
@@ -1727,9 +1791,17 @@ async function setSharedStreamCache(entry) {
             stale_until = EXCLUDED.stale_until,
             imdb_id = EXCLUDED.imdb_id,
             hashes = EXCLUDED.hashes,
+            content_date = EXCLUDED.content_date,
+            freshness_bucket = EXCLUDED.freshness_bucket,
+            confidence_score = EXCLUDED.confidence_score,
+            result_count = EXCLUDED.result_count,
+            cached_count = EXCLUDED.cached_count,
+            best_quality = EXCLUDED.best_quality,
+            source_mix = EXCLUDED.source_mix,
+            policy_version = EXCLUDED.policy_version,
             updated_at = NOW()
         `,
-        [cacheKey, entry.payload_b64, encoding, expiresAt, staleUntil, imdbId, hashes]
+        [cacheKey, entry.payload_b64, encoding, expiresAt, staleUntil, imdbId, hashes, contentDate && Number.isFinite(contentDate.getTime()) ? contentDate : null, freshnessBucket || null, confidenceScore, resultCount, cachedCount, bestQuality, sourceMix, policyVersion]
       );
     });
     return true;
@@ -1803,6 +1875,7 @@ module.exports = {
   updateTbCacheStatus,
   getRdScanProgress,
   getSharedStreamCache,
+  touchSharedStreamCacheHit,
   setSharedStreamCache,
   deleteSharedStreamCacheByHashes,
   deleteSharedStreamCacheByImdb,
