@@ -105,6 +105,8 @@ const QUALITY_SCORES = [
 const SOURCE_WEIGHTS = {
     Corsaro: 28,
     Knaben: 26,
+    Nyaa: 25,
+    SubsPlease: 25,
     "1337x": 23,
     BitSearch: 22,
     RARBG: 21,
@@ -114,6 +116,7 @@ const SOURCE_WEIGHTS = {
     UIndex: 14
 };
 const ENGINE_BLACKLISTED_CATEGORIES = new Set([6006000, 6007000, 6005000]);
+const ANIME_RELEASE_GROUP_REGEX = /\b(?:SUBSPLEASE|ERAI[-.\s]?RAWS|HORRIBLESUBS|EMBER|JUDAS|ASW|RAZE|MUSE|ANI|YAMEII|DUBS[-.\s]?EMPIRE)\b/i;
 
 function now() {
     return Date.now();
@@ -243,8 +246,18 @@ function extractEpisodeContext(imdbId) {
     if (!imdbId || typeof imdbId !== "string") return {};
     const parts = imdbId.split(":");
     if (parts.length < 3) return {};
-    const season = parseInt(parts[1], 10);
-    const episode = parseInt(parts[2], 10);
+
+    let season = null;
+    let episode = null;
+
+    if (parts[0].toLowerCase() === "kitsu" && /^\d+$/.test(parts[1])) {
+        season = parts.length >= 4 ? parseInt(parts[2], 10) : 1;
+        episode = parseInt(parts[parts.length >= 4 ? 3 : 2], 10);
+    } else {
+        season = parseInt(parts[1], 10);
+        episode = parseInt(parts[2], 10);
+    }
+
     return {
         season: Number.isInteger(season) ? season : undefined,
         episode: Number.isInteger(episode) ? episode : undefined
@@ -400,8 +413,19 @@ function getResolutionScore(text) {
     return 0;
 }
 
-function getLanguageScore(name, langMode = 'ita') {
+function isAnimeContext(context = {}) {
+    return Boolean(context?.isAnime);
+}
+
+function parseMagnetSizeBytes(magnet) {
+    const match = String(magnet || "").match(/[?&]xl=(\d+)/i);
+    const bytes = match ? parseInt(match[1], 10) : 0;
+    return Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+}
+
+function getLanguageScore(name, langMode = 'ita', context = {}) {
     const normalized = normalizeSpaces(name).toUpperCase();
+    const animeMode = isAnimeContext(context);
     const hasItalianAudio = ITALIAN_AUDIO_REGEX.test(normalized);
     const hasItalianSubs = ITALIAN_SUB_REGEX.test(normalized);
     const isTrustedItalian = TRUSTED_ITALIAN_REGEX.test(normalized);
@@ -426,6 +450,7 @@ function getLanguageScore(name, langMode = 'ita') {
         if (hasItalianAudio) return 30;
         if (hasEnglishAudio) return 28;
         if (hasMultiLanguage) return 24;
+        if (animeMode && ANIME_RELEASE_GROUP_REGEX.test(normalized)) return 18;
         if (isTrustedItalian) return 20;
         if (hasItalianSubs) return 10;
         return 6;
@@ -434,15 +459,21 @@ function getLanguageScore(name, langMode = 'ita') {
     if (hasItalianAudio) return 30;
     if (isTrustedItalian && !hasOtherLanguage) return 22;
     if (hasItalianSubs) return 12;
+    if (animeMode) {
+        if (hasMultiLanguage) return 18;
+        if (hasEnglishAudio && !hasOtherLanguage) return 10;
+        if (!hasOtherLanguage || ANIME_RELEASE_GROUP_REGEX.test(normalized)) return 8;
+        return -8;
+    }
     if (hasEnglishAudio || hasOtherLanguage) return -40;
     return -8;
 }
 
-function isValidResult(name, langMode = 'ita') {
+function isValidResult(name, langMode = 'ita', context = {}) {
     if (!name) return false;
     const normalized = normalizeSpaces(name);
     if (NOISY_TITLE_REGEX.test(normalized)) return false;
-    if (getLanguageScore(normalized, langMode) < 0) return false;
+    if (getLanguageScore(normalized, langMode, context) < 0) return false;
     return true;
 }
 
@@ -455,9 +486,33 @@ function checkYear(name, year, type) {
     return matches.some(candidate => Math.abs(candidate - yearValue) <= 1);
 }
 
-function isCorrectFormat(name, reqSeason, reqEpisode) {
+function isCorrectFormat(name, reqSeason, reqEpisode, context = {}) {
     if (!reqSeason && !reqEpisode) return true;
     const normalized = normalizeSpaces(name).toUpperCase();
+    const animeMode = isAnimeContext(context);
+    const ignoreAnimeSeason = animeMode && String(context?.imdbId || '').toLowerCase().startsWith('kitsu:');
+
+    if (animeMode && reqEpisode) {
+        const animeSeasonMatch = normalized.match(/\bS(?:EASON)?\s*0?(\d{1,2})(?!\d)/i)
+            || normalized.match(/\b(\d{1,2})(?:ST|ND|RD|TH)\s+SEASON\b/i);
+        if (animeSeasonMatch && reqSeason && !ignoreAnimeSeason) {
+            const season = parseInt(animeSeasonMatch[1], 10);
+            if (Number.isInteger(season) && season !== reqSeason) return false;
+        }
+
+        const absolutePattern = new RegExp(`(?:^|[\\s.\\-_\\[(])0*${reqEpisode}(?:V\\d+)?(?=$|[\\s.\\-_\\])])`, 'i');
+        const explicitPattern = new RegExp(`(?:EP(?:ISODE)?|EPISODIO)\\s*0*${reqEpisode}(?:V\\d+)?`, 'i');
+        const rangeMatch = normalized.match(/(?:^|[^\d])0?(\d{1,4})\s*(?:~|-)\s*0?(\d{1,4})(?:[^\d]|$)/);
+        if (absolutePattern.test(normalized) || explicitPattern.test(normalized)) return true;
+        if (rangeMatch) {
+            const start = parseInt(rangeMatch[1], 10);
+            const end = parseInt(rangeMatch[2], 10);
+            if (Number.isInteger(start) && Number.isInteger(end) && reqEpisode >= Math.min(start, end) && reqEpisode <= Math.max(start, end)) {
+                return true;
+            }
+        }
+        if (/\b(?:BATCH|COMPLETE|PACK|COLLECTION)\b/i.test(normalized)) return true;
+    }
 
     const seasonEpisodePatterns = [
         /S(\d{1,2})E(\d{1,3})/i,
@@ -480,7 +535,7 @@ function isCorrectFormat(name, reqSeason, reqEpisode) {
         const seasonMatch = normalized.match(/(?:\bS(?:EASON)?[ ._-]?|STAGIONE[ ._-]?)(\d{1,2})\b/i);
         if (seasonMatch) {
             const season = parseInt(seasonMatch[1], 10);
-            if (Number.isInteger(season) && season !== reqSeason) return false;
+            if (Number.isInteger(season) && season !== reqSeason && !ignoreAnimeSeason) return false;
         }
     }
 
@@ -499,6 +554,7 @@ function buildSearchQueries(context) {
     const buildBaseSet = () => {
         const bucket = new Set();
         const isSeries = normalizeType(context.type) === 'series';
+        const isAnime = context.isAnime;
         const reqSeason = context.reqSeason;
         const reqEpisode = context.reqEpisode;
 
@@ -508,7 +564,26 @@ function buildSearchQueries(context) {
             pushUnique(bucket, `${base} ${context.year}`);
         }
 
-        if (isSeries && reqSeason && reqEpisode) {
+        if (isSeries && isAnime) {
+            if (reqEpisode) {
+                const e = String(reqEpisode).padStart(2, '0');
+                pushUnique(bucket, `${base} - ${e}`);
+                pushUnique(bucket, `${base} ${e}`);
+                pushUnique(bucket, `${base} episode ${reqEpisode}`);
+                pushUnique(bucket, `${base} ep ${reqEpisode}`);
+                if (reqSeason && reqSeason > 1) {
+                    pushUnique(bucket, `${base} S${reqSeason} - ${e}`);
+                    pushUnique(bucket, `${base} season ${reqSeason} episode ${reqEpisode}`);
+                }
+            }
+            if (reqSeason && reqSeason > 1) {
+                pushUnique(bucket, `${base} season ${reqSeason}`);
+                pushUnique(bucket, `${base} S${reqSeason}`);
+            }
+            pushUnique(bucket, `${base} batch`);
+            pushUnique(bucket, `${base} complete`);
+            pushUnique(bucket, `${base} pack`);
+        } else if (isSeries && reqSeason && reqEpisode) {
             const s = String(reqSeason).padStart(2, '0');
             const e = String(reqEpisode).padStart(2, '0');
             pushUnique(bucket, `${base} S${s}E${e}`);
@@ -528,8 +603,21 @@ function buildSearchQueries(context) {
     const baseQueries = buildBaseSet();
     const itaQueries = new Set();
     const engQueries = new Set();
+    const limitUniqueQueries = (queries) => {
+        const output = [];
+        const seen = new Set();
+        for (const query of queries) {
+            const key = clean(query).toLowerCase();
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            output.push(query);
+            if (output.length >= CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE) break;
+        }
+        return output;
+    };
 
     for (const query of baseQueries) {
+        pushUnique(itaQueries, context.isAnime ? query : `${query} ITA`);
         pushUnique(itaQueries, `${query} ITA`);
         pushUnique(itaQueries, `${query} MULTI`);
         pushUnique(engQueries, query);
@@ -538,7 +626,7 @@ function buildSearchQueries(context) {
     }
 
     if (context.langMode === 'eng') {
-        return [...engQueries].slice(0, CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE);
+        return limitUniqueQueries([...engQueries]);
     }
 
     if (context.langMode === 'all') {
@@ -550,15 +638,16 @@ function buildSearchQueries(context) {
             if (ita[i]) mixed.push(ita[i]);
             if (eng[i]) mixed.push(eng[i]);
         }
-        return mixed.slice(0, CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE);
+        return limitUniqueQueries(mixed);
     }
 
-    return [...itaQueries].slice(0, CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE);
+    return limitUniqueQueries([...itaQueries]);
 }
 
 function buildSearchContext(title, year, type, imdbId, options = {}) {
     const episodeContext = extractEpisodeContext(imdbId);
     const langMode = resolveLangMode(options);
+    const isAnime = normalizeType(type) === 'series' && (String(type || '').toLowerCase() === 'anime' || String(imdbId || '').toLowerCase().startsWith('kitsu:') || options.isAnime === true);
     return {
         title,
         cleanTitle: clean(title),
@@ -570,33 +659,35 @@ function buildSearchContext(title, year, type, imdbId, options = {}) {
         imdbId,
         langMode,
         allowEng: langMode === 'eng' || langMode === 'all',
+        isAnime,
         options
     };
 }
 
 function passesResultFilters(name, context) {
-    if (!isValidResult(name, context.langMode)) return false;
+    if (!isValidResult(name, context.langMode, context)) return false;
     if (!checkYear(name, context.year, context.type)) return false;
-    if (!isCorrectFormat(name, context.reqSeason, context.reqEpisode)) return false;
+    if (!isCorrectFormat(name, context.reqSeason, context.reqEpisode, context)) return false;
 
     const matchScore = titleMatchScore(name, context.title);
     if (context.normalizedType === "movie" && matchScore < 0.34) return false;
-    if (context.normalizedType === "series" && matchScore < 0.30) return false;
+    if (context.normalizedType === "series" && matchScore < (context.isAnime ? 0.18 : 0.30)) return false;
     return true;
 }
 
 function computeResultScore(result, context) {
     const seeders = Math.max(0, Number(result.seeders) || 0);
     const sizeBytes = Math.max(0, Number(result.sizeBytes) || 0);
-    const languageScore = getLanguageScore(result.title, context.langMode);
+    const languageScore = getLanguageScore(result.title, context.langMode, context);
     const resolutionScore = getResolutionScore(result.title) * 8;
     const yearScore = checkYear(result.title, context.year, context.type) ? 8 : -30;
-    const formatScore = isCorrectFormat(result.title, context.reqSeason, context.reqEpisode) ? 18 : -60;
+    const formatScore = isCorrectFormat(result.title, context.reqSeason, context.reqEpisode, context) ? 18 : -60;
     const overlapScore = Math.round(titleMatchScore(result.title, context.title) * 40);
     const sourceScore = SOURCE_WEIGHTS[result.source] || 10;
+    const animeGroupScore = context.isAnime && ANIME_RELEASE_GROUP_REGEX.test(result.title) ? 18 : 0;
     const sizeScore = sizeBytes > 0 ? Math.min(20, Math.round(Math.log10(sizeBytes + 1))) : 0;
     const seederScore = Math.min(35, Math.round(Math.log2(seeders + 1) * 4));
-    return languageScore + resolutionScore + yearScore + formatScore + overlapScore + sourceScore + sizeScore + seederScore;
+    return languageScore + resolutionScore + yearScore + formatScore + overlapScore + sourceScore + animeGroupScore + sizeScore + seederScore;
 }
 
 function normalizeResult(raw, context, source) {
@@ -608,6 +699,7 @@ function normalizeResult(raw, context, source) {
     if (!passesResultFilters(title, context)) return null;
 
     let sizeBytes = Number(raw.sizeBytes) || 0;
+    if (!sizeBytes && magnet) sizeBytes = parseMagnetSizeBytes(magnet);
     if (!sizeBytes && raw.size) sizeBytes = parseSize(raw.size);
     let size = raw.size || "";
     if (!size && sizeBytes > 0) size = bytesToSize(sizeBytes);
@@ -809,6 +901,50 @@ async function searchKnaben(context) {
         return finalResults;
     } catch (error) {
         console.log(`[Knaben] Errore durante la ricerca: ${error.message}`);
+        return [];
+    }
+}
+
+async function searchNyaa(context) {
+    if (!context.isAnime) return [];
+    console.log(`[Nyaa] Avvio ricerca per: ${context.title}...`);
+    try {
+        const results = await collectQueryResults(context, async query => {
+            const url = `https://nyaa.si/?f=0&c=1_0&q=${encodeURIComponent(query)}`;
+            const { data } = await requestHtml(url, { timeout: 6500, langMode: 'all' });
+            if (!data) return [];
+
+            const $ = cheerio.load(data);
+            const rows = [];
+
+            $("table.torrent-list tbody tr").each((_, row) => {
+                const cells = $(row).find("td");
+                if (cells.length < 6) return;
+
+                const titleEl = $(row).find('a[href^="/view/"]').last();
+                const magnet = $(row).find('a[href^="magnet:"]').attr("href");
+                const name = normalizeSpaces(titleEl.attr("title") || titleEl.text());
+                if (!name || !magnet || !passesResultFilters(name, context)) return;
+
+                const size = normalizeSpaces(cells.eq(Math.max(0, cells.length - 5)).text());
+                const seeders = parseInt(cells.eq(Math.max(0, cells.length - 3)).text().trim(), 10) || 0;
+
+                rows.push(normalizeResult({
+                    title: name,
+                    magnet,
+                    size,
+                    seeders
+                }, context, "Nyaa"));
+            });
+
+            return rows.filter(Boolean);
+        }, { maxQueries: 3 });
+
+        const finalResults = dedupeResults(results).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[Nyaa] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[Nyaa] Errore: ${error.message}`);
         return [];
     }
 }
@@ -1124,9 +1260,56 @@ async function searchUindex(context) {
     }
 }
 
+async function searchSubsPlease(context) {
+    if (!context.isAnime) return [];
+    console.log(`[SubsPlease] Avvio ricerca per: ${context.title}...`);
+    try {
+        const results = await collectQueryResults(context, async query => {
+            const { data } = await axios.get(`https://subsplease.org/api/?f=search&tz=UTC&s=${encodeURIComponent(query)}`, {
+                timeout: CONFIG.TIMEOUT_API * 2,
+                httpsAgent,
+                headers: { "Accept-Language": getAcceptLanguage('all') }
+            });
+
+            if (!data || typeof data !== "object") return [];
+            return Object.values(data).flatMap(entry => {
+                const downloads = Array.isArray(entry?.downloads) ? entry.downloads : [];
+                const episode = parseInt(entry?.episode, 10) || context.reqEpisode || 0;
+                const show = normalizeSpaces(entry?.show || context.title);
+
+                return downloads.map(download => {
+                    const magnet = download?.magnet;
+                    if (!magnet) return null;
+
+                    const resolution = normalizeSpaces(download?.res ? `${download.res}p` : "");
+                    const title = normalizeSpaces(`[SubsPlease] ${show}${episode > 0 ? ` - ${String(episode).padStart(2, '0')}` : ''}${resolution ? ` (${resolution})` : ''}`);
+                    const sizeBytes = parseMagnetSizeBytes(magnet);
+
+                    return normalizeResult({
+                        title,
+                        magnet,
+                        sizeBytes,
+                        size: sizeBytes > 0 ? bytesToSize(sizeBytes) : "",
+                        seeders: 0
+                    }, context, "SubsPlease");
+                }).filter(Boolean);
+            });
+        }, { maxQueries: 2 });
+
+        const finalResults = dedupeResults(results).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[SubsPlease] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[SubsPlease] Errore: ${error.message}`);
+        return [];
+    }
+}
+
 const ACTIVE_ENGINES = [
     { name: "Corsaro", fn: searchCorsaro, timeout: CONFIG.ENGINE_TIMEOUT },
     { name: "Knaben", fn: searchKnaben, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "Nyaa", fn: searchNyaa, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "SubsPlease", fn: searchSubsPlease, timeout: CONFIG.ENGINE_TIMEOUT },
     { name: "TPB", fn: searchTPB, timeout: CONFIG.ENGINE_TIMEOUT },
     { name: "TPB Mirror", fn: searchTPBMirror, timeout: CONFIG.ENGINE_TIMEOUT },
     { name: "1337x", fn: search1337x, timeout: CONFIG.ENGINE_TIMEOUT + 2000 },
@@ -1143,7 +1326,8 @@ function buildSearchCacheKey(context) {
         type: context.normalizedType,
         reqSeason: context.reqSeason || 0,
         reqEpisode: context.reqEpisode || 0,
-        langMode: context.langMode
+        langMode: context.langMode,
+        isAnime: context.isAnime === true
     });
 }
 
@@ -1232,6 +1416,7 @@ async function updateTrackers() {
 }
 
 module.exports = {
+    name: "TorrentEngines",
     searchMagnet,
     updateTrackers,
     CONFIG,
