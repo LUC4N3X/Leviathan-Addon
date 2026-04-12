@@ -21,6 +21,7 @@ const { createWebProviderTools } = require("./stream/web_providers");
 const sourceHealth = require("./lib/source_health");
 const { createSearchPlan, evaluatePoolSatisfaction } = require("./lib/search_planner");
 const { shouldSkipRecentWork } = require('./recent_work');
+const { buildSharedStreamCachePolicy, buildSharedReadContext, shouldUseSharedStreamEntry } = require('./lib/shared_stream_policy');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
 const {
@@ -1154,6 +1155,14 @@ async function fetchTmdbMeta(tmdbId, type, userApiKey) {
     catch (e) { logger.warn(`TMDB Meta Fetch Error for ${tmdbId}: ${e.message}`); return null; }
 }
 
+async function fetchTmdbEpisodeMeta(tmdbId, season, episode, userApiKey) {
+    if (!tmdbId || !(season > 0) || !(episode > 0)) return null;
+    const apiKey = (userApiKey && userApiKey.length > 1) ? userApiKey : (process.env.TMDB_API_KEY || "4b9dfb8b1c9f1720b5cd1d7efea1d845");
+    const url = `https://api.themoviedb.org/3/tv/${tmdbId}/season/${season}/episode/${episode}?api_key=${apiKey}&language=it-IT`;
+    try { const { data } = await axios.get(url, { timeout: CONFIG.TIMEOUTS.TMDB }); return data; }
+    catch (e) { logger.warn(`TMDB Episode Meta Fetch Error for ${tmdbId} S${season}E${episode}: ${e.message}`); return null; }
+}
+
 async function getMetadata(id, type, config = {}) {
   const userTmdbKey = String(config?.tmdb || '');
   const metadataCacheKey = `${type}:${id}:${userTmdbKey}`;
@@ -1198,7 +1207,23 @@ async function getMetadata(id, type, config = {}) {
             if (tmdbId) {
                 const tmdbData = await fetchTmdbMeta(tmdbId, cleanType, userTmdbKey);
                 if (tmdbData) {
-                    finalMeta = { title: tmdbData.title || tmdbData.name, originalTitle: tmdbData.original_title || tmdbData.original_name, year: (tmdbData.release_date || tmdbData.first_air_date) ? (tmdbData.release_date || tmdbData.first_air_date).split("-")[0] : "", imdb_id: cleanId, tmdb_id: tmdbId, isSeries: cleanType === "series", season: season, episode: episode };
+                    const episodeData = cleanType === "series" && season > 0 && episode > 0
+                        ? await fetchTmdbEpisodeMeta(tmdbId, season, episode, userTmdbKey)
+                        : null;
+                    finalMeta = {
+                        title: tmdbData.title || tmdbData.name,
+                        originalTitle: tmdbData.original_title || tmdbData.original_name,
+                        year: (tmdbData.release_date || tmdbData.first_air_date) ? (tmdbData.release_date || tmdbData.first_air_date).split("-")[0] : "",
+                        imdb_id: cleanId,
+                        tmdb_id: tmdbId,
+                        isSeries: cleanType === "series",
+                        season: season,
+                        episode: episode,
+                        releaseDate: tmdbData.release_date || null,
+                        firstAirDate: tmdbData.first_air_date || null,
+                        episodeAirDate: episodeData?.air_date || null,
+                        releaseInfo: tmdbData.release_date || tmdbData.first_air_date || null
+                    };
                     logger.info(`[META] Usato TMDB (UserKey: ${!!userTmdbKey}): ${finalMeta.title} (${finalMeta.year}) [ID: ${tmdbId}] Orig: ${finalMeta.originalTitle}`);
                 }
             }
@@ -1207,7 +1232,16 @@ async function getMetadata(id, type, config = {}) {
         if (!finalMeta) {
           logger.info(`[META] Fallback a Cinemeta per ${cleanId}`);
           const { data: cData } = await axios.get(`${CONFIG.CINEMETA_URL}/meta/${cleanType}/${cleanId}.json`, { timeout: CONFIG.TIMEOUTS.TMDB }).catch(() => ({ data: {} }));
-          finalMeta = cData?.meta ? { title: cData.meta.name, originalTitle: cData.meta.name, year: cData.meta.year?.split("â€“")[0], imdb_id: cleanId, isSeries: cleanType === "series", season: season, episode: episode } : null;
+          finalMeta = cData?.meta ? {
+            title: cData.meta.name,
+            originalTitle: cData.meta.name,
+            year: cData.meta.year?.split("â€“")[0],
+            imdb_id: cleanId,
+            isSeries: cleanType === "series",
+            season: season,
+            episode: episode,
+            releaseInfo: cData.meta.releaseInfo || null
+          } : null;
         }
       }
     } catch (err) { logger.error(`Errore getMetadata Critical: ${err.message}`); finalMeta = null; }
@@ -1658,8 +1692,9 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const configuredDebridService = getNormalizedDebridService(config);
   const debridApiKey = getConfiguredDebridKey(config, configuredDebridService);
   const hasDebridKey = Boolean(debridApiKey);
-  const isWebEnabled = config.filters && (isStreamingCommunityEnabled(config.filters) || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableGf);
-  const isP2PEnabled = config.filters && config.filters.enableP2P === true;
+  const filters = config?.filters || {};
+  const isWebEnabled = Boolean(filters && (isStreamingCommunityEnabled(filters) || filters.enableGhd || filters.enableGs || filters.enableAnimeWorld || filters.enableGf));
+  const isP2PEnabled = filters.enableP2P === true;
 
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: "CONFIG", title: "Inserisci API Key, attiva P2P o attiva una sorgente Web" }] };
 
@@ -1667,20 +1702,21 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const cacheKey = `${type}:${id}:${configHash}`;
   const inflightKey = `stream:${cacheKey}`;
 
-  const cachedResult = await Cache.getCachedStream(cacheKey);
-  if (cachedResult) return cachedResult;
+  const localCachedResult = await Cache.getCachedStream(cacheKey, { allowShared: false });
+  if (localCachedResult) return localCachedResult;
 
-  if (streamInflight.has(inflightKey)) {
-      const staleResult = await Cache.getStaleStream(cacheKey);
-      if (staleResult) {
+  const hadConcurrentInflight = streamInflight.has(inflightKey);
+  if (hadConcurrentInflight) {
+      const localStaleResult = await Cache.getStaleStream(cacheKey, { allowShared: false });
+      if (localStaleResult) {
           incrementMetric('stream.generate.staleWhileRefresh');
           if (streamInflight.size >= STREAM_STALE_LOAD_THRESHOLD) incrementMetric('stream.generate.staleLoadShield');
-          return staleResult;
+          return localStaleResult;
       }
   }
 
   return withSharedPromise(streamInflight, inflightKey, async () => {
-      const cachedAgain = await Cache.getCachedStream(cacheKey);
+      const cachedAgain = await Cache.getCachedStream(cacheKey, { allowShared: false });
       if (cachedAgain) return cachedAgain;
 
       const generationStartedAt = Date.now();
@@ -1700,14 +1736,39 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       const meta = await LIMITERS.metadata.schedule(() => getMetadata(finalId, type, config));
       if (!meta) return { streams: [] };
 
+      const sharedReadContext = buildSharedReadContext(meta);
+      const sharedCachedResult = await Cache.getCachedStream(cacheKey, {
+          allowLocal: false,
+          allowShared: true,
+          sharedEntryEvaluator: (row) => shouldUseSharedStreamEntry(row, sharedReadContext, { allowStale: false })
+      });
+      if (sharedCachedResult) {
+          incrementMetric('stream.generate.sharedPolicyHit');
+          return sharedCachedResult;
+      }
+
+      if (hadConcurrentInflight) {
+          const sharedStaleResult = await Cache.getStaleStream(cacheKey, {
+              allowLocal: false,
+              allowShared: true,
+              sharedEntryEvaluator: (row) => shouldUseSharedStreamEntry(row, sharedReadContext, { allowStale: true })
+          });
+          if (sharedStaleResult) {
+              incrementMetric('stream.generate.staleWhileRefresh');
+              incrementMetric('stream.generate.sharedPolicyStaleHit');
+              if (streamInflight.size >= STREAM_STALE_LOAD_THRESHOLD) incrementMetric('stream.generate.staleLoadShield');
+              return sharedStaleResult;
+          }
+      }
+
       logger.info(`[SPEED] Start search for: ${meta.title}`);
 
       const localDbResults = await fetchLocalDbResults(meta);
       if (localDbResults.length > 0) logger.info(`[DB READ] Trovati ${localDbResults.length} torrent dal DB locale.`);
 
       const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
-      const dbOnlyMode = config.filters?.dbOnly === true;
-      const langMode = config.filters?.language || (config.filters?.allowEng ? 'all' : 'ita');
+      const dbOnlyMode = filters.dbOnly === true;
+      const langMode = filters.language || (filters.allowEng ? 'all' : 'ita');
       const allowItalianWebProviders = langMode !== 'eng';
       const aggressiveFilter = createAggressiveResultFilter(meta, type, langMode);
 
@@ -1726,17 +1787,17 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
       let cleanResults = await normalizeCandidateResults([...localDbResults, ...networkResults].filter(aggressiveFilter));
       cleanResults = applyPackKnowledge(cleanResults, meta);
-      cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
+      cleanResults = applyConfiguredTorrentFilters(cleanResults, filters);
       logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
 
       if (!dbOnlyMode) saveResultsToDbBackground(meta, cleanResults, config);
 
       let rankedList = rankAndFilterResults(cleanResults, meta, config);
-      const sortMode = config.sort || (config.filters && config.filters.sort) || 'balanced';
+      const sortMode = config.sort || filters.sort || 'balanced';
       rankedList = rerankCompositeResults(rankedList, meta, config, sortMode);
       rankedList = applyPremiumRankingPolicy(rankedList, meta, config);
 
-      if (config.filters && config.filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, config.filters.maxPerQuality);
+      if (filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, filters.maxPerQuality);
 
       rankedList = await reprioritizeRdRankedList(rankedList, meta, config, hasDebridKey);
       rankedList = applyPremiumRankingPolicy(rankedList, meta, config);
@@ -1747,14 +1808,15 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
       const finalRanked = rankedList.slice(0, CONFIG.MAX_RESULTS);
       let debridStreams = [];
+      let p2pStreams = [];
 
       if (finalRanked.length > 0 && hasDebridKey) {
-          const TOP_LIMIT = Math.max(0, Math.min(10, parseInt(config.filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0));
+          const TOP_LIMIT = Math.max(0, Math.min(10, parseInt(filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0));
           const serviceLimiter = getServiceResolverLimiter(configuredDebridService);
           const resolverConfig = { ...config, service: configuredDebridService, rawConf: userConfStr };
           const immediatePromises = finalRanked.slice(0, TOP_LIMIT).map(item => {
               const runtimeItem = createRuntimeItem(item, meta);
-              return serviceLimiter.schedule(() => resolveDebridLink(resolverConfig, runtimeItem, config.filters?.showFake, reqHost, meta));
+              return serviceLimiter.schedule(() => resolveDebridLink(resolverConfig, runtimeItem, filters?.showFake, reqHost, meta));
           });
           const lazyCandidates = finalRanked.slice(TOP_LIMIT).map(item => createRuntimeItem(item, meta));
           const lazyStreams = lazyCandidates
@@ -1765,7 +1827,8 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           warmupLazyStreamsInBackground(resolverConfig, lazyCandidates, meta);
       } else if (finalRanked.length > 0 && isP2PEnabled) {
           logger.info(`[P2P MODE] Generating direct streams for ${meta.title}`);
-          debridStreams = finalRanked.map(item => P2P.formatP2PStream(item, config));
+          p2pStreams = finalRanked.map(item => P2P.formatP2PStream(item, config));
+          debridStreams = p2pStreams;
       }
 
       const rawWebBuckets = await fetchWebProviderBuckets({
@@ -1780,20 +1843,47 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       });
 
       const formattedWebBuckets = formatWebProviderBuckets(rawWebBuckets, meta, config);
-      let finalStreams = mergeFinalStreams(debridStreams, formattedWebBuckets, config.filters || {});
-      finalStreams = applyConfiguredStreamFilters(finalStreams, config.filters || {});
+      const webStreams = Object.values(formattedWebBuckets || {}).flatMap((bucket) => Array.isArray(bucket) ? bucket : []);
+      const webBucketNames = Object.entries(formattedWebBuckets || {})
+          .filter(([, bucket]) => Array.isArray(bucket) && bucket.length > 0)
+          .map(([bucketName]) => bucketName);
+
+      let finalStreams = mergeFinalStreams(debridStreams, formattedWebBuckets, filters);
+      finalStreams = applyConfiguredStreamFilters(finalStreams, filters);
 
       const resultObj = { streams: finalStreams, cacheMaxAge: 0, staleRevalidate: 0, staleError: 0 };
-      const streamTtl = finalStreams.length > 0 ? 1800 : EMPTY_STREAM_TTL;
+      const enabledWebProvidersCount = [
+          isStreamingCommunityEnabled(filters),
+          filters.enableGhd,
+          filters.enableGs,
+          filters.enableAnimeWorld,
+          filters.enableGf
+      ].filter(Boolean).length;
+      const cachePolicy = buildSharedStreamCachePolicy(meta, {
+          cleanResults,
+          rankedResults: finalRanked,
+          finalStreams,
+          debridStreams: hasDebridKey ? debridStreams : [],
+          webStreams,
+          p2pStreams,
+          webBucketNames,
+          enabledWebProvidersCount,
+          hasDebridKey,
+          isP2PEnabled,
+          dbOnlyMode,
+          debridService: configuredDebridService
+      });
 
-      await Cache.cacheStream(cacheKey, resultObj, streamTtl, {
+      await Cache.cacheStream(cacheKey, resultObj, cachePolicy.localTtl || (finalStreams.length > 0 ? 1800 : EMPTY_STREAM_TTL), {
           imdbId: meta?.imdb_id || null,
           hashes: cleanResults.map((item) => item?.hash || item?.infoHash).filter(Boolean)
+      }, {
+          sharedPolicy: cachePolicy
       });
 
       recordDuration('stream.generate.total', Date.now() - generationStartedAt);
       incrementMetric(finalStreams.length > 0 ? 'stream.generate.nonEmpty' : 'stream.generate.empty');
-      logger.info(`[CACHE] SAVED: ${cacheKey} (ttl=${streamTtl}s, streams=${finalStreams.length})`);
+      logger.info(`[CACHE] SAVED: ${cacheKey} (local=${cachePolicy.localTtl}s, shared=${cachePolicy.allowSharedWrite ? cachePolicy.sharedTtl : 0}s, bucket=${cachePolicy.freshnessBucket}, confidence=${cachePolicy.confidenceScore}, streams=${finalStreams.length})`);
 
       return resultObj;
   });
