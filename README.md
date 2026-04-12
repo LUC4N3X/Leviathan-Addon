@@ -430,21 +430,35 @@ Una valutazione positiva aumenta autorevolezza, fiducia e visibilità del protoc
 
 <div align="center">
 
-# 🧬 Credits
-
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,100:00E0FF&height=130&section=header&text=Credits&fontSize=40&fontColor=ffffff&animation=fadeIn&fontAlignY=35" width="100%" />
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,50:00E0FF,100:8A2BE2&height=180&section=header&text=✨%20CREDITS%20✨&fontSize=50&fontColor=ffffff&animation=twinkling&fontAlignY=35&desc=The%20Mind%20Behind%20The%20Code&descAlignY=60&descAlign=50" width="100%" />
 
 <br><br>
 
 <a href="https://github.com/LUC4N3X">
-  <img src="https://github.com/LUC4N3X.png" width="140" alt="Project Lead" />
+  <img src="https://github.com/LUC4N3X.png" width="160" style="border-radius: 50%; border: 4px solid #00E0FF;" alt="LUC4N3X - Project Lead" />
 </a>
 
 <br><br>
 
-## LUC4N3X
+# 🚀 **LUC4N3X**
 
-### Founder · Core Architect · Lead Engineering
+<p align="center">
+  <img src="https://img.shields.io/badge/👑_Founder-FFD700?style=for-the-badge&logoColor=white" alt="Founder" />
+  <img src="https://img.shields.io/badge/🏛️_Core_Architect-00E0FF?style=for-the-badge&logoColor=white" alt="Core Architect" />
+  <img src="https://img.shields.io/badge/💻_Lead_Engineering-8A2BE2?style=for-the-badge&logoColor=white" alt="Lead Engineering" />
+</p>
+
+<br>
+
+<a href="https://github.com/LUC4N3X">
+  <img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&weight=600&size=22&pause=1000&color=00E0FF&center=true&vCenter=true&width=500&lines=Building+the+future...;Architecting+elegant+solutions...;Leading+innovation..." alt="Typing SVG" />
+</a>
+
+<br><br>
+
+---
+
+</div>
 
 <p align="center">
 Ideazione, architettura, design del protocollo, integrazione dei moduli core, pipeline di aggregazione, identità del progetto e direzione evolutiva del sistema.
