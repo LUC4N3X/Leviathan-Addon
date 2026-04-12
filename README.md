@@ -437,12 +437,12 @@ Una valutazione positiva aumenta autorevolezza, fiducia e visibilità del protoc
 <br><br>
 
 <a href="https://github.com/LUC4N3X">
-  <img src="https://github.com/LUC4N3X.png" width="140" style="border-radius:50%;" alt="LUC4N3X" />
+  <img src="https://github.com/LUC4N3X.png" width="140" alt="Project Lead" />
 </a>
 
 <br><br>
 
-## ✨ LUC4N3X
+## ✦ LUC4N3X, anima del progetto ✦
 
 ### Founder · Core Architect · Lead Engineering
 
