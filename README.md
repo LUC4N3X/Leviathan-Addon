@@ -430,31 +430,42 @@ Una valutazione positiva aumenta autorevolezza, fiducia e visibilità del protoc
 
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,50:00E0FF,100:8A2BE2&height=180&section=header&text=✨%20CREDITS%20✨&fontSize=50&fontColor=ffffff&animation=twinkling&fontAlignY=35&desc=The%20Mind%20Behind%20The%20Code&descAlignY=60&descAlign=50" width="100%" />
-
-<br><br>
-
-<a href="https://github.com/LUC4N3X">
-  <img src="https://github.com/LUC4N3X.png" width="160" style="border-radius: 50%; border: 4px solid #00E0FF;" alt="LUC4N3X - Project Lead" />
-</a>
-
-<br><br>
-
-# 🚀 **LUC4N3X**
-
-<p align="center">
-  <img src="https://img.shields.io/badge/👑_Founder-FFD700?style=for-the-badge&logoColor=white" alt="Founder" />
-  <img src="https://img.shields.io/badge/🏛️_Core_Architect-00E0FF?style=for-the-badge&logoColor=white" alt="Core Architect" />
-  <img src="https://img.shields.io/badge/💻_Lead_Engineering-8A2BE2?style=for-the-badge&logoColor=white" alt="Lead Engineering" />
-</p>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,100:00E0FF&height=130&section=header&text=Credits&fontSize=42&fontColor=ffffff&animation=fadeIn&fontAlignY=35" width="100%" />
 
 <br>
 
 <a href="https://github.com/LUC4N3X">
-  <img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&weight=600&size=22&pause=1000&color=00E0FF&center=true&vCenter=true&width=500&lines=Building+the+future...;Architecting+elegant+solutions...;Leading+innovation..." alt="Typing SVG" />
+  <img src="https://github.com/LUC4N3X.png" width="130" style="border-radius:50%;" alt="LUC4N3X" />
 </a>
 
 <br><br>
+
+### [`LUC4N3X`](https://github.com/LUC4N3X)
+
+**Founder · Core Architect · Lead Engineer**
+
+<br>
+
+<img src="https://img.shields.io/badge/Python-0d1117?style=flat-square&logo=python&logoColor=00E0FF" />
+<img src="https://img.shields.io/badge/Node.js-0d1117?style=flat-square&logo=node.js&logoColor=00E0FF" />
+<img src="https://img.shields.io/badge/Docker-0d1117?style=flat-square&logo=docker&logoColor=00E0FF" />
+<img src="https://img.shields.io/badge/Stremio-0d1117?style=flat-square&logo=stremio&logoColor=00E0FF" />
+
+<br><br>
+
+<a href="https://github.com/LUC4N3X">
+  <img src="https://github-readme-stats.vercel.app/api?username=LUC4N3X&show_icons=true&hide_border=true&bg_color=0d1117&title_color=00E0FF&icon_color=00E0FF&text_color=8892b0&ring_color=00E0FF&card_width=400" height="155" />
+</a>
+
+<br><br>
+
+> *Designed, architected, and engineered from the ground up — every layer, every line.*
+
+<br>
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:00E0FF,100:0d1117&height=100&section=footer" width="100%" />
+
+</div>
 
 ---
 
