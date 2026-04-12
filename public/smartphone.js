@@ -1,3 +1,78 @@
+const MOBILE_LOGO_URL = "https://i.ibb.co/MbmdvP6/file-0000000018387243a2da8535139f6423.png";
+const MOBILE_LOGO_HINTS_ID = "leviathan-mobile-logo-hints";
+const MOBILE_LOGO_PRELOAD_ID = "leviathan-mobile-logo-preload";
+
+function ensureMobileLogoHints() {
+    try {
+        if (!document.getElementById(MOBILE_LOGO_HINTS_ID)) {
+            const frag = document.createDocumentFragment();
+
+            const preconnect = document.createElement("link");
+            preconnect.id = MOBILE_LOGO_HINTS_ID;
+            preconnect.rel = "preconnect";
+            preconnect.href = "https://i.ibb.co";
+            preconnect.crossOrigin = "anonymous";
+            frag.appendChild(preconnect);
+
+            const dns = document.createElement("link");
+            dns.rel = "dns-prefetch";
+            dns.href = "https://i.ibb.co";
+            frag.appendChild(dns);
+
+            document.head.appendChild(frag);
+        }
+
+        let preload = document.getElementById(MOBILE_LOGO_PRELOAD_ID);
+        if (!preload) {
+            preload = document.createElement("link");
+            preload.id = MOBILE_LOGO_PRELOAD_ID;
+            preload.rel = "preload";
+            preload.as = "image";
+            preload.href = MOBILE_LOGO_URL;
+            preload.fetchPriority = "high";
+            document.head.appendChild(preload);
+        }
+    } catch (_) {}
+}
+
+function primeMobileLogo() {
+    ensureMobileLogoHints();
+    try {
+        const img = new Image();
+        img.decoding = "async";
+        img.fetchPriority = "high";
+        img.src = MOBILE_LOGO_URL;
+    } catch (_) {}
+}
+
+function hydrateMobileLogo() {
+    const img = document.querySelector(".logo-image");
+    if (!img) return;
+
+    const markLoaded = () => {
+        img.classList.add("is-loaded");
+        img.removeAttribute("data-loading");
+    };
+
+    if (img.complete) {
+        markLoaded();
+        return;
+    }
+
+    img.setAttribute("data-loading", "1");
+    img.addEventListener("load", markLoaded, { once: true });
+    img.addEventListener("error", () => img.removeAttribute("data-loading"), { once: true });
+}
+
+function applyMobilePerformanceMode() {
+    try {
+        const cores = navigator.hardwareConcurrency || 0;
+        const memory = navigator.deviceMemory || 0;
+        const lowFx = (cores && cores <= 4) || (memory && memory <= 4);
+        document.body.classList.toggle("m-lowfx", !!lowFx);
+    } catch (_) {}
+}
+
 const mobileCSS = `
 :root {
     --m-bg: #000000;
@@ -27,11 +102,14 @@ const mobileCSS = `
 ::-webkit-scrollbar-thumb:active { background: var(--m-primary); }
 
 /* --- BACKGROUND & CRT EFFECT --- */
-body { 
-    margin: 0; 
-    background: radial-gradient(circle at 50% 35%, #131b29 0%, #05080d 60%, #000000 100%);
-    font-family: 'Outfit', sans-serif; 
-    color: var(--m-text); 
+body {
+    margin: 0;
+    background:
+        radial-gradient(circle at 50% 18%, rgba(0, 242, 255, 0.10) 0%, rgba(0, 242, 255, 0.03) 18%, transparent 42%),
+        radial-gradient(circle at 82% 74%, rgba(112, 0, 255, 0.10) 0%, transparent 28%),
+        linear-gradient(180deg, #09111a 0%, #05080d 42%, #000000 100%);
+    font-family: 'Outfit', sans-serif;
+    color: var(--m-text);
     width: 100%;
     height: 100%;
     overscroll-behavior: none;
@@ -39,9 +117,17 @@ body {
 }
 
 body::after {
-    content: " "; display: block; position: absolute; top: 0; left: 0; bottom: 0; right: 0;
-    background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.02) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
-    z-index: 0; background-size: 100% 2px, 3px 100%; pointer-events: none;
+    content: " ";
+    display: block;
+    position: absolute;
+    top: 0; left: 0; bottom: 0; right: 0;
+    background:
+        linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.018) 50%),
+        linear-gradient(90deg, rgba(255, 0, 0, 0.018), rgba(0, 255, 0, 0.008), rgba(0, 0, 255, 0.018));
+    z-index: 0;
+    background-size: 100% 3px, 4px 100%;
+    pointer-events: none;
+    opacity: 0.55;
 }
 
 body::before {
@@ -87,45 +173,147 @@ body::before {
 @keyframes fadeFast { from { opacity: 0; transform: translate3d(0, 15px, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
 
 /* --- HERO SECTION --- */
-.m-hero { 
-    text-align: center; padding: 30px 10px 20px 10px; display: flex; flex-direction: column; align-items: center; width: 100%; position: relative; overflow:visible; 
-    z-index: 10; 
-} 
+.m-hero {
+    text-align: center;
+    padding: 24px 10px 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    position: relative;
+    overflow: visible;
+    z-index: 10;
+    isolation: isolate;
+}
+
+.m-hero::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 22px;
+    transform: translateX(-50%);
+    width: min(340px, 90vw);
+    height: 280px;
+    background: radial-gradient(circle at 50% 36%, rgba(0, 242, 255, 0.18) 0%, rgba(0, 242, 255, 0.07) 26%, rgba(112, 0, 255, 0.05) 52%, transparent 74%);
+    filter: blur(18px);
+    pointer-events: none;
+    z-index: -2;
+}
+
+.m-hero::after {
+    content: none;
+    display: none;
+}
 
 .logo-container {
-    width: 160px; height: 160px; margin: 0 auto 15px; border-radius: 50%; 
-    border: 4px solid rgba(0, 242, 255, 0.7);
-    display: flex; align-items: center; justify-content: center; 
-    box-shadow: 0 0 20px rgba(0, 242, 255, 0.4), inset 0 0 30px rgba(112, 0, 255, 0.2);
-    position: relative; animation: breathe 4s infinite ease-in-out; 
-    background: rgba(0, 5, 10, 0.4); 
-    overflow: hidden; will-change: transform, box-shadow;
+    width: 174px;
+    height: 174px;
+    margin: 0 auto 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    border-radius: 50%;
+    overflow: visible;
+    animation: breathe 5.4s ease-in-out infinite;
+    will-change: transform;
 }
-@keyframes breathe { 0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(0, 242, 255, 0.4); } 50% { transform: scale(1.03); box-shadow: 0 0 30px rgba(0, 242, 255, 0.6); } }
+
+.logo-container::before {
+    content: '';
+    position: absolute;
+    inset: 11px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 50% 36%, rgba(8, 36, 48, 0.98) 0%, rgba(0, 10, 18, 0.985) 60%, rgba(0, 2, 8, 1) 100%);
+    border: 3px solid rgba(0, 242, 255, 0.84);
+    box-shadow:
+        0 0 0 1px rgba(255,255,255,0.04),
+        0 0 18px rgba(0, 242, 255, 0.24),
+        0 0 34px rgba(0, 242, 255, 0.12),
+        inset 0 0 18px rgba(112, 0, 255, 0.10);
+    z-index: 0;
+}
+
+.logo-container::after {
+    content: '';
+    position: absolute;
+    inset: -10px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(0, 242, 255, 0.12) 0%, rgba(0, 242, 255, 0.04) 38%, rgba(112, 0, 255, 0.03) 58%, transparent 78%);
+    filter: blur(12px);
+    z-index: -1;
+    pointer-events: none;
+}
+
+@keyframes breathe {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.018); }
+}
 
 .logo-image {
-    width: 85%; height: 85%; object-fit: contain; border-radius: 50%; 
-    filter: drop-shadow(0 0 15px var(--m-primary)) brightness(1.2);
-    animation: pulseGlow 2s infinite alternate; will-change: filter;
-    z-index: 20;
+    width: 108%;
+    height: auto;
+    max-width: 154px;
+    object-fit: contain;
+    border-radius: 0;
+    transform: translateY(5px) scale(1.03);
+    filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.42)) drop-shadow(0 0 10px rgba(0, 242, 255, 0.14)) brightness(1.05) saturate(1.05);
+    animation: pulseGlow 3.1s ease-in-out infinite alternate;
+    will-change: transform, filter, opacity;
+    z-index: 2;
+    image-rendering: -webkit-optimize-contrast;
+    opacity: 0;
+    transition: opacity 0.22s ease-out;
 }
-@keyframes pulseGlow { 0% { filter: drop-shadow(0 0 10px var(--m-primary)) brightness(1.1); } 100% { filter: drop-shadow(0 0 25px var(--m-primary)) brightness(1.4); } }
 
-.logo-particles { position: absolute; top: -50px; left: -50px; width: 280px; height: 280px; pointer-events: none; z-index: -1; overflow: hidden; }
+.logo-image.is-loaded,
+.logo-image:not([data-loading]) {
+    opacity: 1;
+}
+
+@keyframes pulseGlow {
+    0% {
+        transform: translateY(5px) scale(1.03);
+        filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.40)) drop-shadow(0 0 8px rgba(0, 242, 255, 0.10)) brightness(1.03) saturate(1.03);
+    }
+    100% {
+        transform: translateY(3px) scale(1.055);
+        filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.44)) drop-shadow(0 0 12px rgba(0, 242, 255, 0.18)) brightness(1.07) saturate(1.07);
+    }
+}
+
+.logo-particles {
+    position: absolute;
+    top: -24px;
+    left: -24px;
+    width: 222px;
+    height: 222px;
+    pointer-events: none;
+    z-index: 1;
+    overflow: visible;
+}
+
 .logo-particle {
-    position: absolute; background: radial-gradient(circle, var(--m-secondary) 20%, transparent); border-radius: 50%;
-    box-shadow: 0 0 8px var(--m-primary); opacity: 0; animation: logoFloat 12s linear infinite;
-}
-@keyframes logoFloat {
-    0% { transform: translateY(100%) scale(0.8) rotate(0deg); opacity: 0; }
-    10% { opacity: 0.4; } 90% { opacity: 0.4; }
-    100% { transform: translateY(-100%) scale(1.2) rotate(180deg); opacity: 0; }
+    position: absolute;
+    background: radial-gradient(circle, rgba(112, 0, 255, 0.82) 0%, rgba(0, 242, 255, 0.46) 44%, transparent 74%);
+    border-radius: 50%;
+    box-shadow: 0 0 8px rgba(0, 242, 255, 0.12);
+    opacity: 0;
+    animation: logoFloat 14s linear infinite;
 }
 
-.m-brand-title { font-family: 'Rajdhani', sans-serif; font-size: 2.8rem; font-weight: 900; line-height: 1; background: linear-gradient(180deg, #ffffff 10%, var(--m-primary) 90%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; filter: drop-shadow(0 0 12px rgba(0, 242, 255, 0.5)); text-shadow: 0 0 8px rgba(0,242,255,0.3); position: relative; z-index: 10; }
+@keyframes logoFloat {
+    0% { transform: translateY(100%) scale(0.82); opacity: 0; }
+    18% { opacity: 0.28; }
+    84% { opacity: 0.14; }
+    100% { transform: translateY(-100%) scale(1.10); opacity: 0; }
+}
+
+.m-brand-title { font-family: 'Rajdhani', sans-serif; font-size: 3rem; font-weight: 900; line-height: 0.95; background: linear-gradient(180deg, #ffffff 0%, #9efcff 28%, #1fe6ff 58%, #6783ff 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; filter: drop-shadow(0 0 12px rgba(0, 242, 255, 0.36)); text-shadow: 0 0 6px rgba(0,242,255,0.18); position: relative; z-index: 10; }
 .m-brand-sub { font-family: 'Rajdhani', sans-serif; font-size: 0.75rem; letter-spacing: 3px; color: var(--m-primary); text-transform: uppercase; margin-top: 8px; font-weight: 700; opacity: 0.95; display: flex; align-items: center; justify-content: center; width: 100%; text-shadow: 0 0 6px var(--m-primary); white-space: nowrap; position: relative; z-index: 10; }
 .m-brand-sub::before, .m-brand-sub::after { content: ''; display: block; width: 25px; height: 2px; background: linear-gradient(90deg, transparent, var(--m-primary)); margin: 0 10px; opacity: 0.85; flex-shrink: 0; box-shadow: 0 0 8px var(--m-primary); }
 .m-brand-sub::after { background: linear-gradient(90deg, var(--m-primary), transparent); }
+.m-brand-desc { font-family: 'Outfit', sans-serif; font-size: 0.76rem; color: var(--m-dim); line-height: 1.35; margin-top: 8px; margin-bottom: 8px; max-width: 260px; opacity: 0.88; position: relative; z-index: 10; }
 
 .m-version-tag { margin-top: 10px; font-family: 'Rajdhani', monospace; font-size: 0.6rem; color: #e0f7fa; opacity: 0.9; letter-spacing: 2px; background: rgba(0, 242, 255, 0.1); padding: 4px 10px; border-radius: 20px; border: 1px solid rgba(0, 242, 255, 0.2); display: flex; align-items: center; gap: 6px; transition: all 0.3s ease; cursor: default; box-shadow: 0 0 10px rgba(0,0,0,0.5); position: relative; z-index: 10; }
 .m-v-dot { width: 5px; height: 5px; background: var(--m-success); border-radius: 50%; box-shadow: 0 0 5px var(--m-success); animation: blinkBase 2s infinite; }
@@ -874,6 +1062,52 @@ input:checked + .m-slider-green:before { background-color: #00e676; box-shadow: 
 }
 .m-toast.out { animation: fadeOut 0.3s ease-out forwards; }
 @keyframes fadeOut { to { opacity: 0; transform: translateY(-10px); } }
+
+body.m-lowfx::after {
+    opacity: 0.18;
+}
+
+body.m-lowfx::before {
+    opacity: 0.3;
+}
+
+body.m-lowfx .m-hero::after,
+body.m-lowfx .logo-particles {
+    display: none;
+}
+
+body.m-lowfx .logo-container,
+body.m-lowfx .logo-image,
+body.m-lowfx .m-brand-title,
+body.m-lowfx .m-version-tag .m-v-dot {
+    animation: none !important;
+}
+
+body.m-lowfx .logo-image {
+    filter: drop-shadow(0 8px 14px rgba(0,0,0,0.40)) brightness(1.04) saturate(1.04);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .m-page.active,
+    .m-ptr.loading .m-ptr-icon,
+    .logo-container,
+    .logo-image,
+    .logo-particle,
+    .m-v-dot,
+    .m-kofi-ico,
+    .spin-star,
+    .m-star-btn::before,
+    .m-hero::after {
+        animation: none !important;
+        transition: none !important;
+    }
+
+    body::after,
+    body::before,
+    .logo-particles {
+        display: none !important;
+    }
+}
 `;
 
 const mobileHTML = `
@@ -884,13 +1118,14 @@ const mobileHTML = `
         <div class="m-content">
             <div class="m-hero">
                 <div class="logo-container">
-                    <img src="https://i.ibb.co/svvMzzWq/68747470733a2f2f692e6962622e636f2f766742666b335a2f66696c652d3030303030303030306161343732306139616665.png" alt="Leviathan Logo" class="logo-image">
+                    <img src="${MOBILE_LOGO_URL}" alt="Leviathan Logo" class="logo-image" fetchpriority="high" decoding="sync" loading="eager" width="154" height="154">
                     <div class="logo-particles" id="logoParticles"></div>
                 </div>
                 
                 <h1 class="m-brand-title">LEVIATHAN</h1>
                 <div class="m-brand-sub">SOVRANO DEGLI ABISSI</div>
-                <div class="m-version-tag"><div class="m-v-dot"></div>v2.7.0 STABLE</div>
+                <div class="m-brand-desc">Il protocollo profondo che domina i flussi digitali</div>
+                <div class="m-version-tag"><div class="m-v-dot"></div>CORE v2.7.0</div>
             </div>
 
             <div id="page-setup" class="m-page active">
@@ -1056,7 +1291,7 @@ const mobileHTML = `
                     <div style="margin-top:5px; padding:15px; border-radius:16px; background:linear-gradient(90deg, rgba(112,0,255,0.1), transparent); border-left:4px solid var(--m-secondary);">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <div>
-                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">PRIORITÃ€ WEB</h5>
+                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">PRIORITÃƒâ‚¬ WEB</h5>
                                 <p id="priority-desc" style="margin:5px 0 0; font-size:0.8rem; color:var(--m-dim);">Mostra Web in cima</p>
                             </div>
                             <label class="m-switch">
@@ -1113,7 +1348,7 @@ const mobileHTML = `
                      <div class="m-aio-lock" id="m-aio-lock-overlay">
                         <i class="fas fa-lock m-lock-icon"></i>
                         <div class="m-lock-text">OVERRIDDEN BY AIO CORE</div>
-                        <div class="m-lock-sub">Disabilita "CompatibilitÃ  AIO" per sbloccare le skin.</div>
+                        <div class="m-lock-sub">Disabilita "CompatibilitÃƒÂ  AIO" per sbloccare le skin.</div>
                     </div>
 
                     <div class="m-visual-preview" id="m-preview-box">
@@ -1131,97 +1366,97 @@ const mobileHTML = `
 
                     <div class="m-cortex-grid">
                         <div class="m-cortex-chip active" id="msk_leviathan" onclick="selectMobileSkin('leviathan')">
-                            <div class="m-chip-icon">ðŸ¦‘</div>
+                            <div class="m-chip-icon">Ã°Å¸Â¦â€˜</div>
                             <div class="m-chip-label">Leviathan Core</div>
                             <div class="m-chip-sub">Signature</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_premium" onclick="selectMobileSkin('premium')">
-                            <div class="m-chip-icon">ðŸ†</div>
+                            <div class="m-chip-icon">Ã°Å¸Ââ€ </div>
                             <div class="m-chip-label">Apex Prime</div>
                             <div class="m-chip-sub">Flagship</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_cinema" onclick="selectMobileSkin('cinema')">
-                            <div class="m-chip-icon">ðŸŽžï¸</div>
+                            <div class="m-chip-icon">Ã°Å¸Å½Å¾Ã¯Â¸Â</div>
                             <div class="m-chip-label">Velvet Cinema</div>
                             <div class="m-chip-sub">Reference</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_ultra_compact" onclick="selectMobileSkin('ultra_compact')">
-                            <div class="m-chip-icon">âš¡</div>
+                            <div class="m-chip-icon">Ã¢Å¡Â¡</div>
                             <div class="m-chip-label">Pulse Compact</div>
                             <div class="m-chip-sub">Dense</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_tv_compact" onclick="selectMobileSkin('tv_compact')">
-                            <div class="m-chip-icon">ðŸ“º</div>
+                            <div class="m-chip-icon">Ã°Å¸â€œÂº</div>
                             <div class="m-chip-label">Neon TV</div>
                             <div class="m-chip-sub">Big Screen</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_lev2" onclick="selectMobileSkin('lev2')">
-                            <div class="m-chip-icon">ðŸ§¬</div>
+                            <div class="m-chip-icon">Ã°Å¸Â§Â¬</div>
                             <div class="m-chip-label">Architect</div>
                             <div class="m-chip-sub">Structured</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_fra" onclick="selectMobileSkin('fra')">
-                            <div class="m-chip-icon">âš¡ï¸</div>
+                            <div class="m-chip-icon">Ã¢Å¡Â¡Ã¯Â¸Â</div>
                             <div class="m-chip-label">Horizon</div>
                             <div class="m-chip-sub">Classic</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_comet" onclick="selectMobileSkin('comet')">
-                            <div class="m-chip-icon">â˜„ï¸</div>
+                            <div class="m-chip-icon">Ã¢Ëœâ€žÃ¯Â¸Â</div>
                             <div class="m-chip-label">Comet</div>
                             <div class="m-chip-sub">Scan</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_stremio_ita" onclick="selectMobileSkin('stremio_ita')">
-                            <div class="m-chip-icon">ðŸ‡®ðŸ‡¹</div>
+                            <div class="m-chip-icon">Ã°Å¸â€¡Â®Ã°Å¸â€¡Â¹</div>
                             <div class="m-chip-label">ITA Mod</div>
                             <div class="m-chip-sub">Compat</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_dav" onclick="selectMobileSkin('dav')">
-                            <div class="m-chip-icon">ðŸ“¼</div>
+                            <div class="m-chip-icon">Ã°Å¸â€œÂ¼</div>
                             <div class="m-chip-label">Datastream</div>
                             <div class="m-chip-sub">Verbose</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_pri" onclick="selectMobileSkin('pri')">
-                            <div class="m-chip-icon">ðŸ‘‘</div>
+                            <div class="m-chip-icon">Ã°Å¸â€˜â€˜</div>
                             <div class="m-chip-label">Eclipse</div>
                             <div class="m-chip-sub">Hero</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_and" onclick="selectMobileSkin('and')">
-                            <div class="m-chip-icon">ðŸŽ¬</div>
+                            <div class="m-chip-icon">Ã°Å¸Å½Â¬</div>
                             <div class="m-chip-label">Matrix</div>
                             <div class="m-chip-sub">Minimal</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_lad" onclick="selectMobileSkin('lad')">
-                            <div class="m-chip-icon">ðŸŽŸï¸</div>
+                            <div class="m-chip-icon">Ã°Å¸Å½Å¸Ã¯Â¸Â</div>
                             <div class="m-chip-label">Compact</div>
                             <div class="m-chip-sub">Lean</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_torrentio" onclick="selectMobileSkin('torrentio')">
-                            <div class="m-chip-icon">ðŸ“œ</div>
+                            <div class="m-chip-icon">Ã°Å¸â€œÅ“</div>
                             <div class="m-chip-label">Torrentio</div>
                             <div class="m-chip-sub">Familiar</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_vertical" onclick="selectMobileSkin('vertical')">
-                            <div class="m-chip-icon">ðŸ“‘</div>
+                            <div class="m-chip-icon">Ã°Å¸â€œâ€˜</div>
                             <div class="m-chip-label">Vertical</div>
                             <div class="m-chip-sub">Poster</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_complex" onclick="selectMobileSkin('complex')">
-                            <div class="m-chip-icon">ðŸ”²</div>
+                            <div class="m-chip-icon">Ã°Å¸â€Â²</div>
                             <div class="m-chip-label">Template Matrix</div>
                             <div class="m-chip-sub">Analyst</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_android" onclick="selectMobileSkin('android')">
-                            <div class="m-chip-icon">ðŸ•¹ï¸</div>
+                            <div class="m-chip-icon">Ã°Å¸â€¢Â¹Ã¯Â¸Â</div>
                             <div class="m-chip-label">Console Grid</div>
                             <div class="m-chip-sub">Legacy TV</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_picture" onclick="selectMobileSkin('picture')">
-                            <div class="m-chip-icon">ðŸ–¼ï¸</div>
+                            <div class="m-chip-icon">Ã°Å¸â€“Â¼Ã¯Â¸Â</div>
                             <div class="m-chip-label">Jurassic Poster</div>
                             <div class="m-chip-sub">Artwork</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_custom" onclick="selectMobileSkin('custom')" style="grid-column: span 3; border-style: dashed; background: rgba(0,0,0,0.3);">
-                            <div class="m-chip-icon">ðŸ› ï¸</div>
+                            <div class="m-chip-icon">Ã°Å¸â€ºÂ Ã¯Â¸Â</div>
                             <div class="m-chip-label">Custom Builder</div>
                             <div class="m-chip-sub">Template override</div>
                         </div>
@@ -1275,7 +1510,7 @@ const mobileHTML = `
                             <i class="fas fa-info-circle m-fr-icon" id="flux-icon-display"></i>
                             <div class="m-fr-text">
                                 <span class="m-fr-title" id="flux-title-display">STANDARD MODE</span>
-                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan. Bilancia perfettamente qualitÃ  e velocitÃ .</span>
+                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan. Bilancia perfettamente qualitÃƒÂ  e velocitÃƒÂ .</span>
                             </div>
                         </div>
                     </div>
@@ -1340,7 +1575,7 @@ const mobileHTML = `
                             <input type="range" min="1" max="20" value="3" class="m-range" id="m-gateVal" oninput="updateGateDisplay(this.value)">
                             <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.2rem; color:var(--m-primary); width:30px; text-align:center;" id="m-gate-display">3</span>
                         </div>
-                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualitÃ . Utile per dispositivi lenti.</p>
+                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualitÃƒÂ . Utile per dispositivi lenti.</p>
                     </div>
 
                     <div class="m-row" style="border:none; padding: 5px 0;">
@@ -1371,7 +1606,7 @@ const mobileHTML = `
                     
                     <div style="padding:0 5px;">
                         <p style="font-size:0.8rem; color:var(--m-dim); margin-bottom:20px; line-height:1.4;">
-                            Proxy Server necessario per i moduli Italiani. Se attivo, il <b>Debrid Ghost</b> userÃ  questo server per nascondere il tuo IP reale.
+                            Proxy Server necessario per i moduli Italiani. Se attivo, il <b>Debrid Ghost</b> userÃƒÂ  questo server per nascondere il tuo IP reale.
                         </p>
 
                         <div class="m-field-group">
@@ -1473,7 +1708,7 @@ let mLangMode = 'ita';
 const fluxData = {
     'balanced': {
         title: "STANDARD MODE",
-        desc: "L'algoritmo standard di Leviathan. Bilancia perfettamente qualitÃ , popolaritÃ  del file e velocitÃ .",
+        desc: "L'algoritmo standard di Leviathan. Bilancia perfettamente qualitÃƒÂ , popolaritÃƒÂ  del file e velocitÃƒÂ .",
         icon: "fa-dragon"
     },
     'resolution': {
@@ -1496,15 +1731,15 @@ const langDescriptions = {
 
 const skinMaps = {
     'bold': {
-        nums: {'0':'ðŸ¬','1':'ðŸ­','2':'ðŸ®','3':'ðŸ¯','4':'ðŸ°','5':'ðŸ±','6':'ðŸ²','7':'ðŸ³','8':'ðŸ´','9':'ðŸµ'},
+        nums: {'0':'Ã°ÂÅ¸Â¬','1':'Ã°ÂÅ¸Â­','2':'Ã°ÂÅ¸Â®','3':'Ã°ÂÅ¸Â¯','4':'Ã°ÂÅ¸Â°','5':'Ã°ÂÅ¸Â±','6':'Ã°ÂÅ¸Â²','7':'Ã°ÂÅ¸Â³','8':'Ã°ÂÅ¸Â´','9':'Ã°ÂÅ¸Âµ'},
         chars: {
-            'A':'ð—”','B':'ð—•','C':'ð—–','D':'ð——','E':'ð—˜','F':'ð—™','G':'ð—š','H':'ð—›','I':'ð—œ','J':'ð—','K':'ð—ž','L':'ð—Ÿ','M':'ð— ','N':'ð—¡','O':'ð—¢','P':'ð—£','Q':'ð—¤','R':'ð—¥','S':'ð—¦','T':'ð—§','U':'ð—¨','V':'ð—©','W':'ð—ª','X':'ð—«','Y':'ð—¬','Z':'ð—­',
-            'a':'ð—®','b':'ð—¯','c':'ð—°','d':'ð—±','e':'ð—²','f':'ð—³','g':'ð—´','h':'ð—µ','i':'ð—¶','j':'ð—·','k':'ð—¸','l':'ð—¹','m':'ð—º','n':'ð—»','o':'ð—¼','p':'ð—½','q':'ð—¾','r':'ð—¿','s':'ð˜€','t':'ð˜','u':'ð˜‚','v':'ð˜ƒ','w':'á´¡','x':'ð˜…','y':'ð˜†','z':'ð˜‡'
+            'A':'Ã°Ââ€”â€','B':'Ã°Ââ€”â€¢','C':'Ã°Ââ€”â€“','D':'Ã°Ââ€”â€”','E':'Ã°Ââ€”Ëœ','F':'Ã°Ââ€”â„¢','G':'Ã°Ââ€”Å¡','H':'Ã°Ââ€”â€º','I':'Ã°Ââ€”Å“','J':'Ã°Ââ€”Â','K':'Ã°Ââ€”Å¾','L':'Ã°Ââ€”Å¸','M':'Ã°Ââ€”Â ','N':'Ã°Ââ€”Â¡','O':'Ã°Ââ€”Â¢','P':'Ã°Ââ€”Â£','Q':'Ã°Ââ€”Â¤','R':'Ã°Ââ€”Â¥','S':'Ã°Ââ€”Â¦','T':'Ã°Ââ€”Â§','U':'Ã°Ââ€”Â¨','V':'Ã°Ââ€”Â©','W':'Ã°Ââ€”Âª','X':'Ã°Ââ€”Â«','Y':'Ã°Ââ€”Â¬','Z':'Ã°Ââ€”Â­',
+            'a':'Ã°Ââ€”Â®','b':'Ã°Ââ€”Â¯','c':'Ã°Ââ€”Â°','d':'Ã°Ââ€”Â±','e':'Ã°Ââ€”Â²','f':'Ã°Ââ€”Â³','g':'Ã°Ââ€”Â´','h':'Ã°Ââ€”Âµ','i':'Ã°Ââ€”Â¶','j':'Ã°Ââ€”Â·','k':'Ã°Ââ€”Â¸','l':'Ã°Ââ€”Â¹','m':'Ã°Ââ€”Âº','n':'Ã°Ââ€”Â»','o':'Ã°Ââ€”Â¼','p':'Ã°Ââ€”Â½','q':'Ã°Ââ€”Â¾','r':'Ã°Ââ€”Â¿','s':'Ã°ÂËœâ‚¬','t':'Ã°ÂËœÂ','u':'Ã°ÂËœâ€š','v':'Ã°ÂËœÆ’','w':'Ã¡Â´Â¡','x':'Ã°ÂËœâ€¦','y':'Ã°ÂËœâ€ ','z':'Ã°ÂËœâ€¡'
         }
     },
     'small': {
         nums: {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9'},
-        chars: {'A':'á´€','B':'Ê™','C':'á´„','D':'á´…','E':'á´‡','F':'êœ°','G':'É¢','H':'Êœ','I':'Éª','J':'á´Š','K':'á´‹','L':'ÊŸ','M':'á´','N':'É´','O':'á´','P':'á´˜','Q':'Ç«','R':'Ê€','S':'êœ±','T':'á´›','U':'á´œ','V':'á´ ','W':'á´¡','X':'x','Y':'Ê','Z':'á´¢','a':'á´€','b':'Ê™','c':'á´„','d':'á´…','e':'á´‡','f':'êœ°','g':'É¢','h':'Êœ','i':'Éª','j':'á´Š','k':'á´‹','l':'ÊŸ','m':'á´','n':'É´','o':'á´','p':'á´˜','q':'Ç«','r':'Ê€','s':'êœ±','t':'á´›','u':'á´œ','v':'á´ ','w':'á´¡','x':'x','y':'Ê','z':'á´¢'}
+        chars: {'A':'Ã¡Â´â‚¬','B':'ÃŠâ„¢','C':'Ã¡Â´â€ž','D':'Ã¡Â´â€¦','E':'Ã¡Â´â€¡','F':'ÃªÅ“Â°','G':'Ã‰Â¢','H':'ÃŠÅ“','I':'Ã‰Âª','J':'Ã¡Â´Å ','K':'Ã¡Â´â€¹','L':'ÃŠÅ¸','M':'Ã¡Â´Â','N':'Ã‰Â´','O':'Ã¡Â´Â','P':'Ã¡Â´Ëœ','Q':'Ã‡Â«','R':'ÃŠâ‚¬','S':'ÃªÅ“Â±','T':'Ã¡Â´â€º','U':'Ã¡Â´Å“','V':'Ã¡Â´Â ','W':'Ã¡Â´Â¡','X':'x','Y':'ÃŠÂ','Z':'Ã¡Â´Â¢','a':'Ã¡Â´â‚¬','b':'ÃŠâ„¢','c':'Ã¡Â´â€ž','d':'Ã¡Â´â€¦','e':'Ã¡Â´â€¡','f':'ÃªÅ“Â°','g':'Ã‰Â¢','h':'ÃŠÅ“','i':'Ã‰Âª','j':'Ã¡Â´Å ','k':'Ã¡Â´â€¹','l':'ÃŠÅ¸','m':'Ã¡Â´Â','n':'Ã‰Â´','o':'Ã¡Â´Â','p':'Ã¡Â´Ëœ','q':'Ã‡Â«','r':'ÃŠâ‚¬','s':'ÃªÅ“Â±','t':'Ã¡Â´â€º','u':'Ã¡Â´Å“','v':'Ã¡Â´Â ','w':'Ã¡Â´Â¡','x':'x','y':'ÃŠÂ','z':'Ã¡Â´Â¢'}
     },
 };
 
@@ -1647,9 +1882,9 @@ function selectMobileSkin(skinId) {
 
 function updateMobilePreview() {
     const skin = resolveMobileFormatterSkin(mSkin);
-    let langStr = "ðŸ‡®ðŸ‡¹ ITA";
-    if (mLangMode === 'all') langStr = "ðŸ‡®ðŸ‡¹ ITA â€¢ ðŸ‡¬ðŸ‡§ ENG";
-    if (mLangMode === 'eng') langStr = "ðŸ‡¬ðŸ‡§ ENG";
+    let langStr = "Ã°Å¸â€¡Â®Ã°Å¸â€¡Â¹ ITA";
+    if (mLangMode === 'all') langStr = "Ã°Å¸â€¡Â®Ã°Å¸â€¡Â¹ ITA â€¢ Ã°Å¸â€¡Â¬Ã°Å¸â€¡Â§ ENG";
+    if (mLangMode === 'eng') langStr = "Ã°Å¸â€¡Â¬Ã°Å¸â€¡Â§ ENG";
 
     let serviceTag = "RD";
     if (mCurrentService === 'tb') serviceTag = 'TB';
@@ -1671,72 +1906,72 @@ function updateMobilePreview() {
         lang: langStr,
         audioTag: 'TrueHD Atmos',
         audioChannels: '7.1',
-        audioInfo: 'TrueHD Atmos â”ƒ 7.1',
+        audioInfo: 'TrueHD Atmos Ã¢â€Æ’ 7.1',
         codec: 'HEVC',
-        videoTags: ['ðŸ’Ž ð—¥ð—˜ð— ð—¨ð—«', 'ðŸ‘ï¸ ð——ð—©+ð—›ð——ð—¥', 'âš™ï¸ ð—›ð—˜ð—©ð—–'],
+        videoTags: ['Ã°Å¸â€™Å½ Ã°Ââ€”Â¥Ã°Ââ€”ËœÃ°Ââ€”Â Ã°Ââ€”Â¨Ã°Ââ€”Â«', 'Ã°Å¸â€˜ÂÃ¯Â¸Â Ã°Ââ€”â€”Ã°Ââ€”Â©+Ã°Ââ€”â€ºÃ°Ââ€”â€”Ã°Ââ€”Â¥', 'Ã¢Å¡â„¢Ã¯Â¸Â Ã°Ââ€”â€ºÃ°Ââ€”ËœÃ°Ââ€”Â©Ã°Ââ€”â€“'],
         cleanTags: ['Remux', 'DV+HDR', 'HEVC'],
         seeders: 152,
-        seedersStr: 'ðŸ‘¥ 152',
+        seedersStr: 'Ã°Å¸â€˜Â¥ 152',
         epTag: '',
         releaseGroup: 'Leviathan',
         sourceLine: `${serviceIconTitle} [${serviceTag}] ilCorSaRoNeRo`,
         providerLabel: 'Netflix',
         streamScore: 94,
         scoreTier: 'S+',
-        scoreBadge: 'ðŸ† S+ 94',
-        visualMeter: 'â–°â–°â–°â–°â–°',
+        scoreBadge: 'Ã°Å¸Ââ€  S+ 94',
+        visualMeter: 'Ã¢â€“Â°Ã¢â€“Â°Ã¢â€“Â°Ã¢â€“Â°Ã¢â€“Â°',
         featureSummary: '4K â€¢ DV+HDR â€¢ HEVC â€¢ Atmos'
     };
 
     const isDebrid = ['RD', 'TB'].includes(p.serviceTag);
-    const statusIcon = isDebrid ? 'âš¡' : 'â˜ï¸';
+    const statusIcon = isDebrid ? 'Ã¢Å¡Â¡' : 'Ã¢ËœÂÃ¯Â¸Â';
     const qIcon = isDebrid ? p.serviceIconTitle : 'ðŸ¦ˆ';
 
     const styleLeviathan = (p) => {
         const serviceIcon = p.serviceTag === 'RD' ? 'ðŸ¬' : p.serviceTag === 'TB' ? 'âš“' : 'ðŸ¦ˆ';
-        const stateIcon = isDebrid ? serviceIcon : 'â³';
+        const stateIcon = isDebrid ? serviceIcon : 'Ã¢ÂÂ³';
         const brandName = toStylized('LEVIATHAN', 'small');
         const serviceStyled = toStylized(p.serviceTag, 'bold');
         const techLine = [...new Set([p.quality, ...p.cleanTags].filter(Boolean))].map(t => toStylized(t, 'small')).join(' â€¢ ');
-        const name = `${stateIcon} ${serviceStyled} ðŸ¦‘ ${brandName}`;
+        const name = `${stateIcon} ${serviceStyled} Ã°Å¸Â¦â€˜ ${brandName}`;
         const lines = [
-            `â–¶ï¸ ${toStylized(p.cleanName, 'bold')} ${p.epTag}`.trim(),
-            techLine ? `ðŸ”± ${techLine}` : '',
-            `ðŸ—£ï¸ ${p.lang}  |  ðŸ«§ ${p.audioTag} ${p.audioChannels}`,
-            `ðŸ§² ${p.sizeString}  |  ${p.seedersStr}`,
-            `${p.serviceIconTitle} ${p.displaySource} | ðŸ·ï¸ ${toStylized(p.releaseGroup, 'small')}`
+            `Ã¢â€“Â¶Ã¯Â¸Â ${toStylized(p.cleanName, 'bold')} ${p.epTag}`.trim(),
+            techLine ? `Ã°Å¸â€Â± ${techLine}` : '',
+            `Ã°Å¸â€”Â£Ã¯Â¸Â ${p.lang}  |  Ã°Å¸Â«Â§ ${p.audioTag} ${p.audioChannels}`,
+            `Ã°Å¸Â§Â² ${p.sizeString}  |  ${p.seedersStr}`,
+            `${p.serviceIconTitle} ${p.displaySource} | Ã°Å¸ÂÂ·Ã¯Â¸Â ${toStylized(p.releaseGroup, 'small')}`
         ].filter(Boolean);
         return { name, title: lines.join('\n') };
     };
 
     const styleComplex = (p) => ({
-        name: `ðŸ”² 4K â”‚ â› ${p.sizeString}`,
+        name: `Ã°Å¸â€Â² 4K Ã¢â€â€š Ã¢â€ºÂ ${p.sizeString}`,
         title: [
-            `â˜° ${joinMobilePreviewParts([p.lang, p.audioTag, p.audioChannels], ' Â· ')}`,
-            `â˜² ${joinMobilePreviewParts([p.quality, p.codec, p.cleanTags.join(' Â· ')], ' Â· ')}`,
-            `â˜µ ${joinMobilePreviewParts(['Leviathan', p.releaseGroup, p.displaySource, `[${p.serviceTag}]`], ' Â· ')}`,
-            `â˜¶ ${joinMobilePreviewParts([p.cleanName, p.epTag], ' Â· ')}`
+            `Ã¢ËœÂ° ${joinMobilePreviewParts([p.lang, p.audioTag, p.audioChannels], ' Ã‚Â· ')}`,
+            `Ã¢ËœÂ² ${joinMobilePreviewParts([p.quality, p.codec, p.cleanTags.join(' Ã‚Â· ')], ' Ã‚Â· ')}`,
+            `Ã¢ËœÂµ ${joinMobilePreviewParts(['Leviathan', p.releaseGroup, p.displaySource, `[${p.serviceTag}]`], ' Ã‚Â· ')}`,
+            `Ã¢ËœÂ¶ ${joinMobilePreviewParts([p.cleanName, p.epTag], ' Ã‚Â· ')}`
         ].join('\n')
     });
 
     const styleAndroid = (p) => ({
         name: joinMobilePreviewParts([p.quality, 'DV+HDR', p.serviceTag], ' | '),
-        title: [`ðŸŽžï¸ ${p.codec}`, `ðŸŽ§ ${p.audioTag} ${p.audioChannels}`, `âš™ï¸ ${p.displaySource}`, p.lang, p.fileTitle].join('\n')
+        title: [`Ã°Å¸Å½Å¾Ã¯Â¸Â ${p.codec}`, `Ã°Å¸Å½Â§ ${p.audioTag} ${p.audioChannels}`, `Ã¢Å¡â„¢Ã¯Â¸Â ${p.displaySource}`, p.lang, p.fileTitle].join('\n')
     });
 
     const stylePicture = (p) => ({
-        name: `âœ… UHD HDR ATMOS ${p.quality}`,
-        title: [`ðŸŽ¬ ${p.cleanName}`, `âœ¨ ${p.quality} ðŸ”† DV | HDR`, `ðŸŽ§ ${p.audioTag} ðŸ”Š ${p.audioChannels}`, 'ðŸ’¿ Blu-ray Remux', `ðŸ“¦ ${p.sizeString}`, `ðŸ·ï¸ Blu-ray Remux T1 (${p.releaseGroup})`, `âš¡ Comet ${p.serviceTag}`].join('\n')
+        name: `Ã¢Å“â€¦ UHD HDR ATMOS ${p.quality}`,
+        title: [`Ã°Å¸Å½Â¬ ${p.cleanName}`, `Ã¢Å“Â¨ ${p.quality} Ã°Å¸â€â€  DV | HDR`, `Ã°Å¸Å½Â§ ${p.audioTag} Ã°Å¸â€Å  ${p.audioChannels}`, 'Ã°Å¸â€™Â¿ Blu-ray Remux', `Ã°Å¸â€œÂ¦ ${p.sizeString}`, `Ã°Å¸ÂÂ·Ã¯Â¸Â Blu-ray Remux T1 (${p.releaseGroup})`, `Ã¢Å¡Â¡ Comet ${p.serviceTag}`].join('\n')
     });
 
     const stylePremium = (p) => ({
         name: `${statusIcon} ${p.quality} ${p.scoreBadge}`,
         title: [
-            `ðŸŽ¬ ${toStylized(p.cleanName, 'bold')}`,
-            `ðŸ… ${p.scoreBadge}  ${p.visualMeter}`,
-            `ðŸ§ª ${[...new Set([p.quality, ...p.cleanTags, p.codec].filter(Boolean))].slice(0, 4).join(' â€¢ ')}`,
-            `ðŸ”Š ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang])}`,
-            `ðŸ“¦ ${p.sizeString} â€¢ ${p.seedersStr}`,
+            `Ã°Å¸Å½Â¬ ${toStylized(p.cleanName, 'bold')}`,
+            `Ã°Å¸Ââ€¦ ${p.scoreBadge}  ${p.visualMeter}`,
+            `Ã°Å¸Â§Âª ${[...new Set([p.quality, ...p.cleanTags, p.codec].filter(Boolean))].slice(0, 4).join(' â€¢ ')}`,
+            `Ã°Å¸â€Å  ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang])}`,
+            `Ã°Å¸â€œÂ¦ ${p.sizeString} â€¢ ${p.seedersStr}`,
             `${statusIcon} ${p.displaySource} â€¢ ${p.releaseGroup} â€¢ ${p.serviceTag}`
         ].join('\n')
     });
@@ -1744,12 +1979,12 @@ function updateMobilePreview() {
     const styleCinema = (p) => ({
         name: joinMobilePreviewParts([qIcon, p.quality, p.cleanTags.includes('Remux') ? 'Reference' : 'Cinema'], ' '),
         title: [
-            `ðŸŽžï¸ ${p.cleanName}`,
-            `ðŸŒˆ ${joinMobilePreviewParts([p.cleanTags.join(' â€¢ '), p.codec])}`,
-            `ðŸŽ§ ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang])}`,
-            `ðŸ“Š ${p.scoreBadge} â€¢ ${p.visualMeter}`,
-            `ðŸ“¦ ${p.sizeString} â€¢ ${p.seedersStr}`,
-            `ðŸ·ï¸ ${joinMobilePreviewParts([p.displaySource, p.releaseGroup, p.providerLabel])}`
+            `Ã°Å¸Å½Å¾Ã¯Â¸Â ${p.cleanName}`,
+            `Ã°Å¸Å’Ë† ${joinMobilePreviewParts([p.cleanTags.join(' â€¢ '), p.codec])}`,
+            `Ã°Å¸Å½Â§ ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang])}`,
+            `Ã°Å¸â€œÅ  ${p.scoreBadge} â€¢ ${p.visualMeter}`,
+            `Ã°Å¸â€œÂ¦ ${p.sizeString} â€¢ ${p.seedersStr}`,
+            `Ã°Å¸ÂÂ·Ã¯Â¸Â ${joinMobilePreviewParts([p.displaySource, p.releaseGroup, p.providerLabel])}`
         ].join('\n')
     });
 
@@ -1764,62 +1999,62 @@ function updateMobilePreview() {
 
     const styleTVCompact = (p) => ({
         name: joinMobilePreviewParts([p.quality, 'DV+HDR', p.serviceTag], ' | '),
-        title: [`ðŸŽžï¸ ${p.codec}`, `ðŸŽ§ ${p.audioTag} ${p.audioChannels}`, `ðŸŒ ${removeMobilePreviewEmoji(p.lang) || p.lang}`, `ðŸ… ${p.scoreBadge}`, `ðŸ“¦ ${p.sizeString} â€¢ ${p.seedersStr}`, `âš™ï¸ ${p.displaySource}`, p.fileTitle].join('\n')
+        title: [`Ã°Å¸Å½Å¾Ã¯Â¸Â ${p.codec}`, `Ã°Å¸Å½Â§ ${p.audioTag} ${p.audioChannels}`, `Ã°Å¸Å’Â ${removeMobilePreviewEmoji(p.lang) || p.lang}`, `Ã°Å¸Ââ€¦ ${p.scoreBadge}`, `Ã°Å¸â€œÂ¦ ${p.sizeString} â€¢ ${p.seedersStr}`, `Ã¢Å¡â„¢Ã¯Â¸Â ${p.displaySource}`, p.fileTitle].join('\n')
     });
 
     const styleLeviathanTwo = (p) => ({
-        name: `ðŸ¦‘ ${toStylized('LEVIATHAN', 'small')} ${p.serviceIconTitle} â”‚ ${p.quality}`,
-        title: [`ðŸŽ¬ ${toStylized(p.cleanName, 'bold')}`, `ðŸ“¦ ${p.sizeString} â”‚ ${p.codec} ${p.cleanTags.filter(x => !String(x).includes(p.codec)).join(' ')}`, `ðŸ”Š ${p.audioTag} ${p.audioChannels} â€¢ ${p.lang}`, `ðŸ”— ${p.sourceLine} ${p.seedersStr}`].join('\n')
+        name: `Ã°Å¸Â¦â€˜ ${toStylized('LEVIATHAN', 'small')} ${p.serviceIconTitle} Ã¢â€â€š ${p.quality}`,
+        title: [`Ã°Å¸Å½Â¬ ${toStylized(p.cleanName, 'bold')}`, `Ã°Å¸â€œÂ¦ ${p.sizeString} Ã¢â€â€š ${p.codec} ${p.cleanTags.filter(x => !String(x).includes(p.codec)).join(' ')}`, `Ã°Å¸â€Å  ${p.audioTag} ${p.audioChannels} â€¢ ${p.lang}`, `Ã°Å¸â€â€” ${p.sourceLine} ${p.seedersStr}`].join('\n')
     });
 
     const styleFra = (p) => ({
-        name: 'âš¡ï¸ Leviathan 4K',
-        title: [`ðŸ“„ â¯ ${p.fileTitle}`, `ðŸŒŽ â¯ ${p.lang} â€¢ ${p.audioTag}`, `âœ¨ â¯ ${p.serviceTag} â€¢ ${p.displaySource}`, `ðŸ”¥ â¯ ${p.quality} â€¢ ${p.cleanTags.join(' â€¢ ')}`, `ðŸ’¾ â¯ ${p.sizeString} / ðŸ‘¥ â¯ ${p.seeders}`].join('\n')
+        name: 'Ã¢Å¡Â¡Ã¯Â¸Â Leviathan 4K',
+        title: [`Ã°Å¸â€œâ€ž Ã¢ÂÂ¯ ${p.fileTitle}`, `Ã°Å¸Å’Å½ Ã¢ÂÂ¯ ${p.lang} â€¢ ${p.audioTag}`, `Ã¢Å“Â¨ Ã¢ÂÂ¯ ${p.serviceTag} â€¢ ${p.displaySource}`, `Ã°Å¸â€Â¥ Ã¢ÂÂ¯ ${p.quality} â€¢ ${p.cleanTags.join(' â€¢ ')}`, `Ã°Å¸â€™Â¾ Ã¢ÂÂ¯ ${p.sizeString} / Ã°Å¸â€˜Â¥ Ã¢ÂÂ¯ ${p.seeders}`].join('\n')
     });
 
     const styleDav = (p) => ({
-        name: 'ðŸŽ¥ 4K UHD HEVC',
-        title: [`ðŸ“º ${p.cleanName}`, `ðŸŽ§ ${p.audioTag} ${p.audioChannels} | ðŸŽžï¸ ${p.codec}`, `ðŸ—£ï¸ ${p.lang} | ðŸ“¦ ${p.sizeString}`, `â±ï¸ ${p.seeders} Seeds | ðŸ·ï¸ ${p.displaySource}`, `${p.serviceIconTitle} Leviathan ðŸ“¡ ${p.serviceTag}`, `ðŸ“‚ ${p.fileTitle}`].join('\n')
+        name: 'Ã°Å¸Å½Â¥ 4K UHD HEVC',
+        title: [`Ã°Å¸â€œÂº ${p.cleanName}`, `Ã°Å¸Å½Â§ ${p.audioTag} ${p.audioChannels} | Ã°Å¸Å½Å¾Ã¯Â¸Â ${p.codec}`, `Ã°Å¸â€”Â£Ã¯Â¸Â ${p.lang} | Ã°Å¸â€œÂ¦ ${p.sizeString}`, `Ã¢ÂÂ±Ã¯Â¸Â ${p.seeders} Seeds | Ã°Å¸ÂÂ·Ã¯Â¸Â ${p.displaySource}`, `${p.serviceIconTitle} Leviathan Ã°Å¸â€œÂ¡ ${p.serviceTag}`, `Ã°Å¸â€œâ€š ${p.fileTitle}`].join('\n')
     });
 
     const styleAnd = (p) => ({
-        name: `ðŸŽ¬ ${p.cleanName}`,
-        title: [`${p.quality} ${p.serviceTag === 'RD' ? 'âš¡' : 'â³'}`, 'â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€', `Lingue: ${p.lang}`, `Specifiche: ${p.quality} | ðŸ“º ${p.cleanTags.join(' ')} | ðŸ”Š ${p.audioTag}`, 'â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€', `ðŸ“‚ ${p.sizeString} | â˜ï¸ ${p.serviceTag} | ðŸ›°ï¸ Leviathan`].join('\n')
+        name: `Ã°Å¸Å½Â¬ ${p.cleanName}`,
+        title: [`${p.quality} ${p.serviceTag === 'RD' ? 'Ã¢Å¡Â¡' : 'Ã¢ÂÂ³'}`, 'Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬', `Lingue: ${p.lang}`, `Specifiche: ${p.quality} | Ã°Å¸â€œÂº ${p.cleanTags.join(' ')} | Ã°Å¸â€Å  ${p.audioTag}`, 'Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬', `Ã°Å¸â€œâ€š ${p.sizeString} | Ã¢ËœÂÃ¯Â¸Â ${p.serviceTag} | Ã°Å¸â€ºÂ°Ã¯Â¸Â Leviathan`].join('\n')
     });
 
     const styleLad = (p) => ({
-        name: `ðŸ–¥ï¸ ${p.quality} ${p.serviceTag}`,
-        title: [`ðŸŽŸï¸ ${p.cleanName}`, `ðŸ“œ ${p.epTag || 'Movie'}`, `ðŸŽ¥ ${p.quality} ðŸŽžï¸ ${p.codec} ðŸŽ§ ${p.audioTag}`, `ðŸ“¦ ${p.sizeString} â€¢ ðŸ”— Leviathan`, `ðŸŒ ${p.lang}`].join('\n')
+        name: `Ã°Å¸â€“Â¥Ã¯Â¸Â ${p.quality} ${p.serviceTag}`,
+        title: [`Ã°Å¸Å½Å¸Ã¯Â¸Â ${p.cleanName}`, `Ã°Å¸â€œÅ“ ${p.epTag || 'Movie'}`, `Ã°Å¸Å½Â¥ ${p.quality} Ã°Å¸Å½Å¾Ã¯Â¸Â ${p.codec} Ã°Å¸Å½Â§ ${p.audioTag}`, `Ã°Å¸â€œÂ¦ ${p.sizeString} â€¢ Ã°Å¸â€â€” Leviathan`, `Ã°Å¸Å’Â ${p.lang}`].join('\n')
     });
 
     const stylePri = (p) => ({
-        name: `[${p.serviceTag}]âš¡ï¸â˜ï¸
-4KðŸ”¥UHD
+        name: `[${p.serviceTag}]Ã¢Å¡Â¡Ã¯Â¸ÂÃ¢ËœÂÃ¯Â¸Â
+4KÃ°Å¸â€Â¥UHD
 [Leviathan]`,
-        title: [`ðŸŽ¬ ${p.cleanName}`, `${p.cleanTags.join(' ')}`, `ðŸŽ§ ${p.audioTag} | ðŸ”Š ${p.audioChannels} | ðŸ—£ï¸ ${p.lang}`, `ðŸ“ ${p.sizeString} | ðŸ·ï¸ ${p.displaySource}`, `ðŸ“„ â–¶ï¸ ${p.fileTitle} â—€ï¸`].join('\n')
+        title: [`Ã°Å¸Å½Â¬ ${p.cleanName}`, `${p.cleanTags.join(' ')}`, `Ã°Å¸Å½Â§ ${p.audioTag} | Ã°Å¸â€Å  ${p.audioChannels} | Ã°Å¸â€”Â£Ã¯Â¸Â ${p.lang}`, `Ã°Å¸â€œÂ ${p.sizeString} | Ã°Å¸ÂÂ·Ã¯Â¸Â ${p.displaySource}`, `Ã°Å¸â€œâ€ž Ã¢â€“Â¶Ã¯Â¸Â ${p.fileTitle} Ã¢â€”â‚¬Ã¯Â¸Â`].join('\n')
     });
 
     const styleComet = (p) => ({
-        name: `[${p.serviceTag} âš¡]
+        name: `[${p.serviceTag} Ã¢Å¡Â¡]
 Leviathan
 ${p.quality}`,
-        title: [`ðŸ“„ ${p.fileTitle}`, `ðŸ“¹ ${joinMobilePreviewParts([p.codec, ...p.cleanTags].filter(Boolean))} | ${p.audioTag}`, `â­ ${p.displaySource}`, `ðŸ’¾ ${p.sizeString} ðŸ‘¥ ${p.seeders}`, `ðŸŒ ${p.lang}`].join('\n')
+        title: [`Ã°Å¸â€œâ€ž ${p.fileTitle}`, `Ã°Å¸â€œÂ¹ ${joinMobilePreviewParts([p.codec, ...p.cleanTags].filter(Boolean))} | ${p.audioTag}`, `Ã¢Â­Â ${p.displaySource}`, `Ã°Å¸â€™Â¾ ${p.sizeString} Ã°Å¸â€˜Â¥ ${p.seeders}`, `Ã°Å¸Å’Â ${p.lang}`].join('\n')
     });
 
     const styleStremioIta = (p) => ({
-        name: 'âš¡ï¸ Leviathan 4K',
-        title: [`ðŸ“„ â¯ ${p.fileTitle}`, `ðŸŒŽ â¯ ${p.lang.replace(/ITA/gi, 'ita').replace(/ENG/gi, 'eng')}`, `âœ¨ â¯ ${p.serviceTag} â€¢ ${p.displaySource}`, `ðŸ”¥ â¯ ${p.quality} â€¢ ${p.cleanTags.join(' â€¢ ')}`, `ðŸ’¾ â¯ ${p.sizeString}`, `ðŸ”‰ â¯ ${p.audioTag} â€¢ ${p.audioChannels}`].join('\n')
+        name: 'Ã¢Å¡Â¡Ã¯Â¸Â Leviathan 4K',
+        title: [`Ã°Å¸â€œâ€ž Ã¢ÂÂ¯ ${p.fileTitle}`, `Ã°Å¸Å’Å½ Ã¢ÂÂ¯ ${p.lang.replace(/ITA/gi, 'ita').replace(/ENG/gi, 'eng')}`, `Ã¢Å“Â¨ Ã¢ÂÂ¯ ${p.serviceTag} â€¢ ${p.displaySource}`, `Ã°Å¸â€Â¥ Ã¢ÂÂ¯ ${p.quality} â€¢ ${p.cleanTags.join(' â€¢ ')}`, `Ã°Å¸â€™Â¾ Ã¢ÂÂ¯ ${p.sizeString}`, `Ã°Å¸â€â€° Ã¢ÂÂ¯ ${p.audioTag} â€¢ ${p.audioChannels}`].join('\n')
     });
 
     const styleTorrentio = (p) => ({
         name: `[${p.serviceTag}]
 ${p.quality}`,
-        title: [`ðŸ“„ ${p.fileTitle}`, `ðŸ“¦ ${p.sizeString} ðŸ‘¤ ${p.seeders}`, `ðŸ” ${p.displaySource}`, `ðŸ”Š ${removeMobilePreviewEmoji(p.lang) || p.lang}`].join('\n')
+        title: [`Ã°Å¸â€œâ€ž ${p.fileTitle}`, `Ã°Å¸â€œÂ¦ ${p.sizeString} Ã°Å¸â€˜Â¤ ${p.seeders}`, `Ã°Å¸â€Â ${p.displaySource}`, `Ã°Å¸â€Å  ${removeMobilePreviewEmoji(p.lang) || p.lang}`].join('\n')
     });
 
     const styleVertical = (p) => ({
-        name: `ðŸ¦‘ Leviathan ${p.quality} ${isDebrid ? 'âš¡' : 'â˜ï¸'} Cached`,
-        title: [`ðŸ¿ ${p.cleanName}`, `ðŸ“¼ WEB-DL â€¢ ${p.cleanTags[0]}`, `âš™ï¸ ${p.codec}`, `ðŸ”Š ${p.audioTag} (${p.audioChannels})`, `ðŸ’¬ ${p.lang}`, `ðŸ§² ${p.sizeString}`].join('\n')
+        name: `Ã°Å¸Â¦â€˜ Leviathan ${p.quality} ${isDebrid ? 'Ã¢Å¡Â¡' : 'Ã¢ËœÂÃ¯Â¸Â'} Cached`,
+        title: [`Ã°Å¸ÂÂ¿ ${p.cleanName}`, `Ã°Å¸â€œÂ¼ WEB-DL â€¢ ${p.cleanTags[0]}`, `Ã¢Å¡â„¢Ã¯Â¸Â ${p.codec}`, `Ã°Å¸â€Å  ${p.audioTag} (${p.audioChannels})`, `Ã°Å¸â€™Â¬ ${p.lang}`, `Ã°Å¸Â§Â² ${p.sizeString}`].join('\n')
     });
 
     const styleCustom = (p) => {
@@ -1891,7 +2126,7 @@ function toggleMobileAIOLock() {
 function createLogoParticles() {
     const container = document.getElementById('logoParticles');
     if(!container) return;
-    const count = 6; 
+    const count = document.body.classList.contains('m-lowfx') ? 0 : 5; 
     container.innerHTML = '';
     for(let i=0; i < count; i++) {
         const p = document.createElement('div');
@@ -1908,10 +2143,16 @@ function createLogoParticles() {
 }
 
 function initMobileInterface() {
+    ensureMobileLogoHints();
+    primeMobileLogo();
+
     const styleSheet = document.createElement("style");
     styleSheet.innerText = mobileCSS;
     document.head.appendChild(styleSheet);
+
     document.body.innerHTML = mobileHTML;
+    applyMobilePerformanceMode();
+    hydrateMobileLogo();
     createLogoParticles();
     initPullToRefresh();
     loadMobileConfig();
