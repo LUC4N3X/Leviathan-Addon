@@ -31,6 +31,7 @@
   <img src="https://img.shields.io/badge/Semantic-Validation-00eaff?style=flat-square&labelColor=061018" />
   <img src="https://img.shields.io/badge/Adaptive-Latency_Routing-00eaff?style=flat-square&labelColor=061018" />
   <img src="https://img.shields.io/badge/Hybrid-Delivery-00eaff?style=flat-square&labelColor=061018" />
+  <img src="https://img.shields.io/badge/Shared_Cache-Volatility--Aware-00eaff?style=flat-square&labelColor=061018" />
   <img src="https://img.shields.io/badge/Language-ITA_%7C_ENG_%7C_Hybrid-00eaff?style=flat-square&labelColor=061018" />
 </p>
 
@@ -69,7 +70,7 @@
 > È un layer operativo progettato per aggregare, filtrare, ordinare e presentare risultati con una logica più vicina a un protocollo che a uno scraper tradizionale.
 
 <p align="center">
-Il progetto nasce per offrire una base tecnica capace di unire <b>sorgenti torrent</b>, <b>provider web</b> e <b>moduli ibridi</b>, ridurre il rumore nei risultati, migliorare il matching semantico, mantenere una latenza percepita aggressiva e restituire output leggibili e pronti all’uso in ambiente Stremio.
+Il progetto nasce per offrire una base tecnica capace di unire <b>sorgenti torrent</b>, <b>provider web</b> e <b>moduli ibridi</b>, ridurre il rumore nei risultati, migliorare il matching semantico, mantenere una latenza percepita aggressiva, applicare <b>cache intelligence adattiva</b> e restituire output leggibili e pronti all’uso in ambiente Stremio.
 </p>
 
 </div>
@@ -96,6 +97,64 @@ Il progetto nasce per offrire una base tecnica capace di unire <b>sorgenti torre
 <td align="center" width="33%"><b>🧬 Semantic Matching</b><br><sub>Riduzione dei falsi positivi e ranking più credibile.</sub></td>
 <td align="center" width="33%"><b>⚙️ Hybrid Delivery Logic</b><br><sub>Passaggio intelligente tra percorso torrent e web quando serve.</sub></td>
 </tr>
+<tr>
+<td align="center" width="33%"><b>🛰️ Adaptive Shared Cache</b><br><sub>Policy dinamica che modula TTL, riuso e scrittura in base a volatilità e stabilità reale del contenuto.</sub></td>
+<td align="center" width="33%"><b>🛡️ Fresh Release Protection</b><br><sub>I contenuti appena usciti non vengono “congelati” prematuramente con risultati deboli o incompleti.</sub></td>
+<td align="center" width="33%"><b>🎯 Confidence-Weighted Reuse</b><br><sub>La cache pesa qualità, concordanza delle fonti, exact match e solidità del risultato prima di condividere globalmente.</sub></td>
+</tr>
+</table>
+
+</div>
+
+
+---
+
+<div align="center">
+
+## 🧠 Adaptive Cache Intelligence
+
+<table align="center">
+<tr>
+<td align="center" width="100%">
+
+### Volatility-Aware Shared Cache Policy
+
+<p align="center">
+La cache di <b>Leviathan</b> non lavora come un semplice contenitore con TTL fissi. Il protocollo valuta <b>età del contenuto</b>, <b>solidità del matching</b>, <b>qualità effettiva dei risultati</b>, <b>concordanza tra fonti</b> e <b>rischio di congelare uno stato ancora instabile</b>.
+</p>
+
+<p align="center">
+Questo significa che un contenuto appena uscito non viene trattato come una release ormai assestata: la policy può accorciare il riuso, limitare la scrittura condivisa, favorire micro-cache locali, oppure promuovere in shared solo risultati veramente forti. L’obiettivo è semplice: evitare che output ancora acerbi diventino “verità globale” troppo presto.
+</p>
+
+<br>
+
+<table align="center">
+<tr><th>Volatility Bucket</th><th>Logica Operativa</th><th>Obiettivo</th></tr>
+<tr><td align="center"><b>ULTRA_FRESH</b></td><td align="center">Riuso minimo, shared molto prudente, niente congelamento di risultati deboli.</td><td align="center">Proteggere release appena uscite.</td></tr>
+<tr><td align="center"><b>FRESH</b></td><td align="center">TTL corti, revalidation più frequente, scrittura condivisa solo con segnali credibili.</td><td align="center">Evitare output incompleti o instabili.</td></tr>
+<tr><td align="center"><b>SETTLING</b></td><td align="center">Riuso controllato, peso crescente alla qualità reale del risultato.</td><td align="center">Accompagnare la fase di assestamento.</td></tr>
+<tr><td align="center"><b>STABLE</b></td><td align="center">Shared cache aggressiva, stale reuse più utile, TTL più estesi.</td><td align="center">Massimizzare velocità e continuità.</td></tr>
+</table>
+
+<br>
+
+<p align="center">
+La decisione finale non dipende solo dal tempo: dipende anche da <b>confidence score</b>, <b>exact episode match</b>, <b>qualità migliore trovata</b>, <b>presenza di stream già affidabili</b>, <b>validazione pack</b> e penalizzazione dei risultati più fragili o rumorosi. In questo modo la cache diventa parte attiva del motore di ranking, non un semplice strato passivo.
+</p>
+
+<p align="center">
+<b>Tradotto in pratica:</b> Leviathan accelera quando può, ma evita di condividere troppo presto risultati che rischiano di peggiorare l’esperienza globale.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/CACHE-VOLATILITY_AWARE-00eaff?style=for-the-badge&labelColor=061018" />
+  <img src="https://img.shields.io/badge/TTL-CONFIDENCE_WEIGHTED-7c3aed?style=for-the-badge&labelColor=061018" />
+  <img src="https://img.shields.io/badge/FRESH_RELEASES-PROTECTED-ff5a7a?style=for-the-badge&labelColor=061018" />
+</p>
+
+</td>
+</tr>
 </table>
 
 </div>
@@ -113,7 +172,7 @@ Il progetto nasce per offrire una base tecnica capace di unire <b>sorgenti torre
 ### Un solo blocco operativo, più layer sincronizzati
 
 <p align="center">
-<b>Leviathan</b> concentra la propria logica in una pipeline unica che combina <b>validazione semantica Italy-First</b>, <b>routing a latenza adattiva</b>, <b>resilienza contro challenge e nodi degradati</b>, <b>fusione intelligente dei metadati</b> e <b>delivery ibrido torrent + web</b>.
+<b>Leviathan</b> concentra la propria logica in una pipeline unica che combina <b>validazione semantica Italy-First</b>, <b>routing a latenza adattiva</b>, <b>resilienza contro challenge e nodi degradati</b>, <b>fusione intelligente dei metadati</b>, <b>shared cache volatility-aware</b> e <b>delivery ibrido torrent + web</b>.
 </p>
 
 <p align="center">
