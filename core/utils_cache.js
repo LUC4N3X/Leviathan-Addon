@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const zlib = require('zlib');
+const { promisify } = require('util');
 const NodeCache = require('node-cache');
 
 const dbHelper = require('./storage/db_repository');
@@ -23,6 +24,10 @@ const VERBOSE_CACHE_LOGS = String(process.env.VERBOSE_CACHE_LOGS || 'false').toL
 const SHARED_STREAM_CACHE_ENABLED = String(process.env.SHARED_STREAM_CACHE_ENABLED || 'true').toLowerCase() !== 'false';
 const SHARED_STREAM_CACHE_MAX_BYTES = Math.max(4096, parseInt(process.env.SHARED_STREAM_CACHE_MAX_BYTES || String(1024 * 1024 * 2), 10) || (1024 * 1024 * 2));
 const SHARED_STREAM_CACHE_CODEC = String(process.env.SHARED_STREAM_CACHE_CODEC || 'brotli').toLowerCase();
+const brotliCompressAsync = promisify(zlib.brotliCompress);
+const gzipAsync = promisify(zlib.gzip);
+const brotliDecompressAsync = promisify(zlib.brotliDecompress);
+const gunzipAsync = promisify(zlib.gunzip);
 
 const streamCacheTags = new Map();
 const streamCacheKeysByHash = new Map();
@@ -133,7 +138,7 @@ function writeLocalStreamCache(normalizedKey, value, ttl, tags = {}) {
     }, Math.max(ttl + STREAM_STALE_GRACE_TTL, STREAM_STALE_GRACE_TTL));
 }
 
-function encodeSharedPayload(value) {
+async function encodeSharedPayload(value) {
     const json = JSON.stringify(value);
     const source = Buffer.from(json, 'utf8');
     if (source.length > SHARED_STREAM_CACHE_MAX_BYTES) return null;
@@ -142,12 +147,14 @@ function encodeSharedPayload(value) {
     let payload = source;
 
     if (SHARED_STREAM_CACHE_CODEC === 'brotli') {
-        payload = zlib.brotliCompressSync(source, {
+        payload = await brotliCompressAsync(source, {
             params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 4 }
         });
+        payload = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
         encoding = 'brotli';
     } else if (SHARED_STREAM_CACHE_CODEC === 'gzip') {
-        payload = zlib.gzipSync(source, { level: 5 });
+        payload = await gzipAsync(source, { level: 5 });
+        payload = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
         encoding = 'gzip';
     }
 
@@ -155,15 +162,16 @@ function encodeSharedPayload(value) {
     return { payload_b64: payload.toString('base64'), encoding };
 }
 
-function decodeSharedPayload(row) {
+async function decodeSharedPayload(row) {
     if (!row?.payload_b64) return null;
     try {
         const buffer = Buffer.from(String(row.payload_b64), 'base64');
         let decoded = buffer;
         const encoding = String(row.encoding || 'identity').toLowerCase();
-        if (encoding === 'brotli') decoded = zlib.brotliDecompressSync(buffer);
-        else if (encoding === 'gzip') decoded = zlib.gunzipSync(buffer);
-        return JSON.parse(decoded.toString('utf8'));
+        if (encoding === 'brotli') decoded = await brotliDecompressAsync(buffer);
+        else if (encoding === 'gzip') decoded = await gunzipAsync(buffer);
+        const normalized = Buffer.isBuffer(decoded) ? decoded : Buffer.from(decoded);
+        return JSON.parse(normalized.toString('utf8'));
     } catch (error) {
         logger.warn(`[CACHE] Shared stream decode failed: ${error.message}`);
         return null;
@@ -173,7 +181,7 @@ function decodeSharedPayload(row) {
 async function hydrateLocalFromSharedCache(key, row, options = {}) {
     const normalizedKey = String(key || '').trim();
     if (!normalizedKey || !row) return null;
-    const value = decodeSharedPayload(row);
+    const value = await decodeSharedPayload(row);
     if (!value) return null;
 
     const expiresAtMs = Date.parse(row.expires_at);
@@ -253,7 +261,7 @@ const Cache = {
             return;
         }
 
-        const encoded = encodeSharedPayload(value);
+        const encoded = await encodeSharedPayload(value);
         if (!encoded) {
             incrementMetric('cache.stream.sharedSkipped');
             return;
