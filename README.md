@@ -111,51 +111,51 @@ Il progetto nasce per offrire una base tecnica capace di unire <b>sorgenti torre
 
 <div align="center">
 
-# ⚡ Adaptive Cache Intelligence: Leviathan
+## 🧠 Adaptive Cache Intelligence
+
+<table align="center">
+<tr>
+<td align="center" width="100%">
+
 ### Volatility-Aware Shared Cache Policy
 
 <p align="center">
-La cache di <b>Leviathan</b> supera il paradigma tradizionale dei semplici contenitori a TTL statici. Progettata come un componente attivo del motore di ranking, questa architettura non si limita a immagazzinare dati, ma ne valuta dinamicamente la maturità e l'affidabilità.
+La cache di <b>Leviathan</b> non lavora come un semplice contenitore con TTL fissi. Il protocollo valuta <b>età del contenuto</b>, <b>solidità del matching</b>, <b>qualità effettiva dei risultati</b>, <b>concordanza tra fonti</b> e <b>rischio di congelare uno stato ancora instabile</b>.
 </p>
 
 <p align="center">
-<b>Obiettivo strategico:</b> impedire che un output acerbo o instabile si trasformi prematuramente in una "verità globale".
+Questo significa che un contenuto appena uscito non viene trattato come una release ormai assestata: la policy può accorciare il riuso, limitare la scrittura condivisa, favorire micro-cache locali, oppure promuovere in shared solo risultati veramente forti. L’obiettivo è semplice: evitare che output ancora acerbi diventino “verità globale” troppo presto.
 </p>
 
 <br>
 
-### 📊 Matrice di Volatilità (Volatility Buckets)
-
-| Stato | Logica Operativa | Obiettivo Strategico |
-| :---: | :--- | :--- |
-| 🔴 **ULTRA_FRESH** | Riuso ridotto al minimo, policy di condivisione iper-prudente. Blocco del congelamento per risultati deboli. | **Proteggere** le release appena uscite da falsi positivi. |
-| 🟠 **FRESH** | TTL brevi, revalidation intensiva. Scrittura in shared cache solo con segnali di affidabilità elevati. | **Prevenire** la propagazione di output parziali o instabili. |
-| 🟡 **SETTLING** | Riuso controllato. Il peso algoritmico si sposta progressivamente verso la qualità effettiva del risultato. | **Accompagnare** il contenuto nella sua fase di assestamento. |
-| 🟢 **STABLE** | Caching condiviso aggressivo, TTL estesi al massimo e *stale reuse* abilitato. | **Massimizzare** performance, velocità e continuità di servizio. |
-
-<br>
-
-### ⚙️ Motore Decisionale Multidimensionale
-
-La decisione finale di salvare e condividere un dato non dipende da un banale timer, ma da metriche valutate in tempo reale:
-
-- 🎯 **Confidence Score:** Probabilità statistica che il risultato sia corretto.
-- 🧩 **Exact Match:** Corrispondenza perfetta sull'episodio o sulla release cercata.
-- 💎 **Quality Top-Tier:** Individuazione della risoluzione e del formato migliori disponibili.
-- 🤝 **Source Consensus:** Validazione incrociata tra stream ad alta affidabilità e pack completi.
-- 🚫 **Noise Penalty:** De-indicizzazione dei risultati fragili, corrotti o "rumorosi".
-
-<br>
-
-> **Bottom Line:** Leviathan accelera le performance senza compromessi, con un'intelligenza selettiva. Applica il freno a mano sulla condivisione globale solo quando è necessario per preservare l'integrità dell'esperienza utente, garantendo che ogni hit di cache restituisca sempre e solo il meglio.
+<table align="center">
+<tr><th>Volatility Bucket</th><th>Logica Operativa</th><th>Obiettivo</th></tr>
+<tr><td align="center"><b>ULTRA_FRESH</b></td><td align="center">Riuso minimo, shared molto prudente, niente congelamento di risultati deboli.</td><td align="center">Proteggere release appena uscite.</td></tr>
+<tr><td align="center"><b>FRESH</b></td><td align="center">TTL corti, revalidation più frequente, scrittura condivisa solo con segnali credibili.</td><td align="center">Evitare output incompleti o instabili.</td></tr>
+<tr><td align="center"><b>SETTLING</b></td><td align="center">Riuso controllato, peso crescente alla qualità reale del risultato.</td><td align="center">Accompagnare la fase di assestamento.</td></tr>
+<tr><td align="center"><b>STABLE</b></td><td align="center">Shared cache aggressiva, stale reuse più utile, TTL più estesi.</td><td align="center">Massimizzare velocità e continuità.</td></tr>
+</table>
 
 <br>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/CACHE-VOLATILITY_AWARE-00eaff?style=for-the-badge&labelColor=061018" alt="Cache" />
-  <img src="https://img.shields.io/badge/TTL-CONFIDENCE_WEIGHTED-7c3aed?style=for-the-badge&labelColor=061018" alt="TTL" />
-  <img src="https://img.shields.io/badge/FRESH_RELEASES-PROTECTED-ff5a7a?style=for-the-badge&labelColor=061018" alt="Protected" />
+La decisione finale non dipende solo dal tempo: dipende anche da <b>confidence score</b>, <b>exact episode match</b>, <b>qualità migliore trovata</b>, <b>presenza di stream già affidabili</b>, <b>validazione pack</b> e penalizzazione dei risultati più fragili o rumorosi. In questo modo la cache diventa parte attiva del motore di ranking, non un semplice strato passivo.
 </p>
+
+<p align="center">
+<b>Tradotto in pratica:</b> Leviathan accelera quando può, ma evita di condividere troppo presto risultati che rischiano di peggiorare l’esperienza globale.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/CACHE-VOLATILITY_AWARE-00eaff?style=for-the-badge&labelColor=061018" />
+  <img src="https://img.shields.io/badge/TTL-CONFIDENCE_WEIGHTED-7c3aed?style=for-the-badge&labelColor=061018" />
+  <img src="https://img.shields.io/badge/FRESH_RELEASES-PROTECTED-ff5a7a?style=for-the-badge&labelColor=061018" />
+</p>
+
+</td>
+</tr>
+</table>
 
 </div>
 
