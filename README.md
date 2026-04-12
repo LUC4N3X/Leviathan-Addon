@@ -113,80 +113,49 @@ Il progetto nasce per offrire una base tecnica capace di unire <b>sorgenti torre
 
 ## 🧠 Adaptive Cache Intelligence
 
-<p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:07111f,50:00eaff,100:07111f&height=46&section=header&text=Adaptive%20Cache%20Intelligence&fontSize=22&fontColor=ffffff" width="88%" />
-</p>
-
-<div align="center">
+<table align="center">
+<tr>
+<td align="center" width="100%">
 
 ### Volatility-Aware Shared Cache Policy
 
 <p align="center">
-La cache di <b>Leviathan</b> non è un contenitore passivo con TTL fissi: è un layer decisionale che valuta <b>età del contenuto</b>, <b>solidità del matching</b>, <b>qualità reale dell’output</b>, <b>concordanza tra fonti</b> e <b>rischio di congelare troppo presto uno stato ancora instabile</b>.
+La cache di <b>Leviathan</b> non lavora come un semplice contenitore con TTL fissi. Il protocollo valuta <b>età del contenuto</b>, <b>solidità del matching</b>, <b>qualità effettiva dei risultati</b>, <b>concordanza tra fonti</b> e <b>rischio di congelare uno stato ancora instabile</b>.
 </p>
 
 <p align="center">
-In pratica, una release appena uscita non viene trattata come un contenuto già assestato. Il protocollo può <b>accorciare il riuso</b>, <b>limitare la scrittura condivisa</b>, <b>favorire micro-cache locali</b> oppure <b>promuovere in shared solo risultati davvero forti</b>.
+Questo significa che un contenuto appena uscito non viene trattato come una release ormai assestata: la policy può accorciare il riuso, limitare la scrittura condivisa, favorire micro-cache locali, oppure promuovere in shared solo risultati veramente forti. L’obiettivo è semplice: evitare che output ancora acerbi diventino “verità globale” troppo presto.
 </p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/CACHE-NOT_PASSIVE-00eaff?style=for-the-badge&labelColor=061018" />
-  <img src="https://img.shields.io/badge/DECISION_ENGINE-VOLATILITY_AWARE-7c3aed?style=for-the-badge&labelColor=061018" />
-</p>
-
-</div>
-
-<div align="center">
-
-### ⚡ <ins>ULTRA_FRESH</ins>
-<b>Riuso minimo</b> · <b>shared estremamente prudente</b> · <b>nessun congelamento di risultati deboli</b><br>
-<sub>Obiettivo: proteggere release appena uscite e impedire che output acerbi diventino stato globale.</sub>
 
 <br>
 
-### 🌊 <ins>FRESH</ins>
-<b>TTL corti</b> · <b>revalidation più frequente</b> · <b>scrittura condivisa solo con segnali credibili</b><br>
-<sub>Obiettivo: evitare output incompleti, instabili o ancora troppo rumorosi.</sub>
+<table align="center">
+<tr><th>Volatility Bucket</th><th>Logica Operativa</th><th>Obiettivo</th></tr>
+<tr><td align="center"><b>ULTRA_FRESH</b></td><td align="center">Riuso minimo, shared molto prudente, niente congelamento di risultati deboli.</td><td align="center">Proteggere release appena uscite.</td></tr>
+<tr><td align="center"><b>FRESH</b></td><td align="center">TTL corti, revalidation più frequente, scrittura condivisa solo con segnali credibili.</td><td align="center">Evitare output incompleti o instabili.</td></tr>
+<tr><td align="center"><b>SETTLING</b></td><td align="center">Riuso controllato, peso crescente alla qualità reale del risultato.</td><td align="center">Accompagnare la fase di assestamento.</td></tr>
+<tr><td align="center"><b>STABLE</b></td><td align="center">Shared cache aggressiva, stale reuse più utile, TTL più estesi.</td><td align="center">Massimizzare velocità e continuità.</td></tr>
+</table>
 
 <br>
-
-### 🧭 <ins>SETTLING</ins>
-<b>Riuso controllato</b> · <b>peso crescente alla qualità reale</b> · <b>promozione progressiva dei risultati migliori</b><br>
-<sub>Obiettivo: accompagnare la fase di assestamento senza frenare troppo il motore.</sub>
-
-<br>
-
-### 👑 <ins>STABLE</ins>
-<b>Shared cache aggressiva</b> · <b>stale reuse più utile</b> · <b>TTL più estesi</b><br>
-<sub>Obiettivo: massimizzare velocità, continuità e riuso intelligente sui contenuti maturi.</sub>
-
-</div>
-
-<br>
-
-<div align="center">
-
-> **La decisione finale non dipende solo dal tempo.**  
-> Dipende anche da **confidence score**, **exact episode match**, **qualità migliore trovata**, **presenza di stream già affidabili**, **validazione pack** e **penalizzazione dei risultati fragili o rumorosi**.
 
 <p align="center">
-<b>Questo è il punto chiave:</b> la cache di Leviathan non conserva soltanto risultati. <b>Conserva fiducia operativa</b>. In questo modo diventa parte attiva del motore di ranking, non un semplice strato passivo.
+La decisione finale non dipende solo dal tempo: dipende anche da <b>confidence score</b>, <b>exact episode match</b>, <b>qualità migliore trovata</b>, <b>presenza di stream già affidabili</b>, <b>validazione pack</b> e penalizzazione dei risultati più fragili o rumorosi. In questo modo la cache diventa parte attiva del motore di ranking, non un semplice strato passivo.
 </p>
 
 <p align="center">
-<b>Tradotto in pratica:</b> Leviathan accelera quando può, ma <b>protegge i fresh releases</b> e <b>condivide globalmente solo ciò che ha davvero abbastanza solidità</b>.
+<b>Tradotto in pratica:</b> Leviathan accelera quando può, ma evita di condividere troppo presto risultati che rischiano di peggiorare l’esperienza globale.
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/CACHE-SMART_REUSE-00eaff?style=for-the-badge&labelColor=061018" />
+  <img src="https://img.shields.io/badge/CACHE-VOLATILITY_AWARE-00eaff?style=for-the-badge&labelColor=061018" />
   <img src="https://img.shields.io/badge/TTL-CONFIDENCE_WEIGHTED-7c3aed?style=for-the-badge&labelColor=061018" />
-</p>
-<p align="center">
   <img src="https://img.shields.io/badge/FRESH_RELEASES-PROTECTED-ff5a7a?style=for-the-badge&labelColor=061018" />
-  <img src="https://img.shields.io/badge/RANKING-CACHE_INTELLIGENCE-00d8ff?style=for-the-badge&labelColor=061018" />
 </p>
 
-</div>
+</td>
+</tr>
+</table>
 
 </div>
 
