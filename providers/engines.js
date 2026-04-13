@@ -172,7 +172,7 @@ function clean(title) {
     return decoded
         .normalize("NFKD")
         .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[:"'â€™`Â´]/g, "")
+        .replace(/[:"'Ã¢â‚¬â„¢`Ã‚Â´]/g, "")
         .replace(/[^a-zA-Z0-9\s\-.\[\]()/]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
@@ -469,6 +469,10 @@ function getLanguageScore(name, langMode = 'ita', context = {}) {
     return -8;
 }
 
+function hasExplicitSeasonMarker(text = '') {
+    return /\b(?:S(?:EASON)?\s*0?\d{1,2}|\d{1,2}x\d{1,3}|STAGIONE\s*0?\d{1,2}|(?:1ST|2ND|3RD|4TH)\s+SEASON)\b/i.test(String(text || ''));
+}
+
 function isValidResult(name, langMode = 'ita', context = {}) {
     if (!name) return false;
     const normalized = normalizeSpaces(name);
@@ -490,7 +494,7 @@ function isCorrectFormat(name, reqSeason, reqEpisode, context = {}) {
     if (!reqSeason && !reqEpisode) return true;
     const normalized = normalizeSpaces(name).toUpperCase();
     const animeMode = isAnimeContext(context);
-    const ignoreAnimeSeason = animeMode && String(context?.imdbId || '').toLowerCase().startsWith('kitsu:');
+    const ignoreAnimeSeason = animeMode && String(context?.imdbId || '').toLowerCase().startsWith('kitsu:') && !hasExplicitSeasonMarker(normalized);
 
     if (animeMode && reqEpisode) {
         const animeSeasonMatch = normalized.match(/\bS(?:EASON)?\s*0?(\d{1,2})(?!\d)/i)
@@ -1347,14 +1351,14 @@ async function runEngine(engine, context) {
 
 async function searchMagnet(title, year, type, imdbId, options = {}) {
     console.log(`\n======================================================`);
-    console.log(`ðŸš€ AVVIO RICERCA GLOBALE: "${title}" (Anno: ${year || "N/D"})`);
+    console.log(`Ã°Å¸Å¡â‚¬ AVVIO RICERCA GLOBALE: "${title}" (Anno: ${year || "N/D"})`);
     console.log(`======================================================\n`);
 
     const context = buildSearchContext(title, year, type, imdbId, options);
     const cacheKey = buildSearchCacheKey(context);
     const cached = getCache(searchCache, cacheKey);
     if (cached) {
-        console.log(`âš¡ [CACHE] Hit per "${title}" -> ${cached.length} risultati.`);
+        console.log(`Ã¢Å¡Â¡ [CACHE] Hit per "${title}" -> ${cached.length} risultati.`);
         return cached;
     }
 
@@ -1385,7 +1389,7 @@ async function searchMagnet(title, year, type, imdbId, options = {}) {
     const ttl = uniqueResults.length > 0 ? CONFIG.SEARCH_CACHE_TTL : CONFIG.NEGATIVE_CACHE_TTL;
     setCache(searchCache, cacheKey, uniqueResults, ttl);
 
-    console.log(`\nâœ… RICERCA CONCLUSA. Trovati ${uniqueResults.length} risultati unici totali per "${title}".\n`);
+    console.log(`\nÃ¢Å“â€¦ RICERCA CONCLUSA. Trovati ${uniqueResults.length} risultati unici totali per "${title}".\n`);
     return uniqueResults;
 }
 
