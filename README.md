@@ -33,6 +33,7 @@
   <img src="https://img.shields.io/badge/Hybrid-Delivery-00eaff?style=flat-square&labelColor=061018" />
   <img src="https://img.shields.io/badge/Shared_Cache-Volatility--Aware-00eaff?style=flat-square&labelColor=061018" />
   <img src="https://img.shields.io/badge/Language-ITA_%7C_ENG_%7C_Hybrid-00eaff?style=flat-square&labelColor=061018" />
+  <img src="https://img.shields.io/badge/Kitsu-Anime_Ready-00eaff?style=flat-square&labelColor=061018" />
 </p>
 
 <br>
@@ -72,6 +73,44 @@
 <p align="center">
 Il progetto nasce per offrire una base tecnica capace di unire <b>sorgenti torrent</b>, <b>provider web</b> e <b>moduli ibridi</b>, ridurre il rumore nei risultati, migliorare il matching semantico, mantenere una latenza percepita aggressiva, applicare <b>cache intelligence adattiva</b> e restituire output leggibili e pronti all’uso in ambiente Stremio.
 </p>
+
+</div>
+
+---
+
+<div align="center">
+
+## 🈶 Anime & Kitsu Intelligence
+
+<table align="center">
+<tr>
+<td align="center" width="100%">
+
+### Mapping anime-first · Kitsu-aware · collision control
+
+<p align="center">
+<b>Leviathan</b> integra una logica dedicata per contenuti <b>anime</b> e flussi <b>Kitsu-based</b>, con una pipeline costruita per ridurre mismatch tra <b>stagioni</b>, <b>episodi assoluti</b>, <b>numerazione reale</b> e titoli ambigui.
+</p>
+
+<p align="center">
+Questo permette al protocollo di trattare meglio serie come <b>One Piece</b>, <b>Jujutsu Kaisen</b> e altri anime con naming complesso, distinguendo in modo più credibile tra <b>anime canonico</b>, <b>live action</b>, release pack, stagioni esplicite e risultati semanticamente simili ma sbagliati.
+</p>
+
+<p align="center">
+La logica combina <b>matching anime-first</b>, <b>contesto Kitsu</b>, <b>controllo stagione/episodio</b>, <b>query più intelligenti</b> e <b>ranking anti-collisione</b>, così da restituire output più coerenti quando il catalogo usa identificatori anime invece dei flussi TV standard.
+</p>
+
+<br>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/KITSU-AWARE-00eaff?style=for-the-badge&labelColor=061018" />
+  <img src="https://img.shields.io/badge/ANIME-FIRST-MATCHING-7c3aed?style=for-the-badge&labelColor=061018" />
+  <img src="https://img.shields.io/badge/EPISODE-COLLISION_CONTROL-ff5a7a?style=for-the-badge&labelColor=061018" />
+</p>
+
+</td>
+</tr>
+</table>
 
 </div>
 
