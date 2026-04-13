@@ -64,6 +64,9 @@ function recoverSeriesIdFromHint(conf, req, type, rawId) {
     const second = parseInt(match[2], 10);
 
     if (Number.isInteger(first) && first > 0 && Number.isInteger(second) && second > 0) {
+        if (String(hint.baseId || '').toLowerCase().startsWith('kitsu:')) {
+            return first === 1 ? `${hint.baseId}:${second}` : `${hint.baseId}:${first}:${second}`;
+        }
         return `${hint.baseId}:${first}:${second}`;
     }
     if (Number.isInteger(first) && first > 0) {

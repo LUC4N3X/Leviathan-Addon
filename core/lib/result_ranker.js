@@ -251,6 +251,15 @@ function isAnimeMeta(meta = {}) {
   return Boolean(meta?.kitsu_id || meta?.isAnime);
 }
 
+
+function hasExplicitSeasonMarker(text = '') {
+  return /\b(?:S(?:EASON)?\s*0?\d{1,2}|\d{1,2}x\d{1,3}|STAGIONE\s*0?\d{1,2}|(?:1ST|2ND|3RD|4TH)\s+SEASON)\b/i.test(String(text || ""));
+}
+
+function shouldIgnoreAnimeSeason(meta = {}, title = '') {
+  return isAnimeMeta(meta) && !hasExplicitSeasonMarker(title);
+}
+
 function extractEpisodeContext(title, defaultSeason = 1, options = {}) {
   const safeTitle = normalizeText(title);
   let match = safeTitle.match(/\bS(\d{1,2})E(\d{1,3})\b/i);
@@ -479,7 +488,7 @@ function evaluateEpisodeFit(title, meta = {}, weights) {
   const isPack = isSeasonPack(title) || REGEX_PACK.test(title);
   const context = Number.isFinite(season) && Number.isFinite(episode) ? { season, episode } : null;
   const episodeContext = context ? extractEpisodeContext(title, context.season || 1, { anime: isAnimeMeta(meta) }) : null;
-  const ignoreAnimeSeason = isAnimeMeta(meta);
+  const ignoreAnimeSeason = shouldIgnoreAnimeSeason(meta, title);
   let delta = 0;
   const reasons = [];
 

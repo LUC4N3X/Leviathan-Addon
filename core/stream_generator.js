@@ -89,6 +89,46 @@ function getEffectiveSearchLanguageMode(filters = {}, meta = {}, type = '') {
     return 'ita';
 }
 
+function hasExplicitSeasonMarker(text = '') {
+    return /\b(?:S(?:EASON)?\s*0?\d{1,2}|\d{1,2}x\d{1,3}|STAGIONE\s*0?\d{1,2}|(?:1ST|2ND|3RD|4TH)\s+SEASON)\b/i.test(String(text || ''));
+}
+
+function shouldIgnoreAnimeSeason(meta = {}, type = '', title = '') {
+    return isAnimeMetaContext(meta, type) && !hasExplicitSeasonMarker(title);
+}
+
+function mapKitsuEpisodePosition(parsedKitsu, fallbackKitsuMeta) {
+    const requestedEpisode = Number(parsedKitsu?.episode || 0) || 0;
+    const mappedSeason = Number(fallbackKitsuMeta?.season || parsedKitsu?.season || 1) || 1;
+    const baseEpisode = Number(fallbackKitsuMeta?.episode || 1) || 1;
+
+    if (!(requestedEpisode > 0)) {
+        return {
+            mappedSeason,
+            mappedEpisode: 0,
+            requestedEpisode: 0
+        };
+    }
+
+    return {
+        mappedSeason,
+        mappedEpisode: baseEpisode + requestedEpisode - 1,
+        requestedEpisode
+    };
+}
+
+function buildExternalAddonRequestId(type, finalId, meta = {}) {
+    const cleanType = String(type || '').toLowerCase() === 'anime' ? 'series' : String(type || '').toLowerCase();
+    if (cleanType === 'series' && meta?.imdb_id && Number(meta?.season) > 0 && Number(meta?.episode) > 0) {
+        return `${meta.imdb_id}:${Number(meta.season)}:${Number(meta.episode)}`;
+    }
+    if (cleanType === 'movie' && meta?.imdb_id) return meta.imdb_id;
+    if (cleanType === 'series' && String(finalId || '').startsWith('tmdb:') && Number(meta?.season) > 0 && Number(meta?.episode) > 0) {
+        return `${String(finalId)}:${Number(meta.season)}:${Number(meta.episode)}`;
+    }
+    return finalId;
+}
+
 function isAnimeTmdbMetadata(tmdbData = {}, type = '') {
     if (String(type || '').toLowerCase() !== 'series') return false;
 
@@ -785,7 +825,7 @@ function createAggressiveResultFilter(meta, type, langMode) {
             const episode = meta.episode;
             const parsedEpisode = extractSeasonEpisodeFromFilename(title, season || 1, getEpisodeParseOptions(meta, type));
 
-            if (isAnimeMetaContext(meta, type) && parsedEpisode && parsedEpisode.episode === episode && (parsedEpisode.season === season || meta.kitsu_id)) {
+            if (isAnimeMetaContext(meta, type) && parsedEpisode && parsedEpisode.episode === episode && (parsedEpisode.season === season || shouldIgnoreAnimeSeason(meta, type, title))) {
                 return true;
             }
             if (isAnimeMetaContext(meta, type) && isPack) {
@@ -795,12 +835,13 @@ function createAggressiveResultFilter(meta, type, langMode) {
 
             const wrongSeasonRegex = /(?:s|stagione|season)\s*0?(\d+)(?!\d)/gi;
             let match;
+            const ignoreAnimeSeasonCheck = shouldIgnoreAnimeSeason(meta, type, title);
             while ((match = wrongSeasonRegex.exec(lowerTitle)) !== null) {
-                if (parseInt(match[1], 10) !== season && !meta.kitsu_id) return false;
+                if (parseInt(match[1], 10) !== season && !ignoreAnimeSeasonCheck) return false;
             }
 
             const xMatch = lowerTitle.match(/(\d+)x(\d+)/i);
-            if (xMatch) return (parseInt(xMatch[1], 10) === season || meta.kitsu_id) && parseInt(xMatch[2], 10) === episode;
+            if (xMatch) return (parseInt(xMatch[1], 10) === season || ignoreAnimeSeasonCheck) && parseInt(xMatch[2], 10) === episode;
 
             const hasRightSeason = new RegExp(`(?:s|stagione|season|^)\\s*0?${season}(?!\\d)`, 'i').test(lowerTitle);
             const hasRightEpisode = new RegExp(`(?:e|x|ep|episode|^)\\s*0?${episode}(?!\\d)`, 'i').test(lowerTitle);
@@ -1303,6 +1344,7 @@ async function getMetadata(id, type, config = {}) {
           const season = parsedKitsu?.season || 1;
           const episode = parsedKitsu?.episode || 0;
           const fallbackKitsuMeta = kitsuId ? await kitsuHandler(kitsuId).catch(() => null) : null;
+          const mappedKitsu = mapKitsuEpisodePosition(parsedKitsu, fallbackKitsuMeta);
 
           if (kitsuId) {
               const kitsuUrl = `${CONFIG.KITSU_URL}/meta/anime/kitsu:${kitsuId}.json`;
@@ -1337,8 +1379,9 @@ async function getMetadata(id, type, config = {}) {
                           imdb_id: kMeta.imdb_id || fallbackKitsuMeta?.imdbID || null,
                           kitsu_id: kitsuId,
                           isSeries,
-                          season: isSeries ? season : 0,
-                          episode: isSeries ? episode : 0,
+                          season: isSeries ? mappedKitsu.mappedSeason : 0,
+                          episode: isSeries ? mappedKitsu.mappedEpisode : 0,
+                          requested_kitsu_episode: isSeries ? mappedKitsu.requestedEpisode : 0,
                           releaseInfo: kMeta.releaseInfo || null,
                           aka_titles: aliases,
                           aliases,
@@ -1365,8 +1408,9 @@ async function getMetadata(id, type, config = {}) {
                   imdb_id: fallbackKitsuMeta.imdbID || null,
                   kitsu_id: kitsuId,
                   isSeries: fallbackKitsuMeta.type !== 'movie',
-                  season: fallbackKitsuMeta.type !== 'movie' ? season : 0,
-                  episode: fallbackKitsuMeta.type !== 'movie' ? episode : 0,
+                  season: fallbackKitsuMeta.type !== 'movie' ? mappedKitsu.mappedSeason : 0,
+                  episode: fallbackKitsuMeta.type !== 'movie' ? mappedKitsu.mappedEpisode : 0,
+                  requested_kitsu_episode: fallbackKitsuMeta.type !== 'movie' ? mappedKitsu.requestedEpisode : 0,
                   aka_titles: aliases,
                   aliases,
                   titles,
@@ -1733,11 +1777,12 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
     } catch (e) { logger.error("Err Remote Indexer:", { error: e.message }); return []; }
 }
 
-async function fetchExternalResults(type, finalId, config) {
+async function fetchExternalResults(type, requestId, config, meta = {}, langMode = 'ita') {
     logger.info(`[EXTERNAL] Start Parallel Fetch...`);
     try {
+        const onlyItalian = langMode === 'ita' && !isAnimeMetaContext(meta, type);
         const externalResults = await withTimeout(
-            fetchExternalAddonsFlat(type, finalId, { userConfig: config }).then(items => items.map(i => {
+            fetchExternalAddonsFlat(type, requestId, { userConfig: config, onlyItalian }).then(items => items.map(i => {
                 const title = i.title || i.filename;
                 let finalSeeders = parseInt(i.seeders, 10) || (title ? extractSeeders(title) : 0);
                 let finalSize = i.mainFileSize || (title ? extractSize(title) : 0);
@@ -1816,14 +1861,16 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                         )
                     );
 
+                    const externalRequestId = buildExternalAddonRequestId(type, finalId, meta);
+                    const externalCacheKey = `${type}:${externalRequestId}:${langMode}`;
                     const externalPromise = dbOnlyMode
                         ? Promise.resolve([])
-                        : Cache.fetchWithCache('ExternalAddons', `${type}:${finalId}`, 43200, () =>
+                        : Cache.fetchWithCache('ExternalAddons', externalCacheKey, 43200, () =>
                             guardedProviderCall(
                                 'ExternalAddons',
                                 LIMITERS.externalAddons,
                                 CONFIG.TIMEOUTS.EXTERNAL,
-                                () => fetchExternalResults(type, finalId, config),
+                                () => fetchExternalResults(type, externalRequestId, config, meta, langMode),
                                 { meta }
                             )
                         );
@@ -1853,7 +1900,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                                 providerName,
                                 LIMITERS.scraper,
                                 scraperTimeout,
-                                () => scraper.searchMagnet(q, meta.year, type, finalId, { langMode, allowEng: allowEngScraper, isAnime: isAnimeMetaContext(meta, type) }),
+                                () => scraper.searchMagnet(q, meta.year, type, buildExternalAddonRequestId(type, finalId, meta), { langMode, allowEng: allowEngScraper, isAnime: isAnimeMetaContext(meta, type) }),
                                 { meta }
                             )
                         );

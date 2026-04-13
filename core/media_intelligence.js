@@ -214,6 +214,7 @@ function getTitleCandidates(meta = {}, dynamicAliases = [], allowEngOrLangMode =
 
 function generateSmartQueries(meta = {}, dynamicAliases = [], allowEngOrLangMode = false) {
   const { year, season, episode, isSeries } = meta || {};
+  const animeAbsoluteEpisode = Number(meta.anime_absolute_episode || meta.requested_kitsu_episode || meta.anime_episode || 0);
   const { ita, eng, langMode } = getTitleCandidates(meta, dynamicAliases, allowEngOrLangMode);
   const animeMode = isAnimeMeta(meta);
   const sNum = Number(season);
@@ -233,12 +234,22 @@ function generateSmartQueries(meta = {}, dynamicAliases = [], allowEngOrLangMode
             itaQueries.add(`${title} ${eStr}`);
             itaQueries.add(`${title} episodio ${eNum}`);
             itaQueries.add(`${title} episode ${eNum}`);
+            if (animeAbsoluteEpisode > 0 && animeAbsoluteEpisode !== eNum) {
+              itaQueries.add(`${title} episodio ${animeAbsoluteEpisode}`);
+              itaQueries.add(`${title} episode ${animeAbsoluteEpisode}`);
+              itaQueries.add(`${title} - ${String(animeAbsoluteEpisode).padStart(2, '0')}`);
+            }
             if (Number.isFinite(sNum) && sNum > 1) {
               itaQueries.add(`${title} S${sNum} - ${eStr}`);
               itaQueries.add(`${title} stagione ${sNum} episodio ${eNum}`);
               itaQueries.add(`${title} season ${sNum} episode ${eNum}`);
             }
           }
+          if (Number.isFinite(yNum) && yNum > 0) {
+            itaQueries.add(`${title} ${yNum}`);
+            itaQueries.add(`${title} anime ${yNum}`);
+          }
+          itaQueries.add(`${title} anime`);
           itaQueries.add(`${title} batch`);
           itaQueries.add(`${title} complete`);
           itaQueries.add(`${title} pack`);
@@ -282,11 +293,21 @@ function generateSmartQueries(meta = {}, dynamicAliases = [], allowEngOrLangMode
             engQueries.add(`${title} ${eStr}`);
             engQueries.add(`${title} episode ${eNum}`);
             engQueries.add(`${title} ep ${eNum}`);
+            if (animeAbsoluteEpisode > 0 && animeAbsoluteEpisode !== eNum) {
+              engQueries.add(`${title} episode ${animeAbsoluteEpisode}`);
+              engQueries.add(`${title} ep ${animeAbsoluteEpisode}`);
+              engQueries.add(`${title} - ${String(animeAbsoluteEpisode).padStart(2, '0')}`);
+            }
             if (Number.isFinite(sNum) && sNum > 1) {
               engQueries.add(`${title} S${sNum} - ${eStr}`);
               engQueries.add(`${title} season ${sNum} episode ${eNum}`);
             }
           }
+          if (Number.isFinite(yNum) && yNum > 0) {
+            engQueries.add(`${title} ${yNum}`);
+            engQueries.add(`${title} anime ${yNum}`);
+          }
+          engQueries.add(`${title} anime`);
           engQueries.add(`${title} batch`);
           engQueries.add(`${title} complete`);
           engQueries.add(`${title} pack`);

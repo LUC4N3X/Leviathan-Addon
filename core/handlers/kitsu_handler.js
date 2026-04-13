@@ -14,6 +14,7 @@ let mappingCache = {
     isLoaded: false,
     isLoading: false 
 };
+let mappingCachePromise = null;
 
 function parsePositiveInt(value, fallback = null) {
     const parsed = parseInt(value, 10);
@@ -90,15 +91,62 @@ function buildTitleVariants(attributes = {}) {
     ]);
 }
 
+
+function getBeastEntries(rawData) {
+    if (Array.isArray(rawData)) return rawData;
+    if (rawData && Array.isArray(rawData.data)) return rawData.data;
+    if (rawData && Array.isArray(rawData.entries)) return rawData.entries;
+    if (rawData && typeof rawData === 'object') {
+        return Object.entries(rawData).map(([kitsuId, entry]) => ({
+            kitsu_id: kitsuId,
+            ...(entry && typeof entry === 'object' ? entry : {})
+        }));
+    }
+    return [];
+}
+
+function buildTheBeastEntry(rawEntry = {}) {
+    const kitsuId = String(rawEntry.kitsu_id || rawEntry.kitsuId || rawEntry.id || '').trim();
+    const imdbId = String(rawEntry.imdb_id || rawEntry.imdbId || rawEntry.imdb || '').trim();
+    if (!kitsuId || !imdbId) return null;
+
+    const titles = uniqueStrings([
+        rawEntry.title,
+        rawEntry.name,
+        rawEntry.canonicalTitle,
+        rawEntry.originalTitle,
+        ...(Array.isArray(rawEntry.titles) ? rawEntry.titles : []),
+        ...(Array.isArray(rawEntry.aliases) ? rawEntry.aliases : [])
+    ]);
+
+    return {
+        kitsuId,
+        imdb_id: imdbId,
+        type: normalizeType(rawEntry.type || rawEntry.subtype || 'TV'),
+        season: parsePositiveInt(rawEntry.fromSeason ?? rawEntry.season ?? rawEntry.startSeason, 1),
+        episode: parsePositiveInt(rawEntry.fromEpisode ?? rawEntry.episode ?? rawEntry.startEpisode, 1),
+        titles,
+        aliases: titles,
+        year: String(rawEntry.year || '').match(/^\d{4}$/)?.[0] || '',
+        subtype: String(rawEntry.subtype || rawEntry.type || ''),
+        episode_count: parsePositiveInt(rawEntry.episodeCount ?? rawEntry.episodes ?? null, null),
+        source: 'thebeastlt'
+    };
+}
+
 async function updateCache() {
     const now = Date.now();
     
-    if ((mappingCache.isLoaded && (now - mappingCache.lastFetch < CACHE_DURATION)) || mappingCache.isLoading) {
+    if (mappingCache.isLoaded && (now - mappingCache.lastFetch < CACHE_DURATION)) {
         return;
+    }
+    if (mappingCache.isLoading && mappingCachePromise) {
+        return mappingCachePromise;
     }
 
     mappingCache.isLoading = true;
     console.log("🐉 [KITSU] Avvio download database mapping in background...");
+    mappingCachePromise = (async () => {
 
     try {
         const [fribbRes, beastRes] = await Promise.allSettled([
@@ -123,18 +171,11 @@ async function updateCache() {
         }
 
         if (beastRes.status === 'fulfilled' && beastRes.value.data) {
-            const data = beastRes.value.data;
-            Object.keys(data).forEach(kID => {
-                const entry = data[kID];
-                if (entry.imdb_id) {
-                    tempMap.set(String(kID), {
-                        imdb_id: entry.imdb_id,
-                        type: 'series',
-                        season: entry.fromSeason || 1,
-                        episode: entry.fromEpisode || 1,
-                        source: 'thebeastlt'
-                    });
-                }
+            const entries = getBeastEntries(beastRes.value.data);
+            entries.forEach(rawEntry => {
+                const entry = buildTheBeastEntry(rawEntry);
+                if (!entry) return;
+                tempMap.set(entry.kitsuId, entry);
             });
         }
 
@@ -149,6 +190,13 @@ async function updateCache() {
         console.error("❌ Errore update Kitsu cache:", e.message);
     } finally {
         mappingCache.isLoading = false;
+    }
+    })();
+
+    try {
+        await mappingCachePromise;
+    } finally {
+        mappingCachePromise = null;
     }
 }
 
@@ -201,9 +249,14 @@ async function kitsuHandler(kitsuID) {
     const strID = parsedIdentifier.kitsuId;
 
     if (!mappingCache.isLoaded) {
-        updateCache().catch(e => console.error(e));
-        
-        return await fetchKitsuLive(strID);
+        try {
+            await updateCache();
+        } catch (e) {
+            console.error(e);
+        }
+        if (!mappingCache.isLoaded) {
+            return await fetchKitsuLive(strID);
+        }
     }
     
     let entry = mappingCache.map.get(strID);
