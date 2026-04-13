@@ -75,21 +75,29 @@ function applyMobilePerformanceMode() {
 
 const mobileCSS = `
 :root {
-    --m-bg: #000000;
+    --m-bg: #000205;
+    --m-bg-deep: #00060c;
     --m-primary: #00f2ff;     /* Ciano Leviathan */
+    --m-primary-dim: rgba(0, 242, 255, 0.18);
     --m-secondary: #7000ff;   /* Viola Abisso */
-    --m-accent: #b026ff;      
+    --m-accent: #b026ff;
     --m-amber: #ffcc00;       /* Gold P2P Warning */
     --m-orange: #ff6600;      /* Blaze Orange (AnimeWorld) */
-    --m-cine: #ff0055;        
-    --m-kofi: #FF5E5B;        
-    --m-surface: rgba(10, 15, 25, 0.85); 
+    --m-cine: #ff0055;
+    --m-kofi: #FF5E5B;
+    --m-surface: rgba(8, 14, 22, 0.85);
+    --m-surface-2: rgba(4, 8, 14, 0.92);
     --m-text: #e0f7fa;
-    --m-dim: #7a9ab5; 
+    --m-dim: #7a9ab5;
+    --m-faint: rgba(122, 154, 181, 0.55);
     --m-error: #ff3366;
-    --m-success: #00ff9d;       
+    --m-success: #00ff9d;
     --safe-bottom: env(safe-area-inset-bottom);
-    --m-glow: 0 0 15px rgba(0, 242, 255, 0.3); 
+    --m-glow: 0 0 15px rgba(0, 242, 255, 0.3);
+    --m-glow-strong: 0 0 22px rgba(0, 242, 255, 0.45);
+    --m-radius-lg: 22px;
+    --m-radius-md: 14px;
+    --m-radius-sm: 10px;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; user-select: none; }
@@ -101,13 +109,14 @@ const mobileCSS = `
 ::-webkit-scrollbar-thumb { background: rgba(0, 242, 255, 0.4); border-radius: 10px; }
 ::-webkit-scrollbar-thumb:active { background: var(--m-primary); }
 
-/* --- BACKGROUND & CRT EFFECT --- */
+/* --- DEEP SEA BACKGROUND --- */
 body {
     margin: 0;
     background:
-        radial-gradient(circle at 50% 18%, rgba(0, 242, 255, 0.10) 0%, rgba(0, 242, 255, 0.03) 18%, transparent 42%),
-        radial-gradient(circle at 82% 74%, rgba(112, 0, 255, 0.10) 0%, transparent 28%),
-        linear-gradient(180deg, #09111a 0%, #05080d 42%, #000000 100%);
+        radial-gradient(ellipse at 50% -10%, rgba(0, 242, 255, 0.18) 0%, rgba(0, 242, 255, 0.04) 22%, transparent 50%),
+        radial-gradient(circle at 88% 82%, rgba(112, 0, 255, 0.16) 0%, transparent 38%),
+        radial-gradient(circle at 12% 60%, rgba(0, 242, 255, 0.08) 0%, transparent 38%),
+        linear-gradient(180deg, #050b14 0%, #02060c 45%, #000205 100%);
     font-family: 'Outfit', sans-serif;
     color: var(--m-text);
     width: 100%;
@@ -116,26 +125,51 @@ body {
     overflow: hidden;
 }
 
+/* Subtle CRT scan layer */
 body::after {
     content: " ";
     display: block;
-    position: absolute;
+    position: fixed;
     top: 0; left: 0; bottom: 0; right: 0;
     background:
-        linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.018) 50%),
-        linear-gradient(90deg, rgba(255, 0, 0, 0.018), rgba(0, 255, 0, 0.008), rgba(0, 0, 255, 0.018));
+        linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.025) 50%),
+        linear-gradient(90deg, rgba(255, 0, 0, 0.012), rgba(0, 255, 0, 0.006), rgba(0, 0, 255, 0.012));
     z-index: 0;
     background-size: 100% 3px, 4px 100%;
     pointer-events: none;
-    opacity: 0.55;
+    opacity: 0.45;
+    mix-blend-mode: overlay;
 }
 
+/* Faint blueprint grid */
 body::before {
     content: ''; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -10;
-    background-image: linear-gradient(rgba(0, 242, 255, 0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 242, 255, 0.08) 1px, transparent 1px);
-    background-size: 40px 40px; pointer-events: none;
-    mask-image: radial-gradient(circle at center, black 30%, rgba(0,0,0,0.5) 80%, transparent 100%);
-    -webkit-mask-image: radial-gradient(circle at center, black 30%, rgba(0,0,0,0.5) 80%, transparent 100%);
+    background-image:
+        linear-gradient(rgba(0, 242, 255, 0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 242, 255, 0.07) 1px, transparent 1px);
+    background-size: 44px 44px;
+    pointer-events: none;
+    mask-image: radial-gradient(circle at 50% 30%, black 25%, rgba(0,0,0,0.4) 75%, transparent 100%);
+    -webkit-mask-image: radial-gradient(circle at 50% 30%, black 25%, rgba(0,0,0,0.4) 75%, transparent 100%);
+    animation: gridDrift 80s linear infinite;
+}
+@keyframes gridDrift { from { background-position: 0 0; } to { background-position: 44px 44px; } }
+
+/* Floating ocean particles */
+.m-ocean-particles { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: -5; overflow: hidden; }
+.m-ocean-particle {
+    position: absolute; bottom: -10px;
+    width: 3px; height: 3px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(0, 242, 255, 0.85) 0%, rgba(0, 242, 255, 0.15) 60%, transparent 100%);
+    box-shadow: 0 0 6px rgba(0, 242, 255, 0.5);
+    opacity: 0;
+    animation: oceanFloat 18s linear infinite;
+}
+@keyframes oceanFloat {
+    0% { transform: translate3d(0, 0, 0) scale(0.6); opacity: 0; }
+    12% { opacity: 0.7; }
+    88% { opacity: 0.5; }
+    100% { transform: translate3d(8px, -110vh, 0) scale(1.2); opacity: 0; }
 }
 
 #app-container { 
@@ -148,9 +182,38 @@ body::before {
 
 .m-content {
     flex: 1; overflow-y: auto; overflow-x: hidden;
-    padding: 0 15px 140px 15px; width: 100%; 
-    -webkit-overflow-scrolling: touch; 
+    padding: 0 14px 150px 14px; width: 100%;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
 }
+
+/* --- SECTION HEADER (Leviathan signature) --- */
+.m-section-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 0 4px 12px 4px;
+    padding: 6px 0 6px 12px;
+    border-left: 3px solid var(--m-primary);
+    box-shadow: -3px 0 10px -2px rgba(0, 242, 255, 0.5);
+    position: relative;
+}
+.m-section-head .sh-titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.m-section-head .sh-title {
+    font-family: 'Rajdhani', sans-serif; font-size: 0.95rem; font-weight: 800;
+    color: #fff; text-transform: uppercase; letter-spacing: 3px;
+    text-shadow: 0 0 8px rgba(0, 242, 255, 0.35);
+}
+.m-section-head .sh-sub {
+    font-family: 'Outfit', sans-serif; font-size: 0.62rem; color: var(--m-dim);
+    letter-spacing: 1.4px; text-transform: uppercase; opacity: 0.85;
+}
+.m-section-head .sh-tag {
+    font-family: 'Rajdhani', monospace; font-size: 0.55rem; font-weight: 800;
+    padding: 3px 7px; border-radius: 4px; letter-spacing: 1.4px;
+    color: var(--m-primary); border: 1px solid rgba(0, 242, 255, 0.35);
+    background: rgba(0, 242, 255, 0.06); white-space: nowrap;
+}
+.m-section-head .sh-tag.warn { color: var(--m-amber); border-color: rgba(255, 204, 0, 0.4); background: rgba(255, 204, 0, 0.06); }
+.m-section-head .sh-tag.violet { color: var(--m-secondary); border-color: rgba(112, 0, 255, 0.4); background: rgba(112, 0, 255, 0.06); }
 
 /* --- FIX PTR Z-INDEX --- */
 .m-ptr {
@@ -175,7 +238,7 @@ body::before {
 /* --- HERO SECTION --- */
 .m-hero {
     text-align: center;
-    padding: 24px 10px 18px;
+    padding: 30px 10px 22px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -192,17 +255,28 @@ body::before {
     left: 50%;
     top: 22px;
     transform: translateX(-50%);
-    width: min(340px, 90vw);
-    height: 280px;
-    background: radial-gradient(circle at 50% 36%, rgba(0, 242, 255, 0.18) 0%, rgba(0, 242, 255, 0.07) 26%, rgba(112, 0, 255, 0.05) 52%, transparent 74%);
-    filter: blur(18px);
+    width: min(360px, 92vw);
+    height: 300px;
+    background:
+        radial-gradient(circle at 50% 36%, rgba(0, 242, 255, 0.22) 0%, rgba(0, 242, 255, 0.08) 28%, rgba(112, 0, 255, 0.06) 54%, transparent 76%);
+    filter: blur(22px);
     pointer-events: none;
     z-index: -2;
 }
 
+/* Horizon line under hero */
 .m-hero::after {
-    content: none;
-    display: none;
+    content: '';
+    display: block;
+    position: absolute;
+    bottom: -2px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 80%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0, 242, 255, 0.55), rgba(112, 0, 255, 0.55), transparent);
+    box-shadow: 0 0 10px rgba(0, 242, 255, 0.5);
+    opacity: 0.85;
 }
 
 .logo-container {
@@ -309,55 +383,118 @@ body::before {
     100% { transform: translateY(-100%) scale(1.10); opacity: 0; }
 }
 
-.m-brand-title { font-family: 'Rajdhani', sans-serif; font-size: 3rem; font-weight: 900; line-height: 0.95; background: linear-gradient(180deg, #ffffff 0%, #9efcff 28%, #1fe6ff 58%, #6783ff 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; filter: drop-shadow(0 0 12px rgba(0, 242, 255, 0.36)); text-shadow: 0 0 6px rgba(0,242,255,0.18); position: relative; z-index: 10; }
-.m-brand-sub { font-family: 'Rajdhani', sans-serif; font-size: 0.75rem; letter-spacing: 3px; color: var(--m-primary); text-transform: uppercase; margin-top: 8px; font-weight: 700; opacity: 0.95; display: flex; align-items: center; justify-content: center; width: 100%; text-shadow: 0 0 6px var(--m-primary); white-space: nowrap; position: relative; z-index: 10; }
-.m-brand-sub::before, .m-brand-sub::after { content: ''; display: block; width: 25px; height: 2px; background: linear-gradient(90deg, transparent, var(--m-primary)); margin: 0 10px; opacity: 0.85; flex-shrink: 0; box-shadow: 0 0 8px var(--m-primary); }
+.m-brand-title {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 3.4rem; font-weight: 900; line-height: 0.92;
+    background: linear-gradient(180deg, #ffffff 0%, #9efcff 28%, #1fe6ff 58%, #6783ff 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    margin: 6px 0 0 0; letter-spacing: 1px;
+    filter: drop-shadow(0 0 14px rgba(0, 242, 255, 0.4));
+    position: relative; z-index: 10;
+    animation: titleGlow 4.5s ease-in-out infinite alternate;
+}
+@keyframes titleGlow {
+    from { filter: drop-shadow(0 0 12px rgba(0, 242, 255, 0.32)); }
+    to { filter: drop-shadow(0 0 22px rgba(0, 242, 255, 0.52)); }
+}
+.m-brand-sub {
+    font-family: 'Rajdhani', sans-serif; font-size: 0.78rem; letter-spacing: 6px;
+    color: var(--m-primary); text-transform: uppercase; margin-top: 10px;
+    font-weight: 800; opacity: 0.95; display: flex; align-items: center; justify-content: center;
+    width: 100%; text-shadow: 0 0 8px var(--m-primary); white-space: nowrap;
+    position: relative; z-index: 10;
+}
+.m-brand-sub::before, .m-brand-sub::after {
+    content: ''; display: block; width: 32px; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--m-primary));
+    margin: 0 12px; flex-shrink: 0; box-shadow: 0 0 10px var(--m-primary);
+}
 .m-brand-sub::after { background: linear-gradient(90deg, var(--m-primary), transparent); }
-.m-brand-desc { font-family: 'Outfit', sans-serif; font-size: 0.76rem; color: var(--m-dim); line-height: 1.35; margin-top: 8px; margin-bottom: 8px; max-width: 260px; opacity: 0.88; position: relative; z-index: 10; }
 
-.m-version-tag { margin-top: 10px; font-family: 'Rajdhani', monospace; font-size: 0.6rem; color: #e0f7fa; opacity: 0.9; letter-spacing: 2px; background: rgba(0, 242, 255, 0.1); padding: 4px 10px; border-radius: 20px; border: 1px solid rgba(0, 242, 255, 0.2); display: flex; align-items: center; gap: 6px; transition: all 0.3s ease; cursor: default; box-shadow: 0 0 10px rgba(0,0,0,0.5); position: relative; z-index: 10; }
-.m-v-dot { width: 5px; height: 5px; background: var(--m-success); border-radius: 50%; box-shadow: 0 0 5px var(--m-success); animation: blinkBase 2s infinite; }
-@keyframes blinkBase { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.8); } }
+.m-brand-desc {
+    font-family: 'Outfit', sans-serif; font-size: 0.78rem; color: var(--m-dim);
+    line-height: 1.45; margin-top: 10px; margin-bottom: 10px; max-width: 280px;
+    opacity: 0.9; position: relative; z-index: 10;
+}
+
+.m-version-tag {
+    margin-top: 12px; font-family: 'Rajdhani', monospace; font-size: 0.62rem;
+    color: #e0f7fa; opacity: 0.95; letter-spacing: 2px;
+    background: rgba(0, 242, 255, 0.08); padding: 5px 12px; border-radius: 20px;
+    border: 1px solid rgba(0, 242, 255, 0.28);
+    display: inline-flex; align-items: center; gap: 8px;
+    transition: all 0.3s ease; cursor: default;
+    box-shadow: 0 0 14px rgba(0, 242, 255, 0.12), inset 0 0 8px rgba(0, 242, 255, 0.08);
+    position: relative; z-index: 10; overflow: hidden;
+    animation: badgePulse 4s ease-in-out infinite;
+}
+.m-version-tag::before {
+    content: ''; position: absolute; top: 0; left: -100%; width: 60%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(0, 242, 255, 0.35), transparent);
+    transform: skewX(-25deg); animation: shimmer 5s linear infinite;
+}
+@keyframes badgePulse {
+    0%, 100% { box-shadow: 0 0 12px rgba(0, 242, 255, 0.12), inset 0 0 8px rgba(0, 242, 255, 0.06); border-color: rgba(0, 242, 255, 0.28); }
+    50% { box-shadow: 0 0 22px rgba(0, 242, 255, 0.28), inset 0 0 10px rgba(0, 242, 255, 0.12); border-color: var(--m-primary); }
+}
+.m-v-dot { width: 6px; height: 6px; background: var(--m-success); border-radius: 50%; box-shadow: 0 0 6px var(--m-success), 0 0 12px rgba(0,255,157,0.5); animation: blinkBase 2s infinite; flex-shrink: 0; }
+@keyframes blinkBase { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.8); } }
 
 /* --- COMPONENTS --- */
 
-/* === NEW CREDENTIALS STYLES === */
+/* === CREDENTIALS DECK === */
 .m-cred-deck {
     display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
-    margin-bottom: 25px; perspective: 1000px;
+    margin-bottom: 22px; perspective: 1000px;
 }
 .m-cred-opt {
     position: relative;
-    background: linear-gradient(145deg, rgba(20,25,35,0.8), rgba(5,5,10,0.9));
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 12px;
-    padding: 15px 5px;
+    background: linear-gradient(155deg, rgba(15,22,32,0.92), rgba(2,5,10,0.96));
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 14px 5px 12px;
     text-align: center;
     cursor: pointer;
     transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
     overflow: hidden;
-    box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(255,255,255,0.02);
+    -webkit-tap-highlight-color: transparent;
 }
 .m-cred-opt::before {
     content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
-    background: var(--opt-color);
-    box-shadow: 0 0 10px var(--opt-color);
-    opacity: 0.3; transition: 0.3s;
+    background: linear-gradient(90deg, transparent, var(--opt-color), transparent);
+    box-shadow: 0 0 12px var(--opt-color);
+    opacity: 0.28; transition: 0.35s;
 }
-.m-cred-icon { font-size: 1.6rem; margin-bottom: 4px; filter: drop-shadow(0 0 5px rgba(0,0,0,0.5)); transition: 0.3s; }
-.m-cred-name { font-family: 'Rajdhani', sans-serif; font-weight: 800; font-size: 0.9rem; letter-spacing: 1px; color: #666; transition: 0.3s; }
+.m-cred-opt::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 0%, var(--opt-glow), transparent 55%);
+    opacity: 0; transition: opacity 0.4s ease;
+}
+.m-cred-icon {
+    font-size: 1.5rem; margin-bottom: 2px;
+    color: #4a5666;
+    filter: drop-shadow(0 0 4px rgba(0,0,0,0.6));
+    transition: 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.m-cred-name {
+    font-family: 'Rajdhani', sans-serif; font-weight: 800; font-size: 0.78rem;
+    letter-spacing: 1.4px; color: #5d6c7e; transition: 0.3s;
+}
 
-/* Active State for Credentials */
+/* Active State */
 .m-cred-opt.active {
-    background: linear-gradient(145deg, rgba(20,25,35,0.9), #000);
+    background: linear-gradient(155deg, rgba(20,28,40,0.95), rgba(0,0,0,0.98));
     border-color: var(--opt-color);
-    transform: translateY(-2px);
-    box-shadow: 0 0 20px var(--opt-glow), inset 0 0 10px rgba(0,0,0,0.5);
+    transform: translateY(-3px);
+    box-shadow: 0 0 24px var(--opt-glow), inset 0 0 14px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
 }
 .m-cred-opt.active::before { opacity: 1; height: 3px; }
-.m-cred-opt.active .m-cred-icon { transform: scale(1.1); color: var(--opt-color); filter: drop-shadow(0 0 8px var(--opt-color)); }
-.m-cred-opt.active .m-cred-name { color: #fff; text-shadow: 0 0 8px var(--opt-color); }
+.m-cred-opt.active::after { opacity: 0.55; }
+.m-cred-opt.active .m-cred-icon { transform: scale(1.18); color: var(--opt-color); filter: drop-shadow(0 0 10px var(--opt-color)); }
+.m-cred-opt.active .m-cred-name { color: #fff; text-shadow: 0 0 10px var(--opt-color); letter-spacing: 1.6px; }
+.m-cred-opt:active { transform: scale(0.97); }
 
 /* Specific Colors */
 .cred-rd { --opt-color: var(--m-primary); --opt-glow: rgba(0, 242, 255, 0.2); }
@@ -366,37 +503,43 @@ body::before {
 
 /* Input Fuselage (Container) */
 .m-input-fuselage {
-    position: relative; margin-bottom: 18px;
-    background: rgba(0,0,0,0.4);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 14px;
-    padding: 2px; /* For double border effect */
+    position: relative; margin-bottom: 20px;
+    background: rgba(0,0,0,0.5);
+    border: 1px solid rgba(0, 242, 255, 0.12);
+    border-radius: var(--m-radius-md);
+    padding: 2px;
     transition: 0.3s;
 }
 .m-input-fuselage:focus-within {
     border-color: var(--m-primary);
-    box-shadow: 0 0 15px rgba(0,242,255,0.15);
+    box-shadow: 0 0 18px rgba(0,242,255,0.22), inset 0 0 12px rgba(0,242,255,0.06);
 }
-.m-input-fuselage.is-p2p { opacity: 0.6; pointer-events: none; filter: grayscale(1); border-style: dashed; }
+.m-input-fuselage.is-p2p { opacity: 0.55; pointer-events: none; filter: grayscale(1); border-style: dashed; }
 
 /* Inner Input Wrapper */
 .m-if-inner {
     display: flex; align-items: center;
-    background: #080a10;
+    background: #03070d;
     border-radius: 12px;
     padding: 0 10px;
-    height: 50px;
+    height: 52px;
     position: relative;
     overflow: hidden;
 }
+.m-if-inner::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+    background: linear-gradient(180deg, transparent, var(--m-primary), transparent);
+    opacity: 0; transition: opacity 0.3s;
+}
+.m-input-fuselage:focus-within .m-if-inner::before { opacity: 1; box-shadow: 0 0 8px var(--m-primary); }
 .m-if-icon {
-    font-size: 1rem; color: #555; width: 30px; text-align: center;
+    font-size: 1rem; color: #4a5666; width: 30px; text-align: center;
     transition: 0.3s;
-    border-right: 1px solid rgba(255,255,255,0.1);
+    border-right: 1px solid rgba(255,255,255,0.08);
     padding-right: 10px; margin-right: 10px;
     height: 60%; display: flex; align-items: center; justify-content: center;
 }
-.m-input-fuselage:focus-within .m-if-icon { color: var(--m-primary); border-right-color: var(--m-primary); }
+.m-input-fuselage:focus-within .m-if-icon { color: var(--m-primary); border-right-color: var(--m-primary); filter: drop-shadow(0 0 6px var(--m-primary)); }
 
 .m-if-field {
     flex: 1; background: transparent; border: none; color: #fff;
@@ -414,18 +557,19 @@ body::before {
 
 /* Field Labels Top Right */
 .m-if-label {
-    position: absolute; top: -10px; right: 15px;
-    background: #000; padding: 0 8px;
-    font-family: 'Rajdhani', sans-serif; font-size: 0.65rem; font-weight: 700;
-    color: var(--m-dim); letter-spacing: 1px;
-    border: 1px solid rgba(255,255,255,0.1); border-radius: 4px;
-    z-index: 2;
+    position: absolute; top: -9px; right: 14px;
+    background: linear-gradient(180deg, #03060b, #050a12); padding: 1px 9px;
+    font-family: 'Rajdhani', sans-serif; font-size: 0.6rem; font-weight: 800;
+    color: var(--m-dim); letter-spacing: 1.5px;
+    border: 1px solid rgba(0, 242, 255, 0.18); border-radius: 4px;
+    z-index: 2; text-transform: uppercase;
+    transition: 0.3s;
 }
 .m-input-fuselage:focus-within .m-if-label {
     color: var(--m-primary); border-color: var(--m-primary);
-    box-shadow: 0 0 10px rgba(0,242,255,0.2);
+    box-shadow: 0 0 12px rgba(0,242,255,0.3);
 }
-.m-if-label.opt { color: var(--m-accent); border-color: rgba(176,38,255,0.3); }
+.m-if-label.opt { color: var(--m-accent); border-color: rgba(176,38,255,0.35); background: linear-gradient(180deg, #07020c, #0a0612); }
 
 /* Link Button */
 .m-get-link {
@@ -440,23 +584,55 @@ body::before {
 
 
 .m-hypervisor {
-    background: linear-gradient(165deg, rgba(15, 20, 30, 0.95), rgba(5, 5, 10, 0.98));
-    border: 1px solid rgba(0, 242, 255, 0.15); border-radius: 20px; padding: 15px 15px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.5); position: relative; overflow: hidden;
-    backdrop-filter: blur(20px); margin-bottom: 20px;
-    z-index: 2; 
+    background:
+        linear-gradient(165deg, rgba(8, 14, 22, 0.92), rgba(2, 5, 10, 0.97));
+    border: 1px solid rgba(0, 242, 255, 0.18);
+    border-radius: var(--m-radius-lg); padding: 16px 15px 18px;
+    box-shadow:
+        0 14px 40px rgba(0,0,0,0.55),
+        inset 0 0 24px rgba(0, 242, 255, 0.04),
+        inset 0 1px 0 rgba(255,255,255,0.04);
+    position: relative; overflow: hidden;
+    backdrop-filter: blur(20px); margin-bottom: 18px;
+    z-index: 2;
+    isolation: isolate;
 }
+/* Animated top accent bar */
 .m-hypervisor::before {
-    content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 3px;
-    background: linear-gradient(90deg, var(--m-primary), var(--m-secondary));
-    box-shadow: 0 0 15px var(--m-primary);
+    content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
+    background: linear-gradient(90deg, transparent 0%, var(--m-primary) 25%, var(--m-secondary) 50%, var(--m-primary) 75%, transparent 100%);
+    background-size: 200% 100%;
+    box-shadow: 0 0 12px var(--m-primary);
+    animation: borderFlow 6s linear infinite;
 }
+/* Faint blueprint mesh inside */
+.m-hypervisor::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none; z-index: -1;
+    background-image:
+        linear-gradient(rgba(0, 242, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 242, 255, 0.04) 1px, transparent 1px);
+    background-size: 28px 28px;
+    mask-image: radial-gradient(ellipse at 50% 0%, black 10%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse at 50% 0%, black 10%, transparent 80%);
+    opacity: 0.6;
+}
+@keyframes borderFlow { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
 .m-hyp-header {
-    font-family: 'Rajdhani', sans-serif; font-size: 1rem; color: #fff; font-weight: 800; letter-spacing: 2px;
-    margin-bottom: 15px; display: flex; align-items: center; justify-content: space-between;
-    border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 10px;
+    font-family: 'Rajdhani', sans-serif; font-size: 0.85rem; color: #fff;
+    font-weight: 800; letter-spacing: 3px;
+    margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px dashed rgba(0, 242, 255, 0.18);
+    padding-bottom: 10px; text-transform: uppercase;
+    text-shadow: 0 0 6px rgba(0, 242, 255, 0.25);
 }
-.m-hyp-icon { font-size: 1.1rem; color: var(--m-primary); filter: drop-shadow(0 0 8px var(--m-primary)); }
+.m-hyp-icon {
+    font-size: 1rem; color: var(--m-primary);
+    filter: drop-shadow(0 0 8px var(--m-primary));
+    background: rgba(0, 242, 255, 0.08); width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; border: 1px solid rgba(0, 242, 255, 0.25);
+}
 
 /* --- FLUX STYLES --- */
 .m-flux-control {
@@ -570,17 +746,18 @@ body::before {
 
 .m-reactor-module {
     /* Base Appearance */
-    background: rgba(10, 12, 16, 0.95);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(8, 12, 18, 0.96), rgba(3, 6, 11, 0.97));
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: var(--m-radius-md);
     position: relative;
     overflow: hidden;
     transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
     display: flex;
     align-items: stretch;
-    min-height: 75px; /* Reduced from 90px */
-    box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+    min-height: 78px;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.03);
 }
+.m-reactor-module:active { transform: scale(0.99); }
 
 /* The "Core" (Left Bar) */
 .m-reactor-core {
@@ -715,9 +892,36 @@ body::before {
 
 
 
-.m-visual-core-v2 { margin-bottom: 20px; position: relative; }
-.m-visual-preview { background: #080808; border: 1px solid rgba(0,242,255,0.15); border-radius: 16px; padding: 12px; margin-bottom: 15px; display: flex; gap: 12px; align-items: flex-start; box-shadow: 0 0 25px rgba(0,0,0,0.6); position: relative; overflow: hidden; min-height: 80px; transition: border-color 0.2s; }
-.m-visual-preview::before { content: ''; position: absolute; top:0; left:0; width:3px; height:100%; background: var(--m-primary); box-shadow: 0 0 10px var(--m-primary); }
+.m-visual-core-v2 {
+    margin-bottom: 22px; position: relative;
+    background: linear-gradient(165deg, rgba(8, 14, 22, 0.92), rgba(2, 5, 10, 0.97));
+    border: 1px solid rgba(0, 242, 255, 0.18);
+    border-radius: var(--m-radius-lg); padding: 16px 14px 16px;
+    box-shadow: 0 14px 40px rgba(0,0,0,0.55), inset 0 0 24px rgba(0, 242, 255, 0.04);
+    overflow: hidden;
+}
+.m-visual-core-v2::before {
+    content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
+    background: linear-gradient(90deg, transparent 0%, var(--m-primary) 25%, var(--m-secondary) 50%, var(--m-primary) 75%, transparent 100%);
+    background-size: 200% 100%;
+    box-shadow: 0 0 12px var(--m-primary);
+    animation: borderFlow 6s linear infinite;
+}
+.m-visual-preview {
+    background: linear-gradient(180deg, #04080d, #02050a);
+    border: 1px solid rgba(0,242,255,0.2);
+    border-radius: var(--m-radius-md);
+    padding: 12px; margin-bottom: 15px;
+    display: flex; gap: 12px; align-items: flex-start;
+    box-shadow: 0 0 28px rgba(0,0,0,0.65), inset 0 0 18px rgba(0, 242, 255, 0.04);
+    position: relative; overflow: hidden;
+    min-height: 84px; transition: border-color 0.2s;
+}
+.m-visual-preview::before {
+    content: ''; position: absolute; top: 0; left: 0; width: 3px; height: 100%;
+    background: linear-gradient(180deg, var(--m-primary), var(--m-secondary));
+    box-shadow: 0 0 12px var(--m-primary);
+}
 .m-visual-preview.glitching { animation: glitch-anim 0.3s cubic-bezier(.25, .46, .45, .94) both; border-color: var(--m-accent); }
 .m-visual-preview.glitching .m-vp-icon { background: var(--m-accent); color: #000; }
 @keyframes glitch-anim { 0% { transform: translate(0); filter: hue-rotate(0deg); } 20% { transform: translate(-2px, 2px); filter: hue-rotate(90deg); } 40% { transform: translate(2px, -2px); filter: hue-rotate(-90deg); } 60% { transform: translate(-2px, 2px); } 80% { transform: translate(2px, -2px); } 100% { transform: translate(0); filter: hue-rotate(0deg); } }
@@ -726,15 +930,47 @@ body::before {
 .m-vp-title { font-family: 'Rajdhani'; color: #fff; font-size: 0.95rem; margin-bottom: 4px; line-height: 1.2; word-wrap: break-word; font-weight: 800; }
 .m-vp-sub { font-family: 'Outfit'; color: #888; font-size: 0.7rem; line-height: 1.4; white-space: pre-wrap; overflow: visible; display: block; }
 
-.m-cortex-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 20px; padding: 0 2px; }
-.m-cortex-chip { background: rgba(20, 25, 35, 0.85); border: 1px solid rgba(0, 242, 255, 0.25); border-radius: 8px; padding: 10px 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; cursor: pointer; position: relative; overflow: hidden; transition: all 0.2s; clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%); box-shadow: 0 0 8px rgba(0, 242, 255, 0.1); min-height: 86px; }
-.m-cortex-chip:active { transform: scale(0.95); }
-.m-cortex-chip.active { background: rgba(0, 242, 255, 0.15); border-color: var(--m-primary); box-shadow: 0 0 15px rgba(0, 242, 255, 0.3), inset 0 0 10px rgba(0, 242, 255, 0.1); }
-.m-cortex-chip.active::after { content: ''; position: absolute; bottom: 0; right: 0; width: 8px; height: 8px; background: var(--m-primary); box-shadow: 0 0 8px var(--m-primary); }
-.m-chip-icon { font-size: 1.3rem; filter: none; opacity: 1; transition: 0.3s; text-shadow: 0 0 5px rgba(255,255,255,0.3); }
-.m-cortex-chip.active .m-chip-icon { transform: scale(1.1); text-shadow: 0 0 10px var(--m-primary); }
-.m-chip-label { font-family: 'Rajdhani', monospace; font-size: 0.65rem; font-weight: 700; color: #fff; text-transform: uppercase; letter-spacing: 1px; text-shadow: 0 0 2px var(--m-primary); text-align: center; }
-.m-chip-sub { font-family: 'Outfit', sans-serif; font-size: 0.5rem; color: var(--m-dim); letter-spacing: 0.8px; text-transform: uppercase; text-align: center; line-height: 1.2; }
+.m-cortex-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-bottom: 20px; padding: 0 2px; }
+.m-cortex-chip {
+    background: linear-gradient(180deg, rgba(15, 22, 32, 0.92), rgba(2, 6, 12, 0.96));
+    border: 1px solid rgba(0, 242, 255, 0.18);
+    border-radius: 10px;
+    padding: 10px 4px 8px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    cursor: pointer; position: relative; overflow: hidden;
+    transition: all 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.03);
+    min-height: 88px;
+}
+.m-cortex-chip:active { transform: scale(0.94); }
+.m-cortex-chip.active {
+    background: linear-gradient(180deg, rgba(0, 242, 255, 0.16), rgba(0, 60, 90, 0.18));
+    border-color: var(--m-primary);
+    box-shadow: 0 0 22px rgba(0, 242, 255, 0.35), inset 0 0 14px rgba(0, 242, 255, 0.08);
+}
+.m-cortex-chip.active::after {
+    content: ''; position: absolute; bottom: 0; right: 0;
+    width: 9px; height: 9px;
+    background: var(--m-primary);
+    box-shadow: 0 0 10px var(--m-primary), 0 0 18px var(--m-primary);
+}
+.m-chip-icon {
+    font-size: 1.4rem; filter: none; opacity: 1;
+    transition: 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    text-shadow: 0 0 6px rgba(255,255,255,0.3);
+}
+.m-cortex-chip.active .m-chip-icon { transform: scale(1.18); text-shadow: 0 0 14px var(--m-primary); }
+.m-chip-label {
+    font-family: 'Rajdhani', monospace; font-size: 0.66rem; font-weight: 800;
+    color: #fff; text-transform: uppercase; letter-spacing: 1px;
+    text-shadow: 0 0 4px rgba(0, 242, 255, 0.4); text-align: center;
+}
+.m-chip-sub {
+    font-family: 'Outfit', sans-serif; font-size: 0.5rem;
+    color: var(--m-dim); letter-spacing: 1px; text-transform: uppercase;
+    text-align: center; line-height: 1.2;
+}
 .m-vp-mode { font-family: 'Rajdhani', sans-serif; font-size: 0.58rem; letter-spacing: 1.4px; color: var(--m-primary); margin-bottom: 4px; text-transform: uppercase; font-weight: 800; }
 
 .m-field-group { margin-bottom: 18px; }
@@ -808,16 +1044,66 @@ input:checked + .m-slider-green:before { background-color: #00e676; box-shadow: 
 .m-label { flex: 1; padding-right: 15px; }
 .m-label h4 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: #fff; font-family: 'Rajdhani'; font-weight: 700; }
 
-.m-action-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 5, 10, 0.95); z-index: 200; display: none; flex-direction: column; justify-content: center; align-items: center; backdrop-filter: blur(10px); padding: 20px; animation: fadeInModal 0.2s ease-out; }
+.m-action-modal {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: radial-gradient(circle at 50% 30%, rgba(0, 12, 22, 0.95), rgba(0, 2, 5, 0.98));
+    z-index: 200; display: none; flex-direction: column; justify-content: center; align-items: center;
+    backdrop-filter: blur(14px); padding: 20px;
+    animation: fadeInModal 0.25s ease-out;
+}
+@keyframes fadeInModal { from { opacity: 0; } to { opacity: 1; } }
 .m-action-modal.show { display: flex; }
-.m-am-card { width: 100%; max-width: 400px; background: linear-gradient(145deg, #0a0f18, #000); border: 1px solid var(--m-primary); border-radius: 20px; padding: 25px; box-shadow: 0 0 30px rgba(0, 242, 255, 0.15); display: flex; flex-direction: column; gap: 20px; }
-.m-am-title { text-align: center; font-family: 'Rajdhani', sans-serif; font-weight: 800; color: #fff; font-size: 1.2rem; letter-spacing: 2px; margin-bottom: 5px; }
-.m-am-subtitle { text-align: center; color: var(--m-dim); font-size: 0.8rem; margin-top: -15px; margin-bottom: 5px; }
+.m-am-card {
+    width: 100%; max-width: 400px;
+    background: linear-gradient(160deg, rgba(8, 14, 22, 0.96), rgba(0, 0, 0, 0.98));
+    border: 1px solid var(--m-primary); border-radius: var(--m-radius-lg);
+    padding: 24px 22px;
+    box-shadow:
+        0 0 40px rgba(0, 242, 255, 0.22),
+        inset 0 0 24px rgba(0, 242, 255, 0.05),
+        inset 0 1px 0 rgba(255,255,255,0.05);
+    display: flex; flex-direction: column; gap: 18px;
+    animation: cardEnter 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    position: relative; overflow: hidden;
+}
+.m-am-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--m-primary), var(--m-secondary), var(--m-primary), transparent);
+    background-size: 200% 100%;
+    animation: borderFlow 4s linear infinite;
+}
+@keyframes cardEnter { from { opacity: 0; transform: translateY(20px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.m-am-title {
+    text-align: center; font-family: 'Rajdhani', sans-serif; font-weight: 900;
+    color: #fff; font-size: 1.25rem; letter-spacing: 4px;
+    margin: 0;
+    text-shadow: 0 0 14px rgba(0, 242, 255, 0.4);
+}
+.m-am-subtitle {
+    text-align: center; color: var(--m-dim); font-size: 0.72rem;
+    margin-top: -12px; letter-spacing: 2px; text-transform: uppercase;
+}
 
-.m-act-btn { padding: 15px; border-radius: 12px; font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 1rem; cursor: pointer; text-align: center; transition: 0.2s; border: 1px solid transparent; display: flex; align-items: center; justify-content: center; gap: 10px; }
-.m-act-copy { background: var(--m-primary); color: #000; box-shadow: 0 0 15px rgba(0, 242, 255, 0.3); }
-.m-act-copy:active { transform: scale(0.98); }
-.m-act-close { background: rgba(255,255,255,0.1); color: #aaa; margin-top: 5px; border: 1px solid rgba(255,255,255,0.1); }
+.m-act-btn {
+    padding: 14px; border-radius: var(--m-radius-sm);
+    font-family: 'Rajdhani', sans-serif; font-weight: 800; font-size: 0.95rem;
+    letter-spacing: 1.5px; text-transform: uppercase;
+    cursor: pointer; text-align: center; transition: all 0.2s;
+    border: 1px solid transparent; display: flex; align-items: center; justify-content: center; gap: 10px;
+}
+.m-act-copy {
+    background: linear-gradient(90deg, #00f2ff, #00b4ff);
+    color: #001018;
+    box-shadow: 0 0 22px rgba(0, 242, 255, 0.4), inset 0 1px 0 rgba(255,255,255,0.4);
+    text-shadow: 0 1px 0 rgba(255,255,255,0.3);
+}
+.m-act-copy:active { transform: scale(0.97); box-shadow: 0 0 30px rgba(0, 242, 255, 0.6); }
+.m-act-close {
+    background: rgba(255,255,255,0.05);
+    color: var(--m-dim); margin-top: 0;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+.m-act-close:active { background: rgba(255,255,255,0.1); }
 
 .m-flux-terminal { background: #000; border: 1px solid rgba(0, 242, 255, 0.2); border-left: 3px solid var(--m-primary); border-radius: 12px; overflow: hidden; font-family: 'Consolas', monospace; box-shadow: inset 0 0 20px rgba(0,0,0,0.8); width: 100%; }
 .m-flux-header { background: rgba(0, 242, 255, 0.05); padding: 8px 15px; font-size: 0.7rem; color: var(--m-primary); letter-spacing: 1px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0, 242, 255, 0.1); }
@@ -931,72 +1217,100 @@ input:checked + .m-slider-green:before { background-color: #00e676; box-shadow: 
 .m-neural-footer { margin-top: 10px; text-align: center; font-size: 0.6rem; color: rgba(255,255,255,0.2); font-family: monospace; letter-spacing: 2px; }
 
 /* --- COMMAND DOCK --- */
-.m-dock-container { 
-    position: fixed; 
-    bottom: 0; 
-    left: 0; 
-    width: 100%; 
-    background: rgba(3, 5, 8, 0.98); 
-    border-top: 1px solid rgba(0, 242, 255, 0.2); 
-    box-shadow: 0 -10px 40px rgba(0,0,0,0.9);
-    z-index: 9999; 
-    display: flex; flex-direction: column; 
+.m-dock-container {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background:
+        linear-gradient(180deg, rgba(3, 6, 10, 0.85) 0%, rgba(0, 2, 5, 0.98) 50%, rgba(0, 0, 2, 1) 100%);
+    border-top: 1px solid rgba(0, 242, 255, 0.25);
+    box-shadow: 0 -14px 50px rgba(0,0,0,0.95);
+    z-index: 9999;
+    display: flex; flex-direction: column;
     padding-bottom: calc(10px + env(safe-area-inset-bottom));
-    backdrop-filter: blur(20px); 
-    touch-action: none; 
+    backdrop-filter: blur(24px) saturate(130%);
+    touch-action: none;
 }
 
 .m-dock-container::before {
-    content: ''; position: absolute; top: 0; left: 50%; transform: translateX(-50%);
-    width: 40%; height: 1px; background: linear-gradient(90deg, transparent, var(--m-primary), transparent);
-    box-shadow: 0 0 10px var(--m-primary);
+    content: ''; position: absolute; top: -1px; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent 5%, rgba(0, 242, 255, 0.5) 30%, var(--m-secondary) 50%, rgba(0, 242, 255, 0.5) 70%, transparent 95%);
+    box-shadow: 0 0 14px var(--m-primary);
 }
 
-.m-dock-actions { 
-    display: flex; gap: 8px; padding: 10px 15px 5px 15px; 
-    border-bottom: 1px solid rgba(255,255,255,0.05); 
+.m-dock-actions {
+    display: flex; gap: 9px; padding: 11px 14px 6px 14px;
+    border-bottom: 1px solid rgba(0, 242, 255, 0.08);
 }
 
-.m-btn-install { 
-    flex: 2.5; 
-    background: linear-gradient(90deg, var(--m-primary), #00a8ff); 
-    color: #000; border: none; border-radius: 8px; height: 38px;
-    font-family: 'Rajdhani', sans-serif; font-size: 0.9rem; font-weight: 800; 
-    text-transform: uppercase; letter-spacing: 1px; 
-    display: flex; align-items: center; justify-content: center; gap: 8px; 
-    box-shadow: 0 0 15px rgba(0, 242, 255, 0.15); 
-    transition: all 0.2s; position: relative; overflow: hidden; 
+.m-btn-install {
+    flex: 2.5;
+    background:
+        linear-gradient(90deg, #00f2ff 0%, #00b4ff 50%, #7000ff 110%);
+    color: #001018; border: none; border-radius: var(--m-radius-sm); height: 42px;
+    font-family: 'Rajdhani', sans-serif; font-size: 0.92rem; font-weight: 900;
+    text-transform: uppercase; letter-spacing: 2px;
+    display: flex; align-items: center; justify-content: center; gap: 9px;
+    box-shadow:
+        0 0 22px rgba(0, 242, 255, 0.4),
+        0 4px 14px rgba(0, 242, 255, 0.25),
+        inset 0 1px 0 rgba(255,255,255,0.35),
+        inset 0 -2px 0 rgba(0, 0, 0, 0.2);
+    transition: all 0.2s; position: relative; overflow: hidden;
+    cursor: pointer;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+}
+.m-btn-install::before {
+    content: ''; position: absolute; top: 0; left: -100%; width: 50%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+    transform: skewX(-25deg); animation: shimmer 3.5s linear infinite;
+}
+.m-btn-install:active { transform: scale(0.97); box-shadow: 0 0 30px rgba(0, 242, 255, 0.55); }
+.m-btn-install i { font-size: 1rem; }
+
+.m-btn-copy {
+    flex: 1;
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(0,0,0,0.4));
+    border: 1px solid rgba(0, 242, 255, 0.18);
+    color: var(--m-text); border-radius: var(--m-radius-sm); height: 42px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-family: 'Rajdhani', sans-serif; font-size: 0.6rem; font-weight: 800;
+    letter-spacing: 1.5px; cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+}
+.m-btn-copy:active {
+    background: rgba(0, 242, 255, 0.12);
+    border-color: var(--m-primary);
+    transform: scale(0.97);
+}
+.m-btn-copy i { font-size: 0.95rem; margin-bottom: 2px; color: var(--m-primary); filter: drop-shadow(0 0 4px var(--m-primary)); }
+
+.m-dock-nav {
+    display: flex; justify-content: space-around; align-items: center;
+    padding: 8px 0 2px 0;
 }
 
-.m-btn-copy { 
-    flex: 1; 
-    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); 
-    color: var(--m-dim); border-radius: 8px; height: 38px; 
-    display: flex; flex-direction: column; align-items: center; justify-content: center; 
-    font-family: 'Rajdhani', sans-serif; font-size: 0.6rem; font-weight: 700; 
-    transition: all 0.2s; 
-}
-.m-btn-copy i { font-size: 0.9rem; margin-bottom: 1px; color: #fff; }
-
-.m-dock-nav { 
-    display: flex; justify-content: space-around; align-items: center; 
-    padding: 6px 0 2px 0; 
-}
-
-.m-nav-item { 
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; 
-    color: #555; width: 60px; transition: all 0.25s cubic-bezier(0.25, 1.5, 0.5, 1); 
+.m-nav-item {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    color: #4a5666; width: 64px; transition: all 0.25s cubic-bezier(0.25, 1.5, 0.5, 1);
     position: relative;
     padding: 4px 0;
+    cursor: pointer;
 }
-.m-nav-item i { font-size: 1rem; transition: color 0.2s; }
-.m-nav-item span { font-size: 0.55rem; font-weight: 700; font-family: 'Rajdhani', sans-serif; letter-spacing: 1px; }
+.m-nav-item i { font-size: 1.05rem; transition: color 0.2s, filter 0.2s; }
+.m-nav-item span { font-size: 0.55rem; font-weight: 800; font-family: 'Rajdhani', sans-serif; letter-spacing: 1.6px; text-transform: uppercase; }
 
-.m-nav-item.active { color: #fff; transform: translateY(-2px); }
-.m-nav-item.active i { color: var(--m-primary); filter: drop-shadow(0 0 8px var(--m-primary)); }
+.m-nav-item.active { color: #fff; transform: translateY(-3px); }
+.m-nav-item.active i { color: var(--m-primary); filter: drop-shadow(0 0 10px var(--m-primary)); }
 .m-nav-item.active::after {
-    content: ''; position: absolute; bottom: -2px; width: 4px; height: 4px; 
-    background: var(--m-primary); border-radius: 50%; box-shadow: 0 0 6px var(--m-primary);
+    content: ''; position: absolute; bottom: -4px;
+    width: 22px; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--m-primary), transparent);
+    border-radius: 2px;
+    box-shadow: 0 0 8px var(--m-primary);
 }
 
 .m-custom-dash { margin-top: 15px; background: rgba(0, 0, 0, 0.4); border: 1px dashed rgba(0, 242, 255, 0.3); border-radius: 12px; padding: 15px; animation: slideDown 0.3s ease; display: none; }
@@ -1111,6 +1425,7 @@ body.m-lowfx .logo-image {
 `;
 
 const mobileHTML = `
+<div class="m-ocean-particles" id="m-ocean-particles" aria-hidden="true"></div>
 <div id="app-container">
     <div class="m-content-wrapper">
         <div class="m-ptr" id="m-ptr-indicator"><i class="fas fa-arrow-down m-ptr-icon"></i></div>
@@ -1121,7 +1436,7 @@ const mobileHTML = `
                     <img src="${MOBILE_LOGO_URL}" alt="Leviathan Logo" class="logo-image" fetchpriority="high" decoding="sync" loading="eager" width="154" height="154">
                     <div class="logo-particles" id="logoParticles"></div>
                 </div>
-                
+
                 <h1 class="m-brand-title">LEVIATHAN</h1>
                 <div class="m-brand-sub">SOVRANO DEGLI ABISSI</div>
                 <div class="m-brand-desc">Il protocollo profondo che domina i flussi digitali</div>
@@ -1129,7 +1444,15 @@ const mobileHTML = `
             </div>
 
             <div id="page-setup" class="m-page active">
-                
+
+                <div class="m-section-head">
+                    <div class="sh-titles">
+                        <span class="sh-title">Identity Core</span>
+                        <span class="sh-sub">Servizi &amp; chiavi di accesso</span>
+                    </div>
+                    <span class="sh-tag">01 / 03</span>
+                </div>
+
                 <div class="m-hypervisor">
                     <div class="m-hyp-header">
                         <span>ACCESS CREDENTIALS</span>
@@ -1171,6 +1494,14 @@ const mobileHTML = `
                         </div>
                     </div>
 
+                </div>
+
+                <div class="m-section-head">
+                    <div class="sh-titles">
+                        <span class="sh-title">Reactor Modules</span>
+                        <span class="sh-sub">Sorgenti web italiane</span>
+                    </div>
+                    <span class="sh-tag violet">02 / 03</span>
                 </div>
 
                 <div class="m-hypervisor">
@@ -1291,7 +1622,7 @@ const mobileHTML = `
                     <div style="margin-top:5px; padding:15px; border-radius:16px; background:linear-gradient(90deg, rgba(112,0,255,0.1), transparent); border-left:4px solid var(--m-secondary);">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <div>
-                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">PRIORITÃƒâ‚¬ WEB</h5>
+                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">PRIORITÃ€ WEB</h5>
                                 <p id="priority-desc" style="margin:5px 0 0; font-size:0.8rem; color:var(--m-dim);">Mostra Web in cima</p>
                             </div>
                             <label class="m-switch">
@@ -1337,7 +1668,15 @@ const mobileHTML = `
             </div>
 
             <div id="page-filters" class="m-page">
-                
+
+                <div class="m-section-head">
+                    <div class="sh-titles">
+                        <span class="sh-title">Visual Forge</span>
+                        <span class="sh-sub">Skin del formattatore Leviathan</span>
+                    </div>
+                    <span class="sh-tag">SKIN</span>
+                </div>
+
                 <div class="m-visual-core-v2" id="m-visual-core-v2">
                 
                      <div class="m-hyp-header" style="margin-bottom:15px; border:none; padding-bottom:0;">
@@ -1348,7 +1687,7 @@ const mobileHTML = `
                      <div class="m-aio-lock" id="m-aio-lock-overlay">
                         <i class="fas fa-lock m-lock-icon"></i>
                         <div class="m-lock-text">OVERRIDDEN BY AIO CORE</div>
-                        <div class="m-lock-sub">Disabilita "CompatibilitÃƒÂ  AIO" per sbloccare le skin.</div>
+                        <div class="m-lock-sub">Disabilita "CompatibilitÃ  AIO" per sbloccare le skin.</div>
                     </div>
 
                     <div class="m-visual-preview" id="m-preview-box">
@@ -1366,97 +1705,97 @@ const mobileHTML = `
 
                     <div class="m-cortex-grid">
                         <div class="m-cortex-chip active" id="msk_leviathan" onclick="selectMobileSkin('leviathan')">
-                            <div class="m-chip-icon">Ã°Å¸Â¦â€˜</div>
+                            <div class="m-chip-icon">ðŸ¦‘</div>
                             <div class="m-chip-label">Leviathan Core</div>
                             <div class="m-chip-sub">Signature</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_premium" onclick="selectMobileSkin('premium')">
-                            <div class="m-chip-icon">Ã°Å¸Ââ€ </div>
+                            <div class="m-chip-icon">ðŸ†</div>
                             <div class="m-chip-label">Apex Prime</div>
                             <div class="m-chip-sub">Flagship</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_cinema" onclick="selectMobileSkin('cinema')">
-                            <div class="m-chip-icon">Ã°Å¸Å½Å¾Ã¯Â¸Â</div>
+                            <div class="m-chip-icon">ðŸŽžï¸</div>
                             <div class="m-chip-label">Velvet Cinema</div>
                             <div class="m-chip-sub">Reference</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_ultra_compact" onclick="selectMobileSkin('ultra_compact')">
-                            <div class="m-chip-icon">Ã¢Å¡Â¡</div>
+                            <div class="m-chip-icon">âš¡</div>
                             <div class="m-chip-label">Pulse Compact</div>
                             <div class="m-chip-sub">Dense</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_tv_compact" onclick="selectMobileSkin('tv_compact')">
-                            <div class="m-chip-icon">Ã°Å¸â€œÂº</div>
+                            <div class="m-chip-icon">ðŸ“º</div>
                             <div class="m-chip-label">Neon TV</div>
                             <div class="m-chip-sub">Big Screen</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_lev2" onclick="selectMobileSkin('lev2')">
-                            <div class="m-chip-icon">Ã°Å¸Â§Â¬</div>
+                            <div class="m-chip-icon">ðŸ§¬</div>
                             <div class="m-chip-label">Architect</div>
                             <div class="m-chip-sub">Structured</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_fra" onclick="selectMobileSkin('fra')">
-                            <div class="m-chip-icon">Ã¢Å¡Â¡Ã¯Â¸Â</div>
+                            <div class="m-chip-icon">âš¡ï¸</div>
                             <div class="m-chip-label">Horizon</div>
                             <div class="m-chip-sub">Classic</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_comet" onclick="selectMobileSkin('comet')">
-                            <div class="m-chip-icon">Ã¢Ëœâ€žÃ¯Â¸Â</div>
+                            <div class="m-chip-icon">â˜„ï¸</div>
                             <div class="m-chip-label">Comet</div>
                             <div class="m-chip-sub">Scan</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_stremio_ita" onclick="selectMobileSkin('stremio_ita')">
-                            <div class="m-chip-icon">Ã°Å¸â€¡Â®Ã°Å¸â€¡Â¹</div>
+                            <div class="m-chip-icon">ðŸ‡®ðŸ‡¹</div>
                             <div class="m-chip-label">ITA Mod</div>
                             <div class="m-chip-sub">Compat</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_dav" onclick="selectMobileSkin('dav')">
-                            <div class="m-chip-icon">Ã°Å¸â€œÂ¼</div>
+                            <div class="m-chip-icon">ðŸ“¼</div>
                             <div class="m-chip-label">Datastream</div>
                             <div class="m-chip-sub">Verbose</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_pri" onclick="selectMobileSkin('pri')">
-                            <div class="m-chip-icon">Ã°Å¸â€˜â€˜</div>
+                            <div class="m-chip-icon">ðŸ‘</div>
                             <div class="m-chip-label">Eclipse</div>
                             <div class="m-chip-sub">Hero</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_and" onclick="selectMobileSkin('and')">
-                            <div class="m-chip-icon">Ã°Å¸Å½Â¬</div>
+                            <div class="m-chip-icon">ðŸŽ¬</div>
                             <div class="m-chip-label">Matrix</div>
                             <div class="m-chip-sub">Minimal</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_lad" onclick="selectMobileSkin('lad')">
-                            <div class="m-chip-icon">Ã°Å¸Å½Å¸Ã¯Â¸Â</div>
+                            <div class="m-chip-icon">ðŸŽŸï¸</div>
                             <div class="m-chip-label">Compact</div>
                             <div class="m-chip-sub">Lean</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_torrentio" onclick="selectMobileSkin('torrentio')">
-                            <div class="m-chip-icon">Ã°Å¸â€œÅ“</div>
+                            <div class="m-chip-icon">ðŸ“œ</div>
                             <div class="m-chip-label">Torrentio</div>
                             <div class="m-chip-sub">Familiar</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_vertical" onclick="selectMobileSkin('vertical')">
-                            <div class="m-chip-icon">Ã°Å¸â€œâ€˜</div>
+                            <div class="m-chip-icon">ðŸ“‘</div>
                             <div class="m-chip-label">Vertical</div>
                             <div class="m-chip-sub">Poster</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_complex" onclick="selectMobileSkin('complex')">
-                            <div class="m-chip-icon">Ã°Å¸â€Â²</div>
+                            <div class="m-chip-icon">ðŸ”²</div>
                             <div class="m-chip-label">Template Matrix</div>
                             <div class="m-chip-sub">Analyst</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_android" onclick="selectMobileSkin('android')">
-                            <div class="m-chip-icon">Ã°Å¸â€¢Â¹Ã¯Â¸Â</div>
+                            <div class="m-chip-icon">ðŸ•¹ï¸</div>
                             <div class="m-chip-label">Console Grid</div>
                             <div class="m-chip-sub">Legacy TV</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_picture" onclick="selectMobileSkin('picture')">
-                            <div class="m-chip-icon">Ã°Å¸â€“Â¼Ã¯Â¸Â</div>
+                            <div class="m-chip-icon">ðŸ–¼ï¸</div>
                             <div class="m-chip-label">Jurassic Poster</div>
                             <div class="m-chip-sub">Artwork</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_custom" onclick="selectMobileSkin('custom')" style="grid-column: span 3; border-style: dashed; background: rgba(0,0,0,0.3);">
-                            <div class="m-chip-icon">Ã°Å¸â€ºÂ Ã¯Â¸Â</div>
+                            <div class="m-chip-icon">ðŸ› ï¸</div>
                             <div class="m-chip-label">Custom Builder</div>
                             <div class="m-chip-sub">Template override</div>
                         </div>
@@ -1478,6 +1817,14 @@ const mobileHTML = `
                         </div>
                         <input type="text" class="m-input" id="m-customTemplate" placeholder="Es: Apex {quality} {score_badge} ||| {title}{n}{summary}" style="padding:10px; font-size:0.9rem; border:1px solid rgba(255,255,255,0.3);" oninput="updateMobilePreview(); updateLinkModalContent()">
                     </div>
+                </div>
+
+                <div class="m-section-head">
+                    <div class="sh-titles">
+                        <span class="sh-title">Hypervisor</span>
+                        <span class="sh-sub">Sort &middot; Lingua &middot; Filtri</span>
+                    </div>
+                    <span class="sh-tag warn">RULES</span>
                 </div>
 
                 <div class="m-hypervisor">
@@ -1510,7 +1857,7 @@ const mobileHTML = `
                             <i class="fas fa-info-circle m-fr-icon" id="flux-icon-display"></i>
                             <div class="m-fr-text">
                                 <span class="m-fr-title" id="flux-title-display">STANDARD MODE</span>
-                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan. Bilancia perfettamente qualitÃƒÂ  e velocitÃƒÂ .</span>
+                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan. Bilancia perfettamente qualitÃ  e velocitÃ .</span>
                             </div>
                         </div>
                     </div>
@@ -1575,7 +1922,7 @@ const mobileHTML = `
                             <input type="range" min="1" max="20" value="3" class="m-range" id="m-gateVal" oninput="updateGateDisplay(this.value)">
                             <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.2rem; color:var(--m-primary); width:30px; text-align:center;" id="m-gate-display">3</span>
                         </div>
-                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualitÃƒÂ . Utile per dispositivi lenti.</p>
+                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualitÃ . Utile per dispositivi lenti.</p>
                     </div>
 
                     <div class="m-row" style="border:none; padding: 5px 0;">
@@ -1598,15 +1945,24 @@ const mobileHTML = `
             </div>
 
             <div id="page-network" class="m-page">
+
+                <div class="m-section-head">
+                    <div class="sh-titles">
+                        <span class="sh-title">Deep Bridge</span>
+                        <span class="sh-sub">MediaFlow proxy &amp; ghost</span>
+                    </div>
+                    <span class="sh-tag violet">NET</span>
+                </div>
+
                 <div class="m-hypervisor">
                     <div class="m-hyp-header">
                         <span>NETWORK BRIDGE</span>
-                        <i class="fas fa-network-wired m-hyp-icon" style="color:var(--m-secondary)"></i>
+                        <i class="fas fa-network-wired m-hyp-icon" style="color:var(--m-secondary); border-color:rgba(112,0,255,0.35); background:rgba(112,0,255,0.08);"></i>
                     </div>
                     
                     <div style="padding:0 5px;">
                         <p style="font-size:0.8rem; color:var(--m-dim); margin-bottom:20px; line-height:1.4;">
-                            Proxy Server necessario per i moduli Italiani. Se attivo, il <b>Debrid Ghost</b> userÃƒÂ  questo server per nascondere il tuo IP reale.
+                            Proxy Server necessario per i moduli Italiani. Se attivo, il <b>Debrid Ghost</b> userÃ  questo server per nascondere il tuo IP reale.
                         </p>
 
                         <div class="m-field-group">
@@ -1708,7 +2064,7 @@ let mLangMode = 'ita';
 const fluxData = {
     'balanced': {
         title: "STANDARD MODE",
-        desc: "L'algoritmo standard di Leviathan. Bilancia perfettamente qualitÃƒÂ , popolaritÃƒÂ  del file e velocitÃƒÂ .",
+        desc: "L'algoritmo standard di Leviathan. Bilancia perfettamente qualitÃ , popolaritÃ  del file e velocitÃ .",
         icon: "fa-dragon"
     },
     'resolution': {
@@ -1731,15 +2087,15 @@ const langDescriptions = {
 
 const skinMaps = {
     'bold': {
-        nums: {'0':'Ã°ÂÅ¸Â¬','1':'Ã°ÂÅ¸Â­','2':'Ã°ÂÅ¸Â®','3':'Ã°ÂÅ¸Â¯','4':'Ã°ÂÅ¸Â°','5':'Ã°ÂÅ¸Â±','6':'Ã°ÂÅ¸Â²','7':'Ã°ÂÅ¸Â³','8':'Ã°ÂÅ¸Â´','9':'Ã°ÂÅ¸Âµ'},
+        nums: {'0':'ðŸ¬','1':'ðŸ­','2':'ðŸ®','3':'ðŸ¯','4':'ðŸ°','5':'ðŸ±','6':'ðŸ²','7':'ðŸ³','8':'ðŸ´','9':'ðŸµ'},
         chars: {
-            'A':'Ã°Ââ€”â€','B':'Ã°Ââ€”â€¢','C':'Ã°Ââ€”â€“','D':'Ã°Ââ€”â€”','E':'Ã°Ââ€”Ëœ','F':'Ã°Ââ€”â„¢','G':'Ã°Ââ€”Å¡','H':'Ã°Ââ€”â€º','I':'Ã°Ââ€”Å“','J':'Ã°Ââ€”Â','K':'Ã°Ââ€”Å¾','L':'Ã°Ââ€”Å¸','M':'Ã°Ââ€”Â ','N':'Ã°Ââ€”Â¡','O':'Ã°Ââ€”Â¢','P':'Ã°Ââ€”Â£','Q':'Ã°Ââ€”Â¤','R':'Ã°Ââ€”Â¥','S':'Ã°Ââ€”Â¦','T':'Ã°Ââ€”Â§','U':'Ã°Ââ€”Â¨','V':'Ã°Ââ€”Â©','W':'Ã°Ââ€”Âª','X':'Ã°Ââ€”Â«','Y':'Ã°Ââ€”Â¬','Z':'Ã°Ââ€”Â­',
-            'a':'Ã°Ââ€”Â®','b':'Ã°Ââ€”Â¯','c':'Ã°Ââ€”Â°','d':'Ã°Ââ€”Â±','e':'Ã°Ââ€”Â²','f':'Ã°Ââ€”Â³','g':'Ã°Ââ€”Â´','h':'Ã°Ââ€”Âµ','i':'Ã°Ââ€”Â¶','j':'Ã°Ââ€”Â·','k':'Ã°Ââ€”Â¸','l':'Ã°Ââ€”Â¹','m':'Ã°Ââ€”Âº','n':'Ã°Ââ€”Â»','o':'Ã°Ââ€”Â¼','p':'Ã°Ââ€”Â½','q':'Ã°Ââ€”Â¾','r':'Ã°Ââ€”Â¿','s':'Ã°ÂËœâ‚¬','t':'Ã°ÂËœÂ','u':'Ã°ÂËœâ€š','v':'Ã°ÂËœÆ’','w':'Ã¡Â´Â¡','x':'Ã°ÂËœâ€¦','y':'Ã°ÂËœâ€ ','z':'Ã°ÂËœâ€¡'
+            'A':'ð—”','B':'ð—•','C':'ð—–','D':'ð——','E':'ð—˜','F':'ð—™','G':'ð—š','H':'ð—›','I':'ð—œ','J':'ð—','K':'ð—ž','L':'ð—Ÿ','M':'ð— ','N':'ð—¡','O':'ð—¢','P':'ð—£','Q':'ð—¤','R':'ð—¥','S':'ð—¦','T':'ð—§','U':'ð—¨','V':'ð—©','W':'ð—ª','X':'ð—«','Y':'ð—¬','Z':'ð—­',
+            'a':'ð—®','b':'ð—¯','c':'ð—°','d':'ð—±','e':'ð—²','f':'ð—³','g':'ð—´','h':'ð—µ','i':'ð—¶','j':'ð—·','k':'ð—¸','l':'ð—¹','m':'ð—º','n':'ð—»','o':'ð—¼','p':'ð—½','q':'ð—¾','r':'ð—¿','s':'ð˜€','t':'ð˜','u':'ð˜‚','v':'ð˜ƒ','w':'á´¡','x':'ð˜…','y':'ð˜†','z':'ð˜‡'
         }
     },
     'small': {
         nums: {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9'},
-        chars: {'A':'Ã¡Â´â‚¬','B':'ÃŠâ„¢','C':'Ã¡Â´â€ž','D':'Ã¡Â´â€¦','E':'Ã¡Â´â€¡','F':'ÃªÅ“Â°','G':'Ã‰Â¢','H':'ÃŠÅ“','I':'Ã‰Âª','J':'Ã¡Â´Å ','K':'Ã¡Â´â€¹','L':'ÃŠÅ¸','M':'Ã¡Â´Â','N':'Ã‰Â´','O':'Ã¡Â´Â','P':'Ã¡Â´Ëœ','Q':'Ã‡Â«','R':'ÃŠâ‚¬','S':'ÃªÅ“Â±','T':'Ã¡Â´â€º','U':'Ã¡Â´Å“','V':'Ã¡Â´Â ','W':'Ã¡Â´Â¡','X':'x','Y':'ÃŠÂ','Z':'Ã¡Â´Â¢','a':'Ã¡Â´â‚¬','b':'ÃŠâ„¢','c':'Ã¡Â´â€ž','d':'Ã¡Â´â€¦','e':'Ã¡Â´â€¡','f':'ÃªÅ“Â°','g':'Ã‰Â¢','h':'ÃŠÅ“','i':'Ã‰Âª','j':'Ã¡Â´Å ','k':'Ã¡Â´â€¹','l':'ÃŠÅ¸','m':'Ã¡Â´Â','n':'Ã‰Â´','o':'Ã¡Â´Â','p':'Ã¡Â´Ëœ','q':'Ã‡Â«','r':'ÃŠâ‚¬','s':'ÃªÅ“Â±','t':'Ã¡Â´â€º','u':'Ã¡Â´Å“','v':'Ã¡Â´Â ','w':'Ã¡Â´Â¡','x':'x','y':'ÃŠÂ','z':'Ã¡Â´Â¢'}
+        chars: {'A':'á´€','B':'Ê™','C':'á´„','D':'á´…','E':'á´‡','F':'êœ°','G':'É¢','H':'Êœ','I':'Éª','J':'á´Š','K':'á´‹','L':'ÊŸ','M':'á´','N':'É´','O':'á´','P':'á´˜','Q':'Ç«','R':'Ê€','S':'êœ±','T':'á´›','U':'á´œ','V':'á´ ','W':'á´¡','X':'x','Y':'Ê','Z':'á´¢','a':'á´€','b':'Ê™','c':'á´„','d':'á´…','e':'á´‡','f':'êœ°','g':'É¢','h':'Êœ','i':'Éª','j':'á´Š','k':'á´‹','l':'ÊŸ','m':'á´','n':'É´','o':'á´','p':'á´˜','q':'Ç«','r':'Ê€','s':'êœ±','t':'á´›','u':'á´œ','v':'á´ ','w':'á´¡','x':'x','y':'Ê','z':'á´¢'}
     },
 };
 
@@ -1882,9 +2238,9 @@ function selectMobileSkin(skinId) {
 
 function updateMobilePreview() {
     const skin = resolveMobileFormatterSkin(mSkin);
-    let langStr = "Ã°Å¸â€¡Â®Ã°Å¸â€¡Â¹ ITA";
-    if (mLangMode === 'all') langStr = "Ã°Å¸â€¡Â®Ã°Å¸â€¡Â¹ ITA â€¢ Ã°Å¸â€¡Â¬Ã°Å¸â€¡Â§ ENG";
-    if (mLangMode === 'eng') langStr = "Ã°Å¸â€¡Â¬Ã°Å¸â€¡Â§ ENG";
+    let langStr = "ðŸ‡®ðŸ‡¹ ITA";
+    if (mLangMode === 'all') langStr = "ðŸ‡®ðŸ‡¹ ITA â€¢ ðŸ‡¬ðŸ‡§ ENG";
+    if (mLangMode === 'eng') langStr = "ðŸ‡¬ðŸ‡§ ENG";
 
     let serviceTag = "RD";
     if (mCurrentService === 'tb') serviceTag = 'TB';
@@ -1892,7 +2248,7 @@ function updateMobilePreview() {
 
     let serviceIconTitle = 'ðŸ¦ˆ';
     if (serviceTag === 'RD') serviceIconTitle = 'ðŸ¬';
-    else if (serviceTag === 'TB') serviceIconTitle = 'âš“';
+    else if (serviceTag === 'TB') serviceIconTitle = 'Ã¢Å¡"';
 
     const p = {
         cleanName: 'Dune Parte Due',
@@ -1906,72 +2262,72 @@ function updateMobilePreview() {
         lang: langStr,
         audioTag: 'TrueHD Atmos',
         audioChannels: '7.1',
-        audioInfo: 'TrueHD Atmos Ã¢â€Æ’ 7.1',
+        audioInfo: 'TrueHD Atmos â”ƒ 7.1',
         codec: 'HEVC',
-        videoTags: ['Ã°Å¸â€™Å½ Ã°Ââ€”Â¥Ã°Ââ€”ËœÃ°Ââ€”Â Ã°Ââ€”Â¨Ã°Ââ€”Â«', 'Ã°Å¸â€˜ÂÃ¯Â¸Â Ã°Ââ€”â€”Ã°Ââ€”Â©+Ã°Ââ€”â€ºÃ°Ââ€”â€”Ã°Ââ€”Â¥', 'Ã¢Å¡â„¢Ã¯Â¸Â Ã°Ââ€”â€ºÃ°Ââ€”ËœÃ°Ââ€”Â©Ã°Ââ€”â€“'],
+        videoTags: ['ðŸ’Ž ð—¥ð—˜ð— ð—¨ð—«', 'ðŸ‘ï¸ ð——ð—©+ð—›ð——ð—¥', 'âš™ï¸ ð—›ð—˜ð—©ð—–'],
         cleanTags: ['Remux', 'DV+HDR', 'HEVC'],
         seeders: 152,
-        seedersStr: 'Ã°Å¸â€˜Â¥ 152',
+        seedersStr: 'ðŸ‘¥ 152',
         epTag: '',
         releaseGroup: 'Leviathan',
         sourceLine: `${serviceIconTitle} [${serviceTag}] ilCorSaRoNeRo`,
         providerLabel: 'Netflix',
         streamScore: 94,
         scoreTier: 'S+',
-        scoreBadge: 'Ã°Å¸Ââ€  S+ 94',
+        scoreBadge: 'ðŸ† S+ 94',
         visualMeter: 'Ã¢â€“Â°Ã¢â€“Â°Ã¢â€“Â°Ã¢â€“Â°Ã¢â€“Â°',
         featureSummary: '4K â€¢ DV+HDR â€¢ HEVC â€¢ Atmos'
     };
 
     const isDebrid = ['RD', 'TB'].includes(p.serviceTag);
-    const statusIcon = isDebrid ? 'Ã¢Å¡Â¡' : 'Ã¢ËœÂÃ¯Â¸Â';
+    const statusIcon = isDebrid ? 'âš¡' : 'â˜ï¸';
     const qIcon = isDebrid ? p.serviceIconTitle : 'ðŸ¦ˆ';
 
     const styleLeviathan = (p) => {
         const serviceIcon = p.serviceTag === 'RD' ? 'ðŸ¬' : p.serviceTag === 'TB' ? 'âš“' : 'ðŸ¦ˆ';
-        const stateIcon = isDebrid ? serviceIcon : 'Ã¢ÂÂ³';
+        const stateIcon = isDebrid ? serviceIcon : 'â³';
         const brandName = toStylized('LEVIATHAN', 'small');
         const serviceStyled = toStylized(p.serviceTag, 'bold');
         const techLine = [...new Set([p.quality, ...p.cleanTags].filter(Boolean))].map(t => toStylized(t, 'small')).join(' â€¢ ');
-        const name = `${stateIcon} ${serviceStyled} Ã°Å¸Â¦â€˜ ${brandName}`;
+        const name = `${stateIcon} ${serviceStyled} ðŸ¦‘ ${brandName}`;
         const lines = [
-            `Ã¢â€“Â¶Ã¯Â¸Â ${toStylized(p.cleanName, 'bold')} ${p.epTag}`.trim(),
-            techLine ? `Ã°Å¸â€Â± ${techLine}` : '',
-            `Ã°Å¸â€”Â£Ã¯Â¸Â ${p.lang}  |  Ã°Å¸Â«Â§ ${p.audioTag} ${p.audioChannels}`,
-            `Ã°Å¸Â§Â² ${p.sizeString}  |  ${p.seedersStr}`,
-            `${p.serviceIconTitle} ${p.displaySource} | Ã°Å¸ÂÂ·Ã¯Â¸Â ${toStylized(p.releaseGroup, 'small')}`
+            `â–¶ï¸ ${toStylized(p.cleanName, 'bold')} ${p.epTag}`.trim(),
+            techLine ? `ðŸ”± ${techLine}` : '',
+            `ðŸ—£ï¸ ${p.lang}  |  ðŸ«§ ${p.audioTag} ${p.audioChannels}`,
+            `ðŸ§² ${p.sizeString}  |  ${p.seedersStr}`,
+            `${p.serviceIconTitle} ${p.displaySource} | ðŸ·ï¸ ${toStylized(p.releaseGroup, 'small')}`
         ].filter(Boolean);
         return { name, title: lines.join('\n') };
     };
 
     const styleComplex = (p) => ({
-        name: `Ã°Å¸â€Â² 4K Ã¢â€â€š Ã¢â€ºÂ ${p.sizeString}`,
+        name: `ðŸ”² 4K â”‚ â› ${p.sizeString}`,
         title: [
-            `Ã¢ËœÂ° ${joinMobilePreviewParts([p.lang, p.audioTag, p.audioChannels], ' Ã‚Â· ')}`,
-            `Ã¢ËœÂ² ${joinMobilePreviewParts([p.quality, p.codec, p.cleanTags.join(' Ã‚Â· ')], ' Ã‚Â· ')}`,
-            `Ã¢ËœÂµ ${joinMobilePreviewParts(['Leviathan', p.releaseGroup, p.displaySource, `[${p.serviceTag}]`], ' Ã‚Â· ')}`,
-            `Ã¢ËœÂ¶ ${joinMobilePreviewParts([p.cleanName, p.epTag], ' Ã‚Â· ')}`
+            `â˜° ${joinMobilePreviewParts([p.lang, p.audioTag, p.audioChannels], ' Â· ')}`,
+            `â˜² ${joinMobilePreviewParts([p.quality, p.codec, p.cleanTags.join(' Â· ')], ' Â· ')}`,
+            `â˜µ ${joinMobilePreviewParts(['Leviathan', p.releaseGroup, p.displaySource, `[${p.serviceTag}]`], ' Â· ')}`,
+            `â˜¶ ${joinMobilePreviewParts([p.cleanName, p.epTag], ' Â· ')}`
         ].join('\n')
     });
 
     const styleAndroid = (p) => ({
         name: joinMobilePreviewParts([p.quality, 'DV+HDR', p.serviceTag], ' | '),
-        title: [`Ã°Å¸Å½Å¾Ã¯Â¸Â ${p.codec}`, `Ã°Å¸Å½Â§ ${p.audioTag} ${p.audioChannels}`, `Ã¢Å¡â„¢Ã¯Â¸Â ${p.displaySource}`, p.lang, p.fileTitle].join('\n')
+        title: [`ðŸŽžï¸ ${p.codec}`, `ðŸŽ§ ${p.audioTag} ${p.audioChannels}`, `âš™ï¸ ${p.displaySource}`, p.lang, p.fileTitle].join('\n')
     });
 
     const stylePicture = (p) => ({
-        name: `Ã¢Å“â€¦ UHD HDR ATMOS ${p.quality}`,
-        title: [`Ã°Å¸Å½Â¬ ${p.cleanName}`, `Ã¢Å“Â¨ ${p.quality} Ã°Å¸â€â€  DV | HDR`, `Ã°Å¸Å½Â§ ${p.audioTag} Ã°Å¸â€Å  ${p.audioChannels}`, 'Ã°Å¸â€™Â¿ Blu-ray Remux', `Ã°Å¸â€œÂ¦ ${p.sizeString}`, `Ã°Å¸ÂÂ·Ã¯Â¸Â Blu-ray Remux T1 (${p.releaseGroup})`, `Ã¢Å¡Â¡ Comet ${p.serviceTag}`].join('\n')
+        name: `âœ… UHD HDR ATMOS ${p.quality}`,
+        title: [`ðŸŽ¬ ${p.cleanName}`, `âœ¨ ${p.quality} ðŸ”† DV | HDR`, `ðŸŽ§ ${p.audioTag} ðŸ”Š ${p.audioChannels}`, 'ðŸ’¿ Blu-ray Remux', `ðŸ“¦ ${p.sizeString}`, `ðŸ·ï¸ Blu-ray Remux T1 (${p.releaseGroup})`, `âš¡ Comet ${p.serviceTag}`].join('\n')
     });
 
     const stylePremium = (p) => ({
         name: `${statusIcon} ${p.quality} ${p.scoreBadge}`,
         title: [
-            `Ã°Å¸Å½Â¬ ${toStylized(p.cleanName, 'bold')}`,
-            `Ã°Å¸Ââ€¦ ${p.scoreBadge}  ${p.visualMeter}`,
-            `Ã°Å¸Â§Âª ${[...new Set([p.quality, ...p.cleanTags, p.codec].filter(Boolean))].slice(0, 4).join(' â€¢ ')}`,
-            `Ã°Å¸â€Å  ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang])}`,
-            `Ã°Å¸â€œÂ¦ ${p.sizeString} â€¢ ${p.seedersStr}`,
+            `ðŸŽ¬ ${toStylized(p.cleanName, 'bold')}`,
+            `ðŸ… ${p.scoreBadge}  ${p.visualMeter}`,
+            `ðŸ§ª ${[...new Set([p.quality, ...p.cleanTags, p.codec].filter(Boolean))].slice(0, 4).join(' â€¢ ')}`,
+            `ðŸ”Š ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang])}`,
+            `ðŸ“¦ ${p.sizeString} â€¢ ${p.seedersStr}`,
             `${statusIcon} ${p.displaySource} â€¢ ${p.releaseGroup} â€¢ ${p.serviceTag}`
         ].join('\n')
     });
@@ -1979,12 +2335,12 @@ function updateMobilePreview() {
     const styleCinema = (p) => ({
         name: joinMobilePreviewParts([qIcon, p.quality, p.cleanTags.includes('Remux') ? 'Reference' : 'Cinema'], ' '),
         title: [
-            `Ã°Å¸Å½Å¾Ã¯Â¸Â ${p.cleanName}`,
-            `Ã°Å¸Å’Ë† ${joinMobilePreviewParts([p.cleanTags.join(' â€¢ '), p.codec])}`,
-            `Ã°Å¸Å½Â§ ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang])}`,
-            `Ã°Å¸â€œÅ  ${p.scoreBadge} â€¢ ${p.visualMeter}`,
-            `Ã°Å¸â€œÂ¦ ${p.sizeString} â€¢ ${p.seedersStr}`,
-            `Ã°Å¸ÂÂ·Ã¯Â¸Â ${joinMobilePreviewParts([p.displaySource, p.releaseGroup, p.providerLabel])}`
+            `ðŸŽžï¸ ${p.cleanName}`,
+            `ðŸŒˆ ${joinMobilePreviewParts([p.cleanTags.join(' â€¢ '), p.codec])}`,
+            `ðŸŽ§ ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang])}`,
+            `ðŸ“Š ${p.scoreBadge} â€¢ ${p.visualMeter}`,
+            `ðŸ“¦ ${p.sizeString} â€¢ ${p.seedersStr}`,
+            `ðŸ·ï¸ ${joinMobilePreviewParts([p.displaySource, p.releaseGroup, p.providerLabel])}`
         ].join('\n')
     });
 
@@ -1999,62 +2355,62 @@ function updateMobilePreview() {
 
     const styleTVCompact = (p) => ({
         name: joinMobilePreviewParts([p.quality, 'DV+HDR', p.serviceTag], ' | '),
-        title: [`Ã°Å¸Å½Å¾Ã¯Â¸Â ${p.codec}`, `Ã°Å¸Å½Â§ ${p.audioTag} ${p.audioChannels}`, `Ã°Å¸Å’Â ${removeMobilePreviewEmoji(p.lang) || p.lang}`, `Ã°Å¸Ââ€¦ ${p.scoreBadge}`, `Ã°Å¸â€œÂ¦ ${p.sizeString} â€¢ ${p.seedersStr}`, `Ã¢Å¡â„¢Ã¯Â¸Â ${p.displaySource}`, p.fileTitle].join('\n')
+        title: [`ðŸŽžï¸ ${p.codec}`, `ðŸŽ§ ${p.audioTag} ${p.audioChannels}`, `ðŸŒ ${removeMobilePreviewEmoji(p.lang) || p.lang}`, `ðŸ… ${p.scoreBadge}`, `ðŸ“¦ ${p.sizeString} â€¢ ${p.seedersStr}`, `âš™ï¸ ${p.displaySource}`, p.fileTitle].join('\n')
     });
 
     const styleLeviathanTwo = (p) => ({
-        name: `Ã°Å¸Â¦â€˜ ${toStylized('LEVIATHAN', 'small')} ${p.serviceIconTitle} Ã¢â€â€š ${p.quality}`,
-        title: [`Ã°Å¸Å½Â¬ ${toStylized(p.cleanName, 'bold')}`, `Ã°Å¸â€œÂ¦ ${p.sizeString} Ã¢â€â€š ${p.codec} ${p.cleanTags.filter(x => !String(x).includes(p.codec)).join(' ')}`, `Ã°Å¸â€Å  ${p.audioTag} ${p.audioChannels} â€¢ ${p.lang}`, `Ã°Å¸â€â€” ${p.sourceLine} ${p.seedersStr}`].join('\n')
+        name: `ðŸ¦‘ ${toStylized('LEVIATHAN', 'small')} ${p.serviceIconTitle} â”‚ ${p.quality}`,
+        title: [`ðŸŽ¬ ${toStylized(p.cleanName, 'bold')}`, `ðŸ“¦ ${p.sizeString} â”‚ ${p.codec} ${p.cleanTags.filter(x => !String(x).includes(p.codec)).join(' ')}`, `ðŸ”Š ${p.audioTag} ${p.audioChannels} â€¢ ${p.lang}`, `ðŸ”— ${p.sourceLine} ${p.seedersStr}`].join('\n')
     });
 
     const styleFra = (p) => ({
-        name: 'Ã¢Å¡Â¡Ã¯Â¸Â Leviathan 4K',
-        title: [`Ã°Å¸â€œâ€ž Ã¢ÂÂ¯ ${p.fileTitle}`, `Ã°Å¸Å’Å½ Ã¢ÂÂ¯ ${p.lang} â€¢ ${p.audioTag}`, `Ã¢Å“Â¨ Ã¢ÂÂ¯ ${p.serviceTag} â€¢ ${p.displaySource}`, `Ã°Å¸â€Â¥ Ã¢ÂÂ¯ ${p.quality} â€¢ ${p.cleanTags.join(' â€¢ ')}`, `Ã°Å¸â€™Â¾ Ã¢ÂÂ¯ ${p.sizeString} / Ã°Å¸â€˜Â¥ Ã¢ÂÂ¯ ${p.seeders}`].join('\n')
+        name: 'âš¡ï¸ Leviathan 4K',
+        title: [`ðŸ“„ â¯ ${p.fileTitle}`, `ðŸŒŽ â¯ ${p.lang} â€¢ ${p.audioTag}`, `âœ¨ â¯ ${p.serviceTag} â€¢ ${p.displaySource}`, `ðŸ”¥ â¯ ${p.quality} â€¢ ${p.cleanTags.join(' â€¢ ')}`, `ðŸ’¾ â¯ ${p.sizeString} / ðŸ‘¥ â¯ ${p.seeders}`].join('\n')
     });
 
     const styleDav = (p) => ({
-        name: 'Ã°Å¸Å½Â¥ 4K UHD HEVC',
-        title: [`Ã°Å¸â€œÂº ${p.cleanName}`, `Ã°Å¸Å½Â§ ${p.audioTag} ${p.audioChannels} | Ã°Å¸Å½Å¾Ã¯Â¸Â ${p.codec}`, `Ã°Å¸â€”Â£Ã¯Â¸Â ${p.lang} | Ã°Å¸â€œÂ¦ ${p.sizeString}`, `Ã¢ÂÂ±Ã¯Â¸Â ${p.seeders} Seeds | Ã°Å¸ÂÂ·Ã¯Â¸Â ${p.displaySource}`, `${p.serviceIconTitle} Leviathan Ã°Å¸â€œÂ¡ ${p.serviceTag}`, `Ã°Å¸â€œâ€š ${p.fileTitle}`].join('\n')
+        name: 'ðŸŽ¥ 4K UHD HEVC',
+        title: [`ðŸ“º ${p.cleanName}`, `ðŸŽ§ ${p.audioTag} ${p.audioChannels} | ðŸŽžï¸ ${p.codec}`, `ðŸ—£ï¸ ${p.lang} | ðŸ“¦ ${p.sizeString}`, `â±ï¸ ${p.seeders} Seeds | ðŸ·ï¸ ${p.displaySource}`, `${p.serviceIconTitle} Leviathan ðŸ“¡ ${p.serviceTag}`, `ðŸ“‚ ${p.fileTitle}`].join('\n')
     });
 
     const styleAnd = (p) => ({
-        name: `Ã°Å¸Å½Â¬ ${p.cleanName}`,
-        title: [`${p.quality} ${p.serviceTag === 'RD' ? 'Ã¢Å¡Â¡' : 'Ã¢ÂÂ³'}`, 'Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬', `Lingue: ${p.lang}`, `Specifiche: ${p.quality} | Ã°Å¸â€œÂº ${p.cleanTags.join(' ')} | Ã°Å¸â€Å  ${p.audioTag}`, 'Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬ Ã¢â€â‚¬', `Ã°Å¸â€œâ€š ${p.sizeString} | Ã¢ËœÂÃ¯Â¸Â ${p.serviceTag} | Ã°Å¸â€ºÂ°Ã¯Â¸Â Leviathan`].join('\n')
+        name: `ðŸŽ¬ ${p.cleanName}`,
+        title: [`${p.quality} ${p.serviceTag === 'RD' ? 'âš¡' : 'â³'}`, 'â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€', `Lingue: ${p.lang}`, `Specifiche: ${p.quality} | ðŸ“º ${p.cleanTags.join(' ')} | ðŸ”Š ${p.audioTag}`, 'â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€', `ðŸ“‚ ${p.sizeString} | â˜ï¸ ${p.serviceTag} | ðŸ›°ï¸ Leviathan`].join('\n')
     });
 
     const styleLad = (p) => ({
-        name: `Ã°Å¸â€“Â¥Ã¯Â¸Â ${p.quality} ${p.serviceTag}`,
-        title: [`Ã°Å¸Å½Å¸Ã¯Â¸Â ${p.cleanName}`, `Ã°Å¸â€œÅ“ ${p.epTag || 'Movie'}`, `Ã°Å¸Å½Â¥ ${p.quality} Ã°Å¸Å½Å¾Ã¯Â¸Â ${p.codec} Ã°Å¸Å½Â§ ${p.audioTag}`, `Ã°Å¸â€œÂ¦ ${p.sizeString} â€¢ Ã°Å¸â€â€” Leviathan`, `Ã°Å¸Å’Â ${p.lang}`].join('\n')
+        name: `ðŸ–¥ï¸ ${p.quality} ${p.serviceTag}`,
+        title: [`ðŸŽŸï¸ ${p.cleanName}`, `ðŸ“œ ${p.epTag || 'Movie'}`, `ðŸŽ¥ ${p.quality} ðŸŽžï¸ ${p.codec} ðŸŽ§ ${p.audioTag}`, `ðŸ“¦ ${p.sizeString} â€¢ ðŸ”— Leviathan`, `ðŸŒ ${p.lang}`].join('\n')
     });
 
     const stylePri = (p) => ({
-        name: `[${p.serviceTag}]Ã¢Å¡Â¡Ã¯Â¸ÂÃ¢ËœÂÃ¯Â¸Â
-4KÃ°Å¸â€Â¥UHD
+        name: `[${p.serviceTag}]âš¡ï¸â˜ï¸
+4KðŸ”¥UHD
 [Leviathan]`,
-        title: [`Ã°Å¸Å½Â¬ ${p.cleanName}`, `${p.cleanTags.join(' ')}`, `Ã°Å¸Å½Â§ ${p.audioTag} | Ã°Å¸â€Å  ${p.audioChannels} | Ã°Å¸â€”Â£Ã¯Â¸Â ${p.lang}`, `Ã°Å¸â€œÂ ${p.sizeString} | Ã°Å¸ÂÂ·Ã¯Â¸Â ${p.displaySource}`, `Ã°Å¸â€œâ€ž Ã¢â€“Â¶Ã¯Â¸Â ${p.fileTitle} Ã¢â€”â‚¬Ã¯Â¸Â`].join('\n')
+        title: [`ðŸŽ¬ ${p.cleanName}`, `${p.cleanTags.join(' ')}`, `ðŸŽ§ ${p.audioTag} | ðŸ”Š ${p.audioChannels} | ðŸ—£ï¸ ${p.lang}`, `ðŸ“ ${p.sizeString} | ðŸ·ï¸ ${p.displaySource}`, `ðŸ“„ â–¶ï¸ ${p.fileTitle} â—€ï¸`].join('\n')
     });
 
     const styleComet = (p) => ({
         name: `[${p.serviceTag} Ã¢Å¡Â¡]
 Leviathan
 ${p.quality}`,
-        title: [`Ã°Å¸â€œâ€ž ${p.fileTitle}`, `Ã°Å¸â€œÂ¹ ${joinMobilePreviewParts([p.codec, ...p.cleanTags].filter(Boolean))} | ${p.audioTag}`, `Ã¢Â­Â ${p.displaySource}`, `Ã°Å¸â€™Â¾ ${p.sizeString} Ã°Å¸â€˜Â¥ ${p.seeders}`, `Ã°Å¸Å’Â ${p.lang}`].join('\n')
+        title: [`ðŸ“„ ${p.fileTitle}`, `ðŸ“¹ ${joinMobilePreviewParts([p.codec, ...p.cleanTags].filter(Boolean))} | ${p.audioTag}`, `â­ ${p.displaySource}`, `ðŸ’¾ ${p.sizeString} ðŸ‘¥ ${p.seeders}`, `ðŸŒ ${p.lang}`].join('\n')
     });
 
     const styleStremioIta = (p) => ({
-        name: 'Ã¢Å¡Â¡Ã¯Â¸Â Leviathan 4K',
-        title: [`Ã°Å¸â€œâ€ž Ã¢ÂÂ¯ ${p.fileTitle}`, `Ã°Å¸Å’Å½ Ã¢ÂÂ¯ ${p.lang.replace(/ITA/gi, 'ita').replace(/ENG/gi, 'eng')}`, `Ã¢Å“Â¨ Ã¢ÂÂ¯ ${p.serviceTag} â€¢ ${p.displaySource}`, `Ã°Å¸â€Â¥ Ã¢ÂÂ¯ ${p.quality} â€¢ ${p.cleanTags.join(' â€¢ ')}`, `Ã°Å¸â€™Â¾ Ã¢ÂÂ¯ ${p.sizeString}`, `Ã°Å¸â€â€° Ã¢ÂÂ¯ ${p.audioTag} â€¢ ${p.audioChannels}`].join('\n')
+        name: 'âš¡ï¸ Leviathan 4K',
+        title: [`ðŸ“„ â¯ ${p.fileTitle}`, `ðŸŒŽ â¯ ${p.lang.replace(/ITA/gi, 'ita').replace(/ENG/gi, 'eng')}`, `âœ¨ â¯ ${p.serviceTag} â€¢ ${p.displaySource}`, `ðŸ”¥ â¯ ${p.quality} â€¢ ${p.cleanTags.join(' â€¢ ')}`, `ðŸ’¾ â¯ ${p.sizeString}`, `ðŸ”‰ â¯ ${p.audioTag} â€¢ ${p.audioChannels}`].join('\n')
     });
 
     const styleTorrentio = (p) => ({
         name: `[${p.serviceTag}]
 ${p.quality}`,
-        title: [`Ã°Å¸â€œâ€ž ${p.fileTitle}`, `Ã°Å¸â€œÂ¦ ${p.sizeString} Ã°Å¸â€˜Â¤ ${p.seeders}`, `Ã°Å¸â€Â ${p.displaySource}`, `Ã°Å¸â€Å  ${removeMobilePreviewEmoji(p.lang) || p.lang}`].join('\n')
+        title: [`ðŸ“„ ${p.fileTitle}`, `ðŸ“¦ ${p.sizeString} ðŸ‘¤ ${p.seeders}`, `ðŸ” ${p.displaySource}`, `ðŸ”Š ${removeMobilePreviewEmoji(p.lang) || p.lang}`].join('\n')
     });
 
     const styleVertical = (p) => ({
-        name: `Ã°Å¸Â¦â€˜ Leviathan ${p.quality} ${isDebrid ? 'Ã¢Å¡Â¡' : 'Ã¢ËœÂÃ¯Â¸Â'} Cached`,
-        title: [`Ã°Å¸ÂÂ¿ ${p.cleanName}`, `Ã°Å¸â€œÂ¼ WEB-DL â€¢ ${p.cleanTags[0]}`, `Ã¢Å¡â„¢Ã¯Â¸Â ${p.codec}`, `Ã°Å¸â€Å  ${p.audioTag} (${p.audioChannels})`, `Ã°Å¸â€™Â¬ ${p.lang}`, `Ã°Å¸Â§Â² ${p.sizeString}`].join('\n')
+        name: `ðŸ¦‘ Leviathan ${p.quality} ${isDebrid ? 'âš¡' : 'â˜ï¸'} Cached`,
+        title: [`ðŸ¿ ${p.cleanName}`, `ðŸ“¼ WEB-DL â€¢ ${p.cleanTags[0]}`, `âš™ï¸ ${p.codec}`, `ðŸ”Š ${p.audioTag} (${p.audioChannels})`, `ðŸ’¬ ${p.lang}`, `ðŸ§² ${p.sizeString}`].join('\n')
     });
 
     const styleCustom = (p) => {
@@ -2126,7 +2482,7 @@ function toggleMobileAIOLock() {
 function createLogoParticles() {
     const container = document.getElementById('logoParticles');
     if(!container) return;
-    const count = document.body.classList.contains('m-lowfx') ? 0 : 5; 
+    const count = document.body.classList.contains('m-lowfx') ? 0 : 5;
     container.innerHTML = '';
     for(let i=0; i < count; i++) {
         const p = document.createElement('div');
@@ -2138,6 +2494,29 @@ function createLogoParticles() {
         p.style.animationDelay = `-${Math.random() * 10}s`;
         const sway = Math.random() * 8 - 4;
         p.style.transform = `translateX(${sway}px)`;
+        container.appendChild(p);
+    }
+}
+
+function createOceanParticles() {
+    const container = document.getElementById('m-ocean-particles');
+    if(!container) return;
+    const isLowFx = document.body.classList.contains('m-lowfx');
+    const count = isLowFx ? 0 : 14;
+    container.innerHTML = '';
+    for(let i = 0; i < count; i++) {
+        const p = document.createElement('div');
+        p.className = 'm-ocean-particle';
+        const size = Math.random() * 3 + 1.5;
+        p.style.width = `${size}px`;
+        p.style.height = `${size}px`;
+        p.style.left = `${Math.random() * 100}%`;
+        p.style.animationDuration = `${Math.random() * 14 + 14}s`;
+        p.style.animationDelay = `-${Math.random() * 18}s`;
+        if (Math.random() > 0.7) {
+            p.style.background = 'radial-gradient(circle, rgba(176, 38, 255, 0.85) 0%, rgba(112, 0, 255, 0.15) 60%, transparent 100%)';
+            p.style.boxShadow = '0 0 6px rgba(176, 38, 255, 0.5)';
+        }
         container.appendChild(p);
     }
 }
@@ -2154,6 +2533,7 @@ function initMobileInterface() {
     applyMobilePerformanceMode();
     hydrateMobileLogo();
     createLogoParticles();
+    createOceanParticles();
     initPullToRefresh();
     loadMobileConfig();
     updateMobilePreview();
