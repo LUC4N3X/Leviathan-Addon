@@ -56,7 +56,8 @@ const {
     getStatsSnapshot,
     recordDuration,
     recordProviderMetric,
-    incrementMetric
+    incrementMetric,
+    streamInflight
 } = require('./core/utils');
 const { generateStream, resolveLazyStreamData } = require('./core/stream_generator');
 const { bootRealDebridAuditor } = require('./core/server/bootstrap/rd_auditor_boot');
@@ -66,6 +67,95 @@ const { registerApiRoutes } = require('./core/server/routes/api_routes');
 const { registerPlaybackRoutes } = require('./core/server/routes/playback_routes');
 const { registerAdminRoutes } = require('./core/server/routes/admin_routes');
 const { registerStremioRoutes } = require('./core/server/routes/stremio_routes');
+
+function startSharedStreamCacheCleanupJob({ dbHelper, logger, enabled }) {
+    if (!enabled) return null;
+    if (!dbHelper || typeof dbHelper.cleanupExpiredSharedStreamCache !== 'function') return null;
+
+    const intervalMs = Math.max(60 * 1000, parseInt(process.env.SHARED_STREAM_CACHE_CLEANUP_INTERVAL_MS || String(10 * 60 * 1000), 10) || (10 * 60 * 1000));
+    const batchLimit = Math.max(100, parseInt(process.env.SHARED_STREAM_CACHE_CLEANUP_BATCH || '5000', 10) || 5000);
+    const maxBatchesPerRun = Math.max(1, Math.min(12, parseInt(process.env.SHARED_STREAM_CACHE_CLEANUP_MAX_BATCHES || '4', 10) || 4));
+    const initialDelayMs = Math.max(5 * 1000, parseInt(process.env.SHARED_STREAM_CACHE_CLEANUP_BOOT_DELAY_MS || String(30 * 1000), 10) || (30 * 1000));
+    const vacuumThreshold = Math.max(batchLimit, parseInt(process.env.SHARED_STREAM_CACHE_VACUUM_THRESHOLD || String(batchLimit * 2), 10) || (batchLimit * 2));
+    const vacuumCooldownMs = Math.max(5 * 60 * 1000, parseInt(process.env.SHARED_STREAM_CACHE_VACUUM_COOLDOWN_MS || String(60 * 60 * 1000), 10) || (60 * 60 * 1000));
+    let lastVacuumAt = 0;
+    let vacuumInFlight = false;
+
+    const maybeVacuum = async (totalDeleted) => {
+        if (totalDeleted < vacuumThreshold) return false;
+        if (vacuumInFlight) {
+            incrementMetric('sharedStreamCacheCleanup.vacuumSkippedBusy');
+            return false;
+        }
+        if ((Date.now() - lastVacuumAt) < vacuumCooldownMs) {
+            incrementMetric('sharedStreamCacheCleanup.vacuumSkippedCooldown');
+            return false;
+        }
+        if (typeof dbHelper.vacuumAnalyzeSharedStreamCache !== 'function') return false;
+
+        vacuumInFlight = true;
+        const startedAt = Date.now();
+        try {
+            const ok = await dbHelper.vacuumAnalyzeSharedStreamCache();
+            if (ok) {
+                lastVacuumAt = Date.now();
+                incrementMetric('sharedStreamCacheCleanup.vacuumRuns');
+                recordDuration('sharedStreamCacheCleanup.vacuum', Date.now() - startedAt);
+                logger.info(`[CACHE] Shared stream VACUUM ANALYZE completato | deleted=${totalDeleted}`);
+                return true;
+            }
+        } catch (error) {
+            incrementMetric('sharedStreamCacheCleanup.vacuumErrors');
+            logger.warn(`[CACHE] Shared stream VACUUM ANALYZE failed | error=${error.message}`);
+        } finally {
+            vacuumInFlight = false;
+        }
+        return false;
+    };
+
+    const runCleanup = async () => {
+        const startedAt = Date.now();
+        let totalDeleted = 0;
+        let batches = 0;
+        try {
+            for (let index = 0; index < maxBatchesPerRun; index += 1) {
+                const deleted = await dbHelper.cleanupExpiredSharedStreamCache({ limit: batchLimit });
+                batches += 1;
+                totalDeleted += deleted;
+                if (deleted < batchLimit) break;
+            }
+
+            incrementMetric('sharedStreamCacheCleanup.runs');
+            if (totalDeleted > 0) {
+                incrementMetric('sharedStreamCacheCleanup.deletedRows', totalDeleted);
+                logger.info(`[CACHE] Shared stream cleanup | deleted=${totalDeleted} | batches=${batches} | batchSize=${batchLimit}`);
+                await maybeVacuum(totalDeleted);
+            }
+        } catch (error) {
+            incrementMetric('sharedStreamCacheCleanup.errors');
+            logger.warn(`[CACHE] Shared stream cleanup failed | error=${error.message}`);
+        } finally {
+            recordDuration('sharedStreamCacheCleanup.run', Date.now() - startedAt);
+        }
+    };
+
+    const bootstrapTimer = setTimeout(() => {
+        runCleanup().catch(() => {});
+    }, initialDelayMs);
+    bootstrapTimer.unref();
+
+    const timer = setInterval(() => {
+        runCleanup().catch(() => {});
+    }, intervalMs);
+    timer.unref();
+
+    return {
+        stop() {
+            clearTimeout(bootstrapTimer);
+            clearInterval(timer);
+        }
+    };
+}
 
 function bootstrapServer() {
     const app = express();
@@ -92,6 +182,12 @@ function bootstrapServer() {
         logger,
         recordDuration,
         recordProviderMetric
+    });
+
+    const sharedStreamCleanupJob = startSharedStreamCacheCleanupJob({
+        dbHelper,
+        logger,
+        enabled: String(process.env.SHARED_STREAM_CACHE_ENABLED || 'true').toLowerCase() !== 'false' && (isClusterLeader || !shouldUseCluster())
     });
 
     applyCommonMiddleware(app, { staticDir: publicDir });
@@ -136,7 +232,9 @@ function bootstrapServer() {
         getConfig,
         validateStreamRequest,
         generateStream,
-        logger
+        logger,
+        streamInflight,
+        Cache
     });
 
     const PORT = process.env.PORT || 7000;
@@ -182,6 +280,9 @@ function bootstrapServer() {
 
         server.close(async () => {
             try {
+                if (sharedStreamCleanupJob && typeof sharedStreamCleanupJob.stop === 'function') {
+                    sharedStreamCleanupJob.stop();
+                }
                 if (typeof dbHelper.shutdownDatabase === 'function') {
                     await dbHelper.shutdownDatabase();
                 }
