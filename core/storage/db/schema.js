@@ -72,6 +72,8 @@ async function ensureDatabaseOptimizations(pool) {
       expires_at TIMESTAMPTZ NOT NULL,
       stale_until TIMESTAMPTZ NOT NULL,
       imdb_id TEXT,
+      imdb_season INTEGER,
+      imdb_episode INTEGER,
       hashes TEXT[] DEFAULT ARRAY[]::TEXT[],
       content_date TIMESTAMPTZ,
       freshness_bucket TEXT,
@@ -138,6 +140,8 @@ async function ensureDatabaseOptimizations(pool) {
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS stale_until TIMESTAMPTZ`,
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS imdb_id TEXT`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS imdb_season INTEGER`,
+    `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS imdb_episode INTEGER`,
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS hashes TEXT[] DEFAULT ARRAY[]::TEXT[]`,
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS content_date TIMESTAMPTZ`,
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS freshness_bucket TEXT`,
@@ -173,7 +177,9 @@ async function ensureDatabaseOptimizations(pool) {
     `CREATE INDEX IF NOT EXISTS idx_pack_files_series_lookup ON pack_files (pack_hash_norm, imdb_season, imdb_episode, file_index_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_episode_file_overrides_lookup ON episode_file_overrides (info_hash_norm, imdb_id, imdb_season, imdb_episode)`,
     `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_expires ON shared_stream_cache (expires_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_stale_until ON shared_stream_cache (stale_until)`,
     `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_imdb ON shared_stream_cache (imdb_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_imdb_episode ON shared_stream_cache (imdb_id, imdb_season, imdb_episode)`,
     `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_hashes ON shared_stream_cache USING GIN (hashes)`
   ];
 

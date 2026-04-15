@@ -1,10 +1,14 @@
 'use strict';
 
 const path = require('path');
+const { incrementMetric } = require('../../utils_runtime');
 
 const RECENT_STREAM_HINT_TTL_MS = 10 * 60 * 1000;
 const RECENT_STREAM_HINT_LIMIT = 256;
+const BINGE_WARMUP_DEDUPE_TTL_MS = 10 * 60 * 1000;
+const BINGE_WARMUP_DEDUPE_LIMIT = 512;
 const recentSeriesStreamHints = new Map();
+const recentBingeWarmups = new Map();
 
 function cleanupRecentStreamHints(now = Date.now()) {
     for (const [key, entry] of recentSeriesStreamHints.entries()) {
@@ -14,6 +18,17 @@ function cleanupRecentStreamHints(now = Date.now()) {
         const oldestKey = recentSeriesStreamHints.keys().next().value;
         if (oldestKey === undefined) break;
         recentSeriesStreamHints.delete(oldestKey);
+    }
+}
+
+function cleanupRecentBingeWarmups(now = Date.now()) {
+    for (const [key, expiresAt] of recentBingeWarmups.entries()) {
+        if (!expiresAt || Number(expiresAt) <= now) recentBingeWarmups.delete(key);
+    }
+    while (recentBingeWarmups.size > BINGE_WARMUP_DEDUPE_LIMIT) {
+        const oldestKey = recentBingeWarmups.keys().next().value;
+        if (oldestKey === undefined) break;
+        recentBingeWarmups.delete(oldestKey);
     }
 }
 
@@ -32,6 +47,34 @@ function extractSeriesBaseId(rawId) {
     const imdbMatch = cleanId.match(/^(tt\d+|\d+)(?::\d+){0,2}$/i);
     if (imdbMatch) return imdbMatch[1];
     return null;
+}
+
+function parseEpisodeLocator(rawId) {
+    const cleanId = String(rawId || '').replace(/^ai-recs:/i, '').trim();
+    const baseMatch = cleanId.match(/^(kitsu:\d+|tmdb:\d+|tt\d+|\d+)(?::(\d+))?(?::(\d+))?$/i);
+    if (!baseMatch) return null;
+
+    const baseId = baseMatch[1];
+    const first = baseMatch[2] ? parseInt(baseMatch[2], 10) : null;
+    const second = baseMatch[3] ? parseInt(baseMatch[3], 10) : null;
+
+    if (Number.isInteger(first) && first > 0 && Number.isInteger(second) && second > 0) {
+        return { baseId, season: first, episode: second, compactMode: false };
+    }
+
+    if (String(baseId).toLowerCase().startsWith('kitsu:') && Number.isInteger(first) && first > 0) {
+        return { baseId, season: 1, episode: first, compactMode: true };
+    }
+
+    return null;
+}
+
+function buildEpisodeId(locator, season, episode) {
+    if (!locator?.baseId || !Number.isInteger(season) || !Number.isInteger(episode) || season <= 0 || episode <= 0) return null;
+    if (locator.compactMode && season === 1 && String(locator.baseId).toLowerCase().startsWith('kitsu:')) {
+        return `${locator.baseId}:${episode}`;
+    }
+    return `${locator.baseId}:${season}:${episode}`;
 }
 
 function rememberSeriesHint(conf, req, type, rawId) {
@@ -75,6 +118,118 @@ function recoverSeriesIdFromHint(conf, req, type, rawId) {
     return hint.baseId;
 }
 
+function applyStremioStreamCacheHeaders(res, payload) {
+    const cacheMaxAge = Math.max(0, Number(payload?.cacheMaxAge || 0) || 0);
+    const staleRevalidate = Math.max(0, Number(payload?.staleRevalidate || 0) || 0);
+    const staleError = Math.max(0, Number(payload?.staleError || 0) || 0);
+
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (cacheMaxAge <= 0) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        return;
+    }
+
+    res.removeHeader('Pragma');
+    res.removeHeader('Expires');
+    res.setHeader(
+        'Cache-Control',
+        `public, max-age=${cacheMaxAge}, stale-while-revalidate=${staleRevalidate}, stale-if-error=${staleError}`
+    );
+}
+
+function queueBingePredictionWarmup({
+    req,
+    logger,
+    generateStream,
+    Cache,
+    type,
+    requestId,
+    userConf,
+    userConfStr,
+    reqHost,
+    streamInflight,
+    lastResult
+}) {
+    const normalizedType = String(type || '').toLowerCase();
+    if (normalizedType !== 'series' && normalizedType !== 'anime') return;
+    if (!lastResult || !Array.isArray(lastResult.streams) || lastResult.streams.length === 0) return;
+
+    const filters = userConf?.filters || {};
+    if (filters.bingeWarmup === false) return;
+
+    const cachedEvidence = lastResult.streams.some((stream) => {
+        const title = String(stream?.title || stream?.name || '').toLowerCase();
+        return title.includes('cached') || title.includes('⚡') || title.includes('instant');
+    });
+    if (!cachedEvidence && lastResult.streams.length < 2) {
+        incrementMetric('bingeWarmup.skippedLowConfidence');
+        return;
+    }
+
+    const aheadCount = Math.max(0, Math.min(2, parseInt(filters.bingeWarmupAhead ?? process.env.BINGE_WARMUP_AHEAD ?? '2', 10) || 0));
+    if (aheadCount <= 0) return;
+
+    const inflightSize = streamInflight?.size || 0;
+    const maxInflight = Math.max(1, Math.min(64, parseInt(process.env.BINGE_WARMUP_MAX_INFLIGHT || '8', 10) || 8));
+    if (inflightSize >= maxInflight) {
+        incrementMetric('bingeWarmup.skippedLoad');
+        logger.info(`[BINGE] Skip warmup sotto carico | inflight=${inflightSize} | threshold=${maxInflight}`);
+        return;
+    }
+
+    const locator = parseEpisodeLocator(requestId);
+    if (!locator?.baseId || !Number.isInteger(locator.episode) || locator.episode <= 0) return;
+
+    cleanupRecentBingeWarmups();
+    const clientScope = getStreamHintKey(userConfStr, req);
+    const targets = [];
+    for (let offset = 1; offset <= aheadCount; offset += 1) {
+        const nextId = buildEpisodeId(locator, locator.season, locator.episode + offset);
+        if (!nextId) continue;
+
+        const cacheKey = `${normalizedType}:${nextId}:${String(userConfStr || '').trim()}`;
+        const dedupeKey = `${clientScope}:${normalizedType}:${nextId}`;
+        if (recentBingeWarmups.has(dedupeKey)) continue;
+        if (streamInflight?.has?.(cacheKey)) {
+            incrementMetric('bingeWarmup.skippedInflight');
+            continue;
+        }
+
+        const cachedCandidate = Cache && typeof Cache.getCachedStream === 'function'
+            ? Cache.getCachedStream(cacheKey, { allowLocal: true, allowShared: true }).catch(() => null)
+            : Promise.resolve(null);
+        targets.push({ nextId, dedupeKey, cacheKey, cachedCandidate });
+    }
+
+    if (targets.length === 0) return;
+
+    const timer = setTimeout(() => {
+        targets.forEach(async ({ nextId, dedupeKey, cachedCandidate }) => {
+            recentBingeWarmups.set(dedupeKey, Date.now() + BINGE_WARMUP_DEDUPE_TTL_MS);
+            try {
+                const cached = await cachedCandidate;
+                if (cached && Array.isArray(cached.streams) && cached.streams.length > 0) {
+                    incrementMetric('bingeWarmup.skippedCached');
+                    return;
+                }
+
+                incrementMetric('bingeWarmup.queued');
+                const result = await generateStream(normalizedType, nextId, userConf, userConfStr, reqHost);
+                const count = Array.isArray(result?.streams) ? result.streams.length : 0;
+                incrementMetric(count > 0 ? 'bingeWarmup.success' : 'bingeWarmup.empty');
+                logger.info(`[BINGE] Warmup completato | from=${requestId} | target=${nextId} | streams=${count}`);
+            } catch (error) {
+                recentBingeWarmups.delete(dedupeKey);
+                incrementMetric('bingeWarmup.fail');
+                logger.warn(`[BINGE] Warmup fallito | from=${requestId} | target=${nextId} | error=${error.message}`);
+            }
+        });
+    }, 150);
+    if (typeof timer.unref === 'function') timer.unref();
+}
+
 function registerStremioRoutes(app, {
     publicDir,
     getManifest,
@@ -83,7 +238,9 @@ function registerStremioRoutes(app, {
     getConfig,
     validateStreamRequest,
     generateStream,
-    logger
+    logger,
+    streamInflight,
+    Cache
 }) {
     app.get('/', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
     app.get('/:conf/configure', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
@@ -137,10 +294,6 @@ function registerStremioRoutes(app, {
     app.get('/vixsynthetic.m3u8', handleVixSynthetic);
 
     app.get('/:conf/stream/:type/:id.json', async (req, res) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
         try {
             let requestId = req.params.id.replace('.json', '');
             const recoveredId = recoverSeriesIdFromHint(req.params.conf, req, req.params.type, requestId);
@@ -151,16 +304,37 @@ function registerStremioRoutes(app, {
 
             validateStreamRequest(req.params.type, requestId);
             rememberSeriesHint(req.params.conf, req, req.params.type, requestId);
-            res.json(await generateStream(
+
+            const userConf = getConfig(req.params.conf);
+            const reqHost = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+            const result = await generateStream(
                 req.params.type,
                 requestId,
-                getConfig(req.params.conf),
+                userConf,
                 req.params.conf,
-                `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`
-            ));
+                reqHost
+            );
+
+            applyStremioStreamCacheHeaders(res, result);
+            queueBingePredictionWarmup({
+                req,
+                logger,
+                generateStream,
+                Cache,
+                type: req.params.type,
+                requestId,
+                userConf,
+                userConfStr: req.params.conf,
+                reqHost,
+                streamInflight,
+                lastResult: result
+            });
+            res.json(result);
         } catch (err) {
             logger.error('Validazione/Stream Fallito', { error: err.message, params: req.params });
-            return res.status(400).json({ streams: [] });
+            const fallback = { streams: [], cacheMaxAge: 30, staleRevalidate: 60, staleError: 120 };
+            applyStremioStreamCacheHeaders(res, fallback);
+            return res.status(400).json(fallback);
         }
     });
 }

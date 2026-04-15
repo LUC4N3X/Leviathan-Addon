@@ -5,6 +5,8 @@ const SHARED_STREAM_CACHE_COLUMNS = [
   'expires_at',
   'stale_until',
   'imdb_id',
+  'imdb_season',
+  'imdb_episode',
   'hashes',
   'content_date',
   'freshness_bucket',
@@ -32,6 +34,16 @@ function createSharedStreamCacheRepository({
     normalizeUniqueTextList,
     toDateOrNull
   } = normalizers;
+
+  function normalizeEpisodeFields(imdbId, season, episode) {
+    const normalizedImdb = normalizeImdbId(imdbId);
+    const parsedSeason = Number.isInteger(Number(season)) ? Number(season) : null;
+    const parsedEpisode = Number.isInteger(Number(episode)) ? Number(episode) : null;
+    if (!normalizedImdb || !Number.isInteger(parsedSeason) || parsedSeason <= 0 || !Number.isInteger(parsedEpisode) || parsedEpisode <= 0) {
+      return { imdbId: normalizedImdb, season: null, episode: null };
+    }
+    return { imdbId: normalizedImdb, season: parsedSeason, episode: parsedEpisode };
+  }
 
   async function getSharedStreamCache(cacheKey, options = {}) {
     if (!getPool() || !cacheKey) return null;
@@ -93,7 +105,8 @@ function createSharedStreamCacheRepository({
 
     const cacheKey = String(entry.cache_key);
     const encoding = sanitizeText(entry.encoding, 'identity') || 'identity';
-    const imdbId = normalizeImdbId(entry.imdb_id) || null;
+    const episodeFields = normalizeEpisodeFields(entry.imdb_id, entry.imdb_season, entry.imdb_episode);
+    const imdbId = episodeFields.imdbId;
     const hashes = normalizeUniqueInfoHashes(entry.hashes);
     const contentDate = toDateOrNull(entry.content_date);
     const freshnessBucket = sanitizeText(entry.freshness_bucket).toLowerCase();
@@ -118,6 +131,8 @@ function createSharedStreamCacheRepository({
               expires_at,
               stale_until,
               imdb_id,
+              imdb_season,
+              imdb_episode,
               hashes,
               content_date,
               freshness_bucket,
@@ -131,7 +146,7 @@ function createSharedStreamCacheRepository({
               created_at,
               updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[], $8, $9, $10, $11, $12, $13, $14::TEXT[], $15, 0, NOW(), NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::TEXT[], $10, $11, $12, $13, $14, $15, $16::TEXT[], $17, 0, NOW(), NOW())
             ON CONFLICT (cache_key)
             DO UPDATE SET
               payload_b64 = EXCLUDED.payload_b64,
@@ -139,6 +154,8 @@ function createSharedStreamCacheRepository({
               expires_at = EXCLUDED.expires_at,
               stale_until = EXCLUDED.stale_until,
               imdb_id = EXCLUDED.imdb_id,
+              imdb_season = EXCLUDED.imdb_season,
+              imdb_episode = EXCLUDED.imdb_episode,
               hashes = EXCLUDED.hashes,
               content_date = EXCLUDED.content_date,
               freshness_bucket = EXCLUDED.freshness_bucket,
@@ -157,6 +174,8 @@ function createSharedStreamCacheRepository({
             expiresAt,
             staleUntil,
             imdbId,
+            episodeFields.season,
+            episodeFields.episode,
             hashes,
             contentDate,
             freshnessBucket || null,
@@ -214,12 +233,91 @@ function createSharedStreamCacheRepository({
     }
   }
 
+  async function deleteSharedStreamCacheByEpisode(imdbId, season, episode) {
+    if (!getPool()) return 0;
+    await awaitDatabaseOptimizations();
+
+    const episodeFields = normalizeEpisodeFields(imdbId, season, episode);
+    if (!episodeFields.imdbId || episodeFields.season === null || episodeFields.episode === null) return 0;
+
+    try {
+      const res = await withClient((client) => client.query(
+        `
+          DELETE FROM shared_stream_cache
+          WHERE imdb_id = $1
+            AND imdb_season = $2
+            AND imdb_episode = $3
+        `,
+        [episodeFields.imdbId, episodeFields.season, episodeFields.episode]
+      ));
+      return res.rowCount || 0;
+    } catch (error) {
+      console.error(`❌ DB Error deleteSharedStreamCacheByEpisode: ${error.message}`);
+      return 0;
+    }
+  }
+
+  async function cleanupExpiredSharedStreamCache(options = {}) {
+    if (!getPool()) return 0;
+    await awaitDatabaseOptimizations();
+
+    const limit = clampInt(options.limit, 5000, 100, 50000);
+
+    try {
+      const res = await withClient((client) => client.query(
+        `
+          WITH doomed AS (
+            SELECT ctid
+            FROM shared_stream_cache
+            WHERE stale_until < NOW()
+            ORDER BY stale_until ASC
+            LIMIT $1
+          )
+          DELETE FROM shared_stream_cache s
+          USING doomed d
+          WHERE s.ctid = d.ctid
+        `,
+        [limit]
+      ));
+      return res.rowCount || 0;
+    } catch (error) {
+      console.error(`❌ DB Error cleanupExpiredSharedStreamCache: ${error.message}`);
+      return 0;
+    }
+  }
+
+  async function vacuumAnalyzeSharedStreamCache() {
+    const pool = getPool();
+    if (!pool) return false;
+    await awaitDatabaseOptimizations();
+
+    let client = null;
+    try {
+      client = await pool.connect();
+      await client.query('VACUUM (ANALYZE) shared_stream_cache');
+      return true;
+    } catch (error) {
+      console.error(`❌ DB Error vacuumAnalyzeSharedStreamCache: ${error.message}`);
+      try {
+        if (client) await client.query('ANALYZE shared_stream_cache');
+        return false;
+      } catch (_) {
+        return false;
+      }
+    } finally {
+      if (client) client.release();
+    }
+  }
+
   return {
     getSharedStreamCache,
     touchSharedStreamCacheHit,
     setSharedStreamCache,
     deleteSharedStreamCacheByHashes,
-    deleteSharedStreamCacheByImdb
+    deleteSharedStreamCacheByImdb,
+    deleteSharedStreamCacheByEpisode,
+    cleanupExpiredSharedStreamCache,
+    vacuumAnalyzeSharedStreamCache
   };
 }
 

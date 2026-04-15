@@ -35,6 +35,26 @@ const {
 
 const { parseKitsuIdentifier } = kitsuHandler;
 
+const STREMIO_CACHE_MAX_AGE_DEFAULT = Math.max(60, parseInt(process.env.STREMIO_CACHE_MAX_AGE || '300', 10) || 300);
+const STREMIO_STALE_REVALIDATE_DEFAULT = Math.max(STREMIO_CACHE_MAX_AGE_DEFAULT, parseInt(process.env.STREMIO_STALE_REVALIDATE || '600', 10) || 600);
+const STREMIO_STALE_ERROR_DEFAULT = Math.max(STREMIO_STALE_REVALIDATE_DEFAULT, parseInt(process.env.STREMIO_STALE_ERROR || '1200', 10) || 1200);
+
+function buildClientCacheMetadata(cachePolicy = {}, streamCount = 0) {
+    const policyLocalTtl = Math.max(0, Number(cachePolicy?.localTtl || 0) || 0);
+    const policyStaleGrace = Math.max(0, Number(cachePolicy?.staleGraceTtl || 0) || 0);
+    const baseMaxAge = streamCount > 0
+        ? Math.min(STREMIO_CACHE_MAX_AGE_DEFAULT, Math.max(120, policyLocalTtl || STREMIO_CACHE_MAX_AGE_DEFAULT))
+        : Math.min(120, Math.max(30, Math.min(policyLocalTtl || 60, 120)));
+    const staleRevalidate = Math.max(baseMaxAge, policyStaleGrace, streamCount > 0 ? STREMIO_STALE_REVALIDATE_DEFAULT : Math.max(60, Math.floor(STREMIO_STALE_REVALIDATE_DEFAULT / 2)));
+    const staleError = Math.max(staleRevalidate, streamCount > 0 ? STREMIO_STALE_ERROR_DEFAULT : Math.max(120, Math.floor(STREMIO_STALE_ERROR_DEFAULT / 2)));
+
+    return {
+        cacheMaxAge: baseMaxAge,
+        staleRevalidate,
+        staleError
+    };
+}
+
 function getServiceResolverLimiter(service) {
     const normalized = String(service || '').toLowerCase();
     if (normalized === 'tb') return LIMITERS.tbResolve;
@@ -2098,7 +2118,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       let finalStreams = mergeFinalStreams(debridStreams, formattedWebBuckets, filters);
       finalStreams = applyConfiguredStreamFilters(finalStreams, filters);
 
-      const resultObj = { streams: finalStreams, cacheMaxAge: 0, staleRevalidate: 0, staleError: 0 };
+      const resultObjPlaceholder = { streams: finalStreams };
       const enabledWebProvidersCount = [
           isStreamingCommunityEnabled(filters),
           filters.enableGhd,
@@ -2121,8 +2141,23 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           debridService: configuredDebridService
       });
 
+      const clientCache = buildClientCacheMetadata(cachePolicy, finalStreams.length);
+      const resultObj = {
+          ...resultObjPlaceholder,
+          cacheMaxAge: clientCache.cacheMaxAge,
+          staleRevalidate: clientCache.staleRevalidate,
+          staleError: clientCache.staleError
+      };
+
       await Cache.cacheStream(cacheKey, resultObj, cachePolicy.localTtl || (finalStreams.length > 0 ? 1800 : EMPTY_STREAM_TTL), {
           imdbId: meta?.imdb_id || null,
+          imdbSeason: Number.isInteger(meta?.season) && meta.season > 0 ? meta.season : null,
+          imdbEpisode: Number.isInteger(meta?.episode) && meta.episode > 0 ? meta.episode : null,
+          episodeLocator: {
+              imdbId: meta?.imdb_id || null,
+              season: Number.isInteger(meta?.season) && meta.season > 0 ? meta.season : null,
+              episode: Number.isInteger(meta?.episode) && meta.episode > 0 ? meta.episode : null
+          },
           hashes: cleanResults.map((item) => item?.hash || item?.infoHash).filter(Boolean)
       }, {
           sharedPolicy: cachePolicy

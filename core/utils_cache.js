@@ -8,9 +8,27 @@ const dbHelper = require('./storage/db_repository');
 const { logger, incrementMetric, registerCacheAccess, registerCacheSet } = require('./utils_runtime');
 const { withSharedPromise } = require('./utils_common');
 
-const myCache = new NodeCache({ stdTTL: 1800, checkperiod: 120, maxKeys: 5000 });
-const rawCache = new NodeCache({ stdTTL: 43200, checkperiod: 600, maxKeys: 15000 });
-const cloudBuildCache = new NodeCache({ stdTTL: 900, checkperiod: 60, maxKeys: 5000 });
+const myCache = new NodeCache({
+    stdTTL: 1800,
+    checkperiod: Math.max(15, parseInt(process.env.STREAM_CACHE_CHECKPERIOD || '60', 10) || 60),
+    maxKeys: Math.max(5000, parseInt(process.env.STREAM_CACHE_MAX_KEYS || '20000', 10) || 20000),
+    useClones: false,
+    deleteOnExpire: true
+});
+const rawCache = new NodeCache({
+    stdTTL: 43200,
+    checkperiod: Math.max(60, parseInt(process.env.RAW_CACHE_CHECKPERIOD || '300', 10) || 300),
+    maxKeys: Math.max(15000, parseInt(process.env.RAW_CACHE_MAX_KEYS || '30000', 10) || 30000),
+    useClones: false,
+    deleteOnExpire: true
+});
+const cloudBuildCache = new NodeCache({
+    stdTTL: 900,
+    checkperiod: Math.max(15, parseInt(process.env.CLOUD_BUILD_CACHE_CHECKPERIOD || '60', 10) || 60),
+    maxKeys: Math.max(5000, parseInt(process.env.CLOUD_BUILD_CACHE_MAX_KEYS || '10000', 10) || 10000),
+    useClones: false,
+    deleteOnExpire: true
+});
 const cloudBuildInflight = new Map();
 const sharedFetchInflight = new Map();
 const streamInflight = new Map();
@@ -32,6 +50,7 @@ const gunzipAsync = promisify(zlib.gunzip);
 const streamCacheTags = new Map();
 const streamCacheKeysByHash = new Map();
 const streamCacheKeysByImdb = new Map();
+const streamCacheKeysByEpisode = new Map();
 
 function getStreamCacheStorageKey(key) {
     return `stream:${String(key || '').trim()}`;
@@ -53,6 +72,17 @@ function normalizeHashTag(hash) {
 function normalizeImdbTag(imdbId) {
     const normalized = String(imdbId || '').trim().toLowerCase();
     return /^tt\d+$/.test(normalized) ? normalized : null;
+}
+
+function normalizeEpisodeTag(imdbOrPayload, seasonValue = null, episodeValue = null) {
+    const imdbId = typeof imdbOrPayload === 'object' && imdbOrPayload !== null ? imdbOrPayload.imdbId : imdbOrPayload;
+    const season = typeof imdbOrPayload === 'object' && imdbOrPayload !== null ? imdbOrPayload.season : seasonValue;
+    const episode = typeof imdbOrPayload === 'object' && imdbOrPayload !== null ? imdbOrPayload.episode : episodeValue;
+    const normalizedImdb = normalizeImdbTag(imdbId);
+    const parsedSeason = Number.isInteger(Number(season)) ? Number(season) : null;
+    const parsedEpisode = Number.isInteger(Number(episode)) ? Number(episode) : null;
+    if (!normalizedImdb || !Number.isInteger(parsedSeason) || parsedSeason <= 0 || !Number.isInteger(parsedEpisode) || parsedEpisode <= 0) return null;
+    return `${normalizedImdb}:${parsedSeason}:${parsedEpisode}`;
 }
 
 function addTaggedCacheKey(indexMap, tag, cacheKey) {
@@ -83,6 +113,7 @@ function unregisterStreamCacheKey(cacheKey) {
         removeTaggedCacheKey(streamCacheKeysByHash, hash, normalizedKey);
     }
     if (tags.imdbId) removeTaggedCacheKey(streamCacheKeysByImdb, tags.imdbId, normalizedKey);
+    if (tags.episodeLocator) removeTaggedCacheKey(streamCacheKeysByEpisode, tags.episodeLocator, normalizedKey);
     streamCacheTags.delete(normalizedKey);
 }
 
@@ -96,10 +127,16 @@ function registerStreamCacheKey(cacheKey, tags = {}) {
         .map(normalizeHashTag)
         .filter(Boolean))];
     const imdbId = normalizeImdbTag(tags?.imdbId);
+    const episodeLocator = normalizeEpisodeTag(tags?.episodeLocator || {
+        imdbId,
+        season: tags?.imdbSeason,
+        episode: tags?.imdbEpisode
+    });
 
-    streamCacheTags.set(normalizedKey, { hashes: uniqueHashes, imdbId });
+    streamCacheTags.set(normalizedKey, { hashes: uniqueHashes, imdbId, episodeLocator });
     for (const hash of uniqueHashes) addTaggedCacheKey(streamCacheKeysByHash, hash, normalizedKey);
     if (imdbId) addTaggedCacheKey(streamCacheKeysByImdb, imdbId, normalizedKey);
+    if (episodeLocator) addTaggedCacheKey(streamCacheKeysByEpisode, episodeLocator, normalizedKey);
 }
 
 function deleteStreamCacheKey(cacheKey) {
@@ -196,6 +233,9 @@ async function hydrateLocalFromSharedCache(key, row, options = {}) {
         : EMPTY_STREAM_TTL;
     writeLocalStreamCache(normalizedKey, value, ttlSeconds, {
         imdbId: row.imdb_id || null,
+        imdbSeason: row.imdb_season,
+        imdbEpisode: row.imdb_episode,
+        episodeLocator: { imdbId: row.imdb_id || null, season: row.imdb_season, episode: row.imdb_episode },
         hashes: Array.isArray(row.hashes) ? row.hashes : []
     });
 
@@ -278,6 +318,8 @@ const Cache = {
                 expires_at: expiresAt,
                 stale_until: staleUntil,
                 imdb_id: tags?.imdbId || null,
+                imdb_season: Number.isInteger(Number(tags?.imdbSeason)) ? Number(tags.imdbSeason) : null,
+                imdb_episode: Number.isInteger(Number(tags?.imdbEpisode)) ? Number(tags.imdbEpisode) : null,
                 hashes: Array.isArray(tags?.hashes) ? tags.hashes : [],
                 content_date: sharedPolicy.contentDateIso || null,
                 freshness_bucket: sharedPolicy.freshnessBucket || null,
@@ -397,6 +439,7 @@ const Cache = {
         streamCacheTags.clear();
         streamCacheKeysByHash.clear();
         streamCacheKeysByImdb.clear();
+        streamCacheKeysByEpisode.clear();
     },
     invalidateStreamsByHashes: async (hashes, reason = 'hash_update') => {
         const normalizedHashes = [...new Set((Array.isArray(hashes) ? hashes : [])
@@ -446,10 +489,35 @@ const Cache = {
 
         return { invalidated: keys.size, imdbId: normalizedImdb, deleted, sharedDeleted };
     },
+    invalidateStreamsByEpisode: async (episodePayload, reason = 'episode_update') => {
+        const normalizedEpisode = normalizeEpisodeTag(episodePayload);
+        if (!normalizedEpisode) return { invalidated: 0, episode: null, deleted: 0, sharedDeleted: 0 };
+
+        const keys = collectTaggedStreamKeys(streamCacheKeysByEpisode, [normalizedEpisode]);
+        let deleted = 0;
+        for (const cacheKey of keys) deleted += deleteStreamCacheKey(cacheKey);
+
+        let sharedDeleted = 0;
+        if (supportsSharedStreamCache() && typeof dbHelper.deleteSharedStreamCacheByEpisode === 'function') {
+            const [imdbId, season, episode] = normalizedEpisode.split(':');
+            try {
+                sharedDeleted = await dbHelper.deleteSharedStreamCacheByEpisode(imdbId, Number(season), Number(episode));
+            } catch (_) {}
+        }
+
+        if (keys.size > 0 || sharedDeleted > 0) {
+            incrementMetric('cache.stream.invalidations');
+            incrementMetric('cache.stream.invalidatedKeys', keys.size + sharedDeleted);
+            logger.info(`[CACHE] Stream invalidation by episode | reason=${reason} | episode=${normalizedEpisode} | keys=${keys.size} | shared=${sharedDeleted}`);
+        }
+
+        return { invalidated: keys.size, episode: normalizedEpisode, deleted, sharedDeleted };
+    },
     getStreamCacheIndexStats: () => ({
         trackedKeys: streamCacheTags.size,
         hashBuckets: streamCacheKeysByHash.size,
         imdbBuckets: streamCacheKeysByImdb.size,
+        episodeBuckets: streamCacheKeysByEpisode.size,
         cachedEntries: myCache.keys().filter((key) => String(key).startsWith('stream:')).length,
         staleEntries: rawCache.keys().filter((key) => String(key).startsWith('stream_shadow:')).length,
         dbLookupEntries: rawCache.keys().filter((key) => String(key).startsWith('dblookup:')).length,

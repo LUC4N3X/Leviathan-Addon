@@ -532,7 +532,8 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
 
             if (updated > 0) {
                 await Cache.invalidateStreamsByHashes([item.hash], `${reason}_cached`);
-                if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, `${reason}_cached`);
+                if (meta?.imdb_id && Number.isInteger(meta?.season) && meta.season > 0 && Number.isInteger(meta?.episode) && meta.episode > 0 && typeof Cache.invalidateStreamsByEpisode === 'function') await Cache.invalidateStreamsByEpisode({ imdbId: meta.imdb_id, season: meta.season, episode: meta.episode }, `${reason}_cached`);
+                else if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, `${reason}_cached`);
                 const dbLookupKey = getMetaDbLookupKey(meta);
                 if (dbLookupKey) await Cache.invalidateDbTorrents(dbLookupKey, `${reason}_cached`);
                 logger.info(`[RD AVAILABILITY] Persisted resolved hit | reason=${reason} | service=${normalizedService} | hash=${item.hash} | updated=${updated}`);

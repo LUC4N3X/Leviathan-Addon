@@ -1,17 +1,48 @@
 require('dotenv').config();
 
 const winston = require('winston');
+const { getRequestContext } = require('./request_context');
+
+function enrichWithRequestContext(info) {
+    const context = getRequestContext();
+    if (context?.requestId && !info.requestId) info.requestId = context.requestId;
+    if (context?.method && !info.method) info.method = context.method;
+    if (context?.path && !info.path) info.path = context.path;
+    return info;
+}
+
+function serializeExtraFields(info) {
+    const reserved = new Set(['level', 'message', 'timestamp', 'requestId', 'method', 'path']);
+    const extras = Object.entries(info)
+        .filter(([key]) => !reserved.has(key))
+        .reduce((acc, [key, value]) => {
+            acc[key] = value;
+            return acc;
+        }, {});
+    return Object.keys(extras).length > 0 ? ` ${JSON.stringify(extras)}` : '';
+}
 
 const logger = winston.createLogger({
-    level: 'debug',
+    level: process.env.LOG_LEVEL || 'debug',
     format: winston.format.combine(
+        winston.format((info) => enrichWithRequestContext(info))(),
         winston.format.timestamp(),
         winston.format.json()
     ),
     transports: [
         new winston.transports.File({ filename: 'error.log', level: 'error' }),
         new winston.transports.File({ filename: 'combined.log' }),
-        new winston.transports.Console({ format: winston.format.simple() })
+        new winston.transports.Console({
+            format: winston.format.combine(
+                winston.format((info) => enrichWithRequestContext(info))(),
+                winston.format.timestamp(),
+                winston.format.printf((info) => {
+                    const reqPart = info.requestId ? ` [req:${info.requestId}]` : '';
+                    const routePart = info.method && info.path ? ` ${info.method} ${info.path}` : '';
+                    return `${info.timestamp} ${info.level}:${reqPart}${routePart} ${info.message}${serializeExtraFields(info)}`;
+                })
+            )
+        })
     ]
 });
 

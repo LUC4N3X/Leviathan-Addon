@@ -116,7 +116,8 @@ function createAppServices({
             ]);
             if (updated > 0) {
                 await Cache.invalidateStreamsByHashes([item.hash], 'lazy_play_cached');
-                if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, 'lazy_play_cached');
+                if (meta?.imdb_id && Number.isInteger(meta?.season) && meta.season > 0 && Number.isInteger(meta?.episode) && meta.episode > 0 && typeof Cache.invalidateStreamsByEpisode === 'function') await Cache.invalidateStreamsByEpisode({ imdbId: meta.imdb_id, season: meta.season, episode: meta.episode }, 'lazy_play_cached');
+                else if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, 'lazy_play_cached');
                 const dbLookupKey = getDbLookupCacheKey(meta);
                 if (dbLookupKey) await Cache.invalidateDbTorrents(dbLookupKey, 'lazy_play_cached');
                 logger.info(`[LAZY PLAY] Stato cache aggiornato a CACHED | service=${normalizedService} | hash=${item.hash} | fileIdx=${Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : 'n/a'} | updated=${updated}`);
