@@ -6,8 +6,6 @@ const he = require("he");
 const { ENGINE_BROWSER_PROFILES } = require('../core/browser_profiles');
 
 const BROWSER_PROFILES = ENGINE_BROWSER_PROFILES;
-const { tokenizeTitle: canonicalTokenizeTitle, hasExplicitSeasonMarker: canonicalHasExplicitSeasonMarker } = require('../core/canonical/title_parser');
-const { resolveLangMode: canonicalResolveLangMode, getAcceptLanguage: canonicalGetAcceptLanguage } = require('../core/canonical/language_rules');
 
 const DEFAULT_TRACKERS = [
     "udp://tracker.opentrackr.org:1337/announce",
@@ -189,7 +187,13 @@ function normalizeSpaces(value) {
 }
 
 function tokenizeTitle(value) {
-    return canonicalTokenizeTitle(value, { keepNumbers: true });
+    return clean(value)
+        .toLowerCase()
+        .replace(/\b(?:the|a|an|un|una|il|lo|la|gli|le|di|de|del|della|season|stagione|episode|episodio|part)\b/g, " ")
+        .replace(/\b(?:2160p|1080p|720p|480p|x264|x265|h264|h265|hevc|hdr|dv|ddp|aac|ac3|remux|webdl|webrip|bluray|brrip|dvdrip)\b/g, " ")
+        .replace(/\b(19\d{2}|20\d{2})\b/g, " ")
+        .split(/\s+/)
+        .filter(token => token && token.length > 1);
 }
 
 function titleMatchScore(candidate, expectedTitle) {
@@ -267,11 +271,16 @@ function normalizeType(type) {
 }
 
 function resolveLangMode(options = {}) {
-    return canonicalResolveLangMode({ ...options, defaultMode: 'ita' });
+    const explicit = String(options.langMode || options.languageMode || options.language || '').toLowerCase();
+    if (explicit === 'ita' || explicit === 'eng' || explicit === 'all') return explicit;
+    if (typeof options.allowEng === 'boolean') return options.allowEng ? 'all' : 'ita';
+    return 'ita';
 }
 
 function getAcceptLanguage(langMode = 'ita') {
-    return canonicalGetAcceptLanguage(langMode);
+    if (langMode === 'eng') return 'en-US,en;q=0.9';
+    if (langMode === 'all') return 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7';
+    return 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7';
 }
 
 function getStealthHeaders(url, langMode = 'ita') {
@@ -448,20 +457,18 @@ function getLanguageScore(name, langMode = 'ita', context = {}) {
     }
 
     if (hasItalianAudio) return 30;
-    if (isTrustedItalian && !hasOtherLanguage) return 22;
-    if (hasItalianSubs) return 12;
-    if (animeMode) {
-        if (hasMultiLanguage) return 18;
-        if (hasEnglishAudio && !hasOtherLanguage) return 10;
-        if (!hasOtherLanguage || ANIME_RELEASE_GROUP_REGEX.test(normalized)) return 8;
-        return -8;
-    }
+    if (hasMultiLanguage && hasItalianAudio) return 24;
+    if (isTrustedItalian && !hasOtherLanguage && !hasEnglishAudio) return 22;
+    if (hasItalianSubs && !hasEnglishAudio) return 12;
+
     if (hasEnglishAudio || hasOtherLanguage) return -40;
-    return -8;
+    if (hasMultiLanguage && !hasItalianAudio) return -40;
+
+    return animeMode ? -18 : -8;
 }
 
 function hasExplicitSeasonMarker(text = '') {
-    return canonicalHasExplicitSeasonMarker(text);
+    return /\b(?:S(?:EASON)?\s*0?\d{1,2}|\d{1,2}x\d{1,3}|STAGIONE\s*0?\d{1,2}|(?:1ST|2ND|3RD|4TH)\s+SEASON)\b/i.test(String(text || ''));
 }
 
 function isValidResult(name, langMode = 'ita', context = {}) {
