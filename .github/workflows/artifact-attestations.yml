@@ -1,0 +1,47 @@
+name: Build Provenance
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  attestations: write
+  id-token: write
+
+jobs:
+  attest-source-bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test suite
+        run: npm test
+
+      - name: Create source bundle
+        run: |
+          mkdir -p dist
+          zip -r dist/leviathan-source.zip . -x '*.git*' 'node_modules/*' 'dist/*'
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: leviathan-source
+          path: dist/leviathan-source.zip
+
+      - name: Generate artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/leviathan-source.zip
