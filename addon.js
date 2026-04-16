@@ -166,8 +166,10 @@ function bootstrapServer() {
     }
 
     dbHelper.initDatabase();
-    if (Cache && typeof Cache.startCrossWorkerInvalidationBus === 'function') {
-        Cache.startCrossWorkerInvalidationBus();
+    if (Cache && typeof Cache.startInvalidationSync === 'function') {
+        Cache.startInvalidationSync().catch((error) => {
+            logger.warn(`[CACHE] Invalidation sync bootstrap failed: ${error.message}`);
+        });
     }
 
     const { getRdAuditorStatus } = bootRealDebridAuditor({

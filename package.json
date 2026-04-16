@@ -6,7 +6,13 @@
   "scripts": {
     "start": "node addon.js",
     "dev": "nodemon -r dotenv/config addon.js",
-    "clean": "rm -rf node_modules package-lock.json && npm install"
+    "clean": "rm -rf node_modules && npm ci",
+    "test": "node --test",
+    "lint": "node scripts/lint.js",
+    "format": "node scripts/format.js",
+    "format:check": "node scripts/format-check.js",
+    "check": "npm run lint && npm run format:check && npm test",
+    "bench": "node scripts/benchmark.js"
   },
   "dependencies": {
     "axios": "^1.7.9",
