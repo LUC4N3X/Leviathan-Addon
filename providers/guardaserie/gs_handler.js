@@ -34,7 +34,7 @@ function createClient() {
 
 async function getTmdbFromImdb(imdbId, client) {
     if (!imdbId || !imdbId.startsWith("tt")) return imdbId;
-    
+
     try {
         const url = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_KEY}&external_source=imdb_id`;
         const response = await client.get(url, { timeout: 5000 });
@@ -56,7 +56,7 @@ async function getTmdbFromImdb(imdbId, client) {
         match = finalUrlTv.match(/\/tv\/(\d+)/);
         if (match) return match[1];
     } catch (e) {}
-    
+
     return null;
 }
 
@@ -66,7 +66,7 @@ async function getMediaInfo(tmdbId, type, client) {
         const response = await client.get(url, { timeout: 5000 });
         const data = response.data;
         if (!data) return { title: null, date: null };
-        
+
         if (type === 'movie') {
             return { title: data.title, date: data.release_date ? data.release_date.substring(0, 4) : '' };
         } else {
@@ -118,7 +118,7 @@ function unpackDeanEdwards(html, regexPattern) {
         if (!regexPattern) return unpacked;
         const extracted = unpacked.match(regexPattern);
         if (extracted) return extracted[1];
-        
+
     } catch (e) {}
     return null;
 }
@@ -171,7 +171,7 @@ function deobfuscateSupervideo(htmlText) {
                 let k = isArray ? kRaw.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')) : kRaw.split('|');
                 let limit = Math.min(c, k.length, 2048);
                 let replacements = {};
-                
+
                 for (let i = 0; i < limit; i++) {
                     if (k[i]) replacements[encodeBase(i, a)] = k[i];
                 }
@@ -308,13 +308,13 @@ async function extractSupervideo(url, client) {
     try {
         const embedUrl = normalizeEmbedUrl(url);
         const urlObj = new URL(embedUrl);
-        
+
         const id = urlObj.pathname.split('/').pop().replace(/\.html|embed-|\/k\//gi, '');
         const targetUrl = `${urlObj.origin}/e/${id}`;
-        
+
         const fp = getStealthHeaders();
-        const customHeaders = { 
-            'Referer': `${urlObj.origin}/`, 
+        const customHeaders = {
+            'Referer': `${urlObj.origin}/`,
             'Origin': urlObj.origin,
             'User-Agent': fp['User-Agent'],
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -357,11 +357,11 @@ async function extractDropload(url, client) {
         const res = await client.get(url, { headers: getStealthHeaders(), timeout: 6000 });
         const html = res.data;
         if (!html || typeof html !== 'string') return null;
-        
+
         const dlRegex = /sources:\s*\[\s*\{\s*file\s*:\s*["'](https?:\/\/[^"']+)["']/;
         const linkMatch = html.match(dlRegex);
         if (linkMatch) return linkMatch[1];
-        
+
         const unpacked = unpackDeanEdwards(html, dlRegex);
         if (unpacked) return unpacked;
     } catch (e) {}
@@ -374,11 +374,11 @@ async function extractMixdrop(url, client) {
         const res = await client.get(url, { headers: getStealthHeaders(), timeout: 6000 });
         const html = res.data;
         if (!html || typeof html !== 'string') return null;
-        
+
         const mixdropRegex = /(?:MDCore|Core|wurl)\s*(?:\.wurl)?\s*=\s*["']([^"']+)["']/;
         const linkMatch = html.match(mixdropRegex);
         if (linkMatch) return linkMatch[1].startsWith("//") ? `https:${linkMatch[1]}` : linkMatch[1];
-        
+
         const unpackedHtml = unpackDeanEdwards(html);
         if (unpackedHtml && typeof unpackedHtml === 'string') {
             const unpackedMatch = unpackedHtml.match(mixdropRegex);
@@ -392,14 +392,14 @@ async function processHoster(videoLink, client, cleanTitle) {
     if (!videoLink) return null;
     let mediaUrl = null, hostName = "Sconosciuto", priority = 9, headers = null;
     const vLinkLower = videoLink.toLowerCase();
-    
+
     if (vLinkLower.includes("supervideo")) {
-        hostName = "Supervideo"; priority = 1; 
+        hostName = "Supervideo"; priority = 1;
         const svData = await extractSupervideo(videoLink, client);
         if (svData) {
             mediaUrl = svData.url;
-            headers = { 
-                "Referer": `${svData.origin}/`, 
+            headers = {
+                "Referer": `${svData.origin}/`,
                 "Origin": svData.origin,
                 "User-Agent": svData.userAgent
             };
@@ -465,12 +465,12 @@ function extractLinksAdvanced(html, season, episode) {
         const $ = cheerio.load(html);
         const links = new Set();
         const epRegex = new RegExp(`\\b${season}x(?:${episode.toString().padStart(2, '0')}|${episode})\\b`, 'i');
-        
+
         $('*').contents().filter((_, el) => el.type === 'text' && epRegex.test(el.data)).each((_, el) => {
             let parent = $(el).parent();
             for (let i = 0; i < 3; i++) {
                 if (!parent || parent.length === 0) break;
-                
+
                 parent.find('[data-link]').each((_, tag) => {
                     const dl = $(tag).attr('data-link');
                     if (dl) links.add(dl);
@@ -494,12 +494,12 @@ function extractLinksAdvanced(html, season, episode) {
 }
 
 async function searchGuardaserie(meta, config) {
-    if (!meta || !meta.isSeries || !meta.imdb_id) return []; 
+    if (!meta || !meta.isSeries || !meta.imdb_id) return [];
     if (!config?.filters?.enableGs) return [];
 
     const targetDomain = getTargetDomain();
     const client = createClient();
-    
+
     const cleanId = meta.imdb_id;
     const season = parseInt(meta.season, 10);
     const episode = parseInt(meta.episode, 10);
@@ -508,7 +508,7 @@ async function searchGuardaserie(meta, config) {
 
     try {
         let showName = meta.title || "";
-        
+
         if (cleanId.startsWith("tt")) {
             const tmdbId = await getTmdbFromImdb(cleanId, client);
             if (tmdbId) {
@@ -518,7 +518,7 @@ async function searchGuardaserie(meta, config) {
                 }
             }
         }
-        
+
         if (!showName || showName === meta.title) {
             try {
                 const metaRes = await axios.get(`https://v3-cinemeta.strem.io/meta/series/${cleanId}.json`, { timeout: 4000 });
@@ -536,8 +536,8 @@ async function searchGuardaserie(meta, config) {
             const slug = slugify(showName);
             if (slug) {
                 const guesses = [
-                    `${targetDomain}/serie/${slug}/`, 
-                    `${targetDomain}/${slug}/`, 
+                    `${targetDomain}/serie/${slug}/`,
+                    `${targetDomain}/${slug}/`,
                     `${targetDomain}/serietv/${slug}/`
                 ];
                 const tasks = guesses.map(url => checkCandidatePage(url, cleanId, client));
@@ -557,7 +557,7 @@ async function searchGuardaserie(meta, config) {
                 if (response.status === 200 && typeof response.data === 'string') {
                     const $ = cheerio.load(response.data);
                     const candidates = [];
-                    
+
                     $('.mlnh-2').each((_, div) => {
                         const aTag = $(div).find('h2 a');
                         const href = aTag.attr('href');
@@ -566,7 +566,7 @@ async function searchGuardaserie(meta, config) {
                             candidates.push(href.startsWith('/') ? `${targetDomain}${href}` : href);
                         }
                     });
-                    
+
                     if (candidates.length > 0) {
                         const tasks = candidates.map(url => checkCandidatePage(url, cleanId, client));
                         const result = await getFirstValidCandidate(tasks);
@@ -585,7 +585,7 @@ async function searchGuardaserie(meta, config) {
 
         let videoLinks = [];
         const regexMatch = new RegExp(`data-num="${season}x(?:${episode}|${episode.toString().padStart(2, '0')})"`, 'i').exec(pageHtml);
-        
+
         if (regexMatch) {
             const mirrorsStart = pageHtml.indexOf('<div class="mirrors">', regexMatch.index);
             if (mirrorsStart !== -1) {
@@ -620,7 +620,7 @@ async function searchGuardaserie(meta, config) {
 
         const streams = [];
         const seenUrls = new Set();
-        
+
         results.sort((a, b) => (a._priority || 9) - (b._priority || 9));
 
         for (const res of results) {

@@ -60,20 +60,20 @@ const sourceHealth = require('./lib/source_health');
 const { annotateResult, compareRankedItems } = require("./lib/result_ranker");
 
 const CONFIG = {
-  INDEXER_URL: process.env.INDEXER_URL || "", 
+  INDEXER_URL: process.env.INDEXER_URL || "",
   CINEMETA_URL: "https://v3-cinemeta.strem.io",
-  KITSU_URL: "https://anime-kitsu.strem.fun", 
+  KITSU_URL: "https://anime-kitsu.strem.fun",
   REAL_SIZE_FILTER: 80 * 1024 * 1024,
   MAX_RESULTS: 70,
   TIMEOUTS: {
     TMDB: 2000,
-    SCRAPER: 4000,          
-    REMOTE_INDEXER: 1500,   
-    LOCAL_DB: 1500, 
-    DB_QUERY: 2000,         
-    DEBRID: 8000,           
-    PACK_RESOLVER: 3000,    
-    EXTERNAL: 8000          
+    SCRAPER: 4000,
+    REMOTE_INDEXER: 1500,
+    LOCAL_DB: 1500,
+    DB_QUERY: 2000,
+    DEBRID: 8000,
+    PACK_RESOLVER: 3000,
+    EXTERNAL: 8000
   }
 };
 
@@ -109,8 +109,8 @@ function estimateVisualSize(knownSize, title, isSeries, isPack, infoHash) {
                 else if (is720 && sizeInGB > 3) isSane = false;
                 else if (!is4K && !is1080 && !is720 && sizeInGB > 1.5) isSane = false;
             } else {
-                if (is4K && sizeInGB > 100) isSane = false; 
-                else if (is1080 && sizeInGB > 40) isSane = false; 
+                if (is4K && sizeInGB > 100) isSane = false;
+                else if (is1080 && sizeInGB > 40) isSane = false;
                 else if (is720 && sizeInGB > 12) isSane = false;
                 else if (!is4K && !is1080 && !is720 && sizeInGB > 5) isSane = false;
             }
@@ -409,7 +409,7 @@ function isSafeForItalian(item) {
 }
 
 function validateStreamRequest(type, id) {
-  const validTypes = ['movie', 'series', 'anime']; 
+  const validTypes = ['movie', 'series', 'anime'];
   if (!validTypes.includes(type)) throw new Error(`Tipo non valido: ${type}`);
   const cleanIdToCheck = id.replace('ai-recs:', '');
   const idPattern = /^(tt\d+|\d+|tmdb:\d+|kitsu:\d+)(:\d+)?(:\d+)?$/;

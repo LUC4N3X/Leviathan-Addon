@@ -64,7 +64,7 @@ class GuardaFlixScraper {
         this.config = config || {};
         this.AES_KEY = Buffer.from('kiemtienmua911ca');
         this.AES_IV = Buffer.from('1234567890oiuytr');
-        
+
         logDebug("Inizializzato. Config MFP presente?", !!(this.config?.mediaflow?.url));
     }
 
@@ -73,23 +73,23 @@ class GuardaFlixScraper {
             logDebug(`Recupero TMDB meta per ID: ${imdb_id}`);
             const res = await fetchSmart(`https://api.themoviedb.org/3/find/${imdb_id}?api_key=${CONFIG.TMDB_API_KEY}&external_source=imdb_id&language=it-IT`);
             const media = res.data.movie_results?.[0] || res.data.tv_results?.[0];
-            
+
             if (!media) {
                 logDebug(`Nessun risultato TMDB trovato per ${imdb_id}`);
                 return null;
             }
-            
+
             const meta = {
                 title_it: media.title || media.name,
                 title_orig: media.original_title || media.original_name,
                 year: (media.release_date || media.first_air_date || "").substring(0, 4)
             };
-            
+
             logDebug("Meta TMDB trovati:", meta);
             return meta;
-        } catch (err) { 
+        } catch (err) {
             logDebug("Errore getTmdbMeta:", err.message);
-            return null; 
+            return null;
         }
     }
 
@@ -106,7 +106,7 @@ class GuardaFlixScraper {
         const candSlug = slugify(text);
         if (querySlug && (querySlug === candSlug || hrefLower.includes(querySlug))) score += 1.8;
         if (year && (text.includes(year) || hrefLower.includes(year))) score += 0.35;
-        
+
         return score;
     }
 
@@ -116,7 +116,7 @@ class GuardaFlixScraper {
             logDebug(`Esecuzione ricerca su sito: ${queryUrl}`);
             const res = await fetchSmart(queryUrl);
             const $ = cheerio.load(res.data);
-            
+
             let bestHref = null, bestScore = -1;
             const queryNorm = normalizeText(title);
             const querySlug = slugify(title);
@@ -124,10 +124,10 @@ class GuardaFlixScraper {
             $('a[href]').each((_, el) => {
                 const href = $(el).attr('href');
                 if (!href.toLowerCase().includes('/film/')) return;
-                
+
                 const text = $(el).text().trim() || $(el).attr('title') || $(el).find('img').attr('alt') || '';
                 const score = this.scoreCandidate(queryNorm, querySlug, year, href, text);
-                
+
                 if (score > bestScore) {
                     bestScore = score;
                     bestHref = href;
@@ -135,7 +135,7 @@ class GuardaFlixScraper {
             });
 
             logDebug(`Miglior candidato trovato: ${bestHref} (Score: ${bestScore})`);
-            
+
             if (bestHref && bestScore >= 0.65) {
                 const finalHref = bestHref.startsWith('http') ? bestHref : new URL(bestHref, CONFIG.BASE_URL).href;
                 logDebug(`Candidato accettato: ${finalHref}`);
@@ -143,9 +143,9 @@ class GuardaFlixScraper {
             }
             logDebug("Candidato scartato o non trovato (score < 0.65).");
             return null;
-        } catch (err) { 
+        } catch (err) {
             logDebug("Errore searchMovie:", err.message);
-            return null; 
+            return null;
         }
     }
 
@@ -157,10 +157,10 @@ class GuardaFlixScraper {
             const encryptedBytes = Buffer.from(cleanedHex, 'hex');
             const decipher = crypto.createDecipheriv('aes-128-cbc', this.AES_KEY, this.AES_IV);
             decipher.setAutoPadding(true);
-            
+
             let decrypted = decipher.update(encryptedBytes);
             decrypted = Buffer.concat([decrypted, decipher.final()]);
-            
+
             const json = JSON.parse(decrypted.toString('utf8'));
             const extracted = json.cf || json.source || null;
             logDebug(`Payload decriptato con successo. Link estratto: ${extracted ? "SI" : "NO"}`);
@@ -176,7 +176,7 @@ class GuardaFlixScraper {
             logDebug(`Inizio estrazione LoadM API per: ${iframeUrl}`);
             let videoId = "";
             const parsedOrigin = new URL(iframeUrl);
-            
+
             if (iframeUrl.includes('#')) {
                 videoId = iframeUrl.split('#').pop().trim();
             } else if (parsedOrigin.pathname.includes('/e/')) {
@@ -190,7 +190,7 @@ class GuardaFlixScraper {
 
             const baseUrl = parsedOrigin.origin + '/'; // Es: https://loadm.cam/
             const apiUrl = `${baseUrl}api/v1/video`;
-            
+
             // Usiamo ESATTAMENTE la query string che funziona nel Python
             const params = new URLSearchParams({
                 id: videoId,
@@ -201,7 +201,7 @@ class GuardaFlixScraper {
             const fullApiUrl = `${apiUrl}?${params.toString()}`;
 
             logDebug(`Chiamata API LoadM (Stringa esatta): ${fullApiUrl}`);
-            
+
             let rawPayload;
             try {
                 // Tentativo primario con got-scraping per bypass TLS
@@ -222,7 +222,7 @@ class GuardaFlixScraper {
             }
 
             logDebug(`Payload ricevuto, lunghezza: ${rawPayload.length}`);
-            
+
             const m3u8 = this.decryptLoadmPayload(rawPayload);
             if (!m3u8) {
                 logDebug("Impossibile estrarre M3U8 dal payload decriptato.");
@@ -261,7 +261,7 @@ class GuardaFlixScraper {
     async processIframe(src, pageUrl, mediaTitle, isSub, depth = 0) {
         logDebug(`Processo iframe (Depth: ${depth}): ${src}`);
         if (depth > 2 || !src) return [];
-        
+
         try {
             const absoluteSrc = new URL(src, pageUrl).href;
             const lowerSrc = absoluteSrc.toLowerCase();
@@ -276,19 +276,19 @@ class GuardaFlixScraper {
             const res = await fetchSmart(absoluteSrc, { headers: { 'Referer': pageUrl } });
             const $ = cheerio.load(res.data);
             const nestedStreams = [];
-            
+
             const nestedIframes = $('iframe[src], iframe[data-src]').map((_, el) => $(el).attr('data-src') || $(el).attr('src')).get();
             logDebug(`Trovati ${nestedIframes.length} iframe annidati.`);
-            
+
             for (const nestedSrc of nestedIframes) {
                 const results = await this.processIframe(nestedSrc, absoluteSrc, mediaTitle, isSub, depth + 1);
                 nestedStreams.push(...results);
             }
             return nestedStreams;
 
-        } catch (err) { 
+        } catch (err) {
             logDebug("Errore processIframe:", err.message);
-            return []; 
+            return [];
         }
     }
 
@@ -297,10 +297,10 @@ class GuardaFlixScraper {
             logDebug(`Risoluzione pagina film: ${pageUrl}`);
             const res = await fetchSmart(pageUrl);
             const $ = cheerio.load(res.data);
-            
+
             const mediaTitle = cleanTitle($('meta[property="og:title"]').attr('content') || $('title').text());
             logDebug(`Titolo media estratto: ${mediaTitle}`);
-            
+
             const optLangMap = {};
             $('a[href^="#options-"]').each((_, el) => {
                 optLangMap[$(el).attr('href').substring(1)] = $(el).text().toLowerCase().includes('sub');
@@ -313,7 +313,7 @@ class GuardaFlixScraper {
 
             const jobs = [];
             const optionDivs = $('div[id^="options-"].video.aa-tb');
-            
+
             if (optionDivs.length > 0) {
                 optionDivs.each((_, div) => {
                     const isSub = optLangMap[$(div).attr('id')] ?? defaultIsSub;
@@ -330,11 +330,11 @@ class GuardaFlixScraper {
             }
 
             logDebug(`Lavori iframe estratti dalla pagina: ${jobs.length}`);
-            
+
             const streams = [];
             const promises = jobs.map(job => this.processIframe(job.src, pageUrl, mediaTitle, job.isSub));
             const results = await Promise.allSettled(promises);
-            
+
             results.forEach(result => {
                 if (result.status === 'fulfilled' && result.value.length > 0) {
                     streams.push(...result.value);
@@ -345,9 +345,9 @@ class GuardaFlixScraper {
             logDebug(`Stream finali dopo deduplicazione: ${deduplicated.length}`);
             return deduplicated;
 
-        } catch (err) { 
+        } catch (err) {
             logDebug("Errore resolvePage:", err.message);
-            return []; 
+            return [];
         }
     }
 
@@ -363,7 +363,7 @@ class GuardaFlixScraper {
 
         const searchCandidates = [tmdbMeta.title_it, tmdbMeta.title_orig].filter(Boolean);
         let pageUrl = null;
-        
+
         for (const title of searchCandidates) {
             logDebug(`Tentativo di ricerca con titolo: ${title}`);
             pageUrl = await this.searchMovie(title, tmdbMeta.year);

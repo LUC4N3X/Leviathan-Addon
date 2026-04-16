@@ -41,7 +41,7 @@ async function requestWithSecurity(url, headers = {}, cookies = "") {
 
         // Controllo Anti-DDoS / Security
         const securityMatch = response.data.match(/SecurityAW-([A-Za-z0-9]{2})=([^;"]+)/);
-        
+
         if (securityMatch || response.status === 202) {
             console.log("🛡️ [AW] Security Check detected...");
             let newCookie = "";
@@ -61,7 +61,7 @@ async function requestWithSecurity(url, headers = {}, cookies = "") {
                 console.log(`🔓 [AW] Security Solved: ${newCookie}`);
                 config.headers['Cookie'] = newCookie;
                 response = await axios.get(url, config);
-                response._securityCookie = newCookie; 
+                response._securityCookie = newCookie;
             }
         }
         return response;
@@ -73,8 +73,8 @@ async function requestWithSecurity(url, headers = {}, cookies = "") {
 
 // --- GET MP4 LINK ---
 async function getMp4(animeUrl, isMovie, episode, cookies, index) {
-    let langLabel = "🇯🇵 JPN • Sub ITA"; 
-    if (index === 1) langLabel = "🇮🇹 ITA • Dub"; 
+    let langLabel = "🇯🇵 JPN • Sub ITA";
+    if (index === 1) langLabel = "🇮🇹 ITA • Dub";
 
     console.log(`📥 [AW] Fetching MP4 for Index ${index} (${langLabel})...`);
 
@@ -100,7 +100,7 @@ async function getMp4(animeUrl, isMovie, episode, cookies, index) {
 
         const $ep = cheerio.load(response.data);
         const altLink = $ep('#alternativeDownloadLink').attr('href');
-        
+
         if (altLink) {
             try {
                 // Verifica rapida se il link è vivo (HEAD request)
@@ -147,13 +147,13 @@ async function searchAnimeWorld(requestId, meta, config) {
 
     // 4. NORMALIZZAZIONE TITOLO
     let showname = kitsuProvider.normalizeTitle(kitsuData.title);
-    
+
     // Pulizia extra per la ricerca (rimozione anno tra parentesi se presente nel titolo raw)
     showname = showname.replace(/\(\d{4}\)/, "").trim();
 
     const targetDate = kitsuData.date; // Es: "2024-01-07"
     const searchYear = targetDate ? targetDate.substring(0, 4) : "";
-    
+
     console.log(`🔎 [AW] Search: "${showname}" | Year: ${searchYear}`);
 
     const searchUrl = `${AW_DOMAIN}/filter?year=${searchYear}&sort=2&keyword=${encodeURIComponent(showname)}`;
@@ -198,32 +198,32 @@ async function searchAnimeWorld(requestId, meta, config) {
         try {
             const releaseDate = new Date(releaseDateStr);
             const target = new Date(targetDate);
-            
+
             // Calcolo differenza giorni
             const diffTime = Math.abs(releaseDate - target);
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-            
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
             // Tolleranza di 2 giorni sulla data di uscita
             const isMatch = diffDays <= 2 || releaseDateStr === targetDate;
 
             if (isMatch) {
                 console.log(`🎯 [AW] Match Confermato! ID AW: ${validMatchIndex} | Date: ${releaseDateStr}`);
-                
+
                 const animeLink = $(el).attr('href');
                 const animeUrl = `${AW_DOMAIN}${animeLink}`;
-                
+
                 // Usiamo l'episodio parsato da KitsuProvider, fallback a 1
                 const episodeNum = parsedKitsu.episodeNumber || 1;
                 const isMovie = parsedKitsu.isMovie;
 
                 const result = await getMp4(animeUrl, isMovie, episodeNum, currentCookies, validMatchIndex);
-                
+
                 if (result) {
                     const richDescription = generateRichDescription(showname, episodeNum, result.langLabel);
 
                     streams.push({
-                        name: `⛩️ AnimeWorld\n⚡ Direct`, 
-                        title: richDescription,           
+                        name: `⛩️ AnimeWorld\n⚡ Direct`,
+                        title: richDescription,
                         url: result.url,
                         behaviorHints: {
                             notWebReady: false,
@@ -231,7 +231,7 @@ async function searchAnimeWorld(requestId, meta, config) {
                         }
                     });
                 }
-                validMatchIndex++; 
+                validMatchIndex++;
             } else {
                 console.log(`⚠️ [AW] Date Mismatch: Found ${releaseDateStr} vs Target ${targetDate}`);
             }

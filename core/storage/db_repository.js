@@ -7,12 +7,9 @@ const { createSharedStreamCacheRepository } = require('./db/shared_stream_cache_
 
 let pool = null;
 let databaseOptimizationsPromise = null;
-let cacheEventListenerClient = null;
-let cacheEventReconnectTimer = null;
-const cacheEventHandlers = new Set();
-const CACHE_EVENT_CHANNEL = /^[a-zA-Z0-9_]+$/.test(String(process.env.CACHE_EVENT_CHANNEL || 'leviathan_cache_events'))
-  ? String(process.env.CACHE_EVENT_CHANNEL || 'leviathan_cache_events')
-  : 'leviathan_cache_events';
+let notificationClient = null;
+const notificationHandlers = new Map();
+const subscribedChannels = new Set();
 
 const DB_POOL_MAX = normalizers.clampInt(process.env.DB_POOL_MAX, 40, 5, 120);
 const DB_POOL_IDLE_TIMEOUT_MS = normalizers.clampInt(process.env.DB_POOL_IDLE_TIMEOUT_MS, 30000, 5000, 120000);
@@ -93,6 +90,92 @@ async function awaitDatabaseOptimizations() {
   }
 }
 
+function assertNotificationChannel(channel) {
+  const normalized = String(channel || '').trim().toLowerCase();
+  if (!/^[a-z0-9_]+$/.test(normalized)) throw new Error(`Invalid notification channel: ${channel}`);
+  return normalized;
+}
+
+async function ensureNotificationClient() {
+  if (!pool) throw new Error('Pool not initialized');
+  if (notificationClient) return notificationClient;
+
+  const client = await pool.connect();
+  notificationClient = client;
+
+  client.on('notification', (message) => {
+    const channel = String(message?.channel || '').trim().toLowerCase();
+    const handlers = notificationHandlers.get(channel);
+    if (!handlers || handlers.size === 0) return;
+
+    let payload = null;
+    try {
+      payload = message?.payload ? JSON.parse(message.payload) : null;
+    } catch (_) {
+      payload = { raw: message?.payload || null };
+    }
+
+    for (const handler of handlers) {
+      try {
+        handler(payload);
+      } catch (error) {
+        console.warn(`⚠️ Notification handler failed on ${channel}: ${error.message}`);
+      }
+    }
+  });
+
+  client.on('error', (error) => {
+    console.warn(`⚠️ DB notification client error: ${error.message}`);
+    if (notificationClient === client) notificationClient = null;
+  });
+
+  for (const channel of subscribedChannels) {
+    await client.query(`LISTEN ${channel}`);
+  }
+
+  return client;
+}
+
+async function subscribeNotifications(channel, handler) {
+  const normalizedChannel = assertNotificationChannel(channel);
+  if (typeof handler !== 'function') throw new Error('Notification handler must be a function');
+
+  let handlers = notificationHandlers.get(normalizedChannel);
+  if (!handlers) {
+    handlers = new Set();
+    notificationHandlers.set(normalizedChannel, handlers);
+  }
+  handlers.add(handler);
+  subscribedChannels.add(normalizedChannel);
+
+  const client = await ensureNotificationClient();
+  await client.query(`LISTEN ${normalizedChannel}`);
+
+  return async () => {
+    const currentHandlers = notificationHandlers.get(normalizedChannel);
+    if (currentHandlers) {
+      currentHandlers.delete(handler);
+      if (currentHandlers.size === 0) notificationHandlers.delete(normalizedChannel);
+    }
+
+    if (!notificationHandlers.has(normalizedChannel)) {
+      subscribedChannels.delete(normalizedChannel);
+      if (notificationClient) {
+        try {
+          await notificationClient.query(`UNLISTEN ${normalizedChannel}`);
+        } catch (_) {}
+      }
+    }
+  };
+}
+
+async function publishNotification(channel, payload = {}) {
+  const normalizedChannel = assertNotificationChannel(channel);
+  if (!pool) throw new Error('Pool not initialized');
+  await pool.query('SELECT pg_notify($1, $2)', [normalizedChannel, JSON.stringify(payload || {})]);
+  return true;
+}
+
 async function shutdownDatabase() {
   trackerRegistry.shutdownTrackerRegistry();
   if (!pool) return;
@@ -100,16 +183,13 @@ async function shutdownDatabase() {
   const currentPool = pool;
   pool = null;
   databaseOptimizationsPromise = null;
-  if (cacheEventReconnectTimer) {
-    clearTimeout(cacheEventReconnectTimer);
-    cacheEventReconnectTimer = null;
-  }
-  if (cacheEventListenerClient) {
+  notificationHandlers.clear();
+  subscribedChannels.clear();
+  if (notificationClient) {
     try {
-      await cacheEventListenerClient.query(`UNLISTEN ${CACHE_EVENT_CHANNEL}`);
+      notificationClient.release();
     } catch (_) {}
-    try { cacheEventListenerClient.release(); } catch (_) {}
-    cacheEventListenerClient = null;
+    notificationClient = null;
   }
   await currentPool.end();
 }
@@ -146,77 +226,13 @@ async function healthCheck() {
   return true;
 }
 
-function scheduleCacheEventReconnect() {
-  if (cacheEventReconnectTimer || cacheEventHandlers.size === 0) return;
-  cacheEventReconnectTimer = setTimeout(() => {
-    cacheEventReconnectTimer = null;
-    ensureCacheEventListener().catch(() => {});
-  }, 1500);
-  cacheEventReconnectTimer.unref?.();
-}
-
-async function ensureCacheEventListener() {
-  if (!pool || cacheEventHandlers.size === 0) return false;
-  if (cacheEventListenerClient) return true;
-
-  const client = await pool.connect();
-  cacheEventListenerClient = client;
-
-  client.on('notification', (message) => {
-    if (message.channel !== CACHE_EVENT_CHANNEL) return;
-    let payload = null;
-    try {
-      payload = JSON.parse(String(message.payload || '{}'));
-    } catch (_) {
-      return;
-    }
-    for (const handler of cacheEventHandlers) {
-      try {
-        handler(payload);
-      } catch (_) {}
-    }
-  });
-
-  const reset = () => {
-    if (cacheEventListenerClient === client) cacheEventListenerClient = null;
-    try { client.release(); } catch (_) {}
-    scheduleCacheEventReconnect();
-  };
-
-  client.on('error', reset);
-  client.on('end', reset);
-  await client.query(`LISTEN ${CACHE_EVENT_CHANNEL}`);
-  return true;
-}
-
-function subscribeCacheEvents(handler) {
-  if (typeof handler !== 'function') return () => {};
-  cacheEventHandlers.add(handler);
-  ensureCacheEventListener().catch(() => {
-    scheduleCacheEventReconnect();
-  });
-  return () => {
-    cacheEventHandlers.delete(handler);
-  };
-}
-
-async function publishCacheEvent(event = {}) {
-  if (!pool) return false;
-  const payload = JSON.stringify(event);
-  if (!payload || payload.length > 7800) return false;
-  try {
-    await pool.query('SELECT pg_notify($1, $2)', [CACHE_EVENT_CHANNEL, payload]);
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
-
 const sharedDependencies = {
   getPool: () => pool,
   withClient,
   runInTransaction,
   awaitDatabaseOptimizations,
+  subscribeNotifications,
+  publishNotification,
   trackerRegistry,
   normalizers
 };
@@ -230,8 +246,8 @@ module.exports = {
   getPool: () => pool,
   withClient,
   healthCheck,
-  subscribeCacheEvents,
-  publishCacheEvent,
+  subscribeNotifications,
+  publishNotification,
   ...torrentRepository,
   ...sharedStreamCacheRepository,
   updateTrackers: trackerRegistry.updateTrackers,

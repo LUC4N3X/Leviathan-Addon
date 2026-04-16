@@ -2,7 +2,6 @@
 
 const path = require('path');
 const { incrementMetric } = require('../../utils_runtime');
-const { resolveLangMode: resolveCanonicalLangMode } = require('../../canonical/language_rules');
 
 const RECENT_STREAM_HINT_TTL_MS = 10 * 60 * 1000;
 const RECENT_STREAM_HINT_LIMIT = 256;
@@ -261,7 +260,7 @@ function registerStremioRoutes(app, {
         try {
             const config = getConfig(req.params.conf);
             const filters = config.filters || {};
-            const langMode = resolveCanonicalLangMode({ config, filters, defaultMode: 'ita' });
+            const langMode = filters.language || (filters.allowEng ? 'all' : 'ita');
             const flag = langMode === 'ita'
                 ? ' 🇮🇹'
                 : (langMode === 'eng' ? ' 🇬🇧' : ' 🇮🇹🇬🇧');

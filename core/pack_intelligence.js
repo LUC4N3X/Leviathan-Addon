@@ -1,6 +1,5 @@
+const { tokenizeTitle: canonicalTokenizeTitle } = require('./canonical/title_parser');
 const axios = require('axios');
-const { tokenizeTitle, parseSeasonEpisode, extractSeasonFromText } = require('./canonical/title_parser');
-const { isAnimeMeta } = require('./canonical/anime_rules');
 
 const DEBUG_MODE = process.env.DEBUG_MODE === 'true';
 const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mpg|mpeg|iso)$/i;
@@ -54,6 +53,39 @@ const rdQueue = new RequestQueue(1);
 const pendingScans = new Map();
 const memoryCache = new Map();
 
+const SEASON_EPISODE_PATTERNS = [
+    { pattern: /(?:^|\b)s(\d{1,2})\s*e(\d{1,3})(?:\b|[^\d])/i, extract: m => ({ season: parseInt(m[1], 10), episode: parseInt(m[2], 10) }) },
+    { pattern: /(?:^|\b)(\d{1,2})x(\d{1,3})(?:\b|[^\d])/i, extract: m => ({ season: parseInt(m[1], 10), episode: parseInt(m[2], 10) }) },
+    { pattern: /season\s*(\d{1,2}).{0,20}?episode\s*(\d{1,3})/i, extract: m => ({ season: parseInt(m[1], 10), episode: parseInt(m[2], 10) }) },
+    { pattern: /stagione\s*(\d{1,2}).{0,20}?episodio\s*(\d{1,3})/i, extract: m => ({ season: parseInt(m[1], 10), episode: parseInt(m[2], 10) }) },
+    { pattern: /(?:^|[^a-z])ep?\.?\s*(\d{1,3})(?:[^\d]|$)/i, extract: (m, defaultSeason) => ({ season: defaultSeason, episode: parseInt(m[1], 10) }) }
+];
+
+function isAnimeMeta(meta = {}) {
+    return Boolean(meta?.kitsu_id || meta?.isAnime);
+}
+
+function parseAnimeEpisode(filename, defaultSeason = 1) {
+    const value = String(filename || '');
+    let match = value.match(/\bS(?:EASON)?\s*0?(\d{1,2})\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+    match = value.match(/\b(\d{1,2})(?:ST|ND|RD|TH)\s+SEASON\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+    match = value.match(/\b(?:EP(?:ISODE)?|EPISODIO)\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: defaultSeason, episode: parseInt(match[1], 10) };
+
+    const genericPattern = /(?:^|[\s._\-\[\(])0*([1-9]\d{0,3})(?:v\d+)?(?=$|[\s._\-\]\)])/ig;
+    for (const candidate of value.matchAll(genericPattern)) {
+        const episode = parseInt(candidate[1], 10);
+        if (!Number.isInteger(episode) || episode <= 0) continue;
+        if (episode >= 1900 && episode <= 2100) continue;
+        return { season: defaultSeason, episode };
+    }
+
+    return null;
+}
 
 function normalizeInfoHash(value) {
     return String(value || '').trim().toLowerCase();
@@ -142,6 +174,32 @@ function isSeasonPack(title) {
     ].some(re => re.test(value));
 }
 
+function parseSeasonEpisode(filename, defaultSeason = 1, options = {}) {
+    const value = String(filename || '');
+    for (const { pattern, extract } of SEASON_EPISODE_PATTERNS) {
+        const match = value.match(pattern);
+        if (match) {
+            const parsed = extract(match, defaultSeason);
+            if (parsed && Number.isInteger(parsed.season) && Number.isInteger(parsed.episode) && parsed.episode > 0) return parsed;
+        }
+    }
+    if (options?.anime) return parseAnimeEpisode(value, defaultSeason);
+    return null;
+}
+
+function extractSeasonFromText(title) {
+    const value = String(title || '');
+    const patterns = [
+        /(?:\b|[^a-z])s(\d{1,2})(?!\s*e\d)/i,
+        /season\s*(\d{1,2})/i,
+        /stagione\s*(\d{1,2})/i
+    ];
+    for (const pattern of patterns) {
+        const match = value.match(pattern);
+        if (match) return parseInt(match[1], 10);
+    }
+    return null;
+}
 
 function normalizeName(value) {
     return String(value || '')
@@ -155,6 +213,9 @@ function normalizeName(value) {
         .trim();
 }
 
+function tokenizeTitle(value) {
+    return canonicalTokenizeTitle(value, { keepNumbers: true });
+}
 
 function uniqueTitles(meta, item) {
     const set = new Set();

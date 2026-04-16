@@ -1,62 +1,30 @@
-const { isAnimeMeta } = require('./anime_rules');
+'use strict';
 
-const VALID_LANG_MODES = new Set(['ita', 'eng', 'all']);
-
-function normalizeLangMode(value, fallback = '') {
+function normalizeLanguageMode(value, fallback = 'ita') {
   const normalized = String(value || '').trim().toLowerCase();
-  if (VALID_LANG_MODES.has(normalized)) return normalized;
-  return fallback;
-}
-
-function firstBoolean(...values) {
-  for (const value of values) {
-    if (typeof value === 'boolean') return value;
-  }
-  return undefined;
+  return normalized === 'ita' || normalized === 'eng' || normalized === 'all' ? normalized : fallback;
 }
 
 function resolveLangMode(options = {}) {
-  const meta = options?.meta || {};
-  const filters = options?.filters || options?.config?.filters || {};
-  const explicit = normalizeLangMode(options?.langMode)
-    || normalizeLangMode(options?.languageMode)
-    || normalizeLangMode(options?.language)
-    || normalizeLangMode(filters?.language)
-    || normalizeLangMode(meta?.langMode)
-    || normalizeLangMode(meta?.languageMode)
-    || normalizeLangMode(meta?.language);
-
+  const explicit = normalizeLanguageMode(
+    options.langMode || options.languageMode || options.language || options.filters?.language,
+    ''
+  );
   if (explicit) return explicit;
-
-  const allowEng = firstBoolean(options?.allowEng, filters?.allowEng, options?.config?.allowEng);
-  if (allowEng === true) return 'all';
-
-  const animeDefault = normalizeLangMode(options?.animeDefault);
-  if (animeDefault && isAnimeMeta(meta, options?.type)) return animeDefault;
-
-  const profileName = String(options?.profileName || options?.config?.profile || '').toLowerCase();
-  const dedupeDefaultsToAll = options?.dedupeDefaultAll === true || profileName === 'dedupe';
-  if (dedupeDefaultsToAll) return 'all';
-
-  return normalizeLangMode(options?.defaultMode, 'ita') || 'ita';
+  if (typeof options.allowEng === 'boolean') return options.allowEng ? 'all' : (options.defaultMode || 'ita');
+  if (typeof options.filters?.allowEng === 'boolean') return options.filters.allowEng ? 'all' : (options.defaultMode || 'ita');
+  return options.defaultMode || 'ita';
 }
 
-function resolveMetaOrOptionLangMode(meta = {}, allowEngOrLangMode = false, options = {}) {
-  if (typeof allowEngOrLangMode === 'string') {
-    return resolveLangMode({ ...options, meta, langMode: allowEngOrLangMode });
-  }
-  if (typeof allowEngOrLangMode === 'boolean') {
-    return resolveLangMode({ ...options, meta, allowEng: allowEngOrLangMode });
-  }
-  if (allowEngOrLangMode && typeof allowEngOrLangMode === 'object') {
-    return resolveLangMode({ ...allowEngOrLangMode, ...options, meta });
-  }
-  return resolveLangMode({ ...options, meta });
+function getAcceptLanguage(langMode = 'ita') {
+  const resolved = normalizeLanguageMode(langMode);
+  if (resolved === 'eng') return 'en-US,en;q=0.9';
+  if (resolved === 'all') return 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7';
+  return 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7';
 }
 
 module.exports = {
-  VALID_LANG_MODES,
-  normalizeLangMode,
+  normalizeLanguageMode,
   resolveLangMode,
-  resolveMetaOrOptionLangMode
+  getAcceptLanguage
 };

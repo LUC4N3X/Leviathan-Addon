@@ -12,9 +12,9 @@ const {
   isSeasonPack,
   isTrustedSource
 } = require("../utils_text");
-const { tokenizeTitle, hasExplicitSeasonMarker, extractEpisodeContext } = require('../canonical/title_parser');
-const { isAnimeMeta, shouldIgnoreAnimeSeason } = require('../canonical/anime_rules');
-const { resolveLangMode: resolveCanonicalLangMode } = require('../canonical/language_rules');
+const { tokenizeTitle: canonicalTokenizeTitle, hasExplicitSeasonMarker: canonicalHasExplicitSeasonMarker, extractEpisodeContext: canonicalExtractEpisodeContext } = require('../canonical/title_parser');
+const { resolveLangMode: canonicalResolveLangMode } = require('../canonical/language_rules');
+const { shouldIgnoreAnimeSeason: canonicalShouldIgnoreAnimeSeason } = require('../canonical/anime_rules');
 
 const REGEX_SCENE_RELEASE = /\b(?:web[-.\s]?dl|webrip|blu[-.\s]?ray|bd[-.\s]?rip|remux|uhd|hevc|x265|x264|ddp|truehd|dts|atmos|hdr|dv|dolby[\s.-]?vision)\b/i;
 const REGEX_HEVC = /\b(?:x265|h265|hevc)\b/i;
@@ -180,6 +180,23 @@ function lowerText(value) {
   return normalizeText(value).toLowerCase();
 }
 
+function stripAccents(value) {
+  return normalizeText(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeLooseTitle(value) {
+  return stripAccents(value)
+    .toLowerCase()
+    .replace(REGEX_TITLE_PUNCTUATION, " ")
+    .replace(REGEX_TITLE_SPACING, " ")
+    .replace(REGEX_TITLE_NOISE, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeTitle(value) {
+  return canonicalTokenizeTitle(value, { keepNumbers: true });
+}
 
 function mergeProfile(baseProfile, overrideProfile = {}) {
   return {
@@ -231,18 +248,51 @@ function getProfileConfig(configInput = {}) {
   };
 }
 
-function resolveLangMode(meta = {}, configInput = {}) {
-  const config = buildPreparedConfig(configInput);
-  return resolveCanonicalLangMode({
-    meta,
-    config,
-    filters: configInput.filters || {},
-    defaultMode: 'ita',
-    animeDefault: 'all',
-    dedupeDefaultAll: config.profile === 'dedupe'
-  });
+function isAnimeMeta(meta = {}) {
+  return Boolean(meta?.kitsu_id || meta?.isAnime);
 }
 
+
+function hasExplicitSeasonMarker(text = '') {
+  return canonicalHasExplicitSeasonMarker(text);
+}
+
+function shouldIgnoreAnimeSeason(meta = {}, title = '') {
+  return canonicalShouldIgnoreAnimeSeason(meta, '', title);
+}
+
+function extractEpisodeContext(title, defaultSeason = 1, options = {}) {
+  const safeTitle = normalizeText(title);
+  let match = safeTitle.match(/\bS(\d{1,2})E(\d{1,3})\b/i);
+  if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+  match = safeTitle.match(/\b(\d{1,2})x(\d{1,3})\b/i);
+  if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+  match = safeTitle.match(/\bE(?:P(?:ISODE)?)?\s*0?(\d{1,3})\b/i);
+  if (match) return { season: defaultSeason, episode: parseInt(match[1], 10) };
+
+  if (options?.anime) {
+    match = safeTitle.match(/\bS(?:EASON)?\s*0?(\d{1,2})\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+    match = safeTitle.match(/\b(\d{1,2})(?:ST|ND|RD|TH)\s+SEASON\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+    match = safeTitle.match(/\b(?:EP(?:ISODE)?|EPISODIO)\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: defaultSeason, episode: parseInt(match[1], 10) };
+
+    const genericPattern = /(?:^|[\s._\-\[\(])0*([1-9]\d{0,3})(?:v\d+)?(?=$|[\s._\-\]\)])/ig;
+    for (const candidate of safeTitle.matchAll(genericPattern)) {
+      const episode = parseInt(candidate[1], 10);
+      if (!Number.isInteger(episode) || episode <= 0) continue;
+      if (episode >= 1900 && episode <= 2100) continue;
+      return { season: defaultSeason, episode };
+    }
+  }
+
+  return null;
+}
 
 function detectQuality(value) {
     const text = typeof value === "object" && value !== null
@@ -273,6 +323,16 @@ function getQualityPriority(item) {
   return 1;
 }
 
+function resolveLangMode(meta = {}, configInput = {}) {
+  return canonicalResolveLangMode({
+    filters: configInput?.filters || {},
+    language: configInput?.language,
+    langMode: configInput?.langMode,
+    allowEng: configInput?.allowEng,
+    meta,
+    defaultMode: 'ita'
+  });
+}
 
 function getExpectedTitles(meta = {}) {
   const titles = new Set();

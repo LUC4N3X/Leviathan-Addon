@@ -16,11 +16,11 @@ function detectQuality(title) {
 async function searchWebStreamr(type, id) {
     try {
         const url = `${WEBSTREAMR_BASE}/stream/${type}/${id}.json`;
-        
+
         console.log(`🌍 [FALLBACK SYSTEM] Ricerca stream di emergenza per: ${id}`);
-        
+
         const { data } = await axios.get(url, { timeout: 6000 });
-        
+
         if (!data || !data.streams || !Array.isArray(data.streams)) {
             return [];
         }
@@ -53,38 +53,38 @@ async function searchWebStreamr(type, id) {
 
             // Costruzione righe visuali
             const lines = [];
-            
+
             // RIGA 1: Titolo pulito
             lines.push(`🎬 ${cleanTitle}`);
-            
+
             // RIGA 2: Determinazione Lingua
-            let langInfo = "🇮🇹 ITA"; 
+            let langInfo = "🇮🇹 ITA";
 
             if (isFallbackMode) {
-                
-                
+
+
                 if (/\b(eng|english|en)\b/i.test(rawTitle)) {
                     langInfo = "🇬🇧 ENG";
-                } 
+                }
                 // Se è un anime o subbato
                 else if (/\b(sub|subbed|jap)\b/i.test(rawTitle)) {
-                    langInfo = "🇯🇵 Sub ITA"; 
+                    langInfo = "🇯🇵 Sub ITA";
                 }
-                
+
             }
-            
+
             lines.push(`${langInfo} • 🌐 Web-DL`);
 
             // RIGA 3: Info Provider
             lines.push(`⚡ [Web] WebStreamr Fallback`);
 
             return {
-                name: `🌐 LEVIATHAN\n${icon} ${q}`, 
+                name: `🌐 LEVIATHAN\n${icon} ${q}`,
                 title: lines.join("\n"),
                 url: stream.url,
-                behaviorHints: { 
-                    notWebReady: false, 
-                    bingieGroup: "leviathan-web-fallback" 
+                behaviorHints: {
+                    notWebReady: false,
+                    bingieGroup: "leviathan-web-fallback"
                 }
             };
         });

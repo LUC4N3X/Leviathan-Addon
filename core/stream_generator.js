@@ -15,7 +15,7 @@ const { tmdbToImdb, imdbToTmdb, getTmdbAltTitles } = require("./media_identity_r
 const kitsuHandler = require("./handlers/kitsu_handler");
 const RD = require("../debrid/realdebrid");
 const TB = require("../debrid/torbox");
-const dbHelper = require("./storage/db_repository"); 
+const dbHelper = require("./storage/db_repository");
 const { buildMagnet: buildTrackerMagnet } = require("./storage/tracker_registry");
 const { createDebridAvailabilityTools } = require("./stream/debrid_availability");
 const { createWebProviderTools } = require("./stream/web_providers");
@@ -23,10 +23,17 @@ const sourceHealth = require("./lib/source_health");
 const { createSearchPlan, evaluatePoolSatisfaction } = require("./lib/search_planner");
 const { shouldSkipRecentWork } = require('./recent_work');
 const { buildSharedStreamCachePolicy, buildSharedReadContext, shouldUseSharedStreamEntry } = require('./lib/shared_stream_policy');
+const { createLanguageFilterTools } = require('./pipeline/language_filter');
+const { createRankingTools } = require('./pipeline/ranking');
+const { createMetadataResolutionTools } = require('./pipeline/metadata_resolution');
+const { createProviderFetchTools } = require('./pipeline/fetch_providers');
+const { createDebridResolutionTools } = require('./pipeline/debrid_resolution');
+const { createCachingPersistenceTools } = require('./pipeline/caching_persistence');
+const { createPipelineOrchestration } = require('./pipeline/orchestration');
+const { resolveLangMode: canonicalResolveLangMode } = require('./canonical/language_rules');
+const { isAnimeMetaContext: canonicalIsAnimeMetaContext, getEpisodeParseOptions: canonicalGetEpisodeParseOptions, shouldIgnoreAnimeSeason: canonicalShouldIgnoreAnimeSeason, mapKitsuEpisodePosition: canonicalMapKitsuEpisodePosition } = require('./canonical/anime_rules');
+const { hasExplicitSeasonMarker: canonicalHasExplicitSeasonMarker } = require('./canonical/title_parser');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
-const { hasExplicitSeasonMarker } = require('./canonical/title_parser');
-const { isAnimeMeta: isAnimeMetaContext, getEpisodeParseOptions, shouldIgnoreAnimeSeason } = require('./canonical/anime_rules');
-const { resolveLangMode: resolveCanonicalLangMode } = require('./canonical/language_rules');
 
 const {
   logger, Cache, LIMITERS, CONFIG, REGEX_QUALITY_FILTER, REGEX_SUB_ONLY, REGEX_AUDIO_CONFIRM, REGEX_YEAR, EMPTY_STREAM_TTL, METADATA_CACHE_TTL,
@@ -93,29 +100,28 @@ function uniqueTextList(values = []) {
     return output;
 }
 
-function getEffectiveSearchLanguageMode(filters = {}, meta = {}, type = '') {
-    return resolveCanonicalLangMode({ meta, type, filters, defaultMode: 'ita', animeDefault: 'all' });
+function isAnimeMetaContext(meta = {}, type = '') {
+    return canonicalIsAnimeMetaContext(meta, type);
 }
 
+function getEpisodeParseOptions(meta = {}, type = '') {
+    return canonicalGetEpisodeParseOptions(meta, type);
+}
+
+function getEffectiveSearchLanguageMode(filters = {}, meta = {}, type = '') {
+    return canonicalResolveLangMode({ filters, meta, type, defaultMode: 'ita' });
+}
+
+function hasExplicitSeasonMarker(text = '') {
+    return canonicalHasExplicitSeasonMarker(text);
+}
+
+function shouldIgnoreAnimeSeason(meta = {}, type = '', title = '') {
+    return canonicalShouldIgnoreAnimeSeason(meta, type, title);
+}
 
 function mapKitsuEpisodePosition(parsedKitsu, fallbackKitsuMeta) {
-    const requestedEpisode = Number(parsedKitsu?.episode || 0) || 0;
-    const mappedSeason = Number(fallbackKitsuMeta?.season || parsedKitsu?.season || 1) || 1;
-    const baseEpisode = Number(fallbackKitsuMeta?.episode || 1) || 1;
-
-    if (!(requestedEpisode > 0)) {
-        return {
-            mappedSeason,
-            mappedEpisode: 0,
-            requestedEpisode: 0
-        };
-    }
-
-    return {
-        mappedSeason,
-        mappedEpisode: baseEpisode + requestedEpisode - 1,
-        requestedEpisode
-    };
+    return canonicalMapKitsuEpisodePosition(parsedKitsu, fallbackKitsuMeta);
 }
 
 function buildExternalAddonRequestId(type, finalId, meta = {}) {
@@ -214,7 +220,7 @@ function assessFastResultQuality(items, meta, langMode, config) {
         return { shouldScrape: true, reason: 'no_fast_results', strongCount: 0, exactEpisodeCount: 0, seasonPackCount: 0, total: 0 };
     }
 
-    const effectiveLangMode = langMode;
+    const effectiveLangMode = canonicalResolveLangMode({ language: langMode, meta, defaultMode: 'ita' });
     let strongCount = 0;
     let exactEpisodeCount = 0;
     let seasonPackCount = 0;
@@ -786,7 +792,7 @@ function hasStrongSeriesTitleMatch(title, meta) {
 }
 
 function createAggressiveResultFilter(meta, type, langMode) {
-    const effectiveLangMode = langMode;
+    const effectiveLangMode = canonicalResolveLangMode({ language: langMode, meta, type, defaultMode: 'ita' });
     return (item) => {
         if (!item?.magnet) return false;
 
@@ -1750,7 +1756,7 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
     });
 }
 
-async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, config, meta = {}) { 
+async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, config, meta = {}) {
     if (!CONFIG.INDEXER_URL || !tmdbId) return [];
     try {
         logger.info(`[REMOTE] Query VPS: ${CONFIG.INDEXER_URL} | ID: ${tmdbId} S:${season} E:${episode}`);
@@ -1759,7 +1765,7 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
         if (episode) url += `&episode=${episode}`;
         const { data } = await axios.get(url, { timeout: CONFIG.TIMEOUTS.REMOTE_INDEXER });
         if (!data || !data.torrents || !Array.isArray(data.torrents)) return [];
-        
+
         const mapped = data.torrents.map(t => {
             let magnet = t.magnet || buildTrackerMagnet(t.info_hash, t.title);
             if (!String(magnet).includes("tr=")) magnet = buildTrackerMagnet(t.info_hash, t.title);
@@ -2152,4 +2158,143 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   });
 }
 
-module.exports = { generateStream, getMetadata, resolveDebridLink, resolveLazyStreamData, RD, TB };
+
+const languageTools = createLanguageFilterTools({
+    isAnimeMetaContext,
+    shouldIgnoreAnimeSeason,
+    getEpisodeParseOptions,
+    logger,
+    REGEX_SUB_ONLY,
+    REGEX_AUDIO_CONFIRM,
+    REGEX_YEAR,
+    isSeasonPack,
+    normalizeSearchText,
+    isGoodShortQueryMatch,
+    extractSeasonEpisodeFromFilename,
+    smartMatch,
+    keepItalianCandidate,
+    keepEnglishCandidate,
+    keepAllCandidate,
+    hasStrongSeriesTitleMatch
+});
+
+const rankingTools = createRankingTools({
+    logger,
+    rankAndFilterResults,
+    filterByQualityLimit,
+    applyPackKnowledge,
+    rerankCompositeResults,
+    applyPremiumRankingPolicy,
+    reprioritizeRdRankedList,
+    resolveTorboxRankedList
+});
+
+const metadataTools = createMetadataResolutionTools({
+    getMetadata,
+    buildExternalAddonRequestId
+});
+
+const providerFetchTools = createProviderFetchTools({
+    logger,
+    CONFIG,
+    Cache,
+    LIMITERS,
+    withTimeout,
+    buildTitleSearchPipelineKey,
+    getTimedCacheValue,
+    setTimedCacheValue,
+    titleSearchHotCache,
+    titleSearchInflight,
+    TITLE_SEARCH_HOT_TTL_MS,
+    scheduleKeyed,
+    createSearchPlan,
+    evaluatePoolSatisfaction,
+    sourceHealth,
+    SCRAPER_MODULES,
+    queryRemoteIndexer,
+    fetchExternalResults,
+    normalizeCandidateResults,
+    applyConfiguredTorrentFilters,
+    assessFastResultQuality: languageTools.assessFastResultQuality,
+    getTmdbAltTitles,
+    generateSmartQueries,
+    incrementMetric,
+    guardedProviderCall,
+    isAnimeMetaContext,
+    buildExternalAddonRequestId,
+    withSharedPromise
+});
+
+const debridResolutionTools = createDebridResolutionTools({
+    resolveLazyStreamData,
+    resolveDebridLink,
+    generateLazyStream,
+    warmupLazyStreamsInBackground,
+    getNormalizedDebridService,
+    getConfiguredDebridKey
+});
+
+const cachingPersistenceTools = createCachingPersistenceTools({
+    saveResultsToDbBackground,
+    buildClientCacheMetadata,
+    buildSharedStreamCachePolicy,
+    buildSharedReadContext,
+    shouldUseSharedStreamEntry,
+    Cache,
+    incrementMetric
+});
+
+const pipelineOrchestration = createPipelineOrchestration({
+    crypto,
+    logger,
+    Cache,
+    LIMITERS,
+    CONFIG,
+    EMPTY_STREAM_TTL,
+    streamInflight,
+    withSharedPromise,
+    incrementMetric,
+    recordDuration,
+    buildClientCacheMetadata,
+    filterByQualityLimit,
+    fetchLocalDbResults,
+    fetchWebProviderBuckets,
+    formatWebProviderBuckets,
+    mergeFinalStreams,
+    applyConfiguredStreamFilters,
+    normalizeCandidateResults,
+    applyConfiguredTorrentFilters,
+    fetchTitleCandidatePool: providerFetchTools.fetchTitleCandidatePool,
+    getMetadata: metadataTools.getMetadata,
+    rankResults: rankingTools.rankResults,
+    applyPackKnowledge: rankingTools.applyPackKnowledge,
+    generateLazyStream: debridResolutionTools.generateLazyStream,
+    resolveDebridLink: debridResolutionTools.resolveDebridLink,
+    warmupLazyStreamsInBackground: debridResolutionTools.warmupLazyStreamsInBackground,
+    buildSharedStreamCachePolicy,
+    getSharedCachedResult: cachingPersistenceTools.getSharedCachedResult,
+    getDebridContext: debridResolutionTools.getDebridContext,
+    getEffectiveSearchLanguageMode: languageTools.getEffectiveSearchLanguageMode,
+    createAggressiveResultFilter: languageTools.createAggressiveResultFilter,
+    isStreamingCommunityEnabled,
+    isSeasonPack,
+    createRuntimeItem,
+    getNormalizedDebridService,
+    getConfiguredDebridKey,
+    resolveTorboxRankedListInternal: resolveTorboxRankedList,
+    buildExternalAddonRequestId,
+    persistResults: cachingPersistenceTools.persistResults,
+    P2P,
+    tmdbToImdb,
+    imdbToTmdb,
+    getServiceResolverLimiter
+});
+
+module.exports = {
+    generateStream: pipelineOrchestration.generateStream,
+    getMetadata: metadataTools.getMetadata,
+    resolveDebridLink: debridResolutionTools.resolveDebridLink,
+    resolveLazyStreamData: debridResolutionTools.resolveLazyStreamData,
+    RD,
+    TB
+};

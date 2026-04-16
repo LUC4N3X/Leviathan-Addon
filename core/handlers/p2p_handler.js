@@ -73,7 +73,7 @@ function extractTrackersFromMagnet(magnet) {
       const decoded = decodeURIComponent(match[1]).trim();
       if (/^(udp|http|https):\/\//i.test(decoded)) trackers.push(decoded);
     } catch {
-     
+
     }
   }
   return trackers;
@@ -98,7 +98,7 @@ function parseSafeTitle(rawTitle) {
     const parsed = ptt.parse(original);
     if (parsed?.title && parsed.title.length > 2) return parsed.title;
   } catch {
- 
+
   }
   return original;
 }

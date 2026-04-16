@@ -5,6 +5,7 @@ const { promisify } = require('util');
 const NodeCache = require('node-cache');
 
 const dbHelper = require('./storage/db_repository');
+const { createInvalidationBus } = require('./cache/invalidation_bus');
 const { logger, incrementMetric, registerCacheAccess, registerCacheSet } = require('./utils_runtime');
 const { withSharedPromise } = require('./utils_common');
 
@@ -51,9 +52,10 @@ const streamCacheTags = new Map();
 const streamCacheKeysByHash = new Map();
 const streamCacheKeysByImdb = new Map();
 const streamCacheKeysByEpisode = new Map();
-const CACHE_INVALIDATION_BUS_ENABLED = String(process.env.CACHE_INVALIDATION_BUS_ENABLED || 'true').toLowerCase() !== 'false';
-const LOCAL_CACHE_EVENT_SOURCE = `${process.pid}:${Math.random().toString(36).slice(2, 8)}`;
-let cacheEventUnsubscribe = null;
+const invalidationBus = createInvalidationBus();
+const CACHE_INVALIDATION_CHANNEL = String(process.env.CACHE_INVALIDATION_CHANNEL || 'leviathan_cache_events').toLowerCase();
+let invalidationSyncStarted = false;
+let invalidationSyncStop = null;
 
 function getStreamCacheStorageKey(key) {
     return `stream:${String(key || '').trim()}`;
@@ -168,157 +170,6 @@ function supportsSharedStreamCache() {
         && typeof dbHelper.setSharedStreamCache === 'function';
 }
 
-function supportsCacheInvalidationBus() {
-    return CACHE_INVALIDATION_BUS_ENABLED
-        && dbHelper
-        && typeof dbHelper.subscribeCacheEvents === 'function'
-        && typeof dbHelper.publishCacheEvent === 'function';
-}
-
-async function publishInvalidationEvent(event = {}) {
-    if (!supportsCacheInvalidationBus()) return false;
-    return dbHelper.publishCacheEvent({ ...event, source: LOCAL_CACHE_EVENT_SOURCE, emittedAt: Date.now() });
-}
-
-function resetLocalCaches() {
-    myCache.flushAll();
-    rawCache.flushAll();
-    cloudBuildCache.flushAll();
-    sharedFetchInflight.clear();
-    streamInflight.clear();
-    metadataInflight.clear();
-    streamCacheTags.clear();
-    streamCacheKeysByHash.clear();
-    streamCacheKeysByImdb.clear();
-    streamCacheKeysByEpisode.clear();
-}
-
-async function invalidateDbLookupLocal(key, reason = 'db_update') {
-    const normalizedKey = String(key || '').trim();
-    if (!normalizedKey) return { deleted: 0, key: null };
-    const deleted = rawCache.del(getDbLookupStorageKey(normalizedKey));
-    if (deleted > 0) {
-        incrementMetric('cache.db.invalidations');
-        logger.info(`[CACHE] DB lookup invalidation | reason=${reason} | key=${normalizedKey}`);
-    }
-    return { deleted, key: normalizedKey };
-}
-
-async function invalidateStreamsByHashesLocal(hashes, reason = 'hash_update', options = {}) {
-    const normalizedHashes = [...new Set((Array.isArray(hashes) ? hashes : [])
-        .map(normalizeHashTag)
-        .filter(Boolean))];
-    if (normalizedHashes.length === 0) return { invalidated: 0, hashes: 0, deleted: 0, sharedDeleted: 0, normalizedHashes };
-
-    const keys = collectTaggedStreamKeys(streamCacheKeysByHash, normalizedHashes);
-    let deleted = 0;
-    for (const cacheKey of keys) deleted += deleteStreamCacheKey(cacheKey);
-
-    let sharedDeleted = 0;
-    if (options.deleteShared !== false && supportsSharedStreamCache() && typeof dbHelper.deleteSharedStreamCacheByHashes === 'function') {
-        try {
-            sharedDeleted = await dbHelper.deleteSharedStreamCacheByHashes(normalizedHashes);
-        } catch (_) {}
-    }
-
-    if (keys.size > 0 || sharedDeleted > 0) {
-        incrementMetric('cache.stream.invalidations');
-        incrementMetric('cache.stream.invalidatedKeys', keys.size + sharedDeleted);
-        logger.info(`[CACHE] Stream invalidation by hash | reason=${reason} | hashes=${normalizedHashes.length} | keys=${keys.size} | shared=${sharedDeleted}`);
-    }
-
-    return { invalidated: keys.size, hashes: normalizedHashes.length, deleted, sharedDeleted, normalizedHashes };
-}
-
-async function invalidateStreamsByImdbLocal(imdbId, reason = 'imdb_update', options = {}) {
-    const normalizedImdb = normalizeImdbTag(imdbId);
-    if (!normalizedImdb) return { invalidated: 0, imdbId: null, deleted: 0, sharedDeleted: 0 };
-
-    const keys = collectTaggedStreamKeys(streamCacheKeysByImdb, [normalizedImdb]);
-    let deleted = 0;
-    for (const cacheKey of keys) deleted += deleteStreamCacheKey(cacheKey);
-
-    let sharedDeleted = 0;
-    if (options.deleteShared !== false && supportsSharedStreamCache() && typeof dbHelper.deleteSharedStreamCacheByImdb === 'function') {
-        try {
-            sharedDeleted = await dbHelper.deleteSharedStreamCacheByImdb(normalizedImdb);
-        } catch (_) {}
-    }
-
-    if (keys.size > 0 || sharedDeleted > 0) {
-        incrementMetric('cache.stream.invalidations');
-        incrementMetric('cache.stream.invalidatedKeys', keys.size + sharedDeleted);
-        logger.info(`[CACHE] Stream invalidation by imdb | reason=${reason} | imdb=${normalizedImdb} | keys=${keys.size} | shared=${sharedDeleted}`);
-    }
-
-    return { invalidated: keys.size, imdbId: normalizedImdb, deleted, sharedDeleted };
-}
-
-async function invalidateStreamsByEpisodeLocal(episodePayload, reason = 'episode_update', options = {}) {
-    const normalizedEpisode = normalizeEpisodeTag(episodePayload);
-    if (!normalizedEpisode) return { invalidated: 0, episode: null, deleted: 0, sharedDeleted: 0 };
-
-    const keys = collectTaggedStreamKeys(streamCacheKeysByEpisode, [normalizedEpisode]);
-    let deleted = 0;
-    for (const cacheKey of keys) deleted += deleteStreamCacheKey(cacheKey);
-
-    let sharedDeleted = 0;
-    if (options.deleteShared !== false && supportsSharedStreamCache() && typeof dbHelper.deleteSharedStreamCacheByEpisode === 'function') {
-        const [imdbId, season, episode] = normalizedEpisode.split(':');
-        try {
-            sharedDeleted = await dbHelper.deleteSharedStreamCacheByEpisode(imdbId, Number(season), Number(episode));
-        } catch (_) {}
-    }
-
-    if (keys.size > 0 || sharedDeleted > 0) {
-        incrementMetric('cache.stream.invalidations');
-        incrementMetric('cache.stream.invalidatedKeys', keys.size + sharedDeleted);
-        logger.info(`[CACHE] Stream invalidation by episode | reason=${reason} | episode=${normalizedEpisode} | keys=${keys.size} | shared=${sharedDeleted}`);
-    }
-
-    return { invalidated: keys.size, episode: normalizedEpisode, deleted, sharedDeleted };
-}
-
-function handleRemoteCacheEvent(payload = {}) {
-    if (!payload || payload.source === LOCAL_CACHE_EVENT_SOURCE) return;
-    const type = String(payload.type || '').toLowerCase();
-    if (type === 'flush_all') {
-        resetLocalCaches();
-        return;
-    }
-    if (type === 'dblookup') {
-        invalidateDbLookupLocal(payload.key, payload.reason || 'remote').catch(() => {});
-        return;
-    }
-    if (type === 'stream_hashes') {
-        invalidateStreamsByHashesLocal(payload.hashes, payload.reason || 'remote', { deleteShared: false }).catch(() => {});
-        return;
-    }
-    if (type === 'stream_imdb') {
-        invalidateStreamsByImdbLocal(payload.imdbId, payload.reason || 'remote', { deleteShared: false }).catch(() => {});
-        return;
-    }
-    if (type === 'stream_episode') {
-        invalidateStreamsByEpisodeLocal(payload.episode, payload.reason || 'remote', { deleteShared: false }).catch(() => {});
-    }
-}
-
-function startCrossWorkerInvalidationBus() {
-    if (cacheEventUnsubscribe || !supportsCacheInvalidationBus()) return false;
-    cacheEventUnsubscribe = dbHelper.subscribeCacheEvents(handleRemoteCacheEvent);
-    logger.info('[CACHE] Cross-worker invalidation bus attivo');
-    return true;
-}
-
-function stopCrossWorkerInvalidationBus() {
-    if (!cacheEventUnsubscribe) return false;
-    try {
-        cacheEventUnsubscribe();
-    } catch (_) {}
-    cacheEventUnsubscribe = null;
-    return true;
-}
-
 function writeLocalStreamCache(normalizedKey, value, ttl, tags = {}) {
     registerCacheSet('stream');
     registerStreamCacheKey(normalizedKey, tags);
@@ -395,6 +246,108 @@ async function hydrateLocalFromSharedCache(key, row, options = {}) {
 
     if (options.onlyFresh && !isFresh) return null;
     return value;
+}
+
+
+function invalidateDbTorrentsLocal(key) {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey) return { deleted: 0, key: null };
+    const deleted = rawCache.del(getDbLookupStorageKey(normalizedKey));
+    return { deleted, key: normalizedKey };
+}
+
+function invalidateStreamsByHashesLocal(hashes) {
+    const normalizedHashes = [...new Set((Array.isArray(hashes) ? hashes : [])
+        .map(normalizeHashTag)
+        .filter(Boolean))];
+    if (normalizedHashes.length === 0) return { invalidated: 0, hashes: 0, deleted: 0 };
+
+    const keys = collectTaggedStreamKeys(streamCacheKeysByHash, normalizedHashes);
+    let deleted = 0;
+    for (const cacheKey of keys) deleted += deleteStreamCacheKey(cacheKey);
+    return { invalidated: keys.size, hashes: normalizedHashes.length, deleted, normalizedHashes };
+}
+
+function invalidateStreamsByImdbLocal(imdbId) {
+    const normalizedImdb = normalizeImdbTag(imdbId);
+    if (!normalizedImdb) return { invalidated: 0, imdbId: null, deleted: 0 };
+
+    const keys = collectTaggedStreamKeys(streamCacheKeysByImdb, [normalizedImdb]);
+    let deleted = 0;
+    for (const cacheKey of keys) deleted += deleteStreamCacheKey(cacheKey);
+    return { invalidated: keys.size, imdbId: normalizedImdb, deleted };
+}
+
+function invalidateStreamsByEpisodeLocal(episodePayload) {
+    const normalizedEpisode = normalizeEpisodeTag(episodePayload);
+    if (!normalizedEpisode) return { invalidated: 0, episode: null, deleted: 0 };
+
+    const keys = collectTaggedStreamKeys(streamCacheKeysByEpisode, [normalizedEpisode]);
+    let deleted = 0;
+    for (const cacheKey of keys) deleted += deleteStreamCacheKey(cacheKey);
+    return { invalidated: keys.size, episode: normalizedEpisode, deleted };
+}
+
+async function publishInvalidation(payload) {
+    invalidationBus.emit('invalidate', payload);
+    if (!dbHelper || typeof dbHelper.publishNotification !== 'function') return false;
+    try {
+        await dbHelper.publishNotification(CACHE_INVALIDATION_CHANNEL, payload);
+        return true;
+    } catch (error) {
+        logger.warn(`[CACHE] Notification publish failed: ${error.message}`);
+        return false;
+    }
+}
+
+async function applyRemoteInvalidation(payload = {}) {
+    const scope = String(payload?.scope || '').trim();
+    if (!scope) return;
+    if (payload?.originPid && Number(payload.originPid) === process.pid) return;
+
+    if (scope === 'dblookup') {
+        const outcome = invalidateDbTorrentsLocal(payload.key);
+        if (outcome.deleted > 0) incrementMetric('cache.sync.remoteInvalidations');
+        return;
+    }
+
+    if (scope === 'hashes') {
+        const outcome = invalidateStreamsByHashesLocal(payload.hashes);
+        if (outcome.invalidated > 0) incrementMetric('cache.sync.remoteInvalidations');
+        return;
+    }
+
+    if (scope === 'imdb') {
+        const outcome = invalidateStreamsByImdbLocal(payload.imdbId);
+        if (outcome.invalidated > 0) incrementMetric('cache.sync.remoteInvalidations');
+        return;
+    }
+
+    if (scope === 'episode') {
+        const outcome = invalidateStreamsByEpisodeLocal(payload.episode);
+        if (outcome.invalidated > 0) incrementMetric('cache.sync.remoteInvalidations');
+    }
+}
+
+async function startInvalidationSync() {
+    if (invalidationSyncStarted) return true;
+    invalidationSyncStarted = true;
+    if (!dbHelper || typeof dbHelper.subscribeNotifications !== 'function') return true;
+
+    invalidationSyncStop = await dbHelper.subscribeNotifications(CACHE_INVALIDATION_CHANNEL, (payload) => {
+        applyRemoteInvalidation(payload).catch((error) => {
+            logger.warn(`[CACHE] Remote invalidation failed: ${error.message}`);
+        });
+    });
+    return true;
+}
+
+async function stopInvalidationSync() {
+    if (typeof invalidationSyncStop === 'function') {
+        await invalidationSyncStop();
+    }
+    invalidationSyncStop = null;
+    invalidationSyncStarted = false;
 }
 
 const Cache = {
@@ -556,12 +509,14 @@ const Cache = {
         registerCacheSet('dbLookup');
         rawCache.set(getDbLookupStorageKey(key), Array.isArray(value) ? value : [], ttl);
     },
-    invalidateDbTorrents: async (key, reason = 'db_update', options = {}) => {
-        const result = await invalidateDbLookupLocal(key, reason);
-        if (options.publish !== false && result.key) {
-            await publishInvalidationEvent({ type: 'dblookup', key: result.key, reason });
+    invalidateDbTorrents: async (key, reason = 'db_update') => {
+        const outcome = invalidateDbTorrentsLocal(key);
+        if (outcome.deleted > 0) {
+            incrementMetric('cache.db.invalidations');
+            logger.info(`[CACHE] DB lookup invalidation | reason=${reason} | key=${outcome.key}`);
         }
-        return result;
+        await publishInvalidation({ scope: 'dblookup', key: outcome.key, reason, originPid: process.pid, ts: Date.now() });
+        return outcome;
     },
     getCloudBuild: async (key) => {
         const data = cloudBuildCache.get(`cloud:${key}`) || null;
@@ -572,6 +527,8 @@ const Cache = {
         registerCacheSet('cloud');
         cloudBuildCache.set(`cloud:${key}`, value, ttl);
     },
+    startInvalidationSync,
+    stopInvalidationSync,
     listKeys: async () => myCache.keys(),
     deleteKey: async (key) => {
         const normalizedKey = String(key || '').trim();
@@ -580,30 +537,78 @@ const Cache = {
         }
         return myCache.del(normalizedKey);
     },
-    flushAll: async (options = {}) => {
-        resetLocalCaches();
-        if (options.publish !== false) await publishInvalidationEvent({ type: 'flush_all', reason: options.reason || 'flush_all' });
+    flushAll: async () => {
+        myCache.flushAll();
+        rawCache.flushAll();
+        cloudBuildCache.flushAll();
+        sharedFetchInflight.clear();
+        streamInflight.clear();
+        metadataInflight.clear();
+        streamCacheTags.clear();
+        streamCacheKeysByHash.clear();
+        streamCacheKeysByImdb.clear();
+        streamCacheKeysByEpisode.clear();
     },
-    invalidateStreamsByHashes: async (hashes, reason = 'hash_update', options = {}) => {
-        const result = await invalidateStreamsByHashesLocal(hashes, reason, { deleteShared: options.deleteShared !== false });
-        if (options.publish !== false && Array.isArray(result.normalizedHashes) && result.normalizedHashes.length > 0) {
-            await publishInvalidationEvent({ type: 'stream_hashes', hashes: result.normalizedHashes, reason });
+    invalidateStreamsByHashes: async (hashes, reason = 'hash_update') => {
+        const localOutcome = invalidateStreamsByHashesLocal(hashes);
+        if ((localOutcome.normalizedHashes || []).length === 0) return { invalidated: 0, hashes: 0, deleted: 0, sharedDeleted: 0 };
+
+        let sharedDeleted = 0;
+        if (supportsSharedStreamCache() && typeof dbHelper.deleteSharedStreamCacheByHashes === 'function') {
+            try {
+                sharedDeleted = await dbHelper.deleteSharedStreamCacheByHashes(localOutcome.normalizedHashes);
+            } catch (_) {}
         }
-        return result;
+
+        if (localOutcome.invalidated > 0 || sharedDeleted > 0) {
+            incrementMetric('cache.stream.invalidations');
+            incrementMetric('cache.stream.invalidatedKeys', localOutcome.invalidated + sharedDeleted);
+            logger.info(`[CACHE] Stream invalidation by hash | reason=${reason} | hashes=${localOutcome.hashes} | keys=${localOutcome.invalidated} | shared=${sharedDeleted}`);
+        }
+
+        await publishInvalidation({ scope: 'hashes', hashes: localOutcome.normalizedHashes, reason, originPid: process.pid, ts: Date.now() });
+        return { invalidated: localOutcome.invalidated, hashes: localOutcome.hashes, deleted: localOutcome.deleted, sharedDeleted };
     },
-    invalidateStreamsByImdb: async (imdbId, reason = 'imdb_update', options = {}) => {
-        const result = await invalidateStreamsByImdbLocal(imdbId, reason, { deleteShared: options.deleteShared !== false });
-        if (options.publish !== false && result.imdbId) {
-            await publishInvalidationEvent({ type: 'stream_imdb', imdbId: result.imdbId, reason });
+    invalidateStreamsByImdb: async (imdbId, reason = 'imdb_update') => {
+        const localOutcome = invalidateStreamsByImdbLocal(imdbId);
+        if (!localOutcome.imdbId) return { invalidated: 0, imdbId: null, deleted: 0, sharedDeleted: 0 };
+
+        let sharedDeleted = 0;
+        if (supportsSharedStreamCache() && typeof dbHelper.deleteSharedStreamCacheByImdb === 'function') {
+            try {
+                sharedDeleted = await dbHelper.deleteSharedStreamCacheByImdb(localOutcome.imdbId);
+            } catch (_) {}
         }
-        return result;
+
+        if (localOutcome.invalidated > 0 || sharedDeleted > 0) {
+            incrementMetric('cache.stream.invalidations');
+            incrementMetric('cache.stream.invalidatedKeys', localOutcome.invalidated + sharedDeleted);
+            logger.info(`[CACHE] Stream invalidation by imdb | reason=${reason} | imdb=${localOutcome.imdbId} | keys=${localOutcome.invalidated} | shared=${sharedDeleted}`);
+        }
+
+        await publishInvalidation({ scope: 'imdb', imdbId: localOutcome.imdbId, reason, originPid: process.pid, ts: Date.now() });
+        return { invalidated: localOutcome.invalidated, imdbId: localOutcome.imdbId, deleted: localOutcome.deleted, sharedDeleted };
     },
-    invalidateStreamsByEpisode: async (episodePayload, reason = 'episode_update', options = {}) => {
-        const result = await invalidateStreamsByEpisodeLocal(episodePayload, reason, { deleteShared: options.deleteShared !== false });
-        if (options.publish !== false && result.episode) {
-            await publishInvalidationEvent({ type: 'stream_episode', episode: result.episode, reason });
+    invalidateStreamsByEpisode: async (episodePayload, reason = 'episode_update') => {
+        const localOutcome = invalidateStreamsByEpisodeLocal(episodePayload);
+        if (!localOutcome.episode) return { invalidated: 0, episode: null, deleted: 0, sharedDeleted: 0 };
+
+        let sharedDeleted = 0;
+        if (supportsSharedStreamCache() && typeof dbHelper.deleteSharedStreamCacheByEpisode === 'function') {
+            const [imdbId, season, episode] = localOutcome.episode.split(':');
+            try {
+                sharedDeleted = await dbHelper.deleteSharedStreamCacheByEpisode(imdbId, Number(season), Number(episode));
+            } catch (_) {}
         }
-        return result;
+
+        if (localOutcome.invalidated > 0 || sharedDeleted > 0) {
+            incrementMetric('cache.stream.invalidations');
+            incrementMetric('cache.stream.invalidatedKeys', localOutcome.invalidated + sharedDeleted);
+            logger.info(`[CACHE] Stream invalidation by episode | reason=${reason} | episode=${localOutcome.episode} | keys=${localOutcome.invalidated} | shared=${sharedDeleted}`);
+        }
+
+        await publishInvalidation({ scope: 'episode', episode: localOutcome.episode, reason, originPid: process.pid, ts: Date.now() });
+        return { invalidated: localOutcome.invalidated, episode: localOutcome.episode, deleted: localOutcome.deleted, sharedDeleted };
     },
     getStreamCacheIndexStats: () => ({
         trackedKeys: streamCacheTags.size,
@@ -613,9 +618,7 @@ const Cache = {
         cachedEntries: myCache.keys().filter((key) => String(key).startsWith('stream:')).length,
         staleEntries: rawCache.keys().filter((key) => String(key).startsWith('stream_shadow:')).length,
         dbLookupEntries: rawCache.keys().filter((key) => String(key).startsWith('dblookup:')).length,
-        sharedEnabled: supportsSharedStreamCache(),
-        invalidationBusEnabled: supportsCacheInvalidationBus(),
-        invalidationBusListening: Boolean(cacheEventUnsubscribe)
+        sharedEnabled: supportsSharedStreamCache()
     }),
     getRaw: (provider, id) => {
         const data = rawCache.get(`raw:${provider}:${id}`);
@@ -628,8 +631,6 @@ const Cache = {
         rawCache.set(`raw:${provider}:${id}`, value, ttl);
         if (VERBOSE_CACHE_LOGS) logger.info(`💾 GLOBAL CACHE SET [${provider}]: ${id}`);
     },
-    startCrossWorkerInvalidationBus,
-    stopCrossWorkerInvalidationBus,
     fetchWithCache: async (provider, id, ttl, fetcherFunc) => {
         const cached = Cache.getRaw(provider, id);
         if (cached !== null) return cached;

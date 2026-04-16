@@ -1,5 +1,5 @@
-const { isAnimeMeta } = require('./canonical/anime_rules');
-const { resolveMetaOrOptionLangMode } = require('./canonical/language_rules');
+const { resolveLangMode: canonicalResolveLangMode } = require('./canonical/language_rules');
+
 const STOP_WORDS = new Set([
   'il','lo','la','i','gli','le','l','un','uno','una','di','a','da','in','con','su','per','tra','fra',
   'e','ed','o','ma','se','che','del','dello','della','dei','degli','delle','dell','al','allo','alla','ai','agli','alle','all',
@@ -176,9 +176,18 @@ function expandBaseTitles(base, originalTitle = '', dynamicAliases = []) {
 }
 
 function resolveLangMode(meta = {}, allowEngOrLangMode = false) {
-  return resolveMetaOrOptionLangMode(meta, allowEngOrLangMode, { defaultMode: 'ita' });
+  if (typeof allowEngOrLangMode === 'string') {
+    return canonicalResolveLangMode({ language: allowEngOrLangMode, meta, defaultMode: 'ita' });
+  }
+  if (allowEngOrLangMode && typeof allowEngOrLangMode === 'object') {
+    return canonicalResolveLangMode({ ...allowEngOrLangMode, meta, defaultMode: 'ita' });
+  }
+  return canonicalResolveLangMode({ allowEng: Boolean(allowEngOrLangMode), meta, defaultMode: 'ita' });
 }
 
+function isAnimeMeta(meta = {}) {
+  return Boolean(meta?.kitsu_id || meta?.isAnime || String(meta?.type || '').toLowerCase() === 'anime');
+}
 
 function collectMetaAliases(meta = {}) {
   return [

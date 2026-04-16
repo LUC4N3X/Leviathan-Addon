@@ -29,12 +29,12 @@ const getRandomUserAgent = () => {
     return uas[Math.floor(Math.random() * uas.length)];
 };
 
-const httpsAgent = new https.Agent({ 
-    rejectUnauthorized: false, 
+const httpsAgent = new https.Agent({
+    rejectUnauthorized: false,
     keepAlive: true,
     maxSockets: 100,
     maxFreeSockets: 20,
-    timeout: 30000 
+    timeout: 30000
 });
 
 const httpClient = axios.create({
@@ -46,13 +46,13 @@ const httpClient = axios.create({
 httpClient.interceptors.response.use(undefined, async (err) => {
     const config = err.config;
     if (!config || !config.retry) return Promise.reject(err);
-    
+
     config.retryCount = config.retryCount || 0;
     if (config.retryCount >= config.retry) return Promise.reject(err);
-    
+
     config.retryCount += 1;
     await new Promise(r => setTimeout(r, Math.pow(2, config.retryCount) * 500));
-    
+
     config.headers['User-Agent'] = getRandomUserAgent();
     return httpClient(config);
 });
@@ -112,7 +112,7 @@ const buildMediaflowUrl = (config, targetUrl, type = 'hls') => {
     const mfp = config.mediaflow.url.replace(/\/$/, '');
     const encoded = encodeURIComponent(normalizeUrl(targetUrl));
     const pass = config.mediaflow.pass ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}` : '';
-    return type === 'hls' 
+    return type === 'hls'
         ? `${mfp}/hls?url=${encoded}${pass}&ext=.m3u8`
         : `${mfp}/extractor/video?host=Mixdrop${pass}&d=${encoded}&redirect_stream=true`;
 };
@@ -153,7 +153,7 @@ class CacheManager {
                 if (now - val.timestamp > CONFIG.CACHE.STALE_TTL) this.#cache.delete(key);
             }
             await fs.writeFile(this.#file, JSON.stringify(Object.fromEntries(this.#cache)), 'utf8');
-        } catch {} 
+        } catch {}
         finally { this.#isWriting = false; }
     }
 
@@ -165,7 +165,7 @@ class CacheManager {
         const age = Date.now() - entry.timestamp;
         if (age < CONFIG.CACHE.TTL) return { data: entry, isStale: false };
         if (age < CONFIG.CACHE.STALE_TTL) return { data: entry, isStale: true };
-        
+
         this.#cache.delete(key);
         this.#save();
         return { data: null, isStale: false };
@@ -216,7 +216,7 @@ const Extractors = {
 
             if (!m3u8) return [];
 
-            return [{ 
+            return [{
                 url: normalizeUrl(m3u8), quality: '1080p', size, name: 'SuperVideo',
                 headers: { "Referer": "https://supervideo.cc/", "Origin": "https://supervideo.cc/" }
             }];
@@ -236,16 +236,16 @@ const Extractors = {
             } else return [];
         } catch {}
 
-        return [{ 
-            url: buildMediaflowUrl(config, embedUrl, 'mixdrop'), 
-            quality: resPart, size: sizePart, name: 'MixDrop' 
+        return [{
+            url: buildMediaflowUrl(config, embedUrl, 'mixdrop'),
+            quality: resPart, size: sizePart, name: 'MixDrop'
         }];
     }
 };
 
 class GuardaHDScraper {
     #config;
-    
+
     constructor(config) { this.#config = config; }
 
     async #getTmdbTitle(imdb_id) {
@@ -260,7 +260,7 @@ class GuardaHDScraper {
         try {
             const res = await fetchSmart(`${CONFIG.SCRAPER.BASE_URL}/set-movie-a/${imdb_id}`);
             const $ = cheerio.load(res.data);
-            const embedDict = new Map(); 
+            const embedDict = new Map();
 
             $('li[data-link]').each((_, el) => {
                 const link = normalizeUrl($(el).attr('data-link'));
@@ -291,7 +291,7 @@ class GuardaHDScraper {
                     behaviorHints: { bingeWatching: true, ...(s.headers && { proxyHeaders: { request: s.headers } }) }
                 };
             });
-        } catch { return []; } 
+        } catch { return []; }
         finally { embedSemaphore.release(); }
     }
 
@@ -300,13 +300,13 @@ class GuardaHDScraper {
 
         const { imdb_id, title: metaTitle } = meta;
         let embedUrls = [], officialTitle = metaTitle;
-        
+
         const { data: cached, isStale } = await cacheManager.get(imdb_id);
-        
+
         if (cached) {
             embedUrls = cached.embeds;
             officialTitle = cached.title || officialTitle;
-            
+
             if (isStale) {
                 Promise.all([this.#scrapeEmbedUrls(imdb_id), this.#getTmdbTitle(imdb_id)])
                     .then(([urls, title]) => {

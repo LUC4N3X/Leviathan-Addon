@@ -1,23 +1,42 @@
+'use strict';
+
 const { hasExplicitSeasonMarker } = require('./title_parser');
 
-function isAnimeMeta(meta = {}, type = '') {
-  const normalizedType = String(type || meta?.type || '').toLowerCase();
-  return Boolean(meta?.kitsu_id || meta?.isAnime || normalizedType === 'anime');
+function isAnimeMetaContext(meta = {}, type = '') {
+  return Boolean(meta?.kitsu_id || meta?.isAnime || String(type || '').toLowerCase() === 'anime');
 }
 
 function getEpisodeParseOptions(meta = {}, type = '') {
-  return { anime: isAnimeMeta(meta, type) };
+  return { anime: isAnimeMetaContext(meta, type) };
 }
 
-function shouldIgnoreAnimeSeason(meta = {}, typeOrTitle = '', maybeTitle = '') {
-  const treatSecondArgAsTitle = maybeTitle === '' && typeof typeOrTitle === 'string' && !['anime', 'movie', 'series', 'tv'].includes(String(typeOrTitle || '').toLowerCase());
-  const type = treatSecondArgAsTitle ? '' : typeOrTitle;
-  const title = treatSecondArgAsTitle ? typeOrTitle : maybeTitle;
-  return isAnimeMeta(meta, type) && !hasExplicitSeasonMarker(title);
+function shouldIgnoreAnimeSeason(meta = {}, type = '', title = '') {
+  return isAnimeMetaContext(meta, type) && !hasExplicitSeasonMarker(title);
+}
+
+function mapKitsuEpisodePosition(parsedKitsu, fallbackKitsuMeta) {
+  const requestedEpisode = Number(parsedKitsu?.episode || 0) || 0;
+  const mappedSeason = Number(fallbackKitsuMeta?.season || parsedKitsu?.season || 1) || 1;
+  const baseEpisode = Number(fallbackKitsuMeta?.episode || 1) || 1;
+
+  if (!(requestedEpisode > 0)) {
+    return {
+      mappedSeason,
+      mappedEpisode: 0,
+      requestedEpisode: 0
+    };
+  }
+
+  return {
+    mappedSeason,
+    mappedEpisode: baseEpisode + requestedEpisode - 1,
+    requestedEpisode
+  };
 }
 
 module.exports = {
-  isAnimeMeta,
+  isAnimeMetaContext,
   getEpisodeParseOptions,
-  shouldIgnoreAnimeSeason
+  shouldIgnoreAnimeSeason,
+  mapKitsuEpisodePosition
 };

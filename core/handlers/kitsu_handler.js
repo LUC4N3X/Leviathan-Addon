@@ -6,13 +6,13 @@ const URLS = {
     KITSU_API: "https://kitsu.io/api/edge/anime"
 };
 
-const CACHE_DURATION = 1000 * 60 * 60 * 24; 
+const CACHE_DURATION = 1000 * 60 * 60 * 24;
 
 let mappingCache = {
     map: new Map(),
     lastFetch: 0,
     isLoaded: false,
-    isLoading: false 
+    isLoading: false
 };
 let mappingCachePromise = null;
 
@@ -136,7 +136,7 @@ function buildTheBeastEntry(rawEntry = {}) {
 
 async function updateCache() {
     const now = Date.now();
-    
+
     if (mappingCache.isLoaded && (now - mappingCache.lastFetch < CACHE_DURATION)) {
         return;
     }
@@ -150,7 +150,7 @@ async function updateCache() {
 
     try {
         const [fribbRes, beastRes] = await Promise.allSettled([
-            axios.get(URLS.FRIBB, { timeout: 20000 }), 
+            axios.get(URLS.FRIBB, { timeout: 20000 }),
             axios.get(URLS.THEBEAST, { timeout: 20000 })
         ]);
 
@@ -207,15 +207,15 @@ async function fetchKitsuLive(kitsuID) {
         if (!normalizedId) return null;
 
         const url = `${URLS.KITSU_API}/${normalizedId}?include=mappings`;
-        const res = await axios.get(url, { timeout: 2500 }); 
-        
+        const res = await axios.get(url, { timeout: 2500 });
+
         const data = res.data?.data;
         const included = res.data?.included;
 
         if (!data || !included) return null;
 
-        const imdbMapping = included.find(m => 
-            m.type === 'mappings' && 
+        const imdbMapping = included.find(m =>
+            m.type === 'mappings' &&
             m.attributes?.externalSite === 'imdb'
         );
 
@@ -258,7 +258,7 @@ async function kitsuHandler(kitsuID) {
             return await fetchKitsuLive(strID);
         }
     }
-    
+
     let entry = mappingCache.map.get(strID);
 
     if (!entry) {
