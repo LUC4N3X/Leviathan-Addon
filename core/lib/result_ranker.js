@@ -12,6 +12,9 @@ const {
   isSeasonPack,
   isTrustedSource
 } = require("../utils_text");
+const { tokenizeTitle, hasExplicitSeasonMarker, extractEpisodeContext } = require('../canonical/title_parser');
+const { isAnimeMeta, shouldIgnoreAnimeSeason } = require('../canonical/anime_rules');
+const { resolveLangMode: resolveCanonicalLangMode } = require('../canonical/language_rules');
 
 const REGEX_SCENE_RELEASE = /\b(?:web[-.\s]?dl|webrip|blu[-.\s]?ray|bd[-.\s]?rip|remux|uhd|hevc|x265|x264|ddp|truehd|dts|atmos|hdr|dv|dolby[\s.-]?vision)\b/i;
 const REGEX_HEVC = /\b(?:x265|h265|hevc)\b/i;
@@ -177,25 +180,6 @@ function lowerText(value) {
   return normalizeText(value).toLowerCase();
 }
 
-function stripAccents(value) {
-  return normalizeText(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
-}
-
-function normalizeLooseTitle(value) {
-  return stripAccents(value)
-    .toLowerCase()
-    .replace(REGEX_TITLE_PUNCTUATION, " ")
-    .replace(REGEX_TITLE_SPACING, " ")
-    .replace(REGEX_TITLE_NOISE, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function tokenizeTitle(value) {
-  const normalized = normalizeLooseTitle(value);
-  if (!normalized) return [];
-  return normalized.split(" ").filter((token) => token.length >= 2);
-}
 
 function mergeProfile(baseProfile, overrideProfile = {}) {
   return {
@@ -247,51 +231,18 @@ function getProfileConfig(configInput = {}) {
   };
 }
 
-function isAnimeMeta(meta = {}) {
-  return Boolean(meta?.kitsu_id || meta?.isAnime);
+function resolveLangMode(meta = {}, configInput = {}) {
+  const config = buildPreparedConfig(configInput);
+  return resolveCanonicalLangMode({
+    meta,
+    config,
+    filters: configInput.filters || {},
+    defaultMode: 'ita',
+    animeDefault: 'all',
+    dedupeDefaultAll: config.profile === 'dedupe'
+  });
 }
 
-
-function hasExplicitSeasonMarker(text = '') {
-  return /\b(?:S(?:EASON)?\s*0?\d{1,2}|\d{1,2}x\d{1,3}|STAGIONE\s*0?\d{1,2}|(?:1ST|2ND|3RD|4TH)\s+SEASON)\b/i.test(String(text || ""));
-}
-
-function shouldIgnoreAnimeSeason(meta = {}, title = '') {
-  return isAnimeMeta(meta) && !hasExplicitSeasonMarker(title);
-}
-
-function extractEpisodeContext(title, defaultSeason = 1, options = {}) {
-  const safeTitle = normalizeText(title);
-  let match = safeTitle.match(/\bS(\d{1,2})E(\d{1,3})\b/i);
-  if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
-
-  match = safeTitle.match(/\b(\d{1,2})x(\d{1,3})\b/i);
-  if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
-
-  match = safeTitle.match(/\bE(?:P(?:ISODE)?)?\s*0?(\d{1,3})\b/i);
-  if (match) return { season: defaultSeason, episode: parseInt(match[1], 10) };
-
-  if (options?.anime) {
-    match = safeTitle.match(/\bS(?:EASON)?\s*0?(\d{1,2})\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
-    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
-
-    match = safeTitle.match(/\b(\d{1,2})(?:ST|ND|RD|TH)\s+SEASON\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
-    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
-
-    match = safeTitle.match(/\b(?:EP(?:ISODE)?|EPISODIO)\s*0?(\d{1,4})(?:v\d+)?\b/i);
-    if (match) return { season: defaultSeason, episode: parseInt(match[1], 10) };
-
-    const genericPattern = /(?:^|[\s._\-\[\(])0*([1-9]\d{0,3})(?:v\d+)?(?=$|[\s._\-\]\)])/ig;
-    for (const candidate of safeTitle.matchAll(genericPattern)) {
-      const episode = parseInt(candidate[1], 10);
-      if (!Number.isInteger(episode) || episode <= 0) continue;
-      if (episode >= 1900 && episode <= 2100) continue;
-      return { season: defaultSeason, episode };
-    }
-  }
-
-  return null;
-}
 
 function detectQuality(value) {
     const text = typeof value === "object" && value !== null
@@ -322,21 +273,6 @@ function getQualityPriority(item) {
   return 1;
 }
 
-function resolveLangMode(meta = {}, configInput = {}) {
-  const config = buildPreparedConfig(configInput);
-  const directMeta = lowerText(meta.langMode || meta.languageMode || meta.language);
-  const explicit = lowerText(configInput.filters?.language || configInput.langMode || configInput.language);
-  if (isAnimeMeta(meta)) {
-    if (directMeta === "eng" || explicit === "eng") return "eng";
-    return "all";
-  }
-  if (directMeta === "ita" || directMeta === "eng" || directMeta === "all") return directMeta;
-  if (explicit === "ita" || explicit === "eng" || explicit === "all") return explicit;
-
-  if (configInput.filters?.allowEng === true || configInput.allowEng === true) return "all";
-  if (config.profile === "dedupe" && explicit === "") return "all";
-  return "ita";
-}
 
 function getExpectedTitles(meta = {}) {
   const titles = new Set();

@@ -7,6 +7,12 @@ const { createSharedStreamCacheRepository } = require('./db/shared_stream_cache_
 
 let pool = null;
 let databaseOptimizationsPromise = null;
+let cacheEventListenerClient = null;
+let cacheEventReconnectTimer = null;
+const cacheEventHandlers = new Set();
+const CACHE_EVENT_CHANNEL = /^[a-zA-Z0-9_]+$/.test(String(process.env.CACHE_EVENT_CHANNEL || 'leviathan_cache_events'))
+  ? String(process.env.CACHE_EVENT_CHANNEL || 'leviathan_cache_events')
+  : 'leviathan_cache_events';
 
 const DB_POOL_MAX = normalizers.clampInt(process.env.DB_POOL_MAX, 40, 5, 120);
 const DB_POOL_IDLE_TIMEOUT_MS = normalizers.clampInt(process.env.DB_POOL_IDLE_TIMEOUT_MS, 30000, 5000, 120000);
@@ -94,6 +100,17 @@ async function shutdownDatabase() {
   const currentPool = pool;
   pool = null;
   databaseOptimizationsPromise = null;
+  if (cacheEventReconnectTimer) {
+    clearTimeout(cacheEventReconnectTimer);
+    cacheEventReconnectTimer = null;
+  }
+  if (cacheEventListenerClient) {
+    try {
+      await cacheEventListenerClient.query(`UNLISTEN ${CACHE_EVENT_CHANNEL}`);
+    } catch (_) {}
+    try { cacheEventListenerClient.release(); } catch (_) {}
+    cacheEventListenerClient = null;
+  }
   await currentPool.end();
 }
 
@@ -129,6 +146,72 @@ async function healthCheck() {
   return true;
 }
 
+function scheduleCacheEventReconnect() {
+  if (cacheEventReconnectTimer || cacheEventHandlers.size === 0) return;
+  cacheEventReconnectTimer = setTimeout(() => {
+    cacheEventReconnectTimer = null;
+    ensureCacheEventListener().catch(() => {});
+  }, 1500);
+  cacheEventReconnectTimer.unref?.();
+}
+
+async function ensureCacheEventListener() {
+  if (!pool || cacheEventHandlers.size === 0) return false;
+  if (cacheEventListenerClient) return true;
+
+  const client = await pool.connect();
+  cacheEventListenerClient = client;
+
+  client.on('notification', (message) => {
+    if (message.channel !== CACHE_EVENT_CHANNEL) return;
+    let payload = null;
+    try {
+      payload = JSON.parse(String(message.payload || '{}'));
+    } catch (_) {
+      return;
+    }
+    for (const handler of cacheEventHandlers) {
+      try {
+        handler(payload);
+      } catch (_) {}
+    }
+  });
+
+  const reset = () => {
+    if (cacheEventListenerClient === client) cacheEventListenerClient = null;
+    try { client.release(); } catch (_) {}
+    scheduleCacheEventReconnect();
+  };
+
+  client.on('error', reset);
+  client.on('end', reset);
+  await client.query(`LISTEN ${CACHE_EVENT_CHANNEL}`);
+  return true;
+}
+
+function subscribeCacheEvents(handler) {
+  if (typeof handler !== 'function') return () => {};
+  cacheEventHandlers.add(handler);
+  ensureCacheEventListener().catch(() => {
+    scheduleCacheEventReconnect();
+  });
+  return () => {
+    cacheEventHandlers.delete(handler);
+  };
+}
+
+async function publishCacheEvent(event = {}) {
+  if (!pool) return false;
+  const payload = JSON.stringify(event);
+  if (!payload || payload.length > 7800) return false;
+  try {
+    await pool.query('SELECT pg_notify($1, $2)', [CACHE_EVENT_CHANNEL, payload]);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 const sharedDependencies = {
   getPool: () => pool,
   withClient,
@@ -147,6 +230,8 @@ module.exports = {
   getPool: () => pool,
   withClient,
   healthCheck,
+  subscribeCacheEvents,
+  publishCacheEvent,
   ...torrentRepository,
   ...sharedStreamCacheRepository,
   updateTrackers: trackerRegistry.updateTrackers,

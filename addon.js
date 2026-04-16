@@ -166,6 +166,9 @@ function bootstrapServer() {
     }
 
     dbHelper.initDatabase();
+    if (Cache && typeof Cache.startCrossWorkerInvalidationBus === 'function') {
+        Cache.startCrossWorkerInvalidationBus();
+    }
 
     const { getRdAuditorStatus } = bootRealDebridAuditor({
         dbHelper,

@@ -24,6 +24,9 @@ const { createSearchPlan, evaluatePoolSatisfaction } = require("./lib/search_pla
 const { shouldSkipRecentWork } = require('./recent_work');
 const { buildSharedStreamCachePolicy, buildSharedReadContext, shouldUseSharedStreamEntry } = require('./lib/shared_stream_policy');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
+const { hasExplicitSeasonMarker } = require('./canonical/title_parser');
+const { isAnimeMeta: isAnimeMetaContext, getEpisodeParseOptions, shouldIgnoreAnimeSeason } = require('./canonical/anime_rules');
+const { resolveLangMode: resolveCanonicalLangMode } = require('./canonical/language_rules');
 
 const {
   logger, Cache, LIMITERS, CONFIG, REGEX_QUALITY_FILTER, REGEX_SUB_ONLY, REGEX_AUDIO_CONFIRM, REGEX_YEAR, EMPTY_STREAM_TTL, METADATA_CACHE_TTL,
@@ -90,32 +93,10 @@ function uniqueTextList(values = []) {
     return output;
 }
 
-function isAnimeMetaContext(meta = {}, type = '') {
-    return Boolean(meta?.kitsu_id || meta?.isAnime || String(type || '').toLowerCase() === 'anime');
-}
-
-function getEpisodeParseOptions(meta = {}, type = '') {
-    return { anime: isAnimeMetaContext(meta, type) };
-}
-
 function getEffectiveSearchLanguageMode(filters = {}, meta = {}, type = '') {
-    const explicit = String(filters?.language || '').toLowerCase();
-    if (isAnimeMetaContext(meta, type)) {
-        if (explicit === 'eng') return 'eng';
-        return 'all';
-    }
-    if (explicit === 'ita' || explicit === 'eng' || explicit === 'all') return explicit;
-    if (filters?.allowEng) return 'all';
-    return 'ita';
+    return resolveCanonicalLangMode({ meta, type, filters, defaultMode: 'ita', animeDefault: 'all' });
 }
 
-function hasExplicitSeasonMarker(text = '') {
-    return /\b(?:S(?:EASON)?\s*0?\d{1,2}|\d{1,2}x\d{1,3}|STAGIONE\s*0?\d{1,2}|(?:1ST|2ND|3RD|4TH)\s+SEASON)\b/i.test(String(text || ''));
-}
-
-function shouldIgnoreAnimeSeason(meta = {}, type = '', title = '') {
-    return isAnimeMetaContext(meta, type) && !hasExplicitSeasonMarker(title);
-}
 
 function mapKitsuEpisodePosition(parsedKitsu, fallbackKitsuMeta) {
     const requestedEpisode = Number(parsedKitsu?.episode || 0) || 0;
@@ -233,7 +214,7 @@ function assessFastResultQuality(items, meta, langMode, config) {
         return { shouldScrape: true, reason: 'no_fast_results', strongCount: 0, exactEpisodeCount: 0, seasonPackCount: 0, total: 0 };
     }
 
-    const effectiveLangMode = langMode === 'ita' && isAnimeMetaContext(meta) ? 'all' : langMode;
+    const effectiveLangMode = langMode;
     let strongCount = 0;
     let exactEpisodeCount = 0;
     let seasonPackCount = 0;
@@ -805,7 +786,7 @@ function hasStrongSeriesTitleMatch(title, meta) {
 }
 
 function createAggressiveResultFilter(meta, type, langMode) {
-    const effectiveLangMode = langMode === 'ita' && isAnimeMetaContext(meta, type) ? 'all' : langMode;
+    const effectiveLangMode = langMode;
     return (item) => {
         if (!item?.magnet) return false;
 

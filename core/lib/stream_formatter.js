@@ -1,3 +1,4 @@
+const { resolveLangMode: resolveCanonicalLangMode } = require('../canonical/language_rules');
 function basicParseTitle(title) {
   const source = String(title || '');
   const cleaned = source
@@ -237,11 +238,7 @@ function uniqueBy(items, getKey) {
 }
 
 function resolveFormatterLangMode(config = {}) {
-  const explicit = safeString(config?.filters?.language || config?.language).toLowerCase().trim();
-  if (explicit === 'eng' || explicit === 'ita' || explicit === 'all') return explicit;
-  if (explicit === 'ita-eng') return 'all';
-  if (config?.filters?.allowEng === true || config?.allowEng === true) return 'all';
-  return 'ita';
+  return resolveCanonicalLangMode({ config, filters: config?.filters || {}, defaultMode: 'ita' });
 }
 
 function getDisplayLanguageForMode(lang, config = {}) {
