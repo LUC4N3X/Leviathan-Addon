@@ -12,9 +12,6 @@ const {
   isSeasonPack,
   isTrustedSource
 } = require("../utils_text");
-const { tokenizeTitle: canonicalTokenizeTitle, hasExplicitSeasonMarker: canonicalHasExplicitSeasonMarker, extractEpisodeContext: canonicalExtractEpisodeContext } = require('../canonical/title_parser');
-const { resolveLangMode: canonicalResolveLangMode } = require('../canonical/language_rules');
-const { shouldIgnoreAnimeSeason: canonicalShouldIgnoreAnimeSeason } = require('../canonical/anime_rules');
 
 const REGEX_SCENE_RELEASE = /\b(?:web[-.\s]?dl|webrip|blu[-.\s]?ray|bd[-.\s]?rip|remux|uhd|hevc|x265|x264|ddp|truehd|dts|atmos|hdr|dv|dolby[\s.-]?vision)\b/i;
 const REGEX_HEVC = /\b(?:x265|h265|hevc)\b/i;
@@ -195,7 +192,9 @@ function normalizeLooseTitle(value) {
 }
 
 function tokenizeTitle(value) {
-  return canonicalTokenizeTitle(value, { keepNumbers: true });
+  const normalized = normalizeLooseTitle(value);
+  if (!normalized) return [];
+  return normalized.split(" ").filter((token) => token.length >= 2);
 }
 
 function mergeProfile(baseProfile, overrideProfile = {}) {
@@ -254,11 +253,11 @@ function isAnimeMeta(meta = {}) {
 
 
 function hasExplicitSeasonMarker(text = '') {
-  return canonicalHasExplicitSeasonMarker(text);
+  return /\b(?:S(?:EASON)?\s*0?\d{1,2}|\d{1,2}x\d{1,3}|STAGIONE\s*0?\d{1,2}|(?:1ST|2ND|3RD|4TH)\s+SEASON)\b/i.test(String(text || ""));
 }
 
 function shouldIgnoreAnimeSeason(meta = {}, title = '') {
-  return canonicalShouldIgnoreAnimeSeason(meta, '', title);
+  return isAnimeMeta(meta) && !hasExplicitSeasonMarker(title);
 }
 
 function extractEpisodeContext(title, defaultSeason = 1, options = {}) {
@@ -324,14 +323,16 @@ function getQualityPriority(item) {
 }
 
 function resolveLangMode(meta = {}, configInput = {}) {
-  return canonicalResolveLangMode({
-    filters: configInput?.filters || {},
-    language: configInput?.language,
-    langMode: configInput?.langMode,
-    allowEng: configInput?.allowEng,
-    meta,
-    defaultMode: 'ita'
-  });
+  const config = buildPreparedConfig(configInput);
+  const directMeta = lowerText(meta.langMode || meta.languageMode || meta.language);
+  const explicit = lowerText(configInput.filters?.language || configInput.langMode || configInput.language);
+
+  if (directMeta === "ita" || directMeta === "eng" || directMeta === "all") return directMeta;
+  if (explicit === "ita" || explicit === "eng" || explicit === "all") return explicit;
+
+  if (configInput.filters?.allowEng === true || configInput.allowEng === true) return "all";
+  if (config.profile === "dedupe" && explicit === "") return "all";
+  return "ita";
 }
 
 function getExpectedTitles(meta = {}) {
@@ -423,10 +424,18 @@ function getLanguageSignals(item, meta = {}) {
 
 function shouldKeepItalianCandidate(title, source, meta = {}) {
   const signals = getLanguageSignals({ title, source }, meta);
-  if (signals.langInfo.isItalian || (signals.langInfo.confidence || 0) >= 4 || signals.langInfo.isMaybeItalian) return true;
+
+  if ((signals.explicitEng || signals.explicitOther) && !signals.explicitIta) return false;
+  if (signals.explicitMulti && !signals.explicitIta) return false;
+
+  if (signals.langInfo.isItalian || (signals.langInfo.confidence || 0) >= 4 || signals.langInfo.isMaybeItalian) {
+    return true;
+  }
+
   if (signals.subOnly && !REGEX_AUDIO_CONFIRM.test(title)) {
     return shouldKeepItalianCandidate(String(title || "").replace(REGEX_SUB_ONLY, " "), source, meta);
   }
+
   return false;
 }
 
