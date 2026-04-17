@@ -1,20 +1,21 @@
 const axios = require("axios");
+const { getRequestOrigin, isSafeRemoteUrl } = require("../../core/utils_url");
 
 const DEFAULT_REFERER = "https://vixsrc.to/";
 const DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 function getSelfBase(req) {
-    const forwarded = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
-    const protocol = forwarded || req.protocol || "https";
-    return `${protocol}://${req.get("host")}`;
+    return getRequestOrigin(req);
 }
 
 function safeUrl(value, base) {
     try {
         if (!value) return null;
-        if (/^https?:\/\//i.test(value)) return new URL(value).toString();
-        if (value.startsWith("//")) return `https:${value}`;
-        return new URL(value, base).toString();
+        let resolved = null;
+        if (/^https?:\/\//i.test(value)) resolved = new URL(value).toString();
+        else if (value.startsWith("//")) resolved = `https:${value}`;
+        else resolved = new URL(value, base).toString();
+        return isSafeRemoteUrl(resolved) ? resolved : null;
     } catch {
         return null;
     }
@@ -175,10 +176,10 @@ async function fetchUpstream(targetUrl, referer) {
 async function handleVixSynthetic(req, res) {
     const sourceUrl = safeUrl(req.query.src);
     const forceMax = req.query.max === "1";
-    const pageReferer = req.query.referer || DEFAULT_REFERER;
+    const pageReferer = safeUrl(req.query.referer, DEFAULT_REFERER) || DEFAULT_REFERER;
 
-    if (!sourceUrl) {
-        return res.status(400).send("Missing src");
+    if (!sourceUrl || !isSafeRemoteUrl(sourceUrl)) {
+        return res.status(400).send("Invalid or unsafe src");
     }
 
     try {
