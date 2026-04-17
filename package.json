@@ -25,7 +25,7 @@
     "express-rate-limit": "^8.3.2",
     "got-scraping": "^4.0.0",
     "he": "^1.2.0",
-    "helmet": "^7.1.0",
+    "helmet": "^8.1.0",
     "node-cache": "^5.1.2",
     "parse-torrent-title": "^1.4.0",
     "p-limit": "^3.1.0",
