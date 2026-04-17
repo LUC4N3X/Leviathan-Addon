@@ -36,7 +36,7 @@ jobs:
           zip -r dist/leviathan-source.zip . -x '*.git*' 'node_modules/*' 'dist/*'
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: leviathan-source
           path: dist/leviathan-source.zip
