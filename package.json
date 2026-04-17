@@ -27,7 +27,7 @@
     "he": "^1.2.0",
     "helmet": "^7.1.0",
     "node-cache": "^5.1.2",
-    "parse-torrent-title": "^1.4.0",
+    "parse-torrent-title": "^2.1.0",
     "p-limit": "^3.1.0",
     "pg": "^8.11.5",
     "winston": "^3.17.0"
