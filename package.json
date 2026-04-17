@@ -20,7 +20,7 @@
     "cheerio": "^1.0.0-rc.12",
     "compression": "^1.7.5",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
+    "dotenv": "^17.4.2",
     "express": "^4.19.2",
     "express-rate-limit": "^7.2.0",
     "got-scraping": "^4.0.0",
