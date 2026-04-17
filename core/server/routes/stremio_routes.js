@@ -2,6 +2,7 @@
 
 const path = require('path');
 const { incrementMetric } = require('../../utils_runtime');
+const { getRequestClientIp, getRequestOrigin } = require('../../utils_url');
 
 const RECENT_STREAM_HINT_TTL_MS = 10 * 60 * 1000;
 const RECENT_STREAM_HINT_LIMIT = 256;
@@ -33,8 +34,7 @@ function cleanupRecentBingeWarmups(now = Date.now()) {
 }
 
 function getStreamHintKey(conf, req) {
-    const forwardedFor = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
-    const clientIp = forwardedFor || String(req?.ip || '').trim();
+    const clientIp = getRequestClientIp(req);
     return `${String(conf || '').trim()}:${clientIp}`;
 }
 
@@ -306,7 +306,7 @@ function registerStremioRoutes(app, {
             rememberSeriesHint(req.params.conf, req, req.params.type, requestId);
 
             const userConf = getConfig(req.params.conf);
-            const reqHost = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+            const reqHost = getRequestOrigin(req);
             const result = await generateStream(
                 req.params.type,
                 requestId,

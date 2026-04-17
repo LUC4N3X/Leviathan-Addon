@@ -1,5 +1,7 @@
 'use strict';
 
+const { getRequestOrigin } = require('../../utils_url');
+
 function registerPlaybackRoutes(app, {
     Cache,
     LIMITERS,
@@ -94,8 +96,7 @@ function registerPlaybackRoutes(app, {
             }
             incrementMetric('lazyPlay.redirectToCloud');
             recordDuration('lazyPlay.total', Date.now() - startedAt);
-            const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-            return res.redirect(`${protocol}://${req.get('host')}/${conf}/add_to_cloud/${hash}`);
+            return res.redirect(`${getRequestOrigin(req)}/${conf}/add_to_cloud/${hash}`);
         } catch (err) {
             recordDuration('lazyPlay.total', Date.now() - startedAt);
             recordProviderMetric(`lazy.${requestedService}`, false, Date.now() - startedAt, { error: err.message, timeout: /timeout/i.test(String(err?.message || '')) });
@@ -135,7 +136,7 @@ function registerPlaybackRoutes(app, {
                 logger.info(`📥 [CACHE BUILDER] Richiesta aggiunta hash ${hash} su ${service.toUpperCase()}`);
                 await queueCloudBuild(service, hash, apiKey);
             }
-            res.redirect(`${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}/confirmed.mp4`);
+            res.redirect(`${getRequestOrigin(req)}/confirmed.mp4`);
         } catch (err) {
             logger.error(`Errore Cache Builder: ${err.message}`);
             res.status(500).send(`Errore durante l'aggiunta al cloud: ${err.message}`);

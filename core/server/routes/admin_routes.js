@@ -2,6 +2,7 @@
 
 function registerAdminRoutes(app, { Cache, ADMIN_PASS, safeCompare }) {
     const authMiddleware = (req, res, next) => {
+        res.setHeader('Cache-Control', 'no-store');
         if (!ADMIN_PASS) return res.status(503).json({ error: 'Admin disabilitato: configura ADMIN_PASS nell\'ambiente' });
         const rawAuthHeader = String(req.headers.authorization || '').trim();
         if (safeCompare(rawAuthHeader.toLowerCase().startsWith('bearer ') ? rawAuthHeader.slice(7).trim() : rawAuthHeader, ADMIN_PASS)) {

@@ -84,6 +84,15 @@ function maybeSendCompressed(req, res, originalSend, body, fallbackContentType =
     return true;
 }
 
+function resolveTrustProxySetting() {
+    const raw = String(process.env.TRUST_PROXY || '').trim();
+    if (!raw) return 1;
+    if (/^(?:false|0|off|no)$/i.test(raw)) return false;
+    if (/^(?:true|1|on|yes)$/i.test(raw)) return true;
+    if (/^\d+$/.test(raw)) return parseInt(raw, 10);
+    return raw;
+}
+
 function smartResponseCompressionMiddleware(req, res, next) {
     const originalSend = res.send.bind(res);
     const originalJson = res.json.bind(res);
@@ -116,7 +125,7 @@ function smartResponseCompressionMiddleware(req, res, next) {
 }
 
 function applyCommonMiddleware(app, { staticDir }) {
-    app.set('trust proxy', 1);
+    app.set('trust proxy', resolveTrustProxySetting());
 
     const RATE_LIMIT_WINDOW_MS = Math.max(60 * 1000, parseInt(process.env.RATE_LIMIT_WINDOW_MS || String(15 * 60 * 1000), 10) || (15 * 60 * 1000));
     const RATE_LIMIT_MAX = Math.max(50, parseInt(process.env.RATE_LIMIT_MAX || '350', 10) || 350);
