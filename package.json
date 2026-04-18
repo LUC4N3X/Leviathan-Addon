@@ -1,6 +1,6 @@
 {
   "name": "leviathan",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Leviathan Edition - phased search planner + shared stream cache + premium ranking",
   "main": "addon.js",
   "scripts": {
