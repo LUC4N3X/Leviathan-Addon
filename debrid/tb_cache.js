@@ -32,6 +32,35 @@ function safeNum(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function normalizeHash(value) {
+  return lower(value).replace(/[^a-f0-9]/g, '');
+}
+
+function findTorboxListEntry(data, requestedHash, requestedHashes = []) {
+  const normalizedRequested = normalizeHash(requestedHash);
+  if (!data) return null;
+
+  if (Array.isArray(data)) {
+    for (let index = 0; index < data.length; index += 1) {
+      const entry = data[index];
+      const candidates = [entry?.hash, entry?.info_hash, entry?.torrent_hash, entry?.hash_value]
+        .map(normalizeHash)
+        .filter(Boolean);
+      if (candidates.includes(normalizedRequested)) return entry;
+      if (!candidates.length && normalizeHash(requestedHashes[index]) === normalizedRequested) return entry;
+    }
+    return null;
+  }
+
+  if (typeof data === "object") {
+    for (const [hash, info] of Object.entries(data)) {
+      if (normalizeHash(hash) === normalizedRequested) return info;
+    }
+  }
+
+  return null;
+}
+
 function normalizeName(value) {
   return lower(value)
     .normalize("NFKD")
@@ -109,7 +138,7 @@ function isExtraFile(file) {
 
 function isSeasonPackName(name, season) {
   if (!season) return false;
-  return new RegExp(`\bseason\s*0*${season}\b|\bcomplete\b|\bpack\b|\bcollection\b|\bintegrale\b|\bstagione\s*0*${season}\b`, "i").test(name);
+  return new RegExp(`\\bseason\\s*0*${season}\\b|\\bcomplete\\b|\\bpack\\b|\\bcollection\\b|\\bintegrale\\b|\\bstagione\\s*0*${season}\\b`, "i").test(name);
 }
 
 function parseEpisodeRange(name) {
@@ -134,11 +163,11 @@ function buildEpisodeRegexes(season, episode) {
   const e = safeInt(episode, 0);
   const e2 = String(e).padStart(2, "0");
   return [
-    { score: 1200, regex: new RegExp(`\bS(?:eason)?\s*0*${s}\s*[-_. ]*E(?:pisode)?\s*0*${e}\b`, "i") },
-    { score: 1180, regex: new RegExp(`\b0*${s}x0*${e}\b`, "i") },
-    { score: 1140, regex: new RegExp(`\bS0*${s}[^a-z0-9]{0,4}E0*${e}\b`, "i") },
-    { score: 1090, regex: new RegExp(`\b${s}${e2}\b`) },
-    { score: 980, regex: new RegExp(`\bepisode\s*0*${e}\b|\bep\s*0*${e}\b`, "i") },
+    { score: 1200, regex: new RegExp(`\\bS(?:eason)?\\s*0*${s}\\s*[-_. ]*E(?:pisode)?\\s*0*${e}\\b`, "i") },
+    { score: 1180, regex: new RegExp(`\\b0*${s}x0*${e}\\b`, "i") },
+    { score: 1140, regex: new RegExp(`\\bS0*${s}[^a-z0-9]{0,4}E0*${e}\\b`, "i") },
+    { score: 1090, regex: new RegExp(`\\b${s}${e2}\\b`) },
+    { score: 980, regex: new RegExp(`\\bepisode\\s*0*${e}\\b|\\bep\\s*0*${e}\\b`, "i") },
     { score: 760, regex: new RegExp(`(?:^|\D)0*${e}(?:\D|$)`) }
   ];
 }
@@ -292,7 +321,7 @@ async function checkChunk(entries, token) {
     const response = await fetchWithRetry(`${TB_BASE_URL}/torrents/checkcached`, {
       params: {
         hash: hashes.join(","),
-        format: "object",
+        format: "list",
         list_files: "true"
       },
       headers: {
@@ -306,7 +335,7 @@ async function checkChunk(entries, token) {
     const data = response?.data;
     if (data?.success && data?.data) {
       for (const entry of entries) {
-        const info = data.data[entry.hash] || data.data[entry.hash.toUpperCase()] || data.data[entry.hash.toLowerCase()] || null;
+        const info = findTorboxListEntry(data.data, entry.hash, hashes);
         const [key, value] = parseHashResult(entry.hash, info, entry.meta);
         results[key] = value;
       }

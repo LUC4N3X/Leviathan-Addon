@@ -505,6 +505,32 @@ async function createTorrent(key, magnet) {
   return createRes;
 }
 
+function findCheckcachedEntry(data, requestedHash, requestedHashes = []) {
+  const normalize = (value) => lower(value).replace(/[^a-f0-9]/g, '');
+  const target = normalize(requestedHash);
+  if (!data) return null;
+
+  if (Array.isArray(data)) {
+    for (let index = 0; index < data.length; index += 1) {
+      const entry = data[index];
+      const candidates = [entry?.hash, entry?.info_hash, entry?.torrent_hash, entry?.hash_value]
+        .map(normalize)
+        .filter(Boolean);
+      if (candidates.includes(target)) return entry;
+      if (!candidates.length && normalize(requestedHashes[index]) === target) return entry;
+    }
+    return null;
+  }
+
+  if (typeof data === "object") {
+    for (const [hash, info] of Object.entries(data)) {
+      if (normalize(hash) === target) return info;
+    }
+  }
+
+  return null;
+}
+
 async function requestDownloadLink(key, torrentId, fileId, userIp = null) {
   const params = {
     token: key,
@@ -526,8 +552,8 @@ const TB = {
     const res = await tbRequest("GET", "/torrents/checkcached", key, {
       params: {
         hash: clean.join(","),
-        format: "object",
-        list_files: "false"
+        format: "list",
+        list_files: "true"
       },
       timeout: 20000
     });
@@ -535,7 +561,8 @@ const TB = {
     if (!res?.data?.data) return [];
 
     const cached = [];
-    for (const [hash, info] of Object.entries(res.data.data)) {
+    for (const hash of clean) {
+      const info = findCheckcachedEntry(res.data.data, hash, clean);
       if (info?.cached || (Array.isArray(info?.files) && info.files.length > 0) || safeNum(info?.size, 0) > 0) {
         cached.push(lower(hash));
       }

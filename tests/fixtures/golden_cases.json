@@ -3,8 +3,14 @@
     {
       "name": "anime ita stays ita",
       "input": {
-        "filters": { "language": "ita", "allowEng": false },
-        "meta": { "kitsu_id": "kitsu:21", "isAnime": true },
+        "filters": {
+          "language": "ita",
+          "allowEng": false
+        },
+        "meta": {
+          "kitsu_id": "kitsu:21",
+          "isAnime": true
+        },
         "type": "anime"
       },
       "expected": "ita"
@@ -12,8 +18,12 @@
     {
       "name": "eng explicit wins",
       "input": {
-        "filters": { "language": "eng" },
-        "meta": { "isAnime": true },
+        "filters": {
+          "language": "eng"
+        },
+        "meta": {
+          "isAnime": true
+        },
         "type": "anime"
       },
       "expected": "eng"
@@ -21,7 +31,9 @@
     {
       "name": "allowEng falls back to all",
       "input": {
-        "filters": { "allowEng": true },
+        "filters": {
+          "allowEng": true
+        },
         "meta": {},
         "type": "movie"
       },
@@ -32,12 +44,29 @@
     {
       "name": "one piece live action cleaned",
       "input": "One.Piece.2023.S01E01.1080p.WEB-DL.ENG.x265",
-      "expectedTokens": ["one", "piece", "s01e01"]
+      "expectedTokens": [
+        "one",
+        "piece",
+        "s01e01"
+      ]
     },
     {
       "name": "anime episode cleaned",
       "input": "One Piece 1100 ITA 1080p WEB-DL",
-      "expectedTokens": ["one", "piece", "1100"]
+      "expectedTokens": [
+        "one",
+        "piece",
+        "1100"
+      ]
+    },
+    {
+      "name": "anime unicode markers cleaned",
+      "input": "One Piece 第12話 [1080p] WEB-DL",
+      "expectedTokens": [
+        "one",
+        "piece",
+        "12"
+      ]
     }
   ],
   "seasons": [
@@ -48,18 +77,28 @@
     {
       "title": "One Piece 1100 1080p",
       "expected": false
+    },
+    {
+      "title": "My Hero Academia 第2期 第03話",
+      "expected": true
     }
   ],
   "animeSeasonRules": [
     {
       "title": "One Piece 1100 1080p",
-      "meta": { "kitsu_id": "kitsu:21", "isAnime": true },
+      "meta": {
+        "kitsu_id": "kitsu:21",
+        "isAnime": true
+      },
       "type": "anime",
       "expected": true
     },
     {
       "title": "One Piece S21E02 1080p",
-      "meta": { "kitsu_id": "kitsu:21", "isAnime": true },
+      "meta": {
+        "kitsu_id": "kitsu:21",
+        "isAnime": true
+      },
       "type": "anime",
       "expected": false
     }
@@ -82,7 +121,9 @@
         "kitsu_id": "kitsu:21"
       },
       "config": {
-        "filters": { "language": "ita" }
+        "filters": {
+          "language": "ita"
+        }
       }
     }
   ],
@@ -99,7 +140,9 @@
         "year": 1999
       },
       "config": {
-        "filters": { "language": "ita" }
+        "filters": {
+          "language": "ita"
+        }
       },
       "items": [
         {
