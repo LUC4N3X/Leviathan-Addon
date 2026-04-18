@@ -95,6 +95,8 @@ function formatStreamTitle({
     episodeTitle,
     infoHash,
     techInfo,
+    providerLine,
+    sourceIcon = '🔎',
     forceExtension = false
 } = {}) {
     const displaySeeders = seeders !== undefined && seeders !== null && seeders !== '' ? seeders : '-';
@@ -106,9 +108,10 @@ function formatStreamTitle({
     const rowTech = compactSpaces(techInfo || '');
     const rowInfo = `💾 ${compactSpaces(size || 'Unknown')} • 👤 ${displaySeeders} • ${displayLang}`;
     const rowTitle = `📁 ${displayTitle}`;
-    const rowSource = `🔎 ${displaySource}`;
+    const rowProvider = compactSpaces(providerLine || '');
+    const rowSource = `${compactSpaces(sourceIcon || '🔎')} ${displaySource}`;
 
-    return [rowTech, rowInfo, rowTitle, rowSource].filter(Boolean).join('\n');
+    return [rowTech, rowInfo, rowTitle, rowProvider, rowSource].filter(Boolean).join('\n');
 }
 
 function isAIOStreamsEnabled(config) {

@@ -6,6 +6,7 @@ const { searchVix: searchStreamingCommunity } = require('../../providers/streami
 const { searchGuardaHD } = require('../../providers/guardahd/ghd_handler');
 const { searchGuardaserie } = require('../../providers/guardaserie/gs_handler');
 const { searchAnimeWorld } = require('../../providers/animeworld/aw_handler');
+const { searchAnimeSaturn } = require('../../providers/animesaturn/as_handler');
 const { searchGuardaFlix } = require('../../providers/guardaflix/gf_handler');
 
 function isStreamingCommunityEnabled(filters = {}) {
@@ -16,12 +17,99 @@ function isStreamingCommunityLastEnabled(filters = {}) {
     return filters?.streamingCommunityLast === true || filters?.vixLast === true;
 }
 
+function isAnimeWebEligible(meta = {}) {
+    return Boolean(meta?.kitsu_id || meta?.isAnime || String(meta?.type || '').toLowerCase() === 'anime');
+}
+
+function getWebProviderTimeout(defaultTimeout, cacheName) {
+    const baseTimeout = defaultTimeout || 4000;
+    if (cacheName === 'GuardaHD' || cacheName === 'GuardoSerie' || cacheName === 'GuardaFlix') {
+        return Math.max(baseTimeout, 7000);
+    }
+    return baseTimeout;
+}
+
+
+function normalizeWebExtractorLabel(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+
+    if (/^(unknown|unknow|n\/a|null|undefined)$/i.test(raw)) return '';
+    if (/vix(?:cloud|src)?/i.test(raw)) return 'VixCloud';
+    if (/mixdrop|m1xdrop|mxcontent/i.test(raw)) return 'MixDrop';
+    if (/loadm/i.test(raw)) return 'LoadM';
+    if (/supervideo/i.test(raw)) return 'SuperVideo';
+    if (/maxstream/i.test(raw)) return 'Maxstream';
+    if (/voe/i.test(raw)) return 'VOE';
+    if (/streamtape/i.test(raw)) return 'StreamTape';
+    if (/dood/i.test(raw)) return 'DoodStream';
+    if (/filemoon/i.test(raw)) return 'FileMoon';
+    if (/direct/i.test(raw)) return 'Direct';
+
+    return raw
+        .replace(/^host\s*[:=-]\s*/i, '')
+        .replace(/^extractor\s*[:=-]\s*/i, '')
+        .trim();
+}
+
+function inferWebExtractorLabel(stream, sourceName) {
+    const directCandidates = [
+        stream?.behaviorHints?.extractor,
+        stream?.behaviorHints?.vortexMeta?.extractor,
+        stream?.extractor,
+        stream?.hoster,
+        stream?.source,
+        stream?.name,
+        stream?.title,
+        stream?.url
+    ];
+
+    for (const candidate of directCandidates) {
+        const normalized = normalizeWebExtractorLabel(candidate);
+        if (normalized) return normalized;
+    }
+
+    const source = String(sourceName || '');
+    if (/streamingcommunity|vix/i.test(source)) return 'VixCloud';
+    return '';
+}
+
+function buildWebSourceLabel(stream, sourceName) {
+    const extractor = inferWebExtractorLabel(stream, sourceName);
+    const provider = String(sourceName || '').trim();
+    if (extractor && provider && extractor.toLowerCase() !== provider.toLowerCase()) {
+        return `${extractor} • ${provider}`;
+    }
+    return extractor || provider || 'Web';
+}
+
+
+
+function getWebProviderIcon(sourceName) {
+    const sLower = String(sourceName || '').toLowerCase();
+    if (sLower.includes('animeworld')) return '⛩️';
+    if (sLower.includes('animesaturn')) return '🪐';
+    if (sLower.includes('streamingcommunity')) return '🌪️';
+    if (sLower.includes('guardoserie') || sLower.includes('guardaserie')) return '🍿';
+    if (sLower.includes('guardahd')) return '🦁';
+    if (sLower.includes('guardaflix')) return '🎥';
+    return '🌐';
+}
+
+function rewriteWebTitleLayout(title, providerIcon, providerLabel, extractorLabel) {
+    const lines = String(title || '').split('\n').map((line) => String(line || '').trim()).filter(Boolean);
+    const cleaned = lines.filter((line) => !/^(?:⛵|🦈|🌐|🌪️|🍿|🦁|🎥|⛩️|🪐)\s+/.test(line));
+    cleaned.push(`${providerIcon} ${providerLabel}`);
+    cleaned.push(`⛵ ${extractorLabel || 'Web'}`);
+    return cleaned.join('\n');
+}
+
 function applyAioWebStyle(streamList, sourceName, meta) {
     if (!Array.isArray(streamList) || streamList.length === 0) return [];
 
-    const isAnimeWorld = sourceName.includes('AnimeWorld');
+    const isAnimeProvider = sourceName.includes('AnimeWorld') || sourceName.includes('AnimeSaturn');
     return streamList.map((stream) => {
-        const textToCheck = `${stream?.title || ''} ${stream?.name || ''}`.toUpperCase().replace(/GUARDAHD|STREAMINGCOMMUNITY|LEVIATHAN|VIX|GUARDAFLIX/g, '');
+        const textToCheck = `${stream?.title || ''} ${stream?.name || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|STREAMINGCOMMUNITY|LEVIATHAN|VIX|GUARDAFLIX|ANIMEWORLD|ANIMESATURN/g, '');
         let quality = 'Web';
         let qIcon = '📺';
 
@@ -44,16 +132,30 @@ function applyAioWebStyle(streamList, sourceName, meta) {
             qIcon = '🔥';
         }
 
-        if (isAnimeWorld) {
+        if (isAnimeProvider) {
+            const extractorLabel = inferWebExtractorLabel(stream, sourceName) || 'Web';
+            const providerLabel = String(sourceName || '').trim() || 'Web';
+            const providerIcon = getWebProviderIcon(sourceName);
             stream.name = aioFormatter.formatStreamName({ service: 'web', cached: true, quality: 'HD' });
-            stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: 'Web', language: '🇯🇵 JPN/ITA', source: 'AnimeWorld', techInfo: '⛩️ Anime' });
+            stream.title = aioFormatter.formatStreamTitle({
+                title: meta.title,
+                size: 'Web',
+                language: '🇯🇵 JPN/ITA',
+                source: extractorLabel,
+                providerLine: `${providerIcon} ${providerLabel}`,
+                sourceIcon: '⛵',
+                techInfo: sourceName.includes('AnimeSaturn') ? '🪐 Anime' : '⛩️ Anime'
+            });
             stream.behaviorHints = stream.behaviorHints || {};
-            stream.behaviorHints.bingieGroup = 'Leviathan|HD|Web|AnimeWorld';
+            stream.behaviorHints.bingieGroup = `Leviathan|HD|Web|${sourceName.replace(/\W/g, '')}`;
             return stream;
         }
 
+        const extractorLabel = inferWebExtractorLabel(stream, sourceName) || 'Web';
+        const providerLabel = String(sourceName || '').trim() || 'Web';
+        const providerIcon = getWebProviderIcon(sourceName);
         stream.name = aioFormatter.formatStreamName({ service: 'web', cached: true, quality });
-        stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: 'Web', language: '🇮🇹 ITA', source: sourceName, seeders: null, techInfo: `🎞️ ${quality} ${qIcon}` });
+        stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: 'Web', language: '🇮🇹 ITA', source: extractorLabel, providerLine: `${providerIcon} ${providerLabel}`, sourceIcon: '⛵', seeders: null, techInfo: `🎞️ ${quality} ${qIcon}` });
         stream.behaviorHints = stream.behaviorHints || {};
         stream.behaviorHints.bingieGroup = `Leviathan|${quality}|Web|${sourceName.replace(/\W/g, '')}`;
         return stream;
@@ -78,21 +180,22 @@ function applyWebFormatter(streamList, sourceName, meta, config) {
         }
 
         let langTag = 'ITA';
-        let providerIcon = '🌐';
+        const providerIcon = getWebProviderIcon(sourceName);
         const sLower = sourceName.toLowerCase();
         if (sLower.includes('animeworld')) {
-            providerIcon = '⛩️';
             langTag = (rawTitleToCheck.includes('JPN') || rawTitleToCheck.includes('SUB') || rawTitleToCheck.includes('VOST')) ? 'JPN' : 'ITA';
-        } else if (sLower.includes('streamingcommunity')) providerIcon = '🌪️';
-        else if (sLower.includes('guardaserie')) providerIcon = '🍿';
-        else if (sLower.includes('guardahd')) providerIcon = '🦁';
-        else if (sLower.includes('guardaflix')) providerIcon = '🎥';
+        } else if (sLower.includes('animesaturn')) {
+            langTag = (rawTitleToCheck.includes('JPN') || rawTitleToCheck.includes('SUB') || rawTitleToCheck.includes('VOST')) ? 'JPN' : 'ITA';
+        }
 
-        const formatted = formatStreamSelector(`${fileTitle} ${quality} ${langTag} WEB-DL AAC`, sourceName, 0, null, 'WEB', config, null, false, false);
+        const extractorLabel = inferWebExtractorLabel(stream, sourceName) || 'Web';
+        const providerLabel = String(sourceName || '').trim() || 'Web';
+        const formatted = formatStreamSelector(`${fileTitle} ${quality} ${langTag} WEB-DL AAC`, providerLabel, 0, null, 'WEB', config, null, false, false);
         const cleanTitle = formatted.title.replace(/🧲/g, '⛵').replace(/🦈/g, providerIcon).replace(/🧲\s*\d+(\.\d+)?\s*(GB|MB)/gi, '☁️ Web Stream');
+        const titled = rewriteWebTitleLayout(cleanTitle, providerIcon, providerLabel, extractorLabel);
         return {
             name: formatted.name.replace(/🧲/g, '⛵').replace(/🦈/g, providerIcon),
-            title: cleanTitle,
+            title: titled,
             url: stream.url,
             behaviorHints: stream.behaviorHints || { notWebReady: false, bingieGroup: `Leviathan|${quality}|Web|${sourceName}` }
         };
@@ -106,6 +209,7 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
             guardaHD: [],
             guardaSerie: [],
             animeWorld: [],
+            animeSaturn: [],
             guardaFlix: []
         };
 
@@ -129,7 +233,7 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
             },
             {
                 key: 'guardaSerie',
-                cacheName: 'GuardaSerie',
+                cacheName: 'GuardoSerie',
                 enabled: config.filters?.enableGs,
                 limiter: LIMITERS.webGs,
                 runner: () => searchGuardaserie(meta, config)
@@ -137,14 +241,21 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
             {
                 key: 'animeWorld',
                 cacheName: 'AnimeWorld',
-                enabled: config.filters?.enableAnimeWorld,
+                enabled: config.filters?.enableAnimeWorld && isAnimeWebEligible(meta),
                 limiter: LIMITERS.webAw,
                 runner: () => searchAnimeWorld(originalId, meta, config)
             },
             {
+                key: 'animeSaturn',
+                cacheName: 'AnimeSaturn',
+                enabled: config.filters?.enableAnimeSaturn && isAnimeWebEligible(meta),
+                limiter: LIMITERS.webAs,
+                runner: () => searchAnimeSaturn(originalId, meta, config)
+            },
+            {
                 key: 'guardaFlix',
                 cacheName: 'GuardaFlix',
-                enabled: config.filters?.enableGf,
+                enabled: config.filters?.enableGf && !meta?.isSeries,
                 limiter: LIMITERS.webGf,
                 runner: () => searchGuardaFlix(meta, config)
             }
@@ -153,7 +264,7 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
         const settled = await Promise.allSettled(providerSpecs.map((spec) => {
             if (!spec.enabled) return Promise.resolve([]);
             return Cache.fetchWithCache(spec.cacheName, rawId, 43200, () =>
-                guardedProviderCall(spec.cacheName, spec.limiter, CONFIG.TIMEOUTS.SCRAPER, spec.runner)
+                guardedProviderCall(spec.cacheName, spec.limiter, getWebProviderTimeout(CONFIG.TIMEOUTS.SCRAPER, spec.cacheName), spec.runner)
             );
         }));
 
@@ -169,6 +280,7 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
             guardaHD: Array.isArray(webBuckets?.guardaHD) ? [...webBuckets.guardaHD] : [],
             guardaSerie: Array.isArray(webBuckets?.guardaSerie) ? [...webBuckets.guardaSerie] : [],
             animeWorld: Array.isArray(webBuckets?.animeWorld) ? [...webBuckets.animeWorld] : [],
+            animeSaturn: Array.isArray(webBuckets?.animeSaturn) ? [...webBuckets.animeSaturn] : [],
             guardaFlix: Array.isArray(webBuckets?.guardaFlix) ? [...webBuckets.guardaFlix] : []
         };
 
@@ -176,8 +288,9 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
             return {
                 streamingCommunity: applyAioWebStyle(buckets.streamingCommunity, 'StreamingCommunity', meta),
                 guardaHD: applyAioWebStyle(buckets.guardaHD, 'GuardaHD', meta),
-                guardaSerie: applyAioWebStyle(buckets.guardaSerie, 'GuardaSerie', meta),
+                guardaSerie: applyAioWebStyle(buckets.guardaSerie, 'GuardoSerie', meta),
                 animeWorld: applyAioWebStyle(buckets.animeWorld, 'AnimeWorld', meta),
+                animeSaturn: applyAioWebStyle(buckets.animeSaturn, 'AnimeSaturn', meta),
                 guardaFlix: applyAioWebStyle(buckets.guardaFlix, 'GuardaFlix', meta)
             };
         }
@@ -185,8 +298,9 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
         return {
             streamingCommunity: buckets.streamingCommunity.length > 0 ? applyWebFormatter(buckets.streamingCommunity, 'StreamingCommunity', meta, config) : [],
             guardaHD: buckets.guardaHD.length > 0 ? applyWebFormatter(buckets.guardaHD, 'GuardaHD', meta, config) : [],
-            guardaSerie: buckets.guardaSerie.length > 0 ? applyWebFormatter(buckets.guardaSerie, 'GuardaSerie', meta, config) : [],
+            guardaSerie: buckets.guardaSerie.length > 0 ? applyWebFormatter(buckets.guardaSerie, 'GuardoSerie', meta, config) : [],
             animeWorld: buckets.animeWorld.length > 0 ? applyWebFormatter(buckets.animeWorld, 'AnimeWorld', meta, config) : [],
+            animeSaturn: buckets.animeSaturn.length > 0 ? applyWebFormatter(buckets.animeSaturn, 'AnimeSaturn', meta, config) : [],
             guardaFlix: buckets.guardaFlix.length > 0 ? applyWebFormatter(buckets.guardaFlix, 'GuardaFlix', meta, config) : []
         };
     }
@@ -196,6 +310,7 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
             ...(formattedWebBuckets?.guardaHD || []),
             ...(formattedWebBuckets?.guardaSerie || []),
             ...(formattedWebBuckets?.animeWorld || []),
+            ...(formattedWebBuckets?.animeSaturn || []),
             ...(formattedWebBuckets?.guardaFlix || []),
             ...(formattedWebBuckets?.streamingCommunity || [])
         ];

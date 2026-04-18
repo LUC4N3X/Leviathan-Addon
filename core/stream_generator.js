@@ -1976,7 +1976,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const debridApiKey = getConfiguredDebridKey(config, configuredDebridService);
   const hasDebridKey = Boolean(debridApiKey);
   const filters = config?.filters || {};
-  const isWebEnabled = Boolean(filters && (isStreamingCommunityEnabled(filters) || filters.enableGhd || filters.enableGs || filters.enableAnimeWorld || filters.enableGf));
+  const isWebEnabled = Boolean(filters && (isStreamingCommunityEnabled(filters) || filters.enableGhd || filters.enableGs || filters.enableAnimeWorld || filters.enableAnimeSaturn || filters.enableGf));
   const isP2PEnabled = filters.enableP2P === true;
 
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: "CONFIG", title: "Inserisci API Key, attiva P2P o attiva una sorgente Web" }] };
@@ -2140,6 +2140,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           filters.enableGhd,
           filters.enableGs,
           filters.enableAnimeWorld,
+          filters.enableAnimeSaturn,
           filters.enableGf
       ].filter(Boolean).length;
       const cachePolicy = buildSharedStreamCachePolicy(meta, {

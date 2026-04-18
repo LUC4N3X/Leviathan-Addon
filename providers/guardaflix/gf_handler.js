@@ -59,6 +59,35 @@ const normalizeText = (text) => (text || '').replace(REGEX.NON_ALNUM, '').toLowe
 const cleanTitle = (text) => (text || '').replace(REGEX.CLEAN_TITLE, '').trim();
 const slugify = (text) => (text || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-]+/g, '').replace(/\-+/g, '-').replace(/^-|-$/g, '');
 
+
+function resolveTmdbMovieId(meta) {
+    const direct = String(meta?.tmdb_id || meta?.tmdbId || '').trim();
+    if (/^\d+$/.test(direct)) return direct;
+    const metaId = String(meta?.id || '').trim();
+    const match = metaId.match(/^tmdb:(\d+)/i);
+    return match ? match[1] : null;
+}
+
+async function fetchMovieByImdb(imdbId) {
+    if (!/^tt\d+$/i.test(String(imdbId || '').trim())) return null;
+    try {
+        const res = await fetchSmart(`https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${CONFIG.TMDB_API_KEY}&external_source=imdb_id&language=it-IT`);
+        return res.data?.movie_results?.[0] || null;
+    } catch {
+        return null;
+    }
+}
+
+async function fetchMovieByTmdb(tmdbId) {
+    if (!/^\d+$/.test(String(tmdbId || '').trim())) return null;
+    try {
+        const res = await fetchSmart(`https://api.themoviedb.org/3/movie/${encodeURIComponent(tmdbId)}?api_key=${CONFIG.TMDB_API_KEY}&language=it-IT`);
+        return res.data || null;
+    } catch {
+        return null;
+    }
+}
+
 class GuardaFlixScraper {
     constructor(config) {
         this.config = config || {};
@@ -68,27 +97,40 @@ class GuardaFlixScraper {
         logDebug("Inizializzato. Config MFP presente?", !!(this.config?.mediaflow?.url));
     }
 
-    async getTmdbMeta(imdb_id) {
+    async getTmdbMeta(metaInput) {
         try {
-            logDebug(`Recupero TMDB meta per ID: ${imdb_id}`);
-            const res = await fetchSmart(`https://api.themoviedb.org/3/find/${imdb_id}?api_key=${CONFIG.TMDB_API_KEY}&external_source=imdb_id&language=it-IT`);
-            const media = res.data.movie_results?.[0] || res.data.tv_results?.[0];
+            const explicitImdb = /^tt\d+$/i.test(String(metaInput?.imdb_id || metaInput || '').trim())
+                ? String(metaInput?.imdb_id || metaInput).trim()
+                : null;
+            const explicitTmdb = resolveTmdbMovieId(metaInput);
+
+            let media = null;
+            if (explicitImdb) {
+                logDebug(`Recupero TMDB meta per IMDb: ${explicitImdb}`);
+                media = await fetchMovieByImdb(explicitImdb);
+            }
+            if (!media && explicitTmdb) {
+                logDebug(`Recupero TMDB meta per TMDB: ${explicitTmdb}`);
+                media = await fetchMovieByTmdb(explicitTmdb);
+            }
 
             if (!media) {
-                logDebug(`Nessun risultato TMDB trovato per ${imdb_id}`);
+                logDebug('Nessun risultato TMDB trovato per GuardaFlix');
                 return null;
             }
 
             const meta = {
                 title_it: media.title || media.name,
                 title_orig: media.original_title || media.original_name,
-                year: (media.release_date || media.first_air_date || "").substring(0, 4)
+                year: String(media.release_date || media.first_air_date || '').substring(0, 4),
+                tmdb_id: media.id ? String(media.id) : explicitTmdb,
+                imdb_id: explicitImdb || null
             };
 
-            logDebug("Meta TMDB trovati:", meta);
+            logDebug('Meta TMDB trovati:', meta);
             return meta;
         } catch (err) {
-            logDebug("Errore getTmdbMeta:", err.message);
+            logDebug('Errore getTmdbMeta:', err.message);
             return null;
         }
     }
@@ -234,10 +276,13 @@ class GuardaFlixScraper {
 
             const streamObj = {
                 name: "🍿 Guardaflix",
-                title: `▶️ ${finalTitle}\n🔄 LoadM (Direct)`,
+                title: `▶️ ${finalTitle}
+🔄 LoadM (Direct)`,
                 url: m3u8,
+                extractor: 'LoadM',
                 behaviorHints: {
                     notWebReady: false,
+                    extractor: 'LoadM',
                     proxyHeaders: { request: { "Referer": baseUrl, "Origin": baseUrl.slice(0, -1) } }
                 }
             };
@@ -352,14 +397,17 @@ class GuardaFlixScraper {
     }
 
     async getStreams(meta) {
-        logDebug("--- Inizio getStreams per GuardaFlix ---");
-        if (!meta?.imdb_id) {
-            logDebug("Nessun IMDB ID fornito.");
+        logDebug('--- Inizio getStreams per GuardaFlix ---');
+        if (meta?.isSeries) {
+            logDebug('Provider saltato: GuardaFlix viene usato solo per i film.');
             return [];
         }
 
-        const tmdbMeta = await this.getTmdbMeta(meta.imdb_id);
-        if (!tmdbMeta) return [];
+        const tmdbMeta = await this.getTmdbMeta(meta);
+        if (!tmdbMeta) {
+            logDebug('Impossibile risolvere metadati TMDB per GuardaFlix.');
+            return [];
+        }
 
         const searchCandidates = [tmdbMeta.title_it, tmdbMeta.title_orig].filter(Boolean);
         let pageUrl = null;

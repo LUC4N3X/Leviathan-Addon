@@ -14,7 +14,7 @@ const CONFIG = {
     SCRAPER: {
         MAX_CONCURRENT_EMBEDS: 15,
         TIMEOUT: 15000,
-        BASE_URL: 'https://mostraguarda.stream',
+        BASE_URL: 'https://guardahd.stream',
         RETRIES: 2
     }
 };
@@ -78,6 +78,7 @@ const REGEX = {
     SIZE: /([\d.,]+ ?[GM]B)/i,
     NOT_FOUND: /can't find the (file|video)|deleted|expired/i,
     MIXDROP: /mixdr(op|p)|m1xdrop/i,
+    STREAMHG: /dhcplay|vibuxer/i,
     PACKED_SCRIPT: /eval\(function\([^)]+\).*?split\('\|'\).*?\)\)/s,
     M3U8: /(https?:\/\/[^\s"']+\.m3u8[^\s"']*)/i
 };
@@ -97,6 +98,14 @@ class AsyncSemaphore {
 const embedSemaphore = new AsyncSemaphore(CONFIG.SCRAPER.MAX_CONCURRENT_EMBEDS);
 
 const normalizeUrl = (url) => url?.startsWith('//') ? `https:${url}` : (url || '');
+const resolveAbsoluteUrl = (candidate, baseUrl) => {
+    if (!candidate) return null;
+    try {
+        return new URL(candidate, baseUrl).toString();
+    } catch {
+        return null;
+    }
+};
 
 const parseQuality = (text) => {
     if (!text) return "Unknown";
@@ -191,38 +200,36 @@ const unpackScript = (html) => {
     } catch { return null; }
 };
 
+
+const extractPackedScriptParams = (html) => {
+    if (!html || typeof html !== 'string') return null;
+    const match = html.match(/eval\(function\(p,a,c,k,e,?[rd]?\).*?\}\('(.*?)',\s*(\d+),\s*(\d+),\s*'(.*?)'\.split\('\|'\).*?\)\)/s);
+    if (!match) return null;
+    return {
+        p: match[1],
+        a: Number.parseInt(match[2], 10),
+        c: Number.parseInt(match[3], 10),
+        k: match[4].split('|')
+    };
+};
+
+const unpackFromParams = (params) => {
+    if (!params?.p || !Number.isInteger(params?.a) || !Number.isInteger(params?.c) || !Array.isArray(params?.k)) return null;
+    try {
+        let { p, a, c, k } = params;
+        const decode = (n) => (n < a ? '' : decode(Math.floor(n / a))) + ((n = n % a) > 35 ? String.fromCharCode(n + 29) : n.toString(36));
+        while (c--) if (k[c]) p = p.replace(new RegExp(`\b${decode(c)}\b`, 'g'), k[c]);
+        return p;
+    } catch {
+        return null;
+    }
+};
+
+const getResponseFinalUrl = (response, fallbackUrl) => {
+    return response?.request?.res?.responseUrl || response?.request?.responseURL || response?.config?.url || fallbackUrl;
+};
+
 const Extractors = {
-    supervideo: async (url) => {
-        try {
-            const urlObj = new URL(url);
-            const id = urlObj.pathname.split('/').pop().replace(/\.html|embed-|\/k\//gi, '');
-            const targetUrl = `${urlObj.origin}/e/${id}`;
-            const customHeaders = { 'Referer': `${urlObj.origin}/`, 'Origin': urlObj.origin };
-
-            const fetchWorker = async (target) => {
-                const workerUrl = `https://still-mode-fd28.quelladiprova96.workers.dev/?url=${encodeURIComponent(target)}`;
-                const res = await fetchSmart(workerUrl, { headers: customHeaders });
-                return res.data;
-            };
-
-            let html = await fetchWorker(targetUrl);
-            if (!html || typeof html !== 'string') return [];
-
-            if (html.includes('watched as embed only')) html = await fetchWorker(`${urlObj.origin}/e${urlObj.pathname}`);
-            if (REGEX.NOT_FOUND.test(html)) return [];
-
-            const size = html.match(/\d{3,}x\d{3,},\s*([\d.]+ ?[GM]B)/i)?.[1]?.replace(',', '') || 'N/A';
-            const m3u8 = unpackScript(html)?.match(REGEX.M3U8)?.[1] || html.match(REGEX.M3U8)?.[1];
-
-            if (!m3u8) return [];
-
-            return [{
-                url: normalizeUrl(m3u8), quality: '1080p', size, name: 'SuperVideo',
-                headers: { "Referer": "https://supervideo.cc/", "Origin": "https://supervideo.cc/" }
-            }];
-        } catch { return []; }
-    },
-
     mixdrop: async (url, config) => {
         if (!config?.mediaflow?.url) return [];
         const embedUrl = normalizeUrl(url).replace('/f/', '/e/');
@@ -240,93 +247,270 @@ const Extractors = {
             url: buildMediaflowUrl(config, embedUrl, 'mixdrop'),
             quality: resPart, size: sizePart, name: 'MixDrop'
         }];
+    },
+
+    streamhg: async (url) => {
+        try {
+            let normalized = normalizeUrl(url).replace(/&amp;/g, '&');
+            if (!normalized) return [];
+
+            const candidates = [normalized];
+            try {
+                const parsed = new URL(normalized);
+                const idMatch = parsed.pathname.match(/\/e\/([^/?#]+)/i);
+                if (idMatch && /(^|\.)dhcplay\.com$/i.test(parsed.hostname)) {
+                    candidates.push(`https://vibuxer.com/e/${idMatch[1]}`);
+                }
+            } catch {}
+
+            let unpacked = null;
+            let finalUrl = normalized;
+            for (const candidate of candidates) {
+                const referer = (() => {
+                    try {
+                        return `${new URL(candidate).origin}/`;
+                    } catch {
+                        return 'https://dhcplay.com/';
+                    }
+                })();
+
+                const res = await fetchSmart(candidate, { headers: { Referer: referer } });
+                const html = typeof res?.data === 'string' ? res.data : '';
+                if (!html) continue;
+
+                const packed = extractPackedScriptParams(html);
+                if (!packed) continue;
+
+                const maybeUnpacked = unpackFromParams(packed);
+                if (!maybeUnpacked) continue;
+
+                unpacked = maybeUnpacked;
+                finalUrl = getResponseFinalUrl(res, candidate);
+                break;
+            }
+
+            if (!unpacked) return [];
+
+            const hls2 = unpacked.match(/["']hls2["']\s*:\s*["']([^"']+)["']/i)?.[1];
+            const hls4 = unpacked.match(/["']hls4["']\s*:\s*["']([^"']+)["']/i)?.[1];
+            const file = unpacked.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i)?.[1];
+            const streamUrl = resolveAbsoluteUrl(hls2 || hls4 || file, finalUrl);
+            if (!streamUrl) return [];
+
+            const origin = (() => {
+                try {
+                    return new URL(finalUrl).origin;
+                } catch {
+                    return 'https://dhcplay.com';
+                }
+            })();
+
+            return [{
+                url: streamUrl,
+                quality: streamUrl.match(/(\d{3,4}p)/i)?.[1] || '1080p',
+                size: 'N/A',
+                name: 'StreamHG',
+                headers: {
+                    Referer: `${origin}/`,
+                    Origin: origin,
+                    'User-Agent': getRandomUserAgent()
+                }
+            }];
+        } catch {
+            return [];
+        }
     }
 };
+
+
+async function fetchTmdbMovieByImdb(imdbId) {
+    if (!/^tt\d+$/i.test(String(imdbId || '').trim())) return null;
+    try {
+        const res = await fetchSmart(`https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${CONFIG.TMDB_API_KEY}&external_source=imdb_id&language=it-IT`);
+        return res.data?.movie_results?.[0] || null;
+    } catch {
+        return null;
+    }
+}
+
+async function fetchTmdbMovieById(tmdbId) {
+    if (!/^\d+$/.test(String(tmdbId || '').trim())) return null;
+    try {
+        const res = await fetchSmart(`https://api.themoviedb.org/3/movie/${encodeURIComponent(tmdbId)}?api_key=${CONFIG.TMDB_API_KEY}&language=it-IT`);
+        return res.data || null;
+    } catch {
+        return null;
+    }
+}
+
+async function fetchMovieImdbIdFromTmdb(tmdbId) {
+    if (!/^\d+$/.test(String(tmdbId || '').trim())) return null;
+    try {
+        const res = await fetchSmart(`https://api.themoviedb.org/3/movie/${encodeURIComponent(tmdbId)}/external_ids?api_key=${CONFIG.TMDB_API_KEY}`);
+        return /^tt\d+$/i.test(String(res.data?.imdb_id || '').trim()) ? String(res.data.imdb_id).trim() : null;
+    } catch {
+        return null;
+    }
+}
+
+function resolveTmdbMovieId(meta) {
+    const direct = String(meta?.tmdb_id || meta?.tmdbId || '').trim();
+    if (/^\d+$/.test(direct)) return direct;
+    const metaId = String(meta?.id || '').trim();
+    const match = metaId.match(/^tmdb:(\d+)/i);
+    return match ? match[1] : null;
+}
+
+async function resolveMovieIdentity(meta) {
+    if (!meta || meta.isSeries) return null;
+
+    const explicitImdb = /^tt\d+$/i.test(String(meta?.imdb_id || '').trim()) ? String(meta.imdb_id).trim() : null;
+    const explicitTmdb = resolveTmdbMovieId(meta);
+
+    if (explicitImdb) {
+        const tmdbMovie = await fetchTmdbMovieByImdb(explicitImdb);
+        return {
+            imdbId: explicitImdb,
+            tmdbId: tmdbMovie?.id ? String(tmdbMovie.id) : explicitTmdb,
+            title: tmdbMovie?.title ? (tmdbMovie.release_date ? `${tmdbMovie.title} (${String(tmdbMovie.release_date).slice(0, 4)})` : tmdbMovie.title) : (meta?.title || 'Film HD'),
+            cacheKey: `imdb:${explicitImdb}`
+        };
+    }
+
+    if (explicitTmdb) {
+        const [tmdbMovie, imdbId] = await Promise.all([
+            fetchTmdbMovieById(explicitTmdb),
+            fetchMovieImdbIdFromTmdb(explicitTmdb)
+        ]);
+        if (!imdbId) return null;
+        return {
+            imdbId,
+            tmdbId: explicitTmdb,
+            title: tmdbMovie?.title ? (tmdbMovie.release_date ? `${tmdbMovie.title} (${String(tmdbMovie.release_date).slice(0, 4)})` : tmdbMovie.title) : (meta?.title || 'Film HD'),
+            cacheKey: `tmdb:${explicitTmdb}`
+        };
+    }
+
+    return null;
+}
 
 class GuardaHDScraper {
     #config;
 
     constructor(config) { this.#config = config; }
 
-    async #getTmdbTitle(imdb_id) {
-        try {
-            const res = await fetchSmart(`https://api.themoviedb.org/3/find/${imdb_id}?api_key=${CONFIG.TMDB_API_KEY}&external_source=imdb_id`);
-            const movie = res.data.movie_results?.[0];
-            return movie?.title ? (movie.release_date ? `${movie.title} (${movie.release_date.substring(0, 4)})` : movie.title) : "Film HD";
-        } catch { return "Film HD"; }
+    async #getTmdbTitle(identity) {
+        return identity?.title || 'Film HD';
     }
 
-    async #scrapeEmbedUrls(imdb_id) {
+    async #scrapeEmbedUrls(imdbId) {
+        if (!/^tt\d+$/i.test(String(imdbId || '').trim())) return [];
         try {
-            const res = await fetchSmart(`${CONFIG.SCRAPER.BASE_URL}/set-movie-a/${imdb_id}`);
+            const res = await fetchSmart(`${CONFIG.SCRAPER.BASE_URL}/set-movie-a/${imdbId}`);
             const $ = cheerio.load(res.data);
             const embedDict = new Map();
 
-            $('li[data-link]').each((_, el) => {
-                const link = normalizeUrl($(el).attr('data-link'));
-                if (!link.startsWith('http')) return;
+            const registerLink = (rawLink) => {
+                const link = normalizeUrl(String(rawLink || '').replace(/&amp;/g, '&'));
+                if (!/^https?:/i.test(link)) return;
                 const lower = link.toLowerCase();
-                const key = lower.includes('supervideo') ? 'supervideo' : REGEX.MIXDROP.test(lower) ? 'mixdrop' : link;
+                const key = REGEX.MIXDROP.test(lower)
+                    ? 'mixdrop'
+                    : REGEX.STREAMHG.test(lower)
+                        ? 'streamhg'
+                        : link;
                 if (!embedDict.has(key)) embedDict.set(key, link);
-            });
+            };
+
+            $('li[data-link]').each((_, el) => registerLink($(el).attr('data-link')));
+            $('iframe[src]').each((_, el) => registerLink($(el).attr('src')));
+            $('a[href], source[src]').each((_, el) => registerLink($(el).attr('href') || $(el).attr('src')));
+
+            const directMatches = String(res.data || '').match(/https?:\/\/(?:www\.)?(?:mixdrop|m1xdrop|dhcplay|vibuxer)[^"'<\s]+/ig) || [];
+            directMatches.forEach(registerLink);
+
             return Array.from(embedDict.values());
-        } catch { return []; }
+        } catch {
+            return [];
+        }
     }
 
     async #processSingleEmbed(url, title) {
         await embedSemaphore.acquire();
         try {
             const lowerUrl = url.toLowerCase();
-            const extractor = lowerUrl.includes('supervideo') ? Extractors.supervideo : REGEX.MIXDROP.test(lowerUrl) ? Extractors.mixdrop : null;
+            const extractor = REGEX.MIXDROP.test(lowerUrl)
+                ? Extractors.mixdrop
+                : REGEX.STREAMHG.test(lowerUrl)
+                    ? Extractors.streamhg
+                    : null;
             if (!extractor) return [];
 
             const streams = await extractor(url, this.#config);
-            return streams.map(s => {
+            return streams.map((s) => {
                 const q = parseQuality(s.quality || url);
                 return {
-                    name: `🦁 GHD\n⚡ ${s.name}`,
+                    name: `🦁 GHD
+⚡ ${s.name}`,
                     title: generateRichDescription(title, q, s.size, s.name),
                     url: s.url,
                     qualityRank: q,
-                    behaviorHints: { bingeWatching: true, ...(s.headers && { proxyHeaders: { request: s.headers } }) }
+                    extractor: s.name,
+                    behaviorHints: {
+                        bingeWatching: true,
+                        extractor: s.name,
+                        ...(s.headers && { proxyHeaders: { request: s.headers } })
+                    }
                 };
             });
-        } catch { return []; }
-        finally { embedSemaphore.release(); }
+        } catch {
+            return [];
+        } finally {
+            embedSemaphore.release();
+        }
     }
 
     async getStreams(meta) {
-        if (!meta?.imdb_id || meta.isSeries) return [];
+        if (!meta || meta.isSeries) return [];
 
-        const { imdb_id, title: metaTitle } = meta;
-        let embedUrls = [], officialTitle = metaTitle;
+        const identity = await resolveMovieIdentity(meta);
+        if (!identity?.imdbId) return [];
 
-        const { data: cached, isStale } = await cacheManager.get(imdb_id);
+        let embedUrls = [];
+        let officialTitle = meta?.title || identity.title || 'Film HD';
+        const cacheKey = identity.cacheKey || `imdb:${identity.imdbId}`;
+
+        const { data: cached, isStale } = await cacheManager.get(cacheKey);
 
         if (cached) {
-            embedUrls = cached.embeds;
+            embedUrls = Array.isArray(cached.embeds) ? cached.embeds : [];
             officialTitle = cached.title || officialTitle;
 
             if (isStale) {
-                Promise.all([this.#scrapeEmbedUrls(imdb_id), this.#getTmdbTitle(imdb_id)])
+                Promise.all([this.#scrapeEmbedUrls(identity.imdbId), this.#getTmdbTitle(identity)])
                     .then(([urls, title]) => {
-                        if (urls.length > 0) cacheManager.set(imdb_id, urls, title);
-                    }).catch(() => {});
+                        if (urls.length > 0) cacheManager.set(cacheKey, urls, title);
+                    })
+                    .catch(() => {});
             }
         } else {
-            [embedUrls, officialTitle] = await Promise.all([this.#scrapeEmbedUrls(imdb_id), this.#getTmdbTitle(imdb_id)]);
-            if (embedUrls.length > 0) await cacheManager.set(imdb_id, embedUrls, officialTitle);
+            [embedUrls, officialTitle] = await Promise.all([
+                this.#scrapeEmbedUrls(identity.imdbId),
+                this.#getTmdbTitle(identity)
+            ]);
+            if (embedUrls.length > 0) await cacheManager.set(cacheKey, embedUrls, officialTitle);
         }
 
         if (embedUrls.length === 0) return [];
 
-        const rawStreams = (await Promise.allSettled(embedUrls.map(url => this.#processSingleEmbed(url, officialTitle))))
-            .filter(res => res.status === 'fulfilled').flatMap(res => res.value);
+        const rawStreams = (await Promise.allSettled(embedUrls.map((url) => this.#processSingleEmbed(url, officialTitle))))
+            .filter((res) => res.status === 'fulfilled')
+            .flatMap((res) => res.value);
 
-        const rank = { "4K": 0, "1080p": 1, "720p": 2, "480p": 3, "Unknown": 4 };
-        return Array.from(new Map(rawStreams.map(s => [s.url, s])).values())
+        const rank = { '4K': 0, '1080p': 1, '720p': 2, '480p': 3, 'Unknown': 4 };
+        return Array.from(new Map(rawStreams.map((stream) => [stream.url, stream])).values())
             .sort((a, b) => (rank[a.qualityRank] ?? 4) - (rank[b.qualityRank] ?? 4))
-            .map(({ qualityRank, ...s }) => s);
+            .map(({ qualityRank, ...stream }) => stream);
     }
 }
 

@@ -1126,7 +1126,7 @@
                         <div class="control-row">
                             <div class="control-info">
                                 <div class="control-title notranslate" translate="no">
-                                    <i class="fas fa-tv" style="color: #aa00ff"></i> GuardaSerie
+                                    <i class="fas fa-tv" style="color: #aa00ff"></i> GuardoSerie
                                     <span class="proxy-tag tag-mfp">MFP</span>
                                 </div>
                                 <span class="control-desc">Tracker dedicato per Serie TV. Aggiornamento rapido nuovi episodi.</span>
@@ -1140,9 +1140,20 @@
                                     <i class="fas fa-torii-gate" style="color: #ff6600"></i> AnimeWorld
                                     <span class="proxy-tag tag-noproxy">NO PROXY</span>
                                 </div>
-                                <span class="control-desc">Il più grande database italiano di Anime. Include gestione Cookie SecurityAW.</span>
+                                <span class="control-desc">AnimeWorld con mapping Kitsu, IMDb e TMDb. Più affidabile anche fuori dai soli ID Kitsu.</span>
                             </div>
                             <label class="switch mf-switch"><input type="checkbox" id="enableAnimeWorld" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
+                        </div>
+
+                        <div class="control-row">
+                            <div class="control-info">
+                                <div class="control-title notranslate" translate="no">
+                                    <i class="fas fa-satellite-dish" style="color: #ffcc00"></i> AnimeSaturn
+                                    <span class="proxy-tag tag-noproxy">NO PROXY</span>
+                                </div>
+                                <span class="control-desc">Mirror anime aggiuntivo con mapping automatico Kitsu, IMDb e TMDb. Ottimo fallback per episodi mancanti.</span>
+                            </div>
+                            <label class="switch mf-switch"><input type="checkbox" id="enableAnimeSaturn" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
                         </div>
 
                         <div class="control-row">
@@ -1159,7 +1170,7 @@
                         <div class="control-row sub-row" id="webPriorityRow" style="display:none; margin-top:15px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top:10px;">
                              <div class="control-info">
                                  <div class="control-title"><i class="fas fa-sort-amount-down"></i> Gerarchia Sorgenti</div>
-                                 <span class="control-desc">Sposta i risultati Web (SC, GHD, GS, AW, GF) dopo i Torrent.</span>
+                                 <span class="control-desc">Sposta i risultati Web (SC, GHD, GS, AW, AS, GF) dopo i Torrent.</span>
                              </div>
                              <label class="switch mf-switch"><input type="checkbox" id="vixLast" onchange="updateFluxStream()"><span class="slider"></span></label>
                          </div>
@@ -1479,7 +1490,7 @@
                 </div>
                 <div class="faq-item" onclick="toggleFaq(this)">
                     <div class="faq-q">MediaFlow & GuardaHD/GS <i class="fas fa-chevron-down"></i></div>
-                    <div class="faq-a">I servizi come GuardaHD e GuardaSerie richiedono spesso un Proxy (MediaFlow) per funzionare correttamente su tutti i dispositivi.</div>
+                    <div class="faq-a">I servizi come GuardaHD e GuardoSerie richiedono spesso un Proxy (MediaFlow) per funzionare correttamente su tutti i dispositivi.</div>
                 </div>
                 <div class="faq-item" onclick="toggleFaq(this)">
                     <div class="faq-q">Cos'è il Cache Builder? <i class="fas fa-chevron-down"></i></div>
@@ -2418,6 +2429,7 @@
             const ghd = document.getElementById('enableGhd').checked;
             const gs = document.getElementById('enableGs').checked;
             const aw = document.getElementById('enableAnimeWorld').checked;
+            const as = document.getElementById('enableAnimeSaturn').checked;
             const gf = document.getElementById('enableGf').checked;
 
             const qContainer = document.getElementById('scQualityContainer');
@@ -2425,7 +2437,7 @@
             const pRow = document.getElementById('webPriorityRow');
             if(pRow) {
 
-                if(sc || ghd || gs || aw || gf) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
+                if(sc || ghd || gs || aw || as || gf) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
                 else { pRow.style.display = 'none'; }
             }
         }
@@ -2509,6 +2521,7 @@
                         document.getElementById('enableGs').checked = config.filters.enableGs || false;
 
                         document.getElementById('enableAnimeWorld').checked = config.filters.enableAnimeWorld || false;
+                        document.getElementById('enableAnimeSaturn').checked = config.filters.enableAnimeSaturn || false;
                         document.getElementById('enableGf').checked = config.filters.enableGf || false;
 
                         document.getElementById('enableTrailers').checked = config.filters.enableTrailers || false;
@@ -2600,10 +2613,11 @@
             const ghdActive = document.getElementById('enableGhd').checked;
             const gsActive = document.getElementById('enableGs').checked;
             const awActive = document.getElementById('enableAnimeWorld').checked;
+            const asActive = document.getElementById('enableAnimeSaturn').checked;
             const gfActive = document.getElementById('enableGf').checked;
             const isP2P = currentService === 'p2p';
 
-            const isWebEnabled = scActive || ghdActive || gsActive || awActive || gfActive || isP2P;
+            const isWebEnabled = scActive || ghdActive || gsActive || awActive || asActive || gfActive || isP2P;
 
             const el = document.getElementById('apiKey');
             const value = el.value.trim();
@@ -2650,6 +2664,7 @@
                     enableGhd: document.getElementById('enableGhd').checked,
                     enableGs: document.getElementById('enableGs').checked,
                     enableAnimeWorld: document.getElementById('enableAnimeWorld').checked,
+                    enableAnimeSaturn: document.getElementById('enableAnimeSaturn').checked,
                     enableGf: document.getElementById('enableGf').checked,
                     enableTrailers: document.getElementById('enableTrailers').checked,
                     vixLast: document.getElementById('vixLast').checked,
@@ -2703,6 +2718,7 @@
             let ghdText = c.filters.enableGhd ? 'ATTIVO 🦁' : 'NO';
             let gsText = c.filters.enableGs ? 'ATTIVO 🛡️' : 'NO';
             let awText = c.filters.enableAnimeWorld ? 'ATTIVO ⛩️' : 'NO';
+            let asText = c.filters.enableAnimeSaturn ? 'ATTIVO 🪐' : 'NO';
             let gfText = c.filters.enableGf ? 'ATTIVO 🎥' : 'NO';
             let exclText = [];
             if(c.filters.no4k) exclText.push("4K");
@@ -2729,7 +2745,7 @@
                 <li>Servizio Debrid <span>${serviceDisplay}</span></li>
                 <li>Visual Skin <span>${skinText}</span></li>
                 <li>Swarm P2P <span>${p2pText}</span></li>
-                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | AW: ${awText} | GF: ${gfText}</span></li>
+                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | AW: ${awText} | AS: ${asText} | GF: ${gfText}</span></li>
                 <li>Flux Priority <span>${sortText}</span></li>
                 <li>Proxy Bridge <span>${c.mediaflow.url ? 'CONFIGURATO' : 'NON ATTIVO'}</span></li>
                 <li>Proxy Ghost <span>${c.mediaflow.proxyDebrid ? 'ATTIVO' : 'NO'}</span></li>

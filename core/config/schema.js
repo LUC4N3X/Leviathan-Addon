@@ -101,7 +101,7 @@ function validateConfig(input = {}) {
     if (output.filters[key] !== undefined) output.filters[key] = normalizeStringArray(output.filters[key]);
   }
 
-  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableAnimeWorld', 'enableGf', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast'];
+  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableAnimeWorld', 'enableAnimeSaturn', 'enableGf', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast'];
   for (const key of booleanFilterKeys) {
     if (output.filters[key] !== undefined) output.filters[key] = !!output.filters[key];
   }

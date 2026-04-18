@@ -54,6 +54,7 @@ function createPipelineOrchestration(deps = {}) {
       || filters.enableGhd
       || filters.enableGs
       || filters.enableAnimeWorld
+      || filters.enableAnimeSaturn
       || filters.enableGf
     );
     const isP2PEnabled = filters.enableP2P === true;
@@ -190,6 +191,7 @@ function createPipelineOrchestration(deps = {}) {
         filters.enableGhd,
         filters.enableGs,
         filters.enableAnimeWorld,
+        filters.enableAnimeSaturn,
         filters.enableGf
       ].filter(Boolean).length;
 

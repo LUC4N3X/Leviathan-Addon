@@ -861,6 +861,10 @@ body::before {
 #mod-aw { --glow-color: rgba(255, 102, 0, 0.8); --border-color: #ff6600; --border-color-dim: rgba(255,102,0,0.3); --core-bg: rgba(255,102,0,0.2); }
 #mod-aw .m-core-icon { color: var(--m-orange); }
 
+/* AnimeSaturn - COSMIC GOLD */
+#mod-as { --glow-color: rgba(255, 204, 0, 0.8); --border-color: #ffcc00; --border-color-dim: rgba(255,204,0,0.3); --core-bg: rgba(255,204,0,0.2); }
+#mod-as .m-core-icon { color: var(--m-amber); }
+
 /* GuardaFlix - NEON GREEN */
 #mod-gf { --glow-color: rgba(0, 230, 118, 0.8); --border-color: #00e676; --border-color-dim: rgba(0,230,118,0.3); --core-bg: rgba(0,230,118,0.2); }
 #mod-gf .m-core-icon { color: #00e676; }
@@ -1564,7 +1568,7 @@ const mobileHTML = `
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">GuardaSerie</span>
+                                    <span class="m-reactor-title">GuardoSerie</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableGs" onchange="updateStatus('m-enableGs','st-gs'); toggleModuleStyle('m-enableGs', 'mod-gs');">
                                         <span class="m-slider m-slider-purple"></span>
@@ -1590,6 +1594,25 @@ const mobileHTML = `
                                     </label>
                                 </div>
                                 <span class="m-reactor-desc">Anime ITA Database</span>
+                                <div class="m-tag-row">
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="m-reactor-module" id="mod-as">
+                            <div class="m-reactor-core">
+                                <i class="fas fa-satellite-dish m-core-icon"></i>
+                            </div>
+                            <div class="m-reactor-body">
+                                <div class="m-reactor-top">
+                                    <span class="m-reactor-title">AnimeSaturn</span>
+                                    <label class="m-switch">
+                                        <input type="checkbox" id="m-enableAnimeSaturn" onchange="updateStatus('m-enableAnimeSaturn','st-as'); toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');">
+                                        <span class="m-slider m-slider-amber"></span>
+                                    </label>
+                                </div>
+                                <span class="m-reactor-desc">Fallback anime con mapping Kitsu, IMDb e TMDb.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -2684,9 +2707,10 @@ function checkWebPriorityVisibility() {
     const ghd = document.getElementById('m-enableGhd').checked;
     const gs = document.getElementById('m-enableGs').checked;
     const aw = document.getElementById('m-enableAnimeWorld').checked;
+    const as = document.getElementById('m-enableAnimeSaturn').checked;
     const gf = document.getElementById('m-enableGf').checked;
     const panel = document.getElementById('m-priority-panel');
-    if (vix || ghd || gs || aw || gf) panel.classList.add('show');
+    if (vix || ghd || gs || aw || as || gf) panel.classList.add('show');
     else panel.classList.remove('show');
 }
 
@@ -2924,6 +2948,9 @@ function loadMobileConfig() {
                 document.getElementById('m-enableAnimeWorld').checked = config.filters.enableAnimeWorld || false;
                 toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');
 
+                document.getElementById('m-enableAnimeSaturn').checked = config.filters.enableAnimeSaturn || false;
+                toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');
+
                 document.getElementById('m-enableGf').checked = config.filters.enableGf || false;
                 toggleModuleStyle('m-enableGf', 'mod-gf');
 
@@ -2971,6 +2998,7 @@ function loadMobileConfig() {
             updateStatus('m-enableGhd', 'st-ghd');
             updateStatus('m-enableGs', 'st-gs');
             updateStatus('m-enableAnimeWorld', 'st-aw');
+            updateStatus('m-enableAnimeSaturn', 'st-as');
             updateStatus('m-enableGf', 'st-gf');
             updateStatus('m-aioMode', 'st-aio');
             updateStatus('m-enableTrailers', 'st-trailer');
@@ -3019,6 +3047,7 @@ function getMobileConfig() {
             enableGhd: document.getElementById('m-enableGhd').checked,
             enableGs: document.getElementById('m-enableGs').checked,
             enableAnimeWorld: document.getElementById('m-enableAnimeWorld').checked,
+            enableAnimeSaturn: document.getElementById('m-enableAnimeSaturn').checked,
             enableGf: document.getElementById('m-enableGf').checked,
             enableTrailers: document.getElementById('m-enableTrailers').checked,
             vixLast: document.getElementById('m-vixLast').checked,
@@ -3034,7 +3063,7 @@ function updateLinkModalContent() {
     if(!box) return;
     
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableGf || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableP2P;
     
     if(!config.key && !isWebEnabled) {
         box.value = "/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P";
@@ -3049,7 +3078,7 @@ function updateLinkModalContent() {
 
 function mobileInstall() {
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableGf || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableP2P;
     if(!config.key && !isWebEnabled) {
         showToast("ERRORE: API KEY MANCANTE", "error"); return;
     }

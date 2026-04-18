@@ -50,6 +50,7 @@ const LIMITERS = {
     webGhd: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_GHD'),
     webGs: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_GS'),
     webAw: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_AW'),
+    webAs: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_AS'),
     webGf: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_GF'),
     packResolver: createLimiter({ maxConcurrent: 1, minTime: 2000 }, 'PACK_RESOLVER'),
     bgPackJobs: createLimiter({ maxConcurrent: 2, minTime: 25, highWater: 10, strategy: Bottleneck.strategy.OVERFLOW }, 'BG_PACK_JOBS')
