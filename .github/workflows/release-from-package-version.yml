@@ -1,0 +1,144 @@
+name: Release From Package Version
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - package.json
+
+permissions:
+  actions: write
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Fetch tags
+        run: git fetch --force --tags origin
+
+      - name: Detect version bump
+        id: version_check
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current_version=$(node -p "require('./package.json').version || ''")
+          previous_version=""
+
+          if [[ -n "$BEFORE_SHA" ]] && git cat-file -e "${BEFORE_SHA}:package.json" 2>/dev/null; then
+            previous_version=$(git show "${BEFORE_SHA}:package.json" | node -e "let data=''; process.stdin.on('data', chunk => data += chunk); process.stdin.on('end', () => process.stdout.write(JSON.parse(data).version || ''));")
+          fi
+
+          should_release="true"
+          if [[ "$current_version" == "$previous_version" ]]; then
+            should_release="false"
+          fi
+
+          echo "current_version=$current_version" >> "$GITHUB_OUTPUT"
+          echo "previous_version=$previous_version" >> "$GITHUB_OUTPUT"
+          echo "should_release=$should_release" >> "$GITHUB_OUTPUT"
+
+      - name: Skip when the version did not change
+        if: steps.version_check.outputs.should_release != 'true'
+        run: echo "package.json changed but the version is still v${{ steps.version_check.outputs.current_version }}. Skipping release."
+
+      - name: Bootstrap previous version tag
+        if: steps.version_check.outputs.should_release == 'true' && steps.version_check.outputs.previous_version != ''
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          previous_tag="v${{ steps.version_check.outputs.previous_version }}"
+
+          if git rev-parse -q --verify "refs/tags/${previous_tag}" >/dev/null; then
+            echo "${previous_tag} already exists."
+            exit 0
+          fi
+
+          if [[ -z "$BEFORE_SHA" ]] || ! git rev-parse -q --verify "$BEFORE_SHA^{commit}" >/dev/null; then
+            echo "No valid previous commit available for bootstrapping ${previous_tag}."
+            exit 0
+          fi
+
+          git tag "${previous_tag}" "${BEFORE_SHA}"
+          git push origin "${previous_tag}"
+
+      - name: Generate changelog and release notes
+        if: steps.version_check.outputs.should_release == 'true'
+        id: notes
+        env:
+          RELEASE_NOTES_FILE: .release-notes.md
+        run: node .github/scripts/generate-release-notes.js
+
+      - name: Commit CHANGELOG.md
+        if: steps.version_check.outputs.should_release == 'true' && steps.notes.outputs.changelog_changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "docs(changelog): update CHANGELOG for ${{ steps.notes.outputs.tag }} [skip ci]"
+          git push origin HEAD:main
+
+      - name: Create git tag
+        if: steps.version_check.outputs.should_release == 'true' && steps.notes.outputs.tag_exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git tag "${{ steps.notes.outputs.tag }}"
+          git push origin "${{ steps.notes.outputs.tag }}"
+
+      - name: Trigger Docker image publish
+        if: steps.version_check.outputs.should_release == 'true' && steps.notes.outputs.tag_exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run docker-image.yml --ref "${{ steps.notes.outputs.tag }}"
+
+      - name: Create or update GitHub release
+        if: steps.version_check.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "${{ steps.notes.outputs.tag }}" >/dev/null 2>&1; then
+            gh release edit "${{ steps.notes.outputs.tag }}" \
+              --title "${{ steps.notes.outputs.tag }}" \
+              --notes-file .release-notes.md
+          else
+            gh release create "${{ steps.notes.outputs.tag }}" \
+              --title "${{ steps.notes.outputs.tag }}" \
+              --notes-file .release-notes.md
+          fi
