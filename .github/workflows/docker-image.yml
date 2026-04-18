@@ -1,0 +1,106 @@
+name: Docker Image
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Decide publish context
+        id: context
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package_version=$(node -p "require('./package.json').version || ''")
+          short_sha=$(git rev-parse --short=12 HEAD)
+          ref_name="${GITHUB_REF_NAME}"
+          ref="${GITHUB_REF}"
+          should_run="false"
+
+          {
+            echo 'metadata_tags<<EOF'
+
+            if [[ "$ref" == refs/tags/v* ]]; then
+              should_run="true"
+              echo "type=raw,value=${ref_name}"
+              echo "type=raw,value=latest"
+            elif [[ "$ref_name" == "main" ]]; then
+              should_run="true"
+              echo "type=raw,value=v${package_version}"
+              echo "type=raw,value=latest"
+            else
+              echo "Skipping Docker publish outside main or a release tag."
+            fi
+
+            echo "type=raw,value=sha-${short_sha}"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+
+      - name: Stop when publish context is invalid
+        if: steps.context.outputs.should_run != 'true'
+        run: echo "Nothing to publish for ${GITHUB_REF}."
+
+      - name: Set up QEMU
+        if: steps.context.outputs.should_run == 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.context.outputs.should_run == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.context.outputs.should_run == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        if: steps.context.outputs.should_run == 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: ${{ steps.context.outputs.metadata_tags }}
+
+      - name: Build and push multi-arch image
+        if: steps.context.outputs.should_run == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
