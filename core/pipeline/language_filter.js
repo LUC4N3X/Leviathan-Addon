@@ -42,7 +42,8 @@ function createLanguageFilterTools(deps = {}) {
       const source = String(item?.source || '');
       const sizeBytes = Number(item?._size || item?.sizeBytes || 0);
       const seeders = parseInt(item?.seeders, 10) || 0;
-      const isPack = Boolean(item?._isPack || isSeasonPack(title));
+      const parsedFastEpisode = meta?.isSeries ? extractSeasonEpisodeFromFilename(title, meta.season || 1, getEpisodeParseOptions(meta)) : null;
+      const isPack = Boolean(item?._isPack || isSeasonPack(title) || parsedFastEpisode?.isRange || parsedFastEpisode?.isBatch);
       const langOk = effectiveLangMode === 'eng'
         ? keepEnglishCandidate(title, source, meta?.title)
         : effectiveLangMode === 'all'
@@ -53,10 +54,11 @@ function createLanguageFilterTools(deps = {}) {
 
       let exactEpisode = false;
       if (meta?.isSeries) {
-        const parsed = extractSeasonEpisodeFromFilename(title, meta.season || 1, getEpisodeParseOptions(meta));
-        exactEpisode = Boolean(parsed && parsed.episode === meta.episode && (parsed.season === meta.season || meta?.kitsu_id));
+        const parsed = parsedFastEpisode;
+        exactEpisode = Boolean(parsed && !parsed?.isRange && parsed.episode === meta.episode && (parsed.season === meta.season || meta?.kitsu_id));
         if (exactEpisode) exactEpisodeCount += 1;
-        if (!exactEpisode && isPack && new RegExp(`(?:s|season|stagione)\\s*0?${meta.season}(?!\\d)`, 'i').test(title)) seasonPackCount += 1;
+        const hasSeasonCue = new RegExp(`(?:s|season|stagione)\\s*0?${meta.season}(?!\\d)`, 'i').test(title);
+        if (!exactEpisode && isPack && (hasSeasonCue || Boolean(parsed?.isRange || parsed?.isBatch) || (meta?.kitsu_id && /\b(?:batch|pack|complete|collection|全集|合集)\b/i.test(title)))) seasonPackCount += 1;
       }
 
       let strength = 0;
@@ -88,7 +90,8 @@ function createLanguageFilterTools(deps = {}) {
       const source = String(item.source || '').toLowerCase();
       const title = String(item.title || '');
       const lowerTitle = title.toLowerCase();
-      const isPack = Boolean(item?._isPack || isSeasonPack(title));
+      const parsedFastEpisode = meta?.isSeries ? extractSeasonEpisodeFromFilename(title, meta.season || 1, getEpisodeParseOptions(meta)) : null;
+      const isPack = Boolean(item?._isPack || isSeasonPack(title) || parsedFastEpisode?.isRange || parsedFastEpisode?.isBatch);
 
       if (source.includes('comet') || source.includes('stremthru')) return false;
 
@@ -121,10 +124,10 @@ function createLanguageFilterTools(deps = {}) {
         const episode = meta.episode;
         const parsedEpisode = extractSeasonEpisodeFromFilename(title, season || 1, getEpisodeParseOptions(meta, type));
 
-        if (isAnimeMetaContext(meta, type) && parsedEpisode && parsedEpisode.episode === episode && (parsedEpisode.season === season || shouldIgnoreAnimeSeason(meta, type, title))) {
+        if (isAnimeMetaContext(meta, type) && parsedEpisode && !parsedEpisode?.isRange && parsedEpisode.episode === episode && (parsedEpisode.season === season || shouldIgnoreAnimeSeason(meta, type, title))) {
           return true;
         }
-        if (isAnimeMetaContext(meta, type) && isPack) {
+        if (isAnimeMetaContext(meta, type) && (isPack || parsedEpisode?.isRange || parsedEpisode?.isBatch)) {
           item._isPack = true;
           return true;
         }

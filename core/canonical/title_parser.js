@@ -1,11 +1,11 @@
 'use strict';
 
-const REGEX_TITLE_PUNCTUATION = /[\[\]{}()]/g;
-const REGEX_TITLE_SPACING = /[._:+\-]+/g;
-const REGEX_TITLE_NOISE = /\b(?:2160p|1080p|720p|480p|x264|x265|h264|h265|hevc|hdr10\+?|hdr|dv|dolby\s*vision|web[- ]?dl|webrip|bluray|brrip|dvdrip|remux|proper|repack|nf|amzn|dsnp|atvp|ita|italian|italiano|eng|english|multi|dual|audio|sub|subs|subbed|vostfr|subita)\b/g;
+const REGEX_TITLE_PUNCTUATION = /[\[\]{}()【】「」『』［］（）]/g;
+const REGEX_TITLE_SPACING = /[._:+\-·・]+/g;
+const REGEX_TITLE_NOISE = /\b(?:2160p|1080p|720p|480p|x264|x265|h264|h265|hevc|hdr10\+?|hdr|dv|dolby\s*vision|web[- ]?dl|webrip|bluray|brrip|dvdrip|remux|proper|repack|nf|amzn|dsnp|atvp|ita|italian|italiano|eng|english|multi|dual|audio|sub|subs|subbed|vostfr|subita|batch|complete|completa|integrale|collection|ova|oad|special)\b/g;
 
 function normalizeText(value) {
-  return String(value || '').trim();
+  return String(value || '').normalize('NFKC').trim();
 }
 
 function stripAccents(value) {
@@ -15,6 +15,9 @@ function stripAccents(value) {
 function normalizeLooseTitle(value, options = {}) {
   const keepYear = options.keepYear === true;
   let normalized = stripAccents(value)
+    .replace(/第\s*([0-9]{1,2})\s*[期季]/gi, ' s$1 ')
+    .replace(/第\s*([0-9]{1,4})\s*[話话]/gi, ' $1 ')
+    .replace(/[‐‑–—―〜～]/g, '-')
     .toLowerCase()
     .replace(REGEX_TITLE_PUNCTUATION, ' ')
     .replace(REGEX_TITLE_SPACING, ' ')
@@ -39,7 +42,7 @@ function tokenizeTitle(value, options = {}) {
 }
 
 function hasExplicitSeasonMarker(text = '') {
-  return /\b(?:S\d{1,2}E\d{1,3}|S(?:EASON)?\s*0?\d{1,2}|\d{1,2}x\d{1,3}|STAGIONE\s*0?\d{1,2}|(?:1ST|2ND|3RD|4TH)\s+SEASON)\b/i.test(String(text || ''));
+  return /(?:\b(?:S\d{1,2}E\d{1,3}|S(?:EASON)?\s*0?\d{1,2}|\d{1,2}x\d{1,3}|STAGIONE\s*0?\d{1,2}|(?:1ST|2ND|3RD|4TH)\s+SEASON)\b|第\s*\d{1,2}\s*[期季])/i.test(String(text || '').normalize('NFKC'));
 }
 
 function extractEpisodeContext(identifier = '') {

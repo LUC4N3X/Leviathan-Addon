@@ -65,22 +65,77 @@ function isAnimeMeta(meta = {}) {
     return Boolean(meta?.kitsu_id || meta?.isAnime);
 }
 
+function normalizeAnimeEpisodeText(value) {
+    return String(value || '')
+        .normalize('NFKC')
+        .replace(/[【】「」『』［］（）]/g, ' ')
+        .replace(/[‐‑–—―〜～]/g, '-')
+        .replace(/[·・]/g, ' ')
+        .replace(/第\s*([0-9]{1,2})\s*[期季]/gi, ' season $1 ')
+        .replace(/第\s*([0-9]{1,4})\s*[話话]/gi, ' episode $1 ')
+        .replace(/\b(?:cour|part|pt)\s*([0-9]{1,2})\b/gi, ' season $1 ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function extractAnimeEpisodeRange(filename, defaultSeason = 1) {
+    const name = normalizeAnimeEpisodeText(filename);
+    const patterns = [
+        /\bseason\s*0?(\d{1,2})\s*(?:batch|pack|complete|collection)?\s*0?(\d{1,3})\s*(?:-|~|to|a)\s*0?(\d{1,3})\b/i,
+        /\b(?:episodes?|eps?|episode|episodio)\s*0?(\d{1,3})\s*(?:-|~|to|a)\s*0?(\d{1,3})\b/i,
+        /\b0?(\d{1,3})\s*(?:-|~|to|a)\s*0?(\d{1,3})\b/i
+    ];
+
+    for (const pattern of patterns) {
+        const match = name.match(pattern);
+        if (!match) continue;
+        const hasExplicitSeason = pattern === patterns[0];
+        const season = hasExplicitSeason ? parseInt(match[1], 10) : defaultSeason;
+        const start = parseInt(match[hasExplicitSeason ? 2 : 1], 10);
+        const end = parseInt(match[hasExplicitSeason ? 3 : 2], 10);
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start <= 0 || end < start) continue;
+        if (start >= 1900 && start <= 2100) continue;
+        if (end >= 1900 && end <= 2100) continue;
+        const hasBatchCue = /\b(?:batch|complete|collection|pack|season|stagione|episodes?|eps?|cour|全集|合集)\b/i.test(name) || /第\s*\d+\s*[話话]/i.test(String(filename || ''));
+        if (!hasBatchCue && end - start > 4) continue;
+        return { season, episode: start, rangeStart: start, rangeEnd: end, isRange: true, isBatch: true };
+    }
+
+    return null;
+}
+
 function parseAnimeEpisode(filename, defaultSeason = 1) {
-    const value = String(filename || '');
-    let match = value.match(/\bS(?:EASON)?\s*0?(\d{1,2})\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    const originalValue = String(filename || '');
+    const value = normalizeAnimeEpisodeText(originalValue);
+    let match = value.match(/\bS(?:EASON)?\s*0?(\d{1,2})\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b(?!\s*(?:-|~|to|a)\s*0?\d{1,3}\b)/i);
     if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
 
-    match = value.match(/\b(\d{1,2})(?:ST|ND|RD|TH)\s+SEASON\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    match = value.match(/\b(\d{1,2})(?:ST|ND|RD|TH)\s+SEASON\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b(?!\s*(?:-|~|to|a)\s*0?\d{1,3}\b)/i);
     if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
 
-    match = value.match(/\b(?:EP(?:ISODE)?|EPISODIO)\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    match = value.match(/\bSEASON\s*0?(\d{1,2}).{0,16}?EP(?:ISODE)?\s*0?(\d{1,4})(?:v\d+)?\b/i);
+    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
+
+    match = value.match(/\b(?:EP(?:ISODE)?|EPISODIO)\s*0?(\d{1,4})(?:v\d+)?\b(?!\s*(?:-|~|to|a)\s*0?\d{1,3}\b)/i);
     if (match) return { season: defaultSeason, episode: parseInt(match[1], 10) };
+
+    const range = extractAnimeEpisodeRange(originalValue, defaultSeason);
+    if (range) return range;
+
+    match = value.match(/(?:^|\s)#?0*([1-9]\d{0,3})(?:v\d+)?(?=$|\s)/i);
+    if (match) {
+        const episode = parseInt(match[1], 10);
+        if (!(episode >= 1900 && episode <= 2100) && ![2160, 1080, 720, 576, 480, 360, 264, 265].includes(episode)) {
+            return { season: defaultSeason, episode };
+        }
+    }
 
     const genericPattern = /(?:^|[\s._\-\[\(])0*([1-9]\d{0,3})(?:v\d+)?(?=$|[\s._\-\]\)])/ig;
     for (const candidate of value.matchAll(genericPattern)) {
         const episode = parseInt(candidate[1], 10);
         if (!Number.isInteger(episode) || episode <= 0) continue;
         if (episode >= 1900 && episode <= 2100) continue;
+        if ([2160, 1080, 720, 576, 480, 360, 264, 265].includes(episode)) continue;
         return { season: defaultSeason, episode };
     }
 
@@ -175,7 +230,7 @@ function isSeasonPack(title) {
 }
 
 function parseSeasonEpisode(filename, defaultSeason = 1, options = {}) {
-    const value = String(filename || '');
+    const value = normalizeAnimeEpisodeText(filename);
     for (const { pattern, extract } of SEASON_EPISODE_PATTERNS) {
         const match = value.match(pattern);
         if (match) {
@@ -438,6 +493,28 @@ async function fetchFilesFromRealDebrid(infoHash, rdKey) {
     }
 }
 
+function extractTorboxCacheEntry(data, infoHash) {
+    const normalizedHash = normalizeInfoHash(infoHash);
+    if (!data) return null;
+
+    if (Array.isArray(data)) {
+        for (const entry of data) {
+            const candidates = [entry?.hash, entry?.info_hash, entry?.torrent_hash, entry?.hash_value]
+                .map(normalizeInfoHash)
+                .filter(Boolean);
+            if (candidates.includes(normalizedHash)) return entry;
+        }
+        return data.find((entry) => Array.isArray(entry?.files) && entry.files.length > 0) || null;
+    }
+
+    if (typeof data === 'object') {
+        const matchingKey = Object.keys(data).find((key) => normalizeInfoHash(key) === normalizedHash);
+        if (matchingKey) return data[matchingKey];
+    }
+
+    return null;
+}
+
 async function fetchTorboxListEntry(baseUrl, headers, torrentId) {
     let lastError = null;
     let torrent = null;
@@ -471,22 +548,19 @@ async function fetchFilesFromTorbox(infoHash, torboxKey) {
     try {
         const cacheResponse = await axios.get(`${baseUrl}/torrents/checkcached`, {
             headers,
-            params: { hash: infoHash.toUpperCase(), format: 'object', list_files: true },
+            params: { hash: infoHash.toUpperCase(), format: 'list', list_files: true },
             timeout: 12000
         });
-        const cacheData = cacheResponse?.data?.data;
-        if (cacheData && typeof cacheData === 'object') {
-            const hashKey = Object.keys(cacheData).find(key => key.toLowerCase() === infoHash.toLowerCase());
-            const files = cacheData?.[hashKey]?.files;
-            if (Array.isArray(files) && files.length > 0) {
-                return {
-                    service: 'tb',
-                    infoHash,
-                    torrentId: 'cached',
-                    files: mapRawFiles(files),
-                    packName: null
-                };
-            }
+        const cacheEntry = extractTorboxCacheEntry(cacheResponse?.data?.data, infoHash);
+        const files = Array.isArray(cacheEntry?.files) ? cacheEntry.files : null;
+        if (Array.isArray(files) && files.length > 0) {
+            return {
+                service: 'tb',
+                infoHash,
+                torrentId: cacheEntry?.id || cacheEntry?.torrent_id || 'cached',
+                files: mapRawFiles(files),
+                packName: cacheEntry?.name || cacheEntry?.torrent_title || null
+            };
         }
     } catch (err) {}
 

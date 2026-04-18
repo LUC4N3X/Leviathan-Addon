@@ -427,16 +427,30 @@ function formatLanguageLabel(languageInfo, fallbackLanguages = [], preferredLang
 
 function isSeasonPack(title) {
     if (!title) return false;
-    const lowerTitle = String(title).toLowerCase();
-    if (/s\d{1,2}e\d{1,2}/i.test(lowerTitle)) return false;
+    const normalizedTitle = String(title)
+        .normalize('NFKC')
+        .replace(/第\s*([0-9]{1,2})\s*[期季]/gi, ' season $1 ')
+        .replace(/[‐‑–—―〜～]/g, '-')
+        .toLowerCase();
+    if (/s\d{1,2}e\d{1,2}/i.test(normalizedTitle)) return false;
+    if (/\b\d{1,2}x\d{1,3}\b/i.test(normalizedTitle)) return false;
 
     const packPatterns = [
-        /stagion[ei]\s*\d+\s*[-–—]\s*\d+/i, /season\s*\d+\s*[-–—]\s*\d+/i, /s\d+\s*[-–—]\s*s?\d+/i,
-        /completa/i, /complete/i, /integrale/i, /collection/i, /\bpack\b/i,
-        /stagion[ei]\s*\d+/i, /season\s*\d+/i, /\.s\d{1,2}\./i, /\.s\d{1,2}$/i,
-        /\bs\d{1,2}(?!e)\b/i, /\bs\d{1,2}\./i, /\btutta\b/i
+        /stagion[ei]\s*\d+\s*[-–—]\s*\d+/i,
+        /season\s*\d+\s*[-–—]\s*\d+/i,
+        /s\d+\s*[-–—]\s*s?\d+/i,
+        /\b(?:batch|complete|completa|integrale|collection|全集|合集|cour)\b/i,
+        /\bpack\b/i,
+        /\b(?:season|stagion[ei])\s*\d+\b/i,
+        /\.s\d{1,2}\./i,
+        /\.s\d{1,2}$/i,
+        /\bs\d{1,2}(?!e)\b/i,
+        /\bs\d{1,2}\./i,
+        /\btutta\b/i,
+        /\bepisodes?\s*\d{1,3}\s*(?:-|~|to|a)\s*\d{1,3}\b/i,
+        /\b\d{1,3}\s*(?:-|~|to|a)\s*\d{1,3}\b/i
     ];
-    return packPatterns.some((pattern) => pattern.test(lowerTitle));
+    return packPatterns.some((pattern) => pattern.test(normalizedTitle));
 }
 
 function isGoodShortQueryMatch(torrentTitle, searchQuery) {
