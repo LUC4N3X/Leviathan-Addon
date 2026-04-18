@@ -1,14 +1,11 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
-const crypto = require('crypto');
 const { GUARDA_SERIE_BROWSER_PROFILES, pickRandomProfile } = require('../../core/browser_profiles');
+const { buildWebStream } = require('../extractors/common');
+const { extractFromUrl } = require('../extractors/registry');
 
 const GS_DOMAIN = 'https://guardoserie.team';
 const TMDB_KEY = '5bae8d11f2a7bc7a95c6d040a31d2163';
-const LOADM_KEY = Buffer.from('kiemtienmua911ca');
-const LOADM_IV = Buffer.from('1234567890oiuytr');
-const MIXDROP_REGEX = /mixdrop|m1xdrop|mxcontent/i;
-const LOADM_REGEX = /loadm/i;
 const BROWSER_PROFILES = GUARDA_SERIE_BROWSER_PROFILES;
 
 function getTargetDomain() {
@@ -293,150 +290,30 @@ function extractPlayerLinksFromHtml(html) {
     return Array.from(links);
 }
 
-function decryptLoadmPayload(hexText) {
-    const cleanedHex = String(hexText || '').replace(/[^0-9a-fA-F]/g, '');
-    if (!cleanedHex) return null;
-
-    const encryptedBytes = Buffer.from(cleanedHex, 'hex');
-    const decipher = crypto.createDecipheriv('aes-128-cbc', LOADM_KEY, LOADM_IV);
-    decipher.setAutoPadding(true);
-
-    let decrypted = decipher.update(encryptedBytes);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-
-    const plainText = decrypted.toString('utf8').trim();
-    const lastBraceIndex = plainText.lastIndexOf('}');
-    const cleanJson = lastBraceIndex !== -1 ? plainText.slice(0, lastBraceIndex + 1) : plainText;
-    return JSON.parse(cleanJson);
-}
-
-async function extractLoadm(playerUrl, client) {
-    try {
-        const absolute = normalizePlayerLink(playerUrl);
-        if (!absolute) return null;
-        const parsed = new URL(absolute);
-        const videoId = parsed.hash?.replace(/^#/, '').trim()
-            || parsed.pathname.split('/e/').pop()?.trim()
-            || parsed.searchParams.get('id')
-            || parsed.searchParams.get('v');
-        if (!videoId) return null;
-
-        const apiUrl = `${parsed.origin}/api/v1/video?id=${encodeURIComponent(videoId)}&w=2560&h=1440&r=${encodeURIComponent(getTargetDomain())}`;
-        const response = await client.get(apiUrl, {
-            headers: {
-                'User-Agent': getStealthHeaders()['User-Agent'],
-                'Referer': `${parsed.origin}/`,
-                'X-Requested-With': 'XMLHttpRequest',
-                'Accept': 'application/json, text/plain, */*'
-            },
-            responseType: 'text'
-        });
-
-        const payload = decryptLoadmPayload(typeof response.data === 'string' ? response.data : String(response.data || ''));
-        const streamUrl = payload?.source || payload?.cf || null;
-        if (!streamUrl) return null;
-
-        return {
-            url: streamUrl,
-            headers: {
-                Referer: `${parsed.origin}/`,
-                Origin: parsed.origin
-            },
-            name: 'LoadM',
-            priority: 0
-        };
-    } catch (_) {
-        return null;
-    }
-}
-
-function unpackDeanEdwards(html) {
-    if (!html || typeof html !== 'string') return null;
-    try {
-        const packedMatch = html.match(/eval\(function\(p,a,c,k,e,?[rd]?\).*?\}\('(.*?)',\s*(\d+),\s*(\d+),\s*'([^']+)'\.split\('\|'\).*?\)\)/s);
-        if (!packedMatch) return null;
-
-        let [_, p, a, c, k] = packedMatch;
-        a = parseInt(a, 10);
-        c = parseInt(c, 10);
-        k = k.split('|');
-
-        const e = (n) => {
-            const alphabet = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-            if (n === 0) return alphabet[0];
-            let res = '';
-            while (n > 0) {
-                res = alphabet[n % a] + res;
-                n = Math.floor(n / a);
-            }
-            return res;
-        };
-
-        let unpacked = p;
-        for (let i = c - 1; i >= 0; i -= 1) {
-            if (!k[i]) continue;
-            unpacked = unpacked.replace(new RegExp(`\\b${e(i)}\\b`, 'g'), k[i]);
-        }
-        return unpacked;
-    } catch (_) {
-        return null;
-    }
-}
-
-async function extractMixdrop(url, client) {
-    try {
-        const absolute = normalizePlayerLink(url);
-        if (!absolute) return null;
-        const res = await client.get(absolute, { headers: getStealthHeaders(`${new URL(absolute).origin}/`) });
-        const html = typeof res.data === 'string' ? res.data : '';
-        const regex = /(?:MDCore|Core|wurl)\s*(?:\.wurl)?\s*=\s*["']([^"']+)["']/;
-
-        let linkMatch = html.match(regex);
-        if (!linkMatch) {
-            const unpacked = unpackDeanEdwards(html);
-            linkMatch = unpacked ? unpacked.match(regex) : null;
-        }
-        if (!linkMatch?.[1]) return null;
-
-        const finalUrl = linkMatch[1].startsWith('//') ? `https:${linkMatch[1]}` : linkMatch[1];
-        return {
-            url: finalUrl,
-            headers: {
-                Referer: 'https://m1xdrop.net/',
-                Origin: 'https://m1xdrop.net'
-            },
-            name: 'MixDrop',
-            priority: 1
-        };
-    } catch (_) {
-        return null;
-    }
-}
-
 async function processHoster(videoLink, client, cleanTitle) {
     if (!videoLink) return null;
-    const lower = String(videoLink).toLowerCase();
-
-    const extracted = LOADM_REGEX.test(lower)
-        ? await extractLoadm(videoLink, client)
-        : MIXDROP_REGEX.test(lower)
-            ? await extractMixdrop(videoLink, client)
-            : null;
-
+    const providerHeaders = getStealthHeaders(`${getTargetDomain()}/`);
+    const extracted = await extractFromUrl(videoLink, {
+        client,
+        userAgent: providerHeaders['User-Agent'],
+        requestReferer: getTargetDomain()
+    });
     if (!extracted?.url) return null;
 
-    return {
-        url: extracted.url,
+    return buildWebStream({
         name: `🍿 GuardoSerie | ${extracted.name}`,
         title: `${cleanTitle}
 ☁️ ${extracted.name} • 🇮🇹 ITA`,
+        url: extracted.url,
         extractor: extracted.name,
-        behaviorHints: {
-            ...(extracted.headers ? { proxyHeaders: { request: extracted.headers } } : {}),
-            extractor: extracted.name
-        },
-        _priority: extracted.priority ?? 9
-    };
+        provider: 'GuardoSerie',
+        providerCode: 'GS',
+        quality: extracted.quality || 'Unknown',
+        headers: extracted.headers,
+        extra: {
+            _priority: extracted.priority ?? 9
+        }
+    });
 }
 
 async function searchGuardaserie(meta, config) {

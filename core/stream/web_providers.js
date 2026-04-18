@@ -2,33 +2,14 @@
 
 const aioFormatter = require('../lib/pulse_formatter.cjs');
 const { formatStreamSelector } = require('../lib/stream_formatter');
-const { searchVix: searchStreamingCommunity } = require('../../providers/streamingcommunity/vix_handler');
-const { searchGuardaHD } = require('../../providers/guardahd/ghd_handler');
-const { searchGuardaserie } = require('../../providers/guardaserie/gs_handler');
-const { searchAnimeWorld } = require('../../providers/animeworld/aw_handler');
-const { searchAnimeSaturn } = require('../../providers/animesaturn/as_handler');
-const { searchGuardaFlix } = require('../../providers/guardaflix/gf_handler');
-
-function isStreamingCommunityEnabled(filters = {}) {
-    return filters?.enableStreamingCommunity === true || filters?.enableVix === true;
-}
-
-function isStreamingCommunityLastEnabled(filters = {}) {
-    return filters?.streamingCommunityLast === true || filters?.vixLast === true;
-}
-
-function isAnimeWebEligible(meta = {}) {
-    return Boolean(meta?.kitsu_id || meta?.isAnime || String(meta?.type || '').toLowerCase() === 'anime');
-}
-
-function getWebProviderTimeout(defaultTimeout, cacheName) {
-    const baseTimeout = defaultTimeout || 4000;
-    if (cacheName === 'GuardaHD' || cacheName === 'GuardoSerie' || cacheName === 'GuardaFlix') {
-        return Math.max(baseTimeout, 7000);
-    }
-    return baseTimeout;
-}
-
+const {
+    WEB_PROVIDER_ORDER,
+    getWebProviderDefinitions,
+    getWebProviderIcon,
+    getWebProviderTimeout,
+    isStreamingCommunityEnabled,
+    isStreamingCommunityLastEnabled
+} = require('../../providers/extractors/provider_registry');
 
 function normalizeWebExtractorLabel(value) {
     const raw = String(value || '').trim();
@@ -74,28 +55,6 @@ function inferWebExtractorLabel(stream, sourceName) {
     return '';
 }
 
-function buildWebSourceLabel(stream, sourceName) {
-    const extractor = inferWebExtractorLabel(stream, sourceName);
-    const provider = String(sourceName || '').trim();
-    if (extractor && provider && extractor.toLowerCase() !== provider.toLowerCase()) {
-        return `${extractor} • ${provider}`;
-    }
-    return extractor || provider || 'Web';
-}
-
-
-
-function getWebProviderIcon(sourceName) {
-    const sLower = String(sourceName || '').toLowerCase();
-    if (sLower.includes('animeworld')) return '⛩️';
-    if (sLower.includes('animesaturn')) return '🪐';
-    if (sLower.includes('streamingcommunity')) return '🌪️';
-    if (sLower.includes('guardoserie') || sLower.includes('guardaserie')) return '🍿';
-    if (sLower.includes('guardahd')) return '🦁';
-    if (sLower.includes('guardaflix')) return '🎥';
-    return '🌐';
-}
-
 function rewriteWebTitleLayout(title, providerIcon, providerLabel, extractorLabel) {
     const lines = String(title || '').split('\n').map((line) => String(line || '').trim()).filter(Boolean);
     const cleaned = lines.filter((line) => !/^(?:⛵|🦈|🌐|🌪️|🍿|🦁|🎥|⛩️|🪐)\s+/.test(line));
@@ -104,13 +63,16 @@ function rewriteWebTitleLayout(title, providerIcon, providerLabel, extractorLabe
     return cleaned.join('\n');
 }
 
-function applyAioWebStyle(streamList, sourceName, meta) {
+function applyAioWebStyle(streamList, providerDefinition, meta) {
     if (!Array.isArray(streamList) || streamList.length === 0) return [];
 
+    const sourceName = providerDefinition?.sourceName || 'Web';
+    const providerIcon = providerDefinition?.icon || getWebProviderIcon(sourceName);
     const isAnimeProvider = sourceName.includes('AnimeWorld') || sourceName.includes('AnimeSaturn');
+
     return streamList.map((stream) => {
         const textToCheck = `${stream?.title || ''} ${stream?.name || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|STREAMINGCOMMUNITY|LEVIATHAN|VIX|GUARDAFLIX|ANIMEWORLD|ANIMESATURN/g, '');
-        let quality = 'Web';
+        let quality = 'WebStreams';
         let qIcon = '📺';
 
         if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) {
@@ -135,7 +97,6 @@ function applyAioWebStyle(streamList, sourceName, meta) {
         if (isAnimeProvider) {
             const extractorLabel = inferWebExtractorLabel(stream, sourceName) || 'Web';
             const providerLabel = String(sourceName || '').trim() || 'Web';
-            const providerIcon = getWebProviderIcon(sourceName);
             stream.name = aioFormatter.formatStreamName({ service: 'web', cached: true, quality: 'HD' });
             stream.title = aioFormatter.formatStreamTitle({
                 title: meta.title,
@@ -153,17 +114,29 @@ function applyAioWebStyle(streamList, sourceName, meta) {
 
         const extractorLabel = inferWebExtractorLabel(stream, sourceName) || 'Web';
         const providerLabel = String(sourceName || '').trim() || 'Web';
-        const providerIcon = getWebProviderIcon(sourceName);
         stream.name = aioFormatter.formatStreamName({ service: 'web', cached: true, quality });
-        stream.title = aioFormatter.formatStreamTitle({ title: meta.title, size: 'Web', language: '🇮🇹 ITA', source: extractorLabel, providerLine: `${providerIcon} ${providerLabel}`, sourceIcon: '⛵', seeders: null, techInfo: `🎞️ ${quality} ${qIcon}` });
+        stream.title = aioFormatter.formatStreamTitle({
+            title: meta.title,
+            size: 'Web',
+            language: '🇮🇹 ITA',
+            source: extractorLabel,
+            providerLine: `${providerIcon} ${providerLabel}`,
+            sourceIcon: '⛵',
+            seeders: null,
+            techInfo: `🎞️ ${quality} ${qIcon}`
+        });
         stream.behaviorHints = stream.behaviorHints || {};
         stream.behaviorHints.bingieGroup = `Leviathan|${quality}|Web|${sourceName.replace(/\W/g, '')}`;
         return stream;
     });
 }
 
-function applyWebFormatter(streamList, sourceName, meta, config) {
+function applyWebFormatter(streamList, providerDefinition, meta, config) {
     if (!streamList || !Array.isArray(streamList)) return [];
+
+    const sourceName = providerDefinition?.sourceName || 'Web';
+    const providerIcon = providerDefinition?.icon || getWebProviderIcon(sourceName);
+
     return streamList.map((stream) => {
         let quality = 'HD';
         const upperName = (stream.name || '').toUpperCase();
@@ -180,11 +153,8 @@ function applyWebFormatter(streamList, sourceName, meta, config) {
         }
 
         let langTag = 'ITA';
-        const providerIcon = getWebProviderIcon(sourceName);
         const sLower = sourceName.toLowerCase();
-        if (sLower.includes('animeworld')) {
-            langTag = (rawTitleToCheck.includes('JPN') || rawTitleToCheck.includes('SUB') || rawTitleToCheck.includes('VOST')) ? 'JPN' : 'ITA';
-        } else if (sLower.includes('animesaturn')) {
+        if (sLower.includes('animeworld') || sLower.includes('animesaturn')) {
             langTag = (rawTitleToCheck.includes('JPN') || rawTitleToCheck.includes('SUB') || rawTitleToCheck.includes('VOST')) ? 'JPN' : 'ITA';
         }
 
@@ -204,120 +174,53 @@ function applyWebFormatter(streamList, sourceName, meta, config) {
 
 function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }) {
     async function fetchWebProviderBuckets({ type, originalId, finalId, meta, config, reqHost, allowItalianWebProviders, dbOnlyMode }) {
-        const empty = {
-            streamingCommunity: [],
-            guardaHD: [],
-            guardaSerie: [],
-            animeWorld: [],
-            animeSaturn: [],
-            guardaFlix: []
-        };
+        const definitions = getWebProviderDefinitions({ meta, filters: config.filters || {} });
+        const empty = Object.fromEntries(definitions.map((definition) => [definition.key, []]));
 
         if (dbOnlyMode || !allowItalianWebProviders) return empty;
 
         const rawId = `${type}:${finalId}:${meta.season || 0}:${meta.episode || 0}`;
-        const providerSpecs = [
-            {
-                key: 'streamingCommunity',
-                cacheName: 'StreamingCommunity',
-                enabled: isStreamingCommunityEnabled(config.filters),
-                limiter: LIMITERS.webVix,
-                runner: () => searchStreamingCommunity(meta, config, reqHost)
-            },
-            {
-                key: 'guardaHD',
-                cacheName: 'GuardaHD',
-                enabled: config.filters?.enableGhd,
-                limiter: LIMITERS.webGhd,
-                runner: () => searchGuardaHD(meta, config)
-            },
-            {
-                key: 'guardaSerie',
-                cacheName: 'GuardoSerie',
-                enabled: config.filters?.enableGs,
-                limiter: LIMITERS.webGs,
-                runner: () => searchGuardaserie(meta, config)
-            },
-            {
-                key: 'animeWorld',
-                cacheName: 'AnimeWorld',
-                enabled: config.filters?.enableAnimeWorld && isAnimeWebEligible(meta),
-                limiter: LIMITERS.webAw,
-                runner: () => searchAnimeWorld(originalId, meta, config)
-            },
-            {
-                key: 'animeSaturn',
-                cacheName: 'AnimeSaturn',
-                enabled: config.filters?.enableAnimeSaturn && isAnimeWebEligible(meta),
-                limiter: LIMITERS.webAs,
-                runner: () => searchAnimeSaturn(originalId, meta, config)
-            },
-            {
-                key: 'guardaFlix',
-                cacheName: 'GuardaFlix',
-                enabled: config.filters?.enableGf && !meta?.isSeries,
-                limiter: LIMITERS.webGf,
-                runner: () => searchGuardaFlix(meta, config)
-            }
-        ];
+        const settled = await Promise.allSettled(definitions.map((definition) => {
+            if (!definition.enabled) return Promise.resolve([]);
 
-        const settled = await Promise.allSettled(providerSpecs.map((spec) => {
-            if (!spec.enabled) return Promise.resolve([]);
-            return Cache.fetchWithCache(spec.cacheName, rawId, 43200, () =>
-                guardedProviderCall(spec.cacheName, spec.limiter, getWebProviderTimeout(CONFIG.TIMEOUTS.SCRAPER, spec.cacheName), spec.runner)
+            return Cache.fetchWithCache(definition.cacheName, rawId, 43200, () =>
+                guardedProviderCall(
+                    definition.cacheName,
+                    LIMITERS[definition.limiterKey],
+                    getWebProviderTimeout(CONFIG.TIMEOUTS.SCRAPER, definition.cacheName),
+                    () => definition.run({ type, originalId, finalId, meta, config, reqHost })
+                )
             );
         }));
 
-        return providerSpecs.reduce((acc, spec, index) => {
-            acc[spec.key] = settled[index]?.status === 'fulfilled' ? settled[index].value : [];
+        return definitions.reduce((acc, definition, index) => {
+            acc[definition.key] = settled[index]?.status === 'fulfilled' ? settled[index].value : [];
             return acc;
         }, empty);
     }
 
     function formatWebProviderBuckets(webBuckets, meta, config) {
-        const buckets = {
-            streamingCommunity: Array.isArray(webBuckets?.streamingCommunity) ? [...webBuckets.streamingCommunity] : [],
-            guardaHD: Array.isArray(webBuckets?.guardaHD) ? [...webBuckets.guardaHD] : [],
-            guardaSerie: Array.isArray(webBuckets?.guardaSerie) ? [...webBuckets.guardaSerie] : [],
-            animeWorld: Array.isArray(webBuckets?.animeWorld) ? [...webBuckets.animeWorld] : [],
-            animeSaturn: Array.isArray(webBuckets?.animeSaturn) ? [...webBuckets.animeSaturn] : [],
-            guardaFlix: Array.isArray(webBuckets?.guardaFlix) ? [...webBuckets.guardaFlix] : []
-        };
+        const definitions = getWebProviderDefinitions({ meta, filters: config.filters || {} });
+        const formatted = {};
 
-        if (aioFormatter && aioFormatter.isAIOStreamsEnabled(config)) {
-            return {
-                streamingCommunity: applyAioWebStyle(buckets.streamingCommunity, 'StreamingCommunity', meta),
-                guardaHD: applyAioWebStyle(buckets.guardaHD, 'GuardaHD', meta),
-                guardaSerie: applyAioWebStyle(buckets.guardaSerie, 'GuardoSerie', meta),
-                animeWorld: applyAioWebStyle(buckets.animeWorld, 'AnimeWorld', meta),
-                animeSaturn: applyAioWebStyle(buckets.animeSaturn, 'AnimeSaturn', meta),
-                guardaFlix: applyAioWebStyle(buckets.guardaFlix, 'GuardaFlix', meta)
-            };
+        for (const definition of definitions) {
+            const bucket = Array.isArray(webBuckets?.[definition.key]) ? [...webBuckets[definition.key]] : [];
+            if (aioFormatter && aioFormatter.isAIOStreamsEnabled(config)) {
+                formatted[definition.key] = bucket.length > 0 ? applyAioWebStyle(bucket, definition, meta) : [];
+            } else {
+                formatted[definition.key] = bucket.length > 0 ? applyWebFormatter(bucket, definition, meta, config) : [];
+            }
         }
 
-        return {
-            streamingCommunity: buckets.streamingCommunity.length > 0 ? applyWebFormatter(buckets.streamingCommunity, 'StreamingCommunity', meta, config) : [],
-            guardaHD: buckets.guardaHD.length > 0 ? applyWebFormatter(buckets.guardaHD, 'GuardaHD', meta, config) : [],
-            guardaSerie: buckets.guardaSerie.length > 0 ? applyWebFormatter(buckets.guardaSerie, 'GuardoSerie', meta, config) : [],
-            animeWorld: buckets.animeWorld.length > 0 ? applyWebFormatter(buckets.animeWorld, 'AnimeWorld', meta, config) : [],
-            animeSaturn: buckets.animeSaturn.length > 0 ? applyWebFormatter(buckets.animeSaturn, 'AnimeSaturn', meta, config) : [],
-            guardaFlix: buckets.guardaFlix.length > 0 ? applyWebFormatter(buckets.guardaFlix, 'GuardaFlix', meta, config) : []
-        };
+        return formatted;
     }
 
     function mergeFinalStreams(debridStreams, formattedWebBuckets, filters = {}) {
-        const providerStreams = [
-            ...(formattedWebBuckets?.guardaHD || []),
-            ...(formattedWebBuckets?.guardaSerie || []),
-            ...(formattedWebBuckets?.animeWorld || []),
-            ...(formattedWebBuckets?.animeSaturn || []),
-            ...(formattedWebBuckets?.guardaFlix || []),
-            ...(formattedWebBuckets?.streamingCommunity || [])
-        ];
+        const webStreams = WEB_PROVIDER_ORDER.flatMap((key) => Array.isArray(formattedWebBuckets?.[key]) ? formattedWebBuckets[key] : []);
 
         return isStreamingCommunityLastEnabled(filters)
-            ? [...(debridStreams || []), ...providerStreams]
-            : [...providerStreams, ...(debridStreams || [])];
+            ? [...(debridStreams || []), ...webStreams]
+            : [...webStreams, ...(debridStreams || [])];
     }
 
     return {

@@ -3,6 +3,8 @@ const path = require('path');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const https = require('https');
+const { buildMediaflowUrl, buildWebStream, extractSizeText } = require('../extractors/common');
+const { extractFromUrl, resolveExtractorDefinition } = require('../extractors/registry');
 
 const CONFIG = {
     CACHE: {
@@ -74,13 +76,7 @@ const REGEX = {
     Q_4K: /4k|2160p|uhd/i,
     Q_1080: /1080p|fullhd|fhd/i,
     Q_720: /720p|hd/i,
-    Q_480: /480p|sd/i,
-    SIZE: /([\d.,]+ ?[GM]B)/i,
-    NOT_FOUND: /can't find the (file|video)|deleted|expired/i,
-    MIXDROP: /mixdr(op|p)|m1xdrop/i,
-    STREAMHG: /dhcplay|vibuxer/i,
-    PACKED_SCRIPT: /eval\(function\([^)]+\).*?split\('\|'\).*?\)\)/s,
-    M3U8: /(https?:\/\/[^\s"']+\.m3u8[^\s"']*)/i
+    Q_480: /480p|sd/i
 };
 
 class AsyncSemaphore {
@@ -98,15 +94,6 @@ class AsyncSemaphore {
 const embedSemaphore = new AsyncSemaphore(CONFIG.SCRAPER.MAX_CONCURRENT_EMBEDS);
 
 const normalizeUrl = (url) => url?.startsWith('//') ? `https:${url}` : (url || '');
-const resolveAbsoluteUrl = (candidate, baseUrl) => {
-    if (!candidate) return null;
-    try {
-        return new URL(candidate, baseUrl).toString();
-    } catch {
-        return null;
-    }
-};
-
 const parseQuality = (text) => {
     if (!text) return "Unknown";
     if (REGEX.Q_4K.test(text)) return "4K";
@@ -114,16 +101,6 @@ const parseQuality = (text) => {
     if (REGEX.Q_720.test(text)) return "720p";
     if (REGEX.Q_480.test(text)) return "480p";
     return "Unknown";
-};
-
-const buildMediaflowUrl = (config, targetUrl, type = 'hls') => {
-    if (!config?.mediaflow?.url) return normalizeUrl(targetUrl);
-    const mfp = config.mediaflow.url.replace(/\/$/, '');
-    const encoded = encodeURIComponent(normalizeUrl(targetUrl));
-    const pass = config.mediaflow.pass ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}` : '';
-    return type === 'hls'
-        ? `${mfp}/hls?url=${encoded}${pass}&ext=.m3u8`
-        : `${mfp}/extractor/video?host=Mixdrop${pass}&d=${encoded}&redirect_stream=true`;
 };
 
 const generateRichDescription = (title, quality = 'Unknown', size = 'N/A', hoster = '') => {
@@ -187,140 +164,6 @@ class CacheManager {
     }
 }
 const cacheManager = new CacheManager();
-
-const unpackScript = (html) => {
-    const packedMatch = html.match(REGEX.PACKED_SCRIPT);
-    if (!packedMatch) return null;
-    try {
-        let [_, p, a, c, kRaw] = packedMatch[0].match(/}\('(.+?)',(\d+),(\d+),'(.+?)'\.split\('\|'\)/);
-        a = parseInt(a); c = parseInt(c); const k = kRaw.split('|');
-        const decode = (c) => (c < a ? '' : decode(Math.floor(c / a))) + ((c = c % a) > 35 ? String.fromCharCode(c + 29) : c.toString(36));
-        while (c--) if (k[c]) p = p.replace(new RegExp(`\\b${decode(c)}\\b`, 'g'), k[c]);
-        return p;
-    } catch { return null; }
-};
-
-
-const extractPackedScriptParams = (html) => {
-    if (!html || typeof html !== 'string') return null;
-    const match = html.match(/eval\(function\(p,a,c,k,e,?[rd]?\).*?\}\('(.*?)',\s*(\d+),\s*(\d+),\s*'(.*?)'\.split\('\|'\).*?\)\)/s);
-    if (!match) return null;
-    return {
-        p: match[1],
-        a: Number.parseInt(match[2], 10),
-        c: Number.parseInt(match[3], 10),
-        k: match[4].split('|')
-    };
-};
-
-const unpackFromParams = (params) => {
-    if (!params?.p || !Number.isInteger(params?.a) || !Number.isInteger(params?.c) || !Array.isArray(params?.k)) return null;
-    try {
-        let { p, a, c, k } = params;
-        const decode = (n) => (n < a ? '' : decode(Math.floor(n / a))) + ((n = n % a) > 35 ? String.fromCharCode(n + 29) : n.toString(36));
-        while (c--) if (k[c]) p = p.replace(new RegExp(`\b${decode(c)}\b`, 'g'), k[c]);
-        return p;
-    } catch {
-        return null;
-    }
-};
-
-const getResponseFinalUrl = (response, fallbackUrl) => {
-    return response?.request?.res?.responseUrl || response?.request?.responseURL || response?.config?.url || fallbackUrl;
-};
-
-const Extractors = {
-    mixdrop: async (url, config) => {
-        if (!config?.mediaflow?.url) return [];
-        const embedUrl = normalizeUrl(url).replace('/f/', '/e/');
-        let sizePart = 'N/A', resPart = 'Unknown';
-
-        try {
-            const res = await fetchSmart(embedUrl.replace('/e/', '/f/'));
-            if (res.data && !REGEX.NOT_FOUND.test(res.data)) {
-                sizePart = res.data.match(REGEX.SIZE)?.[1] || 'N/A';
-                resPart = res.data.match(/(\b[1-9]\d{2,3}p\b)/i)?.[1]?.toLowerCase() || 'Unknown';
-            } else return [];
-        } catch {}
-
-        return [{
-            url: buildMediaflowUrl(config, embedUrl, 'mixdrop'),
-            quality: resPart, size: sizePart, name: 'MixDrop'
-        }];
-    },
-
-    streamhg: async (url) => {
-        try {
-            let normalized = normalizeUrl(url).replace(/&amp;/g, '&');
-            if (!normalized) return [];
-
-            const candidates = [normalized];
-            try {
-                const parsed = new URL(normalized);
-                const idMatch = parsed.pathname.match(/\/e\/([^/?#]+)/i);
-                if (idMatch && /(^|\.)dhcplay\.com$/i.test(parsed.hostname)) {
-                    candidates.push(`https://vibuxer.com/e/${idMatch[1]}`);
-                }
-            } catch {}
-
-            let unpacked = null;
-            let finalUrl = normalized;
-            for (const candidate of candidates) {
-                const referer = (() => {
-                    try {
-                        return `${new URL(candidate).origin}/`;
-                    } catch {
-                        return 'https://dhcplay.com/';
-                    }
-                })();
-
-                const res = await fetchSmart(candidate, { headers: { Referer: referer } });
-                const html = typeof res?.data === 'string' ? res.data : '';
-                if (!html) continue;
-
-                const packed = extractPackedScriptParams(html);
-                if (!packed) continue;
-
-                const maybeUnpacked = unpackFromParams(packed);
-                if (!maybeUnpacked) continue;
-
-                unpacked = maybeUnpacked;
-                finalUrl = getResponseFinalUrl(res, candidate);
-                break;
-            }
-
-            if (!unpacked) return [];
-
-            const hls2 = unpacked.match(/["']hls2["']\s*:\s*["']([^"']+)["']/i)?.[1];
-            const hls4 = unpacked.match(/["']hls4["']\s*:\s*["']([^"']+)["']/i)?.[1];
-            const file = unpacked.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i)?.[1];
-            const streamUrl = resolveAbsoluteUrl(hls2 || hls4 || file, finalUrl);
-            if (!streamUrl) return [];
-
-            const origin = (() => {
-                try {
-                    return new URL(finalUrl).origin;
-                } catch {
-                    return 'https://dhcplay.com';
-                }
-            })();
-
-            return [{
-                url: streamUrl,
-                quality: streamUrl.match(/(\d{3,4}p)/i)?.[1] || '1080p',
-                size: 'N/A',
-                name: 'StreamHG',
-                headers: {
-                    Referer: `${origin}/`,
-                    Origin: origin,
-                    'User-Agent': getRandomUserAgent()
-                }
-            }];
-        } catch {
-            return [];
-        }
-    }
-};
 
 
 async function fetchTmdbMovieByImdb(imdbId) {
@@ -413,20 +256,16 @@ class GuardaHDScraper {
             const registerLink = (rawLink) => {
                 const link = normalizeUrl(String(rawLink || '').replace(/&amp;/g, '&'));
                 if (!/^https?:/i.test(link)) return;
-                const lower = link.toLowerCase();
-                const key = REGEX.MIXDROP.test(lower)
-                    ? 'mixdrop'
-                    : REGEX.STREAMHG.test(lower)
-                        ? 'streamhg'
-                        : link;
-                if (!embedDict.has(key)) embedDict.set(key, link);
+                const definition = resolveExtractorDefinition(link);
+                if (!definition) return;
+                if (!embedDict.has(definition.key)) embedDict.set(definition.key, link);
             };
 
             $('li[data-link]').each((_, el) => registerLink($(el).attr('data-link')));
             $('iframe[src]').each((_, el) => registerLink($(el).attr('src')));
             $('a[href], source[src]').each((_, el) => registerLink($(el).attr('href') || $(el).attr('src')));
 
-            const directMatches = String(res.data || '').match(/https?:\/\/(?:www\.)?(?:mixdrop|m1xdrop|dhcplay|vibuxer)[^"'<\s]+/ig) || [];
+            const directMatches = String(res.data || '').match(/https?:\/\/(?:www\.)?(?:mixdrop|m1xdrop|mxcontent|loadm)[^"'<\s]+/ig) || [];
             directMatches.forEach(registerLink);
 
             return Array.from(embedDict.values());
@@ -438,31 +277,77 @@ class GuardaHDScraper {
     async #processSingleEmbed(url, title) {
         await embedSemaphore.acquire();
         try {
-            const lowerUrl = url.toLowerCase();
-            const extractor = REGEX.MIXDROP.test(lowerUrl)
-                ? Extractors.mixdrop
-                : REGEX.STREAMHG.test(lowerUrl)
-                    ? Extractors.streamhg
-                    : null;
-            if (!extractor) return [];
+            const normalizedUrl = normalizeUrl(String(url || '').replace(/&amp;/g, '&'));
+            const definition = resolveExtractorDefinition(normalizedUrl);
 
-            const streams = await extractor(url, this.#config);
-            return streams.map((s) => {
-                const q = parseQuality(s.quality || url);
-                return {
-                    name: `🦁 GHD
-⚡ ${s.name}`,
-                    title: generateRichDescription(title, q, s.size, s.name),
-                    url: s.url,
-                    qualityRank: q,
-                    extractor: s.name,
-                    behaviorHints: {
-                        bingeWatching: true,
-                        extractor: s.name,
-                        ...(s.headers && { proxyHeaders: { request: s.headers } })
+            if (definition?.key === 'mixdrop' && this.#config?.mediaflow?.url) {
+                const embedUrl = normalizedUrl.replace('/f/', '/e/');
+                let quality = 'Unknown';
+                let size = 'N/A';
+
+                try {
+                    const response = await fetchSmart(embedUrl.replace('/e/', '/f/'), {
+                        headers: {
+                            Referer: `${new URL(embedUrl).origin}/`
+                        }
+                    });
+                    const fileHtml = typeof response?.data === 'string' ? response.data : '';
+                    if (fileHtml) {
+                        quality = parseQuality(fileHtml);
+                        size = extractSizeText(fileHtml);
                     }
-                };
+                } catch {}
+
+                const mediaflowUrl = buildMediaflowUrl(this.#config, embedUrl, 'extractor', 'Mixdrop');
+                if (!mediaflowUrl) return [];
+
+                return [
+                    buildWebStream({
+                        name: '🦁 GHD\n⚡ MixDrop',
+                        title: generateRichDescription(title, quality, size, 'MixDrop'),
+                        url: mediaflowUrl,
+                        extractor: 'MixDrop',
+                        provider: 'GuardaHD',
+                        providerCode: 'GHD',
+                        quality,
+                        headers: null,
+                        extraBehaviorHints: {
+                            bingeWatching: true
+                        },
+                        extra: {
+                            qualityRank: quality
+                        }
+                    })
+                ];
+            }
+
+            const extracted = await extractFromUrl(url, {
+                client: httpClient,
+                userAgent: getRandomUserAgent(),
+                requestReferer: CONFIG.SCRAPER.BASE_URL,
+                referer: CONFIG.SCRAPER.BASE_URL
             });
+            if (!extracted?.url) return [];
+
+            const quality = parseQuality(extracted.quality || url);
+            return [
+                buildWebStream({
+                    name: `🦁 GHD\n⚡ ${extracted.name}`,
+                    title: generateRichDescription(title, quality, extracted.size || 'N/A', extracted.name),
+                    url: extracted.url,
+                    extractor: extracted.name,
+                    provider: 'GuardaHD',
+                    providerCode: 'GHD',
+                    quality,
+                    headers: extracted.headers,
+                    extraBehaviorHints: {
+                        bingeWatching: true
+                    },
+                    extra: {
+                        qualityRank: quality
+                    }
+                })
+            ];
         } catch {
             return [];
         } finally {

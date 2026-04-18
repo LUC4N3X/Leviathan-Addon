@@ -2,7 +2,8 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const https = require('https');
 const { URL } = require('url');
-const crypto = require('crypto');
+const { buildWebStream } = require('../extractors/common');
+const { extractFromUrl } = require('../extractors/registry');
 
 const CONFIG = {
     BASE_URL: 'https://www.guardaplay.space',
@@ -91,8 +92,6 @@ async function fetchMovieByTmdb(tmdbId) {
 class GuardaFlixScraper {
     constructor(config) {
         this.config = config || {};
-        this.AES_KEY = Buffer.from('kiemtienmua911ca');
-        this.AES_IV = Buffer.from('1234567890oiuytr');
 
         logDebug("Inizializzato. Config MFP presente?", !!(this.config?.mediaflow?.url));
     }
@@ -191,116 +190,36 @@ class GuardaFlixScraper {
         }
     }
 
-    decryptLoadmPayload(hexStr) {
-        try {
-            const cleanedHex = hexStr.replace(/[^0-9a-fA-F]/g, '');
-            if (!cleanedHex) return null;
+    buildStreamFromExtractor(extracted, mediaTitle, isSub) {
+        const langTag = isSub ? "[SUB]" : "[ITA]";
+        const finalTitle = `${cleanTitle(mediaTitle) || 'Stream'} ${langTag}`;
+        const originalHeaders = extracted?.headers || null;
+        let streamName = '🍿 GuardaFlix';
+        let streamUrl = extracted.url;
+        let modeLabel = 'Direct';
+        let headers = originalHeaders;
 
-            const encryptedBytes = Buffer.from(cleanedHex, 'hex');
-            const decipher = crypto.createDecipheriv('aes-128-cbc', this.AES_KEY, this.AES_IV);
-            decipher.setAutoPadding(true);
-
-            let decrypted = decipher.update(encryptedBytes);
-            decrypted = Buffer.concat([decrypted, decipher.final()]);
-
-            const json = JSON.parse(decrypted.toString('utf8'));
-            const extracted = json.cf || json.source || null;
-            logDebug(`Payload decriptato con successo. Link estratto: ${extracted ? "SI" : "NO"}`);
-            return extracted;
-        } catch (err) {
-            logDebug("Errore decryptLoadmPayload:", err.message);
-            return null;
+        if (this.config?.mediaflow?.url && extracted?.name === 'LoadM' && originalHeaders?.Referer && originalHeaders?.Origin) {
+            logDebug("Applicazione MediaFlow Proxy allo stream LoadM.");
+            const mfp = this.config.mediaflow.url.replace(/\/$/, '');
+            const pass = this.config.mediaflow.pass ? `&api_password=${encodeURIComponent(this.config.mediaflow.pass)}` : '';
+            streamUrl = `${mfp}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(streamUrl)}${pass}&h_Referer=${encodeURIComponent(originalHeaders.Referer)}&h_Origin=${encodeURIComponent(originalHeaders.Origin)}`;
+            streamName = '🍿 GuardaFlix [MFP]';
+            modeLabel = 'Proxy';
+            headers = null;
         }
-    }
 
-    async extractLoadmAPI(iframeUrl, pageUrl, isSub, mediaTitle) {
-        try {
-            logDebug(`Inizio estrazione LoadM API per: ${iframeUrl}`);
-            let videoId = "";
-            const parsedOrigin = new URL(iframeUrl);
-
-            if (iframeUrl.includes('#')) {
-                videoId = iframeUrl.split('#').pop().trim();
-            } else if (parsedOrigin.pathname.includes('/e/')) {
-                videoId = parsedOrigin.pathname.split('/e/').pop().trim();
-            } else {
-                videoId = (parsedOrigin.searchParams.get('id') || parsedOrigin.searchParams.get('v') || '').trim();
-            }
-
-            logDebug(`Video ID estratto: ${videoId}`);
-            if (!videoId) return null;
-
-            const baseUrl = parsedOrigin.origin + '/'; // Es: https://loadm.cam/
-            const apiUrl = `${baseUrl}api/v1/video`;
-
-            // Usiamo ESATTAMENTE la query string che funziona nel Python
-            const params = new URLSearchParams({
-                id: videoId,
-                w: '2560',
-                h: '1440',
-                r: pageUrl
-            });
-            const fullApiUrl = `${apiUrl}?${params.toString()}`;
-
-            logDebug(`Chiamata API LoadM (Stringa esatta): ${fullApiUrl}`);
-
-            let rawPayload;
-            try {
-                // Tentativo primario con got-scraping per bypass TLS
-                const body = await fetchWithGot(fullApiUrl, {
-                    'Referer': baseUrl,
-                    'User-Agent': USER_AGENT,
-                    'Accept': 'application/json, text/plain, */*'
-                });
-                rawPayload = typeof body === 'string' ? body : JSON.stringify(body);
-            } catch (gotErr) {
-                logDebug(`GOT fallito, provo Axios. Errore: ${gotErr.message}`);
-                // Fallback Axios se got fallisce per altri motivi
-                const res = await fetchSmart(fullApiUrl, {
-                    headers: { 'Referer': baseUrl }
-                });
-                if (!res.data) throw new Error("Risposta vuota");
-                rawPayload = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
-            }
-
-            logDebug(`Payload ricevuto, lunghezza: ${rawPayload.length}`);
-
-            const m3u8 = this.decryptLoadmPayload(rawPayload);
-            if (!m3u8) {
-                logDebug("Impossibile estrarre M3U8 dal payload decriptato.");
-                return null;
-            }
-
-            const langTag = isSub ? "[SUB]" : "[ITA]";
-            const finalTitle = `${cleanTitle(mediaTitle) || 'Stream'} ${langTag}`;
-
-            const streamObj = {
-                name: "🍿 Guardaflix",
-                title: `▶️ ${finalTitle}
-🔄 LoadM (Direct)`,
-                url: m3u8,
-                extractor: 'LoadM',
-                behaviorHints: {
-                    notWebReady: false,
-                    extractor: 'LoadM',
-                    proxyHeaders: { request: { "Referer": baseUrl, "Origin": baseUrl.slice(0, -1) } }
-                }
-            };
-
-            if (this.config?.mediaflow?.url) {
-                logDebug("Applicazione MediaFlow Proxy allo stream LoadM.");
-                const mfp = this.config.mediaflow.url.replace(/\/$/, '');
-                const pass = this.config.mediaflow.pass ? `&api_password=${encodeURIComponent(this.config.mediaflow.pass)}` : '';
-                streamObj.url = `${mfp}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(m3u8)}${pass}&h_Referer=${encodeURIComponent(baseUrl)}&h_Origin=${encodeURIComponent(baseUrl.slice(0, -1))}`;
-                streamObj.name = "🍿 Guardaflix [MFP]";
-            }
-
-            return streamObj;
-        } catch (err) {
-            const errorData = err.response ? JSON.stringify(err.response.data) : err.message;
-            logDebug(`Errore extractLoadmAPI: ${errorData} - HTTP ${err.response?.status}`);
-            return null;
-        }
+        return buildWebStream({
+            name: streamName,
+            title: `▶️ ${finalTitle}
+🔄 ${extracted.name} (${modeLabel})`,
+            url: streamUrl,
+            extractor: extracted.name,
+            provider: 'GuardaFlix',
+            providerCode: 'GF',
+            quality: extracted.quality || 'Unknown',
+            headers
+        });
     }
 
     async processIframe(src, pageUrl, mediaTitle, isSub, depth = 0) {
@@ -309,12 +228,18 @@ class GuardaFlixScraper {
 
         try {
             const absoluteSrc = new URL(src, pageUrl).href;
-            const lowerSrc = absoluteSrc.toLowerCase();
+            const extracted = await extractFromUrl(absoluteSrc, {
+                client: httpClient,
+                userAgent: USER_AGENT,
+                requestReferer: pageUrl,
+                fetchers: [
+                    (targetUrl, headers) => fetchWithGot(targetUrl, headers)
+                ]
+            });
 
-            if (lowerSrc.includes('loadm')) {
-                logDebug("Match LoadM trovato! Passo a extractLoadmAPI.");
-                const stream = await this.extractLoadmAPI(absoluteSrc, pageUrl, isSub, mediaTitle);
-                return stream ? [stream] : [];
+            if (extracted?.url) {
+                logDebug(`Extractor condiviso risolto: ${extracted.name}`);
+                return [this.buildStreamFromExtractor(extracted, mediaTitle, isSub)];
             }
 
             logDebug(`Scansione contenuto iframe: ${absoluteSrc}`);
