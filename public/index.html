@@ -242,6 +242,8 @@
         }
 
         .custom-input.input-error { border-color: var(--error); box-shadow: 0 0 10px rgba(255, 51, 102, 0.2); color: var(--error); }
+        .custom-input.token-valid { border-color: var(--success); box-shadow: 0 0 14px rgba(0, 255, 157, 0.18), inset 0 0 24px rgba(0, 255, 157, 0.05); color: #fff; }
+        .custom-input.token-invalid { border-color: var(--error); box-shadow: 0 0 14px rgba(255, 51, 102, 0.18), inset 0 0 24px rgba(255, 51, 102, 0.05); color: #fff; }
         .input-action {
             position: absolute; right: 8px; top: 8px; bottom: 8px; background: linear-gradient(135deg, rgba(0, 242, 255, 0.1), rgba(112, 0, 255, 0.1));
             border: 1px solid rgba(0, 242, 255, 0.3); color: var(--primary); padding: 0 20px; display: flex; align-items: center; gap: 10px;
@@ -250,6 +252,44 @@
         .input-action:hover { background: var(--primary); color: #000; box-shadow: var(--glow-strong); transform: scale(1.03); }
         .error-msg { position: absolute; bottom: -25px; left: 15px; color: var(--error); font-size: 0.9rem; opacity: 0; font-family: 'Rajdhani', sans-serif; text-transform: uppercase; font-weight: 700; transition: opacity 0.3s; }
         .custom-input.input-error + .error-msg, .custom-input.input-error + .input-action + .error-msg { opacity: 1; }
+        .debrid-status {
+            display: flex; align-items: center; gap: 10px;
+            margin-top: 12px; padding: 10px 14px;
+            border: 1px solid rgba(0, 242, 255, 0.12);
+            border-radius: 10px;
+            background: rgba(0, 10, 18, 0.78);
+            color: var(--text-dim);
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 0.88rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            transition: 0.25s ease;
+        }
+        .debrid-status-dot {
+            width: 10px; height: 10px; border-radius: 50%;
+            background: rgba(139, 170, 194, 0.55);
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.04);
+            flex: 0 0 auto;
+        }
+        .debrid-status.idle { border-color: rgba(139, 170, 194, 0.16); color: var(--text-dim); }
+        .debrid-status.idle .debrid-status-dot { background: rgba(139, 170, 194, 0.7); }
+        .debrid-status.checking { border-color: rgba(0, 242, 255, 0.3); color: var(--primary); box-shadow: 0 0 16px rgba(0, 242, 255, 0.08); }
+        .debrid-status.checking .debrid-status-dot {
+            background: var(--primary);
+            box-shadow: 0 0 10px rgba(0, 242, 255, 0.55);
+            animation: debridPulse 1.1s ease-in-out infinite;
+        }
+        .debrid-status.valid { border-color: rgba(0, 255, 157, 0.32); color: var(--success); box-shadow: 0 0 16px rgba(0, 255, 157, 0.08); }
+        .debrid-status.valid .debrid-status-dot { background: var(--success); box-shadow: 0 0 10px rgba(0, 255, 157, 0.45); }
+        .debrid-status.invalid { border-color: rgba(255, 51, 102, 0.32); color: var(--error); box-shadow: 0 0 16px rgba(255, 51, 102, 0.08); }
+        .debrid-status.invalid .debrid-status-dot { background: var(--error); box-shadow: 0 0 10px rgba(255, 51, 102, 0.45); }
+        .debrid-status.warning { border-color: rgba(255, 204, 0, 0.28); color: var(--gold); box-shadow: 0 0 16px rgba(255, 204, 0, 0.08); }
+        .debrid-status.warning .debrid-status-dot { background: var(--gold); box-shadow: 0 0 10px rgba(255, 204, 0, 0.38); }
+        @keyframes debridPulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.35); opacity: 0.75; }
+        }
         .module-box {
             border: 1px solid rgba(112, 0, 255, 0.2); background: linear-gradient(135deg, rgba(0, 5, 10, 0.6), rgba(112, 0, 255, 0.05));
             border-radius: 20px; padding: 25px; margin-top: 30px; position: relative; box-shadow: 0 5px 15px rgba(0,0,0,0.2); transition: all 0.3s ease;
@@ -1077,12 +1117,16 @@
                     </div>
                     <div class="input-group">
                         <div style="position: relative;">
-                            <input type="text" id="apiKey" class="custom-input" placeholder="INSERIRE CHIAVE DEBRID..." oninput="clearError(this); updateFluxStream()">
+                            <input type="text" id="apiKey" class="custom-input" placeholder="INSERIRE CHIAVE DEBRID..." oninput="handleApiKeyInput(this)">
                             <a href="https://real-debrid.com/apitoken" target="_blank" id="apiLink" class="input-action">
                                 <i class="fas fa-key"></i> PRELEVA KEY
                             </a>
                         </div>
                         <span class="error-msg">⚠️ Chiave mancante</span>
+                        <div id="debridValidationStatus" class="debrid-status idle" aria-live="polite" aria-atomic="true">
+                            <span class="debrid-status-dot"></span>
+                            <span id="debridValidationText">Verifica live disponibile per Real-Debrid e TorBox.</span>
+                        </div>
                     </div>
                     <div class="input-group">
                         <input type="text" id="tmdbKey" class="custom-input" placeholder="CHIAVE TMDB (OPZIONALE)" oninput="clearError(this); updateFluxStream()">
@@ -2045,6 +2089,169 @@
 
         let currentService = 'rd';
         let currentSCQuality = 'all';
+        const debridValidationState = {
+            timer: null,
+            requestId: 0,
+            status: 'idle',
+            resolvedKey: '',
+            resolvedService: ''
+        };
+
+        function clearDebridValidationTimer() {
+            if (debridValidationState.timer) {
+                clearTimeout(debridValidationState.timer);
+                debridValidationState.timer = null;
+            }
+        }
+
+        function formatValidationExpiration(value) {
+            if (!value) return null;
+            const parsed = new Date(value);
+            if (Number.isNaN(parsed.getTime())) return null;
+            return parsed.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        }
+
+        function getValidationServiceMeta(service) {
+            if (service === 'tb') {
+                return { code: 'TB', name: 'TorBox' };
+            }
+            return { code: 'RD', name: 'Real-Debrid' };
+        }
+
+        function setDebridValidationStatus(status, message, details = null) {
+            const statusEl = document.getElementById('debridValidationStatus');
+            const textEl = document.getElementById('debridValidationText');
+            const input = document.getElementById('apiKey');
+            if (!statusEl || !textEl) return;
+
+            statusEl.className = `debrid-status ${status}`;
+            textEl.textContent = message;
+            debridValidationState.status = status;
+
+            if (details?.titleParts?.length) {
+                const parts = details.titleParts.filter(Boolean);
+                statusEl.title = parts.join(' | ');
+            } else {
+                statusEl.removeAttribute('title');
+            }
+
+            if (input) {
+                input.classList.remove('token-valid', 'token-invalid');
+                if (status === 'valid') input.classList.add('token-valid');
+                if (status === 'invalid') input.classList.add('token-invalid');
+            }
+        }
+
+        async function runDebridValidation(requestId, service, key) {
+            try {
+                const response = await fetch('/api/debrid/validate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ service, key })
+                });
+                const payload = await response.json().catch(() => null);
+                if (requestId !== debridValidationState.requestId) return;
+
+                debridValidationState.resolvedKey = key;
+                debridValidationState.resolvedService = service;
+
+                if (response.ok && payload?.ok) {
+                    const meta = getValidationServiceMeta(service);
+                    const expiration = formatValidationExpiration(payload.expiration);
+                    let message = `Token ${meta.name} valido.`;
+                    const titleParts = [meta.name];
+
+                    if (service === 'rd' && payload.username) {
+                        message = `Token RD valido • ${payload.username}`;
+                        titleParts.push(`Account ${payload.username}`);
+                    }
+                    if (service === 'tb' && Number.isFinite(Number(payload.items))) {
+                        message = `Token TorBox valido • ${Number(payload.items)} item cloud`;
+                        titleParts.push(`Item cloud ${Number(payload.items)}`);
+                    }
+                    if (expiration) {
+                        message += ` • Scade ${expiration}`;
+                        titleParts.push(`Scadenza ${expiration}`);
+                    }
+                    setDebridValidationStatus('valid', message, { titleParts });
+                    return;
+                }
+
+                const code = String(payload?.code || '').toLowerCase();
+                if (code === 'invalid_token') {
+                    setDebridValidationStatus('invalid', service === 'tb'
+                        ? 'Token TorBox non valido o scaduto.'
+                        : 'Token Real-Debrid non valido o scaduto.');
+                    return;
+                }
+
+                if (code === 'unsupported_service') {
+                    setDebridValidationStatus('idle', 'Verifica live disponibile solo per Real-Debrid e TorBox.');
+                    return;
+                }
+
+                setDebridValidationStatus('warning', payload?.message || 'Verifica temporaneamente non disponibile.');
+            } catch (_) {
+                if (requestId !== debridValidationState.requestId) return;
+                debridValidationState.resolvedKey = key;
+                debridValidationState.resolvedService = service;
+                setDebridValidationStatus('warning', 'Verifica temporaneamente non disponibile.');
+            }
+        }
+
+        function scheduleDebridValidation(options = {}) {
+            const force = options.force === true;
+            const key = String(document.getElementById('apiKey')?.value || '').trim();
+            const service = String(currentService || '').trim().toLowerCase();
+
+            clearDebridValidationTimer();
+            debridValidationState.requestId += 1;
+
+            if (service === 'p2p') {
+                setDebridValidationStatus('idle', 'P2P attivo: nessuna key richiesta.');
+                return;
+            }
+
+            if (!['rd', 'tb'].includes(service)) {
+                setDebridValidationStatus('idle', 'Verifica live disponibile solo per Real-Debrid e TorBox.');
+                return;
+            }
+
+            const meta = getValidationServiceMeta(service);
+
+            if (!key) {
+                setDebridValidationStatus('idle', `Inserisci una key ${meta.code} per la verifica live.`);
+                return;
+            }
+
+            if (key.length < 8) {
+                setDebridValidationStatus('idle', `Completa la key ${meta.code} per avviare la verifica.`);
+                return;
+            }
+
+            if (
+                !force &&
+                debridValidationState.resolvedService === service &&
+                debridValidationState.resolvedKey === key &&
+                ['valid', 'invalid', 'warning'].includes(debridValidationState.status)
+            ) {
+                return;
+            }
+
+            const requestId = debridValidationState.requestId;
+            setDebridValidationStatus('checking', `Verifica token ${meta.name} in corso...`);
+            debridValidationState.timer = setTimeout(() => {
+                runDebridValidation(requestId, service, key);
+            }, 650);
+        }
+
+        function handleApiKeyInput(input) {
+            clearError(input);
+            scheduleDebridValidation();
+            updateFluxStream();
+        }
 
         function showToast(msg, type = 'info') {
             const container = document.getElementById('toastArea');
@@ -2493,7 +2700,7 @@
             else card.classList.remove('active');
         }
 
-        function clearError(input) { input.classList.remove('input-error'); }
+        function clearError(input) { input.classList.remove('input-error', 'token-invalid', 'token-valid'); }
         function toggleFaq(el) { el.classList.toggle('open'); }
 
         window.onload = function() {
@@ -2568,13 +2775,16 @@
 
                     updatePreview(document.getElementById('selectedSkin').value);
                     updateFluxStream();
+                    scheduleDebridValidation({ force: true });
                 } else {
 
                      updatePreview('leviathan');
+                     scheduleDebridValidation({ force: true });
                 }
             } catch (e) {
 
                 updatePreview('leviathan');
+                scheduleDebridValidation({ force: true });
             }
         };
 
@@ -2622,6 +2832,7 @@
             }
 
             updatePreview(document.getElementById('selectedSkin').value);
+            scheduleDebridValidation({ force: true });
             updateFluxStream();
         }
 
