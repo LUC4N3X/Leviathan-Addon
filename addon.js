@@ -99,7 +99,8 @@ if (cluster.isPrimary && shouldUseCluster()) {
         }
 
         const delayMs = computeBackoffMs(slot);
-        spawnWorker(slot, false, delayMs);
+        const shouldLead = worker.__leviLeader === true || slot === 0;
+        spawnWorker(slot, shouldLead, delayMs);
     });
 
     function gracefulPrimaryShutdown(signal) {
