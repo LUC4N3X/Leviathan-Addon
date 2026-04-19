@@ -7,7 +7,7 @@ const cp = require('child_process');
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const IGNORE_DIRS = new Set(['.git', '.github', 'node_modules']);
 const LINT_INCLUDE = new Set(['addon.js', 'manifest.js']);
-const SOURCE_ROOTS = ['core', 'providers', 'scripts', 'tests'];
+const SOURCE_ROOTS = ['config', 'core', 'providers', 'scripts', 'tests'];
 const TEXT_EXTENSIONS = new Set(['.js', '.cjs', '.json', '.md', '.yml', '.yaml', '.html', '.css']);
 const TEXT_FILENAMES = new Set(['.dockerignore', '.gitignore']);
 
