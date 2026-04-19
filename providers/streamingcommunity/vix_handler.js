@@ -1,5 +1,5 @@
 const axios = require('axios');
-const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils_http');
+const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const mediaIdentity = require('../../core/media_identity_resolver');
 
 const VIX_BASE = 'https://vixsrc.to';

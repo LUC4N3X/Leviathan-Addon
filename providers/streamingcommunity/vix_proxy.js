@@ -1,5 +1,5 @@
 const axios = require("axios");
-const { getRequestOrigin, isSafeRemoteUrl } = require("../../core/utils_url");
+const { getRequestOrigin, isSafeRemoteUrl } = require("../../core/utils/url");
 
 const DEFAULT_REFERER = "https://vixsrc.to/";
 const DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
