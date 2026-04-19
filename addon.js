@@ -4,6 +4,7 @@ const cluster = require('cluster');
 const os = require('os');
 const express = require('express');
 const path = require('path');
+const runtimeState = require('./core/runtime_state');
 
 function getClusterWorkerCount() {
     const raw = String(process.env.CLUSTER_WORKERS || '').trim().toLowerCase();
@@ -17,24 +18,117 @@ function shouldUseCluster() {
     return getClusterWorkerCount() > 1;
 }
 
+function getClusterRestartPolicy() {
+    return {
+        windowMs: Math.max(15_000, parseInt(process.env.CLUSTER_RESTART_WINDOW_MS || String(2 * 60 * 1000), 10) || (2 * 60 * 1000)),
+        maxRestarts: Math.max(2, parseInt(process.env.CLUSTER_MAX_RESTARTS_PER_WINDOW || '8', 10) || 8),
+        baseBackoffMs: Math.max(500, parseInt(process.env.CLUSTER_RESTART_BASE_BACKOFF_MS || '1000', 10) || 1000),
+        maxBackoffMs: Math.max(2_000, parseInt(process.env.CLUSTER_RESTART_MAX_BACKOFF_MS || String(30 * 1000), 10) || (30 * 1000))
+    };
+}
+
 if (cluster.isPrimary && shouldUseCluster()) {
     const workerCount = getClusterWorkerCount();
+    const restartPolicy = getClusterRestartPolicy();
+    const slotState = new Map();
+    let shuttingDown = false;
+    let primaryForceTimer = null;
+
+    runtimeState.setClusterRole('primary', { enabled: true, leader: true, slot: -1 });
     console.log(`[CLUSTER] Primary ${process.pid} avvia ${workerCount} worker HTTP`);
 
+    function getSlotStats(slot) {
+        const key = Number(slot);
+        if (!slotState.has(key)) {
+            slotState.set(key, { restarts: [], spawnCount: 0, currentWorkerId: null });
+        }
+        return slotState.get(key);
+    }
+
+    function computeBackoffMs(slot) {
+        const stats = getSlotStats(slot);
+        const now = Date.now();
+        stats.restarts = stats.restarts.filter((ts) => (now - ts) <= restartPolicy.windowMs);
+        if (stats.restarts.length >= restartPolicy.maxRestarts) return restartPolicy.maxBackoffMs;
+        const exponent = Math.max(0, stats.restarts.length - 1);
+        return Math.min(restartPolicy.maxBackoffMs, restartPolicy.baseBackoffMs * (2 ** exponent));
+    }
+
+    function spawnWorker(slot, leader, delayMs = 0) {
+        const boot = () => {
+            if (shuttingDown) return;
+            const stats = getSlotStats(slot);
+            stats.spawnCount += 1;
+            const worker = cluster.fork({
+                LEVI_CLUSTER_HTTP: '1',
+                LEVI_CLUSTER_LEADER: leader ? 'true' : 'false',
+                LEVI_CLUSTER_SLOT: String(slot)
+            });
+            stats.currentWorkerId = worker.id;
+            worker.__leviSlot = slot;
+            worker.__leviLeader = leader;
+            console.log(`[CLUSTER] Spawn worker slot=${slot} pid=${worker.process.pid} leader=${leader}`);
+        };
+
+        if (delayMs > 0) {
+            console.warn(`[CLUSTER] Respawn worker slot=${slot} in ${delayMs}ms`);
+            const timer = setTimeout(boot, delayMs);
+            timer.unref();
+            return;
+        }
+        boot();
+    }
+
     for (let i = 0; i < workerCount; i += 1) {
-        cluster.fork({
-            LEVI_CLUSTER_HTTP: '1',
-            LEVI_CLUSTER_LEADER: i === 0 ? 'true' : 'false'
-        });
+        spawnWorker(i, i === 0, 0);
     }
 
     cluster.on('exit', (worker, code, signal) => {
-        console.warn(`[CLUSTER] Worker ${worker.process.pid} terminato (code=${code} signal=${signal || 'n/a'})`);
-        cluster.fork({
-            LEVI_CLUSTER_HTTP: '1',
-            LEVI_CLUSTER_LEADER: 'false'
-        });
+        const slot = Number.isInteger(worker.__leviSlot) ? worker.__leviSlot : 0;
+        const stats = getSlotStats(slot);
+        stats.restarts.push(Date.now());
+        stats.currentWorkerId = null;
+        console.warn(`[CLUSTER] Worker ${worker.process.pid} terminato (slot=${slot} code=${code} signal=${signal || 'n/a'})`);
+
+        if (shuttingDown) {
+            if (Object.keys(cluster.workers || {}).length === 0) {
+                if (primaryForceTimer) clearTimeout(primaryForceTimer);
+                process.exit(0);
+            }
+            return;
+        }
+
+        const delayMs = computeBackoffMs(slot);
+        spawnWorker(slot, false, delayMs);
     });
+
+    function gracefulPrimaryShutdown(signal) {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        runtimeState.markDraining(`primary_${signal}`, { rejectNewRequests: true });
+        console.log(`[CLUSTER] Primary riceve ${signal}, arresto coordinato dei worker...`);
+
+        primaryForceTimer = setTimeout(() => {
+            console.error('[CLUSTER] Timeout shutdown primary, kill forzato dei worker.');
+            for (const worker of Object.values(cluster.workers || {})) {
+                try { worker.process.kill('SIGKILL'); } catch (_) {}
+            }
+            process.exit(1);
+        }, Math.max(5000, parseInt(process.env.SHUTDOWN_FORCE_MS || '15000', 10) || 15000));
+        primaryForceTimer.unref();
+
+        const workers = Object.values(cluster.workers || {});
+        if (workers.length === 0) {
+            clearTimeout(primaryForceTimer);
+            process.exit(0);
+        }
+        for (const worker of workers) {
+            try { worker.process.kill(signal); } catch (_) {}
+        }
+    }
+
+    process.on('SIGTERM', () => gracefulPrimaryShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulPrimaryShutdown('SIGINT'));
     return;
 }
 
@@ -160,7 +254,15 @@ function startSharedStreamCacheCleanupJob({ dbHelper, logger, enabled }) {
 function bootstrapServer() {
     const app = express();
     const publicDir = path.join(__dirname, 'public');
+    const isClusterWorker = String(process.env.LEVI_CLUSTER_HTTP || '0').toLowerCase() === '1';
     const isClusterLeader = String(process.env.LEVI_CLUSTER_LEADER || 'false').toLowerCase() === 'true';
+    const clusterSlot = Number.parseInt(process.env.LEVI_CLUSTER_SLOT || '-1', 10);
+    runtimeState.setClusterRole(isClusterWorker ? 'worker' : 'standalone', {
+        enabled: isClusterWorker,
+        leader: isClusterLeader,
+        slot: Number.isInteger(clusterSlot) ? clusterSlot : -1
+    });
+
     if (shouldUseCluster() && !isClusterLeader) {
         process.env.RD_CACHE_SCANNER_ENABLED = 'false';
     }
@@ -226,7 +328,10 @@ function bootstrapServer() {
     registerAdminRoutes(app, {
         Cache,
         ADMIN_PASS,
-        safeCompare
+        safeCompare,
+        dbHelper,
+        logger,
+        queueCloudBuild: appServices.queueCloudBuild
     });
 
     registerStremioRoutes(app, {
@@ -244,6 +349,8 @@ function bootstrapServer() {
 
     const PORT = process.env.PORT || 7000;
     const server = app.listen(PORT, () => {
+        server.keepAliveTimeout = Math.max(5000, parseInt(process.env.HTTP_KEEP_ALIVE_TIMEOUT_MS || '65000', 10) || 65000);
+        server.headersTimeout = Math.max(server.keepAliveTimeout + 1000, parseInt(process.env.HTTP_HEADERS_TIMEOUT_MS || '70000', 10) || 70000);
         console.log(`[BOOT] Leviathan (God Tier) attivo su porta interna ${PORT}`);
         console.log('-----------------------------------------------------');
         console.log(`[MODE] FULL LAZY`);
@@ -266,7 +373,7 @@ function bootstrapServer() {
         console.log(`[CACHE] Global raw + user level active`);
         console.log(`[CACHE] Shared L2 ${process.env.SHARED_STREAM_CACHE_ENABLED === 'false' ? 'disabled' : 'active'}`);
         console.log(`[SCRAPERS] Fallback scrapers ready`);
-        if (shouldUseCluster()) console.log(`[CLUSTER] worker=${process.pid} leader=${isClusterLeader}`);
+        if (shouldUseCluster()) console.log(`[CLUSTER] worker=${process.pid} leader=${isClusterLeader} slot=${clusterSlot}`);
         console.log('-----------------------------------------------------');
     });
 
@@ -275,18 +382,22 @@ function bootstrapServer() {
     function gracefulShutdown(signal) {
         if (shuttingDown) return;
         shuttingDown = true;
+        runtimeState.markDraining(signal, { rejectNewRequests: true });
         logger.info(`[SHUTDOWN] Ricevuto ${signal}, chiusura server in corso...`);
 
         const forceTimer = setTimeout(() => {
             logger.error('[SHUTDOWN] Shutdown forzato per timeout.');
             process.exit(1);
-        }, 10000);
+        }, Math.max(5000, parseInt(process.env.SHUTDOWN_FORCE_MS || '12000', 10) || 12000));
         forceTimer.unref();
 
         server.close(async () => {
             try {
                 if (sharedStreamCleanupJob && typeof sharedStreamCleanupJob.stop === 'function') {
                     sharedStreamCleanupJob.stop();
+                }
+                if (Cache && typeof Cache.stopInvalidationSync === 'function') {
+                    await Cache.stopInvalidationSync();
                 }
                 if (typeof dbHelper.shutdownDatabase === 'function') {
                     await dbHelper.shutdownDatabase();
@@ -308,6 +419,7 @@ function bootstrapServer() {
     });
     process.on('uncaughtException', (error) => {
         logger.error('Uncaught Exception', { error: error.message, stack: error.stack });
+        runtimeState.markDraining('uncaught_exception', { rejectNewRequests: true });
         setTimeout(() => process.exit(1), 250).unref();
     });
 }
