@@ -159,6 +159,33 @@ function deleteStreamCacheKey(cacheKey) {
     return deletedPrimary;
 }
 
+function extractManagedStreamCacheKey(storageKey, prefix) {
+    const raw = String(storageKey || '');
+    if (!raw.startsWith(prefix)) return null;
+    const normalized = raw.slice(prefix.length).trim();
+    return normalized || null;
+}
+
+function maybeUnregisterExpiredStreamCacheKey(cacheKey) {
+    const normalizedKey = String(cacheKey || '').trim();
+    if (!normalizedKey) return;
+    if (myCache.get(getStreamCacheStorageKey(normalizedKey)) !== undefined) return;
+    if (rawCache.get(getStreamShadowStorageKey(normalizedKey)) !== undefined) return;
+    unregisterStreamCacheKey(normalizedKey);
+}
+
+myCache.on('expired', (storageKey) => {
+    const cacheKey = extractManagedStreamCacheKey(storageKey, 'stream:');
+    if (!cacheKey) return;
+    maybeUnregisterExpiredStreamCacheKey(cacheKey);
+});
+
+rawCache.on('expired', (storageKey) => {
+    const cacheKey = extractManagedStreamCacheKey(storageKey, 'stream_shadow:');
+    if (!cacheKey) return;
+    maybeUnregisterExpiredStreamCacheKey(cacheKey);
+});
+
 function collectTaggedStreamKeys(indexMap, tags) {
     const keys = new Set();
     for (const tag of tags) {
@@ -655,6 +682,7 @@ const Cache = {
         const cacheOnly = options?.cacheOnly === true;
         const bypassCache = options?.bypassCache === true;
         const emptyTtl = Math.max(1, Number(options?.emptyTtl || EMPTY_FETCH_TTL) || EMPTY_FETCH_TTL);
+        const errorTtl = Math.max(1, Number(options?.errorTtl || Math.min(emptyTtl, EMPTY_FETCH_TTL)) || Math.min(emptyTtl, EMPTY_FETCH_TTL));
         const effectiveTtl = Math.max(1, Number(ttl || RAW_PROVIDER_CACHE_TTL) || RAW_PROVIDER_CACHE_TTL);
 
         if (!bypassCache) {
@@ -678,7 +706,7 @@ const Cache = {
                 return normalized;
             } catch (error) {
                 logger.warn(`⚠️ Errore Fetching [${provider}] per ${id}: ${error.message}`);
-                Cache.setRaw(provider, id, [], emptyTtl);
+                Cache.setRaw(provider, id, [], errorTtl);
                 return [];
             }
         });
