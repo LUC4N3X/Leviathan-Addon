@@ -1890,7 +1890,8 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
             const providerCacheOptions = {
                 cacheOnly: flags.useProviderCachedOnly === true,
                 bypassCache: flags.bypassProviderCache === true,
-                emptyTtl: 3600
+                emptyTtl: 3600,
+                errorTtl: Math.min(300, 3600)
             };
 
             let cleanResults = [];
