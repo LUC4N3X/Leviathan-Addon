@@ -3,6 +3,8 @@
 const axios = require('axios');
 const runtimeState = require('../../runtime_state');
 
+const DEBRID_VALIDATE_TIMEOUT_MS = Math.max(1500, parseInt(process.env.DEBRID_VALIDATE_TIMEOUT_MS || '5000', 10) || 5000);
+
 function escapeLabelValue(value) {
     return String(value ?? '')
         .replace(/\\/g, '\\\\')
@@ -128,6 +130,137 @@ function buildCacheHealthPayload(Cache, getCacheHealthStatus, snapshot) {
     };
 }
 
+async function validateRealDebridKey(key) {
+    try {
+        const response = await axios.get('https://api.real-debrid.com/rest/1.0/user', {
+            headers: {
+                Authorization: `Bearer ${key}`
+            },
+            timeout: DEBRID_VALIDATE_TIMEOUT_MS,
+            validateStatus: () => true
+        });
+
+        if (response.status >= 200 && response.status < 300 && response.data) {
+            return {
+                ok: true,
+                service: 'rd',
+                code: 'ok',
+                username: String(response.data.username || '').trim() || null,
+                email: String(response.data.email || '').trim() || null,
+                type: String(response.data.type || '').trim() || null,
+                expiration: response.data.expiration || null,
+                points: Number(response.data.points || 0) || 0,
+                message: 'Token Real-Debrid valido.'
+            };
+        }
+
+        if (response.status === 401 || response.status === 403) {
+            return {
+                ok: false,
+                service: 'rd',
+                code: 'invalid_token',
+                message: 'Token Real-Debrid non valido o scaduto.'
+            };
+        }
+
+        if (response.status === 429) {
+            return {
+                ok: false,
+                service: 'rd',
+                code: 'rate_limited',
+                transient: true,
+                message: 'Real-Debrid sta limitando le richieste. Riprova tra poco.'
+            };
+        }
+
+        return {
+            ok: false,
+            service: 'rd',
+            code: `http_${Number(response.status || 0) || 0}`,
+            transient: true,
+            message: 'Real-Debrid non ha risposto correttamente alla verifica.'
+        };
+    } catch (error) {
+        const timeout = error?.code === 'ECONNABORTED' || /timeout/i.test(String(error?.message || ''));
+        return {
+            ok: false,
+            service: 'rd',
+            code: timeout ? 'timeout' : 'network_error',
+            transient: true,
+            message: timeout
+                ? 'Timeout durante la verifica di Real-Debrid.'
+                : 'Errore di rete durante la verifica di Real-Debrid.'
+        };
+    }
+}
+
+async function validateTorBoxKey(key) {
+    try {
+        const response = await axios.get('https://api.torbox.app/v1/api/torrents/mylist', {
+            headers: {
+                Authorization: `Bearer ${key}`,
+                Accept: 'application/json'
+            },
+            params: {
+                bypass_cache: true
+            },
+            timeout: DEBRID_VALIDATE_TIMEOUT_MS,
+            validateStatus: () => true
+        });
+
+        if (response.status >= 200 && response.status < 300) {
+            const items = Array.isArray(response.data?.data)
+                ? response.data.data.length
+                : (response.data?.data ? 1 : 0);
+            return {
+                ok: true,
+                service: 'tb',
+                code: 'ok',
+                items,
+                message: 'Token TorBox valido.'
+            };
+        }
+
+        if (response.status === 401 || response.status === 403) {
+            return {
+                ok: false,
+                service: 'tb',
+                code: 'invalid_token',
+                message: 'Token TorBox non valido o scaduto.'
+            };
+        }
+
+        if (response.status === 429) {
+            return {
+                ok: false,
+                service: 'tb',
+                code: 'rate_limited',
+                transient: true,
+                message: 'TorBox sta limitando le richieste. Riprova tra poco.'
+            };
+        }
+
+        return {
+            ok: false,
+            service: 'tb',
+            code: `http_${Number(response.status || 0) || 0}`,
+            transient: true,
+            message: 'TorBox non ha risposto correttamente alla verifica.'
+        };
+    } catch (error) {
+        const timeout = error?.code === 'ECONNABORTED' || /timeout/i.test(String(error?.message || ''));
+        return {
+            ok: false,
+            service: 'tb',
+            code: timeout ? 'timeout' : 'network_error',
+            transient: true,
+            message: timeout
+                ? 'Timeout durante la verifica di TorBox.'
+                : 'Errore di rete durante la verifica di TorBox.'
+        };
+    }
+}
+
 function registerApiRoutes(app, {
     getStatsSnapshot,
     getRdAuditorStatus,
@@ -152,6 +285,52 @@ function registerApiRoutes(app, {
     app.get('/api/cache-health', (req, res) => {
         const snapshot = getStatsSnapshot();
         res.json(buildCacheHealthPayload(Cache, getCacheHealthStatus, snapshot));
+    });
+    app.post('/api/debrid/validate', async (req, res) => {
+        res.setHeader('Cache-Control', 'no-store');
+
+        const service = String(req.body?.service || '').trim().toLowerCase();
+        const key = String(req.body?.key || req.body?.apiKey || '').trim();
+
+        if (!service) {
+            return res.status(400).json({
+                ok: false,
+                code: 'missing_service',
+                message: 'Specifica il servizio Debrid da verificare.'
+            });
+        }
+
+        if (!['rd', 'tb'].includes(service)) {
+            return res.status(501).json({
+                ok: false,
+                supported: false,
+                service,
+                code: 'unsupported_service',
+                message: 'Verifica live disponibile solo per Real-Debrid e TorBox.'
+            });
+        }
+
+        if (!key) {
+            return res.status(400).json({
+                ok: false,
+                service,
+                code: 'missing_key',
+                message: 'Inserisci una API key da verificare.'
+            });
+        }
+
+        const payload = service === 'tb'
+            ? await validateTorBoxKey(key)
+            : await validateRealDebridKey(key);
+        const statusCode = payload.ok
+            ? 200
+            : payload.code === 'invalid_token'
+                ? 401
+                : payload.code === 'rate_limited'
+                    ? 429
+                    : 502;
+
+        return res.status(statusCode).json(payload);
     });
     app.get('/metrics', (req, res) => {
         const snapshot = getStatsSnapshot();
