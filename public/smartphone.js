@@ -478,6 +478,7 @@ body::before {
     filter: drop-shadow(0 0 4px rgba(0,0,0,0.6));
     transition: 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
+.m-cred-icon i { font-size: 1em; }
 .m-cred-name {
     font-family: 'Rajdhani', sans-serif; font-weight: 800; font-size: 0.78rem;
     letter-spacing: 1.4px; color: #5d6c7e; transition: 0.3s;
@@ -515,6 +516,18 @@ body::before {
     box-shadow: 0 0 18px rgba(0,242,255,0.22), inset 0 0 12px rgba(0,242,255,0.06);
 }
 .m-input-fuselage.is-p2p { opacity: 0.55; pointer-events: none; filter: grayscale(1); border-style: dashed; }
+.m-input-fuselage.is-valid {
+    border-color: rgba(0, 255, 157, 0.45);
+    box-shadow: 0 0 18px rgba(0, 255, 157, 0.18), inset 0 0 12px rgba(0, 255, 157, 0.05);
+}
+.m-input-fuselage.is-invalid {
+    border-color: rgba(255, 51, 102, 0.45);
+    box-shadow: 0 0 18px rgba(255, 51, 102, 0.18), inset 0 0 12px rgba(255, 51, 102, 0.05);
+}
+.m-input-fuselage.is-checking {
+    border-color: rgba(0, 242, 255, 0.4);
+    box-shadow: 0 0 18px rgba(0, 242, 255, 0.18), inset 0 0 12px rgba(0, 242, 255, 0.05);
+}
 
 /* Inner Input Wrapper */
 .m-if-inner {
@@ -581,6 +594,48 @@ body::before {
     display: inline-flex; align-items: center; gap: 5px;
 }
 .m-get-link:hover { background: var(--m-primary); color: #000; box-shadow: 0 0 10px var(--m-primary); }
+
+.m-key-status {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px 11px;
+    color: var(--m-dim);
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.66rem;
+    font-weight: 800;
+    letter-spacing: 1.1px;
+    text-transform: uppercase;
+}
+.m-key-status-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: rgba(122, 154, 181, 0.7);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.04);
+    flex: 0 0 auto;
+}
+.m-key-status.checking { color: var(--m-primary); }
+.m-key-status.checking .m-key-status-dot {
+    background: var(--m-primary);
+    box-shadow: 0 0 10px rgba(0, 242, 255, 0.45);
+    animation: mDebridPulse 1.1s ease-in-out infinite;
+}
+.m-key-status.valid { color: var(--m-success); }
+.m-key-status.valid .m-key-status-dot {
+    background: var(--m-success);
+    box-shadow: 0 0 10px rgba(0, 255, 157, 0.45);
+}
+.m-key-status.invalid { color: var(--m-error); }
+.m-key-status.invalid .m-key-status-dot {
+    background: var(--m-error);
+    box-shadow: 0 0 10px rgba(255, 51, 102, 0.45);
+}
+.m-key-status.warning { color: var(--m-amber); }
+.m-key-status.warning .m-key-status-dot {
+    background: var(--m-amber);
+    box-shadow: 0 0 10px rgba(255, 204, 0, 0.4);
+}
+@keyframes mDebridPulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.35); opacity: 0.75; }
+}
 
 
 .m-hypervisor {
@@ -964,6 +1019,7 @@ body::before {
     transition: 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
     text-shadow: 0 0 6px rgba(255,255,255,0.3);
 }
+.m-chip-icon i { font-size: 1em; }
 .m-cortex-chip.active .m-chip-icon { transform: scale(1.18); text-shadow: 0 0 14px var(--m-primary); }
 .m-chip-label {
     font-family: 'Rajdhani', monospace; font-size: 0.66rem; font-weight: 800;
@@ -1465,15 +1521,15 @@ const mobileHTML = `
 
                     <div class="m-cred-deck">
                         <div class="m-cred-opt cred-rd m-srv-btn active" onclick="setMService('rd', this)">
-                            <div class="m-cred-icon">ðŸ¬</div>
+                            <div class="m-cred-icon"><i class="fas fa-bolt"></i></div>
                             <div class="m-cred-name">REAL-DEBRID</div>
                         </div>
                         <div class="m-cred-opt cred-tb m-srv-btn" onclick="setMService('tb', this)">
-                            <div class="m-cred-icon">âš“</div>
+                            <div class="m-cred-icon"><i class="fas fa-anchor"></i></div>
                             <div class="m-cred-name">TORBOX</div>
                         </div>
                         <div class="m-cred-opt cred-p2p m-srv-btn" onclick="setMService('p2p', this)">
-                            <div class="m-cred-icon">ðŸ¦ˆ</div>
+                            <div class="m-cred-icon"><i class="fas fa-network-wired"></i></div>
                             <div class="m-cred-name">P2P MODE</div>
                         </div>
                     </div>
@@ -1482,9 +1538,13 @@ const mobileHTML = `
                         <div class="m-if-label">API ACCESS KEY</div>
                         <div class="m-if-inner">
                             <div class="m-if-icon"><i class="fas fa-key"></i></div>
-                            <input type="text" id="m-apiKey" class="m-if-field" placeholder="INCOLLA KEY..." oninput="updateLinkModalContent()">
+                            <input type="text" id="m-apiKey" class="m-if-field" placeholder="INCOLLA KEY..." oninput="handleMobileApiKeyInput()">
                             <div class="m-if-action" onclick="pasteTo('m-apiKey')"><i class="fas fa-paste"></i></div>
                             <div class="m-get-link" onclick="openApiPage()">GET <i class="fas fa-external-link-alt"></i></div>
+                        </div>
+                        <div class="m-key-status idle" id="m-keyStatus" aria-live="polite" aria-atomic="true">
+                            <span class="m-key-status-dot"></span>
+                            <span id="m-keyStatusText">Live check disponibile per Real-Debrid e TorBox.</span>
                         </div>
                     </div>
 
@@ -1645,7 +1705,7 @@ const mobileHTML = `
                     <div style="margin-top:5px; padding:15px; border-radius:16px; background:linear-gradient(90deg, rgba(112,0,255,0.1), transparent); border-left:4px solid var(--m-secondary);">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <div>
-                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">PRIORITÃ€ WEB</h5>
+                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">PRIORITA WEB</h5>
                                 <p id="priority-desc" style="margin:5px 0 0; font-size:0.8rem; color:var(--m-dim);">Mostra Web in cima</p>
                             </div>
                             <label class="m-switch">
@@ -1710,7 +1770,7 @@ const mobileHTML = `
                      <div class="m-aio-lock" id="m-aio-lock-overlay">
                         <i class="fas fa-lock m-lock-icon"></i>
                         <div class="m-lock-text">OVERRIDDEN BY AIO CORE</div>
-                        <div class="m-lock-sub">Disabilita "CompatibilitÃ  AIO" per sbloccare le skin.</div>
+                        <div class="m-lock-sub">Disabilita "Compatibilita AIO" per sbloccare le skin.</div>
                     </div>
 
                     <div class="m-visual-preview" id="m-preview-box">
@@ -1728,97 +1788,97 @@ const mobileHTML = `
 
                     <div class="m-cortex-grid">
                         <div class="m-cortex-chip active" id="msk_leviathan" onclick="selectMobileSkin('leviathan')">
-                            <div class="m-chip-icon">ðŸ¦‘</div>
+                            <div class="m-chip-icon"><i class="fas fa-dragon"></i></div>
                             <div class="m-chip-label">Leviathan Core</div>
                             <div class="m-chip-sub">Signature</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_premium" onclick="selectMobileSkin('premium')">
-                            <div class="m-chip-icon">ðŸ†</div>
+                            <div class="m-chip-icon"><i class="fas fa-trophy"></i></div>
                             <div class="m-chip-label">Apex Prime</div>
                             <div class="m-chip-sub">Flagship</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_cinema" onclick="selectMobileSkin('cinema')">
-                            <div class="m-chip-icon">ðŸŽžï¸</div>
+                            <div class="m-chip-icon"><i class="fas fa-film"></i></div>
                             <div class="m-chip-label">Velvet Cinema</div>
                             <div class="m-chip-sub">Reference</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_ultra_compact" onclick="selectMobileSkin('ultra_compact')">
-                            <div class="m-chip-icon">âš¡</div>
+                            <div class="m-chip-icon"><i class="fas fa-bolt"></i></div>
                             <div class="m-chip-label">Pulse Compact</div>
                             <div class="m-chip-sub">Dense</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_tv_compact" onclick="selectMobileSkin('tv_compact')">
-                            <div class="m-chip-icon">ðŸ“º</div>
+                            <div class="m-chip-icon"><i class="fas fa-tv"></i></div>
                             <div class="m-chip-label">Neon TV</div>
                             <div class="m-chip-sub">Big Screen</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_lev2" onclick="selectMobileSkin('lev2')">
-                            <div class="m-chip-icon">ðŸ§¬</div>
+                            <div class="m-chip-icon"><i class="fas fa-sitemap"></i></div>
                             <div class="m-chip-label">Architect</div>
                             <div class="m-chip-sub">Structured</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_fra" onclick="selectMobileSkin('fra')">
-                            <div class="m-chip-icon">âš¡ï¸</div>
+                            <div class="m-chip-icon"><i class="fas fa-globe"></i></div>
                             <div class="m-chip-label">Horizon</div>
                             <div class="m-chip-sub">Classic</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_comet" onclick="selectMobileSkin('comet')">
-                            <div class="m-chip-icon">â˜„ï¸</div>
+                            <div class="m-chip-icon"><i class="fas fa-star"></i></div>
                             <div class="m-chip-label">Comet</div>
                             <div class="m-chip-sub">Scan</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_stremio_ita" onclick="selectMobileSkin('stremio_ita')">
-                            <div class="m-chip-icon">ðŸ‡®ðŸ‡¹</div>
+                            <div class="m-chip-icon"><i class="fas fa-flag"></i></div>
                             <div class="m-chip-label">ITA Mod</div>
                             <div class="m-chip-sub">Compat</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_dav" onclick="selectMobileSkin('dav')">
-                            <div class="m-chip-icon">ðŸ“¼</div>
+                            <div class="m-chip-icon"><i class="fas fa-database"></i></div>
                             <div class="m-chip-label">Datastream</div>
                             <div class="m-chip-sub">Verbose</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_pri" onclick="selectMobileSkin('pri')">
-                            <div class="m-chip-icon">ðŸ‘</div>
+                            <div class="m-chip-icon"><i class="fas fa-eye"></i></div>
                             <div class="m-chip-label">Eclipse</div>
                             <div class="m-chip-sub">Hero</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_and" onclick="selectMobileSkin('and')">
-                            <div class="m-chip-icon">ðŸŽ¬</div>
+                            <div class="m-chip-icon"><i class="fas fa-th-large"></i></div>
                             <div class="m-chip-label">Matrix</div>
                             <div class="m-chip-sub">Minimal</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_lad" onclick="selectMobileSkin('lad')">
-                            <div class="m-chip-icon">ðŸŽŸï¸</div>
+                            <div class="m-chip-icon"><i class="fas fa-layer-group"></i></div>
                             <div class="m-chip-label">Compact</div>
                             <div class="m-chip-sub">Lean</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_torrentio" onclick="selectMobileSkin('torrentio')">
-                            <div class="m-chip-icon">ðŸ“œ</div>
+                            <div class="m-chip-icon"><i class="fas fa-stream"></i></div>
                             <div class="m-chip-label">Torrentio</div>
                             <div class="m-chip-sub">Familiar</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_vertical" onclick="selectMobileSkin('vertical')">
-                            <div class="m-chip-icon">ðŸ“‘</div>
+                            <div class="m-chip-icon"><i class="fas fa-align-justify"></i></div>
                             <div class="m-chip-label">Vertical</div>
                             <div class="m-chip-sub">Poster</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_complex" onclick="selectMobileSkin('complex')">
-                            <div class="m-chip-icon">ðŸ”²</div>
+                            <div class="m-chip-icon"><i class="fas fa-project-diagram"></i></div>
                             <div class="m-chip-label">Template Matrix</div>
                             <div class="m-chip-sub">Analyst</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_android" onclick="selectMobileSkin('android')">
-                            <div class="m-chip-icon">ðŸ•¹ï¸</div>
+                            <div class="m-chip-icon"><i class="fas fa-th"></i></div>
                             <div class="m-chip-label">Console Grid</div>
                             <div class="m-chip-sub">Legacy TV</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_picture" onclick="selectMobileSkin('picture')">
-                            <div class="m-chip-icon">ðŸ–¼ï¸</div>
+                            <div class="m-chip-icon"><i class="fas fa-image"></i></div>
                             <div class="m-chip-label">Jurassic Poster</div>
                             <div class="m-chip-sub">Artwork</div>
                         </div>
                         <div class="m-cortex-chip" id="msk_custom" onclick="selectMobileSkin('custom')" style="grid-column: span 3; border-style: dashed; background: rgba(0,0,0,0.3);">
-                            <div class="m-chip-icon">ðŸ› ï¸</div>
+                            <div class="m-chip-icon"><i class="fas fa-tools"></i></div>
                             <div class="m-chip-label">Custom Builder</div>
                             <div class="m-chip-sub">Template override</div>
                         </div>
@@ -1880,7 +1940,7 @@ const mobileHTML = `
                             <i class="fas fa-info-circle m-fr-icon" id="flux-icon-display"></i>
                             <div class="m-fr-text">
                                 <span class="m-fr-title" id="flux-title-display">STANDARD MODE</span>
-                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan. Bilancia perfettamente qualitÃ  e velocitÃ .</span>
+                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan. Bilancia perfettamente qualita e velocita.</span>
                             </div>
                         </div>
                     </div>
@@ -1935,7 +1995,7 @@ const mobileHTML = `
                     <div class="m-row" style="border:none; padding: 5px 0;">
                         <div class="m-label">
                             <h4><i class="fas fa-compress-arrows-alt" style="color:var(--m-error)"></i> Signal Gate <span class="m-status-text" id="st-gate">OFF</span></h4>
-                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro QualitÃ  (Max risultati per ris.)</p>
+                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro Qualita (Max risultati per ris.)</p>
                         </div>
                         <label class="m-switch"><input type="checkbox" id="m-gateActive" onchange="toggleGate()"><span class="m-slider"></span></label>
                     </div>
@@ -1945,7 +2005,7 @@ const mobileHTML = `
                             <input type="range" min="1" max="20" value="3" class="m-range" id="m-gateVal" oninput="updateGateDisplay(this.value)">
                             <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.2rem; color:var(--m-primary); width:30px; text-align:center;" id="m-gate-display">3</span>
                         </div>
-                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualitÃ . Utile per dispositivi lenti.</p>
+                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualita. Utile per dispositivi lenti.</p>
                     </div>
 
                     <div class="m-row" style="border:none; padding: 5px 0;">
@@ -1959,7 +2019,7 @@ const mobileHTML = `
                         <div class="m-gate-control">
                             <span style="font-size:0.8rem; color:#666;">1GB</span>
                             <input type="range" min="1" max="100" step="1" value="0" class="m-range" id="m-sizeVal" oninput="updateSizeDisplay(this.value)" style="background:linear-gradient(90deg, #ff9900, #333)">
-                            <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.1rem; color:var(--m-amber); width:45px; text-align:center;" id="m-size-display">âˆž</span>
+                            <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.1rem; color:var(--m-amber); width:45px; text-align:center;" id="m-size-display">INF</span>
                         </div>
                          <p class="m-range-desc">Nasconde automaticamente tutti i file che superano la dimensione selezionata.</p>
                     </div>
@@ -1985,7 +2045,7 @@ const mobileHTML = `
                     
                     <div style="padding:0 5px;">
                         <p style="font-size:0.8rem; color:var(--m-dim); margin-bottom:20px; line-height:1.4;">
-                            Proxy Server necessario per i moduli Italiani. Se attivo, il <b>Debrid Ghost</b> userÃ  questo server per nascondere il tuo IP reale.
+                            Proxy Server necessario per i moduli Italiani. Se attivo, il <b>Debrid Ghost</b> usera questo server per nascondere il tuo IP reale.
                         </p>
 
                         <div class="m-field-group">
@@ -2001,7 +2061,7 @@ const mobileHTML = `
                             <div class="m-field-header"><span class="m-field-label">PASSWORD</span></div>
                             <div class="m-input-box">
                                 <i class="fas fa-lock m-input-ico"></i>
-                                <input type="password" id="m-mfPass" class="m-input-tech" placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" oninput="updateLinkModalContent()">
+                                <input type="password" id="m-mfPass" class="m-input-tech" placeholder="********" oninput="updateLinkModalContent()">
                             </div>
                         </div>
 
@@ -2083,11 +2143,18 @@ let mScQuality = 'all';
 let mSortMode = 'balanced';
 let mSkin = 'leviathan';
 let mLangMode = 'ita';
+const mDebridValidationState = {
+    timer: null,
+    requestId: 0,
+    status: 'idle',
+    resolvedKey: '',
+    resolvedService: ''
+};
 
 const fluxData = {
     'balanced': {
         title: "STANDARD MODE",
-        desc: "L'algoritmo standard di Leviathan. Bilancia perfettamente qualitÃ , popolaritÃ  del file e velocitÃ .",
+        desc: "L'algoritmo standard di Leviathan. Bilancia qualita, popolarita del file e velocita.",
         icon: "fa-dragon"
     },
     'resolution': {
@@ -2108,36 +2175,15 @@ const langDescriptions = {
     'eng': "Solo contenuti in Inglese."
 };
 
-const skinMaps = {
-    'bold': {
-        nums: {'0':'ðŸ¬','1':'ðŸ­','2':'ðŸ®','3':'ðŸ¯','4':'ðŸ°','5':'ðŸ±','6':'ðŸ²','7':'ðŸ³','8':'ðŸ´','9':'ðŸµ'},
-        chars: {
-            'A':'ð—”','B':'ð—•','C':'ð—–','D':'ð——','E':'ð—˜','F':'ð—™','G':'ð—š','H':'ð—›','I':'ð—œ','J':'ð—','K':'ð—ž','L':'ð—Ÿ','M':'ð— ','N':'ð—¡','O':'ð—¢','P':'ð—£','Q':'ð—¤','R':'ð—¥','S':'ð—¦','T':'ð—§','U':'ð—¨','V':'ð—©','W':'ð—ª','X':'ð—«','Y':'ð—¬','Z':'ð—­',
-            'a':'ð—®','b':'ð—¯','c':'ð—°','d':'ð—±','e':'ð—²','f':'ð—³','g':'ð—´','h':'ð—µ','i':'ð—¶','j':'ð—·','k':'ð—¸','l':'ð—¹','m':'ð—º','n':'ð—»','o':'ð—¼','p':'ð—½','q':'ð—¾','r':'ð—¿','s':'ð˜€','t':'ð˜','u':'ð˜‚','v':'ð˜ƒ','w':'á´¡','x':'ð˜…','y':'ð˜†','z':'ð˜‡'
-        }
-    },
-    'small': {
-        nums: {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9'},
-        chars: {'A':'á´€','B':'Ê™','C':'á´„','D':'á´…','E':'á´‡','F':'êœ°','G':'É¢','H':'Êœ','I':'Éª','J':'á´Š','K':'á´‹','L':'ÊŸ','M':'á´','N':'É´','O':'á´','P':'á´˜','Q':'Ç«','R':'Ê€','S':'êœ±','T':'á´›','U':'á´œ','V':'á´ ','W':'á´¡','X':'x','Y':'Ê','Z':'á´¢','a':'á´€','b':'Ê™','c':'á´„','d':'á´…','e':'á´‡','f':'êœ°','g':'É¢','h':'Êœ','i':'Éª','j':'á´Š','k':'á´‹','l':'ÊŸ','m':'á´','n':'É´','o':'á´','p':'á´˜','q':'Ç«','r':'Ê€','s':'êœ±','t':'á´›','u':'á´œ','v':'á´ ','w':'á´¡','x':'x','y':'Ê','z':'á´¢'}
-    },
-};
-
 function toStylized(text, type = 'std') {
     if (!text) return "";
-    text = String(text);
-    
+    text = String(text).trim();
+
     if (type === 'spaced') {
-        return text.split('').map(c => {
-            const map = skinMaps['bold'];
-            const char = (/[0-9]/.test(c) ? map.nums[c] : map.chars[c]) || c;
-            return char + ' ';
-        }).join('').trim();
+        return text.toUpperCase().split('').join(' ');
     }
-    const map = skinMaps[type] || skinMaps['bold'];
-    return text.split('').map(c => {
-        if (/[0-9]/.test(c)) return map.nums[c] || c;
-        return map.chars[c] || c;
-    }).join('');
+    if (type === 'bold' || type === 'small') return text.toUpperCase();
+    return text;
 }
 
 function showToast(msg, type = 'info') {
@@ -2216,12 +2262,12 @@ function getMobileFormatterMeta(skinId) {
     return MOBILE_FORMATTER_META[resolved] || { label: resolved.toUpperCase(), preview: resolved.toUpperCase() };
 }
 
-function joinMobilePreviewParts(parts, sep = ' â€¢ ') {
+function joinMobilePreviewParts(parts, sep = ' | ') {
     return parts.filter(Boolean).join(sep);
 }
 
 function removeMobilePreviewEmoji(value = '') {
-    return String(value).replace(/[^\w\sâ€¢.\-|+()[\]]/g, '').replace(/\s+/g, ' ').trim();
+    return String(value).replace(/[^A-Za-z0-9\s.\-|+()[\]\/&]/g, '').replace(/\s+/g, ' ').trim();
 }
 
 function selectMobileSkin(skinId) {
@@ -2259,7 +2305,9 @@ function selectMobileSkin(skinId) {
     if(navigator.vibrate) navigator.vibrate(10);
 }
 
-function updateMobilePreview() {
+function updateMobilePreviewLegacy() {
+    return updateMobilePreview();
+
     const skin = resolveMobileFormatterSkin(mSkin);
     let langStr = "ðŸ‡®ðŸ‡¹ ITA";
     if (mLangMode === 'all') langStr = "ðŸ‡®ðŸ‡¹ ITA â€¢ ðŸ‡¬ðŸ‡§ ENG";
@@ -2495,6 +2543,168 @@ ${p.quality}`,
     document.getElementById('m-prev-info').innerText = result.title;
 }
 
+function updateMobilePreview() {
+    const skin = resolveMobileFormatterSkin(mSkin);
+    let langStr = 'ITA';
+    if (mLangMode === 'all') langStr = 'ITA + ENG';
+    if (mLangMode === 'eng') langStr = 'ENG';
+
+    let serviceTag = 'RD';
+    if (mCurrentService === 'tb') serviceTag = 'TB';
+    if (mCurrentService === 'p2p') serviceTag = 'P2P';
+
+    let serviceName = 'Real-Debrid';
+    if (serviceTag === 'TB') serviceName = 'TorBox';
+    if (serviceTag === 'P2P') serviceName = 'P2P';
+
+    const p = {
+        cleanName: 'Dune Parte Due',
+        fileTitle: 'Dune.Parte.Due.2024.2160p.ITA.ENG.TrueHD.7.1.x265-Leviathan',
+        quality: '4K',
+        sizeString: '67.81 GB',
+        displaySource: 'ilCorSaRoNeRo',
+        serviceTag,
+        serviceName,
+        lang: langStr,
+        audioTag: 'TrueHD Atmos',
+        audioChannels: '7.1',
+        audioInfo: 'TrueHD Atmos | 7.1',
+        codec: 'HEVC',
+        cleanTags: ['Remux', 'DV+HDR', 'HEVC'],
+        seeders: 152,
+        seedersStr: '152 seeds',
+        epTag: '',
+        releaseGroup: 'Leviathan',
+        sourceLine: `[${serviceTag}] ilCorSaRoNeRo`,
+        providerLabel: 'Netflix',
+        streamScore: 94,
+        scoreTier: 'S+',
+        scoreBadge: 'S+ 94',
+        visualMeter: '|||||',
+        featureSummary: '4K | DV+HDR | HEVC | Atmos'
+    };
+
+    const isDebrid = ['RD', 'TB'].includes(p.serviceTag);
+    const deliveryLabel = isDebrid ? 'INSTANT' : 'DIRECT';
+    const techLine = joinMobilePreviewParts([p.quality, ...p.cleanTags, p.codec], ' | ');
+    const audioLine = joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang], ' | ');
+    const sizeLine = joinMobilePreviewParts([p.sizeString, p.seedersStr], ' | ');
+    const sourceLine = joinMobilePreviewParts([p.displaySource, p.releaseGroup, p.serviceTag], ' | ');
+
+    const styles = {
+        premium: {
+            name: `${deliveryLabel} ${p.quality} ${p.scoreBadge}`,
+            title: [`TITLE | ${p.cleanName}`, `SCORE | ${p.scoreBadge} ${p.visualMeter}`, `VIDEO | ${techLine}`, `AUDIO | ${audioLine}`, `SIZE | ${sizeLine}`, `SOURCE | ${sourceLine}`].join('\n')
+        },
+        cinema: {
+            name: `${p.quality} | REFERENCE | ${p.serviceTag}`,
+            title: [`TITLE | ${p.cleanName}`, `VIDEO | ${techLine}`, `AUDIO | ${audioLine}`, `SCORE | ${p.scoreBadge}`, `SIZE | ${sizeLine}`, `SOURCE | ${joinMobilePreviewParts([p.displaySource, p.releaseGroup, p.providerLabel])}`].join('\n')
+        },
+        ultra_compact: {
+            name: `${p.quality} | DV+HDR | ${p.serviceTag} | ${p.scoreTier}`,
+            title: [p.cleanName, joinMobilePreviewParts([`${p.audioTag} ${p.audioChannels}`, removeMobilePreviewEmoji(p.lang), p.sizeString]), joinMobilePreviewParts([p.displaySource, p.seedersStr, p.releaseGroup])].join('\n')
+        },
+        tv_compact: {
+            name: `${p.quality} | TV | ${p.serviceTag}`,
+            title: [`VIDEO | ${p.codec}`, `AUDIO | ${p.audioTag} ${p.audioChannels}`, `LANG | ${p.lang}`, `SCORE | ${p.scoreBadge}`, `SIZE | ${sizeLine}`, `SOURCE | ${p.displaySource}`, p.fileTitle].join('\n')
+        },
+        lev2: {
+            name: `LEVIATHAN ${p.serviceTag} | ${p.quality}`,
+            title: [`TITLE | ${toStylized(p.cleanName, 'bold')}`, `VIDEO | ${p.sizeString} | ${p.codec}`, `AUDIO | ${audioLine}`, `SOURCE | ${p.sourceLine} | ${p.seedersStr}`].join('\n')
+        },
+        fra: {
+            name: 'LEVIATHAN 4K',
+            title: [`FILE | ${p.fileTitle}`, `LANG | ${p.lang} | ${p.audioTag}`, `SOURCE | ${p.serviceTag} | ${p.displaySource}`, `VIDEO | ${techLine}`, `SIZE | ${p.sizeString} / SEEDS | ${p.seeders}`].join('\n')
+        },
+        dav: {
+            name: '4K UHD HEVC',
+            title: [`TITLE | ${p.cleanName}`, `AUDIO | ${p.audioTag} ${p.audioChannels} | VIDEO | ${p.codec}`, `LANG | ${p.lang} | SIZE | ${p.sizeString}`, `SEEDS | ${p.seeders} | SOURCE | ${p.displaySource}`, `${p.serviceName} | Leviathan | ${p.serviceTag}`, `FILE | ${p.fileTitle}`].join('\n')
+        },
+        and: {
+            name: p.cleanName,
+            title: [`${p.quality} ${deliveryLabel}`, '--------------------', `Lingue: ${p.lang}`, `Specifiche: ${p.quality} | ${p.cleanTags.join(' ')} | ${p.audioTag}`, '--------------------', `File: ${p.sizeString} | ${p.serviceTag} | Leviathan`].join('\n')
+        },
+        lad: {
+            name: `${p.quality} ${p.serviceTag}`,
+            title: [`TITLE | ${p.cleanName}`, `TYPE | ${p.epTag || 'Movie'}`, `VIDEO | ${p.quality} | ${p.codec} | AUDIO | ${p.audioTag}`, `SIZE | ${p.sizeString} | Leviathan`, `LANG | ${p.lang}`].join('\n')
+        },
+        pri: {
+            name: `[${p.serviceTag}] ${p.quality} UHD [Leviathan]`,
+            title: [`TITLE | ${p.cleanName}`, `${p.cleanTags.join(' ')}`, `AUDIO | ${p.audioTag} | ${p.audioChannels} | LANG | ${p.lang}`, `SIZE | ${p.sizeString} | SOURCE | ${p.displaySource}`, `FILE | ${p.fileTitle}`].join('\n')
+        },
+        comet: {
+            name: `[${p.serviceTag}] Leviathan ${p.quality}`,
+            title: [`FILE | ${p.fileTitle}`, `VIDEO | ${techLine} | ${p.audioTag}`, `SOURCE | ${p.displaySource}`, `SIZE | ${sizeLine}`, `LANG | ${p.lang}`].join('\n')
+        },
+        stremio_ita: {
+            name: 'LEVIATHAN 4K',
+            title: [`FILE | ${p.fileTitle}`, `LANG | ${p.lang.toLowerCase()}`, `SOURCE | ${p.serviceTag} | ${p.displaySource}`, `VIDEO | ${techLine}`, `SIZE | ${p.sizeString}`, `AUDIO | ${p.audioTag} | ${p.audioChannels}`].join('\n')
+        },
+        torrentio: {
+            name: `[${p.serviceTag}]\n${p.quality}`,
+            title: [`FILE | ${p.fileTitle}`, `SIZE | ${p.sizeString} | SEEDS | ${p.seeders}`, `SOURCE | ${p.displaySource}`, `LANG | ${p.lang}`].join('\n')
+        },
+        vertical: {
+            name: `Leviathan ${p.quality} ${deliveryLabel}`,
+            title: [`TITLE | ${p.cleanName}`, `VIDEO | WEB-DL | ${p.cleanTags[0]}`, `CODEC | ${p.codec}`, `AUDIO | ${p.audioTag} (${p.audioChannels})`, `LANG | ${p.lang}`, `SIZE | ${p.sizeString}`].join('\n')
+        },
+        complex: {
+            name: `MATRIX | ${p.quality} | ${p.sizeString}`,
+            title: [`AUDIO | ${audioLine}`, `VIDEO | ${techLine}`, `SOURCE | ${joinMobilePreviewParts(['Leviathan', p.releaseGroup, p.displaySource, `[${p.serviceTag}]`], ' | ')}`, `TITLE | ${joinMobilePreviewParts([p.cleanName, p.epTag], ' | ')}`].join('\n')
+        },
+        android: {
+            name: joinMobilePreviewParts([p.quality, 'DV+HDR', p.serviceTag], ' | '),
+            title: [`VIDEO | ${p.codec}`, `AUDIO | ${p.audioTag} ${p.audioChannels}`, `SOURCE | ${p.displaySource}`, p.lang, p.fileTitle].join('\n')
+        },
+        picture: {
+            name: `UHD HDR ATMOS ${p.quality}`,
+            title: [`TITLE | ${p.cleanName}`, `VIDEO | ${p.quality} | DV | HDR`, `AUDIO | ${p.audioTag} | ${p.audioChannels}`, 'SOURCE | Blu-ray Remux', `SIZE | ${p.sizeString}`, `GROUP | Blu-ray Remux T1 (${p.releaseGroup})`, `DELIVERY | ${deliveryLabel} ${p.serviceTag}`].join('\n')
+        }
+    };
+
+    const styleCustom = () => {
+        let tpl = document.getElementById('m-customTemplate').value || 'Apex {quality} {score_badge} ||| {title}{n}{summary}';
+        const vars = {
+            '{title}': p.cleanName,
+            '{originalTitle}': p.fileTitle,
+            '{ep}': p.epTag || '',
+            '{quality}': p.quality,
+            '{quality_bold}': toStylized(p.quality, 'bold'),
+            '{size}': p.sizeString,
+            '{source}': p.displaySource,
+            '{service}': p.serviceTag,
+            '{lang}': p.lang,
+            '{audio}': p.audioInfo,
+            '{seeders}': p.seedersStr,
+            '{score}': String(p.streamScore),
+            '{score_badge}': p.scoreBadge,
+            '{score_tier}': p.scoreTier,
+            '{meter}': p.visualMeter,
+            '{summary}': p.featureSummary,
+            '{n}': '\n'
+        };
+        Object.keys(vars).forEach((key) => {
+            tpl = tpl.replace(new RegExp(key.replace(/[{}]/g, '\\$&'), 'g'), vars[key]);
+        });
+        if (tpl.includes('|||')) {
+            const parts = tpl.split('|||');
+            return { name: parts[0].trim(), title: parts[1].trim() };
+        }
+        return { name: `Leviathan ${p.quality}`, title: tpl };
+    };
+
+    const result = skin === 'custom'
+        ? styleCustom()
+        : (styles[skin] || {
+            name: `${toStylized(p.serviceTag, 'bold')} ${toStylized('Leviathan', 'small')} | ${p.quality}`,
+            title: [`${toStylized(p.cleanName, 'bold')} ${p.epTag}`.trim(), techLine, audioLine, sizeLine, sourceLine].join('\n')
+        });
+
+    document.getElementById('m-prev-mode').innerText = getMobileFormatterMeta(skin).preview;
+    document.getElementById('m-prev-title').innerText = result.name;
+    document.getElementById('m-prev-info').innerText = result.title;
+}
+
 function toggleMobileAIOLock() {
     const isAIO = document.getElementById('m-aioMode').checked;
     const lock = document.getElementById('m-aio-lock-overlay');
@@ -2627,6 +2837,159 @@ function navTo(pageId, btn) {
     if(navigator.vibrate) navigator.vibrate(10);
 }
 
+function clearMobileDebridValidationTimer() {
+    if (mDebridValidationState.timer) {
+        clearTimeout(mDebridValidationState.timer);
+        mDebridValidationState.timer = null;
+    }
+}
+
+function formatMobileValidationExpiration(value) {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function getMobileValidationServiceMeta(service) {
+    if (service === 'tb') {
+        return { code: 'TB', name: 'TorBox' };
+    }
+    return { code: 'RD', name: 'Real-Debrid' };
+}
+
+function setMobileDebridValidationStatus(status, message, details = null) {
+    const statusEl = document.getElementById('m-keyStatus');
+    const textEl = document.getElementById('m-keyStatusText');
+    const box = document.getElementById('box-apikey');
+    if (!statusEl || !textEl || !box) return;
+
+    statusEl.className = `m-key-status ${status}`;
+    textEl.innerText = message;
+    mDebridValidationState.status = status;
+
+    box.classList.remove('is-valid', 'is-invalid', 'is-checking');
+    if (status === 'valid') box.classList.add('is-valid');
+    if (status === 'invalid') box.classList.add('is-invalid');
+    if (status === 'checking') box.classList.add('is-checking');
+
+    if (details?.titleParts?.length) {
+        const parts = details.titleParts.filter(Boolean);
+        statusEl.title = parts.join(' | ');
+    } else {
+        statusEl.removeAttribute('title');
+    }
+}
+
+async function runMobileDebridValidation(requestId, service, key) {
+    try {
+        const response = await fetch('/api/debrid/validate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ service, key })
+        });
+        const payload = await response.json().catch(() => null);
+        if (requestId !== mDebridValidationState.requestId) return;
+
+        mDebridValidationState.resolvedKey = key;
+        mDebridValidationState.resolvedService = service;
+
+        if (response.ok && payload?.ok) {
+            const meta = getMobileValidationServiceMeta(service);
+            const expiration = formatMobileValidationExpiration(payload.expiration);
+            let message = `Token ${meta.name} valido.`;
+            const titleParts = [meta.name];
+            if (service === 'rd' && payload.username) {
+                message = `Token RD valido | ${payload.username}`;
+                titleParts.push(`Account ${payload.username}`);
+            }
+            if (service === 'tb' && Number.isFinite(Number(payload.items))) {
+                message = `Token TorBox valido | ${Number(payload.items)} item cloud`;
+                titleParts.push(`Item cloud ${Number(payload.items)}`);
+            }
+            if (expiration) {
+                message += ` | ${expiration}`;
+                titleParts.push(`Scadenza ${expiration}`);
+            }
+            setMobileDebridValidationStatus('valid', message, { titleParts });
+            return;
+        }
+
+        const code = String(payload?.code || '').toLowerCase();
+        if (code === 'invalid_token') {
+            setMobileDebridValidationStatus('invalid', service === 'tb'
+                ? 'Token TorBox non valido o scaduto.'
+                : 'Token RD non valido o scaduto.');
+            return;
+        }
+
+        if (code === 'unsupported_service') {
+            setMobileDebridValidationStatus('idle', 'Live check disponibile solo per RD e TB.');
+            return;
+        }
+
+        setMobileDebridValidationStatus('warning', payload?.message || 'Verifica non disponibile.');
+    } catch (_) {
+        if (requestId !== mDebridValidationState.requestId) return;
+        mDebridValidationState.resolvedKey = key;
+        mDebridValidationState.resolvedService = service;
+        setMobileDebridValidationStatus('warning', 'Verifica non disponibile.');
+    }
+}
+
+function scheduleMobileDebridValidation(options = {}) {
+    const force = options.force === true;
+    const key = String(document.getElementById('m-apiKey')?.value || '').trim();
+    const service = String(mCurrentService || '').trim().toLowerCase();
+
+    clearMobileDebridValidationTimer();
+    mDebridValidationState.requestId += 1;
+
+    if (service === 'p2p') {
+        setMobileDebridValidationStatus('idle', 'P2P attivo: nessuna key richiesta.');
+        return;
+    }
+
+    if (!['rd', 'tb'].includes(service)) {
+        setMobileDebridValidationStatus('idle', 'Live check disponibile solo per RD e TB.');
+        return;
+    }
+
+    const meta = getMobileValidationServiceMeta(service);
+
+    if (!key) {
+        setMobileDebridValidationStatus('idle', `Incolla una key ${meta.code} per la verifica live.`);
+        return;
+    }
+
+    if (key.length < 8) {
+        setMobileDebridValidationStatus('idle', `Completa la key ${meta.code} per la verifica.`);
+        return;
+    }
+
+    if (
+        !force &&
+        mDebridValidationState.resolvedService === service &&
+        mDebridValidationState.resolvedKey === key &&
+        ['valid', 'invalid', 'warning'].includes(mDebridValidationState.status)
+    ) {
+        return;
+    }
+
+    const requestId = mDebridValidationState.requestId;
+    setMobileDebridValidationStatus('checking', `Verifica token ${meta.name}...`);
+    mDebridValidationState.timer = setTimeout(() => {
+        runMobileDebridValidation(requestId, service, key);
+    }, 650);
+}
+
+function handleMobileApiKeyInput() {
+    scheduleMobileDebridValidation();
+    updateLinkModalContent();
+}
+
 function setMService(srv, btn, keepInput = false) {
     if(mCurrentService === srv && !keepInput) return;
     mCurrentService = srv;
@@ -2654,6 +3017,7 @@ function setMService(srv, btn, keepInput = false) {
     }
 
     updateMobilePreview(); 
+    scheduleMobileDebridValidation({ force: true });
     updateLinkModalContent();
     if(navigator.vibrate) navigator.vibrate(10);
 }
@@ -2717,7 +3081,7 @@ function checkWebPriorityVisibility() {
 function updatePriorityLabel() {
     const isLast = document.getElementById('m-vixLast').checked;
     const desc = document.getElementById('priority-desc');
-    desc.innerText = isLast ? "PrioritÃ  Bassa: Risultati dopo i Torrent" : "PrioritÃ  Alta: Risultati in cima";
+    desc.innerText = isLast ? "Priorita bassa: risultati dopo i torrent" : "Priorita alta: risultati in cima";
     desc.style.color = isLast ? "var(--m-secondary)" : "var(--m-primary)";
     updateLinkModalContent();
     if(navigator.vibrate) navigator.vibrate([15, 10, 15]);
@@ -2768,7 +3132,7 @@ function toggleSize() {
     } else { 
         wrapper.classList.remove('show'); 
         if(lbl) {lbl.innerText = "OFF"; lbl.classList.remove('on');}
-        document.getElementById('m-size-display').innerText = "âˆž";
+        document.getElementById('m-size-display').innerText = "INF";
     }
     updateLinkModalContent();
     if(navigator.vibrate) navigator.vibrate(10);
@@ -2776,7 +3140,7 @@ function toggleSize() {
 
 function updateSizeDisplay(val) {
     const display = document.getElementById('m-size-display');
-    if (val == 0) { display.innerText = "âˆž"; } else { display.innerText = val; }
+    if (val == 0) { display.innerText = "INF"; } else { display.innerText = val; }
     updateLinkModalContent();
 }
 
@@ -2884,6 +3248,7 @@ async function pasteTo(id) {
     try {
         const text = await navigator.clipboard.readText();
         input.value = text;
+        if(id === 'm-apiKey') scheduleMobileDebridValidation({ force: true });
         updateLinkModalContent();
         
         // Find button relative to input wrapper now
@@ -3007,6 +3372,7 @@ function loadMobileConfig() {
             checkWebPriorityVisibility(); 
             toggleMobileAIOLock();
             updateMobilePreview(); 
+            scheduleMobileDebridValidation({ force: true });
             updateLinkModalContent();
         }
     } catch(e) { console.log("No config loaded"); }
