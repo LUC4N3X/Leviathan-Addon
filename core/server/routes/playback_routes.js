@@ -1,6 +1,6 @@
 'use strict';
 
-const { getRequestOrigin } = require('../../utils_url');
+const { getRequestOrigin } = require('../../utils/url');
 
 function registerPlaybackRoutes(app, {
     Cache,

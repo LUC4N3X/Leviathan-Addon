@@ -11,7 +11,7 @@ const {
   getLanguageInfo,
   isSeasonPack,
   isTrustedSource
-} = require("../utils_text");
+} = require("../utils/text");
 
 const REGEX_SCENE_RELEASE = /\b(?:web[-.\s]?dl|webrip|blu[-.\s]?ray|bd[-.\s]?rip|remux|uhd|hevc|x265|x264|ddp|truehd|dts|atmos|hdr|dv|dolby[\s.-]?vision)\b/i;
 const REGEX_HEVC = /\b(?:x265|h265|hevc)\b/i;

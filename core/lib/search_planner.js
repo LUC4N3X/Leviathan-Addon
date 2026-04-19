@@ -1,6 +1,6 @@
 'use strict';
 
-const { normalizeSearchText } = require('../utils_text');
+const { normalizeSearchText } = require('../utils/text');
 
 function dedupeQueries(rawQueries = []) {
     const seen = new Set();

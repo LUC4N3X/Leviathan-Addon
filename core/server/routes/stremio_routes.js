@@ -1,8 +1,8 @@
 'use strict';
 
 const path = require('path');
-const { incrementMetric } = require('../../utils_runtime');
-const { getRequestClientIp, getRequestOrigin } = require('../../utils_url');
+const { incrementMetric } = require('../../utils/runtime');
+const { getRequestClientIp, getRequestOrigin } = require('../../utils/url');
 
 const RECENT_STREAM_HINT_TTL_MS = 10 * 60 * 1000;
 const RECENT_STREAM_HINT_LIMIT = 256;

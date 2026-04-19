@@ -7,7 +7,7 @@ const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const zlib = require('zlib');
 const { requestContextMiddleware } = require('../request_context');
-const { incrementMetric, recordDuration } = require('../utils_runtime');
+const { incrementMetric, recordDuration } = require('../utils/runtime');
 const runtimeState = require('../runtime_state');
 
 const SMART_COMPRESSION_THRESHOLD = Math.max(512, parseInt(process.env.SMART_COMPRESSION_THRESHOLD || '1024', 10) || 1024);

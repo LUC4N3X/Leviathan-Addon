@@ -1,6 +1,6 @@
 'use strict';
 
-const { scheduleKeyed } = require('./utils_limits');
+const { scheduleKeyed } = require('./utils/limits');
 const { getRequestId } = require('./request_context');
 
 function buildRequestQueueKey(scope, key) {
