@@ -1,7 +1,8 @@
 const axios = require("axios");
 const cheerio = require("cheerio");
 const https = require("https");
-const pLimit = require("p-limit");
+const pLimitModule = require("p-limit");
+const pLimit = typeof pLimitModule === "function" ? pLimitModule : pLimitModule.default;
 const he = require("he");
 const { ENGINE_BROWSER_PROFILES } = require('../core/browser_profiles');
 

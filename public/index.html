@@ -1283,6 +1283,23 @@
                                 </div>
                             </div>
 
+                            <div class="aux-card" id="card_source_mode">
+                                <div class="aux-header">
+                                    <i class="fas fa-database aux-icon"></i><span>Source Policy</span>
+                                </div>
+                                <div class="aux-desc" style="margin-bottom: 5px;">Scegli se usare DB globale, cache condivisa o scraping live.</div>
+
+                                <div class="select-wrapper">
+                                    <select id="sourceMode" class="cyber-select" onchange="updateFluxStream()">
+                                        <option value="balanced" selected>BALANCED (DB + Cache + Live)</option>
+                                        <option value="dbOnly">DB ONLY (solo database)</option>
+                                        <option value="globalCacheOnly">GLOBAL CACHE ONLY</option>
+                                        <option value="liveOnly">LIVE ONLY (bypass cache)</option>
+                                    </select>
+                                    <div class="select-arrow">▼</div>
+                                </div>
+                            </div>
+
                             <div class="aux-card aio-card" id="card_aio">
                                 <div class="aux-header">
                                     <i class="fas fa-microchip aux-icon"></i><span>Core AIO</span>
@@ -2514,6 +2531,7 @@
                     if (config.filters) {
                         const langMode = config.filters.language || (config.filters.allowEng ? 'all' : 'ita');
                         document.getElementById('langMode').value = langMode;
+                        document.getElementById('sourceMode').value = config.filters.sourceMode || (config.filters.dbOnly ? 'dbOnly' : 'balanced');
 
                         document.getElementById('enableVix').checked = config.filters.enableVix || false;
                         document.getElementById('vixLast').checked = config.filters.vixLast || false;
@@ -2616,13 +2634,15 @@
             const asActive = document.getElementById('enableAnimeSaturn').checked;
             const gfActive = document.getElementById('enableGf').checked;
             const isP2P = currentService === 'p2p';
+            const sourceMode = document.getElementById('sourceMode').value;
 
             const isWebEnabled = scActive || ghdActive || gsActive || awActive || asActive || gfActive || isP2P;
+            const sourceModeBypassesKey = sourceMode === 'dbOnly' || sourceMode === 'globalCacheOnly';
 
             const el = document.getElementById('apiKey');
             const value = el.value.trim();
 
-            if (!isP2P && !value && !isWebEnabled) {
+            if (!isP2P && !value && !isWebEnabled && !sourceModeBypassesKey) {
                 el.classList.add('input-error');
                 isValid = false;
             } else {
@@ -2653,6 +2673,7 @@
                 },
                 filters: {
                     language: lang,
+                    sourceMode: document.getElementById('sourceMode').value,
                     allowEng: lang === 'all' || lang === 'eng',
                     enableP2P: isP2P,
                     no4k: document.getElementById('btn_4k').classList.contains('excluded'),
@@ -2732,6 +2753,10 @@
             if(c.sort === 'resolution') sortText = "RISOLUZIONE (4K/FHD)";
             if(c.sort === 'size') sortText = "BITRATE (Peso)";
             let trailerText = c.filters.enableTrailers ? 'ATTIVO 🎬' : 'NO';
+            let sourceModeText = 'BALANCED';
+            if (c.filters.sourceMode === 'dbOnly') sourceModeText = 'DB ONLY';
+            if (c.filters.sourceMode === 'globalCacheOnly') sourceModeText = 'GLOBAL CACHE ONLY';
+            if (c.filters.sourceMode === 'liveOnly') sourceModeText = 'LIVE ONLY';
             let skinText = c.formatter.toUpperCase();
 
             let langText = "SOLO ITA 🇮🇹";
@@ -2747,6 +2772,7 @@
                 <li>Swarm P2P <span>${p2pText}</span></li>
                 <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | AW: ${awText} | AS: ${asText} | GF: ${gfText}</span></li>
                 <li>Flux Priority <span>${sortText}</span></li>
+                <li>Source Policy <span>${sourceModeText}</span></li>
                 <li>Proxy Bridge <span>${c.mediaflow.url ? 'CONFIGURATO' : 'NON ATTIVO'}</span></li>
                 <li>Proxy Ghost <span>${c.mediaflow.proxyDebrid ? 'ATTIVO' : 'NO'}</span></li>
                 <li>Limite Dimensione <span>${sizeText}</span></li>

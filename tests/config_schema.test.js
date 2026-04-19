@@ -19,4 +19,16 @@ test('validateConfig migrates aliases and version', () => {
   assert.equal(config.filters.streamingCommunityLast, true);
   assert.deepEqual(config.filters.providers, ['torrentio', 'comet']);
   assert.equal(config.filters.language, 'ita');
+  assert.equal(config.filters.sourceMode, 'balanced');
+});
+
+test('validateConfig normalizes source mode aliases', () => {
+  const config = validateConfig({
+    filters: {
+      source_mode: 'cacheOnly'
+    }
+  });
+
+  assert.equal(config.filters.sourceMode, 'globalCacheOnly');
+  assert.equal(config.filters.dbOnly, false);
 });
