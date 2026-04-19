@@ -57,6 +57,10 @@ function createProviderFetchTools(deps = {}) {
           : langMode === 'all'
             ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 10000)
             : (CONFIG.TIMEOUTS.SCRAPER || 4000);
+        const providerCacheOptions = {
+          emptyTtl: 3600,
+          errorTtl: 300
+        };
 
         let cleanResults = [];
         let assessmentPool = Array.isArray(seedResults) ? [...seedResults] : [];
@@ -74,7 +78,7 @@ function createProviderFetchTools(deps = {}) {
                 () => queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config, meta),
                 { meta }
               )
-            );
+            , providerCacheOptions);
 
             const externalRequestId = buildExternalAddonRequestId(type, finalId, meta);
             const externalCacheKey = `${type}:${externalRequestId}:${langMode}`;
@@ -88,7 +92,7 @@ function createProviderFetchTools(deps = {}) {
                   () => fetchExternalResults(type, externalRequestId, config, meta, langMode),
                   { meta }
                 )
-              );
+              , providerCacheOptions);
 
             const [remoteSettled, externalSettled] = await Promise.allSettled([remotePromise, externalPromise]);
             const remoteResults = remoteSettled.status === 'fulfilled' ? remoteSettled.value : [];
