@@ -4,6 +4,7 @@ const CURRENT_CONFIG_VERSION = 1;
 const MAX_CONFIG_LENGTH = Math.max(parseInt(process.env.MAX_CONFIG_LENGTH || '16384', 10) || 16384, 2048);
 const ADMIN_PASS = String(process.env.ADMIN_PASS || '').trim();
 const ALLOWED_SERVICES = new Set(['rd', 'tb', 'p2p', 'web']);
+const { SOURCE_MODES, normalizeSourceMode } = require('../source_mode');
 
 function normalizeStringArray(value) {
   if (Array.isArray(value)) {
@@ -26,7 +27,8 @@ function getDefaultConfig() {
     configVersion: CURRENT_CONFIG_VERSION,
     service: 'rd',
     filters: {
-      language: 'ita'
+      language: 'ita',
+      sourceMode: SOURCE_MODES.BALANCED
     }
   };
 }
@@ -105,6 +107,11 @@ function validateConfig(input = {}) {
   for (const key of booleanFilterKeys) {
     if (output.filters[key] !== undefined) output.filters[key] = !!output.filters[key];
   }
+
+  const explicitSourceMode = config?.filters?.sourceMode ?? config?.filters?.source_mode ?? output.filters.sourceMode;
+  output.filters.sourceMode = normalizeSourceMode(explicitSourceMode || (output.filters.dbOnly === true ? SOURCE_MODES.DB_ONLY : SOURCE_MODES.BALANCED));
+  delete output.filters.source_mode;
+  output.filters.dbOnly = output.filters.sourceMode === SOURCE_MODES.DB_ONLY;
 
   const normalizedLanguage = String(output.filters.language || '').toLowerCase();
   output.filters.language = ['ita', 'eng', 'all'].includes(normalizedLanguage)

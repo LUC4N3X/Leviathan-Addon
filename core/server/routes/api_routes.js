@@ -1,6 +1,7 @@
 'use strict';
 
 const axios = require('axios');
+const runtimeState = require('../../runtime_state');
 
 function escapeLabelValue(value) {
     return String(value ?? '')
@@ -47,6 +48,9 @@ function buildPrometheusMetrics(snapshot) {
     if (Number.isFinite(startedAt) && startedAt > 0) {
         pushMetric(lines, 'leviathan_started_at_seconds', 'gauge', 'Unix start timestamp.', Math.floor(startedAt / 1000));
     }
+
+    pushMetric(lines, 'leviathan_runtime_draining', 'gauge', 'Whether the instance is draining.', snapshot?.runtime?.lifecycle?.draining ? 1 : 0);
+    pushMetric(lines, 'leviathan_runtime_active_requests', 'gauge', 'Current active HTTP requests.', Number(snapshot?.runtime?.lifecycle?.activeRequests || 0));
 
     for (const [kind, count] of Object.entries(snapshot?.inflight || {})) {
         pushMetric(lines, 'leviathan_inflight_requests', 'gauge', 'Current inflight operations by kind.', Number(count || 0), { kind });
@@ -115,6 +119,15 @@ function buildPrometheusMetrics(snapshot) {
     return `${lines.join('\n')}\n`;
 }
 
+function buildCacheHealthPayload(Cache, getCacheHealthStatus, snapshot) {
+    return {
+        status: getCacheHealthStatus(),
+        runtime: snapshot?.runtime || runtimeState.getSnapshot(),
+        streamIndex: typeof Cache.getStreamCacheIndexStats === 'function' ? Cache.getStreamCacheIndexStats() : null,
+        counters: snapshot?.cache || null
+    };
+}
+
 function registerApiRoutes(app, {
     getStatsSnapshot,
     getRdAuditorStatus,
@@ -126,6 +139,20 @@ function registerApiRoutes(app, {
     getCacheHealthStatus
 }) {
     app.get('/api/stats', (req, res) => res.json(getStatsSnapshot()));
+    app.get('/api/runtime', (req, res) => res.json(runtimeState.getSnapshot()));
+    app.get('/api/providers', (req, res) => {
+        const snapshot = getStatsSnapshot();
+        res.json({
+            runtime: snapshot?.runtime || runtimeState.getSnapshot(),
+            providers: snapshot?.providers || {},
+            sourceHealth: snapshot?.sourceHealth || {},
+            limiters: snapshot?.limiters || {}
+        });
+    });
+    app.get('/api/cache-health', (req, res) => {
+        const snapshot = getStatsSnapshot();
+        res.json(buildCacheHealthPayload(Cache, getCacheHealthStatus, snapshot));
+    });
     app.get('/metrics', (req, res) => {
         const snapshot = getStatsSnapshot();
         res.type('text/plain; version=0.0.4; charset=utf-8').send(buildPrometheusMetrics(snapshot));
@@ -152,7 +179,8 @@ function registerApiRoutes(app, {
     app.get('/favicon.ico', (req, res) => res.status(204).end());
 
     app.get('/health', async (req, res) => {
-        const checks = { status: 'ok', timestamp: new Date().toISOString(), services: {} };
+        const runtime = runtimeState.getSnapshot();
+        const checks = { status: runtime.lifecycle.draining ? 'draining' : 'ok', timestamp: new Date().toISOString(), runtime, services: {} };
         try {
             if (dbHelper.healthCheck) await withTimeout(dbHelper.healthCheck(), 1000, 'DB Health');
             checks.services.database = 'ok (Write-Only)';
@@ -175,7 +203,8 @@ function registerApiRoutes(app, {
 
         checks.services.cache = getCacheHealthStatus();
         if (String(checks.services.cache).startsWith('degraded')) checks.status = 'degraded';
-        res.status(checks.status === 'ok' ? 200 : 503).json(checks);
+        const httpStatus = checks.status === 'ok' ? 200 : checks.status === 'draining' ? 503 : 503;
+        res.status(httpStatus).json(checks);
     });
 }
 

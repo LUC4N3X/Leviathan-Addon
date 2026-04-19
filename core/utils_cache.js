@@ -35,10 +35,16 @@ const sharedFetchInflight = new Map();
 const streamInflight = new Map();
 const metadataInflight = new Map();
 
-const EMPTY_FETCH_TTL = Math.max(parseInt(process.env.EMPTY_FETCH_TTL || '90', 10) || 90, 15);
+const RAW_PROVIDER_CACHE_TTL = Math.max(parseInt(process.env.RAW_PROVIDER_CACHE_TTL || '43200', 10) || 43200, 60);
+const EMPTY_FETCH_TTL = Math.max(parseInt(process.env.EMPTY_FETCH_TTL || process.env.RAW_PROVIDER_EMPTY_TTL || '90', 10) || 90, 15);
 const EMPTY_STREAM_TTL = Math.max(parseInt(process.env.EMPTY_STREAM_TTL || '60', 10) || 60, 15);
 const STREAM_STALE_GRACE_TTL = Math.max(parseInt(process.env.STREAM_STALE_GRACE_TTL || '180', 10) || 180, 30);
 const METADATA_CACHE_TTL = Math.max(parseInt(process.env.METADATA_CACHE_TTL || '1800', 10) || 1800, 60);
+const RESOLVED_URL_TTL = Math.max(parseInt(process.env.RESOLVED_URL_TTL || process.env.LAZY_LINK_TTL || '180', 10) || 180, 30);
+const EMPTY_RESOLVED_URL_TTL = Math.max(parseInt(process.env.EMPTY_RESOLVED_URL_TTL || '60', 10) || 60, 15);
+const AVAILABILITY_CACHE_TTL = Math.max(parseInt(process.env.AVAILABILITY_CACHE_TTL || '900', 10) || 900, 30);
+const EMPTY_AVAILABILITY_TTL = Math.max(parseInt(process.env.EMPTY_AVAILABILITY_TTL || '120', 10) || 120, 15);
+const DB_LOOKUP_CACHE_TTL = Math.max(parseInt(process.env.DB_LOOKUP_CACHE_TTL || '30', 10) || 30, 5);
 const VERBOSE_CACHE_LOGS = String(process.env.VERBOSE_CACHE_LOGS || 'false').toLowerCase() === 'true';
 const SHARED_STREAM_CACHE_ENABLED = String(process.env.SHARED_STREAM_CACHE_ENABLED || 'true').toLowerCase() !== 'false';
 const SHARED_STREAM_CACHE_MAX_BYTES = Math.max(4096, parseInt(process.env.SHARED_STREAM_CACHE_MAX_BYTES || String(1024 * 1024 * 2), 10) || (1024 * 1024 * 2));
@@ -481,14 +487,28 @@ const Cache = {
         registerCacheSet('metadata');
         myCache.set(`meta:${key}`, value, ttl);
     },
-    getLazyLink: async (key) => {
-        const data = myCache.get(`lazy:${key}`) || null;
+    getResolvedUrl: async (key) => {
+        const data = myCache.get(`resolved:${key}`) || null;
         registerCacheAccess('lazy', !!data);
         return data;
     },
-    cacheLazyLink: async (key, value, ttl = 120) => {
+    cacheResolvedUrl: async (key, value, ttl = RESOLVED_URL_TTL) => {
         registerCacheSet('lazy');
-        myCache.set(`lazy:${key}`, value, ttl);
+        const effectiveTtl = value ? ttl : Math.min(ttl, EMPTY_RESOLVED_URL_TTL);
+        myCache.set(`resolved:${key}`, value, effectiveTtl);
+    },
+    getLazyLink: async (key) => Cache.getResolvedUrl(key),
+    cacheLazyLink: async (key, value, ttl = RESOLVED_URL_TTL) => Cache.cacheResolvedUrl(key, value, ttl),
+    getAvailability: async (key) => {
+        const data = myCache.get(`availability:${key}`) || null;
+        registerCacheAccess('raw', !!data);
+        return data;
+    },
+    cacheAvailability: async (key, value, ttl = AVAILABILITY_CACHE_TTL) => {
+        registerCacheSet('raw');
+        const normalizedValue = value && typeof value === 'object' ? value : (value ? { value } : null);
+        const effectiveTtl = normalizedValue ? ttl : Math.min(ttl, EMPTY_AVAILABILITY_TTL);
+        myCache.set(`availability:${key}`, normalizedValue, effectiveTtl);
     },
     getLazyMeta: async (key) => {
         const data = myCache.get(`lazy_meta:${key}`) || null;
@@ -505,7 +525,7 @@ const Cache = {
         registerCacheAccess('dbLookup', hit);
         return hit ? data : null;
     },
-    cacheDbTorrents: async (key, value, ttl = 30) => {
+    cacheDbTorrents: async (key, value, ttl = DB_LOOKUP_CACHE_TTL) => {
         registerCacheSet('dbLookup');
         rawCache.set(getDbLookupStorageKey(key), Array.isArray(value) ? value : [], ttl);
     },
@@ -631,23 +651,34 @@ const Cache = {
         rawCache.set(`raw:${provider}:${id}`, value, ttl);
         if (VERBOSE_CACHE_LOGS) logger.info(`💾 GLOBAL CACHE SET [${provider}]: ${id}`);
     },
-    fetchWithCache: async (provider, id, ttl, fetcherFunc) => {
-        const cached = Cache.getRaw(provider, id);
-        if (cached !== null) return cached;
+    fetchWithCache: async (provider, id, ttl = RAW_PROVIDER_CACHE_TTL, fetcherFunc, options = {}) => {
+        const cacheOnly = options?.cacheOnly === true;
+        const bypassCache = options?.bypassCache === true;
+        const emptyTtl = Math.max(1, Number(options?.emptyTtl || EMPTY_FETCH_TTL) || EMPTY_FETCH_TTL);
+        const effectiveTtl = Math.max(1, Number(ttl || RAW_PROVIDER_CACHE_TTL) || RAW_PROVIDER_CACHE_TTL);
+
+        if (!bypassCache) {
+            const cached = Cache.getRaw(provider, id);
+            if (cached !== null) return cached;
+            if (cacheOnly) return [];
+        }
 
         const inflightKey = `${provider}:${id}`;
         return withSharedPromise(sharedFetchInflight, inflightKey, async () => {
-            const secondCacheHit = Cache.getRaw(provider, id);
-            if (secondCacheHit !== null) return secondCacheHit;
+            if (!bypassCache) {
+                const secondCacheHit = Cache.getRaw(provider, id);
+                if (secondCacheHit !== null) return secondCacheHit;
+                if (cacheOnly) return [];
+            }
 
             try {
                 const freshData = await fetcherFunc();
                 const normalized = Array.isArray(freshData) ? freshData : (freshData ? [freshData] : []);
-                Cache.setRaw(provider, id, normalized, normalized.length > 0 ? ttl : EMPTY_FETCH_TTL);
+                Cache.setRaw(provider, id, normalized, normalized.length > 0 ? effectiveTtl : emptyTtl);
                 return normalized;
             } catch (error) {
                 logger.warn(`⚠️ Errore Fetching [${provider}] per ${id}: ${error.message}`);
-                Cache.setRaw(provider, id, [], EMPTY_FETCH_TTL);
+                Cache.setRaw(provider, id, [], emptyTtl);
                 return [];
             }
         });
@@ -663,9 +694,15 @@ module.exports = {
     sharedFetchInflight,
     streamInflight,
     metadataInflight,
+    RAW_PROVIDER_CACHE_TTL,
     EMPTY_FETCH_TTL,
     EMPTY_STREAM_TTL,
     STREAM_STALE_GRACE_TTL,
     METADATA_CACHE_TTL,
+    RESOLVED_URL_TTL,
+    EMPTY_RESOLVED_URL_TTL,
+    AVAILABILITY_CACHE_TTL,
+    EMPTY_AVAILABILITY_TTL,
+    DB_LOOKUP_CACHE_TTL,
     VERBOSE_CACHE_LOGS
 };

@@ -8,6 +8,7 @@ const helmet = require('helmet');
 const zlib = require('zlib');
 const { requestContextMiddleware } = require('../request_context');
 const { incrementMetric, recordDuration } = require('../utils_runtime');
+const runtimeState = require('../runtime_state');
 
 const SMART_COMPRESSION_THRESHOLD = Math.max(512, parseInt(process.env.SMART_COMPRESSION_THRESHOLD || '1024', 10) || 1024);
 const GENERAL_COMPRESSION_LEVEL = Math.max(1, Math.min(9, parseInt(process.env.HTTP_GZIP_LEVEL || '4', 10) || 4));
@@ -133,9 +134,22 @@ function applyCommonMiddleware(app, { staticDir }) {
     app.use(requestContextMiddleware);
     app.use((req, res, next) => {
         const startedAt = Date.now();
+        runtimeState.beginRequest();
         incrementMetric('http.requests.total');
+
+        if (runtimeState.shouldRejectNewRequests() && !['/health', '/metrics'].includes(req.path) && !String(req.path || '').startsWith('/admin/runtime')) {
+            runtimeState.endRequest();
+            res.setHeader('Retry-After', '5');
+            return res.status(503).json({
+                status: 'draining',
+                reason: runtimeState.getSnapshot()?.lifecycle?.shutdownReason || 'shutdown',
+                requestId: req.requestId || null
+            });
+        }
+
         res.on('finish', () => {
             const duration = Date.now() - startedAt;
+            runtimeState.endRequest();
             recordDuration('http.request.total', duration);
             recordDuration(`http.request.${String(req.method || 'get').toLowerCase()}`, duration);
             incrementMetric(`http.status.${res.statusCode}`);

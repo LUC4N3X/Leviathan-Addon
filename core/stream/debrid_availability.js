@@ -10,6 +10,9 @@ const { shouldSkipRecentWork } = require('../recent_work');
 
 const LOCAL_DB_CACHE_TTL = Math.max(5, Math.min(300, parseInt(process.env.LOCAL_DB_CACHE_TTL || '25', 10) || 25));
 const RD_PRIORITY_DEDUP_MS = Math.max(1000, Math.min(120000, parseInt(process.env.RD_PRIORITY_DEDUP_MS || '15000', 10) || 15000));
+const AVAILABILITY_CACHE_HIT_TTL = Math.max(300, parseInt(process.env.AVAILABILITY_CACHE_HIT_TTL || String(24 * 60 * 60), 10) || (24 * 60 * 60));
+const AVAILABILITY_CACHE_NEGATIVE_TTL = Math.max(120, parseInt(process.env.AVAILABILITY_CACHE_NEGATIVE_TTL || String(6 * 60 * 60), 10) || (6 * 60 * 60));
+const AVAILABILITY_CACHE_PROBING_TTL = Math.max(60, parseInt(process.env.AVAILABILITY_CACHE_PROBING_TTL || '120', 10) || 120);
 
 const localDbLookupInflight = new Map();
 const recentRdPriorityRequests = new Map();
@@ -21,6 +24,41 @@ const TRUSTED_RELEASE_GROUP_RE = /\b(rarbg|yts|yify|qxr|ntb|evo|tgx|galaxyrg|vxt
 function normalizeRdStateValue(state) {
     const normalized = String(state || '').trim().toLowerCase();
     return VALID_RD_STATES.has(normalized) ? normalized : null;
+}
+
+function getAvailabilityCacheKey(service, hash) {
+    const normalizedService = String(service || 'rd').trim().toLowerCase();
+    const normalizedHash = String(hash || '').trim().toUpperCase();
+    if (!/^[A-F0-9]{40}$/.test(normalizedHash)) return null;
+    return `${normalizedService}:${normalizedHash}`;
+}
+
+function buildAvailabilityCachePayload(statePayload = {}, item = {}, result = null) {
+    return {
+        state: normalizeRdStateValue(statePayload.state) || null,
+        cached: statePayload.cached === true ? true : statePayload.cached === false ? false : null,
+        failures: Math.max(0, Number(statePayload.failures || 0) || 0),
+        fileSize: Number(result?.file_size || item?._size || item?.sizeBytes || 0) || 0,
+        fileIdx: Number.isInteger(Number(item?.fileIdx)) && Number(item.fileIdx) >= 0 ? Number(item.fileIdx) : null,
+        ts: Date.now()
+    };
+}
+
+function applyAvailabilityCachePayload(item, payload) {
+    if (!item || !payload || !payload.state) return false;
+    item._rdCacheState = payload.state;
+    item.rdCacheState = payload.state;
+    item._dbCachedRd = payload.cached === true ? true : payload.cached === false ? false : null;
+    item.cached_rd = payload.cached === true ? true : payload.cached === false ? false : item.cached_rd;
+    item._dbFailures = Math.max(0, Number(payload.failures || 0) || 0);
+    if (Number(payload.fileSize) > 0) {
+        item._size = Math.max(Number(item._size || item.sizeBytes || 0) || 0, Number(payload.fileSize));
+        item.sizeBytes = Math.max(Number(item.sizeBytes || item._size || 0) || 0, Number(payload.fileSize));
+    }
+    if ((item?.fileIdx === undefined || item?.fileIdx === null) && Number.isInteger(payload.fileIdx) && payload.fileIdx >= 0) {
+        item.fileIdx = payload.fileIdx;
+    }
+    return true;
 }
 
 function getRdStateRank(state) {
@@ -330,8 +368,25 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
 
         if (allUnknownCandidates.length === 0) return list;
 
+        const cachedUnknownCandidates = [];
+        for (const item of allUnknownCandidates) {
+            const cacheKey = getAvailabilityCacheKey('rd', item?.hash);
+            if (!cacheKey || typeof Cache.getAvailability !== 'function') {
+                cachedUnknownCandidates.push(item);
+                continue;
+            }
+            try {
+                const cachedPayload = await Cache.getAvailability(cacheKey);
+                if (!applyAvailabilityCachePayload(item, cachedPayload)) cachedUnknownCandidates.push(item);
+            } catch (_) {
+                cachedUnknownCandidates.push(item);
+            }
+        }
+
+        if (cachedUnknownCandidates.length === 0) return list;
+
         const shouldReduceProbe = knownStates >= minKnownStates;
-        const unknownCandidates = allUnknownCandidates
+        const unknownCandidates = cachedUnknownCandidates
             .slice(0, shouldReduceProbe ? fallbackProbeLimit : probeLimit);
 
         if (unknownCandidates.length === 0) return list;
@@ -381,6 +436,14 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                     failures: statePayload.failures,
                     next_hours: statePayload.next_hours
                 });
+
+                if (typeof Cache.cacheAvailability === 'function') {
+                    const availabilityCacheKey = getAvailabilityCacheKey('rd', item.hash);
+                    if (availabilityCacheKey) {
+                        const availabilityTtl = statePayload.state === 'cached' ? AVAILABILITY_CACHE_HIT_TTL : (statePayload.state === 'uncached_terminal' ? AVAILABILITY_CACHE_NEGATIVE_TTL : AVAILABILITY_CACHE_PROBING_TTL);
+                        await Cache.cacheAvailability(availabilityCacheKey, buildAvailabilityCachePayload(statePayload, item, result), availabilityTtl);
+                    }
+                }
             }
 
             if (dbUpdates.length > 0 && typeof dbHelper.updateRdCacheStatus === 'function') {
@@ -397,6 +460,10 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                     item._rdCacheState = 'probing';
                     item.rdCacheState = 'probing';
                     item._dbCachedRd = null;
+                    if (typeof Cache.cacheAvailability === 'function') {
+                        const availabilityCacheKey = getAvailabilityCacheKey('rd', item?.hash);
+                        if (availabilityCacheKey) await Cache.cacheAvailability(availabilityCacheKey, buildAvailabilityCachePayload({ state: 'probing', cached: null, failures: item?._dbFailures || 0 }, item, null), AVAILABILITY_CACHE_PROBING_TTL);
+                    }
                 }
                 RealDebridProbe.backfillAvailabilityInBackground(deferred, apiKey, dbHelper, async (updates) => {
                     await Cache.invalidateStreamsByHashes((updates || []).map((entry) => entry.hash), 'rd_background_backfill');

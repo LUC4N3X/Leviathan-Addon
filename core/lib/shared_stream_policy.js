@@ -7,6 +7,7 @@ const QUALITY_1080_REGEX = /\b(?:1080p|fhd|full[-.\s]?hd)\b/i;
 const QUALITY_720_REGEX = /\b(?:720p|hd)\b/i;
 const CAM_REGEX = /\b(?:cam|hdcam|ts|telesync|screener|scr)\b/i;
 const FRESHNESS_BUCKETS = ['ultra_fresh', 'fresh', 'settling', 'stable'];
+const SHARED_STREAM_FRESH_SKIP_HOURS = Math.max(24, parseInt(process.env.SHARED_STREAM_FRESH_SKIP_HOURS || '96', 10) || 96);
 
 function clamp(value, min, max) {
     const num = Number(value);
@@ -357,17 +358,19 @@ function buildSharedStreamCachePolicy(meta = {}, context = {}) {
     const ttlPolicy = summary.isEmpty
         ? buildEmptyPolicy(timeline.freshnessBucket, summary, confidenceScore)
         : buildPositivePolicy(timeline.freshnessBucket, confidenceScore);
+    const sharedFreshSkip = Number.isFinite(timeline.ageHours) && timeline.ageHours >= 0 && timeline.ageHours < SHARED_STREAM_FRESH_SKIP_HOURS;
 
     return {
-        version: 2,
+        version: 3,
         ...timeline,
         ...summary,
         confidenceScore,
         localTtl: ttlPolicy.localTtl,
-        sharedTtl: ttlPolicy.sharedTtl,
-        staleGraceTtl: ttlPolicy.staleGraceTtl,
-        allowSharedWrite: ttlPolicy.allowSharedWrite,
-        allowSharedStale: ttlPolicy.allowSharedStale
+        sharedTtl: sharedFreshSkip ? 0 : ttlPolicy.sharedTtl,
+        staleGraceTtl: sharedFreshSkip ? 0 : ttlPolicy.staleGraceTtl,
+        allowSharedWrite: sharedFreshSkip ? false : ttlPolicy.allowSharedWrite,
+        allowSharedStale: sharedFreshSkip ? false : ttlPolicy.allowSharedStale,
+        sharedFreshSkip
     };
 }
 
@@ -388,8 +391,11 @@ function shouldUseSharedStreamEntry(row = {}, requestContext = {}, options = {})
     const resultCount = Number(row?.result_count || 0);
     const policyVersion = Number(row?.policy_version || 0);
     const allowStale = options?.allowStale === true;
+    const contentTimeline = parseDateCandidate(row?.content_date);
+    const rowAgeHours = contentTimeline?.date ? ((requestContext?.nowMs || Date.now()) - contentTimeline.date.getTime()) / HOUR_MS : null;
 
     if (requestBucket !== 'stable' && policyVersion < 2) return false;
+    if (requestBucket !== 'stable' && Number.isFinite(rowAgeHours) && rowAgeHours >= 0 && rowAgeHours < SHARED_STREAM_FRESH_SKIP_HOURS) return false;
 
     if (resultCount <= 0) {
         if (allowStale) return false;

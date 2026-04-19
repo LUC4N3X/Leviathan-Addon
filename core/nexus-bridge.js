@@ -1,5 +1,6 @@
 const crypto = require("crypto");
-const pLimit = require("p-limit");
+const pLimitModule = require("p-limit");
+const pLimit = typeof pLimitModule === "function" ? pLimitModule : pLimitModule.default;
 const { LEGACY_BROWSER_PROFILES } = require('./browser_profiles');
 
 const DEBUG_MODE = process.env.DEBUG_MODE === "true";

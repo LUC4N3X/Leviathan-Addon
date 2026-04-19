@@ -286,7 +286,7 @@ function registerStremioRoutes(app, {
         res.json(manifest);
     });
 
-    app.get('/:conf/catalog/:type/:id/:extra?.json', async (req, res) => {
+    app.get('/:conf/catalog/:type/:id{/:extra}.json', async (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.json({ metas: [] });
     });

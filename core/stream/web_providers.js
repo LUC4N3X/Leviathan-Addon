@@ -173,15 +173,22 @@ function applyWebFormatter(streamList, providerDefinition, meta, config) {
 }
 
 function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }) {
-    async function fetchWebProviderBuckets({ type, originalId, finalId, meta, config, reqHost, allowItalianWebProviders, dbOnlyMode }) {
+    async function fetchWebProviderBuckets({ type, originalId, finalId, meta, config, reqHost, allowItalianWebProviders, dbOnlyMode, sourceModeFlags = null }) {
         const definitions = getWebProviderDefinitions({ meta, filters: config.filters || {} });
         const empty = Object.fromEntries(definitions.map((definition) => [definition.key, []]));
+        const flags = sourceModeFlags || {
+            dbOnlyMode: dbOnlyMode === true,
+            useLiveSources: dbOnlyMode !== true,
+            useProviderCachedOnly: false,
+            bypassProviderCache: false
+        };
 
-        if (dbOnlyMode || !allowItalianWebProviders) return empty;
+        if (flags.dbOnlyMode || !allowItalianWebProviders) return empty;
 
         const rawId = `${type}:${finalId}:${meta.season || 0}:${meta.episode || 0}`;
         const settled = await Promise.allSettled(definitions.map((definition) => {
             if (!definition.enabled) return Promise.resolve([]);
+            if (!flags.useLiveSources && !flags.useProviderCachedOnly) return Promise.resolve([]);
 
             return Cache.fetchWithCache(definition.cacheName, rawId, 43200, () =>
                 guardedProviderCall(
@@ -190,7 +197,11 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
                     getWebProviderTimeout(CONFIG.TIMEOUTS.SCRAPER, definition.cacheName),
                     () => definition.run({ type, originalId, finalId, meta, config, reqHost })
                 )
-            );
+            , {
+                cacheOnly: flags.useProviderCachedOnly === true,
+                bypassCache: flags.bypassProviderCache === true,
+                emptyTtl: 3600
+            });
         }));
 
         return definitions.reduce((acc, definition, index) => {

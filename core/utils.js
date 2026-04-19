@@ -151,8 +151,9 @@ function estimateSeeders(knownSeeders, infoHash) {
 }
 
 function getStatsSnapshot() {
+    const runtime = runtimeState.getSnapshot();
     return {
-        status: 'ok',
+        status: runtime?.lifecycle?.draining ? 'draining' : 'ok',
         startedAt: new Date(runtimeMetrics.startedAt).toISOString(),
         uptimeSec: Math.round((Date.now() - runtimeMetrics.startedAt) / 1000),
         inflight: {
@@ -179,7 +180,8 @@ function getStatsSnapshot() {
         timers: runtimeMetrics.timers,
         providers: runtimeMetrics.providers,
         sourceHealth: sourceHealth.getSnapshot(),
-        limiters: getLimiterStats()
+        limiters: getLimiterStats(),
+        runtime
     };
 }
 

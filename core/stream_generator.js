@@ -6,6 +6,7 @@ const PackResolver = require("./pack_intelligence");
 const aioFormatter = require("./lib/pulse_formatter.cjs");
 const TbCache = require("../debrid/tb_cache.js");
 const { scheduleKeyed } = require('./utils_limits');
+const { scheduleRequestTask } = require('./request_queue');
 const { formatStreamSelector, formatBytes } = require("./lib/stream_formatter");
 const { applyTorrentResultFilters } = require("./lib/torrent_result_filters");
 const P2P = require("./handlers/p2p_handler");
@@ -23,6 +24,8 @@ const sourceHealth = require("./lib/source_health");
 const { createSearchPlan, evaluatePoolSatisfaction } = require("./lib/search_planner");
 const { shouldSkipRecentWork } = require('./recent_work');
 const { buildSharedStreamCachePolicy, buildSharedReadContext, shouldUseSharedStreamEntry } = require('./lib/shared_stream_policy');
+const { getSourceModeFlags } = require('./source_mode');
+const { runFilterStage, runSortStage } = require('./lib/result_stage_pipeline');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
 const {
@@ -385,6 +388,7 @@ function buildTitleSearchPipelineKey(meta, type, langMode, dbOnlyMode = false, f
         season: Number(meta?.season || 0) || 0,
         episode: Number(meta?.episode || 0) || 0,
         filters: {
+            sourceMode: String(filters?.sourceMode || (dbOnlyMode ? 'dbOnly' : 'balanced')).toLowerCase(),
             no4k: filters?.no4k === true,
             no1080: filters?.no1080 === true,
             no720: filters?.no720 === true,
@@ -1852,8 +1856,13 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
     } catch (err) { logger.warn('External Addons fallito/timeout', { error: err.message }); return []; }
 }
 
-async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, config, dbOnlyMode, langMode, aggressiveFilter, userTmdbKey, seedResults = [] }) {
-    const titleKey = buildTitleSearchPipelineKey(meta, type, langMode, dbOnlyMode, config?.filters || {});
+async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, config, dbOnlyMode, sourceModeFlags = null, langMode, aggressiveFilter, userTmdbKey, seedResults = [] }) {
+    const flags = sourceModeFlags || getSourceModeFlags(config?.filters || {});
+    const disableLiveSources = flags.useLiveSources !== true;
+    const titleKey = buildTitleSearchPipelineKey(meta, type, langMode, disableLiveSources, {
+        ...(config?.filters || {}),
+        sourceMode: flags.sourceMode
+    });
     const hotCached = getTimedCacheValue(titleSearchHotCache, titleKey);
     if (hotCached) {
         logger.info(`[TITLE-QUEUE] Hot cache hit | key=${titleKey} | results=${hotCached.length}`);
@@ -1864,7 +1873,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
         const cachedAgain = getTimedCacheValue(titleSearchHotCache, titleKey);
         if (cachedAgain) return cachedAgain;
 
-        return scheduleKeyed('title-search', titleKey, async () => {
+        return scheduleRequestTask('title-search', titleKey, async () => {
             let dynamicTitles = [];
             try {
                 if (tmdbIdLookup) dynamicTitles = await getTmdbAltTitles(tmdbIdLookup, type, userTmdbKey);
@@ -1872,12 +1881,17 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
             const allowEngScraper = (langMode === 'all' || langMode === 'eng');
             const rawQueries = generateSmartQueries({ ...meta, langMode }, dynamicTitles, langMode);
-            const plan = createSearchPlan({ meta, langMode, dbOnlyMode, rawQueries });
+            const plan = createSearchPlan({ meta, langMode, dbOnlyMode: disableLiveSources, rawQueries });
             const scraperTimeout = langMode === 'eng'
                 ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 12000)
                 : langMode === 'all'
                     ? Math.max(CONFIG.TIMEOUTS.SCRAPER || 4000, 10000)
                     : (CONFIG.TIMEOUTS.SCRAPER || 4000);
+            const providerCacheOptions = {
+                cacheOnly: flags.useProviderCachedOnly === true,
+                bypassCache: flags.bypassProviderCache === true,
+                emptyTtl: 3600
+            };
 
             let cleanResults = [];
             let assessmentPool = Array.isArray(seedResults) ? [...seedResults] : [];
@@ -1887,29 +1901,34 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                 incrementMetric(`search.phase.${phase.key}.calls`);
 
                 if (phase.kind === 'fast') {
-                    const remotePromise = Cache.fetchWithCache('RemoteIndexer', `${type}:${tmdbIdLookup || finalId}:${meta.season}:${meta.episode}`, 43200, () =>
-                        guardedProviderCall(
-                            'RemoteIndexer',
-                            LIMITERS.remoteIndexer,
-                            CONFIG.TIMEOUTS.REMOTE_INDEXER,
+                    const remoteCacheKey = `${type}:${tmdbIdLookup || finalId}:${meta.season}:${meta.episode}`;
+                    const remotePromise = Cache.fetchWithCache('RemoteIndexer', remoteCacheKey, 43200, () =>
+                        scheduleRequestTask('provider-fast', `remote:${remoteCacheKey}`, () =>
+                            guardedProviderCall(
+                                'RemoteIndexer',
+                                LIMITERS.remoteIndexer,
+                                CONFIG.TIMEOUTS.REMOTE_INDEXER,
                                 () => queryRemoteIndexer(tmdbIdLookup, type, meta.season, meta.episode, config, meta),
-                            { meta }
-                        )
-                    );
+                                { meta }
+                            )
+                        , { group: 'provider-fast' })
+                    , providerCacheOptions);
 
                     const externalRequestId = buildExternalAddonRequestId(type, finalId, meta);
                     const externalCacheKey = `${type}:${externalRequestId}:${langMode}`;
-                    const externalPromise = dbOnlyMode
+                    const externalPromise = disableLiveSources && !flags.useProviderCachedOnly
                         ? Promise.resolve([])
                         : Cache.fetchWithCache('ExternalAddons', externalCacheKey, 43200, () =>
-                            guardedProviderCall(
-                                'ExternalAddons',
-                                LIMITERS.externalAddons,
-                                CONFIG.TIMEOUTS.EXTERNAL,
-                                () => fetchExternalResults(type, externalRequestId, config, meta, langMode),
-                                { meta }
-                            )
-                        );
+                            scheduleRequestTask('provider-fast', `external:${externalCacheKey}`, () =>
+                                guardedProviderCall(
+                                    'ExternalAddons',
+                                    LIMITERS.externalAddons,
+                                    CONFIG.TIMEOUTS.EXTERNAL,
+                                    () => fetchExternalResults(type, externalRequestId, config, meta, langMode),
+                                    { meta }
+                                )
+                            , { group: 'provider-fast' })
+                        , providerCacheOptions);
 
                     const [remoteSettled, externalSettled] = await Promise.allSettled([remotePromise, externalPromise]);
                     const remoteResults = remoteSettled.status === 'fulfilled' ? remoteSettled.value : [];
@@ -1918,7 +1937,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
                     cleanResults = await normalizeCandidateResults([...cleanResults, ...remoteResults, ...externalResults].filter(aggressiveFilter));
                     cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
-                } else if (phase.kind === 'scrape' && phase.querySubset.length > 0 && !dbOnlyMode) {
+                } else if (phase.kind === 'scrape' && phase.querySubset.length > 0 && flags.useLiveSources) {
                     logger.info(`[SCRAPER PLAN] phase=${phase.key} lang=${langMode} queries=${phase.querySubset.length} timeout=${scraperTimeout}ms | titleKey=${titleKey}`);
                     const scraperNames = sourceHealth.sortNamesByPriority(SCRAPER_MODULES.map((scraper) => scraper?.name || 'ScraperModule'));
                     const sortedScrapers = [...SCRAPER_MODULES].sort((a, b) => {
@@ -1931,14 +1950,17 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                     phase.querySubset.forEach((q) => sortedScrapers.forEach((scraper) => {
                         if (!scraper.searchMagnet) return;
                         const providerName = scraper.name || 'ScraperModule';
+                        const requestScopeKey = `${providerName}:${q}`;
                         allScraperTasks.push(
-                            guardedProviderCall(
-                                providerName,
-                                LIMITERS.scraper,
-                                scraperTimeout,
-                                () => scraper.searchMagnet(q, meta.year, type, buildExternalAddonRequestId(type, finalId, meta), { langMode, allowEng: allowEngScraper, isAnime: isAnimeMetaContext(meta, type) }),
-                                { meta }
-                            )
+                            scheduleRequestTask('scrape', requestScopeKey, () =>
+                                guardedProviderCall(
+                                    providerName,
+                                    LIMITERS.scraper,
+                                    scraperTimeout,
+                                    () => scraper.searchMagnet(q, meta.year, type, buildExternalAddonRequestId(type, finalId, meta), { langMode, allowEng: allowEngScraper, isAnime: isAnimeMetaContext(meta, type) }),
+                                    { meta }
+                                )
+                            , { group: 'scrape' })
                         );
                     }));
 
@@ -1962,12 +1984,12 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                 }
             }
 
-            if (!dbOnlyMode && lastAssessment.shouldScrape && cleanResults.length === 0 && plan.broadQueries.length === 0) {
+            if (!disableLiveSources && lastAssessment.shouldScrape && cleanResults.length === 0 && plan.broadQueries.length === 0) {
                 logger.info(`[SEARCH PLAN] exhausted with no results | reason=${lastAssessment.reason}`);
             }
 
             return setTimedCacheValue(titleSearchHotCache, titleKey, cleanResults, TITLE_SEARCH_HOT_TTL_MS);
-        });
+        }, { group: 'title-search' });
     });
 }
 
@@ -1976,20 +1998,23 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const debridApiKey = getConfiguredDebridKey(config, configuredDebridService);
   const hasDebridKey = Boolean(debridApiKey);
   const filters = config?.filters || {};
+  const sourceModeFlags = getSourceModeFlags(filters);
   const isWebEnabled = Boolean(filters && (isStreamingCommunityEnabled(filters) || filters.enableGhd || filters.enableGs || filters.enableAnimeWorld || filters.enableAnimeSaturn || filters.enableGf));
   const isP2PEnabled = filters.enableP2P === true;
 
-  if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: "CONFIG", title: "Inserisci API Key, attiva P2P o attiva una sorgente Web" }] };
+  if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const configHash = crypto.createHash('md5').update(userConfStr || 'no-conf').digest('hex');
   const cacheKey = `${type}:${id}:${configHash}`;
   const inflightKey = `stream:${cacheKey}`;
 
-  const localCachedResult = await Cache.getCachedStream(cacheKey, { allowShared: false });
-  if (localCachedResult) return localCachedResult;
+  if (!sourceModeFlags.liveOnlyMode) {
+      const localCachedResult = await Cache.getCachedStream(cacheKey, { allowShared: false });
+      if (localCachedResult) return localCachedResult;
+  }
 
   const hadConcurrentInflight = streamInflight.has(inflightKey);
-  if (hadConcurrentInflight) {
+  if (!sourceModeFlags.liveOnlyMode && hadConcurrentInflight) {
       const localStaleResult = await Cache.getStaleStream(cacheKey, { allowShared: false });
       if (localStaleResult) {
           incrementMetric('stream.generate.staleWhileRefresh');
@@ -1999,8 +2024,10 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   }
 
   return withSharedPromise(streamInflight, inflightKey, async () => {
-      const cachedAgain = await Cache.getCachedStream(cacheKey, { allowShared: false });
-      if (cachedAgain) return cachedAgain;
+      if (!sourceModeFlags.liveOnlyMode) {
+          const cachedAgain = await Cache.getCachedStream(cacheKey, { allowShared: false });
+          if (cachedAgain) return cachedAgain;
+      }
 
       const generationStartedAt = Date.now();
       incrementMetric('stream.generate.calls');
@@ -2020,17 +2047,19 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       if (!meta) return { streams: [] };
 
       const sharedReadContext = buildSharedReadContext(meta);
-      const sharedCachedResult = await Cache.getCachedStream(cacheKey, {
-          allowLocal: false,
-          allowShared: true,
-          sharedEntryEvaluator: (row) => shouldUseSharedStreamEntry(row, sharedReadContext, { allowStale: false })
-      });
-      if (sharedCachedResult) {
-          incrementMetric('stream.generate.sharedPolicyHit');
-          return sharedCachedResult;
+      if (sourceModeFlags.useSharedCache) {
+          const sharedCachedResult = await Cache.getCachedStream(cacheKey, {
+              allowLocal: false,
+              allowShared: true,
+              sharedEntryEvaluator: (row) => shouldUseSharedStreamEntry(row, sharedReadContext, { allowStale: false })
+          });
+          if (sharedCachedResult) {
+              incrementMetric('stream.generate.sharedPolicyHit');
+              return sharedCachedResult;
+          }
       }
 
-      if (hadConcurrentInflight) {
+      if (sourceModeFlags.useSharedCache && hadConcurrentInflight) {
           const sharedStaleResult = await Cache.getStaleStream(cacheKey, {
               allowLocal: false,
               allowShared: true,
@@ -2044,13 +2073,13 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           }
       }
 
-      logger.info(`[SPEED] Start search for: ${meta.title}`);
+      logger.info(`[SPEED] Start search for: ${meta.title} | sourceMode=${sourceModeFlags.sourceMode}`);
 
-      const localDbResults = await fetchLocalDbResults(meta);
+      const localDbResults = sourceModeFlags.useLocalDb ? await fetchLocalDbResults(meta) : [];
       if (localDbResults.length > 0) logger.info(`[DB READ] Trovati ${localDbResults.length} torrent dal DB locale.`);
 
       const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
-      const dbOnlyMode = filters.dbOnly === true;
+      const dbOnlyMode = sourceModeFlags.dbOnlyMode;
       const langMode = getEffectiveSearchLanguageMode(filters, meta, type);
       const allowItalianWebProviders = langMode !== 'eng';
       const aggressiveFilter = createAggressiveResultFilter(meta, type, langMode);
@@ -2062,6 +2091,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           meta,
           config,
           dbOnlyMode,
+          sourceModeFlags,
           langMode,
           aggressiveFilter,
           userTmdbKey,
@@ -2069,21 +2099,24 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       });
 
       let cleanResults = await normalizeCandidateResults([...localDbResults, ...networkResults].filter(aggressiveFilter));
-      cleanResults = applyPackKnowledge(cleanResults, meta);
-      cleanResults = applyConfiguredTorrentFilters(cleanResults, filters);
+      cleanResults = runFilterStage(cleanResults, meta, filters, {
+          applyPackKnowledge,
+          applyConfiguredTorrentFilters
+      });
       logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
 
-      if (!dbOnlyMode) saveResultsToDbBackground(meta, cleanResults, config);
+      if (!sourceModeFlags.dbOnlyMode && !sourceModeFlags.cacheOnlyMode) saveResultsToDbBackground(meta, cleanResults, config);
 
-      let rankedList = rankAndFilterResults(cleanResults, meta, config);
-      const sortMode = config.sort || filters.sort || 'balanced';
-      rankedList = rerankCompositeResults(rankedList, meta, config, sortMode);
-      rankedList = applyPremiumRankingPolicy(rankedList, meta, config);
-
-      if (filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, filters.maxPerQuality);
+      let rankedList = runSortStage(cleanResults, meta, config, {
+          rankAndFilterResults,
+          rerankCompositeResults,
+          applyPremiumRankingPolicy,
+          filterByQualityLimit
+      });
 
       rankedList = await reprioritizeRdRankedList(rankedList, meta, config, hasDebridKey);
       rankedList = applyPremiumRankingPolicy(rankedList, meta, config);
+      if (filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, filters.maxPerQuality);
 
       if (configuredDebridService === 'tb' && hasDebridKey) {
           rankedList = await resolveTorboxRankedList(rankedList, debridApiKey);
@@ -2097,20 +2130,20 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           const TOP_LIMIT = Math.max(0, Math.min(10, parseInt(filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0));
           const serviceLimiter = getServiceResolverLimiter(configuredDebridService);
           const resolverConfig = { ...config, service: configuredDebridService, rawConf: userConfStr };
-          const immediatePromises = finalRanked.slice(0, TOP_LIMIT).map(item => {
+          const immediatePromises = finalRanked.slice(0, TOP_LIMIT).map((item) => {
               const runtimeItem = createRuntimeItem(item, meta);
               return serviceLimiter.schedule(() => resolveDebridLink(resolverConfig, runtimeItem, filters?.showFake, reqHost, meta));
           });
-          const lazyCandidates = finalRanked.slice(TOP_LIMIT).map(item => createRuntimeItem(item, meta));
+          const lazyCandidates = finalRanked.slice(TOP_LIMIT).map((item) => createRuntimeItem(item, meta));
           const lazyStreams = lazyCandidates
-              .map(item => generateLazyStream(item, resolverConfig, meta, reqHost, userConfStr, true))
+              .map((item) => generateLazyStream(item, resolverConfig, meta, reqHost, userConfStr, true))
               .filter(Boolean);
-          const resolvedInstant = (await Promise.allSettled(immediatePromises)).flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
+          const resolvedInstant = (await Promise.allSettled(immediatePromises)).flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : []);
           debridStreams = [...resolvedInstant, ...lazyStreams];
           warmupLazyStreamsInBackground(resolverConfig, lazyCandidates, meta);
       } else if (finalRanked.length > 0 && isP2PEnabled) {
           logger.info(`[P2P MODE] Generating direct streams for ${meta.title}`);
-          p2pStreams = finalRanked.map(item => P2P.formatP2PStream(item, config));
+          p2pStreams = finalRanked.map((item) => P2P.formatP2PStream(item, config));
           debridStreams = p2pStreams;
       }
 
@@ -2122,7 +2155,8 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           config,
           reqHost,
           allowItalianWebProviders,
-          dbOnlyMode
+          dbOnlyMode,
+          sourceModeFlags
       });
 
       const formattedWebBuckets = formatWebProviderBuckets(rawWebBuckets, meta, config);
@@ -2143,7 +2177,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           filters.enableAnimeSaturn,
           filters.enableGf
       ].filter(Boolean).length;
-      const cachePolicy = buildSharedStreamCachePolicy(meta, {
+      const cachePolicyBase = buildSharedStreamCachePolicy(meta, {
           cleanResults,
           rankedResults: finalRanked,
           finalStreams,
@@ -2157,6 +2191,13 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           dbOnlyMode,
           debridService: configuredDebridService
       });
+      const cachePolicy = {
+          ...cachePolicyBase,
+          allowSharedWrite: sourceModeFlags.useSharedCache ? cachePolicyBase.allowSharedWrite : false,
+          sharedTtl: sourceModeFlags.useSharedCache ? cachePolicyBase.sharedTtl : 0,
+          localTtl: sourceModeFlags.liveOnlyMode ? 0 : cachePolicyBase.localTtl,
+          staleGraceTtl: sourceModeFlags.liveOnlyMode ? 0 : cachePolicyBase.staleGraceTtl
+      };
 
       const clientCache = buildClientCacheMetadata(cachePolicy, finalStreams.length);
       const resultObj = {
@@ -2166,23 +2207,25 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           staleError: clientCache.staleError
       };
 
-      await Cache.cacheStream(cacheKey, resultObj, cachePolicy.localTtl || (finalStreams.length > 0 ? 1800 : EMPTY_STREAM_TTL), {
-          imdbId: meta?.imdb_id || null,
-          imdbSeason: Number.isInteger(meta?.season) && meta.season > 0 ? meta.season : null,
-          imdbEpisode: Number.isInteger(meta?.episode) && meta.episode > 0 ? meta.episode : null,
-          episodeLocator: {
+      if (!sourceModeFlags.liveOnlyMode) {
+          await Cache.cacheStream(cacheKey, resultObj, cachePolicy.localTtl || (finalStreams.length > 0 ? 1800 : EMPTY_STREAM_TTL), {
               imdbId: meta?.imdb_id || null,
-              season: Number.isInteger(meta?.season) && meta.season > 0 ? meta.season : null,
-              episode: Number.isInteger(meta?.episode) && meta.episode > 0 ? meta.episode : null
-          },
-          hashes: cleanResults.map((item) => item?.hash || item?.infoHash).filter(Boolean)
-      }, {
-          sharedPolicy: cachePolicy
-      });
+              imdbSeason: Number.isInteger(meta?.season) && meta.season > 0 ? meta.season : null,
+              imdbEpisode: Number.isInteger(meta?.episode) && meta.episode > 0 ? meta.episode : null,
+              episodeLocator: {
+                  imdbId: meta?.imdb_id || null,
+                  season: Number.isInteger(meta?.season) && meta.season > 0 ? meta.season : null,
+                  episode: Number.isInteger(meta?.episode) && meta.episode > 0 ? meta.episode : null
+              },
+              hashes: cleanResults.map((item) => item?.hash || item?.infoHash).filter(Boolean)
+          }, {
+              sharedPolicy: cachePolicy
+          });
+      }
 
       recordDuration('stream.generate.total', Date.now() - generationStartedAt);
       incrementMetric(finalStreams.length > 0 ? 'stream.generate.nonEmpty' : 'stream.generate.empty');
-      logger.info(`[CACHE] SAVED: ${cacheKey} (local=${cachePolicy.localTtl}s, shared=${cachePolicy.allowSharedWrite ? cachePolicy.sharedTtl : 0}s, bucket=${cachePolicy.freshnessBucket}, confidence=${cachePolicy.confidenceScore}, streams=${finalStreams.length})`);
+      logger.info(`[CACHE] SAVED: ${cacheKey} (mode=${sourceModeFlags.sourceMode}, local=${cachePolicy.localTtl}s, shared=${cachePolicy.allowSharedWrite ? cachePolicy.sharedTtl : 0}s, bucket=${cachePolicy.freshnessBucket}, confidence=${cachePolicy.confidenceScore}, streams=${finalStreams.length})`);
 
       return resultObj;
   });

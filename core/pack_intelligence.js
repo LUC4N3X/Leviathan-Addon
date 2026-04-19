@@ -352,17 +352,23 @@ function filterVideoFiles(files) {
 }
 
 function scoreMovieFile(file, titles, year) {
+    const pathValue = String(file?.path || '').toLowerCase();
     const name = fileName(file.path).toLowerCase();
     let score = 0;
     for (const title of titles) {
         const tokens = tokenizeTitle(title);
         if (tokens.length === 0) continue;
         let matched = 0;
-        for (const token of tokens) if (name.includes(token)) matched += 1;
+        for (const token of tokens) if (pathValue.includes(token)) matched += 1;
+        const normalizedPhrase = tokens.join(' ');
+        const compactPhrase = tokens.join('.');
+        if (normalizedPhrase && pathValue.includes(normalizedPhrase)) matched += 2;
+        if (compactPhrase && pathValue.includes(compactPhrase)) matched += 1;
         score = Math.max(score, matched * 15 + Math.round((matched / tokens.length) * 80));
     }
-    if (year && new RegExp(`(?:^|[^\d])${year}(?:[^\d]|$)`).test(name)) score += 18;
-    if (/sample|trailer|extras?|featurette|behind\s*the\s*scenes/i.test(name)) score -= 80;
+    if (year && new RegExp(`(?:^|[^\d])${year}(?:[^\d]|$)`).test(pathValue)) score += 18;
+    if (/sample|trailer|extras?|featurette|behind\s*the\s*scenes|bonus|interview|deleted\s*scenes/i.test(pathValue)) score -= 80;
+    if (/disc\s*[2-9]|cd\s*[2-9]/i.test(pathValue)) score -= 14;
     if (/2160p|4k|uhd/i.test(name)) score += 12;
     else if (/1080p|fhd/i.test(name)) score += 8;
     else if (/720p/i.test(name)) score += 4;
