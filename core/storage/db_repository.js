@@ -8,12 +8,15 @@ const { createSharedStreamCacheRepository } = require('./db/shared_stream_cache_
 let pool = null;
 let databaseOptimizationsPromise = null;
 let notificationClient = null;
+let notificationReconnectPromise = null;
+let notificationReconnectTimer = null;
 const notificationHandlers = new Map();
 const subscribedChannels = new Set();
 
 const DB_POOL_MAX = normalizers.clampInt(process.env.DB_POOL_MAX, 40, 5, 120);
 const DB_POOL_IDLE_TIMEOUT_MS = normalizers.clampInt(process.env.DB_POOL_IDLE_TIMEOUT_MS, 30000, 5000, 120000);
 const DB_POOL_CONNECT_TIMEOUT_MS = normalizers.clampInt(process.env.DB_POOL_CONNECT_TIMEOUT_MS, 5000, 1000, 30000);
+const DB_NOTIFICATION_RECONNECT_DELAY_MS = normalizers.clampInt(process.env.DB_NOTIFICATION_RECONNECT_DELAY_MS, 2000, 250, 30000);
 
 function buildPoolConfig(config = {}) {
   const sslEnabled = normalizers.normalizeBooleanEnv(process.env.DB_SSL, false);
@@ -96,44 +99,107 @@ function assertNotificationChannel(channel) {
   return normalized;
 }
 
+function releaseNotificationClient(client, error = null) {
+  if (!client || client.__leviReleased === true) return;
+  client.__leviReleased = true;
+  try {
+    client.release(error || undefined);
+  } catch (_) {}
+}
+
+function clearNotificationReconnectTimer() {
+  if (!notificationReconnectTimer) return;
+  clearTimeout(notificationReconnectTimer);
+  notificationReconnectTimer = null;
+}
+
+function scheduleNotificationReconnect(reason = 'unknown') {
+  if (!pool || subscribedChannels.size === 0) return;
+  if (notificationClient || notificationReconnectPromise || notificationReconnectTimer) return;
+
+  notificationReconnectTimer = setTimeout(() => {
+    notificationReconnectTimer = null;
+    notificationReconnectPromise = ensureNotificationClient()
+      .catch((error) => {
+        console.warn(`⚠️ DB notification reconnect failed (${reason}): ${error.message}`);
+        scheduleNotificationReconnect('retry');
+        return null;
+      })
+      .finally(() => {
+        notificationReconnectPromise = null;
+      });
+  }, DB_NOTIFICATION_RECONNECT_DELAY_MS);
+
+  if (typeof notificationReconnectTimer.unref === 'function') {
+    notificationReconnectTimer.unref();
+  }
+}
+
+function handleNotificationClientLoss(client, reason) {
+  if (notificationClient === client) notificationClient = null;
+  releaseNotificationClient(client, reason instanceof Error ? reason : new Error(String(reason || 'notification_client_lost')));
+  scheduleNotificationReconnect(reason instanceof Error ? reason.message : String(reason || 'lost'));
+}
+
 async function ensureNotificationClient() {
   if (!pool) throw new Error('Pool not initialized');
   if (notificationClient) return notificationClient;
+  if (notificationReconnectPromise) return notificationReconnectPromise;
 
-  const client = await pool.connect();
-  notificationClient = client;
+  notificationReconnectPromise = (async () => {
+    clearNotificationReconnectTimer();
 
-  client.on('notification', (message) => {
-    const channel = String(message?.channel || '').trim().toLowerCase();
-    const handlers = notificationHandlers.get(channel);
-    if (!handlers || handlers.size === 0) return;
+    const client = await pool.connect();
+    client.__leviReleased = false;
+    notificationClient = client;
 
-    let payload = null;
-    try {
-      payload = message?.payload ? JSON.parse(message.payload) : null;
-    } catch (_) {
-      payload = { raw: message?.payload || null };
-    }
+    client.on('notification', (message) => {
+      const channel = String(message?.channel || '').trim().toLowerCase();
+      const handlers = notificationHandlers.get(channel);
+      if (!handlers || handlers.size === 0) return;
 
-    for (const handler of handlers) {
+      let payload = null;
       try {
-        handler(payload);
-      } catch (error) {
-        console.warn(`⚠️ Notification handler failed on ${channel}: ${error.message}`);
+        payload = message?.payload ? JSON.parse(message.payload) : null;
+      } catch (_) {
+        payload = { raw: message?.payload || null };
       }
+
+      for (const handler of handlers) {
+        try {
+          handler(payload);
+        } catch (error) {
+          console.warn(`⚠️ Notification handler failed on ${channel}: ${error.message}`);
+        }
+      }
+    });
+
+    client.on('error', (error) => {
+      console.warn(`⚠️ DB notification client error: ${error.message}`);
+      handleNotificationClientLoss(client, error);
+    });
+
+    client.on('end', () => {
+      console.warn('⚠️ DB notification client ended.');
+      handleNotificationClientLoss(client, 'end');
+    });
+
+    try {
+      for (const channel of subscribedChannels) {
+        await client.query(`LISTEN ${channel}`);
+      }
+    } catch (error) {
+      if (notificationClient === client) notificationClient = null;
+      releaseNotificationClient(client, error);
+      throw error;
     }
+
+    return client;
+  })().finally(() => {
+    notificationReconnectPromise = null;
   });
 
-  client.on('error', (error) => {
-    console.warn(`⚠️ DB notification client error: ${error.message}`);
-    if (notificationClient === client) notificationClient = null;
-  });
-
-  for (const channel of subscribedChannels) {
-    await client.query(`LISTEN ${channel}`);
-  }
-
-  return client;
+  return notificationReconnectPromise;
 }
 
 async function subscribeNotifications(channel, handler) {
@@ -185,10 +251,10 @@ async function shutdownDatabase() {
   databaseOptimizationsPromise = null;
   notificationHandlers.clear();
   subscribedChannels.clear();
+  clearNotificationReconnectTimer();
+  notificationReconnectPromise = null;
   if (notificationClient) {
-    try {
-      notificationClient.release();
-    } catch (_) {}
+    releaseNotificationClient(notificationClient, new Error('shutdown'));
     notificationClient = null;
   }
   await currentPool.end();
