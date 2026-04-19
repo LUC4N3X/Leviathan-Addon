@@ -1,4 +1,3 @@
-require('dotenv').config();
 const Bottleneck = require('bottleneck');
 
 function clampInt(value, fallback, min, max) {

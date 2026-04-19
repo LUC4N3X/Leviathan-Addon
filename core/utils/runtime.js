@@ -1,5 +1,4 @@
-require('dotenv').config();
-
+const util = require('util');
 const winston = require('winston');
 const { getRequestContext } = require('../request_context');
 
@@ -9,6 +8,40 @@ function enrichWithRequestContext(info) {
     if (context?.method && !info.method) info.method = context.method;
     if (context?.path && !info.path) info.path = context.path;
     return info;
+}
+
+
+const CONSOLE_LEVELS = {
+    log: 'info',
+    info: 'info',
+    warn: 'warn',
+    error: 'error',
+    debug: 'debug',
+    trace: 'debug'
+};
+const CONSOLE_BRIDGE_FLAG = Symbol.for('leviathan.consoleBridgeInstalled');
+const CONSOLE_ORIGINALS_FLAG = Symbol.for('leviathan.consoleOriginals');
+
+function formatConsoleArgs(args) {
+    return util.formatWithOptions({ colors: false, depth: 6, breakLength: 120 }, ...args);
+}
+
+function installConsoleBridge(targetLogger = logger) {
+    if (!targetLogger || globalThis[CONSOLE_BRIDGE_FLAG]) return false;
+
+    const originals = {};
+    for (const method of Object.keys(CONSOLE_LEVELS)) {
+        const original = console[method];
+        originals[method] = typeof original === 'function' ? original.bind(console) : null;
+        console[method] = (...args) => {
+            const level = CONSOLE_LEVELS[method] || 'info';
+            const message = formatConsoleArgs(args);
+            targetLogger.log({ level, message, source: 'console' });
+        };
+    }
+    globalThis[CONSOLE_ORIGINALS_FLAG] = originals;
+    globalThis[CONSOLE_BRIDGE_FLAG] = true;
+    return true;
 }
 
 function serializeExtraFields(info) {
@@ -119,6 +152,7 @@ function getCacheSnapshot(bucket) {
 
 module.exports = {
     logger,
+    installConsoleBridge,
     runtimeMetrics,
     incrementMetric,
     recordDuration,

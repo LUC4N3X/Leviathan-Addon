@@ -1,5 +1,3 @@
-require('dotenv').config();
-
 const TRACKERS = Object.freeze([
     'udp://tracker.opentrackr.org:1337/announce',
     'udp://open.demonoid.ch:6969/announce',

@@ -5,13 +5,26 @@ const os = require('os');
 const express = require('express');
 const path = require('path');
 const runtimeState = require('./core/runtime_state');
+const { logger, installConsoleBridge } = require('./core/utils/runtime');
+
+installConsoleBridge(logger);
+
+function getAutoWorkerCap(cpuCount) {
+    const raw = String(process.env.CLUSTER_WORKERS_AUTO_MAX || '').trim().toLowerCase();
+    if (!raw || raw === 'cpu' || raw === 'cpus' || raw === 'max') return Math.max(1, cpuCount || 1);
+    if (raw === 'none' || raw === 'off' || raw === 'unlimited') return Math.max(1, cpuCount || 1);
+    const parsed = parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return Math.max(1, cpuCount || 1);
+    return Math.max(1, Math.min(parsed, cpuCount || parsed));
+}
 
 function getClusterWorkerCount() {
     const raw = String(process.env.CLUSTER_WORKERS || '').trim().toLowerCase();
+    const cpuCount = Math.max(1, os.cpus().length || 1);
     if (!raw) return 1;
-    if (raw === 'auto') return Math.max(1, Math.min(os.cpus().length || 1, 4));
+    if (raw === 'auto') return getAutoWorkerCap(cpuCount);
     const parsed = parseInt(raw, 10);
-    return Number.isFinite(parsed) && parsed > 1 ? Math.min(parsed, os.cpus().length || parsed) : 1;
+    return Number.isFinite(parsed) && parsed > 1 ? Math.min(parsed, cpuCount) : 1;
 }
 
 function shouldUseCluster() {
@@ -31,6 +44,7 @@ if (cluster.isPrimary && shouldUseCluster()) {
     const workerCount = getClusterWorkerCount();
     const restartPolicy = getClusterRestartPolicy();
     const slotState = new Map();
+    const MAX_CLUSTER_RESTART_HISTORY = Math.max(4, parseInt(process.env.CLUSTER_RESTART_HISTORY_CAP || '16', 10) || 16);
     let shuttingDown = false;
     let primaryForceTimer = null;
 
@@ -48,7 +62,7 @@ if (cluster.isPrimary && shouldUseCluster()) {
     function computeBackoffMs(slot) {
         const stats = getSlotStats(slot);
         const now = Date.now();
-        stats.restarts = stats.restarts.filter((ts) => (now - ts) <= restartPolicy.windowMs);
+        stats.restarts = stats.restarts.filter((ts) => (now - ts) <= restartPolicy.windowMs).slice(-MAX_CLUSTER_RESTART_HISTORY);
         if (stats.restarts.length >= restartPolicy.maxRestarts) return restartPolicy.maxBackoffMs;
         const exponent = Math.max(0, stats.restarts.length - 1);
         return Math.min(restartPolicy.maxBackoffMs, restartPolicy.baseBackoffMs * (2 ** exponent));
@@ -87,12 +101,14 @@ if (cluster.isPrimary && shouldUseCluster()) {
         const slot = Number.isInteger(worker.__leviSlot) ? worker.__leviSlot : 0;
         const stats = getSlotStats(slot);
         stats.restarts.push(Date.now());
+        if (stats.restarts.length > MAX_CLUSTER_RESTART_HISTORY) stats.restarts = stats.restarts.slice(-MAX_CLUSTER_RESTART_HISTORY);
         stats.currentWorkerId = null;
         console.warn(`[CLUSTER] Worker ${worker.process.pid} terminato (slot=${slot} code=${code} signal=${signal || 'n/a'})`);
 
         if (shuttingDown) {
             if (Object.keys(cluster.workers || {}).length === 0) {
                 if (primaryForceTimer) clearTimeout(primaryForceTimer);
+                slotState.clear();
                 process.exit(0);
             }
             return;
@@ -114,6 +130,7 @@ if (cluster.isPrimary && shouldUseCluster()) {
             for (const worker of Object.values(cluster.workers || {})) {
                 try { worker.process.kill('SIGKILL'); } catch (_) {}
             }
+            slotState.clear();
             process.exit(1);
         }, Math.max(5000, parseInt(process.env.SHUTDOWN_FORCE_MS || '15000', 10) || 15000));
         primaryForceTimer.unref();
@@ -121,6 +138,7 @@ if (cluster.isPrimary && shouldUseCluster()) {
         const workers = Object.values(cluster.workers || {});
         if (workers.length === 0) {
             clearTimeout(primaryForceTimer);
+            slotState.clear();
             process.exit(0);
         }
         for (const worker of workers) {
@@ -137,7 +155,6 @@ const dbHelper = require('./core/storage/db_repository');
 const { getManifest } = require('./manifest');
 const { handleVixSynthetic } = require('./providers/streamingcommunity/vix_proxy');
 const {
-    logger,
     Cache,
     LIMITERS,
     CONFIG,

@@ -309,7 +309,7 @@ const TIMED_CACHE_MAX_ENTRIES = Math.max(200, Math.min(10000, parseInt(process.e
 const TIMED_CACHE_SWEEP_INTERVAL_MS = Math.max(1000, Math.min(60 * 1000, parseInt(process.env.TIMED_CACHE_SWEEP_INTERVAL_MS || '5000', 10) || 5000));
 const BACKGROUND_DB_SAVE_QUEUE_MAX = Math.max(10, Math.min(1000, parseInt(process.env.BACKGROUND_DB_SAVE_QUEUE_MAX || '120', 10) || 120));
 const PACK_RESOLUTION_QUEUE_MAX = Math.max(10, Math.min(1000, parseInt(process.env.PACK_RESOLUTION_QUEUE_MAX || '80', 10) || 80));
-const timedCacheSweepState = new WeakMap();
+const timedCacheSweepState = new Map();
 
 function getTimedCacheState(map) {
     let state = timedCacheSweepState.get(map);
@@ -329,7 +329,11 @@ function trimTimedCacheSize(map, maxEntries = TIMED_CACHE_MAX_ENTRIES) {
 }
 
 function cleanupTimedCache(map, maxEntries = TIMED_CACHE_MAX_ENTRIES, options = {}) {
-    if (!(map instanceof Map) || map.size === 0) return;
+    if (!(map instanceof Map)) return;
+    if (map.size === 0) {
+        timedCacheSweepState.delete(map);
+        return;
+    }
     const now = Date.now();
     const state = getTimedCacheState(map);
     const overCapacity = map.size > maxEntries;
@@ -356,7 +360,7 @@ function getTimedCacheValue(map, key) {
 }
 
 function setTimedCacheValue(map, key, value, ttlMs, maxEntries = TIMED_CACHE_MAX_ENTRIES) {
-    if (!key || ttlMs <= 0) return value;
+    if (!(map instanceof Map) || !key || ttlMs <= 0) return value;
     cleanupTimedCache(map, maxEntries);
     map.set(key, { value, expiresAt: Date.now() + ttlMs });
     trimTimedCacheSize(map, maxEntries);

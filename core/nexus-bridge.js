@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const pLimitModule = require("p-limit");
 const pLimit = typeof pLimitModule === "function" ? pLimitModule : pLimitModule.default;
 const { LEGACY_BROWSER_PROFILES } = require('./browser_profiles');
+const { logger } = require('./utils/runtime');
 
 const DEBUG_MODE = process.env.DEBUG_MODE === "true";
 
@@ -68,9 +69,62 @@ const FETCH_CACHE_TTL = Number(process.env.EXTERNAL_ADDONS_CACHE_TTL || 30000);
 const NEGATIVE_CACHE_TTL = Number(process.env.EXTERNAL_ADDONS_NEGATIVE_CACHE_TTL || 12000);
 const MAX_TRACKERS_IN_MAGNET = Number(process.env.EXTERNAL_ADDONS_MAX_TRACKERS || 10);
 const MAX_CONCURRENCY = Number(process.env.EXTERNAL_ADDONS_MAX_CONCURRENCY || 3);
+const FETCH_CACHE_MAX_ENTRIES = Math.max(100, Number(process.env.EXTERNAL_ADDONS_CACHE_MAX_ENTRIES || 600) || 600);
+const FETCH_CACHE_SWEEP_INTERVAL_MS = Math.max(1000, Number(process.env.EXTERNAL_ADDONS_CACHE_SWEEP_INTERVAL_MS || 15000) || 15000);
 
 const fetchLimiter = pLimit(MAX_CONCURRENCY);
-const fetchCache = new Map();
+class TimedLruCache {
+    constructor({ maxEntries, sweepIntervalMs }) {
+        this.maxEntries = Math.max(50, maxEntries || 600);
+        this.sweepIntervalMs = Math.max(1000, sweepIntervalMs || 15000);
+        this.store = new Map();
+        this.nextSweepAt = 0;
+    }
+
+    get(key) {
+        const entry = this.store.get(key);
+        if (!entry) return null;
+        if (entry.expiresAt <= now()) {
+            this.store.delete(key);
+            return null;
+        }
+        this.store.delete(key);
+        this.store.set(key, entry);
+        return entry.value;
+    }
+
+    set(key, value, ttlMs) {
+        if (!ttlMs || ttlMs <= 0) return value;
+        this.sweep();
+        this.store.delete(key);
+        this.store.set(key, { value, expiresAt: now() + ttlMs });
+        this.trim();
+        return value;
+    }
+
+    sweep(force = false) {
+        const ts = now();
+        if (!force && this.store.size <= this.maxEntries && ts < this.nextSweepAt) return;
+        this.nextSweepAt = ts + this.sweepIntervalMs;
+        for (const [key, value] of this.store.entries()) {
+            if (!value || value.expiresAt <= ts) this.store.delete(key);
+        }
+        this.trim();
+    }
+
+    trim() {
+        while (this.store.size > this.maxEntries) {
+            const firstKey = this.store.keys().next().value;
+            if (firstKey === undefined) break;
+            this.store.delete(firstKey);
+        }
+    }
+}
+
+const fetchCache = new TimedLruCache({
+    maxEntries: FETCH_CACHE_MAX_ENTRIES,
+    sweepIntervalMs: FETCH_CACHE_SWEEP_INTERVAL_MS
+});
 const inflightFetches = new Map();
 const addonHealth = new Map();
 
@@ -157,32 +211,14 @@ function computeJitter(addonKey) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function now() { return Date.now(); }
-function debugLog(...args) { if (DEBUG_MODE) console.log(...args); }
+function debugLog(...args) { if (DEBUG_MODE) logger.debug(require('util').format(...args)); }
 
-function getCache(map, key) {
-    const hit = map.get(key);
-    if (!hit) return null;
-    if (hit.expiresAt <= now()) { map.delete(key); return null; }
-    return hit.value;
+function getCache(cache, key) {
+    return cache?.get?.(key) ?? null;
 }
 
-function setCache(map, key, value, ttl) {
-    if (!ttl || ttl <= 0) return value;
-    map.set(key, { value, expiresAt: now() + ttl });
-    if (map.size > 600) pruneCache(map);
-    return value;
-}
-
-function pruneCache(map) {
-    const ts = now();
-    for (const [key, value] of map.entries()) {
-        if (!value || value.expiresAt <= ts) map.delete(key);
-    }
-    while (map.size > 450) {
-        const firstKey = map.keys().next().value;
-        if (firstKey === undefined) break;
-        map.delete(firstKey);
-    }
+function setCache(cache, key, value, ttl) {
+    return cache?.set?.(key, value, ttl) ?? value;
 }
 
 function normalizeText(value) {

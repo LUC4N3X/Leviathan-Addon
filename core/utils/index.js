@@ -1,5 +1,3 @@
-require('dotenv').config();
-
 require("./http");
 const runtimeState = require("../runtime_state");
 

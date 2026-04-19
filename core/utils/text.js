@@ -1,4 +1,3 @@
-require('dotenv').config();
 const ptt = require('parse-torrent-title');
 
 const parsedTitleCache = new Map();

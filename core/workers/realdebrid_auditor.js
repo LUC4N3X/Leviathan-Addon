@@ -1,5 +1,3 @@
-require('dotenv').config();
-
 const axios = require('axios');
 const { buildMagnet } = require('../storage/tracker_registry');
 

@@ -1,5 +1,3 @@
-require('dotenv').config();
-
 const zlib = require('zlib');
 const { promisify } = require('util');
 const NodeCache = require('node-cache');

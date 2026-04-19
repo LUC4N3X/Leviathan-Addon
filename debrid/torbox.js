@@ -2,7 +2,7 @@ const axios = require("axios");
 const https = require("https");
 
 const TB_BASE = "https://api.torbox.app/v1/api";
-const TB_TIMEOUT = 60000;
+const TB_TIMEOUT = Math.max(5000, Math.min(45000, parseInt(process.env.TB_TIMEOUT_MS || '25000', 10) || 25000));
 const LIST_CACHE_TTL = 30000;
 const MAX_RETRIES = 4;
 const MAX_INFO_POLLS = 4;

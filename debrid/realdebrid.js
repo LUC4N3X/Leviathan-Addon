@@ -1,7 +1,7 @@
 const axios = require("axios");
 
 const RD_API_BASE = "https://api.real-debrid.com/rest/1.0";
-const RD_TIMEOUT = 120000;
+const RD_TIMEOUT = Math.max(5000, Math.min(45000, parseInt(process.env.RD_TIMEOUT_MS || '30000', 10) || 30000));
 const RD_MAX_RETRIES = 4;
 const RD_READY_POLL_ATTEMPTS = 8;
 const RD_READY_POLL_DELAY = 900;

@@ -1,5 +1,3 @@
-require('dotenv').config();
-
 const { logger } = require('./runtime');
 const {
     ADMIN_PASS,

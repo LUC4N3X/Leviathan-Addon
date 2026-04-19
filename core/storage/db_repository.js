@@ -16,6 +16,10 @@ const subscribedChannels = new Set();
 const DB_POOL_MAX = normalizers.clampInt(process.env.DB_POOL_MAX, 40, 5, 120);
 const DB_POOL_IDLE_TIMEOUT_MS = normalizers.clampInt(process.env.DB_POOL_IDLE_TIMEOUT_MS, 30000, 5000, 120000);
 const DB_POOL_CONNECT_TIMEOUT_MS = normalizers.clampInt(process.env.DB_POOL_CONNECT_TIMEOUT_MS, 5000, 1000, 30000);
+const DB_STATEMENT_TIMEOUT_MS = normalizers.clampInt(process.env.DB_STATEMENT_TIMEOUT_MS, 15000, 1000, 120000);
+const DB_QUERY_TIMEOUT_MS = normalizers.clampInt(process.env.DB_QUERY_TIMEOUT_MS, 20000, 1000, 120000);
+const DB_LOCK_TIMEOUT_MS = normalizers.clampInt(process.env.DB_LOCK_TIMEOUT_MS, 5000, 250, 60000);
+const DB_IDLE_TX_TIMEOUT_MS = normalizers.clampInt(process.env.DB_IDLE_TX_TIMEOUT_MS, 15000, 1000, 120000);
 const DB_NOTIFICATION_RECONNECT_DELAY_MS = normalizers.clampInt(process.env.DB_NOTIFICATION_RECONNECT_DELAY_MS, 2000, 250, 30000);
 
 function buildPoolConfig(config = {}) {

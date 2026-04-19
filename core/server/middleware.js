@@ -5,6 +5,7 @@ const cors = require('cors');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
+const { promisify } = require('util');
 const zlib = require('zlib');
 const { requestContextMiddleware } = require('../request_context');
 const { incrementMetric, recordDuration } = require('../utils/runtime');
@@ -15,6 +16,8 @@ const GENERAL_COMPRESSION_LEVEL = Math.max(1, Math.min(9, parseInt(process.env.H
 const GENERAL_COMPRESSION_THRESHOLD = Math.max(0, parseInt(process.env.HTTP_COMPRESSION_THRESHOLD || '1024', 10) || 1024);
 const BROTLI_QUALITY = Math.max(1, Math.min(11, parseInt(process.env.HTTP_BROTLI_QUALITY || '4', 10) || 4));
 const SMART_COMPRESSION_MIN_RATIO = Math.max(0.7, Math.min(0.99, Number(process.env.SMART_COMPRESSION_MIN_RATIO || '0.98') || 0.98));
+const brotliCompressAsync = promisify(zlib.brotliCompress);
+const gzipAsync = promisify(zlib.gzip);
 
 function appendVary(existing, value) {
     const current = String(existing || '').trim();
@@ -41,7 +44,7 @@ function chooseContentEncoding(req) {
     return null;
 }
 
-function maybeSendCompressed(req, res, originalSend, body, fallbackContentType = null) {
+async function maybeSendCompressed(req, res, originalSend, body, fallbackContentType = null) {
     if (res.headersSent) return false;
     if (req.headers['x-no-compression']) return false;
     if (req.headers.range) return false;
@@ -62,11 +65,11 @@ function maybeSendCompressed(req, res, originalSend, body, fallbackContentType =
     let compressed = null;
     try {
         if (encoding === 'br') {
-            compressed = zlib.brotliCompressSync(rawBuffer, {
+            compressed = await brotliCompressAsync(rawBuffer, {
                 params: { [zlib.constants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY }
             });
         } else if (encoding === 'gzip') {
-            compressed = zlib.gzipSync(rawBuffer, { level: GENERAL_COMPRESSION_LEVEL });
+            compressed = await gzipAsync(rawBuffer, { level: GENERAL_COMPRESSION_LEVEL });
         }
     } catch (_) {
         return false;
@@ -98,7 +101,7 @@ function smartResponseCompressionMiddleware(req, res, next) {
     const originalSend = res.send.bind(res);
     const originalJson = res.json.bind(res);
 
-    res.json = function smartJson(payload) {
+    res.json = async function smartJson(payload) {
         if (res.headersSent) return originalJson(payload);
         let serialized = null;
         try {
@@ -110,14 +113,14 @@ function smartResponseCompressionMiddleware(req, res, next) {
         if (!res.getHeader('Content-Type')) {
             res.setHeader('Content-Type', 'application/json; charset=utf-8');
         }
-        if (maybeSendCompressed(req, res, originalSend, serialized, 'application/json; charset=utf-8')) return res;
+        if (await maybeSendCompressed(req, res, originalSend, serialized, 'application/json; charset=utf-8')) return res;
         return originalSend(serialized);
     };
 
-    res.send = function smartSend(body) {
+    res.send = async function smartSend(body) {
         if (res.headersSent) return originalSend(body);
         if (Buffer.isBuffer(body) || typeof body === 'string') {
-            if (maybeSendCompressed(req, res, originalSend, body)) return res;
+            if (await maybeSendCompressed(req, res, originalSend, body)) return res;
         }
         return originalSend(body);
     };
