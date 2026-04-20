@@ -1,4 +1,5 @@
 'use strict';
+const cheerio = require('cheerio');
 const {
     USER_AGENT,
     FETCH_TIMEOUT,
@@ -8,12 +9,9 @@ const {
     toAbsoluteUrl,
     fetchWithTimeout,
     fetchResource,
-    resolveLookupRequest,
-    fetchMappingPayload,
-    extractTmdbIdFromMappingPayload,
-    buildAnimeProviderContext,
     mapLimit
-} = require('../anime/provider_utils');
+} = require('../anime/shared');
+const kitsuProvider = require('./kitsu_provider');
 
 const AW_DOMAIN = 'https://www.animeworld.ac';
 const BLOCKED_DOMAINS = [
@@ -23,8 +21,26 @@ const BLOCKED_DOMAINS = [
     'narutolegend.it'
 ];
 const TTL = {
-    info: 5 * 60 * 1000
+    info: 5 * 60 * 1000,
+    page: 10 * 60 * 1000,
+    search: 10 * 60 * 1000
 };
+const MONTHS = {
+    gennaio: 0,
+    febbraio: 1,
+    marzo: 2,
+    aprile: 3,
+    maggio: 4,
+    giugno: 5,
+    luglio: 6,
+    agosto: 7,
+    settembre: 8,
+    ottobre: 9,
+    novembre: 10,
+    dicembre: 11
+};
+
+let awSecurityCookie = null;
 
 function normalizeAnimeWorldPath(pathOrUrl) {
     if (!pathOrUrl) return null;
@@ -356,22 +372,266 @@ function extractCsrfTokenFromHtml(html) {
     return match?.[1] ? String(match[1]).trim() : null;
 }
 
-async function fetchAnimePageContext(animeUrl) {
-    const response = await fetchWithTimeout(animeUrl, {
-        method: 'GET',
-        headers: {
-            'user-agent': USER_AGENT,
-            'accept-language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
-        },
+function collapseWhitespace(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function extractYear(value) {
+    const match = String(value || '').match(/\b(19|20)\d{2}\b/);
+    return match ? match[0] : null;
+}
+
+function buildCookieHeader(...values) {
+    const parts = [];
+
+    for (const value of values) {
+        const tokens = String(value || '')
+            .split(';')
+            .map((item) => item.trim())
+            .filter((item) => item.includes('='));
+        for (const token of tokens) parts.push(token);
+    }
+
+    const unique = uniqueStrings(parts);
+    return unique.length > 0 ? unique.join('; ') : null;
+}
+
+function extractSecurityCookie(html, setCookieHeader = '') {
+    const bodyMatch = String(html || '').match(/SecurityAW-[A-Za-z0-9]+=[^;"'\s>]+/i);
+    if (bodyMatch?.[0]) return bodyMatch[0];
+
+    const headerMatch = String(setCookieHeader || '').match(/SecurityAW-[^=]+=[^;,\s]+/i);
+    return headerMatch?.[0] ? headerMatch[0] : null;
+}
+
+async function requestAnimeWorldResponse(url, options = {}) {
+    const timeoutMs = options.timeoutMs || FETCH_TIMEOUT;
+    const baseHeaders = {
+        'user-agent': USER_AGENT,
+        'accept-language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+        ...(options.headers || {})
+    };
+
+    const initialCookie = buildCookieHeader(baseHeaders.cookie, awSecurityCookie);
+    if (initialCookie) baseHeaders.cookie = initialCookie;
+
+    let response = await fetchWithTimeout(url, {
+        method: options.method || 'GET',
+        headers: baseHeaders,
+        body: options.body,
         redirect: 'follow'
-    }, FETCH_TIMEOUT);
+    }, timeoutMs);
 
-    if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText} for ${animeUrl}`);
+    let html = await response.text();
+    const securityCookie = extractSecurityCookie(html, response.headers.get('set-cookie') || '');
+    if ((response.status === 202 || securityCookie) && securityCookie) {
+        awSecurityCookie = securityCookie;
+        const retryCookie = buildCookieHeader(baseHeaders.cookie, awSecurityCookie);
 
-    const html = await response.text();
+        const retryHeaders = {
+            ...baseHeaders
+        };
+        if (retryCookie) retryHeaders.cookie = retryCookie;
+
+        response = await fetchWithTimeout(url, {
+            method: options.method || 'GET',
+            headers: retryHeaders,
+            body: options.body,
+            redirect: 'follow'
+        }, timeoutMs);
+        html = await response.text();
+    }
+
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText} for ${url}`);
+    }
+
+    return { response, html };
+}
+
+function parseIsoDate(value) {
+    const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!match) return null;
+
+    const year = Number.parseInt(match[1], 10);
+    const month = Number.parseInt(match[2], 10) - 1;
+    const day = Number.parseInt(match[3], 10);
+    const date = new Date(Date.UTC(year, month, day));
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseAnimeWorldDateValue(value) {
+    const cleaned = collapseWhitespace(decodeHtmlEntities(String(value || '')).replace(/^\?+\s*/, ''));
+    if (!cleaned) return null;
+
+    let match = cleaned.match(/^(\d{1,2})\s+([A-Za-zÀ-ÿ]+)\s+(\d{4})$/i);
+    if (match) {
+        const day = Number.parseInt(match[1], 10);
+        const monthIndex = MONTHS[String(match[2] || '').trim().toLowerCase()];
+        const year = Number.parseInt(match[3], 10);
+        if (Number.isInteger(day) && Number.isInteger(monthIndex) && Number.isInteger(year)) {
+            const date = new Date(Date.UTC(year, monthIndex, day));
+            if (!Number.isNaN(date.getTime())) {
+                return { date, exact: true };
+            }
+        }
+    }
+
+    match = cleaned.match(/^([A-Za-zÀ-ÿ]+)\s+(\d{4})$/i);
+    if (match) {
+        const monthIndex = MONTHS[String(match[1] || '').trim().toLowerCase()];
+        const year = Number.parseInt(match[2], 10);
+        if (Number.isInteger(monthIndex) && Number.isInteger(year)) {
+            const date = new Date(Date.UTC(year, monthIndex, 1));
+            if (!Number.isNaN(date.getTime())) {
+                return { date, exact: false };
+            }
+        }
+    }
+
+    return null;
+}
+
+function extractReleaseDateFromPage(html) {
+    const $ = cheerio.load(String(html || ''));
+    let releaseDate = null;
+
+    $('dt, label').each((_, element) => {
+        if (releaseDate) return;
+
+        const label = collapseWhitespace($(element).text());
+        if (!/data di uscita/i.test(label)) return;
+
+        const sibling = collapseWhitespace($(element).next('dd, span').first().text());
+        if (sibling) releaseDate = sibling;
+    });
+
+    if (releaseDate) return releaseDate;
+
+    const plainText = collapseWhitespace($.root().text());
+    const match = plainText.match(/Data di Uscita:\s*(.+?)(?:Data di fine|Genere|Episodi|Stato|Studio|Durata|Voto|Trama|$)/i);
+    return match?.[1] ? collapseWhitespace(match[1]) : null;
+}
+
+function matchesAnimeWorldDate(candidateDate, targetDate) {
+    if (!candidateDate?.date || !targetDate) return false;
+
+    if (candidateDate.exact) {
+        const diffMs = Math.abs(candidateDate.date.getTime() - targetDate.getTime());
+        return diffMs <= (2 * 24 * 60 * 60 * 1000);
+    }
+
+    return candidateDate.date.getUTCFullYear() === targetDate.getUTCFullYear()
+        && candidateDate.date.getUTCMonth() === targetDate.getUTCMonth();
+}
+
+function parseAnimeWorldSearchCandidates(html) {
+    const $ = cheerio.load(String(html || ''));
+    const candidates = [];
+    const seen = new Set();
+
+    $('a.poster[href], a[href*="/play/"], a[href*="/anime/"]').each((_, element) => {
+        const anchor = $(element);
+        const animePath = normalizeAnimeWorldPath(anchor.attr('href'));
+        if (!animePath) return;
+
+        const infoUrl = toAbsoluteUrl(anchor.attr('data-tip') || anchor.attr('href') || animePath, AW_DOMAIN)
+            || buildWorldUrl(animePath);
+        const title = sanitizeAnimeTitle(anchor.attr('title') || anchor.attr('data-name') || anchor.text() || '');
+        const key = `${animePath}|${infoUrl}`;
+        if (seen.has(key)) return;
+
+        seen.add(key);
+        candidates.push({ animePath, infoUrl, title });
+    });
+
+    return candidates;
+}
+
+async function searchAnimeWorldCandidates(query, searchYear = null) {
+    const encodedQuery = encodeURIComponent(String(query || '').trim());
+    if (!encodedQuery) return [];
+
+    const searchUrls = [
+        searchYear ? `${AW_DOMAIN}/filter?year=${encodeURIComponent(searchYear)}&sort=2&keyword=${encodedQuery}` : null,
+        `${AW_DOMAIN}/filter?sort=2&keyword=${encodedQuery}`,
+        `${AW_DOMAIN}/search?keyword=${encodedQuery}`
+    ].filter(Boolean);
+
+    for (const searchUrl of searchUrls) {
+        try {
+            const { html } = await requestAnimeWorldResponse(searchUrl, {
+                headers: { referer: AW_DOMAIN }
+            });
+            const candidates = parseAnimeWorldSearchCandidates(html);
+            if (candidates.length > 0) return candidates;
+        } catch (error) {
+            console.error('[AnimeWorld] search request failed:', error.message);
+        }
+    }
+
+    return [];
+}
+
+async function matchAnimeWorldCandidatesByDate(candidates, targetDate) {
+    const matched = await mapLimit(candidates, 4, async (candidate) => {
+        try {
+            const lookupUrl = candidate.infoUrl || buildWorldUrl(candidate.animePath);
+            if (!lookupUrl) return null;
+
+            const { html } = await requestAnimeWorldResponse(lookupUrl, {
+                headers: { referer: AW_DOMAIN }
+            });
+            const releaseDateValue = extractReleaseDateFromPage(html);
+            const parsedDate = parseAnimeWorldDateValue(releaseDateValue);
+            return matchesAnimeWorldDate(parsedDate, targetDate) ? candidate.animePath : null;
+        } catch (error) {
+            console.error('[AnimeWorld] release date request failed:', error.message);
+            return null;
+        }
+    });
+
+    return uniqueStrings(matched.filter(Boolean));
+}
+
+async function resolveAnimeWorldPaths(searchContext) {
+    const targetDate = parseIsoDate(searchContext?.date);
+    const searchYear = searchContext?.year || extractYear(searchContext?.date);
+    const searchQueries = uniqueStrings([
+        searchContext?.title,
+        ...(Array.isArray(searchContext?.searchTitles) ? searchContext.searchTitles : []),
+        ...(Array.isArray(searchContext?.rawTitles) ? searchContext.rawTitles.map((title) => kitsuProvider.normalizeTitle(title)) : [])
+    ]).slice(0, 5);
+
+    let fallbackPaths = [];
+
+    for (const query of searchQueries) {
+        const candidates = await searchAnimeWorldCandidates(query, searchYear);
+        if (candidates.length === 0) continue;
+
+        if (fallbackPaths.length === 0) {
+            fallbackPaths = uniqueStrings(candidates.map((candidate) => candidate.animePath).filter(Boolean));
+        }
+
+        if (targetDate) {
+            const matchedPaths = await matchAnimeWorldCandidatesByDate(candidates, targetDate);
+            if (matchedPaths.length > 0) return matchedPaths;
+        } else if (fallbackPaths.length > 0) {
+            return fallbackPaths;
+        }
+    }
+
+    return fallbackPaths;
+}
+
+async function fetchAnimePageContext(animeUrl) {
+    const { response, html } = await requestAnimeWorldResponse(animeUrl);
     return {
         html,
-        sessionCookie: extractSessionCookie(response.headers.get('set-cookie') || ''),
+        sessionCookie: buildCookieHeader(
+            extractSessionCookie(response.headers.get('set-cookie') || ''),
+            awSecurityCookie
+        ),
         csrfToken: extractCsrfTokenFromHtml(html)
     };
 }
@@ -384,7 +644,8 @@ async function fetchEpisodeInfo(episodeRef, refererUrl, pageContext = null) {
     const csrfToken = String(pageContext?.csrfToken || '').trim();
     const sessionCookie = String(pageContext?.sessionCookie || '').trim();
     if (csrfToken) extraHeaders['csrf-token'] = csrfToken;
-    if (sessionCookie) extraHeaders.cookie = sessionCookie;
+    const cookieHeader = buildCookieHeader(sessionCookie, awSecurityCookie);
+    if (cookieHeader) extraHeaders.cookie = cookieHeader;
 
     try {
         return await fetchResource(`${AW_DOMAIN}/api/episode/info?id=${encodeURIComponent(token)}`, {
@@ -476,7 +737,8 @@ ${languageLine} • ${quality}
                 const csrfToken = String(pageContext?.csrfToken || '').trim();
                 const sessionCookie = String(pageContext?.sessionCookie || '').trim();
                 if (csrfToken) extraHeaders['csrf-token'] = csrfToken;
-                if (sessionCookie) extraHeaders.cookie = sessionCookie;
+                const cookieHeader = buildCookieHeader(sessionCookie, awSecurityCookie);
+                if (cookieHeader) extraHeaders.cookie = cookieHeader;
 
                 const targetHtml = await fetchResource(targetUrl, {
                     ttlMs: TTL.info,
@@ -527,67 +789,15 @@ ${languageLine} • ${quality}
     return streams;
 }
 
-function extractAnimeWorldPaths(mappingPayload) {
-    if (!mappingPayload || typeof mappingPayload !== 'object') return [];
-    const raw = mappingPayload?.mappings?.animeworld;
-    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
-    const paths = [];
-
-    for (const item of list) {
-        const candidate = typeof item === 'string'
-            ? item
-            : item && typeof item === 'object'
-                ? item.path || item.url || item.href || item.playPath
-                : null;
-        const normalized = normalizeAnimeWorldPath(candidate);
-        if (normalized) paths.push(normalized);
-    }
-
-    return uniqueStrings(paths);
-}
-
-function resolveEpisodeFromMappingPayload(mappingPayload, fallbackEpisode) {
-    return parsePositiveInt(mappingPayload?.kitsu?.episode)
-        || parsePositiveInt(mappingPayload?.requested?.episode)
-        || normalizeRequestedEpisode(fallbackEpisode);
-}
-
 async function searchAnimeWorld(requestId, meta, config) {
     if (!config?.filters?.enableAnimeWorld) return [];
 
-    const providerContext = buildAnimeProviderContext(meta);
-    const lookup = resolveLookupRequest(requestId, meta?.season, meta?.episode, providerContext);
-    if (!lookup) return [];
-
-    let mappingPayload = await fetchMappingPayload(lookup, providerContext);
-    let animePaths = extractAnimeWorldPaths(mappingPayload);
-
-    if (animePaths.length === 0 && String(lookup.provider || '').toLowerCase() === 'imdb') {
-        const tmdbFromContext = /^\d+$/.test(String(providerContext?.tmdbId || '').trim())
-            ? String(providerContext.tmdbId).trim()
-            : null;
-        const tmdbFromPayload = extractTmdbIdFromMappingPayload(mappingPayload);
-        const fallbackTmdbId = tmdbFromContext || tmdbFromPayload;
-
-        if (fallbackTmdbId) {
-            const tmdbPayload = await fetchMappingPayload({
-                provider: 'tmdb',
-                externalId: fallbackTmdbId,
-                season: lookup.season,
-                episode: lookup.episode
-            }, providerContext);
-            const tmdbPaths = extractAnimeWorldPaths(tmdbPayload);
-            if (tmdbPaths.length > 0) {
-                mappingPayload = tmdbPayload;
-                animePaths = tmdbPaths;
-            }
-        }
-    }
-
+    const searchContext = await kitsuProvider.buildSearchContext(requestId, meta);
+    const animePaths = await resolveAnimeWorldPaths(searchContext);
     if (animePaths.length === 0) return [];
 
-    const requestedEpisode = resolveEpisodeFromMappingPayload(mappingPayload, lookup.episode);
-    const mediaType = meta?.isSeries ? 'tv' : 'movie';
+    const requestedEpisode = normalizeRequestedEpisode(searchContext?.requestedEpisode || meta?.episode);
+    const mediaType = searchContext?.isMovie ? 'movie' : 'tv';
     const perPathStreams = await mapLimit(animePaths, 3, (path) =>
         extractStreamsFromAnimePath(path, requestedEpisode, mediaType)
     );

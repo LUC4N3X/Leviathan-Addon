@@ -9,12 +9,8 @@ const {
     normalizeRequestedEpisode,
     toAbsoluteUrl,
     fetchResource,
-    resolveLookupRequest,
-    fetchMappingPayload,
-    extractTmdbIdFromMappingPayload,
-    buildAnimeProviderContext,
     mapLimit
-} = require('../anime/provider_utils');
+} = require('../anime/shared');
 const kitsuProvider = require('../animeworld/kitsu_provider');
 
 const SATURN_BASE_URL = 'https://www.animesaturn.cx';
@@ -26,7 +22,8 @@ const BLOCKED_DOMAINS = [
 ];
 const TTL = {
     page: 15 * 60 * 1000,
-    watch: 5 * 60 * 1000
+    watch: 5 * 60 * 1000,
+    search: 10 * 60 * 1000
 };
 
 function buildSaturnUrl(pathOrUrl) {
@@ -547,99 +544,257 @@ ${resolveLanguageLine(parsedPage.sourceTag)} • ${quality}
     return streams;
 }
 
-function extractAnimeSaturnPaths(mappingPayload) {
-    if (!mappingPayload || typeof mappingPayload !== 'object') return [];
-    const raw = mappingPayload?.mappings?.animesaturn;
-    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
-    const paths = [];
+function normalizeAnimeSaturnCandidatePath(pathOrUrl) {
+    const direct = normalizeAnimeSaturnPath(pathOrUrl);
+    if (direct) return direct;
 
-    for (const item of list) {
-        const candidate = typeof item === 'string'
-            ? item
-            : item && typeof item === 'object'
-                ? item.path || item.url || item.href || item.playPath
-                : null;
-        const normalized = normalizeAnimeSaturnPath(candidate);
-        if (normalized) paths.push(normalized);
+    const value = String(pathOrUrl || '').trim().replace(/^\/+/, '');
+    if (!value) return null;
+    return normalizeAnimeSaturnPath(`/anime/${value}`);
+}
+
+function normalizeForMatch(value) {
+    return String(value || '')
+        .replace(/½/g, '1/2')
+        .replace(/['’]/g, '')
+        .replace(/\b(?:ita|sub|cr|dub|streaming|episodio|episode)\b/gi, ' ')
+        .replace(/[^a-z0-9]+/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+}
+
+function extractSeasonMarker(value) {
+    const text = ` ${normalizeForMatch(value)} `;
+    const patterns = [
+        /\bseason\s+(\d+)\b/i,
+        /\bstagione\s+(\d+)\b/i,
+        /\bs(\d+)\b/i,
+        /\bpart\s+(\d+)\b/i,
+        /\b(\d+)(?:nd|rd|th)\s+season\b/i
+    ];
+
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match?.[1]) {
+            const parsed = Number.parseInt(match[1], 10);
+            if (Number.isInteger(parsed) && parsed > 0) return parsed;
+        }
     }
 
-    return uniqueStrings(paths);
+    if (/\bii\b/i.test(text)) return 2;
+    if (/\biii\b/i.test(text)) return 3;
+    if (/\biv\b/i.test(text)) return 4;
+    if (/\bv\b/i.test(text)) return 5;
+
+    const tailMatch = text.match(/\b([2-9])\b\s*$/);
+    if (!tailMatch?.[1]) return null;
+
+    const parsed = Number.parseInt(tailMatch[1], 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function resolveAnimeSaturnLookup(requestId, meta, providerContext) {
-    const lookup = resolveLookupRequest(requestId, meta?.season, meta?.episode, providerContext);
-    if (lookup) return lookup;
-
-    const fallbackRawId = String(requestId || meta?.id || meta?.kitsu_id || '').trim();
-    const parsed = kitsuProvider.parseKitsuId(fallbackRawId);
-    if (!parsed?.kitsuId) return null;
-
-    return {
-        provider: 'kitsu',
-        externalId: String(parsed.kitsuId),
-        season: Number.isInteger(parsed.seasonNumber) ? parsed.seasonNumber : null,
-        episode: Number.isInteger(parsed.episodeNumber) && parsed.episodeNumber > 0
-            ? parsed.episodeNumber
-            : normalizeRequestedEpisode(meta?.episode)
-    };
+function removeSeasonMarkers(value) {
+    return ` ${normalizeForMatch(value)} `
+        .replace(/\bseason\s+\d+\b/gi, ' ')
+        .replace(/\bstagione\s+\d+\b/gi, ' ')
+        .replace(/\b\d+(?:nd|rd|th)\s+season\b/gi, ' ')
+        .replace(/\bs\d+\b/gi, ' ')
+        .replace(/\bpart\s+\d+\b/gi, ' ')
+        .replace(/\b(?:ii|iii|iv|v)\b/gi, ' ')
+        .replace(/\b[2-9]\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
-function resolveEpisodeFromMappingPayload(mappingPayload, fallbackEpisode) {
-    const fromKitsu = parsePositiveInt(mappingPayload?.kitsu?.episode);
-    if (fromKitsu) return fromKitsu;
+function hasMovieMarker(value) {
+    return /\b(?:movie|film|the movie|gekijouban)\b/i.test(normalizeForMatch(value));
+}
 
-    const fromRequested = parsePositiveInt(mappingPayload?.requested?.episode);
-    if (fromRequested) return fromRequested;
+function removeMovieMarkers(value) {
+    return ` ${normalizeForMatch(value)} `
+        .replace(/\b(?:movie|film|the movie|gekijouban)\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
 
-    const fromTmdbRaw = parsePositiveInt(
-        mappingPayload?.mappings?.tmdb_episode?.rawEpisodeNumber
-        || mappingPayload?.mappings?.tmdb_episode?.raw_episode_number
-        || mappingPayload?.mappings?.tmdbEpisode?.rawEpisodeNumber
-        || mappingPayload?.tmdb_episode?.rawEpisodeNumber
-        || mappingPayload?.tmdbEpisode?.rawEpisodeNumber
-    );
-    if (fromTmdbRaw) return fromTmdbRaw;
+function candidateLanguage(value) {
+    return /\b(?:ita|doppiato|cr)\b/i.test(String(value || '')) ? 'ita' : 'jp';
+}
 
-    return normalizeRequestedEpisode(fallbackEpisode);
+function animeSaturnScore(queryTitle, candidateTitle, isMovie) {
+    const queryRoot = removeMovieMarkers(removeSeasonMarkers(queryTitle));
+    const candidateRoot = removeMovieMarkers(removeSeasonMarkers(candidateTitle));
+    const querySeason = extractSeasonMarker(queryTitle);
+    const candidateSeason = extractSeasonMarker(candidateTitle);
+    const candidateIsMovie = hasMovieMarker(candidateTitle);
+
+    let score = 0;
+    if (queryRoot && candidateRoot) {
+        if (queryRoot === candidateRoot) {
+            score += 6;
+        } else if (candidateRoot.includes(queryRoot) || queryRoot.includes(candidateRoot)) {
+            score += 3.5;
+        }
+
+        const queryTokens = new Set(queryRoot.split(' ').filter((token) => token.length >= 3));
+        const candidateTokens = new Set(candidateRoot.split(' ').filter((token) => token.length >= 3));
+        const overlap = [...queryTokens].filter((token) => candidateTokens.has(token)).length;
+        score += overlap * 0.6;
+    }
+
+    if (querySeason === null && candidateSeason !== null) score -= 3.5;
+    if (querySeason !== null && candidateSeason === null) score -= 2;
+    if (querySeason !== null && candidateSeason !== null) {
+        score += querySeason === candidateSeason ? 3 : -5;
+    }
+
+    if (isMovie && candidateIsMovie) score += 2;
+    if (isMovie && !candidateIsMovie) score -= 1.5;
+    if (!isMovie && candidateIsMovie) score -= 5.5;
+
+    if (candidateLanguage(candidateTitle) === 'ita') score += 0.1;
+    return score;
+}
+
+function clusterKey(name) {
+    return [
+        removeMovieMarkers(removeSeasonMarkers(name)),
+        extractSeasonMarker(name) || 0,
+        hasMovieMarker(name) ? 'movie' : 'series'
+    ].join('|');
+}
+
+function rankAnimeSaturnCandidates(query, candidates, isMovie) {
+    const scored = candidates
+        .map((candidate) => ({
+            candidate,
+            score: animeSaturnScore(query, candidate?.name || '', isMovie)
+        }))
+        .sort((left, right) => right.score - left.score);
+
+    const bestCluster = scored[0]?.candidate?.name ? clusterKey(scored[0].candidate.name) : null;
+    const selected = [];
+    let itaChoice = null;
+    let jpChoice = null;
+
+    for (const entry of scored) {
+        if (entry.score < 1.25) continue;
+
+        const name = entry?.candidate?.name || '';
+        if (bestCluster && clusterKey(name) !== bestCluster) continue;
+
+        const querySeason = extractSeasonMarker(query);
+        const candidateSeason = extractSeasonMarker(name);
+        if (querySeason === null && candidateSeason !== null) continue;
+        if (querySeason !== null && candidateSeason !== null && querySeason !== candidateSeason) continue;
+        if (querySeason !== null && candidateSeason === null) continue;
+        if (!isMovie && hasMovieMarker(name)) continue;
+
+        if (candidateLanguage(name) === 'ita' && !itaChoice) {
+            itaChoice = entry.candidate;
+            continue;
+        }
+
+        if (candidateLanguage(name) === 'jp' && !jpChoice) {
+            jpChoice = entry.candidate;
+            continue;
+        }
+
+        selected.push(entry.candidate);
+    }
+
+    const output = [];
+    if (jpChoice) output.push(jpChoice);
+    if (itaChoice && itaChoice !== jpChoice) output.push(itaChoice);
+
+    for (const candidate of selected) {
+        if (output.find((entry) => entry.link === candidate.link)) continue;
+        output.push(candidate);
+        if (output.length >= 3) break;
+    }
+
+    if (output.length > 0) return output;
+    return scored.slice(0, 3).map((entry) => entry.candidate);
+}
+
+async function searchAnimeSaturnCandidates(query) {
+    const encodedQuery = encodeURIComponent(String(query || '').trim()).replace(/%20/g, '+');
+    if (!encodedQuery) return [];
+
+    try {
+        const payload = await fetchResource(`${SATURN_BASE_URL}/index.php?search=1&key=${encodedQuery}&page=1`, {
+            as: 'json',
+            ttlMs: TTL.search,
+            cacheKey: `animesaturn-search:${encodedQuery}`,
+            timeoutMs: FETCH_TIMEOUT,
+            headers: {
+                referer: `${SATURN_BASE_URL}/animelist`,
+                accept: 'application/json, text/javascript, */*; q=0.01',
+                'x-requested-with': 'XMLHttpRequest'
+            }
+        });
+
+        if (!Array.isArray(payload)) return [];
+
+        return payload
+            .filter((item) => item && typeof item === 'object')
+            .map((item) => ({
+                name: String(item.name || '').trim(),
+                link: String(item.link || '').trim()
+            }))
+            .filter((item) => item.name && item.link);
+    } catch (error) {
+        console.error('[AnimeSaturn] search request failed:', error.message);
+        return [];
+    }
+}
+
+async function resolveAnimeSaturnPaths(searchContext) {
+    const searchQueries = uniqueStrings([
+        searchContext?.title,
+        ...(Array.isArray(searchContext?.searchTitles) ? searchContext.searchTitles : []),
+        ...(Array.isArray(searchContext?.rawTitles) ? searchContext.rawTitles.map((title) => kitsuProvider.normalizeTitle(title)) : [])
+    ]).slice(0, 5);
+
+    let fallbackPaths = [];
+    const isMovie = Boolean(searchContext?.isMovie);
+
+    for (const query of searchQueries) {
+        const candidates = await searchAnimeSaturnCandidates(query);
+        if (candidates.length === 0) continue;
+
+        const ranked = rankAnimeSaturnCandidates(query, candidates, isMovie);
+        const resolvedPaths = uniqueStrings(
+            ranked
+                .map((candidate) => normalizeAnimeSaturnCandidatePath(candidate?.link))
+                .filter(Boolean)
+        );
+
+        if (resolvedPaths.length > 0) return resolvedPaths;
+
+        if (fallbackPaths.length === 0) {
+            fallbackPaths = uniqueStrings(
+                candidates
+                    .map((candidate) => normalizeAnimeSaturnCandidatePath(candidate?.link))
+                    .filter(Boolean)
+            );
+        }
+    }
+
+    return fallbackPaths;
 }
 
 async function searchAnimeSaturn(requestId, meta, config) {
     if (!config?.filters?.enableAnimeSaturn) return [];
 
-    const providerContext = buildAnimeProviderContext(meta);
-    const lookup = resolveAnimeSaturnLookup(requestId, meta, providerContext);
-    if (!lookup) return [];
-
-    let mappingPayload = await fetchMappingPayload(lookup, providerContext);
-    let animePaths = extractAnimeSaturnPaths(mappingPayload);
-
-    if (animePaths.length === 0) {
-        const tmdbFromContext = /^\d+$/.test(String(providerContext?.tmdbId || '').trim())
-            ? String(providerContext.tmdbId).trim()
-            : null;
-        const tmdbFromPayload = extractTmdbIdFromMappingPayload(mappingPayload);
-        const fallbackTmdbId = tmdbFromContext || tmdbFromPayload;
-
-        if (fallbackTmdbId) {
-            const tmdbPayload = await fetchMappingPayload({
-                provider: 'tmdb',
-                externalId: fallbackTmdbId,
-                season: lookup.season,
-                episode: lookup.episode
-            }, providerContext);
-            const tmdbPaths = extractAnimeSaturnPaths(tmdbPayload);
-            if (tmdbPaths.length > 0) {
-                mappingPayload = tmdbPayload;
-                animePaths = tmdbPaths;
-            }
-        }
-    }
-
+    const searchContext = await kitsuProvider.buildSearchContext(requestId, meta);
+    const animePaths = await resolveAnimeSaturnPaths(searchContext);
     if (animePaths.length === 0) return [];
 
-    const requestedEpisode = resolveEpisodeFromMappingPayload(mappingPayload, lookup.episode);
-    const originalRequestedEpisode = normalizeRequestedEpisode(lookup.episode);
-    const mediaType = meta?.isSeries ? 'tv' : 'movie';
+    const requestedEpisode = normalizeRequestedEpisode(searchContext?.requestedEpisode || meta?.episode);
+    const originalRequestedEpisode = normalizeRequestedEpisode(searchContext?.requestedEpisode || meta?.episode);
+    const mediaType = searchContext?.isMovie ? 'movie' : 'tv';
 
     const perPathStreams = await mapLimit(animePaths, 3, (path) =>
         extractStreamsFromAnimePath(path, requestedEpisode, mediaType, originalRequestedEpisode)
