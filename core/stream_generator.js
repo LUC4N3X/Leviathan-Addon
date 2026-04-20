@@ -24,7 +24,7 @@ const sourceHealth = require("./lib/source_health");
 const { createSearchPlan, evaluatePoolSatisfaction } = require("./lib/search_planner");
 const { shouldSkipRecentWork } = require('./recent_work');
 const { buildSharedStreamCachePolicy, buildSharedReadContext, shouldUseSharedStreamEntry } = require('./lib/shared_stream_policy');
-const { getSourceModeFlags } = require('./source_mode');
+const { getSourceModeFlags, shouldUseTorrentPipeline } = require('./source_mode');
 const { runFilterStage, runSortStage } = require('./lib/result_stage_pipeline');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
@@ -1860,7 +1860,12 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
     } catch (err) { logger.warn('External Addons fallito/timeout', { error: err.message }); return []; }
 }
 
-async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, config, dbOnlyMode, sourceModeFlags = null, langMode, aggressiveFilter, userTmdbKey, seedResults = [] }) {
+async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, config, dbOnlyMode, sourceModeFlags = null, torrentPipelineEnabled = true, langMode, aggressiveFilter, userTmdbKey, seedResults = [] }) {
+    if (torrentPipelineEnabled !== true) {
+        logger.info(`[TORRENT PIPELINE] Skipped title search for ${meta?.title || finalId} (web-only mode)`);
+        return [];
+    }
+
     const flags = sourceModeFlags || getSourceModeFlags(config?.filters || {});
     const disableLiveSources = flags.useLiveSources !== true;
     const titleKey = buildTitleSearchPipelineKey(meta, type, langMode, disableLiveSources, {
@@ -2006,11 +2011,17 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const sourceModeFlags = getSourceModeFlags(filters);
   const isWebEnabled = Boolean(filters && (isStreamingCommunityEnabled(filters) || filters.enableGhd || filters.enableGs || filters.enableAnimeWorld || filters.enableAnimeSaturn || filters.enableGf));
   const isP2PEnabled = filters.enableP2P === true;
+  const torrentPipelineEnabled = shouldUseTorrentPipeline({
+      filters,
+      hasDebridKey,
+      isP2PEnabled
+  });
 
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const configHash = crypto.createHash('md5').update(userConfStr || 'no-conf').digest('hex');
-  const cacheKey = `${type}:${id}:${configHash}`;
+  const cacheScope = torrentPipelineEnabled ? 'torrent' : 'webonly';
+  const cacheKey = `${type}:${id}:${configHash}:${cacheScope}`;
   const inflightKey = `stream:${cacheKey}`;
 
   if (!sourceModeFlags.liveOnlyMode) {
@@ -2080,7 +2091,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
       logger.info(`[SPEED] Start search for: ${meta.title} | sourceMode=${sourceModeFlags.sourceMode}`);
 
-      const localDbResults = sourceModeFlags.useLocalDb ? await fetchLocalDbResults(meta) : [];
+      const localDbResults = (sourceModeFlags.useLocalDb && torrentPipelineEnabled) ? await fetchLocalDbResults(meta) : [];
       if (localDbResults.length > 0) logger.info(`[DB READ] Trovati ${localDbResults.length} torrent dal DB locale.`);
 
       const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
@@ -2089,42 +2100,51 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       const allowItalianWebProviders = langMode !== 'eng';
       const aggressiveFilter = createAggressiveResultFilter(meta, type, langMode);
 
-      const networkResults = await fetchTitleCandidatePool({
-          type,
-          finalId,
-          tmdbIdLookup,
-          meta,
-          config,
-          dbOnlyMode,
-          sourceModeFlags,
-          langMode,
-          aggressiveFilter,
-          userTmdbKey,
-          seedResults: localDbResults
-      });
+      const networkResults = torrentPipelineEnabled
+          ? await fetchTitleCandidatePool({
+              type,
+              finalId,
+              tmdbIdLookup,
+              meta,
+              config,
+              dbOnlyMode,
+              sourceModeFlags,
+              torrentPipelineEnabled,
+              langMode,
+              aggressiveFilter,
+              userTmdbKey,
+              seedResults: localDbResults
+          })
+          : [];
 
-      let cleanResults = await normalizeCandidateResults([...localDbResults, ...networkResults].filter(aggressiveFilter));
-      cleanResults = runFilterStage(cleanResults, meta, filters, {
-          applyPackKnowledge,
-          applyConfiguredTorrentFilters
-      });
-      logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
+      let cleanResults = [];
+      let rankedList = [];
+      if (torrentPipelineEnabled) {
+          cleanResults = await normalizeCandidateResults([...localDbResults, ...networkResults].filter(aggressiveFilter));
+          cleanResults = runFilterStage(cleanResults, meta, filters, {
+              applyPackKnowledge,
+              applyConfiguredTorrentFilters
+          });
+          logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
 
-      if (!sourceModeFlags.dbOnlyMode && !sourceModeFlags.cacheOnlyMode) saveResultsToDbBackground(meta, cleanResults, config);
+          if (!sourceModeFlags.dbOnlyMode && !sourceModeFlags.cacheOnlyMode) saveResultsToDbBackground(meta, cleanResults, config);
 
-      let rankedList = runSortStage(cleanResults, meta, config, {
-          rankAndFilterResults,
-          rerankCompositeResults,
-          applyPremiumRankingPolicy,
-          filterByQualityLimit
-      });
+          rankedList = runSortStage(cleanResults, meta, config, {
+              rankAndFilterResults,
+              rerankCompositeResults,
+              applyPremiumRankingPolicy,
+              filterByQualityLimit
+          });
 
-      rankedList = await reprioritizeRdRankedList(rankedList, meta, config, hasDebridKey);
-      rankedList = applyPremiumRankingPolicy(rankedList, meta, config);
-      if (filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, filters.maxPerQuality);
+          rankedList = await reprioritizeRdRankedList(rankedList, meta, config, hasDebridKey);
+          rankedList = applyPremiumRankingPolicy(rankedList, meta, config);
+          if (filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, filters.maxPerQuality);
 
-      if (configuredDebridService === 'tb' && hasDebridKey) {
-          rankedList = await resolveTorboxRankedList(rankedList, debridApiKey);
+          if (configuredDebridService === 'tb' && hasDebridKey) {
+              rankedList = await resolveTorboxRankedList(rankedList, debridApiKey);
+          }
+      } else {
+          logger.info(`[TORRENT PIPELINE] Disabled for ${meta.title} (solo provider web attivi, nessuna key debrid e P2P off)`);
       }
 
       const finalRanked = rankedList.slice(0, CONFIG.MAX_RESULTS);
