@@ -1,16 +1,34 @@
-const fs = require('fs').promises;
 const path = require('path');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const https = require('https');
-const { buildMediaflowUrl, buildWebStream, extractSizeText } = require('../extractors/common');
-const { extractFromUrl, resolveExtractorDefinition } = require('../extractors/registry');
+const {
+    buildMediaflowUrl,
+    buildWebStream,
+    extractSizeText,
+    normalizeQuality,
+    pickBetterQuality,
+    probePlaylistQuality,
+    qualityRank
+} = require('../extractors/common');
+const {
+    extractFromUrl,
+    HOSTER_DIRECT_LINK_PATTERN,
+    resolveExtractorDefinition
+} = require('../extractors/registry');
+const {
+    CircuitBreaker,
+    PersistentJsonCache,
+    resilientCall
+} = require('../extractors/resilience');
 
 const CONFIG = {
     CACHE: {
         FILE: path.join(__dirname, '..', 'config', 'guardahd_cache.json'),
         TTL: 43200000,
-        STALE_TTL: 86400000
+        STALE_TTL: 86400000,
+        MAX_ENTRIES: 512,
+        SAVE_DEBOUNCE_MS: 1200
     },
     TMDB_API_KEY: "5bae8d11f2a7bc7a95c6d040a31d2163",
     SCRAPER: {
@@ -45,32 +63,46 @@ const httpClient = axios.create({
     validateStatus: (status) => status >= 200 && status < 400
 });
 
-httpClient.interceptors.response.use(undefined, async (err) => {
-    const config = err.config;
-    if (!config || !config.retry) return Promise.reject(err);
-
-    config.retryCount = config.retryCount || 0;
-    if (config.retryCount >= config.retry) return Promise.reject(err);
-
-    config.retryCount += 1;
-    await new Promise(r => setTimeout(r, Math.pow(2, config.retryCount) * 500));
-
-    config.headers['User-Agent'] = getRandomUserAgent();
-    return httpClient(config);
+const RETRYABLE_STATUSES = new Set([403, 408, 425, 429, 500, 502, 503, 504]);
+const requestBreaker = new CircuitBreaker({
+    failureThreshold: 4,
+    recoveryTimeoutMs: 20000,
+    halfOpenMaxCalls: 1
 });
 
-const fetchSmart = (url, options = {}) => httpClient({
-    url,
-    method: 'GET',
-    retry: CONFIG.SCRAPER.RETRIES,
-    headers: {
-        'User-Agent': getRandomUserAgent(),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Referer': CONFIG.SCRAPER.BASE_URL,
-        ...options.headers
-    },
-    ...options
-});
+function getRequestDomain(url) {
+    try {
+        return new URL(url).hostname.toLowerCase();
+    } catch (_) {
+        return 'guardahd';
+    }
+}
+
+async function fetchSmart(url, options = {}) {
+    const requestConfig = {
+        url,
+        method: 'GET',
+        headers: {
+            'User-Agent': getRandomUserAgent(),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Referer': CONFIG.SCRAPER.BASE_URL,
+            ...options.headers
+        },
+        ...options
+    };
+
+    return requestBreaker.run(getRequestDomain(url), async () => resilientCall(
+        async () => httpClient(requestConfig),
+        {
+            attempts: Math.max(1, CONFIG.SCRAPER.RETRIES + 1),
+            shouldRetry: ({ error, status }) => (
+                status != null
+                    ? RETRYABLE_STATUSES.has(Number(status))
+                    : Boolean(error)
+            )
+        }
+    ));
+}
 
 const REGEX = {
     Q_4K: /4k|2160p|uhd/i,
@@ -93,7 +125,15 @@ class AsyncSemaphore {
 }
 const embedSemaphore = new AsyncSemaphore(CONFIG.SCRAPER.MAX_CONCURRENT_EMBEDS);
 
-const normalizeUrl = (url) => url?.startsWith('//') ? `https:${url}` : (url || '');
+const normalizeUrl = (url) => {
+    const normalized = String(url || '')
+        .trim()
+        .replace(/&amp;/g, '&')
+        .replace(/\\u002F/gi, '/')
+        .replace(/\\u0026/gi, '&')
+        .replace(/\\\//g, '/');
+    return normalized.startsWith('//') ? `https:${normalized}` : normalized;
+};
 const parseQuality = (text) => {
     if (!text) return "Unknown";
     if (REGEX.Q_4K.test(text)) return "4K";
@@ -109,61 +149,30 @@ const generateRichDescription = (title, quality = 'Unknown', size = 'N/A', hoste
     return `🎬 ${title}${hosterTag}\n${sizeTag}📺 ${quality} • 🇮🇹 ITA\n⚡ GuardaHD`;
 };
 
-class CacheManager {
-    #file; #cache; #loaded; #isWriting;
+const cacheManager = new PersistentJsonCache({
+    file: CONFIG.CACHE.FILE,
+    ttlMs: CONFIG.CACHE.TTL,
+    staleTtlMs: CONFIG.CACHE.STALE_TTL - CONFIG.CACHE.TTL,
+    maxEntries: CONFIG.CACHE.MAX_ENTRIES,
+    saveDebounceMs: CONFIG.CACHE.SAVE_DEBOUNCE_MS
+});
 
-    constructor() {
-        this.#file = CONFIG.CACHE.FILE;
-        this.#cache = new Map();
-        this.#loaded = false;
-        this.#isWriting = false;
-    }
+const directLinkRegex = new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig');
 
-    async init() {
-        if (this.#loaded) return;
-        try {
-            const data = await fs.readFile(this.#file, 'utf8');
-            const raw = JSON.parse(data);
-            for (const [key, value] of Object.entries(raw)) this.#cache.set(key, value);
-        } catch {}
-        this.#loaded = true;
-    }
+async function resolveStreamQuality(streamUrl, headers, fallback = 'Unknown') {
+    const baseQuality = normalizeQuality(fallback);
+    if (!/\.m3u8($|\?)/i.test(String(streamUrl || ''))) return baseQuality;
 
-    async #save() {
-        if (this.#isWriting) return;
-        this.#isWriting = true;
-        try {
-            await fs.mkdir(path.dirname(this.#file), { recursive: true });
-            const now = Date.now();
-            for (const [key, val] of this.#cache.entries()) {
-                if (now - val.timestamp > CONFIG.CACHE.STALE_TTL) this.#cache.delete(key);
-            }
-            await fs.writeFile(this.#file, JSON.stringify(Object.fromEntries(this.#cache)), 'utf8');
-        } catch {}
-        finally { this.#isWriting = false; }
-    }
-
-    async get(key) {
-        await this.init();
-        const entry = this.#cache.get(key);
-        if (!entry) return { data: null, isStale: false };
-
-        const age = Date.now() - entry.timestamp;
-        if (age < CONFIG.CACHE.TTL) return { data: entry, isStale: false };
-        if (age < CONFIG.CACHE.STALE_TTL) return { data: entry, isStale: true };
-
-        this.#cache.delete(key);
-        this.#save();
-        return { data: null, isStale: false };
-    }
-
-    async set(key, embeds, title) {
-        await this.init();
-        this.#cache.set(key, { timestamp: Date.now(), embeds, title });
-        this.#save();
+    try {
+        const probed = await probePlaylistQuality(httpClient, streamUrl, {
+            headers: headers || {},
+            timeout: 6000
+        });
+        return pickBetterQuality(probed || 'Unknown', baseQuality);
+    } catch (_) {
+        return baseQuality;
     }
 }
-const cacheManager = new CacheManager();
 
 
 async function fetchTmdbMovieByImdb(imdbId) {
@@ -265,7 +274,7 @@ class GuardaHDScraper {
             $('iframe[src]').each((_, el) => registerLink($(el).attr('src')));
             $('a[href], source[src]').each((_, el) => registerLink($(el).attr('href') || $(el).attr('src')));
 
-            const directMatches = String(res.data || '').match(/https?:\/\/(?:www\.)?(?:mixdrop|m1xdrop|mxcontent|loadm)[^"'<\s]+/ig) || [];
+            const directMatches = String(res.data || '').match(directLinkRegex) || [];
             directMatches.forEach(registerLink);
 
             return Array.from(embedDict.values());
@@ -315,7 +324,7 @@ class GuardaHDScraper {
                             bingeWatching: true
                         },
                         extra: {
-                            qualityRank: quality
+                            _priority: definition.priority ?? 3
                         }
                     })
                 ];
@@ -329,7 +338,12 @@ class GuardaHDScraper {
             });
             if (!extracted?.url) return [];
 
-            const quality = parseQuality(extracted.quality || url);
+            const playbackHeaders = extracted.headers || null;
+            const quality = await resolveStreamQuality(
+                extracted.url,
+                playbackHeaders,
+                parseQuality(`${extracted.quality || ''} ${url}`)
+            );
             return [
                 buildWebStream({
                     name: `🦁 GHD\n⚡ ${extracted.name}`,
@@ -344,7 +358,7 @@ class GuardaHDScraper {
                         bingeWatching: true
                     },
                     extra: {
-                        qualityRank: quality
+                        _priority: extracted.priority ?? 9
                     }
                 })
             ];
@@ -367,14 +381,14 @@ class GuardaHDScraper {
 
         const { data: cached, isStale } = await cacheManager.get(cacheKey);
 
-        if (cached) {
+            if (cached) {
             embedUrls = Array.isArray(cached.embeds) ? cached.embeds : [];
             officialTitle = cached.title || officialTitle;
 
             if (isStale) {
                 Promise.all([this.#scrapeEmbedUrls(identity.imdbId), this.#getTmdbTitle(identity)])
                     .then(([urls, title]) => {
-                        if (urls.length > 0) cacheManager.set(cacheKey, urls, title);
+                        if (urls.length > 0) cacheManager.set(cacheKey, { embeds: urls, title });
                     })
                     .catch(() => {});
             }
@@ -383,7 +397,7 @@ class GuardaHDScraper {
                 this.#scrapeEmbedUrls(identity.imdbId),
                 this.#getTmdbTitle(identity)
             ]);
-            if (embedUrls.length > 0) await cacheManager.set(cacheKey, embedUrls, officialTitle);
+            if (embedUrls.length > 0) await cacheManager.set(cacheKey, { embeds: embedUrls, title: officialTitle });
         }
 
         if (embedUrls.length === 0) return [];
@@ -392,10 +406,13 @@ class GuardaHDScraper {
             .filter((res) => res.status === 'fulfilled')
             .flatMap((res) => res.value);
 
-        const rank = { '4K': 0, '1080p': 1, '720p': 2, '480p': 3, 'Unknown': 4 };
         return Array.from(new Map(rawStreams.map((stream) => [stream.url, stream])).values())
-            .sort((a, b) => (rank[a.qualityRank] ?? 4) - (rank[b.qualityRank] ?? 4))
-            .map(({ qualityRank, ...stream }) => stream);
+            .sort((a, b) => {
+                const qualityDelta = qualityRank(b.quality) - qualityRank(a.quality);
+                if (qualityDelta !== 0) return qualityDelta;
+                return (a._priority ?? 9) - (b._priority ?? 9);
+            })
+            .map(({ _priority, ...stream }) => stream);
     }
 }
 

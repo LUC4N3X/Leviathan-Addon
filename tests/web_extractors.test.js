@@ -7,6 +7,7 @@ const {
     buildWebStream,
     dedupeStreamsByUrl,
     detectStreamQuality,
+    extractPlaylistQuality,
     normalizeRemoteUrl
 } = require('../providers/extractors/common');
 const { resolveExtractorDefinition } = require('../providers/extractors/registry');
@@ -27,7 +28,23 @@ test('detectStreamQuality recognizes common web qualities', () => {
 test('resolveExtractorDefinition recognizes supported hosters', () => {
     assert.equal(resolveExtractorDefinition('https://loadm.xyz/e/123').key, 'loadm');
     assert.equal(resolveExtractorDefinition('https://mixdrop.co/e/abc').key, 'mixdrop');
+    assert.equal(resolveExtractorDefinition('https://supervideo.tv/e/xyz').key, 'supervideo');
+    assert.equal(resolveExtractorDefinition('https://vixcloud.co/embed/xyz').key, 'vixcloud');
+    assert.equal(resolveExtractorDefinition('https://streamtape.com/e/xyz').key, 'streamtape');
+    assert.equal(resolveExtractorDefinition('https://vidoza.net/embed-xyz').key, 'vidoza');
     assert.equal(resolveExtractorDefinition('https://example.com/player'), null);
+});
+
+test('extractPlaylistQuality infers the highest advertised rendition', () => {
+    const playlist = [
+        '#EXTM3U',
+        '#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=1280x720',
+        '720p/index.m3u8',
+        '#EXT-X-STREAM-INF:BANDWIDTH=1800000,RESOLUTION=1920x1080',
+        '1080p/index.m3u8'
+    ].join('\n');
+
+    assert.equal(extractPlaylistQuality(playlist), '1080p');
 });
 
 test('buildWebStream stamps consistent provider metadata', () => {

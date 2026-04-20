@@ -1,8 +1,18 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const { GUARDA_SERIE_BROWSER_PROFILES, pickRandomProfile } = require('../../core/browser_profiles');
-const { buildWebStream } = require('../extractors/common');
-const { extractFromUrl } = require('../extractors/registry');
+const {
+    buildWebStream,
+    normalizeQuality,
+    pickBetterQuality,
+    probePlaylistQuality,
+    qualityRank
+} = require('../extractors/common');
+const {
+    extractFromUrl,
+    HOSTER_DIRECT_LINK_PATTERN,
+    HOSTER_ESCAPED_DIRECT_LINK_PATTERN
+} = require('../extractors/registry');
 
 const GS_DOMAIN = 'https://guardoserie.team';
 const TMDB_KEY = '5bae8d11f2a7bc7a95c6d040a31d2163';
@@ -54,6 +64,21 @@ function slugify(value) {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '');
+}
+
+async function resolveExtractedQuality(client, extracted) {
+    let quality = normalizeQuality(extracted?.quality || 'Unknown');
+    if (!/\.m3u8($|\?)/i.test(String(extracted?.url || ''))) return quality;
+
+    try {
+        const probed = await probePlaylistQuality(client, extracted.url, {
+            headers: extracted?.headers || {},
+            timeout: 5000
+        });
+        quality = pickBetterQuality(probed || 'Unknown', quality);
+    } catch (_) {}
+
+    return quality;
 }
 
 function normalizeTitleScore(candidate, title, originalTitle) {
@@ -275,8 +300,8 @@ function extractPlayerLinksFromHtml(html) {
     }
 
     const directRegexes = [
-        /https?:\/\/(?:www\.)?(?:loadm|mixdrop|m1xdrop|mxcontent)[^"'<\s]+/ig,
-        /https?:\\\/\\\/(?:www\\.)?(?:loadm|mixdrop|m1xdrop|mxcontent)[^"'<\s]+/ig
+        new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig'),
+        new RegExp(HOSTER_ESCAPED_DIRECT_LINK_PATTERN, 'ig')
     ];
 
     for (const regex of directRegexes) {
@@ -299,6 +324,7 @@ async function processHoster(videoLink, client, cleanTitle) {
         requestReferer: getTargetDomain()
     });
     if (!extracted?.url) return null;
+    const quality = await resolveExtractedQuality(client, extracted);
 
     return buildWebStream({
         name: `🍿 GuardoSerie | ${extracted.name}`,
@@ -308,7 +334,7 @@ async function processHoster(videoLink, client, cleanTitle) {
         extractor: extracted.name,
         provider: 'GuardoSerie',
         providerCode: 'GS',
-        quality: extracted.quality || 'Unknown',
+        quality,
         headers: extracted.headers,
         extra: {
             _priority: extracted.priority ?? 9
@@ -395,7 +421,11 @@ async function searchGuardaserie(meta, config) {
     const results = processed
         .filter((entry) => entry.status === 'fulfilled' && entry.value)
         .map((entry) => entry.value)
-        .sort((a, b) => (a._priority || 9) - (b._priority || 9));
+        .sort((a, b) => {
+            const qualityDelta = qualityRank(b.quality) - qualityRank(a.quality);
+            if (qualityDelta !== 0) return qualityDelta;
+            return (a._priority || 9) - (b._priority || 9);
+        });
 
     const streams = [];
     const seen = new Set();

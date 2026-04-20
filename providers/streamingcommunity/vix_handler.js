@@ -1,6 +1,12 @@
 const axios = require('axios');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const mediaIdentity = require('../../core/media_identity_resolver');
+const {
+    CircuitBreaker,
+    SingleFlight,
+    TTLCache,
+    resilientCall
+} = require('../extractors/resilience');
 
 const VIX_BASE = 'https://vixsrc.to';
 const CINEMETA_BASE = 'https://v3-cinemeta.strem.io/meta';
@@ -25,10 +31,15 @@ const http = axios.create({
     proxy: false
 });
 
-const payloadCache = new Map();
-const directPageCache = new Map();
-const playlistCache = new Map();
-const inflight = new Map();
+const payloadCache = new TTLCache({ maxSize: 128, ttlMs: PAYLOAD_CACHE_TTL_MS, cloneValues: true });
+const directPageCache = new TTLCache({ maxSize: 64, ttlMs: DIRECT_PAGE_CACHE_TTL_MS, cloneValues: true });
+const playlistCache = new TTLCache({ maxSize: 96, ttlMs: PLAYLIST_CACHE_TTL_MS, cloneValues: true });
+const inflight = new SingleFlight();
+const requestBreaker = new CircuitBreaker({
+    failureThreshold: 4,
+    recoveryTimeoutMs: 20000,
+    halfOpenMaxCalls: 1
+});
 
 const IFRAME_SRC_RE = /<iframe\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/i;
 const SCRIPT_RE = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
@@ -68,33 +79,18 @@ function now() {
     return Date.now();
 }
 
-function cacheGet(map, key) {
-    const entry = map.get(key);
-    if (!entry) return null;
-    if (entry.expiresAt <= now()) {
-        map.delete(key);
-        return null;
-    }
-    return entry.value;
+function cacheGet(cache, key) {
+    return cache.get(key);
 }
 
-function cacheSet(map, key, value, ttlMs) {
+function cacheSet(cache, key, value, ttlMs) {
     if (!key) return value;
-    map.set(key, { value, expiresAt: now() + ttlMs });
+    cache.set(key, value, { ttlMs });
     return value;
 }
 
 async function singleFlight(key, worker) {
-    if (inflight.has(key)) return inflight.get(key);
-    const p = (async () => {
-        try {
-            return await worker();
-        } finally {
-            inflight.delete(key);
-        }
-    })();
-    inflight.set(key, p);
-    return p;
+    return inflight.do(key, worker);
 }
 
 function normalizeAddonBase(reqHost) {
@@ -177,22 +173,29 @@ function buildHeaders(referer = null, kind = 'html') {
 }
 
 async function getWithRetries(url, { headers = {}, timeout = REQUEST_TIMEOUT, responseType } = {}) {
-    let lastResponse = null;
-
-    for (let attempt = 1; attempt <= MAX_FETCH_RETRIES; attempt += 1) {
+    const domain = (() => {
         try {
-            const response = await http.get(url, { headers, timeout, responseType });
-            lastResponse = response;
-            const status = Number(response?.status || 0);
-            if (status === 200) return response;
-            if (!RETRYABLE_STATUSES.has(status)) return response;
-        } catch (error) {
-            if (attempt >= MAX_FETCH_RETRIES) return null;
+            return new URL(url).hostname.toLowerCase();
+        } catch (_) {
+            return 'vixsrc';
         }
-        await new Promise((resolve) => setTimeout(resolve, Math.min(350 * (2 ** (attempt - 1)), 1500)));
-    }
+    })();
 
-    return lastResponse;
+    try {
+        return await requestBreaker.run(domain, async () => resilientCall(
+            async () => http.get(url, { headers, timeout, responseType }),
+            {
+                attempts: MAX_FETCH_RETRIES,
+                shouldRetry: ({ error, status }) => (
+                    status != null
+                        ? RETRYABLE_STATUSES.has(Number(status))
+                        : Boolean(error)
+                )
+            }
+        ));
+    } catch (_) {
+        return null;
+    }
 }
 
 async function fetchText(url, referer = null, kind = 'html') {

@@ -2,7 +2,13 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const https = require('https');
 const { URL } = require('url');
-const { buildWebStream } = require('../extractors/common');
+const {
+    buildWebStream,
+    normalizeQuality,
+    pickBetterQuality,
+    probePlaylistQuality,
+    qualityRank
+} = require('../extractors/common');
 const { extractFromUrl } = require('../extractors/registry');
 
 const CONFIG = {
@@ -59,6 +65,21 @@ const REGEX = {
 const normalizeText = (text) => (text || '').replace(REGEX.NON_ALNUM, '').toLowerCase().trim();
 const cleanTitle = (text) => (text || '').replace(REGEX.CLEAN_TITLE, '').trim();
 const slugify = (text) => (text || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9\-]+/g, '').replace(/\-+/g, '-').replace(/^-|-$/g, '');
+
+async function resolveExtractedQuality(client, extracted) {
+    let quality = normalizeQuality(extracted?.quality || 'Unknown');
+    if (!/\.m3u8($|\?)/i.test(String(extracted?.url || ''))) return quality;
+
+    try {
+        const probed = await probePlaylistQuality(client, extracted.url, {
+            headers: extracted?.headers || {},
+            timeout: 5000
+        });
+        quality = pickBetterQuality(probed || 'Unknown', quality);
+    } catch (_) {}
+
+    return quality;
+}
 
 
 function resolveTmdbMovieId(meta) {
@@ -190,10 +211,11 @@ class GuardaFlixScraper {
         }
     }
 
-    buildStreamFromExtractor(extracted, mediaTitle, isSub) {
+    buildStreamFromExtractor(extracted, mediaTitle, isSub, resolvedQuality = null) {
         const langTag = isSub ? "[SUB]" : "[ITA]";
         const finalTitle = `${cleanTitle(mediaTitle) || 'Stream'} ${langTag}`;
         const originalHeaders = extracted?.headers || null;
+        const quality = normalizeQuality(resolvedQuality || extracted?.quality || 'Unknown');
         let streamName = '🍿 GuardaFlix';
         let streamUrl = extracted.url;
         let modeLabel = 'Direct';
@@ -217,8 +239,11 @@ class GuardaFlixScraper {
             extractor: extracted.name,
             provider: 'GuardaFlix',
             providerCode: 'GF',
-            quality: extracted.quality || 'Unknown',
-            headers
+            quality,
+            headers,
+            extra: {
+                _priority: extracted.priority ?? 9
+            }
         });
     }
 
@@ -239,7 +264,8 @@ class GuardaFlixScraper {
 
             if (extracted?.url) {
                 logDebug(`Extractor condiviso risolto: ${extracted.name}`);
-                return [this.buildStreamFromExtractor(extracted, mediaTitle, isSub)];
+                const quality = await resolveExtractedQuality(httpClient, extracted);
+                return [this.buildStreamFromExtractor(extracted, mediaTitle, isSub, quality)];
             }
 
             logDebug(`Scansione contenuto iframe: ${absoluteSrc}`);
@@ -311,7 +337,13 @@ class GuardaFlixScraper {
                 }
             });
 
-            const deduplicated = Array.from(new Map(streams.map(s => [s.url, s])).values());
+            const deduplicated = Array.from(new Map(streams.map(s => [s.url, s])).values())
+                .sort((a, b) => {
+                    const qualityDelta = qualityRank(b.quality) - qualityRank(a.quality);
+                    if (qualityDelta !== 0) return qualityDelta;
+                    return (a._priority || 9) - (b._priority || 9);
+                })
+                .map(({ _priority, ...stream }) => stream);
             logDebug(`Stream finali dopo deduplicazione: ${deduplicated.length}`);
             return deduplicated;
 

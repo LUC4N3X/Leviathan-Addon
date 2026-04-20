@@ -2,10 +2,29 @@
 
 const QUALITY_PATTERNS = [
     { value: '4K', regex: /\b(?:4k|2160p|uhd)\b/i },
+    { value: '1440p', regex: /\b(?:1440p|2k|qhd)\b/i },
     { value: '1080p', regex: /\b(?:1080p|fullhd|fhd)\b/i },
     { value: '720p', regex: /\b(?:720p|hd)\b/i },
-    { value: '480p', regex: /\b(?:480p|sd)\b/i }
+    { value: '576p', regex: /\b576p\b/i },
+    { value: '480p', regex: /\b(?:480p|sd)\b/i },
+    { value: '360p', regex: /\b360p\b/i },
+    { value: '240p', regex: /\b240p\b/i }
 ];
+
+const PLAYLIST_RESOLUTION_RE = /RESOLUTION=\d+x(\d+)/ig;
+const PLAYLIST_NAME_HEIGHT_RE = /NAME\s*=\s*"?(?:.*?)(\d{3,4})p/ig;
+
+const QUALITY_RANK = {
+    Unknown: 0,
+    '240p': 240,
+    '360p': 360,
+    '480p': 480,
+    '576p': 576,
+    '720p': 720,
+    '1080p': 1080,
+    '1440p': 1440,
+    '4K': 2160
+};
 
 function normalizeRemoteUrl(rawUrl, baseUrl = null) {
     let value = String(rawUrl || '').trim().replace(/&amp;/g, '&').replace(/\\\//g, '/');
@@ -42,6 +61,83 @@ function extractSizeText(value) {
     const match = String(value || '').match(/([\d.,]+\s?(?:KB|MB|GB|TB))/i);
     if (!match?.[1]) return 'N/A';
     return match[1].replace(/\s+/g, ' ').toUpperCase();
+}
+
+function normalizeQuality(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw || ['all', 'auto', 'unknown', 'unknow'].includes(raw)) return 'Unknown';
+    if (['4k', '2160p', '2160', 'uhd'].includes(raw)) return '4K';
+    if (['1440p', '1440', '2k', 'qhd'].includes(raw)) return '1440p';
+    if (['1080p', '1080', 'fhd', 'fullhd'].includes(raw)) return '1080p';
+    if (['720p', '720', 'hd'].includes(raw)) return '720p';
+    if (['576p', '576'].includes(raw)) return '576p';
+    if (['480p', '480', 'sd'].includes(raw)) return '480p';
+    if (['360p', '360'].includes(raw)) return '360p';
+    if (['240p', '240'].includes(raw)) return '240p';
+
+    const detected = detectStreamQuality(raw, 'Unknown');
+    return detected === 'Unknown' ? String(value || 'Unknown') : detected;
+}
+
+function qualityRank(value) {
+    return QUALITY_RANK[normalizeQuality(value)] || 0;
+}
+
+function pickBetterQuality(first, second) {
+    const normalizedFirst = normalizeQuality(first);
+    const normalizedSecond = normalizeQuality(second);
+    return qualityRank(normalizedFirst) >= qualityRank(normalizedSecond)
+        ? normalizedFirst
+        : normalizedSecond;
+}
+
+function extractPlaylistQuality(value) {
+    const text = String(value || '');
+    const heights = [];
+
+    for (const match of text.matchAll(PLAYLIST_RESOLUTION_RE)) {
+        heights.push(Number(match[1]));
+    }
+
+    if (heights.length === 0) {
+        for (const match of text.matchAll(PLAYLIST_NAME_HEIGHT_RE)) {
+            heights.push(Number(match[1]));
+        }
+    }
+
+    if (heights.length === 0) return detectStreamQuality(text, 'Unknown');
+
+    const top = Math.max(...heights.filter(Number.isFinite));
+    if (top >= 2160) return '4K';
+    if (top >= 1440) return '1440p';
+    if (top >= 1080) return '1080p';
+    if (top >= 720) return '720p';
+    if (top >= 576) return '576p';
+    if (top >= 480) return '480p';
+    if (top >= 360) return '360p';
+    if (top >= 240) return '240p';
+    return 'Unknown';
+}
+
+async function probePlaylistQuality(client, targetUrl, { headers = {}, timeout = 5000 } = {}) {
+    if (!client || typeof client.get !== 'function') return null;
+    if (!/\.m3u8($|\?)/i.test(String(targetUrl || ''))) return null;
+
+    try {
+        const response = await client.get(targetUrl, {
+            headers,
+            timeout,
+            responseType: 'text'
+        });
+        const body = typeof response?.data === 'string'
+            ? response.data
+            : Buffer.isBuffer(response?.data)
+                ? response.data.toString('utf8')
+                : String(response?.data || '');
+        return extractPlaylistQuality(body);
+    } catch (_) {
+        return null;
+    }
 }
 
 function cleanHostLabel(rawUrl) {
@@ -150,8 +246,13 @@ module.exports = {
     getOrigin,
     detectStreamQuality,
     extractSizeText,
+    extractPlaylistQuality,
     cleanHostLabel,
     buildWebStream,
     buildMediaflowUrl,
-    dedupeStreamsByUrl
+    dedupeStreamsByUrl,
+    normalizeQuality,
+    pickBetterQuality,
+    probePlaylistQuality,
+    qualityRank
 };

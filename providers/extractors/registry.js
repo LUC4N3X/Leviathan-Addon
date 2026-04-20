@@ -1,21 +1,92 @@
 'use strict';
 
-const { extractLoadm, isLoadmUrl, extractMixdrop, isMixdropUrl } = require('./hosters');
+const {
+    extractDropload,
+    extractLoadm,
+    extractMixdrop,
+    extractStreamtape,
+    extractSupervideo,
+    extractUpstream,
+    extractUqload,
+    extractVidoza,
+    extractVixcloud,
+    isDroploadUrl,
+    isLoadmUrl,
+    isMixdropUrl,
+    isStreamtapeUrl,
+    isSupervideoUrl,
+    isUpstreamUrl,
+    isUqloadUrl,
+    isVidozaUrl,
+    isVixcloudUrl
+} = require('./hosters');
+
+const HOSTER_DIRECT_LINK_PATTERN = String.raw`https?:\/\/(?:www\.)?(?:supervideo|vixcloud|dropload|dr0pstream|mixdrop|m1xdrop|mxcontent|loadm(?:\.cam)?|upstream|uqload|streamtape|vidoza)[^"'<\s]+`;
+const HOSTER_ESCAPED_DIRECT_LINK_PATTERN = String.raw`https?:\\\/\\\/(?:www\\.)?(?:supervideo|vixcloud|dropload|dr0pstream|mixdrop|m1xdrop|mxcontent|loadm(?:\\.cam)?|upstream|uqload|streamtape|vidoza)[^"'<\s]+`;
 
 const HOSTER_DEFINITIONS = [
+    {
+        key: 'supervideo',
+        label: 'SuperVideo',
+        matches: isSupervideoUrl,
+        extract: extractSupervideo,
+        priority: 0
+    },
+    {
+        key: 'vixcloud',
+        label: 'VixCloud',
+        matches: isVixcloudUrl,
+        extract: extractVixcloud,
+        priority: 1
+    },
+    {
+        key: 'dropload',
+        label: 'DropLoad',
+        matches: isDroploadUrl,
+        extract: extractDropload,
+        priority: 2
+    },
     {
         key: 'loadm',
         label: 'LoadM',
         matches: isLoadmUrl,
         extract: extractLoadm,
-        priority: 0
+        priority: 4
     },
     {
         key: 'mixdrop',
         label: 'MixDrop',
         matches: isMixdropUrl,
         extract: extractMixdrop,
-        priority: 1
+        priority: 3
+    },
+    {
+        key: 'upstream',
+        label: 'Upstream',
+        matches: isUpstreamUrl,
+        extract: extractUpstream,
+        priority: 5
+    },
+    {
+        key: 'uqload',
+        label: 'Uqload',
+        matches: isUqloadUrl,
+        extract: extractUqload,
+        priority: 6
+    },
+    {
+        key: 'streamtape',
+        label: 'StreamTape',
+        matches: isStreamtapeUrl,
+        extract: extractStreamtape,
+        priority: 7
+    },
+    {
+        key: 'vidoza',
+        label: 'Vidoza',
+        matches: isVidozaUrl,
+        extract: extractVidoza,
+        priority: 8
     }
 ];
 
@@ -41,6 +112,8 @@ async function extractFromUrl(url, options = {}) {
 
 module.exports = {
     HOSTER_DEFINITIONS,
+    HOSTER_DIRECT_LINK_PATTERN,
+    HOSTER_ESCAPED_DIRECT_LINK_PATTERN,
     resolveExtractorDefinition,
     extractFromUrl
 };
