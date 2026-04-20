@@ -1,5 +1,7 @@
 'use strict';
 
+const { shouldUseTorrentPipeline } = require('../source_mode');
+
 function createPipelineOrchestration(deps = {}) {
   const {
     crypto,
@@ -58,13 +60,19 @@ function createPipelineOrchestration(deps = {}) {
       || filters.enableGf
     );
     const isP2PEnabled = filters.enableP2P === true;
+    const torrentPipelineEnabled = shouldUseTorrentPipeline({
+      filters,
+      hasDebridKey,
+      isP2PEnabled
+    });
 
     if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) {
       return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
     }
 
     const configHash = crypto.createHash('md5').update(userConfStr || 'no-conf').digest('hex');
-    const cacheKey = `${type}:${id}:${configHash}`;
+    const cacheScope = torrentPipelineEnabled ? 'torrent' : 'webonly';
+    const cacheKey = `${type}:${id}:${configHash}:${cacheScope}`;
     const inflightKey = `stream:${cacheKey}`;
 
     const localCachedResult = await Cache.getCachedStream(cacheKey, { allowShared: false });
@@ -111,7 +119,7 @@ function createPipelineOrchestration(deps = {}) {
       }
 
       logger.info(`[SPEED] Start search for: ${meta.title}`);
-      const localDbResults = await fetchLocalDbResults(meta);
+      const localDbResults = torrentPipelineEnabled ? await fetchLocalDbResults(meta) : [];
       if (localDbResults.length > 0) logger.info(`[DB READ] Trovati ${localDbResults.length} torrent dal DB locale.`);
 
       const tmdbLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await deps.imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
@@ -120,27 +128,36 @@ function createPipelineOrchestration(deps = {}) {
       const allowItalianWebProviders = langMode !== 'eng';
       const aggressiveFilter = createAggressiveResultFilter(meta, type, langMode);
 
-      const networkResults = await fetchTitleCandidatePool({
-        type,
-        finalId,
-        tmdbIdLookup: tmdbLookup,
-        meta,
-        config,
-        dbOnlyMode,
-        langMode,
-        aggressiveFilter,
-        userTmdbKey,
-        seedResults: localDbResults
-      });
+      const networkResults = torrentPipelineEnabled
+        ? await fetchTitleCandidatePool({
+            type,
+            finalId,
+            tmdbIdLookup: tmdbLookup,
+            meta,
+            config,
+            dbOnlyMode,
+            langMode,
+            aggressiveFilter,
+            userTmdbKey,
+            seedResults: localDbResults,
+            torrentPipelineEnabled
+          })
+        : [];
 
-      let cleanResults = await normalizeCandidateResults([...localDbResults, ...networkResults].filter(aggressiveFilter));
-      cleanResults = applyPackKnowledge(cleanResults, meta);
-      cleanResults = applyConfiguredTorrentFilters(cleanResults, filters);
-      logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
+      let cleanResults = [];
+      let rankedList = [];
+      if (torrentPipelineEnabled) {
+        cleanResults = await normalizeCandidateResults([...localDbResults, ...networkResults].filter(aggressiveFilter));
+        cleanResults = applyPackKnowledge(cleanResults, meta);
+        cleanResults = applyConfiguredTorrentFilters(cleanResults, filters);
+        logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
 
-      if (!dbOnlyMode) await deps.persistResults(meta, cleanResults, config);
+        if (!dbOnlyMode) await deps.persistResults(meta, cleanResults, config);
 
-      let rankedList = await rankResults(cleanResults, meta, config, hasDebridKey, configuredDebridService, debridApiKey);
+        rankedList = await rankResults(cleanResults, meta, config, hasDebridKey, configuredDebridService, debridApiKey);
+      } else {
+        logger.info(`[TORRENT PIPELINE] Disabled for ${meta.title} (solo provider web attivi, nessuna key debrid e P2P off)`);
+      }
       const finalRanked = rankedList.slice(0, CONFIG.MAX_RESULTS);
       let debridStreams = [];
       let p2pStreams = [];
