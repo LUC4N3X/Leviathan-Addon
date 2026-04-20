@@ -2868,10 +2868,23 @@
             const sizeVal = parseInt(document.getElementById('maxSizeSlider').value);
             const lang = document.getElementById('langMode').value;
             const isP2P = currentService === 'p2p';
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const webOnlyService = (
+                !isP2P
+                && !apiKey
+                && (
+                    document.getElementById('enableVix').checked
+                    || document.getElementById('enableGhd').checked
+                    || document.getElementById('enableGs').checked
+                    || document.getElementById('enableAnimeWorld').checked
+                    || document.getElementById('enableAnimeSaturn').checked
+                    || document.getElementById('enableGf').checked
+                )
+            );
 
             return {
-                service: isP2P ? '' : currentService,
-                key: document.getElementById('apiKey').value.trim(),
+                service: isP2P ? '' : (webOnlyService ? 'web' : currentService),
+                key: apiKey,
                 tmdb: document.getElementById('tmdbKey').value.trim(),
                 sort: document.getElementById('sortMode').value,
                 formatter: document.getElementById('selectedSkin').value,
