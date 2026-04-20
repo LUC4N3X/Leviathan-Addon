@@ -3386,10 +3386,23 @@ function getMobileConfig() {
     const finalMaxSizeGB = sizeActive ? sizeVal : 0;
     
     const isP2P = mCurrentService === 'p2p';
+    const apiKey = document.getElementById('m-apiKey').value.trim();
+    const webOnlyService = (
+        !isP2P
+        && !apiKey
+        && (
+            document.getElementById('m-enableVix').checked
+            || document.getElementById('m-enableGhd').checked
+            || document.getElementById('m-enableGs').checked
+            || document.getElementById('m-enableAnimeWorld').checked
+            || document.getElementById('m-enableAnimeSaturn').checked
+            || document.getElementById('m-enableGf').checked
+        )
+    );
 
     return {
-        service: isP2P ? '' : mCurrentService,
-        key: document.getElementById('m-apiKey').value.trim(),
+        service: isP2P ? '' : (webOnlyService ? 'web' : mCurrentService),
+        key: apiKey,
         tmdb: document.getElementById('m-tmdb').value.trim(),
         sort: mSortMode, 
         formatter: mSkin, 
