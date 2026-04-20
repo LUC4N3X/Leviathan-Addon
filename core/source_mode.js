@@ -74,9 +74,32 @@ function getSourceModeFlags(filters = {}) {
     return flags;
 }
 
+function hasWebProvidersEnabled(filters = {}) {
+    return Boolean(
+        filters?.enableStreamingCommunity === true
+        || filters?.enableVix === true
+        || filters?.enableGhd === true
+        || filters?.enableGs === true
+        || filters?.enableAnimeWorld === true
+        || filters?.enableAnimeSaturn === true
+        || filters?.enableGf === true
+    );
+}
+
+function shouldUseTorrentPipeline(options = {}) {
+    const filters = options?.filters || {};
+    const hasDebridKey = options?.hasDebridKey === true;
+    const isP2PEnabled = options?.isP2PEnabled === true || filters?.enableP2P === true;
+    const hasWebProviders = hasWebProvidersEnabled(filters);
+
+    return hasDebridKey || isP2PEnabled || !hasWebProviders;
+}
+
 module.exports = {
     SOURCE_MODES,
     normalizeSourceMode,
     getSourceMode,
-    getSourceModeFlags
+    getSourceModeFlags,
+    hasWebProvidersEnabled,
+    shouldUseTorrentPipeline
 };
