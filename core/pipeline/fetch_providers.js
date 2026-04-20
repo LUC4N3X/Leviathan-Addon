@@ -31,7 +31,12 @@ function createProviderFetchTools(deps = {}) {
     buildExternalAddonRequestId
   } = deps;
 
-  async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, config, dbOnlyMode, langMode, aggressiveFilter, userTmdbKey, seedResults = [] }) {
+  async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, config, dbOnlyMode, langMode, aggressiveFilter, userTmdbKey, seedResults = [], torrentPipelineEnabled = true }) {
+    if (torrentPipelineEnabled !== true) {
+      logger.info(`[TORRENT PIPELINE] Skipped title search for ${meta?.title || finalId} (web-only mode)`);
+      return [];
+    }
+
     const titleKey = buildTitleSearchPipelineKey(meta, type, langMode, dbOnlyMode, config?.filters || {});
     const hotCached = getTimedCacheValue(titleSearchHotCache, titleKey);
     if (hotCached) {
