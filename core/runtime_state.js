@@ -18,7 +18,10 @@ const state = {
     shutdownRequestedAt: null,
     shutdownReason: null,
     activeRequests: 0,
-    rejectNewRequests: false
+    rejectNewRequests: false,
+    ready: false,
+    readyAt: null,
+    readinessReason: 'starting'
   }
 };
 
@@ -55,6 +58,22 @@ function clearDraining() {
   state.lifecycle.rejectNewRequests = false;
 }
 
+function markReady(reason = 'ready') {
+  state.lifecycle.ready = true;
+  state.lifecycle.readyAt = state.lifecycle.readyAt || new Date().toISOString();
+  state.lifecycle.readinessReason = String(reason || 'ready');
+}
+
+function markNotReady(reason = 'starting') {
+  state.lifecycle.ready = false;
+  state.lifecycle.readyAt = null;
+  state.lifecycle.readinessReason = String(reason || 'starting');
+}
+
+function isReady() {
+  return state.lifecycle.ready === true;
+}
+
 function isDraining() {
   return state.lifecycle.draining === true;
 }
@@ -84,7 +103,10 @@ function getSnapshot() {
       shutdownRequestedAt: state.lifecycle.shutdownRequestedAt,
       shutdownReason: state.lifecycle.shutdownReason,
       activeRequests: state.lifecycle.activeRequests,
-      rejectNewRequests: Boolean(state.lifecycle.rejectNewRequests)
+      rejectNewRequests: Boolean(state.lifecycle.rejectNewRequests),
+      ready: Boolean(state.lifecycle.ready),
+      readyAt: state.lifecycle.readyAt,
+      readinessReason: state.lifecycle.readinessReason
     },
     memory: {
       rss: process.memoryUsage().rss,
@@ -105,7 +127,10 @@ module.exports = {
   endRequest,
   markDraining,
   clearDraining,
+  markReady,
+  markNotReady,
   isDraining,
+  isReady,
   shouldRejectNewRequests,
   getSnapshot
 };

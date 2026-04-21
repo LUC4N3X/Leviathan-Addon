@@ -130,6 +130,49 @@ function buildCacheHealthPayload(Cache, getCacheHealthStatus, snapshot) {
     };
 }
 
+async function runReadinessChecks({ dbHelper, withTimeout, CONFIG, getCacheHealthStatus, logger }) {
+    const runtime = runtimeState.getSnapshot();
+    const services = {};
+    let ready = runtime?.lifecycle?.ready === true && runtime?.lifecycle?.draining !== true;
+    let status = ready ? 'ready' : (runtime?.lifecycle?.draining ? 'draining' : 'starting');
+
+    try {
+        if (dbHelper.healthCheck) await withTimeout(dbHelper.healthCheck(), 1000, 'DB Health');
+        services.database = 'ok';
+    } catch (err) {
+        services.database = 'down';
+        ready = false;
+        status = runtime?.lifecycle?.draining ? 'draining' : 'degraded';
+        logger.error('Readiness DB Fail', { error: err.message });
+    }
+
+    try {
+        if (!CONFIG.INDEXER_URL) services.indexer = 'disabled';
+        else {
+            await withTimeout(axios.get(`${CONFIG.INDEXER_URL}/health`, { timeout: 1000 }), 1000, 'Indexer Health');
+            services.indexer = 'ok';
+        }
+    } catch (err) {
+        services.indexer = 'down';
+        ready = false;
+        status = runtime?.lifecycle?.draining ? 'draining' : 'degraded';
+    }
+
+    services.cache = getCacheHealthStatus();
+    if (String(services.cache).startsWith('degraded')) {
+        ready = false;
+        status = runtime?.lifecycle?.draining ? 'draining' : 'degraded';
+    }
+
+    return {
+        ready,
+        status,
+        runtime,
+        services,
+        timestamp: new Date().toISOString()
+    };
+}
+
 async function validateRealDebridKey(key) {
     try {
         const response = await axios.get('https://api.real-debrid.com/rest/1.0/user', {
@@ -357,33 +400,38 @@ function registerApiRoutes(app, {
 
     app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-    app.get('/health', async (req, res) => {
+    app.get('/livez', (req, res) => {
         const runtime = runtimeState.getSnapshot();
-        const checks = { status: runtime.lifecycle.draining ? 'draining' : 'ok', timestamp: new Date().toISOString(), runtime, services: {} };
-        try {
-            if (dbHelper.healthCheck) await withTimeout(dbHelper.healthCheck(), 1000, 'DB Health');
-            checks.services.database = 'ok (Write-Only)';
-        } catch (err) {
-            checks.services.database = 'down';
-            checks.status = 'degraded';
-            logger.error('Health Check DB Fail', { error: err.message });
-        }
-
-        try {
-            if (!CONFIG.INDEXER_URL) checks.services.indexer = 'disabled';
-            else {
-                await withTimeout(axios.get(`${CONFIG.INDEXER_URL}/health`, { timeout: 1000 }), 1000, 'Indexer Health');
-                checks.services.indexer = 'ok';
+        res.status(200).json({
+            status: 'alive',
+            timestamp: new Date().toISOString(),
+            pid: runtime.pid,
+            uptimeSeconds: runtime.uptimeSeconds,
+            runtime: {
+                role: runtime.role,
+                cluster: runtime.cluster,
+                lifecycle: {
+                    draining: runtime.lifecycle.draining,
+                    activeRequests: runtime.lifecycle.activeRequests
+                }
             }
-        } catch (err) {
-            checks.services.indexer = 'down';
-            checks.status = 'degraded';
-        }
+        });
+    });
 
-        checks.services.cache = getCacheHealthStatus();
-        if (String(checks.services.cache).startsWith('degraded')) checks.status = 'degraded';
-        const httpStatus = checks.status === 'ok' ? 200 : checks.status === 'draining' ? 503 : 503;
-        res.status(httpStatus).json(checks);
+    app.get('/readyz', async (req, res) => {
+        const readiness = await runReadinessChecks({ dbHelper, withTimeout, CONFIG, getCacheHealthStatus, logger });
+        res.status(readiness.ready ? 200 : 503).json(readiness);
+    });
+
+    app.get('/health', async (req, res) => {
+        const readiness = await runReadinessChecks({ dbHelper, withTimeout, CONFIG, getCacheHealthStatus, logger });
+        const status = readiness.ready ? 'ok' : readiness.status;
+        res.status(readiness.ready ? 200 : 503).json({
+            status,
+            timestamp: readiness.timestamp,
+            runtime: readiness.runtime,
+            services: readiness.services
+        });
     });
 }
 

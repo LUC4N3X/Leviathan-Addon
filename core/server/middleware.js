@@ -33,6 +33,8 @@ function shouldUseSmartCompression(req) {
     const pathname = String(req?.path || req?.originalUrl || '').split('?')[0];
     return pathname === '/metrics'
         || pathname === '/health'
+        || pathname === '/readyz'
+        || pathname === '/livez'
         || pathname.startsWith('/api/')
         || pathname.endsWith('.json');
 }
@@ -140,7 +142,7 @@ function applyCommonMiddleware(app, { staticDir }) {
         runtimeState.beginRequest();
         incrementMetric('http.requests.total');
 
-        if (runtimeState.shouldRejectNewRequests() && !['/health', '/metrics'].includes(req.path) && !String(req.path || '').startsWith('/admin/runtime')) {
+        if (runtimeState.shouldRejectNewRequests() && !['/health', '/readyz', '/livez', '/metrics'].includes(req.path) && !String(req.path || '').startsWith('/admin/runtime')) {
             runtimeState.endRequest();
             res.setHeader('Retry-After', '5');
             return res.status(503).json({

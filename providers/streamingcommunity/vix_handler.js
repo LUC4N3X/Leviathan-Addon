@@ -1,12 +1,17 @@
 const axios = require('axios');
+const cheerio = require('cheerio');
+const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const mediaIdentity = require('../../core/media_identity_resolver');
+const kitsuProvider = require('../animeworld/kitsu_provider');
 const {
     CircuitBreaker,
     SingleFlight,
     TTLCache,
     resilientCall
 } = require('../extractors/resilience');
+const { makeProxyToken } = require('./proxy_tokens');
+const { buildRequestHeaders: buildProxyRequestHeaders } = require('./vix_proxy');
 
 const VIX_BASE = 'https://vixsrc.to';
 const CINEMETA_BASE = 'https://v3-cinemeta.strem.io/meta';
@@ -21,6 +26,9 @@ const PAYLOAD_CACHE_TTL_MS = 5 * 60 * 1000;
 const DIRECT_PAGE_CACHE_TTL_MS = 45 * 1000;
 const PLAYLIST_CACHE_TTL_MS = 120 * 1000;
 const PREFERRED_LANG = 'it';
+const AU_BASE = 'https://www.animeunity.so';
+const ANIME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
+const ANIME_MAPPING_BASE = 'https://animemapping.stremio.dpdns.org';
 
 const http = axios.create({
     timeout: REQUEST_TIMEOUT,
@@ -34,6 +42,8 @@ const http = axios.create({
 const payloadCache = new TTLCache({ maxSize: 128, ttlMs: PAYLOAD_CACHE_TTL_MS, cloneValues: true });
 const directPageCache = new TTLCache({ maxSize: 64, ttlMs: DIRECT_PAGE_CACHE_TTL_MS, cloneValues: true });
 const playlistCache = new TTLCache({ maxSize: 96, ttlMs: PLAYLIST_CACHE_TTL_MS, cloneValues: true });
+const animeSessionCache = new TTLCache({ maxSize: 2, ttlMs: 20 * 60 * 1000, cloneValues: true });
+const animeSearchCache = new TTLCache({ maxSize: 96, ttlMs: 10 * 60 * 1000, cloneValues: true });
 const inflight = new SingleFlight();
 const requestBreaker = new CircuitBreaker({
     failureThreshold: 4,
@@ -55,6 +65,12 @@ const TOKEN_PATTERNS = [
     /["']token["']\s*:\s*["']([^"']+)["']/i,
     /\btoken\s*[:=]\s*["']([^"']+)["']/i,
     /[?&]token=([^&\s"']+)/i
+];
+
+const ASN_PATTERNS = [
+    /["']asn["']\s*:\s*["']([^"']+)["']/i,
+    /\basn\s*[:=]\s*["']([^"']+)["']/i,
+    /[?&]asn=([^&\s"']+)/i
 ];
 
 const EXPIRES_PATTERNS = [
@@ -288,7 +304,7 @@ function appendOrReplaceQuery(url, params) {
     }
 }
 
-function buildMasterUrl(base, token, expires, h = false, b = false) {
+function buildMasterUrl(base, token, expires, h = false, b = false, asn = null) {
     const cleanBase = normalizeMediaBaseUrl(base);
     if (!cleanBase) return '';
     const parsed = new URL(cleanBase);
@@ -296,6 +312,7 @@ function buildMasterUrl(base, token, expires, h = false, b = false) {
     if (b) parsed.searchParams.set('b', '1');
     parsed.searchParams.set('token', String(token));
     parsed.searchParams.set('expires', String(expires));
+    if (asn) parsed.searchParams.set('asn', String(asn));
     if (h) parsed.searchParams.set('h', '1');
     return parsed.toString();
 }
@@ -357,11 +374,13 @@ function buildCandidateSpaces(html, scripts) {
 function parsePayloadFromSpace(searchSpace) {
     const token = extractFirst(TOKEN_PATTERNS, searchSpace);
     const expires = extractFirst(EXPIRES_PATTERNS, searchSpace);
+    const asn = extractFirst(ASN_PATTERNS, searchSpace);
     const urlValue = extractUrlValue(searchSpace);
     if (!urlValue) return null;
 
     const tokenFinal = token || getQueryParam(urlValue, 'token');
     const expiresFinal = expires || getQueryParam(urlValue, 'expires');
+    const asnFinal = asn || getQueryParam(urlValue, 'asn');
     if (!(urlValue && tokenFinal && expiresFinal)) return null;
 
     const rawUrl = normalizeMediaBaseUrl(urlValue);
@@ -371,6 +390,7 @@ function parsePayloadFromSpace(searchSpace) {
         rawUrl,
         token: String(tokenFinal),
         expires: String(expiresFinal),
+        asn: asnFinal ? String(asnFinal) : null,
         canPlayFHD: FHD_RE.test(searchSpace) || H_FLAG_RE.test(urlValue),
         hasB: B_FLAG_RE.test(urlValue)
     };
@@ -579,7 +599,12 @@ async function resolveScEmbedUrl(tmdbId, pageUrl, season = null, episode = null)
 function buildSyntheticUrl(masterSource, quality, referer, reqHost) {
     const addonBase = normalizeAddonBase(reqHost);
     const proxy = new URL(`${addonBase}/vixsynthetic.m3u8`);
-    proxy.searchParams.set('src', masterSource);
+    const token = makeProxyToken(masterSource, {
+        referer,
+        headers: buildProxyRequestHeaders(masterSource, referer)
+    });
+    if (token) proxy.searchParams.set('d', token);
+    else proxy.searchParams.set('src', masterSource);
     proxy.searchParams.set('max', quality === '1080p' ? '1' : '0');
     if (referer) proxy.searchParams.set('referer', referer);
     return proxy.toString();
@@ -702,17 +727,387 @@ async function extractFromCandidate(candidateUrl, cleanTitle, season, episode, q
     if (!payload) return [];
 
     const pageReferer = referer || candidateUrl;
-    let inferredFhd = Boolean(payload.canPlayFHD);
-    const sourceUrl = buildMasterUrl(payload.rawUrl, payload.token, payload.expires, payload.canPlayFHD, payload.hasB);
+    const sourceUrl = buildMasterUrl(payload.rawUrl, payload.token, payload.expires, payload.canPlayFHD, payload.hasB, payload.asn);
     if (!sourceUrl) return [];
 
-    if (normalizeQualityFilter(qualityFilter) !== '720' && !inferredFhd) {
+    return buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitle, season, episode, qualityFilter, reqHost);
+}
+
+async function tryDirectVixsrcStream(pageUrl, cleanTitle, season, episode, qualityFilter) {
+    const cached = cacheGet(directPageCache, pageUrl);
+    let status;
+    let pageHtml;
+    if (cached) {
+        ({ status, pageHtml } = cached);
+    } else {
+        const response = await getWithRetries(pageUrl, { headers: buildHeaders(`${VIX_BASE}/`, 'html') });
+        status = Number(response?.status || 0);
+        pageHtml = responseText(response);
+        if (status === 200 && pageHtml) {
+            cacheSet(directPageCache, pageUrl, { status, pageHtml }, DIRECT_PAGE_CACHE_TTL_MS);
+        }
+    }
+
+    if (status !== 200 || !pageHtml) return [];
+
+    const inlineScripts = extractInlineScripts(pageHtml);
+    const candidates = buildCandidateSpaces(pageHtml, inlineScripts);
+    let streamUrl = null;
+    for (const searchSpace of candidates) {
+        const payload = parsePayloadFromSpace(searchSpace);
+        if (!payload) continue;
+        streamUrl = buildMasterUrl(payload.rawUrl, payload.token, payload.expires, payload.canPlayFHD, payload.hasB, payload.asn);
+        if (streamUrl) break;
+    }
+    if (!streamUrl) return [];
+
+    streamUrl = appendOrReplaceQuery(streamUrl, { lang: PREFERRED_LANG });
+    const { quality, headers, hasItalianAudio, allowed } = await fetchPlaylistQualityAndHeaders(streamUrl, pageUrl, qualityFilter);
+    if (!allowed) return [];
+
+    const stream = {
+        name: 'SC Direct',
+        title: cleanTitle,
+        url: streamUrl,
+        quality,
+        behaviorHints: {
+            notWebReady: false,
+            proxyHeaders: { request: headers },
+            vortexMeta: { branch: 'direct-vixsrc', quality }
+        }
+    };
+    if (hasItalianAudio) stream.language = 'ita';
+    return [stampScStream(stream, cleanTitle, season, episode)];
+}
+
+function normalizeLookupTitle(value) {
+    return String(value || '')
+        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/&/g, ' and ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function extractCandidateYear(value) {
+    const match = String(value || '').match(/\b(19|20)\d{2}\b/);
+    return match ? Number(match[0]) : null;
+}
+
+function isKitsuMeta(meta = {}) {
+    const candidates = [meta?.kitsu_id, meta?.id, meta?.imdb_id, meta?.originalId];
+    return candidates.some((value) => Boolean(kitsuProvider.parseKitsuId(value)));
+}
+
+function getKitsuIdentifier(meta = {}) {
+    const candidates = [meta?.kitsu_id, meta?.id, meta?.imdb_id, meta?.originalId];
+    for (const candidate of candidates) {
+        const parsed = kitsuProvider.parseKitsuId(candidate);
+        if (parsed?.kitsuId) return parsed;
+    }
+    return null;
+}
+
+function extractSetCookieHeader(response) {
+    const header = response?.headers?.['set-cookie'];
+    if (!header) return '';
+    if (Array.isArray(header)) return header.map((entry) => String(entry).split(';')[0]).join('; ');
+    return String(header).split(';')[0] || '';
+}
+
+function buildAnimeHeaders(referer = `${AU_BASE}/`, extra = {}) {
+    return {
+        'User-Agent': ANIME_UA,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+        Referer: referer,
+        Origin: AU_BASE,
+        ...extra
+    };
+}
+
+async function fetchAnimeUnitySession() {
+    const cached = cacheGet(animeSessionCache, 'session');
+    if (cached?.csrfToken && cached?.cookie) return cached;
+
+    return singleFlight('animeunity:session', async () => {
+        const secondCached = cacheGet(animeSessionCache, 'session');
+        if (secondCached?.csrfToken && secondCached?.cookie) return secondCached;
+
+        const response = await getWithRetries(AU_BASE, { headers: buildAnimeHeaders(`${AU_BASE}/`) });
+        if (Number(response?.status || 0) !== 200) return null;
+
+        const html = responseText(response);
+        const $ = cheerio.load(html || '');
+        const session = {
+            csrfToken: $('meta[name="csrf-token"]').attr('content') || '',
+            cookie: extractSetCookieHeader(response)
+        };
+
+        if (!session.csrfToken || !session.cookie) return null;
+        cacheSet(animeSessionCache, 'session', session, 20 * 60 * 1000);
+        return session;
+    });
+}
+
+function normalizeAnimeUnityResults(payload) {
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.records)) return payload.records;
+    if (Array.isArray(payload?.data)) return payload.data;
+    if (Array.isArray(payload?.results)) return payload.results;
+    return [];
+}
+
+async function searchAnimeUnity(title, session) {
+    const normalizedTitle = String(title || '').trim();
+    if (!normalizedTitle || !session?.csrfToken || !session?.cookie) return [];
+
+    const cacheKey = `au:${normalizeLookupTitle(normalizedTitle)}`;
+    const cached = cacheGet(animeSearchCache, cacheKey);
+    if (cached) return cached;
+
+    return singleFlight(cacheKey, async () => {
+        const secondCached = cacheGet(animeSearchCache, cacheKey);
+        if (secondCached) return secondCached;
+
+        const response = await getWithRetries(`${AU_BASE}/livesearch`, {
+            headers: {
+                'User-Agent': ANIME_UA,
+                'X-Requested-With': 'XMLHttpRequest',
+                'Content-Type': 'application/json;charset=utf-8',
+                'X-CSRF-Token': session.csrfToken,
+                Referer: `${AU_BASE}/`,
+                Origin: AU_BASE,
+                Cookie: session.cookie,
+                Accept: 'application/json,text/plain,*/*'
+            },
+            timeout: REQUEST_TIMEOUT
+        });
+
+        if (Number(response?.status || 0) !== 200) return [];
+
+        let payload = response?.data;
+        if (!payload || typeof payload !== 'object') {
+            try {
+                payload = JSON.parse(responseText(response) || '{}');
+            } catch {
+                payload = {};
+            }
+        }
+
+        const results = normalizeAnimeUnityResults(payload);
+        cacheSet(animeSearchCache, cacheKey, results, 10 * 60 * 1000);
+        return results;
+    });
+}
+
+function scoreAnimeUnityResult(result, searchContext) {
+    const candidateTitles = [
+        result?.title,
+        result?.name,
+        result?.title_eng,
+        result?.title_it,
+        result?.slug
+    ].filter(Boolean);
+    const normalizedCandidates = candidateTitles.map((value) => normalizeLookupTitle(value)).filter(Boolean);
+    const wantedTitles = [
+        ...(Array.isArray(searchContext?.searchTitles) ? searchContext.searchTitles : []),
+        ...(Array.isArray(searchContext?.rawTitles) ? searchContext.rawTitles : [])
+    ].map((value) => normalizeLookupTitle(value)).filter(Boolean);
+
+    let score = 0;
+    for (const candidate of normalizedCandidates) {
+        for (const wanted of wantedTitles) {
+            if (!candidate || !wanted) continue;
+            if (candidate === wanted) score += 120;
+            else if (candidate.includes(wanted) || wanted.includes(candidate)) score += 60;
+            else if (candidate.split(' ').slice(0, 3).join(' ') === wanted.split(' ').slice(0, 3).join(' ')) score += 35;
+        }
+    }
+
+    const wantedYear = extractCandidateYear(searchContext?.year || searchContext?.date);
+    const resultYear = extractCandidateYear(result?.year || result?.release_date || result?.date || result?.slug);
+    if (wantedYear && resultYear && wantedYear === resultYear) score += 20;
+
+    if (searchContext?.isMovie && /movie|film/i.test(String(result?.type || result?.kind || ''))) score += 10;
+    if (!searchContext?.isMovie && /serie|tv|anime/i.test(String(result?.type || result?.kind || ''))) score += 10;
+    return score;
+}
+
+function pickBestAnimeUnityResult(results, searchContext) {
+    const ranked = [...(results || [])]
+        .map((result) => ({ result, score: scoreAnimeUnityResult(result, searchContext) }))
+        .sort((a, b) => b.score - a.score);
+    return ranked[0]?.result || null;
+}
+
+function buildAnimeUnityPath(result) {
+    if (!result) return null;
+    const direct = normalizeEmbedUrl(result?.path || result?.url || result?.href, AU_BASE);
+    if (direct && direct.includes('/anime/')) return direct;
+    const id = result?.id || result?.anime_id;
+    const slug = result?.slug || result?.title_slug;
+    if (id && slug) return `${AU_BASE}/anime/${id}-${slug}`;
+    if (slug) return `${AU_BASE}/anime/${slug}`;
+    return null;
+}
+
+function parseAnimeEpisodes(rawValue) {
+    if (!rawValue) return [];
+    try {
+        const decoded = he.decode(String(rawValue || ''));
+        const parsed = JSON.parse(decoded);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function normalizeEpisodeCandidate(value) {
+    const parsed = Number.parseFloat(String(value || '').replace(',', '.'));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function pickAnimeEpisode(episodes, requestedEpisode, isMovie) {
+    const wanted = normalizeEpisodeCandidate(requestedEpisode) || 1;
+    const list = Array.isArray(episodes) ? episodes : [];
+    if (!list.length) return null;
+
+    const exact = list.find((episode) => normalizeEpisodeCandidate(episode?.number) === wanted);
+    if (exact) return exact;
+    if (isMovie || list.length === 1) return list[0];
+    const fallback = list.find((episode) => normalizeEpisodeCandidate(episode?.number) === 1);
+    return fallback || list[0];
+}
+
+async function fetchAnimePage(url, referer = `${AU_BASE}/`) {
+    const response = await getWithRetries(url, { headers: buildAnimeHeaders(referer) });
+    if (Number(response?.status || 0) !== 200) return null;
+    return {
+        html: responseText(response),
+        url: responseUrl(response, url)
+    };
+}
+
+async function getAnimeUnityEmbedUrl(animePath, episodeNumber, isMovie) {
+    const animeUrl = normalizeEmbedUrl(animePath, AU_BASE);
+    if (!animeUrl) return null;
+
+    const page = await fetchAnimePage(animeUrl, `${AU_BASE}/`);
+    if (!page?.html) return null;
+
+    const $ = cheerio.load(page.html || '');
+    const player = $('video-player').first();
+    let embedUrl = normalizeEmbedUrl(player.attr('embed_url'), page.url);
+    const episodes = parseAnimeEpisodes(player.attr('episodes'));
+    const chosenEpisode = pickAnimeEpisode(episodes, episodeNumber, isMovie);
+
+    if (chosenEpisode?.embed_url) {
+        embedUrl = normalizeEmbedUrl(chosenEpisode.embed_url, page.url);
+        if (embedUrl) return embedUrl;
+    }
+
+    if (embedUrl && (isMovie || !chosenEpisode?.id)) return embedUrl;
+
+    if (chosenEpisode?.id) {
+        const episodePage = await fetchAnimePage(`${animeUrl.replace(/\/$/, '')}/${chosenEpisode.id}`, animeUrl);
+        if (episodePage?.html) {
+            const $episode = cheerio.load(episodePage.html || '');
+            const directEmbed = normalizeEmbedUrl($episode('video-player').first().attr('embed_url'), episodePage.url)
+                || normalizeEmbedUrl($episode('iframe[src*="vixcloud"]').first().attr('src'), episodePage.url);
+            if (directEmbed) return directEmbed;
+        }
+    }
+
+    return embedUrl || normalizeEmbedUrl($('iframe[src*="vixcloud"]').first().attr('src'), page.url);
+}
+
+async function resolveAnimeUnityMapping(kitsuId, episodeNumber) {
+    if (!ANIME_MAPPING_BASE) return null;
+    const requestedEpisode = Number.parseInt(String(episodeNumber || ''), 10) || 1;
+    const mappingUrl = `${ANIME_MAPPING_BASE}/kitsu/${kitsuId}?ep=${requestedEpisode}`;
+    const response = await getWithRetries(mappingUrl, {
+        headers: { Accept: 'application/json' },
+        timeout: REQUEST_TIMEOUT
+    });
+    if (Number(response?.status || 0) !== 200) return null;
+
+    let payload = response?.data;
+    if (!payload || typeof payload !== 'object') {
+        try {
+            payload = JSON.parse(responseText(response) || '{}');
+        } catch {
+            payload = {};
+        }
+    }
+
+    const mapping = payload?.mappings?.animeunity;
+    const entries = Array.isArray(mapping) ? mapping : (mapping ? [mapping] : []);
+    let animePath = null;
+    for (const entry of entries) {
+        const value = typeof entry === 'string' ? entry : (entry?.path || entry?.url || entry?.href || null);
+        if (typeof value === 'string' && value.startsWith('/')) {
+            animePath = `${AU_BASE}${value}`;
+            break;
+        }
+        const normalized = normalizeEmbedUrl(value, AU_BASE);
+        if (normalized) {
+            animePath = normalized;
+            break;
+        }
+    }
+
+    const resolvedEpisode = Number(payload?.kitsu?.episode || payload?.requested?.episode || requestedEpisode) || requestedEpisode;
+    return { animePath, episodeNumber: resolvedEpisode };
+}
+
+function inferAnimePayloadFromEmbedUrl(embedUrl) {
+    const token = getQueryParam(embedUrl, 'token');
+    const expires = getQueryParam(embedUrl, 'expires');
+    const asn = getQueryParam(embedUrl, 'asn');
+    if (!(token && expires)) return null;
+    const match = String(embedUrl || '').match(/\/embed\/(\d+)/i);
+    if (!match) return null;
+    const origin = (() => {
+        try {
+            return new URL(embedUrl).origin;
+        } catch {
+            return null;
+        }
+    })();
+    if (!origin) return null;
+    return {
+        rawUrl: `${origin}/playlist/${match[1]}.m3u8`,
+        token: String(token),
+        expires: String(expires),
+        asn: asn ? String(asn) : null,
+        canPlayFHD: H_FLAG_RE.test(embedUrl),
+        hasB: B_FLAG_RE.test(embedUrl)
+    };
+}
+
+async function resolveAnimeManifest(embedUrl) {
+    const resolved = await resolveCachedPayload(embedUrl);
+    const payload = resolved?.payload || inferAnimePayloadFromEmbedUrl(embedUrl);
+    const referer = resolved?.referer || embedUrl;
+    if (!payload) return null;
+    const streamUrl = buildMasterUrl(payload.rawUrl, payload.token, payload.expires, payload.canPlayFHD, payload.hasB, payload.asn);
+    if (!streamUrl) return null;
+    return { streamUrl, referer, payload };
+}
+
+async function buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitle, season, episode, qualityFilter, reqHost) {
+    const streams = [];
+    let inferredFhd = false;
+
+    if (normalizeQualityFilter(qualityFilter) !== '720') {
         try {
             inferredFhd = await inferCanPlayFHDFromPlaylist(sourceUrl, pageReferer);
         } catch {}
     }
 
-    const streams = [];
     const wants1080 = normalizeQualityFilter(qualityFilter) !== '720';
     const wants720 = normalizeQualityFilter(qualityFilter) !== '1080';
 
@@ -745,51 +1140,56 @@ async function extractFromCandidate(candidateUrl, cleanTitle, season, episode, q
     return sortStreams(dedupeStreams(streams));
 }
 
-async function tryDirectVixsrcStream(pageUrl, cleanTitle, season, episode, qualityFilter) {
-    const cached = cacheGet(directPageCache, pageUrl);
-    let status;
-    let pageHtml;
-    if (cached) {
-        ({ status, pageHtml } = cached);
-    } else {
-        const response = await getWithRetries(pageUrl, { headers: buildHeaders(`${VIX_BASE}/`, 'html') });
-        status = Number(response?.status || 0);
-        pageHtml = responseText(response);
-        if (status === 200 && pageHtml) {
-            cacheSet(directPageCache, pageUrl, { status, pageHtml }, DIRECT_PAGE_CACHE_TTL_MS);
+async function resolveKitsuVix(meta, config = {}, reqHost) {
+    const kitsu = getKitsuIdentifier(meta);
+    if (!kitsu?.kitsuId) return [];
+
+    const searchContext = await kitsuProvider.buildSearchContext(meta?.id || meta?.imdb_id || meta?.kitsu_id, meta);
+    const normalizedQuality = normalizeQualityFilter(config?.filters?.scQuality || 'all');
+    const cleanTitle = cleanSeriesTitle(searchContext?.title || meta?.title || meta?.name || `Kitsu ${kitsu.kitsuId}`);
+    const episodeNumber = searchContext?.requestedEpisode || kitsu.episodeNumber || normalizeEpisodeCandidate(meta?.episode) || 1;
+
+    let animePath = null;
+    let resolvedEpisode = Number(episodeNumber) || 1;
+    try {
+        const mapping = await resolveAnimeUnityMapping(kitsu.kitsuId, resolvedEpisode);
+        if (mapping?.animePath) animePath = mapping.animePath;
+        if (Number(mapping?.episodeNumber || 0) > 0) resolvedEpisode = Number(mapping.episodeNumber);
+    } catch {}
+
+    let embedUrl = animePath ? await getAnimeUnityEmbedUrl(animePath, resolvedEpisode, searchContext?.isMovie) : null;
+
+    if (!embedUrl) {
+        const session = await fetchAnimeUnitySession();
+        if (session) {
+            const titleCandidates = Array.isArray(searchContext?.searchTitles) && searchContext.searchTitles.length
+                ? searchContext.searchTitles
+                : Array.isArray(searchContext?.rawTitles) ? searchContext.rawTitles : [cleanTitle];
+            for (const title of titleCandidates.slice(0, 4)) {
+                const results = await searchAnimeUnity(title, session);
+                const best = pickBestAnimeUnityResult(results, searchContext);
+                const path = buildAnimeUnityPath(best);
+                if (!path) continue;
+                embedUrl = await getAnimeUnityEmbedUrl(path, resolvedEpisode, searchContext?.isMovie);
+                if (embedUrl) break;
+            }
         }
     }
 
-    if (status !== 200 || !pageHtml) return [];
+    if (!embedUrl) return [];
 
-    const inlineScripts = extractInlineScripts(pageHtml);
-    const candidates = buildCandidateSpaces(pageHtml, inlineScripts);
-    let streamUrl = null;
-    for (const searchSpace of candidates) {
-        const payload = parsePayloadFromSpace(searchSpace);
-        if (!payload) continue;
-        streamUrl = buildMasterUrl(payload.rawUrl, payload.token, payload.expires, true || payload.canPlayFHD, payload.hasB);
-        if (streamUrl) break;
-    }
-    if (!streamUrl) return [];
+    const manifest = await resolveAnimeManifest(embedUrl);
+    if (!manifest?.streamUrl) return [];
 
-    streamUrl = appendOrReplaceQuery(streamUrl, { lang: PREFERRED_LANG });
-    const { quality, headers, hasItalianAudio, allowed } = await fetchPlaylistQualityAndHeaders(streamUrl, pageUrl, qualityFilter);
-    if (!allowed) return [];
-
-    const stream = {
-        name: 'SC Direct',
-        title: cleanTitle,
-        url: streamUrl,
-        quality,
-        behaviorHints: {
-            notWebReady: false,
-            proxyHeaders: { request: headers },
-            vortexMeta: { branch: 'direct-vixsrc', quality }
-        }
-    };
-    if (hasItalianAudio) stream.language = 'ita';
-    return [stampScStream(stream, cleanTitle, season, episode)];
+    return buildSyntheticStreamsFromSource(
+        manifest.streamUrl,
+        manifest.referer || embedUrl,
+        cleanTitle,
+        meta?.isSeries ? safeInt(meta.season) : null,
+        meta?.isSeries ? safeInt(meta.episode) : null,
+        normalizedQuality,
+        reqHost
+    );
 }
 
 async function resolveTmdbId(meta) {
@@ -809,6 +1209,14 @@ async function searchVix(meta, config = {}, reqHost) {
     }
 
     try {
+        if (isKitsuMeta(meta)) {
+            const animeStreams = await resolveKitsuVix(meta, config, reqHost);
+            if (animeStreams.length) {
+                console.log(`[WEB][StreamingCommunity][KITSU] ok | items=${animeStreams.length}`);
+                return animeStreams;
+            }
+        }
+
         const tmdbId = await resolveTmdbId(meta);
         if (!tmdbId) {
             console.log('[WEB][StreamingCommunity] no-tmdb');

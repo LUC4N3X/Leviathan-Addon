@@ -1,4 +1,5 @@
 const zlib = require('zlib');
+const { randomUUID } = require('crypto');
 const { promisify } = require('util');
 const NodeCache = require('node-cache');
 
@@ -46,11 +47,31 @@ const DB_LOOKUP_CACHE_TTL = Math.max(parseInt(process.env.DB_LOOKUP_CACHE_TTL ||
 const VERBOSE_CACHE_LOGS = String(process.env.VERBOSE_CACHE_LOGS || 'false').toLowerCase() === 'true';
 const SHARED_STREAM_CACHE_ENABLED = String(process.env.SHARED_STREAM_CACHE_ENABLED || 'true').toLowerCase() !== 'false';
 const SHARED_STREAM_CACHE_MAX_BYTES = Math.max(4096, parseInt(process.env.SHARED_STREAM_CACHE_MAX_BYTES || String(1024 * 1024 * 2), 10) || (1024 * 1024 * 2));
-const SHARED_STREAM_CACHE_CODEC = String(process.env.SHARED_STREAM_CACHE_CODEC || 'brotli').toLowerCase();
+const SHARED_STREAM_CACHE_WRITE_CONCURRENCY = Math.max(1, parseInt(process.env.SHARED_STREAM_CACHE_WRITE_CONCURRENCY || '2', 10) || 2);
+const SHARED_STREAM_CACHE_NODE_ID = String(process.env.LEVI_NODE_ID || randomUUID());
+const SHARED_STREAM_CACHE_PROCESS_ID = process.pid;
 const brotliCompressAsync = promisify(zlib.brotliCompress);
 const gzipAsync = promisify(zlib.gzip);
 const brotliDecompressAsync = promisify(zlib.brotliDecompress);
 const gunzipAsync = promisify(zlib.gunzip);
+const zstdCompressAsync = typeof zlib.zstdCompress === 'function' ? promisify(zlib.zstdCompress) : null;
+const zstdDecompressAsync = typeof zlib.zstdDecompress === 'function' ? promisify(zlib.zstdDecompress) : null;
+
+function resolveSharedStreamCodec(requestedCodec) {
+    const normalized = String(requestedCodec || '').trim().toLowerCase();
+    const effective = normalized || 'auto';
+    if (effective === 'auto') {
+        if (zstdCompressAsync) return 'zstd';
+        return 'brotli';
+    }
+    if (effective === 'zstd' && zstdCompressAsync) return 'zstd';
+    if (effective === 'brotli') return 'brotli';
+    if (effective === 'gzip') return 'gzip';
+    if (effective === 'identity' || effective === 'none') return 'identity';
+    return zstdCompressAsync ? 'zstd' : 'brotli';
+}
+
+const SHARED_STREAM_CACHE_CODEC = resolveSharedStreamCodec(process.env.SHARED_STREAM_CACHE_CODEC);
 
 const streamCacheTags = new Map();
 const streamCacheKeysByHash = new Map();
@@ -58,6 +79,37 @@ const streamCacheKeysByImdb = new Map();
 const streamCacheKeysByEpisode = new Map();
 const invalidationBus = createInvalidationBus();
 const CACHE_INVALIDATION_CHANNEL = String(process.env.CACHE_INVALIDATION_CHANNEL || 'leviathan_cache_events').toLowerCase();
+const sharedStreamPersistInflight = new Map();
+const sharedStreamWriteQueue = [];
+let sharedStreamWriteActive = 0;
+
+function runSharedStreamWriteQueue() {
+    while (sharedStreamWriteActive < SHARED_STREAM_CACHE_WRITE_CONCURRENCY && sharedStreamWriteQueue.length > 0) {
+        const nextTask = sharedStreamWriteQueue.shift();
+        if (typeof nextTask !== 'function') continue;
+        sharedStreamWriteActive += 1;
+        Promise.resolve()
+            .then(nextTask)
+            .catch(() => {})
+            .finally(() => {
+                sharedStreamWriteActive = Math.max(0, sharedStreamWriteActive - 1);
+                runSharedStreamWriteQueue();
+            });
+    }
+}
+
+function enqueueSharedStreamWrite(task) {
+    return new Promise((resolve, reject) => {
+        sharedStreamWriteQueue.push(async () => {
+            try {
+                resolve(await task());
+            } catch (error) {
+                reject(error);
+            }
+        });
+        runSharedStreamWriteQueue();
+    });
+}
 let invalidationSyncStarted = false;
 let invalidationSyncStop = null;
 
@@ -219,7 +271,11 @@ async function encodeSharedPayload(value) {
     let encoding = 'identity';
     let payload = source;
 
-    if (SHARED_STREAM_CACHE_CODEC === 'brotli') {
+    if (SHARED_STREAM_CACHE_CODEC === 'zstd' && zstdCompressAsync) {
+        payload = await zstdCompressAsync(source);
+        payload = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
+        encoding = 'zstd';
+    } else if (SHARED_STREAM_CACHE_CODEC === 'brotli') {
         payload = await brotliCompressAsync(source, {
             params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 4 }
         });
@@ -241,7 +297,8 @@ async function decodeSharedPayload(row) {
         const buffer = Buffer.from(String(row.payload_b64), 'base64');
         let decoded = buffer;
         const encoding = String(row.encoding || 'identity').toLowerCase();
-        if (encoding === 'brotli') decoded = await brotliDecompressAsync(buffer);
+        if (encoding === 'zstd' && zstdDecompressAsync) decoded = await zstdDecompressAsync(buffer);
+        else if (encoding === 'brotli') decoded = await brotliDecompressAsync(buffer);
         else if (encoding === 'gzip') decoded = await gunzipAsync(buffer);
         const normalized = Buffer.isBuffer(decoded) ? decoded : Buffer.from(decoded);
         return JSON.parse(normalized.toString('utf8'));
@@ -331,10 +388,64 @@ async function publishInvalidation(payload) {
     }
 }
 
+function persistSharedStreamCacheInBackground(normalizedKey, value, tags = {}, sharedPolicy = {}) {
+    if (!normalizedKey || !supportsSharedStreamCache()) return false;
+
+    const existing = sharedStreamPersistInflight.get(normalizedKey);
+    if (existing) return true;
+
+    const task = enqueueSharedStreamWrite(async () => {
+        const encoded = await encodeSharedPayload(value);
+        if (!encoded) {
+            incrementMetric('cache.stream.sharedSkipped');
+            return false;
+        }
+
+        const staleGraceTtl = Math.max(0, Number(sharedPolicy.staleGraceTtl || STREAM_STALE_GRACE_TTL) || STREAM_STALE_GRACE_TTL);
+        const sharedTtl = Math.max(0, Number(sharedPolicy.sharedTtl || 0) || 0);
+        const expiresAt = new Date(Date.now() + (sharedTtl * 1000));
+        const staleUntil = new Date(expiresAt.getTime() + (staleGraceTtl * 1000));
+
+        const persisted = await dbHelper.setSharedStreamCache({
+            cache_key: normalizedKey,
+            payload_b64: encoded.payload_b64,
+            encoding: encoded.encoding,
+            expires_at: expiresAt,
+            stale_until: staleUntil,
+            imdb_id: tags?.imdbId || null,
+            imdb_season: Number.isInteger(Number(tags?.imdbSeason)) ? Number(tags.imdbSeason) : null,
+            imdb_episode: Number.isInteger(Number(tags?.imdbEpisode)) ? Number(tags.imdbEpisode) : null,
+            hashes: Array.isArray(tags?.hashes) ? tags.hashes : [],
+            content_date: sharedPolicy.contentDateIso || null,
+            freshness_bucket: sharedPolicy.freshnessBucket || null,
+            confidence_score: sharedPolicy.confidenceScore,
+            result_count: sharedPolicy.streamCount,
+            cached_count: sharedPolicy.cachedCount,
+            best_quality: sharedPolicy.bestQuality || null,
+            source_mix: Array.isArray(sharedPolicy.sourceMix) ? sharedPolicy.sourceMix : [],
+            policy_version: sharedPolicy.version || null
+        });
+
+        if (persisted) incrementMetric('cache.stream.sharedSet');
+        return persisted;
+    });
+
+    sharedStreamPersistInflight.set(normalizedKey, task);
+    task.catch((error) => {
+        logger.warn(`[CACHE] Shared stream cache write failed | key=${normalizedKey} | error=${error.message}`);
+    }).finally(() => {
+        sharedStreamPersistInflight.delete(normalizedKey);
+    });
+    incrementMetric('cache.stream.sharedQueued');
+    return true;
+}
+
 async function applyRemoteInvalidation(payload = {}) {
     const scope = String(payload?.scope || '').trim();
     if (!scope) return;
-    if (payload?.originPid && Number(payload.originPid) === process.pid) return;
+    const samePid = payload?.originPid && Number(payload.originPid) === SHARED_STREAM_CACHE_PROCESS_ID;
+    const sameNode = payload?.originNodeId && String(payload.originNodeId) === SHARED_STREAM_CACHE_NODE_ID;
+    if (samePid && sameNode) return;
 
     if (scope === 'dblookup') {
         const outcome = invalidateDbTorrentsLocal(payload.key);
@@ -439,39 +550,10 @@ const Cache = {
             return;
         }
 
-        const encoded = await encodeSharedPayload(value);
-        if (!encoded) {
-            incrementMetric('cache.stream.sharedSkipped');
-            return;
-        }
-
-        try {
-            const staleGraceTtl = Math.max(0, Number(sharedPolicy.staleGraceTtl || STREAM_STALE_GRACE_TTL) || STREAM_STALE_GRACE_TTL);
-            const expiresAt = new Date(Date.now() + (sharedTtl * 1000));
-            const staleUntil = new Date(expiresAt.getTime() + (staleGraceTtl * 1000));
-            const persisted = await dbHelper.setSharedStreamCache({
-                cache_key: normalizedKey,
-                payload_b64: encoded.payload_b64,
-                encoding: encoded.encoding,
-                expires_at: expiresAt,
-                stale_until: staleUntil,
-                imdb_id: tags?.imdbId || null,
-                imdb_season: Number.isInteger(Number(tags?.imdbSeason)) ? Number(tags.imdbSeason) : null,
-                imdb_episode: Number.isInteger(Number(tags?.imdbEpisode)) ? Number(tags.imdbEpisode) : null,
-                hashes: Array.isArray(tags?.hashes) ? tags.hashes : [],
-                content_date: sharedPolicy.contentDateIso || null,
-                freshness_bucket: sharedPolicy.freshnessBucket || null,
-                confidence_score: sharedPolicy.confidenceScore,
-                result_count: sharedPolicy.streamCount,
-                cached_count: sharedPolicy.cachedCount,
-                best_quality: sharedPolicy.bestQuality || null,
-                source_mix: Array.isArray(sharedPolicy.sourceMix) ? sharedPolicy.sourceMix : [],
-                policy_version: sharedPolicy.version || null
-            });
-            if (persisted) incrementMetric('cache.stream.sharedSet');
-        } catch (error) {
-            logger.warn(`[CACHE] Shared stream cache write failed | key=${normalizedKey} | error=${error.message}`);
-        }
+        persistSharedStreamCacheInBackground(normalizedKey, value, tags, {
+            ...sharedPolicy,
+            sharedTtl
+        });
     },
     getStaleStream: async (key, options = {}) => {
         const normalizedKey = String(key || '').trim();
@@ -560,7 +642,7 @@ const Cache = {
             incrementMetric('cache.db.invalidations');
             logger.info(`[CACHE] DB lookup invalidation | reason=${reason} | key=${outcome.key}`);
         }
-        await publishInvalidation({ scope: 'dblookup', key: outcome.key, reason, originPid: process.pid, ts: Date.now() });
+        await publishInvalidation({ scope: 'dblookup', key: outcome.key, reason, originPid: process.pid, originNodeId: SHARED_STREAM_CACHE_NODE_ID, ts: Date.now() });
         return outcome;
     },
     getCloudBuild: async (key) => {
@@ -589,6 +671,9 @@ const Cache = {
         sharedFetchInflight.clear();
         streamInflight.clear();
         metadataInflight.clear();
+        sharedStreamPersistInflight.clear();
+        sharedStreamWriteQueue.length = 0;
+        sharedStreamWriteActive = 0;
         streamCacheTags.clear();
         streamCacheKeysByHash.clear();
         streamCacheKeysByImdb.clear();
@@ -611,7 +696,7 @@ const Cache = {
             logger.info(`[CACHE] Stream invalidation by hash | reason=${reason} | hashes=${localOutcome.hashes} | keys=${localOutcome.invalidated} | shared=${sharedDeleted}`);
         }
 
-        await publishInvalidation({ scope: 'hashes', hashes: localOutcome.normalizedHashes, reason, originPid: process.pid, ts: Date.now() });
+        await publishInvalidation({ scope: 'hashes', hashes: localOutcome.normalizedHashes, reason, originPid: process.pid, originNodeId: SHARED_STREAM_CACHE_NODE_ID, ts: Date.now() });
         return { invalidated: localOutcome.invalidated, hashes: localOutcome.hashes, deleted: localOutcome.deleted, sharedDeleted };
     },
     invalidateStreamsByImdb: async (imdbId, reason = 'imdb_update') => {
@@ -631,7 +716,7 @@ const Cache = {
             logger.info(`[CACHE] Stream invalidation by imdb | reason=${reason} | imdb=${localOutcome.imdbId} | keys=${localOutcome.invalidated} | shared=${sharedDeleted}`);
         }
 
-        await publishInvalidation({ scope: 'imdb', imdbId: localOutcome.imdbId, reason, originPid: process.pid, ts: Date.now() });
+        await publishInvalidation({ scope: 'imdb', imdbId: localOutcome.imdbId, reason, originPid: process.pid, originNodeId: SHARED_STREAM_CACHE_NODE_ID, ts: Date.now() });
         return { invalidated: localOutcome.invalidated, imdbId: localOutcome.imdbId, deleted: localOutcome.deleted, sharedDeleted };
     },
     invalidateStreamsByEpisode: async (episodePayload, reason = 'episode_update') => {
@@ -652,7 +737,7 @@ const Cache = {
             logger.info(`[CACHE] Stream invalidation by episode | reason=${reason} | episode=${localOutcome.episode} | keys=${localOutcome.invalidated} | shared=${sharedDeleted}`);
         }
 
-        await publishInvalidation({ scope: 'episode', episode: localOutcome.episode, reason, originPid: process.pid, ts: Date.now() });
+        await publishInvalidation({ scope: 'episode', episode: localOutcome.episode, reason, originPid: process.pid, originNodeId: SHARED_STREAM_CACHE_NODE_ID, ts: Date.now() });
         return { invalidated: localOutcome.invalidated, episode: localOutcome.episode, deleted: localOutcome.deleted, sharedDeleted };
     },
     getStreamCacheIndexStats: () => ({
