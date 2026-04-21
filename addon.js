@@ -2,12 +2,16 @@ require('dotenv').config();
 
 const cluster = require('cluster');
 const os = require('os');
+const { randomUUID } = require('crypto');
 const express = require('express');
 const path = require('path');
 const runtimeState = require('./core/runtime_state');
 const { logger, installConsoleBridge } = require('./core/utils/runtime');
 
 installConsoleBridge(logger);
+
+const LOCAL_NODE_ID = String(process.env.LEVI_NODE_ID || randomUUID());
+process.env.LEVI_NODE_ID = LOCAL_NODE_ID;
 
 function getAutoWorkerCap(cpuCount) {
     const raw = String(process.env.CLUSTER_WORKERS_AUTO_MAX || '').trim().toLowerCase();
@@ -76,7 +80,8 @@ if (cluster.isPrimary && shouldUseCluster()) {
             const worker = cluster.fork({
                 LEVI_CLUSTER_HTTP: '1',
                 LEVI_CLUSTER_LEADER: leader ? 'true' : 'false',
-                LEVI_CLUSTER_SLOT: String(slot)
+                LEVI_CLUSTER_SLOT: String(slot),
+                LEVI_NODE_ID: LOCAL_NODE_ID
             });
             stats.currentWorkerId = worker.id;
             worker.__leviSlot = slot;
@@ -275,6 +280,7 @@ function bootstrapServer() {
     const isClusterWorker = String(process.env.LEVI_CLUSTER_HTTP || '0').toLowerCase() === '1';
     const isClusterLeader = String(process.env.LEVI_CLUSTER_LEADER || 'false').toLowerCase() === 'true';
     const clusterSlot = Number.parseInt(process.env.LEVI_CLUSTER_SLOT || '-1', 10);
+    runtimeState.markNotReady('booting');
     runtimeState.setClusterRole(isClusterWorker ? 'worker' : 'standalone', {
         enabled: isClusterWorker,
         leader: isClusterLeader,
@@ -391,8 +397,10 @@ function bootstrapServer() {
         console.log(`[CACHE] Global raw + user level active`);
         console.log(`[CACHE] Shared L2 ${process.env.SHARED_STREAM_CACHE_ENABLED === 'false' ? 'disabled' : 'active'}`);
         console.log(`[SCRAPERS] Fallback scrapers ready`);
+        console.log(`[NODE] instance=${LOCAL_NODE_ID}`);
         if (shouldUseCluster()) console.log(`[CLUSTER] worker=${process.pid} leader=${isClusterLeader} slot=${clusterSlot}`);
         console.log('-----------------------------------------------------');
+        runtimeState.markReady('http_listening');
     });
 
     let shuttingDown = false;

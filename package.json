@@ -36,7 +36,9 @@
     "nodemon": "^3.1.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.19 <23",
+    "npm": ">=10.8 <11"
   },
+  "packageManager": "npm@10.9.2",
   "private": true
 }
