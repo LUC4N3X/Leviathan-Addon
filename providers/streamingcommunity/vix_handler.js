@@ -1361,7 +1361,7 @@ async function buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitl
 
     if (inferredFhd && wants1080) {
         streams.push(stampScStream({
-            name: '??? StreamingCommunity\n?? 1080p',
+            name: '🌪️ StreamingCommunity\n💎 1080p',
             title: cleanTitle,
             url: buildSyntheticUrl(sourceUrl, '1080p', pageReferer, reqHost),
             quality: '1080p',
@@ -1374,7 +1374,7 @@ async function buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitl
 
     if (wants720 || (!streams.length && fastMode)) {
         streams.push(stampScStream({
-            name: '??? StreamingCommunity\n?? 720p',
+            name: '🌪️ StreamingCommunity\n📺 720p',
             title: cleanTitle,
             url: buildSyntheticUrl(sourceUrl, '720p', pageReferer, reqHost),
             quality: '720p',
