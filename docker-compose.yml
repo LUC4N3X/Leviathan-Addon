@@ -9,19 +9,16 @@ services:
     init: true
     ports:
       - "7000:7000"
+    env_file:
+      - .env
     environment:
       NODE_ENV: production
       PORT: 7000
       TZ: Europe/Rome
     stop_grace_period: 20s
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7000/manifest.json').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 20s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
