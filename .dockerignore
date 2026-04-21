@@ -5,6 +5,7 @@ yarn-error.log*
 pnpm-debug.log*
 .git
 .gitignore
+.github
 Dockerfile*
 docker-compose*.yml
 docker-compose*.yaml
@@ -23,3 +24,8 @@ temp
 *.swo
 .DS_Store
 Thumbs.db
+tests
+scripts
+README.md
+CHANGELOG.md
+*.zip
