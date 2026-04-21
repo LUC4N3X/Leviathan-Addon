@@ -14,7 +14,7 @@ const {
     HOSTER_ESCAPED_DIRECT_LINK_PATTERN
 } = require('../extractors/registry');
 
-const GS_DOMAIN = 'https://guardoserie.team';
+const GS_DOMAIN = 'https://guardoserie.work';
 const TMDB_KEY = '5bae8d11f2a7bc7a95c6d040a31d2163';
 const BROWSER_PROFILES = GUARDA_SERIE_BROWSER_PROFILES;
 
