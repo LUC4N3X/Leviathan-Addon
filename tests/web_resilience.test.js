@@ -10,10 +10,10 @@ const {
 } = require('../providers/extractors/resilience');
 
 test('TTLCache returns stale entries only when requested', async () => {
-    const cache = new TTLCache({ ttlMs: 5, staleTtlMs: 50, cloneValues: true });
+    const cache = new TTLCache({ ttlMs: 30, staleTtlMs: 300, cloneValues: true });
     cache.set('movie', { title: 'Example' });
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 60));
     assert.equal(cache.get('movie'), null);
 
     const staleEntry = cache.getEntry('movie', { allowStale: true });

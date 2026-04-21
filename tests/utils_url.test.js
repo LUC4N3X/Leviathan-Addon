@@ -9,7 +9,7 @@ const {
   isSafeRemoteUrl,
   parseForwardedProto,
   sanitizeHostHeader
-} = require('../core/utils_url');
+} = require('../core/utils/url');
 
 test('parseForwardedProto keeps only safe forwarded protocol values', () => {
   assert.equal(parseForwardedProto('https, http', 'http'), 'https');
