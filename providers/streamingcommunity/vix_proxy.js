@@ -1,6 +1,6 @@
 const axios = require('axios');
 const { getRequestOrigin, isSafeRemoteUrl } = require('../../core/utils/url');
-const { decodeProxyToken, makeProxyToken, normalizeHeaders } = require('./proxy_tokens');
+const { resolveTransitKey, issueTransitKey, normalizeRequestHeaders, TRANSIT_KIND } = require('./proxy_tokens');
 
 const DEFAULT_REFERER = 'https://vixsrc.to/';
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -34,7 +34,7 @@ function buildRequestHeaders(targetUrl, explicitReferer, overrides = null) {
         }
     } catch {}
 
-    return normalizeHeaders({
+    return normalizeRequestHeaders({
         'User-Agent': DEFAULT_UA,
         Accept: '*/*',
         'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -73,9 +73,13 @@ function selectVariant(variants, forceMax) {
 function buildProxyUrl(req, absoluteUrl, pageReferer, extraHeaders = null) {
     const selfBase = getSelfBase(req);
     const url = new URL(`${selfBase}/vixsynthetic.m3u8`);
-    const token = makeProxyToken(absoluteUrl, {
+    const token = issueTransitKey(absoluteUrl, {
+        kind: TRANSIT_KIND,
         referer: pageReferer,
-        headers: buildRequestHeaders(absoluteUrl, pageReferer, extraHeaders)
+        headers: buildRequestHeaders(absoluteUrl, pageReferer, extraHeaders),
+        hostBinding: getSelfBase(req),
+        routeBinding: '/vixsynthetic.m3u8',
+        issuer: 'vix-proxy'
     });
     if (token) url.searchParams.set('d', token);
     else url.searchParams.set('src', absoluteUrl);
@@ -182,7 +186,11 @@ async function fetchUpstream(targetUrl, referer, upstreamHeaders = null) {
 }
 
 function resolveProxySource(req) {
-    const tokenPayload = decodeProxyToken(req.query.d);
+    const tokenPayload = resolveTransitKey(req.query.d, {
+        kind: TRANSIT_KIND,
+        hostBinding: getSelfBase(req),
+        routeBinding: '/vixsynthetic.m3u8'
+    });
     if (tokenPayload?.url && isSafeRemoteUrl(tokenPayload.url)) {
         return {
             sourceUrl: tokenPayload.url,
