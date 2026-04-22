@@ -10,7 +10,7 @@ const {
     TTLCache,
     resilientCall
 } = require('../extractors/resilience');
-const { makeProxyToken } = require('./proxy_tokens');
+const { issueTransitKey, TRANSIT_KIND } = require('./proxy_tokens');
 const { buildRequestHeaders: buildProxyRequestHeaders } = require('./vix_proxy');
 
 const VIX_BASE = 'https://vixsrc.to';
@@ -625,9 +625,14 @@ async function resolveScEmbedUrl(tmdbId, pageUrl, season = null, episode = null)
 function buildSyntheticUrl(masterSource, quality, referer, reqHost) {
     const addonBase = normalizeAddonBase(reqHost);
     const proxy = new URL(`${addonBase}/vixsynthetic.m3u8`);
-    const token = makeProxyToken(masterSource, {
+    const token = issueTransitKey(masterSource, {
+        kind: TRANSIT_KIND,
         referer,
-        headers: buildProxyRequestHeaders(masterSource, referer)
+        headers: buildProxyRequestHeaders(masterSource, referer),
+        hostBinding: addonBase,
+        routeBinding: '/vixsynthetic.m3u8',
+        issuer: 'vix-handler',
+        profile: 'synthetic-stream'
     });
     if (token) proxy.searchParams.set('d', token);
     else proxy.searchParams.set('src', masterSource);
@@ -1611,3 +1616,4 @@ async function searchVix(meta, config = {}, reqHost) {
 }
 
 module.exports = { searchVix };
+
