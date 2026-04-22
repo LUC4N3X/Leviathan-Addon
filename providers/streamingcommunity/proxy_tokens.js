@@ -1,53 +1,32 @@
-'use strict';
+"use strict";
 
 const crypto = require('crypto');
 
-const MODULE_VERSION = 3;
+const MODULE_VERSION = 4;
+const TRANSIT_KIND = 'vix-transit';
 const SWEEP_INTERVAL_MS = 45 * 1000;
-const HEADER_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const REQUEST_CONTEXT_TTL_MS = 6 * 60 * 60 * 1000;
 const TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 const DEFAULT_MAX_USES = 0;
 const MAX_URL_LENGTH = 8192;
 const MAX_REFERER_LENGTH = 2048;
 const MAX_HEADER_VALUE_LENGTH = 4096;
 const MAX_HEADER_COUNT = 64;
-const DEFAULT_SECRET = process.env.PROXY_TOKEN_SECRET || 'dev-only-local-secret-change-me';
+const SECRET = String(process.env.PROXY_TOKEN_SECRET || 'dev-only-local-secret-change-me').trim();
 
-const contextById = new Map();
-const requestHashToId = new Map();
-const headerHashToId = new Map();
-const headerContextById = new Map();
+const requestContextById = new Map();
+const requestKeyToId = new Map();
 let lastSweepAt = 0;
 
 function now() {
     return Date.now();
 }
 
-function clone(value) {
-    return value ? JSON.parse(JSON.stringify(value)) : value;
+function safeClone(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
-function maybeSweep(force = false) {
-    const ts = now();
-    if (!force && ts - lastSweepAt < SWEEP_INTERVAL_MS) return;
-    lastSweepAt = ts;
-
-    for (const [id, entry] of contextById.entries()) {
-        if (!entry || Number(entry.expiresAt || 0) <= ts) {
-            contextById.delete(id);
-            if (entry?.stableHash) requestHashToId.delete(entry.stableHash);
-        }
-    }
-
-    for (const [id, entry] of headerContextById.entries()) {
-        if (!entry || Number(entry.expiresAt || 0) <= ts) {
-            headerContextById.delete(id);
-            if (entry?.stableHash) headerHashToId.delete(entry.stableHash);
-        }
-    }
-}
-
-function createId(prefix = 'ctx') {
+function createContextId(prefix = 'ctx') {
     return `${prefix}_${crypto.randomBytes(9).toString('base64url')}`;
 }
 
@@ -55,22 +34,35 @@ function sha256(input) {
     return crypto.createHash('sha256').update(String(input || ''), 'utf8').digest('hex');
 }
 
-function hmac(input) {
-    return crypto.createHmac('sha256', DEFAULT_SECRET).update(String(input || ''), 'utf8').digest('base64url');
+function signEnvelope(body) {
+    return crypto.createHmac('sha256', SECRET).update(String(body || ''), 'utf8').digest('base64url');
 }
 
-function safeEquals(a, b) {
-    const left = Buffer.from(String(a || ''), 'utf8');
-    const right = Buffer.from(String(b || ''), 'utf8');
-    if (left.length !== right.length) return false;
-    return crypto.timingSafeEqual(left, right);
+function safeEquals(left, right) {
+    const a = Buffer.from(String(left || ''), 'utf8');
+    const b = Buffer.from(String(right || ''), 'utf8');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
 }
 
-function normalizeUrl(url) {
-    const value = String(url || '').trim();
-    if (!value || value.length > MAX_URL_LENGTH) return null;
+function maybeSweep(force = false) {
+    const ts = now();
+    if (!force && ts - lastSweepAt < SWEEP_INTERVAL_MS) return;
+    lastSweepAt = ts;
+
+    for (const [id, entry] of requestContextById.entries()) {
+        if (!entry || Number(entry.expiresAt || 0) <= ts) {
+            requestContextById.delete(id);
+            if (entry?.stableKeyHash) requestKeyToId.delete(entry.stableKeyHash);
+        }
+    }
+}
+
+function normalizeRemoteUrl(value, maxLength = MAX_URL_LENGTH) {
+    const raw = String(value || '').trim();
+    if (!raw || raw.length > maxLength) return null;
     try {
-        const parsed = new URL(value);
+        const parsed = new URL(raw);
         if (!/^https?:$/i.test(parsed.protocol)) return null;
         return parsed.toString();
     } catch {
@@ -78,17 +70,26 @@ function normalizeUrl(url) {
     }
 }
 
-function normalizeReferer(referer) {
-    const value = String(referer || '').trim();
-    if (!value) return null;
-    if (value.length > MAX_REFERER_LENGTH) return null;
-    return normalizeUrl(value);
+function normalizeReferer(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    if (raw.length > MAX_REFERER_LENGTH) return null;
+    return normalizeRemoteUrl(raw, MAX_REFERER_LENGTH);
 }
 
-function normalizeHeaders(headers = {}) {
+function normalizeBinding(value) {
+    const raw = String(value || '').trim();
+    return raw || null;
+}
+
+function normalizeTransitKind(value) {
+    const raw = String(value || '').trim();
+    return raw || TRANSIT_KIND;
+}
+
+function normalizeRequestHeaders(headers = {}) {
     const out = {};
-    const entries = Object.entries(headers || {});
-    for (const [rawKey, rawValue] of entries) {
+    for (const [rawKey, rawValue] of Object.entries(headers || {})) {
         if (rawValue == null) continue;
         const key = String(rawKey || '').trim().toLowerCase();
         const value = String(rawValue || '').trim();
@@ -100,47 +101,46 @@ function normalizeHeaders(headers = {}) {
     return out;
 }
 
-function stableHeaderKey(headers = {}) {
-    const normalized = normalizeHeaders(headers);
-    const ordered = Object.keys(normalized)
+function stableHeaders(headers = {}) {
+    const normalized = normalizeRequestHeaders(headers);
+    return Object.keys(normalized)
         .sort((a, b) => a.localeCompare(b))
         .reduce((acc, key) => {
             acc[key] = normalized[key];
             return acc;
         }, {});
-    return JSON.stringify(ordered);
 }
 
-function stableRequestKey(targetUrl, options = {}) {
+function buildStableRequestKey(targetUrl, options = {}) {
     return JSON.stringify({
-        kind: String(options.kind || 'proxy').trim() || 'proxy',
-        target: normalizeUrl(targetUrl),
+        kind: normalizeTransitKind(options.kind),
+        targetUrl: normalizeRemoteUrl(targetUrl),
         referer: normalizeReferer(options.referer),
-        headers: JSON.parse(stableHeaderKey(options.headers || {})),
+        headers: stableHeaders(options.headers || {}),
+        hostBinding: normalizeBinding(options.hostBinding),
+        routeBinding: normalizeBinding(options.routeBinding),
+        issuer: normalizeBinding(options.issuer),
+        profile: normalizeBinding(options.profile),
         allowInsecureTls: Boolean(options.allowInsecureTls),
-        forceHeaders: Boolean(options.forceHeaders),
-        hostBinding: String(options.hostBinding || '').trim() || null,
-        routeBinding: String(options.routeBinding || '').trim() || null,
-        profile: String(options.profile || '').trim() || null,
-        issuer: String(options.issuer || '').trim() || null
+        forceHeaders: Boolean(options.forceHeaders)
     });
 }
 
-function packEnvelope(payload) {
+function packToken(payload) {
     const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-    const signature = hmac(`${MODULE_VERSION}.${body}`);
-    return `lt.${MODULE_VERSION}.${body}.${signature}`;
+    const signature = signEnvelope(`${MODULE_VERSION}.${body}`);
+    return `lvt.${MODULE_VERSION}.${body}.${signature}`;
 }
 
-function unpackEnvelope(token) {
+function unpackToken(token) {
     const raw = String(token || '').trim();
-    const match = raw.match(/^lt\.(\d+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/);
+    const match = raw.match(/^lvt\.(\d+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/);
     if (!match) return null;
 
     const version = Number(match[1] || 0);
     const body = match[2];
     const signature = match[3];
-    const expected = hmac(`${version}.${body}`);
+    const expected = signEnvelope(`${version}.${body}`);
     if (!safeEquals(signature, expected)) return null;
 
     try {
@@ -152,137 +152,97 @@ function unpackEnvelope(token) {
     }
 }
 
-function touchEntry(entry, ttlMs) {
+function touchEntry(entry, ttlMs = null) {
     if (!entry) return null;
     entry.touchedAt = now();
     if (ttlMs && Number(ttlMs) > 0) entry.expiresAt = now() + Number(ttlMs);
     return entry;
 }
 
-function stashHeaderContext(headers = {}, ttlMs = HEADER_CACHE_TTL_MS) {
-    maybeSweep();
-    const normalized = normalizeHeaders(headers);
-    const stableKey = stableHeaderKey(normalized);
-    if (stableKey === '{}') return null;
-
-    const hash = sha256(`hdr:${stableKey}`);
-    const existingId = headerHashToId.get(hash);
-    if (existingId) {
-        const existing = headerContextById.get(existingId);
-        if (existing && Number(existing.expiresAt || 0) > now()) {
-            touchEntry(existing, ttlMs);
-            return existingId;
-        }
-    }
-
-    const id = createId('hdr');
-    headerContextById.set(id, {
-        id,
-        stableHash: hash,
-        headers: normalized,
-        createdAt: now(),
-        touchedAt: now(),
-        expiresAt: now() + Math.max(1000, Number(ttlMs) || HEADER_CACHE_TTL_MS)
-    });
-    headerHashToId.set(hash, id);
-    return id;
-}
-
-function readHeaderContext(id) {
-    maybeSweep();
-    const entry = headerContextById.get(String(id || ''));
-    if (!entry) return null;
-    if (Number(entry.expiresAt || 0) <= now()) {
-        headerContextById.delete(String(id || ''));
-        if (entry.stableHash) headerHashToId.delete(entry.stableHash);
-        return null;
-    }
-    touchEntry(entry);
-    return { ...entry.headers };
-}
-
-function stashRequestContext(targetUrl, options = {}) {
+function stashTransitContext(targetUrl, options = {}) {
     maybeSweep();
 
-    const normalizedTarget = normalizeUrl(targetUrl);
-    if (!normalizedTarget) return null;
+    const normalizedTargetUrl = normalizeRemoteUrl(targetUrl);
+    if (!normalizedTargetUrl) return null;
 
-    const normalizedHeaders = normalizeHeaders(options.headers || {});
     const normalizedReferer = normalizeReferer(options.referer);
-    const ttlMs = Math.max(1000, Number(options.ttlMs) || HEADER_CACHE_TTL_MS);
+    const normalizedHeaders = normalizeRequestHeaders(options.headers || {});
+    const contextTtlMs = Math.max(1000, Number(options.ttlMs) || REQUEST_CONTEXT_TTL_MS);
     const tokenTtlMs = Math.max(1000, Number(options.tokenTtlMs) || TOKEN_TTL_MS);
-    const stableHash = sha256(stableRequestKey(normalizedTarget, {
+    const stableKeyHash = sha256(buildStableRequestKey(normalizedTargetUrl, {
         ...options,
         referer: normalizedReferer,
         headers: normalizedHeaders
     }));
 
-    const existingId = requestHashToId.get(stableHash);
+    const existingId = requestKeyToId.get(stableKeyHash);
     if (existingId) {
-        const existing = contextById.get(existingId);
+        const existing = requestContextById.get(existingId);
         if (existing && Number(existing.expiresAt || 0) > now()) {
-            existing.targetUrl = normalizedTarget;
+            existing.targetUrl = normalizedTargetUrl;
             existing.referer = normalizedReferer;
             existing.headers = normalizedHeaders;
             existing.tokenExpiresAt = now() + tokenTtlMs;
-            touchEntry(existing, ttlMs);
+            existing.maxUses = Math.max(0, Number(options.maxUses) || existing.maxUses || DEFAULT_MAX_USES);
+            touchEntry(existing, contextTtlMs);
             return existing;
         }
     }
 
     const entry = {
-        id: createId('req'),
-        stableHash,
-        kind: String(options.kind || 'proxy').trim() || 'proxy',
-        targetUrl: normalizedTarget,
+        id: createContextId('req'),
+        stableKeyHash,
+        kind: normalizeTransitKind(options.kind),
+        targetUrl: normalizedTargetUrl,
         referer: normalizedReferer,
         headers: normalizedHeaders,
-        createdAt: now(),
-        touchedAt: now(),
-        expiresAt: now() + ttlMs,
-        tokenExpiresAt: now() + tokenTtlMs,
-        maxUses: Math.max(0, Number(options.maxUses) || DEFAULT_MAX_USES),
-        hits: 0,
+        hostBinding: normalizeBinding(options.hostBinding),
+        routeBinding: normalizeBinding(options.routeBinding),
+        issuer: normalizeBinding(options.issuer),
+        profile: normalizeBinding(options.profile),
         allowInsecureTls: Boolean(options.allowInsecureTls),
         forceHeaders: Boolean(options.forceHeaders),
-        hostBinding: String(options.hostBinding || '').trim() || null,
-        routeBinding: String(options.routeBinding || '').trim() || null,
-        issuer: String(options.issuer || '').trim() || null,
-        profile: String(options.profile || '').trim() || null,
-        meta: clone(options.meta || null)
+        meta: safeClone(options.meta || null),
+        createdAt: now(),
+        touchedAt: now(),
+        expiresAt: now() + contextTtlMs,
+        tokenExpiresAt: now() + tokenTtlMs,
+        maxUses: Math.max(0, Number(options.maxUses) || DEFAULT_MAX_USES),
+        hits: 0
     };
 
-    contextById.set(entry.id, entry);
-    requestHashToId.set(stableHash, entry.id);
+    requestContextById.set(entry.id, entry);
+    requestKeyToId.set(stableKeyHash, entry.id);
     return entry;
 }
 
 function issueTransitKey(targetUrl, options = {}) {
-    const entry = stashRequestContext(targetUrl, options);
+    const entry = stashTransitContext(targetUrl, options);
     if (!entry) return null;
 
-    return packEnvelope({
+    return packToken({
         v: MODULE_VERSION,
-        type: 'transit',
-        rid: entry.id,
+        typ: 'transit',
+        kind: entry.kind,
+        cid: entry.id,
         exp: entry.tokenExpiresAt,
         nonce: crypto.randomBytes(5).toString('base64url')
     });
 }
 
-function consumeRequestContext(entry, options = {}) {
+function materializeContext(entry, options = {}) {
     if (!entry) return null;
-    if (Number(entry.expiresAt || 0) <= now()) return null;
-    if (Number(entry.tokenExpiresAt || 0) <= now()) return null;
+    const ts = now();
+    if (Number(entry.expiresAt || 0) <= ts) return null;
+    if (Number(entry.tokenExpiresAt || 0) <= ts) return null;
 
-    const expectedHost = String(options.hostBinding || '').trim() || null;
-    if (entry.hostBinding && expectedHost && entry.hostBinding !== expectedHost) return null;
+    const expectedKind = normalizeTransitKind(options.kind || entry.kind);
+    const expectedHostBinding = normalizeBinding(options.hostBinding);
+    const expectedRouteBinding = normalizeBinding(options.routeBinding);
 
-    const expectedRoute = String(options.routeBinding || '').trim() || null;
-    if (entry.routeBinding && expectedRoute && entry.routeBinding !== expectedRoute) return null;
-
-    const expectedKind = String(options.kind || '').trim() || null;
-    if (expectedKind && entry.kind && entry.kind !== expectedKind) return null;
+    if (entry.kind && expectedKind && entry.kind !== expectedKind) return null;
+    if (entry.hostBinding && expectedHostBinding && entry.hostBinding !== expectedHostBinding) return null;
+    if (entry.routeBinding && expectedRouteBinding && entry.routeBinding !== expectedRouteBinding) return null;
 
     entry.hits += 1;
     touchEntry(entry);
@@ -291,7 +251,7 @@ function consumeRequestContext(entry, options = {}) {
     return {
         url: entry.targetUrl,
         referer: entry.referer,
-        headers: clone(entry.headers) || null,
+        headers: safeClone(entry.headers) || null,
         contextId: entry.id,
         expiresAt: entry.tokenExpiresAt,
         kind: entry.kind,
@@ -301,94 +261,53 @@ function consumeRequestContext(entry, options = {}) {
         forceHeaders: entry.forceHeaders,
         hits: entry.hits,
         maxUses: entry.maxUses,
-        meta: clone(entry.meta || null)
+        meta: safeClone(entry.meta || null)
     };
 }
 
 function resolveTransitKey(token, options = {}) {
     maybeSweep();
-    const envelope = unpackEnvelope(token);
-    if (envelope?.payload?.rid) {
-        const entry = contextById.get(String(envelope.payload.rid));
-        return consumeRequestContext(entry, options);
-    }
-    return null;
+    const unpacked = unpackToken(token);
+    if (!unpacked?.payload?.cid) return null;
+
+    const entry = requestContextById.get(String(unpacked.payload.cid));
+    return materializeContext(entry, options);
 }
 
-function revokeTransitKey(tokenOrId) {
-    const raw = String(tokenOrId || '').trim();
+function revokeTransitKey(tokenOrContextId) {
+    const raw = String(tokenOrContextId || '').trim();
     if (!raw) return false;
 
-    const envelope = unpackEnvelope(raw);
-    const id = envelope?.payload?.rid || raw;
-    const entry = contextById.get(id);
+    const unpacked = unpackToken(raw);
+    const contextId = unpacked?.payload?.cid || raw;
+    const entry = requestContextById.get(contextId);
     if (!entry) return false;
 
-    contextById.delete(id);
-    if (entry.stableHash) requestHashToId.delete(entry.stableHash);
+    requestContextById.delete(contextId);
+    if (entry.stableKeyHash) requestKeyToId.delete(entry.stableKeyHash);
     return true;
 }
 
 function warmTransitContext(targetUrl, options = {}) {
-    return stashRequestContext(targetUrl, options);
+    return stashTransitContext(targetUrl, options);
 }
 
 function getTransitStats() {
     maybeSweep();
     return {
         version: MODULE_VERSION,
-        liveRequestContexts: contextById.size,
-        liveHeaderContexts: headerContextById.size,
+        kind: TRANSIT_KIND,
+        liveContexts: requestContextById.size,
         sweepIntervalMs: SWEEP_INTERVAL_MS
     };
 }
 
-function registerHeaders(headers = {}, ttlMs = HEADER_CACHE_TTL_MS) {
-    return stashHeaderContext(headers, ttlMs);
-}
-
-function lookupHeaders(id) {
-    return readHeaderContext(id);
-}
-
-function makeProxyToken(targetUrl, options = {}) {
-    return issueTransitKey(targetUrl, options);
-}
-
-function decodeLegacyToken(token) {
-    try {
-        const json = Buffer.from(String(token || ''), 'base64url').toString('utf8');
-        const parsed = JSON.parse(json);
-        if (!parsed || typeof parsed !== 'object') return null;
-        if (Number(parsed.e || 0) > 0 && Number(parsed.e) < now()) return null;
-        const url = normalizeUrl(parsed.u);
-        if (!url) return null;
-        return {
-            url,
-            referer: normalizeReferer(parsed.r),
-            headers: readHeaderContext(parsed.h) || null,
-            contextId: parsed.h ? String(parsed.h) : null,
-            expiresAt: Number(parsed.e || 0) || 0,
-            kind: 'legacy'
-        };
-    } catch {
-        return null;
-    }
-}
-
-function decodeProxyToken(token, options = {}) {
-    return resolveTransitKey(token, options) || decodeLegacyToken(token);
-}
-
 module.exports = {
-    HEADER_CACHE_TTL_MS,
-    TOKEN_TTL_MS,
     MODULE_VERSION,
-    normalizeHeaders,
-    registerHeaders,
-    lookupHeaders,
-    makeProxyToken,
-    decodeProxyToken,
+    TRANSIT_KIND,
+    REQUEST_CONTEXT_TTL_MS,
+    TOKEN_TTL_MS,
+    normalizeRequestHeaders,
     issueTransitKey,
     resolveTransitKey,
     revokeTransitKey,
