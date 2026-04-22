@@ -28,7 +28,7 @@ const PLAYLIST_CACHE_TTL_MS = 120 * 1000;
 const PREFERRED_LANG = 'it';
 const AU_BASE = 'https://www.animeunity.so';
 const ANIME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
-const ANIME_MAPPING_BASE = 'https://animemapping.stremio.dpdns.org';
+const ANIME_MAPPING_BASE = 'https://anime.questoleviatanormio.dpdns.org';
 
 const http = axios.create({
     timeout: REQUEST_TIMEOUT,
