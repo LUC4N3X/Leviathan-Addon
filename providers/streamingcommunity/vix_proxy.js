@@ -1,6 +1,6 @@
 const axios = require('axios');
 const { getRequestOrigin, isSafeRemoteUrl } = require('../../core/utils/url');
-const { resolveTransitKey, issueTransitKey, normalizeRequestHeaders, TRANSIT_KIND } = require('./proxy_tokens');
+const { resolveTransitKey, issueTransitKey, normalizeRequestHeaders, TRANSIT_KIND } = require('./stream_transit.js');
 
 const DEFAULT_REFERER = 'https://vixsrc.to/';
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
