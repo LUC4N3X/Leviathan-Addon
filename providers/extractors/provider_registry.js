@@ -6,6 +6,7 @@ const { searchGuardaserie } = require('../guardaserie/gs_handler');
 const { searchAnimeWorld } = require('../animeworld/aw_handler');
 const { searchAnimeSaturn } = require('../animesaturn/as_handler');
 const { searchGuardaFlix } = require('../guardaflix/gf_handler');
+const { searchCinemaCity } = require('../cinemacity/cc_handler');
 
 function isStreamingCommunityEnabled(filters = {}) {
     return filters?.enableStreamingCommunity === true || filters?.enableVix === true;
@@ -79,6 +80,16 @@ const WEB_PROVIDER_DEFINITIONS = [
         minTimeout: 7000,
         isEnabled: ({ filters, meta }) => filters?.enableGf === true && !meta?.isSeries,
         run: ({ meta, config }) => searchGuardaFlix(meta, config)
+    },
+    {
+        key: 'cinemaCity',
+        sourceName: 'CinemaCity',
+        cacheName: 'CinemaCityV3',
+        icon: '🏙️',
+        limiterKey: 'webCc',
+        minTimeout: 7000,
+        isEnabled: ({ filters }) => filters?.enableCc === true,
+        run: ({ originalId, finalId, meta, config }) => searchCinemaCity(originalId, finalId, meta, config)
     }
 ];
 
