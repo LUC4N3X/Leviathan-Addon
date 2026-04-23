@@ -10,7 +10,7 @@ const {
     TTLCache,
     resilientCall
 } = require('../extractors/resilience');
-const { issueTransitKey, TRANSIT_KIND } = require('./stream_transit.js');
+const { issueHlsTransitKey, TRANSIT_KIND, buildTransitUrl } = require('./stream_transit.js');
 const { buildRequestHeaders: buildProxyRequestHeaders } = require('./vix_proxy');
 
 const VIX_BASE = 'https://vixsrc.to';
@@ -721,21 +721,23 @@ async function resolveScEmbedUrl(tmdbId, pageUrl, season = null, episode = null)
 
 function buildSyntheticUrl(masterSource, quality, referer, reqHost) {
     const addonBase = normalizeAddonBase(reqHost);
-    const proxy = new URL(`${addonBase}/vixsynthetic.m3u8`);
-    const token = issueTransitKey(masterSource, {
+    const token = issueHlsTransitKey(masterSource, {
         kind: TRANSIT_KIND,
         referer,
         headers: buildProxyRequestHeaders(masterSource, referer),
         hostBinding: addonBase,
         routeBinding: '/vixsynthetic.m3u8',
         issuer: 'vix-handler',
-        profile: 'synthetic-stream'
+        profile: 'synthetic-stream',
+        meta: {
+            syntheticQuality: quality,
+            syntheticVariant: quality === '1080p' ? 'max' : 'mid'
+        },
+        tokenTtlMs: 10 * 60 * 1000,
+        tokenMaxUses: 0,
+        maxUses: 0
     });
-    if (token) proxy.searchParams.set('d', token);
-    else proxy.searchParams.set('src', masterSource);
-    proxy.searchParams.set('max', quality === '1080p' ? '1' : '0');
-    if (referer) proxy.searchParams.set('referer', referer);
-    return proxy.toString();
+    return token ? buildTransitUrl(addonBase, '/vixsynthetic.m3u8', token) : '';
 }
 
 function buildSeriesFilename(cleanTitle, season, episode) {
