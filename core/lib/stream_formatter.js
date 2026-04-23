@@ -281,6 +281,11 @@ function getCacheIcon(cacheState) {
   return '⏳';
 }
 
+function getStatusIcon(cacheState, serviceTag) {
+  if (normalizeServiceTag(serviceTag) === 'WEB') return '🌊';
+  return getCacheIcon(cacheState);
+}
+
 function deterministicHash(value) {
   const text = safeString(value);
   let hash = 0;
@@ -669,7 +674,7 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
   const displayLang = getDisplayLanguageForMode(extracted.lang, config);
   const normalizedServiceTag = normalizeServiceTag(serviceTag);
   const normalizedCacheState = normalizeCacheState(cacheState, normalizedServiceTag);
-  const cacheIcon = getCacheIcon(normalizedCacheState);
+  const cacheIcon = getStatusIcon(normalizedCacheState, normalizedServiceTag);
   const serviceIconTitle = SERVICE_ICON_BY_TAG[normalizedServiceTag] || '🦈';
   const qIcon = SERVICE_ICON_BY_TAG[normalizedServiceTag] || extracted.qIcon;
   const numericSize = Number(size) || 0;
