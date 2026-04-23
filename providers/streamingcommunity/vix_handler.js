@@ -16,6 +16,8 @@ const { buildRequestHeaders: buildProxyRequestHeaders } = require('./vix_proxy')
 const VIX_BASE = 'https://vixsrc.to';
 const CINEMETA_BASE = 'https://v3-cinemeta.strem.io/meta';
 const DEFAULT_ADDON_URL = 'https://leviata96n.questoleviatanormio.dpdns.org';
+const TMDB_API_BASE = 'https://api.themoviedb.org/3';
+const TMDB_API_KEY = '5bae8d11f2a7bc7a95c6d040a31d2163';
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const REQUEST_TIMEOUT = 8000;
 const MAX_FETCH_RETRIES = 3;
@@ -25,6 +27,7 @@ const RETRYABLE_STATUSES = new Set([403, 408, 425, 429, 500, 502, 503, 504]);
 const PAYLOAD_CACHE_TTL_MS = 5 * 60 * 1000;
 const DIRECT_PAGE_CACHE_TTL_MS = 45 * 1000;
 const PLAYLIST_CACHE_TTL_MS = 120 * 1000;
+const TMDB_META_CACHE_TTL_MS = 30 * 60 * 1000;
 const PREFERRED_LANG = 'it';
 const AU_BASE = 'https://www.animeunity.so';
 const ANIME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
@@ -44,6 +47,7 @@ const directPageCache = new TTLCache({ maxSize: 64, ttlMs: DIRECT_PAGE_CACHE_TTL
 const playlistCache = new TTLCache({ maxSize: 96, ttlMs: PLAYLIST_CACHE_TTL_MS, cloneValues: true });
 const animeSessionCache = new TTLCache({ maxSize: 2, ttlMs: 20 * 60 * 1000, cloneValues: true });
 const animeSearchCache = new TTLCache({ maxSize: 96, ttlMs: 10 * 60 * 1000, cloneValues: true });
+const tmdbMetaCache = new TTLCache({ maxSize: 128, ttlMs: TMDB_META_CACHE_TTL_MS, cloneValues: true });
 const inflight = new SingleFlight();
 const requestBreaker = new CircuitBreaker({
     failureThreshold: 4,
@@ -564,7 +568,65 @@ async function resolveCachedPayload(url) {
     });
 }
 
+function isImdbId(value) {
+    return /^tt\d{5,12}$/i.test(String(value || '').trim());
+}
+
+function extractTmdbIdFromValue(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    if (/^\d+$/.test(raw)) return raw;
+
+    const patterns = [
+        /^tmdb:(\d+)$/i,
+        /^tmdb:(?:movie|tv|series):(\d+)$/i,
+        /^tmdb[/-](?:movie|tv|series)[/-](\d+)$/i,
+        /(?:^|:)tmdb:(\d+)$/i,
+        /(?:^|:)(\d{2,})$/
+    ];
+
+    for (const pattern of patterns) {
+        const match = raw.match(pattern);
+        if (match?.[1]) return String(match[1]);
+    }
+    return null;
+}
+
+function tmdbParams(params = {}) {
+    return { api_key: TMDB_API_KEY, ...params };
+}
+
+async function fetchTmdbJson(path, params = {}, cacheKey = null, ttlMs = TMDB_META_CACHE_TTL_MS) {
+    const finalCacheKey = cacheKey ? `tmdb:${cacheKey}` : null;
+    if (finalCacheKey) {
+        const cached = cacheGet(tmdbMetaCache, finalCacheKey);
+        if (cached) return cached;
+    }
+
+    return singleFlight(finalCacheKey || `tmdb:${path}:${JSON.stringify(params)}`, async () => {
+        if (finalCacheKey) {
+            const secondCached = cacheGet(tmdbMetaCache, finalCacheKey);
+            if (secondCached) return secondCached;
+        }
+
+        try {
+            const response = await http.get(`${TMDB_API_BASE}${path}`, {
+                params: tmdbParams(params),
+                timeout: 6000,
+                validateStatus: () => true,
+                proxy: false
+            });
+            if (Number(response.status) !== 200 || !response.data || typeof response.data !== 'object') return null;
+            if (finalCacheKey) cacheSet(tmdbMetaCache, finalCacheKey, response.data, ttlMs);
+            return response.data;
+        } catch {
+            return null;
+        }
+    });
+}
+
 async function fetchRealTitle(imdbId, metaType) {
+    if (!isImdbId(imdbId)) return null;
     try {
         const metaUrl = `${CINEMETA_BASE}/${metaType}/${imdbId}.json`;
         const response = await http.get(metaUrl, { timeout: 6000, validateStatus: () => true, proxy: false });
@@ -573,6 +635,41 @@ async function fetchRealTitle(imdbId, metaType) {
     } catch {
         return null;
     }
+}
+
+async function resolveTmdbFromImdb(imdbId, isSeries) {
+    if (!isImdbId(imdbId)) return null;
+    const payload = await fetchTmdbJson(`/find/${imdbId}`, {
+        external_source: 'imdb_id',
+        language: 'it-IT'
+    }, `find:${imdbId}:${isSeries ? 'tv' : 'movie'}`);
+    if (!payload) return null;
+
+    const bucket = isSeries ? payload?.tv_results : payload?.movie_results;
+    const first = Array.isArray(bucket) ? bucket[0] : null;
+    return first?.id ? String(first.id) : null;
+}
+
+async function fetchTmdbMeta(tmdbId, isSeries) {
+    const normalizedTmdbId = extractTmdbIdFromValue(tmdbId);
+    if (!normalizedTmdbId) return null;
+
+    const kind = isSeries ? 'tv' : 'movie';
+    const payload = await fetchTmdbJson(`/${kind}/${normalizedTmdbId}`, {
+        language: 'it-IT',
+        append_to_response: 'external_ids,translations'
+    }, `meta:${kind}:${normalizedTmdbId}`);
+    if (!payload) return null;
+
+    return {
+        tmdbId: String(payload?.id || normalizedTmdbId),
+        imdbId: payload?.imdb_id || payload?.external_ids?.imdb_id || null,
+        title: payload?.title || payload?.name || null,
+        originalTitle: payload?.original_title || payload?.original_name || null,
+        originalLanguage: payload?.original_language || null,
+        year: String(payload?.release_date || payload?.first_air_date || '').slice(0, 4) || null,
+        raw: payload
+    };
 }
 
 function cleanSeriesTitle(text) {
@@ -1506,14 +1603,96 @@ async function resolveKitsuVix(meta, config = {}, reqHost, forcedKitsu = null) {
     return streams;
 }
 
-async function resolveTmdbId(meta) {
-    const rawId = meta.tmdb_id || meta.tmdbId || meta.imdb_id || meta.id;
-    if (!rawId) return null;
-    if (typeof rawId === 'string' && rawId.startsWith('tt')) {
-        const converted = await mediaIdentity.imdbToTmdb(rawId).catch(() => null);
-        return converted?.tmdbId ? String(converted.tmdbId) : null;
+function collectTmdbTitleCandidates(meta = {}) {
+    return uniqueNonEmpty([
+        meta?.title,
+        meta?.name,
+        meta?.originalTitle,
+        meta?.canonicalTitle,
+        meta?.seriesTitle
+    ]);
+}
+
+function scoreTmdbResult(result, titleCandidates = [], meta = {}, isSeries = false) {
+    const resultTitles = uniqueNonEmpty([
+        result?.title,
+        result?.name,
+        result?.original_title,
+        result?.original_name
+    ]).map((value) => normalizeLookupTitle(value));
+    const wantedTitles = uniqueNonEmpty(titleCandidates).map((value) => normalizeLookupTitle(value));
+
+    let score = 0;
+    for (const candidate of resultTitles) {
+        for (const wanted of wantedTitles) {
+            if (!candidate || !wanted) continue;
+            if (candidate === wanted) score += 200;
+            else if (candidate.includes(wanted) || wanted.includes(candidate)) score += 80;
+            else if (candidate.split(' ').slice(0, 3).join(' ') === wanted.split(' ').slice(0, 3).join(' ')) score += 35;
+        }
     }
-    return String(rawId);
+
+    const wantedYear = extractCandidateYear(meta?.year || meta?.date || meta?.releaseInfo);
+    const resultYear = extractCandidateYear(result?.release_date || result?.first_air_date);
+    if (wantedYear && resultYear && wantedYear === resultYear) score += 20;
+    if (isSeries && result?.name) score += 5;
+    if (!isSeries && result?.title) score += 5;
+    if (String(result?.original_language || '').toLowerCase() === 'it') score += 3;
+    return score;
+}
+
+async function searchTmdbByTitle(meta = {}) {
+    const titleCandidates = collectTmdbTitleCandidates(meta);
+    if (!titleCandidates.length) return null;
+
+    const isSeries = Boolean(meta?.isSeries);
+    const path = isSeries ? '/search/tv' : '/search/movie';
+    const year = extractCandidateYear(meta?.year || meta?.date || meta?.releaseInfo);
+
+    for (const title of titleCandidates.slice(0, 4)) {
+        const params = {
+            language: 'it-IT',
+            include_adult: 'false',
+            query: title
+        };
+        if (year) {
+            if (isSeries) params.first_air_date_year = String(year);
+            else params.year = String(year);
+        }
+
+        const payload = await fetchTmdbJson(path, params, `search:${isSeries ? 'tv' : 'movie'}:${normalizeLookupTitle(title)}:${year || 'na'}`);
+        const results = Array.isArray(payload?.results) ? payload.results : [];
+        if (!results.length) continue;
+
+        const ranked = [...results]
+            .map((entry) => ({ entry, score: scoreTmdbResult(entry, titleCandidates, meta, isSeries) }))
+            .sort((a, b) => b.score - a.score);
+
+        if (ranked[0]?.entry?.id && Number(ranked[0].score || 0) >= 120) {
+            return String(ranked[0].entry.id);
+        }
+    }
+
+    return null;
+}
+
+async function resolveTmdbId(meta = {}) {
+    const explicitTmdbId = extractTmdbIdFromValue(meta?.tmdb_id || meta?.tmdbId);
+    if (explicitTmdbId) return explicitTmdbId;
+
+    const imdbCandidates = uniqueNonEmpty([meta?.imdb_id, meta?.id, meta?.requestedId, meta?.originalId]).filter(isImdbId);
+    for (const imdbId of imdbCandidates) {
+        const viaTmdbFind = await resolveTmdbFromImdb(imdbId, meta?.isSeries);
+        if (viaTmdbFind) return viaTmdbFind;
+
+        const converted = await mediaIdentity.imdbToTmdb(imdbId).catch(() => null);
+        if (converted?.tmdbId) return String(converted.tmdbId);
+    }
+
+    const fromGenericId = extractTmdbIdFromValue(meta?.id);
+    if (fromGenericId) return fromGenericId;
+
+    return searchTmdbByTitle(meta);
 }
 
 async function searchVix(meta, config = {}, reqHost) {
@@ -1567,10 +1746,29 @@ async function searchVix(meta, config = {}, reqHost) {
         const season = meta?.isSeries ? safeInt(meta.season) : null;
         const episode = meta?.isSeries ? safeInt(meta.episode) : null;
         const normalizedQuality = normalizeQualityFilter(config?.filters?.scQuality || 'all');
-        const realTitle = await fetchRealTitle(meta.imdb_id || meta.id, meta?.isSeries ? 'series' : 'movie').catch(() => null);
-        const cleanTitle = cleanSeriesTitle(realTitle || meta?.title || meta?.originalTitle || meta?.name || meta?.id || 'StreamingCommunity');
-        const pageUrl = buildScPageUrl(tmdbId, season, episode);
-        const embedUrl = await resolveScEmbedUrl(tmdbId, pageUrl, season, episode);
+        const tmdbMeta = await fetchTmdbMeta(tmdbId, meta?.isSeries).catch(() => null);
+        const canonicalImdbId = tmdbMeta?.imdbId || (isImdbId(meta?.imdb_id) ? meta.imdb_id : null) || (isImdbId(meta?.id) ? meta.id : null);
+        const realTitle = await fetchRealTitle(canonicalImdbId, meta?.isSeries ? 'series' : 'movie').catch(() => null);
+        const finalTmdbId = tmdbMeta?.tmdbId || String(tmdbId);
+        const cleanTitle = cleanSeriesTitle(
+            realTitle
+            || tmdbMeta?.title
+            || tmdbMeta?.originalTitle
+            || meta?.title
+            || meta?.originalTitle
+            || meta?.name
+            || meta?.id
+            || 'StreamingCommunity'
+        );
+        console.log('[WEB][StreamingCommunity][TMDB]', JSON.stringify({
+            tmdbId: finalTmdbId,
+            imdbId: canonicalImdbId,
+            title: cleanTitle,
+            originalTitle: tmdbMeta?.originalTitle || null,
+            year: tmdbMeta?.year || null
+        }));
+        const pageUrl = buildScPageUrl(finalTmdbId, season, episode);
+        const embedUrl = await resolveScEmbedUrl(finalTmdbId, pageUrl, season, episode);
 
         const candidateUrls = [];
         if (embedUrl) candidateUrls.push(embedUrl);
@@ -1579,7 +1777,7 @@ async function searchVix(meta, config = {}, reqHost) {
         for (const candidateUrl of [...new Set(candidateUrls.filter(Boolean))]) {
             const out = await extractFromCandidate(candidateUrl, cleanTitle, season, episode, normalizedQuality, reqHost);
             if (out.length) {
-                console.log(`[WEB][StreamingCommunity] ok | tmdb=${tmdbId} | items=${out.length} | via=${candidateUrl === embedUrl ? 'api-src' : 'page'}`);
+                console.log(`[WEB][StreamingCommunity] ok | tmdb=${finalTmdbId} | items=${out.length} | via=${candidateUrl === embedUrl ? 'api-src' : 'page'}`);
                 return out;
             }
         }
@@ -1587,7 +1785,7 @@ async function searchVix(meta, config = {}, reqHost) {
         for (const candidateUrl of [...new Set(candidateUrls.filter(Boolean))]) {
             const direct = await tryDirectVixsrcStream(candidateUrl, cleanTitle, season, episode, normalizedQuality);
             if (direct.length) {
-                console.log(`[WEB][StreamingCommunity] direct-ok | tmdb=${tmdbId} | items=${direct.length}`);
+                console.log(`[WEB][StreamingCommunity] direct-ok | tmdb=${finalTmdbId} | items=${direct.length}`);
                 return sortStreams(dedupeStreams(direct));
             }
         }
@@ -1607,7 +1805,7 @@ async function searchVix(meta, config = {}, reqHost) {
             }
         }
 
-        console.log(`[WEB][StreamingCommunity] no-server-url | tmdb=${tmdbId}`);
+        console.log(`[WEB][StreamingCommunity] no-server-url | tmdb=${finalTmdbId}`);
         return [];
     } catch (error) {
         console.error(`[WEB][StreamingCommunity] error | ${error.message}`);
@@ -1616,3 +1814,4 @@ async function searchVix(meta, config = {}, reqHost) {
 }
 
 module.exports = { searchVix };
+
