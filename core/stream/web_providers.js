@@ -15,8 +15,10 @@ function normalizeWebExtractorLabel(value) {
     const raw = String(value || '').trim();
     if (!raw) return '';
 
+    if (/[|•]/.test(raw)) return '';
     if (/^(unknown|unknow|n\/a|null|undefined)$/i.test(raw)) return '';
     if (/vix(?:cloud|src)?/i.test(raw)) return 'VixCloud';
+    if (/cccdn/i.test(raw)) return 'CCCDN';
     if (/mixdrop|m1xdrop|mxcontent/i.test(raw)) return 'MixDrop';
     if (/loadm/i.test(raw)) return 'LoadM';
     if (/supervideo/i.test(raw)) return 'SuperVideo';
@@ -25,6 +27,9 @@ function normalizeWebExtractorLabel(value) {
     if (/streamtape/i.test(raw)) return 'StreamTape';
     if (/dood/i.test(raw)) return 'DoodStream';
     if (/filemoon/i.test(raw)) return 'FileMoon';
+    if (/^https?:\/\//i.test(raw)) return '';
+    if (/^(?:hls|direct)\s+proxy$/i.test(raw)) return '';
+    if (/^(?:mfp|cinemacity)$/i.test(raw)) return '';
     if (/direct/i.test(raw)) return 'Direct';
 
     return raw
@@ -52,12 +57,56 @@ function inferWebExtractorLabel(stream, sourceName) {
 
     const source = String(sourceName || '');
     if (/streamingcommunity|vix/i.test(source)) return 'VixCloud';
+    if (/cinemacity/i.test(source)) return 'CCCDN';
     return '';
+}
+
+function normalizeWebQualityLabel(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    if (/^(?:4k|2160p|uhd)$/i.test(raw)) return '4K';
+    if (/^(?:1440p|2k|qhd)$/i.test(raw)) return '1440p';
+    if (/^(?:1080p|1080i|fhd|fullhd)$/i.test(raw)) return '1080p';
+    if (/^(?:720p|hd)$/i.test(raw)) return '720p';
+    if (/^(?:480p|sd)$/i.test(raw)) return 'SD';
+    if (/^\d{3,4}p$/i.test(raw)) return raw.toLowerCase();
+    return raw;
+}
+
+function inferWebQuality(stream, sourceName) {
+    const directCandidates = [
+        stream?.quality,
+        stream?.behaviorHints?.vortexMeta?.quality,
+        stream?.behaviorHints?.quality
+    ];
+
+    for (const candidate of directCandidates) {
+        const normalized = normalizeWebQualityLabel(candidate);
+        if (normalized) return normalized;
+    }
+
+    const textToCheck = `${stream?.title || ''} ${stream?.name || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|STREAMINGCOMMUNITY|CINEMACITY|LEVIATHAN|VIX|GUARDAFLIX|ANIMEWORLD|ANIMESATURN/g, '');
+    if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) return '4K';
+    if (/\b(1440P|2K|QHD)\b/.test(textToCheck)) return '1440p';
+    if (/\b(1080P|FHD|FULLHD)\b/.test(textToCheck)) return '1080p';
+    if (/\b(720P|HD)\b/.test(textToCheck)) return '720p';
+    if (/\b(480P|SD)\b/.test(textToCheck)) return 'SD';
+
+    if (/streamingcommunity|vix/i.test(String(sourceName || ''))) return '1080p';
+    return '';
+}
+
+function getWebQualityIcon(quality) {
+    const normalized = String(quality || '').toLowerCase();
+    if (normalized === '4k' || normalized === '1440p' || normalized === '1080p') return '🔥';
+    if (normalized === '720p') return '⚡';
+    if (normalized === 'sd' || normalized === '480p') return '📼';
+    return '📺';
 }
 
 function rewriteWebTitleLayout(title, providerIcon, providerLabel, extractorLabel) {
     const lines = String(title || '').split('\n').map((line) => String(line || '').trim()).filter(Boolean);
-    const cleaned = lines.filter((line) => !/^(?:⛵|🦈|🌐|🌪️|🍿|🦁|🎥|⛩️|🪐)\s+/.test(line));
+    const cleaned = lines.filter((line) => !/^(?:⛵|🧲|🔎|🏙️|🌐|🌪️|🍿|🦁|🎥|⛩️|🪐|⚙️|✨|🛰️|🔍)\s+/.test(line));
     cleaned.push(`${providerIcon} ${providerLabel}`);
     cleaned.push(`⛵ ${extractorLabel || 'Web'}`);
     return cleaned.join('\n');
@@ -71,28 +120,8 @@ function applyAioWebStyle(streamList, providerDefinition, meta) {
     const isAnimeProvider = sourceName.includes('AnimeWorld') || sourceName.includes('AnimeSaturn');
 
     return streamList.map((stream) => {
-        const textToCheck = `${stream?.title || ''} ${stream?.name || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|STREAMINGCOMMUNITY|LEVIATHAN|VIX|GUARDAFLIX|ANIMEWORLD|ANIMESATURN/g, '');
-        let quality = 'WebStreams';
-        let qIcon = '📺';
-
-        if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) {
-            quality = '4K';
-            qIcon = '🔥';
-        } else if (/\b(1080P|FHD|FULLHD)\b/.test(textToCheck)) {
-            quality = '1080p';
-            qIcon = '🔥';
-        } else if (/\b(720P|HD)\b/.test(textToCheck)) {
-            quality = '720p';
-            qIcon = '🔥';
-        } else if (/\b(480P|SD)\b/.test(textToCheck)) {
-            quality = 'SD';
-            qIcon = '🔥';
-        }
-
-        if ((sourceName.includes('StreamingCommunity') || sourceName.includes('Vix')) && quality === 'SD' && !/\b(480P|SD)\b/.test(textToCheck)) {
-            quality = '1080p';
-            qIcon = '🔥';
-        }
+        const quality = inferWebQuality(stream, sourceName) || 'WebStreams';
+        const qIcon = getWebQualityIcon(quality);
 
         if (isAnimeProvider) {
             const extractorLabel = inferWebExtractorLabel(stream, sourceName) || 'Web';
@@ -138,12 +167,7 @@ function applyWebFormatter(streamList, providerDefinition, meta, config) {
     const providerIcon = providerDefinition?.icon || getWebProviderIcon(sourceName);
 
     return streamList.map((stream) => {
-        let quality = 'HD';
-        const upperName = (stream.name || '').toUpperCase();
-        if (upperName.includes('4K') || upperName.includes('2160P')) quality = '4K';
-        else if (upperName.includes('1080P') || upperName.includes('FHD')) quality = '1080p';
-        else if (upperName.includes('720P')) quality = '720p';
-        else if (upperName.includes('SD') || upperName.includes('480P')) quality = 'SD';
+        const quality = inferWebQuality(stream, sourceName) || 'HD';
 
         let fileTitle = meta.title;
         const rawTitleToCheck = (stream.title || '').toUpperCase();
@@ -160,7 +184,7 @@ function applyWebFormatter(streamList, providerDefinition, meta, config) {
 
         const extractorLabel = inferWebExtractorLabel(stream, sourceName) || 'Web';
         const providerLabel = String(sourceName || '').trim() || 'Web';
-        const formatted = formatStreamSelector(`${fileTitle} ${quality} ${langTag} WEB-DL AAC`, providerLabel, 0, null, 'WEB', config, null, false, false);
+        const formatted = formatStreamSelector(`${fileTitle} ${quality} ${langTag} WEB-DL AAC`, extractorLabel, 0, null, 'WEB', config, null, false, false);
         const cleanTitle = formatted.title.replace(/🧲/g, '⛵').replace(/🦈/g, providerIcon).replace(/🧲\s*\d+(\.\d+)?\s*(GB|MB)/gi, '☁️ Web Stream');
         const titled = rewriteWebTitleLayout(cleanTitle, providerIcon, providerLabel, extractorLabel);
         return {

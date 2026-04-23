@@ -11,6 +11,8 @@ const {
     normalizeRemoteUrl
 } = require('../providers/extractors/common');
 const { resolveExtractorDefinition } = require('../providers/extractors/registry');
+const { getWebProviderDefinition, getWebProviderIcon } = require('../providers/extractors/provider_registry');
+const { createWebProviderTools } = require('../core/stream/web_providers');
 
 test('normalizeRemoteUrl resolves protocol-relative and relative URLs', () => {
     assert.equal(normalizeRemoteUrl('//mixdrop.co/e/abc'), 'https://mixdrop.co/e/abc');
@@ -97,4 +99,76 @@ test('dedupeStreamsByUrl keeps the first stream for duplicate URLs', () => {
     assert.equal(output.length, 2);
     assert.equal(output[0].name, 'first');
     assert.equal(output[1].name, 'third');
+});
+
+test('provider registry exposes CinemaCity metadata', () => {
+    const definition = getWebProviderDefinition('CinemaCity');
+
+    assert.equal(definition?.key, 'cinemaCity');
+    assert.equal(definition?.limiterKey, 'webCc');
+    assert.equal(getWebProviderIcon('CinemaCity'), '🏙️');
+});
+
+test('web formatter keeps CinemaCity quality and avoids duplicate provider lines', () => {
+    const tools = createWebProviderTools({
+        Cache: {},
+        LIMITERS: {},
+        CONFIG: { TIMEOUTS: { SCRAPER: 0 } },
+        guardedProviderCall: async () => []
+    });
+
+    const formatted = tools.formatWebProviderBuckets({
+        cinemaCity: [{
+            name: '🏙️ CinemaCity | CCCDN',
+            title: 'Agente Zeta HD\n☁️ CCCDN • 🇮🇹 ITA',
+            url: 'https://example.com/master.m3u8',
+            quality: '1080p',
+            extractor: 'CCCDN',
+            behaviorHints: {
+                extractor: 'CCCDN',
+                vortexMeta: {
+                    quality: '1080p',
+                    extractor: 'CCCDN',
+                    provider: 'CinemaCity'
+                }
+            }
+        }]
+    }, { title: 'Agente Zeta HD', type: 'movie' }, { formatter: 'leviathan', filters: {} });
+
+    assert.equal(formatted.cinemaCity.length, 1);
+    assert.match(formatted.cinemaCity[0].title, /1080/i);
+    assert.match(formatted.cinemaCity[0].title, /CCCDN/i);
+    assert.equal((formatted.cinemaCity[0].title.match(/CinemaCity/g) || []).length, 1);
+    assert.doesNotMatch(formatted.cinemaCity[0].title, /HLS Proxy/i);
+});
+
+test('web formatter normalizes legacy CinemaCity proxy labels to CCCDN', () => {
+    const tools = createWebProviderTools({
+        Cache: {},
+        LIMITERS: {},
+        CONFIG: { TIMEOUTS: { SCRAPER: 0 } },
+        guardedProviderCall: async () => []
+    });
+
+    const formatted = tools.formatWebProviderBuckets({
+        cinemaCity: [{
+            name: '🏙️ CinemaCity | MFP',
+            title: 'Agente Zeta HD\n☁️ Proxy • 🇮🇹 ITA',
+            url: 'https://example.com/master.m3u8',
+            quality: '1080p',
+            extractor: 'HLS Proxy',
+            behaviorHints: {
+                extractor: 'HLS Proxy',
+                vortexMeta: {
+                    quality: '1080p',
+                    extractor: 'HLS Proxy',
+                    provider: 'CinemaCity'
+                }
+            }
+        }]
+    }, { title: 'Agente Zeta HD', type: 'movie' }, { formatter: 'leviathan', filters: {} });
+
+    assert.equal(formatted.cinemaCity.length, 1);
+    assert.match(formatted.cinemaCity[0].title, /CCCDN/i);
+    assert.doesNotMatch(formatted.cinemaCity[0].title, /HLS Proxy/i);
 });

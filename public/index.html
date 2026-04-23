@@ -1182,7 +1182,7 @@
                             <div class="control-info">
                                 <div class="control-title notranslate" translate="no">
                                     <i class="fas fa-torii-gate" style="color: #ff6600"></i> AnimeWorld
-                                    <span class="proxy-tag tag-noproxy">NO PROXY</span>
+                                    <span class="proxy-tag tag-mfp">MFP</span>
                                 </div>
                                 <span class="control-desc">AnimeWorld con mapping Kitsu, IMDb e TMDb. Più affidabile anche fuori dai soli ID Kitsu.</span>
                             </div>
@@ -1211,10 +1211,21 @@
                             <label class="switch mf-switch"><input type="checkbox" id="enableGf" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
                         </div>
 
+                        <div class="control-row">
+                            <div class="control-info">
+                                <div class="control-title notranslate" translate="no">
+                                    <i class="fas fa-city" style="color: #ff4d6d"></i> CinemaCity
+                                    <span class="proxy-tag tag-noproxy">NO PROXY</span>
+                                </div>
+                                <span class="control-desc">Film & Serie TV con ricerca IMDb/TMDb e fallback titolo. Per la riproduzione su Stremio e TV e consigliato MediaFlow Proxy.</span>
+                            </div>
+                            <label class="switch mf-switch"><input type="checkbox" id="enableCc" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
+                        </div>
+
                         <div class="control-row sub-row" id="webPriorityRow" style="display:none; margin-top:15px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top:10px;">
                              <div class="control-info">
                                  <div class="control-title"><i class="fas fa-sort-amount-down"></i> Gerarchia Sorgenti</div>
-                                 <span class="control-desc">Sposta i risultati Web (SC, GHD, GS, AW, AS, GF) dopo i Torrent.</span>
+                                 <span class="control-desc">Sposta i risultati Web (SC, GHD, GS, AW, AS, GF, CC) dopo i Torrent.</span>
                              </div>
                              <label class="switch mf-switch"><input type="checkbox" id="vixLast" onchange="updateFluxStream()"><span class="slider"></span></label>
                          </div>
@@ -2655,13 +2666,14 @@
             const aw = document.getElementById('enableAnimeWorld').checked;
             const as = document.getElementById('enableAnimeSaturn').checked;
             const gf = document.getElementById('enableGf').checked;
+            const cc = document.getElementById('enableCc').checked;
 
             const qContainer = document.getElementById('scQualityContainer');
             if(qContainer) qContainer.style.display = sc ? 'block' : 'none';
             const pRow = document.getElementById('webPriorityRow');
             if(pRow) {
 
-                if(sc || ghd || gs || aw || as || gf) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
+                if(sc || ghd || gs || aw || as || gf || cc) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
                 else { pRow.style.display = 'none'; }
             }
         }
@@ -2748,6 +2760,7 @@
                         document.getElementById('enableAnimeWorld').checked = config.filters.enableAnimeWorld || false;
                         document.getElementById('enableAnimeSaturn').checked = config.filters.enableAnimeSaturn || false;
                         document.getElementById('enableGf').checked = config.filters.enableGf || false;
+                        document.getElementById('enableCc').checked = config.filters.enableCc || false;
 
                         document.getElementById('enableTrailers').checked = config.filters.enableTrailers || false;
 
@@ -2844,10 +2857,11 @@
             const awActive = document.getElementById('enableAnimeWorld').checked;
             const asActive = document.getElementById('enableAnimeSaturn').checked;
             const gfActive = document.getElementById('enableGf').checked;
+            const ccActive = document.getElementById('enableCc').checked;
             const isP2P = currentService === 'p2p';
             const sourceMode = document.getElementById('sourceMode').value;
 
-            const isWebEnabled = scActive || ghdActive || gsActive || awActive || asActive || gfActive || isP2P;
+            const isWebEnabled = scActive || ghdActive || gsActive || awActive || asActive || gfActive || ccActive || isP2P;
             const sourceModeBypassesKey = sourceMode === 'dbOnly' || sourceMode === 'globalCacheOnly';
 
             const el = document.getElementById('apiKey');
@@ -2879,6 +2893,7 @@
                     || document.getElementById('enableAnimeWorld').checked
                     || document.getElementById('enableAnimeSaturn').checked
                     || document.getElementById('enableGf').checked
+                    || document.getElementById('enableCc').checked
                 )
             );
 
@@ -2911,6 +2926,7 @@
                     enableAnimeWorld: document.getElementById('enableAnimeWorld').checked,
                     enableAnimeSaturn: document.getElementById('enableAnimeSaturn').checked,
                     enableGf: document.getElementById('enableGf').checked,
+                    enableCc: document.getElementById('enableCc').checked,
                     enableTrailers: document.getElementById('enableTrailers').checked,
                     vixLast: document.getElementById('vixLast').checked,
                     scQuality: currentSCQuality,
@@ -2965,6 +2981,7 @@
             let awText = c.filters.enableAnimeWorld ? 'ATTIVO ⛩️' : 'NO';
             let asText = c.filters.enableAnimeSaturn ? 'ATTIVO 🪐' : 'NO';
             let gfText = c.filters.enableGf ? 'ATTIVO 🎥' : 'NO';
+            let ccText = c.filters.enableCc ? 'ATTIVO 🌆' : 'NO';
             let exclText = [];
             if(c.filters.no4k) exclText.push("4K");
             if(c.filters.no1080) exclText.push("1080p");
@@ -2994,7 +3011,7 @@
                 <li>Servizio Debrid <span>${serviceDisplay}</span></li>
                 <li>Visual Skin <span>${skinText}</span></li>
                 <li>Swarm P2P <span>${p2pText}</span></li>
-                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | AW: ${awText} | AS: ${asText} | GF: ${gfText}</span></li>
+                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | AW: ${awText} | AS: ${asText} | GF: ${gfText} | CC: ${ccText}</span></li>
                 <li>Flux Priority <span>${sortText}</span></li>
                 <li>Source Policy <span>${sourceModeText}</span></li>
                 <li>Proxy Bridge <span>${c.mediaflow.url ? 'CONFIGURATO' : 'NON ATTIVO'}</span></li>

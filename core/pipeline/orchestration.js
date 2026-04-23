@@ -58,6 +58,7 @@ function createPipelineOrchestration(deps = {}) {
       || filters.enableAnimeWorld
       || filters.enableAnimeSaturn
       || filters.enableGf
+      || filters.enableCc
     );
     const isP2PEnabled = filters.enableP2P === true;
     const torrentPipelineEnabled = shouldUseTorrentPipeline({
@@ -209,7 +210,8 @@ function createPipelineOrchestration(deps = {}) {
         filters.enableGs,
         filters.enableAnimeWorld,
         filters.enableAnimeSaturn,
-        filters.enableGf
+        filters.enableGf,
+        filters.enableCc
       ].filter(Boolean).length;
 
       const cachePolicy = buildSharedStreamCachePolicy(meta, {

@@ -924,6 +924,10 @@ body::before {
 #mod-gf { --glow-color: rgba(0, 230, 118, 0.8); --border-color: #00e676; --border-color-dim: rgba(0,230,118,0.3); --core-bg: rgba(0,230,118,0.2); }
 #mod-gf .m-core-icon { color: #00e676; }
 
+/* CinemaCity - NEON ROSE */
+#mod-cc { --glow-color: rgba(255, 77, 109, 0.8); --border-color: #ff4d6d; --border-color-dim: rgba(255,77,109,0.3); --core-bg: rgba(255,77,109,0.2); }
+#mod-cc .m-core-icon { color: #ff4d6d; }
+
 /* --- SWITCH OVERRIDE FOR REACTOR --- */
 /* Makes the switch fit the theme better */
 .m-reactor-top .m-switch { transform: scale(0.85); transform-origin: right center; }
@@ -1692,6 +1696,25 @@ const mobileHTML = `
                                     </label>
                                 </div>
                                 <span class="m-reactor-desc">Catalogo esclusivo per i Film. Richiede MediaFlow Proxy configurato.</span>
+                                <div class="m-tag-row">
+                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-shield-alt"></i> MFP</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="m-reactor-module" id="mod-cc">
+                            <div class="m-reactor-core">
+                                <i class="fas fa-city m-core-icon"></i>
+                            </div>
+                            <div class="m-reactor-body">
+                                <div class="m-reactor-top">
+                                    <span class="m-reactor-title">CinemaCity</span>
+                                    <label class="m-switch">
+                                        <input type="checkbox" id="m-enableCc" onchange="updateStatus('m-enableCc','st-cc'); toggleModuleStyle('m-enableCc', 'mod-cc');">
+                                        <span class="m-slider"></span>
+                                    </label>
+                                </div>
+                                <span class="m-reactor-desc">Film & Serie TV con ricerca IMDb/TMDb e fallback titolo. Per Stremio e TV e consigliato MFP.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-mfp"><i class="fas fa-shield-alt"></i> MFP</span>
                                 </div>
@@ -3073,8 +3096,9 @@ function checkWebPriorityVisibility() {
     const aw = document.getElementById('m-enableAnimeWorld').checked;
     const as = document.getElementById('m-enableAnimeSaturn').checked;
     const gf = document.getElementById('m-enableGf').checked;
+    const cc = document.getElementById('m-enableCc').checked;
     const panel = document.getElementById('m-priority-panel');
-    if (vix || ghd || gs || aw || as || gf) panel.classList.add('show');
+    if (vix || ghd || gs || aw || as || gf || cc) panel.classList.add('show');
     else panel.classList.remove('show');
 }
 
@@ -3319,6 +3343,9 @@ function loadMobileConfig() {
                 document.getElementById('m-enableGf').checked = config.filters.enableGf || false;
                 toggleModuleStyle('m-enableGf', 'mod-gf');
 
+                document.getElementById('m-enableCc').checked = config.filters.enableCc || false;
+                toggleModuleStyle('m-enableCc', 'mod-cc');
+
                 if(config.filters.language) {
                     setLangMode(config.filters.language);
                 } else {
@@ -3365,6 +3392,7 @@ function loadMobileConfig() {
             updateStatus('m-enableAnimeWorld', 'st-aw');
             updateStatus('m-enableAnimeSaturn', 'st-as');
             updateStatus('m-enableGf', 'st-gf');
+            updateStatus('m-enableCc', 'st-cc');
             updateStatus('m-aioMode', 'st-aio');
             updateStatus('m-enableTrailers', 'st-trailer');
             updateGhostVisuals();
@@ -3397,6 +3425,7 @@ function getMobileConfig() {
             || document.getElementById('m-enableAnimeWorld').checked
             || document.getElementById('m-enableAnimeSaturn').checked
             || document.getElementById('m-enableGf').checked
+            || document.getElementById('m-enableCc').checked
         )
     );
 
@@ -3428,6 +3457,7 @@ function getMobileConfig() {
             enableAnimeWorld: document.getElementById('m-enableAnimeWorld').checked,
             enableAnimeSaturn: document.getElementById('m-enableAnimeSaturn').checked,
             enableGf: document.getElementById('m-enableGf').checked,
+            enableCc: document.getElementById('m-enableCc').checked,
             enableTrailers: document.getElementById('m-enableTrailers').checked,
             vixLast: document.getElementById('m-vixLast').checked,
             scQuality: mScQuality,
@@ -3442,7 +3472,7 @@ function updateLinkModalContent() {
     if(!box) return;
     
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
     
     if(!config.key && !isWebEnabled) {
         box.value = "/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P";
@@ -3457,7 +3487,7 @@ function updateLinkModalContent() {
 
 function mobileInstall() {
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
     if(!config.key && !isWebEnabled) {
         showToast("ERRORE: API KEY MANCANTE", "error"); return;
     }

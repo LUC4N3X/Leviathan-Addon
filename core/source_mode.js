@@ -83,6 +83,7 @@ function hasWebProvidersEnabled(filters = {}) {
         || filters?.enableAnimeWorld === true
         || filters?.enableAnimeSaturn === true
         || filters?.enableGf === true
+        || filters?.enableCc === true
     );
 }
 

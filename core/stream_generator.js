@@ -2009,7 +2009,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
   const hasDebridKey = Boolean(debridApiKey);
   const filters = config?.filters || {};
   const sourceModeFlags = getSourceModeFlags(filters);
-  const isWebEnabled = Boolean(filters && (isStreamingCommunityEnabled(filters) || filters.enableGhd || filters.enableGs || filters.enableAnimeWorld || filters.enableAnimeSaturn || filters.enableGf));
+  const isWebEnabled = Boolean(filters && (isStreamingCommunityEnabled(filters) || filters.enableGhd || filters.enableGs || filters.enableAnimeWorld || filters.enableAnimeSaturn || filters.enableGf || filters.enableCc));
   const isP2PEnabled = filters.enableP2P === true;
   const torrentPipelineEnabled = shouldUseTorrentPipeline({
       filters,
@@ -2200,7 +2200,8 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           filters.enableGs,
           filters.enableAnimeWorld,
           filters.enableAnimeSaturn,
-          filters.enableGf
+          filters.enableGf,
+          filters.enableCc
       ].filter(Boolean).length;
       const cachePolicyBase = buildSharedStreamCachePolicy(meta, {
           cleanResults,
