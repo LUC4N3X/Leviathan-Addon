@@ -871,6 +871,7 @@ body::before {
 }
 .tag-noproxy { border-color: #444; color: #777; background: rgba(255,255,255,0.02); }
 .tag-mfp { border-color: rgba(0, 242, 255, 0.3); color: var(--m-primary); background: rgba(0, 242, 255, 0.05); }
+.tag-kraken { border-color: rgba(255, 77, 109, 0.7); color: #ff9fb1; background: rgba(255, 77, 109, 0.12); }
 
 /* --- ACTIVE STATES (THE MAGIC) --- */
 
@@ -1714,9 +1715,9 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Film & Serie TV con ricerca IMDb/TMDb e fallback titolo. Per Stremio e TV e consigliato MFP.</span>
+                                <span class="m-reactor-desc">Catalogo Film e Serie TV con aggiornamenti costanti e riproduzione ottimizzata per Stremio e TV.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-shield-alt"></i> MFP</span>
+                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-shield-alt"></i> KRAKEN</span>
                                 </div>
                             </div>
                         </div>
