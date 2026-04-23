@@ -3,6 +3,7 @@
 const axios = require('axios');
 const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
+const kitsuProvider = require('../animeworld/kitsu_provider');
 const {
     buildWebStream,
     dedupeStreamsByUrl,
@@ -117,6 +118,10 @@ function decodeHtmlEntities(value) {
         .replace(/&ndash;|&mdash;/gi, '-');
 }
 
+function uniqueStrings(values = []) {
+    return [...new Set((values || []).map((value) => decodeHtmlEntities(String(value || '')).trim()).filter(Boolean))];
+}
+
 function normalizeTitle(value) {
     return decodeHtmlEntities(String(value || ''))
         .normalize('NFKD')
@@ -157,16 +162,36 @@ function extractSitemapLocs(xml) {
         .filter(Boolean);
 }
 
-function isCinemaCityContentUrlForType(url, providerType) {
+function getCinemaCitySectionType(url) {
     try {
         const pathname = new URL(url).pathname.toLowerCase();
-        if (providerType === 'movie') return pathname.startsWith('/movies/');
-        return pathname.startsWith('/tv-series/')
-            || pathname.startsWith('/series/')
-            || pathname.startsWith('/anime/');
+        if (pathname.startsWith('/movies/')) return 'movie';
+        if (pathname.startsWith('/anime/')) return 'anime';
+        if (pathname.startsWith('/tv-series/') || pathname.startsWith('/series/')) return 'tv';
+        return null;
     } catch (_) {
-        return false;
+        return null;
     }
+}
+
+function isCinemaCityContentUrlForType(url, providerType) {
+    const sectionType = getCinemaCitySectionType(url);
+    if (providerType === 'movie') return sectionType === 'movie';
+    if (providerType === 'anime') return sectionType === 'anime' || sectionType === 'tv';
+    return sectionType === 'tv' || sectionType === 'anime';
+}
+
+function getCinemaCityTypeBoost(url, providerType) {
+    const sectionType = getCinemaCitySectionType(url);
+    if (providerType === 'movie') return sectionType === 'movie' ? 18 : -40;
+    if (providerType === 'anime') {
+        if (sectionType === 'anime') return 24;
+        if (sectionType === 'tv') return 10;
+        return -40;
+    }
+    if (sectionType === 'tv') return 16;
+    if (sectionType === 'anime') return 4;
+    return -40;
 }
 
 function titleFromContentUrl(url) {
@@ -189,6 +214,44 @@ function titleFromContentUrl(url) {
 function extractYear(value) {
     const match = String(value || '').match(/\b(19|20)\d{2}\b/);
     return match ? Number.parseInt(match[0], 10) : null;
+}
+
+function collectMetaTitles(meta = {}) {
+    return uniqueStrings([
+        meta?.title,
+        meta?.name,
+        meta?.originalTitle,
+        meta?.originalName,
+        meta?.canonicalTitle,
+        meta?.seriesTitle,
+        ...(Array.isArray(meta?.titles) ? meta.titles : []),
+        ...(Array.isArray(meta?.aliases) ? meta.aliases : []),
+        ...(Array.isArray(meta?.aka_titles) ? meta.aka_titles : [])
+    ]);
+}
+
+function looksLikeAnimeMeta(meta = {}) {
+    const directType = String(meta?.type || meta?.kind || meta?.mediaType || '').toLowerCase();
+    if (/(^|[^a-z])(anime|animation)([^a-z]|$)/i.test(directType)) return true;
+
+    const genres = Array.isArray(meta?.genres) ? meta.genres : [];
+    if (genres.some((value) => /(anime|animation|animazione)/i.test(String(value)))) return true;
+
+    const haystack = uniqueStrings([
+        meta?.id,
+        meta?.requestedId,
+        meta?.originalId,
+        meta?.kitsu_id,
+        meta?.kitsuId,
+        ...collectMetaTitles(meta)
+    ]).join(' | ').toLowerCase();
+
+    return /(anime-kitsu|kitsu:|\banime\b|\banimazione\b)/i.test(haystack);
+}
+
+function normalizeEpisodeNumber(value) {
+    const parsed = Number.parseInt(String(value || '').trim(), 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function getExpectedYear(metadata = {}, meta = {}) {
@@ -214,6 +277,25 @@ function collectExpectedTitles(metadata = {}, meta = {}) {
     ]
         .map((value) => decodeHtmlEntities(String(value || '')).trim())
         .filter(Boolean)));
+}
+
+function buildSearchQueryVariants(titles = []) {
+    const seen = new Set();
+    const out = [];
+    for (const title of uniqueStrings(titles)) {
+        const normalized = kitsuProvider.normalizeTitle(title);
+        const compact = decodeHtmlEntities(title)
+            .replace(/\b(?:season|stagione|episode|episodio|ep\.?)\s*\d+\b/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        for (const variant of uniqueStrings([title, normalized, compact])) {
+            const key = variant.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(variant);
+        }
+    }
+    return out;
 }
 
 async function getNewsSitemapEntries() {
@@ -290,7 +372,9 @@ async function getIdsFromKitsu(kitsuId, season, episode, config = {}) {
 }
 
 function extractCandidateLinksFromListing(html, sectionType) {
-    const pathPrefix = sectionType === 'movie' ? 'movies' : 'tv-series';
+    const pathPrefix = sectionType === 'movie'
+        ? 'movies'
+        : (sectionType === 'anime' ? '(?:anime|series|tv-series)' : '(?:tv-series|series|anime)');
     const regex = new RegExp(
         `<a[^>]+href=["']((?:https?:\\/\\/cinemacity\\.cc)?\\/${pathPrefix}\\/[^"']+\\.html)["'][^>]*>([\\s\\S]*?)<\\/a>`,
         'gi'
@@ -331,6 +415,119 @@ function scoreTitleMatch(candidateTitle, expectedTitles) {
     }
 
     return best;
+}
+
+function scoreCandidateEntry(candidate, expectedTitles, expectedYear, providerType) {
+    if (!candidate?.url) return 0;
+    const title = candidate.title || titleFromContentUrl(candidate.url);
+    let score = scoreTitleMatch(title, expectedTitles);
+    if (score <= 0) return 0;
+
+    score += getCinemaCityTypeBoost(candidate.url, providerType);
+
+    const candidateYear = extractYear(title) || extractYear(candidate.url);
+    if (expectedYear && candidateYear) {
+        if (candidateYear === expectedYear) score += 15;
+        else if (Math.abs(candidateYear - expectedYear) === 1) score += 5;
+        else score -= 20;
+    }
+
+    return score;
+}
+
+function extractSearchCandidates(html) {
+    const body = String(html || '');
+    const resultMatch = body.match(/Found\s+(\d+)\s+responses/i)
+        || body.match(/Trovat[io]\s+(\d+)\s+risultat[io]/i)
+        || body.match(/Query results\s*\d+\s*-\s*(\d+)/i);
+
+    if ((!resultMatch || Number.parseInt(resultMatch[1], 10) === 0) && /site search yielded no results|ricerca non ha prodotto risultati/i.test(body)) {
+        return [];
+    }
+
+    const markerIdx = resultMatch ? body.indexOf(resultMatch[0]) : body.indexOf('id="dle-content"');
+    if (markerIdx === -1) return [];
+
+    const contentEndStrings = ['id="side"', 'class="side"', '<footer', '<aside'];
+    let contentEndIdx = body.length;
+    for (const token of contentEndStrings) {
+        const position = body.indexOf(token, markerIdx);
+        if (position !== -1 && position < contentEndIdx) contentEndIdx = position;
+    }
+
+    const searchArea = body.substring(markerIdx, contentEndIdx);
+    const links = [...searchArea.matchAll(
+        /<a[^>]+href=["']((?:https?:\/\/cinemacity\.cc)?\/(?:movies|anime|series|tv-series)\/\d+-[^"']+\.html)["'][^>]*>([\s\S]*?)<\/a>/gi
+    )];
+
+    const results = [];
+    for (const match of links) {
+        let href = String(match[1] || '');
+        if (!href) continue;
+        if (href.startsWith('/')) href = `${BASE_URL}${href}`;
+        const title = decodeHtmlEntities(String(match[2] || '').replace(/<[^>]*>?/g, ' ').trim());
+        if (!title) continue;
+        results.push({ url: href, title });
+    }
+
+    return Array.from(new Map(results.map((item) => [item.url, item])).values());
+}
+
+async function pickBestCandidate(candidates, expectedTitles, { requestedImdbId = null, expectedYear = null, providerType = 'tv' } = {}) {
+    const scoredCandidates = (candidates || [])
+        .map((candidate) => ({
+            ...candidate,
+            score: scoreCandidateEntry(candidate, expectedTitles, expectedYear, providerType)
+        }))
+        .filter((candidate) => candidate.score > 0)
+        .sort((left, right) => right.score - left.score);
+
+    if (scoredCandidates.length === 0) return null;
+
+    const normalizedRequestedImdbId = extractImdbId(requestedImdbId);
+    if (normalizedRequestedImdbId) {
+        const mismatchedUrls = new Set();
+        for (const candidate of scoredCandidates.slice(0, 6)) {
+            if (candidate.score < 80) break;
+            const candidateImdbId = await verifyCandidateImdb(candidate.url, normalizedRequestedImdbId);
+            if (candidateImdbId && candidateImdbId === normalizedRequestedImdbId) return candidate;
+            if (candidateImdbId && candidateImdbId !== normalizedRequestedImdbId) mismatchedUrls.add(candidate.url);
+        }
+
+        return scoredCandidates.find((candidate) => candidate.score >= 80 && !mismatchedUrls.has(candidate.url)) || null;
+    }
+
+    return scoredCandidates[0]?.score >= 80 ? scoredCandidates[0] : null;
+}
+
+async function searchByTitleQueries(queryTitles, providerType, expectedTitles, requestedImdbId, expectedYear) {
+    const queries = buildSearchQueryVariants(queryTitles).slice(0, 6);
+    if (queries.length === 0) return null;
+
+    const collected = [];
+    const seen = new Set();
+
+    for (const query of queries) {
+        const searchUrl = `${BASE_URL}/index.php?do=search&subaction=search&story=${encodeURIComponent(query)}`;
+        try {
+            const html = await fetchHtml(searchUrl, {
+                Referer: `${BASE_URL}/`,
+                Cookie: SESSION_COOKIE
+            });
+            const candidates = extractSearchCandidates(html);
+            for (const candidate of candidates) {
+                if (!candidate?.url || seen.has(candidate.url)) continue;
+                seen.add(candidate.url);
+                collected.push(candidate);
+            }
+        } catch (_) {}
+    }
+
+    return pickBestCandidate(collected, expectedTitles, {
+        requestedImdbId,
+        expectedYear,
+        providerType
+    });
 }
 
 function extractImdbIdFromHtml(html) {
@@ -429,51 +626,7 @@ async function searchByImdb(imdbId) {
                 Referer: `${BASE_URL}/`,
                 Cookie: SESSION_COOKIE
             });
-
-            const resultMatch = html.match(/Found\s+(\d+)\s+responses/i)
-                || html.match(/Trovat[io]\s+(\d+)\s+risultat[io]/i)
-                || html.match(/Query results\s*\d+\s*-\s*(\d+)/i);
-
-            if ((!resultMatch || Number.parseInt(resultMatch[1], 10) === 0) && !html.includes(query)) {
-                return null;
-            }
-
-            const markerIdx = resultMatch ? html.indexOf(resultMatch[0]) : html.indexOf('id="dle-content"');
-            if (markerIdx === -1) {
-                if (/site search yielded no results|ricerca non ha prodotto risultati/i.test(html)) return null;
-                return null;
-            }
-
-            const contentEndStrings = ['id="side"', 'class="side"', '<footer', '<aside'];
-            let contentEndIdx = html.length;
-            for (const token of contentEndStrings) {
-                const position = html.indexOf(token, markerIdx);
-                if (position !== -1 && position < contentEndIdx) contentEndIdx = position;
-            }
-            const searchArea = html.substring(markerIdx, contentEndIdx);
-            const links = [...searchArea.matchAll(
-                /<a[^>]+href=["']((?:https?:\/\/cinemacity\.cc)?\/(?:movies|anime|series|tv-series)\/\d+-[^"']+\.html)["'][^>]*>([\s\S]*?)<\/a>/gi
-            )];
-
-            if (links.length === 0) return null;
-
-            let bestMatch = links[0];
-            const queryPos = searchArea.indexOf(query);
-            if (queryPos !== -1) {
-                let minDistance = Infinity;
-                for (const match of links) {
-                    const distance = Math.abs(Number(match.index || 0) - queryPos);
-                    if (distance < minDistance) {
-                        minDistance = distance;
-                        bestMatch = match;
-                    }
-                }
-            }
-
-            let bestLink = bestMatch[1];
-            const bestTitle = decodeHtmlEntities(bestMatch[2].replace(/<[^>]*>?/g, '').trim());
-            if (bestLink.startsWith('/')) bestLink = `${BASE_URL}${bestLink}`;
-            return { url: bestLink, title: bestTitle };
+            return extractSearchCandidates(html)[0] || null;
         } catch (_) {
             return null;
         }
@@ -490,93 +643,129 @@ async function searchByImdb(imdbId) {
     return result;
 }
 
-async function searchByTitleFallback(id, providerType, meta = {}) {
-    const metadata = await getTmdbMetadata(id, providerType);
-    const expectedTitles = collectExpectedTitles(metadata, meta);
+function getListingBaseUrls(providerType) {
+    if (providerType === 'movie') return [`${BASE_URL}/movies/`];
+    if (providerType === 'anime') return [`${BASE_URL}/anime/`, `${BASE_URL}/tv-series/`];
+    return [`${BASE_URL}/tv-series/`, `${BASE_URL}/anime/`];
+}
+
+async function buildAnimeSearchContext(meta = {}, originalId, finalId) {
+    const candidateIds = getIdCandidates(meta, originalId, finalId);
+    let kitsuToken = null;
+
+    for (const candidate of candidateIds) {
+        const parsed = kitsuProvider.parseKitsuId(candidate);
+        if (parsed?.kitsuId) {
+            kitsuToken = String(candidate);
+            break;
+        }
+    }
+
+    if (kitsuToken) {
+        try {
+            const context = await kitsuProvider.buildSearchContext(kitsuToken, meta);
+            if (context) {
+                return {
+                    ...context,
+                    searchTitles: buildSearchQueryVariants([
+                        ...(Array.isArray(context?.searchTitles) ? context.searchTitles : []),
+                        ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
+                        ...collectMetaTitles(meta)
+                    ]),
+                    rawTitles: uniqueStrings([
+                        ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
+                        ...collectMetaTitles(meta)
+                    ])
+                };
+            }
+        } catch (_) {}
+    }
+
+    if (!looksLikeAnimeMeta(meta)) return null;
+
+    const rawTitles = collectMetaTitles(meta);
+    const searchTitles = buildSearchQueryVariants(rawTitles);
+    return {
+        kitsuId: null,
+        rawTitles,
+        searchTitles,
+        title: searchTitles[0] || rawTitles[0] || null,
+        year: extractYear(meta?.year || meta?.releaseInfo || ''),
+        date: null,
+        seasonNumber: normalizeEpisodeNumber(meta?.season),
+        requestedEpisode: normalizeEpisodeNumber(meta?.episode) || 1,
+        isMovie: meta?.isSeries === false
+    };
+}
+
+async function searchByTitleFallback(id, providerType, meta = {}, options = {}) {
+    const tmdbType = providerType === 'movie' ? 'movie' : 'tv';
+    const metadata = options?.metadata || await getTmdbMetadata(id, tmdbType);
+    const expectedTitles = uniqueStrings([
+        ...(Array.isArray(options?.expectedTitles) ? options.expectedTitles : []),
+        ...collectExpectedTitles(metadata, meta)
+    ]);
 
     if (expectedTitles.length === 0) return null;
 
-    const requestedImdbId = extractImdbId(id);
-    const expectedYear = getExpectedYear(metadata, meta);
+    const requestedImdbId = extractImdbId(options?.requestedImdbId || id);
+    const expectedYear = options?.expectedYear || getExpectedYear(metadata, meta);
+
+    if (providerType === 'anime') {
+        const searched = await searchByTitleQueries(expectedTitles, providerType, expectedTitles, requestedImdbId, expectedYear);
+        if (searched?.url) return searched;
+    }
 
     try {
         const sitemapEntries = await getNewsSitemapEntries();
-        const scoredCandidates = sitemapEntries
+        const sitemapCandidates = sitemapEntries
             .filter((url) => isCinemaCityContentUrlForType(url, providerType))
-            .map((url) => {
-                const title = titleFromContentUrl(url);
-                const score = scoreTitleMatch(title, expectedTitles);
-                if (score <= 0) return null;
+            .map((url) => ({ url, title: titleFromContentUrl(url) }))
+            .filter((candidate) => scoreTitleMatch(candidate.title, expectedTitles) > 0);
 
-                const candidateYear = extractYear(title) || extractYear(url);
-                let boostedScore = score;
-                if (expectedYear && candidateYear) {
-                    if (candidateYear === expectedYear) boostedScore += 15;
-                    else if (Math.abs(candidateYear - expectedYear) === 1) boostedScore += 5;
-                    else boostedScore -= 20;
-                }
-
-                return { url, title, score: boostedScore };
-            })
-            .filter(Boolean)
-            .sort((left, right) => right.score - left.score);
-
-        if (scoredCandidates.length > 0) {
-            if (requestedImdbId) {
-                const mismatchedUrls = new Set();
-                for (const candidate of scoredCandidates.slice(0, 6)) {
-                    if (candidate.score < 80) break;
-                    const candidateImdbId = await verifyCandidateImdb(candidate.url, requestedImdbId);
-                    if (candidateImdbId && candidateImdbId === requestedImdbId) return candidate;
-                    if (candidateImdbId && candidateImdbId !== requestedImdbId) mismatchedUrls.add(candidate.url);
-                }
-
-                const bestUnverifiedCandidate = scoredCandidates.find(
-                    (candidate) => candidate.score >= 80 && !mismatchedUrls.has(candidate.url)
-                );
-                if (bestUnverifiedCandidate) return bestUnverifiedCandidate;
-            } else if (scoredCandidates[0].score >= 80) {
-                return scoredCandidates[0];
-            }
+        const bestSitemap = await pickBestCandidate(sitemapCandidates, expectedTitles, {
+            requestedImdbId,
+            expectedYear,
+            providerType
+        });
+        if (bestSitemap?.url) {
+            return bestSitemap;
         }
     } catch (_) {}
 
-    const listingBase = providerType === 'movie' ? `${BASE_URL}/movies/` : `${BASE_URL}/tv-series/`;
     let bestResult = null;
     let bestScore = 0;
-    for (let page = 1; page <= MAX_LISTING_PAGES; page += 1) {
-        const pageUrl = page === 1 ? listingBase : `${listingBase}page/${page}/`;
+    for (const listingBase of getListingBaseUrls(providerType)) {
+        for (let page = 1; page <= MAX_LISTING_PAGES; page += 1) {
+            const pageUrl = page === 1 ? listingBase : `${listingBase}page/${page}/`;
 
-        try {
-            const html = await fetchHtml(pageUrl, {
-                Referer: `${BASE_URL}/`,
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-User': '?1'
-            });
+            try {
+                const html = await fetchHtml(pageUrl, {
+                    Referer: `${BASE_URL}/`,
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'same-origin',
+                    'Sec-Fetch-User': '?1'
+                });
 
-            const candidates = extractCandidateLinksFromListing(html, providerType);
-            if (candidates.length === 0) break;
+                const candidates = extractCandidateLinksFromListing(html, providerType);
+                if (candidates.length === 0) break;
 
-            for (const candidate of candidates.slice(0, MAX_LISTING_CANDIDATES_PER_PAGE)) {
-                const score = scoreTitleMatch(candidate.title, expectedTitles);
-                if (score >= 80 && requestedImdbId) {
-                    const candidateImdbId = await verifyCandidateImdb(candidate.url, requestedImdbId);
-                    if (candidateImdbId && candidateImdbId === requestedImdbId) return candidate;
-                    if (candidateImdbId && candidateImdbId !== requestedImdbId) continue;
+                const picked = await pickBestCandidate(
+                    candidates.slice(0, MAX_LISTING_CANDIDATES_PER_PAGE),
+                    expectedTitles,
+                    { requestedImdbId, expectedYear, providerType }
+                );
+                if (picked?.score > bestScore) {
+                    bestScore = picked.score;
+                    bestResult = picked;
                 }
 
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestResult = candidate;
-                }
+                if (bestScore >= 100) return bestResult;
+            } catch (_) {
+                break;
             }
-
-            if (bestScore >= 100) return bestResult;
-        } catch (_) {
-            break;
         }
     }
 
@@ -715,7 +904,7 @@ async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
     let workingId = parsedRequest.normalizedId;
     let season = parsedRequest.season;
     let episode = parsedRequest.episode;
-    const providerType = isSeries ? 'tv' : 'movie';
+    let providerType = isSeries ? 'tv' : 'movie';
 
     const contextImdbId = candidateIds.map(extractImdbId).find(Boolean) || null;
     const contextTmdbId = candidateIds.map(extractTmdbId).find(Boolean) || null;
@@ -724,15 +913,25 @@ async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
         extractKitsuId(meta?.kitsuId),
         ...candidateIds.map(extractKitsuId)
     ].find(Boolean) || null;
+    let resolvedTmdbId = contextTmdbId || extractTmdbId(workingId) || null;
+    let animeContext = null;
 
     if (!workingId) {
         workingId = contextImdbId || contextTmdbId || (contextKitsuId ? `kitsu:${contextKitsuId}` : '');
+    }
+
+    if (isSeries && (contextKitsuId || looksLikeAnimeMeta(meta))) {
+        animeContext = await buildAnimeSearchContext(meta, originalId, finalId);
+        if (animeContext?.seasonNumber) season = animeContext.seasonNumber;
+        if (animeContext?.requestedEpisode) episode = animeContext.requestedEpisode;
+        providerType = 'anime';
     }
 
     if (String(workingId || '').startsWith('kitsu:') || contextKitsuId) {
         const kitsuId = contextKitsuId || extractKitsuId(workingId);
         const mapped = await getIdsFromKitsu(kitsuId, isSeries ? season : null, isSeries ? episode : 1, config);
         if (mapped) {
+            if (mapped.tmdbId) resolvedTmdbId = mapped.tmdbId;
             if (mapped.imdbId) {
                 workingId = mapped.imdbId;
             } else if (mapped.tmdbId) {
@@ -755,13 +954,18 @@ async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
     }
 
     if (!extractImdbId(workingId)) {
-        const tmdbId = extractTmdbId(workingId) || contextTmdbId;
-        const resolvedImdbId = await resolveImdbFromTmdb(tmdbId, providerType);
+        const tmdbId = extractTmdbId(workingId) || resolvedTmdbId || contextTmdbId;
+        const resolvedImdbId = await resolveImdbFromTmdb(tmdbId, providerType === 'movie' ? 'movie' : 'tv');
         if (resolvedImdbId) workingId = resolvedImdbId;
     }
 
     return {
         imdbId: extractImdbId(workingId),
+        tmdbId: extractTmdbId(workingId) || resolvedTmdbId || contextTmdbId || null,
+        isAnime: providerType === 'anime',
+        searchTitles: Array.isArray(animeContext?.searchTitles) ? animeContext.searchTitles : [],
+        rawTitles: Array.isArray(animeContext?.rawTitles) ? animeContext.rawTitles : [],
+        expectedYear: animeContext?.year || extractYear(meta?.year || meta?.releaseInfo || ''),
         season,
         episode,
         providerType
@@ -878,11 +1082,37 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
 async function searchCinemaCity(originalId, finalId, meta, config = {}) {
     try {
         const resolved = await resolveSearchState(meta, originalId, finalId, config);
-        if (!resolved.imdbId) return [];
+        if (!resolved.imdbId && !resolved.tmdbId && (!resolved.isAnime || resolved.searchTitles.length === 0)) return [];
 
-        let searchResult = await searchByImdb(resolved.imdbId);
+        const titleFallbackOptions = {
+            expectedTitles: uniqueStrings([
+                ...(Array.isArray(resolved.searchTitles) ? resolved.searchTitles : []),
+                ...(Array.isArray(resolved.rawTitles) ? resolved.rawTitles : [])
+            ]),
+            requestedImdbId: resolved.imdbId,
+            expectedYear: resolved.expectedYear
+        };
+
+        let searchResult = null;
+        if (resolved.isAnime && titleFallbackOptions.expectedTitles.length > 0) {
+            searchResult = await searchByTitleFallback(
+                resolved.tmdbId || resolved.imdbId || originalId,
+                resolved.providerType,
+                meta,
+                titleFallbackOptions
+            );
+        }
+
+        if (!searchResult?.url && resolved.imdbId) {
+            searchResult = await searchByImdb(resolved.imdbId);
+        }
         if (!searchResult?.url) {
-            searchResult = await searchByTitleFallback(resolved.imdbId, resolved.providerType, meta);
+            searchResult = await searchByTitleFallback(
+                resolved.tmdbId || resolved.imdbId || originalId,
+                resolved.providerType,
+                meta,
+                titleFallbackOptions
+            );
         }
         if (!searchResult?.url) return [];
 
@@ -954,5 +1184,12 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
 }
 
 module.exports = {
-    searchCinemaCity
+    searchCinemaCity,
+    __private: {
+        looksLikeAnimeMeta,
+        isCinemaCityContentUrlForType,
+        extractCandidateLinksFromListing,
+        buildSearchQueryVariants,
+        getListingBaseUrls
+    }
 };
