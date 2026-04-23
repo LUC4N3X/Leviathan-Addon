@@ -136,6 +136,7 @@ test('web formatter keeps CinemaCity quality and avoids duplicate provider lines
     }, { title: 'Agente Zeta HD', type: 'movie' }, { formatter: 'leviathan', filters: {} });
 
     assert.equal(formatted.cinemaCity.length, 1);
+    assert.match(formatted.cinemaCity[0].name, /^🌊\s/i);
     assert.match(formatted.cinemaCity[0].title, /1080/i);
     assert.match(formatted.cinemaCity[0].title, /CCCDN/i);
     assert.equal((formatted.cinemaCity[0].title.match(/CinemaCity/g) || []).length, 1);
