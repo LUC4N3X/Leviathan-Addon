@@ -28,10 +28,10 @@ const PROVIDER_NAME      = 'guardoserie';
 const SESSION_FILE       = path.join(process.cwd(), `cf-session-${PROVIDER_NAME}.json`);
 const DEBUG              = process.env.GS_DEBUG === '1';
 
-const TTL_SEARCH     = 1000 * 60 * 30;        
-const TTL_EPISODE    = 1000 * 60 * 30;        
-const TTL_SERIES     = 1000 * 60 * 60 * 6;   
-const CF_SESSION_TTL = 1000 * 60 * 60 * 6;  
+const TTL_SEARCH     = 1000 * 60 * 30;
+const TTL_EPISODE    = 1000 * 60 * 30;
+const TTL_SERIES     = 1000 * 60 * 60 * 6;
+const CF_SESSION_TTL = 1000 * 60 * 60 * 6;
 
 const GLOBAL_TIMEOUT_MS = 25000;
 
@@ -47,7 +47,7 @@ const httpAgent  = new http.Agent(agentOptions);
 
 let currentGsDomain = INITIAL_GS_DOMAIN;
 
-const requestCache   = new Map(); 
+const requestCache   = new Map();
 const pendingRequests = new Map();
 const activeBypasses  = new Map();
 
@@ -74,20 +74,31 @@ function saveSession(sessionData) {
   try {
     fs.writeFileSync(SESSION_FILE, JSON.stringify(sessionData, null, 2));
   } catch (e) {
-    console.warn(`[CF][${PROVIDER_NAME}] Fallimento salvataggio sessione:`, e.message);
   }
 }
 
 let activeSession = loadSession();
 
-function isSessionFresh(session) {
-  return !!(
-    session?.cookies &&
-    session?.userAgent &&
-    Date.now() - Number(session.timestamp || 0) < CF_SESSION_TTL
-  );
-}
+function updateCookies(existing, setCookieHeader) {
+  if (!setCookieHeader) return existing;
+  const cookiesArr = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
+  const cookieMap = new Map();
 
+  if (existing) {
+    existing.split(';').forEach(c => {
+      const parts = c.split('=');
+      if (parts.length >= 2) cookieMap.set(parts[0].trim(), parts.slice(1).join('=').trim());
+    });
+  }
+
+  cookiesArr.forEach(c => {
+    const primary = c.split(';')[0];
+    const parts = primary.split('=');
+    if (parts.length >= 2) cookieMap.set(parts[0].trim(), parts.slice(1).join('=').trim());
+  });
+
+  return Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
+}
 
 const CF_CHALLENGE_PATTERNS = [
   /just a moment/i,
@@ -105,10 +116,8 @@ function looksLikeChallenge(html) {
   return CF_CHALLENGE_PATTERNS.some(re => re.test(s));
 }
 
-
 async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
   if (activeBypasses.has(provider)) {
-    DEBUG && console.log(`[CF][${provider}] Bypass in corso, accodamento...`);
     return activeBypasses.get(provider);
   }
 
@@ -118,12 +127,9 @@ async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (attempt > 0) {
-        const delay = 1500 * (2 ** (attempt - 1)); // 1.5s, 3s
-        DEBUG && console.log(`[CF][${provider}] Retry #${attempt} tra ${delay}ms`);
+        const delay = 1500 * (2 ** (attempt - 1));
         await new Promise(r => setTimeout(r, delay));
       }
-
-      console.log(`[CF][${provider}] [FLARESOLVERR] Tentativo ${attempt + 1}/${MAX_RETRIES + 1} per: ${url}`);
 
       try {
         const payload = {
@@ -163,30 +169,25 @@ async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
             } catch (_) {}
           }
 
-          console.log(`[CF][${provider}] Bypass completato.`);
           return data;
         }
-
-        lastErr = new Error(response.data?.message || 'Risposta FlareSolverr non valida');
+        lastErr = new Error(response.data?.message || 'Invalid');
       } catch (e) {
         lastErr = e;
       }
     }
 
     activeBypasses.delete(provider);
-    console.error(`[CF][${provider}] Bypass fallito dopo ${MAX_RETRIES + 1} tentativi:`, lastErr?.message);
     return null;
   })();
-
 
   bypassPromise.finally(() => activeBypasses.delete(provider));
   activeBypasses.set(provider, bypassPromise);
   return bypassPromise;
 }
 
-
 async function executeSmartFetch(url, isPost = false, body = null) {
-  if (isSessionFresh(activeSession)) {
+  if (activeSession && activeSession.cookies && activeSession.userAgent) {
     try {
       const reqOptions = {
         method: isPost ? 'POST' : 'GET',
@@ -211,14 +212,15 @@ async function executeSmartFetch(url, isPost = false, body = null) {
       const html = typeof res.data === 'string' ? res.data : JSON.stringify(res.data || {});
 
       if (res.status !== 403 && res.status !== 503 && !looksLikeChallenge(html)) {
+        if (res.headers && res.headers['set-cookie']) {
+          activeSession.cookies = updateCookies(activeSession.cookies, res.headers['set-cookie']);
+          activeSession.timestamp = Date.now();
+          saveSession(activeSession);
+        }
         return html;
       }
-      console.log(`[CF][${PROVIDER_NAME}] Sessione bloccata (${res.status}). Rinnovo...`);
-
-
       activeSession = {};
     } catch (e) {
-      console.log(`[CF][${PROVIDER_NAME}] Errore Axios (${e.message}). Ripiego su FlareSolverr...`);
     }
   }
 
@@ -232,7 +234,6 @@ async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH }
   const cached = requestCache.get(cacheKey);
   if (cached) {
     if (Date.now() < cached.expires) return cached.data;
-
     if (cached.stale && Date.now() < cached.stale && !pendingRequests.has(cacheKey)) {
       setImmediate(() => smartFetch(url, { isPost, body, ttl }));
       return cached.data;
@@ -248,7 +249,7 @@ async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH }
         requestCache.set(cacheKey, {
           data:    html,
           expires: Date.now() + ttl,
-          stale:   Date.now() + ttl * 2  
+          stale:   Date.now() + ttl * 2
         });
       }
       return html;
@@ -258,7 +259,6 @@ async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH }
   pendingRequests.set(cacheKey, fetchPromise);
   return fetchPromise;
 }
-
 
 const IT_STOPWORDS = /\b(the|a|an|un|una|il|lo|la|gli|le|di|de|del|della|degli|delle|dei|alle|nei|nelle|negli|serie|stagione|season|episodio|episode)\b/g;
 
@@ -328,7 +328,6 @@ function extractSearchResultsFromHtml(html, baseUrl) {
   return results;
 }
 
-
 async function searchProviderSequential(query) {
   const baseUrl = getTargetDomain();
 
@@ -344,7 +343,6 @@ async function searchProviderSequential(query) {
   return extractSearchResultsFromHtml(fallbackHtml, baseUrl);
 }
 
-
 function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
   if (!pageHtml) return null;
   const sIdx = parseInt(season,  10) - 1;
@@ -352,7 +350,6 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
   if (sIdx < 0 || eIdx < 0) return null;
 
   const $ = cheerio.load(String(pageHtml));
-
 
   const seasonBlocks = $('.les-content, [class*="season-"], [class*="stagione-"]');
 
@@ -363,7 +360,6 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
       return episodes.eq(eIdx).attr('href') || null;
     }
   }
-
 
   const explicit = new RegExp(
     `https?:\\/\\/[^"'\\s]+\\/episodio\\/[^"'\\s]*stagione-${season}-episodio-${episode}[^"'\\s]*`,
@@ -412,7 +408,6 @@ function extractPlayerLinksFromHtml(html) {
   return Array.from(links);
 }
 
-
 async function asyncPool(limit, items, asyncFn) {
   if (!items.length) return [];
 
@@ -424,7 +419,6 @@ async function asyncPool(limit, items, asyncFn) {
     if (!queue.length) return;
     const { item, i } = queue.shift();
     const p = Promise.resolve()
-
       .then(() => asyncFn(item))
       .catch(() => null)
       .then(result => {
@@ -436,12 +430,10 @@ async function asyncPool(limit, items, asyncFn) {
     return p;
   }
 
-
   const workers = Array.from({ length: Math.min(limit, items.length) }, runNext);
   await Promise.all(workers);
   return results;
 }
-
 
 async function searchGuardaserie(meta, config) {
   if (!meta?.isSeries || !config?.filters?.enableGs) return [];
@@ -450,14 +442,12 @@ async function searchGuardaserie(meta, config) {
   const episode = parseInt(meta?.episode, 10);
   if (!season || season < 1 || !episode || episode < 1) return [];
 
-
   return Promise.race([
     _searchGuardaserie(meta, config, season, episode),
     new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('GuardoSerie: timeout globale')), GLOBAL_TIMEOUT_MS)
+      setTimeout(() => reject(new Error('GS_TIMEOUT')), GLOBAL_TIMEOUT_MS)
     )
   ]).catch(e => {
-    console.warn(`[GS] ${e.message}`);
     return [];
   });
 }
@@ -503,7 +493,6 @@ async function _searchGuardaserie(meta, config, season, episode) {
   }
   mark('search_completed', { resultsFound: allResults.length });
 
-
   allResults = Array.from(new Map(allResults.map(i => [i.url, i])).values());
   allResults.sort((a, b) =>
     normalizeTitleScore(b.title, showName, originalTitle) -
@@ -537,7 +526,6 @@ async function _searchGuardaserie(meta, config, season, episode) {
   }
 
   if (!target && bestLoose) target = bestLoose;
-
 
   if (!target) {
     const slugs = Array.from(new Set([slugify(showName), slugify(originalTitle)].filter(Boolean)));
@@ -594,8 +582,8 @@ async function _searchGuardaserie(meta, config, season, episode) {
       }
 
       return buildWebStream({
-        name:      `🌊 GuardoSerie | ${extracted.name}`,
-        title:     `${cleanTitle}\n🎬 ${extracted.name}  🇮🇹 ITA`,
+        name:      `GuardoSerie | ${extracted.name}`,
+        title:     `${cleanTitle}\n ${extracted.name}  ITA`,
         url:       extracted.url,
         extractor: extracted.name,
         provider:  'GuardoSerie',
@@ -611,10 +599,6 @@ async function _searchGuardaserie(meta, config, season, episode) {
 
   const validStreams = processedResults.filter(Boolean);
   mark('extraction_completed', { streams: validStreams.length });
-
-  if (DEBUG) {
-    console.log(`[GS] Benchmark:`, JSON.stringify(bench));
-  }
 
   return validStreams
     .sort((a, b) => {
