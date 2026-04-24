@@ -81,6 +81,7 @@ function hasWebProvidersEnabled(filters = {}) {
         || filters?.enableGhd === true
         || filters?.enableGs === true
         || filters?.enableAnimeWorld === true
+        || filters?.enableAnimeUnity === true
         || filters?.enableAnimeSaturn === true
         || filters?.enableGf === true
         || filters?.enableCc === true

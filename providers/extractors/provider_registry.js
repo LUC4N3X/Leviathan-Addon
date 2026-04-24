@@ -4,6 +4,7 @@ const { searchVix: searchStreamingCommunity } = require('../streamingcommunity/v
 const { searchGuardaHD } = require('../guardahd/ghd_handler');
 const { searchGuardaserie } = require('../guardaserie/gs_handler');
 const { searchAnimeWorld } = require('../animeworld/aw_handler');
+const { searchAnimeUnity } = require('../animeunity/au_handler');
 const { searchAnimeSaturn } = require('../animesaturn/as_handler');
 const { searchGuardaFlix } = require('../guardaflix/gf_handler');
 const { searchCinemaCity } = require('../cinemacity/cc_handler');
@@ -18,6 +19,31 @@ function isStreamingCommunityLastEnabled(filters = {}) {
 
 function isAnimeWebEligible(meta = {}) {
     return Boolean(meta?.kitsu_id || meta?.isAnime || String(meta?.type || '').toLowerCase() === 'anime');
+}
+
+function hasExplicitKitsuMeta(meta = {}) {
+    const candidates = [
+        meta?.kitsu_id,
+        meta?.kitsuId,
+        meta?.id,
+        meta?.imdb_id,
+        meta?.stremioId,
+        meta?.behaviorHints?.kitsuId
+    ];
+
+    return candidates.some((value) => {
+        const raw = String(value || '').trim();
+        return /^kitsu(?::|_)?\d+/i.test(raw) || (/^\d+$/.test(raw) && Boolean(meta?.kitsu_id || meta?.kitsuId));
+    });
+}
+
+function isAnimeUnityEnabled(filters = {}, meta = {}) {
+    if (filters?.enableAnimeUnity === true) return isAnimeWebEligible(meta);
+    if (filters?.enableAnimeUnity === false) return false;
+
+    // Backward compatibility: older installed URLs do not contain enableAnimeUnity.
+    // On Kitsu anime requests, auto-enable AU without forcing it on normal film/series IDs.
+    return hasExplicitKitsuMeta(meta) && isAnimeWebEligible(meta);
 }
 
 const WEB_PROVIDER_DEFINITIONS = [
@@ -60,6 +86,18 @@ const WEB_PROVIDER_DEFINITIONS = [
         minTimeout: 0,
         isEnabled: ({ filters, meta }) => filters?.enableAnimeWorld === true && isAnimeWebEligible(meta),
         run: ({ originalId, meta, config }) => searchAnimeWorld(originalId, meta, config)
+    },
+    {
+        key: 'animeUnity',
+        sourceName: 'AnimeUnity',
+        cacheName: 'AnimeUnity',
+        icon: '🌀',
+        limiterKey: 'webAu',
+        minTimeout: 16000,
+        emptyTtl: 30,
+        errorTtl: 20,
+        isEnabled: ({ filters, meta }) => isAnimeUnityEnabled(filters, meta),
+        run: ({ originalId, meta, config, reqHost }) => searchAnimeUnity(originalId, meta, config, reqHost)
     },
     {
         key: 'animeSaturn',
@@ -132,5 +170,7 @@ module.exports = {
     getWebProviderTimeout,
     isStreamingCommunityEnabled,
     isStreamingCommunityLastEnabled,
-    isAnimeWebEligible
+    isAnimeWebEligible,
+    hasExplicitKitsuMeta,
+    isAnimeUnityEnabled
 };

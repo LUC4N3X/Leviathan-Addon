@@ -1665,6 +1665,25 @@ const mobileHTML = `
                             </div>
                         </div>
 
+                        <div class="m-reactor-module" id="mod-au">
+                            <div class="m-reactor-core">
+                                <i class="fas fa-water m-core-icon"></i>
+                            </div>
+                            <div class="m-reactor-body">
+                                <div class="m-reactor-top">
+                                    <span class="m-reactor-title">AnimeUnity</span>
+                                    <label class="m-switch">
+                                        <input type="checkbox" id="m-enableAnimeUnity" onchange="updateStatus('m-enableAnimeUnity','st-au'); toggleModuleStyle('m-enableAnimeUnity', 'mod-au');">
+                                        <span class="m-slider m-slider-amber"></span>
+                                    </label>
+                                </div>
+                                <span class="m-reactor-desc">Kitsu + VixCloud</span>
+                                <div class="m-tag-row">
+                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-route"></i> MFP</span>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="m-reactor-module" id="mod-as">
                             <div class="m-reactor-core">
                                 <i class="fas fa-satellite-dish m-core-icon"></i>
@@ -3095,11 +3114,12 @@ function checkWebPriorityVisibility() {
     const ghd = document.getElementById('m-enableGhd').checked;
     const gs = document.getElementById('m-enableGs').checked;
     const aw = document.getElementById('m-enableAnimeWorld').checked;
+    const au = document.getElementById('m-enableAnimeUnity').checked;
     const as = document.getElementById('m-enableAnimeSaturn').checked;
     const gf = document.getElementById('m-enableGf').checked;
     const cc = document.getElementById('m-enableCc').checked;
     const panel = document.getElementById('m-priority-panel');
-    if (vix || ghd || gs || aw || as || gf || cc) panel.classList.add('show');
+    if (vix || ghd || gs || aw || au || as || gf || cc) panel.classList.add('show');
     else panel.classList.remove('show');
 }
 
@@ -3338,6 +3358,9 @@ function loadMobileConfig() {
                 document.getElementById('m-enableAnimeWorld').checked = config.filters.enableAnimeWorld || false;
                 toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');
 
+                document.getElementById('m-enableAnimeUnity').checked = config.filters.enableAnimeUnity || false;
+                toggleModuleStyle('m-enableAnimeUnity', 'mod-au');
+
                 document.getElementById('m-enableAnimeSaturn').checked = config.filters.enableAnimeSaturn || false;
                 toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');
 
@@ -3391,6 +3414,7 @@ function loadMobileConfig() {
             updateStatus('m-enableGhd', 'st-ghd');
             updateStatus('m-enableGs', 'st-gs');
             updateStatus('m-enableAnimeWorld', 'st-aw');
+            updateStatus('m-enableAnimeUnity', 'st-au');
             updateStatus('m-enableAnimeSaturn', 'st-as');
             updateStatus('m-enableGf', 'st-gf');
             updateStatus('m-enableCc', 'st-cc');
@@ -3424,6 +3448,7 @@ function getMobileConfig() {
             || document.getElementById('m-enableGhd').checked
             || document.getElementById('m-enableGs').checked
             || document.getElementById('m-enableAnimeWorld').checked
+            || document.getElementById('m-enableAnimeUnity').checked
             || document.getElementById('m-enableAnimeSaturn').checked
             || document.getElementById('m-enableGf').checked
             || document.getElementById('m-enableCc').checked
@@ -3456,6 +3481,7 @@ function getMobileConfig() {
             enableGhd: document.getElementById('m-enableGhd').checked,
             enableGs: document.getElementById('m-enableGs').checked,
             enableAnimeWorld: document.getElementById('m-enableAnimeWorld').checked,
+            enableAnimeUnity: document.getElementById('m-enableAnimeUnity').checked,
             enableAnimeSaturn: document.getElementById('m-enableAnimeSaturn').checked,
             enableGf: document.getElementById('m-enableGf').checked,
             enableCc: document.getElementById('m-enableCc').checked,
@@ -3473,7 +3499,7 @@ function updateLinkModalContent() {
     if(!box) return;
     
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
     
     if(!config.key && !isWebEnabled) {
         box.value = "/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P";
@@ -3488,7 +3514,7 @@ function updateLinkModalContent() {
 
 function mobileInstall() {
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
     if(!config.key && !isWebEnabled) {
         showToast("ERRORE: API KEY MANCANTE", "error"); return;
     }

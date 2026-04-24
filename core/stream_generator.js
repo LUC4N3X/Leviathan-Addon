@@ -42,6 +42,36 @@ const STREMIO_CACHE_MAX_AGE_DEFAULT = Math.max(60, parseInt(process.env.STREMIO_
 const STREMIO_STALE_REVALIDATE_DEFAULT = Math.max(STREMIO_CACHE_MAX_AGE_DEFAULT, parseInt(process.env.STREMIO_STALE_REVALIDATE || '600', 10) || 600);
 const STREMIO_STALE_ERROR_DEFAULT = Math.max(STREMIO_STALE_REVALIDATE_DEFAULT, parseInt(process.env.STREMIO_STALE_ERROR || '1200', 10) || 1200);
 
+function isKitsuRequestId(value) {
+    const raw = String(value || '').replace(/^ai-recs:/i, '').trim();
+    return /^kitsu(?::|_)?\d+/i.test(raw);
+}
+
+function shouldAutoEnableAnimeUnityForKitsu(filters = {}, id = '') {
+    if (!filters || Object.prototype.hasOwnProperty.call(filters, 'enableAnimeUnity')) return false;
+    return isKitsuRequestId(id);
+}
+
+function applyAnimeUnityKitsuBackCompat(config = {}, id = '') {
+    const filters = config?.filters || {};
+    if (!shouldAutoEnableAnimeUnityForKitsu(filters, id)) {
+        return { config, autoAnimeUnity: false };
+    }
+
+    return {
+        config: {
+            ...config,
+            filters: {
+                ...filters,
+                enableAnimeUnity: true,
+                __autoAnimeUnityKitsu: true
+            }
+        },
+        autoAnimeUnity: true
+    };
+}
+
+
 function buildClientCacheMetadata(cachePolicy = {}, streamCount = 0) {
     const policyLocalTtl = Math.max(0, Number(cachePolicy?.localTtl || 0) || 0);
     const policyStaleGrace = Math.max(0, Number(cachePolicy?.staleGraceTtl || 0) || 0);
@@ -2004,12 +2034,15 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 }
 
 async function generateStream(type, id, config, userConfStr, reqHost) {
+  const backCompat = applyAnimeUnityKitsuBackCompat(config, id);
+  config = backCompat.config;
+
   const configuredDebridService = getNormalizedDebridService(config);
   const debridApiKey = getConfiguredDebridKey(config, configuredDebridService);
   const hasDebridKey = Boolean(debridApiKey);
   const filters = config?.filters || {};
   const sourceModeFlags = getSourceModeFlags(filters);
-  const isWebEnabled = Boolean(filters && (isStreamingCommunityEnabled(filters) || filters.enableGhd || filters.enableGs || filters.enableAnimeWorld || filters.enableAnimeSaturn || filters.enableGf || filters.enableCc));
+  const isWebEnabled = Boolean(filters && (isStreamingCommunityEnabled(filters) || filters.enableGhd || filters.enableGs || filters.enableAnimeWorld || filters.enableAnimeUnity || filters.enableAnimeSaturn || filters.enableGf || filters.enableCc));
   const isP2PEnabled = filters.enableP2P === true;
   const torrentPipelineEnabled = shouldUseTorrentPipeline({
       filters,
@@ -2019,7 +2052,8 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
-  const configHash = crypto.createHash('md5').update(userConfStr || 'no-conf').digest('hex');
+  const hashInput = backCompat.autoAnimeUnity ? `${userConfStr || 'no-conf'}|autoAnimeUnityKitsu=v2` : (userConfStr || 'no-conf');
+  const configHash = crypto.createHash('md5').update(hashInput).digest('hex');
   const cacheScope = torrentPipelineEnabled ? 'torrent' : 'webonly';
   const cacheKey = `${type}:${id}:${configHash}:${cacheScope}`;
   const inflightKey = `stream:${cacheKey}`;
@@ -2199,6 +2233,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           filters.enableGhd,
           filters.enableGs,
           filters.enableAnimeWorld,
+          filters.enableAnimeUnity,
           filters.enableAnimeSaturn,
           filters.enableGf,
           filters.enableCc
@@ -2217,11 +2252,15 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           dbOnlyMode,
           debridService: configuredDebridService
       });
+      const isAnimeUnityKitsuRequest = Boolean(filters.enableAnimeUnity === true && meta?.kitsu_id);
+      const emptyAnimeUnityLocalTtl = finalStreams.length === 0 && isAnimeUnityKitsuRequest
+          ? Math.min(Math.max(1, Number(cachePolicyBase.localTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 30)
+          : cachePolicyBase.localTtl;
       const cachePolicy = {
           ...cachePolicyBase,
           allowSharedWrite: sourceModeFlags.useSharedCache ? cachePolicyBase.allowSharedWrite : false,
           sharedTtl: sourceModeFlags.useSharedCache ? cachePolicyBase.sharedTtl : 0,
-          localTtl: sourceModeFlags.liveOnlyMode ? 0 : cachePolicyBase.localTtl,
+          localTtl: sourceModeFlags.liveOnlyMode ? 0 : emptyAnimeUnityLocalTtl,
           staleGraceTtl: sourceModeFlags.liveOnlyMode ? 0 : cachePolicyBase.staleGraceTtl
       };
 

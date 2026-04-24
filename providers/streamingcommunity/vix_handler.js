@@ -1815,5 +1815,11 @@ async function searchVix(meta, config = {}, reqHost) {
     }
 }
 
-module.exports = { searchVix };
+module.exports = {
+    searchVix,
+    resolveAnimeManifest,
+    buildSyntheticUrl,
+    normalizeQualityFilter,
+    inferCanPlayFHDFromPlaylist
+};
 

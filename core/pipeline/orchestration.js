@@ -2,6 +2,33 @@
 
 const { shouldUseTorrentPipeline } = require('../source_mode');
 
+
+function isKitsuRequestId(value) {
+  const raw = String(value || '').replace(/^ai-recs:/i, '').trim();
+  return /^kitsu(?::|_)?\d+/i.test(raw);
+}
+
+function shouldAutoEnableAnimeUnityForKitsu(filters = {}, id = '') {
+  if (!filters || Object.prototype.hasOwnProperty.call(filters, 'enableAnimeUnity')) return false;
+  return isKitsuRequestId(id);
+}
+
+function applyAnimeUnityKitsuBackCompat(config = {}, id = '') {
+  const filters = config?.filters || {};
+  if (!shouldAutoEnableAnimeUnityForKitsu(filters, id)) return { config, autoAnimeUnity: false };
+  return {
+    config: {
+      ...config,
+      filters: {
+        ...filters,
+        enableAnimeUnity: true,
+        __autoAnimeUnityKitsu: true
+      }
+    },
+    autoAnimeUnity: true
+  };
+}
+
 function createPipelineOrchestration(deps = {}) {
   const {
     crypto,
@@ -46,6 +73,8 @@ function createPipelineOrchestration(deps = {}) {
   } = deps;
 
   async function generateStream(type, id, config, userConfStr, reqHost) {
+    const backCompat = applyAnimeUnityKitsuBackCompat(config, id);
+    config = backCompat.config;
     const filters = config.filters || {};
     const debridContext = getDebridContext(config);
     const configuredDebridService = debridContext.service;
@@ -56,6 +85,7 @@ function createPipelineOrchestration(deps = {}) {
       || filters.enableGhd
       || filters.enableGs
       || filters.enableAnimeWorld
+      || filters.enableAnimeUnity
       || filters.enableAnimeSaturn
       || filters.enableGf
       || filters.enableCc
@@ -71,7 +101,8 @@ function createPipelineOrchestration(deps = {}) {
       return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
     }
 
-    const configHash = crypto.createHash('md5').update(userConfStr || 'no-conf').digest('hex');
+    const hashInput = backCompat.autoAnimeUnity ? `${userConfStr || 'no-conf'}|autoAnimeUnityKitsu=v2` : (userConfStr || 'no-conf');
+    const configHash = crypto.createHash('md5').update(hashInput).digest('hex');
     const cacheScope = torrentPipelineEnabled ? 'torrent' : 'webonly';
     const cacheKey = `${type}:${id}:${configHash}:${cacheScope}`;
     const inflightKey = `stream:${cacheKey}`;
@@ -209,12 +240,13 @@ function createPipelineOrchestration(deps = {}) {
         filters.enableGhd,
         filters.enableGs,
         filters.enableAnimeWorld,
+        filters.enableAnimeUnity,
         filters.enableAnimeSaturn,
         filters.enableGf,
         filters.enableCc
       ].filter(Boolean).length;
 
-      const cachePolicy = buildSharedStreamCachePolicy(meta, {
+      const cachePolicyBase = buildSharedStreamCachePolicy(meta, {
         cleanResults,
         rankedResults: finalRanked,
         finalStreams,
@@ -228,6 +260,12 @@ function createPipelineOrchestration(deps = {}) {
         dbOnlyMode,
         debridService: configuredDebridService
       });
+      const cachePolicy = {
+        ...cachePolicyBase,
+        localTtl: finalStreams.length === 0 && filters.enableAnimeUnity === true && meta?.kitsu_id
+          ? Math.min(Math.max(1, Number(cachePolicyBase.localTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 30)
+          : cachePolicyBase.localTtl
+      };
 
       const clientCache = buildClientCacheMetadata(cachePolicy, finalStreams.length);
       const resultObj = {

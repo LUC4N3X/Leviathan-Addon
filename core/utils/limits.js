@@ -49,6 +49,7 @@ const LIMITERS = {
     webGhd: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_GHD'),
     webGs: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_GS'),
     webAw: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_AW'),
+    webAu: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_AU'),
     webAs: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_AS'),
     webGf: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_GF'),
     webCc: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_CC'),

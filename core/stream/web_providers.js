@@ -85,7 +85,7 @@ function inferWebQuality(stream, sourceName) {
         if (normalized) return normalized;
     }
 
-    const textToCheck = `${stream?.title || ''} ${stream?.name || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|STREAMINGCOMMUNITY|CINEMACITY|LEVIATHAN|VIX|GUARDAFLIX|ANIMEWORLD|ANIMESATURN/g, '');
+    const textToCheck = `${stream?.title || ''} ${stream?.name || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|STREAMINGCOMMUNITY|CINEMACITY|LEVIATHAN|VIX|GUARDAFLIX|ANIMEWORLD|ANIMEUNITY|ANIMESATURN/g, '');
     if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) return '4K';
     if (/\b(1440P|2K|QHD)\b/.test(textToCheck)) return '1440p';
     if (/\b(1080P|FHD|FULLHD)\b/.test(textToCheck)) return '1080p';
@@ -117,7 +117,7 @@ function applyAioWebStyle(streamList, providerDefinition, meta) {
 
     const sourceName = providerDefinition?.sourceName || 'Web';
     const providerIcon = providerDefinition?.icon || getWebProviderIcon(sourceName);
-    const isAnimeProvider = sourceName.includes('AnimeWorld') || sourceName.includes('AnimeSaturn');
+    const isAnimeProvider = sourceName.includes('AnimeWorld') || sourceName.includes('AnimeUnity') || sourceName.includes('AnimeSaturn');
 
     return streamList.map((stream) => {
         const quality = inferWebQuality(stream, sourceName) || 'WebStreams';
@@ -134,7 +134,7 @@ function applyAioWebStyle(streamList, providerDefinition, meta) {
                 source: extractorLabel,
                 providerLine: `${providerIcon} ${providerLabel}`,
                 sourceIcon: '⛵',
-                techInfo: sourceName.includes('AnimeSaturn') ? '🪐 Anime' : '⛩️ Anime'
+                techInfo: sourceName.includes('AnimeSaturn') ? '🪐 Anime' : (sourceName.includes('AnimeUnity') ? '🌀 Anime' : '⛩️ Anime')
             });
             stream.behaviorHints = stream.behaviorHints || {};
             stream.behaviorHints.bingieGroup = `Leviathan|HD|Web|${sourceName.replace(/\W/g, '')}`;
@@ -178,7 +178,7 @@ function applyWebFormatter(streamList, providerDefinition, meta, config) {
 
         let langTag = 'ITA';
         const sLower = sourceName.toLowerCase();
-        if (sLower.includes('animeworld') || sLower.includes('animesaturn')) {
+        if (sLower.includes('animeworld') || sLower.includes('animeunity') || sLower.includes('animesaturn')) {
             langTag = (rawTitleToCheck.includes('JPN') || rawTitleToCheck.includes('SUB') || rawTitleToCheck.includes('VOST')) ? 'JPN' : 'ITA';
         }
 
@@ -224,7 +224,8 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
             , {
                 cacheOnly: flags.useProviderCachedOnly === true,
                 bypassCache: flags.bypassProviderCache === true,
-                emptyTtl: 3600
+                emptyTtl: Math.max(1, Number(definition.emptyTtl || 3600) || 3600),
+                errorTtl: Math.max(1, Number(definition.errorTtl || Math.min(Number(definition.emptyTtl || 3600) || 3600, 300)) || 300)
             });
         }));
 
