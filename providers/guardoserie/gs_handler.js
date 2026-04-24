@@ -51,6 +51,13 @@ const requestCache   = new Map();
 const pendingRequests = new Map();
 const activeBypasses  = new Map();
 
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of requestCache.entries()) {
+    if (now > val.stale) requestCache.delete(key);
+  }
+}, 600000).unref();
+
 function getTargetDomain() { return currentGsDomain; }
 
 function loadSession() {
@@ -73,8 +80,7 @@ function loadSession() {
 function saveSession(sessionData) {
   try {
     fs.writeFileSync(SESSION_FILE, JSON.stringify(sessionData, null, 2));
-  } catch (e) {
-  }
+  } catch (e) {}
 }
 
 let activeSession = loadSession();
@@ -91,10 +97,17 @@ function updateCookies(existing, setCookieHeader) {
     });
   }
 
+  const ignoreKeys = new Set(['path', 'domain', 'expires', 'max-age', 'secure', 'httponly', 'samesite']);
+  
   cookiesArr.forEach(c => {
     const primary = c.split(';')[0];
     const parts = primary.split('=');
-    if (parts.length >= 2) cookieMap.set(parts[0].trim(), parts.slice(1).join('=').trim());
+    if (parts.length >= 2) {
+      const key = parts[0].trim();
+      if (!ignoreKeys.has(key.toLowerCase())) {
+        cookieMap.set(key, parts.slice(1).join('=').trim());
+      }
+    }
   });
 
   return Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
@@ -123,12 +136,10 @@ async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
 
   const bypassPromise = (async () => {
     const MAX_RETRIES = 2;
-    let lastErr;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (attempt > 0) {
-        const delay = 1500 * (2 ** (attempt - 1));
-        await new Promise(r => setTimeout(r, delay));
+        await new Promise(r => setTimeout(r, 1500 * (2 ** (attempt - 1))));
       }
 
       try {
@@ -147,7 +158,7 @@ async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
 
         if (response.data?.status === 'ok') {
           const solution = response.data.solution;
-          const cookies     = solution.cookies.map(c => `${c.name}=${c.value}`).join('; ');
+          const cookies = solution.cookies.map(c => `${c.name}=${c.value}`).join('; ');
           const cf_clearance = solution.cookies.find(c => c.name === 'cf_clearance')?.value || null;
 
           const data = {
@@ -171,10 +182,7 @@ async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
 
           return data;
         }
-        lastErr = new Error(response.data?.message || 'Invalid');
-      } catch (e) {
-        lastErr = e;
-      }
+      } catch (e) {}
     }
 
     activeBypasses.delete(provider);
@@ -194,24 +202,32 @@ async function executeSmartFetch(url, isPost = false, body = null) {
         url,
         headers: {
           'User-Agent': activeSession.userAgent,
-          'Cookie':     activeSession.cookies,
-          'Referer':    getTargetDomain(),
-          'Accept':     'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+          'Cookie': activeSession.cookies,
+          'Referer': getTargetDomain(),
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'same-origin',
+          'Upgrade-Insecure-Requests': '1'
         },
         timeout: 15000,
         httpAgent,
         httpsAgent,
         validateStatus: () => true
       };
+      
       if (isPost && body) {
         reqOptions.data = body;
         reqOptions.headers['Content-Type'] = 'application/x-www-form-urlencoded';
       }
 
-      const res  = await axios(reqOptions);
+      const res = await axios(reqOptions);
       const html = typeof res.data === 'string' ? res.data : JSON.stringify(res.data || {});
 
-      if (res.status !== 403 && res.status !== 503 && !looksLikeChallenge(html)) {
+      if (res.status === 403 || res.status === 503 || looksLikeChallenge(html)) {
+        activeSession = {};
+      } else {
         if (res.headers && res.headers['set-cookie']) {
           activeSession.cookies = updateCookies(activeSession.cookies, res.headers['set-cookie']);
           activeSession.timestamp = Date.now();
@@ -219,9 +235,7 @@ async function executeSmartFetch(url, isPost = false, body = null) {
         }
         return html;
       }
-      activeSession = {};
-    } catch (e) {
-    }
+    } catch (e) {}
   }
 
   const session = await getClearance(url, PROVIDER_NAME, { method: isPost ? 'POST' : 'GET', body });
@@ -247,9 +261,9 @@ async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH }
     .then(html => {
       if (html) {
         requestCache.set(cacheKey, {
-          data:    html,
+          data: html,
           expires: Date.now() + ttl,
-          stale:   Date.now() + ttl * 2
+          stale: Date.now() + ttl * 2
         });
       }
       return html;
@@ -284,17 +298,17 @@ function slugify(val) {
 }
 
 function normalizeTitleScore(candidate, title, originalTitle) {
-  const cand      = normalizeText(candidate);
-  const primary   = normalizeText(title);
+  const cand = normalizeText(candidate);
+  const primary = normalizeText(title);
   const secondary = normalizeText(originalTitle);
   if (!cand) return 0;
   if (cand === primary || (secondary && cand === secondary)) return 3;
   if (
-    (primary   && (cand.includes(primary)    || primary.includes(cand)))   ||
-    (secondary && (cand.includes(secondary)  || secondary.includes(cand)))
+    (primary && (cand.includes(primary) || primary.includes(cand))) ||
+    (secondary && (cand.includes(secondary) || secondary.includes(cand)))
   ) return 2;
 
-  const candTokens  = new Set(cand.split(' ').filter(Boolean));
+  const candTokens = new Set(cand.split(' ').filter(Boolean));
   const titleTokens = Array.from(new Set(`${primary} ${secondary}`.trim().split(' ').filter(Boolean)));
   if (!titleTokens.length) return 0;
 
@@ -306,9 +320,9 @@ function normalizeTitleScore(candidate, title, originalTitle) {
 
 function extractSearchResultsFromHtml(html, baseUrl) {
   if (!html) return [];
-  const $       = cheerio.load(String(html));
+  const $ = cheerio.load(String(html));
   const results = [];
-  const seen    = new Set();
+  const seen = new Set();
 
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href');
@@ -318,7 +332,7 @@ function extractSearchResultsFromHtml(html, baseUrl) {
       if (!seen.has(absolute)) {
         seen.add(absolute);
         results.push({
-          url:   absolute,
+          url: absolute,
           title: String($(el).attr('title') || $(el).text() || '').trim() || absolute
         });
       }
@@ -331,21 +345,21 @@ function extractSearchResultsFromHtml(html, baseUrl) {
 async function searchProviderSequential(query) {
   const baseUrl = getTargetDomain();
 
-  const ajaxUrl  = `${baseUrl}/wp-admin/admin-ajax.php`;
+  const ajaxUrl = `${baseUrl}/wp-admin/admin-ajax.php`;
   const ajaxBody = `s=${encodeURIComponent(query)}&action=searchwp_live_search&swpengine=default&swpquery=${encodeURIComponent(query)}`;
   const ajaxHtml = await smartFetch(ajaxUrl, { isPost: true, body: ajaxBody, ttl: TTL_SEARCH });
   const ajaxResults = extractSearchResultsFromHtml(ajaxHtml, baseUrl);
 
   if (ajaxResults.length > 0) return ajaxResults;
 
-  const fallbackUrl  = `${baseUrl}/?s=${encodeURIComponent(query)}`;
+  const fallbackUrl = `${baseUrl}/?s=${encodeURIComponent(query)}`;
   const fallbackHtml = await smartFetch(fallbackUrl, { ttl: TTL_SEARCH });
   return extractSearchResultsFromHtml(fallbackHtml, baseUrl);
 }
 
 function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
   if (!pageHtml) return null;
-  const sIdx = parseInt(season,  10) - 1;
+  const sIdx = parseInt(season, 10) - 1;
   const eIdx = parseInt(episode, 10) - 1;
   if (sIdx < 0 || eIdx < 0) return null;
 
@@ -354,7 +368,7 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
   const seasonBlocks = $('.les-content, [class*="season-"], [class*="stagione-"]');
 
   if (seasonBlocks.length > sIdx) {
-    const block    = seasonBlocks.eq(sIdx);
+    const block = seasonBlocks.eq(sIdx);
     const episodes = block.find('a[href*="/episodio/"]');
     if (episodes.length > eIdx) {
       return episodes.eq(eIdx).attr('href') || null;
@@ -369,15 +383,15 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
 }
 
 function extractPlayerLinksFromHtml(html) {
-  const raw    = String(html || '');
-  const links  = new Set();
+  const raw = String(html || '');
+  const links = new Set();
   const baseUrl = getTargetDomain();
 
   const normalize = (link) => {
     let n = String(link).trim().replace(/&amp;/g, '&').replace(/\\\//g, '/');
     if (!n || n.startsWith('data:')) return null;
-    if (n.startsWith('//'))          return `https:${n}`;
-    if (n.startsWith('/'))           return `${baseUrl}${n}`;
+    if (n.startsWith('//')) return `https:${n}`;
+    if (n.startsWith('/')) return `${baseUrl}${n}`;
     if (!/^https?:\/\//i.test(n) && /(loadm|mixdrop|m1xdrop|mxcontent)/i.test(n)) {
       return `https://${n.replace(/^\/+/, '')}`;
     }
@@ -395,7 +409,7 @@ function extractPlayerLinksFromHtml(html) {
   }
 
   const directRegexes = [
-    new RegExp(HOSTER_DIRECT_LINK_PATTERN,         'ig'),
+    new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig'),
     new RegExp(HOSTER_ESCAPED_DIRECT_LINK_PATTERN, 'ig')
   ];
   for (const regex of directRegexes) {
@@ -411,9 +425,9 @@ function extractPlayerLinksFromHtml(html) {
 async function asyncPool(limit, items, asyncFn) {
   if (!items.length) return [];
 
-  const results  = new Array(items.length);
-  const queue    = items.map((item, i) => ({ item, i }));
-  const running  = new Set();
+  const results = new Array(items.length);
+  const queue = items.map((item, i) => ({ item, i }));
+  const running = new Set();
 
   async function runNext() {
     if (!queue.length) return;
@@ -438,7 +452,7 @@ async function asyncPool(limit, items, asyncFn) {
 async function searchGuardaserie(meta, config) {
   if (!meta?.isSeries || !config?.filters?.enableGs) return [];
 
-  const season  = parseInt(meta?.season,  10);
+  const season = parseInt(meta?.season, 10);
   const episode = parseInt(meta?.episode, 10);
   if (!season || season < 1 || !episode || episode < 1) return [];
 
@@ -453,12 +467,6 @@ async function searchGuardaserie(meta, config) {
 }
 
 async function _searchGuardaserie(meta, config, season, episode) {
-  const bench     = [];
-  const benchStart = Date.now();
-  const mark = (step, extra = {}) => {
-    if (DEBUG) bench.push({ step, t: Date.now() - benchStart, ...extra });
-  };
-
   const lightClient = axios.create({ timeout: 10000, httpsAgent, httpAgent });
   let tmdbId = meta?.tmdb_id || meta?.tmdbId || null;
 
@@ -476,12 +484,12 @@ async function _searchGuardaserie(meta, config, season, episode) {
       const res = await lightClient.get(
         `https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_KEY}&language=it-IT`
       );
-      showName      = res.data.name || res.data.title || showName;
+      showName = res.data.name || res.data.title || showName;
       originalTitle = res.data.original_name || res.data.original_title || null;
-      targetYear    = String(res.data.first_air_date || '').slice(0, 4) || null;
+      targetYear = String(res.data.first_air_date || '').slice(0, 4) || null;
     } catch (_) {}
   }
-  mark('tmdb_info', { tmdbId, showName });
+  
   if (!showName) return [];
 
   const queries = Array.from(new Set([showName, originalTitle].filter(Boolean)));
@@ -491,7 +499,6 @@ async function _searchGuardaserie(meta, config, season, episode) {
     const res = await searchProviderSequential(q);
     allResults.push(...res);
   }
-  mark('search_completed', { resultsFound: allResults.length });
 
   allResults = Array.from(new Map(allResults.map(i => [i.url, i])).values());
   allResults.sort((a, b) =>
@@ -499,7 +506,7 @@ async function _searchGuardaserie(meta, config, season, episode) {
     normalizeTitleScore(a.title, showName, originalTitle)
   );
 
-  let target   = null;
+  let target = null;
   let bestLoose = null;
 
   for (const result of allResults) {
@@ -531,7 +538,7 @@ async function _searchGuardaserie(meta, config, season, episode) {
     const slugs = Array.from(new Set([slugify(showName), slugify(originalTitle)].filter(Boolean)));
     outer: for (const slug of slugs) {
       for (const p of [`/serie/${slug}/`, `/${slug}/`, `/serietv/${slug}/`]) {
-        const url  = `${getTargetDomain()}${p}`;
+        const url = `${getTargetDomain()}${p}`;
         const html = await smartFetch(url, { ttl: TTL_SERIES });
         if (html) {
           const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
@@ -544,18 +551,15 @@ async function _searchGuardaserie(meta, config, season, episode) {
     }
   }
 
-  mark('target_resolved', { found: !!target?.url });
   if (!target?.url) return [];
 
   const episodeUrl = extractEpisodeUrlFromSeriesPage(target.html, season, episode);
   if (!episodeUrl) return [];
 
   const absoluteEpUrl = new URL(episodeUrl, getTargetDomain()).toString();
-  const finalHtml     = await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE });
-  mark('episode_fetched');
-
+  const finalHtml = await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE });
+  
   const playerLinks = Array.from(new Set(extractPlayerLinksFromHtml(finalHtml))).slice(0, 8);
-  mark('players_extracted', { count: playerLinks.length });
   if (!playerLinks.length) return [];
 
   const cleanTitle = `${showName} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
@@ -564,9 +568,9 @@ async function _searchGuardaserie(meta, config, season, episode) {
     try {
       const userAgent = activeSession.userAgent || pickRandomProfile(BROWSER_PROFILES).ua;
       const extracted = await extractFromUrl(link, {
-        client:          lightClient,
+        client: lightClient,
         userAgent,
-        requestReferer:  getTargetDomain()
+        requestReferer: getTargetDomain()
       });
       if (!extracted?.url) return null;
 
@@ -582,15 +586,15 @@ async function _searchGuardaserie(meta, config, season, episode) {
       }
 
       return buildWebStream({
-        name:      `GuardoSerie | ${extracted.name}`,
-        title:     `${cleanTitle}\n ${extracted.name}  ITA`,
-        url:       extracted.url,
+        name: `GuardoSerie | ${extracted.name}`,
+        title: `${cleanTitle}\n ${extracted.name}  ITA`,
+        url: extracted.url,
         extractor: extracted.name,
-        provider:  'GuardoSerie',
+        provider: 'GuardoSerie',
         providerCode: 'GS',
         quality,
-        headers:   extracted.headers,
-        extra:     { _priority: extracted.priority ?? 9 }
+        headers: extracted.headers,
+        extra: { _priority: extracted.priority ?? 9 }
       });
     } catch (_) {
       return null;
@@ -598,7 +602,6 @@ async function _searchGuardaserie(meta, config, season, episode) {
   });
 
   const validStreams = processedResults.filter(Boolean);
-  mark('extraction_completed', { streams: validStreams.length });
 
   return validStreams
     .sort((a, b) => {
