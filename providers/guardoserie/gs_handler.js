@@ -26,14 +26,13 @@ const BROWSER_PROFILES   = GUARDA_SERIE_BROWSER_PROFILES;
 const FLARESOLVERR_URL   = process.env.FLARESOLVERR_URL || 'http://127.0.0.1:8191/v1';
 const PROVIDER_NAME      = 'guardoserie';
 const SESSION_FILE       = path.join(process.cwd(), `cf-session-${PROVIDER_NAME}.json`);
-const DEBUG              = process.env.GS_DEBUG === '1';
 
-const TTL_SEARCH     = 1000 * 60 * 30;
-const TTL_EPISODE    = 1000 * 60 * 30;
-const TTL_SERIES     = 1000 * 60 * 60 * 6;
-const CF_SESSION_TTL = 1000 * 60 * 60 * 6;
-
+const TTL_SEARCH      = 1000 * 60 * 30;
+const TTL_EPISODE     = 1000 * 60 * 30;
+const TTL_SERIES      = 1000 * 60 * 60 * 6;
+const CF_SESSION_TTL  = 1000 * 60 * 60 * 6;
 const GLOBAL_TIMEOUT_MS = 25000;
+const MAX_CACHE_ITEMS = 500;
 
 const agentOptions = {
   keepAlive: true,
@@ -44,6 +43,16 @@ const agentOptions = {
 };
 const httpsAgent = new https.Agent(agentOptions);
 const httpAgent  = new http.Agent(agentOptions);
+
+const lightClient = axios.create({
+  timeout: 10000,
+  httpAgent,
+  httpsAgent,
+  validateStatus: status => status >= 200 && status < 500,
+  headers: {
+    'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
+  }
+});
 
 let currentGsDomain = INITIAL_GS_DOMAIN;
 
@@ -59,6 +68,16 @@ setInterval(() => {
 }, 600000).unref();
 
 function getTargetDomain() { return currentGsDomain; }
+
+function isSessionFresh(session) {
+  return !!(
+    session &&
+    session.cookies &&
+    session.userAgent &&
+    session.timestamp &&
+    Date.now() - session.timestamp < CF_SESSION_TTL
+  );
+}
 
 function loadSession() {
   if (!fs.existsSync(SESSION_FILE)) return {};
@@ -84,6 +103,11 @@ function saveSession(sessionData) {
 }
 
 let activeSession = loadSession();
+
+function clearSession() {
+  activeSession = {};
+  try { fs.unlinkSync(SESSION_FILE); } catch (_) {}
+}
 
 function updateCookies(existing, setCookieHeader) {
   if (!setCookieHeader) return existing;
@@ -194,8 +218,8 @@ async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
   return bypassPromise;
 }
 
-async function executeSmartFetch(url, isPost = false, body = null) {
-  if (activeSession && activeSession.cookies && activeSession.userAgent) {
+async function executeSmartFetch(url, isPost = false, body = null, signal = null) {
+  if (isSessionFresh(activeSession)) {
     try {
       const reqOptions = {
         method: isPost ? 'POST' : 'GET',
@@ -214,7 +238,8 @@ async function executeSmartFetch(url, isPost = false, body = null) {
         timeout: 15000,
         httpAgent,
         httpsAgent,
-        validateStatus: () => true
+        validateStatus: () => true,
+        signal
       };
       
       if (isPost && body) {
@@ -226,7 +251,7 @@ async function executeSmartFetch(url, isPost = false, body = null) {
       const html = typeof res.data === 'string' ? res.data : JSON.stringify(res.data || {});
 
       if (res.status === 403 || res.status === 503 || looksLikeChallenge(html)) {
-        activeSession = {};
+        clearSession();
       } else {
         if (res.headers && res.headers['set-cookie']) {
           activeSession.cookies = updateCookies(activeSession.cookies, res.headers['set-cookie']);
@@ -235,21 +260,23 @@ async function executeSmartFetch(url, isPost = false, body = null) {
         }
         return html;
       }
-    } catch (e) {}
+    } catch (e) {
+      if (axios.isCancel(e)) throw e;
+    }
   }
 
   const session = await getClearance(url, PROVIDER_NAME, { method: isPost ? 'POST' : 'GET', body });
   return session?.response || null;
 }
 
-async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH } = {}) {
+async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH, signal = null } = {}) {
   const cacheKey = `${isPost ? 'POST' : 'GET'}:${url}:${body || ''}`;
 
   const cached = requestCache.get(cacheKey);
   if (cached) {
     if (Date.now() < cached.expires) return cached.data;
     if (cached.stale && Date.now() < cached.stale && !pendingRequests.has(cacheKey)) {
-      setImmediate(() => smartFetch(url, { isPost, body, ttl }));
+      setImmediate(() => smartFetch(url, { isPost, body, ttl, signal }));
       return cached.data;
     }
     requestCache.delete(cacheKey);
@@ -257,9 +284,13 @@ async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH }
 
   if (pendingRequests.has(cacheKey)) return pendingRequests.get(cacheKey);
 
-  const fetchPromise = executeSmartFetch(url, isPost, body)
+  const fetchPromise = executeSmartFetch(url, isPost, body, signal)
     .then(html => {
       if (html) {
+        if (requestCache.size >= MAX_CACHE_ITEMS) {
+          const oldestKey = requestCache.keys().next().value;
+          if (oldestKey) requestCache.delete(oldestKey);
+        }
         requestCache.set(cacheKey, {
           data: html,
           expires: Date.now() + ttl,
@@ -318,6 +349,16 @@ function normalizeTitleScore(candidate, title, originalTitle) {
   return ratio >= 0.75 ? 2 : ratio >= 0.45 ? 1 : 0;
 }
 
+function normalizeStreamUrl(url) {
+  try {
+    const u = new URL(url);
+    ['utm_source', 'utm_medium', 'utm_campaign'].forEach(k => u.searchParams.delete(k));
+    return u.toString();
+  } catch (_) {
+    return String(url || '');
+  }
+}
+
 function extractSearchResultsFromHtml(html, baseUrl) {
   if (!html) return [];
   const $ = cheerio.load(String(html));
@@ -342,29 +383,40 @@ function extractSearchResultsFromHtml(html, baseUrl) {
   return results;
 }
 
-async function searchProviderSequential(query) {
+async function searchProviderSequential(query, signal) {
   const baseUrl = getTargetDomain();
 
   const ajaxUrl = `${baseUrl}/wp-admin/admin-ajax.php`;
   const ajaxBody = `s=${encodeURIComponent(query)}&action=searchwp_live_search&swpengine=default&swpquery=${encodeURIComponent(query)}`;
-  const ajaxHtml = await smartFetch(ajaxUrl, { isPost: true, body: ajaxBody, ttl: TTL_SEARCH });
+  const ajaxHtml = await smartFetch(ajaxUrl, { isPost: true, body: ajaxBody, ttl: TTL_SEARCH, signal });
   const ajaxResults = extractSearchResultsFromHtml(ajaxHtml, baseUrl);
 
   if (ajaxResults.length > 0) return ajaxResults;
 
   const fallbackUrl = `${baseUrl}/?s=${encodeURIComponent(query)}`;
-  const fallbackHtml = await smartFetch(fallbackUrl, { ttl: TTL_SEARCH });
+  const fallbackHtml = await smartFetch(fallbackUrl, { ttl: TTL_SEARCH, signal });
   return extractSearchResultsFromHtml(fallbackHtml, baseUrl);
 }
 
 function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
   if (!pageHtml) return null;
+
+  const directEpisodeRegexes = [
+    new RegExp(`/episodio/[^"'\\s]*stagione-${season}-episodio-${episode}[^"'\\s]*`, 'i'),
+    new RegExp(`/episodio/[^"'\\s]*s${String(season).padStart(2, '0')}e${String(episode).padStart(2, '0')}[^"'\\s]*`, 'i'),
+    new RegExp(`/episodio/[^"'\\s]*${season}x${episode}[^"'\\s]*`, 'i')
+  ];
+
+  for (const re of directEpisodeRegexes) {
+    const match = String(pageHtml).match(re);
+    if (match?.[0]) return match[0];
+  }
+
   const sIdx = parseInt(season, 10) - 1;
   const eIdx = parseInt(episode, 10) - 1;
   if (sIdx < 0 || eIdx < 0) return null;
 
   const $ = cheerio.load(String(pageHtml));
-
   const seasonBlocks = $('.les-content, [class*="season-"], [class*="stagione-"]');
 
   if (seasonBlocks.length > sIdx) {
@@ -375,11 +427,7 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
     }
   }
 
-  const explicit = new RegExp(
-    `https?:\\/\\/[^"'\\s]+\\/episodio\\/[^"'\\s]*stagione-${season}-episodio-${episode}[^"'\\s]*`,
-    'i'
-  );
-  return pageHtml.match(explicit)?.[0] || null;
+  return null;
 }
 
 function extractPlayerLinksFromHtml(html) {
@@ -456,24 +504,25 @@ async function searchGuardaserie(meta, config) {
   const episode = parseInt(meta?.episode, 10);
   if (!season || season < 1 || !episode || episode < 1) return [];
 
-  return Promise.race([
-    _searchGuardaserie(meta, config, season, episode),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('GS_TIMEOUT')), GLOBAL_TIMEOUT_MS)
-    )
-  ]).catch(e => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GLOBAL_TIMEOUT_MS);
+
+  try {
+    return await _searchGuardaserie(meta, config, season, episode, controller.signal);
+  } catch (_) {
     return [];
-  });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-async function _searchGuardaserie(meta, config, season, episode) {
-  const lightClient = axios.create({ timeout: 10000, httpsAgent, httpAgent });
+async function _searchGuardaserie(meta, config, season, episode, signal) {
   let tmdbId = meta?.tmdb_id || meta?.tmdbId || null;
 
   if (!tmdbId && meta?.imdb_id) {
     try {
       const url = `https://api.themoviedb.org/3/find/${encodeURIComponent(meta.imdb_id)}?api_key=${TMDB_KEY}&external_source=imdb_id`;
-      const res = await lightClient.get(url);
+      const res = await lightClient.get(url, { signal });
       tmdbId = res.data?.tv_results?.[0]?.id;
     } catch (_) {}
   }
@@ -482,7 +531,8 @@ async function _searchGuardaserie(meta, config, season, episode) {
   if (tmdbId) {
     try {
       const res = await lightClient.get(
-        `https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_KEY}&language=it-IT`
+        `https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_KEY}&language=it-IT`,
+        { signal }
       );
       showName = res.data.name || res.data.title || showName;
       originalTitle = res.data.original_name || res.data.original_title || null;
@@ -496,11 +546,16 @@ async function _searchGuardaserie(meta, config, season, episode) {
   let allResults = [];
 
   for (const q of queries) {
-    const res = await searchProviderSequential(q);
+    const res = await searchProviderSequential(q, signal);
     allResults.push(...res);
   }
 
   allResults = Array.from(new Map(allResults.map(i => [i.url, i])).values());
+  
+  const seriesResults = allResults.filter(r => /\/serie\//i.test(r.url));
+  const episodeResults = allResults.filter(r => /\/episodio\//i.test(r.url));
+  allResults = [...seriesResults, ...episodeResults];
+
   allResults.sort((a, b) =>
     normalizeTitleScore(b.title, showName, originalTitle) -
     normalizeTitleScore(a.title, showName, originalTitle)
@@ -513,7 +568,7 @@ async function _searchGuardaserie(meta, config, season, episode) {
     const titleScore = normalizeTitleScore(result.title, showName, originalTitle);
     if (titleScore < 1) continue;
 
-    const html = await smartFetch(result.url, { ttl: TTL_SERIES });
+    const html = await smartFetch(result.url, { ttl: TTL_SERIES, signal });
     if (!html) continue;
 
     const foundYear =
@@ -522,7 +577,8 @@ async function _searchGuardaserie(meta, config, season, episode) {
       null;
 
     if (targetYear && foundYear) {
-      if (Math.abs(Number(foundYear) - Number(targetYear)) <= (titleScore >= 2 ? 10 : 1)) {
+      const allowedYearDelta = titleScore >= 3 ? 3 : 1;
+      if (Math.abs(Number(foundYear) - Number(targetYear)) <= allowedYearDelta) {
         target = { url: result.url, html };
         break;
       }
@@ -539,7 +595,7 @@ async function _searchGuardaserie(meta, config, season, episode) {
     outer: for (const slug of slugs) {
       for (const p of [`/serie/${slug}/`, `/${slug}/`, `/serietv/${slug}/`]) {
         const url = `${getTargetDomain()}${p}`;
-        const html = await smartFetch(url, { ttl: TTL_SERIES });
+        const html = await smartFetch(url, { ttl: TTL_SERIES, signal });
         if (html) {
           const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
           if (normalizeTitleScore(pageTitle, showName, originalTitle) >= 2) {
@@ -557,7 +613,7 @@ async function _searchGuardaserie(meta, config, season, episode) {
   if (!episodeUrl) return [];
 
   const absoluteEpUrl = new URL(episodeUrl, getTargetDomain()).toString();
-  const finalHtml = await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE });
+  const finalHtml = await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal });
   
   const playerLinks = Array.from(new Set(extractPlayerLinksFromHtml(finalHtml))).slice(0, 8);
   if (!playerLinks.length) return [];
@@ -579,7 +635,8 @@ async function _searchGuardaserie(meta, config, season, episode) {
         try {
           const probed = await probePlaylistQuality(lightClient, extracted.url, {
             headers: extracted.headers || {},
-            timeout: 5000
+            timeout: 5000,
+            signal
           });
           quality = pickBetterQuality(probed || 'Unknown', quality);
         } catch (_) {}
@@ -608,7 +665,10 @@ async function _searchGuardaserie(meta, config, season, episode) {
       const qDelta = qualityRank(b.quality) - qualityRank(a.quality);
       return qDelta !== 0 ? qDelta : (a._priority || 9) - (b._priority || 9);
     })
-    .filter((s, i, arr) => arr.findIndex(x => x.url === s.url) === i)
+    .filter((s, i, arr) => {
+      const key = normalizeStreamUrl(s.url);
+      return arr.findIndex(x => normalizeStreamUrl(x.url) === key) === i;
+    })
     .map(s => { delete s._priority; return s; });
 }
 
