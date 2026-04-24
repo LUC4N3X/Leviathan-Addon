@@ -260,11 +260,16 @@ function createPipelineOrchestration(deps = {}) {
         dbOnlyMode,
         debridService: configuredDebridService
       });
+      const isGsOnlyWebRequest = cacheScope === 'webonly' && enabledWebProvidersCount === 1 && filters.enableGs === true;
+      const emptyAnimeUnityLocalTtl = finalStreams.length === 0 && filters.enableAnimeUnity === true && meta?.kitsu_id
+        ? Math.min(Math.max(1, Number(cachePolicyBase.localTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 30)
+        : cachePolicyBase.localTtl;
+      const emptyGsOnlyLocalTtl = finalStreams.length === 0 && isGsOnlyWebRequest
+        ? Math.min(Math.max(1, Number(emptyAnimeUnityLocalTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 20)
+        : emptyAnimeUnityLocalTtl;
       const cachePolicy = {
         ...cachePolicyBase,
-        localTtl: finalStreams.length === 0 && filters.enableAnimeUnity === true && meta?.kitsu_id
-          ? Math.min(Math.max(1, Number(cachePolicyBase.localTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 30)
-          : cachePolicyBase.localTtl
+        localTtl: emptyGsOnlyLocalTtl
       };
 
       const clientCache = buildClientCacheMetadata(cachePolicy, finalStreams.length);

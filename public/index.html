@@ -1388,19 +1388,6 @@
                                 </label>
                             </div>
 
-                            <div class="aux-card cine-card" id="card_trailer">
-                                <div class="aux-header">
-                                    <i class="fas fa-film aux-icon"></i><span>Cine Mode</span>
-                                </div>
-                                <div class="aux-desc">Avvia automaticamente un trailer cinematografico prima dello streaming.</div>
-                                <label class="cyber-switch-container">
-                                    <input type="checkbox" id="enableTrailers" onchange="toggleAuxCard('card_trailer'); updateFluxStream()">
-                                    <span class="cs-fill"></span>
-                                    <span class="cs-label cs-label-off">OFF</span>
-                                    <span class="cs-separator"></span>
-                                    <span class="cs-label cs-label-on">TRAILER</span>
-                                </label>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -2783,8 +2770,6 @@
                         document.getElementById('enableGf').checked = config.filters.enableGf || false;
                         document.getElementById('enableCc').checked = config.filters.enableCc || false;
 
-                        document.getElementById('enableTrailers').checked = config.filters.enableTrailers || false;
-
                         setSpecState('btn_4k', config.filters.no4k);
                         setSpecState('btn_1080', config.filters.no1080);
                         setSpecState('btn_720', config.filters.no720);
@@ -2802,7 +2787,6 @@
                             document.getElementById('maxSizeSlider').value = 0;
                             updateSizeVal(0);
                         }
-                        if (document.getElementById('enableTrailers').checked) document.getElementById('card_trailer').classList.add('active');
                         if (config.sort) setSortMode(config.sort); else setSortMode('balanced');
                     }
                     checkWebVisibility();
@@ -2951,7 +2935,7 @@
                     enableAnimeSaturn: document.getElementById('enableAnimeSaturn').checked,
                     enableGf: document.getElementById('enableGf').checked,
                     enableCc: document.getElementById('enableCc').checked,
-                    enableTrailers: document.getElementById('enableTrailers').checked,
+                    enableTrailers: false,
                     vixLast: document.getElementById('vixLast').checked,
                     scQuality: currentSCQuality,
                     maxPerQuality: gateActive ? gateVal : 0,
@@ -3018,7 +3002,6 @@
             let sortText = "LEVIATHAN (Balanced)";
             if(c.sort === 'resolution') sortText = "RISOLUZIONE (4K/FHD)";
             if(c.sort === 'size') sortText = "BITRATE (Peso)";
-            let trailerText = c.filters.enableTrailers ? 'ATTIVO 🎬' : 'NO';
             let sourceModeText = 'BALANCED';
             if (c.filters.sourceMode === 'dbOnly') sourceModeText = 'DB ONLY';
             if (c.filters.sourceMode === 'globalCacheOnly') sourceModeText = 'GLOBAL CACHE ONLY';
@@ -3045,7 +3028,6 @@
                 <li>Filtro Qualità <span>${spectrumStr}</span></li>
                 <li>Signal Gate <span>${gateText}</span></li>
                 <li>Lingua Audio <span>${langText}</span></li>
-                <li>Cinema Mode <span>${trailerText}</span></li>
             `;
             const m = document.getElementById('installModal'); m.style.display = 'flex'; setTimeout(() => m.classList.add('show'), 10);
         }

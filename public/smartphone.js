@@ -1840,11 +1840,6 @@ const mobileHTML = `
                             <div class="m-chip-label">Apex Prime</div>
                             <div class="m-chip-sub">Flagship</div>
                         </div>
-                        <div class="m-cortex-chip" id="msk_cinema" onclick="selectMobileSkin('cinema')">
-                            <div class="m-chip-icon"><i class="fas fa-film"></i></div>
-                            <div class="m-chip-label">Velvet Cinema</div>
-                            <div class="m-chip-sub">Reference</div>
-                        </div>
                         <div class="m-cortex-chip" id="msk_ultra_compact" onclick="selectMobileSkin('ultra_compact')">
                             <div class="m-chip-icon"><i class="fas fa-bolt"></i></div>
                             <div class="m-chip-label">Pulse Compact</div>
@@ -2264,7 +2259,6 @@ function triggerPreviewUpdateEffect() {
 const MOBILE_FORMATTER_META = {
     leviathan: { label: 'Leviathan Core', preview: 'LEVIATHAN CORE' },
     premium: { label: 'Apex Prime', preview: 'APEX PRIME' },
-    cinema: { label: 'Velvet Cinema', preview: 'VELVET CINEMA' },
     ultra_compact: { label: 'Pulse Compact', preview: 'PULSE COMPACT' },
     tv_compact: { label: 'Neon TV', preview: 'NEON TV' },
     lev2: { label: 'Architect', preview: 'ARCHITECT' },
@@ -2286,7 +2280,8 @@ const MOBILE_FORMATTER_META = {
 const MOBILE_FORMATTER_ALIASES = {
     default: 'leviathan',
     pro: 'premium',
-    cine: 'cinema',
+    cine: 'premium',
+    cinema: 'premium',
     ultra: 'ultra_compact',
     ultracompact: 'ultra_compact',
     compact: 'ultra_compact',
@@ -2446,18 +2441,6 @@ function updateMobilePreviewLegacy() {
         ].join('\n')
     });
 
-    const styleCinema = (p) => ({
-        name: joinMobilePreviewParts([qIcon, p.quality, p.cleanTags.includes('Remux') ? 'Reference' : 'Cinema'], ' '),
-        title: [
-            `ðŸŽžï¸ ${p.cleanName}`,
-            `ðŸŒˆ ${joinMobilePreviewParts([p.cleanTags.join(' â€¢ '), p.codec])}`,
-            `ðŸŽ§ ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang])}`,
-            `ðŸ“Š ${p.scoreBadge} â€¢ ${p.visualMeter}`,
-            `ðŸ“¦ ${p.sizeString} â€¢ ${p.seedersStr}`,
-            `ðŸ·ï¸ ${joinMobilePreviewParts([p.displaySource, p.releaseGroup, p.providerLabel])}`
-        ].join('\n')
-    });
-
     const styleUltraCompact = (p) => ({
         name: joinMobilePreviewParts([statusIcon, p.quality, 'DV+HDR', p.serviceTag, `â€¢${p.scoreTier}`], ' '),
         title: [
@@ -2561,7 +2544,6 @@ ${p.quality}`,
 
     const result = ({
         premium: stylePremium,
-        cinema: styleCinema,
         ultra_compact: styleUltraCompact,
         tv_compact: styleTVCompact,
         lev2: styleLeviathanTwo,
@@ -2638,10 +2620,6 @@ function updateMobilePreview() {
         premium: {
             name: `${deliveryLabel} ${p.quality} ${p.scoreBadge}`,
             title: [`TITLE | ${p.cleanName}`, `SCORE | ${p.scoreBadge} ${p.visualMeter}`, `VIDEO | ${techLine}`, `AUDIO | ${audioLine}`, `SIZE | ${sizeLine}`, `SOURCE | ${sourceLine}`].join('\n')
-        },
-        cinema: {
-            name: `${p.quality} | REFERENCE | ${p.serviceTag}`,
-            title: [`TITLE | ${p.cleanName}`, `VIDEO | ${techLine}`, `AUDIO | ${audioLine}`, `SCORE | ${p.scoreBadge}`, `SIZE | ${sizeLine}`, `SOURCE | ${joinMobilePreviewParts([p.displaySource, p.releaseGroup, p.providerLabel])}`].join('\n')
         },
         ultra_compact: {
             name: `${p.quality} | DV+HDR | ${p.serviceTag} | ${p.scoreTier}`,

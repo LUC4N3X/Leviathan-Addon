@@ -2256,11 +2256,15 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       const emptyAnimeUnityLocalTtl = finalStreams.length === 0 && isAnimeUnityKitsuRequest
           ? Math.min(Math.max(1, Number(cachePolicyBase.localTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 30)
           : cachePolicyBase.localTtl;
+      const isGsOnlyWebRequest = cacheScope === 'webonly' && enabledWebProvidersCount === 1 && filters.enableGs === true;
+      const emptyGsOnlyLocalTtl = finalStreams.length === 0 && isGsOnlyWebRequest
+          ? Math.min(Math.max(1, Number(emptyAnimeUnityLocalTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 20)
+          : emptyAnimeUnityLocalTtl;
       const cachePolicy = {
           ...cachePolicyBase,
           allowSharedWrite: sourceModeFlags.useSharedCache ? cachePolicyBase.allowSharedWrite : false,
           sharedTtl: sourceModeFlags.useSharedCache ? cachePolicyBase.sharedTtl : 0,
-          localTtl: sourceModeFlags.liveOnlyMode ? 0 : emptyAnimeUnityLocalTtl,
+          localTtl: sourceModeFlags.liveOnlyMode ? 0 : emptyGsOnlyLocalTtl,
           staleGraceTtl: sourceModeFlags.liveOnlyMode ? 0 : cachePolicyBase.staleGraceTtl
       };
 
