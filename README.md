@@ -123,7 +123,7 @@ La logica combina <b>matching anime-first</b>, <b>contesto Kitsu</b>, <b>control
 <table align="center">
 <tr>
 <td align="center" width="33%"><b>🚀 Core Refactoring</b><br><sub>Motore riorganizzato per maggiore stabilità, leggibilità e tenuta sotto carico.</sub></td>
-<td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, GuardaHD, GuardaSerie, AnimeWorld e GuardaFlix.</sub></td>
+<td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, GuardaHD, GuardoSerie, AnimeWorld e GuardaFlix.</sub></td>
 <td align="center" width="33%"><b>🎨 Polymorphic Formatter</b><br><sub>Rendering più pulito, gerarchico e leggibile dentro Stremio.</sub></td>
 </tr>
 <tr>
@@ -219,7 +219,7 @@ In pratica il protocollo analizza pattern come <code>MULTI</code>, <code>SUB-ITA
 </p>
 
 <p align="center">
-A livello infrastrutturale integra <b>WAF handling</b>, <b>identity rotation</b>, <b>failover automatici</b>, <b>magnet enrichment</b> e un layer ibrido con <b>StreamingCommunity</b>, <b>GuardaHD</b> e <b>GuardaSerie</b>, così da poter passare in modo trasparente dal percorso torrent a quello web quando serve un avvio immediato o quando il P2P non restituisce un risultato abbastanza solido.
+A livello infrastrutturale integra <b>WAF handling</b>, <b>identity rotation</b>, <b>failover automatici</b>, <b>magnet enrichment</b> e un layer ibrido con <b>StreamingCommunity</b>, <b>GuardaHD</b> e <b>GuardoSerie</b>, così da poter passare in modo trasparente dal percorso torrent a quello web quando serve un avvio immediato o quando il P2P non restituisce un risultato abbastanza solido.
 </p>
 
 <p align="center">
@@ -263,7 +263,7 @@ Il blocco viene completato da <b>Debrid Ghost Shell</b> per scenari proxy-based,
 <tr><th>Target Engine</th><th>Region</th><th>Mode</th><th>Priority</th><th>Status</th></tr>
 <tr><td align="center"><b>StreamingCommunity</b></td><td align="center">🇮🇹 ITA</td><td align="center">HLS Stream</td><td align="center">Ultra</td><td align="center">🟢</td></tr>
 <tr><td align="center"><b>GuardaHD</b></td><td align="center">🇮🇹 ITA</td><td align="center">HLS / MP4</td><td align="center">High</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>GuardaSerie</b></td><td align="center">🇮🇹 ITA</td><td align="center">HLS / MP4</td><td align="center">High</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>GuardoSerie</b></td><td align="center">🇮🇹 ITA</td><td align="center">HLS / MP4</td><td align="center">High</td><td align="center">🟢</td></tr>
 <tr><td align="center"><b>Il Corsaro Nero</b></td><td align="center">🇮🇹 ITA</td><td align="center">Torrent Fast Lane</td><td align="center">High</td><td align="center">🟢</td></tr>
 <tr><td align="center"><b>Knaben</b></td><td align="center">🌍 GLB</td><td align="center">API JSON</td><td align="center">High</td><td align="center">🟢</td></tr>
 <tr><td align="center"><b>The Pirate Bay</b></td><td align="center">🌍 GLB</td><td align="center">API JSON</td><td align="center">High</td><td align="center">🟢</td></tr>

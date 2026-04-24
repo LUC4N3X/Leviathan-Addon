@@ -2,12 +2,16 @@
 
 const { searchVix: searchStreamingCommunity } = require('../streamingcommunity/vix_handler');
 const { searchGuardaHD } = require('../guardahd/ghd_handler');
-const { searchGuardaserie } = require('../guardaserie/gs_handler');
+const { searchGuardoSerie } = require('../guardoserie/gs_handler');
 const { searchAnimeWorld } = require('../animeworld/aw_handler');
 const { searchAnimeUnity } = require('../animeunity/au_handler');
 const { searchAnimeSaturn } = require('../animesaturn/as_handler');
 const { searchGuardaFlix } = require('../guardaflix/gf_handler');
 const { searchCinemaCity } = require('../cinemacity/cc_handler');
+
+const GUARDO_SERIE_MIN_TIMEOUT = Math.max(7000, parseInt(process.env.GS_PROVIDER_TIMEOUT || '12000', 10) || 12000);
+const GUARDO_SERIE_EMPTY_TTL = Math.max(30, parseInt(process.env.GS_PROVIDER_EMPTY_TTL || '90', 10) || 90);
+const GUARDO_SERIE_ERROR_TTL = Math.max(5, Math.min(GUARDO_SERIE_EMPTY_TTL, parseInt(process.env.GS_PROVIDER_ERROR_TTL || '20', 10) || 20));
 
 function isStreamingCommunityEnabled(filters = {}) {
     return filters?.enableStreamingCommunity === true || filters?.enableVix === true;
@@ -73,9 +77,11 @@ const WEB_PROVIDER_DEFINITIONS = [
         cacheName: 'GuardoSerie',
         icon: '🍿',
         limiterKey: 'webGs',
-        minTimeout: 7000,
+        minTimeout: GUARDO_SERIE_MIN_TIMEOUT,
+        emptyTtl: GUARDO_SERIE_EMPTY_TTL,
+        errorTtl: GUARDO_SERIE_ERROR_TTL,
         isEnabled: ({ filters }) => filters?.enableGs === true,
-        run: ({ meta, config }) => searchGuardaserie(meta, config)
+        run: ({ meta, config }) => searchGuardoSerie(meta, config)
     },
     {
         key: 'animeWorld',
