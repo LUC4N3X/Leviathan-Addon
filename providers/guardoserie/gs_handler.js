@@ -16,6 +16,7 @@ const {
 } = require('../extractors/common');
 const {
   extractFromUrl,
+  resolveExtractorDefinition,
   HOSTER_DIRECT_LINK_PATTERN,
   HOSTER_ESCAPED_DIRECT_LINK_PATTERN
 } = require('../extractors/registry');
@@ -38,6 +39,11 @@ const TTL_SEARCH     = 1000 * 60 * 30;
 const TTL_EPISODE    = 1000 * 60 * 30;
 const TTL_SERIES     = 1000 * 60 * 60 * 6;
 const CF_SESSION_TTL = 1000 * 60 * 60 * 6;
+const TTL_METADATA   = 1000 * 60 * 60 * 12;
+const TTL_SERIES_RESOLUTION  = TTL_SERIES;
+const TTL_EPISODE_RESOLUTION = 1000 * 60 * 20;
+const TTL_EXTRACTOR_RESULT   = 1000 * 60 * 20;
+const TTL_PLAYLIST_QUALITY   = 1000 * 60 * 30;
 
 const TIMEOUT_TMDB        = 8000;
 const TIMEOUT_SEARCH      = 12000;
@@ -73,12 +79,29 @@ let domainFailCount  = 0;
 const requestCache    = new Map();
 const pendingRequests = new Map();
 const activeBypasses  = new Map();
+const metadataCache   = new Map();
+const seriesTargetCache = new Map();
+const episodeResolutionCache = new Map();
+const extractorResultCache = new Map();
+const playlistQualityCache = new Map();
+
+function cleanupTimedCache(map) {
+  const now = Date.now();
+  for (const [key, entry] of map) {
+    if (!entry?.expires || now > entry.expires) map.delete(key);
+  }
+}
 
 setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of requestCache) {
     if (now > (entry.stale || entry.expires)) requestCache.delete(key);
   }
+  cleanupTimedCache(metadataCache);
+  cleanupTimedCache(seriesTargetCache);
+  cleanupTimedCache(episodeResolutionCache);
+  cleanupTimedCache(extractorResultCache);
+  cleanupTimedCache(playlistQualityCache);
 }, 5 * 60 * 1000).unref();
 
 function evictCacheIfNeeded() {
@@ -89,6 +112,34 @@ function evictCacheIfNeeded() {
     if (i++ >= toDelete) break;
     requestCache.delete(key);
   }
+}
+
+function getTimedCache(map, key) {
+  if (!key) return null;
+  const entry = map.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expires) {
+    map.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function setTimedCache(map, key, value, ttl) {
+  if (!key) return value;
+  map.set(key, {
+    value,
+    expires: Date.now() + ttl
+  });
+  return value;
+}
+
+function buildEpisodeCacheKey(seriesKey, season, episode) {
+  return `${seriesKey || 'series'}|s${season}|e${episode}`;
+}
+
+function buildExtractorCacheKey(pageUrl, link) {
+  return `${String(pageUrl || '').trim()}|${String(link || '').trim()}`;
 }
 
 function normalizeStreamUrl(url) {
@@ -166,7 +217,7 @@ function loadSession() {
       } catch (_) {}
     }
     if (data.timestamp && Date.now() - data.timestamp > CF_SESSION_TTL) {
-      if (DEBUG) console.log('[GS] Loaded session expired — discarding');
+      if (DEBUG) console.log('[GS] Loaded session expired â€” discarding');
       try { fs.unlinkSync(SESSION_FILE); } catch (_) {}
       return {};
     }
@@ -338,7 +389,7 @@ async function executeSmartFetch(url, isPost, body, isPageRequest) {
         return html;
       }
 
-      if (DEBUG) console.log(`[GS] Direct blocked (${res.status}) — escalating to FlareSolverr`);
+      if (DEBUG) console.log(`[GS] Direct blocked (${res.status}) â€” escalating to FlareSolverr`);
       invalidateSession();
     } catch (e) {
       if (DEBUG) console.warn('[GS] Direct fetch error:', e.message);
@@ -431,6 +482,16 @@ function slugify(val) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+function buildSeriesCacheKey({ tmdbId, showName, originalTitle, targetYear, fallbackTitle }) {
+  if (tmdbId) return `tmdb:${tmdbId}`;
+  const normalizedTitles = Array.from(new Set(
+    [showName, originalTitle, fallbackTitle]
+      .map((value) => normalizeText(value))
+      .filter(Boolean)
+  ));
+  return `series:${normalizedTitles.join('|')}|${String(targetYear || '').trim()}`;
 }
 
 function normalizeTitleScore(candidate, title, originalTitle) {
@@ -577,6 +638,38 @@ function extractPlayerLinksFromHtml(html) {
   return Array.from(links);
 }
 
+function prioritizePlayerLinks(links = []) {
+  return [...links].sort((first, second) => {
+    const firstPriority = resolveExtractorDefinition(first)?.priority ?? 999;
+    const secondPriority = resolveExtractorDefinition(second)?.priority ?? 999;
+    return firstPriority - secondPriority;
+  });
+}
+
+function maybePrewarmNextEpisode(target, seriesCacheKey, season, episode) {
+  if (!target?.url || !target?.html || !seriesCacheKey || !season || !episode) return;
+  const nextEpisodeCacheKey = buildEpisodeCacheKey(seriesCacheKey, season, episode);
+  if (getTimedCache(episodeResolutionCache, nextEpisodeCacheKey)) return;
+
+  Promise.resolve().then(async () => {
+    const nextEpisodeUrl = extractEpisodeUrlFromSeriesPage(target.html, season, episode);
+    if (!nextEpisodeUrl) return;
+
+    const absoluteEpUrl = new URL(nextEpisodeUrl, target.url).toString();
+    const html = await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE });
+    if (!html) return;
+
+    const playerLinks = prioritizePlayerLinks(
+      Array.from(new Set(extractPlayerLinksFromHtml(html)))
+    ).slice(0, MAX_PLAYER_LINKS);
+
+    setTimedCache(episodeResolutionCache, nextEpisodeCacheKey, {
+      url: absoluteEpUrl,
+      playerLinks
+    }, TTL_EPISODE_RESOLUTION);
+  }).catch(() => {});
+}
+
 function detectStrictQualityHint(value) {
   const text = String(value || '');
   if (!text) return 'Unknown';
@@ -719,6 +812,17 @@ async function _searchGuardaserie(meta, config, season, episode) {
   };
 
   let tmdbId = meta?.tmdb_id || meta?.tmdbId || null;
+  const initialQuery = meta?.title || null;
+  const loadInitialSearch = () => initialQuery
+    ? withTimeout(searchProviderSequential(initialQuery), TIMEOUT_SEARCH, 'search_initial').catch(() => [])
+    : Promise.resolve([]);
+
+  if (!tmdbId && meta?.imdb_id) {
+    const cachedFind = getTimedCache(metadataCache, `imdb:${meta.imdb_id}`);
+    if (cachedFind?.tmdbId) {
+      tmdbId = cachedFind.tmdbId;
+    }
+  }
 
   if (!tmdbId && meta?.imdb_id) {
     try {
@@ -727,98 +831,162 @@ async function _searchGuardaserie(meta, config, season, episode) {
         TIMEOUT_TMDB, 'tmdb/find'
       );
       tmdbId = res.data?.tv_results?.[0]?.id || null;
+      if (tmdbId) {
+        setTimedCache(metadataCache, `imdb:${meta.imdb_id}`, { tmdbId }, TTL_METADATA);
+      }
     } catch (_) {}
   }
 
   let showName = meta?.title || null, originalTitle = null, targetYear = null;
 
   if (tmdbId) {
-    try {
-      const [itRes, enRes] = await withTimeout(
-        Promise.allSettled([
-          lightClient.get(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_KEY}&language=it-IT`),
-          lightClient.get(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_KEY}&language=en-US`)
-        ]),
-        TIMEOUT_TMDB, 'tmdb/tv'
-      );
-      const itData = itRes.status === 'fulfilled' ? itRes.value.data : {};
-      const enData = enRes.status === 'fulfilled' ? enRes.value.data : {};
-      showName      = itData.name || itData.title || enData.name || enData.title || showName;
-      originalTitle = enData.original_name || enData.original_title || itData.original_name || itData.original_title || null;
-      targetYear    = String(itData.first_air_date || enData.first_air_date || '').slice(0, 4) || null;
-    } catch (_) {}
+    const cachedTvMeta = getTimedCache(metadataCache, `tv:${tmdbId}`);
+    if (cachedTvMeta) {
+      showName = cachedTvMeta.showName || showName;
+      originalTitle = cachedTvMeta.originalTitle || originalTitle;
+      targetYear = cachedTvMeta.targetYear || targetYear;
+    } else {
+      try {
+        const [itRes, enRes] = await withTimeout(
+          Promise.allSettled([
+            lightClient.get(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_KEY}&language=it-IT`),
+            lightClient.get(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_KEY}&language=en-US`)
+          ]),
+          TIMEOUT_TMDB, 'tmdb/tv'
+        );
+        const itData = itRes.status === 'fulfilled' ? itRes.value.data : {};
+        const enData = enRes.status === 'fulfilled' ? enRes.value.data : {};
+        showName      = itData.name || itData.title || enData.name || enData.title || showName;
+        originalTitle = enData.original_name || enData.original_title || itData.original_name || itData.original_title || null;
+        targetYear    = String(itData.first_air_date || enData.first_air_date || '').slice(0, 4) || null;
+        setTimedCache(metadataCache, `tv:${tmdbId}`, {
+          showName,
+          originalTitle,
+          targetYear
+        }, TTL_METADATA);
+      } catch (_) {}
+    }
   }
 
   mark('tmdb_info', { tmdbId, showName, originalTitle, targetYear });
   if (!showName) return [];
 
-  const queries = Array.from(new Set([showName, originalTitle].filter(Boolean)));
-  let allResults = [];
+  const seriesCacheKey = buildSeriesCacheKey({
+    tmdbId,
+    showName,
+    originalTitle,
+    targetYear,
+    fallbackTitle: meta?.title
+  });
 
-  const settled = await withTimeout(
-    Promise.allSettled(queries.map(q => searchProviderSequential(q))),
-    TIMEOUT_SEARCH, 'search'
-  ).catch(() => []);
-
-  for (const r of settled) {
-    if (r.status === 'fulfilled' && Array.isArray(r.value)) allResults.push(...r.value);
-  }
-  mark('search_completed', { results: allResults.length });
-
-  allResults = dedupeSearchResults(allResults);
-  allResults.sort((a, b) =>
-    normalizeTitleScore(b.title, showName, originalTitle) -
-    normalizeTitleScore(a.title, showName, originalTitle)
-  );
-
-  const scannedCandidates = await asyncPool(
-    CANDIDATE_SCAN_CONCURRENCY,
-    allResults.slice(0, MAX_SERIES_CANDIDATES),
-    (result) => inspectSeriesCandidate(result, showName, originalTitle, targetYear)
-  );
-
-  let target = selectBestSeriesTarget(scannedCandidates);
+  let target = getTimedCache(seriesTargetCache, seriesCacheKey);
 
   if (!target) {
-    const slugs = Array.from(new Set([slugify(showName), slugify(originalTitle)].filter(Boolean)));
-    outer: for (const slug of slugs) {
-      for (const p of [`/serie/${slug}/`, `/${slug}/`, `/serietv/${slug}/`, `/serie/${slug}-streaming/`]) {
-        const url = `${getTargetDomain()}${p}`;
-        let html;
-        try {
-          html = await withTimeout(smartFetch(url, { ttl: TTL_SERIES }), TIMEOUT_SERIES_PAGE, 'slug_probe');
-        } catch (_) { continue; }
-        if (!html) continue;
-        const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
-        if (normalizeTitleScore(pageTitle, showName, originalTitle) >= 2) {
-          target = { url, html };
-          break outer;
+    const initialSearchPromise = loadInitialSearch();
+    const queries = Array.from(new Set([showName, originalTitle].filter(Boolean)));
+    const normalizedInitialQuery = normalizeText(initialQuery);
+    const deferredQueries = queries.filter((query) => normalizeText(query) !== normalizedInitialQuery);
+    const [initialResults, settled] = await Promise.all([
+      initialSearchPromise,
+      deferredQueries.length > 0
+        ? withTimeout(
+          Promise.allSettled(deferredQueries.map((query) => searchProviderSequential(query))),
+          TIMEOUT_SEARCH, 'search'
+        ).catch(() => [])
+        : Promise.resolve([])
+    ]);
+
+    let allResults = Array.isArray(initialResults) ? [...initialResults] : [];
+    for (const result of settled) {
+      if (result.status === 'fulfilled' && Array.isArray(result.value)) allResults.push(...result.value);
+    }
+    mark('search_completed', { results: allResults.length });
+
+    allResults = dedupeSearchResults(allResults);
+    allResults.sort((a, b) =>
+      normalizeTitleScore(b.title, showName, originalTitle) -
+      normalizeTitleScore(a.title, showName, originalTitle)
+    );
+
+    const scannedCandidates = await asyncPool(
+      CANDIDATE_SCAN_CONCURRENCY,
+      allResults.slice(0, MAX_SERIES_CANDIDATES),
+      (result) => inspectSeriesCandidate(result, showName, originalTitle, targetYear)
+    );
+
+    target = selectBestSeriesTarget(scannedCandidates);
+
+    if (!target) {
+      const slugs = Array.from(new Set([slugify(showName), slugify(originalTitle)].filter(Boolean)));
+      outer: for (const slug of slugs) {
+        for (const p of [`/serie/${slug}/`, `/${slug}/`, `/serietv/${slug}/`, `/serie/${slug}-streaming/`]) {
+          const url = `${getTargetDomain()}${p}`;
+          let html;
+          try {
+            html = await withTimeout(smartFetch(url, { ttl: TTL_SERIES }), TIMEOUT_SERIES_PAGE, 'slug_probe');
+          } catch (_) { continue; }
+          if (!html) continue;
+          const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
+          if (normalizeTitleScore(pageTitle, showName, originalTitle) >= 2) {
+            target = { url, html };
+            break outer;
+          }
         }
       }
     }
+
+    if (target?.url && target?.html) {
+      setTimedCache(seriesTargetCache, seriesCacheKey, {
+        url: target.url,
+        html: target.html
+      }, TTL_SERIES_RESOLUTION);
+    }
+  } else {
+    mark('target_cache_hit', { url: target.url });
   }
 
   mark('target_resolved', { found: !!target?.url, url: target?.url });
   if (!target?.url) return [];
 
-  const episodeUrl = extractEpisodeUrlFromSeriesPage(target.html, season, episode);
-  if (!episodeUrl) { mark('episode_not_found'); return []; }
+  const episodeCacheKey = buildEpisodeCacheKey(seriesCacheKey, season, episode);
+  const cachedEpisode = getTimedCache(episodeResolutionCache, episodeCacheKey);
+  let absoluteEpUrl = cachedEpisode?.url || null;
+  let playerLinks = Array.isArray(cachedEpisode?.playerLinks)
+    ? prioritizePlayerLinks(cachedEpisode.playerLinks).slice(0, MAX_PLAYER_LINKS)
+    : [];
 
-  const absoluteEpUrl = new URL(episodeUrl, target.url).toString();
+  if (!absoluteEpUrl) {
+    const episodeUrl = extractEpisodeUrlFromSeriesPage(target.html, season, episode);
+    if (!episodeUrl) { mark('episode_not_found'); return []; }
+    absoluteEpUrl = new URL(episodeUrl, target.url).toString();
+  }
 
-  let finalHtml;
-  try {
-    finalHtml = await withTimeout(
-      smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE }),
-      TIMEOUT_EPISODE_PAGE, 'episode_page'
-    );
-  } catch (_) { return []; }
-  if (!finalHtml) return [];
-  mark('episode_fetched');
+  if (playerLinks.length === 0) {
+    let finalHtml;
+    try {
+      finalHtml = await withTimeout(
+        smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE }),
+        TIMEOUT_EPISODE_PAGE, 'episode_page'
+      );
+    } catch (_) { return []; }
+    if (!finalHtml) return [];
+    mark('episode_fetched');
 
-  const playerLinks = Array.from(new Set(extractPlayerLinksFromHtml(finalHtml))).slice(0, MAX_PLAYER_LINKS);
+    playerLinks = prioritizePlayerLinks(
+      Array.from(new Set(extractPlayerLinksFromHtml(finalHtml)))
+    ).slice(0, MAX_PLAYER_LINKS);
+    setTimedCache(episodeResolutionCache, episodeCacheKey, {
+      url: absoluteEpUrl,
+      playerLinks
+    }, TTL_EPISODE_RESOLUTION);
+  } else {
+    mark('episode_cache_hit', { url: absoluteEpUrl, links: playerLinks.length });
+  }
+
   mark('players_extracted', { count: playerLinks.length });
   if (!playerLinks.length) return [];
+
+  maybePrewarmNextEpisode(target, seriesCacheKey, season, episode + 1);
 
   const cleanTitle = `${showName} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
   const userAgent = activeSession?.userAgent || pickRandomProfile(BROWSER_PROFILES).ua;
@@ -828,11 +996,18 @@ async function _searchGuardaserie(meta, config, season, episode) {
     processedResults = await withTimeout(
       asyncPool(ASYNC_POOL_CONCURRENCY, playerLinks, async (link) => {
         try {
-          const extracted = await extractFromUrl(link, {
-            client:         lightClient,
-            userAgent,
-            requestReferer: absoluteEpUrl
-          });
+          const extractorCacheKey = buildExtractorCacheKey(absoluteEpUrl, link);
+          let extracted = getTimedCache(extractorResultCache, extractorCacheKey);
+          if (!extracted) {
+            extracted = await extractFromUrl(link, {
+              client:         lightClient,
+              userAgent,
+              requestReferer: absoluteEpUrl
+            });
+            if (extracted?.url) {
+              setTimedCache(extractorResultCache, extractorCacheKey, extracted, TTL_EXTRACTOR_RESULT);
+            }
+          }
           if (!extracted?.url) return null;
 
           const contextualQuality = inferContextualQuality(
@@ -846,13 +1021,25 @@ async function _searchGuardaserie(meta, config, season, episode) {
             contextualQuality,
             normalizeQuality(extracted?.quality || 'Unknown')
           );
-          if (/\.m3u8($|\?)/i.test(String(extracted.url))) {
+          const shouldProbePlaylist = /\.m3u8($|\?)/i.test(String(extracted.url))
+            && qualityRank(quality) < qualityRank('1080p');
+          if (shouldProbePlaylist) {
             try {
-              const probed = await probePlaylistQuality(lightClient, extracted.url, {
-                headers: extracted.headers || {},
-                timeout: 5000
-              });
-              quality = pickBetterQuality(contextualQuality, pickBetterQuality(probed || 'Unknown', quality));
+              const playlistCacheKey = normalizeStreamUrl(extracted.url);
+              const cachedPlaylistQuality = getTimedCache(playlistQualityCache, playlistCacheKey);
+              if (cachedPlaylistQuality) {
+                quality = pickBetterQuality(cachedPlaylistQuality, quality);
+              } else {
+                const probed = await probePlaylistQuality(lightClient, extracted.url, {
+                  headers: extracted.headers || {},
+                  timeout: 5000
+                });
+                const resolvedPlaylistQuality = pickBetterQuality(probed || 'Unknown', quality);
+                if (resolvedPlaylistQuality && resolvedPlaylistQuality !== 'Unknown') {
+                  setTimedCache(playlistQualityCache, playlistCacheKey, resolvedPlaylistQuality, TTL_PLAYLIST_QUALITY);
+                }
+                quality = pickBetterQuality(contextualQuality, resolvedPlaylistQuality);
+              }
             } catch (_) {}
           }
 
