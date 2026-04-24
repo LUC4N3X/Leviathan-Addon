@@ -26,12 +26,16 @@ const BROWSER_PROFILES   = GUARDA_SERIE_BROWSER_PROFILES;
 const FLARESOLVERR_URL   = process.env.FLARESOLVERR_URL || 'http://127.0.0.1:8191/v1';
 const PROVIDER_NAME      = 'guardoserie';
 const SESSION_FILE       = path.join(process.cwd(), `cf-session-${PROVIDER_NAME}.json`);
+const DOMAIN_FILE        = path.join(process.cwd(), `${PROVIDER_NAME}-domain.json`);
+const DOMAIN_REFRESH_TTL = 1000 * 60 * 20;
+const DOMAIN_TIMEOUT_MS  = 8000;
 
 const TTL_SEARCH      = 1000 * 60 * 30;
 const TTL_EPISODE     = 1000 * 60 * 30;
 const TTL_SERIES      = 1000 * 60 * 60 * 6;
 const CF_SESSION_TTL  = 1000 * 60 * 60 * 6;
 const GLOBAL_TIMEOUT_MS = 25000;
+const SEARCH_QUERY_TIMEOUT_MS = 12000;
 const MAX_CACHE_ITEMS = 500;
 
 const agentOptions = {
@@ -54,7 +58,46 @@ const lightClient = axios.create({
   }
 });
 
-let currentGsDomain = INITIAL_GS_DOMAIN;
+function normalizeBaseUrl(value) {
+  try {
+    const u = new URL(String(value || '').trim());
+    return `${u.protocol}//${u.host}`;
+  } catch (_) {
+    return null;
+  }
+}
+
+function loadStoredDomain() {
+  try {
+    if (!fs.existsSync(DOMAIN_FILE)) return null;
+
+    const data = JSON.parse(fs.readFileSync(DOMAIN_FILE, 'utf8'));
+    const base = normalizeBaseUrl(data?.baseUrl);
+
+    if (!base) return null;
+
+    return base;
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveStoredDomain(baseUrl) {
+  const normalized = normalizeBaseUrl(baseUrl);
+  if (!normalized) return;
+
+  try {
+    fs.writeFileSync(DOMAIN_FILE, JSON.stringify({
+      baseUrl: normalized,
+      updatedAt: Date.now()
+    }, null, 2));
+  } catch (_) {}
+}
+
+let currentGsDomain = loadStoredDomain() || INITIAL_GS_DOMAIN;
+let lastDomainRefresh = 0;
+let domainRefreshPromise = null;
+let activeSession = {};
 
 const requestCache   = new Map();
 const pendingRequests = new Map();
@@ -68,6 +111,112 @@ setInterval(() => {
 }, 600000).unref();
 
 function getTargetDomain() { return currentGsDomain; }
+
+function getAxiosFinalUrl(res) {
+  return (
+    res?.request?.res?.responseUrl ||
+    res?.request?._redirectable?._currentUrl ||
+    res?.config?.url ||
+    null
+  );
+}
+
+function updateCurrentDomainFromUrl(url) {
+  const nextBase = normalizeBaseUrl(url);
+  if (!nextBase) return false;
+
+  if (nextBase !== currentGsDomain) {
+    currentGsDomain = nextBase;
+    saveStoredDomain(nextBase);
+
+    if (activeSession?.url) {
+      activeSession.url = nextBase;
+      activeSession.timestamp = Date.now();
+      saveSession(activeSession);
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
+async function resolveRedirectDomain(startBase, signal = null) {
+  const base = normalizeBaseUrl(startBase);
+  if (!base) return null;
+
+  try {
+    const res = await lightClient.get(base, {
+      timeout: DOMAIN_TIMEOUT_MS,
+      maxRedirects: 8,
+      signal,
+      validateStatus: status => status >= 200 && status < 500,
+      headers: {
+        'User-Agent': activeSession?.userAgent || pickRandomProfile(BROWSER_PROFILES).ua,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      }
+    });
+
+    const finalUrl = getAxiosFinalUrl(res);
+    const finalBase = normalizeBaseUrl(finalUrl);
+
+    if (finalBase) return finalBase;
+
+    return base;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function refreshTargetDomain(signal = null, { force = false } = {}) {
+  const now = Date.now();
+
+  if (!force && now - lastDomainRefresh < DOMAIN_REFRESH_TTL) {
+    return currentGsDomain;
+  }
+
+  if (domainRefreshPromise) {
+    return domainRefreshPromise;
+  }
+
+  domainRefreshPromise = (async () => {
+    lastDomainRefresh = Date.now();
+
+    const candidates = Array.from(new Set([
+      currentGsDomain,
+      loadStoredDomain(),
+      INITIAL_GS_DOMAIN
+    ].filter(Boolean)));
+
+    for (const candidate of candidates) {
+      const resolved = await resolveRedirectDomain(candidate, signal);
+
+      if (resolved) {
+        updateCurrentDomainFromUrl(resolved);
+        return currentGsDomain;
+      }
+    }
+
+    return currentGsDomain;
+  })()
+    .finally(() => {
+      domainRefreshPromise = null;
+    });
+
+  return domainRefreshPromise;
+}
+
+function buildGsUrl(pathname) {
+  const base = getTargetDomain();
+  const cleanPath = String(pathname || '').startsWith('/')
+    ? pathname
+    : `/${pathname}`;
+
+  return `${base}${cleanPath}`;
+}
 
 function isSessionFresh(session) {
   return !!(
@@ -85,10 +234,7 @@ function loadSession() {
     const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
     if (data?.userAgent) {
       if (data.url) {
-        try {
-          const u = new URL(data.url);
-          currentGsDomain = `${u.protocol}//${u.host}`;
-        } catch (_) {}
+        updateCurrentDomainFromUrl(data.url);
       }
       return data;
     }
@@ -102,7 +248,7 @@ function saveSession(sessionData) {
   } catch (e) {}
 }
 
-let activeSession = loadSession();
+activeSession = loadSession();
 
 function clearSession() {
   activeSession = {};
@@ -203,11 +349,8 @@ async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
           activeSession = data;
           saveSession(data);
 
-          if (solution.url && solution.url !== url) {
-            try {
-              const u = new URL(solution.url);
-              currentGsDomain = `${u.protocol}//${u.host}`;
-            } catch (_) {}
+          if (solution.url) {
+            updateCurrentDomainFromUrl(solution.url);
           }
 
           return data;
@@ -256,6 +399,8 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
       }
 
       const res = await axios(reqOptions);
+      updateCurrentDomainFromUrl(getAxiosFinalUrl(res));
+
       const html = typeof res.data === 'string' ? res.data : JSON.stringify(res.data || {});
 
       if (res.status === 403 || res.status === 503 || looksLikeChallenge(html)) {
@@ -408,7 +553,7 @@ function extractSearchResultsFromHtml(html, baseUrl) {
 }
 
 async function searchProviderSequential(query, signal) {
-  const baseUrl = getTargetDomain();
+  const baseUrl = await refreshTargetDomain(signal);
 
   const ajaxUrl = `${baseUrl}/wp-admin/admin-ajax.php`;
   const ajaxBody = `s=${encodeURIComponent(query)}&action=searchwp_live_search&swpengine=default&swpquery=${encodeURIComponent(query)}`;
@@ -420,6 +565,61 @@ async function searchProviderSequential(query, signal) {
   const fallbackUrl = `${baseUrl}/?s=${encodeURIComponent(query)}`;
   const fallbackHtml = await smartFetch(fallbackUrl, { ttl: TTL_SEARCH, signal });
   return extractSearchResultsFromHtml(fallbackHtml, baseUrl);
+}
+
+function createTimeoutSignal(parentSignal, timeoutMs) {
+  const controller = new AbortController();
+
+  if (parentSignal?.aborted) {
+    controller.abort(parentSignal.reason);
+    return { signal: controller.signal, clear: () => {} };
+  }
+
+  const abortFromParent = () => {
+    if (!controller.signal.aborted) controller.abort(parentSignal?.reason);
+  };
+
+  if (parentSignal) {
+    parentSignal.addEventListener('abort', abortFromParent, { once: true });
+  }
+
+  const timer = setTimeout(() => {
+    if (!controller.signal.aborted) controller.abort();
+  }, timeoutMs);
+
+  if (timer?.unref) timer.unref();
+
+  return {
+    signal: controller.signal,
+    clear: () => {
+      clearTimeout(timer);
+      if (parentSignal) parentSignal.removeEventListener('abort', abortFromParent);
+    }
+  };
+}
+
+async function searchProviderWithTimeout(query, signal, timeoutMs = SEARCH_QUERY_TIMEOUT_MS) {
+  const scoped = createTimeoutSignal(signal, timeoutMs);
+
+  try {
+    return await searchProviderSequential(query, scoped.signal);
+  } catch (e) {
+    if (isCanceledError(e) || scoped.signal.aborted) return [];
+    return [];
+  } finally {
+    scoped.clear();
+  }
+}
+
+async function searchProviderParallel(queries, signal) {
+  const uniqueQueries = Array.from(new Set(queries.filter(Boolean)));
+  if (!uniqueQueries.length) return [];
+
+  const results = await Promise.all(
+    uniqueQueries.map(q => searchProviderWithTimeout(q, signal))
+  );
+
+  return results.flat();
 }
 
 function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
@@ -516,7 +716,7 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
 function extractPlayerLinksFromHtml(html) {
   const raw = String(html || '');
   const links = new Set();
-  const baseUrl = getTargetDomain();
+  const baseUrl = normalizeBaseUrl(getTargetDomain()) || INITIAL_GS_DOMAIN;
 
   const normalize = (link) => {
     let n = String(link).trim().replace(/&amp;/g, '&').replace(/\\\//g, '/');
@@ -600,6 +800,8 @@ async function searchGuardaserie(meta, config) {
 }
 
 async function _searchGuardaserie(meta, config, season, episode, signal) {
+  await refreshTargetDomain(signal);
+
   let tmdbId = meta?.tmdb_id || meta?.tmdbId || null;
 
   if (!tmdbId && meta?.imdb_id) {
@@ -626,12 +828,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
   if (!showName) return [];
 
   const queries = Array.from(new Set([showName, originalTitle].filter(Boolean)));
-  let allResults = [];
-
-  for (const q of queries) {
-    const res = await searchProviderSequential(q, signal);
-    allResults.push(...res);
-  }
+  let allResults = await searchProviderParallel(queries, signal);
 
   allResults = Array.from(new Map(allResults.map(i => [i.url, i])).values());
   
@@ -677,7 +874,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
     const slugs = Array.from(new Set([slugify(showName), slugify(originalTitle)].filter(Boolean)));
     outer: for (const slug of slugs) {
       for (const p of [`/serie/${slug}/`, `/${slug}/`, `/serietv/${slug}/`]) {
-        const url = `${getTargetDomain()}${p}`;
+        const url = buildGsUrl(p);
         const html = await smartFetch(url, { ttl: TTL_SERIES, signal });
         if (html) {
           const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
