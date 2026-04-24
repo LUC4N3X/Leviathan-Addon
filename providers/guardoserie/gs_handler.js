@@ -423,28 +423,87 @@ async function searchProviderSequential(query, signal) {
 }
 
 function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
-  if (!pageHtml) return null;
+  const raw = String(pageHtml || '');
+  if (!raw) return null;
+
+  const targetSeason = parseInt(season, 10);
+  const targetEpisode = parseInt(episode, 10);
+  if (!Number.isInteger(targetSeason) || !Number.isInteger(targetEpisode) || targetSeason < 1 || targetEpisode < 1) {
+    return null;
+  }
+
+  const $ = cheerio.load(raw);
+  const readSeasonNumber = text => {
+    const match = String(text || '').match(/\b(?:stagione|season)\s*-?\s*(\d+)\b/i);
+    return match ? parseInt(match[1], 10) : null;
+  };
+  const readEpisodeNumber = text => {
+    const s = String(text || '');
+    const match =
+      s.match(/\b(?:episodio|episode|ep)\s*-?\s*(\d+)\b/i) ||
+      s.match(/\bs\d{1,2}e(\d{1,3})\b/i) ||
+      s.match(/\b\d{1,2}x(\d{1,3})\b/i);
+    return match ? parseInt(match[1], 10) : null;
+  };
+  const findEpisodeInBlock = block => {
+    const links = $(block).find('.les-content a[href*="/episodio/"], a[href*="/episodio/"]').toArray();
+
+    for (const el of links) {
+      const href = $(el).attr('href') || '';
+      const epNum = readEpisodeNumber(`${$(el).text()} ${href}`);
+      if (epNum === targetEpisode) return href || null;
+    }
+
+    return links.length >= targetEpisode ? ($(links[targetEpisode - 1]).attr('href') || null) : null;
+  };
+
+  const seasonBlocks = $('.tvseason').toArray();
+  for (const block of seasonBlocks) {
+    const seasonNum = readSeasonNumber($(block).find('.les-title').first().text());
+    if (seasonNum !== targetSeason) continue;
+
+    const href = findEpisodeInBlock(block);
+    if (href) return href;
+  }
+
+  if (seasonBlocks.length >= targetSeason) {
+    const href = findEpisodeInBlock(seasonBlocks[targetSeason - 1]);
+    if (href) return href;
+  }
+
+  let matchedHref = null;
+  $('a[href*="/episodio/"]').each((_, el) => {
+    const href = $(el).attr('href') || '';
+    const text = `${$(el).text()} ${href}`;
+    const seasonNum = readSeasonNumber(text);
+    const epNum = readEpisodeNumber(text);
+    if (seasonNum === targetSeason && epNum === targetEpisode) {
+      matchedHref = href;
+      return false;
+    }
+  });
+
+  if (matchedHref) return matchedHref;
 
   const directEpisodeRegexes = [
-    new RegExp(`/episodio/[^"'\\s]*stagione-${season}-episodio-${episode}[^"'\\s]*`, 'i'),
-    new RegExp(`/episodio/[^"'\\s]*s${String(season).padStart(2, '0')}e${String(episode).padStart(2, '0')}[^"'\\s]*`, 'i'),
-    new RegExp(`/episodio/[^"'\\s]*${season}x${episode}[^"'\\s]*`, 'i')
+    new RegExp(`/episodio/[^"'\\s<>]*stagione-0?${targetSeason}-episodio-0?${targetEpisode}(?=[/?#"'\\s<>]|$)`, 'i'),
+    new RegExp(`/episodio/[^"'\\s<>]*s0?${targetSeason}e0?${targetEpisode}(?=[/?#"'\\s<>]|$)`, 'i'),
+    new RegExp(`/episodio/[^"'\\s<>]*${targetSeason}x${targetEpisode}(?=[/?#"'\\s<>]|$)`, 'i')
   ];
 
   for (const re of directEpisodeRegexes) {
-    const match = String(pageHtml).match(re);
+    const match = raw.match(re);
     if (match?.[0]) return match[0];
   }
 
-  const sIdx = parseInt(season, 10) - 1;
-  const eIdx = parseInt(episode, 10) - 1;
+  const sIdx = targetSeason - 1;
+  const eIdx = targetEpisode - 1;
   if (sIdx < 0 || eIdx < 0) return null;
 
-  const $ = cheerio.load(String(pageHtml));
-  const seasonBlocks = $('.les-content, [class*="season-"], [class*="stagione-"]');
+  const legacySeasonBlocks = $('.les-content, [class*="season-"], [class*="stagione-"]');
 
-  if (seasonBlocks.length > sIdx) {
-    const block = seasonBlocks.eq(sIdx);
+  if (legacySeasonBlocks.length > sIdx) {
+    const block = legacySeasonBlocks.eq(sIdx);
     const episodes = block.find('a[href*="/episodio/"]');
     if (episodes.length > eIdx) {
       return episodes.eq(eIdx).attr('href') || null;
