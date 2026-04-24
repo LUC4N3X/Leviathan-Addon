@@ -265,7 +265,7 @@ function createPipelineOrchestration(deps = {}) {
         ? Math.min(Math.max(1, Number(cachePolicyBase.localTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 30)
         : cachePolicyBase.localTtl;
       const emptyGsOnlyLocalTtl = finalStreams.length === 0 && isGsOnlyWebRequest
-        ? Math.min(Math.max(1, Number(emptyAnimeUnityLocalTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 20)
+        ? Math.min(Math.max(1, Number(emptyAnimeUnityLocalTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 5)
         : emptyAnimeUnityLocalTtl;
       const cachePolicy = {
         ...cachePolicyBase,

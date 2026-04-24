@@ -2258,7 +2258,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           : cachePolicyBase.localTtl;
       const isGsOnlyWebRequest = cacheScope === 'webonly' && enabledWebProvidersCount === 1 && filters.enableGs === true;
       const emptyGsOnlyLocalTtl = finalStreams.length === 0 && isGsOnlyWebRequest
-          ? Math.min(Math.max(1, Number(emptyAnimeUnityLocalTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 20)
+          ? Math.min(Math.max(1, Number(emptyAnimeUnityLocalTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 5)
           : emptyAnimeUnityLocalTtl;
       const cachePolicy = {
           ...cachePolicyBase,
