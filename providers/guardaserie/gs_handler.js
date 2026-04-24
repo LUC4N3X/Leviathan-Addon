@@ -20,9 +20,6 @@ const {
   HOSTER_ESCAPED_DIRECT_LINK_PATTERN
 } = require('../extractors/registry');
 
-// ============================================================================
-// 1. CONFIGURAZIONI GLOBALI
-// ============================================================================
 const INITIAL_GS_DOMAIN  = 'https://guardoserie.garden';
 const TMDB_KEY           = '5bae8d11f2a7bc7a95c6d040a31d2163';
 const BROWSER_PROFILES   = GUARDA_SERIE_BROWSER_PROFILES;
@@ -31,12 +28,11 @@ const PROVIDER_NAME      = 'guardoserie';
 const SESSION_FILE       = path.join(process.cwd(), `cf-session-${PROVIDER_NAME}.json`);
 const DEBUG              = process.env.GS_DEBUG === '1';
 
-const TTL_SEARCH     = 1000 * 60 * 30;        // 30 min
-const TTL_EPISODE    = 1000 * 60 * 30;        // 30 min
-const TTL_SERIES     = 1000 * 60 * 60 * 6;   // 6 ore
-const CF_SESSION_TTL = 1000 * 60 * 60 * 6;   // 6 ore
+const TTL_SEARCH     = 1000 * 60 * 30;        
+const TTL_EPISODE    = 1000 * 60 * 30;        
+const TTL_SERIES     = 1000 * 60 * 60 * 6;   
+const CF_SESSION_TTL = 1000 * 60 * 60 * 6;  
 
-// FIX: timeout globale per tutta la funzione principale
 const GLOBAL_TIMEOUT_MS = 25000;
 
 const agentOptions = {
@@ -51,10 +47,7 @@ const httpAgent  = new http.Agent(agentOptions);
 
 let currentGsDomain = INITIAL_GS_DOMAIN;
 
-// ============================================================================
-// 2. CACHE, SINGLEFLIGHT E GESTIONE SESSIONE
-// ============================================================================
-const requestCache   = new Map(); // { data, expires, stale }
+const requestCache   = new Map(); 
 const pendingRequests = new Map();
 const activeBypasses  = new Map();
 
@@ -95,7 +88,7 @@ function isSessionFresh(session) {
   );
 }
 
-// FIX: pattern più precisi — non matcha riferimenti a CF in footer/blog
+
 const CF_CHALLENGE_PATTERNS = [
   /just a moment/i,
   /checking your browser/i,
@@ -112,9 +105,7 @@ function looksLikeChallenge(html) {
   return CF_CHALLENGE_PATTERNS.some(re => re.test(s));
 }
 
-// ============================================================================
-// 3. FLARESOLVERR — con retry + backoff esponenziale
-// ============================================================================
+
 async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
   if (activeBypasses.has(provider)) {
     DEBUG && console.log(`[CF][${provider}] Bypass in corso, accodamento...`);
@@ -187,15 +178,13 @@ async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
     return null;
   })();
 
-  // FIX: cleanup in ogni caso (anche su throw)
+
   bypassPromise.finally(() => activeBypasses.delete(provider));
   activeBypasses.set(provider, bypassPromise);
   return bypassPromise;
 }
 
-// ============================================================================
-// 4. SMART FETCH
-// ============================================================================
+
 async function executeSmartFetch(url, isPost = false, body = null) {
   if (isSessionFresh(activeSession)) {
     try {
@@ -226,7 +215,7 @@ async function executeSmartFetch(url, isPost = false, body = null) {
       }
       console.log(`[CF][${PROVIDER_NAME}] Sessione bloccata (${res.status}). Rinnovo...`);
 
-      // FIX: invalida sessione immediatamente per non loopare
+
       activeSession = {};
     } catch (e) {
       console.log(`[CF][${PROVIDER_NAME}] Errore Axios (${e.message}). Ripiego su FlareSolverr...`);
@@ -243,7 +232,7 @@ async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH }
   const cached = requestCache.get(cacheKey);
   if (cached) {
     if (Date.now() < cached.expires) return cached.data;
-    // stale-while-revalidate: restituisce dato stale e aggiorna in background
+
     if (cached.stale && Date.now() < cached.stale && !pendingRequests.has(cacheKey)) {
       setImmediate(() => smartFetch(url, { isPost, body, ttl }));
       return cached.data;
@@ -259,7 +248,7 @@ async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH }
         requestCache.set(cacheKey, {
           data:    html,
           expires: Date.now() + ttl,
-          stale:   Date.now() + ttl * 2  // finestra stale 2x TTL
+          stale:   Date.now() + ttl * 2  
         });
       }
       return html;
@@ -270,10 +259,7 @@ async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH }
   return fetchPromise;
 }
 
-// ============================================================================
-// 5. UTILITY & NORMALIZZAZIONE
-// ============================================================================
-// FIX: stopwords italiane più complete
+
 const IT_STOPWORDS = /\b(the|a|an|un|una|il|lo|la|gli|le|di|de|del|della|degli|delle|dei|alle|nei|nelle|negli|serie|stagione|season|episodio|episode)\b/g;
 
 function normalizeText(val) {
@@ -342,9 +328,7 @@ function extractSearchResultsFromHtml(html, baseUrl) {
   return results;
 }
 
-// ============================================================================
-// 6. RICERCA SEQUENZIALE
-// ============================================================================
+
 async function searchProviderSequential(query) {
   const baseUrl = getTargetDomain();
 
@@ -360,9 +344,7 @@ async function searchProviderSequential(query) {
   return extractSearchResultsFromHtml(fallbackHtml, baseUrl);
 }
 
-// ============================================================================
-// 7. ESTRAZIONE EPISODIO — con Cheerio al posto di split su stringa grezza
-// ============================================================================
+
 function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
   if (!pageHtml) return null;
   const sIdx = parseInt(season,  10) - 1;
@@ -371,8 +353,7 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
 
   const $ = cheerio.load(String(pageHtml));
 
-  // FIX: usa Cheerio — più robusto di split su stringa grezza
-  // Supporta class="les-content", class="les-content active", ecc.
+
   const seasonBlocks = $('.les-content, [class*="season-"], [class*="stagione-"]');
 
   if (seasonBlocks.length > sIdx) {
@@ -383,7 +364,7 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
     }
   }
 
-  // Fallback: regex esplicita stagione/episodio nell'URL
+
   const explicit = new RegExp(
     `https?:\\/\\/[^"'\\s]+\\/episodio\\/[^"'\\s]*stagione-${season}-episodio-${episode}[^"'\\s]*`,
     'i'
@@ -431,9 +412,7 @@ function extractPlayerLinksFromHtml(html) {
   return Array.from(links);
 }
 
-// ============================================================================
-// 8. CONCURRENCY LIMITER — corretto e ottimizzato
-// ============================================================================
+
 async function asyncPool(limit, items, asyncFn) {
   if (!items.length) return [];
 
@@ -445,7 +424,7 @@ async function asyncPool(limit, items, asyncFn) {
     if (!queue.length) return;
     const { item, i } = queue.shift();
     const p = Promise.resolve()
-      // FIX: cattura errori per non far esplodere Promise.all
+
       .then(() => asyncFn(item))
       .catch(() => null)
       .then(result => {
@@ -457,15 +436,13 @@ async function asyncPool(limit, items, asyncFn) {
     return p;
   }
 
-  // Avvia fino a `limit` worker in parallelo
+
   const workers = Array.from({ length: Math.min(limit, items.length) }, runNext);
   await Promise.all(workers);
   return results;
 }
 
-// ============================================================================
-// 9. FUNZIONE PRINCIPALE
-// ============================================================================
+
 async function searchGuardaserie(meta, config) {
   if (!meta?.isSeries || !config?.filters?.enableGs) return [];
 
@@ -473,7 +450,7 @@ async function searchGuardaserie(meta, config) {
   const episode = parseInt(meta?.episode, 10);
   if (!season || season < 1 || !episode || episode < 1) return [];
 
-  // FIX: timeout globale — non blocca Leviathan
+
   return Promise.race([
     _searchGuardaserie(meta, config, season, episode),
     new Promise((_, reject) =>
@@ -526,7 +503,7 @@ async function _searchGuardaserie(meta, config, season, episode) {
   }
   mark('search_completed', { resultsFound: allResults.length });
 
-  // Dedup + sort
+
   allResults = Array.from(new Map(allResults.map(i => [i.url, i])).values());
   allResults.sort((a, b) =>
     normalizeTitleScore(b.title, showName, originalTitle) -
@@ -561,7 +538,7 @@ async function _searchGuardaserie(meta, config, season, episode) {
 
   if (!target && bestLoose) target = bestLoose;
 
-  // Fallback slug
+
   if (!target) {
     const slugs = Array.from(new Set([slugify(showName), slugify(originalTitle)].filter(Boolean)));
     outer: for (const slug of slugs) {
