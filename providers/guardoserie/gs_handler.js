@@ -153,6 +153,10 @@ function looksLikeChallenge(html) {
   return CF_CHALLENGE_PATTERNS.some(re => re.test(s));
 }
 
+function isCanceledError(e) {
+  return axios.isCancel(e) || e?.code === 'ERR_CANCELED';
+}
+
 async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
   if (activeBypasses.has(provider)) {
     return activeBypasses.get(provider);
@@ -177,13 +181,15 @@ async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
 
         const response = await axios.post(FLARESOLVERR_URL, payload, {
           timeout: 100000,
+          signal: options.signal,
           headers: { 'Content-Type': 'application/json' }
         });
 
         if (response.data?.status === 'ok') {
-          const solution = response.data.solution;
-          const cookies = solution.cookies.map(c => `${c.name}=${c.value}`).join('; ');
-          const cf_clearance = solution.cookies.find(c => c.name === 'cf_clearance')?.value || null;
+          const solution = response.data?.solution || {};
+          const solutionCookies = Array.isArray(solution?.cookies) ? solution.cookies : [];
+          const cookies = solutionCookies.map(c => `${c.name}=${c.value}`).join('; ');
+          const cf_clearance = solutionCookies.find(c => c.name === 'cf_clearance')?.value || null;
 
           const data = {
             userAgent: solution.userAgent,
@@ -206,14 +212,16 @@ async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
 
           return data;
         }
-      } catch (e) {}
+      } catch (e) {
+        if (isCanceledError(e)) throw e;
+      }
     }
 
     activeBypasses.delete(provider);
     return null;
   })();
 
-  bypassPromise.finally(() => activeBypasses.delete(provider));
+  bypassPromise.finally(() => activeBypasses.delete(provider)).catch(() => {});
   activeBypasses.set(provider, bypassPromise);
   return bypassPromise;
 }
@@ -261,11 +269,11 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
         return html;
       }
     } catch (e) {
-      if (axios.isCancel(e)) throw e;
+      if (isCanceledError(e)) throw e;
     }
   }
 
-  const session = await getClearance(url, PROVIDER_NAME, { method: isPost ? 'POST' : 'GET', body });
+  const session = await getClearance(url, PROVIDER_NAME, { method: isPost ? 'POST' : 'GET', body, signal });
   return session?.response || null;
 }
 
@@ -274,9 +282,15 @@ async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH, 
 
   const cached = requestCache.get(cacheKey);
   if (cached) {
-    if (Date.now() < cached.expires) return cached.data;
-    if (cached.stale && Date.now() < cached.stale && !pendingRequests.has(cacheKey)) {
-      setImmediate(() => smartFetch(url, { isPost, body, ttl, signal }));
+    const now = Date.now();
+    requestCache.delete(cacheKey);
+    requestCache.set(cacheKey, cached);
+
+    if (now < cached.expires) return cached.data;
+    if (cached.stale && now < cached.stale && !pendingRequests.has(cacheKey)) {
+      setImmediate(() => {
+        smartFetch(url, { isPost, body, ttl, signal }).catch(() => {});
+      });
       return cached.data;
     }
     requestCache.delete(cacheKey);
@@ -357,6 +371,16 @@ function normalizeStreamUrl(url) {
   } catch (_) {
     return String(url || '');
   }
+}
+
+function getStreamPriority(stream) {
+  return Number.isFinite(stream?.extra?._priority)
+    ? stream.extra._priority
+    : 9;
+}
+
+function isLikelyPlayerUrl(url) {
+  return /(mixdrop|m1xdrop|voe|loadm|rpmshare|rpmplay|maxstream|supervideo|dood|streamtape|vixsrc|vixcloud|filemoon|dropload|dr0pstream|mxcontent)/i.test(url);
 }
 
 function extractSearchResultsFromHtml(html, baseUrl) {
@@ -452,7 +476,7 @@ function extractPlayerLinksFromHtml(html) {
     let m;
     while ((m = attrRegex.exec(tag)) !== null) {
       const c = normalize(m[2]);
-      if (c) links.add(c);
+      if (c && isLikelyPlayerUrl(c)) links.add(c);
     }
   }
 
@@ -463,7 +487,7 @@ function extractPlayerLinksFromHtml(html) {
   for (const regex of directRegexes) {
     for (const m of raw.match(regex) || []) {
       const c = normalize(m);
-      if (c) links.add(c);
+      if (c && isLikelyPlayerUrl(c)) links.add(c);
     }
   }
 
@@ -663,13 +687,17 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
   return validStreams
     .sort((a, b) => {
       const qDelta = qualityRank(b.quality) - qualityRank(a.quality);
-      return qDelta !== 0 ? qDelta : (a._priority || 9) - (b._priority || 9);
+      return qDelta !== 0 ? qDelta : getStreamPriority(a) - getStreamPriority(b);
     })
     .filter((s, i, arr) => {
       const key = normalizeStreamUrl(s.url);
       return arr.findIndex(x => normalizeStreamUrl(x.url) === key) === i;
     })
-    .map(s => { delete s._priority; return s; });
+    .map(s => {
+      if (s.extra) delete s.extra._priority;
+      delete s._priority;
+      return s;
+    });
 }
 
 module.exports = { searchGuardaserie, searchGuardoSerie: searchGuardaserie };

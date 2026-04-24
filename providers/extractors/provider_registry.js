@@ -9,9 +9,9 @@ const { searchAnimeSaturn } = require('../animesaturn/as_handler');
 const { searchGuardaFlix } = require('../guardaflix/gf_handler');
 const { searchCinemaCity } = require('../cinemacity/cc_handler');
 
-const GUARDO_SERIE_MIN_TIMEOUT = Math.max(7000, parseInt(process.env.GS_PROVIDER_TIMEOUT || '12000', 10) || 12000);
-const GUARDO_SERIE_EMPTY_TTL = Math.max(30, parseInt(process.env.GS_PROVIDER_EMPTY_TTL || '90', 10) || 90);
-const GUARDO_SERIE_ERROR_TTL = Math.max(5, Math.min(GUARDO_SERIE_EMPTY_TTL, parseInt(process.env.GS_PROVIDER_ERROR_TTL || '20', 10) || 20));
+const GUARDO_SERIE_MIN_TIMEOUT = Math.max(7000, parseInt(process.env.GS_PROVIDER_TIMEOUT || '18000', 10) || 18000);
+const GUARDO_SERIE_EMPTY_TTL = Math.max(15, parseInt(process.env.GS_PROVIDER_EMPTY_TTL || '45', 10) || 45);
+const GUARDO_SERIE_ERROR_TTL = Math.max(3, Math.min(GUARDO_SERIE_EMPTY_TTL, parseInt(process.env.GS_PROVIDER_ERROR_TTL || '5', 10) || 5));
 
 function isStreamingCommunityEnabled(filters = {}) {
     return filters?.enableStreamingCommunity === true || filters?.enableVix === true;
