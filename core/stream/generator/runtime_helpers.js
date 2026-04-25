@@ -197,13 +197,41 @@ async function resolveLazyStreamData(service, apiKey, item, meta) {
     });
 }
 
+function getExternalLanguageAudit(item = {}) {
+    const info = item?._externalLanguageInfo && typeof item._externalLanguageInfo === 'object'
+        ? item._externalLanguageInfo
+        : (item?.languageInfo && typeof item.languageInfo === 'object' ? item.languageInfo : {});
+    const confidence = Number(item?._externalLanguageConfidence ?? info.confidence ?? 0) || 0;
+    const hasItalianAudio = Boolean(item?._externalHasItalianAudio || info.hasAudioItalian);
+    const hasItalianSubs = Boolean(item?._externalHasItalianSubs || info.hasSubItalian);
+    const hasNegativeLanguage = Boolean(info.hasNegativeLanguage);
+    const isItalian = Boolean(item?._externalIsItalian || info.isItalian || hasItalianAudio);
+    return { info, confidence, hasItalianAudio, hasItalianSubs, hasNegativeLanguage, isItalian };
+}
+
+function isExternalStrictItalianCandidate(item = {}) {
+    const audit = getExternalLanguageAudit(item);
+    if (audit.hasItalianAudio) return true;
+    if (audit.isItalian && audit.confidence >= 20 && !audit.hasNegativeLanguage && !audit.hasItalianSubs) return true;
+    return false;
+}
+
+function keepLanguageCandidateForMode(item, meta = {}, langMode = 'ita') {
+    const title = String(item?.title || '');
+    const source = item?.source;
+    if (langMode === 'eng') return keepEnglishCandidate(title, source, meta?.title);
+    if (langMode === 'all') return keepAllCandidate(title, source, meta?.title);
+    if (item?.isExternal && isExternalStrictItalianCandidate(item)) return true;
+    return keepItalianCandidate(title, source, meta?.title);
+}
+
 function assessFastResultQuality(items, meta, langMode, config) {
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
         return { shouldScrape: true, reason: 'no_fast_results', strongCount: 0, exactEpisodeCount: 0, seasonPackCount: 0, total: 0 };
     }
 
-    const effectiveLangMode = langMode === 'ita' && isAnimeMetaContext(meta) ? 'all' : langMode;
+    const effectiveLangMode = langMode;
     let strongCount = 0;
     let exactEpisodeCount = 0;
     let seasonPackCount = 0;
@@ -214,11 +242,7 @@ function assessFastResultQuality(items, meta, langMode, config) {
         const sizeBytes = Number(item?._size || item?.sizeBytes || 0);
         const seeders = parseInt(item?.seeders, 10) || 0;
         const isPack = Boolean(item?._isPack || isSeasonPack(title));
-        const langOk = effectiveLangMode === 'eng'
-            ? keepEnglishCandidate(title, source, meta?.title)
-            : effectiveLangMode === 'all'
-                ? keepAllCandidate(title, source, meta?.title)
-                : keepItalianCandidate(title, source, meta?.title);
+        const langOk = keepLanguageCandidateForMode(item, meta, effectiveLangMode);
         const hasQualitySignal = /\b(?:2160p|4k|uhd|1080p|fhd|720p|web[-.\s]?dl|blu[-.\s]?ray|remux|hevc|x265|x264)\b/i.test(title);
         const hasWeight = hasQualitySignal || sizeBytes >= (meta?.isSeries ? 250 : 700) * 1024 * 1024 || seeders > 0;
 
@@ -751,7 +775,7 @@ function hasStrongSeriesTitleMatch(title, meta) {
 }
 
 function createAggressiveResultFilter(meta, type, langMode) {
-    const effectiveLangMode = langMode === 'ita' && isAnimeMetaContext(meta, type) ? 'all' : langMode;
+    const effectiveLangMode = langMode;
     return (item) => {
         if (!item?.magnet) return false;
 
@@ -762,13 +786,7 @@ function createAggressiveResultFilter(meta, type, langMode) {
 
         if (source.includes('comet') || source.includes('stremthru')) return false;
 
-        if (effectiveLangMode === 'ita') {
-            if (!keepItalianCandidate(title, item.source, meta.title)) return false;
-        } else if (effectiveLangMode === 'eng') {
-            if (!keepEnglishCandidate(title, item.source, meta.title)) return false;
-        } else {
-            if (!keepAllCandidate(title, item.source, meta.title)) return false;
-        }
+        if (!keepLanguageCandidateForMode(item, meta, effectiveLangMode)) return false;
 
         const metaYear = parseInt(meta.year, 10);
         if (!Number.isNaN(metaYear)) {
@@ -936,6 +954,8 @@ function getLanguageSignals(title, metaTitle, sourceName) {
 
 function keepItalianCandidate(title, sourceName, metaTitle) {
     const signals = getLanguageSignals(title, metaTitle, sourceName);
+    if ((signals.explicitEng || signals.explicitOther) && !signals.explicitIta) return false;
+    if (signals.explicitMulti && !signals.explicitIta) return false;
     if (signals.langInfo.isItalian || (signals.langInfo.confidence || 0) >= 4 || signals.langInfo.isMaybeItalian) return true;
     if (REGEX_SUB_ONLY.test(title) && !REGEX_AUDIO_CONFIRM.test(title)) {
         const strippedTitle = String(title || '').replace(REGEX_SUB_ONLY, ' ');

@@ -50,10 +50,10 @@ const KNOWN_PROVIDERS = [
     "Uindex", "Contribution Stream"
 ].sort((a, b) => b.length - a.length);
 
-const REGEX_AUDIO_ITA = /\b(?:ITA(?:LIAN)?(?:\s*(?:AUDIO|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?))?|MULTI\s*ITA|DUAL\s*AUDIO\s*ITA|TRUE\s*ITALIAN|AUDIO\s*ITA|ITA\s*AC3|ITA\s*AAC|ITA\s*DDP)\b/i;
+const REGEX_AUDIO_ITA = /(?:🇮🇹|\b(?:(?:ITA(?:LIAN)?)[\s._-]+(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)|MULTI\s*ITA|DUAL\s*AUDIO\s*ITA|TRUE\s*ITALIAN|AUDIO\s*ITA|ITA\s*AC3|ITA\s*AAC|ITA\s*DDP)\b)/i;
 const REGEX_SUB_ITA = /\b(?:SUB[-.\s_]*ITA|SOFTSUB[-.\s_]*ITA|VOST(?:ITA)?|ITALIAN\s*SUBS?)\b/i;
 const REGEX_TRUSTED_ITA = /\b(?:CORSARO|ICV|MEGAPHONE|IDN[_\s-]*CREW|DDN|MUX(?:\s*ITA)?|TRIDIM|LUX|WMS|MIRCREW|CINEFILE)\b/i;
-const REGEX_NEGATIVE_LANGUAGE = /\b(?:TRUEFRENCH|FRENCH|GERMAN|SPANISH|LATINO|RUSSIAN|POLISH|HINDI|TAMIL|TELUGU|KOREAN|JAPANESE|ENG(?:LISH)?\s*ONLY)\b/i;
+const REGEX_NEGATIVE_LANGUAGE = /(?:🇬🇧|🇺🇸|\b(?:ENGLISH(?:\s*(?:DUBBED|DUB|AUDIO|ONLY))?|ENG(?:\s*(?:DUBBED|DUB|AUDIO|ONLY))?|TRUEFRENCH|FRENCH|GERMAN|SPANISH|LATINO|RUSSIAN|POLISH|HINDI|TAMIL|TELUGU|KOREAN|JAPANESE)\b)/i;
 const REGEX_MULTI_LANGUAGE = /\b(?:MULTI|DUAL\s*AUDIO|VOST)\b/i;
 const VIDEO_FILE_REGEX = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts)$/i;
 const SIZE_REGEX = /(?:📦|💾|💽|Size:?|Dimensione:?|File\s*Size:?|Peso:?)[\s:]*([\d.,]+)\s*(B|KB|MB|GB|TB|KIB|MIB|GIB|TIB)/i;
@@ -455,6 +455,7 @@ function buildAddonCacheKey(addonKey, type, id, options = {}) {
     return JSON.stringify({
         addonKey, type: sanitizeFetchType(type, id), id: String(id || ""),
         onlyItalian: options.onlyItalian !== false,
+        languageMode: String(options.languageMode || ''),
         minConfidence: Number(options.minimumItalianConfidence || 20),
         service, tokenSig: token ? hashConfigSignature(token) : ""
     });

@@ -261,6 +261,34 @@ async function resolveLazyStreamData(service, apiKey, item, meta) {
     });
 }
 
+function getExternalLanguageAudit(item = {}) {
+    const info = item?._externalLanguageInfo && typeof item._externalLanguageInfo === 'object'
+        ? item._externalLanguageInfo
+        : (item?.languageInfo && typeof item.languageInfo === 'object' ? item.languageInfo : {});
+    const confidence = Number(item?._externalLanguageConfidence ?? info.confidence ?? 0) || 0;
+    const hasItalianAudio = Boolean(item?._externalHasItalianAudio || info.hasAudioItalian);
+    const hasItalianSubs = Boolean(item?._externalHasItalianSubs || info.hasSubItalian);
+    const hasNegativeLanguage = Boolean(info.hasNegativeLanguage);
+    const isItalian = Boolean(item?._externalIsItalian || info.isItalian || hasItalianAudio);
+    return { info, confidence, hasItalianAudio, hasItalianSubs, hasNegativeLanguage, isItalian };
+}
+
+function isExternalStrictItalianCandidate(item = {}) {
+    const audit = getExternalLanguageAudit(item);
+    if (audit.hasItalianAudio) return true;
+    if (audit.isItalian && audit.confidence >= 20 && !audit.hasNegativeLanguage && !audit.hasItalianSubs) return true;
+    return false;
+}
+
+function keepLanguageCandidateForMode(item, meta = {}, langMode = 'ita') {
+    const title = String(item?.title || '');
+    const source = item?.source;
+    if (langMode === 'eng') return keepEnglishCandidate(title, source, meta?.title);
+    if (langMode === 'all') return keepAllCandidate(title, source, meta?.title);
+    if (item?.isExternal && isExternalStrictItalianCandidate(item)) return true;
+    return keepItalianCandidate(title, source, meta?.title);
+}
+
 function assessFastResultQuality(items, meta, langMode, config) {
     const list = Array.isArray(items) ? items : [];
     if (list.length === 0) {
@@ -279,11 +307,7 @@ function assessFastResultQuality(items, meta, langMode, config) {
         const seeders = parseInt(item?.seeders, 10) || 0;
         const parsedFastEpisode = meta?.isSeries ? extractSeasonEpisodeFromFilename(title, meta.season || 1, getEpisodeParseOptions(meta)) : null;
         const isPack = Boolean(item?._isPack || isSeasonPack(title) || parsedFastEpisode?.isRange || parsedFastEpisode?.isBatch);
-        const langOk = effectiveLangMode === 'eng'
-            ? keepEnglishCandidate(title, source, meta?.title)
-            : effectiveLangMode === 'all'
-                ? keepAllCandidate(title, source, meta?.title)
-                : keepItalianCandidate(title, source, meta?.title);
+        const langOk = keepLanguageCandidateForMode(item, meta, effectiveLangMode);
         const hasQualitySignal = /\b(?:2160p|4k|uhd|1080p|fhd|720p|web[-.\s]?dl|blu[-.\s]?ray|remux|hevc|x265|x264)\b/i.test(title);
         const hasWeight = hasQualitySignal || sizeBytes >= (meta?.isSeries ? 250 : 700) * 1024 * 1024 || seeders > 0;
 
@@ -857,13 +881,7 @@ function createAggressiveResultFilter(meta, type, langMode) {
 
         if (source.includes('comet') || source.includes('stremthru')) return false;
 
-        if (effectiveLangMode === 'ita') {
-            if (!keepItalianCandidate(title, item.source, meta.title)) return false;
-        } else if (effectiveLangMode === 'eng') {
-            if (!keepEnglishCandidate(title, item.source, meta.title)) return false;
-        } else {
-            if (!keepAllCandidate(title, item.source, meta.title)) return false;
-        }
+        if (!keepLanguageCandidateForMode(item, meta, effectiveLangMode)) return false;
 
         const metaYear = parseInt(meta.year, 10);
         if (!Number.isNaN(metaYear)) {
@@ -1869,9 +1887,9 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
 async function fetchExternalResults(type, requestId, config, meta = {}, langMode = 'ita') {
     logger.info(`[EXTERNAL] Start Parallel Fetch...`);
     try {
-        const onlyItalian = langMode === 'ita' && !isAnimeMetaContext(meta, type);
+        const onlyItalian = langMode === 'ita';
         const externalResults = await withTimeout(
-            fetchExternalAddonsFlat(type, requestId, { userConfig: config, onlyItalian }).then(items => items.map(i => {
+            fetchExternalAddonsFlat(type, requestId, { userConfig: config, onlyItalian, languageMode: langMode }).then(items => items.map(i => {
                 const title = i.title || i.filename;
                 let finalSeeders = parseInt(i.seeders, 10) || (title ? extractSeeders(title) : 0);
                 let finalSize = i.mainFileSize || (title ? extractSize(title) : 0);
@@ -1886,6 +1904,11 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
                     infoHash: i.infoHash || extractInfoHash(i.magnetLink),
                     fileIdx: i.fileIdx,
                     isExternal: true,
+                    _externalLanguageInfo: i.languageInfo || null,
+                    _externalIsItalian: Boolean(i.isItalian || i.languageInfo?.isItalian),
+                    _externalHasItalianAudio: Boolean(i.hasItalianAudio || i.languageInfo?.hasAudioItalian),
+                    _externalHasItalianSubs: Boolean(i.hasItalianSubs || i.languageInfo?.hasSubItalian),
+                    _externalLanguageConfidence: Number(i.languageInfo?.confidence || 0) || 0,
                     _isPack: isSeasonPack(title),
                     _rdCacheState: 'cached',
                     rdCacheState: 'cached',

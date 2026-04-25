@@ -19,7 +19,7 @@ const REGEX_MULTI_ITA = /\b(MULTI|DUAL|TRIPLE).*(ITA|ITALIAN)\b/i;
 const REGEX_TRUSTED_GROUPS = /\b(iDN_CreW|CORSARO|MUX|WMS|TRIDIM|SPEEDVIDEO|EAGLE|TRL|MEA|LUX|DNA|LEST|GHIZZO|USAbit|Bric|Dtone|Gaiage|BlackBit|Pantry|Vics|Papeete|Lidri|MirCrew)\b/i;
 const REGEX_FALSE_IT = /\b(10BIT|BIT|WIT|HIT|FIT|KIT|SIT|LIT|PIT)\b/i;
 const REGEX_SUB_ONLY = /\b(SUB|SUBS|SUBBED|SOTTOTITOLI|VOST|VOSTIT)\s*[:.\-_]?\s*(ITA|IT|ITALIAN)\b/i;
-const REGEX_AUDIO_CONFIRM = /\b(AUDIO|AC3|AAC|DTS|MD|LD|DDP|MP3|LINGUA)[\s.\-_]+(ITA|IT)\b/i;
+const REGEX_AUDIO_CONFIRM = /(?:🇮🇹|\b(?:AUDIO|AC3|AAC|DTS|MD|LD|DDP|MP3|LINGUA)[\s.\-_]+(?:ITA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO)[\s.\-_]+(?:AUDIO|DUB|DUBBED|AC3|AAC|DTS|DDP|EAC3|TRUEHD|ATMOS)\b)/i;
 
 const languageMapping = {
     'english': '🇬🇧 ENG',
@@ -335,7 +335,6 @@ function isTrustedSource(source, provider = null) {
     const mainSource = s.split('(')[0].trim();
     const mainProvider = p.split('(')[0].trim();
 
-    if (/^torrentio$/i.test(mainSource) || /^torrentio$/i.test(mainProvider)) return true;
     return false;
 }
 
@@ -355,8 +354,8 @@ function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedI
     if (parsedInfo?.rawLanguages?.length > 0) {
         parsedInfo.rawLanguages.forEach(pushLanguage);
     } else {
-        if (/(ita|italian|italiano)/i.test(title)) pushLanguage('Italian');
-        if (/(eng|english)/i.test(title) && !/(eng|english)[.\s\-_]?sub/i.test(title)) pushLanguage('English');
+        if (/(🇮🇹|\bita\b|italian|italiano)/i.test(title)) pushLanguage('Italian');
+        if (/(🇬🇧|🇺🇸|\beng\b|english)/i.test(title) && !/(eng|english)[.\s\-_]?sub/i.test(title)) pushLanguage('English');
         if (/(multi)/i.test(title) && !/(multi)[.\s\-_]?sub/i.test(title)) pushLanguage('Multi');
         if (/(dual)/i.test(title) && !/(dual)[.\s\-_]?sub/i.test(title)) pushLanguage('Dual Audio');
         if (/(jpn|japanese)/i.test(title)) pushLanguage('Japanese');
@@ -366,7 +365,7 @@ function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedI
     }
 
     const subOnly = REGEX_SUB_ONLY.test(title);
-    const explicitIta = /(ita|italian|italiano)/i.test(title);
+    const explicitIta = /(🇮🇹|\bita\b|italian|italiano)/i.test(title);
     const audioConfirmedIta = REGEX_AUDIO_CONFIRM.test(title) || REGEX_CONTEXT_IT.test(title) || /(?:dub(?:bed)?|audio|lang|lingua|doppiat[oa])(?:[\s.\-_:/-]+)(?:it|ita|italian|italiano)/i.test(title);
     const multiIta = REGEX_MULTI_ITA.test(title);
     const isolatedIt = REGEX_ISOLATED_IT.test(title) && !REGEX_FALSE_IT.test(title);
