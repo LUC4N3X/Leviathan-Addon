@@ -65,7 +65,6 @@ async function getGotScrapingClient() {
     const mod = await import('got-scraping');
     gotScrapingClient = mod.gotScraping || mod.default || mod;
   }
-
   return gotScrapingClient;
 }
 
@@ -84,16 +83,30 @@ async function gotSiteRequest(url, {
     url,
     method,
     body: body || undefined,
-    headers: {
-      'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-      ...headers
-    },
+    headers,
     timeout: { request: timeout },
     signal,
     responseType,
     throwHttpErrors: false,
     followRedirect: true,
     maxRedirects,
+    http2: true,
+    headerGeneratorOptions: {
+      browsers: [
+        { name: 'chrome', minVersion: 110 },
+        { name: 'firefox', minVersion: 110 },
+        { name: 'safari', minVersion: 15 }
+      ],
+      devices: ['desktop'],
+      operatingSystems: ['windows', 'macos', 'linux'],
+      locales: ['it-IT', 'en-US', 'en']
+    },
+    retry: {
+      limit: 2,
+      methods: ['GET'],
+      statusCodes: [408, 413, 429, 500, 502, 503, 504],
+      calculateDelay: ({ computedValue }) => computedValue + Math.random() * 500
+    },
     agent: {
       http: httpAgent,
       https: httpsAgent
@@ -120,12 +133,9 @@ function normalizeBaseUrl(value) {
 function loadStoredDomain() {
   try {
     if (!fs.existsSync(DOMAIN_FILE)) return null;
-
     const data = JSON.parse(fs.readFileSync(DOMAIN_FILE, 'utf8'));
     const base = normalizeBaseUrl(data?.baseUrl);
-
     if (!base) return null;
-
     return base;
   } catch (_) {
     return null;
@@ -135,7 +145,6 @@ function loadStoredDomain() {
 function saveStoredDomain(baseUrl) {
   const normalized = normalizeBaseUrl(baseUrl);
   if (!normalized) return;
-
   try {
     fs.writeFileSync(DOMAIN_FILE, JSON.stringify({
       baseUrl: normalized,
@@ -184,10 +193,8 @@ function updateCurrentDomainFromUrl(url) {
       activeSession.timestamp = Date.now();
       saveSession(activeSession);
     }
-
     return true;
   }
-
   return false;
 }
 
@@ -209,9 +216,7 @@ async function resolveRedirectDomain(startBase, signal = null) {
     });
 
     const finalBase = normalizeBaseUrl(res.url);
-
     if (finalBase) return finalBase;
-
     return base;
   } catch (_) {
     return null;
@@ -246,7 +251,6 @@ async function refreshTargetDomain(signal = null, { force = false } = {}) {
         return currentGsDomain;
       }
     }
-
     return currentGsDomain;
   })()
     .finally(() => {
@@ -261,7 +265,6 @@ function buildGsUrl(pathname) {
   const cleanPath = String(pathname || '').startsWith('/')
     ? pathname
     : `/${pathname}`;
-
   return `${base}${cleanPath}`;
 }
 
