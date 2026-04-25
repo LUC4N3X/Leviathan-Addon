@@ -430,7 +430,17 @@ function isSeasonPack(title) {
         .replace(/第\s*([0-9]{1,2})\s*[期季]/gi, ' season $1 ')
         .replace(/[‐‑–—―〜～]/g, '-')
         .toLowerCase();
-    if (/s\d{1,2}e\d{1,2}/i.test(normalizedTitle)) return false;
+
+    const explicitRangePackPatterns = [
+        /\bs\d{1,2}e\d{1,3}\s*(?:-|~|to|a)\s*(?:e)?\d{1,3}\b/i,
+        /\bs\d{1,2}\s*(?:-|~|to|a)\s*(?:s)?\d{1,2}\b/i,
+        /\b(?:season|stagion[ei])\s*\d{1,2}\s*(?:-|~|to|a)\s*\d{1,2}\b/i,
+        /\bepisodes?\s*\d{1,3}\s*(?:-|~|to|a)\s*\d{1,3}\b/i,
+        /\bepisodi?\s*\d{1,3}\s*(?:-|~|to|a)\s*\d{1,3}\b/i
+    ];
+    if (explicitRangePackPatterns.some((pattern) => pattern.test(normalizedTitle))) return true;
+
+    if (/s\d{1,2}e\d{1,3}/i.test(normalizedTitle)) return false;
     if (/\b\d{1,2}x\d{1,3}\b/i.test(normalizedTitle)) return false;
 
     const packPatterns = [
@@ -445,7 +455,6 @@ function isSeasonPack(title) {
         /\bs\d{1,2}(?!e)\b/i,
         /\bs\d{1,2}\./i,
         /\btutta\b/i,
-        /\bepisodes?\s*\d{1,3}\s*(?:-|~|to|a)\s*\d{1,3}\b/i,
         /\b\d{1,3}\s*(?:-|~|to|a)\s*\d{1,3}\b/i
     ];
     return packPatterns.some((pattern) => pattern.test(normalizedTitle));

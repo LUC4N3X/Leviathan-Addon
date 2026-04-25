@@ -680,9 +680,19 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
   const numericSize = Number(size) || 0;
   const sizeString = numericSize > 0 ? formatBytes(numericSize) : 'Unknown';
   const cleanedName = stripEpisodeFromCleanName(extracted.cleanName);
-  const baseEpTag = getEpisodeTag(fileTitle, config);
+  const explicitType = safeString(config?.mediaType || config?.type || config?.stremioType).toLowerCase();
+  const explicitMovieContext = config?.forceMovie === true || config?.isSeries === false || explicitType === 'movie' || explicitType === 'film';
+  const hasSeriesContext = !explicitMovieContext && (
+    config?.isSeries === true ||
+    explicitType === 'series' ||
+    explicitType === 'anime' ||
+    Number(config?.season || 0) > 0 ||
+    Number(config?.episode || 0) > 0
+  );
+  const baseEpTag = hasSeriesContext ? getEpisodeTag(fileTitle, config) : '';
+  const safePackItem = Boolean(isPackItem && hasSeriesContext);
   const styledPack = toStylized('Season Pack', 'small');
-  const epTag = isPackItem
+  const epTag = safePackItem
     ? (baseEpTag ? `${baseEpTag}  ✦  📦 ${styledPack}` : '📦 ꜱᴇᴀꜱᴏɴ ᴘᴀᴄᴋ')
     : baseEpTag;
   const displaySource = normalizeDisplaySource(source || DEFAULT_SOURCE_LABEL);
@@ -712,7 +722,7 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
     bingeGroup: buildBingeGroup(extracted.quality, extracted.rawInfo, normalizedServiceTag, infoHash),
     providerLabel: extractProviderLabel(fileTitle),
     isLazy: Boolean(isLazy),
-    isPackItem: Boolean(isPackItem),
+    isPackItem: safePackItem,
     cacheState: normalizedCacheState,
     cacheIcon,
     isCached,

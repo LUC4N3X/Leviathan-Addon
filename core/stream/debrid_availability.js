@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const dbHelper = require('../storage/db_repository');
 const RealDebridProbe = require('../../debrid/realdebrid_probe.js');
 const { buildMagnet: buildTrackerMagnet } = require('../storage/tracker_registry');
-const { extractInfoHash, withSharedPromise } = require('../utils');
+const { extractInfoHash, withSharedPromise, isSeasonPack, extractSeasonEpisodeFromFilename } = require('../utils');
 const { shouldSkipRecentWork } = require('../recent_work');
 
 const LOCAL_DB_CACHE_TTL = Math.max(5, Math.min(300, parseInt(process.env.LOCAL_DB_CACHE_TTL || '25', 10) || 25));
@@ -83,6 +83,32 @@ function hasHeavyNegativeProtection(item) {
         /\b(pack|complete|season|stagione|integrale|collection|collezione|trilogy|saga)\b/i.test(title) ||
         TRUSTED_RELEASE_GROUP_RE.test(title)
     );
+}
+
+
+function shouldPersistResolvedAsPack(item = {}, resolvedTitle = '', meta = {}) {
+    const season = Number(meta?.season || 0);
+    const episode = Number(meta?.episode || 0);
+    const isSeries = Boolean(meta?.isSeries || (season > 0 && episode > 0));
+    if (!isSeries) return false;
+
+    const title = String(resolvedTitle || item?.title || '');
+    const filename = String(item?.filename || item?.file_title || '');
+    const joined = [title, filename, item?.packTitle, item?.rawDescription].filter(Boolean).join(' ');
+
+    if (season > 0 && episode > 0) {
+        for (const text of [title, filename]) {
+            const parsed = extractSeasonEpisodeFromFilename(String(text || ''), season);
+            if (parsed && !parsed.isRange && !parsed.isBatch && parsed.season === season && parsed.episode === episode) return false;
+        }
+    }
+
+    if (/\bS\d{1,2}E\d{1,3}\s*(?:-|~|to|a)\s*(?:E)?\d{1,3}\b/i.test(joined)) return true;
+    if (/\b(?:episodes?|episodi?)\s*\d{1,3}\s*(?:-|~|to|a)\s*\d{1,3}\b/i.test(joined)) return true;
+    if (/\b(?:batch|complete|completa|full|integrale|collection|raccolta)\b/i.test(joined)) return true;
+    if (/\bS\d{1,2}E\d{1,3}\b/i.test(joined) || /\b\d{1,2}x\d{1,3}\b/i.test(joined)) return false;
+
+    return Boolean(item?._isPack || item?.potentialPack || item?.packTitle || isSeasonPack(title));
 }
 
 function resolveRdNegativeDecision(item, result) {
@@ -321,7 +347,10 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
     }
 
     function isGuaranteedCachedExternal(item) {
-        return Boolean(item?.isExternal || item?.externalAddon);
+        return Boolean(
+            (item?._mediafusionRdChecked === true || item?._nexusBridgeRdChecked === true || item?._externalRdChecked === true) &&
+            getRdAvailabilityState('rd', item) === 'cached'
+        );
     }
 
     async function hydrateRdForegroundAvailability(items, apiKey, options = {}) {
@@ -570,7 +599,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                     seeders: Number(item?.seeders || 0) || 0,
                     provider: item?.source || normalizedService.toUpperCase(),
                     file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : (item?.fileIdx !== undefined ? item.fileIdx : undefined),
-                    is_pack: Boolean(item?._isPack || isSeasonPack(resolvedTitle))
+                    is_pack: shouldPersistResolvedAsPack(item, resolvedTitle, meta)
                 });
             }
 

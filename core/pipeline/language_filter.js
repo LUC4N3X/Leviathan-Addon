@@ -85,7 +85,7 @@ function createLanguageFilterTools(deps = {}) {
   function createAggressiveResultFilter(meta, type, langMode) {
     const effectiveLangMode = resolveLangMode({ language: langMode, defaultMode: 'ita' });
     return (item) => {
-      if (!item?.magnet) return false;
+      if (!item?.magnet && !item?.directUrl && !item?._externalDirectUrl && !item?.externalDirectUrl && !item?.url) return false;
 
       const source = String(item.source || '').toLowerCase();
       const title = String(item.title || '');

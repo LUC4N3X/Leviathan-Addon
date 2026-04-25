@@ -151,6 +151,85 @@ function shouldIgnoreAnimeSeason(meta = {}, type = '', title = '') {
     return isAnimeMetaContext(meta, type) && !hasExplicitSeasonMarker(title);
 }
 
+
+function getSeriesEpisodeContext(meta = {}) {
+    const season = Number.isInteger(meta?.season) ? meta.season : parseInt(meta?.season, 10);
+    const episode = Number.isInteger(meta?.episode) ? meta.episode : parseInt(meta?.episode, 10);
+    const isSeries = Boolean(meta?.isSeries || (Number.isFinite(season) && Number.isFinite(episode)));
+    return {
+        isSeries,
+        season: Number.isFinite(season) && season > 0 ? season : 1,
+        episode: Number.isFinite(episode) && episode > 0 ? episode : null
+    };
+}
+
+function collectCandidatePackTexts(item = {}) {
+    return uniqueTextList([
+        item.title,
+        item.filename,
+        item.file_title,
+        item.websiteTitle,
+        item.rawDescription,
+        item.packTitle,
+        item.name
+    ]);
+}
+
+function parseCandidateEpisodeText(text, meta = {}, type = '') {
+    const ctx = getSeriesEpisodeContext(meta);
+    return extractSeasonEpisodeFromFilename(String(text || ''), ctx.season || 1, getEpisodeParseOptions(meta, type));
+}
+
+function isExactRequestedEpisodeItem(item = {}, meta = {}, type = '') {
+    const ctx = getSeriesEpisodeContext(meta);
+    if (!ctx.isSeries || !ctx.episode) return false;
+
+    for (const text of collectCandidatePackTexts(item)) {
+        const parsed = parseCandidateEpisodeText(text, meta, type);
+        if (!parsed || parsed.isRange || parsed.isBatch) continue;
+        const seasonOk = parsed.season === ctx.season || shouldIgnoreAnimeSeason(meta, type, text);
+        if (seasonOk && parsed.episode === ctx.episode) return true;
+    }
+
+    return false;
+}
+
+function hasStrictSeasonPackCue(item = {}, meta = {}, type = '') {
+    const texts = collectCandidatePackTexts(item);
+    if (texts.length === 0) return false;
+
+    for (const text of texts) {
+        const parsed = parseCandidateEpisodeText(text, meta, type);
+        if (parsed?.isRange || parsed?.isBatch) return true;
+    }
+
+    const joined = texts.join(' ');
+    if (/\bS\d{1,2}E\d{1,3}\s*(?:-|~|to|a)\s*(?:E)?\d{1,3}\b/i.test(joined)) return true;
+    if (/\b\d{1,2}x\d{1,3}\s*(?:-|~|to|a)\s*(?:\d{1,2}x)?\d{1,3}\b/i.test(joined)) return true;
+    if (/\b(?:episodes?|episodi?)\s*\d{1,3}\s*(?:-|~|to|a)\s*\d{1,3}\b/i.test(joined)) return true;
+    if (/\b(?:batch|complete|completa|full|integrale|collection|raccolta|全集|合集)\b/i.test(joined)) return true;
+
+    const hasSingleEpisodeCue = /\bS\d{1,2}E\d{1,3}\b/i.test(joined) || /\b\d{1,2}x\d{1,3}\b/i.test(joined);
+    if (hasSingleEpisodeCue) return false;
+
+    const ctx = getSeriesEpisodeContext(meta);
+    const season = ctx.season || 1;
+    if (new RegExp(`\\b(?:season|stagione)\\s*0?${season}(?!\\d)`, 'i').test(joined)) return true;
+    if (new RegExp(`\\bS0?${season}(?!\\s*E|\\d)`, 'i').test(joined)) return true;
+
+    return false;
+}
+
+function isConfidentSeasonPackItem(item = {}, meta = {}, type = '') {
+    const ctx = getSeriesEpisodeContext(meta);
+    if (!ctx.isSeries) return false;
+    if (isExactRequestedEpisodeItem(item, meta, type)) return false;
+
+    const hasFlag = Boolean(item?._isPack || item?.potentialPack || item?.packTitle || isSeasonPack(item?.title || ''));
+    if (!hasFlag && !hasStrictSeasonPackCue(item, meta, type)) return false;
+    return hasStrictSeasonPackCue(item, meta, type);
+}
+
 function mapKitsuEpisodePosition(parsedKitsu, fallbackKitsuMeta) {
     const requestedEpisode = Number(parsedKitsu?.episode || 0) || 0;
     const mappedSeason = Number(fallbackKitsuMeta?.season || parsedKitsu?.season || 1) || 1;
@@ -306,7 +385,7 @@ function assessFastResultQuality(items, meta, langMode, config) {
         const sizeBytes = Number(item?._size || item?.sizeBytes || 0);
         const seeders = parseInt(item?.seeders, 10) || 0;
         const parsedFastEpisode = meta?.isSeries ? extractSeasonEpisodeFromFilename(title, meta.season || 1, getEpisodeParseOptions(meta)) : null;
-        const isPack = Boolean(item?._isPack || isSeasonPack(title) || parsedFastEpisode?.isRange || parsedFastEpisode?.isBatch);
+        const isPack = isConfidentSeasonPackItem(item, meta, '');
         const langOk = keepLanguageCandidateForMode(item, meta, effectiveLangMode);
         const hasQualitySignal = /\b(?:2160p|4k|uhd|1080p|fhd|720p|web[-.\s]?dl|blu[-.\s]?ray|remux|hevc|x265|x264)\b/i.test(title);
         const hasWeight = hasQualitySignal || sizeBytes >= (meta?.isSeries ? 250 : 700) * 1024 * 1024 || seeders > 0;
@@ -709,6 +788,23 @@ function createRuntimeItem(item, meta) {
     };
 }
 
+function getExternalDirectUrl(item = {}) {
+    const candidates = [
+        item?._externalDirectUrl,
+        item?.externalDirectUrl,
+        item?.directUrl,
+        item?.url,
+        item?.isExternal ? item?.magnet : null
+    ];
+
+    for (const value of candidates) {
+        const text = String(value || '').trim();
+        if (/^https?:\/\//i.test(text)) return text;
+    }
+
+    return null;
+}
+
 function getObservedSizeBytes(...values) {
     for (const value of values) {
         const parsed = Number(value);
@@ -872,12 +968,12 @@ function hasStrongSeriesTitleMatch(title, meta) {
 function createAggressiveResultFilter(meta, type, langMode) {
     const effectiveLangMode = langMode;
     return (item) => {
-        if (!item?.magnet) return false;
+        if (!item?.magnet && !getExternalDirectUrl(item)) return false;
 
         const source = String(item.source || '').toLowerCase();
         const title = String(item.title || '');
         const lowerTitle = title.toLowerCase();
-        const isPack = Boolean(item?._isPack || isSeasonPack(title));
+        const isPack = isConfidentSeasonPackItem(item, meta, type);
 
         if (source.includes('comet') || source.includes('stremthru')) return false;
 
@@ -1033,7 +1129,18 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         };
     }
 
-    const { name, title, bingeGroup } = formatStreamSelector(parseTitle || item?.title || displayTitle, item?.source, sizeBytes, seeders, serviceLabel, config, item?.hash, isLazy, isPack, availabilityState);
+    const hasSeriesContext = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
+    const selectorConfig = {
+        ...config,
+        season: hasSeriesContext ? Number(meta?.season || 0) : 0,
+        episode: hasSeriesContext ? Number(meta?.episode || 0) : 0,
+        mediaType: hasSeriesContext ? 'series' : 'movie',
+        type: hasSeriesContext ? 'series' : 'movie',
+        isSeries: hasSeriesContext,
+        forceMovie: !hasSeriesContext
+    };
+    const safeIsPack = Boolean(hasSeriesContext && isPack);
+    const { name, title, bingeGroup } = formatStreamSelector(parseTitle || item?.title || displayTitle, item?.source, sizeBytes, seeders, serviceLabel, selectorConfig, item?.hash, isLazy, safeIsPack, availabilityState);
     return {
         name,
         title,
@@ -1111,7 +1218,7 @@ function getCompositeRankScore(item, meta, config) {
     const sizeBytes = Number(item?._size || item?.sizeBytes || 0);
     const seeders = parseInt(item?.seeders, 10) || 0;
     const explicitFileIdx = item?.fileIdx !== undefined && item?.fileIdx !== null;
-    const isPack = !!(item?._isPack || isSeasonPack(title));
+    const isPack = isConfidentSeasonPackItem(item, meta, '');
     const epData = meta?.isSeries ? extractSeasonEpisodeFromFilename(title, meta?.season || 1, getEpisodeParseOptions(meta)) : null;
 
     const langMode = getEffectiveLangMode(config, meta);
@@ -1364,10 +1471,10 @@ async function persistPackResolution(meta, item, resolved) {
 }
 
 function resolvePackNamesInBackground(meta, results, config) {
-    if (!meta || !config || !Array.isArray(results) || results.length === 0) return;
+    if (!meta || !meta.isSeries || !config || !Array.isArray(results) || results.length === 0) return;
     const hasResolvableService = !!((config.service === 'rd' && (config.key || config.rd)) || (config.service === 'tb' && (config.key || config.rd || config.torbox || config.tb)));
     if (!hasResolvableService) return;
-    const packCandidates = results.filter(item => item && (item._isPack || isSeasonPack(item.title)));
+    const packCandidates = results.filter(item => item && isConfidentSeasonPackItem(item, meta, type));
     if (packCandidates.length === 0) return;
 
     LIMITERS.bgPackJobs.schedule(async () => {
@@ -1625,7 +1732,7 @@ function saveResultsToDbBackground(meta, results, config = null) {
                         seeders: item.seeders || 0,
                         provider: item.source || 'External',
                         file_index: item.fileIdx !== undefined ? item.fileIdx : undefined,
-                        is_pack: item._isPack || isSeasonPack(item.title)
+                        is_pack: Boolean(meta?.isSeries && isConfidentSeasonPackItem(item, meta, type))
                     };
 
                     torrentRows.push(torrentObj);
@@ -1708,11 +1815,32 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
         const apiKey = getConfiguredDebridKey(config, service);
         if (!service || !apiKey) return null;
 
-        const isPack = item._isPack || isSeasonPack(item.title);
-        const isSeries = (meta?.season > 0 || meta?.episode > 0);
+        const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
+        const isPack = isSeries && isConfidentSeasonPackItem(item, meta, '');
         const displayTitle = (aioFormatter.isAIOStreamsEnabled(config) && isPack && isSeries && meta) ? getEpisodeDisplayTitle(meta, item.title) : item.title;
         const runtimeItem = createRuntimeItem(item, meta);
         const rawConf = config?.rawConf || '';
+        const directUrl = getExternalDirectUrl(runtimeItem);
+        if (directUrl) {
+            const realSize = getObservedSizeBytes(runtimeItem._size, runtimeItem.sizeBytes);
+            const finalSeeders = getObservedSeederCount(runtimeItem.seeders);
+            runtimeItem._rdCacheState = 'cached';
+            runtimeItem.rdCacheState = 'cached';
+            runtimeItem._dbCachedRd = true;
+            runtimeItem.cached_rd = true;
+            return buildPlayableStream({
+                service,
+                item: runtimeItem,
+                streamUrl: directUrl,
+                displayTitle,
+                parseTitle: runtimeItem.title,
+                sizeBytes: realSize,
+                seeders: finalSeeders,
+                config,
+                meta,
+                isPack
+            });
+        }
 
         if (service === 'tb') {
             if (!item._tbCached) return null;
@@ -1813,8 +1941,8 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
 function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = false) {
     const service = getNormalizedDebridService(config);
     if (!service) return null;
-    const isPack = item._isPack || isSeasonPack(item.title);
-    const isSeries = (meta.season > 0 || meta.episode > 0);
+    const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
+    const isPack = isSeries && isConfidentSeasonPackItem(item, meta, '');
     const runtimeItem = createRuntimeItem(item, meta);
 
     let displayTitle = item.title;
@@ -1826,6 +1954,29 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
     }
 
     const finalSeeders = getObservedSeederCount(item.seeders);
+    const directUrl = getExternalDirectUrl(runtimeItem);
+    if (directUrl) {
+        runtimeItem._rdCacheState = 'cached';
+        runtimeItem.rdCacheState = 'cached';
+        runtimeItem._dbCachedRd = true;
+        runtimeItem.cached_rd = true;
+        return buildPlayableStream({
+            service,
+            item: runtimeItem,
+            streamUrl: directUrl,
+            displayTitle,
+            parseTitle: item.title,
+            sizeBytes: realSize,
+            seeders: finalSeeders,
+            config,
+            meta,
+            isLazy: false,
+            isPack
+        });
+    }
+
+    if (!item.hash) return null;
+
     const imdbParam = meta?.imdb_id ? `&imdb=${encodeURIComponent(meta.imdb_id)}` : '';
     const lazyUrl = `${reqHost}/${userConfStr}/play_lazy/${service}/${item.hash}/${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}?s=${meta.season || 0}&e=${meta.episode || 0}${imdbParam}`;
     const lazyCacheKey = `${service}:${item.hash}:${meta.season || 0}:${meta.episode || 0}:${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}`;
@@ -1856,6 +2007,15 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
     });
 }
 
+function stripMoviePackLabel(title) {
+    return String(title || '')
+        .replace(/\s*📦\s*(?:SEASON\s*)?PACK\b/ig, '')
+        .replace(/\bSEASON\s+PACK\b/ig, '')
+        .replace(/\bSTAGIONE\s+PACK\b/ig, '')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+}
+
 async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, config, meta = {}) { 
     if (!CONFIG.INDEXER_URL || !tmdbId) return [];
     try {
@@ -1866,12 +2026,14 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
         const { data } = await axios.get(url, { timeout: CONFIG.TIMEOUTS.REMOTE_INDEXER });
         if (!data || !data.torrents || !Array.isArray(data.torrents)) return [];
         
+        const isSeriesQuery = String(type || '').toLowerCase() === 'series' || Boolean(season || episode || meta?.isSeries);
         const mapped = data.torrents.map(t => {
-            let magnet = t.magnet || buildTrackerMagnet(t.info_hash, t.title);
-            if (!String(magnet).includes("tr=")) magnet = buildTrackerMagnet(t.info_hash, t.title);
+            const safeDbTitle = isSeriesQuery ? t.title : stripMoviePackLabel(t.title);
+            let magnet = t.magnet || buildTrackerMagnet(t.info_hash, safeDbTitle || t.title);
+            if (!String(magnet).includes("tr=")) magnet = buildTrackerMagnet(t.info_hash, safeDbTitle || t.title);
             let providerName = (t.provider || 'P2P').replace(/LeviathanDB/i, '').replace(/[()]/g, '').trim() || 'P2P';
             const finalHash = t.info_hash ? t.info_hash.toUpperCase() : extractInfoHash(magnet);
-            return { title: t.title, magnet: magnet, hash: finalHash, infoHash: finalHash, size: "DB Cache", sizeBytes: parseInt(t.size), seeders: parseInt(t.seeders, 10) || 0, source: providerName, fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined, _isPack: isSeasonPack(t.title) };
+            return { title: safeDbTitle || t.title, magnet: magnet, hash: finalHash, infoHash: finalHash, size: "DB Cache", sizeBytes: parseInt(t.size), seeders: parseInt(t.seeders, 10) || 0, source: providerName, fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined, _isPack: Boolean(isSeriesQuery && isConfidentSeasonPackItem({ title: safeDbTitle || t.title }, meta, type)) };
         });
 
         const langMode = getEffectiveSearchLanguageMode(config?.filters || {}, meta, type);
@@ -1888,34 +2050,66 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
     logger.info(`[EXTERNAL] Start Parallel Fetch...`);
     try {
         const onlyItalian = langMode === 'ita';
+        const isSeriesQuery = String(type || '').toLowerCase() === 'series' || Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
         const externalResults = await withTimeout(
             fetchExternalAddonsFlat(type, requestId, { userConfig: config, onlyItalian, languageMode: langMode }).then(items => items.map(i => {
-                const title = i.title || i.filename;
+                const rawTitle = i.title || i.filename;
+                const title = isSeriesQuery ? rawTitle : stripMoviePackLabel(rawTitle);
                 let finalSeeders = parseInt(i.seeders, 10) || (title ? extractSeeders(title) : 0);
                 let finalSize = i.mainFileSize || (title ? extractSize(title) : 0);
+                const directUrl = getExternalDirectUrl(i);
+                const magnetOrDirect = i.magnetLink || directUrl || null;
+                const hash = i.infoHash || extractInfoHash(i.magnetLink) || extractInfoHash(directUrl);
+                const externalLanguageOk = Boolean(i.isItalian || i.hasItalianAudio || i.languageInfo?.isItalian || i.languageInfo?.hasAudioItalian);
+                if (onlyItalian && i.externalAddon === 'torrentio_mirror' && !externalLanguageOk) return null;
+                const trustedTorrentioDirect = Boolean(directUrl && i.externalAddon === 'torrentio_mirror' && (!onlyItalian || externalLanguageOk));
+                const mediaFusionRdCached = Boolean(
+                    (i._mediafusionRdChecked === true || i._nexusBridgeRdChecked === true || i._externalRdChecked === true) &&
+                    (i.rdCacheState === 'cached' || i.cacheState === 'cached' || i.cached_rd === true || i._dbCachedRd === true)
+                );
+                const rdCached = Boolean(mediaFusionRdCached || trustedTorrentioDirect);
+                const rdState = rdCached ? 'cached' : 'unknown';
+                const externalPack = isConfidentSeasonPackItem({
+                    ...i,
+                    title,
+                    filename: i.filename || i.file_title,
+                    packTitle: i.packTitle || '',
+                    potentialPack: i.potentialPack
+                }, meta, type);
                 return {
                     title: title,
-                    magnet: i.magnetLink,
+                    magnet: magnetOrDirect,
+                    directUrl,
+                    url: directUrl || null,
+                    _externalDirectUrl: directUrl || null,
+                    externalDirectUrl: directUrl || null,
                     size: i.size || (finalSize > 0 ? formatBytes(finalSize) : null),
                     sizeBytes: finalSize,
                     seeders: finalSeeders,
-                    source: i.externalProvider || i.source.replace(/\[EXT\]\s*/, ''),
-                    hash: i.infoHash || extractInfoHash(i.magnetLink),
-                    infoHash: i.infoHash || extractInfoHash(i.magnetLink),
+                    source: i.externalProvider || String(i.source || '').replace(/\[EXT\]\s*/, ''),
+                    hash,
+                    infoHash: hash,
                     fileIdx: i.fileIdx,
                     isExternal: true,
+                    externalAddon: i.externalAddon || null,
+                    externalGroup: i.externalGroup || null,
                     _externalLanguageInfo: i.languageInfo || null,
-                    _externalIsItalian: Boolean(i.isItalian || i.languageInfo?.isItalian),
-                    _externalHasItalianAudio: Boolean(i.hasItalianAudio || i.languageInfo?.hasAudioItalian),
+                    _externalIsItalian: Boolean(i.isItalian || i.languageInfo?.isItalian || (trustedTorrentioDirect && externalLanguageOk)),
+                    _externalHasItalianAudio: Boolean(i.hasItalianAudio || i.languageInfo?.hasAudioItalian || (trustedTorrentioDirect && externalLanguageOk)),
                     _externalHasItalianSubs: Boolean(i.hasItalianSubs || i.languageInfo?.hasSubItalian),
-                    _externalLanguageConfidence: Number(i.languageInfo?.confidence || 0) || 0,
-                    _isPack: isSeasonPack(title),
-                    _rdCacheState: 'cached',
-                    rdCacheState: 'cached',
-                    _dbCachedRd: true,
-                    cached_rd: true
+                    _externalLanguageConfidence: Number(i.languageInfo?.confidence || 0) || (externalLanguageOk ? 95 : 0),
+                    potentialPack: Boolean(isSeriesQuery && externalPack),
+                    packTitle: (isSeriesQuery && externalPack) ? (i.packTitle || '') : '',
+                    _isPack: Boolean(isSeriesQuery && externalPack),
+                    _rdCacheState: rdState,
+                    rdCacheState: rdState,
+                    _dbCachedRd: rdCached,
+                    cached_rd: rdCached,
+                    _mediafusionRdChecked: Boolean(i._mediafusionRdChecked),
+                    _nexusBridgeRdChecked: Boolean(i._nexusBridgeRdChecked || trustedTorrentioDirect),
+                    _externalRdChecked: Boolean(i._externalRdChecked || trustedTorrentioDirect)
                 };
-            })),
+            }).filter(Boolean)),
             CONFIG.TIMEOUTS.EXTERNAL, 'External Addons'
         );
         if (externalResults && externalResults.length > 0) {
@@ -1993,7 +2187,8 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                     , providerCacheOptions);
 
                     const externalRequestId = buildExternalAddonRequestId(type, finalId, meta);
-                    const externalCacheKey = `${type}:${externalRequestId}:${langMode}`;
+                    const externalConfigSig = crypto.createHash("sha1").update(JSON.stringify({ service: config?.service || "", rd: config?.rd || config?.realdebrid || "", tb: config?.tb || config?.torbox || "", key: config?.key || "" })).digest("hex").slice(0, 12);
+                    const externalCacheKey = `${type}:${externalRequestId}:${langMode}:${externalConfigSig}`;
                     const externalPromise = disableLiveSources && !flags.useProviderCachedOnly
                         ? Promise.resolve([])
                         : Cache.fetchWithCache('ExternalAddons', externalCacheKey, 43200, () =>

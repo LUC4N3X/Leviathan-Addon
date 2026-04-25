@@ -81,10 +81,10 @@ function evaluatePoolSatisfaction(assessment = {}, meta = {}) {
 
     if (meta?.isSeries) {
         if (exactEpisodeCount >= 2) return { satisfied: true, tier: 'excellent', reason: 'exact_episode_depth' };
-        if (exactEpisodeCount >= 1 && strongCount >= 2) return { satisfied: true, tier: 'strong', reason: 'exact_episode_plus_strength' };
-        if (exactEpisodeCount >= 1 && total >= 3) return { satisfied: true, tier: 'good', reason: 'exact_episode_present' };
-        if (exactEpisodeCount === 0 && seasonPackCount >= 2 && strongCount >= 2) return { satisfied: true, tier: 'pack_backfill', reason: 'pack_depth' };
-        if (exactEpisodeCount === 0 && seasonPackCount >= 1 && strongCount >= 3 && total >= 4) return { satisfied: true, tier: 'pack_only', reason: 'pack_supported_by_depth' };
+        if (exactEpisodeCount >= 1 && strongCount >= 1) return { satisfied: true, tier: 'single_exact', reason: 'single_exact_episode' };
+        if (exactEpisodeCount >= 1 && total >= 1) return { satisfied: true, tier: 'minimal_exact', reason: 'exact_episode_present' };
+        if (seasonPackCount >= 2 && strongCount >= 2) return { satisfied: true, tier: 'pack_backfill', reason: 'pack_depth' };
+        if (seasonPackCount >= 1 && strongCount >= 1) return { satisfied: true, tier: 'single_pack', reason: 'single_season_pack' };
         return { satisfied: false, tier: 'weak', reason: 'series_needs_exact_episode' };
     }
 
