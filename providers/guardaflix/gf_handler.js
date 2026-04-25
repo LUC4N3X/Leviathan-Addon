@@ -2,6 +2,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const https = require('https');
 const { URL } = require('url');
+const tmdbHelper = require('../../core/utils/tmdb_helper');
 const {
     buildWebStream,
     normalizeQuality,
@@ -13,7 +14,6 @@ const { extractFromUrl } = require('../extractors/registry');
 
 const CONFIG = {
     BASE_URL: 'https://guardaplay.live/',
-    TMDB_API_KEY: '5bae8d11f2a7bc7a95c6d040a31d2163',
     TIMEOUT: 15000,
     PROBE_TIMEOUT: 5000,
     SEARCH_ACCEPT_THRESHOLD: 1.45,
@@ -346,34 +346,41 @@ function getMetaTitleCandidates(meta) {
 }
 
 async function fetchTmdbFindByImdb(imdbId) {
-    if (!/^tt\d+$/i.test(String(imdbId || '').trim())) return null;
-    const url = `https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${CONFIG.TMDB_API_KEY}&external_source=imdb_id&language=it-IT`;
-    const res = await fetchSmart(url, { responseType: 'json' });
-    return res.data?.movie_results?.[0] || null;
+    const meta = await tmdbHelper.getTmdbMetaFromImdb(imdbId, { mediaHint: 'movie', language: 'it-IT' }).catch(() => null);
+    if (!meta?.tmdb_id) return null;
+    return {
+        id: meta.tmdb_id,
+        title: meta.title,
+        original_title: meta.original_title,
+        release_date: meta.date || (meta.year ? `${meta.year}-01-01` : '')
+    };
 }
 
 async function fetchTmdbMovie(tmdbId) {
-    if (!/^\d+$/.test(String(tmdbId || '').trim())) return null;
-    const url = `https://api.themoviedb.org/3/movie/${encodeURIComponent(tmdbId)}?api_key=${CONFIG.TMDB_API_KEY}&language=it-IT`;
-    const res = await fetchSmart(url, { responseType: 'json' });
-    return res.data || null;
+    const clean = String(tmdbId || '').trim();
+    if (!/^\d+$/.test(clean)) return null;
+    return tmdbHelper.fetchTmdbJson(`/movie/${encodeURIComponent(clean)}`, {
+        params: { language: 'it-IT' },
+        cacheTtlMs: CONFIG.TMDB_META_TTL_MS
+    }).catch(() => null);
 }
 
 async function searchTmdbMovieByTitle(title, year) {
     const safeTitle = String(title || '').trim();
     if (!safeTitle) return null;
-    const params = new URLSearchParams({
-        api_key: CONFIG.TMDB_API_KEY,
-        language: 'it-IT',
-        query: safeTitle,
-        include_adult: 'false'
-    });
-    if (/^\d{4}$/.test(String(year || ''))) params.set('year', String(year));
-    const url = `https://api.themoviedb.org/3/search/movie?${params.toString()}`;
-    const res = await fetchSmart(url, { responseType: 'json' });
-    const results = Array.isArray(res.data?.results) ? res.data.results : [];
+    const payload = await tmdbHelper.fetchTmdbJson('/search/movie', {
+        params: {
+            language: 'it-IT',
+            query: safeTitle,
+            include_adult: 'false',
+            year: /^\d{4}$/.test(String(year || '')) ? String(year) : undefined
+        },
+        cacheTtlMs: CONFIG.TMDB_META_TTL_MS
+    }).catch(() => null);
+    const results = Array.isArray(payload?.results) ? payload.results : [];
     return results[0] || null;
 }
+
 
 function tmdbToMeta(media, fallback = {}) {
     if (!media) return null;

@@ -6,6 +6,8 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const tmdbHelper = require('../../core/utils/tmdb_helper');
+const animeIdentity = require('../anime/anime_identity');
 const { GUARDA_SERIE_BROWSER_PROFILES, pickRandomProfile } = require('../../core/browser_profiles');
 const {
   buildWebStream,
@@ -21,7 +23,6 @@ const {
 } = require('../extractors/registry');
 
 const INITIAL_GS_DOMAIN       = 'https://guardoserie.garden';
-const TMDB_KEY                 = '5bae8d11f2a7bc7a95c6d040a31d2163';
 const BROWSER_PROFILES         = GUARDA_SERIE_BROWSER_PROFILES;
 const FLARESOLVERR_URL         = process.env.FLARESOLVERR_URL || 'http://127.0.0.1:8191/v1';
 const PROVIDER_NAME            = 'guardoserie';
@@ -522,6 +523,50 @@ function normalizeTitleScore(candidate, title, originalTitle) {
   return ratio >= 0.75 ? 2 : ratio >= 0.45 ? 1 : 0;
 }
 
+
+function uniqueCleanStrings(values = [], max = 12) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const text = String(value || '').replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim();
+    if (!text || text.length < 2) continue;
+    const key = normalizeText(text);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function normalizeTitleScoreMany(candidate, titles = []) {
+  let best = 0;
+  for (const title of uniqueCleanStrings(titles, 16)) {
+    best = Math.max(best, normalizeTitleScore(candidate, title, null));
+    if (best >= 3) break;
+  }
+  return best;
+}
+
+async function buildSharedAnimeContext(meta = {}, config = {}, season = null, episode = null) {
+  try {
+    const context = await animeIdentity.buildAnimeSearchContextForProvider({
+      requestId: meta?.requestedId || meta?.id || meta?.imdb_id || meta?.tmdb_id || null,
+      originalId: meta?.originalId || null,
+      finalId: meta?.id || meta?.imdb_id || meta?.tmdb_id || null,
+      meta,
+      config,
+      season,
+      episode,
+      providerName: 'GuardoSerie'
+    });
+    if (context?.isAnime || context?.searchTitles?.length || context?.rawTitles?.length) return context;
+  } catch (error) {
+    console.warn('[GuardoSerie] shared anime context failed:', error.message);
+  }
+  return null;
+}
+
 function normalizeStreamUrl(url) {
   try {
     const u = new URL(url);
@@ -792,32 +837,49 @@ async function searchGuardaserie(meta, config) {
 async function _searchGuardaserie(meta, config, season, episode, signal) {
   await refreshTargetDomain(signal);
 
-  let tmdbId = meta?.tmdb_id || meta?.tmdbId || null;
-
-  if (!tmdbId && meta?.imdb_id) {
-    try {
-      const url = `https://api.themoviedb.org/3/find/${encodeURIComponent(meta.imdb_id)}?api_key=${TMDB_KEY}&external_source=imdb_id`;
-      const res = await lightClient.get(url, { signal });
-      tmdbId = res.data?.tv_results?.[0]?.id;
-    } catch (_) {}
+  const animeContext = await buildSharedAnimeContext(meta, config, season, episode);
+  if (animeContext?.isAnime) {
+    const mappedSeason = parseInt(animeContext.seasonNumber, 10);
+    const mappedEpisode = parseInt(animeContext.requestedEpisode, 10);
+    if (mappedSeason > 0) season = mappedSeason;
+    if (mappedEpisode > 0) episode = mappedEpisode;
   }
 
-  let showName = meta?.title, originalTitle = null, targetYear = null;
+  let tmdbId = meta?.tmdb_id || meta?.tmdbId || animeContext?.tmdbId || animeContext?.mappedIds?.tmdbId || null;
+
+  if (!tmdbId && (meta?.imdb_id || animeContext?.imdbId)) {
+    const resolved = await tmdbHelper.getTmdbFromImdb(meta.imdb_id || animeContext.imdbId, { mediaHint: 'tv' }).catch(() => null);
+    if (resolved) tmdbId = resolved;
+  }
+
+  let showName = meta?.title || animeContext?.title || null;
+  let originalTitle = animeContext?.rawTitles?.find((title) => normalizeText(title) !== normalizeText(showName)) || null;
+  let targetYear = animeContext?.year || null;
+
   if (tmdbId) {
-    try {
-      const res = await lightClient.get(
-        `https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_KEY}&language=it-IT`,
-        { signal }
-      );
-      showName      = res.data.name || res.data.title || showName;
-      originalTitle = res.data.original_name || res.data.original_title || null;
-      targetYear    = String(res.data.first_air_date || '').slice(0, 4) || null;
-    } catch (_) {}
+    const tmdbMeta = await tmdbHelper.getMediaInfoFull(tmdbId, 'tv', { language: 'it-IT' }).catch(() => null);
+    if (tmdbMeta) {
+      showName      = tmdbMeta.title || showName;
+      originalTitle = tmdbMeta.original_title || originalTitle || null;
+      targetYear    = tmdbMeta.year || targetYear || null;
+    }
   }
 
+  const expectedTitles = uniqueCleanStrings([
+    showName,
+    originalTitle,
+    ...(Array.isArray(animeContext?.searchTitles) ? animeContext.searchTitles : []),
+    ...(Array.isArray(animeContext?.rawTitles) ? animeContext.rawTitles : []),
+    meta?.name,
+    meta?.originalTitle,
+    meta?.canonicalTitle,
+    meta?.seriesTitle
+  ], 14);
+
+  showName = showName || expectedTitles[0] || null;
   if (!showName) return [];
 
-  const queries    = Array.from(new Set([showName, originalTitle].filter(Boolean)));
+  const queries    = uniqueCleanStrings(expectedTitles, 8);
   let allResults   = await searchProviderParallel(queries, signal);
   allResults       = Array.from(new Map(allResults.map(i => [i.url, i])).values());
 
@@ -826,14 +888,14 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
   allResults = [...seriesResults, ...episodeResults];
 
   allResults.sort((a, b) =>
-    normalizeTitleScore(b.title, showName, originalTitle) -
-    normalizeTitleScore(a.title, showName, originalTitle)
+    normalizeTitleScoreMany(b.title, expectedTitles) -
+    normalizeTitleScoreMany(a.title, expectedTitles)
   );
 
   let target = null, bestLoose = null;
 
   for (const result of allResults) {
-    const titleScore = normalizeTitleScore(result.title, showName, originalTitle);
+    const titleScore = normalizeTitleScoreMany(result.title, expectedTitles);
     if (titleScore < 1) continue;
 
     const html = await smartFetch(result.url, { ttl: TTL_SERIES, signal });
@@ -859,14 +921,14 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
   if (!target && bestLoose) target = bestLoose;
 
   if (!target) {
-    const slugs = Array.from(new Set([slugify(showName), slugify(originalTitle)].filter(Boolean)));
+    const slugs = uniqueCleanStrings(expectedTitles, 8).map(slugify).filter(Boolean);
     outer: for (const slug of slugs) {
       for (const p of [`/serie/${slug}/`, `/${slug}/`, `/serietv/${slug}/`]) {
         const url  = buildGsUrl(p);
         const html = await smartFetch(url, { ttl: TTL_SERIES, signal });
         if (html) {
           const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
-          if (normalizeTitleScore(pageTitle, showName, originalTitle) >= 2) {
+          if (normalizeTitleScoreMany(pageTitle, expectedTitles) >= 2) {
             target = { url, html };
             break outer;
           }

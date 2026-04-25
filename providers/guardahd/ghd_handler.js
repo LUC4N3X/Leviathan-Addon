@@ -2,6 +2,7 @@ const path = require('path');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const https = require('https');
+const tmdbHelper = require('../../core/utils/tmdb_helper');
 const {
     buildMediaflowUrl,
     buildWebStream,
@@ -30,7 +31,6 @@ const CONFIG = {
         MAX_ENTRIES: 512,
         SAVE_DEBOUNCE_MS: 1200
     },
-    TMDB_API_KEY: "5bae8d11f2a7bc7a95c6d040a31d2163",
     SCRAPER: {
         MAX_CONCURRENT_EMBEDS: 15,
         TIMEOUT: 15000,
@@ -176,33 +176,27 @@ async function resolveStreamQuality(streamUrl, headers, fallback = 'Unknown') {
 
 
 async function fetchTmdbMovieByImdb(imdbId) {
-    if (!/^tt\d+$/i.test(String(imdbId || '').trim())) return null;
-    try {
-        const res = await fetchSmart(`https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${CONFIG.TMDB_API_KEY}&external_source=imdb_id&language=it-IT`);
-        return res.data?.movie_results?.[0] || null;
-    } catch {
-        return null;
-    }
+    const meta = await tmdbHelper.getTmdbMetaFromImdb(imdbId, { mediaHint: 'movie', language: 'it-IT' }).catch(() => null);
+    if (!meta?.tmdb_id) return null;
+    return {
+        id: meta.tmdb_id,
+        title: meta.title,
+        original_title: meta.original_title,
+        release_date: meta.date || (meta.year ? `${meta.year}-01-01` : '')
+    };
 }
 
 async function fetchTmdbMovieById(tmdbId) {
-    if (!/^\d+$/.test(String(tmdbId || '').trim())) return null;
-    try {
-        const res = await fetchSmart(`https://api.themoviedb.org/3/movie/${encodeURIComponent(tmdbId)}?api_key=${CONFIG.TMDB_API_KEY}&language=it-IT`);
-        return res.data || null;
-    } catch {
-        return null;
-    }
+    const clean = String(tmdbId || '').trim();
+    if (!/^\d+$/.test(clean)) return null;
+    return tmdbHelper.fetchTmdbJson(`/movie/${encodeURIComponent(clean)}`, {
+        params: { language: 'it-IT' },
+        cacheTtlMs: 30 * 60 * 1000
+    }).catch(() => null);
 }
 
 async function fetchMovieImdbIdFromTmdb(tmdbId) {
-    if (!/^\d+$/.test(String(tmdbId || '').trim())) return null;
-    try {
-        const res = await fetchSmart(`https://api.themoviedb.org/3/movie/${encodeURIComponent(tmdbId)}/external_ids?api_key=${CONFIG.TMDB_API_KEY}`);
-        return /^tt\d+$/i.test(String(res.data?.imdb_id || '').trim()) ? String(res.data.imdb_id).trim() : null;
-    } catch {
-        return null;
-    }
+    return tmdbHelper.getImdbFromTmdb(tmdbId, 'movie').catch(() => null);
 }
 
 function resolveTmdbMovieId(meta) {

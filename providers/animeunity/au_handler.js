@@ -5,6 +5,7 @@ const cheerio = require('cheerio');
 const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const kitsuProvider = require('../animeworld/kitsu_provider');
+const animeIdentity = require('../anime/anime_identity');
 const {
     resolveAnimeManifest,
     buildSyntheticUrl,
@@ -781,10 +782,19 @@ async function searchAnimeUnity(requestId, meta = {}, config = {}, reqHost = nul
     if (Object.prototype.hasOwnProperty.call(filters, 'enableAnimeUnity') && filters.enableAnimeUnity === false) return [];
 
     try {
-        const context = await kitsuProvider.buildSearchContext(requestId, meta);
+        let context = await animeIdentity.buildAnimeSearchContextForProvider({
+            requestId,
+            meta,
+            config,
+            providerName: 'AnimeUnity'
+        });
+
+        if (!context?.title && !context?.searchTitles?.length && !context?.rawTitles?.length) {
+            context = await kitsuProvider.buildSearchContext(requestId, meta);
+        }
         if (!context?.title && !context?.searchTitles?.length && !context?.rawTitles?.length) return [];
 
-        console.log(`[AnimeUnity] start | title=${context.title || meta?.title || meta?.name || requestId} | ep=${context.requestedEpisode || 1} | kitsu=${context.kitsuId || 'no'}`);
+        console.log(`[AnimeUnity] start | title=${context.title || meta?.title || meta?.name || requestId} | ep=${context.requestedEpisode || 1} | kitsu=${context.kitsuId || 'no'} | tmdb=${context.tmdbId || 'no'} | imdb=${context.imdbId || 'no'}`);
         const modes = [
             { dubbed: false, langTag: 'SUB ITA', emoji: '🇯🇵' },
             { dubbed: true, langTag: 'ITA', emoji: '🇮🇹' }

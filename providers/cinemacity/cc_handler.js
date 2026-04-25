@@ -4,6 +4,8 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
+const tmdbHelper = require('../../core/utils/tmdb_helper');
+const animeIdentity = require('../anime/anime_identity');
 const kitsuProvider = require('../animeworld/kitsu_provider');
 const {
     buildWebStream,
@@ -24,7 +26,6 @@ const FETCH_TIMEOUT = 14000;
 const GOT_TIMEOUT = 16000;
 const MAX_LISTING_PAGES = 8;
 const MAX_LISTING_CANDIDATES_PER_PAGE = 24;
-const TMDB_API_KEY = String(process.env.TMDB_API_KEY || '4b9dfb8b1c9f1720b5cd1d7efea1d845').trim();
 const MAPPING_API_BASE = 'https://anime.questoleviatanormio.dpdns.org';
 const NEWS_SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
 const NEWS_SITEMAP_TTL_MS = 30 * 60 * 1000;
@@ -731,44 +732,34 @@ async function getIdsFromKitsu(kitsuId, season, episode, config = {}) {
 async function getTmdbMetadata(id, providerType) {
     const normalizedId = String(id || '').trim();
     const normalizedType = providerType === 'movie' ? 'movie' : 'tv';
-    let metadataUrl = null;
-
-    if (extractImdbId(normalizedId)) {
-        metadataUrl = `https://api.themoviedb.org/3/find/${encodeURIComponent(normalizedId)}?api_key=${TMDB_API_KEY}&external_source=imdb_id&language=en-US`;
-    } else if (extractTmdbId(normalizedId)) {
-        metadataUrl = `https://api.themoviedb.org/3/${normalizedType}/${extractTmdbId(normalizedId)}?api_key=${TMDB_API_KEY}&language=en-US`;
-    }
-    if (!metadataUrl) return null;
 
     try {
-        const payload = await fetchJson(metadataUrl, { headers: { Accept: 'application/json' } });
         if (extractImdbId(normalizedId)) {
+            const payload = await tmdbHelper.fetchTmdbJson(`/find/${encodeURIComponent(normalizedId)}`, {
+                params: { external_source: 'imdb_id', language: 'en-US' }
+            });
             const results = normalizedType === 'movie' ? payload?.movie_results : payload?.tv_results;
             return Array.isArray(results) && results.length > 0 ? results[0] : null;
         }
-        return payload;
+
+        const cleanTmdbId = extractTmdbId(normalizedId);
+        if (cleanTmdbId) {
+            return tmdbHelper.fetchTmdbJson(`/${normalizedType}/${cleanTmdbId}`, {
+                params: { language: 'en-US' }
+            });
+        }
     } catch (error) {
         console.error('[CinemaCity] TMDB metadata error:', error.message);
-        return null;
     }
+
+    return null;
 }
 
 async function resolveImdbFromTmdb(tmdbId, providerType) {
     const cleanTmdbId = extractTmdbId(tmdbId);
     if (!cleanTmdbId) return null;
     try {
-        if (providerType === 'movie') {
-            const payload = await fetchJson(
-                `https://api.themoviedb.org/3/movie/${cleanTmdbId}?api_key=${TMDB_API_KEY}`,
-                { headers: { Accept: 'application/json' } }
-            );
-            return extractImdbId(payload?.imdb_id);
-        }
-        const payload = await fetchJson(
-            `https://api.themoviedb.org/3/tv/${cleanTmdbId}/external_ids?api_key=${TMDB_API_KEY}`,
-            { headers: { Accept: 'application/json' } }
-        );
-        return extractImdbId(payload?.imdb_id);
+        return extractImdbId(await tmdbHelper.getImdbFromTmdb(cleanTmdbId, providerType === 'movie' ? 'movie' : 'tv'));
     } catch (error) {
         console.error('[CinemaCity] TMDB→IMDb resolution error:', error.message);
         return null;
@@ -1050,7 +1041,38 @@ function getIdCandidates(meta = {}, originalId, finalId) {
     ].filter(Boolean);
 }
 
-async function buildAnimeSearchContext(meta = {}, originalId, finalId) {
+async function buildAnimeSearchContext(meta = {}, originalId, finalId, config = {}, season = null, episode = null) {
+    try {
+        const context = await animeIdentity.buildAnimeSearchContextForProvider({
+            requestId: originalId,
+            originalId,
+            finalId,
+            meta,
+            config,
+            season,
+            episode,
+            providerName: 'CinemaCity',
+            mappingApiBase: MAPPING_API_BASE
+        });
+
+        if (context?.isAnime || context?.kitsuId || context?.searchTitles?.length || context?.rawTitles?.length) {
+            return {
+                ...context,
+                searchTitles: buildSearchQueryVariants([
+                    ...(Array.isArray(context?.searchTitles) ? context.searchTitles : []),
+                    ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
+                    ...collectMetaTitles(meta)
+                ]),
+                rawTitles: uniqueStrings([
+                    ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
+                    ...collectMetaTitles(meta)
+                ])
+            };
+        }
+    } catch (error) {
+        console.warn('[CinemaCity] shared anime context failed:', error.message);
+    }
+
     const candidateIds = getIdCandidates(meta, originalId, finalId);
     let kitsuToken = null;
 
@@ -1125,27 +1147,35 @@ async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
         workingId = contextImdbId || contextTmdbId || (contextKitsuId ? `kitsu:${contextKitsuId}` : '');
     }
 
-    if (isSeries && (contextKitsuId || looksLikeAnimeMeta(meta))) {
-        animeContext = await buildAnimeSearchContext(meta, originalId, finalId);
+    const animeLikely = contextKitsuId || looksLikeAnimeMeta(meta) || candidateIds.some((id) => /^kitsu:/i.test(String(id || '')));
+    if (animeLikely) {
+        animeContext = await buildAnimeSearchContext(meta, originalId, finalId, config, season, episode);
         if (animeContext?.seasonNumber) season = animeContext.seasonNumber;
         if (animeContext?.requestedEpisode) episode = animeContext.requestedEpisode;
         providerType = 'anime';
     }
 
-    if (String(workingId || '').startsWith('kitsu:') || contextKitsuId) {
+    const applyMappedIds = (mapped) => {
+        if (!mapped) return false;
+        if (mapped.tmdbId) resolvedTmdbId = mapped.tmdbId;
+        if (mapped.imdbId) workingId = mapped.imdbId;
+        else if (mapped.tmdbId && !extractImdbId(workingId)) workingId = mapped.tmdbId;
+        if (mapped.mappedSeason && mapped.mappedEpisode) {
+            season = mapped.mappedSeason;
+            episode = mapped.mappedEpisode;
+        } else if (mapped.rawEpisodeNumber) {
+            episode = mapped.rawEpisodeNumber;
+        }
+        return Boolean(mapped.imdbId || mapped.tmdbId || mapped.mappedSeason || mapped.mappedEpisode || mapped.rawEpisodeNumber);
+    };
+
+    const mappedFromSharedContext = animeContext?.mappedIds || null;
+    const sharedApplied = applyMappedIds(mappedFromSharedContext);
+
+    if (!sharedApplied && (String(workingId || '').startsWith('kitsu:') || contextKitsuId)) {
         const kitsuId = contextKitsuId || extractKitsuId(workingId);
         const mapped = await getIdsFromKitsu(kitsuId, isSeries ? season : null, isSeries ? episode : 1, config);
-        if (mapped) {
-            if (mapped.tmdbId) resolvedTmdbId = mapped.tmdbId;
-            if (mapped.imdbId) workingId = mapped.imdbId;
-            else if (mapped.tmdbId) workingId = mapped.tmdbId;
-            if (mapped.mappedSeason && mapped.mappedEpisode) {
-                season = mapped.mappedSeason;
-                episode = mapped.mappedEpisode;
-            } else if (mapped.rawEpisodeNumber) {
-                episode = mapped.rawEpisodeNumber;
-            }
-        }
+        applyMappedIds(mapped);
     }
 
     if (!extractImdbId(workingId) && contextImdbId) {
