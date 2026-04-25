@@ -58,6 +58,56 @@ const lightClient = axios.create({
   }
 });
 
+let gotScrapingClient = null;
+
+async function getGotScrapingClient() {
+  if (!gotScrapingClient) {
+    const mod = await import('got-scraping');
+    gotScrapingClient = mod.gotScraping || mod.default || mod;
+  }
+
+  return gotScrapingClient;
+}
+
+async function gotSiteRequest(url, {
+  method = 'GET',
+  body = null,
+  headers = {},
+  timeout = 15000,
+  signal = null,
+  responseType = 'text',
+  maxRedirects = 8
+} = {}) {
+  const gotScraping = await getGotScrapingClient();
+
+  const res = await gotScraping({
+    url,
+    method,
+    body: body || undefined,
+    headers: {
+      'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+      ...headers
+    },
+    timeout: { request: timeout },
+    signal,
+    responseType,
+    throwHttpErrors: false,
+    followRedirect: true,
+    maxRedirects,
+    agent: {
+      http: httpAgent,
+      https: httpsAgent
+    }
+  });
+
+  return {
+    status: res.statusCode,
+    headers: res.headers || {},
+    data: res.body,
+    url: res.url || url
+  };
+}
+
 function normalizeBaseUrl(value) {
   try {
     const u = new URL(String(value || '').trim());
@@ -146,22 +196,19 @@ async function resolveRedirectDomain(startBase, signal = null) {
   if (!base) return null;
 
   try {
-    const res = await lightClient.get(base, {
+    const res = await gotSiteRequest(base, {
       timeout: DOMAIN_TIMEOUT_MS,
       maxRedirects: 8,
       signal,
-      validateStatus: status => status >= 200 && status < 500,
       headers: {
         'User-Agent': activeSession?.userAgent || pickRandomProfile(BROWSER_PROFILES).ua,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache'
       }
     });
 
-    const finalUrl = getAxiosFinalUrl(res);
-    const finalBase = normalizeBaseUrl(finalUrl);
+    const finalBase = normalizeBaseUrl(res.url);
 
     if (finalBase) return finalBase;
 
@@ -300,7 +347,7 @@ function looksLikeChallenge(html) {
 }
 
 function isCanceledError(e) {
-  return axios.isCancel(e) || e?.code === 'ERR_CANCELED';
+  return axios.isCancel(e) || e?.code === 'ERR_CANCELED' || e?.code === 'ABORT_ERR' || e?.name === 'AbortError';
 }
 
 async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
@@ -372,34 +419,30 @@ async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
 async function executeSmartFetch(url, isPost = false, body = null, signal = null) {
   if (isSessionFresh(activeSession)) {
     try {
-      const reqOptions = {
-        method: isPost ? 'POST' : 'GET',
-        url,
-        headers: {
-          'User-Agent': activeSession.userAgent,
-          'Cookie': activeSession.cookies,
-          'Referer': getTargetDomain(),
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-          'Sec-Fetch-Dest': 'document',
-          'Sec-Fetch-Mode': 'navigate',
-          'Sec-Fetch-Site': 'same-origin',
-          'Upgrade-Insecure-Requests': '1'
-        },
-        timeout: 15000,
-        httpAgent,
-        httpsAgent,
-        validateStatus: () => true,
-        signal
+      const headers = {
+        'User-Agent': activeSession.userAgent,
+        'Cookie': activeSession.cookies,
+        'Referer': getTargetDomain(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Upgrade-Insecure-Requests': '1'
       };
       
       if (isPost && body) {
-        reqOptions.data = body;
-        reqOptions.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+        headers['Content-Type'] = 'application/x-www-form-urlencoded';
       }
 
-      const res = await axios(reqOptions);
-      updateCurrentDomainFromUrl(getAxiosFinalUrl(res));
+      const res = await gotSiteRequest(url, {
+        method: isPost ? 'POST' : 'GET',
+        body: isPost ? body : null,
+        headers,
+        timeout: 15000,
+        signal
+      });
+
+      updateCurrentDomainFromUrl(res.url);
 
       const html = typeof res.data === 'string' ? res.data : JSON.stringify(res.data || {});
 
