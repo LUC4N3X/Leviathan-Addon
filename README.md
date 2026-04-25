@@ -16,7 +16,7 @@
 <br>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Node.js-v18_LTS-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" />
+  <img src="https://img.shields.io/badge/Node.js-20.19--24.x-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" />
   <img src="https://img.shields.io/badge/Architecture-Hypermode-7c3aed?style=for-the-badge&logo=dependabot&logoColor=white" />
   <img src="https://img.shields.io/badge/Status-Operational-00eaff?style=for-the-badge&logo=githubactions&logoColor=081018" />
 </p>
