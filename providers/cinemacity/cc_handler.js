@@ -22,8 +22,8 @@ const SESSION_COOKIE = Buffer.from(
     'ZGxlX3VzZXJfaWQ9MzI3Mjk7IGRsZV9wYXNzd29yZD04OTQxNzFjNmE4ZGFiMThlZTU5NGQ1YzY1MjAwOWEzNTs=',
     'base64'
 ).toString('utf8');
-const FETCH_TIMEOUT = 14000;
-const GOT_TIMEOUT = 16000;
+const FETCH_TIMEOUT = 4500;
+const GOT_TIMEOUT = 2500;
 const MAX_LISTING_PAGES = 8;
 const MAX_LISTING_CANDIDATES_PER_PAGE = 24;
 const MAPPING_API_BASE = 'https://anime.questoleviatanormio.dpdns.org';
@@ -315,16 +315,13 @@ async function fetchHtmlWithAxios(url, extraHeaders = {}) {
  * Throws only if all attempts fail.
  */
 async function fetchHtml(url, extraHeaders = {}) {
-    for (let attempt = 0; attempt < 3; attempt++) {
-        const body = await fetchHtmlWithGot(url, extraHeaders, attempt);
-        if (body) return body;
-        if (attempt < 2) await sleep(400 + attempt * 300);
-    }
+    const gotBody = await fetchHtmlWithGot(url, extraHeaders, 0);
+    if (gotBody) return gotBody;
 
     const axiosBody = await fetchHtmlWithAxios(url, extraHeaders);
     if (axiosBody) return axiosBody;
 
-    throw new Error(`HTTP fetch failed for ${url} — all bypass strategies exhausted`);
+    throw new Error(`HTTP fetch failed for ${url} — fast strategies exhausted`);
 }
 
 async function fetchJson(url, options = {}) {
@@ -503,6 +500,25 @@ function pickHighestResolution(resolutions = []) {
     return normalizeQuality(best);
 }
 
+function extractDownloadLanguagesFromPage(html) {
+    const $ = loadHtml(html);
+    const languages = [];
+
+    $('.dar-tr_item').each((_, item) => {
+        const title = decodeHtmlEntities($(item).find('.dar-tr_title').text() || '');
+        const langLine = decodeHtmlEntities($(item).find('li').filter((__, li) => {
+            return /language/i.test($(li).find('span').first().text() || '');
+        }).text() || '');
+
+        const combined = `${title} ${langLine}`;
+        if (/\bItalian\b|\.Italian\.|\bITA\b/i.test(combined)) languages.push('italian');
+        if (/\bEnglish\b|\.English\.|\bENG\b/i.test(combined)) languages.push('english');
+        if (/\bMulti\b|Dual[-\s]?Audio|Multiaudio/i.test(combined)) languages.push('multi');
+    });
+
+    return normalizeLanguageList(languages);
+}
+
 function parseCinemaCityPageMetadata(html, pageUrl = '') {
     const body = String(html || '');
     const $ = loadHtml(body);
@@ -512,6 +528,7 @@ function parseCinemaCityPageMetadata(html, pageUrl = '') {
         || titleFromContentUrl(pageUrl);
     const genres = extractSectionValues(body, 'Genre');
     const audioLanguages = extractSectionValues(body, 'Audio language');
+    const downloadLanguages = extractDownloadLanguagesFromPage(body);
     const subtitleLanguages = extractSectionValues(body, 'Subtitle language');
     const listedResolutions = extractSectionValues(body, 'Resolution')
         .map((v) => normalizeQuality(v))
@@ -537,7 +554,9 @@ function parseCinemaCityPageMetadata(html, pageUrl = '') {
     const imdbId = extractImdbId(body);
     const quality = pickHighestResolution(listedResolutions);
     const qualityTag = listedQualities.find((v) => /web[- ]?dl|webrip|bluray|hdrip/i.test(String(v)));
-    const isMultiAudio = audioLanguages.length > 1 || /multi/i.test(listedQualities.join(' '));
+    const isMultiAudio = audioLanguages.length > 1
+        || downloadLanguages.includes('multi')
+        || /multi|dual[-\s]?audio|multiaudio/i.test(listedQualities.join(' '));
     const isAnime = genres.some((v) => /\banime\b|\banimation\b/i.test(String(v)))
         || getCinemaCitySectionType(pageUrl) === 'anime';
 
@@ -548,6 +567,7 @@ function parseCinemaCityPageMetadata(html, pageUrl = '') {
         tmdbId,
         genres,
         audioLanguages,
+        downloadLanguages,
         subtitleLanguages,
         listedResolutions,
         quality,
@@ -584,19 +604,194 @@ async function fetchCinemaCityPageMetadata(pageUrl) {
     });
 }
 
+const LANGUAGE_ALIASES = {
+    italian: ['italian', 'ita', 'it', 'italiano'],
+    english: ['english', 'eng', 'en', 'inglese'],
+    japanese: ['japanese', 'jpn', 'ja', 'giapponese'],
+    multi: ['multi', 'multiaudio', 'multi audio', 'dual audio', 'dual-audio']
+};
+
+function normalizeLanguageToken(value) {
+    const raw = decodeHtmlEntities(String(value || ''))
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/\([^)]*\)/g, ' ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!raw) return '';
+
+    const tokens = raw.split(' ').filter(Boolean);
+    const compact = raw.replace(/\s+/g, '');
+
+    for (const [canonical, aliases] of Object.entries(LANGUAGE_ALIASES)) {
+        if (aliases.some((alias) => {
+            const cleanAlias = String(alias || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+            if (!cleanAlias) return false;
+            const aliasCompact = cleanAlias.replace(/\s+/g, '');
+            if (raw === cleanAlias || compact === aliasCompact) return true;
+            if (cleanAlias.length <= 3) return tokens.includes(cleanAlias);
+            return tokens.includes(cleanAlias) || compact.includes(aliasCompact);
+        })) {
+            return canonical;
+        }
+    }
+
+    return raw;
+}
+
+function normalizeLanguageList(values = []) {
+    return uniqueStrings(
+        (Array.isArray(values) ? values : [values])
+            .flatMap((value) => String(value || '').split(/[,;/|]+/g))
+            .map(normalizeLanguageToken)
+            .filter(Boolean)
+    );
+}
+
+function getWantedLanguage(config = {}) {
+    const raw = String(
+        config?.filters?.language
+        || config?.language
+        || config?.preferredLanguage
+        || ''
+    ).trim().toLowerCase();
+
+    if (['ita', 'it', 'italian', 'italiano'].includes(raw)) return 'italian';
+    if (['eng', 'en', 'english', 'inglese'].includes(raw)) return 'english';
+    if (['jpn', 'ja', 'japanese', 'giapponese'].includes(raw)) return 'japanese';
+
+    return raw || null;
+}
+
+function isStrictSingleLanguageMode(config = {}) {
+    const wanted = getWantedLanguage(config);
+    if (!wanted) return false;
+
+    const raw = String(config?.filters?.language || config?.language || '').trim().toLowerCase();
+
+    return (
+        raw === 'ita'
+        || raw === 'it'
+        || raw === 'italian'
+        || raw === 'italiano'
+        || config?.filters?.strictLanguage === true
+        || config?.strictLanguage === true
+    );
+}
+
+function pageHasRequestedAudio(pageMetadata = {}, config = {}) {
+    const wanted = getWantedLanguage(config);
+    if (!wanted) return true;
+
+    const strict = isStrictSingleLanguageMode(config);
+    if (!strict) return true;
+
+    const pageAudio = normalizeLanguageList(pageMetadata.audioLanguages || []);
+    const downloadAudio = normalizeLanguageList(pageMetadata.downloadLanguages || []);
+    const qualityTag = normalizeLanguageToken(pageMetadata.qualityTag || '');
+    const pageHasWanted = pageAudio.includes(wanted);
+    const pageHasMulti = pageAudio.includes('multi')
+        || qualityTag === 'multi'
+        || pageMetadata.isMultiAudio === true
+        || /\bmulti\b|dual[-\s]?audio|multiaudio/i.test(String(pageMetadata.qualityTag || ''));
+    const downloadHasWanted = downloadAudio.includes(wanted);
+    const downloadHasMulti = downloadAudio.includes('multi');
+    const pageOnlyEnglish = pageAudio.length === 1 && pageAudio[0] === 'english';
+    const downloadOnlyEnglish = downloadAudio.length > 0 && downloadAudio.every((lang) => lang === 'english');
+
+    if (wanted === 'italian') {
+        if (pageHasWanted) return true;
+        if (pageHasMulti && config?.filters?.allowMultiWhenItalianOnly === true) return true;
+
+        if (pageAudio.length > 0) return false;
+
+        if (downloadHasWanted) return true;
+        if (downloadHasMulti && config?.filters?.allowMultiWhenItalianOnly === true) return true;
+        if (downloadOnlyEnglish) return false;
+
+        return false;
+    }
+
+    if (pageHasWanted || downloadHasWanted) return true;
+    if (pageHasMulti || downloadHasMulti) return true;
+    if (pageOnlyEnglish && wanted !== 'english') return false;
+
+    return pageAudio.length === 0 && downloadAudio.length === 0;
+}
+
+function buildLanguageRejectReason(pageMetadata = {}, config = {}) {
+    const wanted = getWantedLanguage(config) || 'unknown';
+    const foundPage = normalizeLanguageList(pageMetadata.audioLanguages || []);
+    const foundDownload = normalizeLanguageList(pageMetadata.downloadLanguages || []);
+    return `[CinemaCity] Skip lingua: richiesta=${wanted}, pagina=${foundPage.join(',') || 'unknown'}, download=${foundDownload.join(',') || 'unknown'}, titolo=${pageMetadata.title || 'unknown'}`;
+}
+
+function streamUrlHasForbiddenLanguage(streamUrl = '', config = {}) {
+    const wanted = getWantedLanguage(config);
+    if (!wanted || !isStrictSingleLanguageMode(config)) return false;
+
+    const text = decodeURIComponent(String(streamUrl || '')).replace(/[._-]+/g, ' ');
+    const hasItalian = /(?:^|[^a-z0-9])(ita|it|italian|italiano)(?:[^a-z0-9]|$)/i.test(text);
+    const hasEnglish = /(?:^|[^a-z0-9])(eng|en|english|inglese)(?:[^a-z0-9]|$)/i.test(text);
+    const hasMulti = /(?:^|[^a-z0-9])(multi|multiaudio|dual audio|dual)(?:[^a-z0-9]|$)/i.test(text);
+
+    if (wanted === 'italian') {
+        return hasEnglish && !hasItalian && !hasMulti;
+    }
+
+    const normalized = normalizeLanguageToken(text);
+    return hasEnglish && !normalized.includes(wanted);
+}
+
 function buildCinemaCityLanguageLabel(pageMetadata = {}, config = {}) {
-    const languages = Array.isArray(pageMetadata?.audioLanguages)
-        ? pageMetadata.audioLanguages.map((v) => String(v).trim().toLowerCase()).filter(Boolean)
-        : [];
-    const wantsItalian = String(config?.filters?.language || '').trim().toLowerCase() === 'ita';
-    const hasItalian = languages.includes('italian');
-    const hasEnglish = languages.includes('english');
-    if (hasItalian && pageMetadata?.isMultiAudio) return '🌍 MULTI';
+    const languages = normalizeLanguageList(pageMetadata?.audioLanguages || []);
+    const downloadLanguages = normalizeLanguageList(pageMetadata?.downloadLanguages || []);
+    const wantsItalian = getWantedLanguage(config) === 'italian';
+
+    const hasItalian = languages.includes('italian') || downloadLanguages.includes('italian');
+    const hasEnglish = languages.includes('english') || downloadLanguages.includes('english');
+    const hasMulti = languages.includes('multi') || downloadLanguages.includes('multi') || pageMetadata?.isMultiAudio === true;
+
+    if (hasItalian && hasMulti) return '🇮🇹 ITA+MULTI';
     if (hasItalian) return '🇮🇹 ITA';
-    if (wantsItalian && pageMetadata?.isMultiAudio) return '🌍 MULTI';
-    if (hasEnglish && languages.length === 1) return '🇬🇧 ENG';
-    if (pageMetadata?.isMultiAudio || languages.length > 1) return '🌍 MULTI';
+
+    if (wantsItalian && hasMulti && config?.filters?.allowMultiWhenItalianOnly === true) {
+        return '🌍 MULTI';
+    }
+
+    if (hasEnglish && languages.length <= 1 && downloadLanguages.length <= 1) return '🇬🇧 ENG';
+    if (hasMulti || languages.length > 1 || downloadLanguages.length > 1) return '🌍 MULTI';
+
     return '🌐 WEB';
+}
+
+function hardFilterStreamsByLanguage(streams = [], config = {}) {
+    const wanted = getWantedLanguage(config);
+    if (!wanted || !isStrictSingleLanguageMode(config)) return streams;
+
+    return streams.filter((stream) => {
+        const text = [
+            stream.name,
+            stream.title,
+            stream.description,
+            stream.behaviorHints?.filename,
+            stream.filename,
+            stream.url
+        ].filter(Boolean).join(' ');
+
+        if (wanted === 'italian') {
+            if (/(?:^|[^a-z0-9])(ita|it|italian|italiano)(?:[^a-z0-9]|$)/i.test(text)) return true;
+            if (/(?:^|[^a-z0-9])(multi|multiaudio|dual[-\s]?audio)(?:[^a-z0-9]|$)/i.test(text)
+                && config?.filters?.allowMultiWhenItalianOnly === true) return true;
+            if (/(?:^|[^a-z0-9])(eng|en|english|inglese)(?:[^a-z0-9]|$)/i.test(text)) return false;
+            return false;
+        }
+
+        return normalizeLanguageToken(text).includes(wanted);
+    });
 }
 
 function collectMetaTitles(meta = {}) {
@@ -868,6 +1063,9 @@ async function pickBestCandidate(candidates, expectedTitles, { requestedImdbId =
     if (scoredCandidates.length === 0) return null;
 
     const normalizedRequestedImdbId = extractImdbId(requestedImdbId);
+    if (arguments[2]?.fastMode === true && scoredCandidates[0]?.score >= 80) {
+        return scoredCandidates[0];
+    }
     if (normalizedRequestedImdbId) {
         const mismatchedUrls = new Set();
         for (const candidate of scoredCandidates.slice(0, 6)) {
@@ -906,7 +1104,7 @@ async function pickBestCandidate(candidates, expectedTitles, { requestedImdbId =
 }
 
 async function searchByTitleQueries(queryTitles, providerType, expectedTitles, requestedImdbId, expectedYear) {
-    const queries = buildSearchQueryVariants(queryTitles).slice(0, 6);
+    const queries = buildSearchQueryVariants(queryTitles).slice(0, providerType === 'anime' ? 6 : 3);
     if (queries.length === 0) return null;
 
     const collected = [];
@@ -930,7 +1128,7 @@ async function searchByTitleQueries(queryTitles, providerType, expectedTitles, r
         } catch (_) {}
     }
 
-    return pickBestCandidate(collected, expectedTitles, { requestedImdbId, expectedYear, providerType });
+    return pickBestCandidate(collected, expectedTitles, { requestedImdbId, expectedYear, providerType, fastMode: true });
 }
 
 async function searchByImdb(imdbId) {
@@ -981,10 +1179,10 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
     const requestedImdbId = extractImdbId(options?.requestedImdbId || id);
     const expectedYear = options?.expectedYear || getExpectedYear(metadata, meta);
 
-    if (providerType === 'anime') {
-        const searched = await searchByTitleQueries(expectedTitles, providerType, expectedTitles, requestedImdbId, expectedYear);
-        if (searched?.url) return searched;
-    }
+    const fastMode = options?.fast !== false;
+    const searched = await searchByTitleQueries(expectedTitles, providerType, expectedTitles, requestedImdbId, expectedYear);
+    if (searched?.url) return searched;
+    if (fastMode) return null;
 
     try {
         const sitemapEntries = await getNewsSitemapEntries();
@@ -994,7 +1192,7 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
             .filter((c) => scoreTitleMatch(c.title, expectedTitles) > 0);
 
         const bestSitemap = await pickBestCandidate(sitemapCandidates, expectedTitles, {
-            requestedImdbId, expectedYear, providerType
+            requestedImdbId, expectedYear, providerType, fastMode
         });
         if (bestSitemap?.url) return bestSitemap;
     } catch (_) {}
@@ -1016,7 +1214,7 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
                 const picked = await pickBestCandidate(
                     candidates.slice(0, MAX_LISTING_CANDIDATES_PER_PAGE),
                     expectedTitles,
-                    { requestedImdbId, expectedYear, providerType }
+                    { requestedImdbId, expectedYear, providerType, fastMode }
                 );
                 if (picked?.score > bestScore) {
                     bestScore = picked.score;
@@ -1135,11 +1333,15 @@ async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
 
     const contextImdbId = candidateIds.map(extractImdbId).find(Boolean) || null;
     const contextTmdbId = candidateIds.map(extractTmdbId).find(Boolean) || null;
-    const contextKitsuId = [
-        extractKitsuId(meta?.kitsu_id),
-        extractKitsuId(meta?.kitsuId),
-        ...candidateIds.map(extractKitsuId)
-    ].find(Boolean) || null;
+    const metaLooksAnime = looksLikeAnimeMeta(meta);
+    const explicitKitsuCandidates = [
+        meta?.kitsu_id,
+        meta?.kitsuId,
+        ...candidateIds.filter((id) => /^kitsu:/i.test(String(id || '').trim()))
+    ];
+    const explicitKitsuId = explicitKitsuCandidates.map(extractKitsuId).find(Boolean) || null;
+    const numericKitsuId = metaLooksAnime ? candidateIds.map(extractKitsuId).find(Boolean) : null;
+    const contextKitsuId = explicitKitsuId || numericKitsuId || null;
     let resolvedTmdbId = contextTmdbId || extractTmdbId(workingId) || null;
     let animeContext = null;
 
@@ -1147,7 +1349,7 @@ async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
         workingId = contextImdbId || contextTmdbId || (contextKitsuId ? `kitsu:${contextKitsuId}` : '');
     }
 
-    const animeLikely = contextKitsuId || looksLikeAnimeMeta(meta) || candidateIds.some((id) => /^kitsu:/i.test(String(id || '')));
+    const animeLikely = Boolean(contextKitsuId || metaLooksAnime || candidateIds.some((id) => /^kitsu:/i.test(String(id || '').trim())));
     if (animeLikely) {
         animeContext = await buildAnimeSearchContext(meta, originalId, finalId, config, season, episode);
         if (animeContext?.seasonNumber) season = animeContext.seasonNumber;
@@ -1408,24 +1610,17 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
                 ...(Array.isArray(resolved.rawTitles) ? resolved.rawTitles : [])
             ]),
             requestedImdbId: resolved.imdbId,
-            expectedYear: resolved.expectedYear
+            expectedYear: resolved.expectedYear,
+            fast: config?.filters?.cinemacityFast === true
         };
 
         let searchResult = null;
-        if (resolved.isAnime && titleFallbackOptions.expectedTitles.length > 0) {
-            searchResult = await searchByTitleFallback(
-                resolved.tmdbId || resolved.imdbId || originalId,
-                resolved.providerType, meta, titleFallbackOptions
-            );
-        }
+        searchResult = await searchByTitleFallback(
+            resolved.tmdbId || resolved.imdbId || originalId,
+            resolved.providerType, meta, titleFallbackOptions
+        );
         if (!searchResult?.url && resolved.imdbId) {
             searchResult = await searchByImdb(resolved.imdbId);
-        }
-        if (!searchResult?.url) {
-            searchResult = await searchByTitleFallback(
-                resolved.tmdbId || resolved.imdbId || originalId,
-                resolved.providerType, meta, titleFallbackOptions
-            );
         }
         if (!searchResult?.url) return [];
 
@@ -1434,6 +1629,19 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
         if (!extracted?.streamUrl) return [];
 
         const pageMetadata = extracted.pageMetadata || {};
+        if (!pageHasRequestedAudio(pageMetadata, config)) {
+            if (config?.debug || process.env.DEBUG_CINEMACITY === '1') {
+                console.warn(buildLanguageRejectReason(pageMetadata, config));
+            }
+            return [];
+        }
+        if (streamUrlHasForbiddenLanguage(extracted.streamUrl, config)) {
+            if (config?.debug || process.env.DEBUG_CINEMACITY === '1') {
+                console.warn('[CinemaCity] Skip stream URL non-ITA strict:', extracted.streamUrl);
+            }
+            return [];
+        }
+
         let quality = normalizeQuality(pageMetadata.quality || '1080p');
         if (/\.m3u8($|\?)/i.test(extracted.streamUrl)) {
             try {
@@ -1496,7 +1704,8 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
             }));
         }
 
-        return dedupeStreamsByUrl(streams).sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality));
+        const filteredStreams = hardFilterStreamsByLanguage(dedupeStreamsByUrl(streams), config);
+        return filteredStreams.sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality));
     } catch (error) {
         console.error('[CinemaCity] Error:', error.message);
         return [];
@@ -1513,6 +1722,15 @@ module.exports = {
         getListingBaseUrls,
         pickStream,
         parseCinemaCityPageMetadata,
-        buildCinemaCityLanguageLabel
+        extractDownloadLanguagesFromPage,
+        buildCinemaCityLanguageLabel,
+        normalizeLanguageToken,
+        normalizeLanguageList,
+        getWantedLanguage,
+        isStrictSingleLanguageMode,
+        pageHasRequestedAudio,
+        buildLanguageRejectReason,
+        streamUrlHasForbiddenLanguage,
+        hardFilterStreamsByLanguage
     }
 };
