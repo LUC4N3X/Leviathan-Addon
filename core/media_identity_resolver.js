@@ -2,10 +2,10 @@ const axios = require("axios");
 const http = require("http");
 const https = require("https");
 const dbRepository = require("./storage/db_repository");
+const tmdbHelper = require("./utils/tmdb_helper");
 
 const CONFIG = {
-    DEFAULT_TMDB_KEY: "4b9dfb8b1c9f1720b5cd1d7efea1d845",
-    TMDB_URL: "https://api.themoviedb.org/3",
+    DEFAULT_TMDB_KEY: tmdbHelper.TMDB_KEY,
     TRAKT_CLIENT_ID: "ad521cf009e68d4304eeb82edf0e5c918055eef47bf38c8d568f6a9d8d6da4d1",
     TRAKT_URL: "https://api.trakt.tv",
     OMDB_KEY: "cbd03c31",
@@ -23,7 +23,6 @@ const CONFIG = {
 const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 32 });
 const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 32 });
 
-const getTmdbKey = (userKey) => typeof userKey === "string" && userKey.trim().length > 5 ? userKey.trim() : CONFIG.DEFAULT_TMDB_KEY;
 const now = () => Date.now();
 const asInt = (value) => {
     if (value === null || value === undefined || value === "") return null;
@@ -446,13 +445,6 @@ const timedProvider = async (name, fn) => {
     }
 };
 
-const tmdbClient = axios.create({
-    baseURL: CONFIG.TMDB_URL,
-    timeout: CONFIG.HTTP_TIMEOUT_MS,
-    httpAgent,
-    httpsAgent
-});
-
 const traktClient = axios.create({
     baseURL: CONFIG.TRAKT_URL,
     timeout: CONFIG.HTTP_TIMEOUT_MS,
@@ -513,12 +505,14 @@ const mapTmdbFindResult = (item, source) => {
 };
 
 const searchTmdbByExternal = async (id, source, userKey = null) => {
-    const apiKey = getTmdbKey(userKey);
-    const { data } = await tmdbClient.get(`/find/${encodeURIComponent(id)}`, { params: { api_key: apiKey, external_source: source } });
+    const data = await tmdbHelper.fetchTmdbJson(`/find/${encodeURIComponent(id)}`, {
+        params: { external_source: source },
+        userKey
+    });
     const candidate =
-        mapTmdbFindResult(data.movie_results && data.movie_results[0], "movie_results") ||
-        mapTmdbFindResult(data.tv_results && data.tv_results[0], "tv_results") ||
-        mapTmdbFindResult(data.tv_episode_results && data.tv_episode_results[0], "tv_episode_results");
+        mapTmdbFindResult(data?.movie_results && data.movie_results[0], "movie_results") ||
+        mapTmdbFindResult(data?.tv_results && data.tv_results[0], "tv_results") ||
+        mapTmdbFindResult(data?.tv_episode_results && data.tv_episode_results[0], "tv_episode_results");
     if (!candidate) return null;
     if (source === "imdb_id") candidate.imdb = String(id).toLowerCase();
     if (source === "tvdb_id") candidate.tvdb = asInt(id);
@@ -526,25 +520,23 @@ const searchTmdbByExternal = async (id, source, userKey = null) => {
 };
 
 const fetchTmdbExternalIds = async (tmdbId, type, userKey = null) => {
-    const apiKey = getTmdbKey(userKey);
     const endpoint = type === "series" ? "tv" : "movie";
-    const { data } = await tmdbClient.get(`/${endpoint}/${tmdbId}/external_ids`, { params: { api_key: apiKey } });
+    const data = await tmdbHelper.fetchTmdbJson(`/${endpoint}/${tmdbId}/external_ids`, { userKey });
     return {
         source: "tmdb_ext",
-        imdb: data.imdb_id || null,
-        tvdb: asInt(data.tvdb_id),
+        imdb: data?.imdb_id || null,
+        tvdb: asInt(data?.tvdb_id),
         type
     };
 };
 
 const fetchTmdbEpisodeExternalIds = async (showTmdbId, season, episode, userKey = null) => {
-    const apiKey = getTmdbKey(userKey);
     const [showRes, episodeRes] = await Promise.allSettled([
-        tmdbClient.get(`/tv/${showTmdbId}/external_ids`, { params: { api_key: apiKey } }),
-        tmdbClient.get(`/tv/${showTmdbId}/season/${season}/episode/${episode}/external_ids`, { params: { api_key: apiKey } })
+        tmdbHelper.fetchTmdbJson(`/tv/${showTmdbId}/external_ids`, { userKey }),
+        tmdbHelper.fetchTmdbJson(`/tv/${showTmdbId}/season/${season}/episode/${episode}/external_ids`, { userKey })
     ]);
-    const showData = showRes.status === "fulfilled" ? showRes.value.data : null;
-    const episodeData = episodeRes.status === "fulfilled" ? episodeRes.value.data : null;
+    const showData = showRes.status === "fulfilled" ? showRes.value : null;
+    const episodeData = episodeRes.status === "fulfilled" ? episodeRes.value : null;
     if (!showData && !episodeData) return null;
     return {
         source: "tmdb_ext",
@@ -559,6 +551,7 @@ const fetchTmdbEpisodeExternalIds = async (showTmdbId, season, episode, userKey 
         tvdb: episodeData ? asInt(episodeData.tvdb_id) : null
     };
 };
+
 
 const getTmdbExternalIdsSmart = async (tmdbId, typeHint = null, userKey = null, season = null, episode = null) => {
     const normalizedType = normalizeType(typeHint);
@@ -766,11 +759,12 @@ async function getTmdbAltTitles(tmdbId, type, userKey = null) {
         return row.titles;
     }
 
-    const apiKey = getTmdbKey(userKey);
     const endpoint = normalizedType === "series" ? "tv" : "movie";
     const payload = await timedProvider("tmdb_alt_titles", async () => {
-        const { data } = await tmdbClient.get(`/${endpoint}/${cleanTmdb}`, {
-            params: { api_key: apiKey, append_to_response: "alternative_titles,translations" }
+        const data = await tmdbHelper.fetchTmdbJson(`/${endpoint}/${cleanTmdb}`, {
+            params: { append_to_response: "alternative_titles,translations" },
+            userKey,
+            cacheTtlMs: CONFIG.ALT_TITLES_TTL_MS
         });
         const set = new Set();
         const translations = data.translations && Array.isArray(data.translations.translations) ? data.translations.translations : [];

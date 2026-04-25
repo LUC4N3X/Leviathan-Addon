@@ -13,6 +13,7 @@ const P2P = require("./handlers/p2p_handler");
 const { generateSmartQueries, smartMatch } = require("./media_intelligence");
 const { rankAndFilterResults } = require("./lib/result_ranker");
 const { tmdbToImdb, imdbToTmdb, getTmdbAltTitles } = require("./media_identity_resolver");
+const tmdbHelper = require("./utils/tmdb_helper");
 const kitsuHandler = require("./handlers/kitsu_handler");
 const RD = require("../debrid/realdebrid");
 const TB = require("../debrid/torbox");
@@ -1386,19 +1387,33 @@ function resolvePackNamesInBackground(meta, results, config) {
 
 async function fetchTmdbMeta(tmdbId, type, userApiKey) {
     if (!tmdbId) return null;
-    const apiKey = (userApiKey && userApiKey.length > 1) ? userApiKey : (process.env.TMDB_API_KEY || "4b9dfb8b1c9f1720b5cd1d7efea1d845");
-    const url = `https://api.themoviedb.org/3/${type === 'series' || type === 'tv' ? 'tv' : 'movie'}/${tmdbId}?api_key=${apiKey}&language=it-IT`;
-    try { const { data } = await axios.get(url, { timeout: CONFIG.TIMEOUTS.TMDB }); return data; }
-    catch (e) { logger.warn(`TMDB Meta Fetch Error for ${tmdbId}: ${e.message}`); return null; }
+    const endpoint = type === 'series' || type === 'tv' ? 'tv' : 'movie';
+    try {
+        return await tmdbHelper.fetchTmdbJson(`/${endpoint}/${tmdbId}`, {
+            params: { language: 'it-IT' },
+            userKey: userApiKey,
+            timeoutMs: CONFIG.TIMEOUTS.TMDB
+        });
+    } catch (e) {
+        logger.warn(`TMDB Meta Fetch Error for ${tmdbId}: ${e.message}`);
+        return null;
+    }
 }
 
 async function fetchTmdbEpisodeMeta(tmdbId, season, episode, userApiKey) {
     if (!tmdbId || !(season > 0) || !(episode > 0)) return null;
-    const apiKey = (userApiKey && userApiKey.length > 1) ? userApiKey : (process.env.TMDB_API_KEY || "4b9dfb8b1c9f1720b5cd1d7efea1d845");
-    const url = `https://api.themoviedb.org/3/tv/${tmdbId}/season/${season}/episode/${episode}?api_key=${apiKey}&language=it-IT`;
-    try { const { data } = await axios.get(url, { timeout: CONFIG.TIMEOUTS.TMDB }); return data; }
-    catch (e) { logger.warn(`TMDB Episode Meta Fetch Error for ${tmdbId} S${season}E${episode}: ${e.message}`); return null; }
+    try {
+        return await tmdbHelper.fetchTmdbJson(`/tv/${tmdbId}/season/${season}/episode/${episode}`, {
+            params: { language: 'it-IT' },
+            userKey: userApiKey,
+            timeoutMs: CONFIG.TIMEOUTS.TMDB
+        });
+    } catch (e) {
+        logger.warn(`TMDB Episode Meta Fetch Error for ${tmdbId} S${season}E${episode}: ${e.message}`);
+        return null;
+    }
 }
+
 
 async function getMetadata(id, type, config = {}) {
   const userTmdbKey = String(config?.tmdb || '');
