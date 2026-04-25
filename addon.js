@@ -13,13 +13,23 @@ installConsoleBridge(logger);
 const LOCAL_NODE_ID = String(process.env.LEVI_NODE_ID || randomUUID());
 process.env.LEVI_NODE_ID = LOCAL_NODE_ID;
 
+function clampInt(value, fallback, min, max) {
+    const parsed = parseInt(value, 10);
+    const safe = Number.isFinite(parsed) ? parsed : fallback;
+    return Math.max(min, Math.min(max, safe));
+}
+
 function getAutoWorkerCap(cpuCount) {
     const raw = String(process.env.CLUSTER_WORKERS_AUTO_MAX || '').trim().toLowerCase();
-    if (!raw || raw === 'cpu' || raw === 'cpus' || raw === 'max') return Math.max(1, cpuCount || 1);
-    if (raw === 'none' || raw === 'off' || raw === 'unlimited') return Math.max(1, cpuCount || 1);
-    const parsed = parseInt(raw, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) return Math.max(1, cpuCount || 1);
-    return Math.max(1, Math.min(parsed, cpuCount || parsed));
+    const hardCap = raw && !['cpu', 'cpus', 'max', 'none', 'off', 'unlimited'].includes(raw)
+        ? clampInt(raw, cpuCount, 1, 128)
+        : 128;
+    const totalMemoryMb = Math.max(256, Math.floor(os.totalmem() / 1024 / 1024));
+    const memoryPerWorkerMb = clampInt(process.env.CLUSTER_MEMORY_PER_WORKER_MB || '384', 384, 128, 4096);
+    const memoryCap = Math.max(1, Math.floor((totalMemoryMb * 0.70) / memoryPerWorkerMb));
+    const ioMultiplier = Math.max(1, Math.min(4, Number(process.env.CLUSTER_WORKER_IO_MULTIPLIER || '1') || 1));
+    const cpuCap = Math.max(1, Math.ceil((cpuCount || 1) * ioMultiplier));
+    return Math.max(1, Math.min(cpuCap, memoryCap, hardCap));
 }
 
 function getClusterWorkerCount() {
@@ -28,7 +38,8 @@ function getClusterWorkerCount() {
     if (!raw) return 1;
     if (raw === 'auto') return getAutoWorkerCap(cpuCount);
     const parsed = parseInt(raw, 10);
-    return Number.isFinite(parsed) && parsed > 1 ? Math.min(parsed, cpuCount) : 1;
+    const maxManual = clampInt(process.env.CLUSTER_WORKERS_MANUAL_MAX || '128', 128, 1, 128);
+    return Number.isFinite(parsed) && parsed > 1 ? Math.min(parsed, getAutoWorkerCap(cpuCount), maxManual) : 1;
 }
 
 function shouldUseCluster() {
@@ -46,6 +57,7 @@ function getClusterRestartPolicy() {
 
 if (cluster.isPrimary && shouldUseCluster()) {
     const workerCount = getClusterWorkerCount();
+    process.env.UV_THREADPOOL_SIZE = String(clampInt(process.env.UV_THREADPOOL_SIZE || String(Math.max(32, Math.min((os.cpus().length || 1) * 8, 128))), 32, 4, 128));
     const restartPolicy = getClusterRestartPolicy();
     const slotState = new Map();
     const MAX_CLUSTER_RESTART_HISTORY = Math.max(4, parseInt(process.env.CLUSTER_RESTART_HISTORY_CAP || '16', 10) || 16);
@@ -53,7 +65,7 @@ if (cluster.isPrimary && shouldUseCluster()) {
     let primaryForceTimer = null;
 
     runtimeState.setClusterRole('primary', { enabled: true, leader: true, slot: -1 });
-    console.log(`[CLUSTER] Primary ${process.pid} avvia ${workerCount} worker HTTP`);
+    console.log(`[CLUSTER] Primary ${process.pid} avvia ${workerCount} worker HTTP | UV_THREADPOOL_SIZE=${process.env.UV_THREADPOOL_SIZE}`);
 
     function getSlotStats(slot) {
         const key = Number(slot);
