@@ -1,6 +1,7 @@
 'use strict';
 
 const axios = require('axios');
+const cheerio = require('cheerio');
 const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const kitsuProvider = require('../animeworld/kitsu_provider');
@@ -13,8 +14,6 @@ const {
     probePlaylistQuality,
     qualityRank
 } = require('../extractors/common');
-
-// ─── Constants ────────────────────────────────────────────────────────────────
 
 const BASE_URL = Buffer.from('aHR0cHM6Ly9jaW5lbWFjaXR5LmNj', 'base64').toString('utf8');
 const SESSION_COOKIE = Buffer.from(
@@ -29,9 +28,6 @@ const TMDB_API_KEY = String(process.env.TMDB_API_KEY || '4b9dfb8b1c9f1720b5cd1d7
 const MAPPING_API_BASE = 'https://animemapping.realbestia.com';
 const NEWS_SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
 const NEWS_SITEMAP_TTL_MS = 30 * 60 * 1000;
-
-// ─── Browser Fingerprint Pool ──────────────────────────────────────────────────
-// Realistic Chrome / Firefox / Edge profiles for TLS + UA rotation
 
 const FINGERPRINT_POOL = [
     {
@@ -71,7 +67,6 @@ const FINGERPRINT_POOL = [
     }
 ];
 
-// Round-robin index per request diversification
 let fingerprintIndex = Math.floor(Math.random() * FINGERPRINT_POOL.length);
 
 function getNextFingerprint() {
@@ -110,8 +105,6 @@ function buildBrowserHeaders(fp, extra = {}) {
     return Object.assign(headers, extra);
 }
 
-// ─── Got-Scraping Module Cache ─────────────────────────────────────────────────
-
 let gotScrapingInstance = null;
 let gotScrapingLoadError = null;
 
@@ -128,8 +121,6 @@ async function getGotScraping() {
     }
 }
 
-// ─── Axios Fallback Client ─────────────────────────────────────────────────────
-
 const httpClient = axios.create({
     timeout: FETCH_TIMEOUT,
     httpAgent: HTTP_AGENT,
@@ -139,16 +130,99 @@ const httpClient = axios.create({
     validateStatus: () => true
 });
 
-// ─── Cache State ───────────────────────────────────────────────────────────────
-
 const newsSitemapCache = {
     fetchedAt: 0,
     entries: null,
     pending: null
 };
-const pageMetadataCache = new Map();
 
-// ─── Core Fetch Layer ──────────────────────────────────────────────────────────
+class TtlLruCache {
+    constructor({ ttlMs = 600000, max = 500 } = {}) {
+        this.ttlMs = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : 600000;
+        this.max = Number.isFinite(max) && max > 0 ? Math.floor(max) : 500;
+        this.map = new Map();
+    }
+
+    get(key) {
+        if (!key) return null;
+        const item = this.map.get(key);
+        if (!item) return null;
+        if (Date.now() > item.expiresAt) {
+            this.map.delete(key);
+            return null;
+        }
+        this.map.delete(key);
+        this.map.set(key, item);
+        return item.value;
+    }
+
+    set(key, value) {
+        if (!key) return;
+        if (this.map.has(key)) this.map.delete(key);
+        this.map.set(key, {
+            value,
+            expiresAt: Date.now() + this.ttlMs
+        });
+        while (this.map.size > this.max) {
+            const oldest = this.map.keys().next().value;
+            if (oldest === undefined) break;
+            this.map.delete(oldest);
+        }
+    }
+
+    delete(key) {
+        if (!key) return;
+        this.map.delete(key);
+    }
+
+    clear() {
+        this.map.clear();
+    }
+
+    get size() {
+        return this.map.size;
+    }
+}
+
+const pendingTasks = new Map();
+
+async function singleFlight(key, fn) {
+    if (!key) return fn();
+    if (pendingTasks.has(key)) return pendingTasks.get(key);
+    const task = Promise.resolve()
+        .then(fn)
+        .finally(() => pendingTasks.delete(key));
+    pendingTasks.set(key, task);
+    return task;
+}
+
+function loadHtml(html) {
+    return cheerio.load(String(html || ''), { decodeEntities: false });
+}
+
+function normalizeSectionLabel(value) {
+    return decodeHtmlEntities(value)
+        .replace(/\s+/g, ' ')
+        .replace(/:$/g, '')
+        .trim()
+        .toLowerCase();
+}
+
+function cleanSectionValue(value) {
+    return decodeHtmlEntities(value)
+        .replace(/\s+/g, ' ')
+        .replace(/^[,;:|\-]+|[,;:|\-]+$/g, '')
+        .trim();
+}
+
+function attrSelectorValue(value) {
+    return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+const pageMetadataCache = new TtlLruCache({
+    ttlMs: 60 * 60 * 1000,
+    max: 1000
+});
 
 function responseText(data) {
     if (typeof data === 'string') return data;
@@ -174,7 +248,6 @@ async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0) {
     const gotScraping = await getGotScraping();
     if (!gotScraping) return null;
 
-    // Use a different fingerprint on each retry attempt
     const fp = FINGERPRINT_POOL[(fingerprintIndex + attempt) % FINGERPRINT_POOL.length];
     const mergedHeaders = buildBrowserHeaders(fp, extraHeaders);
 
@@ -188,7 +261,7 @@ async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0) {
                 devices: ['desktop'],
                 locales: ['it-IT', 'en-US']
             },
-            retry: { limit: 0 }, // we manage retry ourselves
+            retry: { limit: 0 },
             timeout: { request: GOT_TIMEOUT },
             followRedirect: true,
             responseType: 'text',
@@ -199,7 +272,7 @@ async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0) {
         const body = response?.body || '';
 
         if (isCloudflareChallenge(body, status)) {
-            return null; // signal to retry with different fp
+            return null;
         }
 
         if (status >= 200 && status < 400) return body;
@@ -241,15 +314,12 @@ async function fetchHtmlWithAxios(url, extraHeaders = {}) {
  * Throws only if all attempts fail.
  */
 async function fetchHtml(url, extraHeaders = {}) {
-    // Try got-scraping up to 3 times with rotating fingerprints
     for (let attempt = 0; attempt < 3; attempt++) {
         const body = await fetchHtmlWithGot(url, extraHeaders, attempt);
         if (body) return body;
-        // Short delay between attempts to avoid rate limiting
         if (attempt < 2) await sleep(400 + attempt * 300);
     }
 
-    // Axios fallback
     const axiosBody = await fetchHtmlWithAxios(url, extraHeaders);
     if (axiosBody) return axiosBody;
 
@@ -275,8 +345,6 @@ async function fetchJson(url, options = {}) {
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
-// ─── HTML Utilities ────────────────────────────────────────────────────────────
 
 function decodeHtmlEntities(value) {
     return he.decode(String(value || ''))
@@ -383,31 +451,47 @@ function extractYear(value) {
 }
 
 function extractSectionValues(html, sectionLabel) {
-    const escaped = String(sectionLabel || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = String(html || '').match(
-        new RegExp(`<li><span>${escaped}<\\/span><span>([\\s\\S]*?)<\\/span><\\/li>`, 'i')
-    );
-    if (!match?.[1]) return [];
-    return [...match[1].matchAll(/>([^<]+)</g)]
-        .map((e) => decodeHtmlEntities(e[1]).trim())
-        .map((v) => v.replace(/^[,;:|\-]+|[,;:|\-]+$/g, '').trim())
-        .filter((v) => Boolean(v) && !/^[,;:|\-]+$/.test(v));
+    const $ = loadHtml(html);
+    const wanted = normalizeSectionLabel(sectionLabel);
+    const values = [];
+
+    $('li').each((_, li) => {
+        const spans = $(li).children('span');
+        if (spans.length < 2) return;
+        const label = normalizeSectionLabel($(spans[0]).text());
+        if (label !== wanted) return;
+
+        const valueNode = $(spans[1]);
+        const linked = [];
+        valueNode.find('a').each((__, a) => {
+            const value = cleanSectionValue($(a).text());
+            if (value) linked.push(value);
+        });
+
+        const rawText = cleanSectionValue(valueNode.text());
+        const sourceValues = linked.length > 0 ? linked : rawText.split(/[,;|]/g);
+        for (const value of sourceValues) {
+            const cleaned = cleanSectionValue(value);
+            if (cleaned) values.push(cleaned);
+        }
+    });
+
+    return uniqueStrings(values);
 }
 
 function extractMetaContent(html, property) {
-    const escaped = String(property || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = String(html || '').match(
-        new RegExp(`<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']+)["']`, 'i')
-    );
-    return match?.[1] ? decodeHtmlEntities(match[1]).trim() : '';
+    const $ = loadHtml(html);
+    const key = attrSelectorValue(property);
+    const value = $(`meta[property="${key}"]`).first().attr('content')
+        || $(`meta[name="${key}"]`).first().attr('content')
+        || '';
+    return decodeHtmlEntities(value).trim();
 }
 
 function extractHeadingTitle(html) {
-    const h1 = String(html || '').match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
-    if (h1?.[1]) {
-        return decodeHtmlEntities(String(h1[1]).replace(/<[^>]+>/g, ' ').trim());
-    }
-    return '';
+    const $ = loadHtml(html);
+    const value = $('h1').first().text();
+    return decodeHtmlEntities(value).replace(/\s+/g, ' ').trim();
 }
 
 function pickHighestResolution(resolutions = []) {
@@ -418,10 +502,9 @@ function pickHighestResolution(resolutions = []) {
     return normalizeQuality(best);
 }
 
-// ─── Page Metadata ─────────────────────────────────────────────────────────────
-
 function parseCinemaCityPageMetadata(html, pageUrl = '') {
     const body = String(html || '');
+    const $ = loadHtml(body);
     const pageTitle = extractHeadingTitle(body)
         || extractMetaContent(body, 'og:title')
         || extractMetaContent(body, 'twitter:title')
@@ -429,16 +512,28 @@ function parseCinemaCityPageMetadata(html, pageUrl = '') {
     const genres = extractSectionValues(body, 'Genre');
     const audioLanguages = extractSectionValues(body, 'Audio language');
     const subtitleLanguages = extractSectionValues(body, 'Subtitle language');
-    const listedResolutions = [...body.matchAll(/<li><span>Resolution:<\/span><span>([^<]+)<\/span><\/li>/gi)]
-        .map((m) => normalizeQuality(m[1]))
+    const listedResolutions = extractSectionValues(body, 'Resolution')
+        .map((v) => normalizeQuality(v))
         .filter((v) => v !== 'Unknown');
+    const uploadedQuality = body.match(/Uploaded\s+([^<\n]+)/i)?.[1] || '';
     const listedQualities = uniqueStrings([
         ...extractSectionValues(body, 'Quality'),
-        ...(body.match(/Uploaded\s+([^<\n]+)/i)?.[1] ? [body.match(/Uploaded\s+([^<\n]+)/i)[1]] : [])
+        uploadedQuality
     ]);
-    const tmdbMatch = body.match(/themoviedb\.org\/(?:movie|tv)\/(\d+)/i);
+
+    let tmdbId = null;
+    $('a[href*="themoviedb.org"], link[href*="themoviedb.org"]').each((_, node) => {
+        if (tmdbId) return;
+        const href = String($(node).attr('href') || '');
+        const match = href.match(/themoviedb\.org\/(?:movie|tv)\/(\d+)/i);
+        if (match?.[1]) tmdbId = extractTmdbId(match[1]);
+    });
+    if (!tmdbId) {
+        const tmdbMatch = body.match(/themoviedb\.org\/(?:movie|tv)\/(\d+)/i);
+        tmdbId = tmdbMatch?.[1] ? extractTmdbId(tmdbMatch[1]) : null;
+    }
+
     const imdbId = extractImdbId(body);
-    const tmdbId = tmdbMatch?.[1] ? extractTmdbId(tmdbMatch[1]) : null;
     const quality = pickHighestResolution(listedResolutions);
     const qualityTag = listedQualities.find((v) => /web[- ]?dl|webrip|bluray|hdrip/i.test(String(v)));
     const isMultiAudio = audioLanguages.length > 1 || /multi/i.test(listedQualities.join(' '));
@@ -464,21 +559,28 @@ function parseCinemaCityPageMetadata(html, pageUrl = '') {
 async function fetchCinemaCityPageMetadata(pageUrl) {
     const normalizedUrl = normalizeRemoteUrl(pageUrl);
     if (!normalizedUrl) return null;
-    if (pageMetadataCache.has(normalizedUrl)) return pageMetadataCache.get(normalizedUrl);
 
-    try {
-        const html = await fetchHtml(normalizedUrl, {
-            'Referer': `${BASE_URL}/`,
-            'Cookie': SESSION_COOKIE,
-            'Sec-Fetch-Site': 'same-origin',
-            'Sec-Fetch-User': '?1'
-        });
-        const metadata = parseCinemaCityPageMetadata(html, normalizedUrl);
-        pageMetadataCache.set(normalizedUrl, metadata);
-        return metadata;
-    } catch (_) {
-        return null;
-    }
+    const cached = pageMetadataCache.get(normalizedUrl);
+    if (cached) return cached;
+
+    return singleFlight(`metadata:${normalizedUrl}`, async () => {
+        const existing = pageMetadataCache.get(normalizedUrl);
+        if (existing) return existing;
+
+        try {
+            const html = await fetchHtml(normalizedUrl, {
+                'Referer': `${BASE_URL}/`,
+                'Cookie': SESSION_COOKIE,
+                'Sec-Fetch-Site': 'same-origin',
+                'Sec-Fetch-User': '?1'
+            });
+            const metadata = parseCinemaCityPageMetadata(html, normalizedUrl);
+            pageMetadataCache.set(normalizedUrl, metadata);
+            return metadata;
+        } catch (_) {
+            return null;
+        }
+    });
 }
 
 function buildCinemaCityLanguageLabel(pageMetadata = {}, config = {}) {
@@ -495,8 +597,6 @@ function buildCinemaCityLanguageLabel(pageMetadata = {}, config = {}) {
     if (pageMetadata?.isMultiAudio || languages.length > 1) return '🌍 MULTI';
     return '🌐 WEB';
 }
-
-// ─── Title / Meta Utilities ────────────────────────────────────────────────────
 
 function collectMetaTitles(meta = {}) {
     return uniqueStrings([
@@ -567,16 +667,17 @@ function buildSearchQueryVariants(titles = []) {
     return out;
 }
 
-// ─── Sitemap ───────────────────────────────────────────────────────────────────
-
 async function getNewsSitemapEntries() {
     const now = Date.now();
     if (Array.isArray(newsSitemapCache.entries) && (now - newsSitemapCache.fetchedAt) < NEWS_SITEMAP_TTL_MS) {
         return newsSitemapCache.entries;
     }
-    if (newsSitemapCache.pending) return newsSitemapCache.pending;
 
-    newsSitemapCache.pending = (async () => {
+    return singleFlight('sitemap:news_pages', async () => {
+        const current = Date.now();
+        if (Array.isArray(newsSitemapCache.entries) && (current - newsSitemapCache.fetchedAt) < NEWS_SITEMAP_TTL_MS) {
+            return newsSitemapCache.entries;
+        }
         const xml = await fetchHtml(NEWS_SITEMAP_URL, {
             'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8',
             'Referer': `${BASE_URL}/`
@@ -585,16 +686,8 @@ async function getNewsSitemapEntries() {
         newsSitemapCache.entries = entries;
         newsSitemapCache.fetchedAt = Date.now();
         return entries;
-    })();
-
-    try {
-        return await newsSitemapCache.pending;
-    } finally {
-        newsSitemapCache.pending = null;
-    }
+    });
 }
-
-// ─── Kitsu / TMDB ID Resolution ───────────────────────────────────────────────
 
 async function getIdsFromKitsu(kitsuId, season, episode, config = {}) {
     if (!kitsuId) return null;
@@ -682,26 +775,25 @@ async function resolveImdbFromTmdb(tmdbId, providerType) {
     }
 }
 
-// ─── Candidate Extraction & Scoring ───────────────────────────────────────────
-
 function extractCandidateLinksFromListing(html, sectionType) {
-    const pathPrefix = sectionType === 'movie'
-        ? 'movies'
-        : (sectionType === 'anime' ? '(?:anime|series|tv-series)' : '(?:tv-series|series|anime)');
-    const regex = new RegExp(
-        `<a[^>]+href=["']((?:https?:\\/\\/cinemacity\\.cc)?\\/${pathPrefix}\\/[^"']+\\.html)["'][^>]*>([\\s\\S]*?)<\\/a>`,
-        'gi'
-    );
+    const $ = loadHtml(html);
     const results = [];
-    let match;
-    while ((match = regex.exec(html)) !== null) {
-        const href = String(match[1] || '').startsWith('/')
-            ? `${BASE_URL}${match[1]}`
-            : String(match[1] || '');
-        const title = decodeHtmlEntities(String(match[2] || '').replace(/<[^>]+>/g, ' ')).trim();
-        if (!href || !title) continue;
-        results.push({ url: href, title });
-    }
+
+    $('a[href]').each((_, anchor) => {
+        const href = String($(anchor).attr('href') || '').trim();
+        if (!href) return;
+        const absoluteUrl = resolveUrl(BASE_URL, href);
+        if (!absoluteUrl || !/\.html(?:$|[?#])/i.test(absoluteUrl)) return;
+        if (!/^https?:\/\/cinemacity\.cc\//i.test(absoluteUrl)) return;
+        if (!isCinemaCityContentUrlForType(absoluteUrl, sectionType)) return;
+
+        const title = decodeHtmlEntities(
+            $(anchor).attr('title') || $(anchor).text() || titleFromContentUrl(absoluteUrl)
+        ).replace(/\s+/g, ' ').trim();
+        if (!title) return;
+        results.push({ url: absoluteUrl, title });
+    });
+
     return Array.from(new Map(results.map((item) => [item.url, item])).values());
 }
 
@@ -742,39 +834,25 @@ function scoreCandidateEntry(candidate, expectedTitles, expectedYear, providerTy
 
 function extractSearchCandidates(html) {
     const body = String(html || '');
-    const resultMatch = body.match(/Found\s+(\d+)\s+responses/i)
-        || body.match(/Trovat[io]\s+(\d+)\s+risultat[io]/i)
-        || body.match(/Query results\s*\d+\s*-\s*(\d+)/i);
+    if (/site search yielded no results|ricerca non ha prodotto risultati/i.test(body)) return [];
 
-    if ((!resultMatch || Number.parseInt(resultMatch[1], 10) === 0)
-        && /site search yielded no results|ricerca non ha prodotto risultati/i.test(body)) {
-        return [];
-    }
-
-    const markerIdx = resultMatch ? body.indexOf(resultMatch[0]) : body.indexOf('id="dle-content"');
-    if (markerIdx === -1) return [];
-
-    const contentEndStrings = ['id="side"', 'class="side"', '<footer', '<aside'];
-    let contentEndIdx = body.length;
-    for (const token of contentEndStrings) {
-        const position = body.indexOf(token, markerIdx);
-        if (position !== -1 && position < contentEndIdx) contentEndIdx = position;
-    }
-
-    const searchArea = body.substring(markerIdx, contentEndIdx);
-    const links = [...searchArea.matchAll(
-        /<a[^>]+href=["']((?:https?:\/\/cinemacity\.cc)?\/(?:movies|anime|series|tv-series)\/\d+-[^"']+\.html)["'][^>]*>([\s\S]*?)<\/a>/gi
-    )];
-
+    const $ = loadHtml(body);
+    const roots = $('#dle-content').length ? $('#dle-content') : $('body');
     const results = [];
-    for (const match of links) {
-        let href = String(match[1] || '');
-        if (!href) continue;
-        if (href.startsWith('/')) href = `${BASE_URL}${href}`;
-        const title = decodeHtmlEntities(String(match[2] || '').replace(/<[^>]*>?/g, ' ').trim());
-        if (!title) continue;
-        results.push({ url: href, title });
-    }
+
+    roots.find('a[href]').each((_, anchor) => {
+        const href = String($(anchor).attr('href') || '').trim();
+        if (!href) return;
+        const absoluteUrl = resolveUrl(BASE_URL, href);
+        if (!absoluteUrl) return;
+        if (!/^https?:\/\/cinemacity\.cc\/(?:movies|anime|series|tv-series)\/\d+-[^?#]+\.html(?:$|[?#])/i.test(absoluteUrl)) return;
+
+        const title = decodeHtmlEntities(
+            $(anchor).attr('title') || $(anchor).text() || titleFromContentUrl(absoluteUrl)
+        ).replace(/\s+/g, ' ').trim();
+        if (!title) return;
+        results.push({ url: absoluteUrl, title });
+    });
 
     return Array.from(new Map(results.map((item) => [item.url, item])).values());
 }
@@ -835,8 +913,6 @@ async function pickBestCandidate(candidates, expectedTitles, { requestedImdbId =
 
     return scoredCandidates[0]?.score >= 80 ? scoredCandidates[0] : null;
 }
-
-// ─── Search Strategies ─────────────────────────────────────────────────────────
 
 async function searchByTitleQueries(queryTitles, providerType, expectedTitles, requestedImdbId, expectedYear) {
     const queries = buildSearchQueryVariants(queryTitles).slice(0, 6);
@@ -965,8 +1041,6 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
     return bestScore >= 80 ? bestResult : null;
 }
 
-// ─── Anime Context ─────────────────────────────────────────────────────────────
-
 function getIdCandidates(meta = {}, originalId, finalId) {
     return [
         originalId, finalId, meta?.requestedId, meta?.originalId, meta?.id,
@@ -1024,8 +1098,6 @@ async function buildAnimeSearchContext(meta = {}, originalId, finalId) {
         isMovie: meta?.isSeries === false
     };
 }
-
-// ─── Search State Resolution ───────────────────────────────────────────────────
 
 async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
     const isSeries = Boolean(meta?.isSeries);
@@ -1100,8 +1172,6 @@ async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
         providerType
     };
 }
-
-// ─── Stream Parsing ────────────────────────────────────────────────────────────
 
 function parseCompositeSeriesId(rawId, season, episode) {
     const parsed = {
@@ -1199,13 +1269,12 @@ function getOrigin(url) {
 }
 
 function extractPlayerReferer(html, pageUrl) {
-    const iframeMatch = String(html || '').match(/<iframe[^>]+src=["']([^"']*player\.php[^"']*)["']/i);
-    if (!iframeMatch || !iframeMatch[1]) return pageUrl;
-    return resolveUrl(pageUrl, iframeMatch[1]);
+    const $ = loadHtml(html);
+    const src = $('iframe[src*="player.php"]').first().attr('src') || '';
+    return src ? resolveUrl(pageUrl, src) : pageUrl;
 }
 
 async function parseCinemaCityStream(pageUrl, meta = {}) {
-    // Use got-scraping for the actual content page — most likely to hit CF
     const html = await fetchHtml(pageUrl, {
         'Referer': `${BASE_URL}/`,
         'Cookie': SESSION_COOKIE,
@@ -1253,7 +1322,6 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
     );
     if (!streamUrl) return null;
 
-    // Use the fingerprint matching the got-scraping session for stream headers
     const activeFp = FINGERPRINT_POOL[fingerprintIndex % FINGERPRINT_POOL.length];
     return {
         streamUrl,
@@ -1268,8 +1336,6 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
         }
     };
 }
-
-// ─── Display / Proxy Helpers ───────────────────────────────────────────────────
 
 function buildDisplayTitle(meta = {}, fallbackTitle, season, episode) {
     const baseTitle = decodeHtmlEntities(
@@ -1300,8 +1366,6 @@ function buildCinemaCityProxyUrl(config = {}, streamUrl, headers = {}, isHls = f
     }
     return `${mfpBase}/proxy/stream?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${refererQuery}${originQuery}`;
 }
-
-// ─── Main Entry Point ──────────────────────────────────────────────────────────
 
 async function searchCinemaCity(originalId, finalId, meta, config = {}) {
     try {
@@ -1336,7 +1400,7 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
         if (!searchResult?.url) return [];
 
         const enrichedMeta = { ...meta, season: resolved.season, episode: resolved.episode };
-        const extracted = await parseCinemaCityStream(searchResult.url, enrichedMeta);
+        const extracted = await singleFlight(`stream:${normalizeRemoteUrl(searchResult.url)}:${resolved.season}:${resolved.episode}`, () => parseCinemaCityStream(searchResult.url, enrichedMeta));
         if (!extracted?.streamUrl) return [];
 
         const pageMetadata = extracted.pageMetadata || {};
@@ -1408,8 +1472,6 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
         return [];
     }
 }
-
-// ─── Exports ───────────────────────────────────────────────────────────────────
 
 module.exports = {
     searchCinemaCity,
