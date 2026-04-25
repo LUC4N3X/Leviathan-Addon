@@ -1,8 +1,18 @@
 const ptt = require('parse-torrent-title');
+const { TinyLruCache } = require('./tiny_lru_cache');
 
-const parsedTitleCache = new Map();
-const normalizedTextCache = new Map();
-const languageInfoCache = new Map();
+const parsedTitleCache = new TinyLruCache({
+    max: Math.max(1000, parseInt(process.env.TEXT_PARSED_TITLE_CACHE_MAX || '5000', 10) || 5000),
+    ttlMs: Math.max(60_000, parseInt(process.env.TEXT_PARSED_TITLE_CACHE_TTL_MS || String(6 * 60 * 60 * 1000), 10) || (6 * 60 * 60 * 1000))
+});
+const normalizedTextCache = new TinyLruCache({
+    max: Math.max(2000, parseInt(process.env.TEXT_NORMALIZED_CACHE_MAX || '12000', 10) || 12000),
+    ttlMs: Math.max(60_000, parseInt(process.env.TEXT_NORMALIZED_CACHE_TTL_MS || String(6 * 60 * 60 * 1000), 10) || (6 * 60 * 60 * 1000))
+});
+const languageInfoCache = new TinyLruCache({
+    max: Math.max(2000, parseInt(process.env.TEXT_LANGUAGE_CACHE_MAX || '12000', 10) || 12000),
+    ttlMs: Math.max(60_000, parseInt(process.env.TEXT_LANGUAGE_CACHE_TTL_MS || String(6 * 60 * 60 * 1000), 10) || (6 * 60 * 60 * 1000))
+});
 
 const REGEX_YEAR = /(19|20)\d{2}/;
 const REGEX_QUALITY_FILTER = {
@@ -14,7 +24,9 @@ const REGEX_QUALITY_FILTER = {
 
 const REGEX_STRONG_ITA = /\b(ITA|ITALIAN|ITALIANO)\b/i;
 const REGEX_CONTEXT_IT = /\b(AUDIO|LINGUA|LANG|VO|AC-?3|AAC|MP3|DDP|DTS|TRUEHD)\W+(IT)\b/i;
-const REGEX_ISOLATED_IT = /(?:^|[_\-.])(IT)(?:$|[_\-.])/;
+const REGEX_ISOLATED_IT = /(?:^|[\s_\-\[\(])(IT)(?:$|[\s_\-\]\)])/i;
+const REGEX_DOMAIN_IT = /(?:https?:\/\/)?(?:www\.)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)*\.it(?:[\/:?#]|$|[\s_\-\]\)])/gi;
+const REGEX_TRACKER_DOMAIN = /\b(?:tracker|announce|torrent|download|ddl|stream|www)\.[a-z0-9.-]+\.it\b/gi;
 const REGEX_MULTI_ITA = /\b(MULTI|DUAL|TRIPLE).*(ITA|ITALIAN)\b/i;
 const REGEX_TRUSTED_GROUPS = /\b(iDN_CreW|CORSARO|MUX|WMS|TRIDIM|SPEEDVIDEO|EAGLE|TRL|MEA|LUX|DNA|LEST|GHIZZO|USAbit|Bric|Dtone|Gaiage|BlackBit|Pantry|Vics|Papeete|Lidri|MirCrew)\b/i;
 const REGEX_FALSE_IT = /\b(10BIT|BIT|WIT|HIT|FIT|KIT|SIT|LIT|PIT)\b/i;
@@ -113,6 +125,13 @@ function detectFirstPatternValue(text, patterns, fallback = '') {
 
 function normalizeReleaseTitle(value) {
     return String(value || '').replace(/[\[\]{}()]/g, ' ').replace(/[._]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function stripFalseItalianDomainTokens(value) {
+    return String(value || '')
+        .replace(REGEX_TRACKER_DOMAIN, ' ')
+        .replace(REGEX_DOMAIN_IT, ' ')
+        .replace(/\b[a-z0-9-]+\.it\b/gi, ' ');
 }
 
 function detectReleaseLanguages(info, text) {
@@ -238,7 +257,8 @@ function parseTitleDetails(filename) {
         const audioCodec = String(info?.audio || '').trim().toUpperCase() || detectFirstPatternValue(normalizedText, AUDIO_CODEC_PATTERNS, '');
         const audioChannels = detectAudioChannels(normalizedText);
         const dynamicRange = detectDynamicRange(normalizedText);
-        const rawLanguages = detectReleaseLanguages(info, normalizedText);
+        const languageScanText = stripFalseItalianDomainTokens(normalizedText);
+        const rawLanguages = detectReleaseLanguages(info, languageScanText);
         const displayLanguages = rawLanguages.map((language) => languageMapping[language.toLowerCase()] || language.substring(0, 3).toUpperCase());
         const quality = detectReleaseQuality(info, normalizedText);
         const flags = detectReleaseFlags(normalizedText);
@@ -354,21 +374,23 @@ function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedI
     if (parsedInfo?.rawLanguages?.length > 0) {
         parsedInfo.rawLanguages.forEach(pushLanguage);
     } else {
-        if (/(🇮🇹|\bita\b|italian|italiano)/i.test(title)) pushLanguage('Italian');
-        if (/(🇬🇧|🇺🇸|\beng\b|english)/i.test(title) && !/(eng|english)[.\s\-_]?sub/i.test(title)) pushLanguage('English');
-        if (/(multi)/i.test(title) && !/(multi)[.\s\-_]?sub/i.test(title)) pushLanguage('Multi');
-        if (/(dual)/i.test(title) && !/(dual)[.\s\-_]?sub/i.test(title)) pushLanguage('Dual Audio');
-        if (/(jpn|japanese)/i.test(title)) pushLanguage('Japanese');
-        if (/(fra|french)/i.test(title)) pushLanguage('French');
-        if (/(ger|german)/i.test(title)) pushLanguage('German');
-        if (/(esp|spanish)/i.test(title)) pushLanguage('Spanish');
+        const languageScanTitle = stripFalseItalianDomainTokens(title);
+        if (/(🇮🇹|\bita\b|italian|italiano)/i.test(languageScanTitle)) pushLanguage('Italian');
+        if (/(🇬🇧|🇺🇸|\beng\b|english)/i.test(languageScanTitle) && !/(eng|english)[.\s\-_]?sub/i.test(languageScanTitle)) pushLanguage('English');
+        if (/(multi)/i.test(languageScanTitle) && !/(multi)[.\s\-_]?sub/i.test(languageScanTitle)) pushLanguage('Multi');
+        if (/(dual)/i.test(languageScanTitle) && !/(dual)[.\s\-_]?sub/i.test(languageScanTitle)) pushLanguage('Dual Audio');
+        if (/(jpn|japanese)/i.test(languageScanTitle)) pushLanguage('Japanese');
+        if (/(fra|french)/i.test(languageScanTitle)) pushLanguage('French');
+        if (/(ger|german)/i.test(languageScanTitle)) pushLanguage('German');
+        if (/(esp|spanish)/i.test(languageScanTitle)) pushLanguage('Spanish');
     }
 
     const subOnly = REGEX_SUB_ONLY.test(title);
-    const explicitIta = /(🇮🇹|\bita\b|italian|italiano)/i.test(title);
-    const audioConfirmedIta = REGEX_AUDIO_CONFIRM.test(title) || REGEX_CONTEXT_IT.test(title) || /(?:dub(?:bed)?|audio|lang|lingua|doppiat[oa])(?:[\s.\-_:/-]+)(?:it|ita|italian|italiano)/i.test(title);
-    const multiIta = REGEX_MULTI_ITA.test(title);
-    const isolatedIt = REGEX_ISOLATED_IT.test(title) && !REGEX_FALSE_IT.test(title);
+    const scanTitle = stripFalseItalianDomainTokens(title);
+    const explicitIta = /(🇮🇹|\bita\b|italian|italiano)/i.test(scanTitle);
+    const audioConfirmedIta = REGEX_AUDIO_CONFIRM.test(scanTitle) || REGEX_CONTEXT_IT.test(scanTitle) || /(?:dub(?:bed)?|audio|lang|lingua|doppiat[oa])(?:[\s.\-_:/-]+)(?:it|ita|italian|italiano)/i.test(scanTitle);
+    const multiIta = REGEX_MULTI_ITA.test(scanTitle);
+    const isolatedIt = REGEX_ISOLATED_IT.test(scanTitle) && !REGEX_FALSE_IT.test(scanTitle);
     const trustedGroup = REGEX_TRUSTED_GROUPS.test(title);
     const titleMatched = italianMovieTitle ? isItalianByTitleMatch(title, italianMovieTitle) : false;
     const trustedSource = !!(source && isTrustedSource(source, null));
@@ -508,6 +530,7 @@ module.exports = {
     REGEX_STRONG_ITA,
     REGEX_CONTEXT_IT,
     REGEX_ISOLATED_IT,
+    REGEX_DOMAIN_IT,
     REGEX_MULTI_ITA,
     REGEX_TRUSTED_GROUPS,
     REGEX_FALSE_IT,
@@ -515,6 +538,7 @@ module.exports = {
     REGEX_AUDIO_CONFIRM,
     languageMapping,
     normalizeLanguageName,
+    stripFalseItalianDomainTokens,
     parseTitleDetails,
     stripVisualPrefixes,
     normalizeSearchText,
