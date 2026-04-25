@@ -24,8 +24,15 @@ const SESSION_COOKIE = Buffer.from(
 ).toString('utf8');
 const FETCH_TIMEOUT = 4500;
 const GOT_TIMEOUT = 2500;
+const GOT_ATTEMPTS = 3;
 const MAX_LISTING_PAGES = 8;
 const MAX_LISTING_CANDIDATES_PER_PAGE = 24;
+const SEARCH_CACHE_TTL_MS = 20 * 60 * 1000;
+const RESOLVED_SEARCH_CACHE_TTL_MS = 45 * 60 * 1000;
+const STREAM_CACHE_TTL_MS = 10 * 60 * 1000;
+const TMDB_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const KITSU_MAPPING_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const QUALITY_PROBE_CACHE_TTL_MS = 20 * 60 * 1000;
 const MAPPING_API_BASE = 'https://anime.questoleviatanormio.dpdns.org';
 const NEWS_SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
 const NEWS_SITEMAP_TTL_MS = 30 * 60 * 1000;
@@ -225,6 +232,41 @@ const pageMetadataCache = new TtlLruCache({
     max: 1000
 });
 
+const searchCandidatesCache = new TtlLruCache({
+    ttlMs: SEARCH_CACHE_TTL_MS,
+    max: 800
+});
+
+const resolvedSearchCache = new TtlLruCache({
+    ttlMs: RESOLVED_SEARCH_CACHE_TTL_MS,
+    max: 800
+});
+
+const streamResultCache = new TtlLruCache({
+    ttlMs: STREAM_CACHE_TTL_MS,
+    max: 600
+});
+
+const tmdbMetadataCache = new TtlLruCache({
+    ttlMs: TMDB_CACHE_TTL_MS,
+    max: 1200
+});
+
+const tmdbImdbCache = new TtlLruCache({
+    ttlMs: TMDB_CACHE_TTL_MS,
+    max: 1200
+});
+
+const kitsuMappingCache = new TtlLruCache({
+    ttlMs: KITSU_MAPPING_CACHE_TTL_MS,
+    max: 1600
+});
+
+const qualityProbeCache = new TtlLruCache({
+    ttlMs: QUALITY_PROBE_CACHE_TTL_MS,
+    max: 800
+});
+
 function responseText(data) {
     if (typeof data === 'string') return data;
     if (Buffer.isBuffer(data)) return data.toString('utf8');
@@ -315,8 +357,10 @@ async function fetchHtmlWithAxios(url, extraHeaders = {}) {
  * Throws only if all attempts fail.
  */
 async function fetchHtml(url, extraHeaders = {}) {
-    const gotBody = await fetchHtmlWithGot(url, extraHeaders, 0);
-    if (gotBody) return gotBody;
+    for (let attempt = 0; attempt < GOT_ATTEMPTS; attempt += 1) {
+        const gotBody = await fetchHtmlWithGot(url, extraHeaders, attempt);
+        if (gotBody) return gotBody;
+    }
 
     const axiosBody = await fetchHtmlWithAxios(url, extraHeaders);
     if (axiosBody) return axiosBody;
@@ -844,20 +888,64 @@ function collectExpectedTitles(metadata = {}, meta = {}) {
         .filter(Boolean)));
 }
 
+function stripEpisodeDecorations(value) {
+    return decodeHtmlEntities(value)
+        .replace(/\b(?:season|stagione|episode|episodio|episodi|ep\.?)\s*\d+\b/gi, ' ')
+        .replace(/\bS\s*\d+\s*E\s*\d+\b/gi, ' ')
+        .replace(/\bS\s*\d+\b/gi, ' ')
+        .replace(/\bE\s*\d+\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function titleAliasesFromOneTitle(title) {
+    const cleaned = stripEpisodeDecorations(title);
+    if (!cleaned) return [];
+
+    const aliases = [cleaned];
+    const slashParts = cleaned.split(/\s+[\\/|]\s+/g).map((v) => v.trim()).filter(Boolean);
+    if (slashParts.length > 1) aliases.push(...slashParts);
+
+    const akaParts = cleaned.split(/\s+(?:aka|a\.k\.a\.|also known as|conosciuto come)\s+/ig).map((v) => v.trim()).filter(Boolean);
+    if (akaParts.length > 1) aliases.push(...akaParts);
+
+    for (const part of [...aliases]) {
+        const colon = part.split(/\s*[:：]\s+/g).map((v) => v.trim()).filter(Boolean);
+        if (colon.length > 1) {
+            aliases.push(colon[0]);
+            aliases.push(colon.slice(1).join(' '));
+        }
+    }
+
+    const ascii = cleaned.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+    if (ascii !== cleaned) aliases.push(ascii);
+
+    if (/\bone\s*piece\b/i.test(cleaned) || /\bwan\s*p[îi]?su\b/i.test(cleaned) || /\bwan\s*pi+su\b/i.test(ascii)) {
+        aliases.push('One Piece');
+        aliases.push('Wan Pisu');
+        aliases.push('Wan piisu');
+    }
+
+    return uniqueStrings(aliases).filter((v) => v.length >= 2);
+}
+
 function buildSearchQueryVariants(titles = []) {
     const seen = new Set();
     const out = [];
     for (const title of uniqueStrings(titles)) {
-        const normalized = kitsuProvider.normalizeTitle(title);
-        const compact = decodeHtmlEntities(title)
-            .replace(/\b(?:season|stagione|episode|episodio|ep\.?)\s*\d+\b/gi, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-        for (const variant of uniqueStrings([title, normalized, compact])) {
-            const key = variant.toLowerCase();
-            if (seen.has(key)) continue;
-            seen.add(key);
-            out.push(variant);
+        const aliases = titleAliasesFromOneTitle(title);
+        for (const alias of aliases) {
+            const normalized = kitsuProvider.normalizeTitle(alias);
+            const compact = stripEpisodeDecorations(alias);
+            const noYear = compact.replace(/\s*\((?:19|20)\d{2}.*?\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+            for (const variant of uniqueStrings([alias, normalized, compact, noYear])) {
+                const cleanVariant = String(variant || '').replace(/\s+/g, ' ').trim();
+                if (!cleanVariant) continue;
+                const key = normalizeTitle(cleanVariant);
+                if (!key || seen.has(key)) continue;
+                seen.add(key);
+                out.push(cleanVariant);
+            }
         }
     }
     return out;
@@ -887,79 +975,121 @@ async function getNewsSitemapEntries() {
 
 async function getIdsFromKitsu(kitsuId, season, episode, config = {}) {
     if (!kitsuId) return null;
-    try {
-        const params = new URLSearchParams();
-        const parsedEpisode = Number.parseInt(String(episode || ''), 10);
-        const parsedSeason = Number.parseInt(String(season || ''), 10);
-        params.set('ep', Number.isInteger(parsedEpisode) && parsedEpisode > 0 ? String(parsedEpisode) : '1');
-        if (Number.isInteger(parsedSeason) && parsedSeason >= 0) params.set('s', String(parsedSeason));
-        const mappingLanguage = getMappingLanguage(config);
-        if (mappingLanguage) params.set('lang', mappingLanguage);
 
-        const payload = await fetchJson(`${MAPPING_API_BASE}/kitsu/${encodeURIComponent(String(kitsuId).trim())}?${params.toString()}`);
-        const ids = payload?.mappings?.ids || {};
-        const tmdbEpisode = payload?.mappings?.tmdb_episode || payload?.mappings?.tmdbEpisode
-            || payload?.tmdb_episode || payload?.tmdbEpisode || null;
+    const parsedEpisode = Number.parseInt(String(episode || ''), 10);
+    const parsedSeason = Number.parseInt(String(season || ''), 10);
+    const mappingLanguage = getMappingLanguage(config) || '';
+    const cacheKey = `kitsu-map:${String(kitsuId).trim()}:${Number.isInteger(parsedSeason) ? parsedSeason : ''}:${Number.isInteger(parsedEpisode) ? parsedEpisode : '1'}:${mappingLanguage}`;
+    const cached = kitsuMappingCache.get(cacheKey);
+    if (cached) return cached.value;
 
-        const mappedSeason = Number.parseInt(String(
-            tmdbEpisode?.season || tmdbEpisode?.seasonNumber || tmdbEpisode?.season_number || ''
-        ), 10);
-        const mappedEpisode = Number.parseInt(String(
-            tmdbEpisode?.episode || tmdbEpisode?.episodeNumber || tmdbEpisode?.episode_number || ''
-        ), 10);
-        const rawEpisodeNumber = Number.parseInt(String(
-            tmdbEpisode?.rawEpisodeNumber || tmdbEpisode?.raw_episode_number || tmdbEpisode?.rawEpisode || ''
-        ), 10);
+    return singleFlight(cacheKey, async () => {
+        const alreadyCached = kitsuMappingCache.get(cacheKey);
+        if (alreadyCached) return alreadyCached.value;
 
-        return {
-            imdbId: extractImdbId(ids.imdb),
-            tmdbId: extractTmdbId(ids.tmdb),
-            mappedSeason: Number.isInteger(mappedSeason) && mappedSeason > 0 ? mappedSeason : null,
-            mappedEpisode: Number.isInteger(mappedEpisode) && mappedEpisode > 0 ? mappedEpisode : null,
-            rawEpisodeNumber: Number.isInteger(rawEpisodeNumber) && rawEpisodeNumber > 0 ? rawEpisodeNumber : null
-        };
-    } catch (error) {
-        console.error('[CinemaCity] Kitsu mapping error:', error.message);
-        return null;
-    }
+        try {
+            const params = new URLSearchParams();
+            params.set('ep', Number.isInteger(parsedEpisode) && parsedEpisode > 0 ? String(parsedEpisode) : '1');
+            if (Number.isInteger(parsedSeason) && parsedSeason >= 0) params.set('s', String(parsedSeason));
+            if (mappingLanguage) params.set('lang', mappingLanguage);
+
+            const payload = await fetchJson(`${MAPPING_API_BASE}/kitsu/${encodeURIComponent(String(kitsuId).trim())}?${params.toString()}`);
+            const ids = payload?.mappings?.ids || {};
+            const tmdbEpisode = payload?.mappings?.tmdb_episode || payload?.mappings?.tmdbEpisode
+                || payload?.tmdb_episode || payload?.tmdbEpisode || null;
+
+            const mappedSeason = Number.parseInt(String(
+                tmdbEpisode?.season || tmdbEpisode?.seasonNumber || tmdbEpisode?.season_number || ''
+            ), 10);
+            const mappedEpisode = Number.parseInt(String(
+                tmdbEpisode?.episode || tmdbEpisode?.episodeNumber || tmdbEpisode?.episode_number || ''
+            ), 10);
+            const rawEpisodeNumber = Number.parseInt(String(
+                tmdbEpisode?.rawEpisodeNumber || tmdbEpisode?.raw_episode_number || tmdbEpisode?.rawEpisode || ''
+            ), 10);
+
+            const result = {
+                imdbId: extractImdbId(ids.imdb),
+                tmdbId: extractTmdbId(ids.tmdb),
+                mappedSeason: Number.isInteger(mappedSeason) && mappedSeason > 0 ? mappedSeason : null,
+                mappedEpisode: Number.isInteger(mappedEpisode) && mappedEpisode > 0 ? mappedEpisode : null,
+                rawEpisodeNumber: Number.isInteger(rawEpisodeNumber) && rawEpisodeNumber > 0 ? rawEpisodeNumber : null
+            };
+            kitsuMappingCache.set(cacheKey, { value: result });
+            return result;
+        } catch (error) {
+            console.error('[CinemaCity] Kitsu mapping error:', error.message);
+            kitsuMappingCache.set(cacheKey, { value: null });
+            return null;
+        }
+    });
 }
+
 
 async function getTmdbMetadata(id, providerType) {
     const normalizedId = String(id || '').trim();
     const normalizedType = providerType === 'movie' ? 'movie' : 'tv';
+    if (!normalizedId) return null;
 
-    try {
-        if (extractImdbId(normalizedId)) {
-            const payload = await tmdbHelper.fetchTmdbJson(`/find/${encodeURIComponent(normalizedId)}`, {
-                params: { external_source: 'imdb_id', language: 'en-US' }
-            });
-            const results = normalizedType === 'movie' ? payload?.movie_results : payload?.tv_results;
-            return Array.isArray(results) && results.length > 0 ? results[0] : null;
+    const cacheKey = `tmdb-meta:${normalizedType}:${normalizedId}`;
+    const cached = tmdbMetadataCache.get(cacheKey);
+    if (cached) return cached.value;
+
+    return singleFlight(cacheKey, async () => {
+        const alreadyCached = tmdbMetadataCache.get(cacheKey);
+        if (alreadyCached) return alreadyCached.value;
+
+        try {
+            let result = null;
+            if (extractImdbId(normalizedId)) {
+                const payload = await tmdbHelper.fetchTmdbJson(`/find/${encodeURIComponent(normalizedId)}`, {
+                    params: { external_source: 'imdb_id', language: 'en-US' }
+                });
+                const results = normalizedType === 'movie' ? payload?.movie_results : payload?.tv_results;
+                result = Array.isArray(results) && results.length > 0 ? results[0] : null;
+            } else {
+                const cleanTmdbId = extractTmdbId(normalizedId);
+                if (cleanTmdbId) {
+                    result = await tmdbHelper.fetchTmdbJson(`/${normalizedType}/${cleanTmdbId}`, {
+                        params: { language: 'en-US' }
+                    });
+                }
+            }
+            tmdbMetadataCache.set(cacheKey, { value: result });
+            return result;
+        } catch (error) {
+            console.error('[CinemaCity] TMDB metadata error:', error.message);
+            tmdbMetadataCache.set(cacheKey, { value: null });
+            return null;
         }
-
-        const cleanTmdbId = extractTmdbId(normalizedId);
-        if (cleanTmdbId) {
-            return tmdbHelper.fetchTmdbJson(`/${normalizedType}/${cleanTmdbId}`, {
-                params: { language: 'en-US' }
-            });
-        }
-    } catch (error) {
-        console.error('[CinemaCity] TMDB metadata error:', error.message);
-    }
-
-    return null;
+    });
 }
 
 async function resolveImdbFromTmdb(tmdbId, providerType) {
     const cleanTmdbId = extractTmdbId(tmdbId);
     if (!cleanTmdbId) return null;
-    try {
-        return extractImdbId(await tmdbHelper.getImdbFromTmdb(cleanTmdbId, providerType === 'movie' ? 'movie' : 'tv'));
-    } catch (error) {
-        console.error('[CinemaCity] TMDB→IMDb resolution error:', error.message);
-        return null;
-    }
+
+    const normalizedType = providerType === 'movie' ? 'movie' : 'tv';
+    const cacheKey = `tmdb-imdb:${normalizedType}:${cleanTmdbId}`;
+    const cached = tmdbImdbCache.get(cacheKey);
+    if (cached) return cached.value;
+
+    return singleFlight(cacheKey, async () => {
+        const alreadyCached = tmdbImdbCache.get(cacheKey);
+        if (alreadyCached) return alreadyCached.value;
+
+        try {
+            const result = extractImdbId(await tmdbHelper.getImdbFromTmdb(cleanTmdbId, normalizedType));
+            tmdbImdbCache.set(cacheKey, { value: result });
+            return result;
+        } catch (error) {
+            console.error('[CinemaCity] TMDB→IMDb resolution error:', error.message);
+            tmdbImdbCache.set(cacheKey, { value: null });
+            return null;
+        }
+    });
 }
+
 
 function extractCandidateLinksFromListing(html, sectionType) {
     const $ = loadHtml(html);
@@ -1103,15 +1233,19 @@ async function pickBestCandidate(candidates, expectedTitles, { requestedImdbId =
     return scoredCandidates[0]?.score >= 80 ? scoredCandidates[0] : null;
 }
 
-async function searchByTitleQueries(queryTitles, providerType, expectedTitles, requestedImdbId, expectedYear) {
-    const queries = buildSearchQueryVariants(queryTitles).slice(0, providerType === 'anime' ? 6 : 3);
-    if (queries.length === 0) return null;
+async function fetchSearchCandidates(query) {
+    const cleanQuery = String(query || '').replace(/\s+/g, ' ').trim();
+    if (!cleanQuery) return [];
 
-    const collected = [];
-    const seen = new Set();
+    const cacheKey = `search:${cleanQuery.toLowerCase()}`;
+    const cached = searchCandidatesCache.get(cacheKey);
+    if (cached) return cached.value;
 
-    for (const query of queries) {
-        const searchUrl = `${BASE_URL}/index.php?do=search&subaction=search&story=${encodeURIComponent(query)}`;
+    return singleFlight(cacheKey, async () => {
+        const alreadyCached = searchCandidatesCache.get(cacheKey);
+        if (alreadyCached) return alreadyCached.value;
+
+        const searchUrl = `${BASE_URL}/index.php?do=search&subaction=search&story=${encodeURIComponent(cleanQuery)}`;
         try {
             const html = await fetchHtml(searchUrl, {
                 'Referer': `${BASE_URL}/`,
@@ -1120,12 +1254,29 @@ async function searchByTitleQueries(queryTitles, providerType, expectedTitles, r
                 'Sec-Fetch-Mode': 'navigate'
             });
             const candidates = extractSearchCandidates(html);
-            for (const candidate of candidates) {
-                if (!candidate?.url || seen.has(candidate.url)) continue;
-                seen.add(candidate.url);
-                collected.push(candidate);
-            }
-        } catch (_) {}
+            searchCandidatesCache.set(cacheKey, { value: candidates });
+            return candidates;
+        } catch (_) {
+            searchCandidatesCache.set(cacheKey, { value: [] });
+            return [];
+        }
+    });
+}
+
+async function searchByTitleQueries(queryTitles, providerType, expectedTitles, requestedImdbId, expectedYear) {
+    const queries = buildSearchQueryVariants(queryTitles).slice(0, providerType === 'anime' ? 10 : 4);
+    if (queries.length === 0) return null;
+
+    const collected = [];
+    const seen = new Set();
+
+    for (const query of queries) {
+        const candidates = await fetchSearchCandidates(query);
+        for (const candidate of candidates) {
+            if (!candidate?.url || seen.has(candidate.url)) continue;
+            seen.add(candidate.url);
+            collected.push(candidate);
+        }
     }
 
     return pickBestCandidate(collected, expectedTitles, { requestedImdbId, expectedYear, providerType, fastMode: true });
@@ -1135,27 +1286,12 @@ async function searchByImdb(imdbId) {
     const normalizedImdbId = extractImdbId(imdbId);
     if (!normalizedImdbId) return null;
 
-    const trySearch = async (query) => {
-        const searchUrl = `${BASE_URL}/index.php?do=search&subaction=search&story=${encodeURIComponent(query)}`;
-        try {
-            const html = await fetchHtml(searchUrl, {
-                'Referer': `${BASE_URL}/`,
-                'Cookie': SESSION_COOKIE,
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-Mode': 'navigate'
-            });
-            return extractSearchCandidates(html)[0] || null;
-        } catch (_) {
-            return null;
-        }
-    };
-
-    let result = await trySearch(normalizedImdbId);
+    let result = (await fetchSearchCandidates(normalizedImdbId))[0] || null;
     if (result) return result;
 
     const numericId = normalizedImdbId.replace(/\D/g, '');
     if (numericId && numericId !== normalizedImdbId) {
-        result = await trySearch(numericId);
+        result = (await fetchSearchCandidates(numericId))[0] || null;
     }
     return result;
 }
@@ -1178,11 +1314,19 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
 
     const requestedImdbId = extractImdbId(options?.requestedImdbId || id);
     const expectedYear = options?.expectedYear || getExpectedYear(metadata, meta);
-
     const fastMode = options?.fast !== false;
+    const cacheKey = `resolve:${providerType}:${requestedImdbId || ''}:${extractTmdbId(id) || ''}:${expectedYear || ''}:${fastMode ? 'fast' : 'deep'}:${buildSearchQueryVariants(expectedTitles).slice(0, 10).map(normalizeTitle).join('|')}`;
+    const cached = resolvedSearchCache.get(cacheKey);
+    if (cached) return cached.value;
+
+    const saveResult = (value) => {
+        resolvedSearchCache.set(cacheKey, { value: value || null });
+        return value || null;
+    };
+
     const searched = await searchByTitleQueries(expectedTitles, providerType, expectedTitles, requestedImdbId, expectedYear);
-    if (searched?.url) return searched;
-    if (fastMode) return null;
+    if (searched?.url) return saveResult(searched);
+    if (fastMode) return saveResult(null);
 
     try {
         const sitemapEntries = await getNewsSitemapEntries();
@@ -1194,7 +1338,7 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
         const bestSitemap = await pickBestCandidate(sitemapCandidates, expectedTitles, {
             requestedImdbId, expectedYear, providerType, fastMode
         });
-        if (bestSitemap?.url) return bestSitemap;
+        if (bestSitemap?.url) return saveResult(bestSitemap);
     } catch (_) {}
 
     let bestResult = null;
@@ -1220,15 +1364,16 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
                     bestScore = picked.score;
                     bestResult = picked;
                 }
-                if (bestScore >= 100) return bestResult;
+                if (bestScore >= 100) return saveResult(bestResult);
             } catch (_) {
                 break;
             }
         }
     }
 
-    return bestScore >= 80 ? bestResult : null;
+    return saveResult(bestScore >= 80 ? bestResult : null);
 }
+
 
 function getIdCandidates(meta = {}, originalId, finalId) {
     return [
@@ -1343,6 +1488,8 @@ async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
     const numericKitsuId = metaLooksAnime ? candidateIds.map(extractKitsuId).find(Boolean) : null;
     const contextKitsuId = explicitKitsuId || numericKitsuId || null;
     let resolvedTmdbId = contextTmdbId || extractTmdbId(workingId) || null;
+    let rawEpisodeNumber = null;
+    let episodeCandidates = numberCandidates([episode]);
     let animeContext = null;
 
     if (!workingId) {
@@ -1362,12 +1509,16 @@ async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
         if (mapped.tmdbId) resolvedTmdbId = mapped.tmdbId;
         if (mapped.imdbId) workingId = mapped.imdbId;
         else if (mapped.tmdbId && !extractImdbId(workingId)) workingId = mapped.tmdbId;
+        if (mapped.rawEpisodeNumber) rawEpisodeNumber = mapped.rawEpisodeNumber;
+        if (mapped.mappedEpisode) episodeCandidates = numberCandidates([mapped.mappedEpisode, episode, rawEpisodeNumber]);
         if (mapped.mappedSeason && mapped.mappedEpisode) {
             season = mapped.mappedSeason;
             episode = mapped.mappedEpisode;
         } else if (mapped.rawEpisodeNumber) {
             episode = mapped.rawEpisodeNumber;
+            episodeCandidates = numberCandidates([rawEpisodeNumber, episode]);
         }
+        episodeCandidates = numberCandidates([episode, ...(episodeCandidates || []), rawEpisodeNumber]);
         return Boolean(mapped.imdbId || mapped.tmdbId || mapped.mappedSeason || mapped.mappedEpisode || mapped.rawEpisodeNumber);
     };
 
@@ -1401,6 +1552,8 @@ async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
         expectedYear: animeContext?.year || extractYear(meta?.year || meta?.releaseInfo || ''),
         season,
         episode,
+        rawEpisodeNumber,
+        episodeCandidates,
         providerType
     };
 }
@@ -1419,6 +1572,18 @@ function parseCompositeSeriesId(rawId, season, episode) {
     return parsed;
 }
 
+function numberCandidates(values = []) {
+    const seen = new Set();
+    const out = [];
+    for (const value of Array.isArray(values) ? values : [values]) {
+        const parsed = normalizeEpisodeNumber(value);
+        if (!parsed || seen.has(parsed)) continue;
+        seen.add(parsed);
+        out.push(parsed);
+    }
+    return out;
+}
+
 function extractSeasonNumberFromTitle(title) {
     const match = String(title || '').match(/(?:season|stagione)\s*0*(\d+)\b|(?:^|\b)s\s*0*(\d+)\b/i);
     const value = Number.parseInt(String(match?.[1] || match?.[2] || ''), 10);
@@ -1431,50 +1596,103 @@ function extractEpisodeNumberFromTitle(title) {
     return Number.isInteger(value) && value > 0 ? value : null;
 }
 
-function pickStream(fileData, type, season = 1, episode = 1) {
+function pickEpisodeFromFolder(folder = [], episodeCandidates = []) {
+    const episodeEntries = folder
+        .filter((e) => e && typeof e === 'object' && e.file)
+        .map((e, index) => ({ entry: e, index, episodeNumber: extractEpisodeNumberFromTitle(e.title) }));
+
+    if (episodeEntries.length === 0) return null;
+
+    for (const wantedEpisode of episodeCandidates) {
+        const exactEpisodeMatch = episodeEntries.find((e) => e.episodeNumber === wantedEpisode);
+        if (exactEpisodeMatch?.entry?.file) return exactEpisodeMatch.entry.file;
+    }
+
+    const hasExplicitEpisodeNumbers = episodeEntries.some((e) => Number.isInteger(e.episodeNumber));
+    if (hasExplicitEpisodeNumbers) return null;
+
+    for (const wantedEpisode of episodeCandidates) {
+        const byIndex = episodeEntries[wantedEpisode - 1]?.entry?.file || null;
+        if (byIndex) return byIndex;
+    }
+
+    return null;
+}
+
+function flattenSeasonEpisodes(seasonEntries = []) {
+    const flat = [];
+    for (const seasonEntry of seasonEntries) {
+        for (const item of seasonEntry?.entry?.folder || []) {
+            if (item && typeof item === 'object' && item.file) flat.push(item);
+        }
+    }
+    return flat;
+}
+
+function pickStream(fileData, type, season = 1, episode = 1, options = {}) {
     if (typeof fileData === 'string') return fileData;
+
+    const episodeCandidates = numberCandidates([
+        episode,
+        ...(Array.isArray(options?.episodeCandidates) ? options.episodeCandidates : []),
+        options?.rawEpisodeNumber
+    ]);
+    const seasonCandidates = numberCandidates([
+        season,
+        ...(Array.isArray(options?.seasonCandidates) ? options.seasonCandidates : []),
+        1
+    ]);
 
     if (Array.isArray(fileData)) {
         if (
             type === 'movie'
             || fileData.every((e) => e && typeof e === 'object' && 'file' in e && !('folder' in e))
         ) {
-            return fileData[0]?.file || null;
+            if (type === 'movie') return fileData[0]?.file || null;
+            return pickEpisodeFromFolder(fileData, episodeCandidates.length ? episodeCandidates : [1]) || fileData[0]?.file || null;
         }
 
-        const requestedSeason = normalizeEpisodeNumber(season) || 1;
-        const requestedEpisode = normalizeEpisodeNumber(episode) || 1;
         const seasonEntries = fileData
             .filter((e) => e && typeof e === 'object' && Array.isArray(e.folder))
-            .map((e) => ({ entry: e, seasonNumber: extractSeasonNumberFromTitle(e.title) }));
+            .map((e, index) => ({ entry: e, index, seasonNumber: extractSeasonNumberFromTitle(e.title) }));
 
-        const exactSeasonMatch = seasonEntries.find((e) => e.seasonNumber === requestedSeason);
-        let selectedSeasonFolder = exactSeasonMatch?.entry?.folder || null;
+        if (seasonEntries.length === 0) return null;
 
-        if (!selectedSeasonFolder) {
-            const hasExplicitSeasonNumbers = seasonEntries.some((e) => Number.isInteger(e.seasonNumber));
-            if (hasExplicitSeasonNumbers) return null;
-            selectedSeasonFolder = seasonEntries[requestedSeason - 1]?.entry?.folder
-                || seasonEntries[0]?.entry?.folder || null;
+        const selectedSeasonEntries = [];
+        for (const wantedSeason of seasonCandidates) {
+            const exactSeasonMatch = seasonEntries.find((e) => e.seasonNumber === wantedSeason);
+            if (exactSeasonMatch) selectedSeasonEntries.push(exactSeasonMatch);
         }
-        if (!selectedSeasonFolder) return null;
 
-        const episodeEntries = selectedSeasonFolder
-            .filter((e) => e && typeof e === 'object' && e.file)
-            .map((e) => ({ entry: e, episodeNumber: extractEpisodeNumberFromTitle(e.title) }));
-
-        const exactEpisodeMatch = episodeEntries.find((e) => e.episodeNumber === requestedEpisode);
-        let selectedEpisodeFile = exactEpisodeMatch?.entry?.file || null;
-
-        if (!selectedEpisodeFile) {
-            const hasExplicitEpisodeNumbers = episodeEntries.some((e) => Number.isInteger(e.episodeNumber));
-            if (hasExplicitEpisodeNumbers) return null;
-            selectedEpisodeFile = episodeEntries[requestedEpisode - 1]?.entry?.file || null;
+        const hasExplicitSeasonNumbers = seasonEntries.some((e) => Number.isInteger(e.seasonNumber));
+        if (selectedSeasonEntries.length === 0 && !hasExplicitSeasonNumbers) {
+            for (const wantedSeason of seasonCandidates) {
+                const byIndex = seasonEntries[wantedSeason - 1] || null;
+                if (byIndex) selectedSeasonEntries.push(byIndex);
+            }
         }
-        return selectedEpisodeFile;
+
+        if (options?.looseAnime === true) {
+            for (const seasonEntry of seasonEntries) {
+                if (!selectedSeasonEntries.includes(seasonEntry)) selectedSeasonEntries.push(seasonEntry);
+            }
+        }
+
+        for (const seasonEntry of selectedSeasonEntries) {
+            const picked = pickEpisodeFromFolder(seasonEntry.entry.folder, episodeCandidates.length ? episodeCandidates : [1]);
+            if (picked) return picked;
+        }
+
+        const rawEpisodeNumber = normalizeEpisodeNumber(options?.rawEpisodeNumber);
+        if (rawEpisodeNumber && options?.looseAnime === true) {
+            const flat = flattenSeasonEpisodes(seasonEntries);
+            const byAbsoluteIndex = flat[rawEpisodeNumber - 1]?.file || null;
+            if (byAbsoluteIndex) return byAbsoluteIndex;
+        }
     }
     return null;
 }
+
 
 function extractJsonArray(decoded) {
     let start = decoded.indexOf('file:');
@@ -1550,7 +1768,11 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
 
     const streamUrl = resolveUrl(
         pageUrl,
-        pickStream(fileData, meta?.isSeries ? 'tv' : 'movie', meta?.season || 1, meta?.episode || 1)
+        pickStream(fileData, meta?.isSeries ? 'tv' : 'movie', meta?.season || 1, meta?.episode || 1, {
+            rawEpisodeNumber: meta?.rawEpisodeNumber,
+            episodeCandidates: Array.isArray(meta?.episodeCandidates) ? meta.episodeCandidates : [],
+            looseAnime: meta?.providerType === 'anime' || meta?.isAnime === true
+        })
     );
     if (!streamUrl) return null;
 
@@ -1567,6 +1789,21 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
             'Cookie': SESSION_COOKIE
         }
     };
+}
+
+async function getParsedCinemaCityStream(pageUrl, meta = {}) {
+    const normalizedUrl = normalizeRemoteUrl(pageUrl);
+    const cacheKey = `stream-result:${normalizedUrl}:${meta?.season || 1}:${meta?.episode || 1}:${meta?.rawEpisodeNumber || ''}:${(meta?.episodeCandidates || []).join(',')}`;
+    const cached = streamResultCache.get(cacheKey);
+    if (cached) return cached.value;
+
+    return singleFlight(cacheKey, async () => {
+        const alreadyCached = streamResultCache.get(cacheKey);
+        if (alreadyCached) return alreadyCached.value;
+        const result = await parseCinemaCityStream(pageUrl, meta);
+        streamResultCache.set(cacheKey, { value: result || null });
+        return result || null;
+    });
 }
 
 function buildDisplayTitle(meta = {}, fallbackTitle, season, episode) {
@@ -1624,8 +1861,15 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
         }
         if (!searchResult?.url) return [];
 
-        const enrichedMeta = { ...meta, season: resolved.season, episode: resolved.episode };
-        const extracted = await singleFlight(`stream:${normalizeRemoteUrl(searchResult.url)}:${resolved.season}:${resolved.episode}`, () => parseCinemaCityStream(searchResult.url, enrichedMeta));
+        const enrichedMeta = {
+            ...meta,
+            season: resolved.season,
+            episode: resolved.episode,
+            rawEpisodeNumber: resolved.rawEpisodeNumber,
+            episodeCandidates: resolved.episodeCandidates,
+            providerType: resolved.providerType
+        };
+        const extracted = await getParsedCinemaCityStream(searchResult.url, enrichedMeta);
         if (!extracted?.streamUrl) return [];
 
         const pageMetadata = extracted.pageMetadata || {};
@@ -1645,9 +1889,17 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
         let quality = normalizeQuality(pageMetadata.quality || '1080p');
         if (/\.m3u8($|\?)/i.test(extracted.streamUrl)) {
             try {
-                const probed = await probePlaylistQuality(httpClient, extracted.streamUrl, {
-                    headers: extracted.headers,
-                    timeout: 6000
+                const qualityCacheKey = `quality:${normalizeRemoteUrl(extracted.streamUrl)}`;
+                const cachedQuality = qualityProbeCache.get(qualityCacheKey);
+                const probed = cachedQuality ? cachedQuality.value : await singleFlight(qualityCacheKey, async () => {
+                    const alreadyCached = qualityProbeCache.get(qualityCacheKey);
+                    if (alreadyCached) return alreadyCached.value;
+                    const detected = await probePlaylistQuality(httpClient, extracted.streamUrl, {
+                        headers: extracted.headers,
+                        timeout: 6000
+                    });
+                    qualityProbeCache.set(qualityCacheKey, { value: detected || 'Unknown' });
+                    return detected || 'Unknown';
                 });
                 quality = pickBetterQuality(probed || 'Unknown', quality);
             } catch (_) {}
@@ -1719,6 +1971,7 @@ module.exports = {
         isCinemaCityContentUrlForType,
         extractCandidateLinksFromListing,
         buildSearchQueryVariants,
+        titleAliasesFromOneTitle,
         getListingBaseUrls,
         pickStream,
         parseCinemaCityPageMetadata,
