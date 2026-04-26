@@ -283,10 +283,7 @@ function isCloudflareChallenge(body, status) {
     );
 }
 
-/**
- * Primary fetch: got-scraping with full TLS impersonation.
- * Rotates fingerprints on retry for max bypass capability.
- */
+
 async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0) {
     const gotScraping = await getGotScraping();
     if (!gotScraping) return null;
@@ -325,9 +322,7 @@ async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0) {
     }
 }
 
-/**
- * Axios fallback with randomized fingerprint headers.
- */
+
 async function fetchHtmlWithAxios(url, extraHeaders = {}) {
     const fp = getNextFingerprint();
     const mergedHeaders = buildBrowserHeaders(fp, extraHeaders);
@@ -348,14 +343,7 @@ async function fetchHtmlWithAxios(url, extraHeaders = {}) {
     }
 }
 
-/**
- * Main HTML fetch with:
- *  1. got-scraping (attempt 0 → primary fingerprint)
- *  2. got-scraping (attempt 1 → rotated fingerprint)
- *  3. got-scraping (attempt 2 → another fingerprint)
- *  4. axios fallback
- * Throws only if all attempts fail.
- */
+
 async function fetchHtml(url, extraHeaders = {}) {
     for (let attempt = 0; attempt < GOT_ATTEMPTS; attempt += 1) {
         const gotBody = await fetchHtmlWithGot(url, extraHeaders, attempt);
@@ -1928,7 +1916,7 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
         const streams = [];
         if (mediaflowProxyUrl) {
             streams.push(buildWebStream({
-                name: '🏙️ CinemaCity | CCCDN',
+                name: '🎟️ CinemaCity | CCCDN',
                 title: `${displayTitle}\n☁️ CCCDN • ${languageLabel}`,
                 url: mediaflowProxyUrl,
                 extractor: 'CCCDN',
@@ -1943,7 +1931,7 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
 
         if (streams.length === 0) {
             streams.push(buildWebStream({
-                name: '🏙️ CinemaCity | Direct',
+                name: '🎟️ CinemaCity | Direct',
                 title: `${displayTitle}\n☁️ ${extractorLabel} • ${languageLabel}`,
                 url: extracted.streamUrl,
                 extractor: extractorLabel,
