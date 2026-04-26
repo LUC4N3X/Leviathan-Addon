@@ -64,6 +64,16 @@ const WEB_PROVIDER_DEFINITIONS = [
         run: ({ meta, config, reqHost }) => searchStreamingCommunity(meta, config, reqHost)
     },
     {
+        key: 'cinemaCity',
+        sourceName: 'CinemaCity',
+        cacheName: 'CinemaCityV3',
+        icon: '🎟️',
+        limiterKey: 'webCc',
+        minTimeout: 7000,
+        isEnabled: ({ filters }) => filters?.enableCc === true,
+        run: ({ originalId, finalId, meta, config }) => searchCinemaCity(originalId, finalId, meta, config)
+    },
+    {
         key: 'guardaHD',
         sourceName: 'GuardaHD',
         cacheName: 'GuardaHD',
@@ -126,16 +136,6 @@ const WEB_PROVIDER_DEFINITIONS = [
         minTimeout: 7000,
         isEnabled: ({ filters, meta }) => filters?.enableGf === true && !meta?.isSeries,
         run: ({ meta, config }) => searchGuardaFlix(meta, config)
-    },
-    {
-        key: 'cinemaCity',
-        sourceName: 'CinemaCity',
-        cacheName: 'CinemaCityV3',
-        icon: '🎟️',
-        limiterKey: 'webCc',
-        minTimeout: 7000,
-        isEnabled: ({ filters }) => filters?.enableCc === true,
-        run: ({ originalId, finalId, meta, config }) => searchCinemaCity(originalId, finalId, meta, config)
     }
 ];
 

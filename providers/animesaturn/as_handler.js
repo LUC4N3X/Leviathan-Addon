@@ -122,6 +122,14 @@ function resolveLanguageLine(sourceTag) {
         : '🇯🇵 JPN • Sub ITA';
 }
 
+function resolveStreamLanguage(sourceTag) {
+    return String(sourceTag || '').toUpperCase() === 'ITA' ? 'ita' : 'jpn';
+}
+
+function streamLanguageRank(stream = {}) {
+    return String(stream?.language || '').toLowerCase() === 'ita' ? 0 : 1;
+}
+
 function parseEpisodeNumber(value, fallbackNum) {
     const raw = String(value || '').trim();
     if (!raw) return fallbackNum;
@@ -503,6 +511,7 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaTyp
     const visited = new Set();
     const seenMedia = new Set();
     const streams = [];
+    const streamLanguage = resolveStreamLanguage(parsedPage.sourceTag);
     const expectedFileId = (() => {
         try {
             return new URL(watchUrls[0]).searchParams.get('file');
@@ -547,6 +556,7 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaTyp
 ${resolveLanguageLine(parsedPage.sourceTag)} • ${quality}
 ☁️ ${hostLabel} • AnimeSaturn`,
                 url: normalizedUrl,
+                language: streamLanguage,
                 extractor: hostLabel,
                 behaviorHints: {
                     notWebReady: false,
@@ -579,7 +589,7 @@ ${resolveLanguageLine(parsedPage.sourceTag)} • ${quality}
         streams.push(...relatedStreams.flat().filter(Boolean));
     }
 
-    return streams;
+    return streams.sort((a, b) => streamLanguageRank(a) - streamLanguageRank(b));
 }
 
 function normalizeAnimeSaturnCandidatePath(pathOrUrl) {
@@ -743,8 +753,8 @@ function rankAnimeSaturnCandidates(query, candidates, isMovie, strict = false) {
     }
 
     const output = [];
-    if (jpChoice) output.push(jpChoice);
     if (itaChoice && itaChoice !== jpChoice) output.push(itaChoice);
+    if (jpChoice) output.push(jpChoice);
 
     for (const candidate of selected) {
         if (output.find((entry) => entry.link === candidate.link)) continue;

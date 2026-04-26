@@ -846,17 +846,17 @@ function buildCinemaCityLanguageLabel(pageMetadata = {}, config = {}) {
     const hasEnglish = languages.includes('english') || downloadLanguages.includes('english');
     const hasMulti = languages.includes('multi') || downloadLanguages.includes('multi') || pageMetadata?.isMultiAudio === true;
 
-    if (hasItalian && hasMulti) return '???? ITA+MULTI';
-    if (hasItalian) return '???? ITA';
+    if (hasItalian && hasMulti) return '🇮🇹 ITA+MULTI';
+    if (hasItalian) return '🇮🇹 ITA';
 
     if (wantsItalian && hasMulti && config?.filters?.allowMultiWhenItalianOnly === true) {
-        return '?? MULTI';
+        return '🌍 MULTI';
     }
 
-    if (hasEnglish && languages.length <= 1 && downloadLanguages.length <= 1) return '???? ENG';
-    if (hasMulti || languages.length > 1 || downloadLanguages.length > 1) return '?? MULTI';
+    if (hasEnglish && languages.length <= 1 && downloadLanguages.length <= 1) return '🇬🇧 ENG';
+    if (hasMulti || languages.length > 1 || downloadLanguages.length > 1) return '🌍 MULTI';
 
-    return '?? WEB';
+    return '🌐 WEB';
 }
 
 function hardFilterStreamsByLanguage(streams = [], config = {}) {
@@ -957,7 +957,7 @@ function titleAliasesFromOneTitle(title) {
     if (akaParts.length > 1) aliases.push(...akaParts);
 
     for (const part of [...aliases]) {
-        const colon = part.split(/\s*[::]\s+/g).map((v) => v.trim()).filter(Boolean);
+        const colon = part.split(/\s*[:：]\s+/g).map((v) => v.trim()).filter(Boolean);
         if (colon.length > 1) {
             aliases.push(colon[0]);
             aliases.push(colon.slice(1).join(' '));
@@ -1130,7 +1130,7 @@ async function resolveImdbFromTmdb(tmdbId, providerType) {
             tmdbImdbCache.set(cacheKey, { value: result });
             return result;
         } catch (error) {
-            console.error('[CinemaCity] TMDB?IMDb resolution error:', error.message);
+            console.error('[CinemaCity] TMDB→IMDb resolution error:', error.message);
             tmdbImdbCache.set(cacheKey, { value: null });
             return null;
         }
@@ -2113,8 +2113,8 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
         const streams = [];
         if (mediaflowProxyUrl) {
             streams.push(buildWebStream({
-                name: '??? CinemaCity | CCCDN',
-                title: `${displayTitle}\n?? CCCDN • ${languageLabel}`,
+                name: '🎟️ CinemaCity | CCCDN',
+                title: `${displayTitle}\n☁️ CCCDN • ${languageLabel}`,
                 url: mediaflowProxyUrl,
                 extractor: 'CCCDN',
                 provider: 'CinemaCity',
@@ -2128,8 +2128,8 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
 
         if (streams.length === 0) {
             streams.push(buildWebStream({
-                name: '??? CinemaCity | Direct',
-                title: `${displayTitle}\n?? ${extractorLabel} • ${languageLabel}`,
+                name: '🎟️ CinemaCity | Direct',
+                title: `${displayTitle}\n☁️ ${extractorLabel} • ${languageLabel}`,
                 url: extracted.streamUrl,
                 extractor: extractorLabel,
                 provider: 'CinemaCity',

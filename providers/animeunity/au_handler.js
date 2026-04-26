@@ -744,6 +744,13 @@ function qualityRank(value) {
     return { '4K': 2160, '1440p': 1440, '1080p': 1080, '720p': 720, '576p': 576, '480p': 480, Unknown: 0 }[String(value || 'Unknown')] || 0;
 }
 
+function languageRank(stream = {}) {
+    const language = String(stream?.language || stream?.behaviorHints?.vortexMeta?.language || '').toLowerCase();
+    if (/^(?:ita|it|italian)$/.test(language)) return 0;
+    if (/^(?:jpn|jp|japanese)$/.test(language) || /sub\s*ita|vost/.test(language)) return 2;
+    return 1;
+}
+
 function buildStream({ sourceUrl, referer, quality, title, langTag, emoji, reqHost, config, branch }) {
     const viaMfp = Boolean(config?.mediaflow?.url);
     const url = viaMfp
@@ -893,6 +900,8 @@ function dedupeStreams(streams = []) {
         out.push(stream);
     }
     return out.sort((a, b) => {
+        const lang = languageRank(a) - languageRank(b);
+        if (lang !== 0) return lang;
         const qa = qualityRank(b?.quality) - qualityRank(a?.quality);
         if (qa !== 0) return qa;
         const la = String(a?.language || '').localeCompare(String(b?.language || ''));
@@ -923,8 +932,8 @@ async function searchAnimeUnity(requestId, meta = {}, config = {}, reqHost = nul
 
         console.log(`[AnimeUnity] start | title=${context.title || meta?.title || meta?.name || requestId} | ep=${context.requestedEpisode || 1} | kitsu=${context.kitsuId || 'no'} | tmdb=${context.tmdbId || 'no'} | imdb=${context.imdbId || 'no'}`);
         const modes = [
-            { dubbed: false, langTag: 'SUB ITA', emoji: '🇯🇵' },
-            { dubbed: true, langTag: 'ITA', emoji: '🇮🇹' }
+            { dubbed: true, langTag: 'ITA', emoji: '🇮🇹' },
+            { dubbed: false, langTag: 'SUB ITA', emoji: '🇯🇵' }
         ];
 
         const settled = await Promise.allSettled(modes.map((mode) => resolveMode(mode, context, config, reqHost)));

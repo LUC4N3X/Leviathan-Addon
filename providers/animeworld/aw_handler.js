@@ -131,6 +131,14 @@ function resolveLanguageLine(sourceTag) {
         : '🇯🇵 JPN • Sub ITA';
 }
 
+function resolveStreamLanguage(sourceTag) {
+    return String(sourceTag || '').toUpperCase() === 'ITA' ? 'ita' : 'jpn';
+}
+
+function streamLanguageRank(stream = {}) {
+    return String(stream?.language || '').toLowerCase() === 'ita' ? 0 : 1;
+}
+
 function parseTagAttributes(tag) {
     const attrs = {};
     const regex = /([A-Za-z_:][A-Za-z0-9_:\-.]*)\s*=\s*("([^"]*)"|'([^']*)')/g;
@@ -793,6 +801,7 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaTyp
     const episodeLabel = getEpisodeDisplayLabel(selectedEpisode, normalizedEpisode);
     const displayTitle = episodeLabel ? `${baseTitle} - Ep ${episodeLabel}` : baseTitle;
     const languageLine = resolveLanguageLine(parsedPage.sourceTag);
+    const streamLanguage = resolveStreamLanguage(parsedPage.sourceTag);
     const seen = new Set();
     const streams = [];
 
@@ -813,6 +822,7 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaTyp
 ${languageLine} • ${quality}
 ☁️ ${hostLabel} • AnimeWorld`,
             url: mediaUrl,
+            language: streamLanguage,
             extractor: hostLabel,
             behaviorHints: {
                 notWebReady: false,
@@ -876,6 +886,7 @@ ${languageLine} • ${quality}
 ${languageLine} • ${quality}
 ☁️ ${hostLabel} • AnimeWorld`,
                         url: mediaUrl,
+                        language: streamLanguage,
                         extractor: hostLabel,
                         behaviorHints: {
                             notWebReady: false,
@@ -922,7 +933,7 @@ async function searchAnimeWorld(requestId, meta, config) {
         deduped.push(stream);
     }
 
-    return deduped;
+    return deduped.sort((a, b) => streamLanguageRank(a) - streamLanguageRank(b));
 }
 
 module.exports = {
