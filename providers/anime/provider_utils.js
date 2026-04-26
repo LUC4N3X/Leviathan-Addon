@@ -560,6 +560,12 @@ function isRetryableStatus(status) {
     return [408, 425, 429, 500, 502, 503, 504, 522, 523, 524].includes(Number(status));
 }
 
+function isHttpNotFoundError(error) {
+    const status = Number(error?.status || error?.response?.status || 0);
+    if (status === 404) return true;
+    return /HTTP\s+404\b/i.test(String(error?.message || error || ''));
+}
+
 function isRetryableError(error) {
     const name = String(error?.name || '').toLowerCase();
     const code = String(error?.code || '').toLowerCase();
@@ -960,7 +966,11 @@ async function fetchMappingPayload(lookup, providerContext = null, mappingApiBas
 
         if (cached?.value !== undefined) return cached.value;
         caches.negative.set(cacheKey, true, DEFAULT_NEGATIVE_TTL_MS, 0);
-        console.error('[AnimeProvider] mapping request failed:', lastError?.message || 'unknown error');
+        if (lastError && !isHttpNotFoundError(lastError)) {
+            console.error('[AnimeProvider] mapping request failed:', lastError?.message || 'unknown error');
+        } else if (process.env.LEVIATHAN_VERBOSE_MAPPING_MISS === '1') {
+            console.warn('[AnimeProvider] mapping miss:', `${provider}/${externalId} ep=${requestedEpisode}`);
+        }
         return null;
     });
 }
