@@ -1786,7 +1786,8 @@ async function searchVix(meta, config = {}, reqHost) {
                 console.log(`[WEB][StreamingCommunity][KITSU] ok | items=${animeStreams.length}`);
                 return animeStreams;
             }
-            kitsuDebug('fallback', 'using-tmdb-flow');
+            kitsuDebug('strict-stop', 'direct-kitsu-no-stream; no tmdb fallback to avoid wrong episode/movie');
+            return [];
         }
 
         const tmdbId = await resolveTmdbId(meta);
