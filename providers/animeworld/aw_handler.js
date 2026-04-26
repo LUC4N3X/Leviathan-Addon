@@ -1,5 +1,6 @@
 'use strict';
 const cheerio = require('cheerio');
+const animeProviderUtils = require('../anime/provider_utils');
 const {
     USER_AGENT,
     FETCH_TIMEOUT,
@@ -14,12 +15,11 @@ const {
 const kitsuProvider = require('./kitsu_provider');
 
 const AW_DOMAIN = 'https://www.animeworld.ac';
-const BLOCKED_DOMAINS = [
-    'jujutsukaisenanime.com',
-    'onepunchman.it',
-    'dragonballhd.it',
-    'narutolegend.it'
-];
+const AW_FETCH_TIMEOUT = Math.max(
+    FETCH_TIMEOUT,
+    Number.parseInt(String(process.env.AW_PROVIDER_FETCH_TIMEOUT || process.env.AW_FETCH_TIMEOUT || '12000'), 10) || 12000
+);
+const BLOCKED_DOMAINS = [];
 const TTL = {
     info: 5 * 60 * 1000,
     page: 10 * 60 * 1000,
@@ -405,7 +405,7 @@ function extractSecurityCookie(html, setCookieHeader = '') {
 }
 
 async function requestAnimeWorldResponse(url, options = {}) {
-    const timeoutMs = options.timeoutMs || FETCH_TIMEOUT;
+    const timeoutMs = options.timeoutMs || AW_FETCH_TIMEOUT;
     const baseHeaders = {
         'user-agent': USER_AGENT,
         'accept-language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -594,7 +594,106 @@ async function matchAnimeWorldCandidatesByDate(candidates, targetDate) {
     return uniqueStrings(matched.filter(Boolean));
 }
 
+function normalizeAnimeWorldMappingValue(value) {
+    if (!value) return null;
+    const raw = typeof value === 'string'
+        ? value
+        : (value.path || value.url || value.href || value.link || value.animePath || value.anime_path || value.play || value.page || null);
+    if (!raw) return null;
+    return normalizeAnimeWorldPath(raw);
+}
+
+function extractAnimeWorldPathsFromMappingPayload(payload) {
+    const out = [];
+    const seen = new Set();
+
+    const push = (value) => {
+        const normalized = normalizeAnimeWorldMappingValue(value);
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        out.push(normalized);
+    };
+
+    const directBuckets = [
+        payload?.mappings?.animeworld,
+        payload?.mappings?.animeWorld,
+        payload?.mappings?.anime_world,
+        payload?.mappings?.aw,
+        payload?.mappings?.providers?.animeworld,
+        payload?.mappings?.providers?.animeWorld,
+        payload?.providers?.animeworld,
+        payload?.providers?.animeWorld,
+        payload?.animeworld,
+        payload?.animeWorld,
+        payload?.anime_world,
+        payload?.aw
+    ];
+
+    for (const bucket of directBuckets) {
+        if (Array.isArray(bucket)) bucket.forEach(push);
+        else push(bucket);
+    }
+
+    const stack = [{ value: payload, depth: 0 }];
+    const visited = new Set();
+    while (stack.length && out.length < 12) {
+        const { value, depth } = stack.pop();
+        if (!value || typeof value !== 'object' || depth > 5 || visited.has(value)) continue;
+        visited.add(value);
+
+        for (const [key, child] of Object.entries(value)) {
+            const normalizedKey = String(key || '').toLowerCase();
+            if (/^(animeworld|anime_world|aw|animeworldpath|animeworldurl|animeworldhref)$/.test(normalizedKey)) {
+                if (Array.isArray(child)) child.forEach(push);
+                else push(child);
+            }
+
+            if (typeof child === 'string' && /animeworld\.|\/anime\/|\/play\//i.test(child)) push(child);
+            if (child && typeof child === 'object') stack.push({ value: child, depth: depth + 1 });
+        }
+    }
+
+    return uniqueStrings(out);
+}
+
+async function resolveAnimeWorldPathsFromMapping(searchContext = {}) {
+    const kitsuId = String(searchContext?.kitsuId || searchContext?.info?.kitsuId || '').trim();
+    if (!/^\d+$/.test(kitsuId)) return [];
+
+    const requestedEpisode = normalizeRequestedEpisode(searchContext?.requestedEpisode || searchContext?.episodeNumber || 1);
+    const providerContext = {
+        id: `kitsu:${kitsuId}:${requestedEpisode}`,
+        kitsuId,
+        mappingLanguage: 'it',
+        italianOnly: true,
+        onlyItalian: true,
+        type: 'anime'
+    };
+
+    try {
+        const payload = await animeProviderUtils.fetchMappingPayload({
+            provider: 'kitsu',
+            externalId: kitsuId,
+            season: null,
+            episode: requestedEpisode,
+            contentType: 'anime'
+        }, providerContext);
+
+        const paths = extractAnimeWorldPathsFromMappingPayload(payload);
+        if (paths.length > 0) {
+            console.log(`[AnimeWorld][KITSU] mapping paths=${paths.length} id=${kitsuId} ep=${requestedEpisode}`);
+        }
+        return paths;
+    } catch (error) {
+        console.error('[AnimeWorld][KITSU] mapping failed:', error.message);
+        return [];
+    }
+}
+
 async function resolveAnimeWorldPaths(searchContext) {
+    const mappedPaths = await resolveAnimeWorldPathsFromMapping(searchContext);
+    if (mappedPaths.length > 0) return mappedPaths;
+
     const targetDate = parseIsoDate(searchContext?.date);
     const searchYear = searchContext?.year || extractYear(searchContext?.date);
     const searchQueries = uniqueStrings([
@@ -652,7 +751,7 @@ async function fetchEpisodeInfo(episodeRef, refererUrl, pageContext = null) {
             as: 'json',
             ttlMs: TTL.info,
             cacheKey: `animeworld-info:${token}:${csrfToken ? 'csrf' : 'nocsrf'}:${sessionCookie ? 'cookie' : 'nocookie'}`,
-            timeoutMs: FETCH_TIMEOUT,
+            timeoutMs: AW_FETCH_TIMEOUT,
             headers: {
                 referer: refererUrl,
                 'x-requested-with': 'XMLHttpRequest',
@@ -730,8 +829,19 @@ ${languageLine} • ${quality}
     }
 
     if (streams.length === 0) {
-        const targetUrl = toAbsoluteUrl(infoData.target || null, AW_DOMAIN);
-        if (targetUrl) {
+        const targetCandidates = uniqueStrings([
+            infoData.target,
+            infoData.embed,
+            infoData.iframe,
+            infoData.player,
+            infoData.src,
+            ...collectGrabberCandidates(infoData)
+        ]
+            .map((value) => toAbsoluteUrl(value, AW_DOMAIN))
+            .filter(Boolean)
+            .filter((value) => !/\.(?:mp4|m3u8)(?:[?#].*)?$/i.test(String(value))));
+
+        for (const targetUrl of targetCandidates.slice(0, 5)) {
             try {
                 const extraHeaders = {};
                 const csrfToken = String(pageContext?.csrfToken || '').trim();
@@ -743,7 +853,7 @@ ${languageLine} • ${quality}
                 const targetHtml = await fetchResource(targetUrl, {
                     ttlMs: TTL.info,
                     cacheKey: `animeworld-target:${targetUrl}`,
-                    timeoutMs: FETCH_TIMEOUT,
+                    timeoutMs: AW_FETCH_TIMEOUT,
                     headers: {
                         referer: animeUrl,
                         'x-requested-with': 'XMLHttpRequest',
@@ -774,12 +884,14 @@ ${languageLine} • ${quality}
                             proxyHeaders: {
                                 request: {
                                     'User-Agent': USER_AGENT,
-                                    Referer: animeUrl
+                                    Referer: targetUrl
                                 }
                             }
                         }
                     });
                 }
+
+                if (streams.length > 0) break;
             } catch (error) {
                 console.error('[AnimeWorld] target player request failed:', error.message);
             }
@@ -813,4 +925,10 @@ async function searchAnimeWorld(requestId, meta, config) {
     return deduped;
 }
 
-module.exports = { searchAnimeWorld };
+module.exports = {
+    searchAnimeWorld,
+    resolveAnimeWorldPaths,
+    extractStreamsFromAnimePath,
+    resolveAnimeWorldPathsFromMapping,
+    extractAnimeWorldPathsFromMappingPayload
+};
