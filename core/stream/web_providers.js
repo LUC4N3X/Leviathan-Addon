@@ -15,7 +15,7 @@ function normalizeWebExtractorLabel(value) {
     const raw = String(value || '').trim();
     if (!raw) return '';
 
-    if (/[|â€¢]/.test(raw)) return '';
+    if (/[|•]/.test(raw)) return '';
     if (/^(unknown|unknow|n\/a|null|undefined)$/i.test(raw)) return '';
     if (/vix(?:cloud|src)?/i.test(raw)) return 'VixCloud';
     if (/cccdn/i.test(raw)) return 'CCCDN';
@@ -98,20 +98,56 @@ function inferWebQuality(stream, sourceName) {
 
 function getWebQualityIcon(quality) {
     const normalized = String(quality || '').toLowerCase();
-    if (normalized === '4k' || normalized === '1440p' || normalized === '1080p') return 'ðŸ”¥';
-    if (normalized === '720p') return 'âš¡';
-    if (normalized === 'sd' || normalized === '480p') return 'ðŸ“¼';
-    return 'ðŸ“º';
+    if (normalized === '4k' || normalized === '1440p' || normalized === '1080p') return '🔥';
+    if (normalized === '720p') return '⚡';
+    if (normalized === 'sd' || normalized === '480p') return '📼';
+    return '📺';
+}
+
+function isKitsuAnimeMeta(meta = {}) {
+    const ids = [meta?.id, meta?.requestedId, meta?.originalId, meta?.kitsu_id, meta?.kitsuId];
+    return Boolean(
+        meta?.isAnime === true
+        || String(meta?.type || '').toLowerCase() === 'anime'
+        || ids.some((value) => /^kitsu(?::|_)?\d+/i.test(String(value || '').trim()))
+    );
+}
+
+function getAnimeLanguagePriority(stream = {}) {
+    const explicit = String(stream?.language || stream?.behaviorHints?.vortexMeta?.language || '').toLowerCase();
+    if (/^(?:ita|it|italian)$/.test(explicit)) return 0;
+    if (/^(?:jpn|jp|japanese)$/.test(explicit) || /sub\s*ita|vost/.test(explicit)) return 2;
+
+    const text = [
+        stream?.title,
+        stream?.name,
+        stream?.provider,
+        stream?.source,
+        stream?.site,
+        stream?.behaviorHints?.vortexMeta?.provider,
+        stream?.behaviorHints?.vortexMeta?.source
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    if (/🇯🇵|\bjpn\b|\bjp\b|japanese|sub\s*ita|vost/.test(text)) return 2;
+    if (/🇮🇹|\bita\b|italian|dub|doppiat/.test(text)) return 0;
+    return 1;
+}
+
+function sortAnimeWebStreamsByLanguage(streams = []) {
+    return [...(streams || [])]
+        .map((stream, index) => ({ stream, index, lang: getAnimeLanguagePriority(stream) }))
+        .sort((a, b) => (a.lang - b.lang) || (a.index - b.index))
+        .map((entry) => entry.stream);
 }
 
 function rewriteWebTitleLayout(title, providerIcon, providerLabel, extractorLabel) {
     const lines = String(title || '').split('\n').map((line) => String(line || '').trim()).filter(Boolean);
     const cleaned = lines.filter((line) => {
         if (providerIcon && line.startsWith(providerIcon)) return false;
-        return !/^(?:â›µ|ðŸ§²|ðŸ”Ž|ðŸ™ï¸|ðŸŒ|ðŸŒªï¸|ðŸ¿|ðŸ¦|ðŸŽ¥|ðŸŽŸï¸|â›©ï¸|ðŸŒ€|ðŸª|âš™ï¸|âœ¨|ðŸ›°ï¸|ðŸ”)\s+/.test(line);
+        return !/^(?:⛵|🧲|🔎|🏙️|🌐|🌪️|🍿|🦁|🎥|🎟️|⛩️|🌀|🪐|⚙️|✨|🛰️|🔍)\s+/.test(line);
     });
     cleaned.push(`${providerIcon} ${providerLabel}`);
-    cleaned.push(`â›µ ${extractorLabel || 'Web'}`);
+    cleaned.push(`⛵ ${extractorLabel || 'Web'}`);
     return cleaned.join('\n');
 }
 
@@ -133,11 +169,11 @@ function applyAioWebStyle(streamList, providerDefinition, meta) {
             stream.title = aioFormatter.formatStreamTitle({
                 title: meta.title,
                 size: 'Web',
-                language: 'ðŸ‡¯ðŸ‡µ JPN/ITA',
+                language: '🇯🇵 JPN/ITA',
                 source: extractorLabel,
                 providerLine: `${providerIcon} ${providerLabel}`,
-                sourceIcon: 'â›µ',
-                techInfo: sourceName.includes('AnimeSaturn') ? 'ðŸª Anime' : (sourceName.includes('AnimeUnity') ? 'ðŸŒ€ Anime' : 'â›©ï¸ Anime')
+                sourceIcon: '⛵',
+                techInfo: sourceName.includes('AnimeSaturn') ? '🪐 Anime' : (sourceName.includes('AnimeUnity') ? '🌀 Anime' : '⛩️ Anime')
             });
             stream.behaviorHints = stream.behaviorHints || {};
             stream.behaviorHints.bingieGroup = `Leviathan|HD|Web|${sourceName.replace(/\W/g, '')}`;
@@ -150,12 +186,12 @@ function applyAioWebStyle(streamList, providerDefinition, meta) {
         stream.title = aioFormatter.formatStreamTitle({
             title: meta.title,
             size: 'Web',
-            language: 'ðŸ‡®ðŸ‡¹ ITA',
+            language: '🇮🇹 ITA',
             source: extractorLabel,
             providerLine: `${providerIcon} ${providerLabel}`,
-            sourceIcon: 'â›µ',
+            sourceIcon: '⛵',
             seeders: null,
-            techInfo: `ðŸŽžï¸ ${quality} ${qIcon}`
+            techInfo: `🎞️ ${quality} ${qIcon}`
         });
         stream.behaviorHints = stream.behaviorHints || {};
         stream.behaviorHints.bingieGroup = `Leviathan|${quality}|Web|${sourceName.replace(/\W/g, '')}`;
@@ -175,7 +211,7 @@ function applyWebFormatter(streamList, providerDefinition, meta, config) {
         let fileTitle = meta.title;
         const rawTitleToCheck = (stream.title || '').toUpperCase();
         if (stream.title) {
-            const cleanRaw = stream.title.split('\n')[0].replace(/[ðŸŽ¬âš¡ðŸŒªï¸â›©ï¸ðŸ¿ðŸ¦ðŸŽ¥ðŸŒ]/g, '').trim();
+            const cleanRaw = stream.title.split('\n')[0].replace(/[🎬⚡🌪️⛩️🍿🦁🎥🌐]/g, '').trim();
             if (cleanRaw.length > 2) fileTitle = cleanRaw;
         }
 
@@ -188,12 +224,18 @@ function applyWebFormatter(streamList, providerDefinition, meta, config) {
         const extractorLabel = inferWebExtractorLabel(stream, sourceName) || 'Web';
         const providerLabel = String(sourceName || '').trim() || 'Web';
         const formatted = formatStreamSelector(`${fileTitle} ${quality} ${langTag} WEB-DL AAC`, extractorLabel, 0, null, 'WEB', config, null, false, false);
-        const cleanTitle = formatted.title.replace(/ðŸ§²/g, 'â›µ').replace(/ðŸ¦ˆ/g, providerIcon).replace(/ðŸ§²\s*\d+(\.\d+)?\s*(GB|MB)/gi, 'â˜ï¸ Web Stream');
+        const cleanTitle = formatted.title.replace(/🧲/g, '⛵').replace(/🦈/g, providerIcon).replace(/🧲\s*\d+(\.\d+)?\s*(GB|MB)/gi, '☁️ Web Stream');
         const titled = rewriteWebTitleLayout(cleanTitle, providerIcon, providerLabel, extractorLabel);
         return {
-            name: formatted.name.replace(/ðŸ§²/g, 'â›µ').replace(/ðŸ¦ˆ/g, providerIcon),
+            name: formatted.name.replace(/🧲/g, '⛵').replace(/🦈/g, providerIcon),
             title: titled,
             url: stream.url,
+            quality: stream.quality,
+            language: stream.language,
+            extractor: stream.extractor,
+            provider: stream.provider,
+            source: stream.source,
+            site: stream.site,
             behaviorHints: stream.behaviorHints || { notWebReady: false, bingieGroup: `Leviathan|${quality}|Web|${sourceName}` }
         };
     });
@@ -254,12 +296,13 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
         return formatted;
     }
 
-    function mergeFinalStreams(debridStreams, formattedWebBuckets, filters = {}) {
+    function mergeFinalStreams(debridStreams, formattedWebBuckets, filters = {}, meta = {}) {
         const webStreams = WEB_PROVIDER_ORDER.flatMap((key) => Array.isArray(formattedWebBuckets?.[key]) ? formattedWebBuckets[key] : []);
+        const orderedWebStreams = isKitsuAnimeMeta(meta) ? sortAnimeWebStreamsByLanguage(webStreams) : webStreams;
 
         return isStreamingCommunityLastEnabled(filters)
-            ? [...(debridStreams || []), ...webStreams]
-            : [...webStreams, ...(debridStreams || [])];
+            ? [...(debridStreams || []), ...orderedWebStreams]
+            : [...orderedWebStreams, ...(debridStreams || [])];
     }
 
     return {

@@ -2457,7 +2457,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           .filter(([, bucket]) => Array.isArray(bucket) && bucket.length > 0)
           .map(([bucketName]) => bucketName);
 
-      let finalStreams = mergeFinalStreams(debridStreams, formattedWebBuckets, filters);
+      let finalStreams = mergeFinalStreams(debridStreams, formattedWebBuckets, filters, meta);
       finalStreams = applyConfiguredStreamFilters(finalStreams, filters);
 
       const resultObjPlaceholder = { streams: finalStreams };
