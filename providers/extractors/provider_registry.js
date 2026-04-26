@@ -131,7 +131,7 @@ const WEB_PROVIDER_DEFINITIONS = [
         key: 'cinemaCity',
         sourceName: 'CinemaCity',
         cacheName: 'CinemaCityV3',
-        icon: '🏙️',
+        icon: '🎟️',
         limiterKey: 'webCc',
         minTimeout: 7000,
         isEnabled: ({ filters }) => filters?.enableCc === true,
