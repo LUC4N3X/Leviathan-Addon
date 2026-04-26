@@ -973,6 +973,7 @@ function getExplicitKitsuCandidates(meta = {}) {
         meta?.originalId,
         meta?.kitsu_id,
         meta?.kitsuId,
+        meta?.kitsu,
         meta?.sourceId,
         meta?.source_id,
         meta?.stremioId,
@@ -984,13 +985,36 @@ function getExplicitKitsuCandidates(meta = {}) {
     ];
 }
 
+function getBareNumericKitsuCandidates(meta = {}) {
+    return [
+        meta?.kitsu_id,
+        meta?.kitsuId,
+        meta?.kitsu,
+        meta?.animeKitsuId,
+        meta?.behaviorHints?.kitsuId,
+        meta?.behaviorHints?.kitsu_id
+    ];
+}
+
+function parseKitsuCandidate(value, { allowBareNumeric = false } = {}) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    if (!allowBareNumeric && /^\d+$/.test(raw)) return null;
+    return kitsuProvider.parseKitsuId(raw);
+}
+
 function findKitsuIdentifierDeep(meta = {}) {
+    for (const candidate of uniqueNonEmpty(getBareNumericKitsuCandidates(meta))) {
+        const parsed = parseKitsuCandidate(candidate, { allowBareNumeric: true });
+        if (parsed?.kitsuId) return parsed;
+    }
+
     const candidates = uniqueNonEmpty([
         ...getExplicitKitsuCandidates(meta),
         ...collectDeepStringValues(meta, 4, 240)
     ]);
     for (const candidate of candidates) {
-        const parsed = kitsuProvider.parseKitsuId(candidate);
+        const parsed = parseKitsuCandidate(candidate);
         if (parsed?.kitsuId) return parsed;
     }
     return null;
@@ -1023,9 +1047,14 @@ function buildKitsuContextId(meta = {}, kitsu = null) {
 }
 
 function buildKitsuResolvedSourceId(meta = {}, kitsu = null) {
+    for (const candidate of uniqueNonEmpty(getBareNumericKitsuCandidates(meta))) {
+        const parsed = parseKitsuCandidate(candidate, { allowBareNumeric: true });
+        if (parsed?.kitsuId) return String(candidate);
+    }
+
     const explicit = getExplicitKitsuCandidates(meta);
     for (const candidate of explicit) {
-        const parsed = kitsuProvider.parseKitsuId(candidate);
+        const parsed = parseKitsuCandidate(candidate);
         if (parsed?.kitsuId) return String(candidate);
     }
     if (kitsu?.kitsuId) {
@@ -1095,14 +1124,17 @@ function resolveStrictKitsuEpisode(mappingPayload, fallbackEpisode) {
 }
 
 function looksLikeAnimeMeta(meta = {}) {
+    if (findKitsuIdentifierDeep(meta)) return true;
+    if (meta?.isAnime === true || meta?.anime === true) return true;
+
     const directType = String(meta?.type || meta?.kind || meta?.mediaType || '').toLowerCase();
-    if (/(^|[^a-z])(anime|animation)([^a-z]|$)/i.test(directType)) return true;
+    if (/(^|[^a-z])anime([^a-z]|$)/i.test(directType)) return true;
 
     const genreList = Array.isArray(meta?.genres) ? meta.genres : [];
-    if (genreList.some((value) => /(anime|animation|animazione)/i.test(String(value)))) return true;
+    if (genreList.some((value) => /(^|[^a-z])anime([^a-z]|$)/i.test(String(value)))) return true;
 
     const haystack = uniqueNonEmpty(collectDeepStringValues(meta, 3, 120)).join(' | ').toLowerCase();
-    return /(anime-kitsu|kitsu:|anime|animazione)/i.test(haystack);
+    return /(anime-kitsu|kitsu:)/i.test(haystack);
 }
 
 async function searchKitsuByTitle(title) {
@@ -1800,7 +1832,7 @@ async function searchVix(meta, config = {}, reqHost) {
         const tmdbId = await resolveTmdbId(meta);
         if (!tmdbId) {
             console.log('[WEB][StreamingCommunity] no-tmdb');
-            if (!directKitsu?.kitsuId) {
+            if (animeHint && !directKitsu?.kitsuId) {
                 const inferredKitsu = await inferKitsuIdentifierFromMeta(meta).catch(() => null);
                 if (inferredKitsu?.kitsuId) {
                     kitsuDebug('title-fallback', `id=${inferredKitsu.kitsuId} title=${inferredKitsu.inferredFromTitle || 'n/a'} score=${inferredKitsu.score || 0}`);
@@ -1861,7 +1893,7 @@ async function searchVix(meta, config = {}, reqHost) {
             }
         }
 
-        if (!directKitsu?.kitsuId) {
+        if (animeHint && !directKitsu?.kitsuId) {
             const inferredKitsu = await inferKitsuIdentifierFromMeta(meta).catch(() => null);
             if (inferredKitsu?.kitsuId) {
                 kitsuDebug('title-fallback', `id=${inferredKitsu.kitsuId} title=${inferredKitsu.inferredFromTitle || 'n/a'} score=${inferredKitsu.score || 0}`);
@@ -1891,4 +1923,3 @@ module.exports = {
     normalizeQualityFilter,
     inferCanPlayFHDFromPlaylist
 };
-
