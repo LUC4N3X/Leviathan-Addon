@@ -15,7 +15,7 @@ function normalizeWebExtractorLabel(value) {
     const raw = String(value || '').trim();
     if (!raw) return '';
 
-    if (/[|•]/.test(raw)) return '';
+    if (/[|â€¢]/.test(raw)) return '';
     if (/^(unknown|unknow|n\/a|null|undefined)$/i.test(raw)) return '';
     if (/vix(?:cloud|src)?/i.test(raw)) return 'VixCloud';
     if (/cccdn/i.test(raw)) return 'CCCDN';
@@ -98,17 +98,20 @@ function inferWebQuality(stream, sourceName) {
 
 function getWebQualityIcon(quality) {
     const normalized = String(quality || '').toLowerCase();
-    if (normalized === '4k' || normalized === '1440p' || normalized === '1080p') return '🔥';
-    if (normalized === '720p') return '⚡';
-    if (normalized === 'sd' || normalized === '480p') return '📼';
-    return '📺';
+    if (normalized === '4k' || normalized === '1440p' || normalized === '1080p') return 'ðŸ”¥';
+    if (normalized === '720p') return 'âš¡';
+    if (normalized === 'sd' || normalized === '480p') return 'ðŸ“¼';
+    return 'ðŸ“º';
 }
 
 function rewriteWebTitleLayout(title, providerIcon, providerLabel, extractorLabel) {
     const lines = String(title || '').split('\n').map((line) => String(line || '').trim()).filter(Boolean);
-    const cleaned = lines.filter((line) => !/^(?:⛵|🧲|🔎|🏙️|🌐|🌪️|🍿|🦁|🎥|⛩️|🪐|⚙️|✨|🛰️|🔍)\s+/.test(line));
+    const cleaned = lines.filter((line) => {
+        if (providerIcon && line.startsWith(providerIcon)) return false;
+        return !/^(?:â›µ|ðŸ§²|ðŸ”Ž|ðŸ™ï¸|ðŸŒ|ðŸŒªï¸|ðŸ¿|ðŸ¦|ðŸŽ¥|ðŸŽŸï¸|â›©ï¸|ðŸŒ€|ðŸª|âš™ï¸|âœ¨|ðŸ›°ï¸|ðŸ”)\s+/.test(line);
+    });
     cleaned.push(`${providerIcon} ${providerLabel}`);
-    cleaned.push(`⛵ ${extractorLabel || 'Web'}`);
+    cleaned.push(`â›µ ${extractorLabel || 'Web'}`);
     return cleaned.join('\n');
 }
 
@@ -130,11 +133,11 @@ function applyAioWebStyle(streamList, providerDefinition, meta) {
             stream.title = aioFormatter.formatStreamTitle({
                 title: meta.title,
                 size: 'Web',
-                language: '🇯🇵 JPN/ITA',
+                language: 'ðŸ‡¯ðŸ‡µ JPN/ITA',
                 source: extractorLabel,
                 providerLine: `${providerIcon} ${providerLabel}`,
-                sourceIcon: '⛵',
-                techInfo: sourceName.includes('AnimeSaturn') ? '🪐 Anime' : (sourceName.includes('AnimeUnity') ? '🌀 Anime' : '⛩️ Anime')
+                sourceIcon: 'â›µ',
+                techInfo: sourceName.includes('AnimeSaturn') ? 'ðŸª Anime' : (sourceName.includes('AnimeUnity') ? 'ðŸŒ€ Anime' : 'â›©ï¸ Anime')
             });
             stream.behaviorHints = stream.behaviorHints || {};
             stream.behaviorHints.bingieGroup = `Leviathan|HD|Web|${sourceName.replace(/\W/g, '')}`;
@@ -147,12 +150,12 @@ function applyAioWebStyle(streamList, providerDefinition, meta) {
         stream.title = aioFormatter.formatStreamTitle({
             title: meta.title,
             size: 'Web',
-            language: '🇮🇹 ITA',
+            language: 'ðŸ‡®ðŸ‡¹ ITA',
             source: extractorLabel,
             providerLine: `${providerIcon} ${providerLabel}`,
-            sourceIcon: '⛵',
+            sourceIcon: 'â›µ',
             seeders: null,
-            techInfo: `🎞️ ${quality} ${qIcon}`
+            techInfo: `ðŸŽžï¸ ${quality} ${qIcon}`
         });
         stream.behaviorHints = stream.behaviorHints || {};
         stream.behaviorHints.bingieGroup = `Leviathan|${quality}|Web|${sourceName.replace(/\W/g, '')}`;
@@ -172,7 +175,7 @@ function applyWebFormatter(streamList, providerDefinition, meta, config) {
         let fileTitle = meta.title;
         const rawTitleToCheck = (stream.title || '').toUpperCase();
         if (stream.title) {
-            const cleanRaw = stream.title.split('\n')[0].replace(/[🎬⚡🌪️⛩️🍿🦁🎥🌐]/g, '').trim();
+            const cleanRaw = stream.title.split('\n')[0].replace(/[ðŸŽ¬âš¡ðŸŒªï¸â›©ï¸ðŸ¿ðŸ¦ðŸŽ¥ðŸŒ]/g, '').trim();
             if (cleanRaw.length > 2) fileTitle = cleanRaw;
         }
 
@@ -185,10 +188,10 @@ function applyWebFormatter(streamList, providerDefinition, meta, config) {
         const extractorLabel = inferWebExtractorLabel(stream, sourceName) || 'Web';
         const providerLabel = String(sourceName || '').trim() || 'Web';
         const formatted = formatStreamSelector(`${fileTitle} ${quality} ${langTag} WEB-DL AAC`, extractorLabel, 0, null, 'WEB', config, null, false, false);
-        const cleanTitle = formatted.title.replace(/🧲/g, '⛵').replace(/🦈/g, providerIcon).replace(/🧲\s*\d+(\.\d+)?\s*(GB|MB)/gi, '☁️ Web Stream');
+        const cleanTitle = formatted.title.replace(/ðŸ§²/g, 'â›µ').replace(/ðŸ¦ˆ/g, providerIcon).replace(/ðŸ§²\s*\d+(\.\d+)?\s*(GB|MB)/gi, 'â˜ï¸ Web Stream');
         const titled = rewriteWebTitleLayout(cleanTitle, providerIcon, providerLabel, extractorLabel);
         return {
-            name: formatted.name.replace(/🧲/g, '⛵').replace(/🦈/g, providerIcon),
+            name: formatted.name.replace(/ðŸ§²/g, 'â›µ').replace(/ðŸ¦ˆ/g, providerIcon),
             title: titled,
             url: stream.url,
             behaviorHints: stream.behaviorHints || { notWebReady: false, bingieGroup: `Leviathan|${quality}|Web|${sourceName}` }
