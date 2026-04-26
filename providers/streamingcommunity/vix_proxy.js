@@ -12,7 +12,9 @@ const DEFAULT_REFERER = 'https://vixsrc.to/';
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const MANIFEST_ROUTE = '/vixsynthetic.m3u8';
 const MAX_UPSTREAM_REDIRECTS = 5;
-const UPSTREAM_TIMEOUT_MS = 10000;
+const UPSTREAM_TIMEOUT_MS = Math.max(10000, Number.parseInt(process.env.VIX_PROXY_TIMEOUT_MS || '18000', 10) || 18000);
+const HLS_PLAYBACK_TOKEN_TTL_MS = Math.max(10 * 60 * 1000, Number.parseInt(process.env.VIX_HLS_TOKEN_TTL_MS || String(2 * 60 * 60 * 1000), 10) || (2 * 60 * 60 * 1000));
+const VIX_STRICT_HOST_BINDING = String(process.env.VIX_STRICT_HOST_BINDING || '').trim() === '1';
 
 function getSelfBase(req) {
     return getRequestOrigin(req);
@@ -84,12 +86,12 @@ function buildProxyUrl(req, absoluteUrl, pageReferer, extraHeaders = null, extra
         kind: TRANSIT_KIND,
         referer: pageReferer,
         headers: buildRequestHeaders(absoluteUrl, pageReferer, extraHeaders),
-        hostBinding: selfBase,
+        hostBinding: VIX_STRICT_HOST_BINDING ? selfBase : null,
         routeBinding: MANIFEST_ROUTE,
         issuer: 'vix-proxy',
         profile: 'hls-proxy',
         meta: extraMeta || null,
-        tokenTtlMs: 10 * 60 * 1000,
+        tokenTtlMs: HLS_PLAYBACK_TOKEN_TTL_MS,
         tokenMaxUses: 0,
         maxUses: 0
     });
@@ -165,21 +167,60 @@ function rewriteMasterManifest(lines, baseUrl, req, pageReferer, variantPolicy =
     return output.join('\n');
 }
 
-async function fetchUpstream(targetUrl, referer, upstreamHeaders = null) {
+
+function setPlaybackCorsHeaders(res) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Range,Origin,Accept,Content-Type,User-Agent,Referer,Cache-Control,Pragma');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length,Content-Range,Accept-Ranges,Content-Type');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+}
+
+function fallbackContentType(targetUrl, upstreamContentType = '') {
+    const contentType = String(upstreamContentType || '').split(';')[0].trim();
+    if (contentType) return upstreamContentType;
+    const clean = String(targetUrl || '').split('?')[0].toLowerCase();
+    if (clean.endsWith('.m3u8')) return 'application/vnd.apple.mpegurl; charset=utf-8';
+    if (clean.endsWith('.ts')) return 'video/mp2t';
+    if (clean.endsWith('.m4s')) return 'video/iso.segment';
+    if (clean.endsWith('.mp4')) return 'video/mp4';
+    if (clean.endsWith('.aac')) return 'audio/aac';
+    if (clean.endsWith('.vtt')) return 'text/vtt; charset=utf-8';
+    if (clean.endsWith('.key')) return 'application/octet-stream';
+    return 'application/octet-stream';
+}
+
+function copyUsefulUpstreamHeaders(upstream, res, { manifest = false } = {}) {
+    if (!upstream?.headers) return;
+    const allowed = manifest
+        ? ['etag', 'last-modified']
+        : ['content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified'];
+    for (const name of allowed) {
+        const value = upstream.headers[name];
+        if (value != null && value !== '') res.setHeader(name.split('-').map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join('-'), value);
+    }
+}
+
+async function fetchUpstream(targetUrl, referer, upstreamHeaders = null, req = null) {
+    const headers = { ...(upstreamHeaders || buildRequestHeaders(targetUrl, referer)) };
+    const range = String(req?.headers?.range || '').trim();
+    if (range && /^bytes=\d*-\d*(?:,\d*-\d*)*$/i.test(range)) headers.Range = range;
+
     return axios.get(targetUrl, {
-        headers: upstreamHeaders || buildRequestHeaders(targetUrl, referer),
+        headers,
         timeout: UPSTREAM_TIMEOUT_MS,
         maxRedirects: MAX_UPSTREAM_REDIRECTS,
         responseType: 'arraybuffer',
         validateStatus: () => true,
-        proxy: false
+        proxy: false,
+        decompress: true
     });
 }
 
 function resolveProxySource(req) {
     const tokenPayload = resolveTransitKey(req.query.d, {
         kind: TRANSIT_KIND,
-        hostBinding: getSelfBase(req),
+        hostBinding: VIX_STRICT_HOST_BINDING ? getSelfBase(req) : null,
         routeBinding: MANIFEST_ROUTE
     });
 
@@ -205,42 +246,68 @@ function resolveProxySource(req) {
 }
 
 async function handleVixSynthetic(req, res) {
+    setPlaybackCorsHeaders(res);
+
+    if (req.method === 'OPTIONS') {
+        res.status(204);
+        return res.end();
+    }
+
+    if (req.method && !['GET', 'HEAD'].includes(String(req.method).toUpperCase())) {
+        res.status(405);
+        return res.end('Method Not Allowed');
+    }
+
     const resolved = resolveProxySource(req);
     if (!resolved?.sourceUrl) return res.status(400).send('Invalid or unsafe src');
 
     const { sourceUrl, pageReferer, upstreamHeaders, variantPolicy } = resolved;
 
     try {
-        const upstream = await fetchUpstream(sourceUrl, pageReferer, upstreamHeaders);
+        const upstream = await fetchUpstream(sourceUrl, pageReferer, upstreamHeaders, req);
         if (upstream.status >= 400) {
             console.error(`[VIX PROXY] Upstream ${upstream.status} for ${sourceUrl}`);
-            return res.status(upstream.status).send(`Vix upstream error ${upstream.status}`);
+            res.status(upstream.status);
+            res.setHeader('Cache-Control', 'no-store');
+            return res.end(`Vix upstream error ${upstream.status}`);
         }
 
         const contentType = String(upstream.headers['content-type'] || '');
         const buffer = Buffer.isBuffer(upstream.data) ? upstream.data : Buffer.from(upstream.data || '');
+        const manifest = isManifest(sourceUrl, contentType);
 
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
-
-        if (!isManifest(sourceUrl, contentType)) {
-            if (contentType) res.setHeader('Content-Type', contentType);
-            return res.send(buffer);
+        if (!manifest) {
+            const status = Number(upstream.status || 200) === 206 ? 206 : 200;
+            res.status(status);
+            res.setHeader('Content-Type', fallbackContentType(sourceUrl, contentType));
+            res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=60');
+            res.setHeader('Accept-Ranges', upstream.headers['accept-ranges'] || 'bytes');
+            copyUsefulUpstreamHeaders(upstream, res, { manifest: false });
+            if (req.method === 'HEAD') return res.end();
+            return res.end(buffer);
         }
 
-        const manifest = buffer.toString('utf8');
-        const lines = manifest.replace(/\r\n/g, '\n').split('\n');
+        const manifestText = buffer.toString('utf8');
+        const lines = manifestText.replace(/\r\n/g, '\n').split('\n');
         const hasVariants = lines.some((line) => String(line).trim().startsWith('#EXT-X-STREAM-INF'));
 
         const rewritten = hasVariants
             ? rewriteMasterManifest(lines, sourceUrl, req, pageReferer, variantPolicy)
             : rewriteLeafManifest(lines, sourceUrl, req, pageReferer);
 
-        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        return res.send(rewritten);
+        const out = rewritten.endsWith('\n') ? rewritten : `${rewritten}\n`;
+        res.status(200);
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Content-Length', Buffer.byteLength(out));
+        copyUsefulUpstreamHeaders(upstream, res, { manifest: true });
+        if (req.method === 'HEAD') return res.end();
+        return res.end(out);
     } catch (error) {
         console.error('Vix Proxy Error:', error.message);
-        return res.status(500).send('Vix Proxy Error');
+        res.status(502);
+        res.setHeader('Cache-Control', 'no-store');
+        return res.end('Vix Proxy Error');
     }
 }
 
