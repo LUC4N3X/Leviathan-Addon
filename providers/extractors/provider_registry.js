@@ -9,6 +9,8 @@ const { searchAnimeSaturn } = require('../animesaturn/as_handler');
 const { searchGuardaFlix } = require('../guardaflix/gf_handler');
 const { searchCinemaCity } = require('../cinemacity/cc_handler');
 
+const STREAMING_COMMUNITY_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.SC_PROVIDER_TIMEOUT || '16000', 10) || 16000);
+const ANIMEWORLD_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.AW_PROVIDER_TIMEOUT || '16000', 10) || 16000);
 const GUARDO_SERIE_MIN_TIMEOUT = Math.max(7000, parseInt(process.env.GS_PROVIDER_TIMEOUT || '18000', 10) || 18000);
 const GUARDO_SERIE_EMPTY_TTL = Math.max(15, parseInt(process.env.GS_PROVIDER_EMPTY_TTL || '45', 10) || 45);
 const GUARDO_SERIE_ERROR_TTL = Math.max(3, Math.min(GUARDO_SERIE_EMPTY_TTL, parseInt(process.env.GS_PROVIDER_ERROR_TTL || '5', 10) || 5));
@@ -57,7 +59,7 @@ const WEB_PROVIDER_DEFINITIONS = [
         cacheName: 'StreamingCommunity',
         icon: '🌪️',
         limiterKey: 'webVix',
-        minTimeout: 0,
+        minTimeout: STREAMING_COMMUNITY_MIN_TIMEOUT,
         isEnabled: ({ filters }) => isStreamingCommunityEnabled(filters),
         run: ({ meta, config, reqHost }) => searchStreamingCommunity(meta, config, reqHost)
     },
@@ -89,7 +91,7 @@ const WEB_PROVIDER_DEFINITIONS = [
         cacheName: 'AnimeWorld',
         icon: '⛩️',
         limiterKey: 'webAw',
-        minTimeout: 0,
+        minTimeout: ANIMEWORLD_MIN_TIMEOUT,
         isEnabled: ({ filters, meta }) => filters?.enableAnimeWorld === true && isAnimeWebEligible(meta),
         run: ({ originalId, meta, config }) => searchAnimeWorld(originalId, meta, config)
     },
