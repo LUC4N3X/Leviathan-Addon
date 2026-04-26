@@ -32,6 +32,8 @@ const TMDB_META_CACHE_TTL_MS = 30 * 60 * 1000;
 const PREFERRED_LANG = 'it';
 const AU_BASE = 'https://www.animeunity.so';
 const ANIME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
+const HLS_PLAYBACK_TOKEN_TTL_MS = Math.max(10 * 60 * 1000, Number.parseInt(process.env.VIX_HLS_TOKEN_TTL_MS || String(2 * 60 * 60 * 1000), 10) || (2 * 60 * 60 * 1000));
+const VIX_STRICT_HOST_BINDING = String(process.env.VIX_STRICT_HOST_BINDING || '').trim() === '1';
 
 const http = axios.create({
     timeout: REQUEST_TIMEOUT,
@@ -725,7 +727,7 @@ function buildSyntheticUrl(masterSource, quality, referer, reqHost) {
         kind: TRANSIT_KIND,
         referer,
         headers: buildProxyRequestHeaders(masterSource, referer),
-        hostBinding: addonBase,
+        hostBinding: VIX_STRICT_HOST_BINDING ? addonBase : null,
         routeBinding: '/vixsynthetic.m3u8',
         issuer: 'vix-handler',
         profile: 'synthetic-stream',
@@ -733,7 +735,7 @@ function buildSyntheticUrl(masterSource, quality, referer, reqHost) {
             syntheticQuality: quality,
             syntheticVariant: quality === '1080p' ? 'max' : 'mid'
         },
-        tokenTtlMs: 10 * 60 * 1000,
+        tokenTtlMs: HLS_PLAYBACK_TOKEN_TTL_MS,
         tokenMaxUses: 0,
         maxUses: 0
     });
@@ -809,6 +811,11 @@ function dedupeStreams(streams) {
 
 function sortStreams(streams) {
     return [...(streams || [])].sort((a, b) => {
+        const baBranch = String(a?.behaviorHints?.vortexMeta?.branch || '').toLowerCase();
+        const bbBranch = String(b?.behaviorHints?.vortexMeta?.branch || '').toLowerCase();
+        const aSafe = baBranch.includes('android-safe') ? 1 : 0;
+        const bSafe = bbBranch.includes('android-safe') ? 1 : 0;
+        if (bSafe !== aSafe) return bSafe - aSafe;
         const qa = qualityRank(inferQualityFromStream(a));
         const qb = qualityRank(inferQualityFromStream(b));
         if (qb !== qa) return qb - qa;
@@ -1533,13 +1540,13 @@ async function buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitl
 
     if (wants720 || (!streams.length && fastMode)) {
         streams.push(stampScStream({
-            name: '??? StreamingCommunity\n?? 720p',
+            name: '📱 StreamingCommunity\n🛡 Android/TV Safe 720p',
             title: cleanTitle,
             url: buildSyntheticUrl(sourceUrl, '720p', pageReferer, reqHost),
             quality: '720p',
             behaviorHints: {
                 notWebReady: false,
-                vortexMeta: { branch: fastMode ? 'synthetic-720-fast' : 'synthetic-720', quality: '720p' }
+                vortexMeta: { branch: fastMode ? 'android-safe-720-fast' : 'android-safe-720', quality: '720p', androidTvSafe: true }
             }
         }, cleanTitle, season, episode));
     }
