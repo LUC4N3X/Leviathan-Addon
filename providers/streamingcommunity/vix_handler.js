@@ -4,6 +4,7 @@ const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const mediaIdentity = require('../../core/media_identity_resolver');
 const kitsuProvider = require('../animeworld/kitsu_provider');
+const animeProviderUtils = require('../anime/provider_utils');
 const {
     CircuitBreaker,
     SingleFlight,
@@ -31,7 +32,6 @@ const TMDB_META_CACHE_TTL_MS = 30 * 60 * 1000;
 const PREFERRED_LANG = 'it';
 const AU_BASE = 'https://www.animeunity.so';
 const ANIME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
-const ANIME_MAPPING_BASE = 'https://anime.questoleviatanormio.dpdns.org';
 
 const http = axios.create({
     timeout: REQUEST_TIMEOUT,
@@ -1028,6 +1028,65 @@ function buildKitsuResolvedSourceId(meta = {}, kitsu = null) {
     return buildKitsuContextId(meta, kitsu);
 }
 
+
+function buildKitsuMappingProviderContext(meta = {}, config = {}, kitsu = null, episodeNumber = 1) {
+    const contextId = buildKitsuResolvedSourceId(meta, kitsu) || (kitsu?.kitsuId ? `kitsu:${kitsu.kitsuId}:${episodeNumber || 1}` : null);
+    const providerContext = animeProviderUtils.buildAnimeProviderContext({
+        ...meta,
+        id: contextId || meta?.id || meta?.requestedId || meta?.originalId || null,
+        kitsuId: kitsu?.kitsuId || meta?.kitsuId || meta?.kitsu_id || meta?.kitsu || null,
+        episode: episodeNumber
+    });
+
+    providerContext.mappingLanguage = 'it';
+    providerContext.italianOnly = true;
+    providerContext.onlyItalian = true;
+    providerContext.mappingTimeoutMs = REQUEST_TIMEOUT;
+    providerContext.mappingRetries = 2;
+
+    if (Array.isArray(config?.mappingApiBases)) providerContext.mappingApiBases = config.mappingApiBases;
+    if (Array.isArray(config?.mappingMirrors)) providerContext.mappingApiBases = config.mappingMirrors;
+    if (Array.isArray(config?.filters?.mappingApiBases)) providerContext.mappingApiBases = config.filters.mappingApiBases;
+    if (Array.isArray(config?.filters?.mappingMirrors)) providerContext.mappingApiBases = config.filters.mappingMirrors;
+
+    return providerContext;
+}
+
+function extractMappingEntries(mappingPayload, key) {
+    const raw = mappingPayload?.mappings?.[key]
+        || mappingPayload?.mapping?.[key]
+        || mappingPayload?.providers?.[key]
+        || mappingPayload?.[key]
+        || null;
+    return Array.isArray(raw) ? raw : raw ? [raw] : [];
+}
+
+function extractAnimeUnityPathsFromMapping(mappingPayload) {
+    const entries = extractMappingEntries(mappingPayload, 'animeunity');
+    const paths = [];
+
+    for (const entry of entries) {
+        const value = typeof entry === 'string'
+            ? entry
+            : entry && typeof entry === 'object'
+                ? entry.path || entry.url || entry.href || entry.playPath || entry.watchPath || null
+                : null;
+        const normalized = normalizeAnimeUrl(value, AU_BASE);
+        if (normalized && normalized.includes('/anime/')) paths.push(normalized);
+    }
+
+    return uniqueNonEmpty(paths);
+}
+
+function resolveStrictKitsuEpisode(mappingPayload, fallbackEpisode) {
+    const requested = Number.parseInt(String(fallbackEpisode || ''), 10) || 1;
+    const fromKitsu = Number.parseInt(String(mappingPayload?.kitsu?.episode || ''), 10);
+    const fromRequested = Number.parseInt(String(mappingPayload?.requested?.episode || ''), 10);
+    if (Number.isInteger(fromKitsu) && fromKitsu > 0 && fromKitsu === requested) return fromKitsu;
+    if (Number.isInteger(fromRequested) && fromRequested > 0 && fromRequested === requested) return fromRequested;
+    return requested;
+}
+
 function looksLikeAnimeMeta(meta = {}) {
     const directType = String(meta?.type || meta?.kind || meta?.mediaType || '').toLowerCase();
     if (/(^|[^a-z])(anime|animation)([^a-z]|$)/i.test(directType)) return true;
@@ -1286,11 +1345,16 @@ function scoreAnimeUnityResult(result, searchContext) {
     return score;
 }
 
-function pickBestAnimeUnityResult(results, searchContext) {
-    const ranked = [...(results || [])]
+function rankAnimeUnityResults(results, searchContext) {
+    return [...(results || [])]
         .map((result) => ({ result, score: scoreAnimeUnityResult(result, searchContext) }))
-        .sort((a, b) => b.score - a.score);
-    return ranked[0]?.result || null;
+        .filter((entry) => entry.result && Number(entry.score || 0) >= 35)
+        .sort((a, b) => b.score - a.score)
+        .map((entry) => entry.result);
+}
+
+function pickBestAnimeUnityResult(results, searchContext) {
+    return rankAnimeUnityResults(results, searchContext)[0] || null;
 }
 
 function buildAnimeUnityPath(result) {
@@ -1320,14 +1384,17 @@ function normalizeEpisodeCandidate(value) {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function pickAnimeEpisode(episodes, requestedEpisode, isMovie) {
+function pickAnimeEpisode(episodes, requestedEpisode, isMovie, options = {}) {
     const wanted = normalizeEpisodeCandidate(requestedEpisode) || 1;
     const list = Array.isArray(episodes) ? episodes : [];
     if (!list.length) return null;
 
     const exact = list.find((episode) => normalizeEpisodeCandidate(episode?.number) === wanted);
     if (exact) return exact;
+
+    if (options?.strictEpisode && !isMovie) return null;
     if (isMovie || list.length === 1) return list[0];
+
     const fallback = list.find((episode) => normalizeEpisodeCandidate(episode?.number) === 1);
     return fallback || list[0];
 }
@@ -1341,7 +1408,7 @@ async function fetchAnimePage(url, referer = `${AU_BASE}/`) {
     };
 }
 
-async function getAnimeUnityEmbedUrl(animePath, episodeNumber, isMovie) {
+async function getAnimeUnityEmbedUrl(animePath, episodeNumber, isMovie, options = {}) {
     const animeUrl = normalizeAnimeUrl(animePath, AU_BASE);
     if (!animeUrl) return null;
 
@@ -1352,14 +1419,16 @@ async function getAnimeUnityEmbedUrl(animePath, episodeNumber, isMovie) {
     const player = $('video-player').first();
     let embedUrl = normalizeAnimeUrl(player.attr('embed_url'), page.url);
     const episodes = parseAnimeEpisodes(player.attr('episodes'));
-    const chosenEpisode = pickAnimeEpisode(episodes, episodeNumber, isMovie);
+    const chosenEpisode = pickAnimeEpisode(episodes, episodeNumber, isMovie, options);
+
+    if (options?.strictEpisode && !isMovie && episodes.length && !chosenEpisode) return null;
 
     if (chosenEpisode?.embed_url) {
         embedUrl = normalizeAnimeUrl(chosenEpisode.embed_url, page.url);
         if (embedUrl) return embedUrl;
     }
 
-    if (embedUrl && (isMovie || !chosenEpisode?.id)) return embedUrl;
+    if (embedUrl && (isMovie || (!options?.strictEpisode && !chosenEpisode?.id))) return embedUrl;
 
     if (chosenEpisode?.id) {
         const episodePage = await fetchAnimePage(`${animeUrl.replace(/\/$/, '')}/${chosenEpisode.id}`, animeUrl);
@@ -1371,46 +1440,32 @@ async function getAnimeUnityEmbedUrl(animePath, episodeNumber, isMovie) {
         }
     }
 
-    return embedUrl || normalizeAnimeUrl($('iframe[src*="vixcloud"]').first().attr('src'), page.url);
+    return options?.strictEpisode && !isMovie
+        ? null
+        : (embedUrl || normalizeAnimeUrl($('iframe[src*="vixcloud"]').first().attr('src'), page.url));
 }
 
-async function resolveAnimeUnityMapping(kitsuId, episodeNumber) {
-    if (!ANIME_MAPPING_BASE) return null;
+async function resolveAnimeUnityMapping(kitsuId, episodeNumber, providerContext = null) {
     const requestedEpisode = Number.parseInt(String(episodeNumber || ''), 10) || 1;
-    const mappingUrl = `${ANIME_MAPPING_BASE}/kitsu/${kitsuId}?ep=${requestedEpisode}`;
-    const response = await getWithRetries(mappingUrl, {
-        headers: { Accept: 'application/json' },
-        timeout: REQUEST_TIMEOUT
-    });
-    if (Number(response?.status || 0) !== 200) return null;
+    const lookup = {
+        provider: 'kitsu',
+        externalId: String(kitsuId || '').trim(),
+        season: null,
+        episode: requestedEpisode,
+        contentType: 'anime'
+    };
+    if (!lookup.externalId) return null;
 
-    let payload = response?.data;
-    if (!payload || typeof payload !== 'object') {
-        try {
-            payload = JSON.parse(responseText(response) || '{}');
-        } catch {
-            payload = {};
-        }
-    }
+    const payload = await animeProviderUtils.fetchMappingPayload(lookup, providerContext);
+    if (!payload) return null;
 
-    const mapping = payload?.mappings?.animeunity;
-    const entries = Array.isArray(mapping) ? mapping : (mapping ? [mapping] : []);
-    let animePath = null;
-    for (const entry of entries) {
-        const value = typeof entry === 'string' ? entry : (entry?.path || entry?.url || entry?.href || null);
-        if (typeof value === 'string' && value.startsWith('/')) {
-            animePath = `${AU_BASE}${value}`;
-            break;
-        }
-        const normalized = normalizeAnimeUrl(value, AU_BASE);
-        if (normalized) {
-            animePath = normalized;
-            break;
-        }
-    }
-
-    const resolvedEpisode = Number(payload?.kitsu?.episode || payload?.requested?.episode || requestedEpisode) || requestedEpisode;
-    return { animePath, episodeNumber: resolvedEpisode };
+    const animePaths = extractAnimeUnityPathsFromMapping(payload);
+    return {
+        animePath: animePaths[0] || null,
+        animePaths,
+        episodeNumber: resolveStrictKitsuEpisode(payload, requestedEpisode),
+        mappingPayload: payload
+    };
 }
 
 function inferAnimePayloadFromEmbedUrl(embedUrl) {
@@ -1519,21 +1574,23 @@ async function resolveKitsuVix(meta, config = {}, reqHost, forcedKitsu = null) {
 
     kitsuDebug('start', `id=${kitsu.kitsuId} requested=${contextSourceId || 'n/a'} ep=${episodeNumber} title=${cleanTitle}${kitsu?.inferredFromTitle ? ` inferred=${kitsu.inferredFromTitle}` : ''}`);
 
-    let animePath = null;
+    const providerContext = buildKitsuMappingProviderContext(meta, config, kitsu, episodeNumber);
+    let animePaths = [];
     let resolvedEpisode = Number(episodeNumber) || 1;
     try {
-        const mapping = await resolveAnimeUnityMapping(kitsu.kitsuId, resolvedEpisode);
-        if (mapping?.animePath) animePath = mapping.animePath;
-        if (Number(mapping?.episodeNumber || 0) > 0) resolvedEpisode = Number(mapping.episodeNumber);
-        kitsuDebug('mapping', `path=${animePath || 'none'} resolvedEp=${resolvedEpisode}`);
+        const mapping = await resolveAnimeUnityMapping(kitsu.kitsuId, resolvedEpisode, providerContext);
+        animePaths = Array.isArray(mapping?.animePaths) ? mapping.animePaths : (mapping?.animePath ? [mapping.animePath] : []);
+        resolvedEpisode = Number(mapping?.episodeNumber || resolvedEpisode) || resolvedEpisode;
+        kitsuDebug('mapping', `paths=${animePaths.length} resolvedEp=${resolvedEpisode}`);
     } catch (error) {
         kitsuDebug('mapping-error', error?.message || 'unknown');
     }
 
     let embedUrl = null;
-    if (animePath) {
-        embedUrl = await getAnimeUnityEmbedUrl(animePath, resolvedEpisode, searchContext?.isMovie);
-        kitsuDebug('mapping-embed', `found=${!!embedUrl}`);
+    for (const animePath of animePaths.slice(0, 4)) {
+        embedUrl = await getAnimeUnityEmbedUrl(animePath, resolvedEpisode, searchContext?.isMovie, { strictEpisode: true });
+        kitsuDebug('mapping-embed', `path=${animePath} found=${!!embedUrl}`);
+        if (embedUrl) break;
     }
 
     if (!embedUrl) {
@@ -1553,7 +1610,7 @@ async function resolveKitsuVix(meta, config = {}, reqHost, forcedKitsu = null) {
             for (const title of titleCandidates.slice(0, 6)) {
                 const results = await searchAnimeUnity(title, session);
                 kitsuDebug('search', `title=${title} results=${results.length}`);
-                const best = pickBestAnimeUnityResult(results, {
+                const ranked = rankAnimeUnityResults(results, {
                     ...(searchContext || {}),
                     searchTitles: uniqueNonEmpty([
                         ...(Array.isArray(searchContext?.searchTitles) ? searchContext.searchTitles : []),
@@ -1569,11 +1626,15 @@ async function resolveKitsuVix(meta, config = {}, reqHost, forcedKitsu = null) {
                         title
                     ])
                 });
-                const path = buildAnimeUnityPath(best);
-                if (!path) continue;
-                kitsuDebug('search-best', `title=${title} path=${path}`);
-                embedUrl = await getAnimeUnityEmbedUrl(path, resolvedEpisode, searchContext?.isMovie);
-                kitsuDebug('search-embed', `title=${title} found=${!!embedUrl}`);
+
+                for (const candidate of ranked.slice(0, 5)) {
+                    const path = buildAnimeUnityPath(candidate);
+                    if (!path) continue;
+                    kitsuDebug('search-best', `title=${title} path=${path}`);
+                    embedUrl = await getAnimeUnityEmbedUrl(path, resolvedEpisode, searchContext?.isMovie, { strictEpisode: true });
+                    kitsuDebug('search-embed', `title=${title} found=${!!embedUrl}`);
+                    if (embedUrl) break;
+                }
                 if (embedUrl) break;
             }
         }

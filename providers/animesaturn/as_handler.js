@@ -14,6 +14,7 @@ const {
 const kitsuProvider = require('../animeworld/kitsu_provider');
 
 const SATURN_BASE_URL = 'https://www.animesaturn.cx';
+const MAPPING_API_BASE = 'https://anime.questoleviatanormio.dpdns.org';
 const BLOCKED_DOMAINS = [
     'jujutsukaisenanime.com',
     'onepunchman.it',
@@ -23,7 +24,22 @@ const BLOCKED_DOMAINS = [
 const TTL = {
     page: 15 * 60 * 1000,
     watch: 5 * 60 * 1000,
-    search: 10 * 60 * 1000
+    search: 10 * 60 * 1000,
+    mapping: 2 * 60 * 1000
+};
+const MONTHS = {
+    gennaio: 0,
+    febbraio: 1,
+    marzo: 2,
+    aprile: 3,
+    maggio: 4,
+    giugno: 5,
+    luglio: 6,
+    agosto: 7,
+    settembre: 8,
+    ottobre: 9,
+    novembre: 10,
+    dicembre: 11
 };
 
 function buildSaturnUrl(pathOrUrl) {
@@ -110,16 +126,26 @@ function parseEpisodeNumber(value, fallbackNum) {
     const raw = String(value || '').trim();
     if (!raw) return fallbackNum;
 
-    const byHref = raw.match(/-ep-(\d+)/i);
-    if (byHref) {
-        const parsed = Number.parseInt(byHref[1], 10);
-        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    const patterns = [
+        /(?:^|[^a-z])episodio[-_\s]*(\d{1,5})(?:$|[^a-z])/i,
+        /(?:^|[^a-z])episode[-_\s]*(\d{1,5})(?:$|[^a-z])/i,
+        /(?:^|[^a-z])ep[-_\s]*(\d{1,5})(?:$|[^a-z])/i,
+        /-ep-(\d{1,5})(?:-|$)/i,
+        /\/ep\/[^/?#]*?(\d{1,5})(?:-|$)/i
+    ];
+
+    for (const pattern of patterns) {
+        const match = raw.match(pattern);
+        if (!match?.[1]) continue;
+        const parsed = Number.parseInt(match[1], 10);
+        if (Number.isInteger(parsed) && parsed > 0) return parsed;
     }
 
-    const byLabel = raw.match(/episodio\s*(\d+)/i);
-    if (byLabel) {
-        const parsed = Number.parseInt(byLabel[1], 10);
-        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    const cleanText = raw.replace(/https?:\/\/\S+/gi, ' ');
+    const compact = cleanText.match(/(?:^|\s)(\d{1,5})(?:\s|$)/);
+    if (compact?.[1]) {
+        const parsed = Number.parseInt(compact[1], 10);
+        if (Number.isInteger(parsed) && parsed > 0) return parsed;
     }
 
     return fallbackNum;
@@ -406,7 +432,7 @@ async function resolveWatchUrlsForEpisodeEntry(source, episodeEntry) {
     return uniqueStrings(urls.map((url) => toAbsoluteUrl(url, SATURN_BASE_URL))).filter(Boolean);
 }
 
-async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaType = 'tv', originalEpisode = null) {
+async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaType = 'tv', originalEpisode = null, includeRelatedIta = false) {
     const normalizedPath = normalizeAnimeSaturnPath(animePath);
     if (!normalizedPath) return [];
 
@@ -541,6 +567,18 @@ ${resolveLanguageLine(parsedPage.sourceTag)} • ${quality}
         }
     }
 
+    if (
+        includeRelatedIta
+        && String(parsedPage.sourceTag || '').toUpperCase() !== 'ITA'
+        && Array.isArray(parsedPage.relatedAnimePaths)
+        && parsedPage.relatedAnimePaths.length > 0
+    ) {
+        const relatedStreams = await mapLimit(parsedPage.relatedAnimePaths.slice(0, 2), 1, (relatedPath) =>
+            extractStreamsFromAnimePath(relatedPath, normalizedEpisode, mediaType, normalizedOriginalEpisode, false)
+        );
+        streams.push(...relatedStreams.flat().filter(Boolean));
+    }
+
     return streams;
 }
 
@@ -665,7 +703,7 @@ function clusterKey(name) {
     ].join('|');
 }
 
-function rankAnimeSaturnCandidates(query, candidates, isMovie) {
+function rankAnimeSaturnCandidates(query, candidates, isMovie, strict = false) {
     const scored = candidates
         .map((candidate) => ({
             candidate,
@@ -715,7 +753,59 @@ function rankAnimeSaturnCandidates(query, candidates, isMovie) {
     }
 
     if (output.length > 0) return output;
+    if (strict) return [];
     return scored.slice(0, 3).map((entry) => entry.candidate);
+}
+
+function parseIsoDate(value) {
+    const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!match) return null;
+
+    const year = Number.parseInt(match[1], 10);
+    const month = Number.parseInt(match[2], 10) - 1;
+    const day = Number.parseInt(match[3], 10);
+    const date = new Date(Date.UTC(year, month, day));
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseAnimeSaturnDateValue(value) {
+    const cleaned = String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!cleaned) return null;
+
+    let match = cleaned.match(/^(\d{1,2})\s+([a-zà-ÿ]+)\s+(\d{4})$/i);
+    if (match) {
+        const day = Number.parseInt(match[1], 10);
+        const monthIndex = MONTHS[String(match[2] || '').trim().toLowerCase()];
+        const year = Number.parseInt(match[3], 10);
+        if (Number.isInteger(day) && Number.isInteger(monthIndex) && Number.isInteger(year)) {
+            const date = new Date(Date.UTC(year, monthIndex, day));
+            if (!Number.isNaN(date.getTime())) return { date, exact: true };
+        }
+    }
+
+    match = cleaned.match(/^([a-zà-ÿ]+)\s+(\d{4})$/i);
+    if (match) {
+        const monthIndex = MONTHS[String(match[1] || '').trim().toLowerCase()];
+        const year = Number.parseInt(match[2], 10);
+        if (Number.isInteger(monthIndex) && Number.isInteger(year)) {
+            const date = new Date(Date.UTC(year, monthIndex, 1));
+            if (!Number.isNaN(date.getTime())) return { date, exact: false };
+        }
+    }
+
+    return null;
+}
+
+function matchesAnimeSaturnDate(candidateDate, targetDate) {
+    if (!candidateDate?.date || !targetDate) return false;
+
+    if (candidateDate.exact) {
+        const diffMs = Math.abs(candidateDate.date.getTime() - targetDate.getTime());
+        return diffMs <= (2 * 24 * 60 * 60 * 1000);
+    }
+
+    return candidateDate.date.getUTCFullYear() === targetDate.getUTCFullYear()
+        && candidateDate.date.getUTCMonth() === targetDate.getUTCMonth();
 }
 
 async function searchAnimeSaturnCandidates(query) {
@@ -741,7 +831,8 @@ async function searchAnimeSaturnCandidates(query) {
             .filter((item) => item && typeof item === 'object')
             .map((item) => ({
                 name: String(item.name || '').trim(),
-                link: String(item.link || '').trim()
+                link: String(item.link || '').trim(),
+                release: String(item.release || '').trim()
             }))
             .filter((item) => item.name && item.link);
     } catch (error) {
@@ -751,6 +842,8 @@ async function searchAnimeSaturnCandidates(query) {
 }
 
 async function resolveAnimeSaturnPaths(searchContext) {
+    const targetDate = parseIsoDate(searchContext?.date);
+    const strictKitsu = Boolean(searchContext?.strictKitsu);
     const searchQueries = uniqueStrings([
         searchContext?.title,
         ...(Array.isArray(searchContext?.searchTitles) ? searchContext.searchTitles : []),
@@ -764,7 +857,11 @@ async function resolveAnimeSaturnPaths(searchContext) {
         const candidates = await searchAnimeSaturnCandidates(query);
         if (candidates.length === 0) continue;
 
-        const ranked = rankAnimeSaturnCandidates(query, candidates, isMovie);
+        const dateMatched = targetDate
+            ? candidates.filter((candidate) => matchesAnimeSaturnDate(parseAnimeSaturnDateValue(candidate?.release), targetDate))
+            : [];
+        const candidatePool = dateMatched.length > 0 ? dateMatched : (targetDate && strictKitsu ? [] : candidates);
+        const ranked = rankAnimeSaturnCandidates(query, candidatePool, isMovie, strictKitsu);
         const resolvedPaths = uniqueStrings(
             ranked
                 .map((candidate) => normalizeAnimeSaturnCandidatePath(candidate?.link))
@@ -773,7 +870,7 @@ async function resolveAnimeSaturnPaths(searchContext) {
 
         if (resolvedPaths.length > 0) return resolvedPaths;
 
-        if (fallbackPaths.length === 0) {
+        if (!strictKitsu && fallbackPaths.length === 0) {
             fallbackPaths = uniqueStrings(
                 candidates
                     .map((candidate) => normalizeAnimeSaturnCandidatePath(candidate?.link))
@@ -782,22 +879,156 @@ async function resolveAnimeSaturnPaths(searchContext) {
         }
     }
 
-    return fallbackPaths;
+    return strictKitsu ? [] : fallbackPaths;
+}
+
+function resolveExplicitKitsuRequestId(requestId, meta = {}) {
+    const taggedCandidates = uniqueStrings([
+        requestId,
+        meta?.id,
+        meta?.requestedId,
+        meta?.originalId,
+        meta?.kitsu_id,
+        meta?.kitsuId,
+        meta?.kitsu
+    ]).filter((value) => /kitsu/i.test(String(value || '')));
+
+    for (const candidate of taggedCandidates) {
+        const parsed = kitsuProvider.parseKitsuId(candidate);
+        if (parsed?.kitsuId) return candidate;
+    }
+
+    for (const candidate of [meta?.kitsu_id, meta?.kitsuId, meta?.kitsu]) {
+        const parsed = kitsuProvider.parseKitsuId(candidate);
+        if (parsed?.kitsuId) return `kitsu:${parsed.kitsuId}`;
+    }
+
+    return null;
+}
+
+function buildStrictKitsuContext(context = {}) {
+    const info = context?.info || {};
+    const rawTitles = uniqueStrings([
+        ...(Array.isArray(info?.titles) ? info.titles : []),
+        info?.canonicalTitle,
+        info?.title
+    ]);
+    const strictRawTitles = rawTitles;
+    const searchTitles = uniqueStrings([
+        ...kitsuProvider.buildTitleVariants(strictRawTitles),
+        ...strictRawTitles
+    ]);
+
+    return {
+        ...context,
+        rawTitles: strictRawTitles,
+        searchTitles,
+        title: searchTitles[0] || strictRawTitles[0] || null,
+        strictKitsu: true
+    };
+}
+
+function resolveRequestedAnimeEpisode(searchContext = {}, meta = {}) {
+    return normalizeRequestedEpisode(
+        meta?.requested_kitsu_episode
+        || meta?.anime_absolute_episode
+        || meta?.anime_episode
+        || searchContext?.episodeNumber
+        || searchContext?.requestedEpisode
+        || meta?.episode
+    );
+}
+
+async function fetchAnimeSaturnMapping(searchContext = {}, requestedEpisode = 1) {
+    const kitsuId = parsePositiveInt(searchContext?.kitsuId);
+    if (!kitsuId) return null;
+
+    const episode = normalizeRequestedEpisode(requestedEpisode);
+    const season = Number.parseInt(String(searchContext?.seasonNumber ?? ''), 10);
+    const params = new URLSearchParams();
+    params.set('ep', String(episode));
+    params.set('lang', 'it');
+    if (Number.isInteger(season) && season >= 0) params.set('s', String(season));
+
+    const cacheKey = `animesaturn-mapping:kitsu:${kitsuId}:s=${Number.isInteger(season) && season >= 0 ? season : 'na'}:ep=${episode}:it`;
+    try {
+        return await fetchResource(`${MAPPING_API_BASE}/kitsu/${encodeURIComponent(kitsuId)}?${params.toString()}`, {
+            as: 'json',
+            ttlMs: TTL.mapping,
+            cacheKey,
+            timeoutMs: FETCH_TIMEOUT
+        });
+    } catch (error) {
+        console.error('[AnimeSaturn] mapping request failed:', error.message);
+        return null;
+    }
+}
+
+function extractAnimeSaturnPathsFromMapping(mappingPayload) {
+    const raw = mappingPayload?.mappings?.animesaturn;
+    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    const paths = [];
+
+    for (const item of list) {
+        const candidate = typeof item === 'string'
+            ? item
+            : item && typeof item === 'object'
+                ? item.path || item.url || item.href || item.playPath
+                : null;
+        const normalized = normalizeAnimeSaturnPath(candidate);
+        if (normalized) paths.push(normalized);
+    }
+
+    return uniqueStrings(paths);
+}
+
+function resolveEpisodeFromMappingPayload(mappingPayload, fallbackEpisode) {
+    const fromKitsu = parsePositiveInt(mappingPayload?.kitsu?.episode);
+    if (fromKitsu) return fromKitsu;
+
+    const fromRequested = parsePositiveInt(mappingPayload?.requested?.episode);
+    if (fromRequested) return fromRequested;
+
+    const fromTmdbRaw = parsePositiveInt(
+        mappingPayload?.mappings?.tmdb_episode?.rawEpisodeNumber
+        || mappingPayload?.mappings?.tmdb_episode?.raw_episode_number
+        || mappingPayload?.mappings?.tmdbEpisode?.rawEpisodeNumber
+        || mappingPayload?.tmdb_episode?.rawEpisodeNumber
+        || mappingPayload?.tmdbEpisode?.rawEpisodeNumber
+    );
+    if (fromTmdbRaw) return fromTmdbRaw;
+
+    return normalizeRequestedEpisode(fallbackEpisode);
 }
 
 async function searchAnimeSaturn(requestId, meta, config) {
     if (!config?.filters?.enableAnimeSaturn) return [];
 
-    const searchContext = await kitsuProvider.buildSearchContext(requestId, meta);
-    const animePaths = await resolveAnimeSaturnPaths(searchContext);
+    const kitsuRequestId = resolveExplicitKitsuRequestId(requestId, meta);
+    const searchContext = kitsuRequestId
+        ? buildStrictKitsuContext(await kitsuProvider.buildSearchContext(kitsuRequestId, meta))
+        : await kitsuProvider.buildSearchContext(requestId, meta);
+    const requestedFromContext = resolveRequestedAnimeEpisode(searchContext, meta);
+    let requestedEpisode = requestedFromContext;
+    let animePaths = [];
+
+    const searchPaths = await resolveAnimeSaturnPaths(searchContext);
+
+    if (searchContext?.strictKitsu) {
+        const mappingPayload = await fetchAnimeSaturnMapping(searchContext, requestedFromContext);
+        const mappingPaths = extractAnimeSaturnPathsFromMapping(mappingPayload);
+        animePaths = uniqueStrings([...searchPaths, ...mappingPaths]);
+        requestedEpisode = requestedFromContext;
+    } else {
+        animePaths = searchPaths;
+    }
     if (animePaths.length === 0) return [];
 
-    const requestedEpisode = normalizeRequestedEpisode(searchContext?.requestedEpisode || meta?.episode);
-    const originalRequestedEpisode = normalizeRequestedEpisode(searchContext?.requestedEpisode || meta?.episode);
+    const originalRequestedEpisode = requestedFromContext;
     const mediaType = searchContext?.isMovie ? 'movie' : 'tv';
 
     const perPathStreams = await mapLimit(animePaths, 3, (path) =>
-        extractStreamsFromAnimePath(path, requestedEpisode, mediaType, originalRequestedEpisode)
+        extractStreamsFromAnimePath(path, requestedEpisode, mediaType, originalRequestedEpisode, false)
     );
 
     const deduped = [];

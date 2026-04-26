@@ -8,6 +8,8 @@ const fs = require('fs');
 const path = require('path');
 const tmdbHelper = require('../../core/utils/tmdb_helper');
 const animeIdentity = require('../anime/anime_identity');
+const kitsuProvider = require('../animeworld/kitsu_provider');
+const animeProviderUtils = require('../anime/provider_utils');
 const { GUARDA_SERIE_BROWSER_PROFILES, pickRandomProfile } = require('../../core/browser_profiles');
 const {
   buildWebStream,
@@ -567,6 +569,161 @@ async function buildSharedAnimeContext(meta = {}, config = {}, season = null, ep
   return null;
 }
 
+
+function getKitsuRequestFromMeta(meta = {}) {
+  const candidates = uniqueCleanStrings([
+    meta?.requestedId,
+    meta?.originalId,
+    meta?.sourceId,
+    meta?.source_id,
+    meta?.stremioId,
+    meta?.stremio_id,
+    meta?.canonicalId,
+    meta?.canonical_id,
+    meta?.id,
+    meta?.kitsu_id,
+    meta?.kitsuId,
+    meta?.kitsu
+  ], 40);
+
+  for (const candidate of candidates) {
+    const parsed = kitsuProvider.parseKitsuId(candidate);
+    if (parsed?.kitsuId) return { requestId: candidate, parsed };
+  }
+
+  for (const value of [meta?.kitsu_id, meta?.kitsuId, meta?.kitsu]) {
+    const text = String(value || '').trim();
+    if (/^\d+$/.test(text)) return { requestId: `kitsu:${text}`, parsed: { kitsuId: text, seasonNumber: null, episodeNumber: null } };
+  }
+
+  return null;
+}
+
+function buildGsKitsuProviderContext(meta = {}, config = {}, kitsuInfo = null, episodeNumber = 1) {
+  const providerContext = animeProviderUtils.buildAnimeProviderContext({
+    ...meta,
+    id: kitsuInfo?.requestId || meta?.id || meta?.requestedId || null,
+    kitsuId: kitsuInfo?.parsed?.kitsuId || meta?.kitsuId || meta?.kitsu_id || meta?.kitsu || null,
+    episode: episodeNumber
+  });
+  providerContext.mappingLanguage = 'it';
+  providerContext.italianOnly = true;
+  providerContext.onlyItalian = true;
+  providerContext.mappingTimeoutMs = 6000;
+  providerContext.mappingRetries = 2;
+
+  if (Array.isArray(config?.mappingApiBases)) providerContext.mappingApiBases = config.mappingApiBases;
+  if (Array.isArray(config?.mappingMirrors)) providerContext.mappingApiBases = config.mappingMirrors;
+  if (Array.isArray(config?.filters?.mappingApiBases)) providerContext.mappingApiBases = config.filters.mappingApiBases;
+  if (Array.isArray(config?.filters?.mappingMirrors)) providerContext.mappingApiBases = config.filters.mappingMirrors;
+
+  return providerContext;
+}
+
+async function fetchStrictKitsuMapping(meta = {}, config = {}, kitsuInfo = null, requestedEpisode = 1) {
+  const kitsuId = kitsuInfo?.parsed?.kitsuId;
+  if (!kitsuId) return null;
+  const episodeNumber = parseInt(requestedEpisode, 10) || kitsuInfo?.parsed?.episodeNumber || parseInt(meta?.episode, 10) || 1;
+  const providerContext = buildGsKitsuProviderContext(meta, config, kitsuInfo, episodeNumber);
+  const lookup = {
+    provider: 'kitsu',
+    externalId: String(kitsuId),
+    season: null,
+    episode: episodeNumber,
+    contentType: 'anime'
+  };
+  try {
+    return await animeProviderUtils.fetchMappingPayload(lookup, providerContext);
+  } catch (error) {
+    console.warn('[GuardoSerie][KITSU] mapping failed:', error.message);
+    return null;
+  }
+}
+
+function resolveStrictKitsuEpisodeForGs(mappingPayload, fallbackEpisode) {
+  const requested = parseInt(fallbackEpisode, 10) || 1;
+  const fromKitsu = parseInt(mappingPayload?.kitsu?.episode, 10);
+  const fromRequested = parseInt(mappingPayload?.requested?.episode, 10);
+  if (Number.isInteger(fromKitsu) && fromKitsu > 0 && fromKitsu === requested) return fromKitsu;
+  if (Number.isInteger(fromRequested) && fromRequested > 0 && fromRequested === requested) return fromRequested;
+  return requested;
+}
+
+function extractGsMappingEntries(mappingPayload) {
+  const mappings = mappingPayload?.mappings || mappingPayload?.mapping || {};
+  const raw = mappings.guardoserie || mappings.guardoSerie || mappings.guardaserie || mappings.gs || null;
+  const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  const out = [];
+
+  for (const entry of list) {
+    const value = typeof entry === 'string'
+      ? entry
+      : entry && typeof entry === 'object'
+        ? entry.path || entry.url || entry.href || entry.watchPath || entry.playPath || null
+        : null;
+    if (!value) continue;
+    try {
+      out.push(/^https?:\/\//i.test(String(value)) ? String(value) : buildGsUrl(String(value)));
+    } catch (_) {}
+  }
+
+  return Array.from(new Set(out.filter(Boolean)));
+}
+
+async function buildStrictKitsuAnimeContext(meta = {}, config = {}, season = null, episode = null) {
+  const kitsuInfo = getKitsuRequestFromMeta(meta);
+  if (!kitsuInfo?.parsed?.kitsuId) return null;
+
+  const requestedEpisode = kitsuInfo.parsed.episodeNumber || parseInt(episode, 10) || parseInt(meta?.episode, 10) || 1;
+  const requestId = kitsuInfo.requestId || `kitsu:${kitsuInfo.parsed.kitsuId}:${requestedEpisode}`;
+  let context = null;
+
+  try {
+    context = await kitsuProvider.buildSearchContext(requestId, { ...meta, season, episode: requestedEpisode });
+  } catch (error) {
+    console.warn('[GuardoSerie][KITSU] context failed:', error.message);
+  }
+
+  const mappingPayload = await fetchStrictKitsuMapping(meta, config, kitsuInfo, requestedEpisode);
+  const strictEpisode = resolveStrictKitsuEpisodeForGs(mappingPayload, requestedEpisode);
+  const rawTitles = uniqueCleanStrings([
+    ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
+    ...(Array.isArray(context?.searchTitles) ? context.searchTitles : []),
+    ...(Array.isArray(context?.info?.titles) ? context.info.titles : []),
+    context?.info?.canonicalTitle,
+    context?.title,
+    meta?.title,
+    meta?.name,
+    meta?.originalTitle,
+    meta?.canonicalTitle,
+    meta?.seriesTitle
+  ], 24);
+
+  const searchTitles = uniqueCleanStrings([
+    ...kitsuProvider.buildTitleVariants(rawTitles),
+    ...rawTitles
+  ], 24);
+
+  return {
+    ...(context || {}),
+    isAnime: true,
+    strictKitsu: true,
+    kitsuId: String(kitsuInfo.parsed.kitsuId),
+    rawTitles,
+    searchTitles,
+    title: searchTitles[0] || rawTitles[0] || meta?.title || null,
+    seasonNumber: parseInt(context?.seasonNumber, 10) || parseInt(season, 10) || parseInt(meta?.season, 10) || 1,
+    requestedEpisode: strictEpisode,
+    episodeCandidates: [strictEpisode],
+    mappingPayload,
+    mappingUrls: extractGsMappingEntries(mappingPayload),
+    tmdbId: null,
+    imdbId: null,
+    mappedIds: null,
+    identitySources: ['kitsu', mappingPayload ? 'mapping:kitsu' : null].filter(Boolean)
+  };
+}
+
 function normalizeStreamUrl(url) {
   try {
     const u = new URL(url);
@@ -668,7 +825,7 @@ async function searchProviderParallel(queries, signal) {
   return results.flat();
 }
 
-function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
+function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode, options = {}) {
   const raw = String(pageHtml || '');
   if (!raw) return null;
 
@@ -702,6 +859,7 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
       const epNum  = readEpisodeNumber(`${$(el).text()} ${href}`);
       if (epNum === targetEpisode) return href || null;
     }
+    if (options?.strictEpisode) return null;
     return links.length >= targetEpisode ? ($(links[targetEpisode - 1]).attr('href') || null) : null;
   };
 
@@ -714,7 +872,7 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
   }
 
   if (seasonBlocks.length >= targetSeason) {
-    const href = findEpisodeInBlock(seasonBlocks[targetSeason - 1]);
+    const href = options?.strictEpisode ? null : findEpisodeInBlock(seasonBlocks[targetSeason - 1]);
     if (href) return href;
   }
 
@@ -748,7 +906,7 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode) {
   if (sIdx < 0 || eIdx < 0) return null;
 
   const legacySeasonBlocks = $('.les-content, [class*="season-"], [class*="stagione-"]');
-  if (legacySeasonBlocks.length > sIdx) {
+  if (!options?.strictEpisode && legacySeasonBlocks.length > sIdx) {
     const block    = legacySeasonBlocks.eq(sIdx);
     const episodes = block.find('a[href*="/episodio/"]');
     if (episodes.length > eIdx) return episodes.eq(eIdx).attr('href') || null;
@@ -818,8 +976,11 @@ async function asyncPool(limit, items, asyncFn) {
 async function searchGuardaserie(meta, config) {
   if (!meta?.isSeries || !config?.filters?.enableGs) return [];
 
-  const season  = parseInt(meta?.season, 10);
-  const episode = parseInt(meta?.episode, 10);
+  const kitsuInfo = getKitsuRequestFromMeta(meta);
+  let season  = parseInt(meta?.season, 10);
+  let episode = parseInt(meta?.episode, 10) || kitsuInfo?.parsed?.episodeNumber || 1;
+
+  if ((!season || season < 1) && kitsuInfo?.parsed?.kitsuId) season = kitsuInfo.parsed.seasonNumber || 1;
   if (!season || season < 1 || !episode || episode < 1) return [];
 
   const controller = new AbortController();
@@ -837,7 +998,10 @@ async function searchGuardaserie(meta, config) {
 async function _searchGuardaserie(meta, config, season, episode, signal) {
   await refreshTargetDomain(signal);
 
-  const animeContext = await buildSharedAnimeContext(meta, config, season, episode);
+  const strictKitsuContext = await buildStrictKitsuAnimeContext(meta, config, season, episode);
+  const animeContext = strictKitsuContext || await buildSharedAnimeContext(meta, config, season, episode);
+  const strictKitsu = Boolean(animeContext?.strictKitsu);
+
   if (animeContext?.isAnime) {
     const mappedSeason = parseInt(animeContext.seasonNumber, 10);
     const mappedEpisode = parseInt(animeContext.requestedEpisode, 10);
@@ -845,14 +1009,14 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
     if (mappedEpisode > 0) episode = mappedEpisode;
   }
 
-  let tmdbId = meta?.tmdb_id || meta?.tmdbId || animeContext?.tmdbId || animeContext?.mappedIds?.tmdbId || null;
+  let tmdbId = strictKitsu ? null : (meta?.tmdb_id || meta?.tmdbId || animeContext?.tmdbId || animeContext?.mappedIds?.tmdbId || null);
 
-  if (!tmdbId && (meta?.imdb_id || animeContext?.imdbId)) {
+  if (!strictKitsu && !tmdbId && (meta?.imdb_id || animeContext?.imdbId)) {
     const resolved = await tmdbHelper.getTmdbFromImdb(meta.imdb_id || animeContext.imdbId, { mediaHint: 'tv' }).catch(() => null);
     if (resolved) tmdbId = resolved;
   }
 
-  let showName = meta?.title || animeContext?.title || null;
+  let showName = strictKitsu ? (animeContext?.title || meta?.title || meta?.name || null) : (meta?.title || animeContext?.title || null);
   let originalTitle = animeContext?.rawTitles?.find((title) => normalizeText(title) !== normalizeText(showName)) || null;
   let targetYear = animeContext?.year || null;
 
@@ -880,12 +1044,14 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
   if (!showName) return [];
 
   const queries    = uniqueCleanStrings(expectedTitles, 8);
-  let allResults   = await searchProviderParallel(queries, signal);
+  const mappedResults = (Array.isArray(animeContext?.mappingUrls) ? animeContext.mappingUrls : [])
+    .map(url => ({ url, title: showName || url, mapped: true }));
+  let allResults   = [...mappedResults, ...await searchProviderParallel(queries, signal)];
   allResults       = Array.from(new Map(allResults.map(i => [i.url, i])).values());
 
   const seriesResults  = allResults.filter(r => /\/serie\//i.test(r.url));
   const episodeResults = allResults.filter(r => /\/episodio\//i.test(r.url));
-  allResults = [...seriesResults, ...episodeResults];
+  allResults = strictKitsu && seriesResults.length ? seriesResults : [...seriesResults, ...episodeResults];
 
   allResults.sort((a, b) =>
     normalizeTitleScoreMany(b.title, expectedTitles) -
@@ -939,7 +1105,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
 
   if (!target?.url) return [];
 
-  const episodeUrl = extractEpisodeUrlFromSeriesPage(target.html, season, episode);
+  const episodeUrl = extractEpisodeUrlFromSeriesPage(target.html, season, episode, { strictEpisode: strictKitsu });
   if (!episodeUrl) return [];
 
   const absoluteEpUrl = new URL(episodeUrl, getTargetDomain()).toString();

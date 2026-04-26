@@ -338,7 +338,40 @@ function buildCandidateTitle(item = {}) {
     return String(item.title || item.title_it || item.title_eng || item.name || item.slug || '').replace(/-/g, ' ').trim();
 }
 
-function scoreCandidate(query, item, isDubbed) {
+function candidateLooksLikeMovie(item = {}) {
+    const text = normalizeLookupTitle([
+        item?.type,
+        item?.anime_type,
+        item?.animeType,
+        item?.format,
+        item?.kind,
+        item?.category,
+        item?.slug,
+        buildCandidateTitle(item)
+    ].filter(Boolean).join(' '));
+    return /\b(?:movie|film|the movie|gekijouban)\b/i.test(` ${text} `);
+}
+
+function candidateLooksLikeSpecial(item = {}) {
+    const text = normalizeLookupTitle([
+        item?.type,
+        item?.anime_type,
+        item?.animeType,
+        item?.format,
+        item?.kind,
+        item?.category,
+        item?.slug,
+        buildCandidateTitle(item)
+    ].filter(Boolean).join(' '));
+    return /\b(?:special|ova|oad|ona|recap|fan letter|spin off|spinoff)\b/i.test(` ${text} `);
+}
+
+function queryLooksLikeSpecial(query) {
+    const text = normalizeLookupTitle(query);
+    return /\b(?:special|ova|oad|ona|recap|fan letter|spin off|spinoff)\b/i.test(` ${text} `);
+}
+
+function scoreCandidate(query, item, isDubbed, isMovie = null) {
     const title = buildCandidateTitle(item);
     if (!title) return 0;
     let score = Math.max(...titleVariants(query, isDubbed).map((variant) => tokenScore(variant, title)), 0);
@@ -350,23 +383,38 @@ function scoreCandidate(query, item, isDubbed) {
         if (dubFlag) score -= 0.25;
         if (containsDubMarker(title)) score -= 0.2;
     }
+    const movieFlag = candidateLooksLikeMovie(item);
+    if (isMovie === true) score += movieFlag ? 0.8 : -0.35;
+    if (isMovie === false && movieFlag) score -= 2.25;
+    if (isMovie === false && candidateLooksLikeSpecial(item) && !queryLooksLikeSpecial(query)) score -= 1.35;
     if (item.always_home === 1 || item.always_home === true) score += 0.05;
     return score;
 }
 
-function pickBestCandidate(query, records, isDubbed) {
-    let best = null;
-    let bestScore = -Infinity;
+function rankAnimeCandidates(query, records, isDubbed, isMovie = null, limit = 5) {
+    const ranked = [];
+    const seen = new Set();
+
     for (const record of records || []) {
-        const score = scoreCandidate(query, record, isDubbed);
-        if (score > bestScore) {
-            best = record;
-            bestScore = score;
-        }
+        const score = scoreCandidate(query, record, isDubbed, isMovie);
+        if (score < 0.55) continue;
+        const path = buildAnimePath(record) || `${record?.id || record?.anime_id || ''}|${record?.slug || record?.title_slug || ''}|${buildCandidateTitle(record)}`;
+        const key = normalizeLookupTitle(path);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        ranked.push({ record, score });
     }
-    if (!best || bestScore < 0.55) return null;
-    console.log(`[AnimeUnity] match ${query} -> ${buildCandidateTitle(best) || best.slug || best.id} score=${bestScore.toFixed(2)} dub=${isDubbed}`);
-    return best;
+
+    ranked.sort((left, right) => right.score - left.score);
+    const output = ranked.slice(0, Math.max(1, limit)).map((entry) => entry.record);
+    if (output[0]) {
+        console.log(`[AnimeUnity] match ${query} -> ${buildCandidateTitle(output[0]) || output[0].slug || output[0].id} score=${ranked[0].score.toFixed(2)} dub=${isDubbed}`);
+    }
+    return output;
+}
+
+function pickBestCandidate(query, records, isDubbed, isMovie = null) {
+    return rankAnimeCandidates(query, records, isDubbed, isMovie, 1)[0] || null;
 }
 
 async function postSearchEndpoint(endpoint, payload, session, asJson = false) {
@@ -392,10 +440,11 @@ async function postSearchEndpoint(endpoint, payload, session, asJson = false) {
     return extractCandidatesFromPayload(parsed);
 }
 
-async function searchAnime(query, isDubbed = false) {
+async function searchAnimeCandidates(query, isDubbed = false, isMovie = null, limit = 5) {
     const normalizedQuery = String(query || '').trim();
-    if (!normalizedQuery) return null;
-    const key = `${normalizeLookupTitle(normalizedQuery)}:${isDubbed ? 'dub' : 'sub'}`;
+    if (!normalizedQuery) return [];
+    const safeLimit = Math.max(1, Math.min(Number.parseInt(limit, 10) || 5, 8));
+    const key = `${normalizeLookupTitle(normalizedQuery)}:${isDubbed ? 'dub' : 'sub'}:${isMovie === null ? 'any' : isMovie ? 'movie' : 'tv'}:limit=${safeLimit}`;
     const cached = getCached(cache.search, key);
     if (cached !== undefined) return cached;
 
@@ -442,8 +491,13 @@ async function searchAnime(query, isDubbed = false) {
             try { extend(await postSearchEndpoint('/livesearch', { title: singleQuery }, session, false)); } catch (error) { console.warn(`[AnimeUnity] livesearch form failed: ${error.message}`); }
         }
 
-        return setCached(cache.search, key, pickBestCandidate(normalizedQuery, candidates, isDubbed), SEARCH_TTL_MS);
+        return setCached(cache.search, key, rankAnimeCandidates(normalizedQuery, candidates, isDubbed, isMovie, safeLimit), SEARCH_TTL_MS);
     });
+}
+
+async function searchAnime(query, isDubbed = false, isMovie = null) {
+    const candidates = await searchAnimeCandidates(query, isDubbed, isMovie, 1);
+    return candidates[0] || null;
 }
 
 function parseVideoPlayer(html) {
@@ -468,6 +522,69 @@ function parseVideoPlayer(html) {
 function safeInt(value) {
     const parsed = Number.parseInt(String(value || '').trim(), 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function resolveRequestedAnimeEpisode(searchContext = {}, meta = {}) {
+    return safeInt(meta?.requested_kitsu_episode)
+        || safeInt(meta?.anime_absolute_episode)
+        || safeInt(meta?.anime_episode)
+        || safeInt(searchContext?.episodeNumber)
+        || safeInt(searchContext?.requestedEpisode)
+        || safeInt(meta?.episode)
+        || 1;
+}
+
+function resolveExplicitKitsuRequestId(requestId, meta = {}) {
+    const taggedCandidates = uniqueNonEmpty([
+        requestId,
+        meta?.id,
+        meta?.requestedId,
+        meta?.originalId,
+        meta?.kitsu_id,
+        meta?.kitsuId,
+        meta?.kitsu
+    ]).filter((value) => /kitsu/i.test(String(value || '')));
+
+    for (const candidate of taggedCandidates) {
+        const parsed = kitsuProvider.parseKitsuId(candidate);
+        if (parsed?.kitsuId) return candidate;
+    }
+
+    for (const candidate of [meta?.kitsu_id, meta?.kitsuId, meta?.kitsu]) {
+        const parsed = kitsuProvider.parseKitsuId(candidate);
+        if (parsed?.kitsuId) return `kitsu:${parsed.kitsuId}`;
+    }
+
+    return null;
+}
+
+function buildStrictKitsuContext(context = {}) {
+    const info = context?.info || {};
+    const rawTitles = uniqueNonEmpty([
+        ...(Array.isArray(info?.titles) ? info.titles : []),
+        info?.canonicalTitle,
+        info?.title
+    ]);
+    const strictRawTitles = rawTitles;
+    const searchTitles = uniqueNonEmpty([
+        ...strictRawTitles.map((title) => TITLE_FIXES.get(normalizeLookupTitle(title))),
+        ...kitsuProvider.buildTitleVariants(strictRawTitles),
+        ...strictRawTitles
+    ]);
+
+    return {
+        ...context,
+        rawTitles: strictRawTitles,
+        searchTitles,
+        title: searchTitles[0] || strictRawTitles[0] || null,
+        tmdbId: null,
+        imdbId: null,
+        mappedIds: null,
+        mappingPayload: null,
+        mappingLookup: null,
+        identitySources: ['kitsu'],
+        strictKitsu: true
+    };
 }
 
 function pickEpisodeByNumber(episodes = [], episodeNumber = 1) {
@@ -605,7 +722,11 @@ async function extractEmbedUrl(animeUrl, episodeNumber, isMovie = false) {
         if (iframe) return setCached(cache.embed, key, iframe, EPISODE_TTL_MS);
     }
 
-    return setCached(cache.embed, key, page.embedUrl || null, EPISODE_TTL_MS);
+    if (safeInt(page.episode?.number) === target && page.embedUrl) {
+        return setCached(cache.embed, key, page.embedUrl, EPISODE_TTL_MS);
+    }
+
+    return setCached(cache.embed, key, null, 90 * 1000);
 }
 
 function buildMfpHlsUrl(config, sourceUrl, referer) {
@@ -726,38 +847,40 @@ async function resolveMode(mode, searchContext, config, reqHost) {
         ...(Array.isArray(searchContext?.rawTitles) ? searchContext.rawTitles : []),
         searchContext?.title
     ]);
-    const requestedEpisode = safeInt(searchContext?.requestedEpisode) || 1;
+    const requestedEpisode = resolveRequestedAnimeEpisode(searchContext, searchContext?.meta || {});
+    const isMovie = searchContext?.isMovie === true;
+    const triedPaths = new Set();
 
-    let candidate = null;
-    let chosenTitle = null;
     for (const title of titles.slice(0, 8)) {
-        candidate = await searchAnime(title, mode.dubbed);
-        if (candidate) {
-            chosenTitle = title;
-            break;
+        const candidates = await searchAnimeCandidates(title, mode.dubbed, isMovie, 4);
+        for (const candidate of candidates) {
+            let animePath = buildAnimePath(candidate);
+            if (!animePath || triedPaths.has(`${mode.langTag}:${animePath}`)) continue;
+            triedPaths.add(`${mode.langTag}:${animePath}`);
+
+            let page = await fetchAnimePage(animePath);
+            const variant = page ? selectRelatedVariant(page, mode.dubbed) : null;
+            const variantPath = buildAnimePath(variant);
+            if (variantPath && variantPath !== animePath && !triedPaths.has(`${mode.langTag}:${variantPath}`)) {
+                animePath = variantPath;
+                triedPaths.add(`${mode.langTag}:${animePath}`);
+                page = await fetchAnimePage(animePath);
+            }
+
+            const embedUrl = await extractEmbedUrl(animePath, requestedEpisode, isMovie);
+            if (!embedUrl) {
+                console.log(`[AnimeUnity] skip candidate without requested episode | ${animePath} ep=${requestedEpisode} mode=${mode.langTag}`);
+                continue;
+            }
+
+            const pageTitle = buildCandidateTitle(page?.anime || {}) || buildCandidateTitle(candidate);
+            const displayTitle = `${title || searchContext?.title || pageTitle || 'Anime'} Ep ${requestedEpisode}`;
+            return buildStreamsFromEmbed(embedUrl, displayTitle, mode.langTag, mode.emoji, requestedEpisode, config, reqHost);
         }
     }
-    if (!candidate) return [];
 
-    let animePath = buildAnimePath(candidate);
-    if (!animePath) return [];
-
-    let page = await fetchAnimePage(animePath);
-    const variant = page ? selectRelatedVariant(page, mode.dubbed) : null;
-    const variantPath = buildAnimePath(variant);
-    if (variantPath && variantPath !== animePath) {
-        animePath = variantPath;
-        page = await fetchAnimePage(animePath);
-    }
-
-    const embedUrl = await extractEmbedUrl(animePath, requestedEpisode, searchContext?.isMovie === true);
-    if (!embedUrl) {
-        console.log(`[AnimeUnity] no embed for ${animePath} ep=${requestedEpisode} mode=${mode.langTag}`);
-        return [];
-    }
-
-    const displayTitle = `${chosenTitle || searchContext?.title || buildCandidateTitle(candidate) || 'Anime'} Ep ${requestedEpisode}`;
-    return buildStreamsFromEmbed(embedUrl, displayTitle, mode.langTag, mode.emoji, requestedEpisode, config, reqHost);
+    console.log(`[AnimeUnity] no embed for requested episode ep=${requestedEpisode} mode=${mode.langTag}`);
+    return [];
 }
 
 function dedupeStreams(streams = []) {
@@ -782,16 +905,20 @@ async function searchAnimeUnity(requestId, meta = {}, config = {}, reqHost = nul
     if (Object.prototype.hasOwnProperty.call(filters, 'enableAnimeUnity') && filters.enableAnimeUnity === false) return [];
 
     try {
-        let context = await animeIdentity.buildAnimeSearchContextForProvider({
-            requestId,
-            meta,
-            config,
-            providerName: 'AnimeUnity'
-        });
+        const kitsuRequestId = resolveExplicitKitsuRequestId(requestId, meta);
+        let context = kitsuRequestId
+            ? buildStrictKitsuContext(await kitsuProvider.buildSearchContext(kitsuRequestId, meta))
+            : await animeIdentity.buildAnimeSearchContextForProvider({
+                requestId,
+                meta,
+                config,
+                providerName: 'AnimeUnity'
+            });
 
-        if (!context?.title && !context?.searchTitles?.length && !context?.rawTitles?.length) {
+        if (!kitsuRequestId && !context?.title && !context?.searchTitles?.length && !context?.rawTitles?.length) {
             context = await kitsuProvider.buildSearchContext(requestId, meta);
         }
+        context = { ...(context || {}), meta };
         if (!context?.title && !context?.searchTitles?.length && !context?.rawTitles?.length) return [];
 
         console.log(`[AnimeUnity] start | title=${context.title || meta?.title || meta?.name || requestId} | ep=${context.requestedEpisode || 1} | kitsu=${context.kitsuId || 'no'} | tmdb=${context.tmdbId || 'no'} | imdb=${context.imdbId || 'no'}`);
