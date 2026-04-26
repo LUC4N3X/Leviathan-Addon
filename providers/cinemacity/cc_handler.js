@@ -291,19 +291,28 @@ async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0) {
     const fp = FINGERPRINT_POOL[(fingerprintIndex + attempt) % FINGERPRINT_POOL.length];
     const mergedHeaders = buildBrowserHeaders(fp, extraHeaders);
 
+    const browserName = fp.browserType === 'firefox' ? 'firefox' : 'chrome';
+    const osPlatform = (() => {
+        if (fp.secChUaPlatform === '"macOS"') return 'macos';
+        if (fp.secChUaPlatform === '"Linux"') return 'linux';
+        return 'windows';
+    })();
+
     try {
         const response = await gotScraping({
             url,
             headers: mergedHeaders,
+            useHeaderGenerator: true,
             headerGeneratorOptions: {
-                browsers: [{ name: fp.browserType === 'firefox' ? 'firefox' : 'chrome', minVersion: 120 }],
-                operatingSystems: ['windows', 'macos', 'linux'],
+                browsers: [{ name: browserName, minVersion: 120 }],
+                operatingSystems: [osPlatform],
                 devices: ['desktop'],
                 locales: ['it-IT', 'en-US']
             },
             retry: { limit: 0 },
             timeout: { request: GOT_TIMEOUT },
             followRedirect: true,
+            maxRedirects: 6,
             responseType: 'text',
             decompress: true
         });
@@ -311,10 +320,7 @@ async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0) {
         const status = Number(response?.statusCode || 0);
         const body = response?.body || '';
 
-        if (isCloudflareChallenge(body, status)) {
-            return null;
-        }
-
+        if (isCloudflareChallenge(body, status)) return null;
         if (status >= 200 && status < 400) return body;
         return null;
     } catch (_) {
@@ -344,8 +350,61 @@ async function fetchHtmlWithAxios(url, extraHeaders = {}) {
 }
 
 
+async function fetchHtmlPostWithGot(url, formBody, extraHeaders = {}) {
+    const gotScraping = await getGotScraping();
+    if (!gotScraping) return null;
+
+    const fp = getNextFingerprint();
+    const browserName = fp.browserType === 'firefox' ? 'firefox' : 'chrome';
+    const osPlatform = (() => {
+        if (fp.secChUaPlatform === '"macOS"') return 'macos';
+        if (fp.secChUaPlatform === '"Linux"') return 'linux';
+        return 'windows';
+    })();
+
+    const baseHeaders = buildBrowserHeaders(fp, {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Origin': BASE_URL,
+        'Referer': `${BASE_URL}/`,
+        ...extraHeaders
+    });
+
+    try {
+        const response = await gotScraping({
+            url,
+            method: 'POST',
+            body: formBody,
+            headers: baseHeaders,
+            useHeaderGenerator: true,
+            headerGeneratorOptions: {
+                browsers: [{ name: browserName, minVersion: 120 }],
+                operatingSystems: [osPlatform],
+                devices: ['desktop'],
+                locales: ['it-IT', 'en-US']
+            },
+            retry: { limit: 0 },
+            timeout: { request: GOT_TIMEOUT },
+            followRedirect: true,
+            maxRedirects: 6,
+            responseType: 'text',
+            decompress: true
+        });
+
+        const status = Number(response?.statusCode || 0);
+        const body = response?.body || '';
+
+        if (isCloudflareChallenge(body, status)) return null;
+        if (status >= 200 && status < 400) return body;
+        return null;
+    } catch (_) {
+        return null;
+    }
+}
+
+
 async function fetchHtml(url, extraHeaders = {}) {
     for (let attempt = 0; attempt < GOT_ATTEMPTS; attempt += 1) {
+        if (attempt > 0) await sleep(80 + Math.floor(Math.random() * 120));
         const gotBody = await fetchHtmlWithGot(url, extraHeaders, attempt);
         if (gotBody) return gotBody;
     }
@@ -787,17 +846,17 @@ function buildCinemaCityLanguageLabel(pageMetadata = {}, config = {}) {
     const hasEnglish = languages.includes('english') || downloadLanguages.includes('english');
     const hasMulti = languages.includes('multi') || downloadLanguages.includes('multi') || pageMetadata?.isMultiAudio === true;
 
-    if (hasItalian && hasMulti) return '🇮🇹 ITA+MULTI';
-    if (hasItalian) return '🇮🇹 ITA';
+    if (hasItalian && hasMulti) return '???? ITA+MULTI';
+    if (hasItalian) return '???? ITA';
 
     if (wantsItalian && hasMulti && config?.filters?.allowMultiWhenItalianOnly === true) {
-        return '🌍 MULTI';
+        return '?? MULTI';
     }
 
-    if (hasEnglish && languages.length <= 1 && downloadLanguages.length <= 1) return '🇬🇧 ENG';
-    if (hasMulti || languages.length > 1 || downloadLanguages.length > 1) return '🌍 MULTI';
+    if (hasEnglish && languages.length <= 1 && downloadLanguages.length <= 1) return '???? ENG';
+    if (hasMulti || languages.length > 1 || downloadLanguages.length > 1) return '?? MULTI';
 
-    return '🌐 WEB';
+    return '?? WEB';
 }
 
 function hardFilterStreamsByLanguage(streams = [], config = {}) {
@@ -898,7 +957,7 @@ function titleAliasesFromOneTitle(title) {
     if (akaParts.length > 1) aliases.push(...akaParts);
 
     for (const part of [...aliases]) {
-        const colon = part.split(/\s*[:：]\s+/g).map((v) => v.trim()).filter(Boolean);
+        const colon = part.split(/\s*[::]\s+/g).map((v) => v.trim()).filter(Boolean);
         if (colon.length > 1) {
             aliases.push(colon[0]);
             aliases.push(colon.slice(1).join(' '));
@@ -1071,7 +1130,7 @@ async function resolveImdbFromTmdb(tmdbId, providerType) {
             tmdbImdbCache.set(cacheKey, { value: result });
             return result;
         } catch (error) {
-            console.error('[CinemaCity] TMDB→IMDb resolution error:', error.message);
+            console.error('[CinemaCity] TMDB?IMDb resolution error:', error.message);
             tmdbImdbCache.set(cacheKey, { value: null });
             return null;
         }
@@ -1181,9 +1240,6 @@ async function pickBestCandidate(candidates, expectedTitles, { requestedImdbId =
     if (scoredCandidates.length === 0) return null;
 
     const normalizedRequestedImdbId = extractImdbId(requestedImdbId);
-    if (arguments[2]?.fastMode === true && scoredCandidates[0]?.score >= 80) {
-        return scoredCandidates[0];
-    }
     if (normalizedRequestedImdbId) {
         const mismatchedUrls = new Set();
         for (const candidate of scoredCandidates.slice(0, 6)) {
@@ -1193,6 +1249,10 @@ async function pickBestCandidate(candidates, expectedTitles, { requestedImdbId =
             if (candidateImdbId && candidateImdbId !== normalizedRequestedImdbId) mismatchedUrls.add(candidate.url);
         }
         return scoredCandidates.find((c) => c.score >= 80 && !mismatchedUrls.has(c.url)) || null;
+    }
+
+    if (arguments[2]?.fastMode === true && scoredCandidates[0]?.score >= 80) {
+        return scoredCandidates[0];
     }
 
     if (providerType === 'anime') {
@@ -1233,38 +1293,80 @@ async function fetchSearchCandidates(query) {
         const alreadyCached = searchCandidatesCache.get(cacheKey);
         if (alreadyCached) return alreadyCached.value;
 
-        const searchUrl = `${BASE_URL}/index.php?do=search&subaction=search&story=${encodeURIComponent(cleanQuery)}`;
+        const searchGetUrl = `${BASE_URL}/index.php?do=search&subaction=search&story=${encodeURIComponent(cleanQuery)}`;
+        const searchCommonHeaders = {
+            'Referer': `${BASE_URL}/`,
+            'Cookie': SESSION_COOKIE,
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-Mode': 'navigate'
+        };
+
+        const tryParse = (html) => {
+            const candidates = extractSearchCandidates(html);
+            if (candidates.length > 0) {
+                searchCandidatesCache.set(cacheKey, { value: candidates });
+                return candidates;
+            }
+            return null;
+        };
+
+        let networkFailed = true;
+
         try {
-            const html = await fetchHtml(searchUrl, {
-                'Referer': `${BASE_URL}/`,
+            const html = await fetchHtml(searchGetUrl, searchCommonHeaders);
+            networkFailed = false;
+            const result = tryParse(html);
+            if (result) return result;
+        } catch (_) {}
+
+        const formBody = new URLSearchParams({
+            do: 'search',
+            subaction: 'search',
+            story: cleanQuery
+        }).toString();
+
+        try {
+            const postHtml = await fetchHtmlPostWithGot(`${BASE_URL}/index.php`, formBody, {
                 'Cookie': SESSION_COOKIE,
                 'Sec-Fetch-Site': 'same-origin',
                 'Sec-Fetch-Mode': 'navigate'
             });
-            const candidates = extractSearchCandidates(html);
-            searchCandidatesCache.set(cacheKey, { value: candidates });
-            return candidates;
-        } catch (_) {
+            if (postHtml) {
+                networkFailed = false;
+                const result = tryParse(postHtml);
+                if (result) return result;
+            }
+        } catch (_) {}
+
+        if (!networkFailed) {
             searchCandidatesCache.set(cacheKey, { value: [] });
-            return [];
         }
+        return [];
     });
 }
 
 async function searchByTitleQueries(queryTitles, providerType, expectedTitles, requestedImdbId, expectedYear) {
-    const queries = buildSearchQueryVariants(queryTitles).slice(0, providerType === 'anime' ? 10 : 4);
+    const queries = buildSearchQueryVariants(queryTitles).slice(0, providerType === 'anime' ? 10 : 6);
     if (queries.length === 0) return null;
 
     const collected = [];
     const seen = new Set();
+    const BATCH_SIZE = 3;
 
-    for (const query of queries) {
-        const candidates = await fetchSearchCandidates(query);
-        for (const candidate of candidates) {
-            if (!candidate?.url || seen.has(candidate.url)) continue;
-            seen.add(candidate.url);
-            collected.push(candidate);
+    for (let i = 0; i < queries.length; i += BATCH_SIZE) {
+        const batch = queries.slice(i, i + BATCH_SIZE);
+        const batchResults = await Promise.all(batch.map((q) => fetchSearchCandidates(q)));
+
+        for (const candidates of batchResults) {
+            for (const candidate of candidates) {
+                if (!candidate?.url || seen.has(candidate.url)) continue;
+                seen.add(candidate.url);
+                collected.push(candidate);
+            }
         }
+
+        const interim = await pickBestCandidate(collected, expectedTitles, { requestedImdbId, expectedYear, providerType, fastMode: true });
+        if (interim?.score >= 100) return interim;
     }
 
     return pickBestCandidate(collected, expectedTitles, { requestedImdbId, expectedYear, providerType, fastMode: true });
@@ -1331,32 +1433,46 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
 
     let bestResult = null;
     let bestScore = 0;
-    for (const listingBase of getListingBaseUrls(providerType)) {
-        for (let page = 1; page <= MAX_LISTING_PAGES; page += 1) {
-            const pageUrl = page === 1 ? listingBase : `${listingBase}page/${page}/`;
-            try {
-                const html = await fetchHtml(pageUrl, {
-                    'Referer': `${BASE_URL}/`,
-                    'Sec-Fetch-Site': 'same-origin',
-                    'Sec-Fetch-Mode': 'navigate'
-                });
-                const candidates = extractCandidateLinksFromListing(html, providerType);
-                if (candidates.length === 0) break;
+    const PAGE_CONCURRENCY = 3;
 
-                const picked = await pickBestCandidate(
-                    candidates.slice(0, MAX_LISTING_CANDIDATES_PER_PAGE),
-                    expectedTitles,
-                    { requestedImdbId, expectedYear, providerType, fastMode }
-                );
+    for (const listingBase of getListingBaseUrls(providerType)) {
+        const pageNums = Array.from({ length: MAX_LISTING_PAGES }, (_, i) => i + 1);
+
+        for (let i = 0; i < pageNums.length; i += PAGE_CONCURRENCY) {
+            const pageBatch = pageNums.slice(i, i + PAGE_CONCURRENCY);
+
+            const batchResults = await Promise.all(pageBatch.map(async (page) => {
+                const pageUrl = page === 1 ? listingBase : `${listingBase}page/${page}/`;
+                try {
+                    const html = await fetchHtml(pageUrl, {
+                        'Referer': `${BASE_URL}/`,
+                        'Sec-Fetch-Site': 'same-origin',
+                        'Sec-Fetch-Mode': 'navigate'
+                    });
+                    const candidates = extractCandidateLinksFromListing(html, providerType);
+                    if (candidates.length === 0) return null;
+                    return candidates.slice(0, MAX_LISTING_CANDIDATES_PER_PAGE);
+                } catch (_) {
+                    return null;
+                }
+            }));
+
+            let batchExhausted = true;
+            for (const candidates of batchResults) {
+                if (!candidates) continue;
+                batchExhausted = false;
+                const picked = await pickBestCandidate(candidates, expectedTitles, { requestedImdbId, expectedYear, providerType, fastMode });
                 if (picked?.score > bestScore) {
                     bestScore = picked.score;
                     bestResult = picked;
                 }
-                if (bestScore >= 100) return saveResult(bestResult);
-            } catch (_) {
-                break;
             }
+
+            if (bestScore >= 100) return saveResult(bestResult);
+            if (batchExhausted) break;
         }
+
+        if (bestScore >= 100) break;
     }
 
     return saveResult(bestScore >= 80 ? bestResult : null);
@@ -1365,52 +1481,63 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
 
 function getIdCandidates(meta = {}, originalId, finalId) {
     return [
-        originalId, finalId, meta?.requestedId, meta?.originalId, meta?.id,
-        meta?.imdb_id, meta?.imdbId, meta?.tmdb_id, meta?.tmdbId,
-        meta?.kitsu_id ? `kitsu:${meta.kitsu_id}` : null,
-        meta?.kitsuId ? `kitsu:${meta.kitsuId}` : null
+        originalId,
+        finalId,
+        meta?.requestedId,
+        meta?.originalId,
+        meta?.id,
+        meta?.imdb_id,
+        meta?.imdbId,
+        meta?.tmdb_id,
+        meta?.tmdbId,
+        meta?.kitsu_id ? 'kitsu:' + meta.kitsu_id : null,
+        meta?.kitsuId ? 'kitsu:' + meta.kitsuId : null,
+        meta?.kitsu ? (/^\d+$/.test(String(meta.kitsu).trim()) ? 'kitsu:' + meta.kitsu : meta.kitsu) : null
     ].filter(Boolean);
+}
+function getKitsuIdCandidates(meta = {}, originalId, finalId) {
+    const taggedCandidates = [
+        originalId,
+        finalId,
+        meta?.requestedId,
+        meta?.originalId,
+        meta?.id,
+        meta?.sourceId,
+        meta?.source_id,
+        meta?.stremioId,
+        meta?.stremio_id,
+        meta?.canonicalId,
+        meta?.canonical_id,
+        meta?.kitsu_id,
+        meta?.kitsuId,
+        meta?.kitsu
+    ].filter((value) => /kitsu/i.test(String(value || '')));
+
+    const dedicated = [meta?.kitsu_id, meta?.kitsuId, meta?.kitsu].map((value) => {
+        const text = String(value || '').trim();
+        if (!text) return null;
+        return /^\d+$/.test(text) ? 'kitsu:' + text : text;
+    });
+
+    return [...taggedCandidates, ...dedicated].filter(Boolean);
+}
+
+function canTryCinemaCityAnimeMapping(meta = {}) {
+    if (!meta || meta?.isSeries === false || String(meta?.type || '').toLowerCase() === 'movie') return false;
+    if (meta?.kitsu_id || meta?.kitsuId || meta?.kitsu) return true;
+    if (meta?.tmdbAnimeCandidate === true) return true;
+    if (meta?.isAnime === true && (meta?.tmdb_id || meta?.tmdbId || meta?.imdb_id || meta?.imdbId)) return true;
+    return false;
 }
 
 async function buildAnimeSearchContext(meta = {}, originalId, finalId, config = {}, season = null, episode = null) {
-    try {
-        const context = await animeIdentity.buildAnimeSearchContextForProvider({
-            requestId: originalId,
-            originalId,
-            finalId,
-            meta,
-            config,
-            season,
-            episode,
-            providerName: 'CinemaCity',
-            mappingApiBase: MAPPING_API_BASE
-        });
-
-        if (context?.isAnime || context?.kitsuId || context?.searchTitles?.length || context?.rawTitles?.length) {
-            return {
-                ...context,
-                searchTitles: buildSearchQueryVariants([
-                    ...(Array.isArray(context?.searchTitles) ? context.searchTitles : []),
-                    ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
-                    ...collectMetaTitles(meta)
-                ]),
-                rawTitles: uniqueStrings([
-                    ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
-                    ...collectMetaTitles(meta)
-                ])
-            };
-        }
-    } catch (error) {
-        console.warn('[CinemaCity] shared anime context failed:', error.message);
-    }
-
-    const candidateIds = getIdCandidates(meta, originalId, finalId);
+    const candidateIds = getKitsuIdCandidates(meta, originalId, finalId);
     let kitsuToken = null;
 
     for (const candidate of candidateIds) {
         const parsed = kitsuProvider.parseKitsuId(candidate);
         if (parsed?.kitsuId) {
-            kitsuToken = String(candidate);
+            kitsuToken = /^\d+$/.test(String(candidate || '').trim()) ? 'kitsu:' + candidate : String(candidate);
             break;
         }
     }
@@ -1418,7 +1545,7 @@ async function buildAnimeSearchContext(meta = {}, originalId, finalId, config = 
     if (kitsuToken) {
         try {
             const context = await kitsuProvider.buildSearchContext(kitsuToken, meta);
-            if (context) {
+            if (context?.kitsuId) {
                 return {
                     ...context,
                     searchTitles: buildSearchQueryVariants([
@@ -1429,27 +1556,57 @@ async function buildAnimeSearchContext(meta = {}, originalId, finalId, config = 
                     rawTitles: uniqueStrings([
                         ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
                         ...collectMetaTitles(meta)
-                    ])
+                    ]),
+                    strictKitsu: true
                 };
             }
         } catch (_) {}
     }
 
-    if (!looksLikeAnimeMeta(meta)) return null;
+    if (!canTryCinemaCityAnimeMapping(meta)) return null;
 
-    const rawTitles = collectMetaTitles(meta);
-    const searchTitles = buildSearchQueryVariants(rawTitles);
-    return {
-        kitsuId: null,
-        rawTitles,
-        searchTitles,
-        title: searchTitles[0] || rawTitles[0] || null,
-        year: extractYear(meta?.year || meta?.releaseInfo || ''),
-        date: null,
-        seasonNumber: normalizeEpisodeNumber(meta?.season),
-        requestedEpisode: normalizeEpisodeNumber(meta?.episode) || 1,
-        isMovie: meta?.isSeries === false
-    };
+    try {
+        const safeSeason = Number.parseInt(String(season || meta?.season || 1), 10) || 1;
+        const safeEpisode = Number.parseInt(String(episode || meta?.episode || 1), 10) || 1;
+        const context = await animeIdentity.buildAnimeSearchContextForProvider({
+            requestId: originalId || finalId || meta?.id || (meta?.imdb_id ? `${meta.imdb_id}:${safeSeason}:${safeEpisode}` : meta?.tmdb_id ? `tmdb:${meta.tmdb_id}:${safeSeason}:${safeEpisode}` : null),
+            finalId: finalId || originalId || meta?.id || null,
+            meta: {
+                ...meta,
+                type: 'series',
+                isSeries: true,
+                season: safeSeason,
+                episode: safeEpisode
+            },
+            config,
+            season: safeSeason,
+            episode: safeEpisode,
+            providerName: 'CinemaCityAnimeBridge',
+            language: 'it-IT',
+            mappingTimeoutMs: FETCH_TIMEOUT,
+            kitsuTimeoutMs: 1400,
+            debug: false
+        });
+
+        if (!context?.kitsuId) return null;
+
+        return {
+            ...context,
+            searchTitles: buildSearchQueryVariants([
+                ...(Array.isArray(context?.searchTitles) ? context.searchTitles : []),
+                ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
+                ...collectMetaTitles(meta)
+            ]),
+            rawTitles: uniqueStrings([
+                ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
+                ...collectMetaTitles(meta)
+            ]),
+            strictKitsu: false,
+            mappedKitsu: true
+        };
+    } catch (_) {}
+
+    return null;
 }
 
 async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
@@ -1473,8 +1630,7 @@ async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
         ...candidateIds.filter((id) => /^kitsu:/i.test(String(id || '').trim()))
     ];
     const explicitKitsuId = explicitKitsuCandidates.map(extractKitsuId).find(Boolean) || null;
-    const numericKitsuId = metaLooksAnime ? candidateIds.map(extractKitsuId).find(Boolean) : null;
-    const contextKitsuId = explicitKitsuId || numericKitsuId || null;
+    const contextKitsuId = explicitKitsuId || null;
     let resolvedTmdbId = contextTmdbId || extractTmdbId(workingId) || null;
     let rawEpisodeNumber = null;
     let episodeCandidates = numberCandidates([episode]);
@@ -1484,12 +1640,21 @@ async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
         workingId = contextImdbId || contextTmdbId || (contextKitsuId ? `kitsu:${contextKitsuId}` : '');
     }
 
-    const animeLikely = Boolean(contextKitsuId || metaLooksAnime || candidateIds.some((id) => /^kitsu:/i.test(String(id || '').trim())));
-    if (animeLikely) {
+    const allowAnimeBridge = isSeries && String(meta?.type || '').toLowerCase() !== 'movie';
+
+    const canTryAnime = allowAnimeBridge && Boolean(
+        contextKitsuId
+        || candidateIds.some((id) => /^kitsu:/i.test(String(id || '').trim()))
+        || meta?.tmdbAnimeCandidate === true
+        || (meta?.isAnime === true && (contextImdbId || contextTmdbId || meta?.tmdb_id || meta?.imdb_id))
+    );
+    if (canTryAnime) {
         animeContext = await buildAnimeSearchContext(meta, originalId, finalId, config, season, episode);
-        if (animeContext?.seasonNumber) season = animeContext.seasonNumber;
-        if (animeContext?.requestedEpisode) episode = animeContext.requestedEpisode;
-        providerType = 'anime';
+        if (animeContext?.kitsuId) {
+            if (animeContext?.seasonNumber) season = animeContext.seasonNumber;
+            if (animeContext?.requestedEpisode) episode = animeContext.requestedEpisode;
+            providerType = 'anime';
+        }
     }
 
     const applyMappedIds = (mapped) => {
@@ -1552,6 +1717,23 @@ function parseCompositeSeriesId(rawId, season, episode) {
         season: Number.isInteger(season) ? season : (Number.parseInt(season, 10) || 1),
         episode: Number.isInteger(episode) ? episode : (Number.parseInt(episode, 10) || 1)
     };
+
+    const kitsuSeasonEpMatch = parsed.normalizedId.match(/^kitsu:(\d+):(\d+):(\d+)$/i);
+    if (kitsuSeasonEpMatch) {
+        parsed.normalizedId = `kitsu:${kitsuSeasonEpMatch[1]}`;
+        parsed.season = Number.parseInt(kitsuSeasonEpMatch[2], 10) || parsed.season;
+        parsed.episode = Number.parseInt(kitsuSeasonEpMatch[3], 10) || parsed.episode;
+        return parsed;
+    }
+
+    const kitsuEpMatch = parsed.normalizedId.match(/^kitsu:(\d+):(\d+)$/i);
+    if (kitsuEpMatch) {
+        parsed.normalizedId = `kitsu:${kitsuEpMatch[1]}`;
+        parsed.season = 1;
+        parsed.episode = Number.parseInt(kitsuEpMatch[2], 10) || parsed.episode;
+        return parsed;
+    }
+
     const match = parsed.normalizedId.match(/^(tt\d+|\d+|tmdb:\d+):(\d+):(\d+)$/i);
     if (!match) return parsed;
     parsed.normalizedId = match[1];
@@ -1579,9 +1761,24 @@ function extractSeasonNumberFromTitle(title) {
 }
 
 function extractEpisodeNumberFromTitle(title) {
-    const match = String(title || '').match(/(?:episode|episodio)\s*0*(\d+)\b|(?:^|\b)e\s*0*(\d+)\b/i);
-    const value = Number.parseInt(String(match?.[1] || match?.[2] || ''), 10);
-    return Number.isInteger(value) && value > 0 ? value : null;
+    const text = String(title || '');
+
+    let match = text.match(/\bS\d{1,2}E0*(\d{1,4})\b/i);
+    if (match) return Number.parseInt(match[1], 10) || null;
+
+    match = text.match(/\b\d{1,2}x0*(\d{1,4})\b/i);
+    if (match) return Number.parseInt(match[1], 10) || null;
+
+    match = text.match(/(?:episode|episodio|ep\.?)\s*0*(\d{1,4})\b/i);
+    if (match) return Number.parseInt(match[1], 10) || null;
+
+    match = text.match(/(?:^|[^a-z0-9])E0*(\d{1,4})(?:[^a-z0-9]|$)/i);
+    if (match) return Number.parseInt(match[1], 10) || null;
+
+    match = text.match(/^\s*0*(\d{1,4})\s*[-–.]/);
+    if (match) return Number.parseInt(match[1], 10) || null;
+
+    return null;
 }
 
 function pickEpisodeFromFolder(folder = [], episodeCandidates = []) {
@@ -1916,8 +2113,8 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
         const streams = [];
         if (mediaflowProxyUrl) {
             streams.push(buildWebStream({
-                name: '🎟️ CinemaCity | CCCDN',
-                title: `${displayTitle}\n☁️ CCCDN • ${languageLabel}`,
+                name: '??? CinemaCity | CCCDN',
+                title: `${displayTitle}\n?? CCCDN • ${languageLabel}`,
                 url: mediaflowProxyUrl,
                 extractor: 'CCCDN',
                 provider: 'CinemaCity',
@@ -1931,8 +2128,8 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
 
         if (streams.length === 0) {
             streams.push(buildWebStream({
-                name: '🎟️ CinemaCity | Direct',
-                title: `${displayTitle}\n☁️ ${extractorLabel} • ${languageLabel}`,
+                name: '??? CinemaCity | Direct',
+                title: `${displayTitle}\n?? ${extractorLabel} • ${languageLabel}`,
                 url: extracted.streamUrl,
                 extractor: extractorLabel,
                 provider: 'CinemaCity',
