@@ -1,14 +1,15 @@
 'use strict';
 
-const axios = require('axios');
+const axios   = require('axios');
 const cheerio = require('cheerio');
-const http = require('http');
-const https = require('https');
-const fs = require('fs');
-const path = require('path');
-const tmdbHelper = require('../../core/utils/tmdb_helper');
-const animeIdentity = require('../anime/anime_identity');
-const kitsuProvider = require('../animeworld/kitsu_provider');
+const http    = require('http');
+const https   = require('https');
+const fs      = require('fs');
+const path    = require('path');
+
+const tmdbHelper        = require('../../core/utils/tmdb_helper');
+const animeIdentity     = require('../anime/anime_identity');
+const kitsuProvider     = require('../animeworld/kitsu_provider');
 const animeProviderUtils = require('../anime/provider_utils');
 const { GUARDA_SERIE_BROWSER_PROFILES, pickRandomProfile } = require('../../core/browser_profiles');
 const {
@@ -24,43 +25,50 @@ const {
   HOSTER_ESCAPED_DIRECT_LINK_PATTERN
 } = require('../extractors/registry');
 
-const INITIAL_GS_DOMAIN       = 'https://guardoserie.garden';
-const BROWSER_PROFILES         = GUARDA_SERIE_BROWSER_PROFILES;
-const FLARESOLVERR_URL         = process.env.FLARESOLVERR_URL || 'http://127.0.0.1:8191/v1';
-const PROVIDER_NAME            = 'guardoserie';
-const SESSION_FILE             = path.join(process.cwd(), `cf-session-${PROVIDER_NAME}.json`);
-const DOMAIN_FILE              = path.join(process.cwd(), `${PROVIDER_NAME}-domain.json`);
-const DOMAIN_REFRESH_TTL       = 1000 * 60 * 20;
-const DOMAIN_TIMEOUT_MS        = 8000;
-const TTL_SEARCH               = 1000 * 60 * 30;
-const TTL_EPISODE              = 1000 * 60 * 30;
-const TTL_SERIES               = 1000 * 60 * 60 * 6;
-const CF_SESSION_TTL           = 1000 * 60 * 60 * 6;
-const GLOBAL_TIMEOUT_MS        = 25000;
-const SEARCH_QUERY_TIMEOUT_MS  = 12000;
-const MAX_CACHE_ITEMS          = 500;
-const FS_CIRCUIT_THRESHOLD     = 3;
-const FS_CIRCUIT_RESET_MS      = 60_000;
+const INITIAL_GS_DOMAIN      = 'https://guardoserie.garden';
+const BROWSER_PROFILES       = GUARDA_SERIE_BROWSER_PROFILES;
+const FLARESOLVERR_URL       = process.env.FLARESOLVERR_URL || 'http://127.0.0.1:8191/v1';
+const PROVIDER_NAME          = 'guardoserie';
+const SESSION_FILE           = path.join(process.cwd(), `cf-session-${PROVIDER_NAME}.json`);
+const DOMAIN_FILE            = path.join(process.cwd(), `${PROVIDER_NAME}-domain.json`);
+const DOMAIN_REFRESH_TTL     = 1000 * 60 * 20;
+const DOMAIN_TIMEOUT_MS      = 8000;
+const TTL_SEARCH             = 1000 * 60 * 30;
+const TTL_EPISODE            = 1000 * 60 * 30;
+const TTL_SERIES             = 1000 * 60 * 60 * 6;
+const CF_SESSION_TTL         = 1000 * 60 * 60 * 6;
+const GLOBAL_TIMEOUT_MS      = 25000;
+const SEARCH_QUERY_TIMEOUT_MS = 12000;
+const MAX_CACHE_ITEMS        = 500;
+const FS_CIRCUIT_THRESHOLD   = 3;
+const FS_CIRCUIT_RESET_MS    = 60_000;
 
 const COMPILED_DIRECT_REGEX  = new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig');
 const COMPILED_ESCAPED_REGEX = new RegExp(HOSTER_ESCAPED_DIRECT_LINK_PATTERN, 'ig');
 
+const GOT_HEADER_OPTIONS = {
+  browsers:         [{ name: 'chrome', minVersion: 120, maxVersion: 124 }],
+  devices:          ['desktop'],
+  operatingSystems: ['windows', 'macos'],
+  locales:          ['it-IT', 'it', 'en-US']
+};
+
 const agentOptions = {
-  keepAlive: true,
-  maxSockets: 250,
+  keepAlive:     true,
+  maxSockets:    250,
   maxFreeSockets: 100,
-  timeout: 30000,
+  timeout:       30000,
   keepAliveMsecs: 30000
 };
 const httpsAgent = new https.Agent(agentOptions);
 const httpAgent  = new http.Agent(agentOptions);
 
 const lightClient = axios.create({
-  timeout: 10000,
+  timeout:        10000,
   httpAgent,
   httpsAgent,
   validateStatus: s => s >= 200 && s < 500,
-  headers: { 'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7' }
+  headers:        { 'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7' }
 });
 
 class LRUCache {
@@ -89,7 +97,7 @@ const pendingRequests = new Map();
 const activeBypasses  = new Map();
 
 const flareSolverrBreaker = {
-  failures: 0,
+  failures:    0,
   lastFailure: 0,
   isOpen() {
     if (this.failures < FS_CIRCUIT_THRESHOLD) return false;
@@ -121,50 +129,66 @@ async function getGotScrapingClient() {
 }
 
 async function gotSiteRequest(url, {
-  method = 'GET',
-  body = null,
-  headers = {},
-  timeout = 15000,
-  signal = null,
+  method       = 'GET',
+  body         = null,
+  headers      = {},
+  timeout      = 15000,
+  signal       = null,
   responseType = 'text',
-  maxRedirects = 8
+  maxRedirects = 8,
+  useHttp2     = true
 } = {}) {
   const gotScraping = await getGotScrapingClient();
-  const res = await gotScraping({
+
+  const lockedUA      = headers['User-Agent'] || headers['user-agent'] || null;
+  const sessionCookies = headers['Cookie'] || headers['cookie'] || null;
+
+  const opts = {
     url,
     method,
-    body: body || undefined,
+    body:             body || undefined,
     headers,
-    timeout: { request: timeout },
+    timeout:          { request: timeout, connect: 6000, response: timeout },
     signal,
     responseType,
-    throwHttpErrors: false,
-    followRedirect: true,
+    throwHttpErrors:  false,
+    followRedirect:   true,
     maxRedirects,
-    http2: true,
-    headerGeneratorOptions: {
-      browsers: [
-        { name: 'chrome', minVersion: 110 },
-        { name: 'firefox', minVersion: 110 },
-        { name: 'safari', minVersion: 15 }
-      ],
-      devices: ['desktop'],
-      operatingSystems: ['windows', 'macos', 'linux'],
-      locales: ['it-IT', 'en-US', 'en']
-    },
+    http2:            useHttp2,
     retry: {
-      limit: 2,
-      methods: ['GET'],
-      statusCodes: [408, 413, 429, 500, 502, 503, 504],
-      calculateDelay: ({ computedValue }) => computedValue + Math.random() * 500
+      limit:       2,
+      methods:     ['GET'],
+      statusCodes: [408, 413, 500, 502, 504],
+      calculateDelay: ({ computedValue, error }) =>
+        error?.response?.statusCode === 429
+          ? 2000 + Math.random() * 1500
+          : computedValue + Math.random() * 400
     },
     agent: { http: httpAgent, https: httpsAgent }
-  });
+  };
+
+  if (!lockedUA) {
+    opts.headerGeneratorOptions = GOT_HEADER_OPTIONS;
+  }
+
+  if (sessionCookies) {
+    opts.hooks = {
+      beforeRedirect: [
+        options => {
+          if (!options.headers['Cookie'] && !options.headers['cookie']) {
+            options.headers['Cookie'] = sessionCookies;
+          }
+        }
+      ]
+    };
+  }
+
+  const res = await gotScraping(opts);
   return {
-    status: res.statusCode,
+    status:  res.statusCode,
     headers: res.headers || {},
-    data: res.body,
-    url: res.url || url
+    data:    res.body,
+    url:     res.url || url
   };
 }
 
@@ -204,7 +228,7 @@ function updateCurrentDomainFromUrl(url) {
   currentGsDomain = nextBase;
   saveStoredDomain(nextBase);
   if (activeSession?.url) {
-    activeSession.url = nextBase;
+    activeSession.url       = nextBase;
     activeSession.timestamp = Date.now();
     saveSession(activeSession);
   }
@@ -215,15 +239,17 @@ async function resolveRedirectDomain(startBase, signal = null) {
   const base = normalizeBaseUrl(startBase);
   if (!base) return null;
   try {
+    const probeUA = activeSession?.userAgent || pickRandomProfile(BROWSER_PROFILES).ua;
     const res = await gotSiteRequest(base, {
-      timeout: DOMAIN_TIMEOUT_MS,
+      timeout:      DOMAIN_TIMEOUT_MS,
       maxRedirects: 8,
       signal,
+      useHttp2:     false,
       headers: {
-        'User-Agent': activeSession?.userAgent || pickRandomProfile(BROWSER_PROFILES).ua,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'User-Agent':    probeUA,
+        'Accept':        'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
+        'Pragma':        'no-cache'
       }
     });
     return normalizeBaseUrl(res.url) || base;
@@ -255,7 +281,7 @@ async function refreshTargetDomain(signal = null, { force = false } = {}) {
 }
 
 function buildGsUrl(pathname) {
-  const base = getTargetDomain();
+  const base      = getTargetDomain();
   const cleanPath = String(pathname || '').startsWith('/') ? pathname : `/${pathname}`;
   return `${base}${cleanPath}`;
 }
@@ -294,7 +320,7 @@ activeSession = loadSession();
 
 function parseSingleCookie(raw) {
   const primary = String(raw || '').split(';')[0];
-  const eqIdx = primary.indexOf('=');
+  const eqIdx   = primary.indexOf('=');
   if (eqIdx < 0) return null;
   const key = primary.slice(0, eqIdx).trim();
   const val = primary.slice(eqIdx + 1).trim();
@@ -303,7 +329,7 @@ function parseSingleCookie(raw) {
 
 function updateCookies(existing, setCookieHeader) {
   if (!setCookieHeader) return existing;
-  const SKIP = new Set(['path', 'domain', 'expires', 'max-age', 'secure', 'httponly', 'samesite']);
+  const SKIP      = new Set(['path', 'domain', 'expires', 'max-age', 'secure', 'httponly', 'samesite']);
   const cookieMap = new Map();
 
   if (existing) {
@@ -316,8 +342,8 @@ function updateCookies(existing, setCookieHeader) {
     }
   }
 
-  const headers = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
-  for (const h of headers) {
+  const hdrs = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
+  for (const h of hdrs) {
     const parsed = parseSingleCookie(h);
     if (parsed && !SKIP.has(parsed[0].toLowerCase())) cookieMap.set(parsed[0], parsed[1]);
   }
@@ -358,31 +384,31 @@ async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
       if (attempt > 0) await new Promise(r => setTimeout(r, 1500 * (2 ** (attempt - 1))));
       try {
         const payload = {
-          cmd: options.method === 'POST' ? 'request.post' : 'request.get',
+          cmd:        options.method === 'POST' ? 'request.post' : 'request.get',
           url,
           maxTimeout: 90000,
-          session: `session_${provider}`
+          session:    `session_${provider}`
         };
         if (options.method === 'POST' && options.body) payload.postData = options.body;
 
         const response = await axios.post(FLARESOLVERR_URL, payload, {
           timeout: 100000,
-          signal: options.signal,
+          signal:  options.signal,
           headers: { 'Content-Type': 'application/json' }
         });
 
         if (response.data?.status === 'ok') {
-          const solution = response.data?.solution || {};
+          const solution        = response.data?.solution || {};
           const solutionCookies = Array.isArray(solution?.cookies) ? solution.cookies : [];
-          const cookies = solutionCookies.map(c => `${c.name}=${c.value}`).join('; ');
-          const cf_clearance = solutionCookies.find(c => c.name === 'cf_clearance')?.value || null;
+          const cookies         = solutionCookies.map(c => `${c.name}=${c.value}`).join('; ');
+          const cf_clearance    = solutionCookies.find(c => c.name === 'cf_clearance')?.value || null;
           const data = {
-            userAgent: solution.userAgent,
+            userAgent:    solution.userAgent,
             cookies,
             cf_clearance,
-            url: solution.url,
-            response: solution.response,
-            timestamp: Date.now()
+            url:          solution.url,
+            response:     solution.response,
+            timestamp:    Date.now()
           };
           activeSession = data;
           saveSession(data);
@@ -404,53 +430,96 @@ async function getClearance(url, provider = PROVIDER_NAME, options = {}) {
 }
 
 async function executeSmartFetch(url, isPost = false, body = null, signal = null) {
+  const buildSessionHeaders = session => {
+    const headers = {
+      'User-Agent':                session.userAgent,
+      'Cookie':                    session.cookies,
+      'Referer':                   getTargetDomain(),
+      'Accept':                    'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Language':           'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Sec-Fetch-Dest':            'document',
+      'Sec-Fetch-Mode':            'navigate',
+      'Sec-Fetch-Site':            'same-origin',
+      'Upgrade-Insecure-Requests': '1'
+    };
+
+    if (isPost && body) {
+      headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    }
+
+    return headers;
+  };
+
+  const fetchWithSession = async session => {
+    if (!isSessionFresh(session)) return null;
+
+    const res = await gotSiteRequest(url, {
+      method:   isPost ? 'POST' : 'GET',
+      body:     isPost ? body : null,
+      headers:  buildSessionHeaders(session),
+      timeout:  15000,
+      signal,
+      useHttp2: true
+    });
+
+    updateCurrentDomainFromUrl(res.url);
+
+    const html = typeof res.data === 'string'
+      ? res.data
+      : String(res.data || '');
+
+    if (!html || res.status === 403 || res.status === 503 || looksLikeChallenge(html)) {
+      clearSession();
+      return null;
+    }
+
+    if (res.headers?.['set-cookie']) {
+      activeSession.cookies   = updateCookies(session.cookies, res.headers['set-cookie']);
+      activeSession.userAgent = session.userAgent;
+      activeSession.url       = normalizeBaseUrl(res.url) || session.url || getTargetDomain();
+      activeSession.timestamp = Date.now();
+      saveSession(activeSession);
+    } else {
+      activeSession = {
+        ...session,
+        url:       normalizeBaseUrl(res.url) || session.url || getTargetDomain(),
+        timestamp: Date.now()
+      };
+      saveSession(activeSession);
+    }
+
+    return html;
+  };
+
   if (isSessionFresh(activeSession)) {
     try {
-      const headers = {
-        'User-Agent': activeSession.userAgent,
-        'Cookie': activeSession.cookies,
-        'Referer': getTargetDomain(),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'same-origin',
-        'Upgrade-Insecure-Requests': '1'
-      };
-      if (isPost && body) headers['Content-Type'] = 'application/x-www-form-urlencoded';
-
-      const res = await gotSiteRequest(url, {
-        method: isPost ? 'POST' : 'GET',
-        body: isPost ? body : null,
-        headers,
-        timeout: 15000,
-        signal
-      });
-
-      updateCurrentDomainFromUrl(res.url);
-      const html = typeof res.data === 'string' ? res.data : JSON.stringify(res.data || {});
-
-      if (res.status === 403 || res.status === 503 || looksLikeChallenge(html)) {
-        clearSession();
-      } else {
-        if (res.headers?.['set-cookie']) {
-          activeSession.cookies = updateCookies(activeSession.cookies, res.headers['set-cookie']);
-          activeSession.timestamp = Date.now();
-          saveSession(activeSession);
-        }
-        return html;
-      }
+      const html = await fetchWithSession(activeSession);
+      if (html) return html;
     } catch (e) {
       if (isCanceledError(e)) throw e;
     }
   }
 
-  const session = await getClearance(url, PROVIDER_NAME, { method: isPost ? 'POST' : 'GET', body, signal });
-  return session?.response || null;
+  const session = await getClearance(url, PROVIDER_NAME, {
+    method: isPost ? 'POST' : 'GET',
+    body,
+    signal
+  });
+
+  if (!isSessionFresh(session)) return null;
+
+  try {
+    return await fetchWithSession(session);
+  } catch (e) {
+    if (isCanceledError(e)) throw e;
+    clearSession();
+    return null;
+  }
 }
 
 async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH, signal = null } = {}) {
   const cacheKey = `${isPost ? 'POST' : 'GET'}:${url}:${body || ''}`;
-  const cached = requestCache.get(cacheKey);
+  const cached   = requestCache.get(cacheKey);
 
   if (cached) {
     const now = Date.now();
@@ -468,9 +537,9 @@ async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH, 
     .then(html => {
       if (html) {
         requestCache.set(cacheKey, {
-          data: html,
+          data:    html,
           expires: Date.now() + ttl,
-          stale: Date.now() + ttl * 2
+          stale:   Date.now() + ttl * 2
         });
       }
       return html;
@@ -525,9 +594,8 @@ function normalizeTitleScore(candidate, title, originalTitle) {
   return ratio >= 0.75 ? 2 : ratio >= 0.45 ? 1 : 0;
 }
 
-
 function uniqueCleanStrings(values = [], max = 12) {
-  const out = [];
+  const out  = [];
   const seen = new Set();
   for (const value of values || []) {
     const text = String(value || '').replace(/&amp;/gi, '&').replace(/\s+/g, ' ').trim();
@@ -553,9 +621,9 @@ function normalizeTitleScoreMany(candidate, titles = []) {
 async function buildSharedAnimeContext(meta = {}, config = {}, season = null, episode = null) {
   try {
     const context = await animeIdentity.buildAnimeSearchContextForProvider({
-      requestId: meta?.requestedId || meta?.id || meta?.imdb_id || meta?.tmdb_id || null,
+      requestId:  meta?.requestedId || meta?.id || meta?.imdb_id || meta?.tmdb_id || null,
       originalId: meta?.originalId || null,
-      finalId: meta?.id || meta?.imdb_id || meta?.tmdb_id || null,
+      finalId:    meta?.id || meta?.imdb_id || meta?.tmdb_id || null,
       meta,
       config,
       season,
@@ -568,7 +636,6 @@ async function buildSharedAnimeContext(meta = {}, config = {}, season = null, ep
   }
   return null;
 }
-
 
 function getKitsuRequestFromMeta(meta = {}) {
   const candidates = uniqueCleanStrings([
@@ -602,20 +669,20 @@ function getKitsuRequestFromMeta(meta = {}) {
 function buildGsKitsuProviderContext(meta = {}, config = {}, kitsuInfo = null, episodeNumber = 1) {
   const providerContext = animeProviderUtils.buildAnimeProviderContext({
     ...meta,
-    id: kitsuInfo?.requestId || meta?.id || meta?.requestedId || null,
+    id:      kitsuInfo?.requestId || meta?.id || meta?.requestedId || null,
     kitsuId: kitsuInfo?.parsed?.kitsuId || meta?.kitsuId || meta?.kitsu_id || meta?.kitsu || null,
     episode: episodeNumber
   });
-  providerContext.mappingLanguage = 'it';
-  providerContext.italianOnly = true;
-  providerContext.onlyItalian = true;
+  providerContext.mappingLanguage  = 'it';
+  providerContext.italianOnly      = true;
+  providerContext.onlyItalian      = true;
   providerContext.mappingTimeoutMs = 6000;
-  providerContext.mappingRetries = 2;
+  providerContext.mappingRetries   = 2;
 
-  if (Array.isArray(config?.mappingApiBases)) providerContext.mappingApiBases = config.mappingApiBases;
-  if (Array.isArray(config?.mappingMirrors)) providerContext.mappingApiBases = config.mappingMirrors;
+  if (Array.isArray(config?.mappingApiBases))          providerContext.mappingApiBases = config.mappingApiBases;
+  if (Array.isArray(config?.mappingMirrors))           providerContext.mappingApiBases = config.mappingMirrors;
   if (Array.isArray(config?.filters?.mappingApiBases)) providerContext.mappingApiBases = config.filters.mappingApiBases;
-  if (Array.isArray(config?.filters?.mappingMirrors)) providerContext.mappingApiBases = config.filters.mappingMirrors;
+  if (Array.isArray(config?.filters?.mappingMirrors))  providerContext.mappingApiBases = config.filters.mappingMirrors;
 
   return providerContext;
 }
@@ -623,13 +690,13 @@ function buildGsKitsuProviderContext(meta = {}, config = {}, kitsuInfo = null, e
 async function fetchStrictKitsuMapping(meta = {}, config = {}, kitsuInfo = null, requestedEpisode = 1) {
   const kitsuId = kitsuInfo?.parsed?.kitsuId;
   if (!kitsuId) return null;
-  const episodeNumber = parseInt(requestedEpisode, 10) || kitsuInfo?.parsed?.episodeNumber || parseInt(meta?.episode, 10) || 1;
+  const episodeNumber   = parseInt(requestedEpisode, 10) || kitsuInfo?.parsed?.episodeNumber || parseInt(meta?.episode, 10) || 1;
   const providerContext = buildGsKitsuProviderContext(meta, config, kitsuInfo, episodeNumber);
   const lookup = {
-    provider: 'kitsu',
-    externalId: String(kitsuId),
-    season: null,
-    episode: episodeNumber,
+    provider:    'kitsu',
+    externalId:  String(kitsuId),
+    season:      null,
+    episode:     episodeNumber,
     contentType: 'anime'
   };
   try {
@@ -641,19 +708,19 @@ async function fetchStrictKitsuMapping(meta = {}, config = {}, kitsuInfo = null,
 }
 
 function resolveStrictKitsuEpisodeForGs(mappingPayload, fallbackEpisode) {
-  const requested = parseInt(fallbackEpisode, 10) || 1;
-  const fromKitsu = parseInt(mappingPayload?.kitsu?.episode, 10);
+  const requested    = parseInt(fallbackEpisode, 10) || 1;
+  const fromKitsu    = parseInt(mappingPayload?.kitsu?.episode, 10);
   const fromRequested = parseInt(mappingPayload?.requested?.episode, 10);
-  if (Number.isInteger(fromKitsu) && fromKitsu > 0 && fromKitsu === requested) return fromKitsu;
+  if (Number.isInteger(fromKitsu)    && fromKitsu > 0    && fromKitsu === requested)    return fromKitsu;
   if (Number.isInteger(fromRequested) && fromRequested > 0 && fromRequested === requested) return fromRequested;
   return requested;
 }
 
 function extractGsMappingEntries(mappingPayload) {
   const mappings = mappingPayload?.mappings || mappingPayload?.mapping || {};
-  const raw = mappings.guardoserie || mappings.guardoSerie || mappings.guardaserie || mappings.gs || null;
-  const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
-  const out = [];
+  const raw      = mappings.guardoserie || mappings.guardoSerie || mappings.guardaserie || mappings.gs || null;
+  const list     = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  const out      = [];
 
   for (const entry of list) {
     const value = typeof entry === 'string'
@@ -675,8 +742,8 @@ async function buildStrictKitsuAnimeContext(meta = {}, config = {}, season = nul
   if (!kitsuInfo?.parsed?.kitsuId) return null;
 
   const requestedEpisode = kitsuInfo.parsed.episodeNumber || parseInt(episode, 10) || parseInt(meta?.episode, 10) || 1;
-  const requestId = kitsuInfo.requestId || `kitsu:${kitsuInfo.parsed.kitsuId}:${requestedEpisode}`;
-  let context = null;
+  const requestId        = kitsuInfo.requestId || `kitsu:${kitsuInfo.parsed.kitsuId}:${requestedEpisode}`;
+  let context            = null;
 
   try {
     context = await kitsuProvider.buildSearchContext(requestId, { ...meta, season, episode: requestedEpisode });
@@ -685,11 +752,11 @@ async function buildStrictKitsuAnimeContext(meta = {}, config = {}, season = nul
   }
 
   const mappingPayload = await fetchStrictKitsuMapping(meta, config, kitsuInfo, requestedEpisode);
-  const strictEpisode = resolveStrictKitsuEpisodeForGs(mappingPayload, requestedEpisode);
-  const rawTitles = uniqueCleanStrings([
-    ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
+  const strictEpisode  = resolveStrictKitsuEpisodeForGs(mappingPayload, requestedEpisode);
+  const rawTitles      = uniqueCleanStrings([
+    ...(Array.isArray(context?.rawTitles)    ? context.rawTitles    : []),
     ...(Array.isArray(context?.searchTitles) ? context.searchTitles : []),
-    ...(Array.isArray(context?.info?.titles) ? context.info.titles : []),
+    ...(Array.isArray(context?.info?.titles) ? context.info.titles  : []),
     context?.info?.canonicalTitle,
     context?.title,
     meta?.title,
@@ -706,21 +773,21 @@ async function buildStrictKitsuAnimeContext(meta = {}, config = {}, season = nul
 
   return {
     ...(context || {}),
-    isAnime: true,
-    strictKitsu: true,
-    kitsuId: String(kitsuInfo.parsed.kitsuId),
+    isAnime:           true,
+    strictKitsu:       true,
+    kitsuId:           String(kitsuInfo.parsed.kitsuId),
     rawTitles,
     searchTitles,
-    title: searchTitles[0] || rawTitles[0] || meta?.title || null,
-    seasonNumber: parseInt(context?.seasonNumber, 10) || parseInt(season, 10) || parseInt(meta?.season, 10) || 1,
-    requestedEpisode: strictEpisode,
+    title:             searchTitles[0] || rawTitles[0] || meta?.title || null,
+    seasonNumber:      parseInt(context?.seasonNumber, 10) || parseInt(season, 10) || parseInt(meta?.season, 10) || 1,
+    requestedEpisode:  strictEpisode,
     episodeCandidates: [strictEpisode],
     mappingPayload,
-    mappingUrls: extractGsMappingEntries(mappingPayload),
-    tmdbId: null,
-    imdbId: null,
-    mappedIds: null,
-    identitySources: ['kitsu', mappingPayload ? 'mapping:kitsu' : null].filter(Boolean)
+    mappingUrls:       extractGsMappingEntries(mappingPayload),
+    tmdbId:            null,
+    imdbId:            null,
+    mappedIds:         null,
+    identitySources:   ['kitsu', mappingPayload ? 'mapping:kitsu' : null].filter(Boolean)
   };
 }
 
@@ -742,9 +809,9 @@ function isLikelyPlayerUrl(url) {
 
 function extractSearchResultsFromHtml(html, baseUrl) {
   if (!html) return [];
-  const $ = cheerio.load(String(html));
+  const $       = cheerio.load(String(html));
   const results = [];
-  const seen = new Set();
+  const seen    = new Set();
 
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href');
@@ -754,7 +821,7 @@ function extractSearchResultsFromHtml(html, baseUrl) {
       if (!seen.has(absolute)) {
         seen.add(absolute);
         results.push({
-          url: absolute,
+          url:   absolute,
           title: String($(el).attr('title') || $(el).text() || '').trim() || absolute
         });
       }
@@ -765,10 +832,10 @@ function extractSearchResultsFromHtml(html, baseUrl) {
 }
 
 async function searchProviderSequential(query, signal) {
-  const baseUrl = await refreshTargetDomain(signal);
-  const ajaxUrl  = `${baseUrl}/wp-admin/admin-ajax.php`;
-  const ajaxBody = `s=${encodeURIComponent(query)}&action=searchwp_live_search&swpengine=default&swpquery=${encodeURIComponent(query)}`;
-  const ajaxHtml = await smartFetch(ajaxUrl, { isPost: true, body: ajaxBody, ttl: TTL_SEARCH, signal });
+  const baseUrl    = await refreshTargetDomain(signal);
+  const ajaxUrl    = `${baseUrl}/wp-admin/admin-ajax.php`;
+  const ajaxBody   = `s=${encodeURIComponent(query)}&action=searchwp_live_search&swpengine=default&swpquery=${encodeURIComponent(query)}`;
+  const ajaxHtml   = await smartFetch(ajaxUrl, { isPost: true, body: ajaxBody, ttl: TTL_SEARCH, signal });
   const ajaxResults = extractSearchResultsFromHtml(ajaxHtml, baseUrl);
   if (ajaxResults.length > 0) return ajaxResults;
 
@@ -799,7 +866,7 @@ function createTimeoutSignal(parentSignal, timeoutMs) {
 
   return {
     signal: controller.signal,
-    clear: () => {
+    clear:  () => {
       clearTimeout(timer);
       if (parentSignal) parentSignal.removeEventListener('abort', abortFromParent);
     }
@@ -832,8 +899,8 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode, options = {}
   const targetSeason  = parseInt(season, 10);
   const targetEpisode = parseInt(episode, 10);
   if (
-    !Number.isInteger(targetSeason) || !Number.isInteger(targetEpisode) ||
-    targetSeason < 1 || targetEpisode < 1
+    !Number.isInteger(targetSeason)  || !Number.isInteger(targetEpisode) ||
+    targetSeason < 1                 || targetEpisode < 1
   ) return null;
 
   const $ = cheerio.load(raw);
@@ -844,7 +911,7 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode, options = {}
   };
 
   const readEpisodeNumber = text => {
-    const s = String(text || '');
+    const s     = String(text || '');
     const match =
       s.match(/\b(?:episodio|episode|ep)\s*-?\s*(\d+)\b/i) ||
       s.match(/\bs\d{1,2}e(\d{1,3})\b/i) ||
@@ -855,8 +922,8 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode, options = {}
   const findEpisodeInBlock = block => {
     const links = $(block).find('.les-content a[href*="/episodio/"], a[href*="/episodio/"]').toArray();
     for (const el of links) {
-      const href   = $(el).attr('href') || '';
-      const epNum  = readEpisodeNumber(`${$(el).text()} ${href}`);
+      const href  = $(el).attr('href') || '';
+      const epNum = readEpisodeNumber(`${$(el).text()} ${href}`);
       if (epNum === targetEpisode) return href || null;
     }
     if (options?.strictEpisode) return null;
@@ -901,7 +968,7 @@ function extractEpisodeUrlFromSeriesPage(pageHtml, season, episode, options = {}
     if (match?.[0]) return match[0];
   }
 
-  const sIdx = targetSeason - 1;
+  const sIdx = targetSeason  - 1;
   const eIdx = targetEpisode - 1;
   if (sIdx < 0 || eIdx < 0) return null;
 
@@ -977,8 +1044,8 @@ async function searchGuardaserie(meta, config) {
   if (!meta?.isSeries || !config?.filters?.enableGs) return [];
 
   const kitsuInfo = getKitsuRequestFromMeta(meta);
-  let season  = parseInt(meta?.season, 10);
-  let episode = parseInt(meta?.episode, 10) || kitsuInfo?.parsed?.episodeNumber || 1;
+  let season      = parseInt(meta?.season, 10);
+  let episode     = parseInt(meta?.episode, 10) || kitsuInfo?.parsed?.episodeNumber || 1;
 
   if ((!season || season < 1) && kitsuInfo?.parsed?.kitsuId) season = kitsuInfo.parsed.seasonNumber || 1;
   if (!season || season < 1 || !episode || episode < 1) return [];
@@ -999,13 +1066,13 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
   await refreshTargetDomain(signal);
 
   const strictKitsuContext = await buildStrictKitsuAnimeContext(meta, config, season, episode);
-  const animeContext = strictKitsuContext || await buildSharedAnimeContext(meta, config, season, episode);
-  const strictKitsu = Boolean(animeContext?.strictKitsu);
+  const animeContext       = strictKitsuContext || await buildSharedAnimeContext(meta, config, season, episode);
+  const strictKitsu        = Boolean(animeContext?.strictKitsu);
 
   if (animeContext?.isAnime) {
-    const mappedSeason = parseInt(animeContext.seasonNumber, 10);
+    const mappedSeason  = parseInt(animeContext.seasonNumber, 10);
     const mappedEpisode = parseInt(animeContext.requestedEpisode, 10);
-    if (mappedSeason > 0) season = mappedSeason;
+    if (mappedSeason > 0)  season  = mappedSeason;
     if (mappedEpisode > 0) episode = mappedEpisode;
   }
 
@@ -1016,16 +1083,16 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
     if (resolved) tmdbId = resolved;
   }
 
-  let showName = strictKitsu ? (animeContext?.title || meta?.title || meta?.name || null) : (meta?.title || animeContext?.title || null);
-  let originalTitle = animeContext?.rawTitles?.find((title) => normalizeText(title) !== normalizeText(showName)) || null;
-  let targetYear = animeContext?.year || null;
+  let showName     = strictKitsu ? (animeContext?.title || meta?.title || meta?.name || null) : (meta?.title || animeContext?.title || null);
+  let originalTitle = animeContext?.rawTitles?.find(title => normalizeText(title) !== normalizeText(showName)) || null;
+  let targetYear   = animeContext?.year || null;
 
   if (tmdbId) {
     const tmdbMeta = await tmdbHelper.getMediaInfoFull(tmdbId, 'tv', { language: 'it-IT' }).catch(() => null);
     if (tmdbMeta) {
-      showName      = tmdbMeta.title || showName;
+      showName      = tmdbMeta.title         || showName;
       originalTitle = tmdbMeta.original_title || originalTitle || null;
-      targetYear    = tmdbMeta.year || targetYear || null;
+      targetYear    = tmdbMeta.year          || targetYear    || null;
     }
   }
 
@@ -1033,7 +1100,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
     showName,
     originalTitle,
     ...(Array.isArray(animeContext?.searchTitles) ? animeContext.searchTitles : []),
-    ...(Array.isArray(animeContext?.rawTitles) ? animeContext.rawTitles : []),
+    ...(Array.isArray(animeContext?.rawTitles)    ? animeContext.rawTitles    : []),
     meta?.name,
     meta?.originalTitle,
     meta?.canonicalTitle,
@@ -1043,11 +1110,11 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
   showName = showName || expectedTitles[0] || null;
   if (!showName) return [];
 
-  const queries    = uniqueCleanStrings(expectedTitles, 8);
+  const queries       = uniqueCleanStrings(expectedTitles, 8);
   const mappedResults = (Array.isArray(animeContext?.mappingUrls) ? animeContext.mappingUrls : [])
     .map(url => ({ url, title: showName || url, mapped: true }));
-  let allResults   = [...mappedResults, ...await searchProviderParallel(queries, signal)];
-  allResults       = Array.from(new Map(allResults.map(i => [i.url, i])).values());
+  let allResults = [...mappedResults, ...await searchProviderParallel(queries, signal)];
+  allResults     = Array.from(new Map(allResults.map(i => [i.url, i])).values());
 
   const seriesResults  = allResults.filter(r => /\/serie\//i.test(r.url));
   const episodeResults = allResults.filter(r => /\/episodio\//i.test(r.url));
@@ -1069,7 +1136,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
 
     const foundYear =
       html.match(/release-year\/(\d{4})/i)?.[1] ||
-      html.match(/\b(19\d{2}|20\d{2})\b/)?.[1] ||
+      html.match(/\b(19\d{2}|20\d{2})\b/)?.[1]  ||
       null;
 
     if (targetYear && foundYear) {
@@ -1105,7 +1172,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
 
   if (!target?.url) return [];
 
-  const episodeUrl = extractEpisodeUrlFromSeriesPage(target.html, season, episode, { strictEpisode: strictKitsu });
+  const episodeUrl    = extractEpisodeUrlFromSeriesPage(target.html, season, episode, { strictEpisode: strictKitsu });
   if (!episodeUrl) return [];
 
   const absoluteEpUrl = new URL(episodeUrl, getTargetDomain()).toString();
@@ -1114,13 +1181,13 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
   if (!playerLinks.length) return [];
 
   const cleanTitle = `${showName} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
+  const sessionUA  = activeSession.userAgent || pickRandomProfile(BROWSER_PROFILES).ua;
 
   const processedResults = await asyncPool(3, playerLinks, async link => {
     try {
-      const userAgent = activeSession.userAgent || pickRandomProfile(BROWSER_PROFILES).ua;
       const extracted = await extractFromUrl(link, {
-        client: lightClient,
-        userAgent,
+        client:         lightClient,
+        userAgent:      sessionUA,
         requestReferer: getTargetDomain()
       });
       if (!extracted?.url) return null;
@@ -1138,15 +1205,15 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
       }
 
       return buildWebStream({
-        name:      `GuardoSerie | ${extracted.name}`,
-        title:     `${cleanTitle}\n ${extracted.name}  ITA`,
-        url:       extracted.url,
-        extractor: extracted.name,
-        provider:  'GuardoSerie',
+        name:         `GuardoSerie | ${extracted.name}`,
+        title:        `${cleanTitle}\n ${extracted.name}  ITA`,
+        url:          extracted.url,
+        extractor:    extracted.name,
+        provider:     'GuardoSerie',
         providerCode: 'GS',
         quality,
-        headers: extracted.headers,
-        extra: { _priority: extracted.priority ?? 9 }
+        headers:      extracted.headers,
+        extra:        { _priority: extracted.priority ?? 9 }
       });
     } catch (_) { return null; }
   });
