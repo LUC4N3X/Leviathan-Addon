@@ -87,50 +87,53 @@ La nuova logica cloud non sostituisce la pipeline principale: la potenzia. Se l�
 
 <div align="center">
 
-<div align="center">
-
 ## ☁️ Debrid Saved Cloud
-
-<table align="center">
-<tr>
-<td align="center" width="100%">
 
 ### RD/TorBox cloud-aware · opzionale · zero duplicati
 
-<p align="center">
-Il <b>Debrid Saved Cloud</b> è un layer opzionale che controlla i file già salvati nel cloud personale dell’utente su <b>Real-Debrid</b> o <b>TorBox</b> e li integra nella lista stream di Leviathan senza creare doppioni.
-</p>
-
-<p align="center">
-La pipeline normale resta invariata: Leviathan cerca prima torrent, cache, provider esterni e risultati web. Dopo il ranking, se il Cloud è attivo, confronta i file salvati con titolo, anno, stagione, episodio, anime/episodio assoluto e filtri lingua/qualità.
-</p>
-
-<br>
-
-<table align="center">
-<tr><th>Funzione</th><th>Comportamento</th></tr>
-<tr><td align="center"><b>Servizi</b></td><td align="center">Solo <b>Real-Debrid</b> e <b>TorBox</b>.</td></tr>
-<tr><td align="center"><b>Attivazione</b></td><td align="center">Toggle dedicato su configuratore desktop e <code>smartphone.js</code>.</td></tr>
-<tr><td align="center"><b>Modalità</b></td><td align="center"><code>smart</code>, <code>fallback</code>, <code>always</code>. In <code>always</code> il cloud viene controllato sempre, ma i duplicati restano esclusi.</td></tr>
-<tr><td align="center"><b>Dedupe</b></td><td align="center">Lo stesso hash non viene mai mostrato due volte. Se un torrent normale è anche nel cloud, viene solo marcato come cloud salvato.</td></tr>
-<tr><td align="center"><b>Formatter</b></td><td align="center">Gli stream cloud usano la nuvola al posto del fulmine: <code>☁️ RD</code> / <code>☁️ TB</code> e label <code>CLOUD SALVATO</code>.</td></tr>
-<tr><td align="center"><b>Playback</b></td><td align="center">Route dedicate <code>/play_saved_cloud/rd/...</code> e <code>/play_saved_cloud/tb/...</code>, senza cancellare torrent e senza aggiungere magnet duplicati.</td></tr>
-<tr><td align="center"><b>Debug</b></td><td align="center">Log <code>[SAVED CLOUD]</code> per gate, skip, scan, duplicate upgrade e stream aggiunti.</td></tr>
-</table>
-
-<br>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/SAVED_CLOUD-RD_%2B_TORBOX-00eaff?style=for-the-badge&labelColor=061018" />
-  <img src="https://img.shields.io/badge/DEDUPLICATION-ALWAYS_ON-7c3aed?style=for-the-badge&labelColor=061018" />
-  <img src="https://img.shields.io/badge/FORMATTER-%E2%98%81%EF%B8%8F_RD_%7C_%E2%98%81%EF%B8%8F_TB-2ee6a6?style=for-the-badge&labelColor=061018" />
-</p>
-
-</td>
-</tr>
-</table>
-
 </div>
+
+Il **Debrid Saved Cloud** è un layer opzionale che controlla i file già salvati nel cloud personale dell’utente su **Real-Debrid** o **TorBox** e li integra nella lista stream di Leviathan.
+
+La pipeline normale resta invariata: Leviathan continua a cercare torrent, cache, provider esterni e risultati web. Dopo il ranking, se il Cloud è attivo, confronta i file salvati con titolo, anno, stagione, episodio, anime/episodio assoluto e filtri lingua/qualità.
+
+### Cosa fa
+
+- Usa solo **Real-Debrid** e **TorBox**.
+- Si attiva dal configuratore desktop e da `smartphone.js`.
+- Non sostituisce Torrentio, MediaFusion, provider web o cache Leviathan.
+- Aggiunge stream cloud solo quando sono realmente utili.
+- Se un file cloud è già presente tra i risultati normali, **non crea un doppione**.
+- Se un torrent normale è anche nel cloud dell’utente, viene solo marcato come cloud salvato.
+
+### Modalità disponibili
+
+**smart**  
+Controlla il cloud in modo intelligente e aggiunge solo risultati utili.
+
+**fallback**  
+Usa il cloud soprattutto quando Leviathan trova pochi risultati validi.
+
+**always**  
+Controlla sempre il cloud, ma la deduplicazione resta obbligatoria: lo stesso hash non viene mai mostrato due volte.
+
+### Come si riconosce nello stream
+
+Gli stream cloud usano la **nuvola al posto del fulmine**:
+
+- `☁️ RD` per Real-Debrid salvato nel cloud.
+- `☁️ TB` per TorBox salvato nel cloud.
+- Label visibile: `CLOUD SALVATO`.
+
+Gli stream normali cached continuano invece a usare il formatter classico.
+
+### Playback sicuro
+
+Il playback usa route dedicate per RD e TorBox, senza cancellare torrent salvati e senza aggiungere magnet duplicati. Il layer legge ciò che è già presente nel cloud dell’utente e genera il link solo quando lo stream viene aperto.
+
+### Debug
+
+I log dedicati usano il tag `[SAVED CLOUD]` e mostrano gate, skip, scan, duplicati riconosciuti, upgrade dei risultati già presenti e stream aggiunti.
 
 ---
 
@@ -176,19 +179,34 @@ La logica combina <b>matching anime-first</b>, <b>contesto Kitsu</b>, <b>control
 
 <table align="center">
 <tr>
-<td align="center" width="33%"><b>☁️ RD/TorBox Saved Cloud</b><br><sub>Layer opzionale che riconosce i file già salvati, marca i duplicati e usa <code>☁️ RD</code> / <code>☁️ TB</code>.</sub></td>
-<td align="center" width="33%"><b>🚀 Core Refactoring</b><br><sub>Motore riorganizzato per maggiore stabilità, leggibilità e tenuta sotto carico.</sub></td>
-<td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, GuardaHD, GuardoSerie, AnimeWorld, GuardaFlix e CinemaCity.</sub></td>
+<td align="center" width="33%"><b>☁️ RD/TorBox Saved Cloud</b><br><sub>Mostra e marca i file già salvati nel cloud personale dell’utente.</sub></td>
+<td align="center" width="33%"><b>🧹 Cloud Dedupe Globale</b><br><sub>Nessun duplicato viene mostrato, nemmeno in modalità ALWAYS.</sub></td>
+<td align="center" width="33%"><b>🎨 Cloud Formatter</b><br><sub>Gli stream cloud usano la nuvola come badge principale: <code>☁️ RD</code> / <code>☁️ TB</code>.</sub></td>
 </tr>
 <tr>
+<td align="center" width="33%"><b>📱 Mobile Config Sync</b><br><sub>Il configuratore smartphone supporta toggle, modalità e limite Cloud.</sub></td>
+<td align="center" width="33%"><b>🛣️ Safe Cloud Routes</b><br><sub>Playback cloud separato da magnet temporanei, senza cancellazioni.</sub></td>
+<td align="center" width="33%"><b>🧾 Saved Cloud Debug</b><br><sub>Log dedicati per capire gate, skip, scan, duplicate upgrade e risultati aggiunti.</sub></td>
+</tr>
+<tr>
+<td align="center" width="33%"><b>🚀 Core Refactoring</b><br><sub>Motore riorganizzato per maggiore stabilità, leggibilità e tenuta sotto carico.</sub></td>
+<td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, GuardaHD, GuardoSerie, AnimeWorld, GuardaFlix e CinemaCity.</sub></td>
 <td align="center" width="33%"><b>🎨 Polymorphic Formatter</b><br><sub>Rendering più pulito, gerarchico e leggibile dentro Stremio.</sub></td>
+</tr>
+<tr>
 <td align="center" width="33%"><b>🗣️ Tri-Scope Language Control</b><br><sub>Modalità dedicate per ITA, ENG e Hybrid.</sub></td>
-<td align="center" width="33%"><b>🛰️ Adaptive Shared Cache</b><br><sub>TTL e riuso modulati su volatilità, qualità e confidence reale.</sub></td>
+<td align="center" width="33%"><b>🌪️ VIX Hybrid Module</b><br><sub>Integrazione con sorgenti web ad avvio rapido.</sub></td>
+<td align="center" width="33%"><b>👻 Ghost Proxy Compatibility</b><br><sub>Supporto MediaFlow e ambienti proxy-based.</sub></td>
 </tr>
 <tr>
 <td align="center" width="33%"><b>📡 Direct Swarm Protocol</b><br><sub>Riproduzione P2P diretta per scenari senza debrid.</sub></td>
 <td align="center" width="33%"><b>🧬 Semantic Matching</b><br><sub>Riduzione dei falsi positivi e ranking più credibile.</sub></td>
 <td align="center" width="33%"><b>⚙️ Hybrid Delivery Logic</b><br><sub>Passaggio intelligente tra percorso torrent e web quando serve.</sub></td>
+</tr>
+<tr>
+<td align="center" width="33%"><b>🛰️ Adaptive Shared Cache</b><br><sub>Policy dinamica che modula TTL, riuso e scrittura in base a volatilità e stabilità reale del contenuto.</sub></td>
+<td align="center" width="33%"><b>🛡️ Fresh Release Protection</b><br><sub>I contenuti appena usciti non vengono “congelati” prematuramente con risultati deboli o incompleti.</sub></td>
+<td align="center" width="33%"><b>🎯 Confidence-Weighted Reuse</b><br><sub>La cache pesa qualità, concordanza delle fonti, exact match e solidità del risultato prima di condividere globalmente.</sub></td>
 </tr>
 </table>
 
