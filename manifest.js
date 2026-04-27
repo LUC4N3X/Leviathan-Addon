@@ -1,9 +1,9 @@
 function getManifest() {
     return {
         id: "org.corsaro.brain.v2",
-        version: "3.0.0",
+        version: "3.1.0",
         name: "Leviathan",
-        description: "Motore di ricerca parallelo ad alte prestazioni. Include integrazione Web (StreamingCommunity, GuardaHD, GuardoSerie) e Scraper Torrent Multi-Source: Corsaro Nero, Knaben, 1337x, RARBG, TGx, Nyaa, TPB, Lime, Solid, BitSearch e altri. Supporto nativo Debrid per garantire streaming 4K/HDR fluido e senza buffering.",
+        description: "Motore di ricerca parallelo ad alte prestazioni per film e serie. Integra provider web italiani, scraper torrent multi-source, cache intelligente, supporto Debrid RD/TorBox e Debrid Saved Cloud opzionale: riconosce i file già salvati nel cloud personale Real-Debrid/TorBox, li mostra nella lista stream senza duplicati e li evidenzia con badge dedicato. Include routing intelligente, filtri lingua/qualità, gestione anime/Kitsu e formatter avanzato per stream 4K/HDR, WEB, BluRay e release italiane.",
         logo: "https://i.ibb.co/p914YMh/logo.png",
         resources: ["catalog", "stream"],
         types: ["movie", "series"],
