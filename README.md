@@ -87,32 +87,35 @@ La nuova logica cloud non sostituisce la pipeline principale: la potenzia. Se l�
 
 <div align="center">
 
-## ☁️ Debrid Saved Cloud Layer
+<div align="center">
+
+## ☁️ Debrid Saved Cloud
 
 <table align="center">
 <tr>
 <td align="center" width="100%">
 
-### Real-Debrid + TorBox · opzionale · dedupe globale · formatter coerente
+### RD/TorBox cloud-aware · opzionale · zero duplicati
 
 <p align="center">
-Il <b>Debrid Saved Cloud Layer</b> è una nuova estensione interna della pipeline Leviathan. Quando attivata, controlla i file già presenti nel cloud personale dell’utente su <b>Real-Debrid</b> o <b>TorBox</b> e li confronta con il contenuto richiesto in Stremio.
+Il <b>Debrid Saved Cloud</b> è un layer opzionale che controlla i file già salvati nel cloud personale dell’utente su <b>Real-Debrid</b> o <b>TorBox</b> e li integra nella lista stream di Leviathan senza creare doppioni.
 </p>
 
 <p align="center">
-Non è un nuovo scraper esterno, non aggiunge AllDebrid, Premiumize o DebridLink, e non cambia la filosofia del progetto. Rimane tutto concentrato su <b>RD</b> e <b>TorBox</b>, usando la stessa configurazione debrid già scelta dall’utente.
+La pipeline normale resta invariata: Leviathan cerca prima torrent, cache, provider esterni e risultati web. Dopo il ranking, se il Cloud è attivo, confronta i file salvati con titolo, anno, stagione, episodio, anime/episodio assoluto e filtri lingua/qualità.
 </p>
 
 <br>
 
 <table align="center">
-<tr><th>Componente</th><th>Comportamento</th></tr>
-<tr><td align="center"><b>Servizi supportati</b></td><td align="center">Solo <b>Real-Debrid</b> e <b>TorBox</b>.</td></tr>
-<tr><td align="center"><b>Attivazione</b></td><td align="center">Opzionale dal configuratore desktop e mobile.</td></tr>
-<tr><td align="center"><b>Risultati nuovi</b></td><td align="center">Aggiunge stream cloud solo se non sono già presenti nella lista.</td></tr>
-<tr><td align="center"><b>Duplicati</b></td><td align="center">Mai aggiunti. Se il file cloud esiste già come torrent normale, viene solo marcato come cloud salvato.</td></tr>
-<tr><td align="center"><b>Playback</b></td><td align="center">Usa route dedicate e sicure, senza cancellare torrent e senza aggiungere magnet duplicati.</td></tr>
-<tr><td align="center"><b>Formatter</b></td><td align="center">Gli stream cloud usano la <b>nuvola</b> come icona principale: <code>☁️ RD</code> / <code>☁️ TB</code>.</td></tr>
+<tr><th>Funzione</th><th>Comportamento</th></tr>
+<tr><td align="center"><b>Servizi</b></td><td align="center">Solo <b>Real-Debrid</b> e <b>TorBox</b>.</td></tr>
+<tr><td align="center"><b>Attivazione</b></td><td align="center">Toggle dedicato su configuratore desktop e <code>smartphone.js</code>.</td></tr>
+<tr><td align="center"><b>Modalità</b></td><td align="center"><code>smart</code>, <code>fallback</code>, <code>always</code>. In <code>always</code> il cloud viene controllato sempre, ma i duplicati restano esclusi.</td></tr>
+<tr><td align="center"><b>Dedupe</b></td><td align="center">Lo stesso hash non viene mai mostrato due volte. Se un torrent normale è anche nel cloud, viene solo marcato come cloud salvato.</td></tr>
+<tr><td align="center"><b>Formatter</b></td><td align="center">Gli stream cloud usano la nuvola al posto del fulmine: <code>☁️ RD</code> / <code>☁️ TB</code> e label <code>CLOUD SALVATO</code>.</td></tr>
+<tr><td align="center"><b>Playback</b></td><td align="center">Route dedicate <code>/play_saved_cloud/rd/...</code> e <code>/play_saved_cloud/tb/...</code>, senza cancellare torrent e senza aggiungere magnet duplicati.</td></tr>
+<tr><td align="center"><b>Debug</b></td><td align="center">Log <code>[SAVED CLOUD]</code> per gate, skip, scan, duplicate upgrade e stream aggiunti.</td></tr>
 </table>
 
 <br>
@@ -120,7 +123,7 @@ Non è un nuovo scraper esterno, non aggiunge AllDebrid, Premiumize o DebridLink
 <p align="center">
   <img src="https://img.shields.io/badge/SAVED_CLOUD-RD_%2B_TORBOX-00eaff?style=for-the-badge&labelColor=061018" />
   <img src="https://img.shields.io/badge/DEDUPLICATION-ALWAYS_ON-7c3aed?style=for-the-badge&labelColor=061018" />
-  <img src="https://img.shields.io/badge/FORMATTER-CLOUD_BADGE-2ee6a6?style=for-the-badge&labelColor=061018" />
+  <img src="https://img.shields.io/badge/FORMATTER-%E2%98%81%EF%B8%8F_RD_%7C_%E2%98%81%EF%B8%8F_TB-2ee6a6?style=for-the-badge&labelColor=061018" />
 </p>
 
 </td>
@@ -130,283 +133,6 @@ Non è un nuovo scraper esterno, non aggiunge AllDebrid, Premiumize o DebridLink
 </div>
 
 ---
-
-<div align="center">
-
-## ☁️ Come funziona il Cloud Salvato
-
-</div>
-
-Quando l’utente apre un film, una serie o un anime, Leviathan esegue prima la pipeline normale: metadati, remote indexer, provider esterni, Torrentio/bridge, ranking, filtri, cache e formatter. Dopo questa fase, se la feature è attiva, entra il layer cloud.
-
-Il layer cloud legge i torrent/file già salvati nel servizio debrid configurato e prova a capire se uno di quei file corrisponde al contenuto richiesto. La corrispondenza non è cieca: viene controllato il titolo, l’anno, la stagione, l’episodio, la natura del contenuto e i filtri utente.
-
-### Regole principali
-
-| Regola | Descrizione |
-|---|---|
-| **Solo RD/TorBox** | La feature resta concentrata su Real-Debrid e TorBox. Nessun altro debrid viene introdotto. |
-| **Opt-in** | Di base l’utente decide se attivarla. Non viene forzata. |
-| **Dedupe globale** | I duplicati non vengono mai mostrati, neanche in modalità `always`. |
-| **Upgrade dei duplicati** | Se un torrent già trovato da Leviathan è anche nel cloud dell’utente, non viene duplicato: viene marcato come `☁️ CLOUD SALVATO`. |
-| **Filtri rispettati** | Lingua, qualità, tipo contenuto e matching episodio restano coerenti con la configurazione. |
-| **No delete** | La route cloud non cancella torrent dall’account dell’utente. |
-| **No magnet doppio** | I file già salvati non vengono riaggiunti come magnet temporanei. |
-| **Formatter pulito** | Per gli stream cloud la nuvola sostituisce il fulmine: `☁️ RD` / `☁️ TB`. |
-
-### Perché è utile
-
-Se l’utente ha già un file salvato nel proprio cloud Real-Debrid o TorBox, Leviathan può riconoscerlo e renderlo immediatamente visibile nella lista stream. Questo è utile soprattutto quando:
-
-- il file cloud è già pronto e non richiede nuova selezione;
-- il risultato normale esiste, ma l’utente vuole sapere che è già salvato nel proprio cloud;
-- il risultato cloud non è presente nei torrent normali e può diventare uno stream aggiuntivo utile;
-- il provider esterno è lento, instabile o non trova abbastanza risultati;
-- l’utente usa Leviathan come pannello unico per torrent, web provider e cloud debrid.
-
----
-
-<div align="center">
-
-## 🎛️ Modalità Debrid Cloud
-
-</div>
-
-La configurazione supporta quattro modalità operative.
-
-| Modalità | Comportamento |
-|---|---|
-| `off` | Cloud salvato disattivato. Nessuna scansione RD/TorBox cloud. |
-| `smart` | Modalità consigliata. Aggiunge o marca solo risultati utili, puliti e coerenti. |
-| `fallback` | Usa il cloud solo quando Leviathan trova pochi risultati o la pipeline principale non è abbastanza ricca. |
-| `always` | Prova sempre a controllare il cloud, ma i duplicati restano esclusi in ogni caso. |
-
-> **Nota importante:** `always` non significa “mostra tutto”.  
-> Significa “controlla sempre il cloud”. La regola anti-duplicati resta obbligatoria e non può essere disattivata, perché mostrare due volte lo stesso hash renderebbe la lista inutile.
-
-Esempio configurazione interna:
-
-```json
-{
-  "service": "rd",
-  "filters": {
-    "enableSavedCloud": true,
-    "savedCloudMode": "smart",
-    "savedCloudMax": 6
-  }
-}
-```
-
----
-
-<div align="center">
-
-## 🧹 Dedupe: nessun duplicato, mai
-
-</div>
-
-La deduplicazione è una regola globale. Leviathan confronta gli hash/infoHash già presenti nella lista stream con quelli trovati nel cloud salvato.
-
-Se il cloud contiene un file nuovo, non presente tra gli stream già generati, Leviathan può aggiungerlo come risultato cloud.
-
-Se invece il cloud contiene lo stesso hash di uno stream già presente, Leviathan non crea una seconda voce. In quel caso aggiorna lo stream esistente aggiungendo il badge cloud.
-
-### Esempio pratico
-
-| Situazione | Risultato |
-|---|---|
-| Torrent trovato da Torrentio e non presente nel cloud | Rimane normale: `⚡ RD` se cached. |
-| Torrent trovato da Torrentio e presente anche nel cloud RD | Non viene duplicato. Diventa `☁️ RD` con label `CLOUD SALVATO • RD`. |
-| File presente nel cloud RD ma non trovato dai torrent normali | Viene aggiunto come nuovo stream cloud. |
-| File cloud non corrispondente a titolo/anno/episodio | Viene scartato. |
-| File cloud in lingua non ammessa dai filtri | Viene scartato. |
-
-Questo comportamento mantiene la lista pulita: l’utente vede più informazioni, ma non più caos.
-
----
-
-<div align="center">
-
-## 🎨 Formatter Cloud
-
-</div>
-
-Il formatter è stato aggiornato per rendere i file cloud immediatamente riconoscibili e coerenti con il resto dell’interfaccia Leviathan.
-
-### Stream normale cached
-
-```txt
-⚡ RD
-LEVIATHAN
-
-▶️ Titolo
-1080p • WEB • H264
-🇮🇹 / 🇬🇧 • audio • size • source
-```
-
-### Stream già salvato nel cloud RD
-
-```txt
-☁️ RD
-LEVIATHAN
-
-☁️ CLOUD SALVATO • RD
-▶️ Titolo
-1080p • WEB • H264
-🇮🇹 / 🇬🇧 • audio • size • source
-```
-
-### Stream già salvato nel cloud TorBox
-
-```txt
-☁️ TB
-LEVIATHAN
-
-☁️ CLOUD SALVATO • TB
-▶️ Titolo
-1080p • WEB • H264
-🇮🇹 / 🇬🇧 • audio • size • source
-```
-
-Il cloud salvato usa la nuvola come icona primaria. Non viene più sommato male al fulmine: se uno stream è cloud, la priorità visiva è `☁️`, non `⚡`.
-
----
-
-<div align="center">
-
-## 🧪 Matching Cloud: film, serie e anime
-
-</div>
-
-Il Saved Cloud Layer non mostra semplicemente tutto quello che trova nel cloud. Ogni candidato viene filtrato e validato.
-
-### Film
-
-Per i film vengono controllati:
-
-- compatibilità titolo;
-- anno quando disponibile;
-- esclusione di sample, trailer, extra e file troppo piccoli;
-- scelta del file video principale in caso di torrent multi-file;
-- rispetto dei filtri lingua e qualità.
-
-### Serie TV
-
-Per le serie vengono controllati:
-
-- titolo serie;
-- stagione richiesta;
-- episodio richiesto;
-- pattern `SxxExx`, `1x02`, `E02` e varianti;
-- prevenzione di episodi sbagliati o pack non coerenti;
-- esclusione di risultati ambigui se non abbastanza sicuri.
-
-### Anime
-
-Per gli anime il layer resta prudente:
-
-- supporta l’episodio assoluto quando utile;
-- tiene conto del contesto anime/Kitsu già usato da Leviathan;
-- evita di attivare logiche anime sui film normali;
-- non forza match deboli solo perché il titolo è simile;
-- applica gli stessi filtri lingua per evitare falsi ITA quando il file è solo JP/ENG.
-
----
-
-<div align="center">
-
-## 📱 Desktop e Smartphone
-
-</div>
-
-La feature è disponibile sia nel configuratore desktop sia nel configuratore mobile.
-
-### Desktop
-
-Nel configuratore principale è disponibile il toggle:
-
-```txt
-☁️ Debrid Cloud
-```
-
-Da qui l’utente può attivare la scansione dei file salvati e scegliere la modalità operativa.
-
-### Smartphone
-
-Anche `public/smartphone.js` è stato aggiornato. La configurazione mobile include:
-
-- toggle `Debrid Cloud`;
-- modalità `SMART`, `FALLBACK`, `ALWAYS`;
-- campo `savedCloudMax`;
-- protezione per abilitarlo solo quando il servizio è `rd` o `tb` e la API key è presente;
-- avviso quando l’utente prova a combinare cloud e P2P in modo non coerente.
-
-Questo evita che da smartphone venga generata una configurazione incompleta o diversa da quella desktop.
-
----
-
-<div align="center">
-
-## 🛣️ Route Cloud sicure
-
-</div>
-
-Il playback dei file cloud usa route dedicate, separate dalle route standard di risoluzione magnet.
-
-```txt
-/:conf/play_saved_cloud/rd/...
-/:conf/play_saved_cloud/tb/...
-```
-
-Questa separazione serve a proteggere l’account dell’utente:
-
-- non viene cancellato nessun torrent salvato;
-- non viene aggiunto un magnet duplicato;
-- il link viene risolto quando serve;
-- il comportamento resta separato dai torrent temporanei della pipeline standard;
-- MediaFlow/proxy possono continuare a essere applicati dal layer di delivery quando configurati.
-
----
-
-<div align="center">
-
-## 🧾 Log e Debug Saved Cloud
-
-</div>
-
-La feature include log diagnostici dedicati per capire subito se il cloud è attivo, se viene saltato, quanti torrent legge e quanti risultati vengono aggiunti o marcati come duplicati cloud.
-
-Comando consigliato:
-
-```bash
-docker compose logs -f | grep -E "SAVED CLOUD|play_saved_cloud|CLOUD SALVATO"
-```
-
-Log principali:
-
-| Log | Significato |
-|---|---|
-| `[SAVED CLOUD] gate` | Dice se la feature è attiva, quale servizio usa, modalità, API key presente, stream già esistenti e limite massimo. |
-| `[SAVED CLOUD] skip` | Spiega perché il layer non parte: toggle spento, mode off, key mancante, servizio non supportato, fallback non necessario. |
-| `[SAVED CLOUD] lookup start/done` | Inizio/fine scansione cloud. |
-| `[SAVED CLOUD] RD scan start/list response/scan done` | Diagnostica specifica Real-Debrid. |
-| `[SAVED CLOUD] TB scan start/list response/scan done` | Diagnostica specifica TorBox. |
-| `[SAVED CLOUD] duplicate upgrade` | Uno o più stream già esistenti sono stati riconosciuti come presenti nel cloud e marcati con badge `☁️`. |
-| `[SAVED CLOUD] added=...` | Numero di stream cloud nuovi aggiunti alla lista. |
-| `[SAVED CLOUD] added=0 duplicateAnnotated>0` | Nessun duplicato aggiunto, ma stream già presenti marcati come cloud salvato. |
-
-Esempio utile:
-
-```txt
-[SAVED CLOUD] RD scan done | found=0 scanned=90 duplicate_list_hash=3 list_title_no_match=87
-[SAVED CLOUD] duplicate upgrade | cloudDuplicates=3 annotated=3
-```
-
-Questo significa che Real-Debrid conteneva tre file già salvati, ma Leviathan li aveva già trovati nella pipeline normale. Non vengono mostrati due volte: gli stream esistenti vengono marcati con `☁️ CLOUD SALVATO • RD`.
-
----
-
-<div align="center">
 
 ## 🈶 Anime & Kitsu Intelligence
 
@@ -450,34 +176,19 @@ La logica combina <b>matching anime-first</b>, <b>contesto Kitsu</b>, <b>control
 
 <table align="center">
 <tr>
-<td align="center" width="33%"><b>☁️ RD/TorBox Saved Cloud</b><br><sub>Mostra e marca i file già salvati nel cloud personale dell’utente.</sub></td>
-<td align="center" width="33%"><b>🧹 Cloud Dedupe Globale</b><br><sub>Nessun duplicato viene mostrato, nemmeno in modalità ALWAYS.</sub></td>
-<td align="center" width="33%"><b>🎨 Cloud Formatter</b><br><sub>Gli stream cloud usano la nuvola come badge principale: <code>☁️ RD</code> / <code>☁️ TB</code>.</sub></td>
-</tr>
-<tr>
-<td align="center" width="33%"><b>📱 Mobile Config Sync</b><br><sub>Il configuratore smartphone supporta toggle, modalità e limite Cloud.</sub></td>
-<td align="center" width="33%"><b>🛣️ Safe Cloud Routes</b><br><sub>Playback cloud separato da magnet temporanei, senza cancellazioni.</sub></td>
-<td align="center" width="33%"><b>🧾 Saved Cloud Debug</b><br><sub>Log dedicati per capire gate, skip, scan, duplicate upgrade e risultati aggiunti.</sub></td>
-</tr>
-<tr>
+<td align="center" width="33%"><b>☁️ RD/TorBox Saved Cloud</b><br><sub>Layer opzionale che riconosce i file già salvati, marca i duplicati e usa <code>☁️ RD</code> / <code>☁️ TB</code>.</sub></td>
 <td align="center" width="33%"><b>🚀 Core Refactoring</b><br><sub>Motore riorganizzato per maggiore stabilità, leggibilità e tenuta sotto carico.</sub></td>
 <td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, GuardaHD, GuardoSerie, AnimeWorld, GuardaFlix e CinemaCity.</sub></td>
-<td align="center" width="33%"><b>🎨 Polymorphic Formatter</b><br><sub>Rendering più pulito, gerarchico e leggibile dentro Stremio.</sub></td>
 </tr>
 <tr>
+<td align="center" width="33%"><b>🎨 Polymorphic Formatter</b><br><sub>Rendering più pulito, gerarchico e leggibile dentro Stremio.</sub></td>
 <td align="center" width="33%"><b>🗣️ Tri-Scope Language Control</b><br><sub>Modalità dedicate per ITA, ENG e Hybrid.</sub></td>
-<td align="center" width="33%"><b>🌪️ VIX Hybrid Module</b><br><sub>Integrazione con sorgenti web ad avvio rapido.</sub></td>
-<td align="center" width="33%"><b>👻 Ghost Proxy Compatibility</b><br><sub>Supporto MediaFlow e ambienti proxy-based.</sub></td>
+<td align="center" width="33%"><b>🛰️ Adaptive Shared Cache</b><br><sub>TTL e riuso modulati su volatilità, qualità e confidence reale.</sub></td>
 </tr>
 <tr>
 <td align="center" width="33%"><b>📡 Direct Swarm Protocol</b><br><sub>Riproduzione P2P diretta per scenari senza debrid.</sub></td>
 <td align="center" width="33%"><b>🧬 Semantic Matching</b><br><sub>Riduzione dei falsi positivi e ranking più credibile.</sub></td>
 <td align="center" width="33%"><b>⚙️ Hybrid Delivery Logic</b><br><sub>Passaggio intelligente tra percorso torrent e web quando serve.</sub></td>
-</tr>
-<tr>
-<td align="center" width="33%"><b>🛰️ Adaptive Shared Cache</b><br><sub>Policy dinamica che modula TTL, riuso e scrittura in base a volatilità e stabilità reale del contenuto.</sub></td>
-<td align="center" width="33%"><b>🛡️ Fresh Release Protection</b><br><sub>I contenuti appena usciti non vengono “congelati” prematuramente con risultati deboli o incompleti.</sub></td>
-<td align="center" width="33%"><b>🎯 Confidence-Weighted Reuse</b><br><sub>La cache pesa qualità, concordanza delle fonti, exact match e solidità del risultato prima di condividere globalmente.</sub></td>
 </tr>
 </table>
 
