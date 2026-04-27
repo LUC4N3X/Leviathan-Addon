@@ -651,11 +651,24 @@ function extractProviderLabel(fileTitle) {
 function normalizeDisplaySource(source) {
   const raw = normalizeSpaces(source);
   if (!raw) return '✨ MediaFusion';
+  if (/(?:saved\s*cloud|cloud\s*salvato|debrid\s*cloud|rd\s*cloud|tb\s*cloud)/i.test(raw)) {
+    return /\btb\b|torbox/i.test(raw) ? 'TorBox' : 'Real-Debrid';
+  }
   for (const entry of DISPLAY_SOURCE_MAP) {
     if (entry.regex.test(raw)) return entry.value;
   }
   const normalized = raw.replace(/MediaFusion|Torrentio|Fallback/gi, '').trim();
   return normalized || '✨ MediaFusion';
+}
+
+function isSavedCloudSource(source, config = {}) {
+  if (config?.savedCloud === true || config?.isSavedCloud === true || config?._savedCloud === true) return true;
+  return /(?:saved\s*cloud|cloud\s*salvato|debrid\s*cloud|rd\s*cloud|tb\s*cloud)/i.test(safeString(source));
+}
+
+function getSavedCloudLabel(serviceTag) {
+  const tag = normalizeServiceTag(serviceTag);
+  return `☁️ ${tag}`;
 }
 
 function stripEpisodeFromCleanName(cleanName) {
@@ -674,9 +687,10 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
   const displayLang = getDisplayLanguageForMode(extracted.lang, config);
   const normalizedServiceTag = normalizeServiceTag(serviceTag);
   const normalizedCacheState = normalizeCacheState(cacheState, normalizedServiceTag);
-  const cacheIcon = getStatusIcon(normalizedCacheState, normalizedServiceTag);
+  const savedCloud = isSavedCloudSource(source, config);
+  const cacheIcon = savedCloud ? '☁️' : getStatusIcon(normalizedCacheState, normalizedServiceTag);
   const serviceIconTitle = SERVICE_ICON_BY_TAG[normalizedServiceTag] || '🦈';
-  const qIcon = SERVICE_ICON_BY_TAG[normalizedServiceTag] || extracted.qIcon;
+  const qIcon = extracted.qIcon;
   const numericSize = Number(size) || 0;
   const sizeString = numericSize > 0 ? formatBytes(numericSize) : 'Unknown';
   const cleanedName = stripEpisodeFromCleanName(extracted.cleanName);
@@ -718,9 +732,11 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
     cleanName: cleanedName,
     epTag,
     sourceLine: `${serviceIconTitle} [${normalizedServiceTag}] ${displaySource}`,
+    cloudBadge: savedCloud ? getSavedCloudLabel(normalizedServiceTag) : '',
     audioInfo: [extracted.audioTag, extracted.audioChannels].filter(Boolean).join(' ┃ '),
     bingeGroup: buildBingeGroup(extracted.quality, extracted.rawInfo, normalizedServiceTag, infoHash),
     providerLabel: extractProviderLabel(fileTitle),
+    isSavedCloud: savedCloud,
     isLazy: Boolean(isLazy),
     isPackItem: safePackItem,
     cacheState: normalizedCacheState,

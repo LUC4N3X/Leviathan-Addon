@@ -21,6 +21,7 @@ const dbHelper = require("./storage/db_repository");
 const { buildMagnet: buildTrackerMagnet } = require("./storage/tracker_registry");
 const { createDebridAvailabilityTools } = require("./stream/debrid_availability");
 const { createWebProviderTools } = require("./stream/web_providers");
+const SavedCloud = require("./stream/debrid_saved_cloud");
 const sourceHealth = require("./lib/source_health");
 const { createSearchPlan, evaluatePoolSatisfaction } = require("./lib/search_planner");
 const { shouldSkipRecentWork } = require('./recent_work');
@@ -1110,18 +1111,22 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         : detectQualityLabel(baseParseTitle, details.quality || 'SD');
     const serviceLabel = normalizedService === 'tb' ? 'TB' : normalizedService.toUpperCase();
     const availabilityState = getRdAvailabilityState(normalizedService, item);
+    const isSavedCloudStream = Boolean(item?.isSavedCloud || item?._savedCloud || item?.savedCloud);
+    const formatterSource = item?.source;
 
     if (isAIOActive) {
         return {
-            name: aioFormatter.formatStreamName({ addonName: "Leviathan", service: getServiceDisplayName(normalizedService), cached: availabilityState === 'cached', cacheState: availabilityState, quality }),
+            name: aioFormatter.formatStreamName({ addonName: "Leviathan", service: getServiceDisplayName(normalizedService), cached: availabilityState === 'cached', cacheState: availabilityState, quality, savedCloud: isSavedCloudStream }),
             title: aioFormatter.formatStreamTitle({
                 title: displayTitle,
                 size: Number(sizeBytes) > 0 ? formatBytes(sizeBytes) : 'Unknown',
                 language: formatLanguageLabel(languageInfo, details.languages, getEffectiveLangMode(config, meta)),
-                source: item?.source,
+                source: formatterSource,
                 seeders,
                 infoHash: item?.hash,
-                techInfo: `ðŸŽžï¸ ${quality} ${details.tags}`.trim()
+                techInfo: `ðŸŽžï¸ ${quality} ${details.tags}`.trim(),
+                providerLine: undefined,
+                sourceIcon: '🔎'
             }),
             url: streamUrl,
             infoHash: item?.hash,
@@ -1137,10 +1142,13 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         mediaType: hasSeriesContext ? 'series' : 'movie',
         type: hasSeriesContext ? 'series' : 'movie',
         isSeries: hasSeriesContext,
-        forceMovie: !hasSeriesContext
+        forceMovie: !hasSeriesContext,
+        savedCloud: isSavedCloudStream,
+        isSavedCloud: isSavedCloudStream,
+        savedCloudService: serviceLabel
     };
     const safeIsPack = Boolean(hasSeriesContext && isPack);
-    const { name, title, bingeGroup } = formatStreamSelector(parseTitle || item?.title || displayTitle, item?.source, sizeBytes, seeders, serviceLabel, selectorConfig, item?.hash, isLazy, safeIsPack, availabilityState);
+    const { name, title, bingeGroup } = formatStreamSelector(parseTitle || item?.title || displayTitle, formatterSource, sizeBytes, seeders, serviceLabel, selectorConfig, item?.hash, isLazy, safeIsPack, availabilityState);
     return {
         name,
         title,
@@ -1809,6 +1817,285 @@ function saveResultsToDbBackground(meta, results, config = null) {
     });
 }
 
+
+function collectExistingTorrentHashes(items = [], streams = []) {
+    const hashes = new Set();
+    const add = (value) => {
+        const text = String(value || '').trim().toLowerCase();
+        if (text) hashes.add(text);
+    };
+    for (const item of Array.isArray(items) ? items : []) {
+        add(item?.hash);
+        add(item?.infoHash);
+        add(extractInfoHash(item?.magnet));
+        add(extractInfoHash(item?.url));
+        add(extractInfoHash(item?.directUrl));
+    }
+    for (const stream of Array.isArray(streams) ? streams : []) {
+        add(stream?.infoHash);
+        add(extractInfoHash(stream?.url));
+        add(extractInfoHash(stream?.title));
+    }
+    return hashes;
+}
+
+
+function getStreamPrimaryHash(stream = {}) {
+    const candidates = [
+        stream?.infoHash,
+        extractInfoHash(stream?.url),
+        extractInfoHash(stream?.title),
+        extractInfoHash(stream?.name)
+    ];
+    for (const value of candidates) {
+        const text = String(value || '').trim().toLowerCase();
+        if (text) return text;
+    }
+    return '';
+}
+
+function addSavedCloudBadgeToStream(stream = {}, serviceLabel = 'RD') {
+    const currentName = String(stream?.name || '');
+    const currentTitle = String(stream?.title || '');
+
+    let nextName = currentName
+        .replace(/☁️\s*CLOUD\s*SALVATO\s*•?\s*(?:RD|TB)?/gi, '')
+        .replace(/CLOUD\s*SALVATO\s*•?\s*(?:RD|TB)?/gi, '')
+        .replace(/💾/g, '')
+        .replace(/⚡/, '☁️')
+        .replace(/☁️\s*☁️/g, '☁️')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
+    if (!/☁️/.test(nextName)) {
+        const cleanBase = currentName.replace(/⚡/g, '').replace(/💾/g, '').replace(/\s{2,}/g, ' ').trim();
+        nextName = cleanBase ? `☁️ ${cleanBase}` : `☁️ ${serviceLabel} LEVIATHAN`;
+    }
+
+    const nextTitle = currentTitle
+        .split(/\r?\n/)
+        .filter((line) => !/CLOUD\s*SALVATO/i.test(line))
+        .join('\n')
+        .replace(/💾/g, '')
+        .trim();
+
+    return {
+        ...stream,
+        name: nextName,
+        title: nextTitle || currentTitle,
+        savedCloudDuplicate: true,
+        isSavedCloudDuplicate: true,
+        behaviorHints: {
+            ...(stream?.behaviorHints || {}),
+            savedCloud: true,
+            savedCloudDuplicate: true
+        }
+    };
+}
+
+function annotateSavedCloudDuplicateStreams(streams = [], duplicateMarkers = [], service = 'rd') {
+    const serviceLabel = String(service || '').toLowerCase() === 'tb' ? 'TB' : 'RD';
+    const duplicateHashes = new Set((Array.isArray(duplicateMarkers) ? duplicateMarkers : [])
+        .map((item) => String(item?.hash || item?.infoHash || '').trim().toLowerCase())
+        .filter(Boolean));
+    if (!duplicateHashes.size || !Array.isArray(streams) || streams.length === 0) {
+        return { streams, annotated: 0 };
+    }
+
+    let annotated = 0;
+    const out = streams.map((stream) => {
+        const hash = getStreamPrimaryHash(stream);
+        if (!hash || !duplicateHashes.has(hash)) return stream;
+        annotated += 1;
+        return addSavedCloudBadgeToStream(stream, serviceLabel);
+    });
+    return { streams: out, annotated };
+}
+
+function shouldAttachSavedCloud(filters = {}, debridStreams = []) {
+    if (filters?.enableSavedCloud !== true) return false;
+    const mode = SavedCloud.getMode(filters);
+    if (mode === 'off') return false;
+    if (mode === 'fallback') {
+        const threshold = Math.max(1, Math.min(4, SavedCloud.getLimit(filters)));
+        return (Array.isArray(debridStreams) ? debridStreams.length : 0) < threshold;
+    }
+    return true;
+}
+
+function generateSavedCloudStream(item, config, meta, reqHost, userConfStr) {
+    const service = String(item?.service || getNormalizedDebridService(config) || '').toLowerCase();
+    if (!['rd', 'tb'].includes(service)) return null;
+    if (!item?.torrentId || item?.fileId === null || item?.fileId === undefined) return null;
+    const runtimeItem = createRuntimeItem({
+        ...item,
+        _rdCacheState: 'cached',
+        rdCacheState: 'cached',
+        _dbCachedRd: true,
+        cached_rd: true,
+        _tbCached: service === 'tb',
+        isSavedCloud: true,
+        _savedCloud: true
+    }, meta);
+    const imdbParam = meta?.imdb_id ? `?imdb=${encodeURIComponent(meta.imdb_id)}` : '';
+    const streamUrl = `${reqHost}/${userConfStr}/play_saved_cloud/${service}/${encodeURIComponent(item.torrentId)}/${encodeURIComponent(item.fileId)}${imdbParam}`;
+    const parseTitle = item.fileTitle || item.filename || item.title;
+    const displayTitle = item.title || parseTitle;
+    const sizeBytes = getObservedSizeBytes(item._size, item.sizeBytes, item.size);
+    const isPack = Boolean(meta?.isSeries && isConfidentSeasonPackItem(runtimeItem, meta, ''));
+    return buildPlayableStream({
+        service,
+        item: runtimeItem,
+        streamUrl,
+        displayTitle,
+        parseTitle,
+        sizeBytes,
+        seeders: null,
+        config,
+        meta,
+        isLazy: false,
+        isPack
+    });
+}
+
+function savedCloudKeyFingerprint(value) {
+    const raw = String(value || '');
+    if (!raw) return 'empty';
+    return crypto.createHash('sha1').update(raw).digest('hex').slice(0, 12);
+}
+
+function savedCloudShortMeta(meta = {}) {
+    return `title="${String(meta?.title || meta?.name || 'n/a').replace(/[\r\n\t]+/g, ' ').slice(0, 80)}" imdb=${meta?.imdb_id || meta?.imdb || 'n/a'} tmdb=${meta?.tmdb_id || meta?.id || 'n/a'} s=${meta?.season || 0} e=${meta?.episode || 0}`;
+}
+
+async function attachSavedCloudStreams({ debridStreams, finalRanked, config, meta, type, reqHost, userConfStr, debridApiKey, configuredDebridService }) {
+    const filters = config?.filters || {};
+    const mode = SavedCloud.getMode(filters);
+    const normalizedService = String(configuredDebridService || '').toLowerCase();
+    const enabled = filters?.enableSavedCloud === true;
+    const streamCount = Array.isArray(debridStreams) ? debridStreams.length : 0;
+    const rankedCount = Array.isArray(finalRanked) ? finalRanked.length : 0;
+    const max = SavedCloud.getLimit(filters || {});
+    const fallbackThreshold = Math.max(1, Math.min(4, max));
+    const serviceOk = ['rd', 'tb'].includes(normalizedService);
+    const hasKey = Boolean(debridApiKey);
+
+    logger.info(`[SAVED CLOUD] gate | enabled=${enabled} rawEnabled=${String(filters?.enableSavedCloud)} mode=${mode} service=${normalizedService || 'n/a'} serviceOk=${serviceOk} hasKey=${hasKey} keyfp=${savedCloudKeyFingerprint(debridApiKey)} streams=${streamCount} ranked=${rankedCount} max=${max} threshold=${fallbackThreshold} type=${type || 'n/a'} ${savedCloudShortMeta(meta)}`);
+
+    if (enabled !== true) {
+        logger.info('[SAVED CLOUD] skip | reason=toggle_disabled_or_missing_config');
+        return debridStreams;
+    }
+    if (mode === 'off') {
+        logger.info('[SAVED CLOUD] skip | reason=mode_off');
+        return debridStreams;
+    }
+    if (!hasKey) {
+        logger.info('[SAVED CLOUD] skip | reason=missing_debrid_api_key');
+        return debridStreams;
+    }
+    if (!serviceOk) {
+        logger.info(`[SAVED CLOUD] skip | reason=unsupported_service service=${normalizedService || 'n/a'} expected=rd_or_tb`);
+        return debridStreams;
+    }
+    if (mode === 'fallback' && streamCount >= fallbackThreshold) {
+        logger.info(`[SAVED CLOUD] skip | reason=fallback_not_needed streams=${streamCount} threshold=${fallbackThreshold}`);
+        return debridStreams;
+    }
+
+    const existingHashes = collectExistingTorrentHashes(finalRanked, debridStreams);
+    let outputStreams = Array.isArray(debridStreams) ? debridStreams : [];
+    logger.info(`[SAVED CLOUD] lookup start | service=${normalizedService.toUpperCase()} mode=${mode} existingHashes=${existingHashes.size} max=${max}`);
+
+    const dupStartedAt = Date.now();
+    const duplicateMarkers = await SavedCloud.findSavedCloudDuplicateHashes({
+        service: normalizedService,
+        apiKey: debridApiKey,
+        meta,
+        type,
+        filters,
+        existingHashes,
+        logger
+    });
+    const duplicateAnnotation = annotateSavedCloudDuplicateStreams(outputStreams, duplicateMarkers, normalizedService);
+    outputStreams = duplicateAnnotation.streams;
+    logger.info(`[SAVED CLOUD] duplicate upgrade | cloudDuplicates=${Array.isArray(duplicateMarkers) ? duplicateMarkers.length : 0} annotated=${duplicateAnnotation.annotated} ms=${Date.now() - dupStartedAt}`);
+
+    const startedAt = Date.now();
+    const items = await SavedCloud.findSavedCloudItems({
+        service: normalizedService,
+        apiKey: debridApiKey,
+        meta,
+        type,
+        filters,
+        max,
+        existingHashes,
+        logger
+    });
+
+    logger.info(`[SAVED CLOUD] lookup done | service=${normalizedService.toUpperCase()} rawItems=${Array.isArray(items) ? items.length : 0} ms=${Date.now() - startedAt}`);
+
+    if (!Array.isArray(items) || items.length === 0) {
+        logger.info(`[SAVED CLOUD] added=0 | reason=no_new_candidates_after_cloud_scan duplicateAnnotated=${duplicateAnnotation.annotated}`);
+        return outputStreams;
+    }
+
+    const langMode = getEffectiveLangMode(config, meta, type);
+    const filtered = [];
+    const seen = new Set(Array.from(existingHashes));
+    const drop = {
+        duplicate_hash: 0,
+        language: 0,
+        quality: 0,
+        invalid_stream: 0
+    };
+
+    for (const item of items) {
+        const hash = String(item?.hash || item?.infoHash || '').toLowerCase();
+        const label = `${item?.title || ''} ${item?.filename || ''}`.trim();
+
+        if (hash && seen.has(hash)) {
+            drop.duplicate_hash++;
+            logger.info(`[SAVED CLOUD] drop | reason=duplicate_hash hash=${hash.slice(0, 12)} title="${label.replace(/[\r\n\t]+/g, ' ').slice(0, 90)}"`);
+            continue;
+        }
+        if (!keepLanguageCandidateForMode(item, meta, langMode)) {
+            drop.language++;
+            logger.info(`[SAVED CLOUD] drop | reason=language_filter langMode=${langMode} title="${label.replace(/[\r\n\t]+/g, ' ').slice(0, 90)}"`);
+            continue;
+        }
+        if (shouldDropByConfiguredQuality(label, filters || {}, { treatGenericHdAs720: true })) {
+            drop.quality++;
+            logger.info(`[SAVED CLOUD] drop | reason=quality_filter title="${label.replace(/[\r\n\t]+/g, ' ').slice(0, 90)}"`);
+            continue;
+        }
+
+        if (hash) seen.add(hash);
+        filtered.push(item);
+        logger.info(`[SAVED CLOUD] keep | service=${normalizedService.toUpperCase()} hash=${hash ? hash.slice(0, 12) : 'n/a'} torrentId=${item?.torrentId || 'n/a'} fileId=${item?.fileId ?? item?.fileIdx ?? 'n/a'} title="${label.replace(/[\r\n\t]+/g, ' ').slice(0, 90)}"`);
+
+        if (filtered.length >= max) break;
+    }
+
+    const savedStreams = filtered
+        .map((item) => {
+            const stream = generateSavedCloudStream(item, config, meta, reqHost, userConfStr);
+            if (!stream) {
+                drop.invalid_stream++;
+                logger.info(`[SAVED CLOUD] drop | reason=stream_generation_failed torrentId=${item?.torrentId || 'n/a'} fileId=${item?.fileId ?? item?.fileIdx ?? 'n/a'}`);
+            }
+            return stream;
+        })
+        .filter(Boolean);
+
+    logger.info(`[SAVED CLOUD] summary | added=${savedStreams.length} raw=${items.length} kept=${filtered.length} duplicate=${drop.duplicate_hash} language=${drop.language} quality=${drop.quality} invalid=${drop.invalid_stream} finalStreams=${outputStreams.length + savedStreams.length} mode=${mode} service=${normalizedService.toUpperCase()} imdb=${meta?.imdb_id || 'n/a'}`);
+
+    if (savedStreams.length > 0) {
+        logger.info(`[SAVED CLOUD] Aggiunti ${savedStreams.length} stream ${String(normalizedService).toUpperCase()} salvati | mode=${mode} | imdb=${meta?.imdb_id || 'n/a'}`);
+    }
+    return [...outputStreams, ...savedStreams];
+}
+
 async function resolveDebridLink(config, item, showFake, reqHost, meta) {
     try {
         const service = getNormalizedDebridService(config);
@@ -2438,6 +2725,18 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           p2pStreams = finalRanked.map((item) => P2P.formatP2PStream(item, config));
           debridStreams = p2pStreams;
       }
+
+      debridStreams = await attachSavedCloudStreams({
+          debridStreams,
+          finalRanked,
+          config: { ...config, service: configuredDebridService, rawConf: userConfStr },
+          meta,
+          type,
+          reqHost,
+          userConfStr,
+          debridApiKey,
+          configuredDebridService
+      });
 
       const rawWebBuckets = await fetchWebProviderBuckets({
           type,

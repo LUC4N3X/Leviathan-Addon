@@ -1,6 +1,8 @@
 'use strict';
 
 const { getRequestOrigin } = require('../../utils/url');
+const RD = require('../../../debrid/realdebrid');
+const TB = require('../../../debrid/torbox');
 
 function registerPlaybackRoutes(app, {
     Cache,
@@ -114,6 +116,57 @@ function registerPlaybackRoutes(app, {
         if (imdb) query.set('imdb', imdb);
         const suffix = query.toString() ? `?${query.toString()}` : '';
         res.redirect(`/${conf}/play_lazy/tb/${hash}/${f || -1}${suffix}`);
+    });
+
+    app.get('/:conf/play_saved_cloud/:service/:torrentId/:fileId', async (req, res) => {
+        const { conf, service, torrentId, fileId } = req.params;
+        const startedAt = Date.now();
+        const requestedService = String(service || '').toLowerCase();
+        try {
+            if (!['rd', 'tb'].includes(requestedService)) return res.status(400).send('Servizio Debrid non supportato.');
+            const config = getConfig(conf);
+            const apiKey = requestedService === 'tb'
+                ? (config.key || config.tb || config.torbox || config.rd)
+                : (config.key || config.rd || config.realdebrid);
+            if (!apiKey) return res.status(400).send('API Key mancante.');
+
+            const cacheKey = `saved:${requestedService}:${torrentId}:${fileId}`;
+            const cached = await Cache.getLazyLink(cacheKey);
+            if (cached?.url) {
+                incrementMetric('savedCloudPlay.cacheHit');
+                recordDuration('savedCloudPlay.total', Date.now() - startedAt);
+                return res.redirect(cached.url);
+            }
+
+            const streamData = requestedService === 'tb'
+                ? await LIMITERS.lazyPlay.schedule(() => TB.resolveSavedTorrentFile(apiKey, torrentId, fileId, req.ip || null))
+                : await LIMITERS.lazyPlay.schedule(() => RD.resolveSavedTorrentFile(apiKey, torrentId, fileId));
+
+            if (!streamData?.url) {
+                incrementMetric('savedCloudPlay.empty');
+                return res.status(404).send('File cloud salvato non più disponibile o non selezionato.');
+            }
+
+            let finalUrl = streamData.url;
+            if (config.mediaflow && config.mediaflow.proxyDebrid && config.mediaflow.url) {
+                try {
+                    const mfpBase = config.mediaflow.url.replace(/\/$/, '');
+                    finalUrl = `${mfpBase}/proxy/stream?d=${encodeURIComponent(streamData.url)}`;
+                    if (config.mediaflow.pass) finalUrl += `&api_password=${encodeURIComponent(config.mediaflow.pass)}`;
+                } catch (_) {}
+            }
+
+            await Cache.cacheLazyLink(cacheKey, { ...streamData, url: finalUrl }, 180);
+            incrementMetric('savedCloudPlay.success');
+            recordDuration('savedCloudPlay.total', Date.now() - startedAt);
+            recordProviderMetric(`savedCloud.${requestedService}`, true, Date.now() - startedAt);
+            return res.redirect(finalUrl);
+        } catch (err) {
+            recordDuration('savedCloudPlay.total', Date.now() - startedAt);
+            recordProviderMetric(`savedCloud.${requestedService}`, false, Date.now() - startedAt, { error: err.message });
+            logger.error(`[SAVED CLOUD PLAY] ${requestedService.toUpperCase()} error: ${err.message}`);
+            return res.status(500).send(`Errore cloud salvato: ${err.message}`);
+        }
     });
 
     app.get('/:conf/add_to_cloud/:hash', async (req, res) => {

@@ -1015,18 +1015,22 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         : detectQualityLabel(baseParseTitle, details.quality || 'SD');
     const serviceLabel = normalizedService === 'tb' ? 'TB' : normalizedService.toUpperCase();
     const availabilityState = typeof availabilityResolver === 'function' ? availabilityResolver(normalizedService, item) : 'unknown';
+    const isSavedCloudStream = Boolean(item?.isSavedCloud || item?._savedCloud || item?.savedCloud);
+    const formatterSource = item?.source;
 
     if (isAIOActive) {
         return {
-            name: aioFormatter.formatStreamName({ addonName: "Leviathan", service: getServiceDisplayName(normalizedService), cached: availabilityState === 'cached', cacheState: availabilityState, quality }),
+            name: aioFormatter.formatStreamName({ addonName: "Leviathan", service: getServiceDisplayName(normalizedService), cached: availabilityState === 'cached', cacheState: availabilityState, quality, savedCloud: isSavedCloudStream }),
             title: aioFormatter.formatStreamTitle({
                 title: displayTitle,
                 size: Number(sizeBytes) > 0 ? formatBytes(sizeBytes) : 'Unknown',
                 language: formatLanguageLabel(languageInfo, details.languages, getEffectiveLangMode(config, meta)),
-                source: item?.source,
+                source: formatterSource,
                 seeders,
                 infoHash: item?.hash,
-                techInfo: `ðŸŽžï¸ ${quality} ${details.tags}`.trim()
+                techInfo: `ðŸŽžï¸ ${quality} ${details.tags}`.trim(),
+                providerLine: undefined,
+                sourceIcon: '🔎'
             }),
             url: streamUrl,
             infoHash: item?.hash,
@@ -1042,10 +1046,13 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         mediaType: hasSeriesContext ? 'series' : 'movie',
         type: hasSeriesContext ? 'series' : 'movie',
         isSeries: hasSeriesContext,
-        forceMovie: !hasSeriesContext
+        forceMovie: !hasSeriesContext,
+        savedCloud: isSavedCloudStream,
+        isSavedCloud: isSavedCloudStream,
+        savedCloudService: serviceLabel
     };
     const safeIsPack = Boolean(hasSeriesContext && isPack);
-    const { name, title, bingeGroup } = formatStreamSelector(parseTitle || item?.title || displayTitle, item?.source, sizeBytes, seeders, serviceLabel, selectorConfig, item?.hash, isLazy, safeIsPack, availabilityState);
+    const { name, title, bingeGroup } = formatStreamSelector(parseTitle || item?.title || displayTitle, formatterSource, sizeBytes, seeders, serviceLabel, selectorConfig, item?.hash, isLazy, safeIsPack, availabilityState);
     return {
         name,
         title,

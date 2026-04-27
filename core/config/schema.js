@@ -75,7 +75,7 @@ function validateConfig(input = {}) {
   delete output.alldebrid;
   if (output.service === 'ad') output.service = getDefaultConfig().service;
 
-  const numericFilterKeys = ['maxPerQuality', 'maxSizeGB', 'minSizeGB', 'maxSizeBytes', 'minSizeBytes', 'instantDebridTop', 'warmupTop', 'minSeeders', 'maxSeeders'];
+  const numericFilterKeys = ['maxPerQuality', 'maxSizeGB', 'minSizeGB', 'maxSizeBytes', 'minSizeBytes', 'instantDebridTop', 'warmupTop', 'savedCloudMax', 'minSeeders', 'maxSeeders'];
   for (const key of numericFilterKeys) {
     if (output.filters[key] !== undefined && output.filters[key] !== null && output.filters[key] !== '') {
       const value = parseInt(output.filters[key], 10);
@@ -103,7 +103,7 @@ function validateConfig(input = {}) {
     if (output.filters[key] !== undefined) output.filters[key] = normalizeStringArray(output.filters[key]);
   }
 
-  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast'];
+  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast'];
   for (const key of booleanFilterKeys) {
     if (output.filters[key] !== undefined) output.filters[key] = !!output.filters[key];
   }
@@ -117,6 +117,13 @@ function validateConfig(input = {}) {
   output.filters.language = ['ita', 'eng', 'all'].includes(normalizedLanguage)
     ? normalizedLanguage
     : (output.filters.allowEng ? 'all' : getDefaultConfig().filters.language);
+
+  const normalizedSavedCloudMode = String(output.filters.savedCloudMode || (output.filters.enableSavedCloud ? 'smart' : 'off')).toLowerCase();
+  output.filters.savedCloudMode = ['off', 'smart', 'fallback', 'always'].includes(normalizedSavedCloudMode)
+    ? normalizedSavedCloudMode
+    : (output.filters.enableSavedCloud ? 'smart' : 'off');
+  if (output.filters.savedCloudMode === 'off') output.filters.enableSavedCloud = false;
+  if (output.filters.enableSavedCloud && (!output.filters.savedCloudMax || output.filters.savedCloudMax < 1)) output.filters.savedCloudMax = 6;
 
   output.configVersion = CURRENT_CONFIG_VERSION;
   return output;

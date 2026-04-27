@@ -24,6 +24,9 @@ function compactSpaces(value) {
 
 function normalizeSourceName(source) {
     let displaySource = compactSpaces(source || 'Unknown Indexer');
+    if (/(?:saved\s*cloud|cloud\s*salvato|debrid\s*cloud|rd\s*cloud|tb\s*cloud)/i.test(displaySource)) {
+        return /\btb\b|torbox/i.test(displaySource) ? 'TorBox' : 'Real-Debrid';
+    }
     for (const [pattern, replacement] of SOURCE_ALIAS_ENTRIES) {
         if (pattern.test(displaySource)) {
             displaySource = replacement;
@@ -66,7 +69,8 @@ function formatStreamName({
     cached,
     cacheState,
     quality,
-    hasError = false
+    hasError = false,
+    savedCloud = false
 } = {}) {
     const serviceAbbr = {
         realdebrid: '[RD',
@@ -77,7 +81,7 @@ function formatStreamName({
 
     const serviceKey = String(service || 'p2p').toLowerCase();
     const srv = serviceAbbr[serviceKey] || '[P2P';
-    const badge = getCacheBadge(cacheState, cached);
+    const badge = savedCloud ? '☁️' : getCacheBadge(cacheState, cached);
     const bolt = `${badge}]`;
     const safeAddonName = compactSpaces(addonName || 'Leviathan');
     const safeQuality = compactSpaces(quality || '');
@@ -109,9 +113,13 @@ function formatStreamTitle({
     const rowInfo = `💾 ${compactSpaces(size || 'Unknown')} • 👤 ${displaySeeders} • ${displayLang}`;
     const rowTitle = `📁 ${displayTitle}`;
     const rowProvider = compactSpaces(providerLine || '');
-    const rowSource = `${compactSpaces(sourceIcon || '🔎')} ${displaySource}`;
+    const safeSourceIcon = compactSpaces(sourceIcon || '🔎');
+    const rowSource = `${safeSourceIcon} ${displaySource}`;
 
-    return [rowTech, rowInfo, rowTitle, rowProvider, rowSource].filter(Boolean).join('\n');
+    return [rowTech, rowInfo, rowTitle, rowProvider, rowSource]
+        .filter(Boolean)
+        .filter((row, index, rows) => index === 0 || row !== rows[index - 1])
+        .join('\n');
 }
 
 function isAIOStreamsEnabled(config) {
