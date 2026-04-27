@@ -23,15 +23,6 @@ const SEARCH_TTL_MS = 10 * 60 * 1000;
 const PAGE_TTL_MS = 10 * 60 * 1000;
 const EPISODE_TTL_MS = 30 * 60 * 1000;
 const RETRYABLE_STATUSES = new Set([403, 408, 425, 429, 500, 502, 503, 504]);
-const NEGATIVE_TTL_MS = 90 * 1000;
-const SEARCH_STALE_TTL_MS = 24 * 60 * 60 * 1000;
-const PAGE_STALE_TTL_MS = 24 * 60 * 60 * 1000;
-const EPISODE_STALE_TTL_MS = 24 * 60 * 60 * 1000;
-const MANIFEST_TTL_MS = 30 * 60 * 1000;
-const MANIFEST_STALE_TTL_MS = 24 * 60 * 60 * 1000;
-const FHD_PROBE_TTL_MS = 60 * 60 * 1000;
-const FHD_PROBE_STALE_TTL_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_SEARCH_CONCURRENCY = 4;
 
 const http = axios.create({
     timeout: REQUEST_TIMEOUT,
@@ -42,54 +33,12 @@ const http = axios.create({
     proxy: false
 });
 
-class TtlLruCache {
-    constructor({ max = 500, ttlMs = 60 * 1000, staleTtlMs = 0 } = {}) {
-        this.max = Math.max(1, Number(max) || 500);
-        this.ttlMs = Math.max(1, Number(ttlMs) || 60 * 1000);
-        this.staleTtlMs = Math.max(this.ttlMs, Number(staleTtlMs || ttlMs) || this.ttlMs);
-        this.map = new Map();
-    }
-
-    get(key, { allowStale = false } = {}) {
-        const entry = this.map.get(key);
-        if (!entry) return undefined;
-        const ts = now();
-        if (entry.staleAt <= ts) {
-            this.map.delete(key);
-            return undefined;
-        }
-        if (entry.expiresAt <= ts && !allowStale) return undefined;
-        this.map.delete(key);
-        this.map.set(key, entry);
-        return entry.value;
-    }
-
-    set(key, value, ttlMs = this.ttlMs, staleTtlMs = this.staleTtlMs) {
-        const ts = now();
-        const ttl = Math.max(1, Number(ttlMs) || this.ttlMs);
-        const stale = Math.max(ttl, Number(staleTtlMs || this.staleTtlMs) || this.staleTtlMs);
-        if (this.map.has(key)) this.map.delete(key);
-        this.map.set(key, { value, expiresAt: ts + ttl, staleAt: ts + stale });
-        while (this.map.size > this.max) {
-            const oldest = this.map.keys().next().value;
-            this.map.delete(oldest);
-        }
-        return value;
-    }
-
-    delete(key) {
-        return this.map.delete(key);
-    }
-}
-
 const cache = {
-    session: new TtlLruCache({ max: 4, ttlMs: SESSION_TTL_MS, staleTtlMs: 2 * SESSION_TTL_MS }),
-    search: new TtlLruCache({ max: 800, ttlMs: SEARCH_TTL_MS, staleTtlMs: SEARCH_STALE_TTL_MS }),
-    page: new TtlLruCache({ max: 1000, ttlMs: PAGE_TTL_MS, staleTtlMs: PAGE_STALE_TTL_MS }),
-    episode: new TtlLruCache({ max: 3000, ttlMs: EPISODE_TTL_MS, staleTtlMs: EPISODE_STALE_TTL_MS }),
-    embed: new TtlLruCache({ max: 3000, ttlMs: EPISODE_TTL_MS, staleTtlMs: EPISODE_STALE_TTL_MS }),
-    manifest: new TtlLruCache({ max: 1000, ttlMs: MANIFEST_TTL_MS, staleTtlMs: MANIFEST_STALE_TTL_MS }),
-    fhdProbe: new TtlLruCache({ max: 1000, ttlMs: FHD_PROBE_TTL_MS, staleTtlMs: FHD_PROBE_STALE_TTL_MS }),
+    session: new Map(),
+    search: new Map(),
+    page: new Map(),
+    episode: new Map(),
+    embed: new Map(),
     inflight: new Map()
 };
 
@@ -109,18 +58,19 @@ function now() {
     return Date.now();
 }
 
-function getCached(store, key, options = {}) {
-    if (!store || typeof store.get !== 'function') return undefined;
-    return store.get(key, options);
+function getCached(map, key) {
+    const entry = map.get(key);
+    if (!entry) return undefined;
+    if (entry.expiresAt <= now()) {
+        map.delete(key);
+        return undefined;
+    }
+    return entry.value;
 }
 
-function getStaleCached(store, key) {
-    return getCached(store, key, { allowStale: true });
-}
-
-function setCached(store, key, value, ttlMs, staleTtlMs) {
-    if (!store || typeof store.set !== 'function') return value;
-    return store.set(key, value, ttlMs, staleTtlMs);
+function setCached(map, key, value, ttlMs) {
+    map.set(key, { value, expiresAt: now() + ttlMs });
+    return value;
 }
 
 async function singleFlight(key, worker) {
@@ -296,7 +246,7 @@ async function fetchSession() {
 
         try {
             const response = await request(AU_BASE, { headers: buildHeaders(`${AU_BASE}/`), attempts: 3 });
-            if (Number(response?.status || 0) !== 200) return setCached(cache.session, 'session', null, NEGATIVE_TTL_MS);
+            if (Number(response?.status || 0) !== 200) return setCached(cache.session, 'session', null, 90 * 1000);
             const html = responseText(response);
             const $ = cheerio.load(html || '');
             const session = {
@@ -306,7 +256,7 @@ async function fetchSession() {
             return setCached(cache.session, 'session', session, SESSION_TTL_MS);
         } catch (error) {
             console.error(`[AnimeUnity] session error: ${error.message}`);
-            return setCached(cache.session, 'session', null, NEGATIVE_TTL_MS);
+            return setCached(cache.session, 'session', null, 90 * 1000);
         }
     });
 }
@@ -420,68 +370,8 @@ function queryLooksLikeSpecial(query) {
     const text = normalizeLookupTitle(query);
     return /\b(?:special|ova|oad|ona|recap|fan letter|spin off|spinoff)\b/i.test(` ${text} `);
 }
-function asArray(value) {
-    if (Array.isArray(value)) return value;
-    if (value == null) return [];
-    return [value];
-}
 
-function collectIdentityIds(identity = {}) {
-    const info = identity?.info || {};
-    const meta = identity?.meta || {};
-    const mappedIds = identity?.mappedIds || identity?.mappingPayload || identity?.mappingLookup || {};
-    const collect = (...values) => uniqueNonEmpty(values.flatMap(asArray).map((value) => value == null ? null : String(value)));
-    return {
-        mal: collect(identity.malId, identity.mal_id, identity.mal, info.malId, info.mal_id, info.mal, meta.malId, meta.mal_id, mappedIds.mal, mappedIds.malId),
-        anilist: collect(identity.anilistId, identity.anilist_id, identity.anilist, info.anilistId, info.anilist_id, info.anilist, meta.anilistId, meta.anilist_id, mappedIds.anilist, mappedIds.anilistId),
-        kitsu: collect(identity.kitsuId, identity.kitsu_id, identity.kitsu, info.kitsuId, info.kitsu_id, meta.kitsuId, meta.kitsu_id, mappedIds.kitsu, mappedIds.kitsuId),
-        tmdb: collect(identity.tmdbId, identity.tmdb_id, meta.tmdbId, meta.tmdb_id, mappedIds.tmdb, mappedIds.tmdbId),
-        imdb: collect(identity.imdbId, identity.imdb_id, meta.imdbId, meta.imdb_id, mappedIds.imdb, mappedIds.imdbId)
-    };
-}
-
-function firstItemId(item = {}, keys = []) {
-    for (const key of keys) {
-        const value = item?.[key];
-        if (value != null && value !== '') return String(value);
-    }
-    return null;
-}
-
-function idListHas(list = [], value) {
-    if (!value) return false;
-    const normalized = normalizeLookupTitle(value);
-    return list.some((entry) => normalizeLookupTitle(entry) === normalized);
-}
-
-function identityScore(item = {}, identity = null) {
-    if (!identity) return 0;
-    const ids = collectIdentityIds(identity);
-    let score = 0;
-    const anilist = firstItemId(item, ['anilist_id', 'anilistId', 'anilist']);
-    const mal = firstItemId(item, ['mal_id', 'malId', 'mal']);
-    const kitsu = firstItemId(item, ['kitsu_id', 'kitsuId', 'kitsu']);
-    const tmdb = firstItemId(item, ['tmdb_id', 'tmdbId', 'tmdb']);
-    const imdb = firstItemId(item, ['imdb_id', 'imdbId', 'imdb']);
-
-    if (anilist && ids.anilist.length) score += idListHas(ids.anilist, anilist) ? 1.5 : -1.2;
-    if (mal && ids.mal.length) score += idListHas(ids.mal, mal) ? 1.25 : -1.0;
-    if (kitsu && ids.kitsu.length) score += idListHas(ids.kitsu, kitsu) ? 1.0 : -0.7;
-    if (tmdb && ids.tmdb.length) score += idListHas(ids.tmdb, tmdb) ? 0.7 : -0.45;
-    if (imdb && ids.imdb.length) score += idListHas(ids.imdb, imdb) ? 0.7 : -0.45;
-    return score;
-}
-
-function identitySignature(identity = null) {
-    if (!identity) return 'noid';
-    const ids = collectIdentityIds(identity);
-    return Object.entries(ids)
-        .map(([kind, values]) => kind + ':' + values.slice(0, 3).join(','))
-        .join('|') || 'noid';
-}
-
-
-function scoreCandidate(query, item, isDubbed, isMovie = null, identity = null) {
+function scoreCandidate(query, item, isDubbed, isMovie = null) {
     const title = buildCandidateTitle(item);
     if (!title) return 0;
     let score = Math.max(...titleVariants(query, isDubbed).map((variant) => tokenScore(variant, title)), 0);
@@ -497,17 +387,16 @@ function scoreCandidate(query, item, isDubbed, isMovie = null, identity = null) 
     if (isMovie === true) score += movieFlag ? 0.8 : -0.35;
     if (isMovie === false && movieFlag) score -= 2.25;
     if (isMovie === false && candidateLooksLikeSpecial(item) && !queryLooksLikeSpecial(query)) score -= 1.35;
-    score += identityScore(item, identity);
     if (item.always_home === 1 || item.always_home === true) score += 0.05;
     return score;
 }
 
-function rankAnimeCandidates(query, records, isDubbed, isMovie = null, limit = 5, identity = null) {
+function rankAnimeCandidates(query, records, isDubbed, isMovie = null, limit = 5) {
     const ranked = [];
     const seen = new Set();
 
     for (const record of records || []) {
-        const score = scoreCandidate(query, record, isDubbed, isMovie, identity);
+        const score = scoreCandidate(query, record, isDubbed, isMovie);
         if (score < 0.55) continue;
         const path = buildAnimePath(record) || `${record?.id || record?.anime_id || ''}|${record?.slug || record?.title_slug || ''}|${buildCandidateTitle(record)}`;
         const key = normalizeLookupTitle(path);
@@ -524,8 +413,8 @@ function rankAnimeCandidates(query, records, isDubbed, isMovie = null, limit = 5
     return output;
 }
 
-function pickBestCandidate(query, records, isDubbed, isMovie = null, identity = null) {
-    return rankAnimeCandidates(query, records, isDubbed, isMovie, 1, identity)[0] || null;
+function pickBestCandidate(query, records, isDubbed, isMovie = null) {
+    return rankAnimeCandidates(query, records, isDubbed, isMovie, 1)[0] || null;
 }
 
 async function postSearchEndpoint(endpoint, payload, session, asJson = false) {
@@ -551,43 +440,15 @@ async function postSearchEndpoint(endpoint, payload, session, asJson = false) {
     return extractCandidatesFromPayload(parsed);
 }
 
-async function runLimited(tasks = [], limit = DEFAULT_SEARCH_CONCURRENCY) {
-    const output = [];
-    const safeLimit = Math.max(1, Math.min(Number.parseInt(limit, 10) || DEFAULT_SEARCH_CONCURRENCY, 8));
-    let index = 0;
-
-    async function worker() {
-        while (index < tasks.length) {
-            const current = index;
-            index += 1;
-            try {
-                output[current] = await tasks[current]();
-            } catch (error) {
-                output[current] = [];
-            }
-        }
-    }
-
-    await Promise.all(Array.from({ length: Math.min(safeLimit, tasks.length) }, () => worker()));
-    return output;
-}
-
-async function searchAnimeCandidates(query, isDubbed = false, isMovie = null, limit = 5, identity = null, options = {}) {
+async function searchAnimeCandidates(query, isDubbed = false, isMovie = null, limit = 5) {
     const normalizedQuery = String(query || '').trim();
     if (!normalizedQuery) return [];
     const safeLimit = Math.max(1, Math.min(Number.parseInt(limit, 10) || 5, 8));
-    const concurrency = Math.max(1, Math.min(Number.parseInt(options.searchConcurrency, 10) || DEFAULT_SEARCH_CONCURRENCY, 8));
-    const key = [
-        normalizeLookupTitle(normalizedQuery),
-        isDubbed ? 'dub' : 'sub',
-        isMovie === null ? 'any' : isMovie ? 'movie' : 'tv',
-        'limit=' + safeLimit,
-        identitySignature(identity)
-    ].join(':');
+    const key = `${normalizeLookupTitle(normalizedQuery)}:${isDubbed ? 'dub' : 'sub'}:${isMovie === null ? 'any' : isMovie ? 'movie' : 'tv'}:limit=${safeLimit}`;
     const cached = getCached(cache.search, key);
     if (cached !== undefined) return cached;
 
-    return singleFlight('au:search:' + key, async () => {
+    return singleFlight(`au:search:${key}`, async () => {
         const second = getCached(cache.search, key);
         if (second !== undefined) return second;
 
@@ -603,8 +464,7 @@ async function searchAnimeCandidates(query, isDubbed = false, isMovie = null, li
             }
         };
 
-        const tasks = [];
-        for (const singleQuery of titleVariants(normalizedQuery, isDubbed).slice(0, options.maxTitleVariants || 6)) {
+        for (const singleQuery of titleVariants(normalizedQuery, isDubbed)) {
             const payloads = [
                 { title: singleQuery, type: '', year: '', order: 'desc', status: '', genres: '', season: '', offset: 0, dubbed: isDubbed ? 1 : 0 },
                 { title: singleQuery, type: false, year: false, order: 'Lista A-Z', status: false, genres: false, season: false, offset: 0, dubbed: isDubbed },
@@ -612,61 +472,26 @@ async function searchAnimeCandidates(query, isDubbed = false, isMovie = null, li
             ];
 
             for (const payload of payloads) {
-                tasks.push(async () => postSearchEndpoint('/archivio/get-animes', payload, session, false).catch((error) => {
-                    console.warn(`[AnimeUnity] archivio form failed: ${error.message}`);
-                    return [];
-                }));
-                tasks.push(async () => postSearchEndpoint('/archivio/get-animes', payload, session, true).catch((error) => {
-                    console.warn(`[AnimeUnity] archivio json failed: ${error.message}`);
-                    return [];
-                }));
+                try { extend(await postSearchEndpoint('/archivio/get-animes', payload, session, false)); } catch (error) { console.warn(`[AnimeUnity] archivio form failed: ${error.message}`); }
+                try { extend(await postSearchEndpoint('/archivio/get-animes', payload, session, true)); } catch (error) { console.warn(`[AnimeUnity] archivio json failed: ${error.message}`); }
             }
 
-            tasks.push(async () => {
-                try {
-                    const response = await request(`${AU_BASE}/archivio`, {
-                        params: { title: singleQuery },
-                        headers: buildHeaders(`${AU_BASE}/`, session?.cookie ? { Cookie: session.cookie } : {}),
-                        timeout: REQUEST_TIMEOUT
-                    });
-                    return Number(response?.status || 0) === 200 ? extractCandidatesFromPayload(responseText(response)) : [];
-                } catch (error) {
-                    console.warn(`[AnimeUnity] archivio html failed: ${error.message}`);
-                    return [];
-                }
-            });
+            try {
+                const response = await request(`${AU_BASE}/archivio`, {
+                    params: { title: singleQuery },
+                    headers: buildHeaders(`${AU_BASE}/`, session?.cookie ? { Cookie: session.cookie } : {}),
+                    timeout: REQUEST_TIMEOUT
+                });
+                if (Number(response?.status || 0) === 200) extend(extractCandidatesFromPayload(responseText(response)));
+            } catch (error) {
+                console.warn(`[AnimeUnity] archivio html failed: ${error.message}`);
+            }
 
-            tasks.push(async () => postSearchEndpoint('/livesearch', { title: singleQuery }, session, true).catch((error) => {
-                console.warn(`[AnimeUnity] livesearch json failed: ${error.message}`);
-                return [];
-            }));
-            tasks.push(async () => postSearchEndpoint('/livesearch', { title: singleQuery }, session, false).catch((error) => {
-                console.warn(`[AnimeUnity] livesearch form failed: ${error.message}`);
-                return [];
-            }));
+            try { extend(await postSearchEndpoint('/livesearch', { title: singleQuery }, session, true)); } catch (error) { console.warn(`[AnimeUnity] livesearch json failed: ${error.message}`); }
+            try { extend(await postSearchEndpoint('/livesearch', { title: singleQuery }, session, false)); } catch (error) { console.warn(`[AnimeUnity] livesearch form failed: ${error.message}`); }
         }
 
-        try {
-            const groups = await runLimited(tasks, concurrency);
-            groups.forEach(extend);
-            if (!candidates.length) {
-                const stale = getStaleCached(cache.search, key);
-                if (stale !== undefined && Array.isArray(stale) && stale.length) {
-                    console.warn(`[AnimeUnity] search stale fallback | query=${normalizedQuery} dub=${isDubbed} reason=empty-live-results`);
-                    return stale;
-                }
-            }
-            const ranked = rankAnimeCandidates(normalizedQuery, candidates, isDubbed, isMovie, safeLimit, identity);
-            return setCached(cache.search, key, ranked, SEARCH_TTL_MS, SEARCH_STALE_TTL_MS);
-        } catch (error) {
-            const stale = getStaleCached(cache.search, key);
-            if (stale !== undefined) {
-                console.warn(`[AnimeUnity] search stale fallback | query=${normalizedQuery} dub=${isDubbed} reason=${error.message}`);
-                return stale;
-            }
-            console.warn(`[AnimeUnity] search failed | query=${normalizedQuery} dub=${isDubbed} reason=${error.message}`);
-            return setCached(cache.search, key, [], NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
-        }
+        return setCached(cache.search, key, rankAnimeCandidates(normalizedQuery, candidates, isDubbed, isMovie, safeLimit), SEARCH_TTL_MS);
     });
 }
 
@@ -766,34 +591,6 @@ function pickEpisodeByNumber(episodes = [], episodeNumber = 1) {
     const target = safeInt(episodeNumber) || 1;
     return (episodes || []).find((episode) => safeInt(episode?.number) === target) || null;
 }
-function numericField(item = {}, keys = []) {
-    for (const key of keys) {
-        const value = safeInt(item?.[key]);
-        if (value) return value;
-    }
-    return null;
-}
-
-function knownEpisodeCount(pageData = {}, candidate = {}) {
-    const anime = pageData?.anime || {};
-    const direct = numericField(anime, ['episodes_count', 'episode_count', 'episodesCount', 'episodeCount', 'tot_episodes', 'total_episodes'])
-        || numericField(candidate, ['episodes_count', 'episode_count', 'episodesCount', 'episodeCount', 'tot_episodes', 'total_episodes']);
-    if (direct) return direct;
-    const episodes = Array.isArray(pageData?.episodes) ? pageData.episodes : [];
-    let max = 0;
-    for (const episode of episodes) max = Math.max(max, safeInt(episode?.number) || 0);
-    return max || null;
-}
-
-function candidateHasRequestedEpisode(pageData = {}, candidate = {}, episodeNumber = 1, isMovie = false) {
-    if (isMovie) return true;
-    const target = safeInt(episodeNumber) || 1;
-    if (pickEpisodeByNumber(pageData?.episodes || [], target)) return true;
-    const count = knownEpisodeCount(pageData, candidate);
-    if (count && target > count) return false;
-    return true;
-}
-
 
 function buildAnimePath(item) {
     if (!item) return null;
@@ -827,27 +624,15 @@ async function fetchAnimePage(animeUrl, episodeId = null) {
         if (second !== undefined) return second;
         try {
             const response = await request(url, { headers: buildHeaders(base), timeout: REQUEST_TIMEOUT, attempts: 2 });
-            if (Number(response?.status || 0) !== 200) {
-                const stale = getStaleCached(cache.page, key);
-                if (stale !== undefined) {
-                    console.warn(`[AnimeUnity] page stale fallback | url=${url} status=${response?.status || 0}`);
-                    return stale;
-                }
-                return setCached(cache.page, key, null, NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
-            }
+            if (Number(response?.status || 0) !== 200) return setCached(cache.page, key, null, 90 * 1000);
             const html = responseText(response);
             const parsed = parseVideoPlayer(html);
-            if (!parsed) return setCached(cache.page, key, null, NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
+            if (!parsed) return setCached(cache.page, key, null, 90 * 1000);
             parsed.url = responseUrl(response, url);
-            return setCached(cache.page, key, parsed, PAGE_TTL_MS, PAGE_STALE_TTL_MS);
+            return setCached(cache.page, key, parsed, PAGE_TTL_MS);
         } catch (error) {
-            const stale = getStaleCached(cache.page, key);
-            if (stale !== undefined) {
-                console.warn(`[AnimeUnity] page stale fallback | url=${url} reason=${error.message}`);
-                return stale;
-            }
             console.warn(`[AnimeUnity] page failed: ${error.message}`);
-            return setCached(cache.page, key, null, NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
+            return setCached(cache.page, key, null, 90 * 1000);
         }
     });
 }
@@ -885,22 +670,13 @@ async function getEpisodeId(animeUrl, episodeNumber) {
     const page = await fetchAnimePage(parts.url);
     if (page) {
         const exact = pickEpisodeByNumber(page.episodes, target);
-        if (exact?.id) return setCached(cache.episode, key, safeInt(exact.id), EPISODE_TTL_MS, EPISODE_STALE_TTL_MS);
-        if (safeInt(page.episode?.number) === target && page.episode?.id) return setCached(cache.episode, key, safeInt(page.episode.id), EPISODE_TTL_MS, EPISODE_STALE_TTL_MS);
-        const count = knownEpisodeCount(page);
-        if (count && target > count) {
-            console.log(`[AnimeUnity] episode rejected by count | anime=${parts.id} target=${target} total=${count}`);
-            return setCached(cache.episode, key, null, NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
-        }
+        if (exact?.id) return setCached(cache.episode, key, safeInt(exact.id), EPISODE_TTL_MS);
+        if (safeInt(page.episode?.number) === target && page.episode?.id) return setCached(cache.episode, key, safeInt(page.episode.id), EPISODE_TTL_MS);
     }
 
     try {
         const info = await request(`${AU_BASE}/info_api/${parts.id}/`, { headers: buildHeaders(parts.url), timeout: REQUEST_TIMEOUT });
         const total = safeInt(info?.data?.episodes_count) || 0;
-        if (total && target > total) {
-            console.log(`[AnimeUnity] episode api rejected by count | anime=${parts.id} target=${target} total=${total}`);
-            return setCached(cache.episode, key, null, NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
-        }
         for (let start = 1; start <= total; start += 120) {
             const end = Math.min(start + 119, total);
             if (!(start <= target && target <= end)) continue;
@@ -911,65 +687,46 @@ async function getEpisodeId(animeUrl, episodeNumber) {
             });
             const episodes = Array.isArray(response?.data?.episodes) ? response.data.episodes : [];
             const exact = pickEpisodeByNumber(episodes, target);
-            if (exact?.id) return setCached(cache.episode, key, safeInt(exact.id), EPISODE_TTL_MS, EPISODE_STALE_TTL_MS);
+            if (exact?.id) return setCached(cache.episode, key, safeInt(exact.id), EPISODE_TTL_MS);
         }
     } catch (error) {
-        const stale = getStaleCached(cache.episode, key);
-        if (stale !== undefined) {
-            console.warn(`[AnimeUnity] episode stale fallback | anime=${parts.id} ep=${target} reason=${error.message}`);
-            return stale;
-        }
         console.warn(`[AnimeUnity] episode api failed: ${error.message}`);
     }
 
-    return setCached(cache.episode, key, null, NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
+    return setCached(cache.episode, key, null, 90 * 1000);
 }
 
-async function extractEmbedUrl(animeUrl, episodeNumber, isMovie = false, candidate = null) {
+async function extractEmbedUrl(animeUrl, episodeNumber, isMovie = false) {
     const parts = animePathParts(animeUrl);
     if (!parts?.url) return null;
     const target = safeInt(episodeNumber) || 1;
-    const key = `embed:${parts.url}:${target}:${isMovie ? 'movie' : 'tv'}`;
+    const key = `embed:${parts.url}:${target}`;
     const cached = getCached(cache.embed, key);
     if (cached !== undefined) return cached;
 
     const page = await fetchAnimePage(parts.url);
-    if (!page) {
-        const stale = getStaleCached(cache.embed, key);
-        if (stale !== undefined) return stale;
-        return setCached(cache.embed, key, null, NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
-    }
-
-    if (!candidateHasRequestedEpisode(page, candidate || {}, target, isMovie)) {
-        console.log(`[AnimeUnity] candidate rejected episode-missing | path=${parts.url} ep=${target} total=${knownEpisodeCount(page, candidate || {}) || 'unknown'}`);
-        return setCached(cache.embed, key, null, NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
-    }
+    if (!page) return setCached(cache.embed, key, null, 90 * 1000);
 
     const chosen = pickEpisodeByNumber(page.episodes, target);
     const directFromList = normalizeAnimeUrl(chosen?.embed_url, page.url);
-    if (directFromList) return setCached(cache.embed, key, directFromList, EPISODE_TTL_MS, EPISODE_STALE_TTL_MS);
+    if (directFromList) return setCached(cache.embed, key, directFromList, EPISODE_TTL_MS);
 
-    if (isMovie && page.embedUrl) return setCached(cache.embed, key, page.embedUrl, EPISODE_TTL_MS, EPISODE_STALE_TTL_MS);
+    if (isMovie && page.embedUrl) return setCached(cache.embed, key, page.embedUrl, EPISODE_TTL_MS);
 
     const episodeId = chosen?.id ? safeInt(chosen.id) : await getEpisodeId(parts.url, target);
     if (episodeId) {
         const episodePage = await fetchAnimePage(parts.url, episodeId);
-        if (episodePage?.embedUrl) return setCached(cache.embed, key, episodePage.embedUrl, EPISODE_TTL_MS, EPISODE_STALE_TTL_MS);
+        if (episodePage?.embedUrl) return setCached(cache.embed, key, episodePage.embedUrl, EPISODE_TTL_MS);
         const $ = cheerio.load(episodePage?.html || '');
         const iframe = normalizeAnimeUrl($('iframe[src*="vixcloud"],iframe[src*="vixsrc"]').first().attr('src'), episodePage?.url || parts.url);
-        if (iframe) return setCached(cache.embed, key, iframe, EPISODE_TTL_MS, EPISODE_STALE_TTL_MS);
+        if (iframe) return setCached(cache.embed, key, iframe, EPISODE_TTL_MS);
     }
 
     if (safeInt(page.episode?.number) === target && page.embedUrl) {
-        return setCached(cache.embed, key, page.embedUrl, EPISODE_TTL_MS, EPISODE_STALE_TTL_MS);
+        return setCached(cache.embed, key, page.embedUrl, EPISODE_TTL_MS);
     }
 
-    const stale = getStaleCached(cache.embed, key);
-    if (stale !== undefined) {
-        console.warn(`[AnimeUnity] embed stale fallback | path=${parts.url} ep=${target}`);
-        return stale;
-    }
-    return setCached(cache.embed, key, null, NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
+    return setCached(cache.embed, key, null, 90 * 1000);
 }
 
 function buildMfpHlsUrl(config, sourceUrl, referer) {
@@ -980,8 +737,7 @@ function buildMfpHlsUrl(config, sourceUrl, referer) {
     let origin = 'https://vixsrc.to';
     try { origin = new URL(referer || sourceUrl).origin; } catch {}
     const org = origin ? `&h_Origin=${encodeURIComponent(origin)}` : '';
-    const ua = `&h_User-Agent=${encodeURIComponent(USER_AGENT)}`;
-    return `${base}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(sourceUrl)}${password}${ref}${org}${ua}`;
+    return `${base}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(sourceUrl)}${password}${ref}${org}`;
 }
 
 function qualityRank(value) {
@@ -996,7 +752,7 @@ function languageRank(stream = {}) {
 }
 
 function buildStream({ sourceUrl, referer, quality, title, langTag, emoji, reqHost, config, branch }) {
-    const viaMfp = Boolean(config?.mediaflow?.url) && config?.filters?.animeUnityUseMfp !== false;
+    const viaMfp = Boolean(config?.mediaflow?.url);
     const url = viaMfp
         ? buildMfpHlsUrl(config, sourceUrl, referer)
         : buildSyntheticUrl(sourceUrl, quality, referer, reqHost);
@@ -1046,54 +802,8 @@ function buildStream({ sourceUrl, referer, quality, title, langTag, emoji, reqHo
     };
 }
 
-async function resolveCachedAnimeManifest(embedUrl) {
-    const key = normalizeAnimeUrl(embedUrl) || String(embedUrl || '');
-    if (!key) return null;
-    const cached = getCached(cache.manifest, key);
-    if (cached !== undefined) return cached;
-    return singleFlight(`au:manifest:${key}`, async () => {
-        const second = getCached(cache.manifest, key);
-        if (second !== undefined) return second;
-        try {
-            const manifest = await resolveAnimeManifest(embedUrl);
-            if (!manifest?.streamUrl) return setCached(cache.manifest, key, null, NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
-            return setCached(cache.manifest, key, manifest, MANIFEST_TTL_MS, MANIFEST_STALE_TTL_MS);
-        } catch (error) {
-            const stale = getStaleCached(cache.manifest, key);
-            if (stale !== undefined) {
-                console.warn(`[AnimeUnity] manifest stale fallback | embed=${key} reason=${error.message}`);
-                return stale;
-            }
-            console.warn(`[AnimeUnity] manifest failed | embed=${key} reason=${error.message}`);
-            return setCached(cache.manifest, key, null, NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
-        }
-    });
-}
-
-async function inferCachedCanPlayFHD(streamUrl, referer) {
-    const key = `${streamUrl || ''}|${referer || ''}`;
-    if (!streamUrl) return false;
-    const cached = getCached(cache.fhdProbe, key);
-    if (cached !== undefined) return cached === true;
-    return singleFlight(`au:fhd:${key}`, async () => {
-        const second = getCached(cache.fhdProbe, key);
-        if (second !== undefined) return second === true;
-        try {
-            const canPlay = await inferCanPlayFHDFromPlaylist(streamUrl, referer);
-            return setCached(cache.fhdProbe, key, canPlay === true, FHD_PROBE_TTL_MS, FHD_PROBE_STALE_TTL_MS);
-        } catch (error) {
-            const stale = getStaleCached(cache.fhdProbe, key);
-            if (stale !== undefined) {
-                console.warn(`[AnimeUnity] fhd probe stale fallback | reason=${error.message}`);
-                return stale === true;
-            }
-            return setCached(cache.fhdProbe, key, false, NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
-        }
-    });
-}
-
 async function buildStreamsFromEmbed(embedUrl, title, langTag, emoji, episodeNumber, config, reqHost) {
-    const manifest = await resolveCachedAnimeManifest(embedUrl);
+    const manifest = await resolveAnimeManifest(embedUrl);
     if (!manifest?.streamUrl) return [];
 
     const qualityFilter = normalizeQualityFilter(config?.filters?.scQuality || config?.filters?.animeUnityQuality || 'all');
@@ -1102,7 +812,9 @@ async function buildStreamsFromEmbed(embedUrl, title, langTag, emoji, episodeNum
     let canPlayFhd = manifest?.payload?.canPlayFHD === true;
 
     if (!canPlayFhd && wants1080) {
-        canPlayFhd = await inferCachedCanPlayFHD(manifest.streamUrl, manifest.referer || embedUrl);
+        try {
+            canPlayFhd = await inferCanPlayFHDFromPlaylist(manifest.streamUrl, manifest.referer || embedUrl);
+        } catch {}
     }
 
     const streams = [];
@@ -1137,7 +849,6 @@ async function buildStreamsFromEmbed(embedUrl, title, langTag, emoji, episodeNum
 }
 
 async function resolveMode(mode, searchContext, config, reqHost) {
-    const options = getAnimeUnityOptions(config);
     const titles = uniqueNonEmpty([
         ...(Array.isArray(searchContext?.searchTitles) ? searchContext.searchTitles : []),
         ...(Array.isArray(searchContext?.rawTitles) ? searchContext.rawTitles : []),
@@ -1147,38 +858,29 @@ async function resolveMode(mode, searchContext, config, reqHost) {
     const isMovie = searchContext?.isMovie === true;
     const triedPaths = new Set();
 
-    for (const title of titles.slice(0, options.maxSearchTitles)) {
-        const candidates = await searchAnimeCandidates(title, mode.dubbed, isMovie, options.candidateLimit, searchContext, options);
+    for (const title of titles.slice(0, 8)) {
+        const candidates = await searchAnimeCandidates(title, mode.dubbed, isMovie, 4);
         for (const candidate of candidates) {
             let animePath = buildAnimePath(candidate);
             if (!animePath || triedPaths.has(`${mode.langTag}:${animePath}`)) continue;
             triedPaths.add(`${mode.langTag}:${animePath}`);
 
             let page = await fetchAnimePage(animePath);
-            if (page && !candidateHasRequestedEpisode(page, candidate, requestedEpisode, isMovie)) {
-                console.log(`[AnimeUnity] candidate rejected episode-missing | title=${buildCandidateTitle(candidate)} ep=${requestedEpisode} total=${knownEpisodeCount(page, candidate) || 'unknown'} mode=${mode.langTag}`);
-                continue;
-            }
-
             const variant = page ? selectRelatedVariant(page, mode.dubbed) : null;
             const variantPath = buildAnimePath(variant);
             if (variantPath && variantPath !== animePath && !triedPaths.has(`${mode.langTag}:${variantPath}`)) {
                 animePath = variantPath;
                 triedPaths.add(`${mode.langTag}:${animePath}`);
                 page = await fetchAnimePage(animePath);
-                if (page && !candidateHasRequestedEpisode(page, variant || candidate, requestedEpisode, isMovie)) {
-                    console.log(`[AnimeUnity] variant rejected episode-missing | title=${buildCandidateTitle(variant || candidate)} ep=${requestedEpisode} total=${knownEpisodeCount(page, variant || candidate) || 'unknown'} mode=${mode.langTag}`);
-                    continue;
-                }
             }
 
-            const embedUrl = await extractEmbedUrl(animePath, requestedEpisode, isMovie, variant || candidate);
+            const embedUrl = await extractEmbedUrl(animePath, requestedEpisode, isMovie);
             if (!embedUrl) {
                 console.log(`[AnimeUnity] skip candidate without requested episode | ${animePath} ep=${requestedEpisode} mode=${mode.langTag}`);
                 continue;
             }
 
-            const pageTitle = buildCandidateTitle(page?.anime || {}) || buildCandidateTitle(variant || candidate);
+            const pageTitle = buildCandidateTitle(page?.anime || {}) || buildCandidateTitle(candidate);
             const displayTitle = `${title || searchContext?.title || pageTitle || 'Anime'} Ep ${requestedEpisode}`;
             return buildStreamsFromEmbed(embedUrl, displayTitle, mode.langTag, mode.emoji, requestedEpisode, config, reqHost);
         }
@@ -1186,75 +888,6 @@ async function resolveMode(mode, searchContext, config, reqHost) {
 
     console.log(`[AnimeUnity] no embed for requested episode ep=${requestedEpisode} mode=${mode.langTag}`);
     return [];
-}
-
-function boolOption(value, fallback) {
-    if (value === true || value === false) return value;
-    if (typeof value === 'string') {
-        const normalized = value.trim().toLowerCase();
-        if (['1', 'true', 'yes', 'on', 'always'].includes(normalized)) return true;
-        if (['0', 'false', 'no', 'off', 'never'].includes(normalized)) return false;
-    }
-    return fallback;
-}
-
-function intOption(value, fallback, min, max) {
-    const parsed = Number.parseInt(value, 10);
-    if (!Number.isFinite(parsed)) return fallback;
-    return Math.max(min, Math.min(max, parsed));
-}
-
-function getAnimeUnityOptions(config = {}) {
-    const filters = config?.filters || {};
-    return {
-        enabledDubbed: boolOption(filters.enableAnimeUnityDubbed, true),
-        enabledSub: boolOption(filters.enableAnimeUnitySub, true),
-        preferDubbed: boolOption(filters.animeUnityPreferDubbed, true),
-        strictAnimeOnly: boolOption(filters.animeUnityStrictAnimeOnly, true),
-        searchConcurrency: intOption(filters.animeUnitySearchConcurrency, DEFAULT_SEARCH_CONCURRENCY, 1, 8),
-        candidateLimit: intOption(filters.animeUnityCandidateLimit, 4, 1, 8),
-        maxSearchTitles: intOption(filters.animeUnityMaxSearchTitles, 8, 1, 12),
-        maxTitleVariants: intOption(filters.animeUnityMaxTitleVariants, 6, 1, 8)
-    };
-}
-
-function textFromUnknown(value) {
-    if (value == null) return '';
-    if (Array.isArray(value)) return value.map(textFromUnknown).join(' ');
-    if (typeof value === 'object') return Object.values(value).map(textFromUnknown).join(' ');
-    return String(value);
-}
-
-function hasAnimeMarker(text) {
-    const normalized = ` ${normalizeLookupTitle(text)} `;
-    return /\b(?:anime|kitsu|anilist|myanimelist|mal|manga|otaku|japanese animation|animazione giapponese)\b/i.test(normalized);
-}
-
-function hasJapanHint(meta = {}, context = {}) {
-    const text = textFromUnknown([
-        meta?.originalLanguage, meta?.original_language, meta?.language, meta?.languages,
-        meta?.country, meta?.countries, meta?.production_countries,
-        context?.originalLanguage, context?.country, context?.countries
-    ]);
-    const normalized = ` ${normalizeLookupTitle(text)} `;
-    return /\b(?:ja|jp|jpn|japan|japanese|giappone|giapponese)\b/i.test(normalized);
-}
-
-function shouldRunAnimeUnity(requestId, meta = {}, context = {}, options = {}) {
-    if (options.strictAnimeOnly === false) return true;
-    if (resolveExplicitKitsuRequestId(requestId, meta)) return true;
-    if (context?.strictKitsu || context?.kitsuId || context?.kitsu_id || context?.isAnime === true || meta?.isAnime === true) return true;
-    const idText = textFromUnknown([requestId, meta?.id, meta?.requestedId, meta?.originalId]);
-    if (/\b(?:kitsu|anilist|mal)[:_\-]/i.test(idText)) return true;
-    const sourceText = textFromUnknown([context?.identitySources, context?.sources, meta?.identitySources]);
-    if (hasAnimeMarker(sourceText)) return true;
-    const contentText = textFromUnknown([
-        meta?.genres, meta?.genre, meta?.type, meta?.kind, meta?.category, meta?.description,
-        context?.genres, context?.genre, context?.type, context?.kind, context?.category
-    ]);
-    if (hasAnimeMarker(contentText)) return true;
-    if (hasJapanHint(meta, context) && /\b(?:animation|animazione|anime)\b/i.test(` ${normalizeLookupTitle(contentText)} `)) return true;
-    return false;
 }
 
 function dedupeStreams(streams = []) {
@@ -1279,8 +912,6 @@ function dedupeStreams(streams = []) {
 async function searchAnimeUnity(requestId, meta = {}, config = {}, reqHost = null) {
     const filters = config?.filters || {};
     if (Object.prototype.hasOwnProperty.call(filters, 'enableAnimeUnity') && filters.enableAnimeUnity === false) return [];
-    const options = getAnimeUnityOptions(config);
-    if (!options.enabledDubbed && !options.enabledSub) return [];
 
     try {
         const kitsuRequestId = resolveExplicitKitsuRequestId(requestId, meta);
@@ -1299,17 +930,11 @@ async function searchAnimeUnity(requestId, meta = {}, config = {}, reqHost = nul
         context = { ...(context || {}), meta };
         if (!context?.title && !context?.searchTitles?.length && !context?.rawTitles?.length) return [];
 
-        if (!shouldRunAnimeUnity(requestId, meta, context, options)) {
-            console.log(`[AnimeUnity] gate skip non-anime | title=${context.title || meta?.title || meta?.name || requestId}`);
-            return [];
-        }
-
-        console.log(`[AnimeUnity] start | title=${context.title || meta?.title || meta?.name || requestId} | ep=${context.requestedEpisode || meta?.episode || 1} | kitsu=${context.kitsuId || context.kitsu_id || 'no'} | tmdb=${context.tmdbId || context.tmdb_id || 'no'} | imdb=${context.imdbId || context.imdb_id || 'no'} | concurrency=${options.searchConcurrency}`);
-
-        const modes = [];
-        if (options.enabledDubbed) modes.push({ dubbed: true, langTag: 'ITA', emoji: '🇮🇹' });
-        if (options.enabledSub) modes.push({ dubbed: false, langTag: 'SUB ITA', emoji: '🇯🇵' });
-        if (!options.preferDubbed) modes.reverse();
+        console.log(`[AnimeUnity] start | title=${context.title || meta?.title || meta?.name || requestId} | ep=${context.requestedEpisode || 1} | kitsu=${context.kitsuId || 'no'} | tmdb=${context.tmdbId || 'no'} | imdb=${context.imdbId || 'no'}`);
+        const modes = [
+            { dubbed: true, langTag: 'ITA', emoji: '🇮🇹' },
+            { dubbed: false, langTag: 'SUB ITA', emoji: '🇯🇵' }
+        ];
 
         const settled = await Promise.allSettled(modes.map((mode) => resolveMode(mode, context, config, reqHost)));
         const streams = dedupeStreams(settled.flatMap((result) => result.status === 'fulfilled' ? result.value : []));

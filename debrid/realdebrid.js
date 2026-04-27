@@ -257,6 +257,49 @@ function chooseSeriesFileId(files, season, episode, forcedFileIdx = null) {
 }
 
 const RD = {
+    listSavedTorrents: async (token, options = {}) => {
+        const limit = Math.max(1, Math.min(250, toInt(options.limit, 100)));
+        const page = Math.max(1, toInt(options.page, 1));
+        const data = await rdRequest("GET", `${RD_API_BASE}/torrents?limit=${limit}&page=${page}`, token);
+        return Array.isArray(data) ? data : [];
+    },
+
+    getSavedTorrentInfo: async (token, torrentId) => {
+        if (!torrentId) return null;
+        return getTorrentInfo(token, torrentId);
+    },
+
+    resolveSavedTorrentFile: async (token, torrentId, selectedFileId = null) => {
+        const info = await getTorrentInfo(token, torrentId);
+        if (!info || info.status !== "downloaded") return null;
+        const selectedId = selectedFileId === null || selectedFileId === undefined || selectedFileId === ""
+            ? null
+            : toInt(selectedFileId, NaN);
+        const linkToUnrestrict = resolveSelectedLink(info, Number.isFinite(selectedId) ? selectedId : null);
+        if (!linkToUnrestrict) return null;
+
+        const unBody = new URLSearchParams();
+        unBody.append("link", linkToUnrestrict);
+        const unrestrictRes = await rdRequest("POST", `${RD_API_BASE}/unrestrict/link`, token, unBody);
+        if (!unrestrictRes || !unrestrictRes.download) return null;
+
+        const selectedFile = getSelectedFileInfo(info, Number.isFinite(selectedId) ? selectedId : null, linkToUnrestrict);
+        const resolvedFileId = Number.isFinite(selectedId) ? selectedId : normalizeFileId(selectedFile);
+        const selectedFileSize = Number(selectedFile?.bytes) || 0;
+        return {
+            type: "ready",
+            url: unrestrictRes.download,
+            filename: unrestrictRes.filename || getSelectedFileName(selectedFile),
+            file_path: selectedFile?.path || null,
+            size: toInt(unrestrictRes.filesize, 0) || selectedFileSize,
+            file_size: toInt(unrestrictRes.filesize, 0) || selectedFileSize || null,
+            rd_file_size: toInt(unrestrictRes.filesize, 0) || selectedFileSize || null,
+            selectedFileId: Number.isInteger(resolvedFileId) ? resolvedFileId : null,
+            rd_file_index: Number.isInteger(resolvedFileId) ? resolvedFileId : null,
+            file_index: Number.isInteger(resolvedFileId) ? resolvedFileId : null
+        };
+    },
+
     deleteTorrent: async (token, torrentId) => {
         if (!torrentId) return;
         try {

@@ -1388,6 +1388,28 @@
                                 </label>
                             </div>
 
+                            <div class="aux-card cine-card" id="card_saved_cloud">
+                                <div class="aux-header">
+                                    <i class="fas fa-cloud aux-icon"></i><span>Debrid Cloud</span>
+                                </div>
+                                <div class="aux-desc">Aggiunge i file già salvati nel tuo RD/TorBox. I duplicati vengono esclusi sempre.</div>
+                                <label class="cyber-switch-container" style="margin-bottom:10px;">
+                                    <input type="checkbox" id="enableSavedCloud" onchange="toggleAuxCard('card_saved_cloud'); updateFluxStream()">
+                                    <span class="cs-fill"></span>
+                                    <span class="cs-label cs-label-off">OFF</span>
+                                    <span class="cs-separator"></span>
+                                    <span class="cs-label cs-label-on">ON</span>
+                                </label>
+                                <div class="select-wrapper">
+                                    <select id="savedCloudMode" class="cyber-select" onchange="updateFluxStream()">
+                                        <option value="smart" selected>SMART: utile e pulito</option>
+                                        <option value="fallback">FALLBACK: solo se trova poco</option>
+                                        <option value="always">ALWAYS: sempre, mai duplicati</option>
+                                    </select>
+                                    <div class="select-arrow">▼</div>
+                                </div>
+                            </div>
+
                         </div>
                     </div>
                 </div>
@@ -2769,6 +2791,9 @@
                         document.getElementById('enableAnimeSaturn').checked = config.filters.enableAnimeSaturn || false;
                         document.getElementById('enableGf').checked = config.filters.enableGf || false;
                         document.getElementById('enableCc').checked = config.filters.enableCc || false;
+                        document.getElementById('enableSavedCloud').checked = config.filters.enableSavedCloud || false;
+                        document.getElementById('savedCloudMode').value = config.filters.savedCloudMode || 'smart';
+                        toggleAuxCard('card_saved_cloud');
 
                         setSpecState('btn_4k', config.filters.no4k);
                         setSpecState('btn_1080', config.filters.no1080);
@@ -2935,6 +2960,9 @@
                     enableAnimeSaturn: document.getElementById('enableAnimeSaturn').checked,
                     enableGf: document.getElementById('enableGf').checked,
                     enableCc: document.getElementById('enableCc').checked,
+                    enableSavedCloud: document.getElementById('enableSavedCloud').checked,
+                    savedCloudMode: document.getElementById('enableSavedCloud').checked ? document.getElementById('savedCloudMode').value : 'off',
+                    savedCloudMax: 6,
                     enableTrailers: false,
                     vixLast: document.getElementById('vixLast').checked,
                     scQuality: currentSCQuality,
@@ -2991,6 +3019,7 @@
             let asText = c.filters.enableAnimeSaturn ? 'ATTIVO 🪐' : 'NO';
             let gfText = c.filters.enableGf ? 'ATTIVO 🎥' : 'NO';
             let ccText = c.filters.enableCc ? 'ATTIVO 🌆' : 'NO';
+            let savedCloudText = c.filters.enableSavedCloud ? `ATTIVO ☁️ (${String(c.filters.savedCloudMode || 'smart').toUpperCase()}, no duplicati)` : 'NO';
             let exclText = [];
             if(c.filters.no4k) exclText.push("4K");
             if(c.filters.no1080) exclText.push("1080p");
@@ -3024,6 +3053,7 @@
                 <li>Source Policy <span>${sourceModeText}</span></li>
                 <li>Proxy Bridge <span>${c.mediaflow.url ? 'CONFIGURATO' : 'NON ATTIVO'}</span></li>
                 <li>Proxy Ghost <span>${c.mediaflow.proxyDebrid ? 'ATTIVO' : 'NO'}</span></li>
+                <li>Debrid Cloud Salvati <span>${savedCloudText}</span></li>
                 <li>Limite Dimensione <span>${sizeText}</span></li>
                 <li>Filtro Qualità <span>${spectrumStr}</span></li>
                 <li>Signal Gate <span>${gateText}</span></li>

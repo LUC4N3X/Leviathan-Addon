@@ -543,6 +543,39 @@ async function requestDownloadLink(key, torrentId, fileId, userIp = null) {
 }
 
 const TB = {
+  listSavedTorrents: async (key, options = {}) => {
+    const list = await getUserList(key, Boolean(options.forceRefresh));
+    const limit = Math.max(1, Math.min(250, safeInt(options.limit, 100)));
+    return Array.isArray(list) ? list.slice(0, limit) : [];
+  },
+
+  getSavedTorrentInfo: async (key, torrentId) => {
+    if (!torrentId) return null;
+    return refreshTorrentInfo(key, torrentId);
+  },
+
+  resolveSavedTorrentFile: async (key, torrentId, fileId, userIp = null) => {
+    const info = await refreshTorrentInfo(key, torrentId);
+    const files = Array.isArray(info?.files) ? info.files : [];
+    const resolvedFileId = safeInt(fileId, NaN);
+    if (!Number.isFinite(resolvedFileId)) return null;
+    const selectedFile = getFileById(files, resolvedFileId);
+    const linkRes = await requestDownloadLink(key, torrentId, resolvedFileId, userIp);
+    if (linkRes?.data?.success && linkRes.data.data) {
+      const resolvedSize = getFileSize(selectedFile);
+      return {
+        url: linkRes.data.data,
+        filename: getFileName(selectedFile) || null,
+        file_size: resolvedSize || null,
+        size: resolvedSize || null,
+        tb_file_size: resolvedSize || null,
+        tb_file_id: Number.isFinite(resolvedFileId) ? resolvedFileId : null,
+        file_id: Number.isFinite(resolvedFileId) ? resolvedFileId : null
+      };
+    }
+    return null;
+  },
+
   checkCached: async (key, hashes) => {
     const clean = Array.from(new Set((Array.isArray(hashes) ? hashes : [])
       .map((hash) => lower(hash))

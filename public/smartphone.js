@@ -790,6 +790,41 @@ body::before {
 .m-sys-grid { display: grid; grid-template-columns: 1fr; gap: 0; background: rgba(0,0,0,0.2); border-radius: 16px; border: 1px solid rgba(255,255,255,0.05); overflow: hidden; margin-bottom: 20px; }
 .m-sys-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 15px; border-bottom: 1px solid rgba(255,255,255,0.05); }
 .m-sys-row:last-child { border-bottom: none; }
+.m-cloud-mode-panel {
+    display: none;
+    padding: 10px 12px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    background: linear-gradient(135deg, rgba(0,242,255,0.045), rgba(112,0,255,0.035), rgba(0,0,0,0.08));
+}
+.m-cloud-mode-panel.show { display: block; animation: fadeFast 0.22s ease-out; }
+.m-cloud-mode-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.m-cloud-mode-btn {
+    min-height: 48px;
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 12px;
+    background: rgba(0,0,0,0.24);
+    color: var(--m-dim);
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 900;
+    letter-spacing: 0.7px;
+    font-size: 0.70rem;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    transition: all 0.18s ease;
+}
+.m-cloud-mode-btn span { display: block; font-family: 'Outfit', sans-serif; font-size: 0.54rem; font-weight: 700; letter-spacing: 0; opacity: 0.72; }
+.m-cloud-mode-btn.active {
+    color: #fff;
+    border-color: rgba(0,242,255,0.55);
+    background: linear-gradient(135deg, rgba(0,242,255,0.16), rgba(112,0,255,0.12));
+    box-shadow: 0 0 14px rgba(0,242,255,0.16), inset 0 0 16px rgba(0,242,255,0.06);
+}
+.m-cloud-mode-btn:active { transform: scale(0.96); }
+.m-cloud-note { margin: 8px 1px 0; color: rgba(224,247,250,0.50); font-family:'Outfit', sans-serif; font-size:0.63rem; line-height:1.3; }
 .m-sys-info h4 { margin: 0; font-size: 0.85rem; color: #fff; font-family: 'Rajdhani'; font-weight: 700; display: flex; align-items: center; gap: 5px; }
 .m-sys-info p { margin: 2px 0 0; font-size: 0.65rem; color: rgba(255,255,255,0.5); }
 
@@ -2073,6 +2108,18 @@ const mobileHTML = `
                             <div class="m-sys-info"><h4><i class="fas fa-film" style="color:var(--m-cine)"></i> Trailer Mode <span class="m-status-text" id="st-trailer">OFF</span></h4><p>Cinema Experience</p></div>
                             <label class="m-switch"><input type="checkbox" id="m-enableTrailers" onchange="updateStatus('m-enableTrailers','st-trailer')"><span class="m-slider m-slider-pink"></span></label>
                         </div>
+                        <div class="m-sys-row">
+                            <div class="m-sys-info"><h4><i class="fas fa-cloud" style="color:var(--m-primary)"></i> Debrid Cloud <span class="m-status-text" id="st-savedcloud">OFF</span></h4><p>File salvati in RD/TorBox. Duplicati esclusi sempre.</p></div>
+                            <label class="m-switch"><input type="checkbox" id="m-enableSavedCloud" onchange="toggleSavedCloud()"><span class="m-slider"></span></label>
+                        </div>
+                        <div class="m-cloud-mode-panel" id="m-savedCloudPanel">
+                            <div class="m-cloud-mode-grid">
+                                <div class="m-cloud-mode-btn active" id="m-cloud-smart" onclick="setSavedCloudMode('smart')">SMART<span>utile e pulito</span></div>
+                                <div class="m-cloud-mode-btn" id="m-cloud-fallback" onclick="setSavedCloudMode('fallback')">FALLBACK<span>solo se trova poco</span></div>
+                                <div class="m-cloud-mode-btn" id="m-cloud-always" onclick="setSavedCloudMode('always')">ALWAYS<span>sempre no doppioni</span></div>
+                            </div>
+                            <p class="m-cloud-note">Usa solo Real-Debrid/TorBox configurati. Anche in ALWAYS, se Leviathan ha gia lo stesso hash/file, il Cloud non viene mostrato.</p>
+                        </div>
                     </div>
 
                     <div class="m-row" style="border:none; padding: 5px 0;">
@@ -2226,6 +2273,7 @@ let mScQuality = 'all';
 let mSortMode = 'balanced';
 let mSkin = 'leviathan';
 let mLangMode = 'ita';
+let mSavedCloudMode = 'smart';
 const mDebridValidationState = {
     timer: null,
     requestId: 0,
@@ -3042,6 +3090,7 @@ function setMService(srv, btn, keepInput = false) {
 
     updateMobilePreview(); 
     scheduleMobileDebridValidation({ force: true });
+    toggleSavedCloud();
     updateLinkModalContent();
     if(navigator.vibrate) navigator.vibrate(10);
 }
@@ -3111,6 +3160,35 @@ function updatePriorityLabel() {
     desc.style.color = isLast ? "var(--m-secondary)" : "var(--m-primary)";
     updateLinkModalContent();
     if(navigator.vibrate) navigator.vibrate([15, 10, 15]);
+}
+
+function setSavedCloudMode(mode) {
+    const allowed = ['smart', 'fallback', 'always'];
+    mSavedCloudMode = allowed.includes(mode) ? mode : 'smart';
+    document.querySelectorAll('.m-cloud-mode-btn').forEach(btn => btn.classList.remove('active'));
+    const activeBtn = document.getElementById('m-cloud-' + mSavedCloudMode);
+    if(activeBtn) activeBtn.classList.add('active');
+    updateLinkModalContent();
+    if(navigator.vibrate) navigator.vibrate(8);
+}
+
+function toggleSavedCloud() {
+    const input = document.getElementById('m-enableSavedCloud');
+    const panel = document.getElementById('m-savedCloudPanel');
+    const status = document.getElementById('st-savedcloud');
+    if(!input || !panel || !status) return;
+
+    const active = input.checked;
+    panel.classList.toggle('show', active);
+    status.innerText = active ? 'ON' : 'OFF';
+    status.classList.toggle('on', active);
+
+    if(active && mCurrentService === 'p2p') {
+        showToast('Debrid Cloud richiede RD o TorBox, non P2P.', 'warning');
+    }
+
+    updateLinkModalContent();
+    if(navigator.vibrate) navigator.vibrate(10);
 }
 
 function toggleScOptions() {
@@ -3358,6 +3436,10 @@ function loadMobileConfig() {
                 }
 
                 document.getElementById('m-enableTrailers').checked = config.filters.enableTrailers || false;
+
+                document.getElementById('m-enableSavedCloud').checked = config.filters.enableSavedCloud || false;
+                setSavedCloudMode(config.filters.savedCloudMode || 'smart');
+                toggleSavedCloud();
                 
                 if(config.filters.vixLast) {
                     document.getElementById('m-vixLast').checked = true;
@@ -3401,6 +3483,7 @@ function loadMobileConfig() {
             updateStatus('m-enableCc', 'st-cc');
             updateStatus('m-aioMode', 'st-aio');
             updateStatus('m-enableTrailers', 'st-trailer');
+            toggleSavedCloud();
             updateGhostVisuals();
             toggleScOptions();
             checkWebPriorityVisibility(); 
@@ -3435,6 +3518,7 @@ function getMobileConfig() {
             || document.getElementById('m-enableCc').checked
         )
     );
+    const savedCloudEnabled = !isP2P && !!apiKey && ['rd', 'tb'].includes(String(mCurrentService || '').toLowerCase()) && document.getElementById('m-enableSavedCloud').checked;
 
     return {
         service: isP2P ? '' : (webOnlyService ? 'web' : mCurrentService),
@@ -3467,6 +3551,9 @@ function getMobileConfig() {
             enableGf: document.getElementById('m-enableGf').checked,
             enableCc: document.getElementById('m-enableCc').checked,
             enableTrailers: document.getElementById('m-enableTrailers').checked,
+            enableSavedCloud: savedCloudEnabled,
+            savedCloudMode: savedCloudEnabled ? mSavedCloudMode : 'off',
+            savedCloudMax: 6,
             vixLast: document.getElementById('m-vixLast').checked,
             scQuality: mScQuality,
             maxPerQuality: gateActive ? gateVal : 0,
