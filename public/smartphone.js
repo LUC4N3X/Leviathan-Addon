@@ -1795,9 +1795,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-green"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Catalogo esclusivo per i Film. Richiede MediaFlow Proxy configurato.</span>
+                                <span class="m-reactor-desc">Catalogo esclusivo per i Film. Non richiede MediaFlow Proxy.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-shield-alt"></i> MFP</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
                             </div>
                         </div>
