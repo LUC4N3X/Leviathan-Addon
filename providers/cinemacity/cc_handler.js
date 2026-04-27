@@ -36,6 +36,7 @@ const QUALITY_PROBE_CACHE_TTL_MS = 20 * 60 * 1000;
 const MAPPING_API_BASE = 'https://anime.questoleviatanormio.dpdns.org';
 const NEWS_SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
 const NEWS_SITEMAP_TTL_MS = 30 * 60 * 1000;
+const NEGATIVE_CACHE_TTL_MS = 30 * 1000;
 
 const FINGERPRINT_POOL = [
     {
@@ -75,12 +76,8 @@ const FINGERPRINT_POOL = [
     }
 ];
 
-let fingerprintIndex = Math.floor(Math.random() * FINGERPRINT_POOL.length);
-
-function getNextFingerprint() {
-    const fp = FINGERPRINT_POOL[fingerprintIndex % FINGERPRINT_POOL.length];
-    fingerprintIndex += 1;
-    return fp;
+function getRandomFingerprint() {
+    return FINGERPRINT_POOL[Math.floor(Math.random() * FINGERPRINT_POOL.length)];
 }
 
 function buildBrowserHeaders(fp, extra = {}) {
@@ -111,6 +108,39 @@ function buildBrowserHeaders(fp, extra = {}) {
     }
 
     return Object.assign(headers, extra);
+}
+
+const domainCookies = new Map();
+
+function updateCookiesFromResponse(url, headers) {
+    const host = new URL(url).hostname;
+    const setCookie = headers['set-cookie'];
+    if (!setCookie) return;
+
+    const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
+    const jar = new Map();
+
+    for (const oldCookie of domainCookies.get(host) || []) {
+        const pair = String(oldCookie).split(';')[0].trim();
+        const name = pair.split('=')[0];
+        if (name) jar.set(name, pair);
+    }
+
+    for (const cookie of cookies) {
+        const pair = String(cookie).split(';')[0].trim();
+        const name = pair.split('=')[0];
+        if (name) jar.set(name, pair);
+    }
+
+    domainCookies.set(host, [...jar.values()]);
+}
+
+function getCookieHeaderForUrl(url, extraCookies = '') {
+    const host = new URL(url).hostname;
+    const jar = domainCookies.get(host) || [];
+    const combined = jar.join('; ');
+    if (extraCookies && combined) return extraCookies + '; ' + combined;
+    return extraCookies || combined || null;
 }
 
 let gotScrapingInstance = null;
@@ -149,6 +179,17 @@ class TtlLruCache {
         this.ttlMs = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : 600000;
         this.max = Number.isFinite(max) && max > 0 ? Math.floor(max) : 500;
         this.map = new Map();
+    }
+
+    has(key) {
+        if (!key) return false;
+        const item = this.map.get(key);
+        if (!item) return false;
+        if (Date.now() > item.expiresAt) {
+            this.map.delete(key);
+            return false;
+        }
+        return true;
     }
 
     get(key) {
@@ -267,6 +308,11 @@ const qualityProbeCache = new TtlLruCache({
     max: 800
 });
 
+const fetchFailureCache = new TtlLruCache({
+    ttlMs: NEGATIVE_CACHE_TTL_MS,
+    max: 2000
+});
+
 function responseText(data) {
     if (typeof data === 'string') return data;
     if (Buffer.isBuffer(data)) return data.toString('utf8');
@@ -283,13 +329,13 @@ function isCloudflareChallenge(body, status) {
     );
 }
 
-
-async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0) {
+async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0, requestTimeout = GOT_TIMEOUT) {
     const gotScraping = await getGotScraping();
     if (!gotScraping) return null;
 
-    const fp = FINGERPRINT_POOL[(fingerprintIndex + attempt) % FINGERPRINT_POOL.length];
-    const mergedHeaders = buildBrowserHeaders(fp, extraHeaders);
+    const fp = getRandomFingerprint();
+    const cookieHeader = getCookieHeaderForUrl(url, extraHeaders.Cookie || '');
+    const mergedHeaders = buildBrowserHeaders(fp, { ...extraHeaders, ...(cookieHeader ? { Cookie: cookieHeader } : {}) });
 
     const browserName = fp.browserType === 'firefox' ? 'firefox' : 'chrome';
     const osPlatform = (() => {
@@ -310,7 +356,7 @@ async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0) {
                 locales: ['it-IT', 'en-US']
             },
             retry: { limit: 0 },
-            timeout: { request: GOT_TIMEOUT },
+            timeout: { request: requestTimeout },
             followRedirect: true,
             maxRedirects: 6,
             responseType: 'text',
@@ -319,6 +365,7 @@ async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0) {
 
         const status = Number(response?.statusCode || 0);
         const body = response?.body || '';
+        updateCookiesFromResponse(url, response.headers);
 
         if (isCloudflareChallenge(body, status)) return null;
         if (status >= 200 && status < 400) return body;
@@ -328,18 +375,20 @@ async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0) {
     }
 }
 
-
-async function fetchHtmlWithAxios(url, extraHeaders = {}) {
-    const fp = getNextFingerprint();
-    const mergedHeaders = buildBrowserHeaders(fp, extraHeaders);
+async function fetchHtmlWithAxios(url, extraHeaders = {}, requestTimeout = FETCH_TIMEOUT) {
+    const fp = getRandomFingerprint();
+    const cookieHeader = getCookieHeaderForUrl(url, extraHeaders.Cookie || '');
+    const mergedHeaders = buildBrowserHeaders(fp, { ...extraHeaders, ...(cookieHeader ? { Cookie: cookieHeader } : {}) });
 
     try {
         const response = await httpClient.get(url, {
             headers: mergedHeaders,
-            responseType: 'text'
+            responseType: 'text',
+            timeout: requestTimeout
         });
         const status = Number(response?.status || 0);
         const body = responseText(response?.data);
+        updateCookiesFromResponse(url, response.headers);
 
         if (isCloudflareChallenge(body, status)) return null;
         if (status >= 200 && status < 400) return body;
@@ -348,13 +397,13 @@ async function fetchHtmlWithAxios(url, extraHeaders = {}) {
         return null;
     }
 }
-
 
 async function fetchHtmlPostWithGot(url, formBody, extraHeaders = {}) {
     const gotScraping = await getGotScraping();
     if (!gotScraping) return null;
 
-    const fp = getNextFingerprint();
+    const fp = getRandomFingerprint();
+    const cookieHeader = getCookieHeaderForUrl(url, extraHeaders.Cookie || SESSION_COOKIE);
     const browserName = fp.browserType === 'firefox' ? 'firefox' : 'chrome';
     const osPlatform = (() => {
         if (fp.secChUaPlatform === '"macOS"') return 'macos';
@@ -366,7 +415,8 @@ async function fetchHtmlPostWithGot(url, formBody, extraHeaders = {}) {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Origin': BASE_URL,
         'Referer': `${BASE_URL}/`,
-        ...extraHeaders
+        ...extraHeaders,
+        ...(cookieHeader ? { Cookie: cookieHeader } : {})
     });
 
     try {
@@ -392,6 +442,7 @@ async function fetchHtmlPostWithGot(url, formBody, extraHeaders = {}) {
 
         const status = Number(response?.statusCode || 0);
         const body = response?.body || '';
+        updateCookiesFromResponse(url, response.headers);
 
         if (isCloudflareChallenge(body, status)) return null;
         if (status >= 200 && status < 400) return body;
@@ -401,22 +452,30 @@ async function fetchHtmlPostWithGot(url, formBody, extraHeaders = {}) {
     }
 }
 
+async function fetchHtml(url, extraHeaders = {}, options = {}) {
+    const cacheKey = `url:${url}`;
+    if (fetchFailureCache.get(cacheKey)) return null;
 
-async function fetchHtml(url, extraHeaders = {}) {
-    for (let attempt = 0; attempt < GOT_ATTEMPTS; attempt += 1) {
-        if (attempt > 0) await sleep(80 + Math.floor(Math.random() * 120));
-        const gotBody = await fetchHtmlWithGot(url, extraHeaders, attempt);
+    const timeout = options.timeout || FETCH_TIMEOUT;
+    for (let attempt = 0; attempt < GOT_ATTEMPTS; attempt++) {
+        if (attempt > 0) {
+            const baseDelay = Math.min(4000, 200 * Math.pow(2, attempt));
+            const jitter = Math.floor(Math.random() * 200);
+            await sleep(baseDelay + jitter);
+        }
+        const gotBody = await fetchHtmlWithGot(url, extraHeaders, attempt, timeout);
         if (gotBody) return gotBody;
     }
 
-    const axiosBody = await fetchHtmlWithAxios(url, extraHeaders);
+    const axiosBody = await fetchHtmlWithAxios(url, extraHeaders, timeout);
     if (axiosBody) return axiosBody;
 
-    throw new Error(`HTTP fetch failed for ${url} — fast strategies exhausted`);
+    fetchFailureCache.set(cacheKey, true);
+    return null;
 }
 
 async function fetchJson(url, options = {}) {
-    const fp = getNextFingerprint();
+    const fp = getRandomFingerprint();
     const defaultHeaders = {
         'User-Agent': fp.userAgent,
         'Accept': 'application/json,*/*;q=0.8',
@@ -1012,7 +1071,7 @@ async function getNewsSitemapEntries() {
         const xml = await fetchHtml(NEWS_SITEMAP_URL, {
             'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8',
             'Referer': `${BASE_URL}/`
-        });
+        }, { timeout: 3000 });
         const entries = extractSitemapLocs(xml).filter((url) => /^https:\/\/cinemacity\.cc\//i.test(url));
         newsSitemapCache.entries = entries;
         newsSitemapCache.fetchedAt = Date.now();
@@ -1071,7 +1130,6 @@ async function getIdsFromKitsu(kitsuId, season, episode, config = {}) {
         }
     });
 }
-
 
 async function getTmdbMetadata(id, providerType) {
     const normalizedId = String(id || '').trim();
@@ -1136,7 +1194,6 @@ async function resolveImdbFromTmdb(tmdbId, providerType) {
         }
     });
 }
-
 
 function extractCandidateLinksFromListing(html, sectionType) {
     const $ = loadHtml(html);
@@ -1241,13 +1298,16 @@ async function pickBestCandidate(candidates, expectedTitles, { requestedImdbId =
 
     const normalizedRequestedImdbId = extractImdbId(requestedImdbId);
     if (normalizedRequestedImdbId) {
+        const candidatesToCheck = scoredCandidates.slice(0, 6).filter(c => c.score >= 80);
+        const imdbResults = await Promise.all(
+            candidatesToCheck.map(c => verifyCandidateImdb(c.url, normalizedRequestedImdbId))
+        );
         const mismatchedUrls = new Set();
-        for (const candidate of scoredCandidates.slice(0, 6)) {
-            if (candidate.score < 80) break;
-            const candidateImdbId = await verifyCandidateImdb(candidate.url, normalizedRequestedImdbId);
-            if (candidateImdbId && candidateImdbId === normalizedRequestedImdbId) return candidate;
-            if (candidateImdbId && candidateImdbId !== normalizedRequestedImdbId) mismatchedUrls.add(candidate.url);
-        }
+        candidatesToCheck.forEach((c, i) => {
+            if (imdbResults[i] && imdbResults[i] !== normalizedRequestedImdbId) mismatchedUrls.add(c.url);
+        });
+        const firstMatch = candidatesToCheck.find((_, i) => imdbResults[i] === normalizedRequestedImdbId);
+        if (firstMatch) return firstMatch;
         return scoredCandidates.find((c) => c.score >= 80 && !mismatchedUrls.has(c.url)) || null;
     }
 
@@ -1314,9 +1374,11 @@ async function fetchSearchCandidates(query) {
 
         try {
             const html = await fetchHtml(searchGetUrl, searchCommonHeaders);
-            networkFailed = false;
-            const result = tryParse(html);
-            if (result) return result;
+            if (html) {
+                networkFailed = false;
+                const result = tryParse(html);
+                if (result) return result;
+            }
         } catch (_) {}
 
         const formBody = new URLSearchParams({
@@ -1448,7 +1510,7 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
                         'Referer': `${BASE_URL}/`,
                         'Sec-Fetch-Site': 'same-origin',
                         'Sec-Fetch-Mode': 'navigate'
-                    });
+                    }, { timeout: 2000 });
                     const candidates = extractCandidateLinksFromListing(html, providerType);
                     if (candidates.length === 0) return null;
                     return candidates.slice(0, MAX_LISTING_CANDIDATES_PER_PAGE);
@@ -1478,7 +1540,6 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
     return saveResult(bestScore >= 80 ? bestResult : null);
 }
 
-
 function getIdCandidates(meta = {}, originalId, finalId) {
     return [
         originalId,
@@ -1495,6 +1556,7 @@ function getIdCandidates(meta = {}, originalId, finalId) {
         meta?.kitsu ? (/^\d+$/.test(String(meta.kitsu).trim()) ? 'kitsu:' + meta.kitsu : meta.kitsu) : null
     ].filter(Boolean);
 }
+
 function getKitsuIdCandidates(meta = {}, originalId, finalId) {
     const taggedCandidates = [
         originalId,
@@ -1623,7 +1685,6 @@ async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
 
     const contextImdbId = candidateIds.map(extractImdbId).find(Boolean) || null;
     const contextTmdbId = candidateIds.map(extractTmdbId).find(Boolean) || null;
-    const metaLooksAnime = looksLikeAnimeMeta(meta);
     const explicitKitsuCandidates = [
         meta?.kitsu_id,
         meta?.kitsuId,
@@ -1878,7 +1939,6 @@ function pickStream(fileData, type, season = 1, episode = 1, options = {}) {
     return null;
 }
 
-
 function extractJsonArray(decoded) {
     let start = decoded.indexOf('file:');
     if (start === -1) start = decoded.indexOf('sources:');
@@ -1961,7 +2021,7 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
     );
     if (!streamUrl) return null;
 
-    const activeFp = FINGERPRINT_POOL[fingerprintIndex % FINGERPRINT_POOL.length];
+    const activeFp = getRandomFingerprint();
     return {
         streamUrl,
         pageMetadata,
@@ -1978,15 +2038,21 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
 
 async function getParsedCinemaCityStream(pageUrl, meta = {}) {
     const normalizedUrl = normalizeRemoteUrl(pageUrl);
+    if (!normalizedUrl) return null;
+
     const cacheKey = `stream-result:${normalizedUrl}:${meta?.season || 1}:${meta?.episode || 1}:${meta?.rawEpisodeNumber || ''}:${(meta?.episodeCandidates || []).join(',')}`;
-    const cached = streamResultCache.get(cacheKey);
-    if (cached) return cached.value;
+
+    if (streamResultCache.has(cacheKey)) {
+        return streamResultCache.get(cacheKey);
+    }
 
     return singleFlight(cacheKey, async () => {
-        const alreadyCached = streamResultCache.get(cacheKey);
-        if (alreadyCached) return alreadyCached.value;
+        if (streamResultCache.has(cacheKey)) {
+            return streamResultCache.get(cacheKey);
+        }
+
         const result = await parseCinemaCityStream(pageUrl, meta);
-        streamResultCache.set(cacheKey, { value: result || null });
+        streamResultCache.set(cacheKey, result || null);
         return result || null;
     });
 }
@@ -2033,7 +2099,7 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
             ]),
             requestedImdbId: resolved.imdbId,
             expectedYear: resolved.expectedYear,
-            fast: config?.filters?.cinemacityFast === true
+            fast: config?.filters?.cinemacityFast !== false
         };
 
         let searchResult = null;
