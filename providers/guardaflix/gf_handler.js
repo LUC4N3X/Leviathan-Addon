@@ -585,6 +585,10 @@ function playlistQualityCacheKey(inputUrl) {
     return normalizeStreamKey(inputUrl);
 }
 
+function normalizeGuardaFlixDisplayQuality(value) {
+    return normalizeQuality(value) === '1080p' ? '1080p' : '720p';
+}
+
 async function resolveExtractedQuality(client, extracted) {
     const url = String(extracted?.url || '');
     let quality = normalizeQuality(extracted?.quality || 'Unknown');
@@ -1166,7 +1170,7 @@ class GuardaFlixScraper {
         const displayTitle = cleanDisplayTitle(mediaTitle) || 'Stream';
         const finalTitle = `${displayTitle} - ${langTag}`;
         const originalHeaders = extracted?.headers || null;
-        const quality = normalizeQuality(resolvedQuality || extracted?.quality || 'Unknown');
+        const quality = normalizeGuardaFlixDisplayQuality(resolvedQuality || extracted?.quality || 'Unknown');
 
         let streamName = '🎬 GuardaFlix';
         let streamUrl = extracted.url;
