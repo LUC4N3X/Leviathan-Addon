@@ -323,6 +323,10 @@ function parseQuality(text) {
     return 'Unknown';
 }
 
+function normalizeGuardaHdDisplayQuality(value) {
+    return normalizeQuality(value) === '1080p' ? '1080p' : '720p';
+}
+
 function extractSize(...values) {
     for (const value of values) {
         const text = safeText(value);
@@ -801,7 +805,7 @@ async function finalizeRawStream(raw, displayTitle, embedUrl) {
     if (shouldNotWebReady(hoster, raw.name)) behaviorHints.notWebReady = true;
 
     const guessed = parseQuality(`${raw.quality || ''} ${raw.name || ''} ${raw.title || ''} ${embedUrl || ''} ${streamUrl}`);
-    const quality = await resolveStreamQuality(streamUrl, effectiveHeaders, raw.quality || guessed);
+    const quality = normalizeGuardaHdDisplayQuality(await resolveStreamQuality(streamUrl, effectiveHeaders, raw.quality || guessed));
     const size = raw.size && raw.size !== 'N/A'
         ? raw.size
         : extractSize(raw.title, raw.name, embedUrl, streamUrl);
