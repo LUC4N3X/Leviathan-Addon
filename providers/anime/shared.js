@@ -524,8 +524,20 @@ async function fetchResource(url, options = {}) {
     })();
 
     if (useCache && ttlMs > 0) {
-        const cached = caches.http.get(key);
-        if (cached !== undefined) return cached;
+        const cachedEntry = caches.http.getEntry(key, { allowStale: true });
+        if (cachedEntry?.expiresAt > now()) return cachedEntry.value;
+        if (cachedEntry?.value !== undefined && options.staleWhileRevalidate !== false) {
+            caches.inflight.do(`http-revalidate:${key}`, async () => {
+                try {
+                    await fetchResource(url, {
+                        ...options,
+                        useStaleOnError: true,
+                        staleWhileRevalidate: false
+                    });
+                } catch (_) {}
+            }).catch(() => {});
+            return cachedEntry.value;
+        }
         const negative = caches.negative.get(key);
         if (negative !== undefined) return negative;
     }
@@ -553,6 +565,7 @@ async function fetchResource(url, options = {}) {
                         headers: {
                             'user-agent': USER_AGENT,
                             'accept-language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+                            'accept-encoding': 'gzip, deflate, br',
                             accept: accept || (as === 'json' ? 'application/json, text/plain, */*' : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'),
                             ...headers
                         },
