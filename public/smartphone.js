@@ -1757,9 +1757,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-amber"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Kitsu + VixCloud</span>
+                                <span class="m-reactor-desc">Kitsu + VixCloud. Non richiede MediaFlow Proxy.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-route"></i> MFP</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
                             </div>
                         </div>
@@ -1814,9 +1814,9 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Catalogo Film e Serie TV con aggiornamenti costanti e riproduzione ottimizzata per Stremio e TV.</span>
+                                <span class="m-reactor-desc">Catalogo Film e Serie TV con aggiornamenti costanti. Non richiede Kraken o MediaFlow Proxy.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-shield-alt"></i> KRAKEN</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
                             </div>
                         </div>
