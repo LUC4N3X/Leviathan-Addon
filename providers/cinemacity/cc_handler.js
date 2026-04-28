@@ -16,6 +16,7 @@ const {
 const tmdbHelper = require('../../core/utils/tmdb_helper');
 const animeIdentity = require('../anime/anime_identity');
 const kitsuProvider = require('../animeworld/kitsu_provider');
+const { buildCinemaCityProxyUrl } = require('./cc_proxy');
 const {
     buildWebStream,
     dedupeStreamsByUrl,
@@ -1939,23 +1940,7 @@ function buildDisplayTitle(meta = {}, fallbackTitle, season, episode) {
     return baseTitle;
 }
 
-function buildCinemaCityProxyUrl(config = {}, streamUrl, headers = {}, isHls = false) {
-    const mfpBase = String(config?.mediaflow?.url || '').trim().replace(/\/$/, '');
-    const normalizedTarget = normalizeRemoteUrl(streamUrl);
-    if (!mfpBase || !normalizedTarget) return null;
-
-    const passwordQuery = config?.mediaflow?.pass
-        ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}` : '';
-    const refererQuery = headers?.Referer ? `&h_Referer=${encodeURIComponent(headers.Referer)}` : '';
-    const originQuery = headers?.Origin ? `&h_Origin=${encodeURIComponent(headers.Origin)}` : '';
-
-    if (isHls) {
-        return `${mfpBase}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${refererQuery}${originQuery}`;
-    }
-    return `${mfpBase}/proxy/stream?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${refererQuery}${originQuery}`;
-}
-
-async function searchCinemaCity(originalId, finalId, meta, config = {}) {
+async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost = null) {
     try {
         const resolved = await resolveSearchState(meta, originalId, finalId, config);
         if (!resolved.imdbId && !resolved.tmdbId && (!resolved.isAnime || resolved.searchTitles.length === 0)) return [];
@@ -2028,7 +2013,7 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
         const extractorLabel = /cccdn/i.test(extracted.streamUrl) ? 'CCCDN' : (isHlsStream ? 'HLS' : 'Direct');
         const displayTitle = buildDisplayTitle(meta, pageMetadata.title || searchResult.title, resolved.season, resolved.episode);
         const languageLabel = buildCinemaCityLanguageLabel(pageMetadata, config);
-        const mediaflowProxyUrl = buildCinemaCityProxyUrl(config, extracted.streamUrl, extracted.headers, isHlsStream);
+        const cinemaCityProxyUrl = buildCinemaCityProxyUrl(extracted.streamUrl, extracted.headers, reqHost, { isHls: isHlsStream });
         const extraVortexMeta = {
             bingeWatching: true,
             vortexMeta: {
@@ -2045,11 +2030,11 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}) {
         };
 
         const streams = [];
-        if (mediaflowProxyUrl) {
+        if (cinemaCityProxyUrl) {
             streams.push(buildWebStream({
                 name: '🎟️ CinemaCity | CCCDN',
                 title: `${displayTitle}\n☁️ CCCDN • ${languageLabel}`,
-                url: mediaflowProxyUrl,
+                url: cinemaCityProxyUrl,
                 extractor: 'CCCDN',
                 provider: 'CinemaCity',
                 providerCode: 'CC',
