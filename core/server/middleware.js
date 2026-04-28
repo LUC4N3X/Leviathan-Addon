@@ -99,6 +99,11 @@ function resolveTrustProxySetting() {
     return raw;
 }
 
+function isPlaybackProxyPath(pathname) {
+    const value = String(pathname || '').split('?')[0];
+    return value === '/vixsynthetic.m3u8' || value.startsWith('/ccproxy/');
+}
+
 function smartResponseCompressionMiddleware(req, res, next) {
     const originalSend = res.send.bind(res);
     const originalJson = res.json.bind(res);
@@ -168,6 +173,7 @@ function applyCommonMiddleware(app, { staticDir }) {
     app.use(compression({
         filter: (req, res) => {
             if (req.headers['x-no-compression']) return false;
+            if (isPlaybackProxyPath(req.path || req.originalUrl)) return false;
             if (shouldUseSmartCompression(req)) return false;
             return compression.filter(req, res);
         },
@@ -180,7 +186,8 @@ function applyCommonMiddleware(app, { staticDir }) {
         max: RATE_LIMIT_MAX,
         standardHeaders: true,
         legacyHeaders: false,
-        message: 'Troppe richieste da questo IP, riprova più tardi.'
+        message: 'Troppe richieste da questo IP, riprova più tardi.',
+        skip: (req) => isPlaybackProxyPath(req.path || req.originalUrl)
     });
 
     app.use(limiter);
