@@ -689,12 +689,26 @@ async function fetchResource(url, options = {}) {
         'user-agent': USER_AGENT,
         'accept': as === 'json' ? 'application/json,text/plain;q=0.9,*/*;q=0.8' : DEFAULT_ACCEPT,
         'accept-language': DEFAULT_ACCEPT_LANGUAGE,
+        'accept-encoding': 'gzip, deflate, br',
         ...normalizeHeaders(headers)
     };
     const key = buildFetchCacheKey({ as, method: finalMethod, cacheKey, body, headers: finalHeaders });
     const canCache = ttlMs > 0 && ['GET', 'HEAD'].includes(finalMethod);
     const staleEntry = canCache ? caches.http.getStale(key) : undefined;
     if (!forceRefresh && staleEntry?.fresh) return staleEntry.value;
+    if (!forceRefresh && staleEntry?.stale && staleEntry.value !== undefined && options.staleWhileRevalidate !== false) {
+        caches.inflight.run(`http-revalidate:${key}`, async () => {
+            try {
+                await fetchResource(url, {
+                    ...options,
+                    forceRefresh: true,
+                    allowStaleOnError: true,
+                    staleWhileRevalidate: false
+                });
+            } catch (_) {}
+        }).catch(() => {});
+        return staleEntry.value;
+    }
 
     return caches.inflight.run(`http:${key}`, async () => {
         const inFlightEntry = canCache ? caches.http.getStale(key) : undefined;
