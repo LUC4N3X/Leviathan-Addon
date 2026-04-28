@@ -31,7 +31,7 @@ const {
 } = require('../utils/bypass');
 const { createFlareSolverrClient } = require('../utils/flaresolverr');
 
-const INITIAL_GS_DOMAIN      = 'https://guardoserie.run';
+const INITIAL_GS_DOMAIN      = 'https://guardoserie.garden';
 const BROWSER_PROFILES       = GUARDA_SERIE_BROWSER_PROFILES;
 const FLARESOLVERR_URL       = process.env.FLARESOLVERR_URL || 'http://127.0.0.1:8191/v1';
 const PROVIDER_NAME          = 'guardoserie';
@@ -43,8 +43,9 @@ const TTL_SEARCH             = 1000 * 60 * 30;
 const TTL_EPISODE            = 1000 * 60 * 30;
 const TTL_SERIES             = 1000 * 60 * 60 * 6;
 const CF_SESSION_TTL         = 1000 * 60 * 60 * 6;
-const GLOBAL_TIMEOUT_MS      = 25000;
-const SEARCH_QUERY_TIMEOUT_MS = 12000;
+const GLOBAL_TIMEOUT_MS      = 24000;
+const SEARCH_QUERY_TIMEOUT_MS = 8000;
+const DIRECT_FETCH_TIMEOUT_MS = 6500;
 const MAX_CACHE_ITEMS        = 500;
 const FS_CIRCUIT_THRESHOLD   = 3;
 const FS_CIRCUIT_RESET_MS    = 60_000;
@@ -338,7 +339,7 @@ function updateCookies(existing, setCookieHeader) {
   return Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
 }
 
-async function executeSmartFetch(url, isPost = false, body = null, signal = null) {
+async function executeSmartFetch(url, isPost = false, body = null, signal = null, allowFlareSolverr = true, timeoutMs = DIRECT_FETCH_TIMEOUT_MS) {
   const buildSessionHeaders = session => {
     const headers = {
       'User-Agent':                session.userAgent,
@@ -366,7 +367,7 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
       method:   isPost ? 'POST' : 'GET',
       body:     isPost ? body : null,
       headers:  buildSessionHeaders(session),
-      timeout:  15000,
+      timeout:  timeoutMs,
       signal,
       useHttp2: true
     });
@@ -409,6 +410,8 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
     }
   }
 
+  if (!allowFlareSolverr) return null;
+
   const session = await flareSolverrClient.getClearance(url, {
     method: isPost ? 'POST' : 'GET',
     body,
@@ -426,7 +429,7 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
   }
 }
 
-async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH, signal = null } = {}) {
+async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH, signal = null, allowFlareSolverr = true, timeoutMs = DIRECT_FETCH_TIMEOUT_MS } = {}) {
   const cacheKey = `${isPost ? 'POST' : 'GET'}:${url}:${body || ''}`;
   const cached   = requestCache.get(cacheKey);
 
@@ -434,7 +437,7 @@ async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH, 
     const now = Date.now();
     if (now < cached.expires) return cached.data;
     if (cached.stale && now < cached.stale && !pendingRequests.has(cacheKey)) {
-      setImmediate(() => smartFetch(url, { isPost, body, ttl, signal }).catch(() => {}));
+      setImmediate(() => smartFetch(url, { isPost, body, ttl, signal, allowFlareSolverr, timeoutMs }).catch(() => {}));
       return cached.data;
     }
     requestCache.delete(cacheKey);
@@ -442,7 +445,7 @@ async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH, 
 
   if (pendingRequests.has(cacheKey)) return pendingRequests.get(cacheKey);
 
-  const fetchPromise = executeSmartFetch(url, isPost, body, signal)
+  const fetchPromise = executeSmartFetch(url, isPost, body, signal, allowFlareSolverr, timeoutMs)
     .then(html => {
       if (html) {
         requestCache.set(cacheKey, {
@@ -744,12 +747,12 @@ async function searchProviderSequential(query, signal) {
   const baseUrl    = await refreshTargetDomain(signal);
   const ajaxUrl    = `${baseUrl}/wp-admin/admin-ajax.php`;
   const ajaxBody   = `s=${encodeURIComponent(query)}&action=searchwp_live_search&swpengine=default&swpquery=${encodeURIComponent(query)}`;
-  const ajaxHtml   = await smartFetch(ajaxUrl, { isPost: true, body: ajaxBody, ttl: TTL_SEARCH, signal });
+  const ajaxHtml   = await smartFetch(ajaxUrl, { isPost: true, body: ajaxBody, ttl: TTL_SEARCH, signal, allowFlareSolverr: true, timeoutMs: SEARCH_QUERY_TIMEOUT_MS });
   const ajaxResults = extractSearchResultsFromHtml(ajaxHtml, baseUrl);
   if (ajaxResults.length > 0) return ajaxResults;
 
   const fallbackUrl  = `${baseUrl}/?s=${encodeURIComponent(query)}`;
-  const fallbackHtml = await smartFetch(fallbackUrl, { ttl: TTL_SEARCH, signal });
+  const fallbackHtml = await smartFetch(fallbackUrl, { ttl: TTL_SEARCH, signal, allowFlareSolverr: true, timeoutMs: SEARCH_QUERY_TIMEOUT_MS });
   return extractSearchResultsFromHtml(fallbackHtml, baseUrl);
 }
 
@@ -1019,7 +1022,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
   showName = showName || expectedTitles[0] || null;
   if (!showName) return [];
 
-  const queries       = uniqueCleanStrings(expectedTitles, 8);
+  const queries       = uniqueCleanStrings(expectedTitles, animeContext?.isAnime ? 8 : 4);
   const mappedResults = (Array.isArray(animeContext?.mappingUrls) ? animeContext.mappingUrls : [])
     .map(url => ({ url, title: showName || url, mapped: true }));
   let allResults = [...mappedResults, ...await searchProviderParallel(queries, signal)];
@@ -1040,7 +1043,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
     const titleScore = normalizeTitleScoreMany(result.title, expectedTitles);
     if (titleScore < 1) continue;
 
-    const html = await smartFetch(result.url, { ttl: TTL_SERIES, signal });
+    const html = await smartFetch(result.url, { ttl: TTL_SERIES, signal, allowFlareSolverr: false, timeoutMs: DIRECT_FETCH_TIMEOUT_MS });
     if (!html) continue;
 
     const foundYear =
@@ -1067,7 +1070,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
     outer: for (const slug of slugs) {
       for (const p of [`/serie/${slug}/`, `/${slug}/`, `/serietv/${slug}/`]) {
         const url  = buildGsUrl(p);
-        const html = await smartFetch(url, { ttl: TTL_SERIES, signal });
+        const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: false, timeoutMs: DIRECT_FETCH_TIMEOUT_MS });
         if (html) {
           const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
           if (normalizeTitleScoreMany(pageTitle, expectedTitles) >= 2) {
@@ -1085,14 +1088,14 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
   if (!episodeUrl) return [];
 
   const absoluteEpUrl = new URL(episodeUrl, getTargetDomain()).toString();
-  const finalHtml     = await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal });
-  const playerLinks   = Array.from(new Set(extractPlayerLinksFromHtml(finalHtml))).slice(0, 8);
+  const finalHtml     = await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: false, timeoutMs: DIRECT_FETCH_TIMEOUT_MS });
+  const playerLinks   = Array.from(new Set(extractPlayerLinksFromHtml(finalHtml))).slice(0, 5);
   if (!playerLinks.length) return [];
 
   const cleanTitle = `${showName} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
   const sessionUA  = activeSession.userAgent || pickRandomProfile(BROWSER_PROFILES).ua;
 
-  const processedResults = await asyncPool(3, playerLinks, async link => {
+  const processedResults = await asyncPool(2, playerLinks, async link => {
     try {
       const extracted = await extractFromUrl(link, {
         client:         lightClient,
