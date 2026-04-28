@@ -6,6 +6,7 @@ const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const kitsuProvider = require('../animeworld/kitsu_provider');
 const animeIdentity = require('../anime/anime_identity');
+const animeProviderUtils = require('../anime/provider_utils');
 const {
     resolveAnimeManifest,
     buildSyntheticUrl,
@@ -251,6 +252,8 @@ function buildHeaders(referer = `${AU_BASE}/`, extra = {}) {
         'User-Agent': USER_AGENT,
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
+        Connection: 'keep-alive',
         Referer: referer,
         Origin: AU_BASE,
         'Cache-Control': 'no-cache',
@@ -673,6 +676,91 @@ async function searchAnimeCandidates(query, isDubbed = false, isMovie = null, li
 async function searchAnime(query, isDubbed = false, isMovie = null) {
     const candidates = await searchAnimeCandidates(query, isDubbed, isMovie, 1);
     return candidates[0] || null;
+}
+
+function normalizeAnimeUnityMappingItem(item = null) {
+    if (!item) return null;
+    if (typeof item === 'string') {
+        const url = normalizeAnimeUrl(item, AU_BASE);
+        if (url && url.includes('/anime/')) return { path: url };
+        const match = String(item).match(/(?:^|\/)(\d+)-([a-z0-9][a-z0-9-]*)/i);
+        if (match) return { id: Number(match[1]), slug: match[2], path: `${AU_BASE}/anime/${match[1]}-${match[2]}` };
+        return null;
+    }
+
+    if (typeof item !== 'object') return null;
+    const path = normalizeAnimeUrl(item.path || item.url || item.href || item.link || item.playPath, AU_BASE);
+    const id = safeInt(item.id || item.anime_id || item.animeId || item.au_id || item.auId);
+    const slug = String(item.slug || item.title_slug || item.titleSlug || item.name_slug || item.nameSlug || '').trim();
+    const candidate = { ...item };
+    if (path) candidate.path = path;
+    if (id) candidate.id = id;
+    if (slug) candidate.slug = slug;
+    if (!candidate.path && candidate.id && candidate.slug) candidate.path = `${AU_BASE}/anime/${candidate.id}-${candidate.slug}`;
+    return buildAnimePath(candidate) ? candidate : null;
+}
+
+function extractAnimeUnityCandidatesFromMapping(mappingPayload, isDubbed = false) {
+    const raw = mappingPayload?.mappings?.animeunity
+        || mappingPayload?.providers?.animeunity
+        || mappingPayload?.animeunity
+        || mappingPayload?.mapping?.animeunity
+        || null;
+    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    const output = [];
+    const seen = new Set();
+
+    for (const item of list) {
+        const candidate = normalizeAnimeUnityMappingItem(item);
+        if (!candidate) continue;
+        const dubValue = candidate.dub ?? candidate.dubbed ?? candidate.isDubbed ?? candidate.italianDub;
+        if (dubValue !== undefined && dubValue !== null) {
+            const isCandidateDub = dubValue === true || dubValue === 1 || String(dubValue).toLowerCase() === 'true';
+            if (isDubbed !== isCandidateDub) continue;
+        }
+        const key = normalizeLookupTitle(buildAnimePath(candidate) || JSON.stringify(candidate));
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        output.push(candidate);
+    }
+
+    return output;
+}
+
+function buildAnimeUnityMappingLookup(searchContext = {}, requestedEpisode = 1) {
+    const episode = safeInt(requestedEpisode) || resolveRequestedAnimeEpisode(searchContext, searchContext?.meta || {});
+    const season = safeInt(searchContext?.seasonNumber || searchContext?.season || searchContext?.requestedSeason || searchContext?.meta?.season);
+    const kitsuId = safeInt(searchContext?.kitsuId || searchContext?.kitsu_id || searchContext?.kitsu || searchContext?.meta?.kitsuId || searchContext?.meta?.kitsu_id);
+    if (kitsuId) return { provider: 'kitsu', externalId: String(kitsuId), season: null, episode, contentType: 'anime' };
+
+    const imdbId = String(searchContext?.imdbId || searchContext?.imdb_id || searchContext?.imdb || searchContext?.meta?.imdbId || searchContext?.meta?.imdb_id || '').trim();
+    if (/^tt\d+$/i.test(imdbId)) return { provider: 'imdb', externalId: imdbId, season: season || null, episode, contentType: season ? 'series' : null };
+
+    const tmdbId = safeInt(searchContext?.tmdbId || searchContext?.tmdb_id || searchContext?.tmdb || searchContext?.meta?.tmdbId || searchContext?.meta?.tmdb_id);
+    if (tmdbId) return { provider: 'tmdb', externalId: String(tmdbId), season: season || null, episode, contentType: season ? 'series' : null };
+
+    return null;
+}
+
+async function fetchAnimeUnityMapping(searchContext = {}, requestedEpisode = 1) {
+    const lookup = buildAnimeUnityMappingLookup(searchContext, requestedEpisode);
+    if (!lookup) return null;
+
+    try {
+        return await animeProviderUtils.fetchMappingPayload(lookup, {
+            ...searchContext,
+            providerName: PROVIDER_NAME,
+            mappingLanguage: 'it',
+            mappingTtlMs: 45 * 60 * 1000,
+            mappingStaleMs: 36 * 60 * 60 * 1000,
+            mappingTimeoutMs: REQUEST_TIMEOUT,
+            mappingRetries: 2,
+            mappingOriginConcurrency: 6
+        });
+    } catch (error) {
+        console.warn(`[AnimeUnity] mapping failed | reason=${error.message}`);
+        return null;
+    }
 }
 
 function parseVideoPlayer(html) {
@@ -1136,6 +1224,40 @@ async function buildStreamsFromEmbed(embedUrl, title, langTag, emoji, episodeNum
     return streams.filter(Boolean).sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality));
 }
 
+async function resolveAnimeUnityCandidate(candidate, title, mode, requestedEpisode, isMovie, config, reqHost, triedPaths) {
+    let animePath = buildAnimePath(candidate);
+    if (!animePath || triedPaths.has(`${mode.langTag}:${animePath}`)) return [];
+    triedPaths.add(`${mode.langTag}:${animePath}`);
+
+    let page = await fetchAnimePage(animePath);
+    if (page && !candidateHasRequestedEpisode(page, candidate, requestedEpisode, isMovie)) {
+        console.log(`[AnimeUnity] candidate rejected episode-missing | title=${buildCandidateTitle(candidate)} ep=${requestedEpisode} total=${knownEpisodeCount(page, candidate) || 'unknown'} mode=${mode.langTag}`);
+        return [];
+    }
+
+    const variant = page ? selectRelatedVariant(page, mode.dubbed) : null;
+    const variantPath = buildAnimePath(variant);
+    if (variantPath && variantPath !== animePath && !triedPaths.has(`${mode.langTag}:${variantPath}`)) {
+        animePath = variantPath;
+        triedPaths.add(`${mode.langTag}:${animePath}`);
+        page = await fetchAnimePage(animePath);
+        if (page && !candidateHasRequestedEpisode(page, variant || candidate, requestedEpisode, isMovie)) {
+            console.log(`[AnimeUnity] variant rejected episode-missing | title=${buildCandidateTitle(variant || candidate)} ep=${requestedEpisode} total=${knownEpisodeCount(page, variant || candidate) || 'unknown'} mode=${mode.langTag}`);
+            return [];
+        }
+    }
+
+    const embedUrl = await extractEmbedUrl(animePath, requestedEpisode, isMovie, variant || candidate);
+    if (!embedUrl) {
+        console.log(`[AnimeUnity] skip candidate without requested episode | ${animePath} ep=${requestedEpisode} mode=${mode.langTag}`);
+        return [];
+    }
+
+    const pageTitle = buildCandidateTitle(page?.anime || {}) || buildCandidateTitle(variant || candidate);
+    const displayTitle = `${title || pageTitle || 'Anime'} Ep ${requestedEpisode}`;
+    return buildStreamsFromEmbed(embedUrl, displayTitle, mode.langTag, mode.emoji, requestedEpisode, config, reqHost);
+}
+
 async function resolveMode(mode, searchContext, config, reqHost) {
     const options = getAnimeUnityOptions(config);
     const titles = uniqueNonEmpty([
@@ -1147,40 +1269,29 @@ async function resolveMode(mode, searchContext, config, reqHost) {
     const isMovie = searchContext?.isMovie === true;
     const triedPaths = new Set();
 
+    const mappedCandidates = extractAnimeUnityCandidatesFromMapping(searchContext?.mappingPayload, mode.dubbed);
+    for (const candidate of mappedCandidates) {
+        const streams = await resolveAnimeUnityCandidate(
+            candidate,
+            searchContext?.title || buildCandidateTitle(candidate),
+            mode,
+            requestedEpisode,
+            isMovie,
+            config,
+            reqHost,
+            triedPaths
+        );
+        if (streams.length > 0) {
+            console.log(`[AnimeUnity] mapping hit | mode=${mode.langTag} | streams=${streams.length}`);
+            return streams;
+        }
+    }
+
     for (const title of titles.slice(0, options.maxSearchTitles)) {
         const candidates = await searchAnimeCandidates(title, mode.dubbed, isMovie, options.candidateLimit, searchContext, options);
         for (const candidate of candidates) {
-            let animePath = buildAnimePath(candidate);
-            if (!animePath || triedPaths.has(`${mode.langTag}:${animePath}`)) continue;
-            triedPaths.add(`${mode.langTag}:${animePath}`);
-
-            let page = await fetchAnimePage(animePath);
-            if (page && !candidateHasRequestedEpisode(page, candidate, requestedEpisode, isMovie)) {
-                console.log(`[AnimeUnity] candidate rejected episode-missing | title=${buildCandidateTitle(candidate)} ep=${requestedEpisode} total=${knownEpisodeCount(page, candidate) || 'unknown'} mode=${mode.langTag}`);
-                continue;
-            }
-
-            const variant = page ? selectRelatedVariant(page, mode.dubbed) : null;
-            const variantPath = buildAnimePath(variant);
-            if (variantPath && variantPath !== animePath && !triedPaths.has(`${mode.langTag}:${variantPath}`)) {
-                animePath = variantPath;
-                triedPaths.add(`${mode.langTag}:${animePath}`);
-                page = await fetchAnimePage(animePath);
-                if (page && !candidateHasRequestedEpisode(page, variant || candidate, requestedEpisode, isMovie)) {
-                    console.log(`[AnimeUnity] variant rejected episode-missing | title=${buildCandidateTitle(variant || candidate)} ep=${requestedEpisode} total=${knownEpisodeCount(page, variant || candidate) || 'unknown'} mode=${mode.langTag}`);
-                    continue;
-                }
-            }
-
-            const embedUrl = await extractEmbedUrl(animePath, requestedEpisode, isMovie, variant || candidate);
-            if (!embedUrl) {
-                console.log(`[AnimeUnity] skip candidate without requested episode | ${animePath} ep=${requestedEpisode} mode=${mode.langTag}`);
-                continue;
-            }
-
-            const pageTitle = buildCandidateTitle(page?.anime || {}) || buildCandidateTitle(variant || candidate);
-            const displayTitle = `${title || searchContext?.title || pageTitle || 'Anime'} Ep ${requestedEpisode}`;
-            return buildStreamsFromEmbed(embedUrl, displayTitle, mode.langTag, mode.emoji, requestedEpisode, config, reqHost);
+            const streams = await resolveAnimeUnityCandidate(candidate, title || searchContext?.title, mode, requestedEpisode, isMovie, config, reqHost, triedPaths);
+            if (streams.length > 0) return streams;
         }
     }
 
@@ -1214,7 +1325,8 @@ function getAnimeUnityOptions(config = {}) {
         searchConcurrency: intOption(filters.animeUnitySearchConcurrency, DEFAULT_SEARCH_CONCURRENCY, 1, 8),
         candidateLimit: intOption(filters.animeUnityCandidateLimit, 4, 1, 8),
         maxSearchTitles: intOption(filters.animeUnityMaxSearchTitles, 8, 1, 12),
-        maxTitleVariants: intOption(filters.animeUnityMaxTitleVariants, 6, 1, 8)
+        maxTitleVariants: intOption(filters.animeUnityMaxTitleVariants, 6, 1, 8),
+        useMapping: boolOption(filters.animeUnityUseMapping, true)
     };
 }
 
@@ -1304,7 +1416,12 @@ async function searchAnimeUnity(requestId, meta = {}, config = {}, reqHost = nul
             return [];
         }
 
-        console.log(`[AnimeUnity] start | title=${context.title || meta?.title || meta?.name || requestId} | ep=${context.requestedEpisode || meta?.episode || 1} | kitsu=${context.kitsuId || context.kitsu_id || 'no'} | tmdb=${context.tmdbId || context.tmdb_id || 'no'} | imdb=${context.imdbId || context.imdb_id || 'no'} | concurrency=${options.searchConcurrency}`);
+        if (options.useMapping) {
+            const mappingPayload = await fetchAnimeUnityMapping(context, resolveRequestedAnimeEpisode(context, meta));
+            if (mappingPayload) context = { ...context, mappingPayload };
+        }
+
+        console.log(`[AnimeUnity] start | title=${context.title || meta?.title || meta?.name || requestId} | ep=${context.requestedEpisode || meta?.episode || 1} | kitsu=${context.kitsuId || context.kitsu_id || 'no'} | tmdb=${context.tmdbId || context.tmdb_id || 'no'} | imdb=${context.imdbId || context.imdb_id || 'no'} | concurrency=${options.searchConcurrency} | mapping=${Boolean(context.mappingPayload)}`);
 
         const modes = [];
         if (options.enabledDubbed) modes.push({ dubbed: true, langTag: 'ITA', emoji: '🇮🇹' });
