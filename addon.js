@@ -171,6 +171,7 @@ if (cluster.isPrimary && shouldUseCluster()) {
 const dbHelper = require('./core/storage/db_repository');
 const { getManifest } = require('./manifest');
 const { handleVixSynthetic } = require('./providers/streamingcommunity/vix_proxy');
+const { handleCinemaCityProxy, CC_MANIFEST_ROUTE, CC_STREAM_ROUTE } = require('./providers/cinemacity/cc_proxy');
 const {
     Cache,
     LIMITERS,
@@ -327,6 +328,11 @@ function bootstrapServer() {
         recordProviderMetric
     });
 
+    if (typeof handleCinemaCityProxy === 'function') {
+        app.all(CC_MANIFEST_ROUTE, handleCinemaCityProxy);
+        app.all(CC_STREAM_ROUTE, handleCinemaCityProxy);
+    }
+
     const sharedStreamCleanupJob = startSharedStreamCacheCleanupJob({
         dbHelper,
         logger,
@@ -374,6 +380,8 @@ function bootstrapServer() {
         publicDir,
         getManifest,
         handleVixSynthetic,
+        handleCinemaCityProxy,
+        cinemaCityProxyRoutes: { manifest: CC_MANIFEST_ROUTE, stream: CC_STREAM_ROUTE },
         cloneManifest: appServices.cloneManifest,
         getConfig,
         validateStreamRequest,
