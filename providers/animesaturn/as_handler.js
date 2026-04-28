@@ -1,6 +1,7 @@
 'use strict';
 
 const cheerio = require('cheerio');
+const animeProviderUtils = require('../anime/provider_utils');
 const {
     USER_AGENT,
     FETCH_TIMEOUT,
@@ -14,7 +15,6 @@ const {
 const kitsuProvider = require('../animeworld/kitsu_provider');
 
 const SATURN_BASE_URL = 'https://www.animesaturn.cx';
-const MAPPING_API_BASE = 'https://anime.questoleviatanormio.dpdns.org';
 const BLOCKED_DOMAINS = [
     'jujutsukaisenanime.com',
     'onepunchman.it',
@@ -25,7 +25,7 @@ const TTL = {
     page: 15 * 60 * 1000,
     watch: 5 * 60 * 1000,
     search: 10 * 60 * 1000,
-    mapping: 2 * 60 * 1000
+    mapping: 45 * 60 * 1000
 };
 const MONTHS = {
     gennaio: 0,
@@ -1141,23 +1141,28 @@ function resolveRequestedAnimeEpisode(searchContext = {}, meta = {}) {
 }
 
 async function fetchAnimeSaturnMapping(searchContext = {}, requestedEpisode = 1) {
-    const kitsuId = parsePositiveInt(searchContext?.kitsuId);
+    const kitsuId = parsePositiveInt(searchContext?.kitsuId || searchContext?.kitsu_id || searchContext?.kitsu);
     if (!kitsuId) return null;
 
     const episode = normalizeRequestedEpisode(requestedEpisode);
-    const season = Number.parseInt(String(searchContext?.seasonNumber ?? ''), 10);
-    const params = new URLSearchParams();
-    params.set('ep', String(episode));
-    params.set('lang', 'it');
-    if (Number.isInteger(season) && season >= 0) params.set('s', String(season));
+    const season = Number.parseInt(String(searchContext?.seasonNumber ?? searchContext?.season ?? ''), 10);
 
-    const cacheKey = `animesaturn-mapping:kitsu:${kitsuId}:s=${Number.isInteger(season) && season >= 0 ? season : 'na'}:ep=${episode}:it`;
     try {
-        return await fetchResource(`${MAPPING_API_BASE}/kitsu/${encodeURIComponent(kitsuId)}?${params.toString()}`, {
-            as: 'json',
-            ttlMs: TTL.mapping,
-            cacheKey,
-            timeoutMs: FETCH_TIMEOUT
+        return await animeProviderUtils.fetchMappingPayload({
+            provider: 'kitsu',
+            externalId: String(kitsuId),
+            season: Number.isInteger(season) && season >= 0 ? season : null,
+            episode,
+            contentType: 'anime'
+        }, {
+            ...searchContext,
+            providerName: 'AnimeSaturn',
+            mappingLanguage: 'it',
+            mappingTtlMs: TTL.mapping,
+            mappingStaleMs: 36 * 60 * 60 * 1000,
+            mappingTimeoutMs: FETCH_TIMEOUT,
+            mappingRetries: 2,
+            mappingOriginConcurrency: 6
         });
     } catch (error) {
         console.error('[AnimeSaturn] mapping request failed:', error.message);
@@ -1200,6 +1205,37 @@ function resolveEpisodeFromMappingPayload(mappingPayload, fallbackEpisode) {
     if (fromTmdbRaw) return fromTmdbRaw;
 
     return normalizeRequestedEpisode(fallbackEpisode);
+}
+
+async function resolveAnimeSaturnStreamsFromPaths(animePaths = [], requestedEpisode = 1, originalRequestedEpisode = 1, mediaType = 'tv', includeRelatedIta = false, config = {}) {
+    const maxPaths = Math.max(1, Math.min(Number.parseInt(getFilterValue(config, 'animeSaturnMaxPaths', 4), 10) || 4, 8));
+    const paths = uniqueStrings(animePaths).slice(0, maxPaths);
+    if (paths.length === 0) return [];
+
+    const concurrency = Math.max(1, Math.min(Number.parseInt(getFilterValue(config, 'animeSaturnConcurrency', 3), 10) || 3, 5));
+    const perPathStreams = await mapLimit(paths, concurrency, (path) =>
+        extractStreamsFromAnimePath(path, requestedEpisode, mediaType, originalRequestedEpisode, includeRelatedIta)
+    );
+
+    const deduped = [];
+    const seen = new Set();
+    for (const stream of perPathStreams.flat().filter(Boolean)) {
+        const url = String(stream?.url || '').trim();
+        if (!url) continue;
+        const key = url
+            .replace(/([?&])token=[^&]+/gi, '$1token=*')
+            .replace(/([?&])expires=[^&]+/gi, '$1expires=*')
+            .replace(/([?&])e=[^&]+/gi, '$1e=*');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(stream);
+    }
+
+    return deduped.sort((a, b) => {
+        const lang = streamLanguageRank(a) - streamLanguageRank(b);
+        if (lang !== 0) return lang;
+        return qualityRank(b?.title || '') - qualityRank(a?.title || '');
+    });
 }
 
 function shouldRunAnimeSaturn(requestId, meta = {}, searchContext = {}, config = {}) {
@@ -1245,53 +1281,41 @@ async function searchAnimeSaturn(requestId, meta = {}, config = {}) {
 
         const requestedFromContext = resolveRequestedAnimeEpisode(searchContext, meta);
         let requestedEpisode = requestedFromContext;
-        const searchPaths = await resolveAnimeSaturnPaths(searchContext, config);
-        let animePaths = searchPaths;
+        let animePaths = [];
+        let mappingUsed = false;
 
         const mappingAllowed = getFilterValue(config, 'animeSaturnUseMapping', true) !== false;
-        if (mappingAllowed && searchContext?.kitsuId) {
+        const hasKitsuMappingId = Boolean(parsePositiveInt(searchContext?.kitsuId || searchContext?.kitsu_id || searchContext?.kitsu));
+        if (mappingAllowed && hasKitsuMappingId) {
             const mappingPayload = await fetchAnimeSaturnMapping(searchContext, requestedFromContext);
             const mappingPaths = extractAnimeSaturnPathsFromMapping(mappingPayload);
-            animePaths = searchContext?.strictKitsu
-                ? uniqueStrings([...mappingPaths, ...searchPaths])
-                : uniqueStrings([...searchPaths, ...mappingPaths]);
-            requestedEpisode = resolveEpisodeFromMappingPayload(mappingPayload, requestedFromContext);
+            if (mappingPaths.length > 0) {
+                animePaths = mappingPaths;
+                mappingUsed = true;
+                requestedEpisode = resolveEpisodeFromMappingPayload(mappingPayload, requestedFromContext);
+            }
         }
 
-        const maxPaths = Math.max(1, Math.min(Number.parseInt(getFilterValue(config, 'animeSaturnMaxPaths', 4), 10) || 4, 8));
-        animePaths = uniqueStrings(animePaths).slice(0, maxPaths);
+        if (animePaths.length === 0) animePaths = await resolveAnimeSaturnPaths(searchContext, config);
+        animePaths = uniqueStrings(animePaths);
         if (animePaths.length === 0) return [];
 
         const originalRequestedEpisode = requestedFromContext;
         const mediaType = searchContext?.isMovie ? 'movie' : 'tv';
         const includeRelatedIta = getFilterValue(config, 'animeSaturnIncludeRelatedIta', false) === true;
-        const concurrency = Math.max(1, Math.min(Number.parseInt(getFilterValue(config, 'animeSaturnConcurrency', 3), 10) || 3, 5));
 
-        console.log(`[AnimeSaturn] start | title=${searchContext?.title || meta?.title || meta?.name || requestId} | ep=${requestedEpisode} | paths=${animePaths.length} | movie=${mediaType === 'movie'} | strict=${Boolean(searchContext?.strictKitsu)}`);
+        console.log(`[AnimeSaturn] start | title=${searchContext?.title || meta?.title || meta?.name || requestId} | ep=${requestedEpisode} | paths=${animePaths.length} | movie=${mediaType === 'movie'} | strict=${Boolean(searchContext?.strictKitsu)} | mapping=${mappingUsed}`);
 
-        const perPathStreams = await mapLimit(animePaths, concurrency, (path) =>
-            extractStreamsFromAnimePath(path, requestedEpisode, mediaType, originalRequestedEpisode, includeRelatedIta)
-        );
+        let deduped = await resolveAnimeSaturnStreamsFromPaths(animePaths, requestedEpisode, originalRequestedEpisode, mediaType, includeRelatedIta, config);
 
-        const deduped = [];
-        const seen = new Set();
-        for (const stream of perPathStreams.flat().filter(Boolean)) {
-            const url = String(stream?.url || '').trim();
-            if (!url) continue;
-            const key = url
-                .replace(/([?&])token=[^&]+/gi, '$1token=*')
-                .replace(/([?&])expires=[^&]+/gi, '$1expires=*')
-                .replace(/([?&])e=[^&]+/gi, '$1e=*');
-            if (seen.has(key)) continue;
-            seen.add(key);
-            deduped.push(stream);
+        if (deduped.length === 0 && mappingUsed && getFilterValue(config, 'animeSaturnFallbackSearchAfterMapping', true) !== false) {
+            const fallbackPaths = uniqueStrings(await resolveAnimeSaturnPaths(searchContext, config))
+                .filter((path) => !animePaths.includes(path));
+            if (fallbackPaths.length > 0) {
+                console.log(`[AnimeSaturn] mapping produced no streams, trying search fallback | paths=${fallbackPaths.length}`);
+                deduped = await resolveAnimeSaturnStreamsFromPaths(fallbackPaths, requestedFromContext, originalRequestedEpisode, mediaType, includeRelatedIta, config);
+            }
         }
-
-        deduped.sort((a, b) => {
-            const lang = streamLanguageRank(a) - streamLanguageRank(b);
-            if (lang !== 0) return lang;
-            return qualityRank(b?.title || '') - qualityRank(a?.title || '');
-        });
 
         console.log(`[AnimeSaturn] done | streams=${deduped.length}`);
         return deduped;
