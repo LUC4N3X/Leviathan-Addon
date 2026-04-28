@@ -1940,6 +1940,25 @@ function buildDisplayTitle(meta = {}, fallbackTitle, season, episode) {
     return baseTitle;
 }
 
+
+function buildCinemaCityMediaflowUrl(config = {}, streamUrl, headers = {}, isHls = false) {
+    const mfpBase = String(config?.mediaflow?.url || '').trim().replace(/\/$/, '');
+    const normalizedTarget = normalizeRemoteUrl(streamUrl);
+    if (!mfpBase || !normalizedTarget) return null;
+
+    const passwordQuery = config?.mediaflow?.pass
+        ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}`
+        : '';
+    const refererQuery = headers?.Referer ? `&h_Referer=${encodeURIComponent(headers.Referer)}` : '';
+    const originQuery = headers?.Origin ? `&h_Origin=${encodeURIComponent(headers.Origin)}` : '';
+
+    if (isHls) {
+        return `${mfpBase}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${refererQuery}${originQuery}`;
+    }
+
+    return `${mfpBase}/proxy/stream?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${refererQuery}${originQuery}`;
+}
+
 async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost = null) {
     try {
         const resolved = await resolveSearchState(meta, originalId, finalId, config);
@@ -2013,7 +2032,9 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost 
         const extractorLabel = /cccdn/i.test(extracted.streamUrl) ? 'CCCDN' : (isHlsStream ? 'HLS' : 'Direct');
         const displayTitle = buildDisplayTitle(meta, pageMetadata.title || searchResult.title, resolved.season, resolved.episode);
         const languageLabel = buildCinemaCityLanguageLabel(pageMetadata, config);
-        const cinemaCityProxyUrl = buildCinemaCityProxyUrl(extracted.streamUrl, extracted.headers, reqHost, { isHls: isHlsStream });
+        const mediaflowProxyUrl = buildCinemaCityMediaflowUrl(config, extracted.streamUrl, extracted.headers, isHlsStream);
+        const cinemaCityUrl = mediaflowProxyUrl || buildCinemaCityProxyUrl(extracted.streamUrl, extracted.headers, reqHost, { isHls: isHlsStream });
+        const cinemaCityMode = mediaflowProxyUrl ? 'MFP' : 'CCCDN';
         const extraVortexMeta = {
             bingeWatching: true,
             vortexMeta: {
@@ -2030,12 +2051,12 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost 
         };
 
         const streams = [];
-        if (cinemaCityProxyUrl) {
+        if (cinemaCityUrl) {
             streams.push(buildWebStream({
-                name: '🎟️ CinemaCity | CCCDN',
-                title: `${displayTitle}\n☁️ CCCDN • ${languageLabel}`,
-                url: cinemaCityProxyUrl,
-                extractor: 'CCCDN',
+                name: `🎟️ CinemaCity | ${cinemaCityMode}`,
+                title: `${displayTitle}\n☁️ ${cinemaCityMode} • ${languageLabel}`,
+                url: cinemaCityUrl,
+                extractor: cinemaCityMode,
                 provider: 'CinemaCity',
                 providerCode: 'CC',
                 quality,
