@@ -12,6 +12,8 @@ const { searchCinemaCity } = require('../cinemacity/cc_handler');
 const STREAMING_COMMUNITY_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.SC_PROVIDER_TIMEOUT || '16000', 10) || 16000);
 const ANIMEWORLD_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.AW_PROVIDER_TIMEOUT || '16000', 10) || 16000);
 const CINEMACITY_MIN_TIMEOUT = Math.max(7000, parseInt(process.env.CC_PROVIDER_TIMEOUT || '10000', 10) || 10000);
+const CINEMACITY_EMPTY_TTL = Math.max(15, parseInt(process.env.CC_PROVIDER_EMPTY_TTL || '60', 10) || 60);
+const CINEMACITY_ERROR_TTL = Math.max(3, Math.min(CINEMACITY_EMPTY_TTL, parseInt(process.env.CC_PROVIDER_ERROR_TTL || '10', 10) || 10));
 const GUARDO_SERIE_MIN_TIMEOUT = Math.max(7000, parseInt(process.env.GS_PROVIDER_TIMEOUT || '18000', 10) || 18000);
 const GUARDO_SERIE_EMPTY_TTL = Math.max(15, parseInt(process.env.GS_PROVIDER_EMPTY_TTL || '45', 10) || 45);
 const GUARDO_SERIE_ERROR_TTL = Math.max(3, Math.min(GUARDO_SERIE_EMPTY_TTL, parseInt(process.env.GS_PROVIDER_ERROR_TTL || '5', 10) || 5));
@@ -71,8 +73,10 @@ const WEB_PROVIDER_DEFINITIONS = [
         icon: '🎟️',
         limiterKey: 'webCc',
         minTimeout: CINEMACITY_MIN_TIMEOUT,
+        emptyTtl: CINEMACITY_EMPTY_TTL,
+        errorTtl: CINEMACITY_ERROR_TTL,
         isEnabled: ({ filters }) => filters?.enableCc === true,
-        run: ({ originalId, finalId, meta, config }) => searchCinemaCity(originalId, finalId, meta, config)
+        run: ({ originalId, finalId, meta, config, reqHost }) => searchCinemaCity(originalId, finalId, meta, config, reqHost)
     },
     {
         key: 'guardaHD',
