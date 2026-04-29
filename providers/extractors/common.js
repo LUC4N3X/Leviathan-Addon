@@ -1,7 +1,5 @@
 'use strict';
 
-const { normalizeProxyTarget, isAlreadyProxied } = require('../../core/proxy/proxy_header_normalizer');
-
 const QUALITY_PATTERNS = [
     { value: '4K', regex: /\b(?:4k|2160p|uhd)\b/i },
     { value: '1440p', regex: /\b(?:1440p|2k|qhd)\b/i },
@@ -169,12 +167,6 @@ function buildWebStream({
     const extractorName = String(extractor || '').trim() || 'Web';
     const providerName = String(provider || '').trim() || 'Web';
     const qualityName = String(quality || '').trim() || 'Unknown';
-    const inputHeaders = headers || extraBehaviorHints?.proxyHeaders?.request || {};
-    const hasInputHeaders = Object.keys(inputHeaders || {}).length > 0;
-    const normalizedProxy = normalizeProxyTarget(url, inputHeaders, {
-        referer: headers?.Referer || headers?.referer || extraBehaviorHints?.referer,
-        origin: headers?.Origin || headers?.origin || extraBehaviorHints?.origin
-    });
     const behaviorHints = {
         notWebReady,
         extractor: extractorName,
@@ -192,11 +184,8 @@ function buildWebStream({
         ...extraBehaviorHints
     };
 
-    if ((hasInputHeaders || normalizedProxy.normalized?.authMoved) && Object.keys(normalizedProxy.headers || {}).length > 0) {
-        behaviorHints.proxyHeaders = {
-            ...(behaviorHints.proxyHeaders || {}),
-            request: normalizedProxy.headers
-        };
+    if (headers && Object.keys(headers).length > 0) {
+        behaviorHints.proxyHeaders = { request: headers };
     }
 
     if (extraBehaviorHints?.vortexMeta) {
@@ -209,7 +198,7 @@ function buildWebStream({
     return {
         name,
         title,
-        url: normalizedProxy.url || url,
+        url,
         extractor: extractorName,
         provider: providerName,
         source: providerName,
@@ -221,23 +210,21 @@ function buildWebStream({
     };
 }
 
-function buildMediaflowUrl(config, targetUrl, type = 'hls', host = 'Mixdrop', headers = {}) {
-    const normalizedProxy = normalizeProxyTarget(targetUrl, headers, { config });
-    const normalizedTarget = normalizeRemoteUrl(normalizedProxy.url || targetUrl);
-    if (!config?.mediaflow?.url) return normalizedTarget;
+function buildMediaflowUrl(config, targetUrl, type = 'hls', host = 'Mixdrop') {
+    if (!config?.mediaflow?.url) return normalizeRemoteUrl(targetUrl);
+
+    const normalizedTarget = normalizeRemoteUrl(targetUrl);
     if (!normalizedTarget) return null;
-    if (isAlreadyProxied(normalizedTarget, config)) return normalizedTarget;
 
     const mfp = String(config.mediaflow.url).replace(/\/$/, '');
     const encoded = encodeURIComponent(normalizedTarget);
     const pass = config.mediaflow.pass ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}` : '';
-    const headerQuery = normalizedProxy.headerQuery || '';
 
     if (type === 'extractor') {
-        return `${mfp}/extractor/video?host=${encodeURIComponent(host)}${pass}&d=${encoded}&redirect_stream=true${headerQuery}`;
+        return `${mfp}/extractor/video?host=${encodeURIComponent(host)}${pass}&d=${encoded}&redirect_stream=true`;
     }
 
-    return `${mfp}/hls?url=${encoded}${pass}&ext=.m3u8${headerQuery}`;
+    return `${mfp}/hls?url=${encoded}${pass}&ext=.m3u8`;
 }
 
 function dedupeStreamsByUrl(streams = []) {

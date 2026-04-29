@@ -4,7 +4,6 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
-const { normalizeProxyTarget, isAlreadyProxied } = require('../../core/proxy/proxy_header_normalizer');
 const kitsuProvider = require('../animeworld/kitsu_provider');
 const animeIdentity = require('../anime/anime_identity');
 const animeProviderUtils = require('../anime/provider_utils');
@@ -1064,17 +1063,15 @@ async function extractEmbedUrl(animeUrl, episodeNumber, isMovie = false, candida
 function buildMfpHlsUrl(config, sourceUrl, referer) {
     const base = String(config?.mediaflow?.url || '').trim().replace(/\/+$/, '');
     if (!base || !sourceUrl) return null;
-    const origin = (() => { try { return new URL(referer || sourceUrl).origin; } catch (_) { return 'https://vixsrc.to'; } })();
-    const normalized = normalizeProxyTarget(sourceUrl, {
-        Referer: referer || '',
-        Origin: origin,
-        'User-Agent': USER_AGENT
-    }, { config, referer, origin, userAgent: USER_AGENT });
-    const targetUrl = normalized.url || sourceUrl;
-    if (isAlreadyProxied(targetUrl, config)) return targetUrl;
     const password = config?.mediaflow?.pass ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}` : '';
-    return `${base}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(targetUrl)}${password}${normalized.headerQuery || ''}`;
+    const ref = referer ? `&h_Referer=${encodeURIComponent(referer)}` : '';
+    let origin = 'https://vixsrc.to';
+    try { origin = new URL(referer || sourceUrl).origin; } catch {}
+    const org = origin ? `&h_Origin=${encodeURIComponent(origin)}` : '';
+    const ua = `&h_User-Agent=${encodeURIComponent(USER_AGENT)}`;
+    return `${base}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(sourceUrl)}${password}${ref}${org}${ua}`;
 }
+
 function qualityRank(value) {
     return { '4K': 2160, '1440p': 1440, '1080p': 1080, '720p': 720, '576p': 576, '480p': 480, Unknown: 0 }[String(value || 'Unknown')] || 0;
 }
