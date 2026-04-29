@@ -3,7 +3,7 @@
 const axios = require('axios');
 const { isCanceledError: defaultIsCanceledError } = require('./bypass');
 
-const DEFAULT_FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || 'http://127.0.0.1:8191/v1';
+const DEFAULT_FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || process.env.FLARE_URL || 'http://127.0.0.1:8191/v1';
 
 function createCircuitBreaker({ threshold = 3, resetMs = 60000 } = {}) {
     return {
@@ -57,6 +57,12 @@ function createFlareSolverrClient({
     onSolution = null
 } = {}) {
     const activeBypasses = new Map();
+    const debugEnabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.FLARESOLVERR_DEBUG || process.env.GUARDOSERIE_DEBUG_CF || '').trim().toLowerCase());
+    const debug = (message, meta = null) => {
+        if (!debugEnabled) return;
+        const suffix = meta ? ` ${JSON.stringify(meta)}` : '';
+        console.log(`[FlareSolverr:${providerName}] ${message}${suffix}`);
+    };
     const breaker = createCircuitBreaker({ threshold: circuitThreshold, resetMs: circuitResetMs });
 
     async function getClearance(url, options = {}) {
@@ -84,6 +90,7 @@ function createFlareSolverrClient({
 
                     if (method === 'POST' && options.body) payload.postData = options.body;
 
+                    debug('request', { url, method, attempt, endpoint });
                     const response = await axios.post(endpoint, payload, {
                         timeout: requestTimeout,
                         signal: options.signal,
@@ -92,12 +99,14 @@ function createFlareSolverrClient({
 
                     if (response.data?.status === 'ok') {
                         const data = buildSessionData(response.data?.solution || {});
+                        debug('solution ok', { url, finalUrl: data.url, hasResponse: Boolean(data.response), hasClearance: Boolean(data.cf_clearance) });
                         if (onSolution) await onSolution(data, response.data);
                         breaker.record(true);
                         return data;
                     }
                 } catch (error) {
                     if (isCanceledError(error)) throw error;
+                    debug('request failed', { url, attempt, error: error?.message || String(error) });
                 }
             }
 
@@ -122,3 +131,4 @@ module.exports = {
     createCircuitBreaker,
     createFlareSolverrClient
 };
+
