@@ -17,6 +17,7 @@ const tmdbHelper = require('../../core/utils/tmdb_helper');
 const animeIdentity = require('../anime/anime_identity');
 const kitsuProvider = require('../animeworld/kitsu_provider');
 const { buildCinemaCityProxyUrl } = require('./cc_proxy');
+const { normalizeProxyTarget, isAlreadyProxied } = require('../../core/proxy/proxy_header_normalizer');
 const {
     buildWebStream,
     dedupeStreamsByUrl,
@@ -1943,20 +1944,21 @@ function buildDisplayTitle(meta = {}, fallbackTitle, season, episode) {
 
 function buildCinemaCityMediaflowUrl(config = {}, streamUrl, headers = {}, isHls = false) {
     const mfpBase = String(config?.mediaflow?.url || '').trim().replace(/\/$/, '');
-    const normalizedTarget = normalizeRemoteUrl(streamUrl);
+    const normalized = normalizeProxyTarget(streamUrl, headers, { config });
+    const normalizedTarget = normalizeRemoteUrl(normalized.url || streamUrl);
     if (!mfpBase || !normalizedTarget) return null;
+    if (isAlreadyProxied(normalizedTarget, config)) return normalizedTarget;
 
     const passwordQuery = config?.mediaflow?.pass
         ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}`
         : '';
-    const refererQuery = headers?.Referer ? `&h_Referer=${encodeURIComponent(headers.Referer)}` : '';
-    const originQuery = headers?.Origin ? `&h_Origin=${encodeURIComponent(headers.Origin)}` : '';
+    const headerQuery = normalized.headerQuery || '';
 
     if (isHls) {
-        return `${mfpBase}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${refererQuery}${originQuery}`;
+        return `${mfpBase}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${headerQuery}`;
     }
 
-    return `${mfpBase}/proxy/stream?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${refererQuery}${originQuery}`;
+    return `${mfpBase}/proxy/stream?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${headerQuery}`;
 }
 
 async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost = null) {

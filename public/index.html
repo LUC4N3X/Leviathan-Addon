@@ -2972,15 +2972,48 @@
             };
         }
 
-        function getBaseManifestUrl() {
-            if(!validateInputs()) return null;
-            return `${window.location.host}/${btoa(JSON.stringify(getConfigObject()))}/manifest.json`;
+        const manifestEncodeCache = new Map();
+        let manifestUpdateSeq = 0;
+
+        function encodeConfigFallback(config) {
+            return btoa(unescape(encodeURIComponent(JSON.stringify(config))))
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=+$/g, '');
         }
 
-        function updateFluxStream() {
+        async function encodeConfigForUrl(config) {
+            const json = JSON.stringify(config || {});
+            if (manifestEncodeCache.has(json)) return manifestEncodeCache.get(json);
+            try {
+                const response = await fetch('/api/config/encode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: json
+                });
+                const payload = await response.json().catch(() => null);
+                if (response.ok && payload && payload.ok && payload.conf) {
+                    manifestEncodeCache.set(json, payload.conf);
+                    return payload.conf;
+                }
+            } catch (_) {}
+            const fallback = encodeConfigFallback(config);
+            manifestEncodeCache.set(json, fallback);
+            return fallback;
+        }
+
+        async function getBaseManifestUrl() {
+            if(!validateInputs()) return null;
+            const conf = await encodeConfigForUrl(getConfigObject());
+            return `${window.location.host}/${conf}/manifest.json`;
+        }
+
+        async function updateFluxStream() {
+            const seq = ++manifestUpdateSeq;
             const terminal = document.getElementById('fluxTerminal');
             const box = document.getElementById('generatedUrlBox');
-            const url = getBaseManifestUrl();
+            const url = await getBaseManifestUrl();
+            if (seq !== manifestUpdateSeq) return;
 
             if(url) {
                 const fullUrl = `${window.location.protocol}//${url}`;
@@ -3069,8 +3102,8 @@
 
         window.onclick = function(e) { if (e.target.classList.contains('modal-backdrop')) closeModal(e.target.id); }
 
-        function proceedToInstall() {
-            const url = getBaseManifestUrl();
+        async function proceedToInstall() {
+            const url = await getBaseManifestUrl();
             if(url) {
                 window.location.href = `stremio://${url}`;
             }
@@ -3083,7 +3116,7 @@
                 return;
             }
 
-            const url = getBaseManifestUrl();
+            const url = await getBaseManifestUrl();
             if(url) {
                 const fullUrl = `${window.location.protocol}//${url}`;
                 if (navigator.clipboard && navigator.clipboard.writeText) {

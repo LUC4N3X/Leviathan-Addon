@@ -3495,6 +3495,34 @@ function loadMobileConfig() {
     } catch(e) { console.log("No config loaded"); }
 }
 
+const mobileManifestEncodeCache = new Map();
+
+function mobileEncodeConfigFallback(config) {
+    return btoa(unescape(encodeURIComponent(JSON.stringify(config))))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/g, '');
+}
+
+async function mobileEncodeConfigForUrl(config) {
+    const json = JSON.stringify(config || {});
+    if (mobileManifestEncodeCache.has(json)) return mobileManifestEncodeCache.get(json);
+    try {
+        const response = await fetch('/api/config/encode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: json
+        });
+        const payload = await response.json().catch(() => null);
+        if (response.ok && payload && payload.ok && payload.conf) {
+            mobileManifestEncodeCache.set(json, payload.conf);
+            return payload.conf;
+        }
+    } catch (_) {}
+    const fallback = mobileEncodeConfigFallback(config);
+    mobileManifestEncodeCache.set(json, fallback);
+    return fallback;
+}
 function getMobileConfig() {
     const gateActive = document.getElementById('m-gateActive').checked;
     const gateVal = parseInt(document.getElementById('m-gateVal').value);
@@ -3562,7 +3590,7 @@ function getMobileConfig() {
     };
 }
 
-function updateLinkModalContent() {
+async function updateLinkModalContent() {
     const box = document.getElementById('m-generatedUrlBox');
     if(!box) return;
     
@@ -3575,18 +3603,20 @@ function updateLinkModalContent() {
         return;
     }
     
-    const manifestUrl = `${window.location.protocol}//${window.location.host}/${btoa(JSON.stringify(config))}/manifest.json`;
+    const conf = await mobileEncodeConfigForUrl(config);
+    const manifestUrl = `${window.location.protocol}//${window.location.host}/${conf}/manifest.json`;
     box.value = manifestUrl;
     box.style.color = "var(--m-primary)";
 }
 
-function mobileInstall() {
+async function mobileInstall() {
     const config = getMobileConfig();
     const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
     if(!config.key && !isWebEnabled) {
         showToast("ERRORE: API KEY MANCANTE", "error"); return;
     }
-    const manifestUrl = `${window.location.host}/${btoa(JSON.stringify(config))}/manifest.json`;
+    const conf = await mobileEncodeConfigForUrl(config);
+    const manifestUrl = `${window.location.host}/${conf}/manifest.json`;
     window.location.href = `stremio://${manifestUrl}`;
 }
 

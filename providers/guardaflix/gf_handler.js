@@ -4,6 +4,7 @@ const https = require('https');
 const { URL } = require('url');
 
 const tmdbHelper = require('../../core/utils/tmdb_helper');
+const { normalizeProxyTarget, isAlreadyProxied } = require('../../core/proxy/proxy_header_normalizer');
 
 const {
     buildWebStream,
@@ -864,19 +865,22 @@ function shouldProxyWithMediaflow(config, extracted) {
 function applyMediaflow(config, extracted) {
     const originalHeaders = extracted?.headers || {};
     const referer = originalHeaders.Referer || originalHeaders.referer || '';
-    const origin = originalHeaders.Origin || originalHeaders.origin || (referer ? new URL(referer).origin : '');
+    const origin = originalHeaders.Origin || originalHeaders.origin || (() => { try { return referer ? new URL(referer).origin : ''; } catch (_) { return ''; } })();
     const base = String(config.mediaflow.url || '').replace(/\/$/, '');
+    const normalized = normalizeProxyTarget(extracted?.url, originalHeaders, { config, referer, origin });
+    const targetUrl = normalized.url || extracted?.url;
+    if (isAlreadyProxied(targetUrl, config)) {
+        return { url: targetUrl, referer, origin, headers: normalized.headers };
+    }
     const password = config.mediaflow.pass ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}` : '';
-    const refererParam = referer ? `&h_Referer=${encodeURIComponent(referer)}` : '';
-    const originParam = origin ? `&h_Origin=${encodeURIComponent(origin)}` : '';
 
     return {
-        url: `${base}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(extracted.url)}${password}${refererParam}${originParam}`,
+        url: `${base}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(targetUrl)}${password}${normalized.headerQuery || ''}`,
         referer,
-        origin
+        origin,
+        headers: normalized.headers
     };
 }
-
 function scoreCandidate(queryTitle, year, href, text) {
     let score = 0;
 
