@@ -695,6 +695,10 @@ function computeScore(item, meta = {}, configInput = {}) {
   }
 
   score += Math.min(seeders, 500) * weights.seedersFactor;
+  if (Number.isFinite(Number(item?._seedHealthDelta)) && Number(item._seedHealthDelta) !== 0) {
+    score += Number(item._seedHealthDelta);
+    reasons.push(`SEED_HEALTH:${item._seedHealth || 'unknown'}`);
+  }
   score += Math.min(Math.floor(sizeBytes / Math.max(1, weights.sizeBucketBytes)), weights.sizeFactorCap);
   score += Math.min(title.length, weights.titleLengthCap);
 

@@ -3,6 +3,7 @@
 const path = require('path');
 const crypto = require('crypto');
 const { incrementMetric } = require('../../utils/runtime');
+const { getRawStreamCache, setRawStreamCache } = require('../../cache/raw_stream_cache');
 const { getRequestClientIp, getRequestOrigin } = require('../../utils/url');
 
 const RECENT_STREAM_HINT_TTL_MS = 10 * 60 * 1000;
@@ -314,6 +315,12 @@ function registerStremioRoutes(app, {
 
             const userConf = getConfig(req.params.conf);
             const reqHost = getRequestOrigin(req);
+            const cachedResult = await getRawStreamCache(req.params.type, requestId, req.params.conf, { logger });
+            if (cachedResult) {
+                applyStremioStreamCacheHeaders(res, cachedResult);
+                return res.json(cachedResult);
+            }
+
             const result = await generateStream(
                 req.params.type,
                 requestId,
@@ -322,6 +329,7 @@ function registerStremioRoutes(app, {
                 reqHost
             );
 
+            setRawStreamCache(req.params.type, requestId, req.params.conf, result, { logger }).catch(() => {});
             applyStremioStreamCacheHeaders(res, result);
             queueBingePredictionWarmup({
                 req,

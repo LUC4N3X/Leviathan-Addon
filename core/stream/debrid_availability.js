@@ -26,7 +26,20 @@ function normalizeRdStateValue(state) {
     return VALID_RD_STATES.has(normalized) ? normalized : null;
 }
 
-function getAvailabilityCacheKey(service, hash) {
+function normalizeFileIdxForAvailability(fileIdx) {
+    if (fileIdx === undefined || fileIdx === null || fileIdx === '') return 'auto';
+    const parsed = Number.parseInt(fileIdx, 10);
+    return Number.isInteger(parsed) && parsed >= 0 ? String(parsed) : 'auto';
+}
+
+function getAvailabilityCacheKey(service, hash, fileIdx = null) {
+    const normalizedService = String(service || 'rd').trim().toLowerCase();
+    const normalizedHash = String(hash || '').trim().toUpperCase();
+    if (!/^[A-F0-9]{40}$/.test(normalizedHash)) return null;
+    return `${normalizedService}:${normalizedHash}:${normalizeFileIdxForAvailability(fileIdx)}`;
+}
+
+function getLegacyAvailabilityCacheKey(service, hash) {
     const normalizedService = String(service || 'rd').trim().toLowerCase();
     const normalizedHash = String(hash || '').trim().toUpperCase();
     if (!/^[A-F0-9]{40}$/.test(normalizedHash)) return null;
@@ -398,19 +411,27 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         if (allUnknownCandidates.length === 0) return list;
 
         const cachedUnknownCandidates = [];
+        let availabilityCacheHits = 0;
         for (const item of allUnknownCandidates) {
-            const cacheKey = getAvailabilityCacheKey('rd', item?.hash);
+            const cacheKey = getAvailabilityCacheKey('rd', item?.hash, item?.fileIdx);
             if (!cacheKey || typeof Cache.getAvailability !== 'function') {
                 cachedUnknownCandidates.push(item);
                 continue;
             }
             try {
-                const cachedPayload = await Cache.getAvailability(cacheKey);
-                if (!applyAvailabilityCachePayload(item, cachedPayload)) cachedUnknownCandidates.push(item);
+                let cachedPayload = await Cache.getAvailability(cacheKey);
+                if (!cachedPayload) {
+                    const legacyKey = getLegacyAvailabilityCacheKey('rd', item?.hash);
+                    if (legacyKey && legacyKey !== cacheKey) cachedPayload = await Cache.getAvailability(legacyKey);
+                }
+                if (applyAvailabilityCachePayload(item, cachedPayload)) availabilityCacheHits += 1;
+                else cachedUnknownCandidates.push(item);
             } catch (_) {
                 cachedUnknownCandidates.push(item);
             }
         }
+
+        if (availabilityCacheHits > 0) logger.info(`[AVAILABILITY CACHE] hit=${availabilityCacheHits}/${allUnknownCandidates.length} key=infoHash:fileIdx service=rd`);
 
         if (cachedUnknownCandidates.length === 0) return list;
 
@@ -467,7 +488,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 });
 
                 if (typeof Cache.cacheAvailability === 'function') {
-                    const availabilityCacheKey = getAvailabilityCacheKey('rd', item.hash);
+                    const availabilityCacheKey = getAvailabilityCacheKey('rd', item.hash, item?.fileIdx);
                     if (availabilityCacheKey) {
                         const availabilityTtl = statePayload.state === 'cached' ? AVAILABILITY_CACHE_HIT_TTL : (statePayload.state === 'uncached_terminal' ? AVAILABILITY_CACHE_NEGATIVE_TTL : AVAILABILITY_CACHE_PROBING_TTL);
                         await Cache.cacheAvailability(availabilityCacheKey, buildAvailabilityCachePayload(statePayload, item, result), availabilityTtl);
@@ -490,7 +511,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                     item.rdCacheState = 'probing';
                     item._dbCachedRd = null;
                     if (typeof Cache.cacheAvailability === 'function') {
-                        const availabilityCacheKey = getAvailabilityCacheKey('rd', item?.hash);
+                        const availabilityCacheKey = getAvailabilityCacheKey('rd', item?.hash, item?.fileIdx);
                         if (availabilityCacheKey) await Cache.cacheAvailability(availabilityCacheKey, buildAvailabilityCachePayload({ state: 'probing', cached: null, failures: item?._dbFailures || 0 }, item, null), AVAILABILITY_CACHE_PROBING_TTL);
                     }
                 }
@@ -632,6 +653,13 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 else if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, `${reason}_cached`);
                 const dbLookupKey = getMetaDbLookupKey(meta);
                 if (dbLookupKey) await Cache.invalidateDbTorrents(dbLookupKey, `${reason}_cached`);
+                if (typeof Cache.cacheAvailability === 'function') {
+                    const availabilityKey = getAvailabilityCacheKey(normalizedService, item.hash, Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : item?.fileIdx);
+                    if (availabilityKey) {
+                        await Cache.cacheAvailability(availabilityKey, buildAvailabilityCachePayload({ state: 'cached', cached: true, failures: 0 }, { ...item, fileIdx: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : item?.fileIdx }, { file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null }), AVAILABILITY_CACHE_HIT_TTL);
+                        logger.info(`[AVAILABILITY CACHE] saved key=infoHash:fileIdx service=${normalizedService} state=cached`);
+                    }
+                }
                 logger.info(`[RD AVAILABILITY] Persisted resolved hit | reason=${reason} | service=${normalizedService} | hash=${item.hash} | updated=${updated}`);
                 return true;
             }

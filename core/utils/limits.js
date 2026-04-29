@@ -135,7 +135,7 @@ function scheduleKeyed(group, key, task, options = {}) {
     };
 
     const runPromise = state.tail.catch(() => undefined).then(execute);
-    state.tail = runPromise.finally(() => {
+    state.tail = runPromise.catch(() => undefined).finally(() => {
         state.pending = Math.max(0, state.pending - 1);
         decrementGroupPending(normalizedGroup);
         state.lastUsedAt = Date.now();

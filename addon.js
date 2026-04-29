@@ -192,6 +192,7 @@ const {
 const { generateStream, resolveLazyStreamData } = require('./core/stream_generator');
 const { bootRealDebridAuditor } = require('./core/server/bootstrap/rd_auditor_boot');
 const { applyCommonMiddleware } = require('./core/server/middleware');
+const { getRawStreamCacheStats } = require('./core/cache/raw_stream_cache');
 const { createAppServices } = require('./core/server/services/app_services');
 const { registerApiRoutes } = require('./core/server/routes/api_routes');
 const { registerPlaybackRoutes } = require('./core/server/routes/playback_routes');
@@ -417,6 +418,12 @@ function bootstrapServer() {
         console.log(`[CORE] Optimized for High Reliability`);
         console.log(`[CACHE] Global raw + user level active`);
         console.log(`[CACHE] Shared L2 ${process.env.SHARED_STREAM_CACHE_ENABLED === 'false' ? 'disabled' : 'active'}`);
+        const rawStreamCacheStats = getRawStreamCacheStats();
+        console.log(`[RAW CACHE] active compressed=${rawStreamCacheStats.compressed} ttl=${rawStreamCacheStats.ttlSeconds}s maxBytes=${rawStreamCacheStats.maxBytes}`);
+        console.log(`[RANK] Seed health smart gate active healthy>=5 weak>=1`);
+        console.log(`[TRACKER] Enricher active + availability cache infoHash:fileIdx`);
+        console.log(`[PROXY HEADERS] normalizer active referer/origin/auth/range dedupe`);
+        console.log(`[SECURITY] API guard + encrypted config active`);
         console.log(`[SCRAPERS] Fallback scrapers ready`);
         console.log(`[NODE] instance=${LOCAL_NODE_ID}`);
         if (shouldUseCluster()) console.log(`[CLUSTER] worker=${process.pid} leader=${isClusterLeader} slot=${clusterSlot}`);

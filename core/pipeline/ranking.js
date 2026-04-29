@@ -1,5 +1,7 @@
 'use strict';
 
+const { applySeedHealthRanking, getSeedHealthLogSamples } = require('../lib/seed_health_ranker');
+
 function createRankingTools(deps = {}) {
   const {
     logger,
@@ -13,7 +15,11 @@ function createRankingTools(deps = {}) {
   } = deps;
 
   async function rankResults(cleanResults, meta, config, hasDebridKey, configuredDebridService, debridApiKey) {
-    let rankedList = rankAndFilterResults(cleanResults, meta, config);
+    const seedHealthPass = applySeedHealthRanking(cleanResults);
+    for (const line of getSeedHealthLogSamples(cleanResults, 3)) logger?.info?.(line);
+    logger?.info?.(`[RANK] seedHealth summary healthy=${seedHealthPass.stats.healthy} weak=${seedHealthPass.stats.weak} dead=${seedHealthPass.stats.dead} unknown=${seedHealthPass.stats.unknown} protected=${seedHealthPass.stats.protected} kept=${seedHealthPass.stats.kept}/${seedHealthPass.stats.total} strict=${seedHealthPass.stats.strict} dropped=${seedHealthPass.stats.dropped}`);
+
+    let rankedList = rankAndFilterResults(seedHealthPass.results, meta, config);
     const sortMode = config.sort || config.filters?.sort || 'balanced';
     rankedList = rerankCompositeResults(rankedList, meta, config, sortMode);
     rankedList = applyPremiumRankingPolicy(rankedList, meta, config);

@@ -7,6 +7,7 @@ const dbHelper = require('../storage/db_repository');
 const { createInvalidationBus } = require('../cache/invalidation_bus');
 const { logger, incrementMetric, registerCacheAccess, registerCacheSet } = require('./runtime');
 const { withSharedPromise } = require('./common');
+const { flushRawStreamCache, getRawStreamCacheStats } = require('../cache/raw_stream_cache');
 
 const myCache = new NodeCache({
     stdTTL: 1800,
@@ -678,6 +679,7 @@ const Cache = {
         streamCacheKeysByHash.clear();
         streamCacheKeysByImdb.clear();
         streamCacheKeysByEpisode.clear();
+        if (typeof flushRawStreamCache === 'function') flushRawStreamCache();
     },
     invalidateStreamsByHashes: async (hashes, reason = 'hash_update') => {
         const localOutcome = invalidateStreamsByHashesLocal(hashes);
@@ -748,7 +750,8 @@ const Cache = {
         cachedEntries: myCache.keys().filter((key) => String(key).startsWith('stream:')).length,
         staleEntries: rawCache.keys().filter((key) => String(key).startsWith('stream_shadow:')).length,
         dbLookupEntries: rawCache.keys().filter((key) => String(key).startsWith('dblookup:')).length,
-        sharedEnabled: supportsSharedStreamCache()
+        sharedEnabled: supportsSharedStreamCache(),
+        rawStream: typeof getRawStreamCacheStats === 'function' ? getRawStreamCacheStats() : null
     }),
     getRaw: (provider, id) => {
         const data = rawCache.get(`raw:${provider}:${id}`);

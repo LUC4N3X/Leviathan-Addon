@@ -1,6 +1,7 @@
 'use strict';
 
 const CURRENT_CONFIG_VERSION = 1;
+const { isEncryptedConfigToken, decryptConfigToken } = require('../security/user_config_crypto');
 const MAX_CONFIG_LENGTH = Math.max(parseInt(process.env.MAX_CONFIG_LENGTH || '16384', 10) || 16384, 2048);
 const ADMIN_PASS = String(process.env.ADMIN_PASS || '').trim();
 const ALLOWED_SERVICES = new Set(['rd', 'tb', 'p2p', 'web']);
@@ -17,7 +18,9 @@ function normalizeStringArray(value) {
 }
 
 function decodeConfigBase64(configStr) {
-  const normalized = String(configStr || '').trim().replace(/-/g, '+').replace(/_/g, '/');
+  const raw = String(configStr || '').trim();
+  if (isEncryptedConfigToken(raw)) return decryptConfigToken(raw);
+  const normalized = raw.replace(/-/g, '+').replace(/_/g, '/');
   const padding = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
   return Buffer.from(normalized + padding, 'base64').toString('utf8');
 }

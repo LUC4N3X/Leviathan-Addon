@@ -12,6 +12,8 @@ const { applyTorrentResultFilters } = require("./lib/torrent_result_filters");
 const P2P = require("./handlers/p2p_handler");
 const { generateSmartQueries, smartMatch } = require("./media_intelligence");
 const { rankAndFilterResults } = require("./lib/result_ranker");
+const { applySeedHealthRanking, getSeedHealthLogSamples } = require("./lib/seed_health_ranker");
+const { enrichTorrentItems } = require("./lib/tracker_enricher");
 const { tmdbToImdb, imdbToTmdb, getTmdbAltTitles } = require("./media_identity_resolver");
 const tmdbHelper = require("./utils/tmdb_helper");
 const kitsuHandler = require("./handlers/kitsu_handler");
@@ -879,7 +881,12 @@ function applyConfiguredStreamFilters(streams, filters = {}) {
 }
 
 async function normalizeCandidateResults(items) {
-    let normalized = deduplicateResults(Array.isArray(items) ? items : []);
+    const trackerPass = enrichTorrentItems(Array.isArray(items) ? items : []);
+    if (trackerPass.stats.enriched > 0) {
+        logger.info(`[TRACKER] enriched=${trackerPass.stats.enriched}/${trackerPass.stats.total} trackersAdded=${trackerPass.stats.trackersAdded} maxPerMagnet=${trackerPass.stats.maxTrackers}`);
+    }
+
+    let normalized = deduplicateResults(trackerPass.results);
     normalized = propagateRdKnownStatesByHash(normalized);
     normalized = await hydrateRdDbStatesByHash(normalized);
     return normalized;
@@ -1478,11 +1485,12 @@ async function persistPackResolution(meta, item, resolved) {
     rememberValidatedFileSet(item, meta, resolved);
 }
 
-function resolvePackNamesInBackground(meta, results, config) {
+function resolvePackNamesInBackground(meta, results, config, type = null) {
     if (!meta || !meta.isSeries || !config || !Array.isArray(results) || results.length === 0) return;
+    const effectiveType = String(type || meta?.type || meta?.contentType || (meta?.isSeries || meta?.season || meta?.episode ? 'series' : 'movie')).toLowerCase();
     const hasResolvableService = !!((config.service === 'rd' && (config.key || config.rd)) || (config.service === 'tb' && (config.key || config.rd || config.torbox || config.tb)));
     if (!hasResolvableService) return;
-    const packCandidates = results.filter(item => item && isConfidentSeasonPackItem(item, meta, type));
+    const packCandidates = results.filter(item => item && isConfidentSeasonPackItem(item, meta, effectiveType));
     if (packCandidates.length === 0) return;
 
     LIMITERS.bgPackJobs.schedule(async () => {
@@ -1804,7 +1812,7 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
                 }
 
                 if (metaCacheKey) await Cache.invalidateDbTorrents(metaCacheKey, 'db_save');
-                resolvePackNamesInBackground(meta, results, config);
+                resolvePackNamesInBackground(meta, results, config, effectiveType);
             });
         },
         { maxGroupPending: BACKGROUND_DB_SAVE_QUEUE_MAX }
@@ -2680,6 +2688,13 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
               applyPackKnowledge,
               applyConfiguredTorrentFilters
           });
+
+          const seedHealthPass = applySeedHealthRanking(cleanResults);
+          for (const line of getSeedHealthLogSamples(cleanResults, 3)) logger.info(line);
+          if (seedHealthPass.stats.total > 0) {
+              logger.info(`[RANK] seedHealth summary healthy=${seedHealthPass.stats.healthy} weak=${seedHealthPass.stats.weak} dead=${seedHealthPass.stats.dead} unknown=${seedHealthPass.stats.unknown} protected=${seedHealthPass.stats.protected} kept=${seedHealthPass.stats.kept}/${seedHealthPass.stats.total} strict=${seedHealthPass.stats.strict} dropped=${seedHealthPass.stats.dropped}`);
+          }
+          cleanResults = seedHealthPass.results;
           logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
 
           if (!sourceModeFlags.dbOnlyMode && !sourceModeFlags.cacheOnlyMode) saveResultsToDbBackground(meta, cleanResults, config, type);
