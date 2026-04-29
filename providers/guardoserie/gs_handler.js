@@ -31,7 +31,7 @@ const {
 } = require('../utils/bypass');
 const { createFlareSolverrClient } = require('../utils/flaresolverr');
 
-const INITIAL_GS_DOMAIN      = 'https://guardoserie.garden';
+const INITIAL_GS_DOMAIN      = 'https://guardoserie.run';
 const BROWSER_PROFILES       = GUARDA_SERIE_BROWSER_PROFILES;
 const FLARESOLVERR_URL       = process.env.FLARESOLVERR_URL || process.env.FLARE_URL || 'http://127.0.0.1:8191/v1';
 const PROVIDER_NAME          = 'guardoserie';
