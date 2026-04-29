@@ -33,7 +33,7 @@ const { createFlareSolverrClient } = require('../utils/flaresolverr');
 
 const INITIAL_GS_DOMAIN      = 'https://guardoserie.garden';
 const BROWSER_PROFILES       = GUARDA_SERIE_BROWSER_PROFILES;
-const FLARESOLVERR_URL       = process.env.FLARESOLVERR_URL || 'http://127.0.0.1:8191/v1';
+const FLARESOLVERR_URL       = process.env.FLARESOLVERR_URL || process.env.FLARE_URL || 'http://127.0.0.1:8191/v1';
 const PROVIDER_NAME          = 'guardoserie';
 const SESSION_FILE           = path.join(process.cwd(), `cf-session-${PROVIDER_NAME}.json`);
 const DOMAIN_FILE            = path.join(process.cwd(), `${PROVIDER_NAME}-domain.json`);
@@ -43,12 +43,20 @@ const TTL_SEARCH             = 1000 * 60 * 30;
 const TTL_EPISODE            = 1000 * 60 * 30;
 const TTL_SERIES             = 1000 * 60 * 60 * 6;
 const CF_SESSION_TTL         = 1000 * 60 * 60 * 6;
-const GLOBAL_TIMEOUT_MS      = 24000;
-const SEARCH_QUERY_TIMEOUT_MS = 8000;
-const DIRECT_FETCH_TIMEOUT_MS = 6500;
+const GLOBAL_TIMEOUT_MS      = Math.max(30000, parseInt(process.env.GS_INTERNAL_TIMEOUT || '45000', 10) || 45000);
+const SEARCH_QUERY_TIMEOUT_MS = Math.max(12000, parseInt(process.env.GS_SEARCH_TIMEOUT || '22000', 10) || 22000);
+const DIRECT_FETCH_TIMEOUT_MS = Math.max(4500, parseInt(process.env.GS_DIRECT_FETCH_TIMEOUT || '5500', 10) || 5500);
 const MAX_CACHE_ITEMS        = 500;
 const FS_CIRCUIT_THRESHOLD   = 3;
 const FS_CIRCUIT_RESET_MS    = 60_000;
+const DEBUG_GS              = ['1', 'true', 'yes', 'on'].includes(String(process.env.GUARDOSERIE_DEBUG || '').trim().toLowerCase());
+const DEBUG_CF              = DEBUG_GS || ['1', 'true', 'yes', 'on'].includes(String(process.env.GUARDOSERIE_DEBUG_CF || process.env.FLARESOLVERR_DEBUG || '').trim().toLowerCase());
+
+function gsDebug(message, meta = null) {
+  if (!DEBUG_GS && !DEBUG_CF) return;
+  const suffix = meta ? ` ${JSON.stringify(meta)}` : '';
+  console.log(`[GuardoSerie:debug] ${message}${suffix}`);
+}
 
 const COMPILED_DIRECT_REGEX  = new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig');
 const COMPILED_ESCAPED_REGEX = new RegExp(HOSTER_ESCAPED_DIRECT_LINK_PATTERN, 'ig');
@@ -340,6 +348,9 @@ function updateCookies(existing, setCookieHeader) {
 }
 
 async function executeSmartFetch(url, isPost = false, body = null, signal = null, allowFlareSolverr = true, timeoutMs = DIRECT_FETCH_TIMEOUT_MS) {
+  const startedAt = Date.now();
+  const method = isPost ? 'POST' : 'GET';
+
   const buildSessionHeaders = session => {
     const headers = {
       'User-Agent':                session.userAgent,
@@ -360,11 +371,31 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
     return headers;
   };
 
+  const isGoodHtml = (html, status = 200) => {
+    const raw = typeof html === 'string' ? html : String(html || '');
+    if (!raw || status === 403 || status === 429 || status === 503) return false;
+    if (isCloudflareChallenge(raw)) return false;
+    return true;
+  };
+
+  const persistSession = (session, resolvedUrl = null, setCookie = null) => {
+    if (!session?.userAgent) return;
+    const next = {
+      ...session,
+      url:       normalizeBaseUrl(resolvedUrl || session.url) || session.url || getTargetDomain(),
+      timestamp: Date.now()
+    };
+    if (setCookie) next.cookies = updateCookies(session.cookies, setCookie);
+    activeSession = next;
+    saveSession(activeSession);
+    if (next.url) updateCurrentDomainFromUrl(next.url);
+  };
+
   const fetchWithSession = async session => {
     if (!isSessionFresh(session)) return null;
 
     const res = await gotSiteRequest(url, {
-      method:   isPost ? 'POST' : 'GET',
+      method,
       body:     isPost ? body : null,
       headers:  buildSessionHeaders(session),
       timeout:  timeoutMs,
@@ -378,26 +409,14 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
       ? res.data
       : String(res.data || '');
 
-    if (!html || res.status === 403 || res.status === 503 || isCloudflareChallenge(html)) {
+    if (!isGoodHtml(html, res.status)) {
+      gsDebug('session fetch rejected', { method, url, status: res.status, ms: Date.now() - startedAt });
       clearSession();
       return null;
     }
 
-    if (res.headers?.['set-cookie']) {
-      activeSession.cookies   = updateCookies(session.cookies, res.headers['set-cookie']);
-      activeSession.userAgent = session.userAgent;
-      activeSession.url       = normalizeBaseUrl(res.url) || session.url || getTargetDomain();
-      activeSession.timestamp = Date.now();
-      saveSession(activeSession);
-    } else {
-      activeSession = {
-        ...session,
-        url:       normalizeBaseUrl(res.url) || session.url || getTargetDomain(),
-        timestamp: Date.now()
-      };
-      saveSession(activeSession);
-    }
-
+    persistSession(session, res.url, res.headers?.['set-cookie']);
+    gsDebug('session fetch ok', { method, url, status: res.status, bytes: html.length, ms: Date.now() - startedAt });
     return html;
   };
 
@@ -407,26 +426,41 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
       if (html) return html;
     } catch (e) {
       if (isCanceledError(e)) throw e;
+      gsDebug('session fetch error', { method, url, error: e?.message || String(e), ms: Date.now() - startedAt });
     }
   }
 
   if (!allowFlareSolverr) return null;
 
+  gsDebug('flaresolverr request', { method, url, endpoint: FLARESOLVERR_URL });
   const session = await flareSolverrClient.getClearance(url, {
-    method: isPost ? 'POST' : 'GET',
+    method,
     body,
     signal
   });
 
-  if (!isSessionFresh(session)) return null;
-
-  try {
-    return await fetchWithSession(session);
-  } catch (e) {
-    if (isCanceledError(e)) throw e;
-    clearSession();
+  if (!isSessionFresh(session)) {
+    gsDebug('flaresolverr no fresh session', { method, url, ms: Date.now() - startedAt });
     return null;
   }
+
+  if (isGoodHtml(session.response, 200)) {
+    persistSession(session, session.url || url);
+    const html = String(session.response || '');
+    gsDebug('flaresolverr response used directly', { method, url, bytes: html.length, ms: Date.now() - startedAt });
+    return html;
+  }
+
+  try {
+    const html = await fetchWithSession(session);
+    if (html) return html;
+  } catch (e) {
+    if (isCanceledError(e)) throw e;
+    gsDebug('post-flaresolverr fetch error', { method, url, error: e?.message || String(e), ms: Date.now() - startedAt });
+    clearSession();
+  }
+
+  return null;
 }
 
 async function smartFetch(url, { isPost = false, body = null, ttl = TTL_SEARCH, signal = null, allowFlareSolverr = true, timeoutMs = DIRECT_FETCH_TIMEOUT_MS } = {}) {
@@ -744,16 +778,45 @@ function extractSearchResultsFromHtml(html, baseUrl) {
 }
 
 async function searchProviderSequential(query, signal) {
-  const baseUrl    = await refreshTargetDomain(signal);
-  const ajaxUrl    = `${baseUrl}/wp-admin/admin-ajax.php`;
-  const ajaxBody   = `s=${encodeURIComponent(query)}&action=searchwp_live_search&swpengine=default&swpquery=${encodeURIComponent(query)}`;
-  const ajaxHtml   = await smartFetch(ajaxUrl, { isPost: true, body: ajaxBody, ttl: TTL_SEARCH, signal, allowFlareSolverr: true, timeoutMs: SEARCH_QUERY_TIMEOUT_MS });
-  const ajaxResults = extractSearchResultsFromHtml(ajaxHtml, baseUrl);
-  if (ajaxResults.length > 0) return ajaxResults;
+  const startedAt = Date.now();
+  const baseUrl     = await refreshTargetDomain(signal);
+  const ajaxUrl     = `${baseUrl}/wp-admin/admin-ajax.php`;
+  const ajaxBody    = `s=${encodeURIComponent(query)}&action=searchwp_live_search&swpengine=default&swpquery=${encodeURIComponent(query)}`;
+  const fallbackUrl = `${baseUrl}/?s=${encodeURIComponent(query)}`;
 
-  const fallbackUrl  = `${baseUrl}/?s=${encodeURIComponent(query)}`;
-  const fallbackHtml = await smartFetch(fallbackUrl, { ttl: TTL_SEARCH, signal, allowFlareSolverr: true, timeoutMs: SEARCH_QUERY_TIMEOUT_MS });
-  return extractSearchResultsFromHtml(fallbackHtml, baseUrl);
+  const [ajaxHtml, fallbackHtml] = await Promise.all([
+    smartFetch(ajaxUrl, {
+      isPost: true,
+      body: ajaxBody,
+      ttl: TTL_SEARCH,
+      signal,
+      allowFlareSolverr: true,
+      timeoutMs: SEARCH_QUERY_TIMEOUT_MS
+    }).catch((e) => {
+      if (isCanceledError(e)) throw e;
+      gsDebug('ajax search failed', { query, error: e?.message || String(e) });
+      return '';
+    }),
+    smartFetch(fallbackUrl, {
+      ttl: TTL_SEARCH,
+      signal,
+      allowFlareSolverr: true,
+      timeoutMs: SEARCH_QUERY_TIMEOUT_MS
+    }).catch((e) => {
+      if (isCanceledError(e)) throw e;
+      gsDebug('fallback search failed', { query, error: e?.message || String(e) });
+      return '';
+    })
+  ]);
+
+  const results = [
+    ...extractSearchResultsFromHtml(ajaxHtml, baseUrl),
+    ...extractSearchResultsFromHtml(fallbackHtml, baseUrl)
+  ];
+
+  const unique = Array.from(new Map(results.map(item => [item.url, item])).values());
+  gsDebug('search query done', { query, results: unique.length, ms: Date.now() - startedAt });
+  return unique;
 }
 
 function createTimeoutSignal(parentSignal, timeoutMs) {
@@ -967,7 +1030,8 @@ async function searchGuardaserie(meta, config) {
 
   try {
     return await _searchGuardaserie(meta, config, season, episode, controller.signal);
-  } catch (_) {
+  } catch (e) {
+    gsDebug('provider failed', { error: e?.message || String(e) });
     return [];
   } finally {
     clearTimeout(timer);
@@ -1043,7 +1107,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
     const titleScore = normalizeTitleScoreMany(result.title, expectedTitles);
     if (titleScore < 1) continue;
 
-    const html = await smartFetch(result.url, { ttl: TTL_SERIES, signal, allowFlareSolverr: false, timeoutMs: DIRECT_FETCH_TIMEOUT_MS });
+    const html = await smartFetch(result.url, { ttl: TTL_SERIES, signal, allowFlareSolverr: true, timeoutMs: DIRECT_FETCH_TIMEOUT_MS });
     if (!html) continue;
 
     const foundYear =
@@ -1070,7 +1134,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
     outer: for (const slug of slugs) {
       for (const p of [`/serie/${slug}/`, `/${slug}/`, `/serietv/${slug}/`]) {
         const url  = buildGsUrl(p);
-        const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: false, timeoutMs: DIRECT_FETCH_TIMEOUT_MS });
+        const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: true, timeoutMs: DIRECT_FETCH_TIMEOUT_MS });
         if (html) {
           const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
           if (normalizeTitleScoreMany(pageTitle, expectedTitles) >= 2) {
@@ -1088,7 +1152,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
   if (!episodeUrl) return [];
 
   const absoluteEpUrl = new URL(episodeUrl, getTargetDomain()).toString();
-  const finalHtml     = await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: false, timeoutMs: DIRECT_FETCH_TIMEOUT_MS });
+  const finalHtml     = await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: true, timeoutMs: DIRECT_FETCH_TIMEOUT_MS });
   const playerLinks   = Array.from(new Set(extractPlayerLinksFromHtml(finalHtml))).slice(0, 5);
   if (!playerLinks.length) return [];
 
