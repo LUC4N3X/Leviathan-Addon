@@ -36,6 +36,8 @@
   <img src="https://img.shields.io/badge/Cloud_Dedupe-Always_On-00eaff?style=flat-square&labelColor=061018" />
   <img src="https://img.shields.io/badge/Language-ITA_%7C_ENG_%7C_Hybrid-00eaff?style=flat-square&labelColor=061018" />
   <img src="https://img.shields.io/badge/Kitsu-Anime_Ready-00eaff?style=flat-square&labelColor=061018" />
+  <img src="https://img.shields.io/badge/AnimeUnity-Enabled-00eaff?style=flat-square&labelColor=061018" />
+  <img src="https://img.shields.io/badge/AnimeSaturn-Enabled-00eaff?style=flat-square&labelColor=061018" />
 </p>
 
 <br>
@@ -151,7 +153,7 @@ Questo permette al protocollo di trattare meglio serie come <b>One Piece</b>, <b
 </p>
 
 <p align="center">
-La logica combina <b>matching anime-first</b>, <b>contesto Kitsu</b>, <b>controllo stagione/episodio</b>, <b>query più intelligenti</b> e <b>ranking anti-collisione</b>, così da restituire output più coerenti quando il catalogo usa identificatori anime invece dei flussi TV standard.
+La logica combina <b>matching anime-first</b>, <b>contesto Kitsu</b>, <b>controllo stagione/episodio</b>, <b>query più intelligenti</b> e <b>ranking anti-collisione</b>. Il layer anime è allineato ai provider realmente registrati nel codice: <b>AnimeWorld</b>, <b>AnimeUnity</b>, <b>AnimeSaturn</b>, più gli engine torrent anime <b>Nyaa</b> e <b>SubsPlease</b>.
 </p>
 
 <br>
@@ -178,7 +180,7 @@ La logica combina <b>matching anime-first</b>, <b>contesto Kitsu</b>, <b>control
 <tr>
 <td align="center" width="33%"><b>☁️ RD/TorBox Saved Cloud</b><br><sub>Layer opzionale che riconosce i file già salvati, marca i duplicati e usa <code>☁️ RD</code> / <code>☁️ TB</code>.</sub></td>
 <td align="center" width="33%"><b>🚀 Core Refactoring</b><br><sub>Motore riorganizzato per maggiore stabilità, leggibilità e tenuta sotto carico.</sub></td>
-<td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, GuardaHD, GuardoSerie, AnimeWorld, GuardaFlix e CinemaCity.</sub></td>
+<td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, CinemaCity, GuardaHD, GuardoSerie, AnimeWorld, AnimeUnity, AnimeSaturn e GuardaFlix.</sub></td>
 </tr>
 <tr>
 <td align="center" width="33%"><b>🎨 Polymorphic Formatter</b><br><sub>Rendering più pulito, gerarchico e leggibile dentro Stremio.</sub></td>
@@ -267,11 +269,11 @@ In pratica il protocollo analizza pattern come <code>MULTI</code>, <code>SUB-ITA
 </p>
 
 <p align="center">
-A livello infrastrutturale integra <b>WAF handling</b>, <b>identity rotation</b>, <b>failover automatici</b>, <b>magnet enrichment</b>, un layer ibrido con <b>StreamingCommunity</b>, <b>GuardaHD</b> e <b>GuardoSerie</b>, e un layer cloud opzionale che riconosce i file già salvati dall’utente su <b>Real-Debrid</b> o <b>TorBox</b> senza duplicare la lista stream.
+A livello infrastrutturale integra <b>WAF handling</b>, <b>identity rotation</b>, <b>failover automatici</b>, <b>magnet enrichment</b>, un layer ibrido con <b>StreamingCommunity</b>, <b>CinemaCity</b>, <b>GuardaHD</b>, <b>GuardoSerie</b>, <b>AnimeWorld</b>, <b>AnimeUnity</b>, <b>AnimeSaturn</b> e <b>GuardaFlix</b>, e un layer cloud opzionale che riconosce i file già salvati dall’utente su <b>Real-Debrid</b> o <b>TorBox</b> senza duplicare la lista stream.
 </p>
 
 <p align="center">
-Il blocco viene completato da <b>Debrid Ghost Shell</b> per scenari proxy-based, <b>Provider Web dedicati</b> per coprire i percorsi diretti, <b>Polymorphic Formatter Engine</b> per una resa visiva superiore, <b>Linguistic Scope Control</b> per gestire ITA / ENG / Hybrid, <b>Trailer Bridge</b> per le anteprime contestuali e <b>Direct Swarm Access</b> per la riproduzione P2P pura.
+Il blocco viene completato da <b>Debrid Ghost Shell</b> per scenari proxy-based, <b>Provider Web dedicati</b> e <b>Anime Provider sincronizzati</b> per coprire i percorsi diretti, <b>Polymorphic Formatter Engine</b> per una resa visiva superiore, <b>Linguistic Scope Control</b> per gestire ITA / ENG / Hybrid, <b>Trailer Bridge</b> per le anteprime contestuali e <b>Direct Swarm Access</b> per la riproduzione P2P pura.
 </p>
 
 <p align="center">
@@ -306,30 +308,94 @@ Il blocco viene completato da <b>Debrid Ghost Shell</b> per scenari proxy-based,
 
 ## 🌐 Leviathan Network Nodes
 
+### Provider matrix sincronizzata con il codice attuale
+
+<p align="center">
+Questa tabella è stata riallineata ai moduli realmente presenti nel progetto: web provider, anime provider, bridge esterni, torrent engine e hoster extractor.
+</p>
+
 </div>
 
 <table align="center">
-<tr><th>Target Engine</th><th>Region</th><th>Mode</th><th>Priority</th><th>Status</th></tr>
-<tr><td align="center"><b>Real-Debrid Saved Cloud</b></td><td align="center">👤 USER</td><td align="center">Cloud Library</td><td align="center">Smart</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>TorBox Saved Cloud</b></td><td align="center">👤 USER</td><td align="center">Cloud Library</td><td align="center">Smart</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>StreamingCommunity</b></td><td align="center">🇮🇹 ITA</td><td align="center">HLS Stream</td><td align="center">Ultra</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>GuardaHD</b></td><td align="center">🇮🇹 ITA</td><td align="center">HLS / MP4</td><td align="center">High</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>GuardoSerie</b></td><td align="center">🇮🇹 ITA</td><td align="center">HLS / MP4</td><td align="center">High</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>AnimeWorld</b></td><td align="center">🇮🇹 ITA</td><td align="center">Anime Provider</td><td align="center">High</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>GuardaFlix</b></td><td align="center">🇮🇹 ITA</td><td align="center">Web Provider</td><td align="center">High</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>CinemaCity</b></td><td align="center">🇮🇹 ITA</td><td align="center">Web Provider</td><td align="center">High</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>Il Corsaro Nero</b></td><td align="center">🇮🇹 ITA</td><td align="center">Torrent Fast Lane</td><td align="center">High</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>Knaben</b></td><td align="center">🌍 GLB</td><td align="center">API JSON</td><td align="center">High</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>The Pirate Bay</b></td><td align="center">🌍 GLB</td><td align="center">API JSON</td><td align="center">High</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>UIndex</b></td><td align="center">🌍 GLB</td><td align="center">Hybrid Aggregator</td><td align="center">Medium</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>SolidTorrents</b></td><td align="center">🌍 GLB</td><td align="center">Hybrid Aggregator</td><td align="center">Medium</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>Nyaa</b></td><td align="center">🇯🇵 JPN</td><td align="center">Deep Scan</td><td align="center">Medium</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>TorrentGalaxy</b></td><td align="center">🌍 GLB</td><td align="center">Deep Scan</td><td align="center">Medium</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>BitSearch</b></td><td align="center">🌍 GLB</td><td align="center">Deep Scan</td><td align="center">Medium</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>LimeTorrents</b></td><td align="center">🌍 GLB</td><td align="center">Deep Scan</td><td align="center">Medium</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>Torrentz2</b></td><td align="center">🌍 GLB</td><td align="center">Deep Scan</td><td align="center">Medium</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>RARBG Mirrors</b></td><td align="center">🌍 GLB</td><td align="center">Mirror Cluster</td><td align="center">Medium</td><td align="center">🟢</td></tr>
-<tr><td align="center"><b>1337x</b></td><td align="center">🌍 GLB</td><td align="center">Protected HTML</td><td align="center">Medium</td><td align="center">🟢</td></tr>
+<tr><th>Layer</th><th>Provider</th><th>Scope</th><th>Attivazione</th><th>Stato</th></tr>
+<tr><td align="center"><b>Cloud</b></td><td align="center"><b>Real-Debrid Saved Cloud</b></td><td align="center">👤 USER</td><td align="center"><code>enableSavedCloud</code> + RD token</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Cloud</b></td><td align="center"><b>TorBox Saved Cloud</b></td><td align="center">👤 USER</td><td align="center"><code>enableSavedCloud</code> + TorBox token</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Nexus Bridge</b></td><td align="center"><b>Torrentio Main</b></td><td align="center">🌍 GLB</td><td align="center">Bridge esterno opzionale</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Nexus Bridge</b></td><td align="center"><b>Torrentio Mirror</b></td><td align="center">🇮🇹 ITA-aware</td><td align="center">Mirror preferito quando ha hit ITA reali</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Nexus Bridge</b></td><td align="center"><b>MediaFusion</b></td><td align="center">🌍 RD-gated</td><td align="center"><code>only_when_torrentio_zero_v3</code></td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Web</b></td><td align="center"><b>StreamingCommunity</b></td><td align="center">🇮🇹 ITA</td><td align="center"><code>enableVix</code> / <code>enableStreamingCommunity</code></td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Web</b></td><td align="center"><b>CinemaCity</b></td><td align="center">🇮🇹 ITA</td><td align="center"><code>enableCc</code></td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Web</b></td><td align="center"><b>GuardaHD</b></td><td align="center">🇮🇹 ITA</td><td align="center"><code>enableGhd</code></td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Web</b></td><td align="center"><b>GuardoSerie</b></td><td align="center">🇮🇹 ITA</td><td align="center"><code>enableGs</code></td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Anime Web</b></td><td align="center"><b>AnimeWorld</b></td><td align="center">🇮🇹 Anime</td><td align="center"><code>enableAnimeWorld</code> + anime/Kitsu eligible</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Anime Web</b></td><td align="center"><b>AnimeUnity</b></td><td align="center">🇮🇹 Anime</td><td align="center"><code>enableAnimeUnity</code> oppure auto su Kitsu legacy</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Anime Web</b></td><td align="center"><b>AnimeSaturn</b></td><td align="center">🇮🇹 Anime</td><td align="center"><code>enableAnimeSaturn</code> + anime/Kitsu eligible</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Web</b></td><td align="center"><b>GuardaFlix</b></td><td align="center">🇮🇹 Movie</td><td align="center"><code>enableGf</code> solo film</td><td align="center">🟢</td></tr>
+</table>
+
+<br>
+
+<div align="center">
+
+### 🧲 Torrent Engine Layer
+
+</div>
+
+<table align="center">
+<tr><th>Engine</th><th>Scope</th><th>Mode</th><th>Note operative</th><th>Stato</th></tr>
+<tr><td align="center"><b>Il Corsaro Nero</b></td><td align="center">🇮🇹 ITA</td><td align="center">Torrent Fast Lane</td><td align="center">Priorità alta per release italiane</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Knaben</b></td><td align="center">🌍 GLB</td><td align="center">API JSON</td><td align="center">Categorie movie/series filtrate</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>The Pirate Bay</b></td><td align="center">🌍 GLB</td><td align="center">ApiBay JSON</td><td align="center">Magnet generati da info hash</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>TPB Mirror</b></td><td align="center">🌍 GLB</td><td align="center">Mirror HTML</td><td align="center">Fallback mirror separato</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>1337x</b></td><td align="center">🌍 GLB</td><td align="center">Protected JSON/HTML</td><td align="center">Parsing con filtri anti-rumore</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>BitSearch</b></td><td align="center">🌍 GLB</td><td align="center">API Search</td><td align="center">Hash magnet diretto</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>LimeTorrents</b></td><td align="center">🌍 GLB</td><td align="center">Deep Scan</td><td align="center">Query variant limitate</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>RARBG</b></td><td align="center">🌍 GLB</td><td align="center">Mirror Cluster</td><td align="center">Fetch dettaglio + magnet extraction</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>UIndex</b></td><td align="center">🌍 GLB</td><td align="center">Hybrid Aggregator</td><td align="center">Parsing magnet da risultati HTML</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Nyaa</b></td><td align="center">🇯🇵 Anime</td><td align="center">Anime Torrent</td><td align="center">Attivo solo per contesto anime</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>SubsPlease</b></td><td align="center">🇯🇵 Anime</td><td align="center">Anime Release API</td><td align="center">Attivo solo per contesto anime</td><td align="center">🟢</td></tr>
+</table>
+
+<br>
+
+<div align="center">
+
+### ⛵ Hoster Extractor Layer
+
+<p align="center">
+Gli hoster sotto non sono provider di ricerca autonomi: sono risolutori usati dai provider web quando una pagina restituisce embed, player o link intermedi.
+</p>
+
+</div>
+
+<table align="center">
+<tr><th>Extractor</th><th>Ruolo</th><th>Stato</th></tr>
+<tr><td align="center"><b>VixCloud</b></td><td align="center">Risoluzione StreamingCommunity / player compatibili</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Mixdrop</b></td><td align="center">Hoster resolver</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>SuperVideo</b></td><td align="center">Hoster resolver</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Streamtape</b></td><td align="center">Hoster resolver</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>UpStream</b></td><td align="center">Hoster resolver</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Uqload</b></td><td align="center">Hoster resolver</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Vidoza</b></td><td align="center">Hoster resolver</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>Dropload</b></td><td align="center">Hoster resolver</td><td align="center">🟢</td></tr>
+<tr><td align="center"><b>LoadM</b></td><td align="center">Hoster resolver</td><td align="center">🟢</td></tr>
+</table>
+
+<br>
+
+<div align="center">
+
+### 🧭 Provider Policy Notes
+
+</div>
+
+<table align="center">
+<tr><th>Policy</th><th>Comportamento</th></tr>
+<tr><td align="center"><b>Anime eligibility</b></td><td align="center">AnimeWorld, AnimeUnity e AnimeSaturn partono solo su richieste anime/Kitsu compatibili.</td></tr>
+<tr><td align="center"><b>AnimeUnity legacy auto</b></td><td align="center">Se l’URL installato è vecchio e manca il toggle, AnimeUnity può auto-attivarsi su Kitsu esplicito.</td></tr>
+<tr><td align="center"><b>MediaFusion gate</b></td><td align="center">MediaFusion parte solo quando Torrentio non restituisce risultati reali, evitando doppioni e latenza inutile.</td></tr>
+<tr><td align="center"><b>MediaFusion RD check</b></td><td align="center">Il check cache Real-Debrid viene applicato a MediaFusion; Torrentio può restare più diretto.</td></tr>
+<tr><td align="center"><b>GuardaFlix scope</b></td><td align="center">GuardaFlix viene usato per i film e non forza percorsi serie.</td></tr>
 </table>
 
 ---
@@ -387,6 +453,30 @@ http://localhost:7000
 | `core/lib/pulse_formatter.cjs` | Formatter AIO/Pulse aggiornato per riconoscere cloud salvato. |
 | `public/index.html` | Configuratore desktop aggiornato. |
 | `public/smartphone.js` | Configuratore mobile aggiornato. |
+
+---
+
+<div align="center">
+
+## 🧩 File principali del Provider Layer
+
+</div>
+
+| File | Ruolo |
+|---|---|
+| `providers/extractors/provider_registry.js` | Registry centrale dei web/anime provider e timeout minimi. |
+| `providers/streamingcommunity/vix_handler.js` | Provider StreamingCommunity / Vix. |
+| `providers/cinemacity/cc_handler.js` | Provider CinemaCity. |
+| `providers/guardahd/ghd_handler.js` | Provider GuardaHD. |
+| `providers/guardoserie/gs_handler.js` | Provider GuardoSerie. |
+| `providers/animeworld/aw_handler.js` | Provider AnimeWorld con supporto Kitsu/anime. |
+| `providers/animeunity/au_handler.js` | Provider AnimeUnity. |
+| `providers/animesaturn/as_handler.js` | Provider AnimeSaturn. |
+| `providers/guardaflix/gf_handler.js` | Provider GuardaFlix. |
+| `providers/engines.js` | Engine torrent: Corsaro, Knaben, Nyaa, SubsPlease, TPB, TPB Mirror, 1337x, BitSearch, LimeTorrents, RARBG e UIndex. |
+| `core/nexus-bridge/torrentio.js` | Bridge Torrentio Main/Mirror. |
+| `core/nexus-bridge/mediafusion.js` | Bridge MediaFusion con gate RD/cache. |
+| `providers/extractors/hosters/` | Resolver hoster: VixCloud, Mixdrop, SuperVideo, Streamtape, UpStream, Uqload, Vidoza, Dropload e LoadM. |
 
 ---
 
