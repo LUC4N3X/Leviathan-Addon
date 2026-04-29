@@ -1705,7 +1705,8 @@ async function getMetadata(id, type, config = {}) {
   });
 }
 
-function saveResultsToDbBackground(meta, results, config = null) {
+function saveResultsToDbBackground(meta, results, config = null, type = null) {
+    const effectiveType = String(type || meta?.type || meta?.contentType || (meta?.isSeries || meta?.season || meta?.episode ? 'series' : 'movie')).toLowerCase();
     if (!results || results.length === 0) return;
     const metaCacheKey = getMetaDbLookupKey(meta);
     const resultsSignature = buildResultsSignature(results);
@@ -1740,7 +1741,7 @@ function saveResultsToDbBackground(meta, results, config = null) {
                         seeders: item.seeders || 0,
                         provider: item.source || 'External',
                         file_index: item.fileIdx !== undefined ? item.fileIdx : undefined,
-                        is_pack: Boolean(meta?.isSeries && isConfidentSeasonPackItem(item, meta, type))
+                        is_pack: Boolean(meta?.isSeries && isConfidentSeasonPackItem(item, meta, effectiveType))
                     };
 
                     torrentRows.push(torrentObj);
@@ -2681,7 +2682,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           });
           logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
 
-          if (!sourceModeFlags.dbOnlyMode && !sourceModeFlags.cacheOnlyMode) saveResultsToDbBackground(meta, cleanResults, config);
+          if (!sourceModeFlags.dbOnlyMode && !sourceModeFlags.cacheOnlyMode) saveResultsToDbBackground(meta, cleanResults, config, type);
 
           rankedList = runSortStage(cleanResults, meta, config, {
               rankAndFilterResults,
