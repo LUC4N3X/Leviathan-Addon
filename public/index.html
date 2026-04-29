@@ -2972,15 +2972,50 @@
             };
         }
 
-        function getBaseManifestUrl() {
-            if(!validateInputs()) return null;
-            return `${window.location.host}/${btoa(JSON.stringify(getConfigObject()))}/manifest.json`;
+        let encryptedManifestCache = { signature: null, url: null, pending: null };
+        let fluxUpdateSequence = 0;
+
+        function getLegacyManifestUrl(config) {
+            return `${window.location.host}/${btoa(JSON.stringify(config))}/manifest.json`;
         }
 
-        function updateFluxStream() {
+        async function getBaseManifestUrl() {
+            if(!validateInputs()) return null;
+            const config = getConfigObject();
+            const signature = JSON.stringify(config);
+            if(encryptedManifestCache.signature === signature && encryptedManifestCache.url) return encryptedManifestCache.url;
+            if(encryptedManifestCache.signature === signature && encryptedManifestCache.pending) return encryptedManifestCache.pending;
+
+            encryptedManifestCache.signature = signature;
+            encryptedManifestCache.pending = (async () => {
+                try {
+                    const response = await fetch('/api/config/encrypt', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        cache: 'no-store',
+                        body: JSON.stringify({ config })
+                    });
+                    if(!response.ok) throw new Error(`encrypt_http_${response.status}`);
+                    const payload = await response.json();
+                    if(!payload || payload.ok !== true || !payload.manifestPath) throw new Error('encrypt_bad_payload');
+                    encryptedManifestCache.url = `${window.location.host}${payload.manifestPath}`;
+                    return encryptedManifestCache.url;
+                } catch (_) {
+                    encryptedManifestCache.url = getLegacyManifestUrl(config);
+                    return encryptedManifestCache.url;
+                } finally {
+                    encryptedManifestCache.pending = null;
+                }
+            })();
+            return encryptedManifestCache.pending;
+        }
+
+        async function updateFluxStream() {
+            const sequence = ++fluxUpdateSequence;
             const terminal = document.getElementById('fluxTerminal');
             const box = document.getElementById('generatedUrlBox');
-            const url = getBaseManifestUrl();
+            const url = await getBaseManifestUrl();
+            if(sequence !== fluxUpdateSequence) return;
 
             if(url) {
                 const fullUrl = `${window.location.protocol}//${url}`;
@@ -3069,8 +3104,8 @@
 
         window.onclick = function(e) { if (e.target.classList.contains('modal-backdrop')) closeModal(e.target.id); }
 
-        function proceedToInstall() {
-            const url = getBaseManifestUrl();
+        async function proceedToInstall() {
+            const url = await getBaseManifestUrl();
             if(url) {
                 window.location.href = `stremio://${url}`;
             }
@@ -3083,7 +3118,7 @@
                 return;
             }
 
-            const url = getBaseManifestUrl();
+            const url = await getBaseManifestUrl();
             if(url) {
                 const fullUrl = `${window.location.protocol}//${url}`;
                 if (navigator.clipboard && navigator.clipboard.writeText) {

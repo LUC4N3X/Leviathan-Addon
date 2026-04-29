@@ -7,6 +7,10 @@ const path = require('path');
 const zlib = require('zlib');
 const { once } = require('events');
 const { getRequestOrigin, isSafeRemoteUrl } = require('../../core/utils/url');
+const {
+    prepareProxyTarget,
+    maybeLogProxyHeaderDecision
+} = require('../../core/lib/proxy_header_normalizer');
 
 const CC_MANIFEST_ROUTE = '/ccproxy/manifest.m3u8';
 const CC_STREAM_ROUTE = '/ccproxy/stream';
@@ -166,26 +170,20 @@ function normalizeRequestHeaders(headers = {}) {
     return out;
 }
 
-function buildRequestHeaders(targetUrl, sourceHeaders = {}) {
-    const target = new URL(targetUrl);
-    const referer = safeUrl(getHeader(sourceHeaders, 'referer')) || `${target.origin}/`;
-    const origin = safeUrl(getHeader(sourceHeaders, 'origin')) || getOrigin(referer, target.origin) || target.origin;
-    const userAgent = getHeader(sourceHeaders, 'user-agent') || DEFAULT_UA;
-    const acceptLanguage = getHeader(sourceHeaders, 'accept-language') || DEFAULT_ACCEPT_LANGUAGE;
-    const cookie = getHeader(sourceHeaders, 'cookie');
-
-    return normalizeRequestHeaders({
-        'User-Agent': userAgent,
-        Accept: getHeader(sourceHeaders, 'accept') || (isHlsUrl(targetUrl) ? 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*' : '*/*'),
-        'Accept-Encoding': 'identity',
-        'Accept-Language': acceptLanguage,
-        'Cache-Control': 'no-cache',
-        Pragma: 'no-cache',
-        Referer: referer,
-        Origin: origin,
-        ...(cookie ? { Cookie: cookie } : {})
+function buildRequestHeaders(targetUrl, sourceHeaders = {}, options = {}) {
+    const prepared = prepareProxyTarget(targetUrl, sourceHeaders, {
+        userAgent: DEFAULT_UA,
+        acceptLanguage: DEFAULT_ACCEPT_LANGUAGE,
+        allowRange: options.allowRange !== false,
+        forceIdentityEncoding: true,
+        fillReferer: true,
+        fillOrigin: true,
+        ...options
     });
+    maybeLogProxyHeaderDecision(prepared, prepared.url || targetUrl);
+    return prepared.headers;
 }
+
 
 function isHlsUrl(targetUrl, contentType = '') {
     return /mpegurl|x-mpegurl|application\/vnd\.apple\.mpegurl/i.test(contentType || '') || /\.m3u8(?:$|[?#])/i.test(String(targetUrl || ''));
@@ -196,14 +194,27 @@ function getRouteForTarget(targetUrl, contentType = '') {
 }
 
 function buildProxyUrl(baseUrl, targetUrl, headers = {}, routePath = null, meta = null) {
-    const normalizedTarget = safeUrl(targetUrl);
-    if (!normalizedTarget) return null;
-    const selectedRoute = routePath || getRouteForTarget(normalizedTarget);
     const normalizedBase = normalizeAddonBase(baseUrl);
-    const requestHeaders = buildRequestHeaders(normalizedTarget, headers);
+    const prepared = prepareProxyTarget(targetUrl, headers, {
+        addonBase: normalizedBase,
+        mediaflowUrl: process.env.MEDIAFLOW_PROXY_URL || process.env.MEDIAFLOW_URL || '',
+        userAgent: DEFAULT_UA,
+        acceptLanguage: DEFAULT_ACCEPT_LANGUAGE,
+        forceIdentityEncoding: true,
+        fillReferer: true,
+        fillOrigin: true
+    });
+    const normalizedTarget = safeUrl(prepared.url);
+    if (!normalizedTarget) return null;
+    if (!prepared.shouldProxy) {
+        maybeLogProxyHeaderDecision(prepared, normalizedTarget, { prefix: '[PROXY] skip' });
+        return normalizedTarget;
+    }
+    const selectedRoute = routePath || getRouteForTarget(normalizedTarget);
+    maybeLogProxyHeaderDecision(prepared, normalizedTarget);
     const token = packToken({
         u: normalizedTarget,
-        h: requestHeaders,
+        h: prepared.headers,
         r: selectedRoute,
         e: Date.now() + PLAYBACK_TOKEN_TTL_MS,
         i: Date.now(),
@@ -211,6 +222,7 @@ function buildProxyUrl(baseUrl, targetUrl, headers = {}, routePath = null, meta 
     });
     return token ? `${normalizedBase}${selectedRoute}?d=${encodeURIComponent(token)}` : null;
 }
+
 
 function buildCinemaCityProxyUrl(streamUrl, headers = {}, reqHost = null, options = {}) {
     const route = options?.isHls === true ? CC_MANIFEST_ROUTE : getRouteForTarget(streamUrl);
@@ -321,7 +333,7 @@ function resolveProxySource(req) {
     if (!payload?.u || payload.r !== routeBinding || !isSafeRemoteUrl(payload.u)) return null;
     return {
         sourceUrl: payload.u,
-        headers: payload.h && typeof payload.h === 'object' ? normalizeRequestHeaders(payload.h) : buildRequestHeaders(payload.u),
+        headers: buildRequestHeaders(payload.u, payload.h && typeof payload.h === 'object' ? payload.h : {}),
         meta: payload.m || null
     };
 }
@@ -337,14 +349,19 @@ function buildAbortSignal(req, res) {
 }
 
 async function fetchUpstream(sourceUrl, headers, req, signal, { allowRange = true } = {}) {
-    const requestHeaders = { ...(headers || buildRequestHeaders(sourceUrl)) };
-    delete requestHeaders['accept-encoding'];
-    delete requestHeaders['Accept-Encoding'];
-    requestHeaders['Accept-Encoding'] = 'identity';
-    delete requestHeaders.range;
-    delete requestHeaders.Range;
+    const prepared = prepareProxyTarget(sourceUrl, headers || {}, {
+        userAgent: DEFAULT_UA,
+        acceptLanguage: DEFAULT_ACCEPT_LANGUAGE,
+        allowRange,
+        forceIdentityEncoding: true,
+        fillReferer: true,
+        fillOrigin: true
+    });
+    const requestHeaders = { ...(prepared.headers || {}) };
     const range = String(req?.headers?.range || '').trim();
     if (allowRange && range && /^bytes=\d*-\d*(?:,\d*-\d*)*$/i.test(range)) requestHeaders.Range = range;
+    else delete requestHeaders.Range;
+    maybeLogProxyHeaderDecision(prepared, sourceUrl);
     return axios.get(sourceUrl, {
         headers: requestHeaders,
         timeout: UPSTREAM_TIMEOUT_MS,
@@ -356,6 +373,7 @@ async function fetchUpstream(sourceUrl, headers, req, signal, { allowRange = tru
         signal
     });
 }
+
 
 async function writeStreamWithSniff({ upstream, res, req, sourceUrl, contentType }) {
     const iterator = upstream.data?.[Symbol.asyncIterator]?.();

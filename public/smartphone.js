@@ -3562,7 +3562,42 @@ function getMobileConfig() {
     };
 }
 
-function updateLinkModalContent() {
+const mobileEncryptedManifestCache = { signature: null, url: null, pending: null };
+
+function getMobileLegacyManifestUrl(config) {
+    return `${window.location.host}/${btoa(JSON.stringify(config))}/manifest.json`;
+}
+
+async function getMobileManifestUrl(config) {
+    const signature = JSON.stringify(config);
+    if(mobileEncryptedManifestCache.signature === signature && mobileEncryptedManifestCache.url) return mobileEncryptedManifestCache.url;
+    if(mobileEncryptedManifestCache.signature === signature && mobileEncryptedManifestCache.pending) return mobileEncryptedManifestCache.pending;
+
+    mobileEncryptedManifestCache.signature = signature;
+    mobileEncryptedManifestCache.pending = (async () => {
+        try {
+            const response = await fetch('/api/config/encrypt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                cache: 'no-store',
+                body: JSON.stringify({ config })
+            });
+            if(!response.ok) throw new Error(`encrypt_http_${response.status}`);
+            const payload = await response.json();
+            if(!payload || payload.ok !== true || !payload.manifestPath) throw new Error('encrypt_bad_payload');
+            mobileEncryptedManifestCache.url = `${window.location.host}${payload.manifestPath}`;
+            return mobileEncryptedManifestCache.url;
+        } catch (_) {
+            mobileEncryptedManifestCache.url = getMobileLegacyManifestUrl(config);
+            return mobileEncryptedManifestCache.url;
+        } finally {
+            mobileEncryptedManifestCache.pending = null;
+        }
+    })();
+    return mobileEncryptedManifestCache.pending;
+}
+
+async function updateLinkModalContent() {
     const box = document.getElementById('m-generatedUrlBox');
     if(!box) return;
     
@@ -3575,18 +3610,18 @@ function updateLinkModalContent() {
         return;
     }
     
-    const manifestUrl = `${window.location.protocol}//${window.location.host}/${btoa(JSON.stringify(config))}/manifest.json`;
+    const manifestUrl = `${window.location.protocol}//${await getMobileManifestUrl(config)}`;
     box.value = manifestUrl;
     box.style.color = "var(--m-primary)";
 }
 
-function mobileInstall() {
+async function mobileInstall() {
     const config = getMobileConfig();
     const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
     if(!config.key && !isWebEnabled) {
         showToast("ERRORE: API KEY MANCANTE", "error"); return;
     }
-    const manifestUrl = `${window.location.host}/${btoa(JSON.stringify(config))}/manifest.json`;
+    const manifestUrl = await getMobileManifestUrl(config);
     window.location.href = `stremio://${manifestUrl}`;
 }
 

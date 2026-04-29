@@ -1,5 +1,7 @@
 'use strict';
 
+const { prepareProxyTarget } = require('../../core/lib/proxy_header_normalizer');
+
 const QUALITY_PATTERNS = [
     { value: '4K', regex: /\b(?:4k|2160p|uhd)\b/i },
     { value: '1440p', regex: /\b(?:1440p|2k|qhd)\b/i },
@@ -167,6 +169,15 @@ function buildWebStream({
     const extractorName = String(extractor || '').trim() || 'Web';
     const providerName = String(provider || '').trim() || 'Web';
     const qualityName = String(quality || '').trim() || 'Unknown';
+    const headerSource = headers || extraBehaviorHints?.proxyHeaders?.request || extraBehaviorHints?.headers || {};
+    const preparedProxy = prepareProxyTarget(url, headerSource, {
+        provider: providerName,
+        service: 'web',
+        fillReferer: true,
+        fillOrigin: true,
+        forceIdentityEncoding: true
+    });
+    const finalUrl = preparedProxy.url || url;
     const behaviorHints = {
         notWebReady,
         extractor: extractorName,
@@ -184,8 +195,18 @@ function buildWebStream({
         ...extraBehaviorHints
     };
 
-    if (headers && Object.keys(headers).length > 0) {
-        behaviorHints.proxyHeaders = { request: headers };
+    if (preparedProxy.headerCount > 0) {
+        behaviorHints.proxyHeaders = {
+            ...(behaviorHints.proxyHeaders || {}),
+            request: preparedProxy.headers
+        };
+        behaviorHints.headers = preparedProxy.headers;
+    }
+    if (preparedProxy.basicAuthMoved) {
+        behaviorHints.proxyHeaderNormalizer = {
+            ...(behaviorHints.proxyHeaderNormalizer || {}),
+            basicAuthMoved: true
+        };
     }
 
     if (extraBehaviorHints?.vortexMeta) {
@@ -198,7 +219,7 @@ function buildWebStream({
     return {
         name,
         title,
-        url,
+        url: finalUrl,
         extractor: extractorName,
         provider: providerName,
         source: providerName,

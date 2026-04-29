@@ -2,7 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { CURRENT_CONFIG_VERSION, validateConfig } = require('../core/config/schema');
+const { CURRENT_CONFIG_VERSION, validateConfig, decodeConfigBase64 } = require('../core/config/schema');
+const { encryptConfigObject } = require('../core/security/user_config_crypto');
 
 test('validateConfig migrates aliases and version', () => {
   const config = validateConfig({
@@ -33,4 +34,22 @@ test('validateConfig normalizes source mode aliases', () => {
 
   assert.equal(config.filters.sourceMode, 'globalCacheOnly');
   assert.equal(config.filters.dbOnly, false);
+});
+
+
+test('decodeConfigBase64 supports encrypted user config tokens', async () => {
+  const token = await encryptConfigObject({
+    service: 'rd',
+    key: 'secret-token',
+    filters: {
+      enableGhd: true,
+      language: 'ita'
+    }
+  });
+
+  const decoded = JSON.parse(decodeConfigBase64(token));
+
+  assert.equal(decoded.service, 'rd');
+  assert.equal(decoded.key, 'secret-token');
+  assert.equal(decoded.filters.enableGhd, true);
 });
