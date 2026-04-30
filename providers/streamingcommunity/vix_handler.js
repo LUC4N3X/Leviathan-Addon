@@ -959,6 +959,73 @@ function normalizeLookupTitle(value) {
         .trim();
 }
 
+function extractSeasonMarker(value) {
+    const text = ` ${normalizeLookupTitle(value)} `;
+    const patterns = [
+        /\b(?:season|stagione|serie|s)\s*([1-9]\d*)\b/i,
+        /\b([1-9]\d*)(?:st|nd|rd|th)\s+season\b/i,
+        /\b(?:part|cour)\s*([1-9]\d*)\b/i
+    ];
+
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match?.[1]) {
+            const parsed = Number.parseInt(match[1], 10);
+            if (Number.isInteger(parsed) && parsed > 0) return parsed;
+        }
+    }
+
+    const roman = text.match(/\b(ii|iii|iv|v|vi|vii|viii|ix|x)\b/i);
+    if (roman?.[1]) {
+        const romanMap = { ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10 };
+        return romanMap[String(roman[1]).toLowerCase()] || null;
+    }
+
+    const tail = text.match(/\b([2-9])\b\s*$/);
+    return tail?.[1] ? Number.parseInt(tail[1], 10) : null;
+}
+
+function removeSeasonMarkers(value) {
+    return ` ${normalizeLookupTitle(value)} `
+        .replace(/\b(?:season|stagione|serie|s)\s*\d+\b/gi, ' ')
+        .replace(/\b\d+(?:st|nd|rd|th)\s+season\b/gi, ' ')
+        .replace(/\b(?:part|cour)\s*\d+\b/gi, ' ')
+        .replace(/\b(?:ii|iii|iv|v|vi|vii|viii|ix|x)\b/gi, ' ')
+        .replace(/\b[2-9]\b\s*$/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function firstSeasonMarker(values = []) {
+    for (const value of values || []) {
+        const season = extractSeasonMarker(value);
+        if (season) return season;
+    }
+    return null;
+}
+
+function filterSeasonSpecificTitles(titles = []) {
+    const season = firstSeasonMarker(titles);
+    if (!season) return titles;
+    const filtered = titles.filter((title) => extractSeasonMarker(title) === season);
+    return filtered.length ? filtered : titles;
+}
+
+function seasonScoreAdjustment(wantedTitles = [], candidateTitles = []) {
+    const wantedSeason = firstSeasonMarker(wantedTitles);
+    const candidateSeason = firstSeasonMarker(candidateTitles);
+    if (!wantedSeason) return candidateSeason ? -15 : 0;
+    if (!candidateSeason) return -110;
+    if (candidateSeason !== wantedSeason) return -180;
+
+    const wantedRoots = uniqueNonEmpty(wantedTitles.map(removeSeasonMarkers).filter(Boolean));
+    const candidateRoots = uniqueNonEmpty(candidateTitles.map(removeSeasonMarkers).filter(Boolean));
+    const rootMatch = wantedRoots.some((wanted) => candidateRoots.some((candidate) => (
+        wanted === candidate || candidate.includes(wanted) || wanted.includes(candidate)
+    )));
+    return rootMatch ? 120 : 90;
+}
+
 function extractCandidateYear(value) {
     const match = String(value || '').match(/\b(19|20)\d{2}\b/);
     return match ? Number(match[0]) : null;
@@ -1412,6 +1479,7 @@ function scoreAnimeUnityResult(result, searchContext) {
 
     if (searchContext?.isMovie && /movie|film/i.test(String(result?.type || result?.kind || ''))) score += 10;
     if (!searchContext?.isMovie && /serie|tv|anime/i.test(String(result?.type || result?.kind || ''))) score += 10;
+    score += seasonScoreAdjustment(wantedTitles, candidateTitles);
     return score;
 }
 
@@ -1667,7 +1735,7 @@ async function resolveKitsuVix(meta, config = {}, reqHost, forcedKitsu = null) {
         const session = await fetchAnimeUnitySession();
         kitsuDebug('session', `ok=${!!session}`);
         if (session) {
-            const titleCandidates = uniqueNonEmpty([
+            const titleCandidates = filterSeasonSpecificTitles(uniqueNonEmpty([
                 ...(Array.isArray(searchContext?.searchTitles) ? searchContext.searchTitles : []),
                 ...(Array.isArray(searchContext?.rawTitles) ? searchContext.rawTitles : []),
                 ...fetchedTitles,
@@ -1675,26 +1743,28 @@ async function resolveKitsuVix(meta, config = {}, reqHost, forcedKitsu = null) {
                 meta?.title,
                 meta?.name,
                 meta?.originalTitle
-            ]);
+            ]));
 
             for (const title of titleCandidates.slice(0, 6)) {
                 const results = await searchAnimeUnity(title, session);
                 kitsuDebug('search', `title=${title} results=${results.length}`);
+                const searchTitles = filterSeasonSpecificTitles(uniqueNonEmpty([
+                    ...(Array.isArray(searchContext?.searchTitles) ? searchContext.searchTitles : []),
+                    ...(Array.isArray(searchContext?.rawTitles) ? searchContext.rawTitles : []),
+                    ...fetchedTitles,
+                    cleanTitle,
+                    title
+                ]));
+                const rawTitles = filterSeasonSpecificTitles(uniqueNonEmpty([
+                    ...(Array.isArray(searchContext?.rawTitles) ? searchContext.rawTitles : []),
+                    ...fetchedTitles,
+                    cleanTitle,
+                    title
+                ]));
                 const ranked = rankAnimeUnityResults(results, {
                     ...(searchContext || {}),
-                    searchTitles: uniqueNonEmpty([
-                        ...(Array.isArray(searchContext?.searchTitles) ? searchContext.searchTitles : []),
-                        ...(Array.isArray(searchContext?.rawTitles) ? searchContext.rawTitles : []),
-                        ...fetchedTitles,
-                        cleanTitle,
-                        title
-                    ]),
-                    rawTitles: uniqueNonEmpty([
-                        ...(Array.isArray(searchContext?.rawTitles) ? searchContext.rawTitles : []),
-                        ...fetchedTitles,
-                        cleanTitle,
-                        title
-                    ])
+                    searchTitles,
+                    rawTitles
                 });
 
                 for (const candidate of ranked.slice(0, 5)) {
