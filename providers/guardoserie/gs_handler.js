@@ -44,7 +44,7 @@ const TTL_SEARCH             = 1000 * 60 * 30;
 const TTL_EPISODE            = 1000 * 60 * 30;
 const TTL_SERIES             = 1000 * 60 * 60 * 6;
 const CF_SESSION_TTL         = 1000 * 60 * 60 * 6;
-const GLOBAL_TIMEOUT_MS      = Math.max(30000, parseInt(process.env.GS_INTERNAL_TIMEOUT || '45000', 10) || 45000);
+const GLOBAL_TIMEOUT_MS      = Math.max(30000, parseInt(process.env.GS_INTERNAL_TIMEOUT || '120000', 10) || 120000);
 const SEARCH_QUERY_TIMEOUT_MS = Math.max(12000, parseInt(process.env.GS_SEARCH_TIMEOUT || '22000', 10) || 22000);
 const DIRECT_FETCH_TIMEOUT_MS = Math.max(4500, parseInt(process.env.GS_DIRECT_FETCH_TIMEOUT || '5500', 10) || 5500);
 const MAX_CACHE_ITEMS        = 500;
@@ -54,6 +54,7 @@ const DEBUG_GS              = ['1', 'true', 'yes', 'on'].includes(String(process
 const DEBUG_CF              = DEBUG_GS || ['1', 'true', 'yes', 'on'].includes(String(process.env.GUARDOSERIE_DEBUG_CF || process.env.FLARESOLVERR_DEBUG || '').trim().toLowerCase());
 const FLARE_CLEARANCE_COOLDOWN_MS = Math.max(3000, parseInt(process.env.GS_FLARE_CLEARANCE_COOLDOWN_MS || '8000', 10) || 8000);
 const FLARE_WARMUP_TIMEOUT_MS     = Math.max(15000, parseInt(process.env.GS_FLARE_WARMUP_TIMEOUT_MS || '90000', 10) || 90000);
+const FLARE_HOMEPAGE_ONLY          = true;
 
 function gsDebug(message, meta = null) {
   if (!DEBUG_GS && !DEBUG_CF) return;
@@ -337,7 +338,7 @@ async function warmupFlareClearance(triggerUrl, signal = null) {
   const base = normalizeBaseUrl(triggerUrl) || normalizeBaseUrl(getTargetDomain()) || INITIAL_GS_DOMAIN;
   const warmupUrl = `${base}/`;
 
-  gsDebug('flaresolverr warmup start', { warmupUrl, endpoint: FLARESOLVERR_URL });
+  gsDebug('flaresolverr homepage warmup start', { warmupUrl, triggerUrl, homepageOnly: FLARE_HOMEPAGE_ONLY, endpoint: FLARESOLVERR_URL });
   flareWarmupPromise = (async () => {
     const session = await flareSolverrClient.getClearance(warmupUrl, {
       method: 'GET',
@@ -349,7 +350,7 @@ async function warmupFlareClearance(triggerUrl, signal = null) {
       activeSession = session;
       saveSession(activeSession);
       if (session.url) updateCurrentDomainFromUrl(session.url);
-      gsDebug('flaresolverr warmup ok', {
+      gsDebug('flaresolverr homepage warmup ok', {
         base: normalizeBaseUrl(session.url || warmupUrl),
         hasClearance: Boolean(session.cf_clearance),
         cookies: String(session.cookies || '').split(';').filter(Boolean).length
@@ -357,7 +358,7 @@ async function warmupFlareClearance(triggerUrl, signal = null) {
       return activeSession;
     }
 
-    gsDebug('flaresolverr warmup empty', { warmupUrl });
+    gsDebug('flaresolverr homepage warmup empty', { warmupUrl, triggerUrl });
     return null;
   })().finally(() => { flareWarmupPromise = null; });
 
@@ -397,14 +398,60 @@ function updateCookies(existing, setCookieHeader) {
   return Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
 }
 
+
+function isGuardaserieChallengePage(html, status = 200) {
+  const raw = typeof html === 'string' ? html : String(html || '');
+  if (!raw) return true;
+  const lower = raw.slice(0, 250000).toLowerCase();
+
+  if (status === 403 || status === 429 || status === 503) return true;
+  if (isCloudflareChallenge(raw, status)) return true;
+
+  const strongSignals = [
+    'turnstile.cloudflare.com',
+    'cf-turnstile',
+    'cf_chl_',
+    '__cf_chl_',
+    'cf-browser-verification',
+    'cf_captcha_kind',
+    'cf_clearance',
+    'challenge-platform',
+    'challenge-form',
+    'cf-challenge',
+    'g-recaptcha',
+    'h-captcha',
+    'hcaptcha.com',
+    'checking if the site connection is secure',
+    'verify you are human',
+    'verifica di essere umano',
+    'verifica che sei umano',
+    'verifica che tu sia umano',
+    'controllo connessione al sito',
+    'just a moment',
+    'un momento',
+    'ray id'
+  ];
+
+  let score = 0;
+  for (const token of strongSignals) {
+    if (lower.includes(token)) score += 2;
+  }
+
+  if (lower.includes('cloudflare') && (lower.includes('captcha') || lower.includes('challenge') || lower.includes('turnstile'))) score += 4;
+  if (/<title>\s*(just a moment|attention required|verifica|checking)/i.test(raw)) score += 4;
+  if (/id=["']?challenge-|class=["'][^"']*(cf-|challenge|turnstile)/i.test(raw)) score += 3;
+
+  return score >= 3;
+}
+
 async function executeSmartFetch(url, isPost = false, body = null, signal = null, allowFlareSolverr = true, timeoutMs = DIRECT_FETCH_TIMEOUT_MS) {
   const startedAt = Date.now();
   const method = isPost ? 'POST' : 'GET';
 
   const isGoodHtml = (html, status = 200) => {
     const raw = typeof html === 'string' ? html : String(html || '');
-    if (!raw || status === 403 || status === 429 || status === 503) return false;
-    if (isCloudflareChallenge(raw, status)) return false;
+    if (!raw) return false;
+    if (isGuardaserieChallengePage(raw, status)) return false;
     return true;
   };
 
@@ -462,7 +509,7 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
     const html = typeof res.data === 'string' ? res.data : String(res.data || '');
 
     if (!isGoodHtml(html, res.status)) {
-      gsDebug('session fetch rejected', { method, url, status: res.status, ms: Date.now() - startedAt });
+      gsDebug('session fetch rejected', { method, url, status: res.status, challenge: isGuardaserieChallengePage(html, res.status), ms: Date.now() - startedAt });
       clearSession();
       return null;
     }
@@ -517,7 +564,7 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
     const html = typeof res.data === 'string' ? res.data : String(res.data || '');
 
     if (!isGoodHtml(html, res.status)) {
-      gsDebug('direct fast rejected', { method, url, status: res.status, bytes: html.length, ms: Date.now() - startedAt });
+      gsDebug('direct fast rejected', { method, url, status: res.status, bytes: html.length, challenge: isGuardaserieChallengePage(html, res.status), ms: Date.now() - startedAt });
       return null;
     }
 
@@ -551,9 +598,11 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
 
   if (!allowFlareSolverr) return null;
 
+  // FlareSolverr is intentionally used only on the domain homepage.
+  // The real search/ajax/episode URL is always retried with got-scraping + saved cookie/UA.
   const session = await warmupFlareClearance(url, signal);
   if (!isSessionFresh(session)) {
-    gsDebug('flaresolverr no fresh session', { method, url, ms: Date.now() - startedAt });
+    gsDebug('flaresolverr no fresh homepage session', { method, url, ms: Date.now() - startedAt });
     return null;
   }
 
@@ -958,11 +1007,20 @@ function createTimeoutSignal(parentSignal, timeoutMs) {
 }
 
 async function searchProviderWithTimeout(query, signal, timeoutMs = SEARCH_QUERY_TIMEOUT_MS) {
-  const scoped = createTimeoutSignal(signal, timeoutMs);
+  // A fresh-looking session can still be rejected when Cloudflare rotates the challenge.
+  // Keep enough budget for a homepage-only FlareSolverr warmup whenever the provider may need clearance.
+  const clearanceBudgetMs = Math.min(Math.max(45000, GLOBAL_TIMEOUT_MS - 5000), FLARE_WARMUP_TIMEOUT_MS + 15000);
+  const effectiveTimeoutMs = Math.max(timeoutMs, clearanceBudgetMs);
+  const needsClearanceWindow = !isSessionFresh(activeSession);
+
+  const scoped = createTimeoutSignal(signal, effectiveTimeoutMs);
   try {
     return await searchProviderSequential(query, scoped.signal);
   } catch (e) {
-    if (isCanceledError(e) || scoped.signal.aborted) return [];
+    if (isCanceledError(e) || scoped.signal.aborted) {
+      gsDebug('search query aborted', { query, timeoutMs: effectiveTimeoutMs, needsClearanceWindow });
+      return [];
+    }
     return [];
   } finally {
     scoped.clear();
@@ -1321,3 +1379,4 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
 }
 
 module.exports = { searchGuardaserie, searchGuardoSerie: searchGuardaserie };
+
