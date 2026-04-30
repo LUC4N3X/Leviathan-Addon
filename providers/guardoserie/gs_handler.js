@@ -11,7 +11,8 @@ const tmdbHelper        = require('../../core/utils/tmdb_helper');
 const animeIdentity     = require('../anime/anime_identity');
 const kitsuProvider     = require('../animeworld/kitsu_provider');
 const animeProviderUtils = require('../anime/provider_utils');
-const { GUARDA_SERIE_BROWSER_PROFILES, pickRandomProfile } = require('../../core/browser_profiles');
+const browserProfiles = require('../../core/browser_profiles');
+const { pickRandomProfile } = browserProfiles;
 const {
   buildWebStream,
   normalizeQuality,
@@ -32,7 +33,7 @@ const {
 const { createFlareSolverrClient } = require('../utils/flaresolverr');
 
 const INITIAL_GS_DOMAIN      = 'https://guardoserie.run';
-const BROWSER_PROFILES       = GUARDA_SERIE_BROWSER_PROFILES;
+const BROWSER_PROFILES       = browserProfiles.GUARDO_SERIE_BROWSER_PROFILES || browserProfiles.GUARDA_SERIE_BROWSER_PROFILES || [];
 const FLARESOLVERR_URL       = process.env.FLARESOLVERR_URL || process.env.FLARE_URL || 'http://127.0.0.1:8191/v1';
 const PROVIDER_NAME          = 'guardoserie';
 const SESSION_FILE           = path.join(process.cwd(), `cf-session-${PROVIDER_NAME}.json`);
@@ -51,6 +52,8 @@ const FS_CIRCUIT_THRESHOLD   = 3;
 const FS_CIRCUIT_RESET_MS    = 60_000;
 const DEBUG_GS              = ['1', 'true', 'yes', 'on'].includes(String(process.env.GUARDOSERIE_DEBUG || '').trim().toLowerCase());
 const DEBUG_CF              = DEBUG_GS || ['1', 'true', 'yes', 'on'].includes(String(process.env.GUARDOSERIE_DEBUG_CF || process.env.FLARESOLVERR_DEBUG || '').trim().toLowerCase());
+const FLARE_CLEARANCE_COOLDOWN_MS = Math.max(3000, parseInt(process.env.GS_FLARE_CLEARANCE_COOLDOWN_MS || '8000', 10) || 8000);
+const FLARE_WARMUP_TIMEOUT_MS     = Math.max(15000, parseInt(process.env.GS_FLARE_WARMUP_TIMEOUT_MS || '90000', 10) || 90000);
 
 function gsDebug(message, meta = null) {
   if (!DEBUG_GS && !DEBUG_CF) return;
@@ -313,6 +316,53 @@ const flareSolverrClient = createFlareSolverrClient({
     if (data.url) updateCurrentDomainFromUrl(data.url);
   }
 });
+let flareWarmupPromise = null;
+let lastFlareWarmupAt  = 0;
+
+function getProfileUserAgent(profile = null) {
+  const fallback = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
+  if (profile?.ua || profile?.userAgent) return profile.ua || profile.userAgent;
+  const picked = pickRandomProfile(BROWSER_PROFILES) || {};
+  return picked.ua || picked.userAgent || fallback;
+}
+
+async function warmupFlareClearance(triggerUrl, signal = null) {
+  if (isSessionFresh(activeSession)) return activeSession;
+  if (flareWarmupPromise) return flareWarmupPromise;
+
+  const now = Date.now();
+  if (now - lastFlareWarmupAt < FLARE_CLEARANCE_COOLDOWN_MS) return null;
+  lastFlareWarmupAt = now;
+
+  const base = normalizeBaseUrl(triggerUrl) || normalizeBaseUrl(getTargetDomain()) || INITIAL_GS_DOMAIN;
+  const warmupUrl = `${base}/`;
+
+  gsDebug('flaresolverr warmup start', { warmupUrl, endpoint: FLARESOLVERR_URL });
+  flareWarmupPromise = (async () => {
+    const session = await flareSolverrClient.getClearance(warmupUrl, {
+      method: 'GET',
+      signal,
+      maxTimeout: FLARE_WARMUP_TIMEOUT_MS
+    });
+
+    if (isSessionFresh(session)) {
+      activeSession = session;
+      saveSession(activeSession);
+      if (session.url) updateCurrentDomainFromUrl(session.url);
+      gsDebug('flaresolverr warmup ok', {
+        base: normalizeBaseUrl(session.url || warmupUrl),
+        hasClearance: Boolean(session.cf_clearance),
+        cookies: String(session.cookies || '').split(';').filter(Boolean).length
+      });
+      return activeSession;
+    }
+
+    gsDebug('flaresolverr warmup empty', { warmupUrl });
+    return null;
+  })().finally(() => { flareWarmupPromise = null; });
+
+  return flareWarmupPromise;
+}
 
 function parseSingleCookie(raw) {
   const primary = String(raw || '').split(';')[0];
@@ -351,30 +401,10 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
   const startedAt = Date.now();
   const method = isPost ? 'POST' : 'GET';
 
-  const buildSessionHeaders = session => {
-    const headers = {
-      'User-Agent':                session.userAgent,
-      'Cookie':                    session.cookies,
-      'Referer':                   getTargetDomain(),
-      'Accept':                    'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'Accept-Language':           'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-      'Sec-Fetch-Dest':            'document',
-      'Sec-Fetch-Mode':            'navigate',
-      'Sec-Fetch-Site':            'same-origin',
-      'Upgrade-Insecure-Requests': '1'
-    };
-
-    if (isPost && body) {
-      headers['Content-Type'] = 'application/x-www-form-urlencoded';
-    }
-
-    return headers;
-  };
-
   const isGoodHtml = (html, status = 200) => {
     const raw = typeof html === 'string' ? html : String(html || '');
     if (!raw || status === 403 || status === 429 || status === 503) return false;
-    if (isCloudflareChallenge(raw)) return false;
+    if (isCloudflareChallenge(raw, status)) return false;
     return true;
   };
 
@@ -391,6 +421,31 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
     if (next.url) updateCurrentDomainFromUrl(next.url);
   };
 
+  const buildSessionHeaders = session => {
+    const headers = {
+      'User-Agent':      session.userAgent,
+      'Cookie':          session.cookies,
+      'Referer':         getTargetDomain(),
+      'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Sec-Fetch-Site':  'same-origin'
+    };
+
+    if (isPost && body) {
+      headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
+      headers['X-Requested-With'] = 'XMLHttpRequest';
+      headers['Sec-Fetch-Dest'] = 'empty';
+      headers['Sec-Fetch-Mode'] = 'cors';
+    } else {
+      headers['Sec-Fetch-Dest'] = 'document';
+      headers['Sec-Fetch-Mode'] = 'navigate';
+      headers['Sec-Fetch-User'] = '?1';
+      headers['Upgrade-Insecure-Requests'] = '1';
+    }
+
+    return headers;
+  };
+
   const fetchWithSession = async session => {
     if (!isSessionFresh(session)) return null;
 
@@ -404,10 +459,7 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
     });
 
     updateCurrentDomainFromUrl(res.url);
-
-    const html = typeof res.data === 'string'
-      ? res.data
-      : String(res.data || '');
+    const html = typeof res.data === 'string' ? res.data : String(res.data || '');
 
     if (!isGoodHtml(html, res.status)) {
       gsDebug('session fetch rejected', { method, url, status: res.status, ms: Date.now() - startedAt });
@@ -417,6 +469,65 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
 
     persistSession(session, res.url, res.headers?.['set-cookie']);
     gsDebug('session fetch ok', { method, url, status: res.status, bytes: html.length, ms: Date.now() - startedAt });
+    return html;
+  };
+
+  const fetchDirectFast = async () => {
+    const profile = pickRandomProfile(BROWSER_PROFILES) || {};
+    const ua = getProfileUserAgent(profile);
+    const headers = {
+      'User-Agent':      ua,
+      'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Referer':         getTargetDomain(),
+      'Cache-Control':   'no-cache',
+      'Pragma':          'no-cache'
+    };
+
+    if (profile.sec_ch_ua) {
+      headers['sec-ch-ua'] = profile.sec_ch_ua;
+      headers['sec-ch-ua-mobile'] = '?0';
+      headers['sec-ch-ua-platform'] = '"Windows"';
+    }
+
+    if (isPost && body) {
+      headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
+      headers['X-Requested-With'] = 'XMLHttpRequest';
+      headers['Sec-Fetch-Dest'] = 'empty';
+      headers['Sec-Fetch-Mode'] = 'cors';
+      headers['Sec-Fetch-Site'] = 'same-origin';
+    } else {
+      headers['Sec-Fetch-Dest'] = 'document';
+      headers['Sec-Fetch-Mode'] = 'navigate';
+      headers['Sec-Fetch-Site'] = 'same-origin';
+      headers['Sec-Fetch-User'] = '?1';
+      headers['Upgrade-Insecure-Requests'] = '1';
+    }
+
+    const res = await gotSiteRequest(url, {
+      method,
+      body:     isPost ? body : null,
+      headers,
+      timeout:  Math.min(timeoutMs, DIRECT_FETCH_TIMEOUT_MS),
+      signal,
+      useHttp2: true
+    });
+
+    updateCurrentDomainFromUrl(res.url);
+    const html = typeof res.data === 'string' ? res.data : String(res.data || '');
+
+    if (!isGoodHtml(html, res.status)) {
+      gsDebug('direct fast rejected', { method, url, status: res.status, bytes: html.length, ms: Date.now() - startedAt });
+      return null;
+    }
+
+    const setCookie = res.headers?.['set-cookie'];
+    if (setCookie) {
+      const cookies = updateCookies('', setCookie);
+      if (cookies) persistSession({ userAgent: ua, cookies, url: res.url, timestamp: Date.now() }, res.url);
+    }
+
+    gsDebug('direct fast ok', { method, url, status: res.status, bytes: html.length, hasCookie: Boolean(setCookie), ms: Date.now() - startedAt });
     return html;
   };
 
@@ -430,33 +541,31 @@ async function executeSmartFetch(url, isPost = false, body = null, signal = null
     }
   }
 
+  try {
+    const html = await fetchDirectFast();
+    if (html) return html;
+  } catch (e) {
+    if (isCanceledError(e)) throw e;
+    gsDebug('direct fast error', { method, url, error: e?.message || String(e), ms: Date.now() - startedAt });
+  }
+
   if (!allowFlareSolverr) return null;
 
-  gsDebug('flaresolverr request', { method, url, endpoint: FLARESOLVERR_URL });
-  const session = await flareSolverrClient.getClearance(url, {
-    method,
-    body,
-    signal
-  });
-
+  const session = await warmupFlareClearance(url, signal);
   if (!isSessionFresh(session)) {
     gsDebug('flaresolverr no fresh session', { method, url, ms: Date.now() - startedAt });
     return null;
   }
 
-  if (isGoodHtml(session.response, 200)) {
-    persistSession(session, session.url || url);
-    const html = String(session.response || '');
-    gsDebug('flaresolverr response used directly', { method, url, bytes: html.length, ms: Date.now() - startedAt });
-    return html;
-  }
-
   try {
     const html = await fetchWithSession(session);
-    if (html) return html;
+    if (html) {
+      gsDebug('post-clearance fast fetch ok', { method, url, ms: Date.now() - startedAt });
+      return html;
+    }
   } catch (e) {
     if (isCanceledError(e)) throw e;
-    gsDebug('post-flaresolverr fetch error', { method, url, error: e?.message || String(e), ms: Date.now() - startedAt });
+    gsDebug('post-clearance fetch error', { method, url, error: e?.message || String(e), ms: Date.now() - startedAt });
     clearSession();
   }
 
