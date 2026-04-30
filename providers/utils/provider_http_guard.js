@@ -113,7 +113,10 @@ function createProviderHttpGuard(options = {}) {
   const clearanceTimeoutMs = Math.max(12000, Number(options.clearanceTimeoutMs || 24000));
   const refreshDomainOnStart = Boolean(options.refreshDomainOnStart);
   const domainProbeTimeoutMs = Math.max(1200, Number(options.domainProbeTimeoutMs || 2500));
+  const originClearance = Boolean(options.originClearance);
+  const clearanceForce = options.clearanceForce !== false;
   const targetUrlClearance = options.targetUrlClearance !== false;
+  const targetFallbackAfterOrigin = Boolean(options.targetFallbackAfterOrigin);
   const homepageFallback = Boolean(options.homepageFallback);
 
   function loadStoredDomain() {
@@ -230,6 +233,11 @@ function createProviderHttpGuard(options = {}) {
 
     try { return new URL(String(triggerUrl || ''), base).toString(); }
     catch (_) { return `${base}/`; }
+  }
+
+  function buildHomepageClearanceUrl(triggerUrl) {
+    const base = normalizeBaseUrl(triggerUrl) || normalizeBaseUrl(currentBaseUrl) || initialBaseUrl;
+    return `${base}/`;
   }
 
   async function resolveRedirectDomain(startBase, signal = null) {
@@ -448,7 +456,9 @@ function createProviderHttpGuard(options = {}) {
   }
 
   async function solveClearance(triggerUrl, { isPost = false, body = null, signal = null, force = true } = {}) {
-    const clearanceUrl = buildClearanceUrl(triggerUrl, { isPost, body });
+    const targetClearanceUrl = buildClearanceUrl(triggerUrl, { isPost, body });
+    const homepageClearanceUrl = buildHomepageClearanceUrl(triggerUrl);
+    const clearanceUrl = originClearance ? homepageClearanceUrl : targetClearanceUrl;
     let session = await clearanceManager.solve(clearanceUrl, signal, {
       triggerUrl,
       method: isPost ? 'POST' : 'GET',
@@ -457,20 +467,22 @@ function createProviderHttpGuard(options = {}) {
     });
 
     if (isSessionFresh(session)) return session;
-    if (homepageFallback) {
-      const base = normalizeBaseUrl(triggerUrl) || currentBaseUrl;
-      const homepage = `${base}/`;
-      if (homepage !== clearanceUrl) {
-        session = await clearanceManager.solve(homepage, signal, {
-          triggerUrl,
-          method: isPost ? 'POST' : 'GET',
-          force,
-          fallback: true,
-          maxTimeout: clearanceTimeoutMs
-        });
-      }
+
+    const fallbacks = [];
+    if (originClearance && targetFallbackAfterOrigin && targetClearanceUrl !== clearanceUrl) fallbacks.push(targetClearanceUrl);
+    if (homepageFallback && homepageClearanceUrl !== clearanceUrl && homepageClearanceUrl !== targetClearanceUrl) fallbacks.push(homepageClearanceUrl);
+
+    for (const fallbackUrl of fallbacks) {
+      session = await clearanceManager.solve(fallbackUrl, signal, {
+        triggerUrl,
+        method: isPost ? 'POST' : 'GET',
+        force,
+        fallback: true,
+        maxTimeout: clearanceTimeoutMs
+      });
+      if (isSessionFresh(session)) return session;
     }
-    return isSessionFresh(session) ? session : null;
+    return null;
   }
 
   async function executeSmartFetch(url, isPost = false, body = null, signal = null, allowFlareSolverr = true, timeoutMs = directFetchTimeoutMs) {
@@ -499,7 +511,7 @@ function createProviderHttpGuard(options = {}) {
 
     if (!allowFlareSolverr) return null;
 
-    const session = await solveClearance(url, { isPost, body, signal, force: true });
+    const session = await solveClearance(url, { isPost, body, signal, force: clearanceForce });
     if (!isSessionFresh(session)) {
       logger.warn('clearance no fresh session', { method, url, ms: Date.now() - startedAt });
       return null;

@@ -84,6 +84,9 @@ const gsHttp = createProviderHttpGuard({
   refreshDomainOnStart: envFlag('GS_REFRESH_DOMAIN_ON_START', false) || envFlag('GUARDOSERIE_REFRESH_DOMAIN_ON_START', false),
   domainProbeTimeoutMs: Math.max(1200, parseInt(process.env.GS_DOMAIN_PROBE_TIMEOUT_MS || '2500', 10) || 2500),
   targetUrlClearance: envFlagNotFalse('GS_FLARE_TARGET_URL', true) && envFlagNotFalse('GUARDOSERIE_FLARE_TARGET_URL', true),
+  originClearance: envFlagNotFalse('GS_FLARE_ORIGIN_CLEARANCE', true) && envFlagNotFalse('GUARDOSERIE_FLARE_ORIGIN_CLEARANCE', true),
+  targetFallbackAfterOrigin: true,
+  clearanceForce: envFlag('GS_FLARE_FORCE_SOLVE', false) || envFlag('GUARDOSERIE_FLARE_FORCE_SOLVE', false),
   homepageFallback: envFlag('GS_FLARE_HOMEPAGE_FALLBACK', false) || envFlag('GUARDOSERIE_FLARE_HOMEPAGE_FALLBACK', false),
   clearanceCooldownMs: Math.max(3000, parseInt(process.env.GS_FLARE_CLEARANCE_COOLDOWN_MS || '8000', 10) || 8000),
   flareEndpoint: process.env.FLARESOLVERR_URL
@@ -96,6 +99,42 @@ const buildGsUrl = pathname => gsHttp.buildProviderUrl(pathname);
 const getTargetDomain = () => gsHttp.getCurrentBaseUrl();
 const normalizeBaseUrl = value => gsHttp.normalizeBaseUrl(value);
 const isAbortLikeError = error => gsHttp.isAbortLikeError(error);
+
+let gsClearanceWarmupPromise = null;
+
+function warmupGsClearanceInBackground(reason = 'startup') {
+  if (gsHttp.isSessionFresh() || !gsHttp.getEndpoint()) return null;
+  if (gsClearanceWarmupPromise) return gsClearanceWarmupPromise;
+
+  const startedAt = Date.now();
+  const url       = buildGsUrl('/');
+  gsDebug('flare warmup start', { reason, url });
+
+  gsClearanceWarmupPromise = smartFetch(url, {
+    ttl: TTL_SERIES,
+    allowFlareSolverr: true,
+    timeoutMs: DIRECT_FETCH_TIMEOUT_MS
+  }).then(html => {
+    gsDebug('flare warmup done', { reason, ok: Boolean(html), freshSession: gsHttp.isSessionFresh(), ms: Date.now() - startedAt });
+    return Boolean(html || gsHttp.isSessionFresh());
+  }).catch(error => {
+    if (!isAbortLikeError(error)) gsDebug('flare warmup failed', { reason, error: error?.message || String(error), ms: Date.now() - startedAt });
+    return false;
+  }).finally(() => {
+    gsClearanceWarmupPromise = null;
+  });
+
+  return gsClearanceWarmupPromise;
+}
+
+function scheduleGsClearanceWarmup(reason = 'startup') {
+  const timer = setTimeout(() => {
+    warmupGsClearanceInBackground(reason);
+  }, 250);
+  if (timer?.unref) timer.unref();
+}
+
+scheduleGsClearanceWarmup('startup');
 
 const IT_STOPWORDS = /\b(the|a|an|un|una|il|lo|la|gli|le|di|de|del|della|degli|delle|dei|alle|nei|nelle|negli|serie|stagione|season|episodio|episode)\b/g;
 
@@ -175,7 +214,34 @@ function normalizeTitleScoreMany(candidate, titles = []) {
   return best;
 }
 
+function hasExplicitAnimeSignal(meta = {}) {
+  const type = String(meta?.type || meta?.kind || meta?.mediaType || meta?.contentType || '').toLowerCase();
+  if (type === 'anime' || meta?.isAnime === true || meta?.anime === true || meta?.tmdbAnimeCandidate === true) return true;
+  if (meta?.kitsu_id || meta?.kitsuId || meta?.kitsu) return true;
+
+  return uniqueCleanStrings([
+    meta?.requestedId,
+    meta?.originalId,
+    meta?.sourceId,
+    meta?.source_id,
+    meta?.stremioId,
+    meta?.stremio_id,
+    meta?.canonicalId,
+    meta?.canonical_id,
+    meta?.id
+  ], 32).some(value => /^(?:kitsu|anime-kitsu):/i.test(String(value || '').trim()));
+}
+
+function canTrySharedAnimeContext(meta = {}) {
+  if (!meta || meta?.isSeries === false) return false;
+  const type = String(meta?.type || meta?.kind || meta?.mediaType || meta?.contentType || '').toLowerCase();
+  if (type === 'movie') return false;
+  return hasExplicitAnimeSignal(meta);
+}
+
 async function buildSharedAnimeContext(meta = {}, config = {}, season = null, episode = null) {
+  if (!canTrySharedAnimeContext(meta)) return null;
+
   try {
     const context = await animeIdentity.buildAnimeSearchContextForProvider({
       requestId:  meta?.requestedId || meta?.id || meta?.imdb_id || meta?.tmdb_id || null,
@@ -693,7 +759,7 @@ async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal
   gsDebug('fast slug start', { candidates: candidates.slice(0, 3) });
   for (const url of candidates.slice(0, 3)) {
     try {
-      const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: true, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+      const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: false, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
       if (!html) continue;
 
       const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
@@ -721,6 +787,7 @@ async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal
 async function _searchGuardaserie(meta, config, season, episode, signal) {
   const providerStartedAt = Date.now();
   gsDebug('provider start', { title: meta?.title || meta?.name, season, episode, budgetMs: GLOBAL_TIMEOUT_MS, shieldEndpoint: gsHttp.getEndpoint() });
+  warmupGsClearanceInBackground('request');
   await refreshTargetDomain(signal);
   gsDebug('domain ready', { base: getTargetDomain(), ms: Date.now() - providerStartedAt, probed: gsHttp.isDomainProbeEnabled() });
   if (signal?.aborted) return [];
@@ -907,4 +974,3 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
 }
 
 module.exports = { searchGuardaserie, searchGuardoSerie: searchGuardaserie };
-
