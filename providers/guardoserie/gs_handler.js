@@ -34,7 +34,7 @@ const { createFlareSolverrClient } = require('../utils/flaresolverr');
 
 const INITIAL_GS_DOMAIN      = 'https://guardoserie.run';
 const BROWSER_PROFILES       = browserProfiles.GUARDO_SERIE_BROWSER_PROFILES || browserProfiles.GUARDA_SERIE_BROWSER_PROFILES || [];
-const FLARESOLVERR_URL       = process.env.FLARESOLVERR_URL || process.env.FLARE_URL || 'http://127.0.0.1:8191/v1';
+const FLARESOLVERR_URL       = process.env.FLARESOLVERR_URL || process.env.FLARE_URL || 'http://185.229.239.195:8191/v1';
 const PROVIDER_NAME          = 'guardoserie';
 const SESSION_FILE           = path.join(process.cwd(), `cf-session-${PROVIDER_NAME}.json`);
 const DOMAIN_FILE            = path.join(process.cwd(), `${PROVIDER_NAME}-domain.json`);
