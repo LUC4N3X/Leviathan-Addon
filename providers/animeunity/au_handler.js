@@ -170,6 +170,84 @@ function containsDubMarker(value) {
     return /(\sita\s|\sdoppiat[oa]\s|\sdub(?:bed)?\s)/i.test(normalized);
 }
 
+function extractSeasonMarker(value) {
+    const text = ` ${normalizeLookupTitle(value)} `;
+    const patterns = [
+        /\b(?:season|stagione|serie|s)\s*([1-9]\d*)\b/i,
+        /\b([1-9]\d*)(?:st|nd|rd|th)\s+season\b/i,
+        /\b(?:part|cour)\s*([1-9]\d*)\b/i
+    ];
+
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        if (match?.[1]) {
+            const parsed = Number.parseInt(match[1], 10);
+            if (Number.isInteger(parsed) && parsed > 0) return parsed;
+        }
+    }
+
+    const roman = text.match(/\b(ii|iii|iv|v|vi|vii|viii|ix|x)\b/i);
+    if (roman?.[1]) {
+        const romanMap = { ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10 };
+        return romanMap[String(roman[1]).toLowerCase()] || null;
+    }
+
+    const tail = text.match(/\b([2-9])\b\s*$/);
+    return tail?.[1] ? Number.parseInt(tail[1], 10) : null;
+}
+
+function replaceSeasonMarkerWithNumber(value, season) {
+    const replacement = String(season || '').trim();
+    if (!replacement) return null;
+    return String(value || '')
+        .replace(/\b(?:season|stagione|serie)\s*\d+\b/gi, replacement)
+        .replace(/\bs\s*\d+\b/gi, replacement)
+        .replace(/\b\d+(?:st|nd|rd|th)\s+season\b/gi, replacement)
+        .replace(/\b(?:ii|iii|iv|v|vi|vii|viii|ix|x)\b(?=\s*$)/i, replacement)
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function removeSeasonMarkers(value) {
+    return ` ${normalizeLookupTitle(value)} `
+        .replace(/\b(?:season|stagione|serie|s)\s*\d+\b/gi, ' ')
+        .replace(/\b\d+(?:st|nd|rd|th)\s+season\b/gi, ' ')
+        .replace(/\b(?:part|cour)\s*\d+\b/gi, ' ')
+        .replace(/\b(?:ii|iii|iv|v|vi|vii|viii|ix|x)\b/gi, ' ')
+        .replace(/\b[2-9]\b\s*$/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function firstSeasonMarker(values = []) {
+    for (const value of values || []) {
+        const season = extractSeasonMarker(value);
+        if (season) return season;
+    }
+    return null;
+}
+
+function filterSeasonSpecificTitles(titles = []) {
+    const season = firstSeasonMarker(titles);
+    if (!season) return titles;
+    const filtered = titles.filter((title) => extractSeasonMarker(title) === season);
+    return filtered.length ? filtered : titles;
+}
+
+function seasonScoreAdjustment(query, candidateText) {
+    const querySeason = extractSeasonMarker(query);
+    const candidateSeason = extractSeasonMarker(candidateText);
+    if (!querySeason) return candidateSeason ? -0.35 : 0;
+    if (!candidateSeason) return -3.2;
+    if (querySeason !== candidateSeason) return -4.5;
+
+    const queryRoot = removeSeasonMarkers(query);
+    const candidateRoot = removeSeasonMarkers(candidateText);
+    return queryRoot && candidateRoot && (queryRoot === candidateRoot || candidateRoot.includes(queryRoot) || queryRoot.includes(candidateRoot))
+        ? 3.0
+        : 2.2;
+}
+
 function titleVariants(title, isDubbed = false) {
     const raw = decodeHtml(title).trim();
     if (!raw) return [];
@@ -182,15 +260,19 @@ function titleVariants(title, isDubbed = false) {
         .replace(/\b(?:sub\s*ita|ita|dub(?:bed)?|doppiat[oa])\b/gi, ' ')
         .replace(/\s+/g, ' ')
         .trim();
+    const season = extractSeasonMarker(raw);
+    const numericSeason = replaceSeasonMarkerWithNumber(compact, season);
     const normalizedKey = normalizeLookupTitle(raw);
     const fixed = TITLE_FIXES.get(normalizedKey);
     return uniqueNonEmpty([
         raw,
         fixed,
+        numericSeason,
+        season && numericSeason ? numericSeason.replace(new RegExp(`\\b${season}\\b`, 'g'), `S${season}`) : null,
         compact,
-        stripped,
-        isDubbed && stripped ? `${stripped} (ITA)` : null,
-        isDubbed && stripped ? `${stripped} ITA` : null
+        season ? null : stripped,
+        isDubbed && !season && stripped ? `${stripped} (ITA)` : null,
+        isDubbed && !season && stripped ? `${stripped} ITA` : null
     ]);
 }
 
@@ -488,6 +570,8 @@ function scoreCandidate(query, item, isDubbed, isMovie = null, identity = null) 
     const title = buildCandidateTitle(item);
     if (!title) return 0;
     let score = Math.max(...titleVariants(query, isDubbed).map((variant) => tokenScore(variant, title)), 0);
+    const seasonText = [title, item?.slug, item?.title_slug, item?.titleSlug].filter(Boolean).join(' ');
+    score += seasonScoreAdjustment(query, seasonText);
     const dubFlag = item.dub === 1 || item.dub === true || String(item.dub).toLowerCase() === 'true';
     if (isDubbed) {
         if (dubFlag) score += 0.55;
@@ -1260,11 +1344,11 @@ async function resolveAnimeUnityCandidate(candidate, title, mode, requestedEpiso
 
 async function resolveMode(mode, searchContext, config, reqHost) {
     const options = getAnimeUnityOptions(config);
-    const titles = uniqueNonEmpty([
+    const titles = filterSeasonSpecificTitles(uniqueNonEmpty([
         ...(Array.isArray(searchContext?.searchTitles) ? searchContext.searchTitles : []),
         ...(Array.isArray(searchContext?.rawTitles) ? searchContext.rawTitles : []),
         searchContext?.title
-    ]);
+    ]));
     const requestedEpisode = resolveRequestedAnimeEpisode(searchContext, searchContext?.meta || {});
     const isMovie = searchContext?.isMovie === true;
     const triedPaths = new Set();
