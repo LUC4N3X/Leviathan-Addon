@@ -27,34 +27,35 @@ const {
     qualityRank
 } = require('../extractors/common');
 
-const BASE_URL = Buffer.from('aHR0cHM6Ly9jaW5lbWFjaXR5LmNj', 'base64').toString('utf8');
-const DEFAULT_SESSION_COOKIE = Buffer.from(
+const CC_HOME = 'https://cinemacity.cc';
+const CC_SITEMAP = `${CC_HOME}/news_pages.xml`;
+const CC_MAPPING_BASE = 'https://anime.questoleviatanormio.dpdns.org';
+const CC_BOOTSTRAP_SESSION = Buffer.from(
     'ZGxlX3VzZXJfaWQ9MzI3Mjk7IGRsZV9wYXNzd29yZD04OTQxNzFjNmE4ZGFiMThlZTU5NGQ1YzY1MjAwOWEzNTs=',
     'base64'
 ).toString('utf8');
-const FETCH_TIMEOUT = 4500;
-const GOT_TIMEOUT = 2500;
-const GOT_ATTEMPTS = 3;
-const MAX_LISTING_PAGES = 8;
-const MAX_LISTING_CANDIDATES_PER_PAGE = 24;
-const SEARCH_CACHE_TTL_MS = 20 * 60 * 1000;
-const RESOLVED_SEARCH_CACHE_TTL_MS = 45 * 60 * 1000;
-const STREAM_CACHE_TTL_MS = 10 * 60 * 1000;
-const TMDB_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-const KITSU_MAPPING_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-const QUALITY_PROBE_CACHE_TTL_MS = 20 * 60 * 1000;
-const MAPPING_API_BASE = 'https://anime.questoleviatanormio.dpdns.org';
-const NEWS_SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
-const NEWS_SITEMAP_TTL_MS = 30 * 60 * 1000;
-const NEGATIVE_CACHE_TTL_MS = 30 * 1000;
+
+const FETCH_TIMEOUT_MS = 4500;
+const GOT_REQUEST_TIMEOUT_MS = 2500;
+const NETWORK_RETRIES = 3;
+const CATALOG_PAGE_LIMIT = 8;
+const CATALOG_SCAN_LIMIT = 24;
+const CACHE = Object.freeze({
+    search: 20 * 60 * 1000,
+    resolved: 45 * 60 * 1000,
+    stream: 10 * 60 * 1000,
+    metadata: 60 * 60 * 1000,
+    tmdb: 6 * 60 * 60 * 1000,
+    kitsu: 6 * 60 * 60 * 1000,
+    quality: 20 * 60 * 1000,
+    sitemap: 30 * 60 * 1000,
+    negative: 30 * 1000
+});
+
 const { updateCookiesFromResponse, getCookieHeaderForUrl } = createDomainCookieJar();
 
-function getCinemaCitySessionCookie() {
-    return String(process.env.CINEMACITY_COOKIE || '').trim() || DEFAULT_SESSION_COOKIE;
-}
-
 const httpClient = axios.create({
-    timeout: FETCH_TIMEOUT,
+    timeout: FETCH_TIMEOUT_MS,
     httpAgent: HTTP_AGENT,
     httpsAgent: HTTPS_AGENT,
     maxRedirects: 5,
@@ -62,307 +63,88 @@ const httpClient = axios.create({
     validateStatus: () => true
 });
 
-const newsSitemapCache = {
-    fetchedAt: 0,
-    entries: null,
-    pending: null
-};
-
-class TtlLruCache {
+class MemoryTtlMap {
     constructor({ ttlMs = 600000, max = 500 } = {}) {
         this.ttlMs = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : 600000;
         this.max = Number.isFinite(max) && max > 0 ? Math.floor(max) : 500;
-        this.map = new Map();
-    }
-
-    has(key) {
-        if (!key) return false;
-        const item = this.map.get(key);
-        if (!item) return false;
-        if (Date.now() > item.expiresAt) {
-            this.map.delete(key);
-            return false;
-        }
-        return true;
+        this.items = new Map();
     }
 
     get(key) {
         if (!key) return null;
-        const item = this.map.get(key);
-        if (!item) return null;
-        if (Date.now() > item.expiresAt) {
-            this.map.delete(key);
+        const hit = this.items.get(key);
+        if (!hit) return null;
+        if (hit.until < Date.now()) {
+            this.items.delete(key);
             return null;
         }
-        this.map.delete(key);
-        this.map.set(key, item);
-        return item.value;
+        this.items.delete(key);
+        this.items.set(key, hit);
+        return hit.value;
     }
 
     set(key, value) {
         if (!key) return;
-        if (this.map.has(key)) this.map.delete(key);
-        this.map.set(key, {
-            value,
-            expiresAt: Date.now() + this.ttlMs
-        });
-        while (this.map.size > this.max) {
-            const oldest = this.map.keys().next().value;
+        if (this.items.has(key)) this.items.delete(key);
+        this.items.set(key, { value, until: Date.now() + this.ttlMs });
+        while (this.items.size > this.max) {
+            const oldest = this.items.keys().next().value;
             if (oldest === undefined) break;
-            this.map.delete(oldest);
+            this.items.delete(oldest);
         }
     }
 
     delete(key) {
-        if (!key) return;
-        this.map.delete(key);
+        if (key) this.items.delete(key);
     }
 
     clear() {
-        this.map.clear();
-    }
-
-    get size() {
-        return this.map.size;
+        this.items.clear();
     }
 }
 
-const pendingTasks = new Map();
+const inFlight = new Map();
+const cache = Object.freeze({
+    metadata: new MemoryTtlMap({ ttlMs: CACHE.metadata, max: 1000 }),
+    search: new MemoryTtlMap({ ttlMs: CACHE.search, max: 800 }),
+    resolved: new MemoryTtlMap({ ttlMs: CACHE.resolved, max: 800 }),
+    stream: new MemoryTtlMap({ ttlMs: CACHE.stream, max: 600 }),
+    tmdb: new MemoryTtlMap({ ttlMs: CACHE.tmdb, max: 1200 }),
+    tmdbImdb: new MemoryTtlMap({ ttlMs: CACHE.tmdb, max: 1200 }),
+    kitsu: new MemoryTtlMap({ ttlMs: CACHE.kitsu, max: 1600 }),
+    quality: new MemoryTtlMap({ ttlMs: CACHE.quality, max: 800 }),
+    negative: new MemoryTtlMap({ ttlMs: CACHE.negative, max: 2000 })
+});
 
-async function singleFlight(key, fn) {
-    if (!key) return fn();
-    if (pendingTasks.has(key)) return pendingTasks.get(key);
-    const task = Promise.resolve()
-        .then(fn)
-        .finally(() => pendingTasks.delete(key));
-    pendingTasks.set(key, task);
-    return task;
+const sitemapState = {
+    at: 0,
+    urls: null
+};
+
+function ccSessionCookie() {
+    return String(process.env.CINEMACITY_COOKIE || '').trim() || CC_BOOTSTRAP_SESSION;
 }
 
-function loadHtml(html) {
+function htmlRoot(html) {
     return cheerio.load(String(html || ''), { decodeEntities: false });
 }
 
-function normalizeSectionLabel(value) {
-    return decodeHtmlEntities(value)
+function safeText(value) {
+    return he.decode(String(value || ''))
+        .replace(/\u2013|\u2014/g, '-')
+        .replace(/&ndash;|&mdash;/gi, '-')
         .replace(/\s+/g, ' ')
-        .replace(/:$/g, '')
-        .trim()
-        .toLowerCase();
-}
-
-function cleanSectionValue(value) {
-    return decodeHtmlEntities(value)
-        .replace(/\s+/g, ' ')
-        .replace(/^[,;:|\-]+|[,;:|\-]+$/g, '')
         .trim();
 }
 
-function attrSelectorValue(value) {
-    return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+function listUnique(values = []) {
+    return [...new Set((Array.isArray(values) ? values : [values])
+        .map((value) => safeText(value))
+        .filter(Boolean))];
 }
 
-const pageMetadataCache = new TtlLruCache({
-    ttlMs: 60 * 60 * 1000,
-    max: 1000
-});
-
-const searchCandidatesCache = new TtlLruCache({
-    ttlMs: SEARCH_CACHE_TTL_MS,
-    max: 800
-});
-
-const resolvedSearchCache = new TtlLruCache({
-    ttlMs: RESOLVED_SEARCH_CACHE_TTL_MS,
-    max: 800
-});
-
-const streamResultCache = new TtlLruCache({
-    ttlMs: STREAM_CACHE_TTL_MS,
-    max: 600
-});
-
-const tmdbMetadataCache = new TtlLruCache({
-    ttlMs: TMDB_CACHE_TTL_MS,
-    max: 1200
-});
-
-const tmdbImdbCache = new TtlLruCache({
-    ttlMs: TMDB_CACHE_TTL_MS,
-    max: 1200
-});
-
-const kitsuMappingCache = new TtlLruCache({
-    ttlMs: KITSU_MAPPING_CACHE_TTL_MS,
-    max: 1600
-});
-
-const qualityProbeCache = new TtlLruCache({
-    ttlMs: QUALITY_PROBE_CACHE_TTL_MS,
-    max: 800
-});
-
-const fetchFailureCache = new TtlLruCache({
-    ttlMs: NEGATIVE_CACHE_TTL_MS,
-    max: 2000
-});
-
-async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0, requestTimeout = GOT_TIMEOUT) {
-    const gotScraping = await getGotScraping();
-    if (!gotScraping) return null;
-
-    const fp = getRandomFingerprint();
-    const cookieHeader = getCookieHeaderForUrl(url, extraHeaders.Cookie || '');
-    const mergedHeaders = buildBrowserHeaders(fp, { ...extraHeaders, ...(cookieHeader ? { Cookie: cookieHeader } : {}) });
-
-    try {
-        const response = await gotScraping({
-            url,
-            headers: mergedHeaders,
-            useHeaderGenerator: true,
-            headerGeneratorOptions: getGotScrapingHeaderOptions(fp, { minVersion: 120 }),
-            retry: { limit: 0 },
-            timeout: { request: requestTimeout },
-            followRedirect: true,
-            maxRedirects: 6,
-            responseType: 'text',
-            decompress: true
-        });
-
-        const status = Number(response?.statusCode || 0);
-        const body = response?.body || '';
-        updateCookiesFromResponse(url, response.headers);
-
-        if (isCloudflareChallenge(body, status)) return null;
-        if (status >= 200 && status < 400) return body;
-        return null;
-    } catch (_) {
-        return null;
-    }
-}
-
-async function fetchHtmlWithAxios(url, extraHeaders = {}, requestTimeout = FETCH_TIMEOUT) {
-    const fp = getRandomFingerprint();
-    const cookieHeader = getCookieHeaderForUrl(url, extraHeaders.Cookie || '');
-    const mergedHeaders = buildBrowserHeaders(fp, { ...extraHeaders, ...(cookieHeader ? { Cookie: cookieHeader } : {}) });
-
-    try {
-        const response = await httpClient.get(url, {
-            headers: mergedHeaders,
-            responseType: 'text',
-            timeout: requestTimeout
-        });
-        const status = Number(response?.status || 0);
-        const body = responseText(response?.data);
-        updateCookiesFromResponse(url, response.headers);
-
-        if (isCloudflareChallenge(body, status)) return null;
-        if (status >= 200 && status < 400) return body;
-        return null;
-    } catch (_) {
-        return null;
-    }
-}
-
-async function fetchHtmlPostWithGot(url, formBody, extraHeaders = {}) {
-    const gotScraping = await getGotScraping();
-    if (!gotScraping) return null;
-
-    const fp = getRandomFingerprint();
-    const cookieHeader = getCookieHeaderForUrl(url, extraHeaders.Cookie || getCinemaCitySessionCookie());
-    const baseHeaders = buildBrowserHeaders(fp, {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Origin': BASE_URL,
-        'Referer': `${BASE_URL}/`,
-        ...extraHeaders,
-        ...(cookieHeader ? { Cookie: cookieHeader } : {})
-    });
-
-    try {
-        const response = await gotScraping({
-            url,
-            method: 'POST',
-            body: formBody,
-            headers: baseHeaders,
-            useHeaderGenerator: true,
-            headerGeneratorOptions: getGotScrapingHeaderOptions(fp, { minVersion: 120 }),
-            retry: { limit: 0 },
-            timeout: { request: GOT_TIMEOUT },
-            followRedirect: true,
-            maxRedirects: 6,
-            responseType: 'text',
-            decompress: true
-        });
-
-        const status = Number(response?.statusCode || 0);
-        const body = response?.body || '';
-        updateCookiesFromResponse(url, response.headers);
-
-        if (isCloudflareChallenge(body, status)) return null;
-        if (status >= 200 && status < 400) return body;
-        return null;
-    } catch (_) {
-        return null;
-    }
-}
-
-async function fetchHtml(url, extraHeaders = {}, options = {}) {
-    const cacheKey = `url:${url}`;
-    if (fetchFailureCache.get(cacheKey)) return null;
-
-    const timeout = options.timeout || FETCH_TIMEOUT;
-    const attempts = Math.max(1, Math.min(GOT_ATTEMPTS, Number.parseInt(String(options.attempts || GOT_ATTEMPTS), 10) || GOT_ATTEMPTS));
-    for (let attempt = 0; attempt < attempts; attempt++) {
-        if (attempt > 0) {
-            const baseDelay = Math.min(4000, 200 * Math.pow(2, attempt));
-            const jitter = Math.floor(Math.random() * 200);
-            await sleep(baseDelay + jitter);
-        }
-        const gotBody = await fetchHtmlWithGot(url, extraHeaders, attempt, timeout);
-        if (gotBody) return gotBody;
-    }
-
-    if (options.axiosFallback !== false) {
-        const axiosBody = await fetchHtmlWithAxios(url, extraHeaders, timeout);
-        if (axiosBody) return axiosBody;
-    }
-
-    fetchFailureCache.set(cacheKey, true);
-    return null;
-}
-
-async function fetchJson(url, options = {}) {
-    const fp = getRandomFingerprint();
-    const defaultHeaders = {
-        'User-Agent': fp.userAgent,
-        'Accept': 'application/json,*/*;q=0.8',
-        'Accept-Language': fp.acceptLanguage
-    };
-    const response = await httpClient.get(url, {
-        ...options,
-        headers: { ...defaultHeaders, ...(options.headers || {}) }
-    });
-    const status = Number(response?.status || 0);
-    if (status >= 200 && status < 400) return response.data;
-    throw new Error(`HTTP ${status || 500}`);
-}
-
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function decodeHtmlEntities(value) {
-    return he.decode(String(value || ''))
-        .replace(/\u2013|\u2014/g, '-')
-        .replace(/&ndash;|&mdash;/gi, '-');
-}
-
-function uniqueStrings(values = []) {
-    return [...new Set((values || []).map((v) => decodeHtmlEntities(String(v || '')).trim()).filter(Boolean))];
-}
-
-function normalizeTitle(value) {
-    return decodeHtmlEntities(String(value || ''))
+function simpleKey(value) {
+    return safeText(value)
         .normalize('NFKD')
         .replace(/[\u0300-\u036f]/g, '')
         .toLowerCase()
@@ -371,37 +153,89 @@ function normalizeTitle(value) {
         .trim();
 }
 
-function extractImdbId(value) {
-    const match = String(value || '').trim().match(/\btt\d{5,}\b/i);
+function tokenSet(value) {
+    return new Set(
+        safeText(value)
+            .normalize('NFKD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .replace(/\([^)]*\)/g, ' ')
+            .split(/[^a-z0-9]+/g)
+            .filter((token) => token.length >= 2)
+    );
+}
+
+function imdbFrom(value) {
+    const match = String(value || '').match(/\btt\d{5,}\b/i);
     return match ? match[0].toLowerCase() : null;
 }
 
-function extractTmdbId(value) {
+function tmdbFrom(value) {
     const raw = String(value || '').trim();
     const tagged = raw.match(/^tmdb:(\d+)/i);
     if (tagged) return tagged[1];
     return /^\d+$/.test(raw) ? raw : null;
 }
 
-function extractKitsuId(value) {
+function kitsuFrom(value) {
     const raw = String(value || '').trim();
     if (/^\d+$/.test(raw)) return raw;
     const match = raw.match(/^kitsu:(\d+)/i);
     return match ? match[1] : null;
 }
 
-function getMappingLanguage(config = {}) {
-    const lang = String(config?.filters?.language || '').trim().toLowerCase();
-    return lang === 'ita' ? 'it' : null;
+function yearFrom(value) {
+    const match = String(value || '').match(/\b(19|20)\d{2}\b/);
+    return match ? Number.parseInt(match[0], 10) : null;
 }
 
-function extractSitemapLocs(xml) {
-    return [...String(xml || '').matchAll(/<loc>([^<]+)<\/loc>/gi)]
-        .map((m) => String(m[1] || '').trim())
-        .filter(Boolean);
+function numericId(value) {
+    const parsed = Number.parseInt(String(value || '').trim(), 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function getCinemaCitySectionType(url) {
+function numberPlan(values = []) {
+    const seen = new Set();
+    const out = [];
+    for (const value of Array.isArray(values) ? values : [values]) {
+        const parsed = numericId(value);
+        if (!parsed || seen.has(parsed)) continue;
+        seen.add(parsed);
+        out.push(parsed);
+    }
+    return out;
+}
+
+function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function keyedTask(key, fn) {
+    if (!key) return fn();
+    if (inFlight.has(key)) return inFlight.get(key);
+    const promise = Promise.resolve().then(fn).finally(() => inFlight.delete(key));
+    inFlight.set(key, promise);
+    return promise;
+}
+
+function ccUrl(pathOrUrl, base = CC_HOME) {
+    if (!pathOrUrl) return null;
+    try {
+        return new URL(pathOrUrl, base).toString();
+    } catch (_) {
+        return null;
+    }
+}
+
+function urlOrigin(url) {
+    try {
+        return new URL(url).origin;
+    } catch (_) {
+        return CC_HOME;
+    }
+}
+
+function ccKind(url) {
     try {
         const pathname = new URL(url).pathname.toLowerCase();
         if (pathname.startsWith('/movies/')) return 'movie';
@@ -413,213 +247,227 @@ function getCinemaCitySectionType(url) {
     }
 }
 
-function isCinemaCityContentUrlForType(url, providerType) {
-    const sectionType = getCinemaCitySectionType(url);
-    if (providerType === 'movie') return sectionType === 'movie';
-    if (providerType === 'anime') return sectionType === 'anime' || sectionType === 'tv';
-    return sectionType === 'tv' || sectionType === 'anime';
+function ccUrlMatchesKind(url, wantedKind) {
+    const kind = ccKind(url);
+    if (wantedKind === 'movie') return kind === 'movie';
+    if (wantedKind === 'anime') return kind === 'anime' || kind === 'tv';
+    return kind === 'tv' || kind === 'anime';
 }
 
-function getCinemaCityTypeBoost(url, providerType) {
-    const sectionType = getCinemaCitySectionType(url);
-    if (providerType === 'movie') return sectionType === 'movie' ? 18 : -40;
-    if (providerType === 'anime') {
-        if (sectionType === 'anime') return 24;
-        if (sectionType === 'tv') return 10;
-        return -40;
-    }
-    if (sectionType === 'tv') return 16;
-    if (sectionType === 'anime') return 4;
-    return -40;
-}
-
-function titleFromContentUrl(url) {
+function slugTitle(url) {
     try {
-        const pathname = new URL(url).pathname;
-        const slug = decodeURIComponent(pathname.split('/').filter(Boolean).pop() || '');
-        return decodeHtmlEntities(
-            slug
-                .replace(/\.html?$/i, '')
-                .replace(/^\d+-/, '')
-                .replace(/-/g, ' ')
-                .replace(/\s+/g, ' ')
-                .trim()
-        );
+        const tail = decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() || '');
+        return safeText(tail.replace(/\.html?$/i, '').replace(/^\d+-/, '').replace(/-/g, ' '));
     } catch (_) {
         return '';
     }
 }
 
-function extractYear(value) {
-    const match = String(value || '').match(/\b(19|20)\d{2}\b/);
-    return match ? Number.parseInt(match[0], 10) : null;
+async function gotText(url, extraHeaders = {}, requestTimeout = GOT_REQUEST_TIMEOUT_MS) {
+    const gotScraping = await getGotScraping();
+    if (!gotScraping) return null;
+
+    const fp = getRandomFingerprint();
+    const cookie = getCookieHeaderForUrl(url, extraHeaders.Cookie || '');
+    const headers = buildBrowserHeaders(fp, {
+        ...extraHeaders,
+        ...(cookie ? { Cookie: cookie } : {})
+    });
+
+    try {
+        const response = await gotScraping({
+            url,
+            headers,
+            useHeaderGenerator: true,
+            headerGeneratorOptions: getGotScrapingHeaderOptions(fp, { minVersion: 120 }),
+            retry: { limit: 0 },
+            timeout: { request: requestTimeout },
+            followRedirect: true,
+            maxRedirects: 6,
+            responseType: 'text',
+            decompress: true
+        });
+        const status = Number(response?.statusCode || 0);
+        const body = String(response?.body || '');
+        updateCookiesFromResponse(url, response.headers);
+        if (isCloudflareChallenge(body, status)) return null;
+        return status >= 200 && status < 400 ? body : null;
+    } catch (_) {
+        return null;
+    }
 }
 
-function extractSectionValues(html, sectionLabel) {
-    const $ = loadHtml(html);
-    const wanted = normalizeSectionLabel(sectionLabel);
-    const values = [];
+async function axiosText(url, extraHeaders = {}, requestTimeout = FETCH_TIMEOUT_MS) {
+    const fp = getRandomFingerprint();
+    const cookie = getCookieHeaderForUrl(url, extraHeaders.Cookie || '');
+    const headers = buildBrowserHeaders(fp, {
+        ...extraHeaders,
+        ...(cookie ? { Cookie: cookie } : {})
+    });
 
+    try {
+        const response = await httpClient.get(url, {
+            headers,
+            timeout: requestTimeout,
+            responseType: 'text'
+        });
+        const status = Number(response?.status || 0);
+        const body = responseText(response?.data);
+        updateCookiesFromResponse(url, response.headers);
+        if (isCloudflareChallenge(body, status)) return null;
+        return status >= 200 && status < 400 ? body : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+async function ccText(url, extraHeaders = {}, options = {}) {
+    const normalized = normalizeRemoteUrl(url) || url;
+    const negativeKey = `net:${normalized}`;
+    if (cache.negative.get(negativeKey)) return null;
+
+    const timeout = Number.parseInt(String(options.timeout || FETCH_TIMEOUT_MS), 10) || FETCH_TIMEOUT_MS;
+    const attempts = Math.max(1, Math.min(NETWORK_RETRIES, Number.parseInt(String(options.attempts || NETWORK_RETRIES), 10) || NETWORK_RETRIES));
+
+    for (let attempt = 0; attempt < attempts; attempt++) {
+        if (attempt > 0) await wait(Math.min(4000, 180 * Math.pow(2, attempt)) + Math.floor(Math.random() * 220));
+        const body = await gotText(url, extraHeaders, timeout);
+        if (body) return body;
+    }
+
+    if (options.axiosFallback !== false) {
+        const body = await axiosText(url, extraHeaders, timeout);
+        if (body) return body;
+    }
+
+    cache.negative.set(negativeKey, true);
+    return null;
+}
+
+async function ccFormText(url, formBody, extraHeaders = {}) {
+    const gotScraping = await getGotScraping();
+    const fp = getRandomFingerprint();
+    const cookie = getCookieHeaderForUrl(url, extraHeaders.Cookie || ccSessionCookie());
+    const headers = buildBrowserHeaders(fp, {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Origin: CC_HOME,
+        Referer: `${CC_HOME}/`,
+        ...extraHeaders,
+        ...(cookie ? { Cookie: cookie } : {})
+    });
+
+    if (gotScraping) {
+        try {
+            const response = await gotScraping({
+                url,
+                method: 'POST',
+                body: formBody,
+                headers,
+                useHeaderGenerator: true,
+                headerGeneratorOptions: getGotScrapingHeaderOptions(fp, { minVersion: 120 }),
+                retry: { limit: 0 },
+                timeout: { request: GOT_REQUEST_TIMEOUT_MS },
+                followRedirect: true,
+                maxRedirects: 6,
+                responseType: 'text',
+                decompress: true
+            });
+            const status = Number(response?.statusCode || 0);
+            const body = String(response?.body || '');
+            updateCookiesFromResponse(url, response.headers);
+            if (!isCloudflareChallenge(body, status) && status >= 200 && status < 400) return body;
+        } catch (_) {}
+    }
+
+    try {
+        const response = await httpClient.post(url, formBody, { headers, responseType: 'text' });
+        const status = Number(response?.status || 0);
+        const body = responseText(response?.data);
+        updateCookiesFromResponse(url, response.headers);
+        if (!isCloudflareChallenge(body, status) && status >= 200 && status < 400) return body;
+    } catch (_) {}
+
+    return null;
+}
+
+async function ccJson(url, options = {}) {
+    const fp = getRandomFingerprint();
+    const headers = {
+        'User-Agent': fp.userAgent,
+        Accept: 'application/json,*/*;q=0.8',
+        'Accept-Language': fp.acceptLanguage,
+        ...(options.headers || {})
+    };
+    const response = await httpClient.get(url, { ...options, headers });
+    const status = Number(response?.status || 0);
+    if (status >= 200 && status < 400) return response.data;
+    throw new Error(`HTTP ${status || 500}`);
+}
+
+function selectorEscape(value) {
+    return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function labelKey(value) {
+    return safeText(value).replace(/:$/g, '').toLowerCase();
+}
+
+function fieldValues(html, label) {
+    const $ = htmlRoot(html);
+    const wanted = labelKey(label);
+    const out = [];
     $('li').each((_, li) => {
         const spans = $(li).children('span');
         if (spans.length < 2) return;
-        const label = normalizeSectionLabel($(spans[0]).text());
-        if (label !== wanted) return;
-
+        if (labelKey($(spans[0]).text()) !== wanted) return;
         const valueNode = $(spans[1]);
         const linked = [];
         valueNode.find('a').each((__, a) => {
-            const value = cleanSectionValue($(a).text());
+            const value = safeText($(a).text()).replace(/^[,;:|\-]+|[,;:|\-]+$/g, '');
             if (value) linked.push(value);
         });
-
-        const rawText = cleanSectionValue(valueNode.text());
-        const sourceValues = linked.length > 0 ? linked : rawText.split(/[,;|]/g);
-        for (const value of sourceValues) {
-            const cleaned = cleanSectionValue(value);
-            if (cleaned) values.push(cleaned);
+        const raw = safeText(valueNode.text()).replace(/^[,;:|\-]+|[,;:|\-]+$/g, '');
+        const pieces = linked.length ? linked : raw.split(/[,;|]/g);
+        for (const piece of pieces) {
+            const clean = safeText(piece).replace(/^[,;:|\-]+|[,;:|\-]+$/g, '');
+            if (clean) out.push(clean);
         }
     });
-
-    return uniqueStrings(values);
+    return listUnique(out);
 }
 
-function extractMetaContent(html, property) {
-    const $ = loadHtml(html);
-    const key = attrSelectorValue(property);
-    const value = $(`meta[property="${key}"]`).first().attr('content')
+function metaContent(html, name) {
+    const $ = htmlRoot(html);
+    const key = selectorEscape(name);
+    return safeText(
+        $(`meta[property="${key}"]`).first().attr('content')
         || $(`meta[name="${key}"]`).first().attr('content')
-        || '';
-    return decodeHtmlEntities(value).trim();
+        || ''
+    );
 }
 
-function extractHeadingTitle(html) {
-    const $ = loadHtml(html);
-    const value = $('h1').first().text();
-    return decodeHtmlEntities(value).replace(/\s+/g, ' ').trim();
+function pageHeading(html) {
+    const $ = htmlRoot(html);
+    return safeText($('h1').first().text());
 }
 
-function pickHighestResolution(resolutions = []) {
+function strongestResolution(values = []) {
     let best = 'Unknown';
-    for (const r of resolutions) {
-        best = pickBetterQuality(best, normalizeQuality(r));
+    for (const value of values) {
+        best = pickBetterQuality(best, normalizeQuality(value));
     }
     return normalizeQuality(best);
 }
 
-function extractDownloadLanguagesFromPage(html) {
-    const $ = loadHtml(html);
-    const languages = [];
-
-    $('.dar-tr_item').each((_, item) => {
-        const title = decodeHtmlEntities($(item).find('.dar-tr_title').text() || '');
-        const langLine = decodeHtmlEntities($(item).find('li').filter((__, li) => {
-            return /language/i.test($(li).find('span').first().text() || '');
-        }).text() || '');
-
-        const combined = `${title} ${langLine}`;
-        if (/\bItalian\b|\.Italian\.|\bITA\b/i.test(combined)) languages.push('italian');
-        if (/\bEnglish\b|\.English\.|\bENG\b/i.test(combined)) languages.push('english');
-        if (/\bMulti\b|Dual[-\s]?Audio|Multiaudio/i.test(combined)) languages.push('multi');
-    });
-
-    return normalizeLanguageList(languages);
-}
-
-function parseCinemaCityPageMetadata(html, pageUrl = '') {
-    const body = String(html || '');
-    const $ = loadHtml(body);
-    const pageTitle = extractHeadingTitle(body)
-        || extractMetaContent(body, 'og:title')
-        || extractMetaContent(body, 'twitter:title')
-        || titleFromContentUrl(pageUrl);
-    const genres = extractSectionValues(body, 'Genre');
-    const audioLanguages = extractSectionValues(body, 'Audio language');
-    const downloadLanguages = extractDownloadLanguagesFromPage(body);
-    const subtitleLanguages = extractSectionValues(body, 'Subtitle language');
-    const listedResolutions = extractSectionValues(body, 'Resolution')
-        .map((v) => normalizeQuality(v))
-        .filter((v) => v !== 'Unknown');
-    const uploadedQuality = body.match(/Uploaded\s+([^<\n]+)/i)?.[1] || '';
-    const listedQualities = uniqueStrings([
-        ...extractSectionValues(body, 'Quality'),
-        uploadedQuality
-    ]);
-
-    let tmdbId = null;
-    $('a[href*="themoviedb.org"], link[href*="themoviedb.org"]').each((_, node) => {
-        if (tmdbId) return;
-        const href = String($(node).attr('href') || '');
-        const match = href.match(/themoviedb\.org\/(?:movie|tv)\/(\d+)/i);
-        if (match?.[1]) tmdbId = extractTmdbId(match[1]);
-    });
-    if (!tmdbId) {
-        const tmdbMatch = body.match(/themoviedb\.org\/(?:movie|tv)\/(\d+)/i);
-        tmdbId = tmdbMatch?.[1] ? extractTmdbId(tmdbMatch[1]) : null;
-    }
-
-    const imdbId = extractImdbId(body);
-    const quality = pickHighestResolution(listedResolutions);
-    const qualityTag = listedQualities.find((v) => /web[- ]?dl|webrip|bluray|hdrip/i.test(String(v)));
-    const isMultiAudio = audioLanguages.length > 1
-        || downloadLanguages.includes('multi')
-        || /multi|dual[-\s]?audio|multiaudio/i.test(listedQualities.join(' '));
-    const isAnime = genres.some((v) => /\banime\b|\banimation\b/i.test(String(v)))
-        || getCinemaCitySectionType(pageUrl) === 'anime';
-
-    return {
-        title: pageTitle,
-        year: extractYear(pageTitle) || extractYear(body),
-        imdbId,
-        tmdbId,
-        genres,
-        audioLanguages,
-        downloadLanguages,
-        subtitleLanguages,
-        listedResolutions,
-        quality,
-        qualityTag: qualityTag || '',
-        isMultiAudio,
-        isAnime
-    };
-}
-
-async function fetchCinemaCityPageMetadata(pageUrl) {
-    const normalizedUrl = normalizeRemoteUrl(pageUrl);
-    if (!normalizedUrl) return null;
-
-    const cached = pageMetadataCache.get(normalizedUrl);
-    if (cached) return cached;
-
-    return singleFlight(`metadata:${normalizedUrl}`, async () => {
-        const existing = pageMetadataCache.get(normalizedUrl);
-        if (existing) return existing;
-
-        try {
-            const html = await fetchHtml(normalizedUrl, {
-                'Referer': `${BASE_URL}/`,
-                'Cookie': getCinemaCitySessionCookie(),
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-User': '?1'
-            });
-            const metadata = parseCinemaCityPageMetadata(html, normalizedUrl);
-            pageMetadataCache.set(normalizedUrl, metadata);
-            return metadata;
-        } catch (_) {
-            return null;
-        }
-    });
-}
-
-const LANGUAGE_ALIASES = {
+const LANGUAGE_ALIASES = Object.freeze({
     italian: ['italian', 'ita', 'it', 'italiano'],
     english: ['english', 'eng', 'en', 'inglese'],
     japanese: ['japanese', 'jpn', 'ja', 'giapponese'],
     multi: ['multi', 'multiaudio', 'multi audio', 'dual audio', 'dual-audio']
-};
+});
 
-function normalizeLanguageToken(value) {
-    const raw = decodeHtmlEntities(String(value || ''))
+function langToken(value) {
+    const raw = safeText(value)
         .normalize('NFKD')
         .replace(/[\u0300-\u036f]/g, '')
         .toLowerCase()
@@ -627,157 +475,198 @@ function normalizeLanguageToken(value) {
         .replace(/[^a-z0-9]+/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
-
     if (!raw) return '';
 
-    const tokens = raw.split(' ').filter(Boolean);
+    const words = raw.split(' ').filter(Boolean);
     const compact = raw.replace(/\s+/g, '');
-
-    for (const [canonical, aliases] of Object.entries(LANGUAGE_ALIASES)) {
-        if (aliases.some((alias) => {
+    for (const [name, aliases] of Object.entries(LANGUAGE_ALIASES)) {
+        for (const alias of aliases) {
             const cleanAlias = String(alias || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-            if (!cleanAlias) return false;
+            if (!cleanAlias) continue;
             const aliasCompact = cleanAlias.replace(/\s+/g, '');
-            if (raw === cleanAlias || compact === aliasCompact) return true;
-            if (cleanAlias.length <= 3) return tokens.includes(cleanAlias);
-            return tokens.includes(cleanAlias) || compact.includes(aliasCompact);
-        })) {
-            return canonical;
+            if (raw === cleanAlias || compact === aliasCompact) return name;
+            if (cleanAlias.length <= 3 && words.includes(cleanAlias)) return name;
+            if (cleanAlias.length > 3 && (words.includes(cleanAlias) || compact.includes(aliasCompact))) return name;
         }
     }
-
     return raw;
 }
 
-function normalizeLanguageList(values = []) {
-    return uniqueStrings(
-        (Array.isArray(values) ? values : [values])
-            .flatMap((value) => String(value || '').split(/[,;/|]+/g))
-            .map(normalizeLanguageToken)
-            .filter(Boolean)
-    );
+function langList(values = []) {
+    return listUnique((Array.isArray(values) ? values : [values])
+        .flatMap((value) => String(value || '').split(/[,;/|]+/g))
+        .map(langToken)
+        .filter(Boolean));
 }
 
-function getWantedLanguage(config = {}) {
-    const raw = String(
-        config?.filters?.language
-        || config?.language
-        || config?.preferredLanguage
-        || ''
-    ).trim().toLowerCase();
+function downloadLanguages(html) {
+    const $ = htmlRoot(html);
+    const found = [];
+    $('.dar-tr_item').each((_, item) => {
+        const title = safeText($(item).find('.dar-tr_title').text());
+        const langLine = safeText($(item).find('li').filter((__, li) => {
+            return /language/i.test($(li).find('span').first().text() || '');
+        }).text());
+        const text = `${title} ${langLine}`;
+        if (/\bItalian\b|\.Italian\.|\bITA\b/i.test(text)) found.push('italian');
+        if (/\bEnglish\b|\.English\.|\bENG\b/i.test(text)) found.push('english');
+        if (/\bMulti\b|Dual[-\s]?Audio|Multiaudio/i.test(text)) found.push('multi');
+    });
+    return langList(found);
+}
 
+function parsePageFacts(html, pageUrl = '') {
+    const body = String(html || '');
+    const $ = htmlRoot(body);
+    const title = pageHeading(body)
+        || metaContent(body, 'og:title')
+        || metaContent(body, 'twitter:title')
+        || slugTitle(pageUrl);
+    const genres = fieldValues(body, 'Genre');
+    const audioLanguages = fieldValues(body, 'Audio language');
+    const fileLanguages = downloadLanguages(body);
+    const subtitleLanguages = fieldValues(body, 'Subtitle language');
+    const resolutions = fieldValues(body, 'Resolution')
+        .map((value) => normalizeQuality(value))
+        .filter((value) => value !== 'Unknown');
+    const uploadedLine = body.match(/Uploaded\s+([^<\n]+)/i)?.[1] || '';
+    const qualityNames = listUnique([...fieldValues(body, 'Quality'), uploadedLine]);
+
+    let tmdbId = null;
+    $('a[href*="themoviedb.org"], link[href*="themoviedb.org"]').each((_, node) => {
+        if (tmdbId) return;
+        const href = String($(node).attr('href') || '');
+        const match = href.match(/themoviedb\.org\/(?:movie|tv)\/(\d+)/i);
+        if (match?.[1]) tmdbId = tmdbFrom(match[1]);
+    });
+    if (!tmdbId) {
+        const match = body.match(/themoviedb\.org\/(?:movie|tv)\/(\d+)/i);
+        if (match?.[1]) tmdbId = tmdbFrom(match[1]);
+    }
+
+    const quality = strongestResolution(resolutions);
+    const qualityTag = qualityNames.find((value) => /web[- ]?dl|webrip|bluray|hdrip|cam[- ]?rip|\bts\b/i.test(String(value || ''))) || '';
+    const multiAudio = audioLanguages.length > 1
+        || fileLanguages.includes('multi')
+        || /multi|dual[-\s]?audio|multiaudio/i.test(qualityNames.join(' '));
+    const anime = genres.some((value) => /\banime\b|\banimation\b/i.test(String(value))) || ccKind(pageUrl) === 'anime';
+
+    return {
+        title,
+        year: yearFrom(title) || yearFrom(body),
+        imdbId: imdbFrom(body),
+        tmdbId,
+        genres,
+        audioLanguages,
+        downloadLanguages: fileLanguages,
+        subtitleLanguages,
+        listedResolutions: resolutions,
+        quality,
+        qualityTag,
+        isMultiAudio: multiAudio,
+        isAnime: anime
+    };
+}
+
+async function pageFacts(pageUrl) {
+    const normalized = normalizeRemoteUrl(pageUrl);
+    if (!normalized) return null;
+    const hit = cache.metadata.get(normalized);
+    if (hit) return hit;
+    return keyedTask(`facts:${normalized}`, async () => {
+        const again = cache.metadata.get(normalized);
+        if (again) return again;
+        const html = await ccText(normalized, {
+            Referer: `${CC_HOME}/`,
+            Cookie: ccSessionCookie(),
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-User': '?1'
+        });
+        if (!html) return null;
+        const facts = parsePageFacts(html, normalized);
+        cache.metadata.set(normalized, facts);
+        return facts;
+    });
+}
+
+function wantedLang(config = {}) {
+    const raw = String(config?.filters?.language || config?.language || config?.preferredLanguage || '').trim().toLowerCase();
     if (['ita', 'it', 'italian', 'italiano'].includes(raw)) return 'italian';
     if (['eng', 'en', 'english', 'inglese'].includes(raw)) return 'english';
     if (['jpn', 'ja', 'japanese', 'giapponese'].includes(raw)) return 'japanese';
-
     return raw || null;
 }
 
-function isStrictSingleLanguageMode(config = {}) {
-    const wanted = getWantedLanguage(config);
+function strictLangMode(config = {}) {
+    const wanted = wantedLang(config);
     if (!wanted) return false;
-
     const raw = String(config?.filters?.language || config?.language || '').trim().toLowerCase();
-
-    return (
-        raw === 'ita'
-        || raw === 'it'
-        || raw === 'italian'
-        || raw === 'italiano'
+    return ['ita', 'it', 'italian', 'italiano'].includes(raw)
         || config?.filters?.strictLanguage === true
-        || config?.strictLanguage === true
-    );
+        || config?.strictLanguage === true;
 }
 
-function pageHasRequestedAudio(pageMetadata = {}, config = {}) {
-    const wanted = getWantedLanguage(config);
-    if (!wanted) return true;
+function pageAudioOk(facts = {}, config = {}) {
+    const wanted = wantedLang(config);
+    if (!wanted || !strictLangMode(config)) return true;
 
-    const strict = isStrictSingleLanguageMode(config);
-    if (!strict) return true;
-
-    const pageAudio = normalizeLanguageList(pageMetadata.audioLanguages || []);
-    const downloadAudio = normalizeLanguageList(pageMetadata.downloadLanguages || []);
-    const qualityTag = normalizeLanguageToken(pageMetadata.qualityTag || '');
-    const pageHasWanted = pageAudio.includes(wanted);
-    const pageHasMulti = pageAudio.includes('multi')
-        || qualityTag === 'multi'
-        || pageMetadata.isMultiAudio === true
-        || /\bmulti\b|dual[-\s]?audio|multiaudio/i.test(String(pageMetadata.qualityTag || ''));
-    const downloadHasWanted = downloadAudio.includes(wanted);
-    const downloadHasMulti = downloadAudio.includes('multi');
-    const pageOnlyEnglish = pageAudio.length === 1 && pageAudio[0] === 'english';
-    const downloadOnlyEnglish = downloadAudio.length > 0 && downloadAudio.every((lang) => lang === 'english');
+    const pageAudio = langList(facts.audioLanguages || []);
+    const fileAudio = langList(facts.downloadLanguages || []);
+    const qualityLang = langToken(facts.qualityTag || '');
+    const pageWanted = pageAudio.includes(wanted);
+    const fileWanted = fileAudio.includes(wanted);
+    const pageMulti = pageAudio.includes('multi') || qualityLang === 'multi' || facts.isMultiAudio === true || /multi|dual[-\s]?audio|multiaudio/i.test(String(facts.qualityTag || ''));
+    const fileMulti = fileAudio.includes('multi');
+    const fileOnlyEnglish = fileAudio.length > 0 && fileAudio.every((lang) => lang === 'english');
 
     if (wanted === 'italian') {
-        if (pageHasWanted) return true;
-        if (pageHasMulti && config?.filters?.allowMultiWhenItalianOnly === true) return true;
-
-        if (pageAudio.length > 0) return false;
-
-        if (downloadHasWanted) return true;
-        if (downloadHasMulti && config?.filters?.allowMultiWhenItalianOnly === true) return true;
-        if (downloadOnlyEnglish) return false;
-
+        if (pageWanted || fileWanted) return true;
+        if ((pageMulti || fileMulti) && config?.filters?.allowMultiWhenItalianOnly === true) return true;
+        if (pageAudio.length > 0 || fileOnlyEnglish) return false;
         return false;
     }
 
-    if (pageHasWanted || downloadHasWanted) return true;
-    if (pageHasMulti || downloadHasMulti) return true;
-    if (pageOnlyEnglish && wanted !== 'english') return false;
-
-    return pageAudio.length === 0 && downloadAudio.length === 0;
+    if (pageWanted || fileWanted) return true;
+    if (pageMulti || fileMulti) return true;
+    return pageAudio.length === 0 && fileAudio.length === 0;
 }
 
-function buildLanguageRejectReason(pageMetadata = {}, config = {}) {
-    const wanted = getWantedLanguage(config) || 'unknown';
-    const foundPage = normalizeLanguageList(pageMetadata.audioLanguages || []);
-    const foundDownload = normalizeLanguageList(pageMetadata.downloadLanguages || []);
-    return `[CinemaCity] Skip lingua: richiesta=${wanted}, pagina=${foundPage.join(',') || 'unknown'}, download=${foundDownload.join(',') || 'unknown'}, titolo=${pageMetadata.title || 'unknown'}`;
+function languageRejectLog(facts = {}, config = {}) {
+    return `[CC V2] language rejected | wanted=${wantedLang(config) || 'unknown'} | page=${langList(facts.audioLanguages || []).join(',') || 'unknown'} | download=${langList(facts.downloadLanguages || []).join(',') || 'unknown'} | title=${facts.title || 'unknown'}`;
 }
 
-function streamUrlHasForbiddenLanguage(streamUrl = '', config = {}) {
-    const wanted = getWantedLanguage(config);
-    if (!wanted || !isStrictSingleLanguageMode(config)) return false;
+function streamLanguageRejected(streamUrl = '', config = {}) {
+    const wanted = wantedLang(config);
+    if (!wanted || !strictLangMode(config)) return false;
 
     const text = decodeURIComponent(String(streamUrl || '')).replace(/[._-]+/g, ' ');
-    const hasItalian = /(?:^|[^a-z0-9])(ita|it|italian|italiano)(?:[^a-z0-9]|$)/i.test(text);
-    const hasEnglish = /(?:^|[^a-z0-9])(eng|en|english|inglese)(?:[^a-z0-9]|$)/i.test(text);
+    const hasIta = /(?:^|[^a-z0-9])(ita|it|italian|italiano)(?:[^a-z0-9]|$)/i.test(text);
+    const hasEng = /(?:^|[^a-z0-9])(eng|en|english|inglese)(?:[^a-z0-9]|$)/i.test(text);
     const hasMulti = /(?:^|[^a-z0-9])(multi|multiaudio|dual audio|dual)(?:[^a-z0-9]|$)/i.test(text);
 
-    if (wanted === 'italian') {
-        return hasEnglish && !hasItalian && !hasMulti;
-    }
-
-    const normalized = normalizeLanguageToken(text);
-    return hasEnglish && !normalized.includes(wanted);
+    if (wanted === 'italian') return hasEng && !hasIta && !hasMulti;
+    return hasEng && !langToken(text).includes(wanted);
 }
 
-function buildCinemaCityLanguageLabel(pageMetadata = {}, config = {}) {
-    const languages = normalizeLanguageList(pageMetadata?.audioLanguages || []);
-    const downloadLanguages = normalizeLanguageList(pageMetadata?.downloadLanguages || []);
-    const wantsItalian = getWantedLanguage(config) === 'italian';
+function languageBadge(facts = {}, config = {}) {
+    const pageAudio = langList(facts?.audioLanguages || []);
+    const fileAudio = langList(facts?.downloadLanguages || []);
+    const wantsIta = wantedLang(config) === 'italian';
+    const hasIta = pageAudio.includes('italian') || fileAudio.includes('italian');
+    const hasEng = pageAudio.includes('english') || fileAudio.includes('english');
+    const hasMulti = pageAudio.includes('multi') || fileAudio.includes('multi') || facts?.isMultiAudio === true;
 
-    const hasItalian = languages.includes('italian') || downloadLanguages.includes('italian');
-    const hasEnglish = languages.includes('english') || downloadLanguages.includes('english');
-    const hasMulti = languages.includes('multi') || downloadLanguages.includes('multi') || pageMetadata?.isMultiAudio === true;
-
-    if (hasItalian && hasMulti) return '🇮🇹 ITA+MULTI';
-    if (hasItalian) return '🇮🇹 ITA';
-
-    if (wantsItalian && hasMulti && config?.filters?.allowMultiWhenItalianOnly === true) {
-        return '🌍 MULTI';
-    }
-
-    if (hasEnglish && languages.length <= 1 && downloadLanguages.length <= 1) return '🇬🇧 ENG';
-    if (hasMulti || languages.length > 1 || downloadLanguages.length > 1) return '🌍 MULTI';
-
+    if (hasIta && hasMulti) return '🇮🇹 ITA+MULTI';
+    if (hasIta) return '🇮🇹 ITA';
+    if (wantsIta && hasMulti && config?.filters?.allowMultiWhenItalianOnly === true) return '🌍 MULTI';
+    if (hasEng && pageAudio.length <= 1 && fileAudio.length <= 1) return '🇬🇧 ENG';
+    if (hasMulti || pageAudio.length > 1 || fileAudio.length > 1) return '🌍 MULTI';
     return '🌐 WEB';
 }
 
-function hardFilterStreamsByLanguage(streams = [], config = {}) {
-    const wanted = getWantedLanguage(config);
-    if (!wanted || !isStrictSingleLanguageMode(config)) return streams;
+function filterByLanguage(streams = [], config = {}) {
+    const wanted = wantedLang(config);
+    if (!wanted || !strictLangMode(config)) return streams;
 
     return streams.filter((stream) => {
         const text = [
@@ -797,12 +686,12 @@ function hardFilterStreamsByLanguage(streams = [], config = {}) {
             return false;
         }
 
-        return normalizeLanguageToken(text).includes(wanted);
+        return langToken(text).includes(wanted);
     });
 }
 
-function collectMetaTitles(meta = {}) {
-    return uniqueStrings([
+function metaTitles(meta = {}) {
+    return listUnique([
         meta?.title,
         meta?.name,
         meta?.originalTitle,
@@ -815,44 +704,23 @@ function collectMetaTitles(meta = {}) {
     ]);
 }
 
-function looksLikeAnimeMeta(meta = {}) {
-    const directType = String(meta?.type || meta?.kind || meta?.mediaType || '').toLowerCase();
-    if (/(^|[^a-z])(anime|animation)([^a-z]|$)/i.test(directType)) return true;
-    const genres = Array.isArray(meta?.genres) ? meta.genres : [];
-    if (genres.some((v) => /(anime|animation|animazione)/i.test(String(v)))) return true;
-    const haystack = uniqueStrings([
-        meta?.id, meta?.requestedId, meta?.originalId,
-        meta?.kitsu_id, meta?.kitsuId,
-        ...collectMetaTitles(meta)
+function animeLike(meta = {}) {
+    const type = String(meta?.type || meta?.kind || meta?.mediaType || '').toLowerCase();
+    if (/(^|[^a-z])(anime|animation)([^a-z]|$)/i.test(type)) return true;
+    if ((Array.isArray(meta?.genres) ? meta.genres : []).some((value) => /(anime|animation|animazione)/i.test(String(value)))) return true;
+    const haystack = listUnique([
+        meta?.id,
+        meta?.requestedId,
+        meta?.originalId,
+        meta?.kitsu_id,
+        meta?.kitsuId,
+        ...metaTitles(meta)
     ]).join(' | ').toLowerCase();
     return /(anime-kitsu|kitsu:|\banime\b|\banimazione\b)/i.test(haystack);
 }
 
-function normalizeEpisodeNumber(value) {
-    const parsed = Number.parseInt(String(value || '').trim(), 10);
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-function getExpectedYear(metadata = {}, meta = {}) {
-    return extractYear(metadata?.release_date)
-        || extractYear(metadata?.first_air_date)
-        || extractYear(meta?.year)
-        || extractYear(meta?.releaseInfo)
-        || null;
-}
-
-function collectExpectedTitles(metadata = {}, meta = {}) {
-    return Array.from(new Set([
-        meta?.title, meta?.name, meta?.originalTitle, meta?.original_title,
-        meta?.originalName, meta?.original_name,
-        metadata?.title, metadata?.name, metadata?.original_title, metadata?.original_name
-    ]
-        .map((v) => decodeHtmlEntities(String(v || '')).trim())
-        .filter(Boolean)));
-}
-
-function stripEpisodeDecorations(value) {
-    return decodeHtmlEntities(value)
+function plainSeriesTitle(value) {
+    return safeText(value)
         .replace(/\b(?:season|stagione|episode|episodio|episodi|ep\.?)\s*\d+\b/gi, ' ')
         .replace(/\bS\s*\d+\s*E\s*\d+\b/gi, ' ')
         .replace(/\bS\s*\d+\b/gi, ' ')
@@ -861,555 +729,477 @@ function stripEpisodeDecorations(value) {
         .trim();
 }
 
-function titleAliasesFromOneTitle(title) {
-    const cleaned = stripEpisodeDecorations(title);
-    if (!cleaned) return [];
-
-    const aliases = [cleaned];
-    const slashParts = cleaned.split(/\s+[\\/|]\s+/g).map((v) => v.trim()).filter(Boolean);
-    if (slashParts.length > 1) aliases.push(...slashParts);
-
-    const akaParts = cleaned.split(/\s+(?:aka|a\.k\.a\.|also known as|conosciuto come)\s+/ig).map((v) => v.trim()).filter(Boolean);
-    if (akaParts.length > 1) aliases.push(...akaParts);
-
-    for (const part of [...aliases]) {
-        const colon = part.split(/\s*[:：]\s+/g).map((v) => v.trim()).filter(Boolean);
-        if (colon.length > 1) {
-            aliases.push(colon[0]);
-            aliases.push(colon.slice(1).join(' '));
-        }
+function titlePlanFromOne(title) {
+    const clean = plainSeriesTitle(title);
+    if (!clean) return [];
+    const out = [clean];
+    const splitters = [
+        /\s+[\\/|]\s+/g,
+        /\s+(?:aka|a\.k\.a\.|also known as|conosciuto come)\s+/ig,
+        /\s*[:：]\s+/g
+    ];
+    for (const splitter of splitters) {
+        const parts = clean.split(splitter).map((value) => value.trim()).filter(Boolean);
+        if (parts.length > 1) out.push(...parts);
     }
-
-    const ascii = cleaned.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
-    if (ascii !== cleaned) aliases.push(ascii);
-
-    if (/\bone\s*piece\b/i.test(cleaned) || /\bwan\s*p[îi]?su\b/i.test(cleaned) || /\bwan\s*pi+su\b/i.test(ascii)) {
-        aliases.push('One Piece');
-        aliases.push('Wan Pisu');
-        aliases.push('Wan piisu');
+    const ascii = clean.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+    if (ascii !== clean) out.push(ascii);
+    if (/\bone\s*piece\b/i.test(clean) || /\bwan\s*p[îi]?su\b/i.test(clean) || /\bwan\s*pi+su\b/i.test(ascii)) {
+        out.push('One Piece', 'Wan Pisu', 'Wan piisu');
     }
-
-    return uniqueStrings(aliases).filter((v) => v.length >= 2);
+    return listUnique(out).filter((value) => value.length >= 2);
 }
 
-function buildSearchQueryVariants(titles = []) {
+function queryPlan(titles = []) {
     const seen = new Set();
     const out = [];
-    for (const title of uniqueStrings(titles)) {
-        const aliases = titleAliasesFromOneTitle(title);
-        for (const alias of aliases) {
+    for (const title of listUnique(titles)) {
+        for (const alias of titlePlanFromOne(title)) {
             const normalized = kitsuProvider.normalizeTitle(alias);
-            const compact = stripEpisodeDecorations(alias);
-            const noYear = compact.replace(/\s*\((?:19|20)\d{2}.*?\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
-            for (const variant of uniqueStrings([alias, normalized, compact, noYear])) {
-                const cleanVariant = String(variant || '').replace(/\s+/g, ' ').trim();
-                if (!cleanVariant) continue;
-                const key = normalizeTitle(cleanVariant);
+            const noYear = alias.replace(/\s*\((?:19|20)\d{2}.*?\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+            for (const value of listUnique([alias, normalized, noYear])) {
+                const clean = safeText(value);
+                const key = simpleKey(clean);
                 if (!key || seen.has(key)) continue;
                 seen.add(key);
-                out.push(cleanVariant);
+                out.push(clean);
             }
         }
     }
     return out;
 }
 
-async function getNewsSitemapEntries() {
-    const now = Date.now();
-    if (Array.isArray(newsSitemapCache.entries) && (now - newsSitemapCache.fetchedAt) < NEWS_SITEMAP_TTL_MS) {
-        return newsSitemapCache.entries;
-    }
+function expectedTitles(tmdbData = {}, meta = {}) {
+    return listUnique([
+        meta?.title,
+        meta?.name,
+        meta?.originalTitle,
+        meta?.original_title,
+        meta?.originalName,
+        meta?.original_name,
+        tmdbData?.title,
+        tmdbData?.name,
+        tmdbData?.original_title,
+        tmdbData?.original_name
+    ]);
+}
 
-    return singleFlight('sitemap:news_pages', async () => {
-        const current = Date.now();
-        if (Array.isArray(newsSitemapCache.entries) && (current - newsSitemapCache.fetchedAt) < NEWS_SITEMAP_TTL_MS) {
-            return newsSitemapCache.entries;
-        }
-        const xml = await fetchHtml(NEWS_SITEMAP_URL, {
-            'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8',
-            'Referer': `${BASE_URL}/`
+function expectedYear(tmdbData = {}, meta = {}) {
+    return yearFrom(tmdbData?.release_date)
+        || yearFrom(tmdbData?.first_air_date)
+        || yearFrom(meta?.year)
+        || yearFrom(meta?.releaseInfo)
+        || null;
+}
+
+function sitemapLocs(xml) {
+    return [...String(xml || '').matchAll(/<loc>([^<]+)<\/loc>/gi)]
+        .map((match) => String(match[1] || '').trim())
+        .filter(Boolean);
+}
+
+async function sitemapUrls() {
+    if (Array.isArray(sitemapState.urls) && (Date.now() - sitemapState.at) < CACHE.sitemap) return sitemapState.urls;
+    return keyedTask('cc:sitemap', async () => {
+        if (Array.isArray(sitemapState.urls) && (Date.now() - sitemapState.at) < CACHE.sitemap) return sitemapState.urls;
+        const xml = await ccText(CC_SITEMAP, {
+            Accept: 'application/xml,text/xml;q=0.9,*/*;q=0.8',
+            Referer: `${CC_HOME}/`
         }, { timeout: 1800, attempts: 1 });
-        const entries = extractSitemapLocs(xml).filter((url) => /^https:\/\/cinemacity\.cc\//i.test(url));
-        if (entries.length === 0) return Array.isArray(newsSitemapCache.entries) ? newsSitemapCache.entries : [];
-        newsSitemapCache.entries = entries;
-        newsSitemapCache.fetchedAt = Date.now();
-        return entries;
+        const urls = sitemapLocs(xml).filter((url) => /^https:\/\/cinemacity\.cc\//i.test(url));
+        if (urls.length) {
+            sitemapState.urls = urls;
+            sitemapState.at = Date.now();
+            return urls;
+        }
+        return sitemapState.urls || [];
     });
 }
 
-async function getIdsFromKitsu(kitsuId, season, episode, config = {}) {
+async function kitsuBridgeIds(kitsuId, season, episode, config = {}) {
     if (!kitsuId) return null;
+    const ep = numericId(episode) || 1;
+    const s = numericId(season) || null;
+    const lang = String(config?.filters?.language || '').trim().toLowerCase() === 'ita' ? 'it' : '';
+    const key = `kitsu:${kitsuId}:${s || ''}:${ep}:${lang}`;
+    const cached = cache.kitsu.get(key);
+    if (cached !== null) return cached;
 
-    const parsedEpisode = Number.parseInt(String(episode || ''), 10);
-    const parsedSeason = Number.parseInt(String(season || ''), 10);
-    const mappingLanguage = getMappingLanguage(config) || '';
-    const cacheKey = `kitsu-map:${String(kitsuId).trim()}:${Number.isInteger(parsedSeason) ? parsedSeason : ''}:${Number.isInteger(parsedEpisode) ? parsedEpisode : '1'}:${mappingLanguage}`;
-    const cached = kitsuMappingCache.get(cacheKey);
-    if (cached) return cached.value;
-
-    return singleFlight(cacheKey, async () => {
-        const alreadyCached = kitsuMappingCache.get(cacheKey);
-        if (alreadyCached) return alreadyCached.value;
-
+    return keyedTask(key, async () => {
+        const again = cache.kitsu.get(key);
+        if (again !== null) return again;
         try {
             const params = new URLSearchParams();
-            params.set('ep', Number.isInteger(parsedEpisode) && parsedEpisode > 0 ? String(parsedEpisode) : '1');
-            if (Number.isInteger(parsedSeason) && parsedSeason >= 0) params.set('s', String(parsedSeason));
-            if (mappingLanguage) params.set('lang', mappingLanguage);
-
-            const payload = await fetchJson(`${MAPPING_API_BASE}/kitsu/${encodeURIComponent(String(kitsuId).trim())}?${params.toString()}`);
+            params.set('ep', String(ep));
+            if (s) params.set('s', String(s));
+            if (lang) params.set('lang', lang);
+            const payload = await ccJson(`${CC_MAPPING_BASE}/kitsu/${encodeURIComponent(String(kitsuId).trim())}?${params.toString()}`);
             const ids = payload?.mappings?.ids || {};
-            const tmdbEpisode = payload?.mappings?.tmdb_episode || payload?.mappings?.tmdbEpisode
-                || payload?.tmdb_episode || payload?.tmdbEpisode || null;
-
-            const mappedSeason = Number.parseInt(String(
-                tmdbEpisode?.season || tmdbEpisode?.seasonNumber || tmdbEpisode?.season_number || ''
-            ), 10);
-            const mappedEpisode = Number.parseInt(String(
-                tmdbEpisode?.episode || tmdbEpisode?.episodeNumber || tmdbEpisode?.episode_number || ''
-            ), 10);
-            const rawEpisodeNumber = Number.parseInt(String(
-                tmdbEpisode?.rawEpisodeNumber || tmdbEpisode?.raw_episode_number || tmdbEpisode?.rawEpisode || ''
-            ), 10);
-
+            const tmdbEpisode = payload?.mappings?.tmdb_episode || payload?.mappings?.tmdbEpisode || payload?.tmdb_episode || payload?.tmdbEpisode || null;
+            const mappedSeason = Number.parseInt(String(tmdbEpisode?.season || tmdbEpisode?.seasonNumber || tmdbEpisode?.season_number || ''), 10);
+            const mappedEpisode = Number.parseInt(String(tmdbEpisode?.episode || tmdbEpisode?.episodeNumber || tmdbEpisode?.episode_number || ''), 10);
+            const rawEpisode = Number.parseInt(String(tmdbEpisode?.rawEpisodeNumber || tmdbEpisode?.raw_episode_number || tmdbEpisode?.rawEpisode || ''), 10);
             const result = {
-                imdbId: extractImdbId(ids.imdb),
-                tmdbId: extractTmdbId(ids.tmdb),
+                imdbId: imdbFrom(ids.imdb),
+                tmdbId: tmdbFrom(ids.tmdb),
                 mappedSeason: Number.isInteger(mappedSeason) && mappedSeason > 0 ? mappedSeason : null,
                 mappedEpisode: Number.isInteger(mappedEpisode) && mappedEpisode > 0 ? mappedEpisode : null,
-                rawEpisodeNumber: Number.isInteger(rawEpisodeNumber) && rawEpisodeNumber > 0 ? rawEpisodeNumber : null
+                rawEpisodeNumber: Number.isInteger(rawEpisode) && rawEpisode > 0 ? rawEpisode : null
             };
-            kitsuMappingCache.set(cacheKey, { value: result });
+            cache.kitsu.set(key, result);
             return result;
         } catch (error) {
-            console.error('[CinemaCity] Kitsu mapping error:', error.message);
-            kitsuMappingCache.set(cacheKey, { value: null });
+            console.error('[CC V2] Kitsu bridge error:', error.message);
+            cache.kitsu.set(key, null);
             return null;
         }
     });
 }
 
-async function getTmdbMetadata(id, providerType) {
-    const normalizedId = String(id || '').trim();
-    const normalizedType = providerType === 'movie' ? 'movie' : 'tv';
-    if (!normalizedId) return null;
+async function tmdbMetadata(id, kind) {
+    const cleanId = String(id || '').trim();
+    const tmdbKind = kind === 'movie' ? 'movie' : 'tv';
+    if (!cleanId) return null;
+    const key = `tmdb:${tmdbKind}:${cleanId}`;
+    const cached = cache.tmdb.get(key);
+    if (cached !== null) return cached;
 
-    const cacheKey = `tmdb-meta:${normalizedType}:${normalizedId}`;
-    const cached = tmdbMetadataCache.get(cacheKey);
-    if (cached) return cached.value;
-
-    return singleFlight(cacheKey, async () => {
-        const alreadyCached = tmdbMetadataCache.get(cacheKey);
-        if (alreadyCached) return alreadyCached.value;
-
+    return keyedTask(key, async () => {
+        const again = cache.tmdb.get(key);
+        if (again !== null) return again;
         try {
             let result = null;
-            if (extractImdbId(normalizedId)) {
-                const payload = await tmdbHelper.fetchTmdbJson(`/find/${encodeURIComponent(normalizedId)}`, {
+            if (imdbFrom(cleanId)) {
+                const payload = await tmdbHelper.fetchTmdbJson(`/find/${encodeURIComponent(cleanId)}`, {
                     params: { external_source: 'imdb_id', language: 'en-US' }
                 });
-                const results = normalizedType === 'movie' ? payload?.movie_results : payload?.tv_results;
+                const results = tmdbKind === 'movie' ? payload?.movie_results : payload?.tv_results;
                 result = Array.isArray(results) && results.length > 0 ? results[0] : null;
             } else {
-                const cleanTmdbId = extractTmdbId(normalizedId);
-                if (cleanTmdbId) {
-                    result = await tmdbHelper.fetchTmdbJson(`/${normalizedType}/${cleanTmdbId}`, {
-                        params: { language: 'en-US' }
-                    });
+                const idOnly = tmdbFrom(cleanId);
+                if (idOnly) {
+                    result = await tmdbHelper.fetchTmdbJson(`/${tmdbKind}/${idOnly}`, { params: { language: 'en-US' } });
                 }
             }
-            tmdbMetadataCache.set(cacheKey, { value: result });
+            cache.tmdb.set(key, result);
             return result;
         } catch (error) {
-            console.error('[CinemaCity] TMDB metadata error:', error.message);
-            tmdbMetadataCache.set(cacheKey, { value: null });
+            console.error('[CC V2] TMDB metadata error:', error.message);
+            cache.tmdb.set(key, null);
             return null;
         }
     });
 }
 
-async function resolveImdbFromTmdb(tmdbId, providerType) {
-    const cleanTmdbId = extractTmdbId(tmdbId);
-    if (!cleanTmdbId) return null;
+async function imdbFromTmdb(tmdbId, kind) {
+    const idOnly = tmdbFrom(tmdbId);
+    if (!idOnly) return null;
+    const tmdbKind = kind === 'movie' ? 'movie' : 'tv';
+    const key = `tmdb-imdb:${tmdbKind}:${idOnly}`;
+    const cached = cache.tmdbImdb.get(key);
+    if (cached !== null) return cached;
 
-    const normalizedType = providerType === 'movie' ? 'movie' : 'tv';
-    const cacheKey = `tmdb-imdb:${normalizedType}:${cleanTmdbId}`;
-    const cached = tmdbImdbCache.get(cacheKey);
-    if (cached) return cached.value;
-
-    return singleFlight(cacheKey, async () => {
-        const alreadyCached = tmdbImdbCache.get(cacheKey);
-        if (alreadyCached) return alreadyCached.value;
-
+    return keyedTask(key, async () => {
+        const again = cache.tmdbImdb.get(key);
+        if (again !== null) return again;
         try {
-            const result = extractImdbId(await tmdbHelper.getImdbFromTmdb(cleanTmdbId, normalizedType));
-            tmdbImdbCache.set(cacheKey, { value: result });
-            return result;
+            const value = imdbFrom(await tmdbHelper.getImdbFromTmdb(idOnly, tmdbKind));
+            cache.tmdbImdb.set(key, value);
+            return value;
         } catch (error) {
-            console.error('[CinemaCity] TMDB→IMDb resolution error:', error.message);
-            tmdbImdbCache.set(cacheKey, { value: null });
+            console.error('[CC V2] TMDB IMDb error:', error.message);
+            cache.tmdbImdb.set(key, null);
             return null;
         }
     });
 }
 
-function extractCandidateLinksFromListing(html, sectionType) {
-    const $ = loadHtml(html);
+function cardLinksFromListing(html, wantedKind) {
+    const $ = htmlRoot(html);
     const results = [];
-
     $('a[href]').each((_, anchor) => {
         const href = String($(anchor).attr('href') || '').trim();
-        if (!href) return;
-        const absoluteUrl = resolveUrl(BASE_URL, href);
-        if (!absoluteUrl || !/\.html(?:$|[?#])/i.test(absoluteUrl)) return;
-        if (!/^https?:\/\/cinemacity\.cc\//i.test(absoluteUrl)) return;
-        if (!isCinemaCityContentUrlForType(absoluteUrl, sectionType)) return;
-
-        const title = decodeHtmlEntities(
-            $(anchor).attr('title') || $(anchor).text() || titleFromContentUrl(absoluteUrl)
-        ).replace(/\s+/g, ' ').trim();
+        const url = ccUrl(href, CC_HOME);
+        if (!url || !/\.html(?:$|[?#])/i.test(url)) return;
+        if (!/^https?:\/\/cinemacity\.cc\//i.test(url)) return;
+        if (!ccUrlMatchesKind(url, wantedKind)) return;
+        const title = safeText($(anchor).attr('title') || $(anchor).text() || slugTitle(url));
         if (!title) return;
-        results.push({ url: absoluteUrl, title });
+        results.push({ url, title });
     });
-
     return Array.from(new Map(results.map((item) => [item.url, item])).values());
 }
 
-function scoreTitleMatch(candidateTitle, expectedTitles) {
-    const normalizedCandidate = normalizeTitle(candidateTitle);
-    if (!normalizedCandidate) return 0;
+function cardsFromSearchPage(html) {
+    const body = String(html || '');
+    if (/site search yielded no results|ricerca non ha prodotto risultati/i.test(body)) return [];
+    const $ = htmlRoot(body);
+    const scope = $('#dle-content').length ? $('#dle-content') : $('body');
+    const results = [];
+    scope.find('a[href]').each((_, anchor) => {
+        const url = ccUrl(String($(anchor).attr('href') || '').trim(), CC_HOME);
+        if (!url) return;
+        if (!/^https?:\/\/cinemacity\.cc\/(?:movies|anime|series|tv-series)\/\d+-[^?#]+\.html(?:$|[?#])/i.test(url)) return;
+        const title = safeText($(anchor).attr('title') || $(anchor).text() || slugTitle(url));
+        if (!title) return;
+        results.push({ url, title });
+    });
+    return Array.from(new Map(results.map((item) => [item.url, item])).values());
+}
+
+function titleScore(candidateTitle, titles = []) {
+    const candidateKey = simpleKey(candidateTitle);
+    if (!candidateKey) return 0;
     let best = 0;
-    for (const title of expectedTitles) {
-        const normalizedExpected = normalizeTitle(title);
-        if (!normalizedExpected) continue;
-        if (normalizedCandidate === normalizedExpected) return 100;
-        if (normalizedCandidate.includes(normalizedExpected) || normalizedExpected.includes(normalizedCandidate)) {
-            best = Math.max(best, 80);
-        } else if (
-            normalizedExpected.length > 5 && normalizedCandidate.length > 5
-            && (normalizedCandidate.startsWith(normalizedExpected) || normalizedExpected.startsWith(normalizedCandidate))
-        ) {
-            best = Math.max(best, 60);
+    const candidateTokens = tokenSet(candidateTitle);
+    for (const title of titles) {
+        const expectedKey = simpleKey(title);
+        if (!expectedKey) continue;
+        if (candidateKey === expectedKey) return 48;
+        if (candidateKey.includes(expectedKey) || expectedKey.includes(candidateKey)) best = Math.max(best, 38);
+        const expectedTokens = tokenSet(title);
+        if (candidateTokens.size && expectedTokens.size) {
+            let overlap = 0;
+            for (const token of expectedTokens) if (candidateTokens.has(token)) overlap++;
+            const ratio = overlap / Math.max(1, expectedTokens.size);
+            if (ratio >= 0.9) best = Math.max(best, 36);
+            else if (ratio >= 0.75) best = Math.max(best, 30);
+            else if (ratio >= 0.55) best = Math.max(best, 22);
         }
     }
     return best;
 }
 
-function scoreCandidateEntry(candidate, expectedTitles, expectedYear, providerType) {
-    if (!candidate?.url) return 0;
-    const title = candidate.title || titleFromContentUrl(candidate.url);
-    let score = scoreTitleMatch(title, expectedTitles);
+function kindScore(url, wantedKind) {
+    const kind = ccKind(url);
+    if (wantedKind === 'movie') return kind === 'movie' ? 12 : -50;
+    if (wantedKind === 'anime') {
+        if (kind === 'anime') return 18;
+        if (kind === 'tv') return 8;
+        return -50;
+    }
+    if (kind === 'tv') return 12;
+    if (kind === 'anime') return 4;
+    return -50;
+}
+
+function rankCard(card, titles, targetYear, wantedKind) {
+    if (!card?.url) return 0;
+    const displayName = card.title || slugTitle(card.url);
+    let score = titleScore(displayName, titles);
     if (score <= 0) return 0;
-    score += getCinemaCityTypeBoost(candidate.url, providerType);
-    const candidateYear = extractYear(title) || extractYear(candidate.url);
-    if (expectedYear && candidateYear) {
-        if (candidateYear === expectedYear) score += 15;
-        else if (Math.abs(candidateYear - expectedYear) === 1) score += 5;
-        else score -= 20;
+    score += kindScore(card.url, wantedKind);
+    const cardYear = yearFrom(displayName) || yearFrom(card.url);
+    if (targetYear && cardYear) {
+        if (targetYear === cardYear) score += 10;
+        else if (Math.abs(targetYear - cardYear) === 1) score += 4;
+        else score -= 22;
     }
     return score;
 }
 
-function extractSearchCandidates(html) {
-    const body = String(html || '');
-    if (/site search yielded no results|ricerca non ha prodotto risultati/i.test(body)) return [];
-
-    const $ = loadHtml(body);
-    const roots = $('#dle-content').length ? $('#dle-content') : $('body');
-    const results = [];
-
-    roots.find('a[href]').each((_, anchor) => {
-        const href = String($(anchor).attr('href') || '').trim();
-        if (!href) return;
-        const absoluteUrl = resolveUrl(BASE_URL, href);
-        if (!absoluteUrl) return;
-        if (!/^https?:\/\/cinemacity\.cc\/(?:movies|anime|series|tv-series)\/\d+-[^?#]+\.html(?:$|[?#])/i.test(absoluteUrl)) return;
-
-        const title = decodeHtmlEntities(
-            $(anchor).attr('title') || $(anchor).text() || titleFromContentUrl(absoluteUrl)
-        ).replace(/\s+/g, ' ').trim();
-        if (!title) return;
-        results.push({ url: absoluteUrl, title });
-    });
-
-    return Array.from(new Map(results.map((item) => [item.url, item])).values());
-}
-
-async function verifyCandidateImdb(candidateUrl, expectedImdbId) {
-    const normalizedExpected = extractImdbId(expectedImdbId);
-    if (!normalizedExpected) return null;
+async function cardImdb(cardUrl) {
     try {
-        const pageMetadata = await fetchCinemaCityPageMetadata(candidateUrl);
-        return pageMetadata?.imdbId || null;
+        const facts = await pageFacts(cardUrl);
+        return facts?.imdbId || null;
     } catch (_) {
         return null;
     }
 }
 
-async function pickBestCandidate(candidates, expectedTitles, { requestedImdbId = null, expectedYear = null, providerType = 'tv', fastMode = false } = {}) {
-    const scoredCandidates = (candidates || [])
-        .map((c) => ({ ...c, score: scoreCandidateEntry(c, expectedTitles, expectedYear, providerType) }))
-        .filter((c) => c.score > 0)
+async function chooseCard(candidates, titles, { requestedImdbId = null, targetYear = null, wantedKind = 'tv', quick = false } = {}) {
+    const ranked = (candidates || [])
+        .map((candidate) => ({ ...candidate, score: rankCard(candidate, titles, targetYear, wantedKind) }))
+        .filter((candidate) => candidate.score > 0)
         .sort((a, b) => b.score - a.score);
 
-    if (scoredCandidates.length === 0) return null;
+    if (!ranked.length) return null;
 
-    if (fastMode === true && scoredCandidates[0]?.score >= 80) {
-        return scoredCandidates[0];
-    }
-
-    const normalizedRequestedImdbId = extractImdbId(requestedImdbId);
-    if (normalizedRequestedImdbId) {
-        const candidatesToCheck = scoredCandidates.slice(0, 6).filter(c => c.score >= 80);
-        const imdbResults = await Promise.all(
-            candidatesToCheck.map(c => verifyCandidateImdb(c.url, normalizedRequestedImdbId))
-        );
-        const mismatchedUrls = new Set();
-        candidatesToCheck.forEach((c, i) => {
-            if (imdbResults[i] && imdbResults[i] !== normalizedRequestedImdbId) mismatchedUrls.add(c.url);
+    const expectedImdb = imdbFrom(requestedImdbId);
+    if (expectedImdb) {
+        const inspection = ranked.slice(0, quick ? 4 : 8).filter((candidate) => candidate.score >= 48);
+        const checked = await Promise.all(inspection.map((candidate) => cardImdb(candidate.url)));
+        const firstVerified = inspection.find((_, index) => checked[index] === expectedImdb);
+        if (firstVerified) return { ...firstVerified, verified: true, score: firstVerified.score + 42 };
+        const wrong = new Set();
+        inspection.forEach((candidate, index) => {
+            if (checked[index] && checked[index] !== expectedImdb) wrong.add(candidate.url);
         });
-        const firstMatch = candidatesToCheck.find((_, i) => imdbResults[i] === normalizedRequestedImdbId);
-        if (firstMatch) return firstMatch;
-        return scoredCandidates.find((c) => c.score >= 80 && !mismatchedUrls.has(c.url)) || null;
+        const safe = ranked.find((candidate) => candidate.score >= 58 && !wrong.has(candidate.url));
+        return safe || null;
     }
 
-    if (providerType === 'anime') {
+    if (wantedKind === 'anime') {
         const enriched = [];
-        for (const candidate of scoredCandidates.slice(0, 6)) {
-            const pageMetadata = await fetchCinemaCityPageMetadata(candidate.url);
-            let score = candidate.score;
-            if (pageMetadata?.isAnime) score += 35;
-            else if (pageMetadata) score -= 10;
-            if (pageMetadata?.title) {
-                const pageTitleScore = scoreTitleMatch(pageMetadata.title, expectedTitles);
-                if (pageTitleScore >= 80) score += 12;
-                else if (pageTitleScore === 0) score -= 10;
-            }
-            if (expectedYear && pageMetadata?.year) {
-                if (pageMetadata.year === expectedYear) score += 12;
-                else if (Math.abs(pageMetadata.year - expectedYear) === 1) score += 4;
-                else score -= 15;
-            }
-            enriched.push({ ...candidate, pageMetadata, score });
+        for (const card of ranked.slice(0, quick ? 4 : 8)) {
+            const facts = await pageFacts(card.url);
+            let score = card.score;
+            if (facts?.isAnime) score += 18;
+            if (facts?.title) score += Math.min(12, Math.floor(titleScore(facts.title, titles) / 4));
+            if (targetYear && facts?.year) score += facts.year === targetYear ? 8 : (Math.abs(facts.year - targetYear) === 1 ? 3 : -10);
+            enriched.push({ ...card, pageMetadata: facts, score });
         }
-        const bestAnime = [...enriched, ...scoredCandidates.slice(6)].sort((a, b) => b.score - a.score)[0];
-        return bestAnime?.score >= 80 ? bestAnime : null;
+        const best = [...enriched, ...ranked.slice(quick ? 4 : 8)].sort((a, b) => b.score - a.score)[0];
+        return best?.score >= 58 ? best : null;
     }
 
-    return scoredCandidates[0]?.score >= 80 ? scoredCandidates[0] : null;
+    return ranked[0]?.score >= 58 ? ranked[0] : null;
 }
 
-async function fetchSearchCandidates(query) {
-    const cleanQuery = String(query || '').replace(/\s+/g, ' ').trim();
-    if (!cleanQuery) return [];
+async function searchCards(query) {
+    const clean = safeText(query);
+    if (!clean) return [];
+    const key = `q:${clean.toLowerCase()}`;
+    const cached = cache.search.get(key);
+    if (cached) return cached;
 
-    const cacheKey = `search:${cleanQuery.toLowerCase()}`;
-    const cached = searchCandidatesCache.get(cacheKey);
-    if (cached) return cached.value;
-
-    return singleFlight(cacheKey, async () => {
-        const alreadyCached = searchCandidatesCache.get(cacheKey);
-        if (alreadyCached) return alreadyCached.value;
-
-        const searchGetUrl = `${BASE_URL}/index.php?do=search&subaction=search&story=${encodeURIComponent(cleanQuery)}`;
-        const searchCommonHeaders = {
-            'Referer': `${BASE_URL}/`,
-            'Cookie': getCinemaCitySessionCookie(),
+    return keyedTask(key, async () => {
+        const again = cache.search.get(key);
+        if (again) return again;
+        const commonHeaders = {
+            Referer: `${CC_HOME}/`,
+            Cookie: ccSessionCookie(),
             'Sec-Fetch-Site': 'same-origin',
             'Sec-Fetch-Mode': 'navigate'
         };
-
-        const tryParse = (html) => {
-            const candidates = extractSearchCandidates(html);
-            if (candidates.length > 0) {
-                searchCandidatesCache.set(cacheKey, { value: candidates });
-                return candidates;
+        const parse = (html) => {
+            const cards = cardsFromSearchPage(html);
+            if (cards.length) {
+                cache.search.set(key, cards);
+                return cards;
             }
             return null;
         };
 
-        let networkFailed = true;
-
-        try {
-            const html = await fetchHtml(searchGetUrl, searchCommonHeaders);
-            if (html) {
-                networkFailed = false;
-                const result = tryParse(html);
-                if (result) return result;
-            }
-        } catch (_) {}
-
-        const formBody = new URLSearchParams({
-            do: 'search',
-            subaction: 'search',
-            story: cleanQuery
-        }).toString();
-
-        try {
-            const postHtml = await fetchHtmlPostWithGot(`${BASE_URL}/index.php`, formBody, {
-                'Cookie': getCinemaCitySessionCookie(),
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-Mode': 'navigate'
-            });
-            if (postHtml) {
-                networkFailed = false;
-                const result = tryParse(postHtml);
-                if (result) return result;
-            }
-        } catch (_) {}
-
-        if (!networkFailed) {
-            searchCandidatesCache.set(cacheKey, { value: [] });
+        let reachedSite = false;
+        const getUrl = `${CC_HOME}/index.php?do=search&subaction=search&story=${encodeURIComponent(clean)}`;
+        const getHtml = await ccText(getUrl, commonHeaders);
+        if (getHtml) {
+            reachedSite = true;
+            const parsed = parse(getHtml);
+            if (parsed) return parsed;
         }
+
+        const body = new URLSearchParams({ do: 'search', subaction: 'search', story: clean }).toString();
+        const postHtml = await ccFormText(`${CC_HOME}/index.php`, body, commonHeaders);
+        if (postHtml) {
+            reachedSite = true;
+            const parsed = parse(postHtml);
+            if (parsed) return parsed;
+        }
+
+        if (reachedSite) cache.search.set(key, []);
         return [];
     });
 }
 
-async function searchByTitleQueries(queryTitles, providerType, expectedTitles, requestedImdbId, expectedYear) {
-    const queries = buildSearchQueryVariants(queryTitles).slice(0, providerType === 'anime' ? 10 : 6);
-    if (queries.length === 0) return null;
-
+async function searchByTitles(titles, wantedKind, expected, requestedImdbId, targetYear) {
+    const plan = queryPlan(titles).slice(0, wantedKind === 'anime' ? 10 : 6);
+    if (!plan.length) return null;
     const collected = [];
     const seen = new Set();
-    const BATCH_SIZE = 3;
 
-    for (let i = 0; i < queries.length; i += BATCH_SIZE) {
-        const batch = queries.slice(i, i + BATCH_SIZE);
-        const batchResults = await Promise.all(batch.map((q) => fetchSearchCandidates(q)));
-
-        for (const candidates of batchResults) {
-            for (const candidate of candidates) {
-                if (!candidate?.url || seen.has(candidate.url)) continue;
-                seen.add(candidate.url);
-                collected.push(candidate);
+    for (let i = 0; i < plan.length; i += 3) {
+        const batch = plan.slice(i, i + 3);
+        const results = await Promise.all(batch.map((query) => searchCards(query)));
+        for (const cards of results) {
+            for (const card of cards) {
+                if (!card?.url || seen.has(card.url)) continue;
+                seen.add(card.url);
+                collected.push(card);
             }
         }
-
-        const interim = await pickBestCandidate(collected, expectedTitles, { requestedImdbId, expectedYear, providerType, fastMode: true });
-        if (interim?.score >= 100) return interim;
+        const current = await chooseCard(collected, expected, { requestedImdbId, targetYear, wantedKind, quick: true });
+        if (current?.score >= 90 || current?.verified) return current;
     }
 
-    return pickBestCandidate(collected, expectedTitles, { requestedImdbId, expectedYear, providerType, fastMode: true });
+    return chooseCard(collected, expected, { requestedImdbId, targetYear, wantedKind, quick: true });
 }
 
-async function searchSitemapCandidates(providerType, expectedTitles, { requestedImdbId = null, expectedYear = null, fastMode = true } = {}) {
+async function searchSitemap(wantedKind, titles, { requestedImdbId = null, targetYear = null, quick = true } = {}) {
     try {
-        const sitemapEntries = await getNewsSitemapEntries();
-        const sitemapCandidates = sitemapEntries
-            .filter((url) => isCinemaCityContentUrlForType(url, providerType))
-            .map((url) => ({ url, title: titleFromContentUrl(url) }))
-            .filter((c) => scoreTitleMatch(c.title, expectedTitles) > 0);
-
-        return pickBestCandidate(sitemapCandidates, expectedTitles, {
-            requestedImdbId, expectedYear, providerType, fastMode
-        });
+        const urls = await sitemapUrls();
+        const cards = urls
+            .filter((url) => ccUrlMatchesKind(url, wantedKind))
+            .map((url) => ({ url, title: slugTitle(url) }))
+            .filter((card) => titleScore(card.title, titles) > 0);
+        return chooseCard(cards, titles, { requestedImdbId, targetYear, wantedKind, quick });
     } catch (_) {
         return null;
     }
 }
 
-async function searchByImdb(imdbId) {
-    const normalizedImdbId = extractImdbId(imdbId);
-    if (!normalizedImdbId) return null;
-
-    let result = (await fetchSearchCandidates(normalizedImdbId))[0] || null;
-    if (result) return result;
-
-    const numericId = normalizedImdbId.replace(/\D/g, '');
-    if (numericId && numericId !== normalizedImdbId) {
-        result = (await fetchSearchCandidates(numericId))[0] || null;
-    }
-    return result;
+async function searchImdb(imdbId) {
+    const id = imdbFrom(imdbId);
+    if (!id) return null;
+    const byFullId = (await searchCards(id))[0] || null;
+    if (byFullId) return byFullId;
+    const numeric = id.replace(/\D/g, '');
+    return numeric ? ((await searchCards(numeric))[0] || null) : null;
 }
 
-function getListingBaseUrls(providerType) {
-    if (providerType === 'movie') return [`${BASE_URL}/movies/`];
-    if (providerType === 'anime') return [`${BASE_URL}/anime/`, `${BASE_URL}/tv-series/`];
-    return [`${BASE_URL}/tv-series/`, `${BASE_URL}/anime/`];
+function listingRoots(wantedKind) {
+    if (wantedKind === 'movie') return [`${CC_HOME}/movies/`];
+    if (wantedKind === 'anime') return [`${CC_HOME}/anime/`, `${CC_HOME}/tv-series/`];
+    return [`${CC_HOME}/tv-series/`, `${CC_HOME}/anime/`];
 }
 
-async function searchByTitleFallback(id, providerType, meta = {}, options = {}) {
-    const tmdbType = providerType === 'movie' ? 'movie' : 'tv';
-    const metadata = options?.metadata || await getTmdbMetadata(id, tmdbType);
-    const expectedTitles = uniqueStrings([
+async function resolveCatalog(id, wantedKind, meta = {}, options = {}) {
+    const tmdbKind = wantedKind === 'movie' ? 'movie' : 'tv';
+    const tmdbData = options?.tmdbData || await tmdbMetadata(id, tmdbKind);
+    const titles = listUnique([
         ...(Array.isArray(options?.expectedTitles) ? options.expectedTitles : []),
-        ...collectExpectedTitles(metadata, meta)
+        ...expectedTitles(tmdbData, meta)
     ]);
+    if (!titles.length) return null;
 
-    if (expectedTitles.length === 0) return null;
+    const requestedImdbId = imdbFrom(options?.requestedImdbId || id);
+    const targetYear = options?.expectedYear || expectedYear(tmdbData, meta);
+    const quick = options?.fast !== false;
+    const key = `resolve:${wantedKind}:${requestedImdbId || ''}:${tmdbFrom(id) || ''}:${targetYear || ''}:${quick ? 'quick' : 'deep'}:${queryPlan(titles).slice(0, 10).map(simpleKey).join('|')}`;
+    const cached = cache.resolved.get(key);
+    if (cached !== null) return cached;
 
-    const requestedImdbId = extractImdbId(options?.requestedImdbId || id);
-    const expectedYear = options?.expectedYear || getExpectedYear(metadata, meta);
-    const fastMode = options?.fast !== false;
-    const cacheKey = `resolve:${providerType}:${requestedImdbId || ''}:${extractTmdbId(id) || ''}:${expectedYear || ''}:${fastMode ? 'fast' : 'deep'}:${buildSearchQueryVariants(expectedTitles).slice(0, 10).map(normalizeTitle).join('|')}`;
-    const cached = resolvedSearchCache.get(cacheKey);
-    if (cached) return cached.value;
-
-    const saveResult = (value) => {
-        resolvedSearchCache.set(cacheKey, { value: value || null });
+    const save = (value) => {
+        cache.resolved.set(key, value || null);
         return value || null;
     };
 
-    const bestSitemap = await searchSitemapCandidates(providerType, expectedTitles, {
-        requestedImdbId, expectedYear, fastMode
-    });
-    if (bestSitemap?.url) return saveResult(bestSitemap);
+    const fromSitemap = await searchSitemap(wantedKind, titles, { requestedImdbId, targetYear, quick });
+    if (fromSitemap?.url) return save(fromSitemap);
 
-    if (fastMode) {
-        return saveResult(null);
-    }
+    const fromSearch = await searchByTitles(titles, wantedKind, titles, requestedImdbId, targetYear);
+    if (fromSearch?.url) return save(fromSearch);
 
-    const searched = await searchByTitleQueries(expectedTitles, providerType, expectedTitles, requestedImdbId, expectedYear);
-    if (searched?.url) return saveResult(searched);
+    if (quick) return save(null);
 
-    let bestResult = null;
-    let bestScore = 0;
-    const PAGE_CONCURRENCY = 3;
-
-    for (const listingBase of getListingBaseUrls(providerType)) {
-        const pageNums = Array.from({ length: MAX_LISTING_PAGES }, (_, i) => i + 1);
-
-        for (let i = 0; i < pageNums.length; i += PAGE_CONCURRENCY) {
-            const pageBatch = pageNums.slice(i, i + PAGE_CONCURRENCY);
-
-            const batchResults = await Promise.all(pageBatch.map(async (page) => {
-                const pageUrl = page === 1 ? listingBase : `${listingBase}page/${page}/`;
-                try {
-                    const html = await fetchHtml(pageUrl, {
-                        'Referer': `${BASE_URL}/`,
-                        'Sec-Fetch-Site': 'same-origin',
-                        'Sec-Fetch-Mode': 'navigate'
-                    }, { timeout: 2000 });
-                    const candidates = extractCandidateLinksFromListing(html, providerType);
-                    if (candidates.length === 0) return null;
-                    return candidates.slice(0, MAX_LISTING_CANDIDATES_PER_PAGE);
-                } catch (_) {
-                    return null;
-                }
+    let best = null;
+    for (const root of listingRoots(wantedKind)) {
+        const pages = Array.from({ length: CATALOG_PAGE_LIMIT }, (_, index) => index + 1);
+        for (let i = 0; i < pages.length; i += 3) {
+            const batch = pages.slice(i, i + 3);
+            const groups = await Promise.all(batch.map(async (page) => {
+                const url = page === 1 ? root : `${root}page/${page}/`;
+                const html = await ccText(url, {
+                    Referer: `${CC_HOME}/`,
+                    'Sec-Fetch-Site': 'same-origin',
+                    'Sec-Fetch-Mode': 'navigate'
+                }, { timeout: 2000 });
+                const cards = cardLinksFromListing(html, wantedKind);
+                return cards.slice(0, CATALOG_SCAN_LIMIT);
             }));
-
-            let batchExhausted = true;
-            for (const candidates of batchResults) {
-                if (!candidates) continue;
-                batchExhausted = false;
-                const picked = await pickBestCandidate(candidates, expectedTitles, { requestedImdbId, expectedYear, providerType, fastMode });
-                if (picked?.score > bestScore) {
-                    bestScore = picked.score;
-                    bestResult = picked;
-                }
-            }
-
-            if (bestScore >= 100) return saveResult(bestResult);
-            if (batchExhausted) break;
+            const cards = groups.flat().filter(Boolean);
+            if (!cards.length) break;
+            const candidate = await chooseCard(cards, titles, { requestedImdbId, targetYear, wantedKind, quick: false });
+            if (candidate && (!best || candidate.score > best.score)) best = candidate;
+            if (best?.score >= 90 || best?.verified) return save(best);
         }
-
-        if (bestScore >= 100) break;
     }
 
-    return saveResult(bestScore >= 80 ? bestResult : null);
+    return save(best?.score >= 58 ? best : null);
 }
 
-function getIdCandidates(meta = {}, originalId, finalId) {
+function idCandidates(meta = {}, originalId, finalId) {
     return [
         originalId,
         finalId,
@@ -1420,14 +1210,14 @@ function getIdCandidates(meta = {}, originalId, finalId) {
         meta?.imdbId,
         meta?.tmdb_id,
         meta?.tmdbId,
-        meta?.kitsu_id ? 'kitsu:' + meta.kitsu_id : null,
-        meta?.kitsuId ? 'kitsu:' + meta.kitsuId : null,
-        meta?.kitsu ? (/^\d+$/.test(String(meta.kitsu).trim()) ? 'kitsu:' + meta.kitsu : meta.kitsu) : null
+        meta?.kitsu_id ? `kitsu:${meta.kitsu_id}` : null,
+        meta?.kitsuId ? `kitsu:${meta.kitsuId}` : null,
+        meta?.kitsu ? (/^\d+$/.test(String(meta.kitsu).trim()) ? `kitsu:${meta.kitsu}` : meta.kitsu) : null
     ].filter(Boolean);
 }
 
-function getKitsuIdCandidates(meta = {}, originalId, finalId) {
-    const taggedCandidates = [
+function kitsuCandidates(meta = {}, originalId, finalId) {
+    const raw = [
         originalId,
         finalId,
         meta?.requestedId,
@@ -1443,32 +1233,29 @@ function getKitsuIdCandidates(meta = {}, originalId, finalId) {
         meta?.kitsuId,
         meta?.kitsu
     ].filter((value) => /kitsu/i.test(String(value || '')));
-
-    const dedicated = [meta?.kitsu_id, meta?.kitsuId, meta?.kitsu].map((value) => {
-        const text = String(value || '').trim();
-        if (!text) return null;
-        return /^\d+$/.test(text) ? 'kitsu:' + text : text;
-    });
-
-    return [...taggedCandidates, ...dedicated].filter(Boolean);
+    const dedicated = [meta?.kitsu_id, meta?.kitsuId, meta?.kitsu]
+        .map((value) => {
+            const text = String(value || '').trim();
+            if (!text) return null;
+            return /^\d+$/.test(text) ? `kitsu:${text}` : text;
+        })
+        .filter(Boolean);
+    return [...raw, ...dedicated].filter(Boolean);
 }
 
-function canTryCinemaCityAnimeMapping(meta = {}) {
+function canBridgeAnime(meta = {}) {
     if (!meta || meta?.isSeries === false || String(meta?.type || '').toLowerCase() === 'movie') return false;
     if (meta?.kitsu_id || meta?.kitsuId || meta?.kitsu) return true;
     if (meta?.tmdbAnimeCandidate === true) return true;
-    if (meta?.isAnime === true && (meta?.tmdb_id || meta?.tmdbId || meta?.imdb_id || meta?.imdbId)) return true;
-    return false;
+    return meta?.isAnime === true && Boolean(meta?.tmdb_id || meta?.tmdbId || meta?.imdb_id || meta?.imdbId);
 }
 
-async function buildAnimeSearchContext(meta = {}, originalId, finalId, config = {}, season = null, episode = null) {
-    const candidateIds = getKitsuIdCandidates(meta, originalId, finalId);
+async function animeSearchProfile(meta = {}, originalId, finalId, config = {}, season = null, episode = null) {
     let kitsuToken = null;
-
-    for (const candidate of candidateIds) {
+    for (const candidate of kitsuCandidates(meta, originalId, finalId)) {
         const parsed = kitsuProvider.parseKitsuId(candidate);
         if (parsed?.kitsuId) {
-            kitsuToken = /^\d+$/.test(String(candidate || '').trim()) ? 'kitsu:' + candidate : String(candidate);
+            kitsuToken = /^\d+$/.test(String(candidate || '').trim()) ? `kitsu:${candidate}` : String(candidate);
             break;
         }
     }
@@ -1479,14 +1266,14 @@ async function buildAnimeSearchContext(meta = {}, originalId, finalId, config = 
             if (context?.kitsuId) {
                 return {
                     ...context,
-                    searchTitles: buildSearchQueryVariants([
+                    searchTitles: queryPlan([
                         ...(Array.isArray(context?.searchTitles) ? context.searchTitles : []),
                         ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
-                        ...collectMetaTitles(meta)
+                        ...metaTitles(meta)
                     ]),
-                    rawTitles: uniqueStrings([
+                    rawTitles: listUnique([
                         ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
-                        ...collectMetaTitles(meta)
+                        ...metaTitles(meta)
                     ]),
                     strictKitsu: true
                 };
@@ -1494,11 +1281,11 @@ async function buildAnimeSearchContext(meta = {}, originalId, finalId, config = 
         } catch (_) {}
     }
 
-    if (!canTryCinemaCityAnimeMapping(meta)) return null;
+    if (!canBridgeAnime(meta)) return null;
 
     try {
-        const safeSeason = Number.parseInt(String(season || meta?.season || 1), 10) || 1;
-        const safeEpisode = Number.parseInt(String(episode || meta?.episode || 1), 10) || 1;
+        const safeSeason = numericId(season || meta?.season) || 1;
+        const safeEpisode = numericId(episode || meta?.episode) || 1;
         const context = await animeIdentity.buildAnimeSearchContextForProvider({
             requestId: originalId || finalId || meta?.id || (meta?.imdb_id ? `${meta.imdb_id}:${safeSeason}:${safeEpisode}` : meta?.tmdb_id ? `tmdb:${meta.tmdb_id}:${safeSeason}:${safeEpisode}` : null),
             finalId: finalId || originalId || meta?.id || null,
@@ -1514,23 +1301,22 @@ async function buildAnimeSearchContext(meta = {}, originalId, finalId, config = 
             episode: safeEpisode,
             providerName: 'CinemaCityAnimeBridge',
             language: 'it-IT',
-            mappingTimeoutMs: FETCH_TIMEOUT,
+            mappingTimeoutMs: FETCH_TIMEOUT_MS,
             kitsuTimeoutMs: 1400,
             debug: false
         });
 
         if (!context?.kitsuId) return null;
-
         return {
             ...context,
-            searchTitles: buildSearchQueryVariants([
+            searchTitles: queryPlan([
                 ...(Array.isArray(context?.searchTitles) ? context.searchTitles : []),
                 ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
-                ...collectMetaTitles(meta)
+                ...metaTitles(meta)
             ]),
-            rawTitles: uniqueStrings([
+            rawTitles: listUnique([
                 ...(Array.isArray(context?.rawTitles) ? context.rawTitles : []),
-                ...collectMetaTitles(meta)
+                ...metaTitles(meta)
             ]),
             strictKitsu: false,
             mappedKitsu: true
@@ -1540,432 +1326,619 @@ async function buildAnimeSearchContext(meta = {}, originalId, finalId, config = 
     return null;
 }
 
-async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
-    const isSeries = Boolean(meta?.isSeries);
-    const fallbackSeason = Number.parseInt(String(meta?.season || ''), 10) || 1;
-    const fallbackEpisode = Number.parseInt(String(meta?.episode || ''), 10) || 1;
-    const candidateIds = getIdCandidates(meta, originalId, finalId);
-    const parsedRequest = parseCompositeSeriesId(candidateIds[0] || '', fallbackSeason, fallbackEpisode);
+function parseMediaId(rawId, season, episode) {
+    const result = {
+        id: String(rawId || '').trim(),
+        season: Number.isInteger(season) ? season : (Number.parseInt(season, 10) || 1),
+        episode: Number.isInteger(episode) ? episode : (Number.parseInt(episode, 10) || 1)
+    };
 
-    let workingId = parsedRequest.normalizedId;
-    let season = parsedRequest.season;
-    let episode = parsedRequest.episode;
-    let providerType = isSeries ? 'tv' : 'movie';
-
-    const contextImdbId = candidateIds.map(extractImdbId).find(Boolean) || null;
-    const contextTmdbId = candidateIds.map(extractTmdbId).find(Boolean) || null;
-    const explicitKitsuCandidates = [
-        meta?.kitsu_id,
-        meta?.kitsuId,
-        ...candidateIds.filter((id) => /^kitsu:/i.test(String(id || '').trim()))
-    ];
-    const explicitKitsuId = explicitKitsuCandidates.map(extractKitsuId).find(Boolean) || null;
-    const contextKitsuId = explicitKitsuId || null;
-    let resolvedTmdbId = contextTmdbId || extractTmdbId(workingId) || null;
-    let rawEpisodeNumber = null;
-    let episodeCandidates = numberCandidates([episode]);
-    let animeContext = null;
-
-    if (!workingId) {
-        workingId = contextImdbId || contextTmdbId || (contextKitsuId ? `kitsu:${contextKitsuId}` : '');
+    const kitsuTriplet = result.id.match(/^kitsu:(\d+):(\d+):(\d+)$/i);
+    if (kitsuTriplet) {
+        result.id = `kitsu:${kitsuTriplet[1]}`;
+        result.season = Number.parseInt(kitsuTriplet[2], 10) || result.season;
+        result.episode = Number.parseInt(kitsuTriplet[3], 10) || result.episode;
+        return result;
     }
 
-    const allowAnimeBridge = isSeries && String(meta?.type || '').toLowerCase() !== 'movie';
+    const kitsuEpisode = result.id.match(/^kitsu:(\d+):(\d+)$/i);
+    if (kitsuEpisode) {
+        result.id = `kitsu:${kitsuEpisode[1]}`;
+        result.season = 1;
+        result.episode = Number.parseInt(kitsuEpisode[2], 10) || result.episode;
+        return result;
+    }
 
-    const canTryAnime = allowAnimeBridge && Boolean(
+    const regular = result.id.match(/^(tt\d+|\d+|tmdb:\d+):(\d+):(\d+)$/i);
+    if (regular) {
+        result.id = regular[1];
+        result.season = Number.parseInt(regular[2], 10) || result.season;
+        result.episode = Number.parseInt(regular[3], 10) || result.episode;
+    }
+    return result;
+}
+
+async function requestProfile(meta = {}, originalId, finalId, config = {}) {
+    const isSeries = Boolean(meta?.isSeries);
+    const fallbackSeason = numericId(meta?.season) || 1;
+    const fallbackEpisode = numericId(meta?.episode) || 1;
+    const ids = idCandidates(meta, originalId, finalId);
+    const parsed = parseMediaId(ids[0] || '', fallbackSeason, fallbackEpisode);
+
+    let workingId = parsed.id;
+    let season = parsed.season;
+    let episode = parsed.episode;
+    let kind = isSeries ? 'tv' : 'movie';
+    let resolvedTmdbId = ids.map(tmdbFrom).find(Boolean) || tmdbFrom(workingId) || null;
+    let rawEpisodeNumber = null;
+    let episodeCandidates = numberPlan([episode]);
+
+    const contextImdbId = ids.map(imdbFrom).find(Boolean) || null;
+    const contextTmdbId = ids.map(tmdbFrom).find(Boolean) || null;
+    const contextKitsuId = [meta?.kitsu_id, meta?.kitsuId, ...ids.filter((id) => /^kitsu:/i.test(String(id || '').trim()))]
+        .map(kitsuFrom)
+        .find(Boolean) || null;
+
+    if (!workingId) workingId = contextImdbId || contextTmdbId || (contextKitsuId ? `kitsu:${contextKitsuId}` : '');
+
+    let animeContext = null;
+    const canTryAnime = isSeries && String(meta?.type || '').toLowerCase() !== 'movie' && Boolean(
         contextKitsuId
-        || candidateIds.some((id) => /^kitsu:/i.test(String(id || '').trim()))
+        || ids.some((id) => /^kitsu:/i.test(String(id || '').trim()))
         || meta?.tmdbAnimeCandidate === true
         || (meta?.isAnime === true && (contextImdbId || contextTmdbId || meta?.tmdb_id || meta?.imdb_id))
     );
+
     if (canTryAnime) {
-        animeContext = await buildAnimeSearchContext(meta, originalId, finalId, config, season, episode);
+        animeContext = await animeSearchProfile(meta, originalId, finalId, config, season, episode);
         if (animeContext?.kitsuId) {
             if (animeContext?.seasonNumber) season = animeContext.seasonNumber;
             if (animeContext?.requestedEpisode) episode = animeContext.requestedEpisode;
-            providerType = 'anime';
+            kind = 'anime';
         }
     }
 
-    const applyMappedIds = (mapped) => {
+    const applyMapping = (mapped) => {
         if (!mapped) return false;
         if (mapped.tmdbId) resolvedTmdbId = mapped.tmdbId;
         if (mapped.imdbId) workingId = mapped.imdbId;
-        else if (mapped.tmdbId && !extractImdbId(workingId)) workingId = mapped.tmdbId;
+        else if (mapped.tmdbId && !imdbFrom(workingId)) workingId = mapped.tmdbId;
         if (mapped.rawEpisodeNumber) rawEpisodeNumber = mapped.rawEpisodeNumber;
-        if (mapped.mappedEpisode) episodeCandidates = numberCandidates([mapped.mappedEpisode, episode, rawEpisodeNumber]);
         if (mapped.mappedSeason && mapped.mappedEpisode) {
             season = mapped.mappedSeason;
             episode = mapped.mappedEpisode;
         } else if (mapped.rawEpisodeNumber) {
             episode = mapped.rawEpisodeNumber;
-            episodeCandidates = numberCandidates([rawEpisodeNumber, episode]);
         }
-        episodeCandidates = numberCandidates([episode, ...(episodeCandidates || []), rawEpisodeNumber]);
+        episodeCandidates = numberPlan([episode, rawEpisodeNumber, ...(episodeCandidates || [])]);
         return Boolean(mapped.imdbId || mapped.tmdbId || mapped.mappedSeason || mapped.mappedEpisode || mapped.rawEpisodeNumber);
     };
 
-    const mappedFromSharedContext = animeContext?.mappedIds || null;
-    const sharedApplied = applyMappedIds(mappedFromSharedContext);
-
-    if (!sharedApplied && (String(workingId || '').startsWith('kitsu:') || contextKitsuId)) {
-        const kitsuId = contextKitsuId || extractKitsuId(workingId);
-        const mapped = await getIdsFromKitsu(kitsuId, isSeries ? season : null, isSeries ? episode : 1, config);
-        applyMappedIds(mapped);
+    const usedSharedMap = applyMapping(animeContext?.mappedIds || null);
+    if (!usedSharedMap && (String(workingId || '').startsWith('kitsu:') || contextKitsuId)) {
+        const mapped = await kitsuBridgeIds(contextKitsuId || kitsuFrom(workingId), isSeries ? season : null, isSeries ? episode : 1, config);
+        applyMapping(mapped);
     }
 
-    if (!extractImdbId(workingId) && contextImdbId) {
-        workingId = contextImdbId;
-    } else if (!extractTmdbId(workingId) && contextTmdbId) {
-        workingId = contextTmdbId;
-    }
+    if (!imdbFrom(workingId) && contextImdbId) workingId = contextImdbId;
+    else if (!tmdbFrom(workingId) && contextTmdbId) workingId = contextTmdbId;
 
-    if (!extractImdbId(workingId)) {
-        const tmdbId = extractTmdbId(workingId) || resolvedTmdbId || contextTmdbId;
-        const resolvedImdbId = await resolveImdbFromTmdb(tmdbId, providerType === 'movie' ? 'movie' : 'tv');
-        if (resolvedImdbId) workingId = resolvedImdbId;
+    if (!imdbFrom(workingId)) {
+        const tmdbId = tmdbFrom(workingId) || resolvedTmdbId || contextTmdbId;
+        const resolvedImdb = await imdbFromTmdb(tmdbId, kind === 'movie' ? 'movie' : 'tv');
+        if (resolvedImdb) workingId = resolvedImdb;
     }
 
     return {
-        imdbId: extractImdbId(workingId),
-        tmdbId: extractTmdbId(workingId) || resolvedTmdbId || contextTmdbId || null,
-        isAnime: providerType === 'anime',
+        imdbId: imdbFrom(workingId),
+        tmdbId: tmdbFrom(workingId) || resolvedTmdbId || contextTmdbId || null,
+        isAnime: kind === 'anime',
         searchTitles: Array.isArray(animeContext?.searchTitles) ? animeContext.searchTitles : [],
         rawTitles: Array.isArray(animeContext?.rawTitles) ? animeContext.rawTitles : [],
-        expectedYear: animeContext?.year || extractYear(meta?.year || meta?.releaseInfo || ''),
+        expectedYear: animeContext?.year || yearFrom(meta?.year || meta?.releaseInfo || ''),
         season,
         episode,
         rawEpisodeNumber,
-        episodeCandidates,
-        providerType
+        episodeCandidates: numberPlan([episode, rawEpisodeNumber, ...(episodeCandidates || [])]),
+        providerType: kind
     };
 }
 
-function parseCompositeSeriesId(rawId, season, episode) {
-    const parsed = {
-        normalizedId: String(rawId || '').trim(),
-        season: Number.isInteger(season) ? season : (Number.parseInt(season, 10) || 1),
-        episode: Number.isInteger(episode) ? episode : (Number.parseInt(episode, 10) || 1)
-    };
-
-    const kitsuSeasonEpMatch = parsed.normalizedId.match(/^kitsu:(\d+):(\d+):(\d+)$/i);
-    if (kitsuSeasonEpMatch) {
-        parsed.normalizedId = `kitsu:${kitsuSeasonEpMatch[1]}`;
-        parsed.season = Number.parseInt(kitsuSeasonEpMatch[2], 10) || parsed.season;
-        parsed.episode = Number.parseInt(kitsuSeasonEpMatch[3], 10) || parsed.episode;
-        return parsed;
-    }
-
-    const kitsuEpMatch = parsed.normalizedId.match(/^kitsu:(\d+):(\d+)$/i);
-    if (kitsuEpMatch) {
-        parsed.normalizedId = `kitsu:${kitsuEpMatch[1]}`;
-        parsed.season = 1;
-        parsed.episode = Number.parseInt(kitsuEpMatch[2], 10) || parsed.episode;
-        return parsed;
-    }
-
-    const match = parsed.normalizedId.match(/^(tt\d+|\d+|tmdb:\d+):(\d+):(\d+)$/i);
-    if (!match) return parsed;
-    parsed.normalizedId = match[1];
-    parsed.season = Number.parseInt(match[2], 10) || parsed.season;
-    parsed.episode = Number.parseInt(match[3], 10) || parsed.episode;
-    return parsed;
-}
-
-function numberCandidates(values = []) {
-    const seen = new Set();
-    const out = [];
-    for (const value of Array.isArray(values) ? values : [values]) {
-        const parsed = normalizeEpisodeNumber(value);
-        if (!parsed || seen.has(parsed)) continue;
-        seen.add(parsed);
-        out.push(parsed);
-    }
-    return out;
-}
-
-function extractSeasonNumberFromTitle(title) {
-    const match = String(title || '').match(/(?:season|stagione)\s*0*(\d+)\b|(?:^|\b)s\s*0*(\d+)\b/i);
+function seasonFromLabel(text) {
+    const match = String(text || '').match(/(?:season|stagione)\s*0*(\d+)\b|(?:^|\b)s\s*0*(\d+)\b/i);
     const value = Number.parseInt(String(match?.[1] || match?.[2] || ''), 10);
     return Number.isInteger(value) && value > 0 ? value : null;
 }
 
-function extractEpisodeNumberFromTitle(title) {
-    const text = String(title || '');
-
-    let match = text.match(/\bS\d{1,2}E0*(\d{1,4})\b/i);
-    if (match) return Number.parseInt(match[1], 10) || null;
-
-    match = text.match(/\b\d{1,2}x0*(\d{1,4})\b/i);
-    if (match) return Number.parseInt(match[1], 10) || null;
-
-    match = text.match(/(?:episode|episodio|ep\.?)\s*0*(\d{1,4})\b/i);
-    if (match) return Number.parseInt(match[1], 10) || null;
-
-    match = text.match(/(?:^|[^a-z0-9])E0*(\d{1,4})(?:[^a-z0-9]|$)/i);
-    if (match) return Number.parseInt(match[1], 10) || null;
-
-    match = text.match(/^\s*0*(\d{1,4})\s*[-–.]/);
-    if (match) return Number.parseInt(match[1], 10) || null;
-
-    return null;
-}
-
-function pickEpisodeFromFolder(folder = [], episodeCandidates = []) {
-    const episodeEntries = folder
-        .filter((e) => e && typeof e === 'object' && e.file)
-        .map((e, index) => ({ entry: e, index, episodeNumber: extractEpisodeNumberFromTitle(e.title) }));
-
-    if (episodeEntries.length === 0) return null;
-
-    for (const wantedEpisode of episodeCandidates) {
-        const exactEpisodeMatch = episodeEntries.find((e) => e.episodeNumber === wantedEpisode);
-        if (exactEpisodeMatch?.entry?.file) return exactEpisodeMatch.entry.file;
-    }
-
-    const hasExplicitEpisodeNumbers = episodeEntries.some((e) => Number.isInteger(e.episodeNumber));
-    if (hasExplicitEpisodeNumbers) return null;
-
-    for (const wantedEpisode of episodeCandidates) {
-        const byIndex = episodeEntries[wantedEpisode - 1]?.entry?.file || null;
-        if (byIndex) return byIndex;
-    }
-
-    return null;
-}
-
-function flattenSeasonEpisodes(seasonEntries = []) {
-    const flat = [];
-    for (const seasonEntry of seasonEntries) {
-        for (const item of seasonEntry?.entry?.folder || []) {
-            if (item && typeof item === 'object' && item.file) flat.push(item);
-        }
-    }
-    return flat;
-}
-
-function pickStream(fileData, type, season = 1, episode = 1, options = {}) {
-    if (typeof fileData === 'string') return fileData;
-
-    const episodeCandidates = numberCandidates([
-        episode,
-        ...(Array.isArray(options?.episodeCandidates) ? options.episodeCandidates : []),
-        options?.rawEpisodeNumber
-    ]);
-    const seasonCandidates = numberCandidates([
-        season,
-        ...(Array.isArray(options?.seasonCandidates) ? options.seasonCandidates : []),
-        1
-    ]);
-
-    if (Array.isArray(fileData)) {
-        if (
-            type === 'movie'
-            || fileData.every((e) => e && typeof e === 'object' && 'file' in e && !('folder' in e))
-        ) {
-            if (type === 'movie') return fileData[0]?.file || null;
-            return pickEpisodeFromFolder(fileData, episodeCandidates.length ? episodeCandidates : [1]) || fileData[0]?.file || null;
-        }
-
-        const seasonEntries = fileData
-            .filter((e) => e && typeof e === 'object' && Array.isArray(e.folder))
-            .map((e, index) => ({ entry: e, index, seasonNumber: extractSeasonNumberFromTitle(e.title) }));
-
-        if (seasonEntries.length === 0) return null;
-
-        const selectedSeasonEntries = [];
-        for (const wantedSeason of seasonCandidates) {
-            const exactSeasonMatch = seasonEntries.find((e) => e.seasonNumber === wantedSeason);
-            if (exactSeasonMatch) selectedSeasonEntries.push(exactSeasonMatch);
-        }
-
-        const hasExplicitSeasonNumbers = seasonEntries.some((e) => Number.isInteger(e.seasonNumber));
-        if (selectedSeasonEntries.length === 0 && !hasExplicitSeasonNumbers) {
-            for (const wantedSeason of seasonCandidates) {
-                const byIndex = seasonEntries[wantedSeason - 1] || null;
-                if (byIndex) selectedSeasonEntries.push(byIndex);
-            }
-        }
-
-        if (options?.looseAnime === true) {
-            for (const seasonEntry of seasonEntries) {
-                if (!selectedSeasonEntries.includes(seasonEntry)) selectedSeasonEntries.push(seasonEntry);
-            }
-        }
-
-        for (const seasonEntry of selectedSeasonEntries) {
-            const picked = pickEpisodeFromFolder(seasonEntry.entry.folder, episodeCandidates.length ? episodeCandidates : [1]);
-            if (picked) return picked;
-        }
-
-        const rawEpisodeNumber = normalizeEpisodeNumber(options?.rawEpisodeNumber);
-        if (rawEpisodeNumber && options?.looseAnime === true) {
-            const flat = flattenSeasonEpisodes(seasonEntries);
-            const byAbsoluteIndex = flat[rawEpisodeNumber - 1]?.file || null;
-            if (byAbsoluteIndex) return byAbsoluteIndex;
-        }
+function episodeFromLabel(text) {
+    const source = String(text || '');
+    const patterns = [
+        /\bS\d{1,2}E0*(\d{1,4})\b/i,
+        /\b\d{1,2}x0*(\d{1,4})\b/i,
+        /(?:episode|episodio|ep\.?)\s*0*(\d{1,4})\b/i,
+        /(?:^|[^a-z0-9])E0*(\d{1,4})(?:[^a-z0-9]|$)/i,
+        /^\s*0*(\d{1,4})\s*[-–.]/
+    ];
+    for (const pattern of patterns) {
+        const match = source.match(pattern);
+        if (match) return Number.parseInt(match[1], 10) || null;
     }
     return null;
 }
 
-function extractJsonArray(decoded) {
-    let start = decoded.indexOf('file:');
-    if (start === -1) start = decoded.indexOf('sources:');
-    if (start === -1) return null;
-    start = decoded.indexOf('[', start);
-    if (start === -1) return null;
+function looksLikeCompactUrlToken(value) {
+    const text = safeText(value).replace(/\//g, '/').trim();
+    if (!text || text.startsWith('data:')) return false;
+    if (text.length > 4096) return false;
+
+    // Hard guard: never allow JavaScript source/body text to become a fake relative URL.
+    if (/^(?:function|class|const|let|var|return|if|for|while|switch)\b/i.test(text)) return false;
+    if (/[{}<>;]/.test(text)) return false;
+    if (/(?:=>|document\.|window\[|callbacks\.|Hls\.|DefaultConfig|Playerjs|Math\.floor|replace\s*\()/i.test(text)) return false;
+
+    // Media URLs should be URL-like tokens, not arbitrary script chunks with spaces/newlines.
+    if (/[\r\n\t]/.test(text)) return false;
+    if (/\s/.test(text) && !/%[0-9A-F]{2}/i.test(text)) return false;
+
+    return /^(?:https?:\/\/|\/\/|\/|\.\.?\/|[A-Za-z0-9._~!$&'()*+,=:@%-]+(?:\/|\.))/i.test(text);
+}
+
+function isLikelyMediaUrl(value) {
+    const text = safeText(value).replace(/\//g, '/').trim();
+    if (!looksLikeCompactUrlToken(text)) return false;
+
+    // Do not classify iframe/player/page URLs as playable media.
+    // cc_proxy must receive a real media endpoint, not CinemaCity HTML.
+    if (/\.(?:m3u8|mp4|mkv|webm|m4a|aac|ts|m4s)(?:$|[?#,])/i.test(text)) return true;
+    if (/\b(?:public_files|playlist|manifest|master|hls|dash)\b/i.test(text)
+        && /(?:m3u8|mp4|mkv|webm|m4a|aac|ts|m4s)/i.test(text)) return true;
+
+    return false;
+}
+
+function decodeBase64Text(value) {
+    try {
+        return Buffer.from(String(value || ''), 'base64').toString('utf8');
+    } catch (_) {
+        return '';
+    }
+}
+
+function scriptPayloadInputs(html) {
+    const body = String(html || '');
+    const $ = htmlRoot(body);
+    const out = [];
+
+    $('script').each((_, script) => {
+        const text = $(script).html() || '';
+        if (text) out.push({ kind: 'script', value: text });
+    });
+
+    $('[data-file], [data-src], [data-url], [data-player], source[src], iframe[src]').each((_, node) => {
+        const attrs = node.attribs || {};
+        for (const key of ['data-file', 'data-src', 'data-url', 'data-player', 'src']) {
+            if (attrs[key]) out.push({ kind: 'attr', value: attrs[key] });
+        }
+    });
+
+    for (const match of body.matchAll(/atob\s*\(\s*['"]([^'"]{30,})['"]\s*\)/gi)) {
+        out.push({ kind: 'b64', value: match[1] });
+    }
+
+    return out;
+}
+
+function firstBalancedFragment(text, startIndex) {
+    const source = String(text || '');
+    const open = source[startIndex];
+    const close = open === '[' ? ']' : '}';
     let depth = 0;
-    for (let i = start; i < decoded.length; i += 1) {
-        if (decoded[i] === '[') depth += 1;
-        else if (decoded[i] === ']') depth -= 1;
-        if (depth === 0) return decoded.substring(start, i + 1);
+    let quote = null;
+    let escaped = false;
+    for (let index = startIndex; index < source.length; index++) {
+        const char = source[index];
+        if (quote) {
+            if (escaped) escaped = false;
+            else if (char === '\\') escaped = true;
+            else if (char === quote) quote = null;
+            continue;
+        }
+        if (char === '"' || char === "'") {
+            quote = char;
+            continue;
+        }
+        if (char === open) depth++;
+        if (char === close) depth--;
+        if (depth === 0) return source.slice(startIndex, index + 1);
     }
     return null;
 }
 
-function resolveUrl(baseUrl, relativeOrAbsoluteUrl) {
-    if (!relativeOrAbsoluteUrl) return null;
-    try { return new URL(relativeOrAbsoluteUrl, baseUrl).toString(); } catch (_) { return relativeOrAbsoluteUrl; }
+function jsonFragments(text) {
+    const source = String(text || '');
+    const fragments = [];
+    for (let index = 0; index < source.length; index++) {
+        const char = source[index];
+        if (char !== '[' && char !== '{') continue;
+        const fragment = firstBalancedFragment(source, index);
+        if (!fragment || fragment.length < 4) continue;
+        fragments.push(fragment);
+        index += fragment.length - 1;
+    }
+    return fragments.slice(0, 40);
 }
 
-function getOrigin(url) {
-    try { return new URL(url).origin; } catch (_) { return BASE_URL; }
+function parseJsonish(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    const attempts = [raw, raw.replace(/\\(.)/g, '$1')];
+    for (const candidate of attempts) {
+        try {
+            return JSON.parse(candidate);
+        } catch (_) {}
+    }
+    return null;
 }
 
-function extractPlayerReferer(html, pageUrl) {
-    const $ = loadHtml(html);
-    const src = $('iframe[src*="player.php"]').first().attr('src') || '';
-    return src ? resolveUrl(pageUrl, src) : pageUrl;
-}
-
-async function parseCinemaCityStream(pageUrl, meta = {}) {
-    const html = await fetchHtml(pageUrl, {
-        'Referer': `${BASE_URL}/`,
-        'Cookie': getCinemaCitySessionCookie(),
-        'Sec-Fetch-Site': 'same-origin',
-        'Sec-Fetch-User': '?1'
-    }, { timeout: 2500, attempts: 1 });
-
-    const pageMetadata = parseCinemaCityPageMetadata(html, pageUrl);
-    pageMetadataCache.set(normalizeRemoteUrl(pageUrl), pageMetadata);
-    const playerReferer = extractPlayerReferer(html, pageUrl);
-
-    const atobRegex = /atob\s*\(\s*['"](.*?)['"]\s*\)/gi;
-    let match;
-    let fileData = null;
-
-    while ((match = atobRegex.exec(html)) !== null) {
-        const encoded = match[1];
-        if (!encoded || encoded.length < 50) continue;
-        let decoded = '';
-        try { decoded = Buffer.from(encoded, 'base64').toString('utf8'); } catch (_) { continue; }
-        if (!decoded) continue;
-
-        if (decoded.trim().startsWith('[')) {
-            try { fileData = JSON.parse(decoded); } catch (_) {}
+function sourceAssignments(text) {
+    const source = String(text || '').replace(/\\\//g, '/');
+    const out = [];
+    const mediaExt = 'm3u8|mp4|mkv|webm|m4a|aac|ts|m4s';
+    const patterns = [
+        new RegExp("(?:file|url|src)\\s*[:=]\\s*['\"]([^'\"]+\\.(?:" + mediaExt + ")(?:\\?[^'\"]*)?)['\"]", 'gi'),
+        new RegExp("(?:sources|playlist)\\s*[:=]\\s*['\"]([^'\"]+)['\"]", 'gi'),
+        new RegExp("(https?:\\/\\/[^\\s'\"<>]+\\.(?:" + mediaExt + ")(?:\\?[^\\s'\"<>]+)?)", 'gi'),
+        new RegExp("((?:\\/[^\\s'\"<>]+)+\\.(?:" + mediaExt + ")(?:\\?[^\\s'\"<>]+)?)", 'gi')
+    ];
+    for (const pattern of patterns) {
+        for (const match of source.matchAll(pattern)) {
+            const url = safeText(match[1]);
+            if (url && isLikelyMediaUrl(url)) out.push(url);
         }
-        if (!fileData) {
-            const rawJson = extractJsonArray(decoded);
-            if (rawJson) {
-                try { fileData = JSON.parse(rawJson.replace(/\\(.)/g, '$1')); }
-                catch (_) { try { fileData = JSON.parse(rawJson); } catch (_) {} }
+    }
+    return listUnique(out);
+}
+
+function payloadObjectsFromHtml(html) {
+    const objects = [];
+    const seen = new Set();
+    const push = (value) => {
+        if (value == null) return;
+        const key = typeof value === 'string' ? value : JSON.stringify(value).slice(0, 1000);
+        if (seen.has(key)) return;
+        seen.add(key);
+        objects.push(value);
+    };
+
+    for (const input of scriptPayloadInputs(html)) {
+        const direct = safeText(input.value);
+        const decoded = input.kind === 'b64' ? decodeBase64Text(input.value) : '';
+        for (const text of [direct, decoded, decoded ? he.decode(decoded) : ''].filter(Boolean)) {
+            if (isLikelyMediaUrl(text)) push(text);
+            for (const url of sourceAssignments(text)) push(url);
+            const asJson = parseJsonish(text);
+            if (asJson) push(asJson);
+            for (const fragment of jsonFragments(text)) {
+                const parsed = parseJsonish(fragment);
+                if (parsed) push(parsed);
             }
         }
-        if (!fileData) {
-            const fileMatch = decoded.match(/(?:file|sources)\s*:\s*['"](.*?)['"]/i);
-            if (fileMatch && (fileMatch[1].includes('.m3u8') || fileMatch[1].includes('.mp4'))) {
-                fileData = fileMatch[1];
-            }
-        }
-        if (fileData) break;
     }
 
-    const streamUrl = resolveUrl(
-        pageUrl,
-        pickStream(fileData, meta?.isSeries ? 'tv' : 'movie', meta?.season || 1, meta?.episode || 1, {
-            rawEpisodeNumber: meta?.rawEpisodeNumber,
-            episodeCandidates: Array.isArray(meta?.episodeCandidates) ? meta.episodeCandidates : [],
-            looseAnime: meta?.providerType === 'anime' || meta?.isAnime === true
-        })
-    );
-    if (!streamUrl) return null;
+    return objects;
+}
 
-    const activeFp = getRandomFingerprint();
+function makeAsset(kind, data = {}) {
     return {
-        streamUrl,
-        pageMetadata,
-        headers: {
-            'User-Agent': activeFp.userAgent,
-            'Referer': playerReferer,
-            'Origin': getOrigin(pageUrl),
-            'Accept': '*/*',
-            'Accept-Language': activeFp.acceptLanguage,
-            'Cookie': getCinemaCitySessionCookie()
-        }
+        kind,
+        title: safeText(data.title || data.label || data.name || ''),
+        season: numericId(data.season || data.seasonNumber || data.season_number) || null,
+        episode: numericId(data.episode || data.episodeNumber || data.episode_number) || null,
+        url: data.url || data.file || data.src || null,
+        children: Array.isArray(data.children) ? data.children : []
     };
 }
 
-async function getParsedCinemaCityStream(pageUrl, meta = {}) {
-    const normalizedUrl = normalizeRemoteUrl(pageUrl);
-    if (!normalizedUrl) return null;
+function assetTree(value, context = {}) {
+    if (!value) return null;
+    if (typeof value === 'string') {
+        return isLikelyMediaUrl(value) ? makeAsset('source', { url: value, title: context.title }) : null;
+    }
+    if (Array.isArray(value)) {
+        const children = value.map((item, index) => assetTree(item, { ...context, index: index + 1 })).filter(Boolean);
+        return children.length ? makeAsset('group', { title: context.title || 'root', children }) : null;
+    }
+    if (typeof value !== 'object') return null;
 
-    const cacheKey = `stream-result:${normalizedUrl}:${meta?.season || 1}:${meta?.episode || 1}:${meta?.rawEpisodeNumber || ''}:${(meta?.episodeCandidates || []).join(',')}`;
+    const title = safeText(value.title || value.label || value.name || value.text || context.title || '');
+    const folder = Array.isArray(value.folder) ? value.folder : (Array.isArray(value.children) ? value.children : null);
+    const directUrl = value.file || value.url || value.src || value.source;
 
-    if (streamResultCache.has(cacheKey)) {
-        return streamResultCache.get(cacheKey);
+    if (directUrl && isLikelyMediaUrl(directUrl)) {
+        return makeAsset('source', {
+            title,
+            url: directUrl,
+            season: value.season || value.seasonNumber || seasonFromLabel(title),
+            episode: value.episode || value.episodeNumber || episodeFromLabel(title)
+        });
     }
 
-    return singleFlight(cacheKey, async () => {
-        if (streamResultCache.has(cacheKey)) {
-            return streamResultCache.get(cacheKey);
-        }
+    if (folder) {
+        const children = folder.map((item, index) => assetTree(item, { title, index: index + 1 })).filter(Boolean);
+        const season = numericId(value.season || value.seasonNumber) || seasonFromLabel(title);
+        return makeAsset(season ? 'season' : 'group', { title, season, children });
+    }
 
-        const result = await parseCinemaCityStream(pageUrl, meta);
-        streamResultCache.set(cacheKey, result || null);
+    const nested = [];
+    for (const key of ['sources', 'playlist', 'files', 'items']) {
+        if (Array.isArray(value[key])) nested.push(...value[key]);
+    }
+    if (nested.length) {
+        const children = nested.map((item, index) => assetTree(item, { title, index: index + 1 })).filter(Boolean);
+        return children.length ? makeAsset('group', { title, children }) : null;
+    }
+
+    return null;
+}
+
+function flattenAssets(node, state = {}, out = []) {
+    if (!node) return out;
+    const title = node.title || state.title || '';
+    const season = node.season || state.season || seasonFromLabel(title) || null;
+    const episode = node.episode || state.episode || episodeFromLabel(title) || null;
+    if (node.url) {
+        out.push({
+            url: node.url,
+            title,
+            season,
+            episode,
+            path: [...(state.path || []), title].filter(Boolean)
+        });
+    }
+    const children = Array.isArray(node.children) ? node.children : [];
+    children.forEach((child, index) => {
+        flattenAssets(child, {
+            title: child.title || title,
+            season,
+            episode,
+            path: [...(state.path || []), title].filter(Boolean),
+            index: index + 1
+        }, out);
+    });
+    return out;
+}
+
+function selectPlayableAsset(payloads, request = {}) {
+    const type = request.type === 'movie' ? 'movie' : 'series';
+    const wantedSeason = numericId(request.season) || 1;
+    const wantedEpisodes = numberPlan([
+        request.episode,
+        ...(Array.isArray(request.episodeCandidates) ? request.episodeCandidates : []),
+        request.rawEpisodeNumber
+    ]);
+    const seasonPlan = numberPlan([wantedSeason, ...(Array.isArray(request.seasonCandidates) ? request.seasonCandidates : []), 1]);
+
+    const sources = [];
+    for (const payload of payloads) {
+        const tree = assetTree(payload);
+        if (!tree) continue;
+        sources.push(...flattenAssets(tree));
+    }
+    if (!sources.length) return null;
+
+    if (type === 'movie') return sources[0]?.url || null;
+
+    const scored = sources.map((source, index) => {
+        let score = 0;
+        if (source.season && seasonPlan.includes(source.season)) score += 30;
+        else if (!source.season && seasonPlan.includes(1)) score += 8;
+        if (source.episode && wantedEpisodes.includes(source.episode)) score += 45;
+        if (!source.episode && wantedEpisodes.includes(index + 1)) score += 18;
+        if (request.looseAnime && source.episode && wantedEpisodes.includes(source.episode)) score += 12;
+        const text = [source.title, ...(source.path || [])].join(' ');
+        for (const ep of wantedEpisodes) {
+            if (new RegExp(`(?:^|[^0-9])0*${ep}(?:[^0-9]|$)`).test(text)) score += 8;
+        }
+        return { ...source, index, score };
+    }).sort((a, b) => b.score - a.score);
+
+    const best = scored[0];
+    if (best?.score >= 45) return best.url;
+
+    const hasExplicitEpisodeNumbers = sources.some((source) => Number.isInteger(source.episode));
+    if (!hasExplicitEpisodeNumbers && wantedEpisodes.length) {
+        const byIndex = sources[wantedEpisodes[0] - 1]?.url || null;
+        if (byIndex && sources.length >= wantedEpisodes[0]) return byIndex;
+    }
+
+    return null;
+}
+
+function playbackFrameUrl(html, pageUrl) {
+    const $ = htmlRoot(html);
+    const buckets = [[], [], []];
+
+    $('iframe[src]').each((_, node) => {
+        const value = node.attribs?.src || '';
+        const absolute = ccUrl(value, pageUrl);
+        if (!absolute) return;
+        if (/player\.php/i.test(value)) buckets[0].push(absolute);
+        else if (/embed|watch|play/i.test(value)) buckets[1].push(absolute);
+    });
+
+    $('[data-player], [data-url], [data-src], button[data-src]').each((_, node) => {
+        const attrs = node.attribs || {};
+        for (const key of ['data-player', 'data-url', 'data-src']) {
+            const value = attrs[key];
+            if (!value || !/player\.php|embed|watch|play/i.test(value)) continue;
+            const absolute = ccUrl(value, pageUrl);
+            if (absolute) buckets[2].push(absolute);
+        }
+    });
+
+    return listUnique([...buckets[0], ...buckets[1], ...buckets[2]])[0] || pageUrl;
+}
+
+async function parsePlayablePage(pageUrl, meta = {}) {
+    const html = await ccText(pageUrl, {
+        Referer: `${CC_HOME}/`,
+        Cookie: ccSessionCookie(),
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-User': '?1'
+    }, { timeout: 2500, attempts: 1 });
+    if (!html) return null;
+
+    const facts = parsePageFacts(html, pageUrl);
+    cache.metadata.set(normalizeRemoteUrl(pageUrl), facts);
+
+    const playerUrl = playbackFrameUrl(html, pageUrl);
+    let payloads = payloadObjectsFromHtml(html);
+
+    if (playerUrl && playerUrl !== pageUrl) {
+        const playerHtml = await ccText(playerUrl, {
+            Referer: pageUrl,
+            Cookie: ccSessionCookie(),
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-Mode': 'navigate'
+        }, { timeout: 2500, attempts: 1, axiosFallback: true });
+        if (playerHtml) payloads = [...payloads, ...payloadObjectsFromHtml(playerHtml)];
+    }
+
+    const selected = selectPlayableAsset(payloads, {
+        type: meta?.isSeries ? 'series' : 'movie',
+        season: meta?.season || 1,
+        episode: meta?.episode || 1,
+        rawEpisodeNumber: meta?.rawEpisodeNumber,
+        episodeCandidates: Array.isArray(meta?.episodeCandidates) ? meta.episodeCandidates : [],
+        looseAnime: meta?.providerType === 'anime' || meta?.isAnime === true
+    });
+    const cleanedSource = cleanPlayableSource(selected);
+    if (!cleanedSource || !isLikelyMediaUrl(cleanedSource)) {
+        if (process.env.DEBUG_CINEMACITY === '1') {
+            console.warn('[CC V2] playable source rejected before resolve | value=%s', String(selected || '').slice(0, 180));
+        }
+        return null;
+    }
+    const streamUrl = ccUrl(cleanedSource, playerUrl || pageUrl) || ccUrl(cleanedSource, pageUrl);
+    if (!streamUrl || !isLikelyMediaUrl(streamUrl)) {
+        if (process.env.DEBUG_CINEMACITY === '1') {
+            console.warn('[CC V2] playable source rejected after resolve | value=%s target=%s', String(selected || '').slice(0, 180), String(streamUrl || '').slice(0, 180));
+        }
+        return null;
+    }
+
+    const fp = getRandomFingerprint();
+    return {
+        streamUrl,
+        pageMetadata: facts,
+        headers: normalizePlaybackHeaders({
+            'User-Agent': fp.userAgent,
+            Referer: playerUrl || pageUrl,
+            Origin: urlOrigin(pageUrl),
+            Accept: isProbablyHls(streamUrl) ? 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*' : '*/*',
+            'Accept-Language': fp.acceptLanguage,
+            Cookie: ccSessionCookie()
+        }, streamUrl, pageUrl)
+    };
+}
+
+async function parsedStream(pageUrl, meta = {}) {
+    const normalized = normalizeRemoteUrl(pageUrl);
+    if (!normalized) return null;
+    const cacheKey = `stream:${normalized}:${meta?.isSeries ? 'series' : 'movie'}:${meta?.season || 1}:${meta?.episode || 1}:${meta?.rawEpisodeNumber || ''}:${(meta?.episodeCandidates || []).join(',')}`;
+    const cached = cache.stream.get(cacheKey);
+    if (cached !== null) return cached;
+
+    return keyedTask(cacheKey, async () => {
+        const again = cache.stream.get(cacheKey);
+        if (again !== null) return again;
+        const result = await parsePlayablePage(normalized, meta);
+        cache.stream.set(cacheKey, result || null);
         return result || null;
     });
 }
 
-function buildDisplayTitle(meta = {}, fallbackTitle, season, episode) {
-    const baseTitle = decodeHtmlEntities(
-        meta?.title || meta?.name || meta?.originalTitle || fallbackTitle || 'CinemaCity'
-    )
+
+function legacyPickStreamCompat(fileData, type, season = 1, episode = 1, options = {}) {
+    const payloads = Array.isArray(fileData) ? fileData : [fileData];
+    return selectPlayableAsset(payloads, {
+        isSeries: type !== 'movie',
+        season,
+        episode,
+        rawEpisodeNumber: options?.rawEpisodeNumber,
+        episodeCandidates: options?.episodeCandidates || []
+    });
+}
+
+function displayName(meta = {}, fallbackTitle, season, episode) {
+    const title = safeText(meta?.title || meta?.name || meta?.originalTitle || fallbackTitle || 'CinemaCity')
         .replace(/\s*\(.*?\)\s*/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
-
-    if (meta?.isSeries) {
-        return `${baseTitle} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
-    }
-    return baseTitle;
+    if (meta?.isSeries) return `${title} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
+    return title;
 }
 
+function cleanPlayableSource(value) {
+    return safeText(value)
+        .replace(/\\\//g, '/')
+        .replace(/&amp;/g, '&')
+        .replace(/^['"]+|['"]+$/g, '')
+        .trim();
+}
 
-function buildCinemaCityMediaflowUrl(config = {}, streamUrl, headers = {}, isHls = false) {
-    const mfpBase = String(config?.mediaflow?.url || '').trim().replace(/\/$/, '');
-    const normalizedTarget = normalizeRemoteUrl(streamUrl);
-    if (!mfpBase || !normalizedTarget) return null;
+function isProbablyHls(value) {
+    const text = cleanPlayableSource(value);
+    return /\.m3u8(?:$|[?#,])/i.test(text) || /(?:^|[/?&])(?:hls|manifest|playlist|master)(?:[=/_-]|$)/i.test(text);
+}
 
-    const passwordQuery = config?.mediaflow?.pass
-        ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}`
-        : '';
-    const refererQuery = headers?.Referer ? `&h_Referer=${encodeURIComponent(headers.Referer)}` : '';
-    const originQuery = headers?.Origin ? `&h_Origin=${encodeURIComponent(headers.Origin)}` : '';
-
-    if (isHls) {
-        return `${mfpBase}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${refererQuery}${originQuery}`;
+function headerValue(headers = {}, wanted) {
+    const target = String(wanted || '').toLowerCase();
+    for (const [key, value] of Object.entries(headers || {})) {
+        if (String(key || '').toLowerCase() === target && value != null && value !== '') return String(value);
     }
+    return '';
+}
 
-    return `${mfpBase}/proxy/stream?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${refererQuery}${originQuery}`;
+function normalizePlaybackHeaders(headers = {}, streamUrl = '', pageUrl = CC_HOME) {
+    const fp = getRandomFingerprint();
+    const referer = headerValue(headers, 'referer') || pageUrl || CC_HOME;
+    const origin = headerValue(headers, 'origin') || urlOrigin(referer) || CC_HOME;
+    return {
+        'User-Agent': headerValue(headers, 'user-agent') || fp.userAgent,
+        Accept: headerValue(headers, 'accept') || (isProbablyHls(streamUrl) ? 'application/vnd.apple.mpegurl,application/x-mpegURL,*/*' : '*/*'),
+        'Accept-Language': headerValue(headers, 'accept-language') || fp.acceptLanguage || 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+        Referer: referer,
+        Origin: origin,
+        ...(headerValue(headers, 'cookie') ? { Cookie: headerValue(headers, 'cookie') } : {})
+    };
+}
+
+function buildCcProxyPlaybackUrl(streamUrl, headers = {}, reqHost = null) {
+    const target = normalizeRemoteUrl(cleanPlayableSource(streamUrl));
+    if (!target || !isLikelyMediaUrl(target)) return null;
+    const proxyHeaders = normalizePlaybackHeaders(headers, target);
+    return buildCinemaCityProxyUrl(target, proxyHeaders, reqHost, { isHls: isProbablyHls(target) });
+}
+
+function mediaflowUrl(config = {}, streamUrl, headers = {}, hls = false) {
+    const base = String(config?.mediaflow?.url || '').trim().replace(/\/$/, '');
+    const target = normalizeRemoteUrl(streamUrl);
+    if (!base || !target) return null;
+    const password = config?.mediaflow?.pass ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}` : '';
+    const referer = headers?.Referer ? `&h_Referer=${encodeURIComponent(headers.Referer)}` : '';
+    const origin = headers?.Origin ? `&h_Origin=${encodeURIComponent(headers.Origin)}` : '';
+    if (hls) return `${base}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(target)}${password}${referer}${origin}`;
+    return `${base}/proxy/stream?d=${encodeURIComponent(target)}${password}${referer}${origin}`;
 }
 
 async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost = null) {
     try {
-        const resolved = await resolveSearchState(meta, originalId, finalId, config);
+        const resolved = await requestProfile(meta, originalId, finalId, config);
         if (!resolved.imdbId && !resolved.tmdbId && (!resolved.isAnime || resolved.searchTitles.length === 0)) return [];
 
-        const titleFallbackOptions = {
-            expectedTitles: uniqueStrings([
+        const catalogOptions = {
+            expectedTitles: listUnique([
                 ...(Array.isArray(resolved.searchTitles) ? resolved.searchTitles : []),
                 ...(Array.isArray(resolved.rawTitles) ? resolved.rawTitles : [])
             ]),
@@ -1974,15 +1947,14 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost 
             fast: config?.filters?.cinemacityFast !== false
         };
 
-        let searchResult = null;
-        searchResult = await searchByTitleFallback(
+        let catalogItem = await resolveCatalog(
             resolved.tmdbId || resolved.imdbId || originalId,
-            resolved.providerType, meta, titleFallbackOptions
+            resolved.providerType,
+            meta,
+            catalogOptions
         );
-        if (!searchResult?.url && resolved.imdbId) {
-            searchResult = await searchByImdb(resolved.imdbId);
-        }
-        if (!searchResult?.url) return [];
+        if (!catalogItem?.url && resolved.imdbId) catalogItem = await searchImdb(resolved.imdbId);
+        if (!catalogItem?.url) return [];
 
         const enrichedMeta = {
             ...meta,
@@ -1992,99 +1964,99 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost 
             episodeCandidates: resolved.episodeCandidates,
             providerType: resolved.providerType
         };
-        const extracted = await getParsedCinemaCityStream(searchResult.url, enrichedMeta);
+        const extracted = await parsedStream(catalogItem.url, enrichedMeta);
         if (!extracted?.streamUrl) return [];
 
-        const pageMetadata = extracted.pageMetadata || {};
-        if (!pageHasRequestedAudio(pageMetadata, config)) {
-            if (config?.debug || process.env.DEBUG_CINEMACITY === '1') {
-                console.warn(buildLanguageRejectReason(pageMetadata, config));
-            }
+        const facts = extracted.pageMetadata || {};
+        if (!pageAudioOk(facts, config)) {
+            if (config?.debug || process.env.DEBUG_CINEMACITY === '1') console.warn(languageRejectLog(facts, config));
             return [];
         }
-        if (streamUrlHasForbiddenLanguage(extracted.streamUrl, config)) {
-            if (config?.debug || process.env.DEBUG_CINEMACITY === '1') {
-                console.warn('[CinemaCity] Skip stream URL non-ITA strict:', extracted.streamUrl);
-            }
+        if (streamLanguageRejected(extracted.streamUrl, config)) {
+            if (config?.debug || process.env.DEBUG_CINEMACITY === '1') console.warn('[CC V2] stream rejected by language policy:', extracted.streamUrl);
             return [];
         }
 
-        let quality = normalizeQuality(pageMetadata.quality || '1080p');
-        if (/\.m3u8($|\?)/i.test(extracted.streamUrl)) {
+        let quality = normalizeQuality(facts.quality || '1080p');
+        const hls = isProbablyHls(extracted.streamUrl);
+        if (hls) {
             try {
-                const qualityCacheKey = `quality:${normalizeRemoteUrl(extracted.streamUrl)}`;
-                const cachedQuality = qualityProbeCache.get(qualityCacheKey);
-                const probed = cachedQuality ? cachedQuality.value : await singleFlight(qualityCacheKey, async () => {
-                    const alreadyCached = qualityProbeCache.get(qualityCacheKey);
-                    if (alreadyCached) return alreadyCached.value;
-                    const detected = await probePlaylistQuality(httpClient, extracted.streamUrl, {
+                const qualityKey = `quality:${normalizeRemoteUrl(extracted.streamUrl)}`;
+                const cachedQuality = cache.quality.get(qualityKey);
+                const detected = cachedQuality || await keyedTask(qualityKey, async () => {
+                    const again = cache.quality.get(qualityKey);
+                    if (again) return again;
+                    const probed = await probePlaylistQuality(httpClient, extracted.streamUrl, {
                         headers: extracted.headers,
                         timeout: 6000
                     });
-                    qualityProbeCache.set(qualityCacheKey, { value: detected || 'Unknown' });
-                    return detected || 'Unknown';
+                    cache.quality.set(qualityKey, probed || 'Unknown');
+                    return probed || 'Unknown';
                 });
-                quality = pickBetterQuality(probed || 'Unknown', quality);
+                quality = pickBetterQuality(detected || 'Unknown', quality);
             } catch (_) {}
         }
 
-        const isHlsStream = /\.m3u8($|\?)/i.test(extracted.streamUrl);
-        const extractorLabel = /cccdn/i.test(extracted.streamUrl) ? 'CCCDN' : (isHlsStream ? 'HLS' : 'Direct');
-        const displayTitle = buildDisplayTitle(meta, pageMetadata.title || searchResult.title, resolved.season, resolved.episode);
-        const languageLabel = buildCinemaCityLanguageLabel(pageMetadata, config);
-        const mediaflowProxyUrl = buildCinemaCityMediaflowUrl(config, extracted.streamUrl, extracted.headers, isHlsStream);
-        const cinemaCityUrl = mediaflowProxyUrl || buildCinemaCityProxyUrl(extracted.streamUrl, extracted.headers, reqHost, { isHls: isHlsStream });
-        const cinemaCityMode = mediaflowProxyUrl ? 'MFP' : 'CCCDN';
-        const extraVortexMeta = {
+        const extractor = /cccdn/i.test(extracted.streamUrl) ? 'CCCDN' : (hls ? 'HLS' : 'Direct');
+        const title = displayName(meta, facts.title || catalogItem.title, resolved.season, resolved.episode);
+        const lang = languageBadge(facts, config);
+        const proxyHeaders = normalizePlaybackHeaders(extracted.headers, extracted.streamUrl, catalogItem.url);
+        const internalProxy = buildCcProxyPlaybackUrl(extracted.streamUrl, proxyHeaders, reqHost);
+        const viaMfp = mediaflowUrl(config, extracted.streamUrl, proxyHeaders, hls);
+        // Same policy as the previous CinemaCity handler:
+        // if MediaFlow/MFP is configured, use it; otherwise fall back to the internal cc_proxy.
+        const proxied = viaMfp || internalProxy;
+        const mode = viaMfp ? 'MFP' : 'CCCDN';
+        const behavior = {
             bingeWatching: true,
             vortexMeta: {
-                pageTitle: pageMetadata.title || '',
-                imdbId: pageMetadata.imdbId || resolved.imdbId || '',
-                tmdbId: pageMetadata.tmdbId || resolved.tmdbId || '',
-                qualityTag: pageMetadata.qualityTag || '',
-                audioLanguages: Array.isArray(pageMetadata.audioLanguages) ? pageMetadata.audioLanguages : [],
-                subtitleLanguages: Array.isArray(pageMetadata.subtitleLanguages) ? pageMetadata.subtitleLanguages : [],
-                genres: Array.isArray(pageMetadata.genres) ? pageMetadata.genres : [],
-                isMultiAudio: pageMetadata.isMultiAudio === true,
-                isAnime: pageMetadata.isAnime === true
+                pageTitle: facts.title || '',
+                imdbId: facts.imdbId || resolved.imdbId || '',
+                tmdbId: facts.tmdbId || resolved.tmdbId || '',
+                qualityTag: facts.qualityTag || '',
+                audioLanguages: Array.isArray(facts.audioLanguages) ? facts.audioLanguages : [],
+                subtitleLanguages: Array.isArray(facts.subtitleLanguages) ? facts.subtitleLanguages : [],
+                genres: Array.isArray(facts.genres) ? facts.genres : [],
+                isMultiAudio: facts.isMultiAudio === true,
+                isAnime: facts.isAnime === true
             }
         };
 
         const streams = [];
-        if (cinemaCityUrl) {
+        if (proxied) {
             streams.push(buildWebStream({
-                name: `🎟️ CinemaCity | ${cinemaCityMode}`,
-                title: `${displayTitle}\n☁️ ${cinemaCityMode} • ${languageLabel}`,
-                url: cinemaCityUrl,
-                extractor: cinemaCityMode,
+                name: `🎟️ CinemaCity | ${mode}`,
+                title: `${title}\n☁️ ${mode} • ${lang}`,
+                url: proxied,
+                extractor: mode,
                 provider: 'CinemaCity',
                 providerCode: 'CC',
                 quality,
                 headers: null,
                 notWebReady: false,
-                extraBehaviorHints: extraVortexMeta
+                extraBehaviorHints: behavior
             }));
         }
 
         if (streams.length === 0) {
             streams.push(buildWebStream({
                 name: '🎟️ CinemaCity | Direct',
-                title: `${displayTitle}\n☁️ ${extractorLabel} • ${languageLabel}`,
+                title: `${title}\n☁️ ${extractor} • ${lang}`,
                 url: extracted.streamUrl,
-                extractor: extractorLabel,
+                extractor,
                 provider: 'CinemaCity',
                 providerCode: 'CC',
                 quality,
                 headers: extracted.headers,
                 notWebReady: true,
-                extraBehaviorHints: extraVortexMeta
+                extraBehaviorHints: behavior
             }));
         }
 
-        const filteredStreams = hardFilterStreamsByLanguage(dedupeStreamsByUrl(streams), config);
-        return filteredStreams.sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality));
+        return filterByLanguage(dedupeStreamsByUrl(streams), config)
+            .sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality));
     } catch (error) {
-        console.error('[CinemaCity] Error:', error.message);
+        console.error('[CC V2] Error:', error?.stack || error?.message || error);
         return [];
     }
 }
@@ -2092,25 +2064,47 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost 
 module.exports = {
     searchCinemaCity,
     __private: {
-        looksLikeAnimeMeta,
-        isCinemaCityContentUrlForType,
-        extractCandidateLinksFromListing,
-        buildSearchQueryVariants,
-        titleFromContentUrl,
-        scoreTitleMatch,
-        titleAliasesFromOneTitle,
-        getListingBaseUrls,
-        pickStream,
-        parseCinemaCityPageMetadata,
-        extractDownloadLanguagesFromPage,
-        buildCinemaCityLanguageLabel,
-        normalizeLanguageToken,
-        normalizeLanguageList,
-        getWantedLanguage,
-        isStrictSingleLanguageMode,
-        pageHasRequestedAudio,
-        buildLanguageRejectReason,
-        streamUrlHasForbiddenLanguage,
-        hardFilterStreamsByLanguage
+        animeLike,
+        ccUrlMatchesKind,
+        cardLinksFromListing,
+        queryPlan,
+        slugTitle,
+        titleScore,
+        titlePlanFromOne,
+        listingRoots,
+        selectPlayableAsset,
+        parsePageFacts,
+        downloadLanguages,
+        languageBadge,
+        langToken,
+        langList,
+        wantedLang,
+        strictLangMode,
+        pageAudioOk,
+        languageRejectLog,
+        streamLanguageRejected,
+        filterByLanguage,
+        // Backward-compatible aliases used by Leviathan tests and older imports.
+        looksLikeAnimeMeta: animeLike,
+        isCinemaCityContentUrlForType: ccUrlMatchesKind,
+        extractCandidateLinksFromListing: cardLinksFromListing,
+        buildSearchQueryVariants: queryPlan,
+        scoreTitleMatch: titleScore,
+        getListingBaseUrls: listingRoots,
+        pickStream: legacyPickStreamCompat,
+        parseCinemaCityPageMetadata: parsePageFacts,
+        extractDownloadLanguagesFromPage: downloadLanguages,
+        buildCinemaCityLanguageLabel: languageBadge,
+        normalizeLanguageToken: langToken,
+        normalizeLanguageList: langList,
+        getWantedLanguage: wantedLang,
+        isStrictSingleLanguageMode: strictLangMode,
+        pageHasRequestedAudio: pageAudioOk,
+        buildLanguageRejectReason: languageRejectLog,
+        streamUrlHasForbiddenLanguage: streamLanguageRejected,
+        hardFilterStreamsByLanguage: filterByLanguage,
+        payloadObjectsFromHtml,
+        assetTree,
+        flattenAssets
     }
 };
