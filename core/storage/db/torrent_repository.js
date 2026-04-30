@@ -313,7 +313,7 @@ function createTorrentRepository({
 
     if (updateRes.rowCount > 0) return false;
 
-    await client.query(
+    const insertRes = await client.query(
       `
         INSERT INTO torrents (
           info_hash,
@@ -329,11 +329,12 @@ function createTorrentRepository({
         )
         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
         ON CONFLICT DO NOTHING
+        RETURNING 1
       `,
       [infoHash, fileIndex, fileIndexNorm, providerName, title, size, seeders]
     );
 
-    return true;
+    return insertRes.rowCount > 0;
   }
 
   async function upsertFileMappingRow(client, mapping) {
@@ -348,7 +349,39 @@ function createTorrentRepository({
     const title = sanitizeText(mapping?.title, '');
     const size = Math.max(0, toSafeNumber(mapping?.size, 0));
 
-    const updateRes = await client.query(
+    const sameIdentityUpdateRes = await client.query(
+      `
+        UPDATE files
+        SET imdb_id = $3,
+            imdb_season = $4,
+            imdb_episode = $5,
+            title = CASE
+              WHEN COALESCE(title, '') = '' THEN $6
+              WHEN LENGTH($6) > LENGTH(title) THEN $6
+              ELSE title
+            END,
+            size = GREATEST(COALESCE(size, 0), $7),
+            file_index = CASE
+              WHEN $2 = -1 THEN file_index
+              ELSE $2
+            END,
+            file_index_norm = $2,
+            info_hash = COALESCE(NULLIF(info_hash, ''), $1),
+            info_hash_norm = $1,
+            updated_at = NOW()
+        WHERE info_hash_norm = $1
+          AND file_index_norm = $2
+          AND imdb_id = $3
+          AND imdb_season IS NOT DISTINCT FROM $4
+          AND imdb_episode IS NOT DISTINCT FROM $5
+        RETURNING 1
+      `,
+      [infoHash, fileIndexNorm, imdbId, imdbSeason, imdbEpisode, title, size]
+    );
+
+    if (sameIdentityUpdateRes.rowCount > 0) return false;
+
+    const changedIdentityUpdateRes = await client.query(
       `
         UPDATE files
         SET imdb_id = $3,
@@ -375,9 +408,9 @@ function createTorrentRepository({
       [infoHash, fileIndexNorm, imdbId, imdbSeason, imdbEpisode, title, size]
     );
 
-    if (updateRes.rowCount > 0) return false;
+    if (changedIdentityUpdateRes.rowCount > 0) return true;
 
-    await client.query(
+    const insertRes = await client.query(
       `
         INSERT INTO files (
           info_hash,
@@ -394,11 +427,12 @@ function createTorrentRepository({
         )
         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
         ON CONFLICT DO NOTHING
+        RETURNING 1
       `,
       [infoHash, fileIndex, fileIndexNorm, imdbId, imdbSeason, imdbEpisode, title, size]
     );
 
-    return true;
+    return insertRes.rowCount > 0;
   }
 
   async function upsertPackFileRow(client, file) {
@@ -447,7 +481,7 @@ function createTorrentRepository({
 
     if (updateRes.rowCount > 0) return false;
 
-    await client.query(
+    const insertRes = await client.query(
       `
         INSERT INTO pack_files (
           pack_hash,
@@ -465,11 +499,12 @@ function createTorrentRepository({
         )
         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
         ON CONFLICT DO NOTHING
+        RETURNING 1
       `,
       [packHash, fileIndex, fileIndexNorm, imdbId, imdbSeason, imdbEpisode, filePath, fileTitle, fileSize]
     );
 
-    return true;
+    return insertRes.rowCount > 0;
   }
 
   function normalizeMeta(meta, torrent = {}) {
@@ -527,11 +562,12 @@ function createTorrentRepository({
     try {
       return await runInTransaction(async (client) => {
         let inserted = 0;
+        let mapped = 0;
 
         for (const entry of items) {
           const wasInserted = await upsertTorrentRow(client, entry.torrent);
           if (wasInserted) inserted += 1;
-          await upsertFileMappingRow(client, {
+          const wasMapped = await upsertFileMappingRow(client, {
             info_hash: entry.infoHash,
             file_index: entry.torrent?.file_index ?? entry.torrent?.fileIdx,
             imdb_id: normalizedMeta.imdbId,
@@ -540,9 +576,10 @@ function createTorrentRepository({
             title: entry.torrent?.title,
             size: entry.torrent?.size
           });
+          if (wasMapped) mapped += 1;
         }
 
-        return { inserted, processed: items.length };
+        return { inserted, mapped, processed: items.length };
       });
     } catch (error) {
       console.error(`❌ DB Batch Save Error: ${error.message}`);

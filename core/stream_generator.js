@@ -726,10 +726,16 @@ const {
     guardedProviderCall
 });
 
+function normalizeResultHash(item = {}) {
+    const raw = String(item?.hash || item?.infoHash || '').trim();
+    if (/^[a-f0-9]{40}$/i.test(raw)) return raw.toUpperCase();
+    return extractInfoHash(raw || item?.magnet || item?.url || item?.directUrl || '');
+}
+
 function buildResultsSignature(results) {
     const tokens = [...new Set((Array.isArray(results) ? results : [])
         .map((item) => {
-            const hash = extractInfoHash(item?.hash || item?.infoHash || item?.magnet || '');
+            const hash = normalizeResultHash(item);
             if (!hash) return null;
             const fileIdx = Number.isInteger(item?.fileIdx) ? item.fileIdx : -1;
             return `${hash}:${fileIdx}`;
@@ -1732,6 +1738,8 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
         async () => {
             return withSharedPromise(backgroundDbSaveInflight, `db_save:${saveKey}`, async () => {
                 let savedCount = 0;
+                let mappedCount = 0;
+                let processedCount = 0;
                 const prioritizedHashes = [];
                 const prioritizedSet = new Set();
                 const guaranteedCachedUpdates = [];
@@ -1785,16 +1793,19 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
                     if (typeof dbHelper.insertTorrentsBatch === 'function' && meta?.imdb_id) {
                         const outcome = await dbHelper.insertTorrentsBatch(meta, torrentRows);
                         savedCount = Number(outcome?.inserted || 0);
+                        mappedCount = Number(outcome?.mapped || 0);
+                        processedCount = Number(outcome?.processed || 0);
                     } else {
                         for (const torrentObj of torrentRows) {
                             const success = await dbHelper.insertTorrent(meta, torrentObj);
                             if (success) savedCount += 1;
                         }
+                        processedCount = torrentRows.length;
                     }
                 }
 
-                if (savedCount > 0) {
-                    logger.info(`[AUTO-LEARN] Salvati ${savedCount} nuovi torrent nel DB per ${meta?.imdb_id || 'n/a'}`);
+                if (savedCount > 0 || mappedCount > 0) {
+                    logger.info(`[AUTO-LEARN] Salvati ${savedCount} nuovi torrent, ${mappedCount} mapping nel DB per ${meta?.imdb_id || 'n/a'}`);
                 }
 
                 if (guaranteedCachedUpdates.length > 0 && typeof dbHelper.updateRdCacheStatus === 'function') {
@@ -1811,7 +1822,7 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
                     logger.info(`[RD PRIORITY] reason=db_save | imdb=${meta?.imdb_id || 'n/a'} | hashes=${prioritizedHashes.length} | updated=${outcome?.updated || 0}`);
                 }
 
-                if (metaCacheKey) await Cache.invalidateDbTorrents(metaCacheKey, 'db_save');
+                if (metaCacheKey && (savedCount > 0 || mappedCount > 0 || processedCount > 0 || guaranteedCachedUpdates.length > 0)) await Cache.invalidateDbTorrents(metaCacheKey, 'db_save');
                 resolvePackNamesInBackground(meta, results, config, effectiveType);
             });
         },
@@ -2654,16 +2665,31 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
       logger.info(`[SPEED] Start search for: ${meta.title} | sourceMode=${sourceModeFlags.sourceMode}`);
 
-      const localDbResults = (sourceModeFlags.useLocalDb && torrentPipelineEnabled) ? await fetchLocalDbResults(meta) : [];
-      if (localDbResults.length > 0) logger.info(`[DB READ] Trovati ${localDbResults.length} torrent dal DB locale.`);
-
       const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
       const dbOnlyMode = sourceModeFlags.dbOnlyMode;
       const langMode = getEffectiveSearchLanguageMode(filters, meta, type);
       const allowItalianWebProviders = langMode !== 'eng';
       const aggressiveFilter = createAggressiveResultFilter(meta, type, langMode);
 
-      const networkResults = torrentPipelineEnabled
+      const localDbResults = (sourceModeFlags.useLocalDb && torrentPipelineEnabled) ? await fetchLocalDbResults(meta) : [];
+      let localDbFastPool = [];
+      let localDbSatisfaction = { satisfied: false, reason: 'no_db_results' };
+      if (localDbResults.length > 0) {
+          localDbFastPool = applyConfiguredTorrentFilters(
+              await normalizeCandidateResults(localDbResults.filter(aggressiveFilter)),
+              filters
+          );
+          const localDbAssessment = assessFastResultQuality(localDbFastPool, meta, langMode, config);
+          localDbSatisfaction = evaluatePoolSatisfaction(localDbAssessment, meta);
+          logger.info(`[DB READ] Trovati ${localDbFastPool.length}/${localDbResults.length} torrent dal DB locale | satisfied=${localDbSatisfaction.satisfied} reason=${localDbSatisfaction.reason}`);
+      }
+
+      const useLocalDbFastPath = localDbFastPool.length > 0 && localDbSatisfaction.satisfied && !sourceModeFlags.liveOnlyMode;
+      if (useLocalDbFastPath) {
+          logger.info(`[DB FAST-PATH] Uso DB locale, skip Remote/External | results=${localDbFastPool.length} reason=${localDbSatisfaction.reason}`);
+      }
+
+      const networkResults = torrentPipelineEnabled && !useLocalDbFastPath
           ? await fetchTitleCandidatePool({
               type,
               finalId,
@@ -2676,14 +2702,16 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
               langMode,
               aggressiveFilter,
               userTmdbKey,
-              seedResults: localDbResults
+              seedResults: localDbFastPool.length > 0 ? localDbFastPool : localDbResults
           })
           : [];
 
       let cleanResults = [];
       let rankedList = [];
       if (torrentPipelineEnabled) {
-          cleanResults = await normalizeCandidateResults([...localDbResults, ...networkResults].filter(aggressiveFilter));
+          cleanResults = useLocalDbFastPath
+              ? localDbFastPool
+              : await normalizeCandidateResults([...(localDbFastPool.length > 0 ? localDbFastPool : localDbResults), ...networkResults].filter(aggressiveFilter));
           cleanResults = runFilterStage(cleanResults, meta, filters, {
               applyPackKnowledge,
               applyConfiguredTorrentFilters
@@ -2697,7 +2725,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           cleanResults = seedHealthPass.results;
           logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
 
-          if (!sourceModeFlags.dbOnlyMode && !sourceModeFlags.cacheOnlyMode) saveResultsToDbBackground(meta, cleanResults, config, type);
+          if (!sourceModeFlags.dbOnlyMode && !sourceModeFlags.cacheOnlyMode && networkResults.length > 0) saveResultsToDbBackground(meta, cleanResults, config, type);
 
           rankedList = runSortStage(cleanResults, meta, config, {
               rankAndFilterResults,
