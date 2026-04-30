@@ -1268,44 +1268,26 @@ async function buildStreamsFromEmbed(embedUrl, title, langTag, emoji, episodeNum
     const manifest = await resolveCachedAnimeManifest(embedUrl);
     if (!manifest?.streamUrl) return [];
 
-    const qualityFilter = normalizeQualityFilter(config?.filters?.scQuality || config?.filters?.animeUnityQuality || 'all');
-    const wants1080 = qualityFilter !== '720';
-    const wants720 = qualityFilter !== '1080';
+    const fastStart = boolOption(config?.filters?.animeUnityFastStart, true);
     let canPlayFhd = manifest?.payload?.canPlayFHD === true;
 
-    if (!canPlayFhd && wants1080) {
+    if (!canPlayFhd && !fastStart) {
         canPlayFhd = await inferCachedCanPlayFHD(manifest.streamUrl, manifest.referer || embedUrl);
     }
 
-    const streams = [];
-    if (canPlayFhd && wants1080) {
-        streams.push(buildStream({
-            sourceUrl: manifest.streamUrl,
-            referer: manifest.referer || embedUrl,
-            quality: '1080p',
-            title,
-            langTag,
-            emoji,
-            reqHost,
-            config,
-            branch: 'animeunity-vix-1080'
-        }));
-    }
-    if (wants720 || !streams.length) {
-        streams.push(buildStream({
-            sourceUrl: manifest.streamUrl,
-            referer: manifest.referer || embedUrl,
-            quality: '720p',
-            title,
-            langTag,
-            emoji,
-            reqHost,
-            config,
-            branch: 'animeunity-vix-720'
-        }));
-    }
+    if (!fastStart && !canPlayFhd) return [];
 
-    return streams.filter(Boolean).sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality));
+    return [buildStream({
+        sourceUrl: manifest.streamUrl,
+        referer: manifest.referer || embedUrl,
+        quality: '1080p',
+        title,
+        langTag,
+        emoji,
+        reqHost,
+        config,
+        branch: fastStart ? 'animeunity-vix-1080-fast' : 'animeunity-vix-1080'
+    })].filter(Boolean);
 }
 
 async function resolveAnimeUnityCandidate(candidate, title, mode, requestedEpisode, isMovie, config, reqHost, triedPaths) {
