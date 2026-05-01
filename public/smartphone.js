@@ -198,10 +198,10 @@ body::before {
     position: fixed; bottom: 0; left: 0; width: 100%;
     pointer-events: none; z-index: -6;
     display: block;
-    opacity: 0.98;
-    filter: saturate(1.08) brightness(0.97) contrast(1.10);
-    mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.08) 7%, rgba(0,0,0,0.36) 16%, rgba(0,0,0,0.70) 28%, black 46%);
-    -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.08) 7%, rgba(0,0,0,0.36) 16%, rgba(0,0,0,0.70) 28%, black 46%);
+    opacity: 0.99;
+    filter: saturate(1.14) brightness(0.99) contrast(1.11);
+    mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.07) 7%, rgba(0,0,0,0.32) 16%, rgba(0,0,0,0.68) 28%, black 46%);
+    -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.07) 7%, rgba(0,0,0,0.32) 16%, rgba(0,0,0,0.68) 28%, black 46%);
 }
 
 #app-container { 
@@ -1583,8 +1583,8 @@ body.m-lowfx .m-ocean-particles {
 
 body.m-lowfx #m-sea-canvas {
     display: block;
-    opacity: 0.90;
-    filter: saturate(1.04) brightness(0.93) contrast(1.06);
+    opacity: 0.92;
+    filter: saturate(1.08) brightness(0.95) contrast(1.07);
 }
 
 body.m-lowfx .m-hero::after,
@@ -2937,18 +2937,19 @@ function createSeaCanvas() {
 
     const layers = lowFx
         ? [
-            { yR: 0.78, amp: 10, f: 0.0054, spd: 0.18, ph: 0.0,  fill: 'rgba(0,12,32,0.96)',  crest: null,                   glow: null },
-            { yR: 0.66, amp: 8,  f: 0.0078, spd: 0.29, ph: 1.4,  fill: 'rgba(0,34,78,0.62)',  crest: 'rgba(74,210,255,0.14)', glow: 'rgba(0,150,225,0.05)' },
-            { yR: 0.55, amp: 6,  f: 0.0108, spd: 0.42, ph: 3.1,  fill: 'rgba(0,82,146,0.28)', crest: 'rgba(125,232,255,0.24)', glow: 'rgba(0,198,255,0.06)' },
-            { yR: 0.46, amp: 4,  f: 0.0148, spd: 0.56, ph: 4.9,  fill: 'rgba(0,155,210,0.09)', crest: 'rgba(185,246,255,0.34)', glow: null },
+            { yR: 0.78, amp: 10, f: 0.0054, spd: 0.18, ph: 0.0,  fill: 'rgba(0,12,32,0.96)',   crest: null,                    glow: null },
+            { yR: 0.66, amp: 8,  f: 0.0078, spd: 0.29, ph: 1.4,  fill: 'rgba(0,34,78,0.62)',   crest: 'rgba(74,210,255,0.14)',  glow: 'rgba(0,150,225,0.05)' },
+            { yR: 0.55, amp: 6,  f: 0.0108, spd: 0.42, ph: 3.1,  fill: 'rgba(8,74,142,0.28)',  crest: 'rgba(136,230,255,0.24)', glow: 'rgba(0,198,255,0.06)' },
+            { yR: 0.46, amp: 4,  f: 0.0148, spd: 0.56, ph: 4.9,  fill: 'rgba(40,118,208,0.08)', crest: 'rgba(206,122,255,0.12)', glow: 'rgba(140,76,255,0.035)' },
         ]
         : [
-            { yR: 0.84, amp: 18, f: 0.0048, spd: 0.16, ph: 0.0,  fill: 'rgba(0,10,26,0.98)',  crest: null,                   glow: null },
-            { yR: 0.75, amp: 16, f: 0.0058, spd: 0.22, ph: 0.8,  fill: 'rgba(0,18,45,0.94)',  crest: null,                   glow: null },
-            { yR: 0.66, amp: 14, f: 0.0068, spd: 0.30, ph: 1.7,  fill: 'rgba(0,36,84,0.82)',  crest: 'rgba(45,180,240,0.09)', glow: 'rgba(0,128,210,0.05)' },
-            { yR: 0.57, amp: 11, f: 0.0083, spd: 0.40, ph: 2.8,  fill: 'rgba(0,66,128,0.58)', crest: 'rgba(72,205,250,0.14)', glow: 'rgba(0,158,235,0.07)' },
+            { yR: 0.84, amp: 18, f: 0.0048, spd: 0.16, ph: 0.0,  fill: 'rgba(0,10,26,0.98)',   crest: null,                    glow: null },
+            { yR: 0.75, amp: 16, f: 0.0058, spd: 0.22, ph: 0.8,  fill: 'rgba(0,18,45,0.94)',   crest: null,                    glow: null },
+            { yR: 0.66, amp: 14, f: 0.0068, spd: 0.30, ph: 1.7,  fill: 'rgba(0,36,84,0.82)',   crest: 'rgba(45,180,240,0.09)',  glow: 'rgba(0,128,210,0.05)' },
+            { yR: 0.57, amp: 11, f: 0.0083, spd: 0.40, ph: 2.8,  fill: 'rgba(0,66,128,0.58)',  crest: 'rgba(72,205,250,0.14)',  glow: 'rgba(0,158,235,0.07)' },
             { yR: 0.49, amp: 8,  f: 0.0108, spd: 0.54, ph: 4.2,  fill: 'rgba(0,112,176,0.30)', crest: 'rgba(102,226,255,0.22)', glow: 'rgba(0,192,255,0.08)' },
-            { yR: 0.42, amp: 6,  f: 0.0145, spd: 0.72, ph: 5.9,  fill: 'rgba(0,176,226,0.12)', crest: 'rgba(178,245,255,0.38)', glow: null },
+            { yR: 0.42, amp: 6,  f: 0.0145, spd: 0.72, ph: 5.9,  fill: 'rgba(32,128,208,0.11)', crest: 'rgba(178,245,255,0.34)', glow: 'rgba(0,220,255,0.05)' },
+            { yR: 0.37, amp: 4,  f: 0.0185, spd: 0.95, ph: 6.7,  fill: 'rgba(92,40,170,0.06)',  crest: 'rgba(198,120,255,0.16)', glow: 'rgba(132,48,255,0.040)' },
         ];
 
     function waveY(layer, x, t) {
@@ -3025,6 +3026,35 @@ function createSeaCanvas() {
         ctx.fillRect(0, horizonY * 0.65, W, H * 0.35);
     }
 
+
+    function drawLeviathanAura(t) {
+        const y = H * (lowFx ? 0.40 : 0.34);
+        const cyan = ctx.createLinearGradient(0, y, 0, H);
+        cyan.addColorStop(0, 'rgba(0,242,255,0.00)');
+        cyan.addColorStop(0.16, lowFx ? 'rgba(0,242,255,0.018)' : 'rgba(0,242,255,0.026)');
+        cyan.addColorStop(0.52, 'rgba(0,140,255,0.028)');
+        cyan.addColorStop(1, 'rgba(0,0,0,0.00)');
+        ctx.fillStyle = cyan;
+        ctx.fillRect(0, y, W, H - y);
+
+        if (!lowFx) {
+            const violet = ctx.createRadialGradient(W * 0.68, H * 0.78, 0, W * 0.68, H * 0.78, W * 0.34);
+            violet.addColorStop(0, 'rgba(124,42,255,0.072)');
+            violet.addColorStop(0.32, 'rgba(124,42,255,0.034)');
+            violet.addColorStop(1, 'rgba(124,42,255,0.0)');
+            ctx.fillStyle = violet;
+            ctx.fillRect(0, 0, W, H);
+
+            const edge = ctx.createLinearGradient(0, H * 0.34, 0, H * 0.55);
+            edge.addColorStop(0, 'rgba(0,242,255,0.00)');
+            edge.addColorStop(0.45, 'rgba(0,242,255,0.045)');
+            edge.addColorStop(0.72, 'rgba(124,42,255,0.022)');
+            edge.addColorStop(1, 'rgba(0,0,0,0.00)');
+            ctx.fillStyle = edge;
+            ctx.fillRect(0, H * 0.30, W, H * 0.28);
+        }
+    }
+
     function drawFoam(t) {
         const topLayer = layers[layers.length - 1];
 
@@ -3034,7 +3064,7 @@ function createSeaCanvas() {
             if (x === 0) ctx.moveTo(x, y);
             else ctx.lineTo(x, y);
         }
-        ctx.strokeStyle = lowFx ? 'rgba(196,246,255,0.26)' : 'rgba(215,248,255,0.34)';
+        ctx.strokeStyle = lowFx ? 'rgba(196,246,255,0.28)' : 'rgba(220,248,255,0.36)';
         ctx.lineWidth = lowFx ? 1.1 : 1.55;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
@@ -3047,7 +3077,7 @@ function createSeaCanvas() {
                 if (x === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
             }
-            ctx.strokeStyle = 'rgba(102,226,255,0.09)';
+            ctx.strokeStyle = 'rgba(116,230,255,0.10)';
             ctx.lineWidth = 3.2;
             ctx.stroke();
 
@@ -3057,7 +3087,7 @@ function createSeaCanvas() {
                 const r = 1.1 + ((x / 11) % 2) * 0.6;
                 ctx.beginPath();
                 ctx.arc(x + Math.sin(t * 0.55 + x * 0.12) * 1.8, y - 0.5, r, 0, Math.PI * 2);
-                ctx.fillStyle = `rgba(218,248,255,${alpha.toFixed(3)})`;
+                ctx.fillStyle = `rgba(220,248,255,${alpha.toFixed(3)})`;
                 ctx.fill();
             }
         }
@@ -3072,6 +3102,7 @@ function createSeaCanvas() {
 
         ctx.clearRect(0, 0, W, H);
         drawWaterLight(t);
+        drawLeviathanAura(t);
         layers.forEach(layer => drawGlow(layer, t));
         layers.forEach(layer => drawLayer(layer, t));
         drawFoam(t);
@@ -3922,3 +3953,4 @@ async function copyFromModal() {
 }
 
 initMobileInterface();
+
