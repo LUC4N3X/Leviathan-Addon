@@ -5,11 +5,11 @@ const cheerio = require('cheerio');
 const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const {
-    buildBrowserHeaders,
+    buildContextHeaders,
     createDomainCookieJar,
     getGotScraping,
     getGotScrapingHeaderOptions,
-    getRandomFingerprint,
+    getStickyFingerprintForUrl,
     isCloudflareChallenge,
     responseText
 } = require('../utils/bypass');
@@ -170,13 +170,23 @@ const fetchFailureCache = new TtlLruCache({
     max: 2000
 });
 
-async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0, requestTimeout = GOT_TIMEOUT) {
+function buildCinemaCityRequestHeaders(url, context = 'document', extraHeaders = {}, cookieFallback = '') {
+    const fp = getStickyFingerprintForUrl(url);
+    const suppliedCookie = extraHeaders.Cookie || extraHeaders.cookie || '';
+    const cookieHeader = getCookieHeaderForUrl(url, suppliedCookie || cookieFallback || '');
+    const headers = buildContextHeaders(url, context, {
+        ...extraHeaders,
+        ...(cookieHeader ? { Cookie: cookieHeader } : {})
+    }, fp);
+
+    return { fp, headers };
+}
+
+async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0, requestTimeout = GOT_TIMEOUT, requestContext = 'document') {
     const gotScraping = await getGotScraping();
     if (!gotScraping) return null;
 
-    const fp = getRandomFingerprint();
-    const cookieHeader = getCookieHeaderForUrl(url, extraHeaders.Cookie || '');
-    const mergedHeaders = buildBrowserHeaders(fp, { ...extraHeaders, ...(cookieHeader ? { Cookie: cookieHeader } : {}) });
+    const { fp, headers: mergedHeaders } = buildCinemaCityRequestHeaders(url, requestContext, extraHeaders);
 
     try {
         const response = await gotScraping({
@@ -212,10 +222,8 @@ async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0, requestTime
     }
 }
 
-async function fetchHtmlWithAxios(url, extraHeaders = {}, requestTimeout = FETCH_TIMEOUT) {
-    const fp = getRandomFingerprint();
-    const cookieHeader = getCookieHeaderForUrl(url, extraHeaders.Cookie || '');
-    const mergedHeaders = buildBrowserHeaders(fp, { ...extraHeaders, ...(cookieHeader ? { Cookie: cookieHeader } : {}) });
+async function fetchHtmlWithAxios(url, extraHeaders = {}, requestTimeout = FETCH_TIMEOUT, requestContext = 'document') {
+    const { headers: mergedHeaders } = buildCinemaCityRequestHeaders(url, requestContext, extraHeaders);
 
     try {
         const response = await httpClient.get(url, {
@@ -247,15 +255,12 @@ async function fetchHtmlPostWithGot(url, formBody, extraHeaders = {}) {
     const gotScraping = await getGotScraping();
     if (!gotScraping) return null;
 
-    const fp = getRandomFingerprint();
-    const cookieHeader = getCookieHeaderForUrl(url, extraHeaders.Cookie || getCinemaCitySessionCookie());
-    const baseHeaders = buildBrowserHeaders(fp, {
+    const { fp, headers: baseHeaders } = buildCinemaCityRequestHeaders(url, 'ajax', {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Origin': BASE_URL,
         'Referer': `${BASE_URL}/`,
-        ...extraHeaders,
-        ...(cookieHeader ? { Cookie: cookieHeader } : {})
-    });
+        ...extraHeaders
+    }, getCinemaCitySessionCookie());
 
     try {
         const response = await gotScraping({
@@ -311,12 +316,12 @@ async function fetchHtml(url, extraHeaders = {}, options = {}) {
             const jitter = Math.floor(Math.random() * 200);
             await sleep(baseDelay + jitter);
         }
-        const gotBody = await fetchHtmlWithGot(url, extraHeaders, attempt, timeout);
+        const gotBody = await fetchHtmlWithGot(url, extraHeaders, attempt, timeout, options.context || 'document');
         if (gotBody) return gotBody;
     }
 
     if (options.axiosFallback !== false) {
-        const axiosBody = await fetchHtmlWithAxios(url, extraHeaders, timeout);
+        const axiosBody = await fetchHtmlWithAxios(url, extraHeaders, timeout, options.context || 'document');
         if (axiosBody) return axiosBody;
     }
 
@@ -333,15 +338,10 @@ async function fetchHtml(url, extraHeaders = {}, options = {}) {
 }
 
 async function fetchJson(url, options = {}) {
-    const fp = getRandomFingerprint();
-    const defaultHeaders = {
-        'User-Agent': fp.userAgent,
-        'Accept': 'application/json,*/*;q=0.8',
-        'Accept-Language': fp.acceptLanguage
-    };
+    const { headers } = buildCinemaCityRequestHeaders(url, 'json', options.headers || {});
     const response = await httpClient.get(url, {
         ...options,
-        headers: { ...defaultHeaders, ...(options.headers || {}) }
+        headers
     });
     const status = Number(response?.status || 0);
     if (status >= 200 && status < 400) return response.data;
@@ -1248,9 +1248,7 @@ async function fetchSearchCandidates(query) {
 
         try {
             const postHtml = await fetchHtmlPostWithGot(`${BASE_URL}/index.php`, formBody, {
-                'Cookie': getCinemaCitySessionCookie(),
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-Mode': 'navigate'
+                'Cookie': getCinemaCitySessionCookie()
             });
             if (postHtml) {
                 networkFailed = false;
@@ -1891,18 +1889,16 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
     );
     if (!streamUrl) return null;
 
-    const activeFp = getRandomFingerprint();
+    const streamContext = /\.m3u8($|\?)/i.test(streamUrl) ? 'hls' : 'media';
+    const { headers: streamHeaders } = buildCinemaCityRequestHeaders(streamUrl, streamContext, {
+        'Referer': playerReferer,
+        'Origin': getOrigin(pageUrl)
+    }, getCinemaCitySessionCookie());
+
     return {
         streamUrl,
         pageMetadata,
-        headers: {
-            'User-Agent': activeFp.userAgent,
-            'Referer': playerReferer,
-            'Origin': getOrigin(pageUrl),
-            'Accept': '*/*',
-            'Accept-Language': activeFp.acceptLanguage,
-            'Cookie': getCinemaCitySessionCookie()
-        }
+        headers: streamHeaders
     };
 }
 
