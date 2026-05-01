@@ -3,6 +3,7 @@
 const { getRequestOrigin } = require('../../utils/url');
 const RD = require('../../../debrid/realdebrid');
 const TB = require('../../../debrid/torbox');
+const { registerLazyExtractionRoute } = require('../../../providers/extractors/lazy_extraction');
 
 function registerPlaybackRoutes(app, {
     Cache,
@@ -18,6 +19,8 @@ function registerPlaybackRoutes(app, {
     queueCloudBuild,
     getBuildKey
 }) {
+    registerLazyExtractionRoute(app, { logger });
+
     app.get('/:conf/play_lazy/:service/:hash/:fileIdx', async (req, res) => {
         const { conf, service, hash, fileIdx } = req.params;
         const { s, e, imdb } = req.query;
