@@ -1386,13 +1386,31 @@ function shouldRunAnimeUnity(requestId, meta = {}, context = {}, options = {}) {
     return false;
 }
 
+function animeUnityDedupeKey(stream = {}) {
+    const url = String(stream?.url || '').trim();
+    if (!url) return '';
+
+    const language = String(
+        stream?.language
+        || stream?.behaviorHints?.vortexMeta?.language
+        || stream?.behaviorHints?.language
+        || ''
+    ).trim().toLowerCase();
+    const quality = String(stream?.quality || stream?.behaviorHints?.vortexMeta?.quality || '').trim().toLowerCase();
+    const extractor = String(stream?.extractor || stream?.host || stream?.behaviorHints?.extractor || '').trim().toLowerCase();
+
+    // AnimeUnity can expose ITA and JP/SUB variants through the same synthetic/proxy URL.
+    // Keep different language/quality/extractor variants separate; dedupe only exact duplicates.
+    return [url, language, quality, extractor].join('|');
+}
+
 function dedupeStreams(streams = []) {
     const seen = new Set();
     const out = [];
     for (const stream of streams || []) {
-        const url = String(stream?.url || '').trim();
-        if (!url || seen.has(url)) continue;
-        seen.add(url);
+        const key = animeUnityDedupeKey(stream);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
         out.push(stream);
     }
     return out.sort((a, b) => {
@@ -1453,6 +1471,7 @@ async function searchAnimeUnityImpl(requestId, meta = {}, config = {}, reqHost =
                 providerLabel: PROVIDER_NAME,
                 providerCode: PROVIDER_CODE,
                 sort: false,
+                dedupe: false,
                 debug: process.env.ANIMEUNITY_DEBUG === '1'
             }
         );
