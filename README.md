@@ -141,25 +141,35 @@ La pipeline normale resta invariata: Leviathan cerca prima torrent, cache, provi
 
 ## 🈶 Anime & Kitsu Intelligence
 
-<div align="center">
+<table align="center">
+<tr>
+<td align="center" width="100%">
 
-### `Mapping anime-first · Kitsu-aware · collision control`
+### Mapping anime-first · Kitsu-aware · collision control
 
-</div>
+<p align="center">
+<b>Leviathan</b> integra una logica dedicata per contenuti <b>anime</b> e flussi <b>Kitsu-based</b>, con una pipeline costruita per ridurre mismatch tra <b>stagioni</b>, <b>episodi assoluti</b>, <b>numerazione reale</b> e titoli ambigui.
+</p>
 
-**Leviathan** integra una logica dedicata per contenuti **anime** e flussi **Kitsu-based**, con una pipeline costruita per ridurre mismatch tra **stagioni**, **episodi assoluti**, **numerazione reale** e titoli ambigui.
+<p align="center">
+Questo permette al protocollo di trattare meglio serie come <b>One Piece</b>, <b>Jujutsu Kaisen</b> e altri anime con naming complesso, distinguendo in modo più credibile tra <b>anime canonico</b>, <b>live action</b>, release pack, stagioni esplicite e risultati semanticamente simili ma sbagliati.
+</p>
 
-Questo permette al protocollo di trattare meglio serie come **One Piece**, **Jujutsu Kaisen** e altri anime con naming complesso, distinguendo in modo più credibile tra **anime canonico**, **live action**, release pack, stagioni esplicite e risultati semanticamente simili ma sbagliati.
-
-La logica combina **matching anime-first**, **contesto Kitsu**, **controllo stagione/episodio**, **query più intelligenti** e **ranking anti-collisione**. Il layer anime è allineato ai provider realmente registrati nel codice: **AnimeWorld**, **AnimeUnity**, **AnimeSaturn**, più gli engine torrent anime **Nyaa** e **SubsPlease**.
-
-<div align="center">
+<p align="center">
+La logica combina <b>matching anime-first</b>, <b>contesto Kitsu</b>, <b>controllo stagione/episodio</b>, <b>query più intelligenti</b> e <b>ranking anti-collisione</b>. Il layer anime è allineato ai provider realmente registrati nel codice: <b>AnimeWorld</b>, <b>AnimeUnity</b>, <b>AnimeSaturn</b>, più gli engine torrent anime <b>Nyaa</b> e <b>SubsPlease</b>.
+</p>
 
 <br>
 
-<img src="https://img.shields.io/badge/KITSU-AWARE-00eaff?style=for-the-badge&labelColor=061018" />
-<img src="https://img.shields.io/badge/ANIME--FIRST-MATCHING-7c3aed?style=for-the-badge&labelColor=061018" />
-<img src="https://img.shields.io/badge/EPISODE-COLLISION_CONTROL-ff5a7a?style=for-the-badge&labelColor=061018" />
+<p align="center">
+  <img src="https://img.shields.io/badge/KITSU-AWARE-00eaff?style=for-the-badge&labelColor=061018" />
+  <img src="https://img.shields.io/badge/ANIME-FIRST-MATCHING-7c3aed?style=for-the-badge&labelColor=061018" />
+  <img src="https://img.shields.io/badge/EPISODE-COLLISION_CONTROL-ff5a7a?style=for-the-badge&labelColor=061018" />
+</p>
+
+</td>
+</tr>
+</table>
 
 </div>
 
