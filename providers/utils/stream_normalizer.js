@@ -99,6 +99,46 @@ function extractSizeLabel(...values) {
     return match?.[1]?.replace(/\s+/g, '').replace(',', '.').toUpperCase() || '';
 }
 
+function parseSizeToBytes(value) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.round(value);
+    const text = String(value || '').trim();
+    if (!text) return 0;
+    const match = text.match(/(\d+(?:[.,]\d+)?)\s*(B|KB|MB|GB|TB)/i);
+    if (!match) return 0;
+    const amount = Number(String(match[1]).replace(',', '.'));
+    if (!Number.isFinite(amount) || amount <= 0) return 0;
+    const unit = String(match[2] || '').toUpperCase();
+    const factor = unit === 'TB' ? 1024 ** 4
+        : unit === 'GB' ? 1024 ** 3
+            : unit === 'MB' ? 1024 ** 2
+                : unit === 'KB' ? 1024
+                    : 1;
+    return Math.round(amount * factor);
+}
+
+function inferAudioCodec(...values) {
+    const text = values.map((value) => String(value || '')).join(' ').toUpperCase();
+    if (/TRUEHD/.test(text)) return 'TrueHD';
+    if (/DTS[-\s]?HD\s?MA/.test(text)) return 'DTS-HD MA';
+    if (/DTS[-\s]?HD/.test(text)) return 'DTS-HD';
+    if (/DTS:X|DTSX/.test(text)) return 'DTS:X';
+    if (/\bDTS\b/.test(text)) return 'DTS';
+    if (/ATMOS/.test(text) && /DDP|E[-\s]?AC3|DD\+/.test(text)) return 'Atmos DDP';
+    if (/DDP|E[-\s]?AC3|DD\+|DOLBY\s*DIGITAL\s*PLUS/.test(text)) return 'DDP';
+    if (/AC[-\s]?3|DOLBY\s*DIGITAL/.test(text)) return 'AC3';
+    if (/AAC/.test(text)) return 'AAC';
+    if (/OPUS/.test(text)) return 'OPUS';
+    if (/FLAC/.test(text)) return 'FLAC';
+    if (/MP3/.test(text)) return 'MP3';
+    return '';
+}
+
+function inferAudioChannels(...values) {
+    const text = values.map((value) => String(value || '')).join(' ');
+    const match = text.match(/\b([1-7][ .][01])\b/i);
+    return match?.[1]?.replace(' ', '.') || '';
+}
+
 function inferLanguagesFromText(...values) {
     const text = values.map((value) => String(value || '')).join(' ').toLowerCase();
     const langs = [];
@@ -241,14 +281,26 @@ function isPlainObject(value) {
 function normalizeLanguageList(value) {
     const source = Array.isArray(value) ? value : (value ? [value] : []);
     const out = [];
+    const push = (lang) => {
+        const clean = String(lang || '').trim().toLowerCase();
+        if (clean && !out.includes(clean)) out.push(clean);
+    };
+
     for (const item of source) {
         const clean = String(item || '').trim().toLowerCase();
         if (!clean) continue;
+
+        const inferred = inferLanguagesFromText(clean);
+        if (inferred.length) {
+            inferred.forEach(push);
+            continue;
+        }
+
         const normalized = clean === 'it' || clean === 'italian' || clean === 'italiano' ? 'ita'
             : clean === 'en' || clean === 'english' || clean === 'inglese' ? 'eng'
                 : clean === 'ja' || clean === 'jp' || clean === 'japanese' || clean === 'giapponese' ? 'jpn'
                     : clean.slice(0, 12);
-        if (!out.includes(normalized)) out.push(normalized);
+        push(normalized);
     }
     return out;
 }
@@ -363,9 +415,19 @@ function mergeBehaviorHints(stream = {}, opts = {}, preparedProxy = null) {
         };
     }
 
-    const audioLanguages = normalizeLanguageList(
-        stream.audioLanguages || stream.audio || hints.vortexMeta?.audioLanguages || hints.vortexMeta?.audio
+    const titleContext = [
+        stream.title,
+        stream.name,
+        stream.filename,
+        hints.vortexMeta?.title,
+        hints.vortexMeta?.filename,
+        hints.vortexMeta?.mediaTitle
+    ];
+    const explicitAudioLanguages = normalizeLanguageList(
+        stream.audioLanguages || stream.audioLanguagesDetected || stream.audio || hints.vortexMeta?.audioLanguages || hints.vortexMeta?.audio
     );
+    const inferredAudioLanguages = inferLanguagesFromText(...titleContext);
+    const audioLanguages = explicitAudioLanguages.length ? explicitAudioLanguages : inferredAudioLanguages;
     const subtitleLanguages = normalizeLanguageList(
         stream.subtitleLanguages || stream.subtitles || hints.vortexMeta?.subtitleLanguages || hints.vortexMeta?.subtitles
     );
@@ -374,6 +436,34 @@ function mergeBehaviorHints(stream = {}, opts = {}, preparedProxy = null) {
         hints.vortexMeta.isMultiAudio = audioLanguages.length > 1;
     }
     if (subtitleLanguages.length) hints.vortexMeta.subtitleLanguages = subtitleLanguages;
+
+    const sizeLabel = firstNonEmpty(
+        hints.vortexMeta?.size,
+        stream.size,
+        stream.sizeLabel,
+        extractSizeLabel(...titleContext)
+    );
+    const sizeBytes = Number(hints.vortexMeta?.sizeBytes || stream.sizeBytes || stream.contentLength || stream.contentLengthBytes || parseSizeToBytes(sizeLabel));
+    if (sizeLabel) hints.vortexMeta.size = sizeLabel;
+    if (Number.isFinite(sizeBytes) && sizeBytes > 0) hints.vortexMeta.sizeBytes = Math.round(sizeBytes);
+
+    const audioCodec = firstNonEmpty(
+        hints.vortexMeta?.audioCodec,
+        stream.audioCodec,
+        stream.codec,
+        inferAudioCodec(...titleContext)
+    );
+    const audioChannels = firstNonEmpty(
+        hints.vortexMeta?.audioChannels,
+        stream.audioChannels,
+        inferAudioChannels(...titleContext)
+    );
+    if (audioCodec) hints.vortexMeta.audioCodec = audioCodec;
+    if (audioChannels) hints.vortexMeta.audioChannels = audioChannels;
+
+    const displayTitle = inferDisplayTitle({ ...stream, behaviorHints: hints }, providerName, extractor);
+    if (displayTitle && !hints.vortexMeta.mediaTitle) hints.vortexMeta.mediaTitle = displayTitle;
+    if (displayTitle && !hints.vortexMeta.title) hints.vortexMeta.title = displayTitle;
 
     if (stream.notWebReady !== undefined && hints.notWebReady === undefined) hints.notWebReady = stream.notWebReady;
     if (hints.vortexMeta && stream.filename && !hints.vortexMeta.filename) hints.vortexMeta.filename = stream.filename;
@@ -509,5 +599,6 @@ module.exports = {
     normalizeQuality,
     normalizeStream,
     normalizeStreams,
+    parseSizeToBytes,
     qualityRank
 };
