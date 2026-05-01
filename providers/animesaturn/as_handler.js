@@ -50,7 +50,7 @@ const STREAM_CACHE_TTL_MS = 4 * 60 * 1000;
 const STREAM_CACHE_STALE_MS = 30 * 60 * 1000;
 const SEARCH_PATHS_TTL_MS = 10 * 60 * 1000;
 const SEARCH_PATHS_STALE_MS = 2 * 60 * 60 * 1000;
-const MAX_WATCH_PAGES = 8;
+const MAX_WATCH_PAGES = 12;
 
 const TITLE_FIXES = new Map([
     ['shingeki no kyojin', ["L'attacco dei Giganti", 'Attack on Titan']],
@@ -576,7 +576,7 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaTyp
         && Array.isArray(parsedPage.relatedAnimePaths)
         && parsedPage.relatedAnimePaths.length > 0
     ) {
-        for (const related of parsedPage.relatedAnimePaths.slice(0, 2)) {
+        for (const related of parsedPage.relatedAnimePaths.slice(0, 4)) {
             try {
                 const relatedUrl = buildSaturnUrl(related);
                 if (!relatedUrl) continue;
@@ -592,11 +592,20 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaTyp
         selected = pickEpisodeEntry(episodes, normalizedEpisode, mediaType);
     }
 
-    if (!selected) return [];
+    if (!selected && normalizedOriginalEpisode !== normalizedEpisode) {
+        selected = pickEpisodeEntry(episodes, normalizedOriginalEpisode, mediaType);
+    }
+
+    if (!selected) {
+        const available = episodes.map((entry) => entry.num).slice(0, 40).join(',') || 'none';
+        console.log(`[AnimeSaturn] miss episode | path=${normalizedPath} wanted=${normalizedOriginalEpisode} mapped=${normalizedEpisode} available=${available}`);
+        return localCache.streams.set(streamCacheKey, [], NEGATIVE_TTL_MS, STREAM_CACHE_STALE_MS);
+    }
 
     const resolvedEpisode = parsePositiveInt(selected.num) || normalizedEpisode;
-    if (mediaType !== 'movie' && resolvedEpisode !== normalizedOriginalEpisode) {
-        console.log(`[AnimeSaturn] skip wrong episode | path=${normalizedPath} wanted=${normalizedOriginalEpisode} got=${resolvedEpisode}`);
+    if (mediaType !== 'movie' && resolvedEpisode !== normalizedOriginalEpisode && resolvedEpisode !== normalizedEpisode) {
+        const available = episodes.map((entry) => entry.num).slice(0, 40).join(',') || 'none';
+        console.log(`[AnimeSaturn] skip wrong episode | path=${normalizedPath} wanted=${normalizedOriginalEpisode} mapped=${normalizedEpisode} got=${resolvedEpisode} available=${available}`);
         return localCache.streams.set(streamCacheKey, [], NEGATIVE_TTL_MS, STREAM_CACHE_STALE_MS);
     }
 
@@ -687,7 +696,7 @@ ${resolveLanguageLine(parsedPage.sourceTag)} • ${quality}
         && Array.isArray(parsedPage.relatedAnimePaths)
         && parsedPage.relatedAnimePaths.length > 0
     ) {
-        const relatedStreams = await mapLimit(parsedPage.relatedAnimePaths.slice(0, 2), 1, (relatedPath) =>
+        const relatedStreams = await mapLimit(parsedPage.relatedAnimePaths.slice(0, 4), 1, (relatedPath) =>
             extractStreamsFromAnimePath(relatedPath, normalizedEpisode, mediaType, normalizedOriginalEpisode, false)
         );
         streams.push(...relatedStreams.flat().filter(Boolean));
@@ -998,8 +1007,8 @@ async function resolveAnimeSaturnPaths(searchContext, config = {}) {
     const strictKitsu = Boolean(searchContext?.strictKitsu);
     const searchQueries = buildSearchTitleVariants(searchContext);
     const isMovie = Boolean(searchContext?.isMovie);
-    const maxQueries = Math.max(1, Math.min(Number.parseInt(getFilterValue(config, 'animeSaturnMaxSearchQueries', 5), 10) || 5, 8));
-    const maxPaths = Math.max(1, Math.min(Number.parseInt(getFilterValue(config, 'animeSaturnMaxPaths', 4), 10) || 4, 8));
+    const maxQueries = Math.max(1, Math.min(Number.parseInt(getFilterValue(config, 'animeSaturnMaxSearchQueries', 8), 10) || 8, 8));
+    const maxPaths = Math.max(1, Math.min(Number.parseInt(getFilterValue(config, 'animeSaturnMaxPaths', 8), 10) || 8, 8));
     const cacheKey = `paths:${searchQueries.join('|')}:movie=${isMovie ? 1 : 0}:strict=${strictKitsu ? 1 : 0}:date=${searchContext?.date || 'na'}:max=${maxPaths}`;
     const cached = localCache.searchPaths.get(cacheKey);
     if (cached !== undefined) return cached;
@@ -1036,9 +1045,14 @@ async function resolveAnimeSaturnPaths(searchContext, config = {}) {
             return localCache.searchPaths.set(cacheKey, primary, SEARCH_PATHS_TTL_MS, SEARCH_PATHS_STALE_MS);
         }
 
-        if (strictKitsu) return localCache.searchPaths.set(cacheKey, [], NEGATIVE_TTL_MS, SEARCH_PATHS_STALE_MS);
+        const fallbackPaths = uniqueStrings(buckets.flatMap((bucket) => bucket.fallback)).slice(0, Math.min(strictKitsu ? 2 : 4, maxPaths));
+        if (strictKitsu && fallbackPaths.length > 0) {
+            console.log(`[AnimeSaturn] strict fallback paths | title=${searchContext?.title || searchQueries[0] || 'n/a'} | paths=${fallbackPaths.length}`);
+        }
+        if (strictKitsu && fallbackPaths.length === 0) {
+            return localCache.searchPaths.set(cacheKey, [], NEGATIVE_TTL_MS, SEARCH_PATHS_STALE_MS);
+        }
 
-        const fallbackPaths = uniqueStrings(buckets.flatMap((bucket) => bucket.fallback)).slice(0, Math.min(3, maxPaths));
         return localCache.searchPaths.set(cacheKey, fallbackPaths, fallbackPaths.length ? SEARCH_PATHS_TTL_MS : NEGATIVE_TTL_MS, SEARCH_PATHS_STALE_MS);
     });
 }
@@ -1168,7 +1182,7 @@ function resolveEpisodeFromMappingPayload(mappingPayload, fallbackEpisode) {
 }
 
 async function resolveAnimeSaturnStreamsFromPaths(animePaths = [], requestedEpisode = 1, originalRequestedEpisode = 1, mediaType = 'tv', includeRelatedIta = false, config = {}) {
-    const maxPaths = Math.max(1, Math.min(Number.parseInt(getFilterValue(config, 'animeSaturnMaxPaths', 4), 10) || 4, 8));
+    const maxPaths = Math.max(1, Math.min(Number.parseInt(getFilterValue(config, 'animeSaturnMaxPaths', 8), 10) || 8, 8));
     const paths = uniqueStrings(animePaths).slice(0, maxPaths);
     if (paths.length === 0) return [];
 
