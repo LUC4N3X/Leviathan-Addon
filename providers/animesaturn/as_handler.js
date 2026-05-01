@@ -2,6 +2,9 @@
 
 const cheerio = require('cheerio');
 const animeProviderUtils = require('../anime/provider_utils');
+const { SingleFlight, TtlLruCache } = require('../utils/provider_runtime');
+const { withProviderHealth } = require('../utils/provider_health');
+const { normalizeStreams } = require('../utils/stream_normalizer');
 const {
     USER_AGENT,
     FETCH_TIMEOUT,
@@ -61,59 +64,16 @@ const TITLE_FIXES = new Map([
     ['one piece fan letter', ['ONE PIECE FAN LETTER']]
 ]);
 
-class TtlLruCache {
-    constructor(max = 500) {
-        this.max = Math.max(20, max);
-        this.map = new Map();
-    }
-
-    get(key, allowStale = false) {
-        const entry = this.map.get(key);
-        if (!entry) return undefined;
-        const time = Date.now();
-        if (entry.expiresAt > time || (allowStale && entry.staleAt > time)) {
-            this.map.delete(key);
-            this.map.set(key, entry);
-            return entry.value;
-        }
-        this.map.delete(key);
-        return undefined;
-    }
-
-    set(key, value, ttlMs, staleMs = ttlMs) {
-        if (this.map.has(key)) this.map.delete(key);
-        const time = Date.now();
-        this.map.set(key, {
-            value,
-            expiresAt: time + Math.max(1, ttlMs),
-            staleAt: time + Math.max(1, ttlMs + staleMs)
-        });
-        while (this.map.size > this.max) {
-            const oldest = this.map.keys().next().value;
-            this.map.delete(oldest);
-        }
-        return value;
-    }
-}
-
 const localCache = {
-    searchPaths: new TtlLruCache(700),
-    streams: new TtlLruCache(1200),
-    parsedPages: new TtlLruCache(1000),
-    watchUrls: new TtlLruCache(1800),
-    inflight: new Map()
+    searchPaths: new TtlLruCache({ name: 'animesaturn:searchPaths', max: 700, staleMode: 'extension' }),
+    streams: new TtlLruCache({ name: 'animesaturn:streams', max: 1200, staleMode: 'extension' }),
+    parsedPages: new TtlLruCache({ name: 'animesaturn:parsedPages', max: 1000, staleMode: 'extension' }),
+    watchUrls: new TtlLruCache({ name: 'animesaturn:watchUrls', max: 1800, staleMode: 'extension' }),
+    inflight: new SingleFlight('animesaturn')
 };
 
 async function singleFlight(key, worker) {
-    const running = localCache.inflight.get(key);
-    if (running) return running;
-    const promise = (async () => worker())();
-    localCache.inflight.set(key, promise);
-    try {
-        return await promise;
-    } finally {
-        localCache.inflight.delete(key);
-    }
+    return localCache.inflight.do(key, worker);
 }
 
 function getFilterValue(config, key, fallback) {
@@ -1231,10 +1191,16 @@ async function resolveAnimeSaturnStreamsFromPaths(animePaths = [], requestedEpis
         deduped.push(stream);
     }
 
-    return deduped.sort((a, b) => {
+    return normalizeStreams(deduped.sort((a, b) => {
         const lang = streamLanguageRank(a) - streamLanguageRank(b);
         if (lang !== 0) return lang;
         return qualityRank(b?.title || '') - qualityRank(a?.title || '');
+    }), {
+        provider: 'animesaturn',
+        providerLabel: 'AnimeSaturn',
+        providerCode: 'AS',
+        sort: false,
+        debug: process.env.ANIMESATURN_DEBUG === '1'
     });
 }
 
@@ -1265,7 +1231,7 @@ function shouldRunAnimeSaturn(requestId, meta = {}, searchContext = {}, config =
     return false;
 }
 
-async function searchAnimeSaturn(requestId, meta = {}, config = {}) {
+async function searchAnimeSaturnImpl(requestId, meta = {}, config = {}) {
     if (!config?.filters?.enableAnimeSaturn) return [];
 
     try {
@@ -1323,6 +1289,13 @@ async function searchAnimeSaturn(requestId, meta = {}, config = {}) {
         console.error('[AnimeSaturn] error:', error.message);
         return [];
     }
+}
+
+async function searchAnimeSaturn(requestId, meta = {}, config = {}) {
+    return withProviderHealth('animesaturn', () => searchAnimeSaturnImpl(requestId, meta, config), {
+        swallowErrors: true,
+        fallbackValue: []
+    });
 }
 
 module.exports = { searchAnimeSaturn };

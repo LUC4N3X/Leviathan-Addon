@@ -12,6 +12,8 @@ const {
     normalizeQuality,
     pickBetterQuality,
     probePlaylistQuality,
+    probePlaylistIntelligence,
+    decorateStreamWithPlaylistIntelligence,
     qualityRank
 } = require('../extractors/common');
 const {
@@ -25,6 +27,10 @@ const {
     resilientCall
 } = require('../extractors/resilience');
 const { createBlockedFallbackGuard } = require('../utils/provider_blocked_fallback');
+const { AsyncSemaphore, SingleFlight, TtlLruCache } = require('../utils/provider_runtime');
+const { withProviderHealth } = require('../utils/provider_health');
+const { normalizeStreams } = require('../utils/stream_normalizer');
+const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
 
 const CONFIG = {
     CACHE: {
@@ -124,77 +130,11 @@ const requestBreaker = new CircuitBreaker({
     halfOpenMaxCalls: 1
 });
 
-class AsyncSemaphore {
-    #max;
-    #active;
-    #queue;
-
-    constructor(max) {
-        this.#max = Math.max(1, Number(max) || 1);
-        this.#active = 0;
-        this.#queue = [];
-    }
-
-    async acquire() {
-        if (this.#active < this.#max) {
-            this.#active += 1;
-            return;
-        }
-        await new Promise((resolve) => this.#queue.push(resolve));
-    }
-
-    release() {
-        this.#active = Math.max(0, this.#active - 1);
-        const next = this.#queue.shift();
-        if (next) {
-            this.#active += 1;
-            next();
-        }
-    }
-}
-
-class TtlMemoryCache {
-    constructor(ttlMs, maxEntries = 2048) {
-        this.ttlMs = Math.max(1000, ttlMs || 1000);
-        this.maxEntries = Math.max(32, maxEntries || 2048);
-        this.map = new Map();
-        this.lastPrune = 0;
-    }
-
-    get(key) {
-        const item = this.map.get(key);
-        if (!item) return undefined;
-        if (item.expiresAt <= Date.now()) {
-            this.map.delete(key);
-            return undefined;
-        }
-        return item.value;
-    }
-
-    set(key, value) {
-        const now = Date.now();
-        this.map.set(key, { value, expiresAt: now + this.ttlMs });
-        if (this.map.size > this.maxEntries || now - this.lastPrune > 60000) this.prune(now);
-    }
-
-    prune(now = Date.now()) {
-        this.lastPrune = now;
-        for (const [key, value] of this.map.entries()) {
-            if (value.expiresAt <= now) this.map.delete(key);
-        }
-        if (this.map.size <= this.maxEntries) return;
-        for (const key of this.map.keys()) {
-            this.map.delete(key);
-            if (this.map.size <= this.maxEntries) break;
-        }
-    }
-}
-
 const runtime = {
     embedSemaphore: new AsyncSemaphore(CONFIG.SCRAPER.MAX_CONCURRENT_EMBEDS),
     playlistSemaphore: new AsyncSemaphore(CONFIG.SCRAPER.MAX_CONCURRENT_PLAYLIST_PROBES),
-    playlistCache: new TtlMemoryCache(30 * 60 * 1000, 4096),
-    playlistInflight: new Map()
+    playlistCache: new TtlLruCache({ name: 'guardahd:playlist', ttlMs: 30 * 60 * 1000, max: 4096 }),
+    playlistInflight: new SingleFlight('guardahd:playlist')
 };
 
 const cacheManager = new PersistentJsonCache({
@@ -456,40 +396,33 @@ function extractPacked(html) {
     return unpackPacked(match[1], Number(match[2]), Number(match[3]), safeText(match[4]).split(match[5] || '|'));
 }
 
-async function probePlaylistQualityCached(streamUrl, headers = {}) {
+async function probePlaylistIntelligenceCached(streamUrl, headers = {}) {
     const normalized = normalizeUrl(streamUrl);
-    if (!/\.m3u8(?:$|\?)/i.test(normalized)) return null;
+    if (!/\.m3u8(?:0\?)/i.test(normalized)) return null;
 
     const cached = runtime.playlistCache.get(normalized);
     if (cached !== undefined) return cached;
 
-    if (runtime.playlistInflight.has(normalized)) {
-        try {
-            return await runtime.playlistInflight.get(normalized);
-        } catch (_) {
-            return null;
-        }
-    }
-
-    const job = (async () => {
+    return runtime.playlistInflight.do(normalized, async () => {
         await runtime.playlistSemaphore.acquire();
         try {
-            const probed = await probePlaylistQuality(httpClient, normalized, {
+            const intelligence = await probePlaylistIntelligence(httpClient, normalized, {
                 headers: normalizeHeaders(headers),
                 timeout: CONFIG.SCRAPER.PLAYLIST_TIMEOUT
             }).catch(() => null);
-            const quality = probed || null;
-            runtime.playlistCache.set(normalized, quality);
-            return quality;
+            runtime.playlistCache.set(normalized, intelligence || null);
+            return intelligence || null;
         } finally {
             runtime.playlistSemaphore.release();
-            runtime.playlistInflight.delete(normalized);
         }
-    })();
-
-    runtime.playlistInflight.set(normalized, job);
-    return job.catch(() => null);
+    }).catch(() => null);
 }
+
+async function probePlaylistQualityCached(streamUrl, headers = {}) {
+    const intelligence = await probePlaylistIntelligenceCached(streamUrl, headers);
+    return intelligence?.quality || null;
+}
+
 
 async function resolveStreamQuality(streamUrl, headers, fallback = 'Unknown') {
     const baseQuality = normalizeQuality(parseQuality(fallback) !== 'Unknown' ? parseQuality(fallback) : fallback);
@@ -842,14 +775,15 @@ async function finalizeRawStream(raw, displayTitle, embedUrl) {
     if (shouldNotWebReady(hoster, raw.name)) behaviorHints.notWebReady = true;
 
     const guessed = parseQuality(`${raw.quality || ''} ${raw.name || ''} ${raw.title || ''} ${embedUrl || ''} ${streamUrl}`);
-    const quality = normalizeGuardaHdDisplayQuality(await resolveStreamQuality(streamUrl, effectiveHeaders, raw.quality || guessed));
+    const playlistIntel = await probePlaylistIntelligenceCached(streamUrl, effectiveHeaders);
+    const quality = normalizeGuardaHdDisplayQuality(pickBetterQuality(playlistIntel?.quality || 'Unknown', await resolveStreamQuality(streamUrl, effectiveHeaders, raw.quality || guessed)));
     const size = raw.size && raw.size !== 'N/A'
         ? raw.size
         : extractSize(raw.title, raw.name, embedUrl, streamUrl);
     const label = raw.name || hosterLabel(hoster);
     const priority = raw.priority ?? HOSTER_PRIORITY[hoster] ?? 9;
 
-    const stream = buildWebStream({
+    let stream = buildWebStream({
         name: `🦁 GHD\n⚡ ${label}`,
         title: generateRichDescription(displayTitle, quality, size, label),
         url: streamUrl,
@@ -868,14 +802,17 @@ async function finalizeRawStream(raw, displayTitle, embedUrl) {
         }
     });
 
+    stream = decorateStreamWithPlaylistIntelligence(stream, playlistIntel);
     return stream;
 }
 
 class GuardaHDScraper {
     #config;
+    #reqHost;
 
-    constructor(config = {}) {
+    constructor(config = {}, reqHost = null) {
         this.#config = config || {};
+        this.#reqHost = reqHost || null;
     }
 
     async #getCachedEmbeds(identity) {
@@ -919,6 +856,21 @@ class GuardaHDScraper {
 
             if (!rawStreams.length) {
                 rawStreams = await extractManual(normalized, this.#config);
+            }
+
+            if (!rawStreams.length) {
+                const lazy = buildLazyExtractorStream({
+                    embedUrl: normalized,
+                    reqHost: this.#reqHost,
+                    provider: 'GuardaHD',
+                    providerCode: 'GHD',
+                    title: displayTitle,
+                    name: hosterLabel(hoster),
+                    quality: parseQuality(normalized),
+                    referer: CONFIG.SCRAPER.BASE_URL,
+                    extra: { _priority: HOSTER_PRIORITY[hoster] ?? 9 }
+                });
+                return lazy ? [lazy] : [];
             }
 
             const finalized = [];
@@ -988,7 +940,13 @@ class GuardaHDScraper {
             .filter((item) => item.status === 'fulfilled')
             .flatMap((item) => item.value || []);
 
-        const streams = this.#dedupAndSort(rawStreams);
+        const streams = normalizeStreams(this.#dedupAndSort(rawStreams), {
+            provider: 'guardahd',
+            providerLabel: 'GuardaHD',
+            providerCode: 'GHD',
+            sort: false,
+            debug: process.env.GUARDAHD_DEBUG === '1'
+        });
         if (process.env.GUARDAHD_DEBUG === '1') {
             console.log(`[GHD] done | type=${identity.mediaType} cache=${cacheHit} embeds=${embeds.length} streams=${streams.length} ms=${Date.now() - started}`);
         }
@@ -996,8 +954,15 @@ class GuardaHDScraper {
     }
 }
 
-async function searchGuardaHD(meta, config) {
-    return new GuardaHDScraper(config).getStreams(meta);
+async function searchGuardaHDImpl(meta, config, reqHost = null) {
+    return new GuardaHDScraper(config, reqHost).getStreams(meta);
+}
+
+async function searchGuardaHD(meta, config, reqHost = null) {
+    return withProviderHealth('guardahd', () => searchGuardaHDImpl(meta, config, reqHost), {
+        swallowErrors: true,
+        fallbackValue: []
+    });
 }
 
 module.exports = { searchGuardaHD };

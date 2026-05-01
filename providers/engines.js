@@ -5,6 +5,7 @@ const pLimitModule = require("p-limit");
 const pLimit = typeof pLimitModule === "function" ? pLimitModule : pLimitModule.default;
 const he = require("he");
 const { ENGINE_BROWSER_PROFILES } = require('../core/browser_profiles');
+const { TtlLruCache } = require('./utils/provider_runtime');
 
 const BROWSER_PROFILES = ENGINE_BROWSER_PROFILES;
 
@@ -50,8 +51,8 @@ const CONFIG = {
 const httpsAgent = new https.Agent(CONFIG.HTTPS_AGENT_OPTIONS);
 const detailLimit = pLimit(CONFIG.DETAIL_FETCH_CONCURRENCY);
 const engineLimit = pLimit(CONFIG.ENGINE_CONCURRENCY);
-const searchCache = new Map();
-const htmlCache = new Map();
+const searchCache = new TtlLruCache({ name: 'engines:search', max: 800, ttlMs: CONFIG.SEARCH_CACHE_TTL });
+const htmlCache = new TtlLruCache({ name: 'engines:html', max: 800, ttlMs: CONFIG.HTML_CACHE_TTL });
 const inflightRequests = new Map();
 let gotScrapingLoader = null;
 
@@ -128,23 +129,23 @@ function sleep(ms) {
 }
 
 function getCache(map, key) {
-    const hit = map.get(key);
-    if (!hit) return null;
-    if (hit.expiresAt <= now()) {
-        map.delete(key);
-        return null;
-    }
-    return hit.value;
+    if (!map || typeof map.get !== 'function') return null;
+    const value = map.get(key);
+    return value === undefined ? null : value;
 }
 
 function setCache(map, key, value, ttl) {
     if (!ttl || ttl <= 0) return value;
-    map.set(key, { value, expiresAt: now() + ttl });
-    if (map.size > 800) pruneCache(map);
+    if (map && typeof map.set === 'function') map.set(key, value, ttl);
+    if (map && map.size > 800) pruneCache(map);
     return value;
 }
 
 function pruneCache(map) {
+    if (map && typeof map.prune === 'function') {
+        map.prune(now());
+        return;
+    }
     const ts = now();
     for (const [key, entry] of map.entries()) {
         if (!entry || entry.expiresAt <= ts) map.delete(key);

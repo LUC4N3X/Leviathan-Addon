@@ -14,6 +14,9 @@ const {
     responseText
 } = require('../utils/bypass');
 const { createBlockedFallbackGuard } = require('../utils/provider_blocked_fallback');
+const { SingleFlight, TtlLruCache } = require('../utils/provider_runtime');
+const { withProviderHealth } = require('../utils/provider_health');
+const { normalizeStreams } = require('../utils/stream_normalizer');
 const tmdbHelper = require('../../core/utils/tmdb_helper');
 const animeIdentity = require('../anime/anime_identity');
 const kitsuProvider = require('../animeworld/kitsu_provider');
@@ -25,6 +28,8 @@ const {
     normalizeQuality,
     pickBetterQuality,
     probePlaylistQuality,
+    probePlaylistIntelligence,
+    decorateStreamWithPlaylistIntelligence,
     qualityRank
 } = require('../extractors/common');
 
@@ -82,75 +87,10 @@ const newsSitemapCache = {
     pending: null
 };
 
-class TtlLruCache {
-    constructor({ ttlMs = 600000, max = 500 } = {}) {
-        this.ttlMs = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : 600000;
-        this.max = Number.isFinite(max) && max > 0 ? Math.floor(max) : 500;
-        this.map = new Map();
-    }
-
-    has(key) {
-        if (!key) return false;
-        const item = this.map.get(key);
-        if (!item) return false;
-        if (Date.now() > item.expiresAt) {
-            this.map.delete(key);
-            return false;
-        }
-        return true;
-    }
-
-    get(key) {
-        if (!key) return null;
-        const item = this.map.get(key);
-        if (!item) return null;
-        if (Date.now() > item.expiresAt) {
-            this.map.delete(key);
-            return null;
-        }
-        this.map.delete(key);
-        this.map.set(key, item);
-        return item.value;
-    }
-
-    set(key, value) {
-        if (!key) return;
-        if (this.map.has(key)) this.map.delete(key);
-        this.map.set(key, {
-            value,
-            expiresAt: Date.now() + this.ttlMs
-        });
-        while (this.map.size > this.max) {
-            const oldest = this.map.keys().next().value;
-            if (oldest === undefined) break;
-            this.map.delete(oldest);
-        }
-    }
-
-    delete(key) {
-        if (!key) return;
-        this.map.delete(key);
-    }
-
-    clear() {
-        this.map.clear();
-    }
-
-    get size() {
-        return this.map.size;
-    }
-}
-
-const pendingTasks = new Map();
+const pendingTasks = new SingleFlight('cinemacity');
 
 async function singleFlight(key, fn) {
-    if (!key) return fn();
-    if (pendingTasks.has(key)) return pendingTasks.get(key);
-    const task = Promise.resolve()
-        .then(fn)
-        .finally(() => pendingTasks.delete(key));
-    pendingTasks.set(key, task);
-    return task;
+    return pendingTasks.do(key, fn);
 }
 
 function loadHtml(html) {
@@ -177,46 +117,55 @@ function attrSelectorValue(value) {
 }
 
 const pageMetadataCache = new TtlLruCache({
+    missingValue: null,
     ttlMs: 60 * 60 * 1000,
     max: 1000
 });
 
 const searchCandidatesCache = new TtlLruCache({
+    missingValue: null,
     ttlMs: SEARCH_CACHE_TTL_MS,
     max: 800
 });
 
 const resolvedSearchCache = new TtlLruCache({
+    missingValue: null,
     ttlMs: RESOLVED_SEARCH_CACHE_TTL_MS,
     max: 800
 });
 
 const streamResultCache = new TtlLruCache({
+    missingValue: null,
     ttlMs: STREAM_CACHE_TTL_MS,
     max: 600
 });
 
 const tmdbMetadataCache = new TtlLruCache({
+    missingValue: null,
     ttlMs: TMDB_CACHE_TTL_MS,
     max: 1200
 });
 
 const tmdbImdbCache = new TtlLruCache({
+    missingValue: null,
     ttlMs: TMDB_CACHE_TTL_MS,
     max: 1200
 });
 
 const kitsuMappingCache = new TtlLruCache({
+    missingValue: null,
     ttlMs: KITSU_MAPPING_CACHE_TTL_MS,
     max: 1600
 });
 
 const qualityProbeCache = new TtlLruCache({
+    missingValue: null,
     ttlMs: QUALITY_PROBE_CACHE_TTL_MS,
     max: 800
 });
 
 const fetchFailureCache = new TtlLruCache({
+    missingValue: null,
     ttlMs: NEGATIVE_CACHE_TTL_MS,
     max: 2000
 });
@@ -2011,7 +1960,7 @@ function buildCinemaCityMediaflowUrl(config = {}, streamUrl, headers = {}, isHls
     return `${mfpBase}/proxy/stream?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${refererQuery}${originQuery}`;
 }
 
-async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost = null) {
+async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqHost = null) {
     try {
         const resolved = await resolveSearchState(meta, originalId, finalId, config);
         if (!resolved.imdbId && !resolved.tmdbId && (!resolved.isAnime || resolved.searchTitles.length === 0)) return [];
@@ -2048,6 +1997,39 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost 
         if (!extracted?.streamUrl) return [];
 
         const pageMetadata = extracted.pageMetadata || {};
+        let quality = normalizeQuality(pageMetadata.quality || '1080p');
+        let playlistIntel = null;
+        if (/\.m3u8($|\?)/i.test(extracted.streamUrl)) {
+            try {
+                const qualityCacheKey = `quality:${normalizeRemoteUrl(extracted.streamUrl)}`;
+                const cachedQuality = qualityProbeCache.get(qualityCacheKey);
+                playlistIntel = cachedQuality?.intelligence || null;
+                const probed = cachedQuality ? cachedQuality.value : await singleFlight(qualityCacheKey, async () => {
+                    const alreadyCached = qualityProbeCache.get(qualityCacheKey);
+                    if (alreadyCached) {
+                        playlistIntel = alreadyCached.intelligence || null;
+                        return alreadyCached.value;
+                    }
+                    const intelligence = await probePlaylistIntelligence(httpClient, extracted.streamUrl, {
+                        headers: extracted.headers,
+                        timeout: 6000
+                    });
+                    playlistIntel = intelligence || null;
+                    const detected = intelligence?.quality || 'Unknown';
+                    qualityProbeCache.set(qualityCacheKey, { value: detected, intelligence: intelligence || null });
+                    return detected;
+                });
+                quality = pickBetterQuality(probed || 'Unknown', quality);
+                if (playlistIntel?.audioLanguages?.length) {
+                    pageMetadata.audioLanguages = Array.from(new Set([...(pageMetadata.audioLanguages || []), ...playlistIntel.audioLanguages]));
+                    pageMetadata.isMultiAudio = pageMetadata.audioLanguages.length > 1;
+                }
+                if (playlistIntel?.subtitleLanguages?.length) {
+                    pageMetadata.subtitleLanguages = Array.from(new Set([...(pageMetadata.subtitleLanguages || []), ...playlistIntel.subtitleLanguages]));
+                }
+            } catch (_) {}
+        }
+
         if (!pageHasRequestedAudio(pageMetadata, config)) {
             if (config?.debug || process.env.DEBUG_CINEMACITY === '1') {
                 console.warn(buildLanguageRejectReason(pageMetadata, config));
@@ -2059,25 +2041,6 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost 
                 console.warn('[CinemaCity] Skip stream URL non-ITA strict:', extracted.streamUrl);
             }
             return [];
-        }
-
-        let quality = normalizeQuality(pageMetadata.quality || '1080p');
-        if (/\.m3u8($|\?)/i.test(extracted.streamUrl)) {
-            try {
-                const qualityCacheKey = `quality:${normalizeRemoteUrl(extracted.streamUrl)}`;
-                const cachedQuality = qualityProbeCache.get(qualityCacheKey);
-                const probed = cachedQuality ? cachedQuality.value : await singleFlight(qualityCacheKey, async () => {
-                    const alreadyCached = qualityProbeCache.get(qualityCacheKey);
-                    if (alreadyCached) return alreadyCached.value;
-                    const detected = await probePlaylistQuality(httpClient, extracted.streamUrl, {
-                        headers: extracted.headers,
-                        timeout: 6000
-                    });
-                    qualityProbeCache.set(qualityCacheKey, { value: detected || 'Unknown' });
-                    return detected || 'Unknown';
-                });
-                quality = pickBetterQuality(probed || 'Unknown', quality);
-            } catch (_) {}
         }
 
         const isHlsStream = /\.m3u8($|\?)/i.test(extracted.streamUrl);
@@ -2104,7 +2067,7 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost 
 
         const streams = [];
         if (cinemaCityUrl) {
-            streams.push(buildWebStream({
+            streams.push(decorateStreamWithPlaylistIntelligence(buildWebStream({
                 name: `🎟️ CinemaCity | ${cinemaCityMode}`,
                 title: `${displayTitle}\n☁️ ${cinemaCityMode} • ${languageLabel}`,
                 url: cinemaCityUrl,
@@ -2115,11 +2078,11 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost 
                 headers: null,
                 notWebReady: false,
                 extraBehaviorHints: extraVortexMeta
-            }));
+            }), playlistIntel));
         }
 
         if (streams.length === 0) {
-            streams.push(buildWebStream({
+            streams.push(decorateStreamWithPlaylistIntelligence(buildWebStream({
                 name: '🎟️ CinemaCity | Direct',
                 title: `${displayTitle}\n☁️ ${extractorLabel} • ${languageLabel}`,
                 url: extracted.streamUrl,
@@ -2130,15 +2093,28 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost 
                 headers: extracted.headers,
                 notWebReady: true,
                 extraBehaviorHints: extraVortexMeta
-            }));
+            }), playlistIntel));
         }
 
         const filteredStreams = hardFilterStreamsByLanguage(dedupeStreamsByUrl(streams), config);
-        return filteredStreams.sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality));
+        return normalizeStreams(filteredStreams, {
+            provider: 'cinemacity',
+            providerLabel: 'CinemaCity',
+            providerCode: 'CC',
+            sort: false,
+            debug: config?.debug === true
+        }).sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality));
     } catch (error) {
         console.error('[CinemaCity] Error:', error.message);
         return [];
     }
+}
+
+async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost = null) {
+    return withProviderHealth('cinemacity', () => searchCinemaCityImpl(originalId, finalId, meta, config, reqHost), {
+        swallowErrors: true,
+        fallbackValue: []
+    });
 }
 
 module.exports = {

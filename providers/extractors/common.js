@@ -1,6 +1,10 @@
 'use strict';
 
 const { prepareProxyTarget } = require('../../core/lib/proxy_header_normalizer');
+const {
+    decorateStreamWithPlaylistIntelligence,
+    probePlaylistIntelligence
+} = require('../utils/playlist_intelligence');
 
 const QUALITY_PATTERNS = [
     { value: '4K', regex: /\b(?:4k|2160p|uhd)\b/i },
@@ -121,22 +125,10 @@ function extractPlaylistQuality(value) {
     return 'Unknown';
 }
 
-async function probePlaylistQuality(client, targetUrl, { headers = {}, timeout = 5000 } = {}) {
-    if (!client || typeof client.get !== 'function') return null;
-    if (!/\.m3u8($|\?)/i.test(String(targetUrl || ''))) return null;
-
+async function probePlaylistQuality(client, targetUrl, { headers = {}, timeout = 5000, signal = undefined } = {}) {
     try {
-        const response = await client.get(targetUrl, {
-            headers,
-            timeout,
-            responseType: 'text'
-        });
-        const body = typeof response?.data === 'string'
-            ? response.data
-            : Buffer.isBuffer(response?.data)
-                ? response.data.toString('utf8')
-                : String(response?.data || '');
-        return extractPlaylistQuality(body);
+        const intelligence = await probePlaylistIntelligence(client, targetUrl, { headers, timeout, signal });
+        return intelligence?.quality || null;
     } catch (_) {
         return null;
     }
@@ -275,5 +267,7 @@ module.exports = {
     normalizeQuality,
     pickBetterQuality,
     probePlaylistQuality,
+    probePlaylistIntelligence,
+    decorateStreamWithPlaylistIntelligence,
     qualityRank
 };

@@ -10,11 +10,17 @@ const {
     normalizeQuality,
     pickBetterQuality,
     probePlaylistQuality,
+    probePlaylistIntelligence,
+    decorateStreamWithPlaylistIntelligence,
     qualityRank
 } = require('../extractors/common');
 
-const { extractFromUrl } = require('../extractors/registry');
+const { extractFromUrl, resolveExtractorDefinition } = require('../extractors/registry');
 const { createBlockedFallbackGuard } = require('../utils/provider_blocked_fallback');
+const { SingleFlight, TtlLruCache, createLimiter } = require('../utils/provider_runtime');
+const { withProviderHealth } = require('../utils/provider_health');
+const { normalizeStreams } = require('../utils/stream_normalizer');
+const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
 
 const CONFIG = Object.freeze({
     BASE_URL: 'https://guardaplay.live/',
@@ -68,150 +74,45 @@ const logDebug = (message, ...args) => {
     console.log(`[GuardaFlix-Live] ${message}`, ...args);
 };
 
-class TTLCache {
-    constructor({ ttl, max = CONFIG.CACHE_MAX_ITEMS, name = 'cache' }) {
-        this.ttl = ttl;
-        this.max = max;
-        this.name = name;
-        this.map = new Map();
-        this.ops = 0;
-    }
-
-    get(key) {
-        this.ops++;
-
-        if (this.ops % CONFIG.CACHE_SWEEP_INTERVAL_OPS === 0) {
-            this.sweep();
-        }
-
-        const entry = this.map.get(key);
-
-        if (!entry) return undefined;
-
-        if (entry.expiresAt <= Date.now()) {
-            this.map.delete(key);
-            return undefined;
-        }
-
-        entry.lastAccess = Date.now();
-        return entry.value;
-    }
-
-    set(key, value, ttl = this.ttl) {
-        this.ops++;
-
-        if (this.map.size >= this.max) {
-            this.evictOne();
-        }
-
-        this.map.set(key, {
-            value,
-            expiresAt: Date.now() + ttl,
-            lastAccess: Date.now()
-        });
-
-        if (this.ops % CONFIG.CACHE_SWEEP_INTERVAL_OPS === 0) {
-            this.sweep();
-        }
-
-        return value;
-    }
-
-    delete(key) {
-        this.map.delete(key);
-    }
-
-    sweep() {
-        const now = Date.now();
-
-        for (const [key, entry] of this.map.entries()) {
-            if (entry.expiresAt <= now) {
-                this.map.delete(key);
-            }
-        }
-
-        while (this.map.size > this.max) {
-            this.evictOne();
-        }
-    }
-
-    evictOne() {
-        let oldestKey = null;
-        let oldestAccess = Number.POSITIVE_INFINITY;
-
-        for (const [key, entry] of this.map.entries()) {
-            if (entry.lastAccess < oldestAccess) {
-                oldestAccess = entry.lastAccess;
-                oldestKey = key;
-            }
-        }
-
-        if (oldestKey !== null) {
-            this.map.delete(oldestKey);
-        }
-    }
-}
-
-const tmdbMetaCache = new TTLCache({
-    ttl: CONFIG.TMDB_META_TTL_MS,
-    name: 'tmdbMeta'
+const tmdbMetaCache = new TtlLruCache({
+    ttlMs: CONFIG.TMDB_META_TTL_MS,
+    name: 'guardaflix:tmdbMeta',
+    max: CONFIG.CACHE_MAX_ITEMS,
+    sweepIntervalOps: CONFIG.CACHE_SWEEP_INTERVAL_OPS
 });
 
-const searchCache = new TTLCache({
-    ttl: CONFIG.SEARCH_TTL_MS,
-    name: 'search'
+const searchCache = new TtlLruCache({
+    ttlMs: CONFIG.SEARCH_TTL_MS,
+    name: 'guardaflix:search',
+    max: CONFIG.CACHE_MAX_ITEMS,
+    sweepIntervalOps: CONFIG.CACHE_SWEEP_INTERVAL_OPS
 });
 
-const pageJobsCache = new TTLCache({
-    ttl: CONFIG.PAGE_JOBS_TTL_MS,
-    name: 'pageJobs'
+const pageJobsCache = new TtlLruCache({
+    ttlMs: CONFIG.PAGE_JOBS_TTL_MS,
+    name: 'guardaflix:pageJobs',
+    max: CONFIG.CACHE_MAX_ITEMS,
+    sweepIntervalOps: CONFIG.CACHE_SWEEP_INTERVAL_OPS
 });
 
-const playlistQualityCache = new TTLCache({
-    ttl: CONFIG.PLAYLIST_QUALITY_TTL_MS,
-    name: 'playlistQuality'
+const playlistQualityCache = new TtlLruCache({
+    ttlMs: CONFIG.PLAYLIST_QUALITY_TTL_MS,
+    name: 'guardaflix:playlistQuality',
+    max: CONFIG.CACHE_MAX_ITEMS,
+    sweepIntervalOps: CONFIG.CACHE_SWEEP_INTERVAL_OPS
 });
 
-const inflight = new Map();
+const playlistIntelCache = new TtlLruCache({
+    ttlMs: CONFIG.PLAYLIST_QUALITY_TTL_MS,
+    name: 'guardaflix:playlistIntel',
+    max: CONFIG.CACHE_MAX_ITEMS,
+    sweepIntervalOps: CONFIG.CACHE_SWEEP_INTERVAL_OPS
+});
+
+const inflight = new SingleFlight('guardaflix');
 
 async function runSingleFlight(key, fn) {
-    if (inflight.has(key)) {
-        return inflight.get(key);
-    }
-
-    const promise = Promise.resolve()
-        .then(fn)
-        .finally(() => inflight.delete(key));
-
-    inflight.set(key, promise);
-
-    return promise;
-}
-
-function createLimiter(concurrency) {
-    let active = 0;
-    const queue = [];
-
-    const next = () => {
-        if (active >= concurrency || queue.length === 0) return;
-
-        active++;
-
-        const task = queue.shift();
-
-        Promise.resolve()
-            .then(task.fn)
-            .then(task.resolve, task.reject)
-            .finally(() => {
-                active--;
-                next();
-            });
-    };
-
-    return (fn) => new Promise((resolve, reject) => {
-        queue.push({ fn, resolve, reject });
-        next();
-    });
+    return inflight.do(key, fn);
 }
 
 const strictHttpsAgent = new https.Agent({
@@ -620,6 +521,25 @@ function normalizeGuardaFlixDisplayQuality(value) {
     return normalizeQuality(value) === '1080p' ? '1080p' : '720p';
 }
 
+async function resolveExtractedPlaylistIntelligence(client, extracted) {
+    const url = String(extracted?.url || '');
+    if (!/\.m3u8($|\?)/i.test(url)) return null;
+    const cacheKey = playlistQualityCacheKey(url);
+    const cached = playlistIntelCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    try {
+        const intelligence = await probePlaylistIntelligence(client, url, {
+            headers: extracted?.headers || {},
+            timeout: CONFIG.PROBE_TIMEOUT
+        });
+        playlistIntelCache.set(cacheKey, intelligence || null);
+        return intelligence || null;
+    } catch (_) {
+        playlistIntelCache.set(cacheKey, null, Math.min(CONFIG.PLAYLIST_QUALITY_TTL_MS, 10 * 60 * 1000));
+        return null;
+    }
+}
+
 async function resolveExtractedQuality(client, extracted) {
     const url = String(extracted?.url || '');
     let quality = normalizeQuality(extracted?.quality || 'Unknown');
@@ -642,12 +562,8 @@ async function resolveExtractedQuality(client, extracted) {
     }
 
     try {
-        const probed = await probePlaylistQuality(client, url, {
-            headers: extracted?.headers || {},
-            timeout: CONFIG.PROBE_TIMEOUT
-        });
-
-        quality = pickBetterQuality(probed || 'Unknown', quality);
+        const intelligence = await resolveExtractedPlaylistIntelligence(client, extracted);
+        quality = pickBetterQuality(intelligence?.quality || 'Unknown', quality);
         playlistQualityCache.set(cacheKey, quality);
 
         return quality;
@@ -1037,8 +953,9 @@ function collectSearchCandidates($, queryTitle, year) {
 }
 
 class GuardaFlixScraper {
-    constructor(config) {
+    constructor(config, reqHost = null) {
         this.config = config || {};
+        this.reqHost = reqHost || null;
         this.iframeLimiter = createLimiter(CONFIG.IFRAME_CONCURRENCY);
         this.visitedIframes = new Set();
 
@@ -1196,7 +1113,7 @@ class GuardaFlixScraper {
         });
     }
 
-    buildStreamFromExtractor(extracted, mediaTitle, isSub, resolvedQuality = null) {
+    buildStreamFromExtractor(extracted, mediaTitle, isSub, resolvedQuality = null, playlistIntel = null) {
         const langTag = isSub ? 'SUB ITA' : 'ITA';
         const displayTitle = cleanDisplayTitle(mediaTitle) || 'Stream';
         const finalTitle = `${displayTitle} - ${langTag}`;
@@ -1225,7 +1142,7 @@ class GuardaFlixScraper {
             logDebug('MediaFlow non applicato a LoadM: flag disattivata');
         }
 
-        const stream = buildWebStream({
+        let stream = buildWebStream({
             name: streamName,
             title: `${finalTitle}\n${extracted.name} (${modeLabel})`,
             url: streamUrl,
@@ -1236,6 +1153,7 @@ class GuardaFlixScraper {
             headers
         });
 
+        stream = decorateStreamWithPlaylistIntelligence(stream, playlistIntel);
         stream._priority = extracted.priority ?? 9;
         stream._fingerprint = createStreamFingerprint(stream);
 
@@ -1275,8 +1193,9 @@ class GuardaFlixScraper {
                 });
 
                 if (extracted?.url) {
-                    const quality = await resolveExtractedQuality(looseHttpClient, extracted);
-                    return [this.buildStreamFromExtractor(extracted, mediaTitle, isSub, quality)];
+                    const playlistIntel = await resolveExtractedPlaylistIntelligence(looseHttpClient, extracted);
+                    const quality = pickBetterQuality(playlistIntel?.quality || 'Unknown', await resolveExtractedQuality(looseHttpClient, extracted));
+                    return [this.buildStreamFromExtractor(extracted, mediaTitle, isSub, quality, playlistIntel)];
                 }
 
                 const response = await fetchSmart(absoluteSrc, {
@@ -1312,10 +1231,37 @@ class GuardaFlixScraper {
                     }
                 }
 
+                if (streams.length === 0 && resolveExtractorDefinition(absoluteSrc)) {
+                    const lazy = buildLazyExtractorStream({
+                        embedUrl: absoluteSrc,
+                        reqHost: this.reqHost,
+                        provider: 'GuardaFlix',
+                        providerCode: 'GF',
+                        title: cleanDisplayTitle(mediaTitle) || 'GuardaFlix',
+                        name: resolveExtractorDefinition(absoluteSrc)?.label,
+                        quality: 'Unknown',
+                        referer: pageUrl,
+                        extra: { _priority: resolveExtractorDefinition(absoluteSrc)?.priority ?? 9 }
+                    });
+                    if (lazy) streams.push(lazy);
+                }
+
                 return streams;
             } catch (error) {
                 logDebug(`Errore processIframe depth=${depth}:`, error.message);
-                return [];
+                const lazy = resolveExtractorDefinition(absoluteSrc)
+                    ? buildLazyExtractorStream({
+                        embedUrl: absoluteSrc,
+                        reqHost: this.reqHost,
+                        provider: 'GuardaFlix',
+                        providerCode: 'GF',
+                        title: cleanDisplayTitle(mediaTitle) || 'GuardaFlix',
+                        name: resolveExtractorDefinition(absoluteSrc)?.label,
+                        referer: pageUrl,
+                        extra: { _priority: resolveExtractorDefinition(absoluteSrc)?.priority ?? 9 }
+                    })
+                    : null;
+                return lazy ? [lazy] : [];
             }
         });
     }
@@ -1425,7 +1371,13 @@ class GuardaFlixScraper {
             ''
         );
 
-        const streams = await this.resolvePage(pageUrl, preferredTitle);
+        const streams = normalizeStreams(await this.resolvePage(pageUrl, preferredTitle), {
+            provider: 'guardaflix',
+            providerLabel: 'GuardaFlix',
+            providerCode: 'GF',
+            sort: false,
+            debug: process.env.GUARDAFLIX_DEBUG === '1'
+        });
 
         logDebug('--- Fine getStreams ---', {
             totalMs: Date.now() - startedAt,
@@ -1437,13 +1389,20 @@ class GuardaFlixScraper {
     }
 }
 
-async function searchGuardaFlix(meta, config) {
+async function searchGuardaFlixImpl(meta, config) {
     const scraper = new GuardaFlixScraper(config);
     return scraper.getStreams(meta);
 }
 
-async function searchGuardaHD(meta, config) {
-    return searchGuardaFlix(meta, config);
+async function searchGuardaFlix(meta, config) {
+    return withProviderHealth('guardaflix', () => searchGuardaFlixImpl(meta, config), {
+        swallowErrors: true,
+        fallbackValue: []
+    });
+}
+
+async function searchGuardaHD(meta, config, reqHost = null) {
+    return searchGuardaFlix(meta, config, reqHost);
 }
 
 module.exports = {

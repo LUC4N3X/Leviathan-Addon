@@ -16,14 +16,20 @@ const {
   normalizeQuality,
   pickBetterQuality,
   probePlaylistQuality,
+  probePlaylistIntelligence,
+  decorateStreamWithPlaylistIntelligence,
   qualityRank
 } = require('../extractors/common');
 const {
   extractFromUrl,
   HOSTER_DIRECT_LINK_PATTERN,
-  HOSTER_ESCAPED_DIRECT_LINK_PATTERN
+  HOSTER_ESCAPED_DIRECT_LINK_PATTERN,
+  resolveExtractorDefinition
 } = require('../extractors/registry');
 const { isCanceledError } = require('../utils/bypass');
+const { withProviderHealth } = require('../utils/provider_health');
+const { normalizeStreams } = require('../utils/stream_normalizer');
+const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
 const { createProviderHttpGuard, envFlag, envFlagNotFalse } = require('../utils/provider_http_guard');
 
 const INITIAL_GS_DOMAIN      = 'https://guardoserie.run';
@@ -716,7 +722,7 @@ async function asyncPool(limit, items, asyncFn) {
   return results;
 }
 
-async function searchGuardaserie(meta, config) {
+async function searchGuardaserieImpl(meta, config, reqHost = null) {
   if (!meta?.isSeries || !config?.filters?.enableGs) return [];
 
   const kitsuInfo = getKitsuRequestFromMeta(meta);
@@ -730,7 +736,7 @@ async function searchGuardaserie(meta, config) {
   const timer      = setTimeout(() => controller.abort(), GLOBAL_TIMEOUT_MS);
 
   try {
-    return await _searchGuardaserie(meta, config, season, episode, controller.signal);
+    return await _searchGuardaserie(meta, config, season, episode, controller.signal, reqHost);
   } catch (e) {
     gsDebug('provider failed', { error: e?.message || String(e) });
     return [];
@@ -784,7 +790,7 @@ async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal
   return out;
 }
 
-async function _searchGuardaserie(meta, config, season, episode, signal) {
+async function _searchGuardaserie(meta, config, season, episode, signal, reqHost = null) {
   const providerStartedAt = Date.now();
   gsDebug('provider start', { title: meta?.title || meta?.name, season, episode, budgetMs: GLOBAL_TIMEOUT_MS, shieldEndpoint: gsHttp.getEndpoint() });
   warmupGsClearanceInBackground('request');
@@ -928,21 +934,36 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
         userAgent:      sessionUA,
         requestReferer: getTargetDomain()
       });
-      if (!extracted?.url) return null;
+
+      if (!extracted?.url) {
+        const def = resolveExtractorDefinition(link);
+        return def ? buildLazyExtractorStream({
+          embedUrl:      link,
+          reqHost,
+          provider:      'GuardoSerie',
+          providerCode:  'GS',
+          title:         cleanTitle,
+          name:          def.label,
+          quality:       'Unknown',
+          referer:       getTargetDomain(),
+          extra:         { _priority: def.priority ?? 9 }
+        }) : null;
+      }
 
       let quality = normalizeQuality(extracted?.quality || 'Unknown');
+      let playlistIntel = null;
       if (/\.m3u8($|\?)/i.test(String(extracted.url))) {
         try {
-          const probed = await probePlaylistQuality(lightClient, extracted.url, {
+          playlistIntel = await probePlaylistIntelligence(lightClient, extracted.url, {
             headers: extracted.headers || {},
             timeout: 5000,
             signal
           });
-          quality = pickBetterQuality(probed || 'Unknown', quality);
+          quality = pickBetterQuality(playlistIntel?.quality || 'Unknown', quality);
         } catch (_) {}
       }
 
-      return buildWebStream({
+      let stream = buildWebStream({
         name:         `GuardoSerie | ${extracted.name}`,
         title:        `${cleanTitle}\n ${extracted.name}  ITA`,
         url:          extracted.url,
@@ -953,10 +974,24 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
         headers:      extracted.headers,
         extra:        { _priority: extracted.priority ?? 9 }
       });
-    } catch (_) { return null; }
+      stream = decorateStreamWithPlaylistIntelligence(stream, playlistIntel);
+      return stream;
+    } catch (_) {
+      const def = resolveExtractorDefinition(link);
+      return def ? buildLazyExtractorStream({
+        embedUrl:      link,
+        reqHost,
+        provider:      'GuardoSerie',
+        providerCode:  'GS',
+        title:         cleanTitle,
+        name:          def.label,
+        referer:       getTargetDomain(),
+        extra:         { _priority: def.priority ?? 9 }
+      }) : null;
+    }
   });
 
-  return processedResults
+  return normalizeStreams(processedResults
     .filter(Boolean)
     .sort((a, b) => {
       const qDelta = qualityRank(b.quality) - qualityRank(a.quality);
@@ -970,7 +1005,20 @@ async function _searchGuardaserie(meta, config, season, episode, signal) {
       if (s.extra) delete s.extra._priority;
       delete s._priority;
       return s;
+    }), {
+      provider: 'guardoserie',
+      providerLabel: 'GuardoSerie',
+      providerCode: 'GS',
+      sort: false,
+      debug: DEBUG_GS
     });
+}
+
+async function searchGuardaserie(meta, config, reqHost = null) {
+  return withProviderHealth('guardoserie', () => searchGuardaserieImpl(meta, config, reqHost), {
+    swallowErrors: true,
+    fallbackValue: []
+  });
 }
 
 module.exports = { searchGuardaserie, searchGuardoSerie: searchGuardaserie };

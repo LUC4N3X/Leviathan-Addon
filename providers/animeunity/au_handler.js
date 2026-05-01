@@ -4,6 +4,15 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
+const {
+    SingleFlight,
+    TtlLruCache,
+    cacheGet,
+    cacheGetStale,
+    cacheSet
+} = require('../utils/provider_runtime');
+const { withProviderHealth } = require('../utils/provider_health');
+const { normalizeStreams } = require('../utils/stream_normalizer');
 const kitsuProvider = require('../animeworld/kitsu_provider');
 const animeIdentity = require('../anime/anime_identity');
 const animeProviderUtils = require('../anime/provider_utils');
@@ -43,46 +52,6 @@ const http = axios.create({
     proxy: false
 });
 
-class TtlLruCache {
-    constructor({ max = 500, ttlMs = 60 * 1000, staleTtlMs = 0 } = {}) {
-        this.max = Math.max(1, Number(max) || 500);
-        this.ttlMs = Math.max(1, Number(ttlMs) || 60 * 1000);
-        this.staleTtlMs = Math.max(this.ttlMs, Number(staleTtlMs || ttlMs) || this.ttlMs);
-        this.map = new Map();
-    }
-
-    get(key, { allowStale = false } = {}) {
-        const entry = this.map.get(key);
-        if (!entry) return undefined;
-        const ts = now();
-        if (entry.staleAt <= ts) {
-            this.map.delete(key);
-            return undefined;
-        }
-        if (entry.expiresAt <= ts && !allowStale) return undefined;
-        this.map.delete(key);
-        this.map.set(key, entry);
-        return entry.value;
-    }
-
-    set(key, value, ttlMs = this.ttlMs, staleTtlMs = this.staleTtlMs) {
-        const ts = now();
-        const ttl = Math.max(1, Number(ttlMs) || this.ttlMs);
-        const stale = Math.max(ttl, Number(staleTtlMs || this.staleTtlMs) || this.staleTtlMs);
-        if (this.map.has(key)) this.map.delete(key);
-        this.map.set(key, { value, expiresAt: ts + ttl, staleAt: ts + stale });
-        while (this.map.size > this.max) {
-            const oldest = this.map.keys().next().value;
-            this.map.delete(oldest);
-        }
-        return value;
-    }
-
-    delete(key) {
-        return this.map.delete(key);
-    }
-}
-
 const cache = {
     session: new TtlLruCache({ max: 4, ttlMs: SESSION_TTL_MS, staleTtlMs: 2 * SESSION_TTL_MS }),
     search: new TtlLruCache({ max: 800, ttlMs: SEARCH_TTL_MS, staleTtlMs: SEARCH_STALE_TTL_MS }),
@@ -91,7 +60,7 @@ const cache = {
     embed: new TtlLruCache({ max: 3000, ttlMs: EPISODE_TTL_MS, staleTtlMs: EPISODE_STALE_TTL_MS }),
     manifest: new TtlLruCache({ max: 1000, ttlMs: MANIFEST_TTL_MS, staleTtlMs: MANIFEST_STALE_TTL_MS }),
     fhdProbe: new TtlLruCache({ max: 1000, ttlMs: FHD_PROBE_TTL_MS, staleTtlMs: FHD_PROBE_STALE_TTL_MS }),
-    inflight: new Map()
+    inflight: new SingleFlight('animeunity')
 };
 
 const TITLE_FIXES = new Map([
@@ -110,30 +79,12 @@ function now() {
     return Date.now();
 }
 
-function getCached(store, key, options = {}) {
-    if (!store || typeof store.get !== 'function') return undefined;
-    return store.get(key, options);
-}
-
-function getStaleCached(store, key) {
-    return getCached(store, key, { allowStale: true });
-}
-
-function setCached(store, key, value, ttlMs, staleTtlMs) {
-    if (!store || typeof store.set !== 'function') return value;
-    return store.set(key, value, ttlMs, staleTtlMs);
-}
+const getCached = cacheGet;
+const getStaleCached = cacheGetStale;
+const setCached = cacheSet;
 
 async function singleFlight(key, worker) {
-    const running = cache.inflight.get(key);
-    if (running) return running;
-    const task = (async () => worker())();
-    cache.inflight.set(key, task);
-    try {
-        return await task;
-    } finally {
-        cache.inflight.delete(key);
-    }
+    return cache.inflight.do(key, worker);
 }
 
 function decodeHtml(value) {
@@ -1454,7 +1405,7 @@ function dedupeStreams(streams = []) {
     });
 }
 
-async function searchAnimeUnity(requestId, meta = {}, config = {}, reqHost = null) {
+async function searchAnimeUnityImpl(requestId, meta = {}, config = {}, reqHost = null) {
     const filters = config?.filters || {};
     if (Object.prototype.hasOwnProperty.call(filters, 'enableAnimeUnity') && filters.enableAnimeUnity === false) return [];
     const options = getAnimeUnityOptions(config);
@@ -1495,13 +1446,29 @@ async function searchAnimeUnity(requestId, meta = {}, config = {}, reqHost = nul
         if (!options.preferDubbed) modes.reverse();
 
         const settled = await Promise.allSettled(modes.map((mode) => resolveMode(mode, context, config, reqHost)));
-        const streams = dedupeStreams(settled.flatMap((result) => result.status === 'fulfilled' ? result.value : []));
+        const streams = normalizeStreams(
+            dedupeStreams(settled.flatMap((result) => result.status === 'fulfilled' ? result.value : [])),
+            {
+                provider: 'animeunity',
+                providerLabel: PROVIDER_NAME,
+                providerCode: PROVIDER_CODE,
+                sort: false,
+                debug: process.env.ANIMEUNITY_DEBUG === '1'
+            }
+        );
         console.log(`[AnimeUnity] done | streams=${streams.length}`);
         return streams;
     } catch (error) {
         console.error(`[AnimeUnity] error: ${error.message}`);
         return [];
     }
+}
+
+async function searchAnimeUnity(requestId, meta = {}, config = {}, reqHost = null) {
+    return withProviderHealth('animeunity', () => searchAnimeUnityImpl(requestId, meta, config, reqHost), {
+        swallowErrors: true,
+        fallbackValue: []
+    });
 }
 
 module.exports = { searchAnimeUnity };

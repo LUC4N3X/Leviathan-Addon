@@ -86,7 +86,7 @@ const WEB_PROVIDER_DEFINITIONS = [
         limiterKey: 'webGhd',
         minTimeout: 7000,
         isEnabled: ({ filters }) => filters?.enableGhd === true,
-        run: ({ meta, config }) => searchGuardaHD(meta, config)
+        run: ({ meta, config, reqHost }) => searchGuardaHD(meta, config, reqHost)
     },
     {
         key: 'guardaSerie',
@@ -98,7 +98,7 @@ const WEB_PROVIDER_DEFINITIONS = [
         emptyTtl: GUARDO_SERIE_EMPTY_TTL,
         errorTtl: GUARDO_SERIE_ERROR_TTL,
         isEnabled: ({ filters }) => filters?.enableGs === true,
-        run: ({ meta, config }) => searchGuardoSerie(meta, config)
+        run: ({ meta, config, reqHost }) => searchGuardoSerie(meta, config, reqHost)
     },
     {
         key: 'animeWorld',
@@ -140,7 +140,7 @@ const WEB_PROVIDER_DEFINITIONS = [
         limiterKey: 'webGf',
         minTimeout: 7000,
         isEnabled: ({ filters, meta }) => filters?.enableGf === true && !meta?.isSeries,
-        run: ({ meta, config }) => searchGuardaFlix(meta, config)
+        run: ({ meta, config, reqHost }) => searchGuardaFlix(meta, config, reqHost)
     }
 ];
 
