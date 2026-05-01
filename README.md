@@ -260,8 +260,7 @@ Il blocco viene completato da **Debrid Ghost Shell** per scenari proxy-based, **
 |:---:|:---:|:---:|:---:|:---:|
 | **Cloud** | Real-Debrid Saved Cloud | 👤 USER | `enableSavedCloud` + RD token | 🟢 |
 | **Cloud** | TorBox Saved Cloud | 👤 USER | `enableSavedCloud` + TorBox token | 🟢 |
-| **Nexus Bridge** | Torrentio Main | 🌍 GLB | Bridge esterno opzionale | 🟢 |
-| **Nexus Bridge** | Torrentio Mirror | 🇮🇹 ITA-aware | Mirror preferito quando ha hit ITA reali | 🟢 |
+| **Nexus Bridge** | Torrentio  | 🌍 GLB | Bridge esterno opzionale | 🟢 |
 | **Nexus Bridge** | MediaFusion | 🌍 RD-gated | `only_when_torrentio_zero_v3` | 🟢 |
 
 </div>
