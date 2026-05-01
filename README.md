@@ -1,30 +1,30 @@
 <div align="center">
 
-<br>
-
-<img src="https://i.ibb.co/MbmdvP6/file-0000000018387243a2da8535139f6423.png" alt="Leviathan" width="220" />
-
-<br>
+<img src="https://i.ibb.co/MbmdvP6/file-0000000018387243a2da8535139f6423.png" alt="Leviathan Logo" width="250" />
 
 # LEVIATHAN
 
-<img src="https://capsule-render.vercel.app/api?type=rect&color=0:060d18,50:00d8ff,100:060d18&height=1&section=header" width="60%" />
+### Italy-First Aggregation Protocol for Stremio
 
-**Italy-First Aggregation Protocol for Stremio**
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0b1220,50:00d8ff,100:0b1220&height=2&section=header" width="82%" />
+
+<p align="center">
+  <b>Leviathan</b> è un motore di aggregazione progettato per unire <b>torrent intelligence</b>, <b>web extraction</b>, <b>routing adattivo</b>, <b>Debrid cloud awareness</b> e <b>presentazione premium dei risultati</b> in un’unica pipeline costruita per Stremio.<br>
+  L’obiettivo non è soltanto trovare release: è restituire output <b>più puliti</b>, <b>più coerenti</b>, <b>più rapidi</b> e davvero <b>più leggibili</b>.
+</p>
 
 <br>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Node.js-20.19–24.x-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" />
-  <img src="https://img.shields.io/badge/Engine-v3.1-00eaff?style=for-the-badge&logoColor=white" />
-  <img src="https://img.shields.io/badge/Architecture-Hypermode-7c3aed?style=for-the-badge&logoColor=white" />
-  <img src="https://img.shields.io/badge/Status-Operational-2ee6a6?style=for-the-badge&logo=githubactions&logoColor=061018" />
+  <img src="https://img.shields.io/badge/Node.js-20.19--24.x-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" />
+  <img src="https://img.shields.io/badge/Architecture-Hypermode-7c3aed?style=for-the-badge&logo=dependabot&logoColor=white" />
+  <img src="https://img.shields.io/badge/Status-Operational-00eaff?style=for-the-badge&logo=githubactions&logoColor=081018" />
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/RealDebrid-Native-a8bfff?style=for-the-badge" />
   <img src="https://img.shields.io/badge/TorBox-Ready-7A4EE3?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Saved_Cloud-RD_+_TorBox-00E7FF?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Saved_Cloud-RD_%2B_TorBox-00E7FF?style=for-the-badge" />
   <img src="https://img.shields.io/badge/P2P-Direct_Swarm-ff0055?style=for-the-badge&logo=qbittorrent&logoColor=white" />
 </p>
 
@@ -34,7 +34,7 @@
   <img src="https://img.shields.io/badge/Hybrid-Delivery-00eaff?style=flat-square&labelColor=061018" />
   <img src="https://img.shields.io/badge/Shared_Cache-Volatility--Aware-00eaff?style=flat-square&labelColor=061018" />
   <img src="https://img.shields.io/badge/Cloud_Dedupe-Always_On-00eaff?style=flat-square&labelColor=061018" />
-  <img src="https://img.shields.io/badge/Language-ITA_|_ENG_|_Hybrid-00eaff?style=flat-square&labelColor=061018" />
+  <img src="https://img.shields.io/badge/Language-ITA_%7C_ENG_%7C_Hybrid-00eaff?style=flat-square&labelColor=061018" />
   <img src="https://img.shields.io/badge/Kitsu-Anime_Ready-00eaff?style=flat-square&labelColor=061018" />
   <img src="https://img.shields.io/badge/AnimeUnity-Enabled-00eaff?style=flat-square&labelColor=061018" />
   <img src="https://img.shields.io/badge/AnimeSaturn-Enabled-00eaff?style=flat-square&labelColor=061018" />
@@ -43,28 +43,28 @@
 <br>
 
 <a href="https://leviathanaddon.dpdns.org" target="_blank">
-  <img src="https://img.shields.io/badge/INSTALLA_LEVIATHAN-→-00E7FF?style=for-the-badge&labelColor=07111f&logo=stremio&logoColor=ffffff" />
+  <img alt="Installa Leviathan" src="https://img.shields.io/badge/INSTALLA-LEVIATHAN-00E7FF?style=for-the-badge&labelColor=07111f&color=00E7FF&logo=stremio&logoColor=ffffff" />
 </a>
 
-<br><br>
+<br>
 
-<sub>Instant setup · Public instance · Premium output layer · RD/TorBox Saved Cloud</sub>
+<p align="center">
+  <sub>Instant setup · Public instance · Premium output layer · RD/TorBox Saved Cloud</sub>
+</p>
 
-<br><br>
+<br>
 
 <table align="center">
 <tr>
 <td align="center"><b>ENGINE</b><br><code>v3.1</code></td>
 <td align="center"><b>MODE</b><br><code>HYBRID</code></td>
 <td align="center"><b>SCOPE</b><br><code>ITA-FIRST</code></td>
-<td align="center"><b>CLOUD</b><br><code>RD / TB</code></td>
+<td align="center"><b>CLOUD</b><br><code>RD/TB</code></td>
 <td align="center"><b>OUTPUT</b><br><code>PREMIUM</code></td>
 </tr>
 </table>
 
 </div>
-
-<br>
 
 ---
 
