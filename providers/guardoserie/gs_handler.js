@@ -26,7 +26,7 @@ const {
   HOSTER_ESCAPED_DIRECT_LINK_PATTERN,
   resolveExtractorDefinition
 } = require('../extractors/registry');
-const { isCanceledError, requestWithImpit } = require('../utils/bypass');
+const { isCanceledError, isCloudflareChallenge, requestWithImpitRotating } = require('../utils/bypass');
 const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
@@ -47,6 +47,17 @@ const GLOBAL_TIMEOUT_MS      = Math.min(
 );
 const SEARCH_QUERY_TIMEOUT_MS = Math.max(8000, parseInt(process.env.GS_SEARCH_TIMEOUT || '12000', 10) || 12000);
 const DIRECT_FETCH_TIMEOUT_MS = Math.max(2500, parseInt(process.env.GS_DIRECT_FETCH_TIMEOUT || '4200', 10) || 4200);
+const GS_IMPIT_MAX_ATTEMPTS = Math.max(2, Math.min(3, parseInt(process.env.GS_IMPIT_MAX_ATTEMPTS || process.env.GUARDOSERIE_IMPIT_MAX_ATTEMPTS || '3', 10) || 3));
+const GS_IMPIT_TOTAL_EXTRA_MS = Math.max(900, Math.min(2200, parseInt(process.env.GS_IMPIT_TOTAL_EXTRA_MS || process.env.GUARDOSERIE_IMPIT_TOTAL_EXTRA_MS || '1400', 10) || 1400));
+const GS_IMPIT_HTTP3 = envFlagNotFalse('GS_IMPIT_HTTP3', true) && envFlagNotFalse('GUARDOSERIE_IMPIT_HTTP3', true);
+const GS_IMPIT_BROWSER_FALLBACKS = Object.freeze(['chrome142', 'chrome136', 'chrome131', 'firefox144', 'firefox135', 'chrome125']);
+const GS_EXTRACTOR_DIRECT_TIMEOUT_MS = 3200;
+const GS_EXTRACTOR_IMPIT_TIMEOUT_MS = 1800;
+// Cold-start must not punish the first real Stremio request:
+// start the clearance prewarm immediately and let the request wait only a tiny window
+// for an already running solve. If it is not ready, the request continues normally.
+const GS_PREWARM_START_DELAY_MS = Math.max(0, Math.min(1500, parseInt(process.env.GS_PREWARM_START_DELAY_MS || '0', 10) || 0));
+const GS_PREWARM_WAIT_MS = Math.max(0, Math.min(3500, parseInt(process.env.GS_PREWARM_WAIT_MS || '2400', 10) || 2400));
 const FLARE_WARMUP_TIMEOUT_MS = Math.min(
   Math.max(12000, parseInt(process.env.GS_FLARE_WARMUP_TIMEOUT_MS || '24000', 10) || 24000),
   Math.max(15000, GLOBAL_TIMEOUT_MS - 12000)
@@ -95,11 +106,21 @@ const gsHttp = createProviderHttpGuard({
   clearanceForce: envFlag('GS_FLARE_FORCE_SOLVE', false) || envFlag('GUARDOSERIE_FLARE_FORCE_SOLVE', false),
   homepageFallback: envFlag('GS_FLARE_HOMEPAGE_FALLBACK', false) || envFlag('GUARDOSERIE_FLARE_HOMEPAGE_FALLBACK', false),
   clearanceCooldownMs: Math.max(3000, parseInt(process.env.GS_FLARE_CLEARANCE_COOLDOWN_MS || '8000', 10) || 8000),
-  flareEndpoint: process.env.FLARESOLVERR_URL
+  flareEndpoint: process.env.FLARESOLVERR_URL,
+  preferImpit: true,
+  impitTurbo: true,
+  impitMaxAttempts: GS_IMPIT_MAX_ATTEMPTS,
+  impitTotalExtraMs: GS_IMPIT_TOTAL_EXTRA_MS,
+  impitHttp3: GS_IMPIT_HTTP3,
+  impitSessionFastPath: true,
+  impitAfterSessionChallenge: true,
+  impitBrowserFallbacks: GS_IMPIT_BROWSER_FALLBACKS,
+  impitChallengeStatuses: [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]
 });
 
 const lightClient = gsHttp.lightClient;
 const smartFetch = (...args) => gsHttp.smartFetch(...args);
+gsInfo('Impit Shield Turbo active', gsHttp.getImpitShieldState?.());
 const refreshTargetDomain = (...args) => gsHttp.refreshTargetDomain(...args);
 const buildGsUrl = pathname => gsHttp.buildProviderUrl(pathname);
 const getTargetDomain = () => gsHttp.getCurrentBaseUrl();
@@ -109,44 +130,80 @@ const isAbortLikeError = error => gsHttp.isAbortLikeError(error);
 const gsExtractorClient = {
   async get(url, options = {}) {
     const headers = options.headers || {};
-    const timeout = options.timeout || DIRECT_FETCH_TIMEOUT_MS;
+    const rawTimeout = Number(options.timeout || DIRECT_FETCH_TIMEOUT_MS) || DIRECT_FETCH_TIMEOUT_MS;
+    const directTimeout = Math.max(1200, Math.min(rawTimeout, GS_EXTRACTOR_DIRECT_TIMEOUT_MS));
     const validateStatus = typeof options.validateStatus === 'function'
       ? options.validateStatus
       : status => status >= 200 && status < 400;
 
-    try {
-      const response = await requestWithImpit(url, {
-        method: 'GET',
-        headers,
-        timeout,
-        signal: options.signal,
-        responseType: options.responseType || 'text',
-        retry: { limit: 1 },
-        ignoreTlsErrors: true,
-        fingerprint: {
-          userAgent: headers['User-Agent'] || headers['user-agent'] || gsHttp.getSession()?.userAgent
-        }
-      });
+    const directOptions = {
+      ...options,
+      headers,
+      timeout: directTimeout,
+      responseType: options.responseType || 'text',
+      validateStatus: status => status >= 200 && status < 600
+    };
 
-      if (response && validateStatus(response.statusCode)) {
-        return {
-          data: response.data,
-          status: response.statusCode,
-          statusCode: response.statusCode,
-          headers: response.headers || {},
-          request: { res: { responseUrl: response.url || url } },
-          config: { url }
-        };
-      }
+    let directResponse = null;
+    let directError = null;
+    try {
+      directResponse = await lightClient.get(url, directOptions);
+      const directData = typeof directResponse.data === 'string' ? directResponse.data : String(directResponse.data || '');
+      const isBlocked = isCloudflareChallenge(directData, directResponse.status) || [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(Number(directResponse.status));
+      if (validateStatus(directResponse.status) && !isBlocked) return directResponse;
+      gsDebug('extractor direct blocked', { url, status: directResponse.status, bytes: directData.length });
     } catch (error) {
       if (isAbortLikeError(error) && options.signal?.aborted) throw error;
-      gsDebug('extractor impit fallback', { url, error: error?.code || error?.message || String(error) });
+      directError = error;
+      gsDebug('extractor direct fallback', { url, error: error?.code || error?.message || String(error), timeout: directTimeout });
     }
 
-    return lightClient.get(url, options);
+    const directStatus = Number(directResponse?.status || directError?.response?.status || 0);
+    const allowImpitFallback = !directError || ['ERR_BAD_REQUEST', 'ERR_BAD_RESPONSE'].includes(String(directError?.code || '')) || [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(directStatus);
+
+    if (allowImpitFallback) {
+      try {
+        const impitTimeout = Math.max(1000, Math.min(rawTimeout, GS_EXTRACTOR_IMPIT_TIMEOUT_MS));
+        const response = await requestWithImpitRotating(url, {
+          method: 'GET',
+          headers,
+          timeout: impitTimeout,
+          signal: options.signal,
+          responseType: options.responseType || 'text',
+          innerRetry: { limit: 0 },
+          maxBrowserAttempts: 1,
+          totalTimeoutMs: impitTimeout + 250,
+          retryOnStatuses: [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524],
+          retryOnChallenge: true,
+          http3: GS_IMPIT_HTTP3,
+          browserFallbacks: GS_IMPIT_BROWSER_FALLBACKS,
+          ignoreTlsErrors: true,
+          fingerprint: {
+            userAgent: headers['User-Agent'] || headers['user-agent'] || gsHttp.getSession()?.userAgent
+          }
+        });
+
+        if (response && validateStatus(response.statusCode)) {
+          return {
+            data: response.data,
+            status: response.statusCode,
+            statusCode: response.statusCode,
+            headers: response.headers || {},
+            request: { res: { responseUrl: response.url || url } },
+            config: { url }
+          };
+        }
+      } catch (error) {
+        if (isAbortLikeError(error) && options.signal?.aborted) throw error;
+        gsDebug('extractor impit rescue failed', { url, error: error?.code || error?.message || String(error), timeout: GS_EXTRACTOR_IMPIT_TIMEOUT_MS });
+      }
+    }
+
+    if (directResponse && validateStatus(directResponse.status)) return directResponse;
+    if (directError) throw directError;
+    return directResponse || lightClient.get(url, options);
   }
 };
-
 let gsClearanceWarmupPromise = null;
 
 function warmupGsClearanceInBackground(reason = 'startup') {
@@ -174,10 +231,38 @@ function warmupGsClearanceInBackground(reason = 'startup') {
   return gsClearanceWarmupPromise;
 }
 
-function scheduleGsClearanceWarmup(reason = 'startup') {
+async function waitForGsClearancePrewarm(reason = 'request') {
+  if (gsHttp.isSessionFresh() || !gsHttp.getEndpoint() || GS_PREWARM_WAIT_MS <= 0) {
+    return gsHttp.isSessionFresh();
+  }
+
+  const startedAt = Date.now();
+  const warmup = warmupGsClearanceInBackground(reason);
+  if (!warmup) return gsHttp.isSessionFresh();
+
+  let timer = null;
+  const timeout = new Promise(resolve => {
+    timer = setTimeout(() => resolve('__timeout__'), GS_PREWARM_WAIT_MS);
+    if (timer?.unref) timer.unref();
+  });
+
+  const result = await Promise.race([warmup, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+
+  const fresh = gsHttp.isSessionFresh();
+  if (result === '__timeout__') {
+    gsDebug('prewarm wait timeout', { reason, freshSession: fresh, waitMs: GS_PREWARM_WAIT_MS, ms: Date.now() - startedAt });
+  } else {
+    gsDebug('prewarm wait done', { reason, ok: Boolean(result), freshSession: fresh, ms: Date.now() - startedAt });
+  }
+  return fresh;
+}
+
+function scheduleGsClearanceWarmup(reason = 'startup', delayMs = GS_PREWARM_START_DELAY_MS) {
   const timer = setTimeout(() => {
     warmupGsClearanceInBackground(reason);
-  }, 250);
+  }, Math.max(0, Number(delayMs) || 0));
   if (timer?.unref) timer.unref();
 }
 
@@ -834,9 +919,9 @@ async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal
 async function _searchGuardaserie(meta, config, season, episode, signal, reqHost = null) {
   const providerStartedAt = Date.now();
   gsDebug('provider start', { title: meta?.title || meta?.name, season, episode, budgetMs: GLOBAL_TIMEOUT_MS, shieldEndpoint: gsHttp.getEndpoint() });
-  warmupGsClearanceInBackground('request');
   await refreshTargetDomain(signal);
-  gsDebug('domain ready', { base: getTargetDomain(), ms: Date.now() - providerStartedAt, probed: gsHttp.isDomainProbeEnabled() });
+  await waitForGsClearancePrewarm('request');
+  gsDebug('domain ready', { base: getTargetDomain(), sessionFresh: gsHttp.isSessionFresh(), ms: Date.now() - providerStartedAt, probed: gsHttp.isDomainProbeEnabled() });
   if (signal?.aborted) return [];
 
   const strictKitsuContext = await buildStrictKitsuAnimeContext(meta, config, season, episode);
@@ -1070,3 +1155,4 @@ async function searchGuardaserie(meta, config, reqHost = null) {
 }
 
 module.exports = { searchGuardaserie, searchGuardoSerie: searchGuardaserie };
+
