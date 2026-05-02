@@ -9,7 +9,8 @@ const {
   getImpitBrowserForFingerprint,
   isCanceledError: defaultIsCanceledError,
   isCloudflareChallenge,
-  requestWithImpit
+  requestWithImpit,
+  requestWithImpitRotating
 } = require('./bypass');
 const { createCfClearanceManager, normalizeBaseUrl, mergeCookieHeaders } = require('./cf_clearance_manager');
 
@@ -124,6 +125,16 @@ function createProviderHttpGuard(options = {}) {
   const targetFallbackAfterOrigin = Boolean(options.targetFallbackAfterOrigin);
   const homepageFallback = Boolean(options.homepageFallback);
   const preferImpit = options.preferImpit !== false;
+  const impitTurbo = options.impitTurbo !== false;
+  const impitMaxAttempts = Math.max(1, Math.min(4, Number(options.impitMaxAttempts || 2) || 2));
+  const impitTotalExtraMs = Math.max(250, Math.min(2500, Number(options.impitTotalExtraMs || 1400) || 1400));
+  const impitBrowserFallbacks = Array.isArray(options.impitBrowserFallbacks) ? options.impitBrowserFallbacks : null;
+  const impitChallengeStatuses = Array.isArray(options.impitChallengeStatuses) && options.impitChallengeStatuses.length
+    ? options.impitChallengeStatuses
+    : [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524];
+  const impitHttp3 = options.impitHttp3 === true;
+  const impitSessionFastPath = options.impitSessionFastPath !== false;
+  const impitAfterSessionChallenge = options.impitAfterSessionChallenge !== false;
 
   function loadStoredDomain() {
     try {
@@ -364,11 +375,11 @@ function createProviderHttpGuard(options = {}) {
     return headers;
   }
 
-  async function axiosSiteRequest(url, { method = 'GET', body = null, headers = {}, timeout = directFetchTimeoutMs, signal = null, maxRedirects = 6, browserProfile = null } = {}) {
+  async function axiosSiteRequest(url, { method = 'GET', body = null, headers = {}, timeout = directFetchTimeoutMs, signal = null, maxRedirects = 6, browserProfile = null, useImpit = preferImpit, impitAttempts = null, impitTotalExtra = null } = {}) {
     const startedAt = Date.now();
-    if (preferImpit) {
+    if (useImpit && preferImpit) {
       try {
-        const response = await requestWithImpit({
+        const baseImpitOptions = {
           url,
           method,
           body: method === 'POST' ? body : null,
@@ -378,18 +389,39 @@ function createProviderHttpGuard(options = {}) {
           maxRedirects,
           followRedirect: maxRedirects !== 0,
           responseType: 'text',
+          fingerprint: browserProfile || activeSession,
           browser: getImpitBrowserForFingerprint(browserProfile || activeSession),
+          browserFallbacks: impitBrowserFallbacks,
+          maxBrowserAttempts: Math.max(1, Math.min(4, Number(impitAttempts || (method === 'GET' ? impitMaxAttempts : Math.min(2, impitMaxAttempts))) || 1)),
+          totalTimeoutMs: Math.max(timeout, Math.min(timeout + (impitTotalExtra == null ? impitTotalExtraMs : Number(impitTotalExtra) || 0), timeout * 2)),
+          retryOnStatuses: impitChallengeStatuses,
+          retryOnChallenge: true,
+          http3: impitHttp3,
+          forceHttp3: false,
           ignoreTlsErrors: options.ignoreTlsErrors === true
-        });
-
-        return {
-          status: response.statusCode,
-          headers: response.headers || {},
-          data: typeof response.body === 'string' ? response.body : String(response.body || ''),
-          url: response.url || url,
-          ms: Date.now() - startedAt,
-          via: 'impit'
         };
+        const response = impitTurbo
+          ? await requestWithImpitRotating(baseImpitOptions)
+          : await requestWithImpit(baseImpitOptions);
+
+        if (response) {
+          logger.debug('impit fetch result', {
+            method,
+            url,
+            status: response.statusCode,
+            browser: response.impitBrowser,
+            attempts: response.impitAttempts || 1,
+            ms: Date.now() - startedAt
+          });
+          return {
+            status: response.statusCode,
+            headers: response.headers || {},
+            data: typeof response.body === 'string' ? response.body : String(response.body || ''),
+            url: response.url || url,
+            ms: Date.now() - startedAt,
+            via: response.impitAttempts > 1 ? `impit:${response.impitBrowser}:${response.impitAttempts}` : 'impit'
+          };
+        }
       } catch (error) {
         if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
         logger.debug('impit fetch error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
@@ -449,19 +481,49 @@ function createProviderHttpGuard(options = {}) {
       headers: buildHeaders({ session: activeSession, method, body }),
       timeout: Math.max(timeout, 4500),
       signal,
-      browserProfile: activeSession
+      browserProfile: activeSession,
+      useImpit: !impitSessionFastPath,
+      impitAttempts: 1,
+      impitTotalExtra: 350
     });
 
     updateCurrentDomainFromUrl(response.url);
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
     if (isChallengePage(html, response.status)) {
-      logger.debug('session fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, ms: Date.now() - startedAt });
+      logger.debug('session fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, via: response.via, ms: Date.now() - startedAt });
+
+      if (impitSessionFastPath && impitAfterSessionChallenge) {
+        try {
+          const impitResponse = await axiosSiteRequest(url, {
+            method,
+            body: method === 'POST' ? body : null,
+            headers: buildHeaders({ session: activeSession, method, body }),
+            timeout: Math.max(1800, Math.min(timeout, 2600)),
+            signal,
+            browserProfile: activeSession,
+            useImpit: true,
+            impitAttempts: 1,
+            impitTotalExtra: 250
+          });
+          updateCurrentDomainFromUrl(impitResponse.url);
+          const impitHtml = typeof impitResponse.data === 'string' ? impitResponse.data : String(impitResponse.data || '');
+          if (!isChallengePage(impitHtml, impitResponse.status)) {
+            persistSession(activeSession, impitResponse.url, impitResponse.headers?.['set-cookie']);
+            logger.debug('session impit rescue ok', { method, url, status: impitResponse.status, bytes: impitHtml.length, via: impitResponse.via, ms: Date.now() - startedAt });
+            return impitHtml;
+          }
+        } catch (error) {
+          if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
+          logger.debug('session impit rescue error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
+        }
+      }
+
       clearSession();
       return null;
     }
 
     persistSession(activeSession, response.url, response.headers?.['set-cookie']);
-    logger.debug('session fetch ok', { method, url, status: response.status, bytes: html.length, ms: Date.now() - startedAt });
+    logger.debug('session fetch ok', { method, url, status: response.status, bytes: html.length, via: response.via, ms: Date.now() - startedAt });
     return html;
   }
 
@@ -474,7 +536,10 @@ function createProviderHttpGuard(options = {}) {
       headers: buildHeaders({ method, body, directProfile: profile }),
       timeout,
       signal,
-      browserProfile: profile
+      browserProfile: profile,
+      // This is the real fast path: a cheap direct probe first when FlareSolverr can
+      // prewarm cookies. If no Flare endpoint exists, keep Impit as the standalone bypass.
+      useImpit: !clearanceManager.endpoint
     });
 
     updateCurrentDomainFromUrl(response.url);
@@ -559,7 +624,7 @@ function createProviderHttpGuard(options = {}) {
     try {
       const html = await fetchWithSession(url, { method, body, signal, timeout: hardFetchTimeout, startedAt });
       if (html) {
-        logger.info('post-clearance fetch ok', { method, url, transport: 'axios', ms: Date.now() - startedAt });
+        logger.info('post-clearance fetch ok', { method, url, transport: 'session-fastpath', sessionFresh: isSessionFresh(), ms: Date.now() - startedAt });
         return html;
       }
     } catch (error) {
@@ -620,6 +685,13 @@ function createProviderHttpGuard(options = {}) {
     isAbortLikeError: error => isAbortLikeError(error, isCanceledError),
     getEndpoint: () => clearanceManager.endpoint,
     isDomainProbeEnabled: () => refreshDomainOnStart,
+    getImpitShieldState: () => ({
+      enabled: preferImpit,
+      turbo: impitTurbo,
+      maxAttempts: impitMaxAttempts,
+      http3: impitHttp3,
+      sessionFastPath: impitSessionFastPath
+    }),
     directFetchTimeoutMs,
     searchTimeoutMs,
     clearanceTimeoutMs,
