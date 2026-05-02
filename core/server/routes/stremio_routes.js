@@ -250,10 +250,20 @@ function registerStremioRoutes(app, {
     streamInflight,
     Cache
 }) {
-    app.get('/', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
-    app.get('/:conf/configure', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
-    app.get('/configure', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));
-    app.get('/rd-scanner', (req, res) => res.sendFile(path.join(publicDir, 'rd-scanner.html')));
+    function sendConfigurePage(req, res) {
+        res.setHeader('Cache-Control', 'no-store, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        return res.sendFile(path.join(publicDir, 'index.html'));
+    }
+
+    app.get('/', sendConfigurePage);
+    app.get('/:conf/configure', sendConfigurePage);
+    app.get('/configure', sendConfigurePage);
+    app.get('/rd-scanner', (req, res) => {
+        res.setHeader('Cache-Control', 'no-store, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        return res.sendFile(path.join(publicDir, 'rd-scanner.html'));
+    });
 
     app.get('/manifest.json', (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
@@ -300,6 +310,14 @@ function registerStremioRoutes(app, {
     });
 
     app.get('/vixsynthetic.m3u8', handleVixSynthetic);
+
+    app.get('/:conf', (req, res, next) => {
+        const conf = String(req.params.conf || '').trim();
+        if (conf.length > 10 && !/^(?:api|admin|health|readyz|livez|metrics|manifest\.json|favicon\.ico|rd-scanner)$/i.test(conf)) {
+            return sendConfigurePage(req, res);
+        }
+        return next();
+    });
 
     app.get('/:conf/stream/:type/:id.json', async (req, res) => {
         try {
