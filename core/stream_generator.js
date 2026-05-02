@@ -1570,7 +1570,13 @@ async function guardedProviderCall(providerName, limiter, timeoutMs, factory, me
     }
 
     try {
-        const result = await limiter.schedule(() => withTimeout(Promise.resolve().then(factory), timeoutMs, providerName));
+        const safeLimiter = limiter && typeof limiter.schedule === 'function'
+            ? limiter
+            : { schedule: (task) => Promise.resolve().then(task) };
+        if (!limiter || typeof limiter.schedule !== 'function') {
+            logger.warn(`[${providerName}] limiter missing, using inline fallback`);
+        }
+        const result = await safeLimiter.schedule(() => withTimeout(Promise.resolve().then(factory), timeoutMs, providerName));
         const duration = Date.now() - startedAt;
         const normalized = Array.isArray(result) ? result : (result ? [result] : []);
         const exactHit = meta?.meta?.isSeries
@@ -3171,3 +3177,4 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 }
 
 module.exports = { generateStream, getMetadata, resolveDebridLink, resolveLazyStreamData, RD, TB };
+
