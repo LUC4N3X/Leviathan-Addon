@@ -28,6 +28,7 @@ try {
 const { LEGACY_BROWSER_PROFILES } = require('../browser_profiles');
 let logger; try { ({ logger } = require('../utils/runtime')); } catch { logger = console; }
 const { EXTERNAL_ADDONS, getAddon } = require('./addons');
+const { getImpitBrowserForFingerprint, requestWithImpit } = require('../../providers/utils/bypass');
 
 const DEBUG_MODE = process.env.DEBUG_MODE === 'true';
 
@@ -712,29 +713,18 @@ async function fetchConfiguredExternalAddon(addonKey, type, id, options = {}) {
             const jitter = computeJitter(addonKey);
             await new Promise((resolve) => setTimeout(resolve, jitter));
 
-            const { gotScraping } = await import('got-scraping');
             const profile = pickBrowserProfile(addonKey, String(id));
             const headers = buildBrowserHeaders(profile, url);
 
             debugLog(`🕵️ [${addon.name}] Profile: ${profile.name}, jitter: ${jitter}ms`);
 
-            const response = await gotScraping({
+            const response = await requestWithImpit({
                 url,
                 method: 'GET',
                 headers,
-                timeout: { request: addon.timeout },
-                retry: { limit: 0 },
-                headerGeneratorOptions: {
-                    browsers: [{ name: profile.name.startsWith('firefox') ? 'firefox' : profile.name.startsWith('safari') ? 'safari' : 'chrome' }],
-                    devices: [profile.name.includes('android') || profile.name.includes('ios') ? 'mobile' : 'desktop'],
-                    locales: ['it-IT', 'en-US'],
-                    operatingSystems: [
-                        profile.name.includes('windows') ? 'windows' :
-                        profile.name.includes('android') ? 'android' :
-                        'macos'
-                    ]
-                },
-                decompress: true
+                timeout: addon.timeout,
+                browser: getImpitBrowserForFingerprint(profile),
+                responseType: 'text'
             });
 
             let data;
