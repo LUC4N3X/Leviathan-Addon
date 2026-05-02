@@ -55,8 +55,20 @@ const DEFAULT_CIRCUIT_BREAKER_RESET_MS = 90 * 1000;
 const DEFAULT_CIRCUIT_BREAKER_FAILURES = 5;
 const DEFAULT_SINGLE_FLIGHT_TTL_MS = 0;
 const DEFAULT_RETRY_DELAYS_MS = Object.freeze([300, 700, 1500]);
+const DEFAULT_IMPIT_BROWSER_STICKY_TTL_MS = 45 * 60 * 1000;
+const DEFAULT_IMPIT_ROTATION_STATUSES = Object.freeze([403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
+const DEFAULT_IMPIT_BROWSER_FALLBACKS = Object.freeze([
+    'chrome142',
+    'chrome136',
+    'chrome131',
+    'firefox144',
+    'firefox135',
+    'chrome125',
+    'okhttp4'
+]);
 
 const stickyFingerprintCache = new Map();
+const impitGoodBrowserCache = new Map();
 
 function now() {
     return Date.now();
@@ -125,6 +137,39 @@ function getStickyFingerprintForUrl(url, ttlMs = DEFAULT_STICKY_FINGERPRINT_TTL_
         expiresAt: now() + Math.max(1000, Number(ttlMs) || DEFAULT_STICKY_FINGERPRINT_TTL_MS)
     });
     return fingerprint;
+}
+
+function rememberGoodImpitBrowser(url, browser, ttlMs = DEFAULT_IMPIT_BROWSER_STICKY_TTL_MS) {
+    const host = getHost(url);
+    const selectedBrowser = safeString(browser).trim();
+    if (!host || !selectedBrowser) return false;
+    impitGoodBrowserCache.set(host, {
+        browser: selectedBrowser,
+        expiresAt: now() + Math.max(10_000, Number(ttlMs) || DEFAULT_IMPIT_BROWSER_STICKY_TTL_MS)
+    });
+    return true;
+}
+
+function getGoodImpitBrowser(url) {
+    const host = getHost(url);
+    if (!host) return null;
+    const cached = impitGoodBrowserCache.get(host);
+    if (!cached) return null;
+    if (cached.expiresAt <= now()) {
+        impitGoodBrowserCache.delete(host);
+        return null;
+    }
+    return cached.browser || null;
+}
+
+function clearGoodImpitBrowser(url = null) {
+    if (!url) {
+        impitGoodBrowserCache.clear();
+        return true;
+    }
+    const host = getHost(url);
+    if (!host) return false;
+    return impitGoodBrowserCache.delete(host);
 }
 
 function clearStickyFingerprints(url = null) {
@@ -268,6 +313,80 @@ function getImpitBrowserForFingerprint(fp = null) {
     return pickNearestImpitBrowser('chrome', chromeVersion, 'chrome136');
 }
 
+function normalizeBrowserList(list = []) {
+    const out = [];
+    for (const item of Array.isArray(list) ? list : [list]) {
+        const browser = safeString(item).trim();
+        if (browser && !out.includes(browser)) out.push(browser);
+    }
+    return out;
+}
+
+function getImpitBrowserCandidatesForFingerprint(fp = null, options = {}) {
+    const url = options.url || options.hostBiasUrl || null;
+    const explicit = normalizeBrowserList(options.browser || options.preferredBrowser);
+    const sticky = normalizeBrowserList(getGoodImpitBrowser(url));
+    const inferred = normalizeBrowserList(getImpitBrowserForFingerprint(fp));
+    const custom = normalizeBrowserList(options.browserFallbacks || options.fallbackBrowsers || []);
+    const defaults = normalizeBrowserList(DEFAULT_IMPIT_BROWSER_FALLBACKS);
+
+    return normalizeBrowserList([
+        ...explicit,
+        ...sticky,
+        ...inferred,
+        ...custom,
+        ...defaults
+    ]);
+}
+
+function deleteHeaderCaseInsensitive(headers, name) {
+    const target = safeString(name).toLowerCase();
+    for (const key of Object.keys(headers || {})) {
+        if (safeString(key).toLowerCase() === target) delete headers[key];
+    }
+}
+
+function setHeaderCaseInsensitive(headers, name, value) {
+    deleteHeaderCaseInsensitive(headers, name);
+    if (value !== undefined && value !== null && value !== '') headers[name] = value;
+}
+
+function alignHeadersForImpitBrowser(headers = {}, browser = '') {
+    const selected = safeString(browser).toLowerCase();
+    const out = { ...(headers || {}) };
+    const version = Number.parseInt(selected.match(/(\d+)/)?.[1] || '', 10);
+
+    if (selected.startsWith('firefox')) {
+        const major = Number.isInteger(version) ? version : 135;
+        setHeaderCaseInsensitive(out, 'User-Agent', `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:${major}.0) Gecko/20100101 Firefox/${major}.0`);
+        deleteHeaderCaseInsensitive(out, 'sec-ch-ua');
+        deleteHeaderCaseInsensitive(out, 'sec-ch-ua-mobile');
+        deleteHeaderCaseInsensitive(out, 'sec-ch-ua-platform');
+        setHeaderCaseInsensitive(out, 'TE', 'trailers');
+        return compactHeaderObject(out);
+    }
+
+    if (selected.startsWith('chrome')) {
+        const major = Number.isInteger(version) ? version : 136;
+        setHeaderCaseInsensitive(out, 'User-Agent', `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`);
+        setHeaderCaseInsensitive(out, 'sec-ch-ua', `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not-A.Brand";v="99"`);
+        setHeaderCaseInsensitive(out, 'sec-ch-ua-mobile', '?0');
+        setHeaderCaseInsensitive(out, 'sec-ch-ua-platform', '"Windows"');
+        deleteHeaderCaseInsensitive(out, 'TE');
+        return compactHeaderObject(out);
+    }
+
+    if (selected.startsWith('okhttp')) {
+        const major = Number.isInteger(version) ? version : 4;
+        setHeaderCaseInsensitive(out, 'User-Agent', `okhttp/${major}.12.0`);
+        deleteHeaderCaseInsensitive(out, 'sec-ch-ua');
+        deleteHeaderCaseInsensitive(out, 'sec-ch-ua-mobile');
+        deleteHeaderCaseInsensitive(out, 'sec-ch-ua-platform');
+    }
+
+    return compactHeaderObject(out);
+}
+
 function headersToPlainObject(headers = {}) {
     const out = {};
     if (!headers) return out;
@@ -363,8 +482,9 @@ async function requestWithImpit(input, config = {}) {
 
     const timeout = resolveImpitTimeout(options.timeout);
     const method = safeString(options.method || 'GET').toUpperCase() || 'GET';
+    const selectedBrowser = options.browser || getImpitBrowserForFingerprint(options.fingerprint || options.fp);
     const client = await getImpitClient({
-        browser: options.browser || getImpitBrowserForFingerprint(options.fingerprint || options.fp),
+        browser: selectedBrowser,
         ignoreTlsErrors: options.ignoreTlsErrors ?? options.https?.rejectUnauthorized === false,
         vanillaFallback: options.vanillaFallback,
         followRedirects: options.followRedirect !== false,
@@ -409,7 +529,8 @@ async function requestWithImpit(input, config = {}) {
                 statusMessage: response.statusText,
                 headers: headersToPlainObject(response.headers),
                 url: response.url || String(url),
-                ok: response.ok
+                ok: response.ok,
+                impitBrowser: selectedBrowser
             };
         } catch (error) {
             lastError = error;
@@ -419,6 +540,84 @@ async function requestWithImpit(input, config = {}) {
     }
 
     throw lastError;
+}
+
+function shouldRotateImpitResponse(response, options = {}) {
+    if (!response) return true;
+    const status = Number(response.statusCode || response.status || 0);
+    const rotateStatuses = new Set(Array.isArray(options.retryOnStatuses) && options.retryOnStatuses.length
+        ? options.retryOnStatuses.map(Number)
+        : DEFAULT_IMPIT_ROTATION_STATUSES);
+    const classification = classifyBlockResponse(response.body ?? response.data, status, response.headers || {});
+
+    if (classification.blocked && classification.retryable) return true;
+    if (options.retryOnChallenge !== false && isCloudflareChallenge(response.body ?? response.data, status)) return true;
+    return rotateStatuses.has(status);
+}
+
+async function requestWithImpitRotating(input, config = {}) {
+    const options = typeof input === 'string' || input instanceof URL
+        ? { ...config, url: String(input) }
+        : { ...(input || {}), ...config };
+    const url = options.url || options.href;
+    if (!url) throw new Error('Impit request missing url');
+
+    const candidates = getImpitBrowserCandidatesForFingerprint(options.fingerprint || options.fp, {
+        url,
+        browser: options.browser,
+        browserFallbacks: options.browserFallbacks || options.fallbackBrowsers
+    });
+    const maxBrowserAttempts = Math.max(1, Math.min(
+        Number(options.maxBrowserAttempts || options.impitMaxAttempts || 1) || 1,
+        candidates.length
+    ));
+    const startedAt = now();
+    const baseTimeout = resolveImpitTimeout(options.timeout);
+    const totalTimeout = Math.max(0, Number(options.totalTimeoutMs || options.impitTotalTimeoutMs || 0) || 0);
+    const browserStickyTtlMs = Number(options.browserStickyTtlMs || DEFAULT_IMPIT_BROWSER_STICKY_TTL_MS);
+
+    let lastError = null;
+    let lastResponse = null;
+    let attempts = 0;
+
+    for (const browser of candidates.slice(0, maxBrowserAttempts)) {
+        if (options.signal?.aborted) break;
+        if (totalTimeout) {
+            const remainingMs = totalTimeout - (now() - startedAt);
+            if (remainingMs < 900) break;
+            options.timeout = baseTimeout ? Math.max(900, Math.min(baseTimeout, remainingMs - 75)) : Math.max(900, remainingMs - 75);
+        }
+
+        attempts += 1;
+        try {
+            const response = await requestWithImpit({
+                ...options,
+                browser,
+                headers: alignHeadersForImpitBrowser(options.headers || {}, browser),
+                retry: options.innerRetry || { limit: 0 },
+                retries: 0
+            });
+            if (!response) continue;
+
+            response.impitBrowser = browser;
+            response.impitAttempts = attempts;
+            lastResponse = response;
+
+            const rotateResponse = shouldRotateImpitResponse(response, options);
+            if (!rotateResponse || attempts >= maxBrowserAttempts) {
+                if (!rotateResponse) rememberGoodImpitBrowser(response.url || url, browser, browserStickyTtlMs);
+                return response;
+            }
+        } catch (error) {
+            lastError = error;
+            if (isCanceledError(error) || options.signal?.aborted) throw error;
+            if (attempts >= maxBrowserAttempts && !isRetryableError(error)) throw error;
+        }
+    }
+
+    if (lastResponse) return lastResponse;
+    if (lastError) throw lastError;
+    return null;
 }
 
 function responseText(data) {
@@ -777,9 +976,13 @@ module.exports = {
 
     buildContextHeaders,
     classifyBlockResponse,
+    clearGoodImpitBrowser,
     clearStickyFingerprints,
     createCircuitBreaker,
     createSingleFlight,
+    getGoodImpitBrowser,
+    getImpitBrowserCandidatesForFingerprint,
+    alignHeadersForImpitBrowser,
     getImpitBrowserForFingerprint,
     getImpitClient,
     getRetryDelay,
@@ -787,7 +990,10 @@ module.exports = {
     headersToPlainObject,
     inferRequestContext,
     isRetryableError,
+    rememberGoodImpitBrowser,
     requestWithImpit,
+    requestWithImpitRotating,
     retry,
     sleep
 };
+
