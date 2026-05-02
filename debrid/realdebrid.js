@@ -307,20 +307,6 @@ const RD = {
         } catch (_) {}
     },
 
-    checkInstantAvailability: async (token, hashes) => {
-        try {
-            if (!Array.isArray(hashes) || hashes.length === 0) return {};
-            const cleanHashes = hashes.filter(Boolean);
-            if (!cleanHashes.length) return {};
-
-            const hashString = cleanHashes.join("/");
-            const url = `${RD_API_BASE}/torrents/instantAvailability/${hashString}`;
-            return (await rdRequest("GET", url, token)) || {};
-        } catch (_) {
-            return {};
-        }
-    },
-
     prepareTorrentForCloud: async (token, magnet, options = {}) => {
         let torrentId = null;
         try {

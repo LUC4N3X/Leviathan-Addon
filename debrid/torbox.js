@@ -614,7 +614,7 @@ const TB = {
         const existing = await findTorrentByHash(key, targetHash);
         if (existing) {
           if (shouldResetTorrent(existing)) {
-            console.log(`ðŸ§¹ [TorBox:${stableKeyFingerprint(key)}] reset torrent ${existing.id} state=${lower(existing.download_state)}`);
+            console.log(`🧹 [TorBox:${stableKeyFingerprint(key)}] reset torrent ${existing.id} state=${lower(existing.download_state)}`);
             await deleteTorrent(key, existing.id);
             await sleep(800);
           } else {
@@ -690,7 +690,7 @@ const TB = {
       const detailStr = typeof detail === "object" ? JSON.stringify(detail) : String(detail);
       throw new Error(`Link Request Failed: ${detailStr}`);
     } catch (error) {
-      console.error(`ðŸ’¥ [TorBox:${stableKeyFingerprint(key)}] ${error?.message || error}`);
+      console.error(`💥 [TorBox:${stableKeyFingerprint(key)}] ${error?.message || error}`);
       return null;
     }
   }

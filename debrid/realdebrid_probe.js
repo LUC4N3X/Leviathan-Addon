@@ -6,10 +6,12 @@ const RD_FAST_TIMEOUT = 5000;
 const DEBUG_MODE = process.env.DEBUG_MODE === 'true';
 const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mpg|mpeg)$/i;
 const PACK_TITLE_PATTERN = /\b(trilog(?:y)?|saga|collection|collezione|pack|complete|completa|integrale|filmografia)\b/i;
-const RD_CACHED_STATUSES = new Set(['downloaded', 'waiting_files_selection']);
+const RD_CACHED_STATUSES = new Set(['downloaded']);
 const RD_TERMINAL_UNCACHED_STATUSES = new Set(['error', 'magnet_error', 'virus', 'dead']);
 const RD_SLOW_RECHECK_ATTEMPTS = Math.max(1, parseInt(process.env.RD_SLOW_RECHECK_ATTEMPTS || '2', 10));
 const RD_SLOW_RECHECK_DELAY_MS = Math.max(500, parseInt(process.env.RD_SLOW_RECHECK_DELAY_MS || '1200', 10));
+const REQUIRE_EPISODE_HINT_FOR_PACKS = process.env.RD_REQUIRE_EPISODE_HINT_FOR_PACKS !== 'false';
+const { findEpisodeFileHint } = require('../core/matching/season_pack_inspector');
 
 function isVideoFile(path) {
     return VIDEO_EXTENSIONS.test(path || '');
@@ -217,19 +219,26 @@ function extractVideoFiles(files) {
 }
 
 function pickMainVideoFile(files) {
-    if (!Array.isArray(files) || files.length === 0) return { file_title: null, file_size: null };
+    if (!Array.isArray(files) || files.length === 0) return { file_title: null, file_size: null, file_index: null };
 
     const candidate = [...files].sort((a, b) => Number(b?.bytes || 0) - Number(a?.bytes || 0))[0];
-    if (!candidate) return { file_title: null, file_size: null };
+    if (!candidate) return { file_title: null, file_size: null, file_index: null };
 
     const fullPath = candidate.path || '';
     return {
         file_title: fullPath.split('/').pop() || fullPath || null,
-        file_size: Number(candidate.bytes || 0) || null
+        file_size: Number(candidate.bytes || 0) || null,
+        file_index: Number.isInteger(Number(candidate.id)) && Number(candidate.id) >= 0 ? Number(candidate.id) : null
     };
 }
 
-function buildProbeResult(infoHash, info) {
+function hasEpisodeProbeContext(context = {}) {
+    const season = Number(context.season || context._probeSeason || 0);
+    const episode = Number(context.episode || context._probeEpisode || 0);
+    return Number.isFinite(season) && season > 0 && Number.isFinite(episode) && episode > 0;
+}
+
+function buildProbeResult(infoHash, info, context = {}) {
     const hash = normalizeHash(infoHash);
     const files = extractVideoFiles(info?.files);
     const main = pickMainVideoFile(files);
@@ -238,26 +247,52 @@ function buildProbeResult(infoHash, info) {
     const packSource = originalFilename || torrentTitle;
     const validPackName = isValidPackName(packSource) ? packSource : null;
     const isPack = files.length > 1;
+    const episodeContext = hasEpisodeProbeContext(context) ? {
+        ...context,
+        title: context.title || context.seriesTitle || context.metaTitle || torrentTitle || originalFilename,
+        season: Number(context.season || context._probeSeason || 0),
+        episode: Number(context.episode || context._probeEpisode || 0),
+        fileIdx: context.fileIdx ?? context.file_index ?? context.rd_file_index
+    } : null;
+    const episodeFileHint = episodeContext && isPack ? findEpisodeFileHint(files, episodeContext) : null;
+    const selected = episodeFileHint ? {
+        file_title: episodeFileHint.fileName || episodeFileHint.filePath || main.file_title,
+        file_size: episodeFileHint.fileSize || main.file_size,
+        file_index: Number.isInteger(Number(episodeFileHint.fileIndex)) ? Number(episodeFileHint.fileIndex) : main.file_index
+    } : main;
+
+    const statusCached = isCachedStatus(info?.status);
+    const requiresEpisodeHint = Boolean(REQUIRE_EPISODE_HINT_FOR_PACKS && statusCached && isPack && episodeContext);
+    const cachedForRequestedEpisode = statusCached && (!requiresEpisodeHint || Boolean(episodeFileHint));
 
     return {
         hash,
-        cached: isCachedStatus(info?.status),
+        cached: cachedForRequestedEpisode,
+        state: cachedForRequestedEpisode ? 'cached' : (isTerminalUncachedStatus(info?.status) ? 'uncached_terminal' : (requiresEpisodeHint ? 'likely_uncached' : 'unknown')),
         rd_status: normalizeStatus(info?.status),
         torrent_title: torrentTitle,
         original_filename: originalFilename,
         pack_name: validPackName,
         is_pack: isPack,
+        pack_without_episode_hint: Boolean(requiresEpisodeHint && !episodeFileHint),
+        episodeFileHint: episodeFileHint || null,
+        file_index: selected.file_index,
+        file_title: selected.file_title,
+        file_size: selected.file_size,
         size: Number(info?.bytes || 0),
-        file_title: main.file_title,
-        file_size: main.file_size,
-        files
+        files: files.map((file) => ({
+            id: file.id,
+            path: cleanFilePath(file.path),
+            bytes: Number(file.bytes || 0) || 0
+        }))
     };
 }
 
 async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
     const {
         fast = false,
-        backgroundDelete = fast
+        backgroundDelete = fast,
+        context = {}
     } = options;
 
     const request = fast ? rdRequestFast : rdRequest;
@@ -295,7 +330,7 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
 
         const initialStatus = normalizeStatus(info?.status);
         if (isCachedStatus(initialStatus) || isTerminalUncachedStatus(initialStatus)) {
-            const result = buildProbeResult(hash, info);
+            const result = buildProbeResult(hash, info, context);
             await cleanup();
             return result;
         }
@@ -320,7 +355,7 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
 
             const polledStatus = normalizeStatus(latestInfo?.status);
             if (isCachedStatus(polledStatus) || isTerminalUncachedStatus(polledStatus)) {
-                const result = buildProbeResult(hash, latestInfo);
+                const result = buildProbeResult(hash, latestInfo, context);
                 await cleanup();
                 return result;
             }
@@ -340,12 +375,12 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
     }
 }
 
-function inspectSingleHash(infoHash, magnet, token) {
-    return performAvailabilityProbe(infoHash, magnet, token, { fast: false, backgroundDelete: false });
+function inspectSingleHash(infoHash, magnet, token, context = {}) {
+    return performAvailabilityProbe(infoHash, magnet, token, { fast: false, backgroundDelete: false, context });
 }
 
-function inspectSingleHashFast(infoHash, magnet, token) {
-    return performAvailabilityProbe(infoHash, magnet, token, { fast: true, backgroundDelete: true });
+function inspectSingleHashFast(infoHash, magnet, token, context = {}) {
+    return performAvailabilityProbe(infoHash, magnet, token, { fast: true, backgroundDelete: true, context });
 }
 
 async function probeAvailabilityFast(items, token, limit = 5) {
@@ -359,7 +394,7 @@ async function probeAvailabilityFast(items, token, limit = 5) {
 
     for (let i = 0; i < toCheck.length; i += 1) {
         const item = toCheck[i];
-        const result = await inspectSingleHashFast(item?.hash, item?.magnet, token);
+        const result = await inspectSingleHashFast(item?.hash, item?.magnet, token, item);
 
         if (result.deferred) {
             deferred.push(item);
@@ -368,6 +403,11 @@ async function probeAvailabilityFast(items, token, limit = 5) {
                 cached: result.cached,
                 file_title: result.file_title,
                 file_size: result.file_size,
+                file_index: result.file_index,
+                episodeFileHint: result.episodeFileHint || null,
+                pack_without_episode_hint: result.pack_without_episode_hint === true,
+                rd_status: result.rd_status || null,
+                state: result.state || (result.cached === true ? 'cached' : 'unknown'),
                 torrent_title: result.torrent_title,
                 size: result.size,
                 is_pack: result.is_pack,
@@ -420,8 +460,8 @@ async function backfillAvailabilityInBackground(items, token, dbHelper, onUpdate
                 for (const item of normalizedItems) {
                     if (knownHashes[item.hash] !== undefined) continue;
                     await sleep(1000);
-                    const inspected = await inspectSingleHash(item.hash, item.magnet, token);
-                    if (!inspected?.deferred) results.push(inspected);
+                    const inspected = await inspectSingleHash(item.hash, item.magnet, token, item);
+                    if (!inspected?.deferred) results.push({ ...inspected, _probeContext: item });
                 }
 
                 if (results.length === 0) return;
@@ -435,8 +475,12 @@ async function backfillAvailabilityInBackground(items, token, dbHelper, onUpdate
                         size: result.size || null,
                         file_title: result.file_title || null,
                         file_size: result.file_size || null,
+                        rd_file_index: Number.isInteger(Number(result.file_index)) && Number(result.file_index) >= 0 ? Number(result.file_index) : null,
                         next_hours: result.cached ? (24 * 30) : (isTerminalUncachedStatus(result.rd_status) ? (24 * 7) : 12),
-                        failures: result.cached ? 0 : 1
+                        failures: result.cached ? 0 : 1,
+                        imdb_id: result._probeContext?.imdb_id || null,
+                        imdb_season: Number(result._probeContext?.season || result._probeContext?._probeSeason || 0) > 0 ? Number(result._probeContext?.season || result._probeContext?._probeSeason) : null,
+                        imdb_episode: Number(result._probeContext?.episode || result._probeContext?._probeEpisode || 0) > 0 ? Number(result._probeContext?.episode || result._probeContext?._probeEpisode) : null
                     }));
 
                     await dbHelper.updateRdCacheStatus(availabilityUpdates);
@@ -453,15 +497,23 @@ async function backfillAvailabilityInBackground(items, token, dbHelper, onUpdate
                         const shouldPersistPackFiles = result.cached && result.is_pack && (isPackTitle(result.torrent_title) || !!result.pack_name);
                         if (!shouldPersistPackFiles) continue;
 
-                        const videoFiles = (result.files || []).filter((file) => isVideoFile(file.path) && Number(file.bytes || 0) > 50 * 1024 * 1024);
+                        const ctx = result._probeContext || {};
+                        const episodeHint = result.episodeFileHint || null;
+                        const hasEpisodeIdentity = ctx.imdb_id && Number(ctx.season || ctx._probeSeason || 0) > 0 && Number(ctx.episode || ctx._probeEpisode || 0) > 0;
+                        const videoFiles = episodeHint && hasEpisodeIdentity
+                            ? [{ id: episodeHint.fileIndex, path: episodeHint.filePath || episodeHint.fileName, bytes: episodeHint.fileSize, file_title: episodeHint.fileName }]
+                            : (result.files || []).filter((file) => isVideoFile(file.path) && Number(file.bytes || 0) > 50 * 1024 * 1024);
                         if (videoFiles.length === 0) continue;
 
                         try {
                             await dbHelper.insertPackFiles(videoFiles.map((file) => ({
                                 pack_hash: normalizeHash(result.hash),
-                                imdb_id: null,
+                                imdb_id: hasEpisodeIdentity ? ctx.imdb_id : null,
+                                imdb_season: hasEpisodeIdentity ? Number(ctx.season || ctx._probeSeason) : null,
+                                imdb_episode: hasEpisodeIdentity ? Number(ctx.episode || ctx._probeEpisode) : null,
                                 file_index: file.id,
                                 file_path: cleanFilePath(file.path),
+                                file_title: file.file_title || cleanFilePath(file.path).split('/').pop(),
                                 file_size: Number(file.bytes || 0)
                             })));
                         } catch (error) {
