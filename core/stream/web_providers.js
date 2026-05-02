@@ -24,6 +24,30 @@ const LANGUAGE_LABELS = Object.freeze({
     ger: { code: 'DEU', flag: '🇩🇪' }
 });
 
+function normalizeBingePart(value, fallback = 'x') {
+    const normalized = String(value || '')
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[|]+/g, ' ')
+        .replace(/[^a-z0-9+._-]+/gi, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 48);
+    return normalized || fallback;
+}
+
+function buildWebBingeGroup({ providerLabel, extractorLabel, quality, languages, audio }) {
+    return [
+        'Leviathan',
+        'WEB',
+        normalizeBingePart(quality, 'q'),
+        'SDR',
+        normalizeBingePart(extractorLabel, 'extractor'),
+        normalizeBingePart(audio, 'audio'),
+        normalizeBingePart(languages?.text || languages?.flags || '', 'lang'),
+        normalizeBingePart(providerLabel, 'provider')
+    ].join('|');
+}
+
 function firstNonEmpty(...values) {
     for (const value of values) {
         const clean = String(value ?? '').trim();
@@ -413,7 +437,7 @@ function buildWebStreamDisplay(stream, providerDefinition, meta = {}, config = {
         vortexExtractor: stream.behaviorHints?.vortexExtractor || extractorLabel,
         vortexSource: stream.behaviorHints?.vortexSource || providerLabel,
         vortexProviderCode: stream.behaviorHints?.vortexProviderCode || providerDefinition?.key || providerLabel,
-        bingieGroup: stream.behaviorHints?.bingieGroup || stream.behaviorHints?.bingeGroup || `Leviathan|${quality}|Web|${providerLabel.replace(/\W/g, '')}`,
+        bingieGroup: stream.behaviorHints?.bingieGroup || stream.behaviorHints?.bingeGroup || buildWebBingeGroup({ providerLabel, extractorLabel, quality, languages, audio }),
         vortexMeta: {
             ...(stream.behaviorHints?.vortexMeta || {}),
             provider: providerLabel,
