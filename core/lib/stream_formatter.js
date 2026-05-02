@@ -675,11 +675,40 @@ function stripEpisodeFromCleanName(cleanName) {
   return normalizeSpaces(cleanName.replace(/\s+(?:S\d+(?:E\d+)?\b.*|\d+x\d+\b.*|(?:Season|Stagione)\s*\d+\b.*)$/i, ''));
 }
 
-function buildBingeGroup(quality, rawInfo, serviceTag, infoHash) {
+function normalizeBingePart(value, fallback = 'x') {
+  const normalized = safeString(value)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[|]+/g, ' ')
+    .replace(/[^a-z0-9+._-]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return normalized || fallback;
+}
+
+function buildBingeGroup(quality, rawInfo, serviceTag, infoHash, context = {}) {
   const hdrPart = Array.isArray(rawInfo?.hdr)
-    ? rawInfo.hdr.join('')
+    ? rawInfo.hdr.join('+')
     : safeString(rawInfo?.hdr || '');
-  return `Leviathan|${quality}|${hdrPart}|${serviceTag}|${infoHash || 'no-hash'}`;
+  const hdr = hdrPart || (Array.isArray(context.cleanTags) && context.cleanTags.some((tag) => /hdr|dv/i.test(tag)) ? 'HDR' : 'SDR');
+  const codec = context.codec || rawInfo?.codec || rawInfo?.videoCodec || rawInfo?.video_codec || '';
+  const audio = [context.audioTag, context.audioChannels].filter(Boolean).join('-') || rawInfo?.audio || rawInfo?.audio_codec || '';
+  const releaseGroup = context.releaseGroup || rawInfo?.group || rawInfo?.releaseGroup || rawInfo?.release_group || '';
+  const hashFallback = infoHash ? `hash-${String(infoHash).slice(0, 12)}` : 'nohash';
+  const groupKey = releaseGroup || hashFallback;
+
+  // Keep adjacent episodes compatible by quality/service/codec/group instead of hard-pinning
+  // the whole binge identity to each episode hash. Season packs still naturally group by hash.
+  return [
+    'Leviathan',
+    normalizeBingePart(serviceTag, 'svc'),
+    normalizeBingePart(quality, 'q'),
+    normalizeBingePart(hdr, 'sdr'),
+    normalizeBingePart(codec, 'codec'),
+    normalizeBingePart(audio, 'audio'),
+    normalizeBingePart(context.lang || '', 'lang'),
+    normalizeBingePart(groupKey, 'group')
+  ].join('|');
 }
 
 function createStyleParams(fileTitle, source, size, seeders, serviceTag, config, infoHash, isLazy, isPackItem, cacheState = 'unknown') {
@@ -734,7 +763,7 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
     sourceLine: `${serviceIconTitle} [${normalizedServiceTag}] ${displaySource}`,
     cloudBadge: savedCloud ? getSavedCloudLabel(normalizedServiceTag) : '',
     audioInfo: [extracted.audioTag, extracted.audioChannels].filter(Boolean).join(' ┃ '),
-    bingeGroup: buildBingeGroup(extracted.quality, extracted.rawInfo, normalizedServiceTag, infoHash),
+    bingeGroup: buildBingeGroup(extracted.quality, extracted.rawInfo, normalizedServiceTag, infoHash, { releaseGroup: extracted.releaseGroup, codec: extracted.codec, audioTag: extracted.audioTag, audioChannels: extracted.audioChannels, lang: displayLang, cleanTags: extracted.cleanTags }),
     providerLabel: extractProviderLabel(fileTitle),
     isSavedCloud: savedCloud,
     isLazy: Boolean(isLazy),
