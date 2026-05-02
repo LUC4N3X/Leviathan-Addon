@@ -10,6 +10,39 @@ const {
     isStreamingCommunityLastEnabled
 } = require('../../providers/extractors/provider_registry');
 
+
+const INLINE_PROVIDER_LIMITER = Object.freeze({
+    schedule(task) {
+        return Promise.resolve().then(task);
+    }
+});
+const warnedMissingProviderLimiters = new Set();
+
+function resolveWebProviderLimiter(limiters = {}, definition = {}) {
+    const key = String(definition?.limiterKey || '').trim();
+    const direct = key ? limiters?.[key] : null;
+    if (direct && typeof direct.schedule === 'function') return direct;
+
+    const fallbackEntries = [
+        ['scraper', limiters?.scraper],
+        ['externalAddons', limiters?.externalAddons],
+        ['remoteIndexer', limiters?.remoteIndexer]
+    ];
+    const fallback = fallbackEntries.find(([, limiter]) => limiter && typeof limiter.schedule === 'function');
+    const fallbackName = fallback?.[0] || 'inline';
+    const providerName = definition?.cacheName || definition?.sourceName || definition?.key || 'WebProvider';
+    const warnKey = `${providerName}:${key || 'missing'}:${fallbackName}`;
+
+    if (!warnedMissingProviderLimiters.has(warnKey)) {
+        warnedMissingProviderLimiters.add(warnKey);
+        // Important: a missing provider-specific limiter must never disable a web provider.
+        // This keeps older Docker layers/configs compatible when new providers introduce new limiter keys.
+        console.warn(`[WEB PROVIDERS] limiter missing provider=${providerName} limiterKey=${key || 'n/a'} fallback=${fallbackName}`);
+    }
+
+    return fallback?.[1] || INLINE_PROVIDER_LIMITER;
+}
+
 const LANGUAGE_LABELS = Object.freeze({
     ita: { code: 'ITA', flag: '🇮🇹' },
     eng: { code: 'ENG', flag: '🇬🇧' },
@@ -497,7 +530,7 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
             return Cache.fetchWithCache(definition.cacheName, rawId, 43200, () =>
                 guardedProviderCall(
                     definition.cacheName,
-                    LIMITERS[definition.limiterKey],
+                    resolveWebProviderLimiter(LIMITERS, definition),
                     getWebProviderTimeout(CONFIG.TIMEOUTS.SCRAPER, definition.cacheName),
                     () => definition.run({ type, originalId, finalId, meta, config, reqHost })
                 )
@@ -550,3 +583,4 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
 }
 
 module.exports = { createWebProviderTools };
+
