@@ -740,8 +740,25 @@ function applyPackKnowledge(items, meta) {
     });
 }
 
+function getConfiguredSortMode(config = {}) {
+    return String(
+        config?.ranking?.sortMode ||
+        config?.sortMode ||
+        config?.sort ||
+        config?.filters?.sort ||
+        'balanced'
+    ).toLowerCase();
+}
+
 function applyPremiumRankingPolicy(results, meta, config) {
     const list = Array.isArray(results) ? results : [];
+
+    // If the user explicitly selected resolution/size ordering from index.html,
+    // never let the diversity policy pull a lower-resolution/low-bitrate item
+    // above stronger matches. Diversity is useful only in balanced mode.
+    const sortMode = getConfiguredSortMode(config);
+    if (sortMode === 'resolution' || sortMode === 'size') return list;
+
     const policy = buildDiversityPolicy(config);
     if (!policy.enabled || list.length <= 2) return list;
 
@@ -778,6 +795,61 @@ function applyPremiumRankingPolicy(results, meta, config) {
     }
 
     return [...selected, ...overflow];
+}
+
+function getFinalStreamSortText(stream = {}) {
+    return String([
+        stream?.name,
+        stream?.title,
+        stream?.description,
+        stream?.behaviorHints?.filename,
+        stream?.behaviorHints?.bingeGroup,
+        stream?.behaviorHints?.vortexMeta?.quality
+    ].filter(Boolean).join(' '));
+}
+
+function getFinalStreamResolutionTier(stream = {}) {
+    const text = getFinalStreamSortText(stream).toLowerCase();
+    if (/\b(?:4320p|8k)\b/.test(text)) return 5;
+    if (/\b(?:2160p|4k|uhd)\b/.test(text)) return 4;
+    if (/\b(?:1440p|2k|qhd)\b/.test(text)) return 3.5;
+    if (/\b(?:1080p|1080i|fhd|full[-.\s]?hd)\b/.test(text)) return 3;
+    if (/\b(?:720p|hd)\b/.test(text)) return 2;
+    if (/\b(?:576p|480p|sd)\b/.test(text)) return 1;
+    return 0;
+}
+
+function parseFinalStreamSizeBytes(stream = {}) {
+    const text = getFinalStreamSortText(stream);
+    const match = text.match(/(\d+(?:[.,]\d+)?)\s*(tib|tb|gib|gb|mib|mb)\b/i);
+    if (!match) return 0;
+    const value = parseFloat(String(match[1]).replace(',', '.'));
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    const unit = match[2].toLowerCase();
+    if (unit === 'tib' || unit === 'tb') return value * 1024 * 1024 * 1024 * 1024;
+    if (unit === 'gib' || unit === 'gb') return value * 1024 * 1024 * 1024;
+    return value * 1024 * 1024;
+}
+
+function applyFinalStreamUserSort(streams = [], config = {}) {
+    const list = Array.isArray(streams) ? streams : [];
+    const sortMode = getConfiguredSortMode(config);
+    if (sortMode !== 'resolution' && sortMode !== 'size') return list;
+
+    return list
+        .map((stream, index) => ({ stream, index }))
+        .sort((a, b) => {
+            if (sortMode === 'resolution') {
+                const resDelta = getFinalStreamResolutionTier(b.stream) - getFinalStreamResolutionTier(a.stream);
+                if (resDelta !== 0) return resDelta;
+            }
+            if (sortMode === 'size') {
+                const sizeDelta = parseFinalStreamSizeBytes(b.stream) - parseFinalStreamSizeBytes(a.stream);
+                if (sizeDelta !== 0) return sizeDelta;
+            }
+            return a.index - b.index;
+        })
+        .map((entry) => entry.stream);
 }
 
 function getMetaDbLookupKey(meta) {
@@ -2993,6 +3065,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           logger.info(`[DEDUPE INFOHASH] stream removed=${infoHashStreamDedupe.removed} kept=${infoHashStreamDedupe.results.length} title="${String(meta?.title || '').slice(0, 80)}" s=${meta?.season || '-'} e=${meta?.episode || '-'}`);
       }
       finalStreams = infoHashStreamDedupe.results;
+      finalStreams = applyFinalStreamUserSort(finalStreams, config);
 
       const resultObjPlaceholder = { streams: finalStreams };
       const enabledWebProvidersCount = [
