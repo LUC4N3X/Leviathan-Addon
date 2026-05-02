@@ -1,6 +1,6 @@
 'use strict';
 const cheerio = require('cheerio');
-const animeProviderUtils = require('../anime/provider_utils');
+const { fetchMappingPayload } = require('../anime/mapping');
 const {
     USER_AGENT,
     FETCH_TIMEOUT,
@@ -679,7 +679,7 @@ async function resolveAnimeWorldPathsFromMapping(searchContext = {}) {
     };
 
     try {
-        const payload = await animeProviderUtils.fetchMappingPayload({
+        const payload = await fetchMappingPayload({
             provider: 'kitsu',
             externalId: kitsuId,
             season: null,

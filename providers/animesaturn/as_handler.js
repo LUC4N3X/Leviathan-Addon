@@ -1,7 +1,7 @@
 'use strict';
 
 const cheerio = require('cheerio');
-const animeProviderUtils = require('../anime/provider_utils');
+const { fetchMappingPayload } = require('../anime/mapping');
 const { SingleFlight, TtlLruCache } = require('../utils/provider_runtime');
 const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
@@ -1122,7 +1122,7 @@ async function fetchAnimeSaturnMapping(searchContext = {}, requestedEpisode = 1)
     const season = Number.parseInt(String(searchContext?.seasonNumber ?? searchContext?.season ?? ''), 10);
 
     try {
-        return await animeProviderUtils.fetchMappingPayload({
+        return await fetchMappingPayload({
             provider: 'kitsu',
             externalId: String(kitsuId),
             season: Number.isInteger(season) && season >= 0 ? season : null,

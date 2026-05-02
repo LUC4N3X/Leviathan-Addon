@@ -26,7 +26,7 @@ const {
   HOSTER_ESCAPED_DIRECT_LINK_PATTERN,
   resolveExtractorDefinition
 } = require('../extractors/registry');
-const { isCanceledError } = require('../utils/bypass');
+const { isCanceledError, requestWithImpit } = require('../utils/bypass');
 const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
@@ -105,6 +105,47 @@ const buildGsUrl = pathname => gsHttp.buildProviderUrl(pathname);
 const getTargetDomain = () => gsHttp.getCurrentBaseUrl();
 const normalizeBaseUrl = value => gsHttp.normalizeBaseUrl(value);
 const isAbortLikeError = error => gsHttp.isAbortLikeError(error);
+
+const gsExtractorClient = {
+  async get(url, options = {}) {
+    const headers = options.headers || {};
+    const timeout = options.timeout || DIRECT_FETCH_TIMEOUT_MS;
+    const validateStatus = typeof options.validateStatus === 'function'
+      ? options.validateStatus
+      : status => status >= 200 && status < 400;
+
+    try {
+      const response = await requestWithImpit(url, {
+        method: 'GET',
+        headers,
+        timeout,
+        signal: options.signal,
+        responseType: options.responseType || 'text',
+        retry: { limit: 1 },
+        ignoreTlsErrors: true,
+        fingerprint: {
+          userAgent: headers['User-Agent'] || headers['user-agent'] || gsHttp.getSession()?.userAgent
+        }
+      });
+
+      if (response && validateStatus(response.statusCode)) {
+        return {
+          data: response.data,
+          status: response.statusCode,
+          statusCode: response.statusCode,
+          headers: response.headers || {},
+          request: { res: { responseUrl: response.url || url } },
+          config: { url }
+        };
+      }
+    } catch (error) {
+      if (isAbortLikeError(error) && options.signal?.aborted) throw error;
+      gsDebug('extractor impit fallback', { url, error: error?.code || error?.message || String(error) });
+    }
+
+    return lightClient.get(url, options);
+  }
+};
 
 let gsClearanceWarmupPromise = null;
 
@@ -930,9 +971,16 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
   const processedResults = await asyncPool(2, playerLinks, async link => {
     try {
       const extracted = await extractFromUrl(link, {
-        client:         lightClient,
+        client:         gsExtractorClient,
         userAgent:      sessionUA,
-        requestReferer: getTargetDomain()
+        requestReferer: getTargetDomain(),
+        fetchers: [
+          (targetUrl, headers) => gsExtractorClient.get(targetUrl, {
+            headers,
+            timeout: Math.max(DIRECT_FETCH_TIMEOUT_MS, 5000),
+            responseType: 'text'
+          }).then(response => response.data)
+        ]
       });
 
       if (!extracted?.url) {
@@ -954,7 +1002,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
       let playlistIntel = null;
       if (/\.m3u8($|\?)/i.test(String(extracted.url))) {
         try {
-          playlistIntel = await probePlaylistIntelligence(lightClient, extracted.url, {
+          playlistIntel = await probePlaylistIntelligence(gsExtractorClient, extracted.url, {
             headers: extracted.headers || {},
             timeout: 5000,
             signal

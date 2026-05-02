@@ -170,7 +170,7 @@ function buildProviderTitleVariants(titles = []) {
         const noSeasonWord = generic.replace(/\bSeason\s+(\d+)\b/gi, '$1').replace(/\s+/g, ' ').trim();
         const noBrackets = generic.replace(/[\[\]]/g, '').replace(/\s+/g, ' ').trim();
         const clean = normalizeTitleForSearch(generic);
-        seeded.push(title, generic, alias, noSeasonWord, noBrackets, clean);
+        seeded.push(alias, title, generic, noSeasonWord, noBrackets, clean);
     }
     return buildTitleVariants(seeded);
 }

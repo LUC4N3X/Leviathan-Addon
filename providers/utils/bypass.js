@@ -5,6 +5,12 @@ const axios = require('axios');
 const IMPIT_INSTANCE_CACHE = new Map();
 let impitModulePromise = null;
 
+const IMPIT_BROWSER_VERSIONS = Object.freeze({
+    chrome: Object.freeze([100, 101, 104, 107, 110, 116, 124, 125, 131, 136, 142]),
+    firefox: Object.freeze([128, 133, 135, 144]),
+    okhttp: Object.freeze([3, 4, 5])
+});
+
 const DEFAULT_FINGERPRINT_POOL = Object.freeze([
     Object.freeze({
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
@@ -234,13 +240,32 @@ function buildContextHeaders(url = null, context = null, extra = {}, fp = null) 
     return compactHeaderObject(Object.assign(headers, extra));
 }
 
+function pickNearestImpitBrowser(prefix, version, fallback) {
+    const versions = IMPIT_BROWSER_VERSIONS[prefix] || [];
+    const parsed = Number.parseInt(String(version || ''), 10);
+    if (!Number.isInteger(parsed) || !versions.length) return fallback;
+
+    const selected = versions.reduce((best, candidate) =>
+        Math.abs(candidate - parsed) < Math.abs(best - parsed) ? candidate : best
+    , versions[0]);
+    return `${prefix}${selected}`;
+}
+
 function getImpitBrowserForFingerprint(fp = null) {
     const browserType = safeString(fp?.browserType || fp?.family || fp?.browser || fp?.name).toLowerCase();
     const userAgent = safeString(fp?.userAgent || fp?.ua).toLowerCase();
 
-    if (browserType.includes('firefox') || userAgent.includes('firefox/')) return 'firefox135';
-    if (browserType.includes('okhttp') || userAgent.includes('okhttp/')) return 'okhttp4';
-    return 'chrome136';
+    if (browserType.includes('firefox') || userAgent.includes('firefox/')) {
+        return pickNearestImpitBrowser('firefox', userAgent.match(/firefox\/(\d+)/i)?.[1], 'firefox135');
+    }
+    if (browserType.includes('okhttp') || userAgent.includes('okhttp/')) {
+        return pickNearestImpitBrowser('okhttp', userAgent.match(/okhttp\/(\d+)/i)?.[1], 'okhttp4');
+    }
+
+    const chromeVersion =
+        userAgent.match(/(?:chrome|crios|chromium)\/(\d+)/i)?.[1] ||
+        userAgent.match(/edg\/(\d+)/i)?.[1];
+    return pickNearestImpitBrowser('chrome', chromeVersion, 'chrome136');
 }
 
 function headersToPlainObject(headers = {}) {
@@ -364,6 +389,7 @@ async function requestWithImpit(input, config = {}) {
                 headers: compactHeaderObject(headersToPlainObject(options.headers || {})),
                 body,
                 timeout,
+                forceHttp3: options.forceHttp3 === true,
                 signal: options.signal,
                 redirect: resolveImpitRedirect(options)
             });

@@ -70,7 +70,7 @@ const WEB_PROVIDER_DEFINITIONS = [
         key: 'cinemaCity',
         sourceName: 'CinemaCity',
         cacheName: 'CinemaCityV3',
-        icon: '🎟️',
+        icon: '🏙️',
         limiterKey: 'webCc',
         minTimeout: CINEMACITY_MIN_TIMEOUT,
         emptyTtl: CINEMACITY_EMPTY_TTL,
