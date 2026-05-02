@@ -1,5 +1,6 @@
 const { tokenizeTitle: canonicalTokenizeTitle } = require('./canonical/title_parser');
 const axios = require('axios');
+const crypto = require('crypto');
 
 const DEBUG_MODE = process.env.DEBUG_MODE === 'true';
 const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mpg|mpeg|iso)$/i;
@@ -14,6 +15,22 @@ const TB_INFO_RETRY_DELAY_MS = Math.max(500, parseInt(process.env.PACK_TB_INFO_R
 const MAX_MEMORY_ENTRIES = Math.max(50, parseInt(process.env.PACK_RESOLVER_CACHE_SIZE || '500', 10) || 500);
 const DB_MOVIE_FILE_LIMIT = Math.max(10, parseInt(process.env.PACK_DB_MOVIE_LIMIT || '30', 10) || 30);
 const DB_SERIES_FILE_LIMIT = Math.max(25, parseInt(process.env.PACK_DB_SERIES_LIMIT || '400', 10) || 400);
+
+// Leviathan Pack Boost: public .torrent metadata fallback.
+// Used only to read the file tree of P2P packs when DB/RD/TB cannot provide files.
+// It does not stream, add, or download the torrent payload.
+const PUBLIC_TORRENT_CACHE_ENABLED = process.env.PACK_PUBLIC_TORRENT_CACHE !== 'false';
+const PUBLIC_TORRENT_CACHE_TIMEOUT_MS = Math.max(2500, parseInt(process.env.PACK_PUBLIC_TORRENT_CACHE_TIMEOUT_MS || '8000', 10) || 8000);
+const PUBLIC_TORRENT_CACHE_MAX_BYTES = Math.max(256 * 1024, parseInt(process.env.PACK_PUBLIC_TORRENT_CACHE_MAX_BYTES || String(8 * 1024 * 1024), 10) || 8 * 1024 * 1024);
+const PUBLIC_TORRENT_CACHE_SOURCES = Object.freeze([
+    { name: 'itorrents', url: (hash) => `https://itorrents.org/torrent/${hash.toUpperCase()}.torrent` },
+    { name: 'torrage', url: (hash) => `https://torrage.info/torrent.php?h=${hash.toUpperCase()}` },
+    { name: 'btcache', url: (hash) => `https://btcache.me/torrent/${hash.toUpperCase()}` }
+]);
+
+// TorBox pack resolver must stay cheap in normal stream requests: check cached file list only.
+// createtorrent belongs to explicit manual/admin import flows, not automatic playback resolution.
+const TORBOX_CREATE_TORRENT_IN_PACK_RESOLVER = false;
 
 class RequestQueue {
     constructor(concurrency = 1) {
@@ -210,6 +227,147 @@ function createExpectedMissError(message, reason = 'unavailable', status = 404) 
     return err;
 }
 
+function isValidInfoHash(value) {
+    return /^[a-f0-9]{40}$/i.test(String(value || '').trim());
+}
+
+function getBufferString(value) {
+    return Buffer.isBuffer(value) ? value.toString('utf8') : String(value || '');
+}
+
+function parseBencodeByteString(buffer, offset) {
+    const colonIndex = buffer.indexOf(58, offset);
+    if (colonIndex === -1) throw new Error('BT_STRING_LENGTH_MISSING');
+    const lenText = buffer.subarray(offset, colonIndex).toString('ascii');
+    if (!/^\d+$/.test(lenText)) throw new Error('BT_STRING_LENGTH_INVALID');
+    const length = Number.parseInt(lenText, 10);
+    const start = colonIndex + 1;
+    const end = start + length;
+    if (end > buffer.length) throw new Error('BT_STRING_OUT_OF_RANGE');
+    return { value: buffer.subarray(start, end), start: offset, end };
+}
+
+function decodeBencodeNode(buffer, offset = 0, state = {}) {
+    if (!Buffer.isBuffer(buffer) || offset >= buffer.length) throw new Error('BT_EOF');
+    const token = buffer[offset];
+
+    if (token === 0x69) { // i
+        const end = buffer.indexOf(0x65, offset + 1); // e
+        if (end === -1) throw new Error('BT_INTEGER_END_MISSING');
+        const raw = buffer.subarray(offset + 1, end).toString('ascii');
+        return { value: Number.parseInt(raw, 10), start: offset, end: end + 1 };
+    }
+
+    if (token === 0x6c) { // l
+        const list = [];
+        let cursor = offset + 1;
+        while (cursor < buffer.length && buffer[cursor] !== 0x65) {
+            const node = decodeBencodeNode(buffer, cursor, state);
+            list.push(node.value);
+            cursor = node.end;
+        }
+        if (buffer[cursor] !== 0x65) throw new Error('BT_LIST_END_MISSING');
+        return { value: list, start: offset, end: cursor + 1 };
+    }
+
+    if (token === 0x64) { // d
+        const map = {};
+        let cursor = offset + 1;
+        while (cursor < buffer.length && buffer[cursor] !== 0x65) {
+            const keyNode = parseBencodeByteString(buffer, cursor);
+            const key = keyNode.value.toString('utf8');
+            cursor = keyNode.end;
+            const valueNode = decodeBencodeNode(buffer, cursor, state);
+            if (key === 'info') state.infoSlice = buffer.subarray(valueNode.start, valueNode.end);
+            map[key] = valueNode.value;
+            cursor = valueNode.end;
+        }
+        if (buffer[cursor] !== 0x65) throw new Error('BT_DICT_END_MISSING');
+        return { value: map, start: offset, end: cursor + 1 };
+    }
+
+    if (token >= 0x30 && token <= 0x39) return parseBencodeByteString(buffer, offset);
+    throw new Error(`BT_UNSUPPORTED_TOKEN_${String.fromCharCode(token)}`);
+}
+
+function mapTorrentInfoFiles(infoDict = {}) {
+    const multiFiles = Array.isArray(infoDict?.files) ? infoDict.files : null;
+    if (multiFiles && multiFiles.length > 0) {
+        return multiFiles.map((entry, index) => {
+            const rawPath = Array.isArray(entry?.path) ? entry.path : [];
+            const pathParts = rawPath.map(getBufferString).filter(Boolean);
+            const path = pathParts.join('/');
+            return {
+                id: index,
+                path,
+                bytes: Number(entry?.length || 0) || 0,
+                selected: 1
+            };
+        }).filter(file => file.path);
+    }
+
+    const singleName = getBufferString(infoDict?.name).trim();
+    const singleLength = Number(infoDict?.length || 0) || 0;
+    return singleName ? [{ id: 0, path: singleName, bytes: singleLength, selected: 1 }] : [];
+}
+
+function parseTorrentMetadata(buffer, expectedInfoHash = null) {
+    const state = {};
+    const root = decodeBencodeNode(buffer, 0, state).value;
+    if (!state.infoSlice) throw new Error('TORRENT_INFO_DICT_MISSING');
+    const infoHash = crypto.createHash('sha1').update(state.infoSlice).digest('hex').toLowerCase();
+    const expected = normalizeInfoHash(expectedInfoHash);
+    if (expected && infoHash !== expected) throw new Error('TORRENT_INFO_HASH_MISMATCH');
+    const infoDict = root?.info || {};
+    const packName = getBufferString(infoDict?.name).trim() || null;
+    return {
+        service: 'public-torrent-cache',
+        infoHash,
+        torrentId: infoHash,
+        files: mapTorrentInfoFiles(infoDict),
+        packName
+    };
+}
+
+async function fetchFilesFromPublicTorrentCaches(infoHash, logger = console) {
+    const normalizedHash = normalizeInfoHash(infoHash);
+    if (!PUBLIC_TORRENT_CACHE_ENABLED || !isValidInfoHash(normalizedHash)) {
+        throw createExpectedMissError('PUBLIC_TORRENT_CACHE_DISABLED_OR_INVALID_HASH', 'public_cache_disabled');
+    }
+
+    const errors = [];
+    for (const source of PUBLIC_TORRENT_CACHE_SOURCES) {
+        try {
+            const response = await axios.get(source.url(normalizedHash), {
+                responseType: 'arraybuffer',
+                timeout: PUBLIC_TORRENT_CACHE_TIMEOUT_MS,
+                maxContentLength: PUBLIC_TORRENT_CACHE_MAX_BYTES,
+                maxBodyLength: PUBLIC_TORRENT_CACHE_MAX_BYTES,
+                headers: {
+                    'User-Agent': 'Leviathan-PackResolver/3.1 (+torrent-metadata-only)',
+                    'Accept': 'application/x-bittorrent,application/octet-stream,*/*;q=0.5'
+                },
+                validateStatus: (status) => status >= 200 && status < 300
+            });
+            const buffer = Buffer.from(response?.data || []);
+            if (buffer.length <= 0 || buffer.length > PUBLIC_TORRENT_CACHE_MAX_BYTES) {
+                throw new Error('PUBLIC_TORRENT_CACHE_BAD_SIZE');
+            }
+            const parsed = parseTorrentMetadata(buffer, normalizedHash);
+            const files = filterVideoFiles(parsed.files);
+            if (files.length <= 0) throw createExpectedMissError('PUBLIC_TORRENT_CACHE_NO_VIDEO_FILES', 'public_cache_no_video');
+            logger?.info?.(`[PACK-PUBLIC] ${source.name} hit hash=${normalizedHash.slice(0, 12)} files=${files.length}`);
+            return { ...parsed, sourceName: source.name, files };
+        } catch (err) {
+            errors.push(`${source.name}:${err?.message || err}`);
+        }
+    }
+
+    const miss = createExpectedMissError('PUBLIC_TORRENT_CACHE_MISS', 'public_cache_miss');
+    miss.errors = errors;
+    throw miss;
+}
+
 function isVideoFile(filename) {
     return VIDEO_EXTENSIONS.test(String(filename || ''));
 }
@@ -351,34 +509,104 @@ function filterVideoFiles(files) {
     return mapRawFiles(files).filter(file => isVideoFile(file.path) && file.bytes >= MIN_VIDEO_BYTES);
 }
 
+function extractYearsFromText(value) {
+    const years = [];
+    const text = String(value || '');
+    for (const match of text.matchAll(/(?:^|[^\d])((?:19|20)\d{2})(?:[^\d]|$)/g)) {
+        const year = Number(match[1]);
+        if (year >= 1900 && year <= 2100) years.push(year);
+    }
+    return [...new Set(years)];
+}
+
+function romanToNumber(value) {
+    const roman = String(value || '').toUpperCase();
+    const map = { I: 1, V: 5, X: 10 };
+    let total = 0;
+    let prev = 0;
+    for (let i = roman.length - 1; i >= 0; i--) {
+        const current = map[roman[i]] || 0;
+        total += current < prev ? -current : current;
+        prev = current;
+    }
+    return total > 0 && total <= 10 ? total : null;
+}
+
+function collectMovieNumberSignals(titles = []) {
+    const signals = new Set();
+    for (const title of titles || []) {
+        const text = String(title || '').toLowerCase();
+        const numeric = text.match(/(?:^|\b)(?:part|parte|chapter|capitolo|vol(?:ume)?|film)?\s*([2-9])(?:\b|$)/i);
+        if (numeric) signals.add(String(Number(numeric[1])));
+        const roman = text.match(/(?:^|\b)(?:part|parte|chapter|capitolo|vol(?:ume)?|film)?\s*(ii|iii|iv|v|vi|vii|viii|ix|x)(?:\b|$)/i);
+        if (roman) {
+            const n = romanToNumber(roman[1]);
+            if (n) signals.add(String(n));
+        }
+    }
+    return [...signals];
+}
+
 function scoreMovieFile(file, titles, year) {
     const pathValue = String(file?.path || '').toLowerCase();
     const name = fileName(file.path).toLowerCase();
+    const fileYears = extractYearsFromText(pathValue);
+    const targetYear = Number(year) || null;
+    const sequelSignals = collectMovieNumberSignals(titles);
     let score = 0;
+    let bestTitleCoverage = 0;
+
     for (const title of titles) {
-        const tokens = tokenizeTitle(title);
+        const tokens = tokenizeTitle(title).filter(token => token.length > 1 || /^\d+$/.test(token));
         if (tokens.length === 0) continue;
         let matched = 0;
         for (const token of tokens) if (pathValue.includes(token)) matched += 1;
         const normalizedPhrase = tokens.join(' ');
         const compactPhrase = tokens.join('.');
+        const dashPhrase = tokens.join('-');
         if (normalizedPhrase && pathValue.includes(normalizedPhrase)) matched += 2;
         if (compactPhrase && pathValue.includes(compactPhrase)) matched += 1;
-        score = Math.max(score, matched * 15 + Math.round((matched / tokens.length) * 80));
+        if (dashPhrase && pathValue.includes(dashPhrase)) matched += 1;
+        const coverage = matched / Math.max(tokens.length, 1);
+        bestTitleCoverage = Math.max(bestTitleCoverage, coverage);
+        score = Math.max(score, matched * 15 + Math.round(coverage * 90));
     }
-    if (year && new RegExp(`(?:^|[^\d])${year}(?:[^\d]|$)`).test(pathValue)) score += 18;
-    if (/sample|trailer|extras?|featurette|behind\s*the\s*scenes|bonus|interview|deleted\s*scenes/i.test(pathValue)) score -= 80;
+
+    if (targetYear) {
+        if (fileYears.includes(targetYear)) score += 45;
+        else if (fileYears.length > 0) {
+            const closestDelta = Math.min(...fileYears.map(y => Math.abs(y - targetYear)));
+            if (closestDelta <= 1) score += 8;
+            else score -= Math.min(65, 22 + closestDelta * 2);
+        }
+    }
+
+    for (const signal of sequelSignals) {
+        const romanSignals = { '2': 'ii', '3': 'iii', '4': 'iv', '5': 'v', '6': 'vi', '7': 'vii', '8': 'viii', '9': 'ix', '10': 'x' };
+        const roman = romanSignals[signal];
+        if (new RegExp(`(?:^|[^a-z0-9])(?:part|parte|chapter|capitolo|vol(?:ume)?|film)?[ ._-]*${signal}(?:[^a-z0-9]|$)`, 'i').test(pathValue)) score += 14;
+        if (roman && new RegExp(`(?:^|[^a-z0-9])(?:part|parte|chapter|capitolo|vol(?:ume)?|film)?[ ._-]*${roman}(?:[^a-z0-9]|$)`, 'i').test(pathValue)) score += 14;
+    }
+
+    if (/sample|trailer|extras?|featurette|behind\s*the\s*scenes|bonus|interview|deleted\s*scenes|making\s*of|commentary/i.test(pathValue)) score -= 120;
     if (/disc\s*[2-9]|cd\s*[2-9]/i.test(pathValue)) score -= 14;
     if (/2160p|4k|uhd/i.test(name)) score += 12;
     else if (/1080p|fhd/i.test(name)) score += 8;
     else if (/720p/i.test(name)) score += 4;
     score += Math.min(Math.floor((file.bytes || 0) / (700 * 1024 * 1024)), 18);
+
+    if (bestTitleCoverage < 0.25 && fileYears.length === 0 && (titles || []).length > 0) score -= 25;
     return score;
 }
 
-function pickMovieFile(videoFiles, titles, year) {
+function isMovieCollectionPackName(value) {
+    return /\b(?:collection|trilogy|quadrilogy|saga|complete|box\s*set|boxset|anthology|raccolta|collezione|tutti\s+i\s+film)\b/i.test(String(value || ''));
+}
+
+function pickMovieFile(videoFiles, titles, year, packName = '') {
     if (!Array.isArray(videoFiles) || videoFiles.length === 0) return null;
     if (videoFiles.length === 1) return videoFiles[0];
+    const isCollection = isMovieCollectionPackName(packName) || videoFiles.length >= 3;
     let best = null;
     let bestScore = -Infinity;
     for (const file of videoFiles) {
@@ -388,6 +616,18 @@ function pickMovieFile(videoFiles, titles, year) {
             best = file;
         }
     }
+
+    if (isCollection) {
+        const targetYear = Number(year) || null;
+        const bestYears = extractYearsFromText(best?.path || '');
+        const yearLooksRight = !targetYear || bestYears.length === 0 || bestYears.includes(targetYear) || bestYears.some(y => Math.abs(y - targetYear) <= 1);
+        if (bestScore >= 35 && yearLooksRight) return best;
+        const largest = [...videoFiles]
+            .filter(file => !/sample|trailer|extras?|bonus|featurette/i.test(String(file.path || '')))
+            .sort((a, b) => (b.bytes || 0) - (a.bytes || 0))[0];
+        return largest || best;
+    }
+
     return bestScore >= 30 ? best : videoFiles.sort((a, b) => (b.bytes || 0) - (a.bytes || 0))[0];
 }
 
@@ -568,8 +808,15 @@ async function fetchFilesFromTorbox(infoHash, torboxKey) {
                 packName: cacheEntry?.name || cacheEntry?.torrent_title || null
             };
         }
-    } catch (err) {}
+    } catch (err) {
+        throw createExpectedMissError('TB_CHECKCACHED_FAILED', 'tb_checkcached_failed', getErrorStatus(err) || 404);
+    }
 
+    if (!TORBOX_CREATE_TORRENT_IN_PACK_RESOLVER) {
+        throw createExpectedMissError('TB_NOT_CACHED_OR_NO_FILE_LIST', 'tb_not_cached_no_file_list');
+    }
+
+    // Kept unreachable by default on purpose. Automatic stream requests must not create TorBox torrents.
     const magnetLink = `magnet:?xt=urn:btih:${infoHash}`;
     const createResponse = await axios.post(`${baseUrl}/torrents/createtorrent`, { magnet: magnetLink }, { headers, timeout: 30000 });
     const torrentId = createResponse?.data?.data?.torrent_id;
@@ -588,7 +835,7 @@ async function fetchFilesFromTorbox(infoHash, torboxKey) {
     }
 }
 
-async function scanPackFiles(infoHash, config) {
+async function scanPackFiles(infoHash, config, logger = console) {
     const { service, rd, tb } = getApiKeys(config);
     const normalizedHash = normalizeInfoHash(infoHash);
     if (!normalizedHash) throw new Error('INVALID_INFO_HASH');
@@ -601,12 +848,20 @@ async function scanPackFiles(infoHash, config) {
     const task = (async () => {
         try {
             let result;
-            if (resolvedService === 'tb') {
-                if (!tb) throw new Error('TB_KEY_MISSING');
-                result = await fetchFilesFromTorbox(normalizedHash, tb);
-            } else {
-                if (!rd) throw new Error('RD_KEY_MISSING');
-                result = await rdQueue.add(() => fetchFilesFromRealDebrid(normalizedHash, rd));
+            let primaryMiss = null;
+            try {
+                if (resolvedService === 'tb') {
+                    if (!tb) throw createExpectedMissError('TB_KEY_MISSING', 'tb_key_missing');
+                    result = await fetchFilesFromTorbox(normalizedHash, tb);
+                } else {
+                    if (!rd) throw createExpectedMissError('RD_KEY_MISSING', 'rd_key_missing');
+                    result = await rdQueue.add(() => fetchFilesFromRealDebrid(normalizedHash, rd));
+                }
+            } catch (err) {
+                primaryMiss = err;
+                if (!isExpectedResolverMissError(err)) throw err;
+                result = await fetchFilesFromPublicTorrentCaches(normalizedHash, logger);
+                logger?.info?.(`[PACK-PUBLIC] fallback used after ${resolvedService.toUpperCase()} miss reason=${err?.reason || err?.message || 'unknown'} hash=${normalizedHash.slice(0, 12)}`);
             }
             const payload = {
                 infoHash: normalizedHash,
@@ -614,7 +869,9 @@ async function scanPackFiles(infoHash, config) {
                 torrentId: result.torrentId,
                 files: filterVideoFiles(result.files),
                 packName: result.packName || null,
-                scannedAt: Date.now()
+                scannedAt: Date.now(),
+                publicFallback: result.service === 'public-torrent-cache',
+                primaryMissReason: primaryMiss?.reason || null
             };
             cacheSet(cacheKey, payload);
             return payload;
@@ -720,6 +977,7 @@ function buildSeriesResolution(packData, context) {
         fileSize: best.file.bytes,
         size: best.file.bytes,
         source: packData.service,
+        publicFallback: Boolean(packData.publicFallback),
         episode: best.parsed.episode,
         season: best.parsed.season,
         totalPackSize: packData.files.reduce((sum, file) => sum + (file.bytes || 0), 0)
@@ -729,7 +987,7 @@ function buildSeriesResolution(packData, context) {
 function buildMovieResolution(packData, context) {
     const titles = uniqueTitles(context.meta, context.item);
     const year = Number(context.meta?.year || context.item?.year || 0) || null;
-    const best = pickMovieFile(packData.files, titles, year);
+    const best = pickMovieFile(packData.files, titles, year, packData.packName || context.item?.title || context.meta?.title || '');
     if (!best) return null;
     const packName = packData.packName || getPackName(packData.files, context.item?.title || context.meta?.title);
     return {
@@ -743,6 +1001,7 @@ function buildMovieResolution(packData, context) {
         fileSize: best.bytes,
         size: best.bytes,
         source: packData.service,
+        publicFallback: Boolean(packData.publicFallback),
         totalPackSize: packData.files.reduce((sum, file) => sum + (file.bytes || 0), 0)
     };
 }
@@ -765,7 +1024,7 @@ async function resolvePackData(arg1, config, meta) {
     }
 
     if (!packData || !Array.isArray(packData.files) || packData.files.length === 0) {
-        packData = await scanPackFiles(infoHash, context.config);
+        packData = await scanPackFiles(infoHash, context.config, context.logger);
     }
     if (packData?.negative === true) return null;
     if (!packData || !Array.isArray(packData.files) || packData.files.length === 0) return null;
@@ -852,5 +1111,7 @@ module.exports = {
     processSeriesPackFiles,
     isSeasonPack,
     isVideoFile,
-    parseSeasonEpisode
+    parseSeasonEpisode,
+    parseTorrentMetadata,
+    fetchFilesFromPublicTorrentCaches
 };
