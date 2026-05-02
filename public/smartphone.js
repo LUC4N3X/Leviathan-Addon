@@ -1688,15 +1688,15 @@ const mobileHTML = `
 
                     <div class="m-cred-deck">
                         <div class="m-cred-opt cred-rd m-srv-btn active" onclick="setMService('rd', this)">
-                            <div class="m-cred-icon"><i class="fas fa-bolt"></i></div>
+                            <div class="m-cred-icon">🐬</div>
                             <div class="m-cred-name">REAL-DEBRID</div>
                         </div>
                         <div class="m-cred-opt cred-tb m-srv-btn" onclick="setMService('tb', this)">
-                            <div class="m-cred-icon"><i class="fas fa-anchor"></i></div>
+                            <div class="m-cred-icon">⚓</div>
                             <div class="m-cred-name">TORBOX</div>
                         </div>
                         <div class="m-cred-opt cred-p2p m-srv-btn" onclick="setMService('p2p', this)">
-                            <div class="m-cred-icon"><i class="fas fa-network-wired"></i></div>
+                            <div class="m-cred-icon">🦈</div>
                             <div class="m-cred-name">P2P MODE</div>
                         </div>
                     </div>
