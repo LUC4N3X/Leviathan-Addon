@@ -31,7 +31,8 @@ const { buildSharedStreamCachePolicy, buildSharedReadContext, shouldUseSharedStr
 const { getSourceModeFlags, shouldUseTorrentPipeline } = require('./config/source_mode');
 const { runFilterStage, runSortStage } = require('./lib/result_stage_pipeline');
 const { buildSeriesContext, matchesCandidateTitle } = require('./matching/episode_matcher');
-const { dedupeByInfoHash } = require('./stream/infohash_deduper');
+const { dedupeByInfoHash, getFolderSizeBytes: getDedupeFolderSizeBytes } = require('./stream/infohash_deduper');
+const { hasFolderSizeSeasonPackSignal } = require('./matching/season_pack_inspector');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
 const {
@@ -263,6 +264,12 @@ function hasStrictSeasonPackCue(item = {}, meta = {}, type = '') {
 function isConfidentSeasonPackItem(item = {}, meta = {}, type = '') {
     const ctx = getSeriesEpisodeContext(meta);
     if (!ctx.isSeries) return false;
+
+    // AIOStreams-style pack signal: if folderSize is much larger than the selected
+    // video file size, this is a multi-file/season-pack even when the visible title
+    // looks like a single episode. This is important for correct fileIdx handling.
+    if (hasFolderSizeSeasonPackSignal(item)) return true;
+
     if (isExactRequestedEpisodeItem(item, meta, type)) return false;
 
     const hasFlag = Boolean(item?._isPack || item?.potentialPack || item?.packTitle || isSeasonPack(item?.title || ''));
@@ -459,6 +466,55 @@ function assessFastResultQuality(items, meta, langMode, config) {
         : 'fast_pool_ok';
 
     return { shouldScrape, reason, strongCount, exactEpisodeCount, seasonPackCount, total: list.length };
+}
+
+
+function getSeriesDbFallbackLimit(filters = {}) {
+    const raw = filters.seriesDbFallbackLimit ?? process.env.SERIES_DB_FALLBACK_LIMIT ?? '10';
+    return Math.max(0, Math.min(40, parseInt(raw, 10) || 10));
+}
+
+function shouldAllowSeriesDbFastPath(filters = {}) {
+    const value = filters.seriesDbFastPath ?? process.env.SERIES_DB_FAST_PATH;
+    return String(value || '0') === '1';
+}
+
+function markFallbackGroup(items = [], group = 'fallback') {
+    return (Array.isArray(items) ? items : []).map((item) => ({
+        ...item,
+        _fallbackGroup: group,
+        _sourceGroup: item?._sourceGroup || group
+    }));
+}
+
+function buildGroupedFallbackCandidatePool({ localDbPool = [], networkResults = [], meta = {}, langMode = 'ita', config = {}, filters = {} }) {
+    const dbList = Array.isArray(localDbPool) ? localDbPool : [];
+    const networkList = Array.isArray(networkResults) ? networkResults : [];
+    const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
+
+    if (!isSeries) {
+        return [...dbList, ...networkList];
+    }
+
+    const networkAssessment = assessFastResultQuality(networkList, meta, langMode, config);
+    const networkSatisfaction = evaluatePoolSatisfaction(networkAssessment, meta);
+    const dbLimit = getSeriesDbFallbackLimit(filters);
+    const networkIsPrimarySatisfied = networkSatisfaction.satisfied && Number(networkAssessment.exactEpisodeCount || 0) >= 1;
+
+    if (networkIsPrimarySatisfied) {
+        const dbFallback = dbLimit > 0 ? dbList.slice(0, dbLimit) : [];
+        logger.info(`[GROUP FALLBACK] series network primary satisfied=${networkSatisfaction.reason} exact=${networkAssessment.exactEpisodeCount} strong=${networkAssessment.strongCount} | dbFallback=${dbFallback.length}/${dbList.length}`);
+        return [
+            ...markFallbackGroup(networkList, 'network_primary'),
+            ...markFallbackGroup(dbFallback, 'db_fallback')
+        ];
+    }
+
+    logger.info(`[GROUP FALLBACK] series network not enough reason=${networkSatisfaction.reason} exact=${networkAssessment.exactEpisodeCount} strong=${networkAssessment.strongCount} -> include full DB fallback=${dbList.length}`);
+    return [
+        ...markFallbackGroup(networkList, 'network_primary'),
+        ...markFallbackGroup(dbList, 'db_full_fallback')
+    ];
 }
 
 function getEffectiveLangMode(config, meta = {}, type = '') {
@@ -859,6 +915,40 @@ function getObservedSizeBytes(...values) {
     return 0;
 }
 
+function getObservedFolderSizeBytes(item = {}) {
+    return getDedupeFolderSizeBytes(item);
+}
+
+function getResolvedFileIdx(item = {}) {
+    const candidates = [
+        item?.fileIdx,
+        item?.fileIndex,
+        item?.file_index,
+        item?.rd_file_index,
+        item?.tb_file_id,
+        item?.episodeFileHint?.fileIdx,
+        item?.episodeFileHint?.fileIndex,
+        item?._episodeFileHint?.fileIdx,
+        item?._episodeFileHint?.fileIndex
+    ];
+    for (const value of candidates) {
+        const parsed = Number(value);
+        if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+    }
+    return null;
+}
+
+function getDedupeContext(meta = {}, extra = {}) {
+    const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
+    return {
+        ...extra,
+        meta,
+        isSeries,
+        season: Number(meta?.season || 0) || 0,
+        episode: Number(meta?.episode || 0) || 0
+    };
+}
+
 function getObservedSeederCount(...values) {
     for (const value of values) {
         const parsed = Number.parseInt(value, 10);
@@ -1181,7 +1271,16 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
             }),
             url: streamUrl,
             infoHash: item?.hash,
-            behaviorHints: { notWebReady: false, bingieGroup: `Leviathan|${quality}|${serviceLabel}|${item?.hash}` }
+            fileIdx: getResolvedFileIdx(item),
+            folderSize: getObservedFolderSizeBytes(item) || undefined,
+            behaviorHints: {
+                notWebReady: false,
+                bingieGroup: `Leviathan|${quality}|${serviceLabel}|${item?.hash}`,
+                infoHash: item?.hash,
+                fileIdx: getResolvedFileIdx(item),
+                folderSize: getObservedFolderSizeBytes(item) || undefined,
+                filename: item?.episodeFileHint?.fileName || item?._episodeFileHint?.fileName || item?.filename || undefined
+            }
         };
     }
 
@@ -1205,7 +1304,16 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         title,
         url: streamUrl,
         infoHash: item?.hash,
-        behaviorHints: { notWebReady: false, bingieGroup: bingeGroup }
+        fileIdx: getResolvedFileIdx(item),
+        folderSize: getObservedFolderSizeBytes(item) || undefined,
+        behaviorHints: {
+            notWebReady: false,
+            bingieGroup: bingeGroup,
+            infoHash: item?.hash,
+            fileIdx: getResolvedFileIdx(item),
+            folderSize: getObservedFolderSizeBytes(item) || undefined,
+            filename: item?.episodeFileHint?.fileName || item?._episodeFileHint?.fileName || item?.filename || undefined
+        }
     };
 }
 
@@ -2335,7 +2443,8 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
         source: item?.source || null,
         seeders: finalSeeders,
         size: realSize > 0 ? realSize : 0,
-        fileIdx: (item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1
+        fileIdx: (item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1,
+        folderSize: getObservedFolderSizeBytes(item) || 0
     }, 43200).catch(() => {});
 
     return buildPlayableStream({
@@ -2379,7 +2488,20 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
             if (!String(magnet).includes("tr=")) magnet = buildTrackerMagnet(t.info_hash, safeDbTitle || t.title);
             let providerName = (t.provider || 'P2P').replace(/LeviathanDB/i, '').replace(/[()]/g, '').trim() || 'P2P';
             const finalHash = t.info_hash ? t.info_hash.toUpperCase() : extractInfoHash(magnet);
-            return { title: safeDbTitle || t.title, magnet: magnet, hash: finalHash, infoHash: finalHash, size: "DB Cache", sizeBytes: parseInt(t.size), seeders: parseInt(t.seeders, 10) || 0, source: providerName, fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined, _isPack: Boolean(isSeriesQuery && isConfidentSeasonPackItem({ title: safeDbTitle || t.title }, meta, type)) };
+            return {
+                title: safeDbTitle || t.title,
+                magnet: magnet,
+                hash: finalHash,
+                infoHash: finalHash,
+                size: "DB Cache",
+                sizeBytes: parseInt(t.size),
+                folderSize: Number(t.folder_size || t.folderSize || t.total_size || 0) || undefined,
+                seeders: parseInt(t.seeders, 10) || 0,
+                source: providerName,
+                fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined,
+                _sourceGroup: 'db',
+                _isPack: Boolean(isSeriesQuery && isConfidentSeasonPackItem({ title: safeDbTitle || t.title, sizeBytes: parseInt(t.size), folderSize: Number(t.folder_size || t.folderSize || t.total_size || 0) || undefined }, meta, type))
+            };
         });
 
         const langMode = getEffectiveSearchLanguageMode(config?.filters || {}, meta, type);
@@ -2431,6 +2553,7 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
                     externalDirectUrl: directUrl || null,
                     size: i.size || (finalSize > 0 ? formatBytes(finalSize) : null),
                     sizeBytes: finalSize,
+                    folderSize: i.folderSize || i.folder_size || i.behaviorHints?.folderSize || undefined,
                     seeders: finalSeeders,
                     source: i.externalProvider || String(i.source || '').replace(/\[EXT\]\s*/, ''),
                     hash,
@@ -2440,6 +2563,7 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
                     _episodeFileHint: i._episodeFileHint || i.episodeFileHint || null,
                     _packValidated: i._packValidated === true,
                     isExternal: true,
+                    _sourceGroup: 'external',
                     externalAddon: i.externalAddon || null,
                     externalGroup: i.externalGroup || null,
                     _preferTorrentioSeries: Boolean(isSeriesQuery && (String(i.externalGroup || '').toLowerCase() === 'torrentio' || String(i.externalAddon || '').toLowerCase().startsWith('torrentio'))),
@@ -2727,9 +2851,12 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           logger.info(`[DB READ] Trovati ${localDbFastPool.length}/${localDbResults.length} torrent dal DB locale | satisfied=${localDbSatisfaction.satisfied} reason=${localDbSatisfaction.reason}`);
       }
 
-      const useLocalDbFastPath = localDbFastPool.length > 0 && localDbSatisfaction.satisfied && !sourceModeFlags.liveOnlyMode;
+      const allowSeriesDbFastPath = !meta?.isSeries || shouldAllowSeriesDbFastPath(filters);
+      const useLocalDbFastPath = localDbFastPool.length > 0 && localDbSatisfaction.satisfied && !sourceModeFlags.liveOnlyMode && allowSeriesDbFastPath;
       if (useLocalDbFastPath) {
           logger.info(`[DB FAST-PATH] Uso DB locale, skip Remote/External | results=${localDbFastPool.length} reason=${localDbSatisfaction.reason}`);
+      } else if (meta?.isSeries && localDbFastPool.length > 0 && localDbSatisfaction.satisfied) {
+          logger.info(`[DB FAST-PATH] serie: skip disattivato, provo prima gruppi network/Torrentio | dbResults=${localDbFastPool.length} reason=${localDbSatisfaction.reason}`);
       }
 
       const networkResults = torrentPipelineEnabled && !useLocalDbFastPath
@@ -2752,9 +2879,20 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       let cleanResults = [];
       let rankedList = [];
       if (torrentPipelineEnabled) {
+          const dbMergePool = localDbFastPool.length > 0 ? localDbFastPool : localDbResults;
+          const groupedMergePool = useLocalDbFastPath
+              ? localDbFastPool
+              : buildGroupedFallbackCandidatePool({
+                  localDbPool: dbMergePool,
+                  networkResults,
+                  meta,
+                  langMode,
+                  config,
+                  filters
+              });
           cleanResults = useLocalDbFastPath
               ? localDbFastPool
-              : await normalizeCandidateResults([...(localDbFastPool.length > 0 ? localDbFastPool : localDbResults), ...networkResults].filter(aggressiveFilter));
+              : await normalizeCandidateResults(groupedMergePool.filter(aggressiveFilter));
           cleanResults = runFilterStage(cleanResults, meta, filters, {
               applyPackKnowledge,
               applyConfiguredTorrentFilters
@@ -2779,7 +2917,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
           rankedList = await reprioritizeRdRankedList(rankedList, meta, config, hasDebridKey);
           rankedList = applyPremiumRankingPolicy(rankedList, meta, config);
-          const infoHashRankDedupe = dedupeByInfoHash(rankedList);
+          const infoHashRankDedupe = dedupeByInfoHash(rankedList, getDedupeContext(meta, { stage: 'ranked' }));
           if (infoHashRankDedupe.removed > 0) {
               logger.info(`[DEDUPE INFOHASH] ranked removed=${infoHashRankDedupe.removed} kept=${infoHashRankDedupe.results.length} title="${String(meta?.title || '').slice(0, 80)}" s=${meta?.season || '-'} e=${meta?.episode || '-'}`);
           }
@@ -2850,7 +2988,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
       let finalStreams = mergeFinalStreams(debridStreams, formattedWebBuckets, filters, meta);
       finalStreams = applyConfiguredStreamFilters(finalStreams, filters);
-      const infoHashStreamDedupe = dedupeByInfoHash(finalStreams);
+      const infoHashStreamDedupe = dedupeByInfoHash(finalStreams, getDedupeContext(meta, { stage: 'streams' }));
       if (infoHashStreamDedupe.removed > 0) {
           logger.info(`[DEDUPE INFOHASH] stream removed=${infoHashStreamDedupe.removed} kept=${infoHashStreamDedupe.results.length} title="${String(meta?.title || '').slice(0, 80)}" s=${meta?.season || '-'} e=${meta?.episode || '-'}`);
       }

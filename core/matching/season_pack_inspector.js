@@ -31,6 +31,48 @@ function parseFileSize(file = {}) {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+
+function parseSizeBytes(value) {
+    if (value === null || value === undefined || value === '') return 0;
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+    const text = String(value || '').trim();
+    const match = text.match(/(\d+(?:[.,]\d+)?)\s*(B|KB|MB|GB|TB)\b/i);
+    if (!match) return 0;
+    const amount = Number(String(match[1]).replace(',', '.'));
+    if (!Number.isFinite(amount) || amount <= 0) return 0;
+    const unit = match[2].toUpperCase();
+    const powers = { B: 0, KB: 1, MB: 2, GB: 3, TB: 4 };
+    return Math.round(amount * Math.pow(1024, powers[unit] || 0));
+}
+
+function getItemFileSizeBytes(item = {}) {
+    const values = [item._size, item.sizeBytes, item.fileSize, item.file_size, item.mainFileSize, item.size, item.behaviorHints?.videoSize];
+    for (const value of values) {
+        const parsed = parseSizeBytes(value);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    return 0;
+}
+
+function getItemFolderSizeBytes(item = {}) {
+    const values = [item.folderSize, item.folder_size, item.totalPackSize, item.packSize, item.behaviorHints?.folderSize, item.behaviorHints?.folder_size];
+    for (const value of values) {
+        const parsed = parseSizeBytes(value);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    return 0;
+}
+
+function hasFolderSizeSeasonPackSignal(item = {}) {
+    const fileSize = getItemFileSizeBytes(item);
+    const folderSize = getItemFolderSizeBytes(item);
+    if (!(fileSize > 0 && folderSize > 0)) return false;
+    if (folderSize <= fileSize) return false;
+    const ratio = folderSize / fileSize;
+    const absoluteDelta = folderSize - fileSize;
+    return ratio >= 2 || absoluteDelta >= 900 * 1024 * 1024;
+}
+
 function normalizeVideoFiles(files) {
     return (Array.isArray(files) ? files : [])
         .map((file) => {
@@ -153,6 +195,10 @@ function isLikelySeasonPackTitle(value, season) {
 
 module.exports = {
     VIDEO_EXTENSIONS,
+    parseSizeBytes,
+    getItemFileSizeBytes,
+    getItemFolderSizeBytes,
+    hasFolderSizeSeasonPackSignal,
     cleanFilePath,
     normalizeVideoFiles,
     findEpisodeFileHint,

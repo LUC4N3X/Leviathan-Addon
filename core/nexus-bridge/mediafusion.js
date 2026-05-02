@@ -124,6 +124,7 @@ async function filterMediaFusionByRealDebridCache(streams, options = {}) {
                 return {
                     ...item,
                     fileIdx: resolvedFileIdx,
+                    folderSize: probe.size || probe.folderSize || item.folderSize || undefined,
                     episodeFileHint: probe.episodeFileHint || item.episodeFileHint || null,
                     _episodeFileHint: probe.episodeFileHint || item._episodeFileHint || null,
                     _packValidated: probe.episodeFileHint ? true : item._packValidated,

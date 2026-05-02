@@ -1,6 +1,7 @@
 'use strict';
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|mpg|mpeg|3gp|3g2|m2ts|ts|vob|ogv|ogm|divx|xvid|rm|rmvb|asf|mxf|mka|mks|mk3d|f4v|f4p|f4a|f4b)$/i;
 
 function base32ToHex(value) {
   const input = String(value || '').replace(/=+$/g, '').toUpperCase();
@@ -52,6 +53,7 @@ function pushCandidate(candidates, value) {
     pushCandidate(candidates, value.magnet);
     pushCandidate(candidates, value.magnetLink);
     pushCandidate(candidates, value.url);
+    pushCandidate(candidates, value.sources);
     return;
   }
   const text = String(value || '').trim();
@@ -89,22 +91,189 @@ function extractInfoHash(item = {}) {
   return null;
 }
 
+function parseIntegerId(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function extractFileIdx(item = {}) {
+  const candidates = [
+    item.fileIdx,
+    item.fileIndex,
+    item.file_index,
+    item.rd_file_index,
+    item.tb_file_id,
+    item.file_id,
+    item.behaviorHints?.fileIdx,
+    item.behaviorHints?.fileIndex,
+    item.behaviorHints?.file_index,
+    item.episodeFileHint?.fileIdx,
+    item.episodeFileHint?.fileIndex,
+    item._episodeFileHint?.fileIdx,
+    item._episodeFileHint?.fileIndex
+  ];
+
+  for (const value of candidates) {
+    const parsed = parseIntegerId(value);
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
+function parseBytes(value) {
+  if (value === null || value === undefined || value === '') return 0;
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  const text = String(value || '').trim();
+  const match = text.match(/(\d+(?:[.,]\d+)?)\s*(B|KB|MB|GB|TB)\b/i);
+  if (!match) return 0;
+  const amount = Number(String(match[1]).replace(',', '.'));
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const unit = match[2].toUpperCase();
+  const powers = { B: 0, KB: 1, MB: 2, GB: 3, TB: 4 };
+  return Math.round(amount * Math.pow(1024, powers[unit] || 0));
+}
+
+function getSizeBytes(item = {}) {
+  const values = [
+    item._size,
+    item.sizeBytes,
+    item.fileSize,
+    item.file_size,
+    item.mainFileSize,
+    item.size,
+    item.behaviorHints?.videoSize
+  ];
+  for (const value of values) {
+    const parsed = typeof value === 'number' ? value : parseBytes(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function getFolderSizeBytes(item = {}) {
+  const values = [
+    item.folderSize,
+    item.folder_size,
+    item.totalPackSize,
+    item.packSize,
+    item.behaviorHints?.folderSize,
+    item.behaviorHints?.folder_size
+  ];
+  for (const value of values) {
+    const parsed = typeof value === 'number' ? value : parseBytes(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function isSeriesContext(options = {}) {
+  const meta = options.meta || {};
+  return Boolean(options.isSeries || meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
+}
+
+function getSeasonEpisodeKey(options = {}) {
+  const meta = options.meta || {};
+  const season = Number(options.season ?? meta?.season ?? 0) || 0;
+  const episode = Number(options.episode ?? meta?.episode ?? 0) || 0;
+  if (season > 0 && episode > 0) return `${season}:${episode}`;
+  return '';
+}
+
+function normalizeFileName(value) {
+  const text = String(value || '')
+    .replace(VIDEO_EXTENSIONS, '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}+]+/gu, '')
+    .toLowerCase()
+    .trim();
+  return text.length >= 8 ? text : '';
+}
+
+function extractFilename(item = {}) {
+  const candidates = [
+    item.filename,
+    item.fileName,
+    item.file_name,
+    item.file_title,
+    item.behaviorHints?.filename,
+    item.behaviorHints?.fileName,
+    item.episodeFileHint?.fileName,
+    item.episodeFileHint?.filePath,
+    item._episodeFileHint?.fileName,
+    item._episodeFileHint?.filePath,
+    item.title,
+    item.name
+  ];
+
+  for (const value of candidates) {
+    const normalized = normalizeFileName(value);
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
+function buildDedupeKeys(item = {}, options = {}) {
+  const hash = extractInfoHash(item);
+  if (!hash) return [];
+
+  const keys = [];
+  const isSeries = isSeriesContext(options);
+  const fileIdx = extractFileIdx(item);
+  const hintIdx = parseIntegerId(item?.episodeFileHint?.fileIdx ?? item?.episodeFileHint?.fileIndex ?? item?._episodeFileHint?.fileIdx ?? item?._episodeFileHint?.fileIndex);
+  const episodeKey = getSeasonEpisodeKey(options);
+  const filenameKey = extractFilename(item);
+
+  if (!isSeries) {
+    keys.push(`infoHash:${hash}`);
+  } else {
+    if (fileIdx !== null) keys.push(`infoHashFile:${hash}:${fileIdx}`);
+    if (hintIdx !== null) keys.push(`infoHashFile:${hash}:${hintIdx}`);
+    if (fileIdx === null && hintIdx === null && episodeKey) keys.push(`infoHashEpisode:${hash}:${episodeKey}`);
+    if (fileIdx === null && hintIdx === null && !episodeKey) keys.push(`infoHashNoFile:${hash}`);
+  }
+
+  // Same torrent + same exact filename is a strong bridge when a provider omits fileIdx.
+  // It is intentionally only added for entries without a concrete file index, so different
+  // files inside the same season pack are not collapsed by infoHash alone.
+  if (isSeries && filenameKey && fileIdx === null && hintIdx === null) {
+    keys.push(`infoHashFilename:${hash}:${filenameKey}`);
+  }
+
+  // Folder-size pack signal is not a dedupe key by itself; it only informs ranking/selection.
+  return [...new Set(keys)];
+}
+
 function cacheTier(item = {}) {
   const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || '').toLowerCase();
-  if (item?._dbCachedRd === true || item?.cached_rd === true || item?._tbCached === true || /⚡/.test(`${item?.name || ''} ${item?.title || ''}`) || state === 'cached') return 5;
-  if (state === 'likely_cached') return 4;
+  const nameTitle = `${item?.name || ''} ${item?.title || ''}`;
+  if (item?.isSavedCloud || item?._savedCloud || item?.savedCloud || item?.behaviorHints?.savedCloud) return 7;
+  if (item?._dbCachedRd === true || item?.cached_rd === true || item?._tbCached === true || /⚡/.test(nameTitle) || state === 'cached') return 6;
+  if (state === 'likely_cached') return 5;
   if (state === 'probing') return 2;
   if (state === 'likely_uncached') return 1;
   if (state === 'uncached_terminal') return 0;
   return 3;
 }
 
-function sourcePriority(item = {}) {
+function isTorrentioLike(item = {}) {
   const text = String(`${item?.source || ''} ${item?.provider || ''} ${item?.externalAddon || ''} ${item?.externalGroup || ''} ${item?.name || ''} ${item?.title || ''}`).toLowerCase();
-  if (/torrentio/.test(text)) return 40;
-  if (/mediafusion/.test(text)) return 20;
-  if (/db|database|saved/.test(text)) return 5;
-  return 10;
+  return /torrentio/.test(text);
+}
+
+function isDbLike(item = {}) {
+  const text = String(`${item?.source || ''} ${item?.provider || ''} ${item?.externalAddon || ''} ${item?.externalGroup || ''} ${item?.name || ''} ${item?.title || ''}`).toLowerCase();
+  return /\b(db|database|leviathandb|saved)\b/.test(text);
+}
+
+function sourcePriority(item = {}, options = {}) {
+  const text = String(`${item?.source || ''} ${item?.provider || ''} ${item?.externalAddon || ''} ${item?.externalGroup || ''} ${item?.name || ''} ${item?.title || ''}`).toLowerCase();
+  const isSeries = isSeriesContext(options);
+  if (isSeries && isTorrentioLike(item)) return 45;
+  if (/mediafusion/.test(text)) return 25;
+  if (isDbLike(item)) return isSeries ? 5 : 12;
+  return 15;
 }
 
 function playablePriority(item = {}) {
@@ -122,26 +291,25 @@ function getSeederCount(item = {}) {
   return match ? parseInt(match[1], 10) || 0 : 0;
 }
 
-function getSizeBytes(item = {}) {
-  const numeric = [item?._size, item?.sizeBytes, item?.fileSize, item?.file_size, item?.mainFileSize, item?.size]
-    .find((value) => typeof value === 'number' && Number.isFinite(value) && value > 0);
-  if (numeric) return numeric;
-  return 0;
-}
-
-function choiceScore(item = {}) {
+function choiceScore(item = {}, options = {}) {
   const explicitScore = Number(item?._compositeScore || item?._score || item?._dedupeScore || 0) || 0;
+  const fileIdxBonus = extractFileIdx(item) !== null ? 20_000 : 0;
+  const packHintBonus = item?.episodeFileHint || item?._episodeFileHint ? 50_000 : 0;
+  const folderSignalBonus = getFolderSizeBytes(item) > getSizeBytes(item) * 2 ? 2_500 : 0;
   return cacheTier(item) * 1_000_000
-    + sourcePriority(item) * 10_000
+    + sourcePriority(item, options) * 10_000
     + playablePriority(item) * 1_000
+    + fileIdxBonus
+    + packHintBonus
+    + folderSignalBonus
     + Math.min(5000, Math.max(0, getSeederCount(item))) * 5
     + Math.min(5000, Math.floor((getSizeBytes(item) || 0) / (1024 * 1024)))
     + Math.max(-100000, Math.min(100000, explicitScore));
 }
 
-function preferItem(next, current) {
-  const nextScore = choiceScore(next);
-  const currentScore = choiceScore(current);
+function preferItem(next, current, options = {}) {
+  const nextScore = choiceScore(next, options);
+  const currentScore = choiceScore(current, options);
   if (nextScore !== currentScore) return nextScore > currentScore;
   const nextSize = getSizeBytes(next);
   const currentSize = getSizeBytes(current);
@@ -149,67 +317,132 @@ function preferItem(next, current) {
   return false;
 }
 
-function mergeSignals(winner = {}, loser = {}, hash = null) {
+function mergeSignals(winner = {}, losers = [], hash = null) {
   const out = { ...winner };
-  const normalizedHash = hash || extractInfoHash(winner) || extractInfoHash(loser);
+  const allLosers = Array.isArray(losers) ? losers : [losers];
+  const normalizedHash = hash || extractInfoHash(winner) || allLosers.map(extractInfoHash).find(Boolean);
 
   if (normalizedHash) {
     out.infoHash = out.infoHash || normalizedHash;
     out.hash = out.hash || normalizedHash;
   }
-  if ((out.fileIdx === undefined || out.fileIdx === null || out.fileIdx === -1) && loser?.fileIdx !== undefined && loser?.fileIdx !== null) out.fileIdx = loser.fileIdx;
-  if ((!out.episodeFileHint || typeof out.episodeFileHint !== 'object') && loser?.episodeFileHint) out.episodeFileHint = loser.episodeFileHint;
-  if ((!out._episodeFileHint || typeof out._episodeFileHint !== 'object') && loser?._episodeFileHint) out._episodeFileHint = loser._episodeFileHint;
-  if (!out._rdCacheState && loser?._rdCacheState) out._rdCacheState = loser._rdCacheState;
-  if (!out.rdCacheState && loser?.rdCacheState) out.rdCacheState = loser.rdCacheState;
-  if (!out.cacheState && loser?.cacheState) out.cacheState = loser.cacheState;
-  if (out._dbCachedRd !== true && loser?._dbCachedRd === true) out._dbCachedRd = true;
-  if (out.cached_rd !== true && loser?.cached_rd === true) out.cached_rd = true;
-  if (out._tbCached !== true && loser?._tbCached === true) out._tbCached = true;
+
+  for (const loser of allLosers) {
+    if (!loser) continue;
+    if ((out.fileIdx === undefined || out.fileIdx === null || out.fileIdx === -1) && extractFileIdx(loser) !== null) out.fileIdx = extractFileIdx(loser);
+    if ((!out.episodeFileHint || typeof out.episodeFileHint !== 'object') && loser?.episodeFileHint) out.episodeFileHint = loser.episodeFileHint;
+    if ((!out._episodeFileHint || typeof out._episodeFileHint !== 'object') && loser?._episodeFileHint) out._episodeFileHint = loser._episodeFileHint;
+    if (!out.folderSize && loser?.folderSize) out.folderSize = loser.folderSize;
+    if (!out.folder_size && loser?.folder_size) out.folder_size = loser.folder_size;
+    if (!out.totalPackSize && loser?.totalPackSize) out.totalPackSize = loser.totalPackSize;
+    if (!out._rdCacheState && loser?._rdCacheState) out._rdCacheState = loser._rdCacheState;
+    if (!out.rdCacheState && loser?.rdCacheState) out.rdCacheState = loser.rdCacheState;
+    if (!out.cacheState && loser?.cacheState) out.cacheState = loser.cacheState;
+    if (out._dbCachedRd !== true && loser?._dbCachedRd === true) out._dbCachedRd = true;
+    if (out.cached_rd !== true && loser?.cached_rd === true) out.cached_rd = true;
+    if (out._tbCached !== true && loser?._tbCached === true) out._tbCached = true;
+    if (!out._dedupeMergedSources) out._dedupeMergedSources = [];
+    const source = loser?.source || loser?.externalAddon || loser?.provider || null;
+    if (source && !out._dedupeMergedSources.includes(source)) out._dedupeMergedSources.push(source);
+  }
   return out;
+}
+
+class DSU {
+  constructor(size) {
+    this.parent = Array.from({ length: size }, (_, i) => i);
+    this.rank = Array.from({ length: size }, () => 0);
+  }
+  find(x) {
+    if (this.parent[x] !== x) this.parent[x] = this.find(this.parent[x]);
+    return this.parent[x];
+  }
+  union(a, b) {
+    let ra = this.find(a);
+    let rb = this.find(b);
+    if (ra === rb) return;
+    if (this.rank[ra] < this.rank[rb]) [ra, rb] = [rb, ra];
+    this.parent[rb] = ra;
+    if (this.rank[ra] === this.rank[rb]) this.rank[ra] += 1;
+  }
 }
 
 function dedupeByInfoHash(items = [], options = {}) {
   const list = Array.isArray(items) ? items : [];
   const enabledValue = options.enabled !== undefined ? options.enabled : process.env.INFOHASH_DEDUPE;
   if (String(enabledValue ?? '1') === '0' || list.length < 2) {
-    return { results: list, removed: 0, groups: 0 };
+    return { results: list, removed: 0, groups: 0, keyGroups: 0 };
   }
 
-  const kept = [];
-  const hashToIndex = new Map();
+  const dsu = new DSU(list.length);
+  const keyToFirstIndex = new Map();
+  let keyGroups = 0;
+
+  list.forEach((item, idx) => {
+    const keys = buildDedupeKeys(item, options);
+    for (const key of keys) {
+      const first = keyToFirstIndex.get(key);
+      if (first === undefined) {
+        keyToFirstIndex.set(key, idx);
+      } else {
+        dsu.union(first, idx);
+        keyGroups += 1;
+      }
+    }
+  });
+
+  const groups = new Map();
+  list.forEach((item, idx) => {
+    const keys = buildDedupeKeys(item, options);
+    if (keys.length === 0) {
+      groups.set(`single:${idx}`, [idx]);
+      return;
+    }
+    const root = dsu.find(idx);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(idx);
+  });
+
+  const resultsWithOriginalIndex = [];
   let removed = 0;
-  let groups = 0;
+  let duplicateGroups = 0;
 
-  for (const item of list) {
-    const hash = extractInfoHash(item);
-    if (!hash) {
-      kept.push(item);
+  for (const indexes of groups.values()) {
+    if (!Array.isArray(indexes) || indexes.length <= 1) {
+      resultsWithOriginalIndex.push({ index: indexes[0], item: list[indexes[0]] });
       continue;
     }
 
-    const existingIndex = hashToIndex.get(hash);
-    if (existingIndex === undefined) {
-      hashToIndex.set(hash, kept.length);
-      kept.push(mergeSignals(item, {}, hash));
-      continue;
+    duplicateGroups += 1;
+    removed += indexes.length - 1;
+    let winnerIndex = indexes[0];
+    for (const idx of indexes.slice(1)) {
+      if (preferItem(list[idx], list[winnerIndex], options)) winnerIndex = idx;
     }
 
-    removed += 1;
-    groups += 1;
-    const current = kept[existingIndex];
-    if (preferItem(item, current)) {
-      kept[existingIndex] = mergeSignals(item, current, hash);
-    } else {
-      kept[existingIndex] = mergeSignals(current, item, hash);
-    }
+    const winner = list[winnerIndex];
+    const losers = indexes.filter((idx) => idx !== winnerIndex).map((idx) => list[idx]);
+    resultsWithOriginalIndex.push({
+      index: Math.min(...indexes),
+      item: mergeSignals(winner, losers, extractInfoHash(winner))
+    });
   }
 
-  return { results: kept, removed, groups };
+  resultsWithOriginalIndex.sort((a, b) => a.index - b.index);
+  return {
+    results: resultsWithOriginalIndex.map((entry) => entry.item),
+    removed,
+    groups: duplicateGroups,
+    keyGroups
+  };
 }
 
 module.exports = {
   normalizeInfoHash,
   extractInfoHash,
+  extractFileIdx,
+  getSizeBytes,
+  getFolderSizeBytes,
+  buildDedupeKeys,
   dedupeByInfoHash
 };

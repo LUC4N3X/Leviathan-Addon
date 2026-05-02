@@ -544,6 +544,12 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                     item.sizeBytes = Math.max(Number(item.sizeBytes || item._size || 0), Number(result.file_size));
                 }
 
+                const totalPackSize = Number(result.size || result.folderSize || result.totalPackSize || 0);
+                if (Number.isFinite(totalPackSize) && totalPackSize > 0 && (result.is_pack === true || totalPackSize > Number(result.file_size || 0) * 2)) {
+                    item.folderSize = totalPackSize;
+                    item.totalPackSize = totalPackSize;
+                }
+
                 const hintedFileSize = Number(result.episodeFileHint?.fileSize || result.file_size || 0);
                 const hintedFileIndex = Number(result.episodeFileHint?.fileIndex ?? result.file_index);
                 if (result.cached === true && result.episodeFileHint && meta?.imdb_id && Number(meta?.season) > 0 && Number(meta?.episode) > 0) {
