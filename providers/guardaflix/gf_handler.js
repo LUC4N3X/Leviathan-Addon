@@ -21,6 +21,7 @@ const { SingleFlight, TtlLruCache, createLimiter } = require('../utils/provider_
 const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
+const { requestWithImpit } = require('../utils/bypass');
 
 const CONFIG = Object.freeze({
     BASE_URL: 'https://guardaplay.live/',
@@ -177,33 +178,19 @@ function isPossiblyProtectedError(error) {
     ].some((token) => message.includes(token));
 }
 
-let gotScrapingInstance = null;
-
-async function getGotScraping() {
-    if (!gotScrapingInstance) {
-        const mod = await import('got-scraping');
-        gotScrapingInstance = mod.gotScraping;
-    }
-
-    return gotScrapingInstance;
-}
-
-async function fetchWithGot(targetUrl, customHeaders = {}, responseType = 'text') {
-    const gotScraping = await getGotScraping();
-
-    const response = await gotScraping({
+async function fetchWithImpit(targetUrl, customHeaders = {}, responseType = 'text') {
+    const response = await requestWithImpit({
         url: targetUrl,
         headers: defaultHeaders(customHeaders),
         retry: { limit: 2 },
         responseType: responseType === 'json' ? 'text' : responseType,
-        https: { rejectUnauthorized: false },
-        timeout: { request: CONFIG.TIMEOUT },
-        throwHttpErrors: false,
+        ignoreTlsErrors: true,
+        timeout: CONFIG.TIMEOUT,
         followRedirect: true
     });
 
     if (response.statusCode < 200 || response.statusCode >= 400) {
-        const error = new Error(`got-scraping HTTP ${response.statusCode} for ${targetUrl}`);
+        const error = new Error(`impit HTTP ${response.statusCode} for ${targetUrl}`);
         error.status = response.statusCode;
         throw error;
     }
@@ -214,10 +201,10 @@ async function fetchWithGot(targetUrl, customHeaders = {}, responseType = 'text'
                 data: JSON.parse(response.body),
                 status: response.statusCode,
                 headers: response.headers,
-                via: 'got'
+                via: 'impit'
             };
         } catch (error) {
-            error.message = `Invalid JSON via got-scraping: ${error.message}`;
+            error.message = `Invalid JSON via impit: ${error.message}`;
             throw error;
         }
     }
@@ -226,7 +213,7 @@ async function fetchWithGot(targetUrl, customHeaders = {}, responseType = 'text'
         data: response.body,
         status: response.statusCode,
         headers: response.headers,
-        via: 'got'
+        via: 'impit'
     };
 }
 
@@ -253,7 +240,7 @@ async function fetchSmart(targetUrl, options = {}) {
     const attempts = [
         () => fetchViaAxios(strictHttpClient, targetUrl, { ...options, via: 'axios-strict' }),
         () => allowSiteFallback ? fetchViaAxios(looseHttpClient, targetUrl, { ...options, via: 'axios-loose' }) : null,
-        () => allowSiteFallback ? fetchWithGot(targetUrl, options.headers || {}, options.responseType || 'text') : null
+        () => allowSiteFallback ? fetchWithImpit(targetUrl, options.headers || {}, options.responseType || 'text') : null
     ];
 
     let lastError = null;
@@ -1188,7 +1175,7 @@ class GuardaFlixScraper {
                     userAgent: USER_AGENT,
                     requestReferer: pageUrl,
                     fetchers: [
-                        (targetUrl, headers) => fetchWithGot(targetUrl, headers, 'text').then((response) => response.data)
+                        (targetUrl, headers) => fetchWithImpit(targetUrl, headers, 'text').then((response) => response.data)
                     ]
                 });
 

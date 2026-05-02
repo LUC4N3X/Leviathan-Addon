@@ -5,7 +5,12 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
-const { isCanceledError: defaultIsCanceledError, isCloudflareChallenge } = require('./bypass');
+const {
+  getImpitBrowserForFingerprint,
+  isCanceledError: defaultIsCanceledError,
+  isCloudflareChallenge,
+  requestWithImpit
+} = require('./bypass');
 const { createCfClearanceManager, normalizeBaseUrl, mergeCookieHeaders } = require('./cf_clearance_manager');
 
 class LRUCache {
@@ -118,6 +123,7 @@ function createProviderHttpGuard(options = {}) {
   const targetUrlClearance = options.targetUrlClearance !== false;
   const targetFallbackAfterOrigin = Boolean(options.targetFallbackAfterOrigin);
   const homepageFallback = Boolean(options.homepageFallback);
+  const preferImpit = options.preferImpit !== false;
 
   function loadStoredDomain() {
     try {
@@ -358,8 +364,38 @@ function createProviderHttpGuard(options = {}) {
     return headers;
   }
 
-  async function axiosSiteRequest(url, { method = 'GET', body = null, headers = {}, timeout = directFetchTimeoutMs, signal = null, maxRedirects = 6 } = {}) {
+  async function axiosSiteRequest(url, { method = 'GET', body = null, headers = {}, timeout = directFetchTimeoutMs, signal = null, maxRedirects = 6, browserProfile = null } = {}) {
     const startedAt = Date.now();
+    if (preferImpit) {
+      try {
+        const response = await requestWithImpit({
+          url,
+          method,
+          body: method === 'POST' ? body : null,
+          headers,
+          timeout,
+          signal,
+          maxRedirects,
+          followRedirect: maxRedirects !== 0,
+          responseType: 'text',
+          browser: getImpitBrowserForFingerprint(browserProfile || activeSession),
+          ignoreTlsErrors: options.ignoreTlsErrors === true
+        });
+
+        return {
+          status: response.statusCode,
+          headers: response.headers || {},
+          data: typeof response.body === 'string' ? response.body : String(response.body || ''),
+          url: response.url || url,
+          ms: Date.now() - startedAt,
+          via: 'impit'
+        };
+      } catch (error) {
+        if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
+        logger.debug('impit fetch error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
+      }
+    }
+
     const response = await axios.request({
       url,
       method,
@@ -387,7 +423,8 @@ function createProviderHttpGuard(options = {}) {
       headers: response.headers || {},
       data: typeof response.data === 'string' ? response.data : String(response.data || ''),
       url: responseUrl,
-      ms: Date.now() - startedAt
+      ms: Date.now() - startedAt,
+      via: 'axios'
     };
   }
 
@@ -411,7 +448,8 @@ function createProviderHttpGuard(options = {}) {
       body: method === 'POST' ? body : null,
       headers: buildHeaders({ session: activeSession, method, body }),
       timeout: Math.max(timeout, 4500),
-      signal
+      signal,
+      browserProfile: activeSession
     });
 
     updateCurrentDomainFromUrl(response.url);
@@ -435,7 +473,8 @@ function createProviderHttpGuard(options = {}) {
       body: method === 'POST' ? body : null,
       headers: buildHeaders({ method, body, directProfile: profile }),
       timeout,
-      signal
+      signal,
+      browserProfile: profile
     });
 
     updateCurrentDomainFromUrl(response.url);

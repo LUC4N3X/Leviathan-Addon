@@ -2,6 +2,9 @@
 
 const axios = require('axios');
 
+const IMPIT_INSTANCE_CACHE = new Map();
+let impitModulePromise = null;
+
 const DEFAULT_FINGERPRINT_POOL = Object.freeze([
     Object.freeze({
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
@@ -231,20 +234,165 @@ function buildContextHeaders(url = null, context = null, extra = {}, fp = null) 
     return compactHeaderObject(Object.assign(headers, extra));
 }
 
-function getGotScrapingHeaderOptions(fp = getRandomFingerprint(), options = {}) {
-    const browserName = fp.browserType === 'firefox' ? 'firefox' : 'chrome';
-    const osPlatform = (() => {
-        if (fp.secChUaPlatform === '"macOS"') return 'macos';
-        if (fp.secChUaPlatform === '"Linux"') return 'linux';
-        return 'windows';
-    })();
+function getImpitBrowserForFingerprint(fp = null) {
+    const browserType = safeString(fp?.browserType || fp?.family || fp?.browser || fp?.name).toLowerCase();
+    const userAgent = safeString(fp?.userAgent || fp?.ua).toLowerCase();
 
-    return {
-        browsers: [{ name: browserName, minVersion: options.minVersion || 120 }],
-        operatingSystems: [osPlatform],
-        devices: options.devices || ['desktop'],
-        locales: options.locales || ['it-IT', 'en-US']
+    if (browserType.includes('firefox') || userAgent.includes('firefox/')) return 'firefox135';
+    if (browserType.includes('okhttp') || userAgent.includes('okhttp/')) return 'okhttp4';
+    return 'chrome136';
+}
+
+function headersToPlainObject(headers = {}) {
+    const out = {};
+    if (!headers) return out;
+
+    if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+        for (const [key, value] of headers.entries()) out[key.toLowerCase()] = value;
+        const setCookies = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
+        if (setCookies?.length) out['set-cookie'] = setCookies;
+        return out;
+    }
+
+    if (typeof headers.entries === 'function') {
+        for (const [key, value] of headers.entries()) out[String(key).toLowerCase()] = value;
+        return out;
+    }
+
+    for (const [key, value] of Object.entries(headers || {})) {
+        out[String(key).toLowerCase()] = value;
+    }
+    return out;
+}
+
+async function loadImpitModule() {
+    if (!impitModulePromise) {
+        impitModulePromise = import('impit').catch((error) => {
+            impitModulePromise = null;
+            throw error;
+        });
+    }
+    return impitModulePromise;
+}
+
+function buildImpitClientKey(options = {}) {
+    return JSON.stringify({
+        browser: options.browser || 'chrome136',
+        ignoreTlsErrors: options.ignoreTlsErrors === true,
+        vanillaFallback: options.vanillaFallback !== false,
+        followRedirects: options.followRedirects !== false,
+        maxRedirects: Math.max(0, Number(options.maxRedirects ?? 10) || 0),
+        proxyUrl: options.proxyUrl || null,
+        http3: options.http3 === true,
+        localAddress: options.localAddress || null
+    });
+}
+
+async function getImpitClient(options = {}) {
+    const clientOptions = {
+        browser: options.browser || 'chrome136',
+        ignoreTlsErrors: options.ignoreTlsErrors === true,
+        vanillaFallback: options.vanillaFallback !== false,
+        followRedirects: options.followRedirects !== false,
+        maxRedirects: Math.max(0, Number(options.maxRedirects ?? 10) || 0),
+        proxyUrl: options.proxyUrl || undefined,
+        http3: options.http3 === true,
+        localAddress: options.localAddress || undefined
     };
+    const cacheKey = buildImpitClientKey(clientOptions);
+    const cached = IMPIT_INSTANCE_CACHE.get(cacheKey);
+    if (cached) return cached;
+
+    try {
+        const mod = await loadImpitModule();
+        const Impit = mod.Impit || mod.default?.Impit || mod.default || mod.ImpitWrapper;
+        if (typeof Impit !== 'function') throw new Error('Impit export not found');
+        const client = new Impit(clientOptions);
+        IMPIT_INSTANCE_CACHE.set(cacheKey, client);
+        return client;
+    } catch (error) {
+        if (options.failSoft) return null;
+        throw error;
+    }
+}
+
+function resolveImpitTimeout(timeout) {
+    const value = typeof timeout === 'object' && timeout
+        ? timeout.request || timeout.timeout || timeout.ms
+        : timeout;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function resolveImpitRedirect(options = {}) {
+    if (options.redirect === 'follow' || options.redirect === 'manual' || options.redirect === 'error') return options.redirect;
+    return options.followRedirect === false ? 'manual' : 'follow';
+}
+
+async function requestWithImpit(input, config = {}) {
+    const options = typeof input === 'string' || input instanceof URL
+        ? { ...config, url: String(input) }
+        : { ...(input || {}), ...config };
+    const url = options.url || options.href;
+    if (!url) throw new Error('Impit request missing url');
+
+    const timeout = resolveImpitTimeout(options.timeout);
+    const method = safeString(options.method || 'GET').toUpperCase() || 'GET';
+    const client = await getImpitClient({
+        browser: options.browser || getImpitBrowserForFingerprint(options.fingerprint || options.fp),
+        ignoreTlsErrors: options.ignoreTlsErrors ?? options.https?.rejectUnauthorized === false,
+        vanillaFallback: options.vanillaFallback,
+        followRedirects: options.followRedirect !== false,
+        maxRedirects: options.maxRedirects,
+        proxyUrl: options.proxyUrl,
+        http3: options.http3,
+        localAddress: options.localAddress,
+        failSoft: options.failSoft
+    });
+    if (!client) return null;
+
+    const body = method === 'GET' || method === 'HEAD'
+        ? undefined
+        : options.body ?? options.data;
+    const retryLimit = Math.max(0, Number(options.retry?.limit ?? options.retries ?? 0) || 0);
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= retryLimit; attempt += 1) {
+        try {
+            const response = await client.fetch(String(url), {
+                method,
+                headers: compactHeaderObject(headersToPlainObject(options.headers || {})),
+                body,
+                timeout,
+                signal: options.signal,
+                redirect: resolveImpitRedirect(options)
+            });
+
+            let responseBody;
+            if (options.responseType === 'buffer' || options.responseType === 'arraybuffer') {
+                responseBody = Buffer.from(await response.arrayBuffer());
+            } else {
+                responseBody = await response.text();
+            }
+
+            return {
+                body: responseBody,
+                data: responseBody,
+                statusCode: response.status,
+                status: response.status,
+                statusMessage: response.statusText,
+                headers: headersToPlainObject(response.headers),
+                url: response.url || String(url),
+                ok: response.ok
+            };
+        } catch (error) {
+            lastError = error;
+            if (attempt >= retryLimit || !isRetryableError(error)) throw error;
+            await sleep(getRetryDelay(attempt, options.retry || {}));
+        }
+    }
+
+    throw lastError;
 }
 
 function responseText(data) {
@@ -318,6 +466,9 @@ function isRetryableError(error) {
     if (!error || isCanceledError(error)) return false;
 
     const code = safeString(error.code || error.cause?.code).toUpperCase();
+    const name = safeString(error.name || error.constructor?.name).toLowerCase();
+    if (/(timeout|network|transport|connect|read|write|protocol|proxy)/i.test(name)) return true;
+
     if ([
         'ECONNRESET',
         'ETIMEDOUT',
@@ -572,34 +723,6 @@ function createCircuitBreaker(options = {}) {
     };
 }
 
-function createGotScrapingLoader({ failSoft = false } = {}) {
-    let gotScrapingInstance = null;
-    let gotScrapingPromise = null;
-    let gotScrapingLoadError = null;
-
-    return async function getGotScraping() {
-        if (gotScrapingInstance) return gotScrapingInstance;
-        if (failSoft && gotScrapingLoadError) return null;
-
-        if (!gotScrapingPromise) {
-            gotScrapingPromise = import('got-scraping')
-                .then((mod) => {
-                    gotScrapingInstance = mod.gotScraping || mod.default?.gotScraping || mod.default || mod;
-                    gotScrapingLoadError = null;
-                    return gotScrapingInstance;
-                })
-                .catch((error) => {
-                    gotScrapingPromise = null;
-                    gotScrapingLoadError = error;
-                    if (failSoft) return null;
-                    throw error;
-                });
-        }
-
-        return gotScrapingPromise;
-    };
-}
-
 async function retry(fn, options = {}) {
     const attempts = Math.max(1, Number(options.attempts) || 3);
     let lastError = null;
@@ -617,15 +740,10 @@ async function retry(fn, options = {}) {
     throw lastError;
 }
 
-const getGotScraping = createGotScrapingLoader({ failSoft: true });
-
 module.exports = {
     DEFAULT_FINGERPRINT_POOL,
     buildBrowserHeaders,
     createDomainCookieJar,
-    createGotScrapingLoader,
-    getGotScraping,
-    getGotScrapingHeaderOptions,
     getRandomFingerprint,
     isCanceledError,
     isCloudflareChallenge,
@@ -636,10 +754,14 @@ module.exports = {
     clearStickyFingerprints,
     createCircuitBreaker,
     createSingleFlight,
+    getImpitBrowserForFingerprint,
+    getImpitClient,
     getRetryDelay,
     getStickyFingerprintForUrl,
+    headersToPlainObject,
     inferRequestContext,
     isRetryableError,
+    requestWithImpit,
     retry,
     sleep
 };

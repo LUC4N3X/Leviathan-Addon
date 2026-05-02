@@ -6,6 +6,7 @@ const pLimit = typeof pLimitModule === "function" ? pLimitModule : pLimitModule.
 const he = require("he");
 const { ENGINE_BROWSER_PROFILES } = require('../core/browser_profiles');
 const { TtlLruCache } = require('./utils/provider_runtime');
+const { requestWithImpit } = require('./utils/bypass');
 
 const BROWSER_PROFILES = ENGINE_BROWSER_PROFILES;
 
@@ -54,32 +55,16 @@ const engineLimit = pLimit(CONFIG.ENGINE_CONCURRENCY);
 const searchCache = new TtlLruCache({ name: 'engines:search', max: 800, ttlMs: CONFIG.SEARCH_CACHE_TTL });
 const htmlCache = new TtlLruCache({ name: 'engines:html', max: 800, ttlMs: CONFIG.HTML_CACHE_TTL });
 const inflightRequests = new Map();
-let gotScrapingLoader = null;
 
-async function getGotScrapingClient() {
-    if (!gotScrapingLoader) {
-        gotScrapingLoader = import("got-scraping")
-            .then((mod) => mod.gotScraping || mod.default?.gotScraping || mod.default || mod)
-            .catch((error) => {
-                gotScrapingLoader = null;
-                throw error;
-            });
-    }
-    return gotScrapingLoader;
-}
-
-async function requestWithGotScraping(url, config = {}) {
-    const gotScraping = await getGotScrapingClient();
-    const response = await gotScraping({
+async function requestWithImpitFallback(url, config = {}) {
+    const response = await requestWithImpit({
         url,
         method: "GET",
         headers: config.headers,
-        timeout: { request: config.timeout || CONFIG.TIMEOUT },
-        https: { rejectUnauthorized: false },
+        timeout: config.timeout || CONFIG.TIMEOUT,
+        ignoreTlsErrors: true,
         followRedirect: (config.maxRedirects ?? 5) > 0,
         maxRedirects: config.maxRedirects ?? 5,
-        throwHttpErrors: false,
-        retry: { limit: 0 },
         responseType: "text"
     });
 
@@ -350,10 +335,10 @@ async function requestHtml(url, config = {}, retries = CONFIG.RETRIES) {
                 return response;
             } catch (error) {
                 lastError = error;
-                const canTryGotScraping = method === "GET";
-                if (canTryGotScraping) {
+                const canTryImpit = method === "GET";
+                if (canTryImpit) {
                     try {
-                        const response = await requestWithGotScraping(url, {
+                        const response = await requestWithImpitFallback(url, {
                             headers,
                             timeout,
                             maxRedirects: config.maxRedirects

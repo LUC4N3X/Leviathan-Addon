@@ -7,10 +7,9 @@ const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const {
     buildContextHeaders,
     createDomainCookieJar,
-    getGotScraping,
-    getGotScrapingHeaderOptions,
     getStickyFingerprintForUrl,
     isCloudflareChallenge,
+    requestWithImpit,
     responseText
 } = require('../utils/bypass');
 const { createBlockedFallbackGuard } = require('../utils/provider_blocked_fallback');
@@ -39,8 +38,8 @@ const DEFAULT_SESSION_COOKIE = Buffer.from(
     'base64'
 ).toString('utf8');
 const FETCH_TIMEOUT = 4500;
-const GOT_TIMEOUT = 2500;
-const GOT_ATTEMPTS = 3;
+const IMPIT_TIMEOUT = 2500;
+const IMPIT_ATTEMPTS = 3;
 const MAX_LISTING_PAGES = 8;
 const MAX_LISTING_CANDIDATES_PER_PAGE = 24;
 const SEARCH_CACHE_TTL_MS = 20 * 60 * 1000;
@@ -182,25 +181,22 @@ function buildCinemaCityRequestHeaders(url, context = 'document', extraHeaders =
     return { fp, headers };
 }
 
-async function fetchHtmlWithGot(url, extraHeaders = {}, attempt = 0, requestTimeout = GOT_TIMEOUT, requestContext = 'document') {
-    const gotScraping = await getGotScraping();
-    if (!gotScraping) return null;
-
+async function fetchHtmlWithImpit(url, extraHeaders = {}, attempt = 0, requestTimeout = IMPIT_TIMEOUT, requestContext = 'document') {
     const { fp, headers: mergedHeaders } = buildCinemaCityRequestHeaders(url, requestContext, extraHeaders);
 
     try {
-        const response = await gotScraping({
+        const response = await requestWithImpit({
             url,
             headers: mergedHeaders,
-            useHeaderGenerator: true,
-            headerGeneratorOptions: getGotScrapingHeaderOptions(fp, { minVersion: 120 }),
-            retry: { limit: 0 },
-            timeout: { request: requestTimeout },
+            fingerprint: fp,
+            timeout: requestTimeout,
             followRedirect: true,
             maxRedirects: 6,
             responseType: 'text',
-            decompress: true
+            ignoreTlsErrors: true,
+            failSoft: true
         });
+        if (!response) return null;
 
         const status = Number(response?.statusCode || 0);
         const body = response?.body || '';
@@ -251,10 +247,7 @@ async function fetchHtmlWithAxios(url, extraHeaders = {}, requestTimeout = FETCH
     }
 }
 
-async function fetchHtmlPostWithGot(url, formBody, extraHeaders = {}) {
-    const gotScraping = await getGotScraping();
-    if (!gotScraping) return null;
-
+async function fetchHtmlPostWithImpit(url, formBody, extraHeaders = {}) {
     const { fp, headers: baseHeaders } = buildCinemaCityRequestHeaders(url, 'ajax', {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Origin': BASE_URL,
@@ -263,20 +256,20 @@ async function fetchHtmlPostWithGot(url, formBody, extraHeaders = {}) {
     }, getCinemaCitySessionCookie());
 
     try {
-        const response = await gotScraping({
+        const response = await requestWithImpit({
             url,
             method: 'POST',
             body: formBody,
             headers: baseHeaders,
-            useHeaderGenerator: true,
-            headerGeneratorOptions: getGotScrapingHeaderOptions(fp, { minVersion: 120 }),
-            retry: { limit: 0 },
-            timeout: { request: GOT_TIMEOUT },
+            fingerprint: fp,
+            timeout: IMPIT_TIMEOUT,
             followRedirect: true,
             maxRedirects: 6,
             responseType: 'text',
-            decompress: true
+            ignoreTlsErrors: true,
+            failSoft: true
         });
+        if (!response) return null;
 
         const status = Number(response?.statusCode || 0);
         const body = response?.body || '';
@@ -284,12 +277,12 @@ async function fetchHtmlPostWithGot(url, formBody, extraHeaders = {}) {
 
         if (isCloudflareChallenge(body, status)) {
             markProviderBlockedFetch(url, 'cloudflare-post');
-            const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: GOT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
+            const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: IMPIT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
             return shielded || null;
         }
         if ([403, 429, 503].includes(status)) {
             markProviderBlockedFetch(url, `http_${status}_post`);
-            const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: GOT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
+            const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: IMPIT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
             return shielded || null;
         }
         if (status >= 200 && status < 400) return body;
@@ -297,7 +290,7 @@ async function fetchHtmlPostWithGot(url, formBody, extraHeaders = {}) {
     } catch (error) {
         if (providerShield.shouldUseShield({ url, error })) {
             markProviderBlockedFetch(url, error?.code || error?.message || 'post-network');
-            const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: GOT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
+            const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: IMPIT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
             return shielded || null;
         }
         return null;
@@ -309,15 +302,15 @@ async function fetchHtml(url, extraHeaders = {}, options = {}) {
     if (fetchFailureCache.get(cacheKey)) return null;
 
     const timeout = options.timeout || FETCH_TIMEOUT;
-    const attempts = Math.max(1, Math.min(GOT_ATTEMPTS, Number.parseInt(String(options.attempts || GOT_ATTEMPTS), 10) || GOT_ATTEMPTS));
+    const attempts = Math.max(1, Math.min(IMPIT_ATTEMPTS, Number.parseInt(String(options.attempts || IMPIT_ATTEMPTS), 10) || IMPIT_ATTEMPTS));
     for (let attempt = 0; attempt < attempts; attempt++) {
         if (attempt > 0) {
             const baseDelay = Math.min(4000, 200 * Math.pow(2, attempt));
             const jitter = Math.floor(Math.random() * 200);
             await sleep(baseDelay + jitter);
         }
-        const gotBody = await fetchHtmlWithGot(url, extraHeaders, attempt, timeout, options.context || 'document');
-        if (gotBody) return gotBody;
+        const impitBody = await fetchHtmlWithImpit(url, extraHeaders, attempt, timeout, options.context || 'document');
+        if (impitBody) return impitBody;
     }
 
     if (options.axiosFallback !== false) {
@@ -1247,7 +1240,7 @@ async function fetchSearchCandidates(query) {
         }).toString();
 
         try {
-            const postHtml = await fetchHtmlPostWithGot(`${BASE_URL}/index.php`, formBody, {
+            const postHtml = await fetchHtmlPostWithImpit(`${BASE_URL}/index.php`, formBody, {
                 'Cookie': getCinemaCitySessionCookie()
             });
             if (postHtml) {
