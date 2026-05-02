@@ -1,7 +1,6 @@
 'use strict';
 
 const cheerio = require('cheerio');
-const { fetchMappingPayload } = require('../anime/mapping');
 const { SingleFlight, TtlLruCache } = require('../utils/provider_runtime');
 const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
@@ -13,6 +12,7 @@ const {
     normalizeRequestedEpisode,
     toAbsoluteUrl,
     fetchResource,
+    fetchMappingPayload,
     mapLimit
 } = require('../anime/shared');
 const kitsuProvider = require('../animeworld/kitsu_provider');

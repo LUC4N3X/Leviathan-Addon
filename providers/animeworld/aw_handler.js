@@ -1,6 +1,5 @@
 'use strict';
 const cheerio = require('cheerio');
-const { fetchMappingPayload } = require('../anime/mapping');
 const {
     USER_AGENT,
     FETCH_TIMEOUT,
@@ -10,6 +9,7 @@ const {
     toAbsoluteUrl,
     fetchWithTimeout,
     fetchResource,
+    fetchMappingPayload,
     mapLimit
 } = require('../anime/shared');
 const kitsuProvider = require('./kitsu_provider');

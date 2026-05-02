@@ -9,6 +9,9 @@ const DEFAULT_HTTP_TTL = 5 * 60 * 1000;
 const DEFAULT_HTTP_STALE_TTL = 6 * 60 * 60 * 1000;
 const DEFAULT_NEGATIVE_TTL = 45 * 1000;
 const DEFAULT_RETRY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const DEFAULT_MAPPING_API = trimTrailingSlash(process.env.LEVIATHAN_MAPPING_API || 'https://anime.questoleviatanormio.dpdns.org');
+const DEFAULT_MAPPING_TTL = Math.max(Number.parseInt(process.env.LEVIATHAN_MAPPING_CACHE_TTL_MS || '2700000', 10) || 2700000, 1000);
+const DEFAULT_MAPPING_STALE_TTL = Math.max(Number.parseInt(process.env.LEVIATHAN_MAPPING_CACHE_STALE_MS || '129600000', 10) || 129600000, 0);
 
 function now() {
     return Date.now();
@@ -20,6 +23,33 @@ function sleep(ms) {
 
 function stableHash(value) {
     return crypto.createHash('sha1').update(String(value || '')).digest('hex').slice(0, 16);
+}
+
+function trimTrailingSlash(value) {
+    return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function boundedInt(value, fallback, min, max) {
+    const parsed = Number.parseInt(String(value || ''), 10);
+    const safe = Number.isInteger(parsed) ? parsed : fallback;
+    return Math.max(min, Math.min(max, safe));
+}
+
+function normalizeConfigBoolean(value) {
+    if (value === true) return true;
+    if (value === false || value === null || value === undefined) return false;
+    const normalized = String(value).trim().toLowerCase();
+    return ['1', 'true', 'yes', 'y', 'on', 'enabled', 'checked', 'si', 'sì'].includes(normalized);
+}
+
+function getMappingLanguage(providerContext = null) {
+    const explicit = String(providerContext?.mappingLanguage || providerContext?.language || providerContext?.lang || '').trim().toLowerCase();
+    if (['it', 'ita', 'italian', 'italiano'].includes(explicit)) return 'it';
+    if (normalizeConfigBoolean(providerContext?.easyCatalogsLangIt)) return 'it';
+    if (normalizeConfigBoolean(providerContext?.italianOnly)) return 'it';
+    if (normalizeConfigBoolean(providerContext?.onlyItalian)) return 'it';
+    if (normalizeConfigBoolean(providerContext?.onlyIt)) return 'it';
+    return null;
 }
 
 class TtlLruCache {
@@ -287,6 +317,7 @@ class CircuitBreaker {
 
 const caches = {
     http: new TtlLruCache({ name: 'http', ttlMs: DEFAULT_HTTP_TTL, staleTtlMs: DEFAULT_HTTP_STALE_TTL, max: 2500 }),
+    mapping: new TtlLruCache({ name: 'mapping', ttlMs: DEFAULT_MAPPING_TTL, staleTtlMs: DEFAULT_MAPPING_STALE_TTL, max: 10000 }),
     negative: new TtlLruCache({ name: 'negative', ttlMs: DEFAULT_NEGATIVE_TTL, staleTtlMs: 0, max: 1000 }),
     inflight: new SingleFlight('http'),
     limiter: new OriginLimiter({ defaultLimit: 6 }),
@@ -465,6 +496,12 @@ function shouldRetryStatus(status, retryStatuses = DEFAULT_RETRY_STATUSES) {
     return retryStatuses instanceof Set ? retryStatuses.has(status) : new Set(retryStatuses || []).has(status);
 }
 
+function isHttpNotFoundError(error) {
+    const status = Number(error?.status || error?.response?.status || 0);
+    if (status === 404) return true;
+    return /HTTP\s+404\b/i.test(String(error?.message || error || ''));
+}
+
 function bodyFingerprint(body) {
     if (body === undefined || body === null) return '';
     if (typeof body === 'string') return stableHash(body);
@@ -609,6 +646,237 @@ async function fetchResource(url, options = {}) {
     });
 }
 
+function parseProviderEpisodeTokens(provider, first, second) {
+    const season = second ? normalizeRequestedSeason(first) : null;
+    const episode = second ? normalizeRequestedEpisode(second) : first ? normalizeRequestedEpisode(first) : null;
+    if (provider === 'kitsu' && !second) return { season: null, episode };
+    return { season, episode };
+}
+
+function extractIdCandidate(rawId) {
+    const value = String(rawId || '').trim().replace(/[?#].*$/, '').replace(/\.json$/i, '');
+    if (!value) return '';
+    const exact = value.match(/^(?:kitsu:(?:anime:)?\d+|imdb:tt\d+|tmdb:(?:(?:movie|tv|series):)?\d+|tt\d+|\d+)(?::\d+){0,2}$/i);
+    if (exact) return value;
+    const embedded = value.match(/(?:kitsu:(?:anime:)?\d+(?::\d+){0,2}|imdb:tt\d+(?::\d+){0,2}|tmdb:(?:(?:movie|tv|series):)?\d+(?::\d+){0,2}|tt\d+(?::\d+){0,2})/i);
+    return embedded ? embedded[0] : value.split('/').filter(Boolean).pop() || value;
+}
+
+function parseExplicitRequestId(rawId) {
+    const value = extractIdCandidate(rawId);
+    if (!value) return null;
+
+    let match = value.match(/^kitsu:(?:anime:)?(\d+)(?::(\d+))?(?::(\d+))?$/i);
+    if (match) {
+        const tokens = parseProviderEpisodeTokens('kitsu', match[2], match[3]);
+        return { provider: 'kitsu', externalId: match[1], seasonFromId: tokens.season, episodeFromId: tokens.episode, contentType: 'anime' };
+    }
+
+    match = value.match(/^imdb:(tt\d+)(?::(\d+))?(?::(\d+))?$/i);
+    if (match) {
+        const tokens = parseProviderEpisodeTokens('imdb', match[2], match[3]);
+        return { provider: 'imdb', externalId: match[1], seasonFromId: tokens.season, episodeFromId: tokens.episode, contentType: tokens.season !== null ? 'series' : null };
+    }
+
+    match = value.match(/^tmdb:(?:(movie|tv|series):)?(\d+)(?::(\d+))?(?::(\d+))?$/i);
+    if (match) {
+        const tokens = parseProviderEpisodeTokens('tmdb', match[3], match[4]);
+        const typeToken = String(match[1] || '').toLowerCase();
+        return {
+            provider: 'tmdb',
+            externalId: match[2],
+            seasonFromId: tokens.season,
+            episodeFromId: tokens.episode,
+            contentType: typeToken === 'movie' ? 'movie' : typeToken ? 'series' : tokens.season !== null ? 'series' : null
+        };
+    }
+
+    match = value.match(/^(tt\d+)(?::(\d+))?(?::(\d+))?$/i);
+    if (match) {
+        const tokens = parseProviderEpisodeTokens('imdb', match[2], match[3]);
+        return { provider: 'imdb', externalId: match[1], seasonFromId: tokens.season, episodeFromId: tokens.episode, contentType: tokens.season !== null ? 'series' : null };
+    }
+
+    match = value.match(/^(\d+)(?::(\d+))?(?::(\d+))?$/);
+    if (match) {
+        const tokens = parseProviderEpisodeTokens('tmdb', match[2], match[3]);
+        return { provider: 'tmdb', externalId: match[1], seasonFromId: tokens.season, episodeFromId: tokens.episode, contentType: tokens.season !== null ? 'series' : null };
+    }
+
+    return null;
+}
+
+function resolveLookupRequest(id, season, episode, providerContext = null) {
+    let requestedSeason = normalizeRequestedSeason(season);
+    let requestedEpisode = normalizeRequestedEpisode(episode);
+    const explicit = parseExplicitRequestId(id);
+
+    if (explicit) {
+        if (Number.isInteger(explicit.seasonFromId) && explicit.seasonFromId >= 0) requestedSeason = explicit.seasonFromId;
+        if (Number.isInteger(explicit.episodeFromId) && explicit.episodeFromId > 0) requestedEpisode = explicit.episodeFromId;
+        if (explicit.provider === 'kitsu' && !Number.isInteger(explicit.seasonFromId)) requestedSeason = null;
+        return { provider: explicit.provider, externalId: explicit.externalId, season: requestedSeason, episode: requestedEpisode, contentType: explicit.contentType || null };
+    }
+
+    const contextExplicit = parseExplicitRequestId(providerContext?.id || providerContext?.stremioId || providerContext?.videoId || '');
+    if (contextExplicit) {
+        if (Number.isInteger(contextExplicit.seasonFromId) && contextExplicit.seasonFromId >= 0) requestedSeason = contextExplicit.seasonFromId;
+        if (Number.isInteger(contextExplicit.episodeFromId) && contextExplicit.episodeFromId > 0) requestedEpisode = contextExplicit.episodeFromId;
+        return {
+            provider: contextExplicit.provider,
+            externalId: contextExplicit.externalId,
+            season: contextExplicit.provider === 'kitsu' ? null : requestedSeason,
+            episode: requestedEpisode,
+            contentType: contextExplicit.contentType || null
+        };
+    }
+
+    const contextKitsu = parsePositiveInt(providerContext?.kitsuId || providerContext?.kitsu_id || providerContext?.kitsu);
+    if (contextKitsu) return { provider: 'kitsu', externalId: String(contextKitsu), season: null, episode: requestedEpisode, contentType: 'anime' };
+
+    const contextImdb = /^tt\d+$/i.test(String(providerContext?.imdbId || providerContext?.imdb_id || providerContext?.imdb || '').trim())
+        ? String(providerContext?.imdbId || providerContext?.imdb_id || providerContext?.imdb).trim()
+        : null;
+    if (contextImdb) return { provider: 'imdb', externalId: contextImdb, season: requestedSeason, episode: requestedEpisode, contentType: requestedSeason !== null ? 'series' : null };
+
+    const contextTmdb = /^\d+$/.test(String(providerContext?.tmdbId || providerContext?.tmdb_id || providerContext?.tmdb || '').trim())
+        ? String(providerContext?.tmdbId || providerContext?.tmdb_id || providerContext?.tmdb).trim()
+        : null;
+    if (contextTmdb) return { provider: 'tmdb', externalId: contextTmdb, season: requestedSeason, episode: requestedEpisode, contentType: requestedSeason !== null ? 'series' : null };
+
+    return null;
+}
+
+function findDeepId(payload, keys, maxDepth = 5) {
+    const wanted = new Set(keys.map(key => String(key).toLowerCase()));
+    const seen = new Set();
+    const stack = [{ value: payload, depth: 0 }];
+    while (stack.length) {
+        const { value, depth } = stack.pop();
+        if (!value || typeof value !== 'object' || depth > maxDepth || seen.has(value)) continue;
+        seen.add(value);
+        for (const [key, child] of Object.entries(value)) {
+            const normalizedKey = String(key).toLowerCase();
+            if (wanted.has(normalizedKey)) {
+                const text = String(child || '').trim();
+                if (/^\d+$/.test(text)) return text;
+            }
+            if (child && typeof child === 'object') stack.push({ value: child, depth: depth + 1 });
+        }
+    }
+    return null;
+}
+
+function extractTmdbIdFromMappingPayload(mappingPayload) {
+    const direct = mappingPayload?.mappings?.ids?.tmdb
+        || mappingPayload?.mappings?.tmdb
+        || mappingPayload?.ids?.tmdb
+        || mappingPayload?.data?.ids?.tmdb
+        || mappingPayload?.result?.ids?.tmdb
+        || mappingPayload?.tmdbId
+        || mappingPayload?.tmdb_id
+        || mappingPayload?.tmdb
+        || null;
+    const text = String(direct || '').trim();
+    if (/^\d+$/.test(text)) return text;
+    return findDeepId(mappingPayload, ['tmdb', 'tmdbid', 'tmdb_id'], 5);
+}
+
+function getMappingApiBases(mappingApiBase = DEFAULT_MAPPING_API, providerContext = null) {
+    const values = [];
+    if (Array.isArray(mappingApiBase)) values.push(...mappingApiBase);
+    else values.push(mappingApiBase);
+    if (providerContext?.mappingApiBase) values.push(providerContext.mappingApiBase);
+    if (Array.isArray(providerContext?.mappingApiBases)) values.push(...providerContext.mappingApiBases);
+    if (process.env.LEVIATHAN_MAPPING_API_MIRRORS) values.push(...process.env.LEVIATHAN_MAPPING_API_MIRRORS.split(','));
+    return uniqueStrings(values.map(trimTrailingSlash).filter(Boolean));
+}
+
+async function fetchMappingPayload(lookup, providerContext = null, mappingApiBase = DEFAULT_MAPPING_API) {
+    if (!lookup?.provider || !lookup?.externalId) return null;
+
+    const provider = String(lookup.provider || '').trim().toLowerCase();
+    const externalId = String(lookup.externalId || '').trim();
+    const requestedEpisode = normalizeRequestedEpisode(lookup.episode);
+    const requestedSeason = normalizeRequestedSeason(lookup.season);
+    if (!['kitsu', 'imdb', 'tmdb'].includes(provider) || !externalId) return null;
+
+    const mappingLanguage = provider === 'kitsu' ? 'it' : getMappingLanguage(providerContext);
+    const mappingLanguageToken = mappingLanguage || 'default';
+    const bases = getMappingApiBases(mappingApiBase, providerContext);
+    const baseFingerprint = stableHash(bases.join('|'));
+    const cacheKey = `${baseFingerprint}:${provider}:${externalId}:s=${requestedSeason ?? 'na'}:ep=${requestedEpisode}:lang=${mappingLanguageToken}`;
+    const cached = caches.mapping.getEntry(cacheKey, { allowStale: true });
+    if (cached?.expiresAt > now()) return cached.value;
+
+    const negativeKey = `mapping:${cacheKey}`;
+    if (caches.negative.get(negativeKey) !== undefined && cached?.value === undefined) return null;
+
+    return caches.inflight.do(`mapping:${cacheKey}`, async () => {
+        const cachedInside = caches.mapping.getEntry(cacheKey, { allowStale: true });
+        if (cachedInside?.expiresAt > now()) return cachedInside.value;
+
+        const params = new URLSearchParams();
+        params.set('ep', String(requestedEpisode));
+        if (Number.isInteger(requestedSeason) && requestedSeason >= 0) params.set('s', String(requestedSeason));
+        if (mappingLanguage === 'it') params.set('lang', 'it');
+
+        const ttlMs = parsePositiveInt(providerContext?.mappingTtlMs) || DEFAULT_MAPPING_TTL;
+        const staleTtlMs = parsePositiveInt(providerContext?.mappingStaleMs) || DEFAULT_MAPPING_STALE_TTL;
+        const timeoutMs = parsePositiveInt(providerContext?.mappingTimeoutMs) || FETCH_TIMEOUT;
+        const retries = boundedInt(providerContext?.mappingRetries, 2, 0, 5);
+        let lastError = null;
+
+        for (const base of bases) {
+            const url = `${base}/${provider}/${encodeURIComponent(externalId)}?${params.toString()}`;
+            try {
+                const payload = await fetchResource(url, {
+                    as: 'json',
+                    ttlMs,
+                    staleTtlMs,
+                    cacheKey: `${cacheKey}:${base}`,
+                    timeoutMs,
+                    retries,
+                    maxBytes: 2 * 1024 * 1024,
+                    useStaleOnError: true,
+                    perOriginLimit: boundedInt(providerContext?.mappingOriginConcurrency, 6, 1, 32)
+                });
+                if (payload && typeof payload === 'object') {
+                    caches.mapping.set(cacheKey, payload, ttlMs, staleTtlMs);
+                    return payload;
+                }
+            } catch (error) {
+                lastError = error;
+            }
+        }
+
+        if (cached?.value !== undefined) return cached.value;
+        caches.negative.set(negativeKey, true, DEFAULT_NEGATIVE_TTL, 0);
+        if (lastError && !isHttpNotFoundError(lastError)) {
+            console.error('[AnimeShared] mapping request failed:', lastError?.message || 'unknown error');
+        } else if (process.env.LEVIATHAN_VERBOSE_MAPPING_MISS === '1') {
+            console.warn('[AnimeShared] mapping miss:', `${provider}/${externalId} ep=${requestedEpisode}`);
+        }
+        return null;
+    });
+}
+
+function buildAnimeProviderContext(meta = {}) {
+    const parsedId = parseExplicitRequestId(meta?.id || meta?.stremioId || meta?.videoId || '');
+    return {
+        id: meta?.id || meta?.stremioId || meta?.videoId || null,
+        imdbId: meta?.imdb_id || meta?.imdbId || meta?.imdb || (parsedId?.provider === 'imdb' ? parsedId.externalId : null) || null,
+        tmdbId: meta?.tmdb_id || meta?.tmdbId || meta?.tmdb || (parsedId?.provider === 'tmdb' ? parsedId.externalId : null) || null,
+        kitsuId: meta?.kitsu_id || meta?.kitsuId || meta?.kitsu || (parsedId?.provider === 'kitsu' ? parsedId.externalId : null) || null,
+        mappingLanguage: meta?.mappingLanguage || meta?.language || meta?.lang || null,
+        easyCatalogsLangIt: meta?.easyCatalogsLangIt,
+        italianOnly: meta?.italianOnly,
+        onlyItalian: meta?.onlyItalian,
+        onlyIt: meta?.onlyIt,
+        type: meta?.type || meta?.contentType || parsedId?.contentType || null
+    };
+}
+
 async function mapLimit(values, limit, mapper) {
     if (!Array.isArray(values) || values.length === 0) return [];
     const concurrency = Math.max(1, Math.min(limit || 1, values.length));
@@ -635,6 +903,7 @@ async function mapLimit(values, limit, mapper) {
 function getCacheStats() {
     return {
         http: caches.http.stats(),
+        mapping: caches.mapping.stats(),
         negative: caches.negative.stats(),
         inflight: caches.inflight.stats(),
         limiter: caches.limiter.stats(),
@@ -644,6 +913,7 @@ function getCacheStats() {
 
 function clearSharedCaches() {
     caches.http.clear();
+    caches.mapping.clear();
     caches.negative.clear();
 }
 
@@ -651,6 +921,7 @@ module.exports = {
     USER_AGENT,
     FETCH_TIMEOUT,
     DEFAULT_MAX_BYTES,
+    DEFAULT_MAPPING_API,
     TtlLruCache,
     SingleFlight,
     OriginLimiter,
@@ -661,6 +932,8 @@ module.exports = {
     parsePositiveInt,
     normalizeRequestedEpisode,
     normalizeRequestedSeason,
+    normalizeConfigBoolean,
+    getMappingLanguage,
     toAbsoluteUrl,
     decodeHtml,
     stripDiacritics,
@@ -671,6 +944,11 @@ module.exports = {
     detectAudioLanguage,
     fetchWithTimeout,
     fetchResource,
+    parseExplicitRequestId,
+    resolveLookupRequest,
+    fetchMappingPayload,
+    extractTmdbIdFromMappingPayload,
+    buildAnimeProviderContext,
     getCached,
     setCached,
     mapLimit,
