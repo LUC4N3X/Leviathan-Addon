@@ -17,12 +17,30 @@ function normalizeStringArray(value) {
   return value;
 }
 
+function safeDecodeUriComponent(value) {
+  try { return decodeURIComponent(value); }
+  catch (_) { return value; }
+}
+
 function decodeConfigBase64(configStr) {
-  const raw = String(configStr || '').trim();
+  const rawInput = String(configStr || '').trim();
+  const raw = safeDecodeUriComponent(rawInput);
+  if (!raw) return '{}';
   if (isEncryptedConfigToken(raw)) return decryptConfigToken(raw);
+
+  // Compatibilità extra: se arriva già JSON puro da un reverse proxy/editor non lo ricodifichiamo.
+  if (/^[\[{]/.test(raw)) return raw;
+
   const normalized = raw.replace(/-/g, '+').replace(/_/g, '/');
   const padding = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
-  return Buffer.from(normalized + padding, 'base64').toString('utf8');
+  const decoded = Buffer.from(normalized + padding, 'base64').toString('utf8');
+
+  // Evita l'errore brutto `Unexpected token �`: se il token non produce JSON, fallisce chiaro.
+  if (!/^[\s]*[\[{]/.test(decoded)) {
+    throw new Error('Config token non JSON: rigenera il link/installazione dal pannello Leviathan');
+  }
+
+  return decoded;
 }
 
 function getDefaultConfig() {

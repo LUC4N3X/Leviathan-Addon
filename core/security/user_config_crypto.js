@@ -6,7 +6,9 @@ const { promisify } = require('util');
 
 const CONFIG_TOKEN_PREFIX = 'lcfg1_';
 const CONFIG_CRYPTO_VERSION = 1;
-const USER_CONFIG_ENCRYPTION_ENABLED = true;
+// La generazione di token cifrati è disattivata: Stremio riceve solo token JSON base64url
+// leggibili/compatibili. La decodifica lcfg1_ resta solo per vecchie installazioni già create.
+const USER_CONFIG_ENCRYPTION_ENABLED = false;
 const USER_CONFIG_ENCRYPTION_SECRET = '34e14289c3d6642f9a1f2c08065b600a4d7c9a517492e1fd99e2de60c005a9a5';
 const USER_CONFIG_AAD = 'leviathan-stremio-config';
 const gzipAsync = promisify(zlib.gzip);
@@ -28,9 +30,22 @@ function isEncryptedConfigToken(value) {
     return String(value || '').startsWith(CONFIG_TOKEN_PREFIX);
 }
 
+function normalizeConfigObject(config) {
+    return config && typeof config === 'object' && !Array.isArray(config) ? config : {};
+}
+
+function encodePlainConfigObject(config) {
+    const json = JSON.stringify(normalizeConfigObject(config));
+    return toBase64Url(Buffer.from(json, 'utf8'));
+}
+
 async function encryptConfigObject(config) {
-    if (!USER_CONFIG_ENCRYPTION_ENABLED) throw new Error('User config encryption disabled');
-    const json = JSON.stringify(config && typeof config === 'object' && !Array.isArray(config) ? config : {});
+    // Compatibilità con il vecchio nome usato dalle route/UI: da ora NON cifra più.
+    return encodePlainConfigObject(config);
+}
+
+async function encryptConfigObjectLegacy(config) {
+    const json = JSON.stringify(normalizeConfigObject(config));
     const compressed = await gzipAsync(Buffer.from(json, 'utf8'), { level: 6 });
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', getEncryptionKey(), iv);
@@ -62,12 +77,19 @@ function buildManifestPathForToken(token) {
     return `/${String(token || '').trim()}/manifest.json`;
 }
 
+function buildManifestPathForConfig(config) {
+    return buildManifestPathForToken(encodePlainConfigObject(config));
+}
+
 module.exports = {
     CONFIG_TOKEN_PREFIX,
     USER_CONFIG_ENCRYPTION_ENABLED,
     isEncryptedConfigToken,
+    encodePlainConfigObject,
     encryptConfigObject,
+    encryptConfigObjectLegacy,
     decryptConfigToken,
     buildManifestPathForToken,
+    buildManifestPathForConfig,
     gunzipAsync
 };

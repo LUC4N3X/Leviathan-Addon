@@ -4,7 +4,6 @@ const axios = require('axios');
 const runtimeState = require('../../runtime_state');
 const { safeCompare } = require('../../utils/common');
 const { getRequestOrigin } = require('../../utils/url');
-const { encryptConfigObject, buildManifestPathForToken } = require('../../security/user_config_crypto');
 const { validateConfig, MAX_CONFIG_LENGTH, decodeConfigBase64 } = require('../../config/schema');
 
 const DEBRID_VALIDATE_TIMEOUT_MS = Math.max(1500, parseInt(process.env.DEBRID_VALIDATE_TIMEOUT_MS || '5000', 10) || 5000);
@@ -438,42 +437,6 @@ function registerApiRoutes(app, {
 
     app.get('/api/config/decode', decodeConfigForEditor);
     app.post('/api/config/decode', decodeConfigForEditor);
-
-    app.post('/api/config/encrypt', async (req, res) => {
-        res.setHeader('Cache-Control', 'no-store');
-
-        try {
-            const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
-            const rawConfig = body.config && typeof body.config === 'object' && !Array.isArray(body.config) ? body.config : body;
-            const estimatedBytes = Buffer.byteLength(JSON.stringify(rawConfig || {}), 'utf8');
-            if (estimatedBytes > MAX_CONFIG_LENGTH) {
-                return res.status(413).json({
-                    ok: false,
-                    code: 'config_too_large',
-                    message: 'Configurazione troppo grande per essere cifrata.'
-                });
-            }
-
-            const normalizedConfig = validateConfig(rawConfig);
-            const token = await encryptConfigObject(normalizedConfig);
-            const manifestPath = buildManifestPathForToken(token);
-            const origin = getRequestOrigin(req);
-            return res.json({
-                ok: true,
-                encrypted: true,
-                token,
-                manifestPath,
-                manifestUrl: `${origin}${manifestPath}`
-            });
-        } catch (error) {
-            logger.warn('[SECURITY] Config encryption failed', { error: error.message });
-            return res.status(400).json({
-                ok: false,
-                code: 'config_encrypt_failed',
-                message: 'Impossibile cifrare la configurazione.'
-            });
-        }
-    });
 
     app.post('/api/debrid/validate', async (req, res) => {
         res.setHeader('Cache-Control', 'no-store');
