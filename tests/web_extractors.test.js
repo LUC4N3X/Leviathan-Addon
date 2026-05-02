@@ -109,6 +109,38 @@ test('provider registry exposes CinemaCity metadata', () => {
     assert.equal(getWebProviderIcon('CinemaCity'), '🏙️');
 });
 
+test('fetchWebProviderBuckets does not crash when CinemaCity limiter is missing', async () => {
+    const calls = [];
+    const tools = createWebProviderTools({
+        Cache: {
+            fetchWithCache: async (_name, _key, _ttl, factory) => factory()
+        },
+        LIMITERS: {},
+        CONFIG: { TIMEOUTS: { SCRAPER: 1 } },
+        guardedProviderCall: async (providerName, limiter) => {
+            calls.push({ providerName, hasLimiter: Boolean(limiter && typeof limiter.schedule === 'function') });
+            await limiter.schedule(() => Promise.resolve('scheduled'));
+            return [];
+        }
+    });
+
+    const buckets = await tools.fetchWebProviderBuckets({
+        type: 'movie',
+        originalId: 'tt33046197',
+        finalId: 'tt33046197',
+        meta: { title: 'Fratelli demolitori', type: 'movie' },
+        config: { filters: { enableCc: true } },
+        reqHost: null,
+        allowItalianWebProviders: true,
+        dbOnlyMode: false
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].providerName, 'CinemaCityV3');
+    assert.equal(calls[0].hasLimiter, true);
+    assert.deepEqual(buckets.cinemaCity, []);
+});
+
 test('web formatter keeps CinemaCity quality and avoids duplicate provider lines', () => {
     const tools = createWebProviderTools({
         Cache: {},
