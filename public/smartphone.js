@@ -3658,11 +3658,160 @@ async function pasteTo(id) {
     } catch (err) { alert("Impossibile accedere agli appunti. Incolla manualmente."); }
 }
 
-function loadMobileConfig() {
+
+const LEVIATHAN_MOBILE_CONFIG_TOKEN_PREFIX = 'lcfg1_';
+const LEVIATHAN_MOBILE_CONFIG_AAD = 'leviathan-stremio-config';
+const LEVIATHAN_MOBILE_CONFIG_SECRET = '34e14289c3d6642f9a1f2c08065b600a4d7c9a517492e1fd99e2de60c005a9a5';
+
+function decodeMobileBase64UrlToBytes(value) {
+    const normalized = String(value || '').trim().replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+}
+
+function decodeMobileBase64UrlToUtf8(value) {
+    return new TextDecoder().decode(decodeMobileBase64UrlToBytes(value));
+}
+
+function encodeMobileConfigToPathToken(config) {
+    const json = JSON.stringify(config || {});
+    const bytes = new TextEncoder().encode(json);
+    let binary = '';
+    bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function normalizeMobileConfigPathToken(rawToken) {
+    try { return decodeURIComponent(String(rawToken || '').trim()); }
+    catch (_) { return String(rawToken || '').trim(); }
+}
+
+function extractMobileConfigTokenFromUrlLike(value) {
+    const text = normalizeMobileConfigPathToken(value);
+    if (!text) return null;
+
     try {
-        const pathParts = window.location.pathname.split('/');
-        if (pathParts.length >= 2 && pathParts[1].length > 10) {
-            const config = JSON.parse(atob(pathParts[1]));
+        const urlText = text.replace(/^stremio:\/\//i, `${window.location.protocol}//`);
+        const url = new URL(urlText, window.location.origin);
+        const part = url.pathname.split('/').filter(Boolean).find(segment => {
+            return segment.length > 10 && !/^(?:configure|manifest\.json)$/i.test(segment);
+        });
+        if (part) return part;
+    } catch (_) {}
+
+    const match = text.match(/\/([^\/?#]{11,})\/(?:manifest\.json|configure)(?:$|[?#])/i)
+        || text.match(/^([^\/?#]{11,})$/i);
+    return match ? match[1] : null;
+}
+
+function getMobileConfigTokenFromLocation() {
+    const pathToken = window.location.pathname.split('/').filter(Boolean).find(segment => {
+        return segment.length > 10 && !/^(?:configure|manifest\.json)$/i.test(segment);
+    });
+    if (pathToken) return pathToken;
+
+    const params = new URLSearchParams(window.location.search || '');
+    const keys = ['conf', 'config', 'token', 'configToken', 'manifest', 'manifestUrl', 'addon', 'addonUrl', 'url'];
+    for (const key of keys) {
+        const value = params.get(key);
+        const token = extractMobileConfigTokenFromUrlLike(value);
+        if (token) return token;
+    }
+
+    const hash = String(window.location.hash || '').replace(/^#/, '');
+    return extractMobileConfigTokenFromUrlLike(hash);
+}
+
+async function decryptMobileEncryptedConfigTokenInBrowser(token) {
+    if (!window.crypto?.subtle || typeof DecompressionStream === 'undefined') {
+        throw new Error('browser_config_decrypt_unavailable');
+    }
+
+    const cleanToken = String(token || '').trim();
+    if (!cleanToken.startsWith(LEVIATHAN_MOBILE_CONFIG_TOKEN_PREFIX)) throw new Error('not_encrypted_config_token');
+
+    const packed = decodeMobileBase64UrlToBytes(cleanToken.slice(LEVIATHAN_MOBILE_CONFIG_TOKEN_PREFIX.length));
+    if (packed.length < 30) throw new Error('encrypted_config_token_too_short');
+    if (packed[0] !== 1) throw new Error('encrypted_config_token_version_unsupported');
+
+    const iv = packed.slice(1, 13);
+    const tag = packed.slice(13, 29);
+    const encrypted = packed.slice(29);
+    const encryptedWithTag = new Uint8Array(encrypted.length + tag.length);
+    encryptedWithTag.set(encrypted, 0);
+    encryptedWithTag.set(tag, encrypted.length);
+
+    const encoder = new TextEncoder();
+    const keyHash = await crypto.subtle.digest('SHA-256', encoder.encode(LEVIATHAN_MOBILE_CONFIG_SECRET));
+    const key = await crypto.subtle.importKey('raw', keyHash, { name: 'AES-GCM' }, false, ['decrypt']);
+    const compressed = await crypto.subtle.decrypt({
+        name: 'AES-GCM',
+        iv,
+        additionalData: encoder.encode(LEVIATHAN_MOBILE_CONFIG_AAD),
+        tagLength: 128
+    }, key, encryptedWithTag);
+
+    const ds = new DecompressionStream('gzip');
+    const writer = ds.writable.getWriter();
+    await writer.write(new Uint8Array(compressed));
+    await writer.close();
+    const json = await new Response(ds.readable).text();
+    return JSON.parse(json);
+}
+
+async function fetchMobileConfigForEditor(token) {
+    let serverError = null;
+    try {
+        const response = await fetch('/api/config/decode', {
+            method: 'POST',
+            cache: 'no-store',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token })
+        });
+        if (!response.ok) throw new Error(`decode_http_${response.status}`);
+        const payload = await response.json();
+        if (!payload || payload.ok !== true || !payload.config) throw new Error('decode_bad_payload');
+        return payload.config;
+    } catch (error) {
+        serverError = error;
+        console.warn('[M-CONFIG] Decode server non disponibile, provo fallback locale:', error.message);
+    }
+
+    if (/^lcfg1_/i.test(String(token || ''))) {
+        try { return await decryptMobileEncryptedConfigTokenInBrowser(token); }
+        catch (localError) {
+            console.warn('[M-CONFIG] Fallback locale fallito:', localError.message);
+            throw serverError || localError;
+        }
+    }
+
+    throw serverError || new Error('mobile_config_decode_failed');
+}
+
+async function loadMobileConfigFromPathToken(rawToken) {
+    const token = normalizeMobileConfigPathToken(rawToken);
+    if (!token || token === 'configure' || token === 'manifest.json') return null;
+
+    if (/^lcfg1_/i.test(token)) {
+        return fetchMobileConfigForEditor(token);
+    }
+
+    try {
+        return JSON.parse(decodeMobileBase64UrlToUtf8(token));
+    } catch (_) {
+        return fetchMobileConfigForEditor(token);
+    }
+}
+
+async function loadMobileConfig() {
+    try {
+        const configToken = getMobileConfigTokenFromLocation();
+        if (configToken) {
+            const config = await loadMobileConfigFromPathToken(configToken);
+            if (!config) throw new Error('empty_mobile_config_token');
             if(config.service) {
                 const srvMap = {'rd':0, 'tb':1}; 
                 // Updated selector for new structure
@@ -3853,7 +4002,7 @@ function getMobileConfig() {
 const mobileEncryptedManifestCache = { signature: null, url: null, pending: null };
 
 function getMobileLegacyManifestUrl(config) {
-    return `${window.location.host}/${btoa(JSON.stringify(config))}/manifest.json`;
+    return `${window.location.host}/${encodeMobileConfigToPathToken(config)}/manifest.json`;
 }
 
 async function getMobileManifestUrl(config) {
