@@ -5,7 +5,7 @@ const runtimeState = require('../../runtime_state');
 const { safeCompare } = require('../../utils/common');
 const { getRequestOrigin } = require('../../utils/url');
 const { encryptConfigObject, buildManifestPathForToken } = require('../../security/user_config_crypto');
-const { validateConfig, MAX_CONFIG_LENGTH } = require('../../config/schema');
+const { validateConfig, MAX_CONFIG_LENGTH, decodeConfigBase64 } = require('../../config/schema');
 
 const DEBRID_VALIDATE_TIMEOUT_MS = Math.max(1500, parseInt(process.env.DEBRID_VALIDATE_TIMEOUT_MS || '5000', 10) || 5000);
 const CODE_API_SECURITY_PASSWORD = 'gL2vuSA0RiPSUUUtN_I5TYs6';
@@ -376,6 +376,69 @@ function registerApiRoutes(app, {
         const snapshot = getStatsSnapshot();
         res.json(buildCacheHealthPayload(Cache, getCacheHealthStatus, snapshot));
     });
+
+    async function decodeConfigForEditor(req, res) {
+        res.setHeader('Cache-Control', 'no-store, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+
+        try {
+            const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+            const rawToken = String(
+                req.query?.conf ||
+                req.query?.token ||
+                body.conf ||
+                body.token ||
+                body.configToken ||
+                body.manifestPath ||
+                body.manifestUrl ||
+                ''
+            ).trim();
+
+            if (!rawToken) {
+                return res.status(400).json({
+                    ok: false,
+                    code: 'missing_config_token',
+                    message: 'Token configurazione mancante.'
+                });
+            }
+
+            const extractedToken = rawToken
+                .replace(/^stremio:\/\//i, '')
+                .split(/[?#]/)[0]
+                .split('/')
+                .filter(Boolean)
+                .find((part) => part.length > 10 && !/^(?:configure|manifest\.json)$/i.test(part)) || rawToken;
+
+            if (extractedToken.length > Math.max(MAX_CONFIG_LENGTH * 4, 65536)) {
+                return res.status(413).json({
+                    ok: false,
+                    code: 'config_token_too_large',
+                    message: 'Token configurazione troppo grande.'
+                });
+            }
+
+            const decoded = decodeConfigBase64(extractedToken);
+            const parsed = JSON.parse(decoded);
+            const config = validateConfig(parsed);
+
+            return res.json({
+                ok: true,
+                encrypted: /^lcfg1_/i.test(extractedToken),
+                config
+            });
+        } catch (error) {
+            logger.warn('[SECURITY] Config decode failed', { error: error.message });
+            return res.status(400).json({
+                ok: false,
+                code: 'config_decode_failed',
+                message: 'Impossibile leggere la configurazione salvata.'
+            });
+        }
+    }
+
+    app.get('/api/config/decode', decodeConfigForEditor);
+    app.post('/api/config/decode', decodeConfigForEditor);
+
     app.post('/api/config/encrypt', async (req, res) => {
         res.setHeader('Cache-Control', 'no-store');
 
