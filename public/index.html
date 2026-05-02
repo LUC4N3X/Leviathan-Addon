@@ -2746,8 +2746,6 @@
 
 
         const LEVIATHAN_CONFIG_TOKEN_PREFIX = 'lcfg1_';
-        const LEVIATHAN_CONFIG_AAD = 'leviathan-stremio-config';
-        const LEVIATHAN_CONFIG_SECRET = '34e14289c3d6642f9a1f2c08065b600a4d7c9a517492e1fd99e2de60c005a9a5';
 
         function decodeBase64UrlToBytes(value) {
             const normalized = String(value || '').trim().replace(/-/g, '+').replace(/_/g, '/');
@@ -2811,70 +2809,17 @@
             return extractConfigTokenFromUrlLike(hash);
         }
 
-        async function decryptEncryptedConfigTokenInBrowser(token) {
-            if (!window.crypto?.subtle || typeof DecompressionStream === 'undefined') {
-                throw new Error('browser_config_decrypt_unavailable');
-            }
-
-            const cleanToken = String(token || '').trim();
-            if (!cleanToken.startsWith(LEVIATHAN_CONFIG_TOKEN_PREFIX)) throw new Error('not_encrypted_config_token');
-
-            const packed = decodeBase64UrlToBytes(cleanToken.slice(LEVIATHAN_CONFIG_TOKEN_PREFIX.length));
-            if (packed.length < 30) throw new Error('encrypted_config_token_too_short');
-            if (packed[0] !== 1) throw new Error('encrypted_config_token_version_unsupported');
-
-            const iv = packed.slice(1, 13);
-            const tag = packed.slice(13, 29);
-            const encrypted = packed.slice(29);
-            const encryptedWithTag = new Uint8Array(encrypted.length + tag.length);
-            encryptedWithTag.set(encrypted, 0);
-            encryptedWithTag.set(tag, encrypted.length);
-
-            const encoder = new TextEncoder();
-            const keyHash = await crypto.subtle.digest('SHA-256', encoder.encode(LEVIATHAN_CONFIG_SECRET));
-            const key = await crypto.subtle.importKey('raw', keyHash, { name: 'AES-GCM' }, false, ['decrypt']);
-            const compressed = await crypto.subtle.decrypt({
-                name: 'AES-GCM',
-                iv,
-                additionalData: encoder.encode(LEVIATHAN_CONFIG_AAD),
-                tagLength: 128
-            }, key, encryptedWithTag);
-
-            const ds = new DecompressionStream('gzip');
-            const writer = ds.writable.getWriter();
-            await writer.write(new Uint8Array(compressed));
-            await writer.close();
-            const json = await new Response(ds.readable).text();
-            return JSON.parse(json);
-        }
-
         async function fetchConfigForEditor(token) {
-            let serverError = null;
-            try {
-                const response = await fetch('/api/config/decode', {
-                    method: 'POST',
-                    cache: 'no-store',
-                    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token })
-                });
-                if (!response.ok) throw new Error(`decode_http_${response.status}`);
-                const payload = await response.json();
-                if (!payload || payload.ok !== true || !payload.config) throw new Error('decode_bad_payload');
-                return payload.config;
-            } catch (error) {
-                serverError = error;
-                console.warn('[CONFIG] Decode server non disponibile, provo fallback locale:', error.message);
-            }
-
-            if (/^lcfg1_/i.test(String(token || ''))) {
-                try { return await decryptEncryptedConfigTokenInBrowser(token); }
-                catch (localError) {
-                    console.warn('[CONFIG] Fallback locale fallito:', localError.message);
-                    throw serverError || localError;
-                }
-            }
-
-            throw serverError || new Error('config_decode_failed');
+            const response = await fetch('/api/config/decode', {
+                method: 'POST',
+                cache: 'no-store',
+                headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token })
+            });
+            if (!response.ok) throw new Error(`decode_http_${response.status}`);
+            const payload = await response.json();
+            if (!payload || payload.ok !== true || !payload.config) throw new Error('decode_bad_payload');
+            return payload.config;
         }
 
         async function loadConfigFromPathToken(rawToken) {
@@ -3121,7 +3066,6 @@
             };
         }
 
-        let encryptedManifestCache = { signature: null, url: null, pending: null };
         let fluxUpdateSequence = 0;
 
         function getLegacyManifestUrl(config) {
@@ -3130,33 +3074,7 @@
 
         async function getBaseManifestUrl() {
             if(!validateInputs()) return null;
-            const config = getConfigObject();
-            const signature = JSON.stringify(config);
-            if(encryptedManifestCache.signature === signature && encryptedManifestCache.url) return encryptedManifestCache.url;
-            if(encryptedManifestCache.signature === signature && encryptedManifestCache.pending) return encryptedManifestCache.pending;
-
-            encryptedManifestCache.signature = signature;
-            encryptedManifestCache.pending = (async () => {
-                try {
-                    const response = await fetch('/api/config/encrypt', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        cache: 'no-store',
-                        body: JSON.stringify({ config })
-                    });
-                    if(!response.ok) throw new Error(`encrypt_http_${response.status}`);
-                    const payload = await response.json();
-                    if(!payload || payload.ok !== true || !payload.manifestPath) throw new Error('encrypt_bad_payload');
-                    encryptedManifestCache.url = `${window.location.host}${payload.manifestPath}`;
-                    return encryptedManifestCache.url;
-                } catch (_) {
-                    encryptedManifestCache.url = getLegacyManifestUrl(config);
-                    return encryptedManifestCache.url;
-                } finally {
-                    encryptedManifestCache.pending = null;
-                }
-            })();
-            return encryptedManifestCache.pending;
+            return getLegacyManifestUrl(getConfigObject());
         }
 
         async function updateFluxStream() {

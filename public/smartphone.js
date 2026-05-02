@@ -3660,8 +3660,6 @@ async function pasteTo(id) {
 
 
 const LEVIATHAN_MOBILE_CONFIG_TOKEN_PREFIX = 'lcfg1_';
-const LEVIATHAN_MOBILE_CONFIG_AAD = 'leviathan-stremio-config';
-const LEVIATHAN_MOBILE_CONFIG_SECRET = '34e14289c3d6642f9a1f2c08065b600a4d7c9a517492e1fd99e2de60c005a9a5';
 
 function decodeMobileBase64UrlToBytes(value) {
     const normalized = String(value || '').trim().replace(/-/g, '+').replace(/_/g, '/');
@@ -3725,70 +3723,17 @@ function getMobileConfigTokenFromLocation() {
     return extractMobileConfigTokenFromUrlLike(hash);
 }
 
-async function decryptMobileEncryptedConfigTokenInBrowser(token) {
-    if (!window.crypto?.subtle || typeof DecompressionStream === 'undefined') {
-        throw new Error('browser_config_decrypt_unavailable');
-    }
-
-    const cleanToken = String(token || '').trim();
-    if (!cleanToken.startsWith(LEVIATHAN_MOBILE_CONFIG_TOKEN_PREFIX)) throw new Error('not_encrypted_config_token');
-
-    const packed = decodeMobileBase64UrlToBytes(cleanToken.slice(LEVIATHAN_MOBILE_CONFIG_TOKEN_PREFIX.length));
-    if (packed.length < 30) throw new Error('encrypted_config_token_too_short');
-    if (packed[0] !== 1) throw new Error('encrypted_config_token_version_unsupported');
-
-    const iv = packed.slice(1, 13);
-    const tag = packed.slice(13, 29);
-    const encrypted = packed.slice(29);
-    const encryptedWithTag = new Uint8Array(encrypted.length + tag.length);
-    encryptedWithTag.set(encrypted, 0);
-    encryptedWithTag.set(tag, encrypted.length);
-
-    const encoder = new TextEncoder();
-    const keyHash = await crypto.subtle.digest('SHA-256', encoder.encode(LEVIATHAN_MOBILE_CONFIG_SECRET));
-    const key = await crypto.subtle.importKey('raw', keyHash, { name: 'AES-GCM' }, false, ['decrypt']);
-    const compressed = await crypto.subtle.decrypt({
-        name: 'AES-GCM',
-        iv,
-        additionalData: encoder.encode(LEVIATHAN_MOBILE_CONFIG_AAD),
-        tagLength: 128
-    }, key, encryptedWithTag);
-
-    const ds = new DecompressionStream('gzip');
-    const writer = ds.writable.getWriter();
-    await writer.write(new Uint8Array(compressed));
-    await writer.close();
-    const json = await new Response(ds.readable).text();
-    return JSON.parse(json);
-}
-
 async function fetchMobileConfigForEditor(token) {
-    let serverError = null;
-    try {
-        const response = await fetch('/api/config/decode', {
-            method: 'POST',
-            cache: 'no-store',
-            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token })
-        });
-        if (!response.ok) throw new Error(`decode_http_${response.status}`);
-        const payload = await response.json();
-        if (!payload || payload.ok !== true || !payload.config) throw new Error('decode_bad_payload');
-        return payload.config;
-    } catch (error) {
-        serverError = error;
-        console.warn('[M-CONFIG] Decode server non disponibile, provo fallback locale:', error.message);
-    }
-
-    if (/^lcfg1_/i.test(String(token || ''))) {
-        try { return await decryptMobileEncryptedConfigTokenInBrowser(token); }
-        catch (localError) {
-            console.warn('[M-CONFIG] Fallback locale fallito:', localError.message);
-            throw serverError || localError;
-        }
-    }
-
-    throw serverError || new Error('mobile_config_decode_failed');
+    const response = await fetch('/api/config/decode', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+    });
+    if (!response.ok) throw new Error(`decode_http_${response.status}`);
+    const payload = await response.json();
+    if (!payload || payload.ok !== true || !payload.config) throw new Error('decode_bad_payload');
+    return payload.config;
 }
 
 async function loadMobileConfigFromPathToken(rawToken) {
@@ -3999,39 +3944,12 @@ function getMobileConfig() {
     };
 }
 
-const mobileEncryptedManifestCache = { signature: null, url: null, pending: null };
-
 function getMobileLegacyManifestUrl(config) {
     return `${window.location.host}/${encodeMobileConfigToPathToken(config)}/manifest.json`;
 }
 
 async function getMobileManifestUrl(config) {
-    const signature = JSON.stringify(config);
-    if(mobileEncryptedManifestCache.signature === signature && mobileEncryptedManifestCache.url) return mobileEncryptedManifestCache.url;
-    if(mobileEncryptedManifestCache.signature === signature && mobileEncryptedManifestCache.pending) return mobileEncryptedManifestCache.pending;
-
-    mobileEncryptedManifestCache.signature = signature;
-    mobileEncryptedManifestCache.pending = (async () => {
-        try {
-            const response = await fetch('/api/config/encrypt', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                cache: 'no-store',
-                body: JSON.stringify({ config })
-            });
-            if(!response.ok) throw new Error(`encrypt_http_${response.status}`);
-            const payload = await response.json();
-            if(!payload || payload.ok !== true || !payload.manifestPath) throw new Error('encrypt_bad_payload');
-            mobileEncryptedManifestCache.url = `${window.location.host}${payload.manifestPath}`;
-            return mobileEncryptedManifestCache.url;
-        } catch (_) {
-            mobileEncryptedManifestCache.url = getMobileLegacyManifestUrl(config);
-            return mobileEncryptedManifestCache.url;
-        } finally {
-            mobileEncryptedManifestCache.pending = null;
-        }
-    })();
-    return mobileEncryptedManifestCache.pending;
+    return getMobileLegacyManifestUrl(config);
 }
 
 async function updateLinkModalContent() {

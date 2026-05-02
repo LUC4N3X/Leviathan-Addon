@@ -423,7 +423,7 @@ function bootstrapServer() {
         console.log(`[RANK] Seed health smart gate active healthy>=5 weak>=1`);
         console.log(`[TRACKER] Enricher active + availability cache infoHash:fileIdx`);
         console.log(`[PROXY HEADERS] normalizer active referer/origin/auth/range dedupe`);
-        console.log(`[SECURITY] API guard + encrypted config active`);
+        console.log(`[SECURITY] API guard active + plain config token mode`);
         console.log(`[SCRAPERS] Fallback scrapers ready`);
         console.log(`[NODE] instance=${LOCAL_NODE_ID}`);
         if (shouldUseCluster()) console.log(`[CLUSTER] worker=${process.pid} leader=${isClusterLeader} slot=${clusterSlot}`);
