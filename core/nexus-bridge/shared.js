@@ -27,7 +27,7 @@ try {
 }
 const { LEGACY_BROWSER_PROFILES } = require('../browser_profiles');
 let logger; try { ({ logger } = require('../utils/runtime')); } catch { logger = console; }
-const { EXTERNAL_ADDONS, getAddon } = require('./addons');
+const { EXTERNAL_ADDONS, getAddon, getAddonGroup, getAddonEmoji } = require('./addons');
 const { getImpitBrowserForFingerprint, requestWithImpit } = require('../../providers/utils/bypass');
 
 const DEBUG_MODE = process.env.DEBUG_MODE === 'true';
@@ -568,7 +568,7 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
         potentialPack,
         packTitle, source: originalProvider ? `${addon.name} (${originalProvider})` : addon.name,
         mediaType: String(mediaType || ''),
-        externalAddon: addonKey, externalProvider: originalProvider, externalGroup: addon.group, sourceEmoji: addon.emoji,
+        externalAddon: addonKey, externalProvider: originalProvider, externalGroup: getAddonGroup(addonKey), sourceEmoji: getAddonEmoji(addonKey),
         magnetLink, url: rawUrl, directUrl: rawUrl, externalDirectUrl: rawUrl, _externalDirectUrl: rawUrl,
         isCached: externalCached, cacheState: externalCached ? 'cached' : 'unknown', rdCacheState: externalCached ? 'cached' : 'unknown',
         cached_rd: trustedDirectUrl, _dbCachedRd: trustedDirectUrl, _nexusBridgeRdChecked: trustedDirectUrl, _externalRdChecked: trustedDirectUrl,
@@ -699,7 +699,7 @@ async function fetchConfiguredExternalAddon(addonKey, type, id, options = {}) {
 
     const task = fetchLimiter(async () => {
         let baseUrl = normalizeAddonUrl(addon.baseUrl);
-        if (addon.group === 'torrentio') baseUrl = buildTorrentioBaseUrl(baseUrl, options.userConfig || null);
+        if (getAddonGroup(addonKey) === 'torrentio') baseUrl = buildTorrentioBaseUrl(baseUrl, options.userConfig || null);
         if (!baseUrl) return [];
 
         const fetchType = sanitizeFetchType(type, id);

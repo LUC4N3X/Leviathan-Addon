@@ -1,6 +1,6 @@
 'use strict';
 
-const { EXTERNAL_ADDONS, splitRequestedAddons } = require('./addons');
+const { EXTERNAL_ADDONS, getAddonGroup, splitRequestedAddons } = require('./addons');
 const {
     infoLog,
     debugLog,
@@ -21,7 +21,7 @@ function shouldRunMediaFusion(realTorrentioCount) {
 }
 
 async function fetchExternalAddon(addonKey, type, id, options = {}) {
-    if (EXTERNAL_ADDONS[addonKey]?.group === 'mediafusion') return fetchMediaFusionAddon(addonKey, type, id, options);
+    if (getAddonGroup(addonKey) === 'mediafusion') return fetchMediaFusionAddon(addonKey, type, id, options);
     return fetchTorrentioAddon(addonKey, type, id, options);
 }
 
