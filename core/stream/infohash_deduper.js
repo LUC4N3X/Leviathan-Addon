@@ -234,14 +234,11 @@ function buildDedupeKeys(item = {}, options = {}) {
     if (fileIdx === null && hintIdx === null && !episodeKey) keys.push(`infoHashNoFile:${hash}`);
   }
 
-  // Same torrent + same exact filename is a strong bridge when a provider omits fileIdx.
-  // It is intentionally only added for entries without a concrete file index, so different
-  // files inside the same season pack are not collapsed by infoHash alone.
+  
   if (isSeries && filenameKey && fileIdx === null && hintIdx === null) {
     keys.push(`infoHashFilename:${hash}:${filenameKey}`);
   }
 
-  // Folder-size pack signal is not a dedupe key by itself; it only informs ranking/selection.
   return [...new Set(keys)];
 }
 
