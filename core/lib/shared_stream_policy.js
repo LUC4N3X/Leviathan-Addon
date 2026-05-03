@@ -7,7 +7,7 @@ const QUALITY_1080_REGEX = /\b(?:1080p|fhd|full[-.\s]?hd)\b/i;
 const QUALITY_720_REGEX = /\b(?:720p|hd)\b/i;
 const CAM_REGEX = /\b(?:cam|hdcam|ts|telesync|screener|scr)\b/i;
 const FRESHNESS_BUCKETS = ['ultra_fresh', 'fresh', 'settling', 'stable'];
-const SHARED_STREAM_FRESH_SKIP_HOURS = Math.max(24, parseInt(process.env.SHARED_STREAM_FRESH_SKIP_HOURS || '96', 10) || 96);
+const SHARED_STREAM_FRESH_SKIP_HOURS = 96;
 
 function clamp(value, min, max) {
     const num = Number(value);

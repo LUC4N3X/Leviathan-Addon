@@ -16,6 +16,7 @@ function registerPlaybackRoutes(app, {
     recordProviderMetric,
     incrementMetric,
     markPlayableResultAsCached,
+    markPlayableResultAsUnavailable,
     queueCloudBuild,
     getBuildKey
 }) {
@@ -99,6 +100,7 @@ function registerPlaybackRoutes(app, {
                 }
                 return res.redirect(streamData.url);
             }
+            await markPlayableResultAsUnavailable?.(requestedService, item, playbackMeta, 'lazy_play_miss');
             incrementMetric('lazyPlay.redirectToCloud');
             recordDuration('lazyPlay.total', Date.now() - startedAt);
             return res.redirect(`${getRequestOrigin(req)}/${conf}/add_to_cloud/${hash}`);

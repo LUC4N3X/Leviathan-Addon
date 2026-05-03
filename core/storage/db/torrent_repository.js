@@ -22,6 +22,12 @@ function createTorrentRepository({
     extractOriginalProvider
   } = normalizers;
 
+
+  // Leviathan RD cache policy: valori fissati in codice, non dipendono da .env.
+  // ⚡ cached confermato viene ricontrollato ogni 7 giorni; i vecchi permanenti 9999 vengono sempre re-queued al boot.
+  const RD_CACHED_RECHECK_HOURS = 168;
+  const RD_REVALIDATE_PERMANENT_ON_BOOT = true;
+
   function normalizeProviderName(providerName, title) {
     const extracted = extractOriginalProvider(title);
     if (extracted) return extracted;
@@ -812,10 +818,6 @@ function createTorrentRepository({
             FROM torrents
             WHERE info_hash_norm IS NOT NULL
               AND (
-                cached_rd IS DISTINCT FROM TRUE
-                OR rd_cache_state IS DISTINCT FROM 'cached'
-              )
-              AND (
                 next_cached_check IS NULL
                 OR next_cached_check <= NOW()
               )
@@ -903,6 +905,9 @@ function createTorrentRepository({
 
     for (const row of rows) {
       if (!row?.hash) continue;
+      const nextCheckTs = row.next_cached_check ? Date.parse(String(row.next_cached_check)) : NaN;
+      const duePositiveRecheck = (row.cached_rd === true || row.rd_cache_state === 'cached') && Number.isFinite(nextCheckTs) && nextCheckTs <= Date.now() + 15000;
+      if (duePositiveRecheck) continue;
       if (row.cached_rd === true || row.cached_rd === false) {
         mapped[row.hash] = row.cached_rd;
       } else if (row.rd_cache_state === 'cached') {
@@ -922,11 +927,14 @@ function createTorrentRepository({
     const normalizedRows = cacheResults
       .map((entry) => {
         const hasCached = typeof entry?.cached === 'boolean';
-        const permanent = hasCached && entry.cached === true && entry?.permanent !== false;
+        const state = deriveStoredCacheState(entry);
+        const permanent = hasCached && entry.cached === true && entry?.permanent === true && entry?.trustedPermanent === true;
+        const defaultNextHours = state === 'cached'
+          ? RD_CACHED_RECHECK_HOURS
+          : (hasCached ? (entry.cached ? RD_CACHED_RECHECK_HOURS : 24 * 7) : 12);
         const nextHours = permanent
           ? null
-          : Math.max(1, Math.min(24 * 365 * 10, toSafeNumber(entry?.next_hours, hasCached ? (entry.cached ? 24 * 30 : 24 * 7) : 12)));
-        const state = deriveStoredCacheState(entry);
+          : Math.max(1, Math.min(24 * 365 * 10, toSafeNumber(entry?.next_hours, defaultNextHours)));
         const cached = deriveCachedBooleanFromState(state, hasCached ? entry.cached : null);
         const identity = normalizeEpisodeIdentity(entry);
         return {
@@ -1218,7 +1226,36 @@ function createTorrentRepository({
           if (changed === 0) break;
         }
 
-        return { applied: true, updated: totalUpdated, reason: 'normalized' };
+        let requeuedPermanent = 0;
+        if (RD_REVALIDATE_PERMANENT_ON_BOOT) {
+          while (true) {
+            const requeueRes = await client.query(
+              `
+                WITH target AS (
+                  SELECT ctid
+                  FROM torrents
+                  WHERE info_hash_norm IS NOT NULL
+                    AND cached_rd IS TRUE
+                    AND rd_cache_state = 'cached'
+                    AND next_cached_check >= TIMESTAMPTZ '9999-01-01 00:00:00+00'
+                  LIMIT $1
+                )
+                UPDATE torrents AS t
+                SET next_cached_check = NOW() - make_interval(mins => 1),
+                    updated_at = NOW()
+                FROM target
+                WHERE t.ctid = target.ctid
+              `,
+              [chunkSize]
+            );
+            const changed = Number(requeueRes.rowCount || 0);
+            requeuedPermanent += changed;
+            totalUpdated += changed;
+            if (changed === 0) break;
+          }
+        }
+
+        return { applied: true, updated: totalUpdated, requeuedPermanent, reason: 'normalized' };
       });
     } catch (error) {
       console.error(`❌ DB Error normalizePendingRdCacheState: ${error.message}`);

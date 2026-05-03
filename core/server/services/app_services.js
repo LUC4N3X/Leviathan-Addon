@@ -130,6 +130,46 @@ function createAppServices({
         return false;
     }
 
+
+    async function markPlayableResultAsUnavailable(service, item, meta = null, reason = 'lazy_miss') {
+        const normalizedService = String(service || '').toLowerCase();
+        if (!item?.hash) return false;
+        if (!['rd', 'tb'].includes(normalizedService)) return false;
+
+        const isTb = normalizedService === 'tb';
+        const updateFn = isTb ? dbHelper?.updateTbCacheStatus : dbHelper?.updateRdCacheStatus;
+        if (!dbHelper || typeof updateFn !== 'function') return false;
+
+        try {
+            const updated = await updateFn([isTb
+                ? {
+                    hash: item.hash,
+                    cached: false,
+                    failures: 1
+                }
+                : {
+                    hash: item.hash,
+                    state: 'likely_uncached',
+                    cached: null,
+                    failures: Math.max(1, Number(item?._dbFailures || 0) + 1),
+                    next_hours: 4
+                }
+            ]);
+
+            await Cache.invalidateStreamsByHashes([item.hash], reason);
+            if (meta?.imdb_id && Number.isInteger(meta?.season) && meta.season > 0 && Number.isInteger(meta?.episode) && meta.episode > 0 && typeof Cache.invalidateStreamsByEpisode === 'function') await Cache.invalidateStreamsByEpisode({ imdbId: meta.imdb_id, season: meta.season, episode: meta.episode }, reason);
+            else if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, reason);
+            const dbLookupKey = getDbLookupCacheKey(meta);
+            if (dbLookupKey) await Cache.invalidateDbTorrents(dbLookupKey, reason);
+
+            logger.info(`[LAZY PLAY] Stato cache corretto a MISS | service=${normalizedService} | hash=${item.hash} | state=${isTb ? 'uncached' : 'likely_uncached'} | updated=${updated} | reason=${reason}`);
+            return Number(updated || 0) > 0;
+        } catch (err) {
+            logger.warn(`[LAZY PLAY] Impossibile correggere stato cache MISS | service=${normalizedService} | hash=${item.hash} | error=${err.message}`);
+            return false;
+        }
+    }
+
     async function queueCloudBuild(service, hash, apiKey) {
         const buildKey = getBuildKey(service, hash, apiKey);
         const existingPromise = cloudBuildInflight.get(buildKey);
@@ -214,6 +254,7 @@ function createAppServices({
         cloneManifest,
         getCacheHealthStatus,
         markPlayableResultAsCached,
+        markPlayableResultAsUnavailable,
         queueCloudBuild
     };
 }

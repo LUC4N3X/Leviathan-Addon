@@ -8,11 +8,19 @@ const { buildMagnet: buildTrackerMagnet } = require('../storage/tracker_registry
 const { extractInfoHash, withSharedPromise, isSeasonPack, extractSeasonEpisodeFromFilename } = require('../utils');
 const { shouldSkipRecentWork } = require('../recent_work');
 
-const LOCAL_DB_CACHE_TTL = Math.max(5, Math.min(300, parseInt(process.env.LOCAL_DB_CACHE_TTL || '25', 10) || 25));
-const RD_PRIORITY_DEDUP_MS = Math.max(1000, Math.min(120000, parseInt(process.env.RD_PRIORITY_DEDUP_MS || '15000', 10) || 15000));
-const AVAILABILITY_CACHE_HIT_TTL = Math.max(300, parseInt(process.env.AVAILABILITY_CACHE_HIT_TTL || String(24 * 60 * 60), 10) || (24 * 60 * 60));
-const AVAILABILITY_CACHE_NEGATIVE_TTL = Math.max(120, parseInt(process.env.AVAILABILITY_CACHE_NEGATIVE_TTL || String(6 * 60 * 60), 10) || (6 * 60 * 60));
-const AVAILABILITY_CACHE_PROBING_TTL = Math.max(60, parseInt(process.env.AVAILABILITY_CACHE_PROBING_TTL || '120', 10) || 120);
+// RD availability policy: default in codice, non in .env.
+const LOCAL_DB_CACHE_TTL = 25;
+const RD_PRIORITY_DEDUP_MS = 15000;
+const RD_FOREGROUND_VISIBLE_WINDOW = 9;
+const RD_FOREGROUND_CACHE_LIMIT = 9;
+const RD_FOREGROUND_MIN_KNOWN = 4;
+const RD_FOREGROUND_FALLBACK_PROBE_LIMIT = 3;
+const RD_FOREGROUND_EXACT_LIMIT = 4;
+const RD_PRIORITY_TOP = 18;
+const RD_PRIORITY_WINDOW_MIN = 5;
+const AVAILABILITY_CACHE_HIT_TTL = 24 * 60 * 60;
+const AVAILABILITY_CACHE_NEGATIVE_TTL = 6 * 60 * 60;
+const AVAILABILITY_CACHE_PROBING_TTL = 120;
 
 const localDbLookupInflight = new Map();
 const recentRdPriorityRequests = new Map();
@@ -98,6 +106,35 @@ function hasHeavyNegativeProtection(item) {
     );
 }
 
+function isPastDueDate(value, skewMs = 15000) {
+    if (!value) return false;
+    const ts = value instanceof Date ? value.getTime() : Date.parse(String(value));
+    return Number.isFinite(ts) && ts <= (Date.now() + skewMs);
+}
+
+function deriveDbRdAvailability(row = {}) {
+    const rawState = normalizeRdStateValue(row?.rd_cache_state);
+    const cachedBool = row?.cached_rd === true ? true : (row?.cached_rd === false ? false : null);
+    const stalePositive = (cachedBool === true || rawState === 'cached') && isPastDueDate(row?.next_cached_check);
+
+    if (stalePositive) {
+        // Un vecchio positivo RD non va mostrato come semplice "probing":
+        // l'auditor lo ricontrolla comunque in background, ma in UI resta un hit morbido.
+        // Se poi il recheck fallisce, il worker lo degrada a likely_uncached/uncached_terminal.
+        return {
+            state: 'likely_cached',
+            cached: null,
+            stale: true
+        };
+    }
+
+    return {
+        state: rawState || (cachedBool === true ? 'cached' : (cachedBool === false ? 'likely_uncached' : null)),
+        cached: cachedBool,
+        stale: false
+    };
+}
+
 
 function shouldPersistResolvedAsPack(item = {}, resolvedTitle = '', meta = {}) {
     const season = Number(meta?.season || 0);
@@ -165,6 +202,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         const fileIdx = row?.rd_file_index !== null && row?.rd_file_index !== undefined
             ? Number(row.rd_file_index)
             : (row?.file_index !== null && row?.file_index !== undefined ? Number(row.file_index) : undefined);
+        const rdDb = deriveDbRdAvailability(row);
         return {
             hash,
             title: row?.title || `DB Torrent ${hash}`,
@@ -174,9 +212,10 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             fileIdx: Number.isInteger(fileIdx) && fileIdx >= 0 ? fileIdx : undefined,
             _size: preferredSize,
             sizeBytes: preferredSize,
-            _dbCachedRd: row?.cached_rd === null || row?.cached_rd === undefined ? null : Boolean(row.cached_rd),
-            _rdCacheState: normalizeRdStateValue(row?.rd_cache_state) || (row?.cached_rd === true ? 'cached' : (row?.cached_rd === false ? 'likely_uncached' : null)),
-            rdCacheState: normalizeRdStateValue(row?.rd_cache_state) || (row?.cached_rd === true ? 'cached' : (row?.cached_rd === false ? 'likely_uncached' : null)),
+            _dbCachedRd: rdDb.cached,
+            _rdCacheState: rdDb.state,
+            rdCacheState: rdDb.state,
+            _rdStalePositive: rdDb.stale === true,
             _dbLastCachedCheck: row?.last_cached_check || null,
             _dbNextCachedCheck: row?.next_cached_check || null,
             _dbFailures: Number(row?.cache_check_failures || 0),
@@ -300,16 +339,18 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 const row = byHash.get(hash);
                 if (!row) continue;
 
-                const rowState = normalizeRdStateValue(row.rd_cache_state) || (row.cached_rd === true ? 'cached' : (row.cached_rd === false ? 'likely_uncached' : null));
-                if (row.cached_rd === true || row.cached_rd === false || rowState) {
-                    item._dbCachedRd = row.cached_rd === true || row.cached_rd === false ? row.cached_rd : null;
-                    item.cached_rd = row.cached_rd === true || row.cached_rd === false ? row.cached_rd : item.cached_rd;
+                const rdDb = deriveDbRdAvailability(row);
+                const rowState = rdDb.state;
+                if (rdDb.cached === true || rdDb.cached === false || rowState) {
+                    item._dbCachedRd = rdDb.cached;
+                    item.cached_rd = rdDb.cached === true || rdDb.cached === false ? rdDb.cached : item.cached_rd;
+                    item._rdStalePositive = rdDb.stale === true || item._rdStalePositive === true;
                     item._dbLastCachedCheck = row.last_cached_check || item._dbLastCachedCheck || null;
                     item._dbNextCachedCheck = row.next_cached_check || item._dbNextCachedCheck || null;
                     item._dbFailures = Number(row.cache_check_failures || item._dbFailures || 0);
 
                     const currentState = getRdAvailabilityState('rd', item);
-                    if (currentState === 'unknown' && rowState) {
+                    if ((currentState === 'unknown' || rdDb.stale === true) && rowState) {
                         item._rdCacheState = rowState;
                         item.rdCacheState = rowState;
                     }
@@ -408,28 +449,28 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             1,
             Math.min(
                 CONFIG.MAX_RESULTS || 70,
-                parseInt(options.visibleWindow ?? process.env.RD_FOREGROUND_VISIBLE_WINDOW ?? '9', 10) || 9
+                parseInt(options.visibleWindow ?? RD_FOREGROUND_VISIBLE_WINDOW, 10) || RD_FOREGROUND_VISIBLE_WINDOW
             )
         );
         const probeLimit = Math.max(
             1,
             Math.min(
                 visibleWindow,
-                parseInt(options.probeLimit ?? process.env.RD_FOREGROUND_CACHE_LIMIT ?? '9', 10) || 9
+                parseInt(options.probeLimit ?? RD_FOREGROUND_CACHE_LIMIT, 10) || RD_FOREGROUND_CACHE_LIMIT
             )
         );
         const minKnownStates = Math.max(
             1,
             Math.min(
                 visibleWindow,
-                parseInt(options.minKnownStates ?? process.env.RD_FOREGROUND_MIN_KNOWN ?? '4', 10) || 4
+                parseInt(options.minKnownStates ?? RD_FOREGROUND_MIN_KNOWN, 10) || RD_FOREGROUND_MIN_KNOWN
             )
         );
         const fallbackProbeLimit = Math.max(
             0,
             Math.min(
                 probeLimit,
-                parseInt(options.fallbackProbeLimit ?? process.env.RD_FOREGROUND_FALLBACK_PROBE_LIMIT ?? '3', 10) || 3
+                parseInt(options.fallbackProbeLimit ?? RD_FOREGROUND_FALLBACK_PROBE_LIMIT, 10) || RD_FOREGROUND_FALLBACK_PROBE_LIMIT
             )
         );
 
@@ -497,7 +538,10 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             }
 
             const { results = {}, deferred = [] } = await LIMITERS.rdResolve.schedule(() =>
-                RealDebridProbe.probeAvailabilityFast(unknownCandidates, apiKey, unknownCandidates.length)
+                RealDebridProbe.probeAvailabilityFast(unknownCandidates, apiKey, unknownCandidates.length, {
+                    exactForeground: true,
+                    exactLimit: RD_FOREGROUND_EXACT_LIMIT
+                })
             );
 
             const dbUpdates = [];
@@ -629,8 +673,8 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         if (String(config?.service || 'rd').toLowerCase() !== 'rd') return;
         if (!dbHelper || typeof dbHelper.prioritizeRdHashes !== 'function') return;
 
-        const maxPriority = Math.max(1, Math.min(30, parseInt(process.env.RD_PRIORITY_TOP || '18', 10) || 18));
-        const priorityMinutes = Math.max(0, Math.min(120, parseInt(process.env.RD_PRIORITY_WINDOW_MIN || '5', 10) || 5));
+        const maxPriority = RD_PRIORITY_TOP;
+        const priorityMinutes = RD_PRIORITY_WINDOW_MIN;
         const candidateHashes = [...new Set((Array.isArray(results) ? results : [])
             .filter((item) => !isGuaranteedCachedExternal(item) && getRdAvailabilityState('rd', item) === 'unknown' && item?.hash)
             .slice(0, maxPriority)

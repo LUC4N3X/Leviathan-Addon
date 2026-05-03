@@ -234,7 +234,7 @@ async function ensureDatabaseOptimizations(pool) {
   }
 
   try {
-    await pool.query(`UPDATE torrents SET next_cached_check = TIMESTAMPTZ '9999-12-31 00:00:00+00' WHERE cached_rd IS TRUE AND (next_cached_check IS NULL OR next_cached_check < TIMESTAMPTZ '9999-12-31 00:00:00+00')`);
+    await pool.query(`UPDATE torrents SET next_cached_check = NOW() - make_interval(mins => 1), updated_at = NOW() WHERE cached_rd IS TRUE AND rd_cache_state = 'cached' AND next_cached_check >= TIMESTAMPTZ '9999-01-01 00:00:00+00'`);
     await pool.query(`DELETE FROM shared_stream_cache WHERE stale_until IS NOT NULL AND stale_until < NOW()`);
   } catch (error) {
     console.warn(`⚠️ DB optimization skipped: ${error.message}`);

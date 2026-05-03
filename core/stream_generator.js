@@ -2026,8 +2026,8 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
                                 cached: true,
                                 rd_file_size: Number(item?._size || item?.sizeBytes || 0) > 0 ? Number(item._size || item.sizeBytes) : null,
                                 failures: 0,
-                                next_hours: 24 * 30,
-                                permanent: true
+                                next_hours: 168,
+                                permanent: false
                             });
                         }
                         continue;
@@ -2072,7 +2072,7 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
                 if (prioritizedHashes.length > 0 && typeof dbHelper.prioritizeRdHashes === 'function') {
                     const outcome = await dbHelper.prioritizeRdHashes(prioritizedHashes, {
                         limit: 18,
-                        priorityMinutes: Math.max(0, Math.min(120, parseInt(process.env.RD_PRIORITY_WINDOW_MIN || '5', 10) || 5))
+                        priorityMinutes: 5
                     });
                     logger.info(`[RD PRIORITY] reason=db_save | imdb=${meta?.imdb_id || 'n/a'} | hashes=${prioritizedHashes.length} | updated=${outcome?.updated || 0}`);
                 }

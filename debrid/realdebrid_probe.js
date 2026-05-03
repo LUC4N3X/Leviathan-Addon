@@ -8,9 +8,11 @@ const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mpg|mpeg)$
 const PACK_TITLE_PATTERN = /\b(trilog(?:y)?|saga|collection|collezione|pack|complete|completa|integrale|filmografia)\b/i;
 const RD_CACHED_STATUSES = new Set(['downloaded']);
 const RD_TERMINAL_UNCACHED_STATUSES = new Set(['error', 'magnet_error', 'virus', 'dead']);
-const RD_SLOW_RECHECK_ATTEMPTS = Math.max(1, parseInt(process.env.RD_SLOW_RECHECK_ATTEMPTS || '2', 10));
-const RD_SLOW_RECHECK_DELAY_MS = Math.max(500, parseInt(process.env.RD_SLOW_RECHECK_DELAY_MS || '1200', 10));
-const REQUIRE_EPISODE_HINT_FOR_PACKS = process.env.RD_REQUIRE_EPISODE_HINT_FOR_PACKS !== 'false';
+// Default fissati nel codice: probe severo sui pack, nessun env necessario.
+const RD_SLOW_RECHECK_ATTEMPTS = 2;
+const RD_SLOW_RECHECK_DELAY_MS = 1200;
+const REQUIRE_EPISODE_HINT_FOR_PACKS = true;
+const RD_CACHED_RECHECK_HOURS = 168;
 const { findEpisodeFileHint } = require('../core/matching/season_pack_inspector');
 
 function isVideoFile(path) {
@@ -207,6 +209,13 @@ function buildSelectAllBody() {
     return body;
 }
 
+
+function buildSelectFilesBody(files) {
+    const body = new URLSearchParams();
+    body.append('files', String(files || 'all'));
+    return body;
+}
+
 function extractVideoFiles(files) {
     if (!Array.isArray(files) || files.length === 0) return [];
     return files
@@ -230,6 +239,75 @@ function pickMainVideoFile(files) {
         file_size: Number(candidate.bytes || 0) || null,
         file_index: Number.isInteger(Number(candidate.id)) && Number(candidate.id) >= 0 ? Number(candidate.id) : null
     };
+}
+
+
+function getEpisodeProbeContext(context = {}, fallbackTitle = '') {
+    if (!hasEpisodeProbeContext(context)) return null;
+    return {
+        ...context,
+        title: context.title || context.seriesTitle || context.metaTitle || fallbackTitle,
+        season: Number(context.season || context._probeSeason || 0),
+        episode: Number(context.episode || context._probeEpisode || 0),
+        fileIdx: context.fileIdx ?? context.file_index ?? context.rd_file_index
+    };
+}
+
+function chooseProbeFileSelection(files, context = {}, fallbackTitle = '') {
+    const videoFiles = extractVideoFiles(files);
+    const episodeContext = getEpisodeProbeContext(context, fallbackTitle);
+
+    // Prima rispetta sempre fileIdx/rd_file_index già imparato dal DB.
+    // È fondamentale per i pack: se il DB conosce l'episodio, non blocchiamo il probe solo perché il parser titolo non ritrova l'hint.
+    const forcedIndex = Number(context?.fileIdx ?? context?.file_index ?? context?.rd_file_index);
+    if (Number.isInteger(forcedIndex) && forcedIndex >= 0 && videoFiles.some((file) => Number(file.id) === forcedIndex)) {
+        return { files: String(forcedIndex), selectedFileIndex: forcedIndex, episodeFileHint: null, forcedIndex: true };
+    }
+
+    if (episodeContext && videoFiles.length > 1) {
+        const episodeFileHint = findEpisodeFileHint(videoFiles, episodeContext);
+        if (episodeFileHint && Number.isInteger(Number(episodeFileHint.fileIndex))) {
+            return {
+                files: String(Number(episodeFileHint.fileIndex)),
+                selectedFileIndex: Number(episodeFileHint.fileIndex),
+                episodeFileHint
+            };
+        }
+        if (REQUIRE_EPISODE_HINT_FOR_PACKS) {
+            return {
+                files: null,
+                missingEpisodeHint: true,
+                episodeFileHint: null
+            };
+        }
+    }
+
+    if (videoFiles.length === 1 && Number.isInteger(Number(videoFiles[0].id))) {
+        return { files: String(Number(videoFiles[0].id)), selectedFileIndex: Number(videoFiles[0].id), episodeFileHint: null };
+    }
+
+    const main = pickMainVideoFile(videoFiles);
+    if (Number.isInteger(Number(main.file_index)) && Number(main.file_index) >= 0) {
+        return { files: String(Number(main.file_index)), selectedFileIndex: Number(main.file_index), episodeFileHint: null };
+    }
+
+    return { files: 'all', selectedFileIndex: null, episodeFileHint: null };
+}
+
+async function selectFilesForProbe(request, token, torrentId, info, context = {}) {
+    const selection = chooseProbeFileSelection(info?.files, context, info?.filename || info?.original_filename || '');
+    if (selection.missingEpisodeHint) return { missingEpisodeHint: true, info, selection };
+
+    const selectedFiles = selection.files || 'all';
+    const selectRes = await request('POST', `${RD_BASE_URL}/torrents/selectFiles/${torrentId}`, token, buildSelectFilesBody(selectedFiles));
+    if (!selectRes) return { info: null, reason: 'select_failed', selection };
+    if (selectRes._deferred) return { deferred: true, reason: selectRes._reason || 'select_deferred', selection };
+
+    const selectedInfo = await request('GET', `${RD_BASE_URL}/torrents/info/${torrentId}`, token);
+    if (!selectedInfo) return { info: null, reason: 'info_after_select_failed', selection };
+    if (selectedInfo._deferred) return { deferred: true, reason: selectedInfo._reason || 'info_after_select_deferred', selection };
+
+    return { info: selectedInfo, selection };
 }
 
 function hasEpisodeProbeContext(context = {}) {
@@ -261,7 +339,8 @@ function buildProbeResult(infoHash, info, context = {}) {
         file_index: Number.isInteger(Number(episodeFileHint.fileIndex)) ? Number(episodeFileHint.fileIndex) : main.file_index
     } : main;
 
-    const statusCached = isCachedStatus(info?.status);
+    const hasDownloadLinks = Array.isArray(info?.links) && info.links.length > 0;
+    const statusCached = isCachedStatus(info?.status) && hasDownloadLinks;
     const requiresEpisodeHint = Boolean(REQUIRE_EPISODE_HINT_FOR_PACKS && statusCached && isPack && episodeContext);
     const cachedForRequestedEpisode = statusCached && (!requiresEpisodeHint || Boolean(episodeFileHint));
 
@@ -328,7 +407,32 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
             return { hash, cached: false, deferred: true, error: info._reason };
         }
 
-        const initialStatus = normalizeStatus(info?.status);
+        let initialStatus = normalizeStatus(info?.status);
+
+        if (initialStatus === 'waiting_files_selection') {
+            const selectionResult = await selectFilesForProbe(request, token, torrentId, info, context);
+            if (selectionResult?.missingEpisodeHint) {
+                const result = {
+                    ...buildProbeResult(hash, info, context),
+                    cached: false,
+                    state: 'likely_uncached',
+                    pack_without_episode_hint: true
+                };
+                await cleanup();
+                return result;
+            }
+            if (selectionResult?.deferred) {
+                await cleanup();
+                return buildDeferredProbeResult(hash, initialStatus, selectionResult.reason);
+            }
+            if (!selectionResult?.info) {
+                await cleanup();
+                return fast ? buildDeferredProbeResult(hash, initialStatus, selectionResult?.reason || 'select_failed') : { hash, cached: false, error: selectionResult?.reason || 'select_failed', rd_status: initialStatus };
+            }
+            info = selectionResult.info;
+            initialStatus = normalizeStatus(info?.status);
+        }
+
         if (isCachedStatus(initialStatus) || isTerminalUncachedStatus(initialStatus)) {
             const result = buildProbeResult(hash, info, context);
             await cleanup();
@@ -383,18 +487,25 @@ function inspectSingleHashFast(infoHash, magnet, token, context = {}) {
     return performAvailabilityProbe(infoHash, magnet, token, { fast: true, backgroundDelete: true, context });
 }
 
-async function probeAvailabilityFast(items, token, limit = 5) {
+async function probeAvailabilityFast(items, token, limit = 5, options = {}) {
     const results = {};
     const deferred = [];
     const toCheck = Array.isArray(items) ? items.slice(0, Math.max(0, limit | 0)) : [];
+    const exactForeground = options?.exactForeground === true;
+    const exactLimit = Math.max(0, Math.min(toCheck.length, Number.parseInt(options?.exactLimit ?? 0, 10) || 0));
 
     if (DEBUG_MODE) {
-        console.log(`⚡ [RD Probe Fast] Checking ${toCheck.length} hashes...`);
+        console.log(`⚡ [RD Probe Fast] Checking ${toCheck.length} hashes... exact=${exactForeground ? exactLimit : 0}`);
     }
 
     for (let i = 0; i < toCheck.length; i += 1) {
         const item = toCheck[i];
-        const result = await inspectSingleHashFast(item?.hash, item?.magnet, token, item);
+        // I primi risultati visibili meritano una verifica completa, altrimenti RD spesso
+        // risponde "magnet_conversion/downloading" per pochi istanti e in UI finisce ⏳
+        // anche quando il file è già cached. Il resto resta fast+background.
+        const result = exactForeground && i < exactLimit
+            ? await inspectSingleHash(item?.hash, item?.magnet, token, item)
+            : await inspectSingleHashFast(item?.hash, item?.magnet, token, item);
 
         if (result.deferred) {
             deferred.push(item);
@@ -476,7 +587,7 @@ async function backfillAvailabilityInBackground(items, token, dbHelper, onUpdate
                         file_title: result.file_title || null,
                         file_size: result.file_size || null,
                         rd_file_index: Number.isInteger(Number(result.file_index)) && Number(result.file_index) >= 0 ? Number(result.file_index) : null,
-                        next_hours: result.cached ? (24 * 30) : (isTerminalUncachedStatus(result.rd_status) ? (24 * 7) : 12),
+                        next_hours: result.cached ? RD_CACHED_RECHECK_HOURS : (isTerminalUncachedStatus(result.rd_status) ? (24 * 7) : 12),
                         failures: result.cached ? 0 : 1,
                         imdb_id: result._probeContext?.imdb_id || null,
                         imdb_season: Number(result._probeContext?.season || result._probeContext?._probeSeason || 0) > 0 ? Number(result._probeContext?.season || result._probeContext?._probeSeason) : null,
