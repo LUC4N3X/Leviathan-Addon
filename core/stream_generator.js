@@ -2011,6 +2011,13 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
                         size: item._size || item.sizeBytes || 0,
                         seeders: item.seeders || 0,
                         provider: item.source || 'External',
+                        torrent_id: item.torrentId || item.torrent_id || item.id || undefined,
+                        type: meta?.isAnime ? 'anime' : effectiveType,
+                        upload_date: item.uploadDate || item.upload_date || item.publishedAt || item.published_at || item.date || undefined,
+                        trackers: item.trackers || item.sources || undefined,
+                        languages: item.languages || item.language || item.langs || item._languages || undefined,
+                        resolution: item.resolution || item.quality || undefined,
+                        quality: item.quality || item.sourceQuality || undefined,
                         file_index: item.fileIdx !== undefined ? item.fileIdx : undefined,
                         is_pack: Boolean(meta?.isSeries && isConfidentSeasonPackItem(item, meta, effectiveType))
                     };
