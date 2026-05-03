@@ -8,9 +8,16 @@ async function ensureDatabaseOptimizations(pool) {
       file_index INTEGER,
       file_index_norm INTEGER DEFAULT -1,
       provider TEXT,
+      torrent_id TEXT,
+      type TEXT,
       title TEXT,
       size BIGINT DEFAULT 0,
       seeders INTEGER DEFAULT 0,
+      upload_date TIMESTAMPTZ,
+      trackers TEXT,
+      languages TEXT,
+      resolution TEXT,
+      quality_tag TEXT,
       cached_rd BOOLEAN,
       rd_cache_state TEXT,
       rd_file_index INTEGER,
@@ -87,9 +94,30 @@ async function ensureDatabaseOptimizations(pool) {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`,
+    `CREATE TABLE IF NOT EXISTS debrid_availability_cache (
+      cache_key TEXT PRIMARY KEY,
+      service TEXT NOT NULL,
+      info_hash TEXT NOT NULL,
+      info_hash_norm TEXT NOT NULL,
+      file_index INTEGER,
+      file_index_norm INTEGER DEFAULT -1,
+      payload_json JSONB NOT NULL,
+      state TEXT,
+      cached BOOLEAN,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS file_index INTEGER`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS file_index_norm INTEGER DEFAULT -1`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS torrent_id TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS type TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS upload_date TIMESTAMPTZ`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS trackers TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS languages TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS resolution TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS quality_tag TEXT`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS cached_rd BOOLEAN`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS rd_cache_state TEXT`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS rd_file_index INTEGER`,
@@ -155,6 +183,18 @@ async function ensureDatabaseOptimizations(pool) {
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
     `ALTER TABLE shared_stream_cache ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
 
+    `ALTER TABLE debrid_availability_cache ADD COLUMN IF NOT EXISTS service TEXT`,
+    `ALTER TABLE debrid_availability_cache ADD COLUMN IF NOT EXISTS info_hash TEXT`,
+    `ALTER TABLE debrid_availability_cache ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
+    `ALTER TABLE debrid_availability_cache ADD COLUMN IF NOT EXISTS file_index INTEGER`,
+    `ALTER TABLE debrid_availability_cache ADD COLUMN IF NOT EXISTS file_index_norm INTEGER DEFAULT -1`,
+    `ALTER TABLE debrid_availability_cache ADD COLUMN IF NOT EXISTS payload_json JSONB`,
+    `ALTER TABLE debrid_availability_cache ADD COLUMN IF NOT EXISTS state TEXT`,
+    `ALTER TABLE debrid_availability_cache ADD COLUMN IF NOT EXISTS cached BOOLEAN`,
+    `ALTER TABLE debrid_availability_cache ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
+    `ALTER TABLE debrid_availability_cache ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
+    `ALTER TABLE debrid_availability_cache ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
+
     `UPDATE torrents SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE torrents SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
     `UPDATE files SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
@@ -162,12 +202,17 @@ async function ensureDatabaseOptimizations(pool) {
     `UPDATE pack_files SET pack_hash_norm = LOWER(TRIM(pack_hash)) WHERE pack_hash IS NOT NULL AND (pack_hash_norm IS NULL OR pack_hash_norm <> LOWER(TRIM(pack_hash)))`,
     `UPDATE pack_files SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
     `UPDATE episode_file_overrides SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
+    `UPDATE debrid_availability_cache SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
+    `UPDATE debrid_availability_cache SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
 
     `CREATE INDEX IF NOT EXISTS idx_torrents_info_hash_norm ON torrents (info_hash_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_lookup_hash_file ON torrents (info_hash_norm, file_index_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_rd_scan_queue ON torrents (next_cached_check NULLS FIRST, last_cached_check NULLS FIRST)`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_rd_cache_state ON torrents (rd_cache_state, next_cached_check NULLS FIRST)`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_tb_cache_state ON torrents (tb_cached, tb_last_cached_check NULLS FIRST)`,
+    `CREATE INDEX IF NOT EXISTS idx_torrents_seeders_upload ON torrents (seeders DESC, upload_date DESC NULLS LAST)`,
+    `CREATE INDEX IF NOT EXISTS idx_torrents_resolution_seeders ON torrents (resolution, seeders DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_torrents_type_provider ON torrents (type, provider)`,
 
     `CREATE INDEX IF NOT EXISTS idx_files_lookup_episode ON files (imdb_id, imdb_season, imdb_episode, info_hash_norm, file_index_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_files_lookup_movie ON files (imdb_id, info_hash_norm, file_index_norm)`,
@@ -180,7 +225,10 @@ async function ensureDatabaseOptimizations(pool) {
     `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_stale_until ON shared_stream_cache (stale_until)`,
     `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_imdb ON shared_stream_cache (imdb_id)`,
     `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_imdb_episode ON shared_stream_cache (imdb_id, imdb_season, imdb_episode)`,
-    `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_hashes ON shared_stream_cache USING GIN (hashes)`
+    `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_hashes ON shared_stream_cache USING GIN (hashes)`,
+    `CREATE INDEX IF NOT EXISTS idx_debrid_availability_expires ON debrid_availability_cache (expires_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_debrid_availability_hash_file ON debrid_availability_cache (service, info_hash_norm, file_index_norm)`,
+    `CREATE INDEX IF NOT EXISTS idx_debrid_availability_state ON debrid_availability_cache (service, state, expires_at)`
   ];
 
   for (const sql of statements) {
@@ -236,6 +284,7 @@ async function ensureDatabaseOptimizations(pool) {
   try {
     await pool.query(`UPDATE torrents SET next_cached_check = NOW() - make_interval(mins => 1), updated_at = NOW() WHERE cached_rd IS TRUE AND rd_cache_state = 'cached' AND next_cached_check >= TIMESTAMPTZ '9999-01-01 00:00:00+00'`);
     await pool.query(`DELETE FROM shared_stream_cache WHERE stale_until IS NOT NULL AND stale_until < NOW()`);
+    await pool.query(`DELETE FROM debrid_availability_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
   } catch (error) {
     console.warn(`⚠️ DB optimization skipped: ${error.message}`);
   }
