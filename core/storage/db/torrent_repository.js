@@ -24,6 +24,9 @@ function createTorrentRepository({
     toDateOrNull
   } = normalizers;
 
+
+  // Leviathan RD cache policy: valori fissati in codice, non dipendono da .env.
+  // ⚡ cached confermato viene ricontrollato ogni 7 giorni; i vecchi permanenti 9999 vengono sempre re-queued al boot.
   const RD_CACHED_RECHECK_HOURS = 168;
   const RD_REVALIDATE_PERMANENT_ON_BOOT = true;
 
@@ -1397,6 +1400,87 @@ function createTorrentRepository({
     };
   }
 
+
+  function normalizeMarkerPart(value, maxLength = 180) {
+    const normalized = sanitizeText(value).toLowerCase().replace(/[^a-z0-9:_-]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+    return normalized ? normalized.slice(0, maxLength) : null;
+  }
+
+  function buildDebridCheckMarkerKey(marker = {}) {
+    const service = normalizeMarkerPart(marker?.service || 'rd', 32) || 'rd';
+    const userHash = normalizeMarkerPart(marker?.userHash || marker?.user_hash || 'global', 80) || 'global';
+    const mediaId = normalizeMarkerPart(marker?.mediaId || marker?.media_id, 220);
+    if (!mediaId) return null;
+    return {
+      key: `${service}:${userHash}:${mediaId}`,
+      service,
+      userHash,
+      mediaId
+    };
+  }
+
+  async function isDebridCacheCheckMarked(marker) {
+    const pool = getPool();
+    if (!pool) return false;
+    await awaitDatabaseOptimizations();
+
+    const built = buildDebridCheckMarkerKey(marker);
+    if (!built) return false;
+
+    try {
+      const res = await pool.query(
+        `
+          SELECT 1
+          FROM debrid_cache_check_markers
+          WHERE marker_key = $1
+            AND expires_at > NOW()
+          LIMIT 1
+        `,
+        [built.key]
+      );
+      return Number(res.rowCount || 0) > 0;
+    } catch (error) {
+      console.error(`❌ DB Error isDebridCacheCheckMarked: ${error.message}`);
+      return false;
+    }
+  }
+
+  async function markDebridCacheCheckDone(marker) {
+    const pool = getPool();
+    if (!pool) return false;
+    await awaitDatabaseOptimizations();
+
+    const built = buildDebridCheckMarkerKey(marker);
+    const ttlSeconds = clampInt(marker?.ttlSeconds || marker?.ttl || 1800, 1800, 60, 24 * 60 * 60);
+    if (!built || ttlSeconds <= 0) return false;
+
+    try {
+      await pool.query(
+        `
+          INSERT INTO debrid_cache_check_markers (
+            marker_key,
+            service,
+            user_hash,
+            media_id,
+            expires_at,
+            created_at,
+            updated_at
+          )
+          VALUES ($1, $2, $3, $4, NOW() + make_interval(secs => $5), NOW(), NOW())
+          ON CONFLICT (marker_key)
+          DO UPDATE SET
+            expires_at = EXCLUDED.expires_at,
+            updated_at = NOW()
+        `,
+        [built.key, built.service, built.userHash, built.mediaId, ttlSeconds]
+      );
+      return true;
+    } catch (error) {
+      console.error(`❌ DB Error markDebridCacheCheckDone: ${error.message}`);
+      return false;
+    }
+  }
+
   async function getDebridAvailabilityCache(cacheKeys) {
     const pool = getPool();
     if (!pool) return {};
@@ -1520,7 +1604,9 @@ function createTorrentRepository({
     prioritizeRdHashes,
     normalizePendingRdCacheState,
     getDebridAvailabilityCache,
-    setDebridAvailabilityCache
+    setDebridAvailabilityCache,
+    isDebridCacheCheckMarked,
+    markDebridCacheCheckDone
   };
 }
 

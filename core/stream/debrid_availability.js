@@ -8,6 +8,7 @@ const { buildMagnet: buildTrackerMagnet } = require('../storage/tracker_registry
 const { extractInfoHash, withSharedPromise, isSeasonPack, extractSeasonEpisodeFromFilename } = require('../utils');
 const { shouldSkipRecentWork } = require('../recent_work');
 
+// RD availability policy: default in codice, non in .env.
 const LOCAL_DB_CACHE_TTL = 25;
 const RD_PRIORITY_DEDUP_MS = 15000;
 const RD_FOREGROUND_VISIBLE_WINDOW = 9;
@@ -20,6 +21,7 @@ const RD_PRIORITY_WINDOW_MIN = 5;
 const AVAILABILITY_CACHE_HIT_TTL = 24 * 60 * 60;
 const AVAILABILITY_CACHE_NEGATIVE_TTL = 6 * 60 * 60;
 const AVAILABILITY_CACHE_PROBING_TTL = 120;
+const DEBRID_CACHE_CHECK_MARKER_TTL = 30 * 60;
 
 const localDbLookupInflight = new Map();
 const recentRdPriorityRequests = new Map();
@@ -37,6 +39,58 @@ function normalizeFileIdxForAvailability(fileIdx) {
     if (fileIdx === undefined || fileIdx === null || fileIdx === '') return 'auto';
     const parsed = Number.parseInt(fileIdx, 10);
     return Number.isInteger(parsed) && parsed >= 0 ? String(parsed) : 'auto';
+}
+
+
+function buildDebridUserHash(apiKey) {
+    const raw = String(apiKey || '').trim();
+    if (!raw) return 'global';
+    return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16);
+}
+
+function buildDebridMediaId(meta = {}) {
+    const imdb = String(meta?.imdb_id || meta?.imdbId || meta?.id || '').trim().toLowerCase();
+    const tmdb = String(meta?.tmdb_id || meta?.tmdbId || meta?.tmdb || '').trim().toLowerCase();
+    const kitsu = String(meta?.kitsu_id || meta?.kitsuId || '').trim().toLowerCase();
+    const providerId = imdb || (tmdb ? `tmdb:${tmdb}` : '') || (kitsu ? `kitsu:${kitsu}` : '');
+    if (!providerId) return null;
+    const season = Number(meta?.season || 0) || 0;
+    const episode = Number(meta?.episode || 0) || 0;
+    if (season > 0 && episode > 0) return `${providerId}:s${season}:e${episode}`;
+    return providerId;
+}
+
+async function isRecentDebridMediaCheck(service, apiKey, meta, logger = console) {
+    if (!dbHelper || typeof dbHelper.isDebridCacheCheckMarked !== 'function') return false;
+    const mediaId = buildDebridMediaId(meta);
+    if (!mediaId) return false;
+    try {
+        return await dbHelper.isDebridCacheCheckMarked({
+            service,
+            userHash: buildDebridUserHash(apiKey),
+            mediaId
+        });
+    } catch (err) {
+        logger.warn?.(`[DEBRID CHECK MARKER] read failed: ${err.message}`);
+        return false;
+    }
+}
+
+async function markDebridMediaCheckDone(service, apiKey, meta, logger = console) {
+    if (!dbHelper || typeof dbHelper.markDebridCacheCheckDone !== 'function') return false;
+    const mediaId = buildDebridMediaId(meta);
+    if (!mediaId) return false;
+    try {
+        return await dbHelper.markDebridCacheCheckDone({
+            service,
+            userHash: buildDebridUserHash(apiKey),
+            mediaId,
+            ttlSeconds: DEBRID_CACHE_CHECK_MARKER_TTL
+        });
+    } catch (err) {
+        logger.warn?.(`[DEBRID CHECK MARKER] write failed: ${err.message}`);
+        return false;
+    }
 }
 
 function getAvailabilityCacheKey(service, hash, fileIdx = null) {
@@ -117,9 +171,9 @@ function deriveDbRdAvailability(row = {}) {
     const stalePositive = (cachedBool === true || rawState === 'cached') && isPastDueDate(row?.next_cached_check);
 
     if (stalePositive) {
-        
-        
-        
+        // Un vecchio positivo RD non va mostrato come semplice "probing":
+        // l'auditor lo ricontrolla comunque in background, ma in UI resta un hit morbido.
+        // Se poi il recheck fallisce, il worker lo degrada a likely_uncached/uncached_terminal.
         return {
             state: 'likely_cached',
             cached: null,
@@ -440,7 +494,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         );
     }
 
-    async function hydrateRdForegroundAvailability(items, apiKey, options = {}) {
+    async function hydrateRdForegroundAvailability(items, apiKey, meta = {}, options = {}) {
         const list = Array.isArray(items) ? items : [];
         if (!apiKey || list.length === 0) return list;
 
@@ -511,6 +565,12 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         }
 
         if (availabilityCacheHits > 0) logger.info(`[AVAILABILITY CACHE] hit=${availabilityCacheHits}/${allUnknownCandidates.length} key=infoHash:fileIdx service=rd`);
+
+        const recentMediaCheck = await isRecentDebridMediaCheck('rd', apiKey, meta, logger);
+        if (recentMediaCheck && (availabilityCacheHits > 0 || knownStates >= minKnownStates)) {
+            logger.info(`[DEBRID CHECK MARKER] skip repeated live probe | service=rd media=${buildDebridMediaId(meta) || 'n/a'} known=${knownStates}/${visibleSlice.length} cacheHits=${availabilityCacheHits}/${allUnknownCandidates.length}`);
+            return list;
+        }
 
         if (cachedUnknownCandidates.length === 0) return list;
 
@@ -675,6 +735,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 });
             }
 
+            await markDebridMediaCheckDone('rd', apiKey, meta, logger);
             logger.info(`[RD PROBE] Live check completato | cached=${dbUpdates.filter((row) => row.state === 'cached').length} | likely_uncached=${dbUpdates.filter((row) => row.state === 'likely_uncached').length} | uncached_terminal=${dbUpdates.filter((row) => row.state === 'uncached_terminal').length} | deferred=${Array.isArray(deferred) ? deferred.length : 0}`);
         } catch (err) {
             logger.warn(`[RD PROBE] Verifica disponibilita live fallita: ${err.message}`);
@@ -727,7 +788,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
 
         let prioritized = applyRdDbAvailabilityPriority(rankedList, config, meta);
         const apiKey = config.key || config.rd;
-        await hydrateRdForegroundAvailability(prioritized, apiKey);
+        await hydrateRdForegroundAvailability(prioritized, apiKey, meta);
         prioritized = applyRdDbAvailabilityPriority(prioritized, config, meta);
         queueRdPriorityAudit(meta, prioritized, config, 'stream_open');
         return prioritized;

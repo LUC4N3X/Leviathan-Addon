@@ -108,6 +108,15 @@ async function ensureDatabaseOptimizations(pool) {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`,
+    `CREATE TABLE IF NOT EXISTS debrid_cache_check_markers (
+      marker_key TEXT PRIMARY KEY,
+      service TEXT NOT NULL,
+      user_hash TEXT,
+      media_id TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS file_index INTEGER`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS file_index_norm INTEGER DEFAULT -1`,
@@ -195,6 +204,13 @@ async function ensureDatabaseOptimizations(pool) {
     `ALTER TABLE debrid_availability_cache ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
     `ALTER TABLE debrid_availability_cache ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
 
+    `ALTER TABLE debrid_cache_check_markers ADD COLUMN IF NOT EXISTS service TEXT`,
+    `ALTER TABLE debrid_cache_check_markers ADD COLUMN IF NOT EXISTS user_hash TEXT`,
+    `ALTER TABLE debrid_cache_check_markers ADD COLUMN IF NOT EXISTS media_id TEXT`,
+    `ALTER TABLE debrid_cache_check_markers ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
+    `ALTER TABLE debrid_cache_check_markers ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
+    `ALTER TABLE debrid_cache_check_markers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
+
     `UPDATE torrents SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE torrents SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
     `UPDATE files SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
@@ -228,7 +244,9 @@ async function ensureDatabaseOptimizations(pool) {
     `CREATE INDEX IF NOT EXISTS idx_shared_stream_cache_hashes ON shared_stream_cache USING GIN (hashes)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_availability_expires ON debrid_availability_cache (expires_at)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_availability_hash_file ON debrid_availability_cache (service, info_hash_norm, file_index_norm)`,
-    `CREATE INDEX IF NOT EXISTS idx_debrid_availability_state ON debrid_availability_cache (service, state, expires_at)`
+    `CREATE INDEX IF NOT EXISTS idx_debrid_availability_state ON debrid_availability_cache (service, state, expires_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_debrid_check_markers_lookup ON debrid_cache_check_markers (service, user_hash, media_id, expires_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_debrid_check_markers_expires ON debrid_cache_check_markers (expires_at)`
   ];
 
   for (const sql of statements) {
@@ -285,6 +303,7 @@ async function ensureDatabaseOptimizations(pool) {
     await pool.query(`UPDATE torrents SET next_cached_check = NOW() - make_interval(mins => 1), updated_at = NOW() WHERE cached_rd IS TRUE AND rd_cache_state = 'cached' AND next_cached_check >= TIMESTAMPTZ '9999-01-01 00:00:00+00'`);
     await pool.query(`DELETE FROM shared_stream_cache WHERE stale_until IS NOT NULL AND stale_until < NOW()`);
     await pool.query(`DELETE FROM debrid_availability_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
+    await pool.query(`DELETE FROM debrid_cache_check_markers WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
   } catch (error) {
     console.warn(`⚠️ DB optimization skipped: ${error.message}`);
   }

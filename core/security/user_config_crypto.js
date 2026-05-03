@@ -6,6 +6,8 @@ const { promisify } = require('util');
 
 const CONFIG_TOKEN_PREFIX = 'lcfg1_';
 const CONFIG_CRYPTO_VERSION = 1;
+// La generazione di token cifrati è disattivata: Stremio riceve solo token JSON base64url
+// leggibili/compatibili. La decodifica lcfg1_ resta solo per vecchie installazioni già create.
 const USER_CONFIG_ENCRYPTION_ENABLED = false;
 const USER_CONFIG_ENCRYPTION_SECRET = '34e14289c3d6642f9a1f2c08065b600a4d7c9a517492e1fd99e2de60c005a9a5';
 const USER_CONFIG_AAD = 'leviathan-stremio-config';
@@ -38,7 +40,7 @@ function encodePlainConfigObject(config) {
 }
 
 async function encryptConfigObject(config) {
-   
+    // Compatibilità con il vecchio nome usato dalle route/UI: da ora NON cifra più.
     return encodePlainConfigObject(config);
 }
 

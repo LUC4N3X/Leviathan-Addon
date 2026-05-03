@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|mpg|mpeg|3gp|3g2|m2ts|ts|vob|ogv|ogm|divx|xvid|rm|rmvb|asf|mxf|mka|mks|mk3d|f4v|f4p|f4a|f4b)$/i;
 
@@ -214,9 +216,109 @@ function extractFilename(item = {}) {
   return '';
 }
 
+
+function normalizeSmartToken(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function joinedSignalText(item = {}) {
+  return [
+    item.filename,
+    item.fileName,
+    item.file_name,
+    item.file_title,
+    item.title,
+    item.name,
+    item.torrent_title,
+    item.rawTitle,
+    item.description,
+    item.behaviorHints?.filename,
+    item.behaviorHints?.fileName,
+    item.episodeFileHint?.fileName,
+    item.episodeFileHint?.filePath,
+    item._episodeFileHint?.fileName,
+    item._episodeFileHint?.filePath
+  ].filter(Boolean).join(' ');
+}
+
+function extractResolutionTag(item = {}) {
+  const explicit = normalizeSmartToken(item.resolution || item.qualityResolution || item.videoResolution || item.behaviorHints?.videoResolution);
+  if (/\b(2160p|1080p|720p|576p|480p|360p|4k|uhd)\b/.test(explicit)) return explicit.match(/\b(2160p|1080p|720p|576p|480p|360p|4k|uhd)\b/)[1].replace('4k', '2160p').replace('uhd', '2160p');
+  const text = normalizeSmartToken(joinedSignalText(item));
+  const match = text.match(/\b(2160p|1080p|720p|576p|480p|360p|4k|uhd)\b/);
+  return match ? match[1].replace('4k', '2160p').replace('uhd', '2160p') : '';
+}
+
+function extractQualityTag(item = {}) {
+  const text = normalizeSmartToken([item.quality, item.quality_tag, item.sourceQuality, joinedSignalText(item)].filter(Boolean).join(' '));
+  const match = text.match(/\b(remux|bluray|blu ray|bdrip|webdl|web dl|webrip|hdtv|hdrip|dvdrip|cam|telesync|ts)\b/);
+  if (!match) return '';
+  return match[1].replace(/\s+/g, '');
+}
+
+function extractEncodeTag(item = {}) {
+  const text = normalizeSmartToken([item.codec, item.videoCodec, item.encode, joinedSignalText(item)].filter(Boolean).join(' '));
+  const match = text.match(/\b(av1|x265|h265|hevc|x264|h264|vp9)\b/);
+  if (!match) return '';
+  const value = match[1];
+  if (value === 'h265') return 'x265';
+  if (value === 'h264') return 'x264';
+  return value;
+}
+
+function extractReleaseGroupTag(item = {}) {
+  const explicit = normalizeSmartToken(item.releaseGroup || item.release_group || item.group || item.uploader);
+  if (explicit && explicit.length <= 24) return explicit.replace(/\s+/g, '');
+  const raw = String(joinedSignalText(item) || '');
+  const match = raw.match(/[-.\s]([A-Za-z0-9]{2,24})\s*(?:\.[A-Za-z0-9]{2,4})?$/);
+  return match ? normalizeSmartToken(match[1]).replace(/\s+/g, '') : '';
+}
+
+function getSizeBucket(item = {}) {
+  const bytes = getSizeBytes(item) || getFolderSizeBytes(item);
+  if (!Number.isFinite(bytes) || bytes <= 0) return '';
+  // 128 MiB buckets are strict enough to merge mirrored duplicates while avoiding
+  // most false positives between different encodes of the same title/resolution.
+  return String(Math.max(1, Math.round(bytes / (128 * 1024 * 1024))));
+}
+
+function stableSmartSignature(parts) {
+  const raw = parts.filter(Boolean).join('|');
+  if (!raw) return '';
+  return crypto.createHash('sha1').update(raw).digest('hex').slice(0, 20);
+}
+
+function buildSmartDedupeKey(item = {}, options = {}) {
+  if (String(process.env.LEVIATHAN_SMART_DEDUPE || '1') === '0') return null;
+
+  const filenameKey = extractFilename(item);
+  if (!filenameKey || filenameKey.length < 12) return null;
+
+  const resolution = extractResolutionTag(item);
+  const quality = extractQualityTag(item);
+  const encode = extractEncodeTag(item);
+  const releaseGroup = extractReleaseGroupTag(item);
+  const sizeBucket = getSizeBucket(item);
+
+  // Smart detect is intentionally conservative: filename alone is not enough.
+  if (!sizeBucket && !resolution && !quality) return null;
+
+  const isSeries = isSeriesContext(options);
+  const episodeKey = isSeries ? getSeasonEpisodeKey(options) : '';
+  const scope = isSeries ? `series:${episodeKey || 'unknown'}` : 'movie';
+  const sig = stableSmartSignature([scope, filenameKey, sizeBucket, resolution, quality, encode, releaseGroup]);
+  return sig ? `smartDetect:${sig}` : null;
+}
+
 function buildDedupeKeys(item = {}, options = {}) {
   const hash = extractInfoHash(item);
-  if (!hash) return [];
+  const smartKey = buildSmartDedupeKey(item, options);
+  if (!hash) return smartKey ? [smartKey] : [];
 
   const keys = [];
   const isSeries = isSeriesContext(options);
@@ -234,11 +336,21 @@ function buildDedupeKeys(item = {}, options = {}) {
     if (fileIdx === null && hintIdx === null && !episodeKey) keys.push(`infoHashNoFile:${hash}`);
   }
 
-  
+  // Same torrent + same exact filename is a strong bridge when a provider omits fileIdx.
+  // It is intentionally only added for entries without a concrete file index, so different
+  // files inside the same season pack are not collapsed by infoHash alone.
   if (isSeries && filenameKey && fileIdx === null && hintIdx === null) {
     keys.push(`infoHashFilename:${hash}:${filenameKey}`);
   }
 
+  // AIOStreams-style smart bridge: same filename/signals across different addons can
+  // collapse mirrored duplicates even when providers disagree on the torrent source.
+  // For series packs it stays guarded by fileIdx/hints above, so pack episodes don't merge.
+  if (smartKey && (!isSeries || (fileIdx === null && hintIdx === null))) {
+    keys.push(smartKey);
+  }
+
+  // Folder-size pack signal is not a dedupe key by itself; it only informs ranking/selection.
   return [...new Set(keys)];
 }
 
@@ -441,5 +553,6 @@ module.exports = {
   getSizeBytes,
   getFolderSizeBytes,
   buildDedupeKeys,
+  buildSmartDedupeKey,
   dedupeByInfoHash
 };
