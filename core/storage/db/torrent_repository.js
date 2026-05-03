@@ -19,12 +19,11 @@ function createTorrentRepository({
     normalizeRdCacheState,
     deriveStoredCacheState,
     deriveCachedBooleanFromState,
-    extractOriginalProvider
+    extractOriginalProvider,
+    normalizeUniqueTextList,
+    toDateOrNull
   } = normalizers;
 
-
-  // Leviathan RD cache policy: valori fissati in codice, non dipendono da .env.
-  // ⚡ cached confermato viene ricontrollato ogni 7 giorni; i vecchi permanenti 9999 vengono sempre re-queued al boot.
   const RD_CACHED_RECHECK_HOURS = 168;
   const RD_REVALIDATE_PERMANENT_ON_BOOT = true;
 
@@ -34,6 +33,73 @@ function createTorrentRepository({
     const normalized = sanitizeText(providerName);
     if (!normalized || normalized === 'Torrentio' || normalized === 'P2P') return 'External';
     return normalized;
+  }
+
+  function normalizeStoredType(value) {
+    const normalized = sanitizeText(value).toLowerCase();
+    if (!normalized) return null;
+    if (['movie', 'series', 'anime', 'p2p', 'torrent', 'pack'].includes(normalized)) return normalized;
+    return normalized.slice(0, 32);
+  }
+
+  function normalizeResolution(value, title = '') {
+    const text = sanitizeText(value) || sanitizeText(title);
+    if (!text) return null;
+    const lower = text.toLowerCase();
+    if (/\b(?:8k|4320p)\b/i.test(lower)) return '4320p';
+    if (/\b(?:4k|2160p|uhd)\b/i.test(lower)) return '2160p';
+    const match = lower.match(/\b(1080p|720p|576p|540p|480p|360p)\b/i);
+    return match ? match[1].toLowerCase() : null;
+  }
+
+  function normalizeDelimitedText(value, limit = 4096) {
+    if (value === null || value === undefined) return null;
+    const values = Array.isArray(value)
+      ? value
+      : String(value).split(/[,|;]/g);
+    const normalized = normalizeUniqueTextList(values, 80).join(',');
+    return normalized ? normalized.slice(0, limit) : null;
+  }
+
+  function extractTrackersFromMagnet(value) {
+    const text = String(value || '');
+    if (!/^magnet:/i.test(text)) return [];
+    const trackers = [];
+    const regex = /[?&]tr=([^&]+)/gi;
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      try {
+        const decoded = decodeURIComponent(match[1]).trim();
+        if (/^(udp|http|https|ws|wss):\/\//i.test(decoded)) trackers.push(decoded);
+      } catch (_) {}
+    }
+    return trackers;
+  }
+
+  function normalizeTrackers(torrent = {}) {
+    const candidates = [];
+    candidates.push(torrent?.trackers);
+    candidates.push(torrent?.trackerList);
+    candidates.push(torrent?.announce);
+    candidates.push(torrent?.sources);
+    candidates.push(extractTrackersFromMagnet(torrent?.magnet || torrent?.magnetLink || torrent?.url));
+    const flattened = candidates.flatMap((entry) => Array.isArray(entry) ? entry : (entry ? [entry] : []));
+    const trackers = flattened
+      .flatMap((entry) => String(entry || '').split(/[,|;]/g))
+      .map((entry) => entry.replace(/^tracker:/i, '').trim())
+      .filter((entry) => /^(udp|http|https|ws|wss):\/\//i.test(entry));
+    return normalizeDelimitedText(trackers, 4096);
+  }
+
+  function normalizeLanguages(torrent = {}) {
+    return normalizeDelimitedText(torrent?.languages || torrent?.language || torrent?.langs || torrent?._languages, 2048);
+  }
+
+  function normalizeQualityTag(torrent = {}) {
+    const text = sanitizeText(torrent?.quality || torrent?.qualityTag || torrent?.quality_tag || torrent?.title);
+    if (!text) return null;
+    const sourceMatch = text.match(/\b(?:remux|bluray|blu[-.\s]?ray|web[-.\s]?dl|webrip|hdtv|bdrip|hdrip|dvdrip|cam|telesync|telecine)\b/i);
+    return sourceMatch ? sourceMatch[0].replace(/\s+/g, '-').toLowerCase().slice(0, 32) : null;
   }
 
   function normalizeEpisodeIdentity(entry) {
@@ -105,7 +171,14 @@ function createTorrentRepository({
       size: toSafeNumber(row.size, 0),
       seeders: toSafeNumber(row.seeders, 0),
       provider: sanitizeText(row.provider, 'Unknown'),
-      magnet: trackerRegistry.buildMagnet(infoHash),
+      torrent_id: sanitizeText(row.torrent_id),
+      type: normalizeStoredType(row.type),
+      upload_date: row.upload_date || null,
+      trackers: sanitizeText(row.trackers),
+      languages: sanitizeText(row.languages),
+      resolution: sanitizeText(row.resolution),
+      quality_tag: sanitizeText(row.quality_tag),
+      magnet: trackerRegistry.buildMagnet(infoHash, row.trackers ? String(row.trackers).split(',') : []),
       file_index: normalizeFileIndex(row.file_index),
       matched_file_index: normalizeFileIndex(row.matched_file_index),
       matched_file_title: sanitizeText(row.matched_file_title),
@@ -202,6 +275,13 @@ function createTorrentRepository({
           t.size,
           t.seeders,
           t.provider,
+          t.torrent_id,
+          t.type,
+          t.upload_date,
+          t.trackers,
+          t.languages,
+          t.resolution,
+          t.quality_tag,
           COALESCE(m.matched_file_index, t.file_index) AS file_index,
           m.matched_file_index,
           m.matched_file_title,
@@ -241,6 +321,13 @@ function createTorrentRepository({
           t.size,
           t.seeders,
           t.provider,
+          t.torrent_id,
+          t.type,
+          t.upload_date,
+          t.trackers,
+          t.languages,
+          t.resolution,
+          t.quality_tag,
           t.file_index,
           NULL::INTEGER AS matched_file_index,
           NULL::TEXT AS matched_file_title,
@@ -290,11 +377,25 @@ function createTorrentRepository({
     const title = sanitizeText(torrent?.title, infoHash);
     const size = Math.max(0, toSafeNumber(torrent?.size, 0));
     const seeders = Math.max(0, toSafeNumber(torrent?.seeders, 0));
+    const torrentId = sanitizeText(torrent?.torrentId || torrent?.torrent_id || torrent?.id);
+    const storedType = normalizeStoredType(torrent?.type || (torrent?.isAnime ? 'anime' : (torrent?.is_pack ? 'pack' : null)));
+    const uploadDate = toDateOrNull(torrent?.uploadDate || torrent?.upload_date || torrent?.publishedAt || torrent?.published_at || torrent?.date);
+    const trackers = normalizeTrackers(torrent);
+    const languages = normalizeLanguages(torrent);
+    const resolution = normalizeResolution(torrent?.resolution || torrent?.quality, title);
+    const qualityTag = normalizeQualityTag(torrent);
 
     const updateRes = await client.query(
       `
         UPDATE torrents
         SET provider = COALESCE(NULLIF($3, ''), provider),
+            torrent_id = COALESCE(NULLIF($7, ''), torrent_id),
+            type = COALESCE(NULLIF($8, ''), type),
+            upload_date = COALESCE($9::timestamptz, upload_date),
+            trackers = COALESCE(NULLIF($10, ''), trackers),
+            languages = COALESCE(NULLIF($11, ''), languages),
+            resolution = COALESCE(NULLIF($12, ''), resolution),
+            quality_tag = COALESCE(NULLIF($13, ''), quality_tag),
             title = CASE
               WHEN title IS NULL OR title = '' THEN $4
               WHEN LENGTH($4) > LENGTH(title) THEN $4
@@ -314,7 +415,7 @@ function createTorrentRepository({
           AND file_index_norm = $2
         RETURNING 1
       `,
-      [infoHash, fileIndexNorm, providerName, title, size, seeders]
+      [infoHash, fileIndexNorm, providerName, title, size, seeders, torrentId, storedType, uploadDate, trackers, languages, resolution, qualityTag]
     );
 
     if (updateRes.rowCount > 0) return false;
@@ -327,17 +428,24 @@ function createTorrentRepository({
           file_index,
           file_index_norm,
           provider,
+          torrent_id,
+          type,
           title,
           size,
           seeders,
+          upload_date,
+          trackers,
+          languages,
+          resolution,
+          quality_tag,
           created_at,
           updated_at
         )
-        VALUES ($1, $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+        VALUES ($1, $1, $2, $3, $4, $8, $9, $5, $6, $7, $10, $11, $12, $13, $14, NOW(), NOW())
         ON CONFLICT DO NOTHING
         RETURNING 1
       `,
-      [infoHash, fileIndex, fileIndexNorm, providerName, title, size, seeders]
+      [infoHash, fileIndex, fileIndexNorm, providerName, title, size, seeders, torrentId, storedType, uploadDate, trackers, languages, resolution, qualityTag]
     );
 
     return insertRes.rowCount > 0;
@@ -1270,6 +1378,129 @@ function createTorrentRepository({
     }
   }
 
+
+  function parseAvailabilityCacheKey(cacheKey) {
+    const key = sanitizeText(cacheKey);
+    const match = key.match(/^([a-z0-9_-]+):([a-f0-9]{40})(?::([^:]+))?$/i);
+    if (!match) return null;
+    const service = match[1].toLowerCase();
+    const hash = normalizeInfoHash(match[2]);
+    const rawFile = match[3] || 'auto';
+    const parsedFile = rawFile === 'auto' ? null : normalizeFileIndex(rawFile);
+    if (!service || !hash) return null;
+    return {
+      key,
+      service,
+      hash,
+      fileIndex: parsedFile,
+      fileIndexNorm: normalizeFileIndexNorm(parsedFile)
+    };
+  }
+
+  async function getDebridAvailabilityCache(cacheKeys) {
+    const pool = getPool();
+    if (!pool) return {};
+    await awaitDatabaseOptimizations();
+
+    const keys = [...new Set((Array.isArray(cacheKeys) ? cacheKeys : [cacheKeys]).map((key) => sanitizeText(key)).filter(Boolean))];
+    if (keys.length === 0) return {};
+
+    try {
+      const res = await pool.query(
+        `
+          SELECT cache_key, payload_json, expires_at
+          FROM debrid_availability_cache
+          WHERE cache_key = ANY($1::text[])
+            AND expires_at > NOW()
+        `,
+        [keys]
+      );
+      const out = {};
+      for (const row of res.rows || []) {
+        if (!row?.cache_key || !row?.payload_json) continue;
+        out[row.cache_key] = row.payload_json;
+      }
+      return out;
+    } catch (error) {
+      console.error(`❌ DB Error getDebridAvailabilityCache: ${error.message}`);
+      return {};
+    }
+  }
+
+  async function setDebridAvailabilityCache(entries) {
+    const pool = getPool();
+    if (!pool) return 0;
+    await awaitDatabaseOptimizations();
+
+    const rows = (Array.isArray(entries) ? entries : [entries])
+      .map((entry) => {
+        const parsed = parseAvailabilityCacheKey(entry?.cache_key || entry?.key);
+        const payload = entry?.payload && typeof entry.payload === 'object' ? entry.payload : null;
+        const ttlSeconds = clampInt(entry?.ttlSeconds || entry?.ttl || 0, 0, 0, 7 * 24 * 60 * 60);
+        if (!parsed || !payload || ttlSeconds <= 0) return null;
+        return {
+          ...parsed,
+          payload,
+          state: normalizeRdCacheState(payload.state),
+          cached: payload.cached === true ? true : payload.cached === false ? false : null,
+          expiresAt: new Date(Date.now() + ttlSeconds * 1000)
+        };
+      })
+      .filter(Boolean);
+
+    if (rows.length === 0) return 0;
+
+    try {
+      return await runInTransaction(async (client) => {
+        let updated = 0;
+        for (const row of rows) {
+          const result = await client.query(
+            `
+              INSERT INTO debrid_availability_cache (
+                cache_key,
+                service,
+                info_hash,
+                info_hash_norm,
+                file_index,
+                file_index_norm,
+                payload_json,
+                state,
+                cached,
+                expires_at,
+                created_at,
+                updated_at
+              )
+              VALUES ($1, $2, $3, $3, $4, $5, $6::jsonb, $7, $8, $9, NOW(), NOW())
+              ON CONFLICT (cache_key)
+              DO UPDATE SET
+                payload_json = EXCLUDED.payload_json,
+                state = EXCLUDED.state,
+                cached = EXCLUDED.cached,
+                expires_at = EXCLUDED.expires_at,
+                updated_at = NOW()
+            `,
+            [
+              row.key,
+              row.service,
+              row.hash,
+              row.fileIndex,
+              row.fileIndexNorm,
+              JSON.stringify(row.payload),
+              row.state,
+              row.cached,
+              row.expiresAt
+            ]
+          );
+          updated += Number(result.rowCount || 0);
+        }
+        return updated;
+      });
+    } catch (error) {
+      console.error(`❌ DB Error setDebridAvailabilityCache: ${error.message}`);
+      return 0;
+    }
+  }
+
   return {
     getTorrents,
     getPackFiles,
@@ -1287,7 +1518,9 @@ function createTorrentRepository({
     updateTbCacheStatus,
     getRdScanProgress,
     prioritizeRdHashes,
-    normalizePendingRdCacheState
+    normalizePendingRdCacheState,
+    getDebridAvailabilityCache,
+    setDebridAvailabilityCache
   };
 }
 
