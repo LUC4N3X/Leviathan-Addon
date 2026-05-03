@@ -8,7 +8,6 @@ const { buildMagnet: buildTrackerMagnet } = require('../storage/tracker_registry
 const { extractInfoHash, withSharedPromise, isSeasonPack, extractSeasonEpisodeFromFilename } = require('../utils');
 const { shouldSkipRecentWork } = require('../recent_work');
 
-// RD availability policy: default in codice, non in .env.
 const LOCAL_DB_CACHE_TTL = 25;
 const RD_PRIORITY_DEDUP_MS = 15000;
 const RD_FOREGROUND_VISIBLE_WINDOW = 9;
@@ -118,9 +117,9 @@ function deriveDbRdAvailability(row = {}) {
     const stalePositive = (cachedBool === true || rawState === 'cached') && isPastDueDate(row?.next_cached_check);
 
     if (stalePositive) {
-        // Un vecchio positivo RD non va mostrato come semplice "probing":
-        // l'auditor lo ricontrolla comunque in background, ma in UI resta un hit morbido.
-        // Se poi il recheck fallisce, il worker lo degrada a likely_uncached/uncached_terminal.
+        
+        
+        
         return {
             state: 'likely_cached',
             cached: null,
@@ -494,10 +493,15 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 continue;
             }
             try {
+                const legacyKey = getLegacyAvailabilityCacheKey('rd', item?.hash);
                 let cachedPayload = await Cache.getAvailability(cacheKey);
-                if (!cachedPayload) {
-                    const legacyKey = getLegacyAvailabilityCacheKey('rd', item?.hash);
-                    if (legacyKey && legacyKey !== cacheKey) cachedPayload = await Cache.getAvailability(legacyKey);
+                if (!cachedPayload && legacyKey && legacyKey !== cacheKey) cachedPayload = await Cache.getAvailability(legacyKey);
+                if (!cachedPayload && typeof dbHelper?.getDebridAvailabilityCache === 'function') {
+                    const persisted = await dbHelper.getDebridAvailabilityCache([cacheKey, legacyKey].filter(Boolean));
+                    cachedPayload = persisted?.[cacheKey] || (legacyKey ? persisted?.[legacyKey] : null) || null;
+                    if (cachedPayload && typeof Cache.cacheAvailability === 'function') {
+                        await Cache.cacheAvailability(cacheKey, cachedPayload, Math.min(AVAILABILITY_CACHE_HIT_TTL, 3600));
+                    }
                 }
                 if (applyAvailabilityCachePayload(item, cachedPayload)) availabilityCacheHits += 1;
                 else cachedUnknownCandidates.push(item);
@@ -628,7 +632,11 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                     const availabilityCacheKey = getAvailabilityCacheKey('rd', item.hash, item?.fileIdx);
                     if (availabilityCacheKey) {
                         const availabilityTtl = statePayload.state === 'cached' ? AVAILABILITY_CACHE_HIT_TTL : (statePayload.state === 'uncached_terminal' ? AVAILABILITY_CACHE_NEGATIVE_TTL : AVAILABILITY_CACHE_PROBING_TTL);
-                        await Cache.cacheAvailability(availabilityCacheKey, buildAvailabilityCachePayload(statePayload, item, result), availabilityTtl);
+                        const availabilityPayload = buildAvailabilityCachePayload(statePayload, item, result);
+                        await Cache.cacheAvailability(availabilityCacheKey, availabilityPayload, availabilityTtl);
+                        if (typeof dbHelper?.setDebridAvailabilityCache === 'function') {
+                            await dbHelper.setDebridAvailabilityCache({ cache_key: availabilityCacheKey, payload: availabilityPayload, ttlSeconds: availabilityTtl });
+                        }
                     }
                 }
             }
@@ -653,7 +661,13 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                     item._dbCachedRd = null;
                     if (typeof Cache.cacheAvailability === 'function') {
                         const availabilityCacheKey = getAvailabilityCacheKey('rd', item?.hash, item?.fileIdx);
-                        if (availabilityCacheKey) await Cache.cacheAvailability(availabilityCacheKey, buildAvailabilityCachePayload({ state: 'probing', cached: null, failures: item?._dbFailures || 0 }, item, null), AVAILABILITY_CACHE_PROBING_TTL);
+                        if (availabilityCacheKey) {
+                            const probingPayload = buildAvailabilityCachePayload({ state: 'probing', cached: null, failures: item?._dbFailures || 0 }, item, null);
+                            await Cache.cacheAvailability(availabilityCacheKey, probingPayload, AVAILABILITY_CACHE_PROBING_TTL);
+                            if (typeof dbHelper?.setDebridAvailabilityCache === 'function') {
+                                await dbHelper.setDebridAvailabilityCache({ cache_key: availabilityCacheKey, payload: probingPayload, ttlSeconds: AVAILABILITY_CACHE_PROBING_TTL });
+                            }
+                        }
                     }
                 }
                 RealDebridProbe.backfillAvailabilityInBackground(deferred, apiKey, dbHelper, async (updates) => {
@@ -750,6 +764,11 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                     size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : Number(item?._size || item?.sizeBytes || 0),
                     seeders: Number(item?.seeders || 0) || 0,
                     provider: item?.source || normalizedService.toUpperCase(),
+                    type: meta?.isAnime ? 'anime' : (meta?.isSeries || Number(meta?.season) > 0 ? 'series' : 'movie'),
+                    trackers: item?.trackers || item?.sources || undefined,
+                    languages: item?.languages || item?.language || item?._languages || undefined,
+                    resolution: item?.resolution || item?.quality || undefined,
+                    quality: item?.quality || undefined,
                     file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : (item?.fileIdx !== undefined ? item.fileIdx : undefined)
                 });
             }
@@ -760,6 +779,11 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                     size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : Number(item?._size || item?.sizeBytes || 0),
                     seeders: Number(item?.seeders || 0) || 0,
                     provider: item?.source || normalizedService.toUpperCase(),
+                    type: meta?.isAnime ? 'anime' : (meta?.isSeries || Number(meta?.season) > 0 ? 'series' : 'movie'),
+                    trackers: item?.trackers || item?.sources || undefined,
+                    languages: item?.languages || item?.language || item?._languages || undefined,
+                    resolution: item?.resolution || item?.quality || undefined,
+                    quality: item?.quality || undefined,
                     file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : (item?.fileIdx !== undefined ? item.fileIdx : undefined),
                     is_pack: shouldPersistResolvedAsPack(item, resolvedTitle, meta)
                 });
@@ -797,7 +821,11 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 if (typeof Cache.cacheAvailability === 'function') {
                     const availabilityKey = getAvailabilityCacheKey(normalizedService, item.hash, Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : item?.fileIdx);
                     if (availabilityKey) {
-                        await Cache.cacheAvailability(availabilityKey, buildAvailabilityCachePayload({ state: 'cached', cached: true, failures: 0 }, { ...item, fileIdx: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : item?.fileIdx }, { file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null }), AVAILABILITY_CACHE_HIT_TTL);
+                        const directPayload = buildAvailabilityCachePayload({ state: 'cached', cached: true, failures: 0 }, { ...item, fileIdx: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : item?.fileIdx }, { file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null });
+                        await Cache.cacheAvailability(availabilityKey, directPayload, AVAILABILITY_CACHE_HIT_TTL);
+                        if (typeof dbHelper?.setDebridAvailabilityCache === 'function') {
+                            await dbHelper.setDebridAvailabilityCache({ cache_key: availabilityKey, payload: directPayload, ttlSeconds: AVAILABILITY_CACHE_HIT_TTL });
+                        }
                         logger.info(`[AVAILABILITY CACHE] saved key=infoHash:fileIdx service=${normalizedService} state=cached`);
                     }
                 }
