@@ -305,7 +305,7 @@ function buildSmartDedupeKey(item = {}, options = {}) {
   const releaseGroup = extractReleaseGroupTag(item);
   const sizeBucket = getSizeBucket(item);
 
-  // Smart detect is intentionally conservative: filename alone is not enough.
+  
   if (!sizeBucket && !resolution && !quality) return null;
 
   const isSeries = isSeriesContext(options);
@@ -336,21 +336,17 @@ function buildDedupeKeys(item = {}, options = {}) {
     if (fileIdx === null && hintIdx === null && !episodeKey) keys.push(`infoHashNoFile:${hash}`);
   }
 
-  // Same torrent + same exact filename is a strong bridge when a provider omits fileIdx.
-  // It is intentionally only added for entries without a concrete file index, so different
-  // files inside the same season pack are not collapsed by infoHash alone.
+  
   if (isSeries && filenameKey && fileIdx === null && hintIdx === null) {
     keys.push(`infoHashFilename:${hash}:${filenameKey}`);
   }
 
-  // AIOStreams-style smart bridge: same filename/signals across different addons can
-  // collapse mirrored duplicates even when providers disagree on the torrent source.
-  // For series packs it stays guarded by fileIdx/hints above, so pack episodes don't merge.
+
   if (smartKey && (!isSeries || (fileIdx === null && hintIdx === null))) {
     keys.push(smartKey);
   }
 
-  // Folder-size pack signal is not a dedupe key by itself; it only informs ranking/selection.
+ 
   return [...new Set(keys)];
 }
 
