@@ -13,6 +13,7 @@ const P2P = require("./handlers/p2p_handler");
 const { generateSmartQueries, smartMatch } = require("./media_intelligence");
 const { rankAndFilterResults } = require("./lib/result_ranker");
 const { applySeedHealthRanking, getSeedHealthLogSamples } = require("./lib/seed_health_ranker");
+const { applySootioPriorityPolicy } = require("./lib/sootio_priority_policy");
 const { enrichTorrentItems } = require("./lib/tracker_enricher");
 const { tmdbToImdb, imdbToTmdb, getTmdbAltTitles } = require("./media_identity_resolver");
 const tmdbHelper = require("./utils/tmdb_helper");
@@ -2008,7 +2009,7 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
                     const torrentObj = {
                         info_hash: infoHash,
                         title: item.title,
-                        size: item._size || item.sizeBytes || 0,
+                        size: item._size || item.sizeBytes || item.fileSize || item.file_size || 0,
                         seeders: item.seeders || 0,
                         provider: item.source || 'External',
                         torrent_id: item.torrentId || item.torrent_id || item.id || undefined,
@@ -2016,9 +2017,21 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
                         upload_date: item.uploadDate || item.upload_date || item.publishedAt || item.published_at || item.date || undefined,
                         trackers: item.trackers || item.sources || undefined,
                         languages: item.languages || item.language || item.langs || item._languages || undefined,
-                        resolution: item.resolution || item.quality || undefined,
-                        quality: item.quality || item.sourceQuality || undefined,
-                        file_index: item.fileIdx !== undefined ? item.fileIdx : undefined,
+                        resolution: item.resolution || item.quality || item.qualityResolution || undefined,
+                        quality: item.quality || item.sourceQuality || item.quality_tag || undefined,
+                        codec: item.codec || item.codec_tag || item.videoCodec || item.encode || undefined,
+                        hdr: item.hdr || item.hdr_tag || item.visualTag || item.visualTags || undefined,
+                        audio: item.audio || item.audio_tag || item.audioTag || item.audioTags || undefined,
+                        releaseGroup: item.releaseGroup || item.release_group || item.group || item.uploader || undefined,
+                        filename: item.filename || item.fileName || item.file_name || item.file_title || item.behaviorHints?.filename || item._episodeFileHint?.fileName || item.episodeFileHint?.fileName || undefined,
+                        fileName: item.fileName || item.filename || item.file_name || item.file_title || undefined,
+                        folderSize: item.folderSize || item.folder_size || item.totalPackSize || item.packSize || item.behaviorHints?.folderSize || undefined,
+                        behaviorHints: item.behaviorHints || undefined,
+                        episodeFileHint: item.episodeFileHint || item._episodeFileHint || undefined,
+                        season: meta?.season || item.season || item.imdb_season || undefined,
+                        episode: meta?.episode || item.episode || item.imdb_episode || undefined,
+                        isSeries: Boolean(meta?.isSeries),
+                        file_index: item.fileIdx !== undefined ? item.fileIdx : (item.fileIndex !== undefined ? item.fileIndex : item.file_index),
                         is_pack: Boolean(meta?.isSeries && isConfidentSeasonPackItem(item, meta, effectiveType))
                     };
 
@@ -3032,6 +3045,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
 
           rankedList = await reprioritizeRdRankedList(rankedList, meta, config, hasDebridKey);
           rankedList = applyPremiumRankingPolicy(rankedList, meta, config);
+          rankedList = applySootioPriorityPolicy(rankedList, meta, config);
           const infoHashRankDedupe = dedupeByInfoHash(rankedList, getDedupeContext(meta, { stage: 'ranked' }));
           if (infoHashRankDedupe.removed > 0) {
               logger.info(`[DEDUPE INFOHASH] ranked removed=${infoHashRankDedupe.removed} kept=${infoHashRankDedupe.results.length} title="${String(meta?.title || '').slice(0, 80)}" s=${meta?.season || '-'} e=${meta?.episode || '-'}`);

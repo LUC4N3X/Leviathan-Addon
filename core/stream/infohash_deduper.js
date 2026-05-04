@@ -237,8 +237,26 @@ function joinedSignalText(item = {}) {
     item.torrent_title,
     item.rawTitle,
     item.description,
+    item.resolution,
+    item.quality,
+    item.quality_tag,
+    item.codec,
+    item.codec_tag,
+    item.videoCodec,
+    item.encode,
+    item.hdr,
+    item.hdr_tag,
+    item.audio,
+    item.audio_tag,
+    item.releaseGroup,
+    item.release_group,
+    item.group,
     item.behaviorHints?.filename,
     item.behaviorHints?.fileName,
+    item.behaviorHints?.videoResolution,
+    item.behaviorHints?.codec,
+    item.behaviorHints?.hdr,
+    item.behaviorHints?.audio,
     item.episodeFileHint?.fileName,
     item.episodeFileHint?.filePath,
     item._episodeFileHint?.fileName,
@@ -246,8 +264,18 @@ function joinedSignalText(item = {}) {
   ].filter(Boolean).join(' ');
 }
 
+function normalizeStoredSmartDedupeKey(item = {}) {
+  const value = item.smart_dedupe_key
+    || item.smartDedupeKey
+    || item._smartDedupeKey
+    || item.behaviorHints?.smartDedupeKey
+    || item.behaviorHints?.smart_dedupe_key;
+  const text = String(value || '').trim();
+  return /^smartDetect:[a-f0-9]{12,40}$/i.test(text) ? text : '';
+}
+
 function extractResolutionTag(item = {}) {
-  const explicit = normalizeSmartToken(item.resolution || item.qualityResolution || item.videoResolution || item.behaviorHints?.videoResolution);
+  const explicit = normalizeSmartToken(item.resolution || item.qualityResolution || item.videoResolution || item.quality_tag || item.behaviorHints?.videoResolution);
   if (/\b(2160p|1080p|720p|576p|480p|360p|4k|uhd)\b/.test(explicit)) return explicit.match(/\b(2160p|1080p|720p|576p|480p|360p|4k|uhd)\b/)[1].replace('4k', '2160p').replace('uhd', '2160p');
   const text = normalizeSmartToken(joinedSignalText(item));
   const match = text.match(/\b(2160p|1080p|720p|576p|480p|360p|4k|uhd)\b/);
@@ -262,7 +290,7 @@ function extractQualityTag(item = {}) {
 }
 
 function extractEncodeTag(item = {}) {
-  const text = normalizeSmartToken([item.codec, item.videoCodec, item.encode, joinedSignalText(item)].filter(Boolean).join(' '));
+  const text = normalizeSmartToken([item.codec, item.codec_tag, item.videoCodec, item.encode, joinedSignalText(item)].filter(Boolean).join(' '));
   const match = text.match(/\b(av1|x265|h265|hevc|x264|h264|vp9)\b/);
   if (!match) return '';
   const value = match[1];
@@ -272,7 +300,7 @@ function extractEncodeTag(item = {}) {
 }
 
 function extractReleaseGroupTag(item = {}) {
-  const explicit = normalizeSmartToken(item.releaseGroup || item.release_group || item.group || item.uploader);
+  const explicit = normalizeSmartToken(item.releaseGroup || item.release_group || item.group || item.uploader || item.provider);
   if (explicit && explicit.length <= 24) return explicit.replace(/\s+/g, '');
   const raw = String(joinedSignalText(item) || '');
   const match = raw.match(/[-.\s]([A-Za-z0-9]{2,24})\s*(?:\.[A-Za-z0-9]{2,4})?$/);
@@ -305,7 +333,7 @@ function buildSmartDedupeKey(item = {}, options = {}) {
   const releaseGroup = extractReleaseGroupTag(item);
   const sizeBucket = getSizeBucket(item);
 
-  
+  // Smart detect is intentionally conservative: filename alone is not enough.
   if (!sizeBucket && !resolution && !quality) return null;
 
   const isSeries = isSeriesContext(options);
@@ -317,7 +345,7 @@ function buildSmartDedupeKey(item = {}, options = {}) {
 
 function buildDedupeKeys(item = {}, options = {}) {
   const hash = extractInfoHash(item);
-  const smartKey = buildSmartDedupeKey(item, options);
+  const smartKey = normalizeStoredSmartDedupeKey(item) || buildSmartDedupeKey(item, options);
   if (!hash) return smartKey ? [smartKey] : [];
 
   const keys = [];
@@ -336,17 +364,21 @@ function buildDedupeKeys(item = {}, options = {}) {
     if (fileIdx === null && hintIdx === null && !episodeKey) keys.push(`infoHashNoFile:${hash}`);
   }
 
-  
+  // Same torrent + same exact filename is a strong bridge when a provider omits fileIdx.
+  // It is intentionally only added for entries without a concrete file index, so different
+  // files inside the same season pack are not collapsed by infoHash alone.
   if (isSeries && filenameKey && fileIdx === null && hintIdx === null) {
     keys.push(`infoHashFilename:${hash}:${filenameKey}`);
   }
 
-
+  // AIOStreams-style smart bridge: same filename/signals across different addons can
+  // collapse mirrored duplicates even when providers disagree on the torrent source.
+  // For series packs it stays guarded by fileIdx/hints above, so pack episodes don't merge.
   if (smartKey && (!isSeries || (fileIdx === null && hintIdx === null))) {
     keys.push(smartKey);
   }
 
- 
+  // Folder-size pack signal is not a dedupe key by itself; it only informs ranking/selection.
   return [...new Set(keys)];
 }
 

@@ -18,6 +18,16 @@ async function ensureDatabaseOptimizations(pool) {
       languages TEXT,
       resolution TEXT,
       quality_tag TEXT,
+      codec_tag TEXT,
+      hdr_tag TEXT,
+      audio_tag TEXT,
+      release_group TEXT,
+      smart_dedupe_key TEXT,
+      folder_size BIGINT DEFAULT 0,
+      first_seen_at TIMESTAMPTZ DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ DEFAULT NOW(),
+      seen_count INTEGER DEFAULT 1,
+      max_seeders INTEGER DEFAULT 0,
       cached_rd BOOLEAN,
       rd_cache_state TEXT,
       rd_file_index INTEGER,
@@ -127,6 +137,16 @@ async function ensureDatabaseOptimizations(pool) {
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS languages TEXT`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS resolution TEXT`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS quality_tag TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS codec_tag TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS hdr_tag TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS audio_tag TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS release_group TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS smart_dedupe_key TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS folder_size BIGINT DEFAULT 0`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ DEFAULT NOW()`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ DEFAULT NOW()`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS seen_count INTEGER DEFAULT 1`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS max_seeders INTEGER DEFAULT 0`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS cached_rd BOOLEAN`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS rd_cache_state TEXT`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS rd_file_index INTEGER`,
@@ -213,6 +233,7 @@ async function ensureDatabaseOptimizations(pool) {
 
     `UPDATE torrents SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE torrents SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
+    `UPDATE torrents SET first_seen_at = COALESCE(first_seen_at, created_at, updated_at, NOW()), last_seen_at = COALESCE(last_seen_at, updated_at, created_at, NOW()), seen_count = GREATEST(COALESCE(seen_count, 1), 1), max_seeders = GREATEST(COALESCE(max_seeders, 0), COALESCE(seeders, 0))`,
     `UPDATE files SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE files SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
     `UPDATE pack_files SET pack_hash_norm = LOWER(TRIM(pack_hash)) WHERE pack_hash IS NOT NULL AND (pack_hash_norm IS NULL OR pack_hash_norm <> LOWER(TRIM(pack_hash)))`,
@@ -227,6 +248,9 @@ async function ensureDatabaseOptimizations(pool) {
     `CREATE INDEX IF NOT EXISTS idx_torrents_rd_cache_state ON torrents (rd_cache_state, next_cached_check NULLS FIRST)`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_tb_cache_state ON torrents (tb_cached, tb_last_cached_check NULLS FIRST)`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_seeders_upload ON torrents (seeders DESC, upload_date DESC NULLS LAST)`,
+    `CREATE INDEX IF NOT EXISTS idx_torrents_smart_dedupe ON torrents (smart_dedupe_key) WHERE smart_dedupe_key IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_torrents_seen_health ON torrents (last_seen_at DESC NULLS LAST, max_seeders DESC, seen_count DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_torrents_release_group ON torrents (release_group) WHERE release_group IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_resolution_seeders ON torrents (resolution, seeders DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_type_provider ON torrents (type, provider)`,
 
@@ -316,7 +340,7 @@ async function deduplicateTableByKey(pool, tableName, hashColumn, fileIndexNormC
     ? 'COALESCE(file_size, 0)'
     : tableName === 'files'
       ? 'COALESCE(size, 0)'
-      : 'COALESCE(size, 0) + (COALESCE(seeders, 0) * 1024)';
+      : 'COALESCE(size, 0) + (GREATEST(COALESCE(seeders, 0), COALESCE(max_seeders, 0)) * 1024) + (COALESCE(seen_count, 0) * 256)';
 
   const sql = `
     WITH ranked AS (

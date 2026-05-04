@@ -14,6 +14,8 @@ const RD_SLOW_RECHECK_DELAY_MS = 1200;
 const REQUIRE_EPISODE_HINT_FOR_PACKS = true;
 const RD_CACHED_RECHECK_HOURS = 168;
 const { findEpisodeFileHint } = require('../core/matching/season_pack_inspector');
+const { scheduleRealDebridRequest } = require('../core/utils/rd_rate_limiter');
+const { withRealDebridMagnetLock } = require('../core/utils/rd_magnet_lock');
 
 function isVideoFile(path) {
     return VIDEO_EXTENSIONS.test(path || '');
@@ -125,7 +127,7 @@ async function rdRequestCore(method, url, token, data = null, options = {}) {
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
         try {
-            const response = await fetch(url, buildRequestConfig(method, token, data, controller.signal));
+            const response = await scheduleRealDebridRequest(token, () => fetch(url, buildRequestConfig(method, token, data, controller.signal)), `${method} ${url.replace(RD_BASE_URL, '')}`);
 
             if (response.status === 204 || response.status === 202) return { success: true, _status: response.status };
             if (response.status === 403) return null;
@@ -389,6 +391,7 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
         torrentId = null;
     };
 
+    return withRealDebridMagnetLock(token, hash, async () => {
     try {
         const addRes = await request('POST', `${RD_BASE_URL}/torrents/addMagnet`, token, buildMagnetBody(magnet));
         if (!addRes) return fast ? buildDeferredProbeResult(hash, null, 'Failed to add magnet') : { hash, cached: false, error: 'Failed to add magnet' };
@@ -477,6 +480,7 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
                 error: error?.message || 'unknown_error'
             };
     }
+    });
 }
 
 function inspectSingleHash(infoHash, magnet, token, context = {}) {

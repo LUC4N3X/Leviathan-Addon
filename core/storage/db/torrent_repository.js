@@ -1,3 +1,5 @@
+const { buildSmartDedupeKey, getFolderSizeBytes, getSizeBytes } = require('../../stream/infohash_deduper');
+
 function createTorrentRepository({
   getPool,
   withClient,
@@ -105,6 +107,107 @@ function createTorrentRepository({
     return sourceMatch ? sourceMatch[0].replace(/\s+/g, '-').toLowerCase().slice(0, 32) : null;
   }
 
+  function normalizeSmartToken(value) {
+    return sanitizeText(value)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function joinedTorrentSignalText(torrent = {}) {
+    return [
+      torrent?.filename,
+      torrent?.fileName,
+      torrent?.file_name,
+      torrent?.file_title,
+      torrent?.title,
+      torrent?.name,
+      torrent?.rawTitle,
+      torrent?.description,
+      torrent?.resolution,
+      torrent?.quality,
+      torrent?.quality_tag,
+      torrent?.codec,
+      torrent?.codec_tag,
+      torrent?.videoCodec,
+      torrent?.encode,
+      torrent?.hdr,
+      torrent?.hdr_tag,
+      torrent?.audio,
+      torrent?.audio_tag,
+      torrent?.releaseGroup,
+      torrent?.release_group,
+      torrent?.group,
+      torrent?.behaviorHints?.filename,
+      torrent?.behaviorHints?.fileName,
+      torrent?.episodeFileHint?.fileName,
+      torrent?.episodeFileHint?.filePath,
+      torrent?._episodeFileHint?.fileName,
+      torrent?._episodeFileHint?.filePath
+    ].filter(Boolean).join(' ');
+  }
+
+  function normalizeCodecTag(torrent = {}) {
+    const text = normalizeSmartToken([torrent?.codec, torrent?.codec_tag, torrent?.videoCodec, torrent?.encode, joinedTorrentSignalText(torrent)].filter(Boolean).join(' '));
+    const match = text.match(/\b(av1|x265|h265|hevc|x264|h264|vp9)\b/);
+    if (!match) return null;
+    const value = match[1];
+    if (value === 'h265' || value === 'hevc') return 'x265';
+    if (value === 'h264') return 'x264';
+    return value.slice(0, 24);
+  }
+
+  function normalizeHdrTag(torrent = {}) {
+    const text = normalizeSmartToken([torrent?.hdr, torrent?.hdr_tag, torrent?.visualTag, torrent?.visualTags, joinedTorrentSignalText(torrent)].filter(Boolean).join(' '));
+    if (/\bdolby vision\b|\bdv\b/.test(text)) return 'dv';
+    if (/\bhdr10\+/.test(text)) return 'hdr10+';
+    if (/\bhdr10\b/.test(text)) return 'hdr10';
+    if (/\bhdr\b/.test(text)) return 'hdr';
+    return null;
+  }
+
+  function normalizeAudioTag(torrent = {}) {
+    const text = normalizeSmartToken([torrent?.audio, torrent?.audio_tag, torrent?.audioTag, torrent?.audioTags, joinedTorrentSignalText(torrent)].filter(Boolean).join(' '));
+    if (/\btruehd\b/.test(text)) return 'truehd';
+    if (/\batmos\b/.test(text)) return 'atmos';
+    if (/\bdts[- ]?hd\b/.test(text)) return 'dts-hd';
+    if (/\bdts\b/.test(text)) return 'dts';
+    if (/\beac3\b|\bddp\b|\bdd\+\b/.test(text)) return 'eac3';
+    if (/\bac3\b/.test(text)) return 'ac3';
+    if (/\baac\b/.test(text)) return 'aac';
+    return null;
+  }
+
+  function normalizeReleaseGroupTag(torrent = {}) {
+    const explicit = normalizeSmartToken(torrent?.releaseGroup || torrent?.release_group || torrent?.group || torrent?.uploader || torrent?.provider);
+    if (explicit && explicit.length <= 32) return explicit.replace(/\s+/g, '').slice(0, 32);
+    const raw = sanitizeText(joinedTorrentSignalText(torrent));
+    const match = raw.match(/[-.\s]([A-Za-z0-9][A-Za-z0-9._-]{1,31})\s*(?:\.[A-Za-z0-9]{2,5})?$/);
+    return match ? normalizeSmartToken(match[1]).replace(/\s+/g, '').slice(0, 32) : null;
+  }
+
+  function normalizeFolderSize(torrent = {}) {
+    const folderSize = getFolderSizeBytes(torrent);
+    const fileSize = getSizeBytes(torrent);
+    const best = Math.max(Number(folderSize || 0), Number(fileSize || 0));
+    return Number.isFinite(best) && best > 0 ? Math.round(best) : 0;
+  }
+
+  function normalizeSmartDedupeKeyForDb(torrent = {}) {
+    try {
+      const key = buildSmartDedupeKey(torrent, {
+        isSeries: Boolean(torrent?.isSeries || torrent?.season || torrent?.episode || torrent?.imdb_season || torrent?.imdb_episode),
+        season: torrent?.season ?? torrent?.imdb_season,
+        episode: torrent?.episode ?? torrent?.imdb_episode
+      });
+      return key ? key.slice(0, 96) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function normalizeEpisodeIdentity(entry) {
     const imdbId = normalizeImdbId(entry?.imdb_id || entry?.imdbId);
     const imdbSeason = toNullableInt(entry?.imdb_season ?? entry?.season);
@@ -181,6 +284,16 @@ function createTorrentRepository({
       languages: sanitizeText(row.languages),
       resolution: sanitizeText(row.resolution),
       quality_tag: sanitizeText(row.quality_tag),
+      codec_tag: sanitizeText(row.codec_tag),
+      hdr_tag: sanitizeText(row.hdr_tag),
+      audio_tag: sanitizeText(row.audio_tag),
+      release_group: sanitizeText(row.release_group),
+      smart_dedupe_key: sanitizeText(row.smart_dedupe_key),
+      folder_size: toSafeNumber(row.folder_size, 0),
+      first_seen_at: row.first_seen_at || null,
+      last_seen_at: row.last_seen_at || null,
+      seen_count: toSafeNumber(row.seen_count, 0),
+      max_seeders: toSafeNumber(row.max_seeders, 0),
       magnet: trackerRegistry.buildMagnet(infoHash, row.trackers ? String(row.trackers).split(',') : []),
       file_index: normalizeFileIndex(row.file_index),
       matched_file_index: normalizeFileIndex(row.matched_file_index),
@@ -285,6 +398,16 @@ function createTorrentRepository({
           t.languages,
           t.resolution,
           t.quality_tag,
+          t.codec_tag,
+          t.hdr_tag,
+          t.audio_tag,
+          t.release_group,
+          t.smart_dedupe_key,
+          t.folder_size,
+          t.first_seen_at,
+          t.last_seen_at,
+          t.seen_count,
+          t.max_seeders,
           COALESCE(m.matched_file_index, t.file_index) AS file_index,
           m.matched_file_index,
           m.matched_file_title,
@@ -308,8 +431,10 @@ function createTorrentRepository({
           COALESCE(m.matched_file_index_norm, t.file_index_norm),
           CASE WHEN COALESCE(o.rd_file_index, t.rd_file_index) IS NOT NULL THEN 1 ELSE 0 END DESC,
           CASE WHEN t.cached_rd IS TRUE THEN 1 ELSE 0 END DESC,
-          COALESCE(t.seeders, 0) DESC,
-          COALESCE(m.matched_file_size, t.rd_file_size, t.size, 0) DESC
+          GREATEST(COALESCE(t.seeders, 0), COALESCE(t.max_seeders, 0)) DESC,
+          COALESCE(t.seen_count, 0) DESC,
+          COALESCE(t.last_seen_at, t.updated_at, t.created_at) DESC NULLS LAST,
+          COALESCE(m.matched_file_size, t.folder_size, t.rd_file_size, t.size, 0) DESC
       `
       : `
         WITH matched_files AS (
@@ -331,6 +456,16 @@ function createTorrentRepository({
           t.languages,
           t.resolution,
           t.quality_tag,
+          t.codec_tag,
+          t.hdr_tag,
+          t.audio_tag,
+          t.release_group,
+          t.smart_dedupe_key,
+          t.folder_size,
+          t.first_seen_at,
+          t.last_seen_at,
+          t.seen_count,
+          t.max_seeders,
           t.file_index,
           NULL::INTEGER AS matched_file_index,
           NULL::TEXT AS matched_file_title,
@@ -355,8 +490,10 @@ function createTorrentRepository({
           t.info_hash_norm,
           t.file_index_norm,
           CASE WHEN t.cached_rd IS TRUE THEN 1 ELSE 0 END DESC,
-          COALESCE(t.seeders, 0) DESC,
-          COALESCE(t.size, 0) DESC
+          GREATEST(COALESCE(t.seeders, 0), COALESCE(t.max_seeders, 0)) DESC,
+          COALESCE(t.seen_count, 0) DESC,
+          COALESCE(t.last_seen_at, t.updated_at, t.created_at) DESC NULLS LAST,
+          COALESCE(t.folder_size, t.size, 0) DESC
       `;
 
     try {
@@ -387,6 +524,12 @@ function createTorrentRepository({
     const languages = normalizeLanguages(torrent);
     const resolution = normalizeResolution(torrent?.resolution || torrent?.quality, title);
     const qualityTag = normalizeQualityTag(torrent);
+    const codecTag = normalizeCodecTag(torrent);
+    const hdrTag = normalizeHdrTag(torrent);
+    const audioTag = normalizeAudioTag(torrent);
+    const releaseGroup = normalizeReleaseGroupTag(torrent);
+    const smartDedupeKey = normalizeSmartDedupeKeyForDb(torrent);
+    const folderSize = normalizeFolderSize(torrent);
 
     const updateRes = await client.query(
       `
@@ -399,13 +542,23 @@ function createTorrentRepository({
             languages = COALESCE(NULLIF($11, ''), languages),
             resolution = COALESCE(NULLIF($12, ''), resolution),
             quality_tag = COALESCE(NULLIF($13, ''), quality_tag),
+            codec_tag = COALESCE(NULLIF($14, ''), codec_tag),
+            hdr_tag = COALESCE(NULLIF($15, ''), hdr_tag),
+            audio_tag = COALESCE(NULLIF($16, ''), audio_tag),
+            release_group = COALESCE(NULLIF($17, ''), release_group),
+            smart_dedupe_key = COALESCE(NULLIF($18, ''), smart_dedupe_key),
+            folder_size = GREATEST(COALESCE(folder_size, 0), $19::bigint),
+            max_seeders = GREATEST(COALESCE(max_seeders, 0), $6::integer),
+            seen_count = GREATEST(COALESCE(seen_count, 0), 0) + 1,
+            first_seen_at = COALESCE(first_seen_at, created_at, NOW()),
+            last_seen_at = NOW(),
             title = CASE
               WHEN title IS NULL OR title = '' THEN $4
               WHEN LENGTH($4) > LENGTH(title) THEN $4
               ELSE title
             END,
-            size = GREATEST(COALESCE(size, 0), $5),
-            seeders = GREATEST(COALESCE(seeders, 0), $6),
+            size = GREATEST(COALESCE(size, 0), $5::bigint),
+            seeders = GREATEST(COALESCE(seeders, 0), $6::integer),
             file_index = CASE
               WHEN $2 = -1 THEN file_index
               ELSE $2
@@ -418,7 +571,7 @@ function createTorrentRepository({
           AND file_index_norm = $2
         RETURNING 1
       `,
-      [infoHash, fileIndexNorm, providerName, title, size, seeders, torrentId, storedType, uploadDate, trackers, languages, resolution, qualityTag]
+      [infoHash, fileIndexNorm, providerName, title, size, seeders, torrentId, storedType, uploadDate, trackers, languages, resolution, qualityTag, codecTag, hdrTag, audioTag, releaseGroup, smartDedupeKey, folderSize]
     );
 
     if (updateRes.rowCount > 0) return false;
@@ -441,14 +594,24 @@ function createTorrentRepository({
           languages,
           resolution,
           quality_tag,
+          codec_tag,
+          hdr_tag,
+          audio_tag,
+          release_group,
+          smart_dedupe_key,
+          folder_size,
+          first_seen_at,
+          last_seen_at,
+          seen_count,
+          max_seeders,
           created_at,
           updated_at
         )
-        VALUES ($1, $1, $2, $3, $4, $8, $9, $5, $6, $7, $10, $11, $12, $13, $14, NOW(), NOW())
+        VALUES ($1, $1, $2, $3, $4, $8, $9, $5, $6, $7::integer, $10::timestamptz, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::bigint, NOW(), NOW(), 1, $7::integer, NOW(), NOW())
         ON CONFLICT DO NOTHING
         RETURNING 1
       `,
-      [infoHash, fileIndex, fileIndexNorm, providerName, title, size, seeders, torrentId, storedType, uploadDate, trackers, languages, resolution, qualityTag]
+      [infoHash, fileIndex, fileIndexNorm, providerName, title, size, seeders, torrentId, storedType, uploadDate, trackers, languages, resolution, qualityTag, codecTag, hdrTag, audioTag, releaseGroup, smartDedupeKey, folderSize]
     );
 
     return insertRes.rowCount > 0;
