@@ -6,10 +6,11 @@ const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const {
     buildContextHeaders,
+    createCircuitBreaker,
     createDomainCookieJar,
     getStickyFingerprintForUrl,
     isCloudflareChallenge,
-    requestWithImpit,
+    requestWithImpitRotating,
     responseText
 } = require('../utils/bypass');
 const { createBlockedFallbackGuard } = require('../utils/provider_blocked_fallback');
@@ -40,6 +41,11 @@ const DEFAULT_SESSION_COOKIE = Buffer.from(
 const FETCH_TIMEOUT = 4500;
 const IMPIT_TIMEOUT = 2500;
 const IMPIT_ATTEMPTS = 3;
+const IMPIT_ROTATING_MAX_ATTEMPTS = 2;
+const IMPIT_ROTATING_HARD_ATTEMPTS = 3;
+const IMPIT_TOTAL_BUDGET_MS = 5200;
+const DIRECT_BREAKER_FAILURES = 3;
+const DIRECT_BREAKER_RESET_MS = 45 * 1000;
 const MAX_LISTING_PAGES = 8;
 const MAX_LISTING_CANDIDATES_PER_PAGE = 24;
 const SEARCH_CACHE_TTL_MS = 20 * 60 * 1000;
@@ -87,6 +93,10 @@ const newsSitemapCache = {
 };
 
 const pendingTasks = new SingleFlight('cinemacity');
+const directFetchBreaker = createCircuitBreaker({
+    maxFailures: DIRECT_BREAKER_FAILURES,
+    resetMs: DIRECT_BREAKER_RESET_MS
+});
 
 async function singleFlight(key, fn) {
     return pendingTasks.do(key, fn);
@@ -181,20 +191,35 @@ function buildCinemaCityRequestHeaders(url, context = 'document', extraHeaders =
     return { fp, headers };
 }
 
-async function fetchHtmlWithImpit(url, extraHeaders = {}, attempt = 0, requestTimeout = IMPIT_TIMEOUT, requestContext = 'document') {
+async function fetchHtmlWithImpit(
+    url,
+    extraHeaders = {},
+    attempt = 0,
+    requestTimeout = IMPIT_TIMEOUT,
+    requestContext = 'document',
+    options = {}
+) {
     const { fp, headers: mergedHeaders } = buildCinemaCityRequestHeaders(url, requestContext, extraHeaders);
+    const hardMode = options.hardMode === true || attempt > 0;
 
     try {
-        const response = await requestWithImpit({
+        const response = await requestWithImpitRotating({
             url,
             headers: mergedHeaders,
             fingerprint: fp,
             timeout: requestTimeout,
+            totalTimeoutMs: Math.max(
+                requestTimeout + 900,
+                Number(options.totalTimeoutMs || IMPIT_TOTAL_BUDGET_MS)
+            ),
+            maxBrowserAttempts: hardMode ? IMPIT_ROTATING_HARD_ATTEMPTS : IMPIT_ROTATING_MAX_ATTEMPTS,
             followRedirect: true,
             maxRedirects: 6,
             responseType: 'text',
             ignoreTlsErrors: true,
-            failSoft: true
+            failSoft: true,
+            innerRetry: { limit: 0 },
+            retryOnStatuses: [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]
         });
         if (!response) return null;
 
@@ -203,17 +228,25 @@ async function fetchHtmlWithImpit(url, extraHeaders = {}, attempt = 0, requestTi
         updateCookiesFromResponse(url, response.headers);
 
         if (isCloudflareChallenge(body, status)) {
-            markProviderBlockedFetch(url, 'cloudflare');
+            markProviderBlockedFetch(url, `cloudflare:${response.impitBrowser || 'unknown'}`);
+            directFetchBreaker.failure(url, new Error(`cloudflare_${status || 0}`));
             return null;
         }
         if ([403, 429, 503].includes(status)) {
-            markProviderBlockedFetch(url, `http_${status}`);
+            markProviderBlockedFetch(url, `http_${status}:${response.impitBrowser || 'unknown'}`);
+            directFetchBreaker.failure(url, new Error(`http_${status}`));
             return null;
         }
-        if (status >= 200 && status < 400) return body;
+        if (status >= 200 && status < 400) {
+            directFetchBreaker.success(url);
+            return body;
+        }
         return null;
     } catch (error) {
-        if (providerShield.shouldUseShield({ url, error })) markProviderBlockedFetch(url, error?.code || error?.message || 'network');
+        if (providerShield.shouldUseShield({ url, error })) {
+            markProviderBlockedFetch(url, error?.code || error?.message || 'network');
+            directFetchBreaker.failure(url, error);
+        }
         return null;
     }
 }
@@ -256,18 +289,22 @@ async function fetchHtmlPostWithImpit(url, formBody, extraHeaders = {}) {
     }, getCinemaCitySessionCookie());
 
     try {
-        const response = await requestWithImpit({
+        const response = await requestWithImpitRotating({
             url,
             method: 'POST',
             body: formBody,
             headers: baseHeaders,
             fingerprint: fp,
             timeout: IMPIT_TIMEOUT,
+            totalTimeoutMs: IMPIT_TOTAL_BUDGET_MS,
+            maxBrowserAttempts: 2,
             followRedirect: true,
             maxRedirects: 6,
             responseType: 'text',
             ignoreTlsErrors: true,
-            failSoft: true
+            failSoft: true,
+            innerRetry: { limit: 0 },
+            retryOnStatuses: [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]
         });
         if (!response) return null;
 
@@ -298,36 +335,57 @@ async function fetchHtmlPostWithImpit(url, formBody, extraHeaders = {}) {
 }
 
 async function fetchHtml(url, extraHeaders = {}, options = {}) {
-    const cacheKey = `url:${url}`;
+    const context = options.context || 'document';
+    const cacheKey = `url:${context}:${url}`;
     if (fetchFailureCache.get(cacheKey)) return null;
 
-    const timeout = options.timeout || FETCH_TIMEOUT;
-    const attempts = Math.max(1, Math.min(IMPIT_ATTEMPTS, Number.parseInt(String(options.attempts || IMPIT_ATTEMPTS), 10) || IMPIT_ATTEMPTS));
-    for (let attempt = 0; attempt < attempts; attempt++) {
-        if (attempt > 0) {
-            const baseDelay = Math.min(4000, 200 * Math.pow(2, attempt));
-            const jitter = Math.floor(Math.random() * 200);
-            await sleep(baseDelay + jitter);
+    return singleFlight(`fetch:${cacheKey}`, async () => {
+        if (fetchFailureCache.get(cacheKey)) return null;
+
+        const timeout = options.timeout || FETCH_TIMEOUT;
+        const useRotating = options.rotating !== false;
+        const attempts = useRotating
+            ? Math.max(1, Math.min(2, Number.parseInt(String(options.attempts || 1), 10) || 1))
+            : Math.max(1, Math.min(IMPIT_ATTEMPTS, Number.parseInt(String(options.attempts || IMPIT_ATTEMPTS), 10) || IMPIT_ATTEMPTS));
+        const directAllowed = directFetchBreaker.canRequest(url);
+
+        if (directAllowed) {
+            for (let attempt = 0; attempt < attempts; attempt++) {
+                if (attempt > 0) {
+                    const baseDelay = Math.min(1200, 180 * Math.pow(2, attempt));
+                    const jitter = Math.floor(Math.random() * 140);
+                    await sleep(baseDelay + jitter);
+                }
+                const impitBody = await fetchHtmlWithImpit(url, extraHeaders, attempt, timeout, context, {
+                    hardMode: attempt > 0,
+                    totalTimeoutMs: options.totalTimeoutMs || IMPIT_TOTAL_BUDGET_MS
+                });
+                if (impitBody) return impitBody;
+            }
+
+            if (options.axiosFallback !== false) {
+                const axiosBody = await fetchHtmlWithAxios(url, extraHeaders, timeout, context);
+                if (axiosBody) {
+                    directFetchBreaker.success(url);
+                    return axiosBody;
+                }
+            }
         }
-        const impitBody = await fetchHtmlWithImpit(url, extraHeaders, attempt, timeout, options.context || 'document');
-        if (impitBody) return impitBody;
-    }
 
-    if (options.axiosFallback !== false) {
-        const axiosBody = await fetchHtmlWithAxios(url, extraHeaders, timeout, options.context || 'document');
-        if (axiosBody) return axiosBody;
-    }
+        if (options.allowClearanceFallback !== false && (wasProviderBlockedFetch(url) || !directAllowed)) {
+            const shieldBody = await providerShield.fetchHtml(url, {
+                ttl: options.ttl || SEARCH_CACHE_TTL_MS,
+                timeout: Math.min(timeout, 6000)
+            });
+            if (shieldBody) {
+                directFetchBreaker.success(url);
+                return shieldBody;
+            }
+        }
 
-    if (options.allowClearanceFallback !== false && wasProviderBlockedFetch(url)) {
-        const shieldBody = await providerShield.fetchHtml(url, {
-            ttl: options.ttl || SEARCH_CACHE_TTL_MS,
-            timeout: Math.min(timeout, 6000)
-        });
-        if (shieldBody) return shieldBody;
-    }
-
-    fetchFailureCache.set(cacheKey, true);
-    return null;
+        fetchFailureCache.set(cacheKey, true);
+        return null;
+    });
 }
 
 async function fetchJson(url, options = {}) {
