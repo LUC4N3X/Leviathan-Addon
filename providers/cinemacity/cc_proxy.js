@@ -33,8 +33,14 @@ const MANIFEST_CACHE_TTL_MS = Math.max(1500, Math.min(60 * 1000, Number.parseInt
 const MANIFEST_CACHE_MAX = Math.max(50, Math.min(1000, Number.parseInt(process.env.CC_PROXY_MANIFEST_CACHE_MAX || '300', 10) || 300));
 const STREAM_RETRY_ATTEMPTS = Math.max(1, Math.min(3, Number.parseInt(process.env.CC_PROXY_STREAM_RETRY_ATTEMPTS || '2', 10) || 2));
 const STREAM_RETRY_BASE_DELAY_MS = Math.max(50, Math.min(1000, Number.parseInt(process.env.CC_PROXY_STREAM_RETRY_BASE_DELAY_MS || '160', 10) || 160));
+const MANIFEST_STALE_TTL_MS = Math.max(60 * 1000, Math.min(15 * 60 * 1000, Number.parseInt(process.env.CC_PROXY_MANIFEST_STALE_TTL_MS || String(6 * 60 * 1000), 10) || (6 * 60 * 1000)));
+const SMALL_OBJECT_CACHE_TTL_MS = Math.max(60 * 1000, Math.min(30 * 60 * 1000, Number.parseInt(process.env.CC_PROXY_SMALL_CACHE_TTL_MS || String(15 * 60 * 1000), 10) || (15 * 60 * 1000)));
+const SMALL_OBJECT_CACHE_MAX = Math.max(50, Math.min(2000, Number.parseInt(process.env.CC_PROXY_SMALL_CACHE_MAX || '500', 10) || 500));
+const SMALL_OBJECT_CACHE_MAX_BYTES = Math.max(16 * 1024, Math.min(512 * 1024, Number.parseInt(process.env.CC_PROXY_SMALL_CACHE_MAX_BYTES || String(192 * 1024), 10) || (192 * 1024)));
+const STREAM_IDLE_TIMEOUT_MS = Math.max(8000, Math.min(90 * 1000, Number.parseInt(process.env.CC_PROXY_STREAM_IDLE_TIMEOUT_MS || '28000', 10) || 28000));
 const proxyUrlCache = new Map();
 const manifestCache = new Map();
+const smallObjectCache = new Map();
 const inFlightTasks = new Map();
 
 
@@ -275,14 +281,33 @@ function getManifestCacheKey(req, sourceUrl, headers = {}) {
     ].join('\n'));
 }
 
-function getCachedManifest(key) {
+function getCachedManifest(key, options = {}) {
     const entry = manifestCache.get(key);
     if (!entry) return null;
-    if (Number(entry.expiresAt || 0) <= Date.now()) {
-        manifestCache.delete(key);
-        return null;
-    }
-    return entry;
+
+    const current = Date.now();
+    const fresh = Number(entry.expiresAt || 0) > current;
+    const staleAllowed = options.allowStale === true && Number(entry.staleUntil || 0) > current;
+
+    if (fresh) return { ...entry, stale: false };
+    if (staleAllowed) return { ...entry, stale: true };
+
+    if (Number(entry.staleUntil || 0) <= current) manifestCache.delete(key);
+    return null;
+}
+
+function refreshManifestEntry(key, entry) {
+    if (!key || !entry?.body) return entry || null;
+    const refreshed = {
+        ...entry,
+        expiresAt: Date.now() + MANIFEST_CACHE_TTL_MS,
+        staleUntil: Date.now() + MANIFEST_CACHE_TTL_MS + MANIFEST_STALE_TTL_MS,
+        refreshedAt: Date.now(),
+        stale: false
+    };
+    manifestCache.set(key, refreshed);
+    pruneExpiringMap(manifestCache, MANIFEST_CACHE_MAX);
+    return refreshed;
 }
 
 function setCachedManifest(key, body, upstreamHeaders = {}) {
@@ -291,13 +316,87 @@ function setCachedManifest(key, body, upstreamHeaders = {}) {
     const entry = {
         body,
         etag,
+        upstreamEtag: upstreamHeaders['etag'] || null,
         lastModified: upstreamHeaders['last-modified'] || null,
         expiresAt: Date.now() + MANIFEST_CACHE_TTL_MS,
-        createdAt: Date.now()
+        staleUntil: Date.now() + MANIFEST_CACHE_TTL_MS + MANIFEST_STALE_TTL_MS,
+        createdAt: Date.now(),
+        refreshedAt: Date.now(),
+        stale: false
     };
     manifestCache.set(key, entry);
     pruneExpiringMap(manifestCache, MANIFEST_CACHE_MAX);
     return entry;
+}
+
+function isSmallObjectCacheable(sourceUrl = '', contentType = '') {
+    const url = String(sourceUrl || '').split('?')[0].toLowerCase();
+    const type = String(contentType || '').toLowerCase();
+    return /\.(key|vtt|srt|ass|ssa)(?:$|[?#])/i.test(url)
+        || /text\/(vtt|plain)/i.test(type)
+        || (/application\/octet-stream/i.test(type) && /\.key$/i.test(url));
+}
+
+function getSmallObjectCacheKey(sourceUrl, headers = {}) {
+    return sha256Base64Url([String(sourceUrl || ''), stableStringify(headers || {})].join('\n'));
+}
+
+function getCachedSmallObject(key) {
+    const entry = smallObjectCache.get(key);
+    if (!entry) return null;
+    if (Number(entry.expiresAt || 0) <= Date.now()) {
+        smallObjectCache.delete(key);
+        return null;
+    }
+    return entry;
+}
+
+function setCachedSmallObject(key, buffer, headers = {}, contentType = '') {
+    if (!key || !Buffer.isBuffer(buffer) || buffer.length <= 0 || buffer.length > SMALL_OBJECT_CACHE_MAX_BYTES) return null;
+    const entry = {
+        buffer,
+        contentType,
+        etag: `W/"ccp-small-${sha256Base64Url(buffer).slice(0, 24)}"`,
+        lastModified: headers['last-modified'] || null,
+        expiresAt: Date.now() + SMALL_OBJECT_CACHE_TTL_MS,
+        createdAt: Date.now()
+    };
+    smallObjectCache.set(key, entry);
+    pruneExpiringMap(smallObjectCache, SMALL_OBJECT_CACHE_MAX);
+    return entry;
+}
+
+async function readStreamBufferLimited(stream, maxBytes) {
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of stream) {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        total += buffer.length;
+        if (total > maxBytes) {
+            const error = new Error('Small object too large');
+            error.code = 'SMALL_OBJECT_TOO_LARGE';
+            throw error;
+        }
+        chunks.push(buffer);
+    }
+    return Buffer.concat(chunks);
+}
+
+function writeSmallObjectResponse({ req, res, entry, sourceUrl, cacheState = 'hit' }) {
+    const buffer = Buffer.isBuffer(entry?.buffer) ? entry.buffer : Buffer.alloc(0);
+    const contentType = entry?.contentType || fallbackContentType(sourceUrl, '');
+    const ifNoneMatch = String(req.headers?.['if-none-match'] || '').trim();
+
+    res.status(ifNoneMatch && entry?.etag && ifNoneMatch === entry.etag ? 304 : 200);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', `public, max-age=${Math.max(1, Math.floor(SMALL_OBJECT_CACHE_TTL_MS / 1000))}, immutable`);
+    res.setHeader('Accept-Ranges', 'none');
+    res.setHeader('X-CC-Proxy-Small-Cache', cacheState);
+    if (entry?.etag) res.setHeader('ETag', entry.etag);
+    if (entry?.lastModified) res.setHeader('Last-Modified', entry.lastModified);
+    if (res.statusCode === 304 || req.method === 'HEAD') return res.end();
+    res.setHeader('Content-Length', buffer.length);
+    return res.end(buffer);
 }
 
 async function singleFlight(key, fn) {
@@ -515,8 +614,15 @@ function isMediaContentType(contentType = '') {
 function shouldFastPipeWithoutSniff({ req, upstream, sourceUrl, contentType }) {
     const status = Number(upstream?.status || 0);
     const hasRange = Boolean(req?.headers?.range);
+    const type = String(contentType || '').toLowerCase();
+
     if (status === 206 && hasRange && isKnownMediaUrl(sourceUrl)) return true;
     if (status === 206 && hasRange && isMediaContentType(contentType)) return true;
+
+    // Fast-start non-range media only when upstream explicitly says media/octet-stream.
+    // HTML/challenge pages keep the sniff path.
+    if (status === 200 && !hasRange && isKnownMediaUrl(sourceUrl) && isMediaContentType(type) && !type.includes('text/html')) return true;
+
     return false;
 }
 
@@ -539,7 +645,7 @@ function getAgentForUrl(sourceUrl) {
     return /^https:/i.test(String(sourceUrl || '')) ? HTTPS_AGENT : HTTP_AGENT;
 }
 
-async function fetchUpstream(sourceUrl, headers, req, signal, { allowRange = true } = {}) {
+async function fetchUpstream(sourceUrl, headers, req, signal, { allowRange = true, extraHeaders = null } = {}) {
     const prepared = prepareProxyTarget(sourceUrl, headers || {}, {
         userAgent: DEFAULT_UA,
         acceptLanguage: DEFAULT_ACCEPT_LANGUAGE,
@@ -548,7 +654,7 @@ async function fetchUpstream(sourceUrl, headers, req, signal, { allowRange = tru
         fillReferer: true,
         fillOrigin: true
     });
-    const requestHeaders = { ...(prepared.headers || {}) };
+    const requestHeaders = { ...(prepared.headers || {}), ...(extraHeaders || {}) };
     const range = String(req?.headers?.range || '').trim();
     if (allowRange && range && isSafeSingleRange(range)) requestHeaders.Range = range;
     else delete requestHeaders.Range;
@@ -595,22 +701,61 @@ async function fetchUpstreamWithRetry(sourceUrl, headers, req, signal, options =
 }
 
 
+function armIdleWatchdog(stream, res, label = 'stream') {
+    let timer = null;
+    const clear = () => {
+        if (timer) clearTimeout(timer);
+        timer = null;
+    };
+    const refresh = () => {
+        clear();
+        timer = setTimeout(() => {
+            const error = new Error(`CinemaCity proxy idle timeout on ${label}`);
+            error.code = 'STREAM_IDLE_TIMEOUT';
+            try { stream?.destroy?.(error); } catch (_) {}
+            try { res?.destroy?.(error); } catch (_) {}
+        }, STREAM_IDLE_TIMEOUT_MS);
+        if (typeof timer.unref === 'function') timer.unref();
+    };
+
+    refresh();
+    stream?.on?.('data', refresh);
+    stream?.on?.('end', clear);
+    stream?.on?.('close', clear);
+    stream?.on?.('error', clear);
+    res?.on?.('close', clear);
+    return clear;
+}
+
+
 async function writeStreamWithSniff({ upstream, res, req, sourceUrl, contentType }) {
+    const status = Number(upstream.status || 200) === 206 ? 206 : 200;
     const fastPipe = shouldFastPipeWithoutSniff({ req, upstream, sourceUrl, contentType });
 
-    if (fastPipe) {
-        const status = Number(upstream.status || 200) === 206 ? 206 : 200;
+    if (req.method === 'HEAD') {
         res.status(status);
         res.setHeader('Content-Type', fallbackContentType(sourceUrl, contentType));
         res.setHeader('Cache-Control', getMediaCacheControl(sourceUrl));
         res.setHeader('Accept-Ranges', upstream.headers['accept-ranges'] || 'bytes');
-        res.setHeader('X-CC-Proxy-Resume', 'fast-pipe');
         copyUsefulHeaders(upstream, res, false);
-        if (req.method === 'HEAD') return res.end();
+        destroyUpstreamQuietly(upstream);
+        return res.end();
+    }
+
+    if (fastPipe) {
+        res.status(status);
+        res.setHeader('Content-Type', fallbackContentType(sourceUrl, contentType));
+        res.setHeader('Cache-Control', getMediaCacheControl(sourceUrl));
+        res.setHeader('Accept-Ranges', upstream.headers['accept-ranges'] || 'bytes');
+        res.setHeader('X-CC-Proxy-Resume', req?.headers?.range ? 'fast-range' : 'fast-start');
+        copyUsefulHeaders(upstream, res, false);
         if (typeof res.flushHeaders === 'function') res.flushHeaders();
+        const clearWatchdog = armIdleWatchdog(upstream.data, res, sourceUrl);
         upstream.data.on('error', (error) => {
+            clearWatchdog();
             try { res.destroy(error); } catch (_) {}
         });
+        upstream.data.on('end', clearWatchdog);
         return upstream.data.pipe(res);
     }
 
@@ -626,7 +771,6 @@ async function writeStreamWithSniff({ upstream, res, req, sourceUrl, contentType
         return res.end('CinemaCity upstream returned HTML/block page instead of media');
     }
 
-    const status = Number(upstream.status || 200) === 206 ? 206 : 200;
     res.status(status);
     res.setHeader('Content-Type', fallbackContentType(sourceUrl, contentType));
     res.setHeader('Cache-Control', getMediaCacheControl(sourceUrl));
@@ -635,14 +779,36 @@ async function writeStreamWithSniff({ upstream, res, req, sourceUrl, contentType
     if (req.method === 'HEAD') return res.end();
     if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
+    let idleTimer = null;
+    const clearIdleTimer = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = null;
+    };
+    const refreshIdleTimer = () => {
+        clearIdleTimer();
+        idleTimer = setTimeout(() => {
+            const error = new Error('CinemaCity proxy idle timeout while writing stream');
+            error.code = 'STREAM_IDLE_TIMEOUT';
+            try { upstream?.data?.destroy?.(error); } catch (_) {}
+            try { res.destroy(error); } catch (_) {}
+        }, STREAM_IDLE_TIMEOUT_MS);
+        if (typeof idleTimer.unref === 'function') idleTimer.unref();
+    };
+    refreshIdleTimer();
+
     const writeChunk = async (chunk) => {
+        refreshIdleTimer();
         if (!chunk || chunk.length === 0) return;
         if (!res.write(chunk)) await once(res, 'drain');
     };
 
     if (!first.done) await writeChunk(firstBuffer);
-    for await (const chunk of iterator) {
-        await writeChunk(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    try {
+        for await (const chunk of iterator) {
+            await writeChunk(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+    } finally {
+        clearIdleTimer();
     }
     return res.end();
 }
@@ -675,28 +841,52 @@ async function getRewrittenManifestEntry({ req, sourceUrl, headers, signal }) {
     const cached = getCachedManifest(manifestKey);
     if (cached) return { entry: cached, state: 'hit' };
 
-    const entry = await singleFlight(`manifest:${manifestKey}`, async () => {
-        const fresh = getCachedManifest(manifestKey);
-        if (fresh) return fresh;
-        const upstream = await fetchUpstreamWithRetry(sourceUrl, headers, req, signal, { allowRange: false, attempts: STREAM_RETRY_ATTEMPTS });
-        const status = Number(upstream?.status || 0);
-        if (status >= 300) {
-            const error = new Error(`CinemaCity upstream error ${status}`);
-            error.status = status;
-            destroyUpstreamQuietly(upstream);
-            throw error;
-        }
-        const manifestText = await readStreamLimited(upstream.data, MANIFEST_MAX_BYTES);
-        if (!/^\ufeff?\s*#EXTM3U/i.test(manifestText)) {
-            const error = new Error('Invalid CinemaCity manifest');
-            error.code = 'INVALID_MANIFEST';
-            throw error;
-        }
-        const rewritten = rewriteManifest(manifestText, sourceUrl, req, headers);
-        return setCachedManifest(manifestKey, rewritten, upstream.headers || {});
-    });
+    const staleCandidate = getCachedManifest(manifestKey, { allowStale: true });
 
-    return { entry, state: 'miss' };
+    try {
+        const entry = await singleFlight(`manifest:${manifestKey}`, async () => {
+            const fresh = getCachedManifest(manifestKey);
+            if (fresh) return fresh;
+
+            const stale = getCachedManifest(manifestKey, { allowStale: true });
+            const conditionalHeaders = {};
+            if (stale?.upstreamEtag) conditionalHeaders['If-None-Match'] = stale.upstreamEtag;
+            if (stale?.lastModified) conditionalHeaders['If-Modified-Since'] = stale.lastModified;
+
+            const upstream = await fetchUpstreamWithRetry(sourceUrl, headers, req, signal, {
+                allowRange: false,
+                attempts: STREAM_RETRY_ATTEMPTS,
+                extraHeaders: conditionalHeaders
+            });
+            const status = Number(upstream?.status || 0);
+
+            if (status === 304 && stale?.body) {
+                destroyUpstreamQuietly(upstream);
+                return refreshManifestEntry(manifestKey, stale);
+            }
+
+            if (status >= 300) {
+                const error = new Error(`CinemaCity upstream error ${status}`);
+                error.status = status;
+                destroyUpstreamQuietly(upstream);
+                throw error;
+            }
+            const manifestText = await readStreamLimited(upstream.data, MANIFEST_MAX_BYTES);
+            if (!/^\ufeff?\s*#EXTM3U/i.test(manifestText)) {
+                const error = new Error('Invalid CinemaCity manifest');
+                error.code = 'INVALID_MANIFEST';
+                throw error;
+            }
+            const rewritten = rewriteManifest(manifestText, sourceUrl, req, headers);
+            return setCachedManifest(manifestKey, rewritten, upstream.headers || {});
+        });
+
+        return { entry, state: entry?.stale ? 'stale' : 'miss' };
+    } catch (error) {
+        const stale = staleCandidate || getCachedManifest(manifestKey, { allowStale: true });
+        if (stale?.body) return { entry: stale, state: 'stale-if-error' };
+        throw error;
+    }
 }
 
 async function handleCinemaCityProxy(req, res) {
@@ -733,6 +923,21 @@ async function handleCinemaCityProxy(req, res) {
             return writeManifestResponse({ req, res, manifestEntry: entry, cacheState: state });
         }
 
+        const hasRange = Boolean(req.headers?.range);
+        const smallCacheKey = !hasRange && isSmallObjectCacheable(resolved.sourceUrl)
+            ? getSmallObjectCacheKey(resolved.sourceUrl, resolved.headers)
+            : null;
+        const cachedSmallObject = smallCacheKey ? getCachedSmallObject(smallCacheKey) : null;
+        if (cachedSmallObject) {
+            return writeSmallObjectResponse({
+                req,
+                res,
+                entry: cachedSmallObject,
+                sourceUrl: resolved.sourceUrl,
+                cacheState: 'hit'
+            });
+        }
+
         const upstream = await fetchUpstreamWithRetry(resolved.sourceUrl, resolved.headers, req, signal, { allowRange });
         const contentType = String(upstream.headers['content-type'] || '');
         if (upstream.status >= 300) {
@@ -755,16 +960,35 @@ async function handleCinemaCityProxy(req, res) {
             return writeManifestResponse({ req, res, manifestEntry: entry, cacheState: state });
         }
 
+        if (smallCacheKey && isSmallObjectCacheable(resolved.sourceUrl, contentType)) {
+            const buffer = await readStreamBufferLimited(upstream.data, SMALL_OBJECT_CACHE_MAX_BYTES);
+            if (looksLikeHtmlBlock(buffer, contentType)) {
+                res.status(502);
+                res.setHeader('Cache-Control', 'no-store');
+                res.setHeader('X-CC-Proxy-Error', 'html-or-block-page');
+                return res.end('CinemaCity upstream returned HTML/block page instead of media');
+            }
+            const entry = setCachedSmallObject(smallCacheKey, buffer, upstream.headers || {}, fallbackContentType(resolved.sourceUrl, contentType));
+            return writeSmallObjectResponse({
+                req,
+                res,
+                entry: entry || { buffer, contentType: fallbackContentType(resolved.sourceUrl, contentType) },
+                sourceUrl: resolved.sourceUrl,
+                cacheState: entry ? 'miss' : 'bypass'
+            });
+        }
+
         return writeStreamWithSniff({ upstream, res, req, sourceUrl: resolved.sourceUrl, contentType });
     } catch (error) {
         if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED' || signal.aborted) return null;
         if (!res.headersSent) {
             const upstreamStatus = Number(error?.status || 0);
-            const statusCode = error?.code === 'MANIFEST_TOO_LARGE' ? 413 : upstreamStatus >= 400 ? upstreamStatus : 502;
+            const statusCode = error?.code === 'MANIFEST_TOO_LARGE' || error?.code === 'SMALL_OBJECT_TOO_LARGE' ? 413 : upstreamStatus >= 400 ? upstreamStatus : 502;
             res.status(statusCode);
             res.setHeader('Cache-Control', 'no-store');
-            res.setHeader('X-CC-Proxy-Error', error?.code === 'MANIFEST_TOO_LARGE' ? 'manifest-too-large' : error?.code === 'INVALID_MANIFEST' ? 'invalid-manifest' : upstreamStatus ? `upstream-${upstreamStatus}` : 'proxy-error');
+            res.setHeader('X-CC-Proxy-Error', error?.code === 'MANIFEST_TOO_LARGE' ? 'manifest-too-large' : error?.code === 'SMALL_OBJECT_TOO_LARGE' ? 'small-object-too-large' : error?.code === 'INVALID_MANIFEST' ? 'invalid-manifest' : upstreamStatus ? `upstream-${upstreamStatus}` : 'proxy-error');
             if (error?.code === 'MANIFEST_TOO_LARGE') return res.end('CinemaCity manifest too large');
+            if (error?.code === 'SMALL_OBJECT_TOO_LARGE') return res.end('CinemaCity small object too large');
             if (error?.code === 'INVALID_MANIFEST') return res.end('CinemaCity upstream did not return a valid HLS manifest');
             return res.end(upstreamStatus ? `CinemaCity upstream error ${upstreamStatus}` : 'CinemaCity proxy error');
         }
