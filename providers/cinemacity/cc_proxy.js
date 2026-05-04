@@ -7,6 +7,7 @@ const path = require('path');
 const zlib = require('zlib');
 const { once } = require('events');
 const { getRequestOrigin, isSafeRemoteUrl } = require('../../core/utils/url');
+const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const {
     prepareProxyTarget,
     maybeLogProxyHeaderDecision
@@ -22,10 +23,109 @@ const MAX_UPSTREAM_REDIRECTS = Math.max(0, Math.min(10, Number.parseInt(process.
 const MANIFEST_MAX_BYTES = Math.max(128 * 1024, Math.min(4 * 1024 * 1024, Number.parseInt(process.env.CC_PROXY_MANIFEST_MAX_BYTES || String(1024 * 1024), 10) || (1024 * 1024)));
 const PLAYBACK_TOKEN_TTL_MS = Math.max(10 * 60 * 1000, Number.parseInt(process.env.CC_PROXY_TOKEN_TTL_MS || String(3 * 60 * 60 * 1000), 10) || (3 * 60 * 60 * 1000));
 const TOKEN_MAX_BYTES = Math.max(512, Math.min(12 * 1024, Number.parseInt(process.env.CC_PROXY_TOKEN_MAX_BYTES || String(8192), 10) || 8192));
+const MANIFEST_CACHE_TTL_MS = Math.max(1500, Math.min(45 * 1000, Number.parseInt(process.env.CC_PROXY_MANIFEST_CACHE_TTL_MS || '12000', 10) || 12000));
+const MANIFEST_CACHE_MAX = Math.max(32, Math.min(1200, Number.parseInt(process.env.CC_PROXY_MANIFEST_CACHE_MAX || '400', 10) || 400));
+const UPSTREAM_RETRY_ATTEMPTS = Math.max(1, Math.min(3, Number.parseInt(process.env.CC_PROXY_RETRY_ATTEMPTS || '2', 10) || 2));
+const UPSTREAM_RETRY_BASE_DELAY_MS = Math.max(40, Math.min(600, Number.parseInt(process.env.CC_PROXY_RETRY_BASE_DELAY_MS || '120', 10) || 120));
+const MAX_RANGE_SPAN_BYTES = Math.max(1024 * 1024, Math.min(512 * 1024 * 1024, Number.parseInt(process.env.CC_PROXY_MAX_RANGE_SPAN_BYTES || String(96 * 1024 * 1024), 10) || (96 * 1024 * 1024)));
 const SECRET_FILE = path.join(__dirname, '..', 'config', 'cinemacity_proxy_secret.key');
-const FALLBACK_SECRET = 'leviathan-cinemacity-proxy-stable-secret-v2';
+const FALLBACK_SECRET = crypto.randomBytes(32).toString('hex');
 let cachedSecret = null;
 
+const proxyHttpClient = axios.create({
+    timeout: UPSTREAM_TIMEOUT_MS,
+    httpAgent: HTTP_AGENT,
+    httpsAgent: HTTPS_AGENT,
+    maxRedirects: MAX_UPSTREAM_REDIRECTS,
+    responseType: 'stream',
+    validateStatus: () => true,
+    proxy: false,
+    decompress: true
+});
+
+
+function sha256Short(value) {
+    return crypto.createHash('sha256').update(String(value || ''), 'utf8').digest('base64url').slice(0, 22);
+}
+
+class TinyTtlCache {
+    constructor({ ttlMs, max }) {
+        this.ttlMs = Math.max(1000, Number(ttlMs) || 1000);
+        this.max = Math.max(16, Number(max) || 256);
+        this.map = new Map();
+    }
+
+    get(key) {
+        const item = this.map.get(key);
+        if (!item) return null;
+        if (item.expiresAt <= Date.now()) {
+            this.map.delete(key);
+            return null;
+        }
+        this.map.delete(key);
+        this.map.set(key, item);
+        return item.value;
+    }
+
+    set(key, value, ttlMs = this.ttlMs) {
+        if (!key) return false;
+        this.map.set(key, {
+            value,
+            expiresAt: Date.now() + Math.max(1000, Number(ttlMs) || this.ttlMs)
+        });
+        while (this.map.size > this.max) {
+            const oldestKey = this.map.keys().next().value;
+            this.map.delete(oldestKey);
+        }
+        return true;
+    }
+
+    delete(key) {
+        return this.map.delete(key);
+    }
+}
+
+const manifestCache = new TinyTtlCache({ ttlMs: MANIFEST_CACHE_TTL_MS, max: MANIFEST_CACHE_MAX });
+const inFlightRequests = new Map();
+
+function singleFlight(key, fn) {
+    const existing = inFlightRequests.get(key);
+    if (existing) return existing;
+    const task = Promise.resolve()
+        .then(fn)
+        .finally(() => inFlightRequests.delete(key));
+    inFlightRequests.set(key, task);
+    return task;
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isCanceledProxyError(error, signal = null) {
+    return Boolean(signal?.aborted || error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED' || error?.name === 'AbortError');
+}
+
+function isRetryableUpstreamStatus(status) {
+    return [408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(Number(status || 0));
+}
+
+function isRetryableProxyError(error) {
+    const code = String(error?.code || '').toUpperCase();
+    const message = String(error?.message || '').toLowerCase();
+    return ['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNABORTED', 'ENOTFOUND', 'EPIPE'].includes(code)
+        || message.includes('timeout')
+        || message.includes('socket hang up');
+}
+
+function retryDelay(attempt) {
+    const jitter = Math.floor(Math.random() * 90);
+    return Math.min(900, UPSTREAM_RETRY_BASE_DELAY_MS * Math.pow(2, attempt)) + jitter;
+}
+
+function destroyUpstream(upstream) {
+    try { upstream?.data?.destroy?.(); } catch (_) {}
+}
 
 
 function previewBuffer(buffer, limit = 180) {
@@ -47,7 +147,11 @@ function looksLikeHtmlBlock(buffer, contentType = '') {
         || preview.includes('cloudflare')
         || preview.includes('ddos-guard')
         || preview.includes('access denied')
-        || preview.includes('forbidden');
+        || preview.includes('forbidden')
+        || preview.includes('captcha')
+        || preview.includes('checking your browser')
+        || preview.includes('attention required')
+        || preview.includes('temporarily unavailable');
 }
 
 function getProxySecret() {
@@ -114,6 +218,8 @@ function unpackToken(token) {
         const payload = JSON.parse(inflated);
         if (!payload || typeof payload !== 'object') return null;
         if (Number(payload.e || 0) <= Date.now()) return null;
+        if (Number(payload.e || 0) > Date.now() + PLAYBACK_TOKEN_TTL_MS + 60 * 1000) return null;
+        if (payload.h && typeof payload.h === 'object' && JSON.stringify(payload.h).length > TOKEN_MAX_BYTES) return null;
         return payload;
     } catch {
         return null;
@@ -171,7 +277,8 @@ function normalizeRequestHeaders(headers = {}) {
 }
 
 function buildRequestHeaders(targetUrl, sourceHeaders = {}, options = {}) {
-    const prepared = prepareProxyTarget(targetUrl, sourceHeaders, {
+    const sanitizedHeaders = normalizeRequestHeaders(sourceHeaders);
+    const prepared = prepareProxyTarget(targetUrl, sanitizedHeaders, {
         userAgent: DEFAULT_UA,
         acceptLanguage: DEFAULT_ACCEPT_LANGUAGE,
         allowRange: options.allowRange !== false,
@@ -214,7 +321,7 @@ function buildProxyUrl(baseUrl, targetUrl, headers = {}, routePath = null, meta 
     maybeLogProxyHeaderDecision(prepared, normalizedTarget);
     const token = packToken({
         u: normalizedTarget,
-        h: prepared.headers,
+        h: normalizeRequestHeaders(prepared.headers),
         r: selectedRoute,
         e: Date.now() + PLAYBACK_TOKEN_TTL_MS,
         i: Date.now(),
@@ -236,8 +343,9 @@ function setPlaybackHeaders(res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Range,Origin,Accept,Content-Type,User-Agent,Referer,Cache-Control,Pragma');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Length,Content-Range,Accept-Ranges,Content-Type,ETag,Last-Modified');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length,Content-Range,Accept-Ranges,Content-Type,ETag,Last-Modified,Cache-Control,X-CC-Proxy-Cache,X-CC-Proxy-Error');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Accel-Buffering', 'no');
 }
 
@@ -279,11 +387,70 @@ async function readStreamLimited(stream, maxBytes) {
     return Buffer.concat(chunks).toString('utf8');
 }
 
+function normalizeRangeHeader(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    const match = raw.match(/^bytes=(\d*)-(\d*)$/i);
+    if (!match) return null;
+    const startRaw = match[1];
+    const endRaw = match[2];
+    if (!startRaw && !endRaw) return null;
+
+    if (startRaw && endRaw) {
+        const start = Number.parseInt(startRaw, 10);
+        const end = Number.parseInt(endRaw, 10);
+        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) return null;
+        if ((end - start + 1) > MAX_RANGE_SPAN_BYTES) return null;
+        return `bytes=${start}-${end}`;
+    }
+
+    if (startRaw) {
+        const start = Number.parseInt(startRaw, 10);
+        if (!Number.isSafeInteger(start) || start < 0) return null;
+        return `bytes=${start}-`;
+    }
+
+    const suffix = Number.parseInt(endRaw, 10);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0 || suffix > MAX_RANGE_SPAN_BYTES) return null;
+    return `bytes=-${suffix}`;
+}
+
+function buildManifestCacheKey(req, sourceUrl, headers = {}) {
+    const origin = getRequestOrigin(req) || 'unknown-origin';
+    const headerKey = sha256Short(JSON.stringify(normalizeRequestHeaders(headers)));
+    return `${origin}:${sourceUrl}:${headerKey}`;
+}
+
+function sendManifestResponse(res, req, payload, cacheState = 'MISS') {
+    res.status(200);
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
+    res.setHeader('Cache-Control', `public, max-age=${Math.max(1, Math.floor(MANIFEST_CACHE_TTL_MS / 1000))}, stale-while-revalidate=15`);
+    res.setHeader('Accept-Ranges', 'none');
+    res.setHeader('X-CC-Proxy-Cache', cacheState);
+    if (payload?.etag) res.setHeader('ETag', payload.etag);
+    if (payload?.lastModified) res.setHeader('Last-Modified', payload.lastModified);
+    const body = String(payload?.body || '');
+    res.setHeader('Content-Length', Buffer.byteLength(body));
+    if (req.method === 'HEAD') return res.end();
+    return res.end(body);
+}
+
+function sendProxyError(res, status, code, message) {
+    res.status(status);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-CC-Proxy-Error', code);
+    return res.end(message);
+}
+
 function rewriteDirectiveUri(line, baseUrl, req, headers) {
-    return String(line || '').replace(/URI="([^"]+)"/ig, (_, uri) => {
+    return String(line || '').replace(/\bURI=(?:"([^"]+)"|'([^']+)'|([^,\s]+))/ig, (full, dq, sq, bare) => {
+        const uri = dq || sq || bare || '';
         const absolute = safeUrl(uri, baseUrl);
         const rewritten = absolute ? buildProxyUrl(getRequestOrigin(req), absolute, headers, getRouteForTarget(absolute)) : null;
-        return rewritten ? `URI="${rewritten}"` : `URI="${uri}"`;
+        if (!rewritten) return full;
+        if (dq != null) return `URI="${rewritten}"`;
+        if (sq != null) return `URI='${rewritten}'`;
+        return `URI=${rewritten}`;
     });
 }
 
@@ -307,7 +474,7 @@ function rewriteManifest(manifestText, baseUrl, req, headers) {
             }
             continue;
         }
-        if (line.startsWith('#EXT-X-KEY') || line.startsWith('#EXT-X-MAP') || line.startsWith('#EXT-X-MEDIA')) {
+        if (line.startsWith('#EXT-X-') && /\bURI=/i.test(line)) {
             out.push(rewriteDirectiveUri(rawLine, baseUrl, req, headers));
             continue;
         }
@@ -329,7 +496,7 @@ function getProxyPathname(req) {
 function resolveProxySource(req) {
     const pathname = getProxyPathname(req);
     const routeBinding = pathname === CC_STREAM_ROUTE ? CC_STREAM_ROUTE : CC_MANIFEST_ROUTE;
-    const payload = unpackToken(req.query.d);
+    const payload = unpackToken((req.query || {}).d);
     if (!payload?.u || payload.r !== routeBinding || !isSafeRemoteUrl(payload.u)) return null;
     return {
         sourceUrl: payload.u,
@@ -358,20 +525,69 @@ async function fetchUpstream(sourceUrl, headers, req, signal, { allowRange = tru
         fillOrigin: true
     });
     const requestHeaders = { ...(prepared.headers || {}) };
-    const range = String(req?.headers?.range || '').trim();
-    if (allowRange && range && /^bytes=\d*-\d*(?:,\d*-\d*)*$/i.test(range)) requestHeaders.Range = range;
+    const range = normalizeRangeHeader(req?.headers?.range);
+    if (allowRange && range) requestHeaders.Range = range;
     else delete requestHeaders.Range;
     maybeLogProxyHeaderDecision(prepared, sourceUrl);
-    return axios.get(sourceUrl, {
+    return proxyHttpClient.get(sourceUrl, {
         headers: requestHeaders,
-        timeout: UPSTREAM_TIMEOUT_MS,
-        maxRedirects: MAX_UPSTREAM_REDIRECTS,
-        responseType: 'stream',
-        validateStatus: () => true,
-        proxy: false,
-        decompress: true,
         signal
     });
+}
+
+async function fetchUpstreamWithRetry(sourceUrl, headers, req, signal, options = {}) {
+    const attempts = Math.max(1, Math.min(UPSTREAM_RETRY_ATTEMPTS, Number(options.attempts || UPSTREAM_RETRY_ATTEMPTS) || UPSTREAM_RETRY_ATTEMPTS));
+    let lastError = null;
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        try {
+            const upstream = await fetchUpstream(sourceUrl, headers, req, signal, options);
+            const status = Number(upstream?.status || 0);
+            if (!isRetryableUpstreamStatus(status) || attempt >= attempts - 1) return upstream;
+            destroyUpstream(upstream);
+            await sleep(retryDelay(attempt));
+        } catch (error) {
+            lastError = error;
+            if (isCanceledProxyError(error, signal)) throw error;
+            if (attempt >= attempts - 1 || !isRetryableProxyError(error)) throw error;
+            await sleep(retryDelay(attempt));
+        }
+    }
+
+    throw lastError || new Error('Upstream request failed');
+}
+
+async function fetchRewrittenManifestPayload({ sourceUrl, headers, req, signal }) {
+    const upstream = await fetchUpstreamWithRetry(sourceUrl, headers, req, signal, { allowRange: false, attempts: UPSTREAM_RETRY_ATTEMPTS });
+    const status = Number(upstream.status || 0);
+    const contentType = String(upstream.headers['content-type'] || '');
+
+    if (status >= 300) {
+        destroyUpstream(upstream);
+        return {
+            ok: false,
+            status: status >= 400 ? status : 502,
+            code: `upstream-${status}`,
+            message: `CinemaCity upstream error ${status}`
+        };
+    }
+
+    const manifestText = await readStreamLimited(upstream.data, MANIFEST_MAX_BYTES);
+    if (!/^\ufeff?\s*#EXTM3U/i.test(manifestText)) {
+        return {
+            ok: false,
+            status: 502,
+            code: looksLikeHtmlBlock(Buffer.from(manifestText.slice(0, 1024)), contentType) ? 'html-or-block-page' : 'invalid-manifest',
+            message: 'CinemaCity upstream did not return a valid HLS manifest'
+        };
+    }
+
+    return {
+        ok: true,
+        body: rewriteManifest(manifestText, sourceUrl, req, headers),
+        etag: upstream.headers?.etag || null,
+        lastModified: upstream.headers?.['last-modified'] || null
+    };
 }
 
 
@@ -432,44 +648,71 @@ async function handleCinemaCityProxy(req, res) {
 
     const signal = buildAbortSignal(req, res);
     try {
-        const allowRange = proxyPathname !== CC_MANIFEST_ROUTE;
-        const upstream = await fetchUpstream(resolved.sourceUrl, resolved.headers, req, signal, { allowRange });
-        const contentType = String(upstream.headers['content-type'] || '');
-        if (upstream.status >= 300) {
-            res.status(upstream.status >= 400 ? upstream.status : 502);
-            res.setHeader('Cache-Control', 'no-store');
-            res.setHeader('X-CC-Proxy-Error', `upstream-${upstream.status}`);
-            return res.end(`CinemaCity upstream error ${upstream.status}`);
+        if (proxyPathname === CC_MANIFEST_ROUTE) {
+            const manifestKey = buildManifestCacheKey(req, resolved.sourceUrl, resolved.headers);
+            const cached = manifestCache.get(manifestKey);
+            if (cached) return sendManifestResponse(res, req, cached, 'HIT');
+
+            const payload = await singleFlight(`manifest:${manifestKey}`, async () => {
+                const existing = manifestCache.get(manifestKey);
+                if (existing) return existing;
+                const fresh = await fetchRewrittenManifestPayload({
+                    sourceUrl: resolved.sourceUrl,
+                    headers: resolved.headers,
+                    req,
+                    signal
+                });
+                if (fresh?.ok) manifestCache.set(manifestKey, fresh);
+                return fresh;
+            });
+
+            if (!payload?.ok) {
+                return sendProxyError(
+                    res,
+                    payload?.status || 502,
+                    payload?.code || 'invalid-manifest',
+                    payload?.message || 'CinemaCity upstream did not return a valid HLS manifest'
+                );
+            }
+            return sendManifestResponse(res, req, payload, 'MISS');
         }
 
-        const manifest = isHlsUrl(resolved.sourceUrl, contentType);
-        if (manifest) {
+        const upstream = await fetchUpstreamWithRetry(resolved.sourceUrl, resolved.headers, req, signal, { allowRange: true });
+        const contentType = String(upstream.headers['content-type'] || '');
+        if (upstream.status >= 300) {
+            destroyUpstream(upstream);
+            return sendProxyError(
+                res,
+                upstream.status >= 400 ? upstream.status : 502,
+                `upstream-${upstream.status}`,
+                `CinemaCity upstream error ${upstream.status}`
+            );
+        }
+
+        if (isHlsUrl(resolved.sourceUrl, contentType)) {
             const manifestText = await readStreamLimited(upstream.data, MANIFEST_MAX_BYTES);
             if (!/^\ufeff?\s*#EXTM3U/i.test(manifestText)) {
-                res.status(502);
-                res.setHeader('Cache-Control', 'no-store');
-                res.setHeader('X-CC-Proxy-Error', 'invalid-manifest');
-                return res.end('CinemaCity upstream did not return a valid HLS manifest');
+                return sendProxyError(res, 502, 'invalid-manifest', 'CinemaCity upstream did not return a valid HLS manifest');
             }
             const rewritten = rewriteManifest(manifestText, resolved.sourceUrl, req, resolved.headers);
-            res.status(200);
-            res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
-            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-            res.setHeader('Accept-Ranges', 'none');
-            res.setHeader('Content-Length', Buffer.byteLength(rewritten));
-            copyUsefulHeaders(upstream, res, true);
-            if (req.method === 'HEAD') return res.end();
-            return res.end(rewritten);
+            return sendManifestResponse(res, req, {
+                ok: true,
+                body: rewritten,
+                etag: upstream.headers?.etag || null,
+                lastModified: upstream.headers?.['last-modified'] || null
+            }, 'BYPASS');
         }
 
         return writeStreamWithSniff({ upstream, res, req, sourceUrl: resolved.sourceUrl, contentType });
     } catch (error) {
-        if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED' || signal.aborted) return null;
+        if (isCanceledProxyError(error, signal)) return null;
         if (!res.headersSent) {
-            res.status(error?.code === 'MANIFEST_TOO_LARGE' ? 413 : 502);
-            res.setHeader('Cache-Control', 'no-store');
-            res.setHeader('X-CC-Proxy-Error', error?.code === 'MANIFEST_TOO_LARGE' ? 'manifest-too-large' : 'proxy-error');
-            return res.end(error?.code === 'MANIFEST_TOO_LARGE' ? 'CinemaCity manifest too large' : 'CinemaCity proxy error');
+            return sendProxyError(
+                res,
+                error?.code === 'MANIFEST_TOO_LARGE' ? 413 : 502,
+                error?.code === 'MANIFEST_TOO_LARGE' ? 'manifest-too-large' : 'proxy-error',
+                error?.code === 'MANIFEST_TOO_LARGE' ? 'CinemaCity manifest too large' : 'CinemaCity proxy error'
+            );
         }
         try { res.destroy(error); } catch (_) {}
         return null;
