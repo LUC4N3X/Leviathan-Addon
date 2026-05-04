@@ -44,6 +44,7 @@ const IMPIT_ATTEMPTS = 3;
 const IMPIT_ROTATING_MAX_ATTEMPTS = 2;
 const IMPIT_ROTATING_HARD_ATTEMPTS = 3;
 const IMPIT_TOTAL_BUDGET_MS = 5200;
+const IMPIT_WARMUP_TTL_MS = 10 * 60 * 1000;
 const DIRECT_BREAKER_FAILURES = 3;
 const DIRECT_BREAKER_RESET_MS = 45 * 1000;
 const MAX_LISTING_PAGES = 8;
@@ -179,6 +180,12 @@ const fetchFailureCache = new TtlLruCache({
     max: 2000
 });
 
+const impitWarmupCache = new TtlLruCache({
+    missingValue: null,
+    ttlMs: IMPIT_WARMUP_TTL_MS,
+    max: 50
+});
+
 function buildCinemaCityRequestHeaders(url, context = 'document', extraHeaders = {}, cookieFallback = '') {
     const fp = getStickyFingerprintForUrl(url);
     const suppliedCookie = extraHeaders.Cookie || extraHeaders.cookie || '';
@@ -191,6 +198,7 @@ function buildCinemaCityRequestHeaders(url, context = 'document', extraHeaders =
     return { fp, headers };
 }
 
+
 async function fetchHtmlWithImpit(
     url,
     extraHeaders = {},
@@ -200,7 +208,7 @@ async function fetchHtmlWithImpit(
     options = {}
 ) {
     const { fp, headers: mergedHeaders } = buildCinemaCityRequestHeaders(url, requestContext, extraHeaders);
-    const hardMode = options.hardMode === true || attempt > 0;
+    const hardMode = options.hardMode === true || attempt > 0 || requestContext === 'ajax' || requestContext === 'json';
 
     try {
         const response = await requestWithImpitRotating({
@@ -280,6 +288,7 @@ async function fetchHtmlWithAxios(url, extraHeaders = {}, requestTimeout = FETCH
     }
 }
 
+
 async function fetchHtmlPostWithImpit(url, formBody, extraHeaders = {}) {
     const { fp, headers: baseHeaders } = buildCinemaCityRequestHeaders(url, 'ajax', {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -297,7 +306,7 @@ async function fetchHtmlPostWithImpit(url, formBody, extraHeaders = {}) {
             fingerprint: fp,
             timeout: IMPIT_TIMEOUT,
             totalTimeoutMs: IMPIT_TOTAL_BUDGET_MS,
-            maxBrowserAttempts: 2,
+            maxBrowserAttempts: IMPIT_ROTATING_MAX_ATTEMPTS,
             followRedirect: true,
             maxRedirects: 6,
             responseType: 'text',
@@ -313,26 +322,33 @@ async function fetchHtmlPostWithImpit(url, formBody, extraHeaders = {}) {
         updateCookiesFromResponse(url, response.headers);
 
         if (isCloudflareChallenge(body, status)) {
-            markProviderBlockedFetch(url, 'cloudflare-post');
+            markProviderBlockedFetch(url, `cloudflare-post:${response.impitBrowser || 'unknown'}`);
+            directFetchBreaker.failure(url, new Error(`cloudflare_post_${status || 0}`));
             const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: IMPIT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
             return shielded || null;
         }
         if ([403, 429, 503].includes(status)) {
-            markProviderBlockedFetch(url, `http_${status}_post`);
+            markProviderBlockedFetch(url, `http_${status}_post:${response.impitBrowser || 'unknown'}`);
+            directFetchBreaker.failure(url, new Error(`http_${status}_post`));
             const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: IMPIT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
             return shielded || null;
         }
-        if (status >= 200 && status < 400) return body;
+        if (status >= 200 && status < 400) {
+            directFetchBreaker.success(url);
+            return body;
+        }
         return null;
     } catch (error) {
         if (providerShield.shouldUseShield({ url, error })) {
             markProviderBlockedFetch(url, error?.code || error?.message || 'post-network');
+            directFetchBreaker.failure(url, error);
             const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: IMPIT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
             return shielded || null;
         }
         return null;
     }
 }
+
 
 async function fetchHtml(url, extraHeaders = {}, options = {}) {
     const context = options.context || 'document';
@@ -343,11 +359,11 @@ async function fetchHtml(url, extraHeaders = {}, options = {}) {
         if (fetchFailureCache.get(cacheKey)) return null;
 
         const timeout = options.timeout || FETCH_TIMEOUT;
-        const useRotating = options.rotating !== false;
-        const attempts = useRotating
+        const directAllowed = directFetchBreaker.canRequest(url);
+        const rotatingEnabled = options.rotating !== false;
+        const attempts = rotatingEnabled
             ? Math.max(1, Math.min(2, Number.parseInt(String(options.attempts || 1), 10) || 1))
             : Math.max(1, Math.min(IMPIT_ATTEMPTS, Number.parseInt(String(options.attempts || IMPIT_ATTEMPTS), 10) || IMPIT_ATTEMPTS));
-        const directAllowed = directFetchBreaker.canRequest(url);
 
         if (directAllowed) {
             for (let attempt = 0; attempt < attempts; attempt++) {
@@ -356,14 +372,16 @@ async function fetchHtml(url, extraHeaders = {}, options = {}) {
                     const jitter = Math.floor(Math.random() * 140);
                     await sleep(baseDelay + jitter);
                 }
+
                 const impitBody = await fetchHtmlWithImpit(url, extraHeaders, attempt, timeout, context, {
-                    hardMode: attempt > 0,
+                    hardMode: options.hardMode === true || attempt > 0,
                     totalTimeoutMs: options.totalTimeoutMs || IMPIT_TOTAL_BUDGET_MS
                 });
                 if (impitBody) return impitBody;
             }
 
-            if (options.axiosFallback !== false) {
+            const blockedNow = wasProviderBlockedFetch(url);
+            if (!blockedNow && options.axiosFallback !== false) {
                 const axiosBody = await fetchHtmlWithAxios(url, extraHeaders, timeout, context);
                 if (axiosBody) {
                     directFetchBreaker.success(url);
@@ -386,6 +404,33 @@ async function fetchHtml(url, extraHeaders = {}, options = {}) {
         fetchFailureCache.set(cacheKey, true);
         return null;
     });
+}
+
+async function warmupCinemaCitySession(reason = 'search') {
+    const cacheKey = `warmup:${BASE_URL}`;
+    if (impitWarmupCache.get(cacheKey)) return true;
+
+    try {
+        const html = await fetchHtml(BASE_URL, {
+            'Referer': `${BASE_URL}/`,
+            'Cookie': getCinemaCitySessionCookie(),
+            'Sec-Fetch-Site': 'same-origin'
+        }, {
+            timeout: 1800,
+            attempts: 1,
+            context: 'document',
+            axiosFallback: false,
+            allowClearanceFallback: false,
+            hardMode: false,
+            totalTimeoutMs: 2600
+        });
+
+        const ok = Boolean(html && html.length > 500);
+        if (ok) impitWarmupCache.set(cacheKey, true);
+        return ok;
+    } catch (error) {
+        return false;
+    }
 }
 
 async function fetchJson(url, options = {}) {
@@ -1283,7 +1328,17 @@ async function fetchSearchCandidates(query) {
         let networkFailed = true;
 
         try {
-            const html = await fetchHtml(searchGetUrl, searchCommonHeaders);
+            await warmupCinemaCitySession('search');
+        } catch (_) {}
+
+        try {
+            const html = await fetchHtml(searchGetUrl, searchCommonHeaders, {
+                context: 'document',
+                timeout: 2600,
+                attempts: 1,
+                hardMode: false,
+                totalTimeoutMs: 4200
+            });
             if (html) {
                 networkFailed = false;
                 const result = tryParse(html);
