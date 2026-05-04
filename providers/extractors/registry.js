@@ -1,18 +1,22 @@
 'use strict';
 
 const {
+    extractDeltabit,
     extractDropload,
     extractLoadm,
     extractMixdrop,
+    extractMaxstream,
     extractStreamtape,
     extractSupervideo,
     extractUpstream,
     extractUqload,
     extractVidoza,
     extractVixcloud,
+    isDeltabitUrl,
     isDroploadUrl,
     isLoadmUrl,
     isMixdropUrl,
+    isMaxstreamUrl,
     isStreamtapeUrl,
     isSupervideoUrl,
     isUpstreamUrl,
@@ -21,8 +25,8 @@ const {
     isVixcloudUrl
 } = require('./hosters');
 
-const HOSTER_DIRECT_LINK_PATTERN = String.raw`https?:\/\/(?:www\.)?(?:supervideo|vixcloud|dropload|dr0pstream|mixdrop|m1xdrop|mxcontent|loadm(?:\.cam)?|upstream|uqload|streamtape|vidoza)[^"'<\s]+`;
-const HOSTER_ESCAPED_DIRECT_LINK_PATTERN = String.raw`https?:\\\/\\\/(?:www\\.)?(?:supervideo|vixcloud|dropload|dr0pstream|mixdrop|m1xdrop|mxcontent|loadm(?:\\.cam)?|upstream|uqload|streamtape|vidoza)[^"'<\s]+`;
+const HOSTER_DIRECT_LINK_PATTERN = String.raw`https?:\/\/(?:www\.)?(?:supervideo|vixcloud|dropload|dr0pstream|mixdrop|m1xdrop|mxcontent|loadm(?:\.cam)?|deltabit|safego|clicka|uprot\.net|maxstream\.video|stayonline\.pro|maxstream|upstream|uqload|streamtape|vidoza)[^"'<\s]+`;
+const HOSTER_ESCAPED_DIRECT_LINK_PATTERN = String.raw`https?:\\\/\\\/(?:www\\.)?(?:supervideo|vixcloud|dropload|dr0pstream|mixdrop|m1xdrop|mxcontent|loadm(?:\\.cam)?|deltabit|safego|clicka|uprot\\.net|maxstream\\.video|stayonline\\.pro|maxstream|upstream|uqload|streamtape|vidoza)[^"'<\s]+`;
 
 const HOSTER_DEFINITIONS = [
     {
@@ -31,6 +35,21 @@ const HOSTER_DEFINITIONS = [
         matches: isSupervideoUrl,
         extract: extractSupervideo,
         priority: 0
+    },
+
+    {
+        key: 'maxstream',
+        label: 'MaxStream',
+        matches: isMaxstreamUrl,
+        extract: extractMaxstream,
+        priority: 0
+    },
+    {
+        key: 'deltabit',
+        label: 'DeltaBit',
+        matches: isDeltabitUrl,
+        extract: extractDeltabit,
+        priority: 1
     },
     {
         key: 'vixcloud',

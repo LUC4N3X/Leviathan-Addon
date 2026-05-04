@@ -1,6 +1,8 @@
 'use strict';
 
 const { extractLoadm, isLoadmUrl } = require('./loadm');
+const { extractDeltabit, isDeltabitUrl } = require('./deltabit');
+const { extractMaxstream, isMaxstreamUrl } = require('./maxstream');
 const { extractMixdrop, isMixdropUrl } = require('./mixdrop');
 const { extractSupervideo, isSupervideoUrl } = require('./supervideo');
 const { extractDropload, isDroploadUrl } = require('./dropload');
@@ -11,8 +13,12 @@ const { extractVidoza, isVidozaUrl } = require('./vidoza');
 const { extractVixcloud, isVixcloudUrl } = require('./vixcloud');
 
 module.exports = {
+    extractDeltabit,
+    isDeltabitUrl,
     extractLoadm,
     isLoadmUrl,
+    extractMaxstream,
+    isMaxstreamUrl,
     extractMixdrop,
     isMixdropUrl,
     extractSupervideo,
