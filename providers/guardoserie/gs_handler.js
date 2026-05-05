@@ -1,6 +1,4 @@
 'use strict';
-// GuardoSerie handler v6: Leviathan ProviderShield architecture.
-// CF/session/HTTP guard logic lives in providers/utils/.
 
 const cheerio = require('cheerio');
 const path    = require('path');
@@ -67,6 +65,13 @@ const DEBUG_GS              = envFlag('GUARDOSERIE_DEBUG', false);
 const DEBUG_CF              = DEBUG_GS || envFlag('GUARDOSERIE_DEBUG_CF', envFlag('PROVIDER_SHIELD_DEBUG_CF', true)) || envFlag('FLARESOLVERR_DEBUG', false);
 const GS_SKIP_AJAX_AFTER_FALLBACK_HIT = envFlagNotFalse('GS_SKIP_AJAX_AFTER_FALLBACK_HIT', true) && envFlagNotFalse('GUARDOSERIE_SKIP_AJAX_AFTER_FALLBACK_HIT', true);
 const GS_FAST_SLUG_FIRST           = envFlagNotFalse('GS_FAST_SLUG_FIRST', true) && envFlagNotFalse('GUARDOSERIE_FAST_SLUG_FIRST', true);
+
+// Guardrail anti-stallo: le ricerche WordPress/AJAX sono speculative.
+// Se non esiste già una sessione valida, non devono aprire finestre da 30/55s:
+// i target slug diretti sono molto più affidabili e costano pochi secondi.
+const GS_SEARCH_ALLOW_CLEARANCE    = envFlag('GS_SEARCH_ALLOW_CLEARANCE', false) || envFlag('GUARDOSERIE_SEARCH_ALLOW_CLEARANCE', false);
+const GS_SEARCH_FAST_TIMEOUT_MS    = Math.max(4500, Math.min(9000, parseInt(process.env.GS_SEARCH_FAST_TIMEOUT_MS || '6500', 10) || 6500));
+const GS_SPECULATIVE_CLEARANCE     = envFlag('GS_SPECULATIVE_CLEARANCE', false) || envFlag('GUARDOSERIE_SPECULATIVE_CLEARANCE', false);
 
 const COMPILED_DIRECT_REGEX  = new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig');
 const COMPILED_ESCAPED_REGEX = new RegExp(HOSTER_ESCAPED_DIRECT_LINK_PATTERN, 'ig');
@@ -346,6 +351,58 @@ function normalizeTitleScoreMany(candidate, titles = []) {
   return best;
 }
 
+function buildSlugCandidatePaths(slug) {
+  const clean = String(slug || '').replace(/^\/+|\/+$/g, '');
+  if (!clean) return [];
+
+  // Ordine scelto dai log reali: spesso la root /titolo/ risponde subito 200,
+  // mentre /serietv/titolo/ può rallentare e far partire clearance inutili.
+  return [`/${clean}/`, `/serie/${clean}/`, `/serietv/${clean}/`];
+}
+
+function readHtmlTitleBits(html, url = '') {
+  const raw = String(html || '');
+  const bits = [String(url || '')];
+  if (!raw) return bits.join(' ');
+
+  try {
+    const $ = cheerio.load(raw);
+    bits.push(
+      $('title').first().text(),
+      $('h1').first().text(),
+      $('meta[property="og:title"]').attr('content'),
+      $('.entry-title,.post-title,.single-title,.page-title,.tvtitle').first().text()
+    );
+  } catch (_) {}
+
+  return uniqueCleanStrings(bits, 8).join(' ');
+}
+
+function evaluateSeriesPageCandidate(html, url, expectedTitles, season, episode, options = {}) {
+  const raw = String(html || '');
+  if (!raw || !/\/episodio\//i.test(raw)) {
+    return { ok: false, score: 0, titleScore: 0, episodeUrl: null, reason: 'no_episode_links' };
+  }
+
+  const titleBits  = readHtmlTitleBits(raw, url);
+  const titleScore = normalizeTitleScoreMany(titleBits, expectedTitles);
+  const strictEpisodeUrl = extractEpisodeUrlFromSeriesPage(raw, season, episode, { strictEpisode: true });
+  const looseEpisodeUrl  = strictEpisodeUrl || (options.strictEpisode ? null : extractEpisodeUrlFromSeriesPage(raw, season, episode, { strictEpisode: false }));
+  const hasEpisodeProof  = Boolean(strictEpisodeUrl || looseEpisodeUrl);
+  const urlScore         = normalizeTitleScoreMany(String(url || ''), expectedTitles);
+  const score            = Math.max(titleScore, urlScore) + (hasEpisodeProof ? 2 : 0);
+
+  return {
+    ok: hasEpisodeProof && (Math.max(titleScore, urlScore) >= 1 || score >= 3),
+    score,
+    titleScore,
+    urlScore,
+    episodeUrl: looseEpisodeUrl,
+    strictEpisodeUrl,
+    reason: hasEpisodeProof ? 'episode_proof' : 'no_target_episode'
+  };
+}
+
 function hasExplicitAnimeSignal(meta = {}) {
   const type = String(meta?.type || meta?.kind || meta?.mediaType || meta?.contentType || '').toLowerCase();
   if (type === 'anime' || meta?.isAnime === true || meta?.anime === true || meta?.tmdbAnimeCandidate === true) return true;
@@ -596,8 +653,8 @@ async function searchProviderSequential(query, signal) {
   const fetchFallback = () => smartFetch(fallbackUrl, {
     ttl: TTL_SEARCH,
     signal,
-    allowFlareSolverr: true,
-    timeoutMs: SEARCH_QUERY_TIMEOUT_MS
+    allowFlareSolverr: GS_SEARCH_ALLOW_CLEARANCE || gsHttp.isSessionFresh(),
+    timeoutMs: gsHttp.isSessionFresh() ? SEARCH_QUERY_TIMEOUT_MS : GS_SEARCH_FAST_TIMEOUT_MS
   }).catch((e) => {
     if (isAbortLikeError(e)) throw e;
     gsDebug('fallback search failed', { query, error: e?.message || String(e) });
@@ -609,8 +666,8 @@ async function searchProviderSequential(query, signal) {
     body: ajaxBody,
     ttl: TTL_SEARCH,
     signal,
-    allowFlareSolverr: true,
-    timeoutMs: SEARCH_QUERY_TIMEOUT_MS
+    allowFlareSolverr: GS_SEARCH_ALLOW_CLEARANCE || gsHttp.isSessionFresh(),
+    timeoutMs: gsHttp.isSessionFresh() ? SEARCH_QUERY_TIMEOUT_MS : GS_SEARCH_FAST_TIMEOUT_MS
   }).catch((e) => {
     if (isAbortLikeError(e)) throw e;
     gsDebug('ajax search failed', { query, error: e?.message || String(e) });
@@ -672,14 +729,19 @@ function createTimeoutSignal(parentSignal, timeoutMs) {
 }
 
 async function searchProviderWithTimeout(query, signal, timeoutMs = SEARCH_QUERY_TIMEOUT_MS) {
-  // Keep every single query bounded. The old wide clearance budget was the reason GS reached Leviathan's 65s watchdog.
-  const clearanceBudgetMs = Math.min(GLOBAL_TIMEOUT_MS - 12000, FLARE_WARMUP_TIMEOUT_MS + DIRECT_FETCH_TIMEOUT_MS + 5000);
-  const effectiveTimeoutMs = Math.max(timeoutMs, Math.max(18000, clearanceBudgetMs));
-  const needsClearanceWindow = !gsHttp.isSessionFresh();
+  // Keep every single query bounded. Search endpoints are fallback, not the main resolver.
+  // Without an already fresh session, they must fail fast instead of consuming the whole
+  // provider budget with clearance attempts.
+  const hasFreshSession = gsHttp.isSessionFresh();
+  const needsClearanceWindow = !hasFreshSession && GS_SEARCH_ALLOW_CLEARANCE;
+  const clearanceBudgetMs = Math.min(GLOBAL_TIMEOUT_MS - 18000, FLARE_WARMUP_TIMEOUT_MS + DIRECT_FETCH_TIMEOUT_MS + 2500);
+  const effectiveTimeoutMs = hasFreshSession
+    ? Math.max(timeoutMs, 9000)
+    : (GS_SEARCH_ALLOW_CLEARANCE ? Math.max(12000, clearanceBudgetMs) : GS_SEARCH_FAST_TIMEOUT_MS);
 
   const scoped = createTimeoutSignal(signal, effectiveTimeoutMs);
   try {
-    gsDebug('search query start', { query, timeoutMs: effectiveTimeoutMs, needsClearanceWindow });
+    gsDebug('search query start', { query, timeoutMs: effectiveTimeoutMs, needsClearanceWindow, sessionFresh: hasFreshSession });
     return await searchProviderSequential(query, scoped.signal);
   } catch (e) {
     if (isAbortLikeError(e) || scoped.signal.aborted) {
@@ -694,9 +756,12 @@ async function searchProviderWithTimeout(query, signal, timeoutMs = SEARCH_QUERY
 }
 
 async function searchProviderParallel(queries, signal) {
-  const uniqueQueries = Array.from(new Set(queries.filter(Boolean))).slice(0, 3);
+  const hasFreshSession = gsHttp.isSessionFresh();
+  const maxQueries = hasFreshSession ? 3 : 1;
+  const uniqueQueries = Array.from(new Set(queries.filter(Boolean))).slice(0, maxQueries);
   if (!uniqueQueries.length) return [];
-  const results = await asyncPool(2, uniqueQueries, q => searchProviderWithTimeout(q, signal));
+  const concurrency = hasFreshSession ? 2 : 1;
+  const results = await asyncPool(concurrency, uniqueQueries, q => searchProviderWithTimeout(q, signal));
   return results.flat().filter(Boolean);
 }
 
@@ -859,7 +924,7 @@ async function searchGuardaserieImpl(meta, config, reqHost = null) {
   if (!season || season < 1 || !episode || episode < 1) return [];
 
   const controller = new AbortController();
-  const timer      = setTimeout(() => controller.abort(), GLOBAL_TIMEOUT_MS);
+  const timer      = setTimeout(() => controller.abort('guardoserie provider budget exceeded'), GLOBAL_TIMEOUT_MS);
 
   try {
     return await _searchGuardaserie(meta, config, season, episode, controller.signal, reqHost);
@@ -871,7 +936,7 @@ async function searchGuardaserieImpl(meta, config, reqHost = null) {
   }
 }
 
-async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal = null) {
+async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal = null, season = null, episode = null, strictEpisode = false) {
   if (!GS_FAST_SLUG_FIRST) return [];
   const candidates = [];
   const seen = new Set();
@@ -879,7 +944,7 @@ async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal
   for (const title of uniqueCleanStrings(expectedTitles, 8).filter(isUsableGsTitleForSearch)) {
     const slug = slugify(title);
     if (!slug) continue;
-    for (const p of [`/serie/${slug}/`]) {
+    for (const p of buildSlugCandidatePaths(slug)) {
       const url = buildGsUrl(p);
       if (seen.has(url)) continue;
       seen.add(url);
@@ -888,15 +953,24 @@ async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal
   }
 
   const out = [];
-  gsDebug('fast slug start', { candidates: candidates.slice(0, 3) });
-  for (const url of candidates.slice(0, 3)) {
+  gsDebug('fast slug start', { candidates: candidates.slice(0, 6) });
+  for (const url of candidates.slice(0, 6)) {
+    if (signal?.aborted) break;
     try {
-      const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: false, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+      const html = await smartFetch(url, {
+        ttl: TTL_SERIES,
+        signal,
+        allowFlareSolverr: false,
+        timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200)
+      });
       if (!html) continue;
 
-      const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
-      const titleScore = normalizeTitleScoreMany(pageTitle, expectedTitles);
-      if (titleScore < 2) continue;
+      const pageTitle = readHtmlTitleBits(html, url);
+      const pageCheck = evaluateSeriesPageCandidate(html, url, expectedTitles, season, episode, { strictEpisode });
+      if (!pageCheck.ok && pageCheck.score < 3) {
+        gsDebug('fast slug rejected', { url, reason: pageCheck.reason, score: pageCheck.score, titleScore: pageCheck.titleScore, urlScore: pageCheck.urlScore });
+        continue;
+      }
 
       const foundYear =
         html.match(/release-year\/(\d{4})/i)?.[1] ||
@@ -904,8 +978,16 @@ async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal
         null;
 
       if (targetYear && foundYear && Math.abs(Number(foundYear) - Number(targetYear)) > 3) continue;
-      out.push({ url, html, title: pageTitle || url, mapped: true, fastSlug: true, score: titleScore });
-      if (titleScore >= 3) break;
+      out.push({
+        url,
+        html,
+        title: pageTitle || url,
+        mapped: true,
+        fastSlug: true,
+        score: pageCheck.score,
+        episodeUrl: pageCheck.episodeUrl
+      });
+      if (pageCheck.ok || pageCheck.score >= 4) break;
     } catch (e) {
       if (isAbortLikeError(e) && signal?.aborted) throw e;
       gsDebug('fast slug candidate failed', { url, error: e?.message || String(e) });
@@ -973,7 +1055,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
   const queries       = uniqueCleanStrings(expectedTitles, animeContext?.isAnime ? 8 : 4);
   const mappedResults = (Array.isArray(animeContext?.mappingUrls) ? animeContext.mappingUrls : [])
     .map(url => ({ url, title: showName || url, mapped: true }));
-  const fastSlugResults = await tryFastSlugTargets(expectedTitles, targetYear, signal);
+  const fastSlugResults = await tryFastSlugTargets(expectedTitles, targetYear, signal, season, episode, strictKitsu);
   gsDebug('fast slug done', { results: fastSlugResults.length, ms: Date.now() - providerStartedAt });
   let allResults = [...mappedResults, ...fastSlugResults];
 
@@ -986,9 +1068,12 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
 
   allResults     = Array.from(new Map(allResults.map(i => [i.url, i])).values());
 
-  const seriesResults  = allResults.filter(r => /\/serie\//i.test(r.url));
-  const episodeResults = allResults.filter(r => /\/episodio\//i.test(r.url));
-  allResults = strictKitsu && seriesResults.length ? seriesResults : [...seriesResults, ...episodeResults];
+  const directPageResults = allResults.filter(r => r.fastSlug || r.mapped || (r.html && /\/episodio\//i.test(String(r.html))));
+  const seriesResults     = allResults.filter(r => /\/serie\//i.test(r.url));
+  const episodeResults    = allResults.filter(r => /\/episodio\//i.test(r.url));
+  allResults = strictKitsu && seriesResults.length
+    ? Array.from(new Map([...seriesResults, ...directPageResults].map(i => [i.url, i])).values())
+    : Array.from(new Map([...directPageResults, ...seriesResults, ...episodeResults].map(i => [i.url, i])).values());
 
   allResults.sort((a, b) =>
     normalizeTitleScoreMany(b.title, expectedTitles) -
@@ -998,11 +1083,20 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
   let target = null, bestLoose = null;
 
   for (const result of allResults) {
-    const titleScore = normalizeTitleScoreMany(result.title, expectedTitles);
-    if (titleScore < 1) continue;
+    const initialTitleScore = normalizeTitleScoreMany(result.title, expectedTitles);
+    if (initialTitleScore < 1 && !result.fastSlug) continue;
 
-    const html = result.html || await smartFetch(result.url, { ttl: TTL_SERIES, signal, allowFlareSolverr: true, timeoutMs: DIRECT_FETCH_TIMEOUT_MS });
+    const html = result.html || await smartFetch(result.url, {
+      ttl: TTL_SERIES,
+      signal,
+      allowFlareSolverr: GS_SPECULATIVE_CLEARANCE || gsHttp.isSessionFresh(),
+      timeoutMs: DIRECT_FETCH_TIMEOUT_MS
+    });
     if (!html) continue;
+
+    const pageCheck = evaluateSeriesPageCandidate(html, result.url, expectedTitles, season, episode, { strictEpisode: strictKitsu });
+    const titleScore = Math.max(initialTitleScore, pageCheck.titleScore, pageCheck.urlScore);
+    if (!pageCheck.ok && titleScore < 1) continue;
 
     const foundYear =
       html.match(/release-year\/(\d{4})/i)?.[1] ||
@@ -1012,12 +1106,12 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
     if (targetYear && foundYear) {
       const allowedYearDelta = titleScore >= 3 ? 3 : 1;
       if (Math.abs(Number(foundYear) - Number(targetYear)) <= allowedYearDelta) {
-        target = { url: result.url, html };
+        target = { url: result.url, html, episodeUrl: result.episodeUrl || pageCheck.episodeUrl };
         break;
       }
-    } else if (titleScore >= (bestLoose?.score || 0)) {
-      bestLoose = { url: result.url, html, score: titleScore };
-      if (titleScore >= 2) break;
+    } else if (pageCheck.ok || pageCheck.score >= (bestLoose?.score || 0)) {
+      bestLoose = { url: result.url, html, score: pageCheck.score || titleScore, episodeUrl: result.episodeUrl || pageCheck.episodeUrl };
+      if (pageCheck.ok || titleScore >= 2) break;
     }
   }
 
@@ -1026,15 +1120,22 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
   if (!target) {
     const slugs = uniqueCleanStrings(expectedTitles, 3).map(slugify).filter(Boolean);
     outer: for (const slug of slugs) {
-      for (const p of [`/serie/${slug}/`, `/${slug}/`, `/serietv/${slug}/`]) {
+      for (const p of buildSlugCandidatePaths(slug)) {
+        if (signal?.aborted) break outer;
         const url  = buildGsUrl(p);
-        const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: true, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
-        if (html) {
-          const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
-          if (normalizeTitleScoreMany(pageTitle, expectedTitles) >= 2) {
-            target = { url, html };
-            break outer;
-          }
+        const html = await smartFetch(url, {
+          ttl: TTL_SERIES,
+          signal,
+          allowFlareSolverr: false,
+          timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200)
+        });
+        if (!html) continue;
+
+        const pageCheck = evaluateSeriesPageCandidate(html, url, expectedTitles, season, episode, { strictEpisode: strictKitsu });
+        if (pageCheck.ok || pageCheck.score >= 3) {
+          target = { url, html, episodeUrl: pageCheck.episodeUrl };
+          gsDebug('fallback slug accepted', { url, score: pageCheck.score, titleScore: pageCheck.titleScore, urlScore: pageCheck.urlScore, reason: pageCheck.reason });
+          break outer;
         }
       }
     }
@@ -1042,11 +1143,16 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
 
   if (!target?.url) return [];
 
-  const episodeUrl    = extractEpisodeUrlFromSeriesPage(target.html, season, episode, { strictEpisode: strictKitsu });
+  const episodeUrl    = target.episodeUrl || extractEpisodeUrlFromSeriesPage(target.html, season, episode, { strictEpisode: strictKitsu });
   if (!episodeUrl) return [];
 
   const absoluteEpUrl = new URL(episodeUrl, getTargetDomain()).toString();
-  const finalHtml     = await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: true, timeoutMs: DIRECT_FETCH_TIMEOUT_MS });
+  const finalHtml     = await smartFetch(absoluteEpUrl, {
+    ttl: TTL_EPISODE,
+    signal,
+    allowFlareSolverr: GS_SPECULATIVE_CLEARANCE || gsHttp.isSessionFresh(),
+    timeoutMs: DIRECT_FETCH_TIMEOUT_MS
+  });
   const playerLinks   = Array.from(new Set(extractPlayerLinksFromHtml(finalHtml))).slice(0, 5);
   if (!playerLinks.length) return [];
 
