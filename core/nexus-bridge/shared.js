@@ -558,6 +558,7 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
     const hasDirectUrl = typeof rawUrl === 'string' && /^https?:\/\//i.test(rawUrl);
     const trustedDirectUrl = hasDirectUrl && addonKey === 'torrentio_mirror' && addon.trustDirectUrl !== false;
     const externalCached = trustedDirectUrl;
+    const externalCachedBool = externalCached ? true : null;
 
     const potentialPack = Boolean(isSeriesType && packCandidate);
 
@@ -571,7 +572,7 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
         externalAddon: addonKey, externalProvider: originalProvider, externalGroup: getAddonGroup(addonKey), sourceEmoji: getAddonEmoji(addonKey),
         magnetLink, url: rawUrl, directUrl: rawUrl, externalDirectUrl: rawUrl, _externalDirectUrl: rawUrl,
         isCached: externalCached, cacheState: externalCached ? 'cached' : 'unknown', rdCacheState: externalCached ? 'cached' : 'unknown',
-        cached_rd: trustedDirectUrl, _dbCachedRd: trustedDirectUrl, _nexusBridgeRdChecked: trustedDirectUrl, _externalRdChecked: trustedDirectUrl,
+        cached_rd: externalCachedBool, _dbCachedRd: externalCachedBool, _nexusBridgeRdChecked: trustedDirectUrl, _externalRdChecked: trustedDirectUrl,
         pubDate: new Date().toISOString(), isItalian: languageInfo.isItalian, hasItalianAudio: languageInfo.hasAudioItalian,
         hasItalianSubs: languageInfo.hasSubItalian, languageInfo, techTags
     };

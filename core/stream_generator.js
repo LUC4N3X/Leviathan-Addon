@@ -862,14 +862,36 @@ function parseFinalStreamSizeBytes(stream = {}) {
     return value * 1024 * 1024;
 }
 
+function getFinalStreamCacheState(stream = {}) {
+    const raw = stream?.cacheState || stream?.rdCacheState || stream?.behaviorHints?.cacheState || stream?.behaviorHints?.rdCacheState || '';
+    const normalized = String(raw || '').trim().toLowerCase();
+    if (normalized) return normalized;
+    const visibleText = `${stream?.name || ''}
+${stream?.title || ''}`;
+    if (/⚡/.test(visibleText) && /\b(RD|TB)\b/i.test(visibleText)) return 'cached';
+    if (/☁️/.test(visibleText) && /\b(RD|TB)\b/i.test(visibleText)) return 'uncached_terminal';
+    if (/⏳/.test(visibleText) && /\b(RD|TB)\b/i.test(visibleText)) return 'probing';
+    return 'unknown';
+}
+
+function getFinalStreamCacheTier(stream = {}) {
+    const state = getFinalStreamCacheState(stream);
+    if (state === 'cached') return 0;
+    if (state === 'likely_cached' || state === 'probing' || state === 'unknown') return 1;
+    if (state === 'likely_uncached') return 2;
+    if (state === 'uncached_terminal') return 3;
+    return 1;
+}
+
 function applyFinalStreamUserSort(streams = [], config = {}) {
     const list = Array.isArray(streams) ? streams : [];
     const sortMode = getConfiguredSortMode(config);
-    if (sortMode !== 'resolution' && sortMode !== 'size') return list;
 
     return list
-        .map((stream, index) => ({ stream, index }))
+        .map((stream, index) => ({ stream, index, cacheTier: getFinalStreamCacheTier(stream) }))
         .sort((a, b) => {
+            // Prima sempre lo stato cache: ⚡ confermati sopra, ⏳ dubbi sotto.
+            if (a.cacheTier !== b.cacheTier) return a.cacheTier - b.cacheTier;
             if (sortMode === 'resolution') {
                 const resDelta = getFinalStreamResolutionTier(b.stream) - getFinalStreamResolutionTier(a.stream);
                 if (resDelta !== 0) return resDelta;
@@ -898,6 +920,7 @@ const {
     reprioritizeRdRankedList,
     getRdAvailabilityState,
     isGuaranteedCachedExternal,
+    applyRdDisplayPriority,
     persistResolvedDebridAvailability
 } = createDebridAvailabilityTools({
     Cache,
@@ -1116,15 +1139,15 @@ function applyConfiguredStreamFilters(streams, filters = {}) {
     return list.filter(stream => !shouldDropByConfiguredQuality(`${stream?.title || ''} ${stream?.name || ''}`, filters, { treatGenericHdAs720: true }));
 }
 
-async function normalizeCandidateResults(items) {
+async function normalizeCandidateResults(items, meta = {}) {
     const trackerPass = enrichTorrentItems(Array.isArray(items) ? items : []);
     if (trackerPass.stats.enriched > 0) {
         logger.info(`[TRACKER] enriched=${trackerPass.stats.enriched}/${trackerPass.stats.total} trackersAdded=${trackerPass.stats.trackersAdded} maxPerMagnet=${trackerPass.stats.maxTrackers}`);
     }
 
     let normalized = deduplicateResults(trackerPass.results);
-    normalized = propagateRdKnownStatesByHash(normalized);
-    normalized = await hydrateRdDbStatesByHash(normalized);
+    normalized = propagateRdKnownStatesByHash(normalized, meta);
+    normalized = await hydrateRdDbStatesByHash(normalized, meta);
     return normalized;
 }
 
@@ -1354,7 +1377,7 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         ? details.qualityLabel
         : detectQualityLabel(baseParseTitle, details.quality || 'SD');
     const serviceLabel = normalizedService === 'tb' ? 'TB' : normalizedService.toUpperCase();
-    const availabilityState = getRdAvailabilityState(normalizedService, item);
+    const availabilityState = getRdAvailabilityState(normalizedService, item, meta);
     const isSavedCloudStream = Boolean(item?.isSavedCloud || item?._savedCloud || item?.savedCloud);
     const formatterSource = item?.source;
 
@@ -1382,8 +1405,12 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
                 infoHash: item?.hash,
                 fileIdx: getResolvedFileIdx(item),
                 folderSize: getObservedFolderSizeBytes(item) || undefined,
-                filename: item?.episodeFileHint?.fileName || item?._episodeFileHint?.fileName || item?.filename || undefined
-            }
+                filename: item?.episodeFileHint?.fileName || item?._episodeFileHint?.fileName || item?.filename || undefined,
+                cacheState: availabilityState,
+                rdCacheState: availabilityState
+            },
+            cacheState: availabilityState,
+            rdCacheState: availabilityState
         };
     }
 
@@ -1415,8 +1442,12 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
             infoHash: item?.hash,
             fileIdx: getResolvedFileIdx(item),
             folderSize: getObservedFolderSizeBytes(item) || undefined,
-            filename: item?.episodeFileHint?.fileName || item?._episodeFileHint?.fileName || item?.filename || undefined
-        }
+            filename: item?.episodeFileHint?.fileName || item?._episodeFileHint?.fileName || item?.filename || undefined,
+            cacheState: availabilityState,
+            rdCacheState: availabilityState
+        },
+        cacheState: availabilityState,
+        rdCacheState: availabilityState
     };
 }
 
@@ -2056,7 +2087,7 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
                     if (
                         String(config?.service || 'rd').toLowerCase() === 'rd' &&
                         prioritizedHashes.length < 18 &&
-                        getRdAvailabilityState('rd', item) === 'unknown' &&
+                        getRdAvailabilityState('rd', item, meta) === 'unknown' &&
                         !prioritizedSet.has(infoHash)
                     ) {
                         prioritizedSet.add(infoHash);
@@ -2665,6 +2696,7 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
                 );
                 const rdCached = Boolean(mediaFusionRdCached || trustedTorrentioDirect);
                 const rdState = rdCached ? 'cached' : 'unknown';
+                const rdCachedBool = rdCached ? true : null;
                 const externalPack = isConfidentSeasonPackItem({
                     ...i,
                     title,
@@ -2705,8 +2737,8 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
                     _isPack: Boolean(isSeriesQuery && externalPack),
                     _rdCacheState: rdState,
                     rdCacheState: rdState,
-                    _dbCachedRd: rdCached,
-                    cached_rd: rdCached,
+                    _dbCachedRd: rdCachedBool,
+                    cached_rd: rdCachedBool,
                     _mediafusionRdChecked: Boolean(i._mediafusionRdChecked),
                     _nexusBridgeRdChecked: Boolean(i._nexusBridgeRdChecked || trustedTorrentioDirect),
                     _externalRdChecked: Boolean(i._externalRdChecked || trustedTorrentioDirect)
@@ -2810,7 +2842,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                     const externalResults = externalSettled.status === 'fulfilled' ? externalSettled.value : [];
                     logger.info(`[STATS] Remote: ${remoteResults.length} | External: ${externalResults.length}`);
 
-                    cleanResults = await normalizeCandidateResults([...cleanResults, ...remoteResults, ...externalResults].filter(aggressiveFilter));
+                    cleanResults = await normalizeCandidateResults([...cleanResults, ...remoteResults, ...externalResults].filter(aggressiveFilter), meta);
                     cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
                 } else if (phase.kind === 'scrape' && phase.querySubset.length > 0 && flags.useLiveSources) {
                     logger.info(`[SCRAPER PLAN] phase=${phase.key} lang=${langMode} queries=${phase.querySubset.length} timeout=${scraperTimeout}ms | titleKey=${titleKey}`);
@@ -2841,12 +2873,12 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
                     const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks))
                         .flatMap((result) => result.status === 'fulfilled' ? result.value : []);
-                    cleanResults = await normalizeCandidateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)]);
+                    cleanResults = await normalizeCandidateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)], meta);
                     cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
                     logger.info(`[STATS SCRAPER] phase=${phase.key} total=${cleanResults.length} added=${scrapedResultsRaw.length}`);
                 }
 
-                assessmentPool = await normalizeCandidateResults([...seedResults, ...cleanResults].filter(aggressiveFilter));
+                assessmentPool = await normalizeCandidateResults([...seedResults, ...cleanResults].filter(aggressiveFilter), meta);
                 assessmentPool = applyConfiguredTorrentFilters(assessmentPool, config.filters || {});
                 lastAssessment = assessFastResultQuality(assessmentPool, meta, langMode, config);
                 const satisfaction = evaluatePoolSatisfaction(lastAssessment, meta);
@@ -2971,7 +3003,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
       let localDbSatisfaction = { satisfied: false, reason: 'no_db_results' };
       if (localDbResults.length > 0) {
           localDbFastPool = applyConfiguredTorrentFilters(
-              await normalizeCandidateResults(localDbResults.filter(aggressiveFilter)),
+              await normalizeCandidateResults(localDbResults.filter(aggressiveFilter), meta),
               filters
           );
           const localDbAssessment = assessFastResultQuality(localDbFastPool, meta, langMode, config);
@@ -3020,7 +3052,7 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
               });
           cleanResults = useLocalDbFastPath
               ? localDbFastPool
-              : await normalizeCandidateResults(groupedMergePool.filter(aggressiveFilter));
+              : await normalizeCandidateResults(groupedMergePool.filter(aggressiveFilter), meta);
           cleanResults = runFilterStage(cleanResults, meta, filters, {
               applyPackKnowledge,
               applyConfiguredTorrentFilters
@@ -3052,6 +3084,9 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           }
           rankedList = infoHashRankDedupe.results;
           if (filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, filters.maxPerQuality);
+          if (configuredDebridService === 'rd' && hasDebridKey && typeof applyRdDisplayPriority === 'function') {
+              rankedList = applyRdDisplayPriority(rankedList, config, meta);
+          }
 
           if (configuredDebridService === 'tb' && hasDebridKey) {
               rankedList = await resolveTorboxRankedList(rankedList, debridApiKey);

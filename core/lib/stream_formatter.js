@@ -274,7 +274,9 @@ function normalizeCacheState(cacheState, serviceTag) {
 }
 
 function getCacheIcon(cacheState) {
-  if (cacheState === 'cached' || cacheState === 'likely_cached') return '⚡';
+  // ⚡ solo per cache RD/TB confermata. likely_cached resta dubbio/probing per non ingannare l'utente.
+  if (cacheState === 'cached') return '⚡';
+  if (cacheState === 'likely_cached') return '⏳';
   if (cacheState === 'uncached_terminal') return '☁️';
   if (cacheState === 'probing') return '⏳';
   if (cacheState === 'likely_uncached') return '⏳';

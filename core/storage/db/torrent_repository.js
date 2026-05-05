@@ -1,4 +1,5 @@
 const { buildSmartDedupeKey, getFolderSizeBytes, getSizeBytes } = require('../../stream/infohash_deduper');
+const { inferEpisodeHintFromPackFiles } = require('../../stream/episode_precision');
 
 function createTorrentRepository({
   getPool,
@@ -1063,6 +1064,141 @@ function createTorrentRepository({
     }
   }
 
+  async function getEpisodePackFileHintsByHashes(hashes, meta = {}) {
+    const pool = getPool();
+    if (!pool) return [];
+    await awaitDatabaseOptimizations();
+
+    const normalizedHashes = normalizeUniqueInfoHashes(hashes);
+    const imdbId = normalizeImdbId(meta?.imdb_id || meta?.imdbId);
+    const season = toNullableInt(meta?.season ?? meta?.imdb_season);
+    const episode = toNullableInt(meta?.episode ?? meta?.imdb_episode);
+
+    if (normalizedHashes.length === 0 || !imdbId || season === null || season <= 0 || episode === null || episode <= 0) return [];
+
+    try {
+      const res = await pool.query(
+        `
+          WITH exact_matches AS (
+            SELECT DISTINCT ON (pack_hash_norm)
+              pack_hash_norm AS hash,
+              file_index,
+              file_index_norm,
+              file_path,
+              file_title,
+              file_size,
+              imdb_id,
+              imdb_season,
+              imdb_episode,
+              'db_exact_identity'::text AS source
+            FROM pack_files
+            WHERE pack_hash_norm = ANY($1::text[])
+              AND imdb_id = $2
+              AND imdb_season = $3
+              AND imdb_episode = $4
+            ORDER BY
+              pack_hash_norm,
+              CASE WHEN file_index_norm >= 0 THEN 0 ELSE 1 END,
+              COALESCE(file_size, 0) DESC,
+              LENGTH(COALESCE(file_title, file_path, '')) DESC
+          )
+          SELECT *
+          FROM exact_matches
+        `,
+        [normalizedHashes, imdbId, season, episode]
+      );
+
+      const exactRows = (res.rows || []).map((row) => ({
+        hash: normalizeInfoHash(row.hash),
+        file_index: normalizeFileIndex(row.file_index),
+        file_path: sanitizeText(row.file_path),
+        file_title: sanitizeText(row.file_title),
+        file_size: toSafeNumber(row.file_size, 0),
+        imdb_id: normalizeImdbId(row.imdb_id),
+        imdb_season: toNullableInt(row.imdb_season),
+        imdb_episode: toNullableInt(row.imdb_episode),
+        source: sanitizeText(row.source, 'db_exact_identity'),
+        confidence: 1,
+        reason: 'db_imdb_season_episode_mapping'
+      })).filter((row) => row.hash);
+
+      const exactHashes = new Set(exactRows.map((row) => row.hash));
+      const missingHashes = normalizedHashes.filter((hash) => !exactHashes.has(hash));
+      if (missingHashes.length === 0) return exactRows;
+
+      const fallbackRes = await pool.query(
+        `
+          SELECT
+            pack_hash_norm AS hash,
+            file_index,
+            file_index_norm,
+            file_path,
+            file_title,
+            file_size
+          FROM pack_files
+          WHERE pack_hash_norm = ANY($1::text[])
+          ORDER BY
+            pack_hash_norm,
+            CASE WHEN file_index_norm >= 0 THEN 0 ELSE 1 END,
+            file_index_norm ASC,
+            COALESCE(file_size, 0) DESC
+        `,
+        [missingHashes]
+      );
+
+      const grouped = new Map();
+      for (const row of fallbackRes.rows || []) {
+        const hash = normalizeInfoHash(row.hash);
+        if (!hash) continue;
+        const list = grouped.get(hash) || [];
+        list.push({
+          id: normalizeFileIndex(row.file_index),
+          file_index: normalizeFileIndex(row.file_index),
+          path: sanitizeText(row.file_path || row.file_title),
+          file_path: sanitizeText(row.file_path || row.file_title),
+          file_title: sanitizeText(row.file_title || row.file_path),
+          bytes: toSafeNumber(row.file_size, 0),
+          file_size: toSafeNumber(row.file_size, 0)
+        });
+        grouped.set(hash, list);
+      }
+
+      const inferredRows = [];
+      for (const hash of missingHashes) {
+        const files = grouped.get(hash) || [];
+        if (files.length === 0) continue;
+        const hint = inferEpisodeHintFromPackFiles(files, meta, {
+          imdb_id: imdbId,
+          season,
+          episode,
+          title: meta?.title || meta?.name || '',
+          seriesTitle: meta?.title || meta?.name || '',
+          isAnime: Boolean(meta?.isAnime || meta?.kitsu_id),
+          kitsu_id: meta?.kitsu_id
+        });
+        if (!hint) continue;
+        inferredRows.push({
+          hash,
+          file_index: normalizeFileIndex(hint.fileIndex),
+          file_path: sanitizeText(hint.filePath || hint.fileName),
+          file_title: sanitizeText(hint.fileName || hint.filePath),
+          file_size: toSafeNumber(hint.fileSize, 0),
+          imdb_id: imdbId,
+          imdb_season: season,
+          imdb_episode: episode,
+          source: 'db_pack_filename_inferred',
+          confidence: Number(hint.confidence || 0.9),
+          reason: hint.reason || 'filename_episode_marker'
+        });
+      }
+
+      return [...exactRows, ...inferredRows];
+    } catch (error) {
+      console.error(`❌ DB Error getEpisodePackFileHintsByHashes: ${error.message}`);
+      return [];
+    }
+  }
+
   async function getRdScanBatch(limit = 5) {
     const pool = getPool();
     if (!pool) return [];
@@ -1752,6 +1888,7 @@ function createTorrentRepository({
     getTorrents,
     getPackFiles,
     getSeriesPackFiles,
+    getEpisodePackFileHintsByHashes,
     getRdScanBatch,
     insertTorrent,
     insertTorrentsBatch,

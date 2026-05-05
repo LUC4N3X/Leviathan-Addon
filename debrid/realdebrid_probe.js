@@ -14,6 +14,7 @@ const RD_SLOW_RECHECK_DELAY_MS = 1200;
 const REQUIRE_EPISODE_HINT_FOR_PACKS = true;
 const RD_CACHED_RECHECK_HOURS = 168;
 const { findEpisodeFileHint } = require('../core/matching/season_pack_inspector');
+const { hasWrongExplicitEpisodeMarker } = require('../core/matching/episode_matcher');
 const { scheduleRealDebridRequest } = require('../core/utils/rd_rate_limiter');
 const { withRealDebridMagnetLock } = require('../core/utils/rd_magnet_lock');
 
@@ -255,15 +256,35 @@ function getEpisodeProbeContext(context = {}, fallbackTitle = '') {
     };
 }
 
+function hasTrustedEpisodeFileIndex(context = {}, episodeContext = null, forcedIndex = null) {
+    if (!episodeContext) return true;
+    if (!Number.isInteger(forcedIndex) || forcedIndex < 0) return false;
+    if (context?._episodeExact === true || context?._rdEpisodeExact === true || context?._dbEpisodeExact === true || context?._dbEpisodeMapping === true) return true;
+    const proof = context?._rdEpisodeProof || context?.rdEpisodeProof || null;
+    const proofIndex = Number(proof?.fileIdx ?? proof?.fileIndex ?? proof?.file_index);
+    if (proof?.exact === true && Number.isInteger(proofIndex) && proofIndex === forcedIndex) return true;
+    const hint = context?.episodeFileHint || context?._episodeFileHint || null;
+    const hintIndex = Number(hint?.fileIndex ?? hint?.fileIdx ?? hint?.file_index);
+    const hintSeason = Number(hint?.season || 0);
+    const hintEpisode = Number(hint?.episode || 0);
+    if (Number.isInteger(hintIndex) && hintIndex === forcedIndex) {
+        if (hintSeason > 0 && hintEpisode > 0) return hintSeason === episodeContext.season && hintEpisode === episodeContext.episode;
+        if (hint?.source || hint?.reason) return true;
+    }
+    return false;
+}
+
 function chooseProbeFileSelection(files, context = {}, fallbackTitle = '') {
     const videoFiles = extractVideoFiles(files);
     const episodeContext = getEpisodeProbeContext(context, fallbackTitle);
 
-    // Prima rispetta sempre fileIdx/rd_file_index già imparato dal DB.
-    // È fondamentale per i pack: se il DB conosce l'episodio, non blocchiamo il probe solo perché il parser titolo non ritrova l'hint.
+    // Rispetta fileIdx/rd_file_index solo se è già provato come episodio richiesto.
+    // Un fileIdx grezzo dentro un pack può puntare all'episodio sbagliato: in quel caso
+    // cerchiamo prima un episodeFileHint tramite i nomi reali dei file RD.
     const forcedIndex = Number(context?.fileIdx ?? context?.file_index ?? context?.rd_file_index);
-    if (Number.isInteger(forcedIndex) && forcedIndex >= 0 && videoFiles.some((file) => Number(file.id) === forcedIndex)) {
-        return { files: String(forcedIndex), selectedFileIndex: forcedIndex, episodeFileHint: null, forcedIndex: true };
+    const forcedIndexExists = Number.isInteger(forcedIndex) && forcedIndex >= 0 && videoFiles.some((file) => Number(file.id) === forcedIndex);
+    if (forcedIndexExists && hasTrustedEpisodeFileIndex(context, episodeContext, forcedIndex)) {
+        return { files: String(forcedIndex), selectedFileIndex: forcedIndex, episodeFileHint: context?.episodeFileHint || context?._episodeFileHint || null, forcedIndex: true };
     }
 
     if (episodeContext && videoFiles.length > 1) {
@@ -334,7 +355,7 @@ function buildProbeResult(infoHash, info, context = {}) {
         episode: Number(context.episode || context._probeEpisode || 0),
         fileIdx: context.fileIdx ?? context.file_index ?? context.rd_file_index
     } : null;
-    const episodeFileHint = episodeContext && isPack ? findEpisodeFileHint(files, episodeContext) : null;
+    const episodeFileHint = episodeContext ? findEpisodeFileHint(files, episodeContext) : null;
     const selected = episodeFileHint ? {
         file_title: episodeFileHint.fileName || episodeFileHint.filePath || main.file_title,
         file_size: episodeFileHint.fileSize || main.file_size,
@@ -343,20 +364,35 @@ function buildProbeResult(infoHash, info, context = {}) {
 
     const hasDownloadLinks = Array.isArray(info?.links) && info.links.length > 0;
     const statusCached = isCachedStatus(info?.status) && hasDownloadLinks;
+    const singleVideoTexts = [main.file_title, torrentTitle, originalFilename].filter(Boolean).join(' ');
+    const singleVideoHasWrongEpisode = episodeContext ? hasWrongExplicitEpisodeMarker(singleVideoTexts, episodeContext) : false;
+    const singleVideoExact = Boolean(statusCached && episodeContext && !isPack && !singleVideoHasWrongEpisode && Number.isInteger(Number(main.file_index)) && Number(main.file_index) >= 0);
     const requiresEpisodeHint = Boolean(REQUIRE_EPISODE_HINT_FOR_PACKS && statusCached && isPack && episodeContext);
     const cachedForRequestedEpisode = statusCached && (!requiresEpisodeHint || Boolean(episodeFileHint));
 
     return {
         hash,
         cached: cachedForRequestedEpisode,
-        state: cachedForRequestedEpisode ? 'cached' : (isTerminalUncachedStatus(info?.status) ? 'uncached_terminal' : (requiresEpisodeHint ? 'likely_uncached' : 'unknown')),
+        state: cachedForRequestedEpisode ? 'cached' : (isTerminalUncachedStatus(info?.status) ? 'uncached_terminal' : (requiresEpisodeHint ? 'likely_cached' : 'unknown')),
         rd_status: normalizeStatus(info?.status),
         torrent_title: torrentTitle,
         original_filename: originalFilename,
         pack_name: validPackName,
         is_pack: isPack,
         pack_without_episode_hint: Boolean(requiresEpisodeHint && !episodeFileHint),
-        episodeFileHint: episodeFileHint || null,
+        single_video_exact: singleVideoExact,
+        episodeFileHint: episodeFileHint || (singleVideoExact ? {
+            fileIndex: selected.file_index,
+            fileIdx: selected.file_index,
+            fileName: selected.file_title,
+            filePath: selected.file_title,
+            fileSize: selected.file_size,
+            season: episodeContext.season,
+            episode: episodeContext.episode,
+            confidence: 0.9,
+            reason: 'single_video_probe',
+            source: 'rd_probe_single_video'
+        } : null),
         file_index: selected.file_index,
         file_title: selected.file_title,
         file_size: selected.file_size,
@@ -418,7 +454,7 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
                 const result = {
                     ...buildProbeResult(hash, info, context),
                     cached: false,
-                    state: 'likely_uncached',
+                    state: 'likely_cached',
                     pack_without_episode_hint: true
                 };
                 await cleanup();
@@ -584,15 +620,15 @@ async function backfillAvailabilityInBackground(items, token, dbHelper, onUpdate
                 if (dbHelper && typeof dbHelper.updateRdCacheStatus === 'function') {
                     const availabilityUpdates = results.map((result) => ({
                         hash: normalizeHash(result.hash),
-                        state: result.cached ? 'cached' : (isTerminalUncachedStatus(result.rd_status) ? 'uncached_terminal' : 'likely_uncached'),
+                        state: result.cached ? 'cached' : (isTerminalUncachedStatus(result.rd_status) ? 'uncached_terminal' : (result.pack_without_episode_hint ? 'likely_cached' : 'likely_uncached')),
                         cached: result.cached ? true : (isTerminalUncachedStatus(result.rd_status) ? false : null),
                         torrent_title: result.torrent_title || null,
                         size: result.size || null,
                         file_title: result.file_title || null,
                         file_size: result.file_size || null,
                         rd_file_index: Number.isInteger(Number(result.file_index)) && Number(result.file_index) >= 0 ? Number(result.file_index) : null,
-                        next_hours: result.cached ? RD_CACHED_RECHECK_HOURS : (isTerminalUncachedStatus(result.rd_status) ? (24 * 7) : 12),
-                        failures: result.cached ? 0 : 1,
+                        next_hours: (result.cached || result.pack_without_episode_hint) ? RD_CACHED_RECHECK_HOURS : (isTerminalUncachedStatus(result.rd_status) ? (24 * 7) : 12),
+                        failures: (result.cached || result.pack_without_episode_hint) ? 0 : 1,
                         imdb_id: result._probeContext?.imdb_id || null,
                         imdb_season: Number(result._probeContext?.season || result._probeContext?._probeSeason || 0) > 0 ? Number(result._probeContext?.season || result._probeContext?._probeSeason) : null,
                         imdb_episode: Number(result._probeContext?.episode || result._probeContext?._probeEpisode || 0) > 0 ? Number(result._probeContext?.episode || result._probeContext?._probeEpisode) : null

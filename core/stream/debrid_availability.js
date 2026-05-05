@@ -7,6 +7,8 @@ const RealDebridProbe = require('../../debrid/realdebrid_probe.js');
 const { buildMagnet: buildTrackerMagnet } = require('../storage/tracker_registry');
 const { extractInfoHash, withSharedPromise, isSeasonPack, extractSeasonEpisodeFromFilename } = require('../utils');
 const { shouldSkipRecentWork } = require('../recent_work');
+const RdOracle = require('./rd_cache_oracle');
+const EpisodePrecision = require('./episode_precision');
 
 // RD availability policy: default in codice, non in .env.
 const LOCAL_DB_CACHE_TTL = 25;
@@ -18,6 +20,9 @@ const RD_FOREGROUND_FALLBACK_PROBE_LIMIT = 3;
 const RD_FOREGROUND_EXACT_LIMIT = 4;
 const RD_PRIORITY_TOP = 18;
 const RD_PRIORITY_WINDOW_MIN = 5;
+// UI sicura: se abbiamo abbastanza episodi RD confermati, nascondiamo i dubbi.
+const RD_HIDE_DUBIOUS_WHEN_ENOUGH_SAFE = true;
+const RD_MIN_EXACT_SAFE_RESULTS = 3;
 const AVAILABILITY_CACHE_HIT_TTL = 24 * 60 * 60;
 const AVAILABILITY_CACHE_NEGATIVE_TTL = 6 * 60 * 60;
 const AVAILABILITY_CACHE_PROBING_TTL = 120;
@@ -108,42 +113,59 @@ function getLegacyAvailabilityCacheKey(service, hash) {
 }
 
 function buildAvailabilityCachePayload(statePayload = {}, item = {}, result = null) {
+    const proof = item?._rdEpisodeProof || item?.rdEpisodeProof || result?.episodeFileHint || null;
     return {
         state: normalizeRdStateValue(statePayload.state) || null,
         cached: statePayload.cached === true ? true : statePayload.cached === false ? false : null,
         failures: Math.max(0, Number(statePayload.failures || 0) || 0),
         fileSize: Number(result?.file_size || item?._size || item?.sizeBytes || 0) || 0,
         fileIdx: Number.isInteger(Number(item?.fileIdx)) && Number(item.fileIdx) >= 0 ? Number(item.fileIdx) : null,
+        episodeExact: item?._episodeExact === true || item?._rdEpisodeExact === true || proof?.exact === true,
+        episodeProof: proof && typeof proof === 'object' ? proof : null,
+        episodeFileHint: item?.episodeFileHint || item?._episodeFileHint || result?.episodeFileHint || null,
         ts: Date.now()
     };
 }
 
-function applyAvailabilityCachePayload(item, payload) {
+function applyAvailabilityCachePayload(item, payload, meta = {}) {
     if (!item || !payload || !payload.state) return false;
-    item._rdCacheState = payload.state;
-    item.rdCacheState = payload.state;
-    item._dbCachedRd = payload.cached === true ? true : payload.cached === false ? false : null;
-    item.cached_rd = payload.cached === true ? true : payload.cached === false ? false : item.cached_rd;
+    const incomingState = normalizeRdStateValue(payload.state);
+    if (!incomingState) return false;
+
+    if (payload.episodeFileHint && typeof payload.episodeFileHint === 'object') {
+        item.episodeFileHint = item.episodeFileHint || payload.episodeFileHint;
+        item._episodeFileHint = item._episodeFileHint || payload.episodeFileHint;
+    }
+    if (payload.episodeExact === true || payload.episodeProof?.exact === true) {
+        item._episodeExact = true;
+        item._rdEpisodeExact = true;
+        item._rdEpisodeProof = payload.episodeProof || item._rdEpisodeProof || null;
+        item.rdEpisodeProof = item._rdEpisodeProof;
+    }
+    EpisodePrecision.applyEpisodePrecisionToItem(item, meta);
+
+    const effectiveIncoming = RdOracle.resolveEffectiveRdState({
+        ...item,
+        _rdCacheState: incomingState,
+        rdCacheState: incomingState,
+        _dbCachedRd: payload.cached === true ? true : (payload.cached === false ? false : item?._dbCachedRd),
+        cached_rd: payload.cached === true ? true : (payload.cached === false ? false : item?.cached_rd),
+        fileIdx: Number.isInteger(payload.fileIdx) && payload.fileIdx >= 0 ? payload.fileIdx : item?.fileIdx
+    }, meta);
+    const currentState = RdOracle.resolveEffectiveRdState(item, meta);
+    if (!RdOracle.shouldUpgradeState(currentState, effectiveIncoming) && currentState !== 'unknown') return false;
+    RdOracle.applyRdStateToItem(item, effectiveIncoming, {
+        cached: payload.cached === true && effectiveIncoming === 'cached' ? true : (effectiveIncoming === 'uncached_terminal' && payload.cached === false ? false : null),
+        fileIdx: Number.isInteger(payload.fileIdx) && payload.fileIdx >= 0 ? payload.fileIdx : undefined,
+        fileSize: Number(payload.fileSize || 0) || 0,
+        clearNegative: effectiveIncoming === 'cached' || effectiveIncoming === 'likely_cached'
+    });
     item._dbFailures = Math.max(0, Number(payload.failures || 0) || 0);
-    if (Number(payload.fileSize) > 0) {
-        item._size = Math.max(Number(item._size || item.sizeBytes || 0) || 0, Number(payload.fileSize));
-        item.sizeBytes = Math.max(Number(item.sizeBytes || item._size || 0) || 0, Number(payload.fileSize));
-    }
-    if ((item?.fileIdx === undefined || item?.fileIdx === null) && Number.isInteger(payload.fileIdx) && payload.fileIdx >= 0) {
-        item.fileIdx = payload.fileIdx;
-    }
     return true;
 }
 
 function getRdStateRank(state) {
-    switch (normalizeRdStateValue(state)) {
-        case 'cached': return 5;
-        case 'likely_cached': return 4;
-        case 'probing': return 3;
-        case 'likely_uncached': return 2;
-        case 'uncached_terminal': return 1;
-        default: return 0;
-    }
+    return RdOracle.getRdStateRank(state);
 }
 
 function hasHeavyNegativeProtection(item) {
@@ -248,7 +270,7 @@ function resolveRdNegativeDecision(item, result) {
 
 
 function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, incrementMetric, isSeasonPack, getMetaDbLookupKey }) {
-    function normalizeDbResultItem(row) {
+    function normalizeDbResultItem(row, meta = {}) {
         const hash = extractInfoHash(row?.info_hash || row?.hash || row?.infoHash || '');
         if (!hash) return null;
         const preferredSize = Number(row?.rd_file_size || row?.tb_file_size || row?.size || row?.sizeBytes || 0);
@@ -256,13 +278,20 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             ? Number(row.rd_file_index)
             : (row?.file_index !== null && row?.file_index !== undefined ? Number(row.file_index) : undefined);
         const rdDb = deriveDbRdAvailability(row);
-        return {
+        const matchedFileIndex = row?.matched_file_index !== null && row?.matched_file_index !== undefined
+            ? Number(row.matched_file_index)
+            : undefined;
+        const matchedFileTitle = row?.matched_file_title || row?.file_title || null;
+        const hasEpisodeMapping = isSeriesMeta(meta) && Number.isInteger(matchedFileIndex) && matchedFileIndex >= 0;
+        const item = {
             hash,
             title: row?.title || `DB Torrent ${hash}`,
             source: row?.provider || 'LocalDB',
             seeders: Number(row?.seeders || 0),
             magnet: row?.magnet || buildTrackerMagnet(hash),
             fileIdx: Number.isInteger(fileIdx) && fileIdx >= 0 ? fileIdx : undefined,
+            matched_file_index: Number.isInteger(matchedFileIndex) && matchedFileIndex >= 0 ? matchedFileIndex : undefined,
+            matched_file_title: matchedFileTitle || undefined,
             _size: preferredSize,
             sizeBytes: preferredSize,
             _dbCachedRd: rdDb.cached,
@@ -275,6 +304,27 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             _tbCached: row?.tb_cached === true,
             tbCached: row?.tb_cached === true
         };
+        if (hasEpisodeMapping) {
+            item.fileIdx = matchedFileIndex;
+            item._dbEpisodeMapping = true;
+            item._episodeExact = true;
+            item._rdEpisodeExact = true;
+            item._episodeProofSource = 'local_db_episode_mapping';
+            item.episodeFileHint = {
+                fileIndex: matchedFileIndex,
+                fileIdx: matchedFileIndex,
+                fileName: matchedFileTitle || undefined,
+                filePath: matchedFileTitle || undefined,
+                fileSize: preferredSize || undefined,
+                season: Number(meta?.season || 0) || undefined,
+                episode: Number(meta?.episode || 0) || undefined,
+                confidence: 1,
+                reason: 'db_imdb_season_episode_mapping',
+                source: 'local_db'
+            };
+            item._episodeFileHint = item.episodeFileHint;
+        }
+        return EpisodePrecision.applyEpisodePrecisionToItem(item, meta);
     }
 
     async function fetchLocalDbResults(meta) {
@@ -291,7 +341,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 if (cachedAgain !== null) return Array.isArray(cachedAgain) ? cachedAgain : [];
 
                 const rows = await dbHelper.getTorrents(meta.imdb_id, meta.season, meta.episode);
-                const normalizedRows = (Array.isArray(rows) ? rows : []).map(normalizeDbResultItem).filter(Boolean);
+                const normalizedRows = (Array.isArray(rows) ? rows : []).map((row) => normalizeDbResultItem(row, meta)).filter(Boolean);
                 await Cache.cacheDbTorrents(cacheKey, normalizedRows, LOCAL_DB_CACHE_TTL);
                 return normalizedRows;
             });
@@ -301,27 +351,20 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         }
     }
 
-    function getRdAvailabilityState(service, item) {
+    function getRdAvailabilityState(service, item, meta = {}) {
         const normalizedService = String(service || '').toLowerCase();
 
-        const explicitState = normalizeRdStateValue(item?._rdCacheState || item?.rdCacheState);
-        if (explicitState) return explicitState;
-
         if (normalizedService === 'tb') {
-            return item?._tbCached ? 'cached' : 'unknown';
+            if (item?._tbCached === true || item?.tbCached === true || item?.tb_cached === true) return 'cached';
+            const explicitTbState = normalizeRdStateValue(item?._tbCacheState || item?.tbCacheState);
+            return explicitTbState || 'unknown';
         }
 
-        if (normalizedService !== 'rd') {
-            return 'unknown';
-        }
-
-        if (item?._dbCachedRd === true || item?.cached_rd === true) return 'cached';
-        if (item?._dbCachedRd === false || item?.cached_rd === false) return 'likely_uncached';
-
-        return 'unknown';
+        if (normalizedService !== 'rd') return 'unknown';
+        return RdOracle.resolveEffectiveRdState(item, meta);
     }
 
-    function propagateRdKnownStatesByHash(items) {
+    function propagateRdKnownStatesByHash(items, meta = {}) {
         const list = Array.isArray(items) ? items : [];
         const stateByHash = new Map();
 
@@ -330,7 +373,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         for (const item of list) {
             const hash = String(item?.hash || item?.infoHash || '').trim().toUpperCase();
             if (!/^[A-F0-9]{40}$/.test(hash)) continue;
-            const state = getRdAvailabilityState('rd', item);
+            const state = getRdAvailabilityState('rd', item, meta);
             if (state === 'unknown') continue;
 
             const current = stateByHash.get(hash);
@@ -350,14 +393,13 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             const known = stateByHash.get(hash);
             if (!known) continue;
 
-            const currentState = getRdAvailabilityState('rd', item);
-            if (currentState === 'unknown') {
-                item._rdCacheState = known.state;
-                item.rdCacheState = known.state;
-                if (known.cached === true || known.cached === false) {
-                    item._dbCachedRd = known.cached;
-                    item.cached_rd = known.cached;
-                }
+            const currentState = getRdAvailabilityState('rd', item, meta);
+            const siblingState = RdOracle.getHashPositiveStateForSibling(known.state, item, meta);
+            if (RdOracle.shouldUpgradeState(currentState, siblingState)) {
+                RdOracle.applyRdStateToItem(item, siblingState, {
+                    cached: known.cached === true && siblingState === 'cached' ? true : null,
+                    clearNegative: siblingState === 'cached' || siblingState === 'likely_cached'
+                });
             }
 
             if (known.sizeBytes > 0 && !(Number(item?._size || item?.sizeBytes || 0) > 0)) {
@@ -369,7 +411,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         return list;
     }
 
-    async function hydrateRdDbStatesByHash(items) {
+    async function hydrateRdDbStatesByHash(items, meta = {}) {
         const list = Array.isArray(items) ? items : [];
         if (list.length === 0) return list;
         if (!dbHelper || typeof dbHelper.getRdCacheStatusByHashes !== 'function') return list;
@@ -380,37 +422,92 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
 
         if (hashes.length === 0) return list;
 
+        if (isSeriesMeta(meta)) {
+            for (const item of list) EpisodePrecision.applyEpisodePrecisionToItem(item, meta);
+        }
+
         try {
             const rows = await dbHelper.getRdCacheStatusByHashes(hashes);
             const byHash = new Map((Array.isArray(rows) ? rows : [])
                 .filter((row) => row?.hash)
                 .map((row) => [String(row.hash).trim().toLowerCase(), row]));
 
+            let episodeHintsByHash = new Map();
+            if (isSeriesMeta(meta) && typeof dbHelper.getEpisodePackFileHintsByHashes === 'function') {
+                try {
+                    const hints = await dbHelper.getEpisodePackFileHintsByHashes(hashes, meta);
+                    episodeHintsByHash = new Map((Array.isArray(hints) ? hints : [])
+                        .filter((hint) => hint?.hash)
+                        .map((hint) => [String(hint.hash).trim().toLowerCase(), hint]));
+                } catch (hintErr) {
+                    logger.warn(`[DB READ] Pack episode hints falliti: ${hintErr.message}`);
+                }
+            }
+
             for (const item of list) {
                 const hash = String(item?.hash || item?.infoHash || '').trim().toLowerCase();
                 if (!hash) continue;
                 const row = byHash.get(hash);
-                if (!row) continue;
+                const episodeHint = episodeHintsByHash.get(hash);
+                if (episodeHint) {
+                    const hintedIdx = Number(episodeHint.file_index);
+                    if (Number.isInteger(hintedIdx) && hintedIdx >= 0) item.fileIdx = hintedIdx;
+                    if (episodeHint.file_title || episodeHint.file_path) {
+                        item._episodeFileHint = {
+                            fileIndex: Number.isInteger(hintedIdx) && hintedIdx >= 0 ? hintedIdx : undefined,
+                            fileName: episodeHint.file_title || String(episodeHint.file_path || '').split('/').pop(),
+                            filePath: episodeHint.file_path || episodeHint.file_title || null,
+                            fileSize: Number(episodeHint.file_size || 0) || undefined
+                        };
+                        item.episodeFileHint = item._episodeFileHint;
+                    }
+                    if (Number(episodeHint.file_size) > 0) {
+                        item._size = Math.max(Number(item._size || item.sizeBytes || 0) || 0, Number(episodeHint.file_size));
+                        item.sizeBytes = Math.max(Number(item.sizeBytes || item._size || 0) || 0, Number(episodeHint.file_size));
+                    }
+                    item._packValidated = true;
+                    item._isPack = true;
+                    item.potentialPack = true;
+                    item._dbEpisodeMapping = true;
+                    item._episodeExact = true;
+                    item._rdEpisodeExact = true;
+                    item._episodeProofSource = episodeHint.source || 'pack_files_episode_mapping';
+                    item._rdEpisodeProof = {
+                        exact: true,
+                        source: episodeHint.source || 'pack_files_episode_mapping',
+                        fileIdx: Number.isInteger(hintedIdx) && hintedIdx >= 0 ? hintedIdx : undefined,
+                        fileName: episodeHint.file_title || String(episodeHint.file_path || '').split('/').pop() || null,
+                        filePath: episodeHint.file_path || episodeHint.file_title || null,
+                        confidence: Number(episodeHint.confidence || 1),
+                        reason: episodeHint.reason || 'db_pack_file_episode_mapping'
+                    };
+                    item.rdEpisodeProof = item._rdEpisodeProof;
+                    EpisodePrecision.applyEpisodePrecisionToItem(item, meta);
+                }
+                if (!row && !episodeHint) continue;
 
-                const rdDb = deriveDbRdAvailability(row);
+                const rdDb = deriveDbRdAvailability(row || { cached_rd: episodeHint ? true : null, rd_cache_state: episodeHint ? 'cached' : null });
                 const rowState = rdDb.state;
                 if (rdDb.cached === true || rdDb.cached === false || rowState) {
                     item._dbCachedRd = rdDb.cached;
                     item.cached_rd = rdDb.cached === true || rdDb.cached === false ? rdDb.cached : item.cached_rd;
                     item._rdStalePositive = rdDb.stale === true || item._rdStalePositive === true;
-                    item._dbLastCachedCheck = row.last_cached_check || item._dbLastCachedCheck || null;
-                    item._dbNextCachedCheck = row.next_cached_check || item._dbNextCachedCheck || null;
-                    item._dbFailures = Number(row.cache_check_failures || item._dbFailures || 0);
+                    item._dbLastCachedCheck = row?.last_cached_check || item._dbLastCachedCheck || null;
+                    item._dbNextCachedCheck = row?.next_cached_check || item._dbNextCachedCheck || null;
+                    item._dbFailures = Number(row?.cache_check_failures || item._dbFailures || 0);
 
-                    const currentState = getRdAvailabilityState('rd', item);
-                    if ((currentState === 'unknown' || rdDb.stale === true) && rowState) {
-                        item._rdCacheState = rowState;
-                        item.rdCacheState = rowState;
+                    const currentState = getRdAvailabilityState('rd', item, meta);
+                    const incomingState = RdOracle.getHashPositiveStateForSibling(rowState, item, meta);
+                    if ((rdDb.stale === true && incomingState) || RdOracle.shouldUpgradeState(currentState, incomingState)) {
+                        RdOracle.applyRdStateToItem(item, incomingState, {
+                            cached: rdDb.cached === true && incomingState === 'cached' ? true : (incomingState === 'uncached_terminal' && rdDb.cached === false ? false : null),
+                            clearNegative: incomingState === 'cached' || incomingState === 'likely_cached'
+                        });
                     }
                 }
 
                 if (!(Number(item?._size || item?.sizeBytes || 0) > 0)) {
-                    const knownSize = Number(row.rd_file_size || row.size || 0);
+                    const knownSize = Number(row?.rd_file_size || row?.size || 0);
                     if (knownSize > 0) {
                         item._size = knownSize;
                         item.sizeBytes = knownSize;
@@ -420,12 +517,13 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 if ((item?.fileIdx === undefined || item?.fileIdx === null) && Number.isInteger(row?.rd_file_index) && row.rd_file_index >= 0) {
                     item.fileIdx = row.rd_file_index;
                 }
+                if (isSeriesMeta(meta)) EpisodePrecision.applyEpisodePrecisionToItem(item, meta);
             }
         } catch (err) {
             logger.warn(`[DB READ] Overlay stato RD per hash fallito: ${err.message}`);
         }
 
-        return propagateRdKnownStatesByHash(list);
+        return propagateRdKnownStatesByHash(list, meta);
     }
 
     function isSeriesMeta(meta = {}) {
@@ -465,7 +563,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         const hardNegative = [];
 
         for (const item of list) {
-            const state = getRdAvailabilityState('rd', item);
+            const state = getRdAvailabilityState('rd', item, meta);
             if (state === 'cached') definitiveCached.push(item);
             else if (state === 'likely_cached') softCached.push(item);
             else if (state === 'probing') probing.push(item);
@@ -475,22 +573,32 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         }
 
         const cachedBucket = preferTorrentioSeriesItems(definitiveCached, meta);
-        return cachedOnly
-            ? [...cachedBucket]
-            : [
-                ...cachedBucket,
-                ...preferTorrentioSeriesItems(softCached, meta),
-                ...preferTorrentioSeriesItems(probing, meta),
-                ...preferTorrentioSeriesItems(unknown, meta),
-                ...preferTorrentioSeriesItems(softNegative, meta),
-                ...preferTorrentioSeriesItems(hardNegative, meta)
-            ];
+        const minExactSafe = Math.max(1, Number(config?.filters?.rdMinExactSafeResults || RD_MIN_EXACT_SAFE_RESULTS) || RD_MIN_EXACT_SAFE_RESULTS);
+        const hideDubiousWhenSafe = config?.filters?.rdHideDubiousWhenSafe === undefined
+            ? RD_HIDE_DUBIOUS_WHEN_ENOUGH_SAFE
+            : config?.filters?.rdHideDubiousWhenSafe !== false;
+
+        if (cachedOnly) return [...cachedBucket];
+
+        if (hideDubiousWhenSafe && cachedBucket.length >= minExactSafe) {
+            logger.info(`[RD SORT] exact=${cachedBucket.length} >= ${minExactSafe} -> hiding dubious RD hits likely/probing/unknown=${softCached.length + probing.length + unknown.length}`);
+            return [...cachedBucket];
+        }
+
+        return [
+            ...cachedBucket,
+            ...preferTorrentioSeriesItems(softCached, meta),
+            ...preferTorrentioSeriesItems(probing, meta),
+            ...preferTorrentioSeriesItems(unknown, meta),
+            ...preferTorrentioSeriesItems(softNegative, meta),
+            ...preferTorrentioSeriesItems(hardNegative, meta)
+        ];
     }
 
-    function isGuaranteedCachedExternal(item) {
+    function isGuaranteedCachedExternal(item, meta = {}) {
         return Boolean(
             (item?._mediafusionRdChecked === true || item?._nexusBridgeRdChecked === true || item?._externalRdChecked === true) &&
-            getRdAvailabilityState('rd', item) === 'cached'
+            getRdAvailabilityState('rd', item, meta) === 'cached'
         );
     }
 
@@ -529,12 +637,12 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
 
         const visibleSlice = list.slice(0, visibleWindow);
         const knownStates = visibleSlice.filter((item) => {
-            const state = getRdAvailabilityState('rd', item);
+            const state = getRdAvailabilityState('rd', item, meta);
             return state === 'cached' || state === 'likely_cached' || state === 'likely_uncached' || state === 'uncached_terminal' || state === 'probing';
         }).length;
 
         const allUnknownCandidates = visibleSlice
-            .filter((item) => !isGuaranteedCachedExternal(item) && getRdAvailabilityState('rd', item) === 'unknown' && item?.hash && item?.magnet);
+            .filter((item) => !isGuaranteedCachedExternal(item, meta) && getRdAvailabilityState('rd', item, meta) === 'unknown' && item?.hash && item?.magnet);
 
         if (allUnknownCandidates.length === 0) return list;
 
@@ -557,7 +665,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                         await Cache.cacheAvailability(cacheKey, cachedPayload, Math.min(AVAILABILITY_CACHE_HIT_TTL, 3600));
                     }
                 }
-                if (applyAvailabilityCachePayload(item, cachedPayload)) availabilityCacheHits += 1;
+                if (applyAvailabilityCachePayload(item, cachedPayload, meta)) availabilityCacheHits += 1;
                 else cachedUnknownCandidates.push(item);
             } catch (_) {
                 cachedUnknownCandidates.push(item);
@@ -619,27 +727,51 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 let statePayload;
                 if (result.cached === true) {
                     statePayload = { state: 'cached', cached: true, failures: 0, next_hours: 24 * 30 };
+                } else if (result.state === 'likely_cached' || result.pack_without_episode_hint === true) {
+                    // RD ha visto l'hash/pack, ma per una serie manca la prova file episodio.
+                    // Non persistere cached=true e non mostrare ⚡: resta dubbio/sotto.
+                    statePayload = { state: 'likely_cached', cached: null, failures: 0, next_hours: 6 };
                 } else {
                     statePayload = resolveRdNegativeDecision(item, result);
                 }
 
-                item._rdCacheState = statePayload.state;
-                item.rdCacheState = statePayload.state;
-                item._dbCachedRd = statePayload.cached === true ? true : (statePayload.cached === false ? false : null);
-                item.cached_rd = statePayload.cached === true ? true : (statePayload.cached === false ? false : item.cached_rd);
+                RdOracle.applyRdStateToItem(item, statePayload.state, {
+                    cached: statePayload.cached === true ? true : (statePayload.state === 'uncached_terminal' && statePayload.cached === false ? false : null),
+                    clearNegative: statePayload.state === 'cached' || statePayload.state === 'likely_cached'
+                });
                 item._dbFailures = Number(statePayload.failures || 0);
 
                 if (Number.isInteger(Number(result.file_index)) && Number(result.file_index) >= 0) {
                     item.fileIdx = Number(result.file_index);
+                }
+                if (result.single_video_exact === true) {
+                    item._singleVideoProbe = true;
+                    item._episodeExact = true;
+                    item._rdEpisodeExact = true;
+                    item._episodeProofSource = 'rd_probe_single_video';
+                    EpisodePrecision.applyEpisodePrecisionToItem(item, meta);
                 }
 
                 if (result.episodeFileHint && typeof result.episodeFileHint === 'object') {
                     item.episodeFileHint = result.episodeFileHint;
                     item._episodeFileHint = result.episodeFileHint;
                     item._packValidated = result.cached === true;
-                    item._isPack = true;
-                    item.potentialPack = true;
+                    item._isPack = result.is_pack === true || item._isPack === true;
+                    item.potentialPack = result.is_pack === true || item.potentialPack === true;
                     item.packTitle = item.packTitle || result.pack_name || result.torrent_title || item.title;
+                    item._episodeExact = true;
+                    item._rdEpisodeExact = true;
+                    item._rdEpisodeProof = {
+                        exact: true,
+                        source: result.episodeFileHint.source || 'rd_probe_episode_file_hint',
+                        fileIdx: Number(result.episodeFileHint.fileIndex ?? result.file_index),
+                        fileName: result.episodeFileHint.fileName || result.file_title || null,
+                        filePath: result.episodeFileHint.filePath || result.file_title || null,
+                        confidence: Number(result.episodeFileHint.confidence || 1),
+                        reason: result.episodeFileHint.reason || 'rd_probe_exact_episode'
+                    };
+                    item.rdEpisodeProof = item._rdEpisodeProof;
+                    EpisodePrecision.applyEpisodePrecisionToItem(item, meta);
                 }
 
                 if (result.pack_without_episode_hint === true) {
@@ -716,9 +848,10 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
 
             if (Array.isArray(deferred) && deferred.length > 0) {
                 for (const item of deferred) {
-                    item._rdCacheState = 'probing';
-                    item.rdCacheState = 'probing';
-                    item._dbCachedRd = null;
+                    const currentState = getRdAvailabilityState('rd', item, meta);
+                    if (!['cached', 'likely_cached'].includes(currentState)) {
+                        RdOracle.applyRdStateToItem(item, 'probing', { cached: null });
+                    }
                     if (typeof Cache.cacheAvailability === 'function') {
                         const availabilityCacheKey = getAvailabilityCacheKey('rd', item?.hash, item?.fileIdx);
                         if (availabilityCacheKey) {
@@ -751,7 +884,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         const maxPriority = RD_PRIORITY_TOP;
         const priorityMinutes = RD_PRIORITY_WINDOW_MIN;
         const candidateHashes = [...new Set((Array.isArray(results) ? results : [])
-            .filter((item) => !isGuaranteedCachedExternal(item) && getRdAvailabilityState('rd', item) === 'unknown' && item?.hash)
+            .filter((item) => !isGuaranteedCachedExternal(item, meta) && getRdAvailabilityState('rd', item, meta) === 'unknown' && item?.hash)
             .slice(0, maxPriority)
             .map((item) => item.hash))];
 
@@ -907,6 +1040,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         reprioritizeRdRankedList,
         getRdAvailabilityState,
         isGuaranteedCachedExternal,
+        applyRdDisplayPriority: applyRdDbAvailabilityPriority,
         persistResolvedDebridAvailability
     };
 }
