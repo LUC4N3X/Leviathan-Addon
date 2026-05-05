@@ -16,9 +16,7 @@ const MAX_MEMORY_ENTRIES = Math.max(50, parseInt(process.env.PACK_RESOLVER_CACHE
 const DB_MOVIE_FILE_LIMIT = Math.max(10, parseInt(process.env.PACK_DB_MOVIE_LIMIT || '30', 10) || 30);
 const DB_SERIES_FILE_LIMIT = Math.max(25, parseInt(process.env.PACK_DB_SERIES_LIMIT || '400', 10) || 400);
 
-// Leviathan Pack Boost: public .torrent metadata fallback.
-// Used only to read the file tree of P2P packs when DB/RD/TB cannot provide files.
-// It does not stream, add, or download the torrent payload.
+
 const PUBLIC_TORRENT_CACHE_ENABLED = process.env.PACK_PUBLIC_TORRENT_CACHE !== 'false';
 const PUBLIC_TORRENT_CACHE_TIMEOUT_MS = Math.max(2500, parseInt(process.env.PACK_PUBLIC_TORRENT_CACHE_TIMEOUT_MS || '8000', 10) || 8000);
 const PUBLIC_TORRENT_CACHE_MAX_BYTES = Math.max(256 * 1024, parseInt(process.env.PACK_PUBLIC_TORRENT_CACHE_MAX_BYTES || String(8 * 1024 * 1024), 10) || 8 * 1024 * 1024);
@@ -28,8 +26,7 @@ const PUBLIC_TORRENT_CACHE_SOURCES = Object.freeze([
     { name: 'btcache', url: (hash) => `https://btcache.me/torrent/${hash.toUpperCase()}` }
 ]);
 
-// TorBox pack resolver must stay cheap in normal stream requests: check cached file list only.
-// createtorrent belongs to explicit manual/admin import flows, not automatic playback resolution.
+
 const TORBOX_CREATE_TORRENT_IN_PACK_RESOLVER = false;
 
 class RequestQueue {
