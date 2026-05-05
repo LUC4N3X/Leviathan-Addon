@@ -33,6 +33,8 @@ const { getSourceModeFlags, shouldUseTorrentPipeline } = require('./config/sourc
 const { runFilterStage, runSortStage } = require('./lib/result_stage_pipeline');
 const { buildSeriesContext, matchesCandidateTitle } = require('./matching/episode_matcher');
 const { dedupeByInfoHash, getFolderSizeBytes: getDedupeFolderSizeBytes } = require('./stream/infohash_deduper');
+const { preserveRdStatusList } = require('./stream/rd_status_guard');
+const { applyResolutionOrderingGuard } = require('./stream/resolution_ordering_guard');
 const { hasFolderSizeSeasonPackSignal } = require('./matching/season_pack_inspector');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
@@ -888,16 +890,28 @@ function applyFinalStreamUserSort(streams = [], config = {}) {
     const sortMode = getConfiguredSortMode(config);
 
     return list
-        .map((stream, index) => ({ stream, index, cacheTier: getFinalStreamCacheTier(stream) }))
+        .map((stream, index) => ({
+            stream,
+            index,
+            cacheTier: getFinalStreamCacheTier(stream),
+            resolutionTier: getFinalStreamResolutionTier(stream),
+            sizeBytes: parseFinalStreamSizeBytes(stream)
+        }))
         .sort((a, b) => {
-            // Prima sempre lo stato cache: ⚡ confermati sopra, ⏳ dubbi sotto.
-            if (a.cacheTier !== b.cacheTier) return a.cacheTier - b.cacheTier;
             if (sortMode === 'resolution') {
-                const resDelta = getFinalStreamResolutionTier(b.stream) - getFinalStreamResolutionTier(a.stream);
+                // Modalità scelta dall'utente in index.html: ordine risoluzione rigido.
+                // A parità di risoluzione resta sopra lo stream con stato cache migliore.
+                const resDelta = b.resolutionTier - a.resolutionTier;
                 if (resDelta !== 0) return resDelta;
+                if (a.cacheTier !== b.cacheTier) return a.cacheTier - b.cacheTier;
+                return a.index - b.index;
             }
+
+            // In balanced/size manteniamo la protezione cache: ⚡ confermati sopra, ⏳ dubbi sotto.
+            if (a.cacheTier !== b.cacheTier) return a.cacheTier - b.cacheTier;
+
             if (sortMode === 'size') {
-                const sizeDelta = parseFinalStreamSizeBytes(b.stream) - parseFinalStreamSizeBytes(a.stream);
+                const sizeDelta = b.sizeBytes - a.sizeBytes;
                 if (sizeDelta !== 0) return sizeDelta;
             }
             return a.index - b.index;
@@ -3078,19 +3092,24 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           rankedList = await reprioritizeRdRankedList(rankedList, meta, config, hasDebridKey);
           rankedList = applyPremiumRankingPolicy(rankedList, meta, config);
           rankedList = applySootioPriorityPolicy(rankedList, meta, config);
+          const beforeInfoHashDedupe = rankedList;
           const infoHashRankDedupe = dedupeByInfoHash(rankedList, getDedupeContext(meta, { stage: 'ranked' }));
           if (infoHashRankDedupe.removed > 0) {
               logger.info(`[DEDUPE INFOHASH] ranked removed=${infoHashRankDedupe.removed} kept=${infoHashRankDedupe.results.length} title="${String(meta?.title || '').slice(0, 80)}" s=${meta?.season || '-'} e=${meta?.episode || '-'}`);
           }
-          rankedList = infoHashRankDedupe.results;
-          if (filters.maxPerQuality) rankedList = filterByQualityLimit(rankedList, filters.maxPerQuality);
+          rankedList = preserveRdStatusList(beforeInfoHashDedupe, infoHashRankDedupe.results, { logger, stage: 'ranked-dedupe' });
+          if (filters.maxPerQuality) rankedList = preserveRdStatusList(rankedList, filterByQualityLimit(rankedList, filters.maxPerQuality), { logger, stage: 'max-per-quality' });
           if (configuredDebridService === 'rd' && hasDebridKey && typeof applyRdDisplayPriority === 'function') {
-              rankedList = applyRdDisplayPriority(rankedList, config, meta);
+              const beforeRdDisplayPriority = rankedList;
+              rankedList = preserveRdStatusList(beforeRdDisplayPriority, applyRdDisplayPriority(rankedList, config, meta), { logger, stage: 'rd-display-priority' });
           }
 
           if (configuredDebridService === 'tb' && hasDebridKey) {
-              rankedList = await resolveTorboxRankedList(rankedList, debridApiKey);
+              const beforeTorboxResolve = rankedList;
+              rankedList = preserveRdStatusList(beforeTorboxResolve, await resolveTorboxRankedList(rankedList, debridApiKey), { logger, stage: 'tb-resolve' });
           }
+
+          rankedList = preserveRdStatusList(rankedList, applyResolutionOrderingGuard(rankedList, { logger, meta, sortMode: getConfiguredSortMode(config) }), { logger, stage: 'resolution-guard' });
       } else {
           logger.info(`[TORRENT PIPELINE] Disabled for ${meta.title} (solo provider web attivi, nessuna key debrid e P2P off)`);
       }
