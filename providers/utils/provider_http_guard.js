@@ -577,6 +577,7 @@ function createProviderHttpGuard(options = {}) {
     if (homepageFallback && homepageClearanceUrl !== clearanceUrl && homepageClearanceUrl !== targetClearanceUrl) fallbacks.push(homepageClearanceUrl);
 
     for (const fallbackUrl of fallbacks) {
+      if (signal?.aborted) return null;
       session = await clearanceManager.solve(fallbackUrl, signal, {
         triggerUrl,
         method: isPost ? 'POST' : 'GET',
@@ -613,7 +614,7 @@ function createProviderHttpGuard(options = {}) {
       logger.debug('direct fetch error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
     }
 
-    if (!allowFlareSolverr) return null;
+    if (!allowFlareSolverr || signal?.aborted) return null;
 
     const session = await solveClearance(url, { isPost, body, signal, force: clearanceForce });
     if (!isSessionFresh(session)) {
