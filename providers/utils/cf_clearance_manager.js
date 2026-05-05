@@ -2,8 +2,6 @@
 
 const axios = require('axios');
 
-// Leviathan ProviderShield is active by default, but the FlareSolverr endpoint is external.
-// Only FLARESOLVERR_URL is read from env. If it is empty, Cloudflare solving is skipped safely.
 const DEFAULT_FLARESOLVERR_URL = null;
 
 function normalizeBaseUrl(value) {
@@ -145,6 +143,13 @@ function createCfClearanceManager(options = {}) {
     }
   }
 
+  function formatAbortReason(reason) {
+    if (reason == null) return null;
+    if (typeof reason === 'string') return reason;
+    if (reason instanceof Error) return reason.message || reason.name;
+    try { return JSON.stringify(reason); } catch (_) { return String(reason); }
+  }
+
   async function solve(clearanceUrl, signal = null, meta = {}) {
     if (!endpoint) {
       if (!missingEndpointWarned) {
@@ -244,7 +249,11 @@ function createCfClearanceManager(options = {}) {
         return session;
       } catch (error) {
         if (isCanceledError(error) || signal?.aborted || String(error?.code || '') === 'ERR_CANCELED') {
-          logger.warn('solve aborted', { provider: providerName, clearanceUrl, reason: signal?.reason || error?.message || String(error) });
+          logger.warn('solve aborted', {
+            provider: providerName,
+            clearanceUrl,
+            reason: formatAbortReason(signal?.reason) || error?.message || String(error)
+          });
           return null;
         }
         logger.warn('solve failed', { provider: providerName, clearanceUrl, error: error?.message || String(error) });
