@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 
-const MODULE_VERSION = 9;
+const MODULE_VERSION = 10;
 const TRANSIT_KIND = 'vix-transit';
 const SWEEP_INTERVAL_MS = 45 * 1000;
 const REQUEST_CONTEXT_TTL_MS = 6 * 60 * 60 * 1000;
@@ -20,7 +20,7 @@ const MAX_HEADER_VALUE_LENGTH = 4096;
 const MAX_HEADER_COUNT = 64;
 const MAX_LIVE_CONTEXTS = 50000;
 
-const SHARED_STATE_KEY = Symbol.for('leviathan.vix.streamTransit.sharedState.v9');
+const SHARED_STATE_KEY = Symbol.for('leviathan.vix.streamTransit.sharedState.v10');
 const sharedState = globalThis[SHARED_STATE_KEY] || (globalThis[SHARED_STATE_KEY] = {
     requestContextById: new Map(),
     requestKeyToId: new Map(),
@@ -760,4 +760,3 @@ module.exports = {
     buildTransitUrl,
     getTransitStats
 };
-
