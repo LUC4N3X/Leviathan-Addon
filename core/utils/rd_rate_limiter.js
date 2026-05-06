@@ -1,9 +1,5 @@
 'use strict';
 
-// Sootio-inspired RealDebrid limiter, adapted for Leviathan.
-// Goal: protect RD foreground/background probes from bursts, 429 storms and unbounded queues.
-// Defaults are intentionally embedded in code; env only allows emergency tuning.
-
 const crypto = require('crypto');
 
 const DEFAULT_RATE_PER_MINUTE = 220;
