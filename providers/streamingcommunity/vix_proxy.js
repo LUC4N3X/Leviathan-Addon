@@ -1,4 +1,6 @@
 const axios = require('axios');
+const http = require('http');
+const https = require('https');
 const { getRequestOrigin, isSafeRemoteUrl } = require('../../core/utils/url');
 const {
     resolveTransitKey,
@@ -12,8 +14,11 @@ const DEFAULT_REFERER = 'https://vixsrc.to/';
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const MANIFEST_ROUTE = '/vixsynthetic.m3u8';
 const MAX_UPSTREAM_REDIRECTS = 5;
-const UPSTREAM_TIMEOUT_MS = Math.max(10000, Number.parseInt(process.env.VIX_PROXY_TIMEOUT_MS || '18000', 10) || 18000);
-const HLS_PLAYBACK_TOKEN_TTL_MS = Math.max(10 * 60 * 1000, Number.parseInt(process.env.VIX_HLS_TOKEN_TTL_MS || String(2 * 60 * 60 * 1000), 10) || (2 * 60 * 60 * 1000));
+const UPSTREAM_TIMEOUT_MS = Math.max(12000, Number.parseInt(process.env.VIX_PROXY_TIMEOUT_MS || '25000', 10) || 25000);
+const HLS_PLAYBACK_TOKEN_TTL_MS = Math.max(30 * 60 * 1000, Number.parseInt(process.env.VIX_HLS_TOKEN_TTL_MS || String(4 * 60 * 60 * 1000), 10) || (4 * 60 * 60 * 1000));
+const UPSTREAM_RETRY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const KEEP_ALIVE_HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 128, maxFreeSockets: 32, timeout: UPSTREAM_TIMEOUT_MS + 5000 });
+const KEEP_ALIVE_HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 128, maxFreeSockets: 32, timeout: UPSTREAM_TIMEOUT_MS + 5000 });
 const VIX_STRICT_HOST_BINDING = String(process.env.VIX_STRICT_HOST_BINDING || '').trim() === '1';
 
 function getSelfBase(req) {
@@ -47,7 +52,7 @@ function buildRequestHeaders(targetUrl, explicitReferer, overrides = null) {
 
     return normalizeRequestHeaders({
         'User-Agent': DEFAULT_UA,
-        Accept: '*/*',
+        Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, video/mp2t, video/*, */*',
         'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
         'Cache-Control': 'no-cache',
         Pragma: 'no-cache',
@@ -69,15 +74,26 @@ function getResolutionScore(infoLine) {
     return bandwidthMatch ? Number(bandwidthMatch[1]) : 0;
 }
 
+function normalizeVariantPolicy(policy = 'auto') {
+    const raw = String(policy || 'auto').trim().toLowerCase();
+    if (['auto', 'all', 'adaptive'].includes(raw)) return 'auto';
+    if (['max', 'best', 'high'].includes(raw)) return 'max';
+    if (['mid', 'safe', 'balanced'].includes(raw)) return 'mid';
+    if (['min', 'low'].includes(raw)) return 'min';
+    return 'auto';
+}
+
 function selectVariant(variants, policy = 'auto') {
     if (!variants.length) return null;
+    const normalizedPolicy = normalizeVariantPolicy(policy);
     const sorted = [...variants].sort((a, b) => b.score - a.score);
-    if (policy === 'max' || sorted.length === 1) return sorted[0];
-    if (policy === 'mid') {
-        const mid = sorted.find((variant) => variant.score > 400000 && variant.score < 2000000 && variant.score !== sorted[0].score);
-        return mid || sorted[1] || sorted[0];
+    if (normalizedPolicy === 'max' || sorted.length === 1) return sorted[0];
+    if (normalizedPolicy === 'min') return sorted[sorted.length - 1];
+    if (normalizedPolicy === 'mid') {
+        const mid = sorted.find((variant) => variant.score > 400000 && variant.score < 2500000 && variant.score !== sorted[0].score);
+        return mid || sorted[Math.min(1, sorted.length - 1)] || sorted[0];
     }
-    return sorted[0];
+    return null;
 }
 
 function buildProxyUrl(req, absoluteUrl, pageReferer, extraHeaders = null, extraMeta = null) {
@@ -138,14 +154,14 @@ function rewriteMasterManifest(lines, baseUrl, req, pageReferer, variantPolicy =
             output.push('');
             continue;
         }
-        if (line.startsWith('#EXT-X-MEDIA')) {
+        if (line.startsWith('#EXT-X-MEDIA') || line.startsWith('#EXT-X-I-FRAME-STREAM-INF')) {
             output.push(rewriteDirectiveUri(line, baseUrl, req, pageReferer));
             continue;
         }
         if (line.startsWith('#EXT-X-STREAM-INF')) {
             const nextLine = String(lines[i + 1] || '').trim();
             const absolute = safeUrl(nextLine, baseUrl);
-            variants.push({ info: line, url: absolute, score: getResolutionScore(line) });
+            variants.push({ info: line, url: absolute, rawUrl: nextLine, score: getResolutionScore(line) });
             i += 1;
             continue;
         }
@@ -159,11 +175,20 @@ function rewriteMasterManifest(lines, baseUrl, req, pageReferer, variantPolicy =
 
     if (!variants.length) return output.join('\n');
 
-    const selected = selectVariant(variants, variantPolicy);
-    if (!selected || !selected.url) return output.join('\n');
+    const normalizedPolicy = normalizeVariantPolicy(variantPolicy);
+    const selected = selectVariant(variants, normalizedPolicy);
 
-    output.push(selected.info);
-    output.push(buildProxyUrl(req, selected.url, pageReferer) || selected.url);
+    if (selected) {
+        output.push(selected.info);
+        output.push(selected.url ? (buildProxyUrl(req, selected.url, pageReferer) || selected.url) : selected.rawUrl);
+        return output.join('\n');
+    }
+
+    for (const variant of variants) {
+        output.push(variant.info);
+        output.push(variant.url ? (buildProxyUrl(req, variant.url, pageReferer) || variant.url) : variant.rawUrl);
+    }
+
     return output.join('\n');
 }
 
@@ -201,7 +226,7 @@ function copyUsefulUpstreamHeaders(upstream, res, { manifest = false } = {}) {
     }
 }
 
-async function fetchUpstream(targetUrl, referer, upstreamHeaders = null, req = null) {
+async function fetchUpstreamOnce(targetUrl, referer, upstreamHeaders = null, req = null) {
     const headers = { ...(upstreamHeaders || buildRequestHeaders(targetUrl, referer)) };
     const range = String(req?.headers?.range || '').trim();
     if (range && /^bytes=\d*-\d*(?:,\d*-\d*)*$/i.test(range)) headers.Range = range;
@@ -213,24 +238,51 @@ async function fetchUpstream(targetUrl, referer, upstreamHeaders = null, req = n
         responseType: 'arraybuffer',
         validateStatus: () => true,
         proxy: false,
-        decompress: true
+        decompress: true,
+        httpAgent: KEEP_ALIVE_HTTP_AGENT,
+        httpsAgent: KEEP_ALIVE_HTTPS_AGENT,
+        transitional: { clarifyTimeoutError: true }
     });
 }
 
-function resolveProxySource(req) {
-    const tokenPayload = resolveTransitKey(req.query.d, {
-        kind: TRANSIT_KIND,
-        hostBinding: VIX_STRICT_HOST_BINDING ? getSelfBase(req) : null,
-        routeBinding: MANIFEST_ROUTE
-    });
+async function fetchUpstream(targetUrl, referer, upstreamHeaders = null, req = null) {
+    let lastError = null;
 
-    if (tokenPayload?.url && isSafeRemoteUrl(tokenPayload.url)) {
-        return {
-            sourceUrl: tokenPayload.url,
-            pageReferer: safeUrl(tokenPayload.referer, DEFAULT_REFERER) || DEFAULT_REFERER,
-            upstreamHeaders: tokenPayload.headers || buildRequestHeaders(tokenPayload.url, tokenPayload.referer || DEFAULT_REFERER),
-            variantPolicy: String(tokenPayload?.meta?.syntheticVariant || 'auto').toLowerCase()
-        };
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+            const upstream = await fetchUpstreamOnce(targetUrl, referer, upstreamHeaders, req);
+            if (!UPSTREAM_RETRY_STATUSES.has(Number(upstream.status || 0)) || attempt >= 2) return upstream;
+            lastError = new Error(`retryable upstream status ${upstream.status}`);
+        } catch (error) {
+            lastError = error;
+            if (attempt >= 2) throw error;
+        }
+    }
+
+    throw lastError || new Error('Vix upstream request failed');
+}
+
+
+function resolveProxySource(req) {
+    const rawToken = String(req.query.d || '').trim();
+    if (rawToken) {
+        const tokenPayload = resolveTransitKey(rawToken, {
+            kind: TRANSIT_KIND,
+            hostBinding: VIX_STRICT_HOST_BINDING ? getSelfBase(req) : null,
+            routeBinding: MANIFEST_ROUTE
+        });
+
+        if (tokenPayload?.url && isSafeRemoteUrl(tokenPayload.url)) {
+            return {
+                sourceUrl: tokenPayload.url,
+                pageReferer: safeUrl(tokenPayload.referer, DEFAULT_REFERER) || DEFAULT_REFERER,
+                upstreamHeaders: tokenPayload.headers || buildRequestHeaders(tokenPayload.url, tokenPayload.referer || DEFAULT_REFERER),
+                variantPolicy: normalizeVariantPolicy(tokenPayload?.meta?.syntheticVariant || 'auto'),
+                recoveredFromEmbedded: Boolean(tokenPayload.recoveredFromEmbedded)
+            };
+        }
+
+        return { invalidToken: true };
     }
 
     const sourceUrl = safeUrl(req.query.src);
@@ -241,7 +293,7 @@ function resolveProxySource(req) {
         sourceUrl,
         pageReferer,
         upstreamHeaders: buildRequestHeaders(sourceUrl, pageReferer),
-        variantPolicy: String(req.query.variant || 'auto').toLowerCase()
+        variantPolicy: normalizeVariantPolicy(req.query.variant || 'auto')
     };
 }
 
@@ -259,6 +311,12 @@ async function handleVixSynthetic(req, res) {
     }
 
     const resolved = resolveProxySource(req);
+    if (resolved?.invalidToken) {
+        console.warn('[VIX PROXY] Invalid transit token');
+        res.status(410);
+        res.setHeader('Cache-Control', 'no-store');
+        return res.end('Expired Vix transit token');
+    }
     if (!resolved?.sourceUrl) return res.status(400).send('Invalid or unsafe src');
 
     const { sourceUrl, pageReferer, upstreamHeaders, variantPolicy } = resolved;
@@ -283,6 +341,7 @@ async function handleVixSynthetic(req, res) {
             res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=60');
             res.setHeader('Accept-Ranges', upstream.headers['accept-ranges'] || 'bytes');
             copyUsefulUpstreamHeaders(upstream, res, { manifest: false });
+            res.setHeader('Content-Length', buffer.length);
             if (req.method === 'HEAD') return res.end();
             return res.end(buffer);
         }
