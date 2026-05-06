@@ -1460,12 +1460,12 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
     });
     if (bestSitemap?.url) return saveResult(bestSitemap);
 
+    const searched = await searchByTitleQueries(expectedTitles, providerType, expectedTitles, requestedImdbId, expectedYear);
+    if (searched?.url) return saveResult(searched);
+
     if (fastMode) {
         return saveResult(null);
     }
-
-    const searched = await searchByTitleQueries(expectedTitles, providerType, expectedTitles, requestedImdbId, expectedYear);
-    if (searched?.url) return saveResult(searched);
 
     let bestResult = null;
     let bestScore = 0;
@@ -1913,19 +1913,172 @@ function pickStream(fileData, type, season = 1, episode = 1, options = {}) {
     return null;
 }
 
-function extractJsonArray(decoded) {
-    let start = decoded.indexOf('file:');
-    if (start === -1) start = decoded.indexOf('sources:');
-    if (start === -1) return null;
-    start = decoded.indexOf('[', start);
-    if (start === -1) return null;
-    let depth = 0;
-    for (let i = start; i < decoded.length; i += 1) {
-        if (decoded[i] === '[') depth += 1;
-        else if (decoded[i] === ']') depth -= 1;
-        if (depth === 0) return decoded.substring(start, i + 1);
+function decodeEmbeddedPayloads(html) {
+    const payloads = [];
+    const seen = new Set();
+    const atobRegex = /atob\s*\(\s*['"]([A-Za-z0-9+/=\-_\s]{40,})['"]\s*\)/gi;
+    let match;
+
+    while ((match = atobRegex.exec(String(html || ''))) !== null) {
+        const encoded = String(match[1] || '').replace(/\s+/g, '');
+        if (!encoded || seen.has(encoded)) continue;
+
+        let decoded = '';
+        try {
+            const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/');
+            decoded = Buffer.from(normalized, 'base64').toString('utf8');
+        } catch (_) {
+            continue;
+        }
+
+        const clean = String(decoded || '').trim();
+        if (!clean) continue;
+        seen.add(encoded);
+        payloads.push(clean);
     }
+
+    return payloads;
+}
+
+function readBalancedSegment(text, openIndex) {
+    const source = String(text || '');
+    const openChar = source[openIndex];
+    const closeChar = openChar === '[' ? ']' : openChar === '{' ? '}' : null;
+    if (!closeChar) return null;
+
+    let depth = 0;
+    let quote = null;
+    let escaped = false;
+
+    for (let i = openIndex; i < source.length; i += 1) {
+        const ch = source[i];
+
+        if (quote) {
+            if (escaped) {
+                escaped = false;
+            } else if (ch === '\\') {
+                escaped = true;
+            } else if (ch === quote) {
+                quote = null;
+            }
+            continue;
+        }
+
+        if (ch === '"' || ch === "'") {
+            quote = ch;
+            continue;
+        }
+
+        if (ch === openChar) depth += 1;
+        if (ch === closeChar) depth -= 1;
+        if (depth === 0) return source.slice(openIndex, i + 1);
+    }
+
     return null;
+}
+
+function readQuotedSegment(text, quoteIndex) {
+    const source = String(text || '');
+    const quote = source[quoteIndex];
+    if (quote !== '"' && quote !== "'") return null;
+
+    let escaped = false;
+    let value = '';
+
+    for (let i = quoteIndex + 1; i < source.length; i += 1) {
+        const ch = source[i];
+        if (escaped) {
+            value += ch;
+            escaped = false;
+            continue;
+        }
+        if (ch === '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch === quote) return value;
+        value += ch;
+    }
+
+    return null;
+}
+
+function parseJsonCandidate(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+
+    const attempts = [
+        raw,
+        raw.replace(/\\\//g, '/'),
+        raw.replace(/\\(.)/g, '$1')
+    ];
+
+    for (const attempt of attempts) {
+        try {
+            return JSON.parse(attempt);
+        } catch (_) {}
+    }
+
+    return null;
+}
+
+function extractSourceTree(payload) {
+    if (Array.isArray(payload)) return payload;
+    if (payload && typeof payload === 'object') return payload;
+
+    const text = String(payload || '').trim();
+    if (!text) return null;
+
+    if (text.startsWith('[') || text.startsWith('{')) {
+        const parsed = parseJsonCandidate(text);
+        if (parsed) return parsed;
+    }
+
+    const keyRegex = /(?:^|[^A-Za-z0-9_$])(file|sources)\s*:/gi;
+    let match;
+    while ((match = keyRegex.exec(text)) !== null) {
+        let cursor = match.index + match[0].length;
+        while (cursor < text.length && /\s/.test(text[cursor])) cursor += 1;
+
+        const marker = text[cursor];
+        if (marker === '[' || marker === '{') {
+            const segment = readBalancedSegment(text, cursor);
+            const parsed = parseJsonCandidate(segment);
+            if (parsed) return parsed;
+        }
+
+        if (marker === '"' || marker === "'") {
+            const quoted = readQuotedSegment(text, cursor);
+            if (quoted && (/\.m3u8(?:$|[?#])/i.test(quoted) || /\.mp4(?:$|[?#])/i.test(quoted))) {
+                return quoted;
+            }
+        }
+    }
+
+    const directUrl = text.match(/https?:\\?\/\\?\/[^\s'"<>]+\.(?:m3u8|mp4)(?:\?[^\s'"<>]*)?/i);
+    return directUrl ? directUrl[0].replace(/\\\//g, '/') : null;
+}
+
+function normalizeCinemaCityAssetTree(sourceTree) {
+    if (!sourceTree) return null;
+    if (typeof sourceTree === 'string') return sourceTree;
+    if (Array.isArray(sourceTree)) return sourceTree;
+
+    if (typeof sourceTree === 'object') {
+        const direct = sourceTree.file || sourceTree.url || sourceTree.src;
+        if (typeof direct === 'string') return direct;
+
+        const nested = sourceTree.sources || sourceTree.source || sourceTree.folder || sourceTree.files;
+        if (Array.isArray(nested)) return nested;
+        if (nested && typeof nested === 'object') return normalizeCinemaCityAssetTree(nested);
+    }
+
+    return null;
+}
+
+function parsePlayerPayload(decoded) {
+    const sourceTree = extractSourceTree(decoded);
+    return normalizeCinemaCityAssetTree(sourceTree);
 }
 
 function resolveUrl(baseUrl, relativeOrAbsoluteUrl) {
@@ -1955,33 +2108,9 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
     pageMetadataCache.set(normalizeRemoteUrl(pageUrl), pageMetadata);
     const playerReferer = extractPlayerReferer(html, pageUrl);
 
-    const atobRegex = /atob\s*\(\s*['"](.*?)['"]\s*\)/gi;
-    let match;
     let fileData = null;
-
-    while ((match = atobRegex.exec(html)) !== null) {
-        const encoded = match[1];
-        if (!encoded || encoded.length < 50) continue;
-        let decoded = '';
-        try { decoded = Buffer.from(encoded, 'base64').toString('utf8'); } catch (_) { continue; }
-        if (!decoded) continue;
-
-        if (decoded.trim().startsWith('[')) {
-            try { fileData = JSON.parse(decoded); } catch (_) {}
-        }
-        if (!fileData) {
-            const rawJson = extractJsonArray(decoded);
-            if (rawJson) {
-                try { fileData = JSON.parse(rawJson.replace(/\\(.)/g, '$1')); }
-                catch (_) { try { fileData = JSON.parse(rawJson); } catch (_) {} }
-            }
-        }
-        if (!fileData) {
-            const fileMatch = decoded.match(/(?:file|sources)\s*:\s*['"](.*?)['"]/i);
-            if (fileMatch && (fileMatch[1].includes('.m3u8') || fileMatch[1].includes('.mp4'))) {
-                fileData = fileMatch[1];
-            }
-        }
+    for (const decoded of decodeEmbeddedPayloads(html)) {
+        fileData = parsePlayerPayload(decoded);
         if (fileData) break;
     }
 
@@ -2241,6 +2370,10 @@ module.exports = {
         pageHasRequestedAudio,
         buildLanguageRejectReason,
         streamUrlHasForbiddenLanguage,
-        hardFilterStreamsByLanguage
+        hardFilterStreamsByLanguage,
+        decodeEmbeddedPayloads,
+        parsePlayerPayload,
+        extractSourceTree,
+        normalizeCinemaCityAssetTree
     }
 };
