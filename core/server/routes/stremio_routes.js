@@ -224,7 +224,16 @@ function queueBingePredictionWarmup({
                 }
 
                 incrementMetric('bingeWarmup.queued');
-                const result = await generateStream(normalizedType, nextId, userConf, userConfStr, reqHost);
+                const result = await generateStream(normalizedType, nextId, userConf, userConfStr, reqHost, {
+                    rdViewScanPriority: 'low',
+                    rdViewScanKind: 'warmup',
+                    requestPage: {
+                        type: normalizedType,
+                        id: nextId,
+                        source: 'binge_warmup',
+                        from: requestId
+                    }
+                });
                 const count = Array.isArray(result?.streams) ? result.streams.length : 0;
                 incrementMetric(count > 0 ? 'bingeWarmup.success' : 'bingeWarmup.empty');
                 logger.info(`[BINGE] Warmup completato | from=${requestId} | target=${nextId} | streams=${count}`);
@@ -344,7 +353,16 @@ function registerStremioRoutes(app, {
                 requestId,
                 userConf,
                 req.params.conf,
-                reqHost
+                reqHost,
+                {
+                    rdViewScanPriority: 'high',
+                    rdViewScanKind: 'visible',
+                    requestPage: {
+                        type: req.params.type,
+                        id: requestId,
+                        source: 'visible_request'
+                    }
+                }
             );
 
             setRawStreamCache(req.params.type, requestId, req.params.conf, result, { logger }).catch(() => {});

@@ -30,6 +30,8 @@ const rawStreamCache = new NodeCache({
     deleteOnExpire: true
 });
 
+const rawStreamCacheIndexByLabel = new Map();
+
 function sha256(value) {
     return crypto.createHash('sha256').update(String(value || '')).digest('hex');
 }
@@ -51,6 +53,24 @@ function buildRawStreamCacheKey(type, id, userConfStr) {
 
 function buildRawStreamCacheLabel(type, id) {
     return `${normalizeIdPart(type).toLowerCase()}:${normalizeIdPart(id)}`;
+}
+
+function indexRawStreamCacheKey(label, key) {
+    if (!label || !key) return;
+    let keys = rawStreamCacheIndexByLabel.get(label);
+    if (!keys) {
+        keys = new Set();
+        rawStreamCacheIndexByLabel.set(label, keys);
+    }
+    keys.add(key);
+}
+
+function unindexRawStreamCacheKey(label, key) {
+    if (!label || !key) return;
+    const keys = rawStreamCacheIndexByLabel.get(label);
+    if (!keys) return;
+    keys.delete(key);
+    if (keys.size === 0) rawStreamCacheIndexByLabel.delete(label);
 }
 
 function compactAge(ms) {
@@ -134,6 +154,7 @@ async function getRawStreamCache(type, id, userConfStr, options = {}) {
         return payload;
     } catch (error) {
         rawStreamCache.del(key);
+        unindexRawStreamCacheKey(label, key);
         registerCacheAccess('raw', false);
         incrementMetric('rawStreamCache.decodeError');
         log.warn(`[RAW CACHE] drop key=${label} reason=decode_error error=${error.message}`);
@@ -162,6 +183,7 @@ async function setRawStreamCache(type, id, userConfStr, payload, options = {}) {
 
         const key = buildRawStreamCacheKey(type, id, userConfStr);
         rawStreamCache.set(key, encoded.entry, RAW_STREAM_CACHE_TTL_SECONDS);
+        indexRawStreamCacheKey(label, key);
         registerCacheSet('raw');
         incrementMetric('rawStreamCache.set');
         log.info(`[RAW CACHE] saved key=${label} compressed=${encoded.entry.compressed === true} bytes=${encoded.entry.rawBytes}->${encoded.entry.storedBytes} ttl=${RAW_STREAM_CACHE_TTL_SECONDS}s`);
@@ -175,6 +197,26 @@ async function setRawStreamCache(type, id, userConfStr, payload, options = {}) {
 
 function flushRawStreamCache() {
     rawStreamCache.flushAll();
+    rawStreamCacheIndexByLabel.clear();
+}
+
+function invalidateRawStreamCacheByPage(type, id, options = {}) {
+    if (!RAW_STREAM_CACHE_ENABLED) return { invalidated: 0, label: buildRawStreamCacheLabel(type, id) };
+    const log = options.logger || defaultLogger;
+    const reason = options.reason || 'manual';
+    const label = buildRawStreamCacheLabel(type, id);
+    const keys = rawStreamCacheIndexByLabel.get(label);
+    if (!keys || keys.size === 0) return { invalidated: 0, label };
+
+    let invalidated = 0;
+    for (const key of Array.from(keys)) {
+        rawStreamCache.del(key);
+        invalidated += 1;
+    }
+    rawStreamCacheIndexByLabel.delete(label);
+    incrementMetric('rawStreamCache.invalidateByPage');
+    log.info(`[RAW CACHE] invalidated key=${label} reason=${reason} entries=${invalidated}`);
+    return { invalidated, label };
 }
 
 function getRawStreamCacheStats() {
@@ -184,7 +226,8 @@ function getRawStreamCacheStats() {
         compressed: RAW_STREAM_CACHE_COMPRESS,
         codec: RAW_STREAM_CACHE_CODEC,
         maxBytes: RAW_STREAM_CACHE_MAX_BYTES,
-        keys: rawStreamCache.keys().length
+        keys: rawStreamCache.keys().length,
+        indexedPages: rawStreamCacheIndexByLabel.size
     };
 }
 
@@ -198,5 +241,6 @@ module.exports = {
     getRawStreamCache,
     setRawStreamCache,
     flushRawStreamCache,
+    invalidateRawStreamCacheByPage,
     getRawStreamCacheStats
 };

@@ -2900,7 +2900,36 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
     });
 }
 
-async function generateStream(type, id, config, userConfStr, reqHost) {
+
+function parseRdViewPageFromId(type, rawId, meta = {}, context = {}) {
+  const raw = String(rawId || context?.requestPage?.id || '').replace(/\.json$/i, '').replace(/^ai-recs:/i, '').trim();
+  const match = raw.match(/^(kitsu:\d+|tmdb:\d+|tt\d+|\d+)(?::(\d+))?(?::(\d+))?$/i);
+  const seasonFromId = match?.[2] ? Number.parseInt(match[2], 10) : null;
+  const episodeFromId = match?.[3] ? Number.parseInt(match[3], 10) : null;
+  const isKitsuCompact = match && String(match[1] || '').toLowerCase().startsWith('kitsu:') && seasonFromId && !episodeFromId;
+
+  const season = Number.isInteger(seasonFromId) && seasonFromId > 0 && Number.isInteger(episodeFromId) && episodeFromId > 0
+      ? seasonFromId
+      : (isKitsuCompact ? 1 : (Number(meta?.season || 0) || null));
+  const episode = Number.isInteger(episodeFromId) && episodeFromId > 0
+      ? episodeFromId
+      : (isKitsuCompact ? seasonFromId : (Number(meta?.episode || 0) || null));
+
+  return {
+      type: String(type || context?.requestPage?.type || '').toLowerCase() || null,
+      id: raw || String(context?.requestPage?.id || '').trim() || null,
+      source: context?.requestPage?.source || context?.rdViewScanKind || 'visible_request',
+      from: context?.requestPage?.from || null,
+      imdb_id: meta?.imdb_id || (/^tt\d+$/i.test(match?.[1] || '') ? match[1] : null),
+      tmdb_id: meta?.tmdb_id || (String(match?.[1] || '').toLowerCase().startsWith('tmdb:') ? match[1].split(':')[1] : null),
+      kitsu_id: meta?.kitsu_id || (String(match?.[1] || '').toLowerCase().startsWith('kitsu:') ? match[1] : null),
+      season,
+      episode,
+      title: meta?.title || meta?.name || null
+  };
+}
+
+async function generateStream(type, id, config, userConfStr, reqHost, runtimeContext = {}) {
   const backCompat = applyAnimeUnityKitsuBackCompat(config, id);
   config = backCompat.config;
 
@@ -3234,12 +3263,15 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
               enqueueRdViewScan({
                   items: finalRanked,
                   meta,
+                  requestPage: parseRdViewPageFromId(type, id, meta, runtimeContext),
+                  priority: runtimeContext?.rdViewScanPriority || 'normal',
+                  kind: runtimeContext?.rdViewScanKind || 'visible',
                   config: { ...config, service: configuredDebridService },
                   apiKey: debridApiKey,
                   Cache,
                   logger,
                   getRdAvailabilityState,
-                  maxScan: 14
+                  maxScan: runtimeContext?.rdViewScanKind === 'warmup' ? 8 : 14
               });
           } catch (err) {
               logger.warn(`[RD VIEW SCAN] enqueue failed: ${err.message}`);

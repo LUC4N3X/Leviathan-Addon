@@ -7,7 +7,16 @@ const RealDebridProbe = require('../probe/realdebrid_probe');
 const EpisodePrecision = require('../../stream/episode_precision');
 const RdOracle = require('../state/cache_oracle');
 const { shouldSkipRecentWork } = require('../../recent_work');
+let RawStreamCache = null;
+try {
+    RawStreamCache = require('../../cache/raw_stream_cache');
+} catch (_) {
+    RawStreamCache = null;
+}
 
+// RD View Scanner: quando uno stream viene mostrato con stato unknown/probing,
+// non blocca Stremio, ma parte subito dietro le quinte per confermare RD e invalidare
+// le cache collegate. Default fissati nel codice per evitare nuove env obbligatorie.
 const RD_VIEW_SCAN_ENABLED = true;
 const RD_VIEW_SCAN_TOP = 14;
 const RD_VIEW_SCAN_BATCH_SIZE = 5;
@@ -17,6 +26,7 @@ const RD_VIEW_SCAN_COLLECTION_DEDUP_MS = 12 * 1000;
 const RD_VIEW_SCAN_MAX_QUEUE = 120;
 const RD_VIEW_SCAN_START_DELAY_MS = 250;
 const RD_VIEW_SCAN_BETWEEN_BATCH_MS = 350;
+const RD_VIEW_SCAN_PRIORITY = Object.freeze({ high: 100, normal: 50, low: 10 });
 const AVAILABILITY_CACHE_HIT_TTL = 24 * 60 * 60;
 const AVAILABILITY_CACHE_NEGATIVE_TTL = 6 * 60 * 60;
 const AVAILABILITY_CACHE_PROBING_TTL = 120;
@@ -47,6 +57,17 @@ function normalizeFileIdxForAvailability(fileIdx) {
     if (fileIdx === undefined || fileIdx === null || fileIdx === '') return 'auto';
     const parsed = Number.parseInt(fileIdx, 10);
     return Number.isInteger(parsed) && parsed >= 0 ? String(parsed) : 'auto';
+}
+
+function normalizePriorityLabel(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'visible' || normalized === 'foreground') return 'high';
+    if (normalized === 'warmup' || normalized === 'background') return 'low';
+    return Object.prototype.hasOwnProperty.call(RD_VIEW_SCAN_PRIORITY, normalized) ? normalized : 'normal';
+}
+
+function getPriorityValue(value) {
+    return RD_VIEW_SCAN_PRIORITY[normalizePriorityLabel(value)] || RD_VIEW_SCAN_PRIORITY.normal;
 }
 
 function getAvailabilityCacheKey(service, hash, fileIdx = null) {
@@ -93,7 +114,27 @@ function getMetaLabel(meta = {}) {
     const season = Number(meta.season || 0) || 0;
     const episode = Number(meta.episode || 0) || 0;
     if (imdb && season > 0 && episode > 0) return `${imdb}:${season}:${episode}`;
+
+    const rawId = String(meta.id || '').replace(/\.json$/i, '').trim().toLowerCase();
+    const idMatch = rawId.match(/^(tt\d+|tmdb:\d+|kitsu:\d+|\d+)(?::(\d+))?(?::(\d+))?$/i);
+    if (idMatch) {
+        const base = String(idMatch[1] || '').toLowerCase();
+        const s = Number(idMatch[2] || 0) || 0;
+        const e = Number(idMatch[3] || 0) || 0;
+        if (base && s > 0 && e > 0) return `${base}:${s}:${e}`;
+        if (base && s > 0) return `${base}:${s}`;
+        return base;
+    }
+
     return imdb || String(meta.kitsu_id || meta.tmdb_id || meta.title || 'n/a').slice(0, 80);
+}
+
+function getJobPageLabel(job = {}) {
+    return getMetaLabel(job.requestPage || job.meta || {});
+}
+
+function getJobKindLabel(job = {}) {
+    return String(job.kind || job.requestPage?.source || 'visible').trim().toLowerCase();
 }
 
 function compactTitle(item = {}) {
@@ -260,7 +301,54 @@ function buildPackFileInsert(item = {}, result = {}, meta = {}) {
     };
 }
 
-async function flushUpdates({ Cache, db, logger, updates, packFileInserts, reason }) {
+
+function cleanupInflightMap(now = Date.now()) {
+    for (const [key, entry] of inFlightByHash.entries()) {
+        const ts = typeof entry === 'object' ? Number(entry.ts || 0) : Number(entry || 0);
+        if (!ts || (now - ts) > RD_VIEW_SCAN_DEDUP_MS) inFlightByHash.delete(key);
+    }
+}
+
+function removePendingCandidateByKey(key, minPriorityValue) {
+    if (!key || pendingQueue.length === 0) return 0;
+    let removed = 0;
+    for (let i = pendingQueue.length - 1; i >= 0; i -= 1) {
+        const job = pendingQueue[i];
+        if (Number(job?.priorityValue || 0) >= minPriorityValue) continue;
+        const before = Array.isArray(job.candidates) ? job.candidates.length : 0;
+        job.candidates = (job.candidates || []).filter((item) => buildViewScanKey('rd', item) !== key);
+        removed += before - job.candidates.length;
+        if (!job.candidates.length) pendingQueue.splice(i, 1);
+    }
+    return removed;
+}
+
+function reserveViewScanKey(key, priorityValue, meta = {}) {
+    if (!key) return false;
+    cleanupInflightMap();
+    const now = Date.now();
+    const previous = inFlightByHash.get(key);
+    const previousTs = typeof previous === 'object' ? Number(previous.ts || 0) : Number(previous || 0);
+    const previousPriority = typeof previous === 'object' ? Number(previous.priorityValue || 0) : 0;
+
+    if (previousTs > 0 && (now - previousTs) < RD_VIEW_SCAN_DEDUP_MS) {
+        if (priorityValue > previousPriority) {
+            removePendingCandidateByKey(key, priorityValue);
+            inFlightByHash.set(key, { ts: now, priorityValue, page: getMetaLabel(meta) });
+            return true;
+        }
+        return false;
+    }
+
+    inFlightByHash.set(key, { ts: now, priorityValue, page: getMetaLabel(meta) });
+    return true;
+}
+
+function sortPendingQueue() {
+    pendingQueue.sort((a, b) => Number(b.priorityValue || 0) - Number(a.priorityValue || 0) || Number(a.enqueuedAt || 0) - Number(b.enqueuedAt || 0));
+}
+
+async function flushUpdates({ Cache, db, logger, updates, packFileInserts, reason, requestPage }) {
     if (!Array.isArray(updates) || updates.length === 0) return { updated: 0, invalidated: 0 };
     let updated = 0;
     if (db && typeof db.updateRdCacheStatus === 'function') {
@@ -281,7 +369,19 @@ async function flushUpdates({ Cache, db, logger, updates, packFileInserts, reaso
         const outcome = await Cache.invalidateStreamsByHashes(updates.map((row) => row.hash).filter(Boolean), reason || 'rd_view_scan');
         invalidated = Number(outcome?.invalidated || 0) + Number(outcome?.sharedDeleted || 0);
     }
-    return { updated: Number(updated || 0), invalidated };
+    let rawInvalidated = 0;
+    if (requestPage?.type && requestPage?.id && RawStreamCache && typeof RawStreamCache.invalidateRawStreamCacheByPage === 'function') {
+        try {
+            const rawOutcome = RawStreamCache.invalidateRawStreamCacheByPage(requestPage.type, requestPage.id, {
+                logger,
+                reason: reason || 'rd_view_scan'
+            });
+            rawInvalidated = Number(rawOutcome?.invalidated || 0) || 0;
+        } catch (err) {
+            logger?.warn?.(`[RD VIEW SCAN] raw cache invalidation failed | page=${getMetaLabel(requestPage)} | error=${err.message}`);
+        }
+    }
+    return { updated: Number(updated || 0), invalidated, rawInvalidated };
 }
 
 async function processBatch(job, batch) {
@@ -289,7 +389,7 @@ async function processBatch(job, batch) {
     const normalizedBatch = batch.filter((item) => normalizeHash(item.hash) && item.magnet);
     if (normalizedBatch.length === 0) return { updated: 0, scanned: 0, changed: 0 };
 
-    logger.info?.(`[RD VIEW SCAN] probing batch size=${normalizedBatch.length} page=${getMetaLabel(meta)}`);
+    logger.info?.(`[RD VIEW SCAN] probing batch size=${normalizedBatch.length} page=${getJobPageLabel(job)} kind=${getJobKindLabel(job)} priority=${job.priority || 'normal'}`);
 
     const { results = {}, deferred = [] } = await RealDebridProbe.probeAvailabilityFast(
         normalizedBatch,
@@ -356,11 +456,11 @@ async function processBatch(job, batch) {
             if (Cache && typeof Cache.invalidateStreamsByHashes === 'function' && hashes.length > 0) {
                 await Cache.invalidateStreamsByHashes(hashes, 'rd_view_scan_backfill');
             }
-            logger.info?.(`[RD VIEW SCAN] deferred backfill updated=${hashes.length} page=${getMetaLabel(meta)}`);
+            logger.info?.(`[RD VIEW SCAN] deferred backfill updated=${hashes.length} page=${getJobPageLabel(job)} kind=${getJobKindLabel(job)}`);
         });
     }
 
-    const persisted = await flushUpdates({ Cache, db, logger, updates, packFileInserts, reason: 'rd_view_scan' });
+    const persisted = await flushUpdates({ Cache, db, logger, updates, packFileInserts, reason: 'rd_view_scan', requestPage: job.requestPage });
     return { ...persisted, scanned: normalizedBatch.length, changed, deferred: deferred.length };
 }
 
@@ -374,15 +474,17 @@ async function runQueue() {
             let scanned = 0;
             let updated = 0;
             let changed = 0;
+            let rawInvalidated = 0;
             for (let i = 0; i < candidates.length; i += RD_VIEW_SCAN_BATCH_SIZE) {
                 const batch = candidates.slice(i, i + RD_VIEW_SCAN_BATCH_SIZE);
                 const outcome = await processBatch(job, batch);
                 scanned += Number(outcome.scanned || 0);
                 updated += Number(outcome.updated || 0);
                 changed += Number(outcome.changed || 0);
+                rawInvalidated += Number(outcome.rawInvalidated || 0);
                 await sleep(RD_VIEW_SCAN_BETWEEN_BATCH_MS);
             }
-            logger.info?.(`[RD VIEW SCAN] completed page=${getMetaLabel(meta)} scanned=${scanned} updated=${updated} changed=${changed}`);
+            logger.info?.(`[RD VIEW SCAN] completed page=${getJobPageLabel(job)} kind=${getJobKindLabel(job)} priority=${job.priority || 'normal'} scanned=${scanned} updated=${updated} changed=${changed} rawInvalidated=${rawInvalidated}`);
         }
     } catch (err) {
         // Non deve mai rompere la richiesta stream: è solo backfill in background.
@@ -402,52 +504,60 @@ function enqueueRdViewScan(params = {}) {
 
     const logger = params.logger || console;
     const meta = params.meta || {};
+    const requestPage = params.requestPage || meta;
+    const kind = String(params.kind || requestPage?.source || 'visible').trim().toLowerCase();
+    const priority = normalizePriorityLabel(params.priority || (kind === 'warmup' || kind === 'binge_warmup' ? 'low' : 'high'));
+    const priorityValue = getPriorityValue(priority);
     const { candidates, stats } = collectViewScanCandidates(params.items || params.results || [], meta, {
         maxScan: params.maxScan || RD_VIEW_SCAN_TOP,
         getRdAvailabilityState: params.getRdAvailabilityState
     });
 
     if (candidates.length === 0) {
-        logger.info?.(`[RD VIEW SCAN] collected unknown=0 probing=0 likely=0 page=${getMetaLabel(meta)} | skip=no_candidates`);
+        logger.info?.(`[RD VIEW SCAN] collected unknown=0 probing=0 likely=0 page=${getMetaLabel(requestPage)} kind=${kind} priority=${priority} | skip=no_candidates`);
         return { queued: false, reason: 'no_candidates', stats };
     }
 
     const fingerprint = crypto.createHash('sha1')
-        .update(`${getMetaLabel(meta)}|${candidates.map((item) => buildViewScanKey('rd', item)).join('|')}`)
+        .update(`${getMetaLabel(requestPage)}|${kind}|${candidates.map((item) => buildViewScanKey('rd', item)).join('|')}`)
         .digest('hex')
         .slice(0, 16);
-    const collectionKey = `${getMetaLabel(meta)}:${fingerprint}`;
-    if (shouldSkipRecentWork(recentCollections, collectionKey, RD_VIEW_SCAN_COLLECTION_DEDUP_MS)) {
+    const collectionKey = `${getMetaLabel(requestPage)}:${kind}:${fingerprint}`;
+    if (priority !== 'high' && shouldSkipRecentWork(recentCollections, collectionKey, RD_VIEW_SCAN_COLLECTION_DEDUP_MS)) {
         return { queued: false, reason: 'collection_cooldown', stats };
     }
+    if (priority === 'high') recentCollections.set(collectionKey, Date.now());
 
     const deduped = [];
     for (const item of candidates) {
         const key = buildViewScanKey('rd', item);
         if (!key) continue;
-        if (shouldSkipRecentWork(inFlightByHash, key, RD_VIEW_SCAN_DEDUP_MS)) {
-            logger.info?.(`[RD VIEW SCAN] skip duplicate hash=${String(item.hash).toLowerCase()} fileIdx=${item.fileIdx ?? 'auto'}`);
+        if (!reserveViewScanKey(key, priorityValue, requestPage)) {
+            logger.info?.(`[RD VIEW SCAN] skip duplicate hash=${String(item.hash).toLowerCase()} fileIdx=${item.fileIdx ?? 'auto'} page=${getMetaLabel(requestPage)} priority=${priority}`);
             continue;
         }
         deduped.push(item);
     }
 
     if (deduped.length === 0) return { queued: false, reason: 'deduped', stats };
-    if (pendingQueue.length >= RD_VIEW_SCAN_MAX_QUEUE) {
-        pendingQueue.splice(0, Math.max(1, pendingQueue.length - RD_VIEW_SCAN_MAX_QUEUE + 1));
-    }
-
     pendingQueue.push({
         apiKey,
         meta,
+        requestPage,
+        kind,
+        priority,
+        priorityValue,
+        enqueuedAt: Date.now(),
         config: params.config || {},
         Cache: params.Cache,
         logger,
         db: params.db || dbHelper,
         candidates: deduped
     });
+    sortPendingQueue();
+    while (pendingQueue.length > RD_VIEW_SCAN_MAX_QUEUE) pendingQueue.pop();
 
-    logger.info?.(`[RD VIEW SCAN] collected unknown=${stats.unknown} probing=${stats.probing} likely=${stats.likely} queued=${deduped.length}/${stats.total} page=${getMetaLabel(meta)}`);
+    logger.info?.(`[RD VIEW SCAN] collected unknown=${stats.unknown} probing=${stats.probing} likely=${stats.likely} queued=${deduped.length}/${stats.total} page=${getMetaLabel(requestPage)} kind=${kind} priority=${priority}`);
     setTimeout(() => { void runQueue(); }, RD_VIEW_SCAN_START_DELAY_MS);
     return { queued: true, count: deduped.length, stats };
 }
@@ -458,6 +568,7 @@ function getRdViewScannerStatus() {
         pending: pendingQueue.length,
         running: queueRunning,
         inflightKeys: inFlightByHash.size,
+        highPriorityPending: pendingQueue.filter((job) => job.priority === 'high').length,
         recentCollections: recentCollections.size
     };
 }
@@ -470,6 +581,8 @@ module.exports = {
         normalizeHash,
         getAvailabilityCacheKey,
         mapProbeResultToState,
-        buildDbUpdate
+        buildDbUpdate,
+        normalizePriorityLabel,
+        getPriorityValue
     }
 };

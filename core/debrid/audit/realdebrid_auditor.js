@@ -24,7 +24,9 @@ const auditorState = {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const RD_CACHED_RECHECK_HOURS = 168; 
+
+// Leviathan RD Audit v2: default fissati nel codice, non nel file .env.
+const RD_CACHED_RECHECK_HOURS = 168; // 7 giorni
 const RD_SCAN_HTTP_TIMEOUT_MS = 30000;
 const RD_SCAN_MAX_POLLS = 2;
 const RD_SCAN_POLL_MS = 8000;
@@ -79,7 +81,8 @@ function buildAuditSelection(files) {
         .map((file) => Number(file.id))
         .filter((id) => Number.isInteger(id) && id >= 0);
 
-    
+    // Se RD espone un pack, lo verifichiamo selezionando TUTTI i file video.
+    // Così non segniamo ⚡ un pack dove è pronto solo il file più grande ma non l'episodio richiesto.
     const primary = videoFiles[0] || null;
     return {
         videoFiles,
