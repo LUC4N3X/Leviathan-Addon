@@ -16,7 +16,6 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package*.json ./
 COPY addon.js manifest.js ./
 COPY core ./core
-COPY debrid ./debrid
 COPY providers ./providers
 COPY public ./public
 
