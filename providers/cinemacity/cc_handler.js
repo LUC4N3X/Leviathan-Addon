@@ -72,9 +72,6 @@ function wasProviderBlockedFetch(url) {
 }
 const NEWS_SITEMAP_TTL_MS = 30 * 60 * 1000;
 const NEGATIVE_CACHE_TTL_MS = 30 * 1000;
-const HOST_HEALTH_TTL_MS = 20 * 60 * 1000;
-const HOST_HEALTH_UNHEALTHY_WINDOW_MS = 90 * 1000;
-const SEARCH_FAILURE_REPLAY_TTL_MS = 15 * 60 * 1000;
 const { updateCookiesFromResponse, getCookieHeaderForUrl } = createDomainCookieJar();
 
 function getCinemaCitySessionCookie() {
@@ -127,135 +124,6 @@ function cleanSectionValue(value) {
 
 function attrSelectorValue(value) {
     return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
-
-function getUrlHost(url) {
-    try {
-        return new URL(String(url || '')).host.toLowerCase();
-    } catch (_) {
-        return '';
-    }
-}
-
-function getHostHealthKey(url) {
-    const host = getUrlHost(url);
-    return host ? `host-health:${host}` : null;
-}
-
-function getHostHealth(url) {
-    const key = getHostHealthKey(url);
-    return key ? hostHealthCache.get(key) : null;
-}
-
-function pickBestHostMode(modes = {}) {
-    const candidates = Object.entries(modes)
-        .map(([mode, stats]) => {
-            const total = Number(stats?.ok || 0) + Number(stats?.fail || 0);
-            const failRate = total > 0 ? Number(stats.fail || 0) / total : 1;
-            return {
-                mode,
-                total,
-                ok: Number(stats?.ok || 0),
-                failRate,
-                avgMs: Number(stats?.avgMs || 0) || 999999
-            };
-        })
-        .filter((entry) => entry.total > 0)
-        .sort((a, b) => {
-            if (b.ok !== a.ok) return b.ok - a.ok;
-            if (a.failRate !== b.failRate) return a.failRate - b.failRate;
-            return a.avgMs - b.avgMs;
-        });
-
-    return candidates[0]?.mode || 'unknown';
-}
-
-function updateHostHealth(url, result = {}) {
-    const key = getHostHealthKey(url);
-    const host = getUrlHost(url);
-    if (!key || !host) return null;
-
-    const now = Date.now();
-    const success = result.success === true;
-    const elapsedMs = Number.isFinite(Number(result.elapsedMs)) ? Math.max(0, Math.round(Number(result.elapsedMs))) : null;
-    const status = Number.isFinite(Number(result.status)) ? Number(result.status) : null;
-    const mode = String(result.mode || 'unknown').trim() || 'unknown';
-    const reason = String(result.reason || result.error || '').slice(0, 120);
-    const current = hostHealthCache.get(key) || {
-        host,
-        ok: 0,
-        fail: 0,
-        total: 0,
-        failRate: 0,
-        avgMs: 0,
-        lastStatus: null,
-        lastReason: '',
-        lastSeen: 0,
-        lastOk: 0,
-        lastFail: 0,
-        bestMode: 'unknown',
-        modes: {}
-    };
-
-    const modeStats = current.modes[mode] || { ok: 0, fail: 0, avgMs: 0, lastStatus: null, lastSeen: 0 };
-    current.total += 1;
-    current.lastSeen = now;
-    current.lastStatus = status;
-    if (reason) current.lastReason = reason;
-
-    if (success) {
-        current.ok += 1;
-        current.lastOk = now;
-        modeStats.ok += 1;
-    } else {
-        current.fail += 1;
-        current.lastFail = now;
-        modeStats.fail += 1;
-    }
-
-    if (elapsedMs !== null) {
-        current.avgMs = current.avgMs > 0 ? Math.round((current.avgMs * 0.78) + (elapsedMs * 0.22)) : elapsedMs;
-        modeStats.avgMs = modeStats.avgMs > 0 ? Math.round((modeStats.avgMs * 0.72) + (elapsedMs * 0.28)) : elapsedMs;
-    }
-
-    modeStats.lastStatus = status;
-    modeStats.lastSeen = now;
-    current.failRate = current.total > 0 ? Number((current.fail / current.total).toFixed(3)) : 0;
-    current.modes[mode] = modeStats;
-    current.bestMode = pickBestHostMode(current.modes);
-    hostHealthCache.set(key, current);
-
-    if (process.env.DEBUG_CINEMACITY_HOST_HEALTH === '1') {
-        console.log(`[HOST HEALTH] host=${host} ok=${current.ok} fail=${current.fail} rate=${current.failRate} avg=${current.avgMs}ms best=${current.bestMode} last=${status || reason || 'n/a'}`);
-    }
-
-    return current;
-}
-
-function shouldThrottleHostDirect(url) {
-    const health = getHostHealth(url);
-    if (!health) return false;
-    const recentFailure = health.lastFail && Date.now() - health.lastFail < HOST_HEALTH_UNHEALTHY_WINDOW_MS;
-    if (!recentFailure) return false;
-    if (health.total >= 5 && health.failRate >= 0.8) return true;
-    if (health.total >= 4 && health.fail > Math.max(2, health.ok * 3)) return true;
-    return false;
-}
-
-function summarizeHostHealth(url) {
-    const health = getHostHealth(url);
-    if (!health) return null;
-    return {
-        host: health.host,
-        ok: health.ok,
-        fail: health.fail,
-        failRate: health.failRate,
-        avgMs: health.avgMs,
-        bestMode: health.bestMode,
-        lastStatus: health.lastStatus,
-        lastReason: health.lastReason
-    };
 }
 
 const pageMetadataCache = new TtlLruCache({
@@ -312,20 +180,6 @@ const fetchFailureCache = new TtlLruCache({
     max: 2000
 });
 
-const hostHealthCache = new TtlLruCache({
-    missingValue: null,
-    ttlMs: HOST_HEALTH_TTL_MS,
-    max: 600
-});
-
-const searchFailureReplayCache = new TtlLruCache({
-    missingValue: null,
-    ttlMs: SEARCH_FAILURE_REPLAY_TTL_MS,
-    max: 300
-});
-
-const searchFailureReplayHistory = [];
-
 const impitWarmupCache = new TtlLruCache({
     missingValue: null,
     ttlMs: IMPIT_WARMUP_TTL_MS,
@@ -353,7 +207,6 @@ async function fetchHtmlWithImpit(
     requestContext = 'document',
     options = {}
 ) {
-    const startedAt = Date.now();
     const { fp, headers: mergedHeaders } = buildCinemaCityRequestHeaders(url, requestContext, extraHeaders);
     const hardMode = options.hardMode === true || attempt > 0 || requestContext === 'ajax' || requestContext === 'json';
 
@@ -376,36 +229,28 @@ async function fetchHtmlWithImpit(
             innerRetry: { limit: 0 },
             retryOnStatuses: [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]
         });
-        if (!response) {
-            updateHostHealth(url, { success: false, mode: 'impit', elapsedMs: Date.now() - startedAt, reason: 'empty_response' });
-            return null;
-        }
+        if (!response) return null;
 
         const status = Number(response?.statusCode || 0);
         const body = response?.body || '';
         updateCookiesFromResponse(url, response.headers);
 
         if (isCloudflareChallenge(body, status)) {
-            updateHostHealth(url, { success: false, mode: 'impit', status, elapsedMs: Date.now() - startedAt, reason: `cloudflare:${response.impitBrowser || 'unknown'}` });
             markProviderBlockedFetch(url, `cloudflare:${response.impitBrowser || 'unknown'}`);
             directFetchBreaker.failure(url, new Error(`cloudflare_${status || 0}`));
             return null;
         }
         if ([403, 429, 503].includes(status)) {
-            updateHostHealth(url, { success: false, mode: 'impit', status, elapsedMs: Date.now() - startedAt, reason: `http_${status}:${response.impitBrowser || 'unknown'}` });
             markProviderBlockedFetch(url, `http_${status}:${response.impitBrowser || 'unknown'}`);
             directFetchBreaker.failure(url, new Error(`http_${status}`));
             return null;
         }
         if (status >= 200 && status < 400) {
-            updateHostHealth(url, { success: true, mode: 'impit', status, elapsedMs: Date.now() - startedAt });
             directFetchBreaker.success(url);
             return body;
         }
-        updateHostHealth(url, { success: false, mode: 'impit', status, elapsedMs: Date.now() - startedAt, reason: `http_${status || 0}` });
         return null;
     } catch (error) {
-        updateHostHealth(url, { success: false, mode: 'impit', elapsedMs: Date.now() - startedAt, reason: error?.code || error?.message || 'network' });
         if (providerShield.shouldUseShield({ url, error })) {
             markProviderBlockedFetch(url, error?.code || error?.message || 'network');
             directFetchBreaker.failure(url, error);
@@ -415,7 +260,6 @@ async function fetchHtmlWithImpit(
 }
 
 async function fetchHtmlWithAxios(url, extraHeaders = {}, requestTimeout = FETCH_TIMEOUT, requestContext = 'document') {
-    const startedAt = Date.now();
     const { headers: mergedHeaders } = buildCinemaCityRequestHeaders(url, requestContext, extraHeaders);
 
     try {
@@ -429,23 +273,16 @@ async function fetchHtmlWithAxios(url, extraHeaders = {}, requestTimeout = FETCH
         updateCookiesFromResponse(url, response.headers);
 
         if (isCloudflareChallenge(body, status)) {
-            updateHostHealth(url, { success: false, mode: 'axios', status, elapsedMs: Date.now() - startedAt, reason: 'cloudflare' });
             markProviderBlockedFetch(url, 'cloudflare');
             return null;
         }
         if ([403, 429, 503].includes(status)) {
-            updateHostHealth(url, { success: false, mode: 'axios', status, elapsedMs: Date.now() - startedAt, reason: `http_${status}` });
             markProviderBlockedFetch(url, `http_${status}`);
             return null;
         }
-        if (status >= 200 && status < 400) {
-            updateHostHealth(url, { success: true, mode: 'axios', status, elapsedMs: Date.now() - startedAt });
-            return body;
-        }
-        updateHostHealth(url, { success: false, mode: 'axios', status, elapsedMs: Date.now() - startedAt, reason: `http_${status || 0}` });
+        if (status >= 200 && status < 400) return body;
         return null;
     } catch (error) {
-        updateHostHealth(url, { success: false, mode: 'axios', elapsedMs: Date.now() - startedAt, reason: error?.code || error?.message || 'network' });
         if (providerShield.shouldUseShield({ url, error })) markProviderBlockedFetch(url, error?.code || error?.message || 'network');
         return null;
     }
@@ -453,7 +290,6 @@ async function fetchHtmlWithAxios(url, extraHeaders = {}, requestTimeout = FETCH
 
 
 async function fetchHtmlPostWithImpit(url, formBody, extraHeaders = {}) {
-    const startedAt = Date.now();
     const { fp, headers: baseHeaders } = buildCinemaCityRequestHeaders(url, 'ajax', {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Origin': BASE_URL,
@@ -479,48 +315,34 @@ async function fetchHtmlPostWithImpit(url, formBody, extraHeaders = {}) {
             innerRetry: { limit: 0 },
             retryOnStatuses: [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]
         });
-        if (!response) {
-            updateHostHealth(url, { success: false, mode: 'impit_post', elapsedMs: Date.now() - startedAt, reason: 'empty_response' });
-            return null;
-        }
+        if (!response) return null;
 
         const status = Number(response?.statusCode || 0);
         const body = response?.body || '';
         updateCookiesFromResponse(url, response.headers);
 
         if (isCloudflareChallenge(body, status)) {
-            updateHostHealth(url, { success: false, mode: 'impit_post', status, elapsedMs: Date.now() - startedAt, reason: `cloudflare-post:${response.impitBrowser || 'unknown'}` });
             markProviderBlockedFetch(url, `cloudflare-post:${response.impitBrowser || 'unknown'}`);
             directFetchBreaker.failure(url, new Error(`cloudflare_post_${status || 0}`));
-            const shieldStartedAt = Date.now();
             const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: IMPIT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
-            updateHostHealth(url, { success: Boolean(shielded), mode: 'shield_post', elapsedMs: Date.now() - shieldStartedAt, reason: shielded ? '' : 'shield_empty' });
             return shielded || null;
         }
         if ([403, 429, 503].includes(status)) {
-            updateHostHealth(url, { success: false, mode: 'impit_post', status, elapsedMs: Date.now() - startedAt, reason: `http_${status}_post:${response.impitBrowser || 'unknown'}` });
             markProviderBlockedFetch(url, `http_${status}_post:${response.impitBrowser || 'unknown'}`);
             directFetchBreaker.failure(url, new Error(`http_${status}_post`));
-            const shieldStartedAt = Date.now();
             const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: IMPIT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
-            updateHostHealth(url, { success: Boolean(shielded), mode: 'shield_post', elapsedMs: Date.now() - shieldStartedAt, reason: shielded ? '' : 'shield_empty' });
             return shielded || null;
         }
         if (status >= 200 && status < 400) {
-            updateHostHealth(url, { success: true, mode: 'impit_post', status, elapsedMs: Date.now() - startedAt });
             directFetchBreaker.success(url);
             return body;
         }
-        updateHostHealth(url, { success: false, mode: 'impit_post', status, elapsedMs: Date.now() - startedAt, reason: `http_${status || 0}_post` });
         return null;
     } catch (error) {
-        updateHostHealth(url, { success: false, mode: 'impit_post', elapsedMs: Date.now() - startedAt, reason: error?.code || error?.message || 'post-network' });
         if (providerShield.shouldUseShield({ url, error })) {
             markProviderBlockedFetch(url, error?.code || error?.message || 'post-network');
             directFetchBreaker.failure(url, error);
-            const shieldStartedAt = Date.now();
             const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: IMPIT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
-            updateHostHealth(url, { success: Boolean(shielded), mode: 'shield_post', elapsedMs: Date.now() - shieldStartedAt, reason: shielded ? '' : 'shield_empty' });
             return shielded || null;
         }
         return null;
@@ -537,12 +359,7 @@ async function fetchHtml(url, extraHeaders = {}, options = {}) {
         if (fetchFailureCache.get(cacheKey)) return null;
 
         const timeout = options.timeout || FETCH_TIMEOUT;
-        const hostThrottled = shouldThrottleHostDirect(url);
-        const directAllowed = directFetchBreaker.canRequest(url) && !hostThrottled;
-        if (hostThrottled && (options.debug === true || process.env.DEBUG_CINEMACITY_HOST_HEALTH === '1')) {
-            const health = summarizeHostHealth(url);
-            console.warn(`[HOST HEALTH] throttling direct fetch host=${health?.host || getUrlHost(url)} failRate=${health?.failRate ?? 'n/a'} best=${health?.bestMode || 'unknown'}`);
-        }
+        const directAllowed = directFetchBreaker.canRequest(url);
         const rotatingEnabled = options.rotating !== false;
         const attempts = rotatingEnabled
             ? Math.max(1, Math.min(2, Number.parseInt(String(options.attempts || 1), 10) || 1))
@@ -574,12 +391,10 @@ async function fetchHtml(url, extraHeaders = {}, options = {}) {
         }
 
         if (options.allowClearanceFallback !== false && (wasProviderBlockedFetch(url) || !directAllowed)) {
-            const shieldStartedAt = Date.now();
             const shieldBody = await providerShield.fetchHtml(url, {
                 ttl: options.ttl || SEARCH_CACHE_TTL_MS,
                 timeout: Math.min(timeout, 6000)
             });
-            updateHostHealth(url, { success: Boolean(shieldBody), mode: 'shield', elapsedMs: Date.now() - shieldStartedAt, reason: shieldBody ? '' : 'shield_empty' });
             if (shieldBody) {
                 directFetchBreaker.success(url);
                 return shieldBody;
@@ -619,24 +434,14 @@ async function warmupCinemaCitySession(reason = 'search') {
 }
 
 async function fetchJson(url, options = {}) {
-    const startedAt = Date.now();
     const { headers } = buildCinemaCityRequestHeaders(url, 'json', options.headers || {});
-    try {
-        const response = await httpClient.get(url, {
-            ...options,
-            headers
-        });
-        const status = Number(response?.status || 0);
-        if (status >= 200 && status < 400) {
-            updateHostHealth(url, { success: true, mode: 'json', status, elapsedMs: Date.now() - startedAt });
-            return response.data;
-        }
-        updateHostHealth(url, { success: false, mode: 'json', status, elapsedMs: Date.now() - startedAt, reason: `http_${status || 500}` });
-        throw new Error(`HTTP ${status || 500}`);
-    } catch (error) {
-        updateHostHealth(url, { success: false, mode: 'json', elapsedMs: Date.now() - startedAt, reason: error?.code || error?.message || 'json_error' });
-        throw error;
-    }
+    const response = await httpClient.get(url, {
+        ...options,
+        headers
+    });
+    const status = Number(response?.status || 0);
+    if (status >= 200 && status < 400) return response.data;
+    throw new Error(`HTTP ${status || 500}`);
 }
 
 function sleep(ms) {
@@ -1402,116 +1207,6 @@ function scoreCandidateEntry(candidate, expectedTitles, expectedYear, providerTy
     return score;
 }
 
-
-function createSearchFailureReplayContext({ originalId, finalId, meta = {}, resolved = {}, config = {} } = {}) {
-    const season = resolved?.season || meta?.season || null;
-    const episode = resolved?.episode || meta?.episode || null;
-    return {
-        provider: 'CinemaCity',
-        key: [originalId, finalId, resolved?.imdbId, resolved?.tmdbId, season, episode].filter(Boolean).join('|') || `cc:${Date.now()}`,
-        startedAt: Date.now(),
-        debug: config?.debug === true,
-        request: {
-            originalId: originalId || '',
-            finalId: finalId || '',
-            imdbId: resolved?.imdbId || '',
-            tmdbId: resolved?.tmdbId || '',
-            providerType: resolved?.providerType || '',
-            season,
-            episode,
-            title: meta?.title || meta?.name || meta?.originalTitle || '',
-            expectedYear: resolved?.expectedYear || null
-        },
-        stages: [],
-        candidates: [],
-        rejects: []
-    };
-}
-
-function addSearchReplayStage(replay, stage, details = {}) {
-    if (!replay) return;
-    replay.stages.push({
-        stage,
-        atMs: Date.now() - replay.startedAt,
-        ...details
-    });
-    if (replay.stages.length > 24) replay.stages = replay.stages.slice(-24);
-}
-
-function buildCandidateReplayItem(candidate = {}, expectedTitles = [], context = {}) {
-    const providerType = context.providerType || 'tv';
-    const expectedYear = context.expectedYear || null;
-    const score = Number.isFinite(Number(candidate.score))
-        ? Number(candidate.score)
-        : scoreCandidateEntry(candidate, expectedTitles, expectedYear, providerType);
-    const title = candidate.title || titleFromContentUrl(candidate.url || '');
-    const item = {
-        stage: context.stage || 'unknown',
-        title,
-        url: candidate.url || '',
-        score,
-        section: getCinemaCitySectionType(candidate.url || '') || 'unknown'
-    };
-    const year = extractYear(title) || extractYear(candidate.url || '');
-    if (year) item.year = year;
-    if (context.requestedImdbId) item.requestedImdbId = context.requestedImdbId;
-    return item;
-}
-
-function addSearchReplayCandidates(replay, stage, candidates = [], expectedTitles = [], context = {}) {
-    if (!replay || !Array.isArray(candidates) || candidates.length === 0) return;
-    const preview = candidates
-        .map((candidate) => buildCandidateReplayItem(candidate, expectedTitles, { ...context, stage }))
-        .filter((candidate) => candidate.url || candidate.title)
-        .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
-        .slice(0, 10);
-
-    replay.candidates.push(...preview);
-    replay.candidates = replay.candidates
-        .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
-        .slice(0, 30);
-}
-
-function addSearchReplayReject(replay, reason, details = {}) {
-    if (!replay) return;
-    replay.rejects.push({ reason, atMs: Date.now() - replay.startedAt, ...details });
-    if (replay.rejects.length > 20) replay.rejects = replay.rejects.slice(-20);
-}
-
-function finishSearchFailureReplay(replay, reason, extra = {}) {
-    if (!replay) return null;
-    const report = {
-        ...replay,
-        reason,
-        finishedAt: Date.now(),
-        elapsedMs: Date.now() - replay.startedAt,
-        hostHealth: extra.hostHealth || null,
-        extra: Object.fromEntries(Object.entries(extra).filter(([key]) => key !== 'hostHealth'))
-    };
-    const key = `replay:${report.key}:${reason}`;
-    searchFailureReplayCache.set(key, report);
-    searchFailureReplayHistory.push(report);
-    while (searchFailureReplayHistory.length > 80) searchFailureReplayHistory.shift();
-
-    const shouldLog = report.debug
-        || process.env.DEBUG_CINEMACITY === '1'
-        || process.env.DEBUG_CINEMACITY_REPLAY === '1'
-        || process.env.CINEMACITY_REPLAY_LOG === '1';
-    if (shouldLog) {
-        const best = report.candidates[0];
-        const stages = report.stages.map((stageInfo) => stageInfo.stage).join('>') || 'none';
-        console.warn(`[CC MISS] reason=${reason} id=${report.request.imdbId || report.request.tmdbId || report.request.originalId || 'unknown'} S=${report.request.season || '-'} E=${report.request.episode || '-'} stages=${stages} candidates=${report.candidates.length} best=${best ? `${best.score}:${best.title}` : 'none'}`);
-    }
-
-    return report;
-}
-
-function getLastSearchFailureReplays(limit = 10) {
-    return [...searchFailureReplayHistory]
-        .sort((a, b) => Number(b.finishedAt || 0) - Number(a.finishedAt || 0))
-        .slice(0, Math.max(1, Math.min(50, Number(limit) || 10)));
-}
-
 function extractSearchCandidates(html) {
     const body = String(html || '');
     if (/site search yielded no results|ricerca non ha prodotto risultati/i.test(body)) return [];
@@ -1675,31 +1370,25 @@ async function fetchSearchCandidates(query) {
     });
 }
 
-async function searchByTitleQueries(queryTitles, providerType, expectedTitles, requestedImdbId, expectedYear, replay = null) {
+async function searchByTitleQueries(queryTitles, providerType, expectedTitles, requestedImdbId, expectedYear) {
     const queries = buildSearchQueryVariants(queryTitles).slice(0, providerType === 'anime' ? 10 : 6);
     if (queries.length === 0) return null;
 
     const collected = [];
     const seen = new Set();
     const BATCH_SIZE = 3;
-    addSearchReplayStage(replay, 'title_search_start', { queries: queries.length });
 
     for (let i = 0; i < queries.length; i += BATCH_SIZE) {
         const batch = queries.slice(i, i + BATCH_SIZE);
         const batchResults = await Promise.all(batch.map((q) => fetchSearchCandidates(q)));
 
-        let batchCandidateCount = 0;
         for (const candidates of batchResults) {
-            batchCandidateCount += Array.isArray(candidates) ? candidates.length : 0;
             for (const candidate of candidates) {
                 if (!candidate?.url || seen.has(candidate.url)) continue;
                 seen.add(candidate.url);
                 collected.push(candidate);
             }
         }
-
-        addSearchReplayStage(replay, 'title_search_batch', { batch: Math.floor(i / BATCH_SIZE) + 1, queries: batch, candidates: batchCandidateCount, collected: collected.length });
-        addSearchReplayCandidates(replay, 'title_search', collected, expectedTitles, { requestedImdbId, expectedYear, providerType });
 
         const interim = await pickBestCandidate(collected, expectedTitles, { requestedImdbId, expectedYear, providerType, fastMode: true });
         if (interim?.score >= 100) return interim;
@@ -1708,16 +1397,13 @@ async function searchByTitleQueries(queryTitles, providerType, expectedTitles, r
     return pickBestCandidate(collected, expectedTitles, { requestedImdbId, expectedYear, providerType, fastMode: true });
 }
 
-async function searchSitemapCandidates(providerType, expectedTitles, { requestedImdbId = null, expectedYear = null, fastMode = true, replay = null } = {}) {
+async function searchSitemapCandidates(providerType, expectedTitles, { requestedImdbId = null, expectedYear = null, fastMode = true } = {}) {
     try {
         const sitemapEntries = await getNewsSitemapEntries();
         const sitemapCandidates = sitemapEntries
             .filter((url) => isCinemaCityContentUrlForType(url, providerType))
             .map((url) => ({ url, title: titleFromContentUrl(url) }))
             .filter((c) => scoreTitleMatch(c.title, expectedTitles) > 0);
-
-        addSearchReplayStage(replay, 'sitemap', { candidates: sitemapCandidates.length });
-        addSearchReplayCandidates(replay, 'sitemap', sitemapCandidates, expectedTitles, { requestedImdbId, expectedYear, providerType });
 
         return pickBestCandidate(sitemapCandidates, expectedTitles, {
             requestedImdbId, expectedYear, providerType, fastMode
@@ -1727,22 +1413,16 @@ async function searchSitemapCandidates(providerType, expectedTitles, { requested
     }
 }
 
-async function searchByImdb(imdbId, replay = null) {
+async function searchByImdb(imdbId) {
     const normalizedImdbId = extractImdbId(imdbId);
     if (!normalizedImdbId) return null;
 
-    const imdbCandidates = await fetchSearchCandidates(normalizedImdbId);
-    addSearchReplayStage(replay, 'imdb_search', { query: normalizedImdbId, candidates: imdbCandidates.length });
-    addSearchReplayCandidates(replay, 'imdb_search', imdbCandidates, [], { requestedImdbId: normalizedImdbId });
-    let result = imdbCandidates[0] || null;
+    let result = (await fetchSearchCandidates(normalizedImdbId))[0] || null;
     if (result) return result;
 
     const numericId = normalizedImdbId.replace(/\D/g, '');
     if (numericId && numericId !== normalizedImdbId) {
-        const numericCandidates = await fetchSearchCandidates(numericId);
-        addSearchReplayStage(replay, 'imdb_numeric_search', { query: numericId, candidates: numericCandidates.length });
-        addSearchReplayCandidates(replay, 'imdb_numeric_search', numericCandidates, [], { requestedImdbId: normalizedImdbId });
-        result = numericCandidates[0] || null;
+        result = (await fetchSearchCandidates(numericId))[0] || null;
     }
     return result;
 }
@@ -1761,15 +1441,11 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
         ...collectExpectedTitles(metadata, meta)
     ]);
 
-    if (expectedTitles.length === 0) {
-        addSearchReplayStage(options?.replay || null, 'title_fallback_skipped', { reason: 'no_expected_titles' });
-        return null;
-    }
+    if (expectedTitles.length === 0) return null;
 
     const requestedImdbId = extractImdbId(options?.requestedImdbId || id);
     const expectedYear = options?.expectedYear || getExpectedYear(metadata, meta);
     const fastMode = options?.fast !== false;
-    const replay = options?.replay || null;
     const cacheKey = `resolve:${providerType}:${requestedImdbId || ''}:${extractTmdbId(id) || ''}:${expectedYear || ''}:${fastMode ? 'fast' : 'deep'}:${buildSearchQueryVariants(expectedTitles).slice(0, 10).map(normalizeTitle).join('|')}`;
     const cached = resolvedSearchCache.get(cacheKey);
     if (cached) return cached.value;
@@ -1780,17 +1456,16 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
     };
 
     const bestSitemap = await searchSitemapCandidates(providerType, expectedTitles, {
-        requestedImdbId, expectedYear, fastMode, replay
+        requestedImdbId, expectedYear, fastMode
     });
     if (bestSitemap?.url) return saveResult(bestSitemap);
 
-    const searched = await searchByTitleQueries(expectedTitles, providerType, expectedTitles, requestedImdbId, expectedYear, replay);
-    if (searched?.url) return saveResult(searched);
-
     if (fastMode) {
-        addSearchReplayStage(replay, 'listing_skipped', { reason: 'fast_mode' });
         return saveResult(null);
     }
+
+    const searched = await searchByTitleQueries(expectedTitles, providerType, expectedTitles, requestedImdbId, expectedYear);
+    if (searched?.url) return saveResult(searched);
 
     let bestResult = null;
     let bestScore = 0;
@@ -1822,8 +1497,6 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
             for (const candidates of batchResults) {
                 if (!candidates) continue;
                 batchExhausted = false;
-                addSearchReplayStage(replay, 'listing_page', { candidates: candidates.length });
-                addSearchReplayCandidates(replay, 'listing', candidates, expectedTitles, { requestedImdbId, expectedYear, providerType });
                 const picked = await pickBestCandidate(candidates, expectedTitles, { requestedImdbId, expectedYear, providerType, fastMode });
                 if (picked?.score > bestScore) {
                     bestScore = picked.score;
@@ -1973,11 +1646,23 @@ async function buildAnimeSearchContext(meta = {}, originalId, finalId, config = 
 }
 
 async function resolveSearchState(meta = {}, originalId, finalId, config = {}) {
-    const isSeries = Boolean(meta?.isSeries);
     const fallbackSeason = Number.parseInt(String(meta?.season || ''), 10) || 1;
     const fallbackEpisode = Number.parseInt(String(meta?.episode || ''), 10) || 1;
     const candidateIds = getIdCandidates(meta, originalId, finalId);
-    const parsedRequest = parseCompositeSeriesId(candidateIds[0] || '', fallbackSeason, fallbackEpisode);
+    let parsedRequest = parseCompositeSeriesId(candidateIds[0] || '', fallbackSeason, fallbackEpisode);
+    for (const candidateId of candidateIds) {
+        const parsedCandidate = parseCompositeSeriesId(candidateId, fallbackSeason, fallbackEpisode);
+        const rawText = String(candidateId || '').trim();
+        const hasCompositeSeasonEpisode = /^(?:tt\d+|\d+|tmdb:\d+|kitsu:\d+):\d+:\d+$/i.test(rawText);
+        if (hasCompositeSeasonEpisode) {
+            parsedRequest = parsedCandidate;
+            break;
+        }
+        if (!parsedRequest.normalizedId && parsedCandidate.normalizedId) parsedRequest = parsedCandidate;
+    }
+
+    const hasCompositeRequestId = candidateIds.some((candidateId) => /^(?:tt\d+|\d+|tmdb:\d+|kitsu:\d+):\d+:\d+$/i.test(String(candidateId || '').trim()));
+    const isSeries = Boolean(meta?.isSeries) || hasCompositeRequestId || String(meta?.type || '').toLowerCase() === 'series';
 
     let workingId = parsedRequest.normalizedId;
     let season = parsedRequest.season;
@@ -2177,7 +1862,12 @@ function flattenSeasonEpisodes(seasonEntries = []) {
 }
 
 function pickStream(fileData, type, season = 1, episode = 1, options = {}) {
-    if (typeof fileData === 'string') return fileData;
+    const isSeriesLike = type === 'tv' || type === 'series' || type === 'anime' || options?.isSeries === true;
+    if (typeof fileData === 'string') {
+        // A single string on a tv-series page is usually CinemaCity's default S01E01 payload.
+        // Do not reuse it for other episodes: better return no CinemaCity result than a wrong episode.
+        return isSeriesLike ? null : fileData;
+    }
 
     const episodeCandidates = numberCandidates([
         episode,
@@ -2187,7 +1877,7 @@ function pickStream(fileData, type, season = 1, episode = 1, options = {}) {
     const seasonCandidates = numberCandidates([
         season,
         ...(Array.isArray(options?.seasonCandidates) ? options.seasonCandidates : []),
-        1
+        ...(isSeriesLike ? [] : [1])
     ]);
 
     if (Array.isArray(fileData)) {
@@ -2196,7 +1886,8 @@ function pickStream(fileData, type, season = 1, episode = 1, options = {}) {
             || fileData.every((e) => e && typeof e === 'object' && 'file' in e && !('folder' in e))
         ) {
             if (type === 'movie') return fileData[0]?.file || null;
-            return pickEpisodeFromFolder(fileData, episodeCandidates.length ? episodeCandidates : [1]) || fileData[0]?.file || null;
+            const pickedEpisode = pickEpisodeFromFolder(fileData, episodeCandidates.length ? episodeCandidates : [1]);
+            return pickedEpisode || null;
         }
 
         const seasonEntries = fileData
@@ -2240,172 +1931,19 @@ function pickStream(fileData, type, season = 1, episode = 1, options = {}) {
     return null;
 }
 
-function decodeEmbeddedPayloads(html) {
-    const payloads = [];
-    const seen = new Set();
-    const atobRegex = /atob\s*\(\s*['"]([A-Za-z0-9+/=\-_\s]{40,})['"]\s*\)/gi;
-    let match;
-
-    while ((match = atobRegex.exec(String(html || ''))) !== null) {
-        const encoded = String(match[1] || '').replace(/\s+/g, '');
-        if (!encoded || seen.has(encoded)) continue;
-
-        let decoded = '';
-        try {
-            const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/');
-            decoded = Buffer.from(normalized, 'base64').toString('utf8');
-        } catch (_) {
-            continue;
-        }
-
-        const clean = String(decoded || '').trim();
-        if (!clean) continue;
-        seen.add(encoded);
-        payloads.push(clean);
-    }
-
-    return payloads;
-}
-
-function readBalancedSegment(text, openIndex) {
-    const source = String(text || '');
-    const openChar = source[openIndex];
-    const closeChar = openChar === '[' ? ']' : openChar === '{' ? '}' : null;
-    if (!closeChar) return null;
-
+function extractJsonArray(decoded) {
+    let start = decoded.indexOf('file:');
+    if (start === -1) start = decoded.indexOf('sources:');
+    if (start === -1) return null;
+    start = decoded.indexOf('[', start);
+    if (start === -1) return null;
     let depth = 0;
-    let quote = null;
-    let escaped = false;
-
-    for (let i = openIndex; i < source.length; i += 1) {
-        const ch = source[i];
-
-        if (quote) {
-            if (escaped) {
-                escaped = false;
-            } else if (ch === '\\') {
-                escaped = true;
-            } else if (ch === quote) {
-                quote = null;
-            }
-            continue;
-        }
-
-        if (ch === '"' || ch === "'") {
-            quote = ch;
-            continue;
-        }
-
-        if (ch === openChar) depth += 1;
-        if (ch === closeChar) depth -= 1;
-        if (depth === 0) return source.slice(openIndex, i + 1);
+    for (let i = start; i < decoded.length; i += 1) {
+        if (decoded[i] === '[') depth += 1;
+        else if (decoded[i] === ']') depth -= 1;
+        if (depth === 0) return decoded.substring(start, i + 1);
     }
-
     return null;
-}
-
-function readQuotedSegment(text, quoteIndex) {
-    const source = String(text || '');
-    const quote = source[quoteIndex];
-    if (quote !== '"' && quote !== "'") return null;
-
-    let escaped = false;
-    let value = '';
-
-    for (let i = quoteIndex + 1; i < source.length; i += 1) {
-        const ch = source[i];
-        if (escaped) {
-            value += ch;
-            escaped = false;
-            continue;
-        }
-        if (ch === '\\') {
-            escaped = true;
-            continue;
-        }
-        if (ch === quote) return value;
-        value += ch;
-    }
-
-    return null;
-}
-
-function parseJsonCandidate(value) {
-    const raw = String(value || '').trim();
-    if (!raw) return null;
-
-    const attempts = [
-        raw,
-        raw.replace(/\\\//g, '/'),
-        raw.replace(/\\(.)/g, '$1')
-    ];
-
-    for (const attempt of attempts) {
-        try {
-            return JSON.parse(attempt);
-        } catch (_) {}
-    }
-
-    return null;
-}
-
-function extractSourceTree(payload) {
-    if (Array.isArray(payload)) return payload;
-    if (payload && typeof payload === 'object') return payload;
-
-    const text = String(payload || '').trim();
-    if (!text) return null;
-
-    if (text.startsWith('[') || text.startsWith('{')) {
-        const parsed = parseJsonCandidate(text);
-        if (parsed) return parsed;
-    }
-
-    const keyRegex = /(?:^|[^A-Za-z0-9_$])(file|sources)\s*:/gi;
-    let match;
-    while ((match = keyRegex.exec(text)) !== null) {
-        let cursor = match.index + match[0].length;
-        while (cursor < text.length && /\s/.test(text[cursor])) cursor += 1;
-
-        const marker = text[cursor];
-        if (marker === '[' || marker === '{') {
-            const segment = readBalancedSegment(text, cursor);
-            const parsed = parseJsonCandidate(segment);
-            if (parsed) return parsed;
-        }
-
-        if (marker === '"' || marker === "'") {
-            const quoted = readQuotedSegment(text, cursor);
-            if (quoted && (/\.m3u8(?:$|[?#])/i.test(quoted) || /\.mp4(?:$|[?#])/i.test(quoted))) {
-                return quoted;
-            }
-        }
-    }
-
-    const directUrl = text.match(/https?:\\?\/\\?\/[^\s'"<>]+\.(?:m3u8|mp4)(?:\?[^\s'"<>]*)?/i);
-    return directUrl ? directUrl[0].replace(/\\\//g, '/') : null;
-}
-
-function normalizeCinemaCityAssetTree(sourceTree) {
-    if (!sourceTree) return null;
-    if (typeof sourceTree === 'string') return sourceTree;
-    if (Array.isArray(sourceTree)) return sourceTree;
-
-    if (typeof sourceTree === 'object') {
-        const direct = sourceTree.file || sourceTree.url || sourceTree.src;
-        if (typeof direct === 'string') return direct;
-
-        const nested = sourceTree.sources || sourceTree.source || sourceTree.folder || sourceTree.files;
-        if (Array.isArray(nested)) return nested;
-        if (nested && typeof nested === 'object') return normalizeCinemaCityAssetTree(nested);
-    }
-
-    return null;
-}
-
-function parsePlayerPayload(decoded) {
-    const sourceTree = extractSourceTree(decoded);
-    return normalizeCinemaCityAssetTree(sourceTree);
 }
 
 function resolveUrl(baseUrl, relativeOrAbsoluteUrl) {
@@ -2435,18 +1973,43 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
     pageMetadataCache.set(normalizeRemoteUrl(pageUrl), pageMetadata);
     const playerReferer = extractPlayerReferer(html, pageUrl);
 
+    const atobRegex = /atob\s*\(\s*['"](.*?)['"]\s*\)/gi;
+    let match;
     let fileData = null;
-    for (const decoded of decodeEmbeddedPayloads(html)) {
-        fileData = parsePlayerPayload(decoded);
+
+    while ((match = atobRegex.exec(html)) !== null) {
+        const encoded = match[1];
+        if (!encoded || encoded.length < 50) continue;
+        let decoded = '';
+        try { decoded = Buffer.from(encoded, 'base64').toString('utf8'); } catch (_) { continue; }
+        if (!decoded) continue;
+
+        if (decoded.trim().startsWith('[')) {
+            try { fileData = JSON.parse(decoded); } catch (_) {}
+        }
+        if (!fileData) {
+            const rawJson = extractJsonArray(decoded);
+            if (rawJson) {
+                try { fileData = JSON.parse(rawJson.replace(/\\(.)/g, '$1')); }
+                catch (_) { try { fileData = JSON.parse(rawJson); } catch (_) {} }
+            }
+        }
+        if (!fileData) {
+            const fileMatch = decoded.match(/(?:file|sources)\s*:\s*['"](.*?)['"]/i);
+            if (fileMatch && (fileMatch[1].includes('.m3u8') || fileMatch[1].includes('.mp4'))) {
+                fileData = fileMatch[1];
+            }
+        }
         if (fileData) break;
     }
 
     const streamUrl = resolveUrl(
         pageUrl,
-        pickStream(fileData, meta?.isSeries ? 'tv' : 'movie', meta?.season || 1, meta?.episode || 1, {
+        pickStream(fileData, meta?.isSeries || meta?.providerType === 'tv' || meta?.providerType === 'anime' ? 'tv' : 'movie', meta?.season || 1, meta?.episode || 1, {
             rawEpisodeNumber: meta?.rawEpisodeNumber,
             episodeCandidates: Array.isArray(meta?.episodeCandidates) ? meta.episodeCandidates : [],
-            looseAnime: meta?.providerType === 'anime' || meta?.isAnime === true
+            looseAnime: meta?.providerType === 'anime' || meta?.isAnime === true,
+            isSeries: meta?.isSeries === true || meta?.providerType === 'tv' || meta?.providerType === 'anime'
         })
     );
     if (!streamUrl) return null;
@@ -2518,21 +2081,36 @@ function buildCinemaCityMediaflowUrl(config = {}, streamUrl, headers = {}, isHls
     return `${mfpBase}/proxy/stream?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${refererQuery}${originQuery}`;
 }
 
+function buildCinemaCityEpisodePageUrl(pageUrl, season, episode) {
+    const normalized = normalizeRemoteUrl(pageUrl);
+    if (!normalized) return null;
+    try {
+        const url = new URL(normalized);
+        url.hash = '';
+        url.searchParams.set('s', String(Math.max(1, Number.parseInt(String(season || 1), 10) || 1)));
+        url.searchParams.set('e', String(Math.max(1, Number.parseInt(String(episode || 1), 10) || 1)));
+        return url.toString();
+    } catch (_) {
+        const separator = normalized.includes('?') ? '&' : '?';
+        return `${normalized.replace(/#.*$/, '')}${separator}s=${encodeURIComponent(String(season || 1))}&e=${encodeURIComponent(String(episode || 1))}`;
+    }
+}
+
+function buildCinemaCityPageExtractorUrl(config = {}, pageUrl, season, episode) {
+    const mfpBase = String(config?.mediaflow?.url || '').trim().replace(/\/+$/, '');
+    const targetPage = buildCinemaCityEpisodePageUrl(pageUrl, season, episode);
+    if (!mfpBase || !targetPage) return null;
+
+    const passwordQuery = config?.mediaflow?.pass
+        ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}`
+        : '';
+    return `${mfpBase}/extractor/video?host=city&d=${encodeURIComponent(targetPage)}&redirect_stream=true${passwordQuery}`;
+}
+
 async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqHost = null) {
     try {
         const resolved = await resolveSearchState(meta, originalId, finalId, config);
-        const searchReplay = createSearchFailureReplayContext({ originalId, finalId, meta, resolved, config });
-        addSearchReplayStage(searchReplay, 'resolved_state', {
-            imdbId: resolved.imdbId || '',
-            tmdbId: resolved.tmdbId || '',
-            providerType: resolved.providerType,
-            titles: (resolved.searchTitles || []).length,
-            rawTitles: (resolved.rawTitles || []).length
-        });
-        if (!resolved.imdbId && !resolved.tmdbId && (!resolved.isAnime || resolved.searchTitles.length === 0)) {
-            finishSearchFailureReplay(searchReplay, 'missing_resolved_ids');
-            return [];
-        }
+        if (!resolved.imdbId && !resolved.tmdbId && (!resolved.isAnime || resolved.searchTitles.length === 0)) return [];
 
         const titleFallbackOptions = {
             expectedTitles: uniqueStrings([
@@ -2541,8 +2119,7 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
             ]),
             requestedImdbId: resolved.imdbId,
             expectedYear: resolved.expectedYear,
-            fast: config?.filters?.cinemacityFast !== false,
-            replay: searchReplay
+            fast: config?.filters?.cinemacityFast !== false
         };
 
         let searchResult = null;
@@ -2551,25 +2128,68 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
             resolved.providerType, meta, titleFallbackOptions
         );
         if (!searchResult?.url && resolved.imdbId) {
-            searchResult = await searchByImdb(resolved.imdbId, searchReplay);
+            searchResult = await searchByImdb(resolved.imdbId);
         }
-        if (!searchResult?.url) {
-            finishSearchFailureReplay(searchReplay, 'no_valid_candidate');
-            return [];
-        }
-        addSearchReplayStage(searchReplay, 'candidate_selected', { title: searchResult.title || '', url: searchResult.url });
+        if (!searchResult?.url) return [];
 
+        const isSeriesRequest = resolved.providerType === 'tv' || resolved.providerType === 'anime';
+        const targetPageUrl = isSeriesRequest
+            ? buildCinemaCityEpisodePageUrl(searchResult.url, resolved.season, resolved.episode)
+            : searchResult.url;
         const enrichedMeta = {
             ...meta,
+            isSeries: isSeriesRequest || meta?.isSeries === true,
             season: resolved.season,
             episode: resolved.episode,
             rawEpisodeNumber: resolved.rawEpisodeNumber,
             episodeCandidates: resolved.episodeCandidates,
             providerType: resolved.providerType
         };
-        const extracted = await getParsedCinemaCityStream(searchResult.url, enrichedMeta);
+
+        if (isSeriesRequest) {
+            const pageExtractorUrl = buildCinemaCityPageExtractorUrl(config, searchResult.url, resolved.season, resolved.episode);
+            if (pageExtractorUrl) {
+                const basePageMetadata = await fetchCinemaCityPageMetadata(searchResult.url).catch(() => null) || {};
+                const displayTitle = buildDisplayTitle(enrichedMeta, basePageMetadata.title || searchResult.title, resolved.season, resolved.episode);
+                const languageLabel = buildCinemaCityLanguageLabel(basePageMetadata, config);
+                const streams = [buildWebStream({
+                    name: '🎟️ CinemaCity | CITY',
+                    title: `${displayTitle}
+☁️ CITY • ${languageLabel}`,
+                    url: pageExtractorUrl,
+                    extractor: 'CITY',
+                    provider: 'CinemaCity',
+                    providerCode: 'CC',
+                    quality: normalizeQuality(basePageMetadata.quality || '1080p'),
+                    headers: null,
+                    notWebReady: false,
+                    extraBehaviorHints: {
+                        bingeWatching: true,
+                        vortexMeta: {
+                            pageTitle: basePageMetadata.title || '',
+                            imdbId: basePageMetadata.imdbId || resolved.imdbId || '',
+                            tmdbId: basePageMetadata.tmdbId || resolved.tmdbId || '',
+                            qualityTag: basePageMetadata.qualityTag || '',
+                            audioLanguages: Array.isArray(basePageMetadata.audioLanguages) ? basePageMetadata.audioLanguages : [],
+                            subtitleLanguages: Array.isArray(basePageMetadata.subtitleLanguages) ? basePageMetadata.subtitleLanguages : [],
+                            genres: Array.isArray(basePageMetadata.genres) ? basePageMetadata.genres : [],
+                            isMultiAudio: basePageMetadata.isMultiAudio === true,
+                            isAnime: basePageMetadata.isAnime === true,
+                            requestedSeason: resolved.season,
+                            requestedEpisode: resolved.episode,
+                            targetPageUrl
+                        }
+                    }
+                })];
+                return normalizeStreams(hardFilterStreamsByLanguage(dedupeStreamsByUrl(streams), config), { provider: 'cinemacity' });
+            }
+        }
+
+        const extracted = await getParsedCinemaCityStream(targetPageUrl || searchResult.url, enrichedMeta);
         if (!extracted?.streamUrl) {
-            finishSearchFailureReplay(searchReplay, 'stream_parse_empty', { pageUrl: searchResult.url, hostHealth: summarizeHostHealth(searchResult.url) });
+            if (isSeriesRequest && (config?.debug || process.env.DEBUG_CINEMACITY === '1' || process.env.DEBUG_CINEMACITY_EPISODE === '1')) {
+                console.warn(`[CinemaCity] Skip diretto serie: pagina=${targetPageUrl || searchResult.url} S=${resolved.season} E=${resolved.episode} non espone uno stream episodio sicuro. Configura MediaFlow/Kraken city extractor per le serie.`);
+            }
             return [];
         }
 
@@ -2587,12 +2207,10 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
                         playlistIntel = alreadyCached.intelligence || null;
                         return alreadyCached.value;
                     }
-                    const probeStartedAt = Date.now();
                     const intelligence = await probePlaylistIntelligence(httpClient, extracted.streamUrl, {
                         headers: extracted.headers,
                         timeout: 6000
                     });
-                    updateHostHealth(extracted.streamUrl, { success: Boolean(intelligence), mode: 'playlist_probe', elapsedMs: Date.now() - probeStartedAt, reason: intelligence ? '' : 'playlist_probe_empty' });
                     playlistIntel = intelligence || null;
                     const detected = intelligence?.quality || 'Unknown';
                     qualityProbeCache.set(qualityCacheKey, { value: detected, intelligence: intelligence || null });
@@ -2606,34 +2224,28 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
                 if (playlistIntel?.subtitleLanguages?.length) {
                     pageMetadata.subtitleLanguages = Array.from(new Set([...(pageMetadata.subtitleLanguages || []), ...playlistIntel.subtitleLanguages]));
                 }
-            } catch (error) {
-                updateHostHealth(extracted.streamUrl, { success: false, mode: 'playlist_probe', reason: error?.code || error?.message || 'playlist_probe_error' });
-            }
+            } catch (_) {}
         }
 
         if (!pageHasRequestedAudio(pageMetadata, config)) {
             if (config?.debug || process.env.DEBUG_CINEMACITY === '1') {
                 console.warn(buildLanguageRejectReason(pageMetadata, config));
             }
-            addSearchReplayReject(searchReplay, 'language_rejected', { pageAudio: pageMetadata.audioLanguages || [], downloadAudio: pageMetadata.downloadLanguages || [] });
-            finishSearchFailureReplay(searchReplay, 'language_rejected', { pageUrl: searchResult.url, streamHostHealth: summarizeHostHealth(extracted.streamUrl) });
             return [];
         }
         if (streamUrlHasForbiddenLanguage(extracted.streamUrl, config)) {
             if (config?.debug || process.env.DEBUG_CINEMACITY === '1') {
                 console.warn('[CinemaCity] Skip stream URL non-ITA strict:', extracted.streamUrl);
             }
-            addSearchReplayReject(searchReplay, 'stream_url_language_rejected', { streamUrl: extracted.streamUrl });
-            finishSearchFailureReplay(searchReplay, 'stream_url_language_rejected', { pageUrl: searchResult.url, streamHostHealth: summarizeHostHealth(extracted.streamUrl) });
             return [];
         }
 
         const isHlsStream = /\.m3u8($|\?)/i.test(extracted.streamUrl);
         const extractorLabel = /cccdn/i.test(extracted.streamUrl) ? 'CCCDN' : (isHlsStream ? 'HLS' : 'Direct');
-        const displayTitle = buildDisplayTitle(meta, pageMetadata.title || searchResult.title, resolved.season, resolved.episode);
+        const displayTitle = buildDisplayTitle(enrichedMeta, pageMetadata.title || searchResult.title, resolved.season, resolved.episode);
         const languageLabel = buildCinemaCityLanguageLabel(pageMetadata, config);
         const mediaflowProxyUrl = buildCinemaCityMediaflowUrl(config, extracted.streamUrl, extracted.headers, isHlsStream);
-        const cinemaCityUrl = mediaflowProxyUrl || buildCinemaCityProxyUrl(extracted.streamUrl, extracted.headers, reqHost, { isHls: isHlsStream });
+        const cinemaCityUrl = mediaflowProxyUrl || buildCinemaCityProxyUrl(extracted.streamUrl, extracted.headers, reqHost, { isHls: isHlsStream, providerType: resolved.providerType, season: resolved.season, episode: resolved.episode, rawEpisodeNumber: resolved.rawEpisodeNumber, pageUrl: targetPageUrl || searchResult.url });
         const cinemaCityMode = mediaflowProxyUrl ? 'MFP' : 'CCCDN';
         const extraVortexMeta = {
             bingeWatching: true,
@@ -2682,17 +2294,13 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
         }
 
         const filteredStreams = hardFilterStreamsByLanguage(dedupeStreamsByUrl(streams), config);
-        const normalizedStreams = normalizeStreams(filteredStreams, {
+        return normalizeStreams(filteredStreams, {
             provider: 'cinemacity',
             providerLabel: 'CinemaCity',
             providerCode: 'CC',
             sort: false,
             debug: config?.debug === true
         }).sort((a, b) => qualityRank(b.quality) - qualityRank(a.quality));
-        if (normalizedStreams.length === 0) {
-            finishSearchFailureReplay(searchReplay, 'no_stream_after_normalize', { pageUrl: searchResult.url, streamHostHealth: summarizeHostHealth(extracted.streamUrl) });
-        }
-        return normalizedStreams;
     } catch (error) {
         console.error('[CinemaCity] Error:', error.message);
         return [];
@@ -2728,16 +2336,6 @@ module.exports = {
         pageHasRequestedAudio,
         buildLanguageRejectReason,
         streamUrlHasForbiddenLanguage,
-        hardFilterStreamsByLanguage,
-        getHostHealth,
-        updateHostHealth,
-        shouldThrottleHostDirect,
-        summarizeHostHealth,
-        getLastSearchFailureReplays,
-        decodeEmbeddedPayloads,
-        parsePlayerPayload,
-        extractSourceTree,
-        normalizeCinemaCityAssetTree
+        hardFilterStreamsByLanguage
     }
 };
-
