@@ -5,7 +5,6 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
-const { once } = require('events');
 const { getRequestOrigin, isSafeRemoteUrl } = require('../../core/utils/url');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const {
@@ -38,6 +37,12 @@ const SMALL_OBJECT_CACHE_TTL_MS = Math.max(60 * 1000, Math.min(30 * 60 * 1000, N
 const SMALL_OBJECT_CACHE_MAX = Math.max(50, Math.min(2000, Number.parseInt(process.env.CC_PROXY_SMALL_CACHE_MAX || '500', 10) || 500));
 const SMALL_OBJECT_CACHE_MAX_BYTES = Math.max(16 * 1024, Math.min(512 * 1024, Number.parseInt(process.env.CC_PROXY_SMALL_CACHE_MAX_BYTES || String(192 * 1024), 10) || (192 * 1024)));
 const STREAM_IDLE_TIMEOUT_MS = Math.max(8000, Math.min(90 * 1000, Number.parseInt(process.env.CC_PROXY_STREAM_IDLE_TIMEOUT_MS || '28000', 10) || 28000));
+const RESUME_BOOTSTRAP_ENABLED = String(process.env.CC_PROXY_RESUME_BOOTSTRAP || '1') !== '0';
+const RESUME_BOOTSTRAP_BYTES = Math.max(512 * 1024, Math.min(64 * 1024 * 1024, Number.parseInt(process.env.CC_PROXY_RESUME_BOOTSTRAP_BYTES || String(8 * 1024 * 1024), 10) || (8 * 1024 * 1024)));
+const RESUME_BOOTSTRAP_MIN_OFFSET_BYTES = Math.max(0, Math.min(256 * 1024 * 1024, Number.parseInt(process.env.CC_PROXY_RESUME_BOOTSTRAP_MIN_OFFSET_BYTES || String(2 * 1024 * 1024), 10) || (2 * 1024 * 1024)));
+const RANGE_RETRY_ATTEMPTS = Math.max(1, Math.min(2, Number.parseInt(process.env.CC_PROXY_RANGE_RETRY_ATTEMPTS || '1', 10) || 1));
+const PLAYBACK_PREWARM_ENABLED = String(process.env.CC_PROXY_PLAYBACK_PREWARM || '1') !== '0';
+const PLAYBACK_PREWARM_TIMEOUT_MS = Math.max(800, Math.min(8000, Number.parseInt(process.env.CC_PROXY_PLAYBACK_PREWARM_TIMEOUT_MS || '2600', 10) || 2600));
 const proxyUrlCache = new Map();
 const manifestCache = new Map();
 const smallObjectCache = new Map();
@@ -270,6 +275,7 @@ function setCachedProxyUrl(key, url, ttlMs = PROXY_URL_CACHE_TTL_MS) {
 }
 
 function getRequestBase(req) {
+    if (req?.__ccProxyBase) return normalizeAddonBase(req.__ccProxyBase);
     return getRequestOrigin(req) || normalizeAddonBase(null);
 }
 
@@ -600,6 +606,39 @@ function isSafeSingleRange(value = '') {
     return true;
 }
 
+function parseSingleRange(value = '') {
+    const raw = String(value || '').trim();
+    const match = raw.match(/^bytes=(\d*)-(\d*)$/i);
+    if (!match) return null;
+    const start = match[1] ? Number(match[1]) : null;
+    const end = match[2] ? Number(match[2]) : null;
+    if (start == null && end == null) return null;
+    if (start != null && !Number.isSafeInteger(start)) return null;
+    if (end != null && !Number.isSafeInteger(end)) return null;
+    if (start != null && end != null && end < start) return null;
+    return { start, end, raw };
+}
+
+function isLikelyHlsSegmentUrl(sourceUrl = '') {
+    return /\.(ts|m4s|aac|key|vtt|srt|ass|ssa)(?:$|[?#])/i.test(String(sourceUrl || ''));
+}
+
+function getResumeBootstrapRange(req, sourceUrl = '') {
+    if (!RESUME_BOOTSTRAP_ENABLED || !req || String(req.method || 'GET').toUpperCase() === 'HEAD') return null;
+    const parsed = parseSingleRange(req.headers?.range);
+    if (!parsed || parsed.start == null || parsed.end != null) return null;
+    if (parsed.start < RESUME_BOOTSTRAP_MIN_OFFSET_BYTES) return null;
+    if (isLikelyHlsSegmentUrl(sourceUrl)) return null;
+    const end = Math.min(Number.MAX_SAFE_INTEGER, parsed.start + RESUME_BOOTSTRAP_BYTES - 1);
+    return {
+        clientRange: parsed.raw,
+        upstreamRange: `bytes=${parsed.start}-${end}`,
+        start: parsed.start,
+        end,
+        bytes: end - parsed.start + 1
+    };
+}
+
 function isKnownMediaUrl(sourceUrl = '') {
     return /\.(ts|m4s|mp4|mkv|webm|mov|m4v|aac|mp3|key)(?:$|[?#])/i.test(String(sourceUrl || ''));
 }
@@ -616,8 +655,9 @@ function shouldFastPipeWithoutSniff({ req, upstream, sourceUrl, contentType }) {
     const hasRange = Boolean(req?.headers?.range);
     const type = String(contentType || '').toLowerCase();
 
-    if (status === 206 && hasRange && isKnownMediaUrl(sourceUrl)) return true;
-    if (status === 206 && hasRange && isMediaContentType(contentType)) return true;
+    // A 206 response already proves the upstream accepted the seek Range. Do not
+    // wait for an anti-block sniff here: this is the hot path when the user jumps ahead.
+    if (status === 206 && hasRange) return true;
 
     // Fast-start non-range media only when upstream explicitly says media/octet-stream.
     // HTML/challenge pages keep the sniff path.
@@ -645,6 +685,59 @@ function getAgentForUrl(sourceUrl) {
     return /^https:/i.test(String(sourceUrl || '')) ? HTTPS_AGENT : HTTP_AGENT;
 }
 
+function tunePlaybackSockets(req, res) {
+    // Stremio seeks generate many short-lived Range requests. Disabling Nagle on both
+    // sockets reduces the small latency spikes between headers, first bytes and aborts.
+    try { req?.socket?.setNoDelay?.(true); } catch (_) {}
+    try { res?.socket?.setNoDelay?.(true); } catch (_) {}
+}
+
+function pipeUpstreamFast(upstream, res, req, sourceUrl, mode = 'fast-pipe') {
+    tunePlaybackSockets(req, res);
+    res.setHeader('X-CC-Proxy-Pipe', mode);
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
+    const clearWatchdog = armIdleWatchdog(upstream.data, res, sourceUrl);
+    upstream.data.on('error', (error) => {
+        clearWatchdog();
+        try { res.destroy(error); } catch (_) {}
+    });
+    upstream.data.on('end', clearWatchdog);
+    upstream.data.on('close', clearWatchdog);
+    return upstream.data.pipe(res);
+}
+
+async function peekAndRestoreFirstChunk(stream) {
+    if (!stream || typeof stream.once !== 'function') throw new Error('Invalid upstream stream');
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const cleanup = () => {
+            stream.removeListener('data', onData);
+            stream.removeListener('end', onEnd);
+            stream.removeListener('error', onError);
+        };
+        const finish = (fn, value) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            fn(value);
+        };
+        const onData = (chunk) => {
+            try { stream.pause?.(); } catch (_) {}
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk || Buffer.alloc(0));
+            if (buffer.length > 0 && typeof stream.unshift === 'function') {
+                try { stream.unshift(buffer); } catch (_) {}
+            }
+            finish(resolve, buffer);
+        };
+        const onEnd = () => finish(resolve, Buffer.alloc(0));
+        const onError = (error) => finish(reject, error);
+        stream.once('data', onData);
+        stream.once('end', onEnd);
+        stream.once('error', onError);
+        try { stream.resume?.(); } catch (_) {}
+    });
+}
+
 async function fetchUpstream(sourceUrl, headers, req, signal, { allowRange = true, extraHeaders = null } = {}) {
     const prepared = prepareProxyTarget(sourceUrl, headers || {}, {
         userAgent: DEFAULT_UA,
@@ -656,10 +749,11 @@ async function fetchUpstream(sourceUrl, headers, req, signal, { allowRange = tru
     });
     const requestHeaders = { ...(prepared.headers || {}), ...(extraHeaders || {}) };
     const range = String(req?.headers?.range || '').trim();
-    if (allowRange && range && isSafeSingleRange(range)) requestHeaders.Range = range;
+    const resumeBootstrap = allowRange && range && isSafeSingleRange(range) ? getResumeBootstrapRange(req, sourceUrl) : null;
+    if (allowRange && range && isSafeSingleRange(range)) requestHeaders.Range = resumeBootstrap?.upstreamRange || range;
     else delete requestHeaders.Range;
     maybeLogProxyHeaderDecision(prepared, sourceUrl);
-    return axios.get(sourceUrl, {
+    const response = await axios.get(sourceUrl, {
         headers: requestHeaders,
         timeout: UPSTREAM_TIMEOUT_MS,
         maxRedirects: MAX_UPSTREAM_REDIRECTS,
@@ -667,10 +761,12 @@ async function fetchUpstream(sourceUrl, headers, req, signal, { allowRange = tru
         validateStatus: () => true,
         proxy: false,
         decompress: false,
-        httpAgent: HTTP_AGENT,
-        httpsAgent: HTTPS_AGENT,
+        httpAgent: getAgentForUrl(sourceUrl),
+        httpsAgent: getAgentForUrl(sourceUrl),
         signal
     });
+    if (resumeBootstrap) response.ccRangeBootstrap = resumeBootstrap;
+    return response;
 }
 
 async function fetchUpstreamWithRetry(sourceUrl, headers, req, signal, options = {}) {
@@ -733,6 +829,7 @@ async function writeStreamWithSniff({ upstream, res, req, sourceUrl, contentType
     const fastPipe = shouldFastPipeWithoutSniff({ req, upstream, sourceUrl, contentType });
 
     if (req.method === 'HEAD') {
+        tunePlaybackSockets(req, res);
         res.status(status);
         res.setHeader('Content-Type', fallbackContentType(sourceUrl, contentType));
         res.setHeader('Cache-Control', getMediaCacheControl(sourceUrl));
@@ -742,75 +839,39 @@ async function writeStreamWithSniff({ upstream, res, req, sourceUrl, contentType
         return res.end();
     }
 
+    res.status(status);
+    res.setHeader('Content-Type', fallbackContentType(sourceUrl, contentType));
+    res.setHeader('Cache-Control', getMediaCacheControl(sourceUrl));
+    res.setHeader('Accept-Ranges', upstream.headers['accept-ranges'] || 'bytes');
+    copyUsefulHeaders(upstream, res, false);
+
     if (fastPipe) {
-        res.status(status);
-        res.setHeader('Content-Type', fallbackContentType(sourceUrl, contentType));
-        res.setHeader('Cache-Control', getMediaCacheControl(sourceUrl));
-        res.setHeader('Accept-Ranges', upstream.headers['accept-ranges'] || 'bytes');
-        res.setHeader('X-CC-Proxy-Resume', req?.headers?.range ? 'fast-range' : 'fast-start');
-        copyUsefulHeaders(upstream, res, false);
-        if (typeof res.flushHeaders === 'function') res.flushHeaders();
-        const clearWatchdog = armIdleWatchdog(upstream.data, res, sourceUrl);
-        upstream.data.on('error', (error) => {
-            clearWatchdog();
-            try { res.destroy(error); } catch (_) {}
-        });
-        upstream.data.on('end', clearWatchdog);
-        return upstream.data.pipe(res);
+        res.setHeader('X-CC-Proxy-Resume', upstream.ccRangeBootstrap ? 'bootstrap-range' : (req?.headers?.range ? 'fast-range' : 'fast-start'));
+        if (upstream.ccRangeBootstrap) {
+            res.setHeader('X-CC-Proxy-Resume-Bootstrap', `${upstream.ccRangeBootstrap.bytes}`);
+            res.setHeader('X-CC-Proxy-Upstream-Range', upstream.ccRangeBootstrap.upstreamRange);
+        }
+        return pipeUpstreamFast(upstream, res, req, sourceUrl, upstream.ccRangeBootstrap ? 'bootstrap-range-pipe' : (req?.headers?.range ? 'range-fast-pipe' : 'start-fast-pipe'));
     }
 
-    const iterator = upstream.data?.[Symbol.asyncIterator]?.();
-    if (!iterator) throw new Error('Invalid upstream stream');
-
-    const first = await iterator.next();
-    const firstBuffer = first.done ? Buffer.alloc(0) : (Buffer.isBuffer(first.value) ? first.value : Buffer.from(first.value || Buffer.alloc(0)));
+    // Slow/suspicious path: read only the first chunk to detect HTML/CF/DDOS pages,
+    // push it back into the readable, then return to native pipe. The previous manual
+    // for-await writer was safe but noticeably slower on Stremio seek/open.
+    const firstBuffer = await peekAndRestoreFirstChunk(upstream.data);
     if (looksLikeHtmlBlock(firstBuffer, contentType)) {
+        destroyUpstreamQuietly(upstream);
         res.status(502);
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('X-CC-Proxy-Error', 'html-or-block-page');
         return res.end('CinemaCity upstream returned HTML/block page instead of media');
     }
 
-    res.status(status);
-    res.setHeader('Content-Type', fallbackContentType(sourceUrl, contentType));
-    res.setHeader('Cache-Control', getMediaCacheControl(sourceUrl));
-    res.setHeader('Accept-Ranges', upstream.headers['accept-ranges'] || 'bytes');
-    copyUsefulHeaders(upstream, res, false);
-    if (req.method === 'HEAD') return res.end();
-    if (typeof res.flushHeaders === 'function') res.flushHeaders();
-
-    let idleTimer = null;
-    const clearIdleTimer = () => {
-        if (idleTimer) clearTimeout(idleTimer);
-        idleTimer = null;
-    };
-    const refreshIdleTimer = () => {
-        clearIdleTimer();
-        idleTimer = setTimeout(() => {
-            const error = new Error('CinemaCity proxy idle timeout while writing stream');
-            error.code = 'STREAM_IDLE_TIMEOUT';
-            try { upstream?.data?.destroy?.(error); } catch (_) {}
-            try { res.destroy(error); } catch (_) {}
-        }, STREAM_IDLE_TIMEOUT_MS);
-        if (typeof idleTimer.unref === 'function') idleTimer.unref();
-    };
-    refreshIdleTimer();
-
-    const writeChunk = async (chunk) => {
-        refreshIdleTimer();
-        if (!chunk || chunk.length === 0) return;
-        if (!res.write(chunk)) await once(res, 'drain');
-    };
-
-    if (!first.done) await writeChunk(firstBuffer);
-    try {
-        for await (const chunk of iterator) {
-            await writeChunk(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        }
-    } finally {
-        clearIdleTimer();
+    res.setHeader('X-CC-Proxy-Resume', upstream.ccRangeBootstrap ? 'sniffed-bootstrap-range' : (req?.headers?.range ? 'sniffed-range-pipe' : 'sniffed-start-pipe'));
+    if (upstream.ccRangeBootstrap) {
+        res.setHeader('X-CC-Proxy-Resume-Bootstrap', `${upstream.ccRangeBootstrap.bytes}`);
+        res.setHeader('X-CC-Proxy-Upstream-Range', upstream.ccRangeBootstrap.upstreamRange);
     }
-    return res.end();
+    return pipeUpstreamFast(upstream, res, req, sourceUrl, upstream.ccRangeBootstrap ? 'sniffed-bootstrap-fast-pipe' : 'sniffed-fast-pipe');
 }
 
 function writeManifestResponse({ req, res, manifestEntry, cacheState = 'miss' }) {
@@ -938,7 +999,10 @@ async function handleCinemaCityProxy(req, res) {
             });
         }
 
-        const upstream = await fetchUpstreamWithRetry(resolved.sourceUrl, resolved.headers, req, signal, { allowRange });
+        const upstream = await fetchUpstreamWithRetry(resolved.sourceUrl, resolved.headers, req, signal, {
+            allowRange,
+            attempts: hasRange ? RANGE_RETRY_ATTEMPTS : STREAM_RETRY_ATTEMPTS
+        });
         const contentType = String(upstream.headers['content-type'] || '');
         if (upstream.status >= 300) {
             res.status(upstream.status >= 400 ? upstream.status : 502);
@@ -997,10 +1061,63 @@ async function handleCinemaCityProxy(req, res) {
     }
 }
 
+function createWarmupRequest(baseUrl, pathname = CC_MANIFEST_ROUTE) {
+    return {
+        method: 'GET',
+        headers: {},
+        query: {},
+        originalUrl: pathname,
+        url: pathname,
+        path: pathname,
+        __ccProxyBase: normalizeAddonBase(baseUrl)
+    };
+}
+
+function prewarmCinemaCityPlayback(streamUrl, headers = {}, reqHost = null, options = {}) {
+    if (!PLAYBACK_PREWARM_ENABLED) return false;
+    const sourceUrl = safeUrl(streamUrl);
+    if (!sourceUrl) return false;
+
+    const requestBase = normalizeAddonBase(reqHost);
+    const isHls = options?.isHls === true || isHlsUrl(sourceUrl);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PLAYBACK_PREWARM_TIMEOUT_MS);
+    if (typeof timer.unref === 'function') timer.unref();
+
+    Promise.resolve().then(async () => {
+        try {
+            if (isHls) {
+                await getRewrittenManifestEntry({
+                    req: createWarmupRequest(requestBase, CC_MANIFEST_ROUTE),
+                    sourceUrl,
+                    headers: buildRequestHeaders(sourceUrl, headers || {}),
+                    signal: controller.signal
+                });
+                return;
+            }
+
+            const warmReq = createWarmupRequest(requestBase, CC_STREAM_ROUTE);
+            warmReq.headers.range = 'bytes=0-0';
+            const upstream = await fetchUpstreamWithRetry(sourceUrl, buildRequestHeaders(sourceUrl, headers || {}), warmReq, controller.signal, {
+                allowRange: true,
+                attempts: 1
+            });
+            destroyUpstreamQuietly(upstream);
+        } catch (_) {
+            // Best-effort only: playback must never wait for warmup.
+        } finally {
+            clearTimeout(timer);
+        }
+    }).catch(() => null);
+
+    return true;
+}
+
 module.exports = {
     CC_MANIFEST_ROUTE,
     CC_STREAM_ROUTE,
     buildCinemaCityProxyUrl,
+    prewarmCinemaCityPlayback,
     handleCinemaCityProxy
 };
 
