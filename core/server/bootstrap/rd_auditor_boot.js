@@ -4,8 +4,7 @@ function bootRealDebridAuditor({ dbHelper, logger, Cache }) {
     let rdAuditorBoot = { enabled: false, started: false, reason: 'disabled' };
     let getRdAuditorStatus = () => ({ ...rdAuditorBoot });
 
-    // Default ON: lo scan RD parte appena c'è un token.
-    // Solo i worker non-leader del cluster lo disattivano impostando esplicitamente RD_CACHE_SCANNER_ENABLED=false.
+    
     if (String(process.env.RD_CACHE_SCANNER_ENABLED || 'true').toLowerCase() !== 'false') {
         try {
             const { startRealDebridAuditor, getRealDebridAuditorStatus: workerStatusGetter } = require('../../workers/realdebrid_auditor');
