@@ -36,6 +36,7 @@ const { buildSeriesContext, matchesCandidateTitle } = require('./matching/episod
 const { dedupeByInfoHash, getFolderSizeBytes: getDedupeFolderSizeBytes } = require('./stream/infohash_deduper');
 const { preserveRdStatusList } = require('./debrid/guards/rd_status_guard');
 const { applyResolutionOrderingGuard } = require('./debrid/guards/resolution_ordering_guard');
+const { enqueueRdViewScan } = require('./debrid/audit/rd_view_scanner');
 const { hasFolderSizeSeasonPackSignal } = require('./matching/season_pack_inspector');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
@@ -3226,6 +3227,23 @@ async function generateStream(type, id, config, userConfStr, reqHost) {
           }, {
               sharedPolicy: cachePolicy
           });
+      }
+
+      if (configuredDebridService === 'rd' && hasDebridKey && torrentPipelineEnabled && finalRanked.length > 0) {
+          try {
+              enqueueRdViewScan({
+                  items: finalRanked,
+                  meta,
+                  config: { ...config, service: configuredDebridService },
+                  apiKey: debridApiKey,
+                  Cache,
+                  logger,
+                  getRdAvailabilityState,
+                  maxScan: 14
+              });
+          } catch (err) {
+              logger.warn(`[RD VIEW SCAN] enqueue failed: ${err.message}`);
+          }
       }
 
       recordDuration('stream.generate.total', Date.now() - generationStartedAt);
