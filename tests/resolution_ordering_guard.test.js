@@ -7,7 +7,7 @@ const {
   applyResolutionOrderingGuard,
   detectResolutionTier,
   shouldPromoteHigherResolution
-} = require('../core/stream/resolution_ordering_guard');
+} = require('../core/debrid/guards/resolution_ordering_guard');
 
 test('resolution guard promotes nearby 1080p above SD only inside the same cache/source bucket', () => {
   const input = [
