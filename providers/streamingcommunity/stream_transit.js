@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 
-const MODULE_VERSION = 8;
+const MODULE_VERSION = 9;
 const TRANSIT_KIND = 'vix-transit';
 const SWEEP_INTERVAL_MS = 45 * 1000;
 const REQUEST_CONTEXT_TTL_MS = 6 * 60 * 60 * 1000;
@@ -20,6 +20,22 @@ const MAX_HEADER_VALUE_LENGTH = 4096;
 const MAX_HEADER_COUNT = 64;
 const MAX_LIVE_CONTEXTS = 50000;
 
+const SHARED_STATE_KEY = Symbol.for('leviathan.vix.streamTransit.sharedState.v9');
+const sharedState = globalThis[SHARED_STATE_KEY] || (globalThis[SHARED_STATE_KEY] = {
+    requestContextById: new Map(),
+    requestKeyToId: new Map(),
+    tokenStateByJti: new Map(),
+    activeSecrets: [],
+    lastSweepAt: 0,
+    lastSecretRotationAt: 0,
+    bootstrapped: false
+});
+
+const requestContextById = sharedState.requestContextById;
+const requestKeyToId = sharedState.requestKeyToId;
+const tokenStateByJti = sharedState.tokenStateByJti;
+const activeSecrets = sharedState.activeSecrets;
+
 const BLOCKED_REQUEST_HEADERS = new Set([
     'host',
     'connection',
@@ -36,15 +52,6 @@ const BLOCKED_REQUEST_HEADERS = new Set([
     'x-forwarded-host',
     'x-forwarded-proto'
 ]);
-
-const requestContextById = new Map();
-const requestKeyToId = new Map();
-const tokenStateByJti = new Map();
-const activeSecrets = [];
-let lastSweepAt = 0;
-let lastSecretRotationAt = 0;
-
-bootstrapSecrets();
 
 function now() {
     return Date.now();
@@ -160,21 +167,49 @@ function stableHeaders(headers = {}) {
         }, {});
 }
 
+function getConfiguredSecretRaw() {
+    return String(
+        process.env.VIX_TRANSIT_SECRET
+        || process.env.STREAM_TRANSIT_SECRET
+        || process.env.LEVIATHAN_TRANSIT_SECRET
+        || ''
+    ).trim();
+}
+
+function createConfiguredSecretRecord() {
+    const raw = getConfiguredSecretRaw();
+    if (!raw) return null;
+    const digest = sha256(`leviathan:vix-transit:${raw}`);
+    return {
+        kid: `kid_${sha256(`kid:${digest}`).slice(0, 12)}`,
+        value: digest,
+        introducedAt: 0,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+        configured: true
+    };
+}
+
 function createSecretRecord() {
+    const configured = createConfiguredSecretRecord();
+    if (configured) return configured;
+
     const ts = now();
     return {
         kid: createRandomId('kid', 6),
         value: crypto.randomBytes(32).toString('hex'),
         introducedAt: ts,
-        expiresAt: ts + SECRET_RETENTION_MS
+        expiresAt: ts + SECRET_RETENTION_MS,
+        configured: false
     };
 }
 
-function bootstrapSecrets() {
+function bootstrapSecrets(force = false) {
+    if (!force && sharedState.bootstrapped && activeSecrets.length) return;
     const secret = createSecretRecord();
     activeSecrets.length = 0;
     activeSecrets.push(secret);
-    lastSecretRotationAt = now();
+    sharedState.lastSecretRotationAt = now();
+    sharedState.bootstrapped = true;
 }
 
 function getCurrentSecret() {
@@ -183,11 +218,22 @@ function getCurrentSecret() {
 }
 
 function maybeRotateSecrets(force = false) {
+    const configured = createConfiguredSecretRecord();
+    if (configured) {
+        if (!activeSecrets.length || activeSecrets[0].kid !== configured.kid || !activeSecrets[0].configured) {
+            activeSecrets.length = 0;
+            activeSecrets.push(configured);
+            sharedState.lastSecretRotationAt = now();
+            sharedState.bootstrapped = true;
+        }
+        return;
+    }
+
     const ts = now();
-    const shouldRotate = force || !activeSecrets.length || (ts - lastSecretRotationAt >= SECRET_ROTATION_INTERVAL_MS);
+    const shouldRotate = force || !activeSecrets.length || (ts - sharedState.lastSecretRotationAt >= SECRET_ROTATION_INTERVAL_MS);
     if (shouldRotate) {
         activeSecrets.unshift(createSecretRecord());
-        lastSecretRotationAt = ts;
+        sharedState.lastSecretRotationAt = ts;
     }
     for (let i = activeSecrets.length - 1; i >= 0; i -= 1) {
         const secret = activeSecrets[i];
@@ -195,8 +241,9 @@ function maybeRotateSecrets(force = false) {
     }
     if (!activeSecrets.length) {
         activeSecrets.push(createSecretRecord());
-        lastSecretRotationAt = ts;
+        sharedState.lastSecretRotationAt = ts;
     }
+    sharedState.bootstrapped = true;
 }
 
 function signEnvelope(body, secretValue) {
@@ -220,9 +267,10 @@ function verifyEnvelopeSignature(version, kid, body, signature) {
     const preferred = findSecretByKid(kid);
     if (preferred) {
         const expected = signEnvelope(raw, preferred.value);
-        return safeEquals(signature, expected);
+        if (safeEquals(signature, expected)) return true;
     }
     for (const secret of activeSecrets) {
+        if (preferred && secret.kid === preferred.kid) continue;
         const expected = signEnvelope(raw, secret.value);
         if (safeEquals(signature, expected)) return true;
     }
@@ -247,11 +295,20 @@ function buildStableRequestKey(targetUrl, options = {}) {
 
 function packToken(payload) {
     maybeRotateSecrets();
-    const currentSecret = getCurrentSecret();
-    const kid = String(payload.kid || currentSecret.kid);
+
+    let kid = String(payload.kid || '').trim();
+    let signingSecret = kid ? findSecretByKid(kid) : null;
+
+    // Never sign a token with kid=A using secret=B. That creates tokens that
+    // are born invalid when a rotation happens between caller and packToken().
+    if (!signingSecret) {
+        signingSecret = getCurrentSecret();
+        kid = signingSecret.kid;
+    }
+
     const completePayload = { ...payload, kid };
     const body = Buffer.from(JSON.stringify(completePayload), 'utf8').toString('base64url');
-    const signature = signEnvelope(`${MODULE_VERSION}.${kid}.${body}`, currentSecret.value);
+    const signature = signEnvelope(`${MODULE_VERSION}.${kid}.${body}`, signingSecret.value);
     return `lvt.${MODULE_VERSION}.${kid}.${body}.${signature}`;
 }
 
@@ -325,8 +382,8 @@ function deleteContextById(contextId) {
 function maybeSweep(force = false) {
     const ts = now();
     maybeRotateSecrets(force);
-    if (!force && ts - lastSweepAt < SWEEP_INTERVAL_MS) return;
-    lastSweepAt = ts;
+    if (!force && ts - sharedState.lastSweepAt < SWEEP_INTERVAL_MS) return;
+    sharedState.lastSweepAt = ts;
 
     for (const [contextId, entry] of requestContextById.entries()) {
         if (!entry || Number(entry.expiresAt || 0) <= ts || Number(entry.tokenExpiresAt || 0) <= ts) {
@@ -418,6 +475,26 @@ function stashTransitContext(targetUrl, options = {}) {
     return entry;
 }
 
+function buildEmbeddedContext(entry) {
+    if (!entry) return null;
+    return {
+        cid: entry.id,
+        kind: entry.kind,
+        url: entry.targetUrl,
+        referer: entry.referer,
+        headers: safeClone(entry.headers) || null,
+        hostBinding: entry.hostBinding || null,
+        routeBinding: entry.routeBinding || null,
+        issuer: entry.issuer || null,
+        profile: entry.profile || null,
+        allowInsecureTls: Boolean(entry.allowInsecureTls),
+        forceHeaders: Boolean(entry.forceHeaders),
+        meta: safeClone(entry.meta || null),
+        exp: entry.tokenExpiresAt,
+        embedded: true
+    };
+}
+
 function issueTransitKey(targetUrl, options = {}) {
     const entry = stashTransitContext(targetUrl, options);
     if (!entry) return null;
@@ -449,10 +526,7 @@ function issueTransitKey(targetUrl, options = {}) {
         kid: currentSecret.kid
     };
 
-    if (options.embedContext === true) {
-        payload.ctx = buildEmbeddedContext(entry);
-    }
-
+    if (options.embedContext === true) payload.ctx = buildEmbeddedContext(entry);
     return packToken(payload);
 }
 
@@ -465,27 +539,6 @@ function issueHlsTransitKey(targetUrl, options = {}) {
         maxUses: toNonNegativeInt(options.maxUses, 0),
         embedContext: true
     });
-}
-
-
-function buildEmbeddedContext(entry) {
-    if (!entry) return null;
-    return {
-        cid: entry.id,
-        kind: entry.kind,
-        url: entry.targetUrl,
-        referer: entry.referer,
-        headers: safeClone(entry.headers) || null,
-        hostBinding: entry.hostBinding || null,
-        routeBinding: entry.routeBinding || null,
-        issuer: entry.issuer || null,
-        profile: entry.profile || null,
-        allowInsecureTls: Boolean(entry.allowInsecureTls),
-        forceHeaders: Boolean(entry.forceHeaders),
-        meta: safeClone(entry.meta || null),
-        exp: entry.tokenExpiresAt,
-        embedded: true
-    };
 }
 
 function materializeEmbeddedContext(ctx, options = {}) {
@@ -672,15 +725,19 @@ function getTransitStats() {
         liveContexts: requestContextById.size,
         liveTokens: tokenStateByJti.size,
         liveSecrets: activeSecrets.length,
+        sharedState: true,
+        configuredSecret: Boolean(getConfiguredSecretRaw()),
         maxLiveContexts: MAX_LIVE_CONTEXTS,
         sweepIntervalMs: SWEEP_INTERVAL_MS,
         secretRotationIntervalMs: SECRET_ROTATION_INTERVAL_MS,
         tokenTtlMs: TOKEN_TTL_MS,
         hlsTokenTtlMs: HLS_TOKEN_TTL_MS,
         maxTokenTtlMs: MAX_TOKEN_TTL_MS,
-        lastSecretRotationAt
+        lastSecretRotationAt: sharedState.lastSecretRotationAt
     };
 }
+
+bootstrapSecrets();
 
 module.exports = {
     MODULE_VERSION,
@@ -703,3 +760,4 @@ module.exports = {
     buildTransitUrl,
     getTransitStats
 };
+
