@@ -20,7 +20,7 @@ const { normalizeStreams } = require('../utils/stream_normalizer');
 const tmdbHelper = require('../../core/utils/tmdb_helper');
 const animeIdentity = require('../anime/anime_identity');
 const kitsuProvider = require('../animeworld/kitsu_provider');
-const { buildCinemaCityProxyUrl } = require('./cc_proxy');
+const { buildCinemaCityProxyUrl, prewarmCinemaCityPlayback } = require('./cc_proxy');
 const {
     buildWebStream,
     dedupeStreamsByUrl,
@@ -55,6 +55,9 @@ const STREAM_CACHE_TTL_MS = 10 * 60 * 1000;
 const TMDB_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const KITSU_MAPPING_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const QUALITY_PROBE_CACHE_TTL_MS = 20 * 60 * 1000;
+const FAST_PLAYBACK_MODE = String(process.env.CINEMACITY_FAST_PLAYBACK || '1') !== '0';
+const QUALITY_PROBE_FAST_TIMEOUT_MS = Math.max(650, Math.min(6000, Number.parseInt(process.env.CINEMACITY_QUALITY_PROBE_TIMEOUT_MS || '1400', 10) || 1400));
+const QUALITY_PROBE_FULL_TIMEOUT_MS = Math.max(1500, Math.min(8000, Number.parseInt(process.env.CINEMACITY_QUALITY_PROBE_FULL_TIMEOUT_MS || '6000', 10) || 6000));
 const MAPPING_API_BASE = 'https://anime.questoleviatanormio.dpdns.org';
 const NEWS_SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
 const providerShield = createBlockedFallbackGuard({
@@ -2048,6 +2051,48 @@ async function getParsedCinemaCityStream(pageUrl, meta = {}) {
     });
 }
 
+function mergePlaylistIntelligenceIntoPageMetadata(pageMetadata = {}, playlistIntel = null) {
+    if (!playlistIntel || typeof playlistIntel !== 'object') return pageMetadata;
+    if (playlistIntel?.audioLanguages?.length) {
+        pageMetadata.audioLanguages = Array.from(new Set([...(pageMetadata.audioLanguages || []), ...playlistIntel.audioLanguages]));
+        pageMetadata.isMultiAudio = pageMetadata.audioLanguages.length > 1;
+    }
+    if (playlistIntel?.subtitleLanguages?.length) {
+        pageMetadata.subtitleLanguages = Array.from(new Set([...(pageMetadata.subtitleLanguages || []), ...playlistIntel.subtitleLanguages]));
+    }
+    return pageMetadata;
+}
+
+function pageNeedsPlaylistProbeForStrictLanguage(pageMetadata = {}, config = {}) {
+    if (!isStrictSingleLanguageMode(config)) return false;
+    const known = normalizeLanguageList([
+        ...(Array.isArray(pageMetadata.audioLanguages) ? pageMetadata.audioLanguages : []),
+        ...(Array.isArray(pageMetadata.downloadLanguages) ? pageMetadata.downloadLanguages : [])
+    ]);
+    return known.length === 0;
+}
+
+async function runPlaylistIntelligenceProbe(streamUrl, headers = {}, timeoutMs = QUALITY_PROBE_FAST_TIMEOUT_MS) {
+    const intelligence = await probePlaylistIntelligence(httpClient, streamUrl, {
+        headers,
+        timeout: timeoutMs
+    });
+    const detected = intelligence?.quality || 'Unknown';
+    return { detected, intelligence: intelligence || null };
+}
+
+function warmPlaylistIntelligenceCache(qualityCacheKey, streamUrl, headers = {}) {
+    // Fire-and-cache only: the current Stremio response must not wait for this unless
+    // strict language filtering has no other proof. Later opens reuse the enriched cache.
+    singleFlight(qualityCacheKey, async () => {
+        const alreadyCached = qualityProbeCache.get(qualityCacheKey);
+        if (alreadyCached) return { detected: alreadyCached.value, intelligence: alreadyCached.intelligence || null };
+        const result = await runPlaylistIntelligenceProbe(streamUrl, headers, QUALITY_PROBE_FAST_TIMEOUT_MS);
+        qualityProbeCache.set(qualityCacheKey, { value: result.detected, intelligence: result.intelligence || null });
+        return result;
+    }).catch(() => null);
+}
+
 function buildDisplayTitle(meta = {}, fallbackTitle, season, episode) {
     const baseTitle = decodeHtmlEntities(
         meta?.title || meta?.name || meta?.originalTitle || fallbackTitle || 'CinemaCity'
@@ -2200,29 +2245,29 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
             try {
                 const qualityCacheKey = `quality:${normalizeRemoteUrl(extracted.streamUrl)}`;
                 const cachedQuality = qualityProbeCache.get(qualityCacheKey);
-                playlistIntel = cachedQuality?.intelligence || null;
-                const probed = cachedQuality ? cachedQuality.value : await singleFlight(qualityCacheKey, async () => {
-                    const alreadyCached = qualityProbeCache.get(qualityCacheKey);
-                    if (alreadyCached) {
-                        playlistIntel = alreadyCached.intelligence || null;
-                        return alreadyCached.value;
-                    }
-                    const intelligence = await probePlaylistIntelligence(httpClient, extracted.streamUrl, {
-                        headers: extracted.headers,
-                        timeout: 6000
+                const mustWaitForLanguageProof = pageNeedsPlaylistProbeForStrictLanguage(pageMetadata, config);
+
+                if (cachedQuality) {
+                    playlistIntel = cachedQuality?.intelligence || null;
+                    quality = pickBetterQuality(cachedQuality.value || 'Unknown', quality);
+                    mergePlaylistIntelligenceIntoPageMetadata(pageMetadata, playlistIntel);
+                } else if (FAST_PLAYBACK_MODE && !mustWaitForLanguageProof) {
+                    warmPlaylistIntelligenceCache(qualityCacheKey, extracted.streamUrl, extracted.headers);
+                } else {
+                    const result = await singleFlight(qualityCacheKey, async () => {
+                        const alreadyCached = qualityProbeCache.get(qualityCacheKey);
+                        if (alreadyCached) return { detected: alreadyCached.value, intelligence: alreadyCached.intelligence || null };
+                        const probed = await runPlaylistIntelligenceProbe(
+                            extracted.streamUrl,
+                            extracted.headers,
+                            FAST_PLAYBACK_MODE ? QUALITY_PROBE_FAST_TIMEOUT_MS : QUALITY_PROBE_FULL_TIMEOUT_MS
+                        );
+                        qualityProbeCache.set(qualityCacheKey, { value: probed.detected, intelligence: probed.intelligence || null });
+                        return probed;
                     });
-                    playlistIntel = intelligence || null;
-                    const detected = intelligence?.quality || 'Unknown';
-                    qualityProbeCache.set(qualityCacheKey, { value: detected, intelligence: intelligence || null });
-                    return detected;
-                });
-                quality = pickBetterQuality(probed || 'Unknown', quality);
-                if (playlistIntel?.audioLanguages?.length) {
-                    pageMetadata.audioLanguages = Array.from(new Set([...(pageMetadata.audioLanguages || []), ...playlistIntel.audioLanguages]));
-                    pageMetadata.isMultiAudio = pageMetadata.audioLanguages.length > 1;
-                }
-                if (playlistIntel?.subtitleLanguages?.length) {
-                    pageMetadata.subtitleLanguages = Array.from(new Set([...(pageMetadata.subtitleLanguages || []), ...playlistIntel.subtitleLanguages]));
+                    playlistIntel = result?.intelligence || null;
+                    quality = pickBetterQuality(result?.detected || 'Unknown', quality);
+                    mergePlaylistIntelligenceIntoPageMetadata(pageMetadata, playlistIntel);
                 }
             } catch (_) {}
         }
@@ -2246,6 +2291,9 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
         const languageLabel = buildCinemaCityLanguageLabel(pageMetadata, config);
         const mediaflowProxyUrl = buildCinemaCityMediaflowUrl(config, extracted.streamUrl, extracted.headers, isHlsStream);
         const cinemaCityUrl = mediaflowProxyUrl || buildCinemaCityProxyUrl(extracted.streamUrl, extracted.headers, reqHost, { isHls: isHlsStream, providerType: resolved.providerType, season: resolved.season, episode: resolved.episode, rawEpisodeNumber: resolved.rawEpisodeNumber, pageUrl: targetPageUrl || searchResult.url });
+        if (!mediaflowProxyUrl && cinemaCityUrl) {
+            prewarmCinemaCityPlayback(extracted.streamUrl, extracted.headers, reqHost, { isHls: isHlsStream });
+        }
         const cinemaCityMode = mediaflowProxyUrl ? 'MFP' : 'CCCDN';
         const extraVortexMeta = {
             bingeWatching: true,
