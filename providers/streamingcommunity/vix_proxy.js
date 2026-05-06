@@ -96,6 +96,31 @@ function selectVariant(variants, policy = 'auto') {
     return null;
 }
 
+function isLikelySeriesFlow(sourceUrl = '', pageReferer = '', meta = null, req = null) {
+    const parts = [sourceUrl, pageReferer, meta?.type, meta?.mediaType, meta?.kind, meta?.imdbType, req?.query?.type]
+        .filter(Boolean)
+        .map((value) => String(value).toLowerCase());
+
+    const joined = parts.join(' ');
+    if (/\b(movie|film)\b/.test(joined) || /\/movie\//i.test(joined)) return false;
+
+    return /\b(series|serie|tv|show|episode|episodio)\b/.test(joined)
+        || /\/(tv|series|serie|show|episode|episodio)\//i.test(joined)
+        || /[?&](season|s)=\d+/i.test(joined)
+        || /[?&](episode|e)=\d+/i.test(joined)
+        || /\/tt\d+\/\d+\/\d+(?:$|[/?#])/i.test(joined);
+}
+
+function pickVariantPolicy(rawPolicy, sourceUrl, pageReferer, meta = null, req = null) {
+    const explicit = String(rawPolicy || '').trim();
+    if (explicit) return normalizeVariantPolicy(explicit);
+
+    // Le serie Vix spesso passano da master -> variant -> leaf -> segmenti.
+    // Forzare una variante media evita switch casuali di qualità che su ExoPlayer
+    // possono causare "passaggio a libVLC", mentre i film restano adaptive/auto.
+    return isLikelySeriesFlow(sourceUrl, pageReferer, meta, req) ? 'mid' : 'auto';
+}
+
 function buildProxyUrl(req, absoluteUrl, pageReferer, extraHeaders = null, extraMeta = null) {
     const selfBase = getSelfBase(req);
     const token = issueHlsTransitKey(absoluteUrl, {
@@ -277,7 +302,8 @@ function resolveProxySource(req) {
                 sourceUrl: tokenPayload.url,
                 pageReferer: safeUrl(tokenPayload.referer, DEFAULT_REFERER) || DEFAULT_REFERER,
                 upstreamHeaders: tokenPayload.headers || buildRequestHeaders(tokenPayload.url, tokenPayload.referer || DEFAULT_REFERER),
-                variantPolicy: normalizeVariantPolicy(tokenPayload?.meta?.syntheticVariant || 'auto'),
+                variantPolicy: pickVariantPolicy(tokenPayload?.meta?.syntheticVariant, tokenPayload.url, tokenPayload.referer || DEFAULT_REFERER, tokenPayload.meta || null, req),
+                isSeriesFlow: isLikelySeriesFlow(tokenPayload.url, tokenPayload.referer || DEFAULT_REFERER, tokenPayload.meta || null, req),
                 recoveredFromEmbedded: Boolean(tokenPayload.recoveredFromEmbedded)
             };
         }
@@ -293,7 +319,8 @@ function resolveProxySource(req) {
         sourceUrl,
         pageReferer,
         upstreamHeaders: buildRequestHeaders(sourceUrl, pageReferer),
-        variantPolicy: normalizeVariantPolicy(req.query.variant || 'auto')
+        variantPolicy: pickVariantPolicy(req.query.variant, sourceUrl, pageReferer, null, req),
+        isSeriesFlow: isLikelySeriesFlow(sourceUrl, pageReferer, null, req)
     };
 }
 
@@ -319,7 +346,7 @@ async function handleVixSynthetic(req, res) {
     }
     if (!resolved?.sourceUrl) return res.status(400).send('Invalid or unsafe src');
 
-    const { sourceUrl, pageReferer, upstreamHeaders, variantPolicy } = resolved;
+    const { sourceUrl, pageReferer, upstreamHeaders, variantPolicy, isSeriesFlow } = resolved;
 
     try {
         const upstream = await fetchUpstream(sourceUrl, pageReferer, upstreamHeaders, req);
@@ -349,6 +376,10 @@ async function handleVixSynthetic(req, res) {
         const manifestText = buffer.toString('utf8');
         const lines = manifestText.replace(/\r\n/g, '\n').split('\n');
         const hasVariants = lines.some((line) => String(line).trim().startsWith('#EXT-X-STREAM-INF'));
+        if (hasVariants && isSeriesFlow) {
+            const variantCount = lines.filter((line) => String(line).trim().startsWith('#EXT-X-STREAM-INF')).length;
+            console.info(`[VIX PROXY] Series-safe HLS master variants=${variantCount} policy=${variantPolicy} url=${sourceUrl}`);
+        }
 
         const rewritten = hasVariants
             ? rewriteMasterManifest(lines, sourceUrl, req, pageReferer, variantPolicy)
@@ -376,3 +407,4 @@ module.exports = {
     buildProxyUrl,
     handleVixSynthetic
 };
+
