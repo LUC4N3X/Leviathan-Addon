@@ -38,6 +38,18 @@ const CONFIG = {
     KNABEN_QUERY_CONCURRENCY: Number(process.env.KNABEN_QUERY_CONCURRENCY || 3),
     KNABEN_FRESH_TTL_MS: Number(process.env.KNABEN_FRESH_TTL_MS || 20 * 60 * 1000),
     KNABEN_STALE_TTL_MS: Number(process.env.KNABEN_STALE_TTL_MS || 24 * 60 * 60 * 1000),
+    CORSARO_QUERY_CONCURRENCY: Number(process.env.CORSARO_QUERY_CONCURRENCY || 2),
+    CORSARO_SEARCH_TIMEOUT_MS: Number(process.env.CORSARO_SEARCH_TIMEOUT_MS || 3500),
+    CORSARO_DETAIL_TIMEOUT_MS: Number(process.env.CORSARO_DETAIL_TIMEOUT_MS || 2600),
+    CORSARO_MAX_DETAIL_CANDIDATES: Number(process.env.CORSARO_MAX_DETAIL_CANDIDATES || 18),
+    CORSARO_FRESH_TTL_MS: Number(process.env.CORSARO_FRESH_TTL_MS || 10 * 60 * 1000),
+    CORSARO_STALE_TTL_MS: Number(process.env.CORSARO_STALE_TTL_MS || 6 * 60 * 60 * 1000),
+    UINDEX_QUERY_CONCURRENCY: Number(process.env.UINDEX_QUERY_CONCURRENCY || 3),
+    UINDEX_SEARCH_TIMEOUT_MS: Number(process.env.UINDEX_SEARCH_TIMEOUT_MS || 3500),
+    UINDEX_DETAIL_TIMEOUT_MS: Number(process.env.UINDEX_DETAIL_TIMEOUT_MS || 2400),
+    UINDEX_MAX_DETAIL_CANDIDATES: Number(process.env.UINDEX_MAX_DETAIL_CANDIDATES || 20),
+    UINDEX_FRESH_TTL_MS: Number(process.env.UINDEX_FRESH_TTL_MS || 15 * 60 * 1000),
+    UINDEX_STALE_TTL_MS: Number(process.env.UINDEX_STALE_TTL_MS || 12 * 60 * 60 * 1000),
     SEARCH_CACHE_TTL: Number(process.env.ENGINES_SEARCH_CACHE_TTL || 180000),
     HTML_CACHE_TTL: Number(process.env.ENGINES_HTML_CACHE_TTL || 45000),
     NEGATIVE_CACHE_TTL: Number(process.env.ENGINES_NEGATIVE_CACHE_TTL || 20000),
@@ -66,7 +78,23 @@ const knabenCache = new TtlLruCache({
     staleTtlMs: CONFIG.KNABEN_STALE_TTL_MS,
     staleMode: 'extension'
 });
+const corsaroCache = new TtlLruCache({
+    name: 'engines:corsaro:fresh-stale',
+    max: 400,
+    ttlMs: CONFIG.CORSARO_FRESH_TTL_MS,
+    staleTtlMs: CONFIG.CORSARO_STALE_TTL_MS,
+    staleMode: 'extension'
+});
+const uindexCache = new TtlLruCache({
+    name: 'engines:uindex:fresh-stale',
+    max: 500,
+    ttlMs: CONFIG.UINDEX_FRESH_TTL_MS,
+    staleTtlMs: CONFIG.UINDEX_STALE_TTL_MS,
+    staleMode: 'extension'
+});
 const knabenRefreshInflight = new Map();
+const corsaroRefreshInflight = new Map();
+const uindexRefreshInflight = new Map();
 const inflightRequests = new Map();
 
 async function requestWithImpitFallback(url, config = {}) {
@@ -863,58 +891,300 @@ async function collectQueryResultsParallel(context, handler, {
     return all;
 }
 
-async function searchCorsaro(context) {
-    console.log(`[IlCorsaroNero] Avvio ricerca per: ${context.title}...`);
+
+function buildEngineCacheKey(engineName, context = {}) {
+    return `${engineName}:${buildSearchCacheKey(context)}`;
+}
+
+function startProviderRefresh(cache, inflight, key, label, producer) {
+    if (inflight.has(key)) return inflight.get(key);
+    const promise = (async () => {
+        try {
+            const fresh = await producer();
+            cache.set(key, Array.isArray(fresh) ? fresh : []);
+            console.log(`[${label}] cache refresh ok results=${Array.isArray(fresh) ? fresh.length : 0}`);
+            return fresh;
+        } catch (error) {
+            console.log(`[${label}] cache refresh failed: ${error.message}`);
+            return [];
+        } finally {
+            inflight.delete(key);
+        }
+    })();
+    inflight.set(key, promise);
+    return promise;
+}
+
+async function resolveProviderCache(cache, inflight, key, label, producer) {
+    const cached = cache.getEntry(key, { allowStale: true });
+    if (cached && !cached.isStale) {
+        console.log(`[${label}] cache hit fresh results=${cached.value.length}`);
+        return cached.value;
+    }
+
+    if (cached && cached.isStale) {
+        console.log(`[${label}] cache hit stale results=${cached.value.length} -> refresh async`);
+        startProviderRefresh(cache, inflight, key, label, producer);
+        return cached.value;
+    }
+
+    return await startProviderRefresh(cache, inflight, key, label, producer);
+}
+
+function decodeHref(value) {
+    return he.decode(String(value || '').replace(/&amp;/g, '&')).trim();
+}
+
+function buildAbsoluteUrl(baseUrl, href) {
+    const decoded = decodeHref(href);
+    if (!decoded) return '';
+    if (/^magnet:/i.test(decoded)) return decoded;
     try {
-        const candidates = await collectQueryResults(context, async query => {
+        return new URL(decoded, baseUrl).toString();
+    } catch {
+        return decoded.startsWith('http') ? decoded : `${String(baseUrl || '').replace(/\/$/, '')}/${decoded.replace(/^\//, '')}`;
+    }
+}
+
+function numberFromHumanInt(value) {
+    const parsed = parseInt(String(value || '').replace(/[.,\s]/g, ''), 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function extractFirstMagnet(value) {
+    const text = he.decode(String(value || '').replace(/&amp;/g, '&'));
+    const match = text.match(/magnet:\?xt=urn:btih:[A-Za-z0-9]{32,40}[^"'<>\s]*/i);
+    return match ? match[0].replace(/\s+/g, '') : '';
+}
+
+function extractInfoHashFromText(value) {
+    const text = he.decode(String(value || ''));
+    const labelled = text.match(/(?:Info\s*Hash|Hash|btih)[^A-Fa-f0-9A-Z2-7]{0,16}([A-Fa-f0-9]{40}|[A-Z2-7]{32})\b/i);
+    if (labelled) return labelled[1].toLowerCase();
+    const generic = text.match(/\b[A-Fa-f0-9]{40}\b/);
+    return generic ? generic[0].toLowerCase() : '';
+}
+
+function parsePeerHealthFromText(value) {
+    const text = normalizeSpaces(value);
+    const health = text.match(/(?:Good|Medium|Poor|Health)?\s*([\d.,]+)\s*\/\s*([\d.,]+)\b/i);
+    if (health) {
+        return {
+            seeders: numberFromHumanInt(health[1]),
+            leechers: numberFromHumanInt(health[2])
+        };
+    }
+
+    const seed = text.match(/(?:Seed(?:er)?s?|S)\s*[:()]?\s*([\d.,]+)/i);
+    const leech = text.match(/(?:Leech(?:er)?s?|L)\s*[:()]?\s*([\d.,]+)/i);
+    return {
+        seeders: seed ? numberFromHumanInt(seed[1]) : 0,
+        leechers: leech ? numberFromHumanInt(leech[1]) : 0
+    };
+}
+
+function parsePeerColumns($, row) {
+    if (!$ || !row) return { seeders: 0, leechers: 0 };
+    const $row = typeof row.find === 'function' ? row : $(row);
+    const cells = $row.find('td').map((_, cell) => normalizeSpaces($(cell).text())).get();
+    if (!cells.length) return { seeders: 0, leechers: 0 };
+
+    const sizeIndex = cells.findIndex(cell => /\b(?:TiB|GiB|MiB|KiB|TB|GB|MB|KB)\b/i.test(cell));
+    const numericAfterSize = sizeIndex >= 0
+        ? cells.slice(sizeIndex + 1).map(numberFromHumanInt).filter(value => value > 0)
+        : [];
+    if (numericAfterSize.length) {
+        return {
+            seeders: numericAfterSize[0] || 0,
+            leechers: numericAfterSize[1] || 0
+        };
+    }
+
+    const numericCells = cells.map(numberFromHumanInt).filter(value => value > 0);
+    if (numericCells.length >= 2) {
+        return {
+            seeders: numericCells[numericCells.length - 2] || 0,
+            leechers: numericCells[numericCells.length - 1] || 0
+        };
+    }
+
+    return { seeders: numericCells[0] || 0, leechers: 0 };
+}
+
+function parseSizeLabelFromText(value) {
+    const text = normalizeSpaces(value);
+    const match = text.match(/\b(\d+(?:[.,]\d+)?)\s*(TiB|GiB|MiB|KiB|TB|GB|MB|KB)\b/i);
+    if (!match) return '';
+    return `${match[1].replace(',', '.')} ${match[2].replace(/([GMTK])iB/i, '$1B').toUpperCase()}`;
+}
+
+function normalizeUindexTitle(value) {
+    return normalizeSpaces(he.decode(String(value || '')))
+        .replace(/^\s*(?:www\.)?uindex\.org\s*[-–—:]\s*/i, '')
+        .replace(/\s+NEW\s*$/i, '')
+        .trim();
+}
+
+function rankDetailCandidates(candidates, context, maxCandidates) {
+    return [...(candidates || [])]
+        .filter(candidate => candidate && candidate.title && (candidate.detailUrl || candidate.magnet))
+        .sort((a, b) => {
+            const score = candidate => {
+                const titleScore = Math.round(titleMatchScore(candidate.title, context.title) * 100);
+                const seederScore = Math.min(50, Math.round(Math.log2((Number(candidate.seeders) || 0) + 1) * 8));
+                const resolutionScore = getResolutionScore(candidate.title) * 12;
+                const sizeScore = parseSize(candidate.size) > 0 ? 3 : 0;
+                const directMagnetScore = candidate.magnet ? 20 : 0;
+                return titleScore + seederScore + resolutionScore + sizeScore + directMagnetScore;
+            };
+            return score(b) - score(a);
+        })
+        .slice(0, Math.max(1, Number(maxCandidates) || 20));
+}
+
+function parseCorsaroSearchRows(html, context, baseUrl = 'https://ilcorsaronero.link') {
+    if (!html) return [];
+    const $ = cheerio.load(html);
+    const items = [];
+    const seen = new Set();
+
+    $('table tr, tbody tr, .table tr').each((_, row) => {
+        const $row = $(row);
+        const rowHtml = $row.html() || '';
+        const directMagnet = extractFirstMagnet(rowHtml);
+        const linkTag = $row.find('a[href*="/torrent/"], a[href*="torrent"], a[href^="magnet:"]').filter((__, link) => {
+            const href = $(link).attr('href') || '';
+            const text = normalizeSpaces($(link).text());
+            return /^magnet:/i.test(href) || /torrent/i.test(href) || text.length > 6;
+        }).first();
+        if (!linkTag.length && !directMagnet) return;
+
+        const rawHref = linkTag.attr('href') || directMagnet;
+        const href = buildAbsoluteUrl(baseUrl, rawHref);
+        const name = normalizeSpaces(linkTag.text() || $row.find('td').first().text());
+        if (!name || !passesResultFilters(name, context)) return;
+
+        const rowText = normalizeSpaces($row.text());
+        const health = parsePeerHealthFromText(rowText);
+        const seedersText = $row.find('.green, font[color="#008000"], td.text-green-500, .seeders, .seeds').text().trim();
+        const cellHealth = parsePeerColumns($, $row);
+        const seeders = seedersText ? numberFromHumanInt(seedersText) : (cellHealth.seeders || health.seeders);
+        const size = parseSizeLabelFromText(rowText);
+        const key = directMagnet || href || name;
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        items.push({
+            title: name,
+            detailUrl: /^magnet:/i.test(href) ? '' : href,
+            magnet: directMagnet || (/^magnet:/i.test(href) ? href : ''),
+            size,
+            seeders
+        });
+    });
+
+    return items;
+}
+
+function parseUindexListRows(html, context, baseUrl = 'https://uindex.org') {
+    if (!html) return [];
+    const $ = cheerio.load(html);
+    const items = [];
+    const seen = new Set();
+
+    $('table tr, tbody tr, .table tr').each((_, row) => {
+        const $row = $(row);
+        const rowHtml = $row.html() || '';
+        const directMagnet = extractFirstMagnet(rowHtml);
+        const linkTag = $row.find('a[href*="details.php"], a[href*="/details"], a[href^="magnet:"]').filter((__, link) => {
+            const href = $(link).attr('href') || '';
+            const text = normalizeUindexTitle($(link).text());
+            return /^magnet:/i.test(href) || /details/i.test(href) || text.length > 6;
+        }).first();
+        if (!linkTag.length && !directMagnet) return;
+
+        const rawHref = linkTag.attr('href') || directMagnet;
+        const href = buildAbsoluteUrl(baseUrl, rawHref);
+        const name = normalizeUindexTitle(linkTag.text() || $row.find('td').first().text());
+        if (!name || !passesResultFilters(name, context)) return;
+
+        const rowText = normalizeSpaces($row.text());
+        const health = parsePeerHealthFromText(rowText);
+        const size = parseSizeLabelFromText(rowText);
+        const key = directMagnet || href || name;
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        items.push({
+            title: name,
+            detailUrl: /^magnet:/i.test(href) ? '' : href,
+            magnet: directMagnet || (/^magnet:/i.test(href) ? href : ''),
+            size,
+            seeders: parsePeerColumns($, $row).seeders || health.seeders,
+            leechers: parsePeerColumns($, $row).leechers || health.leechers
+        });
+    });
+
+    return items;
+}
+
+function parseUindexDetailPayload(html, candidate = {}) {
+    if (!html) return { ...candidate };
+    const $ = cheerio.load(html);
+    const text = normalizeSpaces($.text());
+    const magnet = extractFirstMagnet(html);
+    const hash = extractInfoHashFromText(text);
+    const health = parsePeerHealthFromText(text);
+    const size = parseSizeLabelFromText(text) || candidate.size || '';
+    const title = normalizeUindexTitle($('h1').first().text()) || candidate.title;
+
+    return {
+        ...candidate,
+        title,
+        magnet: magnet || (hash ? buildMagnetFromHash(hash, title || candidate.title || '') : candidate.magnet),
+        size,
+        seeders: health.seeders || candidate.seeders || 0,
+        leechers: health.leechers || candidate.leechers || 0,
+        details: hash ? `uindex:${hash}` : candidate.details || ''
+    };
+}
+
+async function searchCorsaro(context) {
+    console.log(`[IlCorsaroNero] Avvio ricerca turbo per: ${context.title}...`);
+    const cacheKey = buildEngineCacheKey('corsaro', context);
+
+    const producer = async () => {
+        const candidates = await collectQueryResultsParallel(context, async query => {
             const url = `https://ilcorsaronero.link/search?q=${encodeURIComponent(query)}`;
-            const { data } = await requestHtml(url, { langMode: context.langMode });
-            if (!data || isCloudflareResponse(data)) return [];
-
-            const $ = cheerio.load(data);
-            const items = [];
-
-            $("table tr, tbody tr").each((_, row) => {
-                const $row = $(row);
-                const linkTag = $row.find('a[href*="/torrent/"]').first();
-                if (!linkTag.length) return;
-
-                const name = normalizeSpaces(linkTag.text());
-                const href = linkTag.attr("href");
-                if (!name || !href || !passesResultFilters(name, context)) return;
-
-                const seedersText = $row.find('.green, font[color="#008000"], td.text-green-500').text().trim();
-                const seeders = parseInt(seedersText.replace(/,/g, ""), 10) || 0;
-
-                let sizeStr = "";
-                $row.find("td").each((__, cell) => {
-                    const text = normalizeSpaces($(cell).text());
-                    if (!sizeStr && /\b(?:GiB|MiB|KiB|TiB|GB|MB|KB|TB)\b/i.test(text)) {
-                        sizeStr = text.replace(/([GMTK])iB/gi, "$1B");
-                    }
-                });
-
-                items.push({
-                    title: name,
-                    detailUrl: href.startsWith("http") ? href : `https://ilcorsaronero.link${href}`,
-                    size: sizeStr || "",
-                    seeders
-                });
+            const { data } = await requestHtml(url, {
+                timeout: CONFIG.CORSARO_SEARCH_TIMEOUT_MS,
+                langMode: context.langMode
             });
-
-            return items;
+            if (!data || isCloudflareResponse(data)) return [];
+            return parseCorsaroSearchRows(data, context, 'https://ilcorsaronero.link');
+        }, {
+            maxQueries: Math.min(CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE, context.isAnime ? 4 : 3),
+            concurrency: CONFIG.CORSARO_QUERY_CONCURRENCY
         });
 
-        const results = await Promise.all(
-            candidates.slice(0, 30).map(candidate =>
+        const ranked = rankDetailCandidates(candidates, context, CONFIG.CORSARO_MAX_DETAIL_CANDIDATES);
+        const directResults = ranked
+            .filter(candidate => candidate.magnet)
+            .map(candidate => normalizeResult(candidate, context, 'Corsaro'))
+            .filter(Boolean);
+
+        const detailResults = await Promise.all(
+            ranked.filter(candidate => !candidate.magnet && candidate.detailUrl).map(candidate =>
                 detailLimit(async () => {
                     try {
-                        const html = (await requestHtml(candidate.detailUrl, { timeout: 4500, langMode: context.langMode })).data;
+                        const html = (await requestHtml(candidate.detailUrl, {
+                            timeout: CONFIG.CORSARO_DETAIL_TIMEOUT_MS,
+                            langMode: context.langMode,
+                            maxRedirects: 3
+                        })).data;
                         if (!html) return null;
-                        const magnet =
-                            cheerio.load(html)('a[href^="magnet:"]').attr("href") ||
-                            html.match(/magnet:\?xt=urn:btih:[A-Za-z0-9]{32,40}[^"'\s]*/i)?.[0];
-                        return normalizeResult({ ...candidate, magnet }, context, "Corsaro");
+                        const magnet = extractFirstMagnet(html) || cheerio.load(html)('a[href^="magnet:"]').attr('href') || '';
+                        return normalizeResult({ ...candidate, magnet }, context, 'Corsaro');
                     } catch {
                         return null;
                     }
@@ -922,9 +1192,14 @@ async function searchCorsaro(context) {
             )
         );
 
-        const finalResults = dedupeResults(results.filter(Boolean)).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        const finalResults = dedupeResults([...directResults, ...detailResults.filter(Boolean)])
+            .slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
         console.log(`[IlCorsaroNero] Trovati ${finalResults.length} risultati validi.`);
         return finalResults;
+    };
+
+    try {
+        return await resolveProviderCache(corsaroCache, corsaroRefreshInflight, cacheKey, 'IlCorsaroNero', producer);
     } catch (error) {
         console.log(`[IlCorsaroNero] Errore: ${error.message}`);
         return [];
@@ -1372,31 +1647,55 @@ async function searchBitSearch(context) {
 }
 
 async function searchUindex(context) {
-    console.log(`[UIndex] Avvio ricerca per: ${context.title}...`);
-    try {
-        const results = await collectQueryResults(context, async query => {
-            const { data } = await requestHtml(`https://uindex.org/search.php?search=${encodeURIComponent(query)}&c=0`, { timeout: 5000, langMode: context.langMode });
-            if (!data) return [];
+    console.log(`[UIndex] Avvio ricerca turbo per: ${context.title}...`);
+    const cacheKey = buildEngineCacheKey('uindex', context);
 
-            return data
-                .split(/<tr[^>]*>/gi)
-                .map(row => {
-                    const magnet = row.match(/href=["'](magnet:[^"']+)["']/i)?.[1]?.replace(/&amp;/g, "&");
-                    const name = row.match(/<td[^>]*><a[^>]*>([^<]+)/i)?.[1];
-                    return normalizeResult({
-                        title: name,
-                        magnet,
-                        size: "",
-                        sizeBytes: 0,
-                        seeders: 0
-                    }, context, "UIndex");
+    const producer = async () => {
+        const candidates = await collectQueryResultsParallel(context, async query => {
+            const url = `https://uindex.org/search.php?search=${encodeURIComponent(query)}&c=0`;
+            const { data } = await requestHtml(url, {
+                timeout: CONFIG.UINDEX_SEARCH_TIMEOUT_MS,
+                langMode: context.langMode
+            });
+            if (!data || isCloudflareResponse(data)) return [];
+            return parseUindexListRows(data, context, 'https://uindex.org');
+        }, {
+            maxQueries: Math.min(context.isAnime ? CONFIG.MAX_ANIME_QUERY_VARIANTS_PER_ENGINE : 4, 6),
+            concurrency: CONFIG.UINDEX_QUERY_CONCURRENCY
+        });
+
+        const ranked = rankDetailCandidates(candidates, context, CONFIG.UINDEX_MAX_DETAIL_CANDIDATES);
+        const directResults = ranked
+            .filter(candidate => candidate.magnet)
+            .map(candidate => normalizeResult(candidate, context, 'UIndex'))
+            .filter(Boolean);
+
+        const detailResults = await Promise.all(
+            ranked.filter(candidate => !candidate.magnet && candidate.detailUrl).map(candidate =>
+                detailLimit(async () => {
+                    try {
+                        const html = (await requestHtml(candidate.detailUrl, {
+                            timeout: CONFIG.UINDEX_DETAIL_TIMEOUT_MS,
+                            langMode: context.langMode,
+                            maxRedirects: 3
+                        })).data;
+                        const enriched = parseUindexDetailPayload(html, candidate);
+                        return normalizeResult(enriched, context, 'UIndex');
+                    } catch {
+                        return null;
+                    }
                 })
-                .filter(Boolean);
-        }, { maxQueries: 2 });
+            )
+        );
 
-        const finalResults = dedupeResults(results).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        const finalResults = dedupeResults([...directResults, ...detailResults.filter(Boolean)])
+            .slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
         console.log(`[UIndex] Trovati ${finalResults.length} risultati validi.`);
         return finalResults;
+    };
+
+    try {
+        return await resolveProviderCache(uindexCache, uindexRefreshInflight, cacheKey, 'UIndex', producer);
     } catch (error) {
         console.log(`[UIndex] Errore: ${error.message}`);
         return [];
@@ -1577,6 +1876,13 @@ module.exports = {
         getKnabenCategories,
         parseKnabenCategoryId,
         isBlacklistedCategory,
+        extractInfoHashFromText,
+        parsePeerHealthFromText,
+        normalizeUindexTitle,
+        parseUindexListRows,
+        parseUindexDetailPayload,
+        parseCorsaroSearchRows,
+        rankDetailCandidates,
         computeResultScore,
         normalizeResult
     }
