@@ -2,14 +2,15 @@
 
 const crypto = require('crypto');
 
-const MODULE_VERSION = 7;
+const MODULE_VERSION = 8;
 const TRANSIT_KIND = 'vix-transit';
 const SWEEP_INTERVAL_MS = 45 * 1000;
 const REQUEST_CONTEXT_TTL_MS = 6 * 60 * 60 * 1000;
-const TOKEN_TTL_MS = 10 * 60 * 1000;
-const HLS_TOKEN_TTL_MS = 10 * 60 * 1000;
+const TOKEN_TTL_MS = 20 * 60 * 1000;
+const HLS_TOKEN_TTL_MS = 4 * 60 * 60 * 1000;
+const MAX_TOKEN_TTL_MS = 8 * 60 * 60 * 1000;
 const SECRET_ROTATION_INTERVAL_MS = 20 * 60 * 1000;
-const SECRET_RETENTION_MS = TOKEN_TTL_MS + SECRET_ROTATION_INTERVAL_MS + 60 * 1000;
+const SECRET_RETENTION_MS = MAX_TOKEN_TTL_MS + SECRET_ROTATION_INTERVAL_MS + 5 * 60 * 1000;
 const DEFAULT_MAX_USES = 0;
 const DEFAULT_TOKEN_MAX_USES = 0;
 const HLS_TOKEN_MAX_USES = 0;
@@ -54,6 +55,11 @@ function toNonNegativeInt(value, fallback) {
     const n = Number(value);
     if (!Number.isFinite(n)) return fallback;
     return Math.max(0, Math.floor(n));
+}
+
+function boundedTtlMs(value, fallback, maxValue = MAX_TOKEN_TTL_MS) {
+    const parsed = toNonNegativeInt(value, fallback);
+    return Math.max(1000, Math.min(maxValue, parsed));
 }
 
 function safeClone(value) {
@@ -351,7 +357,7 @@ function stashTransitContext(targetUrl, options = {}) {
     const normalizedReferer = normalizeReferer(options.referer);
     const normalizedHeaders = normalizeRequestHeaders(options.headers || {});
     const contextTtlMs = Math.max(1000, toNonNegativeInt(options.ttlMs, REQUEST_CONTEXT_TTL_MS));
-    const tokenTtlMs = Math.max(1000, toNonNegativeInt(options.tokenTtlMs, TOKEN_TTL_MS));
+    const tokenTtlMs = boundedTtlMs(options.tokenTtlMs, TOKEN_TTL_MS);
     const requestedMaxUses = toNonNegativeInt(options.maxUses, DEFAULT_MAX_USES);
     const stableKeyHash = sha256(buildStableRequestKey(normalizedTargetUrl, {
         ...options,
@@ -433,7 +439,7 @@ function issueTransitKey(targetUrl, options = {}) {
         maxUses: tokenMaxUses
     });
 
-    return packToken({
+    const payload = {
         v: MODULE_VERSION,
         typ: 'transit',
         kind: entry.kind,
@@ -441,17 +447,83 @@ function issueTransitKey(targetUrl, options = {}) {
         exp: tokenExp,
         jti,
         kid: currentSecret.kid
-    });
+    };
+
+    if (options.embedContext === true) {
+        payload.ctx = buildEmbeddedContext(entry);
+    }
+
+    return packToken(payload);
 }
 
 function issueHlsTransitKey(targetUrl, options = {}) {
     return issueTransitKey(targetUrl, {
         ...options,
         kind: normalizeTransitKind(options.kind || TRANSIT_KIND),
-        tokenTtlMs: Math.max(1000, toNonNegativeInt(options.tokenTtlMs, HLS_TOKEN_TTL_MS)),
+        tokenTtlMs: boundedTtlMs(options.tokenTtlMs, HLS_TOKEN_TTL_MS),
         tokenMaxUses: toNonNegativeInt(options.tokenMaxUses, HLS_TOKEN_MAX_USES),
-        maxUses: toNonNegativeInt(options.maxUses, 0)
+        maxUses: toNonNegativeInt(options.maxUses, 0),
+        embedContext: true
     });
+}
+
+
+function buildEmbeddedContext(entry) {
+    if (!entry) return null;
+    return {
+        cid: entry.id,
+        kind: entry.kind,
+        url: entry.targetUrl,
+        referer: entry.referer,
+        headers: safeClone(entry.headers) || null,
+        hostBinding: entry.hostBinding || null,
+        routeBinding: entry.routeBinding || null,
+        issuer: entry.issuer || null,
+        profile: entry.profile || null,
+        allowInsecureTls: Boolean(entry.allowInsecureTls),
+        forceHeaders: Boolean(entry.forceHeaders),
+        meta: safeClone(entry.meta || null),
+        exp: entry.tokenExpiresAt,
+        embedded: true
+    };
+}
+
+function materializeEmbeddedContext(ctx, options = {}) {
+    if (!ctx || typeof ctx !== 'object') return null;
+    const ts = now();
+    const targetUrl = normalizeRemoteUrl(ctx.url);
+    if (!targetUrl) return null;
+
+    const tokenExpiresAt = Number(ctx.exp || ctx.tokenExpiresAt || 0);
+    if (!Number.isFinite(tokenExpiresAt) || tokenExpiresAt <= ts) return null;
+
+    const ctxKind = normalizeTransitKind(ctx.kind || TRANSIT_KIND);
+    const expectedKind = normalizeTransitKind(options.kind || ctxKind);
+    const ctxHostBinding = normalizeBinding(ctx.hostBinding, 'host');
+    const ctxRouteBinding = normalizeBinding(ctx.routeBinding, 'route');
+    const expectedHostBinding = normalizeBinding(options.hostBinding, 'host');
+    const expectedRouteBinding = normalizeBinding(options.routeBinding, 'route');
+
+    if (ctxKind && expectedKind && ctxKind !== expectedKind) return null;
+    if (ctxHostBinding && expectedHostBinding && ctxHostBinding !== expectedHostBinding) return null;
+    if (ctxRouteBinding && expectedRouteBinding && ctxRouteBinding !== expectedRouteBinding) return null;
+
+    return {
+        url: targetUrl,
+        referer: normalizeReferer(ctx.referer),
+        headers: normalizeRequestHeaders(ctx.headers || {}),
+        contextId: normalizeBinding(ctx.cid) || null,
+        expiresAt: tokenExpiresAt,
+        kind: ctxKind,
+        issuer: normalizeBinding(ctx.issuer),
+        profile: normalizeBinding(ctx.profile),
+        allowInsecureTls: Boolean(ctx.allowInsecureTls),
+        forceHeaders: Boolean(ctx.forceHeaders),
+        hits: 0,
+        maxUses: 0,
+        meta: safeClone(ctx.meta || null),
+        embedded: true
+    };
 }
 
 function materializeContext(entry, options = {}) {
@@ -494,46 +566,70 @@ function resolveTransitKey(token, options = {}) {
     const unpacked = unpackToken(token);
     if (!unpacked) return null;
 
-    const { version, kid, payload } = unpacked;
+    const { kid, payload } = unpacked;
     if (!payload?.cid) return null;
     if (payload.typ && payload.typ !== 'transit') return null;
 
     const contextId = String(payload.cid || '').trim();
     const tokenJti = String(payload.jti || '').trim();
     const tokenExp = Number(payload.exp || 0);
+    const embeddedContext = payload.ctx && typeof payload.ctx === 'object' ? payload.ctx : null;
 
     if (!contextId) return null;
     if (Number.isFinite(tokenExp) && tokenExp > 0 && tokenExp <= now()) return null;
 
+    let tokenState = null;
+    let recoveredFromEmbedded = false;
+
     if (tokenJti) {
-        const tokenState = tokenStateByJti.get(tokenJti);
-        if (!tokenState) return null;
-        if (tokenState.contextId !== contextId) return null;
-        if (kid && tokenState.kid && tokenState.kid !== kid) return null;
-        if (Number(tokenState.expiresAt || 0) <= now()) {
-            tokenStateByJti.delete(tokenJti);
-            return null;
+        tokenState = tokenStateByJti.get(tokenJti) || null;
+        if (tokenState) {
+            if (tokenState.contextId !== contextId) return null;
+            if (kid && tokenState.kid && tokenState.kid !== kid) return null;
+            if (Number(tokenState.expiresAt || 0) <= now()) {
+                tokenStateByJti.delete(tokenJti);
+                tokenState = null;
+            } else if (tokenState.maxUses > 0 && tokenState.uses >= tokenState.maxUses) {
+                return null;
+            }
         }
-        if (tokenState.maxUses > 0 && tokenState.uses >= tokenState.maxUses) return null;
+
+        if (!tokenState && !embeddedContext) return null;
+        if (!tokenState && embeddedContext) recoveredFromEmbedded = true;
     }
 
     const entry = requestContextById.get(contextId);
-    const materialized = materializeContext(entry, options);
+    let materialized = materializeContext(entry, options);
+
+    if (!materialized && embeddedContext) {
+        materialized = materializeEmbeddedContext({
+            ...embeddedContext,
+            cid: contextId,
+            exp: Number.isFinite(tokenExp) && tokenExp > 0 ? tokenExp : embeddedContext.exp
+        }, options);
+        recoveredFromEmbedded = Boolean(materialized);
+    }
+
     if (!materialized) return null;
 
+    const backingExp = Number(entry?.tokenExpiresAt || materialized.expiresAt || 0);
     const effectiveExp = Number.isFinite(tokenExp) && tokenExp > 0
-        ? Math.min(tokenExp, Number(entry?.tokenExpiresAt || 0))
-        : Number(entry?.tokenExpiresAt || 0);
+        ? Math.min(tokenExp, Number.isFinite(backingExp) && backingExp > 0 ? backingExp : tokenExp)
+        : backingExp;
     if (!Number.isFinite(effectiveExp) || effectiveExp <= now()) return null;
 
-    if (tokenJti) {
-        const tokenState = tokenStateByJti.get(tokenJti);
-        if (!tokenState) return null;
+    if (tokenJti && tokenState) {
         tokenState.uses += 1;
         materialized.tokenJti = tokenJti;
         materialized.tokenUses = tokenState.uses;
         materialized.tokenMaxUses = tokenState.maxUses;
         materialized.tokenKid = kid || tokenState.kid || null;
+    } else if (tokenJti && recoveredFromEmbedded) {
+        materialized.tokenJti = tokenJti;
+        materialized.tokenUses = 0;
+        materialized.tokenMaxUses = 0;
+        materialized.tokenKid = kid || null;
+        materialized.recoveredFromEmbedded = true;
     }
 
     materialized.expiresAt = effectiveExp;
@@ -581,6 +677,7 @@ function getTransitStats() {
         secretRotationIntervalMs: SECRET_ROTATION_INTERVAL_MS,
         tokenTtlMs: TOKEN_TTL_MS,
         hlsTokenTtlMs: HLS_TOKEN_TTL_MS,
+        maxTokenTtlMs: MAX_TOKEN_TTL_MS,
         lastSecretRotationAt
     };
 }
@@ -591,6 +688,7 @@ module.exports = {
     REQUEST_CONTEXT_TTL_MS,
     TOKEN_TTL_MS,
     HLS_TOKEN_TTL_MS,
+    MAX_TOKEN_TTL_MS,
     SECRET_ROTATION_INTERVAL_MS,
     DEFAULT_MAX_USES,
     DEFAULT_TOKEN_MAX_USES,
