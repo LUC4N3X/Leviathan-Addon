@@ -1,8 +1,5 @@
 'use strict';
 
-// Cross-worker file lock for RealDebrid addMagnet/select/delete operations.
-// Inspired by Sootio's rd-magnet-lock; adapted to CommonJS and Leviathan data layout.
-
 const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
