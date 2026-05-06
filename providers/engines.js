@@ -33,6 +33,11 @@ const CONFIG = {
     RESULT_LIMIT_PER_ENGINE: Number(process.env.ENGINES_RESULT_LIMIT_PER_ENGINE || 120),
     FINAL_RESULT_LIMIT: Number(process.env.ENGINES_FINAL_RESULT_LIMIT || 300),
     MAX_QUERY_VARIANTS_PER_ENGINE: Number(process.env.ENGINES_MAX_QUERY_VARIANTS || 4),
+    MAX_ANIME_QUERY_VARIANTS_PER_ENGINE: Number(process.env.ENGINES_MAX_ANIME_QUERY_VARIANTS || 8),
+    QUERY_CONCURRENCY: Number(process.env.ENGINES_QUERY_CONCURRENCY || 2),
+    KNABEN_QUERY_CONCURRENCY: Number(process.env.KNABEN_QUERY_CONCURRENCY || 3),
+    KNABEN_FRESH_TTL_MS: Number(process.env.KNABEN_FRESH_TTL_MS || 20 * 60 * 1000),
+    KNABEN_STALE_TTL_MS: Number(process.env.KNABEN_STALE_TTL_MS || 24 * 60 * 60 * 1000),
     SEARCH_CACHE_TTL: Number(process.env.ENGINES_SEARCH_CACHE_TTL || 180000),
     HTML_CACHE_TTL: Number(process.env.ENGINES_HTML_CACHE_TTL || 45000),
     NEGATIVE_CACHE_TTL: Number(process.env.ENGINES_NEGATIVE_CACHE_TTL || 20000),
@@ -54,6 +59,14 @@ const detailLimit = pLimit(CONFIG.DETAIL_FETCH_CONCURRENCY);
 const engineLimit = pLimit(CONFIG.ENGINE_CONCURRENCY);
 const searchCache = new TtlLruCache({ name: 'engines:search', max: 800, ttlMs: CONFIG.SEARCH_CACHE_TTL });
 const htmlCache = new TtlLruCache({ name: 'engines:html', max: 800, ttlMs: CONFIG.HTML_CACHE_TTL });
+const knabenCache = new TtlLruCache({
+    name: 'engines:knaben:fresh-stale',
+    max: 600,
+    ttlMs: CONFIG.KNABEN_FRESH_TTL_MS,
+    staleTtlMs: CONFIG.KNABEN_STALE_TTL_MS,
+    staleMode: 'extension'
+});
+const knabenRefreshInflight = new Map();
 const inflightRequests = new Map();
 
 async function requestWithImpitFallback(url, config = {}) {
@@ -103,7 +116,14 @@ const SOURCE_WEIGHTS = {
     UIndex: 14
 };
 const ENGINE_BLACKLISTED_CATEGORIES = new Set([6006000, 6007000, 6005000]);
-const ANIME_RELEASE_GROUP_REGEX = /\b(?:SUBSPLEASE|ERAI[-.\s]?RAWS|HORRIBLESUBS|EMBER|JUDAS|ASW|RAZE|MUSE|ANI|YAMEII|DUBS[-.\s]?EMPIRE)\b/i;
+const KNABEN_CATEGORY_MOVIE = [3000000];
+const KNABEN_CATEGORY_SERIES = [2000000];
+const KNABEN_CATEGORY_ANIME = [2000000, 6000000, 6001000, 6002000, 6003000, 6008000];
+const KNABEN_CATEGORY_BLACKLIST = new Set([6005000, 6006000, 6007000]);
+const ANIME_RELEASE_GROUP_REGEX = /\b(?:SUBSPLEASE|ERAI[-.\s]?RAWS|HORRIBLESUBS|EMBER|JUDAS|ASW|RAZE|MUSE|ANI|YAMEII|DUBS[-.\s]?EMPIRE|SEADEx|KAWAIKA|CTR|PAS)\b/i;
+const ANIME_RELEASE_FEATURE_REGEX = /\b(?:BD(?:REMUX|RIP)?|BLU[-.\s]?RAY|WEB[-.\s]?DL|WEBRIP|HEVC|X265|H265|AV1|OPUS|FLAC|AAC|SOFTSUB|SUBBED|DUAL[-.\s]?AUDIO|MULTI)\b/i;
+const ANIME_FOREIGN_DUB_REGEX = /\b(?:TRUEFRENCH|FRENCH|GERMAN|SPANISH|LATINO|RUSSIAN|POLISH|TAMIL|TELUGU|HINDI|KOREAN|DUBBED\s*ENG|ENG(?:LISH)?\s*ONLY)\b/i;
+const TRUSTED_ANIME_TRACKER_REGEX = /\b(?:NYAA|ANIMETOSHO|TOKYOTOSHO|SEADEx|NEKOBT|SUBSPLEASE)\b/i;
 
 function now() {
     return Date.now();
@@ -448,10 +468,20 @@ function getLanguageScore(name, langMode = 'ita', context = {}) {
     if (isTrustedItalian && !hasOtherLanguage && !hasEnglishAudio) return 22;
     if (hasItalianSubs && !hasEnglishAudio) return 12;
 
+    if (animeMode) {
+        if (hasItalianSubs) return 20;
+        if (hasMultiLanguage) return 16;
+        if (ANIME_FOREIGN_DUB_REGEX.test(normalized)) return -42;
+        if (ANIME_RELEASE_GROUP_REGEX.test(normalized)) return 14;
+        if (ANIME_RELEASE_FEATURE_REGEX.test(normalized) && !hasOtherLanguage) return 6;
+        if (hasEnglishAudio && !hasMultiLanguage) return -18;
+        return 0;
+    }
+
     if (hasEnglishAudio || hasOtherLanguage) return -40;
     if (hasMultiLanguage && !hasItalianAudio) return -40;
 
-    return animeMode ? -18 : -8;
+    return -8;
 }
 
 function hasExplicitSeasonMarker(text = '') {
@@ -547,7 +577,9 @@ function buildSearchQueries(context) {
         const reqSeason = context.reqSeason;
         const reqEpisode = context.reqEpisode;
 
-        pushUnique(bucket, base);
+        if (!(isSeries && isAnime)) {
+            pushUnique(bucket, base);
+        }
 
         if (context.year && !isSeries) {
             pushUnique(bucket, `${base} ${context.year}`);
@@ -565,6 +597,7 @@ function buildSearchQueries(context) {
                     pushUnique(bucket, `${base} season ${reqSeason} episode ${reqEpisode}`);
                 }
             }
+            pushUnique(bucket, base);
             if (reqSeason && reqSeason > 1) {
                 pushUnique(bucket, `${base} season ${reqSeason}`);
                 pushUnique(bucket, `${base} S${reqSeason}`);
@@ -592,7 +625,7 @@ function buildSearchQueries(context) {
     const baseQueries = buildBaseSet();
     const itaQueries = new Set();
     const engQueries = new Set();
-    const limitUniqueQueries = (queries) => {
+    const limitUniqueQueries = (queries, max = CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE) => {
         const output = [];
         const seen = new Set();
         for (const query of queries) {
@@ -600,13 +633,17 @@ function buildSearchQueries(context) {
             if (!key || seen.has(key)) continue;
             seen.add(key);
             output.push(query);
-            if (output.length >= CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE) break;
+            if (output.length >= max) break;
         }
         return output;
     };
 
     for (const query of baseQueries) {
-        pushUnique(itaQueries, context.isAnime ? query : `${query} ITA`);
+        if (context.isAnime) {
+            pushUnique(itaQueries, query);
+            pushUnique(engQueries, query);
+            continue;
+        }
         pushUnique(itaQueries, `${query} ITA`);
         pushUnique(itaQueries, `${query} MULTI`);
         pushUnique(engQueries, query);
@@ -614,8 +651,19 @@ function buildSearchQueries(context) {
         pushUnique(engQueries, `${query} ENGLISH`);
     }
 
+    if (context.isAnime) {
+        for (const query of baseQueries) {
+            pushUnique(itaQueries, `${query} ITA`);
+            pushUnique(itaQueries, `${query} MULTI`);
+            pushUnique(engQueries, `${query} ENG`);
+            pushUnique(engQueries, `${query} ENGLISH`);
+        }
+    }
+
+    const queryLimit = context.isAnime ? CONFIG.MAX_ANIME_QUERY_VARIANTS_PER_ENGINE : CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE;
+
     if (context.langMode === 'eng') {
-        return limitUniqueQueries([...engQueries]);
+        return limitUniqueQueries([...engQueries], queryLimit);
     }
 
     if (context.langMode === 'all') {
@@ -627,10 +675,10 @@ function buildSearchQueries(context) {
             if (ita[i]) mixed.push(ita[i]);
             if (eng[i]) mixed.push(eng[i]);
         }
-        return limitUniqueQueries(mixed);
+        return limitUniqueQueries(mixed, queryLimit);
     }
 
-    return limitUniqueQueries([...itaQueries]);
+    return limitUniqueQueries([...itaQueries], queryLimit);
 }
 
 function buildSearchContext(title, year, type, imdbId, options = {}) {
@@ -674,9 +722,17 @@ function computeResultScore(result, context) {
     const overlapScore = Math.round(titleMatchScore(result.title, context.title) * 40);
     const sourceScore = SOURCE_WEIGHTS[result.source] || 10;
     const animeGroupScore = context.isAnime && ANIME_RELEASE_GROUP_REGEX.test(result.title) ? 18 : 0;
+    const animeFeatureScore = context.isAnime && ANIME_RELEASE_FEATURE_REGEX.test(result.title) ? 6 : 0;
+    const trackerText = `${result.tracker || ''} ${result.trackerId || ''} ${result.details || ''}`;
+    const trustedTrackerScore = context.isAnime && TRUSTED_ANIME_TRACKER_REGEX.test(trackerText) ? 8 : 0;
+    const categoryScore = context.isAnime && !isBlacklistedCategory(result.categoryId) && KNABEN_CATEGORY_ANIME.includes(Number(result.categoryId)) ? 7 : 0;
+    const lastSeenMs = Number(result.lastSeen) || 0;
+    const ageDays = lastSeenMs > 0 ? (now() - lastSeenMs) / (24 * 60 * 60 * 1000) : null;
+    const freshnessScore = ageDays === null ? 0 : (ageDays <= 14 ? 8 : (ageDays <= 90 ? 4 : 0));
+    const virusPenalty = Number(result.virusDetection) > 0 ? -25 : 0;
     const sizeScore = sizeBytes > 0 ? Math.min(20, Math.round(Math.log10(sizeBytes + 1))) : 0;
     const seederScore = Math.min(35, Math.round(Math.log2(seeders + 1) * 4));
-    return languageScore + resolutionScore + yearScore + formatScore + overlapScore + sourceScore + animeGroupScore + sizeScore + seederScore;
+    return languageScore + resolutionScore + yearScore + formatScore + overlapScore + sourceScore + animeGroupScore + animeFeatureScore + trustedTrackerScore + categoryScore + freshnessScore + virusPenalty + sizeScore + seederScore;
 }
 
 function normalizeResult(raw, context, source) {
@@ -699,7 +755,13 @@ function normalizeResult(raw, context, source) {
         size,
         sizeBytes,
         seeders: Math.max(0, parseInt(raw.seeders, 10) || 0),
-        source: source || raw.source || "Unknown"
+        source: source || raw.source || "Unknown",
+        tracker: raw.tracker || "",
+        trackerId: raw.trackerId || "",
+        categoryId: raw.categoryId ?? null,
+        lastSeen: raw.lastSeen || 0,
+        virusDetection: Number(raw.virusDetection) || 0,
+        details: raw.details || ""
     };
     normalized._score = computeResultScore(normalized, context);
     return normalized;
@@ -765,6 +827,37 @@ async function collectQueryResults(context, handler, { maxQueries = CONFIG.MAX_Q
             all.push(item);
         }
         if (all.length >= CONFIG.RESULT_LIMIT_PER_ENGINE) break;
+    }
+
+    return all;
+}
+
+async function collectQueryResultsParallel(context, handler, {
+    maxQueries = CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE,
+    concurrency = CONFIG.QUERY_CONCURRENCY
+} = {}) {
+    const queries = buildSearchQueries(context).slice(0, maxQueries);
+    const limit = pLimit(Math.max(1, Number(concurrency) || 1));
+    const seen = new Set();
+    const all = [];
+
+    const batches = await Promise.all(queries.map(query => limit(async () => {
+        try {
+            return await handler(query);
+        } catch (error) {
+            console.log(`[ENGINES] query failed for "${query}": ${error.message}`);
+            return [];
+        }
+    })));
+
+    for (const results of batches) {
+        for (const item of results || []) {
+            const key = item.detailUrl || item.url || item.magnet || item.title;
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            all.push(item);
+            if (all.length >= CONFIG.RESULT_LIMIT_PER_ENGINE) return all;
+        }
     }
 
     return all;
@@ -838,52 +931,113 @@ async function searchCorsaro(context) {
     }
 }
 
-function getKnabenCategories(type) {
-    const normalizedType = normalizeType(type);
-    if (normalizedType === "movie") return [3000000];
-    if (normalizedType === "series") return [2000000, 6000000];
+function getKnabenCategories(context = {}) {
+    if (isAnimeContext(context)) return [...KNABEN_CATEGORY_ANIME];
+    const normalizedType = normalizeType(context.type);
+    if (normalizedType === "movie") return [...KNABEN_CATEGORY_MOVIE];
+    if (normalizedType === "series") return [...KNABEN_CATEGORY_SERIES];
     return [];
+}
+
+function parseKnabenCategoryId(hit = {}) {
+    const raw = hit.categoryId ?? hit.category_id ?? hit.category ?? hit.cat ?? hit.catId;
+    if (Array.isArray(raw)) {
+        const parsed = raw.map(value => parseInt(String(value), 10)).find(value => Number.isInteger(value));
+        return Number.isInteger(parsed) ? parsed : null;
+    }
+    const parsed = parseInt(String(raw ?? ''), 10);
+    return Number.isInteger(parsed) ? parsed : null;
 }
 
 function isBlacklistedCategory(categoryId) {
     if (categoryId === undefined || categoryId === null) return false;
     if (Array.isArray(categoryId)) return categoryId.some(isBlacklistedCategory);
     const numeric = parseInt(String(categoryId), 10);
-    return ENGINE_BLACKLISTED_CATEGORIES.has(numeric);
+    return ENGINE_BLACKLISTED_CATEGORIES.has(numeric) || KNABEN_CATEGORY_BLACKLIST.has(numeric);
+}
+
+function parseKnabenLastSeen(hit = {}) {
+    const raw = hit.lastSeen || hit.last_seen || hit.updatedAt || hit.updated_at || hit.createdAt || hit.created_at;
+    if (!raw) return 0;
+    const parsed = typeof raw === 'number' ? raw : Date.parse(raw);
+    if (!Number.isFinite(parsed)) return 0;
+    return parsed > 0 && parsed < 10_000_000_000 ? parsed * 1000 : parsed;
+}
+
+function getKnabenCacheKey(context, query, categories) {
+    return JSON.stringify({
+        q: clean(query).toLowerCase(),
+        categories: [...categories].sort((a, b) => a - b),
+        type: context.normalizedType,
+        anime: context.isAnime === true,
+        lang: context.langMode
+    });
+}
+
+async function fetchKnabenQuery(context, query, categories) {
+    const cacheKey = getKnabenCacheKey(context, query, categories);
+    const cachedEntry = knabenCache.getEntry(cacheKey, { allowStale: true });
+    if (cachedEntry?.value) {
+        if (cachedEntry.isStale && !knabenRefreshInflight.has(cacheKey)) {
+            const refresh = fetchKnabenQueryLive(context, query, categories)
+                .then(results => knabenCache.set(cacheKey, results, CONFIG.KNABEN_FRESH_TTL_MS, CONFIG.KNABEN_STALE_TTL_MS))
+                .catch(error => console.log(`[Knaben] refresh stale fallito per "${query}": ${error.message}`))
+                .finally(() => knabenRefreshInflight.delete(cacheKey));
+            knabenRefreshInflight.set(cacheKey, refresh);
+        }
+        console.log(`[Knaben] cache ${cachedEntry.isStale ? 'stale' : 'fresh'} hit per "${query}" -> ${cachedEntry.value.length} risultati.`);
+        return cachedEntry.value;
+    }
+
+    const liveResults = await fetchKnabenQueryLive(context, query, categories);
+    knabenCache.set(cacheKey, liveResults, CONFIG.KNABEN_FRESH_TTL_MS, CONFIG.KNABEN_STALE_TTL_MS);
+    return liveResults;
+}
+
+async function fetchKnabenQueryLive(context, query, categories) {
+    const payload = {
+        query,
+        search_type: "100%",
+        search_field: "title",
+        size: 250,
+        from: 0,
+        hide_unsafe: false,
+        hide_xxx: true
+    };
+    if (categories.length) payload.categories = categories;
+
+    const data = await fetchJsonApi(CONFIG.KNABEN_API, payload, CONFIG.TIMEOUT_API, context.langMode);
+    if (!data?.hits || !Array.isArray(data.hits)) return [];
+
+    return data.hits.map(hit => {
+        const categoryId = parseKnabenCategoryId(hit);
+        if (!hit?.title || isBlacklistedCategory(categoryId)) return null;
+        const magnet = hit.magnetUrl || hit.magnet || buildMagnetFromHash(hit.hash || hit.infoHash || hit.info_hash, hit.title);
+        if (!magnet) return null;
+        return normalizeResult({
+            title: hit.title,
+            magnet,
+            sizeBytes: Number(hit.bytes ?? hit.size ?? hit.filesize) || 0,
+            size: hit.bytes ? bytesToSize(hit.bytes) : "",
+            seeders: parseInt(hit.seeders ?? hit.seeds, 10) || 0,
+            tracker: hit.tracker || hit.trackerName || hit.source || '',
+            trackerId: hit.trackerId || hit.tracker_id || '',
+            categoryId,
+            lastSeen: parseKnabenLastSeen(hit),
+            virusDetection: Number(hit.virusDetection ?? hit.virus_detection ?? hit.malware ?? 0) || 0,
+            details: hit.details || hit.detailsUrl || hit.url || ''
+        }, context, "Knaben");
+    }).filter(Boolean);
 }
 
 async function searchKnaben(context) {
     console.log(`[Knaben] Avvio ricerca per: ${context.title}...`);
     try {
-        const categories = getKnabenCategories(context.type);
-        const results = await collectQueryResults(context, async query => {
-            const payload = {
-                query,
-                search_type: "100%",
-                search_field: "title",
-                size: 250,
-                from: 0,
-                hide_unsafe: false,
-                hide_xxx: true
-            };
-            if (categories.length) payload.categories = categories;
-
-            const data = await fetchJsonApi(CONFIG.KNABEN_API, payload, CONFIG.TIMEOUT_API, context.langMode);
-            if (!data?.hits || !Array.isArray(data.hits)) return [];
-
-            return data.hits.map(hit => {
-                if (!hit?.title || isBlacklistedCategory(hit.categoryId)) return null;
-                const magnet = hit.magnetUrl || buildMagnetFromHash(hit.hash, hit.title);
-                if (!magnet) return null;
-                return normalizeResult({
-                    title: hit.title,
-                    magnet,
-                    sizeBytes: Number(hit.bytes) || 0,
-                    size: hit.bytes ? bytesToSize(hit.bytes) : "",
-                    seeders: parseInt(hit.seeders, 10) || 0
-                }, context, "Knaben");
-            }).filter(Boolean);
-        }, { maxQueries: 3 });
+        const categories = getKnabenCategories(context);
+        const maxQueries = context.isAnime ? Math.min(CONFIG.MAX_ANIME_QUERY_VARIANTS_PER_ENGINE, 6) : 3;
+        const results = await collectQueryResultsParallel(context, async query => {
+            return fetchKnabenQuery(context, query, categories);
+        }, { maxQueries, concurrency: CONFIG.KNABEN_QUERY_CONCURRENCY });
 
         const finalResults = dedupeResults(results).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
         console.log(`[Knaben] Trovati ${finalResults.length} risultati validi.`);
@@ -1415,5 +1569,15 @@ module.exports = {
     bytesToSize,
     isValidResult,
     checkYear,
-    isCorrectFormat
+    isCorrectFormat,
+    __internals: {
+        buildSearchContext,
+        buildSearchQueries,
+        getLanguageScore,
+        getKnabenCategories,
+        parseKnabenCategoryId,
+        isBlacklistedCategory,
+        computeResultScore,
+        normalizeResult
+    }
 };
