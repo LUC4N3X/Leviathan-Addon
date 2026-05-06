@@ -38,17 +38,103 @@ function safeUrl(value, base) {
     }
 }
 
+
+function decodeBase64UrlJson(value) {
+    try {
+        const raw = String(value || '').trim();
+        if (!raw) return null;
+        const padded = raw + '='.repeat((4 - (raw.length % 4)) % 4);
+        const json = Buffer.from(padded.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+        const parsed = JSON.parse(json);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
+function extractTransitPayloadUnsafe(token) {
+    const raw = String(token || '').trim();
+    const modern = raw.match(/^lvt\.(\d+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/);
+    if (modern) return decodeBase64UrlJson(modern[3]);
+    const legacy = raw.match(/^lvt\.(\d+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/);
+    if (legacy) return decodeBase64UrlJson(legacy[2]);
+    return null;
+}
+
+function isAllowedVixHost(value) {
+    try {
+        const host = new URL(value).hostname.toLowerCase();
+        return host === 'vixsrc.to' || host.endsWith('.vixsrc.to');
+    } catch {
+        return false;
+    }
+}
+
+function isExpiredUrlToken(value, graceSeconds = 30) {
+    try {
+        const parsed = new URL(value);
+        const expires = Number(parsed.searchParams.get('expires') || 0);
+        return Number.isFinite(expires) && expires > 0 && expires <= Math.floor(Date.now() / 1000) + graceSeconds;
+    } catch {
+        return false;
+    }
+}
+
+function normalizePlaybackReferer(value) {
+    const referer = safeUrl(value, DEFAULT_REFERER) || DEFAULT_REFERER;
+    // Some Vix embed URLs have a very short-lived `expires` query. When stream
+    // responses are cached, that referer can expire before playback starts.
+    // The playlist URL itself usually carries the durable playback token, so
+    // falling back to the plain origin avoids poisoning otherwise valid HLS URLs.
+    if (isAllowedVixHost(referer) && isExpiredUrlToken(referer, 60)) return DEFAULT_REFERER;
+    return referer;
+}
+
+function resolveEmbeddedTransitRescue(rawToken, req) {
+    const payload = extractTransitPayloadUnsafe(rawToken);
+    const ctx = payload && typeof payload.ctx === 'object' ? payload.ctx : null;
+    if (!payload || !ctx || ctx.embedded !== true) return null;
+    if (payload.typ && payload.typ !== 'transit') return null;
+    if (ctx.kind && String(ctx.kind) !== TRANSIT_KIND) return null;
+
+    const exp = Number(payload.exp || ctx.exp || 0);
+    if (!Number.isFinite(exp) || exp <= Date.now()) return null;
+
+    const routeBinding = String(ctx.routeBinding || '').trim();
+    if (routeBinding && routeBinding !== MANIFEST_ROUTE) return null;
+
+    const sourceUrl = safeUrl(ctx.url);
+    if (!sourceUrl || !isSafeRemoteUrl(sourceUrl) || !isAllowedVixHost(sourceUrl)) return null;
+
+    const pageReferer = normalizePlaybackReferer(ctx.referer || DEFAULT_REFERER);
+    if (pageReferer && !isAllowedVixHost(pageReferer)) return null;
+
+    const headers = buildRequestHeaders(sourceUrl, pageReferer, ctx.headers || null);
+    console.warn('[VIX PROXY] Embedded transit rescue accepted for Vix HLS token');
+    return {
+        sourceUrl,
+        pageReferer,
+        upstreamHeaders: headers,
+        variantPolicy: pickVariantPolicy(ctx?.meta?.syntheticVariant, sourceUrl, pageReferer, ctx.meta || null, req),
+        isSeriesFlow: isLikelySeriesFlow(sourceUrl, pageReferer, ctx.meta || null, req),
+        recoveredFromEmbedded: true,
+        rescuedInvalidToken: true
+    };
+}
+
 function buildRequestHeaders(targetUrl, explicitReferer, overrides = null) {
     const target = new URL(targetUrl);
-    let referer = explicitReferer || `${target.origin}/`;
+    let referer = normalizePlaybackReferer(explicitReferer || `${target.origin}/`);
     let origin = target.origin;
 
     try {
-        if (explicitReferer) {
-            origin = new URL(explicitReferer).origin;
-            referer = explicitReferer;
-        }
+        if (referer) origin = new URL(referer).origin;
     } catch {}
+
+    const cleanOverrides = { ...(overrides || {}) };
+    for (const key of Object.keys(cleanOverrides)) {
+        if (/^(referer|origin)$/i.test(key)) delete cleanOverrides[key];
+    }
 
     return normalizeRequestHeaders({
         'User-Agent': DEFAULT_UA,
@@ -56,9 +142,9 @@ function buildRequestHeaders(targetUrl, explicitReferer, overrides = null) {
         'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
         'Cache-Control': 'no-cache',
         Pragma: 'no-cache',
+        ...cleanOverrides,
         Referer: referer,
-        Origin: origin,
-        ...(overrides || {})
+        Origin: origin
     });
 }
 
@@ -300,19 +386,21 @@ function resolveProxySource(req) {
         if (tokenPayload?.url && isSafeRemoteUrl(tokenPayload.url)) {
             return {
                 sourceUrl: tokenPayload.url,
-                pageReferer: safeUrl(tokenPayload.referer, DEFAULT_REFERER) || DEFAULT_REFERER,
-                upstreamHeaders: tokenPayload.headers || buildRequestHeaders(tokenPayload.url, tokenPayload.referer || DEFAULT_REFERER),
-                variantPolicy: pickVariantPolicy(tokenPayload?.meta?.syntheticVariant, tokenPayload.url, tokenPayload.referer || DEFAULT_REFERER, tokenPayload.meta || null, req),
-                isSeriesFlow: isLikelySeriesFlow(tokenPayload.url, tokenPayload.referer || DEFAULT_REFERER, tokenPayload.meta || null, req),
+                pageReferer: normalizePlaybackReferer(tokenPayload.referer || DEFAULT_REFERER),
+                upstreamHeaders: buildRequestHeaders(tokenPayload.url, normalizePlaybackReferer(tokenPayload.referer || DEFAULT_REFERER), tokenPayload.headers || null),
+                variantPolicy: pickVariantPolicy(tokenPayload?.meta?.syntheticVariant, tokenPayload.url, normalizePlaybackReferer(tokenPayload.referer || DEFAULT_REFERER), tokenPayload.meta || null, req),
+                isSeriesFlow: isLikelySeriesFlow(tokenPayload.url, normalizePlaybackReferer(tokenPayload.referer || DEFAULT_REFERER), tokenPayload.meta || null, req),
                 recoveredFromEmbedded: Boolean(tokenPayload.recoveredFromEmbedded)
             };
         }
 
+        const rescued = resolveEmbeddedTransitRescue(rawToken, req);
+        if (rescued?.sourceUrl) return rescued;
         return { invalidToken: true };
     }
 
     const sourceUrl = safeUrl(req.query.src);
-    const pageReferer = safeUrl(req.query.referer, DEFAULT_REFERER) || DEFAULT_REFERER;
+    const pageReferer = normalizePlaybackReferer(req.query.referer || DEFAULT_REFERER);
     if (!sourceUrl || !isSafeRemoteUrl(sourceUrl)) return null;
 
     return {
@@ -339,7 +427,7 @@ async function handleVixSynthetic(req, res) {
 
     const resolved = resolveProxySource(req);
     if (resolved?.invalidToken) {
-        console.warn('[VIX PROXY] Invalid transit token');
+        console.warn('[VIX PROXY] Invalid transit token (not recoverable from embedded Vix context)');
         res.status(410);
         res.setHeader('Cache-Control', 'no-store');
         return res.end('Expired Vix transit token');
