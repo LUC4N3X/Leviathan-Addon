@@ -8,6 +8,7 @@ const { searchAnimeUnity } = require('../animeunity/au_handler');
 const { searchAnimeSaturn } = require('../animesaturn/as_handler');
 const { searchGuardaFlix } = require('../guardaflix/gf_handler');
 const { searchCinemaCity } = require('../cinemacity/cc_handler');
+const { getProviderRecipe } = require('../engine/provider_definition_engine');
 
 const STREAMING_COMMUNITY_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.SC_PROVIDER_TIMEOUT || '16000', 10) || 16000);
 const ANIMEWORLD_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.AW_PROVIDER_TIMEOUT || '16000', 10) || 16000);
@@ -58,6 +59,7 @@ function isAnimeUnityEnabled(filters = {}, meta = {}) {
 const WEB_PROVIDER_DEFINITIONS = [
     {
         key: 'streamingCommunity',
+        recipeId: 'streamingcommunity',
         sourceName: 'StreamingCommunity',
         cacheName: 'StreamingCommunity',
         icon: '🌪️',
@@ -68,6 +70,7 @@ const WEB_PROVIDER_DEFINITIONS = [
     },
     {
         key: 'cinemaCity',
+        recipeId: 'cinemacity',
         sourceName: 'CinemaCity',
         cacheName: 'CinemaCityV3',
         icon: '🏙️',
@@ -80,6 +83,7 @@ const WEB_PROVIDER_DEFINITIONS = [
     },
     {
         key: 'guardaHD',
+        recipeId: 'guardahd',
         sourceName: 'GuardaHD',
         cacheName: 'GuardaHD',
         icon: '🦁',
@@ -90,6 +94,7 @@ const WEB_PROVIDER_DEFINITIONS = [
     },
     {
         key: 'guardaSerie',
+        recipeId: 'guardoserie',
         sourceName: 'GuardoSerie',
         cacheName: 'GuardoSerie',
         icon: '🍿',
@@ -102,6 +107,7 @@ const WEB_PROVIDER_DEFINITIONS = [
     },
     {
         key: 'animeWorld',
+        recipeId: 'animeworld',
         sourceName: 'AnimeWorld',
         cacheName: 'AnimeWorld',
         icon: '⛩️',
@@ -112,6 +118,7 @@ const WEB_PROVIDER_DEFINITIONS = [
     },
     {
         key: 'animeUnity',
+        recipeId: 'animeunity',
         sourceName: 'AnimeUnity',
         cacheName: 'AnimeUnity',
         icon: '🌀',
@@ -124,6 +131,7 @@ const WEB_PROVIDER_DEFINITIONS = [
     },
     {
         key: 'animeSaturn',
+        recipeId: 'animesaturn',
         sourceName: 'AnimeSaturn',
         cacheName: 'AnimeSaturn',
         icon: '🪐',
@@ -134,6 +142,7 @@ const WEB_PROVIDER_DEFINITIONS = [
     },
     {
         key: 'guardaFlix',
+        recipeId: 'guardaflix',
         sourceName: 'GuardaFlix',
         cacheName: 'GuardaFlix',
         icon: '🎥',
@@ -164,6 +173,12 @@ function getWebProviderDefinition(value) {
     ) || null;
 }
 
+
+function getWebProviderRecipe(value) {
+    const definition = getWebProviderDefinition(value);
+    return definition?.recipeId ? getProviderRecipe(definition.recipeId) : null;
+}
+
 function getWebProviderIcon(value) {
     return getWebProviderDefinition(value)?.icon || '🌐';
 }
@@ -179,6 +194,7 @@ module.exports = {
     WEB_PROVIDER_ORDER,
     getWebProviderDefinitions,
     getWebProviderDefinition,
+    getWebProviderRecipe,
     getWebProviderIcon,
     getWebProviderTimeout,
     isStreamingCommunityEnabled,
