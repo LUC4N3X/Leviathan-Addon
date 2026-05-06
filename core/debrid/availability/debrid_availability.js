@@ -10,7 +10,6 @@ const { shouldSkipRecentWork } = require('../../recent_work');
 const RdOracle = require('../state/cache_oracle');
 const EpisodePrecision = require('../../stream/episode_precision');
 
-// RD availability policy: default in codice, non in .env.
 const LOCAL_DB_CACHE_TTL = 25;
 const RD_PRIORITY_DEDUP_MS = 15000;
 const RD_FOREGROUND_VISIBLE_WINDOW = 9;
@@ -20,7 +19,7 @@ const RD_FOREGROUND_FALLBACK_PROBE_LIMIT = 3;
 const RD_FOREGROUND_EXACT_LIMIT = 4;
 const RD_PRIORITY_TOP = 18;
 const RD_PRIORITY_WINDOW_MIN = 5;
-// UI sicura: se abbiamo abbastanza episodi RD confermati, nascondiamo i dubbi.
+
 const RD_HIDE_DUBIOUS_WHEN_ENOUGH_SAFE = true;
 const RD_MIN_EXACT_SAFE_RESULTS = 3;
 const AVAILABILITY_CACHE_HIT_TTL = 24 * 60 * 60;
@@ -193,9 +192,7 @@ function deriveDbRdAvailability(row = {}) {
     const stalePositive = (cachedBool === true || rawState === 'cached') && isPastDueDate(row?.next_cached_check);
 
     if (stalePositive) {
-        // Un vecchio positivo RD non va mostrato come semplice "probing":
-        // l'auditor lo ricontrolla comunque in background, ma in UI resta un hit morbido.
-        // Se poi il recheck fallisce, il worker lo degrada a likely_uncached/uncached_terminal.
+               
         return {
             state: 'likely_cached',
             cached: null,
@@ -728,8 +725,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 if (result.cached === true) {
                     statePayload = { state: 'cached', cached: true, failures: 0, next_hours: 24 * 30 };
                 } else if (result.state === 'likely_cached' || result.pack_without_episode_hint === true) {
-                    // RD ha visto l'hash/pack, ma per una serie manca la prova file episodio.
-                    // Non persistere cached=true e non mostrare ⚡: resta dubbio/sotto.
+                                       
                     statePayload = { state: 'likely_cached', cached: null, failures: 0, next_hours: 6 };
                 } else {
                     statePayload = resolveRdNegativeDecision(item, result);
