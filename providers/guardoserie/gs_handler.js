@@ -36,6 +36,7 @@ const BROWSER_PROFILES       = browserProfiles.GUARDO_SERIE_BROWSER_PROFILES || 
 
 const TTL_SEARCH             = 1000 * 60 * 30;
 const TTL_EPISODE            = 1000 * 60 * 30;
+const TTL_MOVIE              = 1000 * 60 * 30;
 const TTL_SERIES             = 1000 * 60 * 60 * 6;
 const CF_SESSION_TTL         = 1000 * 60 * 60 * 6;
 const PROVIDER_BUDGET_MS     = Math.max(25000, parseInt(process.env.GS_PROVIDER_BUDGET_MS || process.env.GUARDOSERIE_PROVIDER_BUDGET_MS || '55000', 10) || 55000);
@@ -284,6 +285,11 @@ function slugify(val) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+function extractYearValue(value) {
+  const match = String(value || '').match(/(19\d{2}|20\d{2})/);
+  return match ? parseInt(match[1], 10) : null;
 }
 
 function normalizeTitleScore(candidate, title, originalTitle) {
@@ -584,6 +590,73 @@ function getStreamPriority(stream) {
   return Number.isFinite(stream?.extra?._priority) ? stream.extra._priority : 9;
 }
 
+function isLoadmPlayerUrl(url) {
+  return /(?:^|\/\/|[./-])loadm(?:\.cam)?(?:[/:?#]|$)/i.test(String(url || ''));
+}
+
+function pickPreferredPlayerLinks(links = [], options = {}) {
+  const max = Math.max(1, parseInt(options.max || 5, 10) || 5);
+  const unique = Array.from(new Set((links || []).filter(Boolean)));
+  const loadm = unique.filter(isLoadmPlayerUrl);
+
+ 
+  if (options.preferLoadm !== false && loadm.length) return loadm.slice(0, max);
+  return unique.slice(0, max);
+}
+
+function resolveGsMediaType(meta = {}) {
+  const type = String(meta?.type || meta?.kind || meta?.mediaType || meta?.contentType || '').toLowerCase();
+  if (
+    meta?.isSeries === true ||
+    type === 'series' || type === 'tv' || type === 'show' ||
+    Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0
+  ) return 'series';
+
+  if (meta?.isSeries === false || type === 'movie' || type === 'film') return 'movie';
+
+  
+  return 'movie';
+}
+
+function isExcludedGsPath(pathname = '') {
+  const p = String(pathname || '').toLowerCase();
+  return (
+    !p || p === '/' ||
+    /\.(?:jpg|jpeg|png|webp|gif|svg|css|js|ico|json|xml|txt|mp4|m3u8)(?:$|[?#])/i.test(p) ||
+    /^\/(?:wp-|wp\/|feed\/|comments\/|privacy|cookie|dmca|contatti|richieste|disclaimer|login|register|account|author\/|tag\/|tags\/|category\/|categorie\/|genre\/|genres\/|release-year\/|anno\/|cast\/|actors?\/|page\/|search\/)/i.test(p)
+  );
+}
+
+function isLikelyGsContentHref(href, baseUrl) {
+  const raw = String(href || '').trim();
+  if (!raw || /^(?:#|javascript:|mailto:|tel:)/i.test(raw)) return false;
+  if (/\/(?:serie|episodio)\//i.test(raw)) return true;
+
+  try {
+    const absolute = new URL(raw, baseUrl);
+    const base = new URL(baseUrl);
+    if (absolute.hostname.replace(/^www\./i, '') !== base.hostname.replace(/^www\./i, '')) return false;
+    if (isExcludedGsPath(absolute.pathname)) return false;
+
+    const parts = absolute.pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
+    if (parts.length === 1) return parts[0].length >= 3;
+    if (parts.length === 2 && /^(?:movie|film)$/i.test(parts[0])) return parts[1].length >= 3;
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+function isLikelyGsMovieUrl(url) {
+  try {
+    const parsed = new URL(String(url || ''), getTargetDomain());
+    if (/\/(?:serie|episodio)\//i.test(parsed.pathname)) return false;
+    return isLikelyGsContentHref(parsed.toString(), getTargetDomain());
+  } catch (_) {
+    return false;
+  }
+}
+
 function isLikelyPlayerUrl(url) {
   return /(mixdrop|m1xdrop|voe|loadm|rpmshare|rpmplay|maxstream|supervideo|dood|streamtape|vixsrc|vixcloud|filemoon|dropload|dr0pstream|mxcontent)/i.test(url);
 }
@@ -596,7 +669,7 @@ function extractSearchResultsFromHtml(html, baseUrl) {
 
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href');
-    if (!href || !/(\/serie\/|\/episodio\/)/i.test(href)) return;
+    if (!isLikelyGsContentHref(href, baseUrl)) return;
     try {
       const absolute = new URL(href, baseUrl).toString();
       if (!seen.has(absolute)) {
@@ -871,257 +944,11 @@ async function asyncPool(limit, items, asyncFn) {
   return results;
 }
 
-async function searchGuardaserieImpl(meta, config, reqHost = null) {
-  if (!meta?.isSeries || !config?.filters?.enableGs) return [];
-
-  const kitsuInfo = getKitsuRequestFromMeta(meta);
-  let season      = parseInt(meta?.season, 10);
-  let episode     = parseInt(meta?.episode, 10) || kitsuInfo?.parsed?.episodeNumber || 1;
-
-  if ((!season || season < 1) && kitsuInfo?.parsed?.kitsuId) season = kitsuInfo.parsed.seasonNumber || 1;
-  if (!season || season < 1 || !episode || episode < 1) return [];
-
-  const controller = new AbortController();
-  const timer      = setTimeout(() => controller.abort(), GLOBAL_TIMEOUT_MS);
-
-  try {
-    return await _searchGuardaserie(meta, config, season, episode, controller.signal, reqHost);
-  } catch (e) {
-    gsDebug('provider failed', { error: e?.message || String(e) });
-    return [];
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function buildDirectEpisodeSlugCandidates(expectedTitles = [], season, episode) {
-  const candidates = [];
-  const seen = new Set();
-  const s = parseInt(season, 10);
-  const e = parseInt(episode, 10);
-  if (!s || !e) return candidates;
-  for (const title of expandGsTitleAliases(expectedTitles, 12)) {
-    const slug = slugify(title);
-    if (!slug) continue;
-    for (const suffix of [
-      `${slug}-stagione-${s}-episodio-${e}`,
-      `${slug}-stagione-${s}-episodio-${String(e).padStart(2, '0')}`,
-      `${slug}-s${String(s).padStart(2, '0')}e${String(e).padStart(2, '0')}`
-    ]) {
-      for (const pathname of [`/episodio/${suffix}`, `/episodio/${suffix}/`]) {
-        const url = buildGsUrl(pathname);
-        if (seen.has(url)) continue;
-        seen.add(url);
-        candidates.push(url);
-      }
-    }
-  }
-  return candidates.slice(0, 18);
-}
-
-async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal = null) {
-  if (!GS_FAST_SLUG_FIRST) return [];
-  const candidates = [];
-  const seen = new Set();
-
-  for (const title of expandGsTitleAliases(expectedTitles, 10)) {
-    const slug = slugify(title);
-    if (!slug) continue;
-    for (const p of [`/${slug}/`, `/serie/${slug}/`, `/serietv/${slug}/`]) {
-      const url = buildGsUrl(p);
-      if (seen.has(url)) continue;
-      seen.add(url);
-      candidates.push(url);
-    }
-  }
-
-  const out = [];
-  gsDebug('fast slug start', { candidates: candidates.slice(0, 3) });
-  for (const url of candidates.slice(0, 3)) {
-    try {
-      const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: false, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
-      if (!html) continue;
-
-      const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
-      const titleScore = normalizeTitleScoreMany(pageTitle, expectedTitles);
-      if (titleScore < 2) continue;
-
-      const foundYear =
-        html.match(/release-year\/(\d{4})/i)?.[1] ||
-        html.match(/\b(19\d{2}|20\d{2})\b/)?.[1] ||
-        null;
-
-      if (targetYear && foundYear && Math.abs(Number(foundYear) - Number(targetYear)) > 3) continue;
-      out.push({ url, html, title: pageTitle || url, mapped: true, fastSlug: true, score: titleScore });
-      if (titleScore >= 3) break;
-    } catch (e) {
-      if (isAbortLikeError(e) && signal?.aborted) throw e;
-      gsDebug('fast slug candidate failed', { url, error: e?.message || String(e) });
-    }
-  }
-
-  if (out.length) gsInfo('fast slug matched', { count: out.length, first: out[0].url });
-  return out;
-}
-
-async function _searchGuardaserie(meta, config, season, episode, signal, reqHost = null) {
-  const providerStartedAt = Date.now();
-  gsDebug('provider start', { title: meta?.title || meta?.name, season, episode, budgetMs: GLOBAL_TIMEOUT_MS, shieldEndpoint: gsHttp.getEndpoint() });
-  await refreshTargetDomain(signal);
-  await waitForGsClearancePrewarm('request');
-  gsDebug('domain ready', { base: getTargetDomain(), sessionFresh: gsHttp.isSessionFresh(), ms: Date.now() - providerStartedAt, probed: gsHttp.isDomainProbeEnabled() });
-  if (signal?.aborted) return [];
-
-  const strictKitsuContext = await buildStrictKitsuAnimeContext(meta, config, season, episode);
-  const animeContext       = strictKitsuContext || await buildSharedAnimeContext(meta, config, season, episode);
-  gsDebug('identity ready', { isAnime: Boolean(animeContext?.isAnime), strictKitsu: Boolean(animeContext?.strictKitsu), ms: Date.now() - providerStartedAt });
-  const strictKitsu        = Boolean(animeContext?.strictKitsu);
-
-  if (animeContext?.isAnime) {
-    const mappedSeason  = parseInt(animeContext.seasonNumber, 10);
-    const mappedEpisode = parseInt(animeContext.requestedEpisode, 10);
-    if (mappedSeason > 0)  season  = mappedSeason;
-    if (mappedEpisode > 0) episode = mappedEpisode;
-  }
-
-  let tmdbId = strictKitsu ? null : (meta?.tmdb_id || meta?.tmdbId || animeContext?.tmdbId || animeContext?.mappedIds?.tmdbId || null);
-
-  if (!strictKitsu && !tmdbId && (meta?.imdb_id || animeContext?.imdbId)) {
-    const resolved = await tmdbHelper.getTmdbFromImdb(meta.imdb_id || animeContext.imdbId, { mediaHint: 'tv' }).catch(() => null);
-    if (resolved) tmdbId = resolved;
-  }
-
-  let showName     = strictKitsu ? (animeContext?.title || meta?.title || meta?.name || null) : (meta?.title || animeContext?.title || null);
-  let originalTitle = animeContext?.rawTitles?.find(title => normalizeText(title) !== normalizeText(showName)) || null;
-  let targetYear   = animeContext?.year || null;
-
-  if (tmdbId) {
-    const tmdbMeta = await tmdbHelper.getMediaInfoFull(tmdbId, 'tv', { language: 'it-IT' }).catch(() => null);
-    if (tmdbMeta) {
-      showName      = tmdbMeta.title         || showName;
-      originalTitle = tmdbMeta.original_title || originalTitle || null;
-      targetYear    = tmdbMeta.year          || targetYear    || null;
-    }
-  }
-
-  const expectedTitles = expandGsTitleAliases([
-    showName,
-    originalTitle,
-    ...(Array.isArray(animeContext?.searchTitles) ? animeContext.searchTitles : []),
-    ...(Array.isArray(animeContext?.rawTitles)    ? animeContext.rawTitles    : []),
-    meta?.name,
-    meta?.originalTitle,
-    meta?.canonicalTitle,
-    meta?.seriesTitle
-  ], 18).slice(0, 14);
-
-  gsDebug('title candidates ready', { titles: expectedTitles.slice(0, 8) });
-
-  showName = showName || expectedTitles[0] || null;
-  if (!showName) return [];
-
-  const queries       = uniqueCleanStrings(expectedTitles, animeContext?.isAnime ? 8 : 4);
-  const mappedResults = (Array.isArray(animeContext?.mappingUrls) ? animeContext.mappingUrls : [])
-    .map(url => ({ url, title: showName || url, mapped: true }));
-  const fastSlugResults = await tryFastSlugTargets(expectedTitles, targetYear, signal);
-  gsDebug('fast slug done', { results: fastSlugResults.length, ms: Date.now() - providerStartedAt });
-  let allResults = [...mappedResults, ...fastSlugResults];
-
-  if (!fastSlugResults.length) {
-    allResults.push(...await searchProviderParallel(queries, signal));
-    gsDebug('search fallback done', { totalResults: allResults.length, ms: Date.now() - providerStartedAt });
-  }
-
-  allResults     = Array.from(new Map(allResults.map(i => [i.url, i])).values());
-
-  const seriesResults  = allResults.filter(r => /\/serie\//i.test(r.url));
-  const episodeResults = allResults.filter(r => /\/episodio\//i.test(r.url));
-  allResults = strictKitsu && seriesResults.length ? seriesResults : [...seriesResults, ...episodeResults];
-
-  allResults.sort((a, b) =>
-    normalizeTitleScoreMany(b.title, expectedTitles) -
-    normalizeTitleScoreMany(a.title, expectedTitles)
-  );
-
-  let target = null, bestLoose = null;
-
-  for (const result of allResults) {
-    const titleScore = normalizeTitleScoreMany(result.title, expectedTitles);
-    if (titleScore < 1) continue;
-
-    const html = result.html || await smartFetch(result.url, { ttl: TTL_SERIES, signal, allowFlareSolverr: true, timeoutMs: DIRECT_FETCH_TIMEOUT_MS });
-    if (!html) continue;
-
-    const foundYear =
-      html.match(/release-year\/(\d{4})/i)?.[1] ||
-      html.match(/\b(19\d{2}|20\d{2})\b/)?.[1]  ||
-      null;
-
-    if (targetYear && foundYear) {
-      const allowedYearDelta = titleScore >= 3 ? 3 : 1;
-      if (Math.abs(Number(foundYear) - Number(targetYear)) <= allowedYearDelta) {
-        target = { url: result.url, html };
-        break;
-      }
-    } else if (titleScore >= (bestLoose?.score || 0)) {
-      bestLoose = { url: result.url, html, score: titleScore };
-      if (titleScore >= 2) break;
-    }
-  }
-
-  if (!target && bestLoose) target = bestLoose;
-
-  if (!target) {
-    const slugs = uniqueCleanStrings(expectedTitles, 3).map(slugify).filter(Boolean);
-    outer: for (const slug of slugs) {
-      for (const p of [`/serie/${slug}/`, `/${slug}/`, `/serietv/${slug}/`]) {
-        const url  = buildGsUrl(p);
-        const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: true, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
-        if (html) {
-          const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
-          if (normalizeTitleScoreMany(pageTitle, expectedTitles) >= 2) {
-            target = { url, html };
-            break outer;
-          }
-        }
-      }
-    }
-  }
-
-  if (!target?.url) return [];
-
-  let episodeUrl    = extractEpisodeUrlFromSeriesPage(target.html, season, episode, { strictEpisode: strictKitsu });
-  let absoluteEpUrl = episodeUrl ? new URL(episodeUrl, getTargetDomain()).toString() : null;
-  let finalHtml     = absoluteEpUrl ? await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: true, timeoutMs: DIRECT_FETCH_TIMEOUT_MS }) : '';
-  let playerLinks   = Array.from(new Set(extractPlayerLinksFromHtml(finalHtml))).slice(0, 5);
-
-  if (!playerLinks.length) {
-    const directCandidates = buildDirectEpisodeSlugCandidates(expectedTitles, season, episode);
-    for (const directUrl of directCandidates) {
-      if (signal?.aborted) return [];
-      try {
-        const directHtml = await smartFetch(directUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: false, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
-        const directLinks = Array.from(new Set(extractPlayerLinksFromHtml(directHtml))).slice(0, 5);
-        if (directLinks.length) {
-          episodeUrl = directUrl;
-          absoluteEpUrl = directUrl;
-          finalHtml = directHtml;
-          playerLinks = directLinks;
-          gsDebug('direct episode slug accepted', { url: directUrl, links: directLinks.length });
-          break;
-        }
-        gsDebug('direct episode slug rejected', { url: directUrl, links: directLinks.length });
-      } catch (e) {
-        if (isAbortLikeError(e) && signal?.aborted) throw e;
-        gsDebug('direct episode slug failed', { url: directUrl, error: e?.message || String(e) });
-      }
-    }
-  }
-
-  if (!playerLinks.length) return [];
-
-  const cleanTitle = `${showName} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
-  const sessionUA  = gsHttp.getSession()?.userAgent || pickRandomProfile(BROWSER_PROFILES)?.ua || pickRandomProfile(BROWSER_PROFILES)?.userAgent;
+async function buildGsStreamsFromPlayerLinks(playerLinks = [], options = {}) {
+  const cleanTitle = options.cleanTitle || 'GuardoSerie';
+  const signal = options.signal;
+  const reqHost = options.reqHost || null;
+  const sessionUA = gsHttp.getSession()?.userAgent || pickRandomProfile(BROWSER_PROFILES)?.ua || pickRandomProfile(BROWSER_PROFILES)?.userAgent;
 
   const processedResults = await asyncPool(2, playerLinks, async link => {
     try {
@@ -1215,6 +1042,380 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
       sort: false,
       debug: DEBUG_GS
     });
+}
+
+async function buildGsMovieSearchContext(meta = {}, signal = null) {
+  let tmdbId = meta?.tmdb_id || meta?.tmdbId || null;
+  if (!tmdbId && meta?.imdb_id) {
+    const resolved = await tmdbHelper.getTmdbFromImdb(meta.imdb_id, { mediaHint: 'movie' }).catch(() => null);
+    if (resolved) tmdbId = resolved;
+  }
+
+  let movieName = meta?.title || meta?.name || meta?.originalTitle || null;
+  let originalTitle = meta?.originalTitle || meta?.canonicalTitle || null;
+  let targetYear = extractYearValue(meta?.year || meta?.releaseYear || meta?.released || null);
+
+  if (tmdbId && !signal?.aborted) {
+    const tmdbMeta = await tmdbHelper.getMediaInfoFull(tmdbId, 'movie', { language: 'it-IT' }).catch(() => null);
+    if (tmdbMeta) {
+      movieName = tmdbMeta.title || movieName;
+      originalTitle = tmdbMeta.original_title || originalTitle || null;
+      targetYear = extractYearValue(tmdbMeta.year) || targetYear || null;
+    }
+  }
+
+  const expectedTitles = expandGsTitleAliases([
+    movieName,
+    originalTitle,
+    meta?.name,
+    meta?.originalTitle,
+    meta?.canonicalTitle,
+    meta?.englishTitle,
+    meta?.localizedTitle
+  ], 18).slice(0, 14);
+
+  return {
+    movieName: movieName || expectedTitles[0] || null,
+    originalTitle,
+    targetYear,
+    expectedTitles
+  };
+}
+
+async function findGsTargetPage(expectedTitles = [], targetYear = null, signal = null, options = {}) {
+  const mediaType = options.mediaType || 'series';
+  const targetYearNumber = extractYearValue(targetYear);
+  const startedAt = Date.now();
+  const queries = uniqueCleanStrings(expectedTitles, mediaType === 'movie' ? 5 : 4);
+  const fastSlugResults = await tryFastSlugTargets(expectedTitles, targetYear, signal, { mediaType });
+  gsDebug(`${mediaType} fast slug done`, { results: fastSlugResults.length, ms: Date.now() - startedAt });
+
+  let allResults = [...(options.mappedResults || []), ...fastSlugResults];
+  if (!fastSlugResults.length) {
+    allResults.push(...await searchProviderParallel(queries, signal));
+    gsDebug(`${mediaType} search fallback done`, { totalResults: allResults.length, ms: Date.now() - startedAt });
+  }
+
+  allResults = Array.from(new Map(allResults.map(i => [i.url, i])).values());
+
+  if (mediaType === 'movie') {
+    const movieResults = allResults.filter(result => isLikelyGsMovieUrl(result.url));
+    allResults = movieResults.length ? movieResults : allResults.filter(result => !/\/(?:serie|episodio)\//i.test(String(result.url || '')));
+  } else {
+    const seriesResults = allResults.filter(r => /\/serie\//i.test(r.url));
+    const episodeResults = allResults.filter(r => /\/episodio\//i.test(r.url));
+    allResults = options.strictSeriesOnly && seriesResults.length ? seriesResults : [...seriesResults, ...episodeResults];
+  }
+
+  allResults.sort((a, b) =>
+    normalizeTitleScoreMany(b.title, expectedTitles) -
+    normalizeTitleScoreMany(a.title, expectedTitles)
+  );
+
+  let target = null;
+  let bestLoose = null;
+
+  for (const result of allResults) {
+    const titleScore = normalizeTitleScoreMany(result.title, expectedTitles);
+    if (titleScore < 1) continue;
+
+    const html = result.html || await smartFetch(result.url, {
+      ttl: mediaType === 'movie' ? TTL_MOVIE : TTL_SERIES,
+      signal,
+      allowFlareSolverr: true,
+      timeoutMs: DIRECT_FETCH_TIMEOUT_MS
+    });
+    if (!html) continue;
+
+    const foundYear =
+      html.match(/release-year\/(\d{4})/i)?.[1] ||
+      html.match(/\b(19\d{2}|20\d{2})\b/)?.[1]  ||
+      null;
+
+    if (targetYearNumber && foundYear) {
+      const allowedYearDelta = titleScore >= 3 ? 3 : 1;
+      if (Math.abs(Number(foundYear) - targetYearNumber) <= allowedYearDelta) {
+        target = { url: result.url, html, score: titleScore };
+        break;
+      }
+    } else if (titleScore >= (bestLoose?.score || 0)) {
+      bestLoose = { url: result.url, html, score: titleScore };
+      if (titleScore >= 2) break;
+    }
+  }
+
+  return target || bestLoose || null;
+}
+
+async function searchGuardaserieImpl(meta, config, reqHost = null) {
+  if (!config?.filters?.enableGs) return [];
+
+  const mediaType = resolveGsMediaType(meta);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GLOBAL_TIMEOUT_MS);
+
+  try {
+    if (mediaType === 'series') {
+      const kitsuInfo = getKitsuRequestFromMeta(meta);
+      let season      = parseInt(meta?.season, 10);
+      let episode     = parseInt(meta?.episode, 10) || kitsuInfo?.parsed?.episodeNumber || 1;
+
+      if ((!season || season < 1) && kitsuInfo?.parsed?.kitsuId) season = kitsuInfo.parsed.seasonNumber || 1;
+      if (!season || season < 1 || !episode || episode < 1) return [];
+
+      return await _searchGuardaserie(meta, config, season, episode, controller.signal, reqHost);
+    }
+
+    return await _searchGuardaserieMovie(meta, config, controller.signal, reqHost);
+  } catch (e) {
+    gsDebug('provider failed', { mediaType, error: e?.message || String(e) });
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function buildDirectEpisodeSlugCandidates(expectedTitles = [], season, episode) {
+  const candidates = [];
+  const seen = new Set();
+  const s = parseInt(season, 10);
+  const e = parseInt(episode, 10);
+  if (!s || !e) return candidates;
+  for (const title of expandGsTitleAliases(expectedTitles, 12)) {
+    const slug = slugify(title);
+    if (!slug) continue;
+    for (const suffix of [
+      `${slug}-stagione-${s}-episodio-${e}`,
+      `${slug}-stagione-${s}-episodio-${String(e).padStart(2, '0')}`,
+      `${slug}-s${String(s).padStart(2, '0')}e${String(e).padStart(2, '0')}`
+    ]) {
+      for (const pathname of [`/episodio/${suffix}`, `/episodio/${suffix}/`]) {
+        const url = buildGsUrl(pathname);
+        if (seen.has(url)) continue;
+        seen.add(url);
+        candidates.push(url);
+      }
+    }
+  }
+  return candidates.slice(0, 18);
+}
+
+async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal = null, options = {}) {
+  if (!GS_FAST_SLUG_FIRST) return [];
+  const targetYearNumber = extractYearValue(targetYear);
+  const candidates = [];
+  const seen = new Set();
+
+  for (const title of expandGsTitleAliases(expectedTitles, 10)) {
+    const slug = slugify(title);
+    if (!slug) continue;
+    const paths = options.mediaType === 'movie'
+      ? [`/${slug}/`, `/movie/${slug}/`, `/film/${slug}/`, `/guarda-${slug}-streaming-ita/`]
+      : [`/${slug}/`, `/serie/${slug}/`, `/serietv/${slug}/`];
+    for (const p of paths) {
+      const url = buildGsUrl(p);
+      if (seen.has(url)) continue;
+      seen.add(url);
+      candidates.push(url);
+    }
+  }
+
+  const out = [];
+  gsDebug('fast slug start', { candidates: candidates.slice(0, 3) });
+  for (const url of candidates.slice(0, 3)) {
+    try {
+      const html = await smartFetch(url, { ttl: options.mediaType === 'movie' ? TTL_MOVIE : TTL_SERIES, signal, allowFlareSolverr: false, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+      if (!html) continue;
+
+      const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
+      const titleScore = normalizeTitleScoreMany(pageTitle, expectedTitles);
+      if (titleScore < 2) continue;
+
+      const foundYear =
+        html.match(/release-year\/(\d{4})/i)?.[1] ||
+        html.match(/\b(19\d{2}|20\d{2})\b/)?.[1] ||
+        null;
+
+      if (targetYearNumber && foundYear && Math.abs(Number(foundYear) - targetYearNumber) > 3) continue;
+      out.push({ url, html, title: pageTitle || url, mapped: true, fastSlug: true, score: titleScore });
+      if (titleScore >= 3) break;
+    } catch (e) {
+      if (isAbortLikeError(e) && signal?.aborted) throw e;
+      gsDebug('fast slug candidate failed', { url, error: e?.message || String(e) });
+    }
+  }
+
+  if (out.length) gsInfo('fast slug matched', { count: out.length, first: out[0].url });
+  return out;
+}
+
+async function _searchGuardaserie(meta, config, season, episode, signal, reqHost = null) {
+  const providerStartedAt = Date.now();
+  gsDebug('provider start', { title: meta?.title || meta?.name, season, episode, budgetMs: GLOBAL_TIMEOUT_MS, shieldEndpoint: gsHttp.getEndpoint() });
+  await refreshTargetDomain(signal);
+  await waitForGsClearancePrewarm('request');
+  gsDebug('domain ready', { base: getTargetDomain(), sessionFresh: gsHttp.isSessionFresh(), ms: Date.now() - providerStartedAt, probed: gsHttp.isDomainProbeEnabled() });
+  if (signal?.aborted) return [];
+
+  const strictKitsuContext = await buildStrictKitsuAnimeContext(meta, config, season, episode);
+  const animeContext       = strictKitsuContext || await buildSharedAnimeContext(meta, config, season, episode);
+  gsDebug('identity ready', { isAnime: Boolean(animeContext?.isAnime), strictKitsu: Boolean(animeContext?.strictKitsu), ms: Date.now() - providerStartedAt });
+  const strictKitsu        = Boolean(animeContext?.strictKitsu);
+
+  if (animeContext?.isAnime) {
+    const mappedSeason  = parseInt(animeContext.seasonNumber, 10);
+    const mappedEpisode = parseInt(animeContext.requestedEpisode, 10);
+    if (mappedSeason > 0)  season  = mappedSeason;
+    if (mappedEpisode > 0) episode = mappedEpisode;
+  }
+
+  let tmdbId = strictKitsu ? null : (meta?.tmdb_id || meta?.tmdbId || animeContext?.tmdbId || animeContext?.mappedIds?.tmdbId || null);
+
+  if (!strictKitsu && !tmdbId && (meta?.imdb_id || animeContext?.imdbId)) {
+    const resolved = await tmdbHelper.getTmdbFromImdb(meta.imdb_id || animeContext.imdbId, { mediaHint: 'tv' }).catch(() => null);
+    if (resolved) tmdbId = resolved;
+  }
+
+  let showName     = strictKitsu ? (animeContext?.title || meta?.title || meta?.name || null) : (meta?.title || animeContext?.title || null);
+  let originalTitle = animeContext?.rawTitles?.find(title => normalizeText(title) !== normalizeText(showName)) || null;
+  let targetYear   = animeContext?.year || null;
+
+  if (tmdbId) {
+    const tmdbMeta = await tmdbHelper.getMediaInfoFull(tmdbId, 'tv', { language: 'it-IT' }).catch(() => null);
+    if (tmdbMeta) {
+      showName      = tmdbMeta.title         || showName;
+      originalTitle = tmdbMeta.original_title || originalTitle || null;
+      targetYear    = tmdbMeta.year          || targetYear    || null;
+    }
+  }
+
+  const expectedTitles = expandGsTitleAliases([
+    showName,
+    originalTitle,
+    ...(Array.isArray(animeContext?.searchTitles) ? animeContext.searchTitles : []),
+    ...(Array.isArray(animeContext?.rawTitles)    ? animeContext.rawTitles    : []),
+    meta?.name,
+    meta?.originalTitle,
+    meta?.canonicalTitle,
+    meta?.seriesTitle
+  ], 18).slice(0, 14);
+
+  gsDebug('title candidates ready', { titles: expectedTitles.slice(0, 8) });
+
+  showName = showName || expectedTitles[0] || null;
+  if (!showName) return [];
+
+  const mappedResults = (Array.isArray(animeContext?.mappingUrls) ? animeContext.mappingUrls : [])
+    .map(url => ({ url, title: showName || url, mapped: true }));
+  let target = await findGsTargetPage(expectedTitles, targetYear, signal, {
+    mediaType: 'series',
+    mappedResults,
+    strictSeriesOnly: strictKitsu
+  });
+
+  if (!target) {
+    const slugs = uniqueCleanStrings(expectedTitles, 3).map(slugify).filter(Boolean);
+    outer: for (const slug of slugs) {
+      for (const p of [`/serie/${slug}/`, `/${slug}/`, `/serietv/${slug}/`]) {
+        const url  = buildGsUrl(p);
+        const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: true, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+        if (html) {
+          const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
+          if (normalizeTitleScoreMany(pageTitle, expectedTitles) >= 2) {
+            target = { url, html };
+            break outer;
+          }
+        }
+      }
+    }
+  }
+
+  if (!target?.url) return [];
+
+  let episodeUrl    = extractEpisodeUrlFromSeriesPage(target.html, season, episode, { strictEpisode: strictKitsu });
+  let absoluteEpUrl = episodeUrl ? new URL(episodeUrl, getTargetDomain()).toString() : null;
+  let finalHtml     = absoluteEpUrl ? await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: true, timeoutMs: DIRECT_FETCH_TIMEOUT_MS }) : '';
+  let playerLinks   = pickPreferredPlayerLinks(extractPlayerLinksFromHtml(finalHtml), { preferLoadm: true, max: 5 });
+
+  if (!playerLinks.length) {
+    const directCandidates = buildDirectEpisodeSlugCandidates(expectedTitles, season, episode);
+    for (const directUrl of directCandidates) {
+      if (signal?.aborted) return [];
+      try {
+        const directHtml = await smartFetch(directUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: false, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+        const directLinks = pickPreferredPlayerLinks(extractPlayerLinksFromHtml(directHtml), { preferLoadm: true, max: 5 });
+        if (directLinks.length) {
+          episodeUrl = directUrl;
+          absoluteEpUrl = directUrl;
+          finalHtml = directHtml;
+          playerLinks = directLinks;
+          gsDebug('direct episode slug accepted', { url: directUrl, links: directLinks.length });
+          break;
+        }
+        gsDebug('direct episode slug rejected', { url: directUrl, links: directLinks.length });
+      } catch (e) {
+        if (isAbortLikeError(e) && signal?.aborted) throw e;
+        gsDebug('direct episode slug failed', { url: directUrl, error: e?.message || String(e) });
+      }
+    }
+  }
+
+  if (!playerLinks.length) return [];
+
+  const cleanTitle = `${showName} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
+  return buildGsStreamsFromPlayerLinks(playerLinks, { cleanTitle, signal, reqHost });
+}
+
+async function _searchGuardaserieMovie(meta, config, signal, reqHost = null) {
+  const providerStartedAt = Date.now();
+  gsDebug('movie provider start', { title: meta?.title || meta?.name, budgetMs: GLOBAL_TIMEOUT_MS, shieldEndpoint: gsHttp.getEndpoint() });
+  await refreshTargetDomain(signal);
+  await waitForGsClearancePrewarm('request');
+  gsDebug('movie domain ready', { base: getTargetDomain(), sessionFresh: gsHttp.isSessionFresh(), ms: Date.now() - providerStartedAt, probed: gsHttp.isDomainProbeEnabled() });
+  if (signal?.aborted) return [];
+
+  const movieContext = await buildGsMovieSearchContext(meta, signal);
+  const expectedTitles = movieContext.expectedTitles || [];
+  const movieName = movieContext.movieName || expectedTitles[0] || null;
+  const targetYear = movieContext.targetYear || null;
+
+  gsDebug('movie title candidates ready', { titles: expectedTitles.slice(0, 8), year: targetYear });
+  if (!movieName || !expectedTitles.length) return [];
+
+  let target = await findGsTargetPage(expectedTitles, targetYear, signal, { mediaType: 'movie' });
+
+  if (!target) {
+    const slugs = uniqueCleanStrings(expectedTitles, 4).map(slugify).filter(Boolean);
+    outer: for (const slug of slugs) {
+      for (const p of [`/${slug}/`, `/movie/${slug}/`, `/film/${slug}/`, `/guarda-${slug}-streaming-ita/`]) {
+        const url = buildGsUrl(p);
+        const html = await smartFetch(url, { ttl: TTL_MOVIE, signal, allowFlareSolverr: true, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+        if (html) {
+          const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
+          if (normalizeTitleScoreMany(pageTitle, expectedTitles) >= 2) {
+            target = { url, html };
+            break outer;
+          }
+        }
+      }
+    }
+  }
+
+  if (!target?.url || !target?.html) return [];
+
+  const playerLinks = pickPreferredPlayerLinks(extractPlayerLinksFromHtml(target.html), { preferLoadm: true, max: 5 });
+  gsDebug('movie player links extracted', {
+    url: target.url,
+    links: playerLinks.length,
+    loadm: playerLinks.filter(isLoadmPlayerUrl).length,
+    ms: Date.now() - providerStartedAt
+  });
+
+  if (!playerLinks.length) return [];
+
+  const cleanYear = extractYearValue(targetYear);
+  const cleanTitle = cleanYear ? `${movieName} (${cleanYear})` : movieName;
+  return buildGsStreamsFromPlayerLinks(playerLinks, { cleanTitle, signal, reqHost });
 }
 
 async function searchGuardaserie(meta, config, reqHost = null) {
