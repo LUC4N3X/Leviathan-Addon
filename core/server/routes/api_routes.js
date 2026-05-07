@@ -8,7 +8,6 @@ const { validateConfig, MAX_CONFIG_LENGTH, decodeConfigBase64 } = require('../..
 const { getRecentStreamTraces } = require('../../lib/stream_trace');
 
 const DEBRID_VALIDATE_TIMEOUT_MS = Math.max(1500, parseInt(process.env.DEBRID_VALIDATE_TIMEOUT_MS || '5000', 10) || 5000);
-const CODE_API_SECURITY_PASSWORD = 'gL2vuSA0RiPSUUUtN_I5TYs6';
 
 function isTruthyEnv(value) {
     return /^(?:1|true|yes|on)$/i.test(String(value || '').trim());
@@ -30,7 +29,7 @@ function extractTelemetryPassword(req) {
 }
 
 function createTelemetryAuthMiddleware() {
-    const telemetryPass = String(process.env.TELEMETRY_PASS || process.env.ADMIN_PASS || CODE_API_SECURITY_PASSWORD).trim();
+    const telemetryPass = String(process.env.TELEMETRY_PASS || process.env.ADMIN_PASS || '').trim();
     const publicTelemetry = isTruthyEnv(process.env.PUBLIC_TELEMETRY);
 
     return (req, res, next) => {

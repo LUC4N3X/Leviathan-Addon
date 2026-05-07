@@ -28,9 +28,16 @@ const SavedCloud = require("./debrid/saved_cloud/debrid_saved_cloud");
 const sourceHealth = require("./lib/source_health");
 const { createSearchPlan, evaluatePoolSatisfaction } = require("./lib/search_planner");
 const { createStreamTrace } = require("./lib/stream_trace");
+const { createLanguageFilterTools } = require("./pipeline/language_filter");
 const { shouldSkipRecentWork } = require('./recent_work');
 const { buildSharedStreamCachePolicy, buildSharedReadContext, shouldUseSharedStreamEntry } = require('./lib/shared_stream_policy');
 const { getSourceModeFlags, shouldUseTorrentPipeline } = require('./config/source_mode');
+const {
+  isAnimeMetaContext,
+  getEpisodeParseOptions,
+  shouldIgnoreAnimeSeason,
+  mapKitsuEpisodePosition
+} = require('./canonical/anime_rules');
 const { shouldKeepStrictItalianCandidate, hasStrictItalianEvidence } = require('./canonical/language_guard');
 const { runFilterStage, runSortStage } = require('./lib/result_stage_pipeline');
 const { buildSeriesContext, matchesCandidateTitle } = require('./matching/episode_matcher');
@@ -50,6 +57,24 @@ const {
 } = require("./utils");
 
 const { parseKitsuIdentifier } = kitsuHandler;
+
+const languageFilterTools = createLanguageFilterTools({
+  logger,
+  REGEX_YEAR,
+  normalizeSearchText,
+  isGoodShortQueryMatch,
+  isSeasonPack,
+  extractSeasonEpisodeFromFilename,
+  smartMatch,
+  isAnimeMetaContext,
+  shouldIgnoreAnimeSeason,
+  getEpisodeParseOptions,
+  getExternalDirectUrl,
+  keepLanguageCandidateForMode,
+  isConfidentSeasonPackItem,
+  passesSeriesEpisodeGuard,
+  hasStrongSeriesTitleMatch
+});
 
 const STREMIO_CACHE_MAX_AGE_DEFAULT = Math.max(60, parseInt(process.env.STREMIO_CACHE_MAX_AGE || '300', 10) || 300);
 const STREMIO_STALE_REVALIDATE_DEFAULT = Math.max(STREMIO_CACHE_MAX_AGE_DEFAULT, parseInt(process.env.STREMIO_STALE_REVALIDATE || '600', 10) || 600);
@@ -166,31 +191,8 @@ function uniqueTextList(values = []) {
     return output;
 }
 
-function isAnimeMetaContext(meta = {}, type = '') {
-    return Boolean(meta?.kitsu_id || meta?.isAnime || String(type || '').toLowerCase() === 'anime');
-}
-
-function getEpisodeParseOptions(meta = {}, type = '') {
-    return { anime: isAnimeMetaContext(meta, type) };
-}
-
 function getEffectiveSearchLanguageMode(filters = {}, meta = {}, type = '') {
-    const explicit = String(filters?.language || '').toLowerCase();
-    if (explicit === 'ita' || explicit === 'eng' || explicit === 'all') return explicit;
-
-    const metaMode = String(meta?.langMode || meta?.languageMode || meta?.language || '').toLowerCase();
-    if (metaMode === 'ita' || metaMode === 'eng' || metaMode === 'all') return metaMode;
-
-    if (filters?.allowEng) return 'all';
-    return 'ita';
-}
-
-function hasExplicitSeasonMarker(text = '') {
-    return /\b(?:S(?:EASON)?\s*0?\d{1,2}|\d{1,2}x\d{1,3}|STAGIONE\s*0?\d{1,2}|(?:1ST|2ND|3RD|4TH)\s+SEASON)\b/i.test(String(text || ''));
-}
-
-function shouldIgnoreAnimeSeason(meta = {}, type = '', title = '') {
-    return isAnimeMetaContext(meta, type) && !hasExplicitSeasonMarker(title);
+    return languageFilterTools.getEffectiveSearchLanguageMode(filters, meta, type);
 }
 
 
@@ -311,26 +313,6 @@ function isConfidentSeasonPackItem(item = {}, meta = {}, type = '') {
     const hasFlag = Boolean(item?._isPack || item?.potentialPack || item?.packTitle || isSeasonPack(item?.title || ''));
     if (!hasFlag && !hasStrictSeasonPackCue(item, meta, type)) return false;
     return hasStrictSeasonPackCue(item, meta, type);
-}
-
-function mapKitsuEpisodePosition(parsedKitsu, fallbackKitsuMeta) {
-    const requestedEpisode = Number(parsedKitsu?.episode || 0) || 0;
-    const mappedSeason = Number(fallbackKitsuMeta?.season || parsedKitsu?.season || 1) || 1;
-    const baseEpisode = Number(fallbackKitsuMeta?.episode || 1) || 1;
-
-    if (!(requestedEpisode > 0)) {
-        return {
-            mappedSeason,
-            mappedEpisode: 0,
-            requestedEpisode: 0
-        };
-    }
-
-    return {
-        mappedSeason,
-        mappedEpisode: baseEpisode + requestedEpisode - 1,
-        requestedEpisode
-    };
 }
 
 function buildExternalAddonRequestId(type, finalId, meta = {}) {
@@ -454,56 +436,7 @@ function keepLanguageCandidateForMode(item, meta = {}, langMode = 'ita') {
 }
 
 function assessFastResultQuality(items, meta, langMode, config) {
-    const list = Array.isArray(items) ? items : [];
-    if (list.length === 0) {
-        return { shouldScrape: true, reason: 'no_fast_results', strongCount: 0, exactEpisodeCount: 0, seasonPackCount: 0, total: 0 };
-    }
-
-    const effectiveLangMode = langMode;
-    let strongCount = 0;
-    let exactEpisodeCount = 0;
-    let seasonPackCount = 0;
-
-    for (const item of list) {
-        const title = String(item?.title || '');
-        const source = String(item?.source || '');
-        const sizeBytes = Number(item?._size || item?.sizeBytes || 0);
-        const seeders = parseInt(item?.seeders, 10) || 0;
-        const parsedFastEpisode = meta?.isSeries ? extractSeasonEpisodeFromFilename(title, meta.season || 1, getEpisodeParseOptions(meta)) : null;
-        const isPack = isConfidentSeasonPackItem(item, meta, '');
-        const langOk = keepLanguageCandidateForMode(item, meta, effectiveLangMode);
-        const hasQualitySignal = /\b(?:2160p|4k|uhd|1080p|fhd|720p|web[-.\s]?dl|blu[-.\s]?ray|remux|hevc|x265|x264)\b/i.test(title);
-        const hasWeight = hasQualitySignal || sizeBytes >= (meta?.isSeries ? 250 : 700) * 1024 * 1024 || seeders > 0;
-
-        let exactEpisode = false;
-        if (meta?.isSeries) {
-            const parsed = parsedFastEpisode;
-            exactEpisode = Boolean(parsed && !parsed?.isRange && parsed.episode === meta.episode && (parsed.season === meta.season || meta?.kitsu_id));
-            if (exactEpisode) exactEpisodeCount += 1;
-            const hasSeasonCue = new RegExp(`(?:s|season|stagione)\\s*0?${meta.season}(?!\\d)`, 'i').test(title);
-            if (!exactEpisode && isPack && (hasSeasonCue || Boolean(parsed?.isRange || parsed?.isBatch) || (meta?.kitsu_id && /\b(?:batch|pack|complete|collection|全集|合集)\b/i.test(title)))) seasonPackCount += 1;
-        }
-
-        let strength = 0;
-        if (langOk) strength += 1;
-        if (hasWeight) strength += 1;
-        if (!meta?.isSeries || exactEpisode || isPack) strength += 1;
-        if (seeders > 0) strength += 1;
-
-        if (strength >= (meta?.isSeries ? 3 : 2)) strongCount += 1;
-    }
-
-    const minimumStrong = meta?.isSeries ? 2 : 1;
-    const shouldScrape = strongCount < minimumStrong || (meta?.isSeries && exactEpisodeCount === 0 && seasonPackCount === 0);
-    const reason = shouldScrape
-        ? (list.length === 0
-            ? 'no_fast_results'
-            : (meta?.isSeries && exactEpisodeCount === 0 && seasonPackCount === 0)
-                ? 'no_exact_episode_or_pack'
-                : `weak_fast_pool_${strongCount}_of_${minimumStrong}`)
-        : 'fast_pool_ok';
-
-    return { shouldScrape, reason, strongCount, exactEpisodeCount, seasonPackCount, total: list.length };
+    return languageFilterTools.assessFastResultQuality(items, meta, langMode, config);
 }
 
 
@@ -1252,90 +1185,7 @@ function hasStrongSeriesTitleMatch(title, meta) {
 }
 
 function createAggressiveResultFilter(meta, type, langMode) {
-    const effectiveLangMode = langMode;
-    return (item) => {
-        if (!item?.magnet && !getExternalDirectUrl(item)) return false;
-
-        const source = String(item.source || '').toLowerCase();
-        const title = String(item.title || '');
-        const lowerTitle = title.toLowerCase();
-        const isPack = isConfidentSeasonPackItem(item, meta, type);
-
-        if (source.includes('comet') || source.includes('stremthru')) return false;
-
-        if (!keepLanguageCandidateForMode(item, meta, effectiveLangMode)) return false;
-
-        const metaYear = parseInt(meta.year, 10);
-        if (!Number.isNaN(metaYear)) {
-            const fileYearMatch = title.match(REGEX_YEAR);
-            if (fileYearMatch && Math.abs(parseInt(fileYearMatch[0], 10) - metaYear) > 1) return false;
-        }
-
-        if (!meta.isSeries) {
-            const shortQueries = [meta.title, meta.originalTitle]
-                .filter(Boolean)
-                .map(normalizeSearchText)
-                .filter(q => q.length >= 2 && q.length <= 8);
-            if (shortQueries.length > 0 && !shortQueries.some(q => isGoodShortQueryMatch(title, q))) return false;
-        }
-
-        if (meta.isSeries) {
-            if (!passesSeriesEpisodeGuard(item, meta, type)) return false;
-            if (!hasStrongSeriesTitleMatch(title, meta)) return false;
-
-            const season = meta.season;
-            const episode = meta.episode;
-            const parsedEpisode = extractSeasonEpisodeFromFilename(title, season || 1, getEpisodeParseOptions(meta, type));
-
-            if (isAnimeMetaContext(meta, type) && parsedEpisode && !parsedEpisode?.isRange && parsedEpisode.episode === episode && (parsedEpisode.season === season || shouldIgnoreAnimeSeason(meta, type, title))) {
-                return true;
-            }
-            if (isAnimeMetaContext(meta, type) && (isPack || parsedEpisode?.isRange || parsedEpisode?.isBatch)) {
-                item._isPack = true;
-                return true;
-            }
-
-            const wrongSeasonRegex = /(?:s|stagione|season)\s*0?(\d+)(?!\d)/gi;
-            let match;
-            const ignoreAnimeSeasonCheck = shouldIgnoreAnimeSeason(meta, type, title);
-            while ((match = wrongSeasonRegex.exec(lowerTitle)) !== null) {
-                if (parseInt(match[1], 10) !== season && !ignoreAnimeSeasonCheck) return false;
-            }
-
-            const xMatch = lowerTitle.match(/(\d+)x(\d+)/i);
-            if (xMatch) return (parseInt(xMatch[1], 10) === season || ignoreAnimeSeasonCheck) && parseInt(xMatch[2], 10) === episode;
-
-            const hasRightSeason = new RegExp(`(?:s|stagione|season|^)\\s*0?${season}(?!\\d)`, 'i').test(lowerTitle);
-            const hasRightEpisode = new RegExp(`(?:e|x|ep|episode|^)\\s*0?${episode}(?!\\d)`, 'i').test(lowerTitle);
-
-            if (hasRightSeason && hasRightEpisode) return true;
-            if (hasRightSeason && (isSeasonPack(lowerTitle) || !/(?:e|x|ep|episode)\s*0?\d+/i.test(lowerTitle))) {
-                item._isPack = true;
-                return true;
-            }
-            return false;
-        }
-
-        if (/\b(?:S\d{2}|SEASON|STAGIONE)\b/i.test(title) || /\b\d{1,2}x\d{1,2}\b/.test(title)) return false;
-
-        const cleanFile = lowerTitle.replace(/[\.\_\-\(\)\[\]]/g, ' ').replace(/\s{2,}/g, ' ').trim();
-        const checkMatch = (strToCheck) => {
-            if (!strToCheck) return false;
-            const searchKeyword = strToCheck.replace(/^(the|a|an|il|lo|la|i|gli|le)\s+/i, '').trim();
-            if (searchKeyword === 'rip') return /^(the\s+|il\s+)?rip\b/i.test(cleanFile);
-            if (!isGoodShortQueryMatch(cleanFile, searchKeyword)) return false;
-            return searchKeyword.length <= 3
-                ? new RegExp(`\\b${searchKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(cleanFile)
-                : cleanFile.includes(searchKeyword);
-        };
-
-        if (checkMatch(String(meta.title || '').toLowerCase().replace(/[\.\_\-\(\)\[\]]/g, ' ').replace(/\s{2,}/g, ' ').trim())) return true;
-        if (checkMatch(String(meta.title || '').split(/ - |: /)[0].toLowerCase().trim())) return true;
-        if (checkMatch(String(meta.originalTitle || '').toLowerCase().trim())) return true;
-        if (smartMatch(meta.title, title, meta.isSeries, meta.season, meta.episode)) return true;
-
-        return false;
-    };
+    return languageFilterTools.createAggressiveResultFilter(meta, type, langMode);
 }
 
 async function resolveTorboxRankedList(rankedList, apiKey) {
