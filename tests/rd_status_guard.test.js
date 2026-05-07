@@ -77,3 +77,46 @@ test('preserveRdStatusList matches by infoHash and fileIdx after ordering transf
   assert.equal(item.likely_cached, true);
   assert.equal(item.cached, null);
 });
+
+test('preserveRdStatus restores cached state from normalized behaviorHints', () => {
+  const sources = [{
+    title: 'Movie from bridge',
+    behaviorHints: {
+      infoHash: 'C'.repeat(40),
+      fileIdx: 2,
+      cached: true,
+      cacheState: 'cached'
+    },
+    isCached: true,
+    _mediafusionRdChecked: true
+  }];
+  const targets = [{
+    title: 'Movie from bridge renamed',
+    infoHash: 'C'.repeat(40),
+    fileIdx: 2
+  }];
+
+  const [item] = preserveRdStatusList(sources, targets);
+
+  assert.equal(getSourceState(item), 'cached');
+  assert.equal(item._rdCacheState, 'cached');
+  assert.equal(item.rdCacheState, 'cached');
+  assert.equal(item.cacheState, 'cached');
+  assert.equal(item.cached, true);
+  assert.equal(item._mediafusionRdChecked, true);
+});
+
+test('preserveRdStatus treats TorBox camelCase cached signal as confirmed cached', () => {
+  const { item } = preserveRdStatus({
+    title: 'Movie 4K'
+  }, {
+    title: 'Movie 4K',
+    tbCached: true
+  });
+
+  assert.equal(getSourceState(item), 'cached');
+  assert.equal(item._rdCacheState, 'cached');
+  assert.equal(item.rdCacheState, 'cached');
+  assert.equal(item.cached, true);
+  assert.equal(item.tbCached, true);
+});

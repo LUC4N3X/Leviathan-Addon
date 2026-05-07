@@ -46,6 +46,26 @@ test('proxy header normalizer moves basic auth from url to Authorization header'
     assert.equal(result.shouldProxy, true);
 });
 
+test('proxy header normalizer drops invalid header names and control values', () => {
+    const result = normalizeProxyHeaders({
+        'X-Good-Header': 'ok',
+        'Bad\r\nHeader': 'evil',
+        'Also:Bad': 'evil',
+        Referer: 'https://player.example/embed/1\r\nX-Bad: evil'
+    }, {
+        targetUrl: 'https://cdn.example/video.m3u8',
+        fillReferer: false
+    });
+
+    assert.equal(result.headers['X-Good-Header'], 'ok');
+    assert.equal(result.headers['Bad\r\nHeader'], undefined);
+    assert.equal(result.headers['Also:Bad'], undefined);
+    assert.equal(result.headers.Referer, undefined);
+    assert.ok(result.dropped.includes('bad\r\nheader'));
+    assert.ok(result.dropped.includes('also:bad'));
+    assert.ok(result.dropped.includes('referer'));
+});
+
 test('proxy header normalizer skips already proxied urls', () => {
     const url = 'https://leviathan.example/ccproxy/stream?d=token';
     const decision = shouldProxyUrl(url, { addonBase: 'https://leviathan.example' });

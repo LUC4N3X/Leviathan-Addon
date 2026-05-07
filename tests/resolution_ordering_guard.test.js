@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const {
   applyResolutionOrderingGuard,
+  detectCacheTier,
   detectResolutionTier,
   shouldPromoteHigherResolution
 } = require('../core/debrid/guards/resolution_ordering_guard');
@@ -44,6 +45,12 @@ test('detectResolutionTier reads quality fields without requiring title mutation
   assert.equal(detectResolutionTier({ quality: '2160p' }), 4);
   assert.equal(detectResolutionTier({ behaviorHints: { videoResolution: '1080p' } }), 3);
   assert.equal(detectResolutionTier({ title: 'Movie SD' }), 1);
+});
+
+test('detectCacheTier reads provider-normalized cache hints', () => {
+  assert.equal(detectCacheTier({ isCached: true }), 4);
+  assert.equal(detectCacheTier({ tbCached: true }), 4);
+  assert.equal(detectCacheTier({ behaviorHints: { cacheState: 'likely_cached' } }), 3);
 });
 
 test('strict resolution mode from index.html puts 4K before cached lower resolutions', () => {

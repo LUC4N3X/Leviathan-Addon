@@ -41,3 +41,28 @@ test('does not deduplicate similar looking titles without matching infohash', ()
   assert.equal(out.removed, 0);
   assert.equal(out.results.length, 2);
 });
+
+test('dedupe preserves cached aliases from provider-normalized duplicates', () => {
+  const input = [
+    { title: 'A 1080p unknown', infoHash: HASH, source: 'DB', seeders: 200, _rdCacheState: 'unknown' },
+    {
+      title: 'A 1080p cached',
+      infoHash: HASH,
+      source: 'Torrentio',
+      seeders: 5,
+      isCached: true,
+      behaviorHints: { cacheState: 'cached' },
+      _nexusBridgeRdChecked: true
+    }
+  ];
+
+  const out = dedupeByInfoHash(input);
+  const [item] = out.results.filter((entry) => extractInfoHash(entry) === HASH);
+
+  assert.equal(out.removed, 1);
+  assert.equal(item._rdCacheState, 'cached');
+  assert.equal(item.rdCacheState, 'cached');
+  assert.equal(item.cached, true);
+  assert.equal(item.isCached, true);
+  assert.equal(item._nexusBridgeRdChecked, true);
+});
