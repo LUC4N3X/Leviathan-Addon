@@ -11,7 +11,7 @@ const {
   requestWithImpit,
   requestWithImpitRotating
 } = require('./bypass');
-const { createCfClearanceManager, normalizeBaseUrl, mergeCookieHeaders, buildCookieHeaderFromSession, mergeSessionCookies } = require('./cf_clearance_manager');
+const { createCfClearanceManager, normalizeBaseUrl, mergeCookieHeaders, buildCookieHeaderFromSession, mergeSessionCookies, classifyChallengeHtml } = require('./cf_clearance_manager');
 let evidenceGraph = null;
 try {
   evidenceGraph = require('../../core/evidence_graph');
@@ -39,6 +39,46 @@ class LRUCache {
   delete(key) { this._map.delete(key); }
 }
 
+function createProviderLimiter(maxConcurrent = 3, maxQueue = 60) {
+  const limit = Math.max(1, Math.min(16, Number(maxConcurrent) || 3));
+  const queueLimit = Math.max(0, Number(maxQueue) || 60);
+  let active = 0;
+  const queue = [];
+
+  function drain() {
+    while (active < limit && queue.length > 0) {
+      const item = queue.shift();
+      active += 1;
+      Promise.resolve()
+        .then(item.fn)
+        .then(item.resolve, item.reject)
+        .finally(() => {
+          active = Math.max(0, active - 1);
+          drain();
+        });
+    }
+  }
+
+  function run(fn) {
+    return new Promise((resolve, reject) => {
+      if (active >= limit && queue.length >= queueLimit) {
+        const error = new Error('provider_request_queue_overflow');
+        error.code = 'PROVIDER_REQUEST_QUEUE_OVERFLOW';
+        error.active = active;
+        error.queued = queue.length;
+        error.limit = limit;
+        error.maxQueue = queueLimit;
+        reject(error);
+        return;
+      }
+      queue.push({ fn, resolve, reject });
+      drain();
+    });
+  }
+
+  run.stats = () => ({ active, queued: queue.length, limit, maxQueue: queueLimit });
+  return run;
+}
 
 // Shared Cloudflare clearance is intentionally hardcoded: one FlareSolverr solve per provider/domain
 // is reused by all addon requests and all users until the CookieJar session expires or is invalidated.
@@ -161,6 +201,10 @@ function createProviderHttpGuard(options = {}) {
   const impitAfterSessionChallenge = options.impitAfterSessionChallenge !== false;
   const impitPreClearanceRescue = options.impitPreClearanceRescue !== false;
   const impitPreClearanceTimeoutMs = Math.max(1200, Math.min(4500, Number(options.impitPreClearanceTimeoutMs || 2600) || 2600));
+  const staleSessionGraceMs = Math.max(60_000, Number(options.staleSessionGraceMs || 12 * 60 * 60 * 1000));
+  const providerRequestLimiter = createProviderLimiter(options.providerMaxConcurrentFetches || 3, options.providerMaxQueuedFetches || 80);
+  let staleRevalidatePromise = null;
+
 
   function loadStoredDomain() {
     try {
@@ -234,6 +278,13 @@ function createProviderHttpGuard(options = {}) {
     initialSession: activeSession,
     sessionPoolMax: options.sessionPoolMax || 3,
     sessionPoolMinScore: options.sessionPoolMinScore ?? -2,
+    sessionRetireFailures: options.sessionRetireFailures || 2,
+    sessionRetireWindowMs: options.sessionRetireWindowMs || 10 * 60 * 1000,
+    sessionStaleGraceMs: staleSessionGraceMs,
+    solveVerifyTimeoutMs: options.solveVerifyTimeoutMs || 3500,
+    sharedLockFile: options.sharedLockFile || `${sessionFile}.lock`,
+    sharedLockWaitMs: options.sharedLockWaitMs || clearanceTimeoutMs + 10_000,
+    loadExternalSession: loadSession,
     isCanceledError,
     getFallbackUserAgent,
     logger: {
@@ -265,6 +316,14 @@ function createProviderHttpGuard(options = {}) {
 
   function isSessionFreshForUrl(session = activeSession, url = currentBaseUrl) {
     if (!isSessionFresh(session)) return false;
+    return Boolean(buildCookieHeaderFromSession(session, url || session.solvedUrl || session.url || currentBaseUrl));
+  }
+
+  function isSessionStaleUsableForUrl(session = activeSession, url = currentBaseUrl) {
+    if (!session || !session.userAgent || !session.timestamp || session.retired) return false;
+    const ageMs = Date.now() - Number(session.timestamp || 0);
+    if (!Number.isFinite(ageMs) || ageMs < sessionTtlMs || ageMs > sessionTtlMs + staleSessionGraceMs) return false;
+    if (clearanceManager && typeof clearanceManager.isStaleUsable === 'function') return clearanceManager.isStaleUsable(session, url || currentBaseUrl);
     return Boolean(buildCookieHeaderFromSession(session, url || session.solvedUrl || session.url || currentBaseUrl));
   }
 
@@ -400,31 +459,23 @@ function createProviderHttpGuard(options = {}) {
     return domainRefreshPromise;
   }
 
+  function getChallengeFingerprint(html, status = 200) {
+    const base = classifyChallengeHtml(html, status);
+    if (!base.challenge && typeof options.challengeDetector === 'function') {
+      try {
+        if (options.challengeDetector(typeof html === 'string' ? html : String(html || ''), status)) {
+          return { challenge: true, score: Math.max(base.score || 0, 3), reason: base.reason || 'provider_detector' };
+        }
+      } catch (_) {}
+    }
+    if (!base.challenge && isCloudflareChallenge(typeof html === 'string' ? html : String(html || ''), status)) {
+      return { challenge: true, score: Math.max(base.score || 0, 3), reason: base.reason || 'bypass_detector' };
+    }
+    return base;
+  }
+
   function isChallengePage(html, status = 200) {
-    const raw = typeof html === 'string' ? html : String(html || '');
-    if (!raw) return true;
-    const lower = raw.slice(0, 250000).toLowerCase();
-
-    if ([403, 429, 503].includes(Number(status))) return true;
-    if (isCloudflareChallenge(raw, status)) return true;
-    if (typeof options.challengeDetector === 'function' && options.challengeDetector(raw, status)) return true;
-
-    const signals = [
-      'turnstile.cloudflare.com', 'cf-turnstile', 'cf_chl_', '__cf_chl_',
-      'cf-browser-verification', 'cf_captcha_kind', 'cf_clearance',
-      'challenge-platform', 'challenge-form', 'cf-challenge', 'g-recaptcha',
-      'h-captcha', 'hcaptcha.com', 'checking if the site connection is secure',
-      'verify you are human', 'verifica di essere umano', 'verifica che sei umano',
-      'verifica che tu sia umano', 'controllo connessione al sito',
-      'just a moment', 'un momento', 'ray id'
-    ];
-
-    let score = 0;
-    for (const token of signals) if (lower.includes(token)) score += 2;
-    if (lower.includes('cloudflare') && (lower.includes('captcha') || lower.includes('challenge') || lower.includes('turnstile'))) score += 4;
-    if (/<title>\s*(just a moment|attention required|verifica|checking)/i.test(raw)) score += 4;
-    if (/id=["']?challenge-|class=["'][^"']*(cf-|challenge|turnstile)/i.test(raw)) score += 3;
-    return score >= 3;
+    return getChallengeFingerprint(html, status).challenge;
   }
 
   function buildHeaders({ session = null, method = 'GET', body = null, directProfile = null, url = null } = {}) {
@@ -465,7 +516,11 @@ function createProviderHttpGuard(options = {}) {
     return headers;
   }
 
-  async function axiosSiteRequest(url, { method = 'GET', body = null, headers = {}, timeout = directFetchTimeoutMs, signal = null, maxRedirects = 6, browserProfile = null, useImpit = preferImpit, impitAttempts = null, impitTotalExtra = null } = {}) {
+  async function axiosSiteRequest(url, requestOptions = {}) {
+    return providerRequestLimiter(() => axiosSiteRequestUnbounded(url, requestOptions));
+  }
+
+  async function axiosSiteRequestUnbounded(url, { method = 'GET', body = null, headers = {}, timeout = directFetchTimeoutMs, signal = null, maxRedirects = 6, browserProfile = null, useImpit = preferImpit, impitAttempts = null, impitTotalExtra = null } = {}) {
     const startedAt = Date.now();
     if (useImpit && preferImpit) {
       try {
@@ -647,8 +702,8 @@ function createProviderHttpGuard(options = {}) {
     }
   }
 
-  async function fetchWithSession(url, { method = 'GET', body = null, signal = null, timeout = directFetchTimeoutMs, startedAt = Date.now() } = {}) {
-    if (!isSessionFreshForUrl(activeSession, url)) return null;
+  async function fetchWithSession(url, { method = 'GET', body = null, signal = null, timeout = directFetchTimeoutMs, startedAt = Date.now(), allowStale = false } = {}) {
+    if (!(allowStale ? isSessionStaleUsableForUrl(activeSession, url) || isSessionFreshForUrl(activeSession, url) : isSessionFreshForUrl(activeSession, url))) return null;
     const response = await axiosSiteRequest(url, {
       method,
       body: method === 'POST' ? body : null,
@@ -664,7 +719,8 @@ function createProviderHttpGuard(options = {}) {
     updateCurrentDomainFromUrl(response.url);
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
     if (isChallengePage(html, response.status)) {
-      logger.debug('session fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, via: response.via, ms: Date.now() - startedAt });
+      const fingerprint = getChallengeFingerprint(html, response.status);
+      logger.debug('session fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, reason: fingerprint.reason, score: fingerprint.score, via: response.via, ms: Date.now() - startedAt });
       recordProviderEvidence('session_challenge', { method, url, status: response.status, ms: Date.now() - startedAt });
       if (clearanceManager && typeof clearanceManager.recordSessionOutcome === 'function') {
         activeSession = clearanceManager.recordSessionOutcome(activeSession, response.url || url, false, 'session_challenge') || activeSession;
@@ -742,7 +798,8 @@ function createProviderHttpGuard(options = {}) {
     updateCurrentDomainFromUrl(response.url);
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
     if (isChallengePage(html, response.status)) {
-      logger.debug('direct fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, ms: Date.now() - startedAt });
+      const fingerprint = getChallengeFingerprint(html, response.status);
+      logger.debug('direct fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, reason: fingerprint.reason, score: fingerprint.score, ms: Date.now() - startedAt });
       recordProviderEvidence('direct_challenge', { method, url, status: response.status, ms: Date.now() - startedAt });
       const replayed = await tryRedirectedSessionReplay(url, response.url, { method, body, signal, timeout, startedAt, reason: 'direct-challenge' });
       if (replayed) return replayed;
@@ -789,6 +846,8 @@ function createProviderHttpGuard(options = {}) {
         maxTimeout: clearanceTimeoutMs,
         sharedKey,
         wantResponse: sameDocumentUrl(primaryClearanceUrl, triggerUrl),
+        verifySession: true,
+        verifyUrl: triggerUrl,
         allowSessionPool: true,
         cookies: buildCookieHeaderFromSession(activeSession, targetClearanceUrl) || activeSession?.cookies || ''
       });
@@ -808,6 +867,8 @@ function createProviderHttpGuard(options = {}) {
           fallback: true,
           maxTimeout: clearanceTimeoutMs,
           wantResponse: sameDocumentUrl(fallbackUrl, triggerUrl),
+          verifySession: true,
+          verifyUrl: triggerUrl,
           allowSessionPool: true,
           cookies: buildCookieHeaderFromSession(activeSession, fallbackUrl) || activeSession?.cookies || ''
         });
@@ -841,6 +902,21 @@ function createProviderHttpGuard(options = {}) {
   }
 
 
+  function startStaleRevalidate(url, { isPost = false, body = null } = {}) {
+    if (staleRevalidatePromise || sharedClearancePromise) return;
+    staleRevalidatePromise = solveClearance(url, { isPost, body, signal: null, force: false })
+      .then(session => {
+        if (session && isSessionFreshForUrl(session, url)) {
+          logger.debug('stale revalidate ok', { url, fresh: true });
+        }
+      })
+      .catch(error => {
+        logger.debug('stale revalidate error', { url, error: error?.message || String(error), code: error?.code });
+      })
+      .finally(() => { staleRevalidatePromise = null; });
+  }
+
+
   async function executeSmartFetch(url, isPost = false, body = null, signal = null, allowFlareSolverr = true, timeoutMs = directFetchTimeoutMs) {
     const startedAt = Date.now();
     const method = isPost ? 'POST' : 'GET';
@@ -854,6 +930,21 @@ function createProviderHttpGuard(options = {}) {
       } catch (error) {
         if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
         logger.debug('session fetch error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
+      }
+    }
+
+    if (!isSessionFreshForUrl(activeSession, url) && isSessionStaleUsableForUrl(activeSession, url)) {
+      startStaleRevalidate(url, { isPost, body });
+      try {
+        const html = await fetchWithSession(url, { method, body, signal, timeout: hardFetchTimeout, startedAt, allowStale: true });
+        if (html) {
+          recordProviderEvidence('stale_session_fetch_ok', { method, url, ms: Date.now() - startedAt });
+          logger.debug('stale session fetch ok', { method, url, ms: Date.now() - startedAt });
+          return html;
+        }
+      } catch (error) {
+        if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
+        logger.debug('stale session fetch error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
       }
     }
 
@@ -962,6 +1053,9 @@ function createProviderHttpGuard(options = {}) {
       sharedClearanceForceOrigin,
       sharedClearancePending: Boolean(sharedClearancePromise),
       cfSessionPool: typeof clearanceManager.getSessionPoolStats === 'function' ? clearanceManager.getSessionPoolStats() : null,
+      cfGuardian: typeof clearanceManager.getGuardianStats === 'function' ? clearanceManager.getGuardianStats() : null,
+      providerLimiter: typeof providerRequestLimiter.stats === 'function' ? providerRequestLimiter.stats() : null,
+      staleRevalidatePending: Boolean(staleRevalidatePromise),
       evidenceGraph: evidenceGraph && typeof evidenceGraph.getEvidenceGraphStats === 'function' ? evidenceGraph.getEvidenceGraphStats() : null
     }),
     directFetchTimeoutMs,
