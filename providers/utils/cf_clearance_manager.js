@@ -9,6 +9,13 @@ try {
   // Optional at runtime during tests/dev before npm install. Fallback parsers below stay active.
 }
 
+let toughCookie = null;
+try {
+  toughCookie = require('tough-cookie');
+} catch (_) {
+  // Optional guard for old installs: string-cookie fallback below stays active.
+}
+
 const DEFAULT_FLARESOLVERR_URL = null;
 const DEFAULT_ENDPOINT_FAILURE_COOLDOWN_MS = 45_000;
 
@@ -63,6 +70,180 @@ function normalizeSetCookieHeaders(value) {
     } catch (_) {}
   }
   return [String(value)].filter(Boolean);
+}
+
+
+function safeCookieUrl(url, fallback = 'https://example.com/') {
+  try {
+    const parsed = new URL(String(url || fallback));
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('bad protocol');
+    return parsed.toString();
+  } catch (_) {
+    try { return new URL(String(fallback || 'https://example.com/')).toString(); } catch (_) { return 'https://example.com/'; }
+  }
+}
+
+function isToughCookieAvailable() {
+  return Boolean(toughCookie?.CookieJar);
+}
+
+function getCookieJarFromJSON(serialized) {
+  if (!serialized || !isToughCookieAvailable()) return null;
+  try {
+    if (typeof toughCookie.CookieJar.deserializeSync === 'function') {
+      return toughCookie.CookieJar.deserializeSync(serialized);
+    }
+  } catch (_) {}
+  try {
+    if (typeof toughCookie.CookieJar.fromJSON === 'function') {
+      return toughCookie.CookieJar.fromJSON(serialized);
+    }
+  } catch (_) {}
+  return null;
+}
+
+function createEmptyCookieJar() {
+  if (!isToughCookieAvailable()) return null;
+  try { return new toughCookie.CookieJar(); } catch (_) { return null; }
+}
+
+function normalizeCookieDate(value) {
+  if (value == null || value === '' || value === Infinity) return null;
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return null;
+    const ms = value > 1e12 ? value : value * 1000;
+    const date = new Date(ms);
+    return Number.isFinite(date.getTime()) ? date : null;
+  }
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? new Date(parsed) : null;
+}
+
+function cookieObjectToSetCookieString(cookie) {
+  if (!cookie || typeof cookie !== 'object') return null;
+  const name = cookie.name || cookie.key;
+  const value = cookie.value ?? cookie.val;
+  if (!name || value == null) return null;
+
+  const parts = [`${name}=${value}`];
+  const domain = cookie.domain || cookie.host;
+  const path = cookie.path || '/';
+  const maxAge = cookie.maxAge ?? cookie['max-age'];
+  const expires = normalizeCookieDate(cookie.expires ?? cookie.expiry ?? cookie.expirationDate ?? cookie.expiration);
+
+  if (domain) parts.push(`Domain=${String(domain).trim()}`);
+  if (path) parts.push(`Path=${String(path).trim() || '/'}`);
+  if (maxAge != null && Number.isFinite(Number(maxAge))) parts.push(`Max-Age=${Math.trunc(Number(maxAge))}`);
+  if (expires) parts.push(`Expires=${expires.toUTCString()}`);
+  if (cookie.secure === true) parts.push('Secure');
+  if (cookie.httpOnly === true || cookie.httponly === true) parts.push('HttpOnly');
+  if (cookie.sameSite || cookie.samesite) parts.push(`SameSite=${cookie.sameSite || cookie.samesite}`);
+  return parts.join('; ');
+}
+
+function rawCookiesToSetCookieStrings(rawCookies) {
+  if (!rawCookies) return [];
+  const out = [];
+
+  if (Array.isArray(rawCookies)) {
+    for (const item of rawCookies) {
+      if (!item) continue;
+      if (typeof item === 'string') {
+        const trimmed = item.trim();
+        if (trimmed) out.push(trimmed.includes(';') ? trimmed : `${trimmed}; Path=/`);
+      } else if (typeof item === 'object') {
+        const setCookie = cookieObjectToSetCookieString(item);
+        if (setCookie) out.push(setCookie);
+      }
+    }
+    return out;
+  }
+
+  const raw = String(rawCookies || '').trim();
+  if (!raw) return [];
+  if (raw.includes(';') && /(?:path|domain|expires|max-age|secure|httponly|samesite)=?/i.test(raw)) {
+    out.push(raw);
+  } else {
+    for (const { name, value } of parseCookieHeaderPairs(raw)) out.push(`${name}=${value}; Path=/`);
+  }
+  return out;
+}
+
+function addCookieStringsToJar(jar, rawCookies, url) {
+  if (!jar || !rawCookies) return jar;
+  const cookieUrl = safeCookieUrl(url);
+  for (const setCookie of rawCookiesToSetCookieStrings(rawCookies)) {
+    try { jar.setCookieSync(setCookie, cookieUrl, { ignoreError: true }); } catch (_) {}
+  }
+  return jar;
+}
+
+function createCookieJarFromSession(session = {}, url = null) {
+  if (!isToughCookieAvailable()) return null;
+  const cookieUrl = safeCookieUrl(url || session.solvedUrl || session.url);
+  const serializedJar = getCookieJarFromJSON(session.cookieJar || session.jar || null);
+  if (serializedJar) return serializedJar;
+
+  const jar = createEmptyCookieJar();
+  if (!jar) return null;
+  if (session.cookies) addCookieStringsToJar(jar, session.cookies, cookieUrl);
+  return jar;
+}
+
+function serializeCookieJar(jar) {
+  if (!jar) return null;
+  try {
+    if (typeof jar.serializeSync === 'function') return jar.serializeSync();
+  } catch (_) {}
+  try {
+    if (typeof jar.toJSON === 'function') return jar.toJSON();
+  } catch (_) {}
+  return null;
+}
+
+function getCookieStringFromJar(jar, url) {
+  if (!jar) return '';
+  try { return jar.getCookieStringSync(safeCookieUrl(url)); } catch (_) { return ''; }
+}
+
+function buildCookieHeaderFromSession(session = {}, url = null) {
+  if (!session) return '';
+  const cookieUrl = safeCookieUrl(url || session.solvedUrl || session.url);
+  const jar = createCookieJarFromSession(session, cookieUrl);
+  const fromJar = getCookieStringFromJar(jar, cookieUrl);
+  return fromJar || String(session.cookies || '').trim();
+}
+
+function createCookieStateForUrl(url, rawCookies, existingSession = {}) {
+  const cookieUrl = safeCookieUrl(url || existingSession.solvedUrl || existingSession.url);
+  const jar = createCookieJarFromSession(existingSession, cookieUrl);
+  if (jar) {
+    addCookieStringsToJar(jar, rawCookies, cookieUrl);
+    const cookies = getCookieStringFromJar(jar, cookieUrl);
+    return {
+      cookies,
+      cookieJar: serializeCookieJar(jar),
+      cookieJarVersion: 2,
+      cf_clearance: readCookieValue(cookies, 'cf_clearance')
+    };
+  }
+
+  const merged = mergeCookieHeaders(existingSession.cookies || '', rawCookies);
+  return {
+    cookies: merged,
+    cf_clearance: readCookieValue(merged, 'cf_clearance')
+  };
+}
+
+function mergeSessionCookies(session = {}, url = null, setCookieHeader = null) {
+  const cookieUrl = safeCookieUrl(url || session.solvedUrl || session.url);
+  if (!setCookieHeader && !session.cookieJar) return session;
+  const state = createCookieStateForUrl(cookieUrl, setCookieHeader, session);
+  return {
+    ...session,
+    ...state
+  };
 }
 
 function parseCookieHeaderPairs(cookieHeader) {
@@ -127,18 +308,39 @@ function isCookieExpired(cookie) {
   return false;
 }
 
-function cookieHeaderToObjects(cookieHeader) {
+function cookieHeaderToObjects(cookieHeader, url = null) {
   if (Array.isArray(cookieHeader)) {
     const out = [];
     const seen = new Set();
-    for (const cookie of parseSetCookiePairs(cookieHeader)) {
-      if (isCookieExpired(cookie) || seen.has(cookie.name)) continue;
-      seen.add(cookie.name);
-      out.push({ name: cookie.name, value: cookie.value });
+    for (const item of cookieHeader) {
+      if (!item) continue;
+      let name = null;
+      let value = null;
+      let expired = false;
+
+      if (typeof item === 'string') {
+        const parsed = parseSingleCookie(item);
+        if (parsed) {
+          name = parsed[0];
+          value = parsed[1];
+        }
+      } else if (typeof item === 'object') {
+        name = item.name || item.key || null;
+        value = item.value ?? item.val ?? null;
+        expired = isCookieExpired({ name, value, expires: item.expires ?? item.expiry ?? item.expirationDate, maxAge: item.maxAge ?? item['max-age'] });
+      }
+
+      if (!name || value == null || expired || seen.has(name)) continue;
+      seen.add(name);
+      out.push({ name, value: String(value) });
     }
     return out;
   }
-  return parseCookieHeaderPairs(cookieHeader).map(({ name, value }) => ({ name, value }));
+
+  const sessionCookieHeader = cookieHeader?.cookieJar || cookieHeader?.cookies
+    ? buildCookieHeaderFromSession(cookieHeader, url)
+    : String(cookieHeader || '');
+  return parseCookieHeaderPairs(sessionCookieHeader).map(({ name, value }) => ({ name, value }));
 }
 
 function isLikelyChallengeHtml(body, status = 200) {
@@ -311,13 +513,10 @@ function createCfClearanceManager(options = {}) {
   }
 
   function isFresh(session) {
-    return Boolean(
-      session &&
-      session.cookies &&
-      session.userAgent &&
-      session.timestamp &&
-      Date.now() - Number(session.timestamp) < sessionTtlMs
-    );
+    if (!session || !session.userAgent || !session.timestamp) return false;
+    if (Date.now() - Number(session.timestamp) >= sessionTtlMs) return false;
+    const cookieHeader = buildCookieHeaderFromSession(session, session.solvedUrl || session.url);
+    return Boolean(cookieHeader);
   }
 
   function keyFor(url) {
@@ -418,11 +617,17 @@ function createCfClearanceManager(options = {}) {
             }
 
             const solution = payload.solution || {};
-            const cookies = joinCookieHeader(solution.cookies || payload.cookies || '');
+            const rawSolutionCookies = solution.cookies || payload.cookies || '';
             const userAgent = solution.userAgent || payload.userAgent || meta.userAgent || getFallbackUserAgent();
             const solvedUrl = solution.url || clearanceUrl;
             const solutionStatus = solution.status || response.status;
             const solutionBody = solution.response || payload.response || '';
+            const cookieState = createCookieStateForUrl(solvedUrl || clearanceUrl, rawSolutionCookies, {
+              cookies: meta.cookies || meta.cookieHeader || '',
+              userAgent,
+              url: normalizeBaseUrl(solvedUrl) || normalizeBaseUrl(clearanceUrl) || null
+            });
+            const cookies = cookieState.cookies || joinCookieHeader(rawSolutionCookies || '');
 
             if ((!cookies || !userAgent) || isLikelyChallengeHtml(solutionBody, solutionStatus)) {
               logger.warn('solve empty', {
@@ -442,7 +647,9 @@ function createCfClearanceManager(options = {}) {
               providerName,
               userAgent,
               cookies,
-              cf_clearance: readCookieValue(cookies, 'cf_clearance'),
+              cookieJar: cookieState.cookieJar || null,
+              cookieJarVersion: cookieState.cookieJar ? 2 : undefined,
+              cf_clearance: cookieState.cf_clearance || readCookieValue(cookies, 'cf_clearance'),
               url: normalizeBaseUrl(solvedUrl) || normalizeBaseUrl(clearanceUrl) || null,
               solvedUrl,
               timestamp: Date.now(),
@@ -515,5 +722,10 @@ module.exports = {
   parseSingleCookie,
   joinCookieHeader,
   readCookieValue,
-  mergeCookieHeaders
+  mergeCookieHeaders,
+  buildCookieHeaderFromSession,
+  mergeSessionCookies,
+  createCookieJarFromSession,
+  createCookieStateForUrl,
+  isToughCookieAvailable
 };
