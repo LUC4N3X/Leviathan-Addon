@@ -15,6 +15,13 @@ const {
 const { evaluateLeviathanScore } = require('../ranking/score_profile');
 const { shouldKeepStrictItalianCandidate, hasStrictItalianEvidence } = require('../canonical/language_guard');
 
+let evidenceGraph = null;
+try {
+  evidenceGraph = require('../evidence_graph');
+} catch (_) {
+  evidenceGraph = null;
+}
+
 const REGEX_SCENE_RELEASE = /\b(?:web[-.\s]?dl|webrip|blu[-.\s]?ray|bd[-.\s]?rip|remux|uhd|hevc|x265|x264|ddp|truehd|dts|atmos|hdr|dv|dolby[\s.-]?vision)\b/i;
 const REGEX_HEVC = /\b(?:x265|h265|hevc)\b/i;
 const REGEX_HDR = /\b(?:hdr|hdr10\+?|dolby[\s.-]?vision|\bdv\b)\b/i;
@@ -696,6 +703,20 @@ function computeScore(item, meta = {}, configInput = {}) {
     reasons.push("TB_CACHED");
   }
 
+  let evidenceScore = null;
+  if (evidenceGraph && typeof evidenceGraph.getStreamEvidenceScore === 'function') {
+    try {
+      evidenceScore = evidenceGraph.getStreamEvidenceScore(item);
+      if (evidenceScore && Number.isFinite(Number(evidenceScore.score)) && Number(evidenceScore.score) !== 0) {
+        const delta = Number(evidenceScore.score);
+        score += delta;
+        reasons.push(`EVIDENCE:${delta > 0 ? '+' : ''}${delta}`);
+      }
+    } catch (_) {
+      evidenceScore = null;
+    }
+  }
+
   const scoreProfile = evaluateLeviathanScore(item, meta, configInput);
   const useScoreProfile = configInput?.useLeviathanScoreProfile === true
     || configInput?.ranking?.useLeviathanScoreProfile === true
@@ -733,7 +754,14 @@ function computeScore(item, meta = {}, configInput = {}) {
       isMaybeItalian: signals.langInfo.isMaybeItalian,
       isMulti: signals.langInfo.isMulti,
       subOnly: signals.subOnly,
-      scoreProfile
+      scoreProfile,
+      evidence: evidenceScore ? {
+        score: evidenceScore.score,
+        seen: evidenceScore.seen,
+        cachedSafe: evidenceScore.cachedSafe,
+        trustScore: evidenceScore.trustScore,
+        reasons: Array.isArray(evidenceScore.reasons) ? evidenceScore.reasons.slice(0, 4) : []
+      } : null
     }
   };
 }
@@ -799,6 +827,18 @@ function rankAndFilterResults(results = [], meta = {}, configInput = {}) {
     .filter((item) => !config.keepByLanguage || shouldKeepByLanguageMode(item, meta, configInput));
 
   ranked.sort((a, b) => compareRankedItems(a, b, meta, config));
+
+  if (evidenceGraph && typeof evidenceGraph.recordStreamEvidenceBatch === 'function') {
+    try {
+      evidenceGraph.recordStreamEvidenceBatch(ranked, {
+        ...(meta || {}),
+        stage: 'ranked',
+        sortMode: config.sortMode,
+        profile: config.profile
+      });
+    } catch (_) {}
+  }
+
   return ranked;
 }
 
