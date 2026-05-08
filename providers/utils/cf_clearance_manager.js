@@ -58,7 +58,11 @@ function normalizeFlareEndpoints(...values) {
 
 function normalizeSetCookieHeaders(value) {
   if (!value) return [];
-  if (Array.isArray(value)) return value.filter(Boolean).map(String);
+  if (Array.isArray(value)) {
+    return value
+      .map(item => (item && typeof item === 'object') ? cookieObjectToSetCookieString(item) : String(item || ''))
+      .filter(Boolean);
+  }
   if (value && typeof value.getSetCookie === 'function') {
     try { return value.getSetCookie().filter(Boolean).map(String); } catch (_) {}
   }
@@ -519,7 +523,9 @@ function createCfClearanceManager(options = {}) {
     return Boolean(cookieHeader);
   }
 
-  function keyFor(url) {
+  function keyFor(url, sharedKey = null) {
+    const shared = String(sharedKey || '').trim();
+    if (shared) return `shared:${providerName}:${shared}`;
     try {
       const u = new URL(url);
       return `${u.origin}${u.pathname}${u.search}`;
@@ -544,8 +550,17 @@ function createCfClearanceManager(options = {}) {
       return null;
     }
 
-    const key = keyFor(clearanceUrl);
-    if (inFlight.has(key)) return inFlight.get(key);
+    const sharedKey = meta.sharedKey || meta.coalesceKey || null;
+    const key = keyFor(clearanceUrl, sharedKey);
+    if (inFlight.has(key)) {
+      logger.debug('solve shared wait', {
+        provider: providerName,
+        clearanceUrl,
+        key,
+        shared: Boolean(sharedKey)
+      });
+      return inFlight.get(key);
+    }
 
     const now = Date.now();
     const last = cooldown.get(key) || 0;
@@ -584,7 +599,9 @@ function createCfClearanceManager(options = {}) {
               maxTimeout,
               endpoint: selectedEndpoint,
               endpoints: endpoints.length,
-              cookiesIn: cookieObjects.length
+              cookiesIn: cookieObjects.length,
+              shared: Boolean(sharedKey),
+              sharedKey: sharedKey || undefined
             });
 
             const requestPayload = {
