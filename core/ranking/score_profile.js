@@ -69,6 +69,12 @@ const DEFAULT_SCORE_PROFILE = Object.freeze({
         db: -4,
         unknown: 0
     }),
+    sourceConsensus: Object.freeze({
+        strong_consensus: 14,
+        consensus: 9,
+        mirror: 4,
+        none: 0
+    }),
     pack: Object.freeze({
         singleFile: 10,
         seasonPack: 6,
@@ -154,6 +160,40 @@ function detectSource(item = {}) {
     return 'unknown';
 }
 
+function normalizeSourceLabel(value) {
+    const text = String(value || '').trim();
+    if (!text || /^(unknown|n\/a|null|undefined)$/i.test(text)) return '';
+    return text.toLowerCase();
+}
+
+function collectConsensusSources(item = {}) {
+    const out = new Set();
+    const push = (value) => {
+        const normalized = normalizeSourceLabel(value);
+        if (normalized) out.add(normalized);
+    };
+
+    push(item.source);
+    push(item.provider);
+    push(item.providerId);
+    push(item.sourceName);
+    push(item.externalAddon);
+    push(item.behaviorHints?.vortexSource);
+    push(item.behaviorHints?.vortexMeta?.provider);
+    for (const source of Array.isArray(item._dedupeMergedSources) ? item._dedupeMergedSources : []) push(source);
+    for (const source of Array.isArray(item._dedupeEvidence?.sources) ? item._dedupeEvidence.sources : []) push(source);
+    return out;
+}
+
+function detectSourceConsensus(item = {}) {
+    const sourceCount = collectConsensusSources(item).size;
+    const mergedCount = Number(item._dedupeMergedCount || item._dedupeEvidence?.mergedCount || 0) || 0;
+    if (sourceCount >= 3 || mergedCount >= 4) return 'strong_consensus';
+    if (sourceCount >= 2 || mergedCount >= 3) return 'consensus';
+    if (mergedCount >= 2) return 'mirror';
+    return 'none';
+}
+
 function detectPackState(item = {}) {
     const text = `${item.title || ''} ${item.name || ''} ${item.filename || ''}`;
     if (item._isMultiSeasonPack === true || /\b(?:s\d{1,2}\s*[-+]\s*s\d{1,2}|complete\s+series|serie\s+completa)\b/i.test(text)) return 'multiSeasonPack';
@@ -181,6 +221,7 @@ function evaluateLeviathanScore(item = {}, meta = {}, options = {}) {
     const seedHealth = item._seedHealth || getSeedHealth(item.seeders).health;
     const providerReliability = detectProviderReliability(item, options.providerReliability || {});
     const source = detectSource(item);
+    const sourceConsensus = detectSourceConsensus(item);
     const pack = detectPackState(item);
     const episodeTruth = item._episodeTruth || evaluateEpisodeTruth(item, meta, { strict: false });
     const episodeTruthType = episodeTruth?.type || 'not_required';
@@ -192,6 +233,7 @@ function evaluateLeviathanScore(item = {}, meta = {}, options = {}) {
     addComponent(parts, profile, 'providerReliability', providerReliability, providerReliability);
     addComponent(parts, profile, 'episodeTruth', episodeTruthType, episodeTruthType);
     addComponent(parts, profile, 'source', source, source);
+    addComponent(parts, profile, 'sourceConsensus', sourceConsensus, sourceConsensus);
     addComponent(parts, profile, 'pack', pack, pack);
 
     return {
@@ -239,6 +281,7 @@ module.exports = {
     detectRdStatus,
     detectResolution,
     detectSource,
+    detectSourceConsensus,
     evaluateLeviathanScore,
     formatRankExplain,
     mergeProfile,
