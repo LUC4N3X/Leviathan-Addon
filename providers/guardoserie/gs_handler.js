@@ -49,6 +49,8 @@ const DIRECT_FETCH_TIMEOUT_MS = Math.max(2500, parseInt(process.env.GS_DIRECT_FE
 const GS_IMPIT_MAX_ATTEMPTS = Math.max(2, Math.min(3, parseInt(process.env.GS_IMPIT_MAX_ATTEMPTS || process.env.GUARDOSERIE_IMPIT_MAX_ATTEMPTS || '3', 10) || 3));
 const GS_IMPIT_TOTAL_EXTRA_MS = Math.max(900, Math.min(2200, parseInt(process.env.GS_IMPIT_TOTAL_EXTRA_MS || process.env.GUARDOSERIE_IMPIT_TOTAL_EXTRA_MS || '1400', 10) || 1400));
 const GS_IMPIT_HTTP3 = envFlagNotFalse('GS_IMPIT_HTTP3', true) && envFlagNotFalse('GUARDOSERIE_IMPIT_HTTP3', true);
+const GS_IMPIT_PRE_CLEARANCE_TIMEOUT_MS = Math.max(1200, Math.min(4500, parseInt(process.env.GS_IMPIT_PRE_CLEARANCE_TIMEOUT_MS || process.env.GUARDOSERIE_IMPIT_PRE_CLEARANCE_TIMEOUT_MS || '4200', 10) || 4200));
+const GS_IMPIT_PRE_CLEARANCE_WITH_FLARE = envFlag('GS_IMPIT_PRE_CLEARANCE_WITH_FLARE', false) || envFlag('GUARDOSERIE_IMPIT_PRE_CLEARANCE_WITH_FLARE', false);
 const GS_IMPIT_BROWSER_FALLBACKS = Object.freeze(['chrome142', 'chrome136', 'chrome131', 'firefox144', 'firefox135', 'chrome125']);
 const GS_EXTRACTOR_DIRECT_TIMEOUT_MS = 3200;
 const GS_EXTRACTOR_IMPIT_TIMEOUT_MS = 1800;
@@ -108,6 +110,8 @@ const gsHttp = createProviderHttpGuard({
   impitMaxAttempts: GS_IMPIT_MAX_ATTEMPTS,
   impitTotalExtraMs: GS_IMPIT_TOTAL_EXTRA_MS,
   impitHttp3: GS_IMPIT_HTTP3,
+  impitPreClearanceTimeoutMs: GS_IMPIT_PRE_CLEARANCE_TIMEOUT_MS,
+  impitPreClearanceWhenFlareSolverr: GS_IMPIT_PRE_CLEARANCE_WITH_FLARE,
   impitSessionFastPath: true,
   impitAfterSessionChallenge: true,
   impitBrowserFallbacks: GS_IMPIT_BROWSER_FALLBACKS,
