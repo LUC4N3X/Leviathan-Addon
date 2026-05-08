@@ -216,7 +216,7 @@ function buildCookieHeaderFromSession(session = {}, url = null) {
   const cookieUrl = safeCookieUrl(url || session.solvedUrl || session.url);
   const jar = createCookieJarFromSession(session, cookieUrl);
   const fromJar = getCookieStringFromJar(jar, cookieUrl);
-  return fromJar || String(session.cookies || '').trim();
+  return fromJar || joinCookieHeader(session.cookies || '');
 }
 
 function createCookieStateForUrl(url, rawCookies, existingSession = {}) {
@@ -365,8 +365,9 @@ function isLikelyChallengeHtml(body, status = 200) {
   );
 }
 
-function createAsyncLimiter(maxConcurrency = 1) {
+function createAsyncLimiter(maxConcurrency = 1, options = {}) {
   const limit = Math.max(1, Math.min(4, Number(maxConcurrency) || 1));
+  const maxQueue = Math.max(0, Number.isFinite(Number(options.maxQueue)) ? Number(options.maxQueue) : 80);
   let active = 0;
   const queue = [];
 
@@ -385,6 +386,17 @@ function createAsyncLimiter(maxConcurrency = 1) {
 
   return function schedule(fn) {
     return new Promise((resolve, reject) => {
+      if (active >= limit && queue.length >= maxQueue) {
+        const error = new Error('async_limiter_queue_overflow');
+        error.code = 'ASYNC_LIMITER_QUEUE_OVERFLOW';
+        error.active = active;
+        error.queued = queue.length;
+        error.limit = limit;
+        error.maxQueue = maxQueue;
+        reject(error);
+        return;
+      }
+
       queue.push({ fn, resolve, reject });
       runNext();
     });
@@ -475,13 +487,15 @@ function createCfClearanceManager(options = {}) {
   const providerName = options.providerName || 'provider';
   const sessionTtlMs = Math.max(60_000, Number(options.sessionTtlMs || 6 * 60 * 60 * 1000));
   const cooldownMs = Math.max(0, Number(options.cooldownMs || 8000));
+  const cooldownMaxEntries = Math.max(25, Number.isFinite(Number(options.cooldownMaxEntries)) ? Number(options.cooldownMaxEntries) : 500);
+  const solveMaxQueue = Math.max(0, Number.isFinite(Number(options.solveMaxQueue)) ? Number(options.solveMaxQueue) : 80);
   const solveTimeoutMs = Math.max(12_000, Number(options.solveTimeoutMs || 24_000));
   const endpointFailureCooldownMs = Math.max(5_000, Number(options.endpointFailureCooldownMs || DEFAULT_ENDPOINT_FAILURE_COOLDOWN_MS));
   const returnOnlyCookies = options.returnOnlyCookies !== false;
   const disableMedia = options.disableMedia !== false;
   const waitInSeconds = Math.max(0, Math.min(5, Number(options.waitInSeconds || 0) || 0));
   const sessionTtlMinutes = Math.max(1, Math.ceil(sessionTtlMs / 60000));
-  const solveLimiter = createAsyncLimiter(options.solveConcurrency || 1);
+  const solveLimiter = createAsyncLimiter(options.solveConcurrency || 1, { maxQueue: solveMaxQueue });
   const httpAgent = options.httpAgent || undefined;
   const httpsAgent = options.httpsAgent || undefined;
   const getFallbackUserAgent = typeof options.getFallbackUserAgent === 'function'
@@ -534,6 +548,26 @@ function createCfClearanceManager(options = {}) {
     }
   }
 
+  function pruneCooldown(now = Date.now()) {
+    if (!cooldown.size) return;
+    const maxAge = Math.max(cooldownMs * 4, 60_000);
+    for (const [entryKey, timestamp] of cooldown.entries()) {
+      if (!Number.isFinite(Number(timestamp)) || now - Number(timestamp) > maxAge) {
+        cooldown.delete(entryKey);
+      }
+    }
+
+    if (cooldown.size <= cooldownMaxEntries) return;
+    const overflow = cooldown.size - cooldownMaxEntries;
+    let removed = 0;
+    for (const entryKey of cooldown.keys()) {
+      cooldown.delete(entryKey);
+      removed += 1;
+      if (removed >= overflow) break;
+    }
+  }
+
+
   function formatAbortReason(reason) {
     if (reason == null) return null;
     if (typeof reason === 'string') return reason;
@@ -563,6 +597,7 @@ function createCfClearanceManager(options = {}) {
     }
 
     const now = Date.now();
+    pruneCooldown(now);
     const last = cooldown.get(key) || 0;
     if (!meta.force && now - last < cooldownMs) return null;
     cooldown.set(key, now);
@@ -709,6 +744,22 @@ function createCfClearanceManager(options = {}) {
         clearTimeout(hardTimer);
         if (signal) signal.removeEventListener('abort', abortFromParent);
       }
+    }).catch((error) => {
+      if (error?.code === 'ASYNC_LIMITER_QUEUE_OVERFLOW') {
+        logger.warn('solve skipped', {
+          provider: providerName,
+          clearanceUrl,
+          reason: 'queue_overflow',
+          active: error.active,
+          queued: error.queued,
+          limit: error.limit,
+          maxQueue: error.maxQueue,
+          shared: Boolean(sharedKey),
+          sharedKey: sharedKey || undefined
+        });
+        return null;
+      }
+      throw error;
     }).finally(() => inFlight.delete(key));
 
     inFlight.set(key, promise);
