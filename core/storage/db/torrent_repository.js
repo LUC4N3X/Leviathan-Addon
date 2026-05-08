@@ -27,16 +27,24 @@ function createTorrentRepository({
     toDateOrNull
   } = normalizers;
 
-
-  // Leviathan RD cache policy: valori fissati in codice, non dipendono da .env.
-  // ⚡ cached confermato viene ricontrollato ogni 7 giorni; i vecchi permanenti 9999 vengono sempre re-queued al boot.
   const RD_CACHED_RECHECK_HOURS = 168;
   const RD_REVALIDATE_PERMANENT_ON_BOOT = true;
+
+
+  function cleanTorrentioProviderLabel(value = '') {
+    const raw = sanitizeText(value).replace(/\[EXT\]\s*/gi, '').replace(/LeviathanDB/gi, '').replace(/[()]/g, '').trim();
+    if (!raw) return '';
+    const cleaned = raw
+      .replace(/^Torrentio\s*(?:·|:|-|\/)?\s*/i, '')
+      .replace(/^Torrentio\s+/i, '')
+      .trim();
+    return cleaned || raw;
+  }
 
   function normalizeProviderName(providerName, title) {
     const extracted = extractOriginalProvider(title);
     if (extracted) return extracted;
-    const normalized = sanitizeText(providerName);
+    const normalized = cleanTorrentioProviderLabel(providerName);
     if (!normalized || normalized === 'Torrentio' || normalized === 'P2P') return 'External';
     return normalized;
   }
@@ -277,7 +285,7 @@ function createTorrentRepository({
       info_hash: infoHash,
       size: toSafeNumber(row.size, 0),
       seeders: toSafeNumber(row.seeders, 0),
-      provider: sanitizeText(row.provider, 'Unknown'),
+      provider: cleanTorrentioProviderLabel(row.provider) || 'Unknown',
       torrent_id: sanitizeText(row.torrent_id),
       type: normalizeStoredType(row.type),
       upload_date: row.upload_date || null,
