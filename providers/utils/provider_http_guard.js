@@ -12,7 +12,7 @@ const {
   requestWithImpit,
   requestWithImpitRotating
 } = require('./bypass');
-const { createCfClearanceManager, normalizeBaseUrl, mergeCookieHeaders } = require('./cf_clearance_manager');
+const { createCfClearanceManager, normalizeBaseUrl, mergeCookieHeaders, buildCookieHeaderFromSession, mergeSessionCookies } = require('./cf_clearance_manager');
 
 class LRUCache {
   constructor(maxSize) {
@@ -136,7 +136,6 @@ function createProviderHttpGuard(options = {}) {
   const impitSessionFastPath = options.impitSessionFastPath !== false;
   const impitAfterSessionChallenge = options.impitAfterSessionChallenge !== false;
   const impitPreClearanceRescue = options.impitPreClearanceRescue !== false;
-  const impitPreClearanceWhenFlareSolverr = options.impitPreClearanceWhenFlareSolverr !== false;
   const impitPreClearanceTimeoutMs = Math.max(1200, Math.min(4500, Number(options.impitPreClearanceTimeoutMs || 2600) || 2600));
 
   function loadStoredDomain() {
@@ -343,7 +342,7 @@ function createProviderHttpGuard(options = {}) {
     return score >= 3;
   }
 
-  function buildHeaders({ session = null, method = 'GET', body = null, directProfile = null } = {}) {
+  function buildHeaders({ session = null, method = 'GET', body = null, directProfile = null, url = null } = {}) {
     const profile = directProfile || pickProfile(profiles) || {};
     const userAgent = session?.userAgent || getProfileUserAgent(profile);
     const headers = {
@@ -356,7 +355,10 @@ function createProviderHttpGuard(options = {}) {
       'Sec-Fetch-Site': 'same-origin'
     };
 
-    if (session?.cookies) headers.Cookie = session.cookies;
+    if (session) {
+      const cookieHeader = buildCookieHeaderFromSession(session, url || currentBaseUrl);
+      if (cookieHeader) headers.Cookie = cookieHeader;
+    }
     if (profile.sec_ch_ua) {
       headers['sec-ch-ua'] = profile.sec_ch_ua;
       headers['sec-ch-ua-mobile'] = '?0';
@@ -463,18 +465,14 @@ function createProviderHttpGuard(options = {}) {
     };
   }
 
-  async function fetchImpitRescue(url, { method = 'GET', body = null, signal = null, timeout = impitPreClearanceTimeoutMs, startedAt = Date.now(), headers = null, browserProfile = null, reason = 'pre-clearance', allowClearance = false } = {}) {
+  async function fetchImpitRescue(url, { method = 'GET', body = null, signal = null, timeout = impitPreClearanceTimeoutMs, startedAt = Date.now(), headers = null, browserProfile = null, reason = 'pre-clearance' } = {}) {
     if (!preferImpit || !impitPreClearanceRescue || signal?.aborted) return null;
-    if (allowClearance && clearanceManager.endpoint && !impitPreClearanceWhenFlareSolverr) {
-      logger.debug('impit rescue skipped', { method, url, reason, clearance: true, ms: Date.now() - startedAt });
-      return null;
-    }
 
     try {
       const response = await axiosSiteRequest(url, {
         method,
         body: method === 'POST' ? body : null,
-        headers: headers || buildHeaders({ method, body, directProfile: browserProfile }),
+        headers: headers || buildHeaders({ method, body, directProfile: browserProfile, url }),
         timeout: Math.max(1200, Math.min(timeout, impitPreClearanceTimeoutMs)),
         signal,
         browserProfile: browserProfile || activeSession,
@@ -490,7 +488,7 @@ function createProviderHttpGuard(options = {}) {
         if (activeSession?.cookies || setCookie) {
           persistSession({
             userAgent: (browserProfile && (browserProfile.userAgent || browserProfile.ua)) || activeSession?.userAgent || getProfileUserAgent(browserProfile),
-            cookies: activeSession?.cookies || '',
+            cookies: buildCookieHeaderFromSession(activeSession, response.url || url) || activeSession?.cookies || '',
             url: response.url,
             timestamp: Date.now()
           }, response.url, setCookie);
@@ -510,12 +508,14 @@ function createProviderHttpGuard(options = {}) {
 
   function persistSession(session, resolvedUrl = null, setCookie = null) {
     if (!session?.userAgent) return;
+    const cookieUrl = resolvedUrl || session.solvedUrl || session.url || currentBaseUrl;
+    const merged = mergeSessionCookies(session, cookieUrl, setCookie);
     const next = {
-      ...session,
-      url: normalizeBaseUrl(resolvedUrl || session.url) || session.url || currentBaseUrl,
+      ...merged,
+      url: normalizeBaseUrl(cookieUrl) || normalizeBaseUrl(merged.url) || currentBaseUrl,
       timestamp: Date.now()
     };
-    if (setCookie) next.cookies = mergeCookieHeaders(session.cookies, setCookie);
+    if (!next.cookies && setCookie) next.cookies = mergeCookieHeaders(session.cookies || '', setCookie);
     activeSession = next;
     saveSession(activeSession);
     if (next.url) updateCurrentDomainFromUrl(next.url);
@@ -526,7 +526,7 @@ function createProviderHttpGuard(options = {}) {
     const response = await axiosSiteRequest(url, {
       method,
       body: method === 'POST' ? body : null,
-      headers: buildHeaders({ session: activeSession, method, body }),
+      headers: buildHeaders({ session: activeSession, method, body, url }),
       timeout: Math.max(timeout, 4500),
       signal,
       browserProfile: activeSession,
@@ -545,7 +545,7 @@ function createProviderHttpGuard(options = {}) {
           const impitResponse = await axiosSiteRequest(url, {
             method,
             body: method === 'POST' ? body : null,
-            headers: buildHeaders({ session: activeSession, method, body }),
+            headers: buildHeaders({ session: activeSession, method, body, url }),
             timeout: Math.max(1800, Math.min(timeout, 2600)),
             signal,
             browserProfile: activeSession,
@@ -575,10 +575,10 @@ function createProviderHttpGuard(options = {}) {
     return html;
   }
 
-  async function fetchDirectFast(url, { method = 'GET', body = null, signal = null, timeout = directFetchTimeoutMs, startedAt = Date.now(), allowClearance = false } = {}) {
+  async function fetchDirectFast(url, { method = 'GET', body = null, signal = null, timeout = directFetchTimeoutMs, startedAt = Date.now() } = {}) {
     const profile = pickProfile(profiles) || {};
     const userAgent = getProfileUserAgent(profile);
-    const headers = buildHeaders({ method, body, directProfile: profile });
+    const headers = buildHeaders({ method, body, directProfile: profile, url });
     let response = null;
 
     try {
@@ -595,14 +595,22 @@ function createProviderHttpGuard(options = {}) {
     } catch (error) {
       if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
       logger.debug('direct fetch transport error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
-      return fetchImpitRescue(url, { method, body, signal, timeout: Math.min(timeout, impitPreClearanceTimeoutMs), startedAt, headers, browserProfile: profile, reason: 'direct-error', allowClearance });
+      if (clearanceManager.endpoint) {
+        logger.debug('impit rescue skipped', { method, url, reason: 'direct-error-clearance-endpoint', ms: Date.now() - startedAt });
+        return null;
+      }
+      return fetchImpitRescue(url, { method, body, signal, timeout: Math.min(timeout, impitPreClearanceTimeoutMs), startedAt, headers, browserProfile: profile, reason: 'direct-error' });
     }
 
     updateCurrentDomainFromUrl(response.url);
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
     if (isChallengePage(html, response.status)) {
       logger.debug('direct fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, ms: Date.now() - startedAt });
-      const rescued = await fetchImpitRescue(url, { method, body, signal, timeout: Math.min(timeout, impitPreClearanceTimeoutMs), startedAt, headers, browserProfile: profile, reason: 'direct-challenge', allowClearance });
+      if (clearanceManager.endpoint) {
+        logger.debug('impit rescue skipped', { method, url, reason: 'direct-challenge-clearance-endpoint', clearance: true, ms: Date.now() - startedAt });
+        return null;
+      }
+      const rescued = await fetchImpitRescue(url, { method, body, signal, timeout: Math.min(timeout, impitPreClearanceTimeoutMs), startedAt, headers, browserProfile: profile, reason: 'direct-challenge' });
       if (rescued) return rescued;
       return null;
     }
@@ -610,7 +618,7 @@ function createProviderHttpGuard(options = {}) {
     const setCookie = response.headers?.['set-cookie'];
     if (setCookie) {
       const cookies = mergeCookieHeaders('', setCookie);
-      if (cookies) persistSession({ userAgent, cookies, url: response.url, timestamp: Date.now() }, response.url);
+      if (cookies) persistSession({ userAgent, cookies, url: response.url, timestamp: Date.now() }, response.url, setCookie);
     }
 
     logger.debug('direct fetch ok', { method, url, status: response.status, bytes: html.length, hasCookie: Boolean(setCookie), ms: Date.now() - startedAt });
@@ -626,7 +634,7 @@ function createProviderHttpGuard(options = {}) {
       method: isPost ? 'POST' : 'GET',
       force,
       maxTimeout: clearanceTimeoutMs,
-      cookies: activeSession?.cookies || ''
+      cookies: buildCookieHeaderFromSession(activeSession, targetClearanceUrl) || activeSession?.cookies || ''
     });
 
     if (isSessionFresh(session)) return session;
@@ -643,7 +651,7 @@ function createProviderHttpGuard(options = {}) {
         force,
         fallback: true,
         maxTimeout: clearanceTimeoutMs,
-        cookies: activeSession?.cookies || ''
+        cookies: buildCookieHeaderFromSession(activeSession, fallbackUrl) || activeSession?.cookies || ''
       });
       if (isSessionFresh(session)) return session;
     }
@@ -667,7 +675,7 @@ function createProviderHttpGuard(options = {}) {
     }
 
     try {
-      const html = await fetchDirectFast(url, { method, body, signal, timeout: hardFetchTimeout, startedAt, allowClearance: allowFlareSolverr });
+      const html = await fetchDirectFast(url, { method, body, signal, timeout: hardFetchTimeout, startedAt });
       if (html) return html;
     } catch (error) {
       if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
@@ -753,8 +761,8 @@ function createProviderHttpGuard(options = {}) {
       http3: impitHttp3,
       sessionFastPath: impitSessionFastPath,
       preClearanceRescue: impitPreClearanceRescue,
-      preClearanceWhenFlareSolverr: impitPreClearanceWhenFlareSolverr,
-      flareEndpoints: clearanceManager.endpoints?.length || 0
+      flareEndpoints: clearanceManager.endpoints?.length || 0,
+      cookieJarV2: true
     }),
     directFetchTimeoutMs,
     searchTimeoutMs,
@@ -769,3 +777,4 @@ module.exports = {
   envFlag,
   envFlagNotFalse
 };
+
