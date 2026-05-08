@@ -6,18 +6,19 @@ let setCookieParser = null;
 try {
   setCookieParser = require('set-cookie-parser');
 } catch (_) {
-  // Optional at runtime during tests/dev before npm install. Fallback parsers below stay active.
 }
 
 let toughCookie = null;
 try {
   toughCookie = require('tough-cookie');
 } catch (_) {
-  // Optional guard for old installs: string-cookie fallback below stays active.
+  
 }
 
 const DEFAULT_FLARESOLVERR_URL = null;
 const DEFAULT_ENDPOINT_FAILURE_COOLDOWN_MS = 45_000;
+const DEFAULT_SESSION_POOL_MAX = 3;
+const DEFAULT_SESSION_POOL_MIN_SCORE = -2;
 
 
 function normalizeBaseUrl(value) {
@@ -240,6 +241,26 @@ function buildCookieHeaderFromSession(session = {}, url = null) {
   const jar = createCookieJarFromSession(session, cookieUrl);
   const fromJar = getCookieStringFromJar(jar, cookieUrl);
   return fromJar || joinCookieHeader(session.cookies || '');
+}
+
+function makeSessionPoolKey(session = {}, url = null) {
+  const cookieUrl = safeCookieUrl(url || session.solvedUrl || session.url);
+  const cookieHeader = buildCookieHeaderFromSession(session, cookieUrl);
+  const clearance = readCookieValue(cookieHeader, 'cf_clearance');
+  const base = normalizeBaseUrl(session.solvedUrl || session.url || cookieUrl) || cookieUrl;
+  const ua = String(session.userAgent || '').slice(0, 96);
+  const cookieSig = clearance || cookieHeader.slice(0, 96);
+  if (!ua || !cookieSig) return '';
+  return `${base}|${ua}|${String(cookieSig).slice(-32)}`;
+}
+
+function stripSessionForPool(session = {}) {
+  const clean = { ...(session || {}) };
+  delete clean.solutionResponse;
+  delete clean.solutionResponseUrl;
+  delete clean.solutionResponseStatus;
+  delete clean.cfSessionPool;
+  return clean;
 }
 
 function createCookieStateForUrl(url, rawCookies, existingSession = {}) {
@@ -520,6 +541,8 @@ function createCfClearanceManager(options = {}) {
   const flareRetryBackoffMs = Math.max(100, Math.min(3000, Number(options.flareRetryBackoffMs || 750)));
   const providerFailureCooldownMs = Math.max(5_000, Number(options.providerFailureCooldownMs || 60_000));
   const providerFailureCooldownMaxMs = Math.max(providerFailureCooldownMs, Number(options.providerFailureCooldownMaxMs || 300_000));
+  const sessionPoolMax = Math.max(1, Math.min(8, Number.isFinite(Number(options.sessionPoolMax)) ? Number(options.sessionPoolMax) : DEFAULT_SESSION_POOL_MAX));
+  const sessionPoolMinScore = Math.max(-25, Math.min(5, Number.isFinite(Number(options.sessionPoolMinScore)) ? Number(options.sessionPoolMinScore) : DEFAULT_SESSION_POOL_MIN_SCORE));
   const returnOnlyCookies = options.returnOnlyCookies !== false;
   const disableMedia = options.disableMedia !== false;
   const waitInSeconds = Math.max(0, Math.min(5, Number(options.waitInSeconds || 0) || 0));
@@ -537,6 +560,7 @@ function createCfClearanceManager(options = {}) {
   const cooldown = new Map();
   const endpointFailures = new Map();
   const endpointHealthOkUntil = new Map();
+  const sessionPool = [];
   let endpointCursor = 0;
   let missingEndpointWarned = false;
   let providerFailureUntil = 0;
@@ -595,6 +619,132 @@ function createCfClearanceManager(options = {}) {
     providerFailureCount = 0;
     providerFailureReason = null;
   }
+
+  function exportSessionPool() {
+    return sessionPool
+      .slice()
+      .sort((a, b) => {
+        const scoreDelta = Number(b.reputationScore || 0) - Number(a.reputationScore || 0);
+        if (scoreDelta !== 0) return scoreDelta;
+        return Number(b.lastSuccessAt || b.timestamp || 0) - Number(a.lastSuccessAt || a.timestamp || 0);
+      })
+      .slice(0, sessionPoolMax)
+      .map(entry => stripSessionForPool(entry));
+  }
+
+  function attachPoolToSession(session = {}) {
+    if (!session || !session.userAgent) return session;
+    return {
+      ...session,
+      cfSessionPool: exportSessionPool()
+    };
+  }
+
+  function pruneSessionPool() {
+    const now = Date.now();
+    for (let i = sessionPool.length - 1; i >= 0; i -= 1) {
+      const entry = sessionPool[i];
+      const cookieUrl = entry?.solvedUrl || entry?.url;
+      const expired = !entry || !entry.userAgent || !entry.timestamp || (now - Number(entry.timestamp) >= sessionTtlMs);
+      const hasCookie = !expired && Boolean(buildCookieHeaderFromSession(entry, cookieUrl));
+      if (expired || !hasCookie || Number(entry.reputationScore || 0) < sessionPoolMinScore - 8) {
+        sessionPool.splice(i, 1);
+      }
+    }
+    sessionPool.sort((a, b) => {
+      const scoreDelta = Number(b.reputationScore || 0) - Number(a.reputationScore || 0);
+      if (scoreDelta !== 0) return scoreDelta;
+      return Number(b.lastSuccessAt || b.timestamp || 0) - Number(a.lastSuccessAt || a.timestamp || 0);
+    });
+    while (sessionPool.length > sessionPoolMax) sessionPool.pop();
+  }
+
+  function upsertSessionPool(session = {}, outcome = {}) {
+    if (!session || !session.userAgent) return null;
+    const poolKey = makeSessionPoolKey(session, outcome.url || session.solvedUrl || session.url);
+    if (!poolKey) return null;
+
+    const now = Date.now();
+    const index = sessionPool.findIndex(entry => entry.poolKey === poolKey);
+    const previous = index >= 0 ? sessionPool[index] : null;
+    const scoreDelta = Number(outcome.scoreDelta || 0) || 0;
+    const success = outcome.success === true;
+    const failure = outcome.success === false;
+    const next = {
+      ...(previous || {}),
+      ...stripSessionForPool(session),
+      poolKey,
+      providerName,
+      reputationScore: Math.max(-25, Math.min(100, Number(previous?.reputationScore || 0) + scoreDelta)),
+      successes: Number(previous?.successes || 0) + (success ? 1 : 0),
+      failures: Number(previous?.failures || 0) + (failure ? 1 : 0),
+      lastUsedAt: now,
+      lastOutcome: outcome.reason || outcome.outcome || (success ? 'success' : failure ? 'failure' : 'observed'),
+      timestamp: Number(session.timestamp || previous?.timestamp || now) || now
+    };
+    if (success) next.lastSuccessAt = now;
+    if (failure) next.lastFailureAt = now;
+    if (outcome.url) next.lastUrl = safeCookieUrl(outcome.url, next.solvedUrl || next.url || 'https://example.com/');
+
+    if (index >= 0) sessionPool[index] = next;
+    else sessionPool.push(next);
+    pruneSessionPool();
+    const current = sessionPool.find(entry => entry.poolKey === poolKey) || next;
+    return attachPoolToSession(current);
+  }
+
+  function importSessionPoolFromSession(session = {}) {
+    const list = Array.isArray(session?.cfSessionPool) ? session.cfSessionPool : [];
+    for (const entry of list) upsertSessionPool(entry, { scoreDelta: 0, outcome: 'imported_pool' });
+    if (session?.userAgent) upsertSessionPool(session, { scoreDelta: 0, outcome: 'imported_active' });
+    pruneSessionPool();
+  }
+
+  function getBestPooledSession(url = null) {
+    pruneSessionPool();
+    const targetUrl = safeCookieUrl(url || sessionPool[0]?.solvedUrl || sessionPool[0]?.url);
+    const candidates = sessionPool
+      .filter(entry => Number(entry.reputationScore || 0) >= sessionPoolMinScore)
+      .filter(entry => isFresh(entry))
+      .filter(entry => Boolean(buildCookieHeaderFromSession(entry, targetUrl)))
+      .sort((a, b) => {
+        const scoreDelta = Number(b.reputationScore || 0) - Number(a.reputationScore || 0);
+        if (scoreDelta !== 0) return scoreDelta;
+        return Number(b.lastSuccessAt || b.lastUsedAt || b.timestamp || 0) - Number(a.lastSuccessAt || a.lastUsedAt || a.timestamp || 0);
+      });
+    const best = candidates[0] || null;
+    if (!best) return null;
+    best.lastUsedAt = Date.now();
+    return attachPoolToSession(best);
+  }
+
+  function recordSessionOutcome(session = {}, url = null, success = true, reason = 'session_outcome') {
+    if (!session || !session.userAgent) return session;
+    const reasonText = String(reason || '').toLowerCase();
+    const failurePenalty = /challenge|403|429|503|post_clearance|clear_session|rejected/.test(reasonText) ? -18 : -7;
+    const delta = success ? 2 : failurePenalty;
+    const updated = upsertSessionPool(session, { success, scoreDelta: delta, reason, url });
+    return updated || session;
+  }
+
+  function getSessionPoolStats() {
+    pruneSessionPool();
+    return {
+      size: sessionPool.length,
+      max: sessionPoolMax,
+      minScore: sessionPoolMinScore,
+      sessions: sessionPool.map(entry => ({
+        baseUrl: normalizeBaseUrl(entry.solvedUrl || entry.url),
+        reputationScore: Number(entry.reputationScore || 0),
+        successes: Number(entry.successes || 0),
+        failures: Number(entry.failures || 0),
+        lastOutcome: entry.lastOutcome || null,
+        lastUsedAt: entry.lastUsedAt || null
+      }))
+    };
+  }
+
+  importSessionPoolFromSession(options.initialSession || options.session || {});
 
   async function postFlareWithRetry(selectedEndpoint, payload, timeout, signal, label = 'request') {
     let lastError = null;
@@ -697,6 +847,21 @@ function createCfClearanceManager(options = {}) {
   }
 
   async function solve(clearanceUrl, signal = null, meta = {}) {
+    const poolAllowed = meta.allowSessionPool === true || (meta.allowSessionPool !== false && !meta.force && !meta.wantResponse);
+    const pooledSession = poolAllowed ? getBestPooledSession(meta.triggerUrl || clearanceUrl) : null;
+    if (pooledSession) {
+      logger.info('solve session pool reuse', {
+        provider: providerName,
+        clearanceUrl,
+        triggerUrl: meta.triggerUrl,
+        reputationScore: pooledSession.reputationScore,
+        successes: pooledSession.successes,
+        failures: pooledSession.failures
+      });
+      onSession(pooledSession);
+      return pooledSession;
+    }
+
     if (!endpoints.length) {
       if (!missingEndpointWarned) {
         missingEndpointWarned = true;
@@ -845,7 +1010,9 @@ function createCfClearanceManager(options = {}) {
               solutionResponseStatus: usefulSolutionHtml ? solutionStatus : undefined
             };
 
-            onSession(session);
+            upsertSessionPool(session, { success: true, scoreDelta: 8, reason: 'solve_ok', url: solvedUrl || clearanceUrl });
+            const pooledSolvedSession = attachPoolToSession(session);
+            onSession(pooledSolvedSession);
             markEndpointSuccess(selectedEndpoint);
             clearProviderFailure();
             logger.info('solve ok', {
@@ -859,7 +1026,7 @@ function createCfClearanceManager(options = {}) {
               ms: Date.now() - startedAt
             });
 
-            return session;
+            return pooledSolvedSession;
           } catch (error) {
             lastError = error;
             if (isCanceledError(error) || signal?.aborted || String(error?.code || '') === 'ERR_CANCELED') {
@@ -909,6 +1076,10 @@ function createCfClearanceManager(options = {}) {
     endpoints,
     isFresh,
     solve,
+    getBestPooledSession,
+    recordSessionOutcome,
+    getSessionPoolStats,
+    importSessionPoolFromSession,
     mergeCookieHeaders,
     readCookieValue,
     normalizeBaseUrl
@@ -933,5 +1104,7 @@ module.exports = {
   mergeSessionCookies,
   createCookieJarFromSession,
   createCookieStateForUrl,
+  makeSessionPoolKey,
+  stripSessionForPool,
   isToughCookieAvailable
 };
