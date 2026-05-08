@@ -69,6 +69,11 @@ const GS_TOP_SPEED = Object.freeze({
   movieFastSlugMax: 6,
   movieMaxVerifyCandidates: 2,
   movieHardBudgetMs: 12_000,
+  // Inspired by EasyStreams' speed pattern: avoid serial waits in the hot path.
+  // Search AJAX + fallback and slug verifications run in small parallel batches.
+  searchFastTimeoutMs: 6500,
+  parallelSearchQueries: 3,
+  fastSlugConcurrency: 4,
   impitMaxAttempts: 1,
   impitTotalExtraMs: 900,
   impitHttp3: true
@@ -108,6 +113,9 @@ const GS_BACKGROUND_STATIC_PRIME     = GS_TOP_SPEED.backgroundStaticPrime;
 const GS_MOVIE_FAST_SLUG_MAX         = GS_TOP_SPEED.movieFastSlugMax;
 const GS_MOVIE_MAX_VERIFY_CANDIDATES = GS_TOP_SPEED.movieMaxVerifyCandidates;
 const GS_MOVIE_HARD_BUDGET_MS        = GS_TOP_SPEED.movieHardBudgetMs;
+const GS_SEARCH_FAST_TIMEOUT_MS      = GS_TOP_SPEED.searchFastTimeoutMs;
+const GS_PARALLEL_SEARCH_QUERIES     = GS_TOP_SPEED.parallelSearchQueries;
+const GS_FAST_SLUG_CONCURRENCY       = GS_TOP_SPEED.fastSlugConcurrency;
 
 const COMPILED_DIRECT_REGEX  = new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig');
 const COMPILED_ESCAPED_REGEX = new RegExp(HOSTER_ESCAPED_DIRECT_LINK_PATTERN, 'ig');
@@ -910,12 +918,14 @@ async function searchProviderSequential(query, signal) {
   const ajaxUrl     = `${baseUrl}/wp-admin/admin-ajax.php`;
   const ajaxBody    = `s=${encodeURIComponent(query)}&action=searchwp_live_search&swpengine=default&swpquery=${encodeURIComponent(query)}`;
   const fallbackUrl = `${baseUrl}/?s=${encodeURIComponent(query)}`;
+  const hotPathTimeout = Math.min(SEARCH_QUERY_TIMEOUT_MS, GS_SEARCH_FAST_TIMEOUT_MS);
+  const allowClearance = allowHotPathClearance();
 
   const fetchFallback = () => smartFetch(fallbackUrl, {
     ttl: TTL_SEARCH,
     signal,
-    allowFlareSolverr: allowHotPathClearance(),
-    timeoutMs: SEARCH_QUERY_TIMEOUT_MS
+    allowFlareSolverr: allowClearance,
+    timeoutMs: hotPathTimeout
   }).catch((e) => {
     if (isAbortLikeError(e)) throw e;
     gsDebug('fallback search failed', { query, error: e?.message || String(e) });
@@ -927,22 +937,22 @@ async function searchProviderSequential(query, signal) {
     body: ajaxBody,
     ttl: TTL_SEARCH,
     signal,
-    allowFlareSolverr: allowHotPathClearance(),
-    timeoutMs: SEARCH_QUERY_TIMEOUT_MS
+    allowFlareSolverr: allowClearance,
+    timeoutMs: hotPathTimeout
   }).catch((e) => {
     if (isAbortLikeError(e)) throw e;
     gsDebug('ajax search failed', { query, error: e?.message || String(e) });
     return '';
   });
 
-  const fallbackHtml = await fetchFallback();
+  // EasyStreams speed pattern: never wait for fallback before starting AJAX.
+  // Both are cheap Axios/session requests after background clearance, and smartFetch dedupes/cache-protects them.
+  const [fallbackHtml, ajaxHtml] = await Promise.all([
+    fetchFallback(),
+    fetchAjax()
+  ]);
+
   const fallbackResults = extractSearchResultsFromHtml(fallbackHtml, baseUrl);
-  let ajaxHtml = '';
-
-  if (!GS_SKIP_AJAX_AFTER_FALLBACK_HIT || fallbackResults.length === 0) {
-    ajaxHtml = await fetchAjax();
-  }
-
   const ajaxResults = ajaxHtml ? extractSearchResultsFromHtml(ajaxHtml, baseUrl) : [];
   const results = [...fallbackResults, ...ajaxResults];
 
@@ -952,7 +962,8 @@ async function searchProviderSequential(query, signal) {
     fallbackResults: fallbackResults.length,
     ajaxResults: ajaxResults.length,
     results: unique.length,
-    skippedAjax: GS_SKIP_AJAX_AFTER_FALLBACK_HIT && fallbackResults.length > 0,
+    parallel: true,
+    timeoutMs: hotPathTimeout,
     ms: Date.now() - startedAt
   });
   return unique;
@@ -989,16 +1000,19 @@ function createTimeoutSignal(parentSignal, timeoutMs) {
 
 async function searchProviderWithTimeout(query, signal, timeoutMs = SEARCH_QUERY_TIMEOUT_MS) {
   const clearanceBudgetMs = Math.min(GLOBAL_TIMEOUT_MS - 12000, FLARE_WARMUP_TIMEOUT_MS + DIRECT_FETCH_TIMEOUT_MS + 5000);
-  const effectiveTimeoutMs = Math.max(timeoutMs, Math.max(18000, clearanceBudgetMs));
-  const needsClearanceWindow = !gsHttp.isSessionFresh();
+  const hotPathNoFlare = !allowHotPathClearance();
+  const effectiveTimeoutMs = hotPathNoFlare
+    ? Math.max(3500, Math.min(timeoutMs, GS_SEARCH_FAST_TIMEOUT_MS))
+    : Math.max(timeoutMs, Math.max(18000, clearanceBudgetMs));
+  const needsClearanceWindow = !gsHttp.isSessionFresh() && !hotPathNoFlare;
 
   const scoped = createTimeoutSignal(signal, effectiveTimeoutMs);
   try {
-    gsDebug('search query start', { query, timeoutMs: effectiveTimeoutMs, needsClearanceWindow });
+    gsDebug('search query start', { query, timeoutMs: effectiveTimeoutMs, needsClearanceWindow, hotPathNoFlare });
     return await searchProviderSequential(query, scoped.signal);
   } catch (e) {
     if (isAbortLikeError(e) || scoped.signal.aborted) {
-      gsDebug('search query aborted', { query, timeoutMs: effectiveTimeoutMs, needsClearanceWindow, error: e?.message || String(e) });
+      gsDebug('search query aborted', { query, timeoutMs: effectiveTimeoutMs, needsClearanceWindow, hotPathNoFlare, error: e?.message || String(e) });
       return [];
     }
     gsDebug('search query failed', { query, error: e?.message || String(e) });
@@ -1009,9 +1023,10 @@ async function searchProviderWithTimeout(query, signal, timeoutMs = SEARCH_QUERY
 }
 
 async function searchProviderParallel(queries, signal) {
-  const uniqueQueries = Array.from(new Set(queries.filter(Boolean))).slice(0, 3);
+  const uniqueQueries = Array.from(new Set(queries.filter(Boolean))).slice(0, GS_PARALLEL_SEARCH_QUERIES);
   if (!uniqueQueries.length) return [];
-  const results = await asyncPool(2, uniqueQueries, q => searchProviderWithTimeout(q, signal));
+  // EasyStreams launches title/original-title searches together. We keep a small cap to avoid flooding GS.
+  const results = await Promise.all(uniqueQueries.map(q => searchProviderWithTimeout(q, signal)));
   return results.flat().filter(Boolean);
 }
 
@@ -1462,47 +1477,62 @@ async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal
   const mediaType = options.mediaType || 'series';
   const targetYearNumber = extractYearValue(targetYear);
   const candidates = buildFastSlugTargetCandidates(expectedTitles, mediaType, 10);
-  const maxCandidates = mediaType === 'movie' ? GS_MOVIE_FAST_SLUG_MAX : 3;
-  const out = [];
+  const maxCandidates = mediaType === 'movie' ? GS_MOVIE_FAST_SLUG_MAX : 4;
   const startedAt = Date.now();
+  const selectedCandidates = candidates.slice(0, maxCandidates);
 
-  gsDebug(`${mediaType} fast slug start`, { candidates: candidates.slice(0, Math.min(maxCandidates, 6)), hotFlare: allowHotPathClearance() });
-  for (const url of candidates.slice(0, maxCandidates)) {
-    if (signal?.aborted) return out;
-    if (mediaType === 'movie' && Date.now() - startedAt > GS_MOVIE_HARD_BUDGET_MS) {
-      gsDebug('movie fast slug budget stop', { tried: out.length, ms: Date.now() - startedAt });
-      break;
-    }
+  gsDebug(`${mediaType} fast slug start`, {
+    candidates: selectedCandidates.slice(0, Math.min(maxCandidates, 6)),
+    parallel: true,
+    concurrency: GS_FAST_SLUG_CONCURRENCY,
+    hotFlare: allowHotPathClearance()
+  });
+
+  const verifyCandidate = async (url) => {
+    if (signal?.aborted) return null;
+    if (mediaType === 'movie' && Date.now() - startedAt > GS_MOVIE_HARD_BUDGET_MS) return null;
 
     try {
       const html = await smartFetch(url, {
         ttl: mediaType === 'movie' ? TTL_MOVIE : TTL_SERIES,
         signal,
         allowFlareSolverr: allowHotPathClearance(),
-        timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, mediaType === 'movie' ? 2800 : 4200)
+        timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, mediaType === 'movie' ? 2800 : 3600)
       });
-      if (!html) continue;
+      if (!html) return null;
 
       const pageTitle = getGsPageTitle(html);
       if (isGenericGsShellPage(html, pageTitle)) {
         gsDebug(`${mediaType} fast slug generic shell rejected`, { url, pageTitle, bytes: String(html || '').length });
-        continue;
+        return null;
       }
 
       const titleScore = normalizeTitleScoreMany(pageTitle, expectedTitles);
-      if (titleScore < 2) continue;
+      if (titleScore < 2) return null;
 
       const foundYear = readGsPageYear(html);
-      if (targetYearNumber && foundYear && !isYearCompatibleForGs(foundYear, targetYearNumber, titleScore)) continue;
+      if (targetYearNumber && foundYear && !isYearCompatibleForGs(foundYear, targetYearNumber, titleScore)) return null;
 
       const links = extractPlayerLinksFromHtml(html).length;
-      out.push({ url, html, title: pageTitle || url, mapped: true, fastSlug: true, score: titleScore, links });
-      if (titleScore >= 3 && (mediaType !== 'movie' || links > 0)) break;
+      return { url, html, title: pageTitle || url, mapped: true, fastSlug: true, score: titleScore, links };
     } catch (e) {
       if (isAbortLikeError(e) && signal?.aborted) throw e;
       gsDebug(`${mediaType} fast slug candidate failed`, { url, error: e?.message || String(e) });
+      return null;
     }
-  }
+  };
+
+  const verified = await asyncPool(
+    Math.max(1, Math.min(GS_FAST_SLUG_CONCURRENCY, selectedCandidates.length)),
+    selectedCandidates,
+    verifyCandidate
+  );
+
+  const out = verified.filter(Boolean).sort((a, b) => {
+    const scoreDelta = (b.score || 0) - (a.score || 0);
+    if (scoreDelta !== 0) return scoreDelta;
+    return (b.links || 0) - (a.links || 0);
+  });
 
   if (out.length) gsInfo(`${mediaType} fast slug matched`, { count: out.length, first: out[0].url, ms: Date.now() - startedAt });
   return out;
