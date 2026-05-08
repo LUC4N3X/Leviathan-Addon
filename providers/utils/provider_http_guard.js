@@ -34,6 +34,12 @@ class LRUCache {
   delete(key) { this._map.delete(key); }
 }
 
+
+// Shared Cloudflare clearance is intentionally hardcoded: one FlareSolverr solve per provider/domain
+// is reused by all addon requests and all users until the CookieJar session expires or is invalidated.
+const CF_SHARED_CLEARANCE_AUTHORITY = true;
+const CF_SHARED_CLEARANCE_FORCE_ORIGIN = true;
+
 function envFlag(name, fallback = false) {
   const raw = process.env[name];
   if (raw == null || raw === '') return fallback;
@@ -124,6 +130,8 @@ function createProviderHttpGuard(options = {}) {
   const targetUrlClearance = options.targetUrlClearance !== false;
   const targetFallbackAfterOrigin = Boolean(options.targetFallbackAfterOrigin);
   const homepageFallback = Boolean(options.homepageFallback);
+  const sharedClearanceAuthority = CF_SHARED_CLEARANCE_AUTHORITY;
+  const sharedClearanceForceOrigin = CF_SHARED_CLEARANCE_FORCE_ORIGIN;
   const preferImpit = options.preferImpit !== false;
   const impitTurbo = options.impitTurbo !== false;
   const impitMaxAttempts = Math.max(1, Math.min(4, Number(options.impitMaxAttempts || 2) || 2));
@@ -168,6 +176,8 @@ function createProviderHttpGuard(options = {}) {
   let activeSession = loadSession();
   let lastDomainRefresh = 0;
   let domainRefreshPromise = null;
+  let sharedClearancePromise = null;
+  let sharedClearancePromiseStartedAt = 0;
 
   function getProfileUserAgent(profile = null) {
     const fallback = options.fallbackUserAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
@@ -257,6 +267,11 @@ function createProviderHttpGuard(options = {}) {
   function buildHomepageClearanceUrl(triggerUrl) {
     const base = normalizeBaseUrl(triggerUrl) || normalizeBaseUrl(currentBaseUrl) || initialBaseUrl;
     return `${base}/`;
+  }
+
+  function buildSharedClearanceKey(triggerUrl) {
+    const base = normalizeBaseUrl(triggerUrl) || normalizeBaseUrl(currentBaseUrl) || normalizeBaseUrl(initialBaseUrl) || initialBaseUrl;
+    return `${providerName}:${base}`;
   }
 
   async function resolveRedirectDomain(startBase, signal = null) {
@@ -626,37 +641,75 @@ function createProviderHttpGuard(options = {}) {
   }
 
   async function solveClearance(triggerUrl, { isPost = false, body = null, signal = null, force = true } = {}) {
+    if (isSessionFresh(activeSession)) return activeSession;
+
     const targetClearanceUrl = buildClearanceUrl(triggerUrl, { isPost, body });
     const homepageClearanceUrl = buildHomepageClearanceUrl(triggerUrl);
-    const clearanceUrl = originClearance ? homepageClearanceUrl : targetClearanceUrl;
-    let session = await clearanceManager.solve(clearanceUrl, signal, {
-      triggerUrl,
-      method: isPost ? 'POST' : 'GET',
-      force,
-      maxTimeout: clearanceTimeoutMs,
-      cookies: buildCookieHeaderFromSession(activeSession, targetClearanceUrl) || activeSession?.cookies || ''
-    });
+    const primaryClearanceUrl = sharedClearanceAuthority && sharedClearanceForceOrigin
+      ? homepageClearanceUrl
+      : (originClearance ? homepageClearanceUrl : targetClearanceUrl);
+    const sharedKey = sharedClearanceAuthority ? buildSharedClearanceKey(primaryClearanceUrl) : null;
 
-    if (isSessionFresh(session)) return session;
+    const runSolve = async () => {
+      if (isSessionFresh(activeSession)) return activeSession;
 
-    const fallbacks = [];
-    if (originClearance && targetFallbackAfterOrigin && targetClearanceUrl !== clearanceUrl) fallbacks.push(targetClearanceUrl);
-    if (homepageFallback && homepageClearanceUrl !== clearanceUrl && homepageClearanceUrl !== targetClearanceUrl) fallbacks.push(homepageClearanceUrl);
-
-    for (const fallbackUrl of fallbacks) {
-      if (signal?.aborted) return null;
-      session = await clearanceManager.solve(fallbackUrl, signal, {
+      // A shared CF authority must not be canceled by one user closing Stremio.
+      // The internal hard timeout still protects FlareSolverr from hanging forever.
+      const solverSignal = sharedClearanceAuthority ? null : signal;
+      let session = await clearanceManager.solve(primaryClearanceUrl, solverSignal, {
         triggerUrl,
         method: isPost ? 'POST' : 'GET',
         force,
-        fallback: true,
         maxTimeout: clearanceTimeoutMs,
-        cookies: buildCookieHeaderFromSession(activeSession, fallbackUrl) || activeSession?.cookies || ''
+        sharedKey,
+        cookies: buildCookieHeaderFromSession(activeSession, targetClearanceUrl) || activeSession?.cookies || ''
       });
+
       if (isSessionFresh(session)) return session;
+
+      const fallbacks = [];
+      if (!sharedClearanceAuthority && originClearance && targetFallbackAfterOrigin && targetClearanceUrl !== primaryClearanceUrl) fallbacks.push(targetClearanceUrl);
+      if (!sharedClearanceAuthority && homepageFallback && homepageClearanceUrl !== primaryClearanceUrl && homepageClearanceUrl !== targetClearanceUrl) fallbacks.push(homepageClearanceUrl);
+
+      for (const fallbackUrl of fallbacks) {
+        if (signal?.aborted) return null;
+        session = await clearanceManager.solve(fallbackUrl, signal, {
+          triggerUrl,
+          method: isPost ? 'POST' : 'GET',
+          force,
+          fallback: true,
+          maxTimeout: clearanceTimeoutMs,
+          cookies: buildCookieHeaderFromSession(activeSession, fallbackUrl) || activeSession?.cookies || ''
+        });
+        if (isSessionFresh(session)) return session;
+      }
+      return null;
+    };
+
+    if (!sharedClearanceAuthority) return runSolve();
+
+    if (sharedClearancePromise) {
+      logger.debug('clearance shared wait', {
+        method: isPost ? 'POST' : 'GET',
+        triggerUrl,
+        clearanceUrl: primaryClearanceUrl,
+        sharedKey,
+        waitMs: Date.now() - sharedClearancePromiseStartedAt
+      });
+      const waited = await sharedClearancePromise;
+      return isSessionFresh(waited) ? waited : (isSessionFresh(activeSession) ? activeSession : null);
     }
-    return null;
+
+    sharedClearancePromiseStartedAt = Date.now();
+    sharedClearancePromise = runSolve()
+      .finally(() => {
+        sharedClearancePromise = null;
+        sharedClearancePromiseStartedAt = 0;
+      });
+
+    return sharedClearancePromise;
   }
+
 
   async function executeSmartFetch(url, isPost = false, body = null, signal = null, allowFlareSolverr = true, timeoutMs = directFetchTimeoutMs) {
     const startedAt = Date.now();
@@ -762,7 +815,10 @@ function createProviderHttpGuard(options = {}) {
       sessionFastPath: impitSessionFastPath,
       preClearanceRescue: impitPreClearanceRescue,
       flareEndpoints: clearanceManager.endpoints?.length || 0,
-      cookieJarV2: true
+      cookieJarV2: true,
+      sharedClearanceAuthority,
+      sharedClearanceForceOrigin,
+      sharedClearancePending: Boolean(sharedClearancePromise)
     }),
     directFetchTimeoutMs,
     searchTimeoutMs,
