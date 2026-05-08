@@ -6,13 +6,14 @@ let setCookieParser = null;
 try {
   setCookieParser = require('set-cookie-parser');
 } catch (_) {
+  // Optional at runtime during tests/dev before npm install. Fallback parsers below stay active.
 }
 
 let toughCookie = null;
 try {
   toughCookie = require('tough-cookie');
 } catch (_) {
-  
+  // Optional guard for old installs: string-cookie fallback below stays active.
 }
 
 const DEFAULT_FLARESOLVERR_URL = null;
@@ -1108,3 +1109,4 @@ module.exports = {
   stripSessionForPool,
   isToughCookieAvailable
 };
+
