@@ -77,6 +77,29 @@ function normalizeSetCookieHeaders(value) {
 }
 
 
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function isRetryableFlareError(error) {
+  const status = Number(error?.response?.status || error?.status || 0);
+  const code = String(error?.code || '').toUpperCase();
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ECONNABORTED', 'EAI_AGAIN', 'ENOTFOUND'].includes(code) ||
+    code === 'ERR_NETWORK' ||
+    message.includes('timeout') ||
+    [502, 503, 504, 522, 523, 524].includes(status)
+  );
+}
+
+function isUsefulSolutionHtml(body, status = 200) {
+  const text = typeof body === 'string' ? body.trim() : '';
+  if (text.length < 200) return false;
+  return !isLikelyChallengeHtml(text, status);
+}
+
 function safeCookieUrl(url, fallback = 'https://example.com/') {
   try {
     const parsed = new URL(String(url || fallback));
@@ -491,6 +514,12 @@ function createCfClearanceManager(options = {}) {
   const solveMaxQueue = Math.max(0, Number.isFinite(Number(options.solveMaxQueue)) ? Number(options.solveMaxQueue) : 80);
   const solveTimeoutMs = Math.max(12_000, Number(options.solveTimeoutMs || 24_000));
   const endpointFailureCooldownMs = Math.max(5_000, Number(options.endpointFailureCooldownMs || DEFAULT_ENDPOINT_FAILURE_COOLDOWN_MS));
+  const healthCacheMs = Math.max(0, Number(options.healthCacheMs ?? 10_000));
+  const healthTimeoutMs = Math.max(1500, Math.min(8000, Number(options.healthTimeoutMs || 3000)));
+  const flareRetryCount = Math.max(0, Math.min(2, Number.isFinite(Number(options.flareRetryCount)) ? Number(options.flareRetryCount) : 1));
+  const flareRetryBackoffMs = Math.max(100, Math.min(3000, Number(options.flareRetryBackoffMs || 750)));
+  const providerFailureCooldownMs = Math.max(5_000, Number(options.providerFailureCooldownMs || 60_000));
+  const providerFailureCooldownMaxMs = Math.max(providerFailureCooldownMs, Number(options.providerFailureCooldownMaxMs || 300_000));
   const returnOnlyCookies = options.returnOnlyCookies !== false;
   const disableMedia = options.disableMedia !== false;
   const waitInSeconds = Math.max(0, Math.min(5, Number(options.waitInSeconds || 0) || 0));
@@ -507,8 +536,12 @@ function createCfClearanceManager(options = {}) {
   const inFlight = new Map();
   const cooldown = new Map();
   const endpointFailures = new Map();
+  const endpointHealthOkUntil = new Map();
   let endpointCursor = 0;
   let missingEndpointWarned = false;
+  let providerFailureUntil = 0;
+  let providerFailureCount = 0;
+  let providerFailureReason = null;
 
   function getEndpointCandidates(force = false) {
     if (!endpoints.length) return [];
@@ -528,6 +561,94 @@ function createCfClearanceManager(options = {}) {
     if (!item) return;
     endpointFailures.set(item, Date.now() + endpointFailureCooldownMs);
     if (endpoints.length > 1) endpointCursor = (endpoints.indexOf(item) + 1 + endpoints.length) % endpoints.length;
+  }
+
+  function getProviderCooldown(now = Date.now()) {
+    if (!providerFailureUntil || now >= providerFailureUntil) return null;
+    return {
+      remainingMs: providerFailureUntil - now,
+      failures: providerFailureCount,
+      reason: providerFailureReason
+    };
+  }
+
+  function markProviderFailure(error) {
+    const now = Date.now();
+    if (providerFailureUntil && now > providerFailureUntil + providerFailureCooldownMaxMs) providerFailureCount = 0;
+    providerFailureCount += 1;
+    const duration = Math.min(
+      providerFailureCooldownMs * Math.pow(2, Math.max(0, providerFailureCount - 1)),
+      providerFailureCooldownMaxMs
+    );
+    providerFailureUntil = now + duration;
+    providerFailureReason = error?.message || String(error || 'flaresolverr_failure');
+    logger.warn('solve provider cooldown', {
+      provider: providerName,
+      cooldownMs: duration,
+      failures: providerFailureCount,
+      reason: providerFailureReason
+    });
+  }
+
+  function clearProviderFailure() {
+    providerFailureUntil = 0;
+    providerFailureCount = 0;
+    providerFailureReason = null;
+  }
+
+  async function postFlareWithRetry(selectedEndpoint, payload, timeout, signal, label = 'request') {
+    let lastError = null;
+    for (let attempt = 0; attempt <= flareRetryCount; attempt += 1) {
+      try {
+        const response = await axios.post(selectedEndpoint, payload, {
+          timeout,
+          signal,
+          httpAgent,
+          httpsAgent,
+          validateStatus: status => status >= 200 && status < 600,
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          }
+        });
+        if (response.status >= 500 && attempt < flareRetryCount) {
+          const error = new Error(`http_${response.status}`);
+          error.status = response.status;
+          error.response = response;
+          throw error;
+        }
+        return response;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= flareRetryCount || !isRetryableFlareError(error) || signal?.aborted) break;
+        const waitMs = flareRetryBackoffMs * (attempt + 1);
+        logger.debug('solve retry', {
+          provider: providerName,
+          endpoint: selectedEndpoint,
+          label,
+          attempt: attempt + 1,
+          waitMs,
+          error: error?.message || String(error)
+        });
+        await sleep(waitMs);
+      }
+    }
+    throw lastError;
+  }
+
+  async function assertEndpointHealthy(selectedEndpoint, signal = null) {
+    if (!healthCacheMs) return true;
+    const now = Date.now();
+    if ((endpointHealthOkUntil.get(selectedEndpoint) || 0) > now) return true;
+
+    const response = await postFlareWithRetry(selectedEndpoint, { cmd: 'sessions.list' }, healthTimeoutMs, signal, 'health');
+    const payload = response.data || {};
+    if (response.status >= 400) throw new Error(`health_http_${response.status}`);
+    if (payload.status && String(payload.status).toLowerCase() !== 'ok') {
+      throw new Error(payload.message || payload.error || `health_status_${payload.status}`);
+    }
+    endpointHealthOkUntil.set(selectedEndpoint, Date.now() + healthCacheMs);
+    return true;
   }
 
   function isFresh(session) {
@@ -597,6 +718,19 @@ function createCfClearanceManager(options = {}) {
     }
 
     const now = Date.now();
+    const activeProviderCooldown = getProviderCooldown(now);
+    if (activeProviderCooldown && !meta.ignoreProviderCooldown) {
+      logger.warn('solve skipped', {
+        provider: providerName,
+        clearanceUrl,
+        reason: 'provider_cooldown',
+        remainingMs: activeProviderCooldown.remainingMs,
+        failures: activeProviderCooldown.failures,
+        lastError: activeProviderCooldown.reason
+      });
+      return null;
+    }
+
     pruneCooldown(now);
     const last = cooldown.get(key) || 0;
     if (!meta.force && now - last < cooldownMs) return null;
@@ -626,6 +760,8 @@ function createCfClearanceManager(options = {}) {
         for (const selectedEndpoint of candidates) {
           if (controller.signal.aborted) return null;
           try {
+            await assertEndpointHealthy(selectedEndpoint, controller.signal);
+
             logger.info('solve start', {
               provider: providerName,
               clearanceUrl,
@@ -645,22 +781,18 @@ function createCfClearanceManager(options = {}) {
               maxTimeout,
               session_ttl_minutes: sessionTtlMinutes,
               disableMedia,
-              returnOnlyCookies
+              returnOnlyCookies: meta.wantResponse ? false : returnOnlyCookies
             };
             if (waitInSeconds) requestPayload.waitInSeconds = waitInSeconds;
             if (cookieObjects.length) requestPayload.cookies = cookieObjects;
 
-            const response = await axios.post(selectedEndpoint, requestPayload, {
-              timeout: maxTimeout + 9000,
-              signal: controller.signal,
-              httpAgent,
-              httpsAgent,
-              validateStatus: status => status >= 200 && status < 600,
-              headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-              }
-            });
+            const response = await postFlareWithRetry(
+              selectedEndpoint,
+              requestPayload,
+              maxTimeout + 9000,
+              controller.signal,
+              `${requestPayload.cmd} ${providerName}`
+            );
 
             const payload = response.data || {};
             if (response.status >= 400) throw new Error(`http_${response.status}`);
@@ -674,6 +806,7 @@ function createCfClearanceManager(options = {}) {
             const solvedUrl = solution.url || clearanceUrl;
             const solutionStatus = solution.status || response.status;
             const solutionBody = solution.response || payload.response || '';
+            const usefulSolutionHtml = isUsefulSolutionHtml(solutionBody, solutionStatus);
             const cookieState = createCookieStateForUrl(solvedUrl || clearanceUrl, rawSolutionCookies, {
               cookies: meta.cookies || meta.cookieHeader || '',
               userAgent,
@@ -706,11 +839,15 @@ function createCfClearanceManager(options = {}) {
               solvedUrl,
               timestamp: Date.now(),
               status: solutionStatus,
-              endpoint: selectedEndpoint
+              endpoint: selectedEndpoint,
+              solutionResponse: usefulSolutionHtml ? solutionBody : undefined,
+              solutionResponseUrl: usefulSolutionHtml ? solvedUrl : undefined,
+              solutionResponseStatus: usefulSolutionHtml ? solutionStatus : undefined
             };
 
             onSession(session);
             markEndpointSuccess(selectedEndpoint);
+            clearProviderFailure();
             logger.info('solve ok', {
               provider: providerName,
               clearanceUrl,
@@ -718,6 +855,7 @@ function createCfClearanceManager(options = {}) {
               endpoint: selectedEndpoint,
               hasClearance: Boolean(session.cf_clearance || String(session.cookies || '').includes('cf_clearance=')),
               cookies: String(session.cookies || '').split(';').filter(Boolean).length,
+              solutionHtml: Boolean(session.solutionResponse),
               ms: Date.now() - startedAt
             });
 
@@ -738,7 +876,7 @@ function createCfClearanceManager(options = {}) {
           }
         }
 
-        if (lastError) return null;
+        if (lastError) markProviderFailure(lastError);
         return null;
       } finally {
         clearTimeout(hardTimer);
