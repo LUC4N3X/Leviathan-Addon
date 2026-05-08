@@ -333,6 +333,7 @@ function buildTorrentioBaseUrl(baseUrl, userConfig) {
     const service = userConfig?.service;
     const apiKey = getTorrentioCredential(userConfig, service);
     if (!service || !apiKey) return baseUrl;
+    if (process.env.EXT_TORRENTIO_INJECT_DEBRID === 'false') return baseUrl;
 
     const torrentioConf = {};
     if (service === 'rd') torrentioConf.realdebrid = apiKey;
@@ -345,6 +346,13 @@ function buildTorrentioBaseUrl(baseUrl, userConfig) {
         const url = new URL(String(baseUrl || ''));
         const segments = url.pathname.split('/').filter(Boolean);
         const lastSegment = segments[segments.length - 1];
+        const hasPreconfiguredPath = segments.length > 0 && !/^manifest\.json$/i.test(lastSegment || '') && !/^stream$/i.test(lastSegment || '');
+
+        // Non distruggere URL Torrentio/proxy già configurati tipo IlCorsaroViola:
+        // spesso l'ultimo segmento contiene provider/language/quality oppure una URL upstream codificata.
+        // Prima Leviathan lo sostituiva con solo { realdebrid: key }, perdendo provider e lingua.
+        if (hasPreconfiguredPath && process.env.EXT_TORRENTIO_FORCE_REWRITE_CONFIG !== 'true') return baseUrl;
+
         if (lastSegment && /^[A-Za-z0-9_-]{2,}$/.test(lastSegment)) segments[segments.length - 1] = encodedConf;
         else segments.push(encodedConf);
         url.pathname = `/${segments.join('/')}`;
