@@ -136,6 +136,7 @@ function createProviderHttpGuard(options = {}) {
   const impitSessionFastPath = options.impitSessionFastPath !== false;
   const impitAfterSessionChallenge = options.impitAfterSessionChallenge !== false;
   const impitPreClearanceRescue = options.impitPreClearanceRescue !== false;
+  const impitPreClearanceWhenFlareSolverr = options.impitPreClearanceWhenFlareSolverr !== false;
   const impitPreClearanceTimeoutMs = Math.max(1200, Math.min(4500, Number(options.impitPreClearanceTimeoutMs || 2600) || 2600));
 
   function loadStoredDomain() {
@@ -462,8 +463,12 @@ function createProviderHttpGuard(options = {}) {
     };
   }
 
-  async function fetchImpitRescue(url, { method = 'GET', body = null, signal = null, timeout = impitPreClearanceTimeoutMs, startedAt = Date.now(), headers = null, browserProfile = null, reason = 'pre-clearance' } = {}) {
+  async function fetchImpitRescue(url, { method = 'GET', body = null, signal = null, timeout = impitPreClearanceTimeoutMs, startedAt = Date.now(), headers = null, browserProfile = null, reason = 'pre-clearance', allowClearance = false } = {}) {
     if (!preferImpit || !impitPreClearanceRescue || signal?.aborted) return null;
+    if (allowClearance && clearanceManager.endpoint && !impitPreClearanceWhenFlareSolverr) {
+      logger.debug('impit rescue skipped', { method, url, reason, clearance: true, ms: Date.now() - startedAt });
+      return null;
+    }
 
     try {
       const response = await axiosSiteRequest(url, {
@@ -570,7 +575,7 @@ function createProviderHttpGuard(options = {}) {
     return html;
   }
 
-  async function fetchDirectFast(url, { method = 'GET', body = null, signal = null, timeout = directFetchTimeoutMs, startedAt = Date.now() } = {}) {
+  async function fetchDirectFast(url, { method = 'GET', body = null, signal = null, timeout = directFetchTimeoutMs, startedAt = Date.now(), allowClearance = false } = {}) {
     const profile = pickProfile(profiles) || {};
     const userAgent = getProfileUserAgent(profile);
     const headers = buildHeaders({ method, body, directProfile: profile });
@@ -590,14 +595,14 @@ function createProviderHttpGuard(options = {}) {
     } catch (error) {
       if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
       logger.debug('direct fetch transport error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
-      return fetchImpitRescue(url, { method, body, signal, timeout: Math.min(timeout, impitPreClearanceTimeoutMs), startedAt, headers, browserProfile: profile, reason: 'direct-error' });
+      return fetchImpitRescue(url, { method, body, signal, timeout: Math.min(timeout, impitPreClearanceTimeoutMs), startedAt, headers, browserProfile: profile, reason: 'direct-error', allowClearance });
     }
 
     updateCurrentDomainFromUrl(response.url);
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
     if (isChallengePage(html, response.status)) {
       logger.debug('direct fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, ms: Date.now() - startedAt });
-      const rescued = await fetchImpitRescue(url, { method, body, signal, timeout: Math.min(timeout, impitPreClearanceTimeoutMs), startedAt, headers, browserProfile: profile, reason: 'direct-challenge' });
+      const rescued = await fetchImpitRescue(url, { method, body, signal, timeout: Math.min(timeout, impitPreClearanceTimeoutMs), startedAt, headers, browserProfile: profile, reason: 'direct-challenge', allowClearance });
       if (rescued) return rescued;
       return null;
     }
@@ -662,7 +667,7 @@ function createProviderHttpGuard(options = {}) {
     }
 
     try {
-      const html = await fetchDirectFast(url, { method, body, signal, timeout: hardFetchTimeout, startedAt });
+      const html = await fetchDirectFast(url, { method, body, signal, timeout: hardFetchTimeout, startedAt, allowClearance: allowFlareSolverr });
       if (html) return html;
     } catch (error) {
       if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
@@ -748,6 +753,7 @@ function createProviderHttpGuard(options = {}) {
       http3: impitHttp3,
       sessionFastPath: impitSessionFastPath,
       preClearanceRescue: impitPreClearanceRescue,
+      preClearanceWhenFlareSolverr: impitPreClearanceWhenFlareSolverr,
       flareEndpoints: clearanceManager.endpoints?.length || 0
     }),
     directFetchTimeoutMs,
