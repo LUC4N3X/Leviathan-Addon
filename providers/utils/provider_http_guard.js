@@ -145,6 +145,10 @@ function createProviderHttpGuard(options = {}) {
   const impitAfterSessionChallenge = options.impitAfterSessionChallenge !== false;
   const impitPreClearanceRescue = options.impitPreClearanceRescue !== false;
   const impitPreClearanceTimeoutMs = Math.max(1200, Math.min(4500, Number(options.impitPreClearanceTimeoutMs || 2600) || 2600));
+  // Bridge mode keeps FlareSolverr out of the hot path: it asks FlareSolverr only
+  // for cookies/user-agent, then immediately replays the real request through Axios.
+  // Keep this opt-in per provider to avoid changing legacy providers accidentally.
+  const clearanceBridgeMode = Boolean(options.clearanceBridgeMode);
 
   function loadStoredDomain() {
     try {
@@ -719,7 +723,7 @@ function createProviderHttpGuard(options = {}) {
   }
 
   async function solveClearance(triggerUrl, { isPost = false, body = null, signal = null, force = true } = {}) {
-    if (isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
+    if (!force && isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
 
     const targetClearanceUrl = buildClearanceUrl(triggerUrl, { isPost, body });
     const homepageClearanceUrl = buildHomepageClearanceUrl(triggerUrl);
@@ -729,7 +733,7 @@ function createProviderHttpGuard(options = {}) {
     const sharedKey = sharedClearanceAuthority ? buildSharedClearanceKey(primaryClearanceUrl) : null;
 
     const runSolve = async () => {
-      if (isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
+      if (!force && isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
 
       // A shared CF authority must not be canceled by one user closing Stremio.
       // The internal hard timeout still protects FlareSolverr from hanging forever.
@@ -740,7 +744,7 @@ function createProviderHttpGuard(options = {}) {
         force,
         maxTimeout: clearanceTimeoutMs,
         sharedKey,
-        wantResponse: sameDocumentUrl(primaryClearanceUrl, triggerUrl),
+        wantResponse: !clearanceBridgeMode && sameDocumentUrl(primaryClearanceUrl, triggerUrl),
         cookies: buildCookieHeaderFromSession(activeSession, targetClearanceUrl) || activeSession?.cookies || ''
       });
 
@@ -758,7 +762,7 @@ function createProviderHttpGuard(options = {}) {
           force,
           fallback: true,
           maxTimeout: clearanceTimeoutMs,
-          wantResponse: sameDocumentUrl(fallbackUrl, triggerUrl),
+          wantResponse: !clearanceBridgeMode && sameDocumentUrl(fallbackUrl, triggerUrl),
           cookies: buildCookieHeaderFromSession(activeSession, fallbackUrl) || activeSession?.cookies || ''
         });
         if (isSessionFreshForUrl(session, triggerUrl)) return session;
@@ -790,6 +794,13 @@ function createProviderHttpGuard(options = {}) {
     return sharedClearancePromise;
   }
 
+
+  async function ensureClearance(triggerUrl = currentBaseUrl, { signal = null, force = false, isPost = false, body = null } = {}) {
+    const targetUrl = triggerUrl || currentBaseUrl;
+    if (!force && isSessionFreshForUrl(activeSession, targetUrl)) return activeSession;
+    if (!clearanceManager.endpoint) return isSessionFreshForUrl(activeSession, targetUrl) ? activeSession : null;
+    return solveClearance(targetUrl, { isPost, body, signal, force });
+  }
 
   async function executeSmartFetch(url, isPost = false, body = null, signal = null, allowFlareSolverr = true, timeoutMs = directFetchTimeoutMs) {
     const startedAt = Date.now();
@@ -823,10 +834,14 @@ function createProviderHttpGuard(options = {}) {
       return null;
     }
 
-    const solutionHtml = getSolutionHtmlForUrl(session, url);
+    const solutionHtml = clearanceBridgeMode ? null : getSolutionHtmlForUrl(session, url);
     if (solutionHtml) {
       logger.info('post-clearance solution html used', { method, url, bytes: solutionHtml.length, ms: Date.now() - startedAt });
       return solutionHtml;
+    }
+
+    if (clearanceBridgeMode) {
+      logger.debug('post-clearance bridge replay start', { method, url, transport: 'axios', sessionFresh: isSessionFreshForUrl(activeSession, url), ms: Date.now() - startedAt });
     }
 
     try {
@@ -882,6 +897,7 @@ function createProviderHttpGuard(options = {}) {
     httpAgent,
     httpsAgent,
     smartFetch,
+    ensureClearance,
     refreshTargetDomain,
     buildProviderUrl,
     getCurrentBaseUrl,
@@ -904,7 +920,8 @@ function createProviderHttpGuard(options = {}) {
       cookieJarV2: true,
       sharedClearanceAuthority,
       sharedClearanceForceOrigin,
-      sharedClearancePending: Boolean(sharedClearancePromise)
+      sharedClearancePending: Boolean(sharedClearancePromise),
+      clearanceBridgeMode
     }),
     directFetchTimeoutMs,
     searchTimeoutMs,
