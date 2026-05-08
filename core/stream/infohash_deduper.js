@@ -472,6 +472,53 @@ function isDbLike(item = {}) {
   return /\b(db|database|leviathandb|saved)\b/.test(text);
 }
 
+function normalizeSourceLabel(value) {
+  const text = String(value || '').trim();
+  if (!text || /^(unknown|n\/a|null|undefined)$/i.test(text)) return '';
+  return text.slice(0, 48);
+}
+
+function pushSourceLabel(labels, seen, value) {
+  const normalized = normalizeSourceLabel(value);
+  if (!normalized) return;
+  const key = normalized.toLowerCase();
+  if (seen.has(key)) return;
+  seen.add(key);
+  labels.push(normalized);
+}
+
+function collectSourceLabels(items = []) {
+  const labels = [];
+  const seen = new Set();
+  for (const item of items.flat().filter(Boolean)) {
+    pushSourceLabel(labels, seen, item?.source);
+    pushSourceLabel(labels, seen, item?.provider);
+    pushSourceLabel(labels, seen, item?.providerId);
+    pushSourceLabel(labels, seen, item?.sourceName);
+    pushSourceLabel(labels, seen, item?.externalAddon);
+    pushSourceLabel(labels, seen, item?.externalGroup);
+    pushSourceLabel(labels, seen, item?.behaviorHints?.vortexSource);
+    pushSourceLabel(labels, seen, item?.behaviorHints?.vortexMeta?.provider);
+    pushSourceLabel(labels, seen, item?.behaviorHints?.vortexMeta?.source);
+    for (const source of Array.isArray(item?._dedupeMergedSources) ? item._dedupeMergedSources : []) {
+      pushSourceLabel(labels, seen, source);
+    }
+    for (const source of Array.isArray(item?._dedupeEvidence?.sources) ? item._dedupeEvidence.sources : []) {
+      pushSourceLabel(labels, seen, source);
+    }
+  }
+  return labels;
+}
+
+function collectMergedCount(items = [], fallback = 1) {
+  let count = Number(fallback) || 1;
+  for (const item of items.flat().filter(Boolean)) {
+    const direct = Number(item?._dedupeMergedCount || item?._dedupeEvidence?.mergedCount || 0);
+    if (Number.isFinite(direct) && direct > count) count = direct;
+  }
+  return count;
+}
+
 function sourcePriority(item = {}, options = {}) {
   const text = String(`${item?.source || ''} ${item?.provider || ''} ${item?.externalAddon || ''} ${item?.externalGroup || ''} ${item?.name || ''} ${item?.title || ''}`).toLowerCase();
   const isSeries = isSeriesContext(options);
@@ -522,15 +569,33 @@ function preferItem(next, current, options = {}) {
   return false;
 }
 
-function mergeSignals(winner = {}, losers = [], hash = null) {
+function mergeSignals(winner = {}, losers = [], hash = null, evidence = {}) {
   const out = { ...winner };
   const allLosers = Array.isArray(losers) ? losers : [losers];
+  const evidenceItems = [winner, ...allLosers].filter(Boolean);
   const normalizedHash = hash || extractInfoHash(winner) || allLosers.map(extractInfoHash).find(Boolean);
   const bestState = bestKnownCacheState(winner, allLosers);
+  const mergedSources = collectSourceLabels(evidenceItems);
+  const mergedCount = collectMergedCount(evidenceItems, Number(evidence.groupSize || evidenceItems.length || 1));
 
   if (normalizedHash) {
     out.infoHash = out.infoHash || normalizedHash;
     out.hash = out.hash || normalizedHash;
+  }
+
+  if (mergedSources.length > 0) {
+    out._dedupeMergedSources = mergedSources;
+  }
+  if (mergedCount > 1) {
+    out._dedupeMergedCount = mergedCount;
+  }
+  if (mergedSources.length > 0 || mergedCount > 1 || bestState) {
+    out._dedupeEvidence = {
+      ...(out._dedupeEvidence || {}),
+      sources: mergedSources,
+      mergedCount,
+      cacheState: bestState || out._dedupeEvidence?.cacheState || undefined
+    };
   }
 
   if (bestState) {
@@ -566,9 +631,18 @@ function mergeSignals(winner = {}, losers = [], hash = null) {
     if (out._mediafusionRdChecked !== true && loser?._mediafusionRdChecked === true) out._mediafusionRdChecked = true;
     if (out._nexusBridgeRdChecked !== true && loser?._nexusBridgeRdChecked === true) out._nexusBridgeRdChecked = true;
     if (out._externalRdChecked !== true && loser?._externalRdChecked === true) out._externalRdChecked = true;
-    if (!out._dedupeMergedSources) out._dedupeMergedSources = [];
     const source = loser?.source || loser?.externalAddon || loser?.provider || null;
-    if (source && !out._dedupeMergedSources.includes(source)) out._dedupeMergedSources.push(source);
+    if (source) {
+      const refreshedSources = collectSourceLabels([out, { source }]);
+      if (refreshedSources.length > 0) {
+        out._dedupeMergedSources = refreshedSources;
+        out._dedupeEvidence = {
+          ...(out._dedupeEvidence || {}),
+          sources: refreshedSources,
+          mergedCount: out._dedupeMergedCount || mergedCount
+        };
+      }
+    }
   }
   return out;
 }
@@ -649,7 +723,7 @@ function dedupeByInfoHash(items = [], options = {}) {
     const losers = indexes.filter((idx) => idx !== winnerIndex).map((idx) => list[idx]);
     resultsWithOriginalIndex.push({
       index: Math.min(...indexes),
-      item: mergeSignals(winner, losers, extractInfoHash(winner))
+      item: mergeSignals(winner, losers, extractInfoHash(winner), { groupSize: indexes.length })
     });
   }
 
