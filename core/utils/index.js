@@ -335,8 +335,64 @@ function getKnownCacheState(item) {
   return undefined;
 }
 
+function normalizeDedupeSourceLabel(value) {
+  const text = String(value || '').trim();
+  if (!text || /^(unknown|n\/a|null|undefined)$/i.test(text)) return '';
+  return text.slice(0, 48);
+}
+
+function collectDedupeSourceLabels(...items) {
+  const labels = [];
+  const seen = new Set();
+  const push = (value) => {
+    const normalized = normalizeDedupeSourceLabel(value);
+    if (!normalized) return;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    labels.push(normalized);
+  };
+
+  for (const item of items.flat().filter(Boolean)) {
+    push(item.source);
+    push(item.provider);
+    push(item.providerId);
+    push(item.sourceName);
+    push(item.externalAddon);
+    push(item.externalGroup);
+    push(item.behaviorHints?.vortexSource);
+    push(item.behaviorHints?.vortexMeta?.provider);
+    push(item.behaviorHints?.vortexMeta?.source);
+    for (const source of Array.isArray(item._dedupeMergedSources) ? item._dedupeMergedSources : []) push(source);
+    for (const source of Array.isArray(item._dedupeEvidence?.sources) ? item._dedupeEvidence.sources : []) push(source);
+  }
+
+  return labels;
+}
+
+function collectDedupeMergedCount(...items) {
+  let count = items.flat().filter(Boolean).length;
+  for (const item of items.flat().filter(Boolean)) {
+    const direct = Number(item?._dedupeMergedCount || item?._dedupeEvidence?.mergedCount || 0);
+    if (Number.isFinite(direct) && direct > count) count = direct;
+  }
+  return Math.max(1, count);
+}
+
 function mergeDuplicateSignals(preferredItem, alternateItem) {
   const merged = { ...preferredItem };
+  const sourceLabels = collectDedupeSourceLabels(preferredItem, alternateItem);
+  const mergedCount = collectDedupeMergedCount(preferredItem, alternateItem);
+
+  if (sourceLabels.length > 0) merged._dedupeMergedSources = sourceLabels;
+  if (mergedCount > 1) merged._dedupeMergedCount = mergedCount;
+  if (sourceLabels.length > 0 || mergedCount > 1) {
+    merged._dedupeEvidence = {
+      ...(merged._dedupeEvidence || {}),
+      sources: sourceLabels,
+      mergedCount
+    };
+  }
 
   const mergedCacheState = getKnownCacheState(preferredItem) || getKnownCacheState(alternateItem);
   if (mergedCacheState) {
