@@ -1,6 +1,8 @@
 'use strict';
 
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 let setCookieParser = null;
 try {
@@ -20,6 +22,11 @@ const DEFAULT_FLARESOLVERR_URL = null;
 const DEFAULT_ENDPOINT_FAILURE_COOLDOWN_MS = 45_000;
 const DEFAULT_SESSION_POOL_MAX = 3;
 const DEFAULT_SESSION_POOL_MIN_SCORE = -2;
+const DEFAULT_SESSION_RETIRE_FAILURES = 2;
+const DEFAULT_SESSION_RETIRE_WINDOW_MS = 10 * 60 * 1000;
+const DEFAULT_SESSION_STALE_GRACE_MS = 12 * 60 * 60 * 1000;
+const DEFAULT_SOLVE_VERIFY_TIMEOUT_MS = 3500;
+
 
 
 function normalizeBaseUrl(value) {
@@ -96,10 +103,38 @@ function isRetryableFlareError(error) {
   );
 }
 
+function classifyChallengeHtml(body, status = 200) {
+  const text = String(body || '');
+  const sample = text.slice(0, 180000);
+  const lower = sample.toLowerCase();
+  const numericStatus = Number(status) || 0;
+  const signals = [];
+  let score = 0;
+
+  if ([403, 429, 503].includes(numericStatus)) {
+    score += 4;
+    signals.push(`status_${numericStatus}`);
+  }
+  if (!text.trim()) return { challenge: numericStatus >= 400, score, reason: signals.join('|') || 'empty_body' };
+  if (lower.includes('cf-chl') || lower.includes('__cf_chl')) { score += 4; signals.push('cf_chl'); }
+  if (lower.includes('cf-turnstile') || lower.includes('turnstile.cloudflare.com')) { score += 4; signals.push('turnstile'); }
+  if (lower.includes('challenge-platform') || lower.includes('cf-challenge') || lower.includes('challenge-form')) { score += 3; signals.push('challenge_platform'); }
+  if (lower.includes('checking if the site connection is secure')) { score += 4; signals.push('connection_secure'); }
+  if (lower.includes('verify you are human') || lower.includes('verifica che tu sia umano') || lower.includes('verifica di essere umano')) { score += 4; signals.push('verify_human'); }
+  if (lower.includes('cloudflare ray id') || lower.includes('ray id')) { score += 2; signals.push('ray_id'); }
+  if (/<title>\s*(just a moment|attention required|checking|verifica|un momento)/i.test(sample)) { score += 4; signals.push('challenge_title'); }
+  if (/id=["']?challenge-|class=["'][^"']*(cf-|challenge|turnstile)/i.test(sample)) { score += 3; signals.push('challenge_markup'); }
+  if (lower.includes('captcha') && (lower.includes('cloudflare') || lower.includes('hcaptcha') || lower.includes('g-recaptcha'))) { score += 3; signals.push('captcha'); }
+  if (text.trim().length < 160 && numericStatus >= 400) { score += 2; signals.push('tiny_error_body'); }
+
+  const challenge = score >= 3;
+  return { challenge, score, reason: signals.join('|') || null };
+}
+
 function isUsefulSolutionHtml(body, status = 200) {
   const text = typeof body === 'string' ? body.trim() : '';
   if (text.length < 200) return false;
-  return !isLikelyChallengeHtml(text, status);
+  return !classifyChallengeHtml(text, status).challenge;
 }
 
 function safeCookieUrl(url, fallback = 'https://example.com/') {
@@ -111,6 +146,21 @@ function safeCookieUrl(url, fallback = 'https://example.com/') {
     try { return new URL(String(fallback || 'https://example.com/')).toString(); } catch (_) { return 'https://example.com/'; }
   }
 }
+
+function safeLockName(value) {
+  return String(value || 'default')
+    .replace(/[^a-z0-9_.:@-]+/gi, '_')
+    .slice(0, 160) || 'default';
+}
+
+function getFileMtimeMs(filePath) {
+  try { return fs.statSync(filePath).mtimeMs; } catch (_) { return 0; }
+}
+
+function safeUnlink(filePath) {
+  try { fs.unlinkSync(filePath); } catch (_) {}
+}
+
 
 function isToughCookieAvailable() {
   return Boolean(toughCookie?.CookieJar);
@@ -393,21 +443,7 @@ function cookieHeaderToObjects(cookieHeader, url = null) {
 }
 
 function isLikelyChallengeHtml(body, status = 200) {
-  const text = String(body || '').slice(0, 120000);
-  const lower = text.toLowerCase();
-  if ([403, 429, 503].includes(Number(status))) return true;
-  if (!text) return false;
-  return (
-    lower.includes('cf-chl') ||
-    lower.includes('__cf_chl') ||
-    lower.includes('cf-turnstile') ||
-    lower.includes('turnstile.cloudflare.com') ||
-    lower.includes('challenge-platform') ||
-    lower.includes('cloudflare ray id') ||
-    lower.includes('checking if the site connection is secure') ||
-    lower.includes('verify you are human') ||
-    /<title>\s*(just a moment|attention required|checking|verifica)/i.test(text)
-  );
+  return classifyChallengeHtml(body, status).challenge;
 }
 
 function createAsyncLimiter(maxConcurrency = 1, options = {}) {
@@ -544,6 +580,14 @@ function createCfClearanceManager(options = {}) {
   const providerFailureCooldownMaxMs = Math.max(providerFailureCooldownMs, Number(options.providerFailureCooldownMaxMs || 300_000));
   const sessionPoolMax = Math.max(1, Math.min(8, Number.isFinite(Number(options.sessionPoolMax)) ? Number(options.sessionPoolMax) : DEFAULT_SESSION_POOL_MAX));
   const sessionPoolMinScore = Math.max(-25, Math.min(5, Number.isFinite(Number(options.sessionPoolMinScore)) ? Number(options.sessionPoolMinScore) : DEFAULT_SESSION_POOL_MIN_SCORE));
+  const sessionRetireFailures = Math.max(1, Math.min(5, Number.isFinite(Number(options.sessionRetireFailures)) ? Number(options.sessionRetireFailures) : DEFAULT_SESSION_RETIRE_FAILURES));
+  const sessionRetireWindowMs = Math.max(30_000, Number(options.sessionRetireWindowMs || DEFAULT_SESSION_RETIRE_WINDOW_MS));
+  const sessionStaleGraceMs = Math.max(60_000, Number(options.sessionStaleGraceMs || DEFAULT_SESSION_STALE_GRACE_MS));
+  const solveVerifyTimeoutMs = Math.max(1000, Math.min(8000, Number(options.solveVerifyTimeoutMs || DEFAULT_SOLVE_VERIFY_TIMEOUT_MS)));
+  const solveVerifyMinBytes = Math.max(80, Number(options.solveVerifyMinBytes || 200));
+  const sharedLockFile = options.sharedLockFile ? path.resolve(String(options.sharedLockFile)) : null;
+  const sharedLockWaitMs = Math.max(2000, Number(options.sharedLockWaitMs || solveTimeoutMs + 10_000));
+  const loadExternalSession = typeof options.loadExternalSession === 'function' ? options.loadExternalSession : null;
   const returnOnlyCookies = options.returnOnlyCookies !== false;
   const disableMedia = options.disableMedia !== false;
   const waitInSeconds = Math.max(0, Math.min(5, Number(options.waitInSeconds || 0) || 0));
@@ -646,18 +690,36 @@ function createCfClearanceManager(options = {}) {
     for (let i = sessionPool.length - 1; i >= 0; i -= 1) {
       const entry = sessionPool[i];
       const cookieUrl = entry?.solvedUrl || entry?.url;
-      const expired = !entry || !entry.userAgent || !entry.timestamp || (now - Number(entry.timestamp) >= sessionTtlMs);
+      const expired = !entry || !entry.userAgent || !entry.timestamp || (now - Number(entry.timestamp) >= sessionTtlMs + sessionStaleGraceMs);
       const hasCookie = !expired && Boolean(buildCookieHeaderFromSession(entry, cookieUrl));
-      if (expired || !hasCookie || Number(entry.reputationScore || 0) < sessionPoolMinScore - 8) {
+      const retiredTooLong = Boolean(entry?.retired) && Number(entry.retiredAt || 0) && now - Number(entry.retiredAt || 0) > sessionRetireWindowMs;
+      if (expired || !hasCookie || retiredTooLong) {
         sessionPool.splice(i, 1);
       }
     }
     sessionPool.sort((a, b) => {
+      const retiredDelta = Number(Boolean(a.retired)) - Number(Boolean(b.retired));
+      if (retiredDelta !== 0) return retiredDelta;
       const scoreDelta = Number(b.reputationScore || 0) - Number(a.reputationScore || 0);
       if (scoreDelta !== 0) return scoreDelta;
       return Number(b.lastSuccessAt || b.timestamp || 0) - Number(a.lastSuccessAt || a.timestamp || 0);
     });
-    while (sessionPool.length > sessionPoolMax) sessionPool.pop();
+    while (sessionPool.length > sessionPoolMax) {
+      const retiredIndex = sessionPool.findIndex(entry => entry?.retired);
+      if (retiredIndex >= 0) sessionPool.splice(retiredIndex, 1);
+      else sessionPool.pop();
+    }
+  }
+
+  function shouldRetireSession(previous, success, reason, now) {
+    if (success) return false;
+    const reasonText = String(reason || '').toLowerCase();
+    const strongFailure = /challenge|403|429|503|post_clearance|clear_session|rejected|verification/.test(reasonText);
+    if (!strongFailure) return false;
+    const recentFailureAt = Number(previous?.lastFailureAt || 0);
+    const previousStreak = Number(previous?.failureStreak || 0);
+    const nextStreak = recentFailureAt && now - recentFailureAt <= sessionRetireWindowMs ? previousStreak + 1 : 1;
+    return nextStreak >= sessionRetireFailures;
   }
 
   function upsertSessionPool(session = {}, outcome = {}) {
@@ -671,20 +733,27 @@ function createCfClearanceManager(options = {}) {
     const scoreDelta = Number(outcome.scoreDelta || 0) || 0;
     const success = outcome.success === true;
     const failure = outcome.success === false;
+    const retire = shouldRetireSession(previous, success, outcome.reason || outcome.outcome, now);
+    const previousScore = Number(previous?.reputationScore || 0);
     const next = {
       ...(previous || {}),
       ...stripSessionForPool(session),
       poolKey,
       providerName,
-      reputationScore: Math.max(-25, Math.min(100, Number(previous?.reputationScore || 0) + scoreDelta)),
+      reputationScore: Math.max(-25, Math.min(100, previousScore + scoreDelta)),
       successes: Number(previous?.successes || 0) + (success ? 1 : 0),
       failures: Number(previous?.failures || 0) + (failure ? 1 : 0),
+      failureStreak: success ? 0 : (failure ? ((Number(previous?.lastFailureAt || 0) && now - Number(previous.lastFailureAt) <= sessionRetireWindowMs) ? Number(previous?.failureStreak || 0) + 1 : 1) : Number(previous?.failureStreak || 0)),
+      retired: success ? false : Boolean(previous?.retired || retire),
+      retiredAt: success ? null : (retire ? now : (previous?.retiredAt || null)),
+      retireReason: success ? null : (retire ? (outcome.reason || outcome.outcome || 'session_retired') : (previous?.retireReason || null)),
       lastUsedAt: now,
       lastOutcome: outcome.reason || outcome.outcome || (success ? 'success' : failure ? 'failure' : 'observed'),
       timestamp: Number(session.timestamp || previous?.timestamp || now) || now
     };
     if (success) next.lastSuccessAt = now;
     if (failure) next.lastFailureAt = now;
+    if (outcome.verified === true) next.lastVerifiedAt = now;
     if (outcome.url) next.lastUrl = safeCookieUrl(outcome.url, next.solvedUrl || next.url || 'https://example.com/');
 
     if (index >= 0) sessionPool[index] = next;
@@ -705,6 +774,7 @@ function createCfClearanceManager(options = {}) {
     pruneSessionPool();
     const targetUrl = safeCookieUrl(url || sessionPool[0]?.solvedUrl || sessionPool[0]?.url);
     const candidates = sessionPool
+      .filter(entry => !entry.retired)
       .filter(entry => Number(entry.reputationScore || 0) >= sessionPoolMinScore)
       .filter(entry => isFresh(entry))
       .filter(entry => Boolean(buildCookieHeaderFromSession(entry, targetUrl)))
@@ -739,6 +809,10 @@ function createCfClearanceManager(options = {}) {
         reputationScore: Number(entry.reputationScore || 0),
         successes: Number(entry.successes || 0),
         failures: Number(entry.failures || 0),
+        retired: Boolean(entry.retired),
+        retiredAt: entry.retiredAt || null,
+        failureStreak: Number(entry.failureStreak || 0),
+        lastVerifiedAt: entry.lastVerifiedAt || null,
         lastOutcome: entry.lastOutcome || null,
         lastUsedAt: entry.lastUsedAt || null
       }))
@@ -803,10 +877,17 @@ function createCfClearanceManager(options = {}) {
   }
 
   function isFresh(session) {
-    if (!session || !session.userAgent || !session.timestamp) return false;
+    if (!session || !session.userAgent || !session.timestamp || session.retired) return false;
     if (Date.now() - Number(session.timestamp) >= sessionTtlMs) return false;
     const cookieHeader = buildCookieHeaderFromSession(session, session.solvedUrl || session.url);
     return Boolean(cookieHeader);
+  }
+
+  function isStaleUsable(session, url = null) {
+    if (!session || !session.userAgent || !session.timestamp || session.retired) return false;
+    const ageMs = Date.now() - Number(session.timestamp || 0);
+    if (!Number.isFinite(ageMs) || ageMs < sessionTtlMs || ageMs > sessionTtlMs + sessionStaleGraceMs) return false;
+    return Boolean(buildCookieHeaderFromSession(session, url || session.solvedUrl || session.url));
   }
 
   function keyFor(url, sharedKey = null) {
@@ -839,6 +920,114 @@ function createCfClearanceManager(options = {}) {
     }
   }
 
+
+  async function verifySolvedSession(session, targetUrl, signal = null) {
+    if (!session || !session.userAgent || !targetUrl) return { ok: false, reason: 'missing_session_or_url' };
+    const cookieHeader = buildCookieHeaderFromSession(session, targetUrl);
+    if (!cookieHeader) return { ok: false, reason: 'missing_cookies' };
+
+    try {
+      const response = await axios.get(targetUrl, {
+        timeout: solveVerifyTimeoutMs,
+        signal,
+        httpAgent,
+        httpsAgent,
+        maxRedirects: 3,
+        responseType: 'text',
+        validateStatus: status => status >= 200 && status < 600,
+        headers: {
+          'User-Agent': session.userAgent,
+          'Cookie': cookieHeader,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+          'Sec-Fetch-Site': 'same-origin',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Dest': 'document',
+          'Upgrade-Insecure-Requests': '1'
+        }
+      });
+      const body = typeof response.data === 'string' ? response.data : String(response.data || '');
+      const fingerprint = classifyChallengeHtml(body, response.status);
+      if (fingerprint.challenge) {
+        return { ok: false, reason: fingerprint.reason || `challenge_${response.status}`, status: response.status, bytes: body.length };
+      }
+      if (response.status >= 500) return { ok: false, reason: `http_${response.status}`, status: response.status, bytes: body.length };
+      if (body.trim().length < solveVerifyMinBytes && response.status >= 400) {
+        return { ok: false, reason: `tiny_http_${response.status}`, status: response.status, bytes: body.length };
+      }
+      const responseUrl = response?.request?.res?.responseUrl || response?.request?._redirectable?._currentUrl || response?.config?.url || targetUrl;
+      const setCookie = response.headers?.['set-cookie'];
+      const verifiedSession = setCookie ? mergeSessionCookies(session, responseUrl, setCookie) : session;
+      return { ok: true, status: response.status, bytes: body.length, url: responseUrl, session: verifiedSession };
+    } catch (error) {
+      if (signal?.aborted) return { ok: false, reason: 'aborted' };
+      return { ok: false, reason: error?.code || error?.message || String(error) };
+    }
+  }
+
+  function getDistributedLockPath(sharedKey) {
+    if (!sharedLockFile || !sharedKey) return null;
+    const parsed = path.parse(sharedLockFile);
+    const suffix = safeLockName(sharedKey);
+    return path.join(parsed.dir || process.cwd(), `${parsed.name}-${suffix}${parsed.ext || '.lock'}`);
+  }
+
+  function readExternalFreshSession(url) {
+    if (!loadExternalSession) return null;
+    try {
+      const external = loadExternalSession();
+      if (external && isFresh(external) && buildCookieHeaderFromSession(external, url)) return external;
+    } catch (_) {}
+    return null;
+  }
+
+  async function withDistributedSingleFlight(sharedKey, url, maxWaitMs, work) {
+    const lockPath = getDistributedLockPath(sharedKey);
+    if (!lockPath) return work();
+
+    const startedAt = Date.now();
+    const staleAfterMs = Math.max(15_000, maxWaitMs + 10_000);
+
+    while (Date.now() - startedAt < Math.max(2000, maxWaitMs)) {
+      const external = readExternalFreshSession(url);
+      if (external) {
+        logger.debug('solve file lock external session reused', { provider: providerName, url, sharedKey, lockPath });
+        return external;
+      }
+
+      let fd = null;
+      try {
+        fd = fs.openSync(lockPath, 'wx');
+        fs.writeFileSync(fd, JSON.stringify({ providerName, sharedKey, url, pid: process.pid, startedAt: Date.now() }, null, 2));
+        logger.debug('solve file lock acquired', { provider: providerName, url, sharedKey, lockPath });
+        try {
+          return await work();
+        } finally {
+          try { if (fd != null) fs.closeSync(fd); } catch (_) {}
+          safeUnlink(lockPath);
+          logger.debug('solve file lock released', { provider: providerName, url, sharedKey, lockPath });
+        }
+      } catch (error) {
+        try { if (fd != null) fs.closeSync(fd); } catch (_) {}
+        if (error?.code !== 'EEXIST') throw error;
+        const ageMs = Date.now() - getFileMtimeMs(lockPath);
+        if (ageMs > staleAfterMs) {
+          logger.warn('solve file lock stale removed', { provider: providerName, url, sharedKey, lockPath, ageMs });
+          safeUnlink(lockPath);
+          continue;
+        }
+        logger.debug('solve file lock wait', { provider: providerName, url, sharedKey, lockPath, ageMs });
+        await sleep(350);
+      }
+    }
+
+    const external = readExternalFreshSession(url);
+    if (external) return external;
+    logger.warn('solve file lock wait expired', { provider: providerName, url, sharedKey, lockPath, waitedMs: Date.now() - startedAt });
+    return work();
+  }
 
   function formatAbortReason(reason) {
     if (reason == null) return null;
@@ -902,7 +1091,7 @@ function createCfClearanceManager(options = {}) {
     if (!meta.force && now - last < cooldownMs) return null;
     cooldown.set(key, now);
 
-    const promise = solveLimiter(async () => {
+    const executeSolve = () => solveLimiter(async () => {
       const startedAt = Date.now();
       const maxTimeout = Math.max(12_000, Math.min(solveTimeoutMs, Number(meta.maxTimeout || solveTimeoutMs)));
       const controller = new AbortController();
@@ -1011,8 +1200,47 @@ function createCfClearanceManager(options = {}) {
               solutionResponseStatus: usefulSolutionHtml ? solutionStatus : undefined
             };
 
-            upsertSessionPool(session, { success: true, scoreDelta: 8, reason: 'solve_ok', url: solvedUrl || clearanceUrl });
-            const pooledSolvedSession = attachPoolToSession(session);
+            let verifiedSession = session;
+            let verified = false;
+            if (meta.verifySession === true && !usefulSolutionHtml) {
+              const verifyUrl = meta.verifyUrl || meta.triggerUrl || solvedUrl || clearanceUrl;
+              const verification = await verifySolvedSession(session, verifyUrl, controller.signal);
+              if (!verification.ok) {
+                const error = new Error(`verification_${verification.reason || 'failed'}`);
+                error.code = 'CF_SESSION_VERIFICATION_FAILED';
+                error.status = verification.status;
+                lastError = error;
+                logger.warn('solve verification rejected', {
+                  provider: providerName,
+                  clearanceUrl,
+                  verifyUrl,
+                  reason: verification.reason,
+                  status: verification.status,
+                  bytes: verification.bytes
+                });
+                upsertSessionPool(session, { success: false, scoreDelta: -20, reason: 'solve_verification_rejected', url: verifyUrl });
+                markEndpointFailure(selectedEndpoint);
+                continue;
+              }
+              verified = true;
+              verifiedSession = {
+                ...session,
+                ...(verification.session || {}),
+                verifiedAt: Date.now(),
+                verificationUrl: verification.url || verifyUrl,
+                verificationStatus: verification.status
+              };
+              logger.debug('solve verification ok', {
+                provider: providerName,
+                clearanceUrl,
+                verifyUrl,
+                status: verification.status,
+                bytes: verification.bytes
+              });
+            }
+
+            upsertSessionPool(verifiedSession, { success: true, scoreDelta: verified ? 12 : 8, reason: verified ? 'solve_verified' : 'solve_ok', url: solvedUrl || clearanceUrl, verified });
+            const pooledSolvedSession = attachPoolToSession(verifiedSession);
             onSession(pooledSolvedSession);
             markEndpointSuccess(selectedEndpoint);
             clearProviderFailure();
@@ -1066,10 +1294,40 @@ function createCfClearanceManager(options = {}) {
         return null;
       }
       throw error;
-    }).finally(() => inFlight.delete(key));
+    });
+
+    const promise = withDistributedSingleFlight(sharedKey, clearanceUrl, Math.max(sharedLockWaitMs, Number(meta.maxTimeout || solveTimeoutMs) + 10_000), executeSolve)
+      .finally(() => inFlight.delete(key));
 
     inFlight.set(key, promise);
     return promise;
+  }
+
+  function getGuardianStats() {
+    const now = Date.now();
+    pruneCooldown(now);
+    return {
+      provider: providerName,
+      endpoint,
+      endpoints: endpoints.length,
+      inFlight: inFlight.size,
+      cooldownEntries: cooldown.size,
+      providerCooldown: getProviderCooldown(now),
+      sessionPool: getSessionPoolStats(),
+      endpointFailures: endpoints.map(item => ({ endpoint: item, remainingMs: Math.max(0, (endpointFailures.get(item) || 0) - now) })),
+      healthCachedEndpoints: endpoints.filter(item => (endpointHealthOkUntil.get(item) || 0) > now).length,
+      sharedLockFile: sharedLockFile || null,
+      verifyProbe: {
+        enabledByMeta: true,
+        timeoutMs: solveVerifyTimeoutMs,
+        minBytes: solveVerifyMinBytes
+      },
+      retirePolicy: {
+        failures: sessionRetireFailures,
+        windowMs: sessionRetireWindowMs,
+        staleGraceMs: sessionStaleGraceMs
+      }
+    };
   }
 
   return {
@@ -1080,6 +1338,8 @@ function createCfClearanceManager(options = {}) {
     getBestPooledSession,
     recordSessionOutcome,
     getSessionPoolStats,
+    getGuardianStats,
+    isStaleUsable,
     importSessionPoolFromSession,
     mergeCookieHeaders,
     readCookieValue,
@@ -1107,6 +1367,7 @@ module.exports = {
   createCookieStateForUrl,
   makeSessionPoolKey,
   stripSessionForPool,
-  isToughCookieAvailable
+  isToughCookieAvailable,
+  classifyChallengeHtml,
+  isLikelyChallengeHtml
 };
-
