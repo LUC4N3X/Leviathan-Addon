@@ -66,3 +66,19 @@ test('dedupe preserves cached aliases from provider-normalized duplicates', () =
   assert.equal(item.isCached, true);
   assert.equal(item._nexusBridgeRdChecked, true);
 });
+
+test('dedupe records cross-provider consensus evidence on merged streams', () => {
+  const input = [
+    { title: 'A 1080p DB', infoHash: HASH, source: 'DB', seeders: 50 },
+    { title: 'A 1080p Torrentio cached', infoHash: HASH, source: 'Torrentio', seeders: 5, _rdCacheState: 'cached' },
+    { title: 'A 1080p MediaFusion', infoHash: HASH, source: 'MediaFusion', seeders: 40 }
+  ];
+
+  const out = dedupeByInfoHash(input);
+  const [item] = out.results.filter((entry) => extractInfoHash(entry) === HASH);
+
+  assert.equal(out.removed, 2);
+  assert.equal(item._dedupeMergedCount, 3);
+  assert.deepEqual(item._dedupeMergedSources.sort(), ['DB', 'MediaFusion', 'Torrentio'].sort());
+  assert.deepEqual(item._dedupeEvidence.sources.sort(), ['DB', 'MediaFusion', 'Torrentio'].sort());
+});

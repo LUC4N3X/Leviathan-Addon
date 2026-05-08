@@ -46,3 +46,23 @@ test('leviathan score profile penalizes explicit episode mismatch', () => {
     assert.equal(scored.episodeTruth.type, 'episode_mismatch_risk');
     assert.ok(scored.explain.some((entry) => entry.includes('episodeTruth=episode_mismatch_risk')));
 });
+
+test('leviathan score profile rewards cross-provider consensus evidence', () => {
+    const single = evaluateLeviathanScore(
+        { title: 'FROM S01E07 1080p ITA', source: 'Torrentio', _rdCacheState: 'likely_cached' },
+        { title: 'FROM', season: 1, episode: 7, isSeries: true }
+    );
+    const consensus = evaluateLeviathanScore(
+        {
+            title: 'FROM S01E07 1080p ITA',
+            source: 'Torrentio',
+            _rdCacheState: 'likely_cached',
+            _dedupeMergedSources: ['Torrentio', 'MediaFusion', 'DB'],
+            _dedupeMergedCount: 3
+        },
+        { title: 'FROM', season: 1, episode: 7, isSeries: true }
+    );
+
+    assert.ok(consensus.finalScore > single.finalScore);
+    assert.ok(consensus.explain.some((entry) => entry.includes('sourceConsensus=strong_consensus')));
+});
