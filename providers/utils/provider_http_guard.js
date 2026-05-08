@@ -3,8 +3,7 @@
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const http = require('http');
-const https = require('https');
+const { getSharedHttpAgents } = require('./provider_http_agents');
 const {
   getImpitBrowserForFingerprint,
   isCanceledError: defaultIsCanceledError,
@@ -104,8 +103,9 @@ function createProviderHttpGuard(options = {}) {
     timeout: Number(options.agentTimeoutMs || 30000),
     keepAliveMsecs: Number(options.keepAliveMsecs || 30000)
   };
-  const httpAgent = options.httpAgent || new http.Agent(agentOptions);
-  const httpsAgent = options.httpsAgent || new https.Agent(agentOptions);
+  const sharedAgents = getSharedHttpAgents(agentOptions);
+  const httpAgent = options.httpAgent || sharedAgents.httpAgent;
+  const httpsAgent = options.httpsAgent || sharedAgents.httpsAgent;
 
   const lightClient = axios.create({
     timeout: Number(options.clientTimeoutMs || 10000),
@@ -228,13 +228,22 @@ function createProviderHttpGuard(options = {}) {
         url: normalizeBaseUrl(session.url) || currentBaseUrl,
         timestamp: Date.now()
       };
-      saveSession(activeSession);
+      const persistedSession = { ...activeSession };
+      delete persistedSession.solutionResponse;
+      delete persistedSession.solutionResponseUrl;
+      delete persistedSession.solutionResponseStatus;
+      saveSession(persistedSession);
       if (activeSession.url) updateCurrentDomainFromUrl(activeSession.url);
     }
   });
 
   function isSessionFresh(session = activeSession) {
     return clearanceManager.isFresh(session);
+  }
+
+  function isSessionFreshForUrl(session = activeSession, url = currentBaseUrl) {
+    if (!isSessionFresh(session)) return false;
+    return Boolean(buildCookieHeaderFromSession(session, url || session.solvedUrl || session.url || currentBaseUrl));
   }
 
   function clearSession() {
@@ -272,6 +281,29 @@ function createProviderHttpGuard(options = {}) {
   function buildSharedClearanceKey(triggerUrl) {
     const base = normalizeBaseUrl(triggerUrl) || normalizeBaseUrl(currentBaseUrl) || normalizeBaseUrl(initialBaseUrl) || initialBaseUrl;
     return `${providerName}:${base}`;
+  }
+
+  function normalizeComparableUrl(value, base = currentBaseUrl) {
+    try {
+      const parsed = new URL(String(value || ''), base || initialBaseUrl);
+      parsed.hash = '';
+      return parsed.toString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function sameDocumentUrl(a, b) {
+    const left = normalizeComparableUrl(a);
+    const right = normalizeComparableUrl(b);
+    return Boolean(left && right && left === right);
+  }
+
+  function getSolutionHtmlForUrl(session, targetUrl) {
+    if (!session?.solutionResponse || !session.solutionResponseUrl) return null;
+    if (!sameDocumentUrl(session.solutionResponseUrl, targetUrl)) return null;
+    const html = typeof session.solutionResponse === 'string' ? session.solutionResponse : String(session.solutionResponse || '');
+    return html && !isChallengePage(html, session.solutionResponseStatus || 200) ? html : null;
   }
 
   async function resolveRedirectDomain(startBase, signal = null) {
@@ -532,12 +564,53 @@ function createProviderHttpGuard(options = {}) {
     };
     if (!next.cookies && setCookie) next.cookies = mergeCookieHeaders(session.cookies || '', setCookie);
     activeSession = next;
-    saveSession(activeSession);
+    const persistedSession = { ...activeSession };
+    delete persistedSession.solutionResponse;
+    delete persistedSession.solutionResponseUrl;
+    delete persistedSession.solutionResponseStatus;
+    saveSession(persistedSession);
     if (next.url) updateCurrentDomainFromUrl(next.url);
   }
 
+
+  async function tryRedirectedSessionReplay(originalUrl, redirectedUrl, { method = 'GET', body = null, signal = null, timeout = directFetchTimeoutMs, startedAt = Date.now(), reason = 'redirect' } = {}) {
+    const originalBase = normalizeBaseUrl(originalUrl);
+    const redirectedBase = normalizeBaseUrl(redirectedUrl);
+    if (!redirectedUrl || !originalBase || !redirectedBase || originalBase === redirectedBase) return null;
+    if (!isSessionFreshForUrl(activeSession, redirectedUrl)) return null;
+
+    try {
+      logger.debug('redirect session replay start', { method, originalUrl, redirectedUrl, reason });
+      const response = await axiosSiteRequest(redirectedUrl, {
+        method,
+        body: method === 'POST' ? body : null,
+        headers: buildHeaders({ session: activeSession, method, body, url: redirectedUrl }),
+        timeout: Math.max(2200, Math.min(timeout, 4500)),
+        signal,
+        browserProfile: activeSession,
+        useImpit: false,
+        maxRedirects: 3
+      });
+
+      updateCurrentDomainFromUrl(response.url);
+      const html = typeof response.data === 'string' ? response.data : String(response.data || '');
+      if (isChallengePage(html, response.status)) {
+        logger.debug('redirect session replay rejected', { method, originalUrl, redirectedUrl, status: response.status, bytes: html.length, via: response.via, ms: Date.now() - startedAt });
+        return null;
+      }
+
+      persistSession(activeSession, response.url, response.headers?.['set-cookie']);
+      logger.debug('redirect session replay ok', { method, originalUrl, redirectedUrl, status: response.status, bytes: html.length, via: response.via, ms: Date.now() - startedAt });
+      return html;
+    } catch (error) {
+      if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
+      logger.debug('redirect session replay error', { method, originalUrl, redirectedUrl, reason, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
+      return null;
+    }
+  }
+
   async function fetchWithSession(url, { method = 'GET', body = null, signal = null, timeout = directFetchTimeoutMs, startedAt = Date.now() } = {}) {
-    if (!isSessionFresh(activeSession)) return null;
+    if (!isSessionFreshForUrl(activeSession, url)) return null;
     const response = await axiosSiteRequest(url, {
       method,
       body: method === 'POST' ? body : null,
@@ -554,6 +627,9 @@ function createProviderHttpGuard(options = {}) {
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
     if (isChallengePage(html, response.status)) {
       logger.debug('session fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, via: response.via, ms: Date.now() - startedAt });
+
+      const replayed = await tryRedirectedSessionReplay(url, response.url, { method, body, signal, timeout, startedAt, reason: 'session-challenge' });
+      if (replayed) return replayed;
 
       if (impitSessionFastPath && impitAfterSessionChallenge) {
         try {
@@ -621,6 +697,8 @@ function createProviderHttpGuard(options = {}) {
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
     if (isChallengePage(html, response.status)) {
       logger.debug('direct fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, ms: Date.now() - startedAt });
+      const replayed = await tryRedirectedSessionReplay(url, response.url, { method, body, signal, timeout, startedAt, reason: 'direct-challenge' });
+      if (replayed) return replayed;
       if (clearanceManager.endpoint) {
         logger.debug('impit rescue skipped', { method, url, reason: 'direct-challenge-clearance-endpoint', clearance: true, ms: Date.now() - startedAt });
         return null;
@@ -641,7 +719,7 @@ function createProviderHttpGuard(options = {}) {
   }
 
   async function solveClearance(triggerUrl, { isPost = false, body = null, signal = null, force = true } = {}) {
-    if (isSessionFresh(activeSession)) return activeSession;
+    if (isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
 
     const targetClearanceUrl = buildClearanceUrl(triggerUrl, { isPost, body });
     const homepageClearanceUrl = buildHomepageClearanceUrl(triggerUrl);
@@ -651,7 +729,7 @@ function createProviderHttpGuard(options = {}) {
     const sharedKey = sharedClearanceAuthority ? buildSharedClearanceKey(primaryClearanceUrl) : null;
 
     const runSolve = async () => {
-      if (isSessionFresh(activeSession)) return activeSession;
+      if (isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
 
       // A shared CF authority must not be canceled by one user closing Stremio.
       // The internal hard timeout still protects FlareSolverr from hanging forever.
@@ -662,10 +740,11 @@ function createProviderHttpGuard(options = {}) {
         force,
         maxTimeout: clearanceTimeoutMs,
         sharedKey,
+        wantResponse: sameDocumentUrl(primaryClearanceUrl, triggerUrl),
         cookies: buildCookieHeaderFromSession(activeSession, targetClearanceUrl) || activeSession?.cookies || ''
       });
 
-      if (isSessionFresh(session)) return session;
+      if (isSessionFreshForUrl(session, triggerUrl)) return session;
 
       const fallbacks = [];
       if (!sharedClearanceAuthority && originClearance && targetFallbackAfterOrigin && targetClearanceUrl !== primaryClearanceUrl) fallbacks.push(targetClearanceUrl);
@@ -679,9 +758,10 @@ function createProviderHttpGuard(options = {}) {
           force,
           fallback: true,
           maxTimeout: clearanceTimeoutMs,
+          wantResponse: sameDocumentUrl(fallbackUrl, triggerUrl),
           cookies: buildCookieHeaderFromSession(activeSession, fallbackUrl) || activeSession?.cookies || ''
         });
-        if (isSessionFresh(session)) return session;
+        if (isSessionFreshForUrl(session, triggerUrl)) return session;
       }
       return null;
     };
@@ -697,7 +777,7 @@ function createProviderHttpGuard(options = {}) {
         waitMs: Date.now() - sharedClearancePromiseStartedAt
       });
       const waited = await sharedClearancePromise;
-      return isSessionFresh(waited) ? waited : (isSessionFresh(activeSession) ? activeSession : null);
+      return isSessionFreshForUrl(waited, triggerUrl) ? waited : (isSessionFreshForUrl(activeSession, triggerUrl) ? activeSession : null);
     }
 
     sharedClearancePromiseStartedAt = Date.now();
@@ -715,9 +795,9 @@ function createProviderHttpGuard(options = {}) {
     const startedAt = Date.now();
     const method = isPost ? 'POST' : 'GET';
     const hardFetchTimeout = Math.max(2500, Math.min(timeoutMs, directFetchTimeoutMs));
-    logger.debug('fetch start', { method, url, hasSession: isSessionFresh(), allowClearance: allowFlareSolverr, timeoutMs: hardFetchTimeout });
+    logger.debug('fetch start', { method, url, hasSession: isSessionFreshForUrl(activeSession, url), allowClearance: allowFlareSolverr, timeoutMs: hardFetchTimeout });
 
-    if (isSessionFresh()) {
+    if (isSessionFreshForUrl(activeSession, url)) {
       try {
         const html = await fetchWithSession(url, { method, body, signal, timeout: hardFetchTimeout, startedAt });
         if (html) return html;
@@ -738,15 +818,21 @@ function createProviderHttpGuard(options = {}) {
     if (!allowFlareSolverr || signal?.aborted) return null;
 
     const session = await solveClearance(url, { isPost, body, signal, force: clearanceForce });
-    if (!isSessionFresh(session)) {
+    if (!isSessionFreshForUrl(session, url)) {
       logger.warn('clearance no fresh session', { method, url, ms: Date.now() - startedAt });
       return null;
+    }
+
+    const solutionHtml = getSolutionHtmlForUrl(session, url);
+    if (solutionHtml) {
+      logger.info('post-clearance solution html used', { method, url, bytes: solutionHtml.length, ms: Date.now() - startedAt });
+      return solutionHtml;
     }
 
     try {
       const html = await fetchWithSession(url, { method, body, signal, timeout: hardFetchTimeout, startedAt });
       if (html) {
-        logger.info('post-clearance fetch ok', { method, url, transport: 'session-fastpath', sessionFresh: isSessionFresh(), ms: Date.now() - startedAt });
+        logger.info('post-clearance fetch ok', { method, url, transport: 'session-fastpath', sessionFresh: isSessionFreshForUrl(activeSession, url), ms: Date.now() - startedAt });
         return html;
       }
     } catch (error) {
@@ -833,4 +919,3 @@ module.exports = {
   envFlag,
   envFlagNotFalse
 };
-
