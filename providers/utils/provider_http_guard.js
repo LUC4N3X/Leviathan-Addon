@@ -135,6 +135,8 @@ function createProviderHttpGuard(options = {}) {
   const impitHttp3 = options.impitHttp3 === true;
   const impitSessionFastPath = options.impitSessionFastPath !== false;
   const impitAfterSessionChallenge = options.impitAfterSessionChallenge !== false;
+  const impitPreClearanceRescue = options.impitPreClearanceRescue !== false;
+  const impitPreClearanceTimeoutMs = Math.max(1200, Math.min(4500, Number(options.impitPreClearanceTimeoutMs || 2600) || 2600));
 
   function loadStoredDomain() {
     try {
@@ -460,6 +462,47 @@ function createProviderHttpGuard(options = {}) {
     };
   }
 
+  async function fetchImpitRescue(url, { method = 'GET', body = null, signal = null, timeout = impitPreClearanceTimeoutMs, startedAt = Date.now(), headers = null, browserProfile = null, reason = 'pre-clearance' } = {}) {
+    if (!preferImpit || !impitPreClearanceRescue || signal?.aborted) return null;
+
+    try {
+      const response = await axiosSiteRequest(url, {
+        method,
+        body: method === 'POST' ? body : null,
+        headers: headers || buildHeaders({ method, body, directProfile: browserProfile }),
+        timeout: Math.max(1200, Math.min(timeout, impitPreClearanceTimeoutMs)),
+        signal,
+        browserProfile: browserProfile || activeSession,
+        useImpit: true,
+        impitAttempts: Math.min(2, impitMaxAttempts),
+        impitTotalExtra: 300
+      });
+
+      updateCurrentDomainFromUrl(response.url);
+      const html = typeof response.data === 'string' ? response.data : String(response.data || '');
+      if (!isChallengePage(html, response.status)) {
+        const setCookie = response.headers?.['set-cookie'];
+        if (activeSession?.cookies || setCookie) {
+          persistSession({
+            userAgent: (browserProfile && (browserProfile.userAgent || browserProfile.ua)) || activeSession?.userAgent || getProfileUserAgent(browserProfile),
+            cookies: activeSession?.cookies || '',
+            url: response.url,
+            timestamp: Date.now()
+          }, response.url, setCookie);
+        }
+        logger.debug('impit rescue ok', { method, url, reason, status: response.status, bytes: html.length, via: response.via, ms: Date.now() - startedAt, hasCookie: Boolean(activeSession?.cookies || setCookie) });
+        return html;
+      }
+
+      logger.debug('impit rescue rejected', { method, url, reason, status: response.status, bytes: html.length, via: response.via, ms: Date.now() - startedAt });
+      return null;
+    } catch (error) {
+      if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
+      logger.debug('impit rescue error', { method, url, reason, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
+      return null;
+    }
+  }
+
   function persistSession(session, resolvedUrl = null, setCookie = null) {
     if (!session?.userAgent) return;
     const next = {
@@ -530,22 +573,32 @@ function createProviderHttpGuard(options = {}) {
   async function fetchDirectFast(url, { method = 'GET', body = null, signal = null, timeout = directFetchTimeoutMs, startedAt = Date.now() } = {}) {
     const profile = pickProfile(profiles) || {};
     const userAgent = getProfileUserAgent(profile);
-    const response = await axiosSiteRequest(url, {
-      method,
-      body: method === 'POST' ? body : null,
-      headers: buildHeaders({ method, body, directProfile: profile }),
-      timeout,
-      signal,
-      browserProfile: profile,
-      // This is the real fast path: a cheap direct probe first when FlareSolverr can
-      // prewarm cookies. If no Flare endpoint exists, keep Impit as the standalone bypass.
-      useImpit: !clearanceManager.endpoint
-    });
+    const headers = buildHeaders({ method, body, directProfile: profile });
+    let response = null;
+
+    try {
+      response = await axiosSiteRequest(url, {
+        method,
+        body: method === 'POST' ? body : null,
+        headers,
+        timeout,
+        signal,
+        browserProfile: profile,
+        // Cheap probe first. If FlareSolverr exists, do not pay Impit cost unless the probe is blocked.
+        useImpit: !clearanceManager.endpoint
+      });
+    } catch (error) {
+      if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
+      logger.debug('direct fetch transport error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
+      return fetchImpitRescue(url, { method, body, signal, timeout: Math.min(timeout, impitPreClearanceTimeoutMs), startedAt, headers, browserProfile: profile, reason: 'direct-error' });
+    }
 
     updateCurrentDomainFromUrl(response.url);
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
     if (isChallengePage(html, response.status)) {
       logger.debug('direct fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, ms: Date.now() - startedAt });
+      const rescued = await fetchImpitRescue(url, { method, body, signal, timeout: Math.min(timeout, impitPreClearanceTimeoutMs), startedAt, headers, browserProfile: profile, reason: 'direct-challenge' });
+      if (rescued) return rescued;
       return null;
     }
 
@@ -567,7 +620,8 @@ function createProviderHttpGuard(options = {}) {
       triggerUrl,
       method: isPost ? 'POST' : 'GET',
       force,
-      maxTimeout: clearanceTimeoutMs
+      maxTimeout: clearanceTimeoutMs,
+      cookies: activeSession?.cookies || ''
     });
 
     if (isSessionFresh(session)) return session;
@@ -583,7 +637,8 @@ function createProviderHttpGuard(options = {}) {
         method: isPost ? 'POST' : 'GET',
         force,
         fallback: true,
-        maxTimeout: clearanceTimeoutMs
+        maxTimeout: clearanceTimeoutMs,
+        cookies: activeSession?.cookies || ''
       });
       if (isSessionFresh(session)) return session;
     }
@@ -691,7 +746,9 @@ function createProviderHttpGuard(options = {}) {
       turbo: impitTurbo,
       maxAttempts: impitMaxAttempts,
       http3: impitHttp3,
-      sessionFastPath: impitSessionFastPath
+      sessionFastPath: impitSessionFastPath,
+      preClearanceRescue: impitPreClearanceRescue,
+      flareEndpoints: clearanceManager.endpoints?.length || 0
     }),
     directFetchTimeoutMs,
     searchTimeoutMs,
