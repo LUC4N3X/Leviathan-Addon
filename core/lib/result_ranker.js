@@ -12,15 +12,8 @@ const {
   isSeasonPack,
   isTrustedSource
 } = require("../utils/text");
-const { evaluateLeviathanScore } = require('../ranking/score_profile');
+const { detectSourceConsensus, evaluateLeviathanScore } = require('../ranking/score_profile');
 const { shouldKeepStrictItalianCandidate, hasStrictItalianEvidence } = require('../canonical/language_guard');
-
-let evidenceGraph = null;
-try {
-  evidenceGraph = require('../evidence_graph');
-} catch (_) {
-  evidenceGraph = null;
-}
 
 const REGEX_SCENE_RELEASE = /\b(?:web[-.\s]?dl|webrip|blu[-.\s]?ray|bd[-.\s]?rip|remux|uhd|hevc|x265|x264|ddp|truehd|dts|atmos|hdr|dv|dolby[\s.-]?vision)\b/i;
 const REGEX_HEVC = /\b(?:x265|h265|hevc)\b/i;
@@ -34,6 +27,12 @@ const REGEX_EXPLICIT_MULTI = /\b(?:MULTI|MULTILANG(?:UAGE)?|DUAL[\s.-]?AUDIO)\b/
 const REGEX_TITLE_PUNCTUATION = /[\[\]{}()]/g;
 const REGEX_TITLE_SPACING = /[._:+\-]+/g;
 const REGEX_TITLE_NOISE = /\b(?:2160p|1080p|720p|480p|x264|x265|h264|h265|hevc|hdr10\+?|hdr|dv|dolby\s*vision|web[- ]?dl|webrip|bluray|brrip|dvdrip|remux|proper|repack|nf|amzn|dsnp|atvp|ita|italian|italiano|multi|dual|audio|sub|subs|subbed|vostfr|subita)\b/g;
+const SOURCE_CONSENSUS_BONUS = Object.freeze({
+  strong_consensus: 9000,
+  consensus: 5500,
+  mirror: 2500,
+  none: 0
+});
 
 const DEFAULT_PROFILES = {
   stream: {
@@ -642,6 +641,12 @@ function computeScore(item, meta = {}, configInput = {}) {
     score += weights.trustedSource;
     reasons.push("SOURCE");
   }
+  const sourceConsensus = detectSourceConsensus(item);
+  const consensusBonus = SOURCE_CONSENSUS_BONUS[sourceConsensus] || 0;
+  if (consensusBonus > 0) {
+    score += consensusBonus;
+    reasons.push(`SOURCE_CONSENSUS:${sourceConsensus}`);
+  }
   if (hasFileIdx) {
     score += weights.fileIdxBonus;
     reasons.push("FILE_IDX");
@@ -703,20 +708,6 @@ function computeScore(item, meta = {}, configInput = {}) {
     reasons.push("TB_CACHED");
   }
 
-  let evidenceScore = null;
-  if (evidenceGraph && typeof evidenceGraph.getStreamEvidenceScore === 'function') {
-    try {
-      evidenceScore = evidenceGraph.getStreamEvidenceScore(item);
-      if (evidenceScore && Number.isFinite(Number(evidenceScore.score)) && Number(evidenceScore.score) !== 0) {
-        const delta = Number(evidenceScore.score);
-        score += delta;
-        reasons.push(`EVIDENCE:${delta > 0 ? '+' : ''}${delta}`);
-      }
-    } catch (_) {
-      evidenceScore = null;
-    }
-  }
-
   const scoreProfile = evaluateLeviathanScore(item, meta, configInput);
   const useScoreProfile = configInput?.useLeviathanScoreProfile === true
     || configInput?.ranking?.useLeviathanScoreProfile === true
@@ -754,14 +745,8 @@ function computeScore(item, meta = {}, configInput = {}) {
       isMaybeItalian: signals.langInfo.isMaybeItalian,
       isMulti: signals.langInfo.isMulti,
       subOnly: signals.subOnly,
-      scoreProfile,
-      evidence: evidenceScore ? {
-        score: evidenceScore.score,
-        seen: evidenceScore.seen,
-        cachedSafe: evidenceScore.cachedSafe,
-        trustScore: evidenceScore.trustScore,
-        reasons: Array.isArray(evidenceScore.reasons) ? evidenceScore.reasons.slice(0, 4) : []
-      } : null
+      sourceConsensus,
+      scoreProfile
     }
   };
 }
@@ -827,18 +812,6 @@ function rankAndFilterResults(results = [], meta = {}, configInput = {}) {
     .filter((item) => !config.keepByLanguage || shouldKeepByLanguageMode(item, meta, configInput));
 
   ranked.sort((a, b) => compareRankedItems(a, b, meta, config));
-
-  if (evidenceGraph && typeof evidenceGraph.recordStreamEvidenceBatch === 'function') {
-    try {
-      evidenceGraph.recordStreamEvidenceBatch(ranked, {
-        ...(meta || {}),
-        stage: 'ranked',
-        sortMode: config.sortMode,
-        profile: config.profile
-      });
-    } catch (_) {}
-  }
-
   return ranked;
 }
 
