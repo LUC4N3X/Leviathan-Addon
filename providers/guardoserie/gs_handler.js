@@ -31,6 +31,7 @@ const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
 const { createProviderHttpGuard, envFlag, envFlagNotFalse } = require('../utils/provider_http_guard');
 
 const INITIAL_GS_DOMAIN      = 'https://guardoserie.run';
+const GS_MOVIE_LIST_PATH     = '/guarda-film-streaming-ita/';
 const PROVIDER_NAME          = 'guardoserie';
 const BROWSER_PROFILES       = browserProfiles.GUARDO_SERIE_BROWSER_PROFILES || browserProfiles.GUARDA_SERIE_BROWSER_PROFILES || [];
 
@@ -45,25 +46,53 @@ const GLOBAL_TIMEOUT_MS      = Math.min(
   Math.max(30000, parseInt(process.env.GS_INTERNAL_TIMEOUT || String(PROVIDER_BUDGET_MS), 10) || PROVIDER_BUDGET_MS)
 );
 const SEARCH_QUERY_TIMEOUT_MS = Math.max(8000, parseInt(process.env.GS_SEARCH_TIMEOUT || '12000', 10) || 12000);
-const DIRECT_FETCH_TIMEOUT_MS = Math.max(1800, parseInt(process.env.GS_DIRECT_FETCH_TIMEOUT || '3000', 10) || 3000);
-const GS_IMPIT_MAX_ATTEMPTS = Math.max(1, Math.min(3, parseInt(process.env.GS_IMPIT_MAX_ATTEMPTS || process.env.GUARDOSERIE_IMPIT_MAX_ATTEMPTS || '2', 10) || 2));
-const GS_IMPIT_TOTAL_EXTRA_MS = Math.max(500, Math.min(1800, parseInt(process.env.GS_IMPIT_TOTAL_EXTRA_MS || process.env.GUARDOSERIE_IMPIT_TOTAL_EXTRA_MS || '900', 10) || 900));
-const GS_IMPIT_HTTP3 = envFlagNotFalse('GS_IMPIT_HTTP3', true) && envFlagNotFalse('GUARDOSERIE_IMPIT_HTTP3', true);
-const GS_ENABLE_IMPIT_FALLBACK = envFlag('GS_ENABLE_IMPIT_FALLBACK', false) || envFlag('GUARDOSERIE_ENABLE_IMPIT_FALLBACK', false);
-const GS_PREFER_IMPIT = GS_ENABLE_IMPIT_FALLBACK || !process.env.FLARESOLVERR_URL;
-const GS_CLEARANCE_BRIDGE_MODE = envFlagNotFalse('GS_CLEARANCE_BRIDGE_MODE', true) && envFlagNotFalse('GUARDOSERIE_CLEARANCE_BRIDGE_MODE', true);
+
+// GuardoSerie TOP speed defaults are intentionally hardcoded.
+// No .env is required for the fast path: FlareSolverr warms clearance in background,
+// Axios performs the real page fetches, and Impit stays out of the hot path by default.
+const GS_TOP_SPEED = Object.freeze({
+  flareEndpoint: process.env.FLARESOLVERR_URL || 'http://flaresolverr:8191/v1',
+  directFetchTimeoutMs: 3000,
+  clearanceBridgeMode: true,
+  enableImpitFallback: false,
+  backgroundClearanceEnabled: true,
+  backgroundPrimeHome: true,
+  backgroundTitlePrime: true,
+  backgroundRefreshMs: 600_000,
+  backgroundRefreshEarlyMs: 1_200_000,
+  backgroundPrimeTimeoutMs: 2200,
+  backgroundTitlePrimeMax: 8,
+  prewarmStartDelayMs: 0,
+  prewarmWaitMs: 250,
+  hotpathFlareFallback: false,
+  backgroundStaticPrime: true,
+  movieFastSlugMax: 6,
+  movieMaxVerifyCandidates: 2,
+  movieHardBudgetMs: 12_000,
+  impitMaxAttempts: 1,
+  impitTotalExtraMs: 900,
+  impitHttp3: true
+});
+
+const DIRECT_FETCH_TIMEOUT_MS = GS_TOP_SPEED.directFetchTimeoutMs;
+const GS_IMPIT_MAX_ATTEMPTS = GS_TOP_SPEED.impitMaxAttempts;
+const GS_IMPIT_TOTAL_EXTRA_MS = GS_TOP_SPEED.impitTotalExtraMs;
+const GS_IMPIT_HTTP3 = GS_TOP_SPEED.impitHttp3;
+const GS_ENABLE_IMPIT_FALLBACK = GS_TOP_SPEED.enableImpitFallback;
+const GS_PREFER_IMPIT = GS_ENABLE_IMPIT_FALLBACK;
+const GS_CLEARANCE_BRIDGE_MODE = GS_TOP_SPEED.clearanceBridgeMode;
 const GS_IMPIT_BROWSER_FALLBACKS = Object.freeze(['chrome142', 'chrome136', 'chrome131', 'firefox144', 'firefox135', 'chrome125']);
 const GS_EXTRACTOR_DIRECT_TIMEOUT_MS = 3200;
 const GS_EXTRACTOR_IMPIT_TIMEOUT_MS = 1800;
-const GS_BACKGROUND_CLEARANCE_ENABLED = envFlagNotFalse('GS_BACKGROUND_CLEARANCE_ENABLED', true) && envFlagNotFalse('GUARDOSERIE_BACKGROUND_CLEARANCE_ENABLED', true);
-const GS_BACKGROUND_PRIME_HOME = envFlagNotFalse('GS_BACKGROUND_PRIME_HOME', true) && envFlagNotFalse('GUARDOSERIE_BACKGROUND_PRIME_HOME', true);
-const GS_BACKGROUND_TITLE_PRIME = envFlagNotFalse('GS_BACKGROUND_TITLE_PRIME', true) && envFlagNotFalse('GUARDOSERIE_BACKGROUND_TITLE_PRIME', true);
-const GS_BACKGROUND_REFRESH_MS = Math.max(60_000, Math.min(60 * 60_000, parseInt(process.env.GS_BACKGROUND_REFRESH_MS || '600000', 10) || 600000));
-const GS_BACKGROUND_REFRESH_EARLY_MS = Math.max(5 * 60_000, Math.min(CF_SESSION_TTL - 60_000, parseInt(process.env.GS_BACKGROUND_REFRESH_EARLY_MS || '1200000', 10) || 1200000));
-const GS_BACKGROUND_PRIME_TIMEOUT_MS = Math.max(1200, Math.min(5000, parseInt(process.env.GS_BACKGROUND_PRIME_TIMEOUT_MS || '2200', 10) || 2200));
-const GS_BACKGROUND_TITLE_PRIME_MAX = Math.max(2, Math.min(12, parseInt(process.env.GS_BACKGROUND_TITLE_PRIME_MAX || '6', 10) || 6));
-const GS_PREWARM_START_DELAY_MS = Math.max(0, Math.min(1500, parseInt(process.env.GS_PREWARM_START_DELAY_MS || '0', 10) || 0));
-const GS_PREWARM_WAIT_MS = Math.max(0, Math.min(3500, parseInt(process.env.GS_PREWARM_WAIT_MS || (GS_BACKGROUND_CLEARANCE_ENABLED ? '250' : '1200'), 10) || (GS_BACKGROUND_CLEARANCE_ENABLED ? 250 : 1200)));
+const GS_BACKGROUND_CLEARANCE_ENABLED = GS_TOP_SPEED.backgroundClearanceEnabled;
+const GS_BACKGROUND_PRIME_HOME = GS_TOP_SPEED.backgroundPrimeHome;
+const GS_BACKGROUND_TITLE_PRIME = GS_TOP_SPEED.backgroundTitlePrime;
+const GS_BACKGROUND_REFRESH_MS = GS_TOP_SPEED.backgroundRefreshMs;
+const GS_BACKGROUND_REFRESH_EARLY_MS = GS_TOP_SPEED.backgroundRefreshEarlyMs;
+const GS_BACKGROUND_PRIME_TIMEOUT_MS = GS_TOP_SPEED.backgroundPrimeTimeoutMs;
+const GS_BACKGROUND_TITLE_PRIME_MAX = GS_TOP_SPEED.backgroundTitlePrimeMax;
+const GS_PREWARM_START_DELAY_MS = GS_TOP_SPEED.prewarmStartDelayMs;
+const GS_PREWARM_WAIT_MS = GS_TOP_SPEED.prewarmWaitMs;
 const FLARE_WARMUP_TIMEOUT_MS = Math.min(
   Math.max(12000, parseInt(process.env.GS_FLARE_WARMUP_TIMEOUT_MS || '24000', 10) || 24000),
   Math.max(15000, GLOBAL_TIMEOUT_MS - 12000)
@@ -73,6 +102,12 @@ const DEBUG_GS              = envFlag('GUARDOSERIE_DEBUG', false);
 const DEBUG_CF              = DEBUG_GS || envFlag('GUARDOSERIE_DEBUG_CF', envFlag('PROVIDER_SHIELD_DEBUG_CF', true)) || envFlag('FLARESOLVERR_DEBUG', false);
 const GS_SKIP_AJAX_AFTER_FALLBACK_HIT = envFlagNotFalse('GS_SKIP_AJAX_AFTER_FALLBACK_HIT', true) && envFlagNotFalse('GUARDOSERIE_SKIP_AJAX_AFTER_FALLBACK_HIT', true);
 const GS_FAST_SLUG_FIRST           = envFlagNotFalse('GS_FAST_SLUG_FIRST', true) && envFlagNotFalse('GUARDOSERIE_FAST_SLUG_FIRST', true);
+// TOP speed mode: background daemon owns FlareSolverr; hot Stremio requests stay Axios/session-only by default.
+const GS_HOTPATH_FLARE_FALLBACK      = GS_TOP_SPEED.hotpathFlareFallback;
+const GS_BACKGROUND_STATIC_PRIME     = GS_TOP_SPEED.backgroundStaticPrime;
+const GS_MOVIE_FAST_SLUG_MAX         = GS_TOP_SPEED.movieFastSlugMax;
+const GS_MOVIE_MAX_VERIFY_CANDIDATES = GS_TOP_SPEED.movieMaxVerifyCandidates;
+const GS_MOVIE_HARD_BUDGET_MS        = GS_TOP_SPEED.movieHardBudgetMs;
 
 const COMPILED_DIRECT_REGEX  = new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig');
 const COMPILED_ESCAPED_REGEX = new RegExp(HOSTER_ESCAPED_DIRECT_LINK_PATTERN, 'ig');
@@ -112,7 +147,7 @@ const gsHttp = createProviderHttpGuard({
   clearanceForce: envFlag('GS_FLARE_FORCE_SOLVE', false) || envFlag('GUARDOSERIE_FLARE_FORCE_SOLVE', false),
   homepageFallback: envFlag('GS_FLARE_HOMEPAGE_FALLBACK', false) || envFlag('GUARDOSERIE_FLARE_HOMEPAGE_FALLBACK', false),
   clearanceCooldownMs: Math.max(3000, parseInt(process.env.GS_FLARE_CLEARANCE_COOLDOWN_MS || '8000', 10) || 8000),
-  flareEndpoint: process.env.FLARESOLVERR_URL,
+  flareEndpoint: GS_TOP_SPEED.flareEndpoint,
   clearanceBridgeMode: GS_CLEARANCE_BRIDGE_MODE,
   preferImpit: GS_PREFER_IMPIT,
   impitTurbo: true,
@@ -133,6 +168,14 @@ const buildGsUrl = pathname => gsHttp.buildProviderUrl(pathname);
 const getTargetDomain = () => gsHttp.getCurrentBaseUrl();
 const normalizeBaseUrl = value => gsHttp.normalizeBaseUrl(value);
 const isAbortLikeError = error => gsHttp.isAbortLikeError(error);
+
+function allowHotPathClearance() {
+  // Default TOP mode: FlareSolverr runs in the daemon/warmup path, not inside a Stremio stream request.
+  // Hot-path Flare fallback is intentionally hardcoded off for maximum speed.
+  if (GS_HOTPATH_FLARE_FALLBACK) return true;
+  if (!GS_BACKGROUND_CLEARANCE_ENABLED) return true;
+  return !gsHttp.getEndpoint();
+}
 
 const gsExtractorClient = {
   async get(url, options = {}) {
@@ -256,6 +299,7 @@ function warmupGsClearanceInBackground(reason = 'startup', options = {}) {
       sessionReady = sessionReady || gsHttp.isSessionFresh();
     }
 
+    if (sessionReady || homeReady) primeGsStaticPagesInBackground(`${reason}-static-prime`);
     gsDebug('background clearance done', { reason, sessionReady, homeReady, freshSession: gsHttp.isSessionFresh(), ageMs: getGsSessionAgeMs(), ms: Date.now() - startedAt });
     return Boolean(sessionReady || homeReady);
   })().catch(error => {
@@ -330,18 +374,38 @@ function startGsBackgroundClearanceDaemon() {
 function buildFastSlugTargetCandidates(expectedTitles = [], mediaType = 'series', maxTitles = 10) {
   const candidates = [];
   const seen = new Set();
-  for (const title of expandGsTitleAliases(expectedTitles, maxTitles)) {
+  const pushPath = pathname => {
+    const url = buildGsUrl(pathname);
+    if (seen.has(url)) return;
+    seen.add(url);
+    candidates.push(url);
+  };
+
+  const titles = expandGsTitleAliases(expectedTitles, maxTitles);
+  if (mediaType === 'movie') {
+    const slugs = [];
+    const seenSlug = new Set();
+    for (const title of titles.slice(0, 8)) {
+      for (const slug of slugifyGsMovieVariants(title)) {
+        if (!slug || seenSlug.has(slug)) continue;
+        seenSlug.add(slug);
+        slugs.push(slug);
+      }
+    }
+
+    // Vecchio repo speed trick: real movie pages are usually root slugs.
+    // Root first, then guarda-* fallback, only then weak /film/ and /movie/ shells.
+    for (const slug of slugs) pushPath(`/${slug}/`);
+    for (const slug of slugs) pushPath(`/guarda-${slug}-streaming-ita/`);
+    for (const slug of slugs.slice(0, 3)) pushPath(`/film/${slug}/`);
+    for (const slug of slugs.slice(0, 2)) pushPath(`/movie/${slug}/`);
+    return candidates.slice(0, 28);
+  }
+
+  for (const title of titles) {
     const slug = slugify(title);
     if (!slug) continue;
-    const paths = mediaType === 'movie'
-      ? [`/${slug}/`, `/movie/${slug}/`, `/film/${slug}/`, `/guarda-${slug}-streaming-ita/`]
-      : [`/${slug}/`, `/serie/${slug}/`, `/serietv/${slug}/`];
-    for (const p of paths) {
-      const url = buildGsUrl(p);
-      if (seen.has(url)) continue;
-      seen.add(url);
-      candidates.push(url);
-    }
+    for (const p of [`/${slug}/`, `/serie/${slug}/`, `/serietv/${slug}/`]) pushPath(p);
   }
   return candidates;
 }
@@ -372,7 +436,24 @@ function primeGsUrlsInBackground(urls = [], options = {}) {
   });
 }
 
+function primeGsStaticPagesInBackground(reason = 'startup-static-prime') {
+  if (!GS_BACKGROUND_STATIC_PRIME) return;
+  primeGsUrlsInBackground([
+    buildGsUrl('/'),
+    buildGsUrl(GS_MOVIE_LIST_PATH),
+    buildGsUrl('/film/'),
+    buildGsUrl('/serie/'),
+    buildGsUrl('/serietv/')
+  ], {
+    ttl: TTL_SEARCH,
+    reason,
+    max: 5
+  });
+}
+
 startGsBackgroundClearanceDaemon();
+scheduleGsClearanceWarmup('startup-static-after-clearance', Math.max(600, GS_PREWARM_START_DELAY_MS + 600), { primeHome: true });
+primeGsStaticPagesInBackground('startup-static-prime');
 
 const IT_STOPWORDS = /\b(the|a|an|un|una|il|lo|la|gli|le|di|de|del|della|degli|delle|dei|alle|nei|nelle|negli|serie|stagione|season|episodio|episode)\b/g;
 
@@ -393,12 +474,40 @@ function slugify(val) {
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+    // GuardoSerie often compacts apostrophes in movie root slugs:
+    // "dall'oceano" -> "dalloceano", not always "dall-oceano".
+    .replace(/[\u2018\u2019'`´]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
 
+function slugifyGsMovieVariants(val) {
+  const raw = String(val || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&amp;/g, '&')
+    .trim();
+  const variants = new Set();
+
+  const compactApostrophe = raw.replace(/[\u2018\u2019'`´]/g, '');
+  const hyphenApostrophe  = raw.replace(/[\u2018\u2019'`´]/g, '-');
+  for (const value of [compactApostrophe, hyphenApostrophe, raw]) {
+    const slug = value.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (slug) variants.add(slug);
+  }
+
+  const firstPart = raw.split(/\s[-–—:]\s/)[0]?.trim();
+  if (firstPart && firstPart.length >= 3) {
+    const firstSlug = slugify(firstPart);
+    if (firstSlug) variants.add(firstSlug);
+  }
+
+  return Array.from(variants).filter(Boolean);
+}
+
 function extractYearValue(value) {
-  const match = String(value || '').match(/(19\d{2}|20\d{2})/);
+  const match = String(value || '').match(/\b(19\d{2}|20\d{2})\b/);
   return match ? parseInt(match[1], 10) : null;
 }
 
@@ -805,7 +914,7 @@ async function searchProviderSequential(query, signal) {
   const fetchFallback = () => smartFetch(fallbackUrl, {
     ttl: TTL_SEARCH,
     signal,
-    allowFlareSolverr: true,
+    allowFlareSolverr: allowHotPathClearance(),
     timeoutMs: SEARCH_QUERY_TIMEOUT_MS
   }).catch((e) => {
     if (isAbortLikeError(e)) throw e;
@@ -818,7 +927,7 @@ async function searchProviderSequential(query, signal) {
     body: ajaxBody,
     ttl: TTL_SEARCH,
     signal,
-    allowFlareSolverr: true,
+    allowFlareSolverr: allowHotPathClearance(),
     timeoutMs: SEARCH_QUERY_TIMEOUT_MS
   }).catch((e) => {
     if (isAbortLikeError(e)) throw e;
@@ -1154,6 +1263,45 @@ async function buildGsStreamsFromPlayerLinks(playerLinks = [], options = {}) {
     });
 }
 
+function getGsPageTitle(html) {
+  const $ = cheerio.load(String(html || ''));
+  return String(
+    $('h1').first().text() ||
+    $('.entry-title, .post-title, .title, .name, .sheader .data h1, .data h1').first().text() ||
+    $('meta[property="og:title"]').attr('content') ||
+    $('meta[name="twitter:title"]').attr('content') ||
+    $('title').first().text() ||
+    ''
+  ).replace(/\s*[-|]\s*Guardaserie.*$/i, '').replace(/\s+/g, ' ').trim();
+}
+
+function isGenericGsShellPage(html, pageTitle = '') {
+  const titleKey = normalizeText(pageTitle || getGsPageTitle(html));
+  if (!titleKey) return false;
+  if (/^(?:guardaserie|guarda serie e film streaming completo|film streaming|serie tv)$/i.test(titleKey)) return true;
+  const raw = String(html || '');
+  const playerCount = extractPlayerLinksFromHtml(raw).length;
+  const contentHints = /(?:loadm|mixdrop|voe|player|embed|iframe|trailer|streaming)/i.test(raw);
+  return playerCount === 0 && !contentHints && titleKey.length <= 40 && /guardaserie|film streaming|serie tv/i.test(pageTitle || raw.slice(0, 600));
+}
+
+function readGsPageYear(html) {
+  const raw = String(html || '');
+  return (
+    raw.match(/release-year\/(\d{4})/i)?.[1] ||
+    raw.match(/(?:anno|year|release)[^0-9]{0,24}(19\d{2}|20\d{2})/i)?.[1] ||
+    raw.match(/\b(19\d{2}|20\d{2})\b/)?.[1] ||
+    null
+  );
+}
+
+function isYearCompatibleForGs(candidateYear, targetYear, titleScore = 0) {
+  if (!targetYear || !candidateYear) return true;
+  const delta = Math.abs(Number(candidateYear) - Number(targetYear));
+  const allowed = titleScore >= 3 ? 3 : 1;
+  return Number.isFinite(delta) && delta <= allowed;
+}
+
 async function buildGsMovieSearchContext(meta = {}, signal = null) {
   let tmdbId = meta?.tmdb_id || meta?.tmdbId || null;
   if (!tmdbId && meta?.imdb_id) {
@@ -1225,32 +1373,31 @@ async function findGsTargetPage(expectedTitles = [], targetYear = null, signal =
   let target = null;
   let bestLoose = null;
 
-  for (const result of allResults) {
+  for (const result of allResults.slice(0, mediaType === 'movie' ? GS_MOVIE_MAX_VERIFY_CANDIDATES : allResults.length)) {
     const titleScore = normalizeTitleScoreMany(result.title, expectedTitles);
     if (titleScore < 1) continue;
 
     const html = result.html || await smartFetch(result.url, {
       ttl: mediaType === 'movie' ? TTL_MOVIE : TTL_SERIES,
       signal,
-      allowFlareSolverr: true,
+      allowFlareSolverr: allowHotPathClearance(),
       timeoutMs: DIRECT_FETCH_TIMEOUT_MS
     });
     if (!html) continue;
 
-    const foundYear =
-      html.match(/release-year\/(\d{4})/i)?.[1] ||
-      html.match(/\b(19\d{2}|20\d{2})\b/)?.[1]  ||
-      null;
+    const pageTitle = getGsPageTitle(html) || result.title;
+    if (isGenericGsShellPage(html, pageTitle)) continue;
+    const pageScore = Math.max(titleScore, normalizeTitleScoreMany(pageTitle, expectedTitles));
+    const foundYear = readGsPageYear(html);
 
     if (targetYearNumber && foundYear) {
-      const allowedYearDelta = titleScore >= 3 ? 3 : 1;
-      if (Math.abs(Number(foundYear) - targetYearNumber) <= allowedYearDelta) {
-        target = { url: result.url, html, score: titleScore };
+      if (isYearCompatibleForGs(foundYear, targetYearNumber, pageScore)) {
+        target = { url: result.url, html, score: pageScore, title: pageTitle };
         break;
       }
-    } else if (titleScore >= (bestLoose?.score || 0)) {
-      bestLoose = { url: result.url, html, score: titleScore };
-      if (titleScore >= 2) break;
+    } else if (pageScore >= (bestLoose?.score || 0)) {
+      bestLoose = { url: result.url, html, score: pageScore, title: pageTitle };
+      if (pageScore >= 2) break;
     }
   }
 
@@ -1312,35 +1459,52 @@ function buildDirectEpisodeSlugCandidates(expectedTitles = [], season, episode) 
 
 async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal = null, options = {}) {
   if (!GS_FAST_SLUG_FIRST) return [];
+  const mediaType = options.mediaType || 'series';
   const targetYearNumber = extractYearValue(targetYear);
-  const candidates = buildFastSlugTargetCandidates(expectedTitles, options.mediaType || 'series', 10);
-
+  const candidates = buildFastSlugTargetCandidates(expectedTitles, mediaType, 10);
+  const maxCandidates = mediaType === 'movie' ? GS_MOVIE_FAST_SLUG_MAX : 3;
   const out = [];
-  gsDebug('fast slug start', { candidates: candidates.slice(0, 3) });
-  for (const url of candidates.slice(0, 3)) {
+  const startedAt = Date.now();
+
+  gsDebug(`${mediaType} fast slug start`, { candidates: candidates.slice(0, Math.min(maxCandidates, 6)), hotFlare: allowHotPathClearance() });
+  for (const url of candidates.slice(0, maxCandidates)) {
+    if (signal?.aborted) return out;
+    if (mediaType === 'movie' && Date.now() - startedAt > GS_MOVIE_HARD_BUDGET_MS) {
+      gsDebug('movie fast slug budget stop', { tried: out.length, ms: Date.now() - startedAt });
+      break;
+    }
+
     try {
-      const html = await smartFetch(url, { ttl: options.mediaType === 'movie' ? TTL_MOVIE : TTL_SERIES, signal, allowFlareSolverr: false, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+      const html = await smartFetch(url, {
+        ttl: mediaType === 'movie' ? TTL_MOVIE : TTL_SERIES,
+        signal,
+        allowFlareSolverr: allowHotPathClearance(),
+        timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, mediaType === 'movie' ? 2800 : 4200)
+      });
       if (!html) continue;
 
-      const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
+      const pageTitle = getGsPageTitle(html);
+      if (isGenericGsShellPage(html, pageTitle)) {
+        gsDebug(`${mediaType} fast slug generic shell rejected`, { url, pageTitle, bytes: String(html || '').length });
+        continue;
+      }
+
       const titleScore = normalizeTitleScoreMany(pageTitle, expectedTitles);
       if (titleScore < 2) continue;
 
-      const foundYear =
-        html.match(/release-year\/(\d{4})/i)?.[1] ||
-        html.match(/\b(19\d{2}|20\d{2})\b/)?.[1] ||
-        null;
+      const foundYear = readGsPageYear(html);
+      if (targetYearNumber && foundYear && !isYearCompatibleForGs(foundYear, targetYearNumber, titleScore)) continue;
 
-      if (targetYearNumber && foundYear && Math.abs(Number(foundYear) - targetYearNumber) > 3) continue;
-      out.push({ url, html, title: pageTitle || url, mapped: true, fastSlug: true, score: titleScore });
-      if (titleScore >= 3) break;
+      const links = extractPlayerLinksFromHtml(html).length;
+      out.push({ url, html, title: pageTitle || url, mapped: true, fastSlug: true, score: titleScore, links });
+      if (titleScore >= 3 && (mediaType !== 'movie' || links > 0)) break;
     } catch (e) {
       if (isAbortLikeError(e) && signal?.aborted) throw e;
-      gsDebug('fast slug candidate failed', { url, error: e?.message || String(e) });
+      gsDebug(`${mediaType} fast slug candidate failed`, { url, error: e?.message || String(e) });
     }
   }
 
-  if (out.length) gsInfo('fast slug matched', { count: out.length, first: out[0].url });
+  if (out.length) gsInfo(`${mediaType} fast slug matched`, { count: out.length, first: out[0].url, ms: Date.now() - startedAt });
   return out;
 }
 
@@ -1417,7 +1581,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
     outer: for (const slug of slugs) {
       for (const p of [`/serie/${slug}/`, `/${slug}/`, `/serietv/${slug}/`]) {
         const url  = buildGsUrl(p);
-        const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: true, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+        const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: allowHotPathClearance(), timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
         if (html) {
           const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
           if (normalizeTitleScoreMany(pageTitle, expectedTitles) >= 2) {
@@ -1433,7 +1597,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
 
   let episodeUrl    = extractEpisodeUrlFromSeriesPage(target.html, season, episode, { strictEpisode: strictKitsu });
   let absoluteEpUrl = episodeUrl ? new URL(episodeUrl, getTargetDomain()).toString() : null;
-  let finalHtml     = absoluteEpUrl ? await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: true, timeoutMs: DIRECT_FETCH_TIMEOUT_MS }) : '';
+  let finalHtml     = absoluteEpUrl ? await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: allowHotPathClearance(), timeoutMs: DIRECT_FETCH_TIMEOUT_MS }) : '';
   let playerLinks   = pickPreferredPlayerLinks(extractPlayerLinksFromHtml(finalHtml), { preferLoadm: true, max: 5 });
 
   if (!playerLinks.length) {
@@ -1484,9 +1648,10 @@ async function _searchGuardaserieMovie(meta, config, signal, reqHost = null) {
   const targetYear = movieContext.targetYear || null;
 
   gsDebug('movie title candidates ready', { titles: expectedTitles.slice(0, 8), year: targetYear });
-  primeGsUrlsInBackground(buildFastSlugTargetCandidates(expectedTitles, 'movie', 6), {
+  primeGsUrlsInBackground(buildFastSlugTargetCandidates(expectedTitles, 'movie', 8), {
     ttl: TTL_MOVIE,
-    reason: 'movie-title-prime'
+    reason: 'movie-title-prime',
+    max: Math.max(GS_BACKGROUND_TITLE_PRIME_MAX, GS_MOVIE_FAST_SLUG_MAX)
   });
   if (!movieName || !expectedTitles.length) return [];
 
@@ -1497,10 +1662,10 @@ async function _searchGuardaserieMovie(meta, config, signal, reqHost = null) {
     outer: for (const slug of slugs) {
       for (const p of [`/${slug}/`, `/movie/${slug}/`, `/film/${slug}/`, `/guarda-${slug}-streaming-ita/`]) {
         const url = buildGsUrl(p);
-        const html = await smartFetch(url, { ttl: TTL_MOVIE, signal, allowFlareSolverr: true, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+        const html = await smartFetch(url, { ttl: TTL_MOVIE, signal, allowFlareSolverr: allowHotPathClearance(), timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
         if (html) {
-          const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
-          if (normalizeTitleScoreMany(pageTitle, expectedTitles) >= 2) {
+          const pageTitle = getGsPageTitle(html);
+          if (!isGenericGsShellPage(html, pageTitle) && normalizeTitleScoreMany(pageTitle, expectedTitles) >= 2) {
             target = { url, html };
             break outer;
           }
