@@ -37,6 +37,8 @@ const metadataInflight = new Map();
 
 const RAW_PROVIDER_CACHE_TTL = Math.max(parseInt(process.env.RAW_PROVIDER_CACHE_TTL || '43200', 10) || 43200, 60);
 const EMPTY_FETCH_TTL = Math.max(parseInt(process.env.EMPTY_FETCH_TTL || process.env.RAW_PROVIDER_EMPTY_TTL || '90', 10) || 90, 15);
+const RATE_LIMIT_FETCH_TTL = Math.max(parseInt(process.env.RAW_PROVIDER_RATE_LIMIT_TTL || String(EMPTY_FETCH_TTL), 10) || EMPTY_FETCH_TTL, 15);
+const RAW_PROVIDER_STALE_GRACE_TTL = Math.max(parseInt(process.env.RAW_PROVIDER_STALE_GRACE_TTL || '900', 10) || 900, 0);
 const EMPTY_STREAM_TTL = Math.max(parseInt(process.env.EMPTY_STREAM_TTL || '60', 10) || 60, 15);
 const STREAM_STALE_GRACE_TTL = Math.max(parseInt(process.env.STREAM_STALE_GRACE_TTL || '180', 10) || 180, 30);
 const METADATA_CACHE_TTL = Math.max(parseInt(process.env.METADATA_CACHE_TTL || '1800', 10) || 1800, 60);
@@ -130,10 +132,53 @@ function buildRawFetchInflightKey(provider, id, options = {}) {
     return JSON.stringify(['raw-provider-fetch', mode, String(provider || ''), String(id ?? '')]);
 }
 
+function buildRawCacheStorageKey(provider, id) {
+    return `raw:${provider}:${id}`;
+}
+
+function buildRawCacheStaleStorageKey(provider, id) {
+    return `raw_stale:${provider}:${id}`;
+}
+
 function normalizeProviderFetchPayload(value) {
     if (Array.isArray(value)) return value.filter((entry) => entry !== null && entry !== undefined);
     if (value === null || value === undefined || value === false) return [];
     return [value];
+}
+
+function isPositiveRawProviderPayload(value) {
+    return Array.isArray(value) && value.length > 0;
+}
+
+function getErrorStatusCode(error) {
+    const candidates = [
+        error?.status,
+        error?.statusCode,
+        error?.response?.status,
+        error?.cause?.status,
+        error?.cause?.statusCode
+    ];
+    for (const value of candidates) {
+        const parsed = Number(value);
+        if (Number.isInteger(parsed) && parsed > 0) return parsed;
+    }
+    return 0;
+}
+
+function getErrorCode(error) {
+    return String(error?.code || error?.cause?.code || '').trim().toUpperCase();
+}
+
+function getProviderErrorCacheTtl(error, { errorTtl, rateLimitTtl }) {
+    const statusCode = getErrorStatusCode(error);
+    if (statusCode === 429) return rateLimitTtl;
+
+    const code = getErrorCode(error);
+    if (code === 'ERR_RATE_LIMIT' || code === 'RATE_LIMITED' || code === 'TOO_MANY_REQUESTS') {
+        return rateLimitTtl;
+    }
+
+    return errorTtl;
 }
 let invalidationSyncStarted = false;
 let invalidationSyncStop = null;
@@ -778,14 +823,30 @@ const Cache = {
         rawStream: typeof getRawStreamCacheStats === 'function' ? getRawStreamCacheStats() : null
     }),
     getRaw: (provider, id) => {
-        const data = rawCache.get(`raw:${provider}:${id}`);
+        const data = rawCache.get(buildRawCacheStorageKey(provider, id));
         registerCacheAccess('raw', !!data);
         if (data && VERBOSE_CACHE_LOGS) logger.info(`🌍 GLOBAL CACHE HIT [${provider}]: ${id}`);
         return data || null;
     },
+    getRawStale: (provider, id) => {
+        const entry = rawCache.get(buildRawCacheStaleStorageKey(provider, id));
+        const data = isPositiveRawProviderPayload(entry?.value) ? entry.value : null;
+        registerCacheAccess('rawStale', !!data);
+        if (data && VERBOSE_CACHE_LOGS) logger.info(`🌍 GLOBAL CACHE STALE HIT [${provider}]: ${id}`);
+        return data;
+    },
     setRaw: (provider, id, value, ttl = 43200) => {
+        const effectiveTtl = Math.max(1, Number(ttl || 43200) || 43200);
         registerCacheSet('raw');
-        rawCache.set(`raw:${provider}:${id}`, value, ttl);
+        rawCache.set(buildRawCacheStorageKey(provider, id), value, effectiveTtl);
+        if (RAW_PROVIDER_STALE_GRACE_TTL > 0 && isPositiveRawProviderPayload(value)) {
+            rawCache.set(buildRawCacheStaleStorageKey(provider, id), {
+                value,
+                storedAt: Date.now()
+            }, effectiveTtl + RAW_PROVIDER_STALE_GRACE_TTL);
+        } else {
+            rawCache.del(buildRawCacheStaleStorageKey(provider, id));
+        }
         if (VERBOSE_CACHE_LOGS) logger.info(`💾 GLOBAL CACHE SET [${provider}]: ${id}`);
     },
     fetchWithCache: async (provider, id, ttl = RAW_PROVIDER_CACHE_TTL, fetcherFunc, options = {}) => {
@@ -795,6 +856,7 @@ const Cache = {
         const bypassCache = cacheOnly ? false : options?.bypassCache === true;
         const emptyTtl = Math.max(1, Number(options?.emptyTtl || EMPTY_FETCH_TTL) || EMPTY_FETCH_TTL);
         const errorTtl = Math.max(1, Number(options?.errorTtl || Math.min(emptyTtl, EMPTY_FETCH_TTL)) || Math.min(emptyTtl, EMPTY_FETCH_TTL));
+        const rateLimitTtl = Math.max(1, Number(options?.rateLimitTtl || RATE_LIMIT_FETCH_TTL) || RATE_LIMIT_FETCH_TTL);
         const effectiveTtl = Math.max(1, Number(ttl || RAW_PROVIDER_CACHE_TTL) || RAW_PROVIDER_CACHE_TTL);
 
         if (!bypassCache) {
@@ -828,7 +890,15 @@ const Cache = {
             } catch (error) {
                 const message = error?.message || String(error || 'unknown error');
                 logger.warn(`[CACHE] Provider fetch failed | provider=${compactCacheLogValue(providerKey)} | id=${compactCacheLogValue(idKey)} | error=${compactCacheLogValue(message)}`);
-                Cache.setRaw(providerKey, idKey, [], errorTtl);
+                const failureTtl = getProviderErrorCacheTtl(error, { errorTtl, rateLimitTtl });
+                const staleData = !bypassCache ? Cache.getRawStale(providerKey, idKey) : null;
+                if (staleData !== null) {
+                    rawCache.set(buildRawCacheStorageKey(providerKey, idKey), staleData, failureTtl);
+                    incrementMetric('cache.raw.staleIfError');
+                    logger.info(`[CACHE] Provider stale fallback | provider=${compactCacheLogValue(providerKey)} | id=${compactCacheLogValue(idKey)} | ttl=${failureTtl}s | items=${staleData.length}`);
+                    return staleData;
+                }
+                Cache.setRaw(providerKey, idKey, [], failureTtl);
                 return [];
             }
         });
@@ -846,6 +916,8 @@ module.exports = {
     metadataInflight,
     RAW_PROVIDER_CACHE_TTL,
     EMPTY_FETCH_TTL,
+    RATE_LIMIT_FETCH_TTL,
+    RAW_PROVIDER_STALE_GRACE_TTL,
     EMPTY_STREAM_TTL,
     STREAM_STALE_GRACE_TTL,
     METADATA_CACHE_TTL,
