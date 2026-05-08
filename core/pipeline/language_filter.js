@@ -193,6 +193,9 @@ function createLanguageFilterTools(deps = {}) {
 
       if (/\b(?:S\d{2}|SEASON|STAGIONE)\b/i.test(title) || /\b\d{1,2}x\d{1,2}\b/.test(title)) return false;
 
+      const trustedExternalExactId = Boolean(item?._externalIdMatched && (item?.isExternal || item?.externalAddon || item?.externalGroup));
+      if (trustedExternalExactId) return true;
+
       const cleanFile = lowerTitle.replace(/[\._\-\(\)\[\]]/g, ' ').replace(/\s{2,}/g, ' ').trim();
       const checkMatch = (strToCheck) => {
         if (!strToCheck) return false;
@@ -206,8 +209,10 @@ function createLanguageFilterTools(deps = {}) {
 
       if (checkMatch(String(meta.title || '').toLowerCase().replace(/[\._\-\(\)\[\]]/g, ' ').replace(/\s{2,}/g, ' ').trim())) return true;
       if (checkMatch(String(meta.title || '').split(/ - |: /)[0].toLowerCase().trim())) return true;
-      if (checkMatch(String(meta.originalTitle || '').toLowerCase().trim())) return true;
+      if (checkMatch(String(meta.originalTitle || '').toLowerCase().replace(/[\._\-:\(\)\[\]]/g, ' ').replace(/\s{2,}/g, ' ').trim())) return true;
+      if (checkMatch(String(meta.originalTitle || '').split(/ - |: /)[0].toLowerCase().trim())) return true;
       if (smartMatch(meta.title, title, meta.isSeries, meta.season, meta.episode)) return true;
+      if (smartMatch(meta.originalTitle, title, meta.isSeries, meta.season, meta.episode)) return true;
 
       return false;
     };
