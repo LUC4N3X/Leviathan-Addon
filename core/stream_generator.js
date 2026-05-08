@@ -1362,6 +1362,31 @@ function keepAllCandidate(title, sourceName, metaTitle) {
     return !REGEX_SUB_ONLY.test(rawTitle);
 }
 
+function getSourceConsensusRankBonus(item = {}) {
+    const direct = String(item?._rankMeta?.sourceConsensus || '').toLowerCase();
+    if (direct === 'strong_consensus') return 9000;
+    if (direct === 'consensus') return 5500;
+    if (direct === 'mirror') return 2500;
+
+    const sources = new Set();
+    const push = (value) => {
+        const normalized = String(value || '').trim().toLowerCase();
+        if (!normalized || /^(unknown|n\/a|null|undefined)$/.test(normalized)) return;
+        sources.add(normalized);
+    };
+    push(item.source);
+    push(item.provider);
+    push(item.externalAddon);
+    for (const source of Array.isArray(item._dedupeMergedSources) ? item._dedupeMergedSources : []) push(source);
+    for (const source of Array.isArray(item._dedupeEvidence?.sources) ? item._dedupeEvidence.sources : []) push(source);
+
+    const mergedCount = Number(item?._dedupeMergedCount || item?._dedupeEvidence?.mergedCount || 0) || 0;
+    if (sources.size >= 3 || mergedCount >= 4) return 9000;
+    if (sources.size >= 2 || mergedCount >= 3) return 5500;
+    if (mergedCount >= 2) return 2500;
+    return 0;
+}
+
 function getCompositeRankScore(item, meta, config) {
     const title = String(item?.title || '');
     const source = item?.source || item?.provider || null;
@@ -1406,6 +1431,7 @@ function getCompositeRankScore(item, meta, config) {
     if (explicitFileIdx) score += 7000;
     if (source && /mircrew|corsaro|lux|wms|dn[a4]?|idn_crew|speedvideo/i.test(String(source))) score += 6000;
     if (title && /mircrew|corsaro|lux|wms|dn[a4]?|idn_crew|speedvideo/i.test(title)) score += 5000;
+    score += getSourceConsensusRankBonus(item);
     if (meta?.isSeries) {
         if (epData && epData.episode === meta.episode && (epData.season === meta.season || meta?.kitsu_id)) score += 24000;
         else if (isPack && new RegExp(`(?:s|season|stagione)\\s*0?${meta.season}(?!\\d)`, 'i').test(title)) score += 9000;
