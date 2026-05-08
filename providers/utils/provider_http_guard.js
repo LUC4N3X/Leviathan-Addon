@@ -12,6 +12,12 @@ const {
   requestWithImpitRotating
 } = require('./bypass');
 const { createCfClearanceManager, normalizeBaseUrl, mergeCookieHeaders, buildCookieHeaderFromSession, mergeSessionCookies } = require('./cf_clearance_manager');
+let evidenceGraph = null;
+try {
+  evidenceGraph = require('../../core/evidence_graph');
+} catch (_) {
+  evidenceGraph = null;
+}
 
 class LRUCache {
   constructor(maxSize) {
@@ -95,6 +101,16 @@ function createProviderHttpGuard(options = {}) {
   const isCanceledError = typeof options.isCanceledError === 'function' ? options.isCanceledError : defaultIsCanceledError;
   const debugEnabled = Boolean(options.debug || options.debugCf);
   const logger = options.logger || createLogger(logPrefix, debugEnabled, Boolean(options.debugCf));
+
+  function recordProviderEvidence(outcome, details = {}) {
+    if (!evidenceGraph || typeof evidenceGraph.recordProviderEvidence !== 'function') return;
+    try {
+      evidenceGraph.recordProviderEvidence(providerName, outcome, {
+        ...details,
+        provider: providerName
+      });
+    } catch (_) {}
+  }
 
   const agentOptions = {
     keepAlive: true,
@@ -215,6 +231,9 @@ function createProviderHttpGuard(options = {}) {
     solveTimeoutMs: clearanceTimeoutMs,
     httpAgent,
     httpsAgent,
+    initialSession: activeSession,
+    sessionPoolMax: options.sessionPoolMax || 3,
+    sessionPoolMinScore: options.sessionPoolMinScore ?? -2,
     isCanceledError,
     getFallbackUserAgent,
     logger: {
@@ -237,6 +256,9 @@ function createProviderHttpGuard(options = {}) {
     }
   });
 
+  const pooledStartupSession = clearanceManager.getBestPooledSession(currentBaseUrl);
+  if (pooledStartupSession) activeSession = pooledStartupSession;
+
   function isSessionFresh(session = activeSession) {
     return clearanceManager.isFresh(session);
   }
@@ -246,7 +268,23 @@ function createProviderHttpGuard(options = {}) {
     return Boolean(buildCookieHeaderFromSession(session, url || session.solvedUrl || session.url || currentBaseUrl));
   }
 
-  function clearSession() {
+  function clearSession(reason = 'clear_session', url = currentBaseUrl) {
+    if (activeSession?.userAgent && clearanceManager && typeof clearanceManager.recordSessionOutcome === 'function') {
+      activeSession = clearanceManager.recordSessionOutcome(activeSession, url, false, reason) || activeSession;
+    }
+    const pooled = clearanceManager && typeof clearanceManager.getBestPooledSession === 'function'
+      ? clearanceManager.getBestPooledSession(url || currentBaseUrl)
+      : null;
+    if (pooled && pooled.poolKey !== activeSession?.poolKey) {
+      activeSession = pooled;
+      const persistedSession = { ...activeSession };
+      delete persistedSession.solutionResponse;
+      delete persistedSession.solutionResponseUrl;
+      delete persistedSession.solutionResponseStatus;
+      saveSession(persistedSession);
+      logger.debug('session pool promoted after clear', { reason, url, reputationScore: pooled.reputationScore, successes: pooled.successes, failures: pooled.failures });
+      return;
+    }
     activeSession = {};
     try { fs.unlinkSync(sessionFile); } catch (_) {}
   }
@@ -627,6 +665,10 @@ function createProviderHttpGuard(options = {}) {
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
     if (isChallengePage(html, response.status)) {
       logger.debug('session fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, via: response.via, ms: Date.now() - startedAt });
+      recordProviderEvidence('session_challenge', { method, url, status: response.status, ms: Date.now() - startedAt });
+      if (clearanceManager && typeof clearanceManager.recordSessionOutcome === 'function') {
+        activeSession = clearanceManager.recordSessionOutcome(activeSession, response.url || url, false, 'session_challenge') || activeSession;
+      }
 
       const replayed = await tryRedirectedSessionReplay(url, response.url, { method, body, signal, timeout, startedAt, reason: 'session-challenge' });
       if (replayed) return replayed;
@@ -657,11 +699,15 @@ function createProviderHttpGuard(options = {}) {
         }
       }
 
-      clearSession();
+      clearSession('session_challenge', response.url || url);
       return null;
     }
 
     persistSession(activeSession, response.url, response.headers?.['set-cookie']);
+    if (clearanceManager && typeof clearanceManager.recordSessionOutcome === 'function') {
+      activeSession = clearanceManager.recordSessionOutcome(activeSession, response.url || url, true, 'session_fetch_ok') || activeSession;
+    }
+    recordProviderEvidence('session_fetch_ok', { method, url, status: response.status, ms: Date.now() - startedAt });
     logger.debug('session fetch ok', { method, url, status: response.status, bytes: html.length, via: response.via, ms: Date.now() - startedAt });
     return html;
   }
@@ -697,6 +743,7 @@ function createProviderHttpGuard(options = {}) {
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
     if (isChallengePage(html, response.status)) {
       logger.debug('direct fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, ms: Date.now() - startedAt });
+      recordProviderEvidence('direct_challenge', { method, url, status: response.status, ms: Date.now() - startedAt });
       const replayed = await tryRedirectedSessionReplay(url, response.url, { method, body, signal, timeout, startedAt, reason: 'direct-challenge' });
       if (replayed) return replayed;
       if (clearanceManager.endpoint) {
@@ -714,6 +761,7 @@ function createProviderHttpGuard(options = {}) {
       if (cookies) persistSession({ userAgent, cookies, url: response.url, timestamp: Date.now() }, response.url, setCookie);
     }
 
+    recordProviderEvidence('direct_fetch_ok', { method, url, status: response.status, ms: Date.now() - startedAt });
     logger.debug('direct fetch ok', { method, url, status: response.status, bytes: html.length, hasCookie: Boolean(setCookie), ms: Date.now() - startedAt });
     return html;
   }
@@ -741,6 +789,7 @@ function createProviderHttpGuard(options = {}) {
         maxTimeout: clearanceTimeoutMs,
         sharedKey,
         wantResponse: sameDocumentUrl(primaryClearanceUrl, triggerUrl),
+        allowSessionPool: true,
         cookies: buildCookieHeaderFromSession(activeSession, targetClearanceUrl) || activeSession?.cookies || ''
       });
 
@@ -759,6 +808,7 @@ function createProviderHttpGuard(options = {}) {
           fallback: true,
           maxTimeout: clearanceTimeoutMs,
           wantResponse: sameDocumentUrl(fallbackUrl, triggerUrl),
+          allowSessionPool: true,
           cookies: buildCookieHeaderFromSession(activeSession, fallbackUrl) || activeSession?.cookies || ''
         });
         if (isSessionFreshForUrl(session, triggerUrl)) return session;
@@ -819,12 +869,17 @@ function createProviderHttpGuard(options = {}) {
 
     const session = await solveClearance(url, { isPost, body, signal, force: clearanceForce });
     if (!isSessionFreshForUrl(session, url)) {
+      recordProviderEvidence('clearance_no_fresh_session', { method, url, ms: Date.now() - startedAt });
       logger.warn('clearance no fresh session', { method, url, ms: Date.now() - startedAt });
       return null;
     }
 
     const solutionHtml = getSolutionHtmlForUrl(session, url);
     if (solutionHtml) {
+      if (clearanceManager && typeof clearanceManager.recordSessionOutcome === 'function') {
+        activeSession = clearanceManager.recordSessionOutcome(session, url, true, 'solution_html_used') || activeSession;
+      }
+      recordProviderEvidence('solution_html_used', { method, url, ms: Date.now() - startedAt });
       logger.info('post-clearance solution html used', { method, url, bytes: solutionHtml.length, ms: Date.now() - startedAt });
       return solutionHtml;
     }
@@ -832,13 +887,14 @@ function createProviderHttpGuard(options = {}) {
     try {
       const html = await fetchWithSession(url, { method, body, signal, timeout: hardFetchTimeout, startedAt });
       if (html) {
+        recordProviderEvidence('post_clearance_fetch_ok', { method, url, ms: Date.now() - startedAt });
         logger.info('post-clearance fetch ok', { method, url, transport: 'session-fastpath', sessionFresh: isSessionFreshForUrl(activeSession, url), ms: Date.now() - startedAt });
         return html;
       }
     } catch (error) {
       if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
       logger.debug('post-clearance fetch error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
-      clearSession();
+      clearSession('post_clearance_fetch_error', url);
     }
 
     return null;
@@ -904,7 +960,9 @@ function createProviderHttpGuard(options = {}) {
       cookieJarV2: true,
       sharedClearanceAuthority,
       sharedClearanceForceOrigin,
-      sharedClearancePending: Boolean(sharedClearancePromise)
+      sharedClearancePending: Boolean(sharedClearancePromise),
+      cfSessionPool: typeof clearanceManager.getSessionPoolStats === 'function' ? clearanceManager.getSessionPoolStats() : null,
+      evidenceGraph: evidenceGraph && typeof evidenceGraph.getEvidenceGraphStats === 'function' ? evidenceGraph.getEvidenceGraphStats() : null
     }),
     directFetchTimeoutMs,
     searchTimeoutMs,
