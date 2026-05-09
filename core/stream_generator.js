@@ -1545,6 +1545,8 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
     const availabilityState = getRdAvailabilityState(normalizedService, item, meta);
     const isSavedCloudStream = Boolean(item?.isSavedCloud || item?._savedCloud || item?.savedCloud);
     const formatterSource = item?.source;
+    const displayLanguage = formatLanguageLabel(languageInfo, details.languages, getEffectiveLangMode(config, meta));
+    const qualityCompatibleBingeGroup = buildQualityCompatibleBingeGroup({ service: serviceLabel, quality, details, infoHash: item?.hash, releaseGroup: item?.releaseGroup || item?.group, language: displayLanguage });
 
     if (isAIOActive) {
         return {
@@ -1552,7 +1554,7 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
             title: aioFormatter.formatStreamTitle({
                 title: displayTitle,
                 size: Number(sizeBytes) > 0 ? formatBytes(sizeBytes) : 'Unknown',
-                language: formatLanguageLabel(languageInfo, details.languages, getEffectiveLangMode(config, meta)),
+                language: displayLanguage,
                 source: formatterSource,
                 seeders,
                 infoHash: item?.hash,
@@ -1566,7 +1568,8 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
             folderSize: getObservedFolderSizeBytes(item) || undefined,
             behaviorHints: {
                 notWebReady: false,
-                bingieGroup: buildQualityCompatibleBingeGroup({ service: serviceLabel, quality, details, infoHash: item?.hash, releaseGroup: item?.releaseGroup || item?.group, language: formatLanguageLabel(languageInfo, details.languages, getEffectiveLangMode(config, meta)) }),
+                bingeGroup: qualityCompatibleBingeGroup,
+                bingieGroup: qualityCompatibleBingeGroup,
                 infoHash: item?.hash,
                 fileIdx: getResolvedFileIdx(item),
                 folderSize: getObservedFolderSizeBytes(item) || undefined,
@@ -1609,6 +1612,7 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         folderSize: getObservedFolderSizeBytes(item) || undefined,
         behaviorHints: {
             notWebReady: false,
+            bingeGroup,
             bingieGroup: bingeGroup,
             infoHash: item?.hash,
             fileIdx: getResolvedFileIdx(item),
@@ -3566,7 +3570,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const streamCacheVersionParts = [];
-  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v20');
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v21');
   const baseHashInput = backCompat.autoAnimeUnity ? `${userConfStr || 'no-conf'}|autoAnimeUnityKitsu=v2` : (userConfStr || 'no-conf');
   const hashInput = streamCacheVersionParts.length > 0 ? `${baseHashInput}|${streamCacheVersionParts.join('|')}` : baseHashInput;
   const configHash = crypto.createHash('md5').update(hashInput).digest('hex');

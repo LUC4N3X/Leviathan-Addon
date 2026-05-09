@@ -453,6 +453,7 @@ function buildWebStreamDisplay(stream, providerDefinition, meta = {}, config = {
     const audio = inferWebAudio(stream);
     const size = inferWebSize(stream);
     const sourceType = 'WEB';
+    const bingeGroup = stream.behaviorHints?.bingeGroup || stream.behaviorHints?.bingieGroup || buildWebBingeGroup({ providerLabel, extractorLabel, quality, languages, audio });
 
     const titleLines = [
         `▶️ ${displayTitle}`,
@@ -470,7 +471,8 @@ function buildWebStreamDisplay(stream, providerDefinition, meta = {}, config = {
         vortexExtractor: stream.behaviorHints?.vortexExtractor || extractorLabel,
         vortexSource: stream.behaviorHints?.vortexSource || providerLabel,
         vortexProviderCode: stream.behaviorHints?.vortexProviderCode || providerDefinition?.key || providerLabel,
-        bingieGroup: stream.behaviorHints?.bingieGroup || stream.behaviorHints?.bingeGroup || buildWebBingeGroup({ providerLabel, extractorLabel, quality, languages, audio }),
+        bingeGroup,
+        bingieGroup: bingeGroup,
         vortexMeta: {
             ...(stream.behaviorHints?.vortexMeta || {}),
             provider: providerLabel,
@@ -583,4 +585,3 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
 }
 
 module.exports = { createWebProviderTools };
-
