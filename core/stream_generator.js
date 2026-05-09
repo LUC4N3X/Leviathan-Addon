@@ -457,6 +457,11 @@ function hasLooseItalianToken(value = '') {
     return /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|(?:^|[^A-Z0-9])IT(?:[^A-Z0-9]|$))/i.test(text);
 }
 
+function hasEnglishLanguageToken(value = '') {
+    const text = String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, ' ');
+    return /(?:🇬🇧|🇺🇸|\b(?:ENG|ENGLISH)\b|(?:^|[^A-Z0-9])EN(?:[^A-Z0-9]|$))/i.test(text);
+}
+
 function hasTorrentioLooseItalianEvidence(item = {}) {
     if (!isTorrentioExternalItem(item)) return false;
     // torrentio_mirror is already the ITA-filtered Torrentio endpoint in Nexus Bridge.
@@ -1174,6 +1179,41 @@ function choosePlayableParseTitle(item = {}, candidate = '') {
     return rawCandidate;
 }
 
+function appendExternalLanguageSignalsForFormatter(title = '', item = {}) {
+    const output = String(title || '').trim();
+    if (!output || !item?.isExternal) return output;
+
+    const languageInfo = item?._externalLanguageInfo && typeof item._externalLanguageInfo === 'object'
+        ? item._externalLanguageInfo
+        : (item?.languageInfo && typeof item.languageInfo === 'object' ? item.languageInfo : {});
+    const evidenceText = [
+        item?._formatterTitle,
+        item?.formatterTitle,
+        item?._externalFormatterTitle,
+        item?.rawDescription,
+        item?.websiteTitle,
+        item?.filename,
+        item?.file_title,
+        item?.name,
+        item?.language,
+        Array.isArray(item?.languages) ? item.languages.join(' ') : item?.languages,
+        item?.audio,
+        languageInfo?.displayLabel,
+        languageInfo?.reason,
+        Array.isArray(languageInfo?.detectedLanguages) ? languageInfo.detectedLanguages.join(' ') : languageInfo?.detectedLanguages
+    ].filter(Boolean).join(' ');
+
+    const tokens = [];
+    if (item?._externalHasItalianAudio || item?._externalIsItalian || item?.hasItalianAudio || item?.isItalian || languageInfo?.hasAudioItalian || languageInfo?.isItalian || hasLooseItalianToken(evidenceText)) {
+        tokens.push('ITA');
+    }
+    if (languageInfo?.hasEnglish || hasEnglishLanguageToken(evidenceText)) tokens.push('ENG');
+    if (/\b(?:MULTI|DUAL[\s.-]?AUDIO)\b/i.test(evidenceText)) tokens.push('MULTI');
+
+    const missing = tokens.filter((token) => !new RegExp(`(?:^|[^A-Z0-9])${token}(?:[^A-Z0-9]|$)`, 'i').test(output));
+    return missing.length ? `${output} ${missing.join(' ')}` : output;
+}
+
 function getObservedSizeBytes(...values) {
     for (const value of values) {
         const parsed = Number(value);
@@ -1535,7 +1575,7 @@ function getServiceDisplayName(service) {
 function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitle, sizeBytes, seeders, config, meta, isLazy = false, isPack = false }) {
     const normalizedService = String(service || '').toLowerCase();
     const isAIOActive = aioFormatter.isAIOStreamsEnabled(config);
-    const baseParseTitle = choosePlayableParseTitle(item, parseTitle || item?.title || displayTitle || '');
+    const baseParseTitle = appendExternalLanguageSignalsForFormatter(choosePlayableParseTitle(item, parseTitle || item?.title || displayTitle || ''), item);
     const details = parseTitleDetails(baseParseTitle);
     const languageInfo = getLanguageInfo(baseParseTitle, meta?.title, item?.source, details);
     const quality = details.qualityLabel && details.qualityLabel !== 'Other'
@@ -3436,7 +3476,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
                     const externalRequestIds = buildExternalAddonRequestIds(type, finalId, meta);
                     const externalConfigSig = crypto.createHash("sha1").update(JSON.stringify({ service: config?.service || "", rd: config?.rd || config?.realdebrid || "", tb: config?.tb || config?.torbox || "", key: config?.key || "" })).digest("hex").slice(0, 12);
-                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}:torrentioItTrustV13`;
+                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}:torrentioItTrustV14`;
                     const externalPromise = disableLiveSources && !flags.useProviderCachedOnly
                         ? Promise.resolve([])
                         : Cache.fetchWithCache('ExternalAddons', externalCacheKey, 43200, () =>
@@ -3570,7 +3610,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const streamCacheVersionParts = [];
-  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v21');
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v22');
   const baseHashInput = backCompat.autoAnimeUnity ? `${userConfStr || 'no-conf'}|autoAnimeUnityKitsu=v2` : (userConfStr || 'no-conf');
   const hashInput = streamCacheVersionParts.length > 0 ? `${baseHashInput}|${streamCacheVersionParts.join('|')}` : baseHashInput;
   const configHash = crypto.createHash('md5').update(hashInput).digest('hex');
