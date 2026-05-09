@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { normalizeProviderId } = require('./provider_result_normalizer');
 
-const DEFAULT_RECIPE_DIR = path.join(__dirname, '..', '..', 'provider_recipes');
+const DEFAULT_RECIPE_DIR = path.join(__dirname, '..', 'provider_recipes');
 
 function asArray(value) {
     if (!value) return [];
