@@ -1,6 +1,7 @@
 'use strict';
 
 const DEFAULT_MEDIAFUSION_URL = 'https://mediafusionfortheweebs.midnightignite.me/D-FCO8JXfrGOKFpP-Rim96nHZU9epOb5RPbSpgkgVbYoR1NRJNR1C-9X4VDrUSJJNEvp5pk7CGvSLN7cUHUrth3QG8e3mSPa8Ind2k4VzVGFEa-310EjXdsXT_uUXGri86EVnnQ6f_9b0yoVTuVu7Aqk4uY8IXZp47-0FmuxgXX6wleis_0Evllc0v2wcrWIj-D5m3IZhI18CKHr-pUL5h61ZWcaRuxGjgwYK88Xy3PIN2U3YzTi4J9pazQBpCNDH-NpZPwk2RVnjs0WF7dRU5XD_D0robmhH9q0edoqaR_71u1j2y-XnxkwPNjg-o5Yb_';
+const DEFAULT_METEOR_URL = 'https://meteorfortheweebs.midnightignite.me/eyJkZWJyaWRTZXJ2aWNlIjoidG9ycmVudCIsImRlYnJpZEFwaUtleSI6IiIsImNhY2hlZE9ubHkiOnRydWUsImVuYWJsZVlvdXJNZWRpYSI6ZmFsc2UsInlvdXJNZWRpYUxlZ2FjeU1vZGUiOmZhbHNlLCJzaG93WW91ck1lZGlhU3RyZWFtcyI6ZmFsc2UsInlvdXJNZWRpYVNvdXJjZXMiOlsidG9ycmVudCJdLCJyZW1vdmVUcmFzaCI6ZmFsc2UsInJlbW92ZVNhbXBsZXMiOmZhbHNlLCJyZW1vdmVBZHVsdCI6ZmFsc2UsImV4Y2x1ZGUzRCI6ZmFsc2UsImVuYWJsZVNlYURleCI6ZmFsc2UsImVuYWJsZVVzZW5ldCI6ZmFsc2UsInVzZW5ldEN1c3RvbUVuZ2luZXMiOmZhbHNlLCJtaW5TZWVkZXJzIjowLCJtYXhSZXN1bHRzIjowLCJtYXhSZXN1bHRzUGVyUmVzIjowLCJtYXhTaXplIjowLCJyZXNvbHV0aW9ucyI6W10sImxhbmd1YWdlcyI6eyJwcmVmZXJyZWQiOlsibXVsdGkiLCJpdCJdLCJyZXF1aXJlZCI6WyJpdCIsIm11bHRpIl0sImV4Y2x1ZGUiOltdfSwicmVzdWx0Rm9ybWF0IjpbInRpdGxlIiwicXVhbGl0eSIsInNpemUiLCJhdWRpbyJdLCJzb3J0T3JkZXIiOlsicGFjayIsImNhY2hlZCIsInlvdXJtZWRpYSIsInNlYWRleCIsInJlc29sdXRpb24iLCJzaXplIiwicXVhbGl0eSIsInNlZWRlcnMiLCJsYW5ndWFnZSIsInR5cGUiXX0';
 
 function envFirst(names, fallback = '') {
     for (const name of names) {
@@ -46,12 +47,22 @@ const EXTERNAL_ADDONS = {
         priority: 3,
         maxFailures: 4,
         cooldownMs: envNumber('EXT_ADDON_COOLDOWN_MS', 30000)
+    },
+    meteor: {
+        baseUrl: envFirst(['EXT_METEOR_URL', 'METEOR_URL'], DEFAULT_METEOR_URL),
+        name: 'Meteor',
+        timeout: envNumber('EXT_METEOR_TIMEOUT', 2600),
+        priority: 4,
+        maxFailures: 4,
+        cooldownMs: envNumber('EXT_ADDON_COOLDOWN_MS', 30000),
+        requireRdCached: true
     }
 };
 
 const ADDON_GROUP_KEYS = Object.freeze({
     torrentio: Object.freeze(['torrentio_main', 'torrentio_mirror']),
-    mediafusion: Object.freeze(['mediafusion'])
+    mediafusion: Object.freeze(['mediafusion']),
+    meteor: Object.freeze(['meteor'])
 });
 
 const ADDON_GROUP_BY_KEY = Object.freeze(
@@ -62,11 +73,13 @@ const ADDON_GROUP_BY_KEY = Object.freeze(
 
 const ADDON_EMOJI_BY_GROUP = Object.freeze({
     torrentio: '🅣',
-    mediafusion: '🅜'
+    mediafusion: '🅜',
+    meteor: '☄️'
 });
 
 const TORRENTIO_ADDON_KEYS = ADDON_GROUP_KEYS.torrentio.filter((key) => EXTERNAL_ADDONS[key]);
 const MEDIAFUSION_ADDON_KEYS = ADDON_GROUP_KEYS.mediafusion.filter((key) => EXTERNAL_ADDONS[key]);
+const METEOR_ADDON_KEYS = ADDON_GROUP_KEYS.meteor.filter((key) => EXTERNAL_ADDONS[key]);
 
 function getAddon(addonKey) {
     return EXTERNAL_ADDONS[addonKey] || null;
@@ -102,8 +115,9 @@ function splitRequestedAddons(enabledAddons = null) {
 
     const torrentio = sortAddonKeys(requested.filter((addonKey) => isAddonInGroup(addonKey, 'torrentio')));
     const mediafusion = sortAddonKeys(requested.filter((addonKey) => isAddonInGroup(addonKey, 'mediafusion')));
+    const meteor = sortAddonKeys(requested.filter((addonKey) => isAddonInGroup(addonKey, 'meteor')));
 
-    return { requested: sortAddonKeys(requested), torrentio, mediafusion };
+    return { requested: sortAddonKeys(requested), torrentio, mediafusion, meteor };
 }
 
 module.exports = {
@@ -111,6 +125,7 @@ module.exports = {
     ADDON_GROUP_KEYS,
     TORRENTIO_ADDON_KEYS,
     MEDIAFUSION_ADDON_KEYS,
+    METEOR_ADDON_KEYS,
     getAddon,
     getAddonGroup,
     isAddonConfigured,

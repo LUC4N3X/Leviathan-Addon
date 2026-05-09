@@ -384,7 +384,74 @@ function isSeasonPack(title) {
     ].some(re => re.test(value));
 }
 
+
+function isNoiseEpisodeNumber(value) {
+    const episode = Number(value);
+    return !Number.isInteger(episode) || episode <= 0
+        || (episode >= 1900 && episode <= 2100)
+        || [2160, 1080, 720, 576, 480, 360, 264, 265].includes(episode);
+}
+
+function extractSeriesEpisodeRange(filename, defaultSeason = 1) {
+    const value = normalizeAnimeEpisodeText(filename).replace(/[‐‑–—―〜～]/g, '-');
+    const patterns = [
+        {
+            regex: /\bS(?:EASON)?\s*0?(\d{1,2})\s*E(?:P)?\s*0?(\d{1,4})\s*(?:-|~|to|a)\s*(?:S(?:EASON)?\s*0?\d{1,2}\s*)?(?:E(?:P)?\s*)?0?(\d{1,4})\b/i,
+            extract: (m) => ({ season: Number(m[1]), start: Number(m[2]), end: Number(m[3]) })
+        },
+        {
+            regex: /\b0?(\d{1,2})x0?(\d{1,4})\s*(?:-|~|to|a)\s*(?:0?\d{1,2}x)?0?(\d{1,4})\b/i,
+            extract: (m) => ({ season: Number(m[1]), start: Number(m[2]), end: Number(m[3]) })
+        },
+        {
+            regex: /\b(?:episodes?|episodi?|eps?|ep)\s*0?(\d{1,4})\s*(?:-|~|to|a)\s*0?(\d{1,4})\b/i,
+            extract: (m) => ({ season: Number(defaultSeason) || 1, start: Number(m[1]), end: Number(m[2]) })
+        }
+    ];
+
+    for (const { regex, extract } of patterns) {
+        const match = value.match(regex);
+        if (!match) continue;
+        const parsed = extract(match);
+        if (!Number.isInteger(parsed.season) || parsed.season <= 0) continue;
+        if (isNoiseEpisodeNumber(parsed.start) || isNoiseEpisodeNumber(parsed.end)) continue;
+        if (parsed.end < parsed.start) continue;
+        return {
+            season: parsed.season,
+            episode: parsed.start,
+            rangeStart: parsed.start,
+            rangeEnd: parsed.end,
+            isRange: true,
+            isBatch: true
+        };
+    }
+
+    return null;
+}
+
+function parsedSeriesEpisodeCoversTarget(parsed, targetEpisode) {
+    if (!parsed || !Number.isInteger(Number(targetEpisode)) || Number(targetEpisode) <= 0) return false;
+    const episode = Number(parsed.episode || 0);
+    if (episode === Number(targetEpisode)) return true;
+    if (parsed.isRange === true) {
+        const start = Number(parsed.rangeStart || parsed.episode || 0);
+        const end = Number(parsed.rangeEnd || parsed.episode || 0);
+        return start > 0 && end >= start && Number(targetEpisode) >= start && Number(targetEpisode) <= end;
+    }
+    return false;
+}
+
+function getSeriesMatchConfidence(parsed, targetEpisode) {
+    if (!parsedSeriesEpisodeCoversTarget(parsed, targetEpisode)) return 0;
+    if (Number(parsed.episode || 0) === Number(targetEpisode)) return 1;
+    if (parsed.isRange === true) return 0.82;
+    return 0.5;
+}
+
 function parseSeasonEpisode(filename, defaultSeason = 1, options = {}) {
+    const explicitRange = extractSeriesEpisodeRange(filename, defaultSeason);
+    if (explicitRange) return explicitRange;
+
     const value = normalizeAnimeEpisodeText(filename);
     for (const { pattern, extract } of SEASON_EPISODE_PATTERNS) {
         const match = value.match(pattern);
@@ -631,20 +698,34 @@ function pickMovieFile(videoFiles, titles, year, packName = '') {
 function collectSeriesMatches(videoFiles, meta, item) {
     const targetSeason = Number(meta?.season || item?.season || 1) || 1;
     const targetEpisode = Number(meta?.episode || item?.episode || 0) || 0;
+    if (!Number.isInteger(targetEpisode) || targetEpisode <= 0) return [];
+
     const seasonFromTitle = extractSeasonFromText(item?.title || meta?.title || '');
     const seasonFallback = seasonFromTitle || targetSeason || 1;
     const parseOptions = { anime: isAnimeMeta(meta) };
     const matches = [];
     for (const file of videoFiles) {
+        const dbSeason = Number(file.imdb_season || 0);
+        const dbEpisode = Number(file.imdb_episode || 0);
+        if (dbSeason > 0 || dbEpisode > 0) {
+            if (dbSeason === targetSeason && dbEpisode === targetEpisode) {
+                matches.push({ file, parsed: { season: dbSeason, episode: dbEpisode }, confidence: 1.05, dbExact: true });
+            }
+            continue;
+        }
+
         const name = fileName(file.path);
         const parsed = parseSeasonEpisode(name, seasonFallback, parseOptions);
         if (!parsed) continue;
         if (parsed.season !== targetSeason) continue;
-        matches.push({ file, parsed });
+        if (!parsedSeriesEpisodeCoversTarget(parsed, targetEpisode)) continue;
+        matches.push({ file, parsed, confidence: getSeriesMatchConfidence(parsed, targetEpisode) });
     }
     matches.sort((a, b) => {
-        const episodeDelta = Math.abs((a.parsed.episode || 0) - targetEpisode) - Math.abs((b.parsed.episode || 0) - targetEpisode);
-        if (episodeDelta !== 0) return episodeDelta;
+        const confidenceDelta = (b.confidence || 0) - (a.confidence || 0);
+        if (confidenceDelta !== 0) return confidenceDelta;
+        const exactDelta = (Number(b.parsed.episode || 0) === targetEpisode ? 1 : 0) - (Number(a.parsed.episode || 0) === targetEpisode ? 1 : 0);
+        if (exactDelta !== 0) return exactDelta;
         const sizeDelta = (b.file.bytes || 0) - (a.file.bytes || 0);
         if (sizeDelta !== 0) return sizeDelta;
         return String(a.file.path).localeCompare(String(b.file.path));
@@ -977,6 +1058,10 @@ function buildSeriesResolution(packData, context) {
         publicFallback: Boolean(packData.publicFallback),
         episode: best.parsed.episode,
         season: best.parsed.season,
+        rangeStart: best.parsed.rangeStart || null,
+        rangeEnd: best.parsed.rangeEnd || null,
+        packConfidence: best.confidence || getSeriesMatchConfidence(best.parsed, Number(context.meta?.episode || context.item?.episode || 0)),
+        packEvidenceReason: best.dbExact === true ? 'db_episode_mapping_exact' : (best.parsed.isRange === true ? 'episode_range_contains_target' : 'exact_episode_file'),
         totalPackSize: packData.files.reduce((sum, file) => sum + (file.bytes || 0), 0)
     };
 }
@@ -1109,6 +1194,7 @@ module.exports = {
     isSeasonPack,
     isVideoFile,
     parseSeasonEpisode,
+    parsedSeriesEpisodeCoversTarget,
     parseTorrentMetadata,
     fetchFilesFromPublicTorrentCaches
 };

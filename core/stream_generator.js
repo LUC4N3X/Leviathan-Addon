@@ -3363,19 +3363,88 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
         return dedupeExternalCandidates(mapped);
     };
 
-    const runBatch = (enabledAddons, label) => {
-        const tasks = requestIds.map((id) => fetchExternalAddonsFlat(type, id, {
+    const runBatch = (enabledAddons, label, idsForBatch = requestIds) => {
+        const batchIds = [...new Set((Array.isArray(idsForBatch) ? idsForBatch : [idsForBatch]).map((id) => String(id || '').trim()).filter(Boolean))];
+        const tasks = batchIds.map((id) => fetchExternalAddonsFlat(type, id, {
             userConfig: config,
             onlyItalian,
             languageMode: langMode,
-            enabledAddons
+            enabledAddons,
+            meteorLimit: 2
         })
             .then((items) => ({ id, items: Array.isArray(items) ? items : [] }))
             .catch((error) => ({ id, items: [], error })));
         return Promise.allSettled(tasks).then((settled) => normalizeBatch(settled, label));
     };
 
+    const selectMeteorRequestIds = () => {
+        const maxIds = Math.max(1, Math.min(2, Number(process.env.METEOR_REQUEST_ID_LIMIT || 1) || 1));
+        const imdbIds = requestIds.filter((id) => /^tt\d+(?::\d+:\d+)?$/i.test(id));
+        const nonTmdbIds = requestIds.filter((id) => !/^tmdb:/i.test(id));
+        return [...new Set([...imdbIds, ...nonTmdbIds, ...requestIds])].slice(0, maxIds);
+    };
+
+    const meteorRequestIds = selectMeteorRequestIds();
+    const meteorSupplementLimit = Math.max(1, Math.min(2, Number(process.env.METEOR_SUPPLEMENT_LIMIT || 2) || 2));
+    const meteorSupplementTimeout = Math.max(700, Math.min(
+        Math.max(CONFIG.TIMEOUTS.EXTERNAL || 0, 2500),
+        Number(process.env.EXT_METEOR_SUPPLEMENT_TIMEOUT || 1800) || 1800
+    ));
+    const meteorJoinTimeout = Math.max(250, Math.min(
+        meteorSupplementTimeout,
+        Number(process.env.EXT_METEOR_FAST_JOIN_TIMEOUT || 900) || 900
+    ));
+
+    const pickMeteorSupplement = (items = [], base = []) => {
+        const existing = new Set((Array.isArray(base) ? base : []).map((item) => `${String(item.hash || item.infoHash || '').toLowerCase()}:${Number.isInteger(item.fileIdx) ? item.fileIdx : -1}`));
+        return dedupeExternalCandidates(Array.isArray(items) ? items : [])
+            .filter((item) => {
+                if (!item || item.externalAddon !== 'meteor') return false;
+                const key = `${String(item.hash || item.infoHash || '').toLowerCase()}:${Number.isInteger(item.fileIdx) ? item.fileIdx : -1}`;
+                return key !== ':-1' && !existing.has(key);
+            })
+            .sort((a, b) => {
+                const aScore = (a.cached_rd === true ? 100000 : 0) + Number(a.seeders || 0) + Number(a.sizeBytes || 0) / 1e12;
+                const bScore = (b.cached_rd === true ? 100000 : 0) + Number(b.seeders || 0) + Number(b.sizeBytes || 0) / 1e12;
+                return bScore - aScore;
+            })
+            .slice(0, meteorSupplementLimit);
+    };
+
     try {
+        const meteorSupplementPromise = meteorRequestIds.length === 0
+            ? Promise.resolve([])
+            : withTimeout(
+                runBatch(['meteor'], 'Meteor', meteorRequestIds),
+                meteorSupplementTimeout,
+                'Meteor External Supplement'
+            ).catch((error) => {
+                logger.info(`[EXTERNAL] Meteor supplement skipped: ${error?.message || error}`);
+                return [];
+            });
+
+        const readMeteorForSupplement = (stageLabel) => withTimeout(
+            meteorSupplementPromise,
+            meteorJoinTimeout,
+            'Meteor Supplement Fast Join'
+        ).catch((error) => {
+            logger.info(`[EXTERNAL] Meteor supplement ${stageLabel} fast skip after ${meteorJoinTimeout}ms: ${error?.message || error}`);
+            return [];
+        });
+
+        const withMeteorSupplement = async (baseResults, stageLabel) => {
+            const base = Array.isArray(baseResults) ? baseResults : [];
+            const meteorRaw = await readMeteorForSupplement(stageLabel);
+            const meteorPicked = pickMeteorSupplement(meteorRaw, base);
+            if (meteorPicked.length > 0) {
+                const merged = dedupeExternalCandidates([...base, ...meteorPicked]);
+                logger.info(`[EXTERNAL] Meteor supplement ${stageLabel} +${meteorPicked.length}/${meteorRaw.length} -> total=${merged.length}`);
+                return merged;
+            }
+            logger.info(`[EXTERNAL] Meteor supplement ${stageLabel} +0/${Array.isArray(meteorRaw) ? meteorRaw.length : 0}`);
+            return base;
+        };
+
         // Torrentio viene provato su tutti gli ID prima di decidere il fallback.
         // Prima la policy MediaFusion era valutata per singolo ID: imdb=hit, tmdb=0 => MediaFusion partiva comunque.
         const torrentioResults = await withTimeout(
@@ -3386,8 +3455,9 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
 
         if (torrentioResults.length > 0) {
             logger.info(`[EXTERNAL] Torrentio aggregate=${torrentioResults.length} ids=${requestIds.length} -> MediaFusion SKIP`);
-            logger.info(`[EXTERNAL] Trovati ${torrentioResults.length} risultati ids=${requestIds.length}`);
-            return torrentioResults;
+            const supplemented = await withMeteorSupplement(torrentioResults, 'with Torrentio');
+            logger.info(`[EXTERNAL] Trovati ${supplemented.length} risultati ids=${requestIds.length}`);
+            return supplemented;
         }
 
         logger.info(`[EXTERNAL] Torrentio aggregate=0 ids=${requestIds.length} -> MediaFusion RUN`);
@@ -3398,8 +3468,19 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
         );
 
         if (mediaFusionResults.length > 0) {
-            logger.info(`[EXTERNAL] Trovati ${mediaFusionResults.length} risultati ids=${requestIds.length}`);
-            return mediaFusionResults;
+            const supplemented = await withMeteorSupplement(mediaFusionResults, 'with MediaFusion');
+            logger.info(`[EXTERNAL] Trovati ${supplemented.length} risultati ids=${requestIds.length}`);
+            return supplemented;
+        }
+
+        logger.info(`[EXTERNAL] MediaFusion aggregate=0 ids=${requestIds.length} -> Meteor ONLY`);
+        const meteorResults = await meteorSupplementPromise;
+
+        if (meteorResults.length > 0) {
+            const meteorPicked = pickMeteorSupplement(meteorResults, []);
+            logger.info(`[EXTERNAL] Meteor only ${meteorPicked.length}/${meteorResults.length}`);
+            logger.info(`[EXTERNAL] Trovati ${meteorPicked.length} risultati ids=${requestIds.length}`);
+            return meteorPicked;
         }
 
         logger.info(`[EXTERNAL] Nessun risultato trovato ids=${requestIds.length}`);
@@ -3476,7 +3557,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
                     const externalRequestIds = buildExternalAddonRequestIds(type, finalId, meta);
                     const externalConfigSig = crypto.createHash("sha1").update(JSON.stringify({ service: config?.service || "", rd: config?.rd || config?.realdebrid || "", tb: config?.tb || config?.torbox || "", key: config?.key || "" })).digest("hex").slice(0, 12);
-                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}:torrentioItTrustV14`;
+                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}:torrentioItTrustV14MeteorFastTrustedV2`;
                     const externalPromise = disableLiveSources && !flags.useProviderCachedOnly
                         ? Promise.resolve([])
                         : Cache.fetchWithCache('ExternalAddons', externalCacheKey, 43200, () =>

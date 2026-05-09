@@ -37,7 +37,7 @@ const KNOWN_PROVIDERS = [
     'Comando', 'YTS', 'YIFY', 'BestTorrents', 'Knaben', 'BTM', 'Byndr', 'Wadu',
     'Sp33dy94', 'MIRCrew', 'Cosmo Crew', 'Ph4nt0mx', 'Nueng', 'Rutor',
     'TorrentGalaxy', 'TGx', 'RARBG', 'EZTV', 'Nyaa', 'Erai-raws', 'SubsPlease',
-    'Judas', 'QxR', 'Tigole', 'PSA', 'EAGLE', 'ICV', 'MegaPhone', 'iDN_CreW',
+    'Judas', 'QxR', 'Tigole', 'PSA', 'EAGLE', 'MegaPhone', 'iDN_CreW',
     'MUX', 'DDN', 'DLMux', 'WebMux', 'TRIDIM', 'Lidri', 'Ghizzo', 'MeGaPeER',
     'Papeete', 'Vics', 'Gaiage', 'Dtone', 'BlackBit', 'Pantry', 'Bric', 'USAbit',
     'Uindex', 'Contribution Stream'
@@ -45,7 +45,7 @@ const KNOWN_PROVIDERS = [
 
 const REGEX_AUDIO_ITA = /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._-]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._-]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b|\b(?:MULTI|DUAL\s*AUDIO)\s*(?:ITA|IT)\b|\bTRUE\s*ITALIAN\b|\bIT\s*[\/+,\-]\s*(?:GB|UK|US|EN|ENG|ENGLISH|MULTI|VO|SUB|AAC|AC3|DDP|EAC3|DTS)\b|\b(?:GB|UK|US|EN|ENG|ENGLISH|MULTI|VO)\s*[\/+,\-]\s*IT\b|[\[(]\s*IT\s*[\])])/i;
 const REGEX_SUB_ITA = /(?:\b(?:SUB[-.\s_]*ITA|SOFTSUB[-.\s_]*ITA|VOST(?:ITA)?|ITALIAN\s*SUBS?|SUB(?:TITLE)?S?\s*(?:ITALIAN|ITALIANO|ITA))\b|🇮🇹\s*SUB)/i;
-const REGEX_TRUSTED_ITA = /\b(?:CORSARO|ICV|MEGAPHONE|IDN[_\s-]*CREW|DDN|MUX(?:\s*ITA)?|TRIDIM|LUX|WMS|MIRCREW|CINEFILE)\b/i;
+const REGEX_TRUSTED_ITA = /\b(?:CORSARO|MEGAPHONE|IDN[_\s-]*CREW|DDN|MUX(?:\s*ITA)?|TRIDIM|LUX|WMS|MIRCREW|CINEFILE)\b/i;
 const REGEX_ENGLISH_LANGUAGE = /(?:🇬🇧|🇺🇸|\b(?:ENG|ENGLISH)\b|(?:^|[^A-Z0-9])EN(?:[^A-Z0-9]|$))/i;
 const REGEX_NEGATIVE_LANGUAGE = /(?:🇬🇧|🇺🇸|🇷🇺|🇺🇦|🇫🇷|🇩🇪|🇪🇸|🇵🇱|🇯🇵|🇰🇷|🇨🇳|🇮🇳|\b(?:ENGLISH(?:\s*(?:DUBBED|DUB|AUDIO|ONLY))?|ENG(?:\s*(?:DUBBED|DUB|AUDIO|ONLY))?|TRUEFRENCH|FRENCH|FRA|GERMAN|GER|DEU|SPANISH|SPA|ESP|LATINO|RUSSIAN|RUS|UKRAINIAN|UKR|POLISH|POL|HINDI|TAMIL|TELUGU|KOREAN|JAPANESE|JPN|CHINESE|MANDARIN)\b)/i;
 const REGEX_MULTI_LANGUAGE = /\b(?:MULTI|DUAL\s*AUDIO|VOST)\b/i;
@@ -365,7 +365,7 @@ function buildTorrentioBaseUrl(baseUrl, userConfig) {
         const lastSegment = segments[segments.length - 1];
         const hasPreconfiguredPath = segments.length > 0 && !/^manifest\.json$/i.test(lastSegment || '') && !/^stream$/i.test(lastSegment || '');
 
-        // Non distruggere URL Torrentio/proxy già configurati tipo IlCorsaroViola:
+        // Non distruggere URL Torrentio/proxy già preconfigurati:
         // spesso l'ultimo segmento contiene provider/language/quality oppure una URL upstream codificata.
         // Prima Leviathan lo sostituiva con solo { realdebrid: key }, perdendo provider e lingua.
         if (hasPreconfiguredPath && process.env.EXT_TORRENTIO_FORCE_REWRITE_CONFIG !== 'true') return baseUrl;
@@ -435,7 +435,7 @@ function buildAddonCacheKey(addonKey, type, id, options = {}) {
         onlyItalian: options.onlyItalian !== false,
         languageMode: String(options.languageMode || ''),
         minConfidence: Number(options.minimumItalianConfidence || 20),
-        rdOnly: options.requireRdCached === true || addonKey === 'mediafusion',
+        rdOnly: options.requireRdCached === true || getAddon(addonKey)?.requireRdCached === true || addonKey === 'mediafusion',
         service, tokenSig: token ? hashConfigSignature(token) : ''
     });
 }

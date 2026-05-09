@@ -13,8 +13,10 @@ const {
 } = require('./shared');
 const { fetchTorrentioAddon, fetchTorrentioAddons, fetchTorrentioFlat } = require('./torrentio');
 const { fetchMediaFusionAddon, fetchMediaFusionAddons, fetchMediaFusionFlat } = require('./mediafusion');
+const { fetchMeteorAddon, fetchMeteorAddons, fetchMeteorFlat } = require('./meteor');
 
 const MEDIAFUSION_POLICY = 'only_when_torrentio_zero_v3';
+const METEOR_POLICY = 'only_when_torrentio_and_mediafusion_zero_v1';
 
 function shouldRunMediaFusion(realTorrentioCount) {
     return Number(realTorrentioCount || 0) <= 0;
@@ -22,11 +24,12 @@ function shouldRunMediaFusion(realTorrentioCount) {
 
 async function fetchExternalAddon(addonKey, type, id, options = {}) {
     if (getAddonGroup(addonKey) === 'mediafusion') return fetchMediaFusionAddon(addonKey, type, id, options);
+    if (getAddonGroup(addonKey) === 'meteor') return fetchMeteorAddon(addonKey, type, id, options);
     return fetchTorrentioAddon(addonKey, type, id, options);
 }
 
 async function fetchAllExternalAddons(type, id, options = {}) {
-    const { torrentio, mediafusion } = splitRequestedAddons(options.enabledAddons);
+    const { torrentio, mediafusion, meteor } = splitRequestedAddons(options.enabledAddons);
     const resultsByAddon = {};
 
     if (torrentio.length > 0) {
@@ -47,6 +50,17 @@ async function fetchAllExternalAddons(type, id, options = {}) {
     if (mediafusion.length > 0) {
         const mediaFusionResults = await fetchMediaFusionAddons(type, id, { ...options, enabledAddons: mediafusion });
         Object.assign(resultsByAddon, mediaFusionResults);
+
+        const mediaFusionFlat = dedupeNormalizedStreams(Object.values(mediaFusionResults).flat());
+        const realMediaFusionCount = countRealResults(mediaFusionFlat);
+        if (realMediaFusionCount > 0 || meteor.length === 0) return resultsByAddon;
+
+        infoLog(`[NEXUS-BRIDGE] policy=${METEOR_POLICY} | MediaFusion real=0 -> Meteor RUN`);
+    }
+
+    if (meteor.length > 0) {
+        const meteorResults = await fetchMeteorAddons(type, id, { ...options, enabledAddons: meteor });
+        Object.assign(resultsByAddon, meteorResults);
     }
 
     return resultsByAddon;
@@ -69,6 +83,9 @@ module.exports = {
     fetchMediaFusionAddon,
     fetchMediaFusionAddons,
     fetchMediaFusionFlat,
+    fetchMeteorAddon,
+    fetchMeteorAddons,
+    fetchMeteorFlat,
     normalizeExternalStream,
     extractInfoHash,
     isItalianContent,
