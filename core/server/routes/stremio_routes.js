@@ -135,6 +135,28 @@ function recoverSeriesIdFromHint(conf, req, type, rawId) {
     return hint.baseId;
 }
 
+function isStremioEtagEnabled() {
+    const normalized = String(process.env.STREMIO_ETAG_ENABLED || '').trim().toLowerCase();
+    return ['1', 'true', 'yes', 'y', 'on'].includes(normalized);
+}
+
+function buildStremioPayloadEtag(payload) {
+    const stable = JSON.stringify(payload || {}, Object.keys(payload || {}).sort());
+    const hash = crypto.createHash('sha256').update(stable).digest('hex').slice(0, 24);
+    return `W/"${hash}"`;
+}
+
+function maybeSendNotModified(req, res, payload) {
+    if (!isStremioEtagEnabled()) return false;
+    const cacheMaxAge = Math.max(0, Number(payload?.cacheMaxAge || 0) || 0);
+    if (cacheMaxAge <= 0) return false;
+    const etag = buildStremioPayloadEtag(payload);
+    const clientEtag = String(req?.headers?.['if-none-match'] || '').trim();
+    if (clientEtag !== etag) return false;
+    res.status(304).end();
+    return true;
+}
+
 function applyStremioStreamCacheHeaders(res, payload) {
     const cacheMaxAge = Math.max(0, Number(payload?.cacheMaxAge || 0) || 0);
     const staleRevalidate = Math.max(0, Number(payload?.staleRevalidate || 0) || 0);
@@ -154,6 +176,11 @@ function applyStremioStreamCacheHeaders(res, payload) {
         'Cache-Control',
         `public, max-age=${cacheMaxAge}, stale-while-revalidate=${staleRevalidate}, stale-if-error=${staleError}`
     );
+    if (isStremioEtagEnabled()) {
+        res.setHeader('ETag', buildStremioPayloadEtag(payload));
+    } else {
+        res.removeHeader('ETag');
+    }
 }
 
 function queueBingePredictionWarmup({
@@ -362,6 +389,7 @@ function registerStremioRoutes(app, {
             const reqHost = getRequestOrigin(req);
             const cachedResult = await getRawStreamCache(req.params.type, requestId, req.params.conf, { logger });
             if (cachedResult) {
+                if (maybeSendNotModified(req, res, cachedResult)) return;
                 applyStremioStreamCacheHeaders(res, cachedResult);
                 return res.json(cachedResult);
             }
@@ -386,6 +414,7 @@ function registerStremioRoutes(app, {
             );
 
             setRawStreamCache(req.params.type, requestId, req.params.conf, result, { logger }).catch(() => {});
+            if (maybeSendNotModified(req, res, result)) return;
             applyStremioStreamCacheHeaders(res, result);
             queueBingePredictionWarmup({
                 req,
@@ -416,4 +445,4 @@ function registerStremioRoutes(app, {
     });
 }
 
-module.exports = { registerStremioRoutes };
+module.exports = { registerStremioRoutes, applyStremioStreamCacheHeaders, buildStremioPayloadEtag, maybeSendNotModified };

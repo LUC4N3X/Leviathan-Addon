@@ -46,6 +46,8 @@ const { preserveRdStatusList } = require('./debrid/guards/rd_status_guard');
 const { applyResolutionOrderingGuard } = require('./debrid/guards/resolution_ordering_guard');
 const { enqueueRdViewScan } = require('./debrid/audit/rd_view_scanner');
 const { hasFolderSizeSeasonPackSignal } = require('./matching/season_pack_inspector');
+const { buildContentProxyUrlFromBase, shouldProxyContentUrl } = require('./proxy/content_proxy_engine');
+const TorrentInfoLedger = require('./torrent/torrent_info_ledger');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
 const {
@@ -385,6 +387,28 @@ function getLazyResolveInflightKey(service, apiKey, item, meta) {
     return `${String(service || 'rd').toLowerCase()}:${tokenSig}:${item.hash}:${meta?.season || item.season || 0}:${meta?.episode || item.episode || 0}:${item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : -1}`;
 }
 
+function maybeBuildContentProxyUrl(baseUrl, rawConf, targetUrl, config = {}, options = {}) {
+    if (!shouldProxyContentUrl(config, { targetUrl, ...options })) return targetUrl;
+    return buildContentProxyUrlFromBase(baseUrl, rawConf, targetUrl, {
+        source: options.source || 'debrid',
+        filename: options.filename || options.fileName || '',
+        headers: options.headers || options.requestHeaders || {},
+        ttlSeconds: options.ttlSeconds
+    }) || targetUrl;
+}
+
+async function hydrateTorrentCandidatesFromLedger(items, meta = {}, stage = 'pipeline') {
+    const hydrated = await TorrentInfoLedger.hydrateCandidatesWithLedger(items, meta, {
+        dbHelper,
+        logger,
+        rememberValidatedFileSet
+    });
+    if (hydrated !== items && Array.isArray(hydrated)) {
+        logger.info(`[TORRENT LEDGER] hydrate stage=${stage} in=${Array.isArray(items) ? items.length : 0} out=${hydrated.length}`);
+    }
+    return hydrated;
+}
+
 function getProviderBreakerState(providerName) {
     return sourceHealth.getCircuitState(providerName);
 }
@@ -654,6 +678,11 @@ const BACKGROUND_DB_SAVE_QUEUE_MAX = Math.max(10, Math.min(1000, parseInt(proces
 const PACK_RESOLUTION_QUEUE_MAX = Math.max(10, Math.min(1000, parseInt(process.env.PACK_RESOLUTION_QUEUE_MAX || '80', 10) || 80));
 const TORRENTIO_EXACT_ACCEPT_ALL = String(process.env.EXT_TORRENTIO_EXACT_ACCEPT_ALL || 'true').toLowerCase() !== 'false';
 const TORRENTIO_EXACT_ACCEPT_MAX = Math.max(1, Math.min(50, parseInt(process.env.EXT_TORRENTIO_EXACT_ACCEPT_MAX || '24', 10) || 24));
+
+function shouldAcceptAllTorrentioExact(config = {}, key = '') {
+    if (key && Object.prototype.hasOwnProperty.call(config?.filters || {}, key)) return false;
+    return TORRENTIO_EXACT_ACCEPT_ALL;
+}
 const PACK_RESOLVER_HTTP_COOLDOWN_MS = Math.max(5000, Math.min(10 * 60 * 1000, parseInt(process.env.PACK_RESOLVER_HTTP_COOLDOWN_MS || '60000', 10) || 60000));
 const recentPackResolverHttpFailures = new Map();
 const timedCacheSweepState = new Map();
@@ -2301,6 +2330,7 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
                 const guaranteedCachedUpdates = [];
                 const guaranteedSet = new Set();
                 const torrentRows = [];
+                const ledgerPackFiles = [];
 
                 for (const item of results) {
                     const infoHash = item.hash || item.infoHash;
@@ -2337,6 +2367,21 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
 
                     torrentRows.push(torrentObj);
 
+                    const learnedFileIdx = getResolvedFileIdx(item);
+                    if (meta?.isSeries && learnedFileIdx !== null) {
+                        const learnedHint = item.episodeFileHint || item._episodeFileHint || {};
+                        ledgerPackFiles.push({
+                            info_hash: infoHash,
+                            file_index: learnedFileIdx,
+                            file_path: learnedHint.filePath || learnedHint.path || item.filename || item.file_title || item.title,
+                            file_title: learnedHint.fileName || learnedHint.fileTitle || item.filename || item.file_title || item.title,
+                            file_size: getObservedSizeBytes(learnedHint.fileSize, learnedHint.size, item._size, item.sizeBytes, item.fileSize, item.file_size),
+                            imdb_id: meta?.imdb_id || null,
+                            imdb_season: meta?.season || item.season || item.imdb_season || null,
+                            imdb_episode: meta?.episode || item.episode || item.imdb_episode || null
+                        });
+                    }
+
                     if (isGuaranteedCachedExternal(item)) {
                         if (!guaranteedSet.has(infoHash)) {
                             guaranteedSet.add(infoHash);
@@ -2344,10 +2389,14 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
                                 hash: infoHash,
                                 state: 'cached',
                                 cached: true,
+                                rd_file_index: getResolvedFileIdx(item),
                                 rd_file_size: Number(item?._size || item?.sizeBytes || 0) > 0 ? Number(item._size || item.sizeBytes) : null,
                                 failures: 0,
                                 next_hours: 168,
-                                permanent: false
+                                permanent: false,
+                                imdb_id: meta?.imdb_id || null,
+                                imdb_season: meta?.season || null,
+                                imdb_episode: meta?.episode || null
                             });
                         }
                         continue;
@@ -2376,6 +2425,13 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
                             if (success) savedCount += 1;
                         }
                         processedCount = torrentRows.length;
+                    }
+                }
+
+                if (ledgerPackFiles.length > 0 && typeof dbHelper.insertPackFiles === 'function') {
+                    const ledgerOutcome = await dbHelper.insertPackFiles(ledgerPackFiles);
+                    if (Number(ledgerOutcome?.processed || 0) > 0) {
+                        logger.info(`[TORRENT LEDGER] pack/file hints processed=${ledgerOutcome.processed} inserted=${ledgerOutcome.inserted || 0} imdb=${meta?.imdb_id || 'n/a'}`);
                     }
                 }
 
@@ -2713,7 +2769,12 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
             return buildPlayableStream({
                 service,
                 item: runtimeItem,
-                streamUrl: directUrl,
+                streamUrl: maybeBuildContentProxyUrl(reqHost, rawConf, directUrl, config, {
+                    source: 'external_direct',
+                    direct: true,
+                    filename: runtimeItem.filename || runtimeItem.file_title || displayTitle || runtimeItem.title,
+                    headers: runtimeItem.behaviorHints?.proxyHeaders?.request || runtimeItem.proxyHeaders?.request || runtimeItem.headers || {}
+                }),
                 displayTitle,
                 parseTitle: runtimeItem.title,
                 sizeBytes: realSize,
@@ -2772,6 +2833,15 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
             runtimeItem.sizeBytes = finalSize;
         }
         await persistResolvedDebridAvailability(meta, runtimeItem, streamData, service, 'direct_resolve');
+        TorrentInfoLedger.recordResolvedFileIndex({
+            meta,
+            item: runtimeItem,
+            streamData,
+            service,
+            dbHelper,
+            logger,
+            reason: 'direct_resolve'
+        }).catch(() => {});
         const resolvedFileIndexRaw = streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx;
         const resolvedFileIndex = resolvedFileIndexRaw === null || resolvedFileIndexRaw === undefined || resolvedFileIndexRaw === ''
             ? null
@@ -2798,7 +2868,11 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
         return buildPlayableStream({
             service,
             item: runtimeItem,
-            streamUrl: streamData.url,
+            streamUrl: maybeBuildContentProxyUrl(reqHost, rawConf, streamData.url, config, {
+                source: service,
+                debrid: true,
+                filename: parseTitle || displayTitle || runtimeItem.title
+            }),
             displayTitle,
             parseTitle,
             sizeBytes: finalSize,
@@ -2845,7 +2919,12 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
         return buildPlayableStream({
             service,
             item: runtimeItem,
-            streamUrl: directUrl,
+            streamUrl: maybeBuildContentProxyUrl(reqHost, userConfStr, directUrl, config, {
+                source: 'external_direct',
+                direct: true,
+                filename: runtimeItem.filename || runtimeItem.file_title || displayTitle || runtimeItem.title,
+                headers: runtimeItem.behaviorHints?.proxyHeaders?.request || runtimeItem.proxyHeaders?.request || runtimeItem.headers || {}
+            }),
             displayTitle,
             parseTitle: item.title,
             sizeBytes: realSize,
@@ -3159,7 +3238,7 @@ function isTorrentioExactExternalCandidate(item = {}) {
 }
 
 function getPlayableExternalTarget(item = {}) {
-    return item?.magnet || item?.magnetLink || getExternalDirectUrl(item) || item?.directUrl || item?._externalDirectUrl || item?.url || null;
+    return item?.magnet || item?.magnetLink || getExternalDirectUrl(item) || item?.directUrl || item?._externalDirectUrl || item?.url || item?.hash || item?.infoHash || null;
 }
 
 function getExternalGuardScore(item = {}) {
@@ -3273,7 +3352,8 @@ function protectTorrentioExactSeriesMinimum(items = [], aggressiveFilter, { meta
         .filter((item) => shouldProtectTorrentioExactSeriesCandidate(item, meta, type, langMode))
         .sort((a, b) => getExternalGuardScore(b) - getExternalGuardScore(a));
 
-    const wantedCount = TORRENTIO_EXACT_ACCEPT_ALL
+    const acceptAll = shouldAcceptAllTorrentioExact(config, 'torrentioExactSeriesMin');
+    const wantedCount = acceptAll
         ? Math.min(TORRENTIO_EXACT_ACCEPT_MAX, candidates.length)
         : Math.max(0, minWanted - currentTorrentio);
 
@@ -3289,7 +3369,7 @@ function protectTorrentioExactSeriesMinimum(items = [], aggressiveFilter, { meta
     }
 
     if (additions.length > 0) {
-        logger.info(`[EXTERNAL GUARD] Torrentio exact-id IT force-keep series | kept=${currentTorrentio} added=${additions.length} candidates=${candidates.length} mode=${TORRENTIO_EXACT_ACCEPT_ALL ? 'all' : 'minimum'} target=${TORRENTIO_EXACT_ACCEPT_ALL ? TORRENTIO_EXACT_ACCEPT_MAX : minWanted}`);
+        logger.info(`[EXTERNAL GUARD] Torrentio exact-id IT force-keep series | kept=${currentTorrentio} added=${additions.length} candidates=${candidates.length} mode=${acceptAll ? 'all' : 'minimum'} target=${acceptAll ? TORRENTIO_EXACT_ACCEPT_MAX : minWanted}`);
     } else if (list.filter(isTorrentioExactExternalCandidate).length > base.filter(isTorrentioExactExternalCandidate).length && currentTorrentio < minWanted) {
         const exactTotal = list.filter(isTorrentioExactExternalCandidate).length;
         const langRejected = list.filter((item) => isTorrentioExactExternalCandidate(item) && langMode === 'ita' && !isExternalStrictItalianCandidate(item)).length;
@@ -3317,7 +3397,8 @@ function protectTorrentioExactMovieMinimum(items = [], aggressiveFilter, { meta 
         .filter((item) => shouldProtectTorrentioExactMovieCandidate(item, meta, type, langMode))
         .sort((a, b) => getExternalGuardScore(b) - getExternalGuardScore(a));
 
-    const wantedCount = TORRENTIO_EXACT_ACCEPT_ALL
+    const acceptAll = shouldAcceptAllTorrentioExact(config, 'torrentioExactMovieMin');
+    const wantedCount = acceptAll
         ? Math.min(TORRENTIO_EXACT_ACCEPT_MAX, candidates.length)
         : Math.max(0, minWanted - currentTorrentio);
 
@@ -3333,7 +3414,7 @@ function protectTorrentioExactMovieMinimum(items = [], aggressiveFilter, { meta 
     }
 
     if (additions.length > 0) {
-        logger.info(`[EXTERNAL GUARD] Torrentio exact-id IT force-keep movie | kept=${currentTorrentio} added=${additions.length} candidates=${candidates.length} mode=${TORRENTIO_EXACT_ACCEPT_ALL ? 'all' : 'minimum'} target=${TORRENTIO_EXACT_ACCEPT_ALL ? TORRENTIO_EXACT_ACCEPT_MAX : minWanted}`);
+        logger.info(`[EXTERNAL GUARD] Torrentio exact-id IT force-keep movie | kept=${currentTorrentio} added=${additions.length} candidates=${candidates.length} mode=${acceptAll ? 'all' : 'minimum'} target=${acceptAll ? TORRENTIO_EXACT_ACCEPT_MAX : minWanted}`);
     }
 
     return additions.length > 0 ? [...base, ...additions] : base;
@@ -3821,7 +3902,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       }
 
       const shouldFetchNetworkResults = torrentPipelineEnabled && !useLocalDbFastPath;
-      const networkResults = await trace.time('network-candidates', () => shouldFetchNetworkResults
+      let networkResults = await trace.time('network-candidates', () => shouldFetchNetworkResults
           ? fetchTitleCandidatePool({
               type,
               finalId,
@@ -3840,6 +3921,9 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               enabled: shouldFetchNetworkResults,
               results: Array.isArray(items) ? items.length : 0
           }));
+      networkResults = await trace.time('torrent-ledger-hydrate', () => hydrateTorrentCandidatesFromLedger(networkResults, meta, 'network'), (items) => ({
+          results: Array.isArray(items) ? items.length : 0
+      }));
 
       let cleanResults = [];
       let rankedList = [];

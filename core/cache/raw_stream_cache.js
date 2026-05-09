@@ -11,11 +11,25 @@ const {
     registerCacheSet
 } = require('../utils/runtime');
 
-const RAW_STREAM_CACHE_ENABLED = true;
-const RAW_STREAM_CACHE_TTL_SECONDS = 900;
-const RAW_STREAM_CACHE_COMPRESS = true;
-const RAW_STREAM_CACHE_MAX_BYTES = 500000;
-const RAW_STREAM_CACHE_MAX_KEYS = 12000;
+function boolEnv(value, fallback = false) {
+    if (value === undefined || value === null || value === '') return fallback;
+    const normalized = String(value).trim().toLowerCase();
+    if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+    return fallback;
+}
+
+function boundedIntEnv(name, fallback, min, max) {
+    const parsed = parseInt(process.env[name], 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+}
+
+const RAW_STREAM_CACHE_ENABLED = boolEnv(process.env.RAW_STREAM_CACHE_ENABLED, true);
+const RAW_STREAM_CACHE_TTL_SECONDS = boundedIntEnv('RAW_STREAM_CACHE_TTL_SECONDS', 900, 30, 24 * 60 * 60);
+const RAW_STREAM_CACHE_COMPRESS = boolEnv(process.env.RAW_STREAM_CACHE_COMPRESS, true);
+const RAW_STREAM_CACHE_MAX_BYTES = boundedIntEnv('RAW_STREAM_CACHE_MAX_BYTES', 500000, 4096, 5_000_000);
+const RAW_STREAM_CACHE_MAX_KEYS = boundedIntEnv('RAW_STREAM_CACHE_MAX_KEYS', 12000, 32, 100000);
 const RAW_STREAM_CACHE_CODEC = 'deflate';
 const RAW_STREAM_CACHE_VERSION = 'raw-stream-v4';
 
@@ -242,7 +256,8 @@ function getRawStreamCacheStats() {
         maxBytes: RAW_STREAM_CACHE_MAX_BYTES,
         keys: rawStreamCache.keys().length,
         indexedPages: rawStreamCacheIndexByLabel.size,
-        indexedKeys
+        indexedKeys,
+        maxKeys: RAW_STREAM_CACHE_MAX_KEYS
     };
 }
 
@@ -251,6 +266,7 @@ module.exports = {
     RAW_STREAM_CACHE_TTL_SECONDS,
     RAW_STREAM_CACHE_COMPRESS,
     RAW_STREAM_CACHE_MAX_BYTES,
+    RAW_STREAM_CACHE_MAX_KEYS,
     buildRawStreamCacheKey,
     buildRawStreamCacheLabel,
     getRawStreamCache,

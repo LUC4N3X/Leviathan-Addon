@@ -4,6 +4,8 @@ const { getRequestOrigin } = require('../../utils/url');
 const RD = require('../../debrid/clients/realdebrid_client');
 const TB = require('../../debrid/clients/torbox_client');
 const { registerLazyExtractionRoute } = require('../../../providers/extractors/lazy_extraction');
+const { buildContentProxyUrlFromRequest, shouldProxyContentUrl } = require('../../proxy/content_proxy_engine');
+const TorrentInfoLedger = require('../../torrent/torrent_info_ledger');
 
 function registerPlaybackRoutes(app, {
     Cache,
@@ -18,8 +20,45 @@ function registerPlaybackRoutes(app, {
     markPlayableResultAsCached,
     markPlayableResultAsUnavailable,
     queueCloudBuild,
-    getBuildKey
+    getBuildKey,
+    dbHelper
 }) {
+    function maybeProxyResolvedUrl(req, conf, targetUrl, config, options = {}) {
+        if (!shouldProxyContentUrl(config, { targetUrl, ...options })) return targetUrl;
+        return buildContentProxyUrlFromRequest(req, conf, targetUrl, {
+            source: options.source || 'debrid',
+            filename: options.filename || '',
+            headers: options.headers || {},
+            ttlSeconds: options.ttlSeconds
+        }) || targetUrl;
+    }
+
+    function maybeMediaflowUrl(targetUrl, config) {
+        if (!targetUrl || !(config.mediaflow && config.mediaflow.proxyDebrid && config.mediaflow.url)) return targetUrl;
+        try {
+            const mfpBase = config.mediaflow.url.replace(/\/$/, '');
+            let finalUrl = `${mfpBase}/proxy/stream?d=${encodeURIComponent(targetUrl)}`;
+            if (config.mediaflow.pass) finalUrl += `&api_password=${encodeURIComponent(config.mediaflow.pass)}`;
+            return finalUrl;
+        } catch (_) {
+            return targetUrl;
+        }
+    }
+
+    function preferLeviathanProxy(config = {}) {
+        // Safe hardcoded default: keep Mediaflow first when configured. Leviathan content proxy
+        // is still used as fallback for direct/web URLs when Mediaflow is not applied.
+        const preferMediaflowFirst = config?.contentProxy?.preferMediaflow !== false;
+        return !preferMediaflowFirst && shouldProxyContentUrl(config, { targetUrl: 'https://example.invalid/video.mp4', source: 'debrid' });
+    }
+
+    function buildFinalPlaybackUrl(req, conf, targetUrl, config, options = {}) {
+        if (!targetUrl) return targetUrl;
+        if (preferLeviathanProxy(config)) return maybeProxyResolvedUrl(req, conf, targetUrl, config, options);
+        const mediaflowUrl = maybeMediaflowUrl(targetUrl, config);
+        if (mediaflowUrl !== targetUrl) return mediaflowUrl;
+        return maybeProxyResolvedUrl(req, conf, targetUrl, config, options);
+    }
     registerLazyExtractionRoute(app, { logger });
 
     app.get('/:conf/play_lazy/:service/:hash/:fileIdx', async (req, res) => {
@@ -73,11 +112,17 @@ function registerPlaybackRoutes(app, {
                 item.sizeBytes = Number(playbackMeta.size);
             }
             const cachedLazy = await Cache.getLazyLink(lazyCacheKey);
-            if (cachedLazy && cachedLazy.url) {
-                await markPlayableResultAsCached(requestedService, item, cachedLazy, playbackMeta);
+            if (cachedLazy && (cachedLazy.rawUrl || cachedLazy.url)) {
+                const cachedTargetUrl = cachedLazy.rawUrl || cachedLazy.url;
+                const finalCachedUrl = buildFinalPlaybackUrl(req, conf, cachedTargetUrl, config, {
+                    source: requestedService,
+                    debrid: true,
+                    filename: cachedLazy.filename || cachedLazy.fileName || cachedPlaybackMeta?.title || item.title
+                });
+                await markPlayableResultAsCached(requestedService, item, { ...cachedLazy, url: finalCachedUrl, rawUrl: cachedTargetUrl }, playbackMeta);
                 incrementMetric('lazyPlay.cacheHit');
                 recordDuration('lazyPlay.total', Date.now() - startedAt);
-                return res.redirect(cachedLazy.url);
+                return res.redirect(finalCachedUrl);
             }
 
             const streamData = await LIMITERS.lazyPlay.schedule(() =>
@@ -85,20 +130,26 @@ function registerPlaybackRoutes(app, {
             );
 
             if (streamData && streamData.url) {
-                await Cache.cacheLazyLink(lazyCacheKey, streamData, 180);
-                await markPlayableResultAsCached(requestedService, item, streamData, playbackMeta);
+                const finalUrl = buildFinalPlaybackUrl(req, conf, streamData.url, config, {
+                    source: requestedService,
+                    debrid: true,
+                    filename: streamData.filename || playbackMeta?.title || item.title
+                });
+                await Cache.cacheLazyLink(lazyCacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, 180);
+                await markPlayableResultAsCached(requestedService, item, { ...streamData, url: finalUrl, rawUrl: streamData.url }, playbackMeta);
+                TorrentInfoLedger.recordResolvedFileIndex({
+                    meta: playbackMeta,
+                    item,
+                    streamData,
+                    service: requestedService,
+                    dbHelper,
+                    logger,
+                    reason: 'lazy_play'
+                }).catch(() => {});
                 incrementMetric('lazyPlay.success');
                 recordDuration('lazyPlay.total', Date.now() - startedAt);
                 recordProviderMetric(`lazy.${requestedService}`, true, Date.now() - startedAt);
-                if (config.mediaflow && config.mediaflow.proxyDebrid && config.mediaflow.url) {
-                    try {
-                        const mfpBase = config.mediaflow.url.replace(/\/$/, '');
-                        let finalUrl = `${mfpBase}/proxy/stream?d=${encodeURIComponent(streamData.url)}`;
-                        if (config.mediaflow.pass) finalUrl += `&api_password=${config.mediaflow.pass}`;
-                        return res.redirect(finalUrl);
-                    } catch (e) {}
-                }
-                return res.redirect(streamData.url);
+                return res.redirect(finalUrl);
             }
             await markPlayableResultAsUnavailable?.(requestedService, item, playbackMeta, 'lazy_play_miss');
             incrementMetric('lazyPlay.redirectToCloud');
@@ -137,10 +188,16 @@ function registerPlaybackRoutes(app, {
 
             const cacheKey = `saved:${requestedService}:${torrentId}:${fileId}`;
             const cached = await Cache.getLazyLink(cacheKey);
-            if (cached?.url) {
+            if (cached?.rawUrl || cached?.url) {
+                const cachedTargetUrl = cached.rawUrl || cached.url;
+                const finalCachedUrl = buildFinalPlaybackUrl(req, conf, cachedTargetUrl, config, {
+                    source: requestedService,
+                    debrid: true,
+                    filename: cached.filename || cached.fileName || ''
+                });
                 incrementMetric('savedCloudPlay.cacheHit');
                 recordDuration('savedCloudPlay.total', Date.now() - startedAt);
-                return res.redirect(cached.url);
+                return res.redirect(finalCachedUrl);
             }
 
             const streamData = requestedService === 'tb'
@@ -152,16 +209,22 @@ function registerPlaybackRoutes(app, {
                 return res.status(404).send('File cloud salvato non più disponibile o non selezionato.');
             }
 
-            let finalUrl = streamData.url;
-            if (config.mediaflow && config.mediaflow.proxyDebrid && config.mediaflow.url) {
-                try {
-                    const mfpBase = config.mediaflow.url.replace(/\/$/, '');
-                    finalUrl = `${mfpBase}/proxy/stream?d=${encodeURIComponent(streamData.url)}`;
-                    if (config.mediaflow.pass) finalUrl += `&api_password=${encodeURIComponent(config.mediaflow.pass)}`;
-                } catch (_) {}
-            }
+            const finalUrl = buildFinalPlaybackUrl(req, conf, streamData.url, config, {
+                source: requestedService,
+                debrid: true,
+                filename: streamData.filename || streamData.fileName || ''
+            });
 
-            await Cache.cacheLazyLink(cacheKey, { ...streamData, url: finalUrl }, 180);
+            await Cache.cacheLazyLink(cacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, 180);
+            TorrentInfoLedger.recordResolvedFileIndex({
+                meta: { imdb_id: req.query.imdb || null, season: Number(req.query.s || 0) || 0, episode: Number(req.query.e || 0) || 0 },
+                item: { hash: streamData.hash || streamData.infoHash || torrentId, fileIdx: fileId, title: streamData.filename || '' },
+                streamData,
+                service: requestedService,
+                dbHelper,
+                logger,
+                reason: 'saved_cloud_play'
+            }).catch(() => {});
             incrementMetric('savedCloudPlay.success');
             recordDuration('savedCloudPlay.total', Date.now() - startedAt);
             recordProviderMetric(`savedCloud.${requestedService}`, true, Date.now() - startedAt);
