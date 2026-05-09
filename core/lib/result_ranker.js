@@ -220,10 +220,14 @@ function buildPreparedConfig(input = {}) {
   if (input && input.__rankingPrepared) return input;
 
   const ranking = input && typeof input.ranking === "object" ? input.ranking : {};
+  const rawSortMode = String(ranking.sortMode || input.sortMode || input.sort || input.filters?.sortMode || input.filters?.sortBy || input.filters?.sort || DEFAULT_CONFIG.sortMode).trim().toLowerCase();
+  const sortMode = ['resolution', 'res', 'quality', 'qualita', 'qualità', 'risoluzione'].includes(rawSortMode)
+    ? 'resolution'
+    : (['size', 'bitrate', 'peso'].includes(rawSortMode) ? 'size' : 'balanced');
   const config = {
     __rankingPrepared: true,
     profile: ranking.profile || input.profile || DEFAULT_CONFIG.profile,
-    sortMode: ranking.sortMode || input.sortMode || input.sort || input.filters?.sort || DEFAULT_CONFIG.sortMode,
+    sortMode,
     keepByLanguage: ranking.keepByLanguage ?? input.keepByLanguage ?? DEFAULT_CONFIG.keepByLanguage,
     profiles: {
       stream: mergeProfile(DEFAULT_PROFILES.stream, ranking.profiles?.stream || input.profiles?.stream),

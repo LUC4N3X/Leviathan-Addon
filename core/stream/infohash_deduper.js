@@ -36,14 +36,27 @@ function normalizeInfoHash(value) {
   const raw = String(value || '').trim();
   if (!raw) return null;
 
-  const btih = raw.match(/(?:urn:)?btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})/i);
-  if (btih) return normalizeInfoHash(btih[1]);
+  const candidates = [raw];
+  if (/%[0-9A-F]{2}/i.test(raw)) {
+    try {
+      const decoded = decodeURIComponent(raw);
+      if (decoded && decoded !== raw) candidates.push(decoded);
+    } catch (_) {}
+  }
 
-  const dht = raw.match(/^dht:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})$/i);
-  if (dht) return normalizeInfoHash(dht[1]);
+  for (const text of candidates) {
+    const btih = text.match(/(?:urn:)?btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})/i);
+    if (btih) return normalizeInfoHash(btih[1]);
 
-  if (/^[A-Fa-f0-9]{40}$/.test(raw)) return raw.toUpperCase();
-  if (/^[A-Za-z2-7]{32}$/.test(raw)) return base32ToHex(raw);
+    const dht = text.match(/^dht:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})$/i);
+    if (dht) return normalizeInfoHash(dht[1]);
+
+    if (/^[A-Fa-f0-9]{40}$/.test(text)) return text.toUpperCase();
+    if (/^[A-Za-z2-7]{32}$/.test(text)) return base32ToHex(text);
+
+    const embedded = text.match(/(?:^|[-\/\[\(;&:?=])([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})(?=$|[-\]\)\/:;&?=#])/i);
+    if (embedded) return normalizeInfoHash(embedded[1]);
+  }
 
   return null;
 }

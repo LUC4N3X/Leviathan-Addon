@@ -782,14 +782,19 @@ function applyPackKnowledge(items, meta) {
 }
 
 function getConfiguredSortMode(config = {}) {
-    return String(
+    const raw = String(
         config?.ranking?.sortMode ||
         config?.sortMode ||
         config?.sort ||
         config?.filters?.sortMode ||
+        config?.filters?.sortBy ||
+        config?.filters?.order ||
         config?.filters?.sort ||
         'balanced'
-    ).toLowerCase();
+    ).trim().toLowerCase();
+    if (['resolution', 'res', 'quality', 'qualita', 'qualità', 'risoluzione'].includes(raw)) return 'resolution';
+    if (['size', 'bitrate', 'peso'].includes(raw)) return 'size';
+    return 'balanced';
 }
 
 function applyPremiumRankingPolicy(results, meta, config) {
@@ -898,7 +903,7 @@ function applyFinalStreamUserSort(streams = [], config = {}) {
     const list = Array.isArray(streams) ? streams : [];
     const sortMode = getConfiguredSortMode(config);
 
-    return list
+    const sorted = list
         .map((stream, index) => ({
             stream,
             index,
@@ -926,6 +931,13 @@ function applyFinalStreamUserSort(streams = [], config = {}) {
             return a.index - b.index;
         })
         .map((entry) => entry.stream);
+
+    if (sortMode === 'resolution' || sortMode === 'size') {
+        const top = sorted.slice(0, 5).map((stream) => `${getFinalStreamResolutionTier(stream)}:${String(stream?.title || stream?.name || '').replace(/\s+/g, ' ').slice(0, 45)}`);
+        logger.info(`[FINAL SORT] mode=${sortMode} count=${sorted.length} top=${top.join(' | ')}`);
+    }
+
+    return sorted;
 }
 
 function getMetaDbLookupKey(meta) {
@@ -1664,6 +1676,7 @@ function getCompositeRankScore(item, meta, config) {
 
 function rerankCompositeResults(results, meta, config, sortMode) {
     const ranked = Array.isArray(results) ? [...results] : [];
+    sortMode = getConfiguredSortMode(config);
     ranked.forEach(item => { item._compositeScore = getCompositeRankScore(item, meta, config); });
     ranked.sort((a, b) => {
         const scoreDelta = (b._compositeScore || 0) - (a._compositeScore || 0);
@@ -3474,7 +3487,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const streamCacheVersionParts = [];
-  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v16');
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v18');
   const baseHashInput = backCompat.autoAnimeUnity ? `${userConfStr || 'no-conf'}|autoAnimeUnityKitsu=v2` : (userConfStr || 'no-conf');
   const hashInput = streamCacheVersionParts.length > 0 ? `${baseHashInput}|${streamCacheVersionParts.join('|')}` : baseHashInput;
   const configHash = crypto.createHash('md5').update(hashInput).digest('hex');
