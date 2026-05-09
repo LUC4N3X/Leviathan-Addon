@@ -511,6 +511,77 @@ function getSeriesDbFallbackLimit(filters = {}) {
     return Math.max(0, Math.min(40, parseInt(raw, 10) || 10));
 }
 
+function getMovieDbFallbackLimit(filters = {}) {
+    const raw = filters.movieDbFallbackLimit ?? process.env.MOVIE_DB_FALLBACK_LIMIT ?? '12';
+    return Math.max(0, Math.min(40, parseInt(raw, 10) || 12));
+}
+
+function isLocalDbCandidate(item = {}) {
+    return Boolean(
+        item?._localDb === true ||
+        item?._sourceGroup === 'local_db' ||
+        item?._dbEpisodeMapping === true ||
+        item?._dbLastCachedCheck ||
+        item?._dbNextCachedCheck ||
+        item?._dbProvider ||
+        item?._rdStalePositive === true
+    );
+}
+
+function getCandidateInfoHash(item = {}) {
+    const raw = String(item?.hash || item?.infoHash || item?.info_hash || '').trim().toUpperCase();
+    if (/^[A-F0-9]{40}$/.test(raw)) return raw;
+    return extractInfoHash(item?.magnet || item?.url || item?.directUrl || '') || null;
+}
+
+function getDbCoverageScore(item = {}) {
+    const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || '').toLowerCase();
+    const stateScore = state === 'cached' ? 1_000_000
+        : state === 'likely_cached' ? 750_000
+            : state === 'probing' ? 450_000
+                : state === 'unknown' ? 250_000
+                    : state === 'likely_uncached' ? 100_000
+                        : 0;
+    const seeders = Math.max(0, parseInt(item?.seeders, 10) || 0);
+    const size = Number(item?._size || item?.sizeBytes || 0) || 0;
+    return stateScore + Math.min(5000, seeders) * 100 + Math.min(5000, Math.floor(size / (1024 * 1024)));
+}
+
+function shouldUseDbCoverageItem(item = {}) {
+    const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || '').toLowerCase();
+    if (state === 'uncached_terminal') return false;
+    if (item?._dbCachedRd === false || item?.cached_rd === false) return false;
+    return getDbCoverageScore(item) > 0;
+}
+
+function preserveMovieLocalDbCoverage(rankedList = [], localDbPool = [], meta = {}, filters = {}) {
+    const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
+    if (isSeries) return rankedList;
+
+    const limit = getMovieDbFallbackLimit(filters);
+    const list = Array.isArray(rankedList) ? rankedList : [];
+    const dbPool = Array.isArray(localDbPool) ? localDbPool.filter((item) => isLocalDbCandidate(item) && shouldUseDbCoverageItem(item)) : [];
+    if (limit <= 0 || dbPool.length === 0) return list;
+
+    const currentDbCount = list.filter(isLocalDbCandidate).length;
+    const wanted = Math.max(0, Math.min(limit, dbPool.length) - currentDbCount);
+    if (wanted <= 0) return list;
+
+    const existingHashes = new Set(list.map(getCandidateInfoHash).filter(Boolean));
+    const additions = dbPool
+        .filter((item) => {
+            const hash = getCandidateInfoHash(item);
+            return hash && !existingHashes.has(hash);
+        })
+        .sort((a, b) => getDbCoverageScore(b) - getDbCoverageScore(a))
+        .slice(0, wanted)
+        .map((item) => ({ ...item, _localDb: true, _sourceGroup: item?._sourceGroup || 'local_db' }));
+
+    if (additions.length === 0) return list;
+    logger.info(`[DB COVERAGE] movie local-db fallback added=${additions.length} current=${currentDbCount} limit=${limit} dbPool=${dbPool.length}`);
+    return [...list, ...additions];
+}
+
 function shouldAllowSeriesDbFastPath(filters = {}) {
     const value = filters.seriesDbFastPath ?? process.env.SERIES_DB_FAST_PATH;
     return String(value || '0') === '1';
@@ -855,8 +926,16 @@ function getFinalStreamSortText(stream = {}) {
     ].filter(Boolean).join(' '));
 }
 
+function normalizeResolutionSortText(value = '') {
+    return String(value || '')
+        .normalize('NFKC')
+        .replace(/[ᴋＫ]/g, 'k')
+        .replace(/[ᴘＰ]/g, 'p')
+        .toLowerCase();
+}
+
 function getFinalStreamResolutionTier(stream = {}) {
-    const text = getFinalStreamSortText(stream).toLowerCase();
+    const text = normalizeResolutionSortText(getFinalStreamSortText(stream));
     if (/\b(?:4320p|8k)\b/.test(text)) return 5;
     if (/\b(?:2160p|4k|uhd)\b/.test(text)) return 4;
     if (/\b(?:1440p|2k|qhd)\b/.test(text)) return 3.5;
@@ -1265,7 +1344,7 @@ async function normalizeCandidateResults(items, meta = {}) {
         logger.info(`[TRACKER] enriched=${trackerPass.stats.enriched}/${trackerPass.stats.total} trackersAdded=${trackerPass.stats.trackersAdded} maxPerMagnet=${trackerPass.stats.maxTrackers}`);
     }
 
-    let normalized = deduplicateResults(trackerPass.results);
+    let normalized = deduplicateResults(trackerPass.results, meta);
     const beforeForceMergeCount = normalized.length;
     normalized = mergeForcedTorrentioItItems(normalized, trackerPass.results);
     if (normalized.length > beforeForceMergeCount) {
@@ -3487,7 +3566,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const streamCacheVersionParts = [];
-  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v18');
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v20');
   const baseHashInput = backCompat.autoAnimeUnity ? `${userConfStr || 'no-conf'}|autoAnimeUnityKitsu=v2` : (userConfStr || 'no-conf');
   const hashInput = streamCacheVersionParts.length > 0 ? `${baseHashInput}|${streamCacheVersionParts.join('|')}` : baseHashInput;
   const configHash = crypto.createHash('md5').update(hashInput).digest('hex');
@@ -3591,6 +3670,11 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           enabled: localDbEnabled,
           results: Array.isArray(items) ? items.length : 0
       }));
+      for (const item of Array.isArray(localDbResults) ? localDbResults : []) {
+          if (!item) continue;
+          item._localDb = true;
+          item._sourceGroup = item._sourceGroup || 'local_db';
+      }
       let localDbFastPool = [];
       let localDbSatisfaction = { satisfied: false, reason: 'no_db_results' };
       if (localDbResults.length > 0) {
@@ -3695,6 +3779,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               logger.info(`[DEDUPE INFOHASH] ranked removed=${infoHashRankDedupe.removed} kept=${infoHashRankDedupe.results.length} title="${String(meta?.title || '').slice(0, 80)}" s=${meta?.season || '-'} e=${meta?.episode || '-'}`);
           }
           rankedList = preserveRdStatusList(beforeInfoHashDedupe, infoHashRankDedupe.results, { logger, stage: 'ranked-dedupe' });
+          rankedList = preserveMovieLocalDbCoverage(rankedList, localDbFastPool.length > 0 ? localDbFastPool : localDbResults, meta, filters);
           trace.stage('ranked-dedupe', {
               in: beforeInfoHashDedupe.length,
               kept: rankedList.length,

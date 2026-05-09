@@ -17,7 +17,7 @@ const RAW_STREAM_CACHE_COMPRESS = true;
 const RAW_STREAM_CACHE_MAX_BYTES = 500000;
 const RAW_STREAM_CACHE_MAX_KEYS = 12000;
 const RAW_STREAM_CACHE_CODEC = 'deflate';
-const RAW_STREAM_CACHE_VERSION = 'raw-stream-v2';
+const RAW_STREAM_CACHE_VERSION = 'raw-stream-v3';
 
 const deflateAsync = promisify(zlib.deflate);
 const inflateAsync = promisify(zlib.inflate);

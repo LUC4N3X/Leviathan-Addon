@@ -13,8 +13,16 @@ function textOf(item = {}) {
   ].filter(Boolean).join(' '));
 }
 
+function normalizeResolutionText(value = '') {
+  return String(value || '')
+    .normalize('NFKC')
+    .replace(/[ᴋＫ]/g, 'k')
+    .replace(/[ᴘＰ]/g, 'p')
+    .toLowerCase();
+}
+
 function detectResolutionTier(item = {}) {
-  const text = textOf(item).toLowerCase();
+  const text = normalizeResolutionText(textOf(item));
   if (/\b(?:2160p|4k|uhd)\b/.test(text)) return 4;
   if (/\b(?:1080p|fhd|full[-.\s]?hd)\b/.test(text)) return 3;
   if (/\b720p\b/.test(text)) return 2;

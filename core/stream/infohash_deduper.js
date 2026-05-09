@@ -286,6 +286,56 @@ function stripProviderDisplayLines(value = '') {
     .join(' ');
 }
 
+function getForcedTorrentioTitleKey(item = {}) {
+  return normalizeSmartToken(stripVolatileDisplaySignals(stripProviderDisplayLines([
+    item.title,
+    item.name,
+    item.filename,
+    item.fileName,
+    item.file_title,
+    item.behaviorHints?.filename
+  ].filter(Boolean).join('\n')))).replace(/\s+/g, ' ').trim();
+}
+
+function extractDisplayProviderKey(value = '') {
+  const text = String(value || '');
+  const match = text.match(/🐬\s*([^|\n\r]+)/u);
+  return match ? normalizeSmartToken(match[1]).replace(/\s+/g, '') : '';
+}
+
+function getForcedTorrentioSourceKey(item = {}) {
+  return normalizeSmartToken([
+    item.source,
+    item.provider,
+    item.externalProvider,
+    item.externalAddon,
+    item.externalGroup,
+    item.behaviorHints?.vortexSource,
+    item.behaviorHints?.vortexMeta?.provider,
+    extractDisplayProviderKey([item.title, item.name, item.filename, item.fileName, item.file_title].filter(Boolean).join('\n'))
+  ].filter(Boolean).join(' ')).replace(/\s+/g, '');
+}
+
+function getForcedTorrentioMoviePayloadKey(item = {}, options = {}) {
+  if (isSeriesContext(options)) return null;
+
+  const titleKey = getForcedTorrentioTitleKey(item);
+  const sourceKey = getForcedTorrentioSourceKey(item);
+  const sizeBucket = getSizeBucket(item);
+  const resolution = extractResolutionTag(item);
+  if (titleKey.length < 12 || !sourceKey || !sizeBucket || !resolution) return null;
+
+  return [
+    'torrentioMoviePayload',
+    sourceKey,
+    titleKey,
+    sizeBucket,
+    resolution,
+    extractQualityTag(item) || 'noquality',
+    extractEncodeTag(item) || 'noencode'
+  ].join(':');
+}
+
 function getForcedTorrentioExactKey(item = {}, options = {}) {
   const hash = extractInfoHash(item);
   if (!hash) return null;
@@ -297,14 +347,7 @@ function getForcedTorrentioExactKey(item = {}, options = {}) {
 
   if (fileIdx !== null) return ['torrentioExactFile', scope, hash, `file:${fileIdx}`].join(':');
 
-  const titleKey = normalizeSmartToken(stripVolatileDisplaySignals(stripProviderDisplayLines([
-    item.title,
-    item.name,
-    item.filename,
-    item.fileName,
-    item.file_title,
-    item.behaviorHints?.filename
-  ].filter(Boolean).join('\n')))).replace(/\s+/g, ' ').trim();
+  const titleKey = getForcedTorrentioTitleKey(item);
 
   if (titleKey.length < 8) return null;
   const parts = [
@@ -333,7 +376,7 @@ function getSeasonEpisodeKey(options = {}) {
 function normalizeFileName(value) {
   const text = String(value || '')
     .replace(VIDEO_EXTENSIONS, '')
-    .normalize('NFD')
+    .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\p{L}\p{N}+]+/gu, '')
     .toLowerCase()
@@ -367,7 +410,7 @@ function extractFilename(item = {}) {
 
 function normalizeSmartToken(value) {
   return String(value || '')
-    .normalize('NFD')
+    .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim()
@@ -498,6 +541,8 @@ function buildDedupeKeys(item = {}, options = {}) {
     const fileIdx = extractFileIdx(item);
     const forcedKey = getForcedTorrentioExactKey(item, options);
     const keys = forcedKey ? [forcedKey] : [];
+    const payloadKey = getForcedTorrentioMoviePayloadKey(item, options);
+    if (payloadKey) keys.push(payloadKey);
 
     // Same infohash is a safe bridge for movies; for series, require a concrete
     // file index so season-pack aliases are not collapsed by hash alone.
@@ -563,6 +608,7 @@ function isTorrentioLike(item = {}) {
 }
 
 function isDbLike(item = {}) {
+  if (item?._localDb === true || item?._sourceGroup === 'local_db') return true;
   const text = String(`${item?.source || ''} ${item?.provider || ''} ${item?.externalAddon || ''} ${item?.externalGroup || ''} ${item?.name || ''} ${item?.title || ''}`).toLowerCase();
   return /\b(db|database|leviathandb|saved)\b/.test(text);
 }
@@ -619,7 +665,7 @@ function sourcePriority(item = {}, options = {}) {
   const isSeries = isSeriesContext(options);
   if (isSeries && isTorrentioLike(item)) return 45;
   if (/mediafusion/.test(text)) return 25;
-  if (isDbLike(item)) return isSeries ? 5 : 12;
+  if (isDbLike(item)) return isSeries ? 5 : 18;
   return 15;
 }
 
@@ -726,6 +772,9 @@ function mergeSignals(winner = {}, losers = [], hash = null, evidence = {}) {
     if (out._mediafusionRdChecked !== true && loser?._mediafusionRdChecked === true) out._mediafusionRdChecked = true;
     if (out._nexusBridgeRdChecked !== true && loser?._nexusBridgeRdChecked === true) out._nexusBridgeRdChecked = true;
     if (out._externalRdChecked !== true && loser?._externalRdChecked === true) out._externalRdChecked = true;
+    if (out._localDb !== true && (loser?._localDb === true || loser?._sourceGroup === 'local_db')) out._localDb = true;
+    if (!out._sourceGroup && loser?._sourceGroup) out._sourceGroup = loser._sourceGroup;
+    if (!out._dbProvider && loser?._dbProvider) out._dbProvider = loser._dbProvider;
     const source = loser?.source || loser?.externalAddon || loser?.provider || null;
     if (source) {
       const refreshedSources = collectSourceLabels([out, { source }]);

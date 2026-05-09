@@ -379,6 +379,44 @@ function collectDedupeMergedCount(...items) {
   return Math.max(1, count);
 }
 
+function isLocalDbCandidate(item = {}) {
+  return Boolean(
+    item?._localDb === true ||
+    item?._sourceGroup === 'local_db' ||
+    item?._dbEpisodeMapping === true ||
+    item?._dbLastCachedCheck ||
+    item?._dbNextCachedCheck ||
+    item?._dbProvider ||
+    item?._rdStalePositive === true
+  );
+}
+
+function getCacheStateRankForDedupe(item = {}) {
+  const state = getKnownCacheState(item) || 'unknown';
+  if (state === 'cached') return 5;
+  if (state === 'likely_cached') return 4;
+  if (state === 'probing') return 3;
+  if (state === 'unknown') return 2;
+  if (state === 'likely_uncached') return 1;
+  return 0;
+}
+
+function shouldPreferLocalDbDuplicate(candidate, current, meta = {}) {
+  const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
+  if (isSeries) return null;
+  const candidateDb = isLocalDbCandidate(candidate);
+  const currentDb = isLocalDbCandidate(current);
+  if (candidateDb === currentDb) return null;
+
+  const dbItem = candidateDb ? candidate : current;
+  const otherItem = candidateDb ? current : candidate;
+  const dbRank = getCacheStateRankForDedupe(dbItem);
+  const otherRank = getCacheStateRankForDedupe(otherItem);
+  if (dbRank + 1 < otherRank) return null;
+
+  return candidateDb ? 'candidate' : 'current';
+}
+
 function mergeDuplicateSignals(preferredItem, alternateItem) {
   const merged = { ...preferredItem };
   const sourceLabels = collectDedupeSourceLabels(preferredItem, alternateItem);
@@ -422,6 +460,9 @@ function mergeDuplicateSignals(preferredItem, alternateItem) {
   }
   if (!merged._tbCached && alternateItem?._tbCached) merged._tbCached = true;
   if (!merged._isPack && alternateItem?._isPack) merged._isPack = true;
+  if (!merged._localDb && isLocalDbCandidate(alternateItem)) merged._localDb = true;
+  if (!merged._sourceGroup && alternateItem?._sourceGroup) merged._sourceGroup = alternateItem._sourceGroup;
+  if (!merged._dbProvider && alternateItem?._dbProvider) merged._dbProvider = alternateItem._dbProvider;
 
   return merged;
 }
@@ -484,13 +525,14 @@ function deduplicateResults(results, meta = {}, config = {}) {
       continue;
     }
 
+    const localDbPreference = shouldPreferLocalDbDuplicate(item, existing, meta);
     const comparison = compareRankedItems(item, existing, meta, {
       ...config,
       profile: 'dedupe',
       keepByLanguage: false,
       sortMode: 'balanced'
     });
-    const winner = comparison < 0 ? item : existing;
+    const winner = localDbPreference === 'candidate' ? item : (localDbPreference === 'current' ? existing : (comparison < 0 ? item : existing));
     const loser = winner === item ? existing : item;
     const mergedWinner = mergeDuplicateSignals(winner, loser);
     mergedWinner._score = winner._score;
