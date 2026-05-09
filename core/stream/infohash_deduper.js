@@ -259,39 +259,46 @@ function stripVolatileDisplaySignals(value = '') {
     .trim();
 }
 
+function stripProviderDisplayLines(value = '') {
+  return String(value || '')
+    .split(/\r?\n+/)
+    .filter((line) => {
+      const text = String(line || '').trim();
+      if (!text) return false;
+      if (/🐬/.test(text)) return false;
+      if (/\b(?:source|provider)\s*[:=]/i.test(text)) return false;
+      if (/\b(?:1337x|rarbg|thepiratebay|tpb|torrentio|eztv|yts|torrentgalaxy|nyaa|kickass|limetorrents|magnetdl)\b\s*(?:\||-|•)/i.test(text)) return false;
+      return true;
+    })
+    .join(' ');
+}
+
 function getForcedTorrentioExactKey(item = {}, options = {}) {
   const hash = extractInfoHash(item);
   if (!hash) return null;
 
   const fileIdx = extractFileIdx(item);
-  const sourceKey = normalizeSmartToken([
-    item.source,
-    item.provider,
-    item.externalProvider,
-    item.externalAddon,
-    item.externalGroup,
-    item.behaviorHints?.vortexSource,
-    item.behaviorHints?.vortexMeta?.provider
-  ].filter(Boolean).join(' ')).replace(/\s+/g, '');
-  const titleKey = normalizeSmartToken(stripVolatileDisplaySignals([
+  const isSeries = isSeriesContext(options);
+  const episodeKey = isSeries ? getSeasonEpisodeKey(options) : '';
+  const scope = isSeries ? `series:${episodeKey || 'unknown'}` : 'movie';
+
+  if (fileIdx !== null) return ['torrentioExactFile', scope, hash, `file:${fileIdx}`].join(':');
+
+  const titleKey = normalizeSmartToken(stripVolatileDisplaySignals(stripProviderDisplayLines([
     item.title,
     item.name,
     item.filename,
     item.fileName,
     item.file_title,
     item.behaviorHints?.filename
-  ].filter(Boolean).join(' '))).replace(/\s+/g, ' ').trim();
+  ].filter(Boolean).join('\n')))).replace(/\s+/g, ' ').trim();
 
-  if (fileIdx === null && titleKey.length < 8) return null;
-
-  const isSeries = isSeriesContext(options);
-  const episodeKey = isSeries ? getSeasonEpisodeKey(options) : '';
+  if (titleKey.length < 8) return null;
   const parts = [
     'torrentioExact',
-    isSeries ? `series:${episodeKey || 'unknown'}` : 'movie',
+    scope,
     hash,
-    fileIdx === null ? 'nofile' : `file:${fileIdx}`,
-    sourceKey || 'nosource',
+    'nofile',
     titleKey || 'notitle',
     getSizeBucket(item) || 'nosize',
     extractResolutionTag(item) || 'nores',
@@ -473,8 +480,17 @@ function buildSmartDedupeKey(item = {}, options = {}) {
 
 function buildDedupeKeys(item = {}, options = {}) {
   if (isForcedTorrentioKeep(item)) {
+    const hash = extractInfoHash(item);
+    const isSeries = isSeriesContext(options);
+    const fileIdx = extractFileIdx(item);
     const forcedKey = getForcedTorrentioExactKey(item, options);
-    return forcedKey ? [forcedKey] : [];
+    const keys = forcedKey ? [forcedKey] : [];
+
+    // Same infohash is a safe bridge for movies; for series, require a concrete
+    // file index so season-pack aliases are not collapsed by hash alone.
+    if (hash && !isSeries) keys.push(`infoHash:${hash}`);
+    if (hash && isSeries && fileIdx !== null) keys.push(`infoHashFile:${hash}:${fileIdx}`);
+    return [...new Set(keys)];
   }
 
   const hash = extractInfoHash(item);

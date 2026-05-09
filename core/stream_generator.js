@@ -786,6 +786,7 @@ function getConfiguredSortMode(config = {}) {
         config?.ranking?.sortMode ||
         config?.sortMode ||
         config?.sort ||
+        config?.filters?.sortMode ||
         config?.filters?.sort ||
         'balanced'
     ).toLowerCase();
@@ -1176,6 +1177,28 @@ function shouldDropByConfiguredQuality(text, filters = {}, options = {}) {
     return false;
 }
 
+function getConfiguredQualityFilterText(item = {}) {
+    return [
+        item?.title,
+        item?.name,
+        item?.filename,
+        item?.fileName,
+        item?.file_title,
+        item?.rawDescription,
+        item?.quality,
+        item?.resolution,
+        item?._releaseDetails?.quality,
+        item?._releaseDetails?.qualityLabel,
+        item?.behaviorHints?.filename,
+        item?.behaviorHints?.videoResolution,
+        item?.behaviorHints?.bingeGroup
+    ].filter(Boolean).join(' ');
+}
+
+function isBlockedByUserQualityFilters(item = {}, filters = {}) {
+    return shouldDropByConfiguredQuality(getConfiguredQualityFilterText(item), filters, { treatGenericHdAs720: true });
+}
+
 function getTorrentioTrustDedupeKey(item = {}) {
     const hash = String(item?.hash || item?.infoHash || '').trim().toLowerCase();
     const fileIdx = Number.isInteger(Number(item?.fileIdx)) ? Number(item.fileIdx) : -1;
@@ -1197,11 +1220,12 @@ function shouldForceKeepTorrentioIt(item = {}) {
     return Boolean(item?._torrentioLooseItForceKeep || item?._torrentioExactGuard);
 }
 
-function mergeForcedTorrentioItItems(filtered = [], original = []) {
+function mergeForcedTorrentioItItems(filtered = [], original = [], filters = {}) {
     const output = Array.isArray(filtered) ? [...filtered] : [];
     const seen = new Set(output.map(getTorrentioTrustDedupeKey).filter(Boolean));
     for (const item of Array.isArray(original) ? original : []) {
         if (!shouldForceKeepTorrentioIt(item)) continue;
+        if (isBlockedByUserQualityFilters(item, filters)) continue;
         const key = getTorrentioTrustDedupeKey(item);
         if (!key || seen.has(key)) continue;
         seen.add(key);
@@ -1214,13 +1238,13 @@ function applyConfiguredTorrentFilters(items, filters = {}) {
     const list = Array.isArray(items) ? items : [];
     if (!filters || Object.keys(filters).length === 0) return list;
     const filtered = applyTorrentResultFilters(list, filters);
-    return mergeForcedTorrentioItItems(filtered, list);
+    return mergeForcedTorrentioItItems(filtered, list, filters);
 }
 
 function applyConfiguredStreamFilters(streams, filters = {}) {
     const list = Array.isArray(streams) ? streams : [];
     if (!filters || Object.keys(filters).length === 0) return list;
-    return list.filter(stream => !shouldDropByConfiguredQuality(`${stream?.title || ''} ${stream?.name || ''}`, filters, { treatGenericHdAs720: true }));
+    return list.filter(stream => !isBlockedByUserQualityFilters(stream, filters));
 }
 
 async function normalizeCandidateResults(items, meta = {}) {
@@ -3450,7 +3474,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const streamCacheVersionParts = [];
-  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v15');
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v16');
   const baseHashInput = backCompat.autoAnimeUnity ? `${userConfStr || 'no-conf'}|autoAnimeUnityKitsu=v2` : (userConfStr || 'no-conf');
   const hashInput = streamCacheVersionParts.length > 0 ? `${baseHashInput}|${streamCacheVersionParts.join('|')}` : baseHashInput;
   const configHash = crypto.createHash('md5').update(hashInput).digest('hex');
