@@ -49,6 +49,7 @@ const REGEX_TRUSTED_ITA = /\b(?:CORSARO|ICV|MEGAPHONE|IDN[_\s-]*CREW|DDN|MUX(?:\
 const REGEX_NEGATIVE_LANGUAGE = /(?:🇬🇧|🇺🇸|🇷🇺|🇺🇦|🇫🇷|🇩🇪|🇪🇸|🇵🇱|🇯🇵|🇰🇷|🇨🇳|🇮🇳|\b(?:ENGLISH(?:\s*(?:DUBBED|DUB|AUDIO|ONLY))?|ENG(?:\s*(?:DUBBED|DUB|AUDIO|ONLY))?|TRUEFRENCH|FRENCH|FRA|GERMAN|GER|DEU|SPANISH|SPA|ESP|LATINO|RUSSIAN|RUS|UKRAINIAN|UKR|POLISH|POL|HINDI|TAMIL|TELUGU|KOREAN|JAPANESE|JPN|CHINESE|MANDARIN)\b)/i;
 const REGEX_MULTI_LANGUAGE = /\b(?:MULTI|DUAL\s*AUDIO|VOST)\b/i;
 const REGEX_STRONG_ITA_AUDIO = /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i;
+const REGEX_TORRENTIO_LOOSE_ITA = /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|(?:^|[^A-Z0-9])IT(?:[^A-Z0-9]|$))/i;
 const VIDEO_FILE_REGEX = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts)$/i;
 const SIZE_REGEX = /(?:📦|💾|💽|Size:?|Dimensione:?|File\s*Size:?|Peso:?)[\s:]*([\d.,]+)\s*(B|KB|MB|GB|TB|KIB|MIB|GIB|TIB)/i;
 const SEEDERS_REGEX = /(?:👤|👥|Seeders?:?|Peers?:?)\s*[:\-]?\s*(\d+)/i;
@@ -153,11 +154,14 @@ function getTorrentioLanguageEvidence(stream) {
     const normalized = normalizeForComparison(raw);
     const hasExplicitItalianAudio = /(?:🇮🇹|\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i.test(raw);
     const hasItalianSubtitleOnly = REGEX_SUB_ITA.test(raw) && !hasExplicitItalianAudio;
-    const hasItalian = !hasItalianSubtitleOnly && (REGEX_STRONG_ITA_AUDIO.test(raw) || REGEX_STRONG_ITA_AUDIO.test(normalized));
+    const hasLooseItalian = REGEX_TORRENTIO_LOOSE_ITA.test(raw) || REGEX_TORRENTIO_LOOSE_ITA.test(normalized);
+    // Torrentio is ID-based: if the stream says IT/ITA anywhere, keep it.
+    // Do not let dual labels like IT/GB or ITA/ENG become "foreign" just because GB/ENG is also present.
+    const hasItalian = Boolean(hasLooseItalian || REGEX_STRONG_ITA_AUDIO.test(raw) || REGEX_STRONG_ITA_AUDIO.test(normalized));
     const hasForeign = REGEX_NEGATIVE_LANGUAGE.test(raw) || REGEX_NEGATIVE_LANGUAGE.test(normalized);
     const onlyForeignFlagBlock = hasForeign && !hasItalian;
 
-    return { hasItalian, hasForeign, onlyForeignFlagBlock, hasItalianSubtitleOnly };
+    return { hasItalian, hasForeign, onlyForeignFlagBlock, hasItalianSubtitleOnly, hasLooseItalian };
 }
 
 function looksLikeSeasonPackTitle(value) {
@@ -541,7 +545,16 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
     let languageInfo = analyzeItalianSignals(stream);
     if (addonKey === 'torrentio_mirror') {
         const evidence = getTorrentioLanguageEvidence(stream);
-        if (!evidence.hasItalian && evidence.hasForeign) {
+        if (evidence.hasItalian) {
+            languageInfo = {
+                ...languageInfo,
+                isItalian: true,
+                hasAudioItalian: true,
+                confidence: Math.max(Number(languageInfo.confidence || 0), 98),
+                hasNegativeLanguage: false,
+                reason: languageInfo.reason && languageInfo.reason !== 'none' ? `torrentio_it_token|${languageInfo.reason}` : 'torrentio_it_token'
+            };
+        } else if (evidence.hasForeign) {
             languageInfo = {
                 ...languageInfo,
                 isItalian: false,
@@ -586,7 +599,12 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
     };
 
     normalized._score = scoreNormalizedStream(normalized);
-    normalized._dedupeKey = normalized.infoHash ? `${normalized.infoHash}:${normalized.fileIdx}` : `${normalizeForComparison(normalized.title)}|${normalized.url || ''}`;
+    if (normalized.infoHash && getAddonGroup(addonKey) === 'torrentio' && languageInfo.isItalian) {
+        const sourceKey = normalizeForComparison([normalized.source, normalized.externalProvider, normalized.title, normalized.url].filter(Boolean).join('|'));
+        normalized._dedupeKey = `torrentio:${normalized.infoHash}:${normalized.fileIdx}:${sourceKey || 'nosource'}`;
+    } else {
+        normalized._dedupeKey = normalized.infoHash ? `${normalized.infoHash}:${normalized.fileIdx}` : `${normalizeForComparison(normalized.title)}|${normalized.url || ''}`;
+    }
     return normalized;
 }
 
@@ -752,6 +770,7 @@ async function fetchConfiguredExternalAddon(addonKey, type, id, options = {}) {
                     const analysis = analyzeItalianSignals(stream);
                     if (addonKey === 'torrentio_mirror') {
                         const evidence = getTorrentioLanguageEvidence(stream);
+                        if (evidence.hasItalian) return true;
                         if (!evidence.hasItalian && evidence.hasForeign) return false;
                     }
                     return analysis.isItalian && analysis.confidence >= Number(options.minimumItalianConfidence || 20);

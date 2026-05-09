@@ -434,6 +434,22 @@ function shouldKeepItalianCandidate(title, source, meta = {}) {
   return shouldKeepStrictItalianCandidate(title, source);
 }
 
+function hasTrustedExternalItalianEvidence(item = {}) {
+  const languageInfo = item?._externalLanguageInfo || item?.languageInfo || {};
+  const isTrustedExternal = Boolean(item?.isExternal || item?.externalAddon || item?.externalGroup || item?._externalIdMatched || item?._sourceGroup === 'external');
+  if (!isTrustedExternal && !item?._torrentioLooseItForceKeep && !item?._torrentioExactGuard) return false;
+  return Boolean(
+    item?._torrentioLooseItForceKeep ||
+    item?._torrentioExactGuard ||
+    item?._externalIsItalian ||
+    item?._externalHasItalianAudio ||
+    item?.isItalian ||
+    item?.hasItalianAudio ||
+    languageInfo?.isItalian ||
+    languageInfo?.hasAudioItalian
+  );
+}
+
 function shouldKeepByLanguageMode(item, meta = {}, configInput = {}) {
   const title = normalizeText(item?.title || item?.name);
   const source = normalizeText(item?.source || item?.provider);
@@ -442,6 +458,8 @@ function shouldKeepByLanguageMode(item, meta = {}, configInput = {}) {
   const normalizedTitle = normalizeSearchText(title);
   const normalizedMeta = normalizeSearchText(meta?.title || meta?.originalTitle || "");
   const yearMatches = matchesExpectedYear(title, meta);
+
+  if (langMode === "ita" && hasTrustedExternalItalianEvidence(item)) return true;
 
   if (langMode === "eng") {
     if (signals.explicitEng) return true;

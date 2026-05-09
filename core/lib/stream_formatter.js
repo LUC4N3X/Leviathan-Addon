@@ -680,6 +680,14 @@ function stripEpisodeFromCleanName(cleanName) {
   return normalizeSpaces(cleanName.replace(/\s+(?:S\d+(?:E\d+)?\b.*|\d+x\d+\b.*|(?:Season|Stagione)\s*\d+\b.*)$/i, ''));
 }
 
+function isBareEpisodeCleanName(value) {
+  const text = normalizeSpaces(value)
+    .replace(/\.(?:mkv|mp4|avi|mov)$/i, '')
+    .replace(/[._-]+/g, ' ')
+    .trim();
+  return /^(?:s\d{1,2}\s*e\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|e(?:p(?:isode)?)?\s*\d{1,3})$/i.test(text);
+}
+
 function normalizeBingePart(value, fallback = 'x') {
   const normalized = safeString(value)
     .normalize('NFKD')
@@ -727,7 +735,9 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
   const qIcon = extracted.qIcon;
   const numericSize = Number(size) || 0;
   const sizeString = numericSize > 0 ? formatBytes(numericSize) : 'Unknown';
-  const cleanedName = stripEpisodeFromCleanName(extracted.cleanName);
+  const metadataTitle = normalizeSpaces(config?.title || config?.name || config?.originalTitle || '');
+  const extractedCleanName = stripEpisodeFromCleanName(extracted.cleanName);
+  const cleanedName = isBareEpisodeCleanName(extractedCleanName) && metadataTitle ? metadataTitle : extractedCleanName;
   const explicitType = safeString(config?.mediaType || config?.type || config?.stremioType).toLowerCase();
   const explicitMovieContext = config?.forceMovie === true || config?.isSeries === false || explicitType === 'movie' || explicitType === 'film';
   const hasSeriesContext = !explicitMovieContext && (

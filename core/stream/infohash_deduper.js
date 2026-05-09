@@ -242,6 +242,15 @@ function isSeriesContext(options = {}) {
   return Boolean(options.isSeries || meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
 }
 
+function isForcedTorrentioKeep(item = {}) {
+  return Boolean(
+    item?._torrentioLooseItForceKeep ||
+    item?._torrentioExactGuard ||
+    item?.behaviorHints?.torrentioLooseItForceKeep ||
+    item?.behaviorHints?.torrentioExactGuard
+  );
+}
+
 function getSeasonEpisodeKey(options = {}) {
   const meta = options.meta || {};
   const season = Number(options.season ?? meta?.season ?? 0) || 0;
@@ -412,6 +421,8 @@ function buildSmartDedupeKey(item = {}, options = {}) {
 }
 
 function buildDedupeKeys(item = {}, options = {}) {
+  if (isForcedTorrentioKeep(item)) return [];
+
   const hash = extractInfoHash(item);
   const smartKey = normalizeStoredSmartDedupeKey(item) || buildSmartDedupeKey(item, options);
   if (!hash) return smartKey ? [smartKey] : [];
@@ -463,6 +474,7 @@ function cacheTier(item = {}) {
 }
 
 function isTorrentioLike(item = {}) {
+  if (isForcedTorrentioKeep(item)) return true;
   const text = String(`${item?.source || ''} ${item?.provider || ''} ${item?.externalAddon || ''} ${item?.externalGroup || ''} ${item?.name || ''} ${item?.title || ''}`).toLowerCase();
   return /torrentio/.test(text);
 }

@@ -79,6 +79,15 @@ function buildEpisodeId(locator, season, episode) {
     return `${locator.baseId}:${season}:${episode}`;
 }
 
+function getWarmupMaxEpisode(meta = {}, locator = {}) {
+    const seasonMax = Number(meta?.seasonEpisodeCount || meta?.episodesInSeason || 0) || 0;
+    if (seasonMax > 0 && !locator?.compactMode) return seasonMax;
+
+    const totalMax = Number(meta?.episodeCount || meta?.numberOfEpisodes || 0) || 0;
+    if (totalMax > 0 && (locator?.compactMode || meta?.kitsu_id || meta?.isAnime)) return totalMax;
+    return 0;
+}
+
 function getConfigFingerprint(conf) {
     const raw = String(conf || '').trim();
     if (!raw) return null;
@@ -158,7 +167,8 @@ function queueBingePredictionWarmup({
     userConfStr,
     reqHost,
     streamInflight,
-    lastResult
+    lastResult,
+    meta
 }) {
     const normalizedType = String(type || '').toLowerCase();
     if (normalizedType !== 'series' && normalizedType !== 'anime') return;
@@ -190,10 +200,18 @@ function queueBingePredictionWarmup({
     const locator = parseEpisodeLocator(requestId);
     if (!locator?.baseId || !Number.isInteger(locator.episode) || locator.episode <= 0) return;
 
+    const maxEpisode = getWarmupMaxEpisode(meta, locator);
+    if (maxEpisode > 0 && locator.episode >= maxEpisode) {
+        incrementMetric('bingeWarmup.skippedEndOfSeason');
+        logger.info(`[BINGE] Skip warmup fine stagione | id=${requestId} | episode=${locator.episode}/${maxEpisode}`);
+        return;
+    }
+
     cleanupRecentBingeWarmups();
     const clientScope = getStreamHintKey(userConfStr, req);
     const targets = [];
     for (let offset = 1; offset <= aheadCount; offset += 1) {
+        if (maxEpisode > 0 && locator.episode + offset > maxEpisode) continue;
         const nextId = buildEpisodeId(locator, locator.season, locator.episode + offset);
         if (!nextId) continue;
 
@@ -348,21 +366,23 @@ function registerStremioRoutes(app, {
                 return res.json(cachedResult);
             }
 
+            const runtimeContext = {
+                rdViewScanPriority: 'high',
+                rdViewScanKind: 'visible',
+                requestPage: {
+                    type: req.params.type,
+                    id: requestId,
+                    source: 'visible_request'
+                }
+            };
+
             const result = await generateStream(
                 req.params.type,
                 requestId,
                 userConf,
                 req.params.conf,
                 reqHost,
-                {
-                    rdViewScanPriority: 'high',
-                    rdViewScanKind: 'visible',
-                    requestPage: {
-                        type: req.params.type,
-                        id: requestId,
-                        source: 'visible_request'
-                    }
-                }
+                runtimeContext
             );
 
             setRawStreamCache(req.params.type, requestId, req.params.conf, result, { logger }).catch(() => {});
@@ -378,7 +398,8 @@ function registerStremioRoutes(app, {
                 userConfStr: req.params.conf,
                 reqHost,
                 streamInflight,
-                lastResult: result
+                lastResult: result,
+                meta: runtimeContext.generatedMeta
             });
             res.json(result);
         } catch (err) {

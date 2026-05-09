@@ -40,7 +40,7 @@ const {
 } = require('./canonical/anime_rules');
 const { shouldKeepStrictItalianCandidate, hasStrictItalianEvidence } = require('./canonical/language_guard');
 const { runFilterStage, runSortStage } = require('./lib/result_stage_pipeline');
-const { buildSeriesContext, matchesCandidateTitle } = require('./matching/episode_matcher');
+const { buildSeriesContext, matchesCandidateTitle, hasWrongExplicitEpisodeMarker } = require('./matching/episode_matcher');
 const { dedupeByInfoHash, getFolderSizeBytes: getDedupeFolderSizeBytes } = require('./stream/infohash_deduper');
 const { preserveRdStatusList } = require('./debrid/guards/rd_status_guard');
 const { applyResolutionOrderingGuard } = require('./debrid/guards/resolution_ordering_guard');
@@ -433,21 +433,59 @@ async function resolveLazyStreamData(service, apiKey, item, meta) {
     });
 }
 
+function isTorrentioExternalItem(item = {}) {
+    const addon = String(item?.externalAddon || item?._externalAddon || '').toLowerCase();
+    const group = String(item?.externalGroup || item?._externalGroup || item?._sourceGroup || '').toLowerCase();
+    return group === 'torrentio' || addon.startsWith('torrentio');
+}
+
+function collectTorrentioItalianEvidenceText(item = {}) {
+    const info = item?._externalLanguageInfo && typeof item._externalLanguageInfo === 'object'
+        ? item._externalLanguageInfo
+        : (item?.languageInfo && typeof item.languageInfo === 'object' ? item.languageInfo : {});
+    const values = [
+        item?.title, item?.name, item?.filename, item?.file_title, item?.packTitle,
+        item?.source, item?.provider, item?.externalProvider, item?.externalAddon, item?.externalGroup,
+        item?.releaseGroup, item?.language, item?.languages, item?.rawDescription,
+        info?.displayLabel, info?.reason, info?.language, info?.languages, info?.detectedLanguages
+    ];
+    return values.flatMap((value) => Array.isArray(value) ? value : [value]).filter(Boolean).join(' ');
+}
+
+function hasLooseItalianToken(value = '') {
+    const text = String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, ' ');
+    return /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|(?:^|[^A-Z0-9])IT(?:[^A-Z0-9]|$))/i.test(text);
+}
+
+function hasTorrentioLooseItalianEvidence(item = {}) {
+    if (!isTorrentioExternalItem(item)) return false;
+    // torrentio_mirror is already the ITA-filtered Torrentio endpoint in Nexus Bridge.
+    // For Torrentio, any explicit IT/ITA token is enough: do not reject IT/GB or ITA/ENG dual-audio.
+    if (String(item?.externalAddon || '').toLowerCase() === 'torrentio_mirror') return true;
+    return hasLooseItalianToken(collectTorrentioItalianEvidenceText(item));
+}
+
 function getExternalLanguageAudit(item = {}) {
     const info = item?._externalLanguageInfo && typeof item._externalLanguageInfo === 'object'
         ? item._externalLanguageInfo
         : (item?.languageInfo && typeof item.languageInfo === 'object' ? item.languageInfo : {});
-    const confidence = Number(item?._externalLanguageConfidence ?? info.confidence ?? 0) || 0;
-    const hasItalianAudio = Boolean(item?._externalHasItalianAudio || info.hasAudioItalian);
+    const torrentioLooseItalian = hasTorrentioLooseItalianEvidence(item);
+    const confidence = Math.max(Number(item?._externalLanguageConfidence ?? info.confidence ?? 0) || 0, torrentioLooseItalian ? 98 : 0);
+    const hasItalianAudio = Boolean(item?._externalHasItalianAudio || info.hasAudioItalian || torrentioLooseItalian);
     const hasItalianSubs = Boolean(item?._externalHasItalianSubs || info.hasSubItalian);
     const hasNegativeLanguage = Boolean(info.hasNegativeLanguage);
-    const isItalian = Boolean(item?._externalIsItalian || info.isItalian || hasItalianAudio);
-    return { info, confidence, hasItalianAudio, hasItalianSubs, hasNegativeLanguage, isItalian };
+    const isItalian = Boolean(item?._externalIsItalian || info.isItalian || hasItalianAudio || torrentioLooseItalian);
+    return { info, confidence, hasItalianAudio, hasItalianSubs, hasNegativeLanguage, isItalian, torrentioLooseItalian };
 }
 
 function isExternalStrictItalianCandidate(item = {}) {
     const audit = getExternalLanguageAudit(item);
-    if (audit.hasItalianAudio && !audit.hasNegativeLanguage && !audit.hasItalianSubs) return true;
+
+    // Torrentio/ExternalAddons can expose language as structured metadata (for example IT/GB)
+    // while the visible release title is only "Peaky Blinders S01" without an explicit ITA tag.
+    // Italian audio is decisive even on dual-audio labels like IT/GB: the GB flag is not a negative
+    // when IT audio is explicitly present.
+    if (audit.hasItalianAudio) return true;
 
     const title = item?.title || item?.name || item?.filename || item?.file_title || '';
     const source = [item?.source, item?.provider, item?.externalProvider, item?.externalAddon, item?.releaseGroup].filter(Boolean).join(' ');
@@ -538,6 +576,10 @@ const TIMED_CACHE_MAX_ENTRIES = Math.max(200, Math.min(10000, parseInt(process.e
 const TIMED_CACHE_SWEEP_INTERVAL_MS = Math.max(1000, Math.min(60 * 1000, parseInt(process.env.TIMED_CACHE_SWEEP_INTERVAL_MS || '5000', 10) || 5000));
 const BACKGROUND_DB_SAVE_QUEUE_MAX = Math.max(10, Math.min(1000, parseInt(process.env.BACKGROUND_DB_SAVE_QUEUE_MAX || '120', 10) || 120));
 const PACK_RESOLUTION_QUEUE_MAX = Math.max(10, Math.min(1000, parseInt(process.env.PACK_RESOLUTION_QUEUE_MAX || '80', 10) || 80));
+const TORRENTIO_EXACT_ACCEPT_ALL = String(process.env.EXT_TORRENTIO_EXACT_ACCEPT_ALL || 'true').toLowerCase() !== 'false';
+const TORRENTIO_EXACT_ACCEPT_MAX = Math.max(1, Math.min(50, parseInt(process.env.EXT_TORRENTIO_EXACT_ACCEPT_MAX || '24', 10) || 24));
+const PACK_RESOLVER_HTTP_COOLDOWN_MS = Math.max(5000, Math.min(10 * 60 * 1000, parseInt(process.env.PACK_RESOLVER_HTTP_COOLDOWN_MS || '60000', 10) || 60000));
+const recentPackResolverHttpFailures = new Map();
 const timedCacheSweepState = new Map();
 
 function getTimedCacheState(map) {
@@ -1013,6 +1055,33 @@ function getExternalDirectUrl(item = {}) {
     return null;
 }
 
+function isSparseEpisodeOnlyTitle(value = '') {
+    const text = String(value || '')
+        .replace(/\.(?:mkv|mp4|avi|mov|wmv)$/i, '')
+        .replace(/[._-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!text) return true;
+    return /^(?:s\d{1,2}\s*e\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|e(?:p(?:isode)?)?\s*\d{1,3})$/i.test(text);
+}
+
+function hasUsefulReleaseSignals(value = '') {
+    return /\b(?:2160p|4k|uhd|1080p|720p|bluray|blu[-.\s]?ray|bdrip|brrip|web[-.\s]?dl|webrip|hdtv|x265|x264|h265|h264|hevc|ita|italian|eng|english|multi|dual)\b/i.test(String(value || ''));
+}
+
+function getPreferredFormatterTitle(item = {}, fallback = '') {
+    return String(item?._formatterTitle || item?.formatterTitle || item?._externalFormatterTitle || fallback || item?.title || '').trim();
+}
+
+function choosePlayableParseTitle(item = {}, candidate = '') {
+    const rawCandidate = String(candidate || '').trim();
+    const formatterTitle = getPreferredFormatterTitle(item, rawCandidate);
+    if (!rawCandidate) return formatterTitle;
+    if (isSparseEpisodeOnlyTitle(rawCandidate) && formatterTitle) return formatterTitle;
+    if (!hasUsefulReleaseSignals(rawCandidate) && hasUsefulReleaseSignals(formatterTitle)) return `${rawCandidate} ${formatterTitle}`.trim();
+    return rawCandidate;
+}
+
 function getObservedSizeBytes(...values) {
     for (const value of values) {
         const parsed = Number(value);
@@ -1107,10 +1176,45 @@ function shouldDropByConfiguredQuality(text, filters = {}, options = {}) {
     return false;
 }
 
+function getTorrentioTrustDedupeKey(item = {}) {
+    const hash = String(item?.hash || item?.infoHash || '').trim().toLowerCase();
+    const fileIdx = Number.isInteger(Number(item?.fileIdx)) ? Number(item.fileIdx) : -1;
+    const direct = String(item?.directUrl || item?.url || item?._externalDirectUrl || '').trim().toLowerCase();
+    const title = String(item?.title || item?.name || item?.filename || '').trim().toLowerCase();
+    const source = String(item?.source || item?.provider || item?.externalProvider || item?.externalAddon || item?._externalRequestId || '').trim().toLowerCase();
+    // Per Torrentio exact-id IT/ITA l'utente vuole vedere tutto quello che Torrentio espone.
+    // Non collassiamo quindi più solo su infoHash:fileIdx: molti pack/alias Torrentio arrivano
+    // con lo stesso hash o senza fileIdx immediato, ma rappresentano stream utili da mostrare.
+    if (shouldForceKeepTorrentioIt(item)) {
+        return ['torrentio-force', hash || 'nohash', fileIdx, direct || 'nodirect', title || 'notitle', source || 'nosource'].join(':');
+    }
+    if (hash) return `${hash}:${fileIdx}`;
+    if (direct) return direct;
+    return title;
+}
+
+function shouldForceKeepTorrentioIt(item = {}) {
+    return Boolean(item?._torrentioLooseItForceKeep || item?._torrentioExactGuard);
+}
+
+function mergeForcedTorrentioItItems(filtered = [], original = []) {
+    const output = Array.isArray(filtered) ? [...filtered] : [];
+    const seen = new Set(output.map(getTorrentioTrustDedupeKey).filter(Boolean));
+    for (const item of Array.isArray(original) ? original : []) {
+        if (!shouldForceKeepTorrentioIt(item)) continue;
+        const key = getTorrentioTrustDedupeKey(item);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        output.push(item);
+    }
+    return output;
+}
+
 function applyConfiguredTorrentFilters(items, filters = {}) {
     const list = Array.isArray(items) ? items : [];
     if (!filters || Object.keys(filters).length === 0) return list;
-    return applyTorrentResultFilters(list, filters);
+    const filtered = applyTorrentResultFilters(list, filters);
+    return mergeForcedTorrentioItItems(filtered, list);
 }
 
 function applyConfiguredStreamFilters(streams, filters = {}) {
@@ -1126,6 +1230,11 @@ async function normalizeCandidateResults(items, meta = {}) {
     }
 
     let normalized = deduplicateResults(trackerPass.results);
+    const beforeForceMergeCount = normalized.length;
+    normalized = mergeForcedTorrentioItItems(normalized, trackerPass.results);
+    if (normalized.length > beforeForceMergeCount) {
+        logger.info(`[EXTERNAL GUARD] Torrentio IT restore after generic dedupe | added=${normalized.length - beforeForceMergeCount} total=${normalized.length}`);
+    }
     normalized = propagateRdKnownStatesByHash(normalized, meta);
     normalized = await hydrateRdDbStatesByHash(normalized, meta);
     return normalized;
@@ -1216,6 +1325,50 @@ function createAggressiveResultFilter(meta, type, langMode) {
     return languageFilterTools.createAggressiveResultFilter(meta, type, langMode);
 }
 
+function isSeriesTorrentContext(meta = {}, type = 'series') {
+    return String(type || '').toLowerCase() === 'series' || Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
+}
+
+function hasTrustedItalianEvidenceForTorrentPack(item = {}, meta = {}, langMode = 'ita') {
+    if (langMode !== 'ita') return true;
+    if (isExternalStrictItalianCandidate(item)) return true;
+
+    const title = item?.title || item?.name || item?.filename || item?.file_title || '';
+    const source = [item?.source, item?.provider, item?.externalProvider, item?.externalAddon, item?.releaseGroup, item?.language, item?.languages].filter(Boolean).join(' ');
+    if (hasStrictItalianEvidence(title, source)) return true;
+
+    // DB rows learned from Torrentio can lose the structured languageInfo fields; keep only known ITA pack sources.
+    if (item?._torrentioExactGuard === true || item?._sourceGroup === 'external') return true;
+    return false;
+}
+
+function shouldBypassAggressiveFilterForTrustedSeriesPack(item = {}, aggressiveFilter, { meta = {}, type = 'series', langMode = 'ita' } = {}) {
+    if (!item || !isSeriesTorrentContext(meta, type)) return false;
+    if (item?._torrentioExactGuard === true) return true;
+
+    const title = String(item?.title || item?.name || item?.filename || item?.file_title || '');
+    if (!title) return false;
+    if (!hasStrongSeriesTitleMatch(title, meta)) return false;
+    if (!hasTrustedItalianEvidenceForTorrentPack(item, meta, langMode)) return false;
+
+    const season = Number(meta?.season || 0) || 0;
+    const episode = Number(meta?.episode || 0) || 0;
+    if (season > 0 && hasWrongExplicitEpisodeMarker(title, { season, episode }) && !shouldIgnoreAnimeSeason(meta, type, title)) return false;
+
+    return Boolean(item?._isPack || item?.potentialPack || isConfidentSeasonPackItem(item, meta, type) || hasRequestedSeasonCue(item, meta, type));
+}
+
+function keepAfterAggressiveFilter(item = {}, aggressiveFilter, context = {}) {
+    if (shouldForceKeepTorrentioIt(item)) return true;
+    if (typeof aggressiveFilter !== 'function') return true;
+    if (aggressiveFilter(item)) return true;
+    return shouldBypassAggressiveFilterForTrustedSeriesPack(item, aggressiveFilter, context);
+}
+
+function filterWithTorrentPackTrust(items = [], aggressiveFilter, context = {}) {
+    return (Array.isArray(items) ? items : []).filter((item) => keepAfterAggressiveFilter(item, aggressiveFilter, context));
+}
+
 async function resolveTorboxRankedList(rankedList, apiKey) {
     const sourceRanked = Array.isArray(rankedList) ? [...rankedList] : [];
     const progressiveWindows = [30, 60, 90];
@@ -1267,7 +1420,7 @@ function getServiceDisplayName(service) {
 function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitle, sizeBytes, seeders, config, meta, isLazy = false, isPack = false }) {
     const normalizedService = String(service || '').toLowerCase();
     const isAIOActive = aioFormatter.isAIOStreamsEnabled(config);
-    const baseParseTitle = parseTitle || item?.title || displayTitle || '';
+    const baseParseTitle = choosePlayableParseTitle(item, parseTitle || item?.title || displayTitle || '');
     const details = parseTitleDetails(baseParseTitle);
     const languageInfo = getLanguageInfo(baseParseTitle, meta?.title, item?.source, details);
     const quality = details.qualityLabel && details.qualityLabel !== 'Other'
@@ -1304,10 +1457,14 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
                 folderSize: getObservedFolderSizeBytes(item) || undefined,
                 filename: item?.episodeFileHint?.fileName || item?._episodeFileHint?.fileName || item?.filename || undefined,
                 cacheState: availabilityState,
-                rdCacheState: availabilityState
+                rdCacheState: availabilityState,
+                torrentioLooseItForceKeep: Boolean(item?._torrentioLooseItForceKeep),
+                torrentioExactGuard: Boolean(item?._torrentioExactGuard)
             },
             cacheState: availabilityState,
-            rdCacheState: availabilityState
+            rdCacheState: availabilityState,
+            _torrentioLooseItForceKeep: Boolean(item?._torrentioLooseItForceKeep),
+            _torrentioExactGuard: Boolean(item?._torrentioExactGuard)
         };
     }
 
@@ -1319,13 +1476,15 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         mediaType: hasSeriesContext ? 'series' : 'movie',
         type: hasSeriesContext ? 'series' : 'movie',
         isSeries: hasSeriesContext,
+        title: meta?.title || meta?.name || '',
+        originalTitle: meta?.originalTitle || meta?.originalName || '',
         forceMovie: !hasSeriesContext,
         savedCloud: isSavedCloudStream,
         isSavedCloud: isSavedCloudStream,
         savedCloudService: serviceLabel
     };
     const safeIsPack = Boolean(hasSeriesContext && isPack);
-    const { name, title, bingeGroup } = formatStreamSelector(parseTitle || item?.title || displayTitle, formatterSource, sizeBytes, seeders, serviceLabel, selectorConfig, item?.hash, isLazy, safeIsPack, availabilityState);
+    const { name, title, bingeGroup } = formatStreamSelector(baseParseTitle, formatterSource, sizeBytes, seeders, serviceLabel, selectorConfig, item?.hash, isLazy, safeIsPack, availabilityState);
     return {
         name,
         title,
@@ -1341,10 +1500,14 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
             folderSize: getObservedFolderSizeBytes(item) || undefined,
             filename: item?.episodeFileHint?.fileName || item?._episodeFileHint?.fileName || item?.filename || undefined,
             cacheState: availabilityState,
-            rdCacheState: availabilityState
+            rdCacheState: availabilityState,
+            torrentioLooseItForceKeep: Boolean(item?._torrentioLooseItForceKeep),
+            torrentioExactGuard: Boolean(item?._torrentioExactGuard)
         },
         cacheState: availabilityState,
-        rdCacheState: availabilityState
+        rdCacheState: availabilityState,
+        _torrentioLooseItForceKeep: Boolean(item?._torrentioLooseItForceKeep),
+        _torrentioExactGuard: Boolean(item?._torrentioExactGuard)
     };
 }
 
@@ -1587,8 +1750,35 @@ function warmupLazyStreamsInBackground(config, items, meta) {
     });
 }
 
+function getPackResolverFailureKey(item = {}, config = {}, meta = {}) {
+    const service = getNormalizedDebridService(config) || 'unknown';
+    const hash = String(item?.hash || item?.infoHash || '').toUpperCase();
+    return `${service}:${hash}:${Number(meta?.season || item?.season || 0) || 0}:${Number(meta?.episode || item?.episode || 0) || 0}`;
+}
+
+function markPackResolverHttpCooldown(key, status) {
+    if (!key) return;
+    recentPackResolverHttpFailures.set(key, { until: Date.now() + PACK_RESOLVER_HTTP_COOLDOWN_MS, status });
+    cleanupTimedCache(recentPackResolverHttpFailures, TIMED_CACHE_MAX_ENTRIES);
+}
+
+function isPackResolverHttpCooldownActive(key) {
+    const entry = key ? recentPackResolverHttpFailures.get(key) : null;
+    if (!entry) return false;
+    if (Date.now() > Number(entry.until || 0)) {
+        recentPackResolverHttpFailures.delete(key);
+        return false;
+    }
+    return true;
+}
+
 async function resolvePackWithBestEffort(item, config, meta, siblingStreams = []) {
     if (!item || !item.hash) return null;
+    const failureKey = getPackResolverFailureKey(item, config, meta);
+    if (isPackResolverHttpCooldownActive(failureKey)) {
+        incrementMetric('pack.resolverSkippedHttpCooldown');
+        return null;
+    }
     const cachedResolved = getValidatedFileSet(item, meta);
     if (cachedResolved) {
         logger.info(`[PACK CACHE] Hit per ${item.hash} S${meta?.season || 0}E${meta?.episode || 0}`);
@@ -1619,8 +1809,15 @@ async function resolvePackWithBestEffort(item, config, meta, siblingStreams = []
             return payload;
         } catch (err) {
             const status = Number(err?.response?.status || err?.status || 0) || null;
-            if (status === 404) logger.info(`[PACK] Resolver miss for ${item.hash}: ${err.message}`);
-            else logger.warn(`[PACK] Resolver error for ${item.hash}: ${err.message}`);
+            if (status === 404) {
+                logger.info(`[PACK] Resolver miss for ${item.hash}: ${err.message}`);
+            } else if (status === 429 || status === 451) {
+                markPackResolverHttpCooldown(failureKey, status);
+                logger.warn(`[PACK] Resolver cooldown for ${item.hash}: http_${status} ${Math.round(PACK_RESOLVER_HTTP_COOLDOWN_MS / 1000)}s`);
+                break;
+            } else {
+                logger.warn(`[PACK] Resolver error for ${item.hash}: ${err.message}`);
+            }
         }
     }
     return null;
@@ -1868,6 +2065,9 @@ async function getMetadata(id, type, config = {}) {
                     const episodeData = cleanType === "series" && season > 0 && episode > 0
                         ? await fetchTmdbEpisodeMeta(tmdbId, season, episode, userTmdbKey)
                         : null;
+                    const seasonInfo = Array.isArray(tmdbData.seasons)
+                        ? tmdbData.seasons.find((entry) => Number(entry?.season_number) === Number(season))
+                        : null;
                     finalMeta = {
                         title: tmdbData.title || tmdbData.name,
                         originalTitle: tmdbData.original_title || tmdbData.original_name,
@@ -1882,7 +2082,11 @@ async function getMetadata(id, type, config = {}) {
                         firstAirDate: tmdbData.first_air_date || null,
                         episodeAirDate: episodeData?.air_date || null,
                         releaseInfo: tmdbData.release_date || tmdbData.first_air_date || null,
-                        originalLanguage: tmdbData.original_language || null
+                        originalLanguage: tmdbData.original_language || null,
+                        seasonEpisodeCount: Number(seasonInfo?.episode_count || 0) || null,
+                        episodesInSeason: Number(seasonInfo?.episode_count || 0) || null,
+                        numberOfEpisodes: Number(tmdbData.number_of_episodes || 0) || null,
+                        numberOfSeasons: Number(tmdbData.number_of_seasons || 0) || null
                     };
                     logger.info(`[META] Usato TMDB (UserKey: ${!!userTmdbKey}): ${finalMeta.title} (${finalMeta.year}) [ID: ${tmdbId}] Orig: ${finalMeta.originalTitle}`);
                 }
@@ -2602,21 +2806,83 @@ function getExternalSourceLabel(item = {}) {
     return provider || fallback || 'External';
 }
 
+function normalizeExternalTextValue(value = '') {
+    return String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function pickExternalPipelineTitle(item = {}, meta = {}) {
+    const rawTitle = normalizeExternalTextValue(item.title || item.filename || item.file_title || item.name || '');
+    const candidates = [
+        rawTitle,
+        item.websiteTitle,
+        item.filename,
+        item.file_title,
+        item.name,
+        item.rawDescription,
+        item.packTitle
+    ].map(normalizeExternalTextValue).filter(Boolean);
+
+    const metaTitle = normalizeSearchText(meta?.title || meta?.name || '');
+    const richByTitle = metaTitle
+        ? candidates.find((candidate) => normalizeSearchText(candidate).includes(metaTitle) && hasUsefulReleaseSignals(candidate))
+        : null;
+    const richBySignals = candidates.find((candidate) => candidate.length > 8 && hasUsefulReleaseSignals(candidate));
+    const rich = richByTitle || richBySignals || candidates.find((candidate) => candidate.length > 8) || rawTitle;
+
+    return isSparseEpisodeOnlyTitle(rawTitle) && rich ? rich : (rawTitle || rich || '');
+}
+
+function buildExternalFormatterTitle(item = {}, title = '', { externalLanguageOk = false } = {}) {
+    const parts = [title];
+    const signalText = [
+        item.rawDescription,
+        item.websiteTitle,
+        item.filename,
+        item.file_title,
+        item.name,
+        item.quality,
+        item.resolution,
+        item.quality_tag,
+        item.techTags,
+        item.audio,
+        item.audio_tag,
+        item.language,
+        Array.isArray(item.languages) ? item.languages.join(' ') : item.languages,
+        item.languageInfo?.displayLabel,
+        item.languageInfo?.reason,
+        Array.isArray(item.languageInfo?.detectedLanguages) ? item.languageInfo.detectedLanguages.join(' ') : item.languageInfo?.detectedLanguages
+    ].map(normalizeExternalTextValue).filter(Boolean).join(' ');
+
+    const joinedTitle = parts.join(' ');
+    const titleNeedsSignals = isSparseEpisodeOnlyTitle(title)
+        || !hasUsefulReleaseSignals(title)
+        || !/\b(?:2160p|4k|uhd|1080p|720p|480p)\b/i.test(joinedTitle)
+        || (externalLanguageOk && !/\b(?:ITA|ITALIAN|ITALIANO|IT)\b/i.test(joinedTitle));
+    if (signalText && titleNeedsSignals) parts.push(signalText);
+    if (!/\b(?:2160p|4k|uhd|1080p|720p|480p)\b/i.test(parts.join(' ')) && item.quality) parts.push(item.quality);
+    if (item.techTags) parts.push(item.techTags);
+    if (externalLanguageOk && !/\b(?:ITA|ITALIAN|ITALIANO|IT)\b/i.test(parts.join(' '))) parts.push('ITA');
+    if (/\b(?:ENG|ENGLISH)\b/i.test(signalText) && !/\b(?:ENG|ENGLISH)\b/i.test(parts.join(' '))) parts.push('ENG');
+
+    return [...new Set(parts.map(normalizeExternalTextValue).filter(Boolean))].join(' ');
+}
+
 function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode = 'ita' } = {}) {
     if (!item) return null;
     const onlyItalian = langMode === 'ita';
     const isSeriesQuery = String(type || '').toLowerCase() === 'series' || Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
-    const rawTitle = item.title || item.filename;
+    const rawTitle = pickExternalPipelineTitle(item, meta);
     const title = isSeriesQuery ? rawTitle : stripMoviePackLabel(rawTitle);
     const finalSeeders = parseInt(item.seeders, 10) || (title ? extractSeeders(title) : 0);
     const finalSize = item.mainFileSize || item.sizeBytes || (title ? extractSize(title) : 0);
     const directUrl = getExternalDirectUrl(item);
     const magnetOrDirect = item.magnetLink || item.magnet || directUrl || null;
     const hash = item.infoHash || item.hash || extractInfoHash(item.magnetLink) || extractInfoHash(item.magnet) || extractInfoHash(directUrl);
-    const externalLanguageOk = Boolean(item.isItalian || item.hasItalianAudio || item.languageInfo?.isItalian || item.languageInfo?.hasAudioItalian);
-    if (onlyItalian && item.externalAddon === 'torrentio_mirror' && !externalLanguageOk) return null;
+    const isTorrentio = isTorrentioExternalItem(item);
+    const torrentioLooseItalian = hasTorrentioLooseItalianEvidence(item);
+    const externalLanguageOk = Boolean(item.isItalian || item.hasItalianAudio || item.languageInfo?.isItalian || item.languageInfo?.hasAudioItalian || torrentioLooseItalian);
+    if (onlyItalian && isTorrentio && !externalLanguageOk) return null;
 
-    const isTorrentio = String(item.externalGroup || '').toLowerCase() === 'torrentio' || String(item.externalAddon || '').toLowerCase().startsWith('torrentio');
     const trustedTorrentioDirect = Boolean(directUrl && isTorrentio && (!onlyItalian || externalLanguageOk));
     const mediaFusionRdCached = Boolean(
         (item._mediafusionRdChecked === true || item._nexusBridgeRdChecked === true || item._externalRdChecked === true) &&
@@ -2633,8 +2899,13 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
         potentialPack: item.potentialPack
     }, meta, type);
 
+    const formatterTitle = buildExternalFormatterTitle(item, title, { externalLanguageOk });
+
     return {
         title,
+        _formatterTitle: formatterTitle || title,
+        formatterTitle: formatterTitle || title,
+        _externalFormatterTitle: formatterTitle || title,
         magnet: magnetOrDirect,
         directUrl,
         url: directUrl || null,
@@ -2642,6 +2913,14 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
         externalDirectUrl: directUrl || null,
         size: item.size || (finalSize > 0 ? formatBytes(finalSize) : null),
         sizeBytes: finalSize,
+        rawDescription: item.rawDescription || null,
+        filename: item.filename || item.file_title || null,
+        file_title: item.file_title || item.filename || null,
+        quality: item.quality || item.resolution || null,
+        resolution: item.resolution || item.quality || null,
+        techTags: item.techTags || null,
+        languages: item.languages || item.language || item.languageInfo?.detectedLanguages || undefined,
+        audio: item.audio || item.audio_tag || item.languageInfo?.displayLabel || undefined,
         folderSize: item.folderSize || item.folder_size || item.behaviorHints?.folderSize || undefined,
         seeders: finalSeeders,
         source: getExternalSourceLabel(item),
@@ -2656,14 +2935,23 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
         externalAddon: item.externalAddon || null,
         externalGroup: item.externalGroup || null,
         _preferTorrentioSeries: Boolean(isSeriesQuery && isTorrentio),
-        _externalLanguageInfo: item.languageInfo || null,
+        _externalLanguageInfo: item.languageInfo || (torrentioLooseItalian ? {
+            isItalian: true,
+            hasAudioItalian: true,
+            hasSubItalian: Boolean(item.hasItalianSubs),
+            hasNegativeLanguage: false,
+            confidence: 98,
+            reason: 'torrentio_loose_it_token'
+        } : null),
         _externalRequestId: item._externalRequestId || null,
         _externalIdMatched: item._externalIdMatched === true,
         _externalBatch: item._externalBatch || null,
-        _externalIsItalian: Boolean(item.isItalian || item.languageInfo?.isItalian || (trustedTorrentioDirect && externalLanguageOk)),
-        _externalHasItalianAudio: Boolean(item.hasItalianAudio || item.languageInfo?.hasAudioItalian || (trustedTorrentioDirect && externalLanguageOk)),
+        _externalIsItalian: Boolean(item.isItalian || item.languageInfo?.isItalian || externalLanguageOk || (trustedTorrentioDirect && externalLanguageOk)),
+        _externalHasItalianAudio: Boolean(item.hasItalianAudio || item.languageInfo?.hasAudioItalian || externalLanguageOk || (trustedTorrentioDirect && externalLanguageOk)),
         _externalHasItalianSubs: Boolean(item.hasItalianSubs || item.languageInfo?.hasSubItalian),
-        _externalLanguageConfidence: Number(item.languageInfo?.confidence || 0) || (externalLanguageOk ? 95 : 0),
+        _externalLanguageConfidence: Math.max(Number(item.languageInfo?.confidence || 0) || 0, externalLanguageOk ? 98 : 0),
+        _torrentioLooseItalian: Boolean(torrentioLooseItalian),
+        _torrentioLooseItForceKeep: Boolean(isTorrentio && externalLanguageOk && item._externalIdMatched === true),
         potentialPack: Boolean(isSeriesQuery && externalPack),
         packTitle: (isSeriesQuery && externalPack) ? (item.packTitle || '') : '',
         _isPack: Boolean(isSeriesQuery && externalPack),
@@ -2685,7 +2973,7 @@ function dedupeExternalCandidates(items = []) {
         const fileIdx = Number.isInteger(item.fileIdx) ? item.fileIdx : -1;
         const direct = String(item.directUrl || item.url || item._externalDirectUrl || '').trim();
         const title = String(item.title || '').trim().toLowerCase();
-        const key = hash ? `${hash}:${fileIdx}` : `${title}|${direct}`;
+        const key = shouldForceKeepTorrentioIt(item) ? getTorrentioTrustDedupeKey(item) : (hash ? `${hash}:${fileIdx}` : `${title}|${direct}`);
         const existing = bestByKey.get(key);
         if (!existing) {
             bestByKey.set(key, item);
@@ -2748,36 +3036,144 @@ function shouldProtectTorrentioExactMovieCandidate(item = {}, meta = {}, type = 
     return true;
 }
 
+function getTorrentioExactSeriesGuardMin(config = {}) {
+    const raw = config?.filters?.torrentioExactSeriesMin ?? process.env.EXT_TORRENTIO_EXACT_SERIES_MIN ?? '2';
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) ? Math.max(0, Math.min(8, parsed)) : 2;
+}
+
+function hasRequestedSeasonCue(item = {}, meta = {}, type = 'series') {
+    const season = Number(meta?.season || 0) || 0;
+    if (season <= 0) return false;
+    const texts = collectCandidatePackTexts(item);
+    for (const text of texts) {
+        const parsed = parseCandidateEpisodeText(text, meta, type);
+        if (parsed?.season && parsed.season !== season && !shouldIgnoreAnimeSeason(meta, type, text)) return false;
+        if (parsed?.isRange || parsed?.isBatch) return true;
+        if (parsed?.season === season && !parsed?.episode) return true;
+    }
+    const joined = texts.join(' ');
+    if (new RegExp(`\\bS0?${season}(?!\\s*E|\\d)`, 'i').test(joined)) return true;
+    if (new RegExp(`\\b(?:season|stagione)\\s*0?${season}(?!\\d)`, 'i').test(joined)) return true;
+    return false;
+}
+
+function shouldProtectTorrentioExactSeriesCandidate(item = {}, meta = {}, type = 'series', langMode = 'ita') {
+    const isSeries = String(type || '').toLowerCase() === 'series' || meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0;
+    if (!isSeries) return false;
+    if (!isTorrentioExactExternalCandidate(item)) return false;
+    if (!getPlayableExternalTarget(item)) return false;
+
+    if (langMode === 'ita' && !isExternalStrictItalianCandidate(item)) return false;
+    if (langMode === 'eng' && !keepEnglishCandidate(item.title || '', item.source || item.externalProvider || '', meta?.title)) return false;
+    if (langMode === 'all' && !keepAllCandidate(item.title || '', item.source || item.externalProvider || '', meta?.title)) return false;
+
+    const title = String(item?.title || '');
+    // L'addon Torrentio viene interrogato con ID episodio esatto: un titolo pack/alias puo'
+    // non contenere il nome serie completo, ma resta valido finche' non dichiara stagione/episodio sbagliati.
+
+    const season = Number(meta?.season || 0) || 0;
+    const episode = Number(meta?.episode || 0) || 0;
+    const parsed = parseCandidateEpisodeText(title, meta, type);
+
+    if (parsed && parsed.season && season > 0 && parsed.season !== season && !shouldIgnoreAnimeSeason(meta, type, title)) return false;
+    if (hasWrongExplicitEpisodeMarker(title, { season, episode }) && !shouldIgnoreAnimeSeason(meta, type, title)) return false;
+    if (parsed && !parsed.isRange && !parsed.isBatch && episode > 0 && parsed.episode === episode && (parsed.season === season || shouldIgnoreAnimeSeason(meta, type, title))) return true;
+
+    if (isConfidentSeasonPackItem(item, meta, type)) return true;
+    if (hasRequestedSeasonCue(item, meta, type)) return true;
+
+    // Torrentio viene interrogato con ID episodio esatto (es. tt2442560:1:5).
+    // Molti pack stagione arrivano come "Peaky Blinders S01" senza S01E05 nel titolo:
+    // se l'ID è exact-match, la lingua è ITA e non c'è un marker episodio sbagliato,
+    // proteggo il candidato invece di farlo sparire nel filtro aggressivo.
+    return true;
+}
+
+function markTorrentioLooseItForceKeep(item = {}, meta = {}, type = 'series') {
+    return {
+        ...item,
+        _torrentioExactGuard: true,
+        _torrentioLooseItForceKeep: true,
+        _packValidated: item?._packValidated === true || Boolean(isConfidentSeasonPackItem(item, meta, type) || hasRequestedSeasonCue(item, meta, type)),
+        potentialPack: item?.potentialPack === true || Boolean(isConfidentSeasonPackItem(item, meta, type) || hasRequestedSeasonCue(item, meta, type))
+    };
+}
+
+function protectTorrentioExactSeriesMinimum(items = [], aggressiveFilter, { meta = {}, type = 'series', langMode = 'ita', config = {} } = {}) {
+    const list = Array.isArray(items) ? items : [];
+    const base = list.filter(aggressiveFilter);
+    const isSeries = String(type || '').toLowerCase() === 'series' || meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0;
+    const minWanted = getTorrentioExactSeriesGuardMin(config);
+    if (!isSeries) return base;
+
+    const seen = new Set(base.map(getTorrentioTrustDedupeKey).filter(Boolean));
+    const currentTorrentio = base.filter(isTorrentioExactExternalCandidate).length;
+    const candidates = list
+        .filter((item) => shouldProtectTorrentioExactSeriesCandidate(item, meta, type, langMode))
+        .sort((a, b) => getExternalGuardScore(b) - getExternalGuardScore(a));
+
+    const wantedCount = TORRENTIO_EXACT_ACCEPT_ALL
+        ? Math.min(TORRENTIO_EXACT_ACCEPT_MAX, candidates.length)
+        : Math.max(0, minWanted - currentTorrentio);
+
+    if (wantedCount <= 0) return base;
+
+    const additions = [];
+    for (const item of candidates) {
+        const key = getTorrentioTrustDedupeKey(item);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        additions.push(markTorrentioLooseItForceKeep(item, meta, type));
+        if (additions.length >= wantedCount) break;
+    }
+
+    if (additions.length > 0) {
+        logger.info(`[EXTERNAL GUARD] Torrentio exact-id IT force-keep series | kept=${currentTorrentio} added=${additions.length} candidates=${candidates.length} mode=${TORRENTIO_EXACT_ACCEPT_ALL ? 'all' : 'minimum'} target=${TORRENTIO_EXACT_ACCEPT_ALL ? TORRENTIO_EXACT_ACCEPT_MAX : minWanted}`);
+    } else if (list.filter(isTorrentioExactExternalCandidate).length > base.filter(isTorrentioExactExternalCandidate).length && currentTorrentio < minWanted) {
+        const exactTotal = list.filter(isTorrentioExactExternalCandidate).length;
+        const langRejected = list.filter((item) => isTorrentioExactExternalCandidate(item) && langMode === 'ita' && !isExternalStrictItalianCandidate(item)).length;
+        logger.info(`[EXTERNAL GUARD] Torrentio exact-id IT force-keep series | kept=${currentTorrentio} added=0 candidates=${exactTotal} langRejected=${langRejected}`);
+    }
+
+    return additions.length > 0 ? [...base, ...additions] : base;
+}
+
+function protectTorrentioExactMinimum(items = [], aggressiveFilter, { meta = {}, type = 'movie', langMode = 'ita', config = {} } = {}) {
+    const isSeries = String(type || '').toLowerCase() === 'series' || meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0;
+    if (isSeries) return protectTorrentioExactSeriesMinimum(items, aggressiveFilter, { meta, type, langMode, config });
+    return protectTorrentioExactMovieMinimum(items, aggressiveFilter, { meta, type, langMode, config });
+}
+
 function protectTorrentioExactMovieMinimum(items = [], aggressiveFilter, { meta = {}, type = 'movie', langMode = 'ita', config = {} } = {}) {
     const list = Array.isArray(items) ? items : [];
     const base = list.filter(aggressiveFilter);
     const minWanted = getTorrentioExactMovieGuardMin(config);
-    if (minWanted <= 0 || String(type || '').toLowerCase() === 'series' || meta?.isSeries) return base;
+    if (String(type || '').toLowerCase() === 'series' || meta?.isSeries) return base;
 
+    const seen = new Set(base.map(getTorrentioTrustDedupeKey).filter(Boolean));
     const currentTorrentio = base.filter(isTorrentioExactExternalCandidate).length;
-    if (currentTorrentio >= minWanted) return base;
-
-    const seen = new Set(base.map((item) => {
-        const hash = String(item?.hash || item?.infoHash || '').toLowerCase();
-        const direct = String(item?.directUrl || item?.url || item?._externalDirectUrl || '').trim().toLowerCase();
-        return hash || direct || String(item?.title || '').trim().toLowerCase();
-    }));
-
-    const additions = list
+    const candidates = list
         .filter((item) => shouldProtectTorrentioExactMovieCandidate(item, meta, type, langMode))
-        .filter((item) => {
-            const key = String(item?.hash || item?.infoHash || '').toLowerCase()
-                || String(item?.directUrl || item?.url || item?._externalDirectUrl || '').trim().toLowerCase()
-                || String(item?.title || '').trim().toLowerCase();
-            if (!key || seen.has(key)) return false;
-            seen.add(key);
-            return true;
-        })
-        .sort((a, b) => getExternalGuardScore(b) - getExternalGuardScore(a))
-        .slice(0, Math.max(0, minWanted - currentTorrentio));
+        .sort((a, b) => getExternalGuardScore(b) - getExternalGuardScore(a));
+
+    const wantedCount = TORRENTIO_EXACT_ACCEPT_ALL
+        ? Math.min(TORRENTIO_EXACT_ACCEPT_MAX, candidates.length)
+        : Math.max(0, minWanted - currentTorrentio);
+
+    if (wantedCount <= 0) return base;
+
+    const additions = [];
+    for (const item of candidates) {
+        const key = getTorrentioTrustDedupeKey(item);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        additions.push({ ...item, _torrentioExactGuard: true, _torrentioLooseItForceKeep: true });
+        if (additions.length >= wantedCount) break;
+    }
 
     if (additions.length > 0) {
-        logger.info(`[EXTERNAL GUARD] Torrentio exact-id minimum | kept=${currentTorrentio} added=${additions.length} target=${minWanted}`);
+        logger.info(`[EXTERNAL GUARD] Torrentio exact-id IT force-keep movie | kept=${currentTorrentio} added=${additions.length} candidates=${candidates.length} mode=${TORRENTIO_EXACT_ACCEPT_ALL ? 'all' : 'minimum'} target=${TORRENTIO_EXACT_ACCEPT_ALL ? TORRENTIO_EXACT_ACCEPT_MAX : minWanted}`);
     }
 
     return additions.length > 0 ? [...base, ...additions] : base;
@@ -2920,7 +3316,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
                     const externalRequestIds = buildExternalAddonRequestIds(type, finalId, meta);
                     const externalConfigSig = crypto.createHash("sha1").update(JSON.stringify({ service: config?.service || "", rd: config?.rd || config?.realdebrid || "", tb: config?.tb || config?.torbox || "", key: config?.key || "" })).digest("hex").slice(0, 12);
-                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}`;
+                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}:torrentioItTrustV13`;
                     const externalPromise = disableLiveSources && !flags.useProviderCachedOnly
                         ? Promise.resolve([])
                         : Cache.fetchWithCache('ExternalAddons', externalCacheKey, 43200, () =>
@@ -2945,8 +3341,8 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                         logger.info(`[AUTO-LEARN] External early-save queued | count=${externalResults.length} ids=${externalRequestIds.join(',')}`);
                     }
 
-                    const fastRemoteResults = remoteResults.filter(aggressiveFilter);
-                    const fastExternalResults = protectTorrentioExactMovieMinimum(externalResults, aggressiveFilter, { meta, type, langMode, config });
+                    const fastRemoteResults = filterWithTorrentPackTrust(remoteResults, aggressiveFilter, { meta, type, langMode });
+                    const fastExternalResults = protectTorrentioExactMinimum(externalResults, aggressiveFilter, { meta, type, langMode, config });
                     cleanResults = await normalizeCandidateResults([...cleanResults, ...fastRemoteResults, ...fastExternalResults], meta);
                     cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
                 } else if (phase.kind === 'scrape' && phase.querySubset.length > 0 && flags.useLiveSources) {
@@ -2978,12 +3374,12 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
                     const scrapedResultsRaw = (await Promise.allSettled(allScraperTasks))
                         .flatMap((result) => result.status === 'fulfilled' ? result.value : []);
-                    cleanResults = await normalizeCandidateResults([...cleanResults, ...scrapedResultsRaw.filter(aggressiveFilter)], meta);
+                    cleanResults = await normalizeCandidateResults([...cleanResults, ...filterWithTorrentPackTrust(scrapedResultsRaw, aggressiveFilter, { meta, type, langMode })], meta);
                     cleanResults = applyConfiguredTorrentFilters(cleanResults, config.filters || {});
                     logger.info(`[STATS SCRAPER] phase=${phase.key} total=${cleanResults.length} added=${scrapedResultsRaw.length}`);
                 }
 
-                assessmentPool = await normalizeCandidateResults([...seedResults, ...cleanResults].filter(aggressiveFilter), meta);
+                assessmentPool = await normalizeCandidateResults(filterWithTorrentPackTrust([...seedResults, ...cleanResults], aggressiveFilter, { meta, type, langMode }), meta);
                 assessmentPool = applyConfiguredTorrentFilters(assessmentPool, config.filters || {});
                 lastAssessment = assessFastResultQuality(assessmentPool, meta, langMode, config);
                 const satisfaction = evaluatePoolSatisfaction(lastAssessment, meta);
@@ -3053,7 +3449,10 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
 
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
-  const hashInput = backCompat.autoAnimeUnity ? `${userConfStr || 'no-conf'}|autoAnimeUnityKitsu=v2` : (userConfStr || 'no-conf');
+  const streamCacheVersionParts = [];
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v14');
+  const baseHashInput = backCompat.autoAnimeUnity ? `${userConfStr || 'no-conf'}|autoAnimeUnityKitsu=v2` : (userConfStr || 'no-conf');
+  const hashInput = streamCacheVersionParts.length > 0 ? `${baseHashInput}|${streamCacheVersionParts.join('|')}` : baseHashInput;
   const configHash = crypto.createHash('md5').update(hashInput).digest('hex');
   const cacheScope = torrentPipelineEnabled ? 'torrent' : 'webonly';
   const cacheKey = `${type}:${id}:${configHash}:${cacheScope}`;
@@ -3111,6 +3510,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           trace.finish({ streams: 0, error: 'metadata_missing' });
           return { streams: [] };
       }
+      if (runtimeContext && typeof runtimeContext === 'object') runtimeContext.generatedMeta = meta;
 
       const sharedReadContext = buildSharedReadContext(meta);
       if (sourceModeFlags.useSharedCache) {
@@ -3158,7 +3558,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       let localDbSatisfaction = { satisfied: false, reason: 'no_db_results' };
       if (localDbResults.length > 0) {
           localDbFastPool = applyConfiguredTorrentFilters(
-              await normalizeCandidateResults(localDbResults.filter(aggressiveFilter), meta),
+              await normalizeCandidateResults(filterWithTorrentPackTrust(localDbResults, aggressiveFilter, { meta, type, langMode }), meta),
               filters
           );
           const localDbAssessment = assessFastResultQuality(localDbFastPool, meta, langMode, config);
@@ -3211,7 +3611,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               });
           cleanResults = useLocalDbFastPath
               ? localDbFastPool
-              : await normalizeCandidateResults(groupedMergePool.filter(aggressiveFilter), meta);
+              : await normalizeCandidateResults(filterWithTorrentPackTrust(groupedMergePool, aggressiveFilter, { meta, type, langMode }), meta);
           cleanResults = runFilterStage(cleanResults, meta, filters, {
               applyPackKnowledge,
               applyConfiguredTorrentFilters
@@ -3466,4 +3866,4 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   });
 }
 
-module.exports = { generateStream, getMetadata, resolveDebridLink, resolveLazyStreamData, RD, TB, buildExternalAddonRequestIds, buildExternalAddonRequestId, normalizeExternalCandidateForPipeline, getExternalSourceLabel, protectTorrentioExactMovieMinimum };
+module.exports = { generateStream, getMetadata, resolveDebridLink, resolveLazyStreamData, RD, TB, buildExternalAddonRequestIds, buildExternalAddonRequestId, normalizeExternalCandidateForPipeline, getExternalSourceLabel, protectTorrentioExactMovieMinimum, protectTorrentioExactSeriesMinimum, protectTorrentioExactMinimum };
