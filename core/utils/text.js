@@ -437,6 +437,7 @@ function formatLanguageLabel(languageInfo, fallbackLanguages = [], preferredLang
     const mode = getPreferredLanguageMode(preferredLanguageMode);
     const detected = new Set(Array.isArray(languageInfo?.detectedLanguages) ? languageInfo.detectedLanguages.map((v) => String(v)) : []);
     if (mode === 'eng' && (detected.has('English') || languageInfo?.displayLabel === '🇬🇧')) return '🇬🇧 ENG';
+    if (languageInfo?.isItalian && detected.has('English')) return '🇮🇹/🇬🇧 ITA/ENG';
     if (languageInfo?.isItalian && languageInfo?.isMulti) return '🇮🇹/🌍 MULTI';
     if (languageInfo?.isItalian) return '🇮🇹 ITA';
     if (languageInfo?.isMulti) return '🌍 MULTI';
