@@ -46,6 +46,7 @@ const KNOWN_PROVIDERS = [
 const REGEX_AUDIO_ITA = /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._-]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._-]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b|\b(?:MULTI|DUAL\s*AUDIO)\s*(?:ITA|IT)\b|\bTRUE\s*ITALIAN\b|\bIT\s*[\/+,\-]\s*(?:GB|UK|US|EN|ENG|ENGLISH|MULTI|VO|SUB|AAC|AC3|DDP|EAC3|DTS)\b|\b(?:GB|UK|US|EN|ENG|ENGLISH|MULTI|VO)\s*[\/+,\-]\s*IT\b|[\[(]\s*IT\s*[\])])/i;
 const REGEX_SUB_ITA = /(?:\b(?:SUB[-.\s_]*ITA|SOFTSUB[-.\s_]*ITA|VOST(?:ITA)?|ITALIAN\s*SUBS?|SUB(?:TITLE)?S?\s*(?:ITALIAN|ITALIANO|ITA))\b|🇮🇹\s*SUB)/i;
 const REGEX_TRUSTED_ITA = /\b(?:CORSARO|ICV|MEGAPHONE|IDN[_\s-]*CREW|DDN|MUX(?:\s*ITA)?|TRIDIM|LUX|WMS|MIRCREW|CINEFILE)\b/i;
+const REGEX_ENGLISH_LANGUAGE = /(?:🇬🇧|🇺🇸|\b(?:ENG|ENGLISH)\b|(?:^|[^A-Z0-9])EN(?:[^A-Z0-9]|$))/i;
 const REGEX_NEGATIVE_LANGUAGE = /(?:🇬🇧|🇺🇸|🇷🇺|🇺🇦|🇫🇷|🇩🇪|🇪🇸|🇵🇱|🇯🇵|🇰🇷|🇨🇳|🇮🇳|\b(?:ENGLISH(?:\s*(?:DUBBED|DUB|AUDIO|ONLY))?|ENG(?:\s*(?:DUBBED|DUB|AUDIO|ONLY))?|TRUEFRENCH|FRENCH|FRA|GERMAN|GER|DEU|SPANISH|SPA|ESP|LATINO|RUSSIAN|RUS|UKRAINIAN|UKR|POLISH|POL|HINDI|TAMIL|TELUGU|KOREAN|JAPANESE|JPN|CHINESE|MANDARIN)\b)/i;
 const REGEX_MULTI_LANGUAGE = /\b(?:MULTI|DUAL\s*AUDIO|VOST)\b/i;
 const REGEX_STRONG_ITA_AUDIO = /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i;
@@ -190,12 +191,13 @@ function getStreamText(stream) {
 
 function analyzeItalianSignals(stream) {
     const fullText = normalizeForComparison(getStreamText(stream));
-    if (!fullText) return { isItalian: false, hasAudioItalian: false, hasSubItalian: false, hasTrustedItalian: false, hasNegativeLanguage: false, confidence: 0, reason: 'empty' };
+    if (!fullText) return { isItalian: false, hasAudioItalian: false, hasSubItalian: false, hasTrustedItalian: false, hasNegativeLanguage: false, hasEnglish: false, isMulti: false, detectedLanguages: [], displayLabel: '', confidence: 0, reason: 'empty' };
 
     const hasAudioItalian = REGEX_AUDIO_ITA.test(fullText);
     const hasSubItalian = REGEX_SUB_ITA.test(fullText);
     const hasTrustedItalian = REGEX_TRUSTED_ITA.test(fullText);
     const hasNegativeLanguage = REGEX_NEGATIVE_LANGUAGE.test(fullText);
+    const hasEnglish = REGEX_ENGLISH_LANGUAGE.test(fullText);
     const hasMultiLanguage = REGEX_MULTI_LANGUAGE.test(fullText);
 
     let confidence = 0;
@@ -207,9 +209,20 @@ function analyzeItalianSignals(stream) {
     if (hasMultiLanguage && hasAudioItalian) { confidence += 12; reasons.push('multi'); }
     if (hasNegativeLanguage && !hasAudioItalian && !hasTrustedItalian) { confidence -= 120; reasons.push('negative'); }
 
+    const detectedLanguages = [];
+    if (hasAudioItalian || hasTrustedItalian) detectedLanguages.push('Italian');
+    if (hasEnglish) detectedLanguages.push('English');
+    if (hasMultiLanguage) detectedLanguages.push('Multi');
+
     return {
         isItalian: confidence >= 20 || hasAudioItalian || (hasTrustedItalian && !hasNegativeLanguage),
-        hasAudioItalian, hasSubItalian, hasTrustedItalian, hasNegativeLanguage, confidence,
+        hasAudioItalian, hasSubItalian, hasTrustedItalian, hasNegativeLanguage, hasEnglish,
+        isMulti: hasMultiLanguage || (detectedLanguages.includes('Italian') && detectedLanguages.includes('English')),
+        detectedLanguages,
+        displayLabel: detectedLanguages.includes('Italian') && detectedLanguages.includes('English')
+            ? '🇮🇹 🇬🇧'
+            : (detectedLanguages.includes('Italian') ? '🇮🇹' : (detectedLanguages.includes('English') ? '🇬🇧' : '')),
+        confidence,
         reason: reasons.join('|') || 'none'
     };
 }
