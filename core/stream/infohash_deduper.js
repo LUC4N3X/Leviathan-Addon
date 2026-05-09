@@ -251,6 +251,57 @@ function isForcedTorrentioKeep(item = {}) {
   );
 }
 
+function stripVolatileDisplaySignals(value = '') {
+  return String(value || '')
+    .replace(/(?:👥|seed(?:er)?s?|seeds?|peers?)\s*[:=]?\s*\d{1,6}/gi, ' ')
+    .replace(/\b(?:cached|likely_cached|probing|unknown)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getForcedTorrentioExactKey(item = {}, options = {}) {
+  const hash = extractInfoHash(item);
+  if (!hash) return null;
+
+  const fileIdx = extractFileIdx(item);
+  const sourceKey = normalizeSmartToken([
+    item.source,
+    item.provider,
+    item.externalProvider,
+    item.externalAddon,
+    item.externalGroup,
+    item.behaviorHints?.vortexSource,
+    item.behaviorHints?.vortexMeta?.provider
+  ].filter(Boolean).join(' ')).replace(/\s+/g, '');
+  const titleKey = normalizeSmartToken(stripVolatileDisplaySignals([
+    item.title,
+    item.name,
+    item.filename,
+    item.fileName,
+    item.file_title,
+    item.behaviorHints?.filename
+  ].filter(Boolean).join(' '))).replace(/\s+/g, ' ').trim();
+
+  if (fileIdx === null && titleKey.length < 8) return null;
+
+  const isSeries = isSeriesContext(options);
+  const episodeKey = isSeries ? getSeasonEpisodeKey(options) : '';
+  const parts = [
+    'torrentioExact',
+    isSeries ? `series:${episodeKey || 'unknown'}` : 'movie',
+    hash,
+    fileIdx === null ? 'nofile' : `file:${fileIdx}`,
+    sourceKey || 'nosource',
+    titleKey || 'notitle',
+    getSizeBucket(item) || 'nosize',
+    extractResolutionTag(item) || 'nores',
+    extractQualityTag(item) || 'noquality',
+    extractEncodeTag(item) || 'noencode',
+    extractReleaseGroupTag(item) || 'nogroup'
+  ];
+  return parts.join(':');
+}
+
 function getSeasonEpisodeKey(options = {}) {
   const meta = options.meta || {};
   const season = Number(options.season ?? meta?.season ?? 0) || 0;
@@ -421,7 +472,10 @@ function buildSmartDedupeKey(item = {}, options = {}) {
 }
 
 function buildDedupeKeys(item = {}, options = {}) {
-  if (isForcedTorrentioKeep(item)) return [];
+  if (isForcedTorrentioKeep(item)) {
+    const forcedKey = getForcedTorrentioExactKey(item, options);
+    return forcedKey ? [forcedKey] : [];
+  }
 
   const hash = extractInfoHash(item);
   const smartKey = normalizeStoredSmartDedupeKey(item) || buildSmartDedupeKey(item, options);
