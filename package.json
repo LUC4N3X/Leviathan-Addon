@@ -30,7 +30,7 @@
     "p-limit": "^7.3.0",
     "parse-torrent-title": "^3.0.1",
     "pg": "^8.11.5",
-    "set-cookie-parser": "^2.7.2",
+    "set-cookie-parser": "^3.1.0",
     "tough-cookie": "^6.0.1",
     "winston": "^3.17.0"
   },
