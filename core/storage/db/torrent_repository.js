@@ -42,9 +42,11 @@ function createTorrentRepository({
   }
 
   function normalizeProviderName(providerName, title) {
+    const normalized = cleanTorrentioProviderLabel(providerName);
+    if (normalized && !/^(?:external|unknown|n\/a|null|undefined|p2p|torrent|torrentio|mirror|main|fallback|addon)$/i.test(normalized)) return normalized;
+
     const extracted = extractOriginalProvider(title);
     if (extracted) return extracted;
-    const normalized = cleanTorrentioProviderLabel(providerName);
     if (!normalized || normalized === 'Torrentio' || normalized === 'P2P') return 'External';
     return normalized;
   }

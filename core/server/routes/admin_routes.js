@@ -450,6 +450,14 @@ async function ensureManualCachedTorrentVisible(payload, result, { dbHelper, log
     }
 
     if (String(payload.type || '').toLowerCase() === 'movie' && typeof dbHelper.insertEpisodeFiles === 'function') {
+        const fallbackTorrentRow = { ...torrentRow, file_index: null, fileIndex: null, fileIdx: null };
+        if (typeof dbHelper.ensureTorrentRecord === 'function') {
+            outcome.fallbackEnsured = await dbHelper.ensureTorrentRecord(fallbackTorrentRow);
+        }
+        if (typeof dbHelper.insertTorrent === 'function') {
+            outcome.fallbackMapped = await dbHelper.insertTorrent(mediaMeta, fallbackTorrentRow);
+        }
+
         const movieMappings = [{
             info_hash: payload.hash,
             file_index: null,
@@ -489,13 +497,6 @@ async function ensureManualCachedTorrentVisible(payload, result, { dbHelper, log
     }
 
     if (!outcome.visible && String(payload.type || '').toLowerCase() === 'movie') {
-        const fallbackTorrentRow = { ...torrentRow, file_index: null, fileIndex: null, fileIdx: null };
-        if (typeof dbHelper.ensureTorrentRecord === 'function') {
-            outcome.fallbackEnsured = await dbHelper.ensureTorrentRecord(fallbackTorrentRow);
-        }
-        if (typeof dbHelper.insertTorrent === 'function') {
-            outcome.fallbackMapped = await dbHelper.insertTorrent(mediaMeta, fallbackTorrentRow);
-        }
         if (typeof dbHelper.getTorrents === 'function') {
             const rows = await dbHelper.getTorrents(payload.imdbId, payload.season, payload.episode);
             outcome.visibleCount = Array.isArray(rows) ? rows.length : outcome.visibleCount;
@@ -714,6 +715,7 @@ function registerAdminRoutes(app, {
             ensured: false,
             mapped: false,
             episodeMapped: false,
+            movieGenericMapped: false,
             packFilesInserted: 0,
             cacheInvalidated: null,
             dbLookupInvalidated: null,
@@ -748,6 +750,23 @@ function registerAdminRoutes(app, {
                     magnet: payload.magnet || undefined,
                     is_pack: payload.packFiles.length > 1
                 });
+
+                if (payload.type === 'movie') {
+                    summary.movieGenericMapped = await dbHelper.insertTorrent({
+                        imdb_id: payload.imdbId,
+                        type: payload.type,
+                        season: null,
+                        episode: null
+                    }, {
+                        info_hash: payload.hash,
+                        title: payload.title,
+                        provider: payload.provider,
+                        size: payload.size,
+                        file_index: null,
+                        magnet: payload.magnet || undefined,
+                        is_pack: payload.packFiles.length > 1
+                    });
+                }
 
                 if (payload.type !== 'movie' && payload.season && payload.episode) {
                     const episodeInsert = await dbHelper.insertEpisodeFiles([{

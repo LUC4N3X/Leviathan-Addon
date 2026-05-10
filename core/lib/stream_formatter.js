@@ -147,6 +147,7 @@ const SERVICE_ICON_BY_TAG = {
 };
 
 const DISPLAY_SOURCE_MAP = [
+  { regex: /bt4g|b\d+gprx|downloadtorrentfile/i, value: 'BT4G' },
   { regex: /1337/i, value: '1337x' },
   { regex: /corsaro/i, value: 'ilCorSaRoNeRo' },
   { regex: /knaben/i, value: 'Knaben' },
