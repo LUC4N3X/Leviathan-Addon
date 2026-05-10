@@ -454,7 +454,7 @@ async function resolveLazyStreamData(service, apiKey, item, meta) {
                 item.fileIdx
             )
         );
-    });
+    }, boundedSharedPromiseOptions(LAZY_RESOLVE_INFLIGHT_MAX_ENTRIES, 'lazyResolve.inflight.evicted'));
 }
 
 function isTorrentioExternalItem(item = {}) {
@@ -668,6 +668,11 @@ const validatedFileSetCache = new Map();
 const recentBackgroundDbSaves = new Map();
 const recentPackResolutionJobs = new Map();
 const STREAM_STALE_LOAD_THRESHOLD = Math.max(1, Math.min(200, parseInt(process.env.STREAM_STALE_LOAD_THRESHOLD || '18', 10) || 18));
+const STREAM_INFLIGHT_MAX_ENTRIES = Math.max(256, Math.min(20000, parseInt(process.env.STREAM_INFLIGHT_MAX_ENTRIES || '4096', 10) || 4096));
+const METADATA_INFLIGHT_MAX_ENTRIES = Math.max(128, Math.min(10000, parseInt(process.env.METADATA_INFLIGHT_MAX_ENTRIES || '2048', 10) || 2048));
+const LAZY_RESOLVE_INFLIGHT_MAX_ENTRIES = Math.max(128, Math.min(10000, parseInt(process.env.LAZY_RESOLVE_INFLIGHT_MAX_ENTRIES || '2048', 10) || 2048));
+const TITLE_SEARCH_INFLIGHT_MAX_ENTRIES = Math.max(128, Math.min(10000, parseInt(process.env.TITLE_SEARCH_INFLIGHT_MAX_ENTRIES || '2048', 10) || 2048));
+const BACKGROUND_DB_SAVE_INFLIGHT_MAX_ENTRIES = Math.max(64, Math.min(5000, parseInt(process.env.BACKGROUND_DB_SAVE_INFLIGHT_MAX_ENTRIES || '512', 10) || 512));
 const BACKGROUND_DB_SAVE_DEDUP_MS = Math.max(1000, Math.min(120000, parseInt(process.env.BACKGROUND_DB_SAVE_DEDUP_MS || '15000', 10) || 15000));
 const LAZY_WARMUP_LOAD_THRESHOLD = Math.max(1, Math.min(200, parseInt(process.env.LAZY_WARMUP_LOAD_THRESHOLD || '14', 10) || 14));
 const TITLE_SEARCH_HOT_TTL_MS = Math.max(5000, Math.min(5 * 60 * 1000, parseInt(process.env.TITLE_SEARCH_HOT_TTL_MS || '45000', 10) || 45000));
@@ -686,6 +691,15 @@ function shouldAcceptAllTorrentioExact(config = {}, key = '') {
 const PACK_RESOLVER_HTTP_COOLDOWN_MS = Math.max(5000, Math.min(10 * 60 * 1000, parseInt(process.env.PACK_RESOLVER_HTTP_COOLDOWN_MS || '60000', 10) || 60000));
 const recentPackResolverHttpFailures = new Map();
 const timedCacheSweepState = new Map();
+
+function boundedSharedPromiseOptions(maxEntries, metricName) {
+    return {
+        maxEntries,
+        onEvict: (count) => {
+            if (count > 0) incrementMetric(metricName, count);
+        }
+    };
+}
 
 function getTimedCacheState(map) {
     let state = timedCacheSweepState.get(map);
@@ -2323,7 +2337,7 @@ async function getMetadata(id, type, config = {}) {
 
     if (finalMeta) await Cache.cacheMetadata(metadataCacheKey, finalMeta, METADATA_CACHE_TTL);
     return finalMeta;
-  });
+  }, boundedSharedPromiseOptions(METADATA_INFLIGHT_MAX_ENTRIES, 'metadata.inflight.evicted'));
 }
 
 function saveResultsToDbBackground(meta, results, config = null, type = null, options = {}) {
@@ -2484,7 +2498,7 @@ function saveResultsToDbBackground(meta, results, config = null, type = null, op
                     || (options?.invalidateStreamCache === true && processedCount > 0);
                 if (streamRefreshNeeded) await invalidateStreamCacheForDbSave(meta, 'db_save');
                 resolvePackNamesInBackground(meta, results, config, effectiveType);
-            });
+            }, boundedSharedPromiseOptions(BACKGROUND_DB_SAVE_INFLIGHT_MAX_ENTRIES, 'dbSave.inflight.evicted'));
         },
         { maxGroupPending: BACKGROUND_DB_SAVE_QUEUE_MAX }
     ).catch(err => {
@@ -3749,7 +3763,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
             return setTimedCacheValue(titleSearchHotCache, titleKey, cleanResults, TITLE_SEARCH_HOT_TTL_MS);
         }, { group: 'title-search' });
-    });
+    }, boundedSharedPromiseOptions(TITLE_SEARCH_INFLIGHT_MAX_ENTRIES, 'titleSearch.inflight.evicted'));
 }
 
 
@@ -4223,7 +4237,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       });
 
       return resultObj;
-  });
+  }, boundedSharedPromiseOptions(STREAM_INFLIGHT_MAX_ENTRIES, 'stream.inflight.evicted'));
 }
 
 module.exports = { generateStream, getMetadata, resolveDebridLink, resolveLazyStreamData, RD, TB, buildExternalAddonRequestIds, buildExternalAddonRequestId, normalizeExternalCandidateForPipeline, getExternalSourceLabel, protectTorrentioExactMovieMinimum, protectTorrentioExactSeriesMinimum, protectTorrentioExactMinimum };
