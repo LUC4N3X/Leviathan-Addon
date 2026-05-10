@@ -283,23 +283,45 @@ function normalizeLanguageCode(value) {
 function collectLanguages(stream = {}, sourceName = '') {
     const hints = stream.behaviorHints || {};
     const vMeta = hints.vortexMeta || {};
-    const rawValues = [];
-    const addRaw = (value) => {
-        if (Array.isArray(value)) rawValues.push(...value);
-        else if (value) rawValues.push(value);
+    const explicitAudioValues = [];
+    const addAudio = (value) => {
+        if (Array.isArray(value)) explicitAudioValues.push(...value);
+        else if (value) explicitAudioValues.push(value);
     };
 
-    addRaw(stream.audioLanguages);
-    addRaw(stream.audio);
-    addRaw(stream.language);
-    addRaw(vMeta.audioLanguages);
-    addRaw(vMeta.audio);
-    addRaw(vMeta.language);
-    addRaw(stream.subtitleLanguages);
-    addRaw(stream.subtitles);
-    addRaw(vMeta.subtitleLanguages);
-    addRaw(vMeta.subtitles);
+    // This badge represents AUDIO tracks only. Do not merge subtitles here:
+    // a file with ITA/FRA audio + ENG/DEU/JPN subs must not look like it has
+    // ENG/DEU/JPN audio tracks in Stremio.
+    addAudio(stream.audioLanguages);
+    addAudio(stream.audio);
+    addAudio(stream.language);
+    addAudio(vMeta.audioLanguages);
+    addAudio(vMeta.audio);
+    addAudio(vMeta.language);
 
+    const out = [];
+    const push = (lang) => {
+        const normalized = normalizeLanguageCode(lang);
+        if (normalized && !out.includes(normalized)) out.push(normalized);
+    };
+
+    const scan = (values) => {
+        for (const value of values) {
+            const str = String(value || '');
+            if (/🇮🇹|\b(?:ita|it|italiano|italian)\b/i.test(str)) push('ita');
+            if (/🇬🇧|\b(?:eng|en|inglese|english)\b/i.test(str)) push('eng');
+            if (/🇯🇵|\b(?:jpn|jp|jap|ja|giapponese|japanese)\b/i.test(str)) push('jpn');
+            if (/🇫🇷|\b(?:fra|fre|fr|francese|french)\b/i.test(str)) push('fra');
+            if (/🇪🇸|\b(?:spa|esp|es|spagnolo|spanish)\b/i.test(str)) push('spa');
+            if (/🇩🇪|\b(?:deu|ger|de|tedesco|german)\b/i.test(str)) push('deu');
+        }
+    };
+
+    scan(explicitAudioValues);
+    if (out.length) return out;
+
+    // Fallback only when there is no structured audio metadata. Strip subtitle
+    // labels before scanning old title/name strings.
     const text = [
         stream.title,
         stream.name,
@@ -307,31 +329,21 @@ function collectLanguages(stream = {}, sourceName = '') {
         vMeta.filename,
         vMeta.title,
         sourceName
-    ].filter(Boolean).join(' ');
+    ].filter(Boolean).join(' ')
+        .replace(/(?:💬|subs?|subtitles?|sottotitoli)\s*[:：\-]?\s*[^\n|•]+/gi, ' ');
 
-    rawValues.push(text);
-    const out = [];
-    const push = (lang) => {
-        const normalized = normalizeLanguageCode(lang);
-        if (normalized && !out.includes(normalized)) out.push(normalized);
-    };
-
-    for (const value of rawValues) {
-        const str = String(value || '');
-        if (/🇮🇹|\b(?:ita|it|italiano|italian)\b/i.test(str)) push('ita');
-        if (/🇬🇧|\b(?:eng|en|inglese|english)\b/i.test(str)) push('eng');
-        if (/🇯🇵|\b(?:jpn|jp|jap|ja|giapponese|japanese)\b|sub\s*ita|vost/i.test(str)) push('jpn');
-        if (/🇫🇷|\b(?:fra|fre|fr|francese|french)\b/i.test(str)) push('fra');
-        if (/🇪🇸|\b(?:spa|esp|es|spagnolo|spanish)\b/i.test(str)) push('spa');
-        if (/🇩🇪|\b(?:deu|ger|de|tedesco|german)\b/i.test(str)) push('deu');
-    }
-
+    scan([text]);
     return out;
 }
 
+function prioritizeItalianLanguageCodes(languages = []) {
+    const unique = [...new Set(languages.map(normalizeLanguageCode).filter(Boolean))];
+    if (!unique.includes('ita')) return unique;
+    return ['ita', ...unique.filter((lang) => lang !== 'ita')];
+}
+
 function formatLanguageSummary(languages = []) {
-    const normalized = languages.map(normalizeLanguageCode).filter(Boolean);
-    const unique = [...new Set(normalized)];
+    const unique = prioritizeItalianLanguageCodes(languages);
     if (!unique.length) return { text: 'ITA', flags: '🇮🇹' };
 
     const labels = unique.map((lang) => LANGUAGE_LABELS[lang]?.code || String(lang).slice(0, 3).toUpperCase());
