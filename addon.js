@@ -350,7 +350,8 @@ function bootstrapServer() {
         withTimeout,
         CONFIG,
         logger,
-        getCacheHealthStatus: appServices.getCacheHealthStatus
+        getCacheHealthStatus: appServices.getCacheHealthStatus,
+        publicDir
     });
 
     registerPlaybackRoutes(app, {
