@@ -71,6 +71,7 @@ const GS_TOP_SPEED = Object.freeze({
   hotpathFlareFallback: false,
   backgroundStaticPrime: true,
   movieFastSlugMax: 6,
+  seriesFastSlugMax: 12,
   movieMaxVerifyCandidates: 2,
   movieHardBudgetMs: 12_000,
   // Inspired by EasyStreams' speed pattern: avoid serial waits in the hot path.
@@ -122,6 +123,7 @@ const GS_FAST_SLUG_FIRST           = envFlagNotFalse('GS_FAST_SLUG_FIRST', true)
 const GS_HOTPATH_FLARE_FALLBACK      = GS_TOP_SPEED.hotpathFlareFallback;
 const GS_BACKGROUND_STATIC_PRIME     = GS_TOP_SPEED.backgroundStaticPrime;
 const GS_MOVIE_FAST_SLUG_MAX         = GS_TOP_SPEED.movieFastSlugMax;
+const GS_SERIES_FAST_SLUG_MAX        = GS_TOP_SPEED.seriesFastSlugMax;
 const GS_MOVIE_MAX_VERIFY_CANDIDATES = GS_TOP_SPEED.movieMaxVerifyCandidates;
 const GS_MOVIE_HARD_BUDGET_MS        = GS_TOP_SPEED.movieHardBudgetMs;
 const GS_SEARCH_FAST_TIMEOUT_MS      = GS_TOP_SPEED.searchFastTimeoutMs;
@@ -400,7 +402,8 @@ function startGsBackgroundClearanceDaemon() {
     earlyRefreshMs: GS_BACKGROUND_REFRESH_EARLY_MS,
     primeHome: GS_BACKGROUND_PRIME_HOME,
     titlePrime: GS_BACKGROUND_TITLE_PRIME,
-    requestWaitMs: GS_PREWARM_WAIT_MS
+    prewarmWaitMs: GS_PREWARM_WAIT_MS,
+    requestWaitMs: GS_REQUEST_CLEARANCE_WAIT_MS
   });
 }
 
@@ -438,9 +441,19 @@ function buildFastSlugTargetCandidates(expectedTitles = [], mediaType = 'series'
   for (const title of titles) {
     const slug = slugify(title);
     if (!slug) continue;
-    for (const p of [`/${slug}/`, `/serie/${slug}/`, `/serietv/${slug}/`]) pushPath(p);
+    // GuardoSerie stores TV show landing pages primarily below /serie/<slug>/.
+    // Root slugs are noisy and can be movie/category shells, so keep them as a fallback.
+    for (const p of [`/serie/${slug}/`, `/serietv/${slug}/`, `/${slug}/`]) pushPath(p);
   }
   return candidates;
+}
+
+function allowExactGsSlugClearance(mediaType = 'series') {
+  if (allowHotPathClearance()) return true;
+  // If the request gate could not obtain a fresh CF session, exact slug probes are
+  // the highest-confidence GuardoSerie path. Allow one shared FlareSolverr bridge
+  // here instead of saving a false web-only cache while the page exists.
+  return mediaType === 'series' && Boolean(gsHttp.getEndpoint()) && !gsHttp.isSessionFresh();
 }
 
 function primeGsUrlsInBackground(urls = [], options = {}) {
@@ -1400,9 +1413,10 @@ async function findGsTargetPage(expectedTitles = [], targetYear = null, signal =
     const movieResults = allResults.filter(result => isLikelyGsMovieUrl(result.url));
     allResults = movieResults.length ? movieResults : allResults.filter(result => !/\/(?:serie|episodio)\//i.test(String(result.url || '')));
   } else {
-    const seriesResults = allResults.filter(r => /\/serie\//i.test(r.url));
+    const seriesResults = allResults.filter(r => /\/(?:serie|serietv)\//i.test(r.url));
     const episodeResults = allResults.filter(r => /\/episodio\//i.test(r.url));
-    allResults = options.strictSeriesOnly && seriesResults.length ? seriesResults : [...seriesResults, ...episodeResults];
+    const rootSlugResults = allResults.filter(r => r.fastSlug && !/\/(?:movie|film|guarda-|episodio)\//i.test(r.url));
+    allResults = options.strictSeriesOnly && seriesResults.length ? seriesResults : [...seriesResults, ...episodeResults, ...rootSlugResults];
   }
 
   allResults.sort((a, b) =>
@@ -1420,7 +1434,7 @@ async function findGsTargetPage(expectedTitles = [], targetYear = null, signal =
     const html = result.html || await smartFetch(result.url, {
       ttl: mediaType === 'movie' ? TTL_MOVIE : TTL_SERIES,
       signal,
-      allowFlareSolverr: allowHotPathClearance(),
+      allowFlareSolverr: allowExactGsSlugClearance(mediaType),
       timeoutMs: DIRECT_FETCH_TIMEOUT_MS
     });
     if (!html) continue;
@@ -1502,7 +1516,7 @@ async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal
   const mediaType = options.mediaType || 'series';
   const targetYearNumber = extractYearValue(targetYear);
   const candidates = buildFastSlugTargetCandidates(expectedTitles, mediaType, 10);
-  const maxCandidates = mediaType === 'movie' ? GS_MOVIE_FAST_SLUG_MAX : 4;
+  const maxCandidates = mediaType === 'movie' ? GS_MOVIE_FAST_SLUG_MAX : GS_SERIES_FAST_SLUG_MAX;
   const startedAt = Date.now();
   const selectedCandidates = candidates.slice(0, maxCandidates);
 
@@ -1521,7 +1535,7 @@ async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal
       const html = await smartFetch(url, {
         ttl: mediaType === 'movie' ? TTL_MOVIE : TTL_SERIES,
         signal,
-        allowFlareSolverr: allowHotPathClearance(),
+        allowFlareSolverr: allowExactGsSlugClearance(mediaType),
         timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, mediaType === 'movie' ? 2800 : 3600)
       });
       if (!html) return null;
@@ -1634,9 +1648,9 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
   if (!target) {
     const slugs = uniqueCleanStrings(expectedTitles, 3).map(slugify).filter(Boolean);
     outer: for (const slug of slugs) {
-      for (const p of [`/serie/${slug}/`, `/${slug}/`, `/serietv/${slug}/`]) {
+      for (const p of [`/serie/${slug}/`, `/serietv/${slug}/`, `/${slug}/`]) {
         const url  = buildGsUrl(p);
-        const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: allowHotPathClearance(), timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+        const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: allowExactGsSlugClearance('series'), timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
         if (html) {
           const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
           if (normalizeTitleScoreMany(pageTitle, expectedTitles) >= 2) {
@@ -1652,7 +1666,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
 
   let episodeUrl    = extractEpisodeUrlFromSeriesPage(target.html, season, episode, { strictEpisode: strictKitsu });
   let absoluteEpUrl = episodeUrl ? new URL(episodeUrl, getTargetDomain()).toString() : null;
-  let finalHtml     = absoluteEpUrl ? await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: allowHotPathClearance(), timeoutMs: DIRECT_FETCH_TIMEOUT_MS }) : '';
+  let finalHtml     = absoluteEpUrl ? await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: allowExactGsSlugClearance('series'), timeoutMs: DIRECT_FETCH_TIMEOUT_MS }) : '';
   let playerLinks   = pickPreferredPlayerLinks(extractPlayerLinksFromHtml(finalHtml), { preferLoadm: true, max: 5 });
 
   if (!playerLinks.length) {
@@ -1665,7 +1679,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
     for (const directUrl of directCandidates) {
       if (signal?.aborted) return [];
       try {
-        const directHtml = await smartFetch(directUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: false, timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+        const directHtml = await smartFetch(directUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: allowExactGsSlugClearance('series'), timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
         const directLinks = pickPreferredPlayerLinks(extractPlayerLinksFromHtml(directHtml), { preferLoadm: true, max: 5 });
         if (directLinks.length) {
           episodeUrl = directUrl;
