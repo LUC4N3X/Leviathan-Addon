@@ -1608,6 +1608,9 @@ async function resolveTorboxRankedList(rankedList, apiKey) {
             const result = cacheResults?.[hash];
             if (result && result.cached === true) {
                 item._tbCached = true;
+                item.tbCached = true;
+                item._tbLiveChecked = true;
+                item._tbCacheState = 'cached';
                 if (result.file_size) {
                     item._size = result.file_size;
                     item.sizeBytes = result.file_size;
