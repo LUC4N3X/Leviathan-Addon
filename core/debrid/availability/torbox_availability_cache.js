@@ -441,8 +441,16 @@ async function enrichCacheBackground(items, token, dbHelper) {
   if (entries.length === 0) return;
 
   const apiResults = await checkHashes(entries, token);
-  const updates = entries.map((entry) => buildDbUpdate(entry.hash, apiResults[entry.hash] || { cached: false }));
+  const updates = entries.map((entry) => buildDbUpdate(entry.hash, apiResults[entry.hash] || { cached: false }, entry.meta));
   await flushDbUpdates(dbHelper, updates);
 }
 
-module.exports = { checkCacheSync, enrichCacheBackground };
+module.exports = {
+  checkCacheSync,
+  enrichCacheBackground,
+  __private: {
+    buildDbUpdate,
+    extractItemMeta,
+    parseHashResult
+  }
+};
