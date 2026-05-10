@@ -211,6 +211,102 @@ function addComponent(parts, profile, group, key, label = key) {
     parts.explain.push(`${prefix}${score} ${group}=${label}`);
 }
 
+function formatComponentLabel(group, key) {
+    const labels = {
+        resolution: 'qualità',
+        language: 'lingua',
+        rdStatus: 'cache',
+        seedHealth: 'seed',
+        providerReliability: 'provider',
+        episodeTruth: 'match',
+        source: 'fonte',
+        sourceConsensus: 'consenso',
+        pack: 'pack'
+    };
+    return `${labels[group] || group}=${key}`;
+}
+
+function componentBadge(group, key) {
+    if (group === 'rdStatus') {
+        if (key === 'cached') return '⚡ cached exact';
+        if (key === 'likely_cached') return '🟡 likely cached';
+        if (/uncached/.test(key)) return '⌛ uncached';
+        return '❔ cache unknown';
+    }
+    if (group === 'language') {
+        if (key === 'ita') return '🇮🇹 ITA';
+        if (key === 'multi') return '🌍 MULTI';
+        if (key === 'eng') return '🇬🇧 ENG';
+        return '🗣️ lingua unknown';
+    }
+    if (group === 'resolution') {
+        if (key === '2160p') return '🎬 2160p/4K';
+        if (key === '1080p') return '🎬 1080p';
+        if (key === '720p') return '🎬 720p';
+        return '🎬 qualità unknown';
+    }
+    if (group === 'episodeTruth') {
+        if (key === 'exact_episode') return '🎯 episodio exact';
+        if (key === 'season_pack_file_match') return '📦 file pack exact';
+        if (/mismatch|risk|uncertain/.test(key)) return '⚠️ match rischio';
+        return '🧭 match ok';
+    }
+    if (group === 'seedHealth') {
+        if (key === 'healthy' || key === 'protected') return '🌱 seed buoni';
+        if (key === 'dead') return '🪦 seed morti';
+        if (key === 'weak') return '🥀 seed deboli';
+    }
+    if (group === 'sourceConsensus') {
+        if (key === 'strong_consensus') return '🤝 consenso forte';
+        if (key === 'consensus') return '🤝 consenso';
+    }
+    return '';
+}
+
+function buildBrutalRankExplain({ finalScore = 0, components = {}, episodeTruth = null, item = {}, meta = {} } = {}) {
+    const positives = [];
+    const negatives = [];
+    const badges = [];
+
+    for (const [group, component] of Object.entries(components || {})) {
+        if (!component) continue;
+        const key = String(component.key || 'unknown');
+        const score = Number(component.score || 0) || 0;
+        const line = `${score >= 0 ? '+' : ''}${score} ${formatComponentLabel(group, key)}`;
+        if (score >= 0) positives.push(line);
+        else negatives.push(line);
+        const badge = componentBadge(group, key);
+        if (badge) badges.push(badge);
+    }
+
+    const proof = firstNonEmpty(
+        item._rdEpisodeProof?.reason,
+        item.rdEpisodeProof?.reason,
+        item._episodeFileHint?.reason,
+        item.episodeFileHint?.reason,
+        episodeTruth?.reason
+    );
+    const fileIdx = item.fileIdx ?? item.file_index ?? item.behaviorHints?.fileIdx;
+    if (fileIdx !== undefined && fileIdx !== null && fileIdx !== '') badges.push(`📁 fileIdx=${fileIdx}`);
+    if (item._externalSnapshot === true || item._fromExternalSnapshot === true) badges.push('🧠 snapshot DB');
+    if (item._localDb === true || item._fromDb === true) badges.push('🗄️ DB locale');
+    if (proof) positives.push(`proof=${proof}`);
+
+    const title = firstNonEmpty(item.title, item.name, item.filename, meta.title, meta.name, 'stream');
+    const text = `[RANK EXPLAIN] BRUTALE ${title} | score=${Number(finalScore || 0)} | ${badges.slice(0, 7).join(' · ')} | + ${positives.slice(0, 8).join(' | ')}${negatives.length ? ` | - ${negatives.slice(0, 6).join(' | ')}` : ''}`;
+
+    return {
+        title,
+        score: Number(finalScore || 0),
+        badges,
+        positives,
+        negatives,
+        proof: proof || null,
+        text
+    };
+}
+
+
 function evaluateLeviathanScore(item = {}, meta = {}, options = {}) {
     const profile = mergeProfile(options.profile || options.scoreProfile || options.ranking?.scoreProfile || {});
     const parts = { score: 0, explain: [], components: {} };
@@ -236,9 +332,18 @@ function evaluateLeviathanScore(item = {}, meta = {}, options = {}) {
     addComponent(parts, profile, 'sourceConsensus', sourceConsensus, sourceConsensus);
     addComponent(parts, profile, 'pack', pack, pack);
 
+    const brutalExplain = buildBrutalRankExplain({
+        finalScore: parts.score,
+        components: parts.components,
+        episodeTruth,
+        item,
+        meta
+    });
+
     return {
         finalScore: parts.score,
         explain: parts.explain,
+        brutalExplain,
         components: parts.components,
         episodeTruth
     };
@@ -250,6 +355,8 @@ function annotateWithLeviathanScore(item = {}, meta = {}, options = {}) {
         ...item,
         _leviathanScore: scoreProfile.finalScore,
         _leviathanScoreExplain: scoreProfile.explain,
+        _leviathanExplain: scoreProfile.brutalExplain,
+        _leviathanExplainText: scoreProfile.brutalExplain?.text,
         _leviathanScoreProfile: scoreProfile
     };
 }
@@ -266,6 +373,7 @@ function rankWithLeviathanScore(items = [], meta = {}, options = {}) {
 
 function formatRankExplain(item = {}) {
     const score = Number(item._leviathanScore || 0);
+    if (item._leviathanExplainText) return item._leviathanExplainText;
     const explain = Array.isArray(item._leviathanScoreExplain) ? item._leviathanScoreExplain.join(' | ') : '';
     const title = firstNonEmpty(item.title, item.name, item.provider, item.source);
     return `[RANK EXPLAIN] ${title} | score=${score} | ${explain}`;
@@ -274,6 +382,7 @@ function formatRankExplain(item = {}) {
 module.exports = {
     DEFAULT_SCORE_PROFILE,
     annotateWithLeviathanScore,
+    buildBrutalRankExplain,
     compareLeviathanScore,
     detectLanguage,
     detectPackState,
