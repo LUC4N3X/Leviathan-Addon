@@ -7,6 +7,7 @@ const { getRequestOrigin } = require('../../utils/url');
 const { validateConfig, MAX_CONFIG_LENGTH, decodeConfigBase64 } = require('../../config/schema');
 const { encryptConfigObject, isUserConfigEncryptionEnabled } = require('../../security/user_config_crypto');
 const { getRecentStreamTraces } = require('../../lib/stream_trace');
+const { buildMissionControlPayload } = require('../../observability/mission_control');
 
 const DEBRID_VALIDATE_TIMEOUT_MS = Math.max(1500, parseInt(process.env.DEBRID_VALIDATE_TIMEOUT_MS || '5000', 10) || 5000);
 
@@ -218,6 +219,7 @@ async function runReadinessChecks({ dbHelper, withTimeout, CONFIG, getCacheHealt
     };
 }
 
+
 async function validateRealDebridKey(key) {
     try {
         const response = await axios.get('https://api.real-debrid.com/rest/1.0/user', {
@@ -383,6 +385,18 @@ function registerApiRoutes(app, {
     app.get('/api/cache-health', telemetryAuthMiddleware, (req, res) => {
         const snapshot = getStatsSnapshot();
         res.json(buildCacheHealthPayload(Cache, getCacheHealthStatus, snapshot));
+    });
+    app.get('/api/mission-control', telemetryAuthMiddleware, async (req, res) => {
+        const limit = Math.max(1, Math.min(50, parseInt(req.query?.traceLimit || '12', 10) || 12));
+        const payload = await buildMissionControlPayload({
+            getStatsSnapshot,
+            getRdAuditorStatus,
+            dbHelper,
+            Cache,
+            getCacheHealthStatus,
+            traceLimit: limit
+        });
+        res.json(payload);
     });
 
     async function decodeConfigForEditor(req, res) {
@@ -602,4 +616,7 @@ function registerApiRoutes(app, {
     });
 }
 
-module.exports = { registerApiRoutes };
+module.exports = {
+    buildPrometheusMetrics,
+    registerApiRoutes
+};
