@@ -318,7 +318,8 @@ function createTorrentRepository({
       cache_check_failures: toSafeNumber(row.cache_check_failures, 0),
       tb_cached: row.tb_cached === null || row.tb_cached === undefined ? null : Boolean(row.tb_cached),
       tb_file_id: normalizeFileIndex(row.tb_file_id),
-      tb_file_size: toSafeNumber(row.tb_file_size, 0)
+      tb_file_size: toSafeNumber(row.tb_file_size, 0),
+      tb_last_cached_check: row.tb_last_cached_check || null
     };
   }
 
@@ -431,7 +432,8 @@ function createTorrentRepository({
           t.cache_check_failures,
           t.tb_cached,
           COALESCE(o.tb_file_id, t.tb_file_id) AS tb_file_id,
-          COALESCE(o.tb_file_size, t.tb_file_size) AS tb_file_size
+          COALESCE(o.tb_file_size, t.tb_file_size) AS tb_file_size,
+          t.tb_last_cached_check
         FROM dedup_matches m
         JOIN torrents t
           ON t.info_hash_norm = m.hash_norm
@@ -489,7 +491,8 @@ function createTorrentRepository({
           t.cache_check_failures,
           t.tb_cached,
           t.tb_file_id,
-          t.tb_file_size
+          t.tb_file_size,
+          t.tb_last_cached_check
         FROM matched_files f
         JOIN torrents t
           ON t.info_hash_norm = f.info_hash_norm
@@ -1693,11 +1696,11 @@ function createTorrentRepository({
 
   function parseAvailabilityCacheKey(cacheKey) {
     const key = sanitizeText(cacheKey);
-    const match = key.match(/^([a-z0-9_-]+):([a-f0-9]{40})(?::([^:]+))?$/i);
-    if (!match) return null;
-    const service = match[1].toLowerCase();
-    const hash = normalizeInfoHash(match[2]);
-    const rawFile = match[3] || 'auto';
+    const parts = key.split(':');
+    if (parts.length < 2) return null;
+    const service = String(parts[0] || '').trim().toLowerCase();
+    const hash = normalizeInfoHash(parts[1]);
+    const rawFile = parts[2] || 'auto';
     const parsedFile = rawFile === 'auto' ? null : normalizeFileIndex(rawFile);
     if (!service || !hash) return null;
     return {
@@ -1705,7 +1708,8 @@ function createTorrentRepository({
       service,
       hash,
       fileIndex: parsedFile,
-      fileIndexNorm: normalizeFileIndexNorm(parsedFile)
+      fileIndexNorm: normalizeFileIndexNorm(parsedFile),
+      mediaId: parts.length > 3 ? normalizeMarkerPart(parts.slice(3).join(':'), 220) : null
     };
   }
 
@@ -1834,6 +1838,11 @@ function createTorrentRepository({
         return {
           ...parsed,
           payload,
+          mediaId: normalizeMarkerPart(entry?.media_id || entry?.mediaId || payload.mediaId || parsed.mediaId, 220),
+          imdbId: normalizeImdbId(entry?.imdb_id || entry?.imdbId || payload.imdbId),
+          imdbSeason: toNullableInt(entry?.imdb_season ?? entry?.season ?? payload.season),
+          imdbEpisode: toNullableInt(entry?.imdb_episode ?? entry?.episode ?? payload.episode),
+          proofLevel: sanitizeText(entry?.proof_level || entry?.proofLevel || payload.proofLevel).toLowerCase().slice(0, 48) || null,
           state: normalizeRdCacheState(payload.state),
           cached: payload.cached === true ? true : payload.cached === false ? false : null,
           expiresAt: new Date(Date.now() + ttlSeconds * 1000)
@@ -1856,6 +1865,11 @@ function createTorrentRepository({
                 info_hash_norm,
                 file_index,
                 file_index_norm,
+                media_id,
+                imdb_id,
+                imdb_season,
+                imdb_episode,
+                proof_level,
                 payload_json,
                 state,
                 cached,
@@ -1863,9 +1877,14 @@ function createTorrentRepository({
                 created_at,
                 updated_at
               )
-              VALUES ($1, $2, $3, $3, $4, $5, $6::jsonb, $7, $8, $9, NOW(), NOW())
+              VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, NOW(), NOW())
               ON CONFLICT (cache_key)
               DO UPDATE SET
+                media_id = EXCLUDED.media_id,
+                imdb_id = EXCLUDED.imdb_id,
+                imdb_season = EXCLUDED.imdb_season,
+                imdb_episode = EXCLUDED.imdb_episode,
+                proof_level = EXCLUDED.proof_level,
                 payload_json = EXCLUDED.payload_json,
                 state = EXCLUDED.state,
                 cached = EXCLUDED.cached,
@@ -1878,6 +1897,11 @@ function createTorrentRepository({
               row.hash,
               row.fileIndex,
               row.fileIndexNorm,
+              row.mediaId,
+              row.imdbId,
+              row.imdbSeason,
+              row.imdbEpisode,
+              row.proofLevel,
               JSON.stringify(row.payload),
               row.state,
               row.cached,
