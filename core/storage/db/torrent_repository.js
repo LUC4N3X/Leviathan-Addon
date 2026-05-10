@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { buildSmartDedupeKey, getFolderSizeBytes, getSizeBytes } = require('../../stream/infohash_deduper');
 const { inferEpisodeHintFromPackFiles } = require('../../stream/episode_precision');
 
@@ -807,6 +808,142 @@ function createTorrentRepository({
     const season = fallbackType === 'movie' ? null : toNullableInt(meta?.season ?? torrent?.season ?? torrent?.imdb_season);
     const episode = fallbackType === 'movie' ? null : toNullableInt(meta?.episode ?? torrent?.episode ?? torrent?.imdb_episode);
     return { imdbId, season, episode, type: fallbackType };
+  }
+
+
+
+  function normalizeExternalSnapshotType(value, meta = {}) {
+    const raw = sanitizeText(value || meta?.type || meta?.contentType || '').toLowerCase();
+    if (['movie', 'series', 'anime'].includes(raw)) return raw;
+    return meta?.isSeries || meta?.season || meta?.episode ? 'series' : 'movie';
+  }
+
+  function buildExternalSnapshotIdentity(meta = {}) {
+    const imdbId = normalizeImdbId(meta?.imdb_id || meta?.imdbId);
+    const season = toNullableInt(meta?.season ?? meta?.imdb_season);
+    const episode = toNullableInt(meta?.episode ?? meta?.imdb_episode);
+    if (!imdbId) return null;
+    return {
+      imdbId,
+      season: season !== null && season > 0 ? season : null,
+      episode: episode !== null && episode > 0 ? episode : null
+    };
+  }
+
+  function normalizeSnapshotProvider(item = {}) {
+    return sanitizeText(item.externalProvider || item.provider || item.source || item.sourceName || 'external').slice(0, 160) || 'external';
+  }
+
+  function normalizeSnapshotAddon(item = {}) {
+    return sanitizeText(item.externalAddon || item._externalAddon || item.addon || 'external').toLowerCase().slice(0, 96) || 'external';
+  }
+
+  function normalizeSnapshotGroup(item = {}) {
+    const raw = sanitizeText(item.externalGroup || item._externalGroup || item._sourceGroup || 'external').toLowerCase();
+    if (raw.includes('torrentio')) return 'torrentio';
+    if (raw.includes('mediafusion')) return 'mediafusion';
+    if (raw.includes('meteor')) return 'meteor';
+    return raw.slice(0, 64) || 'external';
+  }
+
+  function normalizeSnapshotLanguages(item = {}) {
+    const values = [];
+    if (Array.isArray(item.languages)) values.push(...item.languages);
+    else if (item.languages) values.push(item.languages);
+    for (const value of [item.language, item.lang, item.audio, item.languageInfo?.displayLabel]) {
+      if (value) values.push(value);
+    }
+    if (item.isItalian || item.hasItalianAudio || item._externalIsItalian || item._externalHasItalianAudio || item.languageInfo?.isItalian || item.languageInfo?.hasAudioItalian) values.push('ita');
+    return normalizeDelimitedText(values, 2048);
+  }
+
+  function normalizeSnapshotPayload(item = {}) {
+    const payload = { ...item };
+    delete payload._debug;
+    delete payload.debug;
+    delete payload.error;
+    return payload;
+  }
+
+  function buildExternalSnapshotKey(identity, item = {}, type = 'movie') {
+    const hash = normalizeInfoHash(item.hash || item.infoHash || item.info_hash);
+    const fileIndex = normalizeFileIndex(item.fileIdx ?? item.fileIndex ?? item.file_index);
+    const direct = sanitizeText(item.directUrl || item.externalDirectUrl || item._externalDirectUrl || item.url).slice(0, 512);
+    const title = sanitizeText(item.title || item.name || item.filename || item.file_title).slice(0, 220);
+    const source = [normalizeSnapshotGroup(item), normalizeSnapshotAddon(item), normalizeSnapshotProvider(item)].join(':');
+    const media = [identity.imdbId, identity.season || 0, identity.episode || 0, type].join(':');
+    const stable = hash
+      ? [media, source, hash, fileIndex === null ? -1 : fileIndex].join(':')
+      : [media, source, direct, title].join(':');
+    return crypto.createHash('sha1').update(stable).digest('hex');
+  }
+
+  function normalizeExternalSnapshotEntry(meta = {}, item = {}, options = {}) {
+    const identity = buildExternalSnapshotIdentity(meta);
+    if (!identity || !item || typeof item !== 'object') return null;
+
+    const infoHash = normalizeInfoHash(item.hash || item.infoHash || item.info_hash);
+    const directUrl = sanitizeText(item.directUrl || item.externalDirectUrl || item._externalDirectUrl || item.url);
+    if (!infoHash && !directUrl) return null;
+
+    const type = normalizeExternalSnapshotType(options.type || item.type, meta);
+    const fileIndex = normalizeFileIndex(item.fileIdx ?? item.fileIndex ?? item.file_index);
+    const title = sanitizeText(item.title || item.name || item.filename || item.file_title || infoHash || directUrl).slice(0, 600);
+    const payload = normalizeSnapshotPayload(item);
+    const ttlSeconds = clampInt(options.ttlSeconds || process.env.EXTERNAL_SNAPSHOT_TTL || 7 * 24 * 60 * 60, 7 * 24 * 60 * 60, 60, 30 * 24 * 60 * 60);
+
+    return {
+      snapshotKey: buildExternalSnapshotKey(identity, item, type),
+      imdbId: identity.imdbId,
+      season: identity.season,
+      episode: identity.episode,
+      type,
+      infoHash,
+      fileIndex,
+      fileIndexNorm: normalizeFileIndexNorm(fileIndex),
+      addon: normalizeSnapshotAddon(item),
+      addonGroup: normalizeSnapshotGroup(item),
+      provider: normalizeSnapshotProvider(item),
+      title,
+      quality: sanitizeText(item.quality || item.resolution || item.quality_tag).slice(0, 80) || null,
+      languages: normalizeSnapshotLanguages(item),
+      seeders: Math.max(0, toSafeNumber(item.seeders, 0)),
+      size: Math.max(0, toSafeNumber(item.sizeBytes || item._size || item.mainFileSize || item.size || item.fileSize || item.file_size, 0)),
+      rdState: normalizeRdCacheState(item._rdCacheState || item.rdCacheState || item.cacheState),
+      cached: item.cached_rd === true || item._dbCachedRd === true || item.isCached === true ? true : (item.cached_rd === false || item._dbCachedRd === false ? false : null),
+      payload,
+      expiresAt: new Date(Date.now() + ttlSeconds * 1000)
+    };
+  }
+
+  function normalizeExternalSnapshotRow(row = {}) {
+    const payload = row?.payload_json && typeof row.payload_json === 'object' ? row.payload_json : {};
+    return {
+      ...payload,
+      title: payload.title || sanitizeText(row.title),
+      hash: normalizeInfoHash(payload.hash || payload.infoHash || row.info_hash),
+      infoHash: normalizeInfoHash(payload.infoHash || payload.hash || row.info_hash),
+      fileIdx: normalizeFileIndex(payload.fileIdx ?? payload.fileIndex ?? row.file_index),
+      source: payload.source || sanitizeText(row.provider || row.addon || 'External Snapshot'),
+      provider: payload.provider || sanitizeText(row.provider),
+      externalProvider: payload.externalProvider || sanitizeText(row.provider),
+      externalAddon: payload.externalAddon || sanitizeText(row.addon),
+      externalGroup: payload.externalGroup || sanitizeText(row.addon_group),
+      quality: payload.quality || sanitizeText(row.quality),
+      resolution: payload.resolution || sanitizeText(row.quality),
+      languages: payload.languages || sanitizeText(row.languages),
+      seeders: Math.max(Number(payload.seeders || 0) || 0, Number(row.seeders || 0) || 0),
+      sizeBytes: Math.max(Number(payload.sizeBytes || payload._size || 0) || 0, Number(row.size || 0) || 0),
+      _size: Math.max(Number(payload._size || payload.sizeBytes || 0) || 0, Number(row.size || 0) || 0),
+      rdCacheState: payload.rdCacheState || sanitizeText(row.rd_state),
+      _rdCacheState: payload._rdCacheState || sanitizeText(row.rd_state),
+      cached_rd: payload.cached_rd === true || row.cached === true ? true : (payload.cached_rd === false || row.cached === false ? false : null),
+      _dbCachedRd: payload._dbCachedRd === true || row.cached === true ? true : (payload._dbCachedRd === false || row.cached === false ? false : null),
+      _externalSnapshot: true,
+      _fromExternalSnapshot: true,
+      _externalSnapshotSeenCount: toSafeNumber(row.seen_count, 0),
+      _externalSnapshotLastSeenAt: row.last_seen_at || null
+    };
   }
 
   async function insertTorrent(meta, torrent) {
@@ -1794,6 +1931,219 @@ function createTorrentRepository({
     }
   }
 
+
+  async function upsertExternalStreamSnapshots(meta, items, options = {}) {
+    const pool = getPool();
+    if (!pool || !Array.isArray(items) || items.length === 0) return { processed: 0, upserted: 0 };
+    await awaitDatabaseOptimizations();
+
+    const rows = items
+      .map((item) => normalizeExternalSnapshotEntry(meta, item, options))
+      .filter(Boolean);
+    if (rows.length === 0) return { processed: 0, upserted: 0 };
+
+    try {
+      return await runInTransaction(async (client) => {
+        let upserted = 0;
+        for (const row of rows) {
+          const result = await client.query(
+            `
+              INSERT INTO external_stream_snapshots (
+                snapshot_key,
+                imdb_id,
+                imdb_season,
+                imdb_episode,
+                type,
+                info_hash,
+                info_hash_norm,
+                file_index,
+                file_index_norm,
+                addon,
+                addon_group,
+                provider,
+                title,
+                quality,
+                languages,
+                seeders,
+                size,
+                rd_state,
+                cached,
+                payload_json,
+                first_seen_at,
+                last_seen_at,
+                seen_count,
+                expires_at,
+                created_at,
+                updated_at
+              )
+              VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, NOW(), NOW(), 1, $20, NOW(), NOW())
+              ON CONFLICT (snapshot_key)
+              DO UPDATE SET
+                title = CASE
+                  WHEN EXCLUDED.title IS NULL OR EXCLUDED.title = '' THEN external_stream_snapshots.title
+                  WHEN LENGTH(EXCLUDED.title) > LENGTH(COALESCE(external_stream_snapshots.title, '')) THEN EXCLUDED.title
+                  ELSE external_stream_snapshots.title
+                END,
+                quality = COALESCE(NULLIF(EXCLUDED.quality, ''), external_stream_snapshots.quality),
+                languages = COALESCE(NULLIF(EXCLUDED.languages, ''), external_stream_snapshots.languages),
+                seeders = GREATEST(COALESCE(external_stream_snapshots.seeders, 0), COALESCE(EXCLUDED.seeders, 0)),
+                size = GREATEST(COALESCE(external_stream_snapshots.size, 0), COALESCE(EXCLUDED.size, 0)),
+                rd_state = COALESCE(NULLIF(EXCLUDED.rd_state, ''), external_stream_snapshots.rd_state),
+                cached = COALESCE(EXCLUDED.cached, external_stream_snapshots.cached),
+                payload_json = EXCLUDED.payload_json,
+                last_seen_at = NOW(),
+                seen_count = GREATEST(COALESCE(external_stream_snapshots.seen_count, 0), 0) + 1,
+                expires_at = GREATEST(EXCLUDED.expires_at, external_stream_snapshots.expires_at),
+                updated_at = NOW()
+            `,
+            [
+              row.snapshotKey,
+              row.imdbId,
+              row.season,
+              row.episode,
+              row.type,
+              row.infoHash,
+              row.fileIndex,
+              row.fileIndexNorm,
+              row.addon,
+              row.addonGroup,
+              row.provider,
+              row.title,
+              row.quality,
+              row.languages,
+              row.seeders,
+              row.size,
+              row.rdState,
+              row.cached,
+              JSON.stringify(row.payload),
+              row.expiresAt
+            ]
+          );
+          upserted += Number(result.rowCount || 0);
+        }
+        return { processed: rows.length, upserted };
+      });
+    } catch (error) {
+      console.error(`❌ DB Error upsertExternalStreamSnapshots: ${error.message}`);
+      return { processed: rows.length, upserted: 0, error: error.message };
+    }
+  }
+
+  async function getExternalStreamSnapshots(meta = {}, options = {}) {
+    const pool = getPool();
+    if (!pool) return [];
+    await awaitDatabaseOptimizations();
+
+    const identity = buildExternalSnapshotIdentity(meta);
+    if (!identity) return [];
+
+    const limit = clampInt(options.limit || process.env.EXTERNAL_SNAPSHOT_READ_LIMIT || 80, 80, 1, 300);
+    const type = normalizeExternalSnapshotType(options.type, meta);
+    const params = [identity.imdbId, identity.season, identity.episode, type, limit];
+
+    try {
+      const res = await pool.query(
+        `
+          SELECT DISTINCT ON (COALESCE(info_hash_norm, snapshot_key), file_index_norm)
+            snapshot_key,
+            imdb_id,
+            imdb_season,
+            imdb_episode,
+            type,
+            info_hash,
+            file_index,
+            addon,
+            addon_group,
+            provider,
+            title,
+            quality,
+            languages,
+            seeders,
+            size,
+            rd_state,
+            cached,
+            payload_json,
+            first_seen_at,
+            last_seen_at,
+            seen_count,
+            expires_at
+          FROM external_stream_snapshots
+          WHERE imdb_id = $1
+            AND COALESCE(imdb_season, 0) = COALESCE($2::integer, 0)
+            AND COALESCE(imdb_episode, 0) = COALESCE($3::integer, 0)
+            AND (type = $4 OR $4 IS NULL)
+            AND expires_at > NOW()
+          ORDER BY
+            COALESCE(info_hash_norm, snapshot_key),
+            file_index_norm,
+            CASE WHEN cached IS TRUE THEN 2 WHEN rd_state = 'cached' THEN 1 ELSE 0 END DESC,
+            GREATEST(COALESCE(seeders, 0), 0) DESC,
+            COALESCE(size, 0) DESC,
+            last_seen_at DESC NULLS LAST
+          LIMIT $5
+        `,
+        params
+      );
+      return (res.rows || []).map(normalizeExternalSnapshotRow).filter(Boolean);
+    } catch (error) {
+      console.error(`❌ DB Error getExternalStreamSnapshots: ${error.message}`);
+      return [];
+    }
+  }
+
+  async function getExternalSnapshotStats() {
+    const pool = getPool();
+    if (!pool) return null;
+    await awaitDatabaseOptimizations();
+
+    try {
+      const res = await pool.query(`
+        SELECT
+          COUNT(*)::bigint AS total,
+          COUNT(*) FILTER (WHERE expires_at > NOW())::bigint AS active,
+          COUNT(*) FILTER (WHERE expires_at <= NOW())::bigint AS expired,
+          COUNT(*) FILTER (WHERE cached IS TRUE OR rd_state = 'cached')::bigint AS cached,
+          COUNT(*) FILTER (WHERE addon_group = 'torrentio')::bigint AS torrentio,
+          COUNT(*) FILTER (WHERE addon_group = 'mediafusion')::bigint AS mediafusion,
+          COUNT(*) FILTER (WHERE addon_group = 'meteor')::bigint AS meteor,
+          MAX(last_seen_at) AS last_seen_at
+        FROM external_stream_snapshots
+      `);
+      return res.rows?.[0] || null;
+    } catch (error) {
+      console.error(`❌ DB Error getExternalSnapshotStats: ${error.message}`);
+      return null;
+    }
+  }
+
+  async function getAvailabilityCacheStats() {
+    const pool = getPool();
+    if (!pool) return null;
+    await awaitDatabaseOptimizations();
+
+    try {
+      const res = await pool.query(`
+        SELECT
+          service,
+          COUNT(*)::bigint AS total,
+          COUNT(*) FILTER (WHERE expires_at > NOW())::bigint AS active,
+          COUNT(*) FILTER (WHERE expires_at <= NOW())::bigint AS expired,
+          COUNT(*) FILTER (WHERE cached IS TRUE OR state = 'cached')::bigint AS cached,
+          COUNT(*) FILTER (WHERE state = 'likely_cached')::bigint AS likely_cached,
+          COUNT(*) FILTER (WHERE state = 'probing')::bigint AS probing,
+          COUNT(*) FILTER (WHERE cached IS FALSE OR state = 'uncached_terminal')::bigint AS uncached_terminal,
+          MAX(updated_at) AS last_updated_at
+        FROM debrid_availability_cache
+        GROUP BY service
+        ORDER BY service
+      `);
+      return res.rows || [];
+    } catch (error) {
+      console.error(`❌ DB Error getAvailabilityCacheStats: ${error.message}`);
+      return [];
+    }
+  }
+
   async function getDebridAvailabilityCache(cacheKeys) {
     const pool = getPool();
     if (!pool) return {};
@@ -1937,6 +2287,10 @@ function createTorrentRepository({
     getRdScanProgress,
     prioritizeRdHashes,
     normalizePendingRdCacheState,
+    upsertExternalStreamSnapshots,
+    getExternalStreamSnapshots,
+    getExternalSnapshotStats,
+    getAvailabilityCacheStats,
     getDebridAvailabilityCache,
     setDebridAvailabilityCache,
     isDebridCacheCheckMarked,
