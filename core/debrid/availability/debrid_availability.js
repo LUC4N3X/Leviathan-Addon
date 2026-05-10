@@ -27,9 +27,13 @@ const AVAILABILITY_CACHE_HIT_TTL = 24 * 60 * 60;
 const AVAILABILITY_CACHE_NEGATIVE_TTL = 6 * 60 * 60;
 const AVAILABILITY_CACHE_PROBING_TTL = 120;
 const DEBRID_CACHE_CHECK_MARKER_TTL = 30 * 60;
+const LOCAL_AVAILABILITY_MAX_ENTRIES = 8000;
+const LOCAL_CHECK_MARKER_MAX_ENTRIES = 3000;
 
 const localDbLookupInflight = new Map();
 const recentRdPriorityRequests = new Map();
+const localAvailabilityCache = new Map();
+const localDebridCheckMarkers = new Map();
 
 const VALID_RD_STATES = new Set(['cached', 'likely_cached', 'probing', 'likely_uncached', 'uncached_terminal', 'unknown']);
 const TERMINAL_RD_NEGATIVE_STATUSES = new Set(['error', 'magnet_error', 'virus', 'dead']);
@@ -65,16 +69,75 @@ function buildDebridMediaId(meta = {}) {
     return providerId;
 }
 
+function pruneTimedMap(map, maxEntries) {
+    if (!map || map.size <= maxEntries) return;
+    const now = Date.now();
+    for (const [key, entry] of map.entries()) {
+        if (!entry || Number(entry.expiresAt || 0) <= now) map.delete(key);
+    }
+    while (map.size > maxEntries) {
+        const oldest = map.keys().next().value;
+        if (oldest === undefined) break;
+        map.delete(oldest);
+    }
+}
+
+function getTimedMapValue(map, key) {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey) return null;
+    const entry = map.get(normalizedKey);
+    if (!entry) return null;
+    if (Number(entry.expiresAt || 0) <= Date.now()) {
+        map.delete(normalizedKey);
+        return null;
+    }
+    return entry.value;
+}
+
+function setTimedMapValue(map, key, value, ttlSeconds, maxEntries) {
+    const normalizedKey = String(key || '').trim();
+    const ttl = Math.max(1, Number(ttlSeconds || 0) || 0);
+    if (!normalizedKey || value === undefined || value === null || ttl <= 0) return false;
+    if (map.has(normalizedKey)) map.delete(normalizedKey);
+    map.set(normalizedKey, { value, expiresAt: Date.now() + ttl * 1000 });
+    pruneTimedMap(map, maxEntries);
+    return true;
+}
+
+function getLocalAvailabilityPayload(cacheKey, legacyKey = null) {
+    return getTimedMapValue(localAvailabilityCache, cacheKey) ||
+        (legacyKey && legacyKey !== cacheKey ? getTimedMapValue(localAvailabilityCache, legacyKey) : null);
+}
+
+function rememberLocalAvailabilityPayload(cacheKey, payload, ttlSeconds) {
+    if (!cacheKey || !payload || typeof payload !== 'object') return false;
+    return setTimedMapValue(localAvailabilityCache, cacheKey, payload, ttlSeconds, LOCAL_AVAILABILITY_MAX_ENTRIES);
+}
+
+function buildDebridCheckMarkerLocalKey(service, apiKey, meta = {}) {
+    const mediaId = buildDebridMediaId(meta);
+    if (!mediaId) return null;
+    return `${String(service || 'rd').trim().toLowerCase() || 'rd'}:${buildDebridUserHash(apiKey)}:${mediaId}`;
+}
+
 async function isRecentDebridMediaCheck(service, apiKey, meta, logger = console) {
-    if (!dbHelper || typeof dbHelper.isDebridCacheCheckMarked !== 'function') return false;
     const mediaId = buildDebridMediaId(meta);
     if (!mediaId) return false;
+
+    const localKey = buildDebridCheckMarkerLocalKey(service, apiKey, meta);
+    if (getTimedMapValue(localDebridCheckMarkers, localKey) === true) return true;
+
+    if (!dbHelper || typeof dbHelper.isDebridCacheCheckMarked !== 'function') return false;
     try {
-        return await dbHelper.isDebridCacheCheckMarked({
+        const marked = await dbHelper.isDebridCacheCheckMarked({
             service,
             userHash: buildDebridUserHash(apiKey),
             mediaId
         });
+        if (marked && localKey) {
+            setTimedMapValue(localDebridCheckMarkers, localKey, true, DEBRID_CACHE_CHECK_MARKER_TTL, LOCAL_CHECK_MARKER_MAX_ENTRIES);
+        }
+        return marked;
     } catch (err) {
         logger.warn?.(`[DEBRID CHECK MARKER] read failed: ${err.message}`);
         return false;
@@ -82,9 +145,15 @@ async function isRecentDebridMediaCheck(service, apiKey, meta, logger = console)
 }
 
 async function markDebridMediaCheckDone(service, apiKey, meta, logger = console) {
-    if (!dbHelper || typeof dbHelper.markDebridCacheCheckDone !== 'function') return false;
     const mediaId = buildDebridMediaId(meta);
     if (!mediaId) return false;
+
+    const localKey = buildDebridCheckMarkerLocalKey(service, apiKey, meta);
+    if (localKey) {
+        setTimedMapValue(localDebridCheckMarkers, localKey, true, DEBRID_CACHE_CHECK_MARKER_TTL, LOCAL_CHECK_MARKER_MAX_ENTRIES);
+    }
+
+    if (!dbHelper || typeof dbHelper.markDebridCacheCheckDone !== 'function') return Boolean(localKey);
     try {
         return await dbHelper.markDebridCacheCheckDone({
             service,
@@ -94,7 +163,7 @@ async function markDebridMediaCheckDone(service, apiKey, meta, logger = console)
         });
     } catch (err) {
         logger.warn?.(`[DEBRID CHECK MARKER] write failed: ${err.message}`);
-        return false;
+        return Boolean(localKey);
     }
 }
 
@@ -659,11 +728,20 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             }
             try {
                 const legacyKey = getLegacyAvailabilityCacheKey('rd', item?.hash);
-                let cachedPayload = await Cache.getAvailability(cacheKey);
-                if (!cachedPayload && legacyKey && legacyKey !== cacheKey) cachedPayload = await Cache.getAvailability(legacyKey);
+                let cachedPayload = getLocalAvailabilityPayload(cacheKey, legacyKey);
+                if (!cachedPayload) {
+                    cachedPayload = await Cache.getAvailability(cacheKey);
+                    if (!cachedPayload && legacyKey && legacyKey !== cacheKey) cachedPayload = await Cache.getAvailability(legacyKey);
+                    if (cachedPayload) {
+                        rememberLocalAvailabilityPayload(cacheKey, cachedPayload, Math.min(AVAILABILITY_CACHE_HIT_TTL, 3600));
+                    }
+                }
                 if (!cachedPayload && typeof dbHelper?.getDebridAvailabilityCache === 'function') {
                     const persisted = await dbHelper.getDebridAvailabilityCache([cacheKey, legacyKey].filter(Boolean));
                     cachedPayload = persisted?.[cacheKey] || (legacyKey ? persisted?.[legacyKey] : null) || null;
+                    if (cachedPayload) {
+                        rememberLocalAvailabilityPayload(cacheKey, cachedPayload, Math.min(AVAILABILITY_CACHE_HIT_TTL, 3600));
+                    }
                     if (cachedPayload && typeof Cache.cacheAvailability === 'function') {
                         await Cache.cacheAvailability(cacheKey, cachedPayload, Math.min(AVAILABILITY_CACHE_HIT_TTL, 3600));
                     }
@@ -829,6 +907,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                         const availabilityTtl = statePayload.state === 'cached' ? AVAILABILITY_CACHE_HIT_TTL : (statePayload.state === 'uncached_terminal' ? AVAILABILITY_CACHE_NEGATIVE_TTL : AVAILABILITY_CACHE_PROBING_TTL);
                         const availabilityPayload = buildAvailabilityCachePayload(statePayload, item, result);
                         await Cache.cacheAvailability(availabilityCacheKey, availabilityPayload, availabilityTtl);
+                        rememberLocalAvailabilityPayload(availabilityCacheKey, availabilityPayload, availabilityTtl);
                         if (typeof dbHelper?.setDebridAvailabilityCache === 'function') {
                             await dbHelper.setDebridAvailabilityCache({ cache_key: availabilityCacheKey, payload: availabilityPayload, ttlSeconds: availabilityTtl });
                         }
@@ -860,6 +939,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                         if (availabilityCacheKey) {
                             const probingPayload = buildAvailabilityCachePayload({ state: 'probing', cached: null, failures: item?._dbFailures || 0 }, item, null);
                             await Cache.cacheAvailability(availabilityCacheKey, probingPayload, AVAILABILITY_CACHE_PROBING_TTL);
+                            rememberLocalAvailabilityPayload(availabilityCacheKey, probingPayload, AVAILABILITY_CACHE_PROBING_TTL);
                             if (typeof dbHelper?.setDebridAvailabilityCache === 'function') {
                                 await dbHelper.setDebridAvailabilityCache({ cache_key: availabilityCacheKey, payload: probingPayload, ttlSeconds: AVAILABILITY_CACHE_PROBING_TTL });
                             }
@@ -1020,6 +1100,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                     if (availabilityKey) {
                         const directPayload = buildAvailabilityCachePayload({ state: 'cached', cached: true, failures: 0 }, { ...item, fileIdx: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : item?.fileIdx }, { file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null });
                         await Cache.cacheAvailability(availabilityKey, directPayload, AVAILABILITY_CACHE_HIT_TTL);
+                        rememberLocalAvailabilityPayload(availabilityKey, directPayload, AVAILABILITY_CACHE_HIT_TTL);
                         if (typeof dbHelper?.setDebridAvailabilityCache === 'function') {
                             await dbHelper.setDebridAvailabilityCache({ cache_key: availabilityKey, payload: directPayload, ttlSeconds: AVAILABILITY_CACHE_HIT_TTL });
                         }

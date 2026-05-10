@@ -613,9 +613,33 @@ function isDbLike(item = {}) {
   return /\b(db|database|leviathandb|saved)\b/.test(text);
 }
 
+function isManualContributionSourceText(value = '') {
+  const text = String(value || '').trim().toLowerCase();
+  return /(?:leviathan[_\s-]*companion|manual|bt4g|b\d+gprx|downloadtorrentfile)/i.test(text);
+}
+
+function isManualContributionItem(item = {}) {
+  const values = [
+    item?.source,
+    item?.provider,
+    item?.providerId,
+    item?.sourceName,
+    item?.externalAddon,
+    item?.externalGroup,
+    item?._dbProvider,
+    item?.behaviorHints?.vortexSource,
+    item?.behaviorHints?.vortexMeta?.provider,
+    item?.behaviorHints?.vortexMeta?.source
+  ];
+  return values.some(isManualContributionSourceText);
+}
+
 function normalizeSourceLabel(value) {
   const text = String(value || '').trim();
   if (!text || /^(unknown|n\/a|null|undefined)$/i.test(text)) return '';
+  // Manual companion/import sources are intentionally not merged into duplicate labels.
+  // If the infoHash already exists from another provider, the manual source must stay hidden.
+  if (isManualContributionSourceText(text)) return '';
   return text.slice(0, 48);
 }
 
@@ -663,6 +687,10 @@ function collectMergedCount(items = [], fallback = 1) {
 function sourcePriority(item = {}, options = {}) {
   const text = String(`${item?.source || ''} ${item?.provider || ''} ${item?.externalAddon || ''} ${item?.externalGroup || ''} ${item?.name || ''} ${item?.title || ''}`).toLowerCase();
   const isSeries = isSeriesContext(options);
+  // Manual imports are for filling holes. If the same infoHash is already found by
+  // Torrentio/remote/external providers, keep the non-manual provider visible and
+  // suppress the manual duplicate/label. Unique manual hashes still pass through.
+  if (isManualContributionItem(item)) return 1;
   if (isSeries && isTorrentioLike(item)) return 45;
   if (/mediafusion/.test(text)) return 25;
   if (isDbLike(item)) return isSeries ? 5 : 18;

@@ -5,6 +5,7 @@ const runtimeState = require('../../runtime_state');
 const { safeCompare } = require('../../utils/common');
 const { getRequestOrigin } = require('../../utils/url');
 const { validateConfig, MAX_CONFIG_LENGTH, decodeConfigBase64 } = require('../../config/schema');
+const { encryptConfigObject, isUserConfigEncryptionEnabled } = require('../../security/user_config_crypto');
 const { getRecentStreamTraces } = require('../../lib/stream_trace');
 
 const DEBRID_VALIDATE_TIMEOUT_MS = Math.max(1500, parseInt(process.env.DEBRID_VALIDATE_TIMEOUT_MS || '5000', 10) || 5000);
@@ -445,6 +446,55 @@ function registerApiRoutes(app, {
 
     app.get('/api/config/decode', decodeConfigForEditor);
     app.post('/api/config/decode', decodeConfigForEditor);
+
+    async function encodeConfigForInstall(req, res) {
+        res.setHeader('Cache-Control', 'no-store, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+
+        try {
+            const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+            const rawConfig = body.config && typeof body.config === 'object' && !Array.isArray(body.config) ? body.config : body;
+            const normalizedConfig = validateConfig(rawConfig);
+            const mergedConfig = {
+                ...rawConfig,
+                filters: {
+                    ...(rawConfig.filters || {}),
+                    ...(normalizedConfig.filters || {})
+                },
+                service: normalizedConfig.service,
+                configVersion: normalizedConfig.configVersion
+            };
+
+            const token = await encryptConfigObject(mergedConfig);
+            if (token.length > Math.max(MAX_CONFIG_LENGTH * 4, 65536)) {
+                return res.status(413).json({
+                    ok: false,
+                    code: 'config_token_too_large',
+                    message: 'Configurazione troppo grande.'
+                });
+            }
+
+            const origin = getRequestOrigin(req, { fallbackOrigin: 'http://localhost' });
+            const manifestPath = `/${encodeURIComponent(token)}/manifest.json`;
+
+            return res.json({
+                ok: true,
+                encrypted: isUserConfigEncryptionEnabled(),
+                token,
+                manifestPath,
+                manifestUrl: `${origin}${manifestPath}`
+            });
+        } catch (error) {
+            logger.warn('[SECURITY] Config encode failed', { error: error.message });
+            return res.status(400).json({
+                ok: false,
+                code: 'config_encode_failed',
+                message: 'Impossibile generare la configurazione.'
+            });
+        }
+    }
+
+    app.post('/api/config/encode', encodeConfigForInstall);
 
     app.post('/api/debrid/validate', async (req, res) => {
         res.setHeader('Cache-Control', 'no-store');

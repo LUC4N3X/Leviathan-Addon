@@ -659,10 +659,31 @@ function normalizeDisplaySource(source) {
   if (/(?:saved\s*cloud|cloud\s*salvato|debrid\s*cloud|rd\s*cloud|tb\s*cloud)/i.test(raw)) {
     return /\btb\b|torbox/i.test(raw) ? 'TorBox' : 'Real-Debrid';
   }
+
+  const cleanSourceToken = (value) => normalizeSpaces(String(value || '')
+    .replace(/[\u200b-\u200d\ufeff]/g, '')
+    .replace(/^(?:[-_\s]+)|(?:[-_\s]+)$/g, '')
+    .replace(/[_-]+/g, ' ')
+  );
+
+  const cleanedParts = raw
+    .split(/[|,/]+/)
+    .map(cleanSourceToken)
+    .filter(Boolean)
+    .filter((part) => !/^(?:mirror|mirrors?|main|fallback|external|addon|torrentio mirror|torrentio main)$/i.test(part));
+
+  const cleanedRaw = normalizeSpaces(cleanedParts.join(' | '));
+  const sourceForMapping = cleanedRaw || raw;
+
   for (const entry of DISPLAY_SOURCE_MAP) {
-    if (entry.regex.test(raw)) return entry.value;
+    if (entry.regex.test(sourceForMapping)) return entry.value;
   }
-  const normalized = raw.replace(/MediaFusion|Torrentio|Fallback/gi, '').trim();
+
+  const normalized = cleanedParts
+    .map((part) => part.replace(/\b(?:MediaFusion|Torrentio|Fallback)\b/gi, '').trim())
+    .filter(Boolean)
+    .join(' | ');
+
   return normalized || '✨ MediaFusion';
 }
 
