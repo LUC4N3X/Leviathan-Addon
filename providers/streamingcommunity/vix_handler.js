@@ -13,6 +13,10 @@ const {
 } = require('../extractors/resilience');
 const { issueHlsTransitKey, TRANSIT_KIND, buildTransitUrl } = require('./stream_transit.js');
 const { buildRequestHeaders: buildProxyRequestHeaders } = require('./vix_proxy');
+const {
+    extractPlaylistIntelligence,
+    normalizeLanguage: normalizePlaylistLanguage
+} = require('../utils/playlist_intelligence');
 const { createBlockedFallbackGuard } = require('../utils/provider_blocked_fallback');
 
 const VIX_BASE = 'https://vixsrc.to';
@@ -540,6 +544,96 @@ async function inferCanPlayFHDFromPlaylist(url, referer) {
     return ['1080p', '1440p', '4K'].includes(normalizeQuality(snapshot.quality));
 }
 
+function uniquePlaylistLanguages(values = []) {
+    const out = [];
+    for (const value of values || []) {
+        const normalized = normalizePlaylistLanguage(value) || String(value || '').trim().toLowerCase();
+        if (normalized && !out.includes(normalized)) out.push(normalized);
+    }
+    return out;
+}
+
+function buildScLanguageMeta(intelligence = null, fallbackText = '') {
+    const audioLanguages = uniquePlaylistLanguages(intelligence?.audioLanguages || []);
+    const subtitleLanguages = uniquePlaylistLanguages(intelligence?.subtitleLanguages || []);
+
+    if (!audioLanguages.length && AUDIO_IT_RE.test(String(fallbackText || ''))) {
+        audioLanguages.push('ita');
+    }
+
+    return {
+        audioLanguages,
+        subtitleLanguages,
+        isMultiAudio: audioLanguages.length > 1,
+        hasItalianAudio: audioLanguages.includes('ita'),
+        language: audioLanguages.length === 1 ? audioLanguages[0] : ''
+    };
+}
+
+async function getPlaylistLanguageIntel(streamUrl, referer) {
+    try {
+        const snapshot = await fetchPlaylistSnapshot(streamUrl, referer);
+        const intelligence = extractPlaylistIntelligence(snapshot?.text || '');
+        return {
+            snapshot,
+            intelligence,
+            ...buildScLanguageMeta(intelligence, snapshot?.text || '')
+        };
+    } catch {
+        return {
+            snapshot: null,
+            intelligence: null,
+            ...buildScLanguageMeta(null, '')
+        };
+    }
+}
+
+function decorateScStreamWithLanguageIntel(stream, languageIntel = null) {
+    if (!stream || !languageIntel) return stream;
+    const audioLanguages = uniquePlaylistLanguages(languageIntel.audioLanguages || []);
+    const subtitleLanguages = uniquePlaylistLanguages(languageIntel.subtitleLanguages || []);
+    const intelligence = languageIntel.intelligence || null;
+
+    const vortexMeta = {
+        ...(stream.behaviorHints?.vortexMeta || {})
+    };
+
+    if (audioLanguages.length) {
+        vortexMeta.audioLanguages = audioLanguages;
+        vortexMeta.isMultiAudio = audioLanguages.length > 1;
+        vortexMeta.hasItalianAudio = audioLanguages.includes('ita');
+    }
+
+    if (subtitleLanguages.length) {
+        vortexMeta.subtitleLanguages = subtitleLanguages;
+    }
+
+    if (intelligence) {
+        vortexMeta.playlistLanguageConfidence = intelligence.confidence || 0;
+        vortexMeta.playlistVariantCount = intelligence.variantCount || 0;
+        vortexMeta.playlistTrackCount = intelligence.trackCount || 0;
+        vortexMeta.playlistQuality = normalizeQuality(intelligence.quality || 'Unknown');
+        vortexMeta.playlistHeight = intelligence.height || 0;
+    }
+
+    return {
+        ...stream,
+        language: audioLanguages.length === 1 ? audioLanguages[0] : stream.language,
+        audioLanguages: audioLanguages.length ? audioLanguages : stream.audioLanguages,
+        subtitleLanguages: subtitleLanguages.length ? subtitleLanguages : stream.subtitleLanguages,
+        isMultiAudio: audioLanguages.length > 1 || stream.isMultiAudio === true,
+        hasItalianAudio: audioLanguages.includes('ita') || stream.hasItalianAudio === true,
+        behaviorHints: {
+            ...(stream.behaviorHints || {}),
+            audioLanguages: audioLanguages.length ? audioLanguages : stream.behaviorHints?.audioLanguages,
+            subtitleLanguages: subtitleLanguages.length ? subtitleLanguages : stream.behaviorHints?.subtitleLanguages,
+            isMultiAudio: audioLanguages.length > 1 || stream.behaviorHints?.isMultiAudio === true,
+            hasItalianAudio: audioLanguages.includes('ita') || stream.behaviorHints?.hasItalianAudio === true,
+            vortexMeta
+        }
+    };
+}
+
 async function getRealVixPage(url) {
     let currentUrl = url;
     let currentReferer = `${VIX_BASE}/`;
@@ -869,17 +963,18 @@ async function fetchPlaylistQualityAndHeaders(streamUrl, pageUrl, qualityFilter)
     };
 
     let quality = 'Unknown';
-    let hasItalianAudio = false;
+    let languageIntel = buildScLanguageMeta(null, '');
 
     try {
-        const snapshot = await fetchPlaylistSnapshot(streamUrl, pageUrl);
+        languageIntel = await getPlaylistLanguageIntel(streamUrl, pageUrl);
+        const snapshot = languageIntel?.snapshot;
         if (snapshot?.text) {
             quality = normalizeQuality(snapshot.quality);
             if (!qualityMatchesFilter(quality, qualityFilter)) {
-                return { quality, headers, hasItalianAudio: false, allowed: false };
+                return { quality, headers, languageIntel, allowed: false };
             }
-            if (AUDIO_IT_RE.test(snapshot.text)) {
-                hasItalianAudio = true;
+
+            if (languageIntel.hasItalianAudio) {
                 headers['Accept-Language'] = 'it-IT,it;q=0.9,en;q=0.8';
             } else {
                 headers['Accept-Language'] = 'en-US,en;q=0.9,it;q=0.5';
@@ -887,7 +982,7 @@ async function fetchPlaylistQualityAndHeaders(streamUrl, pageUrl, qualityFilter)
         }
     } catch {}
 
-    return { quality, headers, hasItalianAudio, allowed: true };
+    return { quality, headers, languageIntel, allowed: true };
 }
 
 async function extractFromCandidate(candidateUrl, cleanTitle, season, episode, qualityFilter, reqHost) {
@@ -898,7 +993,9 @@ async function extractFromCandidate(candidateUrl, cleanTitle, season, episode, q
     const sourceUrl = buildMasterUrl(payload.rawUrl, payload.token, payload.expires, payload.canPlayFHD, payload.hasB, payload.asn);
     if (!sourceUrl) return [];
 
-    return buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitle, season, episode, qualityFilter, reqHost);
+    return buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitle, season, episode, qualityFilter, reqHost, {
+        canPlayFHD: payload.canPlayFHD === true
+    });
 }
 
 async function tryDirectVixsrcStream(pageUrl, cleanTitle, season, episode, qualityFilter) {
@@ -930,10 +1027,10 @@ async function tryDirectVixsrcStream(pageUrl, cleanTitle, season, episode, quali
     if (!streamUrl) return [];
 
     streamUrl = appendOrReplaceQuery(streamUrl, { lang: PREFERRED_LANG });
-    const { quality, headers, hasItalianAudio, allowed } = await fetchPlaylistQualityAndHeaders(streamUrl, pageUrl, qualityFilter);
+    const { quality, headers, languageIntel, allowed } = await fetchPlaylistQualityAndHeaders(streamUrl, pageUrl, qualityFilter);
     if (!allowed) return [];
 
-    const stream = {
+    const stream = decorateScStreamWithLanguageIntel({
         name: 'SC Direct',
         title: cleanTitle,
         url: streamUrl,
@@ -943,8 +1040,7 @@ async function tryDirectVixsrcStream(pageUrl, cleanTitle, season, episode, quali
             proxyHeaders: { request: headers },
             vortexMeta: { branch: 'direct-vixsrc', quality }
         }
-    };
-    if (hasItalianAudio) stream.language = 'ita';
+    }, languageIntel);
     return [stampScStream(stream, cleanTitle, season, episode)];
 }
 
@@ -1647,18 +1743,27 @@ async function buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitl
     const wants720 = normalizeQualityFilter(qualityFilter) !== '1080';
     const hintedFhd = options?.canPlayFHD === true || H_FLAG_RE.test(String(sourceUrl || ''));
     const fastMode = options?.fastMode === true;
+    const shouldProbeLanguages = !fastMode || String(process.env.SC_FAST_LANGUAGE_PROBE || '').trim() === '1';
 
     let inferredFhd = hintedFhd;
+    let languageIntel = buildScLanguageMeta(null, '');
+
+    if (shouldProbeLanguages) {
+        languageIntel = await getPlaylistLanguageIntel(sourceUrl, pageReferer);
+    }
 
     if (!inferredFhd && wants1080 && !fastMode) {
         try {
-            inferredFhd = await inferCanPlayFHDFromPlaylist(sourceUrl, pageReferer);
+            inferredFhd = ['1080p', '1440p', '4K'].includes(normalizeQuality(languageIntel?.snapshot?.quality || 'Unknown'))
+                || await inferCanPlayFHDFromPlaylist(sourceUrl, pageReferer);
         } catch {}
     }
 
+    const makeStream = (stream) => stampScStream(decorateScStreamWithLanguageIntel(stream, languageIntel), cleanTitle, season, episode);
+
     if (inferredFhd && wants1080) {
-        streams.push(stampScStream({
-            name: '??? StreamingCommunity\n?? 1080p',
+        streams.push(makeStream({
+            name: '🎬 StreamingCommunity\n🎥 1080p',
             title: cleanTitle,
             url: buildSyntheticUrl(sourceUrl, '1080p', pageReferer, reqHost),
             quality: '1080p',
@@ -1666,11 +1771,11 @@ async function buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitl
                 notWebReady: false,
                 vortexMeta: { branch: fastMode ? 'synthetic-1080-fast' : 'synthetic-1080', quality: '1080p' }
             }
-        }, cleanTitle, season, episode));
+        }));
     }
 
     if (wants720 || (!streams.length && fastMode)) {
-        streams.push(stampScStream({
+        streams.push(makeStream({
             name: '📱 StreamingCommunity\n🛡 Android/TV Safe 720p',
             title: cleanTitle,
             url: buildSyntheticUrl(sourceUrl, '720p', pageReferer, reqHost),
@@ -1679,7 +1784,7 @@ async function buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitl
                 notWebReady: false,
                 vortexMeta: { branch: fastMode ? 'android-safe-720-fast' : 'android-safe-720', quality: '720p', androidTvSafe: true }
             }
-        }, cleanTitle, season, episode));
+        }));
     }
 
     return sortStreams(dedupeStreams(streams));
@@ -2024,3 +2129,4 @@ module.exports = {
     normalizeQualityFilter,
     inferCanPlayFHDFromPlaylist
 };
+
