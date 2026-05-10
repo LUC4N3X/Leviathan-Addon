@@ -47,6 +47,7 @@ const EMPTY_RESOLVED_URL_TTL = Math.max(parseInt(process.env.EMPTY_RESOLVED_URL_
 const AVAILABILITY_CACHE_TTL = Math.max(parseInt(process.env.AVAILABILITY_CACHE_TTL || '900', 10) || 900, 30);
 const EMPTY_AVAILABILITY_TTL = Math.max(parseInt(process.env.EMPTY_AVAILABILITY_TTL || '120', 10) || 120, 15);
 const DB_LOOKUP_CACHE_TTL = Math.max(parseInt(process.env.DB_LOOKUP_CACHE_TTL || '30', 10) || 30, 5);
+const SHARED_FETCH_INFLIGHT_MAX_ENTRIES = Math.max(128, Math.min(20000, parseInt(process.env.SHARED_FETCH_INFLIGHT_MAX_ENTRIES || '4096', 10) || 4096));
 const VERBOSE_CACHE_LOGS = String(process.env.VERBOSE_CACHE_LOGS || 'false').toLowerCase() === 'true';
 const SHARED_STREAM_CACHE_ENABLED = String(process.env.SHARED_STREAM_CACHE_ENABLED || 'true').toLowerCase() !== 'false';
 const SHARED_STREAM_CACHE_MAX_BYTES = Math.max(4096, parseInt(process.env.SHARED_STREAM_CACHE_MAX_BYTES || String(1024 * 1024 * 2), 10) || (1024 * 1024 * 2));
@@ -900,6 +901,11 @@ const Cache = {
                 }
                 Cache.setRaw(providerKey, idKey, [], failureTtl);
                 return [];
+            }
+        }, {
+            maxEntries: SHARED_FETCH_INFLIGHT_MAX_ENTRIES,
+            onEvict: (count) => {
+                if (count > 0) incrementMetric('cache.raw.inflight.evicted', count);
             }
         });
     }
