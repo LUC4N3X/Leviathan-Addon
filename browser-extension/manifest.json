@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Leviathan Companion",
-  "version": "0.4.1",
-  "description": "Companion grafico per import magnet in Leviathan: attivo solo su pagine torrent, con ricerca IMDb/TMDB assistita e scan Real-Debrid.",
+  "version": "0.5.0",
+  "description": "Leviathan Companion Pro: sonar magnet con provider BT4G/1337x, titolo/anno/qualità/lingua/codec/size/seed/leech, IMDb assistant, health check, explain import e RD/TorBox mode.",
   "permissions": [
     "storage"
   ],
