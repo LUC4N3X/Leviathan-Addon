@@ -780,7 +780,11 @@ function annotateResult(item, meta = {}, configInput = {}) {
     _score: score,
     _reasons: reasons,
     _rankMeta: details,
-    _rankProfile: details.profile
+    _rankProfile: details.profile,
+    _leviathanScore: details.scoreProfile?.finalScore,
+    _leviathanScoreExplain: details.scoreProfile?.explain,
+    _leviathanExplain: details.scoreProfile?.brutalExplain,
+    _leviathanExplainText: details.scoreProfile?.brutalExplain?.text
   };
 }
 
