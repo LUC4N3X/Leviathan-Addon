@@ -10,7 +10,6 @@ const { shouldSkipRecentWork } = require('../../recent_work');
 const RdOracle = require('../state/cache_oracle');
 const EpisodePrecision = require('../../stream/episode_precision');
 
-// RD availability policy: default in codice, non in .env.
 const LOCAL_DB_CACHE_TTL = 25;
 const RD_PRIORITY_DEDUP_MS = 15000;
 const RD_FOREGROUND_VISIBLE_WINDOW = 9;
@@ -20,7 +19,6 @@ const RD_FOREGROUND_FALLBACK_PROBE_LIMIT = 3;
 const RD_FOREGROUND_EXACT_LIMIT = 4;
 const RD_PRIORITY_TOP = 18;
 const RD_PRIORITY_WINDOW_MIN = 5;
-// UI sicura: se abbiamo abbastanza episodi RD confermati, nascondiamo i dubbi.
 const RD_HIDE_DUBIOUS_WHEN_ENOUGH_SAFE = true;
 const RD_MIN_EXACT_SAFE_RESULTS = 3;
 const AVAILABILITY_CACHE_HIT_TTL = 24 * 60 * 60;
@@ -29,6 +27,7 @@ const AVAILABILITY_CACHE_PROBING_TTL = 120;
 const DEBRID_CACHE_CHECK_MARKER_TTL = 30 * 60;
 const LOCAL_AVAILABILITY_MAX_ENTRIES = 8000;
 const LOCAL_CHECK_MARKER_MAX_ENTRIES = 3000;
+const LOCAL_DB_LOOKUP_INFLIGHT_MAX_ENTRIES = 2000;
 
 const localDbLookupInflight = new Map();
 const recentRdPriorityRequests = new Map();
@@ -262,9 +261,7 @@ function deriveDbRdAvailability(row = {}) {
     const stalePositive = (cachedBool === true || rawState === 'cached') && isPastDueDate(row?.next_cached_check);
 
     if (stalePositive) {
-        // Un vecchio positivo RD non va mostrato come semplice "probing":
-        // l'auditor lo ricontrolla comunque in background, ma in UI resta un hit morbido.
-        // Se poi il recheck fallisce, il worker lo degrada a likely_uncached/uncached_terminal.
+                        
         return {
             state: 'likely_cached',
             cached: null,
@@ -416,6 +413,8 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 const normalizedRows = (Array.isArray(rows) ? rows : []).map((row) => normalizeDbResultItem(row, meta)).filter(Boolean);
                 await Cache.cacheDbTorrents(cacheKey, normalizedRows, LOCAL_DB_CACHE_TTL);
                 return normalizedRows;
+            }, {
+                maxEntries: LOCAL_DB_LOOKUP_INFLIGHT_MAX_ENTRIES
             });
         } catch (err) {
             logger.warn(`[DB READ] Lookup locale fallito: ${err.message}`);
