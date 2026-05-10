@@ -53,6 +53,9 @@ const SEARCH_QUERY_TIMEOUT_MS = Math.max(8000, parseInt(process.env.GS_SEARCH_TI
 const GS_TOP_SPEED = Object.freeze({
   flareEndpoint: process.env.FLARESOLVERR_URL || 'http://flaresolverr:8191/v1',
   directFetchTimeoutMs: 3000,
+  sessionTimeoutFloorMs: 2600,
+  staleSessionEmergencyClearance: true,
+  staleSessionEmergencyCooldownMs: 0,
   clearanceBridgeMode: true,
   enableImpitFallback: false,
   backgroundClearanceEnabled: true,
@@ -64,6 +67,7 @@ const GS_TOP_SPEED = Object.freeze({
   backgroundTitlePrimeMax: 8,
   prewarmStartDelayMs: 0,
   prewarmWaitMs: 250,
+  requestClearanceWaitMs: 18000,
   hotpathFlareFallback: false,
   backgroundStaticPrime: true,
   movieFastSlugMax: 6,
@@ -101,6 +105,13 @@ const GS_PREWARM_WAIT_MS = GS_TOP_SPEED.prewarmWaitMs;
 const FLARE_WARMUP_TIMEOUT_MS = Math.min(
   Math.max(12000, parseInt(process.env.GS_FLARE_WARMUP_TIMEOUT_MS || '24000', 10) || 24000),
   Math.max(15000, GLOBAL_TIMEOUT_MS - 12000)
+);
+const GS_REQUEST_CLEARANCE_WAIT_MS = Math.max(
+  GS_PREWARM_WAIT_MS,
+  Math.min(
+    FLARE_WARMUP_TIMEOUT_MS + DIRECT_FETCH_TIMEOUT_MS + 1500,
+    Math.max(6000, parseInt(process.env.GS_REQUEST_CLEARANCE_WAIT_MS || process.env.GUARDOSERIE_REQUEST_CLEARANCE_WAIT_MS || String(GS_TOP_SPEED.requestClearanceWaitMs), 10) || GS_TOP_SPEED.requestClearanceWaitMs)
+  )
 );
 
 const DEBUG_GS              = envFlag('GUARDOSERIE_DEBUG', false);
@@ -145,6 +156,9 @@ const gsHttp = createProviderHttpGuard({
   debugCf: DEBUG_CF,
   sessionTtlMs: CF_SESSION_TTL,
   directFetchTimeoutMs: DIRECT_FETCH_TIMEOUT_MS,
+  sessionTimeoutFloorMs: GS_TOP_SPEED.sessionTimeoutFloorMs,
+  emergencyClearanceAfterSessionFailure: GS_TOP_SPEED.staleSessionEmergencyClearance,
+  emergencyClearanceMinIntervalMs: GS_TOP_SPEED.staleSessionEmergencyCooldownMs,
   searchTimeoutMs: SEARCH_QUERY_TIMEOUT_MS,
   clearanceTimeoutMs: FLARE_WARMUP_TIMEOUT_MS,
   refreshDomainOnStart: envFlag('GS_REFRESH_DOMAIN_ON_START', false) || envFlag('GUARDOSERIE_REFRESH_DOMAIN_ON_START', false),
@@ -320,18 +334,29 @@ function warmupGsClearanceInBackground(reason = 'startup', options = {}) {
   return gsClearanceWarmupPromise;
 }
 
+function isGsRequestClearanceGate(reason = '') {
+  return /^(?:request|movie|series|episode|stream)/i.test(String(reason || ''));
+}
+
 async function waitForGsClearancePrewarm(reason = 'request') {
-  if (gsHttp.isSessionFresh() || !gsHttp.getEndpoint() || GS_PREWARM_WAIT_MS <= 0) {
+  if (gsHttp.isSessionFresh() || !gsHttp.getEndpoint()) {
     return gsHttp.isSessionFresh();
   }
 
   const startedAt = Date.now();
-  const warmup = warmupGsClearanceInBackground(reason);
+  const requestGate = isGsRequestClearanceGate(reason);
+  const waitMs = requestGate
+    ? Math.max(GS_PREWARM_WAIT_MS, GS_REQUEST_CLEARANCE_WAIT_MS)
+    : GS_PREWARM_WAIT_MS;
+
+  if (waitMs <= 0) return gsHttp.isSessionFresh();
+
+  const warmup = warmupGsClearanceInBackground(reason, { primeHome: true });
   if (!warmup) return gsHttp.isSessionFresh();
 
   let timer = null;
   const timeout = new Promise(resolve => {
-    timer = setTimeout(() => resolve('__timeout__'), GS_PREWARM_WAIT_MS);
+    timer = setTimeout(() => resolve('__timeout__'), waitMs);
     if (timer?.unref) timer.unref();
   });
 
@@ -341,9 +366,9 @@ async function waitForGsClearancePrewarm(reason = 'request') {
 
   const fresh = gsHttp.isSessionFresh();
   if (result === '__timeout__') {
-    gsDebug('prewarm wait timeout', { reason, freshSession: fresh, waitMs: GS_PREWARM_WAIT_MS, ms: Date.now() - startedAt });
+    gsDebug('prewarm wait timeout', { reason, freshSession: fresh, waitMs, requestGate, ms: Date.now() - startedAt });
   } else {
-    gsDebug('prewarm wait done', { reason, ok: Boolean(result), freshSession: fresh, ms: Date.now() - startedAt });
+    gsDebug('prewarm wait done', { reason, ok: Boolean(result), freshSession: fresh, waitMs, requestGate, ms: Date.now() - startedAt });
   }
   return fresh;
 }
