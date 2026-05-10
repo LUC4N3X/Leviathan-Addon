@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('path');
 const axios = require('axios');
 const runtimeState = require('../../runtime_state');
 const { safeCompare } = require('../../utils/common');
@@ -359,7 +360,8 @@ function registerApiRoutes(app, {
     withTimeout,
     CONFIG,
     logger,
-    getCacheHealthStatus
+    getCacheHealthStatus,
+    publicDir
 }) {
     const telemetryAuthMiddleware = createTelemetryAuthMiddleware();
 
@@ -397,6 +399,15 @@ function registerApiRoutes(app, {
             traceLimit: limit
         });
         res.json(payload);
+    });
+
+    app.get('/mission-control', telemetryAuthMiddleware, (req, res) => {
+        if (!publicDir) {
+            return res.status(503).send('Mission Control UI non configurata.');
+        }
+        res.setHeader('Cache-Control', 'no-store, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        return res.sendFile(path.join(publicDir, 'mission-control.html'));
     });
 
     async function decodeConfigForEditor(req, res) {
