@@ -1655,6 +1655,10 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
     const formatterSource = item?.source;
     const displayLanguage = formatLanguageLabel(languageInfo, details.languages, getEffectiveLangMode(config, meta));
     const qualityCompatibleBingeGroup = buildQualityCompatibleBingeGroup({ service: serviceLabel, quality, details, infoHash: item?.hash, releaseGroup: item?.releaseGroup || item?.group, language: displayLanguage });
+    const rankExplainText = item?._leviathanExplainText || item?._leviathanExplain?.text || (Array.isArray(item?._leviathanScoreExplain) ? item._leviathanScoreExplain.join(' | ') : undefined);
+    const rankScore = Number.isFinite(Number(item?._leviathanScore))
+        ? Number(item._leviathanScore)
+        : (Number.isFinite(Number(item?._score)) ? Number(item._score) : undefined);
 
     if (isAIOActive) {
         return {
@@ -1684,6 +1688,8 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
                 filename: item?.episodeFileHint?.fileName || item?._episodeFileHint?.fileName || item?.filename || undefined,
                 cacheState: availabilityState,
                 rdCacheState: availabilityState,
+                rankExplain: rankExplainText,
+                rankScore,
                 torrentioLooseItForceKeep: Boolean(item?._torrentioLooseItForceKeep),
                 torrentioExactGuard: Boolean(item?._torrentioExactGuard)
             },
@@ -1728,6 +1734,8 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
             filename: item?.episodeFileHint?.fileName || item?._episodeFileHint?.fileName || item?.filename || undefined,
             cacheState: availabilityState,
             rdCacheState: availabilityState,
+            rankExplain: rankExplainText,
+            rankScore,
             torrentioLooseItForceKeep: Boolean(item?._torrentioLooseItForceKeep),
             torrentioExactGuard: Boolean(item?._torrentioExactGuard)
         },
@@ -2369,6 +2377,7 @@ function saveResultsToDbBackground(meta, results, config = null, type = null, op
                 const guaranteedCachedUpdates = [];
                 const guaranteedSet = new Set();
                 const torrentRows = [];
+                const externalSnapshotRows = [];
                 const ledgerPackFiles = [];
 
                 for (const item of results) {
@@ -2405,6 +2414,9 @@ function saveResultsToDbBackground(meta, results, config = null, type = null, op
                     };
 
                     torrentRows.push(torrentObj);
+                    if (item?.isExternal === true || item?.externalAddon || item?.externalGroup || item?._externalSnapshot === true || item?._sourceGroup === 'external') {
+                        externalSnapshotRows.push(item);
+                    }
 
                     const learnedFileIdx = getResolvedFileIdx(item);
                     if (meta?.isSeries && learnedFileIdx !== null) {
@@ -2464,6 +2476,16 @@ function saveResultsToDbBackground(meta, results, config = null, type = null, op
                             if (success) savedCount += 1;
                         }
                         processedCount = torrentRows.length;
+                    }
+                }
+
+                if (externalSnapshotRows.length > 0 && typeof dbHelper.upsertExternalStreamSnapshots === 'function') {
+                    const snapshotOutcome = await dbHelper.upsertExternalStreamSnapshots(meta, externalSnapshotRows, {
+                        type: effectiveType,
+                        ttlSeconds: config?.filters?.externalSnapshotTtl || process.env.EXTERNAL_SNAPSHOT_TTL || undefined
+                    });
+                    if (Number(snapshotOutcome?.processed || 0) > 0) {
+                        logger.info(`[EXTERNAL SNAPSHOT] processed=${snapshotOutcome.processed} upserted=${snapshotOutcome.upserted || 0} imdb=${meta?.imdb_id || 'n/a'}`);
                     }
                 }
 
@@ -3618,6 +3640,39 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
     }
 }
 
+
+async function fetchExternalSnapshotResults(meta = {}, type = 'movie', langMode = 'ita', config = {}) {
+    if (!dbHelper || typeof dbHelper.getExternalStreamSnapshots !== 'function' || !meta?.imdb_id) return [];
+    try {
+        const rows = await dbHelper.getExternalStreamSnapshots(meta, {
+            type,
+            limit: config?.filters?.externalSnapshotLimit || process.env.EXTERNAL_SNAPSHOT_READ_LIMIT || 80
+        });
+        const normalized = (Array.isArray(rows) ? rows : [])
+            .map((item) => normalizeExternalCandidateForPipeline({
+                ...item,
+                _externalSnapshot: true,
+                _fromExternalSnapshot: true,
+                _externalIdMatched: item?._externalIdMatched !== false,
+                _externalBatch: item?._externalBatch || 'SnapshotDB'
+            }, { type, meta, langMode }))
+            .filter(Boolean)
+            .map((item) => ({
+                ...item,
+                _externalSnapshot: true,
+                _fromExternalSnapshot: true,
+                _sourceGroup: item._sourceGroup || 'external_snapshot'
+            }));
+        if (normalized.length > 0) {
+            logger.info(`[EXTERNAL SNAPSHOT] DB hit | imdb=${meta.imdb_id} s=${meta?.season || '-'} e=${meta?.episode || '-'} results=${normalized.length}`);
+        }
+        return dedupeExternalCandidates(normalized);
+    } catch (error) {
+        logger.warn(`[EXTERNAL SNAPSHOT] read failed | imdb=${meta?.imdb_id || 'n/a'} | error=${error.message}`);
+        return [];
+    }
+}
+
 async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, config, dbOnlyMode, sourceModeFlags = null, torrentPipelineEnabled = true, langMode, aggressiveFilter, userTmdbKey, seedResults = [] }) {
     if (torrentPipelineEnabled !== true) {
         logger.info(`[TORRENT PIPELINE] Skipped title search for ${meta?.title || finalId} (web-only mode)`);
@@ -3927,16 +3982,27 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           item._localDb = true;
           item._sourceGroup = item._sourceGroup || 'local_db';
       }
+
+      const externalSnapshotResults = await trace.time('external-snapshots', () => (
+          localDbEnabled && !sourceModeFlags.liveOnlyMode
+              ? fetchExternalSnapshotResults(meta, type, langMode, config)
+              : []
+      ), (items) => ({
+          enabled: localDbEnabled && !sourceModeFlags.liveOnlyMode,
+          results: Array.isArray(items) ? items.length : 0
+      }));
+      const dbSeedResults = [...(Array.isArray(localDbResults) ? localDbResults : []), ...(Array.isArray(externalSnapshotResults) ? externalSnapshotResults : [])];
+
       let localDbFastPool = [];
       let localDbSatisfaction = { satisfied: false, reason: 'no_db_results' };
-      if (localDbResults.length > 0) {
+      if (dbSeedResults.length > 0) {
           localDbFastPool = applyConfiguredTorrentFilters(
-              await normalizeCandidateResults(filterWithTorrentPackTrust(localDbResults, aggressiveFilter, { meta, type, langMode }), meta),
+              await normalizeCandidateResults(filterWithTorrentPackTrust(dbSeedResults, aggressiveFilter, { meta, type, langMode }), meta),
               filters
           );
           const localDbAssessment = assessFastResultQuality(localDbFastPool, meta, langMode, config);
           localDbSatisfaction = evaluatePoolSatisfaction(localDbAssessment, meta);
-          logger.info(`[DB READ] Trovati ${localDbFastPool.length}/${localDbResults.length} torrent dal DB locale | satisfied=${localDbSatisfaction.satisfied} reason=${localDbSatisfaction.reason}`);
+          logger.info(`[DB READ] Trovati ${localDbFastPool.length}/${dbSeedResults.length} torrent/snapshot dal DB locale | torrents=${localDbResults.length} snapshots=${externalSnapshotResults.length} satisfied=${localDbSatisfaction.satisfied} reason=${localDbSatisfaction.reason}`);
       }
 
       const allowSeriesDbFastPath = !meta?.isSeries || shouldAllowSeriesDbFastPath(filters);
@@ -3961,7 +4027,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               langMode,
               aggressiveFilter,
               userTmdbKey,
-              seedResults: localDbFastPool.length > 0 ? localDbFastPool : localDbResults
+              seedResults: localDbFastPool.length > 0 ? localDbFastPool : dbSeedResults
           })
           : [], (items) => ({
               enabled: shouldFetchNetworkResults,
@@ -3974,7 +4040,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       let cleanResults = [];
       let rankedList = [];
       if (torrentPipelineEnabled) {
-          const dbMergePool = localDbFastPool.length > 0 ? localDbFastPool : localDbResults;
+          const dbMergePool = localDbFastPool.length > 0 ? localDbFastPool : dbSeedResults;
           const groupedMergePool = useLocalDbFastPath
               ? localDbFastPool
               : buildGroupedFallbackCandidatePool({
@@ -3994,6 +4060,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           });
           trace.stage('torrent-filter', {
               db: localDbResults.length,
+              snapshots: externalSnapshotResults.length,
               network: networkResults.length,
               pool: groupedMergePool.length,
               results: cleanResults.length,
@@ -4034,7 +4101,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               logger.info(`[DEDUPE INFOHASH] ranked removed=${infoHashRankDedupe.removed} kept=${infoHashRankDedupe.results.length} title="${String(meta?.title || '').slice(0, 80)}" s=${meta?.season || '-'} e=${meta?.episode || '-'}`);
           }
           rankedList = preserveRdStatusList(beforeInfoHashDedupe, infoHashRankDedupe.results, { logger, stage: 'ranked-dedupe' });
-          rankedList = preserveMovieLocalDbCoverage(rankedList, localDbFastPool.length > 0 ? localDbFastPool : localDbResults, meta, filters);
+          rankedList = preserveMovieLocalDbCoverage(rankedList, localDbFastPool.length > 0 ? localDbFastPool : dbSeedResults, meta, filters);
           trace.stage('ranked-dedupe', {
               in: beforeInfoHashDedupe.length,
               kept: rankedList.length,
