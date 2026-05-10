@@ -10,6 +10,7 @@ const { shouldSkipRecentWork } = require('../../recent_work');
 const RdOracle = require('../state/cache_oracle');
 const EpisodePrecision = require('../../stream/episode_precision');
 
+// RD availability policy: default in codice, non in .env.
 const LOCAL_DB_CACHE_TTL = 25;
 const RD_PRIORITY_DEDUP_MS = 15000;
 const RD_FOREGROUND_VISIBLE_WINDOW = 9;
@@ -19,6 +20,7 @@ const RD_FOREGROUND_FALLBACK_PROBE_LIMIT = 3;
 const RD_FOREGROUND_EXACT_LIMIT = 4;
 const RD_PRIORITY_TOP = 18;
 const RD_PRIORITY_WINDOW_MIN = 5;
+// UI sicura: se abbiamo abbastanza episodi RD confermati, nascondiamo i dubbi.
 const RD_HIDE_DUBIOUS_WHEN_ENOUGH_SAFE = true;
 const RD_MIN_EXACT_SAFE_RESULTS = 3;
 const AVAILABILITY_CACHE_HIT_TTL = 24 * 60 * 60;
@@ -66,6 +68,20 @@ function buildDebridMediaId(meta = {}) {
     const episode = Number(meta?.episode || 0) || 0;
     if (season > 0 && episode > 0) return `${providerId}:s${season}:e${episode}`;
     return providerId;
+}
+
+function encodeAvailabilityMediaId(mediaId) {
+    const raw = String(mediaId || '').trim().toLowerCase();
+    if (!raw) return null;
+    return raw.replace(/[^a-z0-9:_-]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '').slice(0, 220) || null;
+}
+
+function getAvailabilityMediaId(meta = {}) {
+    return encodeAvailabilityMediaId(buildDebridMediaId(meta));
+}
+
+function isSeriesAvailabilityMeta(meta = {}) {
+    return Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
 }
 
 function pruneTimedMap(map, maxEntries) {
@@ -166,11 +182,31 @@ async function markDebridMediaCheckDone(service, apiKey, meta, logger = console)
     }
 }
 
-function getAvailabilityCacheKey(service, hash, fileIdx = null) {
+function getAvailabilityCacheKey(service, hash, fileIdx = null, meta = null) {
     const normalizedService = String(service || 'rd').trim().toLowerCase();
     const normalizedHash = String(hash || '').trim().toUpperCase();
     if (!/^[A-F0-9]{40}$/.test(normalizedHash)) return null;
-    return `${normalizedService}:${normalizedHash}:${normalizeFileIdxForAvailability(fileIdx)}`;
+    const baseKey = `${normalizedService}:${normalizedHash}:${normalizeFileIdxForAvailability(fileIdx)}`;
+    const mediaId = getAvailabilityMediaId(meta);
+    return mediaId ? `${baseKey}:${mediaId}` : baseKey;
+}
+
+function getAvailabilityCacheKeys(service, hash, fileIdx = null, meta = {}) {
+    const primary = getAvailabilityCacheKey(service, hash, fileIdx, meta);
+    if (!primary) return { primary: null, fallbacks: [] };
+
+    const normalizedService = String(service || 'rd').trim().toLowerCase();
+    const normalizedHash = String(hash || '').trim().toUpperCase();
+    const filePart = normalizeFileIdxForAvailability(fileIdx);
+    const fallbacks = [];
+    const fileScoped = `${normalizedService}:${normalizedHash}:${filePart}`;
+
+    if (fileScoped !== primary) fallbacks.push(fileScoped);
+    // Hash-only legacy cache is safe for movies. For series it can leak a pack
+    // result from another episode, so allow it only when a concrete file id exists.
+    if (!isSeriesAvailabilityMeta(meta) || filePart !== 'auto') fallbacks.push(`${normalizedService}:${normalizedHash}`);
+
+    return { primary, fallbacks: [...new Set(fallbacks.filter(Boolean))] };
 }
 
 function getLegacyAvailabilityCacheKey(service, hash) {
@@ -180,15 +216,21 @@ function getLegacyAvailabilityCacheKey(service, hash) {
     return `${normalizedService}:${normalizedHash}`;
 }
 
-function buildAvailabilityCachePayload(statePayload = {}, item = {}, result = null) {
+function buildAvailabilityCachePayload(statePayload = {}, item = {}, result = null, meta = {}) {
     const proof = item?._rdEpisodeProof || item?.rdEpisodeProof || result?.episodeFileHint || null;
+    const episodeExact = item?._episodeExact === true || item?._rdEpisodeExact === true || proof?.exact === true;
     return {
         state: normalizeRdStateValue(statePayload.state) || null,
         cached: statePayload.cached === true ? true : statePayload.cached === false ? false : null,
         failures: Math.max(0, Number(statePayload.failures || 0) || 0),
         fileSize: Number(result?.file_size || item?._size || item?.sizeBytes || 0) || 0,
         fileIdx: Number.isInteger(Number(item?.fileIdx)) && Number(item.fileIdx) >= 0 ? Number(item.fileIdx) : null,
-        episodeExact: item?._episodeExact === true || item?._rdEpisodeExact === true || proof?.exact === true,
+        mediaId: getAvailabilityMediaId(meta),
+        imdbId: String(meta?.imdb_id || meta?.imdbId || '').trim().toLowerCase() || null,
+        season: Number(meta?.season || 0) > 0 ? Number(meta.season) : null,
+        episode: Number(meta?.episode || 0) > 0 ? Number(meta.episode) : null,
+        proofLevel: episodeExact ? 'episode_file' : (Number.isInteger(Number(item?.fileIdx)) && Number(item.fileIdx) >= 0 ? 'file' : 'hash'),
+        episodeExact,
         episodeProof: proof && typeof proof === 'object' ? proof : null,
         episodeFileHint: item?.episodeFileHint || item?._episodeFileHint || result?.episodeFileHint || null,
         ts: Date.now()
@@ -261,7 +303,9 @@ function deriveDbRdAvailability(row = {}) {
     const stalePositive = (cachedBool === true || rawState === 'cached') && isPastDueDate(row?.next_cached_check);
 
     if (stalePositive) {
-                        
+        // Un vecchio positivo RD non va mostrato come semplice "probing":
+        // l'auditor lo ricontrolla comunque in background, ma in UI resta un hit morbido.
+        // Se poi il recheck fallisce, il worker lo degrada a likely_uncached/uncached_terminal.
         return {
             state: 'likely_cached',
             cached: null,
@@ -370,8 +414,12 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             _dbLastCachedCheck: row?.last_cached_check || null,
             _dbNextCachedCheck: row?.next_cached_check || null,
             _dbFailures: Number(row?.cache_check_failures || 0),
-            _tbCached: row?.tb_cached === true,
-            tbCached: row?.tb_cached === true
+            // TorBox cache can change quickly/monthly. DB state is only a hint;
+            // the foreground TorBox API check remains authoritative before emit.
+            _tbDbCachedHint: row?.tb_cached === true,
+            _tbDbLastCachedCheck: row?.tb_last_cached_check || null,
+            _tbCached: false,
+            tbCached: false
         };
         if (hasEpisodeMapping) {
             item.fileIdx = matchedFileIndex;
@@ -426,9 +474,10 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         const normalizedService = String(service || '').toLowerCase();
 
         if (normalizedService === 'tb') {
-            if (item?._tbCached === true || item?.tbCached === true || item?.tb_cached === true) return 'cached';
+            if (item?._savedCloud === true || item?.isSavedCloud === true) return 'cached';
+            if ((item?._tbCached === true || item?.tbCached === true || item?.tb_cached === true) && item?._tbLiveChecked === true) return 'cached';
             const explicitTbState = normalizeRdStateValue(item?._tbCacheState || item?.tbCacheState);
-            return explicitTbState || 'unknown';
+            return explicitTbState || (item?._tbDbCachedHint === true ? 'likely_cached' : 'unknown');
         }
 
         if (normalizedService !== 'rd') return 'unknown';
@@ -720,24 +769,27 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         const cachedUnknownCandidates = [];
         let availabilityCacheHits = 0;
         for (const item of allUnknownCandidates) {
-            const cacheKey = getAvailabilityCacheKey('rd', item?.hash, item?.fileIdx);
+                const { primary: cacheKey, fallbacks } = getAvailabilityCacheKeys('rd', item?.hash, item?.fileIdx, meta);
             if (!cacheKey || typeof Cache.getAvailability !== 'function') {
                 cachedUnknownCandidates.push(item);
                 continue;
             }
             try {
-                const legacyKey = getLegacyAvailabilityCacheKey('rd', item?.hash);
-                let cachedPayload = getLocalAvailabilityPayload(cacheKey, legacyKey);
+                    let cachedPayload = getLocalAvailabilityPayload(cacheKey, fallbacks[0] || null);
                 if (!cachedPayload) {
                     cachedPayload = await Cache.getAvailability(cacheKey);
-                    if (!cachedPayload && legacyKey && legacyKey !== cacheKey) cachedPayload = await Cache.getAvailability(legacyKey);
+                        for (const fallbackKey of fallbacks) {
+                            if (cachedPayload) break;
+                            cachedPayload = await Cache.getAvailability(fallbackKey);
+                        }
                     if (cachedPayload) {
                         rememberLocalAvailabilityPayload(cacheKey, cachedPayload, Math.min(AVAILABILITY_CACHE_HIT_TTL, 3600));
                     }
                 }
                 if (!cachedPayload && typeof dbHelper?.getDebridAvailabilityCache === 'function') {
-                    const persisted = await dbHelper.getDebridAvailabilityCache([cacheKey, legacyKey].filter(Boolean));
-                    cachedPayload = persisted?.[cacheKey] || (legacyKey ? persisted?.[legacyKey] : null) || null;
+                        const lookupKeys = [cacheKey, ...fallbacks].filter(Boolean);
+                        const persisted = await dbHelper.getDebridAvailabilityCache(lookupKeys);
+                        cachedPayload = persisted?.[cacheKey] || fallbacks.map((key) => persisted?.[key]).find(Boolean) || null;
                     if (cachedPayload) {
                         rememberLocalAvailabilityPayload(cacheKey, cachedPayload, Math.min(AVAILABILITY_CACHE_HIT_TTL, 3600));
                     }
@@ -901,10 +953,10 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 });
 
                 if (typeof Cache.cacheAvailability === 'function') {
-                    const availabilityCacheKey = getAvailabilityCacheKey('rd', item.hash, item?.fileIdx);
+                    const availabilityCacheKey = getAvailabilityCacheKey('rd', item.hash, item?.fileIdx, meta);
                     if (availabilityCacheKey) {
                         const availabilityTtl = statePayload.state === 'cached' ? AVAILABILITY_CACHE_HIT_TTL : (statePayload.state === 'uncached_terminal' ? AVAILABILITY_CACHE_NEGATIVE_TTL : AVAILABILITY_CACHE_PROBING_TTL);
-                        const availabilityPayload = buildAvailabilityCachePayload(statePayload, item, result);
+                        const availabilityPayload = buildAvailabilityCachePayload(statePayload, item, result, meta);
                         await Cache.cacheAvailability(availabilityCacheKey, availabilityPayload, availabilityTtl);
                         rememberLocalAvailabilityPayload(availabilityCacheKey, availabilityPayload, availabilityTtl);
                         if (typeof dbHelper?.setDebridAvailabilityCache === 'function') {
@@ -934,9 +986,9 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                         RdOracle.applyRdStateToItem(item, 'probing', { cached: null });
                     }
                     if (typeof Cache.cacheAvailability === 'function') {
-                        const availabilityCacheKey = getAvailabilityCacheKey('rd', item?.hash, item?.fileIdx);
+                        const availabilityCacheKey = getAvailabilityCacheKey('rd', item?.hash, item?.fileIdx, meta);
                         if (availabilityCacheKey) {
-                            const probingPayload = buildAvailabilityCachePayload({ state: 'probing', cached: null, failures: item?._dbFailures || 0 }, item, null);
+                            const probingPayload = buildAvailabilityCachePayload({ state: 'probing', cached: null, failures: item?._dbFailures || 0 }, item, null, meta);
                             await Cache.cacheAvailability(availabilityCacheKey, probingPayload, AVAILABILITY_CACHE_PROBING_TTL);
                             rememberLocalAvailabilityPayload(availabilityCacheKey, probingPayload, AVAILABILITY_CACHE_PROBING_TTL);
                             if (typeof dbHelper?.setDebridAvailabilityCache === 'function') {
@@ -1095,9 +1147,9 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 const dbLookupKey = getMetaDbLookupKey(meta);
                 if (dbLookupKey) await Cache.invalidateDbTorrents(dbLookupKey, `${reason}_cached`);
                 if (typeof Cache.cacheAvailability === 'function') {
-                    const availabilityKey = getAvailabilityCacheKey(normalizedService, item.hash, Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : item?.fileIdx);
+                    const availabilityKey = getAvailabilityCacheKey(normalizedService, item.hash, Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : item?.fileIdx, meta);
                     if (availabilityKey) {
-                        const directPayload = buildAvailabilityCachePayload({ state: 'cached', cached: true, failures: 0 }, { ...item, fileIdx: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : item?.fileIdx }, { file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null });
+                        const directPayload = buildAvailabilityCachePayload({ state: 'cached', cached: true, failures: 0 }, { ...item, fileIdx: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : item?.fileIdx }, { file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null }, meta);
                         await Cache.cacheAvailability(availabilityKey, directPayload, AVAILABILITY_CACHE_HIT_TTL);
                         rememberLocalAvailabilityPayload(availabilityKey, directPayload, AVAILABILITY_CACHE_HIT_TTL);
                         if (typeof dbHelper?.setDebridAvailabilityCache === 'function') {
@@ -1128,4 +1180,13 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
     };
 }
 
-module.exports = { createDebridAvailabilityTools };
+module.exports = {
+    createDebridAvailabilityTools,
+    __private: {
+        buildDebridMediaId,
+        getAvailabilityMediaId,
+        getAvailabilityCacheKey,
+        getAvailabilityCacheKeys,
+        buildAvailabilityCachePayload
+    }
+};
