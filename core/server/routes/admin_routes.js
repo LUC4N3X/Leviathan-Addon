@@ -1,8 +1,10 @@
 'use strict';
 
+const packageMeta = require('../../../package.json');
 const runtimeState = require('../../runtime_state');
 const tmdbHelper = require('../../utils/tmdb_helper');
 const RealDebridProbe = require('../../debrid/probe/realdebrid_probe');
+const TorboxClient = require('../../debrid/clients/torbox_client');
 const { parseSeasonEpisode } = require('../../pack_intelligence');
 const {
     normalizeHash,
@@ -20,6 +22,100 @@ function normalizeHashes(values) {
 function normalizeTmdbId(value) {
     const normalized = String(value || '').trim().replace(/^tmdb:(?:movie|tv|series):/i, '').replace(/^tmdb:/i, '');
     return /^\d+$/.test(normalized) ? normalized : null;
+}
+
+
+function readBoolean(value, fallback = false) {
+    if (value === true || value === false) return value;
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+    return fallback;
+}
+
+function normalizeCacheMode(body = {}) {
+    const raw = String(body.cacheMode || body.cache_mode || body.service || '').trim().toLowerCase();
+    if (['none', 'off', 'disabled', 'no'].includes(raw)) return 'none';
+    if (['tb', 'torbox', 'tor-box'].includes(raw)) return 'tb';
+    if (['both', 'all', 'rd+tb', 'rd_tb', 'rd-tb', 'realdebrid+torbox', 'real-debrid+torbox'].includes(raw)) return 'both';
+    if (['rd', 'realdebrid', 'real-debrid'].includes(raw)) return 'rd';
+
+    const wantsRd = readBoolean(body.scanRd ?? body.scan_rd, false);
+    const wantsTb = readBoolean(body.scanTb ?? body.scan_tb, false);
+    if (wantsRd && wantsTb) return 'both';
+    if (wantsTb) return 'tb';
+    if (wantsRd) return 'rd';
+    return 'rd';
+}
+
+function normalizeReleaseInfo(value = {}) {
+    const input = value && typeof value === 'object' ? value : {};
+    const rawLanguages = Array.isArray(input.languages) ? input.languages : String(input.languages || '').split(/[,|/;]/g);
+    const languages = [...new Set(rawLanguages
+        .map((item) => String(item || '').trim().toUpperCase())
+        .filter(Boolean)
+        .slice(0, 8))];
+    const seeders = Number.isFinite(Number(input.seed ?? input.seeders)) ? Math.max(0, Number(input.seed ?? input.seeders)) : 0;
+    const leechers = Number.isFinite(Number(input.leech ?? input.leechers)) ? Math.max(0, Number(input.leech ?? input.leechers)) : 0;
+    const sizeMb = Number.isFinite(Number(input.sizeMb ?? input.size_mb)) && Number(input.sizeMb ?? input.size_mb) > 0
+        ? Number(input.sizeMb ?? input.size_mb)
+        : null;
+    const sizeBytes = Number.isFinite(Number(input.sizeBytes ?? input.size_bytes)) && Number(input.sizeBytes ?? input.size_bytes) > 0
+        ? Number(input.sizeBytes ?? input.size_bytes)
+        : (sizeMb ? Math.round(sizeMb * 1024 * 1024) : 0);
+    return {
+        rawTitle: String(input.rawTitle || input.raw_title || '').trim() || null,
+        cleanTitle: String(input.cleanTitle || input.clean_title || '').trim() || null,
+        year: Number.isInteger(Number(input.year)) ? Number(input.year) : null,
+        resolution: String(input.resolution || '').trim() || null,
+        languages,
+        codec: String(input.codec || input.videoCodec || input.video_codec || '').trim() || null,
+        source: String(input.source || input.qualitySource || input.quality_source || '').trim() || null,
+        sizeLabel: String(input.sizeLabel || input.size_label || '').trim() || null,
+        sizeMb,
+        sizeBytes,
+        seeders,
+        leechers,
+        packKind: String(input.packKind || input.pack_kind || '').trim() || null,
+        packLabel: String(input.packLabel || input.pack_label || '').trim() || null,
+        packReason: String(input.packReason || input.pack_reason || '').trim() || null,
+        score: Number.isFinite(Number(input.score)) ? Number(input.score) : null,
+        hash: normalizeHash(input.hash || input.infoHash || input.info_hash) || null
+    };
+}
+
+function normalizeManualPageInfo(value = {}) {
+    const input = value && typeof value === 'object' ? value : {};
+    return {
+        host: String(input.host || input.hostname || '').trim().slice(0, 160) || null,
+        title: String(input.title || '').trim().slice(0, 300) || null,
+        canonical: String(input.canonical || '').trim().slice(0, 1024) || null,
+        imdbIds: Array.isArray(input.imdbIds) ? input.imdbIds.filter((id) => /^tt\d+$/i.test(String(id || ''))).slice(0, 8) : [],
+        magnetCount: Number.isInteger(Number(input.magnetCount)) ? Number(input.magnetCount) : null,
+        jsonLdTypes: Array.isArray(input.jsonLdTypes) ? input.jsonLdTypes.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 12) : []
+    };
+}
+
+function cleanManualProviderLabel(value = '') {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    return raw
+        .replace(/\[[^\]]*\]/g, ' ')
+        .replace(/\([^)]*\)/g, ' ')
+        .replace(/\b(?:mirror|mirrors?|proxy|proxied|download|torrent|magnet|search|results?|pagina|page|official|unblock(?:ed)?|clone|main|alt|alternative)\b/ig, ' ')
+        .replace(/(?:^|\s)[#:/|\\-]+\s*/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+}
+
+function normalizeManualProviderHost(value = '') {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+        return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.replace(/^www\./i, '').toLowerCase();
+    } catch (_) {
+        return raw.replace(/^www\./i, '').toLowerCase();
+    }
 }
 
 function normalizePackFileEntries(values = []) {
@@ -40,20 +136,48 @@ function getLargestPackFileIndex(files = []) {
 }
 
 
-function deriveManualProvider(rawProvider, sourceUrl, sourceTitle) {
-    const raw = String(rawProvider || '').trim();
-    const generic = !raw || /^(manual|leviathan_companion|companion|unknown|n\/a)$/i.test(raw);
+function deriveManualProvider(rawProvider, sourceUrl, sourceTitle, sourceHost = '') {
+    const raw = cleanManualProviderLabel(rawProvider);
+    const generic = !raw || /^(manual|leviathan[_\s-]*companion|companion|unknown|n\/a|null|undefined|source|provider)$/i.test(raw);
+    const host = normalizeManualProviderHost(sourceHost || sourceUrl);
+    const rawLower = raw.toLowerCase();
     const sourceText = `${sourceUrl || ''} ${sourceTitle || ''}`.toLowerCase();
-    let host = '';
-    try { host = new URL(String(sourceUrl || '')).hostname.replace(/^www\./i, '').toLowerCase(); } catch (_) {}
-    const haystack = `${host} ${sourceText}`;
-    if (/bt4g|b\d+gprx|downloadtorrentfile/.test(haystack)) return 'BT4G';
-    if (/1337x/.test(haystack)) return '1337x';
-    if (/rarbg/.test(haystack)) return 'RARBG';
-    if (/torrentgalaxy|tgx/.test(haystack)) return 'TorrentGalaxy';
-    if (/thepiratebay|piratebay/.test(haystack)) return 'ThePirateBay';
+
+    const providers = [
+        ['BT4G', /(?:^|\.)(?:bt4g|bt4gprx|btdig|btdiggg|b4g|b4gprx|downloadtorrentfile)(?:\.|$)/i, /\b(?:bt4g|bt4gprx|btdig|btdiggg|b4gprx|downloadtorrentfile)\b/i],
+        ['1337x', /(?:^|\.)(?:1337x|1377x|x1337x|1337xx)(?:\.|$)/i, /\b(?:1337x|1377x|x1337x|1337xx)\b/i],
+        ['TorrentGalaxy', /(?:^|\.)(?:torrentgalaxy|tgx)(?:\.|$)/i, /\b(?:torrentgalaxy|tgx)\b/i],
+        ['MagnetDL', /(?:^|\.)magnetdl(?:\.|$)/i, /\bmagnetdl\b/i],
+        ['IlCorsaroNero', /(?:^|\.)(?:ilcorsaronero|corsaronero|ilcorsaro|corsaro)(?:\.|$)/i, /\b(?:ilcorsaronero|ilcorsaro|corsaro nero|corsaronero)\b/i],
+        ['ThePirateBay', /(?:^|\.)(?:thepiratebay|piratebay|tpb)(?:\.|$)/i, /\b(?:the pirate bay|thepiratebay|piratebay|tpb)\b/i],
+        ['LimeTorrents', /(?:^|\.)limetorrents(?:\.|$)/i, /\blimetorrents\b/i],
+        ['Nyaa', /(?:^|\.)nyaa(?:\.|$)/i, /\bnyaa\b/i],
+        ['EZTV', /(?:^|\.)eztv(?:\.|$)/i, /\beztv\b/i],
+        ['YTS', /(?:^|\.)(?:yts|yify)(?:\.|$)/i, /\b(?:yts|yify)\b/i],
+        ['Torlock', /(?:^|\.)torlock(?:\.|$)/i, /\btorlock\b/i],
+        ['TorrentDownloads', /(?:^|\.)(?:torrentdownloads|torrentdownload)(?:\.|$)/i, /\btorrentdownloads?\b/i],
+        ['RARBG', /(?:^|\.)rarbg(?:\.|$)/i, /\brarbg\b/i]
+    ];
+
+    // The real page host is authoritative. This prevents BT4G pages from being
+    // re-labelled as 1337x just because a page title, related result or ad text
+    // contains another provider name.
+    for (const [label, hostPattern] of providers) {
+        if (hostPattern.test(host)) return label;
+    }
+
+    // If the extension explicitly sent a known provider, preserve it before
+    // scanning noisy page text.
+    for (const [label, _hostPattern, textPattern] of providers) {
+        if (textPattern.test(rawLower)) return label;
+    }
+
+    for (const [label, _hostPattern, textPattern] of providers) {
+        if (textPattern.test(sourceText)) return label;
+    }
+
     if (!generic) return raw.slice(0, 64);
-    if (host) return host.split('.')[0].replace(/[^a-z0-9_-]+/gi, '').slice(0, 32) || 'MANUAL';
+    if (host) return cleanManualProviderLabel(host.split('.')[0]).replace(/[^a-z0-9_-]+/gi, '').slice(0, 32) || 'MANUAL';
     return 'MANUAL';
 }
 
@@ -63,9 +187,12 @@ function normalizeManualImportPayload(body = {}) {
     const torrentSource = body.torrent || body.torrentB64 || body.torrentBase64 || body.torrentFile || body.torrent_file || null;
     if (torrentSource) torrentMeta = parseTorrentInput(torrentSource);
 
-    const rawTitle = String(body.title || '').trim() || magnet?.title || torrentMeta?.title || '';
-    const sourceUrl = String(body.sourceUrl || body.source_url || '').trim() || null;
-    const sourceTitle = String(body.sourceTitle || body.source_title || body.pageTitle || body.page_title || '').trim() || null;
+    const releaseInfo = normalizeReleaseInfo(body.releaseInfo || body.release_info || {});
+    const pageInfo = normalizeManualPageInfo(body.pageInfo || body.page_info || {});
+    const rawTitle = String(body.title || '').trim() || releaseInfo.rawTitle || releaseInfo.cleanTitle || magnet?.title || torrentMeta?.title || '';
+    const sourceUrl = String(body.sourceUrl || body.source_url || pageInfo.canonical || '').trim() || null;
+    const sourceTitle = String(body.sourceTitle || body.source_title || body.pageTitle || body.page_title || pageInfo.title || '').trim() || null;
+    const sourceHost = String(body.sourceHost || body.source_host || pageInfo.host || '').trim() || null;
     const parsedFromTitle = rawTitle ? parseSeasonEpisode(rawTitle, 1, { anime: body.isAnime === true || body.anime === true }) : null;
     const imdbId = String(body.imdbId || body.imdb_id || '').trim().toLowerCase();
     const season = Number.isInteger(Number(body.season)) && Number(body.season) > 0 ? Number(body.season) : (parsedFromTitle?.season || null);
@@ -74,7 +201,7 @@ function normalizeManualImportPayload(body = {}) {
         ? Number(body.fileIdx ?? body.file_index)
         : null;
     const inferredType = String(body.type || (season || episode ? 'series' : 'movie')).trim().toLowerCase();
-    const hash = normalizeHash(body.hash || body.infoHash || body.info_hash) || magnet?.infoHash || torrentMeta?.infoHash || null;
+    const hash = normalizeHash(body.hash || body.infoHash || body.info_hash) || releaseInfo.hash || magnet?.infoHash || torrentMeta?.infoHash || null;
     const tmdbId = normalizeTmdbId(body.tmdbId || body.tmdb_id);
     const normalizedPackFiles = normalizePackFileEntries(body.packFiles || body.pack_files || []);
     const inferredPackFiles = normalizedPackFiles.length > 0
@@ -97,8 +224,14 @@ function normalizeManualImportPayload(body = {}) {
 
     const size = Number.isFinite(Number(body.size)) && Number(body.size) > 0
         ? Number(body.size)
-        : (Number(torrentMeta?.totalSize || 0) || 0);
-    const service = ['rd', 'tb'].includes(String(body.service || '').trim().toLowerCase()) ? String(body.service).trim().toLowerCase() : null;
+        : (Number(releaseInfo.sizeBytes || 0) || Number(torrentMeta?.totalSize || 0) || 0);
+    const cacheMode = normalizeCacheMode(body);
+    const scanRd = cacheMode !== 'none' && (cacheMode === 'rd' || cacheMode === 'both') && readBoolean(body.scanRd ?? body.scan_rd, true);
+    const scanTb = cacheMode !== 'none' && (cacheMode === 'tb' || cacheMode === 'both') && readBoolean(body.scanTb ?? body.scan_tb, true);
+    const serviceRaw = String(body.service || '').trim().toLowerCase();
+    const service = ['rd', 'tb', 'both'].includes(serviceRaw) ? serviceRaw : (cacheMode === 'both' ? 'both' : (cacheMode === 'tb' ? 'tb' : (cacheMode === 'rd' ? 'rd' : null)));
+    const rdApiKey = String(body.rdApiKey || body.rd_api_key || body.apiKey || body.api_key || '').trim() || null;
+    const torboxApiKey = String(body.torboxApiKey || body.torbox_api_key || body.tbApiKey || body.tb_api_key || '').trim() || null;
 
     return {
         hash,
@@ -106,22 +239,32 @@ function normalizeManualImportPayload(body = {}) {
         title: rawTitle || hash,
         sourceTitle,
         sourceUrl,
-        scanRd: body.scanRd !== false && body.scan_rd !== false,
-        provider: deriveManualProvider(body.provider || body.source, sourceUrl, sourceTitle),
+        sourceHost,
+        scanRd,
+        scanTb,
+        cacheMode,
+        provider: deriveManualProvider(body.provider || body.sourceProvider || body.source, sourceUrl, sourceTitle, sourceHost),
         imdbId: /^tt\d+$/.test(imdbId) ? imdbId : null,
         tmdbId,
         type: inferredType,
         season,
         episode,
+        year: Number.isInteger(Number(body.year || releaseInfo.year)) ? Number(body.year || releaseInfo.year) : extractYearFromTitle(rawTitle || sourceTitle || ''),
         fileIndex: autoFileIndex,
         size,
         service,
-        apiKey: String(body.apiKey || body.api_key || '').trim() || null,
+        apiKey: rdApiKey,
+        rdApiKey,
+        torboxApiKey,
+        releaseInfo,
+        pageInfo,
+        explainClient: String(body.explainClient || body.explain_client || '').trim() || null,
         packFiles: inferredPackFiles,
         torrentMeta,
         importSource: torrentMeta ? 'torrent' : (magnet ? 'magnet' : 'hash')
     };
 }
+
 
 
 function normalizeManualMediaType(value) {
@@ -346,7 +489,37 @@ async function buildManualImportIdentityCandidates(body = {}, logger = console) 
 }
 
 function getManualImportRdToken(payload = {}) {
-    return String(payload.apiKey || process.env.RD_SCAN_TOKEN || process.env.RD_API_KEY || process.env.REALDEBRID_API_KEY || '').trim();
+    return String(payload.rdApiKey || payload.apiKey || process.env.RD_SCAN_TOKEN || process.env.RD_API_KEY || process.env.REALDEBRID_API_KEY || '').trim();
+}
+
+function getManualImportTbToken(payload = {}) {
+    return String(payload.torboxApiKey || process.env.TORBOX_API_KEY || process.env.TB_API_KEY || '').trim();
+}
+
+function getManualImportTbAvailability(payload = {}) {
+    const payloadToken = String(payload.torboxApiKey || '').trim();
+    const envToken = String(process.env.TORBOX_API_KEY || process.env.TB_API_KEY || '').trim();
+    const token = payloadToken || envToken;
+    return {
+        configured: Boolean(token),
+        token,
+        source: payloadToken ? 'payload' : (envToken ? 'env' : null)
+    };
+}
+
+function buildSkippedTorboxScan(reason = 'missing_torbox_token', extra = {}) {
+    return {
+        skipped: true,
+        reason,
+        cached: null,
+        state: 'skipped',
+        importContinued: true,
+        nonBlocking: true,
+        message: reason === 'missing_torbox_token'
+            ? 'TorBox API key assente: import salvato comunque, scan TorBox saltato.'
+            : 'Scan TorBox saltato: import salvato comunque.',
+        ...extra
+    };
 }
 
 function buildManualRdState(result = {}) {
@@ -539,6 +712,187 @@ async function invalidateManualImportCaches(Cache, payload, reason) {
     return outcomes;
 }
 
+function buildManualTorrentRow(payload = {}, overrides = {}) {
+    const release = payload.releaseInfo || {};
+    const languages = Array.isArray(release.languages) ? release.languages.join(',') : String(release.languages || '');
+    const quality = [release.resolution, release.source].filter(Boolean).join(' ') || release.resolution || null;
+    return {
+        info_hash: payload.hash,
+        title: overrides.title || payload.title,
+        provider: payload.provider,
+        size: Number(overrides.size ?? payload.size ?? release.sizeBytes ?? 0) || 0,
+        file_index: overrides.fileIndex ?? payload.fileIndex,
+        magnet: payload.magnet || undefined,
+        is_pack: overrides.isPack ?? (payload.packFiles?.length > 1 || /pack|season|complete/i.test(String(release.packKind || release.packLabel || ''))),
+        type: payload.type,
+        resolution: release.resolution || undefined,
+        quality: quality || undefined,
+        languages: languages || undefined,
+        codec: release.codec || undefined,
+        seeders: Number.isFinite(Number(release.seeders)) ? Number(release.seeders) : 0,
+        leechers: Number.isFinite(Number(release.leechers)) ? Number(release.leechers) : 0,
+        source: release.source || undefined,
+        folder_size: Number(release.sizeBytes || payload.size || 0) || 0
+    };
+}
+
+function serializeManualPayload(payload = {}) {
+    return {
+        hash: payload.hash,
+        title: payload.title,
+        provider: payload.provider,
+        imdbId: payload.imdbId,
+        tmdbId: payload.tmdbId,
+        type: payload.type,
+        season: payload.season,
+        episode: payload.episode,
+        year: payload.year || null,
+        fileIndex: payload.fileIndex,
+        size: payload.size,
+        cacheMode: payload.cacheMode,
+        scanRd: payload.scanRd,
+        scanTb: payload.scanTb,
+        service: payload.service,
+        importSource: payload.importSource,
+        releaseInfo: payload.releaseInfo || null,
+        pageInfo: payload.pageInfo || null,
+        packFilesCount: Array.isArray(payload.packFiles) ? payload.packFiles.length : 0,
+        torrentMeta: payload.torrentMeta ? {
+            title: payload.torrentMeta.title,
+            totalSize: payload.torrentMeta.totalSize,
+            files: payload.torrentMeta.files
+        } : null
+    };
+}
+
+function buildManualImportExplain(payload = {}, identityMatch = null, options = {}) {
+    const release = payload.releaseInfo || {};
+    const lines = [];
+    lines.push('🧠 LEVIATHAN EXPLAIN IMPORT / MATCH');
+    lines.push(`Hash: ${payload.hash || 'n/a'}`);
+    lines.push(`Provider: ${payload.provider || 'MANUAL'}`);
+    lines.push(`Titolo: ${payload.title || 'n/a'}`);
+    if (payload.year) lines.push(`Anno: ${payload.year}`);
+    lines.push(`Tipo: ${payload.type || 'auto'}${payload.season && payload.episode ? ` S${payload.season}E${payload.episode}` : ''}`);
+    if (release.resolution || release.codec || release.languages?.length) {
+        lines.push(`Release: ${[release.resolution, release.codec, Array.isArray(release.languages) ? release.languages.join('/') : release.languages].filter(Boolean).join(' · ')}`);
+    }
+    if (release.sizeLabel || payload.size) lines.push(`Dimensione: ${release.sizeLabel || `${Math.round((payload.size || 0) / 1024 / 1024)} MB`}`);
+    if (release.seeders || release.leechers) lines.push(`Seed/Leech: ${release.seeders || 0}/${release.leechers || 0}`);
+    if (release.packLabel || release.packKind) lines.push(`Pack: ${release.packLabel || release.packKind}`);
+
+    if (payload.imdbId) {
+        lines.push(`IMDb: ${payload.imdbId}${identityMatch?.matched ? ` (${identityMatch.source})` : ' (esplicito/risolto)'}`);
+    } else if (identityMatch?.matched) {
+        lines.push(`IMDb risolto: ${identityMatch.imdbId || 'n/a'} via ${identityMatch.source || 'auto'} score=${identityMatch.score ?? 'n/a'}`);
+    } else {
+        lines.push(`IMDb: non confermato (${identityMatch?.reason || 'no_match'})`);
+    }
+
+    const actions = [];
+    actions.push('ensure torrent record');
+    if (payload.imdbId) actions.push('map IMDb/torrent');
+    if (payload.type !== 'movie' && payload.season && payload.episode) actions.push('map episode file');
+    if (payload.packFiles?.length) actions.push(`insert pack files: ${payload.packFiles.length}`);
+    if (payload.scanRd) actions.push('RD live scan');
+    if (payload.scanTb) actions.push('TorBox cache check');
+    if (payload.service && payload.service !== 'none') actions.push(`cloud build queue: ${payload.service}`);
+    lines.push(`Azioni ${options.dryRun ? 'simulate' : 'eseguite'}: ${actions.join(' → ')}`);
+    if (payload.explainClient) lines.push(`\nClient explain:\n${payload.explainClient}`);
+    return lines.join('\n');
+}
+
+async function buildAdminHealthPayload({ Cache, dbHelper }) {
+    const runtime = runtimeState.getSnapshot();
+    let database = 'unknown';
+    try {
+        if (dbHelper && typeof dbHelper.healthCheck === 'function') {
+            await dbHelper.healthCheck();
+            database = 'ok';
+        } else {
+            database = 'unavailable';
+        }
+    } catch (error) {
+        database = `down:${error.message}`;
+    }
+
+    let cache = 'unknown';
+    try {
+        cache = Cache && typeof Cache.getStreamCacheIndexStats === 'function' ? 'ok' : (Cache ? 'basic' : 'unavailable');
+    } catch (error) {
+        cache = `degraded:${error.message}`;
+    }
+
+    return {
+        success: true,
+        status: database === 'ok' ? 'ok' : 'degraded',
+        mode: 'Leviathan Admin Companion Bridge',
+        version: packageMeta.version || 'unknown',
+        timestamp: new Date().toISOString(),
+        db: database,
+        database,
+        cache,
+        runtime: {
+            pid: runtime.pid,
+            role: runtime.role,
+            uptimeSeconds: runtime.uptimeSeconds,
+            lifecycle: runtime.lifecycle,
+            cluster: runtime.cluster
+        },
+        manualImport: {
+            enabled: true,
+            identityCandidates: true,
+            dryRun: true,
+            cacheCheck: true,
+            bulk: true,
+            providers: ['BT4G', '1337x', 'TorrentGalaxy', 'MagnetDL', 'IlCorsaroNero', 'ThePirateBay', 'Nyaa', 'EZTV', 'YTS'],
+            debridModes: ['none', 'rd', 'tb', 'both']
+        },
+        debrid: {
+            rdConfigured: Boolean(process.env.RD_SCAN_TOKEN || process.env.RD_API_KEY || process.env.REALDEBRID_API_KEY),
+            torboxConfigured: Boolean(process.env.TORBOX_API_KEY || process.env.TB_API_KEY)
+        }
+    };
+}
+
+async function inspectManualImportWithRd(payload, { logger }) {
+    if (payload.scanRd === false) return { skipped: true, reason: 'disabled' };
+    const token = getManualImportRdToken(payload);
+    if (!token) return { skipped: true, reason: 'missing_rd_token' };
+    if (!payload.hash) return { skipped: true, reason: 'missing_hash' };
+    const magnet = payload.magnet || `magnet:?xt=urn:btih:${payload.hash}`;
+    const context = {
+        hash: payload.hash,
+        magnet,
+        title: payload.title,
+        source: payload.provider || 'MANUAL',
+        fileIdx: payload.fileIndex,
+        imdb_id: payload.imdbId || null,
+        season: payload.season || null,
+        episode: payload.episode || null,
+        _probeSeason: payload.season || null,
+        _probeEpisode: payload.episode || null
+    };
+    try {
+        const result = await RealDebridProbe.inspectSingleHash(payload.hash, magnet, token, context);
+        const rdState = buildManualRdState(result);
+        return {
+            skipped: false,
+            cached: result.cached === true,
+            state: rdState.state,
+            rdStatus: result.rd_status || null,
+            fileIndex: Number.isInteger(Number(result.file_index)) ? Number(result.file_index) : null,
+            fileTitle: result.file_title || null,
+            fileSize: result.file_size || null,
+            pack: result.is_pack === true,
+            packWithoutEpisodeHint: result.pack_without_episode_hint === true
+        };
+    } catch (error) {
+        logger.warn?.(`[ADMIN] Manual import RD cache check failed | hash=${payload.hash} | error=${error.message}`);
+        return { skipped: false, cached: null, state: 'error', error: error.message };
+    }
+}
+
 async function scanManualImportWithRd(payload, { Cache, dbHelper, logger }) {
     if (payload.scanRd === false) return { skipped: true, reason: 'disabled' };
     const token = getManualImportRdToken(payload);
@@ -632,6 +986,56 @@ async function scanManualImportWithRd(payload, { Cache, dbHelper, logger }) {
     };
 }
 
+
+async function scanManualImportWithTorbox(payload, { Cache, dbHelper, logger }) {
+    if (payload.scanTb === false) return buildSkippedTorboxScan('disabled');
+    const tbAvailability = getManualImportTbAvailability(payload);
+    const token = tbAvailability.token;
+    if (!token) {
+        logger.info?.('[ADMIN] Manual import TorBox cache check skipped: missing API key, import continues', {
+            hash: payload.hash,
+            imdbId: payload.imdbId,
+            cacheMode: payload.cacheMode,
+            service: payload.service
+        });
+        return buildSkippedTorboxScan('missing_torbox_token', { configured: false });
+    }
+    if (!payload.hash) return buildSkippedTorboxScan('missing_hash', { configured: tbAvailability.configured });
+
+    try {
+        const cachedHashes = await TorboxClient.checkCached(token, [payload.hash]);
+        const cached = cachedHashes.map((hash) => String(hash || '').toUpperCase()).includes(String(payload.hash || '').toUpperCase());
+        const state = cached ? 'cached' : 'likely_uncached';
+        let updated = 0;
+        if (dbHelper && typeof dbHelper.updateTbCacheStatus === 'function') {
+            updated = await dbHelper.updateTbCacheStatus([{
+                hash: payload.hash,
+                cached,
+                title: payload.title || null,
+                torrent_title: payload.title || null,
+                size: Number(payload.size || 0) || null,
+                imdb_id: payload.imdbId || null,
+                imdb_season: payload.season || null,
+                imdb_episode: payload.episode || null
+            }]);
+        }
+        const cacheInvalidated = await invalidateManualImportCaches(Cache, payload, cached ? 'manual_import_tb_cached' : 'manual_import_tb_checked');
+        logger.info('[ADMIN] Manual import TorBox cache check completed', {
+            hash: payload.hash,
+            imdbId: payload.imdbId,
+            season: payload.season,
+            episode: payload.episode,
+            cached,
+            updated,
+            cacheInvalidated
+        });
+        return { skipped: false, cached, state, updated, cacheInvalidated, configured: true, tokenSource: tbAvailability.source, nonBlocking: true };
+    } catch (error) {
+        logger.warn?.(`[ADMIN] Manual import TorBox cache check failed but import continues | hash=${payload.hash} | error=${error.message}`);
+        return { skipped: false, cached: null, state: 'error', error: error.message, importContinued: true, nonBlocking: true };
+    }
+}
+
 function registerAdminRoutes(app, {
     Cache,
     ADMIN_PASS,
@@ -687,6 +1091,106 @@ function registerAdminRoutes(app, {
     });
 
 
+    app.get('/admin/health', authMiddleware, async (req, res) => {
+        try {
+            return res.json(await buildAdminHealthPayload({ Cache, dbHelper }));
+        } catch (error) {
+            logger.error('[ADMIN] Health check failed', { error: error.message });
+            return res.status(500).json({ success: false, status: 'error', error: error.message });
+        }
+    });
+
+    app.post('/admin/manual-import/dry-run', authMiddleware, async (req, res) => {
+        let payload;
+        try {
+            payload = normalizeManualImportPayload(req.body || {});
+        } catch (error) {
+            return res.status(400).json({ success: false, error: `Dry-run torrent non valido: ${error.message}` });
+        }
+
+        if (!payload.hash) {
+            return res.status(400).json({ success: false, error: 'Fornisci hash/infoHash, magnet o torrent valido.' });
+        }
+
+        try {
+            const identityMatch = await resolveManualImportIdentity(payload, logger);
+            const explain = buildManualImportExplain(payload, identityMatch, { dryRun: true });
+            const tbAvailability = getManualImportTbAvailability(payload);
+            return res.json({
+                success: true,
+                dryRun: true,
+                explain,
+                payload: serializeManualPayload(payload),
+                summary: {
+                    identityMatch,
+                    wouldEnsureTorrent: true,
+                    wouldMapIdentity: Boolean(payload.imdbId),
+                    wouldMapEpisode: Boolean(payload.imdbId && payload.type !== 'movie' && payload.season && payload.episode),
+                    wouldInsertPackFiles: Array.isArray(payload.packFiles) ? payload.packFiles.length : 0,
+                    wouldScanRd: payload.scanRd === true,
+                    wouldScanTb: payload.scanTb === true && tbAvailability.configured,
+                    torbox: {
+                        requested: payload.scanTb === true,
+                        configured: tbAvailability.configured,
+                        wouldScan: payload.scanTb === true && tbAvailability.configured,
+                        skipReason: payload.scanTb === true && !tbAvailability.configured ? 'missing_torbox_token' : null,
+                        nonBlocking: true
+                    },
+                    cacheMode: payload.cacheMode,
+                    provider: payload.provider
+                }
+            });
+        } catch (error) {
+            logger.error('[ADMIN] Manual import dry-run failed', { error: error.message, hash: payload.hash });
+            return res.status(500).json({ success: false, dryRun: true, error: error.message, payload: serializeManualPayload(payload) });
+        }
+    });
+
+    app.post('/admin/manual-import/cache-check', authMiddleware, async (req, res) => {
+        let payload;
+        try {
+            payload = normalizeManualImportPayload(req.body || {});
+        } catch (error) {
+            return res.status(400).json({ success: false, error: `Cache check torrent non valido: ${error.message}` });
+        }
+        if (!payload.hash) return res.status(400).json({ success: false, error: 'Fornisci hash/infoHash, magnet o torrent valido.' });
+
+        const result = { rd: null, torbox: null };
+        if (payload.scanRd) result.rd = await inspectManualImportWithRd(payload, { logger });
+        if (payload.scanTb) result.torbox = await scanManualImportWithTorbox(payload, { Cache, dbHelper, logger });
+        return res.json({ success: true, payload: serializeManualPayload(payload), cache: result });
+    });
+
+    app.post('/admin/manual-import/bulk', authMiddleware, async (req, res) => {
+        const items = Array.isArray(req.body?.items) ? req.body.items : (Array.isArray(req.body?.magnets) ? req.body.magnets.map((magnet) => ({ magnet })) : []);
+        const limit = Math.max(1, Math.min(25, Number(req.body?.limit || items.length || 1) || 1));
+        const selected = items.slice(0, limit);
+        const results = [];
+        for (const item of selected) {
+            const fakeReq = { body: item };
+            try {
+                const payload = normalizeManualImportPayload(fakeReq.body || {});
+                if (!payload.hash) {
+                    results.push({ success: false, error: 'missing_hash', item: fakeReq.body });
+                    continue;
+                }
+                const identityMatch = await resolveManualImportIdentity(payload, logger);
+                const ensured = await dbHelper.ensureTorrentRecord(buildManualTorrentRow(payload));
+                let mapped = false;
+                if (payload.imdbId) {
+                    mapped = await dbHelper.insertTorrent({ imdb_id: payload.imdbId, type: payload.type, season: payload.season, episode: payload.episode }, buildManualTorrentRow(payload));
+                    await invalidateManualImportCaches(Cache, payload, 'manual_import_bulk');
+                } else {
+                    await Cache.invalidateStreamsByHashes([payload.hash], 'manual_import_bulk');
+                }
+                results.push({ success: true, hash: payload.hash, provider: payload.provider, identityMatch, ensured, mapped });
+            } catch (error) {
+                results.push({ success: false, error: error.message, item });
+            }
+        }
+        return res.json({ success: true, processed: results.length, results });
+    });
+
     app.post('/admin/manual-import/identity-candidates', authMiddleware, async (req, res) => {
         try {
             const result = await buildManualImportIdentityCandidates(req.body || {}, logger);
@@ -720,20 +1224,14 @@ function registerAdminRoutes(app, {
             cacheInvalidated: null,
             dbLookupInvalidated: null,
             rdScan: null,
-            cloudBuildQueued: false
+            tbScan: null,
+            cloudBuildQueued: []
         };
 
         try {
             summary.identityMatch = await resolveManualImportIdentity(payload, logger);
 
-            summary.ensured = await dbHelper.ensureTorrentRecord({
-                info_hash: payload.hash,
-                title: payload.title,
-                provider: payload.provider,
-                size: payload.size,
-                file_index: payload.fileIndex,
-                magnet: payload.magnet || undefined
-            });
+            summary.ensured = await dbHelper.ensureTorrentRecord(buildManualTorrentRow(payload));
 
             if (payload.imdbId) {
                 summary.mapped = await dbHelper.insertTorrent({
@@ -741,15 +1239,7 @@ function registerAdminRoutes(app, {
                     type: payload.type,
                     season: payload.season,
                     episode: payload.episode
-                }, {
-                    info_hash: payload.hash,
-                    title: payload.title,
-                    provider: payload.provider,
-                    size: payload.size,
-                    file_index: payload.fileIndex,
-                    magnet: payload.magnet || undefined,
-                    is_pack: payload.packFiles.length > 1
-                });
+                }, buildManualTorrentRow(payload));
 
                 if (payload.type === 'movie') {
                     summary.movieGenericMapped = await dbHelper.insertTorrent({
@@ -757,15 +1247,7 @@ function registerAdminRoutes(app, {
                         type: payload.type,
                         season: null,
                         episode: null
-                    }, {
-                        info_hash: payload.hash,
-                        title: payload.title,
-                        provider: payload.provider,
-                        size: payload.size,
-                        file_index: null,
-                        magnet: payload.magnet || undefined,
-                        is_pack: payload.packFiles.length > 1
-                    });
+                    }, buildManualTorrentRow(payload, { fileIndex: null }));
                 }
 
                 if (payload.type !== 'movie' && payload.season && payload.episode) {
@@ -801,12 +1283,29 @@ function registerAdminRoutes(app, {
                 summary.cacheInvalidated = await Cache.invalidateStreamsByHashes([payload.hash], 'manual_import');
             }
 
-            summary.rdScan = await scanManualImportWithRd(payload, { Cache, dbHelper, logger });
-            summary.dbLookupInvalidated = summary.rdScan?.cacheInvalidated?.dbLookup || summary.dbLookupInvalidated;
+            if (payload.scanRd) {
+                summary.rdScan = await scanManualImportWithRd(payload, { Cache, dbHelper, logger });
+                summary.dbLookupInvalidated = summary.rdScan?.cacheInvalidated?.dbLookup || summary.dbLookupInvalidated;
+            } else {
+                summary.rdScan = { skipped: true, reason: 'disabled' };
+            }
 
-            if (payload.service && payload.apiKey && typeof queueCloudBuild === 'function') {
-                await queueCloudBuild(payload.service, payload.hash, payload.apiKey);
-                summary.cloudBuildQueued = true;
+            if (payload.scanTb) {
+                summary.tbScan = await scanManualImportWithTorbox(payload, { Cache, dbHelper, logger });
+                summary.dbLookupInvalidated = summary.tbScan?.cacheInvalidated?.dbLookup || summary.dbLookupInvalidated;
+            } else {
+                summary.tbScan = { skipped: true, reason: 'disabled' };
+            }
+
+            if (typeof queueCloudBuild === 'function') {
+                if ((payload.service === 'rd' || payload.service === 'both') && payload.rdApiKey) {
+                    await queueCloudBuild('rd', payload.hash, payload.rdApiKey);
+                    summary.cloudBuildQueued.push('rd');
+                }
+                if ((payload.service === 'tb' || payload.service === 'both') && payload.torboxApiKey) {
+                    await queueCloudBuild('tb', payload.hash, payload.torboxApiKey);
+                    summary.cloudBuildQueued.push('tb');
+                }
             }
 
             logger.info('[ADMIN] Manual import completed', {
@@ -820,14 +1319,7 @@ function registerAdminRoutes(app, {
                 packFilesInserted: summary.packFilesInserted
             });
 
-            return res.json({ success: true, payload: {
-                ...payload,
-                torrentMeta: payload.torrentMeta ? {
-                    title: payload.torrentMeta.title,
-                    totalSize: payload.torrentMeta.totalSize,
-                    files: payload.torrentMeta.files
-                } : null
-            }, summary });
+            return res.json({ success: true, payload: serializeManualPayload(payload), explain: buildManualImportExplain(payload, summary.identityMatch, { dryRun: false }), summary });
         } catch (error) {
             logger.error('[ADMIN] Manual import failed', { error: error.message, hash: payload.hash, imdbId: payload.imdbId, importSource: payload.importSource });
             return res.status(500).json({ success: false, error: error.message, payload, summary });
@@ -839,6 +1331,8 @@ module.exports = {
     registerAdminRoutes,
     _test: {
         normalizeManualImportPayload,
-        resolveManualImportIdentity
+        resolveManualImportIdentity,
+        deriveManualProvider,
+        buildManualImportExplain
     }
 };
