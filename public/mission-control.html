@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Leviathan Mission Control</title>
+<style>
+:root{color-scheme:dark;--bg:#061018;--bg2:#0c1725;--card:rgba(12,25,38,.72);--card2:rgba(21,39,56,.72);--line:rgba(159,203,255,.16);--text:#eaf6ff;--muted:#8ba7bd;--cyan:#48d7ff;--blue:#7aa7ff;--green:#55f0a4;--amber:#ffd36a;--red:#ff6b87;--violet:#b897ff;--shadow:0 24px 80px rgba(0,0,0,.38);--radius:24px;--mono:"SFMono-Regular",Consolas,"Liberation Mono",monospace;--sans:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 12% 10%,rgba(72,215,255,.18),transparent 34%),radial-gradient(circle at 90% 6%,rgba(184,151,255,.17),transparent 32%),radial-gradient(circle at 70% 82%,rgba(85,240,164,.11),transparent 30%),linear-gradient(135deg,var(--bg),#03070c 76%);color:var(--text);font-family:var(--sans);overflow-x:hidden}.ocean{position:fixed;inset:0;z-index:-1;opacity:.76;pointer-events:none}.ocean:before,.ocean:after{content:"";position:absolute;inset:-20%;background:repeating-linear-gradient(115deg,transparent 0 42px,rgba(72,215,255,.045) 44px,transparent 48px);animation:drift 22s linear infinite}.ocean:after{background:radial-gradient(circle,rgba(122,167,255,.13) 0 1px,transparent 2px);background-size:34px 34px;animation:float 18s ease-in-out infinite}@keyframes drift{to{transform:translate3d(-90px,70px,0)}}@keyframes float{50%{transform:translate3d(36px,-26px,0)}}.shell{width:min(1480px,calc(100vw - 34px));margin:0 auto;padding:28px 0 44px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:22px}.brand{display:flex;align-items:center;gap:16px}.logo{width:58px;height:58px;border-radius:20px;background:linear-gradient(135deg,rgba(72,215,255,.95),rgba(85,240,164,.72) 55%,rgba(184,151,255,.86));box-shadow:0 0 45px rgba(72,215,255,.24);position:relative;overflow:hidden}.logo:before{content:"";position:absolute;inset:9px;border-radius:15px;border:1px solid rgba(255,255,255,.45);background:linear-gradient(180deg,rgba(3,7,12,.13),rgba(3,7,12,.4))}.logo:after{content:"";position:absolute;left:16px;top:12px;width:24px;height:34px;border-radius:14px 14px 8px 8px;border:3px solid rgba(3,12,18,.82);border-bottom-color:transparent;transform:rotate(-18deg)}h1{margin:0;font-size:clamp(28px,4vw,52px);line-height:.92;letter-spacing:-.05em}.subtitle{margin:7px 0 0;color:var(--muted);font-size:14px}.actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}.btn,.chip{border:1px solid var(--line);background:rgba(10,22,34,.74);color:var(--text);border-radius:999px;padding:11px 14px;font-weight:800;letter-spacing:.01em;box-shadow:0 12px 40px rgba(0,0,0,.18)}.btn{cursor:pointer;transition:.18s ease}.btn:hover{transform:translateY(-1px);border-color:rgba(72,215,255,.45);box-shadow:0 14px 48px rgba(72,215,255,.12)}.btn.primary{background:linear-gradient(135deg,rgba(72,215,255,.23),rgba(85,240,164,.16));border-color:rgba(72,215,255,.35)}.chip{display:inline-flex;align-items:center;gap:8px;color:var(--muted)}.dot{width:9px;height:9px;border-radius:50%;background:var(--amber);box-shadow:0 0 18px currentColor}.dot.ok{background:var(--green)}.dot.bad{background:var(--red)}.hero{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(330px,.75fr);gap:18px;margin-bottom:18px}.glass{background:linear-gradient(180deg,rgba(14,28,43,.78),rgba(8,17,27,.68));border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);backdrop-filter:blur(18px)}.hero-main{padding:28px;min-height:278px;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden}.hero-main:before{content:"";position:absolute;right:-80px;top:-80px;width:270px;height:270px;border-radius:50%;background:radial-gradient(circle,rgba(72,215,255,.23),transparent 62%)}.eyebrow{margin:0 0 9px;color:var(--cyan);text-transform:uppercase;letter-spacing:.18em;font-size:11px;font-weight:900}.hero-main h2{font-size:clamp(32px,5vw,74px);letter-spacing:-.07em;line-height:.9;margin:0 0 14px}.hero-main p{max-width:760px;margin:0;color:#bad0df;font-size:15px;line-height:1.65}.hero-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:22px}.mini-card{padding:16px;border-radius:18px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08)}.mini-card span,.label{display:block;color:var(--muted);font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.09em}.mini-card strong{display:block;margin-top:7px;font-size:24px;letter-spacing:-.03em}.hero-side{padding:22px;position:relative;overflow:hidden}.ring{--p:0;position:relative;margin:2px auto 18px;width:220px;height:220px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--green) calc(var(--p)*1%),rgba(255,255,255,.08) 0);box-shadow:inset 0 0 32px rgba(0,0,0,.32),0 0 60px rgba(85,240,164,.1)}.ring:before{content:"";position:absolute;inset:14px;border-radius:50%;background:linear-gradient(145deg,#0c1825,#050b12);border:1px solid rgba(255,255,255,.08)}.ring-inner{position:relative;text-align:center}.ring-inner strong{display:block;font-size:42px;letter-spacing:-.06em}.ring-inner span{font-size:12px;color:var(--muted);font-weight:800;text-transform:uppercase;letter-spacing:.12em}.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px}.card{grid-column:span 3;padding:18px;background:linear-gradient(180deg,rgba(16,32,49,.72),rgba(8,17,27,.62));border:1px solid var(--line);border-radius:22px;box-shadow:0 16px 50px rgba(0,0,0,.2);min-height:126px}.card.wide{grid-column:span 6}.card.xwide{grid-column:span 8}.card.full{grid-column:1/-1}.card h3{margin:0 0 14px;font-size:15px;letter-spacing:-.02em}.value{font-size:36px;font-weight:950;letter-spacing:-.07em}.small{font-size:12px;color:var(--muted);line-height:1.55}.status-pill{display:inline-flex;align-items:center;gap:7px;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.1);font-weight:900;font-size:12px}.ok{color:var(--green)}.warn{color:var(--amber)}.bad{color:var(--red)}.mono{font-family:var(--mono)}.bar{height:13px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.07);display:flex;margin:12px 0}.seg.green{background:linear-gradient(90deg,var(--green),#b4ffd4)}.seg.red{background:linear-gradient(90deg,var(--red),#ffc1cc)}.seg.amber{background:linear-gradient(90deg,var(--amber),#fff0af)}.seg.blue{background:linear-gradient(90deg,var(--blue),var(--cyan))}.kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.kv div{padding:12px;border-radius:15px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.075);min-width:0}.kv strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:5px}.table-wrap{overflow:auto;border-radius:16px;border:1px solid rgba(255,255,255,.07)}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:11px 12px;border-bottom:1px solid rgba(255,255,255,.065);white-space:nowrap}th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;background:rgba(255,255,255,.035)}tr:last-child td{border-bottom:0}.trace{display:grid;gap:10px;max-height:420px;overflow:auto}.trace-item{padding:13px;border-radius:16px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07)}.trace-top{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:6px}.trace-title{font-weight:950;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.trace-meta{font-size:12px;color:var(--muted)}.raw{margin-top:12px;max-height:280px;overflow:auto;border-radius:16px;background:rgba(0,0,0,.24);border:1px solid rgba(255,255,255,.06);padding:14px;color:#c9e8ff;font-size:12px}.error{padding:18px;border:1px solid rgba(255,107,135,.35);border-radius:20px;background:rgba(255,107,135,.1);color:#ffdce3}.footer{margin-top:18px;color:var(--muted);font-size:12px;text-align:center}@media(max-width:1040px){.hero{grid-template-columns:1fr}.hero-grid{grid-template-columns:repeat(2,1fr)}.card,.card.wide,.card.xwide{grid-column:1/-1}.topbar{align-items:flex-start;flex-direction:column}.actions{justify-content:flex-start}.ring{width:180px;height:180px}}@media(max-width:620px){.shell{width:min(100vw - 20px,1480px);padding-top:18px}.hero-main{padding:20px}.hero-grid,.kv{grid-template-columns:1fr}.card{padding:15px}h1{font-size:32px}}
+</style>
+</head>
+<body>
+<div class="ocean"></div>
+<main class="shell">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"></div>
+      <div>
+        <h1>Mission Control</h1>
+        <p class="subtitle">Dashboard admin per Leviathan: cache, RD/TorBox, provider, snapshot esterni e trace stream.</p>
+      </div>
+    </div>
+    <div class="actions">
+      <span class="chip"><i class="dot" id="liveDot"></i><span id="liveText">Caricamento</span></span>
+      <button class="btn primary" id="refreshBtn" type="button">Aggiorna</button>
+      <button class="btn" id="autoBtn" type="button">Auto: ON</button>
+      <a class="btn" href="/api/mission-control?traceLimit=30" target="_blank" rel="noreferrer">JSON</a>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="glass hero-main">
+      <div>
+        <p class="eyebrow">Leviathan Core</p>
+        <h2 id="heroTitle">Connessione...</h2>
+        <p id="heroCopy">Sto leggendo /api/mission-control con le stesse credenziali admin.</p>
+      </div>
+      <div class="hero-grid" id="heroCards"></div>
+    </div>
+    <aside class="glass hero-side">
+      <div class="ring" id="scanRing"><div class="ring-inner"><span>RD scan</span><strong>--</strong></div></div>
+      <div class="kv" id="sideKv"></div>
+    </aside>
+  </section>
+
+  <section class="grid" id="dashboard">
+    <article class="card"><h3>Runtime</h3><div id="runtimeCard"></div></article>
+    <article class="card"><h3>Cache Stream</h3><div id="streamCacheCard"></div></article>
+    <article class="card"><h3>External Snapshot</h3><div id="snapshotCard"></div></article>
+    <article class="card"><h3>Availability</h3><div id="availabilityCard"></div></article>
+    <article class="card wide"><h3>RD / Debrid Authority</h3><div id="debridCard"></div></article>
+    <article class="card wide"><h3>Cache Matrix</h3><div id="cacheMatrix"></div></article>
+    <article class="card xwide"><h3>Provider Health</h3><div id="providerTable"></div></article>
+    <article class="card"><h3>Source Health</h3><div id="sourceTable"></div></article>
+    <article class="card wide"><h3>Limiters / Queue</h3><div id="limiterTable"></div></article>
+    <article class="card wide"><h3>Timers</h3><div id="timerTable"></div></article>
+    <article class="card full"><h3>Recent Stream Traces</h3><div id="traceList"></div></article>
+    <article class="card full"><h3>Raw Debug Snapshot</h3><div class="raw"><pre id="rawJson">{}</pre></div></article>
+  </section>
+  <p class="footer" id="footerInfo">Mission Control non modifica nulla: legge solo metriche e stato runtime.</p>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const state = { auto: true, timer: null, lastPayload: null };
+  const nf = new Intl.NumberFormat('it-IT');
+  const esc = (value) => String(value ?? '-').replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
+  const num = (value) => { const n = Number(value); return Number.isFinite(n) ? n : 0; };
+  const fmt = (value) => Number.isFinite(Number(value)) ? nf.format(Number(value)) : esc(value ?? '-');
+  const pct = (value) => `${Math.max(0, Math.min(100, num(value))).toFixed(num(value) >= 10 ? 0 : 1)}%`;
+  const when = (value) => {
+    if (!value) return '-';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return esc(value);
+    return new Intl.DateTimeFormat('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(d);
+  };
+  const compact = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return esc(value ?? '-');
+    if (Math.abs(n) >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+    if (Math.abs(n) >= 1000) return `${(n / 1000).toFixed(1)}k`;
+    return nf.format(n);
+  };
+  const duration = (seconds) => {
+    const total = Math.max(0, Math.floor(num(seconds)));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  };
+  const dotClass = (ok) => ok ? 'dot ok' : 'dot bad';
+  const normalizeList = (value) => Array.isArray(value) ? value : Object.entries(value || {}).map(([key, stats]) => ({ key, ...(stats || {}) }));
+  const kv = (items) => `<div class="kv">${items.map((item) => `<div><span class="label">${esc(item.k)}</span><strong title="${esc(item.v)}">${esc(item.v)}</strong></div>`).join('')}</div>`;
+  const statusPill = (label, tone = 'ok') => `<span class="status-pill ${tone}"><i class="dot ${tone === 'ok' ? 'ok' : tone === 'bad' ? 'bad' : ''}"></i>${esc(label)}</span>`;
+  const table = (headers, rows, empty = 'Nessun dato disponibile') => {
+    if (!rows.length) return `<p class="small">${esc(empty)}</p>`;
+    return `<div class="table-wrap"><table><thead><tr>${headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+  };
+  const row = (cells) => `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
+
+  function setLive(ok, text) {
+    $('liveDot').className = dotClass(ok);
+    $('liveText').textContent = text;
+  }
+
+  function getAvailabilityTotals(cache) {
+    const items = Array.isArray(cache) ? cache : Object.values(cache || {});
+    const totals = { rd: 0, tb: 0, cached: 0, active: 0 };
+    for (const item of items) {
+      const service = String(item?.service || item?.key || '').toLowerCase();
+      const total = num(item?.total || item?.active || item?.count);
+      const cached = num(item?.cached || item?.cached_true || item?.cachedTrue);
+      if (service.includes('rd') || service.includes('real')) totals.rd += total;
+      if (service.includes('tb') || service.includes('torbox')) totals.tb += total;
+      totals.active += total;
+      totals.cached += cached;
+    }
+    return totals;
+  }
+
+  function renderHero(data) {
+    const runtime = data.runtime || {};
+    const lifecycle = runtime.lifecycle || {};
+    const scanner = data.debrid?.scanner || {};
+    const progress = data.debrid?.progress || {};
+    const streamIndex = data.cache?.streamIndex || {};
+    const snapshot = data.externalSnapshots || {};
+    const ready = lifecycle.ready === true || data.status === 'ok';
+    const total = Math.max(1, num(progress.total_with_hash || progress.total));
+    const scanned = num(progress.already_scanned || progress.scanned);
+    const completion = scanned / total * 100;
+    $('heroTitle').textContent = ready ? 'Sistema operativo' : 'Sistema degradato';
+    $('heroCopy').textContent = ready
+      ? 'Leviathan sta rispondendo: qui sotto hai il quadro leggibile di cache, DB snapshot, scanner RD/TorBox, provider e code.'
+      : 'Leviathan risponde, ma alcuni sottosistemi non sembrano pronti: controlla i pannelli con stato giallo/rosso.';
+    $('heroCards').innerHTML = [
+      ['Uptime', duration(data.uptimeSec)],
+      ['Active req', compact(lifecycle.activeRequests || 0)],
+      ['Cache health', data.cache?.health || '-'],
+      ['Snapshots active', compact(snapshot.active || snapshot.total || 0)]
+    ].map(([k, v]) => `<div class="mini-card"><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`).join('');
+    $('scanRing').style.setProperty('--p', String(Math.max(0, Math.min(100, completion))));
+    $('scanRing').innerHTML = `<div class="ring-inner"><span>RD scan</span><strong>${pct(completion)}</strong></div>`;
+    $('sideKv').innerHTML = kv([
+      { k: 'Scanned', v: `${fmt(scanned)} / ${fmt(total)}` },
+      { k: 'Cached', v: fmt(progress.cached_true || progress.cached || 0) },
+      { k: 'Due now', v: fmt(progress.due_now || 0) },
+      { k: 'Stream keys', v: fmt(streamIndex.trackedKeys || 0) }
+    ]);
+  }
+
+  function renderSummaryCards(data) {
+    const lifecycle = data.runtime?.lifecycle || {};
+    const stream = data.cache?.streamIndex || {};
+    const snapshots = data.externalSnapshots || {};
+    const avail = getAvailabilityTotals(data.debrid?.availabilityCache);
+    $('runtimeCard').innerHTML = `<div class="value">${esc(lifecycle.ready ? 'READY' : 'CHECK')}</div><p class="small">Role: ${esc(data.runtime?.role || '-')}, cluster: ${esc(data.runtime?.cluster?.enabled ? 'on' : 'off')}, memoria RSS: ${fmt(data.runtime?.memory?.rss || 0)} bytes.</p>`;
+    $('streamCacheCard').innerHTML = `<div class="value">${fmt(stream.trackedKeys || 0)}</div><p class="small">Hash buckets: ${fmt(stream.hashBuckets || 0)} · IMDB buckets: ${fmt(stream.imdbBuckets || 0)} · cached entries: ${fmt(stream.cachedEntries || 0)}</p>`;
+    $('snapshotCard').innerHTML = `<div class="value">${fmt(snapshots.active || snapshots.total || 0)}</div><p class="small">Torrentio: ${fmt(snapshots.torrentio || 0)} · MediaFusion: ${fmt(snapshots.mediafusion || 0)} · Meteor: ${fmt(snapshots.meteor || 0)} · expired: ${fmt(snapshots.expired || 0)}</p>`;
+    $('availabilityCard').innerHTML = `<div class="value">${fmt(avail.active)}</div><p class="small">RD entries: ${fmt(avail.rd)} · TorBox entries: ${fmt(avail.tb)} · cached hints: ${fmt(avail.cached)}.</p>`;
+  }
+
+  function renderDebrid(data) {
+    const scanner = data.debrid?.scanner || {};
+    const progress = data.debrid?.progress || {};
+    const total = Math.max(1, num(progress.total_with_hash || progress.total));
+    const cached = num(progress.cached_true || progress.cached);
+    const uncached = num(progress.cached_false || progress.uncached);
+    const pending = num(progress.pending_first_scan || progress.pending);
+    const rest = Math.max(0, total - cached - uncached - pending);
+    const tone = scanner.running ? 'ok' : scanner.enabled ? 'warn' : 'bad';
+    $('debridCard').innerHTML = `${statusPill(scanner.running ? 'Scanner running' : scanner.enabled ? 'Scanner idle' : 'Scanner off', tone)}<div class="bar"><div class="seg green" style="width:${cached / total * 100}%"></div><div class="seg red" style="width:${uncached / total * 100}%"></div><div class="seg amber" style="width:${pending / total * 100}%"></div><div class="seg blue" style="width:${rest / total * 100}%"></div></div>${kv([
+      { k: 'Current hash', v: scanner.currentHash || '-' },
+      { k: 'Last activity', v: when(scanner.lastActivityAt) },
+      { k: 'Batch size', v: fmt(scanner.batchSize || 0) },
+      { k: 'Reason', v: scanner.reason || '-' },
+      { k: 'Cached true', v: fmt(cached) },
+      { k: 'Pending', v: fmt(pending) }
+    ])}`;
+  }
+
+  function renderCacheMatrix(data) {
+    const cache = data.cache?.counters || {};
+    const rows = Object.entries(cache).filter(([, stats]) => stats && typeof stats === 'object').map(([name, stats]) => row([
+      `<strong>${esc(name)}</strong>`,
+      fmt(stats.hit || 0),
+      fmt(stats.miss || 0),
+      fmt(stats.set || 0),
+      pct(stats.hitRate || 0)
+    ]));
+    $('cacheMatrix').innerHTML = table(['Cache', 'Hit', 'Miss', 'Set', 'Hit rate'], rows, 'Nessuna statistica cache ancora raccolta.');
+  }
+
+  function renderProviders(data) {
+    const providers = Object.entries(data.providers || {}).map(([name, stats]) => ({ name, ...(stats || {}) }))
+      .sort((a, b) => num(b.fail || b.timeout || b.avgMs) - num(a.fail || a.timeout || a.avgMs)).slice(0, 14);
+    $('providerTable').innerHTML = table(['Provider', 'OK', 'Fail', 'Timeout', 'Avg ms', 'Last seen'], providers.map((p) => row([
+      `<strong>${esc(p.name)}</strong>`, fmt(p.ok || 0), fmt(p.fail || 0), fmt(p.timeout || 0), fmt(p.avgMs || 0), when(p.lastSeenAt)
+    ])), 'Nessun provider ancora tracciato.');
+  }
+
+  function renderSourceHealth(data) {
+    const sources = Object.entries(data.sourceHealth || {}).map(([name, stats]) => ({ name, ...(stats || {}) })).slice(0, 10);
+    $('sourceTable').innerHTML = table(['Source', 'State'], sources.map((s) => row([
+      `<strong>${esc(s.name)}</strong>`, `<span class="small">${esc(JSON.stringify(Object.fromEntries(Object.entries(s).filter(([k]) => k !== 'name'))))}</span>`
+    ])), 'Nessun dato source health.');
+  }
+
+  function renderLimiters(data) {
+    const limiters = Object.entries(data.limiters || {}).map(([name, stats]) => ({ name, ...(stats || {}) }));
+    $('limiterTable').innerHTML = table(['Limiter', 'Received', 'Queued', 'Running', 'Executing'], limiters.map((l) => row([
+      `<strong>${esc(l.name)}</strong>`, fmt(l.RECEIVED || l.received || 0), fmt(l.QUEUED || l.queued || 0), fmt(l.RUNNING || l.running || 0), fmt(l.EXECUTING || l.executing || 0)
+    ])), 'Nessuna coda limiter attiva.');
+  }
+
+  function renderTimers(data) {
+    const timers = Object.entries(data.timers || {}).map(([name, stats]) => ({ name, ...(stats || {}) }))
+      .sort((a, b) => num(b.avgMs) - num(a.avgMs)).slice(0, 14);
+    $('timerTable').innerHTML = table(['Timer', 'Count', 'Avg', 'Min', 'Max'], timers.map((t) => row([
+      `<strong>${esc(t.name)}</strong>`, fmt(t.count || 0), `${fmt(t.avgMs || 0)} ms`, `${fmt(t.minMs || 0)} ms`, `${fmt(t.maxMs || 0)} ms`
+    ])), 'Nessun timer raccolto.');
+  }
+
+  function renderTraces(data) {
+    const traces = Array.isArray(data.recentStreamTraces) ? data.recentStreamTraces : [];
+    if (!traces.length) {
+      $('traceList').innerHTML = '<p class="small">Nessun trace recente. Apri qualche film/episodio da Stremio e aggiorna questa pagina.</p>';
+      return;
+    }
+    $('traceList').innerHTML = `<div class="trace">${traces.map((trace) => {
+      const title = trace.title || trace.name || trace.id || trace.requestId || 'stream trace';
+      const streams = trace.streams ?? trace.streamCount ?? '-';
+      return `<div class="trace-item"><div class="trace-top"><div class="trace-title">${esc(title)}</div><span class="status-pill">${esc(streams)} stream</span></div><div class="trace-meta">${esc(trace.type || '-')} · ${when(trace.timestamp || trace.createdAt || trace.at)} · ${esc(trace.reason || trace.phase || '')}</div></div>`;
+    }).join('')}</div>`;
+  }
+
+  function render(data) {
+    state.lastPayload = data;
+    setLive(true, `Live · ${when(data.timestamp)}`);
+    renderHero(data);
+    renderSummaryCards(data);
+    renderDebrid(data);
+    renderCacheMatrix(data);
+    renderProviders(data);
+    renderSourceHealth(data);
+    renderLimiters(data);
+    renderTimers(data);
+    renderTraces(data);
+    $('rawJson').textContent = JSON.stringify(data, null, 2);
+    $('footerInfo').textContent = `Ultimo aggiornamento: ${when(new Date().toISOString())}`;
+  }
+
+  function renderError(error, status) {
+    setLive(false, status === 401 ? 'Auth richiesta' : 'Errore');
+    $('heroTitle').textContent = status === 401 ? 'Accesso richiesto' : 'Mission Control non disponibile';
+    $('heroCopy').textContent = status === 401
+      ? 'Apri /mission-control e inserisci username admin + password TELEMETRY_PASS o ADMIN_PASS. Se sei già qui, aggiorna la pagina.'
+      : `Errore durante la lettura delle metriche: ${error.message}`;
+    $('dashboard').innerHTML = `<article class="card full"><div class="error"><strong>${status === 401 ? 'Password mancante o errata.' : 'Errore di caricamento.'}</strong><p>${esc(error.message)}</p></div></article>`;
+  }
+
+  async function load() {
+    try {
+      setLive(true, 'Aggiornamento...');
+      const response = await fetch('/api/mission-control?traceLimit=30', { credentials: 'same-origin', cache: 'no-store' });
+      if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
+      render(await response.json());
+    } catch (error) {
+      renderError(error, error.status || 0);
+    }
+  }
+
+  function setAuto(enabled) {
+    state.auto = enabled;
+    $('autoBtn').textContent = `Auto: ${enabled ? 'ON' : 'OFF'}`;
+    if (state.timer) clearInterval(state.timer);
+    state.timer = enabled ? setInterval(load, 15000) : null;
+  }
+
+  $('refreshBtn').addEventListener('click', load);
+  $('autoBtn').addEventListener('click', () => setAuto(!state.auto));
+  setAuto(true);
+  load();
+})();
+</script>
+</body>
+</html>
