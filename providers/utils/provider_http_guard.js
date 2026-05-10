@@ -145,6 +145,9 @@ function createProviderHttpGuard(options = {}) {
   const impitAfterSessionChallenge = options.impitAfterSessionChallenge !== false;
   const impitPreClearanceRescue = options.impitPreClearanceRescue !== false;
   const impitPreClearanceTimeoutMs = Math.max(1200, Math.min(4500, Number(options.impitPreClearanceTimeoutMs || 2600) || 2600));
+  const sessionTimeoutFloorMs = Math.max(1200, Math.min(4500, Number(options.sessionTimeoutFloorMs || 4500) || 4500));
+  const emergencyClearanceAfterSessionFailure = Boolean(options.emergencyClearanceAfterSessionFailure);
+  const emergencyClearanceMinIntervalMs = Math.max(0, Math.min(30000, Number(options.emergencyClearanceMinIntervalMs ?? 6000) || 0));
   // Bridge mode keeps FlareSolverr out of the hot path: it asks FlareSolverr only
   // for cookies/user-agent, then immediately replays the real request through Axios.
   // Keep this opt-in per provider to avoid changing legacy providers accidentally.
@@ -182,6 +185,7 @@ function createProviderHttpGuard(options = {}) {
   let domainRefreshPromise = null;
   let sharedClearancePromise = null;
   let sharedClearancePromiseStartedAt = 0;
+  let lastEmergencyClearanceAt = 0;
 
   function getProfileUserAgent(profile = null) {
     const fallback = options.fallbackUserAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
@@ -253,6 +257,25 @@ function createProviderHttpGuard(options = {}) {
   function clearSession() {
     activeSession = {};
     try { fs.unlinkSync(sessionFile); } catch (_) {}
+  }
+
+  function isTimeoutLikeError(error) {
+    const code = String(error?.code || '');
+    const message = String(error?.message || error || '');
+    return /(?:ETIMEDOUT|ECONNABORTED|timeout|timed out|socket hang up)/i.test(`${code} ${message}`);
+  }
+
+  function clearSessionAfterTransportFailure(error, url, startedAt, stage = 'session') {
+    if (!isTimeoutLikeError(error) || !isSessionFreshForUrl(activeSession, url)) return false;
+    clearSession();
+    logger.debug('session cleared after transport failure', {
+      stage,
+      url,
+      error: error?.message || String(error),
+      code: error?.code,
+      ms: Date.now() - startedAt
+    });
+    return true;
   }
 
   function buildProviderUrl(pathname) {
@@ -619,7 +642,7 @@ function createProviderHttpGuard(options = {}) {
       method,
       body: method === 'POST' ? body : null,
       headers: buildHeaders({ session: activeSession, method, body, url }),
-      timeout: Math.max(timeout, 4500),
+      timeout: Math.max(timeout, sessionTimeoutFloorMs),
       signal,
       browserProfile: activeSession,
       useImpit: !impitSessionFastPath,
@@ -806,14 +829,19 @@ function createProviderHttpGuard(options = {}) {
     const startedAt = Date.now();
     const method = isPost ? 'POST' : 'GET';
     const hardFetchTimeout = Math.max(2500, Math.min(timeoutMs, directFetchTimeoutMs));
-    logger.debug('fetch start', { method, url, hasSession: isSessionFreshForUrl(activeSession, url), allowClearance: allowFlareSolverr, timeoutMs: hardFetchTimeout });
+    const hadFreshSessionAtStart = isSessionFreshForUrl(activeSession, url);
+    let sessionFailureDetected = false;
+    logger.debug('fetch start', { method, url, hasSession: hadFreshSessionAtStart, allowClearance: allowFlareSolverr, timeoutMs: hardFetchTimeout });
 
-    if (isSessionFreshForUrl(activeSession, url)) {
+    if (hadFreshSessionAtStart) {
       try {
         const html = await fetchWithSession(url, { method, body, signal, timeout: hardFetchTimeout, startedAt });
         if (html) return html;
+        sessionFailureDetected = true;
       } catch (error) {
         if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
+        sessionFailureDetected = true;
+        clearSessionAfterTransportFailure(error, url, startedAt, 'session');
         logger.debug('session fetch error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
       }
     }
@@ -824,6 +852,21 @@ function createProviderHttpGuard(options = {}) {
     } catch (error) {
       if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
       logger.debug('direct fetch error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
+    }
+
+    const canEmergencyClearance = emergencyClearanceAfterSessionFailure && clearanceManager.endpoint && hadFreshSessionAtStart && sessionFailureDetected;
+    const emergencyCoolingDown = canEmergencyClearance && lastEmergencyClearanceAt && (Date.now() - lastEmergencyClearanceAt < emergencyClearanceMinIntervalMs);
+    if (!allowFlareSolverr && canEmergencyClearance && !emergencyCoolingDown && !signal?.aborted) {
+      allowFlareSolverr = true;
+      lastEmergencyClearanceAt = Date.now();
+      logger.info('emergency clearance enabled after stale session failure', {
+        method,
+        url,
+        reason: 'session_failed_then_direct_blocked',
+        ms: Date.now() - startedAt
+      });
+    } else if (!allowFlareSolverr && canEmergencyClearance && emergencyCoolingDown) {
+      logger.debug('emergency clearance skipped by cooldown', { method, url, cooldownMs: emergencyClearanceMinIntervalMs, ms: Date.now() - startedAt });
     }
 
     if (!allowFlareSolverr || signal?.aborted) return null;
@@ -921,7 +964,9 @@ function createProviderHttpGuard(options = {}) {
       sharedClearanceAuthority,
       sharedClearanceForceOrigin,
       sharedClearancePending: Boolean(sharedClearancePromise),
-      clearanceBridgeMode
+      clearanceBridgeMode,
+      emergencyClearanceAfterSessionFailure,
+      sessionTimeoutFloorMs
     }),
     directFetchTimeoutMs,
     searchTimeoutMs,
