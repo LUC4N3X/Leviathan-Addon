@@ -47,7 +47,8 @@ function getConfig(provider, overrides = {}) {
         maxConsecutiveZeroes: positiveInt(overrides.maxConsecutiveZeroes ?? process.env[`${prefix}_HEALTH_MAX_ZEROES`] ?? process.env.PROVIDER_HEALTH_MAX_ZEROES, DEFAULTS.maxConsecutiveZeroes),
         maxHistory: positiveInt(overrides.maxHistory ?? process.env.PROVIDER_HEALTH_HISTORY, DEFAULTS.maxHistory),
         debug: overrides.debug === true || envFlag(`${prefix}_HEALTH_DEBUG`, envFlag('PROVIDER_HEALTH_DEBUG', false)),
-        skipCooldown: overrides.skipCooldown === true || envFlag(`${prefix}_HEALTH_SKIP_COOLDOWN`, envFlag('PROVIDER_HEALTH_SKIP_COOLDOWN', false))
+        skipCooldown: overrides.skipCooldown === true || envFlag(`${prefix}_HEALTH_SKIP_COOLDOWN`, envFlag('PROVIDER_HEALTH_SKIP_COOLDOWN', false)),
+        logger: overrides.logger || null
     };
 }
 
@@ -110,7 +111,15 @@ function logHealth(provider, state, message, meta = {}, config = {}) {
         .filter(([, value]) => value !== undefined && value !== null && value !== '')
         .map(([key, value]) => `${key}=${value}`)
         .join(' ');
-    console.log(`[PROVIDER HEALTH] ${providerKey(provider)} ${message}${details ? ` | ${details}` : ''}`);
+    const line = `[PROVIDER HEALTH] ${providerKey(provider)} ${message}${details ? ` | ${details}` : ''}`;
+    const log = config.logger;
+    if (log && typeof log === 'object') {
+        const method = message === 'error' || ['blocked_cf', 'blocked', 'rate_limited', 'cooldown'].includes(meta.status || state.status) ? 'warn' : 'info';
+        if (typeof log[method] === 'function') return log[method](line);
+        if (typeof log.info === 'function') return log.info(line);
+        if (typeof log.log === 'function') return log.log(method, line);
+    }
+    console.log(line);
 }
 
 function setStatus(state, status) {
