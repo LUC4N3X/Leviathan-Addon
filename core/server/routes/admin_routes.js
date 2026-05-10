@@ -17,6 +17,11 @@ function normalizeHashes(values) {
         .filter(Boolean))];
 }
 
+function normalizeTmdbId(value) {
+    const normalized = String(value || '').trim().replace(/^tmdb:(?:movie|tv|series):/i, '').replace(/^tmdb:/i, '');
+    return /^\d+$/.test(normalized) ? normalized : null;
+}
+
 function normalizePackFileEntries(values = []) {
     return (Array.isArray(values) ? values : []).map((entry) => ({
         file_index: entry?.file_index ?? entry?.fileIdx,
@@ -70,6 +75,7 @@ function normalizeManualImportPayload(body = {}) {
         : null;
     const inferredType = String(body.type || (season || episode ? 'series' : 'movie')).trim().toLowerCase();
     const hash = normalizeHash(body.hash || body.infoHash || body.info_hash) || magnet?.infoHash || torrentMeta?.infoHash || null;
+    const tmdbId = normalizeTmdbId(body.tmdbId || body.tmdb_id);
     const normalizedPackFiles = normalizePackFileEntries(body.packFiles || body.pack_files || []);
     const inferredPackFiles = normalizedPackFiles.length > 0
         ? normalizedPackFiles
@@ -103,6 +109,7 @@ function normalizeManualImportPayload(body = {}) {
         scanRd: body.scanRd !== false && body.scan_rd !== false,
         provider: deriveManualProvider(body.provider || body.source, sourceUrl, sourceTitle),
         imdbId: /^tt\d+$/.test(imdbId) ? imdbId : null,
+        tmdbId,
         type: inferredType,
         season,
         episode,
@@ -185,6 +192,29 @@ async function resolveManualImportIdentity(payload, logger = console) {
     if (payload.imdbId) return { matched: false, reason: 'explicit_imdb' };
 
     const expectedType = normalizeManualMediaType(payload.type) || (payload.season || payload.episode ? 'tv' : 'movie');
+
+    if (payload.tmdbId) {
+        const searchTypes = [expectedType];
+        for (const searchType of [...new Set(searchTypes)]) {
+            try {
+                const imdbId = await tmdbHelper.getImdbFromTmdb(payload.tmdbId, searchType);
+                if (!/^tt\d+$/i.test(String(imdbId || ''))) continue;
+
+                payload.imdbId = String(imdbId).toLowerCase();
+                payload.type = searchType === 'tv' ? 'series' : 'movie';
+                return {
+                    matched: true,
+                    source: 'explicit_tmdb',
+                    tmdbId: String(payload.tmdbId),
+                    imdbId: payload.imdbId,
+                    type: payload.type
+                };
+            } catch (error) {
+                logger.warn?.(`[ADMIN] Manual import TMDB->IMDb failed | tmdb=${payload.tmdbId} | type=${searchType} | error=${error.message}`);
+            }
+        }
+    }
+
     const candidates = [payload.title, payload.sourceTitle]
         .map(cleanManualLookupTitle)
         .filter(Boolean);
@@ -786,4 +816,10 @@ function registerAdminRoutes(app, {
     });
 }
 
-module.exports = { registerAdminRoutes };
+module.exports = {
+    registerAdminRoutes,
+    _test: {
+        normalizeManualImportPayload,
+        resolveManualImportIdentity
+    }
+};

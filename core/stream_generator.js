@@ -1061,6 +1061,28 @@ function getMetaDbLookupKey(meta) {
     return `${imdbId}:${season}:${episode}`;
 }
 
+async function invalidateStreamCacheForDbSave(meta, reason = 'db_save', scheduleDelayed = true) {
+    const imdbId = String(meta?.imdb_id || '').trim().toLowerCase();
+    if (!/^tt\d+$/.test(imdbId)) return null;
+
+    const season = Number(meta?.season || 0) || 0;
+    const episode = Number(meta?.episode || 0) || 0;
+    const isEpisode = season > 0 && episode > 0;
+
+    const outcome = isEpisode && typeof Cache.invalidateStreamsByEpisode === 'function'
+        ? await Cache.invalidateStreamsByEpisode({ imdbId, season, episode }, reason)
+        : await Cache.invalidateStreamsByImdb(imdbId, reason);
+
+    if (scheduleDelayed) {
+        const timer = setTimeout(() => {
+            invalidateStreamCacheForDbSave(meta, `${reason}_delayed`, false).catch(() => {});
+        }, 2500);
+        if (typeof timer.unref === 'function') timer.unref();
+    }
+
+    return outcome;
+}
+
 const {
     fetchLocalDbResults,
     propagateRdKnownStatesByHash,
@@ -2304,7 +2326,7 @@ async function getMetadata(id, type, config = {}) {
   });
 }
 
-function saveResultsToDbBackground(meta, results, config = null, type = null) {
+function saveResultsToDbBackground(meta, results, config = null, type = null, options = {}) {
     const effectiveType = String(type || meta?.type || meta?.contentType || (meta?.isSeries || meta?.season || meta?.episode ? 'series' : 'movie')).toLowerCase();
     if (!results || results.length === 0) return;
     const metaCacheKey = getMetaDbLookupKey(meta);
@@ -2453,7 +2475,14 @@ function saveResultsToDbBackground(meta, results, config = null, type = null) {
                     logger.info(`[RD PRIORITY] reason=db_save | imdb=${meta?.imdb_id || 'n/a'} | hashes=${prioritizedHashes.length} | updated=${outcome?.updated || 0}`);
                 }
 
-                if (metaCacheKey && (savedCount > 0 || mappedCount > 0 || processedCount > 0 || guaranteedCachedUpdates.length > 0)) await Cache.invalidateDbTorrents(metaCacheKey, 'db_save');
+                const dbLookupChanged = savedCount > 0 || mappedCount > 0 || processedCount > 0 || guaranteedCachedUpdates.length > 0;
+                if (metaCacheKey && dbLookupChanged) await Cache.invalidateDbTorrents(metaCacheKey, 'db_save');
+
+                const streamRefreshNeeded = savedCount > 0
+                    || mappedCount > 0
+                    || guaranteedCachedUpdates.length > 0
+                    || (options?.invalidateStreamCache === true && processedCount > 0);
+                if (streamRefreshNeeded) await invalidateStreamCacheForDbSave(meta, 'db_save');
                 resolvePackNamesInBackground(meta, results, config, effectiveType);
             });
         },
@@ -3659,7 +3688,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                     logger.info(`[STATS] Remote: ${remoteResults.length} | External: ${externalResults.length} ids=${externalRequestIds.join(',')}`);
 
                     if (!flags.dbOnlyMode && !flags.cacheOnlyMode && externalResults.length > 0) {
-                        saveResultsToDbBackground(meta, externalResults, config, type);
+                        saveResultsToDbBackground(meta, externalResults, config, type, { invalidateStreamCache: assessmentPool.length === 0 });
                         logger.info(`[AUTO-LEARN] External early-save queued | count=${externalResults.length} ids=${externalRequestIds.join(',')}`);
                     }
 
@@ -3970,7 +3999,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           });
           logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
 
-          if (!sourceModeFlags.dbOnlyMode && !sourceModeFlags.cacheOnlyMode && networkResults.length > 0) saveResultsToDbBackground(meta, cleanResults, config, type);
+          if (!sourceModeFlags.dbOnlyMode && !sourceModeFlags.cacheOnlyMode && networkResults.length > 0) saveResultsToDbBackground(meta, cleanResults, config, type, { invalidateStreamCache: localDbResults.length === 0 });
 
           rankedList = runSortStage(cleanResults, meta, config, {
               rankAndFilterResults,
