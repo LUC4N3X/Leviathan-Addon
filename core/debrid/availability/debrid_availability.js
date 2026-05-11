@@ -10,7 +10,6 @@ const { shouldSkipRecentWork } = require('../../recent_work');
 const RdOracle = require('../state/cache_oracle');
 const EpisodePrecision = require('../../stream/episode_precision');
 
-// RD availability policy: default in codice, non in .env.
 const LOCAL_DB_CACHE_TTL = 25;
 const RD_PRIORITY_DEDUP_MS = 15000;
 const RD_FOREGROUND_VISIBLE_WINDOW = 9;
@@ -20,7 +19,6 @@ const RD_FOREGROUND_FALLBACK_PROBE_LIMIT = 3;
 const RD_FOREGROUND_EXACT_LIMIT = 4;
 const RD_PRIORITY_TOP = 18;
 const RD_PRIORITY_WINDOW_MIN = 5;
-// UI sicura: se abbiamo abbastanza episodi RD confermati, nascondiamo i dubbi.
 const RD_HIDE_DUBIOUS_WHEN_ENOUGH_SAFE = true;
 const RD_MIN_EXACT_SAFE_RESULTS = 3;
 const AVAILABILITY_CACHE_HIT_TTL = 24 * 60 * 60;
@@ -303,9 +301,7 @@ function deriveDbRdAvailability(row = {}) {
     const stalePositive = (cachedBool === true || rawState === 'cached') && isPastDueDate(row?.next_cached_check);
 
     if (stalePositive) {
-        // Un vecchio positivo RD non va mostrato come semplice "probing":
-        // l'auditor lo ricontrolla comunque in background, ma in UI resta un hit morbido.
-        // Se poi il recheck fallisce, il worker lo degrada a likely_uncached/uncached_terminal.
+                        
         return {
             state: 'likely_cached',
             cached: null,
@@ -413,9 +409,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             _rdStalePositive: rdDb.stale === true,
             _dbLastCachedCheck: row?.last_cached_check || null,
             _dbNextCachedCheck: row?.next_cached_check || null,
-            _dbFailures: Number(row?.cache_check_failures || 0),
-            // TorBox cache can change quickly/monthly. DB state is only a hint;
-            // the foreground TorBox API check remains authoritative before emit.
+            _dbFailures: Number(row?.cache_check_failures || 0),                        
             _tbDbCachedHint: row?.tb_cached === true,
             _tbDbLastCachedCheck: row?.tb_last_cached_check || null,
             _tbCached: false,
@@ -672,6 +666,21 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             .map((entry) => entry.item);
     }
 
+    function isMovieDbPrimaryCandidate(item = {}, meta = {}) {
+        if (isSeriesMeta(meta)) return false;
+        const group = String(item?._sourceGroup || item?.sourceGroup || '').toLowerCase();
+        if (item?._externalSnapshot === true || item?._fromExternalSnapshot === true || group === 'external_snapshot') return false;
+        return Boolean(
+            item?._dbPrimary === true ||
+            item?._myDb === true ||
+            item?._remoteDb === true ||
+            item?._localDb === true ||
+            group === 'db' ||
+            group === 'remote_db' ||
+            group === 'local_db'
+        );
+    }
+
     function applyRdDbAvailabilityPriority(items, config, meta = {}) {
         const list = Array.isArray(items) ? items : [];
         const cachedOnly = config?.filters?.rdCachedOnly === true;
@@ -701,8 +710,19 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         if (cachedOnly) return [...cachedBucket];
 
         if (hideDubiousWhenSafe && cachedBucket.length >= minExactSafe) {
-            logger.info(`[RD SORT] exact=${cachedBucket.length} >= ${minExactSafe} -> hiding dubious RD hits likely/probing/unknown=${softCached.length + probing.length + unknown.length}`);
-            return [...cachedBucket];
+            const ambiguousBucket = [
+                ...preferTorrentioSeriesItems(softCached, meta),
+                ...preferTorrentioSeriesItems(probing, meta),
+                ...preferTorrentioSeriesItems(unknown, meta)
+            ];
+            const preserveMovieDbPrimaryWhenSafe = config?.filters?.rdPreserveDbPrimaryWhenSafe === true
+                || String(process.env.RD_PRESERVE_DB_PRIMARY_WHEN_SAFE || '').trim() === '1';
+            const protectedDbPrimary = preserveMovieDbPrimaryWhenSafe
+                ? ambiguousBucket.filter((item) => isMovieDbPrimaryCandidate(item, meta))
+                : [];
+            const hiddenCount = softCached.length + probing.length + unknown.length - protectedDbPrimary.length;
+            logger.info(`[RD SORT] exact=${cachedBucket.length} >= ${minExactSafe} -> hiding dubious RD hits likely/probing/unknown=${Math.max(0, hiddenCount)} preservingDbPrimary=${protectedDbPrimary.length}${preserveMovieDbPrimaryWhenSafe ? '' : ' exactOnly=true'}`);
+            return [...cachedBucket, ...protectedDbPrimary];
         }
 
         return [
@@ -860,8 +880,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 if (result.cached === true) {
                     statePayload = { state: 'cached', cached: true, failures: 0, next_hours: 24 * 30 };
                 } else if (result.state === 'likely_cached' || result.pack_without_episode_hint === true) {
-                    // RD ha visto l'hash/pack, ma per una serie manca la prova file episodio.
-                    // Non persistere cached=true e non mostrare ⚡: resta dubbio/sotto.
+                                        
                     statePayload = { state: 'likely_cached', cached: null, failures: 0, next_hours: 6 };
                 } else {
                     statePayload = resolveRdNegativeDecision(item, result);
