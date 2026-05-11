@@ -239,6 +239,21 @@ function createAppServices({
                 return { ok: true, duplicate: true };
             }
             await Cache.setCloudBuild(buildKey, { status: 'error', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now(), error: err.message }, 120);
+            if (service === 'rd' && dbHelper && typeof dbHelper.updateRdCacheStatus === 'function') {
+                try {
+                    await dbHelper.updateRdCacheStatus([{
+                        hash,
+                        state: 'likely_uncached',
+                        cached: null,
+                        failures: 1,
+                        next_hours: status === 429 ? 24 : 4
+                    }]);
+                    if (Cache && typeof Cache.invalidateStreamsByHashes === 'function') await Cache.invalidateStreamsByHashes([hash], 'cloud_build_failed');
+                    logger.info(`[CACHE BUILDER] RD miss persisted | hash=${hash} | state=likely_uncached | reason=${status || err.message}`);
+                } catch (dbErr) {
+                    logger.warn(`[CACHE BUILDER] Persistenza errore RD fallita | hash=${hash} | error=${dbErr.message}`);
+                }
+            }
             recordProviderMetric(`cloudBuild.${service}`, false, 0, { error: err.message });
             throw err;
         }).finally(() => cloudBuildInflight.delete(buildKey));
