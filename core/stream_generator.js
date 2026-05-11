@@ -557,6 +557,84 @@ function isLocalDbCandidate(item = {}) {
     );
 }
 
+function isMovieTypeForDbPriority(type = 'movie', meta = {}) {
+    return String(type || '').toLowerCase() === 'movie'
+        && !meta?.isSeries
+        && !(Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
+}
+
+function isMovieDbPrimaryCandidate(item = {}) {
+    const group = String(item?._sourceGroup || item?.sourceGroup || '').toLowerCase();
+    if (item?._externalSnapshot === true || item?._fromExternalSnapshot === true || group === 'external_snapshot') return false;
+    return Boolean(
+        item?._dbPrimary === true ||
+        item?._myDb === true ||
+        item?._remoteDb === true ||
+        isLocalDbCandidate(item) ||
+        group === 'db' ||
+        group === 'remote_db' ||
+        group === 'local_db'
+    );
+}
+
+function markMovieDbPrimaryCandidate(item = {}, group = 'remote_db') {
+    if (!item || typeof item !== 'object') return item;
+    return {
+        ...item,
+        _remoteDb: group === 'remote_db' || item?._remoteDb === true,
+        _myDb: true,
+        _dbPrimary: true,
+        _sourceGroup: item?._sourceGroup || group,
+        _fallbackGroup: item?._fallbackGroup || 'db_primary'
+    };
+}
+
+function getMovieExternalFillLimit(filters = {}, dbPrimaryCount = 0) {
+    const raw = filters.movieExternalFillWhenDbLimit ?? process.env.MOVIE_EXTERNAL_FILL_WHEN_DB_LIMIT ?? '2';
+    const parsed = parseInt(raw, 10);
+    const base = Number.isFinite(parsed) ? Math.max(0, Math.min(20, parsed)) : 2;
+    if (dbPrimaryCount <= 0) return 9999;
+    return Math.min(base, Math.max(0, dbPrimaryCount - 1));
+}
+
+function getMovieDbVerifiedSkipExternalMin(filters = {}) {
+    const raw = filters.movieDbVerifiedSkipExternalMin ?? process.env.MOVIE_DB_VERIFIED_SKIP_EXTERNAL_MIN ?? '3';
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) ? Math.max(1, Math.min(20, parsed)) : 3;
+}
+
+function isMovieDbVerifiedCandidate(item = {}) {
+    if (!isMovieDbPrimaryCandidate(item)) return false;
+    const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || item?.rd_cache_state || '').toLowerCase();
+    return Boolean(
+        item?._dbCachedRd === true ||
+        item?.cached_rd === true ||
+        state === 'cached' ||
+        state === 'rd_cached' ||
+        state === 'instant' ||
+        state === 'instant_available'
+    );
+}
+
+function countMovieDbVerifiedCandidates(items = []) {
+    const seen = new Set();
+    let count = 0;
+    for (const item of Array.isArray(items) ? items : []) {
+        if (!isMovieDbVerifiedCandidate(item)) continue;
+        const hash = getCandidateInfoHash(item) || `${String(item?.title || '').toLowerCase()}|${String(item?.source || '').toLowerCase()}`;
+        const key = `${hash}:${Number.isInteger(item?.fileIdx) ? item.fileIdx : -1}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        count += 1;
+    }
+    return count;
+}
+
+function hasEnoughMovieVerifiedDbResults(items = [], filters = {}) {
+    const min = getMovieDbVerifiedSkipExternalMin(filters);
+    return countMovieDbVerifiedCandidates(items) >= min;
+}
+
 function getCandidateInfoHash(item = {}) {
     const raw = String(item?.hash || item?.infoHash || item?.info_hash || '').trim().toUpperCase();
     if (/^[A-F0-9]{40}$/.test(raw)) return raw;
@@ -578,7 +656,7 @@ function getDbCoverageScore(item = {}) {
 
 function shouldUseDbCoverageItem(item = {}) {
     const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || '').toLowerCase();
-    if (state === 'uncached_terminal') return false;
+    if (state === 'uncached_terminal' || state === 'likely_uncached') return false;
     if (item?._dbCachedRd === false || item?.cached_rd === false) return false;
     return getDbCoverageScore(item) > 0;
 }
@@ -589,10 +667,10 @@ function preserveMovieLocalDbCoverage(rankedList = [], localDbPool = [], meta = 
 
     const limit = getMovieDbFallbackLimit(filters);
     const list = Array.isArray(rankedList) ? rankedList : [];
-    const dbPool = Array.isArray(localDbPool) ? localDbPool.filter((item) => isLocalDbCandidate(item) && shouldUseDbCoverageItem(item)) : [];
+    const dbPool = Array.isArray(localDbPool) ? localDbPool.filter((item) => isMovieDbPrimaryCandidate(item) && shouldUseDbCoverageItem(item)) : [];
     if (limit <= 0 || dbPool.length === 0) return list;
 
-    const currentDbCount = list.filter(isLocalDbCandidate).length;
+    const currentDbCount = list.filter(isMovieDbPrimaryCandidate).length;
     const wanted = Math.max(0, Math.min(limit, dbPool.length) - currentDbCount);
     if (wanted <= 0) return list;
 
@@ -604,10 +682,10 @@ function preserveMovieLocalDbCoverage(rankedList = [], localDbPool = [], meta = 
         })
         .sort((a, b) => getDbCoverageScore(b) - getDbCoverageScore(a))
         .slice(0, wanted)
-        .map((item) => ({ ...item, _localDb: true, _sourceGroup: item?._sourceGroup || 'local_db' }));
+        .map((item) => ({ ...item, _myDb: true, _dbPrimary: true, _sourceGroup: item?._sourceGroup || 'local_db' }));
 
     if (additions.length === 0) return list;
-    logger.info(`[DB COVERAGE] movie local-db fallback added=${additions.length} current=${currentDbCount} limit=${limit} dbPool=${dbPool.length}`);
+    logger.info(`[DB COVERAGE] movie db-primary fallback added=${additions.length} current=${currentDbCount} limit=${limit} dbPool=${dbPool.length}`);
     return [...list, ...additions];
 }
 
@@ -630,7 +708,25 @@ function buildGroupedFallbackCandidatePool({ localDbPool = [], networkResults = 
     const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
 
     if (!isSeries) {
-        return [...dbList, ...networkList];
+        const primaryFromDb = dbList.filter(isMovieDbPrimaryCandidate);
+        const snapshotFill = dbList.filter((item) => !isMovieDbPrimaryCandidate(item));
+        const primaryFromNetwork = networkList.filter(isMovieDbPrimaryCandidate);
+        const externalFromNetwork = networkList.filter((item) => !isMovieDbPrimaryCandidate(item));
+        const dbPrimary = [...primaryFromDb, ...primaryFromNetwork];
+
+        if (dbPrimary.length > 0) {
+            const fillPool = [...snapshotFill, ...externalFromNetwork];
+            const fillLimit = getMovieExternalFillLimit(filters, dbPrimary.length);
+            const externalFill = fillPool.slice(0, fillLimit);
+            logger.info(`[GROUP FALLBACK] movie DB-primary wins | dbPrimary=${dbPrimary.length} local=${primaryFromDb.length} remote=${primaryFromNetwork.length} externalFill=${externalFill.length}/${fillPool.length}`);
+            return [
+                ...markFallbackGroup(dbPrimary, 'db_primary'),
+                ...markFallbackGroup(externalFill, 'external_fill')
+            ];
+        }
+
+        logger.info(`[GROUP FALLBACK] movie no DB-primary | snapshots=${snapshotFill.length} external=${externalFromNetwork.length}`);
+        return [...snapshotFill, ...externalFromNetwork];
     }
 
     const networkAssessment = assessFastResultQuality(networkList, meta, langMode, config);
@@ -3073,8 +3169,16 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
                 folderSize: Number(t.folder_size || t.folderSize || t.total_size || 0) || undefined,
                 seeders: parseInt(t.seeders, 10) || 0,
                 source: providerName,
+                provider: providerName,
                 fileIdx: t.file_index !== undefined ? parseInt(t.file_index) : undefined,
-                _sourceGroup: 'db',
+                _sourceGroup: 'remote_db',
+                _remoteDb: true,
+                _myDb: true,
+                _dbPrimary: true,
+                _rdCacheState: t.rd_cache_state || t.rdCacheState || t.cacheState || undefined,
+                rdCacheState: t.rd_cache_state || t.rdCacheState || t.cacheState || undefined,
+                _dbCachedRd: t.cached_rd === true ? true : (t.cached_rd === false ? false : undefined),
+                cached_rd: t.cached_rd === true ? true : (t.cached_rd === false ? false : undefined),
                 _isPack: Boolean(isSeriesQuery && isConfidentSeasonPackItem({ title: safeDbTitle || t.title, sizeBytes: parseInt(t.size), folderSize: Number(t.folder_size || t.folderSize || t.total_size || 0) || undefined }, meta, type))
             };
         });
@@ -3740,7 +3844,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                     const externalRequestIds = buildExternalAddonRequestIds(type, finalId, meta);
                     const externalConfigSig = crypto.createHash("sha1").update(JSON.stringify({ service: config?.service || "", rd: config?.rd || config?.realdebrid || "", tb: config?.tb || config?.torbox || "", key: config?.key || "" })).digest("hex").slice(0, 12);
                     const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}:torrentioItTrustV14MeteorFastTrustedV2`;
-                    const externalPromise = disableLiveSources && !flags.useProviderCachedOnly
+                    const createExternalPromise = () => disableLiveSources && !flags.useProviderCachedOnly
                         ? Promise.resolve([])
                         : Cache.fetchWithCache('ExternalAddons', externalCacheKey, 43200, () =>
                             scheduleRequestTask('provider-fast', `external:${externalCacheKey}`, () =>
@@ -3754,9 +3858,39 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                             , { group: 'provider-fast' })
                         , providerCacheOptions);
 
-                    const [remoteSettled, externalSettled] = await Promise.allSettled([remotePromise, externalPromise]);
-                    const remoteResults = remoteSettled.status === 'fulfilled' ? remoteSettled.value : [];
-                    const externalResults = externalSettled.status === 'fulfilled' ? externalSettled.value : [];
+                    let remoteResults = [];
+                    let externalResults = [];
+                    const isMovieDbPriorityRequest = isMovieTypeForDbPriority(type, meta);
+
+                    if (isMovieDbPriorityRequest) {
+                        const remoteSettled = await Promise.allSettled([remotePromise]);
+                        remoteResults = (remoteSettled[0]?.status === 'fulfilled' ? remoteSettled[0].value : [])
+                            .map((item) => markMovieDbPrimaryCandidate(item, 'remote_db'));
+                        const hydratedRemoteForDecision = await hydrateTorrentCandidatesFromLedger(remoteResults, meta, 'remote-pre-external-skip');
+                        if (Array.isArray(hydratedRemoteForDecision)) remoteResults = hydratedRemoteForDecision.map((item) => markMovieDbPrimaryCandidate(item, 'remote_db'));
+
+                        const decisionPool = [
+                            ...(Array.isArray(seedResults) ? seedResults : []),
+                            ...remoteResults
+                        ];
+                        const verifiedDbCount = countMovieDbVerifiedCandidates(decisionPool);
+                        const verifiedMin = getMovieDbVerifiedSkipExternalMin(config?.filters || {});
+
+                        if (verifiedDbCount >= verifiedMin && !flags.useProviderCachedOnly) {
+                            logger.info(`[EXTERNAL] movie DB verified=${verifiedDbCount} >= ${verifiedMin} -> skip Torrentio/MediaFusion/Meteor live`);
+                            externalResults = [];
+                        } else {
+                            const externalSettled = await Promise.allSettled([createExternalPromise()]);
+                            externalResults = externalSettled[0]?.status === 'fulfilled' ? externalSettled[0].value : [];
+                            logger.info(`[EXTERNAL] movie DB verified=${verifiedDbCount}/${verifiedMin} -> Torrentio priority live allowed`);
+                        }
+                    } else {
+                        const externalPromise = createExternalPromise();
+                        const [remoteSettled, externalSettled] = await Promise.allSettled([remotePromise, externalPromise]);
+                        remoteResults = remoteSettled.status === 'fulfilled' ? remoteSettled.value : [];
+                        externalResults = externalSettled.status === 'fulfilled' ? externalSettled.value : [];
+                    }
+
                     logger.info(`[STATS] Remote: ${remoteResults.length} | External: ${externalResults.length} ids=${externalRequestIds.join(',')}`);
 
                     if (!flags.dbOnlyMode && !flags.cacheOnlyMode && externalResults.length > 0) {
@@ -3873,7 +4007,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const streamCacheVersionParts = [];
-  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v22');
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v22|movieDbPriorityVerifiedSkip=v1');
   const baseHashInput = backCompat.autoAnimeUnity ? `${userConfStr || 'no-conf'}|autoAnimeUnityKitsu=v2` : (userConfStr || 'no-conf');
   const hashInput = streamCacheVersionParts.length > 0 ? `${baseHashInput}|${streamCacheVersionParts.join('|')}` : baseHashInput;
   const configHash = crypto.createHash('md5').update(hashInput).digest('hex');
@@ -3980,6 +4114,8 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       for (const item of Array.isArray(localDbResults) ? localDbResults : []) {
           if (!item) continue;
           item._localDb = true;
+          item._myDb = true;
+          item._dbPrimary = true;
           item._sourceGroup = item._sourceGroup || 'local_db';
       }
 
@@ -3992,23 +4128,37 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           results: Array.isArray(items) ? items.length : 0
       }));
       const dbSeedResults = [...(Array.isArray(localDbResults) ? localDbResults : []), ...(Array.isArray(externalSnapshotResults) ? externalSnapshotResults : [])];
+      const isMovieDbPriorityPolicy = isMovieTypeForDbPriority(type, meta);
 
       let localDbFastPool = [];
+      let localDbPrimaryFastPool = [];
       let localDbSatisfaction = { satisfied: false, reason: 'no_db_results' };
       if (dbSeedResults.length > 0) {
           localDbFastPool = applyConfiguredTorrentFilters(
               await normalizeCandidateResults(filterWithTorrentPackTrust(dbSeedResults, aggressiveFilter, { meta, type, langMode }), meta),
               filters
           );
-          const localDbAssessment = assessFastResultQuality(localDbFastPool, meta, langMode, config);
+          localDbPrimaryFastPool = isMovieDbPriorityPolicy
+              ? localDbFastPool.filter(isMovieDbPrimaryCandidate)
+              : localDbFastPool;
+          const localDbAssessmentPool = isMovieDbPriorityPolicy ? localDbPrimaryFastPool : localDbFastPool;
+          const localDbAssessment = assessFastResultQuality(localDbAssessmentPool, meta, langMode, config);
           localDbSatisfaction = evaluatePoolSatisfaction(localDbAssessment, meta);
-          logger.info(`[DB READ] Trovati ${localDbFastPool.length}/${dbSeedResults.length} torrent/snapshot dal DB locale | torrents=${localDbResults.length} snapshots=${externalSnapshotResults.length} satisfied=${localDbSatisfaction.satisfied} reason=${localDbSatisfaction.reason}`);
+          const localVerified = isMovieDbPriorityPolicy ? countMovieDbVerifiedCandidates(localDbPrimaryFastPool) : 0;
+          logger.info(`[DB READ] Trovati ${localDbFastPool.length}/${dbSeedResults.length} torrent/snapshot dal DB locale | torrents=${localDbResults.length} snapshots=${externalSnapshotResults.length} primary=${localDbPrimaryFastPool.length} verified=${localVerified} satisfied=${localDbSatisfaction.satisfied} reason=${localDbSatisfaction.reason}`);
+          if (isMovieDbPriorityPolicy && localDbPrimaryFastPool.length === 0 && externalSnapshotResults.length > 0) {
+              logger.info(`[DB FAST-PATH] movie snapshot-only ignored | snapshots=${externalSnapshotResults.length} -> Remote/Torrentio live required`);
+          }
       }
 
       const allowSeriesDbFastPath = !meta?.isSeries || shouldAllowSeriesDbFastPath(filters);
-      const useLocalDbFastPath = localDbFastPool.length > 0 && localDbSatisfaction.satisfied && !sourceModeFlags.liveOnlyMode && allowSeriesDbFastPath;
+      const fastPathPool = isMovieDbPriorityPolicy ? localDbPrimaryFastPool : localDbFastPool;
+      const movieVerifiedEnoughForFastPath = !isMovieDbPriorityPolicy || hasEnoughMovieVerifiedDbResults(fastPathPool, filters);
+      const useLocalDbFastPath = fastPathPool.length > 0 && localDbSatisfaction.satisfied && movieVerifiedEnoughForFastPath && !sourceModeFlags.liveOnlyMode && allowSeriesDbFastPath;
       if (useLocalDbFastPath) {
-          logger.info(`[DB FAST-PATH] Uso DB locale, skip Remote/External | results=${localDbFastPool.length} reason=${localDbSatisfaction.reason}`);
+          logger.info(`[DB FAST-PATH] Uso DB proprietario verificato, skip Remote/Torrentio/External | results=${fastPathPool.length} verified=${countMovieDbVerifiedCandidates(fastPathPool)} allDbRows=${localDbFastPool.length} reason=${localDbSatisfaction.reason}`);
+      } else if (isMovieDbPriorityPolicy && fastPathPool.length > 0 && localDbSatisfaction.satisfied) {
+          logger.info(`[DB FAST-PATH] movie DB primary non abbastanza verificato | primary=${fastPathPool.length} verified=${countMovieDbVerifiedCandidates(fastPathPool)}/${getMovieDbVerifiedSkipExternalMin(filters)} -> Remote/Torrentio consentiti`);
       } else if (meta?.isSeries && localDbFastPool.length > 0 && localDbSatisfaction.satisfied) {
           logger.info(`[DB FAST-PATH] serie: skip disattivato, provo prima gruppi network/Torrentio | dbResults=${localDbFastPool.length} reason=${localDbSatisfaction.reason}`);
       }
@@ -4042,7 +4192,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       if (torrentPipelineEnabled) {
           const dbMergePool = localDbFastPool.length > 0 ? localDbFastPool : dbSeedResults;
           const groupedMergePool = useLocalDbFastPath
-              ? localDbFastPool
+              ? fastPathPool
               : buildGroupedFallbackCandidatePool({
                   localDbPool: dbMergePool,
                   networkResults,
@@ -4052,7 +4202,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
                   filters
               });
           cleanResults = useLocalDbFastPath
-              ? localDbFastPool
+              ? fastPathPool
               : await normalizeCandidateResults(filterWithTorrentPackTrust(groupedMergePool, aggressiveFilter, { meta, type, langMode }), meta);
           cleanResults = runFilterStage(cleanResults, meta, filters, {
               applyPackKnowledge,
@@ -4101,7 +4251,11 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               logger.info(`[DEDUPE INFOHASH] ranked removed=${infoHashRankDedupe.removed} kept=${infoHashRankDedupe.results.length} title="${String(meta?.title || '').slice(0, 80)}" s=${meta?.season || '-'} e=${meta?.episode || '-'}`);
           }
           rankedList = preserveRdStatusList(beforeInfoHashDedupe, infoHashRankDedupe.results, { logger, stage: 'ranked-dedupe' });
-          rankedList = preserveMovieLocalDbCoverage(rankedList, localDbFastPool.length > 0 ? localDbFastPool : dbSeedResults, meta, filters);
+          const movieDbPrimaryCoveragePool = [
+              ...(localDbFastPool.length > 0 ? localDbFastPool : dbSeedResults),
+              ...(Array.isArray(networkResults) ? networkResults.filter(isMovieDbPrimaryCandidate) : [])
+          ];
+          rankedList = preserveMovieLocalDbCoverage(rankedList, movieDbPrimaryCoveragePool, meta, filters);
           trace.stage('ranked-dedupe', {
               in: beforeInfoHashDedupe.length,
               kept: rankedList.length,
