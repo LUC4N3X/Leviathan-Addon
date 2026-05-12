@@ -1,5 +1,14 @@
 const axios = require("axios");
 
+const {
+  TB_CACHE_STATES,
+  normalizeTbCacheState,
+  toRdCacheState,
+  shouldPersistNegativeTbState,
+  shortTorboxHash,
+  redactSecretsInText
+} = require("./torbox_cache_state");
+
 const TB_BASE_URL = "https://api.torbox.app/v1/api";
 
 const CHUNK_SIZE = 40;
@@ -168,8 +177,40 @@ function buildEpisodeRegexes(season, episode) {
     { score: 1140, regex: new RegExp(`\\bS0*${s}[^a-z0-9]{0,4}E0*${e}\\b`, "i") },
     { score: 1090, regex: new RegExp(`\\b${s}${e2}\\b`) },
     { score: 980, regex: new RegExp(`\\bepisode\\s*0*${e}\\b|\\bep\\s*0*${e}\\b`, "i") },
-    { score: 760, regex: new RegExp(`(?:^|\D)0*${e}(?:\D|$)`) }
+    { score: 760, regex: new RegExp(`(?:^|\\D)0*${e}(?:\\D|$)`) }
   ];
+}
+
+function parseExplicitEpisodeHints(name) {
+  const hints = new Set();
+  const patterns = [
+    /\bS(?:eason)?\s*0*(\d{1,2})\s*[-_. ]*E(?:pisode)?\s*0*(\d{1,3})\b/gi,
+    /\b(\d{1,2})x(\d{1,3})\b/gi,
+    /\b(?:episode|ep)\s*0*(\d{1,3})\b/gi
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(name)) !== null) {
+      const season = match.length >= 3 ? safeInt(match[1], 0) : 0;
+      const episode = safeInt(match[match.length - 1], 0);
+      if (episode > 0) hints.add(`${season}:${episode}`);
+    }
+  }
+  return hints;
+}
+
+function hasConflictingExplicitEpisode(name, season, episode) {
+  const hints = parseExplicitEpisodeHints(name);
+  if (hints.size === 0) return false;
+  const s = safeInt(season, 0);
+  const e = safeInt(episode, 0);
+  if (hints.has(`${s}:${e}`) || hints.has(`0:${e}`)) return false;
+  for (const hint of hints) {
+    const [hintSeason, hintEpisode] = hint.split(":").map((v) => safeInt(v, 0));
+    if (hintSeason === 0 && hintEpisode === e) return false;
+    if (hintSeason === s && hintEpisode === e) return false;
+  }
+  return true;
 }
 
 function getNested(obj, path) {
@@ -217,22 +258,27 @@ function buildMovieScore(file) {
 }
 
 function buildEpisodeScore(file, season, episode) {
-  const name = normalizeName(getFileName(file));
+  const rawName = getFileName(file);
+  const name = normalizeName(rawName);
   const size = getFileSize(file);
   let score = 0;
+
+  if (hasConflictingExplicitEpisode(rawName, season, episode)) return -Infinity;
 
   score += 300;
   score += Math.min(size / (1024 * 1024 * 50), 150);
   if (isExtraFile(file)) score -= 320;
 
+  let matched = false;
   for (const { score: bonus, regex } of buildEpisodeRegexes(season, episode)) {
-    if (regex.test(name)) {
+    if (regex.test(rawName) || regex.test(name)) {
       score += bonus;
+      matched = true;
       break;
     }
   }
 
-  const range = parseEpisodeRange(name);
+  const range = parseEpisodeRange(rawName) || parseEpisodeRange(name);
   const targetEpisode = safeInt(episode, 0);
   if (range) {
     if (targetEpisode >= range.start && targetEpisode <= range.end) {
@@ -242,7 +288,7 @@ function buildEpisodeScore(file, season, episode) {
     }
   }
 
-  if (isSeasonPackName(name, season)) score -= 180;
+  if (!matched && isSeasonPackName(name, season)) score -= 180;
   if (/\b(batch|multi|complete|collection|pack|全集)\b/i.test(name)) score -= 120;
   if (/\b(2160p|1080p|720p|bluray|bdrip|web[- ]?dl|webrip|remux)\b/i.test(name)) score += 20;
 
@@ -252,7 +298,7 @@ function buildEpisodeScore(file, season, episode) {
 function pickBestFile(files, meta) {
   const candidates = files.filter(isVideoCandidate);
   if (candidates.length === 0) {
-    return { file: null, confidence: 0 };
+    return { file: null, confidence: 0, score: -Infinity, reason: "no_video_candidates" };
   }
 
   const isEpisodeRequest = Boolean(meta?.isEpisodeRequest);
@@ -264,10 +310,11 @@ function pickBestFile(files, meta) {
         : buildMovieScore(file),
       size: getFileSize(file)
     }))
+    .filter((item) => Number.isFinite(item.score))
     .sort((a, b) => (b.score - a.score) || (b.size - a.size));
 
   const best = ranked[0] || null;
-  if (!best) return { file: null, confidence: 0 };
+  if (!best) return { file: null, confidence: 0, score: -Infinity, reason: "no_confident_episode_file" };
 
   let confidence = 0;
   if (!isEpisodeRequest) {
@@ -282,40 +329,162 @@ function pickBestFile(files, meta) {
     confidence = candidates.length === 1 ? 0.6 : 0.35;
   }
 
-  return { file: best.file, confidence };
+  return {
+    file: best.file,
+    confidence,
+    score: best.score,
+    reason: confidence >= 0.75 ? "file_match_confident" : "file_match_uncertain"
+  };
+}
+
+function makeCacheResult(state, extra = {}) {
+  const normalized = normalizeTbCacheState(state);
+  return {
+    cached: normalized === TB_CACHE_STATES.CACHED_VERIFIED ? true : (normalized === TB_CACHE_STATES.UNCACHED ? false : null),
+    state: normalized,
+    cache_state: normalized,
+    tb_cache_state: normalized,
+    rd_cache_state: toRdCacheState(normalized),
+    confidence: 0,
+    ...extra
+  };
 }
 
 function parseHashResult(hash, info, meta = null) {
   const lowerHash = lower(hash);
 
-  if (!info || safeNum(info?.size, 0) <= 0 || !Array.isArray(info?.files) || info.files.length === 0) {
-    return [lowerHash, { cached: false }];
+  if (!info) {
+    return [lowerHash, makeCacheResult(TB_CACHE_STATES.UNCACHED, {
+      match_reason: "hash_not_returned"
+    })];
+  }
+
+  const apiState = lower(info?.download_state || info?.state || info?.status);
+  if (/(queued|pending|downloading|processing)/i.test(apiState)) {
+    return [lowerHash, makeCacheResult(TB_CACHE_STATES.QUEUED, {
+      torrent_title: info.name || null,
+      size: safeNum(info.size, 0) || null,
+      match_reason: `api_state_${apiState || "queued"}`
+    })];
+  }
+
+  const hasFiles = Array.isArray(info?.files) && info.files.length > 0;
+  const totalSize = safeNum(info?.size, 0);
+
+  if (!hasFiles) {
+    if (info?.cached === true || totalSize > 0) {
+      return [lowerHash, makeCacheResult(TB_CACHE_STATES.LIKELY_CACHED, {
+        torrent_title: info.name || null,
+        size: totalSize || null,
+        confidence: 0.45,
+        match_reason: "metadata_without_files"
+      })];
+    }
+    return [lowerHash, makeCacheResult(TB_CACHE_STATES.UNCACHED, {
+      match_reason: "no_files_no_size"
+    })];
   }
 
   const validVideoFiles = info.files.filter(isVideoCandidate);
   if (validVideoFiles.length === 0) {
-    return [lowerHash, { cached: false }];
+    return [lowerHash, makeCacheResult(TB_CACHE_STATES.UNCACHED, {
+      torrent_title: info.name || null,
+      size: totalSize || null,
+      match_reason: "no_video_files"
+    })];
   }
 
-  const { file: bestFile, confidence } = pickBestFile(validVideoFiles, meta);
+  const { file: bestFile, confidence, score, reason } = pickBestFile(validVideoFiles, meta);
   const bestSize = bestFile ? getFileSize(bestFile) : Math.max(...validVideoFiles.map(getFileSize), 0);
   const bestId = bestFile ? getFileId(bestFile) : null;
+  const isEpisodeRequest = Boolean(meta?.isEpisodeRequest);
   const shouldExposeFileId = confidence >= 0.75 && bestId != null;
+  const verified = Boolean(bestFile && (!isEpisodeRequest || shouldExposeFileId));
 
-  return [lowerHash, {
-    cached: true,
+  if (verified) {
+    return [lowerHash, makeCacheResult(TB_CACHE_STATES.CACHED_VERIFIED, {
+      torrent_title: info.name || null,
+      size: bestSize || totalSize || null,
+      file_title: getFileName(bestFile) || null,
+      file_size: bestSize || null,
+      file_id: bestId,
+      confidence,
+      match_score: score,
+      match_reason: reason || "file_verified"
+    })];
+  }
+
+  return [lowerHash, makeCacheResult(TB_CACHE_STATES.UNCERTAIN, {
     torrent_title: info.name || null,
-    size: bestSize || safeNum(info.size, 0),
-    file_title: shouldExposeFileId ? getFileName(bestFile) : null,
-    file_size: shouldExposeFileId ? bestSize : null,
-    file_id: shouldExposeFileId ? bestId : null
-  }];
+    size: bestSize || totalSize || null,
+    file_title: confidence >= 0.5 && bestFile ? getFileName(bestFile) : null,
+    file_size: confidence >= 0.5 ? bestSize || null : null,
+    file_id: null,
+    confidence,
+    match_score: score,
+    match_reason: reason || "file_match_uncertain"
+  })];
+}
+
+function errorStateForResponse(response, fallbackMessage = "torbox_api_error") {
+  const status = response?.status || 0;
+  let code = "api_error";
+  if (status === 401 || status === 403) code = "auth_error";
+  else if (status === 429) code = "rate_limited";
+  else if (status >= 500) code = "server_error";
+  else if (status >= 400) code = "request_error";
+  return { status, code, message: fallbackMessage };
+}
+
+function buildErrorResults(entries, errorInfo) {
+  const results = {};
+  for (const entry of entries) {
+    results[entry.hash] = makeCacheResult(TB_CACHE_STATES.ERROR, {
+      error_code: errorInfo.code,
+      http_status: errorInfo.status || null,
+      match_reason: errorInfo.message || "api_error"
+    });
+  }
+  return results;
+}
+
+function logCacheEvent(event, payload = {}, level = "info") {
+  const safePayload = {};
+  for (const [key, value] of Object.entries(payload || {})) {
+    if (/token|key|authorization/i.test(key)) continue;
+    safePayload[key] = value;
+  }
+  const message = `[${event}] ${Object.entries(safePayload).map(([k, v]) => `${k}=${v}`).join(" ")}`.trim();
+  if (level === "error") console.error(message);
+  else if (level === "warn") console.warn(message);
+  else console.info(message);
+}
+
+function summarizeStates(results) {
+  const counts = {
+    cached_verified: 0,
+    likely_cached: 0,
+    uncertain: 0,
+    queued: 0,
+    uncached: 0,
+    error: 0
+  };
+  for (const value of Object.values(results || {})) {
+    const state = normalizeTbCacheState(value?.state || value?.cache_state || (value?.cached === true ? TB_CACHE_STATES.CACHED_VERIFIED : TB_CACHE_STATES.UNCACHED));
+    counts[state] = (counts[state] || 0) + 1;
+  }
+  return counts;
 }
 
 async function checkChunk(entries, token) {
   const hashes = entries.map((entry) => entry.hash).filter(Boolean);
   const results = {};
   if (hashes.length === 0) return results;
+
+  logCacheEvent("torbox.cache.check.start", {
+    hashes: hashes.length,
+    sample: hashes.slice(0, 3).map(shortTorboxHash).join(",")
+  });
 
   try {
     const response = await fetchWithRetry(`${TB_BASE_URL}/torrents/checkcached`, {
@@ -332,6 +501,18 @@ async function checkChunk(entries, token) {
       timeout: API_TIMEOUT
     });
 
+    if (!response || response.status < 200 || response.status >= 300) {
+      const errorInfo = errorStateForResponse(response, `http_${response?.status || "unknown"}`);
+      const errorResults = buildErrorResults(entries, errorInfo);
+      logCacheEvent("torbox.cache.check.result", {
+        hashes: hashes.length,
+        error: hashes.length,
+        code: errorInfo.code,
+        status: errorInfo.status || "n/a"
+      }, errorInfo.status === 429 || errorInfo.status >= 500 ? "warn" : "error");
+      return errorResults;
+    }
+
     const data = response?.data;
     if (data?.success && data?.data) {
       for (const entry of entries) {
@@ -339,9 +520,37 @@ async function checkChunk(entries, token) {
         const [key, value] = parseHashResult(entry.hash, info, entry.meta);
         results[key] = value;
       }
+    } else {
+      const detail = redactSecretsInText(data?.detail || data?.error || "missing_data");
+      Object.assign(results, buildErrorResults(entries, {
+        status: response.status,
+        code: "malformed_response",
+        message: detail
+      }));
     }
+
+    const counts = summarizeStates(results);
+    logCacheEvent("torbox.cache.check.result", {
+      hashes: hashes.length,
+      verified: counts.cached_verified,
+      likely: counts.likely_cached,
+      uncertain: counts.uncertain,
+      queued: counts.queued,
+      uncached: counts.uncached,
+      error: counts.error
+    });
   } catch (error) {
-    console.error(`❌ [TB Cache] API error on chunk (${hashes.length} hash): ${error?.message || error}`);
+    const message = redactSecretsInText(error?.message || String(error));
+    Object.assign(results, buildErrorResults(entries, {
+      status: error?.response?.status || null,
+      code: error?.code === "ECONNABORTED" || error?.code === "ETIMEDOUT" ? "timeout" : "network_error",
+      message
+    }));
+    logCacheEvent("torbox.cache.check.result", {
+      hashes: hashes.length,
+      error: hashes.length,
+      code: error?.code || "network_error"
+    }, "warn");
   }
 
   return results;
@@ -384,17 +593,24 @@ async function checkHashes(entries, token) {
 }
 
 function buildDbUpdate(hash, apiRes, meta = null) {
+  const state = normalizeTbCacheState(
+    apiRes?.state || apiRes?.cache_state || apiRes?.tb_cache_state || (apiRes?.cached === true ? TB_CACHE_STATES.CACHED_VERIFIED : (apiRes?.cached === false ? TB_CACHE_STATES.UNCACHED : TB_CACHE_STATES.UNCERTAIN))
+  );
+  const cached = state === TB_CACHE_STATES.CACHED_VERIFIED ? true : (shouldPersistNegativeTbState(state) ? false : null);
+
   return {
     hash,
-    cached: Boolean(apiRes?.cached),
+    cached,
     torrent_title: apiRes?.torrent_title || null,
     size: apiRes?.size || null,
     file_title: apiRes?.file_title || null,
-    file_size: apiRes?.file_size || null,
-    file_id: apiRes?.file_id != null ? apiRes.file_id : null,
+    file_size: state === TB_CACHE_STATES.CACHED_VERIFIED ? apiRes?.file_size || null : null,
+    file_id: state === TB_CACHE_STATES.CACHED_VERIFIED && apiRes?.file_id != null ? apiRes.file_id : null,
     imdb_id: meta?.imdbId || null,
     imdb_season: meta?.isEpisodeRequest && meta?.season > 0 ? meta.season : null,
-    imdb_episode: meta?.isEpisodeRequest && meta?.episode > 0 ? meta.episode : null
+    imdb_episode: meta?.isEpisodeRequest && meta?.episode > 0 ? meta.episode : null,
+    tb_cache_state: state,
+    confidence: apiRes?.confidence || 0
   };
 }
 
@@ -419,12 +635,20 @@ async function checkCacheSync(items, token, dbHelper, limit = DEFAULT_SYNC_LIMIT
   const updates = [];
 
   for (const entry of entries) {
-    const apiRes = apiResults[entry.hash] || { cached: false };
+    const apiRes = apiResults[entry.hash] || makeCacheResult(TB_CACHE_STATES.UNCACHED, { match_reason: "not_returned" });
+    const state = normalizeTbCacheState(apiRes.state || apiRes.cache_state || (apiRes.cached === true ? TB_CACHE_STATES.CACHED_VERIFIED : (apiRes.cached === false ? TB_CACHE_STATES.UNCACHED : TB_CACHE_STATES.UNCERTAIN)));
     results[entry.hash] = {
-      cached: Boolean(apiRes.cached),
-      file_title: apiRes.file_title || null,
-      file_size: apiRes.file_size || null,
-      file_id: apiRes.file_id != null ? apiRes.file_id : null
+      cached: state === TB_CACHE_STATES.CACHED_VERIFIED,
+      state,
+      cache_state: state,
+      tb_cache_state: state,
+      rd_cache_state: toRdCacheState(state),
+      confidence: apiRes.confidence || 0,
+      file_title: state === TB_CACHE_STATES.CACHED_VERIFIED ? apiRes.file_title || null : null,
+      file_size: state === TB_CACHE_STATES.CACHED_VERIFIED ? apiRes.file_size || null : null,
+      file_id: state === TB_CACHE_STATES.CACHED_VERIFIED && apiRes.file_id != null ? apiRes.file_id : null,
+      match_reason: apiRes.match_reason || null,
+      error_code: apiRes.error_code || null
     };
     updates.push(buildDbUpdate(entry.hash, apiRes, entry.meta));
   }
@@ -441,7 +665,7 @@ async function enrichCacheBackground(items, token, dbHelper) {
   if (entries.length === 0) return;
 
   const apiResults = await checkHashes(entries, token);
-  const updates = entries.map((entry) => buildDbUpdate(entry.hash, apiResults[entry.hash] || { cached: false }, entry.meta));
+  const updates = entries.map((entry) => buildDbUpdate(entry.hash, apiResults[entry.hash] || makeCacheResult(TB_CACHE_STATES.UNCACHED, { match_reason: "not_returned" }), entry.meta));
   await flushDbUpdates(dbHelper, updates);
 }
 
@@ -451,6 +675,9 @@ module.exports = {
   __private: {
     buildDbUpdate,
     extractItemMeta,
-    parseHashResult
+    parseHashResult,
+    pickBestFile,
+    normalizeTbCacheState,
+    TB_CACHE_STATES
   }
 };
