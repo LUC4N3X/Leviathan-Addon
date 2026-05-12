@@ -15,6 +15,18 @@ services:
       NODE_ENV: production
       PORT: 7000
       TZ: Europe/Rome
+      RUST_SHIELD_ENABLED: ${RUST_SHIELD_ENABLED:-true}
+      RUST_SHIELD_URL: ${RUST_SHIELD_URL:-http://rust-shield:8787}
+      RUST_SHIELD_FIRST: ${RUST_SHIELD_FIRST:-true}
+      RUST_SHIELD_FAIL_OPEN: ${RUST_SHIELD_FAIL_OPEN:-true}
+      RUST_SHIELD_CACHE_ENABLED: ${RUST_SHIELD_CACHE_ENABLED:-true}
+      RUST_SHIELD_TIMEOUT_MS: ${RUST_SHIELD_TIMEOUT_MS:-1800}
+      RUST_SHIELD_NODE_TIMEOUT_MS: ${RUST_SHIELD_NODE_TIMEOUT_MS:-2300}
+      RUST_SHIELD_CACHE_TTL_MS: ${RUST_SHIELD_CACHE_TTL_MS:-1200000}
+      RUST_SHIELD_STALE_TTL_MS: ${RUST_SHIELD_STALE_TTL_MS:-3600000}
+    depends_on:
+      rust-shield:
+        condition: service_started
     stop_grace_period: 20s
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -22,3 +34,35 @@ services:
       timeout: 10s
       retries: 5
       start_period: 20s
+
+
+  rust-shield:
+    build:
+      context: ./services/rust-shield
+      dockerfile: Dockerfile
+    container_name: leviathan-rust-shield
+    restart: unless-stopped
+    init: true
+    environment:
+      TZ: Europe/Rome
+      RUST_LOG: ${RUST_SHIELD_LOG:-info}
+      RUST_SHIELD_BIND: 0.0.0.0:8787
+      RUST_SHIELD_TIMEOUT_MS: ${RUST_SHIELD_TIMEOUT_MS:-1800}
+      RUST_SHIELD_CONNECT_TIMEOUT_MS: ${RUST_SHIELD_CONNECT_TIMEOUT_MS:-900}
+      RUST_SHIELD_CLIENT_TIMEOUT_MS: ${RUST_SHIELD_CLIENT_TIMEOUT_MS:-2600}
+      RUST_SHIELD_CACHE_MAX: ${RUST_SHIELD_CACHE_MAX:-2000}
+      RUST_SHIELD_CACHE_TTL_MS: ${RUST_SHIELD_CACHE_TTL_MS:-1200000}
+      RUST_SHIELD_STALE_TTL_MS: ${RUST_SHIELD_STALE_TTL_MS:-3600000}
+      RUST_SHIELD_MAX_BODY_BYTES: ${RUST_SHIELD_MAX_BODY_BYTES:-2500000}
+      RUST_SHIELD_POOL_MAX_IDLE_PER_HOST: ${RUST_SHIELD_POOL_MAX_IDLE_PER_HOST:-64}
+      RUST_SHIELD_WARMUP_CONCURRENCY: ${RUST_SHIELD_WARMUP_CONCURRENCY:-4}
+      RUST_SHIELD_ALLOW_PRIVATE: ${RUST_SHIELD_ALLOW_PRIVATE:-false}
+    expose:
+      - "8787"
+    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/rust-shield", "healthcheck"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
