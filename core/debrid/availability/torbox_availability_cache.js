@@ -18,6 +18,17 @@ const RETRY_DELAY_BASE = 1600;
 const MAX_CONCURRENCY = 3;
 const DEFAULT_SYNC_LIMIT = 20;
 const MIN_VIDEO_SIZE = 50 * 1024 * 1024;
+const LOCAL_AVAILABILITY_MAX_ENTRIES = 8000;
+const AVAILABILITY_TTL_SECONDS = Object.freeze({
+  [TB_CACHE_STATES.CACHED_VERIFIED]: 24 * 60 * 60,
+  [TB_CACHE_STATES.LIKELY_CACHED]: 15 * 60,
+  [TB_CACHE_STATES.UNCERTAIN]: 5 * 60,
+  [TB_CACHE_STATES.QUEUED]: 3 * 60,
+  [TB_CACHE_STATES.UNCACHED]: 6 * 60 * 60,
+  [TB_CACHE_STATES.ERROR]: 2 * 60
+});
+
+const localAvailabilityCache = new Map();
 
 const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|mov|webm|iso|m4v|ts)$/i;
 const JUNK_PATTERN = /\b(sample|trailer|promo|preview|screens?|proof|nfo|cover|poster|thumb)\b/i;
@@ -350,6 +361,208 @@ function makeCacheResult(state, extra = {}) {
   };
 }
 
+function normalizeFileIdx(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function normalizeMediaId(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9:_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized ? normalized.slice(0, 220) : null;
+}
+
+function buildMediaId(meta = {}) {
+  const imdb = String(meta?.imdbId || meta?.imdb_id || "").trim().toLowerCase();
+  if (!/^tt\d+$/.test(imdb)) return null;
+  const season = safeInt(meta?.season, 0);
+  const episode = safeInt(meta?.episode, 0);
+  if (season > 0 && episode > 0) return `${imdb}:s${season}:e${episode}`;
+  return imdb;
+}
+
+function getAvailabilityCacheKey(hash, fileId = null, meta = {}) {
+  const normalizedHash = normalizeHash(hash).toUpperCase();
+  if (!/^[A-F0-9]{40}$/.test(normalizedHash)) return null;
+  const filePart = normalizeFileIdx(fileId);
+  const mediaId = normalizeMediaId(buildMediaId(meta));
+  const base = `tb:${normalizedHash}:${filePart === null ? "auto" : filePart}`;
+  return mediaId ? `${base}:${mediaId}` : base;
+}
+
+function getAvailabilityLookupKeys(entry) {
+  const raw = entry?.raw || {};
+  const meta = entry?.meta || {};
+  const fileId = normalizeFileIdx(raw?.tb_file_id ?? raw?.file_id ?? raw?.fileIdx ?? raw?.fileIndex);
+  const keys = [
+    getAvailabilityCacheKey(entry?.hash, fileId, meta),
+    getAvailabilityCacheKey(entry?.hash, null, meta)
+  ];
+  const isSeries = Boolean(meta?.isEpisodeRequest || meta?.season || meta?.episode);
+  if (!isSeries && entry?.hash) {
+    keys.push(`tb:${normalizeHash(entry.hash).toUpperCase()}:auto`);
+  }
+  return [...new Set(keys.filter(Boolean))];
+}
+
+function pruneLocalAvailabilityCache() {
+  if (localAvailabilityCache.size <= LOCAL_AVAILABILITY_MAX_ENTRIES) return;
+  const now = Date.now();
+  for (const [key, entry] of localAvailabilityCache.entries()) {
+    if (!entry || Number(entry.expiresAt || 0) <= now) localAvailabilityCache.delete(key);
+  }
+  while (localAvailabilityCache.size > LOCAL_AVAILABILITY_MAX_ENTRIES) {
+    const oldest = localAvailabilityCache.keys().next().value;
+    if (oldest === undefined) break;
+    localAvailabilityCache.delete(oldest);
+  }
+}
+
+function rememberLocalAvailability(key, payload, ttlSeconds) {
+  if (!key || !payload || typeof payload !== "object") return;
+  localAvailabilityCache.set(key, {
+    payload,
+    expiresAt: Date.now() + Math.max(1, ttlSeconds || 1) * 1000
+  });
+  pruneLocalAvailabilityCache();
+}
+
+function getLocalAvailability(key) {
+  const cached = localAvailabilityCache.get(key);
+  if (!cached) return null;
+  if (Number(cached.expiresAt || 0) <= Date.now()) {
+    localAvailabilityCache.delete(key);
+    return null;
+  }
+  return cached.payload;
+}
+
+function getTtlForState(state) {
+  const normalized = normalizeTbCacheState(state);
+  return AVAILABILITY_TTL_SECONDS[normalized] || AVAILABILITY_TTL_SECONDS[TB_CACHE_STATES.UNCERTAIN];
+}
+
+function buildAvailabilityPayload(result = {}, meta = {}) {
+  const state = normalizeTbCacheState(result?.state || result?.cache_state || result?.tb_cache_state || (result?.cached === true ? TB_CACHE_STATES.CACHED_VERIFIED : (result?.cached === false ? TB_CACHE_STATES.UNCACHED : TB_CACHE_STATES.UNCERTAIN)));
+  return {
+    state,
+    cached: state === TB_CACHE_STATES.CACHED_VERIFIED ? true : (state === TB_CACHE_STATES.UNCACHED ? false : null),
+    confidence: Number(result?.confidence || 0) || 0,
+    file_id: state === TB_CACHE_STATES.CACHED_VERIFIED && result?.file_id != null ? normalizeFileIdx(result.file_id) : null,
+    file_title: state === TB_CACHE_STATES.CACHED_VERIFIED ? result?.file_title || null : null,
+    file_size: state === TB_CACHE_STATES.CACHED_VERIFIED ? result?.file_size || null : null,
+    torrent_title: result?.torrent_title || null,
+    size: result?.size || null,
+    match_reason: result?.match_reason || null,
+    error_code: result?.error_code || null,
+    imdbId: meta?.imdbId || null,
+    season: meta?.season || null,
+    episode: meta?.episode || null,
+    proofLevel: state === TB_CACHE_STATES.CACHED_VERIFIED ? "torbox_file_verified" : "torbox_hash_state",
+    ts: Date.now()
+  };
+}
+
+function cacheResultFromPayload(payload = {}) {
+  const state = normalizeTbCacheState(payload?.state || payload?.tb_cache_state || payload?.cache_state);
+  return makeCacheResult(state, {
+    torrent_title: payload?.torrent_title || null,
+    size: payload?.size || null,
+    file_title: state === TB_CACHE_STATES.CACHED_VERIFIED ? payload?.file_title || null : null,
+    file_size: state === TB_CACHE_STATES.CACHED_VERIFIED ? payload?.file_size || null : null,
+    file_id: state === TB_CACHE_STATES.CACHED_VERIFIED && payload?.file_id != null ? normalizeFileIdx(payload.file_id) : null,
+    confidence: Number(payload?.confidence || 0) || 0,
+    match_reason: payload?.match_reason || "availability_cache",
+    error_code: payload?.error_code || null,
+    from_cache: true
+  });
+}
+
+async function readCachedAvailability(entries, dbHelper) {
+  const hits = {};
+  const missing = [];
+  const keysToFetch = new Set();
+  const entryKeys = new Map();
+
+  for (const entry of entries) {
+    const keys = getAvailabilityLookupKeys(entry);
+    entryKeys.set(entry.hash, keys);
+    let localHit = null;
+    for (const key of keys) {
+      localHit = getLocalAvailability(key);
+      if (localHit) break;
+    }
+    if (localHit) {
+      hits[entry.hash] = cacheResultFromPayload(localHit);
+      continue;
+    }
+    keys.forEach((key) => keysToFetch.add(key));
+    missing.push(entry);
+  }
+
+  if (missing.length > 0 && keysToFetch.size > 0 && typeof dbHelper?.getDebridAvailabilityCache === "function") {
+    try {
+      const persisted = await dbHelper.getDebridAvailabilityCache([...keysToFetch]);
+      for (const entry of [...missing]) {
+        const keys = entryKeys.get(entry.hash) || [];
+        const payload = keys.map((key) => persisted?.[key]).find(Boolean);
+        if (!payload) continue;
+        const ttl = getTtlForState(payload.state);
+        for (const key of keys) rememberLocalAvailability(key, payload, Math.min(ttl, 3600));
+        hits[entry.hash] = cacheResultFromPayload(payload);
+      }
+    } catch (_) {}
+  }
+
+  return {
+    hits,
+    missing: entries.filter((entry) => !hits[entry.hash])
+  };
+}
+
+async function persistAvailabilityResults(entries, results, dbHelper) {
+  if (!Array.isArray(entries) || entries.length === 0) return;
+  const rows = [];
+
+  for (const entry of entries) {
+    const result = results?.[entry.hash];
+    if (!result) continue;
+    const state = normalizeTbCacheState(result.state || result.cache_state || result.tb_cache_state);
+    const payload = buildAvailabilityPayload(result, entry.meta);
+    const ttl = getTtlForState(state);
+    const fileId = state === TB_CACHE_STATES.CACHED_VERIFIED ? normalizeFileIdx(result.file_id) : null;
+    const keys = [
+      getAvailabilityCacheKey(entry.hash, null, entry.meta),
+      fileId !== null ? getAvailabilityCacheKey(entry.hash, fileId, entry.meta) : null
+    ].filter(Boolean);
+
+    for (const key of [...new Set(keys)]) {
+      rememberLocalAvailability(key, payload, Math.min(ttl, 3600));
+      rows.push({
+        cache_key: key,
+        payload,
+        ttlSeconds: ttl,
+        media_id: buildMediaId(entry.meta),
+        imdb_id: entry.meta?.imdbId || null,
+        season: entry.meta?.season || null,
+        episode: entry.meta?.episode || null,
+        proof_level: payload.proofLevel
+      });
+    }
+  }
+
+  if (rows.length > 0 && typeof dbHelper?.setDebridAvailabilityCache === "function") {
+    try {
+      await dbHelper.setDebridAvailabilityCache(rows);
+    } catch (_) {}
+  }
+}
+
 function parseHashResult(hash, info, meta = null) {
   const lowerHash = lower(hash);
 
@@ -610,7 +823,8 @@ function buildDbUpdate(hash, apiRes, meta = null) {
     imdb_season: meta?.isEpisodeRequest && meta?.season > 0 ? meta.season : null,
     imdb_episode: meta?.isEpisodeRequest && meta?.episode > 0 ? meta.episode : null,
     tb_cache_state: state,
-    confidence: apiRes?.confidence || 0
+    confidence: apiRes?.confidence || 0,
+    next_hours: getTtlForState(state) / 3600
   };
 }
 
@@ -630,12 +844,22 @@ async function checkCacheSync(items, token, dbHelper, limit = DEFAULT_SYNC_LIMIT
 
   if (entries.length === 0) return {};
 
-  const apiResults = await checkHashes(entries, token);
+  const { hits: cachedHits, missing } = await readCachedAvailability(entries, dbHelper);
+  if (Object.keys(cachedHits).length > 0) {
+    logCacheEvent("torbox.cache.db.hit", {
+      hits: Object.keys(cachedHits).length,
+      missing: missing.length
+    });
+  }
+
+  const apiResults = missing.length > 0 ? await checkHashes(missing, token) : {};
+  await persistAvailabilityResults(missing, apiResults, dbHelper);
+
   const results = {};
   const updates = [];
 
   for (const entry of entries) {
-    const apiRes = apiResults[entry.hash] || makeCacheResult(TB_CACHE_STATES.UNCACHED, { match_reason: "not_returned" });
+    const apiRes = cachedHits[entry.hash] || apiResults[entry.hash] || makeCacheResult(TB_CACHE_STATES.UNCACHED, { match_reason: "not_returned" });
     const state = normalizeTbCacheState(apiRes.state || apiRes.cache_state || (apiRes.cached === true ? TB_CACHE_STATES.CACHED_VERIFIED : (apiRes.cached === false ? TB_CACHE_STATES.UNCACHED : TB_CACHE_STATES.UNCERTAIN)));
     results[entry.hash] = {
       cached: state === TB_CACHE_STATES.CACHED_VERIFIED,
@@ -648,7 +872,8 @@ async function checkCacheSync(items, token, dbHelper, limit = DEFAULT_SYNC_LIMIT
       file_size: state === TB_CACHE_STATES.CACHED_VERIFIED ? apiRes.file_size || null : null,
       file_id: state === TB_CACHE_STATES.CACHED_VERIFIED && apiRes.file_id != null ? apiRes.file_id : null,
       match_reason: apiRes.match_reason || null,
-      error_code: apiRes.error_code || null
+      error_code: apiRes.error_code || null,
+      from_cache: apiRes.from_cache === true
     };
     updates.push(buildDbUpdate(entry.hash, apiRes, entry.meta));
   }
@@ -664,8 +889,11 @@ async function enrichCacheBackground(items, token, dbHelper) {
   const entries = buildEntries(safeItems.slice(DEFAULT_SYNC_LIMIT), 0);
   if (entries.length === 0) return;
 
-  const apiResults = await checkHashes(entries, token);
-  const updates = entries.map((entry) => buildDbUpdate(entry.hash, apiResults[entry.hash] || makeCacheResult(TB_CACHE_STATES.UNCACHED, { match_reason: "not_returned" }), entry.meta));
+  const { hits, missing } = await readCachedAvailability(entries, dbHelper);
+  const apiResults = missing.length > 0 ? await checkHashes(missing, token) : {};
+  await persistAvailabilityResults(missing, apiResults, dbHelper);
+  const mergedResults = { ...hits, ...apiResults };
+  const updates = entries.map((entry) => buildDbUpdate(entry.hash, mergedResults[entry.hash] || makeCacheResult(TB_CACHE_STATES.UNCACHED, { match_reason: "not_returned" }), entry.meta));
   await flushDbUpdates(dbHelper, updates);
 }
 
@@ -677,6 +905,9 @@ module.exports = {
     extractItemMeta,
     parseHashResult,
     pickBestFile,
+    getAvailabilityCacheKey,
+    buildAvailabilityPayload,
+    cacheResultFromPayload,
     normalizeTbCacheState,
     TB_CACHE_STATES
   }

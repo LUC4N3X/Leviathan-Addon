@@ -36,6 +36,11 @@ async function ensureDatabaseOptimizations(pool) {
       next_cached_check TIMESTAMPTZ,
       cache_check_failures INTEGER DEFAULT 0,
       tb_cached BOOLEAN,
+      tb_cache_state TEXT,
+      tb_cache_confidence NUMERIC(5,2) DEFAULT 0,
+      tb_cache_match_reason TEXT,
+      tb_next_cached_check TIMESTAMPTZ,
+      tb_cache_check_failures INTEGER DEFAULT 0,
       tb_file_id INTEGER,
       tb_file_size BIGINT,
       tb_last_cached_check TIMESTAMPTZ,
@@ -189,6 +194,11 @@ async function ensureDatabaseOptimizations(pool) {
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS next_cached_check TIMESTAMPTZ`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS cache_check_failures INTEGER DEFAULT 0`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS tb_cached BOOLEAN`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS tb_cache_state TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS tb_cache_confidence NUMERIC(5,2) DEFAULT 0`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS tb_cache_match_reason TEXT`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS tb_next_cached_check TIMESTAMPTZ`,
+    `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS tb_cache_check_failures INTEGER DEFAULT 0`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS tb_file_id INTEGER`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS tb_file_size BIGINT`,
     `ALTER TABLE torrents ADD COLUMN IF NOT EXISTS tb_last_cached_check TIMESTAMPTZ`,
@@ -298,6 +308,13 @@ async function ensureDatabaseOptimizations(pool) {
 
     `UPDATE torrents SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE torrents SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
+    `UPDATE torrents SET tb_cache_state = CASE
+      WHEN tb_cache_state IN ('cached_verified','likely_cached','uncertain','queued','uncached','error') THEN tb_cache_state
+      WHEN tb_cached IS TRUE THEN 'cached_verified'
+      WHEN tb_cached IS FALSE THEN 'uncached'
+      ELSE tb_cache_state
+    END WHERE tb_cache_state IS NULL OR tb_cache_state NOT IN ('cached_verified','likely_cached','uncertain','queued','uncached','error')`,
+    `UPDATE torrents SET tb_next_cached_check = COALESCE(tb_next_cached_check, tb_last_cached_check + make_interval(hours => CASE WHEN tb_cached IS TRUE THEN 24 ELSE 6 END)) WHERE tb_last_cached_check IS NOT NULL AND tb_next_cached_check IS NULL`,
     `UPDATE torrents SET first_seen_at = COALESCE(first_seen_at, created_at, updated_at, NOW()), last_seen_at = COALESCE(last_seen_at, updated_at, created_at, NOW()), seen_count = GREATEST(COALESCE(seen_count, 1), 1), max_seeders = GREATEST(COALESCE(max_seeders, 0), COALESCE(seeders, 0))`,
     `UPDATE files SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE files SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
@@ -313,7 +330,9 @@ async function ensureDatabaseOptimizations(pool) {
     `CREATE INDEX IF NOT EXISTS idx_torrents_lookup_hash_file ON torrents (info_hash_norm, file_index_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_rd_scan_queue ON torrents (next_cached_check NULLS FIRST, last_cached_check NULLS FIRST)`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_rd_cache_state ON torrents (rd_cache_state, next_cached_check NULLS FIRST)`,
-    `CREATE INDEX IF NOT EXISTS idx_torrents_tb_cache_state ON torrents (tb_cached, tb_last_cached_check NULLS FIRST)`,
+    `CREATE INDEX IF NOT EXISTS idx_torrents_tb_cache_state ON torrents (tb_cache_state, tb_next_cached_check NULLS FIRST)`,
+    `CREATE INDEX IF NOT EXISTS idx_torrents_tb_cached_legacy ON torrents (tb_cached, tb_last_cached_check NULLS FIRST)`,
+    `CREATE INDEX IF NOT EXISTS idx_torrents_tb_recheck ON torrents (tb_next_cached_check NULLS FIRST, tb_last_cached_check NULLS FIRST)`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_seeders_upload ON torrents (seeders DESC, upload_date DESC NULLS LAST)`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_smart_dedupe ON torrents (smart_dedupe_key) WHERE smart_dedupe_key IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS idx_torrents_seen_health ON torrents (last_seen_at DESC NULLS LAST, max_seeders DESC, seen_count DESC)`,

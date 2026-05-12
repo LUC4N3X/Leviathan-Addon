@@ -70,6 +70,34 @@ function normalizeRdCacheState(value) {
   return null;
 }
 
+function normalizeTbCacheState(value) {
+  const normalized = sanitizeText(value).toLowerCase();
+  if (['cached_verified', 'likely_cached', 'uncertain', 'queued', 'uncached', 'error'].includes(normalized)) {
+    return normalized;
+  }
+  if (['cached', 'cached_safe', 'verified'].includes(normalized)) return 'cached_verified';
+  if (['probing', 'unknown', 'pending'].includes(normalized)) return 'uncertain';
+  if (['downloading', 'processing'].includes(normalized)) return 'queued';
+  if (['not_cached', 'likely_uncached', 'uncached_terminal'].includes(normalized)) return 'uncached';
+  if (['timeout', 'rate_limited', 'auth_error', 'server_error'].includes(normalized)) return 'error';
+  return null;
+}
+
+function mapTbStateToRdState(value) {
+  const state = normalizeTbCacheState(value);
+  if (state === 'cached_verified') return 'cached';
+  if (state === 'likely_cached') return 'likely_cached';
+  if (state === 'uncached') return 'likely_uncached';
+  if (state === 'queued' || state === 'uncertain') return 'probing';
+  return state ? 'unknown' : null;
+}
+
+function deriveTbCachedBooleanFromState(state, cachedValue) {
+  if (state === 'cached_verified') return true;
+  if (state === 'uncached') return false;
+  return typeof cachedValue === 'boolean' ? cachedValue : null;
+}
+
 function deriveStoredCacheState(entry) {
   const explicitState = normalizeRdCacheState(entry?.state || entry?.rd_cache_state);
   if (explicitState) return explicitState;
@@ -133,6 +161,9 @@ module.exports = {
   normalizeFileIndex,
   normalizeFileIndexNorm,
   normalizeRdCacheState,
+  normalizeTbCacheState,
+  mapTbStateToRdState,
+  deriveTbCachedBooleanFromState,
   deriveStoredCacheState,
   deriveCachedBooleanFromState,
   extractOriginalProvider,

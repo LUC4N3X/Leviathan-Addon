@@ -9,6 +9,7 @@ const { extractInfoHash, withSharedPromise, isSeasonPack, extractSeasonEpisodeFr
 const { shouldSkipRecentWork } = require('../../recent_work');
 const RdOracle = require('../state/cache_oracle');
 const EpisodePrecision = require('../../stream/episode_precision');
+const { normalizeTbCacheState, toRdCacheState } = require('./torbox_cache_state');
 
 const LOCAL_DB_CACHE_TTL = 25;
 const RD_PRIORITY_DEDUP_MS = 15000;
@@ -41,6 +42,25 @@ const TRUSTED_RELEASE_GROUP_RE = /\b(rarbg|yts|yify|qxr|ntb|evo|tgx|galaxyrg|vxt
 function normalizeRdStateValue(state) {
     const normalized = String(state || '').trim().toLowerCase();
     return VALID_RD_STATES.has(normalized) ? normalized : null;
+}
+
+function isFreshFuture(value, skewMs = 15000) {
+    if (!value) return false;
+    const ts = value instanceof Date ? value.getTime() : Date.parse(String(value));
+    return Number.isFinite(ts) && ts > Date.now() + skewMs;
+}
+
+function deriveDbTbAvailability(row = {}) {
+    const rawState = normalizeTbCacheState(row?.tb_cache_state, null);
+    const cachedBool = row?.tb_cached === true ? true : (row?.tb_cached === false ? false : null);
+    const state = rawState || (cachedBool === true ? 'cached_verified' : (cachedBool === false ? 'uncached' : null));
+    const fresh = isFreshFuture(row?.tb_next_cached_check);
+    return {
+        state,
+        rdState: state ? toRdCacheState(state) : null,
+        cached: state === 'cached_verified' ? true : (state === 'uncached' ? false : cachedBool),
+        fresh
+    };
 }
 
 function normalizeFileIdxForAvailability(fileIdx) {
@@ -384,6 +404,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             ? Number(row.rd_file_index)
             : (row?.file_index !== null && row?.file_index !== undefined ? Number(row.file_index) : undefined);
         const rdDb = deriveDbRdAvailability(row);
+        const tbDb = deriveDbTbAvailability(row);
         const matchedFileIndex = row?.matched_file_index !== null && row?.matched_file_index !== undefined
             ? Number(row.matched_file_index)
             : undefined;
@@ -409,11 +430,18 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             _rdStalePositive: rdDb.stale === true,
             _dbLastCachedCheck: row?.last_cached_check || null,
             _dbNextCachedCheck: row?.next_cached_check || null,
-            _dbFailures: Number(row?.cache_check_failures || 0),                        
-            _tbDbCachedHint: row?.tb_cached === true,
+            _dbFailures: Number(row?.cache_check_failures || 0),
+            _tbDbCachedHint: tbDb.cached === true && tbDb.fresh === true,
             _tbDbLastCachedCheck: row?.tb_last_cached_check || null,
-            _tbCached: false,
-            tbCached: false
+            _tbDbNextCachedCheck: row?.tb_next_cached_check || null,
+            _tbDbCacheConfidence: Number(row?.tb_cache_confidence || 0) || 0,
+            _tbCacheStateRaw: tbDb.state || null,
+            tb_cache_state: tbDb.state || null,
+            _tbCacheState: tbDb.rdState || null,
+            tbCacheState: tbDb.rdState || null,
+            _tbCacheMatchReason: row?.tb_cache_match_reason || null,
+            _tbCached: tbDb.cached === true && tbDb.fresh === true,
+            tbCached: tbDb.cached === true && tbDb.fresh === true
         };
         if (hasEpisodeMapping) {
             item.fileIdx = matchedFileIndex;

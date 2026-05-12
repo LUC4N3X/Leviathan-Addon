@@ -21,6 +21,9 @@ function createTorrentRepository({
     normalizeFileIndex,
     normalizeFileIndexNorm,
     normalizeRdCacheState,
+    normalizeTbCacheState,
+    mapTbStateToRdState,
+    deriveTbCachedBooleanFromState,
     deriveStoredCacheState,
     deriveCachedBooleanFromState,
     extractOriginalProvider,
@@ -30,6 +33,21 @@ function createTorrentRepository({
 
   const RD_CACHED_RECHECK_HOURS = 168;
   const RD_REVALIDATE_PERMANENT_ON_BOOT = true;
+  const TB_STATE_RECHECK_HOURS = Object.freeze({
+    cached_verified: 24,
+    likely_cached: 3,
+    uncertain: 1,
+    queued: 1,
+    uncached: 6,
+    error: 0.25
+  });
+  const TB_VERIFIED_HARD_MAX_AGE_DAYS = clampInt(
+    process.env.TB_VERIFIED_HARD_MAX_AGE_DAYS,
+    21,
+    1,
+    29
+  );
+  const TB_VERIFIED_HARD_MAX_AGE_MS = TB_VERIFIED_HARD_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 
 
   function cleanTorrentioProviderLabel(value = '') {
@@ -280,9 +298,47 @@ function createTorrentRepository({
     return true;
   }
 
+  function isTbVerifiedFreshEnough(row = {}) {
+    const state = normalizeTbCacheState(row?.tb_cache_state);
+    const cached = row?.tb_cached === true;
+    if (state !== 'cached_verified' && !cached) return false;
+    const checkedAt = toDateOrNull(row?.tb_last_cached_check);
+    if (!checkedAt) return false;
+    return Date.now() - checkedAt.getTime() <= TB_VERIFIED_HARD_MAX_AGE_MS;
+  }
+
+  function normalizeTbDbState(row = {}) {
+    const state = normalizeTbCacheState(row?.tb_cache_state);
+    const cached = row?.tb_cached === null || row?.tb_cached === undefined ? null : Boolean(row.tb_cached);
+    const verified = state === 'cached_verified' || cached === true;
+    if (!verified) {
+      return {
+        state,
+        cached,
+        reason: sanitizeText(row?.tb_cache_match_reason)
+      };
+    }
+    if (isTbVerifiedFreshEnough(row)) {
+      return {
+        state: 'cached_verified',
+        cached: true,
+        reason: sanitizeText(row?.tb_cache_match_reason)
+      };
+    }
+    const previousReason = sanitizeText(row?.tb_cache_match_reason);
+    return {
+      state: 'uncertain',
+      cached: null,
+      reason: previousReason
+        ? `stale_cached_verified_gt_${TB_VERIFIED_HARD_MAX_AGE_DAYS}d:${previousReason}`
+        : `stale_cached_verified_gt_${TB_VERIFIED_HARD_MAX_AGE_DAYS}d`
+    };
+  }
+
   function normalizeTorrentRow(row) {
     const infoHash = normalizeInfoHash(row?.info_hash);
     if (!infoHash) return null;
+    const tbDbState = normalizeTbDbState(row);
     return {
       title: sanitizeText(row.title, infoHash),
       info_hash: infoHash,
@@ -317,7 +373,13 @@ function createTorrentRepository({
       last_cached_check: row.last_cached_check || null,
       next_cached_check: row.next_cached_check || null,
       cache_check_failures: toSafeNumber(row.cache_check_failures, 0),
-      tb_cached: row.tb_cached === null || row.tb_cached === undefined ? null : Boolean(row.tb_cached),
+      tb_cached: tbDbState.cached,
+      tb_cache_state: tbDbState.state,
+      tb_cache_rd_state: mapTbStateToRdState(tbDbState.state),
+      tb_cache_confidence: toSafeNumber(row.tb_cache_confidence, 0),
+      tb_cache_match_reason: tbDbState.reason,
+      tb_next_cached_check: row.tb_next_cached_check || null,
+      tb_cache_check_failures: toSafeNumber(row.tb_cache_check_failures, 0),
       tb_file_id: normalizeFileIndex(row.tb_file_id),
       tb_file_size: toSafeNumber(row.tb_file_size, 0),
       tb_last_cached_check: row.tb_last_cached_check || null
@@ -337,8 +399,8 @@ function createTorrentRepository({
     const isSeriesEpisode = normalizedSeason !== null && normalizedSeason > 0 && normalizedEpisode !== null && normalizedEpisode > 0;
 
     const params = isSeriesEpisode
-      ? [normalizedImdb, normalizedSeason, normalizedEpisode]
-      : [normalizedImdb];
+      ? [normalizedImdb, normalizedSeason, normalizedEpisode, TB_VERIFIED_HARD_MAX_AGE_DAYS]
+      : [normalizedImdb, TB_VERIFIED_HARD_MAX_AGE_DAYS];
 
     const query = isSeriesEpisode
       ? `
@@ -432,6 +494,11 @@ function createTorrentRepository({
           t.next_cached_check,
           t.cache_check_failures,
           t.tb_cached,
+          t.tb_cache_state,
+          t.tb_cache_confidence,
+          t.tb_cache_match_reason,
+          t.tb_next_cached_check,
+          t.tb_cache_check_failures,
           COALESCE(o.tb_file_id, t.tb_file_id) AS tb_file_id,
           COALESCE(o.tb_file_size, t.tb_file_size) AS tb_file_size,
           t.tb_last_cached_check
@@ -445,6 +512,7 @@ function createTorrentRepository({
           COALESCE(m.matched_file_index_norm, t.file_index_norm),
           CASE WHEN COALESCE(o.rd_file_index, t.rd_file_index) IS NOT NULL THEN 1 ELSE 0 END DESC,
           CASE WHEN t.cached_rd IS TRUE THEN 1 ELSE 0 END DESC,
+          CASE WHEN (t.tb_cache_state = 'cached_verified' OR t.tb_cached IS TRUE) AND t.tb_last_cached_check >= NOW() - ($4::integer * INTERVAL '1 day') THEN 1 ELSE 0 END DESC,
           GREATEST(COALESCE(t.seeders, 0), COALESCE(t.max_seeders, 0)) DESC,
           COALESCE(t.seen_count, 0) DESC,
           COALESCE(t.last_seen_at, t.updated_at, t.created_at) DESC NULLS LAST,
@@ -491,6 +559,11 @@ function createTorrentRepository({
           t.next_cached_check,
           t.cache_check_failures,
           t.tb_cached,
+          t.tb_cache_state,
+          t.tb_cache_confidence,
+          t.tb_cache_match_reason,
+          t.tb_next_cached_check,
+          t.tb_cache_check_failures,
           t.tb_file_id,
           t.tb_file_size,
           t.tb_last_cached_check
@@ -505,6 +578,7 @@ function createTorrentRepository({
           t.info_hash_norm,
           t.file_index_norm,
           CASE WHEN t.cached_rd IS TRUE THEN 1 ELSE 0 END DESC,
+          CASE WHEN (t.tb_cache_state = 'cached_verified' OR t.tb_cached IS TRUE) AND t.tb_last_cached_check >= NOW() - ($2::integer * INTERVAL '1 day') THEN 1 ELSE 0 END DESC,
           GREATEST(COALESCE(t.seeders, 0), COALESCE(t.max_seeders, 0)) DESC,
           COALESCE(t.seen_count, 0) DESC,
           COALESCE(t.last_seen_at, t.updated_at, t.created_at) DESC NULLS LAST,
@@ -1591,6 +1665,13 @@ function createTorrentRepository({
     }
   }
 
+  function getTbNextCheckHours(state, fallback = null) {
+    const normalized = normalizeTbCacheState(state) || 'uncertain';
+    const raw = fallback === null || fallback === undefined ? TB_STATE_RECHECK_HOURS[normalized] : Number(fallback);
+    const hours = Number.isFinite(raw) ? raw : TB_STATE_RECHECK_HOURS.uncertain;
+    return Math.max(0.05, Math.min(24 * 30, hours));
+  }
+
   async function updateTbCacheStatus(updates) {
     if (!getPool() || !Array.isArray(updates) || updates.length === 0) return 0;
     await awaitDatabaseOptimizations();
@@ -1598,9 +1679,16 @@ function createTorrentRepository({
     const rows = updates
       .map((entry) => {
         const identity = normalizeEpisodeIdentity(entry);
+        const state = normalizeTbCacheState(entry?.tb_cache_state || entry?.cache_state || entry?.state || (entry?.cached === true ? 'cached_verified' : (entry?.cached === false ? 'uncached' : null)));
+        const cached = deriveTbCachedBooleanFromState(state, typeof entry?.cached === 'boolean' ? entry.cached : null);
+        const failures = state === 'error' ? Math.max(1, toSafeNumber(entry?.failures ?? entry?.cache_check_failures, 1)) : 0;
         return {
           hash: normalizeInfoHash(entry?.hash),
-          cached: typeof entry?.cached === 'boolean' ? entry.cached : null,
+          cached,
+          tb_cache_state: state,
+          tb_cache_rd_state: mapTbStateToRdState(state),
+          tb_cache_confidence: Math.max(0, Math.min(1, toSafeNumber(entry?.confidence ?? entry?.tb_cache_confidence, 0))),
+          tb_cache_match_reason: sanitizeText(entry?.match_reason || entry?.tb_cache_match_reason).slice(0, 160),
           fileId: normalizeFileIndex(entry?.tb_file_id ?? entry?.file_id),
           fileSize: entry?.tb_file_size === null || entry?.tb_file_size === undefined
             ? (entry?.file_size === null || entry?.file_size === undefined ? null : toSafeNumber(entry?.file_size, 0))
@@ -1610,7 +1698,9 @@ function createTorrentRepository({
           imdb_id: identity.imdbId,
           imdb_season: identity.imdbSeason,
           imdb_episode: identity.imdbEpisode,
-          episode_scoped: identity.isEpisode
+          episode_scoped: identity.isEpisode,
+          failures,
+          next_hours: getTbNextCheckHours(state, entry?.next_hours)
         };
       })
       .filter((entry) => entry.hash);
@@ -1622,7 +1712,7 @@ function createTorrentRepository({
         let updated = 0;
 
         for (const row of rows) {
-          if (row.episode_scoped && Number.isInteger(row.fileId) && row.fileId >= 0) {
+          if (row.episode_scoped && Number.isInteger(row.fileId) && row.fileId >= 0 && row.tb_cache_state === 'cached_verified') {
             await upsertEpisodeScopedOverrideRow(client, {
               hash: row.hash,
               imdb_id: row.imdb_id,
@@ -1639,30 +1729,62 @@ function createTorrentRepository({
           const result = await client.query(
             `
               UPDATE torrents
-              SET tb_cached = COALESCE($2::boolean, tb_cached),
+              SET tb_cache_state = CASE
+                    WHEN $3::text IS NULL OR $3::text = '' THEN tb_cache_state
+                    ELSE $3::text
+                  END,
+                  tb_cached = CASE
+                    WHEN $3::text = 'cached_verified' THEN TRUE
+                    WHEN $3::text = 'uncached' THEN FALSE
+                    WHEN $3::text IN ('likely_cached', 'uncertain', 'queued', 'error') THEN NULL
+                    WHEN $2::boolean IS NULL THEN tb_cached
+                    ELSE $2::boolean
+                  END,
+                  tb_cache_confidence = CASE
+                    WHEN $4::numeric IS NULL THEN tb_cache_confidence
+                    ELSE $4::numeric
+                  END,
+                  tb_cache_match_reason = CASE
+                    WHEN $5::text = '' THEN tb_cache_match_reason
+                    ELSE $5::text
+                  END,
+                  tb_cache_check_failures = GREATEST(0, COALESCE($10::integer, 0)),
+                  tb_next_cached_check = NOW() + make_interval(secs => GREATEST(60, CEIL(COALESCE($11::numeric, 1) * 3600)::integer)),
                   tb_file_id = CASE
-                    WHEN $3::integer IS NULL OR $3::integer < 0 THEN tb_file_id
-                    ELSE $3::integer
+                    WHEN $6::integer IS NULL OR $6::integer < 0 THEN tb_file_id
+                    ELSE $6::integer
                   END,
                   tb_file_size = CASE
-                    WHEN $4::bigint IS NULL OR $4::bigint <= 0 THEN tb_file_size
-                    ELSE $4::bigint
+                    WHEN $7::bigint IS NULL OR $7::bigint <= 0 THEN tb_file_size
+                    ELSE $7::bigint
                   END,
                   title = CASE
-                    WHEN $5::text = '' THEN title
-                    WHEN title IS NULL OR title = '' THEN $5::text
-                    WHEN LENGTH($5::text) > LENGTH(title) THEN $5::text
+                    WHEN $8::text = '' THEN title
+                    WHEN title IS NULL OR title = '' THEN $8::text
+                    WHEN LENGTH($8::text) > LENGTH(title) THEN $8::text
                     ELSE title
                   END,
                   size = CASE
-                    WHEN $6::bigint <= 0 THEN size
-                    ELSE GREATEST(COALESCE(size, 0), $6::bigint)
+                    WHEN $9::bigint <= 0 THEN size
+                    ELSE GREATEST(COALESCE(size, 0), $9::bigint)
                   END,
                   tb_last_cached_check = NOW(),
                   updated_at = NOW()
               WHERE info_hash_norm = $1
             `,
-            [row.hash, row.cached, globalFileId, globalFileSize, row.title, row.size]
+            [
+              row.hash,
+              row.cached,
+              row.tb_cache_state,
+              row.tb_cache_confidence,
+              row.tb_cache_match_reason,
+              globalFileId,
+              globalFileSize,
+              row.title,
+              row.size,
+              row.failures,
+              row.next_hours
+            ]
           );
           updated += Number(result.rowCount || 0);
         }
@@ -2128,10 +2250,11 @@ function createTorrentRepository({
           COUNT(*)::bigint AS total,
           COUNT(*) FILTER (WHERE expires_at > NOW())::bigint AS active,
           COUNT(*) FILTER (WHERE expires_at <= NOW())::bigint AS expired,
-          COUNT(*) FILTER (WHERE cached IS TRUE OR state = 'cached')::bigint AS cached,
+          COUNT(*) FILTER (WHERE cached IS TRUE OR state IN ('cached', 'cached_verified'))::bigint AS cached,
           COUNT(*) FILTER (WHERE state = 'likely_cached')::bigint AS likely_cached,
-          COUNT(*) FILTER (WHERE state = 'probing')::bigint AS probing,
-          COUNT(*) FILTER (WHERE cached IS FALSE OR state = 'uncached_terminal')::bigint AS uncached_terminal,
+          COUNT(*) FILTER (WHERE state IN ('probing', 'uncertain', 'queued'))::bigint AS probing,
+          COUNT(*) FILTER (WHERE cached IS FALSE OR state IN ('uncached_terminal', 'uncached'))::bigint AS uncached_terminal,
+          COUNT(*) FILTER (WHERE state = 'error')::bigint AS error,
           MAX(updated_at) AS last_updated_at
         FROM debrid_availability_cache
         GROUP BY service
@@ -2193,7 +2316,7 @@ function createTorrentRepository({
           imdbSeason: toNullableInt(entry?.imdb_season ?? entry?.season ?? payload.season),
           imdbEpisode: toNullableInt(entry?.imdb_episode ?? entry?.episode ?? payload.episode),
           proofLevel: sanitizeText(entry?.proof_level || entry?.proofLevel || payload.proofLevel).toLowerCase().slice(0, 48) || null,
-          state: normalizeRdCacheState(payload.state),
+          state: normalizeRdCacheState(payload.state) || normalizeTbCacheState(payload.state),
           cached: payload.cached === true ? true : payload.cached === false ? false : null,
           expiresAt: new Date(Date.now() + ttlSeconds * 1000)
         };
