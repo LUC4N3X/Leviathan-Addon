@@ -65,13 +65,25 @@ function createAppServices({
         const updateFn = isTb ? dbHelper?.updateTbCacheStatus : dbHelper?.updateRdCacheStatus;
         if (!dbHelper || typeof updateFn !== 'function') return false;
 
-        const rawFileIndex = streamData?.rd_file_index ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx ?? item?.fileIdx;
+        const requestedItemFileIndex = item?.fileIdx;
+        const rawFileIndex = isTb
+            ? (requestedItemFileIndex ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx)
+            : (streamData?.rd_file_index ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx ?? requestedItemFileIndex);
         const rawFileSize = streamData?.rd_file_size ?? streamData?.tb_file_size ?? streamData?.file_size ?? streamData?.filesize ?? streamData?.size ?? item?._size ?? item?.sizeBytes ?? null;
         const parsedFileIndex = rawFileIndex === null || rawFileIndex === undefined || rawFileIndex === ''
             ? NaN
             : Number(rawFileIndex);
         const parsedFileSize = Number(rawFileSize);
         const resolvedTitle = streamData?.filename || item?.title || String(item.hash);
+        const parsedRequestedFileIndex = requestedItemFileIndex === null || requestedItemFileIndex === undefined || requestedItemFileIndex === ''
+            ? NaN
+            : Number(requestedItemFileIndex);
+        const parsedStreamFileIndex = streamData?.tb_file_id === null || streamData?.tb_file_id === undefined || streamData?.tb_file_id === ''
+            ? NaN
+            : Number(streamData.tb_file_id);
+        if (isTb && Number.isInteger(parsedRequestedFileIndex) && parsedRequestedFileIndex >= 0 && Number.isInteger(parsedStreamFileIndex) && parsedStreamFileIndex >= 0 && parsedRequestedFileIndex !== parsedStreamFileIndex) {
+            logger.warn(`[LAZY PLAY] TorBox fileIdx mismatch streamData ignored | hash=${item.hash} | requested=${parsedRequestedFileIndex} | streamData=${parsedStreamFileIndex}`);
+        }
 
         try {
             if ((!meta?.imdb_id) && typeof dbHelper.ensureTorrentRecord === 'function') {
