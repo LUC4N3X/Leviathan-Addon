@@ -101,6 +101,7 @@ function createProviderHttpGuard(options = {}) {
     endpoint: options.rustShieldUrl || process.env.RUST_SHIELD_URL,
     logger
   });
+  const useRustShieldForSession = options.useRustShieldForSession !== false;
 
   const agentOptions = {
     keepAlive: true,
@@ -152,6 +153,11 @@ function createProviderHttpGuard(options = {}) {
   const impitPreClearanceRescue = options.impitPreClearanceRescue !== false;
   const impitPreClearanceTimeoutMs = Math.max(1200, Math.min(4500, Number(options.impitPreClearanceTimeoutMs || 2600) || 2600));
   const sessionTimeoutFloorMs = Math.max(1200, Math.min(4500, Number(options.sessionTimeoutFloorMs || 4500) || 4500));
+  const postClearanceReplayTimeoutMs = Math.max(
+    sessionTimeoutFloorMs,
+    Math.min(12000, Number(options.postClearanceReplayTimeoutMs || Math.max(sessionTimeoutFloorMs, directFetchTimeoutMs + 2500)) || Math.max(sessionTimeoutFloorMs, directFetchTimeoutMs + 2500))
+  );
+  const clearSessionOnTransportFailure = Boolean(options.clearSessionOnTransportFailure);
   const emergencyClearanceAfterSessionFailure = Boolean(options.emergencyClearanceAfterSessionFailure);
   const emergencyClearanceMinIntervalMs = Math.max(0, Math.min(30000, Number(options.emergencyClearanceMinIntervalMs ?? 6000) || 0));
   // Bridge mode keeps FlareSolverr out of the hot path: it asks FlareSolverr only
@@ -226,7 +232,18 @@ function createProviderHttpGuard(options = {}) {
     endpoint: options.flareEndpoint || process.env.FLARESOLVERR_URL,
     sessionTtlMs,
     cooldownMs: options.clearanceCooldownMs || 8000,
+    cooldownMaxEntries: options.clearanceCooldownMaxEntries,
+    solveMaxQueue: options.clearanceSolveMaxQueue,
+    solveConcurrency: options.clearanceSolveConcurrency,
     solveTimeoutMs: clearanceTimeoutMs,
+    endpointFailureCooldownMs: options.endpointFailureCooldownMs,
+    providerFailureCooldownMs: options.providerFailureCooldownMs,
+    providerFailureCooldownMaxMs: options.providerFailureCooldownMaxMs,
+    healthCacheMs: options.flareHealthCacheMs,
+    healthTimeoutMs: options.flareHealthTimeoutMs,
+    flareRetryCount: options.flareRetryCount,
+    flareRetryBackoffMs: options.flareRetryBackoffMs,
+    waitInSeconds: options.flareWaitInSeconds,
     httpAgent,
     httpsAgent,
     isCanceledError,
@@ -273,14 +290,27 @@ function createProviderHttpGuard(options = {}) {
 
   function clearSessionAfterTransportFailure(error, url, startedAt, stage = 'session') {
     if (!isTimeoutLikeError(error) || !isSessionFreshForUrl(activeSession, url)) return false;
-    clearSession();
-    logger.debug('session cleared after transport failure', {
+
+    const meta = {
       stage,
       url,
       error: error?.message || String(error),
       code: error?.code,
       ms: Date.now() - startedAt
-    });
+    };
+
+    // A timeout/502/socket reset after a valid cf_clearance is usually a transport hiccup
+    // or an overloaded Rust/Axios bridge, not proof that the CF cookie is invalid.
+    // Clearing here causes the next candidate URL to start with hasSession:false and may
+    // waste the remaining provider budget solving FlareSolverr again. Challenge HTML is
+    // still handled inside fetchWithSession(), where the session is invalidated correctly.
+    if (!clearSessionOnTransportFailure) {
+      logger.debug('session kept after transport failure', meta);
+      return false;
+    }
+
+    clearSession();
+    logger.debug('session cleared after transport failure', meta);
     return true;
   }
 
@@ -660,6 +690,7 @@ function createProviderHttpGuard(options = {}) {
         signal,
         browserProfile: activeSession,
         useImpit: false,
+        useRustShield: useRustShieldForSession,
         maxRedirects: 3
       });
 
@@ -689,6 +720,7 @@ function createProviderHttpGuard(options = {}) {
       timeout: Math.max(timeout, sessionTimeoutFloorMs),
       signal,
       browserProfile: activeSession,
+      useRustShield: useRustShieldForSession,
       useImpit: !impitSessionFastPath,
       impitAttempts: 1,
       impitTotalExtra: 350
@@ -789,7 +821,7 @@ function createProviderHttpGuard(options = {}) {
     return html;
   }
 
-  async function solveClearance(triggerUrl, { isPost = false, body = null, signal = null, force = true } = {}) {
+  async function solveClearance(triggerUrl, { isPost = false, body = null, signal = null, force = true, ignoreProviderCooldown = false } = {}) {
     if (!force && isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
 
     const targetClearanceUrl = buildClearanceUrl(triggerUrl, { isPost, body });
@@ -812,7 +844,8 @@ function createProviderHttpGuard(options = {}) {
         maxTimeout: clearanceTimeoutMs,
         sharedKey,
         wantResponse: !clearanceBridgeMode && sameDocumentUrl(primaryClearanceUrl, triggerUrl),
-        cookies: buildCookieHeaderFromSession(activeSession, targetClearanceUrl) || activeSession?.cookies || ''
+        cookies: buildCookieHeaderFromSession(activeSession, targetClearanceUrl) || activeSession?.cookies || '',
+        ignoreProviderCooldown
       });
 
       if (isSessionFreshForUrl(session, triggerUrl)) return session;
@@ -830,7 +863,8 @@ function createProviderHttpGuard(options = {}) {
           fallback: true,
           maxTimeout: clearanceTimeoutMs,
           wantResponse: !clearanceBridgeMode && sameDocumentUrl(fallbackUrl, triggerUrl),
-          cookies: buildCookieHeaderFromSession(activeSession, fallbackUrl) || activeSession?.cookies || ''
+          cookies: buildCookieHeaderFromSession(activeSession, fallbackUrl) || activeSession?.cookies || '',
+          ignoreProviderCooldown
         });
         if (isSessionFreshForUrl(session, triggerUrl)) return session;
       }
@@ -862,11 +896,11 @@ function createProviderHttpGuard(options = {}) {
   }
 
 
-  async function ensureClearance(triggerUrl = currentBaseUrl, { signal = null, force = false, isPost = false, body = null } = {}) {
+  async function ensureClearance(triggerUrl = currentBaseUrl, { signal = null, force = false, isPost = false, body = null, ignoreProviderCooldown = false } = {}) {
     const targetUrl = triggerUrl || currentBaseUrl;
     if (!force && isSessionFreshForUrl(activeSession, targetUrl)) return activeSession;
     if (!clearanceManager.endpoint) return isSessionFreshForUrl(activeSession, targetUrl) ? activeSession : null;
-    return solveClearance(targetUrl, { isPost, body, signal, force });
+    return solveClearance(targetUrl, { isPost, body, signal, force, ignoreProviderCooldown });
   }
 
   async function executeSmartFetch(url, isPost = false, body = null, signal = null, allowFlareSolverr = true, timeoutMs = directFetchTimeoutMs) {
@@ -932,7 +966,13 @@ function createProviderHttpGuard(options = {}) {
     }
 
     try {
-      const html = await fetchWithSession(url, { method, body, signal, timeout: hardFetchTimeout, startedAt });
+      const html = await fetchWithSession(url, {
+        method,
+        body,
+        signal,
+        timeout: Math.max(hardFetchTimeout, postClearanceReplayTimeoutMs),
+        startedAt
+      });
       if (html) {
         logger.info('post-clearance fetch ok', { method, url, transport: 'session-fastpath', sessionFresh: isSessionFreshForUrl(activeSession, url), ms: Date.now() - startedAt });
         return html;
@@ -940,7 +980,7 @@ function createProviderHttpGuard(options = {}) {
     } catch (error) {
       if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
       logger.debug('post-clearance fetch error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
-      clearSession();
+      clearSessionAfterTransportFailure(error, url, startedAt, 'post-clearance');
     }
 
     return null;
@@ -1096,7 +1136,12 @@ function createProviderHttpGuard(options = {}) {
       sharedClearancePending: Boolean(sharedClearancePromise),
       clearanceBridgeMode,
       emergencyClearanceAfterSessionFailure,
-      sessionTimeoutFloorMs
+      sessionTimeoutFloorMs,
+      providerFailureCooldownMs: options.providerFailureCooldownMs,
+      providerFailureCooldownMaxMs: options.providerFailureCooldownMaxMs,
+      postClearanceReplayTimeoutMs,
+      clearSessionOnTransportFailure,
+      useRustShieldForSession
     }),
     directFetchTimeoutMs,
     searchTimeoutMs,
