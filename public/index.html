@@ -1052,27 +1052,1381 @@
             .hub-grid { flex-direction: column; align-items: stretch; }
             .hub-card { justify-content: center; }
         }
+
+        /* Hotfix layout: rimuove il laser divider centrale che finiva sopra input e card su desktop. */
+        @media (min-width: 1024px) {
+            .desktop-grid-container::after {
+                content: none !important;
+                display: none !important;
+                opacity: 0 !important;
+                width: 0 !important;
+            }
+            .desktop-grid-container {
+                gap: clamp(32px, 4vw, 64px) !important;
+            }
+            .col-left,
+            .col-right {
+                position: relative !important;
+                z-index: 1 !important;
+                min-width: 0 !important;
+            }
+        }
+
+    
+
+        /* =========================================================
+           PATCH: FORMATTER VISUAL CORE — OCEAN PREMIUM EMOJI HUD
+           Leggero: solo CSS + markup, nessuna logica rotta.
+        ========================================================= */
+        .visual-core-hero {
+            overflow: hidden;
+            isolation: isolate;
+            background:
+                radial-gradient(circle at 8% 0%, rgba(0, 242, 255, 0.16), transparent 34%),
+                radial-gradient(circle at 90% 8%, rgba(255, 77, 220, 0.10), transparent 28%),
+                radial-gradient(circle at 50% 120%, rgba(112, 0, 255, 0.16), transparent 44%),
+                linear-gradient(145deg, rgba(5, 20, 32, 0.78), rgba(3, 3, 13, 0.96));
+            border-color: rgba(0, 242, 255, 0.24);
+            box-shadow:
+                0 22px 70px rgba(0,0,0,0.85),
+                inset 0 0 54px rgba(0, 242, 255, 0.035),
+                0 0 0 1px rgba(255,255,255,0.035);
+        }
+
+        .visual-core-hero::after {
+            content: '';
+            position: absolute;
+            inset: -40%;
+            z-index: -1;
+            pointer-events: none;
+            background:
+                conic-gradient(from 180deg at 50% 50%, transparent 0deg, rgba(0,242,255,0.11) 62deg, transparent 118deg, rgba(112,0,255,0.10) 192deg, transparent 265deg, rgba(255,255,255,0.035) 320deg, transparent 360deg);
+            opacity: 0.32;
+            transform: rotate(8deg);
+        }
+
+        .formatter-neo-header {
+            margin-bottom: 22px !important;
+            padding: 0 0 17px !important;
+            border-bottom: 1px solid rgba(0, 242, 255, 0.13) !important;
+            gap: 18px;
+        }
+
+        .formatter-title {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            color: #eaffff;
+            text-shadow: 0 0 16px rgba(0, 242, 255, 0.20);
+        }
+
+        .formatter-title-icon {
+            width: 34px;
+            height: 34px;
+            display: inline-grid;
+            place-items: center;
+            border-radius: 12px;
+            background: linear-gradient(135deg, rgba(0,242,255,0.18), rgba(255,77,220,0.12));
+            border: 1px solid rgba(0,242,255,0.25);
+            box-shadow: 0 0 18px rgba(0,242,255,0.12), inset 0 0 12px rgba(255,255,255,0.04);
+            font-size: 1.05rem;
+        }
+
+        .formatter-title em {
+            font-style: normal;
+            color: var(--primary);
+            opacity: 0.92;
+        }
+
+        .formatter-desc {
+            padding: 7px 12px;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 999px;
+            background: rgba(0,0,0,0.18);
+            white-space: nowrap;
+            text-align: right;
+        }
+
+        .preview-terminal.formatter-preview {
+            padding: 32px;
+            border-radius: 22px;
+            border: 1px solid rgba(0, 242, 255, 0.18);
+            background:
+                radial-gradient(circle at 12% 10%, rgba(0, 242, 255, 0.13), transparent 28%),
+                radial-gradient(circle at 92% 78%, rgba(255, 77, 220, 0.08), transparent 30%),
+                linear-gradient(145deg, rgba(3, 12, 18, 0.98), rgba(6, 5, 10, 0.98));
+            box-shadow:
+                inset 0 0 70px rgba(0,0,0,0.92),
+                0 16px 44px rgba(0,0,0,0.52),
+                0 0 0 1px rgba(255,255,255,0.035);
+        }
+
+        .preview-bubbles {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 1;
+            overflow: hidden;
+            opacity: 0.35;
+        }
+        .preview-bubbles span {
+            position: absolute;
+            font-size: 1.2rem;
+            filter: drop-shadow(0 0 10px rgba(0,242,255,0.22));
+        }
+        .preview-bubbles span:nth-child(1) { left: 5%; top: 72%; transform: rotate(-12deg); }
+        .preview-bubbles span:nth-child(2) { left: 91%; top: 18%; transform: rotate(12deg); }
+        .preview-bubbles span:nth-child(3) { left: 82%; top: 78%; transform: rotate(-8deg); }
+        .preview-bubbles span:nth-child(4) { left: 12%; top: 18%; transform: rotate(10deg); }
+
+        .preview-header.preview-header-neo {
+            margin-bottom: 16px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(0, 242, 255, 0.12);
+            color: rgba(224,247,250,0.78);
+        }
+
+        .preview-live-title {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            letter-spacing: 2.8px;
+            color: rgba(255,255,255,0.78);
+        }
+
+        .live-orb {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--success);
+            box-shadow: 0 0 12px rgba(0,255,157,0.55), 0 0 0 4px rgba(0,255,157,0.08);
+        }
+
+        .preview-mode-wrap {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .mini-signal-chip,
+        .preview-hud-strip span,
+        .preview-bottom-wave span {
+            border: 1px solid rgba(0,242,255,0.16);
+            background: rgba(0, 242, 255, 0.055);
+            color: rgba(235,253,255,0.88);
+            border-radius: 999px;
+            box-shadow: inset 0 0 12px rgba(0,242,255,0.035);
+        }
+
+        .mini-signal-chip {
+            padding: 4px 10px;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 0.75rem;
+            font-weight: 800;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        #prev-mode-label {
+            border-radius: 8px;
+            padding: 5px 12px;
+            letter-spacing: 2px;
+            background: linear-gradient(135deg, rgba(0,242,255,0.14), rgba(112,0,255,0.14));
+            border-color: rgba(0,242,255,0.35);
+        }
+        #prev-mode-label::before { content: '🦑 '; }
+
+        .preview-hud-strip,
+        .preview-bottom-wave {
+            position: relative;
+            z-index: 3;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+        .preview-hud-strip span,
+        .preview-bottom-wave span {
+            padding: 7px 11px;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 0.82rem;
+            font-weight: 800;
+            letter-spacing: 0.9px;
+            text-transform: uppercase;
+        }
+
+        .stremio-mock-row.premium-stream-card {
+            gap: 24px;
+            align-items: stretch;
+            border-radius: 18px;
+            padding: 24px 26px;
+            background:
+                linear-gradient(90deg, rgba(0,242,255,0.075), rgba(255,255,255,0.026) 38%, rgba(112,0,255,0.058)),
+                rgba(255,255,255,0.025);
+            border: 1px solid rgba(0,242,255,0.13);
+            box-shadow:
+                0 14px 34px rgba(0,0,0,0.38),
+                inset 0 0 40px rgba(0,242,255,0.024);
+        }
+
+        .stremio-mock-row.premium-stream-card::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 16px;
+            bottom: 16px;
+            width: 3px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, var(--primary), rgba(255,77,220,0.75), transparent);
+            box-shadow: 0 0 18px rgba(0,242,255,0.28);
+        }
+
+        .stremio-mock-row.premium-stream-card:hover {
+            transform: translateY(-2px);
+            background:
+                linear-gradient(90deg, rgba(0,242,255,0.11), rgba(255,255,255,0.036) 38%, rgba(112,0,255,0.075)),
+                rgba(255,255,255,0.035);
+            border-color: rgba(0,242,255,0.34);
+            box-shadow: 0 18px 42px rgba(0,0,0,0.44), 0 0 24px rgba(0,242,255,0.10);
+        }
+
+        .mock-poster.premium-poster {
+            width: 76px;
+            min-height: 112px;
+            height: auto;
+            border-radius: 14px;
+            position: relative;
+            overflow: hidden;
+            color: #eaffff;
+            border: 1px solid rgba(0,242,255,0.22);
+            background:
+                radial-gradient(circle at 35% 18%, rgba(255,255,255,0.22), transparent 19%),
+                linear-gradient(160deg, rgba(0,242,255,0.22), rgba(112,0,255,0.18) 48%, rgba(0,0,0,0.76));
+            box-shadow: 0 12px 26px rgba(0,0,0,0.58), inset 0 0 28px rgba(0,242,255,0.06);
+        }
+        .poster-emoji {
+            position: absolute;
+            inset: auto auto 8px 8px;
+            font-size: 1.25rem;
+            opacity: 0.65;
+        }
+        .poster-icon {
+            font-size: 2rem;
+            filter: drop-shadow(0 0 12px rgba(0,242,255,0.34));
+        }
+        .poster-badge {
+            position: absolute;
+            right: 6px;
+            top: 6px;
+            padding: 2px 6px;
+            border-radius: 6px;
+            background: rgba(0,0,0,0.56);
+            border: 1px solid rgba(255,255,255,0.16);
+            color: var(--primary);
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 0.72rem;
+            font-weight: 900;
+            letter-spacing: 1px;
+        }
+
+        .premium-content {
+            justify-content: center;
+            gap: 10px;
+            min-width: 0;
+        }
+        .premium-content .mock-title {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            width: fit-content;
+            max-width: 100%;
+            padding: 5px 10px;
+            border-radius: 10px;
+            background: rgba(0,0,0,0.24);
+            border: 1px solid rgba(255,255,255,0.07);
+            font-size: 1.2rem;
+            letter-spacing: 1px;
+        }
+        .premium-content .mock-info {
+            color: rgba(235,240,245,0.92);
+            font-size: 0.96rem;
+            line-height: 1.72;
+            text-shadow: 0 0 12px rgba(0,0,0,0.48);
+        }
+
+        .preview-bottom-wave {
+            margin-top: 14px;
+            margin-bottom: 0;
+            justify-content: flex-end;
+        }
+        .preview-bottom-wave span {
+            background: rgba(255,255,255,0.035);
+            border-color: rgba(255,255,255,0.08);
+            color: rgba(224,247,250,0.72);
+        }
+
+        @media (max-width: 720px) {
+            .formatter-neo-header { align-items: flex-start; flex-direction: column; }
+            .formatter-desc { white-space: normal; text-align: left; }
+            .preview-terminal.formatter-preview { padding: 18px; border-radius: 18px; }
+            .preview-header.preview-header-neo { align-items: flex-start; gap: 10px; flex-direction: column; }
+            .preview-mode-wrap { justify-content: flex-start; }
+            .stremio-mock-row.premium-stream-card { padding: 18px; gap: 14px; }
+            .mock-poster.premium-poster { width: 62px; min-height: 92px; border-radius: 12px; }
+            .poster-icon { font-size: 1.55rem; }
+            .premium-content .mock-title { font-size: 1rem; }
+            .premium-content .mock-info { font-size: 0.88rem; line-height: 1.55; }
+            .preview-hud-strip span, .preview-bottom-wave span { font-size: 0.74rem; padding: 6px 9px; }
+        }
+
     </style>
+
+
+    <style id="leviathan-ocean-order-refresh-v2">
+        /* ==========================================================
+           LEVIATHAN OCEAN UI FIX v2
+           Codice vero, non immagine: refresh leggero e sicuro.
+           Nessun blocco hero gigante: solo UI compatta e codice reale.
+           Runtime originale, ID, onchange/onclick e smartphone.js preservati.
+           ========================================================== */
+        :root {
+            --mf-sea: #14ddff;
+            --mf-sea-soft: rgba(20, 221, 255, .14);
+            --mf-reef: #31f3a5;
+            --mf-sun: #ffd166;
+            --mf-coral: #ff6b8a;
+            --mf-purple: #8b5cf6;
+            --mf-card: rgba(4, 18, 32, .76);
+            --mf-card-strong: rgba(5, 21, 38, .94);
+            --mf-border: rgba(126, 231, 255, .25);
+            --mf-border-strong: rgba(126, 231, 255, .48);
+            --mf-text: #ecfbff;
+            --mf-muted: #a7c8d8;
+            --mf-radius: 22px;
+            --mf-shadow: 0 18px 58px rgba(0,0,0,.45);
+        }
+
+        @media (min-width: 769px) {
+            html { scroll-padding-top: 92px; }
+            body {
+                align-items: flex-start !important;
+                background:
+                    radial-gradient(circle at 18% 0%, rgba(20,221,255,.16), transparent 28%),
+                    radial-gradient(circle at 82% 12%, rgba(139,92,246,.15), transparent 30%),
+                    radial-gradient(circle at 50% 100%, rgba(49,243,165,.07), transparent 35%),
+                    linear-gradient(180deg, #031423 0%, #02070f 48%, #000309 100%) !important;
+                color: var(--mf-text);
+            }
+
+            .main-wrapper.leviathan-safe-refresh {
+                width: min(100%, 1220px) !important;
+                max-width: 1220px !important;
+                margin: 28px auto 56px !important;
+                padding: 0 22px !important;
+            }
+
+            header {
+                margin-bottom: 18px !important;
+                padding-top: 8px;
+            }
+            .logo-container {
+                width: 166px !important;
+                height: 166px !important;
+                margin-bottom: 14px !important;
+            }
+            .logo-container::before {
+                border-width: 3px !important;
+                border-color: rgba(88,226,255,.92) !important;
+                box-shadow: 0 0 34px rgba(20,221,255,.35), inset 0 0 34px rgba(139,92,246,.23) !important;
+            }
+            .logo-image { max-width: 158px !important; }
+            .brand-title {
+                font-size: clamp(4rem, 7vw, 6.4rem) !important;
+                letter-spacing: clamp(-4px, -.48vw, -2px) !important;
+                background: linear-gradient(180deg, #ffffff 0%, #8bf2ff 36%, #31f3a5 66%, #8b5cf6 100%) !important;
+                -webkit-background-clip: text !important;
+                filter: drop-shadow(0 0 24px rgba(20,221,255,.24));
+            }
+            .brand-subtitle {
+                width: fit-content;
+                margin-inline: auto;
+                gap: 8px;
+                padding: 8px 15px;
+                border: 1px solid rgba(126,231,255,.24);
+                background: rgba(6,25,44,.52);
+                border-radius: 999px;
+                letter-spacing: 5px !important;
+                color: #eaffff !important;
+                box-shadow: inset 0 0 20px rgba(20,221,255,.06);
+            }
+            .brand-subtitle::before, .brand-subtitle::after { width: 18px !important; margin: 0 6px !important; }
+            .logo-desc { color: var(--mf-muted) !important; }
+            .version-badge {
+                border-radius: 999px !important;
+                border-color: rgba(255,209,102,.52) !important;
+                color: #fff6d7 !important;
+                background: linear-gradient(135deg, rgba(255,209,102,.14), rgba(20,221,255,.10)) !important;
+                box-shadow: 0 0 22px rgba(255,209,102,.15) !important;
+            }
+
+            .leviathan-flowbar {
+                position: sticky;
+                top: 10px;
+                z-index: 60;
+                display: grid;
+                grid-template-columns: repeat(5, minmax(0, 1fr));
+                gap: 9px;
+                margin: 0 auto 18px;
+                padding: 9px;
+                width: min(100%, 980px);
+                border-radius: 999px;
+                background: rgba(1, 8, 16, .78);
+                border: 1px solid rgba(126,231,255,.24);
+                box-shadow: 0 14px 48px rgba(0,0,0,.36), inset 0 0 28px rgba(20,221,255,.06);
+                backdrop-filter: blur(16px);
+            }
+            .flow-chip {
+                min-height: 42px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                padding: 9px 10px;
+                border-radius: 999px;
+                text-decoration: none;
+                color: #eafcff;
+                font-family: 'Rajdhani', sans-serif;
+                font-weight: 800;
+                letter-spacing: .7px;
+                background: rgba(255,255,255,.045);
+                border: 1px solid rgba(255,255,255,.08);
+                transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease;
+                white-space: nowrap;
+            }
+            .flow-chip:hover {
+                transform: translateY(-2px);
+                border-color: rgba(126,231,255,.5);
+                box-shadow: 0 10px 26px rgba(20,221,255,.12);
+            }
+            .flow-chip.provider { background: linear-gradient(135deg, rgba(20,221,255,.15), rgba(49,243,165,.07)); }
+            .flow-chip.web { background: linear-gradient(135deg, rgba(255,209,102,.14), rgba(255,107,138,.08)); }
+            .flow-chip.bridge { background: linear-gradient(135deg, rgba(139,92,246,.15), rgba(20,221,255,.07)); }
+            .flow-chip.style { background: linear-gradient(135deg, rgba(255,107,138,.14), rgba(139,92,246,.10)); }
+            .flow-chip.install { background: linear-gradient(135deg, rgba(49,243,165,.16), rgba(20,221,255,.08)); }
+
+            .glass-panel {
+                border-radius: var(--mf-radius) !important;
+                padding: 28px !important;
+                margin-bottom: 24px !important;
+                background:
+                    linear-gradient(160deg, rgba(5,22,39,.88), rgba(2,8,18,.94)) !important;
+                border: 1px solid var(--mf-border) !important;
+                box-shadow: var(--mf-shadow), inset 0 0 26px rgba(20,221,255,.045) !important;
+            }
+            .glass-panel::before { opacity: .20 !important; }
+            .panel-header {
+                padding-bottom: 16px !important;
+                margin-bottom: 22px !important;
+                gap: 14px !important;
+            }
+            .panel-title {
+                letter-spacing: 2px !important;
+                font-size: clamp(1.55rem, 2vw, 2rem) !important;
+            }
+
+            .info-grid { gap: 14px !important; }
+            .info-card {
+                border-radius: 18px !important;
+                padding: 18px !important;
+                background: linear-gradient(135deg, rgba(20,221,255,.08), rgba(49,243,165,.035)) !important;
+                border-color: rgba(126,231,255,.22) !important;
+            }
+            .info-card:hover { transform: translateY(-2px) !important; }
+
+            @media (min-width: 1024px) {
+                .desktop-grid-container {
+                    grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr) !important;
+                    gap: 40px !important;
+                }
+                .desktop-grid-container::after {
+                    opacity: .55 !important;
+                    box-shadow: 0 0 14px rgba(20,221,255,.34) !important;
+                }
+                .col-left { padding-right: 0 !important; }
+                .col-right { padding-left: 0 !important; }
+            }
+
+            .service-tabs {
+                border-radius: 20px !important;
+                gap: 10px !important;
+                padding: 8px !important;
+                background: rgba(0,0,0,.34) !important;
+            }
+            .service-tab {
+                border-radius: 16px !important;
+                padding: 15px 10px !important;
+                background: rgba(255,255,255,.045);
+            }
+            .service-tab.active {
+                background: linear-gradient(135deg, rgba(20,221,255,.18), rgba(49,243,165,.10)) !important;
+                border-color: rgba(126,231,255,.58) !important;
+            }
+            .service-tab.p2p-active {
+                background: linear-gradient(135deg, rgba(255,209,102,.18), rgba(255,107,138,.10)) !important;
+                border-color: rgba(255,209,102,.62) !important;
+            }
+
+            .module-box,
+            .filter-unit,
+            .aux-card,
+            .spectrum-container,
+            .visual-core,
+            .flux-terminal {
+                border-radius: 18px !important;
+                background: rgba(3, 15, 28, .72) !important;
+                border-color: rgba(126,231,255,.20) !important;
+                box-shadow: inset 0 0 20px rgba(20,221,255,.035) !important;
+            }
+            .module-label,
+            .section-header,
+            .unit-title,
+            .f-label {
+                letter-spacing: 1.8px !important;
+            }
+            .section-header {
+                color: #9cf6ff !important;
+                border-left-color: var(--mf-reef) !important;
+                text-shadow: 0 0 12px rgba(20,221,255,.18) !important;
+            }
+            .control-row {
+                border-radius: 16px !important;
+                padding: 14px !important;
+                background: rgba(2,12,23,.62) !important;
+                border-color: rgba(126,231,255,.13) !important;
+            }
+            .control-row:hover {
+                border-color: rgba(126,231,255,.35) !important;
+                background: rgba(5,22,38,.82) !important;
+            }
+            .control-title { color: #f4fdff !important; }
+            .control-desc, .aux-desc, .f-desc-mini, .spectrum-desc { color: var(--mf-muted) !important; }
+
+            .custom-input,
+            .mf-input,
+            .cyber-select,
+            .flux-input {
+                border-radius: 14px !important;
+            }
+            .custom-input:focus,
+            .mf-input:focus {
+                border-color: rgba(49,243,165,.75) !important;
+                box-shadow: 0 0 18px rgba(49,243,165,.14), inset 0 0 26px rgba(20,221,255,.045) !important;
+            }
+            .input-action {
+                border-radius: 12px !important;
+                color: #eaffff !important;
+            }
+
+            .aux-grid { gap: 14px !important; }
+            .aux-card.active {
+                border-color: rgba(49,243,165,.48) !important;
+                box-shadow: inset 0 0 26px rgba(49,243,165,.06) !important;
+            }
+            .spec-btn {
+                border-radius: 13px !important;
+                letter-spacing: .5px !important;
+            }
+            .spec-btn.active {
+                background: linear-gradient(135deg, rgba(20,221,255,.18), rgba(49,243,165,.10)) !important;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .leviathan-flowbar { display: none !important; }
+            .brand-subtitle { letter-spacing: 3px !important; }
+        }
+    </style>
+
+
+    <style id="leviathan-ocean-polish-v3">
+        /* ==========================================================
+           LEVIATHAN OCEAN POLISH v3
+           - Rimette il divider centrale nel punto corretto.
+           - Riempie la zona destra vuota con una strip informativa.
+           - Rende la selezione skin più bella senza toccare ID/funzioni JS.
+           ========================================================== */
+
+        @media (min-width: 1024px) {
+            .desktop-grid-container {
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+                gap: clamp(58px, 5vw, 72px) !important;
+                position: relative !important;
+            }
+
+            .desktop-grid-container::before {
+                content: '';
+                position: absolute;
+                top: 18px;
+                bottom: 18px;
+                left: 50%;
+                width: 58px;
+                transform: translateX(-50%);
+                background:
+                    radial-gradient(circle at 50% 16%, rgba(20,221,255,.18), transparent 23%),
+                    radial-gradient(circle at 50% 50%, rgba(49,243,165,.13), transparent 20%),
+                    radial-gradient(circle at 50% 84%, rgba(139,92,246,.16), transparent 22%);
+                pointer-events: none;
+                z-index: 0;
+            }
+
+            .desktop-grid-container::after {
+                content: '' !important;
+                display: block !important;
+                position: absolute !important;
+                top: 18px !important;
+                bottom: 18px !important;
+                left: 50% !important;
+                width: 2px !important;
+                transform: translateX(-50%) !important;
+                opacity: 1 !important;
+                pointer-events: none !important;
+                z-index: 1 !important;
+                border-radius: 999px !important;
+                animation: none !important;
+                background: linear-gradient(
+                    to bottom,
+                    transparent 0%,
+                    rgba(20,221,255,.88) 12%,
+                    rgba(49,243,165,.56) 46%,
+                    rgba(139,92,246,.62) 74%,
+                    transparent 100%
+                ) !important;
+                box-shadow:
+                    0 0 16px rgba(20,221,255,.45),
+                    0 0 34px rgba(139,92,246,.24) !important;
+            }
+
+            .col-left,
+            .col-right {
+                position: relative !important;
+                z-index: 2 !important;
+                min-width: 0 !important;
+            }
+
+            .col-left { padding-right: 0 !important; }
+            .col-right { padding-left: 0 !important; }
+
+            .col-right .filters-container {
+                position: relative;
+            }
+
+            .col-right .aux-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+                gap: 16px !important;
+                margin-top: 20px !important;
+                align-items: stretch !important;
+            }
+
+            .col-right .aux-card {
+                min-height: 178px;
+                clip-path: none !important;
+                border-radius: 20px !important;
+                padding: 18px !important;
+                background:
+                    linear-gradient(145deg, rgba(5,22,38,.88), rgba(1,8,16,.92)) !important;
+                border-color: rgba(126,231,255,.24) !important;
+                box-shadow:
+                    0 14px 34px rgba(0,0,0,.28),
+                    inset 0 0 24px rgba(20,221,255,.04) !important;
+            }
+
+            .col-right .aux-card::before {
+                height: 3px !important;
+                background: linear-gradient(90deg, var(--mf-sea), rgba(49,243,165,.72), transparent) !important;
+            }
+
+            .col-right .aux-card:hover {
+                transform: translateY(-2px) !important;
+                border-color: rgba(126,231,255,.46) !important;
+                background:
+                    linear-gradient(145deg, rgba(6,28,49,.95), rgba(1,10,20,.96)) !important;
+            }
+
+            .col-right .aux-header {
+                gap: 10px;
+                line-height: 1.1;
+                font-size: 1.08rem !important;
+            }
+
+            .col-right .aux-icon {
+                width: 34px;
+                height: 34px;
+                margin-right: 0 !important;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 12px;
+                background: rgba(20,221,255,.10);
+                color: var(--mf-sea) !important;
+            }
+
+            .col-right .cyber-select {
+                min-height: 48px;
+                border-radius: 16px !important;
+                background: rgba(0, 8, 16, .84) !important;
+                border-color: rgba(20,221,255,.38) !important;
+                color: #39f5ff !important;
+            }
+        }
+
+        .ocean-command-strip {
+            margin-top: 18px;
+            padding: 18px;
+            border-radius: 22px;
+            border: 1px solid rgba(126,231,255,.24);
+            background:
+                radial-gradient(circle at 8% 0%, rgba(49,243,165,.16), transparent 31%),
+                radial-gradient(circle at 92% 18%, rgba(139,92,246,.16), transparent 35%),
+                linear-gradient(145deg, rgba(3,17,31,.82), rgba(0,8,18,.92));
+            box-shadow: inset 0 0 28px rgba(20,221,255,.055), 0 16px 36px rgba(0,0,0,.26);
+            overflow: hidden;
+            position: relative;
+        }
+
+        .ocean-command-strip::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(126,231,255,.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(126,231,255,.035) 1px, transparent 1px);
+            background-size: 32px 32px;
+            opacity: .55;
+            pointer-events: none;
+        }
+
+        .ocean-strip-head,
+        .ocean-metrics,
+        .ocean-flowline {
+            position: relative;
+            z-index: 1;
+        }
+
+        .ocean-strip-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 14px;
+            font-family: 'Rajdhani', sans-serif;
+            text-transform: uppercase;
+            letter-spacing: 1.6px;
+            font-weight: 800;
+            color: #f2feff;
+        }
+
+        .ocean-strip-head em {
+            font-style: normal;
+            font-size: .75rem;
+            color: var(--mf-reef);
+            padding: 5px 10px;
+            border-radius: 999px;
+            background: rgba(49,243,165,.10);
+            border: 1px solid rgba(49,243,165,.24);
+        }
+
+        .ocean-metrics {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .ocean-metric {
+            min-height: 74px;
+            padding: 12px;
+            border-radius: 16px;
+            background: rgba(0, 8, 18, .58);
+            border: 1px solid rgba(126,231,255,.14);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 4px;
+        }
+
+        .ocean-metric strong {
+            color: #effdff;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: .98rem;
+            letter-spacing: .9px;
+        }
+
+        .ocean-metric span {
+            color: var(--mf-muted);
+            font-size: .8rem;
+        }
+
+        .ocean-flowline {
+            margin-top: 14px;
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            flex-wrap: wrap;
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 800;
+            letter-spacing: .8px;
+            color: #dffbff;
+        }
+
+        .ocean-flowline span {
+            padding: 7px 10px;
+            border-radius: 999px;
+            background: rgba(20,221,255,.08);
+            border: 1px solid rgba(20,221,255,.16);
+        }
+
+        .ocean-flowline i {
+            width: 24px;
+            height: 2px;
+            border-radius: 99px;
+            background: linear-gradient(90deg, rgba(20,221,255,.2), rgba(49,243,165,.76));
+            box-shadow: 0 0 10px rgba(20,221,255,.24);
+        }
+
+        .visual-core-hero {
+            border-radius: 26px !important;
+            border: 1px solid rgba(126,231,255,.26) !important;
+            background:
+                radial-gradient(circle at 10% 0%, rgba(255,107,138,.11), transparent 28%),
+                radial-gradient(circle at 86% 10%, rgba(139,92,246,.15), transparent 34%),
+                linear-gradient(160deg, rgba(4,18,32,.86), rgba(1,7,15,.96)) !important;
+            box-shadow: 0 20px 56px rgba(0,0,0,.42), inset 0 0 32px rgba(20,221,255,.045) !important;
+        }
+
+        .visual-core-hero .spectrum-header {
+            border-bottom-color: rgba(126,231,255,.17) !important;
+        }
+
+        .skin-selector-container {
+            display: grid !important;
+            grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)) !important;
+            gap: 12px !important;
+            padding: 18px !important;
+            margin: 0 0 18px !important;
+            border-radius: 24px !important;
+            border: 1px solid rgba(126,231,255,.22) !important;
+            background:
+                radial-gradient(circle at 0% 0%, rgba(20,221,255,.14), transparent 28%),
+                radial-gradient(circle at 100% 0%, rgba(255,107,138,.10), transparent 28%),
+                linear-gradient(145deg, rgba(0,9,19,.84), rgba(2,18,32,.62)) !important;
+            box-shadow: inset 0 0 28px rgba(20,221,255,.05), 0 14px 34px rgba(0,0,0,.24);
+            position: relative;
+        }
+
+        .skin-selector-container::before {
+            content: '🎨 SELEZIONE SKIN RISULTATI';
+            grid-column: 1 / -1;
+            display: flex;
+            align-items: center;
+            min-height: 24px;
+            margin-bottom: 2px;
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 800;
+            letter-spacing: 1.6px;
+            color: #9cf6ff;
+            text-shadow: 0 0 14px rgba(20,221,255,.22);
+        }
+
+        .skin-btn {
+            min-height: 106px;
+            clip-path: none !important;
+            border-radius: 20px !important;
+            padding: 13px 10px !important;
+            background:
+                linear-gradient(145deg, rgba(8,29,49,.82), rgba(0,8,18,.92)) !important;
+            border: 1px solid rgba(126,231,255,.16) !important;
+            box-shadow: 0 14px 28px rgba(0,0,0,.28), inset 0 0 20px rgba(20,221,255,.035) !important;
+            isolation: isolate;
+        }
+
+        .skin-btn::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            background: linear-gradient(135deg, rgba(20,221,255,.10), transparent 45%, rgba(139,92,246,.09));
+            opacity: 0;
+            transition: opacity .2s ease;
+            z-index: -1;
+        }
+
+        .skin-btn:hover {
+            transform: translateY(-3px) !important;
+            border-color: rgba(126,231,255,.44) !important;
+            box-shadow: 0 18px 36px rgba(0,0,0,.34), 0 0 20px rgba(20,221,255,.10) !important;
+        }
+
+        .skin-btn:hover::before,
+        .skin-btn.active::before {
+            opacity: 1;
+        }
+
+        .skin-icon {
+            width: 48px;
+            height: 48px;
+            margin: 0 !important;
+            border-radius: 17px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem !important;
+            background:
+                radial-gradient(circle at 30% 20%, rgba(255,255,255,.22), transparent 26%),
+                linear-gradient(145deg, rgba(20,221,255,.18), rgba(139,92,246,.14));
+            border: 1px solid rgba(126,231,255,.18);
+        }
+
+        .skin-name {
+            font-size: .88rem !important;
+            letter-spacing: 1.2px !important;
+            color: #dffaff;
+        }
+
+        .skin-btn.active {
+            transform: translateY(-2px) !important;
+            border-color: rgba(49,243,165,.66) !important;
+            background:
+                linear-gradient(145deg, rgba(8,40,54,.96), rgba(4,16,28,.98)) !important;
+            box-shadow:
+                0 20px 42px rgba(0,0,0,.35),
+                0 0 0 1px rgba(49,243,165,.22),
+                0 0 26px rgba(49,243,165,.13),
+                inset 0 0 28px rgba(20,221,255,.08) !important;
+        }
+
+        .skin-btn.active::after {
+            content: 'ATTIVA';
+            left: 50% !important;
+            bottom: 8px !important;
+            width: auto !important;
+            height: auto !important;
+            transform: translateX(-50%);
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: .62rem;
+            letter-spacing: 1px;
+            color: #061018;
+            background: linear-gradient(90deg, var(--mf-reef), var(--mf-sea)) !important;
+            box-shadow: 0 0 14px rgba(49,243,165,.35) !important;
+            animation: none !important;
+        }
+
+        .skin-btn.active .skin-icon {
+            animation: none !important;
+            transform: scale(1.08) !important;
+            filter: drop-shadow(0 0 18px rgba(49,243,165,.34)) !important;
+        }
+
+        .skin-btn.active .skin-name {
+            color: #ffffff !important;
+            text-shadow: 0 0 12px rgba(49,243,165,.22) !important;
+        }
+
+        @media (max-width: 900px) {
+            .ocean-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .ocean-flowline i { display: none; }
+        }
+
+        @media (max-width: 768px) {
+            .ocean-command-strip { display: none !important; }
+            .skin-selector-container { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+        }
+    </style>
+
+
+
+    <style id="leviathan-ocean-polish-v4-softline-skinfix">
+        /* ==========================================================
+           LEVIATHAN OCEAN POLISH v4
+           - Divider centrale più morbido: divide senza rubare lo sguardo.
+           - Skin attiva: niente testo "ATTIVA", solo segnale visivo elegante.
+           ========================================================== */
+
+        @media (min-width: 1024px) {
+            .desktop-grid-container::before {
+                width: 42px !important;
+                opacity: .24 !important;
+                filter: blur(1px) !important;
+                background:
+                    radial-gradient(circle at 50% 18%, rgba(20,221,255,.075), transparent 28%),
+                    radial-gradient(circle at 50% 52%, rgba(49,243,165,.055), transparent 25%),
+                    radial-gradient(circle at 50% 84%, rgba(139,92,246,.065), transparent 28%) !important;
+            }
+
+            .desktop-grid-container::after {
+                width: 1px !important;
+                opacity: .34 !important;
+                background: linear-gradient(
+                    to bottom,
+                    transparent 0%,
+                    rgba(126,231,255,.08) 8%,
+                    rgba(126,231,255,.28) 24%,
+                    rgba(49,243,165,.20) 52%,
+                    rgba(139,92,246,.18) 76%,
+                    transparent 100%
+                ) !important;
+                box-shadow:
+                    0 0 5px rgba(20,221,255,.14),
+                    0 0 12px rgba(139,92,246,.08) !important;
+                animation: none !important;
+            }
+        }
+
+        .skin-btn.active::after {
+            content: '' !important;
+            position: absolute !important;
+            left: 18% !important;
+            right: 18% !important;
+            bottom: 9px !important;
+            width: auto !important;
+            height: 3px !important;
+            transform: none !important;
+            padding: 0 !important;
+            border-radius: 999px !important;
+            background: linear-gradient(90deg,
+                transparent,
+                rgba(49,243,165,.78),
+                rgba(20,221,255,.70),
+                transparent
+            ) !important;
+            box-shadow:
+                0 0 10px rgba(49,243,165,.22),
+                0 0 16px rgba(20,221,255,.12) !important;
+            pointer-events: none !important;
+            animation: none !important;
+        }
+
+        .skin-btn.active .skin-name::after {
+            content: none !important;
+            display: none !important;
+        }
+    </style>
+
+
+    <style id="leviathan-ocean-polish-v5-subtle-preview">
+        /* ==========================================================
+           LEVIATHAN OCEAN POLISH v5
+           - Preview e skin meno pacchiane ma ancora premium.
+           - Flow bar rimossa.
+           - Sfondo arricchito in modo leggero.
+           ========================================================== */
+
+        .leviathan-flowbar {
+            display: none !important;
+        }
+
+        .ocean-bg::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: -3;
+            background:
+                radial-gradient(60% 45% at 50% 0%, rgba(0, 242, 255, 0.045), transparent 72%),
+                radial-gradient(35% 30% at 78% 22%, rgba(112, 0, 255, 0.035), transparent 72%),
+                linear-gradient(180deg, rgba(255,255,255,0.012), transparent 22%);
+            opacity: .9;
+        }
+
+        .visual-core-hero {
+            background:
+                radial-gradient(circle at 12% 0%, rgba(0, 242, 255, 0.08), transparent 30%),
+                radial-gradient(circle at 88% 10%, rgba(112, 0, 255, 0.09), transparent 28%),
+                linear-gradient(160deg, rgba(4,18,32,.88), rgba(1,7,15,.97)) !important;
+            border-color: rgba(126,231,255,.22) !important;
+            box-shadow: 0 18px 46px rgba(0,0,0,.36), inset 0 0 26px rgba(20,221,255,.03) !important;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .visual-core-hero::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            background:
+                radial-gradient(circle at 82% 24%, rgba(255,255,255,.04) 0, transparent 2px),
+                radial-gradient(circle at 18% 76%, rgba(255,255,255,.04) 0, transparent 2px),
+                radial-gradient(circle at 50% 50%, transparent 0 120px, rgba(20,221,255,.022) 121px, transparent 122px),
+                radial-gradient(circle at 50% 50%, transparent 0 190px, rgba(20,221,255,.016) 191px, transparent 192px),
+                linear-gradient(rgba(126,231,255,.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(126,231,255,.018) 1px, transparent 1px);
+            background-size: auto, auto, auto, auto, 38px 38px, 38px 38px;
+            opacity: .42;
+        }
+
+        .visual-core-hero::after {
+            inset: -28% !important;
+            opacity: .14 !important;
+            transform: rotate(4deg) !important;
+            filter: blur(1px);
+        }
+
+        .visual-core-hero > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        .formatter-title {
+            text-shadow: 0 0 10px rgba(0,242,255,.14) !important;
+        }
+
+        .formatter-title-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, rgba(0,242,255,.12), rgba(112,0,255,.09));
+            box-shadow: 0 0 12px rgba(0,242,255,.08), inset 0 0 10px rgba(255,255,255,.03);
+        }
+
+        .formatter-desc {
+            background: rgba(255,255,255,.03) !important;
+            border-color: rgba(255,255,255,.06) !important;
+            color: #bdd7ea !important;
+        }
+
+        .preview-terminal.formatter-preview {
+            padding: 26px !important;
+            border-radius: 20px !important;
+            border-color: rgba(126,231,255,.14) !important;
+            background:
+                radial-gradient(circle at 14% 10%, rgba(0,242,255,.08), transparent 22%),
+                linear-gradient(145deg, rgba(4,12,20,.97), rgba(5,7,12,.98)) !important;
+            box-shadow: inset 0 0 55px rgba(0,0,0,.84), 0 14px 36px rgba(0,0,0,.36) !important;
+        }
+
+        .preview-bubbles {
+            opacity: .15 !important;
+        }
+        .preview-bubbles span {
+            font-size: 1rem !important;
+            filter: drop-shadow(0 0 8px rgba(0,242,255,.12)) !important;
+        }
+        .preview-bubbles span:nth-child(3),
+        .preview-bubbles span:nth-child(4) {
+            display: none !important;
+        }
+
+        .preview-live-title {
+            letter-spacing: 1.6px !important;
+            color: rgba(255,255,255,.72) !important;
+        }
+
+        .mini-signal-chip,
+        .preview-hud-strip span,
+        .preview-bottom-wave span,
+        #prev-mode-label {
+            background: rgba(255,255,255,.045) !important;
+            border-color: rgba(126,231,255,.14) !important;
+            box-shadow: inset 0 0 10px rgba(20,221,255,.02) !important;
+            color: #e8f7ff !important;
+        }
+
+        .mini-signal-chip,
+        .preview-hud-strip span,
+        .preview-bottom-wave span {
+            text-transform: none !important;
+            letter-spacing: .6px !important;
+        }
+
+        #prev-mode-label {
+            letter-spacing: 1.4px !important;
+            border-radius: 10px !important;
+        }
+        #prev-mode-label::before {
+            content: '' !important;
+        }
+
+        .preview-hud-strip,
+        .preview-bottom-wave {
+            gap: 7px !important;
+        }
+
+        .stremio-mock-row.premium-stream-card {
+            gap: 18px !important;
+            padding: 20px 22px !important;
+            border-radius: 16px !important;
+            background: linear-gradient(90deg, rgba(255,255,255,.035), rgba(255,255,255,.018)) !important;
+            border-color: rgba(126,231,255,.12) !important;
+            box-shadow: 0 10px 28px rgba(0,0,0,.32), inset 0 0 24px rgba(20,221,255,.02) !important;
+        }
+
+        .stremio-mock-row.premium-stream-card::before {
+            width: 2px !important;
+            top: 14px !important;
+            bottom: 14px !important;
+            background: linear-gradient(180deg, rgba(20,221,255,.85), rgba(20,221,255,.22), transparent) !important;
+            box-shadow: 0 0 10px rgba(20,221,255,.16) !important;
+        }
+
+        .mock-poster.premium-poster {
+            width: 72px !important;
+            min-height: 106px !important;
+            border-radius: 13px !important;
+            background:
+                radial-gradient(circle at 36% 18%, rgba(255,255,255,.16), transparent 18%),
+                linear-gradient(160deg, rgba(10,29,44,.95), rgba(9,18,31,.96) 50%, rgba(3,6,11,.98)) !important;
+            border-color: rgba(126,231,255,.16) !important;
+            box-shadow: 0 10px 22px rgba(0,0,0,.44), inset 0 0 20px rgba(20,221,255,.035) !important;
+        }
+
+        .poster-emoji {
+            opacity: .3 !important;
+            font-size: 1rem !important;
+        }
+
+        .poster-icon {
+            font-size: 1.75rem !important;
+            filter: drop-shadow(0 0 10px rgba(0,242,255,.18)) !important;
+        }
+
+        .poster-badge {
+            background: rgba(0,0,0,.44) !important;
+            border-color: rgba(255,255,255,.08) !important;
+            color: #dffaff !important;
+        }
+
+        .premium-content {
+            gap: 8px !important;
+        }
+
+        .premium-content .mock-title {
+            padding: 4px 10px !important;
+            border-radius: 9px !important;
+            background: rgba(255,255,255,.035) !important;
+            border-color: rgba(255,255,255,.06) !important;
+            font-size: 1.06rem !important;
+            letter-spacing: .5px !important;
+            font-weight: 700 !important;
+        }
+
+        .premium-content .mock-info {
+            font-size: .93rem !important;
+            line-height: 1.62 !important;
+            color: rgba(235,240,245,.88) !important;
+        }
+
+        .skin-selector-container {
+            grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)) !important;
+            gap: 10px !important;
+            padding: 16px !important;
+            border-radius: 20px !important;
+            border-color: rgba(126,231,255,.16) !important;
+            background:
+                linear-gradient(145deg, rgba(3,11,20,.88), rgba(4,16,28,.64)) !important;
+            box-shadow: inset 0 0 18px rgba(20,221,255,.03), 0 10px 26px rgba(0,0,0,.22) !important;
+        }
+
+        .skin-selector-container::before {
+            content: '✦ Skin risultati';
+            margin-bottom: 4px !important;
+            letter-spacing: 1.1px !important;
+            font-size: .95rem !important;
+            color: #bdefff !important;
+            text-shadow: none !important;
+        }
+
+        .skin-btn {
+            min-height: 94px !important;
+            border-radius: 16px !important;
+            padding: 12px 10px !important;
+            background: linear-gradient(145deg, rgba(7,23,38,.88), rgba(4,11,20,.95)) !important;
+            border-color: rgba(126,231,255,.10) !important;
+            box-shadow: 0 10px 20px rgba(0,0,0,.18), inset 0 0 16px rgba(20,221,255,.02) !important;
+        }
+
+        .skin-btn::before {
+            background: linear-gradient(135deg, rgba(20,221,255,.06), transparent 45%, rgba(112,0,255,.05)) !important;
+        }
+
+        .skin-btn:hover {
+            transform: translateY(-2px) !important;
+            border-color: rgba(126,231,255,.22) !important;
+            box-shadow: 0 12px 24px rgba(0,0,0,.24), 0 0 14px rgba(20,221,255,.05) !important;
+        }
+
+        .skin-icon {
+            width: 42px !important;
+            height: 42px !important;
+            border-radius: 14px !important;
+            font-size: 1.58rem !important;
+            background: linear-gradient(145deg, rgba(20,221,255,.11), rgba(112,0,255,.09)) !important;
+            border-color: rgba(126,231,255,.12) !important;
+            box-shadow: none !important;
+        }
+
+        .skin-name {
+            font-size: .84rem !important;
+            letter-spacing: .8px !important;
+            color: #def5ff !important;
+        }
+
+        .skin-btn.active {
+            transform: translateY(-1px) !important;
+            border-color: rgba(49,243,165,.34) !important;
+            background: linear-gradient(145deg, rgba(10,31,42,.95), rgba(6,15,26,.98)) !important;
+            box-shadow: 0 14px 28px rgba(0,0,0,.24), 0 0 0 1px rgba(49,243,165,.12), inset 0 0 18px rgba(20,221,255,.04) !important;
+        }
+
+        .skin-btn.active::after {
+            left: 20% !important;
+            right: 20% !important;
+            bottom: 8px !important;
+            height: 2px !important;
+            background: linear-gradient(90deg, transparent, rgba(49,243,165,.72), rgba(20,221,255,.45), transparent) !important;
+            box-shadow: 0 0 8px rgba(49,243,165,.12) !important;
+        }
+
+        .skin-btn.active .skin-icon {
+            transform: scale(1.03) !important;
+            filter: drop-shadow(0 0 8px rgba(49,243,165,.18)) !important;
+        }
+
+        .skin-btn.active .skin-name {
+            color: #ffffff !important;
+            text-shadow: 0 0 6px rgba(49,243,165,.08) !important;
+        }
+
+        @media (max-width: 720px) {
+            .preview-terminal.formatter-preview { padding: 18px !important; }
+            .stremio-mock-row.premium-stream-card { padding: 16px !important; }
+            .skin-selector-container { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+        }
+    </style>
+
 </head>
 <body>
     <canvas id="deepSeaCanvas"></canvas>
     <div class="ocean-bg"></div>
     <div class="particles" id="particles"></div>
-    <div class="main-wrapper">
+    <div class="main-wrapper leviathan-safe-refresh">
         <header>
             <div class="logo-container">
                 <img src="https://i.ibb.co/MbmdvP6/file-0000000018387243a2da8535139f6423.png" alt="Leviathan Logo" class="logo-image" fetchpriority="high" decoding="sync">
                 <div class="logo-particles" id="logoParticles"></div>
             </div>
             <h1 class="brand-title notranslate" translate="no">LEVIATHAN</h1>
-            <div class="brand-subtitle notranslate" translate="no">SOVRANO DEGLI ABISSI</div>
+            <div class="brand-subtitle notranslate" translate="no">🌊 SOVRANO DEGLI ABISSI</div>
             <p class="logo-desc">Il protocollo profondo che domina i flussi digitali</p>
-            <div class="version-badge">CORE v2.7.0</div>
+            <div class="version-badge">🐙 CORE v2.7.0 • OCEAN UI</div>
         </header>
         <div class="glass-panel">
             <div class="panel-header">
                 <i class="fas fa-microchip" style="color:var(--primary)"></i>
-                <div class="panel-title">SISTEMI DI BORDO</div>
+                <div class="panel-title">🧭 SISTEMI DI BORDO</div>
             </div>
             <div class="info-grid">
                 <div class="info-card">
@@ -1102,12 +2456,12 @@
         <div class="glass-panel" id="config-area">
             <div class="panel-header">
                 <i class="fas fa-sliders-h" style="color:var(--primary)"></i>
-                <div class="panel-title">STAZIONE DI COMANDO</div>
+                <div class="panel-title">🚢 STAZIONE DI COMANDO</div>
             </div>
 
             <div class="desktop-grid-container">
                 <div class="col-left">
-                    <div class="section-header" style="margin-top:0;">PROTOCOLLI DI CONNESSIONE</div>
+                    <div class="section-header" style="margin-top:0;">🐬 PROTOCOLLI DI CONNESSIONE</div>
 
                     <div class="service-tabs">
                         <div class="service-tab active" onclick="selectService('rd')">
@@ -1144,7 +2498,7 @@
                     </div>
 
                     <div class="module-box" id="webModule">
-                        <div class="module-label">MODULO SORGENTI WEB</div>
+                        <div class="module-label">🎬 MODULO SORGENTI WEB</div>
                         <div class="control-row">
     <div class="control-info">
         <div class="control-title notranslate" translate="no">
@@ -1252,7 +2606,7 @@
                     </div>
 
                     <div class="module-box" id="netModule" style="border-color: rgba(0, 242, 255, 0.3);">
-                        <div class="module-label" style="border-color: rgba(0, 242, 255, 0.4); color: var(--primary);">NETWORK BRIDGE</div>
+                        <div class="module-label" style="border-color: rgba(0, 242, 255, 0.4); color: var(--primary);">🌉 NETWORK BRIDGE</div>
                         <div class="mf-group" style="margin-top:0; border:none; padding:0; background:transparent;">
                             <input type="text" id="mfUrl" class="mf-input" placeholder="URL MediaFlow Proxy" oninput="updateFluxStream()">
                             <input type="password" id="mfPass" class="mf-input" style="margin-top: 10px;" placeholder="Password Proxy (Opzionale)" oninput="updateFluxStream()">
@@ -1270,7 +2624,7 @@
                 </div>
 
                 <div class="col-right">
-                    <div class="section-header" style="margin-top:0;">CENTRO DI CONTROLLO RICERCA</div>
+                    <div class="section-header" style="margin-top:0;">🧠 CENTRO DI CONTROLLO RICERCA</div>
 
                     <div class="filters-container">
                         <div class="spectrum-container" style="border-color: var(--secondary); background: linear-gradient(135deg, rgba(0, 5, 10, 0.6), rgba(112, 0, 255, 0.05)); margin-bottom: 20px;">
@@ -1411,6 +2765,28 @@
                             </div>
 
                         </div>
+
+                        <div class="ocean-command-strip" aria-hidden="true">
+                            <div class="ocean-strip-head">
+                                <span>🌊 ROTTA INTELLIGENTE</span>
+                                <em>clean • fast • safe</em>
+                            </div>
+                            <div class="ocean-metrics">
+                                <div class="ocean-metric"><strong>⚡ Speed</strong><span>cache first</span></div>
+                                <div class="ocean-metric"><strong>🧠 Match</strong><span>anti doppioni</span></div>
+                                <div class="ocean-metric"><strong>🇮🇹 Audio</strong><span>ITA davanti</span></div>
+                                <div class="ocean-metric"><strong>🛡️ Safe</strong><span>no caos</span></div>
+                            </div>
+                            <div class="ocean-flowline">
+                                <span>🔎 Cerca</span>
+                                <i></i>
+                                <span>🧹 Filtra</span>
+                                <i></i>
+                                <span>🏆 Ordina</span>
+                                <i></i>
+                                <span>🚀 Avvia</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1423,33 +2799,58 @@
                     <div style="color:#aaa; font-size:0.9rem; margin-top:5px;">Disabilita "Compatibilità AIO" per sbloccare le skin.</div>
                 </div>
 
-                <div class="spectrum-header" style="margin-bottom:20px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 15px;">
-                    <span style="display:flex; align-items:center; gap:10px;">
-                        <i class="fas fa-palette" style="color:var(--primary)"></i> FORMATTER PROTOCOL // VISUAL CORE
+                <div class="spectrum-header formatter-neo-header">
+                    <span class="formatter-title">
+                        <span class="formatter-title-icon">🎨</span>
+                        FORMATTER PROTOCOL <em>// VISUAL CORE</em>
                     </span>
-                    <span class="spectrum-desc" style="text-align:right;">Personalizza l'aspetto dei risultati.</span>
+                    <span class="spectrum-desc formatter-desc">✨ Emoji, badge e skin dei risultati.</span>
                 </div>
 
-                <div class="preview-terminal" id="prevTerminal">
+                <div class="preview-terminal formatter-preview" id="prevTerminal">
+                    <div class="preview-bubbles" aria-hidden="true">
+                        <span>🐬</span><span>🦑</span><span>💎</span><span>⚡</span>
+                    </div>
                     <div class="recalc-overlay" id="recalcLayer">
                         <div class="recalc-text"><i class="fas fa-cog fa-spin"></i> UPDATING CORE...</div>
                     </div>
 
-                    <div class="preview-header">
-                        <span><i class="fas fa-satellite-dish"></i> LIVE SIGNAL PREVIEW</span>
-                        <span id="prev-mode-label">LEVIATHAN</span>
+                    <div class="preview-header preview-header-neo">
+                        <span class="preview-live-title"><span class="live-orb"></span>📡 LIVE SIGNAL PREVIEW</span>
+                        <span class="preview-mode-wrap">
+                            <span class="mini-signal-chip">⚡ cache ready</span>
+                            <span id="prev-mode-label">LEVIATHAN</span>
+                        </span>
                     </div>
-                    <div class="stremio-mock-row">
-                        <div class="mock-poster"><i class="fas fa-image"></i></div>
-                        <div class="mock-content">
-                            <div class="mock-title" id="prev-name">🐬 𝗥𝗗 🦑 ʟᴇᴠɪᴀᴛʜᴀɴ</div>
 
-                            <div class="mock-info" id="prev-desc">▶️ 𝗗𝘂𝗻𝗲 𝗣𝗮𝗿𝘁 𝗧𝘄𝗼
-🔱 𝟰𝗞 • ʀᴇᴍᴜx • ᴅᴠ+ʜᴅʀ
-🗣️ 🇮🇹 ITA  |  🫧 TrueHD 7.1
-🧲 64.20 GB  |  👥 1337
-🐬 1337x | 🏷️ ʟᴇᴠɪᴀᴛʜᴀɴ</div>
+                    <div class="preview-hud-strip" aria-hidden="true">
+                        <span>🐬 RD</span>
+                        <span>🇮🇹 ITA priority</span>
+                        <span>💎 REMUX</span>
+                        <span>🛡️ safe pick</span>
+                    </div>
+
+                    <div class="stremio-mock-row premium-stream-card">
+                        <div class="mock-poster premium-poster">
+                            <span class="poster-emoji">🌊</span>
+                            <span class="poster-icon">🎬</span>
+                            <span class="poster-badge">4K</span>
                         </div>
+                        <div class="mock-content premium-content">
+                            <div class="mock-title" id="prev-name">🐬 RD • Leviathan</div>
+
+                            <div class="mock-info" id="prev-desc">🎬 Dune Part Two
+4K • REMUX • DV+HDR
+🇮🇹 ITA • 🔊 TrueHD 7.1
+🧲 64.20 GB • 👥 1337
+🐬 1337x • 🏷️ Leviathan</div>
+                        </div>
+                    </div>
+
+                    <div class="preview-bottom-wave" aria-hidden="true">
+                        <span>🌊 ocean skin</span>
+                        <span>🔥 best stream first</span>
+                        <span>🧠 clean formatter</span>
                     </div>
                 </div>
 
@@ -2463,51 +3864,27 @@
                 serviceIconTitle: "⚡"
             };
 
-            if (p.serviceTag === "RD") { p.serviceIconTitle = "🐋"; }
+            if (p.serviceTag === "RD") { p.serviceIconTitle = "🐬"; }
             else if (p.serviceTag === "TB") { p.serviceIconTitle = "⚓"; }
             else if (p.serviceTag === "P2P") { p.serviceIconTitle = "🦈"; }
 
             p.sourceLine = `${p.serviceIconTitle} [${p.serviceTag}] ${p.displaySource}`;
 
             let name = "", desc = "";
-
             if (skin === 'leviathan') {
-
-                const titleIcon = "▶️";
-                const techIcon = "🔱";
 
                 let serviceIcon = "🦈";
                 if (p.serviceTag === "RD") serviceIcon = "🐬";
                 else if (p.serviceTag === "TB") serviceIcon = "⚓";
 
-                const isCached = ["RD", "TB"].includes(p.serviceTag);
-                const statusIcon = isCached ? serviceIcon : "⏳";
-
-                const brandName = toStylized("LEVIATHAN", "small");
-                const serviceStyled = toStylized(p.serviceTag, "bold");
-                name = `${statusIcon} ${serviceStyled} 🦑 ${brandName}`;
+                name = `${serviceIcon} ${p.serviceTag} • Leviathan`;
 
                 const lines = [];
-
-                lines.push(`${titleIcon} ${toStylized(p.cleanName, "bold")} ${p.epTag}`);
-
-                let techSpecs = [p.quality, ...p.cleanTags].filter(Boolean);
-                techSpecs = [...new Set(techSpecs)];
-                let techLine = techSpecs.map(t => toStylized(t, 'small')).join(" • ");
-                if (techLine) lines.push(`${techIcon} ${techLine}`);
-
-                let cleanAudio = p.audioTag;
-                let audioPart = [cleanAudio, p.audioChannels].filter(Boolean).join(" ");
-                lines.push(`🗣️ ${p.lang}  |  🫧 ${audioPart}`);
-
-                let fileInfo = `🧲 ${p.sizeString}`;
-                if (p.seedersStr) fileInfo += `  |  ${p.seedersStr}`;
-                lines.push(fileInfo);
-
-                let sourceRow = `${serviceIcon} ${p.displaySource}`;
-                const styledGroup = toStylized("LEVIATHAN", 'small');
-                sourceRow += ` | 🏷️ ${styledGroup}`;
-                lines.push(sourceRow);
+                lines.push(`🎬 ${p.cleanName}${p.epTag ? ` ${p.epTag}` : ''}`);
+                lines.push(`${p.quality} • ${p.cleanTags.join(' • ')}`);
+                lines.push(`🇮🇹 ITA • 🔊 ${p.audioTag} ${p.audioChannels}`);
+                lines.push(`🧲 ${p.sizeString} • 👥 ${p.seeders}`);
+                lines.push(`${serviceIcon} ${p.displaySource} • 🏷️ Leviathan`);
 
                 desc = lines.join("\n");
             }
