@@ -5,6 +5,7 @@ const { fetchExternalAddonsFlat } = require("./nexus-bridge");
 const PackResolver = require("./pack_intelligence");
 const aioFormatter = require("./lib/pulse_formatter.cjs");
 const TorboxAvailabilityCache = require("./debrid/availability/torbox_availability_cache");
+const { TB_CACHE_STATES, normalizeTbCacheState, toRdCacheState, isTbVerified, shortTorboxHash } = require("./debrid/availability/torbox_cache_state");
 const { scheduleKeyed } = require('./utils/limits');
 const { scheduleRequestTask } = require('./server/request_queue');
 const { formatStreamSelector, formatBytes } = require("./lib/stream_formatter");
@@ -1685,6 +1686,59 @@ function filterWithTorrentPackTrust(items = [], aggressiveFilter, context = {}) 
     return (Array.isArray(items) ? items : []).filter((item) => keepAfterAggressiveFilter(item, aggressiveFilter, context));
 }
 
+function summarizeTorboxCacheStates(items = []) {
+    const counts = {
+        cached_verified: 0,
+        likely_cached: 0,
+        uncertain: 0,
+        queued: 0,
+        uncached: 0,
+        error: 0
+    };
+    for (const item of items) {
+        const state = normalizeTbCacheState(item?._tbCacheStateRaw || item?.tb_cache_state || item?.tbCacheStateRaw || item?._tbCacheState || item?.tbCacheState);
+        counts[state] = (counts[state] || 0) + 1;
+    }
+    return counts;
+}
+
+function applyTorboxCacheResultToItem(item, result = {}) {
+    const state = normalizeTbCacheState(
+        result?.state || result?.cache_state || result?.tb_cache_state || (result?.cached === true ? TB_CACHE_STATES.CACHED_VERIFIED : (result?.cached === false ? TB_CACHE_STATES.UNCACHED : TB_CACHE_STATES.UNCERTAIN))
+    );
+    const rdState = toRdCacheState(state);
+
+    item._tbLiveChecked = true;
+    item._tbCacheStateRaw = state;
+    item.tbCacheStateRaw = state;
+    item.tb_cache_state = state;
+    item._tbCacheState = rdState;
+    item.tbCacheState = rdState;
+    item._tbCacheConfidence = Number(result?.confidence || 0) || 0;
+    item._tbCacheMatchReason = result?.match_reason || null;
+
+    if (isTbVerified(state)) {
+        item._tbCached = true;
+        item.tbCached = true;
+        item.tb_cached = true;
+        if (result.file_size) {
+            item._size = result.file_size;
+            item.sizeBytes = result.file_size;
+        }
+        if (result.file_id !== undefined && result.file_id !== null) {
+            item.fileIdx = result.file_id;
+            item.tb_file_id = result.file_id;
+        }
+        if (result.file_title) item.file_title = result.file_title;
+    } else {
+        item._tbCached = false;
+        item.tbCached = false;
+        item.tb_cached = false;
+    }
+
+    return state;
+}
+
 async function resolveTorboxRankedList(rankedList, apiKey) {
     const sourceRanked = Array.isArray(rankedList) ? [...rankedList] : [];
     const progressiveWindows = [30, 60, 90];
@@ -1695,25 +1749,24 @@ async function resolveTorboxRankedList(rankedList, apiKey) {
         const candidates = sourceRanked.slice(0, checkLimit);
         if (candidates.length === 0) break;
 
-        logger.info(`📦 [TB CHECK] Scansiono ${candidates.length} torrent alla ricerca di file video reali...`);
+        logger.info(`[torbox.cache.check.start] window=${candidates.length} sample=${candidates.slice(0, 3).map((item) => shortTorboxHash(item?.hash)).join(',')}`);
         const cacheResults = await LIMITERS.tbResolve.schedule(() => TorboxAvailabilityCache.checkCacheSync(candidates, apiKey, dbHelper, checkLimit));
         verifiedList = [];
 
         for (const item of candidates) {
             const hash = String(item?.hash || '').toLowerCase();
-            const result = cacheResults?.[hash];
-            if (result && result.cached === true) {
-                item._tbCached = true;
-                item.tbCached = true;
-                item._tbLiveChecked = true;
-                item._tbCacheState = 'cached';
-                if (result.file_size) {
-                    item._size = result.file_size;
-                    item.sizeBytes = result.file_size;
-                }
-                if (result.file_id !== undefined && result.file_id !== null) item.fileIdx = result.file_id;
+            const result = cacheResults?.[hash] || { state: TB_CACHE_STATES.UNCACHED, cached: false };
+            const state = applyTorboxCacheResultToItem(item, result);
+            if (isTbVerified(state)) {
                 verifiedList.push(item);
             }
+        }
+
+        const counts = summarizeTorboxCacheStates(candidates);
+        logger.info(`[torbox.cache.check.result] window=${candidates.length} verified=${counts.cached_verified} likely=${counts.likely_cached} uncertain=${counts.uncertain} queued=${counts.queued} uncached=${counts.uncached} error=${counts.error}`);
+        if (verifiedList.length > 0) {
+            const topReason = verifiedList.slice(0, 3).map((item) => `${shortTorboxHash(item?.hash)}:${item?._tbCacheMatchReason || 'cached_verified'}`).join(',');
+            logger.info(`[torbox.rank.reason] kept=${verifiedList.length} reason=cached_verified_only sample=${topReason}`);
         }
 
         usedWindow = candidates.length;
@@ -3058,6 +3111,21 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
     }
 }
 
+function getPositiveInteger(value, fallback = 0) {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getLazyPlaybackEpisodeContext(item = {}, meta = {}) {
+    const titleText = String(item?.fileName || item?.filename || item?.file_title || item?.title || '');
+    const parsed = meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0
+        ? extractSeasonEpisodeFromFilename(titleText, getPositiveInteger(item?.season, getPositiveInteger(meta?.season, 1)), getEpisodeParseOptions(meta))
+        : null;
+    const season = getPositiveInteger(item?.season, getPositiveInteger(parsed?.season, getPositiveInteger(meta?.season, 0)));
+    const episode = getPositiveInteger(item?.episode, getPositiveInteger(parsed?.episode, getPositiveInteger(meta?.episode, 0)));
+    return { season, episode };
+}
+
 function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = false) {
     const service = getNormalizedDebridService(config);
     if (!service) return null;
@@ -3102,13 +3170,17 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
 
     if (!item.hash) return null;
 
+    const playbackContext = getLazyPlaybackEpisodeContext(item, meta);
+    const playbackSeason = playbackContext.season || 0;
+    const playbackEpisode = playbackContext.episode || 0;
+    const playbackFileIdx = (item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1;
     const imdbParam = meta?.imdb_id ? `&imdb=${encodeURIComponent(meta.imdb_id)}` : '';
-    const lazyUrl = `${reqHost}/${userConfStr}/play_lazy/${service}/${item.hash}/${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}?s=${meta.season || 0}&e=${meta.episode || 0}${imdbParam}`;
-    const lazyCacheKey = `${service}:${item.hash}:${meta.season || 0}:${meta.episode || 0}:${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}`;
+    const lazyUrl = `${reqHost}/${userConfStr}/play_lazy/${service}/${item.hash}/${playbackFileIdx}?s=${playbackSeason}&e=${playbackEpisode}${imdbParam}`;
+    const lazyCacheKey = `${service}:${item.hash}:${playbackSeason}:${playbackEpisode}:${playbackFileIdx}`;
     Cache.cacheLazyMeta(lazyCacheKey, {
         imdb_id: meta?.imdb_id || null,
-        season: meta?.season || 0,
-        episode: meta?.episode || 0,
+        season: playbackSeason,
+        episode: playbackEpisode,
         type: isSeries ? 'series' : 'movie',
         title: item?.title || displayTitle || null,
         source: item?.source || null,
