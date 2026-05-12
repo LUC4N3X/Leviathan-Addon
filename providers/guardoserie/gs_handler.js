@@ -466,6 +466,27 @@ function primeGsUrlsInBackground(urls = [], options = {}) {
   setImmediate(async () => {
     const startedAt = Date.now();
     let ok = 0;
+    try {
+      const rustWarmup = await gsHttp.warmupRustShield(unique, {
+        timeoutMs: Math.min(GS_BACKGROUND_PRIME_TIMEOUT_MS, 1800),
+        cacheTtlMs: ttl,
+        staleTtlMs: ttl * 2,
+        concurrency: Math.min(4, unique.length)
+      });
+      if (rustWarmup?.warmed || rustWarmup?.blocked) {
+        gsDebug('background rust prime done', {
+          reason,
+          urls: unique.length,
+          warmed: rustWarmup.warmed || 0,
+          blocked: rustWarmup.blocked || 0,
+          sessionBridge: Boolean(rustWarmup.sessionBridge),
+          groups: rustWarmup.groups || 0,
+          ms: rustWarmup.ms
+        });
+      }
+    } catch (error) {
+      if (!isAbortLikeError(error)) gsDebug('background rust prime failed', { reason, error: error?.message || String(error) });
+    }
     for (const url of unique) {
       try {
         const html = await smartFetch(url, {
