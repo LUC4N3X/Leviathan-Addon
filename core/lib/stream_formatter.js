@@ -143,7 +143,7 @@ const GROUP_BLACKLIST = new Set([
 
 const SERVICE_ICON_BY_TAG = {
   RD: '🐬',
-  TB: '⚓',
+  TB: '🧊',
 };
 
 const DISPLAY_SOURCE_MAP = [
@@ -1097,7 +1097,8 @@ function styleLeviathan(p) {
   const statusIcon = p.cacheIcon;
   const brandName = toStylized('LEVIATHAN', 'small');
   const serviceStyled = toStylized(p.serviceTag, 'bold');
-  const name = `${statusIcon} ${serviceStyled} 🦑 ${brandName}`;
+  const servicePrefix = isDebridService(p.serviceTag) ? `${statusIcon}${serviceStyled}` : `${statusIcon} ${serviceStyled}`;
+  const name = `${servicePrefix}  🦑 ${brandName}`;
 
   const techSpecs = uniqueBy([p.quality, ...p.cleanTags].filter(Boolean), (item) => item.toLowerCase());
   const techLine = techSpecs.map((item) => toStylized(item, 'small')).join(' • ');
