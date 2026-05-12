@@ -29,3 +29,5 @@ scripts
 README.md
 CHANGELOG.md
 *.zip
+
+services/rust-shield/target
