@@ -12,6 +12,7 @@ const {
   requestWithImpitRotating
 } = require('./bypass');
 const { createCfClearanceManager, normalizeBaseUrl, mergeCookieHeaders, buildCookieHeaderFromSession, mergeSessionCookies } = require('./cf_clearance_manager');
+const { createRustShieldClient } = require('./rust_shield_client');
 
 class LRUCache {
   constructor(maxSize) {
@@ -95,6 +96,11 @@ function createProviderHttpGuard(options = {}) {
   const isCanceledError = typeof options.isCanceledError === 'function' ? options.isCanceledError : defaultIsCanceledError;
   const debugEnabled = Boolean(options.debug || options.debugCf);
   const logger = options.logger || createLogger(logPrefix, debugEnabled, Boolean(options.debugCf));
+  const rustShield = createRustShieldClient({
+    providerName,
+    endpoint: options.rustShieldUrl || process.env.RUST_SHIELD_URL,
+    logger
+  });
 
   const agentOptions = {
     keepAlive: true,
@@ -454,8 +460,46 @@ function createProviderHttpGuard(options = {}) {
     return headers;
   }
 
-  async function axiosSiteRequest(url, { method = 'GET', body = null, headers = {}, timeout = directFetchTimeoutMs, signal = null, maxRedirects = 6, browserProfile = null, useImpit = preferImpit, impitAttempts = null, impitTotalExtra = null } = {}) {
+  async function axiosSiteRequest(url, { method = 'GET', body = null, headers = {}, timeout = directFetchTimeoutMs, signal = null, maxRedirects = 6, browserProfile = null, useImpit = preferImpit, useRustShield = true, impitAttempts = null, impitTotalExtra = null } = {}) {
     const startedAt = Date.now();
+
+    if (useRustShield && rustShield.enabled && rustShield.first) {
+      try {
+        const rustResponse = await rustShield.fetch(url, {
+          method,
+          body: method === 'POST' ? body : null,
+          headers,
+          timeout: Math.min(timeout, rustShield.timeoutMs || timeout),
+          signal,
+          maxRedirects,
+          providerName
+        });
+        if (rustResponse && !rustResponse.rustBlocked) {
+          logger.debug('rust shield fetch ok', {
+            method,
+            url,
+            status: rustResponse.status,
+            cache: rustResponse.rustCache,
+            bytes: String(rustResponse.data || '').length,
+            ms: Date.now() - startedAt
+          });
+          return rustResponse;
+        }
+        if (rustResponse?.rustBlocked) {
+          logger.debug('rust shield blocked; falling through', {
+            method,
+            url,
+            status: rustResponse.status,
+            reason: rustResponse.rustBlockedReason,
+            ms: Date.now() - startedAt
+          });
+        }
+      } catch (error) {
+        if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
+        logger.debug('rust shield error; falling through', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
+      }
+    }
+
     if (useImpit && preferImpit) {
       try {
         const baseImpitOptions = {
@@ -935,6 +979,90 @@ function createProviderHttpGuard(options = {}) {
     return fetchPromise;
   }
 
+
+  function originKeyForWarmup(url) {
+    try {
+      const parsed = new URL(String(url || ''), currentBaseUrl || initialBaseUrl);
+      return parsed.origin;
+    } catch (_) {
+      return 'invalid';
+    }
+  }
+
+  function buildRustWarmupHeaders(url, requestHeaders = {}) {
+    const baseHeaders = buildHeaders({
+      session: isSessionFreshForUrl(activeSession, url) ? activeSession : null,
+      method: 'GET',
+      url
+    });
+    return {
+      ...baseHeaders,
+      ...(requestHeaders || {})
+    };
+  }
+
+  async function warmupRustShield(urls, requestOptions = {}) {
+    const cleanUrls = Array.from(new Set((urls || []).filter(Boolean).map(String))).slice(0, Math.max(1, Number(requestOptions.max || 64) || 64));
+    if (!cleanUrls.length) return null;
+
+    const groups = new Map();
+    for (const url of cleanUrls) {
+      const origin = originKeyForWarmup(url);
+      if (!groups.has(origin)) groups.set(origin, []);
+      groups.get(origin).push(url);
+    }
+
+    const startedAt = Date.now();
+    const aggregate = {
+      ok: false,
+      total: 0,
+      warmed: 0,
+      blocked: 0,
+      ms: 0,
+      results: [],
+      groups: groups.size,
+      sessionBridge: false
+    };
+
+    for (const [origin, groupUrls] of groups.entries()) {
+      if (origin === 'invalid' || !groupUrls.length) continue;
+      const firstUrl = groupUrls[0];
+      const headers = buildRustWarmupHeaders(firstUrl, requestOptions.headers || {});
+      const cookieHeader = headers.Cookie || headers.cookie || '';
+      const userAgent = headers['User-Agent'] || headers['user-agent'] || '';
+      const sessionFresh = isSessionFreshForUrl(activeSession, firstUrl);
+      const startedGroup = Date.now();
+
+      const result = await rustShield.warmup(groupUrls, {
+        ...requestOptions,
+        headers,
+        providerName,
+        staleTtlMs: requestOptions.staleTtlMs || requestOptions.cacheTtlMs || rustShield.staleTtlMs
+      });
+
+      aggregate.total += Number(result?.total || groupUrls.length || 0);
+      aggregate.warmed += Number(result?.warmed || 0);
+      aggregate.blocked += Number(result?.blocked || 0);
+      if (Array.isArray(result?.results)) aggregate.results.push(...result.results);
+      if (cookieHeader) aggregate.sessionBridge = true;
+
+      logger.debug('rust warmup bridge group done', {
+        origin,
+        urls: groupUrls.length,
+        warmed: Number(result?.warmed || 0),
+        blocked: Number(result?.blocked || 0),
+        sessionFresh,
+        hasCookie: Boolean(cookieHeader),
+        hasUserAgent: Boolean(userAgent),
+        ms: Date.now() - startedGroup
+      });
+    }
+
+    aggregate.ok = aggregate.warmed > 0 || aggregate.total === 0;
+    aggregate.ms = Date.now() - startedAt;
+    return aggregate;
+  }
+
   return {
     lightClient,
     httpAgent,
@@ -948,6 +1076,7 @@ function createProviderHttpGuard(options = {}) {
     normalizeBaseUrl,
     clearSession,
     getSession: () => activeSession,
+    warmupRustShield,
     isSessionFresh,
     isAbortLikeError: error => isAbortLikeError(error, isCanceledError),
     getEndpoint: () => clearanceManager.endpoint,
@@ -961,6 +1090,7 @@ function createProviderHttpGuard(options = {}) {
       preClearanceRescue: impitPreClearanceRescue,
       flareEndpoints: clearanceManager.endpoints?.length || 0,
       cookieJarV2: true,
+      rustShield: rustShield.state?.() || { enabled: false },
       sharedClearanceAuthority,
       sharedClearanceForceOrigin,
       sharedClearancePending: Boolean(sharedClearancePromise),
