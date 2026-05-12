@@ -59,6 +59,35 @@ function registerPlaybackRoutes(app, {
         if (mediaflowUrl !== targetUrl) return mediaflowUrl;
         return maybeProxyResolvedUrl(req, conf, targetUrl, config, options);
     }
+
+    function parseFileIndex(value) {
+        if (value === null || value === undefined || value === '') return NaN;
+        const parsed = Number(value);
+        return Number.isInteger(parsed) && parsed >= 0 ? parsed : NaN;
+    }
+
+    function getStreamDataFileIndex(data = {}) {
+        const candidates = [
+            data.tb_file_id,
+            data.file_id,
+            data.file_index,
+            data.fileIdx,
+            data.rd_file_index
+        ];
+        for (const candidate of candidates) {
+            const parsed = parseFileIndex(candidate);
+            if (Number.isInteger(parsed)) return parsed;
+        }
+        return NaN;
+    }
+
+    function isLazyCacheCompatibleWithRequest(cachedLazy, item) {
+        const requestedIdx = parseFileIndex(item?.fileIdx);
+        if (!Number.isInteger(requestedIdx)) return true;
+        const cachedIdx = getStreamDataFileIndex(cachedLazy);
+        return !Number.isInteger(cachedIdx) || cachedIdx === requestedIdx;
+    }
+
     registerLazyExtractionRoute(app, { logger });
 
     app.get('/:conf/play_lazy/:service/:hash/:fileIdx', async (req, res) => {
@@ -113,16 +142,19 @@ function registerPlaybackRoutes(app, {
             }
             const cachedLazy = await Cache.getLazyLink(lazyCacheKey);
             if (cachedLazy && (cachedLazy.rawUrl || cachedLazy.url)) {
-                const cachedTargetUrl = cachedLazy.rawUrl || cachedLazy.url;
-                const finalCachedUrl = buildFinalPlaybackUrl(req, conf, cachedTargetUrl, config, {
-                    source: requestedService,
-                    debrid: true,
-                    filename: cachedLazy.filename || cachedLazy.fileName || cachedPlaybackMeta?.title || item.title
-                });
-                await markPlayableResultAsCached(requestedService, item, { ...cachedLazy, url: finalCachedUrl, rawUrl: cachedTargetUrl }, playbackMeta);
-                incrementMetric('lazyPlay.cacheHit');
-                recordDuration('lazyPlay.total', Date.now() - startedAt);
-                return res.redirect(finalCachedUrl);
+                if (isLazyCacheCompatibleWithRequest(cachedLazy, item)) {
+                    const cachedTargetUrl = cachedLazy.rawUrl || cachedLazy.url;
+                    const finalCachedUrl = buildFinalPlaybackUrl(req, conf, cachedTargetUrl, config, {
+                        source: requestedService,
+                        debrid: true,
+                        filename: cachedLazy.filename || cachedLazy.fileName || cachedPlaybackMeta?.title || item.title
+                    });
+                    await markPlayableResultAsCached(requestedService, item, { ...cachedLazy, url: finalCachedUrl, rawUrl: cachedTargetUrl }, playbackMeta);
+                    incrementMetric('lazyPlay.cacheHit');
+                    recordDuration('lazyPlay.total', Date.now() - startedAt);
+                    return res.redirect(finalCachedUrl);
+                }
+                logger.warn(`[LAZY PLAY] Ignoro lazy cache con fileIdx mismatch | service=${requestedService} | hash=${item.hash} | requested=${item.fileIdx ?? 'n/a'} | cached=${getStreamDataFileIndex(cachedLazy)}`);
             }
 
             const streamData = await LIMITERS.lazyPlay.schedule(() =>
