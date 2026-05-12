@@ -1,30 +1,29 @@
-FROM rust:1-bookworm AS builder
+FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-COPY Cargo.toml ./
-COPY src ./src
-
-RUN cargo --version && rustc --version && cargo build --release
-
-
-FROM debian:bookworm-slim
+ENV NODE_ENV=production
+ENV PORT=7000
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        libssl3 \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/rust-shield /usr/local/bin/rust-shield
+COPY package.json package-lock.json ./
 
-ENV RUST_SHIELD_HOST=0.0.0.0
-ENV RUST_SHIELD_PORT=8787
-ENV RUST_LOG=info
+RUN npm ci --omit=dev \
+    && npm cache clean --force
 
-EXPOSE 8787
+COPY addon.js manifest.js ./
+COPY config ./config
+COPY core ./core
+COPY providers ./providers
+COPY public ./public
+COPY browser-extension ./browser-extension
 
-HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
-    CMD /usr/local/bin/rust-shield healthcheck || exit 1
+EXPOSE 7000
 
-ENTRYPOINT ["/usr/local/bin/rust-shield"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=5 \
+    CMD node -e "fetch('http://127.0.0.1:7000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "addon.js"]
