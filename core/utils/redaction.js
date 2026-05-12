@@ -1,6 +1,7 @@
 'use strict';
 
 const CONFIG_ROUTE_CHILDREN = new Set(['manifest.json', 'configure', 'catalog', 'stream']);
+const CONFIG_PLAYBACK_CHILDREN = new Set(['play_lazy', 'play_tb', 'play_saved_cloud', 'add_to_cloud']);
 const SENSITIVE_QUERY_KEYS = /(?:^|[_-])(?:key|api_key|apikey|token|secret|password|pass|auth|authorization|conf|config|tmdb|rd|tb|torbox|debrid|mediaflow)(?:$|[_-])/i;
 const SENSITIVE_OBJECT_KEYS = /^(?:authorization|proxy-authorization|cookie|set-cookie|key|apiKey|api_key|token|accessToken|refreshToken|secret|password|pass|conf|config|rawConf|userConfStr|rd|tb|torbox|realdebrid|real_debrid|debrid|tmdb|mediaflow)$/i;
 
@@ -62,7 +63,7 @@ function sanitizeRequestPath(value) {
   if (
     parts.length > 2
     && parts[1]
-    && CONFIG_ROUTE_CHILDREN.has(String(parts[2] || '').toLowerCase())
+    && (CONFIG_ROUTE_CHILDREN.has(String(parts[2] || '').toLowerCase()) || CONFIG_PLAYBACK_CHILDREN.has(String(parts[2] || '').toLowerCase()))
     && isLikelyEncodedConfigSegment(parts[1])
   ) {
     parts[1] = ':conf';
@@ -74,7 +75,7 @@ function sanitizeRequestPath(value) {
 
 function redactSensitiveString(value) {
   return String(value || '')
-    .replace(/\/[A-Za-z0-9_-]{80,}(\/(?:manifest\.json|configure|catalog|stream)\b)/gi, '/:conf$1')
+    .replace(/\/[A-Za-z0-9_-]{80,}(\/(?:manifest\.json|configure|catalog|stream|play_lazy|play_tb|play_saved_cloud|add_to_cloud)\b)/gi, '/:conf$1')
     .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s'",}]+/gi, '$1[REDACTED]')
     .replace(/((?:api[_-]?key|token|secret|password|pass|tmdb|rd|tb|torbox|debrid|conf|config)\s*[=:]\s*)[^\s&'",}]+/gi, '$1[REDACTED]')
     .replace(/("(?:key|apiKey|api_key|token|secret|password|pass|conf|config|tmdb|rd|tb|torbox|debrid)"\s*:\s*")[^"]*(")/gi, '$1[REDACTED]$2');
