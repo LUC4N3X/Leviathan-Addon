@@ -1,30 +1,30 @@
-FROM node:22-bookworm-slim AS deps
+FROM rust:1-bookworm AS builder
 
-ENV NODE_ENV=production
 WORKDIR /app
 
-COPY package*.json ./
-RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi \
- && npm cache clean --force
+COPY Cargo.toml ./
+COPY src ./src
 
-FROM node:22-bookworm-slim AS runtime
+RUN cargo --version && rustc --version && cargo build --release
 
-ENV NODE_ENV=production
-WORKDIR /app
 
-COPY --from=deps /app/node_modules ./node_modules
-COPY package*.json ./
-COPY addon.js manifest.js ./
-COPY core ./core
-COPY providers ./providers
-COPY public ./public
+FROM debian:bookworm-slim
 
-RUN chown -R node:node /app
-USER node
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3 \
+    && rm -rf /var/lib/apt/lists/*
 
-EXPOSE 7000
+COPY --from=builder /app/target/release/rust-shield /usr/local/bin/rust-shield
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
-  CMD node -e "fetch('http://127.0.0.1:7000/livez').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+ENV RUST_SHIELD_HOST=0.0.0.0
+ENV RUST_SHIELD_PORT=8787
+ENV RUST_LOG=info
 
-CMD ["node", "addon.js"]
+EXPOSE 8787
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
+    CMD /usr/local/bin/rust-shield healthcheck || exit 1
+
+ENTRYPOINT ["/usr/local/bin/rust-shield"]
