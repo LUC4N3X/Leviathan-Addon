@@ -17,7 +17,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{net::TcpListener, sync::RwLock, time::timeout};
+use tokio::{net::TcpListener, sync::{watch, Mutex, RwLock}, time::timeout};
 use tracing::{debug, info, warn};
 use url::Url;
 
@@ -32,6 +32,7 @@ struct AppState {
     client: reqwest::Client,
     cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
     cookies: Arc<RwLock<HashMap<String, String>>>,
+    inflight: Arc<Mutex<HashMap<String, FlightEntry>>>,
     cfg: Config,
 }
 
@@ -131,6 +132,18 @@ struct CacheEntry {
     created_at: Instant,
 }
 
+type FlightResult = Result<FetchResponse, (StatusCode, String)>;
+
+#[derive(Clone)]
+struct FlightEntry {
+    sender: watch::Sender<Option<FlightResult>>,
+}
+
+enum SingleflightRole {
+    Leader(FlightEntry),
+    Waiter(FlightEntry),
+}
+
 fn default_method() -> String {
     "GET".to_string()
 }
@@ -196,6 +209,7 @@ async fn main() -> anyhow::Result<()> {
         client,
         cache: Arc::new(RwLock::new(HashMap::new())),
         cookies: Arc::new(RwLock::new(HashMap::new())),
+        inflight: Arc::new(Mutex::new(HashMap::new())),
         cfg: cfg.clone(),
     };
 
@@ -234,11 +248,13 @@ fn run_healthcheck() -> bool {
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let cache_entries = state.cache.read().await.len();
     let cookie_origins = state.cookies.read().await.len();
+    let inflight_requests = state.inflight.lock().await.len();
     Json(serde_json::json!({
         "ok": true,
         "service": "rust-shield",
         "cache_entries": cache_entries,
         "cookie_origins": cookie_origins,
+        "inflight_requests": inflight_requests,
         "timeout_ms": state.cfg.default_timeout_ms,
         "max_body_bytes": state.cfg.max_body_bytes
     }))
@@ -356,7 +372,7 @@ async fn warmup_route(State(state): State<AppState>, Json(req): Json<WarmupReque
     })
 }
 
-async fn fetch_inner(state: AppState, req: FetchRequest) -> Result<FetchResponse, (StatusCode, String)> {
+async fn fetch_inner(state: AppState, req: FetchRequest) -> FlightResult {
     let started = Instant::now();
     let method = req.method.trim().to_ascii_uppercase();
     if method != "GET" && method != "POST" && method != "HEAD" {
@@ -380,6 +396,35 @@ async fn fetch_inner(state: AppState, req: FetchRequest) -> Result<FetchResponse
     }
 
     let timeout_ms = req.timeout_ms.unwrap_or(state.cfg.default_timeout_ms).clamp(350, 10_000);
+
+    if cache_enabled {
+        match begin_singleflight(&state, &cache_key).await {
+            SingleflightRole::Waiter(entry) => {
+                debug!(url = %parsed.as_str(), key = %cache_key, "singleflight wait");
+                return wait_singleflight_result(entry, timeout_ms, started).await;
+            }
+            SingleflightRole::Leader(entry) => {
+                debug!(url = %parsed.as_str(), key = %cache_key, "singleflight leader");
+                let result = fetch_uncached(state.clone(), req, parsed, method, cache_key.clone(), cache_enabled, timeout_ms, started).await;
+                finish_singleflight(&state, &cache_key, &entry, result.clone()).await;
+                return result;
+            }
+        }
+    }
+
+    fetch_uncached(state, req, parsed, method, cache_key, cache_enabled, timeout_ms, started).await
+}
+
+async fn fetch_uncached(
+    state: AppState,
+    req: FetchRequest,
+    parsed: Url,
+    method: String,
+    cache_key: String,
+    cache_enabled: bool,
+    timeout_ms: u64,
+    started: Instant,
+) -> FlightResult {
     let mut headers = sanitize_headers(&req.headers);
     apply_default_headers(&mut headers, &parsed, &state).await;
 
@@ -438,6 +483,58 @@ async fn fetch_inner(state: AppState, req: FetchRequest) -> Result<FetchResponse
 
     debug!(url = %resp.url, status = resp.status, bytes = resp.bytes, blocked = resp.blocked, ms = resp.ms, "fetch done");
     Ok(resp)
+}
+
+async fn begin_singleflight(state: &AppState, key: &str) -> SingleflightRole {
+    let mut inflight = state.inflight.lock().await;
+    if let Some(entry) = inflight.get(key) {
+        return SingleflightRole::Waiter(entry.clone());
+    }
+
+    let (sender, _receiver) = watch::channel(None);
+    let entry = FlightEntry { sender };
+    inflight.insert(key.to_string(), entry.clone());
+    SingleflightRole::Leader(entry)
+}
+
+async fn finish_singleflight(state: &AppState, key: &str, entry: &FlightEntry, result: FlightResult) {
+    let _ = entry.sender.send(Some(result));
+    let mut inflight = state.inflight.lock().await;
+    inflight.remove(key);
+}
+
+async fn wait_singleflight_result(entry: FlightEntry, timeout_ms: u64, started: Instant) -> FlightResult {
+    let mut receiver = entry.sender.subscribe();
+    if let Some(result) = receiver.borrow().clone() {
+        return mark_singleflight_shared(result, started);
+    }
+
+    let wait_budget = Duration::from_millis((timeout_ms + 750).clamp(750, 11_000));
+    let result = timeout(wait_budget, async {
+        loop {
+            if receiver.changed().await.is_err() {
+                return None;
+            }
+            if let Some(result) = receiver.borrow().clone() {
+                return Some(result);
+            }
+        }
+    })
+    .await
+    .map_err(|_| (StatusCode::GATEWAY_TIMEOUT, "singleflight_timeout".to_string()))?
+    .ok_or_else(|| (StatusCode::BAD_GATEWAY, "singleflight_closed".to_string()))?;
+
+    mark_singleflight_shared(result, started)
+}
+
+fn mark_singleflight_shared(result: FlightResult, started: Instant) -> FlightResult {
+    result.map(|mut resp| {
+        if resp.cache == "miss" {
+            resp.cache = "shared".to_string();
+        }
+        resp.ms = started.elapsed().as_millis();
+        resp
+    })
 }
 
 async fn read_cache(state: &AppState, key: &str) -> Option<FetchResponse> {
