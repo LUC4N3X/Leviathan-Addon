@@ -1080,7 +1080,7 @@ function createProviderHttpGuard(options = {}) {
         staleTtlMs: requestOptions.staleTtlMs || requestOptions.cacheTtlMs || rustShield.staleTtlMs
       });
 
-      aggregate.total += Number(result?.total ?? groupUrls.length ?? 0);
+      aggregate.total += Number(result?.total || groupUrls.length || 0);
       aggregate.warmed += Number(result?.warmed || 0);
       aggregate.blocked += Number(result?.blocked || 0);
       if (Array.isArray(result?.results)) aggregate.results.push(...result.results);
@@ -1091,7 +1091,6 @@ function createProviderHttpGuard(options = {}) {
         urls: groupUrls.length,
         warmed: Number(result?.warmed || 0),
         blocked: Number(result?.blocked || 0),
-        skipped: Number(result?.skipped || 0),
         sessionFresh,
         hasCookie: Boolean(cookieHeader),
         hasUserAgent: Boolean(userAgent),
