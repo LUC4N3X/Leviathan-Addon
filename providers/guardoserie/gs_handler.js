@@ -53,7 +53,7 @@ const GS_TOP_SPEED = Object.freeze({
   sessionTimeoutFloorMs: 2600,
   postClearanceReplayTimeoutMs: 6500,
   clearSessionOnTransportFailure: false,
-  useRustShieldForSession: false,
+  useRustShieldForSession: envFlag('GUARDOSERIE_RUST_SESSION_ENABLED', true),
   flareWarmupTimeoutMs: 24000,
   flareClearanceCooldownMs: 8000,
   flareProviderFailureCooldownMs: 8000,
@@ -182,9 +182,9 @@ const gsHttp = createProviderHttpGuard({
     Math.min(12000, GS_TOP_SPEED.postClearanceReplayTimeoutMs)
   ),
   clearSessionOnTransportFailure: GS_TOP_SPEED.clearSessionOnTransportFailure,
-  // Rust shield is useful for anonymous warmup/direct probes, but in front of a valid
-  // cf_clearance it can waste ~2s on every candidate when the Rust service returns 502.
-  // Keep session/post-clearance fetches on the cookie-bearing Axios path by default.
+  // Rust shield is used only after a real browser clearance exists. Anonymous Rust probes
+  // are blocked by rust_shield_client for guardoserie, so CF challenge pages cannot poison
+  // the hot path; if Rust fails, the guard falls back to Axios/ImpIt/FlareSolverr.
   useRustShieldForSession: GS_TOP_SPEED.useRustShieldForSession,
   emergencyClearanceAfterSessionFailure: GS_TOP_SPEED.staleSessionEmergencyClearance,
   emergencyClearanceMinIntervalMs: GS_TOP_SPEED.staleSessionEmergencyCooldownMs,
