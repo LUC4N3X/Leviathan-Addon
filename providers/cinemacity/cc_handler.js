@@ -16,6 +16,7 @@ const {
 const { createBlockedFallbackGuard } = require('../utils/provider_blocked_fallback');
 const { SingleFlight, TtlLruCache } = require('../utils/provider_runtime');
 const { withProviderHealth } = require('../utils/provider_health');
+const { createRustShieldClient } = require('../utils/rust_shield_client');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const tmdbHelper = require('../../core/utils/tmdb_helper');
 const animeIdentity = require('../anime/anime_identity');
@@ -65,6 +66,14 @@ function envFlag(name, fallback = false) {
 }
 const CINEMACITY_USE_RUST_SHIELD = envFlag('CINEMACITY_RUST_SHIELD', false);
 const CINEMACITY_USE_CF_FALLBACK = envFlag('CINEMACITY_CF_FALLBACK', false);
+const CINEMACITY_RUST_ACCEL = envFlag('CINEMACITY_RUST_ACCEL', true);
+const CINEMACITY_RUST_ACCEL_RACE = envFlag('CINEMACITY_RUST_ACCEL_RACE', true);
+const CINEMACITY_RUST_ACCEL_LISTING = envFlag('CINEMACITY_RUST_ACCEL_LISTING', true);
+const CINEMACITY_RUST_ACCEL_SEARCH_GET = envFlag('CINEMACITY_RUST_ACCEL_SEARCH_GET', true);
+const CINEMACITY_RUST_ACCEL_SITEMAP = envFlag('CINEMACITY_RUST_ACCEL_SITEMAP', true);
+const CINEMACITY_RUST_ACCEL_TIMEOUT_MS = Math.max(350, Math.min(2500, Number.parseInt(process.env.CINEMACITY_RUST_ACCEL_TIMEOUT_MS || '950', 10) || 950));
+const CINEMACITY_RUST_ACCEL_CACHE_TTL_MS = Math.max(30 * 1000, Math.min(60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_RUST_ACCEL_CACHE_TTL_MS || String(15 * 60 * 1000), 10) || (15 * 60 * 1000)));
+const CINEMACITY_RUST_ACCEL_STALE_TTL_MS = Math.max(CINEMACITY_RUST_ACCEL_CACHE_TTL_MS, Math.min(4 * 60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_RUST_ACCEL_STALE_TTL_MS || String(60 * 60 * 1000), 10) || (60 * 60 * 1000)));
 const CINEMACITY_SEARCH_WARMUP = envFlag('CINEMACITY_SEARCH_WARMUP', false);
 const CINEMACITY_SITEMAP_TIMEOUT_MS = Math.max(900, Math.min(3500, Number.parseInt(process.env.CINEMACITY_SITEMAP_TIMEOUT_MS || '1400', 10) || 1400));
 const CINEMACITY_SITEMAP_TOTAL_MS = Math.max(CINEMACITY_SITEMAP_TIMEOUT_MS + 250, Math.min(4500, Number.parseInt(process.env.CINEMACITY_SITEMAP_TOTAL_MS || '2300', 10) || 2300));
@@ -95,6 +104,13 @@ const providerShield = createBlockedFallbackGuard({
     // Rust Shield stays enabled for the rest of Leviathan, but is opt-in for CinemaCity.
     useRustShield: CINEMACITY_USE_RUST_SHIELD,
     useRustShieldForSession: CINEMACITY_USE_RUST_SHIELD
+});
+const cinemaCityRustAccel = createRustShieldClient({
+    providerName: 'cinemacity-accel',
+    logger: {
+        debug(message, data = {}) { logCinemaCityDebug(message, data); },
+        warn(message, data = {}) { logCinemaCityDebug(message, data); }
+    }
 });
 let lastProviderBlockedFetch = null;
 function markProviderBlockedFetch(url, reason) {
@@ -249,6 +265,113 @@ function buildCinemaCityRequestHeaders(url, context = 'document', extraHeaders =
     }, fp);
 
     return { fp, headers };
+}
+
+function isUsableCinemaCityHtml(html, minBytes = 500) {
+    const body = String(html || '');
+    if (body.length < minBytes) return false;
+    return !isCloudflareChallenge(body, 200);
+}
+
+async function fetchHtmlWithRustAccel(url, extraHeaders = {}, options = {}) {
+    if (!CINEMACITY_RUST_ACCEL || !cinemaCityRustAccel.enabled || !url) return null;
+    if (options.enabled === false) return null;
+
+    const context = options.context || 'document';
+    const { headers } = buildCinemaCityRequestHeaders(url, context, extraHeaders, getCinemaCitySessionCookie());
+    const startedAt = Date.now();
+
+    try {
+        const response = await cinemaCityRustAccel.fetch(url, {
+            method: 'GET',
+            headers,
+            providerName: 'cinemacity',
+            timeout: Math.min(Number(options.timeout || CINEMACITY_RUST_ACCEL_TIMEOUT_MS) || CINEMACITY_RUST_ACCEL_TIMEOUT_MS, CINEMACITY_RUST_ACCEL_TIMEOUT_MS),
+            cacheTtlMs: Number(options.cacheTtlMs || CINEMACITY_RUST_ACCEL_CACHE_TTL_MS) || CINEMACITY_RUST_ACCEL_CACHE_TTL_MS,
+            staleTtlMs: Number(options.staleTtlMs || CINEMACITY_RUST_ACCEL_STALE_TTL_MS) || CINEMACITY_RUST_ACCEL_STALE_TTL_MS,
+            cache: options.cache !== false,
+            maxRedirects: options.maxRedirects ?? 6
+        });
+        if (!response || response.rustBlocked) return null;
+
+        const status = Number(response.status || 0);
+        const html = responseText(response.data);
+        updateCookiesFromResponse(url, response.headers);
+        if (status >= 200 && status < 400 && isUsableCinemaCityHtml(html, options.minBytes || 500)) {
+            logCinemaCityDebug('rust accel ok', { url, cache: response.rustCache, bytes: html.length, ms: Date.now() - startedAt });
+            return html;
+        }
+        logCinemaCityDebug('rust accel unusable', { url, status, cache: response.rustCache, bytes: html.length, ms: Date.now() - startedAt });
+        return null;
+    } catch (error) {
+        logCinemaCityDebug('rust accel fail-open', { url, error: error?.message || String(error), ms: Date.now() - startedAt });
+        return null;
+    }
+}
+
+async function firstUsableHtml(tasks = [], { minBytes = 500, totalMs = 0 } = {}) {
+    const startedAt = Date.now();
+    const pending = tasks
+        .filter((task) => typeof task?.run === 'function')
+        .map((task) => {
+            const item = { name: task.name || 'unknown', promise: null };
+            item.promise = Promise.resolve()
+                .then(task.run)
+                .then((html) => ({ html: isUsableCinemaCityHtml(html, minBytes) ? html : null }))
+                .catch(() => ({ html: null }));
+            return item;
+        });
+
+    if (!pending.length) return null;
+
+    const deadlineAt = Number(totalMs || 0) > 0 ? startedAt + Math.max(50, totalMs) : 0;
+    const remaining = new Set(pending);
+
+    while (remaining.size > 0) {
+        const waiters = [...remaining].map((item) => item.promise.then((result) => ({ item, result })));
+        if (deadlineAt > 0) {
+            const leftMs = deadlineAt - Date.now();
+            if (leftMs <= 0) return null;
+            waiters.push(new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), leftMs)));
+        }
+
+        const winner = await Promise.race(waiters);
+        if (winner?.timeout) return null;
+        remaining.delete(winner.item);
+
+        if (winner?.result?.html) {
+            logCinemaCityDebug('fast race winner', { via: winner.item.name, bytes: winner.result.html.length, ms: Date.now() - startedAt });
+            return { html: winner.result.html, via: winner.item.name };
+        }
+    }
+    return null;
+}
+
+async function fetchPublicHtmlFast(url, extraHeaders = {}, options = {}) {
+    const minBytes = options.minBytes || 500;
+    const totalMs = Math.max(650, Number(options.totalMs || options.timeout || 1600) || 1600);
+    const rustTimeout = Math.min(CINEMACITY_RUST_ACCEL_TIMEOUT_MS, Math.max(350, Number(options.rustTimeout || options.timeout || CINEMACITY_RUST_ACCEL_TIMEOUT_MS) || CINEMACITY_RUST_ACCEL_TIMEOUT_MS));
+    const axiosTimeout = Math.max(600, Math.min(Number(options.axiosTimeout || options.timeout || 1600) || 1600, Math.max(700, totalMs)));
+
+    const tasks = [];
+    if (CINEMACITY_RUST_ACCEL_RACE) {
+        tasks.push({
+            name: 'rust-accel',
+            run: () => fetchHtmlWithRustAccel(url, extraHeaders, {
+                context: options.context || 'document',
+                timeout: rustTimeout,
+                cacheTtlMs: options.cacheTtlMs,
+                staleTtlMs: options.staleTtlMs,
+                minBytes
+            })
+        });
+    }
+    tasks.push({
+        name: 'axios-fast',
+        run: () => fetchHtmlWithAxios(url, extraHeaders, axiosTimeout, options.context || 'document')
+    });
+
+    return firstUsableHtml(tasks, { minBytes, totalMs });
 }
 
 
@@ -1111,19 +1234,33 @@ async function getNewsSitemapEntries() {
         if (Array.isArray(newsSitemapCache.entries) && (current - newsSitemapCache.fetchedAt) < NEWS_SITEMAP_TTL_MS) {
             return newsSitemapCache.entries;
         }
-        const xml = await fetchHtml(NEWS_SITEMAP_URL, {
+        const sitemapHeaders = {
             'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8',
             'Referer': `${BASE_URL}/`
-        }, {
-            timeout: CINEMACITY_SITEMAP_TIMEOUT_MS,
-            attempts: 1,
-            context: 'document',
-            axiosFallback: true,
-            axiosOnBlocked: true,
-            allowClearanceFallback: false,
-            hardMode: false,
-            totalTimeoutMs: CINEMACITY_SITEMAP_TOTAL_MS
-        });
+        };
+        let xml = null;
+        if (CINEMACITY_RUST_ACCEL_SITEMAP) {
+            const fast = await fetchPublicHtmlFast(NEWS_SITEMAP_URL, sitemapHeaders, {
+                timeout: CINEMACITY_SITEMAP_TIMEOUT_MS,
+                totalMs: CINEMACITY_SITEMAP_TOTAL_MS,
+                minBytes: 120,
+                cacheTtlMs: NEWS_SITEMAP_TTL_MS,
+                staleTtlMs: Math.max(NEWS_SITEMAP_TTL_MS, CINEMACITY_RUST_ACCEL_STALE_TTL_MS)
+            }).catch(() => null);
+            xml = fast?.html || null;
+        }
+        if (!xml) {
+            xml = await fetchHtml(NEWS_SITEMAP_URL, sitemapHeaders, {
+                timeout: CINEMACITY_SITEMAP_TIMEOUT_MS,
+                attempts: 1,
+                context: 'document',
+                axiosFallback: true,
+                axiosOnBlocked: true,
+                allowClearanceFallback: false,
+                hardMode: false,
+                totalTimeoutMs: CINEMACITY_SITEMAP_TOTAL_MS
+            });
+        }
         const entries = extractSitemapLocs(xml).filter((url) => /^https:\/\/cinemacity\.cc\//i.test(url));
         if (entries.length === 0) return Array.isArray(newsSitemapCache.entries) ? newsSitemapCache.entries : [];
         newsSitemapCache.entries = entries;
@@ -1337,10 +1474,22 @@ async function fetchListingPageHtml(pageUrl) {
         'Sec-Fetch-Mode': 'navigate'
     };
 
-    // Listing pages are public HTML. Axios-first is faster and avoids ImpIt/browser
-    // spending the whole listing budget on pages that do not need anti-bot handling.
+    // Acceleration path: public listing pages do not need ImpIt first.
+    // Race Rust/reqwest keep-alive against Axios and return the first valid HTML.
+    if (CINEMACITY_RUST_ACCEL_LISTING) {
+        const fast = await fetchPublicHtmlFast(pageUrl, headers, {
+            timeout: CINEMACITY_LISTING_TIMEOUT_MS,
+            totalMs: Math.min(CINEMACITY_LISTING_TOTAL_MS, Math.max(1200, CINEMACITY_LISTING_TIMEOUT_MS + 350)),
+            minBytes: 500,
+            cacheTtlMs: CINEMACITY_LISTING_PAGE_CACHE_TTL_MS,
+            staleTtlMs: Math.max(CINEMACITY_LISTING_PAGE_CACHE_TTL_MS, CINEMACITY_RUST_ACCEL_STALE_TTL_MS)
+        }).catch(() => null);
+        if (fast?.html) return fast;
+    }
+
+    // Legacy compatibility fallback: unchanged behavior if the fast path misses.
     const axiosHtml = await fetchHtmlWithAxios(pageUrl, headers, CINEMACITY_LISTING_TIMEOUT_MS, 'document').catch(() => null);
-    if (axiosHtml && axiosHtml.length > 500) return { html: axiosHtml, via: 'axios' };
+    if (axiosHtml && isUsableCinemaCityHtml(axiosHtml, 500)) return { html: axiosHtml, via: 'axios' };
 
     const guardedHtml = await fetchHtml(pageUrl, headers, {
         timeout: CINEMACITY_LISTING_TIMEOUT_MS,
@@ -1653,6 +1802,24 @@ async function fetchSearchCandidates(query) {
         if (CINEMACITY_SEARCH_WARMUP) {
             try {
                 await warmupCinemaCitySession('search');
+            } catch (_) {}
+        }
+
+        if (CINEMACITY_RUST_ACCEL_SEARCH_GET) {
+            try {
+                const fast = await fetchPublicHtmlFast(searchGetUrl, searchCommonHeaders, {
+                    context: 'document',
+                    timeout: CINEMACITY_SEARCH_GET_TIMEOUT_MS,
+                    totalMs: Math.min(CINEMACITY_SEARCH_GET_TOTAL_MS, Math.max(1300, CINEMACITY_SEARCH_GET_TIMEOUT_MS + 350)),
+                    minBytes: 500,
+                    cacheTtlMs: SEARCH_CACHE_TTL_MS,
+                    staleTtlMs: Math.max(SEARCH_CACHE_TTL_MS, CINEMACITY_RUST_ACCEL_STALE_TTL_MS)
+                });
+                if (fast?.html) {
+                    networkFailed = false;
+                    const result = tryParse(fast.html);
+                    if (result) return result;
+                }
             } catch (_) {}
         }
 
