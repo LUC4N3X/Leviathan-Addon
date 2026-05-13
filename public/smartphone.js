@@ -2522,6 +2522,575 @@ body.m-input-active.m-keyboard-open .m-dock-actions {
     body.m-mf-plus .m-reactor-module.active { border-color: var(--border-color); }
 }
 
+
+/* === LEVIATHAN APP CARD REFACTOR PACK ====================================
+   Card system più professionale e più app-like: provider, filtri, cloud,
+   skin, input e dock restano leggeri su smartphone. Nessuna nuova animazione
+   costosa: solo layout, spacing, leggibilità e stati ON/OFF più chiari. */
+body.m-mf-plus {
+    --lc-card-bg: rgba(7, 19, 32, 0.88);
+    --lc-card-bg-strong: rgba(3, 10, 19, 0.96);
+    --lc-card-line: rgba(134, 232, 255, 0.18);
+    --lc-card-line-soft: rgba(134, 232, 255, 0.105);
+    --lc-card-glass: rgba(255, 255, 255, 0.035);
+    --lc-card-shadow: 0 10px 22px rgba(0, 0, 0, 0.36);
+    --lc-card-shadow-soft: 0 6px 15px rgba(0, 0, 0, 0.26);
+}
+
+body.m-mf-plus .m-content {
+    padding-left: 12px;
+    padding-right: 12px;
+}
+
+body.m-mf-plus .m-section-head {
+    margin: 8px 2px 11px;
+    padding: 9px 10px;
+    border-radius: 20px;
+    background:
+        radial-gradient(circle at 0 0, rgba(0,242,255,0.16), transparent 36%),
+        linear-gradient(90deg, rgba(10, 29, 47, 0.88), rgba(4, 13, 24, 0.62));
+    border: 1px solid var(--lc-card-line-soft);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.045);
+}
+
+body.m-mf-plus .m-section-head .sh-title {
+    font-size: 0.90rem;
+    letter-spacing: 1.15px;
+    color: #f7fdff;
+}
+
+body.m-mf-plus .m-section-head .sh-sub {
+    font-size: 0.61rem;
+    letter-spacing: 0.75px;
+    color: rgba(224,247,250,0.64);
+}
+
+body.m-mf-plus .m-section-head .sh-tag {
+    min-width: 48px;
+    text-align: center;
+    color: #00151b;
+    background: linear-gradient(135deg, rgba(164,250,255,0.96), rgba(34,211,238,0.92));
+    border: 0;
+    box-shadow: 0 5px 12px rgba(0, 214, 255, 0.18), inset 0 1px 0 rgba(255,255,255,0.55);
+}
+
+body.m-mf-plus .m-section-head .sh-tag.violet {
+    color: #fff;
+    background: linear-gradient(135deg, rgba(176,38,255,0.98), rgba(99,102,241,0.92));
+    box-shadow: 0 5px 12px rgba(176,38,255,0.16), inset 0 1px 0 rgba(255,255,255,0.18);
+}
+
+body.m-mf-plus .m-hypervisor,
+body.m-mf-plus .m-visual-core-v2,
+body.m-mf-plus .m-ghost-panel,
+body.m-mf-plus .m-p2p-module {
+    padding: 14px;
+    border-radius: 26px;
+    border-color: var(--lc-card-line);
+    background:
+        radial-gradient(circle at 0 0, rgba(0,242,255,0.115), transparent 38%),
+        radial-gradient(circle at 100% 0, rgba(176,38,255,0.095), transparent 43%),
+        linear-gradient(155deg, var(--lc-card-bg), var(--lc-card-bg-strong));
+    box-shadow: var(--lc-card-shadow), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+body.m-mf-plus .m-hyp-header {
+    margin: -2px 0 13px;
+    padding: 0 0 11px;
+    border-bottom: 1px solid rgba(134,232,255,0.13);
+    font-size: 0.86rem;
+    letter-spacing: 1.45px;
+}
+
+body.m-mf-plus .m-hyp-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, rgba(0,242,255,0.16), rgba(176,38,255,0.10));
+    border: 1px solid rgba(134,232,255,0.18);
+}
+
+body.m-mf-plus .m-cred-deck {
+    gap: 9px;
+    margin-bottom: 17px;
+}
+
+body.m-mf-plus .m-cred-opt {
+    min-height: 88px;
+    padding: 12px 5px 10px;
+    border-radius: 21px;
+    background:
+        radial-gradient(circle at 50% 0, var(--opt-glow), transparent 54%),
+        linear-gradient(180deg, rgba(19, 41, 63, 0.82), rgba(3, 10, 19, 0.96));
+    border-color: rgba(134,232,255,0.14);
+    box-shadow: var(--lc-card-shadow-soft), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+body.m-mf-plus .m-cred-opt.active {
+    transform: translateY(-1px);
+    border-color: var(--opt-color);
+    background:
+        radial-gradient(circle at 50% 0, var(--opt-glow), transparent 58%),
+        linear-gradient(180deg, rgba(24, 52, 77, 0.96), rgba(3, 10, 19, 0.98));
+    box-shadow: 0 9px 20px rgba(0,0,0,0.36), 0 0 0 1px var(--opt-glow), inset 0 0 14px rgba(255,255,255,0.035);
+}
+
+body.m-mf-plus .m-cred-opt.active::after {
+    content: "✓" !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    inset: auto 7px auto auto;
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    color: #00151b;
+    background: var(--opt-color);
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.78rem;
+    font-weight: 900;
+    opacity: 1 !important;
+    box-shadow: 0 0 10px var(--opt-glow);
+}
+
+body.m-mf-plus .m-cred-icon {
+    font-size: 1.90rem;
+    transform: translateZ(0);
+}
+
+body.m-mf-plus .m-cred-name {
+    font-size: 0.63rem;
+    letter-spacing: 0.7px;
+    color: rgba(244,253,255,0.74);
+}
+
+body.m-mf-plus .m-input-fuselage,
+body.m-mf-plus .m-input-box {
+    border-radius: 22px !important;
+    padding: 3px;
+    background:
+        radial-gradient(circle at 0 0, rgba(0,242,255,0.09), transparent 38%),
+        linear-gradient(180deg, rgba(10, 24, 39, 0.86), rgba(2, 8, 16, 0.96)) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.035), 0 7px 16px rgba(0,0,0,0.25);
+}
+
+body.m-mf-plus .m-if-inner,
+body.m-mf-plus .m-input-box {
+    min-height: 52px;
+}
+
+body.m-mf-plus .m-if-label,
+body.m-mf-plus .m-field-label {
+    border-radius: 999px;
+    background: linear-gradient(135deg, rgba(9, 25, 40, 0.98), rgba(4, 12, 22, 0.98));
+    border-color: rgba(134,232,255,0.20);
+    color: rgba(224,247,250,0.74);
+}
+
+body.m-mf-plus .m-key-status {
+    margin: 7px 2px 1px;
+    border-radius: 16px;
+    background: rgba(0,0,0,0.15);
+}
+
+body.m-mf-plus .m-reactor-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-bottom: 18px;
+}
+
+body.m-mf-plus .m-reactor-module {
+    min-height: 82px;
+    border-radius: 23px;
+    background:
+        radial-gradient(circle at 0 0, rgba(255,255,255,0.045), transparent 40%),
+        linear-gradient(145deg, rgba(12, 31, 49, 0.91), rgba(3, 10, 19, 0.98));
+    border: 1px solid var(--lc-card-line-soft);
+    box-shadow: var(--lc-card-shadow-soft), inset 0 1px 0 rgba(255,255,255,0.045);
+}
+
+body.m-mf-plus .m-reactor-module::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 12px;
+    bottom: 12px;
+    width: 4px;
+    border-radius: 999px;
+    background: var(--border-color, var(--m-primary));
+    opacity: 0.34;
+    box-shadow: 0 0 12px var(--glow-color, rgba(0,242,255,0.28));
+}
+
+body.m-mf-plus .m-reactor-module.active {
+    border-color: var(--border-color);
+    background:
+        radial-gradient(circle at 0 0, var(--glow-color), transparent 45%),
+        linear-gradient(145deg, rgba(16, 42, 65, 0.98), rgba(3, 10, 19, 0.99));
+    box-shadow: 0 10px 24px rgba(0,0,0,0.42), 0 0 0 1px var(--border-color-dim), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+body.m-mf-plus .m-reactor-module.active::before {
+    opacity: 1;
+}
+
+body.m-mf-plus .m-reactor-core {
+    width: 54px;
+    margin: 11px 0 11px 11px;
+    border-radius: 18px;
+    border-right: 0;
+    background: rgba(255,255,255,0.055);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+body.m-mf-plus .m-reactor-module.active .m-reactor-core {
+    background: color-mix(in srgb, var(--border-color) 18%, rgba(255,255,255,0.04));
+}
+
+body.m-mf-plus .m-core-icon {
+    font-size: 1.18rem;
+    opacity: 0.84;
+}
+
+body.m-mf-plus .m-reactor-body {
+    padding: 10px 12px 10px 10px;
+}
+
+body.m-mf-plus .m-reactor-body::after {
+    content: "OFF";
+    position: absolute;
+    right: 11px;
+    bottom: 9px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 0.53rem;
+    font-weight: 900;
+    letter-spacing: 0.8px;
+    color: rgba(224,247,250,0.42);
+    border: 1px solid rgba(255,255,255,0.075);
+    background: rgba(255,255,255,0.035);
+    pointer-events: none;
+}
+
+body.m-mf-plus .m-reactor-module.active .m-reactor-body::after {
+    content: "ON";
+    color: #00151b;
+    border-color: transparent;
+    background: var(--border-color);
+    box-shadow: 0 0 10px var(--glow-color, rgba(0,242,255,0.24));
+}
+
+body.m-mf-plus .m-reactor-top {
+    align-items: flex-start;
+    gap: 10px;
+}
+
+body.m-mf-plus .m-reactor-title {
+    max-width: calc(100% - 54px);
+    font-size: clamp(0.90rem, 4.05vw, 1.02rem);
+    line-height: 1.05;
+}
+
+body.m-mf-plus .m-reactor-desc {
+    max-width: calc(100% - 42px);
+    margin-top: 2px;
+    font-size: 0.64rem;
+    color: rgba(224,247,250,0.60);
+}
+
+body.m-mf-plus .m-tag-row {
+    margin-top: 6px;
+    padding-right: 38px;
+}
+
+body.m-mf-plus .m-tech-tag {
+    padding: 4px 8px;
+    font-size: 0.50rem;
+    background: rgba(255,255,255,0.04);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+body.m-mf-plus .tag-noproxy { border-color: rgba(0,242,255,0.24); color: #97f7ff; }
+body.m-mf-plus .tag-mfp { border-color: rgba(34,211,238,0.32); color: #9af6ff; }
+body.m-mf-plus .tag-kraken { border-color: rgba(255,77,109,0.34); color: #ffc0ca; }
+
+body.m-mf-plus .m-switch {
+    width: 48px;
+    height: 28px;
+}
+
+body.m-mf-plus .m-slider {
+    border-radius: 999px;
+    border-color: rgba(255,255,255,0.16);
+    background:
+        radial-gradient(circle at 20% 50%, rgba(255,255,255,0.10), transparent 42%),
+        linear-gradient(180deg, rgba(31,35,42,0.98), rgba(12,13,16,0.98));
+}
+
+body.m-mf-plus .m-slider:before {
+    width: 20px;
+    height: 20px;
+    left: 3px;
+    bottom: 3px;
+    background: linear-gradient(180deg, #f4f4f4, #b7b7b7);
+}
+
+body.m-mf-plus input:checked + .m-slider:before {
+    transform: translateX(20px);
+}
+
+body.m-mf-plus .m-lang-grid,
+body.m-mf-plus .m-flux-grid,
+body.m-mf-plus .m-cortex-grid,
+body.m-mf-plus .m-chip-grid,
+body.m-mf-plus .m-cloud-mode-grid {
+    gap: 9px;
+}
+
+body.m-mf-plus .m-lang-opt,
+body.m-mf-plus .m-flux-opt,
+body.m-mf-plus .m-cortex-chip,
+body.m-mf-plus .m-qual-chip,
+body.m-mf-plus .m-cloud-mode-btn {
+    border-radius: 21px;
+    min-height: 64px;
+    background:
+        radial-gradient(circle at 50% 0, rgba(0,242,255,0.085), transparent 54%),
+        linear-gradient(180deg, rgba(16, 35, 55, 0.84), rgba(3, 10, 19, 0.97));
+    border-color: rgba(134,232,255,0.14);
+    box-shadow: var(--lc-card-shadow-soft), inset 0 1px 0 rgba(255,255,255,0.045);
+}
+
+body.m-mf-plus .m-lang-opt.active-ita,
+body.m-mf-plus .m-lang-opt.active-hyb,
+body.m-mf-plus .m-lang-opt.active-eng,
+body.m-mf-plus .m-flux-opt.active-bal,
+body.m-mf-plus .m-flux-opt.active-res,
+body.m-mf-plus .m-flux-opt.active-sz,
+body.m-mf-plus .m-cortex-chip.active,
+body.m-mf-plus .m-cloud-mode-btn.active {
+    transform: translateY(-1px);
+    border-color: rgba(0,242,255,0.48);
+    background:
+        radial-gradient(circle at 50% 0, rgba(0,242,255,0.18), transparent 58%),
+        linear-gradient(180deg, rgba(18, 48, 74, 0.96), rgba(3, 10, 19, 0.98));
+}
+
+body.m-mf-plus .m-qual-chip {
+    min-height: 62px;
+    padding: 9px 4px;
+    font-size: 0.78rem;
+}
+
+body.m-mf-plus .m-qual-chip:not(.excluded) {
+    color: #f7fdff;
+}
+
+body.m-mf-plus .m-qual-chip.excluded {
+    opacity: 0.72;
+    background:
+        radial-gradient(circle at 50% 0, rgba(255,51,102,0.12), transparent 55%),
+        linear-gradient(180deg, rgba(52, 16, 29, 0.74), rgba(14, 4, 9, 0.94));
+    border-color: rgba(255,51,102,0.32);
+}
+
+body.m-mf-plus .m-flux-readout,
+body.m-mf-plus #lang-desc-container,
+body.m-mf-plus .m-sys-grid {
+    border-radius: 24px !important;
+    padding: 3px;
+    background:
+        radial-gradient(circle at 0 0, rgba(0,242,255,0.085), transparent 45%),
+        linear-gradient(155deg, rgba(7, 19, 32, 0.78), rgba(2, 8, 16, 0.94)) !important;
+    box-shadow: var(--lc-card-shadow-soft), inset 0 1px 0 rgba(255,255,255,0.035);
+}
+
+body.m-mf-plus .m-sys-grid {
+    display: grid;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid rgba(134,232,255,0.12);
+}
+
+body.m-mf-plus .m-sys-row,
+body.m-mf-plus .m-row {
+    border: 1px solid rgba(134,232,255,0.105) !important;
+    border-radius: 21px;
+    padding: 13px 14px !important;
+    background:
+        radial-gradient(circle at 0 0, rgba(0,242,255,0.075), transparent 42%),
+        linear-gradient(145deg, rgba(10, 26, 43, 0.78), rgba(3, 10, 19, 0.92));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.035);
+}
+
+body.m-mf-plus .m-sys-info h4,
+body.m-mf-plus .m-label h4 {
+    gap: 7px;
+    font-size: 0.92rem;
+    letter-spacing: 0.15px;
+}
+
+body.m-mf-plus .m-sys-info p,
+body.m-mf-plus .m-label p,
+body.m-mf-plus .m-range-desc,
+body.m-mf-plus .m-cloud-note {
+    color: rgba(224,247,250,0.58) !important;
+    line-height: 1.32;
+}
+
+body.m-mf-plus .m-status-text {
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 0.60rem;
+    letter-spacing: 0.7px;
+    background: rgba(255,255,255,0.09);
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+body.m-mf-plus .m-status-text.on {
+    background: rgba(0, 255, 157, 0.16);
+    border-color: rgba(0,255,157,0.28);
+    color: var(--m-success);
+}
+
+body.m-mf-plus .m-cloud-mode-panel.show {
+    margin: -3px 4px 10px;
+    padding: 9px 8px 11px;
+    border-radius: 22px;
+    border: 1px solid rgba(134,232,255,0.10);
+    background:
+        radial-gradient(circle at 0 0, rgba(0,242,255,0.09), transparent 42%),
+        linear-gradient(145deg, rgba(8, 22, 37, 0.74), rgba(2, 8, 16, 0.94));
+}
+
+body.m-mf-plus .m-cloud-mode-btn {
+    min-height: 58px;
+    font-size: 0.74rem;
+}
+
+body.m-mf-plus .m-cloud-mode-btn span {
+    font-size: 0.55rem;
+}
+
+body.m-mf-plus .m-gate-wrapper.show {
+    padding: 9px 10px 11px;
+    border-radius: 20px;
+    border: 1px solid rgba(134,232,255,0.10);
+    background: rgba(2, 8, 16, 0.48);
+}
+
+body.m-mf-plus .m-gate-control {
+    background: transparent;
+}
+
+body.m-mf-plus .m-visual-preview {
+    border-radius: 22px;
+    border-color: rgba(134,232,255,0.18);
+    background:
+        radial-gradient(circle at 0 0, rgba(0,242,255,0.10), transparent 45%),
+        linear-gradient(145deg, rgba(9, 24, 39, 0.93), rgba(2, 8, 16, 0.98));
+}
+
+body.m-mf-plus .m-vp-icon {
+    width: 50px;
+    height: 70px;
+    border-radius: 15px;
+    background: linear-gradient(145deg, rgba(0,242,255,0.13), rgba(176,38,255,0.08), rgba(0,0,0,0.20));
+    border-color: rgba(134,232,255,0.16);
+}
+
+body.m-mf-plus .m-am-card {
+    border-radius: 28px;
+    background:
+        radial-gradient(circle at 0 0, rgba(0,242,255,0.12), transparent 42%),
+        linear-gradient(155deg, rgba(9, 23, 38, 0.98), rgba(1, 5, 12, 0.99));
+    border-color: rgba(134,232,255,0.18);
+}
+
+body.m-mf-plus .m-act-btn {
+    border-radius: 19px;
+}
+
+body.m-mf-plus .m-act-copy {
+    background: linear-gradient(135deg, #00f2ff, #22d3ee 42%, #8b5cf6 110%);
+    color: #00151b;
+    border: 1px solid rgba(255,255,255,0.25);
+    box-shadow: 0 8px 18px rgba(0, 213, 255, 0.21);
+}
+
+body.m-mf-plus .m-toast {
+    border-radius: 18px;
+}
+
+body.m-lowfx.m-mf-plus .m-hypervisor,
+body.m-lowfx.m-mf-plus .m-reactor-module,
+body.m-lowfx.m-mf-plus .m-cred-opt,
+body.m-lowfx.m-mf-plus .m-sys-row,
+body.m-lowfx.m-mf-plus .m-row,
+body.m-keyboard-open.m-mf-plus .m-hypervisor,
+body.m-keyboard-open.m-mf-plus .m-reactor-module,
+body.m-keyboard-open.m-mf-plus .m-cred-opt {
+    box-shadow: 0 5px 12px rgba(0,0,0,0.26) !important;
+}
+
+@media (max-width: 370px) {
+    body.m-mf-plus .m-content { padding-left: 9px; padding-right: 9px; }
+    body.m-mf-plus .m-hypervisor { padding: 11px; border-radius: 23px; }
+    body.m-mf-plus .m-reactor-core { width: 48px; margin-left: 9px; }
+    body.m-mf-plus .m-reactor-title { font-size: 0.88rem; }
+    body.m-mf-plus .m-reactor-desc { font-size: 0.60rem; }
+    body.m-mf-plus .m-cred-name { font-size: 0.56rem; }
+}
+
+@supports not (color: color-mix(in srgb, red, blue)) {
+    body.m-mf-plus .m-reactor-module.active .m-reactor-core {
+        background: rgba(0,242,255,0.10);
+    }
+}
+
+
+/* === LEVIATHAN NO-FLICKER SWITCH PATCH ====================================
+   Ritorno al comportamento naturale degli switch: nessuna classe globale,
+   nessun restore scroll e nessun resize dinamico durante il tap. */
+body.m-mf-plus .m-switch {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    transform: translateZ(0);
+}
+
+body.m-mf-plus .m-switch input[type="checkbox"] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    opacity: 0 !important;
+    appearance: none;
+    -webkit-appearance: none;
+    z-index: 4;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+body.m-mf-plus .m-slider,
+body.m-mf-plus .m-slider:before {
+    will-change: transform;
+}
+
+body.m-mf-plus input[type="checkbox"]:focus,
+body.m-mf-plus input[type="checkbox"]:active {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+
 `;
 
 const mobileHTML = `
@@ -2546,7 +3115,7 @@ const mobileHTML = `
 
                 <h1 class="m-brand-title">LEVIATHAN</h1>
                 <div class="m-brand-sub">🌊 LEVIATHAN SEA CORE</div>
-                <div class="m-brand-desc">Config rapida, pulita e leggera per smartphone ⚡</div>
+                <div class="m-brand-desc">Interfaccia mobile rapida, ordinata e stabile ⚡</div>
                 <div class="m-version-tag"><div class="m-v-dot"></div>🦑 LEVIATHAN • ⚡ MOBILE LITE</div>
             </div>
 
@@ -2635,7 +3204,7 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🍿 Film, serie e anime: catalogo rapido</span>
+                                <span class="m-reactor-desc">🍿 Catalogo rapido • film, serie e anime</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -2662,7 +3231,7 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎬 HD italiano, film e serie aggiornati</span>
+                                <span class="m-reactor-desc">🎬 HD italiano • film e serie aggiornati</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-mfp"><i class="fas fa-shield-alt"></i> MFP</span>
                                 </div>
@@ -2681,7 +3250,7 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-purple"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">📺 Serie TV italiane e ultime uscite</span>
+                                <span class="m-reactor-desc">📺 Serie italiane • aggiornamento rapido</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -2700,7 +3269,7 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-amber"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🐉 Anime ITA database</span>
+                                <span class="m-reactor-desc">🐉 Anime ITA • mapping dedicato</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -2719,7 +3288,7 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-amber"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🌊 Kitsu + VixCloud, no proxy</span>
+                                <span class="m-reactor-desc">🌊 Kitsu + VixCloud • no proxy</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -2738,7 +3307,7 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-amber"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🪐 Anime fallback con mapping avanzato</span>
+                                <span class="m-reactor-desc">🪐 Fallback anime • mapping avanzato</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -2757,7 +3326,7 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-green"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎞️ Film italiani, no proxy</span>
+                                <span class="m-reactor-desc">🎞️ Film italiani • no proxy</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -2776,7 +3345,7 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎟️ Film e serie, no Kraken/MFP</span>
+                                <span class="m-reactor-desc">🎟️ Film e serie • direct mode</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -3067,7 +3636,7 @@ const mobileHTML = `
                             <label class="m-switch"><input type="checkbox" id="m-aioMode" onchange="updateStatus('m-aioMode','st-aio')"><span class="m-slider m-slider-purple"></span></label>
                         </div>
                         <div class="m-sys-row">
-                            <div class="m-sys-info"><h4><i class="fas fa-cloud" style="color:var(--m-primary)"></i> ☁️ Debrid Cloud <span class="m-status-text" id="st-savedcloud">OFF</span></h4><p>File salvati in RD/TorBox. Duplicati esclusi sempre.</p></div>
+                            <div class="m-sys-info"><h4><i class="fas fa-cloud" style="color:var(--m-primary)"></i> ☁️ Debrid Cloud <span class="m-status-text" id="st-savedcloud">OFF</span></h4><p>File salvati RD/TorBox. Duplicati sempre esclusi.</p></div>
                             <label class="m-switch"><input type="checkbox" id="m-enableSavedCloud" onchange="toggleSavedCloud()"><span class="m-slider"></span></label>
                         </div>
                         <div class="m-cloud-mode-panel" id="m-savedCloudPanel">
@@ -3083,7 +3652,7 @@ const mobileHTML = `
                     <div class="m-row" style="border:none; padding: 5px 0;">
                         <div class="m-label">
                             <h4><i class="fas fa-compress-arrows-alt" style="color:var(--m-error)"></i> 🚦 Signal Gate <span class="m-status-text" id="st-gate">OFF</span></h4>
-                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro Qualita (Max risultati per ris.)</p>
+                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro qualità • max risultati per risoluzione</p>
                         </div>
                         <label class="m-switch"><input type="checkbox" id="m-gateActive" onchange="toggleGate()"><span class="m-slider"></span></label>
                     </div>
@@ -3099,7 +3668,7 @@ const mobileHTML = `
                     <div class="m-row" style="border:none; padding: 5px 0;">
                         <div class="m-label">
                             <h4><i class="fas fa-weight-hanging" style="color:var(--m-amber)"></i> ⚖️ Size Limit <span class="m-status-text" id="st-size">OFF</span></h4>
-                            <p style="font-size:0.65rem; color:var(--m-amber);">Filtro Peso Massimo (GB)</p>
+                            <p style="font-size:0.65rem; color:var(--m-amber);">Filtro peso massimo • GB</p>
                         </div>
                         <label class="m-switch"><input type="checkbox" id="m-sizeActive" onchange="toggleSize()"><span class="m-slider m-slider-amber"></span></label>
                     </div>
@@ -3199,7 +3768,7 @@ const mobileHTML = `
     <div class="m-action-modal" id="m-link-modal">
         <div class="m-am-card">
             <div class="m-am-title">🔗 LINK GENERATO</div>
-            <div class="m-am-subtitle">Installa, copia o condividi in modo sicuro</div>
+            <div class="m-am-subtitle">Installa, copia o condividi il link configurato</div>
             
             <div class="m-flux-terminal">
                 <div class="m-flux-header">
@@ -3907,66 +4476,48 @@ function createSeaCanvas() {
 
 function initMobileViewportGuard() {
     const root = document.documentElement;
-    const vv = window.visualViewport;
+    let blurTimer = 0;
 
-    const isTextField = (el = document.activeElement) => !!el?.matches?.('input, textarea, [contenteditable="true"]');
-
-    const clearKeyboardStateIfNeeded = () => {
-        if (isTextField()) return;
-        document.body.classList.remove('m-keyboard-open', 'm-typing', 'm-input-active');
+    const setStableHeight = () => {
+        // Altezza stabile: non segue ogni micro-resize di Chrome Android.
+        // Questo evita lo sfarfallio tipo refresh quando si toccano switch/card.
+        const h = Math.max(320, Math.round(window.innerHeight || document.documentElement.clientHeight || 0));
+        if (h) root.style.setProperty('--m-vvh', `${h}px`);
     };
 
-    const apply = () => {
-        MOBILE_PERF.viewportRaf = 0;
-        const viewportHeight = vv ? vv.height : window.innerHeight;
-        const layoutHeight = Math.max(window.innerHeight || viewportHeight, viewportHeight);
-        const focusedText = isTextField();
-        const heightLoss = Math.max(0, layoutHeight - viewportHeight);
-        const strongKeyboardDelta = Math.max(MOBILE_PERF.keyboardDeltaPx || 140, Math.round(layoutHeight * 0.18));
-        const keyboardLikelyOpen = focusedText && (!!vv ? heightLoss > strongKeyboardDelta : true);
+    const isTextField = (el = document.activeElement) => !!el?.matches?.('input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], textarea, [contenteditable="true"]');
 
-        root.style.setProperty('--m-vvh', `${Math.max(320, Math.round(viewportHeight))}px`);
-        document.body.classList.toggle('m-input-active', focusedText);
-        document.body.classList.toggle('m-keyboard-open', keyboardLikelyOpen);
-        if (!focusedText) document.body.classList.remove('m-typing');
+    const openKeyboardMode = () => {
+        window.clearTimeout(blurTimer);
+        document.body.classList.add('m-input-active', 'm-keyboard-open', 'm-typing');
     };
 
-    const schedule = () => {
-        if (MOBILE_PERF.viewportRaf) return;
-        MOBILE_PERF.viewportRaf = requestAnimationFrame(apply);
+    const closeKeyboardMode = () => {
+        window.clearTimeout(blurTimer);
+        blurTimer = window.setTimeout(() => {
+            if (isTextField()) return;
+            document.body.classList.remove('m-input-active', 'm-keyboard-open', 'm-typing');
+        }, 120);
     };
 
-    schedule();
-    window.addEventListener('resize', schedule, { passive: true });
-    window.addEventListener('orientationchange', () => setTimeout(schedule, 180), { passive: true });
-    if (vv) {
-        vv.addEventListener('resize', schedule, { passive: true });
-        vv.addEventListener('scroll', schedule, { passive: true });
-    }
+    setStableHeight();
+    window.addEventListener('orientationchange', () => window.setTimeout(setStableHeight, 260), { passive: true });
 
     document.addEventListener('focusin', (event) => {
-        if (!event.target?.matches?.('input, textarea, [contenteditable="true"]')) return;
-        document.body.classList.add('m-input-active', 'm-typing');
-        schedule();
+        if (!isTextField(event.target)) return;
+        openKeyboardMode();
     }, { passive: true });
 
     document.addEventListener('focusout', (event) => {
-        if (!event.target?.matches?.('input, textarea, [contenteditable="true"]')) return;
-        window.setTimeout(() => {
-            document.body.classList.remove('m-input-active', 'm-keyboard-open', 'm-typing');
-            schedule();
-        }, 160);
+        if (!isTextField(event.target)) return;
+        closeKeyboardMode();
     }, { passive: true });
 
     document.addEventListener('pointerdown', (event) => {
-        if (event.target?.closest?.('input, textarea, [contenteditable="true"]')) return;
-        window.setTimeout(clearKeyboardStateIfNeeded, 60);
-    }, { passive: true });
-
-    document.addEventListener('click', (event) => {
-        if (event.target?.closest?.('input, textarea, [contenteditable="true"]')) return;
-        clearKeyboardStateIfNeeded();
-        schedule();
+        const target = event.target;
+        if (target?.closest?.('input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], textarea, [contenteditable="true"]')) return;
+        if (target?.closest?.('.m-switch, input[type="checkbox"], button, .m-qual-chip, .m-cloud-mode-btn, .m-reactor-module, .m-flux-opt, .m-lang-opt, .m-cortex-chip, .m-cred-opt, .m-act-btn, .m-nav-item')) return;
+        closeKeyboardMode();
     }, { passive: true });
 }
 
@@ -3993,6 +4544,7 @@ function installMobileInputPerformanceGuard() {
         setTimeout(() => action.classList.remove('is-touching'), 160);
     }, { passive: true });
 }
+
 
 function scheduleMobileAfterPaint(fn) {
     if (typeof requestIdleCallback === 'function') {
