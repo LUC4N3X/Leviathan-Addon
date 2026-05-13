@@ -2,6 +2,24 @@ const MOBILE_LOGO_URL = "https://i.ibb.co/MbmdvP6/file-0000000018387243a2da85351
 const MOBILE_LOGO_HINTS_ID = "leviathan-mobile-logo-hints";
 const MOBILE_LOGO_PRELOAD_ID = "leviathan-mobile-logo-preload";
 
+const MOBILE_PERF = {
+    maxDpr: 1.08,
+    targetFps: 20,
+    lowFxFps: 12,
+    keyboardDeltaPx: 110,
+    inputIdleMs: 420,
+    viewportRaf: 0,
+    inputIdleTimer: null
+};
+
+function isMobileCoarsePointer() {
+    try {
+        return window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    } catch (_) {
+        return true;
+    }
+}
+
 function ensureMobileLogoHints() {
     try {
         if (!document.getElementById(MOBILE_LOGO_HINTS_ID)) {
@@ -68,9 +86,18 @@ function applyMobilePerformanceMode() {
     try {
         const cores = navigator.hardwareConcurrency || 0;
         const memory = navigator.deviceMemory || 0;
-        const lowFx = (cores && cores <= 4) || (memory && memory <= 4);
-        document.body.classList.toggle("m-lowfx", !!lowFx);
-    } catch (_) {}
+        const width = Math.min(window.innerWidth || 390, screen.width || 390);
+        const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        const coarse = isMobileCoarsePointer();
+        const lowFx = reduceMotion || (cores && cores <= 4) || (memory && memory <= 4) || width <= 360;
+
+        document.body.classList.add('m-mf-lite', 'm-mf-plus');
+        document.body.classList.toggle('m-lowfx', !!lowFx);
+        document.body.classList.toggle('m-touch', !!coarse);
+        document.documentElement.style.setProperty('--m-vvh', `${window.innerHeight}px`);
+    } catch (_) {
+        document.body.classList.add('m-mf-lite', 'm-mf-plus');
+    }
 }
 
 const mobileCSS = `
@@ -1642,6 +1669,859 @@ body.m-lowfx .logo-image {
         display: none !important;
     }
 }
+
+/* === LEVIATHAN PROFESSIONAL MOBILE LITE OVERRIDE ==========================
+   Obiettivo: look pulito, professionale e compatto, mare Leviathan leggero,
+   meno paint/reflow durante tastiera, input e scroll su smartphone. */
+:root {
+    --m-vvh: 100dvh;
+    --m-dock-h: 118px;
+    --m-card-bg: rgba(8, 17, 29, 0.88);
+    --m-card-bg-2: rgba(3, 8, 16, 0.94);
+    --m-card-border: rgba(120, 220, 255, 0.15);
+    --m-soft-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
+}
+
+html, body {
+    min-height: 100%;
+    background-color: #020711;
+    overscroll-behavior-y: contain;
+}
+
+body.m-mf-lite {
+    background:
+        radial-gradient(ellipse at 50% -10%, rgba(0, 226, 255, 0.20), transparent 42%),
+        radial-gradient(circle at 85% 20%, rgba(124, 58, 237, 0.13), transparent 36%),
+        radial-gradient(circle at 10% 80%, rgba(0, 180, 255, 0.10), transparent 34%),
+        linear-gradient(180deg, #041321 0%, #020a13 46%, #00040a 100%);
+}
+
+body.m-mf-lite::after {
+    opacity: 0.12;
+    mix-blend-mode: normal;
+}
+
+body.m-mf-lite::before {
+    opacity: 0.26;
+    animation-duration: 140s;
+    background-size: 56px 56px;
+}
+
+input, textarea, [contenteditable="true"] {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    touch-action: manipulation;
+}
+
+button, .m-nav-item, .m-cred-opt, .m-reactor-module, .m-cortex-chip, .m-flux-opt, .m-lang-opt, .m-act-btn, .m-btn-install, .m-btn-copy, .m-if-action, .m-paste-action {
+    touch-action: manipulation;
+}
+
+#app-container {
+    height: var(--m-vvh, 100dvh);
+    contain: layout style;
+}
+
+.m-content-wrapper {
+    height: var(--m-vvh, 100dvh);
+}
+
+.m-content {
+    padding: 0 13px calc(var(--m-dock-h) + 26px + var(--safe-bottom)) 13px;
+    scroll-behavior: auto;
+    overscroll-behavior-y: contain;
+}
+
+body.m-keyboard-open .m-content {
+    padding-bottom: calc(68px + var(--safe-bottom));
+}
+
+body.m-keyboard-open .m-dock-container {
+    transform: translate3d(0, calc(100% - 58px - var(--safe-bottom)), 0);
+    transition: transform 180ms ease, opacity 180ms ease;
+    opacity: 0.96;
+}
+
+body.m-keyboard-open .m-dock-actions {
+    opacity: 0;
+    pointer-events: none;
+}
+
+body.m-keyboard-open .m-toast-container {
+    bottom: calc(70px + var(--safe-bottom));
+}
+
+.m-hero {
+    padding: 18px 8px 14px;
+}
+
+.m-hero::before {
+    height: 210px;
+    filter: blur(18px);
+    opacity: 0.78;
+}
+
+.logo-container {
+    width: 128px;
+    height: 128px;
+    margin-bottom: 10px;
+    animation-duration: 8s;
+}
+
+.logo-container::before {
+    inset: 8px;
+    border-width: 2px;
+    box-shadow: 0 0 18px rgba(0, 242, 255, 0.18), inset 0 0 16px rgba(112, 0, 255, 0.08);
+}
+
+.logo-image {
+    max-width: 116px;
+    animation: none;
+    filter: drop-shadow(0 8px 14px rgba(0,0,0,0.42)) brightness(1.05) saturate(1.06);
+    will-change: opacity;
+}
+
+.logo-particles, .m-caustic {
+    opacity: 0.45;
+}
+
+.m-brand-title {
+    font-size: clamp(2.26rem, 12vw, 2.88rem);
+    animation: none;
+    filter: drop-shadow(0 0 10px rgba(0, 242, 255, 0.24));
+}
+
+.m-brand-sub {
+    font-size: 0.68rem;
+    letter-spacing: 3.2px;
+    text-shadow: 0 0 7px rgba(0, 242, 255, 0.48);
+}
+
+.m-brand-desc {
+    font-size: 0.72rem;
+    max-width: 292px;
+    opacity: 0.82;
+}
+
+.m-version-tag {
+    animation: none;
+    background: rgba(0, 242, 255, 0.075);
+    box-shadow: inset 0 0 10px rgba(0, 242, 255, 0.06);
+}
+
+.m-version-tag::before,
+.m-btn-install::before,
+.m-star-btn::before,
+.m-hypervisor::before,
+.m-visual-core-v2::before {
+    display: none !important;
+}
+
+.m-section-head {
+    margin: 4px 2px 10px;
+    padding: 8px 0 8px 11px;
+    border-left-width: 3px;
+    box-shadow: none;
+}
+
+.m-section-head .sh-title {
+    font-size: 0.88rem;
+    letter-spacing: 2px;
+}
+
+.m-section-head .sh-sub {
+    font-size: 0.60rem;
+    letter-spacing: 1px;
+}
+
+.m-section-head .sh-tag {
+    border-radius: 999px;
+    padding: 3px 8px;
+    background: rgba(0, 242, 255, 0.08);
+}
+
+.m-hypervisor,
+.m-visual-core-v2,
+.m-ghost-panel,
+.m-p2p-module {
+    background:
+        linear-gradient(145deg, rgba(12, 26, 42, 0.88), rgba(3, 8, 16, 0.95)),
+        radial-gradient(circle at 100% 0%, rgba(0, 242, 255, 0.08), transparent 40%);
+    border: 1px solid var(--m-card-border);
+    border-radius: 20px;
+    box-shadow: var(--m-soft-shadow), inset 0 1px 0 rgba(255,255,255,0.04);
+    backdrop-filter: none;
+    overflow: hidden;
+}
+
+.m-hypervisor::after,
+.m-visual-core-v2::after {
+    opacity: 0.35;
+}
+
+.m-hyp-header {
+    margin-bottom: 12px;
+    padding-bottom: 9px;
+    letter-spacing: 2px;
+    border-bottom-color: rgba(120, 220, 255, 0.12);
+}
+
+.m-hyp-icon {
+    width: 26px;
+    height: 26px;
+    box-shadow: none;
+    filter: none;
+}
+
+.m-cred-deck,
+.m-lang-grid,
+.m-flux-grid {
+    gap: 8px;
+}
+
+.m-cred-opt,
+.m-lang-opt,
+.m-flux-opt,
+.m-cortex-chip,
+.m-cloud-mode-btn,
+.m-qual-chip {
+    background: linear-gradient(180deg, rgba(14, 30, 48, 0.76), rgba(4, 9, 18, 0.94));
+    border-color: rgba(120, 220, 255, 0.12);
+    border-radius: 15px;
+    box-shadow: 0 6px 14px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.035);
+    transition: transform 120ms ease, border-color 120ms ease, background 120ms ease, opacity 120ms ease;
+}
+
+.m-cred-opt {
+    min-height: 84px;
+    padding: 12px 4px 10px;
+}
+
+.m-cred-icon {
+    font-size: 1.62rem;
+    color: inherit;
+    filter: none;
+}
+
+.m-cred-name {
+    font-size: 0.69rem;
+    letter-spacing: 1px;
+    color: rgba(224, 247, 250, 0.74);
+}
+
+.m-cred-opt.active,
+.m-lang-opt.active-ita,
+.m-lang-opt.active-hyb,
+.m-lang-opt.active-eng,
+.m-flux-opt.active-bal,
+.m-flux-opt.active-res,
+.m-flux-opt.active-sz,
+.m-cortex-chip.active,
+.m-cloud-mode-btn.active {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.34), inset 0 0 14px rgba(0, 242, 255, 0.06);
+}
+
+.m-input-fuselage,
+.m-input-box {
+    margin-bottom: 14px;
+}
+
+.m-input-fuselage {
+    background: rgba(3, 8, 16, 0.82);
+    border-color: rgba(120, 220, 255, 0.13);
+    border-radius: 16px;
+    box-shadow: none;
+}
+
+.m-input-fuselage:focus-within {
+    box-shadow: 0 0 0 1px rgba(0, 242, 255, 0.24), 0 10px 24px rgba(0,0,0,0.30);
+}
+
+.m-if-inner {
+    height: 50px;
+    background: rgba(1, 5, 11, 0.74);
+    border-radius: 14px;
+}
+
+.m-if-field,
+.m-input-tech,
+.m-flux-input,
+#m-customTemplate {
+    font-size: 16px !important;
+    line-height: 1.25;
+    -webkit-text-size-adjust: 100%;
+}
+
+.m-get-link {
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+.m-key-status {
+    padding: 8px 11px 10px;
+    letter-spacing: 0.8px;
+}
+
+.m-reactor-grid {
+    gap: 9px;
+}
+
+.m-reactor-module {
+    min-height: 72px;
+    border-radius: 17px;
+    background: linear-gradient(140deg, rgba(13, 28, 45, 0.82), rgba(3, 8, 16, 0.96));
+    border-color: rgba(120, 220, 255, 0.105);
+    box-shadow: 0 7px 18px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.035);
+    transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.m-reactor-module::after {
+    opacity: 0 !important;
+}
+
+.m-reactor-module.active {
+    box-shadow: 0 8px 20px rgba(0,0,0,0.36), inset 0 0 0 1px var(--border-color-dim);
+}
+
+.m-reactor-core {
+    width: 48px;
+    background: rgba(255,255,255,0.035);
+}
+
+.m-reactor-module.active .m-reactor-core {
+    box-shadow: none;
+}
+
+.m-reactor-title {
+    font-size: clamp(0.82rem, 3.8vw, 0.96rem);
+    line-height: 1.05;
+    overflow-wrap: anywhere;
+}
+
+.m-reactor-desc {
+    font-size: 0.62rem;
+    color: rgba(224, 247, 250, 0.48);
+    line-height: 1.25;
+}
+
+.m-tag-row {
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.m-tech-tag {
+    border-radius: 999px;
+    font-size: 0.48rem;
+    letter-spacing: 0.75px;
+    padding: 3px 6px;
+}
+
+.m-mini-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    width: 100%;
+}
+
+.m-mini-tab {
+    border-radius: 12px;
+    min-width: 0;
+    text-align: center;
+}
+
+.m-visual-preview {
+    border-radius: 16px;
+    background: linear-gradient(145deg, rgba(10, 22, 36, 0.92), rgba(2, 7, 14, 0.98));
+    box-shadow: 0 8px 18px rgba(0,0,0,0.36);
+}
+
+.m-cortex-chip {
+    clip-path: none;
+    min-height: 72px;
+}
+
+.m-cortex-chip.active::after {
+    border-radius: 999px 0 0 0;
+}
+
+.m-chip-icon {
+    filter: none;
+    text-shadow: none;
+}
+
+.m-chip-label {
+    letter-spacing: 0.56px;
+    text-shadow: none;
+}
+
+.m-chip-sub {
+    opacity: 0.78;
+}
+
+.m-sys-grid {
+    border-radius: 18px;
+    background: rgba(1, 5, 11, 0.40);
+}
+
+.m-sys-row {
+    padding: 12px 13px;
+}
+
+.m-dock-container {
+    background: linear-gradient(180deg, rgba(5, 15, 25, 0.94), rgba(0, 4, 9, 0.99));
+    border-top-color: rgba(120, 220, 255, 0.16);
+    box-shadow: 0 -8px 24px rgba(0,0,0,0.58);
+    backdrop-filter: none;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+    touch-action: manipulation;
+    will-change: transform;
+}
+
+.m-dock-container::before {
+    height: 1px;
+    opacity: 0.65;
+    box-shadow: none;
+}
+
+.m-dock-actions {
+    padding: 9px 12px 5px;
+    gap: 8px;
+}
+
+.m-btn-install,
+.m-btn-copy {
+    height: 40px;
+    border-radius: 14px;
+    box-shadow: 0 6px 16px rgba(0, 180, 255, 0.17);
+}
+
+.m-btn-install {
+    letter-spacing: 1.4px;
+}
+
+.m-dock-nav {
+    padding: 7px 0 1px;
+}
+
+.m-nav-item {
+    width: min(20vw, 68px);
+    transition: transform 120ms ease, opacity 120ms ease;
+}
+
+.m-nav-item.active {
+    transform: translateY(-1px);
+}
+
+.m-nav-item i {
+    filter: none !important;
+}
+
+.m-nav-item span {
+    letter-spacing: 1.05px;
+}
+
+.m-toast-container {
+    bottom: calc(var(--m-dock-h) + 12px + var(--safe-bottom));
+}
+
+.m-toast {
+    backdrop-filter: none;
+    border-radius: 14px;
+    box-shadow: 0 8px 22px rgba(0,0,0,0.44);
+}
+
+#m-sea-canvas {
+    opacity: 0.82;
+    filter: none;
+}
+
+body.m-typing .m-caustic,
+body.m-typing .m-ocean-particles,
+body.m-typing .logo-particles,
+body.m-keyboard-open .m-caustic,
+body.m-keyboard-open .m-ocean-particles,
+body.m-keyboard-open .logo-particles {
+    display: none !important;
+}
+
+body.m-typing .logo-container,
+body.m-typing .m-v-dot,
+body.m-typing .m-ptr.loading .m-ptr-icon,
+body.m-typing .m-page.active,
+body.m-keyboard-open .logo-container,
+body.m-keyboard-open .m-v-dot,
+body.m-keyboard-open .m-page.active {
+    animation: none !important;
+}
+
+body.m-typing .m-hypervisor,
+body.m-keyboard-open .m-hypervisor,
+body.m-typing .m-visual-core-v2,
+body.m-keyboard-open .m-visual-core-v2 {
+    box-shadow: 0 7px 16px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.03);
+}
+
+@media (max-width: 370px) {
+    .m-content { padding-left: 10px; padding-right: 10px; }
+    .m-cred-deck { gap: 6px; }
+    .m-cred-name { font-size: 0.62rem; }
+    .m-reactor-core { width: 42px; }
+    .m-reactor-body { padding: 8px 9px; }
+    .m-dock-actions { padding-left: 10px; padding-right: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+
+/* === LEVIATHAN PROFESSIONAL MOBILE PACK ===
+   Extra app-like look: più emoji, card più leggibili, zero effetti pesanti. */
+body.m-mf-plus {
+    --mf-card: rgba(10, 24, 39, 0.86);
+    --mf-card-2: rgba(3, 10, 19, 0.94);
+    --mf-line: rgba(125, 232, 255, 0.16);
+    --mf-chip: rgba(0, 242, 255, 0.085);
+    --mf-chip-2: rgba(176, 38, 255, 0.08);
+}
+
+body.m-mf-plus .m-brand-desc,
+body.m-mf-plus .m-reactor-desc,
+body.m-mf-plus .m-hyp-desc,
+body.m-mf-plus .m-sys-info p,
+body.m-mf-plus .m-range-desc,
+body.m-mf-plus .m-cloud-note {
+    text-wrap: balance;
+}
+
+body.m-mf-plus .m-section-head {
+    border-left: 0;
+    padding: 7px 8px;
+    border-radius: 16px;
+    background: linear-gradient(90deg, rgba(0,242,255,0.075), rgba(176,38,255,0.055), transparent);
+    border: 1px solid rgba(125,232,255,0.10);
+}
+
+body.m-mf-plus .m-section-head .sh-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.86rem;
+    letter-spacing: 1.35px;
+}
+
+body.m-mf-plus .m-section-head .sh-sub {
+    color: rgba(224,247,250,0.62);
+}
+
+body.m-mf-plus .m-section-head .sh-tag {
+    font-size: 0.54rem;
+    border-color: rgba(125,232,255,0.18);
+    background: rgba(0, 242, 255, 0.075);
+}
+
+body.m-mf-plus .m-hyp-header {
+    display: flex;
+    align-items: center;
+    min-height: 30px;
+    color: #f5fdff;
+}
+
+body.m-mf-plus .m-hypervisor,
+body.m-mf-plus .m-visual-core-v2 {
+    background:
+        linear-gradient(145deg, var(--mf-card), var(--mf-card-2)),
+        radial-gradient(circle at 0 0, rgba(0,242,255,0.08), transparent 38%),
+        radial-gradient(circle at 100% 0, rgba(176,38,255,0.07), transparent 44%);
+}
+
+body.m-mf-plus .m-cred-opt,
+body.m-mf-plus .m-lang-opt,
+body.m-mf-plus .m-flux-opt,
+body.m-mf-plus .m-cortex-chip,
+body.m-mf-plus .m-cloud-mode-btn,
+body.m-mf-plus .m-qual-chip {
+    border-radius: 18px;
+    background:
+        linear-gradient(180deg, rgba(18, 38, 58, 0.78), rgba(4, 12, 22, 0.95));
+    border-color: var(--mf-line);
+}
+
+body.m-mf-plus .m-cred-opt::before,
+body.m-mf-plus .m-cred-opt::after,
+body.m-mf-plus .m-cortex-chip::before {
+    display: none !important;
+}
+
+body.m-mf-plus .m-cred-icon {
+    font-size: 1.74rem;
+    line-height: 1;
+}
+
+body.m-mf-plus .m-cred-name {
+    font-size: 0.64rem;
+    letter-spacing: 0.55px;
+    white-space: nowrap;
+}
+
+body.m-mf-plus .m-reactor-module {
+    min-height: 76px;
+    border-radius: 19px;
+    background:
+        linear-gradient(135deg, rgba(13, 33, 53, 0.90), rgba(3, 10, 19, 0.97));
+    border-color: var(--mf-line);
+}
+
+body.m-mf-plus .m-reactor-module.active {
+    border-color: color-mix(in srgb, var(--border-color) 70%, #ffffff 0%);
+    background:
+        linear-gradient(135deg, rgba(15, 43, 68, 0.95), rgba(3, 10, 19, 0.98));
+}
+
+body.m-mf-plus .m-reactor-core {
+    width: 50px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.055), rgba(0,0,0,0.08));
+}
+
+body.m-mf-plus .m-core-icon {
+    font-size: 1.05rem;
+    opacity: 0.72;
+}
+
+body.m-mf-plus .m-reactor-module.active .m-core-icon {
+    opacity: 1;
+    transform: scale(1.08);
+}
+
+body.m-mf-plus .m-reactor-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    letter-spacing: 0.2px;
+    color: #ffffff;
+}
+
+body.m-mf-plus .m-reactor-desc {
+    color: rgba(224,247,250,0.56);
+}
+
+body.m-mf-plus .m-tech-tag,
+body.m-mf-plus .mini-tag,
+body.m-mf-plus .m-tag-item {
+    border-radius: 999px;
+}
+
+body.m-mf-plus .m-tech-tag i {
+    margin-right: 2px;
+}
+
+body.m-mf-plus .m-cortex-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+body.m-mf-plus .m-chip-icon {
+    font-size: 1.16rem;
+    line-height: 1;
+}
+
+body.m-mf-plus .m-chip-label {
+    font-size: 0.66rem;
+}
+
+body.m-mf-plus .m-chip-sub {
+    font-size: 0.52rem;
+}
+
+body.m-mf-plus .m-flux-readout,
+body.m-mf-plus #lang-desc-container,
+body.m-mf-plus .m-sys-grid,
+body.m-mf-plus .m-input-fuselage,
+body.m-mf-plus .m-input-box {
+    border-radius: 18px !important;
+    border-color: rgba(125,232,255,0.13) !important;
+    background: linear-gradient(145deg, rgba(6, 18, 31, 0.72), rgba(1, 7, 14, 0.88)) !important;
+}
+
+body.m-mf-plus .m-sys-info h4,
+body.m-mf-plus .m-label h4 {
+    font-size: 0.82rem;
+}
+
+body.m-mf-plus .m-btn-install {
+    background: linear-gradient(90deg, #00f2ff 0%, #22d3ee 42%, #8b5cf6 105%);
+    gap: 7px;
+}
+
+body.m-mf-plus .m-btn-copy {
+    gap: 1px;
+}
+
+body.m-mf-plus .mf-btn-emoji,
+body.m-mf-plus .mf-copy-emoji,
+body.m-mf-plus .mf-nav-emoji {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+body.m-mf-plus .mf-nav-emoji {
+    font-size: 1.04rem;
+    margin-bottom: -2px;
+}
+
+body.m-mf-plus .m-nav-item i {
+    display: none;
+}
+
+body.m-mf-plus .m-nav-item span {
+    font-size: 0.54rem;
+    letter-spacing: 0.9px;
+}
+
+body.m-mf-plus .m-nav-item.active .mf-nav-emoji {
+    filter: drop-shadow(0 0 8px rgba(0,242,255,0.55));
+}
+
+body.m-mf-plus .m-dock-container {
+    border-top-left-radius: 21px;
+    border-top-right-radius: 21px;
+}
+
+body.m-mf-plus .m-toast i {
+    margin-right: 5px;
+}
+
+body.m-keyboard-open.m-mf-plus .mf-nav-emoji,
+body.m-typing.m-mf-plus .mf-nav-emoji {
+    filter: none !important;
+}
+
+/* === LEVIATHAN DOCK STABILITY + PREMIUM ACTION BAR =======================
+   Fix: gli switch/tap non devono mai far sparire INSTALLA/COPIA.
+   La dock si compatta solo con un vero campo testo attivo e tastiera aperta. */
+body.m-keyboard-open:not(.m-input-active) .m-dock-container {
+    transform: translate3d(0, 0, 0) !important;
+    opacity: 1 !important;
+}
+
+body.m-keyboard-open:not(.m-input-active) .m-dock-actions {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+}
+
+body.m-mf-plus .m-dock-container {
+    padding-top: 7px;
+    background:
+        radial-gradient(ellipse at 50% -25%, rgba(0,242,255,0.18), transparent 54%),
+        linear-gradient(180deg, rgba(7, 21, 34, 0.96), rgba(0, 5, 12, 0.995));
+    border-top: 1px solid rgba(125,232,255,0.22);
+    box-shadow: 0 -12px 30px rgba(0,0,0,0.68), 0 -1px 0 rgba(255,255,255,0.035) inset;
+}
+
+body.m-mf-plus .m-dock-actions {
+    padding: 10px 12px 6px;
+    gap: 9px;
+    border-bottom-color: rgba(125,232,255,0.08);
+}
+
+body.m-mf-plus .m-btn-install,
+body.m-mf-plus .m-btn-copy {
+    height: 45px;
+    min-height: 45px;
+    border-radius: 17px;
+    position: relative;
+    overflow: hidden;
+    transform: translateZ(0);
+}
+
+body.m-mf-plus .m-btn-install {
+    flex: 2.25;
+    color: #00141d;
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.96) 0%, rgba(159,246,255,0.96) 18%, #22d3ee 46%, #00a7ff 66%, #8b5cf6 108%);
+    border: 1px solid rgba(255,255,255,0.36);
+    box-shadow:
+        0 9px 22px rgba(0, 213, 255, 0.28),
+        0 0 0 1px rgba(0,242,255,0.08),
+        inset 0 1px 0 rgba(255,255,255,0.78),
+        inset 0 -2px 0 rgba(0,0,0,0.17);
+    font-size: 0.98rem;
+    letter-spacing: 1.15px;
+    text-shadow: 0 1px 0 rgba(255,255,255,0.50);
+}
+
+body.m-mf-plus .m-btn-install::after {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.36), transparent 44%);
+    pointer-events: none;
+}
+
+body.m-mf-plus .m-btn-install .mf-btn-emoji {
+    width: 24px;
+    height: 24px;
+    border-radius: 9px;
+    background: rgba(255,255,255,0.42);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.34), 0 3px 8px rgba(0,0,0,0.13);
+    font-size: 1.03rem;
+}
+
+body.m-mf-plus .m-btn-install i {
+    display: none;
+}
+
+body.m-mf-plus .m-btn-copy {
+    flex: 1.04;
+    color: #dffbff;
+    background:
+        radial-gradient(circle at 50% 0%, rgba(0,242,255,0.18), transparent 56%),
+        linear-gradient(180deg, rgba(18, 34, 50, 0.95), rgba(2, 8, 16, 0.98));
+    border: 1px solid rgba(125,232,255,0.30);
+    box-shadow:
+        0 8px 18px rgba(0,0,0,0.36),
+        inset 0 1px 0 rgba(255,255,255,0.08);
+    font-size: 0.58rem;
+    letter-spacing: 1.1px;
+}
+
+body.m-mf-plus .m-btn-copy .mf-copy-emoji {
+    font-size: 1.06rem;
+    margin-bottom: 0;
+    filter: drop-shadow(0 0 7px rgba(0,242,255,0.45));
+}
+
+body.m-mf-plus .m-btn-copy i {
+    display: none;
+}
+
+body.m-mf-plus .m-btn-install:active,
+body.m-mf-plus .m-btn-copy:active {
+    transform: scale(0.985) translateZ(0);
+}
+
+body.m-input-active.m-keyboard-open .m-dock-container {
+    transform: translate3d(0, calc(100% - 60px - var(--safe-bottom)), 0);
+}
+
+body.m-input-active.m-keyboard-open .m-dock-actions {
+    opacity: 0;
+    pointer-events: none;
+}
+
+@supports not (color: color-mix(in srgb, red, blue)) {
+    body.m-mf-plus .m-reactor-module.active { border-color: var(--border-color); }
+}
+
 `;
 
 const mobileHTML = `
@@ -1665,61 +2545,61 @@ const mobileHTML = `
                 </div>
 
                 <h1 class="m-brand-title">LEVIATHAN</h1>
-                <div class="m-brand-sub">SOVRANO DEGLI ABISSI</div>
-                <div class="m-brand-desc">Il protocollo profondo che domina i flussi digitali</div>
-                <div class="m-version-tag"><div class="m-v-dot"></div>CORE v2.7.0</div>
+                <div class="m-brand-sub">🌊 LEVIATHAN SEA CORE</div>
+                <div class="m-brand-desc">Config rapida, pulita e leggera per smartphone ⚡</div>
+                <div class="m-version-tag"><div class="m-v-dot"></div>🦑 LEVIATHAN • ⚡ MOBILE LITE</div>
             </div>
 
             <div id="page-setup" class="m-page active">
 
                 <div class="m-section-head">
                     <div class="sh-titles">
-                        <span class="sh-title">Identity Core</span>
-                        <span class="sh-sub">Servizi &amp; chiavi di accesso</span>
+                        <span class="sh-title">🔐 Account Core</span>
+                        <span class="sh-sub">Debrid, TorBox &amp; P2P</span>
                     </div>
                     <span class="sh-tag">01 / 03</span>
                 </div>
 
                 <div class="m-hypervisor">
                     <div class="m-hyp-header">
-                        <span>ACCESS CREDENTIALS</span>
+                        <span>🔑 ACCOUNT &amp; ACCESS</span>
                         <i class="fas fa-fingerprint m-hyp-icon"></i>
                     </div>
 
                     <div class="m-cred-deck">
                         <div class="m-cred-opt cred-rd m-srv-btn active" onclick="setMService('rd', this)">
                             <div class="m-cred-icon">🐬</div>
-                            <div class="m-cred-name">REAL-DEBRID</div>
+                            <div class="m-cred-name">🐬 REAL-DEBRID</div>
                         </div>
                         <div class="m-cred-opt cred-tb m-srv-btn" onclick="setMService('tb', this)">
-                            <div class="m-cred-icon">⚓</div>
-                            <div class="m-cred-name">TORBOX</div>
+                            <div class="m-cred-icon">🧊</div>
+                            <div class="m-cred-name">🧊 TORBOX</div>
                         </div>
                         <div class="m-cred-opt cred-p2p m-srv-btn" onclick="setMService('p2p', this)">
                             <div class="m-cred-icon">🦈</div>
-                            <div class="m-cred-name">P2P MODE</div>
+                            <div class="m-cred-name">🦈 P2P MODE</div>
                         </div>
                     </div>
 
                     <div class="m-input-fuselage" id="box-apikey">
-                        <div class="m-if-label">API ACCESS KEY</div>
+                        <div class="m-if-label">🔑 API KEY</div>
                         <div class="m-if-inner">
                             <div class="m-if-icon"><i class="fas fa-key"></i></div>
-                            <input type="text" id="m-apiKey" class="m-if-field" placeholder="INCOLLA KEY..." oninput="handleMobileApiKeyInput()">
+                            <input type="text" id="m-apiKey" class="m-if-field" placeholder="🔑 INCOLLA KEY..." oninput="handleMobileApiKeyInput()">
                             <div class="m-if-action" onclick="pasteTo('m-apiKey')"><i class="fas fa-paste"></i></div>
                             <div class="m-get-link" onclick="openApiPage()">GET <i class="fas fa-external-link-alt"></i></div>
                         </div>
                         <div class="m-key-status idle" id="m-keyStatus" aria-live="polite" aria-atomic="true">
                             <span class="m-key-status-dot"></span>
-                            <span id="m-keyStatusText">Live check disponibile per Real-Debrid e TorBox.</span>
+                            <span id="m-keyStatusText">🐬 RD / 🧊 TB live check disponibile.</span>
                         </div>
                     </div>
 
                     <div class="m-input-fuselage tmdb-box" id="box-tmdb">
-                        <div class="m-if-label opt">TMDB (OPTIONAL)</div>
+                        <div class="m-if-label opt">🎬 TMDB OPTIONAL</div>
                         <div class="m-if-inner">
                             <div class="m-if-icon"><i class="fas fa-film"></i></div>
-                            <input type="text" id="m-tmdb" class="m-if-field" placeholder="PERSONAL KEY..." oninput="updateLinkModalContent()">
+                            <input type="text" id="m-tmdb" class="m-if-field" placeholder="🎬 PERSONAL KEY..." oninput="updateLinkModalContent()">
                             <div class="m-if-action" onclick="pasteTo('m-tmdb')"><i class="fas fa-paste"></i></div>
                             <div class="m-get-link" style="color:var(--m-accent); border-color:var(--m-accent); background:rgba(176,38,255,0.05);" onclick="openApiPage('tmdb')">GET <i class="fas fa-external-link-alt"></i></div>
                         </div>
@@ -1729,15 +2609,15 @@ const mobileHTML = `
 
                 <div class="m-section-head">
                     <div class="sh-titles">
-                        <span class="sh-title">Reactor Modules</span>
-                        <span class="sh-sub">Sorgenti web italiane</span>
+                        <span class="sh-title">🍿 Provider Hub</span>
+                        <span class="sh-sub">Sorgenti italiane ottimizzate</span>
                     </div>
                     <span class="sh-tag violet">02 / 03</span>
                 </div>
 
                 <div class="m-hypervisor">
                      <div class="m-hyp-header">
-                        <span>WEB MODULES</span>
+                        <span>🍿 PROVIDER STREAMS</span>
                         <i class="fas fa-cubes m-hyp-icon"></i>
                     </div>
 
@@ -1749,13 +2629,13 @@ const mobileHTML = `
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">StreamingCommunity</span>
+                                    <span class="m-reactor-title">🍿 StreamingCommunity</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableVix" onchange="updateStatus('m-enableVix','st-vix'); toggleModuleStyle('m-enableVix', 'mod-vix');">
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Film, Serie TV & Anime (Catalogo Vasto)</span>
+                                <span class="m-reactor-desc">🍿 Film, serie e anime: catalogo rapido</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -1776,13 +2656,13 @@ const mobileHTML = `
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">GuardaHD</span>
+                                    <span class="m-reactor-title">🎬 GuardaHD</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableGhd" onchange="updateStatus('m-enableGhd','st-ghd'); toggleModuleStyle('m-enableGhd', 'mod-ghd');">
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Archivio HD di Film e Serie TV in Italiano. Aggiornamenti quotidiani.</span>
+                                <span class="m-reactor-desc">🎬 HD italiano, film e serie aggiornati</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-mfp"><i class="fas fa-shield-alt"></i> MFP</span>
                                 </div>
@@ -1795,13 +2675,13 @@ const mobileHTML = `
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">GuardoSerie</span>
+                                    <span class="m-reactor-title">📺 GuardoSerie</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableGs" onchange="updateStatus('m-enableGs','st-gs'); toggleModuleStyle('m-enableGs', 'mod-gs');">
                                         <span class="m-slider m-slider-purple"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Specializzato in Serie TV. Catalogo Italiano completo con ultime uscite.</span>
+                                <span class="m-reactor-desc">📺 Serie TV italiane e ultime uscite</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -1814,13 +2694,13 @@ const mobileHTML = `
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">AnimeWorld</span>
+                                    <span class="m-reactor-title">🐉 AnimeWorld</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableAnimeWorld" onchange="updateStatus('m-enableAnimeWorld','st-aw'); toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');">
                                         <span class="m-slider m-slider-amber"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Anime ITA Database</span>
+                                <span class="m-reactor-desc">🐉 Anime ITA database</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -1833,13 +2713,13 @@ const mobileHTML = `
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">AnimeUnity</span>
+                                    <span class="m-reactor-title">🌊 AnimeUnity</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableAnimeUnity" onchange="updateStatus('m-enableAnimeUnity','st-au'); toggleModuleStyle('m-enableAnimeUnity', 'mod-au');">
                                         <span class="m-slider m-slider-amber"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Kitsu + VixCloud. Non richiede MediaFlow Proxy.</span>
+                                <span class="m-reactor-desc">🌊 Kitsu + VixCloud, no proxy</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -1852,13 +2732,13 @@ const mobileHTML = `
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">AnimeSaturn</span>
+                                    <span class="m-reactor-title">🪐 AnimeSaturn</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableAnimeSaturn" onchange="updateStatus('m-enableAnimeSaturn','st-as'); toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');">
                                         <span class="m-slider m-slider-amber"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Fallback anime con mapping Kitsu, IMDb e TMDb.</span>
+                                <span class="m-reactor-desc">🪐 Anime fallback con mapping avanzato</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -1871,13 +2751,13 @@ const mobileHTML = `
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">GuardaFlix</span>
+                                    <span class="m-reactor-title">🎞️ GuardaFlix</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableGf" onchange="updateStatus('m-enableGf','st-gf'); toggleModuleStyle('m-enableGf', 'mod-gf');">
                                         <span class="m-slider m-slider-green"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Catalogo esclusivo per i Film. Non richiede MediaFlow Proxy.</span>
+                                <span class="m-reactor-desc">🎞️ Film italiani, no proxy</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -1890,13 +2770,13 @@ const mobileHTML = `
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">CinemaCity</span>
+                                    <span class="m-reactor-title">🎟️ CinemaCity</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableCc" onchange="updateStatus('m-enableCc','st-cc'); toggleModuleStyle('m-enableCc', 'mod-cc');">
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Catalogo Film e Serie TV con aggiornamenti costanti. Non richiede Kraken o MediaFlow Proxy.</span>
+                                <span class="m-reactor-desc">🎟️ Film e serie, no Kraken/MFP</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
                                 </div>
@@ -1910,7 +2790,7 @@ const mobileHTML = `
                     <div style="margin-top:5px; padding:15px; border-radius:16px; background:linear-gradient(90deg, rgba(112,0,255,0.1), transparent); border-left:4px solid var(--m-secondary);">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <div>
-                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">PRIORITA WEB</h5>
+                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">🚀 PRIORITÀ WEB</h5>
                                 <p id="priority-desc" style="margin:5px 0 0; font-size:0.8rem; color:var(--m-dim);">Mostra Web in cima</p>
                             </div>
                             <label class="m-switch">
@@ -1959,8 +2839,8 @@ const mobileHTML = `
 
                 <div class="m-section-head">
                     <div class="sh-titles">
-                        <span class="sh-title">Visual Forge</span>
-                        <span class="sh-sub">Skin del formattatore Leviathan</span>
+                        <span class="sh-title">🎨 Skin Studio</span>
+                        <span class="sh-sub">Anteprima formatter &amp; preset</span>
                     </div>
                     <span class="sh-tag">SKIN</span>
                 </div>
@@ -1968,7 +2848,7 @@ const mobileHTML = `
                 <div class="m-visual-core-v2" id="m-visual-core-v2">
                 
                      <div class="m-hyp-header" style="margin-bottom:15px; border:none; padding-bottom:0;">
-                        <span>VISUAL FORMATTER</span>
+                        <span>🎨 FORMATTER PREVIEW</span>
                         <i class="fas fa-swatchbook m-hyp-icon"></i>
                      </div>
                 
@@ -1980,7 +2860,7 @@ const mobileHTML = `
 
                     <div class="m-visual-preview" id="m-preview-box">
                         <div class="m-recalc-overlay" id="m-recalc-layer">
-                            <div class="m-recalc-text"><i class="fas fa-cog fa-spin"></i> UPDATING CORE...</div>
+                            <div class="m-recalc-text"><i class="fas fa-cog fa-spin"></i> 🔄 AGGIORNO PREVIEW...</div>
                         </div>
                         
                         <div class="m-vp-icon" id="m-prev-icon">🦑</div>
@@ -2104,35 +2984,35 @@ const mobileHTML = `
 
                 <div class="m-section-head">
                     <div class="sh-titles">
-                        <span class="sh-title">Hypervisor</span>
-                        <span class="sh-sub">Sort &middot; Lingua &middot; Filtri</span>
+                        <span class="sh-title">⚙️ Stream Rules</span>
+                        <span class="sh-sub">Sort, lingua, cache e limiti</span>
                     </div>
                     <span class="sh-tag warn">RULES</span>
                 </div>
 
                 <div class="m-hypervisor">
                     <div class="m-hyp-header">
-                        <span>SYSTEM HYPERVISOR</span>
+                        <span>⚙️ QUALITY RULES</span>
                         <i class="fas fa-microchip m-hyp-icon"></i>
                     </div>
                     
                     <p class="m-hyp-desc" style="margin-bottom:15px;">
-                        Ottimizza l'algoritmo di ricerca in base alle tue preferenze di visione.
+                        ⚡ Ottimizza risultati, lingua e filtri senza appesantire lo smartphone.
                     </p>
 
                     <div class="m-flux-control">
                         <div class="m-flux-grid">
                             <div class="m-flux-opt active-bal" id="sort-balanced" onclick="setSortMode('balanced')">
                                 <i class="fas fa-dragon"></i>
-                                <span>BALANCED</span>
+                                <span>🐉 SMART</span>
                             </div>
                             <div class="m-flux-opt" id="sort-resolution" onclick="setSortMode('resolution')">
                                 <i class="fas fa-gem"></i>
-                                <span>QUALITY</span>
+                                <span>💎 QUALITY</span>
                             </div>
                             <div class="m-flux-opt" id="sort-size" onclick="setSortMode('size')">
                                 <i class="fas fa-hdd"></i>
-                                <span>SIZE</span>
+                                <span>💾 SIZE</span>
                             </div>
                         </div>
                         
@@ -2146,22 +3026,22 @@ const mobileHTML = `
                     </div>
 
                     <div class="m-hyp-header" style="margin-top:25px; border-top:none; padding-top:0; margin-bottom:10px;">
-                         <span>AUDIO & LANGUAGE</span>
+                         <span>🗣️ AUDIO &amp; LANGUAGE</span>
                          <i class="fas fa-globe-americas m-hyp-icon"></i>
                     </div>
                     
                     <div class="m-lang-grid">
                         <div class="m-lang-opt active-ita" id="lang-ita" onclick="setLangMode('ita')">
                             <i class="fas fa-flag"></i>
-                            <span class="m-lang-txt">ITA ONLY</span>
+                            <span class="m-lang-txt">🇮🇹 ITA</span>
                         </div>
                         <div class="m-lang-opt" id="lang-all" onclick="setLangMode('all')">
                             <i class="fas fa-comments"></i>
-                            <span class="m-lang-txt">ITA + ENG</span>
+                            <span class="m-lang-txt">🇮🇹+🇬🇧</span>
                         </div>
                         <div class="m-lang-opt" id="lang-eng" onclick="setLangMode('eng')">
                             <i class="fas fa-flag-usa"></i>
-                            <span class="m-lang-txt">ENG ONLY</span>
+                            <span class="m-lang-txt">🇬🇧 ENG</span>
                         </div>
                     </div>
 
@@ -2171,27 +3051,23 @@ const mobileHTML = `
                         </p>
                     </div>
 
-                    <div class="m-hyp-label">Resolution Filter (Exclude)</div>
-                    <p class="m-hyp-desc">Tocca per escludere risoluzioni specifiche.</p>
+                    <div class="m-hyp-label">📺 Resolution Filter</div>
+                    <p class="m-hyp-desc">Tocca per escludere qualità specifiche.</p>
                     
                     <div class="m-chip-grid">
-                        <div class="m-qual-chip" id="mq-4k" onclick="toggleFilter('mq-4k')">4K UHD</div>
-                        <div class="m-qual-chip" id="mq-1080" onclick="toggleFilter('mq-1080')">1080p</div>
-                        <div class="m-qual-chip" id="mq-720" onclick="toggleFilter('mq-720')">720p <span class="mini-tag">HD</span></div>
-                        <div class="m-qual-chip" id="mq-sd" onclick="toggleFilter('mq-sd')">CAM/SD</div>
+                        <div class="m-qual-chip" id="mq-4k" onclick="toggleFilter('mq-4k')">💎 4K</div>
+                        <div class="m-qual-chip" id="mq-1080" onclick="toggleFilter('mq-1080')">🎬 1080p</div>
+                        <div class="m-qual-chip" id="mq-720" onclick="toggleFilter('mq-720')">📺 720p <span class="mini-tag">HD</span></div>
+                        <div class="m-qual-chip" id="mq-sd" onclick="toggleFilter('mq-sd')">📼 CAM/SD</div>
                     </div>
 
                     <div class="m-sys-grid">
                         <div class="m-sys-row">
-                            <div class="m-sys-info"><h4><i class="fas fa-layer-group" style="color:var(--m-accent)"></i> AIO Mode <span class="m-status-text" id="st-aio">OFF</span></h4><p>Formatta per AIOStreams</p></div>
+                            <div class="m-sys-info"><h4><i class="fas fa-layer-group" style="color:var(--m-accent)"></i> 🧩 AIO Mode <span class="m-status-text" id="st-aio">OFF</span></h4><p>Formatta per AIOStreams</p></div>
                             <label class="m-switch"><input type="checkbox" id="m-aioMode" onchange="updateStatus('m-aioMode','st-aio')"><span class="m-slider m-slider-purple"></span></label>
                         </div>
                         <div class="m-sys-row">
-                            <div class="m-sys-info"><h4><i class="fas fa-film" style="color:var(--m-cine)"></i> Trailer Mode <span class="m-status-text" id="st-trailer">OFF</span></h4><p>Cinema Experience</p></div>
-                            <label class="m-switch"><input type="checkbox" id="m-enableTrailers" onchange="updateStatus('m-enableTrailers','st-trailer')"><span class="m-slider m-slider-pink"></span></label>
-                        </div>
-                        <div class="m-sys-row">
-                            <div class="m-sys-info"><h4><i class="fas fa-cloud" style="color:var(--m-primary)"></i> Debrid Cloud <span class="m-status-text" id="st-savedcloud">OFF</span></h4><p>File salvati in RD/TorBox. Duplicati esclusi sempre.</p></div>
+                            <div class="m-sys-info"><h4><i class="fas fa-cloud" style="color:var(--m-primary)"></i> ☁️ Debrid Cloud <span class="m-status-text" id="st-savedcloud">OFF</span></h4><p>File salvati in RD/TorBox. Duplicati esclusi sempre.</p></div>
                             <label class="m-switch"><input type="checkbox" id="m-enableSavedCloud" onchange="toggleSavedCloud()"><span class="m-slider"></span></label>
                         </div>
                         <div class="m-cloud-mode-panel" id="m-savedCloudPanel">
@@ -2206,7 +3082,7 @@ const mobileHTML = `
 
                     <div class="m-row" style="border:none; padding: 5px 0;">
                         <div class="m-label">
-                            <h4><i class="fas fa-compress-arrows-alt" style="color:var(--m-error)"></i> Signal Gate <span class="m-status-text" id="st-gate">OFF</span></h4>
+                            <h4><i class="fas fa-compress-arrows-alt" style="color:var(--m-error)"></i> 🚦 Signal Gate <span class="m-status-text" id="st-gate">OFF</span></h4>
                             <p style="font-size:0.65rem; color:var(--m-error);">Filtro Qualita (Max risultati per ris.)</p>
                         </div>
                         <label class="m-switch"><input type="checkbox" id="m-gateActive" onchange="toggleGate()"><span class="m-slider"></span></label>
@@ -2222,7 +3098,7 @@ const mobileHTML = `
 
                     <div class="m-row" style="border:none; padding: 5px 0;">
                         <div class="m-label">
-                            <h4><i class="fas fa-weight-hanging" style="color:var(--m-amber)"></i> Size Limit <span class="m-status-text" id="st-size">OFF</span></h4>
+                            <h4><i class="fas fa-weight-hanging" style="color:var(--m-amber)"></i> ⚖️ Size Limit <span class="m-status-text" id="st-size">OFF</span></h4>
                             <p style="font-size:0.65rem; color:var(--m-amber);">Filtro Peso Massimo (GB)</p>
                         </div>
                         <label class="m-switch"><input type="checkbox" id="m-sizeActive" onchange="toggleSize()"><span class="m-slider m-slider-amber"></span></label>
@@ -2243,25 +3119,25 @@ const mobileHTML = `
 
                 <div class="m-section-head">
                     <div class="sh-titles">
-                        <span class="sh-title">Deep Bridge</span>
-                        <span class="sh-sub">MediaFlow proxy &amp; ghost</span>
+                        <span class="sh-title">🌉 Deep Bridge</span>
+                        <span class="sh-sub">Proxy, MFP e Debrid Ghost</span>
                     </div>
                     <span class="sh-tag violet">NET</span>
                 </div>
 
                 <div class="m-hypervisor">
                     <div class="m-hyp-header">
-                        <span>NETWORK BRIDGE</span>
+                        <span>🌉 NETWORK BRIDGE</span>
                         <i class="fas fa-network-wired m-hyp-icon" style="color:var(--m-secondary); border-color:rgba(112,0,255,0.35); background:rgba(112,0,255,0.08);"></i>
                     </div>
                     
                     <div style="padding:0 5px;">
                         <p style="font-size:0.8rem; color:var(--m-dim); margin-bottom:20px; line-height:1.4;">
-                            Proxy Server necessario per i moduli Italiani. Se attivo, il <b>Debrid Ghost</b> usera questo server per nascondere il tuo IP reale.
+                            🌊 Proxy Server per moduli italiani. Se attivo, <b>Debrid Ghost</b> può instradare il traffico dal bridge configurato.
                         </p>
 
                         <div class="m-field-group">
-                            <div class="m-field-header"><span class="m-field-label">SERVER URL</span></div>
+                            <div class="m-field-header"><span class="m-field-label">🌐 SERVER URL</span></div>
                             <div class="m-input-box">
                                 <i class="fas fa-server m-input-ico"></i>
                                 <input type="text" id="m-mfUrl" class="m-input-tech" placeholder="https://tuo-proxy.com" oninput="updateLinkModalContent()">
@@ -2270,7 +3146,7 @@ const mobileHTML = `
                         </div>
 
                         <div class="m-field-group">
-                            <div class="m-field-header"><span class="m-field-label">PASSWORD</span></div>
+                            <div class="m-field-header"><span class="m-field-label">🔒 PASSWORD</span></div>
                             <div class="m-input-box">
                                 <i class="fas fa-lock m-input-ico"></i>
                                 <input type="password" id="m-mfPass" class="m-input-tech" placeholder="********" oninput="updateLinkModalContent()">
@@ -2279,7 +3155,7 @@ const mobileHTML = `
 
                         <div class="m-ghost-panel" id="ghost-zone-box">
                             <div class="m-ghost-head">
-                                <div class="m-ghost-title"><i class="fas fa-user-shield"></i> DEBRID GHOST</div>
+                                <div class="m-ghost-title"><i class="fas fa-user-shield"></i> 👻 DEBRID GHOST</div>
                                 <div class="m-ghost-status" id="ghost-status-text">VISIBLE</div>
                             </div>
                             <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -2301,44 +3177,44 @@ const mobileHTML = `
     <div class="m-dock-container">
         <div class="m-dock-actions">
             <button class="m-btn-install" onclick="mobileInstall()">
-                <i class="fas fa-download"></i> INSTALLA
+                <span class="mf-btn-emoji">⚡</span><i class="fas fa-download"></i> INSTALLA
             </button>
             <button class="m-btn-copy" onclick="openLinkModal()">
-                <i class="fas fa-link"></i><span>COPIA</span>
+                <span class="mf-copy-emoji">📋</span><i class="fas fa-link"></i><span>COPIA</span>
             </button>
         </div>
         <div class="m-dock-nav">
             <div class="m-nav-item active" onclick="navTo('setup', this)">
-                <i class="fas fa-sliders-h"></i><span>SETUP</span>
+                <span class="mf-nav-emoji">🧩</span><i class="fas fa-sliders-h"></i><span>SETUP</span>
             </div>
             <div class="m-nav-item" onclick="navTo('filters', this)">
-                <i class="fas fa-filter"></i><span>FILTRI</span>
+                <span class="mf-nav-emoji">🎛️</span><i class="fas fa-filter"></i><span>FILTRI</span>
             </div>
             <div class="m-nav-item" onclick="navTo('network', this)">
-                <i class="fas fa-globe"></i><span>NET</span>
+                <span class="mf-nav-emoji">🌐</span><i class="fas fa-globe"></i><span>NET</span>
             </div>
         </div>
     </div>
     
     <div class="m-action-modal" id="m-link-modal">
         <div class="m-am-card">
-            <div class="m-am-title">LINK GENERATO</div>
-            <div class="m-am-subtitle">Scegli come procedere</div>
+            <div class="m-am-title">🔗 LINK GENERATO</div>
+            <div class="m-am-subtitle">Installa, copia o condividi in modo sicuro</div>
             
             <div class="m-flux-terminal">
                 <div class="m-flux-header">
-                    <span>FLUX DATA STREAM</span>
+                    <span>🌊 FLUX DATA STREAM</span>
                     <i class="fas fa-network-wired"></i>
                 </div>
                 <textarea id="m-generatedUrlBox" class="m-flux-input" readonly>/// WAITING FOR DATA ///</textarea>
             </div>
             
             <div class="m-act-btn m-act-copy" onclick="copyFromModal()">
-                <i class="fas fa-copy"></i> COPIA NEGLI APPUNTI
+                <i class="fas fa-copy"></i> 📋 COPIA NEGLI APPUNTI
             </div>
             
             <div class="m-act-btn m-act-close" onclick="closeLinkModal()">
-                CHIUDI
+                ✕ CHIUDI
             </div>
         </div>
     </div>
@@ -2366,26 +3242,26 @@ const mDebridValidationState = {
 
 const fluxData = {
     'balanced': {
-        title: "STANDARD MODE",
-        desc: "L'algoritmo standard di Leviathan. Bilancia qualita, popolarita del file e velocita.",
+        title: "🐉 SMART BALANCE",
+        desc: "Profilo intelligente: bilancia qualità, seed/cache e velocità.",
         icon: "fa-dragon"
     },
     'resolution': {
-        title: "VISUAL FIDELITY",
-        desc: "Gerarchia visiva rigida. I risultati 4K UHD appariranno sempre in cima alla lista.",
+        title: "💎 QUALITY FIRST",
+        desc: "4K e 1080p sopra: priorità alla qualità visiva.",
         icon: "fa-gem"
     },
     'size': {
-        title: "DATA HEAVY",
-        desc: "Ordina per dimensione del file. Ideale per chi cerca il massimo bitrate possibile.",
+        title: "💾 BITRATE HEAVY",
+        desc: "Ordina per peso/file: utile per massimo bitrate.",
         icon: "fa-hdd"
     }
 };
 
 const langDescriptions = {
-    'ita': "Solo contenuti in Italiano. Ignora tutto il resto.",
-    'all': "Cerca prima in Italiano. Se non trova nulla, mostra i risultati in Inglese.",
-    'eng': "Solo contenuti in Inglese."
+    'ita': "🇮🇹 Solo contenuti in Italiano. Ignora tutto il resto.",
+    'all': "🇮🇹 Prima Italiano, poi 🇬🇧 Inglese se serve.",
+    'eng': "🇬🇧 Solo contenuti in Inglese."
 };
 
 function toStylized(text, type = 'std') {
@@ -2889,7 +3765,8 @@ function createOceanParticles() {
     const container = document.getElementById('m-ocean-particles');
     if(!container) return;
     const isLowFx = document.body.classList.contains('m-lowfx');
-    const count = isLowFx ? 0 : 16;
+    const liteFx = document.body.classList.contains('m-mf-lite');
+    const count = isLowFx ? 0 : (liteFx ? 6 : 10);
     container.innerHTML = '';
     for(let i = 0; i < count; i++) {
         const p = document.createElement('div');
@@ -2898,7 +3775,7 @@ function createOceanParticles() {
         p.style.width = `${size}px`;
         p.style.height = `${size}px`;
         p.style.left = `${Math.random() * 100}%`;
-        p.style.animationDuration = `${Math.random() * 14 + 14}s`;
+        p.style.animationDuration = `${Math.random() * 18 + 22}s`;
         p.style.animationDelay = `-${Math.random() * 18}s`;
         const drift = (Math.random() * 24 - 12).toFixed(1);
         p.style.setProperty('--drift', `${drift}px`);
@@ -2915,75 +3792,49 @@ function createOceanParticles() {
 }
 
 function createSeaCanvas() {
-    const lowFx = document.body.classList.contains('m-lowfx');
+    if (document.getElementById('m-sea-canvas')) return;
 
     const canvas = document.createElement('canvas');
     canvas.id = 'm-sea-canvas';
     document.body.appendChild(canvas);
 
     const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
-    const dpr = Math.min(window.devicePixelRatio || 1, lowFx ? 1.05 : 1.45);
+    if (!ctx) return;
 
-    let W = 0, H = 0, animId = null, lastTs = 0;
+    let W = 0;
+    let H = 0;
+    let dpr = 1;
+    let animId = 0;
+    let lastTs = 0;
+    let t = 0;
+
+    const isLow = () => document.body.classList.contains('m-lowfx');
+    const shouldPause = () => document.hidden || document.body.classList.contains('m-typing') || document.body.classList.contains('m-keyboard-open');
 
     function resize() {
-        W = window.innerWidth;
-        H = Math.round(window.innerHeight * (lowFx ? 0.34 : 0.44));
-        canvas.style.height = H + 'px';
-        canvas.width = Math.round(W * dpr);
-        canvas.height = Math.round(H * dpr);
+        const lowFx = isLow();
+        W = Math.max(1, window.innerWidth || 390);
+        H = Math.round(Math.max(180, Math.min((window.innerHeight || 720) * (lowFx ? 0.28 : 0.34), 310)));
+        dpr = Math.min(window.devicePixelRatio || 1, lowFx ? 1 : MOBILE_PERF.maxDpr);
+
+        canvas.style.height = `${H}px`;
+        const nextW = Math.round(W * dpr);
+        const nextH = Math.round(H * dpr);
+        if (canvas.width !== nextW) canvas.width = nextW;
+        if (canvas.height !== nextH) canvas.height = nextH;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
-    const layers = lowFx
-        ? [
-            { yR: 0.78, amp: 10, f: 0.0054, spd: 0.18, ph: 0.0,  fill: 'rgba(0,12,32,0.96)',   crest: null,                    glow: null },
-            { yR: 0.66, amp: 8,  f: 0.0078, spd: 0.29, ph: 1.4,  fill: 'rgba(0,34,78,0.62)',   crest: 'rgba(74,210,255,0.14)',  glow: 'rgba(0,150,225,0.05)' },
-            { yR: 0.55, amp: 6,  f: 0.0108, spd: 0.42, ph: 3.1,  fill: 'rgba(8,74,142,0.28)',  crest: 'rgba(136,230,255,0.24)', glow: 'rgba(0,198,255,0.06)' },
-            { yR: 0.46, amp: 4,  f: 0.0148, spd: 0.56, ph: 4.9,  fill: 'rgba(40,118,208,0.08)', crest: 'rgba(206,122,255,0.12)', glow: 'rgba(140,76,255,0.035)' },
-        ]
-        : [
-            { yR: 0.84, amp: 18, f: 0.0048, spd: 0.16, ph: 0.0,  fill: 'rgba(0,10,26,0.98)',   crest: null,                    glow: null },
-            { yR: 0.75, amp: 16, f: 0.0058, spd: 0.22, ph: 0.8,  fill: 'rgba(0,18,45,0.94)',   crest: null,                    glow: null },
-            { yR: 0.66, amp: 14, f: 0.0068, spd: 0.30, ph: 1.7,  fill: 'rgba(0,36,84,0.82)',   crest: 'rgba(45,180,240,0.09)',  glow: 'rgba(0,128,210,0.05)' },
-            { yR: 0.57, amp: 11, f: 0.0083, spd: 0.40, ph: 2.8,  fill: 'rgba(0,66,128,0.58)',  crest: 'rgba(72,205,250,0.14)',  glow: 'rgba(0,158,235,0.07)' },
-            { yR: 0.49, amp: 8,  f: 0.0108, spd: 0.54, ph: 4.2,  fill: 'rgba(0,112,176,0.30)', crest: 'rgba(102,226,255,0.22)', glow: 'rgba(0,192,255,0.08)' },
-            { yR: 0.42, amp: 6,  f: 0.0145, spd: 0.72, ph: 5.9,  fill: 'rgba(32,128,208,0.11)', crest: 'rgba(178,245,255,0.34)', glow: 'rgba(0,220,255,0.05)' },
-            { yR: 0.37, amp: 4,  f: 0.0185, spd: 0.95, ph: 6.7,  fill: 'rgba(92,40,170,0.06)',  crest: 'rgba(198,120,255,0.16)', glow: 'rgba(132,48,255,0.040)' },
-        ];
-
-    function waveY(layer, x, t) {
-        const base = H * layer.yR;
-        const swell = Math.sin(x * layer.f + t * layer.spd + layer.ph) * layer.amp;
-        const chop = Math.sin(x * layer.f * 1.75 + t * layer.spd * 0.72 + layer.ph * 1.14) * layer.amp * 0.34;
-        const ripple = lowFx ? 0 : Math.sin(x * layer.f * 3.1 + t * layer.spd * 1.22 + layer.ph * 0.58) * layer.amp * 0.12;
-        return base + swell + chop + ripple;
+    function wave(x, y, amp, freq, speed, phase) {
+        return y + Math.sin((x * freq) + (t * speed) + phase) * amp + Math.sin((x * freq * 1.72) + (t * speed * 0.55) + phase) * amp * 0.28;
     }
 
-    function drawGlow(layer, t) {
-        if (!layer.glow) return;
-        const step = lowFx ? 10 : 7;
+    function drawLayer(layer) {
+        const step = layer.step;
         ctx.beginPath();
-        let started = false;
         for (let x = 0; x <= W + step; x += step) {
-            const y = waveY(layer, x, t) - (lowFx ? 1 : 2);
-            if (!started) { ctx.moveTo(x, y); started = true; }
-            else ctx.lineTo(x, y);
-        }
-        ctx.strokeStyle = layer.glow;
-        ctx.lineWidth = lowFx ? 8 : 14;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.stroke();
-    }
-
-    function drawLayer(layer, t) {
-        const step = lowFx ? 7 : 5;
-        ctx.beginPath();
-        let started = false;
-        for (let x = 0; x <= W + step; x += step) {
-            const y = waveY(layer, x, t);
-            if (!started) { ctx.moveTo(x, y); started = true; }
+            const y = wave(x, H * layer.y, layer.amp, layer.freq, layer.speed, layer.phase);
+            if (x === 0) ctx.moveTo(x, y);
             else ctx.lineTo(x, y);
         }
         ctx.lineTo(W, H);
@@ -2992,125 +3843,163 @@ function createSeaCanvas() {
         ctx.fillStyle = layer.fill;
         ctx.fill();
 
-        if (layer.crest) {
+        if (layer.stroke) {
             ctx.beginPath();
-            started = false;
             for (let x = 0; x <= W + step; x += step) {
-                const y = waveY(layer, x, t);
-                if (!started) { ctx.moveTo(x, y); started = true; }
-                else ctx.lineTo(x, y);
-            }
-            ctx.strokeStyle = layer.crest;
-            ctx.lineWidth = lowFx ? 1.05 : 1.35;
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-            ctx.stroke();
-        }
-    }
-
-    function drawWaterLight(t) {
-        const horizonY = H * (lowFx ? 0.34 : 0.30);
-        const grad = ctx.createLinearGradient(0, 0, 0, H);
-        grad.addColorStop(0, 'rgba(0,0,0,0)');
-        grad.addColorStop(horizonY / H, lowFx ? 'rgba(0,150,210,0.025)' : 'rgba(0,170,225,0.035)');
-        grad.addColorStop(0.62, 'rgba(0,18,42,0.10)');
-        grad.addColorStop(1, 'rgba(0,5,14,0.88)');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, W, H);
-
-        const sheen = ctx.createLinearGradient(0, horizonY * 0.88, 0, H * 0.96);
-        sheen.addColorStop(0, 'rgba(80,220,255,0.00)');
-        sheen.addColorStop(0.12, lowFx ? 'rgba(80,220,255,0.02)' : 'rgba(110,235,255,0.03)');
-        sheen.addColorStop(1, 'rgba(0,0,0,0.00)');
-        ctx.fillStyle = sheen;
-        ctx.fillRect(0, horizonY * 0.65, W, H * 0.35);
-    }
-
-
-    function drawLeviathanAura(t) {
-        const y = H * (lowFx ? 0.40 : 0.34);
-        const cyan = ctx.createLinearGradient(0, y, 0, H);
-        cyan.addColorStop(0, 'rgba(0,242,255,0.00)');
-        cyan.addColorStop(0.16, lowFx ? 'rgba(0,242,255,0.018)' : 'rgba(0,242,255,0.026)');
-        cyan.addColorStop(0.52, 'rgba(0,140,255,0.028)');
-        cyan.addColorStop(1, 'rgba(0,0,0,0.00)');
-        ctx.fillStyle = cyan;
-        ctx.fillRect(0, y, W, H - y);
-
-        if (!lowFx) {
-            const violet = ctx.createRadialGradient(W * 0.68, H * 0.78, 0, W * 0.68, H * 0.78, W * 0.34);
-            violet.addColorStop(0, 'rgba(124,42,255,0.072)');
-            violet.addColorStop(0.32, 'rgba(124,42,255,0.034)');
-            violet.addColorStop(1, 'rgba(124,42,255,0.0)');
-            ctx.fillStyle = violet;
-            ctx.fillRect(0, 0, W, H);
-
-            const edge = ctx.createLinearGradient(0, H * 0.34, 0, H * 0.55);
-            edge.addColorStop(0, 'rgba(0,242,255,0.00)');
-            edge.addColorStop(0.45, 'rgba(0,242,255,0.045)');
-            edge.addColorStop(0.72, 'rgba(124,42,255,0.022)');
-            edge.addColorStop(1, 'rgba(0,0,0,0.00)');
-            ctx.fillStyle = edge;
-            ctx.fillRect(0, H * 0.30, W, H * 0.28);
-        }
-    }
-
-    function drawFoam(t) {
-        const topLayer = layers[layers.length - 1];
-
-        ctx.beginPath();
-        for (let x = 0; x <= W + 12; x += 12) {
-            const y = waveY(topLayer, x, t) - 0.8;
-            if (x === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-        }
-        ctx.strokeStyle = lowFx ? 'rgba(196,246,255,0.28)' : 'rgba(220,248,255,0.36)';
-        ctx.lineWidth = lowFx ? 1.1 : 1.55;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.stroke();
-
-        if (!lowFx) {
-            ctx.beginPath();
-            for (let x = 0; x <= W + 16; x += 16) {
-                const y = waveY(topLayer, x, t) + 2.6 + Math.sin(x * 0.035 + t * 1.8) * 0.8;
+                const y = wave(x, H * layer.y, layer.amp, layer.freq, layer.speed, layer.phase) - 0.5;
                 if (x === 0) ctx.moveTo(x, y);
                 else ctx.lineTo(x, y);
             }
-            ctx.strokeStyle = 'rgba(116,230,255,0.10)';
-            ctx.lineWidth = 3.2;
+            ctx.strokeStyle = layer.stroke;
+            ctx.lineWidth = layer.lineWidth;
+            ctx.lineCap = 'round';
             ctx.stroke();
-
-            for (let x = 0; x < W; x += 22) {
-                const y = waveY(topLayer, x, t);
-                const alpha = 0.03 + Math.abs(Math.sin(x * 0.04 + t * 0.92)) * 0.05;
-                const r = 1.1 + ((x / 11) % 2) * 0.6;
-                ctx.beginPath();
-                ctx.arc(x + Math.sin(t * 0.55 + x * 0.12) * 1.8, y - 0.5, r, 0, Math.PI * 2);
-                ctx.fillStyle = `rgba(220,248,255,${alpha.toFixed(3)})`;
-                ctx.fill();
-            }
         }
     }
 
-    let t = 0;
-    function frame(ts) {
-        animId = requestAnimationFrame(frame);
-        if (ts - lastTs < (lowFx ? 48 : 32)) return;
-        lastTs = ts;
-        t += lowFx ? 0.010 : 0.014;
+    function drawFrame(ts) {
+        animId = requestAnimationFrame(drawFrame);
 
+        const lowFx = isLow();
+        const frameBudget = 1000 / (lowFx ? MOBILE_PERF.lowFxFps : MOBILE_PERF.targetFps);
+        if (ts - lastTs < frameBudget) return;
+        lastTs = ts;
+
+        if (shouldPause()) return;
+        t += lowFx ? 0.010 : 0.014;
         ctx.clearRect(0, 0, W, H);
-        drawWaterLight(t);
-        drawLeviathanAura(t);
-        layers.forEach(layer => drawGlow(layer, t));
-        layers.forEach(layer => drawLayer(layer, t));
-        drawFoam(t);
+
+        const bg = ctx.createLinearGradient(0, 0, 0, H);
+        bg.addColorStop(0, 'rgba(0, 20, 42, 0.00)');
+        bg.addColorStop(0.34, 'rgba(0, 82, 130, 0.08)');
+        bg.addColorStop(1, 'rgba(0, 4, 12, 0.88)');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+
+        const layers = lowFx ? [
+            { y: 0.68, amp: 8, freq: 0.0068, speed: 0.24, phase: 0.2, step: 11, fill: 'rgba(0, 20, 52, 0.90)', stroke: null, lineWidth: 1 },
+            { y: 0.55, amp: 6, freq: 0.0105, speed: 0.36, phase: 1.6, step: 10, fill: 'rgba(0, 88, 150, 0.22)', stroke: 'rgba(135, 230, 255, 0.18)', lineWidth: 1.1 },
+            { y: 0.46, amp: 4, freq: 0.0150, speed: 0.44, phase: 3.2, step: 10, fill: 'rgba(124, 58, 237, 0.055)', stroke: 'rgba(0, 242, 255, 0.20)', lineWidth: 1.0 }
+        ] : [
+            { y: 0.76, amp: 14, freq: 0.0052, speed: 0.18, phase: 0.0, step: 8, fill: 'rgba(0, 12, 34, 0.94)', stroke: null, lineWidth: 1 },
+            { y: 0.65, amp: 11, freq: 0.0078, speed: 0.28, phase: 1.2, step: 8, fill: 'rgba(0, 42, 92, 0.66)', stroke: 'rgba(80, 206, 255, 0.11)', lineWidth: 1.0 },
+            { y: 0.54, amp: 8, freq: 0.0108, speed: 0.41, phase: 2.8, step: 7, fill: 'rgba(0, 110, 176, 0.26)', stroke: 'rgba(124, 230, 255, 0.20)', lineWidth: 1.15 },
+            { y: 0.45, amp: 5, freq: 0.0162, speed: 0.58, phase: 4.7, step: 8, fill: 'rgba(124, 58, 237, 0.065)', stroke: 'rgba(205, 145, 255, 0.14)', lineWidth: 1.0 }
+        ];
+
+        layers.forEach(drawLayer);
+
+        const shine = ctx.createLinearGradient(0, H * 0.28, 0, H * 0.62);
+        shine.addColorStop(0, 'rgba(0, 242, 255, 0.00)');
+        shine.addColorStop(0.44, lowFx ? 'rgba(0, 242, 255, 0.025)' : 'rgba(0, 242, 255, 0.040)');
+        shine.addColorStop(1, 'rgba(0, 242, 255, 0.00)');
+        ctx.fillStyle = shine;
+        ctx.fillRect(0, H * 0.24, W, H * 0.45);
     }
 
     resize();
-    window.addEventListener('resize', resize, { passive: true });
-    animId = requestAnimationFrame(frame);
+    window.addEventListener('resize', () => requestAnimationFrame(resize), { passive: true });
+    window.addEventListener('orientationchange', () => setTimeout(resize, 180), { passive: true });
+    document.addEventListener('visibilitychange', () => { lastTs = 0; }, { passive: true });
+    animId = requestAnimationFrame(drawFrame);
+}
+
+
+function initMobileViewportGuard() {
+    const root = document.documentElement;
+    const vv = window.visualViewport;
+
+    const isTextField = (el = document.activeElement) => !!el?.matches?.('input, textarea, [contenteditable="true"]');
+
+    const clearKeyboardStateIfNeeded = () => {
+        if (isTextField()) return;
+        document.body.classList.remove('m-keyboard-open', 'm-typing', 'm-input-active');
+    };
+
+    const apply = () => {
+        MOBILE_PERF.viewportRaf = 0;
+        const viewportHeight = vv ? vv.height : window.innerHeight;
+        const layoutHeight = Math.max(window.innerHeight || viewportHeight, viewportHeight);
+        const focusedText = isTextField();
+        const heightLoss = Math.max(0, layoutHeight - viewportHeight);
+        const strongKeyboardDelta = Math.max(MOBILE_PERF.keyboardDeltaPx || 140, Math.round(layoutHeight * 0.18));
+        const keyboardLikelyOpen = focusedText && (!!vv ? heightLoss > strongKeyboardDelta : true);
+
+        root.style.setProperty('--m-vvh', `${Math.max(320, Math.round(viewportHeight))}px`);
+        document.body.classList.toggle('m-input-active', focusedText);
+        document.body.classList.toggle('m-keyboard-open', keyboardLikelyOpen);
+        if (!focusedText) document.body.classList.remove('m-typing');
+    };
+
+    const schedule = () => {
+        if (MOBILE_PERF.viewportRaf) return;
+        MOBILE_PERF.viewportRaf = requestAnimationFrame(apply);
+    };
+
+    schedule();
+    window.addEventListener('resize', schedule, { passive: true });
+    window.addEventListener('orientationchange', () => setTimeout(schedule, 180), { passive: true });
+    if (vv) {
+        vv.addEventListener('resize', schedule, { passive: true });
+        vv.addEventListener('scroll', schedule, { passive: true });
+    }
+
+    document.addEventListener('focusin', (event) => {
+        if (!event.target?.matches?.('input, textarea, [contenteditable="true"]')) return;
+        document.body.classList.add('m-input-active', 'm-typing');
+        schedule();
+    }, { passive: true });
+
+    document.addEventListener('focusout', (event) => {
+        if (!event.target?.matches?.('input, textarea, [contenteditable="true"]')) return;
+        window.setTimeout(() => {
+            document.body.classList.remove('m-input-active', 'm-keyboard-open', 'm-typing');
+            schedule();
+        }, 160);
+    }, { passive: true });
+
+    document.addEventListener('pointerdown', (event) => {
+        if (event.target?.closest?.('input, textarea, [contenteditable="true"]')) return;
+        window.setTimeout(clearKeyboardStateIfNeeded, 60);
+    }, { passive: true });
+
+    document.addEventListener('click', (event) => {
+        if (event.target?.closest?.('input, textarea, [contenteditable="true"]')) return;
+        clearKeyboardStateIfNeeded();
+        schedule();
+    }, { passive: true });
+}
+
+function installMobileInputPerformanceGuard() {
+    const markTyping = () => {
+        document.body.classList.add('m-typing');
+        clearTimeout(MOBILE_PERF.inputIdleTimer);
+        MOBILE_PERF.inputIdleTimer = setTimeout(() => {
+            if (!document.activeElement?.matches?.('input, textarea')) {
+                document.body.classList.remove('m-typing');
+            }
+        }, MOBILE_PERF.inputIdleMs);
+    };
+
+    document.addEventListener('input', (event) => {
+        if (!event.target?.matches?.('input, textarea')) return;
+        markTyping();
+    }, { passive: true });
+
+    document.addEventListener('touchstart', (event) => {
+        const action = event.target?.closest?.('.m-if-action, .m-paste-action, .m-get-link, .m-nav-item, .m-btn-install, .m-btn-copy, .m-act-btn');
+        if (!action) return;
+        action.classList.add('is-touching');
+        setTimeout(() => action.classList.remove('is-touching'), 160);
+    }, { passive: true });
+}
+
+function scheduleMobileAfterPaint(fn) {
+    if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(fn, { timeout: 900 });
+    } else {
+        setTimeout(fn, 80);
+    }
 }
 
 function initMobileInterface() {
@@ -3123,13 +4012,18 @@ function initMobileInterface() {
 
     document.body.innerHTML = mobileHTML;
     applyMobilePerformanceMode();
+    initMobileViewportGuard();
+    installMobileInputPerformanceGuard();
     hydrateMobileLogo();
-    createLogoParticles();
-    createOceanParticles();
-    createSeaCanvas();
     initPullToRefresh();
     loadMobileConfig();
     updateMobilePreview();
+
+    scheduleMobileAfterPaint(() => {
+        createLogoParticles();
+        createOceanParticles();
+        createSeaCanvas();
+    });
 }
 
 function initPullToRefresh() {
@@ -3636,26 +4530,31 @@ function toggleFilter(id) {
 
 async function pasteTo(id) {
     const input = document.getElementById(id);
-    if (input.disabled) return;
+    if (!input || input.disabled) return;
+
     try {
         const text = await navigator.clipboard.readText();
         input.value = text;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+
         if(id === 'm-apiKey') scheduleMobileDebridValidation({ force: true });
         updateLinkModalContent();
-        
-        // Find button relative to input wrapper now
-        let btn = null;
-        const wrapper = input.closest('.m-if-inner') || input.parentElement;
-        if(wrapper) btn = wrapper.querySelector('.m-if-action .fa-paste')?.parentElement;
-        if(!btn) btn = wrapper.querySelector('.m-paste-action'); // fallback
 
+        const wrapper = input.closest('.m-if-inner') || input.closest('.m-input-box') || input.parentElement;
+        let btn = wrapper?.querySelector?.('.m-if-action') || wrapper?.querySelector?.('.m-paste-action');
         if(btn) {
             const originalHTML = btn.innerHTML;
             btn.innerHTML = '<i class="fas fa-check"></i>';
-            setTimeout(() => btn.innerHTML = originalHTML, 1500);
+            setTimeout(() => { btn.innerHTML = originalHTML; }, 900);
         }
-        showToast("INCOLLATO CON SUCCESSO", "success");
-    } catch (err) { alert("Impossibile accedere agli appunti. Incolla manualmente."); }
+
+        input.focus({ preventScroll: true });
+        showToast("INCOLLATO", "success");
+    } catch (err) {
+        const input = document.getElementById(id);
+        if (input) input.focus({ preventScroll: false });
+        showToast("APPUNTI BLOCCATI: INCOLLA MANUALMENTE", "warning");
+    }
 }
 
 
@@ -3817,8 +4716,6 @@ async function loadMobileConfig() {
                     setLangMode(config.filters.allowEng ? 'all' : 'ita');
                 }
 
-                document.getElementById('m-enableTrailers').checked = config.filters.enableTrailers || false;
-
                 document.getElementById('m-enableSavedCloud').checked = config.filters.enableSavedCloud || false;
                 setSavedCloudMode(config.filters.savedCloudMode || 'smart');
                 toggleSavedCloud();
@@ -3864,7 +4761,6 @@ async function loadMobileConfig() {
             updateStatus('m-enableGf', 'st-gf');
             updateStatus('m-enableCc', 'st-cc');
             updateStatus('m-aioMode', 'st-aio');
-            updateStatus('m-enableTrailers', 'st-trailer');
             toggleSavedCloud();
             updateGhostVisuals();
             toggleScOptions();
@@ -3932,7 +4828,7 @@ function getMobileConfig() {
             enableAnimeSaturn: document.getElementById('m-enableAnimeSaturn').checked,
             enableGf: document.getElementById('m-enableGf').checked,
             enableCc: document.getElementById('m-enableCc').checked,
-            enableTrailers: document.getElementById('m-enableTrailers').checked,
+            enableTrailers: false,
             enableSavedCloud: savedCloudEnabled,
             savedCloudMode: savedCloudEnabled ? mSavedCloudMode : 'off',
             savedCloudMax: 6,
