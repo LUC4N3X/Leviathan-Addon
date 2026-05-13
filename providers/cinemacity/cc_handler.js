@@ -2560,27 +2560,12 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
         };
 
         let searchResult = null;
-
-        // Fast exact path: CinemaCity search by IMDb/numeric id is the safest locator when
-        // the request carries an IMDb id. Keep this before broad title/listing fallbacks so
-        // slow/empty listing pages cannot waste budget or accidentally bias the resolver.
-        if (resolved.imdbId) {
+        searchResult = await searchByTitleFallback(
+            resolved.tmdbId || resolved.imdbId || originalId,
+            resolved.providerType, meta, titleFallbackOptions
+        );
+        if (!searchResult?.url && resolved.imdbId) {
             searchResult = await searchByImdb(resolved.imdbId);
-            if (searchResult?.url) {
-                logCinemaCityDebug('locator hit imdb search first', {
-                    providerType: resolved.providerType,
-                    imdbId: resolved.imdbId,
-                    url: searchResult.url,
-                    title: searchResult.title
-                });
-            }
-        }
-
-        if (!searchResult?.url) {
-            searchResult = await searchByTitleFallback(
-                resolved.tmdbId || resolved.imdbId || originalId,
-                resolved.providerType, meta, titleFallbackOptions
-            );
         }
         if (!searchResult?.url) {
             const diagnosticTitles = uniqueStrings([
