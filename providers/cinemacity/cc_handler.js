@@ -58,13 +58,43 @@ const QUALITY_PROBE_CACHE_TTL_MS = 20 * 60 * 1000;
 const FAST_PLAYBACK_MODE = String(process.env.CINEMACITY_FAST_PLAYBACK || '1') !== '0';
 const QUALITY_PROBE_FAST_TIMEOUT_MS = Math.max(650, Math.min(6000, Number.parseInt(process.env.CINEMACITY_QUALITY_PROBE_TIMEOUT_MS || '1400', 10) || 1400));
 const QUALITY_PROBE_FULL_TIMEOUT_MS = Math.max(1500, Math.min(8000, Number.parseInt(process.env.CINEMACITY_QUALITY_PROBE_FULL_TIMEOUT_MS || '6000', 10) || 6000));
+function envFlag(name, fallback = false) {
+    const raw = process.env[name];
+    if (raw == null || raw === '') return fallback;
+    return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+}
+const CINEMACITY_USE_RUST_SHIELD = envFlag('CINEMACITY_RUST_SHIELD', false);
+const CINEMACITY_USE_CF_FALLBACK = envFlag('CINEMACITY_CF_FALLBACK', false);
+const CINEMACITY_SEARCH_WARMUP = envFlag('CINEMACITY_SEARCH_WARMUP', false);
+const CINEMACITY_SITEMAP_TIMEOUT_MS = Math.max(900, Math.min(3500, Number.parseInt(process.env.CINEMACITY_SITEMAP_TIMEOUT_MS || '1400', 10) || 1400));
+const CINEMACITY_SITEMAP_TOTAL_MS = Math.max(CINEMACITY_SITEMAP_TIMEOUT_MS + 250, Math.min(4500, Number.parseInt(process.env.CINEMACITY_SITEMAP_TOTAL_MS || '2300', 10) || 2300));
+const CINEMACITY_SEARCH_GET_TIMEOUT_MS = Math.max(1200, Math.min(5000, Number.parseInt(process.env.CINEMACITY_SEARCH_GET_TIMEOUT_MS || '2400', 10) || 2400));
+const CINEMACITY_SEARCH_GET_TOTAL_MS = Math.max(CINEMACITY_SEARCH_GET_TIMEOUT_MS + 500, Math.min(6500, Number.parseInt(process.env.CINEMACITY_SEARCH_GET_TOTAL_MS || '3800', 10) || 3800));
+const CINEMACITY_SEARCH_POST_TIMEOUT_MS = Math.max(1200, Math.min(5000, Number.parseInt(process.env.CINEMACITY_SEARCH_POST_TIMEOUT_MS || '2600', 10) || 2600));
+const CINEMACITY_SEARCH_POST_TOTAL_MS = Math.max(CINEMACITY_SEARCH_POST_TIMEOUT_MS + 600, Math.min(7000, Number.parseInt(process.env.CINEMACITY_SEARCH_POST_TOTAL_MS || '4300', 10) || 4300));
+const CINEMACITY_QUICK_TITLE_SEARCH = envFlag('CINEMACITY_QUICK_TITLE_SEARCH', false);
+const CINEMACITY_QUICK_TITLE_QUERIES = Math.max(1, Math.min(6, Number.parseInt(process.env.CINEMACITY_QUICK_TITLE_QUERIES || '3', 10) || 3));
+const CINEMACITY_AXIOS_ON_BLOCKED = envFlag('CINEMACITY_AXIOS_ON_BLOCKED', true);
+const CINEMACITY_LISTING_SCAN = envFlag('CINEMACITY_LISTING_SCAN', true);
+const CINEMACITY_LISTING_MAX_PAGES = Math.max(4, Math.min(80, Number.parseInt(process.env.CINEMACITY_LISTING_MAX_PAGES || '55', 10) || 55));
+const CINEMACITY_LISTING_CONCURRENCY = Math.max(1, Math.min(8, Number.parseInt(process.env.CINEMACITY_LISTING_CONCURRENCY || '3', 10) || 3));
+const CINEMACITY_LISTING_TIMEOUT_MS = Math.max(900, Math.min(4500, Number.parseInt(process.env.CINEMACITY_LISTING_TIMEOUT_MS || '2200', 10) || 2200));
+const CINEMACITY_LISTING_TOTAL_MS = Math.max(CINEMACITY_LISTING_TIMEOUT_MS + 900, Math.min(9000, Number.parseInt(process.env.CINEMACITY_LISTING_TOTAL_MS || '6500', 10) || 6500));
+const CINEMACITY_LISTING_CACHE_TTL_MS = Math.max(5 * 60 * 1000, Math.min(4 * 60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_LISTING_CACHE_TTL_MS || String(45 * 60 * 1000), 10) || (45 * 60 * 1000)));
+const CINEMACITY_LISTING_PAGE_CACHE_TTL_MS = Math.max(2 * 60 * 1000, Math.min(60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_LISTING_PAGE_CACHE_TTL_MS || String(20 * 60 * 1000), 10) || (20 * 60 * 1000)));
+const CINEMACITY_DEBUG = envFlag('CINEMACITY_DEBUG', false) || envFlag('DEBUG_CINEMACITY', false);
 const MAPPING_API_BASE = 'https://anime.questoleviatanormio.dpdns.org';
 const NEWS_SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
 const providerShield = createBlockedFallbackGuard({
     providerName: 'cinemacity',
     envPrefix: 'CINEMACITY',
     baseUrl: BASE_URL,
-    logPrefix: 'CC-SHIELD'
+    logPrefix: 'CC-SHIELD',
+    enabled: CINEMACITY_USE_CF_FALLBACK,
+    // main_30 compatibility: CinemaCity works better through its own ImpIt/Axios path.
+    // Rust Shield stays enabled for the rest of Leviathan, but is opt-in for CinemaCity.
+    useRustShield: CINEMACITY_USE_RUST_SHIELD,
+    useRustShieldForSession: CINEMACITY_USE_RUST_SHIELD
 });
 let lastProviderBlockedFetch = null;
 function markProviderBlockedFetch(url, reason) {
@@ -72,6 +102,14 @@ function markProviderBlockedFetch(url, reason) {
 }
 function wasProviderBlockedFetch(url) {
     return Boolean(lastProviderBlockedFetch && lastProviderBlockedFetch.url === String(url || '') && Date.now() - lastProviderBlockedFetch.at < 15000);
+}
+function logCinemaCityDebug(message, data = {}) {
+    if (!CINEMACITY_DEBUG) return;
+    try {
+        console.log(`[CinemaCity:debug] ${message}`, JSON.stringify(data));
+    } catch (_) {
+        console.log(`[CinemaCity:debug] ${message}`);
+    }
 }
 const NEWS_SITEMAP_TTL_MS = 30 * 60 * 1000;
 const NEGATIVE_CACHE_TTL_MS = 30 * 1000;
@@ -183,6 +221,18 @@ const fetchFailureCache = new TtlLruCache({
     max: 2000
 });
 
+const listingPageCache = new TtlLruCache({
+    missingValue: null,
+    ttlMs: CINEMACITY_LISTING_PAGE_CACHE_TTL_MS,
+    max: 220
+});
+
+const listingScanCache = new TtlLruCache({
+    missingValue: null,
+    ttlMs: CINEMACITY_LISTING_CACHE_TTL_MS,
+    max: 24
+});
+
 const impitWarmupCache = new TtlLruCache({
     missingValue: null,
     ttlMs: IMPIT_WARMUP_TTL_MS,
@@ -292,7 +342,42 @@ async function fetchHtmlWithAxios(url, extraHeaders = {}, requestTimeout = FETCH
 }
 
 
-async function fetchHtmlPostWithImpit(url, formBody, extraHeaders = {}) {
+
+async function fetchHtmlPostWithAxios(url, formBody, extraHeaders = {}, requestTimeout = CINEMACITY_SEARCH_POST_TIMEOUT_MS) {
+    const { headers: mergedHeaders } = buildCinemaCityRequestHeaders(url, 'ajax', {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Origin': BASE_URL,
+        'Referer': `${BASE_URL}/`,
+        ...extraHeaders
+    }, getCinemaCitySessionCookie());
+
+    try {
+        const response = await httpClient.post(url, formBody, {
+            headers: mergedHeaders,
+            responseType: 'text',
+            timeout: requestTimeout
+        });
+        const status = Number(response?.status || 0);
+        const body = responseText(response?.data);
+        updateCookiesFromResponse(url, response.headers);
+
+        if (isCloudflareChallenge(body, status)) {
+            markProviderBlockedFetch(url, 'cloudflare-post-axios');
+            return null;
+        }
+        if ([403, 429, 503].includes(status)) {
+            markProviderBlockedFetch(url, `http_${status}_post_axios`);
+            return null;
+        }
+        if (status >= 200 && status < 400) return body;
+        return null;
+    } catch (error) {
+        if (providerShield.shouldUseShield({ url, error })) markProviderBlockedFetch(url, error?.code || error?.message || 'post-axios-network');
+        return null;
+    }
+}
+
+async function fetchHtmlPostWithImpit(url, formBody, extraHeaders = {}, options = {}) {
     const { fp, headers: baseHeaders } = buildCinemaCityRequestHeaders(url, 'ajax', {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Origin': BASE_URL,
@@ -307,8 +392,8 @@ async function fetchHtmlPostWithImpit(url, formBody, extraHeaders = {}) {
             body: formBody,
             headers: baseHeaders,
             fingerprint: fp,
-            timeout: IMPIT_TIMEOUT,
-            totalTimeoutMs: IMPIT_TOTAL_BUDGET_MS,
+            timeout: Math.max(1000, Number(options.timeout || CINEMACITY_SEARCH_POST_TIMEOUT_MS || IMPIT_TIMEOUT) || IMPIT_TIMEOUT),
+            totalTimeoutMs: Math.max(1800, Number(options.totalTimeoutMs || CINEMACITY_SEARCH_POST_TOTAL_MS || IMPIT_TOTAL_BUDGET_MS) || IMPIT_TOTAL_BUDGET_MS),
             maxBrowserAttempts: IMPIT_ROTATING_MAX_ATTEMPTS,
             followRedirect: true,
             maxRedirects: 6,
@@ -327,13 +412,13 @@ async function fetchHtmlPostWithImpit(url, formBody, extraHeaders = {}) {
         if (isCloudflareChallenge(body, status)) {
             markProviderBlockedFetch(url, `cloudflare-post:${response.impitBrowser || 'unknown'}`);
             directFetchBreaker.failure(url, new Error(`cloudflare_post_${status || 0}`));
-            const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: IMPIT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
+            const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: Math.min(CINEMACITY_SEARCH_POST_TIMEOUT_MS, IMPIT_TIMEOUT), ttl: SEARCH_CACHE_TTL_MS });
             return shielded || null;
         }
         if ([403, 429, 503].includes(status)) {
             markProviderBlockedFetch(url, `http_${status}_post:${response.impitBrowser || 'unknown'}`);
             directFetchBreaker.failure(url, new Error(`http_${status}_post`));
-            const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: IMPIT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
+            const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: Math.min(CINEMACITY_SEARCH_POST_TIMEOUT_MS, IMPIT_TIMEOUT), ttl: SEARCH_CACHE_TTL_MS });
             return shielded || null;
         }
         if (status >= 200 && status < 400) {
@@ -345,7 +430,7 @@ async function fetchHtmlPostWithImpit(url, formBody, extraHeaders = {}) {
         if (providerShield.shouldUseShield({ url, error })) {
             markProviderBlockedFetch(url, error?.code || error?.message || 'post-network');
             directFetchBreaker.failure(url, error);
-            const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: IMPIT_TIMEOUT, ttl: SEARCH_CACHE_TTL_MS });
+            const shielded = await providerShield.fetchHtml(url, { method: 'POST', body: formBody, timeout: Math.min(CINEMACITY_SEARCH_POST_TIMEOUT_MS, IMPIT_TIMEOUT), ttl: SEARCH_CACHE_TTL_MS });
             return shielded || null;
         }
         return null;
@@ -384,7 +469,8 @@ async function fetchHtml(url, extraHeaders = {}, options = {}) {
             }
 
             const blockedNow = wasProviderBlockedFetch(url);
-            if (!blockedNow && options.axiosFallback !== false) {
+            const allowAxiosAfterBlocked = options.axiosOnBlocked === true || CINEMACITY_AXIOS_ON_BLOCKED === true;
+            if ((!blockedNow || allowAxiosAfterBlocked) && options.axiosFallback !== false) {
                 const axiosBody = await fetchHtmlWithAxios(url, extraHeaders, timeout, context);
                 if (axiosBody) {
                     directFetchBreaker.success(url);
@@ -1028,7 +1114,16 @@ async function getNewsSitemapEntries() {
         const xml = await fetchHtml(NEWS_SITEMAP_URL, {
             'Accept': 'application/xml,text/xml;q=0.9,*/*;q=0.8',
             'Referer': `${BASE_URL}/`
-        }, { timeout: 1800, attempts: 1 });
+        }, {
+            timeout: CINEMACITY_SITEMAP_TIMEOUT_MS,
+            attempts: 1,
+            context: 'document',
+            axiosFallback: true,
+            axiosOnBlocked: true,
+            allowClearanceFallback: false,
+            hardMode: false,
+            totalTimeoutMs: CINEMACITY_SITEMAP_TOTAL_MS
+        });
         const entries = extractSitemapLocs(xml).filter((url) => /^https:\/\/cinemacity\.cc\//i.test(url));
         if (entries.length === 0) return Array.isArray(newsSitemapCache.entries) ? newsSitemapCache.entries : [];
         newsSitemapCache.entries = entries;
@@ -1153,26 +1248,243 @@ async function resolveImdbFromTmdb(tmdbId, providerType) {
     });
 }
 
-function extractCandidateLinksFromListing(html, sectionType) {
-    const $ = loadHtml(html);
-    const results = [];
+function cleanCinemaCityHref(value) {
+    const raw = decodeHtmlEntities(String(value || ''))
+        .replace(/\\\//g, '/')
+        .replace(/&amp;/gi, '&')
+        .trim();
+    if (!raw) return null;
+    const withoutTrailingNoise = raw.replace(/[)\],.;]+$/g, '');
+    return resolveUrl(BASE_URL, withoutTrailingNoise);
+}
 
-    $('a[href]').each((_, anchor) => {
-        const href = String($(anchor).attr('href') || '').trim();
-        if (!href) return;
-        const absoluteUrl = resolveUrl(BASE_URL, href);
-        if (!absoluteUrl || !/\.html(?:$|[?#])/i.test(absoluteUrl)) return;
+function normalizeListingCandidateTitle(value, url) {
+    const fromText = decodeHtmlEntities(String(value || ''))
+        .replace(/\s+/g, ' ')
+        .replace(/^\s*(?:New|TS|CAM-Rip|WEB-DL|HD|SD)\s*$/i, '')
+        .trim();
+    return fromText || titleFromContentUrl(url);
+}
+
+function extractCandidateLinksFromListing(html, sectionType) {
+    const body = String(html || '');
+    const $ = loadHtml(body);
+    const results = [];
+    const seen = new Set();
+
+    const addCandidate = (href, title = '') => {
+        const absoluteUrl = cleanCinemaCityHref(href);
+        if (!absoluteUrl || seen.has(absoluteUrl)) return;
+        if (!/\.html(?:$|[?#])/i.test(absoluteUrl)) return;
         if (!/^https?:\/\/cinemacity\.cc\//i.test(absoluteUrl)) return;
         if (!isCinemaCityContentUrlForType(absoluteUrl, sectionType)) return;
 
-        const title = decodeHtmlEntities(
-            $(anchor).attr('title') || $(anchor).text() || titleFromContentUrl(absoluteUrl)
-        ).replace(/\s+/g, ' ').trim();
-        if (!title) return;
-        results.push({ url: absoluteUrl, title });
+        const cleanTitle = normalizeListingCandidateTitle(title, absoluteUrl);
+        if (!cleanTitle) return;
+        seen.add(absoluteUrl);
+        results.push({ url: absoluteUrl, title: cleanTitle });
+    };
+
+    // DOM path: works for normal cards and preserves human title when present.
+    $('a[href], [data-href], [data-url]').each((_, node) => {
+        const el = $(node);
+        const href = el.attr('href') || el.attr('data-href') || el.attr('data-url') || '';
+        const title = el.attr('title') || el.attr('aria-label') || el.text() || '';
+        addCandidate(href, title);
     });
 
-    return Array.from(new Map(results.map((item) => [item.url, item])).values());
+    // Raw HTML rescue: CinemaCity sometimes renders cards/links in attributes or minified chunks
+    // that cheerio does not expose as simple anchors. This keeps the locator independent from
+    // cosmetic HTML changes and fixes pages after /movies/page/1/ returning zero candidates.
+    const rawPatterns = [
+        /(?:href|data-href|data-url)\s*=\s*["']([^"']*(?:\/|%2F)(?:movies|anime|tv-series|series)(?:\/|%2F)\d+[-_][^"']+?\.html(?:\?[^"']*)?)["']/gi,
+        /(https?:\\?\/\\?\/cinemacity\.cc\\?\/(?:movies|anime|tv-series|series)\\?\/\d+[-_][^\s"'<>\\]+?\.html(?:\?[^\s"'<>\\]*)?)/gi,
+        /(^|[\s"'>(])((?:\/)?(?:movies|anime|tv-series|series)\/\d+[-_][^\s"'<>]+?\.html(?:\?[^\s"'<>]*)?)/gi
+    ];
+
+    for (const pattern of rawPatterns) {
+        for (const match of body.matchAll(pattern)) {
+            const href = match[2] || match[1];
+            addCandidate(href, titleFromContentUrl(cleanCinemaCityHref(href) || href));
+        }
+    }
+
+    return results;
+}
+
+
+function extractListingLastPage(html, fallback = CINEMACITY_LISTING_MAX_PAGES) {
+    let maxPage = 1;
+    const body = String(html || '');
+    for (const match of body.matchAll(/\/page\/(\d+)\/?/gi)) {
+        const page = Number.parseInt(match[1], 10);
+        if (Number.isInteger(page) && page > maxPage) maxPage = page;
+    }
+    return Math.max(1, Math.min(CINEMACITY_LISTING_MAX_PAGES, maxPage || fallback || 1));
+}
+
+function buildListingPageUrl(listingBase, page) {
+    const cleanBase = String(listingBase || '').replace(/\/+$/, '/');
+    const pageNumber = Math.max(1, Number.parseInt(String(page || 1), 10) || 1);
+    return pageNumber === 1 ? cleanBase : `${cleanBase}page/${pageNumber}/`;
+}
+
+async function fetchListingPageHtml(pageUrl) {
+    const headers = {
+        'Referer': `${BASE_URL}/movies/`,
+        'Cookie': getCinemaCitySessionCookie(),
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-Mode': 'navigate'
+    };
+
+    // Listing pages are public HTML. Axios-first is faster and avoids ImpIt/browser
+    // spending the whole listing budget on pages that do not need anti-bot handling.
+    const axiosHtml = await fetchHtmlWithAxios(pageUrl, headers, CINEMACITY_LISTING_TIMEOUT_MS, 'document').catch(() => null);
+    if (axiosHtml && axiosHtml.length > 500) return { html: axiosHtml, via: 'axios' };
+
+    const guardedHtml = await fetchHtml(pageUrl, headers, {
+        timeout: CINEMACITY_LISTING_TIMEOUT_MS,
+        attempts: 1,
+        context: 'document',
+        axiosFallback: true,
+        axiosOnBlocked: true,
+        allowClearanceFallback: false,
+        hardMode: false,
+        totalTimeoutMs: CINEMACITY_LISTING_TOTAL_MS
+    }).catch(() => null);
+    return { html: guardedHtml || '', via: guardedHtml ? 'guarded' : 'none' };
+}
+
+async function fetchListingPageCandidates(providerType, listingBase, page) {
+    const pageNumber = Math.max(1, Number.parseInt(String(page || 1), 10) || 1);
+    const pageUrl = buildListingPageUrl(listingBase, pageNumber);
+    const cacheKey = `listing-page:v6:${providerType}:${pageUrl}`;
+    const cached = listingPageCache.get(cacheKey);
+    if (cached) return cached;
+
+    const value = await singleFlight(cacheKey, async () => {
+        const alreadyCached = listingPageCache.get(cacheKey);
+        if (alreadyCached) return alreadyCached;
+        const startedAt = Date.now();
+        const { html, via } = await fetchListingPageHtml(pageUrl);
+        const candidates = extractCandidateLinksFromListing(html, providerType);
+        const result = {
+            page: pageNumber,
+            url: pageUrl,
+            lastPage: pageNumber === 1 ? extractListingLastPage(html) : null,
+            candidates,
+            ok: Boolean(html && html.length > 500),
+            via,
+            ms: Date.now() - startedAt
+        };
+        listingPageCache.set(cacheKey, result);
+        return result;
+    });
+
+    return value || { page: pageNumber, url: pageUrl, lastPage: null, candidates: [], ok: false, via: 'none', ms: 0 };
+}
+
+async function searchListingIndexCandidates(providerType, expectedTitles, { requestedImdbId = null, expectedYear = null, fastMode = true } = {}) {
+    if (!CINEMACITY_LISTING_SCAN) return null;
+
+    const cacheKey = `listing-resolve:v6:${providerType}:${requestedImdbId || ''}:${expectedYear || ''}:${buildSearchQueryVariants(expectedTitles).slice(0, 10).map(normalizeTitle).join('|')}`;
+    const cached = listingScanCache.get(cacheKey);
+    if (cached) return cached;
+
+    return singleFlight(cacheKey, async () => {
+        const alreadyCached = listingScanCache.get(cacheKey);
+        if (alreadyCached) return alreadyCached;
+
+        const collected = [];
+        const seen = new Set();
+        const startedAt = Date.now();
+        let pagesScanned = 0;
+        let okPages = 0;
+        let pagesWithCandidates = 0;
+        const pageFetchVia = {};
+
+        const noteVia = (result) => {
+            const via = result?.via || 'none';
+            pageFetchVia[via] = (pageFetchVia[via] || 0) + 1;
+        };
+
+        const addCandidates = (items = []) => {
+            for (const candidate of items || []) {
+                if (!candidate?.url || seen.has(candidate.url)) continue;
+                seen.add(candidate.url);
+                collected.push(candidate);
+            }
+        };
+
+        const pick = async () => pickBestCandidate(collected, expectedTitles, {
+            requestedImdbId,
+            expectedYear,
+            providerType,
+            fastMode: true
+        });
+
+        for (const listingBase of getListingBaseUrls(providerType)) {
+            const firstPage = await fetchListingPageCandidates(providerType, listingBase, 1);
+            pagesScanned += 1;
+            if (firstPage?.ok) okPages += 1;
+            noteVia(firstPage);
+            if ((firstPage?.candidates || []).length > 0) pagesWithCandidates += 1;
+            addCandidates(firstPage.candidates);
+
+            let best = await pick();
+            if (best?.score >= 100) {
+                listingScanCache.set(cacheKey, best);
+                logCinemaCityDebug('locator hit listing scan', { providerType, title: best.title, url: best.url, pagesScanned, ms: Date.now() - startedAt, reason: 'page-1' });
+                return best;
+            }
+
+            const lastPage = Math.max(1, Math.min(CINEMACITY_LISTING_MAX_PAGES, firstPage.lastPage || CINEMACITY_LISTING_MAX_PAGES));
+            const pages = Array.from({ length: Math.max(0, lastPage - 1) }, (_, i) => i + 2);
+
+            for (let i = 0; i < pages.length; i += CINEMACITY_LISTING_CONCURRENCY) {
+                const batch = pages.slice(i, i + CINEMACITY_LISTING_CONCURRENCY);
+                const batchResults = await Promise.all(batch.map((page) => fetchListingPageCandidates(providerType, listingBase, page).catch(() => null)));
+                for (const result of batchResults) {
+                    if (!result) continue;
+                    pagesScanned += 1;
+                    if (result?.ok) okPages += 1;
+                    noteVia(result);
+                    if ((result?.candidates || []).length > 0) pagesWithCandidates += 1;
+                    addCandidates(result.candidates);
+                }
+
+                best = await pick();
+                if (best?.score >= 100 || (best?.score >= 95 && pagesScanned >= 8)) {
+                    listingScanCache.set(cacheKey, best);
+                    logCinemaCityDebug('locator hit listing scan', { providerType, title: best.title, url: best.url, pagesScanned, ms: Date.now() - startedAt, reason: 'batch' });
+                    return best;
+                }
+
+                if (fastMode && Date.now() - startedAt > 9000 && best?.score >= 80) {
+                    listingScanCache.set(cacheKey, best);
+                    logCinemaCityDebug('locator hit listing scan budget', { providerType, title: best.title, url: best.url, pagesScanned, ms: Date.now() - startedAt });
+                    return best;
+                }
+            }
+        }
+
+        const finalBest = await pick();
+        const value = finalBest?.url ? finalBest : null;
+        listingScanCache.set(cacheKey, value);
+        logCinemaCityDebug(value ? 'locator hit listing scan final' : 'locator listing scan miss', {
+            providerType,
+            pagesScanned,
+            okPages,
+            pagesWithCandidates,
+            via: pageFetchVia,
+            candidates: collected.length,
+            sample: collected.slice(0, 5).map((c) => c.title || titleFromContentUrl(c.url)),
+            expectedYear,
+            titles: expectedTitles.slice(0, 4),
+            ms: Date.now() - startedAt
+        });
+        return value;
+    });
 }
 
 function scoreTitleMatch(candidateTitle, expectedTitles) {
@@ -1254,13 +1566,12 @@ async function pickBestCandidate(candidates, expectedTitles, { requestedImdbId =
 
     if (scoredCandidates.length === 0) return null;
 
-    if (fastMode === true && scoredCandidates[0]?.score >= 80) {
-        return scoredCandidates[0];
-    }
-
     const normalizedRequestedImdbId = extractImdbId(requestedImdbId);
     if (normalizedRequestedImdbId) {
-        const candidatesToCheck = scoredCandidates.slice(0, 6).filter(c => c.score >= 80);
+        // Anti-mismatch guard: never fast-return a title candidate while we have an IMDb id.
+        // Failed CinemaCity searches can return generic homepage cards; those must never be
+        // accepted for another movie just because they are first in the HTML.
+        const candidatesToCheck = scoredCandidates.slice(0, fastMode ? 4 : 8).filter(c => c.score >= 80);
         const imdbResults = await Promise.all(
             candidatesToCheck.map(c => verifyCandidateImdb(c.url, normalizedRequestedImdbId))
         );
@@ -1270,7 +1581,16 @@ async function pickBestCandidate(candidates, expectedTitles, { requestedImdbId =
         });
         const firstMatch = candidatesToCheck.find((_, i) => imdbResults[i] === normalizedRequestedImdbId);
         if (firstMatch) return firstMatch;
-        return scoredCandidates.find((c) => c.score >= 80 && !mismatchedUrls.has(c.url)) || null;
+
+        const safeByTitle = scoredCandidates.find((c) => {
+            const year = extractYear(c.title) || extractYear(c.url);
+            return c.score >= 100 && !mismatchedUrls.has(c.url) && (!expectedYear || !year || Math.abs(year - expectedYear) <= 1);
+        });
+        return safeByTitle || null;
+    }
+
+    if (fastMode === true && scoredCandidates[0]?.score >= 100) {
+        return scoredCandidates[0];
     }
 
     if (providerType === 'anime') {
@@ -1330,17 +1650,22 @@ async function fetchSearchCandidates(query) {
 
         let networkFailed = true;
 
-        try {
-            await warmupCinemaCitySession('search');
-        } catch (_) {}
+        if (CINEMACITY_SEARCH_WARMUP) {
+            try {
+                await warmupCinemaCitySession('search');
+            } catch (_) {}
+        }
 
         try {
             const html = await fetchHtml(searchGetUrl, searchCommonHeaders, {
                 context: 'document',
-                timeout: 2600,
+                timeout: CINEMACITY_SEARCH_GET_TIMEOUT_MS,
                 attempts: 1,
                 hardMode: false,
-                totalTimeoutMs: 4200
+                axiosFallback: true,
+                axiosOnBlocked: true,
+                allowClearanceFallback: false,
+                totalTimeoutMs: CINEMACITY_SEARCH_GET_TOTAL_MS
             });
             if (html) {
                 networkFailed = false;
@@ -1358,10 +1683,24 @@ async function fetchSearchCandidates(query) {
         try {
             const postHtml = await fetchHtmlPostWithImpit(`${BASE_URL}/index.php`, formBody, {
                 'Cookie': getCinemaCitySessionCookie()
+            }, {
+                timeout: CINEMACITY_SEARCH_POST_TIMEOUT_MS,
+                totalTimeoutMs: CINEMACITY_SEARCH_POST_TOTAL_MS
             });
             if (postHtml) {
                 networkFailed = false;
                 const result = tryParse(postHtml);
+                if (result) return result;
+            }
+        } catch (_) {}
+
+        try {
+            const postAxiosHtml = await fetchHtmlPostWithAxios(`${BASE_URL}/index.php`, formBody, {
+                'Cookie': getCinemaCitySessionCookie()
+            }, CINEMACITY_SEARCH_POST_TIMEOUT_MS);
+            if (postAxiosHtml) {
+                networkFailed = false;
+                const result = tryParse(postAxiosHtml);
                 if (result) return result;
             }
         } catch (_) {}
@@ -1373,13 +1712,15 @@ async function fetchSearchCandidates(query) {
     });
 }
 
-async function searchByTitleQueries(queryTitles, providerType, expectedTitles, requestedImdbId, expectedYear) {
-    const queries = buildSearchQueryVariants(queryTitles).slice(0, providerType === 'anime' ? 10 : 6);
+async function searchByTitleQueries(queryTitles, providerType, expectedTitles, requestedImdbId, expectedYear, options = {}) {
+    const defaultLimit = providerType === 'anime' ? 10 : 6;
+    const maxQueries = Math.max(1, Math.min(defaultLimit, Number.parseInt(String(options.maxQueries || defaultLimit), 10) || defaultLimit));
+    const queries = buildSearchQueryVariants(queryTitles).slice(0, maxQueries);
     if (queries.length === 0) return null;
 
     const collected = [];
     const seen = new Set();
-    const BATCH_SIZE = 3;
+    const BATCH_SIZE = Math.max(1, Math.min(3, Number.parseInt(String(options.batchSize || 3), 10) || 3));
 
     for (let i = 0; i < queries.length; i += BATCH_SIZE) {
         const batch = queries.slice(i, i + BATCH_SIZE);
@@ -1420,12 +1761,31 @@ async function searchByImdb(imdbId) {
     const normalizedImdbId = extractImdbId(imdbId);
     if (!normalizedImdbId) return null;
 
-    let result = (await fetchSearchCandidates(normalizedImdbId))[0] || null;
+    const verifyList = async (candidates, source) => {
+        const uniqueCandidates = Array.from(new Map((candidates || [])
+            .filter((c) => c?.url)
+            .map((c) => [c.url, c])).values()).slice(0, 8);
+        if (uniqueCandidates.length === 0) return null;
+
+        const imdbResults = await Promise.all(uniqueCandidates.map(c => verifyCandidateImdb(c.url, normalizedImdbId)));
+        const matchIndex = imdbResults.findIndex((value) => value === normalizedImdbId);
+        if (matchIndex >= 0) return uniqueCandidates[matchIndex];
+
+        logCinemaCityDebug('locator imdb search rejected', {
+            imdbId: normalizedImdbId,
+            source,
+            checked: uniqueCandidates.length,
+            sample: uniqueCandidates.slice(0, 4).map((c) => c.title || titleFromContentUrl(c.url))
+        });
+        return null;
+    };
+
+    let result = await verifyList(await fetchSearchCandidates(normalizedImdbId), 'tt');
     if (result) return result;
 
     const numericId = normalizedImdbId.replace(/\D/g, '');
     if (numericId && numericId !== normalizedImdbId) {
-        result = (await fetchSearchCandidates(numericId))[0] || null;
+        result = await verifyList(await fetchSearchCandidates(numericId), 'numeric');
     }
     return result;
 }
@@ -1449,7 +1809,7 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
     const requestedImdbId = extractImdbId(options?.requestedImdbId || id);
     const expectedYear = options?.expectedYear || getExpectedYear(metadata, meta);
     const fastMode = options?.fast !== false;
-    const cacheKey = `resolve:${providerType}:${requestedImdbId || ''}:${extractTmdbId(id) || ''}:${expectedYear || ''}:${fastMode ? 'fast' : 'deep'}:${buildSearchQueryVariants(expectedTitles).slice(0, 10).map(normalizeTitle).join('|')}`;
+    const cacheKey = `resolve:v6:${providerType}:${requestedImdbId || ''}:${extractTmdbId(id) || ''}:${expectedYear || ''}:${fastMode ? 'fast' : 'deep'}:${buildSearchQueryVariants(expectedTitles).slice(0, 10).map(normalizeTitle).join('|')}`;
     const cached = resolvedSearchCache.get(cacheKey);
     if (cached) return cached.value;
 
@@ -1461,14 +1821,46 @@ async function searchByTitleFallback(id, providerType, meta = {}, options = {}) 
     const bestSitemap = await searchSitemapCandidates(providerType, expectedTitles, {
         requestedImdbId, expectedYear, fastMode
     });
-    if (bestSitemap?.url) return saveResult(bestSitemap);
+    if (bestSitemap?.url) {
+        logCinemaCityDebug('locator hit sitemap', { providerType, title: bestSitemap.title, url: bestSitemap.url });
+        return saveResult(bestSitemap);
+    }
+    logCinemaCityDebug('locator sitemap miss', { providerType, expectedYear, titles: expectedTitles.slice(0, 4) });
 
     if (fastMode) {
+        if (CINEMACITY_QUICK_TITLE_SEARCH) {
+            const quickSearched = await searchByTitleQueries(expectedTitles, providerType, expectedTitles, requestedImdbId, expectedYear, {
+                maxQueries: CINEMACITY_QUICK_TITLE_QUERIES,
+                batchSize: 1
+            });
+            if (quickSearched?.url) {
+                logCinemaCityDebug('locator hit quick title search', { providerType, title: quickSearched.title, url: quickSearched.url });
+                return saveResult(quickSearched);
+            }
+            logCinemaCityDebug('locator quick title miss', { providerType, titles: expectedTitles.slice(0, 4) });
+        }
+
+        const listed = await searchListingIndexCandidates(providerType, expectedTitles, {
+            requestedImdbId,
+            expectedYear,
+            fastMode: true
+        });
+        if (listed?.url) return saveResult(listed);
         return saveResult(null);
     }
 
     const searched = await searchByTitleQueries(expectedTitles, providerType, expectedTitles, requestedImdbId, expectedYear);
-    if (searched?.url) return saveResult(searched);
+    if (searched?.url) {
+        logCinemaCityDebug('locator hit deep title search', { providerType, title: searched.title, url: searched.url });
+        return saveResult(searched);
+    }
+
+    const listed = await searchListingIndexCandidates(providerType, expectedTitles, {
+        requestedImdbId,
+        expectedYear,
+        fastMode: false
+    });
+    if (listed?.url) return saveResult(listed);
 
     let bestResult = null;
     let bestScore = 0;
@@ -2168,14 +2560,39 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
         };
 
         let searchResult = null;
-        searchResult = await searchByTitleFallback(
-            resolved.tmdbId || resolved.imdbId || originalId,
-            resolved.providerType, meta, titleFallbackOptions
-        );
-        if (!searchResult?.url && resolved.imdbId) {
+
+        // Fast exact path: CinemaCity search by IMDb/numeric id is the safest locator when
+        // the request carries an IMDb id. Keep this before broad title/listing fallbacks so
+        // slow/empty listing pages cannot waste budget or accidentally bias the resolver.
+        if (resolved.imdbId) {
             searchResult = await searchByImdb(resolved.imdbId);
+            if (searchResult?.url) {
+                logCinemaCityDebug('locator hit imdb search first', {
+                    providerType: resolved.providerType,
+                    imdbId: resolved.imdbId,
+                    url: searchResult.url,
+                    title: searchResult.title
+                });
+            }
         }
-        if (!searchResult?.url) return [];
+
+        if (!searchResult?.url) {
+            searchResult = await searchByTitleFallback(
+                resolved.tmdbId || resolved.imdbId || originalId,
+                resolved.providerType, meta, titleFallbackOptions
+            );
+        }
+        if (!searchResult?.url) {
+            const diagnosticTitles = uniqueStrings([
+                ...(Array.isArray(titleFallbackOptions.expectedTitles) ? titleFallbackOptions.expectedTitles : []),
+                ...(Array.isArray(resolved.searchTitles) ? resolved.searchTitles : []),
+                ...(Array.isArray(resolved.rawTitles) ? resolved.rawTitles : []),
+                ...collectMetaTitles(meta)
+            ]);
+            logCinemaCityDebug('locator final miss', { providerType: resolved.providerType, imdbId: resolved.imdbId, tmdbId: resolved.tmdbId, titles: diagnosticTitles.slice(0, 5) });
+            return [];
+        }
+        logCinemaCityDebug('locator selected page', { providerType: resolved.providerType, url: searchResult.url, title: searchResult.title });
 
         const isSeriesRequest = resolved.providerType === 'tv' || resolved.providerType === 'anime';
         const targetPageUrl = isSeriesRequest

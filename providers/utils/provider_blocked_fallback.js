@@ -101,6 +101,8 @@ function createBlockedFallbackGuard(options = {}) {
   const envPrefix = String(options.envPrefix || providerName).toUpperCase().replace(/[^A-Z0-9]+/g, '_');
   const baseUrl = normalizeOrigin(options.baseUrl || options.initialBaseUrl) || options.baseUrl || options.initialBaseUrl;
   const enabled = options.enabled ?? envFlag(`${envPrefix}_CF_FALLBACK`, true);
+  const useRustShield = options.useRustShield ?? envFlag(`${envPrefix}_RUST_SHIELD`, true);
+  const useRustShieldForSession = options.useRustShieldForSession ?? useRustShield;
 
   const guard = createProviderHttpGuard({
     providerName,
@@ -119,7 +121,10 @@ function createBlockedFallbackGuard(options = {}) {
     pickProfile: options.pickProfile,
     challengeDetector: options.challengeDetector,
     sessionTtlMs: options.sessionTtlMs,
-    maxCacheItems: options.maxCacheItems || 300
+    maxCacheItems: options.maxCacheItems || 300,
+    rustShieldUrl: options.rustShieldUrl,
+    useRustShield,
+    useRustShieldForSession
   });
 
   async function fetchHtml(url, fetchOptions = {}) {

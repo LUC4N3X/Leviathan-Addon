@@ -101,7 +101,10 @@ function createProviderHttpGuard(options = {}) {
     endpoint: options.rustShieldUrl || process.env.RUST_SHIELD_URL,
     logger
   });
-  const useRustShieldForSession = options.useRustShieldForSession !== false;
+  // Per-provider kill-switch: keeps Rust Shield available globally while allowing
+  // fragile providers (CinemaCity) to use the legacy main_30 path unchanged.
+  const useRustShieldDefault = options.useRustShield !== false;
+  const useRustShieldForSession = useRustShieldDefault && options.useRustShieldForSession !== false;
 
   const agentOptions = {
     keepAlive: true,
@@ -490,7 +493,7 @@ function createProviderHttpGuard(options = {}) {
     return headers;
   }
 
-  async function axiosSiteRequest(url, { method = 'GET', body = null, headers = {}, timeout = directFetchTimeoutMs, signal = null, maxRedirects = 6, browserProfile = null, useImpit = preferImpit, useRustShield = true, impitAttempts = null, impitTotalExtra = null } = {}) {
+  async function axiosSiteRequest(url, { method = 'GET', body = null, headers = {}, timeout = directFetchTimeoutMs, signal = null, maxRedirects = 6, browserProfile = null, useImpit = preferImpit, useRustShield = useRustShieldDefault, impitAttempts = null, impitTotalExtra = null } = {}) {
     const startedAt = Date.now();
 
     if (useRustShield && rustShield.enabled && rustShield.first) {
@@ -1141,6 +1144,7 @@ function createProviderHttpGuard(options = {}) {
       providerFailureCooldownMaxMs: options.providerFailureCooldownMaxMs,
       postClearanceReplayTimeoutMs,
       clearSessionOnTransportFailure,
+      useRustShieldDefault,
       useRustShieldForSession
     }),
     directFetchTimeoutMs,

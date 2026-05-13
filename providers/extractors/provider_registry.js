@@ -12,7 +12,7 @@ const { getProviderRecipe } = require('../engine/provider_definition_engine');
 
 const STREAMING_COMMUNITY_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.SC_PROVIDER_TIMEOUT || '16000', 10) || 16000);
 const ANIMEWORLD_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.AW_PROVIDER_TIMEOUT || '16000', 10) || 16000);
-const CINEMACITY_MIN_TIMEOUT = Math.max(7000, parseInt(process.env.CC_PROVIDER_TIMEOUT || '10000', 10) || 10000);
+const CINEMACITY_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.CC_PROVIDER_TIMEOUT || '18000', 10) || 18000);
 const CINEMACITY_EMPTY_TTL = Math.max(15, parseInt(process.env.CC_PROVIDER_EMPTY_TTL || '60', 10) || 60);
 const CINEMACITY_ERROR_TTL = Math.max(3, Math.min(CINEMACITY_EMPTY_TTL, parseInt(process.env.CC_PROVIDER_ERROR_TTL || '10', 10) || 10));
 const GUARDO_SERIE_MIN_TIMEOUT = Math.max(30000, parseInt(process.env.GS_PROVIDER_TIMEOUT || '45000', 10) || 45000);
