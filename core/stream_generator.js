@@ -1789,10 +1789,53 @@ function getServiceDisplayName(service) {
     return 'p2p';
 }
 
+
+const RD_WEBDL_BLOCK_REGEX = /\b(?:web[- ._]?dl|webdl)\b/i;
+
+function buildRdBlocklistText(item = {}, parseTitle = '', displayTitle = '') {
+    return [
+        parseTitle,
+        displayTitle,
+        item?.title,
+        item?.filename,
+        item?.fileName,
+        item?.file_title,
+        item?.releaseName,
+        item?.name,
+        item?.behaviorHints?.filename,
+        item?.episodeFileHint?.fileName,
+        item?._episodeFileHint?.fileName
+    ]
+        .filter(Boolean)
+        .map((value) => String(value))
+        .join(' ');
+}
+
+function shouldBlockRdWebDlStream(service, item = {}, parseTitle = '', displayTitle = '') {
+    if (String(service || '').toLowerCase() !== 'rd') return false;
+    const text = buildRdBlocklistText(item, parseTitle, displayTitle);
+    return RD_WEBDL_BLOCK_REGEX.test(text);
+}
+
+function logBlockedRdWebDlStream(item = {}, parseTitle = '', displayTitle = '', stage = 'build-stream') {
+    const text = buildRdBlocklistText(item, parseTitle, displayTitle)
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim()
+        .slice(0, 140);
+    logger.info(`[RD BLOCKED] skip | reason=webdl_removed_by_rd stage=${stage} hash=${item?.hash || 'n/a'} fileIdx=${getResolvedFileIdx(item) ?? 'n/a'} title="${text || 'n/a'}"`);
+}
+
 function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitle, sizeBytes, seeders, config, meta, isLazy = false, isPack = false }) {
     const normalizedService = String(service || '').toLowerCase();
     const isAIOActive = aioFormatter.isAIOStreamsEnabled(config);
     const baseParseTitle = appendExternalLanguageSignalsForFormatter(choosePlayableParseTitle(item, parseTitle || item?.title || displayTitle || ''), item);
+
+    if (shouldBlockRdWebDlStream(normalizedService, item, baseParseTitle, displayTitle)) {
+        logBlockedRdWebDlStream(item, baseParseTitle, displayTitle, isLazy ? 'lazy-stream' : 'direct-stream');
+        return null;
+    }
+
     const details = parseTitleDetails(baseParseTitle);
     const languageInfo = getLanguageInfo(baseParseTitle, meta?.title, item?.source, details);
     const quality = details.qualityLabel && details.qualityLabel !== 'Other'
