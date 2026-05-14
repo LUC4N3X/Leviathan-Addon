@@ -8,6 +8,7 @@ const {
   shortTorboxHash,
   redactSecretsInText
 } = require("./torbox_cache_state");
+const { computeBackoffDelay, parseRetryAfterMs } = require("../utils/backoff");
 
 const TB_BASE_URL = "https://api.torbox.app/v1/api";
 
@@ -15,16 +16,24 @@ const CHUNK_SIZE = 40;
 const API_TIMEOUT = 14000;
 const MAX_RETRIES = 4;
 const RETRY_DELAY_BASE = 1600;
-const MAX_CONCURRENCY = 3;
+// More chunks in flight = faster bulk cache detection. Still bounded so we never
+// stampede the TorBox API. Tunable via TB_CACHE_MAX_CONCURRENCY.
+const MAX_CONCURRENCY = Math.max(1, Math.min(8, parseInt(process.env.TB_CACHE_MAX_CONCURRENCY || '5', 10) || 5));
 const DEFAULT_SYNC_LIMIT = 20;
 const MIN_VIDEO_SIZE = 50 * 1024 * 1024;
 const LOCAL_AVAILABILITY_MAX_ENTRIES = 8000;
+// "uncached" used to be frozen for 6h, which kept stale negatives long after a
+// torrent actually became cached. Default lowered to 2h, tunable via env.
+const UNCACHED_TTL_SECONDS = Math.max(
+  15 * 60,
+  parseInt(process.env.TB_UNCACHED_TTL_SECONDS || String(2 * 60 * 60), 10) || 2 * 60 * 60
+);
 const AVAILABILITY_TTL_SECONDS = Object.freeze({
   [TB_CACHE_STATES.CACHED_VERIFIED]: 24 * 60 * 60,
   [TB_CACHE_STATES.LIKELY_CACHED]: 15 * 60,
   [TB_CACHE_STATES.UNCERTAIN]: 5 * 60,
   [TB_CACHE_STATES.QUEUED]: 3 * 60,
-  [TB_CACHE_STATES.UNCACHED]: 6 * 60 * 60,
+  [TB_CACHE_STATES.UNCACHED]: UNCACHED_TTL_SECONDS,
   [TB_CACHE_STATES.ERROR]: 2 * 60
 });
 
@@ -99,10 +108,9 @@ function isRetryable(error) {
 }
 
 function getRetryDelay(error, attempt) {
-  const retryAfter = safeInt(error?.response?.headers?.["retry-after"]);
-  if (retryAfter > 0) return retryAfter * 1000;
-  if (error?.response?.status === 429) return 4000 + attempt * 1000;
-  return RETRY_DELAY_BASE * (attempt + 1);
+  const retryAfterMs = parseRetryAfterMs(error?.response?.headers?.["retry-after"]);
+  const baseMs = error?.response?.status === 429 ? 2500 : RETRY_DELAY_BASE;
+  return computeBackoffDelay(attempt, { baseMs, maxMs: 20000, retryAfterMs });
 }
 
 async function fetchWithRetry(url, config, retries = MAX_RETRIES) {
@@ -585,12 +593,23 @@ function parseHashResult(hash, info, meta = null) {
   const totalSize = safeNum(info?.size, 0);
 
   if (!hasFiles) {
-    if (info?.cached === true || totalSize > 0) {
+    // An explicit `cached` flag is a real (if file-unverified) cache signal.
+    if (info?.cached === true) {
       return [lowerHash, makeCacheResult(TB_CACHE_STATES.LIKELY_CACHED, {
         torrent_title: info.name || null,
         size: totalSize || null,
         confidence: 0.45,
         match_reason: "metadata_without_files"
+      })];
+    }
+    // A bare `size` with no file list and no cached flag is just torrent metadata.
+    // Marking it likely_cached produced false-positive "cached" badges.
+    if (totalSize > 0) {
+      return [lowerHash, makeCacheResult(TB_CACHE_STATES.UNCERTAIN, {
+        torrent_title: info.name || null,
+        size: totalSize || null,
+        confidence: 0.2,
+        match_reason: "metadata_size_only"
       })];
     }
     return [lowerHash, makeCacheResult(TB_CACHE_STATES.UNCACHED, {

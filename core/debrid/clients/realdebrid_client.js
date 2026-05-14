@@ -1,10 +1,19 @@
 const axios = require("axios");
+const crypto = require("crypto");
+const { computeBackoffDelay, parseRetryAfterMs } = require("../utils/backoff");
+const { CircuitBreaker } = require("../utils/circuit_breaker");
 
 const RD_API_BASE = "https://api.real-debrid.com/rest/1.0";
 const RD_TIMEOUT = 30000;
 const RD_MAX_RETRIES = 4;
 const RD_READY_POLL_ATTEMPTS = 8;
 const RD_READY_POLL_DELAY = 900;
+
+const rdCircuit = new CircuitBreaker("realdebrid");
+
+function rdCircuitKey(token) {
+    return crypto.createHash("sha1").update(String(token || "no-token")).digest("hex").slice(0, 12);
+}
 
 const VIDEO_EXT_RE = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts)$/i;
 const JUNK_VIDEO_RE =
@@ -117,6 +126,12 @@ function isRetryableNetworkError(error) {
 }
 
 async function rdRequest(method, url, token, data = null) {
+    const circuitKey = rdCircuitKey(token);
+    if (!rdCircuit.canRequest(circuitKey)) {
+        console.warn("[RD CIRCUIT] open, skipping request fast-fail");
+        return null;
+    }
+
     for (let attempt = 0; attempt < RD_MAX_RETRIES; attempt++) {
         try {
             const config = {
@@ -140,22 +155,41 @@ async function rdRequest(method, url, token, data = null) {
             const response = await axios(config);
             const status = response.status;
 
-            if (status >= 200 && status < 300) return response.data;
-            if (status === 401 || status === 403 || status === 404) return null;
-
-            if (isRetryableStatus(status)) {
-                const backoff = 900 + attempt * 700 + Math.floor(Math.random() * 400);
-                await sleep(backoff);
-                continue;
+            if (status >= 200 && status < 300) {
+                rdCircuit.recordSuccess(circuitKey);
+                return response.data;
+            }
+            if (status === 401 || status === 403 || status === 404) {
+                rdCircuit.recordSuccess(circuitKey);
+                return null;
             }
 
+            if (isRetryableStatus(status)) {
+                if (attempt < RD_MAX_RETRIES - 1) {
+                    const retryAfterMs = parseRetryAfterMs(response.headers?.["retry-after"]);
+                    const backoff = computeBackoffDelay(attempt, {
+                        baseMs: status === 429 ? 1500 : 800,
+                        maxMs: 15000,
+                        retryAfterMs
+                    });
+                    await sleep(backoff);
+                    continue;
+                }
+                // Sustained 5xx is an outage signal; 429 is left to the rate limiter.
+                if (status >= 500) rdCircuit.recordFailure(circuitKey);
+                return null;
+            }
+
+            rdCircuit.recordSuccess(circuitKey);
             return null;
         } catch (error) {
             if (attempt < RD_MAX_RETRIES - 1 && isRetryableNetworkError(error)) {
-                const backoff = 900 + attempt * 700 + Math.floor(Math.random() * 400);
+                const retryAfterMs = parseRetryAfterMs(error?.response?.headers?.["retry-after"]);
+                const backoff = computeBackoffDelay(attempt, { baseMs: 800, maxMs: 15000, retryAfterMs });
                 await sleep(backoff);
                 continue;
             }
+            rdCircuit.recordFailure(circuitKey);
             return null;
         }
     }

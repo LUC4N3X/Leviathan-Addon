@@ -8,13 +8,19 @@ const {
   redactSecretsInText,
   shortTorboxHash
 } = require("../availability/torbox_cache_state");
+const { computeBackoffDelay, parseRetryAfterMs } = require("../utils/backoff");
+const { CircuitBreaker } = require("../utils/circuit_breaker");
 
 const TB_BASE = "https://api.torbox.app/v1/api";
 const TB_TIMEOUT = Math.max(5000, Math.min(45000, parseInt(process.env.TB_TIMEOUT_MS || '25000', 10) || 25000));
 const LIST_CACHE_TTL = 30000;
 const MAX_RETRIES = 4;
 const MAX_INFO_POLLS = 4;
-const POLL_DELAYS = [1200, 1800, 2500, 3500];
+// Faster first poll: most cached torrents expose their file list almost immediately,
+// so a long fixed initial delay just adds dead latency to the resolve path.
+const POLL_DELAYS = [600, 1100, 1800, 3000];
+
+const tbCircuit = new CircuitBreaker("torbox");
 
 const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|mov|wmv|flv|webm|iso|m4v|ts)$/i;
 const JUNK_PATTERN = /\b(sample|trailer|promo|preview|screens?|proof|nfo|cover|poster|thumb|trailerfix)\b/i;
@@ -118,10 +124,9 @@ function logTorboxEvent(event, payload = {}, level = "info") {
 
 function getRetryDelay(error, attempt) {
   const status = error?.response?.status;
-  const retryAfter = safeInt(error?.response?.headers?.["retry-after"]);
-  if (retryAfter > 0) return retryAfter * 1000;
-  if (status === 429) return 4000 + attempt * 1200;
-  return 1200 * (attempt + 1);
+  const retryAfterMs = parseRetryAfterMs(error?.response?.headers?.["retry-after"]);
+  const baseMs = status === 429 ? 2500 : 800;
+  return computeBackoffDelay(attempt, { baseMs, maxMs: 20000, retryAfterMs });
 }
 
 function isRetryableError(error) {
@@ -156,6 +161,13 @@ function mapTorboxError(responseOrError, context = "request") {
 }
 
 async function tbRequest(method, endpoint, key, { data = null, params = null, timeout = TB_TIMEOUT, json = false, op = endpoint } = {}) {
+  const circuitKey = stableKeyFingerprint(key);
+  if (!tbCircuit.canRequest(circuitKey)) {
+    logTorboxEvent("torbox.circuit.open", { op }, "warn");
+    // Synthetic transient response so callers keep their existing error handling.
+    return { status: 503, data: { detail: "torbox_circuit_open" }, headers: {}, _circuitOpen: true };
+  }
+
   let lastResponse = null;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
     try {
@@ -190,12 +202,17 @@ async function tbRequest(method, endpoint, key, { data = null, params = null, ti
       const response = await axios(config);
       lastResponse = response;
       if (response.status >= 200 && response.status < 300) {
+        tbCircuit.recordSuccess(circuitKey);
         return response;
       }
       if (attempt < MAX_RETRIES - 1 && isRetryableError({ response })) {
         await sleep(getRetryDelay({ response }, attempt));
         continue;
       }
+      // Server answered (even with an error status) -> upstream is reachable.
+      // Only sustained 5xx counts against the breaker; 4xx/429 do not.
+      if (response.status >= 500) tbCircuit.recordFailure(circuitKey);
+      else tbCircuit.recordSuccess(circuitKey);
       return response;
     } catch (error) {
       if (attempt < MAX_RETRIES - 1 && isRetryableError(error)) {
@@ -203,7 +220,11 @@ async function tbRequest(method, endpoint, key, { data = null, params = null, ti
         continue;
       }
       const response = error?.response || lastResponse || null;
-      if (response) return response;
+      if (response) {
+        if (response.status >= 500) tbCircuit.recordFailure(circuitKey);
+        return response;
+      }
+      tbCircuit.recordFailure(circuitKey);
       throw mapTorboxError(error, op);
     }
   }
@@ -671,13 +692,26 @@ function normalizeCheckcachedInfo(hash, info) {
     };
   }
 
-  if (info?.cached === true || safeNum(info?.size, 0) > 0) {
+  // An explicit `cached` flag is a real (if unverified) cache signal.
+  if (info?.cached === true) {
     return {
       hash: lower(hash),
       cached: null,
       state: TB_CACHE_STATES.LIKELY_CACHED,
       cache_state: TB_CACHE_STATES.LIKELY_CACHED,
-      confidence: 0.45
+      confidence: 0.5
+    };
+  }
+
+  // A bare `size` with no file list and no cached flag is just torrent metadata,
+  // not a cache hit. Treating it as likely_cached produced false-positive badges.
+  if (safeNum(info?.size, 0) > 0) {
+    return {
+      hash: lower(hash),
+      cached: null,
+      state: TB_CACHE_STATES.UNCERTAIN,
+      cache_state: TB_CACHE_STATES.UNCERTAIN,
+      confidence: 0.2
     };
   }
 

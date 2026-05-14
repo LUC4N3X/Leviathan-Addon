@@ -4215,7 +4215,18 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
 
       logger.info(`[SPEED] Start search for: ${meta.title} | sourceMode=${sourceModeFlags.sourceMode}`);
 
-      const tmdbIdLookup = meta.tmdb_id || (meta.kitsu_id ? null : (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId);
+      // Overlap the imdb->tmdb network lookup with the local DB / snapshot reads below.
+      // It is only consumed when the network candidate pool is fetched, so awaiting it
+      // up front just added a serial round-trip to the hot path.
+      const tmdbIdLookupPromise = (async () => {
+          if (meta.tmdb_id) return meta.tmdb_id;
+          if (meta.kitsu_id) return null;
+          try {
+              return (await imdbToTmdb(meta.imdb_id, userTmdbKey))?.tmdbId || null;
+          } catch (_) {
+              return null;
+          }
+      })();
       const dbOnlyMode = sourceModeFlags.dbOnlyMode;
       const langMode = getEffectiveSearchLanguageMode(filters, meta, type);
       const allowItalianWebProviders = langMode !== 'eng';
@@ -4279,6 +4290,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       }
 
       const shouldFetchNetworkResults = torrentPipelineEnabled && !useLocalDbFastPath;
+      const tmdbIdLookup = await tmdbIdLookupPromise;
       let networkResults = await trace.time('network-candidates', () => shouldFetchNetworkResults
           ? fetchTitleCandidatePool({
               type,
