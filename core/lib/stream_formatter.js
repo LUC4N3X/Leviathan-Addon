@@ -12,6 +12,12 @@ function basicParseTitle(title) {
 
   const resolution = source.match(/\b(2160p|1440p|1080p|1080i|720p|480p)\b/i)?.[1] || '';
   const codec = source.match(/\b(x265|x264|h265|h264|hevc|av1|vvc|h266)\b/i)?.[1] || '';
+  let releaseSource = '';
+  if (/\b(?:blu[-.\s]?ray|bd(?:rip)?|brrip)\b/i.test(source)) releaseSource = 'BluRay';
+  else if (/\bweb[-.\s]?dl\b|\bwebdl\b/i.test(source)) releaseSource = 'WEB-DL';
+  else if (/\bweb[-.\s]?rip\b|\bwebrip\b/i.test(source)) releaseSource = 'WEBRip';
+  else if (/\bhdtv\b/i.test(source)) releaseSource = 'HDTV';
+  else if (/\bweb\b/i.test(source)) releaseSource = 'WEB';
   const group = source.match(/[-_]\s?([a-zA-Z0-9@.]+)$/)?.[1] || '';
   const channels = source.match(/\b([1-7][ .][01])\b/i)?.[1]?.replace(' ', '.') || '';
   const hdr = [];
@@ -26,9 +32,7 @@ function basicParseTitle(title) {
     group,
     channels,
     hdr,
-    source: /\b(?:bluray|blu-ray|bd)\b/i.test(source)
-      ? 'BluRay'
-      : (/\b(?:web-dl|webrip|web|hdtv)\b/i.test(source) ? 'WEB' : ''),
+    source: releaseSource,
     remux: /\bremux\b/i.test(source),
     audio: source.match(/\b(?:ddp|aac|ac3|dts|truehd|opus|flac|pcm|lpcm|mp3)\b/i)?.[0] || '',
   };
@@ -82,7 +86,11 @@ const REGEX_EXTRA = {
   cam: /\b(?:cam|hdcam|ts|telesync|tc|telecine|scr|screener)\b/i,
   remux: /\bremux\b/i,
   bluray: /\b(?:bluray|blu-ray|bd(?:rip)?|brrip)\b/i,
-  web: /\b(?:web[- .]?dl|webrip|web|hdtv)\b/i,
+  webdl: /\b(?:web[- ._]?dl|webdl)\b/i,
+  webrip: /\b(?:web[- ._]?rip|webrip)\b/i,
+  hdtv: /\bhdtv\b/i,
+  web: /\bweb\b/i,
+  webLike: /\b(?:web[- ._]?dl|webdl|web[- ._]?rip|webrip|web|hdtv)\b/i,
   imax: /\bimax\b/i,
   atmos: /\b(?:atmos)\b/i,
   dtsx: /\b(?:dts\s?x|dts:x)\b/i,
@@ -508,10 +516,16 @@ function deriveVideoTags(info, upperTitle) {
 
   const isRemux = Boolean(info.remux) || REGEX_EXTRA.remux.test(sourceText);
   const isBluRay = REGEX_EXTRA.bluray.test(sourceText);
+  const isWebDl = REGEX_EXTRA.webdl.test(sourceText);
+  const isWebRip = REGEX_EXTRA.webrip.test(sourceText);
+  const isHdtv = REGEX_EXTRA.hdtv.test(sourceText);
   const isWeb = REGEX_EXTRA.web.test(sourceText);
 
   if (isRemux) addTag('💎', 'REMUX', 'Remux');
   else if (isBluRay) addTag('💿', 'BluRay', 'BluRay');
+  else if (isWebDl) addTag('☁️', 'WEB-DL', 'WEB-DL');
+  else if (isWebRip) addTag('🌐', 'WEBRip', 'WEBRip');
+  else if (isHdtv) addTag('📺', 'HDTV', 'HDTV');
   else if (isWeb) addTag('☁️', 'WEB', 'WEB');
   else addTag('🎞️', 'RIP', 'Rip');
 
@@ -627,7 +641,7 @@ function deriveAudio(info, upperTitle, quality, cleanTags) {
   else if (info.audio) foundCodec = safeString(info.audio).toUpperCase();
 
   if (!foundCodec) {
-    if (cleanTags.includes('WEB')) foundCodec = 'AAC';
+    if (cleanTags.some((tag) => /^(?:WEB-DL|WEBRip|WEB|HDTV)$/i.test(tag))) foundCodec = 'AAC';
     else if (cleanTags.includes('BluRay') || /4k|1080/i.test(quality)) foundCodec = 'AC3';
   }
 
@@ -862,6 +876,9 @@ function compactLanguageLabel(lang) {
 function getPrimarySourceTag(cleanTags) {
   if (cleanTags.includes('Remux')) return 'Remux';
   if (cleanTags.includes('BluRay')) return 'BluRay';
+  if (cleanTags.includes('WEB-DL')) return 'WEB-DL';
+  if (cleanTags.includes('WEBRip')) return 'WEBRip';
+  if (cleanTags.includes('HDTV')) return 'HDTV';
   if (cleanTags.includes('WEB')) return 'WEB';
   if (cleanTags.includes('Rip')) return 'Rip';
   return '';
@@ -905,7 +922,10 @@ function visualTagScore(cleanTags) {
   let score = 0;
   if (tags.has('Remux')) score += 24;
   else if (tags.has('BluRay')) score += 18;
-  else if (tags.has('WEB')) score += 12;
+  else if (tags.has('WEB-DL')) score += 13;
+  else if (tags.has('WEBRip')) score += 11;
+  else if (tags.has('WEB')) score += 10;
+  else if (tags.has('HDTV')) score += 9;
   else if (tags.has('Rip')) score += 6;
 
   if (tags.has('DV+HDR')) score += 18;
@@ -1001,7 +1021,7 @@ function buildPremiumTags(params, maxItems = 4) {
   for (const tag of params.cleanTags) {
     if (tags.length >= maxItems) break;
     if (tag === primarySource || tag === params.quality) continue;
-    if (/^(WEB|Rip)$/.test(tag) && primarySource === tag) continue;
+    if (/^(WEB-DL|WEBRip|WEB|HDTV|Rip)$/.test(tag) && primarySource === tag) continue;
     tags.push(tag);
   }
   return uniqueBy(tags, (item) => item.toLowerCase()).slice(0, maxItems);
@@ -1228,7 +1248,7 @@ function styleTorrentio(p) {
 
 function styleVertical(p) {
   const cacheLabel = p.cacheIcon;
-  const type = p.cleanTags.some((tag) => /Remux/i.test(tag)) ? 'Remux' : 'WEB-DL';
+  const type = p.cleanTags.some((tag) => /Remux/i.test(tag)) ? 'Remux' : (p.primarySourceTag || 'WEB-DL');
   const lines = [
     `🍿 ${p.cleanName}`,
     `📼 ${type}${p.cleanTags[0] ? ` • ${p.cleanTags[0]}` : ''}`,
