@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { computeBackoffDelay, parseRetryAfterMs } = require('./backoff');
 
 const DEFAULT_RATE_PER_MINUTE = 220;
 const DEFAULT_CONCURRENCY = 8;
@@ -8,6 +9,10 @@ const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_MAX_QUEUE = 450;
 const DEFAULT_REQUEST_WAIT_TIMEOUT_MS = 20000;
 const DEFAULT_LIMITER_TTL_MS = 10 * 60 * 1000;
+// Pausing every RD call after just 2 consecutive 429s (for a fixed 30s) was too
+// aggressive. Threshold + pause are now tunable, and the pause honours Retry-After.
+const DEFAULT_RATE_LIMIT_429_THRESHOLD = 3;
+const DEFAULT_RATE_LIMIT_429_PAUSE_MS = 20000;
 
 function clampInt(value, fallback, min, max) {
     const parsed = Number.parseInt(value, 10);
@@ -48,6 +53,8 @@ class RealDebridUserLimiter {
         this.maxRetries = clampInt(options.maxRetries, DEFAULT_MAX_RETRIES, 0, 8);
         this.maxQueue = clampInt(options.maxQueue, DEFAULT_MAX_QUEUE, 20, 5000);
         this.requestWaitTimeoutMs = clampInt(options.requestWaitTimeoutMs, DEFAULT_REQUEST_WAIT_TIMEOUT_MS, 1000, 120000);
+        this.rateLimit429Threshold = clampInt(options.rateLimit429Threshold, DEFAULT_RATE_LIMIT_429_THRESHOLD, 2, 20);
+        this.rateLimit429PauseMs = clampInt(options.rateLimit429PauseMs, DEFAULT_RATE_LIMIT_429_PAUSE_MS, 2000, 120000);
         this.queue = [];
         this.running = 0;
         this.consecutive429 = 0;
@@ -109,17 +116,23 @@ class RealDebridUserLimiter {
                 })
                 .catch(async (error) => {
                     this.running -= 1;
+                    const retryAfterMs = parseRetryAfterMs(error?.response?.headers?.['retry-after']);
                     if (isRateLimitError(error)) {
                         this.consecutive429 += 1;
-                        if (this.consecutive429 >= 2) {
-                            this.abortUntil = Date.now() + 30_000;
-                            console.warn(`[RD LIMITER] 429 storm detected, pausing RD calls for 30s`);
+                        if (this.consecutive429 >= this.rateLimit429Threshold) {
+                            const pauseMs = Math.max(this.rateLimit429PauseMs, retryAfterMs);
+                            this.abortUntil = Date.now() + pauseMs;
+                            console.warn(`[RD LIMITER] 429 storm detected (${this.consecutive429}x), pausing RD calls for ${Math.round(pauseMs / 1000)}s`);
                         }
                     }
 
                     if (isRetryableError(error) && job.tries < this.maxRetries && Date.now() >= this.abortUntil) {
                         job.tries += 1;
-                        const delay = Math.min(5000, 750 * job.tries + Math.floor(Math.random() * 250));
+                        const delay = computeBackoffDelay(job.tries - 1, {
+                            baseMs: 750,
+                            maxMs: 8000,
+                            retryAfterMs
+                        });
                         await sleep(delay);
                         this.queue.unshift(job);
                         this.drain();
@@ -166,7 +179,9 @@ function getLimiter(apiKey) {
                 concurrency: process.env.RD_CONCURRENCY,
                 maxRetries: process.env.RD_MAX_RETRIES,
                 maxQueue: process.env.RD_MAX_QUEUE_SIZE,
-                requestWaitTimeoutMs: process.env.RD_REQUEST_WAIT_TIMEOUT_MS
+                requestWaitTimeoutMs: process.env.RD_REQUEST_WAIT_TIMEOUT_MS,
+                rateLimit429Threshold: process.env.RD_LIMITER_429_THRESHOLD,
+                rateLimit429PauseMs: process.env.RD_LIMITER_429_PAUSE_MS
             }),
             createdAt: Date.now(),
             lastUsedAt: Date.now()
