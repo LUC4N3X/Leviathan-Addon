@@ -539,21 +539,30 @@ fn mark_singleflight_shared(result: FlightResult, started: Instant) -> FlightRes
 
 async fn read_cache(state: &AppState, key: &str) -> Option<FetchResponse> {
     let now = Instant::now();
+    {
+        let cache = state.cache.read().await;
+        let Some(entry) = cache.get(key) else { return None; };
+        if now <= entry.expires_at {
+            let mut resp = entry.response.clone();
+            resp.cache = "hit".to_string();
+            resp.ms = 0;
+            return Some(resp);
+        }
+        if now <= entry.stale_until {
+            let mut resp = entry.response.clone();
+            resp.cache = "stale".to_string();
+            resp.ms = 0;
+            return Some(resp);
+        }
+    }
+    // Entry is past its stale window: escalate to a write lock to evict it,
+    // re-checking under the lock since another task may have refreshed it.
     let mut cache = state.cache.write().await;
-    let Some(entry) = cache.get_mut(key) else { return None; };
-    if now <= entry.expires_at {
-        let mut resp = entry.response.clone();
-        resp.cache = "hit".to_string();
-        resp.ms = 0;
-        return Some(resp);
+    if let Some(entry) = cache.get(key) {
+        if Instant::now() > entry.stale_until {
+            cache.remove(key);
+        }
     }
-    if now <= entry.stale_until {
-        let mut resp = entry.response.clone();
-        resp.cache = "stale".to_string();
-        resp.ms = 0;
-        return Some(resp);
-    }
-    cache.remove(key);
     None
 }
 
@@ -729,7 +738,7 @@ fn detect_blocked(body: &str, status: u16) -> Option<String> {
     if matches!(status, 403 | 429 | 503 | 520 | 521 | 522 | 523 | 524) {
         return Some(format!("status_{status}"));
     }
-    let lower = body.chars().take(250_000).collect::<String>().to_ascii_lowercase();
+    let lower: String = body.chars().take(250_000).map(|c| c.to_ascii_lowercase()).collect();
     let signals = [
         "turnstile.cloudflare.com",
         "cf-turnstile",
