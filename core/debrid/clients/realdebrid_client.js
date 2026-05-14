@@ -161,6 +161,10 @@ async function rdRequest(method, url, token, data = null) {
             }
             if (status === 401 || status === 403 || status === 404) {
                 rdCircuit.recordSuccess(circuitKey);
+                if (status === 401 || status === 403) {
+                    const path = String(url).replace(RD_API_BASE, "");
+                    console.warn(`[RD] HTTP ${status} on ${method} ${path} — Real-Debrid rejected the API token (expired / regenerated / wrong account?). Regenerate it at https://real-debrid.com/apitoken`);
+                }
                 return null;
             }
 
@@ -354,7 +358,10 @@ const RD = {
                 addBody
             );
 
-            if (!addRes || !addRes.id) return null;
+            if (!addRes || !addRes.id) {
+                console.warn(`[RD] prepareTorrentForCloud: addMagnet returned no torrent id — likely an auth/token error (see preceding [RD] log) or RD rejected the magnet`);
+                return null;
+            }
             torrentId = addRes.id;
 
             let info = await getTorrentInfo(token, torrentId);
