@@ -539,20 +539,46 @@ fn mark_singleflight_shared(result: FlightResult, started: Instant) -> FlightRes
 
 async fn read_cache(state: &AppState, key: &str) -> Option<FetchResponse> {
     let now = Instant::now();
+    {
+        let cache = state.cache.read().await;
+        let Some(entry) = cache.get(key) else { return None; };
+
+        if now <= entry.expires_at {
+            let mut resp = entry.response.clone();
+            resp.cache = "hit".to_string();
+            resp.ms = 0;
+            return Some(resp);
+        }
+
+        if now <= entry.stale_until {
+            let mut resp = entry.response.clone();
+            resp.cache = "stale".to_string();
+            resp.ms = 0;
+            return Some(resp);
+        }
+    }
+
+    // Entry looked expired from the read lock path. Escalate only for eviction,
+    // but fully re-check under the write lock because another task may have
+    // refreshed the same key while we were waiting for the lock.
+    let now = Instant::now();
     let mut cache = state.cache.write().await;
-    let Some(entry) = cache.get_mut(key) else { return None; };
+    let Some(entry) = cache.get(key) else { return None; };
+
     if now <= entry.expires_at {
         let mut resp = entry.response.clone();
         resp.cache = "hit".to_string();
         resp.ms = 0;
         return Some(resp);
     }
+
     if now <= entry.stale_until {
         let mut resp = entry.response.clone();
         resp.cache = "stale".to_string();
         resp.ms = 0;
         return Some(resp);
     }
+
     cache.remove(key);
     None
 }
@@ -729,7 +755,7 @@ fn detect_blocked(body: &str, status: u16) -> Option<String> {
     if matches!(status, 403 | 429 | 503 | 520 | 521 | 522 | 523 | 524) {
         return Some(format!("status_{status}"));
     }
-    let lower = body.chars().take(250_000).collect::<String>().to_ascii_lowercase();
+    let lower: String = body.chars().take(250_000).map(|c| c.to_ascii_lowercase()).collect();
     let signals = [
         "turnstile.cloudflare.com",
         "cf-turnstile",
