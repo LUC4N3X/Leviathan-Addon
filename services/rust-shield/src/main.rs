@@ -542,12 +542,14 @@ async fn read_cache(state: &AppState, key: &str) -> Option<FetchResponse> {
     {
         let cache = state.cache.read().await;
         let Some(entry) = cache.get(key) else { return None; };
+
         if now <= entry.expires_at {
             let mut resp = entry.response.clone();
             resp.cache = "hit".to_string();
             resp.ms = 0;
             return Some(resp);
         }
+
         if now <= entry.stale_until {
             let mut resp = entry.response.clone();
             resp.cache = "stale".to_string();
@@ -555,14 +557,29 @@ async fn read_cache(state: &AppState, key: &str) -> Option<FetchResponse> {
             return Some(resp);
         }
     }
-    // Entry is past its stale window: escalate to a write lock to evict it,
-    // re-checking under the lock since another task may have refreshed it.
+
+    // Entry looked expired from the read lock path. Escalate only for eviction,
+    // but fully re-check under the write lock because another task may have
+    // refreshed the same key while we were waiting for the lock.
+    let now = Instant::now();
     let mut cache = state.cache.write().await;
-    if let Some(entry) = cache.get(key) {
-        if Instant::now() > entry.stale_until {
-            cache.remove(key);
-        }
+    let Some(entry) = cache.get(key) else { return None; };
+
+    if now <= entry.expires_at {
+        let mut resp = entry.response.clone();
+        resp.cache = "hit".to_string();
+        resp.ms = 0;
+        return Some(resp);
     }
+
+    if now <= entry.stale_until {
+        let mut resp = entry.response.clone();
+        resp.cache = "stale".to_string();
+        resp.ms = 0;
+        return Some(resp);
+    }
+
+    cache.remove(key);
     None
 }
 
