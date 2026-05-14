@@ -1,6 +1,10 @@
 'use strict';
 
 const { getSourceState } = require('../debrid/guards/rd_status_guard');
+const { createFilterExplain } = require('./filter_explain_engine');
+const { applyStreamPolicies } = require('../policies/stream_policy_engine');
+const { applySmartDeduperV2 } = require('../stream/smart_deduper_v2');
+const { queueSelectedStreamPrecache } = require('../precache/precache_selector');
 
 function getTitleText(item) {
     return String(item?.title || item?.name || '').trim();
@@ -56,10 +60,82 @@ function compareFallbackBuckets(left, right) {
     return getTitleText(left).localeCompare(getTitleText(right));
 }
 
+function envFlag(name, fallback = false) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return fallback;
+    return /^(1|true|yes|y|on)$/i.test(String(raw).trim());
+}
+
+function getRequestKey(meta = {}) {
+    const type = meta?.type || meta?.requestType || (meta?.isSeries ? 'series' : 'movie');
+    const id = meta?.id || meta?.imdb_id || meta?.tmdb_id || meta?.title || meta?.name || 'unknown';
+    const season = meta?.season !== undefined ? `:${meta.season}` : '';
+    const episode = meta?.episode !== undefined ? `:${meta.episode}` : '';
+    return `${type}:${id}${season}${episode}`;
+}
+
+function createStageExplain(meta = {}, filters = {}, helpers = {}) {
+    const enabled = filters?.explainFilters !== false
+        && filters?.filterExplain !== false
+        && envFlag('LEVIATHAN_FILTER_EXPLAIN', true);
+
+    return createFilterExplain({
+        enabled,
+        requestKey: getRequestKey(meta),
+        logger: helpers.logger,
+        compact: String(process.env.LEVIATHAN_FILTER_EXPLAIN_COMPACT || '1') !== '0',
+        sampleLimit: Math.max(0, Math.min(20, parseInt(process.env.LEVIATHAN_FILTER_EXPLAIN_SAMPLES || '4', 10) || 4))
+    });
+}
+
+function explainDiff(explain, stage, before, after, reason) {
+    if (!explain || !explain.enabled) return;
+    explain.stage(stage, before, after, reason);
+}
+
 function runFilterStage(items, meta, filters, helpers = {}) {
     let list = Array.isArray(items) ? items : [];
-    if (typeof helpers.applyPackKnowledge === 'function') list = helpers.applyPackKnowledge(list, meta);
-    if (typeof helpers.applyConfiguredTorrentFilters === 'function') list = helpers.applyConfiguredTorrentFilters(list, filters || {});
+    const explain = createStageExplain(meta, filters || {}, helpers);
+
+    explain.input('filter.input', list);
+
+    if (typeof helpers.applyPackKnowledge === 'function') {
+        const before = list;
+        list = helpers.applyPackKnowledge(list, meta);
+        explainDiff(explain, 'packKnowledge', before, list, 'pack_knowledge_removed');
+    }
+
+    if (typeof helpers.applyConfiguredTorrentFilters === 'function') {
+        const before = list;
+        list = helpers.applyConfiguredTorrentFilters(list, filters || {});
+        explainDiff(explain, 'configuredTorrentFilters', before, list, 'configured_torrent_filter_removed');
+    }
+
+    const policyResult = applyStreamPolicies(list, {
+        meta,
+        filters: filters || {},
+        explain,
+        logger: helpers.logger,
+        mode: filters?.streamPolicyMode || process.env.LEVIATHAN_STREAM_POLICY_MODE || 'audit'
+    });
+    list = policyResult.items;
+    if (policyResult.stats?.removed > 0 || policyResult.stats?.matched > 0) {
+        explain.note('streamPolicy', policyResult.stats);
+    }
+
+    const dedupeResult = applySmartDeduperV2(list, {
+        meta,
+        filters: filters || {},
+        explain,
+        logger: helpers.logger,
+        mode: filters?.smartDedupeV2Mode || process.env.LEVIATHAN_SMART_DEDUPE_V2_MODE || 'conservative'
+    });
+    list = dedupeResult.items;
+    if (dedupeResult.stats?.merged > 0 || dedupeResult.stats?.groups > 0) {
+        explain.note('smartDedupeV2', dedupeResult.stats);
+    }
+
+    explain.final(list, { stage: 'filter' });
     return list;
 }
 
@@ -69,15 +145,49 @@ function applyFallbackSort(items) {
 
 function runSortStage(items, meta, config, helpers = {}) {
     let list = Array.isArray(items) ? items : [];
-    if (typeof helpers.rankAndFilterResults === 'function') list = helpers.rankAndFilterResults(list, meta, config);
-    if (typeof helpers.rerankCompositeResults === 'function') list = helpers.rerankCompositeResults(list, meta, config, config?.sort || config?.filters?.sort || 'balanced');
-    if (typeof helpers.applyPremiumRankingPolicy === 'function') list = helpers.applyPremiumRankingPolicy(list, meta, config);
-    if (config?.filters?.maxPerQuality && typeof helpers.filterByQualityLimit === 'function') list = helpers.filterByQualityLimit(list, config.filters.maxPerQuality);
+    const explain = createStageExplain(meta, config?.filters || {}, helpers);
+
+    explain.input('sort.input', list);
+
+    if (typeof helpers.rankAndFilterResults === 'function') {
+        const before = list;
+        list = helpers.rankAndFilterResults(list, meta, config);
+        explainDiff(explain, 'rankAndFilterResults', before, list, 'rank_filter_removed');
+    }
+
+    if (typeof helpers.rerankCompositeResults === 'function') {
+        const before = list;
+        list = helpers.rerankCompositeResults(list, meta, config, config?.sort || config?.filters?.sort || 'balanced');
+        explainDiff(explain, 'rerankCompositeResults', before, list, 'composite_rerank_removed');
+    }
+
+    if (typeof helpers.applyPremiumRankingPolicy === 'function') {
+        const before = list;
+        list = helpers.applyPremiumRankingPolicy(list, meta, config);
+        explainDiff(explain, 'premiumRankingPolicy', before, list, 'premium_policy_removed');
+    }
+
+    if (config?.filters?.maxPerQuality && typeof helpers.filterByQualityLimit === 'function') {
+        const before = list;
+        list = helpers.filterByQualityLimit(list, config.filters.maxPerQuality);
+        explainDiff(explain, 'maxPerQuality', before, list, 'max_per_quality_removed');
+    }
 
     const mode = String(config?.filters?.simpleSortFallback || '').toLowerCase();
     const shouldForceFallback = mode === 'force' || mode === 'true';
     const hasRankScores = list.some((item) => typeof item?._score === 'number' || typeof item?._compositeScore === 'number');
-    if (shouldForceFallback || !hasRankScores) return applyFallbackSort(list);
+    if (shouldForceFallback || !hasRankScores) {
+        list = applyFallbackSort(list);
+    }
+
+    queueSelectedStreamPrecache(list, {
+        meta,
+        config,
+        logger: helpers.logger,
+        selector: config?.filters?.precacheSelector || process.env.LEVIATHAN_PRECACHE_SELECTOR
+    });
+
+    explain.final(list, { stage: 'sort' });
     return list;
 }
 
