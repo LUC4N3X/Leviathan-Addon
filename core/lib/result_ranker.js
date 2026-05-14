@@ -75,7 +75,6 @@ const DEFAULT_PROFILES = {
       titleLengthCap: 300,
       titleSimilarityFactor: 12000,
       tbCachedBonus: 9000,
-      rdCachedBonus: 9000,
       seriesOnMoviePenalty: -9000
     }
   },
@@ -119,7 +118,6 @@ const DEFAULT_PROFILES = {
       titleLengthCap: 400,
       titleSimilarityFactor: 4000,
       tbCachedBonus: 6000,
-      rdCachedBonus: 6000,
       seriesOnMoviePenalty: -18000
     }
   }
@@ -727,25 +725,9 @@ function computeScore(item, meta = {}, configInput = {}) {
   score += Math.min(Math.floor(sizeBytes / Math.max(1, weights.sizeBucketBytes)), weights.sizeFactorCap);
   score += Math.min(title.length, weights.titleLengthCap);
 
-  const rankerService = String(configInput?.service || "").toLowerCase();
-  if (rankerService === "tb" && item?._tbCached) {
+  if (String(configInput?.service || "").toLowerCase() === "tb" && item?._tbCached) {
     score += weights.tbCachedBonus;
     reasons.push("TB_CACHED");
-  }
-  // Symmetric to TB: RD users had no cache bonus even though rd_cache_state is known,
-  // so a cached RD result could rank below an uncached one of equal quality.
-  if (rankerService === "rd") {
-    const rdStateText = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || "").toLowerCase();
-    const rdCached = item?._dbCachedRd === true || item?.cached_rd === true || item?.isCached === true
-      || item?.cached === true || rdStateText === "cached";
-    const rdLikely = !rdCached && (item?.likely_cached === true || rdStateText === "likely_cached");
-    if (rdCached) {
-      score += weights.rdCachedBonus;
-      reasons.push("RD_CACHED");
-    } else if (rdLikely) {
-      score += Math.round(weights.rdCachedBonus * 0.5);
-      reasons.push("RD_LIKELY_CACHED");
-    }
   }
 
   const scoreProfile = evaluateLeviathanScore(item, meta, configInput);
