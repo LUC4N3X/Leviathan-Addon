@@ -412,9 +412,6 @@ function isConfidentSeasonPackItem(item = {}, meta = {}, type = '') {
     const ctx = getSeriesEpisodeContext(meta);
     if (!ctx.isSeries) return false;
 
-    // AIOStreams-style pack signal: if folderSize is much larger than the selected
-    // video file size, this is a multi-file/season-pack even when the visible title
-    // looks like a single episode. This is important for correct fileIdx handling.
     if (hasFolderSizeSeasonPackSignal(item)) return true;
 
     if (isExactRequestedEpisodeItem(item, meta, type)) return false;
@@ -602,8 +599,6 @@ function hasEnglishLanguageToken(value = '') {
 
 function hasTorrentioLooseItalianEvidence(item = {}) {
     if (!isTorrentioExternalItem(item)) return false;
-    // torrentio_mirror is already the ITA-filtered Torrentio endpoint in Nexus Bridge.
-    // For Torrentio, any explicit IT/ITA token is enough: do not reject IT/GB or ITA/ENG dual-audio.
     if (String(item?.externalAddon || '').toLowerCase() === 'torrentio_mirror') return true;
     return hasLooseItalianToken(collectTorrentioItalianEvidenceText(item));
 }
@@ -742,9 +737,6 @@ function getMovieDbExternalBypassMin(filters = {}) {
 function getMovieDbExternalBypassMinForService(filters = {}, service = null) {
     const normalizedService = String(service || '').toLowerCase();
     if (normalizedService === 'rd') {
-        // RD direct-only mode would otherwise hide Torrentio live too early and return 0/1
-        // streams. Torrentio itself keeps showing download-to-debrid candidates, so RD needs
-        // a wider DB before suppressing live external sources.
         const raw = filters.movieDbExternalBypassMinRd ?? process.env.MOVIE_DB_EXTERNAL_BYPASS_MIN_RD ?? '12';
         const parsed = parseInt(raw, 10);
         return Number.isFinite(parsed) ? Math.max(1, Math.min(30, parsed)) : 12;
