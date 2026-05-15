@@ -942,7 +942,7 @@ function createTorrentRepository({
   function buildExternalSnapshotKey(identity, item = {}, type = 'movie') {
     const hash = normalizeInfoHash(item.hash || item.infoHash || item.info_hash);
     const fileIndex = normalizeFileIndex(item.fileIdx ?? item.fileIndex ?? item.file_index);
-    const direct = sanitizeText(item.directUrl || item.externalDirectUrl || item._externalDirectUrl || item.url).slice(0, 512);
+    const direct = sanitizeText(item.externalPlayableUrl || item._torrentioPlayableUrl || item.directUrl || item.externalDirectUrl || item._externalDirectUrl || item.url).slice(0, 2048);
     const title = sanitizeText(item.title || item.name || item.filename || item.file_title).slice(0, 220);
     const source = [normalizeSnapshotGroup(item), normalizeSnapshotAddon(item), normalizeSnapshotProvider(item)].join(':');
     const media = [identity.imdbId, identity.season || 0, identity.episode || 0, type].join(':');
@@ -957,7 +957,7 @@ function createTorrentRepository({
     if (!identity || !item || typeof item !== 'object') return null;
 
     const infoHash = normalizeInfoHash(item.hash || item.infoHash || item.info_hash);
-    const directUrl = sanitizeText(item.directUrl || item.externalDirectUrl || item._externalDirectUrl || item.url);
+    const directUrl = sanitizeText(item.externalPlayableUrl || item._torrentioPlayableUrl || item.directUrl || item.externalDirectUrl || item._externalDirectUrl || item.url);
     if (!infoHash && !directUrl) return null;
 
     const type = normalizeExternalSnapshotType(options.type || item.type, meta);
@@ -1707,8 +1707,11 @@ function createTorrentRepository({
 
     if (rows.length === 0) return 0;
 
-    try {
-      return await runInTransaction(async (client) => {
+    const maxAttempts = 3;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await runInTransaction(async (client) => {
+
         let updated = 0;
 
         for (const row of rows) {
@@ -1791,10 +1794,19 @@ function createTorrentRepository({
 
         return updated;
       });
-    } catch (error) {
-      console.error(`❌ DB Error updateTbCacheStatus: ${error.message}`);
-      return 0;
+      } catch (error) {
+        const isDeadlock = error?.code === '40P01' || /deadlock detected/i.test(String(error?.message || ''));
+        if (isDeadlock && attempt < maxAttempts) {
+          const delayMs = 75 * attempt;
+          console.warn(`⚠️ DB Deadlock updateTbCacheStatus: retry ${attempt}/${maxAttempts} tra ${delayMs}ms`);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        console.error(`❌ DB Error updateTbCacheStatus: ${error.message}`);
+        return 0;
+      }
     }
+    return 0;
   }
 
   async function getRdScanProgress() {
