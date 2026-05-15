@@ -2,12 +2,12 @@
 
 const DEFAULT_STREAM_POLICIES = [
     {
-        id: 'rd_removed_webdl_guard',
-        description: 'RD ha rimosso molti WEB/WEB-DL: in audit/enforce marca o nasconde WEB non verificati.',
+        id: 'torrentio_bad_release_guard',
+        description: 'Nasconde solo payload chiaramente non riproducibili/spazzatura; WEB-DL e WEBRip restano validi.',
         enabled: true,
         action: 'hide',
         severity: 'high',
-        expression: '(service == "rd" || debrid == "rd") && !cached && !savedCloud && quality in ["web", "webdl", "webrip"]'
+        expression: 'regex("(^|[\\\\s._\\\\-\\\\[\\\\]\\\\(\\\\)])(sample|trailer|promo|preview|screens?|proof|nfo|cover|poster|thumbs?|extras?|featurette|making[\\\\s._-]?of|behind[\\\\s._-]?the[\\\\s._-]?scenes|commentary|password|passw(or)?d|keygen|crack|patch|setup|installer|readme|virus|malware)($|[\\\\s._\\\\-\\\\[\\\\]\\\\(\\\\)])", "i")'
     },
     {
         id: 'strict_italian_negative_guard',
@@ -40,3 +40,4 @@ const DEFAULT_STREAM_POLICIES = [
 module.exports = {
     DEFAULT_STREAM_POLICIES
 };
+
