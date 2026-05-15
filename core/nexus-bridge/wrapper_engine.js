@@ -1,9 +1,5 @@
 'use strict';
 
-/**
- * Nexus Bridge 2.0: one policy engine for external Stremio addons.
- * Important rule preserved for Leviathan: MediaFusion is a fallback, never a parallel primary.
- */
 async function fetchAddonGroupSafely({ groupName, addonKeys, fetchGroup, type, id, options, infoLog, countRealResults, dedupeNormalizedStreams }) {
     if (!Array.isArray(addonKeys) || addonKeys.length === 0 || typeof fetchGroup !== 'function') return { resultsByAddon: {}, flat: [], real: 0 };
 
