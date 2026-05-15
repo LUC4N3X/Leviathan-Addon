@@ -391,9 +391,10 @@ body::before {
     object-fit: contain;
     border-radius: 0;
     transform: translateY(5px) scale(1.03);
-    filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.42)) drop-shadow(0 0 10px rgba(0, 242, 255, 0.14)) brightness(1.05) saturate(1.05);
+    /* Static filter — never animated; brightness/saturate are expensive on Android */
+    filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.42)) drop-shadow(0 0 10px rgba(0, 242, 255, 0.15)) brightness(1.05) saturate(1.05);
     animation: pulseGlow 3.1s ease-in-out infinite alternate;
-    will-change: transform, filter, opacity;
+    will-change: transform, opacity;
     z-index: 2;
     image-rendering: -webkit-optimize-contrast;
     opacity: 0;
@@ -405,15 +406,10 @@ body::before {
     opacity: 1;
 }
 
+/* Only animate transform — GPU-composited, zero repaint cost on mobile */
 @keyframes pulseGlow {
-    0% {
-        transform: translateY(5px) scale(1.03);
-        filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.40)) drop-shadow(0 0 8px rgba(0, 242, 255, 0.10)) brightness(1.03) saturate(1.03);
-    }
-    100% {
-        transform: translateY(3px) scale(1.055);
-        filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.44)) drop-shadow(0 0 12px rgba(0, 242, 255, 0.18)) brightness(1.07) saturate(1.07);
-    }
+    0%   { transform: translateY(5px)  scale(1.03); }
+    100% { transform: translateY(3px)  scale(1.055); }
 }
 
 .logo-particles {
@@ -453,9 +449,10 @@ body::before {
     position: relative; z-index: 10;
     animation: titleGlow 4.5s ease-in-out infinite alternate;
 }
+/* Only animate opacity — filter animation triggers repaints on mobile */
 @keyframes titleGlow {
-    from { filter: drop-shadow(0 0 9px rgba(0, 242, 255, 0.26)); }
-    to { filter: drop-shadow(0 0 16px rgba(0, 242, 255, 0.40)); }
+    from { opacity: 0.88; }
+    to   { opacity: 1; }
 }
 .m-brand-sub {
     font-family: 'Rajdhani', sans-serif; font-size: 0.75rem; letter-spacing: 4.7px;
@@ -4495,12 +4492,13 @@ function createSeaCanvas() {
 function initMobileViewportGuard() {
     const root = document.documentElement;
     let blurTimer = 0;
+    let stableH = 0;
 
     const setStableHeight = () => {
-        // Altezza stabile: non segue ogni micro-resize di Chrome Android.
-        // Questo evita lo sfarfallio tipo refresh quando si toccano switch/card.
+        // Stable height: does not follow every micro-resize from Chrome Android.
+        // This avoids flicker when tapping switches/cards.
         const h = Math.max(320, Math.round(window.innerHeight || document.documentElement.clientHeight || 0));
-        if (h) root.style.setProperty('--m-vvh', `${h}px`);
+        if (h) { stableH = h; root.style.setProperty('--m-vvh', `${h}px`); }
     };
 
     const isTextField = (el = document.activeElement) => !!el?.matches?.('input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], textarea, [contenteditable="true"]');
@@ -4510,16 +4508,31 @@ function initMobileViewportGuard() {
         document.body.classList.add('m-input-active', 'm-keyboard-open', 'm-typing');
     };
 
-    const closeKeyboardMode = () => {
+    const closeKeyboardMode = (force = false) => {
         window.clearTimeout(blurTimer);
         blurTimer = window.setTimeout(() => {
-            if (isTextField()) return;
+            if (!force && isTextField()) return;
             document.body.classList.remove('m-input-active', 'm-keyboard-open', 'm-typing');
         }, 250);
     };
 
     setStableHeight();
     window.addEventListener('orientationchange', () => window.setTimeout(setStableHeight, 260), { passive: true });
+
+    // Visual Viewport API: reliable keyboard-close detection on Android.
+    // document.activeElement stays on the input after back-button keyboard dismiss,
+    // so the focusout guard alone is not enough — this catches that case.
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', () => {
+            const vvh = window.visualViewport.height;
+            const base = stableH || window.innerHeight;
+            // If the visual viewport has expanded back to ≥ 80 % of stable height,
+            // the keyboard is gone — force-remove the keyboard-open class.
+            if (vvh >= base * 0.8 && document.body.classList.contains('m-keyboard-open')) {
+                closeKeyboardMode(true);
+            }
+        }, { passive: true });
+    }
 
     document.addEventListener('focusin', (event) => {
         if (!isTextField(event.target)) return;
@@ -4534,7 +4547,7 @@ function initMobileViewportGuard() {
     document.addEventListener('pointerdown', (event) => {
         const target = event.target;
         if (target?.closest?.('input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], textarea, [contenteditable="true"]')) return;
-        if (target?.closest?.('.m-switch, input[type="checkbox"], button, .m-qual-chip, .m-cloud-mode-btn, .m-reactor-module, .m-flux-opt, .m-lang-opt, .m-cortex-chip, .m-cred-opt, .m-act-btn, .m-nav-item')) return;
+        if (target?.closest?.('.m-switch, input[type="checkbox"], button, .m-qual-chip, .m-cloud-mode-btn, .m-reactor-module, .m-flux-opt, .m-lang-opt, .m-cortex-chip, .m-cred-opt, .m-act-btn, .m-nav-item, .m-paste-action, .m-if-action, .m-get-link')) return;
         closeKeyboardMode();
     }, { passive: true });
 }
