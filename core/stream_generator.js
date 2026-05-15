@@ -179,6 +179,82 @@ function getConfiguredDebridKey(config, service = getNormalizedDebridService(con
     return null;
 }
 
+function parseBoundedInt(value, fallback, min, max) {
+    const parsed = parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+}
+
+function isTruthyConfigValue(value) {
+    return /^(1|true|yes|on)$/i.test(String(value || '').trim());
+}
+
+function shouldAllowRdLazyStreams(filters = {}) {
+    // Default OFF: RD entries should be returned only when Leviathan already resolved
+    // a playable URL. This avoids the broken lazy -> add_to_cloud path and mirrors
+    // Torrentio-style RD UX more closely: no fake playable entry that later fails.
+    return isTruthyConfigValue(filters.enableRdLazyStreams ?? process.env.RD_LAZY_STREAMS ?? 'false');
+}
+
+function getRdDirectResolveLimit(filters = {}, rankedCount = 0) {
+    const hardMax = Math.max(1, Math.min(CONFIG.MAX_RESULTS || 12, 20));
+    const configured = filters.rdDirectMaxResults ?? process.env.RD_DIRECT_MAX_RESULTS ?? String(hardMax);
+    return Math.min(Math.max(0, rankedCount), parseBoundedInt(configured, hardMax, 1, hardMax));
+}
+
+function shouldShowRdDownloadToDebrid(filters = {}) {
+    // HARD SAFE DEFAULT: do NOT honor the legacy RD_SHOW_DOWNLOAD_TO_DEBRID flag anymore.
+    // Some deployments may still have that old env set to true in docker-compose/.env, and
+    // that makes visible Stremio rows call /add_to_cloud repeatedly. To re-enable this risky
+    // UX, use the new explicit opt-in RD_ALLOW_DOWNLOAD_TO_DEBRID_ROWS=true.
+    const hardDisable = !isTruthyConfigValue(process.env.RD_ALLOW_DOWNLOAD_TO_DEBRID_ROWS || filters.allowRdDownloadToDebridRows || 'false');
+    if (hardDisable) return false;
+    return isTruthyConfigValue(filters.allowRdDownloadToDebridRows ?? process.env.RD_ALLOW_DOWNLOAD_TO_DEBRID_ROWS ?? 'false');
+}
+
+function isKnownRdUnavailableCandidate(item = {}) {
+    const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || item?.rd_cache_state || '').toLowerCase().trim();
+    if (state === 'likely_uncached' || state === 'uncached' || state === 'uncached_terminal') return true;
+    if (item?._dbCachedRd === false || item?.cached_rd === false) return true;
+    return false;
+}
+
+function base64UrlEncodeText(value = '') {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    return Buffer.from(text, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function compactMagnetForCloudBuild(item = {}) {
+    const candidates = [item?.magnetLink, item?.magnet, item?.url, item?.directUrl];
+    const rawMagnet = candidates.map((value) => String(value || '').trim()).find((value) => /^magnet:\?/i.test(value));
+    const hash = getCandidateInfoHash(item) || extractInfoHash(rawMagnet || '');
+    if (!hash) return rawMagnet || '';
+    const title = String(item?.title || item?.filename || item?.file_title || '').trim();
+    const params = [`xt=urn:btih:${String(hash).toUpperCase()}`];
+    if (title) params.push(`dn=${encodeURIComponent(title.slice(0, 180))}`);
+    const trackers = [];
+    if (rawMagnet) {
+        try {
+            const query = rawMagnet.replace(/^magnet:\?/i, '');
+            const parsed = new URLSearchParams(query);
+            for (const tr of parsed.getAll('tr')) {
+                const tracker = String(tr || '').trim();
+                if (tracker && !trackers.includes(tracker)) trackers.push(tracker);
+                if (trackers.length >= 8) break;
+            }
+        } catch (_) {}
+    }
+    for (const tracker of trackers) params.push(`tr=${encodeURIComponent(tracker)}`);
+    return `magnet:?${params.join('&')}`;
+}
+
+function getRdDownloadFallbackTarget(filters = {}, fallback = CONFIG.MAX_RESULTS || 12) {
+    const hardMax = Math.max(1, Math.min(CONFIG.MAX_RESULTS || 12, 20));
+    const configured = filters.rdDownloadFallbackMaxResults ?? process.env.RD_DOWNLOAD_FALLBACK_MAX_RESULTS ?? String(fallback || hardMax);
+    return parseBoundedInt(configured, hardMax, 1, hardMax);
+}
+
 function uniqueTextList(values = []) {
     const seen = new Set();
     const output = [];
@@ -464,6 +540,13 @@ function isTorrentioExternalItem(item = {}) {
     return group === 'torrentio' || addon.startsWith('torrentio');
 }
 
+function isMediaFusionExternalItem(item = {}) {
+    const addon = String(item?.externalAddon || item?._externalAddon || '').toLowerCase();
+    const group = String(item?.externalGroup || item?._externalGroup || item?._sourceGroup || '').toLowerCase();
+    const source = String(item?.source || item?.provider || '').toLowerCase();
+    return group === 'mediafusion' || addon === 'mediafusion' || source.includes('mediafusion');
+}
+
 function collectTorrentioItalianEvidenceText(item = {}) {
     const info = item?._externalLanguageInfo && typeof item._externalLanguageInfo === 'object'
         ? item._externalLanguageInfo
@@ -546,6 +629,26 @@ function getMovieDbFallbackLimit(filters = {}) {
     return Math.max(0, Math.min(40, parseInt(raw, 10) || 12));
 }
 
+function getMovieDbSnapshotRescueLimit(filters = {}, service = null) {
+    const normalizedService = String(service || '').toLowerCase();
+    if (normalizedService !== 'rd' && process.env.MOVIE_DB_SNAPSHOT_RESCUE_ALL_SERVICES !== 'true') return 0;
+    const raw = filters.movieDbSnapshotRescueLimit ?? process.env.MOVIE_DB_SNAPSHOT_RESCUE_LIMIT ?? '8';
+    return Math.max(0, Math.min(30, parseInt(raw, 10) || 8));
+}
+
+function shouldUseDbSnapshotRescueItem(item = {}) {
+    if (!item || isMovieDbPrimaryCandidate(item)) return false;
+    const group = String(item?._sourceGroup || item?.sourceGroup || '').toLowerCase();
+    const isSnapshot = item?._externalSnapshot === true || item?._fromExternalSnapshot === true || group === 'external_snapshot' || item?._snapshot === true;
+    if (!isSnapshot) return false;
+    const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || '').toLowerCase();
+    if (state === 'uncached_terminal' || state === 'likely_uncached') return false;
+    if (item?._dbCachedRd === false || item?.cached_rd === false) return false;
+    const seeders = parseInt(item?.seeders, 10) || 0;
+    const hasTrustedState = state === 'cached' || state === 'likely_cached' || item?._dbCachedRd === true || item?.cached_rd === true || item?._mediafusionRdAuthority === true || item?._torrentioRdAuthority === true;
+    return hasTrustedState || seeders >= Number(process.env.MOVIE_DB_SNAPSHOT_RESCUE_MIN_SEEDERS || 3);
+}
+
 function isLocalDbCandidate(item = {}) {
     return Boolean(
         item?._localDb === true ||
@@ -602,6 +705,44 @@ function getMovieDbVerifiedSkipExternalMin(filters = {}) {
     const raw = filters.movieDbVerifiedSkipExternalMin ?? process.env.MOVIE_DB_VERIFIED_SKIP_EXTERNAL_MIN ?? '3';
     const parsed = parseInt(raw, 10);
     return Number.isFinite(parsed) ? Math.max(1, Math.min(20, parsed)) : 3;
+}
+
+function getMovieDbExternalBypassMin(filters = {}) {
+    const raw = filters.movieDbExternalBypassMin ?? process.env.MOVIE_DB_EXTERNAL_BYPASS_MIN ?? '8';
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) ? Math.max(1, Math.min(30, parsed)) : 8;
+}
+
+function getMovieDbExternalBypassMinForService(filters = {}, service = null) {
+    const normalizedService = String(service || '').toLowerCase();
+    if (normalizedService === 'rd') {
+        // RD direct-only mode would otherwise hide Torrentio live too early and return 0/1
+        // streams. Torrentio itself keeps showing download-to-debrid candidates, so RD needs
+        // a wider DB before suppressing live external sources.
+        const raw = filters.movieDbExternalBypassMinRd ?? process.env.MOVIE_DB_EXTERNAL_BYPASS_MIN_RD ?? '12';
+        const parsed = parseInt(raw, 10);
+        return Number.isFinite(parsed) ? Math.max(1, Math.min(30, parsed)) : 12;
+    }
+    return getMovieDbExternalBypassMin(filters);
+}
+
+function shouldBypassMovieExternalLive({ verifiedDbCount = 0, dbCandidateCount = 0, filters = {}, service = null, flags = {} } = {}) {
+    if (flags?.useProviderCachedOnly) return false;
+
+    const verifiedMin = getMovieDbVerifiedSkipExternalMin(filters);
+    if (verifiedDbCount < verifiedMin) return false;
+
+    const normalizedService = String(service || '').toLowerCase();
+
+    // RD and TorBox both benefit from Torrentio/MediaFusion/Meteor enrichment unless the DB
+    // pool is already genuinely wide. For RD this is critical because direct-resolve only
+    // returns instant playable URLs, while Torrentio keeps additional [RD download] entries.
+    if (normalizedService === 'tb' || normalizedService === 'rd') {
+        const bypassMin = getMovieDbExternalBypassMinForService(filters, normalizedService);
+        return dbCandidateCount >= bypassMin;
+    }
+
+    return true;
 }
 
 function isMovieDbVerifiedCandidate(item = {}) {
@@ -662,32 +803,74 @@ function shouldUseDbCoverageItem(item = {}) {
     return getDbCoverageScore(item) > 0;
 }
 
-function preserveMovieLocalDbCoverage(rankedList = [], localDbPool = [], meta = {}, filters = {}) {
+function preserveMovieLocalDbCoverage(rankedList = [], localDbPool = [], meta = {}, filters = {}, config = {}) {
     const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
     if (isSeries) return rankedList;
 
+    const service = getNormalizedDebridService(config || {});
     const limit = getMovieDbFallbackLimit(filters);
+    const snapshotLimit = getMovieDbSnapshotRescueLimit(filters, service);
     const list = Array.isArray(rankedList) ? rankedList : [];
-    const dbPool = Array.isArray(localDbPool) ? localDbPool.filter((item) => isMovieDbPrimaryCandidate(item) && shouldUseDbCoverageItem(item)) : [];
-    if (limit <= 0 || dbPool.length === 0) return list;
+    const sourcePool = Array.isArray(localDbPool) ? localDbPool : [];
+    const dbPool = sourcePool.filter((item) => isMovieDbPrimaryCandidate(item) && shouldUseDbCoverageItem(item));
+    const snapshotPool = snapshotLimit > 0
+        ? sourcePool.filter(shouldUseDbSnapshotRescueItem)
+        : [];
 
-    const currentDbCount = list.filter(isMovieDbPrimaryCandidate).length;
-    const wanted = Math.max(0, Math.min(limit, dbPool.length) - currentDbCount);
-    if (wanted <= 0) return list;
+    let output = list;
+    const existingHashes = new Set(output.map(getCandidateInfoHash).filter(Boolean));
 
-    const existingHashes = new Set(list.map(getCandidateInfoHash).filter(Boolean));
-    const additions = dbPool
-        .filter((item) => {
-            const hash = getCandidateInfoHash(item);
-            return hash && !existingHashes.has(hash);
-        })
-        .sort((a, b) => getDbCoverageScore(b) - getDbCoverageScore(a))
-        .slice(0, wanted)
-        .map((item) => ({ ...item, _myDb: true, _dbPrimary: true, _sourceGroup: item?._sourceGroup || 'local_db' }));
+    if (limit > 0 && dbPool.length > 0) {
+        const currentDbCount = output.filter(isMovieDbPrimaryCandidate).length;
+        const wanted = Math.max(0, Math.min(limit, dbPool.length) - currentDbCount);
+        if (wanted > 0) {
+            const additions = dbPool
+                .filter((item) => {
+                    const hash = getCandidateInfoHash(item);
+                    return hash && !existingHashes.has(hash);
+                })
+                .sort((a, b) => getDbCoverageScore(b) - getDbCoverageScore(a))
+                .slice(0, wanted)
+                .map((item) => ({ ...item, _myDb: true, _dbPrimary: true, _sourceGroup: item?._sourceGroup || 'local_db' }));
 
-    if (additions.length === 0) return list;
-    logger.info(`[DB COVERAGE] movie db-primary fallback added=${additions.length} current=${currentDbCount} limit=${limit} dbPool=${dbPool.length}`);
-    return [...list, ...additions];
+            for (const item of additions) {
+                const hash = getCandidateInfoHash(item);
+                if (hash) existingHashes.add(hash);
+            }
+            if (additions.length > 0) {
+                logger.info(`[DB COVERAGE] movie db-primary fallback added=${additions.length} current=${currentDbCount} limit=${limit} dbPool=${dbPool.length}`);
+                output = [...output, ...additions];
+            }
+        }
+    }
+
+    if (snapshotLimit > 0 && snapshotPool.length > 0) {
+        const currentSnapshotCount = output.filter((item) => item?._fromExternalSnapshot === true || item?._externalSnapshot === true || String(item?._sourceGroup || '').toLowerCase() === 'external_snapshot').length;
+        const wanted = Math.max(0, Math.min(snapshotLimit, snapshotPool.length) - currentSnapshotCount);
+        if (wanted > 0) {
+            const additions = snapshotPool
+                .filter((item) => {
+                    const hash = getCandidateInfoHash(item);
+                    return hash && !existingHashes.has(hash);
+                })
+                .sort((a, b) => getDbCoverageScore(b) - getDbCoverageScore(a))
+                .slice(0, wanted)
+                .map((item) => ({
+                    ...item,
+                    _fromExternalSnapshot: true,
+                    _externalSnapshot: true,
+                    _sourceGroup: item?._sourceGroup || 'external_snapshot',
+                    _fallbackGroup: item?._fallbackGroup || 'db_snapshot_rescue'
+                }));
+
+            if (additions.length > 0) {
+                logger.info(`[DB COVERAGE] movie snapshot rescue added=${additions.length} current=${currentSnapshotCount} limit=${snapshotLimit} snapshotPool=${snapshotPool.length} service=${service || 'n/a'}`);
+                output = [...output, ...additions];
+            }
+        }
+    }
+
+    return output;
 }
 
 function shouldAllowSeriesDbFastPath(filters = {}) {
@@ -718,8 +901,24 @@ function buildGroupedFallbackCandidatePool({ localDbPool = [], networkResults = 
         if (dbPrimary.length > 0) {
             const fillPool = [...snapshotFill, ...externalFromNetwork];
             const fillLimit = getMovieExternalFillLimit(filters, dbPrimary.length);
-            const externalFill = fillPool.slice(0, fillLimit);
-            logger.info(`[GROUP FALLBACK] movie DB-primary wins | dbPrimary=${dbPrimary.length} local=${primaryFromDb.length} remote=${primaryFromNetwork.length} externalFill=${externalFill.length}/${fillPool.length}`);
+            const rdAuthorityFillMaxRaw = filters.rdTorrentioAuthorityFillMax ?? process.env.RD_TORRENTIO_AUTHORITY_FILL_MAX ?? '12';
+            const rdAuthorityFillMax = Math.max(0, Math.min(30, parseInt(rdAuthorityFillMaxRaw, 10) || 12));
+            const isRdService = getNormalizedDebridService(config) === 'rd';
+            const authorityFill = isRdService
+                ? fillPool.filter(isTorrentioRdAuthorityCandidate).slice(0, rdAuthorityFillMax)
+                : [];
+            const regularFill = fillPool.slice(0, fillLimit);
+            const seenFill = new Set();
+            const externalFill = [];
+            for (const item of [...authorityFill, ...regularFill]) {
+                const hash = getCandidateInfoHash(item) || String(item?.title || item?.name || '').toLowerCase();
+                const fileIdx = Number.isInteger(Number(item?.fileIdx)) ? Number(item.fileIdx) : -1;
+                const key = `${hash || externalFill.length}:${fileIdx}`;
+                if (seenFill.has(key)) continue;
+                seenFill.add(key);
+                externalFill.push(item);
+            }
+            logger.info(`[GROUP FALLBACK] movie DB-primary wins | dbPrimary=${dbPrimary.length} local=${primaryFromDb.length} remote=${primaryFromNetwork.length} externalFill=${externalFill.length}/${fillPool.length}${isRdService ? ` rdAuthority=${authorityFill.length}` : ''}`);
             return [
                 ...markFallbackGroup(dbPrimary, 'db_primary'),
                 ...markFallbackGroup(externalFill, 'external_fill')
@@ -1314,6 +1513,98 @@ function getExternalDirectUrl(item = {}) {
     return null;
 }
 
+function isLeviathanCloudBuilderUrl(value = '') {
+    const text = String(value || '').trim();
+    if (!/^https?:\/\//i.test(text)) return false;
+    try {
+        const url = new URL(text);
+        return /\/(?:[^/]+\/)?add_to_cloud\//i.test(url.pathname);
+    } catch {
+        return /\/add_to_cloud\//i.test(text);
+    }
+}
+
+function getTorrentioPassthroughUrl(item = {}) {
+    if (process.env.RD_TORRENTIO_PASSTHROUGH === 'false') return null;
+    if (!isTorrentioExternalItem(item)) return null;
+    const candidates = [
+        item?._torrentioPlayableUrl,
+        item?.externalPlayableUrl,
+        item?._externalOriginalUrl,
+        item?._externalDirectUrl,
+        item?.externalDirectUrl,
+        item?.directUrl,
+        item?.url
+    ];
+
+    for (const value of candidates) {
+        const text = String(value || '').trim();
+        if (!/^https?:\/\//i.test(text)) continue;
+        if (isLeviathanCloudBuilderUrl(text)) continue;
+        return text;
+    }
+
+    return null;
+}
+
+function getMediaFusionPassthroughUrl(item = {}) {
+    if (process.env.RD_MEDIAFUSION_PASSTHROUGH === 'false') return null;
+    if (!isMediaFusionExternalItem(item)) return null;
+    if (process.env.MEDIAFUSION_TRUST_NATIVE_RD_URLS === 'false') return null;
+    const candidates = [
+        item?._mediafusionPlayableUrl,
+        item?.externalPlayableUrl,
+        item?._externalOriginalUrl,
+        item?._externalDirectUrl,
+        item?.externalDirectUrl,
+        item?.directUrl,
+        item?.url
+    ];
+
+    for (const value of candidates) {
+        const text = String(value || '').trim();
+        if (!/^https?:\/\//i.test(text)) continue;
+        if (isLeviathanCloudBuilderUrl(text)) continue;
+        return text;
+    }
+
+    return null;
+}
+
+function annotateMediaFusionPassthroughStream(stream, item = {}, passthroughUrl = '') {
+    if (!stream) return stream;
+    stream.behaviorHints = {
+        ...(stream.behaviorHints || {}),
+        mediafusionPassthrough: true,
+        externalAddon: item?.externalAddon || item?._externalAddon || undefined,
+        externalProvider: item?.externalProvider || undefined,
+        cacheState: stream.behaviorHints?.cacheState || stream.cacheState || 'cached',
+        rdCacheState: stream.behaviorHints?.rdCacheState || stream.rdCacheState || 'cached'
+    };
+    stream.cacheState = stream.cacheState || 'cached';
+    stream.rdCacheState = stream.rdCacheState || 'cached';
+    stream._mediafusionPassthrough = true;
+    stream._mediafusionPlayableUrl = passthroughUrl || undefined;
+    return stream;
+}
+
+function annotateTorrentioPassthroughStream(stream, item = {}, passthroughUrl = '') {
+    if (!stream) return stream;
+    stream.behaviorHints = {
+        ...(stream.behaviorHints || {}),
+        torrentioPassthrough: true,
+        externalAddon: item?.externalAddon || item?._externalAddon || undefined,
+        externalProvider: item?.externalProvider || undefined,
+        cacheState: stream.behaviorHints?.cacheState || stream.cacheState || 'cached',
+        rdCacheState: stream.behaviorHints?.rdCacheState || stream.rdCacheState || 'cached'
+    };
+    stream.cacheState = stream.cacheState || 'cached';
+    stream.rdCacheState = stream.rdCacheState || 'cached';
+    stream._torrentioPassthrough = true;
+    stream._torrentioPlayableUrl = passthroughUrl || undefined;
+    return stream;
+}
+
 function isSparseEpisodeOnlyTitle(value = '') {
     const text = String(value || '')
         .replace(/\.(?:mkv|mp4|avi|mov|wmv)$/i, '')
@@ -1790,9 +2081,15 @@ function getServiceDisplayName(service) {
 }
 
 
-const RD_WEBDL_BLOCK_REGEX = /\b(?:web[- ._]?dl|webdl)\b/i;
+// Torrentio-style safety guard: WEB-DL / WEBRip are valid release sources and must not be
+// hidden only because RD changed cache semantics. Block only clearly non-playable junk files.
+const STREAM_BAD_AUX_FILE_REGEX = /(?:^|[\s._\-\[\]()])(?:sample|trailer|promo|preview|screens?|proof|nfo|cover|poster|thumbs?|extras?|featurette|making[\s._-]?of|behind[\s._-]?the[\s._-]?scenes|commentary)(?:$|[\s._\-\[\]()])/i;
+const STREAM_BAD_ARCHIVE_REGEX = /\.(?:rar|zip|7z|tar|gz|bz2|xz|nfo|txt|jpg|jpeg|png|gif|webp|srt|sub|idx|ass|ssa)(?:$|[?&#\s])/i;
+const STREAM_BAD_PAYLOAD_REGEX = /(?:^|[\s._\-\[\]()])(?:password|passw(?:or)?d|keygen|crack|patch|setup|installer|readme|virus|malware)(?:$|[\s._\-\[\]()])/i;
+const STREAM_LOW_QUALITY_CAPTURE_REGEX = /\b(?:camrip|hdcam|cam|telesync|telecine|dvdscr|bdscr|screener)\b/i;
+const BLOCK_LOW_QUALITY_CAPTURE_RELEASES = /^(1|true|yes|y|on)$/i.test(String(process.env.LEVIATHAN_BLOCK_LOW_QUALITY_RELEASES || 'false'));
 
-function buildRdBlocklistText(item = {}, parseTitle = '', displayTitle = '') {
+function buildStreamGuardText(item = {}, parseTitle = '', displayTitle = '') {
     return [
         parseTitle,
         displayTitle,
@@ -1802,6 +2099,7 @@ function buildRdBlocklistText(item = {}, parseTitle = '', displayTitle = '') {
         item?.file_title,
         item?.releaseName,
         item?.name,
+        item?.url,
         item?.behaviorHints?.filename,
         item?.episodeFileHint?.fileName,
         item?._episodeFileHint?.fileName
@@ -1811,19 +2109,31 @@ function buildRdBlocklistText(item = {}, parseTitle = '', displayTitle = '') {
         .join(' ');
 }
 
-function shouldBlockRdWebDlStream(service, item = {}, parseTitle = '', displayTitle = '') {
-    if (String(service || '').toLowerCase() !== 'rd') return false;
-    const text = buildRdBlocklistText(item, parseTitle, displayTitle);
-    return RD_WEBDL_BLOCK_REGEX.test(text);
+function getTorrentioStyleBadReleaseReason(item = {}, parseTitle = '', displayTitle = '') {
+    const text = buildStreamGuardText(item, parseTitle, displayTitle);
+    if (!text) return '';
+
+    // Do not classify WEB-DL/WEBRip/WEB as bad. Torrentio treats source/quality as a normal
+    // user filter dimension; the hard guard here is only for obvious non-video junk.
+    if (STREAM_BAD_AUX_FILE_REGEX.test(text)) return 'auxiliary_file';
+    if (STREAM_BAD_ARCHIVE_REGEX.test(text)) return 'non_video_payload';
+    if (STREAM_BAD_PAYLOAD_REGEX.test(text)) return 'unsafe_payload';
+    if (BLOCK_LOW_QUALITY_CAPTURE_RELEASES && STREAM_LOW_QUALITY_CAPTURE_REGEX.test(text)) return 'low_quality_capture';
+    return '';
 }
 
-function logBlockedRdWebDlStream(item = {}, parseTitle = '', displayTitle = '', stage = 'build-stream') {
-    const text = buildRdBlocklistText(item, parseTitle, displayTitle)
+function shouldBlockTorrentioStyleBadRelease(item = {}, parseTitle = '', displayTitle = '') {
+    return Boolean(getTorrentioStyleBadReleaseReason(item, parseTitle, displayTitle));
+}
+
+function logBlockedTorrentioStyleBadRelease(item = {}, parseTitle = '', displayTitle = '', stage = 'build-stream') {
+    const reason = getTorrentioStyleBadReleaseReason(item, parseTitle, displayTitle) || 'bad_release';
+    const text = buildStreamGuardText(item, parseTitle, displayTitle)
         .replace(/[\r\n\t]+/g, ' ')
         .replace(/\s{2,}/g, ' ')
         .trim()
         .slice(0, 140);
-    logger.info(`[RD BLOCKED] skip | reason=webdl_removed_by_rd stage=${stage} hash=${item?.hash || 'n/a'} fileIdx=${getResolvedFileIdx(item) ?? 'n/a'} title="${text || 'n/a'}"`);
+    logger.info(`[STREAM BLOCKED] skip | reason=torrentio_bad_release:${reason} stage=${stage} hash=${item?.hash || 'n/a'} fileIdx=${getResolvedFileIdx(item) ?? 'n/a'} title="${text || 'n/a'}"`);
 }
 
 function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitle, sizeBytes, seeders, config, meta, isLazy = false, isPack = false }) {
@@ -1831,8 +2141,8 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
     const isAIOActive = aioFormatter.isAIOStreamsEnabled(config);
     const baseParseTitle = appendExternalLanguageSignalsForFormatter(choosePlayableParseTitle(item, parseTitle || item?.title || displayTitle || ''), item);
 
-    if (shouldBlockRdWebDlStream(normalizedService, item, baseParseTitle, displayTitle)) {
-        logBlockedRdWebDlStream(item, baseParseTitle, displayTitle, isLazy ? 'lazy-stream' : 'direct-stream');
+    if (shouldBlockTorrentioStyleBadRelease(item, baseParseTitle, displayTitle)) {
+        logBlockedTorrentioStyleBadRelease(item, baseParseTitle, displayTitle, isLazy ? 'lazy-stream' : 'direct-stream');
         return null;
     }
 
@@ -3018,6 +3328,63 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
         const displayTitle = (aioFormatter.isAIOStreamsEnabled(config) && isPack && isSeries && meta) ? getEpisodeDisplayTitle(meta, item.title) : item.title;
         const runtimeItem = createRuntimeItem(item, meta);
         const rawConf = config?.rawConf || '';
+        const torrentioPassthroughUrl = service === 'rd' ? getTorrentioPassthroughUrl(runtimeItem) : null;
+        if (torrentioPassthroughUrl) {
+            const realSize = getObservedSizeBytes(runtimeItem._size, runtimeItem.sizeBytes);
+            const finalSeeders = getObservedSeederCount(runtimeItem.seeders);
+            runtimeItem._rdCacheState = 'cached';
+            runtimeItem.rdCacheState = 'cached';
+            runtimeItem.cacheState = 'cached';
+            runtimeItem._dbCachedRd = true;
+            runtimeItem.cached_rd = true;
+            runtimeItem._torrentioRdAuthority = true;
+            runtimeItem._torrentioCached = true;
+            runtimeItem._torrentioRdDirect = true;
+            runtimeItem._rdProof = runtimeItem._rdProof || 'torrentio_passthrough_url';
+            logger.info(`[TORRENTIO PASSTHROUGH] playable url preserved hash=${runtimeItem.hash || runtimeItem.infoHash || 'n/a'} fileIdx=${getResolvedFileIdx(runtimeItem) ?? 'n/a'} addon=${runtimeItem.externalAddon || 'torrentio'} source=${runtimeItem.externalProvider || runtimeItem.source || 'n/a'}`);
+            return annotateTorrentioPassthroughStream(buildPlayableStream({
+                service,
+                item: runtimeItem,
+                streamUrl: torrentioPassthroughUrl,
+                displayTitle,
+                parseTitle: runtimeItem.title,
+                sizeBytes: realSize,
+                seeders: finalSeeders,
+                config,
+                meta,
+                isPack
+            }), runtimeItem, torrentioPassthroughUrl);
+        }
+
+        const mediaFusionPassthroughUrl = service === 'rd' ? getMediaFusionPassthroughUrl(runtimeItem) : null;
+        if (mediaFusionPassthroughUrl) {
+            const realSize = getObservedSizeBytes(runtimeItem._size, runtimeItem.sizeBytes);
+            const finalSeeders = getObservedSeederCount(runtimeItem.seeders);
+            runtimeItem._rdCacheState = 'cached';
+            runtimeItem.rdCacheState = 'cached';
+            runtimeItem.cacheState = 'cached';
+            runtimeItem._dbCachedRd = true;
+            runtimeItem.cached_rd = true;
+            runtimeItem._mediafusionRdAuthority = true;
+            runtimeItem._mediafusionRdChecked = true;
+            runtimeItem._nexusBridgeRdChecked = true;
+            runtimeItem._externalRdChecked = true;
+            runtimeItem._rdProof = runtimeItem._rdProof || 'mediafusion_passthrough_url';
+            logger.info(`[MEDIAFUSION PASSTHROUGH] playable url preserved hash=${runtimeItem.hash || runtimeItem.infoHash || 'n/a'} fileIdx=${getResolvedFileIdx(runtimeItem) ?? 'n/a'} source=${runtimeItem.externalProvider || runtimeItem.source || 'n/a'}`);
+            return annotateMediaFusionPassthroughStream(buildPlayableStream({
+                service,
+                item: runtimeItem,
+                streamUrl: mediaFusionPassthroughUrl,
+                displayTitle,
+                parseTitle: runtimeItem.title,
+                sizeBytes: realSize,
+                seeders: finalSeeders,
+                config,
+                meta,
+                isPack
+            }), runtimeItem, mediaFusionPassthroughUrl);
+        }
+
         const directUrl = getExternalDirectUrl(runtimeItem);
         if (directUrl) {
             const realSize = getObservedSizeBytes(runtimeItem._size, runtimeItem.sizeBytes);
@@ -3169,9 +3536,83 @@ function getLazyPlaybackEpisodeContext(item = {}, meta = {}) {
     return { season, episode };
 }
 
+function generateRdDownloadToDebridStream(item, config, meta, reqHost, userConfStr) {
+    const service = getNormalizedDebridService(config);
+    if (service !== 'rd' || !item?.hash) return null;
+
+    const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
+    const isPack = isSeries && isConfidentSeasonPackItem(item, meta, '');
+    const runtimeItem = createRuntimeItem({
+        ...item,
+        _rdCacheState: isTorrentioRdAuthorityCandidate(item) ? 'likely_cached' : 'unknown',
+        rdCacheState: isTorrentioRdAuthorityCandidate(item) ? 'likely_cached' : 'unknown',
+        cacheState: isTorrentioRdAuthorityCandidate(item) ? 'likely_cached' : 'unknown',
+        _dbCachedRd: null,
+        cached_rd: null,
+        _torrentioRdAuthority: Boolean(item?._torrentioRdAuthority),
+        _torrentioCached: Boolean(item?._torrentioCached),
+        _rdProof: item?._rdProof,
+        source: `${item?.source || 'Torrent'} · ${isTorrentioRdAuthorityCandidate(item) ? 'RD cached candidate' : 'RD download'}`
+    }, meta);
+
+    let displayTitle = item.title;
+    if (aioFormatter.isAIOStreamsEnabled(config) && isPack && isSeries) {
+        displayTitle = getEpisodeDisplayTitle(meta, item.title);
+    }
+
+    const realSize = getObservedSizeBytes(item._size, item.sizeBytes);
+    const finalSeeders = getObservedSeederCount(item.seeders);
+    const playbackContext = getLazyPlaybackEpisodeContext(item, meta);
+    const query = new URLSearchParams();
+    query.set('rd_download', '1');
+    query.set('s', String(playbackContext.season || 0));
+    query.set('e', String(playbackContext.episode || 0));
+    if (Number.isInteger(Number(item.fileIdx)) && Number(item.fileIdx) >= 0) query.set('f', String(Number(item.fileIdx)));
+    if (meta?.imdb_id) query.set('imdb', String(meta.imdb_id));
+    const compactMagnet = compactMagnetForCloudBuild(item);
+    const encodedMagnet = base64UrlEncodeText(compactMagnet);
+    // Pass the original/external magnet context to the cloud builder. ICV-style external
+    // addon integration keeps provider magnet/tracker context instead of rebuilding a bare
+    // btih-only magnet at click time.
+    if (encodedMagnet && encodedMagnet.length < 4096) query.set('m', encodedMagnet);
+    const streamUrl = `${reqHost}/${userConfStr}/add_to_cloud/${item.hash}?${query.toString()}`;
+
+    const stream = buildPlayableStream({
+        service: 'rd',
+        item: runtimeItem,
+        streamUrl,
+        displayTitle,
+        parseTitle: item.title,
+        sizeBytes: realSize,
+        seeders: finalSeeders,
+        config,
+        meta,
+        isLazy: false,
+        isPack
+    });
+
+    if (!stream) return null;
+    const note = isTorrentioRdAuthorityCandidate(item)
+        ? '⏳ Torrentio RD cached • se non parte, aggiungi al cloud e aggiorna'
+        : '⬇️ RD download • aggiungi al cloud, poi aggiorna';
+    stream.title = `${stream.title || displayTitle || item.title}
+${note}`;
+    stream.cacheState = 'download';
+    stream.rdCacheState = 'download';
+    stream.behaviorHints = {
+        ...(stream.behaviorHints || {}),
+        cacheState: 'download',
+        rdCacheState: 'download',
+        notWebReady: false,
+        rdDownloadToDebrid: true
+    };
+    return stream;
+}
+
 function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = false) {
     const service = getNormalizedDebridService(config);
     if (!service) return null;
+    if (service === 'rd' && !shouldAllowRdLazyStreams(config?.filters || {})) return null;
     const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
     const isPack = isSeries && isConfidentSeasonPackItem(item, meta, '');
     const runtimeItem = createRuntimeItem(item, meta);
@@ -3393,7 +3834,54 @@ function buildExternalFormatterTitle(item = {}, title = '', { externalLanguageOk
     return [...new Set(parts.map(normalizeExternalTextValue).filter(Boolean))].join(' ');
 }
 
-function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode = 'ita' } = {}) {
+function collectTorrentioRdAuthorityText(item = {}) {
+    const hints = item?.behaviorHints && typeof item.behaviorHints === 'object' ? item.behaviorHints : {};
+    const values = [
+        item?.title, item?.name, item?.filename, item?.file_title, item?.websiteTitle, item?.rawDescription,
+        item?.description, item?.source, item?.provider, item?.externalProvider, item?.externalAddon, item?.externalGroup,
+        item?.cacheState, item?.rdCacheState, item?._rdCacheState, item?.cachedStatus, item?.debridStatus, item?.availability,
+        hints.cacheState, hints.rdCacheState, hints.cached, hints.filename, hints.bingeGroup, hints.infoHash
+    ];
+    return values.flatMap((value) => Array.isArray(value) ? value : [value]).filter(Boolean).join(' ');
+}
+
+function hasTorrentioRdDownloadMarker(item = {}) {
+    const text = collectTorrentioRdAuthorityText(item);
+    return /(?:⬇️|\bRD\s*download\b|\bdownload\s+to\s+debrid\b|\baggiungi\s+al\s+cloud\b|\badd\s+to\s+cloud\b)/i.test(text);
+}
+
+function hasTorrentioRdCachedMarker(item = {}) {
+    const text = collectTorrentioRdAuthorityText(item);
+    if (!text) return false;
+    if (item?._dbCachedRd === true || item?.cached_rd === true || item?.isCached === true || item?.cached === true) return true;
+    if (/^(?:cached|rd_cached|instant|instant_available)$/i.test(String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || '').trim())) return true;
+    return /(?:⚡|\bRD\s*\+\b|\bRD\+\b|\bReal[-\s]?Debrid\s*(?:cached|instant|ready)\b|\binstant(?:ly)?\s*(?:available|ready)\b|\bcached\b)/i.test(text);
+}
+
+function getTorrentioRdAuthority(item = {}, { service = null, onlyItalian = false, externalLanguageOk = false, directUrl = null } = {}) {
+    if (String(service || '').toLowerCase() !== 'rd') return { trusted: false, direct: false, reason: '' };
+    if (!isTorrentioExternalItem(item)) return { trusted: false, direct: false, reason: '' };
+    if (onlyItalian && !externalLanguageOk) return { trusted: false, direct: false, reason: 'language_rejected' };
+
+    const hasDirect = /^https?:\/\//i.test(String(directUrl || '').trim());
+    if (hasDirect) return { trusted: true, direct: true, reason: 'torrentio_passthrough_url' };
+    if (hasTorrentioRdDownloadMarker(item)) return { trusted: false, direct: false, reason: 'torrentio_download_marker' };
+    if (hasTorrentioRdCachedMarker(item)) return { trusted: true, direct: false, reason: 'torrentio_cached_marker' };
+    return { trusted: false, direct: false, reason: '' };
+}
+
+function isTorrentioRdAuthorityCandidate(item = {}) {
+    return Boolean(
+        item?._torrentioRdAuthority === true ||
+        item?._torrentioCached === true ||
+        item?._rdProof === 'torrentio_direct_url' ||
+        item?._rdProof === 'torrentio_passthrough_url' ||
+        item?._rdProof === 'torrentio_cached_marker' ||
+        (isTorrentioExternalItem(item) && (item?._dbCachedRd === true || item?.cached_rd === true || item?.rdCacheState === 'cached' || item?._rdCacheState === 'cached'))
+    );
+}
+
+function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode = 'ita', config = {} } = {}) {
     if (!item) return null;
     const onlyItalian = langMode === 'ita';
     const isSeriesQuery = String(type || '').toLowerCase() === 'series' || Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
@@ -3405,16 +3893,25 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
     const magnetOrDirect = item.magnetLink || item.magnet || directUrl || null;
     const hash = item.infoHash || item.hash || extractInfoHash(item.magnetLink) || extractInfoHash(item.magnet) || extractInfoHash(directUrl);
     const isTorrentio = isTorrentioExternalItem(item);
+    const isMediaFusion = isMediaFusionExternalItem(item);
+    const currentDebridService = getNormalizedDebridService(config);
+    const mediaFusionPassthroughUrl = currentDebridService === 'rd' ? getMediaFusionPassthroughUrl(item) : null;
     const torrentioLooseItalian = hasTorrentioLooseItalianEvidence(item);
     const externalLanguageOk = Boolean(item.isItalian || item.hasItalianAudio || item.languageInfo?.isItalian || item.languageInfo?.hasAudioItalian || torrentioLooseItalian);
     if (onlyItalian && isTorrentio && !externalLanguageOk) return null;
 
-    const trustedTorrentioDirect = Boolean(directUrl && isTorrentio && (!onlyItalian || externalLanguageOk));
+    const torrentioRdAuthority = getTorrentioRdAuthority(item, {
+        service: currentDebridService,
+        onlyItalian,
+        externalLanguageOk,
+        directUrl
+    });
     const mediaFusionRdCached = Boolean(
-        (item._mediafusionRdChecked === true || item._nexusBridgeRdChecked === true || item._externalRdChecked === true) &&
+        (mediaFusionPassthroughUrl && isMediaFusion) ||
+        (item._mediafusionRdChecked === true || item._mediafusionRdAuthority === true || item._nexusBridgeRdChecked === true || item._externalRdChecked === true) &&
         (item.rdCacheState === 'cached' || item.cacheState === 'cached' || item.cached_rd === true || item._dbCachedRd === true)
     );
-    const rdCached = Boolean(mediaFusionRdCached || trustedTorrentioDirect);
+    const rdCached = Boolean(mediaFusionRdCached || torrentioRdAuthority.trusted);
     const rdState = rdCached ? 'cached' : 'unknown';
     const rdCachedBool = rdCached ? true : null;
     const externalPack = isConfidentSeasonPackItem({
@@ -3437,6 +3934,12 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
         url: directUrl || null,
         _externalDirectUrl: directUrl || null,
         externalDirectUrl: directUrl || null,
+        externalPlayableUrl: getTorrentioPassthroughUrl(item) || mediaFusionPassthroughUrl || directUrl || null,
+        _torrentioPlayableUrl: getTorrentioPassthroughUrl(item) || null,
+        _mediafusionPlayableUrl: mediaFusionPassthroughUrl || item._mediafusionPlayableUrl || null,
+        _torrentioPassthrough: Boolean(isTorrentio && getTorrentioPassthroughUrl(item)),
+        _mediafusionPassthrough: Boolean(isMediaFusion && mediaFusionPassthroughUrl),
+        _externalOriginalUrl: item._externalOriginalUrl || item.url || directUrl || null,
         size: item.size || (finalSize > 0 ? formatBytes(finalSize) : null),
         sizeBytes: finalSize,
         rawDescription: item.rawDescription || null,
@@ -3472,12 +3975,17 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
         _externalRequestId: item._externalRequestId || null,
         _externalIdMatched: item._externalIdMatched === true,
         _externalBatch: item._externalBatch || null,
-        _externalIsItalian: Boolean(item.isItalian || item.languageInfo?.isItalian || externalLanguageOk || (trustedTorrentioDirect && externalLanguageOk)),
-        _externalHasItalianAudio: Boolean(item.hasItalianAudio || item.languageInfo?.hasAudioItalian || externalLanguageOk || (trustedTorrentioDirect && externalLanguageOk)),
+        _externalIsItalian: Boolean(item.isItalian || item.languageInfo?.isItalian || externalLanguageOk || (torrentioRdAuthority.direct && externalLanguageOk)),
+        _externalHasItalianAudio: Boolean(item.hasItalianAudio || item.languageInfo?.hasAudioItalian || externalLanguageOk || (torrentioRdAuthority.direct && externalLanguageOk)),
         _externalHasItalianSubs: Boolean(item.hasItalianSubs || item.languageInfo?.hasSubItalian),
         _externalLanguageConfidence: Math.max(Number(item.languageInfo?.confidence || 0) || 0, externalLanguageOk ? 98 : 0),
         _torrentioLooseItalian: Boolean(torrentioLooseItalian),
         _torrentioLooseItForceKeep: Boolean(isTorrentio && externalLanguageOk && item._externalIdMatched === true),
+        _torrentioRdAuthority: Boolean(torrentioRdAuthority.trusted),
+        _torrentioCached: Boolean(torrentioRdAuthority.trusted),
+        _torrentioRdDirect: Boolean(torrentioRdAuthority.direct),
+        _rdProof: torrentioRdAuthority.trusted ? torrentioRdAuthority.reason : (mediaFusionPassthroughUrl ? 'mediafusion_passthrough_url' : undefined),
+        _mediafusionRdAuthority: Boolean(mediaFusionRdCached),
         potentialPack: Boolean(isSeriesQuery && externalPack),
         packTitle: (isSeriesQuery && externalPack) ? (item.packTitle || '') : '',
         _isPack: Boolean(isSeriesQuery && externalPack),
@@ -3485,9 +3993,9 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
         rdCacheState: rdState,
         _dbCachedRd: rdCachedBool,
         cached_rd: rdCachedBool,
-        _mediafusionRdChecked: Boolean(item._mediafusionRdChecked),
-        _nexusBridgeRdChecked: Boolean(item._nexusBridgeRdChecked || trustedTorrentioDirect),
-        _externalRdChecked: Boolean(item._externalRdChecked || trustedTorrentioDirect)
+        _mediafusionRdChecked: Boolean(item._mediafusionRdChecked || mediaFusionRdCached),
+        _nexusBridgeRdChecked: Boolean(item._nexusBridgeRdChecked || torrentioRdAuthority.trusted || mediaFusionRdCached),
+        _externalRdChecked: Boolean(item._externalRdChecked || torrentioRdAuthority.trusted || mediaFusionRdCached)
     };
 }
 
@@ -3725,10 +4233,20 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
                     _externalRequestId: value.id,
                     _externalIdMatched: true,
                     _externalBatch: label
-                }, { type, meta, langMode }))
+                }, { type, meta, langMode, config }))
                 .filter(Boolean));
         }
-        return dedupeExternalCandidates(mapped);
+        const deduped = dedupeExternalCandidates(mapped);
+        if (getNormalizedDebridService(config) === 'rd') {
+            const authority = deduped.filter(isTorrentioRdAuthorityCandidate);
+            if (authority.length > 0) {
+                const direct = authority.filter((item) => item?._torrentioRdDirect === true || getTorrentioPassthroughUrl(item) || getExternalDirectUrl(item)).length;
+                const passthrough = authority.filter((item) => getTorrentioPassthroughUrl(item)).length;
+                const marker = authority.length - direct;
+                logger.info(`[TORRENTIO RD AUTH] trusted cached imported=${authority.length} direct=${direct} passthrough=${passthrough} marker=${marker} batch=${label}`);
+            }
+        }
+        return deduped;
     };
 
     const runBatch = (enabledAddons, label, idsForBatch = requestIds) => {
@@ -3958,7 +4476,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
                     const externalRequestIds = buildExternalAddonRequestIds(type, finalId, meta);
                     const externalConfigSig = crypto.createHash("sha1").update(JSON.stringify({ service: config?.service || "", rd: config?.rd || config?.realdebrid || "", tb: config?.tb || config?.torbox || "", key: config?.key || "" })).digest("hex").slice(0, 12);
-                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}:torrentioItTrustV14MeteorFastTrustedV2`;
+                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}:torrentioItTrustV15Passthrough`;
                     const createExternalPromise = () => disableLiveSources && !flags.useProviderCachedOnly
                         ? Promise.resolve([])
                         : Cache.fetchWithCache('ExternalAddons', externalCacheKey, 43200, () =>
@@ -3989,15 +4507,22 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                             ...remoteResults
                         ];
                         const verifiedDbCount = countMovieDbVerifiedCandidates(decisionPool);
+                        const dbCandidateCount = dedupeByInfoHash(decisionPool, getDedupeContext(meta, { stage: 'external-skip-decision' }))?.results?.length || decisionPool.length;
                         const verifiedMin = getMovieDbVerifiedSkipExternalMin(config?.filters || {});
 
-                        if (verifiedDbCount >= verifiedMin && !flags.useProviderCachedOnly) {
-                            logger.info(`[EXTERNAL] movie DB verified=${verifiedDbCount} >= ${verifiedMin} -> skip Torrentio/MediaFusion/Meteor live`);
+                        if (shouldBypassMovieExternalLive({
+                            verifiedDbCount,
+                            dbCandidateCount,
+                            filters: config?.filters || {},
+                            service: config?.service,
+                            flags
+                        })) {
+                            logger.info(`[EXTERNAL] movie DB verified=${verifiedDbCount} >= ${verifiedMin} dbPool=${dbCandidateCount}/${getMovieDbExternalBypassMinForService(config?.filters || {}, config?.service)} service=${config?.service || 'n/a'} -> skip Torrentio/MediaFusion/Meteor live`);
                             externalResults = [];
                         } else {
                             const externalSettled = await Promise.allSettled([createExternalPromise()]);
                             externalResults = externalSettled[0]?.status === 'fulfilled' ? externalSettled[0].value : [];
-                            logger.info(`[EXTERNAL] movie DB verified=${verifiedDbCount}/${verifiedMin} -> Torrentio priority live allowed`);
+                            logger.info(`[EXTERNAL] movie DB verified=${verifiedDbCount}/${verifiedMin} dbPool=${dbCandidateCount}/${getMovieDbExternalBypassMinForService(config?.filters || {}, config?.service)} service=${config?.service || 'n/a'} -> Torrentio/MediaFusion/Meteor live allowed`);
                         }
                     } else {
                         const externalPromise = createExternalPromise();
@@ -4122,7 +4647,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const streamCacheVersionParts = [];
-  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v22|movieDbPriorityVerifiedSkip=v1');
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v24|movieDbPriorityVerifiedSkip=v3|rdDirectNoLazy=v2|rdDownloadFallback=v1|torrentioRdNativeConfig=v1');
   const baseHashInput = backCompat.autoAnimeUnity ? `${userConfStr || 'no-conf'}|autoAnimeUnityKitsu=v2` : (userConfStr || 'no-conf');
   const hashInput = streamCacheVersionParts.length > 0 ? `${baseHashInput}|${streamCacheVersionParts.join('|')}` : baseHashInput;
   const configHash = crypto.createHash('md5').update(hashInput).digest('hex');
@@ -4382,7 +4907,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               ...(localDbFastPool.length > 0 ? localDbFastPool : dbSeedResults),
               ...(Array.isArray(networkResults) ? networkResults.filter(isMovieDbPrimaryCandidate) : [])
           ];
-          rankedList = preserveMovieLocalDbCoverage(rankedList, movieDbPrimaryCoveragePool, meta, filters);
+          rankedList = preserveMovieLocalDbCoverage(rankedList, movieDbPrimaryCoveragePool, meta, filters, config);
           trace.stage('ranked-dedupe', {
               in: beforeInfoHashDedupe.length,
               kept: rankedList.length,
@@ -4411,20 +4936,48 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       const debridStageStartedAt = Date.now();
 
       if (finalRanked.length > 0 && hasDebridKey) {
-          const TOP_LIMIT = Math.max(0, Math.min(10, parseInt(filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0));
+          const rdDirectOnly = configuredDebridService === 'rd' && !shouldAllowRdLazyStreams(filters);
+          const TOP_LIMIT = rdDirectOnly
+              ? getRdDirectResolveLimit(filters, finalRanked.length)
+              : Math.max(0, Math.min(10, parseInt(filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0));
           const serviceLimiter = getServiceResolverLimiter(configuredDebridService);
           const resolverConfig = { ...config, service: configuredDebridService, rawConf: userConfStr };
-          const immediatePromises = finalRanked.slice(0, TOP_LIMIT).map((item) => {
+          const rdAuthorityRanked = rdDirectOnly
+              ? [
+                  ...finalRanked.filter(isTorrentioRdAuthorityCandidate),
+                  ...finalRanked.filter((item) => !isTorrentioRdAuthorityCandidate(item))
+              ]
+              : finalRanked;
+          const immediateCandidates = rdAuthorityRanked.slice(0, TOP_LIMIT);
+          const immediatePromises = immediateCandidates.map((item) => {
               const runtimeItem = createRuntimeItem(item, meta);
               return serviceLimiter.schedule(() => resolveDebridLink(resolverConfig, runtimeItem, filters?.showFake, reqHost, meta));
           });
-          const lazyCandidates = finalRanked.slice(TOP_LIMIT).map((item) => createRuntimeItem(item, meta));
+          const lazyCandidates = rdDirectOnly ? [] : finalRanked.slice(TOP_LIMIT).map((item) => createRuntimeItem(item, meta));
           const lazyStreams = lazyCandidates
               .map((item) => generateLazyStream(item, resolverConfig, meta, reqHost, userConfStr, true))
               .filter(Boolean);
           const resolvedInstant = (await Promise.allSettled(immediatePromises)).flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : []);
-          debridStreams = [...resolvedInstant, ...lazyStreams];
-          warmupLazyStreamsInBackground(resolverConfig, lazyCandidates, meta);
+          let rdDownloadFallbackStreams = [];
+          if (rdDirectOnly && shouldShowRdDownloadToDebrid(filters)) {
+              const resolvedHashes = collectExistingTorrentHashes([], resolvedInstant);
+              const downloadTarget = getRdDownloadFallbackTarget(filters, CONFIG.MAX_RESULTS || 12);
+              const downloadLimit = Math.max(0, downloadTarget - resolvedInstant.length);
+              rdDownloadFallbackStreams = rdAuthorityRanked
+                  .filter((item) => !resolvedHashes.has(String(item?.hash || item?.infoHash || extractInfoHash(item?.magnet) || '').toLowerCase()))
+                  .filter((item) => !isKnownRdUnavailableCandidate(item))
+                  .slice(0, downloadLimit)
+                  .map((item) => generateRdDownloadToDebridStream(item, resolverConfig, meta, reqHost, userConfStr))
+                  .filter(Boolean);
+          }
+          debridStreams = [...resolvedInstant, ...lazyStreams, ...rdDownloadFallbackStreams];
+          if (rdDirectOnly) {
+              const rdAuthorityTotal = finalRanked.filter(isTorrentioRdAuthorityCandidate).length;
+              const rdAuthorityAttempted = immediateCandidates.filter(isTorrentioRdAuthorityCandidate).length;
+              logger.info(`[RD DIRECT] lazy disabled | candidates=${finalRanked.length} resolved=${resolvedInstant.length} attempted=${TOP_LIMIT} downloadFallback=${rdDownloadFallbackStreams.length} suppressed=${Math.max(0, finalRanked.length - TOP_LIMIT)} torrentioAuthority=${rdAuthorityTotal}/${rdAuthorityAttempted}`);
+          } else {
+              warmupLazyStreamsInBackground(resolverConfig, lazyCandidates, meta);
+          }
       } else if (finalRanked.length > 0 && isP2PEnabled) {
           logger.info(`[P2P MODE] Generating direct streams for ${meta.title}`);
           p2pStreams = finalRanked.map((item) => P2P.formatP2PStream(item, config));
@@ -4592,3 +5145,4 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
 }
 
 module.exports = { generateStream, getMetadata, resolveDebridLink, resolveLazyStreamData, RD, TB, buildExternalAddonRequestIds, buildExternalAddonRequestId, normalizeExternalCandidateForPipeline, getExternalSourceLabel, protectTorrentioExactMovieMinimum, protectTorrentioExactSeriesMinimum, protectTorrentioExactMinimum };
+
