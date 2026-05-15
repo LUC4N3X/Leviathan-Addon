@@ -155,9 +155,7 @@ function getTorrentioLanguageEvidence(stream) {
     const normalized = normalizeForComparison(raw);
     const hasExplicitItalianAudio = /(?:🇮🇹|\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i.test(raw);
     const hasItalianSubtitleOnly = REGEX_SUB_ITA.test(raw) && !hasExplicitItalianAudio;
-    const hasLooseItalian = REGEX_TORRENTIO_LOOSE_ITA.test(raw) || REGEX_TORRENTIO_LOOSE_ITA.test(normalized);
-    // Torrentio is ID-based: if the stream says IT/ITA anywhere, keep it.
-    // Do not let dual labels like IT/GB or ITA/ENG become "foreign" just because GB/ENG is also present.
+    const hasLooseItalian = REGEX_TORRENTIO_LOOSE_ITA.test(raw) || REGEX_TORRENTIO_LOOSE_ITA.test(normalized);        
     const hasItalian = Boolean(hasLooseItalian || REGEX_STRONG_ITA_AUDIO.test(raw) || REGEX_STRONG_ITA_AUDIO.test(normalized));
     const hasForeign = REGEX_NEGATIVE_LANGUAGE.test(raw) || REGEX_NEGATIVE_LANGUAGE.test(normalized);
     const onlyForeignFlagBlock = hasForeign && !hasItalian;
@@ -350,10 +348,7 @@ function safeDecodeURIComponent(value) {
     try { return decodeURIComponent(String(value || '')); } catch { return String(value || ''); }
 }
 
-function safeEncodeTorrentioConfigSegment(value) {
-    // Torrentio accepts a path segment such as:
-    // providers=...|qualityfilter=...|realdebrid=...
-    // Keep separators readable while encoding dangerous path characters.
+function safeEncodeTorrentioConfigSegment(value) {        
     return encodeURIComponent(String(value || '').trim())
         .replace(/%7C/gi, '|')
         .replace(/%3D/gi, '=')
@@ -412,10 +407,7 @@ function buildTorrentioBaseUrl(baseUrl, userConfig) {
     const apiKey = getTorrentioCredential(userConfig, service);
     if (!service || !apiKey) return baseUrl;
     if (process.env.EXT_TORRENTIO_INJECT_DEBRID === 'false') return baseUrl;
-
-    // RD must use Torrentio's native pipe-style config. The previous JSON/base64
-    // injection is not the same configuration used by the standalone Torrentio addon,
-    // so Torrentio often returned only hashes/magnets and Leviathan then probed RD to 0.
+     
     if (service === 'rd') {
         try {
             const url = new URL(String(baseUrl || ''));
@@ -450,7 +442,7 @@ function buildTorrentioBaseUrl(baseUrl, userConfig) {
         }
     }
 
-    // Leave TorBox and other services on the old path to avoid changing TB behavior.
+    
     const torrentioConf = {};
     if (service === 'tb') torrentioConf.torbox = apiKey;
     else return baseUrl;
@@ -485,10 +477,6 @@ function buildMediaFusionBaseUrl(baseUrl, userConfig) {
     if (service !== 'rd') return baseUrl;
     if (process.env.EXT_MEDIAFUSION_INJECT_DEBRID === 'false') return baseUrl;
 
-    // MediaFusion encrypts/signes its config path. Unlike Torrentio, we cannot safely
-    // synthesize a valid native Real-Debrid config segment from only the RD token.
-    // The safe path is: use a user-provided configured MediaFusion manifest/base URL
-    // when RD mode is active, then preserve MediaFusion's own playable URL verbatim.
     const configuredRdUrl = envFirst([
         'EXT_MEDIAFUSION_RD_URL',
         'MEDIAFUSION_RD_URL',
@@ -715,10 +703,7 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
     const hasDirectUrl = typeof rawUrl === 'string' && /^https?:\/\//i.test(rawUrl);
     const addonGroup = getAddonGroup(addonKey);
     const isTorrentioAddon = addonGroup === 'torrentio';
-    const isMediaFusionAddon = addonGroup === 'mediafusion';
-    // Torrentio and a user-configured MediaFusion addon can return resolver URLs that
-    // are already playable in Stremio. Keep those URLs untouched instead of converting
-    // them back into magnets/RD addMagnet operations.
+    const isMediaFusionAddon = addonGroup === 'mediafusion';            
     const torrentioPlayableUrl = hasDirectUrl && isTorrentioAddon ? rawUrl : null;
     const mediaFusionPlayableUrl = hasDirectUrl && isMediaFusionAddon ? rawUrl : null;
     const trustedTorrentioDirectUrl = hasDirectUrl && isTorrentioAddon && addon.trustDirectUrl !== false;
