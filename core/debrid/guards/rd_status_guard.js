@@ -20,8 +20,15 @@ const RD_STATUS_FIELDS = [
   'debridService',
   'service',
   '_mediafusionRdChecked',
+  '_mediafusionRdAuthority',
+  '_mediafusionPassthrough',
+  '_mediafusionPlayableUrl',
   '_nexusBridgeRdChecked',
-  '_externalRdChecked'
+  '_externalRdChecked',
+  '_torrentioRdAuthority',
+  '_torrentioCached',
+  '_torrentioRdDirect',
+  '_rdProof'
 ];
 
 const STATE_PRIORITY = {
@@ -78,6 +85,10 @@ function getSourceState(item = {}) {
     item?._tbCached === true ||
     item?.tbCached === true ||
     item?.tb_cached === true ||
+    item?._torrentioRdAuthority === true ||
+    item?._torrentioCached === true ||
+    item?._mediafusionRdAuthority === true ||
+    item?._mediafusionPassthrough === true ||
     item?.cached === true ||
     hints.cached === true
   ) return 'cached';
