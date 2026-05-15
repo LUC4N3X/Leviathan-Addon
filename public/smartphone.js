@@ -1685,6 +1685,28 @@ body.m-typing .m-content, body.m-keyboard-open .m-content {
 /* === LEVIATHAN PROFESSIONAL MOBILE LITE OVERRIDE ==========================
    Obiettivo: look pulito, professionale e compatto, mare Leviathan leggero,
    meno paint/reflow durante tastiera, input e scroll su smartphone. */
+
+/* --- Compositor budget: remove layer-explosion sources ---
+   mix-blend-mode on a fixed full-screen overlay forces the browser to
+   software-rasterise the entire page whenever anything changes (every
+   toggle, scroll, animation frame). Replaced with a plain low-opacity
+   overlay — visually identical at these tiny values, zero blend cost.
+   CSS filter on the canvas and caustic rays promoted each to a separate
+   GPU texture; on mid-range Android this exhausts VRAM and causes the
+   "tutto scompare" blank frame on any repaint. */
+body::after {
+    mix-blend-mode: normal;
+    opacity: 0.07;
+}
+
+#m-sea-canvas {
+    filter: none;
+}
+
+.m-caustic-ray {
+    filter: none;
+}
+
 :root {
     --m-vvh: 100dvh;
     --m-dock-h: 118px;
