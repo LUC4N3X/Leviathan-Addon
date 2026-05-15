@@ -189,10 +189,7 @@ function isTruthyConfigValue(value) {
     return /^(1|true|yes|on)$/i.test(String(value || '').trim());
 }
 
-function shouldAllowRdLazyStreams(filters = {}) {
-    // Default OFF: RD entries should be returned only when Leviathan already resolved
-    // a playable URL. This avoids the broken lazy -> add_to_cloud path and mirrors
-    // Torrentio-style RD UX more closely: no fake playable entry that later fails.
+function shouldAllowRdLazyStreams(filters = {}) {            
     return isTruthyConfigValue(filters.enableRdLazyStreams ?? process.env.RD_LAZY_STREAMS ?? 'false');
 }
 
@@ -202,11 +199,7 @@ function getRdDirectResolveLimit(filters = {}, rankedCount = 0) {
     return Math.min(Math.max(0, rankedCount), parseBoundedInt(configured, hardMax, 1, hardMax));
 }
 
-function shouldShowRdDownloadToDebrid(filters = {}) {
-    // HARD SAFE DEFAULT: do NOT honor the legacy RD_SHOW_DOWNLOAD_TO_DEBRID flag anymore.
-    // Some deployments may still have that old env set to true in docker-compose/.env, and
-    // that makes visible Stremio rows call /add_to_cloud repeatedly. To re-enable this risky
-    // UX, use the new explicit opt-in RD_ALLOW_DOWNLOAD_TO_DEBRID_ROWS=true.
+function shouldShowRdDownloadToDebrid(filters = {}) {               
     const hardDisable = !isTruthyConfigValue(process.env.RD_ALLOW_DOWNLOAD_TO_DEBRID_ROWS || filters.allowRdDownloadToDebridRows || 'false');
     if (hardDisable) return false;
     return isTruthyConfigValue(filters.allowRdDownloadToDebridRows ?? process.env.RD_ALLOW_DOWNLOAD_TO_DEBRID_ROWS ?? 'false');
@@ -630,11 +623,7 @@ function getExternalLanguageAudit(item = {}) {
 
 function isExternalStrictItalianCandidate(item = {}) {
     const audit = getExternalLanguageAudit(item);
-
-    // Torrentio/ExternalAddons can expose language as structured metadata (for example IT/GB)
-    // while the visible release title is only "Peaky Blinders S01" without an explicit ITA tag.
-    // Italian audio is decisive even on dual-audio labels like IT/GB: the GB flag is not a negative
-    // when IT audio is explicitly present.
+       
     if (audit.hasItalianAudio) return true;
 
     const title = item?.title || item?.name || item?.filename || item?.file_title || '';
@@ -770,10 +759,7 @@ function shouldBypassMovieExternalLive({ verifiedDbCount = 0, dbCandidateCount =
     if (verifiedDbCount < verifiedMin) return false;
 
     const normalizedService = String(service || '').toLowerCase();
-
-    // RD and TorBox both benefit from Torrentio/MediaFusion/Meteor enrichment unless the DB
-    // pool is already genuinely wide. For RD this is critical because direct-resolve only
-    // returns instant playable URLs, while Torrentio keeps additional [RD download] entries.
+           
     if (normalizedService === 'tb' || normalizedService === 'rd') {
         const bypassMin = getMovieDbExternalBypassMinForService(filters, normalizedService);
         return dbCandidateCount >= bypassMin;
@@ -1373,15 +1359,13 @@ function applyFinalStreamUserSort(streams = [], config = {}) {
         }))
         .sort((a, b) => {
             if (sortMode === 'resolution') {
-                // Modalità scelta dall'utente in index.html: ordine risoluzione rigido.
-                // A parità di risoluzione resta sopra lo stream con stato cache migliore.
-                const resDelta = b.resolutionTier - a.resolutionTier;
+                               
+              const resDelta = b.resolutionTier - a.resolutionTier;
                 if (resDelta !== 0) return resDelta;
                 if (a.cacheTier !== b.cacheTier) return a.cacheTier - b.cacheTier;
                 return a.index - b.index;
             }
-
-            // In balanced/size manteniamo la protezione cache: ⚡ confermati sopra, ⏳ dubbi sotto.
+           
             if (a.cacheTier !== b.cacheTier) return a.cacheTier - b.cacheTier;
 
             if (sortMode === 'size') {
@@ -1825,10 +1809,7 @@ function getTorrentioTrustDedupeKey(item = {}) {
     const fileIdx = Number.isInteger(Number(item?.fileIdx)) ? Number(item.fileIdx) : -1;
     const direct = String(item?.directUrl || item?.url || item?._externalDirectUrl || '').trim().toLowerCase();
     const title = String(item?.title || item?.name || item?.filename || '').trim().toLowerCase();
-    const source = String(item?.source || item?.provider || item?.externalProvider || item?.externalAddon || item?._externalRequestId || '').trim().toLowerCase();
-    // Per Torrentio exact-id IT/ITA l'utente vuole vedere tutto quello che Torrentio espone.
-    // Non collassiamo quindi più solo su infoHash:fileIdx: molti pack/alias Torrentio arrivano
-    // con lo stesso hash o senza fileIdx immediato, ma rappresentano stream utili da mostrare.
+    const source = String(item?.source || item?.provider || item?.externalProvider || item?.externalAddon || item?._externalRequestId || '').trim().toLowerCase();          
     if (shouldForceKeepTorrentioIt(item)) {
         return ['torrentio-force', hash || 'nohash', fileIdx, direct || 'nodirect', title || 'notitle', source || 'nosource'].join(':');
     }
@@ -1982,7 +1963,6 @@ function hasTrustedItalianEvidenceForTorrentPack(item = {}, meta = {}, langMode 
     const source = [item?.source, item?.provider, item?.externalProvider, item?.externalAddon, item?.releaseGroup, item?.language, item?.languages].filter(Boolean).join(' ');
     if (hasStrictItalianEvidence(title, source)) return true;
 
-    // DB rows learned from Torrentio can lose the structured languageInfo fields; keep only known ITA pack sources.
     if (item?._torrentioExactGuard === true || item?._sourceGroup === 'external') return true;
     return false;
 }
@@ -2117,9 +2097,6 @@ function getServiceDisplayName(service) {
     return 'p2p';
 }
 
-
-// Torrentio-style safety guard: WEB-DL / WEBRip are valid release sources and must not be
-// hidden only because RD changed cache semantics. Block only clearly non-playable junk files.
 const STREAM_BAD_AUX_FILE_REGEX = /(?:^|[\s._\-\[\]()])(?:sample|trailer|promo|preview|screens?|proof|nfo|cover|poster|thumbs?|extras?|featurette|making[\s._-]?of|behind[\s._-]?the[\s._-]?scenes|commentary)(?:$|[\s._\-\[\]()])/i;
 const STREAM_BAD_ARCHIVE_REGEX = /\.(?:rar|zip|7z|tar|gz|bz2|xz|nfo|txt|jpg|jpeg|png|gif|webp|srt|sub|idx|ass|ssa)(?:$|[?&#\s])/i;
 const STREAM_BAD_PAYLOAD_REGEX = /(?:^|[\s._\-\[\]()])(?:password|passw(?:or)?d|keygen|crack|patch|setup|installer|readme|virus|malware)(?:$|[\s._\-\[\]()])/i;
@@ -2150,8 +2127,6 @@ function getTorrentioStyleBadReleaseReason(item = {}, parseTitle = '', displayTi
     const text = buildStreamGuardText(item, parseTitle, displayTitle);
     if (!text) return '';
 
-    // Do not classify WEB-DL/WEBRip/WEB as bad. Torrentio treats source/quality as a normal
-    // user filter dimension; the hard guard here is only for obvious non-video junk.
     if (STREAM_BAD_AUX_FILE_REGEX.test(text)) return 'auxiliary_file';
     if (STREAM_BAD_ARCHIVE_REGEX.test(text)) return 'non_video_payload';
     if (STREAM_BAD_PAYLOAD_REGEX.test(text)) return 'unsafe_payload';
@@ -3608,9 +3583,6 @@ function generateRdDownloadToDebridStream(item, config, meta, reqHost, userConfS
     if (meta?.imdb_id) query.set('imdb', String(meta.imdb_id));
     const compactMagnet = compactMagnetForCloudBuild(item);
     const encodedMagnet = base64UrlEncodeText(compactMagnet);
-    // Pass the original/external magnet context to the cloud builder. ICV-style external
-    // addon integration keeps provider magnet/tracker context instead of rebuilding a bare
-    // btih-only magnet at click time.
     if (encodedMagnet && encodedMagnet.length < 4096) query.set('m', encodedMagnet);
     const streamUrl = `${reqHost}/${userConfStr}/add_to_cloud/${item.hash}?${query.toString()}`;
 
@@ -3846,8 +3818,6 @@ function getExternalSourceLabel(item = {}) {
     const provider = String(item.externalProvider || '').trim();
     const fallback = String(item.source || '').replace(/\[EXT\]\s*/, '').trim();
 
-    // Per Torrentio mostriamo/salviamo solo il provider reale (1337x, ThePirateBay, ecc.).
-    // L'origine Torrentio resta nei campi tecnici _sourceGroup/_externalSourceKind, non nel nome visibile.
     if (group === 'torrentio' || addon.startsWith('torrentio')) return cleanTorrentioProviderLabel(provider || fallback) || 'Torrentio';
     if (group === 'mediafusion' || addon === 'mediafusion') return provider ? `MediaFusion · ${provider}` : 'MediaFusion';
     return provider || fallback || 'External';
@@ -4197,10 +4167,6 @@ function shouldProtectTorrentioExactSeriesCandidate(item = {}, meta = {}, type =
     if (isConfidentSeasonPackItem(item, meta, type)) return true;
     if (hasRequestedSeasonCue(item, meta, type)) return true;
 
-    // Torrentio viene interrogato con ID episodio esatto (es. tt2442560:1:5).
-    // Molti pack stagione arrivano come "Peaky Blinders S01" senza S01E05 nel titolo:
-    // se l'ID è exact-match, la lingua è ITA e non c'è un marker episodio sbagliato,
-    // proteggo il candidato invece di farlo sparire nel filtro aggressivo.
     return true;
 }
 
@@ -4411,8 +4377,6 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
             return base;
         };
 
-        // Torrentio viene provato su tutti gli ID prima di decidere il fallback.
-        // Prima la policy MediaFusion era valutata per singolo ID: imdb=hit, tmdb=0 => MediaFusion partiva comunque.
         const torrentioResults = await withTimeout(
             runBatch(['torrentio_main', 'torrentio_mirror'], 'Torrentio'),
             Math.max(CONFIG.TIMEOUTS.EXTERNAL, 4500),
@@ -4820,9 +4784,6 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
 
       logger.info(`[SPEED] Start search for: ${meta.title} | sourceMode=${sourceModeFlags.sourceMode}`);
 
-      // Overlap the imdb->tmdb network lookup with the local DB / snapshot reads below.
-      // It is only consumed when the network candidate pool is fetched, so awaiting it
-      // up front just added a serial round-trip to the hot path.
       const tmdbIdLookupPromise = (async () => {
           if (meta.tmdb_id) return meta.tmdb_id;
           if (meta.kitsu_id) return null;
