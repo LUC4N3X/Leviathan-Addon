@@ -166,8 +166,8 @@ body::after {
     z-index: 0;
     background-size: 100% 3px, 4px 100%;
     pointer-events: none;
-    opacity: 0.45;
-    mix-blend-mode: overlay;
+    opacity: 0.07;
+    mix-blend-mode: normal;
 }
 
 /* Caustic light rays from the surface above */
@@ -193,7 +193,6 @@ body::before {
     background: linear-gradient(180deg, rgba(0,220,255,0.09) 0%, rgba(0,180,255,0.04) 50%, transparent 100%);
     transform-origin: top center;
     border-radius: 50%;
-    filter: blur(18px);
     animation: causticSway var(--ray-dur, 12s) ease-in-out infinite alternate;
     opacity: var(--ray-op, 0.6);
     left: var(--ray-x, 30%);
@@ -225,10 +224,7 @@ body::before {
     position: fixed; bottom: 0; left: 0; width: 100%;
     pointer-events: none; z-index: -6;
     display: block;
-    opacity: 0.99;
-    filter: saturate(1.14) brightness(0.99) contrast(1.11);
-    mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.07) 7%, rgba(0,0,0,0.32) 16%, rgba(0,0,0,0.68) 28%, black 46%);
-    -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.07) 7%, rgba(0,0,0,0.32) 16%, rgba(0,0,0,0.68) 28%, black 46%);
+    will-change: transform;
 }
 
 #app-container { 
@@ -242,7 +238,7 @@ body::before {
 .m-content {
     flex: 1; overflow-y: auto; overflow-x: hidden;
     padding: 0 14px calc(226px + var(--safe-bottom)) 14px; width: 100%;
-    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
     scroll-behavior: smooth;
 }
 
@@ -390,9 +386,10 @@ body::before {
     object-fit: contain;
     border-radius: 0;
     transform: translateY(5px) scale(1.03);
-    filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.42)) drop-shadow(0 0 10px rgba(0, 242, 255, 0.14)) brightness(1.05) saturate(1.05);
+    /* Static filter — never animated; brightness/saturate are expensive on Android */
+    filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.42)) drop-shadow(0 0 10px rgba(0, 242, 255, 0.15)) brightness(1.05) saturate(1.05);
     animation: pulseGlow 3.1s ease-in-out infinite alternate;
-    will-change: transform, filter, opacity;
+    will-change: transform, opacity;
     z-index: 2;
     image-rendering: -webkit-optimize-contrast;
     opacity: 0;
@@ -404,15 +401,10 @@ body::before {
     opacity: 1;
 }
 
+/* Only animate transform — GPU-composited, zero repaint cost on mobile */
 @keyframes pulseGlow {
-    0% {
-        transform: translateY(5px) scale(1.03);
-        filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.40)) drop-shadow(0 0 8px rgba(0, 242, 255, 0.10)) brightness(1.03) saturate(1.03);
-    }
-    100% {
-        transform: translateY(3px) scale(1.055);
-        filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.44)) drop-shadow(0 0 12px rgba(0, 242, 255, 0.18)) brightness(1.07) saturate(1.07);
-    }
+    0%   { transform: translateY(5px)  scale(1.03); }
+    100% { transform: translateY(3px)  scale(1.055); }
 }
 
 .logo-particles {
@@ -452,9 +444,10 @@ body::before {
     position: relative; z-index: 10;
     animation: titleGlow 4.5s ease-in-out infinite alternate;
 }
+/* Only animate opacity — filter animation triggers repaints on mobile */
 @keyframes titleGlow {
-    from { filter: drop-shadow(0 0 9px rgba(0, 242, 255, 0.26)); }
-    to { filter: drop-shadow(0 0 16px rgba(0, 242, 255, 0.40)); }
+    from { opacity: 0.88; }
+    to   { opacity: 1; }
 }
 .m-brand-sub {
     font-family: 'Rajdhani', sans-serif; font-size: 0.75rem; letter-spacing: 4.7px;
@@ -900,7 +893,8 @@ body::before {
     border-radius: var(--m-radius-md);
     position: relative;
     overflow: hidden;
-    transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+    /* Only compositor-safe props: border-color (no layout/paint), opacity via ::after */
+    transition: border-color 0.3s ease;
     display: flex;
     align-items: stretch;
     min-height: 78px;
@@ -919,12 +913,13 @@ body::before {
     justify-content: center;
     position: relative;
     z-index: 2; /* Keeps icon above glow */
-    transition: background 0.3s, box-shadow 0.3s;
+    transition: background 0.3s ease;
 }
 
 .m-core-icon {
     font-size: 1.1rem; /* Reduced from 1.4rem */
-    transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    /* Only animate transform — GPU-composited, no repaint */
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
     filter: drop-shadow(0 0 5px rgba(0,0,0,0.5));
     z-index: 3;
     position: relative;
@@ -991,10 +986,11 @@ body::before {
     box-shadow: 10px 0 30px -5px var(--glow-color); /* Spills light into body */
 }
 
-/* Icon Activation - BOOST BRIGHTNESS but keep color */
+/* Icon Activation */
 .m-reactor-module.active .m-core-icon {
     transform: scale(1.15);
-    filter: drop-shadow(0 0 8px var(--border-color)) brightness(1.2);
+    /* No brightness() — not GPU-composited and forces repaint */
+    filter: drop-shadow(0 0 8px var(--border-color));
 }
 
 /* Specific Module Colors & ALWAYS ON ICONS */
@@ -1065,9 +1061,6 @@ body::before {
         inset 0 1px 0 rgba(255,255,255,0.045);
     overflow: hidden;
     min-width: 0;
-    z-index: 4;
-    isolation: isolate;
-    backdrop-filter: blur(18px) saturate(116%);
 }
 .m-visual-core-v2::before {
     content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
@@ -1193,7 +1186,7 @@ body::before {
 .m-field-link { font-family: 'Rajdhani'; font-weight: 700; font-size: 0.65rem; color: var(--m-primary); cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 5px; }
 .m-input-box { position: relative; width: 100%; }
 .m-input-ico { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #555; font-size: 0.9rem; transition: 0.3s; z-index: 2; pointer-events: none; }
-.m-input-tech { width: 100%; background: #05080b; border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 12px 40px 12px 38px; color: #fff; font-family: 'Roboto Mono', monospace; font-size: 0.9rem; transition: all 0.3s; }
+.m-input-tech { width: 100%; background: #05080b; border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 12px 40px 12px 38px; color: #fff; font-family: 'Roboto Mono', monospace; font-size: 16px; transition: all 0.3s; }
 .m-input-tech:focus { border-color: var(--m-primary); background: #080c12; box-shadow: 0 0 15px rgba(0,242,255,0.1); }
 .m-input-tech:focus ~ .m-input-ico { color: var(--m-primary); }
 .m-paste-action { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; border-radius: 6px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: var(--m-dim); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; font-size: 0.8rem; }
@@ -1243,10 +1236,11 @@ input:checked + .m-slider-pink:before { background-color: var(--m-cine); box-sha
 input:checked + .m-slider-green { background-color: rgba(0, 230, 118, 0.3); border-color: #00e676; box-shadow: inset 0 0 10px rgba(0,230,118,0.4); }
 input:checked + .m-slider-green:before { background-color: #00e676; box-shadow: 0 0 10px #00e676; }
 
-.m-priority-wrapper { max-height: 0; opacity: 0; overflow: hidden; transition: all 0.35s ease; margin: 0 -10px; }
+.m-priority-wrapper { max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.3s ease; margin: 0 -10px; }
 .m-priority-wrapper.show { max-height: 130px; opacity: 1; margin-top: 15px; padding: 0 10px; }
 
-.m-gate-wrapper { width: 100%; overflow: hidden; max-height: 0; opacity: 0; transition: all 0.35s ease; }
+/* max-height/opacity only — margin/padding apply instantly (no layout-reflow animation) */
+.m-gate-wrapper { width: 100%; overflow: hidden; max-height: 0; opacity: 0; transition: max-height 0.3s ease, opacity 0.3s ease; }
 .m-gate-wrapper.show { max-height: 100px; opacity: 1; margin-top: 5px; margin-bottom: 10px; }
 .m-gate-control { display: flex; align-items: center; gap: 12px; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.05); }
 .m-range { -webkit-appearance: none; width: 100%; height: 4px; background: #333; border-radius: 3px; outline: none; }
@@ -1609,9 +1603,7 @@ body.m-lowfx .m-ocean-particles {
 }
 
 body.m-lowfx #m-sea-canvas {
-    display: block;
-    opacity: 0.92;
-    filter: saturate(1.08) brightness(0.95) contrast(1.07);
+    display: none;
 }
 
 body.m-lowfx .m-hero::after,
@@ -1670,9 +1662,20 @@ body.m-lowfx .logo-image {
     }
 }
 
+/* Freeze all CSS animations when the tab is invisible — saves battery on mobile. */
+body.m-page-hidden *, body.m-page-hidden *::before, body.m-page-hidden *::after {
+    animation-play-state: paused !important;
+}
+
+/* Disable smooth scroll during typing/keyboard-open to cut layout cost. */
+body.m-typing .m-content, body.m-keyboard-open .m-content {
+    scroll-behavior: auto;
+}
+
 /* === LEVIATHAN PROFESSIONAL MOBILE LITE OVERRIDE ==========================
    Obiettivo: look pulito, professionale e compatto, mare Leviathan leggero,
    meno paint/reflow durante tastiera, input e scroll su smartphone. */
+
 :root {
     --m-vvh: 100dvh;
     --m-dock-h: 118px;
@@ -1973,7 +1976,7 @@ body.m-keyboard-open .m-toast-container {
     background: linear-gradient(140deg, rgba(13, 28, 45, 0.82), rgba(3, 8, 16, 0.96));
     border-color: rgba(120, 220, 255, 0.105);
     box-shadow: 0 7px 18px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.035);
-    transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+    transition: border-color 120ms ease, transform 120ms ease;
 }
 
 .m-reactor-module::after {
@@ -2133,7 +2136,6 @@ body.m-keyboard-open .m-toast-container {
 
 #m-sea-canvas {
     opacity: 0.82;
-    filter: none;
 }
 
 body.m-typing .m-caustic,
@@ -3547,7 +3549,7 @@ const mobileHTML = `
                             <div class="m-tag-item">{meter}</div>
                             <div class="m-tag-item">{summary}</div>
                         </div>
-                        <input type="text" class="m-input" id="m-customTemplate" placeholder="Es: Apex {quality} {score_badge} ||| {title}{n}{summary}" style="padding:10px; font-size:0.9rem; border:1px solid rgba(255,255,255,0.3);" oninput="updateMobilePreview(); updateLinkModalContent()">
+                        <input type="text" class="m-input" id="m-customTemplate" placeholder="Es: Apex {quality} {score_badge} ||| {title}{n}{summary}" style="padding:10px; font-size:16px; border:1px solid rgba(255,255,255,0.3);" oninput="updateMobilePreview(); updateLinkModalContent()">
                     </div>
                 </div>
 
@@ -4127,7 +4129,7 @@ ${p.quality}`,
         name: '⚡️ Leviathan 4K',
         title: [
             `📄 ❯ ${p.fileTitle}`,
-            `🌎 ❯ ${p.lang.replace(/ITA/gi, 'ita').replace(/ENG/gi, 'eng')}`,
+            `🌎 ❯ ${String(p.lang || '').replace(/ITA/gi, 'ita').replace(/ENG/gi, 'eng')}`,
             `✨ ❯ ${p.serviceTag} • ${p.displaySource}`,
             `🔥 ❯ ${p.quality} • ${p.cleanTags.join(' • ')}`,
             `💾 ❯ ${p.sizeString}`,
@@ -4315,7 +4317,7 @@ function createLogoParticles() {
     const container = document.getElementById('logoParticles');
     if(!container) return;
     const count = document.body.classList.contains('m-lowfx') ? 0 : 5;
-    container.innerHTML = '';
+    container.textContent = '';
     for(let i=0; i < count; i++) {
         const p = document.createElement('div');
         p.classList.add('logo-particle');
@@ -4336,7 +4338,7 @@ function createOceanParticles() {
     const isLowFx = document.body.classList.contains('m-lowfx');
     const liteFx = document.body.classList.contains('m-mf-lite');
     const count = isLowFx ? 0 : (liteFx ? 6 : 10);
-    container.innerHTML = '';
+    container.textContent = '';
     for(let i = 0; i < count; i++) {
         const p = document.createElement('div');
         p.className = 'm-ocean-particle';
@@ -4344,8 +4346,8 @@ function createOceanParticles() {
         p.style.width = `${size}px`;
         p.style.height = `${size}px`;
         p.style.left = `${Math.random() * 100}%`;
-        p.style.animationDuration = `${Math.random() * 18 + 22}s`;
-        p.style.animationDelay = `-${Math.random() * 18}s`;
+        p.style.animationDuration = `${Math.random() * 10 + 14}s`;
+        p.style.animationDelay = `-${Math.random() * 12}s`;
         const drift = (Math.random() * 24 - 12).toFixed(1);
         p.style.setProperty('--drift', `${drift}px`);
         const rnd = Math.random();
@@ -4427,14 +4429,14 @@ function createSeaCanvas() {
     }
 
     function drawFrame(ts) {
+        // Reschedule first so skipped frames don't lose the loop.
         animId = requestAnimationFrame(drawFrame);
+
+        if (shouldPause()) return;
 
         const lowFx = isLow();
         const frameBudget = 1000 / (lowFx ? MOBILE_PERF.lowFxFps : MOBILE_PERF.targetFps);
         if (ts - lastTs < frameBudget) return;
-        lastTs = ts;
-
-        if (shouldPause()) return;
         t += lowFx ? 0.010 : 0.014;
         ctx.clearRect(0, 0, W, H);
 
@@ -4464,12 +4466,30 @@ function createSeaCanvas() {
         shine.addColorStop(1, 'rgba(0, 242, 255, 0.00)');
         ctx.fillStyle = shine;
         ctx.fillRect(0, H * 0.24, W, H * 0.45);
+
+        // Gradient fade: transparent at top → opaque at bottom (replaces CSS mask-image)
+        const fade = ctx.createLinearGradient(0, 0, 0, H);
+        fade.addColorStop(0,    'rgba(0,0,0,0)');
+        fade.addColorStop(0.16, 'rgba(0,0,0,0.32)');
+        fade.addColorStop(0.28, 'rgba(0,0,0,0.68)');
+        fade.addColorStop(0.46, 'rgba(0,0,0,1)');
+        ctx.globalCompositeOperation = 'destination-in';
+        ctx.fillStyle = fade;
+        ctx.fillRect(0, 0, W, H);
+        ctx.globalCompositeOperation = 'source-over';
     }
 
     resize();
     window.addEventListener('resize', () => requestAnimationFrame(resize), { passive: true });
     window.addEventListener('orientationchange', () => setTimeout(resize, 180), { passive: true });
-    document.addEventListener('visibilitychange', () => { lastTs = 0; }, { passive: true });
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            if (animId) { cancelAnimationFrame(animId); animId = 0; }
+        } else {
+            lastTs = 0;
+            if (!animId) animId = requestAnimationFrame(drawFrame);
+        }
+    }, { passive: true });
     animId = requestAnimationFrame(drawFrame);
 }
 
@@ -4477,12 +4497,13 @@ function createSeaCanvas() {
 function initMobileViewportGuard() {
     const root = document.documentElement;
     let blurTimer = 0;
+    let stableH = 0;
 
     const setStableHeight = () => {
-        // Altezza stabile: non segue ogni micro-resize di Chrome Android.
-        // Questo evita lo sfarfallio tipo refresh quando si toccano switch/card.
+        // Stable height: does not follow every micro-resize from Chrome Android.
+        // This avoids flicker when tapping switches/cards.
         const h = Math.max(320, Math.round(window.innerHeight || document.documentElement.clientHeight || 0));
-        if (h) root.style.setProperty('--m-vvh', `${h}px`);
+        if (h) { stableH = h; root.style.setProperty('--m-vvh', `${h}px`); }
     };
 
     const isTextField = (el = document.activeElement) => !!el?.matches?.('input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], textarea, [contenteditable="true"]');
@@ -4492,16 +4513,31 @@ function initMobileViewportGuard() {
         document.body.classList.add('m-input-active', 'm-keyboard-open', 'm-typing');
     };
 
-    const closeKeyboardMode = () => {
+    const closeKeyboardMode = (force = false) => {
         window.clearTimeout(blurTimer);
         blurTimer = window.setTimeout(() => {
-            if (isTextField()) return;
+            if (!force && isTextField()) return;
             document.body.classList.remove('m-input-active', 'm-keyboard-open', 'm-typing');
-        }, 120);
+        }, 250);
     };
 
     setStableHeight();
     window.addEventListener('orientationchange', () => window.setTimeout(setStableHeight, 260), { passive: true });
+
+    // Visual Viewport API: reliable keyboard-close detection on Android.
+    // document.activeElement stays on the input after back-button keyboard dismiss,
+    // so the focusout guard alone is not enough — this catches that case.
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', () => {
+            const vvh = window.visualViewport.height;
+            const base = stableH || window.innerHeight;
+            // If the visual viewport has expanded back to ≥ 80 % of stable height,
+            // the keyboard is gone — force-remove the keyboard-open class.
+            if (vvh >= base * 0.8 && document.body.classList.contains('m-keyboard-open')) {
+                closeKeyboardMode(true);
+            }
+        }, { passive: true });
+    }
 
     document.addEventListener('focusin', (event) => {
         if (!isTextField(event.target)) return;
@@ -4516,9 +4552,15 @@ function initMobileViewportGuard() {
     document.addEventListener('pointerdown', (event) => {
         const target = event.target;
         if (target?.closest?.('input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], textarea, [contenteditable="true"]')) return;
-        if (target?.closest?.('.m-switch, input[type="checkbox"], button, .m-qual-chip, .m-cloud-mode-btn, .m-reactor-module, .m-flux-opt, .m-lang-opt, .m-cortex-chip, .m-cred-opt, .m-act-btn, .m-nav-item')) return;
+        if (target?.closest?.('.m-switch, input[type="checkbox"], button, .m-qual-chip, .m-cloud-mode-btn, .m-reactor-module, .m-flux-opt, .m-lang-opt, .m-cortex-chip, .m-cred-opt, .m-act-btn, .m-nav-item, .m-paste-action, .m-if-action, .m-get-link')) return;
         closeKeyboardMode();
     }, { passive: true });
+}
+
+function installMobileVisibilityGuard() {
+    const sync = () => document.body.classList.toggle('m-page-hidden', document.hidden);
+    document.addEventListener('visibilitychange', sync, { passive: true });
+    sync();
 }
 
 function installMobileInputPerformanceGuard() {
@@ -4565,6 +4607,7 @@ function initMobileInterface() {
     document.body.innerHTML = mobileHTML;
     applyMobilePerformanceMode();
     initMobileViewportGuard();
+    installMobileVisibilityGuard();
     installMobileInputPerformanceGuard();
     hydrateMobileLogo();
     initPullToRefresh();
@@ -4621,7 +4664,7 @@ function initPullToRefresh() {
         pulling = false;
         const currentY = e.changedTouches[0].pageY;
         const diff = currentY - startY;
-        
+
         if (diff > threshold && content.scrollTop <= 0) {
             ptr.classList.add('loading');
             ptr.style.transform = `translate3d(0, 50px, 0)`;
@@ -4630,17 +4673,24 @@ function initPullToRefresh() {
         } else {
             ptr.style.transform = ''; ptr.style.opacity = 0;
         }
-        if(rAF) { cancelAnimationFrame(rAF); rAF = null; }
-    });
+        if (rAF) { cancelAnimationFrame(rAF); rAF = null; }
+    }, { passive: true });
 }
 
+let _navPageCache = null;
+let _navItemCache = null;
+let _navContentCache = null;
 function navTo(pageId, btn) {
-    document.querySelectorAll('.m-page').forEach(p => p.classList.remove('active'));
-    document.getElementById('page-' + pageId).classList.add('active');
-    document.querySelectorAll('.m-nav-item').forEach(i => i.classList.remove('active'));
-    if(btn) btn.classList.add('active');
-    document.querySelector('.m-content').scrollTop = 0;
-    if(navigator.vibrate) navigator.vibrate(10);
+    if (!_navPageCache) _navPageCache = [...document.querySelectorAll('.m-page')];
+    if (!_navItemCache) _navItemCache = [...document.querySelectorAll('.m-nav-item')];
+    if (!_navContentCache) _navContentCache = document.querySelector('.m-content');
+    _navPageCache.forEach(p => p.classList.remove('active'));
+    _navItemCache.forEach(i => i.classList.remove('active'));
+    const target = document.getElementById('page-' + pageId);
+    if (target) target.classList.add('active');
+    if (btn) btn.classList.add('active');
+    if (_navContentCache) _navContentCache.scrollTop = 0;
+    if (navigator.vibrate) navigator.vibrate(10);
 }
 
 function clearMobileDebridValidationTimer() {
@@ -5400,7 +5450,13 @@ async function getMobileManifestUrl(config) {
     return getMobileLegacyManifestUrl(config);
 }
 
-async function updateLinkModalContent() {
+let _linkModalTimer = 0;
+async function updateLinkModalContent(immediate = false) {
+    if (!immediate) {
+        clearTimeout(_linkModalTimer);
+        _linkModalTimer = setTimeout(() => updateLinkModalContent(true), 120);
+        return;
+    }
     const box = document.getElementById('m-generatedUrlBox');
     if(!box) return;
     
@@ -5429,7 +5485,7 @@ async function mobileInstall() {
 }
 
 function openLinkModal() {
-    updateLinkModalContent();
+    updateLinkModalContent(true);  // bypass debounce — user is waiting for this
     document.getElementById('m-link-modal').classList.add('show');
     if(navigator.vibrate) navigator.vibrate(10);
 }

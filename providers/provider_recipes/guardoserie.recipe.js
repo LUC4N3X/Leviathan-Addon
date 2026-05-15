@@ -7,7 +7,7 @@ module.exports = webProviderRecipe({
     key: 'guardaSerie',
     name: 'GuardoSerie',
     aliases: ['GuardaSerie', 'GuardoSerie', 'webGs'],
-    tags: ['series', 'web', 'cloudflare-aware', 'episode-aware'],
+    tags: ['series', 'web', 'direct-first', 'episode-aware', 'lazy-extraction'],
     selectors: {
         resultItems: '[data-provider-result], .series-card, .episode-card, .result-item, article',
         title: '[data-title], .title, .name, h2, h3',
@@ -23,9 +23,8 @@ module.exports = webProviderRecipe({
         resolverPolicy: 'lazy-direct-first'
     },
     antiBot: {
-        mode: 'direct-first-session-fallback',
-        proxy: 'only-on-block',
-        challengeSolver: 'page-specific-only',
+        mode: 'direct-first',
+        proxy: 'disabled-by-default',
         sessionReuse: true
     },
     fallback: [
@@ -34,6 +33,6 @@ module.exports = webProviderRecipe({
         { id: 'site-search', stopOnHit: true },
         { id: 'provider-cache', stopOnHit: false }
     ],
-    timeouts: { searchMs: 45000, detailMs: 16000, resolveMs: 18000 },
-    reliability: { initial: 'unstable', decayOn: ['403', 'challenge', 'selector_miss', 'timeout'] }
+    timeouts: { searchMs: 8000, detailMs: 10000, resolveMs: 12000 },
+    reliability: { initial: 'good', decayOn: ['selector_miss', 'wrong_episode', 'slow_resolve'] }
 });
