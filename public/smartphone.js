@@ -166,8 +166,8 @@ body::after {
     z-index: 0;
     background-size: 100% 3px, 4px 100%;
     pointer-events: none;
-    opacity: 0.45;
-    mix-blend-mode: overlay;
+    opacity: 0.07;
+    mix-blend-mode: normal;
 }
 
 /* Caustic light rays from the surface above */
@@ -193,7 +193,6 @@ body::before {
     background: linear-gradient(180deg, rgba(0,220,255,0.09) 0%, rgba(0,180,255,0.04) 50%, transparent 100%);
     transform-origin: top center;
     border-radius: 50%;
-    filter: blur(18px);
     animation: causticSway var(--ray-dur, 12s) ease-in-out infinite alternate;
     opacity: var(--ray-op, 0.6);
     left: var(--ray-x, 30%);
@@ -225,10 +224,6 @@ body::before {
     position: fixed; bottom: 0; left: 0; width: 100%;
     pointer-events: none; z-index: -6;
     display: block;
-    opacity: 0.99;
-    filter: saturate(1.14) brightness(0.99) contrast(1.11);
-    mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.07) 7%, rgba(0,0,0,0.32) 16%, rgba(0,0,0,0.68) 28%, black 46%);
-    -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.07) 7%, rgba(0,0,0,0.32) 16%, rgba(0,0,0,0.68) 28%, black 46%);
     will-change: transform;
 }
 
@@ -1066,9 +1061,6 @@ body::before {
         inset 0 1px 0 rgba(255,255,255,0.045);
     overflow: hidden;
     min-width: 0;
-    z-index: 4;
-    isolation: isolate;
-    backdrop-filter: blur(18px) saturate(116%);
 }
 .m-visual-core-v2::before {
     content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
@@ -1611,9 +1603,7 @@ body.m-lowfx .m-ocean-particles {
 }
 
 body.m-lowfx #m-sea-canvas {
-    display: block;
-    opacity: 0.92;
-    filter: saturate(1.08) brightness(0.95) contrast(1.07);
+    display: none;
 }
 
 body.m-lowfx .m-hero::after,
@@ -1685,27 +1675,6 @@ body.m-typing .m-content, body.m-keyboard-open .m-content {
 /* === LEVIATHAN PROFESSIONAL MOBILE LITE OVERRIDE ==========================
    Obiettivo: look pulito, professionale e compatto, mare Leviathan leggero,
    meno paint/reflow durante tastiera, input e scroll su smartphone. */
-
-/* --- Compositor budget: remove layer-explosion sources ---
-   mix-blend-mode on a fixed full-screen overlay forces the browser to
-   software-rasterise the entire page whenever anything changes (every
-   toggle, scroll, animation frame). Replaced with a plain low-opacity
-   overlay — visually identical at these tiny values, zero blend cost.
-   CSS filter on the canvas and caustic rays promoted each to a separate
-   GPU texture; on mid-range Android this exhausts VRAM and causes the
-   "tutto scompare" blank frame on any repaint. */
-body::after {
-    mix-blend-mode: normal;
-    opacity: 0.07;
-}
-
-#m-sea-canvas {
-    filter: none;
-}
-
-.m-caustic-ray {
-    filter: none;
-}
 
 :root {
     --m-vvh: 100dvh;
@@ -4498,6 +4467,17 @@ function createSeaCanvas() {
         shine.addColorStop(1, 'rgba(0, 242, 255, 0.00)');
         ctx.fillStyle = shine;
         ctx.fillRect(0, H * 0.24, W, H * 0.45);
+
+        // Gradient fade: transparent at top → opaque at bottom (replaces CSS mask-image)
+        const fade = ctx.createLinearGradient(0, 0, 0, H);
+        fade.addColorStop(0,    'rgba(0,0,0,0)');
+        fade.addColorStop(0.16, 'rgba(0,0,0,0.32)');
+        fade.addColorStop(0.28, 'rgba(0,0,0,0.68)');
+        fade.addColorStop(0.46, 'rgba(0,0,0,1)');
+        ctx.globalCompositeOperation = 'destination-in';
+        ctx.fillStyle = fade;
+        ctx.fillRect(0, 0, W, H);
+        ctx.globalCompositeOperation = 'source-over';
     }
 
     resize();
