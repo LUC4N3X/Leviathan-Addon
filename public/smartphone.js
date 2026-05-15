@@ -229,6 +229,7 @@ body::before {
     filter: saturate(1.14) brightness(0.99) contrast(1.11);
     mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.07) 7%, rgba(0,0,0,0.32) 16%, rgba(0,0,0,0.68) 28%, black 46%);
     -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.07) 7%, rgba(0,0,0,0.32) 16%, rgba(0,0,0,0.68) 28%, black 46%);
+    will-change: transform;
 }
 
 #app-container { 
@@ -242,7 +243,7 @@ body::before {
 .m-content {
     flex: 1; overflow-y: auto; overflow-x: hidden;
     padding: 0 14px calc(226px + var(--safe-bottom)) 14px; width: 100%;
-    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
     scroll-behavior: smooth;
 }
 
@@ -1193,7 +1194,7 @@ body::before {
 .m-field-link { font-family: 'Rajdhani'; font-weight: 700; font-size: 0.65rem; color: var(--m-primary); cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 5px; }
 .m-input-box { position: relative; width: 100%; }
 .m-input-ico { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #555; font-size: 0.9rem; transition: 0.3s; z-index: 2; pointer-events: none; }
-.m-input-tech { width: 100%; background: #05080b; border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 12px 40px 12px 38px; color: #fff; font-family: 'Roboto Mono', monospace; font-size: 0.9rem; transition: all 0.3s; }
+.m-input-tech { width: 100%; background: #05080b; border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 12px 40px 12px 38px; color: #fff; font-family: 'Roboto Mono', monospace; font-size: 16px; transition: all 0.3s; }
 .m-input-tech:focus { border-color: var(--m-primary); background: #080c12; box-shadow: 0 0 15px rgba(0,242,255,0.1); }
 .m-input-tech:focus ~ .m-input-ico { color: var(--m-primary); }
 .m-paste-action { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; border-radius: 6px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: var(--m-dim); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; font-size: 0.8rem; }
@@ -1668,6 +1669,16 @@ body.m-lowfx .logo-image {
     .m-caustic {
         display: none !important;
     }
+}
+
+/* Freeze all CSS animations when the tab is invisible — saves battery on mobile. */
+body.m-page-hidden *, body.m-page-hidden *::before, body.m-page-hidden *::after {
+    animation-play-state: paused !important;
+}
+
+/* Disable smooth scroll during typing/keyboard-open to cut layout cost. */
+body.m-typing .m-content, body.m-keyboard-open .m-content {
+    scroll-behavior: auto;
 }
 
 /* === LEVIATHAN PROFESSIONAL MOBILE LITE OVERRIDE ==========================
@@ -3547,7 +3558,7 @@ const mobileHTML = `
                             <div class="m-tag-item">{meter}</div>
                             <div class="m-tag-item">{summary}</div>
                         </div>
-                        <input type="text" class="m-input" id="m-customTemplate" placeholder="Es: Apex {quality} {score_badge} ||| {title}{n}{summary}" style="padding:10px; font-size:0.9rem; border:1px solid rgba(255,255,255,0.3);" oninput="updateMobilePreview(); updateLinkModalContent()">
+                        <input type="text" class="m-input" id="m-customTemplate" placeholder="Es: Apex {quality} {score_badge} ||| {title}{n}{summary}" style="padding:10px; font-size:16px; border:1px solid rgba(255,255,255,0.3);" oninput="updateMobilePreview(); updateLinkModalContent()">
                     </div>
                 </div>
 
@@ -4127,7 +4138,7 @@ ${p.quality}`,
         name: '⚡️ Leviathan 4K',
         title: [
             `📄 ❯ ${p.fileTitle}`,
-            `🌎 ❯ ${p.lang.replace(/ITA/gi, 'ita').replace(/ENG/gi, 'eng')}`,
+            `🌎 ❯ ${String(p.lang || '').replace(/ITA/gi, 'ita').replace(/ENG/gi, 'eng')}`,
             `✨ ❯ ${p.serviceTag} • ${p.displaySource}`,
             `🔥 ❯ ${p.quality} • ${p.cleanTags.join(' • ')}`,
             `💾 ❯ ${p.sizeString}`,
@@ -4315,7 +4326,7 @@ function createLogoParticles() {
     const container = document.getElementById('logoParticles');
     if(!container) return;
     const count = document.body.classList.contains('m-lowfx') ? 0 : 5;
-    container.innerHTML = '';
+    container.textContent = '';
     for(let i=0; i < count; i++) {
         const p = document.createElement('div');
         p.classList.add('logo-particle');
@@ -4336,7 +4347,7 @@ function createOceanParticles() {
     const isLowFx = document.body.classList.contains('m-lowfx');
     const liteFx = document.body.classList.contains('m-mf-lite');
     const count = isLowFx ? 0 : (liteFx ? 6 : 10);
-    container.innerHTML = '';
+    container.textContent = '';
     for(let i = 0; i < count; i++) {
         const p = document.createElement('div');
         p.className = 'm-ocean-particle';
@@ -4344,8 +4355,8 @@ function createOceanParticles() {
         p.style.width = `${size}px`;
         p.style.height = `${size}px`;
         p.style.left = `${Math.random() * 100}%`;
-        p.style.animationDuration = `${Math.random() * 18 + 22}s`;
-        p.style.animationDelay = `-${Math.random() * 18}s`;
+        p.style.animationDuration = `${Math.random() * 10 + 14}s`;
+        p.style.animationDelay = `-${Math.random() * 12}s`;
         const drift = (Math.random() * 24 - 12).toFixed(1);
         p.style.setProperty('--drift', `${drift}px`);
         const rnd = Math.random();
@@ -4427,14 +4438,14 @@ function createSeaCanvas() {
     }
 
     function drawFrame(ts) {
+        // Reschedule first so skipped frames don't lose the loop.
         animId = requestAnimationFrame(drawFrame);
+
+        if (shouldPause()) return;
 
         const lowFx = isLow();
         const frameBudget = 1000 / (lowFx ? MOBILE_PERF.lowFxFps : MOBILE_PERF.targetFps);
         if (ts - lastTs < frameBudget) return;
-        lastTs = ts;
-
-        if (shouldPause()) return;
         t += lowFx ? 0.010 : 0.014;
         ctx.clearRect(0, 0, W, H);
 
@@ -4469,7 +4480,14 @@ function createSeaCanvas() {
     resize();
     window.addEventListener('resize', () => requestAnimationFrame(resize), { passive: true });
     window.addEventListener('orientationchange', () => setTimeout(resize, 180), { passive: true });
-    document.addEventListener('visibilitychange', () => { lastTs = 0; }, { passive: true });
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            if (animId) { cancelAnimationFrame(animId); animId = 0; }
+        } else {
+            lastTs = 0;
+            if (!animId) animId = requestAnimationFrame(drawFrame);
+        }
+    }, { passive: true });
     animId = requestAnimationFrame(drawFrame);
 }
 
@@ -4497,7 +4515,7 @@ function initMobileViewportGuard() {
         blurTimer = window.setTimeout(() => {
             if (isTextField()) return;
             document.body.classList.remove('m-input-active', 'm-keyboard-open', 'm-typing');
-        }, 120);
+        }, 250);
     };
 
     setStableHeight();
@@ -4519,6 +4537,12 @@ function initMobileViewportGuard() {
         if (target?.closest?.('.m-switch, input[type="checkbox"], button, .m-qual-chip, .m-cloud-mode-btn, .m-reactor-module, .m-flux-opt, .m-lang-opt, .m-cortex-chip, .m-cred-opt, .m-act-btn, .m-nav-item')) return;
         closeKeyboardMode();
     }, { passive: true });
+}
+
+function installMobileVisibilityGuard() {
+    const sync = () => document.body.classList.toggle('m-page-hidden', document.hidden);
+    document.addEventListener('visibilitychange', sync, { passive: true });
+    sync();
 }
 
 function installMobileInputPerformanceGuard() {
@@ -4565,6 +4589,7 @@ function initMobileInterface() {
     document.body.innerHTML = mobileHTML;
     applyMobilePerformanceMode();
     initMobileViewportGuard();
+    installMobileVisibilityGuard();
     installMobileInputPerformanceGuard();
     hydrateMobileLogo();
     initPullToRefresh();
@@ -4621,7 +4646,7 @@ function initPullToRefresh() {
         pulling = false;
         const currentY = e.changedTouches[0].pageY;
         const diff = currentY - startY;
-        
+
         if (diff > threshold && content.scrollTop <= 0) {
             ptr.classList.add('loading');
             ptr.style.transform = `translate3d(0, 50px, 0)`;
@@ -4630,17 +4655,24 @@ function initPullToRefresh() {
         } else {
             ptr.style.transform = ''; ptr.style.opacity = 0;
         }
-        if(rAF) { cancelAnimationFrame(rAF); rAF = null; }
-    });
+        if (rAF) { cancelAnimationFrame(rAF); rAF = null; }
+    }, { passive: true });
 }
 
+let _navPageCache = null;
+let _navItemCache = null;
+let _navContentCache = null;
 function navTo(pageId, btn) {
-    document.querySelectorAll('.m-page').forEach(p => p.classList.remove('active'));
-    document.getElementById('page-' + pageId).classList.add('active');
-    document.querySelectorAll('.m-nav-item').forEach(i => i.classList.remove('active'));
-    if(btn) btn.classList.add('active');
-    document.querySelector('.m-content').scrollTop = 0;
-    if(navigator.vibrate) navigator.vibrate(10);
+    if (!_navPageCache) _navPageCache = [...document.querySelectorAll('.m-page')];
+    if (!_navItemCache) _navItemCache = [...document.querySelectorAll('.m-nav-item')];
+    if (!_navContentCache) _navContentCache = document.querySelector('.m-content');
+    _navPageCache.forEach(p => p.classList.remove('active'));
+    _navItemCache.forEach(i => i.classList.remove('active'));
+    const target = document.getElementById('page-' + pageId);
+    if (target) target.classList.add('active');
+    if (btn) btn.classList.add('active');
+    if (_navContentCache) _navContentCache.scrollTop = 0;
+    if (navigator.vibrate) navigator.vibrate(10);
 }
 
 function clearMobileDebridValidationTimer() {
