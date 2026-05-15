@@ -16,14 +16,10 @@ const CHUNK_SIZE = 40;
 const API_TIMEOUT = 14000;
 const MAX_RETRIES = 4;
 const RETRY_DELAY_BASE = 1600;
-// More chunks in flight = faster bulk cache detection. Still bounded so we never
-// stampede the TorBox API. Tunable via TB_CACHE_MAX_CONCURRENCY.
 const MAX_CONCURRENCY = Math.max(1, Math.min(8, parseInt(process.env.TB_CACHE_MAX_CONCURRENCY || '5', 10) || 5));
 const DEFAULT_SYNC_LIMIT = 20;
 const MIN_VIDEO_SIZE = 50 * 1024 * 1024;
 const LOCAL_AVAILABILITY_MAX_ENTRIES = 8000;
-// "uncached" used to be frozen for 6h, which kept stale negatives long after a
-// torrent actually became cached. Default lowered to 2h, tunable via env.
 const UNCACHED_TTL_SECONDS = Math.max(
   15 * 60,
   parseInt(process.env.TB_UNCACHED_TTL_SECONDS || String(2 * 60 * 60), 10) || 2 * 60 * 60
@@ -593,7 +589,7 @@ function parseHashResult(hash, info, meta = null) {
   const totalSize = safeNum(info?.size, 0);
 
   if (!hasFiles) {
-    // An explicit `cached` flag is a real (if file-unverified) cache signal.
+    
     if (info?.cached === true) {
       return [lowerHash, makeCacheResult(TB_CACHE_STATES.LIKELY_CACHED, {
         torrent_title: info.name || null,
@@ -602,8 +598,7 @@ function parseHashResult(hash, info, meta = null) {
         match_reason: "metadata_without_files"
       })];
     }
-    // A bare `size` with no file list and no cached flag is just torrent metadata.
-    // Marking it likely_cached produced false-positive "cached" badges.
+        
     if (totalSize > 0) {
       return [lowerHash, makeCacheResult(TB_CACHE_STATES.UNCERTAIN, {
         torrent_title: info.name || null,
