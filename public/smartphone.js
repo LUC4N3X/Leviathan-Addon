@@ -2136,7 +2136,6 @@ body.m-keyboard-open .m-toast-container {
 
 #m-sea-canvas {
     opacity: 0.82;
-    filter: none;
 }
 
 body.m-typing .m-caustic,
