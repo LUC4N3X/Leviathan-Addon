@@ -558,9 +558,7 @@ async fn read_cache(state: &AppState, key: &str) -> Option<FetchResponse> {
         }
     }
 
-    // Entry looked expired from the read lock path. Escalate only for eviction,
-    // but fully re-check under the write lock because another task may have
-    // refreshed the same key while we were waiting for the lock.
+    
     let now = Instant::now();
     let mut cache = state.cache.write().await;
     let Some(entry) = cache.get(key) else { return None; };
