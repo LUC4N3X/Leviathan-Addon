@@ -98,6 +98,33 @@ async function fetchRdAvailabilityMap(token, streams, episodeContext = null) {
     return merged;
 }
 
+function hasNativeMediaFusionPlayableUrl(item = {}) {
+    if (process.env.MEDIAFUSION_TRUST_NATIVE_RD_URLS === 'false') return false;
+    const url = String(item?._mediafusionPlayableUrl || item?.externalPlayableUrl || item?.directUrl || item?.url || '').trim();
+    if (!/^https?:\/\//i.test(url)) return false;
+    // Do not trust a Leviathan cloud-builder URL as an external playable stream.
+    if (/\/add_to_cloud\//i.test(url)) return false;
+    return true;
+}
+
+function markNativeMediaFusionPlayable(item = {}) {
+    return {
+        ...item,
+        isCached: true,
+        cacheState: 'cached',
+        rdCacheState: 'cached',
+        _rdCacheState: 'cached',
+        _dbCachedRd: true,
+        cached_rd: true,
+        _mediafusionRdChecked: true,
+        _mediafusionRdAuthority: true,
+        _mediafusionPassthrough: true,
+        _nexusBridgeRdChecked: true,
+        _externalRdChecked: true,
+        _rdProof: item._rdProof || 'mediafusion_passthrough_url'
+    };
+}
+
 async function filterMediaFusionByRealDebridCache(streams, options = {}) {
     const items = dedupeNormalizedStreams(Array.isArray(streams) ? streams : []);
     if (items.length === 0) return [];
@@ -114,6 +141,10 @@ async function filterMediaFusionByRealDebridCache(streams, options = {}) {
     try {
         const episodeContext = parseEpisodeContextFromId(options.id || options.requestId || '');
         const availabilityByHash = await fetchRdAvailabilityMap(rdToken, items, episodeContext);
+        const nativePlayable = items
+            .filter(hasNativeMediaFusionPlayableUrl)
+            .map(markNativeMediaFusionPlayable);
+        const nativeKeys = new Set(nativePlayable.map((item) => `${normalizeHash(extractInfoHash(item))}:${item.fileIdx ?? -1}:${item._mediafusionPlayableUrl || item.externalPlayableUrl || item.url || ''}`));
         const cachedOnly = items
             .filter((item) => availabilityByHash[normalizeHash(extractInfoHash(item))]?.cached === true)
             .map((item) => {
@@ -139,8 +170,13 @@ async function filterMediaFusionByRealDebridCache(streams, options = {}) {
                 };
             });
 
-        infoLog(`[MEDIAFUSION] RD cached filter ${items.length} -> ${cachedOnly.length}`);
-        return dedupeNormalizedStreams(cachedOnly);
+        const combined = dedupeNormalizedStreams([...nativePlayable, ...cachedOnly]).filter((item) => {
+            if (!hasNativeMediaFusionPlayableUrl(item)) return true;
+            const key = `${normalizeHash(extractInfoHash(item))}:${item.fileIdx ?? -1}:${item._mediafusionPlayableUrl || item.externalPlayableUrl || item.url || ''}`;
+            return nativeKeys.has(key) || item.rdCacheState === 'cached' || item.cacheState === 'cached';
+        });
+        infoLog(`[MEDIAFUSION] RD cached filter ${items.length} -> ${combined.length} nativePlayable=${nativePlayable.length}`);
+        return combined;
     } catch (error) {
         infoLog(`[MEDIAFUSION] RD check failed: ${error?.message || error}`);
         return [];
