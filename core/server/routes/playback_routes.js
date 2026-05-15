@@ -7,6 +7,13 @@ const { registerLazyExtractionRoute } = require('../../../providers/extractors/l
 const { buildContentProxyUrlFromRequest, shouldProxyContentUrl } = require('../../proxy/content_proxy_engine');
 const TorrentInfoLedger = require('../../torrent/torrent_info_ledger');
 
+
+function extractInfoHashFromText(value = '') {
+    const text = String(value || '');
+    const match = text.match(/(?:btih:|\/)([A-Fa-f0-9]{40})(?:[&/?#]|$)/i) || text.match(/\b([A-Fa-f0-9]{40})\b/i);
+    return match ? String(match[1]).toUpperCase() : null;
+}
+
 function registerPlaybackRoutes(app, {
     Cache,
     LIMITERS,
@@ -184,6 +191,12 @@ function registerPlaybackRoutes(app, {
                 return res.redirect(finalUrl);
             }
             await markPlayableResultAsUnavailable?.(requestedService, item, playbackMeta, 'lazy_play_miss');
+            if (requestedService === 'rd') {
+                incrementMetric('lazyPlay.rdNoCloudFallback');
+                recordDuration('lazyPlay.total', Date.now() - startedAt);
+                logger.info(`[LAZY PLAY] RD miss senza add_to_cloud | hash=${item.hash} | fileIdx=${item.fileIdx ?? 'n/a'} | reason=rd_lazy_disabled`);
+                return res.status(404).send('Stream RD non disponibile: Leviathan non aggiunge più automaticamente questo hash al cloud RD. Aggiorna la pagina per vedere solo link RD risolti.');
+            }
             incrementMetric('lazyPlay.redirectToCloud');
             recordDuration('lazyPlay.total', Date.now() - startedAt);
             return res.redirect(`${getRequestOrigin(req)}/${conf}/add_to_cloud/${hash}`);
@@ -269,6 +282,39 @@ function registerPlaybackRoutes(app, {
         }
     });
 
+
+    function decodeBase64UrlText(value = '') {
+        const text = String(value || '').trim();
+        if (!text) return '';
+        try {
+            const padded = text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - text.length % 4) % 4);
+            return Buffer.from(padded, 'base64').toString('utf8').trim();
+        } catch (_) {
+            return '';
+        }
+    }
+
+    function pickRdCloudBuildMagnet(req, hash) {
+        const fromEncoded = decodeBase64UrlText(req.query?.m || req.query?.magnet_b64 || '');
+        const fromPlain = String(req.query?.magnet || '').trim();
+        const rdDownloadRaw = String(req.query?.rd_download || '').trim();
+        const rdDownloadDecoded = decodeBase64UrlText(rdDownloadRaw);
+        const candidates = [fromEncoded, fromPlain, rdDownloadDecoded, rdDownloadRaw]
+            .map((value) => String(value || '').trim())
+            .filter((value) => /^magnet:\?/i.test(value));
+        const wantedHash = String(hash || '').toUpperCase();
+        for (const candidate of candidates) {
+            const foundHash = extractInfoHashFromText(candidate);
+            if (!wantedHash || !foundHash || String(foundHash).toUpperCase() === wantedHash) return candidate;
+        }
+        return null;
+    }
+
+    app.head('/:conf/add_to_cloud/:hash', async (req, res) => {
+        
+        res.status(204).end();
+    });
+
     app.get('/:conf/add_to_cloud/:hash', async (req, res) => {
         const { conf, hash } = req.params;
         try {
@@ -281,13 +327,30 @@ function registerPlaybackRoutes(app, {
                     : null;
             if (!['rd', 'tb'].includes(service)) return res.status(400).send('Servizio Debrid non supportato.');
             if (!apiKey) return res.status(400).send('API Key mancante.');
+
+            const isRdDownloadFallbackUrl = service === 'rd' && String(req.query?.rd_download || '').trim();
+            const allowPublicRdDownloadBuilder = /^(1|true|yes|on)$/i.test(String(process.env.RD_ALLOW_PUBLIC_DOWNLOAD_BUILDER || '').trim());
+            if (isRdDownloadFallbackUrl && !allowPublicRdDownloadBuilder) {
+                                    
+                logger.info(`📥 [CACHE BUILDER] RD download fallback blocked | hash=${hash} | reason=public_builder_disabled`);
+                return res.redirect(`${getRequestOrigin(req)}/confirmed.mp4`);
+            }
+
             const buildKey = getBuildKey(service, hash, apiKey);
             const recentBuild = await Cache.getCloudBuild(buildKey);
-            const isRecent = recentBuild && (Date.now() - Number(recentBuild.queuedAt || 0) < 120000) && ['queued', 'submitted'].includes(recentBuild.status);
+            const ageMs = recentBuild ? Date.now() - Number(recentBuild.queuedAt || 0) : Infinity;
+            const isRecent = recentBuild && ageMs < 120000 && ['queued', 'submitted'].includes(recentBuild.status);
+            const isErrorCooldown = recentBuild && ageMs < 600000 && recentBuild.status === 'error';
             if (isRecent) logger.info(`📥 [CACHE BUILDER] Già in coda ${hash} su ${service.toUpperCase()} - salto duplicato`);
+            else if (isErrorCooldown) logger.info(`📥 [CACHE BUILDER] cooldown errore attivo ${hash} su ${service.toUpperCase()} - niente retry spam`);
             else {
-                logger.info(`📥 [CACHE BUILDER] Richiesta aggiunta hash ${hash} su ${service.toUpperCase()}`);
-                await queueCloudBuild(service, hash, apiKey);
+                const magnet = service === 'rd' ? pickRdCloudBuildMagnet(req, hash) : null;
+                logger.info(`📥 [CACHE BUILDER] Richiesta aggiunta hash ${hash} su ${service.toUpperCase()}${magnet ? ' | magnet=external_context' : ''}`);
+                
+                
+                queueCloudBuild(service, hash, apiKey, { magnet }).catch((error) => {
+                    logger.warn(`[CACHE BUILDER] async cloud build failed | service=${service.toUpperCase()} | hash=${hash} | error=${error?.message || error}`);
+                });
             }
             res.redirect(`${getRequestOrigin(req)}/confirmed.mp4`);
         } catch (err) {
