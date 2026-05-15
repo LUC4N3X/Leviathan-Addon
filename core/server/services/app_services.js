@@ -182,15 +182,16 @@ function createAppServices({
         }
     }
 
-    async function queueCloudBuild(service, hash, apiKey) {
+    async function queueCloudBuild(service, hash, apiKey, options = {}) {
         const buildKey = getBuildKey(service, hash, apiKey);
         const existingPromise = cloudBuildInflight.get(buildKey);
         if (existingPromise) return existingPromise;
 
         const task = (async () => {
             const startedAt = Date.now();
-            const magnet = buildTrackerMagnet(hash);
-            await Cache.setCloudBuild(buildKey, { status: 'queued', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now() }, 900);
+            const providedMagnet = String(options?.magnet || '').trim();
+            const magnet = /^magnet:\?/i.test(providedMagnet) ? providedMagnet : buildTrackerMagnet(hash);
+            await Cache.setCloudBuild(buildKey, { status: 'queued', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now(), magnetSource: providedMagnet ? 'external_context' : 'tracker_registry' }, 900);
 
             await LIMITERS.cloudBuild.schedule(async () => {
                 if (service === 'rd') {
@@ -250,7 +251,7 @@ function createAppServices({
                 recordProviderMetric(`cloudBuild.${service}`, true, 0, { error: 'duplicate' });
                 return { ok: true, duplicate: true };
             }
-            await Cache.setCloudBuild(buildKey, { status: 'error', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now(), error: err.message }, 120);
+            await Cache.setCloudBuild(buildKey, { status: 'error', service, hash: String(hash || '').toUpperCase(), queuedAt: Date.now(), error: err.message }, service === 'rd' ? 900 : 120);
             if (service === 'rd' && dbHelper && typeof dbHelper.updateRdCacheStatus === 'function') {
                 try {
                     await dbHelper.updateRdCacheStatus([{
