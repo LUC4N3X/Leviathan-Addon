@@ -110,12 +110,12 @@ const mobileCSS = `
 :root {
     --m-bg: #000205;
     --m-bg-deep: #00060c;
-    --m-primary: #00f2ff;     /* Ciano Leviathan */
+    --m-primary: #00f2ff;
     --m-primary-dim: rgba(0, 242, 255, 0.18);
-    --m-secondary: #7000ff;   /* Viola Abisso */
+    --m-secondary: #7000ff;
     --m-accent: #b026ff;
-    --m-amber: #ffcc00;       /* Gold P2P Warning */
-    --m-orange: #ff6600;      /* Blaze Orange (AnimeWorld) */
+    --m-amber: #ffcc00;
+    --m-orange: #ff6600;
     --m-cine: #ff0055;
     --m-kofi: #FF5E5B;
     --m-surface: rgba(8, 14, 22, 0.85);
@@ -135,14 +135,12 @@ const mobileCSS = `
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; user-select: none; }
 
-/* --- CUSTOM THIN SCROLLBAR --- */
 * { scrollbar-width: thin; scrollbar-color: rgba(0, 242, 255, 0.4) transparent; }
 ::-webkit-scrollbar { width: 3px; height: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(0, 242, 255, 0.4); border-radius: 10px; }
 ::-webkit-scrollbar-thumb:active { background: var(--m-primary); }
 
-/* --- DEEP SEA BACKGROUND --- */
 body {
     margin: 0;
     background:
@@ -160,7 +158,6 @@ body {
     overflow: hidden;
 }
 
-/* Subtle CRT scan layer */
 body::after {
     content: " ";
     display: block;
@@ -176,7 +173,6 @@ body::after {
     mix-blend-mode: normal;
 }
 
-/* Caustic light rays from the surface above */
 body::before {
     content: ''; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -10;
     background-image:
@@ -190,7 +186,6 @@ body::before {
 }
 @keyframes gridDrift { from { background-position: 0 0; } to { background-position: 44px 44px; } }
 
-/* Caustic light shafts */
 .m-caustic {
     position: fixed; top: 0; left: 0; width: 100%; height: 55%; pointer-events: none; z-index: -8; overflow: hidden;
 }
@@ -208,7 +203,6 @@ body::before {
     100% { transform: rotate(var(--ray-to, 8deg)) scaleX(1.3); opacity: calc(var(--ray-op, 0.6) * 0.5); }
 }
 
-/* Floating ocean particles */
 .m-ocean-particles { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: -5; overflow: hidden; }
 .m-ocean-particle {
     position: absolute; bottom: -10px;
@@ -225,7 +219,6 @@ body::before {
     100% { transform: translate3d(var(--drift, 12px), -110vh, 0) scale(1.4); opacity: 0; }
 }
 
-/* === SEA CANVAS === */
 #m-sea-canvas {
     position: fixed; bottom: 0; left: 0; width: 100%;
     pointer-events: none; z-index: -6;
@@ -233,12 +226,12 @@ body::before {
     will-change: transform;
 }
 
-#app-container { 
-    display: flex; flex-direction: column; height: 100dvh; width: 100%; max-width: 100%; position: relative; overflow: hidden; 
+#app-container {
+    display: flex; flex-direction: column; height: 100dvh; width: 100%; max-width: 100%; position: relative; overflow: hidden;
 }
 
-.m-content-wrapper { 
-    flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; overflow: hidden; z-index: 5; 
+.m-content-wrapper {
+    flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; overflow: hidden; z-index: 5;
 }
 
 .m-content {
@@ -248,7 +241,6 @@ body::before {
     scroll-behavior: smooth;
 }
 
-/* --- SECTION HEADER (Leviathan signature) --- */
 .m-section-head {
     display: flex; align-items: center; justify-content: space-between;
     margin: 0 4px 12px 4px;
@@ -276,12 +268,11 @@ body::before {
 .m-section-head .sh-tag.warn { color: var(--m-amber); border-color: rgba(255, 204, 0, 0.4); background: rgba(255, 204, 0, 0.06); }
 .m-section-head .sh-tag.violet { color: var(--m-secondary); border-color: rgba(112, 0, 255, 0.4); background: rgba(112, 0, 255, 0.06); }
 
-/* --- FIX PTR Z-INDEX --- */
 .m-ptr {
     position: absolute; top: -70px; left: 0; width: 100%; height: 70px;
     display: flex; align-items: flex-end; justify-content: center;
-    padding-bottom: 15px; color: var(--m-primary); 
-    z-index: 100; /* FIXED: Sopra a tutto, anche al logo */
+    padding-bottom: 15px; color: var(--m-primary);
+    z-index: 100;
     pointer-events: none; opacity: 0; transition: opacity 0.2s ease-out;
 }
 .m-ptr-icon {
@@ -296,7 +287,6 @@ body::before {
 .m-page.active { display: block; animation: fadeFast 0.35s ease-out; }
 @keyframes fadeFast { from { opacity: 0; transform: translate3d(0, 15px, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
 
-/* --- HERO SECTION --- */
 .m-hero {
     text-align: center;
     padding: 26px 10px 18px;
@@ -325,7 +315,6 @@ body::before {
     z-index: -2;
 }
 
-/* Horizon line under hero */
 .m-hero::after {
     content: '';
     display: block;
@@ -392,7 +381,7 @@ body::before {
     object-fit: contain;
     border-radius: 0;
     transform: translateY(5px) scale(1.03);
-    /* Static filter — never animated; brightness/saturate are expensive on Android */
+
     filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.42)) drop-shadow(0 0 10px rgba(0, 242, 255, 0.15)) brightness(1.05) saturate(1.05);
     animation: pulseGlow 3.1s ease-in-out infinite alternate;
     will-change: transform, opacity;
@@ -407,7 +396,6 @@ body::before {
     opacity: 1;
 }
 
-/* Only animate transform — GPU-composited, zero repaint cost on mobile */
 @keyframes pulseGlow {
     0%   { transform: translateY(5px)  scale(1.03); }
     100% { transform: translateY(3px)  scale(1.055); }
@@ -450,7 +438,7 @@ body::before {
     position: relative; z-index: 10;
     animation: titleGlow 4.5s ease-in-out infinite alternate;
 }
-/* Only animate opacity — filter animation triggers repaints on mobile */
+
 @keyframes titleGlow {
     from { opacity: 0.88; }
     to   { opacity: 1; }
@@ -498,9 +486,6 @@ body::before {
 .m-v-dot { width: 6px; height: 6px; background: var(--m-success); border-radius: 50%; box-shadow: 0 0 6px var(--m-success), 0 0 12px rgba(0,255,157,0.5); animation: blinkBase 2s infinite; flex-shrink: 0; }
 @keyframes blinkBase { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.8); } }
 
-/* --- COMPONENTS --- */
-
-/* === CREDENTIALS DECK === */
 .m-cred-deck {
     display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
     margin-bottom: 22px; perspective: 1000px;
@@ -542,7 +527,6 @@ body::before {
     letter-spacing: 1.4px; color: #5d6c7e; transition: 0.3s;
 }
 
-/* Active State */
 .m-cred-opt.active {
     background: linear-gradient(155deg, rgba(20,28,40,0.95), rgba(0,0,0,0.98));
     border-color: var(--opt-color);
@@ -555,12 +539,10 @@ body::before {
 .m-cred-opt.active .m-cred-name { color: #fff; text-shadow: 0 0 10px var(--opt-color); letter-spacing: 1.6px; }
 .m-cred-opt:active { transform: scale(0.97); }
 
-/* Specific Colors */
 .cred-rd { --opt-color: var(--m-primary); --opt-glow: rgba(0, 242, 255, 0.2); }
 .cred-tb { --opt-color: var(--m-accent); --opt-glow: rgba(176, 38, 255, 0.2); }
 .cred-p2p { --opt-color: var(--m-amber); --opt-glow: rgba(255, 204, 0, 0.2); }
 
-/* Input Fuselage (Container) */
 .m-input-fuselage {
     position: relative; margin-bottom: 20px;
     background: rgba(0,0,0,0.5);
@@ -587,7 +569,6 @@ body::before {
     box-shadow: 0 0 18px rgba(0, 242, 255, 0.18), inset 0 0 12px rgba(0, 242, 255, 0.05);
 }
 
-/* Inner Input Wrapper */
 .m-if-inner {
     display: flex; align-items: center;
     background: #03070d;
@@ -626,7 +607,6 @@ body::before {
 .m-if-action:hover { color: #fff; background: rgba(255,255,255,0.1); }
 .m-if-action:active { transform: scale(0.9); color: var(--m-primary); }
 
-/* Field Labels Top Right */
 .m-if-label {
     position: absolute; top: -9px; right: 14px;
     background: linear-gradient(180deg, #03060b, #050a12); padding: 1px 9px;
@@ -642,7 +622,6 @@ body::before {
 }
 .m-if-label.opt { color: var(--m-accent); border-color: rgba(176,38,255,0.35); background: linear-gradient(180deg, #07020c, #0a0612); }
 
-/* Link Button */
 .m-get-link {
     font-family: 'Rajdhani'; font-size: 0.65rem; font-weight: 700;
     color: var(--m-primary); text-transform: uppercase; letter-spacing: 1px;
@@ -695,7 +674,6 @@ body::before {
     50% { transform: scale(1.35); opacity: 0.75; }
 }
 
-
 .m-hypervisor {
     background:
         linear-gradient(165deg, rgba(8, 14, 22, 0.92), rgba(2, 5, 10, 0.97));
@@ -710,7 +688,7 @@ body::before {
     z-index: 2;
     isolation: isolate;
 }
-/* Animated top accent bar */
+
 .m-hypervisor::before {
     content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
     background: linear-gradient(90deg, transparent 0%, var(--m-primary) 25%, var(--m-secondary) 50%, var(--m-primary) 75%, transparent 100%);
@@ -718,7 +696,7 @@ body::before {
     box-shadow: 0 0 12px var(--m-primary);
     animation: borderFlow 6s linear infinite;
 }
-/* Faint blueprint mesh inside */
+
 .m-hypervisor::after {
     content: ''; position: absolute; inset: 0; pointer-events: none; z-index: -1;
     background-image:
@@ -747,7 +725,6 @@ body::before {
     border-radius: 50%; border: 1px solid rgba(0, 242, 255, 0.25);
 }
 
-/* --- FLUX STYLES --- */
 .m-flux-control {
     display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;
 }
@@ -765,7 +742,6 @@ body::before {
 .m-flux-opt i { font-size: 1.2rem; color: #666; transition: all 0.3s; }
 .m-flux-opt span { font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 0.75rem; color: #666; transition: all 0.3s; }
 
-/* Active States for Flux */
 .m-flux-opt.active-bal {
     background: rgba(0, 242, 255, 0.05); border-color: var(--m-primary);
     box-shadow: 0 0 15px rgba(0, 242, 255, 0.1), inset 0 0 5px rgba(0, 242, 255, 0.05);
@@ -795,7 +771,6 @@ body::before {
 .m-fr-title { font-family: 'Rajdhani'; font-weight: 800; font-size: 0.8rem; color: #fff; text-transform: uppercase; letter-spacing: 1px; }
 .m-fr-desc { font-family: 'Outfit'; font-size: 0.7rem; color: #888; line-height: 1.3; }
 
-/* Readout Colors */
 .m-flux-readout.mode-bal { border-left-color: var(--m-primary); background: linear-gradient(90deg, rgba(0,242,255,0.05), transparent); }
 .m-flux-readout.mode-bal .m-fr-icon { color: var(--m-primary); }
 .m-flux-readout.mode-res { border-left-color: var(--m-secondary); background: linear-gradient(90deg, rgba(112,0,255,0.05), transparent); }
@@ -803,7 +778,6 @@ body::before {
 .m-flux-readout.mode-sz { border-left-color: var(--m-amber); background: linear-gradient(90deg, rgba(255,153,0,0.05), transparent); }
 .m-flux-readout.mode-sz .m-fr-icon { color: var(--m-amber); }
 
-/* --- LANGUAGE STYLES --- */
 .m-lang-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 15px; }
 .m-lang-opt {
     background: rgba(20, 20, 25, 0.6);
@@ -816,7 +790,6 @@ body::before {
 .m-lang-opt i { font-size: 1.2rem; color: #555; transition: all 0.3s; margin-bottom: 2px; }
 .m-lang-txt { font-family: 'Rajdhani', sans-serif; font-weight: 800; font-size: 0.8rem; color: #777; transition: color 0.3s; }
 
-/* Active Language States */
 .m-lang-opt.active-ita {
     background: rgba(0, 242, 255, 0.08); border-color: var(--m-primary);
     box-shadow: 0 0 15px rgba(0, 242, 255, 0.15);
@@ -886,20 +859,18 @@ body::before {
 .m-sys-info h4 { margin: 0; font-size: 0.85rem; color: #fff; font-family: 'Rajdhani'; font-weight: 700; display: flex; align-items: center; gap: 5px; }
 .m-sys-info p { margin: 2px 0 0; font-size: 0.65rem; color: rgba(255,255,255,0.5); }
 
-
-/* --- REACTOR CORE MODULES (OPTIMIZED & LESS ZOOMED) --- */
 .m-reactor-grid {
     display: flex; flex-direction: column; gap: 10px; margin-bottom: 25px;
 }
 
 .m-reactor-module {
-    /* Base Appearance */
+
     background: linear-gradient(180deg, rgba(8, 12, 18, 0.96), rgba(3, 6, 11, 0.97));
     border: 1px solid rgba(255,255,255,0.06);
     border-radius: var(--m-radius-md);
     position: relative;
     overflow: hidden;
-    /* Only compositor-safe props: border-color (no layout/paint), opacity via ::after */
+
     transition: border-color 0.3s ease;
     display: flex;
     align-items: stretch;
@@ -908,9 +879,8 @@ body::before {
 }
 .m-reactor-module:active { transform: scale(0.99); }
 
-/* The "Core" (Left Bar) */
 .m-reactor-core {
-    width: 45px; /* Reduced from 60px */
+    width: 45px;
     flex-shrink: 0;
     background: #0f1219;
     border-right: 1px solid rgba(255,255,255,0.05);
@@ -918,23 +888,22 @@ body::before {
     align-items: center;
     justify-content: center;
     position: relative;
-    z-index: 2; /* Keeps icon above glow */
+    z-index: 2;
     transition: background 0.3s ease;
 }
 
 .m-core-icon {
-    font-size: 1.1rem; /* Reduced from 1.4rem */
-    /* Only animate transform — GPU-composited, no repaint */
+    font-size: 1.1rem;
+
     transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
     filter: drop-shadow(0 0 5px rgba(0,0,0,0.5));
     z-index: 3;
     position: relative;
 }
 
-/* The Body (Content) */
 .m-reactor-body {
     flex: 1;
-    padding: 8px 12px; /* Reduced padding */
+    padding: 8px 12px;
     display: flex;
     flex-direction: column;
     justify-content: center;
@@ -943,21 +912,19 @@ body::before {
     background: linear-gradient(90deg, rgba(255,255,255,0.01), transparent);
 }
 
-/* Titles & Text */
 .m-reactor-top {
     display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;
 }
 .m-reactor-title {
-    font-family: 'Rajdhani', sans-serif; font-weight: 800; color: #fff; font-size: 0.95rem; /* Reduced from 1rem */
+    font-family: 'Rajdhani', sans-serif; font-weight: 800; color: #fff; font-size: 0.95rem;
     letter-spacing: 0.5px; text-shadow: 0 2px 5px rgba(0,0,0,0.5);
 }
 .m-reactor-desc {
-    font-family: 'Outfit', sans-serif; font-size: 0.6rem; /* Reduced from 0.65rem */
-    color: #666; 
+    font-family: 'Outfit', sans-serif; font-size: 0.6rem;
+    color: #666;
     line-height: 1.3; margin-bottom: 4px; display: block;
 }
 
-/* Badges (Tech Tags) */
 .m-tag-row { display: flex; gap: 6px; align-items: center; }
 .m-tech-tag {
     font-family: 'Rajdhani', monospace; font-size: 0.5rem; font-weight: 700;
@@ -968,9 +935,6 @@ body::before {
 .tag-mfp { border-color: rgba(0, 242, 255, 0.3); color: var(--m-primary); background: rgba(0, 242, 255, 0.05); }
 .tag-kraken { border-color: rgba(255, 77, 109, 0.7); color: #ff9fb1; background: rgba(255, 77, 109, 0.12); }
 
-/* --- ACTIVE STATES (THE MAGIC) --- */
-
-/* Background Glow Effect */
 .m-reactor-module::after {
     content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
     background: radial-gradient(circle at 0% 50%, var(--glow-color), transparent 70%);
@@ -979,27 +943,23 @@ body::before {
 }
 .m-reactor-module.active::after { opacity: 0.25; }
 
-/* Border Glow */
 .m-reactor-module.active {
     border-color: var(--border-color);
     box-shadow: 0 0 20px rgba(0,0,0,0.5), inset 0 0 0 1px var(--border-color-dim);
 }
 
-/* Core Activation */
 .m-reactor-module.active .m-reactor-core {
     background: var(--core-bg);
     border-right-color: var(--border-color);
-    box-shadow: 10px 0 30px -5px var(--glow-color); /* Spills light into body */
+    box-shadow: 10px 0 30px -5px var(--glow-color);
 }
 
-/* Icon Activation */
 .m-reactor-module.active .m-core-icon {
     transform: scale(1.15);
-    /* No brightness() — not GPU-composited and forces repaint */
+
     filter: drop-shadow(0 0 8px var(--border-color));
 }
 
-/* Specific Module Colors & ALWAYS ON ICONS */
 #mod-vix { --glow-color: rgba(112, 0, 255, 0.8); --border-color: #7000ff; --border-color-dim: rgba(112,0,255,0.3); --core-bg: rgba(112,0,255,0.2); }
 #mod-vix .m-core-icon { color: var(--m-secondary); }
 
@@ -1009,32 +969,25 @@ body::before {
 #mod-gs { --glow-color: rgba(176, 38, 255, 0.8); --border-color: #b026ff; --border-color-dim: rgba(176,38,255,0.3); --core-bg: rgba(176,38,255,0.2); }
 #mod-gs .m-core-icon { color: var(--m-accent); }
 
-/* AnimeWorld - BLAZE ORANGE */
 #mod-aw { --glow-color: rgba(255, 102, 0, 0.8); --border-color: #ff6600; --border-color-dim: rgba(255,102,0,0.3); --core-bg: rgba(255,102,0,0.2); }
 #mod-aw .m-core-icon { color: var(--m-orange); }
 
-/* AnimeSaturn - COSMIC GOLD */
 #mod-as { --glow-color: rgba(255, 204, 0, 0.8); --border-color: #ffcc00; --border-color-dim: rgba(255,204,0,0.3); --core-bg: rgba(255,204,0,0.2); }
 #mod-as .m-core-icon { color: var(--m-amber); }
 
-/* GuardaFlix - NEON GREEN */
 #mod-gf { --glow-color: rgba(0, 230, 118, 0.8); --border-color: #00e676; --border-color-dim: rgba(0,230,118,0.3); --core-bg: rgba(0,230,118,0.2); }
 #mod-gf .m-core-icon { color: #00e676; }
 
-/* CinemaCity - NEON ROSE */
 #mod-cc { --glow-color: rgba(255, 77, 109, 0.8); --border-color: #ff4d6d; --border-color-dim: rgba(255,77,109,0.3); --core-bg: rgba(255,77,109,0.2); }
 #mod-cc .m-core-icon { color: #ff4d6d; }
 
-/* --- SWITCH OVERRIDE FOR REACTOR --- */
-/* Makes the switch fit the theme better */
 .m-reactor-top .m-switch { transform: scale(0.85); transform-origin: right center; }
 
-/* --- SC SUBPANEL (FIXED: NO CUT OFF & HIDDEN BY DEFAULT) --- */
 .m-sc-subpanel {
-    display: none; /* KEY FIX: HIDDEN BY DEFAULT */
-    background: transparent; 
+    display: none;
+    background: transparent;
     border: none;
-    margin: 8px 0 0 0; 
+    margin: 8px 0 0 0;
     padding: 0;
     width: 100%;
 }
@@ -1049,8 +1002,6 @@ body::before {
     background: var(--m-secondary); border-color: var(--m-secondary);
     color: #fff; box-shadow: 0 0 10px rgba(112,0,255,0.4);
 }
-
-
 
 .m-visual-core-v2 {
     margin: 6px 0 22px; position: relative;
@@ -1205,7 +1156,6 @@ body::before {
 .m-ghost-status { font-family: 'Rajdhani'; font-weight: 700; font-size: 0.65rem; padding: 3px 6px; border-radius: 4px; background: rgba(255,255,255,0.1); color: #666; transition: all 0.3s; }
 .m-ghost-panel.active .m-ghost-status { background: var(--m-secondary); color: #000; box-shadow: 0 0 10px var(--m-secondary); }
 
-/* --- P2P MODULE STYLE --- */
 .m-p2p-module { background: rgba(255, 204, 0, 0.05); border: 1px solid rgba(255, 204, 0, 0.3); border-radius: 16px; padding: 15px; margin-top: 15px; position: relative; overflow: hidden; transition: all 0.3s; }
 .m-p2p-module.active { border-color: var(--m-amber); box-shadow: 0 0 20px rgba(255, 204, 0, 0.2); background: radial-gradient(circle at top right, rgba(255, 204, 0, 0.08), transparent); }
 .m-p2p-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
@@ -1237,7 +1187,6 @@ input:checked + .m-slider-amber:before { background-color: var(--m-amber); box-s
 input:checked + .m-slider-pink { background-color: rgba(255, 0, 85, 0.3); border-color: var(--m-cine); box-shadow: inset 0 0 10px rgba(255,0,85,0.4); }
 input:checked + .m-slider-pink:before { background-color: var(--m-cine); box-shadow: 0 0 10px var(--m-cine); }
 
-/* Nuova Slider Green per GuardaFlix */
 .m-slider-green { background-color: #1c1c1c; }
 input:checked + .m-slider-green { background-color: rgba(0, 230, 118, 0.3); border-color: #00e676; box-shadow: inset 0 0 10px rgba(0,230,118,0.4); }
 input:checked + .m-slider-green:before { background-color: #00e676; box-shadow: 0 0 10px #00e676; }
@@ -1245,7 +1194,6 @@ input:checked + .m-slider-green:before { background-color: #00e676; box-shadow: 
 .m-priority-wrapper { max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.3s ease; margin: 0 -10px; }
 .m-priority-wrapper.show { max-height: 130px; opacity: 1; margin-top: 15px; padding: 0 10px; }
 
-/* max-height/opacity only — margin/padding apply instantly (no layout-reflow animation) */
 .m-gate-wrapper { width: 100%; overflow: hidden; max-height: 0; opacity: 0; transition: max-height 0.3s ease, opacity 0.3s ease; }
 .m-gate-wrapper.show { max-height: 100px; opacity: 1; margin-top: 5px; margin-bottom: 10px; }
 .m-gate-control { display: flex; align-items: center; gap: 12px; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.05); }
@@ -1394,13 +1342,12 @@ input:checked + .m-slider-green:before { background-color: #00e676; box-shadow: 
 .m-kofi-ico { font-size: 1.1rem; color: var(--m-kofi); margin-bottom: 4px; animation: heartbeat 1.5s infinite; filter: drop-shadow(0 0 5px var(--m-kofi)); }
 .m-support-txt { font-family: 'Rajdhani'; font-weight: 800; font-size: 0.75rem; color: #fff; letter-spacing: 1px; }
 
-/* --- UPDATED STAR MODULE --- */
 .m-star-btn {
     margin-top: 10px;
     background: linear-gradient(90deg, rgba(255, 153, 0, 0.1), rgba(255, 153, 0, 0.05), rgba(255, 153, 0, 0.1));
     border: 1px solid rgba(255, 153, 0, 0.3);
     border-radius: 12px;
-    padding: 10px 15px; /* Compact padding */
+    padding: 10px 15px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1410,7 +1357,7 @@ input:checked + .m-slider-green:before { background-color: #00e676; box-shadow: 
     font-family: 'Rajdhani', sans-serif;
     font-weight: 800;
     letter-spacing: 1px;
-    font-size: 0.75rem; /* Smaller Font */
+    font-size: 0.75rem;
     box-shadow: 0 0 10px rgba(255, 153, 0, 0.1);
     transition: all 0.3s ease;
     text-transform: uppercase;
@@ -1430,7 +1377,6 @@ input:checked + .m-slider-green:before { background-color: #00e676; box-shadow: 
 
 .m-neural-footer { margin-top: 10px; text-align: center; font-size: 0.6rem; color: rgba(255,255,255,0.2); font-family: monospace; letter-spacing: 2px; }
 
-/* --- COMMAND DOCK --- */
 .m-dock-container {
     position: fixed;
     bottom: 0;
@@ -1668,19 +1614,13 @@ body.m-lowfx .logo-image {
     }
 }
 
-/* Freeze all CSS animations when the tab is invisible — saves battery on mobile. */
 body.m-page-hidden *, body.m-page-hidden *::before, body.m-page-hidden *::after {
     animation-play-state: paused !important;
 }
 
-/* Disable smooth scroll during typing/keyboard-open to cut layout cost. */
 body.m-typing .m-content, body.m-keyboard-open .m-content {
     scroll-behavior: auto;
 }
-
-/* === LEVIATHAN PROFESSIONAL MOBILE LITE OVERRIDE ==========================
-   Obiettivo: look pulito, professionale e compatto, mare Leviathan leggero,
-   meno paint/reflow durante tastiera, input e scroll su smartphone. */
 
 :root {
     --m-vvh: 100dvh;
@@ -2188,9 +2128,6 @@ body.m-keyboard-open .m-visual-core-v2 {
     }
 }
 
-
-/* === LEVIATHAN PROFESSIONAL MOBILE PACK ===
-   Extra app-like look: più emoji, card più leggibili, zero effetti pesanti. */
 body.m-mf-plus {
     --mf-card: rgba(10, 24, 39, 0.86);
     --mf-card-2: rgba(3, 10, 19, 0.94);
@@ -2412,9 +2349,6 @@ body.m-typing.m-mf-plus .mf-nav-emoji {
     filter: none !important;
 }
 
-/* === LEVIATHAN DOCK STABILITY + PREMIUM ACTION BAR =======================
-   Fix: gli switch/tap non devono mai far sparire INSTALLA/COPIA.
-   La dock si compatta solo con un vero campo testo attivo e tastiera aperta. */
 body.m-keyboard-open:not(.m-input-active) .m-dock-container {
     transform: translate3d(0, 0, 0) !important;
     opacity: 1 !important;
@@ -2530,11 +2464,6 @@ body.m-input-active.m-keyboard-open .m-dock-actions {
     body.m-mf-plus .m-reactor-module.active { border-color: var(--border-color); }
 }
 
-
-/* === LEVIATHAN APP CARD REFACTOR PACK ====================================
-   Card system più professionale e più app-like: provider, filtri, cloud,
-   skin, input e dock restano leggeri su smartphone. Nessuna nuova animazione
-   costosa: solo layout, spacing, leggibilità e stati ON/OFF più chiari. */
 body.m-mf-plus {
     --lc-card-bg: rgba(7, 19, 32, 0.88);
     --lc-card-bg-strong: rgba(3, 10, 19, 0.96);
@@ -3061,10 +2990,6 @@ body.m-keyboard-open.m-mf-plus .m-cred-opt {
     }
 }
 
-
-/* === LEVIATHAN NO-FLICKER SWITCH PATCH ====================================
-   Ritorno al comportamento naturale degli switch: nessuna classe globale,
-   nessun restore scroll e nessun resize dinamico durante il tap. */
 body.m-mf-plus .m-switch {
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
@@ -3098,10 +3023,6 @@ body.m-mf-plus input[type="checkbox"]:active {
     box-shadow: none !important;
 }
 
-/* === LEVIATHAN ZERO-FLICKER V2 ============================================
-   Dopo il primo render la pagina attiva non deve più riavviare fadeFast.
-   Gli switch possono cambiare molte classi in sequenza: durante il tap congeliamo
-   solo le animazioni globali, lasciando naturale il movimento dello slider. */
 body.m-ui-ready .m-page.active,
 body.m-switching .m-page.active {
     animation: none !important;
@@ -3109,12 +3030,13 @@ body.m-switching .m-page.active {
     transform: translate3d(0, 0, 0) !important;
 }
 
-body.m-switching .m-content {
-    scroll-behavior: auto !important;
-}
-
+body.m-ui-ready .m-cloud-mode-panel.show,
 body.m-switching .m-cloud-mode-panel.show {
     animation: none !important;
+}
+
+body.m-switching .m-content {
+    scroll-behavior: auto !important;
 }
 
 body.m-switching .m-caustic-ray,
@@ -3124,7 +3046,9 @@ body.m-switching .logo-container,
 body.m-switching .logo-image,
 body.m-switching .m-version-tag,
 body.m-switching .m-hypervisor::before,
-body.m-switching .m-visual-core-v2::before {
+body.m-switching .m-visual-core-v2::before,
+body.m-switching .m-v-dot,
+body.m-switching .m-ptr.loading .m-ptr-icon {
     animation-play-state: paused !important;
 }
 
@@ -3133,22 +3057,35 @@ body.m-switching .m-reactor-module::after,
 body.m-switching .m-reactor-core,
 body.m-switching .m-sys-row,
 body.m-switching .m-slider,
-body.m-switching .m-slider:before {
-    transition-duration: 0.14s !important;
+body.m-switching .m-slider:before,
+body.m-switching .m-cloud-mode-btn,
+body.m-switching .m-flux-opt,
+body.m-switching .m-lang-opt,
+body.m-switching .m-cortex-chip,
+body.m-switching .m-cred-opt {
+    transition-duration: 0.12s !important;
 }
 
+body.m-mf-plus .m-page.active,
 body.m-mf-plus .m-switch,
 body.m-mf-plus .m-slider,
 body.m-mf-plus .m-slider:before {
     backface-visibility: hidden;
     -webkit-backface-visibility: hidden;
+    transform: translateZ(0);
 }
 
+body.m-mf-plus .m-page.active,
 body.m-mf-plus .m-switch,
 body.m-mf-plus .m-slider {
     contain: paint;
 }
 
+body.m-mf-plus input[type="checkbox"],
+body.m-mf-plus input[type="radio"],
+body.m-mf-plus input[type="range"] {
+    touch-action: manipulation;
+}
 
 `;
 
@@ -3250,7 +3187,7 @@ const mobileHTML = `
                     </div>
 
                     <div class="m-reactor-grid">
-                        
+
                         <div class="m-reactor-module" id="mod-vix">
                             <div class="m-reactor-core">
                                 <i class="fas fa-play-circle m-core-icon"></i>
@@ -3372,7 +3309,7 @@ const mobileHTML = `
                                 </div>
                             </div>
                         </div>
-                        
+
                         <div class="m-reactor-module" id="mod-gf">
                             <div class="m-reactor-core">
                                 <i class="fas fa-play m-core-icon"></i>
@@ -3435,7 +3372,7 @@ const mobileHTML = `
                             <span class="m-nh-title">/// NEURAL SIGNATURE ///</span>
                             <span class="m-nh-id">ID: L3V-2026</span>
                         </div>
-                        
+
                         <div class="m-neural-grid">
                             <a href="https://github.com/LUC4N3X/stremio-leviathan-addon" target="_blank" class="m-dev-module">
                                 <img src="https://i.ibb.co/gLkrjxXT/Whats-App-Image-2026-01-12-at-20-15-37.jpg" alt="Dev" class="m-dev-img">
@@ -3451,9 +3388,9 @@ const mobileHTML = `
                                 <span class="m-support-txt">KO-FI</span>
                             </a>
                         </div>
-                        
+
                         <a href="https://stremio-addons.net/addons/leviathan" target="_blank" class="m-star-btn">
-                            <i class="fas fa-star spin-star"></i> 
+                            <i class="fas fa-star spin-star"></i>
                             <span>LASCIAMI UNA STELLA</span>
                             <i class="fas fa-star spin-star"></i>
                         </a>
@@ -3474,12 +3411,12 @@ const mobileHTML = `
                 </div>
 
                 <div class="m-visual-core-v2" id="m-visual-core-v2">
-                
+
                      <div class="m-hyp-header" style="margin-bottom:15px; border:none; padding-bottom:0;">
                         <span>🎨 FORMATTER PREVIEW</span>
                         <i class="fas fa-swatchbook m-hyp-icon"></i>
                      </div>
-                
+
                      <div class="m-aio-lock" id="m-aio-lock-overlay">
                         <i class="fas fa-lock m-lock-icon"></i>
                         <div class="m-lock-text">OVERRIDDEN BY AIO CORE</div>
@@ -3490,7 +3427,7 @@ const mobileHTML = `
                         <div class="m-recalc-overlay" id="m-recalc-layer">
                             <div class="m-recalc-text"><i class="fas fa-cog fa-spin"></i> 🔄 AGGIORNO PREVIEW...</div>
                         </div>
-                        
+
                         <div class="m-vp-icon" id="m-prev-icon">🦑</div>
                         <div class="m-vp-text">
                             <div class="m-vp-mode" id="m-prev-mode">LEVIATHAN CORE</div>
@@ -3623,7 +3560,7 @@ const mobileHTML = `
                         <span>⚙️ QUALITY RULES</span>
                         <i class="fas fa-microchip m-hyp-icon"></i>
                     </div>
-                    
+
                     <p class="m-hyp-desc" style="margin-bottom:15px;">
                         ⚡ Ottimizza risultati, lingua e filtri senza appesantire lo smartphone.
                     </p>
@@ -3643,7 +3580,7 @@ const mobileHTML = `
                                 <span>💾 SIZE</span>
                             </div>
                         </div>
-                        
+
                         <div class="m-flux-readout mode-bal" id="flux-readout-box">
                             <i class="fas fa-info-circle m-fr-icon" id="flux-icon-display"></i>
                             <div class="m-fr-text">
@@ -3657,7 +3594,7 @@ const mobileHTML = `
                          <span>🗣️ AUDIO &amp; LANGUAGE</span>
                          <i class="fas fa-globe-americas m-hyp-icon"></i>
                     </div>
-                    
+
                     <div class="m-lang-grid">
                         <div class="m-lang-opt active-ita" id="lang-ita" onclick="setLangMode('ita')">
                             <i class="fas fa-flag"></i>
@@ -3681,7 +3618,7 @@ const mobileHTML = `
 
                     <div class="m-hyp-label">📺 Resolution Filter</div>
                     <p class="m-hyp-desc">Tocca per escludere qualità specifiche.</p>
-                    
+
                     <div class="m-chip-grid">
                         <div class="m-qual-chip" id="mq-4k" onclick="toggleFilter('mq-4k')">💎 4K</div>
                         <div class="m-qual-chip" id="mq-1080" onclick="toggleFilter('mq-1080')">🎬 1080p</div>
@@ -3758,7 +3695,7 @@ const mobileHTML = `
                         <span>🌉 NETWORK BRIDGE</span>
                         <i class="fas fa-network-wired m-hyp-icon" style="color:var(--m-secondary); border-color:rgba(112,0,255,0.35); background:rgba(112,0,255,0.08);"></i>
                     </div>
-                    
+
                     <div style="padding:0 5px;">
                         <p style="font-size:0.8rem; color:var(--m-dim); margin-bottom:20px; line-height:1.4;">
                             🌊 Proxy Server per moduli italiani. Se attivo, <b>Debrid Ghost</b> può instradare il traffico dal bridge configurato.
@@ -3799,7 +3736,7 @@ const mobileHTML = `
                     </div>
                 </div>
             </div>
-        </div> 
+        </div>
     </div>
 
     <div class="m-dock-container">
@@ -3823,12 +3760,12 @@ const mobileHTML = `
             </div>
         </div>
     </div>
-    
+
     <div class="m-action-modal" id="m-link-modal">
         <div class="m-am-card">
             <div class="m-am-title">🔗 LINK GENERATO</div>
             <div class="m-am-subtitle">Installa, copia o condividi il link configurato</div>
-            
+
             <div class="m-flux-terminal">
                 <div class="m-flux-header">
                     <span>🌊 FLUX DATA STREAM</span>
@@ -3836,23 +3773,21 @@ const mobileHTML = `
                 </div>
                 <textarea id="m-generatedUrlBox" class="m-flux-input" readonly>/// WAITING FOR DATA ///</textarea>
             </div>
-            
+
             <div class="m-act-btn m-act-copy" onclick="copyFromModal()">
                 <i class="fas fa-copy"></i> 📋 COPIA NEGLI APPUNTI
             </div>
-            
+
             <div class="m-act-btn m-act-close" onclick="closeLinkModal()">
                 ✕ CHIUDI
             </div>
         </div>
     </div>
-    
+
     <div class="m-toast-container" id="m-toast-area"></div>
 
 </div>
 `;
-
-// --- LOGIC ---
 
 let mCurrentService = 'rd';
 let mScQuality = 'all';
@@ -3929,17 +3864,17 @@ function showToast(msg, type = 'info') {
     if(!container) return;
     const el = document.createElement('div');
     el.className = `m-toast ${type}`;
-    
+
     let icon = 'fa-info-circle';
     if(type === 'warning') icon = 'fa-exclamation-triangle';
     if(type === 'error') icon = 'fa-bug';
     if(type === 'success') icon = 'fa-check-circle';
-    
+
     el.innerHTML = `<i class="fas ${icon}"></i> <span>${msg}</span>`;
     container.appendChild(el);
-    
+
     if(navigator.vibrate) navigator.vibrate(20);
-    
+
     setTimeout(() => {
         el.classList.add('out');
         setTimeout(() => el.remove(), 300);
@@ -3949,11 +3884,11 @@ function showToast(msg, type = 'info') {
 function triggerPreviewUpdateEffect() {
     const layer = document.getElementById('m-recalc-layer');
     if(!layer) return;
-    
+
     layer.classList.add('visible');
     setTimeout(() => {
         layer.classList.remove('visible');
-    }, 400); 
+    }, 400);
 }
 
 const MOBILE_FORMATTER_META = {
@@ -4011,27 +3946,27 @@ function removeMobilePreviewEmoji(value = '') {
 function selectMobileSkin(skinId) {
     skinId = resolveMobileFormatterSkin(skinId);
     const isAIO = document.getElementById('m-aioMode').checked;
-    
+
     if (isAIO && skinId !== 'leviathan') {
         const lockOverlay = document.getElementById('m-aio-lock-overlay');
         lockOverlay.classList.remove('m-denied-anim');
-        void lockOverlay.offsetWidth; 
+        void lockOverlay.offsetWidth;
         lockOverlay.classList.add('m-denied-anim');
-        
-        if(navigator.vibrate) navigator.vibrate([50, 50, 50]); 
+
+        if(navigator.vibrate) navigator.vibrate([50, 50, 50]);
         showToast("SKIN BLOCCATA DA AIO MODE", "warning");
-        return; 
+        return;
     }
 
     mSkin = skinId;
     document.querySelectorAll('.m-cortex-chip').forEach(b => b.classList.remove('active'));
     const selectedBtn = document.getElementById('msk_' + skinId);
     if(selectedBtn) selectedBtn.classList.add('active');
-    
+
     const customArea = document.getElementById('m-custom-skin-area');
     if(skinId === 'custom') customArea.style.display = 'block';
     else customArea.style.display = 'none';
-    
+
     const previewBox = document.getElementById('m-preview-box');
     if(previewBox) {
         previewBox.classList.remove('glitching');
@@ -4486,7 +4421,6 @@ function createSeaCanvas() {
     }
 
     function drawFrame(ts) {
-        // Reschedule first so skipped frames don't lose the loop.
         animId = requestAnimationFrame(drawFrame);
 
         if (shouldPause()) return;
@@ -4523,8 +4457,6 @@ function createSeaCanvas() {
         shine.addColorStop(1, 'rgba(0, 242, 255, 0.00)');
         ctx.fillStyle = shine;
         ctx.fillRect(0, H * 0.24, W, H * 0.45);
-
-        // Gradient fade: transparent at top → opaque at bottom (replaces CSS mask-image)
         const fade = ctx.createLinearGradient(0, 0, 0, H);
         fade.addColorStop(0,    'rgba(0,0,0,0)');
         fade.addColorStop(0.16, 'rgba(0,0,0,0.32)');
@@ -4550,15 +4482,12 @@ function createSeaCanvas() {
     animId = requestAnimationFrame(drawFrame);
 }
 
-
 function initMobileViewportGuard() {
     const root = document.documentElement;
     let blurTimer = 0;
     let stableH = 0;
 
     const setStableHeight = () => {
-        // Stable height: does not follow every micro-resize from Chrome Android.
-        // This avoids flicker when tapping switches/cards.
         const h = Math.max(320, Math.round(window.innerHeight || document.documentElement.clientHeight || 0));
         if (h) { stableH = h; root.style.setProperty('--m-vvh', `${h}px`); }
     };
@@ -4580,16 +4509,10 @@ function initMobileViewportGuard() {
 
     setStableHeight();
     window.addEventListener('orientationchange', () => window.setTimeout(setStableHeight, 260), { passive: true });
-
-    // Visual Viewport API: reliable keyboard-close detection on Android.
-    // document.activeElement stays on the input after back-button keyboard dismiss,
-    // so the focusout guard alone is not enough — this catches that case.
     if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', () => {
             const vvh = window.visualViewport.height;
             const base = stableH || window.innerHeight;
-            // If the visual viewport has expanded back to ≥ 80 % of stable height,
-            // the keyboard is gone — force-remove the keyboard-open class.
             if (vvh >= base * 0.8 && document.body.classList.contains('m-keyboard-open')) {
                 closeKeyboardMode(true);
             }
@@ -4621,76 +4544,55 @@ function installMobileVisibilityGuard() {
 }
 
 function installMobileInputPerformanceGuard() {
-    // Attiva la modalità typing solo sui veri campi di testo.
-    // Checkbox/radio/range emettono input, ma non devono mai toccare m-typing.
     const isTextInput = isMobileTextField;
     const isToggleInput = (el) => !!el?.matches?.('input[type="checkbox"], input[type="radio"], input[type="range"]');
-
-    const clearTypingIfNotText = () => {
+    const clearTyping = () => {
         if (isTextInput(document.activeElement)) return;
         clearTimeout(MOBILE_PERF.inputIdleTimer);
         document.body.classList.remove('m-typing', 'm-input-active', 'm-keyboard-open');
     };
-
     const markTyping = () => {
         document.body.classList.add('m-typing');
         clearTimeout(MOBILE_PERF.inputIdleTimer);
         MOBILE_PERF.inputIdleTimer = setTimeout(() => {
-            if (!isTextInput(document.activeElement)) {
-                document.body.classList.remove('m-typing');
-            }
+            if (!isTextInput(document.activeElement)) document.body.classList.remove('m-typing');
         }, MOBILE_PERF.inputIdleMs);
     };
-
     document.addEventListener('input', (event) => {
-        if (isToggleInput(event.target)) {
-            clearTypingIfNotText();
-            return;
-        }
-        if (!isTextInput(event.target)) return;
-        markTyping();
+        const target = event.target;
+        if (isToggleInput(target)) return clearTyping();
+        if (isTextInput(target)) markTyping();
     }, { passive: true });
-
     document.addEventListener('touchstart', (event) => {
         const action = event.target?.closest?.('.m-if-action, .m-paste-action, .m-get-link, .m-nav-item, .m-btn-install, .m-btn-copy, .m-act-btn');
         if (!action) return;
         action.classList.add('is-touching');
-        setTimeout(() => action.classList.remove('is-touching'), 160);
+        setTimeout(() => action.classList.remove('is-touching'), 140);
     }, { passive: true });
 }
 
 function installMobileNoFlickerGuard() {
     let switchTimer = 0;
-
-    const isSwitchTarget = (target) => !!target?.closest?.('.m-switch, input[type="checkbox"], input[type="radio"]');
-
+    const switchSelector = '.m-switch, input[type="checkbox"], input[type="radio"], input[type="range"]';
+    const cleanTyping = () => {
+        if (isMobileTextField(document.activeElement)) return;
+        clearTimeout(MOBILE_PERF.inputIdleTimer);
+        document.body.classList.remove('m-typing', 'm-input-active', 'm-keyboard-open');
+    };
     const markSwitching = () => {
         document.body.classList.add('m-switching');
-        if (!isMobileTextField(document.activeElement)) {
-            clearTimeout(MOBILE_PERF.inputIdleTimer);
-            document.body.classList.remove('m-typing', 'm-input-active', 'm-keyboard-open');
-        }
+        cleanTyping();
         clearTimeout(switchTimer);
-        switchTimer = setTimeout(() => {
-            document.body.classList.remove('m-switching');
-        }, 260);
+        switchTimer = setTimeout(() => document.body.classList.remove('m-switching'), 360);
     };
-
-    document.addEventListener('pointerdown', (event) => {
-        if (!isSwitchTarget(event.target)) return;
-        markSwitching();
+    const bind = (type) => document.addEventListener(type, (event) => {
+        if (event.target?.closest?.(switchSelector)) markSwitching();
     }, { passive: true });
-
-    document.addEventListener('change', (event) => {
-        if (!isSwitchTarget(event.target)) return;
-        markSwitching();
-    }, { passive: true });
-
-    // Dopo il primo paint disabilita le ri-animazioni della pagina attiva.
-    // La transizione iniziale resta, ma gli switch non possono più riavviare fadeFast.
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => document.body.classList.add('m-ui-ready'));
-    });
+    bind('pointerdown');
+    bind('touchstart');
+    bind('input');
+    bind('change');
+    requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.add('m-ui-ready')));
 }
 
 function scheduleMobileAfterPaint(fn) {
@@ -4749,16 +4651,16 @@ function initPullToRefresh() {
             if (rAF) return;
             rAF = requestAnimationFrame(() => {
                 ptr.style.opacity = Math.min(diff / 100, 1);
-                const move = Math.min(diff * 0.4, 80); 
+                const move = Math.min(diff * 0.4, 80);
                 ptr.style.transform = `translate3d(0, ${move}px, 0)`;
                 icon.style.transform = `rotate(${move * 3}deg)`;
-                
-                if (diff > threshold) { 
-                    icon.classList.remove('fa-arrow-down'); 
-                    icon.classList.add('fa-sync-alt'); 
-                } else { 
-                    icon.classList.remove('fa-sync-alt'); 
-                    icon.classList.add('fa-arrow-down'); 
+
+                if (diff > threshold) {
+                    icon.classList.remove('fa-arrow-down');
+                    icon.classList.add('fa-sync-alt');
+                } else {
+                    icon.classList.remove('fa-sync-alt');
+                    icon.classList.add('fa-arrow-down');
                 }
                 rAF = null;
             });
@@ -4963,10 +4865,10 @@ function setMService(srv, btn, keepInput = false) {
     if(btn) {
         btn.classList.add('active');
     }
-    
+
     const input = document.getElementById('m-apiKey');
     const box = document.getElementById('box-apikey');
-    
+
     if (srv === 'p2p') {
         input.placeholder = "P2P BYPASS MODE";
         input.disabled = true;
@@ -4978,7 +4880,7 @@ function setMService(srv, btn, keepInput = false) {
         if(box) box.classList.remove('is-p2p');
     }
 
-    updateMobilePreview(); 
+    updateMobilePreview();
     scheduleMobileDebridValidation({ force: true });
     toggleSavedCloud();
     updateLinkModalContent();
@@ -4992,7 +4894,7 @@ function updateStatus(inputId, statusId) {
         lbl.innerText = chk ? "ON" : "OFF";
         if(chk) lbl.classList.add('on'); else lbl.classList.remove('on');
     }
-    
+
     if(inputId === 'm-enableVix') toggleScOptions();
     if(inputId === 'm-aioMode') toggleMobileAIOLock();
     checkWebPriorityVisibility();
@@ -5005,13 +4907,9 @@ function setLangMode(mode) {
     const btnIta = document.getElementById('lang-ita');
     const btnHyb = document.getElementById('lang-all');
     const btnEng = document.getElementById('lang-eng');
-
-    // Reset Classes
     [btnIta, btnHyb, btnEng].forEach(b => {
         b.className = 'm-lang-opt';
     });
-
-    // Apply specific Active Class
     if(mode === 'ita') btnIta.classList.add('active-ita');
     if(mode === 'all') btnHyb.classList.add('active-hyb');
     if(mode === 'eng') btnEng.classList.add('active-eng');
@@ -5085,26 +4983,26 @@ function toggleScOptions() {
     const chk = document.getElementById('m-enableVix').checked;
     const opts = document.getElementById('m-sc-options');
     opts.style.display = chk ? 'block' : 'none';
-    
+
     const lbl = document.getElementById('st-vix');
     if(lbl) {
         lbl.innerText = chk ? "ON" : "OFF";
         if(chk) lbl.classList.add('on'); else lbl.classList.remove('on');
     }
-    checkWebPriorityVisibility(); 
+    checkWebPriorityVisibility();
 }
 
 function toggleGate() {
     const active = document.getElementById('m-gateActive').checked;
     const wrapper = document.getElementById('m-gate-wrapper');
     const lbl = document.getElementById('st-gate');
-    
-    if(active) { 
-        wrapper.classList.add('show'); 
+
+    if(active) {
+        wrapper.classList.add('show');
         if(lbl) {lbl.innerText = "ON"; lbl.classList.add('on');}
         showToast("Signal Gate Attivo: Risultati Limitati", "warning");
-    } else { 
-        wrapper.classList.remove('show'); 
+    } else {
+        wrapper.classList.remove('show');
         if(lbl) {lbl.innerText = "OFF"; lbl.classList.remove('on');}
     }
     updateLinkModalContent();
@@ -5118,13 +5016,13 @@ function toggleSize() {
     const wrapper = document.getElementById('m-size-wrapper');
     const lbl = document.getElementById('st-size');
     const slider = document.getElementById('m-sizeVal');
-    
-    if(active) { 
-        wrapper.classList.add('show'); 
+
+    if(active) {
+        wrapper.classList.add('show');
         if(lbl) {lbl.innerText = "ON"; lbl.classList.add('on');}
         updateSizeDisplay(slider.value);
-    } else { 
-        wrapper.classList.remove('show'); 
+    } else {
+        wrapper.classList.remove('show');
         if(lbl) {lbl.innerText = "OFF"; lbl.classList.remove('on');}
         document.getElementById('m-size-display').innerText = "INF";
     }
@@ -5163,31 +5061,27 @@ function setSortMode(mode) {
     ['balanced', 'resolution', 'size'].forEach(m => {
         const btn = document.getElementById('sort-' + m);
         const map = {'balanced':'active-bal', 'resolution':'active-res', 'size':'active-sz'};
-        
-        // Remove ALL active classes
         btn.classList.remove('active-bal', 'active-res', 'active-sz');
-        
+
         if(m === mode) btn.classList.add(map[m]);
     });
-    
+
     const readout = document.getElementById('flux-readout-box');
     const title = document.getElementById('flux-title-display');
     const desc = document.getElementById('flux-desc-display');
     const icon = document.getElementById('flux-icon-display');
-    
-    readout.className = "m-flux-readout"; 
-    
-    // Tiny fade effect
+
+    readout.className = "m-flux-readout";
     readout.style.opacity = 0.5;
     setTimeout(() => {
         if(mode === 'balanced') readout.classList.add('mode-bal');
         if(mode === 'resolution') readout.classList.add('mode-res');
         if(mode === 'size') readout.classList.add('mode-sz');
-        
+
         title.innerText = fluxData[mode].title;
         desc.innerText = fluxData[mode].desc;
         icon.className = `fas ${fluxData[mode].icon} m-fr-icon`;
-        
+
         readout.style.opacity = 1;
     }, 150);
 
@@ -5199,7 +5093,7 @@ function updateGhostVisuals() {
     const chk = document.getElementById('m-proxyDebrid').checked;
     const box = document.getElementById('ghost-zone-box');
     const txt = document.getElementById('ghost-status-text');
-    
+
     if(chk) {
         box.classList.add('active');
         if(txt) txt.innerText = "STEALTH";
@@ -5207,7 +5101,7 @@ function updateGhostVisuals() {
         box.classList.remove('active');
         if(txt) txt.innerText = "VISIBLE";
     }
-    
+
     const lbl = document.getElementById('st-ghost');
     if(lbl) {
          lbl.innerText = chk ? "ON" : "OFF";
@@ -5226,8 +5120,8 @@ function toggleModuleStyle(inputId, boxId) {
     updateLinkModalContent();
 }
 
-function toggleFilter(id) { 
-    document.getElementById(id).classList.toggle('excluded'); 
+function toggleFilter(id) {
+    document.getElementById(id).classList.toggle('excluded');
     const isExcluded = document.getElementById(id).classList.contains('excluded');
     if(isExcluded) {
         if(navigator.vibrate) navigator.vibrate(20);
@@ -5264,7 +5158,6 @@ async function pasteTo(id) {
         showToast("APPUNTI BLOCCATI: INCOLLA MANUALMENTE", "warning");
     }
 }
-
 
 const LEVIATHAN_MOBILE_CONFIG_TOKEN_PREFIX = 'lcfg1_';
 
@@ -5365,14 +5258,12 @@ async function loadMobileConfig() {
             const config = await loadMobileConfigFromPathToken(configToken);
             if (!config) throw new Error('empty_mobile_config_token');
             if(config.service) {
-                const srvMap = {'rd':0, 'tb':1}; 
-                // Updated selector for new structure
+                const srvMap = {'rd':0, 'tb':1};
                 const railBtns = document.querySelectorAll('#page-setup .m-srv-btn');
                 if(railBtns.length > 0 && srvMap[config.service] !== undefined) {
                      setMService(config.service, railBtns[srvMap[config.service]], true);
                 }
             } else if (config.filters && config.filters.enableP2P) {
-                 // Select P2P if active and no service
                  const railBtns = document.querySelectorAll('#page-setup .m-srv-btn');
                  setMService('p2p', railBtns[2], true);
             }
@@ -5381,10 +5272,10 @@ async function loadMobileConfig() {
 
             if(config.tmdb) document.getElementById('m-tmdb').value = config.tmdb;
             if(config.aiostreams_mode) document.getElementById('m-aioMode').checked = true;
-            
+
             if(config.sort) setSortMode(config.sort);
             else setSortMode('balanced');
-            
+
             if(config.formatter) selectMobileSkin(config.formatter);
             if(config.customTemplate) document.getElementById('m-customTemplate').value = config.customTemplate;
 
@@ -5402,7 +5293,7 @@ async function loadMobileConfig() {
 
                 document.getElementById('m-enableGs').checked = config.filters.enableGs || false;
                 toggleModuleStyle('m-enableGs', 'mod-gs');
-                
+
                 document.getElementById('m-enableAnimeWorld').checked = config.filters.enableAnimeWorld || false;
                 toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');
 
@@ -5427,7 +5318,7 @@ async function loadMobileConfig() {
                 document.getElementById('m-enableSavedCloud').checked = config.filters.enableSavedCloud || false;
                 setSavedCloudMode(config.filters.savedCloudMode || 'smart');
                 toggleSavedCloud();
-                
+
                 if(config.filters.vixLast) {
                     document.getElementById('m-vixLast').checked = true;
                     updatePriorityLabel();
@@ -5436,7 +5327,7 @@ async function loadMobileConfig() {
                 const qMap = {'no4k':'mq-4k', 'no1080':'mq-1080', 'no720':'mq-720', 'noScr':'mq-sd'};
                 for(let k in qMap) if(config.filters[k]) document.getElementById(qMap[k]).classList.add('excluded');
                 if(config.filters.scQuality) setScQuality(config.filters.scQuality);
-                
+
                 if(config.filters.maxPerQuality && config.filters.maxPerQuality > 0) {
                     const val = config.filters.maxPerQuality;
                     document.getElementById('m-gateActive').checked = true;
@@ -5459,7 +5350,7 @@ async function loadMobileConfig() {
                     toggleSize();
                 }
             }
-            
+
             updateStatus('m-enableVix', 'st-vix');
             updateStatus('m-enableGhd', 'st-ghd');
             updateStatus('m-enableGs', 'st-gs');
@@ -5472,9 +5363,9 @@ async function loadMobileConfig() {
             toggleSavedCloud();
             updateGhostVisuals();
             toggleScOptions();
-            checkWebPriorityVisibility(); 
+            checkWebPriorityVisibility();
             toggleMobileAIOLock();
-            updateMobilePreview(); 
+            updateMobilePreview();
             scheduleMobileDebridValidation({ force: true });
             updateLinkModalContent();
         }
@@ -5487,7 +5378,7 @@ function getMobileConfig() {
     const sizeActive = document.getElementById('m-sizeActive').checked;
     const sizeVal = parseInt(document.getElementById('m-sizeVal').value);
     const finalMaxSizeGB = sizeActive ? sizeVal : 0;
-    
+
     const isP2P = mCurrentService === 'p2p';
     const apiKey = document.getElementById('m-apiKey').value.trim();
     const webOnlyService = (
@@ -5510,8 +5401,8 @@ function getMobileConfig() {
         service: isP2P ? '' : (webOnlyService ? 'web' : mCurrentService),
         key: apiKey,
         tmdb: document.getElementById('m-tmdb').value.trim(),
-        sort: mSortMode, 
-        formatter: mSkin, 
+        sort: mSortMode,
+        formatter: mSkin,
         customTemplate: document.getElementById('m-customTemplate').value,
         aiostreams_mode: document.getElementById('m-aioMode').checked,
         mediaflow: {
@@ -5521,7 +5412,7 @@ function getMobileConfig() {
         },
         filters: {
             language: mLangMode,
-            allowEng: (mLangMode === 'all' || mLangMode === 'eng'), 
+            allowEng: (mLangMode === 'all' || mLangMode === 'eng'),
             enableP2P: isP2P,
             no4k: document.getElementById('mq-4k').classList.contains('excluded'),
             no1080: document.getElementById('mq-1080').classList.contains('excluded'),
@@ -5565,16 +5456,16 @@ async function updateLinkModalContent(immediate = false) {
     }
     const box = document.getElementById('m-generatedUrlBox');
     if(!box) return;
-    
+
     const config = getMobileConfig();
     const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
-    
+
     if(!config.key && !isWebEnabled) {
         box.value = "/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P";
         box.style.color = "var(--m-error)";
         return;
     }
-    
+
     const manifestUrl = `${window.location.protocol}//${await getMobileManifestUrl(config)}`;
     box.value = manifestUrl;
     box.style.color = "var(--m-primary)";
@@ -5591,7 +5482,7 @@ async function mobileInstall() {
 }
 
 function openLinkModal() {
-    updateLinkModalContent(true);  // bypass debounce — user is waiting for this
+    updateLinkModalContent(true);
     document.getElementById('m-link-modal').classList.add('show');
     if(navigator.vibrate) navigator.vibrate(10);
 }
@@ -5603,7 +5494,7 @@ function closeLinkModal() {
 async function copyFromModal() {
     const box = document.getElementById('m-generatedUrlBox');
     const textToCopy = box.value;
-    
+
     if (textToCopy.includes("WAITING FOR")) {
         showToast("CONFIGURA PRIMA L'ADDON", "error");
         return;
@@ -5630,4 +5521,5 @@ async function copyFromModal() {
 }
 
 initMobileInterface();
+
 
