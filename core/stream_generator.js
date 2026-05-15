@@ -112,7 +112,6 @@ function applyAnimeUnityKitsuBackCompat(config = {}, id = '') {
     };
 }
 
-
 function buildClientCacheMetadata(cachePolicy = {}, streamCount = 0) {
     const policyLocalTtl = Math.max(0, Number(cachePolicy?.localTtl || 0) || 0);
     const policyStaleGrace = Math.max(0, Number(cachePolicy?.staleGraceTtl || 0) || 0);
@@ -189,17 +188,19 @@ function isTruthyConfigValue(value) {
     return /^(1|true|yes|on)$/i.test(String(value || '').trim());
 }
 
-function shouldAllowRdLazyStreams(filters = {}) {            
+function shouldAllowRdLazyStreams(filters = {}) {
     return isTruthyConfigValue(filters.enableRdLazyStreams ?? process.env.RD_LAZY_STREAMS ?? 'false');
 }
 
+const RD_DIRECT_RESOLVE_MAX_RESULTS = 24;
+
 function getRdDirectResolveLimit(filters = {}, rankedCount = 0) {
-    const hardMax = Math.max(1, Math.min(CONFIG.MAX_RESULTS || 12, 20));
-    const configured = filters.rdDirectMaxResults ?? process.env.RD_DIRECT_MAX_RESULTS ?? String(hardMax);
+    const hardMax = Math.max(1, Math.min(CONFIG.MAX_RESULTS || 12, RD_DIRECT_RESOLVE_MAX_RESULTS));
+    const configured = filters.rdDirectMaxResults ?? RD_DIRECT_RESOLVE_MAX_RESULTS;
     return Math.min(Math.max(0, rankedCount), parseBoundedInt(configured, hardMax, 1, hardMax));
 }
 
-function shouldShowRdDownloadToDebrid(filters = {}) {               
+function shouldShowRdDownloadToDebrid(filters = {}) {
     const hardDisable = !isTruthyConfigValue(process.env.RD_ALLOW_DOWNLOAD_TO_DEBRID_ROWS || filters.allowRdDownloadToDebridRows || 'false');
     if (hardDisable) return false;
     return isTruthyConfigValue(filters.allowRdDownloadToDebridRows ?? process.env.RD_ALLOW_DOWNLOAD_TO_DEBRID_ROWS ?? 'false');
@@ -303,7 +304,6 @@ function uniqueTextList(values = []) {
 function getEffectiveSearchLanguageMode(filters = {}, meta = {}, type = '') {
     return languageFilterTools.getEffectiveSearchLanguageMode(filters, meta, type);
 }
-
 
 function getSeriesEpisodeContext(meta = {}) {
     const season = Number.isInteger(meta?.season) ? meta.season : parseInt(meta?.season, 10);
@@ -618,7 +618,7 @@ function getExternalLanguageAudit(item = {}) {
 
 function isExternalStrictItalianCandidate(item = {}) {
     const audit = getExternalLanguageAudit(item);
-       
+
     if (audit.hasItalianAudio) return true;
 
     const title = item?.title || item?.name || item?.filename || item?.file_title || '';
@@ -638,7 +638,6 @@ function keepLanguageCandidateForMode(item, meta = {}, langMode = 'ita') {
 function assessFastResultQuality(items, meta, langMode, config) {
     return languageFilterTools.assessFastResultQuality(items, meta, langMode, config);
 }
-
 
 function getSeriesDbFallbackLimit(filters = {}) {
     const raw = filters.seriesDbFallbackLimit ?? process.env.SERIES_DB_FALLBACK_LIMIT ?? '10';
@@ -751,7 +750,7 @@ function shouldBypassMovieExternalLive({ verifiedDbCount = 0, dbCandidateCount =
     if (verifiedDbCount < verifiedMin) return false;
 
     const normalizedService = String(service || '').toLowerCase();
-           
+
     if (normalizedService === 'tb' || normalizedService === 'rd') {
         const bypassMin = getMovieDbExternalBypassMinForService(filters, normalizedService);
         return dbCandidateCount >= bypassMin;
@@ -1153,8 +1152,6 @@ function rememberValidatedFileSet(item, meta, payload) {
     setTimedCacheValue(validatedFileSetCache, key, payload, VALIDATED_FILE_SET_TTL_MS);
 }
 
-
-
 function detectCodecBucket(text) {
     const raw = String(text || '').toLowerCase();
     if (/\b(?:av1)\b/.test(raw)) return 'av1';
@@ -1348,13 +1345,12 @@ function applyFinalStreamUserSort(streams = [], config = {}) {
         }))
         .sort((a, b) => {
             if (sortMode === 'resolution') {
-                               
-              const resDelta = b.resolutionTier - a.resolutionTier;
+                const resDelta = b.resolutionTier - a.resolutionTier;
                 if (resDelta !== 0) return resDelta;
                 if (a.cacheTier !== b.cacheTier) return a.cacheTier - b.cacheTier;
                 return a.index - b.index;
             }
-           
+
             if (a.cacheTier !== b.cacheTier) return a.cacheTier - b.cacheTier;
 
             if (sortMode === 'size') {
@@ -1798,7 +1794,7 @@ function getTorrentioTrustDedupeKey(item = {}) {
     const fileIdx = Number.isInteger(Number(item?.fileIdx)) ? Number(item.fileIdx) : -1;
     const direct = String(item?.directUrl || item?.url || item?._externalDirectUrl || '').trim().toLowerCase();
     const title = String(item?.title || item?.name || item?.filename || '').trim().toLowerCase();
-    const source = String(item?.source || item?.provider || item?.externalProvider || item?.externalAddon || item?._externalRequestId || '').trim().toLowerCase();          
+    const source = String(item?.source || item?.provider || item?.externalProvider || item?.externalAddon || item?._externalRequestId || '').trim().toLowerCase();
     if (shouldForceKeepTorrentioIt(item)) {
         return ['torrentio-force', hash || 'nohash', fileIdx, direct || 'nodirect', title || 'notitle', source || 'nosource'].join(':');
     }
@@ -2254,9 +2250,6 @@ function getLanguageSignals(title, metaTitle, sourceName) {
 }
 
 function keepItalianCandidate(title, sourceName, metaTitle) {
-    // SOLO ITA deve essere severo: niente ENG-only e niente risultati global/unknown.
-    // Non usiamo metaTitle come prova di lingua, perché un titolo originale inglese
-    // tipo "Apex" farebbe passare erroneamente release senza marker ITA.
     return shouldKeepStrictItalianCandidate(title, sourceName);
 }
 
@@ -2689,7 +2682,6 @@ async function fetchTmdbEpisodeMeta(tmdbId, season, episode, userApiKey) {
     }
 }
 
-
 async function getMetadata(id, type, config = {}) {
   const userTmdbKey = String(config?.tmdb || '');
   const metadataCacheKey = `${type}:${id}:${userTmdbKey}`;
@@ -3039,7 +3031,6 @@ function saveResultsToDbBackground(meta, results, config = null, type = null, op
     });
 }
 
-
 function collectExistingTorrentHashes(items = [], streams = []) {
     const hashes = new Set();
     const add = (value) => {
@@ -3060,7 +3051,6 @@ function collectExistingTorrentHashes(items = [], streams = []) {
     }
     return hashes;
 }
-
 
 function getStreamPrimaryHash(stream = {}) {
     const candidates = [
@@ -3790,7 +3780,6 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
     } catch (e) { logger.error("Err Remote Indexer:", { error: e.message }); return []; }
 }
 
-
 function cleanTorrentioProviderLabel(value = '') {
     const raw = String(value || '').replace(/\[EXT\]\s*/gi, '').replace(/LeviathanDB/gi, '').replace(/[()]/g, '').trim();
     if (!raw) return '';
@@ -4142,8 +4131,6 @@ function shouldProtectTorrentioExactSeriesCandidate(item = {}, meta = {}, type =
     if (langMode === 'all' && !keepAllCandidate(item.title || '', item.source || item.externalProvider || '', meta?.title)) return false;
 
     const title = String(item?.title || '');
-    // L'addon Torrentio viene interrogato con ID episodio esatto: un titolo pack/alias puo'
-    // non contenere il nome serie completo, ma resta valido finche' non dichiara stagione/episodio sbagliati.
 
     const season = Number(meta?.season || 0) || 0;
     const episode = Number(meta?.episode || 0) || 0;
@@ -4410,7 +4397,6 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
     }
 }
 
-
 async function fetchExternalSnapshotResults(meta = {}, type = 'movie', langMode = 'ita', config = {}) {
     if (!dbHelper || typeof dbHelper.getExternalStreamSnapshots !== 'function' || !meta?.imdb_id) return [];
     try {
@@ -4630,7 +4616,6 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
         }, { group: 'title-search' });
     }, boundedSharedPromiseOptions(TITLE_SEARCH_INFLIGHT_MAX_ENTRIES, 'titleSearch.inflight.evicted'));
 }
-
 
 function parseRdViewPageFromId(type, rawId, meta = {}, context = {}) {
   const raw = String(rawId || context?.requestPage?.id || '').replace(/\.json$/i, '').replace(/^ai-recs:/i, '').trim();
@@ -4981,7 +4966,15 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           const immediateCandidates = rdAuthorityRanked.slice(0, TOP_LIMIT);
           const immediatePromises = immediateCandidates.map((item) => {
               const runtimeItem = createRuntimeItem(item, meta);
-              return serviceLimiter.schedule(() => resolveDebridLink(resolverConfig, runtimeItem, filters?.showFake, reqHost, meta));
+              return serviceLimiter.schedule(async () => {
+                  const stream = await resolveDebridLink(resolverConfig, runtimeItem, filters?.showFake, reqHost, meta);
+                  if (rdDirectOnly && !stream) {
+                      const hash = String(runtimeItem?.hash || runtimeItem?.infoHash || extractInfoHash(runtimeItem?.magnet || '') || 'n/a');
+                      const state = String(runtimeItem?._rdCacheState || runtimeItem?.rdCacheState || runtimeItem?.cacheState || 'unknown');
+                      logger.info(`[RD DIRECT] miss hash=${hash.slice(0, 12)} state=${state} fileIdx=${runtimeItem?.fileIdx ?? 'n/a'} title="${String(runtimeItem?.title || '').replace(/[\r\n\t]+/g, ' ').slice(0, 90)}"`);
+                  }
+                  return stream;
+              });
           });
           const lazyCandidates = rdDirectOnly ? [] : finalRanked.slice(TOP_LIMIT).map((item) => createRuntimeItem(item, meta));
           const lazyStreams = lazyCandidates
@@ -5209,3 +5202,4 @@ module.exports = {
         isRdVerifiedDbFallbackCandidate
     }
 };
+
