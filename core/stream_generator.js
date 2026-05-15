@@ -1230,9 +1230,6 @@ function getConfiguredSortMode(config = {}) {
 function applyPremiumRankingPolicy(results, meta, config) {
     const list = Array.isArray(results) ? results : [];
 
-    // If the user explicitly selected resolution/size ordering from index.html,
-    // never let the diversity policy pull a lower-resolution/low-bitrate item
-    // above stronger matches. Diversity is useful only in balanced mode.
     const sortMode = getConfiguredSortMode(config);
     if (sortMode === 'resolution' || sortMode === 'size') return list;
 
