@@ -30,10 +30,7 @@ function buildLanguageEvidence(title = '', sourceName = '', parsedInfo = null) {
   const scanTitle = stripFalseItalianDomainTokens(rawTitle);
   const scanCombined = stripFalseItalianDomainTokens(combined);
   const parsed = parsedInfo || parseTitleDetails(rawTitle);
-
-  // Nota: qui passiamo italianMovieTitle=null di proposito.
-  // Il titolo del film/serie NON deve diventare una prova di lingua italiana:
-  // es. "Apex 1080p WEB x264" contiene il titolo Apex, ma resta lingua sconosciuta.
+ 
   const langInfo = getLanguageInfo(rawTitle, null, rawSource, parsed);
   const detected = new Set(Array.isArray(langInfo?.detectedLanguages) ? langInfo.detectedLanguages.map((v) => String(v)) : []);
 
@@ -85,8 +82,6 @@ function shouldKeepStrictItalianCandidate(title = '', sourceName = '', parsedInf
   if (evidence.subtitleOnlyItalian) return false;
   if (!evidence.hasItalianAudioEvidence) return false;
 
-  // Se è marcato ENG/altro ma non ha una prova ITA esplicita, non deve passare in SOLO ITA.
-  // Gruppi trusted da soli non bastano per sovrascrivere "ENG only".
   const hasExplicitItaMarker = evidence.explicitItalian || evidence.multiItalian;
   if ((evidence.explicitEnglish || evidence.explicitOther) && !hasExplicitItaMarker) return false;
   if (evidence.genericMulti && !hasExplicitItaMarker && !evidence.trustedItalianGroup && !evidence.trustedItalianSource) return false;
