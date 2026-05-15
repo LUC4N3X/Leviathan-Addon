@@ -4,10 +4,11 @@ const { computeBackoffDelay, parseRetryAfterMs } = require("../utils/backoff");
 const { CircuitBreaker } = require("../utils/circuit_breaker");
 
 const RD_API_BASE = "https://api.real-debrid.com/rest/1.0";
-const RD_TIMEOUT = 30000;
+
+const RD_TIMEOUT = 32000;
 const RD_MAX_RETRIES = 4;
-const RD_READY_POLL_ATTEMPTS = 8;
-const RD_READY_POLL_DELAY = 900;
+const RD_READY_POLL_ATTEMPTS = 12;
+const RD_READY_POLL_DELAY = 1000;
 
 const rdCircuit = new CircuitBreaker("realdebrid");
 
@@ -179,7 +180,6 @@ async function rdRequest(method, url, token, data = null) {
                     await sleep(backoff);
                     continue;
                 }
-                // Sustained 5xx is an outage signal; 429 is left to the rate limiter.
                 if (status >= 500) rdCircuit.recordFailure(circuitKey);
                 return null;
             }
