@@ -67,6 +67,103 @@ function registerPlaybackRoutes(app, {
         return maybeProxyResolvedUrl(req, conf, targetUrl, config, options);
     }
 
+    function getDebridApiKey(config = {}, service = '') {
+        const normalized = String(service || config?.service || '').toLowerCase();
+        if (normalized === 'tb') return config.key || config.tb || config.torbox || config.rd || null;
+        if (normalized === 'rd') return config.key || config.rd || config.realdebrid || config.realDebrid || config.real_debrid || null;
+        return null;
+    }
+
+    function parsePositiveInt(value, fallback = 0) {
+        const parsed = Number.parseInt(value, 10);
+        return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+    }
+
+    function buildRdDownloadPlaybackContext(req, hash, magnet) {
+        const season = parsePositiveInt(req.query?.s, 0);
+        const episode = parsePositiveInt(req.query?.e, 0);
+        const fileIdx = parseFileIndex(req.query?.f);
+        const normalizedHash = String(hash || '').toUpperCase();
+        const item = {
+            title: `RD Download (${normalizedHash.slice(0, 8)})`,
+            hash: normalizedHash,
+            season,
+            episode,
+            fileIdx: Number.isInteger(fileIdx) ? fileIdx : undefined,
+            magnet
+        };
+        const meta = {
+            imdb_id: req.query?.imdb ? String(req.query.imdb) : null,
+            season,
+            episode,
+            type: season > 0 || episode > 0 ? 'series' : 'movie',
+            title: item.title
+        };
+        return { item, meta, season, episode, fileIdx };
+    }
+
+    async function tryResolveRdDownloadFallback(req, conf, hash, apiKey, config, magnet) {
+        if (!/^magnet:\?/i.test(String(magnet || ''))) return null;
+        const startedAt = Date.now();
+        const { item, meta, season, episode, fileIdx } = buildRdDownloadPlaybackContext(req, hash, magnet);
+        const lazyCacheKey = `rd:${item.hash}:${season || 0}:${episode || 0}:${Number.isInteger(fileIdx) ? fileIdx : -1}`;
+
+        try {
+            const cachedLazy = await Cache.getLazyLink(lazyCacheKey);
+            if (cachedLazy && (cachedLazy.rawUrl || cachedLazy.url)) {
+                const cachedTargetUrl = cachedLazy.rawUrl || cachedLazy.url;
+                const finalCachedUrl = buildFinalPlaybackUrl(req, conf, cachedTargetUrl, config, {
+                    source: 'rd',
+                    debrid: true,
+                    filename: cachedLazy.filename || cachedLazy.fileName || item.title
+                });
+                await markPlayableResultAsCached('rd', item, { ...cachedLazy, url: finalCachedUrl, rawUrl: cachedTargetUrl }, meta);
+                incrementMetric('rdDownloadFallback.cacheHit');
+                recordDuration('rdDownloadFallback.total', Date.now() - startedAt);
+                logger.info(`[RD DOWNLOAD PLAY] cache hit | hash=${item.hash} | fileIdx=${item.fileIdx ?? 'n/a'}`);
+                return finalCachedUrl;
+            }
+
+            const streamData = await LIMITERS.lazyPlay.schedule(() =>
+                RD.getStreamLink(apiKey, magnet, season || 0, episode || 0, Number.isInteger(fileIdx) ? fileIdx : null)
+            );
+
+            if (!streamData || !streamData.url) {
+                await markPlayableResultAsUnavailable?.('rd', item, meta, 'rd_download_fallback_miss');
+                incrementMetric('rdDownloadFallback.miss');
+                recordDuration('rdDownloadFallback.total', Date.now() - startedAt);
+                return null;
+            }
+
+            const finalUrl = buildFinalPlaybackUrl(req, conf, streamData.url, config, {
+                source: 'rd',
+                debrid: true,
+                filename: streamData.filename || item.title
+            });
+            await Cache.cacheLazyLink(lazyCacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, 180);
+            await markPlayableResultAsCached('rd', item, { ...streamData, url: finalUrl, rawUrl: streamData.url }, meta);
+            TorrentInfoLedger.recordResolvedFileIndex({
+                meta,
+                item,
+                streamData,
+                service: 'rd',
+                dbHelper,
+                logger,
+                reason: 'rd_download_fallback_play'
+            }).catch(() => {});
+            incrementMetric('rdDownloadFallback.success');
+            recordDuration('rdDownloadFallback.total', Date.now() - startedAt);
+            recordProviderMetric('rdDownloadFallback.rd', true, Date.now() - startedAt);
+            logger.info(`[RD DOWNLOAD PLAY] resolved playable URL | hash=${item.hash} | fileIdx=${streamData.file_index ?? streamData.rd_file_index ?? item.fileIdx ?? 'n/a'}`);
+            return finalUrl;
+        } catch (err) {
+            recordDuration('rdDownloadFallback.total', Date.now() - startedAt);
+            recordProviderMetric('rdDownloadFallback.rd', false, Date.now() - startedAt, { error: err.message });
+            logger.warn(`[RD DOWNLOAD PLAY] resolve failed | hash=${item.hash} | error=${err.message}`);
+            return null;
+        }
+    }
+
     function parseFileIndex(value) {
         if (value === null || value === undefined || value === '') return NaN;
         const parsed = Number(value);
@@ -106,9 +203,7 @@ function registerPlaybackRoutes(app, {
         try {
             if (!['rd', 'tb'].includes(requestedService)) return res.status(400).send('Servizio Debrid non supportato.');
             const config = getConfig(conf);
-            const apiKey = requestedService === 'tb'
-                ? (config.key || config.tb || config.torbox || config.rd)
-                : (config.key || config.rd);
+            const apiKey = getDebridApiKey(config, requestedService);
             if (!apiKey) return res.status(400).send('API Key mancante.');
             const magnet = buildTrackerMagnet(hash);
             const item = {
@@ -226,9 +321,7 @@ function registerPlaybackRoutes(app, {
         try {
             if (!['rd', 'tb'].includes(requestedService)) return res.status(400).send('Servizio Debrid non supportato.');
             const config = getConfig(conf);
-            const apiKey = requestedService === 'tb'
-                ? (config.key || config.tb || config.torbox || config.rd)
-                : (config.key || config.rd || config.realdebrid);
+            const apiKey = getDebridApiKey(config, requestedService);
             if (!apiKey) return res.status(400).send('API Key mancante.');
 
             const cacheKey = `saved:${requestedService}:${torrentId}:${fileId}`;
@@ -320,20 +413,16 @@ function registerPlaybackRoutes(app, {
         try {
             const config = getConfig(conf);
             const service = String(config.service || '').toLowerCase();
-            const apiKey = service === 'tb'
-                ? (config.key || config.tb || config.torbox || config.rd)
-                : service === 'rd'
-                    ? (config.key || config.rd)
-                    : null;
+            const apiKey = getDebridApiKey(config, service);
             if (!['rd', 'tb'].includes(service)) return res.status(400).send('Servizio Debrid non supportato.');
             if (!apiKey) return res.status(400).send('API Key mancante.');
 
             const isRdDownloadFallbackUrl = service === 'rd' && String(req.query?.rd_download || '').trim();
-            const allowPublicRdDownloadBuilder = /^(1|true|yes|on)$/i.test(String(process.env.RD_ALLOW_PUBLIC_DOWNLOAD_BUILDER || '').trim());
-            if (isRdDownloadFallbackUrl && !allowPublicRdDownloadBuilder) {
-                                    
-                logger.info(`📥 [CACHE BUILDER] RD download fallback blocked | hash=${hash} | reason=public_builder_disabled`);
-                return res.redirect(`${getRequestOrigin(req)}/confirmed.mp4`);
+            const rdFallbackMagnet = isRdDownloadFallbackUrl ? pickRdCloudBuildMagnet(req, hash) : null;
+            if (isRdDownloadFallbackUrl && rdFallbackMagnet) {
+                const playableUrl = await tryResolveRdDownloadFallback(req, conf, hash, apiKey, config, rdFallbackMagnet);
+                if (playableUrl) return res.redirect(playableUrl);
+                logger.info(`📥 [CACHE BUILDER] RD fallback non pronto, passo a cloud build | hash=${hash} | magnet=external_context`);
             }
 
             const buildKey = getBuildKey(service, hash, apiKey);
@@ -344,7 +433,7 @@ function registerPlaybackRoutes(app, {
             if (isRecent) logger.info(`📥 [CACHE BUILDER] Già in coda ${hash} su ${service.toUpperCase()} - salto duplicato`);
             else if (isErrorCooldown) logger.info(`📥 [CACHE BUILDER] cooldown errore attivo ${hash} su ${service.toUpperCase()} - niente retry spam`);
             else {
-                const magnet = service === 'rd' ? pickRdCloudBuildMagnet(req, hash) : null;
+                const magnet = service === 'rd' ? (rdFallbackMagnet || pickRdCloudBuildMagnet(req, hash)) : null;
                 logger.info(`📥 [CACHE BUILDER] Richiesta aggiunta hash ${hash} su ${service.toUpperCase()}${magnet ? ' | magnet=external_context' : ''}`);
                 
                 
