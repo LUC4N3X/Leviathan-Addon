@@ -22,6 +22,7 @@ function isMobileCoarsePointer() {
 
 function ensureMobileLogoHints() {
     try {
+        if (!document.head) return;
         if (!document.getElementById(MOBILE_LOGO_HINTS_ID)) {
             const frag = document.createDocumentFragment();
 
@@ -40,14 +41,13 @@ function ensureMobileLogoHints() {
             document.head.appendChild(frag);
         }
 
-        let preload = document.getElementById(MOBILE_LOGO_PRELOAD_ID);
-        if (!preload) {
-            preload = document.createElement("link");
+        if (!document.getElementById(MOBILE_LOGO_PRELOAD_ID)) {
+            const preload = document.createElement("link");
             preload.id = MOBILE_LOGO_PRELOAD_ID;
             preload.rel = "preload";
             preload.as = "image";
             preload.href = MOBILE_LOGO_URL;
-            preload.fetchPriority = "high";
+            preload.setAttribute("fetchpriority", "high");
             document.head.appendChild(preload);
         }
     } catch (_) {}
@@ -72,7 +72,7 @@ function hydrateMobileLogo() {
         img.removeAttribute("data-loading");
     };
 
-    if (img.complete) {
+    if ("complete" in img && img.complete) {
         markLoaded();
         return;
     }
@@ -83,9 +83,10 @@ function hydrateMobileLogo() {
 }
 
 function applyMobilePerformanceMode() {
+    if (!document.body) return;
     try {
         const cores = navigator.hardwareConcurrency || 0;
-        const memory = navigator.deviceMemory || 0;
+        const memory = Number(navigator['deviceMemory'] || 0);
         const width = Math.min(window.innerWidth || 390, screen.width || 390);
         const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
         const coarse = isMobileCoarsePointer();
@@ -104,6 +105,84 @@ function isMobileTextField(el = document.activeElement) {
     return !!el?.matches?.(
         'input:not([type]), input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], input[type="tel"], input[type="number"], textarea, [contenteditable="true"]'
     );
+}
+
+function mById(id) {
+    return document.getElementById(id);
+}
+
+function mAsElement(value) {
+    return value && value.nodeType === 1 ? value : null;
+}
+
+function mClosest(value, selector) {
+    return mAsElement(value)?.closest?.(selector) || null;
+}
+
+function mChecked(id, fallback = false) {
+    const el = mById(id);
+    return !!(el && "checked" in el ? el.checked : fallback);
+}
+
+function mSetChecked(id, value) {
+    const el = mById(id);
+    if (el && "checked" in el) el.checked = !!value;
+    return el;
+}
+
+function mValue(id, fallback = "") {
+    const el = mById(id);
+    return el && "value" in el ? String(el.value ?? "") : fallback;
+}
+
+function mSetValue(id, value) {
+    const el = mById(id);
+    if (el && "value" in el) el.value = value == null ? "" : String(value);
+    return el;
+}
+
+function mSetDisabled(id, value) {
+    const el = mById(id);
+    if (el && "disabled" in el) el.disabled = !!value;
+    return el;
+}
+
+function mSetPlaceholder(id, value) {
+    const el = mById(id);
+    if (el && "placeholder" in el) el.placeholder = value == null ? "" : String(value);
+    return el;
+}
+
+function mSetText(id, value) {
+    const el = mById(id);
+    if (el) el.innerText = value == null ? "" : String(value);
+    return el;
+}
+
+function mHasClass(id, cls) {
+    return !!mById(id)?.classList?.contains(cls);
+}
+
+function mAddClass(id, cls) {
+    const el = mById(id);
+    if (el) el.classList.add(cls);
+    return el;
+}
+
+function mToggleClass(id, cls, force) {
+    const el = mById(id);
+    if (el) el.classList.toggle(cls, !!force);
+    return el;
+}
+
+function mSetStyle(el, prop, value) {
+    if (el?.style) el.style[prop] = String(value);
+}
+
+function mVibrate(pattern) {
+    try {
+        mVibrate(pattern);
+    } catch (_) {}
 }
 
 const mobileCSS = `
@@ -3873,7 +3952,7 @@ function showToast(msg, type = 'info') {
     el.innerHTML = `<i class="fas ${icon}"></i> <span>${msg}</span>`;
     container.appendChild(el);
 
-    if(navigator.vibrate) navigator.vibrate(20);
+    mVibrate(20);
 
     setTimeout(() => {
         el.classList.add('out');
@@ -3945,15 +4024,17 @@ function removeMobilePreviewEmoji(value = '') {
 
 function selectMobileSkin(skinId) {
     skinId = resolveMobileFormatterSkin(skinId);
-    const isAIO = document.getElementById('m-aioMode').checked;
+    const isAIO = mChecked('m-aioMode');
 
     if (isAIO && skinId !== 'leviathan') {
         const lockOverlay = document.getElementById('m-aio-lock-overlay');
-        lockOverlay.classList.remove('m-denied-anim');
-        void lockOverlay.offsetWidth;
-        lockOverlay.classList.add('m-denied-anim');
+        if (lockOverlay) {
+            lockOverlay.classList.remove('m-denied-anim');
+            void lockOverlay.offsetWidth;
+            lockOverlay.classList.add('m-denied-anim');
+        }
 
-        if(navigator.vibrate) navigator.vibrate([50, 50, 50]);
+        mVibrate([50, 50, 50]);
         showToast("SKIN BLOCCATA DA AIO MODE", "warning");
         return;
     }
@@ -3964,8 +4045,7 @@ function selectMobileSkin(skinId) {
     if(selectedBtn) selectedBtn.classList.add('active');
 
     const customArea = document.getElementById('m-custom-skin-area');
-    if(skinId === 'custom') customArea.style.display = 'block';
-    else customArea.style.display = 'none';
+    if (customArea) customArea.style.display = skinId === 'custom' ? 'block' : 'none';
 
     const previewBox = document.getElementById('m-preview-box');
     if(previewBox) {
@@ -3975,7 +4055,7 @@ function selectMobileSkin(skinId) {
     }
     updateMobilePreview();
     updateLinkModalContent();
-    if(navigator.vibrate) navigator.vibrate(10);
+    mVibrate(10);
 }
 
 function updateMobilePreviewLegacy() {
@@ -4235,7 +4315,7 @@ ${p.quality}`,
     });
 
     const styleCustom = () => {
-        let tpl = document.getElementById('m-customTemplate').value || 'Apex {quality} {score_badge} ||| {title}{n}{summary}';
+        let tpl = mValue('m-customTemplate') || 'Apex {quality} {score_badge} ||| {title}{n}{summary}';
         const vars = {
             '{title}': p.cleanName,
             '{originalTitle}': p.fileTitle,
@@ -4299,10 +4379,10 @@ ${p.quality}`,
 }
 
 function toggleMobileAIOLock() {
-    const isAIO = document.getElementById('m-aioMode').checked;
+    const isAIO = mChecked('m-aioMode');
     const lock = document.getElementById('m-aio-lock-overlay');
-    if(isAIO) lock.classList.add('active');
-    else lock.classList.remove('active');
+    if (!lock) return;
+    lock.classList.toggle('active', isAIO);
 }
 
 function createLogoParticles() {
@@ -4520,19 +4600,19 @@ function initMobileViewportGuard() {
     }
 
     document.addEventListener('focusin', (event) => {
-        if (!isTextField(event.target)) return;
+        if (!isTextField(mAsElement(event.target))) return;
         openKeyboardMode();
     }, { passive: true });
 
     document.addEventListener('focusout', (event) => {
-        if (!isTextField(event.target)) return;
+        if (!isTextField(mAsElement(event.target))) return;
         closeKeyboardMode();
     }, { passive: true });
 
     document.addEventListener('pointerdown', (event) => {
-        const target = event.target;
-        if (isMobileTextField(target?.closest?.('input, textarea, [contenteditable="true"]'))) return;
-        if (target?.closest?.('.m-switch, input[type="checkbox"], button, .m-qual-chip, .m-cloud-mode-btn, .m-reactor-module, .m-flux-opt, .m-lang-opt, .m-cortex-chip, .m-cred-opt, .m-act-btn, .m-nav-item, .m-paste-action, .m-if-action, .m-get-link')) return;
+        const target = mAsElement(event.target);
+        if (isMobileTextField(mClosest(target, 'input, textarea, [contenteditable="true"]'))) return;
+        if (mClosest(target, '.m-switch, input[type="checkbox"], button, .m-qual-chip, .m-cloud-mode-btn, .m-reactor-module, .m-flux-opt, .m-lang-opt, .m-cortex-chip, .m-cred-opt, .m-act-btn, .m-nav-item, .m-paste-action, .m-if-action, .m-get-link')) return;
         closeKeyboardMode();
     }, { passive: true });
 }
@@ -4559,12 +4639,12 @@ function installMobileInputPerformanceGuard() {
         }, MOBILE_PERF.inputIdleMs);
     };
     document.addEventListener('input', (event) => {
-        const target = event.target;
+        const target = mAsElement(event.target);
         if (isToggleInput(target)) return clearTyping();
         if (isTextInput(target)) markTyping();
     }, { passive: true });
     document.addEventListener('touchstart', (event) => {
-        const action = event.target?.closest?.('.m-if-action, .m-paste-action, .m-get-link, .m-nav-item, .m-btn-install, .m-btn-copy, .m-act-btn');
+        const action = mClosest(event.target, '.m-if-action, .m-paste-action, .m-get-link, .m-nav-item, .m-btn-install, .m-btn-copy, .m-act-btn');
         if (!action) return;
         action.classList.add('is-touching');
         setTimeout(() => action.classList.remove('is-touching'), 140);
@@ -4586,7 +4666,7 @@ function installMobileNoFlickerGuard() {
         switchTimer = setTimeout(() => document.body.classList.remove('m-switching'), 360);
     };
     const bind = (type) => document.addEventListener(type, (event) => {
-        if (event.target?.closest?.(switchSelector)) markSwitching();
+        if (mClosest(event.target, switchSelector)) markSwitching();
     }, { passive: true });
     bind('pointerdown');
     bind('touchstart');
@@ -4604,12 +4684,20 @@ function scheduleMobileAfterPaint(fn) {
 }
 
 function initMobileInterface() {
+    if (!document.head || !document.body) return;
+    if (window['__leviathanMobileInitialized']) return;
+    window['__leviathanMobileInitialized'] = true;
+
     ensureMobileLogoHints();
     primeMobileLogo();
 
-    const styleSheet = document.createElement("style");
-    styleSheet.innerText = mobileCSS;
-    document.head.appendChild(styleSheet);
+    let styleSheet = document.getElementById('leviathan-mobile-style');
+    if (!styleSheet) {
+        styleSheet = document.createElement("style");
+        styleSheet.id = 'leviathan-mobile-style';
+        styleSheet.textContent = mobileCSS;
+        document.head.appendChild(styleSheet);
+    }
 
     document.body.innerHTML = mobileHTML;
     applyMobilePerformanceMode();
@@ -4632,25 +4720,31 @@ function initMobileInterface() {
 function initPullToRefresh() {
     const content = document.querySelector('.m-content');
     const ptr = document.getElementById('m-ptr-indicator');
-    const icon = ptr.querySelector('i');
+    const icon = ptr?.querySelector?.('i');
+    if (!content || !ptr || !icon) return;
+
     let startY = 0;
     let pulling = false;
     let threshold = 80;
     let rAF = null;
 
     content.addEventListener('touchstart', (e) => {
-        if (content.scrollTop === 0) { startY = e.touches[0].pageY; pulling = true; }
+        const touch = e['touches']?.[0];
+        if (!touch) return;
+        if (content.scrollTop === 0) { startY = touch.pageY; pulling = true; }
     }, {passive: true});
 
     content.addEventListener('touchmove', (e) => {
         if (!pulling) return;
-        const currentY = e.touches[0].pageY;
+        const touch = e['touches']?.[0];
+        if (!touch) return;
+        const currentY = touch.pageY;
         const diff = currentY - startY;
 
         if (diff > 0 && content.scrollTop <= 0) {
             if (rAF) return;
             rAF = requestAnimationFrame(() => {
-                ptr.style.opacity = Math.min(diff / 100, 1);
+                ptr.style.opacity = String(Math.min(diff / 100, 1));
                 const move = Math.min(diff * 0.4, 80);
                 ptr.style.transform = `translate3d(0, ${move}px, 0)`;
                 icon.style.transform = `rotate(${move * 3}deg)`;
@@ -4670,16 +4764,19 @@ function initPullToRefresh() {
     content.addEventListener('touchend', (e) => {
         if (!pulling) return;
         pulling = false;
-        const currentY = e.changedTouches[0].pageY;
+        const touch = e['changedTouches']?.[0];
+        if (!touch) return;
+        const currentY = touch.pageY;
         const diff = currentY - startY;
 
         if (diff > threshold && content.scrollTop <= 0) {
             ptr.classList.add('loading');
             ptr.style.transform = `translate3d(0, 50px, 0)`;
-            if (navigator.vibrate) navigator.vibrate(50);
+            mVibrate(50);
             setTimeout(() => { location.reload(); }, 500);
         } else {
-            ptr.style.transform = ''; ptr.style.opacity = 0;
+            ptr.style.transform = '';
+            ptr.style.opacity = '0';
         }
         if (rAF) { cancelAnimationFrame(rAF); rAF = null; }
     }, { passive: true });
@@ -4689,8 +4786,8 @@ let _navPageCache = null;
 let _navItemCache = null;
 let _navContentCache = null;
 function navTo(pageId, btn) {
-    if (!_navPageCache) _navPageCache = [...document.querySelectorAll('.m-page')];
-    if (!_navItemCache) _navItemCache = [...document.querySelectorAll('.m-nav-item')];
+    if (!_navPageCache) _navPageCache = Array.from(document.querySelectorAll('.m-page'));
+    if (!_navItemCache) _navItemCache = Array.from(document.querySelectorAll('.m-nav-item'));
     if (!_navContentCache) _navContentCache = document.querySelector('.m-content');
     _navPageCache.forEach(p => p.classList.remove('active'));
     _navItemCache.forEach(i => i.classList.remove('active'));
@@ -4698,7 +4795,7 @@ function navTo(pageId, btn) {
     if (target) target.classList.add('active');
     if (btn) btn.classList.add('active');
     if (_navContentCache) _navContentCache.scrollTop = 0;
-    if (navigator.vibrate) navigator.vibrate(10);
+    mVibrate(10);
 }
 
 function clearMobileDebridValidationTimer() {
@@ -4805,7 +4902,7 @@ async function runMobileDebridValidation(requestId, service, key) {
 
 function scheduleMobileDebridValidation(options = {}) {
     const force = options.force === true;
-    const key = String(document.getElementById('m-apiKey')?.value || '').trim();
+    const key = mValue('m-apiKey').trim();
     const service = String(mCurrentService || '').trim().toLowerCase();
 
     clearMobileDebridValidationTimer();
@@ -4857,7 +4954,7 @@ function handleMobileApiKeyInput() {
 function setMService(srv, btn, keepInput = false) {
     if(mCurrentService === srv && !keepInput) return;
     mCurrentService = srv;
-    if (!keepInput) { document.getElementById('m-apiKey').value = ''; }
+    if (!keepInput) mSetValue('m-apiKey', '');
 
     document.querySelectorAll('.m-srv-btn').forEach(b => {
         b.classList.remove('active');
@@ -4869,85 +4966,81 @@ function setMService(srv, btn, keepInput = false) {
     const input = document.getElementById('m-apiKey');
     const box = document.getElementById('box-apikey');
 
-    if (srv === 'p2p') {
-        input.placeholder = "P2P BYPASS MODE";
-        input.disabled = true;
-        if(box) box.classList.add('is-p2p');
-    } else {
-        const placeholders = { 'rd': "INCOLLA RD KEY...", 'tb': "INCOLLA TB KEY..." };
-        input.placeholder = placeholders[srv];
-        input.disabled = false;
-        if(box) box.classList.remove('is-p2p');
+    if (input) {
+        if (srv === 'p2p') {
+            mSetPlaceholder('m-apiKey', "P2P BYPASS MODE");
+            mSetDisabled('m-apiKey', true);
+            if(box) box.classList.add('is-p2p');
+        } else {
+            const placeholders = { 'rd': "INCOLLA RD KEY...", 'tb': "INCOLLA TB KEY..." };
+            mSetPlaceholder('m-apiKey', placeholders[srv] || "INCOLLA API KEY...");
+            mSetDisabled('m-apiKey', false);
+            if(box) box.classList.remove('is-p2p');
+        }
     }
 
     updateMobilePreview();
     scheduleMobileDebridValidation({ force: true });
     toggleSavedCloud();
     updateLinkModalContent();
-    if(navigator.vibrate) navigator.vibrate(10);
+    mVibrate(10);
 }
 
 function updateStatus(inputId, statusId) {
-    const chk = document.getElementById(inputId).checked;
+    const chk = mChecked(inputId);
     const lbl = document.getElementById(statusId);
     if(lbl) {
         lbl.innerText = chk ? "ON" : "OFF";
-        if(chk) lbl.classList.add('on'); else lbl.classList.remove('on');
+        lbl.classList.toggle('on', chk);
     }
 
     if(inputId === 'm-enableVix') toggleScOptions();
     if(inputId === 'm-aioMode') toggleMobileAIOLock();
     checkWebPriorityVisibility();
     updateLinkModalContent();
-    if(navigator.vibrate) navigator.vibrate(10);
+    mVibrate(10);
 }
 
 function setLangMode(mode) {
-    mLangMode = mode;
+    mLangMode = ['ita', 'all', 'eng'].includes(mode) ? mode : 'ita';
     const btnIta = document.getElementById('lang-ita');
     const btnHyb = document.getElementById('lang-all');
     const btnEng = document.getElementById('lang-eng');
     [btnIta, btnHyb, btnEng].forEach(b => {
-        b.className = 'm-lang-opt';
+        if (b) b.className = 'm-lang-opt';
     });
-    if(mode === 'ita') btnIta.classList.add('active-ita');
-    if(mode === 'all') btnHyb.classList.add('active-hyb');
-    if(mode === 'eng') btnEng.classList.add('active-eng');
+    if(mLangMode === 'ita' && btnIta) btnIta.classList.add('active-ita');
+    if(mLangMode === 'all' && btnHyb) btnHyb.classList.add('active-hyb');
+    if(mLangMode === 'eng' && btnEng) btnEng.classList.add('active-eng');
 
     const descEl = document.getElementById('lang-description');
     if(descEl) {
-        descEl.style.opacity = 0;
+        descEl.style.opacity = '0';
         setTimeout(() => {
-            descEl.innerText = langDescriptions[mode];
-            descEl.style.opacity = 1;
+            descEl.innerText = langDescriptions[mLangMode] || langDescriptions.ita;
+            descEl.style.opacity = '1';
         }, 200);
     }
     updateMobilePreview();
     updateLinkModalContent();
-    if(navigator.vibrate) navigator.vibrate(10);
+    mVibrate(10);
 }
 
 function checkWebPriorityVisibility() {
-    const vix = document.getElementById('m-enableVix').checked;
-    const ghd = document.getElementById('m-enableGhd').checked;
-    const gs = document.getElementById('m-enableGs').checked;
-    const aw = document.getElementById('m-enableAnimeWorld').checked;
-    const au = document.getElementById('m-enableAnimeUnity').checked;
-    const as = document.getElementById('m-enableAnimeSaturn').checked;
-    const gf = document.getElementById('m-enableGf').checked;
-    const cc = document.getElementById('m-enableCc').checked;
+    const enabled = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'].some(id => mChecked(id));
     const panel = document.getElementById('m-priority-panel');
-    if (vix || ghd || gs || aw || au || as || gf || cc) panel.classList.add('show');
-    else panel.classList.remove('show');
+    if (panel) panel.classList.toggle('show', enabled);
 }
 
 function updatePriorityLabel() {
-    const isLast = document.getElementById('m-vixLast').checked;
+    const isLast = mChecked('m-vixLast');
     const desc = document.getElementById('priority-desc');
-    desc.innerText = isLast ? "Priorita bassa: risultati dopo i torrent" : "Priorita alta: risultati in cima";
-    desc.style.color = isLast ? "var(--m-secondary)" : "var(--m-primary)";
+    if (desc) {
+        desc.innerText = isLast ? "Priorita bassa: risultati dopo i torrent" : "Priorita alta: risultati in cima";
+        desc.style.color = isLast ? "var(--m-secondary)" : "var(--m-primary)";
+    }
     updateLinkModalContent();
-    if(navigator.vibrate) navigator.vibrate([15, 10, 15]);
+    mVibrate([15, 10, 15]);
 }
 
 function setSavedCloudMode(mode) {
@@ -4957,7 +5050,7 @@ function setSavedCloudMode(mode) {
     const activeBtn = document.getElementById('m-cloud-' + mSavedCloudMode);
     if(activeBtn) activeBtn.classList.add('active');
     updateLinkModalContent();
-    if(navigator.vibrate) navigator.vibrate(8);
+    mVibrate(8);
 }
 
 function toggleSavedCloud() {
@@ -4966,7 +5059,7 @@ function toggleSavedCloud() {
     const status = document.getElementById('st-savedcloud');
     if(!input || !panel || !status) return;
 
-    const active = input.checked;
+    const active = mChecked('m-enableSavedCloud');
     panel.classList.toggle('show', active);
     status.innerText = active ? 'ON' : 'OFF';
     status.classList.toggle('on', active);
@@ -4976,63 +5069,65 @@ function toggleSavedCloud() {
     }
 
     updateLinkModalContent();
-    if(navigator.vibrate) navigator.vibrate(10);
+    mVibrate(10);
 }
 
 function toggleScOptions() {
-    const chk = document.getElementById('m-enableVix').checked;
+    const chk = mChecked('m-enableVix');
     const opts = document.getElementById('m-sc-options');
-    opts.style.display = chk ? 'block' : 'none';
+    if (opts) opts.style.display = chk ? 'block' : 'none';
 
     const lbl = document.getElementById('st-vix');
     if(lbl) {
         lbl.innerText = chk ? "ON" : "OFF";
-        if(chk) lbl.classList.add('on'); else lbl.classList.remove('on');
+        lbl.classList.toggle('on', chk);
     }
     checkWebPriorityVisibility();
 }
 
 function toggleGate() {
-    const active = document.getElementById('m-gateActive').checked;
+    const active = mChecked('m-gateActive');
     const wrapper = document.getElementById('m-gate-wrapper');
     const lbl = document.getElementById('st-gate');
 
-    if(active) {
-        wrapper.classList.add('show');
-        if(lbl) {lbl.innerText = "ON"; lbl.classList.add('on');}
-        showToast("Signal Gate Attivo: Risultati Limitati", "warning");
-    } else {
-        wrapper.classList.remove('show');
-        if(lbl) {lbl.innerText = "OFF"; lbl.classList.remove('on');}
+    if (wrapper) wrapper.classList.toggle('show', active);
+    if(lbl) {
+        lbl.innerText = active ? "ON" : "OFF";
+        lbl.classList.toggle('on', active);
     }
+    if(active) showToast("Signal Gate Attivo: Risultati Limitati", "warning");
     updateLinkModalContent();
-    if(navigator.vibrate) navigator.vibrate(10);
+    mVibrate(10);
 }
 
-function updateGateDisplay(val) { document.getElementById('m-gate-display').innerText = val; updateLinkModalContent(); }
+function updateGateDisplay(val) {
+    mSetText('m-gate-display', val);
+    updateLinkModalContent();
+}
 
 function toggleSize() {
-    const active = document.getElementById('m-sizeActive').checked;
+    const active = mChecked('m-sizeActive');
     const wrapper = document.getElementById('m-size-wrapper');
     const lbl = document.getElementById('st-size');
-    const slider = document.getElementById('m-sizeVal');
+    const sliderValue = mValue('m-sizeVal', '0');
 
+    if (wrapper) wrapper.classList.toggle('show', active);
+    if(lbl) {
+        lbl.innerText = active ? "ON" : "OFF";
+        lbl.classList.toggle('on', active);
+    }
     if(active) {
-        wrapper.classList.add('show');
-        if(lbl) {lbl.innerText = "ON"; lbl.classList.add('on');}
-        updateSizeDisplay(slider.value);
+        updateSizeDisplay(sliderValue);
     } else {
-        wrapper.classList.remove('show');
-        if(lbl) {lbl.innerText = "OFF"; lbl.classList.remove('on');}
-        document.getElementById('m-size-display').innerText = "INF";
+        mSetText('m-size-display', "INF");
     }
     updateLinkModalContent();
-    if(navigator.vibrate) navigator.vibrate(10);
+    mVibrate(10);
 }
 
 function updateSizeDisplay(val) {
     const display = document.getElementById('m-size-display');
-    if (val == 0) { display.innerText = "INF"; } else { display.innerText = val; }
+    if (display) display.innerText = val == 0 ? "INF" : String(val);
     updateLinkModalContent();
 }
 
@@ -5053,17 +5148,18 @@ function setScQuality(val) {
     const activeEl = document.getElementById('mq-sc-' + val);
     if(activeEl) activeEl.classList.add('active');
     updateLinkModalContent();
-    if(navigator.vibrate) navigator.vibrate(10);
+    mVibrate(10);
 }
 
 function setSortMode(mode) {
-    mSortMode = mode;
+    mSortMode = fluxData[mode] ? mode : 'balanced';
     ['balanced', 'resolution', 'size'].forEach(m => {
         const btn = document.getElementById('sort-' + m);
         const map = {'balanced':'active-bal', 'resolution':'active-res', 'size':'active-sz'};
+        if (!btn) return;
         btn.classList.remove('active-bal', 'active-res', 'active-sz');
 
-        if(m === mode) btn.classList.add(map[m]);
+        if(m === mSortMode) btn.classList.add(map[m]);
     });
 
     const readout = document.getElementById('flux-readout-box');
@@ -5071,60 +5167,58 @@ function setSortMode(mode) {
     const desc = document.getElementById('flux-desc-display');
     const icon = document.getElementById('flux-icon-display');
 
-    readout.className = "m-flux-readout";
-    readout.style.opacity = 0.5;
+    if (readout) {
+        readout.className = "m-flux-readout";
+        readout.style.opacity = '0.5';
+    }
     setTimeout(() => {
-        if(mode === 'balanced') readout.classList.add('mode-bal');
-        if(mode === 'resolution') readout.classList.add('mode-res');
-        if(mode === 'size') readout.classList.add('mode-sz');
+        const data = fluxData[mSortMode] || fluxData.balanced;
+        if(readout) {
+            if(mSortMode === 'balanced') readout.classList.add('mode-bal');
+            if(mSortMode === 'resolution') readout.classList.add('mode-res');
+            if(mSortMode === 'size') readout.classList.add('mode-sz');
+            readout.style.opacity = '1';
+        }
 
-        title.innerText = fluxData[mode].title;
-        desc.innerText = fluxData[mode].desc;
-        icon.className = `fas ${fluxData[mode].icon} m-fr-icon`;
-
-        readout.style.opacity = 1;
+        if (title) title.innerText = data.title;
+        if (desc) desc.innerText = data.desc;
+        if (icon) icon.className = `fas ${data.icon} m-fr-icon`;
     }, 150);
 
     updateLinkModalContent();
-    if(navigator.vibrate) navigator.vibrate(10);
+    mVibrate(10);
 }
 
 function updateGhostVisuals() {
-    const chk = document.getElementById('m-proxyDebrid').checked;
+    const chk = mChecked('m-proxyDebrid');
     const box = document.getElementById('ghost-zone-box');
     const txt = document.getElementById('ghost-status-text');
 
-    if(chk) {
-        box.classList.add('active');
-        if(txt) txt.innerText = "STEALTH";
-    } else {
-        box.classList.remove('active');
-        if(txt) txt.innerText = "VISIBLE";
-    }
+    if (box) box.classList.toggle('active', chk);
+    if(txt) txt.innerText = chk ? "STEALTH" : "VISIBLE";
 
     const lbl = document.getElementById('st-ghost');
     if(lbl) {
          lbl.innerText = chk ? "ON" : "OFF";
-         if(chk) lbl.classList.add('on'); else lbl.classList.remove('on');
+         lbl.classList.toggle('on', chk);
     }
-    if(navigator.vibrate) navigator.vibrate(15);
+    mVibrate(15);
 }
 
 function toggleModuleStyle(inputId, boxId) {
-    const chk = document.getElementById(inputId).checked;
+    const chk = mChecked(inputId);
     const box = document.getElementById(boxId);
-    if(box) {
-        if(chk) box.classList.add('active');
-        else box.classList.remove('active');
-    }
+    if(box) box.classList.toggle('active', chk);
     updateLinkModalContent();
 }
 
 function toggleFilter(id) {
-    document.getElementById(id).classList.toggle('excluded');
-    const isExcluded = document.getElementById(id).classList.contains('excluded');
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle('excluded');
+    const isExcluded = el.classList.contains('excluded');
     if(isExcluded) {
-        if(navigator.vibrate) navigator.vibrate(20);
+        mVibrate(20);
         triggerPreviewUpdateEffect();
     }
     updateLinkModalContent();
@@ -5132,11 +5226,11 @@ function toggleFilter(id) {
 
 async function pasteTo(id) {
     const input = document.getElementById(id);
-    if (!input || input.disabled) return;
+    if (!input || ("disabled" in input && input.disabled)) return;
 
     try {
         const text = await navigator.clipboard.readText();
-        input.value = text;
+        mSetValue(id, text);
         input.dispatchEvent(new Event('input', { bubbles: true }));
 
         if(id === 'm-apiKey') scheduleMobileDebridValidation({ force: true });
@@ -5268,45 +5362,45 @@ async function loadMobileConfig() {
                  setMService('p2p', railBtns[2], true);
             }
 
-            if(config.key) document.getElementById('m-apiKey').value = config.key;
+            if(config.key) mSetValue('m-apiKey', config.key);
 
-            if(config.tmdb) document.getElementById('m-tmdb').value = config.tmdb;
-            if(config.aiostreams_mode) document.getElementById('m-aioMode').checked = true;
+            if(config.tmdb) mSetValue('m-tmdb', config.tmdb);
+            if(config.aiostreams_mode) mSetChecked('m-aioMode', true);
 
             if(config.sort) setSortMode(config.sort);
             else setSortMode('balanced');
 
             if(config.formatter) selectMobileSkin(config.formatter);
-            if(config.customTemplate) document.getElementById('m-customTemplate').value = config.customTemplate;
+            if(config.customTemplate) mSetValue('m-customTemplate', config.customTemplate);
 
             if(config.mediaflow) {
-                document.getElementById('m-mfUrl').value = config.mediaflow.url || "";
-                document.getElementById('m-mfPass').value = config.mediaflow.pass || "";
-                document.getElementById('m-proxyDebrid').checked = config.mediaflow.proxyDebrid || false;
+                mSetValue('m-mfUrl', config.mediaflow.url || "");
+                mSetValue('m-mfPass', config.mediaflow.pass || "");
+                mSetChecked('m-proxyDebrid', config.mediaflow.proxyDebrid || false);
             }
             if(config.filters) {
-                document.getElementById('m-enableVix').checked = config.filters.enableVix || false;
+                mSetChecked('m-enableVix', config.filters.enableVix || false);
                 toggleModuleStyle('m-enableVix', 'mod-vix');
 
-                document.getElementById('m-enableGhd').checked = config.filters.enableGhd || false;
+                mSetChecked('m-enableGhd', config.filters.enableGhd || false);
                 toggleModuleStyle('m-enableGhd', 'mod-ghd');
 
-                document.getElementById('m-enableGs').checked = config.filters.enableGs || false;
+                mSetChecked('m-enableGs', config.filters.enableGs || false);
                 toggleModuleStyle('m-enableGs', 'mod-gs');
 
-                document.getElementById('m-enableAnimeWorld').checked = config.filters.enableAnimeWorld || false;
+                mSetChecked('m-enableAnimeWorld', config.filters.enableAnimeWorld || false);
                 toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');
 
-                document.getElementById('m-enableAnimeUnity').checked = config.filters.enableAnimeUnity || false;
+                mSetChecked('m-enableAnimeUnity', config.filters.enableAnimeUnity || false);
                 toggleModuleStyle('m-enableAnimeUnity', 'mod-au');
 
-                document.getElementById('m-enableAnimeSaturn').checked = config.filters.enableAnimeSaturn || false;
+                mSetChecked('m-enableAnimeSaturn', config.filters.enableAnimeSaturn || false);
                 toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');
 
-                document.getElementById('m-enableGf').checked = config.filters.enableGf || false;
+                mSetChecked('m-enableGf', config.filters.enableGf || false);
                 toggleModuleStyle('m-enableGf', 'mod-gf');
 
-                document.getElementById('m-enableCc').checked = config.filters.enableCc || false;
+                mSetChecked('m-enableCc', config.filters.enableCc || false);
                 toggleModuleStyle('m-enableCc', 'mod-cc');
 
                 if(config.filters.language) {
@@ -5315,38 +5409,38 @@ async function loadMobileConfig() {
                     setLangMode(config.filters.allowEng ? 'all' : 'ita');
                 }
 
-                document.getElementById('m-enableSavedCloud').checked = config.filters.enableSavedCloud || false;
+                mSetChecked('m-enableSavedCloud', config.filters.enableSavedCloud || false);
                 setSavedCloudMode(config.filters.savedCloudMode || 'smart');
                 toggleSavedCloud();
 
                 if(config.filters.vixLast) {
-                    document.getElementById('m-vixLast').checked = true;
+                    mSetChecked('m-vixLast', true);
                     updatePriorityLabel();
                 }
 
                 const qMap = {'no4k':'mq-4k', 'no1080':'mq-1080', 'no720':'mq-720', 'noScr':'mq-sd'};
-                for(let k in qMap) if(config.filters[k]) document.getElementById(qMap[k]).classList.add('excluded');
+                for(let k in qMap) if(config.filters[k]) mAddClass(qMap[k], 'excluded');
                 if(config.filters.scQuality) setScQuality(config.filters.scQuality);
 
                 if(config.filters.maxPerQuality && config.filters.maxPerQuality > 0) {
                     const val = config.filters.maxPerQuality;
-                    document.getElementById('m-gateActive').checked = true;
-                    document.getElementById('m-gateVal').value = val;
+                    mSetChecked('m-gateActive', true);
+                    mSetValue('m-gateVal', val);
                     updateGateDisplay(val);
                     toggleGate();
                 } else {
-                    document.getElementById('m-gateActive').checked = false;
+                    mSetChecked('m-gateActive', false);
                     toggleGate();
                 }
 
                 if(config.filters.maxSizeGB && config.filters.maxSizeGB > 0) {
                     const valGB = config.filters.maxSizeGB;
-                    document.getElementById('m-sizeActive').checked = true;
-                    document.getElementById('m-sizeVal').value = valGB;
+                    mSetChecked('m-sizeActive', true);
+                    mSetValue('m-sizeVal', valGB);
                     updateSizeDisplay(valGB);
                     toggleSize();
                 } else {
-                    document.getElementById('m-sizeActive').checked = false;
+                    mSetChecked('m-sizeActive', false);
                     toggleSize();
                 }
             }
@@ -5373,65 +5467,53 @@ async function loadMobileConfig() {
 }
 
 function getMobileConfig() {
-    const gateActive = document.getElementById('m-gateActive').checked;
-    const gateVal = parseInt(document.getElementById('m-gateVal').value);
-    const sizeActive = document.getElementById('m-sizeActive').checked;
-    const sizeVal = parseInt(document.getElementById('m-sizeVal').value);
+    const gateActive = mChecked('m-gateActive');
+    const gateVal = parseInt(mValue('m-gateVal', '0'), 10) || 0;
+    const sizeActive = mChecked('m-sizeActive');
+    const sizeVal = parseInt(mValue('m-sizeVal', '0'), 10) || 0;
     const finalMaxSizeGB = sizeActive ? sizeVal : 0;
 
     const isP2P = mCurrentService === 'p2p';
-    const apiKey = document.getElementById('m-apiKey').value.trim();
-    const webOnlyService = (
-        !isP2P
-        && !apiKey
-        && (
-            document.getElementById('m-enableVix').checked
-            || document.getElementById('m-enableGhd').checked
-            || document.getElementById('m-enableGs').checked
-            || document.getElementById('m-enableAnimeWorld').checked
-            || document.getElementById('m-enableAnimeUnity').checked
-            || document.getElementById('m-enableAnimeSaturn').checked
-            || document.getElementById('m-enableGf').checked
-            || document.getElementById('m-enableCc').checked
-        )
-    );
-    const savedCloudEnabled = !isP2P && !!apiKey && ['rd', 'tb'].includes(String(mCurrentService || '').toLowerCase()) && document.getElementById('m-enableSavedCloud').checked;
+    const apiKey = mValue('m-apiKey').trim();
+    const webModules = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'];
+    const webOnlyService = !isP2P && !apiKey && webModules.some(id => mChecked(id));
+    const savedCloudEnabled = !isP2P && !!apiKey && ['rd', 'tb'].includes(String(mCurrentService || '').toLowerCase()) && mChecked('m-enableSavedCloud');
 
     return {
         service: isP2P ? '' : (webOnlyService ? 'web' : mCurrentService),
         key: apiKey,
-        tmdb: document.getElementById('m-tmdb').value.trim(),
+        tmdb: mValue('m-tmdb').trim(),
         sort: mSortMode,
         formatter: mSkin,
-        customTemplate: document.getElementById('m-customTemplate').value,
-        aiostreams_mode: document.getElementById('m-aioMode').checked,
+        customTemplate: mValue('m-customTemplate'),
+        aiostreams_mode: mChecked('m-aioMode'),
         mediaflow: {
-            url: document.getElementById('m-mfUrl').value.trim().replace(/\/$/, ""),
-            pass: document.getElementById('m-mfPass').value.trim(),
-            proxyDebrid: document.getElementById('m-proxyDebrid').checked
+            url: mValue('m-mfUrl').trim().replace(/\/$/, ""),
+            pass: mValue('m-mfPass').trim(),
+            proxyDebrid: mChecked('m-proxyDebrid')
         },
         filters: {
             language: mLangMode,
             allowEng: (mLangMode === 'all' || mLangMode === 'eng'),
             enableP2P: isP2P,
-            no4k: document.getElementById('mq-4k').classList.contains('excluded'),
-            no1080: document.getElementById('mq-1080').classList.contains('excluded'),
-            no720: document.getElementById('mq-720').classList.contains('excluded'),
-            noScr: document.getElementById('mq-sd').classList.contains('excluded'),
-            noCam: document.getElementById('mq-sd').classList.contains('excluded'),
-            enableVix: document.getElementById('m-enableVix').checked,
-            enableGhd: document.getElementById('m-enableGhd').checked,
-            enableGs: document.getElementById('m-enableGs').checked,
-            enableAnimeWorld: document.getElementById('m-enableAnimeWorld').checked,
-            enableAnimeUnity: document.getElementById('m-enableAnimeUnity').checked,
-            enableAnimeSaturn: document.getElementById('m-enableAnimeSaturn').checked,
-            enableGf: document.getElementById('m-enableGf').checked,
-            enableCc: document.getElementById('m-enableCc').checked,
+            no4k: mHasClass('mq-4k', 'excluded'),
+            no1080: mHasClass('mq-1080', 'excluded'),
+            no720: mHasClass('mq-720', 'excluded'),
+            noScr: mHasClass('mq-sd', 'excluded'),
+            noCam: mHasClass('mq-sd', 'excluded'),
+            enableVix: mChecked('m-enableVix'),
+            enableGhd: mChecked('m-enableGhd'),
+            enableGs: mChecked('m-enableGs'),
+            enableAnimeWorld: mChecked('m-enableAnimeWorld'),
+            enableAnimeUnity: mChecked('m-enableAnimeUnity'),
+            enableAnimeSaturn: mChecked('m-enableAnimeSaturn'),
+            enableGf: mChecked('m-enableGf'),
+            enableCc: mChecked('m-enableCc'),
             enableTrailers: false,
             enableSavedCloud: savedCloudEnabled,
             savedCloudMode: savedCloudEnabled ? mSavedCloudMode : 'off',
             savedCloudMax: 6,
-            vixLast: document.getElementById('m-vixLast').checked,
+            vixLast: mChecked('m-vixLast'),
             scQuality: mScQuality,
             maxPerQuality: gateActive ? gateVal : 0,
             maxSizeGB: finalMaxSizeGB > 0 ? finalMaxSizeGB : null
@@ -5461,13 +5543,13 @@ async function updateLinkModalContent(immediate = false) {
     const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
 
     if(!config.key && !isWebEnabled) {
-        box.value = "/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P";
+        mSetValue('m-generatedUrlBox', "/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P");
         box.style.color = "var(--m-error)";
         return;
     }
 
     const manifestUrl = `${window.location.protocol}//${await getMobileManifestUrl(config)}`;
-    box.value = manifestUrl;
+    mSetValue('m-generatedUrlBox', manifestUrl);
     box.style.color = "var(--m-primary)";
 }
 
@@ -5483,17 +5565,20 @@ async function mobileInstall() {
 
 function openLinkModal() {
     updateLinkModalContent(true);
-    document.getElementById('m-link-modal').classList.add('show');
-    if(navigator.vibrate) navigator.vibrate(10);
+    const modal = document.getElementById('m-link-modal');
+    if (modal) modal.classList.add('show');
+    mVibrate(10);
 }
 
 function closeLinkModal() {
-    document.getElementById('m-link-modal').classList.remove('show');
+    const modal = document.getElementById('m-link-modal');
+    if (modal) modal.classList.remove('show');
 }
 
 async function copyFromModal() {
     const box = document.getElementById('m-generatedUrlBox');
-    const textToCopy = box.value;
+    const textToCopy = box && "value" in box ? String(box.value || "") : "";
+    if (!textToCopy) return;
 
     if (textToCopy.includes("WAITING FOR")) {
         showToast("CONFIGURA PRIMA L'ADDON", "error");
@@ -5520,6 +5605,55 @@ async function copyFromModal() {
     }
 }
 
-initMobileInterface();
+function exposeMobileInlineHandlers() {
+    if (typeof window === 'undefined') return;
+    Object.assign(window, {
+        navTo,
+        selectMobileSkin,
+        updateMobilePreview,
+        toggleMobileAIOLock,
+        setMService,
+        handleMobileApiKeyInput,
+        scheduleMobileDebridValidation,
+        updateStatus,
+        setLangMode,
+        checkWebPriorityVisibility,
+        updatePriorityLabel,
+        setSavedCloudMode,
+        toggleSavedCloud,
+        toggleScOptions,
+        toggleGate,
+        updateGateDisplay,
+        toggleSize,
+        updateSizeDisplay,
+        openApiPage,
+        setScQuality,
+        setSortMode,
+        updateGhostVisuals,
+        toggleModuleStyle,
+        toggleFilter,
+        pasteTo,
+        getMobileConfig,
+        getMobileManifestUrl,
+        updateLinkModalContent,
+        mobileInstall,
+        openLinkModal,
+        closeLinkModal,
+        copyFromModal
+    });
+}
+
+function startMobileInterfaceWhenReady() {
+    exposeMobileInlineHandlers();
+    const start = () => initMobileInterface();
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start, { once: true });
+    } else {
+        start();
+    }
+}
+
+startMobileInterfaceWhenReady();
+
 
 
