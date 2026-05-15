@@ -100,6 +100,12 @@ function applyMobilePerformanceMode() {
     }
 }
 
+function isMobileTextField(el = document.activeElement) {
+    return !!el?.matches?.(
+        'input:not([type]), input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], input[type="tel"], input[type="number"], textarea, [contenteditable="true"]'
+    );
+}
+
 const mobileCSS = `
 :root {
     --m-bg: #000205;
@@ -3092,6 +3098,57 @@ body.m-mf-plus input[type="checkbox"]:active {
     box-shadow: none !important;
 }
 
+/* === LEVIATHAN ZERO-FLICKER V2 ============================================
+   Dopo il primo render la pagina attiva non deve più riavviare fadeFast.
+   Gli switch possono cambiare molte classi in sequenza: durante il tap congeliamo
+   solo le animazioni globali, lasciando naturale il movimento dello slider. */
+body.m-ui-ready .m-page.active,
+body.m-switching .m-page.active {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: translate3d(0, 0, 0) !important;
+}
+
+body.m-switching .m-content {
+    scroll-behavior: auto !important;
+}
+
+body.m-switching .m-cloud-mode-panel.show {
+    animation: none !important;
+}
+
+body.m-switching .m-caustic-ray,
+body.m-switching .m-ocean-particle,
+body.m-switching .logo-particle,
+body.m-switching .logo-container,
+body.m-switching .logo-image,
+body.m-switching .m-version-tag,
+body.m-switching .m-hypervisor::before,
+body.m-switching .m-visual-core-v2::before {
+    animation-play-state: paused !important;
+}
+
+body.m-switching .m-reactor-module,
+body.m-switching .m-reactor-module::after,
+body.m-switching .m-reactor-core,
+body.m-switching .m-sys-row,
+body.m-switching .m-slider,
+body.m-switching .m-slider:before {
+    transition-duration: 0.14s !important;
+}
+
+body.m-mf-plus .m-switch,
+body.m-mf-plus .m-slider,
+body.m-mf-plus .m-slider:before {
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+}
+
+body.m-mf-plus .m-switch,
+body.m-mf-plus .m-slider {
+    contain: paint;
+}
+
 
 `;
 
@@ -4506,7 +4563,7 @@ function initMobileViewportGuard() {
         if (h) { stableH = h; root.style.setProperty('--m-vvh', `${h}px`); }
     };
 
-    const isTextField = (el = document.activeElement) => !!el?.matches?.('input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], textarea, [contenteditable="true"]');
+    const isTextField = isMobileTextField;
 
     const openKeyboardMode = () => {
         window.clearTimeout(blurTimer);
@@ -4551,7 +4608,7 @@ function initMobileViewportGuard() {
 
     document.addEventListener('pointerdown', (event) => {
         const target = event.target;
-        if (target?.closest?.('input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], textarea, [contenteditable="true"]')) return;
+        if (isMobileTextField(target?.closest?.('input, textarea, [contenteditable="true"]'))) return;
         if (target?.closest?.('.m-switch, input[type="checkbox"], button, .m-qual-chip, .m-cloud-mode-btn, .m-reactor-module, .m-flux-opt, .m-lang-opt, .m-cortex-chip, .m-cred-opt, .m-act-btn, .m-nav-item, .m-paste-action, .m-if-action, .m-get-link')) return;
         closeKeyboardMode();
     }, { passive: true });
@@ -4565,11 +4622,15 @@ function installMobileVisibilityGuard() {
 
 function installMobileInputPerformanceGuard() {
     // Attiva la modalità typing solo sui veri campi di testo.
-    // Le checkbox/switch emettono comunque un evento input: non devono mai
-    // aggiungere m-typing, altrimenti la pagina riapplica fadeFast e lampeggia.
-    const isTextInput = (el) => !!el?.matches?.(
-        'input:not([type]), input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], input[type="tel"], input[type="number"], textarea, [contenteditable="true"]'
-    );
+    // Checkbox/radio/range emettono input, ma non devono mai toccare m-typing.
+    const isTextInput = isMobileTextField;
+    const isToggleInput = (el) => !!el?.matches?.('input[type="checkbox"], input[type="radio"], input[type="range"]');
+
+    const clearTypingIfNotText = () => {
+        if (isTextInput(document.activeElement)) return;
+        clearTimeout(MOBILE_PERF.inputIdleTimer);
+        document.body.classList.remove('m-typing', 'm-input-active', 'm-keyboard-open');
+    };
 
     const markTyping = () => {
         document.body.classList.add('m-typing');
@@ -4582,6 +4643,10 @@ function installMobileInputPerformanceGuard() {
     };
 
     document.addEventListener('input', (event) => {
+        if (isToggleInput(event.target)) {
+            clearTypingIfNotText();
+            return;
+        }
         if (!isTextInput(event.target)) return;
         markTyping();
     }, { passive: true });
@@ -4594,6 +4659,39 @@ function installMobileInputPerformanceGuard() {
     }, { passive: true });
 }
 
+function installMobileNoFlickerGuard() {
+    let switchTimer = 0;
+
+    const isSwitchTarget = (target) => !!target?.closest?.('.m-switch, input[type="checkbox"], input[type="radio"]');
+
+    const markSwitching = () => {
+        document.body.classList.add('m-switching');
+        if (!isMobileTextField(document.activeElement)) {
+            clearTimeout(MOBILE_PERF.inputIdleTimer);
+            document.body.classList.remove('m-typing', 'm-input-active', 'm-keyboard-open');
+        }
+        clearTimeout(switchTimer);
+        switchTimer = setTimeout(() => {
+            document.body.classList.remove('m-switching');
+        }, 260);
+    };
+
+    document.addEventListener('pointerdown', (event) => {
+        if (!isSwitchTarget(event.target)) return;
+        markSwitching();
+    }, { passive: true });
+
+    document.addEventListener('change', (event) => {
+        if (!isSwitchTarget(event.target)) return;
+        markSwitching();
+    }, { passive: true });
+
+    // Dopo il primo paint disabilita le ri-animazioni della pagina attiva.
+    // La transizione iniziale resta, ma gli switch non possono più riavviare fadeFast.
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => document.body.classList.add('m-ui-ready'));
+    });
+}
 
 function scheduleMobileAfterPaint(fn) {
     if (typeof requestIdleCallback === 'function') {
@@ -4616,6 +4714,7 @@ function initMobileInterface() {
     initMobileViewportGuard();
     installMobileVisibilityGuard();
     installMobileInputPerformanceGuard();
+    installMobileNoFlickerGuard();
     hydrateMobileLogo();
     initPullToRefresh();
     loadMobileConfig();
