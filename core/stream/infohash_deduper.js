@@ -501,8 +501,7 @@ function extractReleaseGroupTag(item = {}) {
 function getSizeBucket(item = {}) {
   const bytes = getSizeBytes(item) || getFolderSizeBytes(item);
   if (!Number.isFinite(bytes) || bytes <= 0) return '';
-  // 128 MiB buckets are strict enough to merge mirrored duplicates while avoiding
-  // most false positives between different encodes of the same title/resolution.
+    
   return String(Math.max(1, Math.round(bytes / (128 * 1024 * 1024))));
 }
 
@@ -523,8 +522,7 @@ function buildSmartDedupeKey(item = {}, options = {}) {
   const encode = extractEncodeTag(item);
   const releaseGroup = extractReleaseGroupTag(item);
   const sizeBucket = getSizeBucket(item);
-
-  // Smart detect is intentionally conservative: filename alone is not enough.
+  
   if (!sizeBucket && !resolution && !quality) return null;
 
   const isSeries = isSeriesContext(options);
@@ -542,10 +540,7 @@ function buildDedupeKeys(item = {}, options = {}) {
     const forcedKey = getForcedTorrentioExactKey(item, options);
     const keys = forcedKey ? [forcedKey] : [];
     const payloadKey = getForcedTorrentioMoviePayloadKey(item, options);
-    if (payloadKey) keys.push(payloadKey);
-
-    // Same infohash is a safe bridge for movies; for series, require a concrete
-    // file index so season-pack aliases are not collapsed by hash alone.
+    if (payloadKey) keys.push(payloadKey);         
     if (hash && !isSeries) keys.push(`infoHash:${hash}`);
     if (hash && isSeries && fileIdx !== null) keys.push(`infoHashFile:${hash}:${fileIdx}`);
     return [...new Set(keys)];
@@ -570,22 +565,17 @@ function buildDedupeKeys(item = {}, options = {}) {
     if (fileIdx === null && hintIdx === null && episodeKey) keys.push(`infoHashEpisode:${hash}:${episodeKey}`);
     if (fileIdx === null && hintIdx === null && !episodeKey) keys.push(`infoHashNoFile:${hash}`);
   }
+  
 
-  // Same torrent + same exact filename is a strong bridge when a provider omits fileIdx.
-  // It is intentionally only added for entries without a concrete file index, so different
-  // files inside the same season pack are not collapsed by infoHash alone.
   if (isSeries && filenameKey && fileIdx === null && hintIdx === null) {
     keys.push(`infoHashFilename:${hash}:${filenameKey}`);
   }
 
-  // AIOStreams-style smart bridge: same filename/signals across different addons can
-  // collapse mirrored duplicates even when providers disagree on the torrent source.
-  // For series packs it stays guarded by fileIdx/hints above, so pack episodes don't merge.
+  
   if (smartKey && (!isSeries || (fileIdx === null && hintIdx === null))) {
     keys.push(smartKey);
   }
-
-  // Folder-size pack signal is not a dedupe key by itself; it only informs ranking/selection.
+  
   return [...new Set(keys)];
 }
 
@@ -686,10 +676,7 @@ function collectMergedCount(items = [], fallback = 1) {
 
 function sourcePriority(item = {}, options = {}) {
   const text = String(`${item?.source || ''} ${item?.provider || ''} ${item?.externalAddon || ''} ${item?.externalGroup || ''} ${item?.name || ''} ${item?.title || ''}`).toLowerCase();
-  const isSeries = isSeriesContext(options);
-  // Manual imports are for filling holes. If the same infoHash is already found by
-  // Torrentio/remote/external providers, keep the non-manual provider visible and
-  // suppress the manual duplicate/label. Unique manual hashes still pass through.
+  const isSeries = isSeriesContext(options);       
   if (isManualContributionItem(item)) return 1;
   if (isSeries && isTorrentioLike(item)) return 45;
   if (/mediafusion/.test(text)) return 25;
