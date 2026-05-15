@@ -40,13 +40,13 @@ const TTL_EPISODE            = 1000 * 60 * 30;
 const TTL_MOVIE              = 1000 * 60 * 30;
 const TTL_SERIES             = 1000 * 60 * 60 * 6;
 const CF_SESSION_TTL         = 1000 * 60 * 60 * 6;
-const PROVIDER_BUDGET_MS     = 55000;
+const PROVIDER_BUDGET_MS     = 15000;
 const GLOBAL_TIMEOUT_MS      = PROVIDER_BUDGET_MS;
-const SEARCH_QUERY_TIMEOUT_MS = 12000;
+const SEARCH_QUERY_TIMEOUT_MS = 5000;
 
-// GuardoSerie TOP speed defaults are intentionally hardcoded.
-// No .env is required for the fast path: FlareSolverr warms clearance in background,
-// Axios performs the real page fetches, and Impit stays out of the hot path by default.
+// GuardoSerie fast-path defaults mirror the CinemaCity approach:
+// ImpIt (browser fingerprint impersonation) is the PRIMARY bypass method.
+// FlareSolverr is opt-in via GUARDOSERIE_FLARE_ENABLED=1 env var.
 const GS_TOP_SPEED = Object.freeze({
   flareEndpoint: process.env.FLARESOLVERR_URL || 'http://flaresolverr:8191/v1',
   directFetchTimeoutMs: 3000,
@@ -62,14 +62,14 @@ const GS_TOP_SPEED = Object.freeze({
   flareRetryCount: 1,
   flareRetryBackoffMs: 900,
   backgroundRetryMs: 8000,
-  backgroundForceStartup: true,
+  backgroundForceStartup: false,
   backgroundIgnoreProviderCooldown: true,
   staleSessionEmergencyClearance: true,
   staleSessionEmergencyCooldownMs: 0,
   clearanceBridgeMode: true,
-  enableImpitFallback: false,
-  backgroundClearanceEnabled: true,
-  backgroundPrimeHome: true,
+  enableImpitFallback: true,
+  backgroundClearanceEnabled: envFlag('GUARDOSERIE_FLARE_ENABLED', false),
+  backgroundPrimeHome: false,
   backgroundTitlePrime: true,
   backgroundRefreshMs: 600_000,
   backgroundRefreshEarlyMs: 1_200_000,
@@ -79,17 +79,15 @@ const GS_TOP_SPEED = Object.freeze({
   prewarmWaitMs: 250,
   requestClearanceWaitMs: 18000,
   hotpathFlareFallback: false,
-  backgroundStaticPrime: true,
+  backgroundStaticPrime: false,
   movieFastSlugMax: 6,
   seriesFastSlugMax: 12,
   movieMaxVerifyCandidates: 2,
   movieHardBudgetMs: 12_000,
-  // Inspired by EasyStreams' speed pattern: avoid serial waits in the hot path.
-  // Search AJAX + fallback and slug verifications run in small parallel batches.
-  searchFastTimeoutMs: 6500,
+  searchFastTimeoutMs: 5500,
   parallelSearchQueries: 3,
   fastSlugConcurrency: 4,
-  impitMaxAttempts: 1,
+  impitMaxAttempts: 2,
   impitTotalExtraMs: 900,
   impitHttp3: true
 });
@@ -150,6 +148,11 @@ const GS_FAST_SLUG_CONCURRENCY       = GS_TOP_SPEED.fastSlugConcurrency;
 
 const COMPILED_DIRECT_REGEX  = new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig');
 const COMPILED_ESCAPED_REGEX = new RegExp(HOSTER_ESCAPED_DIRECT_LINK_PATTERN, 'ig');
+
+const GS_WP_SITEMAP_TTL_MS   = 45 * 60 * 1000;
+const GS_WP_REST_TIMEOUT_MS  = 3200;
+const GS_WP_SITEMAP_INDEX    = `${INITIAL_GS_DOMAIN}/wp-sitemap.xml`;
+const gsSitemapCache = { fetchedAt: 0, entries: null };
 
 function gsDebug(message, meta = null) {
   if (!DEBUG_GS && !DEBUG_CF) return;
@@ -229,7 +232,8 @@ function allowHotPathClearance() {
   // Default TOP mode: FlareSolverr runs in the daemon/warmup path, not inside every Stremio request.
   // If no endpoint exists, fall back to direct/Impit behavior.
   if (GS_HOTPATH_FLARE_FALLBACK) return true;
-  if (!GS_BACKGROUND_CLEARANCE_ENABLED) return true;
+  // When FlareSolverr is fully disabled (opt-out mode), ImpIt is the only bypass — no hot-path clearance.
+  if (!GS_BACKGROUND_CLEARANCE_ENABLED) return false;
   return !gsHttp.getEndpoint();
 }
 
@@ -406,6 +410,7 @@ function isGsRequestClearanceGate(reason = '') {
 }
 
 async function waitForGsClearancePrewarm(reason = 'request') {
+  if (!GS_BACKGROUND_CLEARANCE_ENABLED) return gsHttp.isSessionFresh();
   if (gsHttp.isSessionFresh() || !gsHttp.getEndpoint()) {
     return gsHttp.isSessionFresh();
   }
@@ -452,6 +457,105 @@ function scheduleGsClearanceWarmup(reason = 'startup', delayMs = GS_PREWARM_STAR
   }, Math.max(0, Number(delayMs) || 0));
   if (timer?.unref) timer.unref();
   return timer;
+}
+
+function extractWpSitemapLocs(xml) {
+  return [...String(xml || '').matchAll(/<loc>([^<]+)<\/loc>/gi)]
+    .map(m => String(m[1] || '').trim())
+    .filter(Boolean);
+}
+
+function titleFromGsSlug(url) {
+  try {
+    const parts = new URL(url).pathname.split('/').filter(Boolean);
+    const slug = decodeURIComponent(parts[parts.length - 1] || '');
+    return slug
+      .replace(/-stagione-\d+.*$/i, '')
+      .replace(/-ep(?:isodio|isode)?\d+/i, '')
+      .replace(/-\d+x\d+/i, '')
+      .replace(/-\d+$/i, '')
+      .replace(/-/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  } catch (_) { return ''; }
+}
+
+async function fetchGsWpSitemapEntries() {
+  const now = Date.now();
+  if (Array.isArray(gsSitemapCache.entries) && (now - gsSitemapCache.fetchedAt) < GS_WP_SITEMAP_TTL_MS) {
+    return gsSitemapCache.entries;
+  }
+
+  try {
+    const baseUrl = getTargetDomain();
+    const sitemapIndexUrl = baseUrl.replace(/\/+$/, '') + '/wp-sitemap.xml';
+    const indexXml = await smartFetch(sitemapIndexUrl, {
+      ttl: GS_WP_SITEMAP_TTL_MS,
+      allowFlareSolverr: false,
+      timeoutMs: GS_WP_REST_TIMEOUT_MS
+    }).catch(() => null);
+
+    if (!indexXml || typeof indexXml !== 'string') return gsSitemapCache.entries || [];
+
+    const subUrls = extractWpSitemapLocs(indexXml).filter(u => /wp-sitemap-posts/i.test(u));
+    if (!subUrls.length) return gsSitemapCache.entries || [];
+
+    const subXmls = await Promise.all(
+      subUrls.slice(0, 3).map(u =>
+        smartFetch(u, { ttl: GS_WP_SITEMAP_TTL_MS, allowFlareSolverr: false, timeoutMs: GS_WP_REST_TIMEOUT_MS }).catch(() => null)
+      )
+    );
+
+    const baseDomain = new URL(baseUrl).hostname.replace(/^www\./, '');
+    const entries = subXmls
+      .filter(Boolean)
+      .flatMap(xml => extractWpSitemapLocs(xml))
+      .filter(u => {
+        try { return new URL(u).hostname.replace(/^www\./, '') === baseDomain; } catch (_) { return false; }
+      });
+
+    if (entries.length > 0) {
+      gsSitemapCache.entries = entries;
+      gsSitemapCache.fetchedAt = Date.now();
+    }
+    return gsSitemapCache.entries || [];
+  } catch (_) {
+    return gsSitemapCache.entries || [];
+  }
+}
+
+async function searchGsSitemapCandidates(expectedTitles) {
+  try {
+    const entries = await fetchGsWpSitemapEntries();
+    if (!entries.length) return [];
+    return entries
+      .map(url => ({ url, title: titleFromGsSlug(url) }))
+      .filter(c => c.title && normalizeTitleScoreMany(c.title, expectedTitles) > 0);
+  } catch (_) { return []; }
+}
+
+async function searchGsViaRestApi(query, signal) {
+  try {
+    const baseUrl = getTargetDomain();
+    const restUrl = `${baseUrl}/wp-json/wp/v2/search?search=${encodeURIComponent(query)}&per_page=10&type=post&_fields=link,title`;
+    const raw = await smartFetch(restUrl, {
+      ttl: TTL_SEARCH,
+      signal,
+      allowFlareSolverr: false,
+      timeoutMs: GS_WP_REST_TIMEOUT_MS
+    }).catch(() => null);
+    if (!raw || typeof raw !== 'string') return [];
+    try {
+      const data = JSON.parse(raw);
+      if (!Array.isArray(data)) return [];
+      return data
+        .filter(item => item?.link)
+        .map(item => ({
+          url: String(item.link),
+          title: String(item.title?.rendered || item.title || '')
+        }));
+    } catch (_) { return []; }
+  } catch (_) { return []; }
 }
 
 function startGsBackgroundClearanceDaemon() {
@@ -1090,22 +1194,24 @@ async function searchProviderSequential(query, signal) {
     return '';
   });
 
-  // EasyStreams speed pattern: never wait for fallback before starting AJAX.
-  // Both are cheap Axios/session requests after background clearance, and smartFetch dedupes/cache-protects them.
-  const [fallbackHtml, ajaxHtml] = await Promise.all([
+  // CinemaCity-style parallel search: AJAX + GET search + WP REST API all race concurrently.
+  // ImpIt (browser fingerprint impersonation) is the primary bypass; no FlareSolverr required.
+  const [fallbackHtml, ajaxHtml, restResults] = await Promise.all([
     fetchFallback(),
-    fetchAjax()
+    fetchAjax(),
+    searchGsViaRestApi(query, signal).catch(() => [])
   ]);
 
   const fallbackResults = extractSearchResultsFromHtml(fallbackHtml, baseUrl);
   const ajaxResults = ajaxHtml ? extractSearchResultsFromHtml(ajaxHtml, baseUrl) : [];
-  const results = [...fallbackResults, ...ajaxResults];
+  const results = [...fallbackResults, ...ajaxResults, ...restResults];
 
   const unique = Array.from(new Map(results.map(item => [item.url, item])).values());
   gsDebug('search query done', {
     query,
     fallbackResults: fallbackResults.length,
     ajaxResults: ajaxResults.length,
+    restResults: restResults.length,
     results: unique.length,
     parallel: true,
     timeoutMs: hotPathTimeout,
@@ -1510,8 +1616,13 @@ async function findGsTargetPage(expectedTitles = [], targetYear = null, signal =
 
   let allResults = [...(options.mappedResults || []), ...fastSlugResults];
   if (!fastSlugResults.length) {
-    allResults.push(...await searchProviderParallel(queries, signal));
-    gsDebug(`${mediaType} search fallback done`, { totalResults: allResults.length, ms: Date.now() - startedAt });
+    // CinemaCity-style: text search + WP sitemap lookup race in parallel.
+    const [searchResults, sitemapResults] = await Promise.all([
+      searchProviderParallel(queries, signal),
+      searchGsSitemapCandidates(expectedTitles).catch(() => [])
+    ]);
+    allResults.push(...searchResults, ...sitemapResults);
+    gsDebug(`${mediaType} search fallback done`, { totalResults: allResults.length, search: searchResults.length, sitemap: sitemapResults.length, ms: Date.now() - startedAt });
   }
 
   allResults = Array.from(new Map(allResults.map(i => [i.url, i])).values());
