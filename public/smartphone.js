@@ -898,7 +898,8 @@ body::before {
     border-radius: var(--m-radius-md);
     position: relative;
     overflow: hidden;
-    transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+    /* Only compositor-safe props: border-color (no layout/paint), opacity via ::after */
+    transition: border-color 0.3s ease;
     display: flex;
     align-items: stretch;
     min-height: 78px;
@@ -917,12 +918,13 @@ body::before {
     justify-content: center;
     position: relative;
     z-index: 2; /* Keeps icon above glow */
-    transition: background 0.3s, box-shadow 0.3s;
+    transition: background 0.3s ease;
 }
 
 .m-core-icon {
     font-size: 1.1rem; /* Reduced from 1.4rem */
-    transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    /* Only animate transform — GPU-composited, no repaint */
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
     filter: drop-shadow(0 0 5px rgba(0,0,0,0.5));
     z-index: 3;
     position: relative;
@@ -989,10 +991,11 @@ body::before {
     box-shadow: 10px 0 30px -5px var(--glow-color); /* Spills light into body */
 }
 
-/* Icon Activation - BOOST BRIGHTNESS but keep color */
+/* Icon Activation */
 .m-reactor-module.active .m-core-icon {
     transform: scale(1.15);
-    filter: drop-shadow(0 0 8px var(--border-color)) brightness(1.2);
+    /* No brightness() — not GPU-composited and forces repaint */
+    filter: drop-shadow(0 0 8px var(--border-color));
 }
 
 /* Specific Module Colors & ALWAYS ON ICONS */
@@ -1241,10 +1244,11 @@ input:checked + .m-slider-pink:before { background-color: var(--m-cine); box-sha
 input:checked + .m-slider-green { background-color: rgba(0, 230, 118, 0.3); border-color: #00e676; box-shadow: inset 0 0 10px rgba(0,230,118,0.4); }
 input:checked + .m-slider-green:before { background-color: #00e676; box-shadow: 0 0 10px #00e676; }
 
-.m-priority-wrapper { max-height: 0; opacity: 0; overflow: hidden; transition: all 0.35s ease; margin: 0 -10px; }
+.m-priority-wrapper { max-height: 0; opacity: 0; overflow: hidden; transition: max-height 0.3s ease, opacity 0.3s ease; margin: 0 -10px; }
 .m-priority-wrapper.show { max-height: 130px; opacity: 1; margin-top: 15px; padding: 0 10px; }
 
-.m-gate-wrapper { width: 100%; overflow: hidden; max-height: 0; opacity: 0; transition: all 0.35s ease; }
+/* max-height/opacity only — margin/padding apply instantly (no layout-reflow animation) */
+.m-gate-wrapper { width: 100%; overflow: hidden; max-height: 0; opacity: 0; transition: max-height 0.3s ease, opacity 0.3s ease; }
 .m-gate-wrapper.show { max-height: 100px; opacity: 1; margin-top: 5px; margin-bottom: 10px; }
 .m-gate-control { display: flex; align-items: center; gap: 12px; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.05); }
 .m-range { -webkit-appearance: none; width: 100%; height: 4px; background: #333; border-radius: 3px; outline: none; }
@@ -1981,7 +1985,7 @@ body.m-keyboard-open .m-toast-container {
     background: linear-gradient(140deg, rgba(13, 28, 45, 0.82), rgba(3, 8, 16, 0.96));
     border-color: rgba(120, 220, 255, 0.105);
     box-shadow: 0 7px 18px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.035);
-    transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+    transition: border-color 120ms ease, transform 120ms ease;
 }
 
 .m-reactor-module::after {
@@ -5445,7 +5449,13 @@ async function getMobileManifestUrl(config) {
     return getMobileLegacyManifestUrl(config);
 }
 
-async function updateLinkModalContent() {
+let _linkModalTimer = 0;
+async function updateLinkModalContent(immediate = false) {
+    if (!immediate) {
+        clearTimeout(_linkModalTimer);
+        _linkModalTimer = setTimeout(() => updateLinkModalContent(true), 120);
+        return;
+    }
     const box = document.getElementById('m-generatedUrlBox');
     if(!box) return;
     
@@ -5474,7 +5484,7 @@ async function mobileInstall() {
 }
 
 function openLinkModal() {
-    updateLinkModalContent();
+    updateLinkModalContent(true);  // bypass debounce — user is waiting for this
     document.getElementById('m-link-modal').classList.add('show');
     if(navigator.vibrate) navigator.vibrate(10);
 }
