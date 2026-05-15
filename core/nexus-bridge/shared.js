@@ -346,15 +346,113 @@ function encodeBase64Url(data) {
     return Buffer.from(String(data || '')).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
+function safeDecodeURIComponent(value) {
+    try { return decodeURIComponent(String(value || '')); } catch { return String(value || ''); }
+}
+
+function safeEncodeTorrentioConfigSegment(value) {
+    // Torrentio accepts a path segment such as:
+    // providers=...|qualityfilter=...|realdebrid=...
+    // Keep separators readable while encoding dangerous path characters.
+    return encodeURIComponent(String(value || '').trim())
+        .replace(/%7C/gi, '|')
+        .replace(/%3D/gi, '=')
+        .replace(/%2C/gi, ',')
+        .replace(/%3A/gi, ':');
+}
+
+function isTorrentioConfigSegment(value = '') {
+    const text = safeDecodeURIComponent(value).trim();
+    if (!text || /^manifest\.json$/i.test(text) || /^stream$/i.test(text)) return false;
+    return /(?:^|\|)(?:providers|qualityfilter|sort|debridoptions|realdebrid|premiumize|alldebrid|debridlink|offcloud|putio|torbox|language|limit|cachedonly)=/i.test(text)
+        || (text.includes('|') && text.includes('='));
+}
+
+function stripTorrentioDebridTokens(configText = '') {
+    return String(configText || '')
+        .split('|')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .filter((part) => !/^(?:realdebrid|torbox|premiumize|alldebrid|debridlink|offcloud|putio)=/i.test(part))
+        .join('|');
+}
+
+function upsertTorrentioConfigPart(configText = '', key, value) {
+    const wantedKey = String(key || '').trim();
+    if (!wantedKey) return String(configText || '').trim();
+    const encodedValue = String(value || '').trim();
+    const parts = String(configText || '')
+        .split('|')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .filter((part) => !part.toLowerCase().startsWith(`${wantedKey.toLowerCase()}=`));
+    if (encodedValue) parts.push(`${wantedKey}=${encodedValue}`);
+    return parts.join('|');
+}
+
+function ensureTorrentioNoDownloadLinks(configText = '') {
+    if (process.env.EXT_TORRENTIO_ALLOW_DOWNLOAD_LINKS === 'true') return configText;
+    const text = String(configText || '').trim();
+    const existing = text.split('|').find((part) => /^debridoptions=/i.test(part));
+    if (!existing) return upsertTorrentioConfigPart(text, 'debridoptions', 'nodownloadlinks');
+    const value = existing.split('=').slice(1).join('=');
+    if (/(^|,)nodownloadlinks(,|$)/i.test(value)) return text;
+    return upsertTorrentioConfigPart(text, 'debridoptions', `${value},nodownloadlinks`);
+}
+
+function buildTorrentioPipeConfig(baseConfig = '', apiKey = '') {
+    let configText = stripTorrentioDebridTokens(safeDecodeURIComponent(baseConfig || process.env.EXT_TORRENTIO_BASE_CONFIG || ''));
+    configText = ensureTorrentioNoDownloadLinks(configText);
+    configText = upsertTorrentioConfigPart(configText, 'realdebrid', encodeURIComponent(String(apiKey || '').trim()));
+    return configText;
+}
+
 function buildTorrentioBaseUrl(baseUrl, userConfig) {
     const service = userConfig?.service;
     const apiKey = getTorrentioCredential(userConfig, service);
     if (!service || !apiKey) return baseUrl;
     if (process.env.EXT_TORRENTIO_INJECT_DEBRID === 'false') return baseUrl;
 
+    // RD must use Torrentio's native pipe-style config. The previous JSON/base64
+    // injection is not the same configuration used by the standalone Torrentio addon,
+    // so Torrentio often returned only hashes/magnets and Leviathan then probed RD to 0.
+    if (service === 'rd') {
+        try {
+            const url = new URL(String(baseUrl || ''));
+            const originalSegments = url.pathname.split('/').filter(Boolean);
+            const segments = [...originalSegments];
+            while (segments.length && /^manifest\.json$/i.test(segments[segments.length - 1])) segments.pop();
+            while (segments.length && /^stream$/i.test(segments[segments.length - 1])) segments.pop();
+
+            let configIndex = -1;
+            for (let i = segments.length - 1; i >= 0; i -= 1) {
+                if (isTorrentioConfigSegment(segments[i])) { configIndex = i; break; }
+            }
+
+            const baseConfig = configIndex >= 0 ? segments[configIndex] : '';
+            const rdConfig = buildTorrentioPipeConfig(baseConfig, apiKey);
+            if (!rdConfig) return baseUrl;
+            const encodedConfig = safeEncodeTorrentioConfigSegment(rdConfig);
+
+            if (configIndex >= 0) segments[configIndex] = encodedConfig;
+            else segments.push(encodedConfig);
+
+            url.pathname = `/${segments.join('/')}`;
+            const injected = url.toString().replace(/\/+$/, '');
+            if (injected !== baseUrl) {
+                infoLog(`[TORRENTIO CONFIG] RD native config injected tokenSig=${hashConfigSignature(apiKey)} baseHadConfig=${configIndex >= 0} nodownloadlinks=${process.env.EXT_TORRENTIO_ALLOW_DOWNLOAD_LINKS === 'true' ? 'false' : 'true'}`);
+            }
+            return injected;
+        } catch {
+            const trimmed = String(baseUrl || '').replace(/\/+$/, '');
+            const rdConfig = safeEncodeTorrentioConfigSegment(buildTorrentioPipeConfig('', apiKey));
+            return rdConfig ? `${trimmed}/${rdConfig}` : baseUrl;
+        }
+    }
+
+    // Leave TorBox and other services on the old path to avoid changing TB behavior.
     const torrentioConf = {};
-    if (service === 'rd') torrentioConf.realdebrid = apiKey;
-    else if (service === 'tb') torrentioConf.torbox = apiKey;
+    if (service === 'tb') torrentioConf.torbox = apiKey;
     else return baseUrl;
 
     const encodedConf = encodeBase64Url(JSON.stringify(torrentioConf));
@@ -365,9 +463,6 @@ function buildTorrentioBaseUrl(baseUrl, userConfig) {
         const lastSegment = segments[segments.length - 1];
         const hasPreconfiguredPath = segments.length > 0 && !/^manifest\.json$/i.test(lastSegment || '') && !/^stream$/i.test(lastSegment || '');
 
-        // Non distruggere URL Torrentio/proxy già preconfigurati:
-        // spesso l'ultimo segmento contiene provider/language/quality oppure una URL upstream codificata.
-        // Prima Leviathan lo sostituiva con solo { realdebrid: key }, perdendo provider e lingua.
         if (hasPreconfiguredPath && process.env.EXT_TORRENTIO_FORCE_REWRITE_CONFIG !== 'true') return baseUrl;
 
         if (lastSegment && /^[A-Za-z0-9_-]{2,}$/.test(lastSegment)) segments[segments.length - 1] = encodedConf;
@@ -378,6 +473,34 @@ function buildTorrentioBaseUrl(baseUrl, userConfig) {
         const trimmed = String(baseUrl || '').replace(/\/+$/, '');
         return `${trimmed}/${encodedConf}`;
     }
+}
+
+function getMediaFusionCredential(userConfig, service) {
+    if (!userConfig || String(service || '').toLowerCase() !== 'rd') return null;
+    return userConfig.rd || userConfig.realdebrid || (userConfig.service === 'rd' ? userConfig.key : null) || null;
+}
+
+function buildMediaFusionBaseUrl(baseUrl, userConfig) {
+    const service = String(userConfig?.service || '').toLowerCase();
+    if (service !== 'rd') return baseUrl;
+    if (process.env.EXT_MEDIAFUSION_INJECT_DEBRID === 'false') return baseUrl;
+
+    // MediaFusion encrypts/signes its config path. Unlike Torrentio, we cannot safely
+    // synthesize a valid native Real-Debrid config segment from only the RD token.
+    // The safe path is: use a user-provided configured MediaFusion manifest/base URL
+    // when RD mode is active, then preserve MediaFusion's own playable URL verbatim.
+    const configuredRdUrl = envFirst([
+        'EXT_MEDIAFUSION_RD_URL',
+        'MEDIAFUSION_RD_URL',
+        'NEXUS_MEDIAFUSION_RD_URL'
+    ]);
+    if (configuredRdUrl) {
+        const token = getMediaFusionCredential(userConfig, service);
+        infoLog(`[MEDIAFUSION CONFIG] RD configured URL selected tokenSig=${hashConfigSignature(token || 'none')}`);
+        return configuredRdUrl;
+    }
+
+    return baseUrl;
 }
 
 function sanitizeFetchType(type, id) {
@@ -531,7 +654,7 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
 
     const text = getStreamText(stream);
     const infoHash = extractInfoHash(stream);
-    const rawUrl = stream.url || null;
+    const rawUrl = stream.url || stream.externalUrl || null;
     if (!infoHash && !rawUrl) return null;
 
     const mediaTypeNormalized = String(mediaType || '').toLowerCase();
@@ -590,7 +713,17 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
     const normalizedFileIdx = Number.isInteger(stream.fileIdx) ? stream.fileIdx : -1;
     const magnetLink = buildMagnetLink(infoHash, stream.sources, preferredTitle);
     const hasDirectUrl = typeof rawUrl === 'string' && /^https?:\/\//i.test(rawUrl);
-    const trustedDirectUrl = hasDirectUrl && addonKey === 'torrentio_mirror' && addon.trustDirectUrl !== false;
+    const addonGroup = getAddonGroup(addonKey);
+    const isTorrentioAddon = addonGroup === 'torrentio';
+    const isMediaFusionAddon = addonGroup === 'mediafusion';
+    // Torrentio and a user-configured MediaFusion addon can return resolver URLs that
+    // are already playable in Stremio. Keep those URLs untouched instead of converting
+    // them back into magnets/RD addMagnet operations.
+    const torrentioPlayableUrl = hasDirectUrl && isTorrentioAddon ? rawUrl : null;
+    const mediaFusionPlayableUrl = hasDirectUrl && isMediaFusionAddon ? rawUrl : null;
+    const trustedTorrentioDirectUrl = hasDirectUrl && isTorrentioAddon && addon.trustDirectUrl !== false;
+    const trustedMediaFusionDirectUrl = hasDirectUrl && isMediaFusionAddon && process.env.MEDIAFUSION_TRUST_NATIVE_RD_URLS !== 'false';
+    const trustedDirectUrl = trustedTorrentioDirectUrl || trustedMediaFusionDirectUrl;
     const externalCached = trustedDirectUrl;
     const externalCachedBool = externalCached ? true : null;
 
@@ -603,10 +736,14 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
         potentialPack,
         packTitle, source: originalProvider ? `${addon.name} (${originalProvider})` : addon.name,
         mediaType: String(mediaType || ''),
-        externalAddon: addonKey, externalProvider: originalProvider, externalGroup: getAddonGroup(addonKey), sourceEmoji: getAddonEmoji(addonKey),
+        externalAddon: addonKey, externalProvider: originalProvider, externalGroup: addonGroup, sourceEmoji: getAddonEmoji(addonKey),
         magnetLink, url: rawUrl, directUrl: rawUrl, externalDirectUrl: rawUrl, _externalDirectUrl: rawUrl,
+        externalPlayableUrl: torrentioPlayableUrl || mediaFusionPlayableUrl, _torrentioPlayableUrl: torrentioPlayableUrl,
+        _mediafusionPlayableUrl: mediaFusionPlayableUrl, _mediafusionPassthrough: Boolean(mediaFusionPlayableUrl),
+        _torrentioPassthrough: Boolean(torrentioPlayableUrl), _externalOriginalUrl: rawUrl,
         isCached: externalCached, cacheState: externalCached ? 'cached' : 'unknown', rdCacheState: externalCached ? 'cached' : 'unknown',
         cached_rd: externalCachedBool, _dbCachedRd: externalCachedBool, _nexusBridgeRdChecked: trustedDirectUrl, _externalRdChecked: trustedDirectUrl,
+        _mediafusionRdAuthority: Boolean(trustedMediaFusionDirectUrl), _rdProof: trustedMediaFusionDirectUrl ? 'mediafusion_passthrough_url' : undefined,
         pubDate: new Date().toISOString(), isItalian: languageInfo.isItalian, hasItalianAudio: languageInfo.hasAudioItalian,
         hasItalianSubs: languageInfo.hasSubItalian, languageInfo, techTags
     };
@@ -629,6 +766,20 @@ function mergeNormalizedStream(base, candidate) {
     winner.mainFileSize = Math.max(winner.mainFileSize || 0, loser.mainFileSize || 0);
     winner.size = winner.size || loser.size;
     winner.url = winner.url || loser.url;
+    winner.directUrl = winner.directUrl || loser.directUrl;
+    winner.externalDirectUrl = winner.externalDirectUrl || loser.externalDirectUrl;
+    winner._externalDirectUrl = winner._externalDirectUrl || loser._externalDirectUrl;
+    winner.externalPlayableUrl = winner.externalPlayableUrl || loser.externalPlayableUrl;
+    winner._torrentioPlayableUrl = winner._torrentioPlayableUrl || loser._torrentioPlayableUrl;
+    winner._mediafusionPlayableUrl = winner._mediafusionPlayableUrl || loser._mediafusionPlayableUrl;
+    winner._externalOriginalUrl = winner._externalOriginalUrl || loser._externalOriginalUrl;
+    winner._torrentioPassthrough = winner._torrentioPassthrough || loser._torrentioPassthrough;
+    winner._mediafusionPassthrough = winner._mediafusionPassthrough || loser._mediafusionPassthrough;
+    winner._mediafusionRdAuthority = winner._mediafusionRdAuthority || loser._mediafusionRdAuthority;
+    winner._torrentioRdAuthority = winner._torrentioRdAuthority || loser._torrentioRdAuthority;
+    winner._torrentioCached = winner._torrentioCached || loser._torrentioCached;
+    winner._torrentioRdDirect = winner._torrentioRdDirect || loser._torrentioRdDirect;
+    winner._rdProof = winner._rdProof || loser._rdProof;
     winner.magnetLink = winner.magnetLink || loser.magnetLink;
     winner.externalProvider = winner.externalProvider || loser.externalProvider;
     winner.source = winner.source || loser.source;
@@ -739,7 +890,9 @@ async function fetchConfiguredExternalAddon(addonKey, type, id, options = {}) {
 
     const task = fetchLimiter(async () => {
         let baseUrl = normalizeAddonUrl(addon.baseUrl);
-        if (getAddonGroup(addonKey) === 'torrentio') baseUrl = buildTorrentioBaseUrl(baseUrl, options.userConfig || null);
+        const addonGroup = getAddonGroup(addonKey);
+        if (addonGroup === 'torrentio') baseUrl = buildTorrentioBaseUrl(baseUrl, options.userConfig || null);
+        if (addonGroup === 'mediafusion') baseUrl = buildMediaFusionBaseUrl(baseUrl, options.userConfig || null);
         if (!baseUrl) return [];
 
         const fetchType = sanitizeFetchType(type, id);
@@ -850,3 +1003,4 @@ module.exports = {
     countRealResults,
     fetchConfiguredExternalAddon
 };
+
