@@ -4564,18 +4564,25 @@ function installMobileVisibilityGuard() {
 }
 
 function installMobileInputPerformanceGuard() {
+    // Attiva la modalità typing solo sui veri campi di testo.
+    // Le checkbox/switch emettono comunque un evento input: non devono mai
+    // aggiungere m-typing, altrimenti la pagina riapplica fadeFast e lampeggia.
+    const isTextInput = (el) => !!el?.matches?.(
+        'input:not([type]), input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], input[type="tel"], input[type="number"], textarea, [contenteditable="true"]'
+    );
+
     const markTyping = () => {
         document.body.classList.add('m-typing');
         clearTimeout(MOBILE_PERF.inputIdleTimer);
         MOBILE_PERF.inputIdleTimer = setTimeout(() => {
-            if (!document.activeElement?.matches?.('input, textarea')) {
+            if (!isTextInput(document.activeElement)) {
                 document.body.classList.remove('m-typing');
             }
         }, MOBILE_PERF.inputIdleMs);
     };
 
     document.addEventListener('input', (event) => {
-        if (!event.target?.matches?.('input, textarea')) return;
+        if (!isTextInput(event.target)) return;
         markTyping();
     }, { passive: true });
 
