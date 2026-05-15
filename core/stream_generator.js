@@ -219,6 +219,43 @@ function isKnownRdUnavailableCandidate(item = {}) {
     return false;
 }
 
+function getRdVerifiedDbFallbackLimit(filters = {}, fallback = CONFIG.MAX_RESULTS || 12) {
+    const hardMax = Math.max(1, Math.min(CONFIG.MAX_RESULTS || 12, 20));
+    const configured = filters.rdVerifiedDbFallbackMaxResults ?? process.env.RD_VERIFIED_DB_FALLBACK_MAX_RESULTS ?? String(fallback || hardMax);
+    return parseBoundedInt(configured, hardMax, 1, hardMax);
+}
+
+function isRdVerifiedDbFallbackCandidate(item = {}) {
+    if (!item || !getCandidateInfoHash(item)) return false;
+    if (isKnownRdUnavailableCandidate(item)) return false;
+
+    const group = String(item?._sourceGroup || item?.sourceGroup || '').toLowerCase();
+    const dbBacked = Boolean(
+        isMovieDbPrimaryCandidate(item) ||
+        item?._localDb === true ||
+        item?._remoteDb === true ||
+        item?._myDb === true ||
+        item?._dbPrimary === true ||
+        group === 'db' ||
+        group === 'remote_db' ||
+        group === 'local_db' ||
+        group === 'external_snapshot' ||
+        item?._externalSnapshot === true ||
+        item?._fromExternalSnapshot === true
+    );
+    if (!dbBacked) return false;
+
+    const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || item?.rd_cache_state || '').toLowerCase().trim();
+    return Boolean(
+        item?._dbCachedRd === true ||
+        item?.cached_rd === true ||
+        state === 'cached' ||
+        state === 'rd_cached' ||
+        state === 'instant' ||
+        state === 'instant_available'
+    );
+}
+
 function base64UrlEncodeText(value = '') {
     const text = String(value || '').trim();
     if (!text) return '';
@@ -3609,10 +3646,10 @@ ${note}`;
     return stream;
 }
 
-function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = false) {
+function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = false, options = {}) {
     const service = getNormalizedDebridService(config);
     if (!service) return null;
-    if (service === 'rd' && !shouldAllowRdLazyStreams(config?.filters || {})) return null;
+    if (service === 'rd' && !options?.allowRdVerifiedDbFallback && !shouldAllowRdLazyStreams(config?.filters || {})) return null;
     const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
     const isPack = isSeries && isConfidentSeasonPackItem(item, meta, '');
     const runtimeItem = createRuntimeItem(item, meta);
@@ -3687,6 +3724,49 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
         isLazy,
         isPack
     });
+}
+
+function buildRdVerifiedDbFallbackStreams({
+    finalRanked = [],
+    resolvedInstant = [],
+    existingStreams = [],
+    rdDirectOnly = false,
+    filters = {},
+    resolverConfig = {},
+    meta = {},
+    reqHost = '',
+    userConfStr = ''
+} = {}) {
+    if (!rdDirectOnly || (Array.isArray(resolvedInstant) && resolvedInstant.length > 0)) return [];
+    if (getNormalizedDebridService(resolverConfig) !== 'rd') return [];
+
+    const target = getRdVerifiedDbFallbackLimit(filters, CONFIG.MAX_RESULTS || 12);
+    const occupiedHashes = collectExistingTorrentHashes([], [
+        ...(Array.isArray(resolvedInstant) ? resolvedInstant : []),
+        ...(Array.isArray(existingStreams) ? existingStreams : [])
+    ]);
+    const seen = new Set(occupiedHashes);
+    const candidates = [];
+
+    for (const item of Array.isArray(finalRanked) ? finalRanked : []) {
+        if (!isRdVerifiedDbFallbackCandidate(item)) continue;
+        const hash = String(getCandidateInfoHash(item) || '').toLowerCase();
+        if (!hash || seen.has(hash)) continue;
+        seen.add(hash);
+        candidates.push(item);
+        if (candidates.length >= target) break;
+    }
+
+    return candidates
+        .map((item) => generateLazyStream(item, resolverConfig, meta, reqHost, userConfStr, true, { allowRdVerifiedDbFallback: true }))
+        .filter(Boolean)
+        .map((stream) => ({
+            ...stream,
+            behaviorHints: {
+                ...(stream.behaviorHints || {}),
+                rdVerifiedDbFallback: true
+            }
+        }));
 }
 
 function stripMoviePackLabel(title) {
@@ -4970,11 +5050,27 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
                   .map((item) => generateRdDownloadToDebridStream(item, resolverConfig, meta, reqHost, userConfStr))
                   .filter(Boolean);
           }
-          debridStreams = [...resolvedInstant, ...lazyStreams, ...rdDownloadFallbackStreams];
+          const rdVerifiedDbFallbackStreams = rdDirectOnly
+              ? buildRdVerifiedDbFallbackStreams({
+                  finalRanked: rdAuthorityRanked,
+                  resolvedInstant,
+                  existingStreams: rdDownloadFallbackStreams,
+                  rdDirectOnly,
+                  filters,
+                  resolverConfig,
+                  meta,
+                  reqHost,
+                  userConfStr
+              })
+              : [];
+          if (rdVerifiedDbFallbackStreams.length > 0) {
+              logger.info(`[RD DB FALLBACK] verified DB fallback streams=${rdVerifiedDbFallbackStreams.length} reason=rd_direct_zero_live`);
+          }
+          debridStreams = [...resolvedInstant, ...lazyStreams, ...rdDownloadFallbackStreams, ...rdVerifiedDbFallbackStreams];
           if (rdDirectOnly) {
               const rdAuthorityTotal = finalRanked.filter(isTorrentioRdAuthorityCandidate).length;
               const rdAuthorityAttempted = immediateCandidates.filter(isTorrentioRdAuthorityCandidate).length;
-              logger.info(`[RD DIRECT] lazy disabled | candidates=${finalRanked.length} resolved=${resolvedInstant.length} attempted=${TOP_LIMIT} downloadFallback=${rdDownloadFallbackStreams.length} suppressed=${Math.max(0, finalRanked.length - TOP_LIMIT)} torrentioAuthority=${rdAuthorityTotal}/${rdAuthorityAttempted}`);
+              logger.info(`[RD DIRECT] lazy disabled | candidates=${finalRanked.length} resolved=${resolvedInstant.length} attempted=${TOP_LIMIT} downloadFallback=${rdDownloadFallbackStreams.length} dbVerifiedFallback=${rdVerifiedDbFallbackStreams.length} suppressed=${Math.max(0, finalRanked.length - TOP_LIMIT)} torrentioAuthority=${rdAuthorityTotal}/${rdAuthorityAttempted}`);
           } else {
               warmupLazyStreamsInBackground(resolverConfig, lazyCandidates, meta);
           }
@@ -5144,5 +5240,22 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   }, boundedSharedPromiseOptions(STREAM_INFLIGHT_MAX_ENTRIES, 'stream.inflight.evicted'));
 }
 
-module.exports = { generateStream, getMetadata, resolveDebridLink, resolveLazyStreamData, RD, TB, buildExternalAddonRequestIds, buildExternalAddonRequestId, normalizeExternalCandidateForPipeline, getExternalSourceLabel, protectTorrentioExactMovieMinimum, protectTorrentioExactSeriesMinimum, protectTorrentioExactMinimum };
-
+module.exports = {
+    generateStream,
+    getMetadata,
+    resolveDebridLink,
+    resolveLazyStreamData,
+    RD,
+    TB,
+    buildExternalAddonRequestIds,
+    buildExternalAddonRequestId,
+    normalizeExternalCandidateForPipeline,
+    getExternalSourceLabel,
+    protectTorrentioExactMovieMinimum,
+    protectTorrentioExactSeriesMinimum,
+    protectTorrentioExactMinimum,
+    __private: {
+        buildRdVerifiedDbFallbackStreams,
+        isRdVerifiedDbFallbackCandidate
+    }
+};
