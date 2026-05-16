@@ -62,6 +62,11 @@ function createAppServices({
         if (!['rd', 'tb'].includes(normalizedService)) return false;
 
         const isTb = normalizedService === 'tb';
+        const scopedIdentity = meta?.imdb_id ? {
+            imdb_id: meta.imdb_id,
+            imdb_season: Number(meta?.season) > 0 ? Number(meta.season) : null,
+            imdb_episode: Number(meta?.episode) > 0 ? Number(meta.episode) : null
+        } : {};
         const updateFn = isTb ? dbHelper?.updateTbCacheStatus : dbHelper?.updateRdCacheStatus;
         if (!dbHelper || typeof updateFn !== 'function') return false;
 
@@ -114,7 +119,8 @@ function createAppServices({
                     tb_file_id: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
                     tb_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
                     failures: 0,
-                    permanent: true
+                    permanent: true,
+                    ...scopedIdentity
                 }
                 : {
                     hash: item.hash,
@@ -123,7 +129,8 @@ function createAppServices({
                     rd_file_index: Number.isInteger(parsedFileIndex) && parsedFileIndex >= 0 ? parsedFileIndex : null,
                     rd_file_size: Number.isFinite(parsedFileSize) && parsedFileSize > 0 ? parsedFileSize : null,
                     failures: 0,
-                    permanent: true
+                    permanent: true,
+                    ...scopedIdentity
                 }
             ]);
             if (updated > 0) {
@@ -149,6 +156,11 @@ function createAppServices({
         if (!['rd', 'tb'].includes(normalizedService)) return false;
 
         const isTb = normalizedService === 'tb';
+        const scopedIdentity = meta?.imdb_id ? {
+            imdb_id: meta.imdb_id,
+            imdb_season: Number(meta?.season) > 0 ? Number(meta.season) : null,
+            imdb_episode: Number(meta?.episode) > 0 ? Number(meta.episode) : null
+        } : {};
         const updateFn = isTb ? dbHelper?.updateTbCacheStatus : dbHelper?.updateRdCacheStatus;
         if (!dbHelper || typeof updateFn !== 'function') return false;
 
@@ -157,14 +169,16 @@ function createAppServices({
                 ? {
                     hash: item.hash,
                     cached: false,
-                    failures: 1
+                    failures: 1,
+                    ...scopedIdentity
                 }
                 : {
                     hash: item.hash,
                     state: 'likely_uncached',
                     cached: null,
                     failures: Math.max(1, Number(item?._dbFailures || 0) + 1),
-                    next_hours: 4
+                    next_hours: 4,
+                    ...scopedIdentity
                 }
             ]);
 
