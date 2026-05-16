@@ -95,6 +95,7 @@ function normalizeWebExtractorLabel(value) {
 
     if (/^(unknown|unknow|n\/a|null|undefined)$/i.test(raw)) return '';
     if (/vix(?:cloud|src)?/i.test(raw)) return 'VixCloud';
+    if (/vidx\s*go|vidxgo/i.test(raw)) return 'VidxGo';
     if (/sweet\s*pixel|sweetpixel/i.test(raw)) return 'SweetPixel';
     if (/cccdn/i.test(raw)) return 'CCCDN';
     if (/mixdrop|m1xdrop|mxcontent/i.test(raw)) return 'MixDrop';
@@ -125,7 +126,7 @@ function normalizeWebExtractorLabel(value) {
         .trim();
 
     // Only trust free-form labels when they look like a hoster/extractor, not a media title.
-    return /^(?:web|hls|loadm|vixcloud|sweetpixel|srv12|cccdn|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|direct)$/i.test(cleaned)
+    return /^(?:web|hls|loadm|vixcloud|vidxgo|sweetpixel|srv12|cccdn|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|direct)$/i.test(cleaned)
         ? cleaned
         : '';
 }
@@ -182,7 +183,7 @@ function inferWebQuality(stream, sourceName) {
         if (normalized) return normalized;
     }
 
-    const textToCheck = `${stream?.title || ''} ${stream?.name || ''} ${stream?.filename || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|STREAMINGCOMMUNITY|CINEMACITY|LEVIATHAN|VIX|GUARDAFLIX|ANIMEWORLD|ANIMEUNITY|ANIMESATURN/g, '');
+    const textToCheck = `${stream?.title || ''} ${stream?.name || ''} ${stream?.filename || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|GUARDASERIETV|STREAMINGCOMMUNITY|CINEMACITY|LEVIATHAN|VIX|GUARDAFLIX|ANIMEWORLD|ANIMEUNITY|ANIMESATURN/g, '');
     if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) return '4K';
     if (/\b(1440P|2K|QHD)\b/.test(textToCheck)) return '1440p';
     if (/\b(1080P|FHD|FULLHD)\b/.test(textToCheck)) return '1080p';
