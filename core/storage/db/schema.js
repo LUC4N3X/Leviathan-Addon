@@ -173,6 +173,23 @@ async function ensureDatabaseOptimizations(pool) {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`,
+    `CREATE TABLE IF NOT EXISTS debrid_resolved_link_cache (
+      cache_key TEXT PRIMARY KEY,
+      service TEXT NOT NULL,
+      token_fp TEXT,
+      torrent_id TEXT,
+      file_id INTEGER,
+      info_hash_norm TEXT,
+      media_id TEXT,
+      url TEXT NOT NULL,
+      filename TEXT,
+      file_size BIGINT,
+      payload_json JSONB,
+      expires_at TIMESTAMPTZ NOT NULL,
+      hit_count BIGINT DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
     `CREATE TABLE IF NOT EXISTS torrent_items (
       info_hash TEXT NOT NULL,
       info_hash_norm TEXT PRIMARY KEY,
@@ -474,6 +491,20 @@ async function ensureDatabaseOptimizations(pool) {
     `ALTER TABLE debrid_authority ADD COLUMN IF NOT EXISTS service_torrent_id TEXT`,
     `ALTER TABLE debrid_authority ADD COLUMN IF NOT EXISTS payload_json JSONB`,
     `ALTER TABLE debrid_check_jobs ADD COLUMN IF NOT EXISTS locked_by TEXT`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS service TEXT`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS token_fp TEXT`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS torrent_id TEXT`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS file_id INTEGER`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS media_id TEXT`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS url TEXT`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS filename TEXT`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS file_size BIGINT`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS payload_json JSONB`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS hit_count BIGINT DEFAULT 0`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
+    `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
 
     `UPDATE torrents SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE torrents SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
@@ -1139,6 +1170,9 @@ async function ensureDatabaseOptimizations(pool) {
     `CREATE INDEX IF NOT EXISTS idx_debrid_authority_media ON debrid_authority (service, imdb_id, season, episode, state, expires_at DESC NULLS LAST)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_authority_due ON debrid_authority (service, next_check_at NULLS FIRST, failure_count ASC)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_authority_state ON debrid_authority (service, state, checked_at DESC NULLS LAST)`,
+    `CREATE INDEX IF NOT EXISTS idx_debrid_resolved_link_expires ON debrid_resolved_link_cache (expires_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_debrid_resolved_link_service_hash ON debrid_resolved_link_cache (service, token_fp, info_hash_norm, file_id, expires_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_debrid_resolved_link_saved ON debrid_resolved_link_cache (service, token_fp, torrent_id, file_id, expires_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_check_jobs_due ON debrid_check_jobs (service, status, priority ASC, run_after ASC)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_check_jobs_hash ON debrid_check_jobs (service, info_hash_norm, file_index_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_check_markers_lookup ON debrid_cache_check_markers (service, user_hash, media_id, expires_at)`,
@@ -1200,6 +1234,7 @@ async function ensureDatabaseOptimizations(pool) {
     await pool.query(`DELETE FROM shared_stream_cache WHERE stale_until IS NOT NULL AND stale_until < NOW()`);
     await pool.query(`DELETE FROM external_stream_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
     await pool.query(`DELETE FROM debrid_availability_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
+    await pool.query(`DELETE FROM debrid_resolved_link_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
     await pool.query(`DELETE FROM debrid_cache_check_markers WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
   } catch (error) {
     console.warn(`⚠️ DB optimization skipped: ${error.message}`);
