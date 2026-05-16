@@ -2717,6 +2717,555 @@
         }
     </style>
 
+
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style id="saas-reskin">
+/* ============================================================
+   LEVIATHAN — SaaS / Dev-Tool reskin (override layer)
+   layout invariato, solo theming
+   ============================================================ */
+:root{
+  /* Leviathan x mediaflow — abisso LUMINOSO: cyan brillante + indigo/violet + oro */
+  --primary:#26dffb;
+  --primary-dim:rgba(38,223,251,.16);
+  --indigo:#6d70f5;
+  --violet:#9b6cff;
+  --secondary:#9b6cff;
+  --accent:#7df0ff;
+  --gold:#ffce4d;
+  --gold-dim:rgba(255,206,77,.18);
+  --bg-deep:#070c1d;
+  --abyss:#070b1a;
+  --text-main:#eaf6ff;
+  --text-dim:#a3b6dd;
+  --error:#fb6573;
+  --success:#34e6ad;
+  --glow-strong:0 0 0 1px rgba(38,223,251,.30);
+  --glow-intense:0 10px 34px rgba(38,223,251,.30);
+  --surface:rgba(22,30,58,.62);
+  --surface-2:rgba(28,37,68,.56);
+  --line:rgba(160,190,255,.16);
+  --line-soft:rgba(160,190,255,.10);
+  --radius:18px;
+  --shadow-soft:0 1px 0 rgba(190,215,255,.07) inset,0 20px 50px -26px rgba(0,0,0,.62);
+  /* gradient firma: cyan -> indigo -> violet -> magenta */
+  --grad:linear-gradient(135deg,#26dffb 0%,#6d70f5 42%,#9b6cff 78%,#c98bff 112%);
+  --grad-aurora:linear-gradient(120deg,#2bd6f5 0%,#6366f1 38%,#8b5cf6 64%,#f5c542 112%);
+  --grad-gold:linear-gradient(135deg,#ffe08a 0%,#f5c542 50%,#d99a2b 100%);
+}
+
+html{ background:#070c1d!important; }
+body{ background:transparent!important; background-color:transparent!important; font-family:'Outfit',system-ui,sans-serif!important; }
+
+/* --- mare animato: portato DAVANTI agli overlay scuri originali + schiarito --- */
+#deepSeaCanvas{
+  z-index:-2!important;
+  opacity:1!important;
+  mix-blend-mode:normal!important;
+  filter:saturate(1.3) brightness(1.32) contrast(1.05)!important;
+  display:block!important;
+}
+.ocean-bg{
+  z-index:-4!important;
+  background:
+    radial-gradient(760px 560px at 16% 4%, rgba(38,223,251,.17), transparent 64%),
+    radial-gradient(720px 600px at 86% 10%, rgba(155,108,255,.17), transparent 66%),
+    radial-gradient(820px 620px at 54% 60%, rgba(109,112,245,.13), transparent 64%),
+    radial-gradient(900px 700px at 50% 114%, rgba(201,139,255,.12), transparent 62%)!important;
+}
+@media (min-width:769px){ .ocean-bg{ background:
+    radial-gradient(760px 560px at 16% 4%, rgba(38,223,251,.17), transparent 64%),
+    radial-gradient(720px 600px at 86% 10%, rgba(155,108,255,.17), transparent 66%),
+    radial-gradient(820px 620px at 54% 60%, rgba(109,112,245,.13), transparent 64%),
+    radial-gradient(900px 700px at 50% 114%, rgba(201,139,255,.12), transparent 62%)!important; } }
+/* via la vignette/colonne nere fisse che appiattivano il mare */
+.ocean-bg::before{ opacity:0!important; background:none!important; }
+.ocean-bg::after{ opacity:.16!important; }
+.particles{ z-index:-1!important; }
+.particles .particle{
+  box-shadow:0 0 7px rgba(139,92,246,.4)!important;
+  background:radial-gradient(circle,#67e8f9 12%,rgba(139,92,246,.5) 45%,transparent 74%)!important;
+}
+body::after{
+  content:''; position:fixed; inset:0; z-index:-3; pointer-events:none;
+  background-image:linear-gradient(rgba(255,255,255,.022) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(255,255,255,.022) 1px,transparent 1px);
+  background-size:46px 46px;
+  mask-image:radial-gradient(circle at 50% 30%,#000 0%,transparent 78%);
+}
+
+/* --- typography --- */
+.brand-title{
+  font-family:'Plus Jakarta Sans',sans-serif!important; font-weight:800!important;
+  font-size:5.4rem!important; letter-spacing:-3px!important; line-height:.95!important;
+  background:linear-gradient(135deg,#ffffff 0%,#67e8f9 24%,#6366f1 58%,#a855f7 88%,#c084fc 100%)!important;
+  background-size:200% 200%!important;
+  -webkit-background-clip:text!important;
+  background-clip:text!important; -webkit-text-fill-color:transparent!important;
+  text-shadow:none!important;
+  animation:levTitle 9s ease-in-out infinite!important;
+  filter:drop-shadow(0 3px 18px rgba(43,214,245,.32)) drop-shadow(0 6px 26px rgba(139,92,246,.3))!important;
+}
+@keyframes levTitle{ 0%,100%{background-position:0% 50%} 50%{background-position:100% 50%} }
+.brand-subtitle{
+  font-family:'Plus Jakarta Sans',sans-serif!important; color:#9bb8ff!important;
+  letter-spacing:6px!important; font-weight:600!important; font-size:.92rem!important;
+  text-shadow:0 0 14px rgba(139,92,246,.4)!important;
+}
+.brand-subtitle::before,.brand-subtitle::after{
+  background:linear-gradient(90deg,transparent,#8b5cf6)!important; box-shadow:none!important; width:34px!important;
+}
+.logo-desc{ color:var(--text-dim)!important; text-shadow:none!important; opacity:.85!important; font-size:1.02rem!important; }
+.panel-title,.section-header,.unit-title,.modal-title,.spectrum-header,.aux-header,.preview-header,.flux-title,.ocean-strip-head{
+  font-family:'Plus Jakarta Sans',sans-serif!important; text-shadow:none!important;
+}
+.panel-title{ letter-spacing:-.2px!important; font-weight:700!important; text-transform:none!important; font-size:1.5rem!important; }
+.section-header{
+  border-left:none!important; padding-left:18px!important; position:relative!important;
+  color:#cfe3ff!important; background:none!important;
+  -webkit-text-fill-color:#cfe3ff!important; text-shadow:0 0 14px rgba(38,223,251,.25)!important;
+}
+.section-header::before{
+  content:''!important; position:absolute!important; left:0; top:2px; bottom:2px; width:4px;
+  border-radius:3px!important;
+  background:linear-gradient(180deg,#26dffb,#6d70f5 55%,#9b6cff)!important;
+  box-shadow:0 0 12px rgba(38,223,251,.55)!important;
+}
+
+/* --- logo: alone soft, niente neon --- */
+.logo-container{ animation:none!important; }
+.logo-container::before{
+  background:radial-gradient(circle at 50% 40%,rgba(36,38,60,.95),rgba(14,15,26,.96))!important;
+  border:1px solid var(--line)!important;
+  box-shadow:0 18px 50px -18px rgba(0,0,0,.8),inset 0 0 40px rgba(39,211,245,.10)!important;
+}
+.logo-container::after{
+  background:radial-gradient(circle,rgba(39,211,245,.22),rgba(245,197,66,.10) 45%,transparent 72%)!important;
+  filter:blur(26px)!important;
+}
+.logo-image{ animation:none!important; filter:drop-shadow(0 14px 26px rgba(0,0,0,.5))!important; transform:translateY(6px) scale(1.06)!important; }
+.logo-particle{ display:none!important; }
+
+.version-badge{
+  display:inline-flex!important; align-items:center!important; gap:7px!important;
+  padding:6px 16px!important; margin:0!important;
+  background:linear-gradient(180deg,rgba(38,223,251,.16),rgba(109,112,245,.10))!important;
+  border:0!important; box-shadow:inset 0 0 0 1px rgba(38,223,251,.4),0 6px 18px -8px rgba(38,223,251,.5)!important;
+  color:#cdeeff!important; animation:none!important;
+  font-family:'Plus Jakarta Sans',sans-serif!important; font-weight:800!important;
+  font-size:.78rem!important; letter-spacing:.6px!important; border-radius:999px!important; backdrop-filter:blur(8px);
+}
+.version-badge::before{ display:none!important; }
+.lev-hero-meta{
+  display:flex!important; align-items:center!important; justify-content:center!important;
+  gap:12px!important; margin-top:18px!important; flex-wrap:wrap!important;
+}
+.lev-status{
+  display:inline-flex!important; align-items:center!important; gap:8px!important;
+  padding:6px 16px!important; border-radius:999px!important;
+  font-family:'Plus Jakarta Sans',sans-serif!important; font-weight:700!important;
+  font-size:.74rem!important; letter-spacing:1.4px!important; text-transform:uppercase!important;
+  color:#a7f3d6!important;
+  background:linear-gradient(180deg,rgba(52,230,173,.15),rgba(52,230,173,.06))!important;
+  box-shadow:inset 0 0 0 1px rgba(52,230,173,.34)!important; backdrop-filter:blur(8px);
+}
+.lev-status i{
+  width:7px!important; height:7px!important; border-radius:50%!important; background:#34e6ad!important;
+  box-shadow:0 0 0 0 rgba(52,230,173,.7)!important; animation:levBeat 2.4s ease-out infinite!important;
+}
+@keyframes levBeat{
+  0%{ box-shadow:0 0 0 0 rgba(52,230,173,.55); }
+  70%{ box-shadow:0 0 0 8px rgba(52,230,173,0); }
+  100%{ box-shadow:0 0 0 0 rgba(52,230,173,0); }
+}
+
+/* --- glass panels: soft glassmorphism --- */
+.glass-panel{
+  background:var(--surface)!important;
+  border:1px solid var(--line)!important;
+  border-radius:24px!important;
+  box-shadow:var(--shadow-soft)!important;
+  backdrop-filter:blur(20px) saturate(140%)!important;
+  -webkit-backdrop-filter:blur(20px) saturate(140%)!important;
+  animation:saasIn .7s cubic-bezier(.22,1,.36,1) both!important;
+}
+@keyframes saasIn{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}
+.glass-panel::before{
+  background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px)!important;
+  background-size:44px 44px!important; opacity:.4!important;
+}
+.panel-header{ border-bottom:1px solid var(--line)!important; }
+
+/* --- generic cards --- */
+.info-card,.aux-card,.hub-card,.cmd-card,.kofi-card,.rate-card,.faq-item,
+.cine-card,.aio-card,.module-box,.filter-unit,.ocean-metric,.skin-selector-container,
+.spectrum-container,.filters-container,.sc-quality-container{
+  background:var(--surface-2)!important;
+  border:1px solid var(--line)!important;
+  border-radius:16px!important;
+  box-shadow:none!important;
+  transition:transform .25s cubic-bezier(.22,1,.36,1),border-color .25s,background .25s!important;
+}
+.info-card:hover,.aux-card:hover,.hub-card:hover,.cmd-card:hover,.kofi-card:hover,
+.rate-card:hover,.faq-item:hover{
+  background:rgba(40,43,66,.6)!important;
+  border-color:rgba(39,211,245,.32)!important;
+  transform:translateY(-3px)!important;
+  box-shadow:0 18px 40px -22px rgba(39,211,245,.4)!important;
+}
+.info-icon,.aux-icon,.kofi-icon,.skin-icon,.trigger-icon{ filter:none!important; color:var(--primary)!important; }
+.aux-card::before{ background:var(--line)!important; }
+.aux-card.active{ border-color:rgba(39,211,245,.38)!important; }
+.aux-card.active::before{ background:var(--grad)!important; box-shadow:none!important; }
+.aux-card.active .aux-icon{ color:var(--primary)!important; text-shadow:none!important; }
+
+/* ============================================================
+   AUX CARDS premium — Vercel (shadow-as-border, stack ombre)
+   + Apple (geometria pulita, gerarchia, respiro)
+   ============================================================ */
+.aux-grid{ gap:18px!important; }
+.aux-card{
+  background:
+    radial-gradient(120% 70% at 50% -8%,rgba(150,170,255,.07),transparent 64%),
+    linear-gradient(180deg,rgba(28,37,68,.6),rgba(18,25,50,.64))!important;
+  border:0!important; clip-path:none!important; border-radius:18px!important;
+  padding:22px 22px 20px!important;
+  box-shadow:
+    inset 0 0 0 1px rgba(150,170,255,.10),
+    inset 0 1px 0 rgba(190,205,255,.06),
+    0 2px 6px -2px rgba(0,0,0,.5),
+    0 20px 44px -28px rgba(0,0,0,.7)!important;
+  transition:transform .32s cubic-bezier(.22,1,.36,1),box-shadow .32s,background .32s!important;
+  overflow:hidden!important;
+}
+/* barra accento in cima — sottile da idle, aurora viva da attiva */
+.aux-card::before{
+  content:''!important; position:absolute!important; top:0; left:0; right:0; height:2px!important;
+  background:rgba(150,170,255,.16)!important; box-shadow:none!important; transition:.32s!important; opacity:.7;
+}
+.aux-card:hover{
+  transform:translateY(-4px)!important;
+  background:
+    radial-gradient(120% 70% at 50% -8%,rgba(150,170,255,.10),transparent 64%),
+    linear-gradient(180deg,rgba(34,44,80,.66),rgba(22,30,58,.68))!important;
+  box-shadow:
+    inset 0 0 0 1px rgba(150,170,255,.16),
+    inset 0 1px 0 rgba(200,210,255,.08),
+    0 4px 10px -3px rgba(0,0,0,.5),
+    0 30px 60px -28px rgba(99,102,241,.5)!important;
+}
+
+/* icona come chip in vetro (look dashboard moderno) */
+.aux-card .aux-icon{
+  width:36px!important; height:36px!important; margin-right:13px!important;
+  display:inline-flex!important; align-items:center!important; justify-content:center!important;
+  font-size:1rem!important; border-radius:11px!important;
+  background:rgba(150,170,255,.08)!important;
+  box-shadow:inset 0 0 0 1px rgba(150,170,255,.14)!important;
+  color:#aebdff!important; text-shadow:none!important; transition:.32s!important; flex-shrink:0!important;
+}
+.aux-header{
+  font-family:'Plus Jakarta Sans',sans-serif!important; text-transform:none!important;
+  font-size:1rem!important; font-weight:700!important; letter-spacing:-.2px!important;
+  color:#eaf0ff!important; margin-bottom:8px!important; align-items:center!important;
+}
+.aux-desc{
+  font-size:.82rem!important; color:var(--text-dim)!important; line-height:1.5!important;
+  margin-bottom:18px!important; letter-spacing:.1px!important;
+}
+.aux-desc strong{ color:#cdd8ff!important; font-weight:700!important; }
+
+/* accento PER TIPO (Apple: un colore, deciso) */
+#card_audio{ --c:#2bd6f5; --crgb:43,214,245; }
+#card_source_mode{ --c:#6366f1; --crgb:99,102,241; }
+.aux-card.aio-card{ --c:#8b5cf6; --crgb:139,92,246; }
+.aux-card.cine-card{ --c:#f5c542; --crgb:245,197,66; }
+
+.aux-card:hover::before,
+.aux-card.active::before{
+  background:linear-gradient(90deg,transparent,var(--c,#6366f1) 18%,var(--c,#6366f1) 82%,transparent)!important;
+  box-shadow:0 0 12px rgba(var(--crgb,99,102,241),.6)!important; opacity:1!important;
+}
+.aux-card:hover .aux-icon{
+  color:#fff!important;
+  background:rgba(var(--crgb,99,102,241),.16)!important;
+  box-shadow:inset 0 0 0 1px rgba(var(--crgb,99,102,241),.4),0 0 16px -4px rgba(var(--crgb,99,102,241),.5)!important;
+}
+.aux-card.active{
+  background:
+    radial-gradient(130% 90% at 50% 0%,rgba(var(--crgb,99,102,241),.16),transparent 60%),
+    linear-gradient(180deg,rgba(32,42,76,.68),rgba(20,28,54,.7))!important;
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--crgb,99,102,241),.42),
+    inset 0 1px 0 rgba(200,210,255,.10),
+    0 2px 6px -2px rgba(0,0,0,.5),
+    0 26px 52px -26px rgba(var(--crgb,99,102,241),.55)!important;
+}
+.aux-card.active .aux-icon{
+  color:#fff!important;
+  background:rgba(var(--crgb,99,102,241),.20)!important;
+  box-shadow:inset 0 0 0 1px rgba(var(--crgb,99,102,241),.5),0 0 18px -3px rgba(var(--crgb,99,102,241),.6)!important;
+  text-shadow:none!important;
+}
+.aux-card.active .aux-header{ color:#fff!important; }
+
+/* --- service tabs: semplice ma bello --- */
+.service-tabs{
+  background:rgba(22,30,56,.5)!important;
+  box-shadow:inset 0 0 0 1px rgba(150,170,255,.08)!important;
+  border:0!important; border-radius:16px!important; padding:6px!important;
+}
+.service-tab{
+  border-radius:11px!important; font-family:'Plus Jakarta Sans',sans-serif!important;
+  border:0!important; position:relative!important; color:var(--text-dim)!important;
+  transition:background .26s ease,color .26s ease,box-shadow .26s ease!important;
+}
+.service-tab:hover{ background:rgba(150,170,255,.06)!important; color:var(--text-main)!important; transform:none!important; }
+.service-tab:hover .tab-icon{ filter:none!important; transform:none!important; }
+
+.service-tab.active,
+.service-tab.p2p-active{
+  color:#eef3ff!important;
+  background:linear-gradient(180deg,rgba(99,102,241,.20),rgba(43,214,245,.10))!important;
+  box-shadow:inset 0 0 0 1px rgba(124,140,255,.42),0 8px 22px -14px rgba(99,102,241,.6)!important;
+}
+.service-tab.active::before,.service-tab.p2p-active::before{ content:none!important; }
+.service-tab.active::after,.service-tab.p2p-active::after{ content:none!important; }
+.service-tab.active .tab-name,
+.service-tab.p2p-active .tab-name{ color:#eef3ff!important; font-weight:700!important; }
+.service-tab.active .tab-icon,
+.service-tab.p2p-active .tab-icon{ color:#bfe9ff!important; filter:none!important; transform:none!important; }
+
+/* --- inputs --- */
+.custom-input,.mf-input,.flux-input{
+  background:rgba(15,17,28,.7)!important;
+  border:1px solid var(--line)!important;
+  border-radius:12px!important;
+  color:var(--text-main)!important;
+  font-family:'Outfit',sans-serif!important;
+  box-shadow:none!important;
+  transition:border-color .2s,box-shadow .2s!important;
+}
+.custom-input::placeholder{ color:rgba(139,143,168,.5)!important; letter-spacing:.3px!important; }
+.custom-input:focus,.custom-input:not(:placeholder-shown),.mf-input:focus{
+  border-color:rgba(39,211,245,.55)!important;
+  box-shadow:0 0 0 4px rgba(39,211,245,.12)!important;
+  color:var(--text-main)!important;
+}
+.custom-input.token-valid{ border-color:rgba(52,211,154,.6)!important; box-shadow:0 0 0 4px rgba(52,211,154,.12)!important; }
+.custom-input.token-invalid,.custom-input.input-error{ border-color:rgba(251,93,107,.6)!important; box-shadow:0 0 0 4px rgba(251,93,107,.12)!important; }
+.input-action{ color:var(--primary)!important; }
+
+/* --- toggles / switches --- */
+.slider{ background:#23263a!important; border:1px solid var(--line)!important; }
+.slider:before{ background:#9ea3bf!important; box-shadow:0 1px 3px rgba(0,0,0,.4)!important; }
+input:checked + .slider{ background:var(--grad)!important; border-color:transparent!important; }
+input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px rgba(0,0,0,.35)!important; }
+.mf-switch input:checked + .slider{ background:linear-gradient(135deg,#27d3f5,#2f6df6)!important; }
+.mf-switch input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px rgba(0,0,0,.35)!important; }
+
+/* cyber switch (AIO / CINE) */
+.cyber-switch-container{ border-radius:12px!important; border:1px solid var(--line)!important; }
+.cyber-switch-container:hover{ border-color:rgba(39,211,245,.3)!important; }
+.cs-separator{ background:var(--line)!important; box-shadow:none!important; }
+.aio-card input:checked + .cyber-switch-container{ border-color:rgba(39,211,245,.4)!important; box-shadow:none!important; }
+.aio-card input:checked + .cyber-switch-container .cs-fill{ background-color:rgba(39,211,245,.20)!important; border-left:3px solid var(--secondary)!important; box-shadow:none!important; }
+.aio-card input:checked + .cyber-switch-container .cs-label-on{ color:var(--secondary)!important; text-shadow:none!important; }
+.aio-card input:checked + .cyber-switch-container .cs-separator{ background:var(--secondary)!important; box-shadow:none!important; }
+.cine-card input:checked + .cyber-switch-container{ border-color:rgba(251,191,36,.4)!important; box-shadow:none!important; }
+.cine-card input:checked + .cyber-switch-container .cs-fill{ background-color:rgba(251,191,36,.20)!important; border-left:3px solid var(--gold)!important; box-shadow:none!important; }
+.cine-card input:checked + .cyber-switch-container .cs-label-on{ color:var(--gold)!important; text-shadow:none!important; }
+.cine-card input:checked + .cyber-switch-container .cs-separator{ background:var(--gold)!important; box-shadow:none!important; }
+
+/* --- selects --- */
+.cyber-select{
+  background:rgba(15,17,28,.7)!important; border:1px solid var(--line)!important;
+  color:var(--text-main)!important; border-radius:12px!important; box-shadow:none!important;
+  font-family:'Outfit',sans-serif!important; text-transform:none!important; letter-spacing:.2px!important;
+}
+.cyber-select:hover{ border-color:rgba(39,211,245,.4)!important; box-shadow:none!important; color:var(--text-main)!important; }
+.cyber-select:focus{ border-color:rgba(39,211,245,.55)!important; box-shadow:0 0 0 4px rgba(39,211,245,.12)!important; }
+
+/* --- quality / spec / q buttons --- */
+.q-btn,.spec-btn,.skin-btn,.star-icon,.lock-icon{ font-family:'Plus Jakarta Sans',sans-serif!important; }
+.q-btn{ background:var(--surface-2)!important; border:1px solid var(--line)!important; border-radius:10px!important; color:var(--text-dim)!important; }
+.q-btn:hover{ background:rgba(255,255,255,.06)!important; }
+.q-btn.active{ background:var(--grad)!important; border-color:transparent!important; color:#fff!important; box-shadow:0 8px 20px -12px rgba(39,211,245,.7)!important; }
+.spec-btn{ background:var(--surface-2)!important; border:1px solid var(--line)!important; color:var(--text-main)!important; border-radius:10px!important; box-shadow:none!important; text-transform:none!important; }
+.spec-btn:hover{ background:rgba(255,255,255,.06)!important; transform:translateY(-2px)!important; }
+.spec-btn.active{ background:var(--primary-dim)!important; border-color:rgba(39,211,245,.5)!important; color:var(--primary)!important; text-shadow:none!important; }
+.spec-btn.excluded{ background:rgba(251,93,107,.08)!important; border-color:rgba(251,93,107,.4)!important; color:var(--error)!important; }
+.skin-btn{ background:var(--surface-2)!important; border:1px solid var(--line)!important; border-radius:14px!important; }
+.skin-btn:hover{ border-color:rgba(39,211,245,.32)!important; }
+.skin-btn:hover .skin-icon{ filter:none!important; }
+.skin-btn.active{ border-color:rgba(39,211,245,.5)!important; background:var(--primary-dim)!important; }
+.skin-btn.active::before,.skin-btn.active::after{ background:var(--grad)!important; box-shadow:none!important; }
+.skin-btn.active .skin-icon,.skin-btn.active .skin-name{ color:var(--primary)!important; text-shadow:none!important; }
+
+/* --- gate slider --- */
+.gate-slider-new::-webkit-slider-thumb{ background:var(--grad)!important; box-shadow:0 2px 8px rgba(39,211,245,.4)!important; }
+.gate-slider-new::-moz-range-thumb{ background:var(--grad)!important; }
+.gate-val-box{ background:var(--surface-2)!important; border:1px solid var(--line)!important; color:var(--primary)!important; box-shadow:none!important; }
+
+/* --- action buttons --- */
+.action-area .btn-install,.btn-install{
+  background:var(--grad)!important; color:#fff!important; border:none!important;
+  border-radius:14px!important; font-family:'Plus Jakarta Sans',sans-serif!important;
+  letter-spacing:.5px!important; text-transform:none!important; font-weight:700!important;
+  box-shadow:0 14px 34px -16px rgba(39,211,245,.75)!important;
+}
+.btn-install:hover{ filter:brightness(1.08)!important; transform:translateY(-2px)!important; box-shadow:0 18px 40px -16px rgba(39,211,245,.85)!important; letter-spacing:.5px!important; color:#fff!important; }
+.btn-install::before{ background:linear-gradient(90deg,transparent,rgba(255,255,255,.28),transparent)!important; }
+.btn-copy{
+  background:var(--surface-2)!important; border:1px solid var(--line)!important;
+  color:var(--text-main)!important; border-radius:14px!important;
+  font-family:'Plus Jakarta Sans',sans-serif!important; text-transform:none!important; box-shadow:none!important;
+}
+.btn-copy:hover{ border-color:rgba(39,211,245,.4)!important; background:rgba(255,255,255,.05)!important; color:var(--text-main)!important; }
+
+/* --- flux terminal --- */
+.flux-terminal,.preview-terminal{
+  background:rgba(12,14,22,.75)!important; border:1px solid var(--line)!important;
+  border-radius:16px!important; box-shadow:var(--shadow-soft)!important;
+}
+.flux-header,.preview-header{ border-bottom:1px solid var(--line)!important; }
+.flux-input{ font-family:'JetBrains Mono',monospace!important; color:var(--success)!important; }
+.live-dot{ background:var(--success)!important; box-shadow:0 0 0 3px rgba(52,211,154,.18)!important; }
+.flux-copy-btn{ background:var(--surface-2)!important; border:1px solid var(--line)!important; color:var(--text-main)!important; border-radius:10px!important; }
+.flux-copy-btn:hover{ border-color:rgba(39,211,245,.4)!important; }
+
+/* --- nota informativa minimale (sostituisce la striscia decorativa) --- */
+.lev-note{
+  display:flex!important; align-items:center!important; gap:12px!important;
+  margin-top:6px!important; padding:14px 18px!important; border-radius:14px!important;
+  background:linear-gradient(180deg,rgba(26,34,64,.55),rgba(16,22,44,.6))!important;
+  box-shadow:inset 0 0 0 1px rgba(150,170,255,.10),0 14px 36px -26px rgba(0,0,0,.7)!important;
+  color:var(--text-dim)!important; font-size:.86rem!important; line-height:1.5!important;
+  letter-spacing:.1px!important;
+}
+.lev-note i{
+  flex-shrink:0!important; width:30px!important; height:30px!important;
+  display:inline-flex!important; align-items:center!important; justify-content:center!important;
+  border-radius:9px!important; font-size:.85rem!important; color:#9fe9ff!important;
+  background:rgba(43,214,245,.10)!important;
+  box-shadow:inset 0 0 0 1px rgba(43,214,245,.28)!important;
+}
+.lev-note strong{ color:#dbe4ff!important; font-weight:700!important; }
+
+/* --- modal --- */
+.modal-backdrop{ background:rgba(8,9,16,.72)!important; backdrop-filter:blur(8px)!important; }
+.modal-content{
+  background:rgba(20,22,36,.92)!important; border:1px solid var(--line)!important;
+  border-radius:22px!important; box-shadow:0 30px 80px -30px rgba(0,0,0,.8)!important;
+  backdrop-filter:blur(24px) saturate(140%)!important;
+}
+.modal-list{ background:rgba(15,17,28,.6)!important; border:1px solid var(--line)!important; border-radius:12px!important; }
+
+/* --- proxy tags / badges --- */
+/* --- badge NO PROXY / MFP — pill premium con dot luminoso (no verde) --- */
+.proxy-tag{
+  display:inline-flex!important; align-items:center!important; gap:6px!important;
+  padding:4px 11px 4px 9px!important; margin-left:8px!important;
+  border-radius:999px!important; border:0!important;
+  font-family:'Plus Jakarta Sans',sans-serif!important; font-weight:700!important;
+  font-size:.66rem!important; letter-spacing:.7px!important; text-transform:uppercase!important;
+  vertical-align:middle!important; text-shadow:none!important; line-height:1!important;
+  backdrop-filter:blur(6px)!important; -webkit-backdrop-filter:blur(6px)!important;
+  transition:transform .24s ease,box-shadow .24s ease,background .24s ease!important;
+}
+.proxy-tag::before{
+  content:''!important; width:6px!important; height:6px!important; border-radius:50%!important; flex-shrink:0!important;
+}
+/* NO PROXY = connessione diretta → cyan elettrico Leviathan */
+.proxy-tag.tag-noproxy{
+  color:#a6ecff!important;
+  background:linear-gradient(180deg,rgba(43,214,245,.20),rgba(43,214,245,.07))!important;
+  box-shadow:inset 0 0 0 1px rgba(43,214,245,.45),0 5px 16px -7px rgba(43,214,245,.6)!important;
+}
+.proxy-tag.tag-noproxy::before{
+  background:#2bd6f5!important; box-shadow:0 0 7px 1px rgba(43,214,245,.95)!important;
+}
+/* MFP = instradato MediaFlow → indigo/violet */
+.proxy-tag.tag-mfp{
+  color:#d2c4ff!important;
+  background:linear-gradient(180deg,rgba(139,92,246,.24),rgba(99,102,241,.10))!important;
+  box-shadow:inset 0 0 0 1px rgba(139,92,246,.5),0 5px 16px -7px rgba(139,92,246,.6)!important;
+}
+.proxy-tag.tag-mfp::before{
+  background:linear-gradient(135deg,#a78bfa,#6366f1)!important; box-shadow:0 0 7px 1px rgba(139,92,246,.95)!important;
+}
+.proxy-tag:hover{ transform:translateY(-1px)!important; }
+.proxy-tag.tag-noproxy:hover{ box-shadow:inset 0 0 0 1px rgba(43,214,245,.62),0 7px 20px -7px rgba(43,214,245,.75)!important; }
+.proxy-tag.tag-mfp:hover{ box-shadow:inset 0 0 0 1px rgba(139,92,246,.68),0 7px 20px -7px rgba(139,92,246,.75)!important; }
+.git-badge,.signature{ font-family:'Plus Jakarta Sans',sans-serif!important; }
+
+/* --- SYSTEM CORE: card singola GitHub / LUC4N3X (premium) --- */
+.hub-grid{ justify-content:center!important; }
+.hub-card.cmd-card{
+  min-width:0!important; gap:18px!important; padding:20px 34px!important;
+  border:0!important; border-radius:20px!important;
+  background:
+    radial-gradient(120% 140% at 0% 0%,rgba(43,214,245,.12),transparent 55%),
+    radial-gradient(120% 140% at 100% 100%,rgba(139,92,246,.14),transparent 55%),
+    linear-gradient(180deg,rgba(28,37,68,.62),rgba(18,25,50,.66))!important;
+  box-shadow:
+    inset 0 0 0 1px rgba(150,170,255,.12),
+    inset 0 1px 0 rgba(200,210,255,.07),
+    0 2px 8px -2px rgba(0,0,0,.55),
+    0 26px 56px -28px rgba(0,0,0,.75)!important;
+  transition:transform .34s cubic-bezier(.22,1,.36,1),box-shadow .34s!important;
+}
+.hub-card.cmd-card:hover{
+  transform:translateY(-4px)!important;
+  box-shadow:
+    inset 0 0 0 1px rgba(150,170,255,.2),
+    inset 0 1px 0 rgba(200,210,255,.1),
+    0 4px 12px -3px rgba(0,0,0,.5),
+    0 34px 70px -28px rgba(99,102,241,.55)!important;
+}
+.cmd-card .cmd-visual{ width:58px!important; height:58px!important; }
+.cmd-card .cmd-img{
+  border:0!important; box-shadow:0 0 0 2px rgba(8,10,24,1),0 0 0 4px rgba(43,214,245,.55),0 0 18px -2px rgba(139,92,246,.5)!important;
+}
+.cmd-card .git-badge{
+  background:linear-gradient(135deg,#2bd6f5,#8b5cf6)!important; color:#fff!important;
+  border:2px solid #0a0d1c!important; box-shadow:0 4px 10px -3px rgba(99,102,241,.7)!important;
+  width:26px!important; height:26px!important;
+}
+.cmd-card .cmd-role{
+  font-family:'Plus Jakarta Sans',sans-serif!important; color:#8fa6d8!important;
+  letter-spacing:2.5px!important; font-size:.68rem!important; font-weight:600!important; text-transform:uppercase!important;
+}
+.cmd-card .cmd-nick{
+  font-family:'Plus Jakarta Sans',sans-serif!important; font-size:1.55rem!important; font-weight:800!important;
+  letter-spacing:-.5px!important; text-shadow:none!important;
+  background:linear-gradient(120deg,#ffffff 0%,#7fe9ff 45%,#a5a8ff 100%)!important;
+  -webkit-background-clip:text!important; background-clip:text!important; -webkit-text-fill-color:transparent!important;
+}
+.signature{ color:rgba(150,170,255,.28)!important; letter-spacing:3px!important; }
+.footer-hub::before{ content:'SYSTEM CORE'!important; }
+
+
+/* --- scrollbar / selection --- */
+::-webkit-scrollbar-thumb{ background:rgba(39,211,245,.45)!important; border-radius:8px!important; box-shadow:none!important; }
+::-webkit-scrollbar-thumb:hover{ background:rgba(39,211,245,.65)!important; }
+::selection{ background:rgba(39,211,245,.32)!important; color:#fff!important; }
+
+/* --- footer --- */
+.footer-hub{ border-top:1px solid var(--line)!important; }
+.footer-hub::before{ background:var(--bg-deep)!important; color:var(--text-dim)!important; font-family:'Plus Jakarta Sans',monospace!important; }
+
+/* --- debrid status / misc text --- */
+.debrid-status-dot{ box-shadow:none!important; }
+.recalc-overlay,.aio-lock-overlay{ background:rgba(10,11,20,.7)!important; backdrop-filter:blur(6px)!important; }
+
+@media (max-width:768px){
+  .brand-title{ font-size:3.4rem!important; letter-spacing:-2px!important; }
+  .glass-panel{ border-radius:18px!important; }
+}
+</style>
+
 </head>
 <body>
     <canvas id="deepSeaCanvas"></canvas>
@@ -2730,13 +3279,15 @@
             </div>
             <h1 class="brand-title notranslate" translate="no">LEVIATHAN</h1>
             <div class="brand-subtitle notranslate" translate="no">🌊 SOVRANO DEGLI ABISSI</div>
-            <p class="logo-desc">Il protocollo profondo che domina i flussi digitali</p>
-            <div class="version-badge">🐙 CORE v2.7.0 • OCEAN UI</div>
+            <div class="lev-hero-meta">
+                <span class="version-badge notranslate" translate="no">v3.0.1</span>
+                <span class="lev-status"><i></i> SYSTEM ONLINE</span>
+            </div>
         </header>
         <div class="glass-panel">
             <div class="panel-header">
                 <i class="fas fa-microchip" style="color:var(--primary)"></i>
-                <div class="panel-title">🧭 SISTEMI DI BORDO</div>
+                <div class="panel-title">🧭 SISTEMI DI BORDO ⚙️</div>
             </div>
             <div class="info-grid">
                 <div class="info-card">
@@ -2766,12 +3317,12 @@
         <div class="glass-panel" id="config-area">
             <div class="panel-header">
                 <i class="fas fa-sliders-h" style="color:var(--primary)"></i>
-                <div class="panel-title">🚢 STAZIONE DI COMANDO</div>
+                <div class="panel-title">🚢 STAZIONE DI COMANDO 🎛️</div>
             </div>
 
             <div class="desktop-grid-container">
                 <div class="col-left">
-                    <div class="section-header" style="margin-top:0;">🐬 PROTOCOLLI DI CONNESSIONE</div>
+                    <div class="section-header" style="margin-top:0;">🐬 PROTOCOLLI DI CONNESSIONE 🔌</div>
 
                     <div class="service-tabs">
                         <div class="service-tab active" onclick="selectService('rd')">
@@ -2934,7 +3485,7 @@
                 </div>
 
                 <div class="col-right">
-                    <div class="section-header" style="margin-top:0;">🧠 CENTRO DI CONTROLLO RICERCA</div>
+                    <div class="section-header" style="margin-top:0;">🧠 CENTRO DI CONTROLLO RICERCA 🎯</div>
 
                     <div class="filters-container">
                         <div class="spectrum-container" style="border-color: var(--secondary); background: linear-gradient(135deg, rgba(0, 5, 10, 0.6), rgba(112, 0, 255, 0.05)); margin-bottom: 20px;">
@@ -2960,12 +3511,12 @@
 
                         <div class="filter-unit">
                             <div class="unit-header">
-                                <div class="unit-title"><i class="fas fa-layer-group" style="color:var(--primary)"></i> UNITÀ ELABORAZIONE SEGNALE</div>
+                                <div class="unit-title"><i class="fas fa-layer-group" style="color:var(--primary)"></i> 📡 UNITÀ ELABORAZIONE SEGNALE</div>
                             </div>
 
                             <div class="filter-row">
                                 <div class="header-with-desc">
-                                    <span class="f-label">FILTRO RISOLUZIONE (Escludi)</span>
+                                    <span class="f-label">🎚️ FILTRO RISOLUZIONE (Escludi)</span>
                                     <span class="f-desc-mini">Rimuove le qualità selezionate dai risultati.</span>
                                 </div>
                                 <div class="spectrum-grid">
@@ -2978,7 +3529,7 @@
 
                             <div class="filter-row">
                                 <div class="header-with-desc">
-                                    <span class="f-label">LIMITATORE PESO (Max GB)</span>
+                                    <span class="f-label">⚖️ LIMITATORE PESO (Max GB)</span>
                                     <span class="f-desc-mini">Filtra i file che superano la dimensione impostata.</span>
                                 </div>
                                 <div class="gate-integrated limiter-style" id="sizeWrapper">
@@ -2990,7 +3541,7 @@
                             <div class="filter-row">
                                 <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:5px;">
                                     <div class="header-with-desc" style="margin-bottom:0;">
-                                        <span class="f-label" style="margin:0;">SIGNAL GATE</span>
+                                        <span class="f-label" style="margin:0;">🛰️ SIGNAL GATE</span>
                                         <span class="f-desc-mini">Imposta un tetto massimo di risultati per ogni risoluzione.</span>
                                     </div>
                                     <label class="switch" style="transform:scale(0.8); margin:0;"><input type="checkbox" id="gateActive" onchange="toggleGate(); updateFluxStream()"><span class="slider"></span></label>
@@ -3005,7 +3556,7 @@
                         <div class="aux-grid">
                             <div class="aux-card active" id="card_audio">
                                 <div class="aux-header">
-                                    <i class="fas fa-globe-americas aux-icon"></i><span>LINGUA & AUDIO</span>
+                                    <i class="fas fa-globe-americas aux-icon"></i><span>🌍 LINGUA & AUDIO</span>
                                 </div>
                                 <div class="aux-desc" style="margin-bottom: 5px;">
                                     Seleziona il protocollo linguistico di ricerca.
@@ -3023,7 +3574,7 @@
 
                             <div class="aux-card" id="card_source_mode">
                                 <div class="aux-header">
-                                    <i class="fas fa-database aux-icon"></i><span>Source Policy</span>
+                                    <i class="fas fa-database aux-icon"></i><span>🗄️ Source Policy</span>
                                 </div>
                                 <div class="aux-desc" style="margin-bottom: 5px;">Scegli se usare DB globale, cache condivisa o scraping live.</div>
 
@@ -3040,7 +3591,7 @@
 
                             <div class="aux-card aio-card" id="card_aio">
                                 <div class="aux-header">
-                                    <i class="fas fa-microchip aux-icon"></i><span>Core AIO</span>
+                                    <i class="fas fa-microchip aux-icon"></i><span>🧬 Core AIO</span>
                                 </div>
                                 <div class="aux-desc">Ottimizza la lista risultati specificamente per l'addon <strong>AIOStreams</strong>.</div>
                                 <label class="cyber-switch-container">
@@ -3054,7 +3605,7 @@
 
                             <div class="aux-card cine-card" id="card_saved_cloud">
                                 <div class="aux-header">
-                                    <i class="fas fa-cloud aux-icon"></i><span>Debrid Cloud</span>
+                                    <i class="fas fa-cloud aux-icon"></i><span>☁️ Debrid Cloud</span>
                                 </div>
                                 <div class="aux-desc">Aggiunge i file già salvati nel tuo RD/TorBox. I duplicati vengono esclusi sempre.</div>
                                 <label class="cyber-switch-container" style="margin-bottom:10px;">
@@ -3076,26 +3627,9 @@
 
                         </div>
 
-                        <div class="ocean-command-strip" aria-hidden="true">
-                            <div class="ocean-strip-head">
-                                <span>🌊 ROTTA INTELLIGENTE</span>
-                                <em>clean • fast • safe</em>
-                            </div>
-                            <div class="ocean-metrics">
-                                <div class="ocean-metric"><strong>⚡ Speed</strong><span>cache first</span></div>
-                                <div class="ocean-metric"><strong>🧠 Match</strong><span>anti doppioni</span></div>
-                                <div class="ocean-metric"><strong>🇮🇹 Audio</strong><span>ITA davanti</span></div>
-                                <div class="ocean-metric"><strong>🛡️ Safe</strong><span>no caos</span></div>
-                            </div>
-                            <div class="ocean-flowline">
-                                <span>🔎 Cerca</span>
-                                <i></i>
-                                <span>🧹 Filtra</span>
-                                <i></i>
-                                <span>🏆 Ordina</span>
-                                <i></i>
-                                <span>🚀 Avvia</span>
-                            </div>
+                        <div class="lev-note" aria-hidden="true">
+                            <i class="fas fa-bolt"></i>
+                            <span>I risultati vengono ordinati in automatico: <strong>cache prima</strong>, <strong>audio ITA in cima</strong>, zero duplicati.</span>
                         </div>
                     </div>
                 </div>
@@ -3212,7 +3746,7 @@
 
             <div id="fluxTerminal" class="flux-terminal offline">
                 <div class="flux-header">
-                    <span class="flux-title"><span class="live-dot"></span>FLUX DATA STREAM // LINK GENERATOR</span>
+                    <span class="flux-title"><span class="live-dot"></span>🔗 FLUX DATA STREAM // LINK GENERATOR</span>
                 </div>
                 <div class="flux-content">
                     <textarea id="generatedUrlBox" class="flux-input" readonly spellcheck="false">/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///</textarea>
@@ -3231,19 +3765,6 @@
                             <span class="cmd-role">Lead Developer</span>
                             <span class="cmd-nick">LUC4N3X</span>
                         </div>
-                    </a>
-
-                    <a href="https://ko-fi.com/luc4n3x" target="_blank" class="hub-card kofi-card">
-                        <i class="fas fa-coffee kofi-icon"></i>
-                        <div class="kofi-data">
-                            <h4>OFFRIMI UN KO-FI</h4>
-                            <span>Ricarica il Sistema</span>
-                        </div>
-                    </a>
-
-                    <a href="https://stremio-addons.net/addons/leviathan" target="_blank" class="hub-card rate-card">
-                        <i class="fas fa-star star-icon"></i>
-                        <div class="rate-text">LASCIA UNA STELLA</div>
                     </a>
                 </div>
 
