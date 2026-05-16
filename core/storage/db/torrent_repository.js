@@ -3094,6 +3094,119 @@ function createTorrentRepository({
     }
   }
 
+
+  function normalizeResolvedLinkPayload(entry = {}) {
+    const cacheKey = sanitizeText(entry.cache_key || entry.cacheKey || entry.key).slice(0, 512);
+    const service = sanitizeText(entry.service || '').toLowerCase().slice(0, 16);
+    const url = sanitizeText(entry.url || entry.rawUrl || entry.raw_url || '').trim();
+    const ttlSeconds = clampInt(entry.ttlSeconds || entry.ttl || 0, 0, 0, 24 * 60 * 60);
+    if (!cacheKey || !service || !url || ttlSeconds <= 0) return null;
+    return {
+      cacheKey,
+      service,
+      tokenFp: sanitizeText(entry.token_fp || entry.tokenFp || '').slice(0, 80) || null,
+      torrentId: sanitizeText(entry.torrent_id || entry.torrentId || '').slice(0, 96) || null,
+      fileId: toNullableInt(entry.file_id ?? entry.fileId),
+      hash: normalizeInfoHash(entry.info_hash || entry.infoHash || entry.hash || entry.info_hash_norm || entry.infoHashNorm),
+      mediaId: sanitizeText(entry.media_id || entry.mediaId || '').slice(0, 220) || null,
+      url,
+      filename: sanitizeText(entry.filename || entry.fileName || '').slice(0, 512) || null,
+      fileSize: toNullableInt(entry.file_size ?? entry.fileSize ?? entry.size),
+      payload: entry.payload && typeof entry.payload === 'object' ? entry.payload : { ...entry, url },
+      expiresAt: new Date(Date.now() + ttlSeconds * 1000)
+    };
+  }
+
+  async function getDebridResolvedLinkCache(cacheKey) {
+    const pool = getPool();
+    if (!pool) return null;
+    await awaitDatabaseOptimizations();
+    const key = sanitizeText(cacheKey).slice(0, 512);
+    if (!key) return null;
+    try {
+      const result = await pool.query(
+        `
+          UPDATE debrid_resolved_link_cache
+          SET hit_count = COALESCE(hit_count, 0) + 1, updated_at = NOW()
+          WHERE cache_key = $1
+            AND expires_at > NOW()
+          RETURNING cache_key, service, token_fp, torrent_id, file_id, info_hash_norm, media_id, url, filename, file_size, payload_json, expires_at
+        `,
+        [key]
+      );
+      const row = result.rows?.[0];
+      if (!row) return null;
+      return {
+        ...(row.payload_json && typeof row.payload_json === 'object' ? row.payload_json : {}),
+        cache_key: row.cache_key,
+        service: row.service,
+        token_fp: row.token_fp,
+        torrent_id: row.torrent_id,
+        file_id: row.file_id,
+        tb_file_id: row.service === 'tb' ? row.file_id : undefined,
+        info_hash_norm: row.info_hash_norm,
+        media_id: row.media_id,
+        url: row.url,
+        rawUrl: row.url,
+        filename: row.filename,
+        file_size: row.file_size,
+        expires_at: row.expires_at
+      };
+    } catch (error) {
+      console.error(`❌ DB Error getDebridResolvedLinkCache: ${error.message}`);
+      return null;
+    }
+  }
+
+  async function setDebridResolvedLinkCache(entry) {
+    const pool = getPool();
+    if (!pool) return 0;
+    await awaitDatabaseOptimizations();
+    const row = normalizeResolvedLinkPayload(entry);
+    if (!row) return 0;
+    try {
+      const result = await pool.query(
+        `
+          INSERT INTO debrid_resolved_link_cache (
+            cache_key, service, token_fp, torrent_id, file_id, info_hash_norm, media_id, url, filename, file_size, payload_json, expires_at, created_at, updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, NOW(), NOW())
+          ON CONFLICT (cache_key) DO UPDATE SET
+            service = EXCLUDED.service,
+            token_fp = EXCLUDED.token_fp,
+            torrent_id = EXCLUDED.torrent_id,
+            file_id = EXCLUDED.file_id,
+            info_hash_norm = EXCLUDED.info_hash_norm,
+            media_id = EXCLUDED.media_id,
+            url = EXCLUDED.url,
+            filename = EXCLUDED.filename,
+            file_size = EXCLUDED.file_size,
+            payload_json = EXCLUDED.payload_json,
+            expires_at = EXCLUDED.expires_at,
+            updated_at = NOW()
+        `,
+        [
+          row.cacheKey,
+          row.service,
+          row.tokenFp,
+          row.torrentId,
+          row.fileId,
+          row.hash,
+          row.mediaId,
+          row.url,
+          row.filename,
+          row.fileSize,
+          JSON.stringify(row.payload),
+          row.expiresAt
+        ]
+      );
+      return Number(result.rowCount || 0);
+    } catch (error) {
+      console.error(`❌ DB Error setDebridResolvedLinkCache: ${error.message}`);
+      return 0;
+    }
+  }
+
   return {
     getTorrents,
     getPackFiles,
@@ -3119,6 +3232,8 @@ function createTorrentRepository({
     getAvailabilityCacheStats,
     getDebridAvailabilityCache,
     setDebridAvailabilityCache,
+    getDebridResolvedLinkCache,
+    setDebridResolvedLinkCache,
     isDebridCacheCheckMarked,
     markDebridCacheCheckDone,
     upsertDebridAuthorityRows,
