@@ -190,7 +190,7 @@ const {
     streamInflight
 } = require('./core/utils');
 const { generateStream, resolveLazyStreamData } = require('./core/stream_generator');
-const { bootRealDebridAuditor } = require('./core/debrid/audit/rd_auditor_boot');
+const { bootRealDebridAuditor } = require('./core/debrid/rd/audit/rd_auditor_boot');
 const { applyCommonMiddleware } = require('./core/server/middleware');
 const { getRawStreamCacheStats } = require('./core/cache/raw_stream_cache');
 const { createAppServices } = require('./core/server/services/app_services');
@@ -413,7 +413,7 @@ function bootstrapServer() {
         console.log(`[GUARDAFLIX] Modulo integrato`);
         console.log(`[CINEMACITY] Modulo integrato`);
         console.log(`[TRAILER] Attivabile da config`);
-        console.log(`📦 TORBOX: ADVANCED SMART CACHE`);
+        console.log(`ðŸ“¦ TORBOX: ADVANCED SMART CACHE`);
         console.log(`[PARSER] Enhanced`);
         console.log(`[P2P] Handler attivo`);
         console.log(`[CORE] Optimized for High Reliability`);
