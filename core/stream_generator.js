@@ -4654,7 +4654,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   const hasDebridKey = Boolean(debridApiKey);
   const filters = config?.filters || {};
   const sourceModeFlags = getSourceModeFlags(filters);
-  const isWebEnabled = Boolean(filters && (isStreamingCommunityEnabled(filters) || filters.enableGhd || filters.enableGs || filters.enableAnimeWorld || filters.enableAnimeUnity || filters.enableAnimeSaturn || filters.enableGf || filters.enableCc));
+  const isWebEnabled = Boolean(filters && (isStreamingCommunityEnabled(filters) || filters.enableGhd || filters.enableGs || filters.enableGstv || filters.enableAnimeWorld || filters.enableAnimeUnity || filters.enableAnimeSaturn || filters.enableGf || filters.enableCc));
   const isP2PEnabled = filters.enableP2P === true;
   const torrentPipelineEnabled = shouldUseTorrentPipeline({
       filters,
@@ -5083,6 +5083,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           isStreamingCommunityEnabled(filters),
           filters.enableGhd,
           filters.enableGs,
+          filters.enableGstv,
           filters.enableAnimeWorld,
           filters.enableAnimeUnity,
           filters.enableAnimeSaturn,
@@ -5107,7 +5108,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       const emptyAnimeUnityLocalTtl = finalStreams.length === 0 && isAnimeUnityKitsuRequest
           ? Math.min(Math.max(1, Number(cachePolicyBase.localTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 30)
           : cachePolicyBase.localTtl;
-      const isGsOnlyWebRequest = cacheScope === 'webonly' && enabledWebProvidersCount === 1 && filters.enableGs === true;
+      const isGsOnlyWebRequest = cacheScope === 'webonly' && enabledWebProvidersCount === 1 && (filters.enableGs === true || filters.enableGstv === true);
       const emptyGsOnlyLocalTtl = finalStreams.length === 0 && isGsOnlyWebRequest
           ? Math.min(Math.max(1, Number(emptyAnimeUnityLocalTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 5)
           : emptyAnimeUnityLocalTtl;
