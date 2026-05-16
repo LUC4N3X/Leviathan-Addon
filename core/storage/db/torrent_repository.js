@@ -456,7 +456,7 @@ function createTorrentRepository({
       `
         INSERT INTO torrent_files (file_key, info_hash, info_hash_norm, file_index, file_index_norm, rd_file_id, tb_file_id, path, leaf_name, size, extension, is_video, video_rank, parsed_season, parsed_episode, path_hash, source, confidence, created_at, updated_at)
         VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
-        ON CONFLICT (file_key)
+        ON CONFLICT (info_hash_norm, file_index_norm)
         DO UPDATE SET
           rd_file_id = COALESCE(EXCLUDED.rd_file_id, torrent_files.rd_file_id),
           tb_file_id = COALESCE(EXCLUDED.tb_file_id, torrent_files.tb_file_id),
