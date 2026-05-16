@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+const { withSharedPromise } = require('../../utils/common');
 const { getRequestOrigin } = require('../../utils/url');
 const RD = require('../../debrid/clients/realdebrid_client');
 const TB = require('../../debrid/clients/torbox_client');
@@ -7,6 +9,106 @@ const { registerLazyExtractionRoute } = require('../../../providers/extractors/l
 const { buildContentProxyUrlFromRequest, shouldProxyContentUrl } = require('../../proxy/content_proxy_engine');
 const TorrentInfoLedger = require('../../torrent/torrent_info_ledger');
 
+const savedCloudResolveInflight = new Map();
+
+function tokenFingerprint(value) {
+    return crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, 16);
+}
+
+function normalizeHash40(value = '') {
+    const raw = String(value || '').trim().toUpperCase().replace(/[^A-F0-9]/g, '');
+    return /^[A-F0-9]{40}$/.test(raw) ? raw : null;
+}
+
+function buildTbMediaId(meta = {}) {
+    const imdb = String(meta?.imdb_id || meta?.imdbId || '').trim().toLowerCase();
+    if (!/^tt\d+$/.test(imdb)) return null;
+    const season = Number(meta?.season || 0) || 0;
+    const episode = Number(meta?.episode || 0) || 0;
+    return season > 0 && episode > 0 ? `${imdb}:s${season}:e${episode}` : imdb;
+}
+
+function buildTbAvailabilityKeys(hash, fileIdx, meta = {}) {
+    const normalizedHash = normalizeHash40(hash);
+    if (!normalizedHash) return [];
+    const mediaId = buildTbMediaId(meta);
+    const normalizedFileIdx = Number.isInteger(Number(fileIdx)) && Number(fileIdx) >= 0 ? Number(fileIdx) : null;
+    const baseAuto = `tb:${normalizedHash}:auto`;
+    const keys = [];
+    if (normalizedFileIdx !== null) keys.push(`tb:${normalizedHash}:${normalizedFileIdx}${mediaId ? `:${mediaId}` : ''}`);
+    keys.push(`${baseAuto}${mediaId ? `:${mediaId}` : ''}`);
+    if (!mediaId) keys.push(baseAuto);
+    return [...new Set(keys)];
+}
+
+function getTbAvailabilityFastPayload(payload = {}, requestedFileIdx = null) {
+    const state = String(payload.state || payload.tb_cache_state || payload.cache_state || '').toLowerCase();
+    const confidence = Number(payload.confidence || 0) || 0;
+    const fileId = parseFileIndex(payload.file_id ?? payload.tb_file_id ?? payload.fileId);
+    const requested = parseFileIndex(requestedFileIdx);
+    if (state !== 'cached_verified') return null;
+    if (!Number.isInteger(fileId)) return null;
+    if (confidence < 0.75) return null;
+    if (Number.isInteger(requested) && requested !== fileId) return null;
+    return {
+        fileId,
+        confidence,
+        fileTitle: payload.file_title || payload.filename || null,
+        fileSize: Number(payload.file_size || payload.size || 0) || null,
+        matchReason: payload.match_reason || 'availability_cache'
+    };
+}
+
+async function readTbAvailabilityFastPayload(dbHelper, hash, fileIdx, meta = {}) {
+    if (!dbHelper || typeof dbHelper.getDebridAvailabilityCache !== 'function') return null;
+    const keys = buildTbAvailabilityKeys(hash, fileIdx, meta);
+    if (keys.length === 0) return null;
+    try {
+        const persisted = await dbHelper.getDebridAvailabilityCache(keys);
+        for (const key of keys) {
+            const payload = persisted?.[key];
+            const fast = getTbAvailabilityFastPayload(payload, fileIdx);
+            if (fast) return { ...fast, cacheKey: key };
+        }
+    } catch (_) {}
+    return null;
+}
+
+function getResolvedDbTtlSeconds(streamData = {}, fallback = 1800) {
+    const explicit = Number(streamData.expires_in || streamData.expiresIn || streamData.ttl || 0) || 0;
+    if (explicit > 0) return Math.max(60, Math.min(explicit - 60, 2 * 60 * 60));
+    const expiresAt = streamData.expires_at || streamData.expiresAt || null;
+    if (expiresAt) {
+        const ms = new Date(expiresAt).getTime() - Date.now() - 60000;
+        if (Number.isFinite(ms) && ms > 0) return Math.max(60, Math.min(Math.floor(ms / 1000), 2 * 60 * 60));
+    }
+    return Math.max(300, Math.min(Number(process.env.TB_RESOLVED_LINK_TTL_SECONDS || fallback) || fallback, 2 * 60 * 60));
+}
+
+async function getPersistedResolvedLink(dbHelper, cacheKey) {
+    if (!dbHelper || typeof dbHelper.getDebridResolvedLinkCache !== 'function') return null;
+    try { return await dbHelper.getDebridResolvedLinkCache(cacheKey); } catch (_) { return null; }
+}
+
+async function persistResolvedLink(dbHelper, cacheKey, service, tokenFp, streamData, extra = {}) {
+    if (!dbHelper || typeof dbHelper.setDebridResolvedLinkCache !== 'function' || !streamData?.url) return;
+    try {
+        await dbHelper.setDebridResolvedLinkCache({
+            cache_key: cacheKey,
+            service,
+            token_fp: tokenFp,
+            torrent_id: extra.torrentId || streamData.torrent_id || null,
+            file_id: extra.fileId ?? streamData.file_id ?? streamData.tb_file_id ?? null,
+            info_hash: extra.hash || streamData.hash || null,
+            media_id: extra.mediaId || null,
+            url: streamData.url,
+            filename: streamData.filename || streamData.fileName || extra.filename || null,
+            file_size: streamData.file_size || streamData.size || extra.fileSize || null,
+            payload: { ...streamData, rawUrl: streamData.url, url: streamData.url },
+            ttlSeconds: getResolvedDbTtlSeconds(streamData, extra.ttlSeconds || 1800)
+        });
+    } catch (_) {}
+}
 
 function extractInfoHashFromText(value = '') {
     const text = String(value || '');
@@ -259,9 +361,52 @@ function registerPlaybackRoutes(app, {
                 logger.warn(`[LAZY PLAY] Ignoro lazy cache con fileIdx mismatch | service=${requestedService} | hash=${item.hash} | requested=${item.fileIdx ?? 'n/a'} | cached=${getStreamDataFileIndex(cachedLazy)}`);
             }
 
-            const streamData = await LIMITERS.lazyPlay.schedule(() =>
-                resolveLazyStreamData(requestedService, apiKey, item, { season: item.season, episode: item.episode })
-            );
+            const tokenFp = tokenFingerprint(apiKey);
+            const persistedLazyKey = `lazy:${requestedService}:${tokenFp}:${item.hash}:${item.season || 0}:${item.episode || 0}:${item.fileIdx !== undefined ? item.fileIdx : -1}:${requestedService === 'tb' ? (req.ip || '') : ''}`;
+            const persistedLazy = await getPersistedResolvedLink(dbHelper, persistedLazyKey);
+            if (persistedLazy && (persistedLazy.rawUrl || persistedLazy.url) && isLazyCacheCompatibleWithRequest(persistedLazy, item)) {
+                const cachedTargetUrl = persistedLazy.rawUrl || persistedLazy.url;
+                const finalCachedUrl = buildFinalPlaybackUrl(req, conf, cachedTargetUrl, config, {
+                    source: requestedService,
+                    debrid: true,
+                    filename: persistedLazy.filename || persistedLazy.fileName || cachedPlaybackMeta?.title || item.title
+                });
+                await Cache.cacheLazyLink(lazyCacheKey, { ...persistedLazy, rawUrl: cachedTargetUrl, url: cachedTargetUrl }, Math.min(getResolvedDbTtlSeconds(persistedLazy), 1800));
+                await markPlayableResultAsCached(requestedService, item, { ...persistedLazy, url: finalCachedUrl, rawUrl: cachedTargetUrl }, playbackMeta);
+                incrementMetric('lazyPlay.dbResolvedCacheHit');
+                recordDuration('lazyPlay.total', Date.now() - startedAt);
+                return res.redirect(finalCachedUrl);
+            }
+
+            let streamData = null;
+            if (requestedService === 'tb') {
+                const fastAvailability = await readTbAvailabilityFastPayload(dbHelper, item.hash, item.fileIdx, playbackMeta || { imdb_id: imdb || null, season: item.season, episode: item.episode });
+                if (fastAvailability) {
+                    streamData = await LIMITERS.lazyPlay.schedule(() => TB.resolveFromAvailability(
+                        apiKey,
+                        magnet,
+                        item.hash,
+                        fastAvailability.fileId,
+                        item.season || 0,
+                        item.episode || 0,
+                        req.ip || null,
+                        {
+                            filename: fastAvailability.fileTitle || item.title,
+                            fileTitle: fastAvailability.fileTitle || null,
+                            fileSize: fastAvailability.fileSize || null,
+                            confidence: fastAvailability.confidence,
+                            matchReason: fastAvailability.matchReason
+                        }
+                    ));
+                    if (streamData?.url) incrementMetric('lazyPlay.tbAvailabilityFastPath');
+                }
+            }
+
+            if (!streamData) {
+                streamData = await LIMITERS.lazyPlay.schedule(() =>
+                    resolveLazyStreamData(requestedService, apiKey, item, { season: item.season, episode: item.episode })
+                );
+            }
 
             if (streamData && streamData.url) {
                 const finalUrl = buildFinalPlaybackUrl(req, conf, streamData.url, config, {
@@ -269,7 +414,14 @@ function registerPlaybackRoutes(app, {
                     debrid: true,
                     filename: streamData.filename || playbackMeta?.title || item.title
                 });
-                await Cache.cacheLazyLink(lazyCacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, 180);
+                await Cache.cacheLazyLink(lazyCacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, Math.min(getResolvedDbTtlSeconds(streamData), 1800));
+                await persistResolvedLink(dbHelper, persistedLazyKey, requestedService, tokenFingerprint(apiKey), streamData, {
+                    hash: item.hash,
+                    fileId: streamData.file_id ?? streamData.tb_file_id ?? item.fileIdx,
+                    filename: streamData.filename || playbackMeta?.title || item.title,
+                    fileSize: streamData.file_size || streamData.size || null,
+                    mediaId: buildTbMediaId(playbackMeta || { imdb_id: imdb || null, season: item.season, episode: item.episode })
+                });
                 await markPlayableResultAsCached(requestedService, item, { ...streamData, url: finalUrl, rawUrl: streamData.url }, playbackMeta);
                 TorrentInfoLedger.recordResolvedFileIndex({
                     meta: playbackMeta,
@@ -324,7 +476,10 @@ function registerPlaybackRoutes(app, {
             const apiKey = getDebridApiKey(config, requestedService);
             if (!apiKey) return res.status(400).send('API Key mancante.');
 
+            const tokenFp = tokenFingerprint(apiKey);
+            const savedIpPart = requestedService === 'tb' ? `:${req.ip || ''}` : '';
             const cacheKey = `saved:${requestedService}:${torrentId}:${fileId}`;
+            const persistedCacheKey = `saved:${requestedService}:${tokenFp}:${torrentId}:${fileId}${savedIpPart}`;
             const cached = await Cache.getLazyLink(cacheKey);
             if (cached?.rawUrl || cached?.url) {
                 const cachedTargetUrl = cached.rawUrl || cached.url;
@@ -338,9 +493,25 @@ function registerPlaybackRoutes(app, {
                 return res.redirect(finalCachedUrl);
             }
 
-            const streamData = requestedService === 'tb'
-                ? await LIMITERS.lazyPlay.schedule(() => TB.resolveSavedTorrentFile(apiKey, torrentId, fileId, req.ip || null))
-                : await LIMITERS.lazyPlay.schedule(() => RD.resolveSavedTorrentFile(apiKey, torrentId, fileId));
+            const persistedSaved = await getPersistedResolvedLink(dbHelper, persistedCacheKey);
+            if (persistedSaved?.rawUrl || persistedSaved?.url) {
+                const cachedTargetUrl = persistedSaved.rawUrl || persistedSaved.url;
+                const finalCachedUrl = buildFinalPlaybackUrl(req, conf, cachedTargetUrl, config, {
+                    source: requestedService,
+                    debrid: true,
+                    filename: persistedSaved.filename || persistedSaved.fileName || ''
+                });
+                await Cache.cacheLazyLink(cacheKey, { ...persistedSaved, rawUrl: cachedTargetUrl, url: cachedTargetUrl }, Math.min(getResolvedDbTtlSeconds(persistedSaved), 1800));
+                incrementMetric('savedCloudPlay.dbResolvedCacheHit');
+                recordDuration('savedCloudPlay.total', Date.now() - startedAt);
+                return res.redirect(finalCachedUrl);
+            }
+
+            const inflightKey = `saved:${requestedService}:${tokenFp}:${torrentId}:${fileId}${savedIpPart}`;
+            const streamData = await withSharedPromise(savedCloudResolveInflight, inflightKey, () => (requestedService === 'tb'
+                ? LIMITERS.lazyPlay.schedule(() => TB.resolveSavedTorrentFile(apiKey, torrentId, fileId, req.ip || null))
+                : LIMITERS.lazyPlay.schedule(() => RD.resolveSavedTorrentFile(apiKey, torrentId, fileId))
+            ), { maxEntries: 2048 });
 
             if (!streamData?.url) {
                 incrementMetric('savedCloudPlay.empty');
@@ -353,7 +524,14 @@ function registerPlaybackRoutes(app, {
                 filename: streamData.filename || streamData.fileName || ''
             });
 
-            await Cache.cacheLazyLink(cacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, 180);
+            await Cache.cacheLazyLink(cacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, Math.min(getResolvedDbTtlSeconds(streamData), 1800));
+            await persistResolvedLink(dbHelper, persistedCacheKey, requestedService, tokenFp, streamData, {
+                torrentId,
+                fileId,
+                filename: streamData.filename || streamData.fileName || '',
+                fileSize: streamData.file_size || streamData.size || null,
+                mediaId: buildTbMediaId({ imdb_id: req.query.imdb || null, season: Number(req.query.s || 0) || 0, episode: Number(req.query.e || 0) || 0 })
+            });
             TorrentInfoLedger.recordResolvedFileIndex({
                 meta: { imdb_id: req.query.imdb || null, season: Number(req.query.s || 0) || 0, episode: Number(req.query.e || 0) || 0 },
                 item: { hash: streamData.hash || streamData.infoHash || torrentId, fileIdx: fileId, title: streamData.filename || '' },
