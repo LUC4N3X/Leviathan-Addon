@@ -4157,6 +4157,25 @@ const mobileHTML = `
                             </div>
                         </div>
 
+                        <div class="m-reactor-module" id="mod-gstv">
+                            <div class="m-reactor-core">
+                                <i class="fas fa-satellite-dish m-core-icon"></i>
+                            </div>
+                            <div class="m-reactor-body">
+                                <div class="m-reactor-top">
+                                    <span class="m-reactor-title">📡 GuardaserieTV</span>
+                                    <label class="m-switch">
+                                        <input type="checkbox" id="m-enableGstv" onchange="updateStatus('m-enableGstv','st-gstv'); toggleModuleStyle('m-enableGstv', 'mod-gstv');">
+                                        <span class="m-slider m-slider-aqua"></span>
+                                    </label>
+                                </div>
+                                <span class="m-reactor-desc">📡 Serie italiane • No Proxy lazy-safe</span>
+                                <div class="m-tag-row">
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-shield-halved"></i> NO PROXY</span>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="m-reactor-module" id="mod-aw">
                             <div class="m-reactor-core">
                                 <i class="fas fa-torii-gate m-core-icon"></i>
@@ -5852,7 +5871,7 @@ function setLangMode(mode) {
 }
 
 function checkWebPriorityVisibility() {
-    const enabled = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'].some(id => mChecked(id));
+    const enabled = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'].some(id => mChecked(id));
     const panel = document.getElementById('m-priority-panel');
     if (panel) panel.classList.toggle('show', enabled);
 }
@@ -6213,6 +6232,9 @@ async function loadMobileConfig() {
                 mSetChecked('m-enableGs', config.filters.enableGs || false);
                 toggleModuleStyle('m-enableGs', 'mod-gs');
 
+                mSetChecked('m-enableGstv', config.filters.enableGstv || false);
+                toggleModuleStyle('m-enableGstv', 'mod-gstv');
+
                 mSetChecked('m-enableAnimeWorld', config.filters.enableAnimeWorld || false);
                 toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');
 
@@ -6273,6 +6295,7 @@ async function loadMobileConfig() {
             updateStatus('m-enableVix', 'st-vix');
             updateStatus('m-enableGhd', 'st-ghd');
             updateStatus('m-enableGs', 'st-gs');
+            updateStatus('m-enableGstv', 'st-gstv');
             updateStatus('m-enableAnimeWorld', 'st-aw');
             updateStatus('m-enableAnimeUnity', 'st-au');
             updateStatus('m-enableAnimeSaturn', 'st-as');
@@ -6300,7 +6323,7 @@ function getMobileConfig() {
 
     const isP2P = mCurrentService === 'p2p';
     const apiKey = mValue('m-apiKey').trim();
-    const webModules = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'];
+    const webModules = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'];
     const webOnlyService = !isP2P && !apiKey && webModules.some(id => mChecked(id));
     const savedCloudEnabled = !isP2P && !!apiKey && ['rd', 'tb'].includes(String(mCurrentService || '').toLowerCase()) && mChecked('m-enableSavedCloud');
 
@@ -6329,6 +6352,7 @@ function getMobileConfig() {
             enableVix: mChecked('m-enableVix'),
             enableGhd: mChecked('m-enableGhd'),
             enableGs: mChecked('m-enableGs'),
+            enableGstv: mChecked('m-enableGstv'),
             enableAnimeWorld: mChecked('m-enableAnimeWorld'),
             enableAnimeUnity: mChecked('m-enableAnimeUnity'),
             enableAnimeSaturn: mChecked('m-enableAnimeSaturn'),
@@ -6365,7 +6389,7 @@ async function updateLinkModalContent(immediate = false) {
     if(!box) return;
 
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
 
     if(!config.key && !isWebEnabled) {
         mSetValue('m-generatedUrlBox', "/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P");
@@ -6380,7 +6404,7 @@ async function updateLinkModalContent(immediate = false) {
 
 async function mobileInstall() {
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
     if(!config.key && !isWebEnabled) {
         showToast("ERRORE: API KEY MANCANTE", "error"); return;
     }

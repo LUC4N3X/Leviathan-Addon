@@ -3610,6 +3610,17 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                         <div class="control-row">
                             <div class="control-info">
                                 <div class="control-title notranslate" translate="no">
+                                    <i class="fas fa-satellite-dish" style="color: #00e5ff"></i> GuardaserieTV
+                                    <span class="proxy-tag tag-noproxy">NO PROXY</span>
+                                </div>
+                                <span class="control-desc">Serie TV da guardaserietv.rest con matching stagione/episodio e estrazione No Proxy lazy-safe.</span>
+                            </div>
+                            <label class="switch mf-switch"><input type="checkbox" id="enableGstv" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
+                        </div>
+
+                        <div class="control-row">
+                            <div class="control-info">
+                                <div class="control-title notranslate" translate="no">
                                     <i class="fas fa-torii-gate" style="color: #ff6600"></i> AnimeWorld
                                     <span class="proxy-tag tag-mfp">MFP</span>
                                 </div>
@@ -5104,6 +5115,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             const sc = document.getElementById('enableVix').checked;
             const ghd = document.getElementById('enableGhd').checked;
             const gs = document.getElementById('enableGs').checked;
+            const gstv = document.getElementById('enableGstv').checked;
             const aw = document.getElementById('enableAnimeWorld').checked;
             const au = document.getElementById('enableAnimeUnity').checked;
             const as = document.getElementById('enableAnimeSaturn').checked;
@@ -5115,7 +5127,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             const pRow = document.getElementById('webPriorityRow');
             if(pRow) {
 
-                if(sc || ghd || gs || aw || au || as || gf || cc) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
+                if(sc || ghd || gs || gstv || aw || au || as || gf || cc) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
                 else { pRow.style.display = 'none'; }
             }
         }
@@ -5292,6 +5304,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                         document.getElementById('vixLast').checked = config.filters.vixLast || false;
                         document.getElementById('enableGhd').checked = config.filters.enableGhd || false;
                         document.getElementById('enableGs').checked = config.filters.enableGs || false;
+                        document.getElementById('enableGstv').checked = config.filters.enableGstv || false;
 
                         document.getElementById('enableAnimeWorld').checked = config.filters.enableAnimeWorld || false;
                         document.getElementById('enableAnimeUnity').checked = config.filters.enableAnimeUnity || false;
@@ -5391,6 +5404,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             const scActive = document.getElementById('enableVix').checked;
             const ghdActive = document.getElementById('enableGhd').checked;
             const gsActive = document.getElementById('enableGs').checked;
+            const gstvActive = document.getElementById('enableGstv').checked;
             const awActive = document.getElementById('enableAnimeWorld').checked;
             const auActive = document.getElementById('enableAnimeUnity').checked;
             const asActive = document.getElementById('enableAnimeSaturn').checked;
@@ -5399,7 +5413,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             const isP2P = currentService === 'p2p';
             const sourceMode = document.getElementById('sourceMode').value;
 
-            const isWebEnabled = scActive || ghdActive || gsActive || awActive || auActive || asActive || gfActive || ccActive || isP2P;
+            const isWebEnabled = scActive || ghdActive || gsActive || gstvActive || awActive || auActive || asActive || gfActive || ccActive || isP2P;
             const sourceModeBypassesKey = sourceMode === 'dbOnly' || sourceMode === 'globalCacheOnly';
 
             const el = document.getElementById('apiKey');
@@ -5428,6 +5442,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                     document.getElementById('enableVix').checked
                     || document.getElementById('enableGhd').checked
                     || document.getElementById('enableGs').checked
+                    || document.getElementById('enableGstv').checked
                     || document.getElementById('enableAnimeWorld').checked
                     || document.getElementById('enableAnimeUnity').checked
                     || document.getElementById('enableAnimeSaturn').checked
@@ -5462,6 +5477,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                     enableVix: document.getElementById('enableVix').checked,
                     enableGhd: document.getElementById('enableGhd').checked,
                     enableGs: document.getElementById('enableGs').checked,
+                    enableGstv: document.getElementById('enableGstv').checked,
                     enableAnimeWorld: document.getElementById('enableAnimeWorld').checked,
                     enableAnimeUnity: document.getElementById('enableAnimeUnity').checked,
                     enableAnimeSaturn: document.getElementById('enableAnimeSaturn').checked,
@@ -5529,6 +5545,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             let p2pText = c.filters.enableP2P ? 'ATTIVO (⚠️)' : 'DISATTIVATO';
             let ghdText = c.filters.enableGhd ? 'ATTIVO 🦁' : 'NO';
             let gsText = c.filters.enableGs ? 'ATTIVO 🛡️' : 'NO';
+            let gstvText = c.filters.enableGstv ? 'ATTIVO 📺' : 'NO';
             let awText = c.filters.enableAnimeWorld ? 'ATTIVO ⛩️' : 'NO';
             let auText = c.filters.enableAnimeUnity ? 'ATTIVO 🌀' : 'NO';
             let asText = c.filters.enableAnimeSaturn ? 'ATTIVO 🪐' : 'NO';
@@ -5563,7 +5580,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                 <li>Servizio Debrid <span>${serviceDisplay}</span></li>
                 <li>Visual Skin <span>${skinText}</span></li>
                 <li>Swarm P2P <span>${p2pText}</span></li>
-                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | AW: ${awText} | AU: ${auText} | AS: ${asText} | GF: ${gfText} | CC: ${ccText}</span></li>
+                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | GSTV: ${gstvText} | AW: ${awText} | AU: ${auText} | AS: ${asText} | GF: ${gfText} | CC: ${ccText}</span></li>
                 <li>Flux Priority <span>${sortText}</span></li>
                 <li>Source Policy <span>${sourceModeText}</span></li>
                 <li>Proxy Bridge <span>${c.mediaflow.url ? 'CONFIGURATO' : 'NON ATTIVO'}</span></li>
