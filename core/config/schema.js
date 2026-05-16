@@ -28,14 +28,12 @@ function decodeConfigBase64(configStr) {
   if (!raw) return '{}';
   if (isEncryptedConfigToken(raw)) return decryptConfigToken(raw);
 
-  // Compatibilità extra: se arriva già JSON puro da un reverse proxy/editor non lo ricodifichiamo.
   if (/^[\[{]/.test(raw)) return raw;
 
   const normalized = raw.replace(/-/g, '+').replace(/_/g, '/');
   const padding = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
   const decoded = Buffer.from(normalized + padding, 'base64').toString('utf8');
 
-  // Evita l'errore brutto `Unexpected token �`: se il token non produce JSON, fallisce chiaro.
   if (!/^[\s]*[\[{]/.test(decoded)) {
     throw new Error('Config token non JSON: rigenera il link/installazione dal pannello Leviathan');
   }
@@ -124,7 +122,7 @@ function validateConfig(input = {}) {
     if (output.filters[key] !== undefined) output.filters[key] = normalizeStringArray(output.filters[key]);
   }
 
-  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast'];
+  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableGstv', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast'];
   for (const key of booleanFilterKeys) {
     if (output.filters[key] !== undefined) output.filters[key] = !!output.filters[key];
   }
