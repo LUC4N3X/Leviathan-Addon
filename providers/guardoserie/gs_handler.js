@@ -46,7 +46,7 @@ const SEARCH_QUERY_TIMEOUT_MS = 5000;
 
 // GuardoSerie fast-path defaults mirror the CinemaCity approach:
 // ImpIt (browser fingerprint impersonation) is the PRIMARY bypass method.
-// FlareSolverr is opt-in via GUARDOSERIE_FLARE_ENABLED=1 env var.
+// FlareSolverr background clearance is enabled by default for GuardoSerie; set GUARDOSERIE_FLARE_ENABLED=0 to disable it.
 const GS_TOP_SPEED = Object.freeze({
   flareEndpoint: process.env.FLARESOLVERR_URL || 'http://flaresolverr:8191/v1',
   directFetchTimeoutMs: 3000,
@@ -68,7 +68,7 @@ const GS_TOP_SPEED = Object.freeze({
   staleSessionEmergencyCooldownMs: 0,
   clearanceBridgeMode: true,
   enableImpitFallback: true,
-  backgroundClearanceEnabled: envFlag('GUARDOSERIE_FLARE_ENABLED', false),
+  backgroundClearanceEnabled: envFlag('GUARDOSERIE_FLARE_ENABLED', true),
   backgroundPrimeHome: false,
   backgroundTitlePrime: true,
   backgroundRefreshMs: 600_000,
@@ -193,7 +193,7 @@ const gsHttp = createProviderHttpGuard({
   emergencyClearanceMinIntervalMs: GS_TOP_SPEED.staleSessionEmergencyCooldownMs,
   searchTimeoutMs: SEARCH_QUERY_TIMEOUT_MS,
   clearanceTimeoutMs: FLARE_WARMUP_TIMEOUT_MS,
-  refreshDomainOnStart: false,
+  refreshDomainOnStart: true,
   domainProbeTimeoutMs: 2500,
   targetUrlClearance: true,
   originClearance: true,
@@ -537,24 +537,33 @@ async function searchGsSitemapCandidates(expectedTitles) {
 async function searchGsViaRestApi(query, signal) {
   try {
     const baseUrl = getTargetDomain();
-    const restUrl = `${baseUrl}/wp-json/wp/v2/search?search=${encodeURIComponent(query)}&per_page=10&type=post&_fields=link,title`;
-    const raw = await smartFetch(restUrl, {
-      ttl: TTL_SEARCH,
-      signal,
-      allowFlareSolverr: false,
-      timeoutMs: GS_WP_REST_TIMEOUT_MS
-    }).catch(() => null);
-    if (!raw || typeof raw !== 'string') return [];
-    try {
-      const data = JSON.parse(raw);
-      if (!Array.isArray(data)) return [];
-      return data
-        .filter(item => item?.link)
-        .map(item => ({
-          url: String(item.link),
-          title: String(item.title?.rendered || item.title || '')
-        }));
-    } catch (_) { return []; }
+    const encodedQuery = encodeURIComponent(query);
+    const restUrls = [
+      `${baseUrl}/wp-json/wp/v2/search?search=${encodedQuery}&per_page=10&type=post&_fields=link,title`,
+      `${baseUrl}/?rest_route=/wp/v2/search&search=${encodedQuery}&per_page=10&type=post&_fields=link,title`
+    ];
+
+    for (const restUrl of restUrls) {
+      const raw = await smartFetch(restUrl, {
+        ttl: TTL_SEARCH,
+        signal,
+        allowFlareSolverr: false,
+        timeoutMs: GS_WP_REST_TIMEOUT_MS
+      }).catch(() => null);
+      if (!raw || typeof raw !== 'string') continue;
+      try {
+        const data = JSON.parse(raw);
+        if (!Array.isArray(data)) continue;
+        const results = data
+          .filter(item => item?.link)
+          .map(item => ({
+            url: String(item.link),
+            title: String(item.title?.rendered || item.title || '')
+          }));
+        if (results.length > 0) return results;
+      } catch (_) {}
+    }
+    return [];
   } catch (_) { return []; }
 }
 

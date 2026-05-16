@@ -167,6 +167,15 @@ function createProviderHttpGuard(options = {}) {
   // for cookies/user-agent, then immediately replays the real request through Axios.
   // Keep this opt-in per provider to avoid changing legacy providers accidentally.
   const clearanceBridgeMode = Boolean(options.clearanceBridgeMode);
+  const clearanceEgressKey = String(
+    options.clearanceEgressKey ||
+    process.env.CF_CLEARANCE_EGRESS_KEY ||
+    process.env.PROVIDER_EGRESS_KEY ||
+    process.env.OUTBOUND_PROXY_ID ||
+    process.env.HTTPS_PROXY ||
+    process.env.HTTP_PROXY ||
+    'direct'
+  ).trim() || 'direct';
 
   function loadStoredDomain() {
     try {
@@ -260,7 +269,9 @@ function createProviderHttpGuard(options = {}) {
       activeSession = {
         ...session,
         url: normalizeBaseUrl(session.url) || currentBaseUrl,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        egressKey: session.egressKey || clearanceEgressKey,
+        impitBrowser: session.impitBrowser || getImpitBrowserForFingerprint(session)
       };
       const persistedSession = { ...activeSession };
       delete persistedSession.solutionResponse;
@@ -272,7 +283,9 @@ function createProviderHttpGuard(options = {}) {
   });
 
   function isSessionFresh(session = activeSession) {
-    return clearanceManager.isFresh(session);
+    if (!clearanceManager.isFresh(session)) return false;
+    if (session?.egressKey && session.egressKey !== clearanceEgressKey) return false;
+    return true;
   }
 
   function isSessionFreshForUrl(session = activeSession, url = currentBaseUrl) {
@@ -346,7 +359,7 @@ function createProviderHttpGuard(options = {}) {
 
   function buildSharedClearanceKey(triggerUrl) {
     const base = normalizeBaseUrl(triggerUrl) || normalizeBaseUrl(currentBaseUrl) || normalizeBaseUrl(initialBaseUrl) || initialBaseUrl;
-    return `${providerName}:${base}`;
+    return `${providerName}:${base}:egress:${clearanceEgressKey}`;
   }
 
   function normalizeComparableUrl(value, base = currentBaseUrl) {
@@ -546,7 +559,7 @@ function createProviderHttpGuard(options = {}) {
           followRedirect: maxRedirects !== 0,
           responseType: 'text',
           fingerprint: browserProfile || activeSession,
-          browser: getImpitBrowserForFingerprint(browserProfile || activeSession),
+          browser: (browserProfile && browserProfile.impitBrowser) || activeSession?.impitBrowser || getImpitBrowserForFingerprint(browserProfile || activeSession),
           browserFallbacks: impitBrowserFallbacks,
           maxBrowserAttempts: Math.max(1, Math.min(4, Number(impitAttempts || (method === 'GET' ? impitMaxAttempts : Math.min(2, impitMaxAttempts))) || 1)),
           totalTimeoutMs: Math.max(timeout, Math.min(timeout + (impitTotalExtra == null ? impitTotalExtraMs : Number(impitTotalExtra) || 0), timeout * 2)),
@@ -575,7 +588,8 @@ function createProviderHttpGuard(options = {}) {
             data: typeof response.body === 'string' ? response.body : String(response.body || ''),
             url: response.url || url,
             ms: Date.now() - startedAt,
-            via: response.impitAttempts > 1 ? `impit:${response.impitBrowser}:${response.impitAttempts}` : 'impit'
+            via: response.impitAttempts > 1 ? `impit:${response.impitBrowser}:${response.impitAttempts}` : 'impit',
+            impitBrowser: response.impitBrowser || null
           };
         }
       } catch (error) {
@@ -641,7 +655,9 @@ function createProviderHttpGuard(options = {}) {
             userAgent: (browserProfile && (browserProfile.userAgent || browserProfile.ua)) || activeSession?.userAgent || getProfileUserAgent(browserProfile),
             cookies: buildCookieHeaderFromSession(activeSession, response.url || url) || activeSession?.cookies || '',
             url: response.url,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            egressKey: clearanceEgressKey,
+            impitBrowser: response.impitBrowser || browserProfile?.impitBrowser || activeSession?.impitBrowser || getImpitBrowserForFingerprint(browserProfile || activeSession)
           }, response.url, setCookie);
         }
         logger.debug('impit rescue ok', { method, url, reason, status: response.status, bytes: html.length, via: response.via, ms: Date.now() - startedAt, hasCookie: Boolean(activeSession?.cookies || setCookie) });
@@ -664,7 +680,9 @@ function createProviderHttpGuard(options = {}) {
     const next = {
       ...merged,
       url: normalizeBaseUrl(cookieUrl) || normalizeBaseUrl(merged.url) || currentBaseUrl,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      egressKey: merged.egressKey || clearanceEgressKey,
+      impitBrowser: merged.impitBrowser || session.impitBrowser || getImpitBrowserForFingerprint(merged)
     };
     if (!next.cookies && setCookie) next.cookies = mergeCookieHeaders(session.cookies || '', setCookie);
     activeSession = next;
@@ -817,7 +835,14 @@ function createProviderHttpGuard(options = {}) {
     const setCookie = response.headers?.['set-cookie'];
     if (setCookie) {
       const cookies = mergeCookieHeaders('', setCookie);
-      if (cookies) persistSession({ userAgent, cookies, url: response.url, timestamp: Date.now() }, response.url, setCookie);
+      if (cookies) persistSession({
+        userAgent,
+        cookies,
+        url: response.url,
+        timestamp: Date.now(),
+        egressKey: clearanceEgressKey,
+        impitBrowser: getImpitBrowserForFingerprint(profile)
+      }, response.url, setCookie);
     }
 
     logger.debug('direct fetch ok', { method, url, status: response.status, bytes: html.length, hasCookie: Boolean(setCookie), ms: Date.now() - startedAt });
@@ -848,6 +873,8 @@ function createProviderHttpGuard(options = {}) {
         sharedKey,
         wantResponse: !clearanceBridgeMode && sameDocumentUrl(primaryClearanceUrl, triggerUrl),
         cookies: buildCookieHeaderFromSession(activeSession, targetClearanceUrl) || activeSession?.cookies || '',
+        userAgent: activeSession?.userAgent || getFallbackUserAgent(),
+        egressKey: clearanceEgressKey,
         ignoreProviderCooldown
       });
 
@@ -867,6 +894,8 @@ function createProviderHttpGuard(options = {}) {
           maxTimeout: clearanceTimeoutMs,
           wantResponse: !clearanceBridgeMode && sameDocumentUrl(fallbackUrl, triggerUrl),
           cookies: buildCookieHeaderFromSession(activeSession, fallbackUrl) || activeSession?.cookies || '',
+          userAgent: activeSession?.userAgent || getFallbackUserAgent(),
+          egressKey: clearanceEgressKey,
           ignoreProviderCooldown
         });
         if (isSessionFreshForUrl(session, triggerUrl)) return session;
@@ -1138,6 +1167,7 @@ function createProviderHttpGuard(options = {}) {
       sharedClearanceForceOrigin,
       sharedClearancePending: Boolean(sharedClearancePromise),
       clearanceBridgeMode,
+      clearanceEgressKey,
       emergencyClearanceAfterSessionFailure,
       sessionTimeoutFloorMs,
       providerFailureCooldownMs: options.providerFailureCooldownMs,

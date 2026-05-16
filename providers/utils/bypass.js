@@ -69,6 +69,7 @@ const DEFAULT_IMPIT_BROWSER_FALLBACKS = Object.freeze([
 
 const stickyFingerprintCache = new Map();
 const impitGoodBrowserCache = new Map();
+const impitBadBrowserCache = new Map();
 
 function now() {
     return Date.now();
@@ -170,6 +171,42 @@ function clearGoodImpitBrowser(url = null) {
     const host = getHost(url);
     if (!host) return false;
     return impitGoodBrowserCache.delete(host);
+}
+
+function rememberBadImpitBrowser(url, browser, ttlMs = 10 * 60 * 1000) {
+    const host = getHost(url);
+    const normalized = safeString(browser).trim();
+    if (!host || !normalized) return false;
+    const current = impitBadBrowserCache.get(host) || { browsers: new Map() };
+    current.browsers.set(normalized, now() + Math.max(30_000, Number(ttlMs) || 10 * 60 * 1000));
+    impitBadBrowserCache.set(host, current);
+    return true;
+}
+
+function getBadImpitBrowsers(url = null) {
+    const host = getHost(url);
+    if (!host) return new Set();
+    const current = impitBadBrowserCache.get(host);
+    if (!current?.browsers) return new Set();
+
+    const ts = now();
+    const out = new Set();
+    for (const [browser, expiresAt] of current.browsers.entries()) {
+        if (Number(expiresAt) > ts) out.add(browser);
+        else current.browsers.delete(browser);
+    }
+    if (current.browsers.size === 0) impitBadBrowserCache.delete(host);
+    return out;
+}
+
+function clearBadImpitBrowser(url = null) {
+    if (!url) {
+        impitBadBrowserCache.clear();
+        return true;
+    }
+    const host = getHost(url);
+    if (!host) return false;
+    return impitBadBrowserCache.delete(host);
 }
 
 function clearStickyFingerprints(url = null) {
@@ -330,13 +367,16 @@ function getImpitBrowserCandidatesForFingerprint(fp = null, options = {}) {
     const custom = normalizeBrowserList(options.browserFallbacks || options.fallbackBrowsers || []);
     const defaults = normalizeBrowserList(DEFAULT_IMPIT_BROWSER_FALLBACKS);
 
-    return normalizeBrowserList([
+    const candidates = normalizeBrowserList([
         ...explicit,
         ...sticky,
         ...inferred,
         ...custom,
         ...defaults
     ]);
+    const badBrowsers = getBadImpitBrowsers(url);
+    const filtered = candidates.filter((browser) => !badBrowsers.has(browser));
+    return filtered.length > 0 ? filtered : candidates;
 }
 
 function deleteHeaderCaseInsensitive(headers, name) {
@@ -359,9 +399,18 @@ function alignHeadersForImpitBrowser(headers = {}, browser = '') {
     if (selected.startsWith('firefox')) {
         const major = Number.isInteger(version) ? version : 135;
         setHeaderCaseInsensitive(out, 'User-Agent', `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:${major}.0) Gecko/20100101 Firefox/${major}.0`);
+        setHeaderCaseInsensitive(out, 'Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
+        setHeaderCaseInsensitive(out, 'Accept-Language', out['Accept-Language'] || out['accept-language'] || 'it-IT,it;q=0.8,en-US;q=0.5,en;q=0.3');
+        setHeaderCaseInsensitive(out, 'Accept-Encoding', 'gzip, deflate, br, zstd');
         deleteHeaderCaseInsensitive(out, 'sec-ch-ua');
         deleteHeaderCaseInsensitive(out, 'sec-ch-ua-mobile');
         deleteHeaderCaseInsensitive(out, 'sec-ch-ua-platform');
+        deleteHeaderCaseInsensitive(out, 'Priority');
+        setHeaderCaseInsensitive(out, 'Sec-Fetch-Dest', 'document');
+        setHeaderCaseInsensitive(out, 'Sec-Fetch-Mode', 'navigate');
+        setHeaderCaseInsensitive(out, 'Sec-Fetch-Site', 'none');
+        setHeaderCaseInsensitive(out, 'Sec-Fetch-User', '?1');
+        setHeaderCaseInsensitive(out, 'Upgrade-Insecure-Requests', '1');
         setHeaderCaseInsensitive(out, 'TE', 'trailers');
         return compactHeaderObject(out);
     }
@@ -369,9 +418,18 @@ function alignHeadersForImpitBrowser(headers = {}, browser = '') {
     if (selected.startsWith('chrome')) {
         const major = Number.isInteger(version) ? version : 136;
         setHeaderCaseInsensitive(out, 'User-Agent', `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`);
-        setHeaderCaseInsensitive(out, 'sec-ch-ua', `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not-A.Brand";v="99"`);
+        setHeaderCaseInsensitive(out, 'Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7');
+        setHeaderCaseInsensitive(out, 'Accept-Language', out['Accept-Language'] || out['accept-language'] || 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7');
+        setHeaderCaseInsensitive(out, 'Accept-Encoding', 'gzip, deflate, br, zstd');
+        setHeaderCaseInsensitive(out, 'sec-ch-ua', `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not.A/Brand";v="99"`);
         setHeaderCaseInsensitive(out, 'sec-ch-ua-mobile', '?0');
         setHeaderCaseInsensitive(out, 'sec-ch-ua-platform', '"Windows"');
+        setHeaderCaseInsensitive(out, 'Sec-Fetch-Dest', 'document');
+        setHeaderCaseInsensitive(out, 'Sec-Fetch-Mode', 'navigate');
+        setHeaderCaseInsensitive(out, 'Sec-Fetch-Site', 'none');
+        setHeaderCaseInsensitive(out, 'Sec-Fetch-User', '?1');
+        setHeaderCaseInsensitive(out, 'Upgrade-Insecure-Requests', '1');
+        setHeaderCaseInsensitive(out, 'Priority', 'u=0, i');
         deleteHeaderCaseInsensitive(out, 'TE');
         return compactHeaderObject(out);
     }
@@ -379,9 +437,16 @@ function alignHeadersForImpitBrowser(headers = {}, browser = '') {
     if (selected.startsWith('okhttp')) {
         const major = Number.isInteger(version) ? version : 4;
         setHeaderCaseInsensitive(out, 'User-Agent', `okhttp/${major}.12.0`);
+        setHeaderCaseInsensitive(out, 'Accept', '*/*');
         deleteHeaderCaseInsensitive(out, 'sec-ch-ua');
         deleteHeaderCaseInsensitive(out, 'sec-ch-ua-mobile');
         deleteHeaderCaseInsensitive(out, 'sec-ch-ua-platform');
+        deleteHeaderCaseInsensitive(out, 'Sec-Fetch-Dest');
+        deleteHeaderCaseInsensitive(out, 'Sec-Fetch-Mode');
+        deleteHeaderCaseInsensitive(out, 'Sec-Fetch-Site');
+        deleteHeaderCaseInsensitive(out, 'Sec-Fetch-User');
+        deleteHeaderCaseInsensitive(out, 'Upgrade-Insecure-Requests');
+        deleteHeaderCaseInsensitive(out, 'Priority');
     }
 
     return compactHeaderObject(out);
@@ -605,12 +670,19 @@ async function requestWithImpitRotating(input, config = {}) {
 
             const rotateResponse = shouldRotateImpitResponse(response, options);
             if (!rotateResponse || attempts >= maxBrowserAttempts) {
-                if (!rotateResponse) rememberGoodImpitBrowser(response.url || url, browser, browserStickyTtlMs);
+                if (!rotateResponse) {
+                    rememberGoodImpitBrowser(response.url || url, browser, browserStickyTtlMs);
+                    clearBadImpitBrowser(response.url || url);
+                } else {
+                    rememberBadImpitBrowser(response.url || url, browser, options.badBrowserTtlMs);
+                }
                 return response;
             }
+            rememberBadImpitBrowser(response.url || url, browser, options.badBrowserTtlMs);
         } catch (error) {
             lastError = error;
             if (isCanceledError(error) || options.signal?.aborted) throw error;
+            if (isRetryableError(error)) rememberBadImpitBrowser(url, browser, options.badBrowserTtlMs);
             if (attempts >= maxBrowserAttempts && !isRetryableError(error)) throw error;
         }
     }
@@ -977,6 +1049,7 @@ module.exports = {
     buildContextHeaders,
     classifyBlockResponse,
     clearGoodImpitBrowser,
+    clearBadImpitBrowser,
     clearStickyFingerprints,
     createCircuitBreaker,
     createSingleFlight,
@@ -990,6 +1063,7 @@ module.exports = {
     headersToPlainObject,
     inferRequestContext,
     isRetryableError,
+    rememberBadImpitBrowser,
     rememberGoodImpitBrowser,
     requestWithImpit,
     requestWithImpitRotating,
