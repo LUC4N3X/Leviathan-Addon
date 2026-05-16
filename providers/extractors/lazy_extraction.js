@@ -166,7 +166,13 @@ async function resolveLazyExtractionToken(token, options = {}) {
         Referer: payload.referer,
         ...(payload.headers || {})
     });
-    const client = options.client || axios.create({ timeout: Number.parseInt(process.env.LAZY_EXTRACT_TIMEOUT_MS || '12000', 10) || 12000 });
+    const client = options.client || axios.create({
+        timeout: Number.parseInt(process.env.LAZY_EXTRACT_TIMEOUT_MS || '12000', 10) || 12000,
+        maxRedirects: 5,
+        decompress: true,
+        proxy: false,
+        validateStatus: (status) => status >= 200 && status < 400
+    });
     try {
         const extracted = await extractFromUrl(payload.url, {
             client,

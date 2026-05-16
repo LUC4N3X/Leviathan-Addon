@@ -11,6 +11,7 @@ const { extractUqload, isUqloadUrl } = require('./uqload');
 const { extractUpstream, isUpstreamUrl } = require('./upstream');
 const { extractVidoza, isVidozaUrl } = require('./vidoza');
 const { extractVixcloud, isVixcloudUrl } = require('./vixcloud');
+const { extractVidxgo, isVidxgoUrl } = require('./vidxgo');
 
 module.exports = {
     extractDeltabit,
@@ -34,5 +35,7 @@ module.exports = {
     extractVidoza,
     isVidozaUrl,
     extractVixcloud,
-    isVixcloudUrl
+    isVixcloudUrl,
+    extractVidxgo,
+    isVidxgoUrl
 };
