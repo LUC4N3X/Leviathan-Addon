@@ -9,6 +9,7 @@ const {
   redactSecretsInText
 } = require("./torbox_cache_state");
 const { computeBackoffDelay, parseRetryAfterMs } = require("../utils/backoff");
+const { matchTorboxFile, getFileId: getMatchedFileId, getFileName: getMatchedFileName, getFileSize: getMatchedFileSize, isVideoFile: isMatchedVideoFile } = require("../torbox/tb_file_match");
 
 const TB_BASE_URL = "https://api.torbox.app/v1/api";
 
@@ -612,7 +613,7 @@ function parseHashResult(hash, info, meta = null) {
     })];
   }
 
-  const validVideoFiles = info.files.filter(isVideoCandidate);
+  const validVideoFiles = info.files.filter((file) => isMatchedVideoFile(file, { minVideoSize: MIN_VIDEO_SIZE }));
   if (validVideoFiles.length === 0) {
     return [lowerHash, makeCacheResult(TB_CACHE_STATES.UNCACHED, {
       torrent_title: info.name || null,
@@ -621,9 +622,13 @@ function parseHashResult(hash, info, meta = null) {
     })];
   }
 
-  const { file: bestFile, confidence, score, reason } = pickBestFile(validVideoFiles, meta);
-  const bestSize = bestFile ? getFileSize(bestFile) : Math.max(...validVideoFiles.map(getFileSize), 0);
-  const bestId = bestFile ? getFileId(bestFile) : null;
+  const match = matchTorboxFile(info.files, meta, { minVideoSize: MIN_VIDEO_SIZE });
+  const bestFile = match.file || null;
+  const confidence = Number(match.confidence || 0) || 0;
+  const score = match.score;
+  const reason = match.reason;
+  const bestSize = bestFile ? getMatchedFileSize(bestFile) : Math.max(...validVideoFiles.map(getMatchedFileSize), 0);
+  const bestId = bestFile ? getMatchedFileId(bestFile) : null;
   const isEpisodeRequest = Boolean(meta?.isEpisodeRequest);
   const shouldExposeFileId = confidence >= 0.75 && bestId != null;
   const verified = Boolean(bestFile && (!isEpisodeRequest || shouldExposeFileId));
@@ -632,7 +637,7 @@ function parseHashResult(hash, info, meta = null) {
     return [lowerHash, makeCacheResult(TB_CACHE_STATES.CACHED_VERIFIED, {
       torrent_title: info.name || null,
       size: bestSize || totalSize || null,
-      file_title: getFileName(bestFile) || null,
+      file_title: getMatchedFileName(bestFile) || null,
       file_size: bestSize || null,
       file_id: bestId,
       confidence,
@@ -644,7 +649,7 @@ function parseHashResult(hash, info, meta = null) {
   return [lowerHash, makeCacheResult(TB_CACHE_STATES.UNCERTAIN, {
     torrent_title: info.name || null,
     size: bestSize || totalSize || null,
-    file_title: confidence >= 0.5 && bestFile ? getFileName(bestFile) : null,
+    file_title: confidence >= 0.5 && bestFile ? getMatchedFileName(bestFile) : null,
     file_size: confidence >= 0.5 ? bestSize || null : null,
     file_id: null,
     confidence,
