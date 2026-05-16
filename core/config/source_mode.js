@@ -80,6 +80,7 @@ function hasWebProvidersEnabled(filters = {}) {
         || filters?.enableVix === true
         || filters?.enableGhd === true
         || filters?.enableGs === true
+        || filters?.enableGstv === true
         || filters?.enableAnimeWorld === true
         || filters?.enableAnimeUnity === true
         || filters?.enableAnimeSaturn === true
