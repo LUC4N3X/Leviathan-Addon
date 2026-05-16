@@ -569,6 +569,30 @@ async function ensureDatabaseOptimizations(pool) {
       last_seen_at = GREATEST(COALESCE(torrent_items.last_seen_at, EXCLUDED.last_seen_at), COALESCE(EXCLUDED.last_seen_at, torrent_items.last_seen_at)),
       seen_count = GREATEST(COALESCE(torrent_items.seen_count, 1), COALESCE(EXCLUDED.seen_count, 1)),
       updated_at = NOW()`,
+    `UPDATE torrent_files
+     SET info_hash_norm = LOWER(TRIM(info_hash_norm))
+     WHERE info_hash_norm IS NOT NULL
+       AND info_hash_norm <> LOWER(TRIM(info_hash_norm))`,
+    `UPDATE torrent_files
+     SET file_index_norm = COALESCE(file_index_norm, -1)
+     WHERE file_index_norm IS NULL`,
+    `DELETE FROM torrent_files t
+     USING (
+       SELECT ctid,
+              ROW_NUMBER() OVER (
+                PARTITION BY info_hash_norm, file_index_norm
+                ORDER BY confidence DESC NULLS LAST,
+                         video_rank DESC NULLS LAST,
+                         size DESC NULLS LAST,
+                         updated_at DESC NULLS LAST,
+                         file_key DESC
+              ) AS rn
+       FROM torrent_files
+       WHERE info_hash_norm IS NOT NULL
+     ) d
+     WHERE t.ctid = d.ctid
+       AND d.rn > 1`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_torrent_files_hash_file ON torrent_files (info_hash_norm, file_index_norm)`,
     `INSERT INTO torrent_files (
       file_key,
       info_hash,
@@ -588,6 +612,51 @@ async function ensureDatabaseOptimizations(pool) {
       created_at,
       updated_at
     )
+    WITH torrent_file_source AS (
+      SELECT pack_hash_norm AS info_hash_norm,
+             COALESCE(file_index_norm, -1) AS file_index_norm,
+             file_path AS path,
+             COALESCE(NULLIF(file_title, ''), NULLIF(regexp_replace(COALESCE(file_path, ''), '^.*/', ''), ''), pack_hash_norm) AS leaf_name,
+             file_size AS size,
+             LOWER(NULLIF(regexp_replace(COALESCE(file_path, file_title, ''), '^.*\\.', ''), COALESCE(file_path, file_title, ''))) AS extension,
+             CASE WHEN COALESCE(file_path, file_title, '') ~* '\\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mpg|mpeg)$' THEN TRUE ELSE NULL END AS is_video,
+             CASE WHEN file_size >= 52428800 THEN 100 WHEN file_size >= 26214400 THEN 75 ELSE 0 END AS video_rank,
+             imdb_season AS season,
+             imdb_episode AS episode,
+             'legacy_pack_files' AS source,
+             CASE WHEN imdb_season IS NOT NULL AND imdb_episode IS NOT NULL THEN 0.95 ELSE 0.70 END AS confidence
+      FROM pack_files
+      WHERE pack_hash_norm IS NOT NULL
+
+      UNION ALL
+
+      SELECT info_hash_norm,
+             COALESCE(file_index_norm, -1) AS file_index_norm,
+             NULL::text AS path,
+             NULLIF(title, '') AS leaf_name,
+             size,
+             NULL::text AS extension,
+             NULL::boolean AS is_video,
+             CASE WHEN size >= 52428800 THEN 70 ELSE 0 END AS video_rank,
+             imdb_season,
+             imdb_episode,
+             'legacy_files' AS source,
+             CASE WHEN imdb_id IS NOT NULL THEN 0.85 ELSE 0.50 END AS confidence
+      FROM files
+      WHERE info_hash_norm IS NOT NULL
+    ), torrent_file_ranked AS (
+      SELECT *,
+             ROW_NUMBER() OVER (
+               PARTITION BY info_hash_norm, file_index_norm
+               ORDER BY confidence DESC NULLS LAST,
+                        video_rank DESC NULLS LAST,
+                        size DESC NULLS LAST,
+                        CASE source WHEN 'legacy_pack_files' THEN 0 ELSE 1 END ASC,
+                        leaf_name DESC NULLS LAST
+             ) AS rn
+      FROM torrent_file_source
+      WHERE info_hash_norm IS NOT NULL
+    )
     SELECT
       md5(x.info_hash_norm || ':' || x.file_index_norm::text),
       x.info_hash_norm,
@@ -606,42 +675,10 @@ async function ensureDatabaseOptimizations(pool) {
       x.confidence,
       NOW(),
       NOW()
-    FROM (
-      SELECT pack_hash_norm AS info_hash_norm,
-             file_index_norm,
-             file_path AS path,
-             COALESCE(NULLIF(file_title, ''), NULLIF(regexp_replace(COALESCE(file_path, ''), '^.*/', ''), ''), pack_hash_norm) AS leaf_name,
-             file_size AS size,
-             LOWER(NULLIF(regexp_replace(COALESCE(file_path, file_title, ''), '^.*\\.', ''), COALESCE(file_path, file_title, ''))) AS extension,
-             CASE WHEN COALESCE(file_path, file_title, '') ~* '\\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mpg|mpeg)$' THEN TRUE ELSE NULL END AS is_video,
-             CASE WHEN file_size >= 52428800 THEN 100 WHEN file_size >= 26214400 THEN 75 ELSE 0 END AS video_rank,
-             imdb_season AS season,
-             imdb_episode AS episode,
-             'legacy_pack_files' AS source,
-             CASE WHEN imdb_season IS NOT NULL AND imdb_episode IS NOT NULL THEN 0.95 ELSE 0.70 END AS confidence
-      FROM pack_files
-      WHERE pack_hash_norm IS NOT NULL
-
-      UNION ALL
-
-      SELECT info_hash_norm,
-             file_index_norm,
-             NULL::text AS path,
-             NULLIF(title, '') AS leaf_name,
-             size,
-             NULL::text AS extension,
-             NULL::boolean AS is_video,
-             CASE WHEN size >= 52428800 THEN 70 ELSE 0 END AS video_rank,
-             imdb_season,
-             imdb_episode,
-             'legacy_files' AS source,
-             CASE WHEN imdb_id IS NOT NULL THEN 0.85 ELSE 0.50 END AS confidence
-      FROM files
-      WHERE info_hash_norm IS NOT NULL
-    ) x
-    WHERE x.info_hash_norm IS NOT NULL
+    FROM torrent_file_ranked x
+    WHERE x.rn = 1
     LIMIT ${DB_AUTHORITY_BACKFILL_LIMIT}
-    ON CONFLICT (file_key)
+    ON CONFLICT (info_hash_norm, file_index_norm)
     DO UPDATE SET
       path = COALESCE(NULLIF(EXCLUDED.path, ''), torrent_files.path),
       leaf_name = CASE
@@ -650,6 +687,7 @@ async function ensureDatabaseOptimizations(pool) {
         ELSE torrent_files.leaf_name
       END,
       size = GREATEST(COALESCE(torrent_files.size, 0), COALESCE(EXCLUDED.size, 0)),
+      extension = COALESCE(EXCLUDED.extension, torrent_files.extension),
       is_video = COALESCE(EXCLUDED.is_video, torrent_files.is_video),
       video_rank = GREATEST(COALESCE(torrent_files.video_rank, 0), COALESCE(EXCLUDED.video_rank, 0)),
       parsed_season = COALESCE(EXCLUDED.parsed_season, torrent_files.parsed_season),
