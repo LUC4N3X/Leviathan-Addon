@@ -48,6 +48,8 @@ function createTorrentRepository({
     29
   );
   const TB_VERIFIED_HARD_MAX_AGE_MS = TB_VERIFIED_HARD_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+  const DB_AUTHORITY_DUAL_WRITE = String(process.env.DB_AUTHORITY_DUAL_WRITE || '1').trim() !== '0';
+  const DB_AUTHORITY_READ = String(process.env.DB_AUTHORITY_READ || '1').trim() !== '0';
 
 
   function cleanTorrentioProviderLabel(value = '') {
@@ -238,6 +240,513 @@ function createTorrentRepository({
     }
   }
 
+
+  function makeStableKey(parts) {
+    return crypto.createHash('sha1').update(parts.map((part) => String(part ?? '')).join(':')).digest('hex');
+  }
+
+  function normalizeAuthorityService(value) {
+    const service = sanitizeText(value).toLowerCase();
+    if (service === 'rd' || service === 'realdebrid' || service === 'real_debrid') return 'rd';
+    if (service === 'tb' || service === 'torbox') return 'tb';
+    return null;
+  }
+
+  function normalizeAuthorityState(service, state, cached = null) {
+    const normalizedService = normalizeAuthorityService(service);
+    const raw = sanitizeText(state).toLowerCase();
+    if (normalizedService === 'rd') {
+      const rdState = normalizeRdCacheState(raw);
+      if (rdState === 'cached') return 'cached_verified';
+      if (rdState) return rdState;
+      if (cached === true) return 'cached_verified';
+      if (cached === false) return 'uncached_terminal';
+      return 'uncertain';
+    }
+    if (normalizedService === 'tb') {
+      const tbState = normalizeTbCacheState(raw);
+      if (tbState) return tbState;
+      if (cached === true) return 'cached_verified';
+      if (cached === false) return 'uncached';
+      return 'uncertain';
+    }
+    return raw || (cached === true ? 'cached_verified' : (cached === false ? 'uncached' : 'uncertain'));
+  }
+
+  function deriveAuthorityCached(state, cached = null) {
+    if (state === 'cached_verified') return true;
+    if (state === 'uncached' || state === 'uncached_terminal') return false;
+    return typeof cached === 'boolean' ? cached : null;
+  }
+
+  function getAuthorityProofLevel(entry = {}, state = null) {
+    const explicit = sanitizeText(entry?.proof_level || entry?.proofLevel).toLowerCase();
+    if (explicit) return explicit.slice(0, 48);
+    const fileId = normalizeFileIndex(entry?.service_file_id ?? entry?.rd_file_index ?? entry?.tb_file_id ?? entry?.file_id ?? entry?.fileIndex ?? entry?.file_index);
+    const identity = normalizeEpisodeIdentity(entry);
+    if (state === 'cached_verified' && identity.isEpisode && Number.isInteger(fileId) && fileId >= 0) return 'episode_exact';
+    if (state === 'cached_verified' && Number.isInteger(fileId) && fileId >= 0) return 'file_exact';
+    if (state === 'cached_verified') return 'hash_only';
+    if (state === 'uncached' || state === 'uncached_terminal') return 'negative_terminal';
+    return 'service_state';
+  }
+
+  function getAuthorityTtlHours(service, state, fallback = null) {
+    const parsedFallback = Number(fallback);
+    if (Number.isFinite(parsedFallback) && parsedFallback > 0) return Math.max(0.05, Math.min(24 * 365, parsedFallback));
+    const normalizedService = normalizeAuthorityService(service);
+    if (normalizedService === 'rd') {
+      if (state === 'cached_verified') return RD_CACHED_RECHECK_HOURS;
+      if (state === 'uncached_terminal') return 24 * 7;
+      if (state === 'likely_uncached') return 6;
+      if (state === 'probing' || state === 'uncertain') return 1;
+      return 12;
+    }
+    if (normalizedService === 'tb') return getTbNextCheckHours(state);
+    return 6;
+  }
+
+  function normalizeAuthorityEntry(entry = {}) {
+    const service = normalizeAuthorityService(entry?.service || entry?.debrid_service || entry?.sourceService);
+    const hash = normalizeInfoHash(entry?.hash || entry?.info_hash || entry?.infoHash);
+    if (!service || !hash) return null;
+    const rawFileIndex = entry?.file_index ?? entry?.fileIdx ?? entry?.service_file_id ?? (service === 'rd' ? entry?.rd_file_index : entry?.tb_file_id) ?? entry?.file_id;
+    const fileIndex = normalizeFileIndex(rawFileIndex);
+    const fileIndexNorm = normalizeFileIndexNorm(fileIndex);
+    const state = normalizeAuthorityState(service, entry?.state || entry?.cache_state || entry?.rd_cache_state || entry?.tb_cache_state, typeof entry?.cached === 'boolean' ? entry.cached : null);
+    const cached = deriveAuthorityCached(state, typeof entry?.cached === 'boolean' ? entry.cached : null);
+    const identity = normalizeEpisodeIdentity(entry);
+    const mediaId = sanitizeText(entry?.media_id || entry?.mediaId || (identity.isEpisode ? `${identity.imdbId}:${identity.imdbSeason}:${identity.imdbEpisode}` : '')).slice(0, 220) || null;
+    const proofLevel = getAuthorityProofLevel(entry, state);
+    const serviceFileId = normalizeFileIndex(entry?.service_file_id ?? (service === 'rd' ? entry?.rd_file_index : entry?.tb_file_id) ?? entry?.file_id ?? fileIndex);
+    const serviceFileSize = entry?.service_file_size ?? entry?.file_size ?? (service === 'rd' ? entry?.rd_file_size : entry?.tb_file_size);
+    const confidence = Math.max(0, Math.min(1, toSafeNumber(entry?.confidence ?? entry?.tb_cache_confidence ?? (proofLevel === 'episode_exact' ? 0.99 : (proofLevel === 'file_exact' ? 0.95 : (cached === true ? 0.80 : 0.45))), 0)));
+    const ttlHours = getAuthorityTtlHours(service, state, entry?.next_hours ?? entry?.ttl_hours);
+    const checkedAt = toDateOrNull(entry?.checked_at || entry?.checkedAt || entry?.updated_at) || new Date();
+    const expiresAt = toDateOrNull(entry?.expires_at || entry?.expiresAt) || new Date(Date.now() + ttlHours * 3600 * 1000);
+    const nextCheckAt = toDateOrNull(entry?.next_check_at || entry?.nextCheckAt) || expiresAt;
+    const authorityKey = makeStableKey([service, hash, fileIndexNorm, mediaId || '', identity.imdbId || '', identity.imdbSeason ?? -1, identity.imdbEpisode ?? -1]);
+    return {
+      authorityKey, service, hash, fileIndex, fileIndexNorm, mediaId,
+      imdbId: identity.imdbId, season: identity.imdbSeason, episode: identity.imdbEpisode,
+      state, cached, proofLevel, confidence, serviceFileId,
+      serviceFileSize: serviceFileSize === null || serviceFileSize === undefined ? null : toSafeNumber(serviceFileSize, 0),
+      serviceTorrentId: sanitizeText(entry?.service_torrent_id || entry?.torrent_id || entry?.torrentId).slice(0, 120) || null,
+      checkedAt, expiresAt, nextCheckAt,
+      failureCount: Math.max(0, toSafeNumber(entry?.failure_count ?? entry?.failures ?? entry?.cache_check_failures, 0)),
+      lastError: sanitizeText(entry?.last_error || entry?.error).slice(0, 240) || null,
+      matchReason: sanitizeText(entry?.match_reason || entry?.tb_cache_match_reason || entry?.reason || proofLevel).slice(0, 240) || null,
+      payload: entry?.payload && typeof entry.payload === 'object' ? entry.payload : null
+    };
+  }
+
+  async function upsertTorrentItemAuthorityRow(client, torrent = {}) {
+    if (!DB_AUTHORITY_DUAL_WRITE) return false;
+    const infoHash = normalizeInfoHash(torrent?.infoHash || torrent?.info_hash || torrent?.hash);
+    if (!infoHash) return false;
+    const title = sanitizeText(torrent?.title, infoHash);
+    await client.query(
+      `
+        INSERT INTO torrent_items (
+          info_hash, info_hash_norm, title_best, title_original, type, size, folder_size, seeders, max_seeders,
+          resolution, quality_tag, codec_tag, hdr_tag, audio_tag, release_group, languages, trackers, smart_dedupe_key,
+          first_seen_at, last_seen_at, seen_count, created_at, updated_at
+        )
+        VALUES ($1, $1, $2, $2, $3, $4, $5, $6, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW(), 1, NOW(), NOW())
+        ON CONFLICT (info_hash_norm)
+        DO UPDATE SET
+          title_best = CASE WHEN COALESCE(torrent_items.title_best, '') = '' THEN EXCLUDED.title_best WHEN LENGTH(COALESCE(EXCLUDED.title_best, '')) > LENGTH(COALESCE(torrent_items.title_best, '')) THEN EXCLUDED.title_best ELSE torrent_items.title_best END,
+          size = GREATEST(COALESCE(torrent_items.size, 0), COALESCE(EXCLUDED.size, 0)),
+          folder_size = GREATEST(COALESCE(torrent_items.folder_size, 0), COALESCE(EXCLUDED.folder_size, 0)),
+          seeders = GREATEST(COALESCE(torrent_items.seeders, 0), COALESCE(EXCLUDED.seeders, 0)),
+          max_seeders = GREATEST(COALESCE(torrent_items.max_seeders, 0), COALESCE(EXCLUDED.max_seeders, 0)),
+          resolution = COALESCE(EXCLUDED.resolution, torrent_items.resolution),
+          quality_tag = COALESCE(EXCLUDED.quality_tag, torrent_items.quality_tag),
+          codec_tag = COALESCE(EXCLUDED.codec_tag, torrent_items.codec_tag),
+          hdr_tag = COALESCE(EXCLUDED.hdr_tag, torrent_items.hdr_tag),
+          audio_tag = COALESCE(EXCLUDED.audio_tag, torrent_items.audio_tag),
+          release_group = COALESCE(EXCLUDED.release_group, torrent_items.release_group),
+          languages = COALESCE(EXCLUDED.languages, torrent_items.languages),
+          trackers = COALESCE(EXCLUDED.trackers, torrent_items.trackers),
+          smart_dedupe_key = COALESCE(EXCLUDED.smart_dedupe_key, torrent_items.smart_dedupe_key),
+          last_seen_at = NOW(),
+          seen_count = GREATEST(COALESCE(torrent_items.seen_count, 0), 0) + 1,
+          updated_at = NOW()
+      `,
+      [
+        infoHash,
+        title,
+        normalizeStoredType(torrent?.type || (torrent?.isAnime ? 'anime' : (torrent?.is_pack ? 'pack' : null))),
+        Math.max(0, toSafeNumber(torrent?.size, 0)),
+        normalizeFolderSize(torrent),
+        Math.max(0, toSafeNumber(torrent?.seeders, 0)),
+        normalizeResolution(torrent?.resolution || torrent?.quality, title),
+        normalizeQualityTag(torrent),
+        normalizeCodecTag(torrent),
+        normalizeHdrTag(torrent),
+        normalizeAudioTag(torrent),
+        normalizeReleaseGroupTag(torrent),
+        normalizeLanguages(torrent),
+        normalizeTrackers(torrent),
+        normalizeSmartDedupeKeyForDb(torrent)
+      ]
+    );
+    return true;
+  }
+
+  async function upsertProviderObservationAuthorityRow(client, torrent = {}, options = {}) {
+    if (!DB_AUTHORITY_DUAL_WRITE) return false;
+    const infoHash = normalizeInfoHash(torrent?.infoHash || torrent?.info_hash || torrent?.hash);
+    if (!infoHash) return false;
+    const fileIndex = normalizeFileIndex(torrent?.fileIndex ?? torrent?.file_index ?? torrent?.fileIdx);
+    const fileIndexNorm = normalizeFileIndexNorm(fileIndex);
+    const providerGroup = sanitizeText(options.providerGroup || torrent?._sourceGroup || torrent?.providerGroup || 'local_db').toLowerCase().slice(0, 64) || 'local_db';
+    const providerName = normalizeProviderName(torrent?.provider || torrent?.providerName || options.providerName, torrent?.title).slice(0, 160) || 'unknown';
+    const addonName = sanitizeText(options.addonName || torrent?.externalAddon || torrent?._externalAddon || 'leviathan').toLowerCase().slice(0, 96) || 'leviathan';
+    const observationKey = makeStableKey([infoHash, fileIndexNorm, providerGroup, providerName, addonName]);
+    const payload = options.payload || null;
+    await client.query(
+      `
+        INSERT INTO provider_observations (observation_key, info_hash, info_hash_norm, file_index, file_index_norm, provider_group, provider_name, addon_name, raw_title, raw_quality, raw_languages, seeders, size, magnet, stream_url, source_priority, first_seen_at, last_seen_at, seen_count, payload_json, created_at, updated_at)
+        VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW(), 1, $16::jsonb, NOW(), NOW())
+        ON CONFLICT (observation_key)
+        DO UPDATE SET
+          raw_title = CASE WHEN COALESCE(provider_observations.raw_title, '') = '' THEN EXCLUDED.raw_title WHEN LENGTH(COALESCE(EXCLUDED.raw_title, '')) > LENGTH(COALESCE(provider_observations.raw_title, '')) THEN EXCLUDED.raw_title ELSE provider_observations.raw_title END,
+          raw_quality = COALESCE(EXCLUDED.raw_quality, provider_observations.raw_quality),
+          raw_languages = COALESCE(EXCLUDED.raw_languages, provider_observations.raw_languages),
+          seeders = GREATEST(COALESCE(provider_observations.seeders, 0), COALESCE(EXCLUDED.seeders, 0)),
+          size = GREATEST(COALESCE(provider_observations.size, 0), COALESCE(EXCLUDED.size, 0)),
+          magnet = COALESCE(EXCLUDED.magnet, provider_observations.magnet),
+          stream_url = COALESCE(EXCLUDED.stream_url, provider_observations.stream_url),
+          last_seen_at = NOW(),
+          seen_count = GREATEST(COALESCE(provider_observations.seen_count, 0), 0) + 1,
+          payload_json = COALESCE(EXCLUDED.payload_json, provider_observations.payload_json),
+          updated_at = NOW()
+      `,
+      [
+        observationKey, infoHash, fileIndex, fileIndexNorm, providerGroup, providerName, addonName,
+        sanitizeText(torrent?.title, infoHash),
+        sanitizeText(torrent?.quality || torrent?.qualityTag || torrent?.quality_tag || normalizeQualityTag(torrent)).slice(0, 120) || null,
+        normalizeLanguages(torrent),
+        Math.max(0, toSafeNumber(torrent?.seeders, 0)),
+        Math.max(0, toSafeNumber(torrent?.size, 0)),
+        sanitizeText(torrent?.magnet || torrent?.magnetLink || '').slice(0, 4096) || null,
+        sanitizeText(torrent?.url || torrent?.streamUrl || torrent?.stream_url || '').slice(0, 4096) || null,
+        clampInt(options.sourcePriority, 20, 0, 100),
+        payload ? JSON.stringify(payload) : null
+      ]
+    );
+    return true;
+  }
+
+  async function upsertTorrentFileAuthorityRow(client, file = {}) {
+    if (!DB_AUTHORITY_DUAL_WRITE) return false;
+    const infoHash = normalizeInfoHash(file?.pack_hash || file?.packHash || file?.info_hash || file?.infoHash || file?.hash);
+    if (!infoHash) return false;
+    const fileIndex = normalizeFileIndex(file?.file_index ?? file?.fileIdx ?? file?.index);
+    const fileIndexNorm = normalizeFileIndexNorm(fileIndex);
+    const filePath = sanitizeText(file?.file_path || file?.path);
+    const leafName = sanitizeText(file?.file_title || file?.title || (filePath ? filePath.split('/').pop() : ''), '');
+    const fileSize = Math.max(0, toSafeNumber(file?.file_size ?? file?.size, 0));
+    const extensionMatch = sanitizeText(filePath || leafName).match(/\.([a-z0-9]{2,6})$/i);
+    const extension = extensionMatch ? extensionMatch[1].toLowerCase() : null;
+    const isVideo = extension ? /^(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mpg|mpeg)$/i.test(extension) : null;
+    const fileKey = makeStableKey([infoHash, fileIndexNorm]);
+    await client.query(
+      `
+        INSERT INTO torrent_files (file_key, info_hash, info_hash_norm, file_index, file_index_norm, rd_file_id, tb_file_id, path, leaf_name, size, extension, is_video, video_rank, parsed_season, parsed_episode, path_hash, source, confidence, created_at, updated_at)
+        VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
+        ON CONFLICT (file_key)
+        DO UPDATE SET
+          rd_file_id = COALESCE(EXCLUDED.rd_file_id, torrent_files.rd_file_id),
+          tb_file_id = COALESCE(EXCLUDED.tb_file_id, torrent_files.tb_file_id),
+          path = COALESCE(NULLIF(EXCLUDED.path, ''), torrent_files.path),
+          leaf_name = CASE WHEN COALESCE(torrent_files.leaf_name, '') = '' THEN EXCLUDED.leaf_name WHEN LENGTH(COALESCE(EXCLUDED.leaf_name, '')) > LENGTH(COALESCE(torrent_files.leaf_name, '')) THEN EXCLUDED.leaf_name ELSE torrent_files.leaf_name END,
+          size = GREATEST(COALESCE(torrent_files.size, 0), COALESCE(EXCLUDED.size, 0)),
+          extension = COALESCE(EXCLUDED.extension, torrent_files.extension),
+          is_video = COALESCE(EXCLUDED.is_video, torrent_files.is_video),
+          video_rank = GREATEST(COALESCE(torrent_files.video_rank, 0), COALESCE(EXCLUDED.video_rank, 0)),
+          parsed_season = COALESCE(EXCLUDED.parsed_season, torrent_files.parsed_season),
+          parsed_episode = COALESCE(EXCLUDED.parsed_episode, torrent_files.parsed_episode),
+          path_hash = COALESCE(EXCLUDED.path_hash, torrent_files.path_hash),
+          confidence = GREATEST(COALESCE(torrent_files.confidence, 0), COALESCE(EXCLUDED.confidence, 0)),
+          updated_at = NOW()
+      `,
+      [
+        fileKey, infoHash, fileIndex, fileIndexNorm,
+        normalizeFileIndex(file?.rd_file_id ?? file?.rd_file_index),
+        normalizeFileIndex(file?.tb_file_id ?? file?.file_id),
+        filePath, leafName, fileSize, extension, isVideo,
+        isVideo ? (fileSize >= 50 * 1024 * 1024 ? 100 : 50) : 0,
+        toNullableInt(file?.imdb_season ?? file?.season),
+        toNullableInt(file?.imdb_episode ?? file?.episode),
+        filePath ? crypto.createHash('sha1').update(filePath).digest('hex') : null,
+        sanitizeText(file?.source || 'legacy_write').slice(0, 80),
+        Math.max(0, Math.min(1, toSafeNumber(file?.confidence ?? 0.90, 0.90)))
+      ]
+    );
+    return true;
+  }
+
+  async function upsertMediaFileMapAuthorityRow(client, mapping = {}) {
+    if (!DB_AUTHORITY_DUAL_WRITE) return false;
+    const infoHash = normalizeInfoHash(mapping?.infoHash || mapping?.info_hash || mapping?.hash || mapping?.pack_hash || mapping?.packHash);
+    const imdbId = normalizeImdbId(mapping?.imdb_id || mapping?.imdbId);
+    if (!infoHash || !imdbId) return false;
+    const fileIndex = normalizeFileIndex(mapping?.file_index ?? mapping?.fileIdx ?? mapping?.index);
+    const fileIndexNorm = normalizeFileIndexNorm(fileIndex);
+    const season = toNullableInt(mapping?.imdb_season ?? mapping?.season);
+    const episode = toNullableInt(mapping?.imdb_episode ?? mapping?.episode);
+    const mediaType = sanitizeText(mapping?.media_type || mapping?.type || (season !== null && episode !== null ? 'series' : 'movie')).toLowerCase().slice(0, 32) || 'movie';
+    const source = sanitizeText(mapping?.match_source || mapping?.source || 'legacy_write').slice(0, 80) || 'legacy_write';
+    const mapKey = makeStableKey([infoHash, fileIndexNorm, imdbId, season ?? -1, episode ?? -1, source]);
+    await client.query(
+      `
+        INSERT INTO media_file_map (map_key, info_hash, info_hash_norm, file_index, file_index_norm, imdb_id, tmdb_id, kitsu_id, season, episode, absolute_episode, media_type, match_source, match_confidence, match_reason, is_exact, created_at, updated_at)
+        VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+        ON CONFLICT (map_key)
+        DO UPDATE SET
+          tmdb_id = COALESCE(EXCLUDED.tmdb_id, media_file_map.tmdb_id),
+          kitsu_id = COALESCE(EXCLUDED.kitsu_id, media_file_map.kitsu_id),
+          absolute_episode = COALESCE(EXCLUDED.absolute_episode, media_file_map.absolute_episode),
+          match_confidence = GREATEST(COALESCE(media_file_map.match_confidence, 0), COALESCE(EXCLUDED.match_confidence, 0)),
+          match_reason = COALESCE(EXCLUDED.match_reason, media_file_map.match_reason),
+          is_exact = media_file_map.is_exact OR EXCLUDED.is_exact,
+          updated_at = NOW()
+      `,
+      [
+        mapKey, infoHash, fileIndex, fileIndexNorm, imdbId,
+        sanitizeText(mapping?.tmdb_id || mapping?.tmdbId).slice(0, 64) || null,
+        sanitizeText(mapping?.kitsu_id || mapping?.kitsuId).slice(0, 64) || null,
+        season, episode, toNullableInt(mapping?.absolute_episode ?? mapping?.absoluteEpisode),
+        mediaType, source,
+        Math.max(0, Math.min(1, toSafeNumber(mapping?.match_confidence ?? mapping?.confidence ?? 0.90, 0.90))),
+        sanitizeText(mapping?.match_reason || mapping?.reason || source).slice(0, 240),
+        mapping?.is_exact === false ? false : true
+      ]
+    );
+    return true;
+  }
+
+  async function upsertDebridAuthorityRow(client, entry = {}) {
+    if (!DB_AUTHORITY_DUAL_WRITE) return false;
+    const row = normalizeAuthorityEntry(entry);
+    if (!row) return false;
+    await client.query(
+      `
+        INSERT INTO debrid_authority (authority_key, service, info_hash, info_hash_norm, file_index, file_index_norm, media_id, imdb_id, season, episode, state, cached, proof_level, confidence, service_file_id, service_file_size, service_torrent_id, checked_at, expires_at, next_check_at, failure_count, last_error, match_reason, payload_json, created_at, updated_at)
+        VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, NOW(), NOW())
+        ON CONFLICT (authority_key)
+        DO UPDATE SET
+          state = EXCLUDED.state,
+          cached = EXCLUDED.cached,
+          proof_level = CASE WHEN EXCLUDED.proof_level IN ('episode_exact', 'file_exact') THEN EXCLUDED.proof_level WHEN debrid_authority.proof_level IN ('episode_exact', 'file_exact') THEN debrid_authority.proof_level ELSE EXCLUDED.proof_level END,
+          confidence = GREATEST(COALESCE(debrid_authority.confidence, 0), COALESCE(EXCLUDED.confidence, 0)),
+          service_file_id = COALESCE(EXCLUDED.service_file_id, debrid_authority.service_file_id),
+          service_file_size = GREATEST(COALESCE(debrid_authority.service_file_size, 0), COALESCE(EXCLUDED.service_file_size, 0)),
+          service_torrent_id = COALESCE(EXCLUDED.service_torrent_id, debrid_authority.service_torrent_id),
+          checked_at = GREATEST(COALESCE(debrid_authority.checked_at, EXCLUDED.checked_at), COALESCE(EXCLUDED.checked_at, debrid_authority.checked_at)),
+          expires_at = GREATEST(COALESCE(debrid_authority.expires_at, EXCLUDED.expires_at), COALESCE(EXCLUDED.expires_at, debrid_authority.expires_at)),
+          next_check_at = COALESCE(EXCLUDED.next_check_at, debrid_authority.next_check_at),
+          failure_count = EXCLUDED.failure_count,
+          last_error = COALESCE(EXCLUDED.last_error, debrid_authority.last_error),
+          match_reason = COALESCE(EXCLUDED.match_reason, debrid_authority.match_reason),
+          payload_json = COALESCE(EXCLUDED.payload_json, debrid_authority.payload_json),
+          updated_at = NOW()
+      `,
+      [
+        row.authorityKey, row.service, row.hash, row.fileIndex, row.fileIndexNorm, row.mediaId, row.imdbId,
+        row.season, row.episode, row.state, row.cached, row.proofLevel, row.confidence, row.serviceFileId,
+        row.serviceFileSize, row.serviceTorrentId, row.checkedAt, row.expiresAt, row.nextCheckAt,
+        row.failureCount, row.lastError, row.matchReason, row.payload ? JSON.stringify(row.payload) : null
+      ]
+    );
+    return true;
+  }
+
+  async function upsertDebridAuthorityRows(entries = []) {
+    const pool = getPool();
+    if (!pool || !DB_AUTHORITY_DUAL_WRITE) return 0;
+    await awaitDatabaseOptimizations();
+    const rows = (Array.isArray(entries) ? entries : [entries]).filter(Boolean);
+    if (rows.length === 0) return 0;
+    try {
+      return await runInTransaction(async (client) => {
+        let updated = 0;
+        for (const entry of rows) if (await upsertDebridAuthorityRow(client, entry)) updated += 1;
+        return updated;
+      });
+    } catch (error) {
+      console.error(`❌ DB Error upsertDebridAuthorityRows: ${error.message}`);
+      return 0;
+    }
+  }
+
+  async function getDebridAuthorityByHashes(hashes, service = null) {
+    const pool = getPool();
+    if (!pool || !DB_AUTHORITY_READ) return [];
+    await awaitDatabaseOptimizations();
+    const normalizedHashes = normalizeUniqueInfoHashes(hashes);
+    const normalizedService = normalizeAuthorityService(service);
+    if (normalizedHashes.length === 0) return [];
+    try {
+      const res = await pool.query(
+        `
+          SELECT DISTINCT ON (service, info_hash_norm, file_index_norm, COALESCE(media_id, ''))
+            service, info_hash_norm AS hash, file_index, file_index_norm, media_id, imdb_id, season, episode,
+            state, cached, proof_level, confidence, service_file_id, service_file_size, checked_at, expires_at,
+            next_check_at, failure_count, match_reason
+          FROM debrid_authority
+          WHERE info_hash_norm = ANY($1::text[])
+            AND ($2::text IS NULL OR service = $2::text)
+            AND (expires_at IS NULL OR expires_at > NOW())
+          ORDER BY service, info_hash_norm, file_index_norm, COALESCE(media_id, ''),
+            CASE WHEN proof_level = 'episode_exact' THEN 5 WHEN proof_level = 'file_exact' THEN 4 WHEN state = 'cached_verified' THEN 3 WHEN state IN ('likely_cached','queued','probing') THEN 2 WHEN state IN ('uncached','uncached_terminal') THEN 1 ELSE 0 END DESC,
+            confidence DESC, checked_at DESC NULLS LAST
+        `,
+        [normalizedHashes, normalizedService]
+      );
+      return (res.rows || []).map((row) => ({
+        service: normalizeAuthorityService(row.service),
+        hash: normalizeInfoHash(row.hash),
+        file_index: normalizeFileIndex(row.file_index),
+        file_index_norm: normalizeFileIndexNorm(row.file_index),
+        media_id: sanitizeText(row.media_id),
+        imdb_id: normalizeImdbId(row.imdb_id),
+        season: toNullableInt(row.season),
+        episode: toNullableInt(row.episode),
+        state: sanitizeText(row.state).toLowerCase(),
+        cached: row.cached === null || row.cached === undefined ? null : Boolean(row.cached),
+        proof_level: sanitizeText(row.proof_level).toLowerCase(),
+        confidence: toSafeNumber(row.confidence, 0),
+        service_file_id: normalizeFileIndex(row.service_file_id),
+        service_file_size: toSafeNumber(row.service_file_size, 0),
+        checked_at: row.checked_at || null,
+        expires_at: row.expires_at || null,
+        next_check_at: row.next_check_at || null,
+        failure_count: toSafeNumber(row.failure_count, 0),
+        match_reason: sanitizeText(row.match_reason)
+      })).filter((row) => row.hash && row.service);
+    } catch (error) {
+      console.error(`❌ DB Error getDebridAuthorityByHashes: ${error.message}`);
+      return [];
+    }
+  }
+
+  async function enqueueDebridChecks(entries = []) {
+    const pool = getPool();
+    if (!pool || !Array.isArray(entries) || entries.length === 0) return 0;
+    await awaitDatabaseOptimizations();
+    try {
+      return await runInTransaction(async (client) => {
+        let updated = 0;
+        for (const entry of entries) {
+          const service = normalizeAuthorityService(entry?.service);
+          const hash = normalizeInfoHash(entry?.hash || entry?.info_hash || entry?.infoHash);
+          if (!service || !hash) continue;
+          const fileIndex = normalizeFileIndex(entry?.file_index ?? entry?.fileIdx);
+          const fileIndexNorm = normalizeFileIndexNorm(fileIndex);
+          const mediaId = sanitizeText(entry?.media_id || entry?.mediaId).slice(0, 220) || null;
+          const jobKey = makeStableKey([service, hash, fileIndexNorm, mediaId || '']);
+          const result = await client.query(
+            `
+              INSERT INTO debrid_check_jobs (job_key, service, info_hash, info_hash_norm, file_index, file_index_norm, media_id, priority, status, run_after, created_at, updated_at)
+              VALUES ($1, $2, $3, $3, $4, $5, $6, $7, 'pending', $8, NOW(), NOW())
+              ON CONFLICT (job_key)
+              DO UPDATE SET priority = LEAST(debrid_check_jobs.priority, EXCLUDED.priority), status = CASE WHEN debrid_check_jobs.status IN ('done','failed') THEN 'pending' ELSE debrid_check_jobs.status END, run_after = LEAST(COALESCE(debrid_check_jobs.run_after, EXCLUDED.run_after), EXCLUDED.run_after), updated_at = NOW()
+              RETURNING 1
+            `,
+            [jobKey, service, hash, fileIndex, fileIndexNorm, mediaId, clampInt(entry?.priority, 50, 0, 100), toDateOrNull(entry?.run_after || entry?.runAfter) || new Date()]
+          );
+          updated += Number(result.rowCount || 0);
+        }
+        return updated;
+      });
+    } catch (error) {
+      console.error(`❌ DB Error enqueueDebridChecks: ${error.message}`);
+      return 0;
+    }
+  }
+
+
+
+  async function getDueDebridJobs(service = null, limit = 25, workerId = null) {
+    const pool = getPool();
+    if (!pool) return [];
+    await awaitDatabaseOptimizations();
+    const normalizedService = normalizeAuthorityService(service);
+    const jobLimit = clampInt(limit, 25, 1, 200);
+    const owner = sanitizeText(workerId || `leviathan-${process.pid}`).slice(0, 80);
+    try {
+      const res = await pool.query(
+        `
+          WITH picked AS (
+            SELECT job_key
+            FROM debrid_check_jobs
+            WHERE status = 'pending'
+              AND run_after <= NOW()
+              AND ($1::text IS NULL OR service = $1::text)
+              AND (locked_at IS NULL OR locked_at < NOW() - INTERVAL '10 minutes')
+            ORDER BY priority ASC, run_after ASC, created_at ASC
+            LIMIT $2
+            FOR UPDATE SKIP LOCKED
+          )
+          UPDATE debrid_check_jobs j
+          SET status = 'running', locked_at = NOW(), locked_by = $3, attempts = attempts + 1, updated_at = NOW()
+          FROM picked
+          WHERE j.job_key = picked.job_key
+          RETURNING j.job_key, j.service, j.info_hash_norm AS hash, j.file_index, j.file_index_norm, j.media_id, j.priority, j.attempts, j.run_after
+        `,
+        [normalizedService, jobLimit, owner]
+      );
+      return (res.rows || []).map((row) => ({
+        job_key: sanitizeText(row.job_key),
+        service: normalizeAuthorityService(row.service),
+        hash: normalizeInfoHash(row.hash),
+        file_index: normalizeFileIndex(row.file_index),
+        file_index_norm: normalizeFileIndexNorm(row.file_index),
+        media_id: sanitizeText(row.media_id),
+        priority: toSafeNumber(row.priority, 50),
+        attempts: toSafeNumber(row.attempts, 0),
+        run_after: row.run_after || null
+      })).filter((row) => row.job_key && row.service && row.hash);
+    } catch (error) {
+      console.error(`❌ DB Error getDueDebridJobs: ${error.message}`);
+      return [];
+    }
+  }
+
+  async function markDebridJobDone(jobKey, options = {}) {
+    const pool = getPool();
+    if (!pool) return false;
+    await awaitDatabaseOptimizations();
+    const key = sanitizeText(jobKey);
+    if (!key) return false;
+    const status = options?.ok === false ? 'failed' : 'done';
+    const errorText = sanitizeText(options?.error || options?.last_error).slice(0, 240) || null;
+    const retryAfter = toDateOrNull(options?.retry_after || options?.retryAfter);
+    try {
+      await pool.query(
+        `
+          UPDATE debrid_check_jobs
+          SET status = CASE WHEN $2::text = 'failed' AND $4::timestamptz IS NOT NULL THEN 'pending' ELSE $2::text END,
+              locked_at = NULL,
+              locked_by = NULL,
+              last_error = $3,
+              run_after = COALESCE($4::timestamptz, run_after),
+              updated_at = NOW()
+          WHERE job_key = $1
+        `,
+        [key, status, errorText, retryAfter]
+      );
+      return true;
+    } catch (error) {
+      console.error(`❌ DB Error markDebridJobDone: ${error.message}`);
+      return false;
+    }
+  }
+
+
   function normalizeEpisodeIdentity(entry) {
     const imdbId = normalizeImdbId(entry?.imdb_id || entry?.imdbId);
     const imdbSeason = toNullableInt(entry?.imdb_season ?? entry?.season);
@@ -294,6 +803,55 @@ function createTorrentRepository({
       `,
       [hash, identity.imdbId, identity.imdbSeason, identity.imdbEpisode, rdFileIndex, rdFileSize, tbFileId, tbFileSize]
     );
+
+    await upsertMediaFileMapAuthorityRow(client, {
+      info_hash: hash,
+      imdb_id: identity.imdbId,
+      imdb_season: identity.imdbSeason,
+      imdb_episode: identity.imdbEpisode,
+      match_source: 'legacy_episode_override',
+      match_confidence: 0.99,
+      match_reason: 'episode override service-file proof',
+      is_exact: true
+    });
+
+    if (Number.isInteger(rdFileIndex) && rdFileIndex >= 0) {
+      await upsertDebridAuthorityRow(client, {
+        service: 'rd',
+        hash,
+        file_index: rdFileIndex,
+        imdb_id: identity.imdbId,
+        imdb_season: identity.imdbSeason,
+        imdb_episode: identity.imdbEpisode,
+        state: 'cached',
+        cached: true,
+        rd_file_index: rdFileIndex,
+        rd_file_size: rdFileSize,
+        proof_level: 'episode_exact',
+        confidence: 0.99,
+        next_hours: 24 * 14,
+        match_reason: 'legacy_episode_override_rd'
+      });
+    }
+
+    if (Number.isInteger(tbFileId) && tbFileId >= 0) {
+      await upsertDebridAuthorityRow(client, {
+        service: 'tb',
+        hash,
+        file_index: tbFileId,
+        imdb_id: identity.imdbId,
+        imdb_season: identity.imdbSeason,
+        imdb_episode: identity.imdbEpisode,
+        state: 'cached_verified',
+        cached: true,
+        tb_file_id: tbFileId,
+        tb_file_size: tbFileSize,
+        proof_level: 'episode_exact',
+        confidence: 0.99,
+        next_hours: 72,
+        match_reason: 'legacy_episode_override_tb'
+      });
+    }
 
     return true;
   }
@@ -663,7 +1221,11 @@ function createTorrentRepository({
       [infoHash, fileIndexNorm, providerName, title, size, seeders, torrentId, storedType, uploadDate, trackers, languages, resolution, qualityTag, codecTag, hdrTag, audioTag, releaseGroup, smartDedupeKey, folderSize]
     );
 
-    if (updateRes.rowCount > 0) return false;
+    if (updateRes.rowCount > 0) {
+      await upsertTorrentItemAuthorityRow(client, torrent);
+      await upsertProviderObservationAuthorityRow(client, torrent);
+      return false;
+    }
 
     const insertRes = await client.query(
       `
@@ -703,6 +1265,8 @@ function createTorrentRepository({
       [infoHash, fileIndex, fileIndexNorm, providerName, title, size, seeders, torrentId, storedType, uploadDate, trackers, languages, resolution, qualityTag, codecTag, hdrTag, audioTag, releaseGroup, smartDedupeKey, folderSize]
     );
 
+    await upsertTorrentItemAuthorityRow(client, torrent);
+    await upsertProviderObservationAuthorityRow(client, torrent);
     return insertRes.rowCount > 0;
   }
 
@@ -748,7 +1312,10 @@ function createTorrentRepository({
       [infoHash, fileIndexNorm, imdbId, imdbSeason, imdbEpisode, title, size]
     );
 
-    if (sameIdentityUpdateRes.rowCount > 0) return false;
+    if (sameIdentityUpdateRes.rowCount > 0) {
+      await upsertMediaFileMapAuthorityRow(client, { ...mapping, match_source: 'legacy_files', is_exact: true });
+      return false;
+    }
 
     const changedIdentityUpdateRes = await client.query(
       `
@@ -777,7 +1344,10 @@ function createTorrentRepository({
       [infoHash, fileIndexNorm, imdbId, imdbSeason, imdbEpisode, title, size]
     );
 
-    if (changedIdentityUpdateRes.rowCount > 0) return true;
+    if (changedIdentityUpdateRes.rowCount > 0) {
+      await upsertMediaFileMapAuthorityRow(client, { ...mapping, match_source: 'legacy_files', is_exact: true });
+      return true;
+    }
 
     const insertRes = await client.query(
       `
@@ -801,6 +1371,7 @@ function createTorrentRepository({
       [infoHash, fileIndex, fileIndexNorm, imdbId, imdbSeason, imdbEpisode, title, size]
     );
 
+    await upsertMediaFileMapAuthorityRow(client, { ...mapping, match_source: 'legacy_files', is_exact: true });
     return insertRes.rowCount > 0;
   }
 
@@ -848,7 +1419,11 @@ function createTorrentRepository({
       [packHash, fileIndexNorm, imdbId, imdbSeason, imdbEpisode, filePath, fileTitle, fileSize]
     );
 
-    if (updateRes.rowCount > 0) return false;
+    if (updateRes.rowCount > 0) {
+      await upsertTorrentFileAuthorityRow(client, { ...file, source: 'legacy_pack_files' });
+      await upsertMediaFileMapAuthorityRow(client, { ...file, info_hash: packHash, match_source: 'legacy_pack_files', is_exact: true });
+      return false;
+    }
 
     const insertRes = await client.query(
       `
@@ -873,6 +1448,8 @@ function createTorrentRepository({
       [packHash, fileIndex, fileIndexNorm, imdbId, imdbSeason, imdbEpisode, filePath, fileTitle, fileSize]
     );
 
+    await upsertTorrentFileAuthorityRow(client, { ...file, source: 'legacy_pack_files' });
+    await upsertMediaFileMapAuthorityRow(client, { ...file, info_hash: packHash, match_source: 'legacy_pack_files', is_exact: true });
     return insertRes.rowCount > 0;
   }
 
@@ -1486,7 +2063,7 @@ function createTorrentRepository({
     if (normalizedHashes.length === 0) return [];
 
     try {
-      return await withClient(async (client) => {
+      const legacyRows = await withClient(async (client) => {
         const res = await client.query(
           `
             SELECT DISTINCT ON (info_hash_norm)
@@ -1524,9 +2101,41 @@ function createTorrentRepository({
           size: toSafeNumber(row.size, 0),
           last_cached_check: row.last_cached_check || null,
           next_cached_check: row.next_cached_check || null,
-          cache_check_failures: toSafeNumber(row.cache_check_failures, 0)
+          cache_check_failures: toSafeNumber(row.cache_check_failures, 0),
+          source: 'legacy_torrents'
         })).filter((row) => row.hash);
       });
+
+      if (!DB_AUTHORITY_READ) return legacyRows;
+
+      const authorityRows = await getDebridAuthorityByHashes(normalizedHashes, 'rd');
+      if (authorityRows.length === 0) return legacyRows;
+
+      const byHash = new Map(legacyRows.map((row) => [row.hash, row]));
+      for (const authority of authorityRows) {
+        if (!authority?.hash) continue;
+        const legacyState = authority.state === 'cached_verified' ? 'cached' : (normalizeRdCacheState(authority.state) || 'unknown');
+        const cached = authority.cached === true ? true : (authority.cached === false ? false : null);
+        const current = byHash.get(authority.hash);
+        const currentRank = current?.cached_rd === true || current?.rd_cache_state === 'cached' ? 4 : (current?.rd_cache_state === 'likely_cached' || current?.rd_cache_state === 'probing' ? 2 : 0);
+        const authorityRank = authority.proof_level === 'episode_exact' ? 6 : authority.proof_level === 'file_exact' ? 5 : authority.state === 'cached_verified' ? 4 : authority.state === 'likely_cached' ? 2 : authority.state === 'uncached_terminal' ? 1 : 0;
+        if (current && currentRank > authorityRank) continue;
+        byHash.set(authority.hash, {
+          hash: authority.hash,
+          cached_rd: cached,
+          rd_cache_state: legacyState,
+          rd_file_index: authority.service_file_id,
+          rd_file_size: authority.service_file_size,
+          size: current?.size || authority.service_file_size || 0,
+          last_cached_check: authority.checked_at || current?.last_cached_check || null,
+          next_cached_check: authority.next_check_at || authority.expires_at || current?.next_cached_check || null,
+          cache_check_failures: authority.failure_count || 0,
+          proof_level: authority.proof_level,
+          source: 'debrid_authority'
+        });
+      }
+
+      return [...byHash.values()];
     } catch (error) {
       console.error(`❌ DB Error getRdCacheStatusByHashes: ${error.message}`);
       return [];
@@ -1610,6 +2219,24 @@ function createTorrentRepository({
 
           const globalRdFileIndex = row.episode_scoped ? null : row.rd_file_index;
           const globalRdFileSize = row.episode_scoped ? null : row.rd_file_size;
+
+          await upsertDebridAuthorityRow(client, {
+            service: 'rd',
+            hash: row.hash,
+            state: row.rd_cache_state,
+            cached: row.cached,
+            rd_file_index: row.rd_file_index,
+            rd_file_size: row.rd_file_size,
+            imdb_id: row.imdb_id,
+            imdb_season: row.imdb_season,
+            imdb_episode: row.imdb_episode,
+            failures: row.failures,
+            next_hours: row.next_hours || (row.permanent ? 24 * 365 : null),
+            title: row.title,
+            size: row.size,
+            confidence: row.rd_cache_state === 'cached' ? 0.95 : 0.55,
+            match_reason: 'rd_cache_status_update'
+          });
 
           const result = await client.query(
             `
@@ -1728,6 +2355,24 @@ function createTorrentRepository({
 
           const globalFileId = row.episode_scoped ? null : row.fileId;
           const globalFileSize = row.episode_scoped ? null : row.fileSize;
+
+          await upsertDebridAuthorityRow(client, {
+            service: 'tb',
+            hash: row.hash,
+            state: row.tb_cache_state,
+            cached: row.cached,
+            tb_file_id: row.fileId,
+            tb_file_size: row.fileSize,
+            imdb_id: row.imdb_id,
+            imdb_season: row.imdb_season,
+            imdb_episode: row.imdb_episode,
+            failures: row.failures,
+            next_hours: row.next_hours,
+            title: row.title,
+            size: row.size,
+            confidence: row.tb_cache_confidence,
+            match_reason: row.tb_cache_match_reason || 'tb_cache_status_update'
+          });
 
           const result = await client.query(
             `
@@ -2153,6 +2798,35 @@ function createTorrentRepository({
               row.expiresAt
             ]
           );
+          if (row.infoHash) {
+            await upsertProviderObservationAuthorityRow(client, {
+              info_hash: row.infoHash,
+              file_index: row.fileIndex,
+              provider: row.provider,
+              title: row.title,
+              quality: row.quality,
+              languages: row.languages,
+              seeders: row.seeders,
+              size: row.size
+            }, {
+              providerGroup: row.addonGroup,
+              addonName: row.addon,
+              sourcePriority: 30,
+              payload: row.payload
+            });
+            await upsertMediaFileMapAuthorityRow(client, {
+              info_hash: row.infoHash,
+              file_index: row.fileIndex,
+              imdb_id: row.imdbId,
+              imdb_season: row.season,
+              imdb_episode: row.episode,
+              media_type: row.type,
+              match_source: `external_snapshot:${row.addonGroup || row.addon || 'external'}`,
+              match_confidence: 0.70,
+              match_reason: 'external stream snapshot',
+              is_exact: Boolean(row.season && row.episode && row.fileIndexNorm >= 0)
+            });
+          }
           upserted += Number(result.rowCount || 0);
         }
         return { processed: rows.length, upserted };
@@ -2393,6 +3067,23 @@ function createTorrentRepository({
               row.expiresAt
             ]
           );
+          await upsertDebridAuthorityRow(client, {
+            service: row.service,
+            hash: row.hash,
+            file_index: row.fileIndex,
+            media_id: row.mediaId,
+            imdb_id: row.imdbId,
+            imdb_season: row.imdbSeason,
+            imdb_episode: row.imdbEpisode,
+            state: row.state,
+            cached: row.cached,
+            proof_level: row.proofLevel || 'availability_cache',
+            confidence: row.proofLevel === 'episode_exact' || row.proofLevel === 'file_exact' ? 0.95 : (row.cached === true ? 0.75 : 0.50),
+            expires_at: row.expiresAt,
+            next_check_at: row.expiresAt,
+            payload: row.payload,
+            match_reason: 'availability_cache'
+          });
           updated += Number(result.rowCount || 0);
         }
         return updated;
@@ -2429,7 +3120,12 @@ function createTorrentRepository({
     getDebridAvailabilityCache,
     setDebridAvailabilityCache,
     isDebridCacheCheckMarked,
-    markDebridCacheCheckDone
+    markDebridCacheCheckDone,
+    upsertDebridAuthorityRows,
+    getDebridAuthorityByHashes,
+    enqueueDebridChecks,
+    getDueDebridJobs,
+    markDebridJobDone
   };
 }
 
