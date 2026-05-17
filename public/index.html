@@ -3621,6 +3621,17 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                         <div class="control-row">
                             <div class="control-info">
                                 <div class="control-title notranslate" translate="no">
+                                    <i class="fas fa-globe-europe" style="color: #38bdf8"></i> Eurostreaming
+                                    <span class="proxy-tag tag-mfp">MFP</span>
+                                </div>
+                                <span class="control-desc">Serie TV via WP REST, MixDrop e MaxStream con passaggio Uprot obbligatorio.</span>
+                            </div>
+                            <label class="switch mf-switch"><input type="checkbox" id="enableEs" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
+                        </div>
+
+                        <div class="control-row">
+                            <div class="control-info">
+                                <div class="control-title notranslate" translate="no">
                                     <i class="fas fa-torii-gate" style="color: #ff6600"></i> AnimeWorld
                                     <span class="proxy-tag tag-mfp">MFP</span>
                                 </div>
@@ -3676,7 +3687,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                         <div class="control-row sub-row" id="webPriorityRow" style="display:none; margin-top:15px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top:10px;">
                              <div class="control-info">
                                  <div class="control-title"><i class="fas fa-sort-amount-down"></i> Gerarchia Sorgenti</div>
-                                 <span class="control-desc">Sposta i risultati Web (SC, GHD, GS, AW, AS, GF, CC) dopo i Torrent.</span>
+                                 <span class="control-desc">Sposta i risultati Web (SC, GHD, GS, GSTV, ES, AW, AS, GF, CC) dopo i Torrent.</span>
                              </div>
                              <label class="switch mf-switch"><input type="checkbox" id="vixLast" onchange="updateFluxStream()"><span class="slider"></span></label>
                          </div>
@@ -5116,6 +5127,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             const ghd = document.getElementById('enableGhd').checked;
             const gs = document.getElementById('enableGs').checked;
             const gstv = document.getElementById('enableGstv').checked;
+            const es = document.getElementById('enableEs').checked;
             const aw = document.getElementById('enableAnimeWorld').checked;
             const au = document.getElementById('enableAnimeUnity').checked;
             const as = document.getElementById('enableAnimeSaturn').checked;
@@ -5127,7 +5139,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             const pRow = document.getElementById('webPriorityRow');
             if(pRow) {
 
-                if(sc || ghd || gs || gstv || aw || au || as || gf || cc) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
+                if(sc || ghd || gs || gstv || es || aw || au || as || gf || cc) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
                 else { pRow.style.display = 'none'; }
             }
         }
@@ -5305,6 +5317,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                         document.getElementById('enableGhd').checked = config.filters.enableGhd || false;
                         document.getElementById('enableGs').checked = config.filters.enableGs || false;
                         document.getElementById('enableGstv').checked = config.filters.enableGstv || false;
+                        document.getElementById('enableEs').checked = config.filters.enableEs || false;
 
                         document.getElementById('enableAnimeWorld').checked = config.filters.enableAnimeWorld || false;
                         document.getElementById('enableAnimeUnity').checked = config.filters.enableAnimeUnity || false;
@@ -5405,6 +5418,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             const ghdActive = document.getElementById('enableGhd').checked;
             const gsActive = document.getElementById('enableGs').checked;
             const gstvActive = document.getElementById('enableGstv').checked;
+            const esActive = document.getElementById('enableEs').checked;
             const awActive = document.getElementById('enableAnimeWorld').checked;
             const auActive = document.getElementById('enableAnimeUnity').checked;
             const asActive = document.getElementById('enableAnimeSaturn').checked;
@@ -5413,7 +5427,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             const isP2P = currentService === 'p2p';
             const sourceMode = document.getElementById('sourceMode').value;
 
-            const isWebEnabled = scActive || ghdActive || gsActive || gstvActive || awActive || auActive || asActive || gfActive || ccActive || isP2P;
+            const isWebEnabled = scActive || ghdActive || gsActive || gstvActive || esActive || awActive || auActive || asActive || gfActive || ccActive || isP2P;
             const sourceModeBypassesKey = sourceMode === 'dbOnly' || sourceMode === 'globalCacheOnly';
 
             const el = document.getElementById('apiKey');
@@ -5443,6 +5457,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                     || document.getElementById('enableGhd').checked
                     || document.getElementById('enableGs').checked
                     || document.getElementById('enableGstv').checked
+                    || document.getElementById('enableEs').checked
                     || document.getElementById('enableAnimeWorld').checked
                     || document.getElementById('enableAnimeUnity').checked
                     || document.getElementById('enableAnimeSaturn').checked
@@ -5478,6 +5493,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                     enableGhd: document.getElementById('enableGhd').checked,
                     enableGs: document.getElementById('enableGs').checked,
                     enableGstv: document.getElementById('enableGstv').checked,
+                    enableEs: document.getElementById('enableEs').checked,
                     enableAnimeWorld: document.getElementById('enableAnimeWorld').checked,
                     enableAnimeUnity: document.getElementById('enableAnimeUnity').checked,
                     enableAnimeSaturn: document.getElementById('enableAnimeSaturn').checked,
@@ -5546,6 +5562,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             let ghdText = c.filters.enableGhd ? 'ATTIVO 🦁' : 'NO';
             let gsText = c.filters.enableGs ? 'ATTIVO 🛡️' : 'NO';
             let gstvText = c.filters.enableGstv ? 'ATTIVO 📺' : 'NO';
+            let esText = c.filters.enableEs ? 'ATTIVO 🌍' : 'NO';
             let awText = c.filters.enableAnimeWorld ? 'ATTIVO ⛩️' : 'NO';
             let auText = c.filters.enableAnimeUnity ? 'ATTIVO 🌀' : 'NO';
             let asText = c.filters.enableAnimeSaturn ? 'ATTIVO 🪐' : 'NO';
@@ -5580,7 +5597,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                 <li>Servizio Debrid <span>${serviceDisplay}</span></li>
                 <li>Visual Skin <span>${skinText}</span></li>
                 <li>Swarm P2P <span>${p2pText}</span></li>
-                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | GSTV: ${gstvText} | AW: ${awText} | AU: ${auText} | AS: ${asText} | GF: ${gfText} | CC: ${ccText}</span></li>
+                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | GSTV: ${gstvText} | ES: ${esText} | AW: ${awText} | AU: ${auText} | AS: ${asText} | GF: ${gfText} | CC: ${ccText}</span></li>
                 <li>Flux Priority <span>${sortText}</span></li>
                 <li>Source Policy <span>${sourceModeText}</span></li>
                 <li>Proxy Bridge <span>${c.mediaflow.url ? 'CONFIGURATO' : 'NON ATTIVO'}</span></li>

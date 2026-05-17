@@ -1060,6 +1060,9 @@ body::before {
 #mod-cc { --glow-color: rgba(56, 189, 248, 0.8); --border-color: #38bdf8; --border-color-dim: rgba(56, 189, 248,0.3); --core-bg: rgba(56, 189, 248,0.2); }
 #mod-cc .m-core-icon { color: #38bdf8; }
 
+#mod-es { --glow-color: rgba(45, 212, 191, 0.8); --border-color: #2dd4bf; --border-color-dim: rgba(45, 212, 191,0.3); --core-bg: rgba(45, 212, 191,0.2); }
+#mod-es .m-core-icon { color: #2dd4bf; }
+
 .m-reactor-top .m-switch { transform: scale(0.85); transform-origin: right center; }
 
 .m-sc-subpanel {
@@ -4176,6 +4179,25 @@ const mobileHTML = `
                             </div>
                         </div>
 
+                        <div class="m-reactor-module" id="mod-es">
+                            <div class="m-reactor-core">
+                                <i class="fas fa-globe-europe m-core-icon"></i>
+                            </div>
+                            <div class="m-reactor-body">
+                                <div class="m-reactor-top">
+                                    <span class="m-reactor-title">🌍 Eurostreaming</span>
+                                    <label class="m-switch">
+                                        <input type="checkbox" id="m-enableEs" onchange="updateStatus('m-enableEs','st-es'); toggleModuleStyle('m-enableEs', 'mod-es');">
+                                        <span class="m-slider m-slider-aqua"></span>
+                                    </label>
+                                </div>
+                                <span class="m-reactor-desc">🌍 Serie ITA • MFP + Uprot</span>
+                                <div class="m-tag-row">
+                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-shield-alt"></i> MFP</span>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="m-reactor-module" id="mod-aw">
                             <div class="m-reactor-core">
                                 <i class="fas fa-torii-gate m-core-icon"></i>
@@ -5871,7 +5893,7 @@ function setLangMode(mode) {
 }
 
 function checkWebPriorityVisibility() {
-    const enabled = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'].some(id => mChecked(id));
+    const enabled = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'].some(id => mChecked(id));
     const panel = document.getElementById('m-priority-panel');
     if (panel) panel.classList.toggle('show', enabled);
 }
@@ -6235,6 +6257,9 @@ async function loadMobileConfig() {
                 mSetChecked('m-enableGstv', config.filters.enableGstv || false);
                 toggleModuleStyle('m-enableGstv', 'mod-gstv');
 
+                mSetChecked('m-enableEs', config.filters.enableEs || false);
+                toggleModuleStyle('m-enableEs', 'mod-es');
+
                 mSetChecked('m-enableAnimeWorld', config.filters.enableAnimeWorld || false);
                 toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');
 
@@ -6296,6 +6321,7 @@ async function loadMobileConfig() {
             updateStatus('m-enableGhd', 'st-ghd');
             updateStatus('m-enableGs', 'st-gs');
             updateStatus('m-enableGstv', 'st-gstv');
+            updateStatus('m-enableEs', 'st-es');
             updateStatus('m-enableAnimeWorld', 'st-aw');
             updateStatus('m-enableAnimeUnity', 'st-au');
             updateStatus('m-enableAnimeSaturn', 'st-as');
@@ -6323,7 +6349,7 @@ function getMobileConfig() {
 
     const isP2P = mCurrentService === 'p2p';
     const apiKey = mValue('m-apiKey').trim();
-    const webModules = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'];
+    const webModules = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'];
     const webOnlyService = !isP2P && !apiKey && webModules.some(id => mChecked(id));
     const savedCloudEnabled = !isP2P && !!apiKey && ['rd', 'tb'].includes(String(mCurrentService || '').toLowerCase()) && mChecked('m-enableSavedCloud');
 
@@ -6353,6 +6379,7 @@ function getMobileConfig() {
             enableGhd: mChecked('m-enableGhd'),
             enableGs: mChecked('m-enableGs'),
             enableGstv: mChecked('m-enableGstv'),
+            enableEs: mChecked('m-enableEs'),
             enableAnimeWorld: mChecked('m-enableAnimeWorld'),
             enableAnimeUnity: mChecked('m-enableAnimeUnity'),
             enableAnimeSaturn: mChecked('m-enableAnimeSaturn'),
@@ -6389,7 +6416,7 @@ async function updateLinkModalContent(immediate = false) {
     if(!box) return;
 
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
 
     if(!config.key && !isWebEnabled) {
         mSetValue('m-generatedUrlBox', "/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P");
@@ -6404,7 +6431,7 @@ async function updateLinkModalContent(immediate = false) {
 
 async function mobileInstall() {
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
     if(!config.key && !isWebEnabled) {
         showToast("ERRORE: API KEY MANCANTE", "error"); return;
     }
@@ -6503,5 +6530,3 @@ function startMobileInterfaceWhenReady() {
 }
 
 startMobileInterfaceWhenReady();
-
-
