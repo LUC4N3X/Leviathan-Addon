@@ -51,6 +51,8 @@ const PROXY_ROUTE_HINTS = [
     '/proxy/',
     '/proxy/stream',
     '/proxy/hls/',
+    '/extractor/video',
+    '/extractor/',
     '/hls?',
     '/vixsynthetic.m3u8',
     '/play_rd/',
