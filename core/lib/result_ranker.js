@@ -11,9 +11,7 @@ const {
   getLanguageInfo,
   isSeasonPack,
   isTrustedSource
-} = require("../utils/text");
-const { detectSourceConsensus, evaluateLeviathanScore } = require('../ranking/score_profile');
-const { shouldKeepStrictItalianCandidate, hasStrictItalianEvidence } = require('../canonical/language_guard');
+} = require("../utils_text");
 
 const REGEX_SCENE_RELEASE = /\b(?:web[-.\s]?dl|webrip|blu[-.\s]?ray|bd[-.\s]?rip|remux|uhd|hevc|x265|x264|ddp|truehd|dts|atmos|hdr|dv|dolby[\s.-]?vision)\b/i;
 const REGEX_HEVC = /\b(?:x265|h265|hevc)\b/i;
@@ -27,12 +25,6 @@ const REGEX_EXPLICIT_MULTI = /\b(?:MULTI|MULTILANG(?:UAGE)?|DUAL[\s.-]?AUDIO)\b/
 const REGEX_TITLE_PUNCTUATION = /[\[\]{}()]/g;
 const REGEX_TITLE_SPACING = /[._:+\-]+/g;
 const REGEX_TITLE_NOISE = /\b(?:2160p|1080p|720p|480p|x264|x265|h264|h265|hevc|hdr10\+?|hdr|dv|dolby\s*vision|web[- ]?dl|webrip|bluray|brrip|dvdrip|remux|proper|repack|nf|amzn|dsnp|atvp|ita|italian|italiano|multi|dual|audio|sub|subs|subbed|vostfr|subita)\b/g;
-const SOURCE_CONSENSUS_BONUS = Object.freeze({
-  strong_consensus: 9000,
-  consensus: 5500,
-  mirror: 2500,
-  none: 0
-});
 
 const DEFAULT_PROFILES = {
   stream: {
@@ -75,7 +67,6 @@ const DEFAULT_PROFILES = {
       titleLengthCap: 300,
       titleSimilarityFactor: 12000,
       tbCachedBonus: 9000,
-      rdCachedBonus: 9000,
       seriesOnMoviePenalty: -9000
     }
   },
@@ -119,7 +110,6 @@ const DEFAULT_PROFILES = {
       titleLengthCap: 400,
       titleSimilarityFactor: 4000,
       tbCachedBonus: 6000,
-      rdCachedBonus: 6000,
       seriesOnMoviePenalty: -18000
     }
   }
@@ -222,14 +212,10 @@ function buildPreparedConfig(input = {}) {
   if (input && input.__rankingPrepared) return input;
 
   const ranking = input && typeof input.ranking === "object" ? input.ranking : {};
-  const rawSortMode = String(ranking.sortMode || input.sortMode || input.sort || input.filters?.sortMode || input.filters?.sortBy || input.filters?.sort || DEFAULT_CONFIG.sortMode).trim().toLowerCase();
-  const sortMode = ['resolution', 'res', 'quality', 'qualita', 'qualità', 'risoluzione'].includes(rawSortMode)
-    ? 'resolution'
-    : (['size', 'bitrate', 'peso'].includes(rawSortMode) ? 'size' : 'balanced');
   const config = {
     __rankingPrepared: true,
     profile: ranking.profile || input.profile || DEFAULT_CONFIG.profile,
-    sortMode,
+    sortMode: ranking.sortMode || input.sortMode || input.sort || input.filters?.sort || DEFAULT_CONFIG.sortMode,
     keepByLanguage: ranking.keepByLanguage ?? input.keepByLanguage ?? DEFAULT_CONFIG.keepByLanguage,
     profiles: {
       stream: mergeProfile(DEFAULT_PROFILES.stream, ranking.profiles?.stream || input.profiles?.stream),
@@ -261,20 +247,7 @@ function getProfileConfig(configInput = {}) {
   };
 }
 
-function isAnimeMeta(meta = {}) {
-  return Boolean(meta?.kitsu_id || meta?.isAnime);
-}
-
-
-function hasExplicitSeasonMarker(text = '') {
-  return /\b(?:S(?:EASON)?\s*0?\d{1,2}|\d{1,2}x\d{1,3}|STAGIONE\s*0?\d{1,2}|(?:1ST|2ND|3RD|4TH)\s+SEASON)\b/i.test(String(text || ""));
-}
-
-function shouldIgnoreAnimeSeason(meta = {}, title = '') {
-  return isAnimeMeta(meta) && !hasExplicitSeasonMarker(title);
-}
-
-function extractEpisodeContext(title, defaultSeason = 1, options = {}) {
+function extractEpisodeContext(title, defaultSeason = 1) {
   const safeTitle = normalizeText(title);
   let match = safeTitle.match(/\bS(\d{1,2})E(\d{1,3})\b/i);
   if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
@@ -284,25 +257,6 @@ function extractEpisodeContext(title, defaultSeason = 1, options = {}) {
 
   match = safeTitle.match(/\bE(?:P(?:ISODE)?)?\s*0?(\d{1,3})\b/i);
   if (match) return { season: defaultSeason, episode: parseInt(match[1], 10) };
-
-  if (options?.anime) {
-    match = safeTitle.match(/\bS(?:EASON)?\s*0?(\d{1,2})\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
-    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
-
-    match = safeTitle.match(/\b(\d{1,2})(?:ST|ND|RD|TH)\s+SEASON\s*[-._ ]+\s*0?(\d{1,4})(?:v\d+)?\b/i);
-    if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
-
-    match = safeTitle.match(/\b(?:EP(?:ISODE)?|EPISODIO)\s*0?(\d{1,4})(?:v\d+)?\b/i);
-    if (match) return { season: defaultSeason, episode: parseInt(match[1], 10) };
-
-    const genericPattern = /(?:^|[\s._\-\[\(])0*([1-9]\d{0,3})(?:v\d+)?(?=$|[\s._\-\]\)])/ig;
-    for (const candidate of safeTitle.matchAll(genericPattern)) {
-      const episode = parseInt(candidate[1], 10);
-      if (!Number.isInteger(episode) || episode <= 0) continue;
-      if (episode >= 1900 && episode <= 2100) continue;
-      return { season: defaultSeason, episode };
-    }
-  }
 
   return null;
 }
@@ -339,9 +293,9 @@ function getQualityPriority(item) {
 function resolveLangMode(meta = {}, configInput = {}) {
   const config = buildPreparedConfig(configInput);
   const directMeta = lowerText(meta.langMode || meta.languageMode || meta.language);
-  const explicit = lowerText(configInput.filters?.language || configInput.langMode || configInput.language);
-
   if (directMeta === "ita" || directMeta === "eng" || directMeta === "all") return directMeta;
+
+  const explicit = lowerText(configInput.filters?.language || configInput.langMode || configInput.language);
   if (explicit === "ita" || explicit === "eng" || explicit === "all") return explicit;
 
   if (configInput.filters?.allowEng === true || configInput.allowEng === true) return "all";
@@ -367,9 +321,7 @@ function getExpectedTitles(meta = {}) {
   pushValue(meta.originalName);
   pushValue(meta.alternativeTitles);
   pushValue(meta.altTitles);
-  pushValue(meta.aka_titles);
   pushValue(meta.aliases);
-  pushValue(meta.titles);
   pushValue(meta.aka);
   return [...titles];
 }
@@ -416,7 +368,7 @@ function getLanguageSignals(item, meta = {}) {
   const langInfo = getLanguageInfo(title, meta?.title || meta?.originalTitle || null, source, parsed);
   const upperTitle = title.toUpperCase();
   const explicitEng = REGEX_EXPLICIT_ENG.test(upperTitle);
-  const explicitIta = hasStrictItalianEvidence(title, source, parsed);
+  const explicitIta = langInfo.isItalian || REGEX_STRONG_ITA.test(title) || REGEX_AUDIO_CONFIRM.test(title);
   const explicitMulti = langInfo.isMulti || REGEX_MULTI_ITA.test(title) || REGEX_EXPLICIT_MULTI.test(upperTitle);
   const explicitOther = REGEX_EXPLICIT_OTHER.test(upperTitle);
   const subOnly = REGEX_SUB_ONLY.test(title);
@@ -437,23 +389,12 @@ function getLanguageSignals(item, meta = {}) {
 }
 
 function shouldKeepItalianCandidate(title, source, meta = {}) {
-  return shouldKeepStrictItalianCandidate(title, source);
-}
-
-function hasTrustedExternalItalianEvidence(item = {}) {
-  const languageInfo = item?._externalLanguageInfo || item?.languageInfo || {};
-  const isTrustedExternal = Boolean(item?.isExternal || item?.externalAddon || item?.externalGroup || item?._externalIdMatched || item?._sourceGroup === 'external');
-  if (!isTrustedExternal && !item?._torrentioLooseItForceKeep && !item?._torrentioExactGuard) return false;
-  return Boolean(
-    item?._torrentioLooseItForceKeep ||
-    item?._torrentioExactGuard ||
-    item?._externalIsItalian ||
-    item?._externalHasItalianAudio ||
-    item?.isItalian ||
-    item?.hasItalianAudio ||
-    languageInfo?.isItalian ||
-    languageInfo?.hasAudioItalian
-  );
+  const signals = getLanguageSignals({ title, source }, meta);
+  if (signals.langInfo.isItalian || (signals.langInfo.confidence || 0) >= 4 || signals.langInfo.isMaybeItalian) return true;
+  if (signals.subOnly && !REGEX_AUDIO_CONFIRM.test(title)) {
+    return shouldKeepItalianCandidate(String(title || "").replace(REGEX_SUB_ONLY, " "), source, meta);
+  }
+  return false;
 }
 
 function shouldKeepByLanguageMode(item, meta = {}, configInput = {}) {
@@ -465,15 +406,12 @@ function shouldKeepByLanguageMode(item, meta = {}, configInput = {}) {
   const normalizedMeta = normalizeSearchText(meta?.title || meta?.originalTitle || "");
   const yearMatches = matchesExpectedYear(title, meta);
 
-  if (langMode === "ita" && hasTrustedExternalItalianEvidence(item)) return true;
-
   if (langMode === "eng") {
-    if (signals.explicitEng) return true;
+    if (signals.explicitIta || signals.explicitMulti) return false;
     if (signals.explicitOther && !signals.explicitEng) return false;
     if (signals.subOnly && !signals.explicitEng) return false;
-    if (signals.explicitIta && !signals.explicitEng) return false;
-    if (signals.explicitMulti && !signals.explicitEng) return false;
 
+    if (signals.explicitEng) return true;
     if (signals.neutralScene && yearMatches) return true;
     if (normalizedMeta && normalizedTitle.includes(normalizedMeta) && yearMatches) return true;
     return !signals.explicitOther && !signals.explicitIta && !signals.explicitMulti && yearMatches;
@@ -511,8 +449,7 @@ function evaluateEpisodeFit(title, meta = {}, weights) {
   const isSeries = meta?.isSeries || (Number.isFinite(season) && Number.isFinite(episode));
   const isPack = isSeasonPack(title) || REGEX_PACK.test(title);
   const context = Number.isFinite(season) && Number.isFinite(episode) ? { season, episode } : null;
-  const episodeContext = context ? extractEpisodeContext(title, context.season || 1, { anime: isAnimeMeta(meta) }) : null;
-  const ignoreAnimeSeason = shouldIgnoreAnimeSeason(meta, title);
+  const episodeContext = context ? extractEpisodeContext(title, context.season || 1) : null;
   let delta = 0;
   const reasons = [];
 
@@ -524,7 +461,7 @@ function evaluateEpisodeFit(title, meta = {}, weights) {
     return { delta, reasons, isPack, exactEpisode: false };
   }
 
-  if (episodeContext && episodeContext.episode === context?.episode && (episodeContext.season === context?.season || ignoreAnimeSeason)) {
+  if (episodeContext && episodeContext.season === context?.season && episodeContext.episode === context?.episode) {
     delta += weights.exactEpisodeBoost;
     reasons.push("EXACT_EPISODE");
     return { delta, reasons, isPack, exactEpisode: true };
@@ -540,7 +477,7 @@ function evaluateEpisodeFit(title, meta = {}, weights) {
     reasons.push("PACK");
   }
 
-  if (episodeContext && context?.season && episodeContext.season !== context.season && !ignoreAnimeSeason) {
+  if (episodeContext && context?.season && episodeContext.season !== context.season) {
     delta += weights.wrongSeasonPenalty;
     reasons.push("WRONG_SEASON");
   } else if (episodeContext && context?.episode && episodeContext.episode !== context.episode) {
@@ -589,19 +526,15 @@ function computeScore(item, meta = {}, configInput = {}) {
     if (signals.explicitEng) {
       score += weights.languageEng;
       reasons.push("ENG");
-      if (signals.explicitMulti) {
-        score += Math.max(0, Math.floor(Math.abs(weights.languageMultiPenaltyInEng || 0) * 0.35));
-        reasons.push("ENG_MULTI_OK");
-      }
     } else if (signals.neutralScene) {
       score += weights.languageNeutral;
       reasons.push("NEUTRAL");
     }
-    if (signals.explicitIta && !signals.explicitEng) {
+    if (signals.explicitIta) {
       score += weights.languageItaPenaltyInEng;
       reasons.push("ITA_PENALTY");
     }
-    if (signals.explicitMulti && !signals.explicitEng) {
+    if (signals.explicitMulti) {
       score += weights.languageMultiPenaltyInEng;
       reasons.push("MULTI_PENALTY");
     }
@@ -665,12 +598,6 @@ function computeScore(item, meta = {}, configInput = {}) {
     score += weights.trustedSource;
     reasons.push("SOURCE");
   }
-  const sourceConsensus = detectSourceConsensus(item);
-  const consensusBonus = SOURCE_CONSENSUS_BONUS[sourceConsensus] || 0;
-  if (consensusBonus > 0) {
-    score += consensusBonus;
-    reasons.push(`SOURCE_CONSENSUS:${sourceConsensus}`);
-  }
   if (hasFileIdx) {
     score += weights.fileIdxBonus;
     reasons.push("FILE_IDX");
@@ -720,41 +647,12 @@ function computeScore(item, meta = {}, configInput = {}) {
   }
 
   score += Math.min(seeders, 500) * weights.seedersFactor;
-  if (Number.isFinite(Number(item?._seedHealthDelta)) && Number(item._seedHealthDelta) !== 0) {
-    score += Number(item._seedHealthDelta);
-    reasons.push(`SEED_HEALTH:${item._seedHealth || 'unknown'}`);
-  }
   score += Math.min(Math.floor(sizeBytes / Math.max(1, weights.sizeBucketBytes)), weights.sizeFactorCap);
   score += Math.min(title.length, weights.titleLengthCap);
 
-  const rankerService = String(configInput?.service || "").toLowerCase();
-  if (rankerService === "tb" && item?._tbCached) {
+  if (String(configInput?.service || "").toLowerCase() === "tb" && item?._tbCached) {
     score += weights.tbCachedBonus;
     reasons.push("TB_CACHED");
-  }
-  // Symmetric to TB: RD users had no cache bonus even though rd_cache_state is known,
-  // so a cached RD result could rank below an uncached one of equal quality.
-  if (rankerService === "rd") {
-    const rdStateText = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || "").toLowerCase();
-    const rdCached = item?._dbCachedRd === true || item?.cached_rd === true || item?.isCached === true
-      || item?.cached === true || rdStateText === "cached";
-    const rdLikely = !rdCached && (item?.likely_cached === true || rdStateText === "likely_cached");
-    if (rdCached) {
-      score += weights.rdCachedBonus;
-      reasons.push("RD_CACHED");
-    } else if (rdLikely) {
-      score += Math.round(weights.rdCachedBonus * 0.5);
-      reasons.push("RD_LIKELY_CACHED");
-    }
-  }
-
-  const scoreProfile = evaluateLeviathanScore(item, meta, configInput);
-  const useScoreProfile = configInput?.useLeviathanScoreProfile === true
-    || configInput?.ranking?.useLeviathanScoreProfile === true
-    || configInput?.ranking?.useScoreProfile === true;
-  if (useScoreProfile) {
-    score += scoreProfile.finalScore;
-    reasons.push("LEV_SCORE_PROFILE");
   }
 
   if (invalid) {
@@ -784,9 +682,7 @@ function computeScore(item, meta = {}, configInput = {}) {
       isItalian: signals.langInfo.isItalian,
       isMaybeItalian: signals.langInfo.isMaybeItalian,
       isMulti: signals.langInfo.isMulti,
-      subOnly: signals.subOnly,
-      sourceConsensus,
-      scoreProfile
+      subOnly: signals.subOnly
     }
   };
 }
@@ -798,11 +694,7 @@ function annotateResult(item, meta = {}, configInput = {}) {
     _score: score,
     _reasons: reasons,
     _rankMeta: details,
-    _rankProfile: details.profile,
-    _leviathanScore: details.scoreProfile?.finalScore,
-    _leviathanScoreExplain: details.scoreProfile?.explain,
-    _leviathanExplain: details.scoreProfile?.brutalExplain,
-    _leviathanExplainText: details.scoreProfile?.brutalExplain?.text
+    _rankProfile: details.profile
   };
 }
 

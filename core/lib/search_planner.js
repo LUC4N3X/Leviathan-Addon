@@ -1,6 +1,6 @@
 'use strict';
 
-const { normalizeSearchText } = require('../utils/text');
+const { normalizeSearchText } = require('../utils_text');
 
 function dedupeQueries(rawQueries = []) {
     const seen = new Set();
@@ -14,65 +14,11 @@ function dedupeQueries(rawQueries = []) {
     return deduped;
 }
 
-function isSeriesMeta(meta = {}) {
-    return Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
-}
-
-function isSeasonPackQuery(query = '', meta = {}) {
-    const season = Number(meta?.season || 0);
-    if (!season) return false;
-    const text = String(query || '');
-    const sToken = String(season).padStart(2, '0');
-    return new RegExp(`\bS${sToken}\b`, 'i').test(text)
-        || new RegExp(`\bS${season}\b`, 'i').test(text)
-        || new RegExp(`\b(?:season|stagione)\s*${season}\b`, 'i').test(text)
-        || /\b(?:pack|batch|complete|completa)\b/i.test(text);
-}
-
-function isExactEpisodeQuery(query = '', meta = {}) {
-    const season = Number(meta?.season || 0);
-    const episode = Number(meta?.episode || 0);
-    if (!season || !episode) return false;
-    const text = String(query || '');
-    const sToken = String(season).padStart(2, '0');
-    const eToken = String(episode).padStart(2, '0');
-    return new RegExp(`\bS${sToken}E${eToken}\b`, 'i').test(text)
-        || new RegExp(`\b${season}x${eToken}\b`, 'i').test(text)
-        || new RegExp(`\b(?:episode|episodio|ep)\s*${episode}\b`, 'i').test(text);
-}
-
-function prioritizeSeriesQueries(queries, meta, langMode, limit) {
-    const list = dedupeQueries(queries);
-    if (!isSeriesMeta(meta)) return list.slice(0, limit);
-
-    const exact = list.filter((query) => isExactEpisodeQuery(query, meta));
-    const packs = list.filter((query) => isSeasonPackQuery(query, meta) && !isExactEpisodeQuery(query, meta));
-    const titleOnly = list.filter((query) => !exact.includes(query) && !packs.includes(query));
-
-    // Per le serie non basta cercare solo SxxExx: molte release ITA buone sono pack Sxx.
-    // Interlacciamo quindi exact episode + season pack, senza aumentare troppo il costo.
-    const ordered = [];
-    const push = (items, count) => {
-        for (const item of items.slice(0, count)) {
-            if (!ordered.includes(item)) ordered.push(item);
-        }
-    };
-
-    push(exact, langMode === 'ita' ? 2 : 3);
-    push(packs, langMode === 'ita' ? 2 : 3);
-    push(titleOnly, limit);
-    push(list, limit);
-
-    return ordered.slice(0, limit);
-}
-
 function selectFocusedQueries(queries, meta, langMode) {
     const list = dedupeQueries(queries);
-    if (isSeriesMeta(meta)) return prioritizeSeriesQueries(list, meta, langMode, langMode === 'eng' ? 5 : 4);
-
     if (langMode === 'eng') {
         const noIta = list.filter((q) => !/\b(?:ita|multi)\b/i.test(q));
-        const yearQueries = noIta.filter((q) => meta?.year && new RegExp(`\b${meta.year}\b`).test(q));
+        const yearQueries = noIta.filter((q) => meta?.year && new RegExp(`\\b${meta.year}\\b`).test(q));
         const plainQueries = noIta.filter((q) => !/\b(?:19|20)\d{2}\b/.test(q));
         return [...new Set([...yearQueries, ...plainQueries, ...noIta])].slice(0, 4);
     }
@@ -80,9 +26,8 @@ function selectFocusedQueries(queries, meta, langMode) {
     return list.slice(0, 3);
 }
 
-function selectBroadQueries(queries, langMode, meta = {}) {
+function selectBroadQueries(queries, langMode) {
     const list = dedupeQueries(queries);
-    if (isSeriesMeta(meta)) return prioritizeSeriesQueries(list, meta, langMode, langMode === 'all' ? 8 : 6);
     if (langMode === 'all') return list.slice(0, 8);
     if (langMode === 'eng') return list.slice(0, 6);
     return list.slice(0, 5);
@@ -90,7 +35,7 @@ function selectBroadQueries(queries, langMode, meta = {}) {
 
 function createSearchPlan({ meta, langMode, dbOnlyMode, rawQueries = [] }) {
     const focusedQueries = selectFocusedQueries(rawQueries, meta, langMode);
-    const broadQueries = selectBroadQueries(rawQueries, langMode, meta);
+    const broadQueries = selectBroadQueries(rawQueries, langMode);
 
     const phases = [{
         key: 'fast',
@@ -136,10 +81,8 @@ function evaluatePoolSatisfaction(assessment = {}, meta = {}) {
 
     if (meta?.isSeries) {
         if (exactEpisodeCount >= 2) return { satisfied: true, tier: 'excellent', reason: 'exact_episode_depth' };
-        if (exactEpisodeCount >= 1 && strongCount >= 1) return { satisfied: true, tier: 'single_exact', reason: 'single_exact_episode' };
-        if (exactEpisodeCount >= 1 && total >= 1) return { satisfied: true, tier: 'minimal_exact', reason: 'exact_episode_present' };
-        if (seasonPackCount >= 2 && strongCount >= 2) return { satisfied: true, tier: 'pack_backfill', reason: 'pack_depth' };
-        if (seasonPackCount >= 1 && strongCount >= 1) return { satisfied: true, tier: 'single_pack', reason: 'single_season_pack' };
+        if (exactEpisodeCount >= 1 && strongCount >= 2) return { satisfied: true, tier: 'strong', reason: 'exact_episode_plus_strength' };
+        if (exactEpisodeCount === 0 && seasonPackCount >= 2 && strongCount >= 2) return { satisfied: true, tier: 'pack_backfill' , reason: 'pack_depth' };
         return { satisfied: false, tier: 'weak', reason: 'series_needs_exact_episode' };
     }
 
@@ -153,6 +96,5 @@ module.exports = {
     evaluatePoolSatisfaction,
     dedupeQueries,
     selectFocusedQueries,
-    selectBroadQueries,
-    prioritizeSeriesQueries
+    selectBroadQueries
 };

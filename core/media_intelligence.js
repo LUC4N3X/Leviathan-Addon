@@ -1,5 +1,3 @@
-const { resolveLangMode: canonicalResolveLangMode } = require('./canonical/language_rules');
-
 const STOP_WORDS = new Set([
   'il','lo','la','i','gli','le','l','un','uno','una','di','a','da','in','con','su','per','tra','fra',
   'e','ed','o','ma','se','che','del','dello','della','dei','degli','delle','dell','al','allo','alla','ai','agli','alle','all',
@@ -177,31 +175,19 @@ function expandBaseTitles(base, originalTitle = '', dynamicAliases = []) {
 
 function resolveLangMode(meta = {}, allowEngOrLangMode = false) {
   if (typeof allowEngOrLangMode === 'string') {
-    return canonicalResolveLangMode({ language: allowEngOrLangMode, meta, defaultMode: 'ita' });
+    const mode = allowEngOrLangMode.toLowerCase();
+    if (mode === 'ita' || mode === 'eng' || mode === 'all') return mode;
   }
-  if (allowEngOrLangMode && typeof allowEngOrLangMode === 'object') {
-    return canonicalResolveLangMode({ ...allowEngOrLangMode, meta, defaultMode: 'ita' });
-  }
-  return canonicalResolveLangMode({ allowEng: Boolean(allowEngOrLangMode), meta, defaultMode: 'ita' });
-}
 
-function isAnimeMeta(meta = {}) {
-  return Boolean(meta?.kitsu_id || meta?.isAnime || String(meta?.type || '').toLowerCase() === 'anime');
-}
+  const metaMode = String(meta.langMode || meta.languageMode || meta.language || '').toLowerCase();
+  if (metaMode === 'ita' || metaMode === 'eng' || metaMode === 'all') return metaMode;
 
-function collectMetaAliases(meta = {}) {
-  return [
-    ...(Array.isArray(meta?.aka_titles) ? meta.aka_titles : []),
-    ...(Array.isArray(meta?.aliases) ? meta.aliases : []),
-    ...(Array.isArray(meta?.titles) ? meta.titles : []),
-    ...(Array.isArray(meta?.alternativeTitles) ? meta.alternativeTitles : []),
-    ...(Array.isArray(meta?.altTitles) ? meta.altTitles : [])
-  ].filter(Boolean);
+  if (typeof allowEngOrLangMode === 'boolean') return allowEngOrLangMode ? 'all' : 'ita';
+  return 'ita';
 }
 
 function getTitleCandidates(meta = {}, dynamicAliases = [], allowEngOrLangMode = false) {
-  const aliasPool = [...collectMetaAliases(meta), ...(Array.isArray(dynamicAliases) ? dynamicAliases : [dynamicAliases])].filter(Boolean);
-  const primary = expandBaseTitles(meta.title || '', meta.originalTitle || meta.originalName || '', aliasPool);
+  const primary = expandBaseTitles(meta.title || '', meta.originalTitle || '', dynamicAliases);
   const langMode = resolveLangMode(meta, allowEngOrLangMode);
   const ita = new Set(primary);
   const eng = new Set();
@@ -213,9 +199,7 @@ function getTitleCandidates(meta = {}, dynamicAliases = [], allowEngOrLangMode =
 
 function generateSmartQueries(meta = {}, dynamicAliases = [], allowEngOrLangMode = false) {
   const { year, season, episode, isSeries } = meta || {};
-  const animeAbsoluteEpisode = Number(meta.anime_absolute_episode || meta.requested_kitsu_episode || meta.anime_episode || 0);
   const { ita, eng, langMode } = getTitleCandidates(meta, dynamicAliases, allowEngOrLangMode);
-  const animeMode = isAnimeMeta(meta);
   const sNum = Number(season);
   const eNum = Number(episode);
   const yNum = Number(year);
@@ -227,48 +211,18 @@ function generateSmartQueries(meta = {}, dynamicAliases = [], allowEngOrLangMode
   if (langMode === 'ita' || langMode === 'all') {
     for (const title of ita) {
       if (isSeries) {
-        if (animeMode) {
-          if (Number.isFinite(eNum) && eNum > 0) {
-            itaQueries.add(`${title} - ${eStr}`);
-            itaQueries.add(`${title} ${eStr}`);
-            itaQueries.add(`${title} episodio ${eNum}`);
-            itaQueries.add(`${title} episode ${eNum}`);
-            if (animeAbsoluteEpisode > 0 && animeAbsoluteEpisode !== eNum) {
-              itaQueries.add(`${title} episodio ${animeAbsoluteEpisode}`);
-              itaQueries.add(`${title} episode ${animeAbsoluteEpisode}`);
-              itaQueries.add(`${title} - ${String(animeAbsoluteEpisode).padStart(2, '0')}`);
-            }
-            if (Number.isFinite(sNum) && sNum > 1) {
-              itaQueries.add(`${title} S${sNum} - ${eStr}`);
-              itaQueries.add(`${title} stagione ${sNum} episodio ${eNum}`);
-              itaQueries.add(`${title} season ${sNum} episode ${eNum}`);
-            }
-          }
-          if (Number.isFinite(yNum) && yNum > 0) {
-            itaQueries.add(`${title} ${yNum}`);
-            itaQueries.add(`${title} anime ${yNum}`);
-          }
-          itaQueries.add(`${title} anime`);
-          itaQueries.add(`${title} batch`);
-          itaQueries.add(`${title} complete`);
-          itaQueries.add(`${title} pack`);
-          itaQueries.add(title);
-          itaQueries.add(`${title} ITA`);
-          itaQueries.add(`${title} MULTI`);
-        } else {
-          if (Number.isFinite(eNum) && eNum > 0) {
-            itaQueries.add(`${title} S${sStr}E${eStr} ITA`);
-            itaQueries.add(`${title} S${sStr}E${eStr}`);
-            itaQueries.add(`${title} ${sNum}x${eStr}`);
-            itaQueries.add(`${title} episodio ${eNum}`);
-          }
-          if (Number.isFinite(sNum) && sNum > 0) {
-            itaQueries.add(`${title} stagione ${sNum} ITA`);
-            itaQueries.add(`${title} S${sStr} ITA`);
-            itaQueries.add(`${title} stagione ${sNum}`);
-          }
-          itaQueries.add(`${title} ITA`);
+        if (Number.isFinite(eNum) && eNum > 0) {
+          itaQueries.add(`${title} S${sStr}E${eStr} ITA`);
+          itaQueries.add(`${title} S${sStr}E${eStr}`);
+          itaQueries.add(`${title} ${sNum}x${eStr}`);
+          itaQueries.add(`${title} episodio ${eNum}`);
         }
+        if (Number.isFinite(sNum) && sNum > 0) {
+          itaQueries.add(`${title} stagione ${sNum} ITA`);
+          itaQueries.add(`${title} S${sStr} ITA`);
+          itaQueries.add(`${title} stagione ${sNum}`);
+        }
+        itaQueries.add(`${title} ITA`);
       } else {
         if (Number.isFinite(yNum) && yNum > 0) {
           itaQueries.add(`${title} ${yNum} ITA`);
@@ -286,41 +240,14 @@ function generateSmartQueries(meta = {}, dynamicAliases = [], allowEngOrLangMode
   if (langMode === 'eng' || langMode === 'all') {
     for (const title of eng) {
       if (isSeries) {
-        if (animeMode) {
-          if (Number.isFinite(eNum) && eNum > 0) {
-            engQueries.add(`${title} - ${eStr}`);
-            engQueries.add(`${title} ${eStr}`);
-            engQueries.add(`${title} episode ${eNum}`);
-            engQueries.add(`${title} ep ${eNum}`);
-            if (animeAbsoluteEpisode > 0 && animeAbsoluteEpisode !== eNum) {
-              engQueries.add(`${title} episode ${animeAbsoluteEpisode}`);
-              engQueries.add(`${title} ep ${animeAbsoluteEpisode}`);
-              engQueries.add(`${title} - ${String(animeAbsoluteEpisode).padStart(2, '0')}`);
-            }
-            if (Number.isFinite(sNum) && sNum > 1) {
-              engQueries.add(`${title} S${sNum} - ${eStr}`);
-              engQueries.add(`${title} season ${sNum} episode ${eNum}`);
-            }
-          }
-          if (Number.isFinite(yNum) && yNum > 0) {
-            engQueries.add(`${title} ${yNum}`);
-            engQueries.add(`${title} anime ${yNum}`);
-          }
-          engQueries.add(`${title} anime`);
-          engQueries.add(`${title} batch`);
-          engQueries.add(`${title} complete`);
-          engQueries.add(`${title} pack`);
-          if (title.length >= 3 && !commonWordsOnly(title)) engQueries.add(title);
-        } else {
-          if (Number.isFinite(eNum) && eNum > 0) {
-            engQueries.add(`${title} S${sStr}E${eStr}`);
-            engQueries.add(`${title} ${sNum}x${eStr}`);
-            engQueries.add(`${title} episode ${eNum}`);
-          }
-          if (Number.isFinite(sNum) && sNum > 0) {
-            engQueries.add(`${title} season ${sNum}`);
-            engQueries.add(`${title} S${sStr}`);
-          }
+        if (Number.isFinite(eNum) && eNum > 0) {
+          engQueries.add(`${title} S${sStr}E${eStr}`);
+          engQueries.add(`${title} ${sNum}x${eStr}`);
+          engQueries.add(`${title} episode ${eNum}`);
+        }
+        if (Number.isFinite(sNum) && sNum > 0) {
+          engQueries.add(`${title} season ${sNum}`);
+          engQueries.add(`${title} S${sStr}`);
         }
       } else {
         if (Number.isFinite(yNum) && yNum > 0) {

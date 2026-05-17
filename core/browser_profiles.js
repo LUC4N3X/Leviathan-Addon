@@ -172,7 +172,7 @@ function createEngineProfile(profile) {
     };
 }
 
-function createGuardoserieProfile(profile) {
+function createGuardaserieProfile(profile) {
     return {
         ua: profile.userAgent,
         sec_ch_ua: profile.secChUa
@@ -183,9 +183,9 @@ const LEGACY_BROWSER_PROFILES = Object.freeze(CANONICAL_BROWSER_PROFILES.map(cre
 const ENGINE_BROWSER_PROFILES = Object.freeze(CANONICAL_BROWSER_PROFILES
     .filter((profile) => ['safari', 'chrome', 'firefox'].includes(profile.family))
     .map(createEngineProfile));
-const GUARDO_SERIE_BROWSER_PROFILES = Object.freeze(CANONICAL_BROWSER_PROFILES
+const GUARDA_SERIE_BROWSER_PROFILES = Object.freeze(CANONICAL_BROWSER_PROFILES
     .filter((profile) => profile.name === 'chrome-windows' || profile.name === 'edge-windows' || profile.name === 'firefox-windows')
-    .map(createGuardoserieProfile));
+    .map(createGuardaserieProfile));
 
 function pickRandomProfile(profiles) {
     if (!Array.isArray(profiles) || profiles.length === 0) return null;
@@ -196,6 +196,6 @@ module.exports = {
     CANONICAL_BROWSER_PROFILES,
     LEGACY_BROWSER_PROFILES,
     ENGINE_BROWSER_PROFILES,
-    GUARDO_SERIE_BROWSER_PROFILES,
+    GUARDA_SERIE_BROWSER_PROFILES,
     pickRandomProfile
 };

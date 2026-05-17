@@ -24,9 +24,6 @@ function compactSpaces(value) {
 
 function normalizeSourceName(source) {
     let displaySource = compactSpaces(source || 'Unknown Indexer');
-    if (/(?:saved\s*cloud|cloud\s*salvato|debrid\s*cloud|rd\s*cloud|tb\s*cloud)/i.test(displaySource)) {
-        return /\btb\b|torbox/i.test(displaySource) ? 'TorBox' : 'Real-Debrid';
-    }
     for (const [pattern, replacement] of SOURCE_ALIAS_ENTRIES) {
         if (pattern.test(displaySource)) {
             displaySource = replacement;
@@ -55,12 +52,10 @@ function cleanFileNameForDisplay(filename, options = {}) {
 
 function getCacheBadge(cacheState, cached) {
     const normalized = compactSpaces(cacheState).toLowerCase();
-    // ⚡ solo per cached confermato; likely_cached resta sotto come dubbio.
-    if (normalized === 'cached') return '⚡';
-    if (normalized === 'likely_cached') return '⏳';
+    if (normalized === 'cached' || normalized === 'likely_cached') return '⚡';
     if (normalized === 'uncached' || normalized === 'likely_uncached') return '⏳';
     if (normalized === 'uncached_terminal') return '☁️';
-    if (normalized === 'probing') return '⏳';
+    if (normalized === 'probing') return '🔄';
     if (normalized === 'unknown') return '⏳';
     return cached ? '⚡' : '⏳';
 }
@@ -71,19 +66,19 @@ function formatStreamName({
     cached,
     cacheState,
     quality,
-    hasError = false,
-    savedCloud = false
+    hasError = false
 } = {}) {
     const serviceAbbr = {
         realdebrid: '[RD',
         torbox: '[TB',
+        alldebrid: '[AD',
         p2p: '[P2P',
         web: '[WEB'
     };
 
     const serviceKey = String(service || 'p2p').toLowerCase();
     const srv = serviceAbbr[serviceKey] || '[P2P';
-    const badge = savedCloud ? '☁️' : getCacheBadge(cacheState, cached);
+    const badge = getCacheBadge(cacheState, cached);
     const bolt = `${badge}]`;
     const safeAddonName = compactSpaces(addonName || 'Leviathan');
     const safeQuality = compactSpaces(quality || '');
@@ -101,8 +96,6 @@ function formatStreamTitle({
     episodeTitle,
     infoHash,
     techInfo,
-    providerLine,
-    sourceIcon = '🔎',
     forceExtension = false
 } = {}) {
     const displaySeeders = seeders !== undefined && seeders !== null && seeders !== '' ? seeders : '-';
@@ -114,14 +107,9 @@ function formatStreamTitle({
     const rowTech = compactSpaces(techInfo || '');
     const rowInfo = `💾 ${compactSpaces(size || 'Unknown')} • 👤 ${displaySeeders} • ${displayLang}`;
     const rowTitle = `📁 ${displayTitle}`;
-    const rowProvider = compactSpaces(providerLine || '');
-    const safeSourceIcon = compactSpaces(sourceIcon || '🔎');
-    const rowSource = `${safeSourceIcon} ${displaySource}`;
+    const rowSource = `🔎 ${displaySource}`;
 
-    return [rowTech, rowInfo, rowTitle, rowProvider, rowSource]
-        .filter(Boolean)
-        .filter((row, index, rows) => index === 0 || row !== rows[index - 1])
-        .join('\n');
+    return [rowTech, rowInfo, rowTitle, rowSource].filter(Boolean).join('\n');
 }
 
 function isAIOStreamsEnabled(config) {

@@ -22,7 +22,7 @@ function applyAioWebStyle(streamList, sourceName, meta) {
     const isAnimeWorld = sourceName.includes('AnimeWorld');
     return streamList.map((stream) => {
         const textToCheck = `${stream?.title || ''} ${stream?.name || ''}`.toUpperCase().replace(/GUARDAHD|STREAMINGCOMMUNITY|LEVIATHAN|VIX|GUARDAFLIX/g, '');
-        let quality = 'Web';
+        let quality = 'WebStreams';
         let qIcon = '📺';
 
         if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) {
@@ -99,7 +99,7 @@ function applyWebFormatter(streamList, sourceName, meta, config) {
     });
 }
 
-function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }) {
+function createWebStreamTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }) {
     async function fetchWebProviderBuckets({ type, originalId, finalId, meta, config, reqHost, allowItalianWebProviders, dbOnlyMode }) {
         const empty = {
             streamingCommunity: [],
@@ -192,7 +192,7 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
     }
 
     function mergeFinalStreams(debridStreams, formattedWebBuckets, filters = {}) {
-        const providerStreams = [
+        const webStreams = [
             ...(formattedWebBuckets?.guardaHD || []),
             ...(formattedWebBuckets?.guardaSerie || []),
             ...(formattedWebBuckets?.animeWorld || []),
@@ -201,8 +201,8 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
         ];
 
         return isStreamingCommunityLastEnabled(filters)
-            ? [...(debridStreams || []), ...providerStreams]
-            : [...providerStreams, ...(debridStreams || [])];
+            ? [...(debridStreams || []), ...webStreams]
+            : [...webStreams, ...(debridStreams || [])];
     }
 
     return {
@@ -214,4 +214,4 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
     };
 }
 
-module.exports = { createWebProviderTools };
+module.exports = { createWebStreamTools };

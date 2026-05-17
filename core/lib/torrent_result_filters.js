@@ -1,4 +1,4 @@
-const { parseTitleDetails } = require('../utils/text');
+const { parseTitleDetails } = require('../utils_text');
 
 function normalizeArrayInput(value) {
     if (Array.isArray(value)) {

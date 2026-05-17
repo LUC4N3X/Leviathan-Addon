@@ -1,4 +1,3 @@
-const { REGEX_TRUSTED_GROUPS } = require('../utils/text');
 function basicParseTitle(title) {
   const source = String(title || '');
   const cleaned = source
@@ -12,12 +11,6 @@ function basicParseTitle(title) {
 
   const resolution = source.match(/\b(2160p|1440p|1080p|1080i|720p|480p)\b/i)?.[1] || '';
   const codec = source.match(/\b(x265|x264|h265|h264|hevc|av1|vvc|h266)\b/i)?.[1] || '';
-  let releaseSource = '';
-  if (/\b(?:blu[-.\s]?ray|bd(?:rip)?|brrip)\b/i.test(source)) releaseSource = 'BluRay';
-  else if (/\bweb[-.\s]?dl\b|\bwebdl\b/i.test(source)) releaseSource = 'WEB-DL';
-  else if (/\bweb[-.\s]?rip\b|\bwebrip\b/i.test(source)) releaseSource = 'WEBRip';
-  else if (/\bhdtv\b/i.test(source)) releaseSource = 'HDTV';
-  else if (/\bweb\b/i.test(source)) releaseSource = 'WEB';
   const group = source.match(/[-_]\s?([a-zA-Z0-9@.]+)$/)?.[1] || '';
   const channels = source.match(/\b([1-7][ .][01])\b/i)?.[1]?.replace(' ', '.') || '';
   const hdr = [];
@@ -32,7 +25,9 @@ function basicParseTitle(title) {
     group,
     channels,
     hdr,
-    source: releaseSource,
+    source: /\b(?:bluray|blu-ray|bd)\b/i.test(source)
+      ? 'BluRay'
+      : (/\b(?:web-dl|webrip|web|hdtv)\b/i.test(source) ? 'WEB' : ''),
     remux: /\bremux\b/i.test(source),
     audio: source.match(/\b(?:ddp|aac|ac3|dts|truehd|opus|flac|pcm|lpcm|mp3)\b/i)?.[0] || '',
   };
@@ -86,11 +81,7 @@ const REGEX_EXTRA = {
   cam: /\b(?:cam|hdcam|ts|telesync|tc|telecine|scr|screener)\b/i,
   remux: /\bremux\b/i,
   bluray: /\b(?:bluray|blu-ray|bd(?:rip)?|brrip)\b/i,
-  webdl: /\b(?:web[- ._]?dl|webdl)\b/i,
-  webrip: /\b(?:web[- ._]?rip|webrip)\b/i,
-  hdtv: /\bhdtv\b/i,
-  web: /\bweb\b/i,
-  webLike: /\b(?:web[- ._]?dl|webdl|web[- ._]?rip|webrip|web|hdtv)\b/i,
+  web: /\b(?:web[- .]?dl|webrip|web|hdtv)\b/i,
   imax: /\bimax\b/i,
   atmos: /\b(?:atmos)\b/i,
   dtsx: /\b(?:dts\s?x|dts:x)\b/i,
@@ -151,11 +142,11 @@ const GROUP_BLACKLIST = new Set([
 
 const SERVICE_ICON_BY_TAG = {
   RD: '🐬',
-  TB: '🧊',
+  TB: '⚓',
+  AD: '🐚',
 };
 
 const DISPLAY_SOURCE_MAP = [
-  { regex: /bt4g|b\d+gprx|downloadtorrentfile/i, value: 'BT4G' },
   { regex: /1337/i, value: '1337x' },
   { regex: /corsaro/i, value: 'ilCorSaRoNeRo' },
   { regex: /knaben/i, value: 'Knaben' },
@@ -246,28 +237,13 @@ function uniqueBy(items, getKey) {
   return results;
 }
 
-function resolveFormatterLangMode(config = {}) {
-  const explicit = safeString(config?.filters?.language || config?.language).toLowerCase().trim();
-  if (explicit === 'eng' || explicit === 'ita' || explicit === 'all') return explicit;
-  if (explicit === 'ita-eng') return 'all';
-  if (config?.filters?.allowEng === true || config?.allowEng === true) return 'all';
-  return 'ita';
-}
-
-function getDisplayLanguageForMode(lang, config = {}) {
-  const langMode = resolveFormatterLangMode(config);
-  if (langMode === 'eng') return '🇬🇧';
-  const normalized = safeString(lang).trim();
-  return normalized || '🇬🇧';
-}
-
 function normalizeServiceTag(serviceTag) {
   const normalized = safeString(serviceTag).toUpperCase().trim();
   return normalized || DEFAULT_SERVICE_TAG;
 }
 
 function isDebridService(serviceTag) {
-  return ['RD', 'TB'].includes(normalizeServiceTag(serviceTag));
+  return ['RD', 'TB', 'AD'].includes(normalizeServiceTag(serviceTag));
 }
 
 function normalizeCacheState(cacheState, serviceTag) {
@@ -284,18 +260,11 @@ function normalizeCacheState(cacheState, serviceTag) {
 }
 
 function getCacheIcon(cacheState) {
-  // ⚡ solo per cache RD/TB confermata. likely_cached resta dubbio/probing per non ingannare l'utente.
-  if (cacheState === 'cached') return '⚡';
-  if (cacheState === 'likely_cached') return '⏳';
+  if (cacheState === 'cached' || cacheState === 'likely_cached') return '⚡';
   if (cacheState === 'uncached_terminal') return '☁️';
-  if (cacheState === 'probing') return '⏳';
+  if (cacheState === 'probing') return '🔄';
   if (cacheState === 'likely_uncached') return '⏳';
   return '⏳';
-}
-
-function getStatusIcon(cacheState, serviceTag) {
-  if (normalizeServiceTag(serviceTag) === 'WEB') return '🌊';
-  return getCacheIcon(cacheState);
 }
 
 function deterministicHash(value) {
@@ -443,7 +412,7 @@ function normalizeReleaseGroup(group) {
 
 function deriveReleaseGroup(title, info) {
   const cleanTitle = normalizeSpaces(stripExtension(title));
-
+  
   const candidates = [
     safeString(title).match(/^\[([a-zA-Z0-9_\-.\s]+)\]/)?.[1],
     info.group,
@@ -516,16 +485,10 @@ function deriveVideoTags(info, upperTitle) {
 
   const isRemux = Boolean(info.remux) || REGEX_EXTRA.remux.test(sourceText);
   const isBluRay = REGEX_EXTRA.bluray.test(sourceText);
-  const isWebDl = REGEX_EXTRA.webdl.test(sourceText);
-  const isWebRip = REGEX_EXTRA.webrip.test(sourceText);
-  const isHdtv = REGEX_EXTRA.hdtv.test(sourceText);
   const isWeb = REGEX_EXTRA.web.test(sourceText);
 
   if (isRemux) addTag('💎', 'REMUX', 'Remux');
   else if (isBluRay) addTag('💿', 'BluRay', 'BluRay');
-  else if (isWebDl) addTag('☁️', 'WEB-DL', 'WEB-DL');
-  else if (isWebRip) addTag('🌐', 'WEBRip', 'WEBRip');
-  else if (isHdtv) addTag('📺', 'HDTV', 'HDTV');
   else if (isWeb) addTag('☁️', 'WEB', 'WEB');
   else addTag('🎞️', 'RIP', 'Rip');
 
@@ -604,10 +567,8 @@ function deriveLanguages(title, source) {
   if (unique.length > 1 && unique.length <= 3) return unique.map((item) => item.flag).join(LANG_SEP);
   if (unique.length > 3) return `${unique[0].flag}${LANG_SEP}🌐`;
 
-  const trustedItalianGroup = REGEX_TRUSTED_GROUPS.test(text);
-  if (multiHint && (italianHint || trustedItalianGroup)) return '🇮🇹' + LANG_SEP + '🌐';
   if (multiHint) return '🌐';
-  if (italianHint || /corsaro/i.test(sourceText) || trustedItalianGroup) return '🇮🇹';
+  if (italianHint || /corsaro/i.test(sourceText)) return '🇮🇹';
 
   return '🇬🇧';
 }
@@ -641,7 +602,7 @@ function deriveAudio(info, upperTitle, quality, cleanTags) {
   else if (info.audio) foundCodec = safeString(info.audio).toUpperCase();
 
   if (!foundCodec) {
-    if (cleanTags.some((tag) => /^(?:WEB-DL|WEBRip|WEB|HDTV)$/i.test(tag))) foundCodec = 'AAC';
+    if (cleanTags.includes('WEB')) foundCodec = 'AAC';
     else if (cleanTags.includes('BluRay') || /4k|1080/i.test(quality)) foundCodec = 'AC3';
   }
 
@@ -671,122 +632,37 @@ function extractProviderLabel(fileTitle) {
 function normalizeDisplaySource(source) {
   const raw = normalizeSpaces(source);
   if (!raw) return '✨ MediaFusion';
-  if (/(?:saved\s*cloud|cloud\s*salvato|debrid\s*cloud|rd\s*cloud|tb\s*cloud)/i.test(raw)) {
-    return /\btb\b|torbox/i.test(raw) ? 'TorBox' : 'Real-Debrid';
-  }
-
-  const cleanSourceToken = (value) => normalizeSpaces(String(value || '')
-    .replace(/[\u200b-\u200d\ufeff]/g, '')
-    .replace(/^(?:[-_\s]+)|(?:[-_\s]+)$/g, '')
-    .replace(/[_-]+/g, ' ')
-  );
-
-  const cleanedParts = raw
-    .split(/[|,/]+/)
-    .map(cleanSourceToken)
-    .filter(Boolean)
-    .filter((part) => !/^(?:mirror|mirrors?|main|fallback|external|addon|torrentio mirror|torrentio main)$/i.test(part));
-
-  const cleanedRaw = normalizeSpaces(cleanedParts.join(' | '));
-  const sourceForMapping = cleanedRaw || raw;
-
   for (const entry of DISPLAY_SOURCE_MAP) {
-    if (entry.regex.test(sourceForMapping)) return entry.value;
+    if (entry.regex.test(raw)) return entry.value;
   }
-
-  const normalized = cleanedParts
-    .map((part) => part.replace(/\b(?:MediaFusion|Torrentio|Fallback)\b/gi, '').trim())
-    .filter(Boolean)
-    .join(' | ');
-
+  const normalized = raw.replace(/MediaFusion|Torrentio|Fallback/gi, '').trim();
   return normalized || '✨ MediaFusion';
-}
-
-function isSavedCloudSource(source, config = {}) {
-  if (config?.savedCloud === true || config?.isSavedCloud === true || config?._savedCloud === true) return true;
-  return /(?:saved\s*cloud|cloud\s*salvato|debrid\s*cloud|rd\s*cloud|tb\s*cloud)/i.test(safeString(source));
-}
-
-function getSavedCloudLabel(serviceTag) {
-  const tag = normalizeServiceTag(serviceTag);
-  return `☁️ ${tag}`;
 }
 
 function stripEpisodeFromCleanName(cleanName) {
   return normalizeSpaces(cleanName.replace(/\s+(?:S\d+(?:E\d+)?\b.*|\d+x\d+\b.*|(?:Season|Stagione)\s*\d+\b.*)$/i, ''));
 }
 
-function isBareEpisodeCleanName(value) {
-  const text = normalizeSpaces(value)
-    .replace(/\.(?:mkv|mp4|avi|mov)$/i, '')
-    .replace(/[._-]+/g, ' ')
-    .trim();
-  return /^(?:s\d{1,2}\s*e\d{1,3}|\d{1,2}\s*x\s*\d{1,3}|e(?:p(?:isode)?)?\s*\d{1,3})$/i.test(text);
-}
-
-function normalizeBingePart(value, fallback = 'x') {
-  const normalized = safeString(value)
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[|]+/g, ' ')
-    .replace(/[^a-z0-9+._-]+/gi, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48);
-  return normalized || fallback;
-}
-
-function buildBingeGroup(quality, rawInfo, serviceTag, infoHash, context = {}) {
+function buildBingeGroup(quality, rawInfo, serviceTag, infoHash) {
   const hdrPart = Array.isArray(rawInfo?.hdr)
-    ? rawInfo.hdr.join('+')
+    ? rawInfo.hdr.join('')
     : safeString(rawInfo?.hdr || '');
-  const hdr = hdrPart || (Array.isArray(context.cleanTags) && context.cleanTags.some((tag) => /hdr|dv/i.test(tag)) ? 'HDR' : 'SDR');
-  const codec = context.codec || rawInfo?.codec || rawInfo?.videoCodec || rawInfo?.video_codec || '';
-  const audio = [context.audioTag, context.audioChannels].filter(Boolean).join('-') || rawInfo?.audio || rawInfo?.audio_codec || '';
-  const releaseGroup = context.releaseGroup || rawInfo?.group || rawInfo?.releaseGroup || rawInfo?.release_group || '';
-  const hashFallback = infoHash ? `hash-${String(infoHash).slice(0, 12)}` : 'nohash';
-  const groupKey = releaseGroup || hashFallback;
-
-  // Keep adjacent episodes compatible by quality/service/codec/group instead of hard-pinning
-  // the whole binge identity to each episode hash. Season packs still naturally group by hash.
-  return [
-    'Leviathan',
-    normalizeBingePart(serviceTag, 'svc'),
-    normalizeBingePart(quality, 'q'),
-    normalizeBingePart(hdr, 'sdr'),
-    normalizeBingePart(codec, 'codec'),
-    normalizeBingePart(audio, 'audio'),
-    normalizeBingePart(context.lang || '', 'lang'),
-    normalizeBingePart(groupKey, 'group')
-  ].join('|');
+  return `Leviathan|${quality}|${hdrPart}|${serviceTag}|${infoHash || 'no-hash'}`;
 }
 
 function createStyleParams(fileTitle, source, size, seeders, serviceTag, config, infoHash, isLazy, isPackItem, cacheState = 'unknown') {
   const extracted = extractStreamInfo(fileTitle, source, config);
-  const displayLang = getDisplayLanguageForMode(extracted.lang, config);
   const normalizedServiceTag = normalizeServiceTag(serviceTag);
   const normalizedCacheState = normalizeCacheState(cacheState, normalizedServiceTag);
-  const savedCloud = isSavedCloudSource(source, config);
-  const cacheIcon = savedCloud ? '☁️' : getStatusIcon(normalizedCacheState, normalizedServiceTag);
+  const cacheIcon = getCacheIcon(normalizedCacheState);
   const serviceIconTitle = SERVICE_ICON_BY_TAG[normalizedServiceTag] || '🦈';
-  const qIcon = extracted.qIcon;
+  const qIcon = SERVICE_ICON_BY_TAG[normalizedServiceTag] || extracted.qIcon;
   const numericSize = Number(size) || 0;
   const sizeString = numericSize > 0 ? formatBytes(numericSize) : 'Unknown';
-  const metadataTitle = normalizeSpaces(config?.title || config?.name || config?.originalTitle || '');
-  const extractedCleanName = stripEpisodeFromCleanName(extracted.cleanName);
-  const cleanedName = isBareEpisodeCleanName(extractedCleanName) && metadataTitle ? metadataTitle : extractedCleanName;
-  const explicitType = safeString(config?.mediaType || config?.type || config?.stremioType).toLowerCase();
-  const explicitMovieContext = config?.forceMovie === true || config?.isSeries === false || explicitType === 'movie' || explicitType === 'film';
-  const hasSeriesContext = !explicitMovieContext && (
-    config?.isSeries === true ||
-    explicitType === 'series' ||
-    explicitType === 'anime' ||
-    Number(config?.season || 0) > 0 ||
-    Number(config?.episode || 0) > 0
-  );
-  const baseEpTag = hasSeriesContext ? getEpisodeTag(fileTitle, config) : '';
-  const safePackItem = Boolean(isPackItem && hasSeriesContext);
+  const cleanedName = stripEpisodeFromCleanName(extracted.cleanName);
+  const baseEpTag = getEpisodeTag(fileTitle, config);
   const styledPack = toStylized('Season Pack', 'small');
-  const epTag = safePackItem
+  const epTag = isPackItem
     ? (baseEpTag ? `${baseEpTag}  ✦  📦 ${styledPack}` : '📦 ꜱᴇᴀꜱᴏɴ ᴘᴀᴄᴋ')
     : baseEpTag;
   const displaySource = normalizeDisplaySource(source || DEFAULT_SOURCE_LABEL);
@@ -796,8 +672,6 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
 
   const baseParams = {
     ...extracted,
-    rawLang: extracted.lang,
-    lang: displayLang,
     fileTitle: safeString(fileTitle),
     source: safeString(source) || DEFAULT_SOURCE_LABEL,
     displaySource,
@@ -812,17 +686,15 @@ function createStyleParams(fileTitle, source, size, seeders, serviceTag, config,
     cleanName: cleanedName,
     epTag,
     sourceLine: `${serviceIconTitle} [${normalizedServiceTag}] ${displaySource}`,
-    cloudBadge: savedCloud ? getSavedCloudLabel(normalizedServiceTag) : '',
     audioInfo: [extracted.audioTag, extracted.audioChannels].filter(Boolean).join(' ┃ '),
-    bingeGroup: buildBingeGroup(extracted.quality, extracted.rawInfo, normalizedServiceTag, infoHash, { releaseGroup: extracted.releaseGroup, codec: extracted.codec, audioTag: extracted.audioTag, audioChannels: extracted.audioChannels, lang: displayLang, cleanTags: extracted.cleanTags }),
+    bingeGroup: buildBingeGroup(extracted.quality, extracted.rawInfo, normalizedServiceTag, infoHash),
     providerLabel: extractProviderLabel(fileTitle),
-    isSavedCloud: savedCloud,
     isLazy: Boolean(isLazy),
-    isPackItem: safePackItem,
+    isPackItem: Boolean(isPackItem),
     cacheState: normalizedCacheState,
     cacheIcon,
     isCached,
-    compactLang: compactLanguageLabel(displayLang),
+    compactLang: compactLanguageLabel(extracted.lang),
     primarySourceTag: getPrimarySourceTag(extracted.cleanTags),
     config,
   };
@@ -876,9 +748,6 @@ function compactLanguageLabel(lang) {
 function getPrimarySourceTag(cleanTags) {
   if (cleanTags.includes('Remux')) return 'Remux';
   if (cleanTags.includes('BluRay')) return 'BluRay';
-  if (cleanTags.includes('WEB-DL')) return 'WEB-DL';
-  if (cleanTags.includes('WEBRip')) return 'WEBRip';
-  if (cleanTags.includes('HDTV')) return 'HDTV';
   if (cleanTags.includes('WEB')) return 'WEB';
   if (cleanTags.includes('Rip')) return 'Rip';
   return '';
@@ -922,10 +791,7 @@ function visualTagScore(cleanTags) {
   let score = 0;
   if (tags.has('Remux')) score += 24;
   else if (tags.has('BluRay')) score += 18;
-  else if (tags.has('WEB-DL')) score += 13;
-  else if (tags.has('WEBRip')) score += 11;
-  else if (tags.has('WEB')) score += 10;
-  else if (tags.has('HDTV')) score += 9;
+  else if (tags.has('WEB')) score += 12;
   else if (tags.has('Rip')) score += 6;
 
   if (tags.has('DV+HDR')) score += 18;
@@ -1021,7 +887,7 @@ function buildPremiumTags(params, maxItems = 4) {
   for (const tag of params.cleanTags) {
     if (tags.length >= maxItems) break;
     if (tag === primarySource || tag === params.quality) continue;
-    if (/^(WEB-DL|WEBRip|WEB|HDTV|Rip)$/.test(tag) && primarySource === tag) continue;
+    if (/^(WEB|Rip)$/.test(tag) && primarySource === tag) continue;
     tags.push(tag);
   }
   return uniqueBy(tags, (item) => item.toLowerCase()).slice(0, maxItems);
@@ -1117,8 +983,7 @@ function styleLeviathan(p) {
   const statusIcon = p.cacheIcon;
   const brandName = toStylized('LEVIATHAN', 'small');
   const serviceStyled = toStylized(p.serviceTag, 'bold');
-  const servicePrefix = isDebridService(p.serviceTag) ? `${statusIcon}${serviceStyled}` : `${statusIcon} ${serviceStyled}`;
-  const name = `${servicePrefix}  🦑 ${brandName}`;
+  const name = `${statusIcon} ${serviceStyled} 🦑 ${brandName}`;
 
   const techSpecs = uniqueBy([p.quality, ...p.cleanTags].filter(Boolean), (item) => item.toLowerCase());
   const techLine = techSpecs.map((item) => toStylized(item, 'small')).join(' • ');
@@ -1248,7 +1113,7 @@ function styleTorrentio(p) {
 
 function styleVertical(p) {
   const cacheLabel = p.cacheIcon;
-  const type = p.cleanTags.some((tag) => /Remux/i.test(tag)) ? 'Remux' : (p.primarySourceTag || 'WEB-DL');
+  const type = p.cleanTags.some((tag) => /Remux/i.test(tag)) ? 'Remux' : 'WEB-DL';
   const lines = [
     `🍿 ${p.cleanName}`,
     `📼 ${type}${p.cleanTags[0] ? ` • ${p.cleanTags[0]}` : ''}`,
