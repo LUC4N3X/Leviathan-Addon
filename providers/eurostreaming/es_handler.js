@@ -97,9 +97,7 @@ function titleMatches(postTitle, expectedTitle, content, expectedYear) {
     const expected = normalizeTitle(expectedTitle);
     if (!actual || !expected) return false;
 
-    // Keep this intentionally strict. WordPress search for short titles such as "FROM"
-    // returns many neighbours: "Agent from Above", "From Scratch", etc.
-    // Resolving their UPROT links is slow and causes provider timeouts.
+            
     if (actual === expected) return true;
 
     const actualNoYear = stripYearTokens(postTitle);
@@ -227,9 +225,7 @@ function pickHostLinks(blockHtml) {
         }
     }
 
-    // Same practical Eurostreaming priority used by MammaMia: try the
-    // lightweight clicka/DeltaBit branch before MixDrop and keep UPROT/MaxStream
-    // as the slower fallback. MaxStream resolution itself is intentionally left untouched.
+            
     return [...deltabitLinks, ...mixdropLinks, ...maxstreamLinks];
 }
 
