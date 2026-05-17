@@ -1,6 +1,7 @@
 'use strict';
 
 const { getOrigin, normalizeRemoteUrl } = require('../common');
+const { isUprotUrl, normalizeUprotInput, resolveUprotToMaxstream } = require('./uprot');
 const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
@@ -10,8 +11,7 @@ const {
     unpackDeanEdwards
 } = require('./shared');
 
-const MAXSTREAM_REGEX = /(?:uprot\.net|maxstream\.video|stayonline\.pro)/i;
-const FINAL_HOST_RE = /https?:\/\/(?:www\.)?(?:maxstream\.video|stayonline\.pro)[^"'\s<>\\]+/i;
+const MAXSTREAM_REGEX = /(?:maxstream\.video|stayonline\.pro)/i;
 const SOURCE_PATTERNS = [
     /sources\s*:\s*\[\s*\{\s*(?:src|file)\s*:\s*["']([^"']+)["']/i,
     /(?:src|file)\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i,
@@ -25,31 +25,10 @@ function isMaxstreamUrl(url) {
 
 function normalizeMaxstreamInput(url) {
     const absolute = normalizeRemoteUrl(url);
-    if (!absolute || !isMaxstreamUrl(absolute)) return null;
-    return absolute.replace('/msf/', '/mse/');
-}
-
-function compactCandidate(value, baseUrl = null) {
-    if (!value) return null;
-    return normalizeRemoteUrl(String(value).replace(/\\\//g, '/').replace(/\\/g, ''), baseUrl);
-}
-
-function extractRedirectCandidate(html, baseUrl) {
-    const text = String(html || '');
-    const direct = compactCandidate(text.match(FINAL_HOST_RE)?.[0], baseUrl);
-    if (direct) return direct;
-
-    const patterns = [
-        /window\.location(?:\.href)?\s*=\s*["']([^"']+)["']/i,
-        /location\.replace\(\s*["']([^"']+)["']\s*\)/i,
-        /href=["']([^"']*(?:maxstream|stayonline)[^"']*)["']/i,
-        /data-(?:href|url|link)=["']([^"']*(?:maxstream|stayonline)[^"']*)["']/i
-    ];
-    for (const pattern of patterns) {
-        const candidate = compactCandidate(text.match(pattern)?.[1], baseUrl);
-        if (candidate && /(?:maxstream\.video|stayonline\.pro)/i.test(candidate)) return candidate;
-    }
-    return null;
+    if (!absolute) return null;
+    if (isUprotUrl(absolute)) return normalizeUprotInput(absolute);
+    if (!isMaxstreamUrl(absolute)) return null;
+    return absolute;
 }
 
 function extractCanonicalUrl(html, fallbackUrl) {
@@ -111,24 +90,6 @@ function buildPlaybackHeaders(playerUrl, userAgent, referer = null) {
     };
 }
 
-async function resolveUprotLanding(client, landingUrl, options = {}) {
-    const userAgent = options?.userAgent || DEFAULT_USER_AGENT;
-    const referer = options?.requestReferer || options?.referer || 'https://uprot.net/';
-    const headers = buildRequestHeaders(landingUrl, { userAgent, referer });
-    const { status, text } = await fetchText(client, landingUrl, {
-        headers,
-        timeout: Number(options?.landingTimeout || 12_000)
-    });
-    if (status < 200 || status >= 400 || !text) return null;
-
-    const directStream = extractFirstUrl(text, SOURCE_PATTERNS, landingUrl);
-    if (directStream) return { streamUrl: directStream, playerUrl: landingUrl, sourceUrl: landingUrl, via: 'uprot-direct' };
-
-    const redirected = extractRedirectCandidate(text, landingUrl);
-    if (!redirected) return null;
-    return { playerUrl: redirected, sourceUrl: landingUrl, via: 'uprot-redirect' };
-}
-
 async function extractMaxstream(url, options = {}) {
     const inputUrl = normalizeMaxstreamInput(url);
     const client = options?.client;
@@ -140,8 +101,8 @@ async function extractMaxstream(url, options = {}) {
     let via = 'direct';
 
     try {
-        if (/uprot\.net/i.test(playerUrl)) {
-            const resolved = await resolveUprotLanding(client, playerUrl, options);
+        if (isUprotUrl(playerUrl)) {
+            const resolved = await resolveUprotToMaxstream(client, playerUrl, options);
             if (!resolved) return null;
             if (resolved.streamUrl) {
                 const headers = buildPlaybackHeaders(resolved.playerUrl, userAgent, sourceUrl);

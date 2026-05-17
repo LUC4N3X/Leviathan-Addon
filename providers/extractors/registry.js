@@ -9,6 +9,7 @@ const {
     extractStreamtape,
     extractSupervideo,
     extractUpstream,
+    extractUprot,
     extractUqload,
     extractVidoza,
     extractVixcloud,
@@ -21,6 +22,7 @@ const {
     isStreamtapeUrl,
     isSupervideoUrl,
     isUpstreamUrl,
+    isUprotUrl,
     isUqloadUrl,
     isVidozaUrl,
     isVixcloudUrl,
@@ -44,6 +46,13 @@ const HOSTER_DEFINITIONS = [
         label: 'MaxStream',
         matches: isMaxstreamUrl,
         extract: extractMaxstream,
+        priority: 0
+    },
+    {
+        key: 'uprot',
+        label: 'Uprot',
+        matches: isUprotUrl,
+        extract: extractUprot,
         priority: 0
     },
     {

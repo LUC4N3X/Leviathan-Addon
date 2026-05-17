@@ -9,6 +9,7 @@ const { extractDropload, isDroploadUrl } = require('./dropload');
 const { extractStreamtape, isStreamtapeUrl } = require('./streamtape');
 const { extractUqload, isUqloadUrl } = require('./uqload');
 const { extractUpstream, isUpstreamUrl } = require('./upstream');
+const { extractUprot, isUprotUrl, resolveUprotToMaxstream } = require('./uprot');
 const { extractVidoza, isVidozaUrl } = require('./vidoza');
 const { extractVixcloud, isVixcloudUrl } = require('./vixcloud');
 const { extractVidxgo, isVidxgoUrl } = require('./vidxgo');
@@ -32,6 +33,9 @@ module.exports = {
     isUqloadUrl,
     extractUpstream,
     isUpstreamUrl,
+    extractUprot,
+    isUprotUrl,
+    resolveUprotToMaxstream,
     extractVidoza,
     isVidozaUrl,
     extractVixcloud,

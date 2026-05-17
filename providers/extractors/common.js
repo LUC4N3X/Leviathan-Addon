@@ -154,6 +154,8 @@ function buildWebStream({
     providerCode,
     quality = 'Unknown',
     headers = null,
+    mediaflowUrl = null,
+    addonBase = null,
     notWebReady = false,
     extraBehaviorHints = {},
     extra = {}
@@ -167,7 +169,9 @@ function buildWebStream({
         service: 'web',
         fillReferer: true,
         fillOrigin: true,
-        forceIdentityEncoding: true
+        forceIdentityEncoding: true,
+        mediaflowUrl,
+        addonBase
     });
     const finalUrl = preparedProxy.url || url;
     const behaviorHints = {
@@ -187,14 +191,15 @@ function buildWebStream({
         ...extraBehaviorHints
     };
 
-    if (preparedProxy.headerCount > 0) {
+    const shouldAttachProxyHeaders = preparedProxy.shouldProxy && preparedProxy.headerCount > 0;
+    if (shouldAttachProxyHeaders) {
         behaviorHints.proxyHeaders = {
             ...(behaviorHints.proxyHeaders || {}),
             request: preparedProxy.headers
         };
         behaviorHints.headers = preparedProxy.headers;
     }
-    if (preparedProxy.basicAuthMoved) {
+    if (preparedProxy.basicAuthMoved && preparedProxy.shouldProxy) {
         behaviorHints.proxyHeaderNormalizer = {
             ...(behaviorHints.proxyHeaderNormalizer || {}),
             basicAuthMoved: true

@@ -4,6 +4,7 @@ const { searchVix: searchStreamingCommunity } = require('../streamingcommunity/v
 const { searchGuardaHD } = require('../guardahd/ghd_handler');
 const { searchGuardoSerie } = require('../guardoserie/gs_handler');
 const { searchGuardaserieTv } = require('../guardaserietv/gstv_handler');
+const { searchEurostreaming } = require('../eurostreaming/es_handler');
 const { searchAnimeWorld } = require('../animeworld/aw_handler');
 const { searchAnimeUnity } = require('../animeunity/au_handler');
 const { searchAnimeSaturn } = require('../animesaturn/as_handler');
@@ -18,10 +19,13 @@ const CINEMACITY_EMPTY_TTL = Math.max(15, parseInt(process.env.CC_PROVIDER_EMPTY
 const CINEMACITY_ERROR_TTL = Math.max(3, Math.min(CINEMACITY_EMPTY_TTL, parseInt(process.env.CC_PROVIDER_ERROR_TTL || '10', 10) || 10));
 const GUARDO_SERIE_MIN_TIMEOUT = Math.max(30000, parseInt(process.env.GS_PROVIDER_TIMEOUT || '45000', 10) || 45000);
 const GUARDASERIETV_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.GSTV_PROVIDER_TIMEOUT || '22000', 10) || 22000);
+const EUROSTREAMING_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.ES_PROVIDER_TIMEOUT || '22000', 10) || 22000);
 const GUARDO_SERIE_EMPTY_TTL = Math.max(15, parseInt(process.env.GS_PROVIDER_EMPTY_TTL || '45', 10) || 45);
 const GUARDO_SERIE_ERROR_TTL = Math.max(3, Math.min(GUARDO_SERIE_EMPTY_TTL, parseInt(process.env.GS_PROVIDER_ERROR_TTL || '5', 10) || 5));
 const GUARDASERIETV_EMPTY_TTL = Math.max(15, parseInt(process.env.GSTV_PROVIDER_EMPTY_TTL || '45', 10) || 45);
 const GUARDASERIETV_ERROR_TTL = Math.max(3, Math.min(GUARDASERIETV_EMPTY_TTL, parseInt(process.env.GSTV_PROVIDER_ERROR_TTL || '8', 10) || 8));
+const EUROSTREAMING_EMPTY_TTL = Math.max(15, parseInt(process.env.ES_PROVIDER_EMPTY_TTL || '45', 10) || 45);
+const EUROSTREAMING_ERROR_TTL = Math.max(3, Math.min(EUROSTREAMING_EMPTY_TTL, parseInt(process.env.ES_PROVIDER_ERROR_TTL || '8', 10) || 8));
 
 function isStreamingCommunityEnabled(filters = {}) {
     return filters?.enableStreamingCommunity === true || filters?.enableVix === true;
@@ -121,6 +125,19 @@ const WEB_PROVIDER_DEFINITIONS = [
         errorTtl: GUARDASERIETV_ERROR_TTL,
         isEnabled: ({ filters }) => filters?.enableGstv === true,
         run: ({ meta, config, reqHost }) => searchGuardaserieTv(meta, config, reqHost)
+    },
+    {
+        key: 'eurostreaming',
+        recipeId: 'eurostreaming',
+        sourceName: 'Eurostreaming',
+        cacheName: 'Eurostreaming',
+        icon: '🌍',
+        limiterKey: 'webEs',
+        minTimeout: EUROSTREAMING_MIN_TIMEOUT,
+        emptyTtl: EUROSTREAMING_EMPTY_TTL,
+        errorTtl: EUROSTREAMING_ERROR_TTL,
+        isEnabled: ({ filters }) => filters?.enableEs === true,
+        run: ({ meta, config, reqHost }) => searchEurostreaming(meta, config, reqHost)
     },
     {
         key: 'animeWorld',
