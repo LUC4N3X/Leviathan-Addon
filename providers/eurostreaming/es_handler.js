@@ -6,13 +6,11 @@ const { createMediaflowGateway, getMediaflowBase } = require('../../core/proxy/m
 const { isUprotUrl, resolveUprotToMaxstream } = require('../extractors/hosters/uprot');
 const { extractMixdrop } = require('../extractors/hosters/mixdrop');
 
-// ---------- optional OCR dependency (tesseract.js) ----------
 let Tesseract = null;
-try { Tesseract = require('tesseract.js'); } catch (_) { /* optional */ }
+try { Tesseract = require('tesseract.js'); } catch (_) {}
 
-// ---------- set-cookie parser (already in package.json) ----------
 let setCookieParser = null;
-try { setCookieParser = require('set-cookie-parser'); } catch (_) { /* optional */ }
+try { setCookieParser = require('set-cookie-parser'); } catch (_) {}
 
 const SAFEGO_FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0';
 
@@ -21,9 +19,6 @@ const PROVIDER = 'Eurostreaming';
 const PROVIDER_CODE = 'ES';
 const SEARCH_TTL_FALLBACK_MS = 12_000;
 
-
-// ---------- Eurostreaming safe in-memory cache ----------
-// Local only, TTL-bounded, success-only. It speeds up binge/warmup without changing playback URLs.
 const ES_CACHE_LIMIT = 900;
 const ES_CACHE_TTL = Object.freeze({
     wpSearch: 30 * 60_000,
@@ -74,7 +69,6 @@ function setEsCache(namespace, parts = [], value, ttlMs) {
     return value;
 }
 
-
 async function withEsCoalescing(namespace, parts = [], worker) {
     const key = cacheNamespaceKey(namespace, parts);
     if (esRequestCache.inflight.has(key)) {
@@ -101,7 +95,6 @@ function getDefaultClient() {
     }
 }
 
-
 function envFlag(name, defaultValue = false) {
     const raw = process.env[name];
     if (raw === undefined || raw === null || raw === '') return defaultValue;
@@ -109,14 +102,12 @@ function envFlag(name, defaultValue = false) {
 }
 
 function isDeltabitMfpFallbackEnabled() {
-    // Luca's Kraken/MFP setup can act as the network/proxy layer for DeltaBit too.
-    // Default ON: if local DeltaBit extraction fails, send the settled DeltaBit page to Kraken/MFP.
+
     return envFlag('EUROSTREAMING_DELTABIT_MFP_FALLBACK', false);
 }
 
 function isDeltabitMfpFirstEnabled() {
-    // Try Kraken/MFP before the local POST flow. Useful when DeltaBit blocks the VPS/browserless client
-    // but works when the request is proxied through Kraken/MFP, just like MixDrop/MaxStream.
+
     return envFlag('EUROSTREAMING_DELTABIT_MFP_FIRST', false);
 }
 
@@ -129,15 +120,12 @@ function getDeltabitMfpPath() {
 }
 
 function getMaxstreamMfpPath() {
-    // MaxStream/UPROT works best in Stremio/VLC through the HLS-looking
-    // MediaFlow/Kraken extractor endpoint. The generic /extractor/video path
-    // can leave VLC stuck on the cone because no playable HLS response is exposed.
+
     return '/extractor/video.m3u8';
 }
 
 function getMaxstreamRedirectStream() {
-    // Keep the historical working behaviour for MaxStream: let MediaFlow/Kraken
-    // expose the resolved HLS stream instead of forcing an internal playlist proxy.
+
     return true;
 }
 
@@ -212,7 +200,6 @@ function titleMatches(postTitle, expectedTitle, content, expectedYear) {
     const expected = normalizeTitle(expectedTitle);
     if (!actual || !expected) return false;
 
-            
     if (actual === expected) return true;
 
     const actualNoYear = stripYearTokens(postTitle);
@@ -260,13 +247,13 @@ function extractEurostreamingEpisodeBlocks(description, season, episode) {
     const safeSeason = Math.max(1, Number.parseInt(String(season || 1), 10) || 1);
     const safeEpisode = Math.max(1, Number.parseInt(String(episode || 1), 10) || 1);
     const markerPatterns = [
-        // 1x09 / 01x09 / 1×9 / 1&#215;09
+
         `(?:^|\\b)0*${safeSeason}\\s*(?:x|&#215;|&#x0?d7;|\\u00d7|×)\\s*0*${safeEpisode}(?:\\b|\\D)`,
-        // S01E09 / S1 E9 / S01 - E09
+
         `(?:^|\\b)s\\s*0*${safeSeason}\\s*[-_. ]*e\\s*0*${safeEpisode}(?:\\b|\\D)`,
-        // Episodio 9 / Ep. 09, used by some Eurostreaming layouts when the season header is external
+
         `(?:^|\\b)(?:episodio|episode|ep\\.?)\\s*0*${safeEpisode}(?:\\b|\\D)`,
-        // 09) / 09 - only as a last resort near hoster anchors
+
         `(?:^|[>\\s])0*${safeEpisode}\\s*(?:[).:-]|-)`
     ];
     const markerRes = markerPatterns.map((pattern) => new RegExp(pattern, 'i'));
@@ -283,7 +270,7 @@ function extractEurostreamingEpisodeBlocks(description, season, episode) {
         }
 
         const html = segment.replace(marker, '').replace(/^\s*[\-–—:).]+\s*/, '').trim() || segment;
-        // Avoid the loose "09)" fallback accidentally grabbing menus without hosters.
+
         if (!extractAnchors(html).some((anchor) => /delta\s*bit|mix\s*drop|max\s*stream|uprot|adelta|amix|amax/i.test(`${anchor.label} ${anchor.href}`))) {
             if (!markerPatterns.slice(0, 3).some((pattern) => new RegExp(pattern, 'i').test(segment)) && !/x|episodio|episode|ep\.?/i.test(segment)) continue;
         }
@@ -293,9 +280,6 @@ function extractEurostreamingEpisodeBlocks(description, season, episode) {
         });
     }
 
-    // Some Eurostreaming pages keep hoster anchors in a single collapsed block where
-    // the exact episode marker is stripped by WP shortcodes. In that case, use the
-    // whole content only if it contains hoster anchors and no conflicting episode list.
     if (!blocks.length) {
         const anchors = extractAnchors(description);
         const hostAnchors = anchors.filter((anchor) => /delta\s*bit|mix\s*drop|max\s*stream|uprot|adelta|amix|amax/i.test(`${anchor.label} ${anchor.href}`));
@@ -345,9 +329,7 @@ function pickHostLinks(blockHtml) {
         const looksLikeMaxstream = /max\s*stream|uprot/i.test(label) || /\/amax\//i.test(href) || /uprot\.net|maxstream\.video|stayonline\.pro/i.test(href);
 
         if (looksLikeDeltabit) {
-            // Eurostreaming's DeltaBit anchor points to a generic redirector chain
-            // (not deltabit/safego yet). Keying off the anchor label like MammaMia
-            // and chasing the chain at resolve time is what makes DeltaBit appear.
+
             if (labelSaysDeltabit ? /^https?:\/\//i.test(href) : (isDeltabitLikeUrl(href) || REDIRECTOR_RE.test(href))) {
                 pushLink(deltabitLinks, { host: 'deltabit', label: 'DeltaBit', href });
             }
@@ -442,7 +424,6 @@ function isUsableRedirectCandidate(value) {
     if (!normalized) return false;
     return !isStaticAssetUrl(normalized);
 }
-
 
 function parseLooseObject(value) {
     if (value == null || value === '') return null;
@@ -651,7 +632,7 @@ async function getSafegoPage(client, url, headers) {
 async function postSafegoCaptcha(client, url, headers, cookies, captchaCode) {
     if (!client || typeof client.post !== 'function') return null;
     const postHeaders = mergeCookieHeader(headers, cookies);
-    // MammaMia sends captch5 as form-urlencoded data, not JSON
+
     const body = `captch5=${encodeURIComponent(captchaCode)}`;
     try {
         return await client.post(url, body, {
@@ -670,20 +651,17 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
     let cookies = state.cookies || {};
     const headers = buildSafegoHeaders(safegoUrl);
 
-    // ---------- Step 1: POST with saved cookies (like MammaMia real_page) ----------
     esDebug('info', 'safego step 1: POST with saved cookies', { url: safegoUrl, hasCookies: Object.keys(cookies).length > 0 });
     const response1 = await postSafegoWithCookies(client, safegoUrl, headers, cookies);
     if (response1) {
         cookies = mergeSetCookieHeaders(cookies, response1);
 
-        // Check for redirect
         const finalUrl1 = finalResponseUrl(response1, safegoUrl);
         if (finalUrl1 && finalUrl1 !== safegoUrl && !SAFEGO_RE.test(finalUrl1)) {
             saveSafegoState(cookies, options);
             return finalUrl1;
         }
 
-        // Check for anchor link (like MammaMia: if len(soup) >= 1: return soup.a['href'])
         const html1 = responseText(response1);
         const anchor1 = extractAnchorHref(html1);
         if (anchor1 && !SAFEGO_RE.test(anchor1)) {
@@ -692,15 +670,12 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
             return anchor1;
         }
 
-        // Check if page says "not found"
         if (/The requested URL was not found on this server/i.test(html1)) {
             esDebug('warn', 'safego: URL not found on server');
             return null;
         }
     }
 
-    // ---------- Step 2: GET the CAPTCHA page (like MammaMia get_numbers) ----------
-    // MammaMia does a separate GET to fetch the CAPTCHA image and collect fresh cookies
     esDebug('info', 'safego step 2: GET for CAPTCHA page');
     const getHeaders = {
         'User-Agent': SAFEGO_FIREFOX_UA,
@@ -713,14 +688,13 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
         return null;
     }
 
-    // Collect cookies from the GET response (MammaMia: cookies = response.cookies.get_dict())
     const getCookies = mergeSetCookieHeaders({}, getCaptchaResponse);
     esDebug('info', 'safego GET cookies', { cookieKeys: Object.keys(getCookies) });
 
     const captchaHtml = responseText(getCaptchaResponse);
     const captchaData = extractCaptchaBase64(captchaHtml);
     if (!captchaData) {
-        // No CAPTCHA found — try extracting redirect from the GET page
+
         const candidate = extractRedirectCandidate(captchaHtml, safegoUrl);
         if (candidate && !SAFEGO_RE.test(candidate)) {
             saveSafegoState(cookies, options);
@@ -736,7 +710,6 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
         return null;
     }
 
-    // ---------- Step 3: OCR the CAPTCHA (like MammaMia convert_numbers) ----------
     esDebug('info', 'safego step 3: OCR CAPTCHA');
     const captchaCode = await solveCaptchaOCR(captchaData.base64);
     if (!captchaCode) {
@@ -745,7 +718,6 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
         return null;
     }
 
-    // ---------- Step 4: POST captch5 with GET cookies (like MammaMia real_page) ----------
     esDebug('info', 'safego step 4: POST captch5', { code: captchaCode, cookieKeys: Object.keys(getCookies) });
     const captchaPostHeaders = {
         ...headers,
@@ -754,10 +726,9 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
     };
     const response2 = await postSafegoCaptcha(client, safegoUrl, captchaPostHeaders, getCookies, captchaCode);
     if (response2) {
-        // MammaMia: cap4 = response.headers.get('set-cookie').split(';')[0]
-        //           cookies[cap4.split('=')[0]] = cap4.split('=')[1]
+
         const updatedCookies = mergeSetCookieHeaders(getCookies, response2);
-        // Merge into the saved cookies for persistence
+
         Object.assign(cookies, updatedCookies);
         saveSafegoState(cookies, options);
 
@@ -775,7 +746,6 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
 
         esDebug('warn', 'safego: captch5 POST did not yield a link, attempting retry with merged cookies');
 
-        // ---------- Step 5: retry POST with the updated cookies ----------
         const response3 = await postSafegoWithCookies(client, safegoUrl, headers, cookies);
         if (response3) {
             cookies = mergeSetCookieHeaders(cookies, response3);
@@ -1012,16 +982,11 @@ function extractFormFields(html) {
 
 function extractDeltabitSource(html, baseUrl = null) {
     const text = String(html || '').replace(/\x00/g, '');
-    // MammaMia uses exactly: re.findall(r'sources:\s*\["([^"]+)"', html, re.DOTALL)[0]
-    // The player config link has no reliable extension/query shape, so do NOT gate
-    // on isDirectMediaUrl here or the valid link gets dropped before reaching Kraken.
+
     const primary = text.match(/sources\s*:\s*\[\s*["']([^"']+)["']/is);
     const primaryUrl = compactRedirectCandidate(primary?.[1], baseUrl);
     if (primaryUrl && /^https?:\/\//i.test(primaryUrl)) return primaryUrl;
 
-    // DeltaBit variants are not consistent: some pages expose sources as an
-    // array of objects, some through file/src keys, and some JS builds escape
-    // slashes. Keep this liberal, then normalize against the player page.
     const fallbackPatterns = [
         /sources\s*:\s*\[\s*\{[\s\S]{0,300}?(?:file|src)\s*:\s*["']([^"']+)["']/i,
         /(?:file|src)\s*:\s*["']([^"']+)["']/i,
@@ -1037,9 +1002,7 @@ function extractDeltabitSource(html, baseUrl = null) {
 }
 
 function extractFormFieldsRaw(html) {
-    // Equivalent to MammaMia BeautifulSoup input.get('value'): keep the value as-is
-    // (only basic entity decode), no tag-stripping / whitespace-collapsing, so the
-    // hash/op/id fields are posted byte-for-byte like the browser would.
+
     const fields = {};
     const inputRe = /<input\b[^>]*>/ig;
     for (const input of String(html || '').match(inputRe) || []) {
@@ -1074,21 +1037,14 @@ async function chaseToHosterPage(client, href, referer, options = {}) {
     if (!current || !client || typeof client.get !== 'function') return null;
     if (isDeltabitEntryUrl(current)) return current;
 
-    // For safego/clicka: resolveRedirectLink handles the full multi-hop chain
-    // (safego captcha, clicka Range, loop) and is proven to reach deltabit.co.
-    // The naive Range-GET loop gets stuck in a clicka→safego→clicka cycle when
-    // there are no persistent session cookies, so we always delegate here.
     if (REDIRECTOR_RE.test(current)) {
         const resolved = await resolveRedirectLinkCached(client, current, referer || getBaseUrl(), options);
-        // MammaMia-compatible path: Safego may legally return clicka.cc/adelta/...;
-        // the DeltaBit extractor then performs the Range GET on that Clicka URL.
+
         if (resolved && isDeltabitEntryUrl(resolved)) return resolved;
         esDebug('warn', 'deltabit redirect chain did not reach hoster', { fromHost: safeHost(current), toHost: safeHost(resolved), toPath: safePath(resolved) });
         return null;
     }
 
-    // For non-redirector generic chains (e.g. provider-internal URLs → deltabit):
-    // follow Range GETs; if mid-chain we hit safego/clicka, delegate.
     const headers = {
         Referer: referer || getBaseUrl(),
         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
@@ -1168,11 +1124,8 @@ function buildDeltabitPostPayloads(fields, html, extractor, pageUrl, options = {
         payloads.push({ data: normalized, reason });
     };
 
-    // MammaMia sends imhuman='' for Deltabit. Keep it as first attempt.
     addPayload({ imhuman: extractor === 'Turbovid' ? 'Proceed+to+video' : (options.deltabitImhuman ?? '') }, 'mammamia-imhuman');
 
-    // Browser path: the user actually clicks "GUARDA LO STREAMING". Some XFS
-    // variants only unlock the player when the clicked submit name/value is sent.
     const preferred = submitButtons.filter((button) => /guarda|stream|watch|video/i.test(`${button.name} ${button.value} ${button.label}`));
     const others = submitButtons.filter((button) => !preferred.includes(button));
     for (const button of [...preferred, ...others].slice(0, 4)) {
@@ -1180,8 +1133,6 @@ function buildDeltabitPostPayloads(fields, html, extractor, pageUrl, options = {
         addPayload({ [button.name]: button.value || button.label || '', imhuman: fields.imhuman ?? '' }, `submit:${button.name}`);
     }
 
-    // Common fallback names used by XFileSharing templates when submit inputs are
-    // customized by CSS/images and are not visible as normal form values.
     for (const value of ['', 'Guarda lo streaming', 'GUARDA LO STREAMING', 'Watch video']) {
         addPayload({ imhuman: value }, `imhuman:${value || 'empty'}`);
     }
@@ -1201,7 +1152,6 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
         }, attempt));
     }
 
-    // 1) Resolve the redirector chain (and safego/captcha) to the real host link.
     let pageUrl = await chaseToHosterPage(client, href, referer || getBaseUrl(), options);
     if (!pageUrl && isHosterPageUrl(normalizeRemoteUrl(href))) pageUrl = normalizeRemoteUrl(href);
     if (!pageUrl || !isDeltabitEntryUrl(pageUrl)) {
@@ -1218,9 +1168,6 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
     const userAgent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
     const extractor = options.deltabitExtractor === 'Turbovid' ? 'Turbovid' : 'Deltabit';
 
-    // MammaMia uses a real AsyncSession: cookies collected on the GET are
-    // automatically reused on the form POST. Axios does not do that, so keep a
-    // tiny per-extraction cookie jar or DeltaBit answers 200 with no sources.
     let deltabitCookies = {};
     const withDeltabitCookies = (headers = {}) => mergeCookieHeader(headers, deltabitCookies);
     const rememberDeltabitCookies = (response) => {
@@ -1245,9 +1192,6 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
         'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
     });
 
-    // 2) MammaMia step 1: ALWAYS GET with Range first. In MammaMia this
-    // happens even when the entry already looks like deltabit.co; it also primes
-    // the session cookies that the later POST needs.
     const rangeSettle = async (settleHop) => {
         const probe = await client.get(pageUrl, {
             headers: rangeHeaders(),
@@ -1270,8 +1214,6 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
         esDebug('warn', 'deltabit range settle failed', { pageHost: safeHost(pageUrl), error: error?.message || String(error) });
     }
 
-    // If it bounces back to Safego/Clicka, resolve Safego again and retry Range
-    // instead of POSTing the Safego page.
     for (let settleHop = 1; settleHop < 5 && !isHosterPageUrl(pageUrl); settleHop += 1) {
         try {
             if (REDIRECTOR_RE.test(pageUrl)) {
@@ -1293,7 +1235,6 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
         return null;
     }
 
-    // 3) MammaMia step 2: full GET with safego referer (deltabit often re-redirects).
     let response;
     try {
         response = await client.get(pageUrl, {
@@ -1326,7 +1267,7 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
                 const settled3 = finalResponseUrl(response, pageUrl);
                 if (settled3) pageUrl = settled3.replace(/%20/g, '');
                 html = responseText(response);
-            } catch (_) { /* use previous response */ }
+            } catch (_) {}
         }
     }
 
@@ -1343,7 +1284,7 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
                 });
                 rememberDeltabitCookies(response);
                 html = responseText(response);
-            } catch (_) { /* keep previous html */ }
+            } catch (_) {}
         }
     }
 
@@ -1365,7 +1306,6 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
         });
     }
 
-    // 4) Build the hidden-form payload exactly like MammaMia.
     const fields = extractFormFieldsRaw(html);
     if (!Object.keys(fields).length) {
         esDebug('warn', 'deltabit page has no playable source and no form fields', { pageHost: safeHost(pageUrl), attempt });
@@ -1382,7 +1322,6 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
         payloads: payloads.map((payload) => payload.reason).slice(0, 7)
     });
 
-    // 5) Mandatory wait or the POST returns no source (2.5s deltabit / 5s turbovid).
     const waitMs = extractor === 'Turbovid' ? 5000 : getDeltabitWaitMs(options);
     await delay(waitMs);
 
@@ -1534,7 +1473,6 @@ function extractorHeadersFor(targetUrl, kind = '') {
     return headers;
 }
 
-
 function isHlsStreamUrl(value) {
     return /\.m3u8(?:$|[?#])/i.test(String(value || ''));
 }
@@ -1572,7 +1510,6 @@ function buildDirectExtractorStream({ targetUrl, label, title, language, headers
         extra: { _priority: streamPriority(label) }
     });
 }
-
 
 function buildDeltabitMfpStream({ config, targetUrl, title, language, via = 'deltabit-mfp' }) {
     if (!targetUrl || !getMediaflowBase(config)) return null;
@@ -1639,8 +1576,6 @@ async function buildHostStream(link, context) {
     if (link.host === 'deltabit') {
         let targetUrl = normalizeRemoteUrl(link.href);
 
-        // DeltaBit often needs the same network path/proxy used by Kraken/MFP. Resolve only the
-        // Eurostreaming/Safego/Clicka wrapper first, then hand the real DeltaBit page to Kraken.
         let mfpTargetUrl = targetUrl;
         if (mfpTargetUrl && !isHosterPageUrl(mfpTargetUrl)) {
             const chased = await chaseToHosterPage(client, mfpTargetUrl, options?.baseUrl || getBaseUrl(), options);
@@ -1681,8 +1616,6 @@ async function buildHostStream(link, context) {
                 }
             }
 
-            // Last resort: direct source. Keep headers optional because Android sometimes
-            // switches to LibVLC for header-heavy URLs; the proxied path above is preferred.
             return buildDirectExtractorStream({
                 targetUrl: resolved.streamUrl,
                 label: 'DeltaBit',
@@ -1721,10 +1654,6 @@ async function buildHostStream(link, context) {
             esDebug('info', 'mixdrop canonicalized for MFP', { fromPath: safePath(targetUrl), toPath: safePath(normalizedMixdrop), host: safeHost(normalizedMixdrop) });
         }
 
-        // New safe path: MixDrop sometimes returns a page that Kraken extracts but
-        // then playback stalls because the final CDN URL needs Referer/Origin.
-        // Try the local extractor first, then proxy the final source through MFP
-        // with headers. If it fails, keep the old MFP extractor fallback below.
         if (getMediaflowBase(config) && envFlag('EUROSTREAMING_MIXDROP_LOCAL_PROXY_FIRST', true)) {
             try {
                 const extracted = await withTimeout(
@@ -2063,7 +1992,6 @@ function esDebug(level, message, payload = null) {
         logger(`${prefix} ${message}`);
     }
 }
-
 
 function safeHost(value) {
     try { return new URL(String(value || '')).hostname; } catch (_) { return ''; }
