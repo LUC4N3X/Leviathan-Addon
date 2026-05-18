@@ -87,7 +87,7 @@ La logica cloud non sostituisce la pipeline principale: la potenzia. Se l'utente
 <tr>
 <td align="center" width="33%"><b>☁️ RD/TorBox Saved Cloud</b><br><sub>Layer opzionale che riconosce i file già salvati, marca i duplicati e usa <code>☁️ RD</code> / <code>☁️ TB</code>.</sub></td>
 <td align="center" width="33%"><b>🚀 Core Refactoring</b><br><sub>Motore riorganizzato per maggiore stabilità, leggibilità e tenuta sotto carico.</sub></td>
-<td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, CinemaCity, GuardaHD, GuardoSerie, AnimeWorld, AnimeUnity, AnimeSaturn e GuardaFlix.</sub></td>
+<td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, CinemaCity, GuardaHD, GuardoSerie, Eurostreaming, AnimeWorld, AnimeUnity, AnimeSaturn e GuardaFlix.</sub></td>
 </tr>
 <tr>
 <td align="center" width="33%"><b>🎨 Polymorphic Formatter</b><br><sub>Rendering più pulito, gerarchico e leggibile dentro Stremio.</sub></td>
@@ -220,7 +220,7 @@ La decisione finale non dipende solo dal tempo: dipende da **confidence score**,
 
 In pratica il protocollo analizza pattern come `MULTI`, `SUB-ITA`, `AC3` e `DTS`, distingue release realmente italiane da risultati ambigui, riduce i falsi positivi e ordina le sorgenti con priorità più sensate per l'utente finale. Sul piano operativo decide dinamicamente quali provider meritano la corsia veloce e quali richiedono una scansione più profonda.
 
-A livello infrastrutturale integra **WAF handling**, **identity rotation**, **failover automatici**, **magnet enrichment**, un layer ibrido con **StreamingCommunity**, **CinemaCity**, **GuardaHD**, **GuardoSerie**, **AnimeWorld**, **AnimeUnity**, **AnimeSaturn** e **GuardaFlix**, e un layer cloud opzionale senza duplicati.
+A livello infrastrutturale integra **WAF handling**, **identity rotation**, **failover automatici**, **magnet enrichment**, un layer ibrido con **StreamingCommunity**, **CinemaCity**, **GuardaHD**, **GuardoSerie**, **Eurostreaming**, **AnimeWorld**, **AnimeUnity**, **AnimeSaturn** e **GuardaFlix**, e un layer cloud opzionale senza duplicati.
 
 Il blocco viene completato da **Debrid Ghost Shell** per scenari proxy-based, **Polymorphic Formatter Engine** per una resa visiva superiore, **Linguistic Scope Control** per ITA / ENG / Hybrid, **Trailer Bridge** per le anteprime contestuali e **Direct Swarm Access** per la riproduzione P2P pura.
 
@@ -275,6 +275,7 @@ Il blocco viene completato da **Debrid Ghost Shell** per scenari proxy-based, **
 | **Web** | CinemaCity | 🇮🇹 ITA | `enableCc` | 🟢 |
 | **Web** | GuardaHD | 🇮🇹 ITA | `enableGhd` | 🟢 |
 | **Web** | GuardoSerie | 🇮🇹 ITA | `enableGs` | 🟢 |
+| **Web** | Eurostreaming | 🇮🇹 ITA Series | `enableEurostreaming` / `enableEs` | 🟢 |
 | **Web** | GuardaFlix | 🇮🇹 Movie | `enableGf` solo film | 🟢 |
 | **Anime Web** | AnimeWorld | 🇮🇹 Anime | `enableAnimeWorld` + anime/Kitsu eligible | 🟢 |
 | **Anime Web** | AnimeUnity | 🇮🇹 Anime | `enableAnimeUnity` oppure auto su Kitsu legacy | 🟢 |
@@ -319,6 +320,8 @@ Il blocco viene completato da **Debrid Ghost Shell** per scenari proxy-based, **
 | **Vidoza** | Hoster resolver | 🟢 |
 | **Dropload** | Hoster resolver | 🟢 |
 | **LoadM** | Hoster resolver | 🟢 |
+| **DeltaBit** | Hoster resolver per Eurostreaming | 🟢 |
+| **MaxStream / UPROT** | Hoster resolver via MediaFlow/Kraken fallback | 🟢 |
 
 </div>
 
@@ -333,6 +336,7 @@ Il blocco viene completato da **Debrid Ghost Shell** per scenari proxy-based, **
 | **MediaFusion gate** | MediaFusion parte solo quando Torrentio non restituisce risultati reali |
 | **MediaFusion RD check** | Il check cache Real-Debrid viene applicato a MediaFusion; Torrentio può restare più diretto |
 | **GuardaFlix scope** | GuardaFlix viene usato per i film e non forza percorsi serie |
+| **Eurostreaming scope** | Eurostreaming viene usato come provider web ITA per serie, con routing hoster dedicato |
 
 </div>
 
@@ -399,10 +403,11 @@ http://localhost:7000
 | `providers/animeunity/au_handler.js` | Provider AnimeUnity |
 | `providers/animesaturn/as_handler.js` | Provider AnimeSaturn |
 | `providers/guardaflix/gf_handler.js` | Provider GuardaFlix |
+| `providers/eurostreaming/es_handler.js` | Provider Eurostreaming con routing Safego/Clicka e hoster DeltaBit, MixDrop e MaxStream |
 | `providers/engines.js` | Engine torrent: Corsaro, Knaben, Nyaa, SubsPlease, TPB, TPB Mirror, 1337x, BitSearch, LimeTorrents, RARBG e UIndex |
 | `core/nexus-bridge/torrentio.js` | Bridge Torrentio Main/Mirror |
 | `core/nexus-bridge/mediafusion.js` | Bridge MediaFusion con gate RD/cache |
-| `providers/extractors/hosters/` | Resolver hoster: VixCloud, Mixdrop, SuperVideo, Streamtape, UpStream, Uqload, Vidoza, Dropload e LoadM |
+| `providers/extractors/hosters/` | Resolver hoster: VixCloud, Mixdrop, SuperVideo, Streamtape, UpStream, Uqload, Vidoza, Dropload, LoadM, DeltaBit e MaxStream/UPROT |
 
 </div>
 
