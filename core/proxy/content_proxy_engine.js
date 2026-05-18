@@ -12,9 +12,6 @@ function getAxiosClient() {
 
 const TOKEN_VERSION = 1;
 
-// Hardcoded safe defaults: no .env values are required for the content proxy.
-// The proxy is enabled only for direct/web URLs by default; RD/TorBox/debrid CDN URLs
-// stay direct unless user config explicitly opts in. This avoids blocking playback.
 const CONTENT_PROXY_DEFAULTS = Object.freeze({
     enabled: true,
     mode: 'direct',
@@ -212,9 +209,6 @@ function shouldProxyContentUrl(config = {}, options = {}) {
     const isDebrid = source === 'rd' || source === 'tb' || source.includes('debrid') || options.debrid === true;
     const isDirect = source.includes('external') || source.includes('web') || options.direct === true;
 
-    // Safe default: do not proxy RealDebrid/TorBox resolved URLs unless explicitly enabled.
-    // Debrid CDNs are usually already optimized; forcing them through the VPS can break start/seek
-    // or make playback slower. The proxy is safest for web/direct sources that need headers/range help.
     if (isDebrid && !isDebridProxyAllowed(config)) return false;
 
     if (mode === 'all') return true;
