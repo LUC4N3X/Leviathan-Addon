@@ -1,5 +1,7 @@
 'use strict';
 
+const mediaflowGateway = require('../../core/proxy/mediaflow_gateway');
+
 const { prepareProxyTarget } = require('../../core/lib/proxy_header_normalizer');
 const {
     decorateStreamWithPlaylistIntelligence,
@@ -251,12 +253,13 @@ function getMediaflowExtractorPath(host = '', options = {}) {
 
     const hostName = String(host || '').trim().toLowerCase();
 
-    // Hardcoded safety for Android/Stremio: MaxStream/UPROT must be exposed
-    // through MediaFlow's HLS-looking extractor endpoint even if docker envs
-    // are stale or missing.
+    // MaxStream/UPROT needs the HLS-looking extractor URL for Stremio/VLC.
+    // Do not downgrade it to the generic extractor endpoint, or playback can
+    // remain stuck on the external-player loading screen.
     if (/maxstream|uprot/i.test(hostName)) {
         return normalizeExtractorPath('/extractor/video.m3u8');
     }
+
 
     const hlsHosts = String(process.env.MEDIAFLOW_EXTRACTOR_HLS_HOSTS || '').toLowerCase()
         .split(',')
@@ -288,7 +291,40 @@ function getMediaflowRedirectStream(host = '', options = {}) {
     return /^(?:1|true|yes|on)$/i.test(raw) ? 'true' : 'false';
 }
 
+function mediaflowHeaderParamName(name) {
+    const key = String(name || '').trim().toLowerCase();
+    if (!key) return '';
+    if (key === 'referer' || key === 'referrer') return 'h_referer';
+    if (key === 'origin') return 'h_origin';
+    if (key === 'user-agent' || key === 'useragent') return 'h_user-agent';
+    if (key === 'cookie') return 'h_cookie';
+    return `h_${key}`;
+}
+
+function appendQueryParam(parts, key, value) {
+    if (value === undefined || value === null || value === '') return;
+    parts.push(`${encodeURIComponent(String(key))}=${encodeURIComponent(String(value))}`);
+}
+
+function appendMediaflowExtractorOptions(parts, options = {}) {
+    const headers = options?.headers || options?.requestHeaders || {};
+    for (const [name, value] of Object.entries(headers)) {
+        const paramName = mediaflowHeaderParamName(name);
+        if (!paramName || value === undefined || value === null || value === '') continue;
+        appendQueryParam(parts, paramName, value);
+    }
+
+    const extraParams = options?.extraParams || options?.params || {};
+    for (const [name, value] of Object.entries(extraParams)) {
+        if (!name || value === undefined || value === null || value === '') continue;
+        appendQueryParam(parts, name, value);
+    }
+}
+
 function buildMediaflowUrl(config, targetUrl, type = 'hls', host = 'Mixdrop', options = {}) {
+    // Legacy provider builder restored for extractor playback compatibility.
+    // This is the exact style used before the global Gateway refactor, with
+    // optional h_* request headers for hosts that changed anti-hotlink rules.
     if (!config?.mediaflow?.url) return normalizeRemoteUrl(targetUrl);
 
     const normalizedTarget = normalizeRemoteUrl(targetUrl);
@@ -297,14 +333,20 @@ function buildMediaflowUrl(config, targetUrl, type = 'hls', host = 'Mixdrop', op
     const mfp = String(config.mediaflow.url).replace(/\/$/, '');
     const encoded = encodeURIComponent(normalizedTarget);
     const password = getMediaflowPassword(config);
-    const pass = password ? `&api_password=${encodeURIComponent(password)}` : '';
 
     if (type === 'extractor') {
         const extractorPath = getMediaflowExtractorPath(host, options);
         const redirectStream = getMediaflowRedirectStream(host, options);
-        return `${mfp}${extractorPath}?host=${encodeURIComponent(host)}${pass}&d=${encoded}&redirect_stream=${redirectStream}`;
+        const parts = [];
+        appendQueryParam(parts, 'host', host);
+        if (password) appendQueryParam(parts, 'api_password', password);
+        appendQueryParam(parts, 'd', normalizedTarget);
+        appendQueryParam(parts, 'redirect_stream', redirectStream);
+        appendMediaflowExtractorOptions(parts, options);
+        return `${mfp}${extractorPath}?${parts.join('&')}`;
     }
 
+    const pass = password ? `&api_password=${encodeURIComponent(password)}` : '';
     return `${mfp}/hls?url=${encoded}${pass}&ext=.m3u8`;
 }
 

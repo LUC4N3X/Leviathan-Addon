@@ -22,6 +22,10 @@ const {
     normalizeQualityFilter,
     inferCanPlayFHDFromPlaylist
 } = require('../streamingcommunity/vix_handler');
+const {
+    buildProxyUrl: buildMediaflowGatewayProxyUrl,
+    getMediaflowBase
+} = require('../../core/proxy/mediaflow_gateway');
 
 const AU_BASE = 'https://www.animeunity.so';
 const PROVIDER_NAME = 'AnimeUnity';
@@ -1096,15 +1100,18 @@ async function extractEmbedUrl(animeUrl, episodeNumber, isMovie = false, candida
 }
 
 function buildMfpHlsUrl(config, sourceUrl, referer) {
-    const base = String(config?.mediaflow?.url || '').trim().replace(/\/+$/, '');
-    if (!base || !sourceUrl) return null;
-    const password = config?.mediaflow?.pass ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}` : '';
-    const ref = referer ? `&h_Referer=${encodeURIComponent(referer)}` : '';
+    if (!getMediaflowBase(config) || !sourceUrl) return null;
     let origin = 'https://vixsrc.to';
     try { origin = new URL(referer || sourceUrl).origin; } catch {}
-    const org = origin ? `&h_Origin=${encodeURIComponent(origin)}` : '';
-    const ua = `&h_User-Agent=${encodeURIComponent(USER_AGENT)}`;
-    return `${base}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(sourceUrl)}${password}${ref}${org}${ua}`;
+
+    return buildMediaflowGatewayProxyUrl(config, sourceUrl, {
+        ...(referer ? { Referer: referer } : {}),
+        ...(origin ? { Origin: origin } : {}),
+        'User-Agent': USER_AGENT
+    }, {
+        isHls: true,
+        allowCookie: false
+    });
 }
 
 function qualityRank(value) {
@@ -1119,7 +1126,7 @@ function languageRank(stream = {}) {
 }
 
 function buildStream({ sourceUrl, referer, quality, title, langTag, emoji, reqHost, config, branch }) {
-    const viaMfp = Boolean(config?.mediaflow?.url) && config?.filters?.animeUnityUseMfp !== false;
+    const viaMfp = Boolean(getMediaflowBase(config)) && config?.filters?.animeUnityUseMfp !== false;
     const url = viaMfp
         ? buildMfpHlsUrl(config, sourceUrl, referer)
         : buildSyntheticUrl(sourceUrl, quality, referer, reqHost);

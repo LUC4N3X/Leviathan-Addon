@@ -33,6 +33,11 @@ const {
     decorateStreamWithPlaylistIntelligence,
     qualityRank
 } = require('../extractors/common');
+const {
+    buildExtractorUrl: buildMediaflowGatewayExtractorUrl,
+    buildProxyUrl: buildMediaflowGatewayProxyUrl,
+    getMediaflowBase
+} = require('../../core/proxy/mediaflow_gateway');
 
 const BASE_URL = Buffer.from('aHR0cHM6Ly9jaW5lbWFjaXR5LmNj', 'base64').toString('utf8');
 const DEFAULT_SESSION_COOKIE = Buffer.from(
@@ -92,6 +97,10 @@ const CINEMACITY_LISTING_TOTAL_MS = Math.max(CINEMACITY_LISTING_TIMEOUT_MS + 900
 const CINEMACITY_LISTING_CACHE_TTL_MS = Math.max(5 * 60 * 1000, Math.min(4 * 60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_LISTING_CACHE_TTL_MS || String(45 * 60 * 1000), 10) || (45 * 60 * 1000)));
 const CINEMACITY_LISTING_PAGE_CACHE_TTL_MS = Math.max(2 * 60 * 1000, Math.min(60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_LISTING_PAGE_CACHE_TTL_MS || String(20 * 60 * 1000), 10) || (20 * 60 * 1000)));
 const CINEMACITY_DEBUG = envFlag('CINEMACITY_DEBUG', false) || envFlag('DEBUG_CINEMACITY', false);
+// Serie CinemaCity: preferiamo il proxy locale CCCDN/ccproxy come nei film.
+// Il page extractor MediaFlow/Kraken resta fallback se la pagina non espone un file episodio sicuro.
+const CINEMACITY_SERIES_FORCE_CCDN = envFlag('CINEMACITY_SERIES_FORCE_CCDN', true);
+const CINEMACITY_SERIES_PAGE_EXTRACTOR_PRIMARY = envFlag('CINEMACITY_SERIES_PAGE_EXTRACTOR_PRIMARY', false);
 const MAPPING_API_BASE = 'https://anime.questoleviatanormio.dpdns.org';
 const NEWS_SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
 const providerShield = createBlockedFallbackGuard({
@@ -2668,21 +2677,18 @@ function buildDisplayTitle(meta = {}, fallbackTitle, season, episode) {
 
 
 function buildCinemaCityMediaflowUrl(config = {}, streamUrl, headers = {}, isHls = false) {
-    const mfpBase = String(config?.mediaflow?.url || '').trim().replace(/\/$/, '');
     const normalizedTarget = normalizeRemoteUrl(streamUrl);
-    if (!mfpBase || !normalizedTarget) return null;
+    if (!getMediaflowBase(config) || !normalizedTarget) return null;
 
-    const passwordQuery = config?.mediaflow?.pass
-        ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}`
-        : '';
-    const refererQuery = headers?.Referer ? `&h_Referer=${encodeURIComponent(headers.Referer)}` : '';
-    const originQuery = headers?.Origin ? `&h_Origin=${encodeURIComponent(headers.Origin)}` : '';
+    const proxyHeaders = {};
+    if (headers?.Referer || headers?.referer) proxyHeaders.Referer = headers.Referer || headers.referer;
+    if (headers?.Origin || headers?.origin) proxyHeaders.Origin = headers.Origin || headers.origin;
 
-    if (isHls) {
-        return `${mfpBase}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${refererQuery}${originQuery}`;
-    }
-
-    return `${mfpBase}/proxy/stream?d=${encodeURIComponent(normalizedTarget)}${passwordQuery}${refererQuery}${originQuery}`;
+    const proxied = buildMediaflowGatewayProxyUrl(config, normalizedTarget, proxyHeaders, {
+        isHls: Boolean(isHls),
+        allowCookie: false
+    });
+    return proxied && proxied !== normalizedTarget ? proxied : null;
 }
 
 function buildCinemaCityEpisodePageUrl(pageUrl, season, episode) {
@@ -2701,14 +2707,78 @@ function buildCinemaCityEpisodePageUrl(pageUrl, season, episode) {
 }
 
 function buildCinemaCityPageExtractorUrl(config = {}, pageUrl, season, episode) {
-    const mfpBase = String(config?.mediaflow?.url || '').trim().replace(/\/+$/, '');
     const targetPage = buildCinemaCityEpisodePageUrl(pageUrl, season, episode);
-    if (!mfpBase || !targetPage) return null;
+    if (!getMediaflowBase(config) || !targetPage) return null;
 
-    const passwordQuery = config?.mediaflow?.pass
-        ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}`
-        : '';
-    return `${mfpBase}/extractor/video?host=city&d=${encodeURIComponent(targetPage)}&redirect_stream=true${passwordQuery}`;
+    const proxied = buildMediaflowGatewayExtractorUrl(config, targetPage, 'city', {
+        redirectStream: true
+    });
+    return proxied && proxied !== targetPage ? proxied : null;
+}
+
+function shouldPreferCinemaCityLocalProxy(isSeriesRequest) {
+    return Boolean(isSeriesRequest && CINEMACITY_SERIES_FORCE_CCDN);
+}
+
+function isLikelyCinemaCityMediaUrl(rawUrl = '') {
+    const value = String(rawUrl || '').trim();
+    if (!value) return false;
+    try {
+        const parsed = new URL(value);
+        const host = parsed.hostname.toLowerCase();
+        const path = parsed.pathname.toLowerCase();
+        const full = `${host}${path}`;
+        if (/\.(?:m3u8|mp4|mkv|webm|mov|m4v)(?:$|[?#])/i.test(value)) return true;
+        if (/(?:cccdn|ccddn|cdn|hls|stream|video|playlist|master)/i.test(full)) return true;
+        return false;
+    } catch (_) {
+        return /\.(?:m3u8|mp4|mkv|webm|mov|m4v)(?:$|[?#])/i.test(value)
+            || /(?:cccdn|ccddn|cdn|hls|stream|video|playlist|master)/i.test(value);
+    }
+}
+
+function buildCinemaCityPageExtractorStream(pageExtractorUrl, {
+    enrichedMeta = {},
+    basePageMetadata = {},
+    searchResult = {},
+    resolved = {},
+    targetPageUrl = '',
+    config = {},
+    addonBase = null
+} = {}) {
+    if (!pageExtractorUrl) return null;
+    const displayTitle = buildDisplayTitle(enrichedMeta, basePageMetadata.title || searchResult.title, resolved.season, resolved.episode);
+    const languageLabel = buildCinemaCityLanguageLabel(basePageMetadata, config);
+    return buildWebStream({
+        name: '🎟️ CinemaCity | CITY',
+        title: `${displayTitle}\n☁️ CITY • ${languageLabel}`,
+        url: pageExtractorUrl,
+        extractor: 'CITY',
+        provider: 'CinemaCity',
+        providerCode: 'CC',
+        quality: normalizeQuality(basePageMetadata.quality || '1080p'),
+        headers: null,
+        mediaflowUrl: getMediaflowBase(config),
+        addonBase,
+        notWebReady: false,
+        extraBehaviorHints: {
+            bingeWatching: true,
+            vortexMeta: {
+                pageTitle: basePageMetadata.title || '',
+                imdbId: basePageMetadata.imdbId || resolved.imdbId || '',
+                tmdbId: basePageMetadata.tmdbId || resolved.tmdbId || '',
+                qualityTag: basePageMetadata.qualityTag || '',
+                audioLanguages: Array.isArray(basePageMetadata.audioLanguages) ? basePageMetadata.audioLanguages : [],
+                subtitleLanguages: Array.isArray(basePageMetadata.subtitleLanguages) ? basePageMetadata.subtitleLanguages : [],
+                genres: Array.isArray(basePageMetadata.genres) ? basePageMetadata.genres : [],
+                isMultiAudio: basePageMetadata.isMultiAudio === true,
+                isAnime: basePageMetadata.isAnime === true,
+                requestedSeason: resolved.season,
+                requestedEpisode: resolved.episode,
+                targetPageUrl
+            }
+        }
+    });
 }
 
 async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqHost = null) {
@@ -2760,47 +2830,55 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
             providerType: resolved.providerType
         };
 
-        if (isSeriesRequest) {
-            const pageExtractorUrl = buildCinemaCityPageExtractorUrl(config, searchResult.url, resolved.season, resolved.episode);
-            if (pageExtractorUrl) {
-                const basePageMetadata = await fetchCinemaCityPageMetadata(searchResult.url).catch(() => null) || {};
-                const displayTitle = buildDisplayTitle(enrichedMeta, basePageMetadata.title || searchResult.title, resolved.season, resolved.episode);
-                const languageLabel = buildCinemaCityLanguageLabel(basePageMetadata, config);
-                const streams = [buildWebStream({
-                    name: '🎟️ CinemaCity | CITY',
-                    title: `${displayTitle}
-☁️ CITY • ${languageLabel}`,
-                    url: pageExtractorUrl,
-                    extractor: 'CITY',
-                    provider: 'CinemaCity',
-                    providerCode: 'CC',
-                    quality: normalizeQuality(basePageMetadata.quality || '1080p'),
-                    headers: null,
-                    notWebReady: false,
-                    extraBehaviorHints: {
-                        bingeWatching: true,
-                        vortexMeta: {
-                            pageTitle: basePageMetadata.title || '',
-                            imdbId: basePageMetadata.imdbId || resolved.imdbId || '',
-                            tmdbId: basePageMetadata.tmdbId || resolved.tmdbId || '',
-                            qualityTag: basePageMetadata.qualityTag || '',
-                            audioLanguages: Array.isArray(basePageMetadata.audioLanguages) ? basePageMetadata.audioLanguages : [],
-                            subtitleLanguages: Array.isArray(basePageMetadata.subtitleLanguages) ? basePageMetadata.subtitleLanguages : [],
-                            genres: Array.isArray(basePageMetadata.genres) ? basePageMetadata.genres : [],
-                            isMultiAudio: basePageMetadata.isMultiAudio === true,
-                            isAnime: basePageMetadata.isAnime === true,
-                            requestedSeason: resolved.season,
-                            requestedEpisode: resolved.episode,
-                            targetPageUrl
-                        }
-                    }
-                })];
-                return normalizeStreams(hardFilterStreamsByLanguage(dedupeStreamsByUrl(streams), config), { provider: 'cinemacity' });
-            }
+        const pageExtractorUrl = isSeriesRequest
+            ? buildCinemaCityPageExtractorUrl(config, searchResult.url, resolved.season, resolved.episode)
+            : null;
+        const basePageMetadataForSeries = isSeriesRequest && pageExtractorUrl
+            ? (await fetchCinemaCityPageMetadata(searchResult.url).catch(() => null) || {})
+            : {};
+
+        if (
+            isSeriesRequest
+            && pageExtractorUrl
+            && CINEMACITY_SERIES_PAGE_EXTRACTOR_PRIMARY
+            && !shouldPreferCinemaCityLocalProxy(isSeriesRequest)
+        ) {
+            const cityExtractorStream = buildCinemaCityPageExtractorStream(pageExtractorUrl, {
+                enrichedMeta,
+                basePageMetadata: basePageMetadataForSeries,
+                searchResult,
+                resolved,
+                targetPageUrl,
+                config,
+                addonBase: reqHost
+            });
+            const streams = cityExtractorStream ? [cityExtractorStream] : [];
+            return normalizeStreams(hardFilterStreamsByLanguage(dedupeStreamsByUrl(streams), config), { provider: 'cinemacity' });
         }
 
         const extracted = await getParsedCinemaCityStream(targetPageUrl || searchResult.url, enrichedMeta);
-        if (!extracted?.streamUrl) {
+        if (!extracted?.streamUrl || (isSeriesRequest && !isLikelyCinemaCityMediaUrl(extracted.streamUrl))) {
+            if (isSeriesRequest && pageExtractorUrl) {
+                const cityExtractorStream = buildCinemaCityPageExtractorStream(pageExtractorUrl, {
+                    enrichedMeta,
+                    basePageMetadata: basePageMetadataForSeries,
+                    searchResult,
+                    resolved,
+                    targetPageUrl,
+                    config,
+                    addonBase: reqHost
+                });
+                const streams = cityExtractorStream ? [cityExtractorStream] : [];
+                if (streams.length) {
+                    logCinemaCityDebug('series local stream unavailable; using CITY extractor fallback', {
+                        page: targetPageUrl || searchResult.url,
+                        streamUrl: extracted?.streamUrl || '',
+                        season: resolved.season,
+                        episode: resolved.episode
+                    });
+                    return normalizeStreams(hardFilterStreamsByLanguage(dedupeStreamsByUrl(streams), config), { provider: 'cinemacity' });
+                }
+            }
             if (isSeriesRequest && (config?.debug || process.env.DEBUG_CINEMACITY === '1' || process.env.DEBUG_CINEMACITY_EPISODE === '1')) {
                 console.warn(`[CinemaCity] Skip diretto serie: pagina=${targetPageUrl || searchResult.url} S=${resolved.season} E=${resolved.episode} non espone uno stream episodio sicuro. Configura MediaFlow/Kraken city extractor per le serie.`);
             }
@@ -2855,15 +2933,19 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
         }
 
         const isHlsStream = /\.m3u8($|\?)/i.test(extracted.streamUrl);
-        const extractorLabel = /cccdn/i.test(extracted.streamUrl) ? 'CCCDN' : (isHlsStream ? 'HLS' : 'Direct');
+        const extractorLabel = /cc(?:c|d)dn/i.test(extracted.streamUrl) ? 'CCCDN' : (isHlsStream ? 'HLS' : 'Direct');
         const displayTitle = buildDisplayTitle(enrichedMeta, pageMetadata.title || searchResult.title, resolved.season, resolved.episode);
         const languageLabel = buildCinemaCityLanguageLabel(pageMetadata, config);
+        const localCinemaCityProxyUrl = buildCinemaCityProxyUrl(extracted.streamUrl, extracted.headers, reqHost, { isHls: isHlsStream, providerType: resolved.providerType, season: resolved.season, episode: resolved.episode, rawEpisodeNumber: resolved.rawEpisodeNumber, pageUrl: targetPageUrl || searchResult.url });
         const mediaflowProxyUrl = buildCinemaCityMediaflowUrl(config, extracted.streamUrl, extracted.headers, isHlsStream);
-        const cinemaCityUrl = mediaflowProxyUrl || buildCinemaCityProxyUrl(extracted.streamUrl, extracted.headers, reqHost, { isHls: isHlsStream, providerType: resolved.providerType, season: resolved.season, episode: resolved.episode, rawEpisodeNumber: resolved.rawEpisodeNumber, pageUrl: targetPageUrl || searchResult.url });
-        if (!mediaflowProxyUrl && cinemaCityUrl) {
+        const preferLocalProxy = shouldPreferCinemaCityLocalProxy(isSeriesRequest);
+        const cinemaCityUrl = preferLocalProxy
+            ? (localCinemaCityProxyUrl || mediaflowProxyUrl)
+            : (mediaflowProxyUrl || localCinemaCityProxyUrl);
+        if (localCinemaCityProxyUrl) {
             prewarmCinemaCityPlayback(extracted.streamUrl, extracted.headers, reqHost, { isHls: isHlsStream });
         }
-        const cinemaCityMode = mediaflowProxyUrl ? 'MFP' : 'CCCDN';
+        const cinemaCityMode = cinemaCityUrl === mediaflowProxyUrl ? 'MFP' : 'CCCDN';
         const extraVortexMeta = {
             bingeWatching: true,
             vortexMeta: {
@@ -2890,9 +2972,38 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
                 providerCode: 'CC',
                 quality,
                 headers: null,
+                mediaflowUrl: getMediaflowBase(config),
+                addonBase: reqHost,
                 notWebReady: false,
                 extraBehaviorHints: extraVortexMeta
             }), playlistIntel));
+        }
+
+        // Serie CinemaCity: se il CDN locale risponde ma il player non parte, offri anche
+        // il percorso CITY/MFP come backup esplicito. Prima lo usavamo solo quando
+        // l'estrazione locale falliva; così su Stremio/Android hai una seconda strada
+        // cliccabile senza perdere il CCCDN principale.
+        if (isSeriesRequest && pageExtractorUrl && cinemaCityUrl && cinemaCityUrl === localCinemaCityProxyUrl) {
+            const cityFallbackStream = buildCinemaCityPageExtractorStream(pageExtractorUrl, {
+                enrichedMeta,
+                basePageMetadata: basePageMetadataForSeries || pageMetadata,
+                searchResult,
+                resolved,
+                targetPageUrl,
+                config,
+                addonBase: reqHost
+            });
+            if (cityFallbackStream) {
+                cityFallbackStream.name = '🎟️ CinemaCity | CITY fallback';
+                cityFallbackStream.title = `${displayTitle}\n☁️ CITY fallback • ${languageLabel}`;
+                cityFallbackStream.extractor = 'CITY';
+                cityFallbackStream.host = 'CITY';
+                if (cityFallbackStream.behaviorHints) {
+                    cityFallbackStream.behaviorHints.extractor = 'CITY';
+                    cityFallbackStream.behaviorHints.vortexExtractor = 'CITY';
+                }
+                streams.push(cityFallbackStream);
+            }
         }
 
         if (streams.length === 0) {
@@ -2905,9 +3016,24 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
                 providerCode: 'CC',
                 quality,
                 headers: extracted.headers,
+                mediaflowUrl: getMediaflowBase(config),
+                addonBase: reqHost,
                 notWebReady: true,
                 extraBehaviorHints: extraVortexMeta
             }), playlistIntel));
+        }
+
+        if (config?.debug || process.env.DEBUG_CINEMACITY === '1' || process.env.DEBUG_CINEMACITY_EPISODE === '1') {
+            logCinemaCityDebug('stream output', {
+                providerType: resolved.providerType,
+                season: resolved.season,
+                episode: resolved.episode,
+                mode: cinemaCityMode,
+                hasLocalProxy: Boolean(localCinemaCityProxyUrl),
+                hasMediaflowProxy: Boolean(mediaflowProxyUrl),
+                hasCityFallback: Boolean(pageExtractorUrl && streams.some((s) => /CITY/i.test(String(s?.name || s?.extractor || '')))),
+                count: streams.length
+            });
         }
 
         const filteredStreams = hardFilterStreamsByLanguage(dedupeStreamsByUrl(streams), config);
@@ -2943,6 +3069,10 @@ module.exports = {
         titleAliasesFromOneTitle,
         getListingBaseUrls,
         pickStream,
+        buildCinemaCityEpisodePageUrl,
+        buildCinemaCityPageExtractorUrl,
+        shouldPreferCinemaCityLocalProxy,
+        isLikelyCinemaCityMediaUrl,
         parseCinemaCityPageMetadata,
         extractDownloadLanguagesFromPage,
         buildCinemaCityLanguageLabel,

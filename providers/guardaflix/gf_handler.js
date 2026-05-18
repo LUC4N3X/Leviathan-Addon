@@ -14,6 +14,10 @@ const {
     decorateStreamWithPlaylistIntelligence,
     qualityRank
 } = require('../extractors/common');
+const {
+    buildProxyUrl: buildMediaflowGatewayProxyUrl,
+    getMediaflowBase
+} = require('../../core/proxy/mediaflow_gateway');
 
 const { extractFromUrl, resolveExtractorDefinition } = require('../extractors/registry');
 const { createBlockedFallbackGuard } = require('../utils/provider_blocked_fallback');
@@ -767,7 +771,7 @@ function isMediaflowLoadmEnabled(config) {
 }
 
 function shouldProxyWithMediaflow(config, extracted) {
-    if (!config?.mediaflow?.url) return false;
+    if (!getMediaflowBase(config)) return false;
 
     const url = String(extracted?.url || '');
     const headers = extracted?.headers || {};
@@ -799,16 +803,17 @@ function applyMediaflow(config, extracted) {
     const originalHeaders = extracted?.headers || {};
     const referer = originalHeaders.Referer || originalHeaders.referer || '';
     const origin = originalHeaders.Origin || originalHeaders.origin || (referer ? new URL(referer).origin : '');
-    const base = String(config.mediaflow.url || '').replace(/\/$/, '');
-    const password = config.mediaflow.pass ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}` : '';
-    const refererParam = referer ? `&h_Referer=${encodeURIComponent(referer)}` : '';
-    const originParam = origin ? `&h_Origin=${encodeURIComponent(origin)}` : '';
+    if (!getMediaflowBase(config) || !extracted?.url) return null;
 
-    return {
-        url: `${base}/proxy/hls/manifest.m3u8?d=${encodeURIComponent(extracted.url)}${password}${refererParam}${originParam}`,
-        referer,
-        origin
-    };
+    const proxied = buildMediaflowGatewayProxyUrl(config, extracted.url, {
+        ...(referer ? { Referer: referer } : {}),
+        ...(origin ? { Origin: origin } : {})
+    }, {
+        isHls: true,
+        allowCookie: false
+    });
+
+    return proxied ? { url: proxied, referer, origin } : null;
 }
 
 function scoreCandidate(queryTitle, year, href, text) {
@@ -948,7 +953,7 @@ class GuardaFlixScraper {
 
         logDebug('Inizializzato', {
             baseUrl: CONFIG.BASE_URL,
-            mediaflow: Boolean(this.config?.mediaflow?.url),
+            mediaflow: Boolean(getMediaflowBase(this.config)),
             mediaflowLoadm: isMediaflowLoadmEnabled(this.config),
             iframeConcurrency: CONFIG.IFRAME_CONCURRENCY,
             maxDepth: CONFIG.MAX_IFRAME_DEPTH
@@ -1115,6 +1120,7 @@ class GuardaFlixScraper {
         if (shouldProxyWithMediaflow(this.config, extracted)) {
             try {
                 const proxied = applyMediaflow(this.config, extracted);
+                if (!proxied?.url) throw new Error('MediaFlow gateway unavailable');
 
                 streamName = '🎬 GuardaFlix [MFP]';
                 streamUrl = proxied.url;
@@ -1125,7 +1131,7 @@ class GuardaFlixScraper {
             } catch (error) {
                 logDebug(`MediaFlow skip per ${extracted.name}: ${error.message}`);
             }
-        } else if (isLoadmExtracted(extracted) && this.config?.mediaflow?.url) {
+        } else if (isLoadmExtracted(extracted) && getMediaflowBase(this.config)) {
             logDebug('MediaFlow non applicato a LoadM: flag disattivata');
         }
 

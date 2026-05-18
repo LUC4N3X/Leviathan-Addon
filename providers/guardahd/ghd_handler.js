@@ -16,6 +16,7 @@ const {
     decorateStreamWithPlaylistIntelligence,
     qualityRank
 } = require('../extractors/common');
+const { getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
 const {
     extractFromUrl,
     HOSTER_DIRECT_LINK_PATTERN,
@@ -684,7 +685,7 @@ async function extractViaRegistry(embedUrl) {
 }
 
 async function extractMixdropMediaflow(embedUrl, config) {
-    if (!config?.mediaflow?.url) return [];
+    if (!getMediaflowBase(config)) return [];
     const normalized = normalizeUrl(embedUrl);
     const playerUrl = normalized.replace('/f/', '/e/');
     let quality = parseQuality(playerUrl);
@@ -846,7 +847,7 @@ class GuardaHDScraper {
             if (!ALLOWED_HOSTERS.has(hoster)) return [];
             let rawStreams = [];
 
-            if (hoster === 'mixdrop' && this.#config?.mediaflow?.url) {
+            if (hoster === 'mixdrop' && getMediaflowBase(this.#config)) {
                 rawStreams = await extractMixdropMediaflow(normalized, this.#config);
             }
 

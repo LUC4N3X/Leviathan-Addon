@@ -171,7 +171,10 @@ function detectDeliveryMode(stream = {}, finalUrl = '') {
     const hints = stream.behaviorHints || {};
     const meta = hints.vortexMeta || {};
     const url = String(finalUrl || stream.url || '').toLowerCase();
+    const extractor = String(stream.extractor || stream.host || hints.extractor || meta.extractor || '').toLowerCase();
+    const provider = String(stream.provider || stream.source || stream.site || hints.vortexSource || meta.provider || '').toLowerCase();
     if (hints.lazyExtraction === true || meta.lazyExtraction === true || /\/lazy_extract\//i.test(url)) return 'Lazy';
+    if (/\/ccproxy\//i.test(url) || (provider.includes('cinemacity') && /cc(?:c|d)dn/i.test(extractor))) return 'CCCDN';
     if (/\/extractor\/video|\/hls\?|\/proxy\/|mediaflow|kraken/i.test(url)) return 'Proxy';
     if (hints.proxyHeaders?.request || hints.headers || stream.headers) return 'Direct+Headers';
     if (hints.notWebReady === true || stream.notWebReady === true) return 'Needs Proxy';
