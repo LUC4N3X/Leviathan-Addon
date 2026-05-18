@@ -3,6 +3,16 @@
 const { buildMediaflowUrl, buildWebStream, normalizeRemoteUrl } = require('../extractors/common');
 const { isUprotUrl, resolveUprotToMaxstream } = require('../extractors/hosters/uprot');
 
+// ---------- optional OCR dependency (tesseract.js) ----------
+let Tesseract = null;
+try { Tesseract = require('tesseract.js'); } catch (_) { /* optional */ }
+
+// ---------- set-cookie parser (already in package.json) ----------
+let setCookieParser = null;
+try { setCookieParser = require('set-cookie-parser'); } catch (_) { /* optional */ }
+
+const SAFEGO_FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0';
+
 const DEFAULT_BASE_URL = 'https://eurostream.ing';
 const PROVIDER = 'Eurostreaming';
 const PROVIDER_CODE = 'ES';
@@ -24,6 +34,44 @@ function getDefaultClient() {
     } catch (_) {
         return null;
     }
+}
+
+
+function envFlag(name, defaultValue = false) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return defaultValue;
+    return /^(?:1|true|yes|on)$/i.test(String(raw).trim());
+}
+
+function isDeltabitMfpFallbackEnabled() {
+    // Luca's Kraken/MFP setup can act as the network/proxy layer for DeltaBit too.
+    // Default ON: if local DeltaBit extraction fails, send the settled DeltaBit page to Kraken/MFP.
+    return envFlag('EUROSTREAMING_DELTABIT_MFP_FALLBACK', false);
+}
+
+function isDeltabitMfpFirstEnabled() {
+    // Try Kraken/MFP before the local POST flow. Useful when DeltaBit blocks the VPS/browserless client
+    // but works when the request is proxied through Kraken/MFP, just like MixDrop/MaxStream.
+    return envFlag('EUROSTREAMING_DELTABIT_MFP_FIRST', false);
+}
+
+function getDeltabitMfpHost() {
+    return String(process.env.EUROSTREAMING_DELTABIT_MFP_HOST || process.env.ES_DELTABIT_MFP_HOST || 'Deltabit').trim() || 'Deltabit';
+}
+
+function getDeltabitMfpPath() {
+    return String(process.env.EUROSTREAMING_DELTABIT_MFP_PATH || process.env.ES_DELTABIT_MFP_PATH || process.env.MEDIAFLOW_EXTRACTOR_VIDEO_PATH || '/extractor/video').trim() || '/extractor/video';
+}
+
+function getMaxstreamMfpPath() {
+    // Hardcoded for Android/Stremio: never let old docker envs downgrade
+    // MaxStream/UPROT back to the generic /extractor/video endpoint.
+    return '/extractor/video.m3u8';
+}
+
+function getMaxstreamRedirectStream() {
+    // Hardcoded for Android/Stremio: keep MediaFlow/Kraken on the HLS redirect flow.
+    return true;
 }
 
 function responseData(response) {
@@ -144,28 +192,53 @@ function detectEpisodeLanguage(segment, index, previousText = '') {
 function extractEurostreamingEpisodeBlocks(description, season, episode) {
     const safeSeason = Math.max(1, Number.parseInt(String(season || 1), 10) || 1);
     const safeEpisode = Math.max(1, Number.parseInt(String(episode || 1), 10) || 1);
-    const markerRe = new RegExp(`(?:^|\\b)0*${safeSeason}\\s*(?:x|&#215;|&#x0?d7;|\\u00d7)\\s*0*${safeEpisode}(?:\\b|\\D)`, 'i');
-    const anyEpisodeRe = /(?:^|\b)\d{1,2}\s*(?:x|&#215;|&#x0?d7;|\u00d7)\s*\d{1,4}(?:\b|\D)/i;
+    const markerPatterns = [
+        // 1x09 / 01x09 / 1×9 / 1&#215;09
+        `(?:^|\\b)0*${safeSeason}\\s*(?:x|&#215;|&#x0?d7;|\\u00d7|×)\\s*0*${safeEpisode}(?:\\b|\\D)`,
+        // S01E09 / S1 E9 / S01 - E09
+        `(?:^|\\b)s\\s*0*${safeSeason}\\s*[-_. ]*e\\s*0*${safeEpisode}(?:\\b|\\D)`,
+        // Episodio 9 / Ep. 09, used by some Eurostreaming layouts when the season header is external
+        `(?:^|\\b)(?:episodio|episode|ep\\.?)\\s*0*${safeEpisode}(?:\\b|\\D)`,
+        // 09) / 09 - only as a last resort near hoster anchors
+        `(?:^|[>\\s])0*${safeEpisode}\\s*(?:[).:-]|-)`
+    ];
+    const markerRes = markerPatterns.map((pattern) => new RegExp(pattern, 'i'));
+    const anyEpisodeRe = /(?:^|\b)(?:s\s*\d{1,2}\s*[-_. ]*e\s*\d{1,4}|\d{1,2}\s*(?:x|&#215;|&#x0?d7;|\u00d7|×)\s*\d{1,4}|(?:episodio|episode|ep\.?)\s*\d{1,4})(?:\b|\D)/i;
     const blocks = [];
     const segments = splitEpisodeSegments(description);
     let previousText = '';
 
     for (const segment of segments) {
-        if (!markerRe.test(segment)) {
+        const marker = markerRes.find((re) => re.test(segment));
+        if (!marker) {
             if (!anyEpisodeRe.test(segment)) previousText = `${previousText} ${decodeHtml(segment)}`.slice(-500);
             continue;
         }
 
-        const html = segment.replace(markerRe, '').replace(/^\s*[\-–—:]+\s*/, '').trim() || segment;
+        const html = segment.replace(marker, '').replace(/^\s*[\-–—:).]+\s*/, '').trim() || segment;
+        // Avoid the loose "09)" fallback accidentally grabbing menus without hosters.
+        if (!extractAnchors(html).some((anchor) => /delta\s*bit|mix\s*drop|max\s*stream|uprot|adelta|amix|amax/i.test(`${anchor.label} ${anchor.href}`))) {
+            if (!markerPatterns.slice(0, 3).some((pattern) => new RegExp(pattern, 'i').test(segment)) && !/x|episodio|episode|ep\.?/i.test(segment)) continue;
+        }
         blocks.push({
             html,
             language: detectEpisodeLanguage(segment, blocks.length, previousText)
         });
     }
 
+    // Some Eurostreaming pages keep hoster anchors in a single collapsed block where
+    // the exact episode marker is stripped by WP shortcodes. In that case, use the
+    // whole content only if it contains hoster anchors and no conflicting episode list.
+    if (!blocks.length) {
+        const anchors = extractAnchors(description);
+        const hostAnchors = anchors.filter((anchor) => /delta\s*bit|mix\s*drop|max\s*stream|uprot|adelta|amix|amax/i.test(`${anchor.label} ${anchor.href}`));
+        if (hostAnchors.length && !anyEpisodeRe.test(decodeHtml(description))) {
+            blocks.push({ html: description, language: detectEpisodeLanguage(description, 0, '') });
+        }
+    }
+
     return blocks;
 }
-
 function extractAnchors(html) {
     const anchors = [];
     const re = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/ig;
@@ -199,12 +272,16 @@ function pickHostLinks(blockHtml) {
     for (const anchor of anchors) {
         const href = anchor.href;
         const label = anchor.label;
-        const looksLikeDeltabit = /delta\s*bit/i.test(label) || /\/delta\//i.test(href) || isDeltabitLikeUrl(href);
-        const looksLikeMixdrop = /mix\s*drop/i.test(label) || /\/mix\//i.test(href) || /mixdrop|m1xdrop|mxcontent|mixdrp/i.test(href);
-        const looksLikeMaxstream = /max\s*stream|uprot/i.test(label) || /uprot\.net|maxstream\.video|stayonline\.pro/i.test(href);
+        const labelSaysDeltabit = /delta\s*bit/i.test(label) || /turbovid/i.test(label);
+        const looksLikeDeltabit = labelSaysDeltabit || /\/adelta\//i.test(href) || /\/delta\//i.test(href) || isDeltabitLikeUrl(href);
+        const looksLikeMixdrop = /mix\s*drop/i.test(label) || /\/amix\//i.test(href) || /\/mix\//i.test(href) || /mixdrop|m1xdrop|mxcontent|mixdrp/i.test(href);
+        const looksLikeMaxstream = /max\s*stream|uprot/i.test(label) || /\/amax\//i.test(href) || /uprot\.net|maxstream\.video|stayonline\.pro/i.test(href);
 
         if (looksLikeDeltabit) {
-            if (isDeltabitLikeUrl(href) || REDIRECTOR_RE.test(href)) {
+            // Eurostreaming's DeltaBit anchor points to a generic redirector chain
+            // (not deltabit/safego yet). Keying off the anchor label like MammaMia
+            // and chasing the chain at resolve time is what makes DeltaBit appear.
+            if (labelSaysDeltabit ? /^https?:\/\//i.test(href) : (isDeltabitLikeUrl(href) || REDIRECTOR_RE.test(href))) {
                 pushLink(deltabitLinks, { host: 'deltabit', label: 'DeltaBit', href });
             }
             continue;
@@ -218,14 +295,15 @@ function pickHostLinks(blockHtml) {
         }
 
         if (looksLikeMaxstream) {
-            const maxstreamHref = (isUprotUrl(href) || isMaxstreamLikeUrl(href)) ? href : companionUprot?.href;
+            const maxstreamHref = (isUprotUrl(href) || isMaxstreamLikeUrl(href) || REDIRECTOR_RE.test(href))
+                ? href
+                : companionUprot?.href;
             if (maxstreamHref) {
                 pushLink(maxstreamLinks, { host: 'maxstream', label: 'MaxStream', href: maxstreamHref });
             }
         }
     }
 
-            
     return [...deltabitLinks, ...mixdropLinks, ...maxstreamLinks];
 }
 
@@ -253,6 +331,31 @@ function isStaticAssetUrl(value) {
 
 function isMixdropUrl(value) {
     return MIXDROP_URL_RE.test(String(value || ''));
+}
+
+function normalizeMixdropForExtractor(value) {
+    const normalized = normalizeRemoteUrl(value);
+    if (!normalized || !isMixdropUrl(normalized)) return null;
+    try {
+        const parsed = new URL(normalized);
+        const parts = parsed.pathname.split('/').filter(Boolean);
+        const fileId = parts.length >= 2 && /^(?:e|emb|embed|f|file|watch|video)$/i.test(parts[0])
+            ? parts[1]
+            : parts.length === 1 ? parts[0] : '';
+        if (!fileId) return normalized;
+        parsed.pathname = `/e/${fileId}`;
+        parsed.search = '';
+        parsed.hash = '';
+        return parsed.toString();
+    } catch (_) {
+        return normalized
+            .replace('/emb/', '/e/')
+            .replace('/embed/', '/e/')
+            .replace('/f/', '/e/')
+            .replace('/file/', '/e/')
+            .replace('/watch/', '/e/')
+            .replace('/video/', '/e/');
+    }
 }
 
 function isDeltabitLikeUrl(value) {
@@ -315,6 +418,12 @@ function loadJsonLikeFile(filePath) {
     }
 }
 
+function getSafegoCookiePath(options = {}) {
+    return options.safegoCookieFile
+        || process.env.SAFEGO_COOKIE_FILE
+        || require('path').resolve(process.cwd(), 'config', 'safego_cookies.json');
+}
+
 function loadSafegoState(options = {}) {
     let cookies = options.safegoCookies
         || parseLooseObject(process.env.SAFEGO_COOKIES_JSON)
@@ -344,7 +453,7 @@ function loadSafegoState(options = {}) {
         }
     }
 
-    const cookieFile = options.safegoCookieFile || process.env.SAFEGO_COOKIE_FILE;
+    const cookieFile = getSafegoCookiePath(options);
     const cookieText = loadJsonLikeFile(cookieFile);
     if (!cookies && cookieText) cookies = parseLooseObject(cookieText) || cookieText.trim();
 
@@ -352,7 +461,21 @@ function loadSafegoState(options = {}) {
         if (captchaData.captcha && !captchaData.captch5) captchaData = { ...captchaData, captch5: captchaData.captcha };
     }
 
-    return { cookies, captchaData };
+    return { cookies: cookies || {}, captchaData };
+}
+
+function saveSafegoState(cookies, options = {}) {
+    const fs = require('fs');
+    const path = require('path');
+    const filePath = getSafegoCookiePath(options);
+    try {
+        const dir = path.dirname(filePath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(filePath, JSON.stringify(cookies, null, 2), 'utf8');
+        esDebug('info', 'safego cookies saved', { path: filePath });
+    } catch (err) {
+        esDebug('warn', 'failed to save safego cookies', { error: err?.message || String(err) });
+    }
 }
 
 function mergeCookieHeader(headers, cookies) {
@@ -361,13 +484,80 @@ function mergeCookieHeader(headers, cookies) {
     return { ...headers, Cookie: cookieHeader };
 }
 
-async function postSafego(client, url, headers, state, data = null) {
-    if (!client || typeof client.post !== 'function') return null;
-    const postHeaders = mergeCookieHeader(headers, state?.cookies);
-    const body = data || state?.captchaData || {};
+function mergeSetCookieHeaders(existingCookies, response) {
+    const merged = { ...(existingCookies || {}) };
+    const rawHeaders = response?.headers?.['set-cookie'] || response?.headers?.['Set-Cookie'];
+    if (!rawHeaders) return merged;
+
+    if (setCookieParser) {
+        const parsed = setCookieParser.parse(
+            Array.isArray(rawHeaders) ? rawHeaders : [rawHeaders],
+            { decodeValues: true }
+        );
+        for (const cookie of parsed) {
+            if (cookie.name) merged[cookie.name] = cookie.value;
+        }
+    } else {
+        const list = Array.isArray(rawHeaders) ? rawHeaders : [rawHeaders];
+        for (const raw of list) {
+            const pair = String(raw || '').split(';')[0]?.trim();
+            const eq = pair.indexOf('=');
+            if (eq > 0) merged[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+        }
+    }
+    return merged;
+}
+
+function extractAnchorHref(html) {
+    const match = String(html || '').match(/<a\b[^>]*href=["']([^"']+)["'][^>]*>/i);
+    return match?.[1] ? normalizeRemoteUrl(match[1]) : null;
+}
+
+function extractCaptchaBase64(html) {
+    const match = String(html || '').match(/<img\b[^>]+src=["'](data:image\/[^;]+;base64,([^"']+))["']/i);
+    if (!match) return null;
+    return { dataUri: match[1], base64: match[2] };
+}
+
+async function solveCaptchaOCR(base64Data) {
+    if (!Tesseract) {
+        esDebug('warn', 'tesseract.js not available, cannot solve SafeGo CAPTCHA');
+        return null;
+    }
     try {
-        return await client.post(url, body, {
-            headers: postHeaders,
+        const imageBuffer = Buffer.from(base64Data, 'base64');
+        const worker = await Tesseract.createWorker('eng');
+        await worker.setParameters({
+            tessedit_char_whitelist: '0123456789'
+        });
+        const { data: { text } } = await worker.recognize(imageBuffer);
+        await worker.terminate();
+        const digits = String(text || '').replace(/\D/g, '').trim();
+        esDebug('info', 'OCR captcha result', { raw: text?.trim(), digits });
+        return digits || null;
+    } catch (err) {
+        esDebug('warn', 'OCR captcha failed', { error: err?.message || String(err) });
+        return null;
+    }
+}
+
+function buildSafegoHeaders(safegoUrl) {
+    const origin = (() => { try { return new URL(safegoUrl).origin; } catch (_) { return 'https://safego.cc'; } })();
+    return {
+        'User-Agent': SAFEGO_FIREFOX_UA,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Origin': origin,
+        'Referer': safegoUrl
+    };
+}
+
+async function postSafegoWithCookies(client, url, headers, cookies) {
+    if (!client || typeof client.post !== 'function') return null;
+    const postHeaders = mergeCookieHeader(headers, cookies);
+    try {
+        return await client.post(url, '', {
+            headers: { ...postHeaders, 'Content-Type': 'application/x-www-form-urlencoded' },
             maxRedirects: 5,
             responseType: 'text',
             validateStatus: () => true
@@ -377,21 +567,168 @@ async function postSafego(client, url, headers, state, data = null) {
     }
 }
 
-async function resolveSafegoPage(client, safegoUrl, headers, options = {}) {
+async function getSafegoPage(client, url, headers) {
+    if (!client || typeof client.get !== 'function') return null;
+    try {
+        return await client.get(url, {
+            headers,
+            maxRedirects: 5,
+            responseType: 'text',
+            validateStatus: () => true
+        });
+    } catch (_) {
+        return null;
+    }
+}
+
+async function postSafegoCaptcha(client, url, headers, cookies, captchaCode) {
+    if (!client || typeof client.post !== 'function') return null;
+    const postHeaders = mergeCookieHeader(headers, cookies);
+    // MammaMia sends captch5 as form-urlencoded data, not JSON
+    const body = `captch5=${encodeURIComponent(captchaCode)}`;
+    try {
+        return await client.post(url, body, {
+            headers: { ...postHeaders, 'Content-Type': 'application/x-www-form-urlencoded' },
+            maxRedirects: 5,
+            responseType: 'text',
+            validateStatus: () => true
+        });
+    } catch (_) {
+        return null;
+    }
+}
+
+async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
     const state = loadSafegoState(options);
-    const attempts = [];
+    let cookies = state.cookies || {};
+    const headers = buildSafegoHeaders(safegoUrl);
 
-    if (state.cookies) attempts.push({ kind: 'cookies', data: null });
-    if (state.cookies && state.captchaData) attempts.push({ kind: 'captcha', data: state.captchaData });
+    // ---------- Step 1: POST with saved cookies (like MammaMia real_page) ----------
+    esDebug('info', 'safego step 1: POST with saved cookies', { url: safegoUrl, hasCookies: Object.keys(cookies).length > 0 });
+    const response1 = await postSafegoWithCookies(client, safegoUrl, headers, cookies);
+    if (response1) {
+        cookies = mergeSetCookieHeaders(cookies, response1);
 
-    for (const attempt of attempts) {
-        const response = await postSafego(client, safegoUrl, headers, state, attempt.data);
-        const finalUrl = finalResponseUrl(response, safegoUrl);
-        if (finalUrl && finalUrl !== safegoUrl && !SAFEGO_RE.test(finalUrl)) return finalUrl;
-        const candidate = extractRedirectCandidate(responseText(response), safegoUrl);
-        if (candidate && !SAFEGO_RE.test(candidate)) return candidate;
+        // Check for redirect
+        const finalUrl1 = finalResponseUrl(response1, safegoUrl);
+        if (finalUrl1 && finalUrl1 !== safegoUrl && !SAFEGO_RE.test(finalUrl1)) {
+            saveSafegoState(cookies, options);
+            return finalUrl1;
+        }
+
+        // Check for anchor link (like MammaMia: if len(soup) >= 1: return soup.a['href'])
+        const html1 = responseText(response1);
+        const anchor1 = extractAnchorHref(html1);
+        if (anchor1 && !SAFEGO_RE.test(anchor1)) {
+            esDebug('info', 'safego resolved via anchor (saved cookies)', { anchor: anchor1 });
+            saveSafegoState(cookies, options);
+            return anchor1;
+        }
+
+        // Check if page says "not found"
+        if (/The requested URL was not found on this server/i.test(html1)) {
+            esDebug('warn', 'safego: URL not found on server');
+            return null;
+        }
     }
 
+    // ---------- Step 2: GET the CAPTCHA page (like MammaMia get_numbers) ----------
+    // MammaMia does a separate GET to fetch the CAPTCHA image and collect fresh cookies
+    esDebug('info', 'safego step 2: GET for CAPTCHA page');
+    const getHeaders = {
+        'User-Agent': SAFEGO_FIREFOX_UA,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
+    };
+    const getCaptchaResponse = await getSafegoPage(client, safegoUrl, getHeaders);
+    if (!getCaptchaResponse) {
+        saveSafegoState(cookies, options);
+        return null;
+    }
+
+    // Collect cookies from the GET response (MammaMia: cookies = response.cookies.get_dict())
+    const getCookies = mergeSetCookieHeaders({}, getCaptchaResponse);
+    esDebug('info', 'safego GET cookies', { cookieKeys: Object.keys(getCookies) });
+
+    const captchaHtml = responseText(getCaptchaResponse);
+    const captchaData = extractCaptchaBase64(captchaHtml);
+    if (!captchaData) {
+        // No CAPTCHA found — try extracting redirect from the GET page
+        const candidate = extractRedirectCandidate(captchaHtml, safegoUrl);
+        if (candidate && !SAFEGO_RE.test(candidate)) {
+            saveSafegoState(cookies, options);
+            return candidate;
+        }
+        const anchor = extractAnchorHref(captchaHtml);
+        if (anchor && !SAFEGO_RE.test(anchor)) {
+            saveSafegoState(cookies, options);
+            return anchor;
+        }
+        esDebug('warn', 'safego: no CAPTCHA image found on GET page');
+        saveSafegoState(cookies, options);
+        return null;
+    }
+
+    // ---------- Step 3: OCR the CAPTCHA (like MammaMia convert_numbers) ----------
+    esDebug('info', 'safego step 3: OCR CAPTCHA');
+    const captchaCode = await solveCaptchaOCR(captchaData.base64);
+    if (!captchaCode) {
+        esDebug('warn', 'safego: OCR failed or returned empty');
+        saveSafegoState(cookies, options);
+        return null;
+    }
+
+    // ---------- Step 4: POST captch5 with GET cookies (like MammaMia real_page) ----------
+    esDebug('info', 'safego step 4: POST captch5', { code: captchaCode, cookieKeys: Object.keys(getCookies) });
+    const captchaPostHeaders = {
+        ...headers,
+        'Origin': 'https://safego.cc',
+        'Referer': safegoUrl
+    };
+    const response2 = await postSafegoCaptcha(client, safegoUrl, captchaPostHeaders, getCookies, captchaCode);
+    if (response2) {
+        // MammaMia: cap4 = response.headers.get('set-cookie').split(';')[0]
+        //           cookies[cap4.split('=')[0]] = cap4.split('=')[1]
+        const updatedCookies = mergeSetCookieHeaders(getCookies, response2);
+        // Merge into the saved cookies for persistence
+        Object.assign(cookies, updatedCookies);
+        saveSafegoState(cookies, options);
+
+        const finalUrl2 = finalResponseUrl(response2, safegoUrl);
+        if (finalUrl2 && finalUrl2 !== safegoUrl && !SAFEGO_RE.test(finalUrl2)) return finalUrl2;
+
+        const html2 = responseText(response2);
+        const anchor2 = extractAnchorHref(html2);
+        if (anchor2 && !SAFEGO_RE.test(anchor2)) {
+            esDebug('info', 'safego resolved via anchor (post-captcha)', { anchor: anchor2 });
+            return anchor2;
+        }
+        const candidate2 = extractRedirectCandidate(html2, safegoUrl);
+        if (candidate2 && !SAFEGO_RE.test(candidate2)) return candidate2;
+
+        esDebug('warn', 'safego: captch5 POST did not yield a link, attempting retry with merged cookies');
+
+        // ---------- Step 5: retry POST with the updated cookies ----------
+        const response3 = await postSafegoWithCookies(client, safegoUrl, headers, cookies);
+        if (response3) {
+            cookies = mergeSetCookieHeaders(cookies, response3);
+            saveSafegoState(cookies, options);
+
+            const finalUrl3 = finalResponseUrl(response3, safegoUrl);
+            if (finalUrl3 && finalUrl3 !== safegoUrl && !SAFEGO_RE.test(finalUrl3)) return finalUrl3;
+
+            const html3 = responseText(response3);
+            const anchor3 = extractAnchorHref(html3);
+            if (anchor3 && !SAFEGO_RE.test(anchor3)) {
+                esDebug('info', 'safego resolved via anchor (post-captcha retry)', { anchor: anchor3 });
+                return anchor3;
+            }
+            const candidate3 = extractRedirectCandidate(html3, safegoUrl);
+            if (candidate3 && !SAFEGO_RE.test(candidate3)) return candidate3;
+        }
+    }
+
+    saveSafegoState(cookies, options);
     return null;
 }
 
@@ -502,7 +839,7 @@ async function resolveRedirectLink(client, href, referer, options = {}) {
     let current = normalized;
     const headers = {
         Referer: referer || getBaseUrl(),
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'User-Agent': SAFEGO_FIREFOX_UA,
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
     };
@@ -517,34 +854,56 @@ async function resolveRedirectLink(client, href, referer, options = {}) {
         if (SAFEGO_RE.test(current)) {
             const origin = (() => { try { return new URL(current).origin; } catch (_) { return ''; } })();
             const safegoCandidate = await resolveSafegoPage(client, current, { ...headers, Origin: origin, Referer: current }, options);
-            if (safegoCandidate) return safegoCandidate;
+            if (safegoCandidate) {
+                if (!REDIRECTOR_RE.test(safegoCandidate)) return safegoCandidate;
+                current = safegoCandidate;
+                continue;
+            }
         }
 
         try {
-            const requestHeaders = CLICKA_RE.test(current)
-                ? { ...headers, Range: 'bytes=0-0' }
-                : headers;
-            const response = await client.get(current, {
-                headers: requestHeaders,
-                maxRedirects: 5,
-                responseType: 'text',
-                validateStatus: () => true
-            });
-            const finalUrl = finalResponseUrl(response, current);
-            if (finalUrl && finalUrl !== current) {
-                current = finalUrl;
-                if (!REDIRECTOR_RE.test(current)) return current;
-                if (SAFEGO_RE.test(current)) {
-                    const origin = (() => { try { return new URL(current).origin; } catch (_) { return ''; } })();
-                    const safegoCandidate = await resolveSafegoPage(client, current, { ...headers, Origin: origin, Referer: current }, options);
-                    if (safegoCandidate) return safegoCandidate;
+            const attempts = CLICKA_RE.test(current)
+                ? [
+                    { ...headers, Range: 'bytes=0-0' },
+                    headers
+                ]
+                : [headers];
+
+            let advanced = false;
+            for (const requestHeaders of attempts) {
+                const response = await client.get(current, {
+                    headers: requestHeaders,
+                    maxRedirects: 5,
+                    responseType: 'text',
+                    validateStatus: () => true
+                });
+                const finalUrl = finalResponseUrl(response, current);
+                if (finalUrl && finalUrl !== current) {
+                    current = finalUrl.replace(/%20/g, '');
+                    advanced = true;
+                    if (!REDIRECTOR_RE.test(current)) return current;
+                    if (SAFEGO_RE.test(current)) {
+                        const origin = (() => { try { return new URL(current).origin; } catch (_) { return ''; } })();
+                        const safegoCandidate = await resolveSafegoPage(client, current, { ...headers, Origin: origin, Referer: current }, options);
+                        if (safegoCandidate) {
+                            current = safegoCandidate.replace(/%20/g, '');
+                            advanced = true;
+                            if (!REDIRECTOR_RE.test(current)) return current;
+                            break;
+                        }
+                    }
+                    break;
+                }
+
+                const nextUrl = extractRedirectCandidate(responseText(response), current);
+                if (nextUrl && nextUrl !== current) {
+                    current = nextUrl.replace(/%20/g, '');
+                    advanced = true;
+                    if (!REDIRECTOR_RE.test(current)) return current;
+                    break;
                 }
             }
-
-            const nextUrl = extractRedirectCandidate(responseText(response), current);
-            if (!nextUrl || nextUrl === current) break;
-            current = nextUrl;
-            if (!REDIRECTOR_RE.test(current)) return current;
+            if (!advanced) break;
         } catch (error) {
             const finalUrl = finalResponseUrl(error?.response, current);
             if (finalUrl && finalUrl !== current) return finalUrl;
@@ -569,18 +928,428 @@ function extractFormFields(html) {
 
 function extractDeltabitSource(html, baseUrl = null) {
     const text = String(html || '').replace(/\x00/g, '');
-    const patterns = [
-        /sources\s*:\s*\[\s*["']([^"']+)["']/i,
-        /file\s*:\s*["']([^"']+)["']/i,
-        /source\s+src=["']([^"']+)["']/i
+    // MammaMia uses exactly: re.findall(r'sources:\s*\["([^"]+)"', html, re.DOTALL)[0]
+    // The player config link has no reliable extension/query shape, so do NOT gate
+    // on isDirectMediaUrl here or the valid link gets dropped before reaching Kraken.
+    const primary = text.match(/sources\s*:\s*\[\s*["']([^"']+)["']/is);
+    const primaryUrl = compactRedirectCandidate(primary?.[1], baseUrl);
+    if (primaryUrl && /^https?:\/\//i.test(primaryUrl)) return primaryUrl;
+
+    // DeltaBit variants are not consistent: some pages expose sources as an
+    // array of objects, some through file/src keys, and some JS builds escape
+    // slashes. Keep this liberal, then normalize against the player page.
+    const fallbackPatterns = [
+        /sources\s*:\s*\[\s*\{[\s\S]{0,300}?(?:file|src)\s*:\s*["']([^"']+)["']/i,
+        /(?:file|src)\s*:\s*["']([^"']+)["']/i,
+        /<source\b[^>]+src=["']([^"']+)["']/i,
+        /["'](https?:\/\/[^"']+\.(?:m3u8|mp4|mkv|webm)[^"']*)["']/i
     ];
-    for (const pattern of patterns) {
-        const match = text.match(pattern);
-        const candidate = compactRedirectCandidate(match?.[1], baseUrl);
-        if (candidate && isDirectMediaUrl(candidate)) return candidate;
+    for (const pattern of fallbackPatterns) {
+        const candidate = compactRedirectCandidate(text.match(pattern)?.[1], baseUrl);
+        if (candidate && (/^https?:\/\//i.test(candidate) || isDirectMediaUrl(candidate))) return candidate;
     }
     const direct = compactRedirectCandidate(text.match(DIRECT_MEDIA_URL_RE)?.[0], baseUrl);
     return direct && isDirectMediaUrl(direct) ? direct : null;
+}
+
+function extractFormFieldsRaw(html) {
+    // Equivalent to MammaMia BeautifulSoup input.get('value'): keep the value as-is
+    // (only basic entity decode), no tag-stripping / whitespace-collapsing, so the
+    // hash/op/id fields are posted byte-for-byte like the browser would.
+    const fields = {};
+    const inputRe = /<input\b[^>]*>/ig;
+    for (const input of String(html || '').match(inputRe) || []) {
+        const name = input.match(/\bname=["']([^"']+)["']/i)?.[1];
+        if (!name) continue;
+        const raw = input.match(/\bvalue=["']([^"']*)["']/i)?.[1] ?? '';
+        fields[name] = raw
+            .replace(/&amp;/g, '&')
+            .replace(/&quot;/g, '"')
+            .replace(/&#0?39;|&apos;/g, "'")
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>');
+    }
+    return fields;
+}
+
+function isHosterPageUrl(value) {
+    return isDeltabitLikeUrl(value) && !REDIRECTOR_RE.test(String(value || ''));
+}
+
+function isDeltabitClickaEntry(value) {
+    const text = String(value || '');
+    return CLICKA_RE.test(text) && /\/(?:a)?delta\//i.test(text);
+}
+
+function isDeltabitEntryUrl(value) {
+    return isHosterPageUrl(value) || isDeltabitClickaEntry(value);
+}
+
+async function chaseToHosterPage(client, href, referer, options = {}) {
+    let current = normalizeRemoteUrl(href);
+    if (!current || !client || typeof client.get !== 'function') return null;
+    if (isDeltabitEntryUrl(current)) return current;
+
+    // For safego/clicka: resolveRedirectLink handles the full multi-hop chain
+    // (safego captcha, clicka Range, loop) and is proven to reach deltabit.co.
+    // The naive Range-GET loop gets stuck in a clicka→safego→clicka cycle when
+    // there are no persistent session cookies, so we always delegate here.
+    if (REDIRECTOR_RE.test(current)) {
+        const resolved = await resolveRedirectLink(client, current, referer || getBaseUrl(), options);
+        // MammaMia-compatible path: Safego may legally return clicka.cc/adelta/...;
+        // the DeltaBit extractor then performs the Range GET on that Clicka URL.
+        if (resolved && isDeltabitEntryUrl(resolved)) return resolved;
+        esDebug('warn', 'deltabit redirect chain did not reach hoster', { fromHost: safeHost(current), toHost: safeHost(resolved), toPath: safePath(resolved) });
+        return null;
+    }
+
+    // For non-redirector generic chains (e.g. provider-internal URLs → deltabit):
+    // follow Range GETs; if mid-chain we hit safego/clicka, delegate.
+    const headers = {
+        Referer: referer || getBaseUrl(),
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
+    };
+
+    for (let hop = 0; hop < 5; hop += 1) {
+        if (isHosterPageUrl(current)) return current;
+        if (REDIRECTOR_RE.test(current)) {
+            const resolved = await resolveRedirectLink(client, current, referer || getBaseUrl(), options);
+            if (resolved && isDeltabitEntryUrl(resolved)) return resolved;
+            esDebug('warn', 'deltabit redirect chain did not reach hoster', { fromHost: safeHost(current), toHost: safeHost(resolved), toPath: safePath(resolved) });
+            return null;
+        }
+        const paramCandidate = redirectParamCandidate(current);
+        if (paramCandidate && paramCandidate !== current) { current = paramCandidate; continue; }
+
+        let response;
+        try {
+            response = await client.get(current, {
+                headers: { ...headers, Range: 'bytes=0-0' },
+                maxRedirects: 5, responseType: 'text', validateStatus: () => true
+            });
+        } catch (error) {
+            const failUrl = finalResponseUrl(error?.response, current);
+            if (failUrl && failUrl !== current) { current = failUrl.replace(/%20/g, ''); continue; }
+            return null;
+        }
+        const finalUrl = finalResponseUrl(response, current);
+        if (finalUrl && finalUrl !== current) { current = finalUrl.replace(/%20/g, ''); continue; }
+        const body = responseText(response);
+        const next = extractRedirectCandidate(body, current) || extractAnchorHref(body);
+        if (next && next !== current && !isStaticAssetUrl(next)) { current = next; continue; }
+        break;
+    }
+
+    return isDeltabitEntryUrl(current) ? current : null;
+}
+
+function encodeFormBody(data) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(data || {})) {
+        if (key === undefined || key === null) continue;
+        params.append(String(key), value == null ? '' : String(value));
+    }
+    return params.toString();
+}
+
+function extractSubmitButtons(html) {
+    const buttons = [];
+    const text = String(html || '');
+    const tagRe = /<(?:input|button)\b[^>]*>/ig;
+    for (const tag of text.match(tagRe) || []) {
+        const type = tag.match(/\btype=["']?([^"'\s>]+)/i)?.[1]?.toLowerCase() || '';
+        if (type && type !== 'submit' && !/^<button/i.test(tag)) continue;
+        const name = tag.match(/\bname=["']([^"']+)["']/i)?.[1] || tag.match(/\bname=([^\s>]+)/i)?.[1] || '';
+        let value = tag.match(/\bvalue=["']([^"']*)["']/i)?.[1];
+        if (value == null) value = tag.match(/\bvalue=([^\s>]+)/i)?.[1] || '';
+        const label = decodeHtml(value || tag.replace(/<[^>]+>/g, ''));
+        if (!name && !label) continue;
+        buttons.push({ name: decodeHtml(name), value: decodeHtml(value || ''), label });
+    }
+    return buttons;
+}
+
+function buildDeltabitPostPayloads(fields, html, extractor, pageUrl, options = {}) {
+    const base = { ...fields, referer: pageUrl };
+    const submitButtons = extractSubmitButtons(html);
+    const seen = new Set();
+    const payloads = [];
+    const addPayload = (data, reason) => {
+        const normalized = { ...base, ...data };
+        const key = JSON.stringify(Object.keys(normalized).sort().map((k) => [k, normalized[k]]));
+        if (seen.has(key)) return;
+        seen.add(key);
+        payloads.push({ data: normalized, reason });
+    };
+
+    // MammaMia sends imhuman='' for Deltabit. Keep it as first attempt.
+    addPayload({ imhuman: extractor === 'Turbovid' ? 'Proceed+to+video' : (options.deltabitImhuman ?? '') }, 'mammamia-imhuman');
+
+    // Browser path: the user actually clicks "GUARDA LO STREAMING". Some XFS
+    // variants only unlock the player when the clicked submit name/value is sent.
+    const preferred = submitButtons.filter((button) => /guarda|stream|watch|video/i.test(`${button.name} ${button.value} ${button.label}`));
+    const others = submitButtons.filter((button) => !preferred.includes(button));
+    for (const button of [...preferred, ...others].slice(0, 4)) {
+        if (!button.name) continue;
+        addPayload({ [button.name]: button.value || button.label || '', imhuman: fields.imhuman ?? '' }, `submit:${button.name}`);
+    }
+
+    // Common fallback names used by XFileSharing templates when submit inputs are
+    // customized by CSS/images and are not visible as normal form values.
+    for (const value of ['', 'Guarda lo streaming', 'GUARDA LO STREAMING', 'Watch video']) {
+        addPayload({ imhuman: value }, `imhuman:${value || 'empty'}`);
+    }
+    addPayload({ method_free: '', imhuman: fields.imhuman ?? '' }, 'method_free-empty');
+    addPayload({ method_free: 'Guarda lo streaming', imhuman: fields.imhuman ?? '' }, 'method_free-streaming');
+
+    return payloads.slice(0, 7);
+}
+
+async function resolveDeltabitDirectStream(client, href, referer, options = {}, attempt = 0) {
+    if (!client || typeof client.get !== 'function' || typeof client.post !== 'function') return null;
+
+    // 1) Resolve the redirector chain (and safego/captcha) to the real host link.
+    let pageUrl = await chaseToHosterPage(client, href, referer || getBaseUrl(), options);
+    if (!pageUrl && isHosterPageUrl(normalizeRemoteUrl(href))) pageUrl = normalizeRemoteUrl(href);
+    if (!pageUrl || !isDeltabitEntryUrl(pageUrl)) {
+        esDebug('warn', 'deltabit direct resolve failed before hoster page', { hrefHost: safeHost(href), hrefPath: safePath(href), pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl) });
+        return null;
+    }
+
+    const userAgent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
+    const extractor = options.deltabitExtractor === 'Turbovid' ? 'Turbovid' : 'Deltabit';
+
+    // MammaMia uses a real AsyncSession: cookies collected on the GET are
+    // automatically reused on the form POST. Axios does not do that, so keep a
+    // tiny per-extraction cookie jar or DeltaBit answers 200 with no sources.
+    let deltabitCookies = {};
+    const withDeltabitCookies = (headers = {}) => mergeCookieHeader(headers, deltabitCookies);
+    const rememberDeltabitCookies = (response) => {
+        const next = mergeSetCookieHeaders(deltabitCookies, response);
+        if (Object.keys(next).length !== Object.keys(deltabitCookies).length) {
+            esDebug('info', 'deltabit cookies updated', { cookieKeys: Object.keys(next) });
+        }
+        deltabitCookies = next;
+    };
+
+    const rangeHeaders = () => withDeltabitCookies({
+        Referer: 'https://safego.cc/',
+        'User-Agent': userAgent,
+        Range: 'bytes=0-0',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
+    });
+    const pageHeaders = () => withDeltabitCookies({
+        Referer: 'https://safego.cc/',
+        'User-Agent': userAgent,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
+    });
+
+    // 2) MammaMia step 1: ALWAYS GET with Range first. In MammaMia this
+    // happens even when the entry already looks like deltabit.co; it also primes
+    // the session cookies that the later POST needs.
+    const rangeSettle = async (settleHop) => {
+        const probe = await client.get(pageUrl, {
+            headers: rangeHeaders(),
+            maxRedirects: 5,
+            responseType: 'text',
+            validateStatus: () => true
+        });
+        rememberDeltabitCookies(probe);
+        const settled = finalResponseUrl(probe, pageUrl)
+            || extractRedirectCandidate(responseText(probe), pageUrl)
+            || extractAnchorHref(responseText(probe));
+        if (settled) pageUrl = settled.replace(/%20/g, '');
+        esDebug('info', 'deltabit entry settled via range', { pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl), fromClicka: isDeltabitClickaEntry(href), settleHop });
+        return probe;
+    };
+
+    try {
+        await rangeSettle(0);
+    } catch (error) {
+        esDebug('warn', 'deltabit range settle failed', { pageHost: safeHost(pageUrl), error: error?.message || String(error) });
+    }
+
+    // If it bounces back to Safego/Clicka, resolve Safego again and retry Range
+    // instead of POSTing the Safego page.
+    for (let settleHop = 1; settleHop < 5 && !isHosterPageUrl(pageUrl); settleHop += 1) {
+        try {
+            if (REDIRECTOR_RE.test(pageUrl)) {
+                const redirected = await resolveRedirectLink(client, pageUrl, 'https://safego.cc/', options);
+                if (redirected && redirected !== pageUrl) {
+                    pageUrl = redirected.replace(/%20/g, '');
+                    esDebug('info', 'deltabit safego/clicka re-resolved', { pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl), settleHop });
+                }
+            }
+            if (!isHosterPageUrl(pageUrl)) await rangeSettle(settleHop);
+        } catch (error) {
+            esDebug('warn', 'deltabit range settle failed', { pageHost: safeHost(pageUrl), error: error?.message || String(error) });
+            break;
+        }
+    }
+
+    if (!isHosterPageUrl(pageUrl)) {
+        esDebug('warn', 'deltabit stopped before full GET because entry did not reach hoster', { pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl), attempt });
+        return null;
+    }
+
+    // 3) MammaMia step 2: full GET with safego referer (deltabit often re-redirects).
+    let response;
+    try {
+        response = await client.get(pageUrl, {
+            headers: pageHeaders(),
+            maxRedirects: 5,
+            responseType: 'text',
+            validateStatus: () => true
+        });
+        rememberDeltabitCookies(response);
+    } catch (error) {
+        esDebug('warn', 'deltabit full GET failed', { pageHost: safeHost(pageUrl), error: error?.message || String(error) });
+        return null;
+    }
+    const settled2 = finalResponseUrl(response, pageUrl);
+    if (settled2) pageUrl = settled2.replace(/%20/g, '');
+
+    let html = responseText(response);
+    if (!isHosterPageUrl(pageUrl)) {
+        const next = extractRedirectCandidate(html, pageUrl) || extractAnchorHref(html);
+        if (next && next !== pageUrl) {
+            pageUrl = next.replace(/%20/g, '');
+            try {
+                response = await client.get(pageUrl, {
+                    headers: pageHeaders(),
+                    maxRedirects: 5,
+                    responseType: 'text',
+                    validateStatus: () => true
+                });
+                rememberDeltabitCookies(response);
+                const settled3 = finalResponseUrl(response, pageUrl);
+                if (settled3) pageUrl = settled3.replace(/%20/g, '');
+                html = responseText(response);
+            } catch (_) { /* use previous response */ }
+        }
+    }
+
+    if (!isHosterPageUrl(pageUrl)) {
+        const chasedBeforePost = await chaseToHosterPage(client, pageUrl, referer || getBaseUrl(), options);
+        if (chasedBeforePost && isHosterPageUrl(chasedBeforePost)) {
+            pageUrl = chasedBeforePost;
+            try {
+                response = await client.get(pageUrl, {
+                    headers: pageHeaders(),
+                    maxRedirects: 5,
+                    responseType: 'text',
+                    validateStatus: () => true
+                });
+                rememberDeltabitCookies(response);
+                html = responseText(response);
+            } catch (_) { /* keep previous html */ }
+        }
+    }
+
+    if (!isHosterPageUrl(pageUrl)) {
+        esDebug('warn', 'deltabit stopped before form POST because page is not hoster', { pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl), attempt });
+        return null;
+    }
+
+    const origin = (() => { try { return new URL(pageUrl).origin; } catch (_) { return ''; } })();
+
+    const directSource = extractDeltabitSource(html, pageUrl);
+    const earlyFields = extractFormFieldsRaw(html);
+    if (directSource) {
+        return {
+            streamUrl: directSource,
+            pageUrl,
+            fileName: earlyFields.fname || 'DeltaBit',
+            headers: mergeCookieHeader({ Referer: pageUrl, Origin: origin, 'User-Agent': userAgent }, deltabitCookies)
+        };
+    }
+
+    // 4) Build the hidden-form payload exactly like MammaMia.
+    const fields = extractFormFieldsRaw(html);
+    if (!Object.keys(fields).length) {
+        esDebug('warn', 'deltabit page has no playable source and no form fields', { pageHost: safeHost(pageUrl), attempt });
+        if (attempt < getDeltabitMaxRetries(options)) return resolveDeltabitDirectStream(client, pageUrl, referer, options, attempt + 1);
+        return null;
+    }
+
+    const fileName = fields.fname || 'DeltaBit';
+    const payloads = buildDeltabitPostPayloads(fields, html, extractor, pageUrl, options);
+    esDebug('info', 'deltabit form prepared', {
+        pageHost: safeHost(pageUrl),
+        fieldKeys: Object.keys(fields).filter((key) => !/hash|token|sess|pass|key/i.test(key)).slice(0, 12),
+        submitCount: extractSubmitButtons(html).length,
+        payloads: payloads.map((payload) => payload.reason).slice(0, 7)
+    });
+
+    // 5) Mandatory wait or the POST returns no source (2.5s deltabit / 5s turbovid).
+    const waitMs = extractor === 'Turbovid' ? 5000 : getDeltabitWaitMs(options);
+    await delay(waitMs);
+
+    let source = null;
+    let lastStatus = null;
+    let lastPostError = null;
+    for (let postAttempt = 0; postAttempt < payloads.length; postAttempt += 1) {
+        const payload = payloads[postAttempt];
+        try {
+            response = await client.post(pageUrl, encodeFormBody(payload.data), {
+                headers: withDeltabitCookies({
+                    Origin: origin,
+                    Referer: pageUrl,
+                    'User-Agent': userAgent,
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
+                }),
+                maxRedirects: 5,
+                responseType: 'text',
+                validateStatus: () => true
+            });
+            rememberDeltabitCookies(response);
+            lastStatus = response?.status;
+            const postUrl = finalResponseUrl(response, pageUrl) || pageUrl;
+            source = extractDeltabitSource(responseText(response), postUrl);
+            if (source) {
+                esDebug('info', 'deltabit source extracted after post', { pageHost: safeHost(postUrl), postAttempt, payload: payload.reason });
+                break;
+            }
+            const next = extractRedirectCandidate(responseText(response), postUrl) || extractAnchorHref(responseText(response));
+            if (next && next !== postUrl && isHosterPageUrl(next)) {
+                const follow = await client.get(next, {
+                    headers: withDeltabitCookies({ Referer: postUrl, 'User-Agent': userAgent }),
+                    maxRedirects: 5,
+                    responseType: 'text',
+                    validateStatus: () => true
+                });
+                rememberDeltabitCookies(follow);
+                source = extractDeltabitSource(responseText(follow), finalResponseUrl(follow, next) || next);
+                if (source) {
+                    pageUrl = finalResponseUrl(follow, next) || next;
+                    esDebug('info', 'deltabit source extracted after follow-up', { pageHost: safeHost(pageUrl), postAttempt, payload: payload.reason });
+                    break;
+                }
+            }
+        } catch (error) {
+            lastPostError = error;
+            esDebug('warn', 'deltabit form POST failed', { pageHost: safeHost(pageUrl), postAttempt, payload: payload.reason, error: error?.message || String(error) });
+        }
+    }
+
+    if (!source) {
+        esDebug('warn', 'deltabit form POST returned no source', { pageHost: safeHost(pageUrl), attempt, status: lastStatus, error: lastPostError?.message });
+        if (attempt < getDeltabitMaxRetries(options)) return resolveDeltabitDirectStream(client, pageUrl, referer, options, attempt + 1);
+        return null;
+    }
+
+    return {
+        streamUrl: source,
+        pageUrl,
+        fileName,
+        headers: mergeCookieHeader({ Referer: pageUrl, Origin: origin, 'User-Agent': userAgent }, deltabitCookies)
+    };
 }
 
 function getDeltabitWaitMs(options = {}) {
@@ -594,80 +1363,34 @@ function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function resolveDeltabitDirectStream(client, href, referer, options = {}) {
-    if (!client || typeof client.get !== 'function' || typeof client.post !== 'function') return null;
-    let pageUrl = normalizeRemoteUrl(href);
-    if (!pageUrl) return null;
-
-    if (REDIRECTOR_RE.test(pageUrl)) {
-        const resolved = await resolveRedirectLink(client, pageUrl, referer || getBaseUrl(), options);
-        if (resolved && resolved !== pageUrl) pageUrl = resolved;
-    }
-
-    if (!pageUrl || REDIRECTOR_RE.test(pageUrl) || !isDeltabitLikeUrl(pageUrl)) return null;
-
-    const userAgent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
-    const warmHeaders = {
-        Referer: 'https://safego.cc/',
-        'User-Agent': userAgent,
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
-    };
-
-    let response = await client.get(pageUrl, {
-        headers: warmHeaders,
-        maxRedirects: 5,
-        responseType: 'text',
-        validateStatus: () => true
+function withTimeout(promise, ms, label = 'operation') {
+    const timeoutMs = Number.parseInt(String(ms || 0), 10);
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`TIMEOUT: ${label} exceeded ${timeoutMs}ms`)), timeoutMs);
     });
+    return Promise.race([promise, timeout]).finally(() => { if (timer) clearTimeout(timer); });
+}
 
-    const finalUrl = finalResponseUrl(response, pageUrl);
-    if (finalUrl) pageUrl = finalUrl;
+function envInt(name, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
+    const raw = process.env[name];
+    const value = Number.parseInt(String(raw ?? fallback), 10);
+    if (!Number.isFinite(value)) return fallback;
+    return Math.max(min, Math.min(max, value));
+}
 
-    const html = responseText(response);
-    const fields = extractFormFields(html);
-    const directSource = extractDeltabitSource(html, pageUrl);
-    const origin = (() => { try { return new URL(pageUrl).origin; } catch (_) { return ''; } })();
-    if (directSource) {
-        return {
-            streamUrl: directSource,
-            pageUrl,
-            fileName: fields.fname || 'DeltaBit',
-            headers: { Referer: pageUrl, Origin: origin, 'User-Agent': userAgent }
-        };
-    }
+function getHostResolveTimeoutMs(host) {
+    if (host === 'deltabit') return envInt('ES_DELTABIT_HOST_TIMEOUT_MS', 10000, 1000, 20000);
+    if (host === 'maxstream') return envInt('ES_MAXSTREAM_HOST_TIMEOUT_MS', 4500, 1000, 15000);
+    if (host === 'mixdrop') return envInt('ES_MIXDROP_HOST_TIMEOUT_MS', 4500, 1000, 15000);
+    return envInt('ES_HOST_TIMEOUT_MS', 5000, 1000, 20000);
+}
 
-    if (!Object.keys(fields).length) return null;
-
-    const data = {
-        ...fields,
-        imhuman: options.deltabitImhuman ?? '',
-        referer: pageUrl
-    };
-
-    await delay(getDeltabitWaitMs(options));
-
-    response = await client.post(pageUrl, data, {
-        headers: {
-            Origin: origin,
-            Referer: pageUrl,
-            'User-Agent': userAgent,
-            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-        },
-        maxRedirects: 5,
-        responseType: 'text',
-        validateStatus: () => true
-    });
-
-    const source = extractDeltabitSource(responseText(response), pageUrl);
-    if (!source) return null;
-
-    return {
-        streamUrl: source,
-        pageUrl,
-        fileName: data.fname || 'DeltaBit',
-        headers: { Referer: pageUrl, Origin: origin, 'User-Agent': userAgent }
-    };
+function getDeltabitMaxRetries(options = {}) {
+    const raw = options.deltabitMaxRetries ?? process.env.ES_DELTABIT_MAX_RETRIES ?? '1';
+    const value = Number.parseInt(String(raw), 10);
+    return Number.isFinite(value) ? Math.max(0, Math.min(value, 2)) : 1;
 }
 
 function streamPriority(label) {
@@ -677,7 +1400,34 @@ function streamPriority(label) {
     return 9;
 }
 
-function buildDirectExtractorStream({ targetUrl, label, title, language, headers = null, fileName = '' }) {
+
+function isHlsStreamUrl(value) {
+    return /\.m3u8(?:$|[?#])/i.test(String(value || ''));
+}
+
+function buildMfpProxyUrl(config = {}, targetUrl, headers = {}, { isHls = false } = {}) {
+    const mfpBase = String(config?.mediaflow?.url || '').trim().replace(/\/+$/, '');
+    const normalizedTarget = normalizeRemoteUrl(targetUrl);
+    if (!mfpBase || !normalizedTarget) return null;
+
+    const pass = String(config?.mediaflow?.pass || process.env.MEDIAFLOW_API_PASSWORD || process.env.MEDIAFLOW_PASS || process.env.MEDIAFLOW_PROXY_PASSWORD || process.env.MFP_API_PASSWORD || '').trim();
+    const params = new URLSearchParams();
+    params.set('d', normalizedTarget);
+    if (pass) params.set('api_password', pass);
+
+    const allowedHeaders = ['Referer', 'Origin', 'Cookie', 'User-Agent'];
+    for (const headerName of allowedHeaders) {
+        const value = headers?.[headerName] || headers?.[headerName.toLowerCase()];
+        if (!value) continue;
+        if (headerName === 'Cookie' && !envFlag('ES_DELTABIT_PROXY_COOKIE', true)) continue;
+        params.set(`h_${headerName}`, String(value));
+    }
+
+    const path = isHls ? '/proxy/hls/manifest.m3u8' : '/proxy/stream';
+    return `${mfpBase}${path}?${params.toString()}`;
+}
+
+function buildDirectExtractorStream({ targetUrl, label, title, language, headers = null, fileName = '', mediaflowUrl = null, via = 'direct' }) {
     return buildWebStream({
         name: `🌍 ${PROVIDER} | ${label}`,
         title: `${title}\n☁️ ${label} • ${language === 'SUB-ITA' ? '🇮🇹 SUB-ITA' : '🇮🇹 ITA'}${fileName ? `\n${fileName}` : ''}`,
@@ -687,25 +1437,55 @@ function buildDirectExtractorStream({ targetUrl, label, title, language, headers
         providerCode: PROVIDER_CODE,
         quality: 'HD',
         headers,
-        mediaflowUrl: null,
+        mediaflowUrl,
         notWebReady: false,
         extraBehaviorHints: {
             bingeWatching: true,
             vortexMeta: {
                 language,
                 audioLanguages: language === 'SUB-ITA' ? [] : ['ita'],
-                subtitleLanguages: language === 'SUB-ITA' ? ['ita'] : []
+                subtitleLanguages: language === 'SUB-ITA' ? ['ita'] : [],
+                via
             }
         },
         extra: { _priority: streamPriority(label) }
     });
 }
 
-function buildMfpExtractorStream({ config, targetUrl, host, label, title, language }) {
+
+function buildDeltabitMfpStream({ config, targetUrl, title, language, via = 'deltabit-mfp' }) {
+    if (!targetUrl || !config?.mediaflow?.url) return null;
+    return buildMfpExtractorStream({
+        config,
+        targetUrl,
+        host: getDeltabitMfpHost(),
+        label: 'DeltaBit',
+        title,
+        language,
+        via,
+        mediaflowOptions: {
+            extractorPath: getDeltabitMfpPath(),
+            redirectStream: envFlag('EUROSTREAMING_DELTABIT_MFP_REDIRECT_STREAM', false)
+        },
+        streamKind: 'video'
+    });
+}
+
+function buildMfpExtractorStream({ config, targetUrl, host, label, title, language, via = 'mfp', mediaflowOptions = null, streamKind = 'video' }) {
     if (!config?.mediaflow?.url) return null;
-    const mfpUrl = buildMediaflowUrl(config, targetUrl, 'extractor', host);
+    const mfpUrl = buildMediaflowUrl(config, targetUrl, 'extractor', host, mediaflowOptions || {});
     if (!mfpUrl || mfpUrl === targetUrl) return null;
 
+    esDebug('info', 'mfp extractor stream built', {
+        label,
+        host,
+        via,
+        targetHost: safeHost(targetUrl),
+        targetPath: safePath(targetUrl),
+        mfpPath: safePath(mfpUrl),
+        redirectStream: /[?&]redirect_stream=true(?:&|$)/i.test(mfpUrl),
+        streamKind
+    });
     return buildWebStream({
         name: `🌍 ${PROVIDER} | ${label}`,
         title: `${title}\n☁️ ${label} • ${language === 'SUB-ITA' ? '🇮🇹 SUB-ITA' : '🇮🇹 ITA'}`,
@@ -722,7 +1502,9 @@ function buildMfpExtractorStream({ config, targetUrl, host, label, title, langua
             vortexMeta: {
                 language,
                 audioLanguages: language === 'SUB-ITA' ? [] : ['ita'],
-                subtitleLanguages: language === 'SUB-ITA' ? ['ita'] : []
+                subtitleLanguages: language === 'SUB-ITA' ? ['ita'] : [],
+                via,
+                streamKind
             }
         },
         extra: { _priority: streamPriority(label) }
@@ -732,16 +1514,76 @@ function buildMfpExtractorStream({ config, targetUrl, host, label, title, langua
 async function buildHostStream(link, context) {
     const { client, config, title, language, options } = context;
     if (link.host === 'deltabit') {
-        const resolved = await resolveDeltabitDirectStream(client, link.href, options?.baseUrl || getBaseUrl(), options);
-        if (!resolved?.streamUrl) return null;
-        return buildDirectExtractorStream({
-            targetUrl: resolved.streamUrl,
-            label: 'DeltaBit',
-            title,
-            language,
-            headers: resolved.headers,
-            fileName: resolved.fileName
-        });
+        let targetUrl = normalizeRemoteUrl(link.href);
+
+        // DeltaBit often needs the same network path/proxy used by Kraken/MFP. Resolve only the
+        // Eurostreaming/Safego/Clicka wrapper first, then hand the real DeltaBit page to Kraken.
+        let mfpTargetUrl = targetUrl;
+        if (mfpTargetUrl && !isHosterPageUrl(mfpTargetUrl)) {
+            const chased = await chaseToHosterPage(client, mfpTargetUrl, options?.baseUrl || getBaseUrl(), options);
+            if (chased) mfpTargetUrl = chased;
+        }
+        if (mfpTargetUrl && config?.mediaflow?.url && isDeltabitMfpFallbackEnabled() && isDeltabitMfpFirstEnabled()) {
+            const stream = buildDeltabitMfpStream({ config, targetUrl: mfpTargetUrl, title, language, via: 'deltabit-mfp-first' });
+            if (stream) {
+                esDebug('info', 'deltabit sent to MFP/Kraken first', { hrefHost: safeHost(link.href), targetHost: safeHost(mfpTargetUrl), targetPath: safePath(mfpTargetUrl), host: getDeltabitMfpHost(), path: getDeltabitMfpPath() });
+                return stream;
+            }
+        }
+
+        const resolved = await resolveDeltabitDirectStream(client, targetUrl, options?.baseUrl || getBaseUrl(), options);
+        if (resolved?.streamUrl) {
+            const isHls = isHlsStreamUrl(resolved.streamUrl);
+            const shouldProxyExtracted = envFlag('EUROSTREAMING_DELTABIT_PROXY_EXTRACTED', true);
+            if (config?.mediaflow?.url && shouldProxyExtracted) {
+                const mfpProxyUrl = buildMfpProxyUrl(config, resolved.streamUrl, resolved.headers || {}, { isHls });
+                if (mfpProxyUrl && mfpProxyUrl !== resolved.streamUrl) {
+                    esDebug('info', 'deltabit source proxied via MFP/Kraken', {
+                        sourceHost: safeHost(resolved.streamUrl),
+                        sourcePath: safePath(resolved.streamUrl),
+                        proxyPath: safePath(mfpProxyUrl),
+                        isHls,
+                        hasCookie: Boolean((resolved.headers || {}).Cookie || (resolved.headers || {}).cookie)
+                    });
+                    return buildDirectExtractorStream({
+                        targetUrl: mfpProxyUrl,
+                        label: 'DeltaBit',
+                        title,
+                        language,
+                        headers: null,
+                        fileName: resolved.fileName,
+                        mediaflowUrl: config.mediaflow.url,
+                        via: isHls ? 'deltabit-mfp-proxy-hls' : 'deltabit-mfp-proxy-stream'
+                    });
+                }
+            }
+
+            // Last resort: direct source. Keep headers optional because Android sometimes
+            // switches to LibVLC for header-heavy URLs; the proxied path above is preferred.
+            return buildDirectExtractorStream({
+                targetUrl: resolved.streamUrl,
+                label: 'DeltaBit',
+                title,
+                language,
+                headers: envFlag('ES_DELTABIT_DIRECT_HEADERS', false) ? resolved.headers : null,
+                fileName: resolved.fileName,
+                via: 'deltabit-direct'
+            });
+        }
+
+        if (targetUrl && REDIRECTOR_RE.test(targetUrl)) {
+            const redirected = await resolveRedirectLink(client, targetUrl, options?.baseUrl || getBaseUrl(), options);
+            if (redirected && redirected !== targetUrl) targetUrl = redirected;
+        }
+
+        if (targetUrl && config?.mediaflow?.url && isDeltabitMfpFallbackEnabled()) {
+            esDebug('warn', 'deltabit direct resolve failed; using MFP/Kraken fallback', { hrefHost: safeHost(link.href), targetHost: safeHost(targetUrl), targetPath: safePath(targetUrl), host: getDeltabitMfpHost(), path: getDeltabitMfpPath() });
+            return buildDeltabitMfpStream({ config, targetUrl, title, language, via: 'deltabit-fallback' });
+        }
+        if (targetUrl && config?.mediaflow?.url) {
+            esDebug('warn', 'deltabit direct resolve failed; MFP fallback disabled by env', { hrefHost: safeHost(link.href), targetHost: safeHost(targetUrl) });
+        }
+        return null;
     }
 
     if (link.host === 'mixdrop') {
@@ -750,22 +1592,61 @@ async function buildHostStream(link, context) {
             targetUrl = await resolveRedirectLink(client, targetUrl, options?.baseUrl || getBaseUrl(), options);
         }
         if (!targetUrl || !isMixdropUrl(targetUrl)) return null;
-        return buildMfpExtractorStream({ config, targetUrl, host: 'Mixdrop', label: 'MixDrop', title, language });
+        const normalizedMixdrop = normalizeMixdropForExtractor(targetUrl);
+        if (!normalizedMixdrop) return null;
+        if (normalizedMixdrop !== targetUrl) {
+            esDebug('info', 'mixdrop canonicalized for MFP', { fromPath: safePath(targetUrl), toPath: safePath(normalizedMixdrop), host: safeHost(normalizedMixdrop) });
+        }
+        return buildMfpExtractorStream({
+            config,
+            targetUrl: normalizedMixdrop,
+            host: 'Mixdrop',
+            label: 'MixDrop',
+            title,
+            language,
+            mediaflowOptions: { redirectStream: envFlag('EUROSTREAMING_MIXDROP_REDIRECT_STREAM', false) },
+            streamKind: 'video'
+        });
     }
 
     if (link.host === 'maxstream') {
         let targetUrl = normalizeRemoteUrl(link.href);
+        if (targetUrl && REDIRECTOR_RE.test(targetUrl)) {
+            const redirected = await resolveRedirectLink(client, targetUrl, options?.baseUrl || getBaseUrl(), options);
+            if (redirected && redirected !== targetUrl) targetUrl = redirected;
+        }
+
         const originalUprotUrl = isUprotUrl(targetUrl) ? targetUrl : null;
         if (originalUprotUrl) {
             const resolved = await resolveUprotToMaxstream(client, targetUrl, options);
             targetUrl = resolved?.playerUrl || null;
             if (!targetUrl && config?.mediaflow?.url) {
                 esDebug('warn', 'uprot local resolve failed; using MFP fallback', { hrefHost: safeHost(originalUprotUrl) });
-                return buildMfpExtractorStream({ config, targetUrl: originalUprotUrl, host: 'Maxstream', label: 'MaxStream', title, language });
+                return buildMfpExtractorStream({
+                    config,
+                    targetUrl: originalUprotUrl,
+                    host: 'Maxstream',
+                    label: 'MaxStream',
+                    title,
+                    language,
+                    via: 'uprot-fallback',
+                    mediaflowOptions: { extractorPath: getMaxstreamMfpPath(), redirectStream: getMaxstreamRedirectStream() },
+                    streamKind: 'hls'
+                });
             }
         }
         if (!targetUrl || !isMaxstreamLikeUrl(targetUrl)) return null;
-        return buildMfpExtractorStream({ config, targetUrl, host: 'Maxstream', label: 'MaxStream', title, language });
+        return buildMfpExtractorStream({
+            config,
+            targetUrl,
+            host: 'Maxstream',
+            label: 'MaxStream',
+            title,
+            language,
+            via: originalUprotUrl ? 'uprot-local' : 'maxstream',
+            mediaflowOptions: { extractorPath: getMaxstreamMfpPath(), redirectStream: getMaxstreamRedirectStream() },
+            streamKind: 'hls'
+        });
     }
 
     return null;
@@ -871,6 +1752,10 @@ function safeHost(value) {
     try { return new URL(String(value || '')).hostname; } catch (_) { return ''; }
 }
 
+function safePath(value) {
+    try { return new URL(String(value || '')).pathname; } catch (_) { return ''; }
+}
+
 async function appendStreamsFromPost(post, context) {
     const { client, config, title, expectedYear, season, episode, reqHost, options, streams, seen, source } = context;
     const postTitle = post?.title?.rendered || post?.title || '';
@@ -887,32 +1772,39 @@ async function appendStreamsFromPost(post, context) {
     for (const block of blocks) {
         const links = pickHostLinks(block.html);
         esDebug('info', 'episode block links', { source, language: block.language, links: links.map((link) => link.label || link.host) });
-        for (const link of links) {
+        const resolveAll = String(options?.resolveAllHosts ?? process.env.ES_RESOLVE_ALL_HOSTS ?? 'true').toLowerCase() === 'true';
+        const linksToResolve = resolveAll ? links : links.slice(0, 1);
+        const tasks = linksToResolve.map(async (link) => {
             try {
-                const stream = await buildHostStream(link, {
+                const timeoutMs = getHostResolveTimeoutMs(link?.host);
+                const stream = await withTimeout(buildHostStream(link, {
                     client,
                     config,
                     title: `${title} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`,
                     language: block.language,
                     reqHost,
                     options
-                });
-                const key = stream?.url;
-                if (!key) {
-                    esDebug('warn', 'host stream returned null', { source, host: link?.host, label: link?.label, hrefHost: safeHost(link?.href) });
-                    continue;
-                }
-                if (seen.has(key)) continue;
-                seen.add(key);
-                streams.push(stream);
-                // Faster Eurostreaming resolution: if a lightweight clicka/safego
-                // host resolved, do not spend the remaining provider budget on UPROT.
-                // Set ES_RESOLVE_ALL_HOSTS=true to collect every available host.
-                const resolveAll = String(options?.resolveAllHosts ?? process.env.ES_RESOLVE_ALL_HOSTS ?? 'false').toLowerCase() === 'true';
-                if (!resolveAll && (link?.host === 'deltabit' || link?.host === 'mixdrop')) break;
+                }), timeoutMs, `Eurostreaming ${link?.label || link?.host || 'host'}`);
+                return { link, stream };
             } catch (error) {
                 esDebug('warn', 'host stream failed', { source, host: link?.host, label: link?.label, error: error?.message || String(error) });
+                return { link, stream: null };
             }
+        });
+
+        const results = await Promise.allSettled(tasks);
+        for (const result of results) {
+            const value = result.status === 'fulfilled' ? result.value : null;
+            const link = value?.link;
+            const stream = value?.stream;
+            const key = stream?.url;
+            if (!key) {
+                esDebug('warn', 'host stream returned null', { source, host: link?.host, label: link?.label, hrefHost: safeHost(link?.href) });
+                continue;
+            }
+            if (seen.has(key)) continue;
+            seen.add(key);
+            streams.push(stream);
         }
     }
 
