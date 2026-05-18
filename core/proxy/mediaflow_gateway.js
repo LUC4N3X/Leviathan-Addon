@@ -1,14 +1,5 @@
 'use strict';
 
-/**
- * Central builder for MediaFlow/Kraken URLs.
- *
- * The module deliberately only builds URLs. It does not fetch, probe or mutate
- * stream objects, so wiring providers to it is low-risk: existing extractors keep
- * their own resolution/playback logic, while the proxy URL policy lives in one
- * place.
- */
-
 function normalizeRemoteUrl(rawUrl, baseUrl = null) {
     let value = String(rawUrl || '').trim().replace(/&amp;/g, '&').replace(/\\\//g, '/');
     if (!value || value.startsWith('data:')) return null;
@@ -60,9 +51,6 @@ function boolString(value, fallback = true) {
 function defaultExtractorPath(host = '', options = {}) {
     const hostName = String(host || '').trim().toLowerCase();
 
-    // HARD rollback for this Kraken/MFP instance: MaxStream/UPROT must never use
-    // /extractor/video.m3u8. Put this before explicit options/env so a stale
-    // caller cannot override it.
     if (/maxstream|uprot/i.test(hostName)) return normalizeExtractorPath('/extractor/video');
 
     if (options?.extractorPath) return normalizeExtractorPath(options.extractorPath);
@@ -132,11 +120,6 @@ function buildExtractorUrl(config = {}, targetUrl, host = 'Mixdrop', options = {
     const normalizedTarget = normalizeRemoteUrl(targetUrl);
     if (!base || !normalizedTarget) return normalizedTarget;
 
-    // Compatibility note: the old provider builders used encodeURIComponent()
-    // manually for extractor URLs. URLSearchParams encodes spaces as '+', and
-    // some MediaFlow/Kraken deployments parse extractor query strings more
-    // strictly. Keep the legacy encoding here so MixDrop/MaxStream URLs remain
-    // byte-for-byte compatible with the pre-gateway behavior.
     const parts = [];
     appendParam(parts, 'host', String(host || 'Mixdrop'));
     const pass = getMediaflowPassword(config);
