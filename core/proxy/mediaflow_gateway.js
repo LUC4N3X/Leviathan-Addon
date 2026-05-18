@@ -1,0 +1,220 @@
+'use strict';
+
+/**
+ * Central builder for MediaFlow/Kraken URLs.
+ *
+ * The module deliberately only builds URLs. It does not fetch, probe or mutate
+ * stream objects, so wiring providers to it is low-risk: existing extractors keep
+ * their own resolution/playback logic, while the proxy URL policy lives in one
+ * place.
+ */
+
+function normalizeRemoteUrl(rawUrl, baseUrl = null) {
+    let value = String(rawUrl || '').trim().replace(/&amp;/g, '&').replace(/\\\//g, '/');
+    if (!value || value.startsWith('data:')) return null;
+
+    try {
+        if (value.startsWith('//')) return `https:${value}`;
+        if (/^https?:\/\//i.test(value)) return new URL(value).toString();
+        if (baseUrl) return new URL(value, baseUrl).toString();
+    } catch (_) {
+        return null;
+    }
+
+    return null;
+}
+
+function trimBaseUrl(value) {
+    return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function getMediaflowBase(config = {}) {
+    return trimBaseUrl(config?.mediaflow?.url || config?.mfp?.url || config?.kraken?.url || '');
+}
+
+function getMediaflowPassword(config = {}) {
+    return String(
+        config?.mediaflow?.pass
+        || config?.mfp?.pass
+        || config?.kraken?.pass
+        || process.env.MEDIAFLOW_API_PASSWORD
+        || process.env.MEDIAFLOW_PASS
+        || process.env.MEDIAFLOW_PROXY_PASSWORD
+        || process.env.MFP_API_PASSWORD
+        || ''
+    ).trim();
+}
+
+function normalizeExtractorPath(rawPath, fallback = '/extractor/video') {
+    const raw = String(rawPath || fallback).trim();
+    const path = raw.startsWith('/') ? raw : `/${raw}`;
+    return path.includes('/extractor/video') ? path : fallback;
+}
+
+function boolString(value, fallback = true) {
+    if (value === undefined || value === null || value === '') return fallback ? 'true' : 'false';
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    return /^(?:1|true|yes|on)$/i.test(String(value).trim()) ? 'true' : 'false';
+}
+
+function defaultExtractorPath(host = '', options = {}) {
+    const hostName = String(host || '').trim().toLowerCase();
+
+    // HARD rollback for this Kraken/MFP instance: MaxStream/UPROT must never use
+    // /extractor/video.m3u8. Put this before explicit options/env so a stale
+    // caller cannot override it.
+    if (/maxstream|uprot/i.test(hostName)) return normalizeExtractorPath('/extractor/video');
+
+    if (options?.extractorPath) return normalizeExtractorPath(options.extractorPath);
+
+    const hlsHosts = String(process.env.MEDIAFLOW_EXTRACTOR_HLS_HOSTS || '').toLowerCase()
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+    if (hlsHosts.some((item) => hostName.includes(item))) {
+        return normalizeExtractorPath(process.env.MEDIAFLOW_EXTRACTOR_HLS_PATH || '/extractor/video.m3u8');
+    }
+
+    return normalizeExtractorPath(process.env.MEDIAFLOW_EXTRACTOR_PATH || '/extractor/video');
+}
+
+function defaultRedirectStream(host = '', options = {}) {
+    if (options?.redirectStream !== undefined) return boolString(options.redirectStream, true);
+
+    const hostName = String(host || '').trim().toLowerCase();
+    if (/maxstream|uprot/i.test(hostName)) return 'true';
+
+    return boolString(process.env.MEDIAFLOW_REDIRECT_STREAM || 'true', true);
+}
+
+
+function enc(value) {
+    return encodeURIComponent(String(value ?? ''));
+}
+
+function appendParam(parts, key, value) {
+    if (value === undefined || value === null || value === '') return;
+    parts.push(`${enc(key)}=${enc(value)}`);
+}
+
+function addPassword(params, config = {}) {
+    const pass = getMediaflowPassword(config);
+    if (pass) params.set('api_password', pass);
+}
+
+function extractorHeaderParamName(name) {
+    const key = String(name || '').trim().toLowerCase();
+    if (!key) return '';
+    if (key === 'referer' || key === 'referrer') return 'h_referer';
+    if (key === 'origin') return 'h_origin';
+    if (key === 'user-agent' || key === 'useragent') return 'h_user-agent';
+    if (key === 'cookie') return 'h_cookie';
+    return `h_${key}`;
+}
+
+function appendExtractorExtras(parts, options = {}) {
+    const headers = options?.headers || options?.requestHeaders || {};
+    for (const [name, value] of Object.entries(headers)) {
+        const paramName = extractorHeaderParamName(name);
+        if (!paramName || value === undefined || value === null || value === '') continue;
+        appendParam(parts, paramName, value);
+    }
+
+    const extraParams = options?.extraParams || options?.params || {};
+    for (const [name, value] of Object.entries(extraParams)) {
+        if (!name || value === undefined || value === null || value === '') continue;
+        appendParam(parts, name, value);
+    }
+}
+
+function buildExtractorUrl(config = {}, targetUrl, host = 'Mixdrop', options = {}) {
+    const base = getMediaflowBase(config);
+    const normalizedTarget = normalizeRemoteUrl(targetUrl);
+    if (!base || !normalizedTarget) return normalizedTarget;
+
+    // Compatibility note: the old provider builders used encodeURIComponent()
+    // manually for extractor URLs. URLSearchParams encodes spaces as '+', and
+    // some MediaFlow/Kraken deployments parse extractor query strings more
+    // strictly. Keep the legacy encoding here so MixDrop/MaxStream URLs remain
+    // byte-for-byte compatible with the pre-gateway behavior.
+    const parts = [];
+    appendParam(parts, 'host', String(host || 'Mixdrop'));
+    const pass = getMediaflowPassword(config);
+    if (pass) appendParam(parts, 'api_password', pass);
+    appendParam(parts, 'd', normalizedTarget);
+    appendParam(parts, 'redirect_stream', defaultRedirectStream(host, options));
+    appendExtractorExtras(parts, options);
+
+    return `${base}${defaultExtractorPath(host, options)}?${parts.join('&')}`;
+}
+
+function buildHlsUrl(config = {}, targetUrl) {
+    const base = getMediaflowBase(config);
+    const normalizedTarget = normalizeRemoteUrl(targetUrl);
+    if (!base || !normalizedTarget) return normalizedTarget;
+
+    const params = new URLSearchParams();
+    params.set('url', normalizedTarget);
+    addPassword(params, config);
+    params.set('ext', '.m3u8');
+    return `${base}/hls?${params.toString()}`;
+}
+
+function normalizeHeaderName(name) {
+    const key = String(name || '').trim().toLowerCase();
+    if (key === 'referer' || key === 'referrer') return 'Referer';
+    if (key === 'origin') return 'Origin';
+    if (key === 'cookie') return 'Cookie';
+    if (key === 'user-agent' || key === 'useragent') return 'User-Agent';
+    return '';
+}
+
+function buildProxyUrl(config = {}, targetUrl, headers = {}, options = {}) {
+    const base = getMediaflowBase(config);
+    const normalizedTarget = normalizeRemoteUrl(targetUrl);
+    if (!base || !normalizedTarget) return normalizedTarget;
+
+    const params = new URLSearchParams();
+    params.set('d', normalizedTarget);
+    addPassword(params, config);
+
+    const allowCookie = options.allowCookie !== false;
+    for (const [rawName, rawValue] of Object.entries(headers || {})) {
+        const name = normalizeHeaderName(rawName);
+        if (!name || !rawValue) continue;
+        if (name === 'Cookie' && !allowCookie) continue;
+        params.set(`h_${name}`, String(rawValue));
+    }
+
+    const path = options.isHls ? '/proxy/hls/manifest.m3u8' : '/proxy/stream';
+    return `${base}${path}?${params.toString()}`;
+}
+
+function buildMediaflowUrl(config, targetUrl, type = 'hls', host = 'Mixdrop', options = {}) {
+    if (type === 'extractor') return buildExtractorUrl(config, targetUrl, host, options);
+    return buildHlsUrl(config, targetUrl);
+}
+
+function createMediaflowGateway(config = {}) {
+    return {
+        isConfigured: Boolean(getMediaflowBase(config)),
+        baseUrl: getMediaflowBase(config),
+        buildExtractorUrl: (targetUrl, host = 'Mixdrop', options = {}) => buildExtractorUrl(config, targetUrl, host, options),
+        buildHlsUrl: (targetUrl) => buildHlsUrl(config, targetUrl),
+        buildProxyUrl: (targetUrl, headers = {}, options = {}) => buildProxyUrl(config, targetUrl, headers, options),
+        buildMediaflowUrl: (targetUrl, type = 'hls', host = 'Mixdrop', options = {}) => buildMediaflowUrl(config, targetUrl, type, host, options)
+    };
+}
+
+module.exports = {
+    buildExtractorUrl,
+    buildHlsUrl,
+    buildMediaflowUrl,
+    buildProxyUrl,
+    createMediaflowGateway,
+    defaultExtractorPath,
+    defaultRedirectStream,
+    getMediaflowBase,
+    getMediaflowPassword,
+    normalizeRemoteUrl
+};

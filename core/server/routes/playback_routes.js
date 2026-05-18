@@ -7,6 +7,10 @@ const RD = require('../../debrid/rd/clients/realdebrid_client');
 const TB = require('../../debrid/tb/clients/torbox_client');
 const { registerLazyExtractionRoute } = require('../../../providers/extractors/lazy_extraction');
 const { buildContentProxyUrlFromRequest, shouldProxyContentUrl } = require('../../proxy/content_proxy_engine');
+const {
+    buildProxyUrl: buildMediaflowGatewayProxyUrl,
+    getMediaflowBase
+} = require('../../proxy/mediaflow_gateway');
 const TorrentInfoLedger = require('../../torrent/torrent_info_ledger');
 
 const savedCloudResolveInflight = new Map();
@@ -143,12 +147,12 @@ function registerPlaybackRoutes(app, {
     }
 
     function maybeMediaflowUrl(targetUrl, config) {
-        if (!targetUrl || !(config.mediaflow && config.mediaflow.proxyDebrid && config.mediaflow.url)) return targetUrl;
+        if (!targetUrl || !(config.mediaflow && config.mediaflow.proxyDebrid && getMediaflowBase(config))) return targetUrl;
         try {
-            const mfpBase = config.mediaflow.url.replace(/\/$/, '');
-            let finalUrl = `${mfpBase}/proxy/stream?d=${encodeURIComponent(targetUrl)}`;
-            if (config.mediaflow.pass) finalUrl += `&api_password=${encodeURIComponent(config.mediaflow.pass)}`;
-            return finalUrl;
+            return buildMediaflowGatewayProxyUrl(config, targetUrl, {}, {
+                isHls: false,
+                allowCookie: false
+            }) || targetUrl;
         } catch (_) {
             return targetUrl;
         }
