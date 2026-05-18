@@ -53,7 +53,26 @@ function unpackDeanEdwards(html) {
 function normalizeMixdropUrl(url) {
     const absolute = normalizeRemoteUrl(url);
     if (!absolute || !isMixdropUrl(absolute)) return null;
-    return absolute.replace('/f/', '/e/');
+    try {
+        const parsed = new URL(absolute);
+        const parts = parsed.pathname.split('/').filter(Boolean);
+        const fileId = parts.length >= 2 && /^(?:e|emb|embed|f|file|watch|video)$/i.test(parts[0])
+            ? parts[1]
+            : parts.length === 1 ? parts[0] : '';
+        if (fileId) {
+            parsed.pathname = `/e/${fileId}`;
+            parsed.search = '';
+            parsed.hash = '';
+            return parsed.toString();
+        }
+    } catch (_) {}
+    return absolute
+        .replace('/emb/', '/e/')
+        .replace('/embed/', '/e/')
+        .replace('/f/', '/e/')
+        .replace('/file/', '/e/')
+        .replace('/watch/', '/e/')
+        .replace('/video/', '/e/');
 }
 
 function buildMixdropHeaders(embedUrl, userAgent) {

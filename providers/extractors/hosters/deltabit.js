@@ -100,7 +100,7 @@ async function sleep(ms) {
 
 async function resolveRedirectors(client, initialUrl, options = {}) {
     const userAgent = options?.userAgent || DEFAULT_USER_AGENT;
-    const referer = options?.requestReferer || options?.referer || 'https://eurostreamings.help/';
+    const referer = options?.requestReferer || options?.referer || 'https://safego.cc/';
     let targetUrl = initialUrl;
 
     for (let attempt = 0; attempt < Number(options?.redirectHops || 3); attempt += 1) {
@@ -138,7 +138,7 @@ async function extractDeltabit(url, options = {}) {
     if (!normalized || !client || typeof client.get !== 'function') return null;
 
     const userAgent = options?.userAgent || DEFAULT_USER_AGENT;
-    const referer = options?.requestReferer || options?.referer || 'https://eurostreamings.help/';
+    const referer = options?.requestReferer || options?.referer || 'https://safego.cc/';
 
     try {
         const targetUrl = await resolveRedirectors(client, normalized, { ...options, userAgent, referer });
@@ -181,8 +181,9 @@ async function extractDeltabit(url, options = {}) {
             };
         }
         if (options?.deltabitCaptchaCode) form.set('code', String(options.deltabitCaptchaCode));
+        if (!form.has('imhuman')) form.set('imhuman', '');
 
-        await sleep(Number(options?.deltabitWaitMs ?? 3500));
+        await sleep(Number(options?.deltabitWaitMs ?? 2500));
 
         const postHeaders = {
             ...pageHeaders,
