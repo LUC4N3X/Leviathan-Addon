@@ -228,7 +228,67 @@ function buildWebStream({
     };
 }
 
-function buildMediaflowUrl(config, targetUrl, type = 'hls', host = 'Mixdrop') {
+function getMediaflowPassword(config = {}) {
+    return String(
+        config?.mediaflow?.pass
+        || process.env.MEDIAFLOW_API_PASSWORD
+        || process.env.MEDIAFLOW_PASS
+        || process.env.MEDIAFLOW_PROXY_PASSWORD
+        || process.env.MFP_API_PASSWORD
+        || ''
+    ).trim();
+}
+
+function normalizeExtractorPath(rawPath, fallback = '/extractor/video') {
+    const raw = String(rawPath || fallback).trim();
+    const path = raw.startsWith('/') ? raw : `/${raw}`;
+    return path.includes('/extractor/video') ? path : fallback;
+}
+
+function getMediaflowExtractorPath(host = '', options = {}) {
+    const explicitPath = options?.extractorPath || '';
+    if (explicitPath) return normalizeExtractorPath(explicitPath);
+
+    const hostName = String(host || '').trim().toLowerCase();
+
+    // Hardcoded safety for Android/Stremio: MaxStream/UPROT must be exposed
+    // through MediaFlow's HLS-looking extractor endpoint even if docker envs
+    // are stale or missing.
+    if (/maxstream|uprot/i.test(hostName)) {
+        return normalizeExtractorPath('/extractor/video.m3u8');
+    }
+
+    const hlsHosts = String(process.env.MEDIAFLOW_EXTRACTOR_HLS_HOSTS || '').toLowerCase()
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+    const wantsHlsPath = hlsHosts.some((item) => hostName.includes(item));
+
+    if (wantsHlsPath) {
+        return normalizeExtractorPath(process.env.MEDIAFLOW_EXTRACTOR_HLS_PATH || '/extractor/video.m3u8');
+    }
+
+    return normalizeExtractorPath(process.env.MEDIAFLOW_EXTRACTOR_PATH || '/extractor/video');
+}
+
+function getMediaflowRedirectStream(host = '', options = {}) {
+    if (options?.redirectStream !== undefined) {
+        return options.redirectStream ? 'true' : 'false';
+    }
+
+    const hostName = String(host || '').trim().toLowerCase();
+
+    // Hardcoded safety for Android/Stremio: MaxStream/UPROT should keep
+    // redirect_stream=true by default. No docker env needed.
+    if (/maxstream|uprot/i.test(hostName)) {
+        return 'true';
+    }
+
+    const raw = String(process.env.MEDIAFLOW_REDIRECT_STREAM || 'true').trim().toLowerCase();
+    return /^(?:1|true|yes|on)$/i.test(raw) ? 'true' : 'false';
+}
+
+function buildMediaflowUrl(config, targetUrl, type = 'hls', host = 'Mixdrop', options = {}) {
     if (!config?.mediaflow?.url) return normalizeRemoteUrl(targetUrl);
 
     const normalizedTarget = normalizeRemoteUrl(targetUrl);
@@ -236,10 +296,13 @@ function buildMediaflowUrl(config, targetUrl, type = 'hls', host = 'Mixdrop') {
 
     const mfp = String(config.mediaflow.url).replace(/\/$/, '');
     const encoded = encodeURIComponent(normalizedTarget);
-    const pass = config.mediaflow.pass ? `&api_password=${encodeURIComponent(config.mediaflow.pass)}` : '';
+    const password = getMediaflowPassword(config);
+    const pass = password ? `&api_password=${encodeURIComponent(password)}` : '';
 
     if (type === 'extractor') {
-        return `${mfp}/extractor/video?host=${encodeURIComponent(host)}${pass}&d=${encoded}&redirect_stream=true`;
+        const extractorPath = getMediaflowExtractorPath(host, options);
+        const redirectStream = getMediaflowRedirectStream(host, options);
+        return `${mfp}${extractorPath}?host=${encodeURIComponent(host)}${pass}&d=${encoded}&redirect_stream=${redirectStream}`;
     }
 
     return `${mfp}/hls?url=${encoded}${pass}&ext=.m3u8`;
