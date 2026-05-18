@@ -126,7 +126,7 @@ function normalizeWebExtractorLabel(value) {
         .trim();
 
     // Only trust free-form labels when they look like a hoster/extractor, not a media title.
-    return /^(?:web|hls|loadm|vixcloud|vidxgo|sweetpixel|srv12|cccdn|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|direct)$/i.test(cleaned)
+    return /^(?:web|hls|loadm|deltabit|delta\s*bit|turbovid|vixcloud|vidxgo|sweetpixel|srv12|cccdn|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|direct)$/i.test(cleaned)
         ? cleaned
         : '';
 }
@@ -598,3 +598,4 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
 }
 
 module.exports = { createWebProviderTools };
+
