@@ -361,7 +361,8 @@ function registerApiRoutes(app, {
     CONFIG,
     logger,
     getCacheHealthStatus,
-    publicDir
+    publicDir,
+    torrentioTmdbScanner = null
 }) {
     const telemetryAuthMiddleware = createTelemetryAuthMiddleware();
 
@@ -572,6 +573,19 @@ function registerApiRoutes(app, {
         res.type('text/plain; version=0.0.4; charset=utf-8').send(buildPrometheusMetrics(snapshot));
     });
     app.get('/api/rd-scanner-status', telemetryAuthMiddleware, (req, res) => res.json(getRdAuditorStatus()));
+    app.get('/api/torrentio-tmdb-scanner', telemetryAuthMiddleware, async (req, res) => {
+        if (!torrentioTmdbScanner || typeof torrentioTmdbScanner.getStatus !== 'function') {
+            return res.status(503).json({ ok: false, error: 'Torrentio TMDB scanner non disponibile.' });
+        }
+        return res.json(await torrentioTmdbScanner.getStatus());
+    });
+    app.post('/api/torrentio-tmdb-scanner/run', telemetryAuthMiddleware, async (req, res) => {
+        if (!torrentioTmdbScanner || typeof torrentioTmdbScanner.trigger !== 'function') {
+            return res.status(503).json({ ok: false, error: 'Torrentio TMDB scanner non disponibile.' });
+        }
+        const accepted = await torrentioTmdbScanner.trigger('api');
+        return res.status(accepted ? 202 : 409).json({ ok: accepted, status: await torrentioTmdbScanner.getStatus() });
+    });
     app.get('/api/rd-scanner-dashboard', telemetryAuthMiddleware, async (req, res) => {
         let progress = null;
         try {

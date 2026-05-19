@@ -1,5 +1,10 @@
 'use strict';
 
+const HARDCODED_TORRENTIO_MAIN_URL = 'https://thorrentan.elninhostre.dpdns.org/e30';
+const HARDCODED_TORRENTIO_MIRROR_URL = 'https://torrentio.strem.fun';
+const HARDCODED_TORRENTIO_TIMEOUT_MS = 4500;
+const HARDCODED_EXT_ADDON_COOLDOWN_MS = 30000;
+
 const DEFAULT_MEDIAFUSION_URL = 'https://mediafusionfortheweebs.midnightignite.me/D-FCO8JXfrGOKFpP-Rim96nHZU9epOb5RPbSpgkgVbYoR1NRJNR1C-9X4VDrUSJJNEvp5pk7CGvSLN7cUHUrth3QG8e3mSPa8Ind2k4VzVGFEa-310EjXdsXT_uUXGri86EVnnQ6f_9b0yoVTuVu7Aqk4uY8IXZp47-0FmuxgXX6wleis_0Evllc0v2wcrWIj-D5m3IZhI18CKHr-pUL5h61ZWcaRuxGjgwYK88Xy3PIN2U3YzTi4J9pazQBpCNDH-NpZPwk2RVnjs0WF7dRU5XD_D0robmhH9q0edoqaR_71u1j2y-XnxkwPNjg-o5Yb_';
 const DEFAULT_METEOR_URL = 'https://meteorfortheweebs.midnightignite.me/eyJkZWJyaWRTZXJ2aWNlIjoidG9ycmVudCIsImRlYnJpZEFwaUtleSI6IiIsImNhY2hlZE9ubHkiOnRydWUsImVuYWJsZVlvdXJNZWRpYSI6ZmFsc2UsInlvdXJNZWRpYUxlZ2FjeU1vZGUiOmZhbHNlLCJzaG93WW91ck1lZGlhU3RyZWFtcyI6ZmFsc2UsInlvdXJNZWRpYVNvdXJjZXMiOlsidG9ycmVudCJdLCJyZW1vdmVUcmFzaCI6ZmFsc2UsInJlbW92ZVNhbXBsZXMiOmZhbHNlLCJyZW1vdmVBZHVsdCI6ZmFsc2UsImV4Y2x1ZGUzRCI6ZmFsc2UsImVuYWJsZVNlYURleCI6ZmFsc2UsImVuYWJsZVVzZW5ldCI6ZmFsc2UsInVzZW5ldEN1c3RvbUVuZ2luZXMiOmZhbHNlLCJtaW5TZWVkZXJzIjowLCJtYXhSZXN1bHRzIjowLCJtYXhSZXN1bHRzUGVyUmVzIjowLCJtYXhTaXplIjowLCJyZXNvbHV0aW9ucyI6W10sImxhbmd1YWdlcyI6eyJwcmVmZXJyZWQiOlsibXVsdGkiLCJpdCJdLCJyZXF1aXJlZCI6WyJpdCIsIm11bHRpIl0sImV4Y2x1ZGUiOltdfSwicmVzdWx0Rm9ybWF0IjpbInRpdGxlIiwicXVhbGl0eSIsInNpemUiLCJhdWRpbyJdLCJzb3J0T3JkZXIiOlsicGFjayIsImNhY2hlZCIsInlvdXJtZWRpYSIsInNlYWRleCIsInJlc29sdXRpb24iLCJzaXplIiwicXVhbGl0eSIsInNlZWRlcnMiLCJsYW5ndWFnZSIsInR5cGUiXX0';
 
@@ -18,27 +23,24 @@ function envNumber(name, fallback) {
 
 const EXTERNAL_ADDONS = {
     torrentio_main: {
-        baseUrl: envFirst([
-            'EXT_TORRENTIO_MAIN_URL',
-            'TORRENTIO_MAIN_URL',
-            'TORRENTIO_URL',
-            'NEXUS_TORRENTIO_MAIN_URL'
-        ]),
+        baseUrl: HARDCODED_TORRENTIO_MAIN_URL,
         name: 'Torrentio Main',
-        timeout: envNumber('EXT_TORRENTIO_MAIN_TIMEOUT', 2200),
+        timeout: HARDCODED_TORRENTIO_TIMEOUT_MS,
         priority: 1,
         maxFailures: 3,
-        cooldownMs: envNumber('EXT_ADDON_COOLDOWN_MS', 30000)
+        cooldownMs: HARDCODED_EXT_ADDON_COOLDOWN_MS,
+        trustItalian: false,
+        trustDirectUrl: true
     },
     torrentio_mirror: {
-        baseUrl: envFirst(['EXT_TORRENTIO_MIRROR_URL', 'TORRENTIO_MIRROR_URL']),
+        baseUrl: HARDCODED_TORRENTIO_MIRROR_URL,
         name: 'Torrentio Mirror',
-        timeout: envNumber('EXT_TORRENTIO_MIRROR_TIMEOUT', 2200),
+        timeout: HARDCODED_TORRENTIO_TIMEOUT_MS,
         priority: 2,
         maxFailures: 3,
-        cooldownMs: envNumber('EXT_ADDON_COOLDOWN_MS', 30000),
-        trustItalian: process.env.EXT_TORRENTIO_MIRROR_TRUST_ITA === 'true',
-        trustDirectUrl: process.env.EXT_TORRENTIO_MIRROR_DIRECT !== 'false'
+        cooldownMs: HARDCODED_EXT_ADDON_COOLDOWN_MS,
+        trustItalian: false,
+        trustDirectUrl: true
     },
     mediafusion: {
         baseUrl: envFirst(['EXT_MEDIAFUSION_URL', 'MEDIAFUSION_URL'], DEFAULT_MEDIAFUSION_URL),

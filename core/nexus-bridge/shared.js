@@ -62,6 +62,21 @@ const QUALITY_PATTERNS = [
 ];
 const FAKE_RESULT_REGEX = /\b(?:no\s*(?:result|stream)s?|nessun\s*risultato|not\s*found|non\s*trovato|empty|unavailable|offline)\b/i;
 
+const TORRENTHAN_ITALIAN_BRANDS = [
+    'ilcorsaronero', 'corsaronero', 'mircrew', 'tntvillage', 'ddlstreamitaly',
+    'darksidemux', 'pir8', 'giuseppetornatore', 'megaphone', 'idn crew', 'ddn', 'mux', 'tridim'
+];
+const TORRENTHAN_BAD_TOKENS = ['cam', 'hdcam', 'ts', 'hdts', 'telesync', 'telecine', 'tc', 'workprint', 'wp', 'xxx'];
+const REGEX_TORRENTHAN_BAD = new RegExp(`(?:^|[^A-Z0-9])(?:${TORRENTHAN_BAD_TOKENS.join('|')})(?:[^A-Z0-9]|$)`, 'i');
+const REGEX_TORRENTHAN_BRAND = new RegExp(TORRENTHAN_ITALIAN_BRANDS.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s._-]*')).join('|'), 'i');
+const REGEX_TORRENTHAN_IT_COMBO = /(?:🇮🇹|\bIT\s*[\/+,_\-. ]\s*(?:GB|UK|US|EN|ENG|ENGLISH|MULTI)\b|\b(?:GB|UK|US|EN|ENG|ENGLISH|MULTI)\s*[\/+,_\-. ]\s*IT\b|\bITA\s*[\/+,_\-. ]\s*(?:ENG|EN|ENGLISH|MULTI)\b|\b(?:ENG|EN|ENGLISH|MULTI)\s*[\/+,_\-. ]\s*ITA\b)/i;
+const REGEX_TORRENTHAN_POSITIVE_ITA = /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO)\b|\bAUDIO\s*ITA\b|\bITA\s*(?:AAC|AC3|EAC3|DD|DDP|DTS|TRUEHD|ATMOS)\b|\b(?:AUDIO|LANG|LANGUAGE|LINGUA)\s*(?:ITA|ITALIAN|ITALIANO)\b|\b(?:ITA|ITALIAN|ITALIANO)\s*(?:DUB|DUBBED|MUX|MULTI)\b|\b(?:MULTI|MULTI-AUDIO|DUAL\s*AUDIO|DUAL-AUDIO)\b.*\b(?:ITA|ITALIAN|ITALIANO|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|IT)\b.*\b(?:MULTI|MULTI-AUDIO|DUAL\s*AUDIO|DUAL-AUDIO)\b|\bSUB\s*ITA\b|\bSUBS?\s*ITA\b|\bSOFTSUB\s*ITA\b|\bFORCED\s*ITA\b|\bACCOPPIALO\b)/i;
+const REGEX_TORRENTHAN_AUDIO_ITA = /(?:\bAUDIO\s*ITA\b|\bITA\s*(?:AAC|AC3|EAC3|DD|DDP|DTS|TRUEHD|ATMOS)\b|\b(?:AUDIO|LANG|LANGUAGE|LINGUA)\s*(?:ITA|ITALIAN|ITALIANO)\b|\b(?:ITA|ITALIAN|ITALIANO)\s*(?:AUDIO|DUB|DUBBED|MUX|MULTI|AAC|AC3|EAC3|DD|DDP|DTS|TRUEHD|ATMOS)\b|\b(?:MULTI|MULTI-AUDIO|DUAL\s*AUDIO|DUAL-AUDIO)\b.*\b(?:ITA|ITALIAN|ITALIANO|IT)\b)/i;
+const REGEX_TORRENTHAN_SUB_ITA = /(?:\bSUB\s*ITA\b|\bSUBS?\s*ITA\b|\bSOTTOTITOL[IA].*\bITA\b|\bSOFTSUB\s*ITA\b|\bFORCED\s*ITA\b|\bSUB[-.\s_]*ITA\b|\bVOST(?:ITA)?\b)/i;
+const REGEX_TORRENTHAN_NEGATIVE = /(?:\bSUB(?:BED)?\s*ENG\b|\bENGLISH\b|\bENG\b|\bVO\b|\bORIGINAL\s*AUDIO\b|\bVOSTFR\b|\bVOSE\b)/i;
+const REGEX_TORRENTHAN_MULTI = /\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b/i;
+const REGEX_TORRENTHAN_IT_CODEC = /\b(?:ITA|ITALIAN|ITALIANO)\b.*\b(?:AC3|EAC3|AAC|DTS|TRUEHD|ATMOS|DDP)\b/i;
+
 const FETCH_CACHE_TTL = Number(process.env.EXTERNAL_ADDONS_CACHE_TTL || 30000);
 const NEGATIVE_CACHE_TTL = Number(process.env.EXTERNAL_ADDONS_NEGATIVE_CACHE_TTL || 12000);
 const MAX_TRACKERS_IN_MAGNET = Number(process.env.EXTERNAL_ADDONS_MAX_TRACKERS || 10);
@@ -191,35 +206,51 @@ function analyzeItalianSignals(stream) {
     const fullText = normalizeForComparison(getStreamText(stream));
     if (!fullText) return { isItalian: false, hasAudioItalian: false, hasSubItalian: false, hasTrustedItalian: false, hasNegativeLanguage: false, hasEnglish: false, isMulti: false, detectedLanguages: [], displayLabel: '', confidence: 0, reason: 'empty' };
 
-    const hasAudioItalian = REGEX_AUDIO_ITA.test(fullText);
-    const hasSubItalian = REGEX_SUB_ITA.test(fullText);
-    const hasTrustedItalian = REGEX_TRUSTED_ITA.test(fullText);
-    const hasNegativeLanguage = REGEX_NEGATIVE_LANGUAGE.test(fullText);
+    if (REGEX_TORRENTHAN_BAD.test(fullText)) {
+        return { isItalian: false, hasAudioItalian: false, hasSubItalian: false, hasTrustedItalian: false, hasNegativeLanguage: true, hasEnglish: false, isMulti: false, detectedLanguages: [], displayLabel: '', confidence: 0, reason: 'bad_release_token' };
+    }
+
+    const hasTorrenthanBrand = REGEX_TORRENTHAN_BRAND.test(fullText);
+    const hasTorrenthanCombo = REGEX_TORRENTHAN_IT_COMBO.test(fullText);
+    const hasTorrenthanPositive = REGEX_TORRENTHAN_POSITIVE_ITA.test(fullText);
+    const hasTorrenthanAudio = REGEX_TORRENTHAN_AUDIO_ITA.test(fullText);
+    const hasSubItalian = REGEX_SUB_ITA.test(fullText) || REGEX_TORRENTHAN_SUB_ITA.test(fullText);
+    const hasSubOnlyItalian = hasSubItalian && !hasTorrenthanAudio;
+    const hasTrustedItalian = REGEX_TRUSTED_ITA.test(fullText) || hasTorrenthanBrand;
+    const hasNegativeLanguage = REGEX_NEGATIVE_LANGUAGE.test(fullText) || REGEX_TORRENTHAN_NEGATIVE.test(fullText);
     const hasEnglish = REGEX_ENGLISH_LANGUAGE.test(fullText);
-    const hasMultiLanguage = REGEX_MULTI_LANGUAGE.test(fullText);
+    const hasMultiLanguage = REGEX_MULTI_LANGUAGE.test(fullText) || REGEX_TORRENTHAN_MULTI.test(fullText);
 
     let confidence = 0;
     const reasons = [];
 
-    if (hasAudioItalian) { confidence += 100; reasons.push('audio'); }
-    if (hasTrustedItalian) { confidence += 35; reasons.push('trusted'); }
-    if (hasSubItalian) { confidence += 18; reasons.push('subs'); }
-    if (hasMultiLanguage && hasAudioItalian) { confidence += 12; reasons.push('multi'); }
-    if (hasNegativeLanguage && !hasAudioItalian && !hasTrustedItalian) { confidence -= 120; reasons.push('negative'); }
+    if (hasTorrenthanBrand) { confidence += 40; reasons.push('torrenthan_brand'); }
+    if (hasTorrenthanCombo) { confidence += 38; reasons.push('it_combo'); }
+    if (hasTorrenthanPositive) { confidence += 24; reasons.push('positive_ita'); }
+    if (hasTorrenthanAudio) { confidence += 18; reasons.push('audio'); }
+    if (hasMultiLanguage && /\b(?:ITA|ITALIAN|ITALIANO|IT)\b/i.test(fullText)) { confidence += 12; reasons.push('multi_ita'); }
+    if (REGEX_TORRENTHAN_IT_CODEC.test(fullText)) { confidence += 10; reasons.push('codec_ita'); }
+    if (hasTrustedItalian && !hasTorrenthanBrand) { confidence += 35; reasons.push('trusted'); }
+    if (hasSubOnlyItalian) { confidence -= 10; confidence = Math.max(confidence, 36); reasons.push('sub_ita'); }
+    if (hasNegativeLanguage && !hasTorrenthanAudio && !hasTrustedItalian && !hasTorrenthanCombo) { confidence -= 16; reasons.push('negative'); }
 
+    confidence = Math.max(0, Math.min(100, confidence));
+    const isItalian = confidence >= 35 || hasTorrenthanAudio || hasTorrenthanCombo || (hasTrustedItalian && !hasNegativeLanguage);
     const detectedLanguages = [];
-    if (hasAudioItalian || hasTrustedItalian) detectedLanguages.push('Italian');
-    if (hasEnglish) detectedLanguages.push('English');
-    if (hasMultiLanguage) detectedLanguages.push('Multi');
+    if (isItalian) detectedLanguages.push('Italian');
+    if (hasEnglish && !isItalian) detectedLanguages.push('English');
+    if (hasMultiLanguage && !detectedLanguages.includes('Multi')) detectedLanguages.push('Multi');
 
     return {
-        isItalian: confidence >= 20 || hasAudioItalian || (hasTrustedItalian && !hasNegativeLanguage),
-        hasAudioItalian, hasSubItalian, hasTrustedItalian, hasNegativeLanguage, hasEnglish,
-        isMulti: hasMultiLanguage || (detectedLanguages.includes('Italian') && detectedLanguages.includes('English')),
+        isItalian,
+        hasAudioItalian: Boolean(hasTorrenthanAudio || hasTorrenthanCombo || hasTorrenthanBrand),
+        hasSubItalian: hasSubItalian,
+        hasTrustedItalian,
+        hasNegativeLanguage,
+        hasEnglish,
+        isMulti: hasMultiLanguage,
         detectedLanguages,
-        displayLabel: detectedLanguages.includes('Italian') && detectedLanguages.includes('English')
-            ? '🇮🇹 🇬🇧'
-            : (detectedLanguages.includes('Italian') ? '🇮🇹' : (detectedLanguages.includes('English') ? '🇬🇧' : '')),
+        displayLabel: isItalian ? (hasSubOnlyItalian ? '🇮🇹 SUB-ITA' : '🇮🇹') : (hasEnglish ? '🇬🇧' : ''),
         confidence,
         reason: reasons.join('|') || 'none'
     };
@@ -545,7 +576,7 @@ function buildAddonCacheKey(addonKey, type, id, options = {}) {
         addonKey, type: sanitizeFetchType(type, id), id: String(id || ''),
         onlyItalian: options.onlyItalian !== false,
         languageMode: String(options.languageMode || ''),
-        minConfidence: Number(options.minimumItalianConfidence || 20),
+        minConfidence: Number(options.minimumItalianConfidence || 35),
         rdOnly: options.requireRdCached === true || getAddon(addonKey)?.requireRdCached === true || addonKey === 'mediafusion',
         service, tokenSig: token ? hashConfigSignature(token) : ''
     });
@@ -793,7 +824,7 @@ function dedupeNormalizedStreams(streams) {
 
 function passesItalianFilter(stream, options = {}) {
     if (options.onlyItalian === false) return true;
-    const minimumConfidence = Number(options.minimumItalianConfidence || 20);
+    const minimumConfidence = Number(options.minimumItalianConfidence || 35);
     const analysis = analyzeItalianSignals(stream);
     return analysis.isItalian && analysis.confidence >= minimumConfidence;
 }
@@ -924,7 +955,7 @@ async function fetchConfiguredExternalAddon(addonKey, type, id, options = {}) {
                         if (evidence.hasItalian) return true;
                         if (!evidence.hasItalian && evidence.hasForeign) return false;
                     }
-                    return analysis.isItalian && analysis.confidence >= Number(options.minimumItalianConfidence || 20);
+                    return analysis.isItalian && analysis.confidence >= Number(options.minimumItalianConfidence || 35);
                 });
             debugLog(`🇮🇹 [${addon.name}] Filter ${streams.length} -> ${filteredStreams.length}${trustItalian ? ' (forced-trusted-mirror)' : ''}`);
             if (streams.length > 0 && filteredStreams.length === 0 && options.onlyItalian !== false) {
