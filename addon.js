@@ -189,7 +189,8 @@ const {
     incrementMetric,
     streamInflight
 } = require('./core/utils');
-const { generateStream, resolveLazyStreamData } = require('./core/stream_generator');
+const { generateStream, resolveLazyStreamData, normalizeExternalCandidateForPipeline } = require('./core/stream_generator');
+const { createTorrentioTmdbScanner } = require('./core/prewarm/torrentio_tmdb_scanner');
 const { bootRealDebridAuditor } = require('./core/debrid/rd/audit/rd_auditor_boot');
 const { applyCommonMiddleware } = require('./core/server/middleware');
 const { getRawStreamCacheStats } = require('./core/cache/raw_stream_cache');
@@ -318,6 +319,13 @@ function bootstrapServer() {
         Cache
     });
 
+    const torrentioTmdbScanner = createTorrentioTmdbScanner({
+        dbHelper,
+        logger,
+        normalizeExternalCandidateForPipeline
+    });
+    torrentioTmdbScanner.start({ leader: isClusterLeader || !shouldUseCluster() });
+
     const appServices = createAppServices({
         Cache,
         LIMITERS,
@@ -351,7 +359,8 @@ function bootstrapServer() {
         CONFIG,
         logger,
         getCacheHealthStatus: appServices.getCacheHealthStatus,
-        publicDir
+        publicDir,
+        torrentioTmdbScanner
     });
 
     registerPlaybackRoutes(app, {
@@ -453,6 +462,9 @@ function bootstrapServer() {
                 }
                 if (Cache && typeof Cache.stopInvalidationSync === 'function') {
                     await Cache.stopInvalidationSync();
+                }
+                if (torrentioTmdbScanner && typeof torrentioTmdbScanner.stop === 'function') {
+                    await torrentioTmdbScanner.stop();
                 }
                 if (typeof dbHelper.shutdownDatabase === 'function') {
                     await dbHelper.shutdownDatabase();
