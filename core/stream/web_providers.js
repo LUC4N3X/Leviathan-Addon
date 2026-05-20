@@ -18,6 +18,50 @@ const INLINE_PROVIDER_LIMITER = Object.freeze({
 });
 const warnedMissingProviderLimiters = new Set();
 
+function envDebugFlag(name, defaultValue = false) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return defaultValue;
+    return /^(?:1|true|yes|on)$/i.test(String(raw).trim());
+}
+
+
+function envNameList(name) {
+    return String(process.env[name] || '')
+        .split(/[\s,;|]+/)
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean);
+}
+
+function providerForceEnabled(definition = {}) {
+    const names = [definition.key, definition.cacheName, definition.sourceName]
+        .filter(Boolean)
+        .map((value) => String(value).trim().toLowerCase());
+    if (envDebugFlag('WEB_PROVIDERS_ALWAYS_RUN', false)) return true;
+    if (envDebugFlag('CB01_ALWAYS_RUN', false) && names.some((name) => /^cb01/.test(name))) return true;
+    const forced = envNameList('WEB_PROVIDERS_FORCE');
+    return forced.length > 0 && names.some((name) => forced.includes(name));
+}
+
+function buildProviderRawId(rawId, definition = {}) {
+    const parts = [rawId];
+    if (definition.cacheKeyVersion) parts.push(`v=${definition.cacheKeyVersion}`);
+    return parts.join('|');
+}
+
+function webProviderDebug(level, message, payload = null) {
+    const normalizedLevel = String(level || 'info').toLowerCase();
+    const alwaysShow = /^(warn|error)$/i.test(normalizedLevel);
+    const enabled = envDebugFlag('WEB_PROVIDER_DEBUG', false) || envDebugFlag('CB01_DEBUG', false);
+    if (!alwaysShow && !enabled) return;
+    const logger = console[normalizedLevel] || console.info;
+    if (payload && typeof payload === 'object') {
+        try { logger(`[WEB PROVIDERS:debug] ${message} ${JSON.stringify(payload)}`); }
+        catch (_) { logger(`[WEB PROVIDERS:debug] ${message}`); }
+    } else {
+        logger(`[WEB PROVIDERS:debug] ${message}`);
+    }
+}
+
 function resolveWebProviderLimiter(limiters = {}, definition = {}) {
     const key = String(definition?.limiterKey || '').trim();
     const direct = key ? limiters?.[key] : null;
@@ -101,7 +145,8 @@ function normalizeWebExtractorLabel(value) {
     if (/mixdrop|m1xdrop|mxcontent/i.test(raw)) return 'MixDrop';
     if (/loadm/i.test(raw)) return 'LoadM';
     if (/supervideo/i.test(raw)) return 'SuperVideo';
-    if (/maxstream/i.test(raw)) return 'Maxstream';
+    if (/maxstream/i.test(raw)) return 'MaxStream';
+    if (/uprot/i.test(raw)) return 'Uprot';
     if (/voe/i.test(raw)) return 'VOE';
     if (/streamtape/i.test(raw)) return 'StreamTape';
     if (/dood/i.test(raw)) return 'DoodStream';
@@ -126,7 +171,7 @@ function normalizeWebExtractorLabel(value) {
         .trim();
 
     // Only trust free-form labels when they look like a hoster/extractor, not a media title.
-    return /^(?:web|hls|loadm|deltabit|delta\s*bit|turbovid|vixcloud|vidxgo|sweetpixel|srv12|cccdn|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|direct)$/i.test(cleaned)
+    return /^(?:web|hls|loadm|deltabit|delta\s*bit|turbovid|vixcloud|vidxgo|sweetpixel|srv12|cccdn|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|uprot|direct)$/i.test(cleaned)
         ? cleaned
         : '';
 }
@@ -183,7 +228,7 @@ function inferWebQuality(stream, sourceName) {
         if (normalized) return normalized;
     }
 
-    const textToCheck = `${stream?.title || ''} ${stream?.name || ''} ${stream?.filename || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|GUARDASERIETV|STREAMINGCOMMUNITY|CINEMACITY|LEVIATHAN|VIX|GUARDAFLIX|ANIMEWORLD|ANIMEUNITY|ANIMESATURN/g, '');
+    const textToCheck = `${stream?.title || ''} ${stream?.name || ''} ${stream?.filename || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|GUARDASERIETV|STREAMINGCOMMUNITY|CINEMACITY|LEVIATHAN|VIX|GUARDAFLIX|CB01|ANIMEWORLD|ANIMEUNITY|ANIMESATURN/g, '');
     if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) return '4K';
     if (/\b(1440P|2K|QHD)\b/.test(textToCheck)) return '1440p';
     if (/\b(1080P|FHD|FULLHD)\b/.test(textToCheck)) return '1080p';
@@ -535,14 +580,61 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
             bypassProviderCache: false
         };
 
-        if (flags.dbOnlyMode || !allowItalianWebProviders) return empty;
+        if (flags.dbOnlyMode || !allowItalianWebProviders) {
+            webProviderDebug('info', 'skipped all providers', {
+                dbOnlyMode: flags.dbOnlyMode,
+                allowItalianWebProviders,
+                title: meta?.title || meta?.name || '',
+                type,
+                finalId
+            });
+            return empty;
+        }
+
+        webProviderDebug('info', 'bucket fetch start', {
+            title: meta?.title || meta?.name || '',
+            type,
+            finalId,
+            season: meta?.season || 0,
+            episode: meta?.episode || 0,
+            cacheOnly: flags.useProviderCachedOnly === true,
+            bypassCache: flags.bypassProviderCache === true,
+            enabled: definitions.filter((definition) => definition.enabled).map((definition) => definition.cacheName || definition.sourceName || definition.key),
+            disabled: definitions.filter((definition) => !definition.enabled).map((definition) => definition.cacheName || definition.sourceName || definition.key),
+            forced: definitions.filter((definition) => providerForceEnabled(definition)).map((definition) => definition.cacheName || definition.sourceName || definition.key)
+        });
 
         const rawId = `${type}:${finalId}:${meta.season || 0}:${meta.episode || 0}`;
         const settled = await Promise.allSettled(definitions.map((definition) => {
-            if (!definition.enabled) return Promise.resolve([]);
-            if (!flags.useLiveSources && !flags.useProviderCachedOnly) return Promise.resolve([]);
+            const providerName = definition.cacheName || definition.sourceName || definition.key;
+            const forced = providerForceEnabled(definition);
+            const providerRawId = buildProviderRawId(rawId, definition);
+            const providerCacheOnly = forced ? false : flags.useProviderCachedOnly === true;
+            const providerBypassCache = forced ? true : flags.bypassProviderCache === true;
 
-            return Cache.fetchWithCache(definition.cacheName, rawId, 43200, () =>
+            if (!definition.enabled && !forced) {
+                webProviderDebug('info', 'provider disabled', { provider: providerName });
+                return Promise.resolve([]);
+            }
+            if (!flags.useLiveSources && !flags.useProviderCachedOnly && !forced) {
+                webProviderDebug('warn', 'provider skipped by source mode', { provider: providerName, useLiveSources: flags.useLiveSources, cacheOnly: flags.useProviderCachedOnly });
+                return Promise.resolve([]);
+            }
+
+            webProviderDebug('info', 'provider call scheduled', {
+                provider: providerName,
+                rawId,
+                providerRawId,
+                cacheKeyVersion: definition.cacheKeyVersion || '',
+                forced,
+                cacheOnly: providerCacheOnly,
+                bypassCache: providerBypassCache,
+                timeoutMs: getWebProviderTimeout(CONFIG.TIMEOUTS.SCRAPER, definition.cacheName),
+                emptyTtl: Math.max(1, Number(definition.emptyTtl || 3600) || 3600),
+                errorTtl: Math.max(1, Number(definition.errorTtl || Math.min(Number(definition.emptyTtl || 3600) || 3600, 300)) || 300),
+                limiterKey: definition.limiterKey || ''
+            });
+            return Cache.fetchWithCache(definition.cacheName, providerRawId, 43200, () =>
                 guardedProviderCall(
                     definition.cacheName,
                     resolveWebProviderLimiter(LIMITERS, definition),
@@ -550,15 +642,35 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
                     () => definition.run({ type, originalId, finalId, meta, config, reqHost })
                 )
             , {
-                cacheOnly: flags.useProviderCachedOnly === true,
-                bypassCache: flags.bypassProviderCache === true,
+                cacheOnly: providerCacheOnly,
+                bypassCache: providerBypassCache,
                 emptyTtl: Math.max(1, Number(definition.emptyTtl || 3600) || 3600),
                 errorTtl: Math.max(1, Number(definition.errorTtl || Math.min(Number(definition.emptyTtl || 3600) || 3600, 300)) || 300)
             });
         }));
 
         return definitions.reduce((acc, definition, index) => {
-            acc[definition.key] = settled[index]?.status === 'fulfilled' ? settled[index].value : [];
+            const item = settled[index];
+            const providerName = definition.cacheName || definition.sourceName || definition.key;
+            if (item?.status === 'fulfilled') {
+                const value = Array.isArray(item.value) ? item.value : [];
+                acc[definition.key] = value;
+                if (definition.enabled || value.length > 0) {
+                    webProviderDebug(value.length > 0 ? 'info' : 'warn', 'provider bucket result', {
+                        provider: providerName,
+                        key: definition.key,
+                        streams: value.length,
+                        firstNames: value.slice(0, 5).map((stream) => stream?.name || stream?.title || '')
+                    });
+                }
+            } else {
+                acc[definition.key] = [];
+                webProviderDebug('warn', 'provider bucket rejected', {
+                    provider: providerName,
+                    key: definition.key,
+                    error: item?.reason?.message || String(item?.reason || 'unknown')
+                });
+            }
             return acc;
         }, empty);
     }
@@ -573,6 +685,14 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
                 formatted[definition.key] = bucket.length > 0 ? applyAioWebStyle(bucket, definition, meta, config) : [];
             } else {
                 formatted[definition.key] = bucket.length > 0 ? applyWebFormatter(bucket, definition, meta, config) : [];
+            }
+            if (definition.enabled || bucket.length > 0) {
+                webProviderDebug(bucket.length > 0 ? 'info' : 'warn', 'provider format result', {
+                    provider: definition.cacheName || definition.sourceName || definition.key,
+                    raw: bucket.length,
+                    formatted: formatted[definition.key].length,
+                    aio: Boolean(aioFormatter && aioFormatter.isAIOStreamsEnabled(config))
+                });
             }
         }
 

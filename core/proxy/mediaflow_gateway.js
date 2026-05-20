@@ -1,5 +1,34 @@
 'use strict';
 
+
+function envDebugFlag(name, defaultValue = false) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return defaultValue;
+    return /^(?:1|true|yes|on)$/i.test(String(raw).trim());
+}
+
+function safeUrlPart(value, part = 'host') {
+    try {
+        const parsed = new URL(String(value || ''));
+        return part === 'path' ? parsed.pathname : parsed.hostname;
+    } catch (_) {
+        return '';
+    }
+}
+
+function mfpDebug(level, message, payload = null) {
+    const normalizedLevel = String(level || 'info').toLowerCase();
+    const enabled = envDebugFlag('MEDIAFLOW_DEBUG', false) || envDebugFlag('MFP_DEBUG', false) || envDebugFlag('CB01_DEBUG', false);
+    const alwaysShow = /^(warn|error)$/i.test(normalizedLevel);
+    if (!alwaysShow && !enabled) return;
+    const logger = console[normalizedLevel] || console.info;
+    if (payload && typeof payload === 'object') {
+        try { logger(`[MFP:debug] ${message} ${JSON.stringify(payload)}`); }
+        catch (_) { logger(`[MFP:debug] ${message}`); }
+    } else {
+        logger(`[MFP:debug] ${message}`);
+    }
+}
 function normalizeRemoteUrl(rawUrl, baseUrl = null) {
     let value = String(rawUrl || '').trim().replace(/&amp;/g, '&').replace(/\\\//g, '/');
     if (!value || value.startsWith('data:')) return null;
@@ -49,11 +78,13 @@ function boolString(value, fallback = true) {
 }
 
 function defaultExtractorPath(host = '', options = {}) {
+    if (options?.extractorPath) return normalizeExtractorPath(options.extractorPath);
+
     const hostName = String(host || '').trim().toLowerCase();
 
-    if (/maxstream|uprot/i.test(hostName)) return normalizeExtractorPath('/extractor/video');
-
-    if (options?.extractorPath) return normalizeExtractorPath(options.extractorPath);
+    if (/maxstream|uprot/i.test(hostName)) {
+        return normalizeExtractorPath(process.env.MEDIAFLOW_MAXSTREAM_EXTRACTOR_PATH || '/extractor/video.m3u8');
+    }
 
     const hlsHosts = String(process.env.MEDIAFLOW_EXTRACTOR_HLS_HOSTS || '').toLowerCase()
         .split(',')
@@ -118,7 +149,15 @@ function appendExtractorExtras(parts, options = {}) {
 function buildExtractorUrl(config = {}, targetUrl, host = 'Mixdrop', options = {}) {
     const base = getMediaflowBase(config);
     const normalizedTarget = normalizeRemoteUrl(targetUrl);
-    if (!base || !normalizedTarget) return normalizedTarget;
+    if (!base || !normalizedTarget) {
+        mfpDebug('warn', 'extractor url skipped', {
+            reason: !base ? 'missing_base' : 'invalid_target',
+            host,
+            targetHost: safeUrlPart(targetUrl),
+            targetPath: safeUrlPart(targetUrl, 'path')
+        });
+        return normalizedTarget;
+    }
 
     const parts = [];
     appendParam(parts, 'host', String(host || 'Mixdrop'));
@@ -128,7 +167,18 @@ function buildExtractorUrl(config = {}, targetUrl, host = 'Mixdrop', options = {
     appendParam(parts, 'redirect_stream', defaultRedirectStream(host, options));
     appendExtractorExtras(parts, options);
 
-    return `${base}${defaultExtractorPath(host, options)}?${parts.join('&')}`;
+    const path = defaultExtractorPath(host, options);
+    const out = `${base}${path}?${parts.join('&')}`;
+    mfpDebug('info', 'extractor url built', {
+        host,
+        targetHost: safeUrlPart(normalizedTarget),
+        targetPath: safeUrlPart(normalizedTarget, 'path'),
+        mfpHost: safeUrlPart(base),
+        extractorPath: path,
+        redirectStream: defaultRedirectStream(host, options),
+        headerParams: parts.filter((part) => /^h_/i.test(decodeURIComponent(String(part).split('=')[0] || ''))).map((part) => decodeURIComponent(String(part).split('=')[0] || '')).slice(0, 12)
+    });
+    return out;
 }
 
 function buildHlsUrl(config = {}, targetUrl) {
@@ -143,19 +193,27 @@ function buildHlsUrl(config = {}, targetUrl) {
     return `${base}/hls?${params.toString()}`;
 }
 
-function normalizeHeaderName(name) {
+function proxyHeaderParamName(name) {
     const key = String(name || '').trim().toLowerCase();
-    if (key === 'referer' || key === 'referrer') return 'Referer';
-    if (key === 'origin') return 'Origin';
-    if (key === 'cookie') return 'Cookie';
-    if (key === 'user-agent' || key === 'useragent') return 'User-Agent';
+    if (key === 'referer' || key === 'referrer') return 'h_referer';
+    if (key === 'origin') return 'h_origin';
+    if (key === 'cookie') return 'h_cookie';
+    if (key === 'user-agent' || key === 'useragent') return 'h_user-agent';
     return '';
 }
 
 function buildProxyUrl(config = {}, targetUrl, headers = {}, options = {}) {
     const base = getMediaflowBase(config);
     const normalizedTarget = normalizeRemoteUrl(targetUrl);
-    if (!base || !normalizedTarget) return normalizedTarget;
+    if (!base || !normalizedTarget) {
+        mfpDebug('warn', 'proxy url skipped', {
+            reason: !base ? 'missing_base' : 'invalid_target',
+            targetHost: safeUrlPart(targetUrl),
+            targetPath: safeUrlPart(targetUrl, 'path'),
+            isHls: Boolean(options?.isHls)
+        });
+        return normalizedTarget;
+    }
 
     const params = new URLSearchParams();
     params.set('d', normalizedTarget);
@@ -163,14 +221,25 @@ function buildProxyUrl(config = {}, targetUrl, headers = {}, options = {}) {
 
     const allowCookie = options.allowCookie !== false;
     for (const [rawName, rawValue] of Object.entries(headers || {})) {
-        const name = normalizeHeaderName(rawName);
-        if (!name || !rawValue) continue;
-        if (name === 'Cookie' && !allowCookie) continue;
-        params.set(`h_${name}`, String(rawValue));
+        const paramName = proxyHeaderParamName(rawName);
+        if (!paramName || rawValue === undefined || rawValue === null || rawValue === '') continue;
+        if (paramName === 'h_cookie' && !allowCookie) continue;
+        params.set(paramName, String(rawValue));
     }
 
     const path = options.isHls ? '/proxy/hls/manifest.m3u8' : '/proxy/stream';
-    return `${base}${path}?${params.toString()}`;
+    const out = `${base}${path}?${params.toString()}`;
+    mfpDebug('info', 'proxy url built', {
+        targetHost: safeUrlPart(normalizedTarget),
+        targetPath: safeUrlPart(normalizedTarget, 'path'),
+        mfpHost: safeUrlPart(base),
+        proxyPath: path,
+        isHls: Boolean(options?.isHls),
+        allowCookie,
+        inputHeaders: Object.keys(headers || {}),
+        outputHeaderParams: [...params.keys()].filter((key) => /^h_/i.test(key))
+    });
+    return out;
 }
 
 function buildMediaflowUrl(config, targetUrl, type = 'hls', host = 'Mixdrop', options = {}) {
