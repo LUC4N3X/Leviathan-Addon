@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const Oracle = require('../core/debrid/state/cache_oracle');
+const Oracle = require('../core/debrid/rd/state/cache_oracle');
 const EpisodePrecision = require('../core/stream/episode_precision');
 
 const META = { isSeries: true, season: 1, episode: 3, title: 'Example Show' };

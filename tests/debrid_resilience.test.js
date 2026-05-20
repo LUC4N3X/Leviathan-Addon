@@ -5,9 +5,9 @@ const assert = require('node:assert/strict');
 
 const { parseRetryAfterMs, computeBackoffDelay } = require('../core/debrid/utils/backoff');
 const { CircuitBreaker } = require('../core/debrid/utils/circuit_breaker');
-const { TB_CACHE_STATES } = require('../core/debrid/availability/torbox_cache_state');
-const { __private: TbCachePrivate } = require('../core/debrid/availability/torbox_availability_cache');
-const TB = require('../core/debrid/clients/torbox_client');
+const { TB_CACHE_STATES } = require('../core/debrid/tb/availability/torbox_cache_state');
+const { __private: TbCachePrivate } = require('../core/debrid/tb/availability/torbox_availability_cache');
+const TB = require('../core/debrid/tb/clients/torbox_client');
 
 const GB = 1024 * 1024 * 1024;
 

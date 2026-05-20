@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { preserveRdStatus, preserveRdStatusList, getSourceState } = require('../core/debrid/guards/rd_status_guard');
+const { preserveRdStatus, preserveRdStatusList, getSourceState } = require('../core/debrid/rd/guards/rd_status_guard');
 
 test('preserveRdStatus restores cached RD flags when a later pipeline item lost them', () => {
   const before = {

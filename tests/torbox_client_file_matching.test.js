@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const TB = require('../core/debrid/clients/torbox_client');
+const TB = require('../core/debrid/tb/clients/torbox_client');
 
 const {
   matchFileDetailed,
@@ -20,7 +20,7 @@ test('TorBox file matcher selects the requested episode from a season pack', () 
 
   assert.equal(result.fileId, 2);
   assert.equal(result.confidence >= 0.75, true);
-  assert.equal(result.reason, 'episode_file_match');
+  assert.equal(result.reason, 'file_match_confident');
 });
 
 test('TorBox file matcher rejects a single conflicting episode instead of guessing fileIdx', () => {

@@ -13,6 +13,7 @@ const {
 const { resolveExtractorDefinition } = require('../providers/extractors/registry');
 const { getWebProviderDefinition, getWebProviderIcon } = require('../providers/extractors/provider_registry');
 const { createWebProviderTools } = require('../core/stream/web_providers');
+const { buildExtractorUrl, buildProxyUrl, defaultExtractorPath } = require('../core/proxy/mediaflow_gateway');
 
 test('normalizeRemoteUrl resolves protocol-relative and relative URLs', () => {
     assert.equal(normalizeRemoteUrl('//mixdrop.co/e/abc'), 'https://mixdrop.co/e/abc');
@@ -89,6 +90,32 @@ test('buildMediaflowUrl builds extractor and hls targets', () => {
     );
 });
 
+
+
+test('mediaflow gateway keeps explicit MaxStream extractor path and lowercase proxy headers', () => {
+    const config = { mediaflow: { url: 'https://mfp.example', pass: 'secret' } };
+
+    assert.equal(defaultExtractorPath('Maxstream'), '/extractor/video.m3u8');
+    assert.equal(defaultExtractorPath('Maxstream', { extractorPath: '/extractor/video.m3u8' }), '/extractor/video.m3u8');
+    assert.equal(
+        buildExtractorUrl(config, 'https://uprot.net/msf/abc', 'Maxstream', {
+            extractorPath: '/extractor/video.m3u8',
+            headers: { Referer: 'https://uprot.net/', Origin: 'https://uprot.net', 'User-Agent': 'UA' }
+        }),
+        'https://mfp.example/extractor/video.m3u8?host=Maxstream&api_password=secret&d=https%3A%2F%2Fuprot.net%2Fmsf%2Fabc&redirect_stream=true&h_referer=https%3A%2F%2Fuprot.net%2F&h_origin=https%3A%2F%2Fuprot.net&h_user-agent=UA'
+    );
+
+    const proxy = buildProxyUrl(config, 'https://cdn.example/master.m3u8', {
+        Referer: 'https://player.example/',
+        Origin: 'https://player.example',
+        'User-Agent': 'UA'
+    }, { isHls: true });
+    assert.match(proxy, /h_referer=/);
+    assert.match(proxy, /h_origin=/);
+    assert.match(proxy, /h_user-agent=/);
+    assert.doesNotMatch(proxy, /h_Referer=/);
+});
+
 test('dedupeStreamsByUrl keeps the first stream for duplicate URLs', () => {
     const output = dedupeStreamsByUrl([
         { url: 'https://video.example/a.m3u8', name: 'first' },
@@ -101,12 +128,16 @@ test('dedupeStreamsByUrl keeps the first stream for duplicate URLs', () => {
     assert.equal(output[1].name, 'third');
 });
 
-test('provider registry exposes CinemaCity metadata', () => {
-    const definition = getWebProviderDefinition('CinemaCity');
+test('provider registry exposes CinemaCity and CB01 metadata', () => {
+    const cinemaCity = getWebProviderDefinition('CinemaCity');
+    const cb01 = getWebProviderDefinition('CB01');
 
-    assert.equal(definition?.key, 'cinemaCity');
-    assert.equal(definition?.limiterKey, 'webCc');
+    assert.equal(cinemaCity?.key, 'cinemaCity');
+    assert.equal(cinemaCity?.limiterKey, 'webCc');
     assert.equal(getWebProviderIcon('CinemaCity'), '🏙️');
+    assert.equal(cb01?.key, 'cb01');
+    assert.equal(cb01?.limiterKey, 'webCb01');
+    assert.equal(getWebProviderIcon('CB01'), '🎬');
 });
 
 test('fetchWebProviderBuckets does not crash when CinemaCity limiter is missing', async () => {

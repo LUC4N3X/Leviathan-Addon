@@ -1,12 +1,12 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const TorboxAvailabilityCache = require('../core/debrid/availability/torbox_availability_cache');
+const TorboxAvailabilityCache = require('../core/debrid/tb/availability/torbox_availability_cache');
 const {
   TB_CACHE_STATES,
   normalizeTbCacheState,
   toRdCacheState
-} = require('../core/debrid/availability/torbox_cache_state');
+} = require('../core/debrid/tb/availability/torbox_cache_state');
 
 const {
   parseHashResult,

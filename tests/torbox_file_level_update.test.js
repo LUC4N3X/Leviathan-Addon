@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { __private } = require('../core/debrid/availability/torbox_availability_cache');
+const { __private } = require('../core/debrid/tb/availability/torbox_availability_cache');
 
 test('TorBox DB update keeps episode identity for file-level cache hints', () => {
   const update = __private.buildDbUpdate(
