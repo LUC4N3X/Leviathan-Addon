@@ -1,10 +1,12 @@
 'use strict';
 
+const crypto = require('crypto');
 const { searchVix: searchStreamingCommunity } = require('../streamingcommunity/vix_handler');
 const { searchGuardaHD } = require('../guardahd/ghd_handler');
 const { searchGuardoSerie } = require('../guardoserie/gs_handler');
 const { searchGuardaserieTv } = require('../guardaserietv/gstv_handler');
 const { searchEurostreaming } = require('../eurostreaming/es_handler');
+const { searchCb01 } = require('../cb01/cb01_handler');
 const { searchAnimeWorld } = require('../animeworld/aw_handler');
 const { searchAnimeUnity } = require('../animeunity/au_handler');
 const { searchAnimeSaturn } = require('../animesaturn/as_handler');
@@ -20,12 +22,42 @@ const CINEMACITY_ERROR_TTL = Math.max(3, Math.min(CINEMACITY_EMPTY_TTL, parseInt
 const GUARDO_SERIE_MIN_TIMEOUT = Math.max(30000, parseInt(process.env.GS_PROVIDER_TIMEOUT || '45000', 10) || 45000);
 const GUARDASERIETV_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.GSTV_PROVIDER_TIMEOUT || '22000', 10) || 22000);
 const EUROSTREAMING_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.ES_PROVIDER_TIMEOUT || '22000', 10) || 22000);
+const CB01_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.CB01_PROVIDER_TIMEOUT || '22000', 10) || 22000);
 const GUARDO_SERIE_EMPTY_TTL = Math.max(15, parseInt(process.env.GS_PROVIDER_EMPTY_TTL || '45', 10) || 45);
 const GUARDO_SERIE_ERROR_TTL = Math.max(3, Math.min(GUARDO_SERIE_EMPTY_TTL, parseInt(process.env.GS_PROVIDER_ERROR_TTL || '5', 10) || 5));
 const GUARDASERIETV_EMPTY_TTL = Math.max(15, parseInt(process.env.GSTV_PROVIDER_EMPTY_TTL || '45', 10) || 45);
 const GUARDASERIETV_ERROR_TTL = Math.max(3, Math.min(GUARDASERIETV_EMPTY_TTL, parseInt(process.env.GSTV_PROVIDER_ERROR_TTL || '8', 10) || 8));
 const EUROSTREAMING_EMPTY_TTL = Math.max(15, parseInt(process.env.ES_PROVIDER_EMPTY_TTL || '45', 10) || 45);
 const EUROSTREAMING_ERROR_TTL = Math.max(3, Math.min(EUROSTREAMING_EMPTY_TTL, parseInt(process.env.ES_PROVIDER_ERROR_TTL || '8', 10) || 8));
+const CB01_EMPTY_TTL = Math.max(15, parseInt(process.env.CB01_PROVIDER_EMPTY_TTL || '45', 10) || 45);
+const CB01_ERROR_TTL = Math.max(3, Math.min(CB01_EMPTY_TTL, parseInt(process.env.CB01_PROVIDER_ERROR_TTL || '8', 10) || 8));
+
+
+function firstEnvValue(...names) {
+    for (const name of names) {
+        const value = process.env[name];
+        if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+    }
+    return '';
+}
+
+function normalizeCacheUrl(value) {
+    const raw = String(value || '').trim().replace(/\/+$/g, '');
+    if (!raw) return '';
+    const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    try {
+        const url = new URL(withProtocol);
+        return `${url.protocol}//${url.hostname.replace(/^www\./i, '').toLowerCase()}`;
+    } catch (_) {
+        return withProtocol.toLowerCase();
+    }
+}
+
+function getCb01ProviderCacheVersion() {
+    const primary = normalizeCacheUrl('https://cb01uno.bar');
+    const hash = crypto.createHash('sha1').update(primary).digest('hex').slice(0, 12);
+    return `hardcoded-domain:${hash}`;
+}
 
 function isStreamingCommunityEnabled(filters = {}) {
     return filters?.enableStreamingCommunity === true || filters?.enableVix === true;
@@ -138,6 +170,20 @@ const WEB_PROVIDER_DEFINITIONS = [
         errorTtl: EUROSTREAMING_ERROR_TTL,
         isEnabled: ({ filters }) => filters?.enableEs === true,
         run: ({ meta, config, reqHost }) => searchEurostreaming(meta, config, reqHost)
+    },
+    {
+        key: 'cb01',
+        recipeId: 'cb01',
+        sourceName: 'CB01',
+        cacheName: 'CB01V2',
+        cacheKeyVersion: getCb01ProviderCacheVersion(),
+        icon: '🎬',
+        limiterKey: 'webCb01',
+        minTimeout: CB01_MIN_TIMEOUT,
+        emptyTtl: CB01_EMPTY_TTL,
+        errorTtl: CB01_ERROR_TTL,
+        isEnabled: ({ filters }) => filters?.enableCb01 === true,
+        run: ({ meta, config, reqHost }) => searchCb01(meta, config, reqHost)
     },
     {
         key: 'animeWorld',
