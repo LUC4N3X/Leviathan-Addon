@@ -3,9 +3,9 @@ const MOBILE_LOGO_HINTS_ID = "leviathan-mobile-logo-hints";
 const MOBILE_LOGO_PRELOAD_ID = "leviathan-mobile-logo-preload";
 
 const MOBILE_PERF = {
-    maxDpr: 1.08,
-    targetFps: 20,
-    lowFxFps: 12,
+    maxDpr: 1.0,
+    targetFps: 24,
+    lowFxFps: 14,
     keyboardDeltaPx: 110,
     inputIdleMs: 420,
     viewportRaf: 0,
@@ -220,7 +220,7 @@ function mSetStyle(el, prop, value) {
 
 function mVibrate(pattern) {
     try {
-        mVibrate(pattern);
+        if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(pattern);
     } catch (_) {}
 }
 
@@ -4496,6 +4496,659 @@ body.m-typing .m-nav-item .mf-nav-emoji {
     font-size: 0.82rem;
 }
 
+
+/* Mobile ocean: visible movement, GPU-friendly */
+.m-sea-motion {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: -7;
+    opacity: 0.78;
+    contain: layout paint;
+}
+.m-sea-band {
+    position: absolute;
+    left: -30%;
+    width: 160%;
+    border-radius: 44%;
+    transform: translate3d(0,0,0);
+    will-change: transform;
+}
+.m-sea-band.band-1 {
+    top: -5vh;
+    height: 22vh;
+    background:
+        radial-gradient(70px 24px at 70px 100%, rgba(170,245,255,0.30) 67px, transparent 70px) repeat-x,
+        linear-gradient(180deg, rgba(125,232,255,0.18), rgba(14,165,233,0.10), transparent);
+    background-size: 140px 56px, 100% 100%;
+    animation: mSeaSlideA 12s linear infinite, mSeaBobA 7s ease-in-out infinite;
+}
+.m-sea-band.band-2 {
+    top: 13vh;
+    height: 26vh;
+    opacity: 0.55;
+    background:
+        radial-gradient(110px 32px at 110px 100%, rgba(75,215,255,0.22) 107px, transparent 110px) repeat-x,
+        linear-gradient(180deg, rgba(34,211,238,0.12), rgba(3,60,95,0.07), transparent);
+    background-size: 220px 70px, 100% 100%;
+    animation: mSeaSlideB 18s linear infinite, mSeaBobB 9s ease-in-out infinite;
+}
+.m-sea-band.band-3 {
+    bottom: -10vh;
+    height: 34vh;
+    opacity: 0.50;
+    background:
+        radial-gradient(145px 38px at 145px 0, rgba(5,60,96,0.40) 142px, transparent 145px) repeat-x,
+        linear-gradient(0deg, rgba(0,4,12,0.72), rgba(4,45,70,0.12), transparent);
+    background-size: 290px 88px, 100% 100%;
+    animation: mSeaSlideC 24s linear infinite, mSeaBobC 11s ease-in-out infinite;
+}
+@keyframes mSeaSlideA {
+    from { background-position: 0 0, 0 0; transform: translate3d(0,0,0) scale(1.02); }
+    to   { background-position: 140px 0, 0 0; transform: translate3d(-2.2%,0,0) scale(1.04); }
+}
+@keyframes mSeaSlideB {
+    from { background-position: 0 0, 0 0; transform: translate3d(0,0,0) scale(1.03); }
+    to   { background-position: -220px 0, 0 0; transform: translate3d(2.0%,0,0) scale(1.05); }
+}
+@keyframes mSeaSlideC {
+    from { background-position: 0 0, 0 0; transform: translate3d(0,0,0) scale(1.02); }
+    to   { background-position: -290px 0, 0 0; transform: translate3d(1.6%,0,0) scale(1.04); }
+}
+@keyframes mSeaBobA { 0%,100% { margin-top: 0; } 50% { margin-top: 1.1vh; } }
+@keyframes mSeaBobB { 0%,100% { margin-top: 0; } 50% { margin-top: -1.0vh; } }
+@keyframes mSeaBobC { 0%,100% { margin-bottom: 0; } 50% { margin-bottom: -1.2vh; } }
+body.m-lowfx .m-sea-motion { opacity: 0.45; }
+body.m-lowfx .m-sea-band.band-2 { display: none; }
+body.m-typing .m-sea-motion,
+body.m-keyboard-open .m-sea-motion { display: none !important; }
+
+/* Leviathan SaaS skin — keeps original layout, upgrades only the visual layer */
+:root {
+    --m-bg: #020817;
+    --m-bg-deep: #01040d;
+    --m-primary: #4de7ff;
+    --m-primary-dim: rgba(77, 231, 255, 0.18);
+    --m-secondary: #8b5cf6;
+    --m-accent: #ff7ad9;
+    --m-amber: #ffb86b;
+    --m-orange: #ff8a3d;
+    --m-cine: #38bdf8;
+    --m-kofi: #ff7ad9;
+    --m-surface: rgba(9, 18, 35, 0.68);
+    --m-surface-2: rgba(3, 9, 20, 0.82);
+    --m-text: #f6fbff;
+    --m-dim: rgba(207, 232, 245, 0.72);
+    --m-faint: rgba(207, 232, 245, 0.42);
+    --m-glow: 0 18px 60px rgba(77, 231, 255, 0.20);
+    --m-glow-strong: 0 24px 90px rgba(139, 92, 246, 0.26);
+    --m-radius-lg: 26px;
+    --m-radius-md: 18px;
+    --m-radius-sm: 12px;
+}
+
+body {
+    background:
+        radial-gradient(circle at 14% 10%, rgba(77, 231, 255, 0.30) 0, transparent 28%),
+        radial-gradient(circle at 88% 8%, rgba(139, 92, 246, 0.34) 0, transparent 32%),
+        radial-gradient(circle at 18% 82%, rgba(255, 122, 217, 0.16) 0, transparent 31%),
+        radial-gradient(circle at 84% 76%, rgba(255, 138, 61, 0.12) 0, transparent 28%),
+        radial-gradient(ellipse at 50% 108%, rgba(2, 132, 199, 0.32), transparent 62%),
+        linear-gradient(180deg, #06162d 0%, #04101f 36%, #020817 68%, #01030a 100%);
+}
+
+body::after {
+    opacity: 0.045;
+    background:
+        linear-gradient(rgba(255,255,255,0) 50%, rgba(255,255,255,0.045) 50%),
+        linear-gradient(90deg, rgba(77,231,255,0.035), rgba(139,92,246,0.025), rgba(255,122,217,0.028));
+}
+
+body::before {
+    opacity: 0.58;
+    background-size: 54px 54px;
+    background-image:
+        linear-gradient(rgba(148, 238, 255, 0.052) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 238, 255, 0.052) 1px, transparent 1px);
+}
+
+.m-sea-motion { opacity: 0.72; filter: saturate(1.08) hue-rotate(2deg); }
+.m-caustic { opacity: 0.85; }
+.m-ocean-particles { opacity: 0.55; }
+
+.m-content { padding-top: 4px; }
+
+.m-abyss-hero {
+    padding: 25px 10px 22px;
+    margin: 8px 0 12px;
+}
+
+.m-abyss-hero::before {
+    top: 8px;
+    width: min(360px, 94vw);
+    height: 286px;
+    background:
+        radial-gradient(circle at 50% 34%, rgba(77, 231, 255, 0.30) 0%, rgba(77, 231, 255, 0.10) 30%, transparent 56%),
+        radial-gradient(circle at 36% 54%, rgba(255, 122, 217, 0.13) 0%, transparent 38%),
+        radial-gradient(circle at 72% 58%, rgba(139, 92, 246, 0.17) 0%, transparent 42%);
+    filter: blur(24px);
+}
+
+.m-abyss-hero::after {
+    width: min(320px, 86vw);
+    background: linear-gradient(90deg, transparent, rgba(77,231,255,0.62), rgba(255,122,217,0.36), rgba(255,184,107,0.32), transparent);
+    opacity: 0.86;
+}
+
+.m-abyss-logo {
+    width: 164px;
+    height: 164px;
+    margin-bottom: 12px;
+}
+
+.m-abyss-logo::before {
+    inset: 7px;
+    border: 0;
+    background:
+        linear-gradient(#020817, #020817) padding-box,
+        conic-gradient(from 220deg, rgba(77,231,255,0.95), rgba(139,92,246,0.75), rgba(255,122,217,0.60), rgba(255,184,107,0.50), rgba(77,231,255,0.95)) border-box;
+    border: 2px solid transparent;
+    box-shadow:
+        0 22px 70px rgba(0, 0, 0, 0.38),
+        0 0 34px rgba(77, 231, 255, 0.22),
+        inset 0 1px 0 rgba(255,255,255,0.14),
+        inset 0 0 26px rgba(139,92,246,0.10);
+}
+
+.m-abyss-logo::after {
+    inset: -18px;
+    background:
+        radial-gradient(circle, rgba(77,231,255,0.20), rgba(139,92,246,0.10) 42%, transparent 72%);
+    filter: blur(16px);
+}
+
+.m-abyss-logo .logo-image {
+    max-width: 146px;
+    transform: translateY(4px) scale(1.03);
+    filter:
+        drop-shadow(0 18px 24px rgba(0, 0, 0, 0.40))
+        drop-shadow(0 0 14px rgba(77, 231, 255, 0.25))
+        saturate(1.08) brightness(1.04);
+}
+
+.m-abyss-crown {
+    background: linear-gradient(135deg, rgba(255,184,107,0.95), rgba(255,122,217,0.75));
+    box-shadow: 0 0 20px rgba(255,184,107,0.34);
+}
+
+.m-abyss-title {
+    font-size: clamp(2.72rem, 13.6vw, 3.42rem);
+    letter-spacing: 1px;
+    background: linear-gradient(180deg, #ffffff 0%, #b9fbff 28%, #4de7ff 56%, #a78bfa 82%, #ff7ad9 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 0 15px rgba(77,231,255,0.28));
+}
+
+.m-abyss-sub {
+    width: auto;
+    max-width: 92%;
+    margin-top: 10px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    color: rgba(238, 252, 255, 0.92);
+    background: linear-gradient(135deg, rgba(255,255,255,0.11), rgba(255,255,255,0.045));
+    border: 1px solid rgba(255,255,255,0.13);
+    letter-spacing: 3.6px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 10px 28px rgba(0,0,0,0.20);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+}
+
+.m-abyss-sub::before,
+.m-abyss-sub::after { display: none; }
+
+.m-abyss-version {
+    color: rgba(246,251,255,0.90);
+    background: linear-gradient(135deg, rgba(77,231,255,0.12), rgba(139,92,246,0.10), rgba(255,122,217,0.08));
+    border-color: rgba(255,255,255,0.18);
+    box-shadow: 0 12px 34px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.12);
+}
+
+.m-section-head {
+    margin: 5px 2px 12px;
+    padding: 10px 11px;
+    border-left: 0;
+    border-radius: 18px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.105), rgba(255,255,255,0.045));
+    border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 14px 38px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.11);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+}
+
+.m-section-head::before {
+    content: "";
+    position: absolute;
+    left: 11px;
+    top: 10px;
+    bottom: 10px;
+    width: 3px;
+    border-radius: 20px;
+    background: linear-gradient(180deg, var(--m-primary), var(--m-accent), var(--m-orange));
+    box-shadow: 0 0 14px rgba(77,231,255,0.34);
+}
+
+.m-section-head .sh-titles { padding-left: 9px; }
+.m-section-head .sh-title { font-size: 0.98rem; letter-spacing: 2.4px; }
+.m-section-head .sh-sub { color: rgba(207,232,245,0.62); }
+.m-section-head .sh-tag {
+    border-radius: 999px;
+    padding: 5px 9px;
+    border-color: rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.075);
+    color: rgba(246,251,255,0.86);
+}
+
+.m-hypervisor,
+.m-visual-core-v2 {
+    background:
+        linear-gradient(145deg, rgba(255,255,255,0.105), rgba(255,255,255,0.040)),
+        radial-gradient(circle at 20% 0%, rgba(77,231,255,0.10), transparent 42%),
+        radial-gradient(circle at 94% 12%, rgba(139,92,246,0.10), transparent 40%),
+        rgba(2, 8, 23, 0.66);
+    border-color: rgba(255,255,255,0.13);
+    box-shadow:
+        0 18px 58px rgba(0,0,0,0.34),
+        inset 0 1px 0 rgba(255,255,255,0.13),
+        inset 0 0 28px rgba(77,231,255,0.035);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+}
+
+.m-hypervisor::before,
+.m-visual-core-v2::before {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(77,231,255,0.88), rgba(255,122,217,0.50), rgba(255,184,107,0.38), transparent);
+    box-shadow: 0 0 18px rgba(77,231,255,0.34);
+}
+
+.m-hyp-header {
+    border-bottom-color: rgba(255,255,255,0.11);
+    color: rgba(246,251,255,0.96);
+    letter-spacing: 2.5px;
+}
+
+.m-hyp-icon {
+    border-color: rgba(255,255,255,0.15);
+    background: linear-gradient(135deg, rgba(77,231,255,0.16), rgba(139,92,246,0.12));
+}
+
+.m-cred-opt,
+.m-flux-opt,
+.m-lang-opt,
+.m-cortex-chip,
+.m-reactor-module,
+.m-cloud-mode-btn,
+.m-qual-chip {
+    background: linear-gradient(155deg, rgba(255,255,255,0.088), rgba(255,255,255,0.032));
+    border-color: rgba(255,255,255,0.12);
+    box-shadow: 0 10px 28px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+.m-cred-opt.active,
+.m-flux-opt.active-bal,
+.m-flux-opt.active-res,
+.m-flux-opt.active-sz,
+.m-lang-opt.active-ita,
+.m-lang-opt.active-hyb,
+.m-lang-opt.active-eng,
+.m-cortex-chip.active,
+.m-cloud-mode-btn.active {
+    background: linear-gradient(155deg, rgba(77,231,255,0.15), rgba(139,92,246,0.115), rgba(255,122,217,0.075));
+    border-color: rgba(77,231,255,0.48);
+    box-shadow: 0 0 26px rgba(77,231,255,0.16), 0 14px 34px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.13);
+}
+
+.m-reactor-module.active {
+    box-shadow: 0 0 24px var(--glow-color), 0 13px 32px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.12);
+}
+
+.m-reactor-core {
+    background: rgba(255,255,255,0.05);
+    border-right-color: rgba(255,255,255,0.10);
+}
+
+.m-reactor-title,
+.m-cred-name,
+.m-chip-label,
+.m-vp-title { color: rgba(255,255,255,0.97); }
+
+.m-reactor-desc,
+.m-hyp-desc,
+.m-vp-sub,
+.m-cloud-note { color: rgba(207,232,245,0.58); }
+
+.m-if-inner,
+.m-input-tech,
+.m-visual-preview,
+.m-flux-readout,
+.m-sys-grid,
+.m-action-modal .m-am-card {
+    background: rgba(1, 8, 18, 0.54);
+    border-color: rgba(255,255,255,0.12);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.07), 0 10px 30px rgba(0,0,0,0.20);
+}
+
+.m-input-fuselage {
+    background: linear-gradient(145deg, rgba(255,255,255,0.07), rgba(255,255,255,0.025));
+    border-color: rgba(255,255,255,0.12);
+}
+
+.m-input-fuselage:focus-within,
+.m-input-box:focus-within .m-input-tech {
+    border-color: rgba(77,231,255,0.55);
+    box-shadow: 0 0 24px rgba(77,231,255,0.18), inset 0 1px 0 rgba(255,255,255,0.10);
+}
+
+.m-tech-tag {
+    border-radius: 999px;
+    padding: 3px 7px;
+    background: rgba(255,255,255,0.055);
+}
+
+.tag-noproxy { border-color: rgba(255,184,107,0.34); color: rgba(255,219,171,0.92); }
+.tag-mfp { border-color: rgba(77,231,255,0.38); color: rgba(190,249,255,0.95); }
+.tag-kraken { border-color: rgba(139,92,246,0.42); color: rgba(220,210,255,0.95); }
+
+.m-dock-container {
+    background: linear-gradient(180deg, rgba(1, 6, 16, 0.16), rgba(1, 6, 16, 0.86) 32%, rgba(1, 4, 12, 0.96));
+}
+
+.m-dock-actions,
+.m-dock-nav {
+    background: linear-gradient(135deg, rgba(255,255,255,0.105), rgba(255,255,255,0.050));
+    border: 1px solid rgba(255,255,255,0.13);
+    box-shadow: 0 18px 48px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.12);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+}
+
+.m-btn-install {
+    background: linear-gradient(135deg, #4de7ff, #8b5cf6 54%, #ff7ad9);
+    color: #ffffff;
+    box-shadow: 0 13px 34px rgba(77,231,255,0.22), inset 0 1px 0 rgba(255,255,255,0.24);
+}
+
+.m-btn-copy {
+    background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.052));
+    border-color: rgba(255,255,255,0.14);
+    color: rgba(246,251,255,0.90);
+}
+
+.m-nav-item.active {
+    background: linear-gradient(135deg, rgba(77,231,255,0.16), rgba(139,92,246,0.14));
+    border-color: rgba(77,231,255,0.25);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 0 18px rgba(77,231,255,0.12);
+}
+
+.m-slider:before {
+    box-shadow: 0 4px 14px rgba(0,0,0,0.42);
+}
+
+@media (max-width: 370px) {
+    .m-abyss-logo { width: 150px; height: 150px; }
+    .m-abyss-logo .logo-image { max-width: 134px; }
+    .m-abyss-title { font-size: 2.72rem; }
+    .m-section-head .sh-title { font-size: 0.90rem; letter-spacing: 1.9px; }
+}
+
+body.m-lowfx .m-abyss-sub,
+body.m-lowfx .m-section-head,
+body.m-lowfx .m-hypervisor,
+body.m-lowfx .m-visual-core-v2,
+body.m-lowfx .m-dock-actions,
+body.m-lowfx .m-dock-nav {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+
+/* Viewport fix: the bottom install dock must reserve real space, not cover the setup cards. */
+:root {
+    --m-dock-h: 118px;
+    --m-dock-gap: 8px;
+}
+
+.m-content-wrapper {
+    height: var(--m-vvh, 100dvh) !important;
+    padding-bottom: calc(var(--m-dock-h) + var(--m-dock-gap)) !important;
+    overflow: hidden !important;
+}
+
+.m-content {
+    min-height: 0 !important;
+    padding-bottom: 16px !important;
+}
+
+body.m-keyboard-open .m-content-wrapper,
+body.m-typing .m-content-wrapper {
+    padding-bottom: calc(58px + var(--m-dock-gap)) !important;
+}
+
+body.m-keyboard-open .m-content,
+body.m-typing .m-content {
+    padding-bottom: 12px !important;
+}
+
+.m-dock-container {
+    transform: translateZ(0);
+}
+
+@media (max-height: 740px) {
+    .m-hero {
+        padding-top: 14px !important;
+        padding-bottom: 12px !important;
+    }
+
+    .logo-container,
+    .m-abyss-logo {
+        width: 118px !important;
+        height: 118px !important;
+        margin-bottom: 8px !important;
+    }
+
+    .logo-image,
+    .m-abyss-logo .logo-image {
+        max-width: 108px !important;
+    }
+
+    .m-brand-title,
+    .m-abyss-title {
+        font-size: clamp(2.12rem, 11vw, 2.62rem) !important;
+    }
+
+    .m-brand-sub,
+    .m-abyss-sub {
+        font-size: 0.62rem !important;
+        letter-spacing: 2.6px !important;
+    }
+
+    .m-version-tag {
+        margin-top: 6px !important;
+    }
+}
+
+
+/* Static Marine SaaS Skin: no moving background, stronger ocean identity */
+body {
+    background:
+        radial-gradient(ellipse at 50% -10%, rgba(125, 249, 255, 0.34) 0%, rgba(34, 211, 238, 0.13) 24%, transparent 54%),
+        radial-gradient(circle at 14% 16%, rgba(45, 212, 191, 0.22) 0%, transparent 31%),
+        radial-gradient(circle at 86% 12%, rgba(59, 130, 246, 0.24) 0%, transparent 34%),
+        radial-gradient(circle at 13% 78%, rgba(14, 165, 233, 0.18) 0%, transparent 36%),
+        radial-gradient(circle at 88% 76%, rgba(6, 182, 212, 0.16) 0%, transparent 35%),
+        radial-gradient(ellipse at 50% 112%, rgba(3, 105, 161, 0.48) 0%, rgba(7, 89, 133, 0.20) 42%, transparent 72%),
+        linear-gradient(180deg, #06263a 0%, #03192e 34%, #020b1c 67%, #00040d 100%) !important;
+}
+
+body.m-mf-plus {
+    background:
+        radial-gradient(ellipse at 50% -14%, rgba(125, 249, 255, 0.32) 0%, rgba(34, 211, 238, 0.12) 32%, transparent 64%),
+        radial-gradient(circle at 12% 22%, rgba(45, 212, 191, 0.20) 0%, transparent 32%),
+        radial-gradient(circle at 88% 18%, rgba(59, 130, 246, 0.22) 0%, transparent 34%),
+        radial-gradient(circle at 18% 86%, rgba(14, 165, 233, 0.17) 0%, transparent 34%),
+        radial-gradient(circle at 84% 78%, rgba(20, 184, 166, 0.12) 0%, transparent 32%),
+        linear-gradient(180deg, #06263a 0%, #03192e 37%, #020b1c 70%, #00040d 100%) !important;
+}
+
+body::before {
+    animation: none !important;
+    opacity: 0.82 !important;
+    background-image:
+        radial-gradient(ellipse at 50% 107%, rgba(34, 211, 238, 0.22) 0%, transparent 58%),
+        radial-gradient(circle at 18% 74%, rgba(103, 232, 249, 0.12) 0 1.5px, transparent 2px),
+        radial-gradient(circle at 78% 66%, rgba(186, 230, 253, 0.10) 0 1.5px, transparent 2px),
+        linear-gradient(18deg, transparent 0 55%, rgba(125, 249, 255, 0.06) 57%, transparent 62%),
+        linear-gradient(-16deg, transparent 0 42%, rgba(45, 212, 191, 0.05) 44%, transparent 51%),
+        linear-gradient(rgba(125, 249, 255, 0.040) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(125, 249, 255, 0.032) 1px, transparent 1px) !important;
+    background-size:
+        100% 100%,
+        88px 88px,
+        116px 116px,
+        340px 150px,
+        390px 170px,
+        58px 58px,
+        58px 58px !important;
+    background-position:
+        center,
+        0 0,
+        12px 24px,
+        center,
+        center,
+        center,
+        center !important;
+    mask-image: linear-gradient(180deg, rgba(0,0,0,0.90) 0%, rgba(0,0,0,0.78) 58%, rgba(0,0,0,0.98) 100%) !important;
+    -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0.90) 0%, rgba(0,0,0,0.78) 58%, rgba(0,0,0,0.98) 100%) !important;
+}
+
+body::after {
+    animation: none !important;
+    opacity: 0.36 !important;
+    background:
+        radial-gradient(ellipse at 50% 8%, rgba(215, 255, 255, 0.12) 0%, transparent 38%),
+        linear-gradient(180deg, rgba(77, 231, 255, 0.09) 0%, transparent 34%, rgba(0, 7, 18, 0.40) 100%),
+        repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 10px) !important;
+    mix-blend-mode: screen !important;
+}
+
+#app-container::before {
+    background:
+        radial-gradient(ellipse at 50% 12%, rgba(125, 249, 255, 0.15), transparent 42%),
+        radial-gradient(ellipse at 50% 112%, rgba(14, 165, 233, 0.24), transparent 48%),
+        linear-gradient(180deg, rgba(255,255,255,0.020), transparent 18%, rgba(0,0,0,0.16) 100%) !important;
+    opacity: 0.92 !important;
+}
+
+#app-container::after {
+    background-image:
+        linear-gradient(rgba(125, 249, 255, 0.065) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(125, 249, 255, 0.045) 1px, transparent 1px) !important;
+    background-size: 68px 68px !important;
+    opacity: 0.11 !important;
+    animation: none !important;
+}
+
+.m-sea-motion,
+.m-ocean-particles,
+#m-sea-canvas {
+    display: none !important;
+    opacity: 0 !important;
+    animation: none !important;
+}
+
+.m-caustic {
+    opacity: 0.30 !important;
+    filter: saturate(1.15) hue-rotate(-8deg) !important;
+}
+
+.m-caustic-ray {
+    animation: none !important;
+    opacity: 0.28 !important;
+    background: linear-gradient(180deg, rgba(185,255,255,0.10) 0%, rgba(77,231,255,0.045) 48%, transparent 100%) !important;
+}
+
+.m-sea-band,
+.m-ocean-particle {
+    animation: none !important;
+}
+
+.m-abyss-hero::before {
+    background:
+        radial-gradient(circle at 50% 30%, rgba(125, 249, 255, 0.32) 0%, rgba(45, 212, 191, 0.12) 31%, transparent 58%),
+        radial-gradient(circle at 34% 57%, rgba(34, 211, 238, 0.14) 0%, transparent 38%),
+        radial-gradient(circle at 72% 58%, rgba(59, 130, 246, 0.16) 0%, transparent 42%) !important;
+}
+
+.m-abyss-hero::after {
+    background: linear-gradient(90deg, transparent, rgba(125,249,255,0.72), rgba(45,212,191,0.42), rgba(59,130,246,0.34), transparent) !important;
+}
+
+.m-abyss-logo::before {
+    background:
+        linear-gradient(#021426, #020817) padding-box,
+        conic-gradient(from 220deg, rgba(125,249,255,0.95), rgba(45,212,191,0.78), rgba(59,130,246,0.66), rgba(14,165,233,0.72), rgba(125,249,255,0.95)) border-box !important;
+    box-shadow:
+        0 22px 70px rgba(0, 0, 0, 0.42),
+        0 0 34px rgba(125, 249, 255, 0.22),
+        inset 0 1px 0 rgba(255,255,255,0.14),
+        inset 0 0 28px rgba(45,212,191,0.12) !important;
+}
+
+.m-abyss-title {
+    background: linear-gradient(180deg, #ffffff 0%, #dffcff 18%, #7df9ff 40%, #22d3ee 62%, #38bdf8 82%, #8bdbff 100%) !important;
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    filter: drop-shadow(0 0 16px rgba(125,249,255,0.30)) drop-shadow(0 12px 24px rgba(0,0,0,0.44)) !important;
+}
+
+.m-abyss-sub,
+.m-abyss-version,
+.m-section-head,
+.m-hypervisor,
+.m-visual-core-v2,
+.m-dock-actions,
+.m-dock-nav {
+    border-color: rgba(125, 249, 255, 0.16) !important;
+    background:
+        linear-gradient(145deg, rgba(255,255,255,0.095), rgba(255,255,255,0.036)),
+        radial-gradient(circle at 0 0, rgba(45,212,191,0.085), transparent 42%) !important;
+}
+
+.m-section-head::before {
+    background: linear-gradient(180deg, #7df9ff, #2dd4bf, #38bdf8) !important;
+    box-shadow: 0 0 14px rgba(125,249,255,0.36) !important;
+}
+
+.m-btn-install {
+    background: linear-gradient(135deg, #7df9ff 0%, #2dd4bf 42%, #38bdf8 76%, #8bdbff 100%) !important;
+    color: #02111f !important;
+    text-shadow: none !important;
+}
+
+.m-nav-item.active {
+    background: linear-gradient(135deg, rgba(125,249,255,0.17), rgba(45,212,191,0.13), rgba(56,189,248,0.11)) !important;
+    border-color: rgba(125,249,255,0.30) !important;
+}
+
+body.m-lowfx .m-caustic {
+    display: none !important;
+}
+
 `;
 
 const mobileHTML = `
@@ -4505,6 +5158,11 @@ const mobileHTML = `
     <div class="m-caustic-ray" style="--ray-x:50%;--ray-dur:16s;--ray-op:0.65;--ray-from:-10deg;--ray-to:8deg;width:65px;"></div>
     <div class="m-caustic-ray" style="--ray-x:68%;--ray-dur:9s;--ray-op:0.35;--ray-from:5deg;--ray-to:-12deg;width:40px;"></div>
     <div class="m-caustic-ray" style="--ray-x:85%;--ray-dur:13s;--ray-op:0.50;--ray-from:8deg;--ray-to:-6deg;width:55px;"></div>
+</div>
+<div class="m-sea-motion" aria-hidden="true">
+    <div class="m-sea-band band-1"></div>
+    <div class="m-sea-band band-2"></div>
+    <div class="m-sea-band band-3"></div>
 </div>
 <div class="m-ocean-particles" id="m-ocean-particles" aria-hidden="true"></div>
 <div id="app-container">
@@ -4616,7 +5274,7 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🍿 Catalogo completo e aggiornato</span>
+                                <span class="m-reactor-desc">🍿 Film e serie TV italiani, catalogo ricco e player rapido</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
@@ -4643,7 +5301,7 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎬 Film e serie in alta qualità</span>
+                                <span class="m-reactor-desc">🎬 Film e serie TV in HD, con nuove uscite e schede ordinate</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-mfp"><i class="fas fa-check-circle"></i> OTTIMIZZATO</span>
                                 </div>
@@ -4662,7 +5320,7 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-purple"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">📺 Serie TV italiane aggiornate</span>
+                                <span class="m-reactor-desc">📺 Serie TV italiane, stagioni ed episodi facili da seguire</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
@@ -4681,7 +5339,7 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">📡 Serie TV con ricerca rapida</span>
+                                <span class="m-reactor-desc">📡 Archivio serie TV ordinato per stagioni ed episodi</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
@@ -4700,7 +5358,7 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🌍 Serie italiane organizzate</span>
+                                <span class="m-reactor-desc">🌍 Storico portale italiano dedicato alle serie TV</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-mfp"><i class="fas fa-check-circle"></i> OTTIMIZZATO</span>
                                 </div>
@@ -4719,7 +5377,7 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎬 Film e serie con catalogo ampio</span>
+                                <span class="m-reactor-desc">🎬 Ampio catalogo di film e serie TV, molto conosciuto in Italia</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-mfp"><i class="fas fa-check-circle"></i> OTTIMIZZATO</span>
                                 </div>
@@ -4738,7 +5396,7 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🐉 Anime italiani ben indicizzati</span>
+                                <span class="m-reactor-desc">🐉 Anime sub-ita e doppiati, schede serie e catalogo ricco</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
@@ -4757,7 +5415,7 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🌊 Anime e simulcast aggiornati</span>
+                                <span class="m-reactor-desc">🌊 Anime, simulcast e doppiaggi con episodi aggiornati</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
@@ -4776,7 +5434,7 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🪐 Anime classici e recenti</span>
+                                <span class="m-reactor-desc">🪐 Anime classici e recenti, archivio ampio e veloce</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
@@ -4795,7 +5453,7 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-green"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎞️ Film italiani selezionati</span>
+                                <span class="m-reactor-desc">🎞️ Film in streaming con raccolte per genere e ultime uscite</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
@@ -4814,7 +5472,7 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎟️ Catalogo cinema e serie</span>
+                                <span class="m-reactor-desc">🎟️ Film e serie TV con catalogo aggiornato e navigazione semplice</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
@@ -5800,160 +6458,12 @@ function createLogoParticles() {
 
 function createOceanParticles() {
     const container = document.getElementById('m-ocean-particles');
-    if(!container) return;
-    const isLowFx = document.body.classList.contains('m-lowfx');
-    const liteFx = document.body.classList.contains('m-mf-lite');
-    const count = isLowFx ? 0 : (liteFx ? 6 : 10);
-    container.textContent = '';
-    for(let i = 0; i < count; i++) {
-        const p = document.createElement('div');
-        p.className = 'm-ocean-particle';
-        const size = Math.random() * 3.5 + 1.5;
-        p.style.width = `${size}px`;
-        p.style.height = `${size}px`;
-        p.style.left = `${Math.random() * 100}%`;
-        p.style.animationDuration = `${Math.random() * 10 + 14}s`;
-        p.style.animationDelay = `-${Math.random() * 12}s`;
-        const drift = (Math.random() * 24 - 12).toFixed(1);
-        p.style.setProperty('--drift', `${drift}px`);
-        const rnd = Math.random();
-        if (rnd > 0.75) {
-            p.style.background = 'radial-gradient(circle, rgba(124, 58, 237, 0.95) 0%, rgba(112, 0, 255, 0.25) 55%, transparent 100%)';
-            p.style.boxShadow = '0 0 8px 2px rgba(124, 58, 237, 0.65), 0 0 22px rgba(112, 0, 255, 0.25)';
-        } else if (rnd > 0.55) {
-            p.style.background = 'radial-gradient(circle, rgba(0, 255, 200, 0.90) 0%, rgba(0, 200, 160, 0.20) 55%, transparent 100%)';
-            p.style.boxShadow = '0 0 8px 2px rgba(0, 255, 200, 0.55), 0 0 18px rgba(0, 220, 180, 0.2)';
-        }
-        container.appendChild(p);
-    }
+    if (container) container.textContent = '';
 }
 
 function createSeaCanvas() {
-    if (document.getElementById('m-sea-canvas')) return;
-
-    const canvas = document.createElement('canvas');
-    canvas.id = 'm-sea-canvas';
-    document.body.appendChild(canvas);
-
-    const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
-    if (!ctx) return;
-
-    let W = 0;
-    let H = 0;
-    let dpr = 1;
-    let animId = 0;
-    let lastTs = 0;
-    let t = 0;
-
-    const isLow = () => document.body.classList.contains('m-lowfx');
-    const shouldPause = () => document.hidden || document.body.classList.contains('m-typing') || document.body.classList.contains('m-keyboard-open');
-
-    function resize() {
-        const lowFx = isLow();
-        W = Math.max(1, window.innerWidth || 390);
-        H = Math.round(Math.max(180, Math.min((window.innerHeight || 720) * (lowFx ? 0.28 : 0.34), 310)));
-        dpr = Math.min(window.devicePixelRatio || 1, lowFx ? 1 : MOBILE_PERF.maxDpr);
-
-        canvas.style.height = `${H}px`;
-        const nextW = Math.round(W * dpr);
-        const nextH = Math.round(H * dpr);
-        if (canvas.width !== nextW) canvas.width = nextW;
-        if (canvas.height !== nextH) canvas.height = nextH;
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-
-    function wave(x, y, amp, freq, speed, phase) {
-        return y + Math.sin((x * freq) + (t * speed) + phase) * amp + Math.sin((x * freq * 1.72) + (t * speed * 0.55) + phase) * amp * 0.28;
-    }
-
-    function drawLayer(layer) {
-        const step = layer.step;
-        ctx.beginPath();
-        for (let x = 0; x <= W + step; x += step) {
-            const y = wave(x, H * layer.y, layer.amp, layer.freq, layer.speed, layer.phase);
-            if (x === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-        }
-        ctx.lineTo(W, H);
-        ctx.lineTo(0, H);
-        ctx.closePath();
-        ctx.fillStyle = layer.fill;
-        ctx.fill();
-
-        if (layer.stroke) {
-            ctx.beginPath();
-            for (let x = 0; x <= W + step; x += step) {
-                const y = wave(x, H * layer.y, layer.amp, layer.freq, layer.speed, layer.phase) - 0.5;
-                if (x === 0) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
-            }
-            ctx.strokeStyle = layer.stroke;
-            ctx.lineWidth = layer.lineWidth;
-            ctx.lineCap = 'round';
-            ctx.stroke();
-        }
-    }
-
-    function drawFrame(ts) {
-        animId = requestAnimationFrame(drawFrame);
-
-        if (shouldPause()) return;
-
-        const lowFx = isLow();
-        const frameBudget = 1000 / (lowFx ? MOBILE_PERF.lowFxFps : MOBILE_PERF.targetFps);
-        if (ts - lastTs < frameBudget) return;
-        t += lowFx ? 0.010 : 0.014;
-        ctx.clearRect(0, 0, W, H);
-
-        const bg = ctx.createLinearGradient(0, 0, 0, H);
-        bg.addColorStop(0, 'rgba(0, 20, 42, 0.00)');
-        bg.addColorStop(0.34, 'rgba(0, 82, 130, 0.08)');
-        bg.addColorStop(1, 'rgba(0, 4, 12, 0.88)');
-        ctx.fillStyle = bg;
-        ctx.fillRect(0, 0, W, H);
-
-        const layers = lowFx ? [
-            { y: 0.68, amp: 8, freq: 0.0068, speed: 0.24, phase: 0.2, step: 11, fill: 'rgba(0, 20, 52, 0.90)', stroke: null, lineWidth: 1 },
-            { y: 0.55, amp: 6, freq: 0.0105, speed: 0.36, phase: 1.6, step: 10, fill: 'rgba(0, 88, 150, 0.22)', stroke: 'rgba(135, 230, 255, 0.18)', lineWidth: 1.1 },
-            { y: 0.46, amp: 4, freq: 0.0150, speed: 0.44, phase: 3.2, step: 10, fill: 'rgba(124, 58, 237, 0.055)', stroke: 'rgba(0, 242, 255, 0.20)', lineWidth: 1.0 }
-        ] : [
-            { y: 0.76, amp: 14, freq: 0.0052, speed: 0.18, phase: 0.0, step: 8, fill: 'rgba(0, 12, 34, 0.94)', stroke: null, lineWidth: 1 },
-            { y: 0.65, amp: 11, freq: 0.0078, speed: 0.28, phase: 1.2, step: 8, fill: 'rgba(0, 42, 92, 0.66)', stroke: 'rgba(80, 206, 255, 0.11)', lineWidth: 1.0 },
-            { y: 0.54, amp: 8, freq: 0.0108, speed: 0.41, phase: 2.8, step: 7, fill: 'rgba(0, 110, 176, 0.26)', stroke: 'rgba(124, 230, 255, 0.20)', lineWidth: 1.15 },
-            { y: 0.45, amp: 5, freq: 0.0162, speed: 0.58, phase: 4.7, step: 8, fill: 'rgba(124, 58, 237, 0.065)', stroke: 'rgba(205, 145, 255, 0.14)', lineWidth: 1.0 }
-        ];
-
-        layers.forEach(drawLayer);
-
-        const shine = ctx.createLinearGradient(0, H * 0.28, 0, H * 0.62);
-        shine.addColorStop(0, 'rgba(0, 242, 255, 0.00)');
-        shine.addColorStop(0.44, lowFx ? 'rgba(0, 242, 255, 0.025)' : 'rgba(0, 242, 255, 0.040)');
-        shine.addColorStop(1, 'rgba(0, 242, 255, 0.00)');
-        ctx.fillStyle = shine;
-        ctx.fillRect(0, H * 0.24, W, H * 0.45);
-        const fade = ctx.createLinearGradient(0, 0, 0, H);
-        fade.addColorStop(0,    'rgba(0,0,0,0)');
-        fade.addColorStop(0.16, 'rgba(0,0,0,0.32)');
-        fade.addColorStop(0.28, 'rgba(0,0,0,0.68)');
-        fade.addColorStop(0.46, 'rgba(0,0,0,1)');
-        ctx.globalCompositeOperation = 'destination-in';
-        ctx.fillStyle = fade;
-        ctx.fillRect(0, 0, W, H);
-        ctx.globalCompositeOperation = 'source-over';
-    }
-
-    resize();
-    window.addEventListener('resize', () => requestAnimationFrame(resize), { passive: true });
-    window.addEventListener('orientationchange', () => setTimeout(resize, 180), { passive: true });
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden) {
-            if (animId) { cancelAnimationFrame(animId); animId = 0; }
-        } else {
-            lastTs = 0;
-            if (!animId) animId = requestAnimationFrame(drawFrame);
-        }
-    }, { passive: true });
-    animId = requestAnimationFrame(drawFrame);
+    const canvas = document.getElementById('m-sea-canvas');
+    if (canvas) canvas.remove();
 }
 
 function initMobileViewportGuard() {
@@ -6077,6 +6587,37 @@ function scheduleMobileAfterPaint(fn) {
     }
 }
 
+
+function syncMobileDockMetrics() {
+    try {
+        const root = document.documentElement;
+        const dock = document.querySelector('.m-dock-container');
+        if (!root || !dock) return;
+        const rect = dock.getBoundingClientRect();
+        const h = Math.max(96, Math.ceil(rect.height || dock.offsetHeight || 118));
+        root.style.setProperty('--m-dock-h', `${h}px`);
+    } catch (_) {}
+}
+
+function installMobileDockMetricsGuard() {
+    try {
+        syncMobileDockMetrics();
+        requestAnimationFrame(syncMobileDockMetrics);
+        setTimeout(syncMobileDockMetrics, 250);
+        setTimeout(syncMobileDockMetrics, 900);
+        window.addEventListener('resize', () => requestAnimationFrame(syncMobileDockMetrics), { passive: true });
+        window.addEventListener('orientationchange', () => setTimeout(syncMobileDockMetrics, 220), { passive: true });
+        if ('ResizeObserver' in window) {
+            const dock = document.querySelector('.m-dock-container');
+            if (dock) {
+                const ro = new ResizeObserver(() => syncMobileDockMetrics());
+                ro.observe(dock);
+                window.__leviathanDockMetricsObserver = ro;
+            }
+        }
+    } catch (_) {}
+}
+
 function initMobileInterface() {
     if (!document.head || !document.body) return;
     if (window['__leviathanMobileInitialized']) return;
@@ -6093,7 +6634,8 @@ function initMobileInterface() {
         document.head.appendChild(styleSheet);
     }
 
-    document.body.innerHTML = mobileHTML;
+    if (!document.getElementById('app-container')) document.body.innerHTML = mobileHTML;
+    installMobileDockMetricsGuard();
     lockMobileBrandTitle();
     applyMobilePerformanceMode();
     initMobileViewportGuard();
@@ -7064,3 +7606,21 @@ function startMobileInterfaceWhenReady() {
 }
 
 startMobileInterfaceWhenReady();
+
+
+
+
+(function ensureMobileMarkupVisible(){
+    try {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', ensureMobileMarkupVisible, { once: true });
+            return;
+        }
+        if (!document.getElementById('app-container')) {
+            document.body.innerHTML = mobileHTML;
+        }
+        document.body.classList.add('m-ui-ready');
+    } catch (_) {}
+})();
+
+
