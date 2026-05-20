@@ -4198,6 +4198,25 @@ const mobileHTML = `
                             </div>
                         </div>
 
+                        <div class="m-reactor-module" id="mod-cb01">
+                            <div class="m-reactor-core">
+                                <i class="fas fa-film m-core-icon"></i>
+                            </div>
+                            <div class="m-reactor-body">
+                                <div class="m-reactor-top">
+                                    <span class="m-reactor-title">🎬 CB01</span>
+                                    <label class="m-switch">
+                                        <input type="checkbox" id="m-enableCb01" onchange="updateStatus('m-enableCb01','st-cb01'); toggleModuleStyle('m-enableCb01', 'mod-cb01');">
+                                        <span class="m-slider m-slider-aqua"></span>
+                                    </label>
+                                </div>
+                                <span class="m-reactor-desc">🎬 Film & Serie ITA • MFP + Stayonline/Uprot</span>
+                                <div class="m-tag-row">
+                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-shield-alt"></i> MFP</span>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="m-reactor-module" id="mod-aw">
                             <div class="m-reactor-core">
                                 <i class="fas fa-torii-gate m-core-icon"></i>
@@ -5893,7 +5912,7 @@ function setLangMode(mode) {
 }
 
 function checkWebPriorityVisibility() {
-    const enabled = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'].some(id => mChecked(id));
+    const enabled = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableCb01', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'].some(id => mChecked(id));
     const panel = document.getElementById('m-priority-panel');
     if (panel) panel.classList.toggle('show', enabled);
 }
@@ -6260,6 +6279,9 @@ async function loadMobileConfig() {
                 mSetChecked('m-enableEs', config.filters.enableEs || false);
                 toggleModuleStyle('m-enableEs', 'mod-es');
 
+                mSetChecked('m-enableCb01', config.filters.enableCb01 || false);
+                toggleModuleStyle('m-enableCb01', 'mod-cb01');
+
                 mSetChecked('m-enableAnimeWorld', config.filters.enableAnimeWorld || false);
                 toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');
 
@@ -6322,6 +6344,7 @@ async function loadMobileConfig() {
             updateStatus('m-enableGs', 'st-gs');
             updateStatus('m-enableGstv', 'st-gstv');
             updateStatus('m-enableEs', 'st-es');
+            updateStatus('m-enableCb01', 'st-cb01');
             updateStatus('m-enableAnimeWorld', 'st-aw');
             updateStatus('m-enableAnimeUnity', 'st-au');
             updateStatus('m-enableAnimeSaturn', 'st-as');
@@ -6349,7 +6372,7 @@ function getMobileConfig() {
 
     const isP2P = mCurrentService === 'p2p';
     const apiKey = mValue('m-apiKey').trim();
-    const webModules = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'];
+    const webModules = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableCb01', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableCc'];
     const webOnlyService = !isP2P && !apiKey && webModules.some(id => mChecked(id));
     const savedCloudEnabled = !isP2P && !!apiKey && ['rd', 'tb'].includes(String(mCurrentService || '').toLowerCase()) && mChecked('m-enableSavedCloud');
 
@@ -6380,6 +6403,7 @@ function getMobileConfig() {
             enableGs: mChecked('m-enableGs'),
             enableGstv: mChecked('m-enableGstv'),
             enableEs: mChecked('m-enableEs'),
+            enableCb01: mChecked('m-enableCb01'),
             enableAnimeWorld: mChecked('m-enableAnimeWorld'),
             enableAnimeUnity: mChecked('m-enableAnimeUnity'),
             enableAnimeSaturn: mChecked('m-enableAnimeSaturn'),
@@ -6416,7 +6440,7 @@ async function updateLinkModalContent(immediate = false) {
     if(!box) return;
 
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableCb01 || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
 
     if(!config.key && !isWebEnabled) {
         mSetValue('m-generatedUrlBox', "/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P");
@@ -6431,7 +6455,7 @@ async function updateLinkModalContent(immediate = false) {
 
 async function mobileInstall() {
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableCb01 || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
     if(!config.key && !isWebEnabled) {
         showToast("ERRORE: API KEY MANCANTE", "error"); return;
     }
