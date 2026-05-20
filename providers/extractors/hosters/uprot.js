@@ -76,7 +76,7 @@ function getFlareEndpoint(options = {}) {
         options.uprotFlareEndpoint
         || process.env.UPROT_FLARESOLVERR_URL
         || process.env.FLARESOLVERR_URL
-        || 'http://flaresolverr:8191/v1'
+        || ''
     );
 }
 
