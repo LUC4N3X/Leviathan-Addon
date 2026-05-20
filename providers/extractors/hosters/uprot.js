@@ -22,7 +22,13 @@ const SOURCE_PATTERNS = [
     /(?:src|file)\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i,
     /["'](https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)["']/i
 ];
-const WATCHFREE_URL_RE = /https?:\/\/[^"'<>\s]+\/watchfree\/[^"'<>\s]+/i;
+const WATCHFREE_URL_RE = /(https?:\/\/[^"'<>\s]+\/watchfree\/[^"'<>\s]+)/i;
+const PLAYER_LINK_PATTERNS = [
+    /href=["']([^"']*(?:watchfree|maxstream|stayonline)[^"']*)["']/i,
+    /(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']*(?:watchfree|maxstream|stayonline)[^"']*)["']/i,
+    /data-(?:url|href)=["']([^"']*(?:watchfree|maxstream|stayonline)[^"']*)["']/i,
+    WATCHFREE_URL_RE
+];
 
 function uprotDebug(level, message, payload = null) {
     const enabled = envFlag('UPROT_DEBUG', envFlag('EUROSTREAMING_DEBUG', true));
@@ -76,8 +82,6 @@ function getFlareEndpoint(options = {}) {
 
 function flareEnabled(options = {}) {
     if (options.uprotFlareEnabled !== undefined) return Boolean(options.uprotFlareEnabled);
-    // Default off for UPROT: MammaMia's primary path is pre-generated captcha cookies/data.
-    // Enable only when explicitly requested.
     return envFlag('UPROT_FLARE_ENABLED', envFlag('EUROSTREAMING_UPROT_FLARE_ENABLED', false));
 }
 
@@ -152,7 +156,7 @@ function isUprotUrl(url) {
 function normalizeUprotInput(url) {
     const normalized = normalizeRemoteUrl(url);
     if (!normalized || !isUprotUrl(normalized)) return null;
-    return normalized.replace('/msf/', '/mse/');
+    return normalized.replace(/\/msf\//i, '/mse/');
 }
 
 function isMsfiUrl(url) {
@@ -248,7 +252,7 @@ function loadUprotStateFromFile(options = {}) {
             const parsed = parseUprotTxtState(fs.readFileSync(filePath, 'utf8'));
             if (parsed) return { ...parsed, source: filePath };
         } catch (_) {
-            // Ignore broken optional state files. Env vars still take precedence.
+            
         }
     }
     return null;
@@ -499,10 +503,7 @@ async function resolveMsfi(client, targetUrl, options = {}) {
     }
 
     const continueUrl = extractContinueLink(posted.text, targetUrl);
-    const fallbackUrl = extractFirstUrl(posted.text, [
-        /href=["']([^"']*(?:watchfree|maxstream|stayonline)[^"']*)["']/i,
-        WATCHFREE_URL_RE
-    ], targetUrl);
+    const fallbackUrl = extractFirstUrl(posted.text, PLAYER_LINK_PATTERNS, targetUrl);
     const playerUrl = continueUrl
         ? await followContinueLink(client, continueUrl, { ...options, sourceUrl: targetUrl })
         : toMaxstreamPlayerUrl(fallbackUrl);
@@ -533,10 +534,7 @@ async function parseUprotLandingText(client, targetUrl, text, options = {}, via 
     }
 
     const continueUrl = extractContinueLink(text, targetUrl);
-    const fallbackUrl = extractFirstUrl(text, [
-        /href=["']([^"']*(?:watchfree|maxstream|stayonline)[^"']*)["']/i,
-        WATCHFREE_URL_RE
-    ], targetUrl);
+    const fallbackUrl = extractFirstUrl(text, PLAYER_LINK_PATTERNS, targetUrl);
     const playerUrl = continueUrl
         ? await followContinueLink(client, continueUrl, { ...options, sourceUrl: targetUrl })
         : toMaxstreamPlayerUrl(fallbackUrl);
@@ -682,5 +680,13 @@ module.exports = {
     isUprotUrl,
     normalizeUprotInput,
     resolveUprotToMaxstream,
-    toMaxstreamPlayerUrl
+    toMaxstreamPlayerUrl,
+    _test: {
+        buildFormBody,
+        cookieHeaderFromState,
+        extractContinueLink,
+        loadUprotState,
+        parseUprotTxtState,
+        toMsfCaptchaUrl
+    }
 };
