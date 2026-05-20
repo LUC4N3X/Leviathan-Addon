@@ -182,10 +182,28 @@ function isPossiblyProtectedError(error) {
     ].some((token) => message.includes(token));
 }
 
+function hasUsefulEmbedHtml(html, targetUrl = '') {
+    const text = String(html || '');
+    if (!text || !/guardaplay|trembed/i.test(`${targetUrl} ${text}`)) return false;
+    const $ = cheerio.load(text);
+    const iframeSources = $('iframe[src], iframe[data-src], iframe[data-lazy-src]')
+        .map((_, element) => $(element).attr('data-src') || $(element).attr('data-lazy-src') || $(element).attr('src'))
+        .get();
+    return iframeSources.some((src) => resolveExtractorDefinition(safeAbsoluteUrl(src, targetUrl) || src));
+}
+
 async function fetchWithImpit(targetUrl, customHeaders = {}, responseType = 'text') {
+    const {
+        method = 'GET',
+        body = null,
+        data = null,
+        ...headers
+    } = customHeaders || {};
     const response = await requestWithImpit({
         url: targetUrl,
-        headers: defaultHeaders(customHeaders),
+        method,
+        headers: defaultHeaders(headers),
+        body: body || data,
         retry: { limit: 2 },
         responseType: responseType === 'json' ? 'text' : responseType,
         ignoreTlsErrors: true,
@@ -222,9 +240,15 @@ async function fetchWithImpit(targetUrl, customHeaders = {}, responseType = 'tex
 }
 
 async function fetchViaAxios(client, targetUrl, options = {}) {
+    let data = options.data || options.body || null;
+    if (!data && options.form && typeof options.form === 'object') {
+        data = new URLSearchParams(options.form).toString();
+    }
+
     const response = await client({
         url: targetUrl,
-        method: 'GET',
+        method: String(options.method || 'GET').toUpperCase(),
+        data,
         validateStatus: (status) => status >= 200 && status < 400,
         responseType: options.responseType || 'text',
         headers: defaultHeaders(options.headers || {})
@@ -244,7 +268,11 @@ async function fetchSmart(targetUrl, options = {}) {
     const attempts = [
         () => fetchViaAxios(strictHttpClient, targetUrl, { ...options, via: 'axios-strict' }),
         () => allowSiteFallback ? fetchViaAxios(looseHttpClient, targetUrl, { ...options, via: 'axios-loose' }) : null,
-        () => allowSiteFallback ? fetchWithImpit(targetUrl, options.headers || {}, options.responseType || 'text') : null
+        () => allowSiteFallback ? fetchWithImpit(targetUrl, {
+            ...(options.headers || {}),
+            method: options.method,
+            body: options.data || options.body || (options.form ? new URLSearchParams(options.form).toString() : null)
+        }, options.responseType || 'text') : null
     ];
 
     let lastError = null;
@@ -256,6 +284,7 @@ async function fetchSmart(targetUrl, options = {}) {
             if (!result) continue;
 
             if (providerShield.shouldUseShield({ targetUrl, url: targetUrl, status: result.status, body: result.data })) {
+                if (hasUsefulEmbedHtml(result.data, targetUrl)) return result;
                 blockedCandidate = true;
                 break;
             }
@@ -944,10 +973,62 @@ function collectSearchCandidates($, queryTitle, year) {
     return candidates;
 }
 
+function cleanAjaxSuggestionText($element) {
+    const directText = $element.clone().children().remove().end().text().trim();
+    const raw = directText || $element.text().trim();
+    return cleanTitle(raw.replace(/^\s*(?:movies?|film|serie)\s*/i, '')).trim();
+}
+
+function collectAjaxSearchCandidates($, queryTitle, year) {
+    const candidates = [];
+    const seen = new Set();
+
+    $('a[href]').each((_, element) => {
+        const $element = $(element);
+        const finalHref = safeAbsoluteUrl($element.attr('href'), SITE_ORIGIN);
+        if (!finalHref || !/\/film\//i.test(finalHref)) return;
+
+        const key = finalHref.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        const text = cleanAjaxSuggestionText($element);
+        candidates.push({
+            href: finalHref,
+            text,
+            source: 'ajax-suggest',
+            score: scoreCandidate(queryTitle, year, finalHref, text)
+        });
+    });
+
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates;
+}
+
+function extractPageYear(html) {
+    const $ = cheerio.load(String(html || ''));
+    const candidates = [
+        $('span.year').first().text(),
+        $('.year').first().text(),
+        $('[class*="calendar"]').first().text(),
+        $('.date').first().text(),
+        $('time[datetime]').first().attr('datetime'),
+        $('meta[property="article:published_time"]').attr('content')
+    ];
+
+    for (const candidate of candidates) {
+        const match = String(candidate || '').match(REGEX.YEAR);
+        if (match) return match[1];
+    }
+
+    return '';
+}
+
 class GuardaFlixScraper {
-    constructor(config, reqHost = null) {
+    constructor(config, reqHost = null, options = {}) {
         this.config = config || {};
         this.reqHost = reqHost || null;
+        this.fetcher = typeof options.fetcher === 'function' ? options.fetcher : fetchSmart;
         this.iframeLimiter = createLimiter(CONFIG.IFRAME_CONCURRENCY);
         this.visitedIframes = new Set();
 
@@ -957,6 +1038,13 @@ class GuardaFlixScraper {
             mediaflowLoadm: isMediaflowLoadmEnabled(this.config),
             iframeConcurrency: CONFIG.IFRAME_CONCURRENCY,
             maxDepth: CONFIG.MAX_IFRAME_DEPTH
+        });
+    }
+
+    async fetchText(targetUrl, options = {}) {
+        return this.fetcher(targetUrl, {
+            responseType: 'text',
+            ...options
         });
     }
 
@@ -1050,12 +1138,18 @@ class GuardaFlixScraper {
             }
 
             try {
+                const ajaxHref = await this.searchMovieAjax(title, year);
+                if (ajaxHref) {
+                    searchCache.set(cacheKey, ajaxHref);
+                    return ajaxHref;
+                }
+
                 const queryUrl = `${SITE_ORIGIN}/?s=${encodeURIComponent(title)}`;
                 const startedAt = Date.now();
 
                 logDebug(`Ricerca sito: ${queryUrl}`);
 
-                const response = await fetchSmart(queryUrl, {
+                const response = await this.fetchText(queryUrl, {
                     responseType: 'text',
                     allowGotFallback: true,
                     preferLoose: true
@@ -1103,6 +1197,69 @@ class GuardaFlixScraper {
                 return null;
             }
         });
+    }
+
+    async searchMovieAjax(title, year) {
+        const startedAt = Date.now();
+        const ajaxUrl = `${SITE_ORIGIN}/wp-admin/admin-ajax.php`;
+        const form = {
+            action: 'action_tr_search_suggest',
+            nonce: process.env.GUARDAFLIX_AJAX_NONCE || '20115729b4',
+            term: String(title || '').trim()
+        };
+        if (!form.term) return null;
+
+        try {
+            logDebug(`Ricerca AJAX sito: ${ajaxUrl}`);
+            const response = await this.fetchText(ajaxUrl, {
+                method: 'POST',
+                form,
+                headers: {
+                    Origin: SITE_ORIGIN,
+                    Referer: `${SITE_ORIGIN}/`,
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                allowGotFallback: true,
+                preferLoose: true
+            });
+
+            const candidates = collectAjaxSearchCandidates(cheerio.load(response.data), title, year);
+            for (const candidate of candidates.slice(0, 8)) {
+                if (year) {
+                    const page = await this.fetchText(candidate.href, {
+                        headers: { Referer: `${SITE_ORIGIN}/` },
+                        allowGotFallback: true,
+                        preferLoose: true
+                    });
+                    const pageYear = extractPageYear(page.data);
+                    if (pageYear && pageYear !== String(year)) continue;
+                }
+
+                logDebug('Risultato search AJAX', {
+                    title,
+                    year,
+                    via: response.via,
+                    ms: Date.now() - startedAt,
+                    finalHref: candidate.href,
+                    bestScore: candidate.score,
+                    bestText: candidate.text
+                });
+                return candidate.href;
+            }
+
+            logDebug('Search AJAX senza match accettato', {
+                title,
+                year,
+                via: response.via,
+                ms: Date.now() - startedAt,
+                candidates: candidates.length
+            });
+            return null;
+        } catch (error) {
+            logDebug('Errore searchMovieAjax:', error.message);
+            return null;
+        }
     }
 
     buildStreamFromExtractor(extracted, mediaTitle, isSub, resolvedQuality = null, playlistIntel = null) {
@@ -1191,7 +1348,7 @@ class GuardaFlixScraper {
                     return [this.buildStreamFromExtractor(extracted, mediaTitle, isSub, quality, playlistIntel)];
                 }
 
-                const response = await fetchSmart(absoluteSrc, {
+                const response = await this.fetchText(absoluteSrc, {
                     responseType: 'text',
                     headers: { Referer: pageUrl },
                     allowGotFallback: true,
@@ -1400,5 +1557,14 @@ async function searchGuardaHD(meta, config, reqHost = null) {
 
 module.exports = {
     searchGuardaFlix,
-    searchGuardaHD
+    searchGuardaHD,
+    _test: {
+        collectAjaxSearchCandidates,
+        collectSearchCandidates,
+        extractPageYear,
+        GuardaFlixScraper,
+        hasUsefulEmbedHtml,
+        parsePageJobs,
+        scoreCandidate
+    }
 };
