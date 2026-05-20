@@ -5,6 +5,7 @@ const { ProviderRequestCache } = require('../../core/cache/provider_request_cach
 const { createMediaflowGateway, getMediaflowBase, buildMediaflowUrl } = require('../../core/proxy/mediaflow_gateway');
 const { isUprotUrl, resolveUprotToMaxstream } = require('../extractors/hosters/uprot');
 const { extractMixdrop } = require('../extractors/hosters/mixdrop');
+const { requestWithImpitRotating, isCanceledError } = require('../utils/bypass');
 
 const DEFAULT_BASE_URL = 'https://cb01uno.bar';
 const PROVIDER = 'CB01';
@@ -13,6 +14,58 @@ const ICON = '🎬';
 const SEARCH_TTL_FALLBACK_MS = 12_000;
 const SAFEGO_FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0';
 const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+
+
+const CB01_CODE_DEFAULTS = Object.freeze({
+    CB01_BASE_URL: 'https://cb01uno.bar',
+    CB01_PROVIDER_TIMEOUT: '12000',
+    CB01_DEBUG: '1',
+    CB01_TRACE: '1',
+
+    CB01_IMPIT_STRATEGY: 'forward-only',
+    CB01_USE_PROXY: '0',
+    CB01_PROXY_MAX_ATTEMPTS: '0',
+
+    CB01_IMPIT_FORWARD_ENABLED: '1',
+    CB01_IMPIT_FORWARD_FALLBACK: '0',
+    CB01_FORWARD_PROXY_FROM_MFP: '0',
+    CB01_FORWARD_PROXY: 'https://krakenproxy.questoleviatanormio.dpdns.org/forward?url=',
+
+    CB01_IMPIT_DIRECT_FALLBACK: '0',
+    CB01_STOP_ON_CHALLENGE: '1',
+
+    CB01_SEARCH_TIMEOUT_MS: '12000',
+    CB01_PAGE_TIMEOUT_MS: '12000',
+    CB01_SEARCH_TOTAL_BUDGET_MS: '10500',
+    CB01_PAGE_TOTAL_BUDGET_MS: '14000',
+
+    CB01_IMPIT_PROXY_TIMEOUT_MS: '1',
+    CB01_IMPIT_FORWARD_TIMEOUT_MS: '9500',
+    CB01_IMPIT_DIRECT_TIMEOUT_MS: '1',
+    CB01_IMPIT_MAX_ATTEMPTS_TOTAL: '1',
+    CB01_IMPIT_MAX_BROWSER_ATTEMPTS: '1',
+    CB01_IMPIT_INNER_RETRY: '0',
+    CB01_IMPIT_RETRY_ON_CHALLENGE: '0',
+    CB01_IMPIT_HTTP3: '0',
+    CB01_IMPIT_BROWSER: 'chrome125'
+});
+
+const CB_SIMPLE_UAS = Object.freeze([
+    DESKTOP_UA,
+    SAFEGO_FIREFOX_UA,
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15'
+]);
+
+const CB_IMPIT_BROWSER_FALLBACKS = Object.freeze(['chrome142', 'chrome136', 'chrome131', 'chrome125', 'firefox144', 'firefox135']);
+
+const CB_DEFAULT_PROXY_LIST = Object.freeze([
+    'http://znvmriuj-rotate:bkpzeu8rhr24@p.webshare.io:80',
+    'http://pzhhzcks-rotate:sggme9zee12p@p.webshare.io:80',
+    'http://pnpswulu-rotate:chmxqkncvb9d@p.webshare.io:80'
+]);
+const CB_PROXY_COOLDOWN_MS = 90_000;
+const CB_PROXY_MAX_FAILURES = 4;
 
 const CB_CACHE_LIMIT = 700;
 const CB_CACHE_TTL = Object.freeze({
@@ -90,8 +143,12 @@ function normalizeBaseUrl(value) {
 }
 
 function getBaseUrls() {
-    const out = [normalizeBaseUrl(DEFAULT_BASE_URL)].filter(Boolean);
-    cbDebug('trace', 'base urls resolved', { bases: out, source: 'hardcoded' });
+    const raw = [
+        envString('CB01_BASE_URL', DEFAULT_BASE_URL),
+        envString('CB01_BASE_URL_2', '')
+    ];
+    const out = [...new Set(raw.map(normalizeBaseUrl).filter(Boolean))];
+    cbDebug('trace', 'base urls resolved', { bases: out, source: 'code-defaults+env-override' });
     return out;
 }
 
@@ -103,7 +160,7 @@ function getDefaultClient() {
     try {
         const axios = require('axios');
         return axios.create({
-            timeout: Number.parseInt(process.env.CB01_PROVIDER_TIMEOUT || String(SEARCH_TTL_FALLBACK_MS), 10) || SEARCH_TTL_FALLBACK_MS,
+            timeout: envInt('CB01_PROVIDER_TIMEOUT', SEARCH_TTL_FALLBACK_MS, 1000, 60000),
             maxRedirects: 5,
             proxy: false,
             validateStatus: () => true,
@@ -118,14 +175,26 @@ function getDefaultClient() {
     }
 }
 
-function envFlag(name, defaultValue = false) {
+function envRaw(name, fallback = '') {
     const raw = process.env[name];
+    if (raw !== undefined && raw !== null && raw !== '') return raw;
+    const coded = CB01_CODE_DEFAULTS[name];
+    if (coded !== undefined && coded !== null && coded !== '') return coded;
+    return fallback;
+}
+
+function envString(name, fallback = '') {
+    return String(envRaw(name, fallback) ?? '').trim();
+}
+
+function envFlag(name, defaultValue = false) {
+    const raw = envRaw(name, defaultValue ? '1' : '0');
     if (raw === undefined || raw === null || raw === '') return defaultValue;
     return /^(?:1|true|yes|on)$/i.test(String(raw).trim());
 }
 
 function envInt(name, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
-    const raw = process.env[name];
+    const raw = envRaw(name, fallback);
     const value = Number.parseInt(String(raw ?? fallback), 10);
     if (!Number.isFinite(value)) return fallback;
     return Math.max(min, Math.min(max, value));
@@ -269,9 +338,35 @@ function responseJson(response) {
     try { return JSON.parse(responseText(response)); } catch (_) { return null; }
 }
 
+function cbHtmlSignals(html = '') {
+    const text = String(html || '');
+    return {
+        cards: (text.match(/card-content/gi) || []).length,
+        cardTitles: (text.match(/card-title/gi) || []).length,
+        iframen1: /id=["']iframen1["']/i.test(text),
+        iframen2: /id=["']iframen2["']/i.test(text),
+        spoilers: (text.match(/sp-head/gi) || []).length,
+        anchors: (text.match(/<a\b/gi) || []).length
+    };
+}
+
+function hasCbUsableHtml(html = '') {
+    const signals = cbHtmlSignals(html);
+    return Boolean(
+        signals.cards > 0 ||
+        signals.cardTitles > 0 ||
+        signals.iframen1 ||
+        signals.iframen2 ||
+        signals.spoilers > 0
+    );
+}
+
 function isChallengePage(html = '') {
     const text = String(html || '').slice(0, 200000);
-    return /cloudflare|cf-browser-verification|just a moment|challenge-platform|cf-chl|captcha|attention required/i.test(text);
+    if (!text) return false;
+
+    const challengeMarker = /cf-browser-verification|just a moment|challenge-platform|cf-chl|captcha|attention required|checking your browser|verify you are human|turnstile/i.test(text);
+    return Boolean(challengeMarker && !hasCbUsableHtml(text));
 }
 
 function decodeHtml(value) {
@@ -779,38 +874,487 @@ function extractCardCandidates(html, baseUrl = null) {
     return candidates;
 }
 
-async function fetchSearchHtml(client, url, baseUrl) {
-    cbDebug('info', 'search html request', { url: safeUrlForLog(url), baseUrl });
-    const response = await withTimeout(client.get(url, {
-        headers: {
-            'User-Agent': DESKTOP_UA,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.6,en;q=0.5',
-            'Referer': `${baseUrl}/`
+function parseCbProxyList() {
+    const raw = envString('CB01_PROXY_LIST', '');
+    if (!raw) return CB_DEFAULT_PROXY_LIST.slice();
+    const out = raw
+        .split(/[\s,;]+/)
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .filter((value) => /^https?:\/\//i.test(value) || /^socks[45]?:\/\//i.test(value));
+    return out.length ? out : CB_DEFAULT_PROXY_LIST.slice();
+}
+
+const CB_PROXY_POOL = (() => {
+    const list = parseCbProxyList();
+    const entries = list.map((url) => ({
+        url,
+        host: (() => { try { return new URL(url).host; } catch (_) { return 'invalid'; } })(),
+        failures: 0,
+        cooldownUntil: 0,
+        lastUsedAt: 0
+    }));
+    let cursor = 0;
+    const advance = () => { cursor = (cursor + 1) % Math.max(entries.length, 1); };
+    return {
+        size: () => entries.length,
+        entries: () => entries.slice(),
+        next() {
+            if (!entries.length) return null;
+            const now = Date.now();
+            const startedCursor = cursor;
+            for (let i = 0; i < entries.length; i += 1) {
+                const entry = entries[cursor];
+                advance();
+                if (entry.cooldownUntil <= now) {
+                    entry.lastUsedAt = now;
+                    return entry;
+                }
+            }
+            const oldest = entries.slice().sort((a, b) => a.cooldownUntil - b.cooldownUntil)[0];
+            oldest.cooldownUntil = 0;
+            oldest.failures = 0;
+            oldest.lastUsedAt = Date.now();
+            cursor = (startedCursor + 1) % entries.length;
+            cbDebug('warn', 'proxy pool exhausted; force-clearing oldest cooldown', { host: oldest.host, failures: oldest.failures });
+            return oldest;
         },
-        timeout: envInt('CB01_SEARCH_TIMEOUT_MS', 12000, 1500, 30000),
-        maxRedirects: 5,
-        validateStatus: () => true,
-        responseType: 'text'
-    }), envInt('CB01_SEARCH_TIMEOUT_MS', 12000, 1500, 30000) + 1500, 'CB01 search');
-    const status = Number(response?.status || 0);
-    const text = responseText(response);
-    cbDebug('info', 'search html response', { ...responseSummary(response, url), probe: htmlProbe(text) });
-    if (status && (status < 200 || status >= 400)) {
-        cbDebug('warn', 'search bad status', { status, url: safeUrlForLog(url), baseUrl, probe: htmlProbe(text) });
+        markSuccess(entry) {
+            if (!entry) return;
+            entry.failures = 0;
+            entry.cooldownUntil = 0;
+        },
+        markFailure(entry, reason = '') {
+            if (!entry) return;
+            entry.failures += 1;
+            if (entry.failures >= CB_PROXY_MAX_FAILURES) {
+                entry.cooldownUntil = Date.now() + CB_PROXY_COOLDOWN_MS;
+                cbDebug('warn', 'proxy cooldown engaged', { host: entry.host, failures: entry.failures, cooldownMs: CB_PROXY_COOLDOWN_MS, reason });
+            }
+        }
+    };
+})();
+
+function pickSimpleUa() {
+    return CB_SIMPLE_UAS[Math.floor(Math.random() * CB_SIMPLE_UAS.length)] || DESKTOP_UA;
+}
+
+function normalizeForwardProxyBase(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    if (raw.includes('{url}')) return raw;
+    if (/[?&][^=]+=$/.test(raw)) return raw;
+    return raw.endsWith('/') ? raw : `${raw}/`;
+}
+
+function getExplicitCbForwardProxy() {
+    return envString('CB01_FORWARD_PROXY', '') || envString('FORWARDPROXY', '');
+}
+
+function getCbForwardProxy(config = {}) {
+    const explicit = getExplicitCbForwardProxy();
+    if (explicit) return normalizeForwardProxyBase(explicit);
+
+    if (!envFlag('CB01_FORWARD_PROXY_FROM_MFP', true)) return '';
+
+    const mfpBase = getMediaflowBase(config);
+    if (!mfpBase) return '';
+    return normalizeForwardProxyBase(mfpBase);
+}
+
+function buildCbForwardProxyUrl(targetUrl, config = {}, headers = {}) {
+    const explicit = getExplicitCbForwardProxy();
+    if (explicit) {
+        const forwardProxy = normalizeForwardProxyBase(explicit);
+        if (forwardProxy.includes('{url}')) return forwardProxy.replace('{url}', encodeURIComponent(targetUrl));
+        if (/[?&][^=]+=$/.test(forwardProxy)) return `${forwardProxy}${encodeURIComponent(targetUrl)}`;
+        return `${forwardProxy}${targetUrl}`;
+    }
+
+    if (!envFlag('CB01_FORWARD_PROXY_FROM_MFP', true) || !getMediaflowBase(config)) return targetUrl;
+
+    try {
+        const base = String(getMediaflowBase(config) || '').replace(/\/+$/, '');
+        if (!base) return targetUrl;
+        const forwardUrl = new URL(`${base}/forward`);
+        forwardUrl.searchParams.set('url', targetUrl);
+
+        const userAgent = headers?.['User-Agent'] || headers?.['user-agent'] || DESKTOP_UA;
+        const referer = headers?.Referer || headers?.referer || '';
+        if (userAgent) forwardUrl.searchParams.set('h_user-agent', userAgent);
+        if (referer) forwardUrl.searchParams.set('h_referer', referer);
+
+        const apiPassword = String(config?.mediaflowApiPassword || config?.mediaFlowApiPassword || config?.mfpPassword || envString('MEDIAFLOW_API_PASSWORD', '') || envString('KRAKEN_API_PASSWORD', '') || '').trim();
+        if (apiPassword) forwardUrl.searchParams.set('api_password', apiPassword);
+
+        return forwardUrl.toString();
+    } catch (error) {
+        cbDebug('warn', 'mediaflow forward html url build failed', {
+            url: safeUrlForLog(targetUrl),
+            error: error?.message || String(error)
+        });
+    }
+
+    return targetUrl;
+}
+
+function buildCbBrowserHeaders(baseUrl, targetUrl = '', label = 'fetch') {
+    const isSeriesSearch = /\/serietv\/?\?/i.test(String(targetUrl || ''));
+    const referer = isSeriesSearch ? `${baseUrl}/serietv/` : `${baseUrl}/`;
+    return {
+        'User-Agent': pickSimpleUa(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.6,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Referer': referer,
+        'Upgrade-Insecure-Requests': '1'
+    };
+}
+
+function toAxiosProxyConfig(proxyUrl) {
+    if (!proxyUrl) return false;
+    try {
+        const parsed = new URL(proxyUrl);
+        if (!/^https?:$/i.test(parsed.protocol)) return false;
+        const proxy = {
+            protocol: parsed.protocol.replace(':', ''),
+            host: parsed.hostname,
+            port: Number.parseInt(parsed.port || (parsed.protocol === 'https:' ? '443' : '80'), 10)
+        };
+        if (parsed.username || parsed.password) {
+            proxy.auth = {
+                username: decodeURIComponent(parsed.username || ''),
+                password: decodeURIComponent(parsed.password || '')
+            };
+        }
+        return proxy;
+    } catch (_) {
+        return false;
+    }
+}
+
+function pickCbImpitBrowser(label = '') {
+    const preferred = envString('CB01_IMPIT_BROWSER', '');
+    if (preferred) return preferred;
+    if (label === 'search') return 'chrome125';
+    return CB_IMPIT_BROWSER_FALLBACKS[Math.floor(Math.random() * CB_IMPIT_BROWSER_FALLBACKS.length)] || 'chrome125';
+}
+
+function impitResponseToText(response) {
+    if (!response) return '';
+    const data = response.data ?? response.body;
+    if (typeof data === 'string') return data;
+    if (Buffer.isBuffer(data)) return data.toString('utf8');
+    if (data == null) return '';
+    try { return JSON.stringify(data); } catch (_) { return String(data || ''); }
+}
+
+function impitResponseStatus(response) {
+    if (!response) return 0;
+    const value = Number(response.statusCode ?? response.status ?? 0);
+    return Number.isFinite(value) ? value : 0;
+}
+
+function buildCbImpitAttempts(url, baseUrl, label, config = {}, hardTimeoutMs = 9000) {
+    const attempts = [];
+    const upstreamHeaders = buildCbBrowserHeaders(baseUrl, url, label);
+    const isSearch = label === 'search';
+    const forwardUrl = buildCbForwardProxyUrl(url, config, upstreamHeaders);
+    const hasForward = Boolean(forwardUrl && forwardUrl !== url);
+
+    const directTimeoutMs = envInt('CB01_IMPIT_DIRECT_TIMEOUT_MS', isSearch ? 2500 : 3500, 1500, 12000);
+    const forwardTimeoutMs = envInt('CB01_IMPIT_FORWARD_TIMEOUT_MS', isSearch ? 5500 : 7000, 2000, 18000);
+    const proxyTimeoutMs = envInt('CB01_IMPIT_PROXY_TIMEOUT_MS', isSearch ? 6500 : 7500, 2000, 18000);
+
+    const proxyMaxAttempts = Math.min(
+        CB_PROXY_POOL.size(),
+        envInt('CB01_PROXY_MAX_ATTEMPTS', isSearch ? 1 : 2, 0, isSearch ? 2 : 4)
+    );
+    const proxyEnabled = envFlag('CB01_USE_PROXY', false) && proxyMaxAttempts > 0;
+    const forwardEnabled = hasForward && envFlag('CB01_IMPIT_FORWARD_ENABLED', true);
+    const directFallback = envFlag('CB01_IMPIT_DIRECT_FALLBACK', false);
+    const forwardFallback = envFlag('CB01_IMPIT_FORWARD_FALLBACK', true);
+    const maxAttempts = envInt('CB01_IMPIT_MAX_ATTEMPTS_TOTAL', isSearch ? 2 : 3, 1, 5);
+
+    const strategy = String(
+        envString('CB01_IMPIT_STRATEGY', '') ||
+        (proxyEnabled ? 'proxy-first' : (forwardEnabled ? 'forward-first' : 'direct-first'))
+    ).trim().toLowerCase();
+
+    const canAdd = () => attempts.length < maxAttempts;
+
+    const addDirect = (via = 'impit-direct', timeout = hardTimeoutMs) => {
+        if (!canAdd()) return;
+        attempts.push({
+            via,
+            requestUrl: url,
+            proxyEntry: null,
+            proxyUrl: '',
+            headers: upstreamHeaders,
+            browser: pickCbImpitBrowser(label),
+            timeoutMs: Math.max(1500, Number(timeout || hardTimeoutMs))
+        });
+    };
+
+    const addForward = (via = null) => {
+        if (!forwardEnabled || !canAdd()) return;
+        attempts.push({
+            via: via || (getExplicitCbForwardProxy() ? 'impit-explicit-forward' : 'impit-kraken-forward-html'),
+            requestUrl: forwardUrl,
+            proxyEntry: null,
+            proxyUrl: '',
+            headers: upstreamHeaders,
+            browser: pickCbImpitBrowser(label),
+            timeoutMs: Math.max(2000, Number(forwardTimeoutMs || hardTimeoutMs))
+        });
+    };
+
+    const addProxyAttempts = () => {
+        if (!proxyEnabled) return;
+        for (let i = 0; i < proxyMaxAttempts && canAdd(); i += 1) {
+            const entry = CB_PROXY_POOL.next();
+            if (!entry) continue;
+            attempts.push({
+                via: 'impit-proxy',
+                requestUrl: url,
+                proxyEntry: entry,
+                proxyUrl: entry.url,
+                headers: upstreamHeaders,
+                browser: pickCbImpitBrowser(label),
+                timeoutMs: proxyTimeoutMs
+            });
+        }
+    };
+
+    if (strategy === 'forward-only') {
+        addForward('impit-forward-only');
+    } else if (strategy === 'proxy-only') {
+        addProxyAttempts();
+    } else if (strategy === 'direct-only') {
+        addDirect('impit-direct-only', hardTimeoutMs);
+    } else if (strategy === 'proxy-first') {
+        addProxyAttempts();
+        if (forwardFallback) addForward('impit-forward-fallback');
+        if (directFallback) addDirect('impit-direct-fallback', directTimeoutMs);
+    } else if (strategy === 'direct-first') {
+        addDirect('impit-direct-first', hasForward ? directTimeoutMs : hardTimeoutMs);
+        addProxyAttempts();
+        if (forwardFallback) addForward('impit-forward-fallback');
+    } else {
+        addForward('impit-forward-first');
+        addProxyAttempts();
+        if (directFallback) addDirect('impit-direct-fallback', hasForward ? directTimeoutMs : hardTimeoutMs);
+    }
+
+    if (!attempts.length) {
+        if (forwardEnabled) addForward('impit-forward-default');
+        if (!attempts.length && proxyEnabled) addProxyAttempts();
+        if (!attempts.length) addDirect('impit-direct-default', Math.min(hardTimeoutMs, directTimeoutMs));
+    }
+
+    cbDebug('info', 'impit html attempt plan', {
+        label,
+        url: safeUrlForLog(url),
+        strategy,
+        hasForward,
+        proxyEnabled,
+        directFallback,
+        forwardFallback,
+        maxAttempts,
+        forwardHost: safeHost(forwardUrl),
+        forwardPath: safePath(forwardUrl),
+        attempts: attempts.map((attempt) => ({ via: attempt.via, timeoutMs: attempt.timeoutMs, requestHost: safeHost(attempt.requestUrl), proxyHost: attempt.proxyEntry?.host || '' }))
+    });
+
+    return attempts;
+}
+
+async function fetchViaCbProxy(url, baseUrl, { timeoutMs, label = 'fetch', config = {} } = {}) {
+    const startedAt = Date.now();
+    const isSearch = label === 'search';
+    const hardTimeoutMs = Math.max(
+        2000,
+        Number(timeoutMs) || envInt(
+            isSearch ? 'CB01_SEARCH_TIMEOUT_MS' : 'CB01_PAGE_TIMEOUT_MS',
+            isSearch ? 8500 : 9500,
+            1500,
+            30000
+        )
+    );
+    const totalBudgetMs = envInt(
+        isSearch ? 'CB01_SEARCH_TOTAL_BUDGET_MS' : 'CB01_PAGE_TOTAL_BUDGET_MS',
+        isSearch ? 13500 : 16500,
+        3000,
+        21000
+    );
+
+    const attempts = buildCbImpitAttempts(url, baseUrl, label, config, hardTimeoutMs);
+    let lastStatus = 0;
+    let lastError = '';
+    let lastProxyHost = '';
+    let lastVia = '';
+
+    for (let index = 0; index < attempts.length; index += 1) {
+        const elapsedBefore = Date.now() - startedAt;
+        const remainingBudgetMs = totalBudgetMs - elapsedBefore;
+        if (remainingBudgetMs < 1800) {
+            cbDebug('warn', 'impit html fetch budget exhausted before attempt', {
+                label,
+                url: safeUrlForLog(url),
+                attempt: index + 1,
+                maxAttempts: attempts.length,
+                elapsedMs: elapsedBefore,
+                totalBudgetMs,
+                lastVia,
+                lastStatus,
+                lastError
+            });
+            break;
+        }
+
+        const attempt = attempts[index];
+        const headers = attempt.headers || buildCbBrowserHeaders(baseUrl, url, label);
+        const proxyHost = attempt.proxyEntry?.host || '';
+        const browser = attempt.browser || pickCbImpitBrowser(label);
+        const perAttemptTimeout = Math.max(1500, Math.min(Number(attempt.timeoutMs || hardTimeoutMs), remainingBudgetMs - 600));
+
+        lastProxyHost = proxyHost;
+        lastVia = attempt.via;
+
+        cbDebug('info', 'impit html fetch attempt', {
+            label,
+            url: safeUrlForLog(url),
+            requestUrl: safeUrlForLog(attempt.requestUrl),
+            via: attempt.via,
+            proxyHost,
+            browser,
+            attempt: index + 1,
+            maxAttempts: attempts.length,
+            timeoutMs: perAttemptTimeout,
+            remainingBudgetMs
+        });
+
+        let response = null;
+        let errorMessage = '';
+        try {
+            response = await requestWithImpitRotating(attempt.requestUrl, {
+                method: 'GET',
+                headers,
+                timeout: perAttemptTimeout,
+                responseType: 'text',
+                proxyUrl: attempt.proxyUrl || undefined,
+                browser,
+                browserFallbacks: [browser, ...CB_IMPIT_BROWSER_FALLBACKS.filter((item) => item !== browser)],
+                maxBrowserAttempts: envInt('CB01_IMPIT_MAX_BROWSER_ATTEMPTS', 1, 1, 3),
+                totalTimeoutMs: perAttemptTimeout + 300,
+                innerRetry: { limit: envInt('CB01_IMPIT_INNER_RETRY', 0, 0, 2) },
+                retryOnStatuses: [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524],
+                retryOnChallenge: envFlag('CB01_IMPIT_RETRY_ON_CHALLENGE', false),
+                http3: envFlag('CB01_IMPIT_HTTP3', true),
+                ignoreTlsErrors: true,
+                fingerprint: { userAgent: headers['User-Agent'] || headers['user-agent'] || DESKTOP_UA }
+            });
+        } catch (error) {
+            if (isCanceledError(error)) throw error;
+            errorMessage = error?.message || String(error);
+        }
+
+        const status = impitResponseStatus(response);
+        const text = impitResponseToText(response);
+        const usableHtml = hasCbUsableHtml(text);
+        const challenge = isChallengePage(text);
+        const ok = status >= 200 && status < 400 && text && (!challenge || usableHtml);
+        lastStatus = status;
+        lastError = errorMessage;
+
+        cbDebug(ok ? 'info' : 'warn', 'impit html fetch result', {
+            label,
+            url: safeUrlForLog(url),
+            via: attempt.via,
+            proxyHost,
+            browser,
+            status,
+            bytes: Buffer.byteLength(text || '', 'utf8'),
+            challenge,
+            usableHtml,
+            cards: (text.match(/card-content/gi) || []).length,
+            probe: htmlProbe(text),
+            error: errorMessage || undefined,
+            ms: Date.now() - startedAt
+        });
+
+        if (ok) {
+            if (attempt.proxyEntry) CB_PROXY_POOL.markSuccess(attempt.proxyEntry);
+            return { text, status, proxyHost, via: attempt.via };
+        }
+
+        if (attempt.proxyEntry) {
+            CB_PROXY_POOL.markFailure(attempt.proxyEntry, errorMessage || (challenge ? 'challenge' : `status_${status}`));
+        }
+
+        if (challenge && !usableHtml && envFlag('CB01_STOP_ON_CHALLENGE', true)) {
+            cbDebug('warn', 'impit html fetch stopped on hard challenge', {
+                label,
+                url: safeUrlForLog(url),
+                via: attempt.via,
+                status,
+                ms: Date.now() - startedAt
+            });
+            break;
+        }
+    }
+
+    cbDebug('warn', 'impit html fetch exhausted attempts', {
+        label,
+        url: safeUrlForLog(url),
+        attempts: attempts.length,
+        lastStatus,
+        lastError,
+        lastProxyHost,
+        lastVia,
+        ms: Date.now() - startedAt,
+        totalBudgetMs
+    });
+
+    return { text: '', status: lastStatus, proxyHost: lastProxyHost, via: lastVia || 'error' };
+}
+
+async function fetchSearchHtml(client, url, baseUrl, config = {}) {
+    cbDebug('info', 'search html request', { url: safeUrlForLog(url), baseUrl });
+    const startedAt = Date.now();
+    const result = await fetchViaCbProxy(url, baseUrl, {
+        timeoutMs: envInt('CB01_SEARCH_TIMEOUT_MS', 7000, 1500, 30000),
+        label: 'search',
+        config
+    });
+    const text = result.text || '';
+    cbDebug('info', 'search html response', {
+        url: safeUrlForLog(url),
+        baseUrl,
+        status: result.status,
+        bytes: Buffer.byteLength(text, 'utf8'),
+        proxyHost: result.proxyHost,
+        via: result.via,
+        ms: Date.now() - startedAt,
+        probe: htmlProbe(text)
+    });
+    if (!text) {
+        cbDebug('warn', 'search simple fetch empty', { url: safeUrlForLog(url), baseUrl, status: result.status, via: result.via });
         return '';
     }
-    if (isChallengePage(text)) {
-        cbDebug('warn', 'search challenge detected', { url: safeUrlForLog(url), baseUrl, probe: htmlProbe(text) });
+    if (isChallengePage(text) && !hasCbUsableHtml(text)) {
+        cbDebug('warn', 'search hard challenge detected after simple fetch', { url: safeUrlForLog(url), baseUrl, probe: htmlProbe(text) });
         return '';
     }
-    if (!text || !/card-content/i.test(text)) {
+    if (!/card-content/i.test(text)) {
         cbDebug('warn', 'search html has no card-content markers', { url: safeUrlForLog(url), baseUrl, probe: htmlProbe(text) });
     }
     return text;
 }
 
-async function fetchPageHtml(client, url, baseUrl, namespace = 'page') {
+async function fetchPageHtml(client, url, baseUrl, namespace = 'page', config = {}) {
     cbDebug('info', 'page html request', { namespace, url: safeUrlForLog(url), baseUrl });
     const cacheKey = [url];
     const cached = getCbCache(namespace, cacheKey);
@@ -818,33 +1362,33 @@ async function fetchPageHtml(client, url, baseUrl, namespace = 'page') {
     return withCbCoalescing(namespace, cacheKey, async () => {
         const afterWait = getCbCache(namespace, cacheKey);
         if (afterWait) return afterWait;
-        const response = await withTimeout(client.get(url, {
-            headers: {
-                'User-Agent': DESKTOP_UA,
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.6,en;q=0.5',
-                'Referer': `${baseUrl}/`
-            },
-            timeout: envInt('CB01_PAGE_TIMEOUT_MS', 14000, 1500, 30000),
-            maxRedirects: 5,
-            validateStatus: () => true,
-            responseType: 'text'
-        }), envInt('CB01_PAGE_TIMEOUT_MS', 14000, 1500, 30000) + 1500, 'CB01 page');
-        const status = Number(response?.status || 0);
-        const text = responseText(response);
-        cbDebug('info', 'page html response', { namespace, ...responseSummary(response, url), probe: htmlProbe(text) });
-        if (status && (status < 200 || status >= 400)) {
-            cbDebug('warn', 'page bad status', { status, url: safeUrlForLog(url), namespace, probe: htmlProbe(text) });
-            return '';
-        }
-        if (isChallengePage(text)) {
-            cbDebug('warn', 'page challenge detected', { url: safeUrlForLog(url), baseUrl, namespace, probe: htmlProbe(text) });
-            return '';
-        }
+        const startedAt = Date.now();
+        const result = await fetchViaCbProxy(url, baseUrl, {
+            timeoutMs: envInt('CB01_PAGE_TIMEOUT_MS', 9000, 1500, 30000),
+            label: namespace,
+            config
+        });
+        const text = result.text || '';
+        cbDebug('info', 'page html response', {
+            namespace,
+            url: safeUrlForLog(url),
+            baseUrl,
+            status: result.status,
+            bytes: Buffer.byteLength(text, 'utf8'),
+            proxyHost: result.proxyHost,
+            via: result.via,
+            ms: Date.now() - startedAt,
+            probe: htmlProbe(text)
+        });
         if (!text) {
-            cbDebug('warn', 'page response empty', { url: safeUrlForLog(url), namespace });
+            cbDebug('warn', 'page simple fetch empty', { url: safeUrlForLog(url), namespace, status: result.status, via: result.via });
+            return '';
         }
-        if (text) setCbCache(namespace, cacheKey, text, CB_CACHE_TTL[namespace] || CB_CACHE_TTL.moviePage);
+        if (isChallengePage(text) && !hasCbUsableHtml(text)) {
+            cbDebug('warn', 'page hard challenge detected after simple fetch', { url: safeUrlForLog(url), baseUrl, namespace, probe: htmlProbe(text) });
+            return '';
+        }
+        setCbCache(namespace, cacheKey, text, CB_CACHE_TTL[namespace] || CB_CACHE_TTL.moviePage);
         return text;
     });
 }
@@ -860,7 +1404,7 @@ function buildSearchQuery(title) {
     return new URLSearchParams({ s: normalized }).toString();
 }
 
-async function searchMovieUrl(client, baseUrl, title, year) {
+async function searchMovieUrl(client, baseUrl, title, year, config = {}) {
     if (!title) return null;
     const cacheKey = [baseUrl, normalizeTitle(title), year || 0];
     const cached = getCbCache('movieSearch', cacheKey);
@@ -871,7 +1415,7 @@ async function searchMovieUrl(client, baseUrl, title, year) {
         const query = buildSearchQuery(title);
         const url = `${baseUrl}/?${query}`;
         cbDebug('info', 'movie search start', { title, normalizedTitle: normalizeTitle(title), year: year || null, query, url: safeUrlForLog(url) });
-        const html = await fetchSearchHtml(client, url, baseUrl);
+        const html = await fetchSearchHtml(client, url, baseUrl, config);
         if (!html) {
             cbDebug('warn', 'movie search failed: empty html', { title, year: year || null, url: safeUrlForLog(url) });
             return null;
@@ -916,7 +1460,7 @@ async function searchMovieUrl(client, baseUrl, title, year) {
     });
 }
 
-async function searchSeriesUrl(client, baseUrl, title, year) {
+async function searchSeriesUrl(client, baseUrl, title, year, config = {}) {
     if (!title) return null;
     const cacheKey = [baseUrl, normalizeTitle(title), year || 0];
     const cached = getCbCache('seriesSearch', cacheKey);
@@ -927,7 +1471,7 @@ async function searchSeriesUrl(client, baseUrl, title, year) {
         const query = buildSearchQuery(title);
         const url = `${baseUrl}/serietv/?${query}`;
         cbDebug('info', 'series search start', { title, normalizedTitle: normalizeTitle(title), year: year || null, query, url: safeUrlForLog(url) });
-        const html = await fetchSearchHtml(client, url, baseUrl);
+        const html = await fetchSearchHtml(client, url, baseUrl, config);
         if (!html) {
             cbDebug('warn', 'series search failed: empty html', { title, year: year || null, url: safeUrlForLog(url) });
             return null;
@@ -970,8 +1514,8 @@ async function searchSeriesUrl(client, baseUrl, title, year) {
     });
 }
 
-async function extractMovieEmbedLinks(client, pageUrl, baseUrl) {
-    const html = await fetchPageHtml(client, pageUrl, baseUrl, 'moviePage');
+async function extractMovieEmbedLinks(client, pageUrl, baseUrl, config = {}) {
+    const html = await fetchPageHtml(client, pageUrl, baseUrl, 'moviePage', config);
     if (!html) {
         cbDebug('warn', 'movie page empty while extracting embeds', { pageUrl: safeUrlForLog(pageUrl), baseUrl });
         return null;
@@ -1018,7 +1562,6 @@ function extractSpoilerSections(html) {
     const sections = [];
     const headerRe = /<div\b[^>]*class=["'][^"']*sp-head[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi;
     const sources = String(html || '');
-    let lastIndex = 0;
     const headers = [];
     for (const headerMatch of sources.matchAll(headerRe)) {
         headers.push({
@@ -1032,7 +1575,6 @@ function extractSpoilerSections(html) {
         const nextStart = i + 1 < headers.length ? headers[i + 1].startIndex : sources.length;
         const blockHtml = sources.slice(header.endIndex, nextStart);
         sections.push({ headerText: header.text, blockHtml });
-        lastIndex = nextStart;
     }
     if (!sections.length && sources.length) sections.push({ headerText: '', blockHtml: sources });
     return sections;
@@ -1129,7 +1671,7 @@ function pickEpisodeHostLinks(anchors) {
     return { mixdropLink, maxstreamLink };
 }
 
-async function resolveAliasSeasonEpisode(client, baseUrl, alias, seasonAliasHeaderText, season, episode) {
+async function resolveAliasSeasonEpisode(client, baseUrl, alias, seasonAliasHeaderText, season, episode, config = {}) {
     if (!alias?.href) {
         cbDebug('warn', 'series alias skipped: missing href', { season, episode, seasonAliasHeaderText });
         return null;
@@ -1148,7 +1690,7 @@ async function resolveAliasSeasonEpisode(client, baseUrl, alias, seasonAliasHead
     return withCbCoalescing('seasonAlias', cacheKey, async () => {
         const afterWait = getCbCache('seasonAlias', cacheKey);
         if (afterWait) return afterWait;
-        const html = await fetchPageHtml(client, alias.href, baseUrl, 'seriesPage');
+        const html = await fetchPageHtml(client, alias.href, baseUrl, 'seriesPage', config);
         if (!html) return null;
         const safeSeason = Math.max(1, Number.parseInt(String(season || 1), 10) || 1);
         const safeEpisode = Math.max(1, Number.parseInt(String(episode || 1), 10) || 1);
@@ -1180,8 +1722,8 @@ async function resolveAliasSeasonEpisode(client, baseUrl, alias, seasonAliasHead
     });
 }
 
-async function extractSeriesEpisodeLinks(client, pageUrl, baseUrl, season, episode) {
-    const html = await fetchPageHtml(client, pageUrl, baseUrl, 'seriesPage');
+async function extractSeriesEpisodeLinks(client, pageUrl, baseUrl, season, episode, config = {}) {
+    const html = await fetchPageHtml(client, pageUrl, baseUrl, 'seriesPage', config);
     if (!html) return null;
     const sections = extractSpoilerSections(html);
     cbDebug('info', 'series sections', {
@@ -1247,7 +1789,7 @@ async function extractSeriesEpisodeLinks(client, pageUrl, baseUrl, season, episo
     }
 
     if (aliasAnchor) {
-        const aliasResult = await resolveAliasSeasonEpisode(client, baseUrl, aliasAnchor, aliasHeaderText, season, episode);
+        const aliasResult = await resolveAliasSeasonEpisode(client, baseUrl, aliasAnchor, aliasHeaderText, season, episode, config);
         if (aliasResult?.maxstreamLink) {
             cbDebug('info', 'series alias resolved', { season, episode, maxstream: safeHost(aliasResult.maxstreamLink), maxstreamPath: safePath(aliasResult.maxstreamLink) });
             return { mixdropLink: null, maxstreamLink: aliasResult.maxstreamLink };
@@ -1313,7 +1855,7 @@ async function buildStreamsFromLinks({ mixdropLink, maxstreamLink } = {}, contex
     }
 
     if (tasks.length) await Promise.allSettled(tasks);
-    const sorted = streams.sort((a, b) => (a?._priority ?? 9) - (b?._priority ?? 9));
+    const sorted = streams.sort((a, b) => (a?.extra?._priority ?? a?._priority ?? 9) - (b?.extra?._priority ?? b?._priority ?? 9));
     cbDebug(sorted.length ? 'info' : 'warn', 'build streams from links done', {
         title: context?.title || '',
         streams: sorted.length,
@@ -1350,6 +1892,11 @@ async function searchCb01(meta = {}, config = {}, reqHost = null, options = {}) 
     }
 
     const bases = getBaseUrls();
+    const proxyPoolState = CB_PROXY_POOL.entries().map((entry) => ({
+        host: entry.host,
+        failures: entry.failures,
+        cooldownMs: Math.max(0, entry.cooldownUntil - Date.now())
+    }));
     cbDebug('info', 'search start', {
         title,
         normalizedTitle: normalizeTitle(title),
@@ -1360,9 +1907,19 @@ async function searchCb01(meta = {}, config = {}, reqHost = null, options = {}) 
         bases,
         hasMfp: Boolean(getMediaflowBase(config)),
         mfpBase: getMediaflowBase(config) ? safeHost(getMediaflowBase(config)) : '',
+        cbForwardProxy: Boolean(getCbForwardProxy(config)),
+        cbForwardProxyHost: safeHost(getCbForwardProxy(config)),
         reqHost: reqHost || '',
         cb01Debug: isCbDebugEnabled(),
-        cb01Trace: isCbTraceEnabled()
+        cb01Trace: isCbTraceEnabled(),
+        codeDefaults: {
+            strategy: envString('CB01_IMPIT_STRATEGY', ''),
+            useProxy: envFlag('CB01_USE_PROXY', false),
+            proxyMaxAttempts: envInt('CB01_PROXY_MAX_ATTEMPTS', 0, 0, 10),
+            forwardFromMfp: envFlag('CB01_FORWARD_PROXY_FROM_MFP', true),
+            totalBudgetSearchMs: envInt('CB01_SEARCH_TOTAL_BUDGET_MS', 13500, 3000, 30000)
+        },
+        proxyPool: proxyPoolState
     });
 
     const failureTrail = [];
@@ -1371,13 +1928,13 @@ async function searchCb01(meta = {}, config = {}, reqHost = null, options = {}) 
         cbDebug('info', 'base attempt start', { baseUrl, isSeries, title, season: season || null, episode: episode || null });
         try {
             if (isSeries) {
-                const pageUrl = await searchSeriesUrl(client, baseUrl, title, year);
+                const pageUrl = await searchSeriesUrl(client, baseUrl, title, year, config);
                 if (!pageUrl) {
                     failureTrail.push({ baseUrl, stage: 'series_page_not_found', elapsedMs: Date.now() - baseStartedAt });
                     cbDebug('warn', 'series page not found', { title, year, baseUrl });
                     continue;
                 }
-                const links = await extractSeriesEpisodeLinks(client, pageUrl, baseUrl, season, episode);
+                const links = await extractSeriesEpisodeLinks(client, pageUrl, baseUrl, season, episode, config);
                 if (!links) {
                     failureTrail.push({ baseUrl, stage: 'series_episode_links_not_found', pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl), elapsedMs: Date.now() - baseStartedAt });
                     cbDebug('warn', 'series episode links not found', { title, season, episode, pageUrl: safeUrlForLog(pageUrl) });
@@ -1397,13 +1954,13 @@ async function searchCb01(meta = {}, config = {}, reqHost = null, options = {}) 
                 }
                 failureTrail.push({ baseUrl, stage: 'series_streams_empty', pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl), elapsedMs: Date.now() - baseStartedAt });
             } else {
-                const pageUrl = await searchMovieUrl(client, baseUrl, title, year);
+                const pageUrl = await searchMovieUrl(client, baseUrl, title, year, config);
                 if (!pageUrl) {
                     failureTrail.push({ baseUrl, stage: 'movie_page_not_found', elapsedMs: Date.now() - baseStartedAt });
                     cbDebug('warn', 'movie page not found', { title, year, baseUrl });
                     continue;
                 }
-                const links = await extractMovieEmbedLinks(client, pageUrl, baseUrl);
+                const links = await extractMovieEmbedLinks(client, pageUrl, baseUrl, config);
                 if (!links || (!links.mixdropLink && !links.maxstreamLink)) {
                     failureTrail.push({ baseUrl, stage: 'movie_embed_links_not_found', pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl), elapsedMs: Date.now() - baseStartedAt });
                     cbDebug('warn', 'movie embed links not found', { title, year, pageUrl: safeUrlForLog(pageUrl) });
@@ -1456,10 +2013,17 @@ module.exports = {
         getBaseUrls,
         normalizeBaseUrl,
         isChallengePage,
+        hasCbUsableHtml,
         isMixdropUrl,
         isStayonlineUrl,
         isMaxstreamLikeUrl,
         normalizeMixdropForExtractor,
-        buildSearchQuery
+        buildSearchQuery,
+        buildCbBrowserHeaders,
+        normalizeForwardProxyBase,
+        getCbForwardProxy,
+        getExplicitCbForwardProxy,
+        buildCbForwardProxyUrl,
+        toAxiosProxyConfig
     }
 };
