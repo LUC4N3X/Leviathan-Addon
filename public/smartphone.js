@@ -82,6 +82,45 @@ function hydrateMobileLogo() {
     img.addEventListener("error", () => img.removeAttribute("data-loading"), { once: true });
 }
 
+
+const MOBILE_BRAND_LOCK_TEXT = "LEVIATHAN";
+
+function lockMobileBrandTitle() {
+    try {
+        const title = document.querySelector(".m-abyss-title") || document.querySelector(".m-brand-title");
+        if (!title) return;
+
+        if (title.textContent !== MOBILE_BRAND_LOCK_TEXT) {
+            title.textContent = MOBILE_BRAND_LOCK_TEXT;
+        }
+
+        title.classList.add("notranslate");
+        title.setAttribute("translate", "no");
+        title.setAttribute("lang", "zxx");
+        title.setAttribute("aria-label", MOBILE_BRAND_LOCK_TEXT);
+        title.setAttribute("data-brand-lock", MOBILE_BRAND_LOCK_TEXT);
+        title.setAttribute("data-no-translate", "true");
+
+        const hero = title.closest(".m-abyss-hero, .m-hero");
+        if (hero) {
+            hero.classList.add("notranslate");
+            hero.setAttribute("translate", "no");
+            hero.setAttribute("data-no-translate", "true");
+        }
+
+        if (window.__leviathanBrandLockObserver) return;
+
+        const observer = new MutationObserver(() => {
+            const lockedTitle = document.querySelector("[data-brand-lock]");
+            if (lockedTitle && lockedTitle.textContent !== MOBILE_BRAND_LOCK_TEXT) {
+                lockedTitle.textContent = MOBILE_BRAND_LOCK_TEXT;
+            }
+        });
+        observer.observe(title, { childList: true, characterData: true, subtree: true });
+        window.__leviathanBrandLockObserver = observer;
+    } catch (_) {}
+}
+
 function applyMobilePerformanceMode() {
     if (!document.body) return;
     try {
@@ -3987,6 +4026,476 @@ body.m-lowfx .m-visual-core-v2 {
         linear-gradient(180deg, rgba(8, 26, 42, 0.94), rgba(2, 8, 18, 0.98)) !important;
     box-shadow: 0 0 22px rgba(34, 211, 238, 0.26), inset 0 0 14px rgba(34, 211, 238, 0.08) !important;
 }
+
+/* Leviathan premium mobile overrides: brand lock, lightweight sea background, logo/title boost, dock nav upgrade. */
+.notranslate,
+[translate="no"],
+[data-no-translate="true"] {
+    unicode-bidi: isolate;
+}
+
+body {
+    background:
+        radial-gradient(ellipse at 50% -8%, rgba(93, 244, 255, 0.30) 0%, rgba(0, 160, 220, 0.13) 25%, transparent 52%),
+        radial-gradient(ellipse at 50% 112%, rgba(0, 94, 150, 0.42) 0%, rgba(0, 35, 70, 0.22) 42%, transparent 72%),
+        radial-gradient(circle at 12% 72%, rgba(0, 190, 255, 0.12) 0%, transparent 34%),
+        radial-gradient(circle at 88% 66%, rgba(112, 0, 255, 0.13) 0%, transparent 38%),
+        linear-gradient(180deg, #041b2a 0%, #021223 34%, #010914 68%, #000307 100%);
+}
+
+body.m-mf-plus {
+    background:
+        radial-gradient(ellipse at 50% -12%, rgba(34, 211, 238, 0.22) 0%, rgba(14, 165, 233, 0.08) 34%, transparent 64%),
+        radial-gradient(circle at 12% 78%, rgba(56, 189, 248, 0.13) 0%, transparent 34%),
+        radial-gradient(circle at 88% 72%, rgba(124, 58, 237, 0.11) 0%, transparent 34%),
+        linear-gradient(180deg, #02101f 0%, #010813 46%, #000205 100%);
+}
+
+body::after {
+    background:
+        radial-gradient(ellipse at 50% 10%, rgba(185, 255, 255, 0.10) 0%, transparent 38%),
+        linear-gradient(180deg, rgba(0, 172, 230, 0.08) 0%, transparent 38%, rgba(0, 0, 0, 0.22) 100%),
+        repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 8px);
+    background-size: auto;
+    opacity: 0.45;
+    mix-blend-mode: screen;
+}
+
+body::before {
+    background-image:
+        radial-gradient(ellipse at 50% 105%, rgba(0, 155, 220, 0.18) 0%, transparent 58%),
+        linear-gradient(14deg, transparent 0 58%, rgba(0, 242, 255, 0.055) 60%, transparent 66%),
+        linear-gradient(-12deg, transparent 0 46%, rgba(56, 189, 248, 0.045) 48%, transparent 56%),
+        radial-gradient(circle at 18% 82%, rgba(34, 211, 238, 0.10) 0%, transparent 30%);
+    background-size: 100% 100%, 280px 120px, 320px 140px, 100% 100%;
+    opacity: 0.72;
+    animation: none;
+    mask-image: linear-gradient(180deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.75) 58%, rgba(0,0,0,0.95) 100%);
+    -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.75) 58%, rgba(0,0,0,0.95) 100%);
+}
+
+#app-container::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+        radial-gradient(ellipse at 50% 14%, rgba(34, 211, 238, 0.13), transparent 42%),
+        radial-gradient(ellipse at 50% 112%, rgba(2, 132, 199, 0.18), transparent 48%),
+        linear-gradient(180deg, rgba(255,255,255,0.018), transparent 18%, rgba(0,0,0,0.12) 100%);
+    opacity: 0.86;
+}
+
+#app-container::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+        linear-gradient(rgba(34, 211, 238, 0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(34, 211, 238, 0.05) 1px, transparent 1px);
+    background-size: 64px 64px;
+    opacity: 0.10;
+    mask-image: radial-gradient(ellipse at 50% 28%, black 0%, rgba(0,0,0,0.42) 54%, transparent 88%);
+    -webkit-mask-image: radial-gradient(ellipse at 50% 28%, black 0%, rgba(0,0,0,0.42) 54%, transparent 88%);
+}
+
+body.m-lowfx #app-container::before {
+    opacity: 0.55;
+}
+
+body.m-lowfx #app-container::after {
+    display: none;
+}
+
+.m-abyss-logo {
+    filter:
+        drop-shadow(0 0 24px rgba(34, 211, 238, 0.30))
+        drop-shadow(0 0 46px rgba(59, 130, 246, 0.18));
+}
+
+.m-abyss-logo::before {
+    box-shadow:
+        0 0 0 1px rgba(255,255,255,0.08),
+        0 0 26px rgba(34, 211, 238, 0.36),
+        0 0 58px rgba(14, 165, 233, 0.18),
+        0 18px 44px rgba(2, 8, 23, 0.42),
+        inset 0 0 24px rgba(59, 130, 246, 0.16),
+        inset 0 0 42px rgba(34, 211, 238, 0.06);
+}
+
+.m-abyss-logo::after {
+    background: radial-gradient(circle, rgba(34, 211, 238, 0.24) 0%, rgba(14, 165, 233, 0.10) 42%, rgba(59, 130, 246, 0.07) 62%, transparent 82%);
+}
+
+.m-abyss-logo .logo-image {
+    filter:
+        saturate(1.24)
+        brightness(1.08)
+        contrast(1.08)
+        drop-shadow(0 13px 20px rgba(0, 0, 0, 0.52))
+        drop-shadow(0 0 14px rgba(34, 211, 238, 0.30))
+        drop-shadow(0 0 26px rgba(96, 165, 250, 0.16));
+}
+
+.m-abyss-logo .logo-particles::before {
+    background:
+        conic-gradient(from 0deg,
+            transparent 0 12%,
+            rgba(236,254,255,0.26) 13% 14%,
+            rgba(34,211,238,0.46) 16% 19%,
+            transparent 20% 38%,
+            rgba(96,165,250,0.30) 40% 44%,
+            transparent 45% 69%,
+            rgba(34,211,238,0.42) 71% 75%,
+            rgba(236,254,255,0.18) 76% 77%,
+            transparent 78% 100%);
+    opacity: 0.88;
+}
+
+.m-abyss-title {
+    font-size: clamp(2.34rem, 12.6vw, 3.42rem);
+    letter-spacing: 0.052em;
+    text-transform: uppercase;
+    background:
+        linear-gradient(180deg, #ffffff 0%, #ecfeff 16%, #9ffbff 36%, #22d3ee 58%, #60a5fa 78%, #a78bfa 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    -webkit-text-stroke: 0.55px rgba(236, 254, 255, 0.28);
+    text-shadow:
+        0 2px 0 rgba(255,255,255,0.08),
+        0 0 18px rgba(34, 211, 238, 0.44),
+        0 0 40px rgba(37, 99, 235, 0.22);
+    filter:
+        drop-shadow(0 13px 24px rgba(0, 0, 0, 0.46))
+        drop-shadow(0 0 20px rgba(34, 211, 238, 0.30))
+        drop-shadow(0 0 36px rgba(96, 165, 250, 0.16));
+}
+
+.m-abyss-title::before {
+    content: "LEVIATHAN";
+}
+
+/* Dock nav upgrade: prettier Setup / Filtri / Net buttons with stronger selected states. */
+.m-dock-nav {
+    gap: 8px;
+    padding: 10px 10px 4px;
+}
+
+.m-nav-item {
+    width: calc(33.333% - 6px);
+    max-width: 106px;
+    min-height: 58px;
+    gap: 5px;
+    padding: 8px 6px 9px;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.01)),
+        linear-gradient(180deg, rgba(5, 12, 20, 0.92), rgba(2, 7, 14, 0.98));
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.04),
+        0 10px 24px rgba(0,0,0,0.26);
+    overflow: hidden;
+    isolation: isolate;
+    transform: translateY(0);
+}
+
+.m-nav-item::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background:
+        radial-gradient(circle at 50% 0%, rgba(255,255,255,0.10), transparent 46%),
+        linear-gradient(180deg, rgba(255,255,255,0.04), transparent 46%);
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+.m-nav-item::after {
+    content: '';
+    position: absolute;
+    left: 18%;
+    right: 18%;
+    bottom: 5px;
+    height: 3px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, rgba(103, 232, 249, 0.85), transparent);
+    box-shadow: 0 0 12px rgba(34, 211, 238, 0.28);
+    opacity: 0;
+    transform: scaleX(0.35);
+    transition: opacity 0.26s ease, transform 0.26s ease;
+    pointer-events: none;
+}
+
+.m-nav-item > span:last-child {
+    font-size: 0.60rem;
+    font-weight: 900;
+    letter-spacing: 1.35px;
+    color: rgba(219, 241, 247, 0.78);
+    text-shadow: none;
+}
+
+.m-nav-item .mf-nav-emoji {
+    width: 28px;
+    height: 28px;
+    margin-bottom: 0;
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02));
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.05),
+        0 6px 16px rgba(0,0,0,0.22);
+    font-size: 1rem;
+    transition: transform 0.22s ease, box-shadow 0.22s ease, background 0.22s ease, border-color 0.22s ease;
+}
+
+.m-nav-item:not(.active) {
+    opacity: 0.94;
+}
+
+.m-nav-item:not(.active):active {
+    transform: scale(0.98);
+    background:
+        linear-gradient(180deg, rgba(34, 211, 238, 0.08), rgba(255,255,255,0.015)),
+        linear-gradient(180deg, rgba(5, 12, 20, 0.94), rgba(2, 7, 14, 0.99));
+    border-color: rgba(103, 232, 249, 0.28);
+}
+
+.m-nav-item.active {
+    color: #fff;
+    transform: translateY(-5px) scale(1.015);
+    border-color: rgba(103, 232, 249, 0.40);
+    background:
+        radial-gradient(circle at 50% 0%, rgba(103, 232, 249, 0.18), transparent 56%),
+        linear-gradient(180deg, rgba(12, 28, 42, 0.98), rgba(4, 11, 20, 0.99));
+    box-shadow:
+        0 16px 34px rgba(0,0,0,0.34),
+        0 0 0 1px rgba(103, 232, 249, 0.08),
+        inset 0 0 16px rgba(103, 232, 249, 0.08);
+}
+
+.m-nav-item.active .mf-nav-emoji {
+    transform: translateY(-2px) scale(1.08);
+    background: linear-gradient(180deg, rgba(103, 232, 249, 0.28), rgba(59, 130, 246, 0.12));
+    border-color: rgba(103, 232, 249, 0.34);
+    box-shadow:
+        0 10px 20px rgba(0,0,0,0.26),
+        0 0 18px rgba(34, 211, 238, 0.22),
+        inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+.m-nav-item.active > span:last-child {
+    color: #ffffff;
+    text-shadow: 0 0 12px rgba(34, 211, 238, 0.22);
+}
+
+.m-nav-item.active::after {
+    opacity: 1;
+    transform: scaleX(1);
+}
+
+.m-nav-item:nth-child(1).active {
+    border-color: rgba(34, 211, 238, 0.48);
+    background:
+        radial-gradient(circle at 50% 0%, rgba(34, 211, 238, 0.19), transparent 56%),
+        linear-gradient(180deg, rgba(6, 31, 43, 0.98), rgba(3, 11, 18, 0.99));
+    box-shadow:
+        0 16px 34px rgba(0,0,0,0.34),
+        0 0 22px rgba(34, 211, 238, 0.14),
+        inset 0 0 16px rgba(34, 211, 238, 0.10);
+}
+
+.m-nav-item:nth-child(2).active {
+    border-color: rgba(139, 92, 246, 0.48);
+    background:
+        radial-gradient(circle at 50% 0%, rgba(139, 92, 246, 0.18), transparent 56%),
+        linear-gradient(180deg, rgba(18, 17, 43, 0.98), rgba(7, 7, 20, 0.99));
+    box-shadow:
+        0 16px 34px rgba(0,0,0,0.34),
+        0 0 22px rgba(139, 92, 246, 0.14),
+        inset 0 0 16px rgba(139, 92, 246, 0.10);
+}
+
+.m-nav-item:nth-child(3).active {
+    border-color: rgba(56, 189, 248, 0.48);
+    background:
+        radial-gradient(circle at 50% 0%, rgba(56, 189, 248, 0.18), transparent 56%),
+        linear-gradient(180deg, rgba(8, 22, 40, 0.98), rgba(3, 8, 18, 0.99));
+    box-shadow:
+        0 16px 34px rgba(0,0,0,0.34),
+        0 0 22px rgba(56, 189, 248, 0.14),
+        inset 0 0 16px rgba(56, 189, 248, 0.10);
+}
+
+body.m-mf-plus .m-dock-nav {
+    gap: 8px;
+    padding: 10px 10px 4px;
+}
+
+body.m-mf-plus .m-nav-item {
+    min-height: 60px;
+}
+
+body.m-mf-plus .mf-nav-emoji {
+    font-size: 1.08rem;
+    margin-bottom: 0;
+}
+
+body.m-mf-plus .m-nav-item > span:last-child {
+    font-size: 0.60rem;
+    letter-spacing: 1.2px;
+}
+
+body.m-mf-plus .m-nav-item.active .mf-nav-emoji {
+    filter: drop-shadow(0 0 10px rgba(103,232,249,0.34));
+}
+
+
+/* Final compact dock: smaller install/copy row and smaller selected menu pills. */
+.m-content {
+    padding-bottom: calc(178px + var(--safe-bottom));
+}
+
+.m-dock-container {
+    padding-bottom: calc(6px + env(safe-area-inset-bottom));
+    box-shadow: 0 -10px 34px rgba(0,0,0,0.86);
+}
+
+.m-dock-actions {
+    gap: 7px;
+    padding: 7px 12px 4px 12px;
+}
+
+.m-btn-install {
+    height: 36px;
+    border-radius: 11px;
+    font-size: 0.82rem;
+    letter-spacing: 1.45px;
+    gap: 7px;
+    box-shadow:
+        0 0 16px rgba(0, 242, 255, 0.30),
+        0 3px 10px rgba(0, 242, 255, 0.18),
+        inset 0 1px 0 rgba(255,255,255,0.32),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.20);
+}
+
+.m-btn-install i,
+.m-btn-install .mf-btn-emoji {
+    font-size: 0.88rem;
+}
+
+.m-btn-copy {
+    height: 36px;
+    border-radius: 11px;
+    font-size: 0.53rem;
+    letter-spacing: 1.05px;
+}
+
+.m-btn-copy i,
+.m-btn-copy .mf-copy-emoji {
+    font-size: 0.82rem;
+}
+
+.m-dock-nav {
+    gap: 6px;
+    padding: 6px 10px 3px;
+}
+
+.m-nav-item {
+    width: calc(33.333% - 5px);
+    max-width: 96px;
+    min-height: 48px;
+    gap: 3px;
+    padding: 5px 5px 7px;
+    border-radius: 15px;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.035),
+        0 7px 16px rgba(0,0,0,0.22);
+}
+
+.m-nav-item .mf-nav-emoji {
+    width: 23px;
+    height: 23px;
+    border-radius: 8px;
+    font-size: 0.90rem;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.05),
+        0 4px 10px rgba(0,0,0,0.18);
+}
+
+.m-nav-item > span:last-child {
+    font-size: 0.52rem;
+    letter-spacing: 1.0px;
+}
+
+.m-nav-item.active {
+    transform: translateY(-3px) scale(1.01);
+    box-shadow:
+        0 10px 22px rgba(0,0,0,0.28),
+        0 0 0 1px rgba(103, 232, 249, 0.07),
+        inset 0 0 12px rgba(103, 232, 249, 0.07);
+}
+
+.m-nav-item.active .mf-nav-emoji {
+    transform: translateY(-1px) scale(1.04);
+    box-shadow:
+        0 7px 14px rgba(0,0,0,0.22),
+        0 0 13px rgba(34, 211, 238, 0.18),
+        inset 0 1px 0 rgba(255,255,255,0.07);
+}
+
+.m-nav-item::after {
+    bottom: 4px;
+    height: 2px;
+}
+
+body.m-mf-plus .m-dock-nav {
+    gap: 6px;
+    padding: 6px 10px 3px;
+}
+
+body.m-mf-plus .m-nav-item {
+    min-height: 48px;
+}
+
+body.m-mf-plus .mf-nav-emoji {
+    font-size: 0.92rem;
+}
+
+body.m-mf-plus .m-nav-item > span:last-child {
+    font-size: 0.52rem;
+    letter-spacing: 0.95px;
+}
+
+body.m-keyboard-open .m-dock-container,
+body.m-typing .m-dock-container {
+    padding-bottom: calc(5px + env(safe-area-inset-bottom));
+}
+
+body.m-keyboard-open .m-dock-actions,
+body.m-typing .m-dock-actions {
+    padding-top: 5px;
+    padding-bottom: 3px;
+}
+
+body.m-keyboard-open .m-nav-item,
+body.m-typing .m-nav-item {
+    min-height: 42px;
+    padding-top: 4px;
+    padding-bottom: 5px;
+}
+
+body.m-keyboard-open .m-nav-item .mf-nav-emoji,
+body.m-typing .m-nav-item .mf-nav-emoji {
+    width: 21px;
+    height: 21px;
+    font-size: 0.82rem;
+}
+
 `;
 
 const mobileHTML = `
@@ -4003,10 +4512,10 @@ const mobileHTML = `
         <div class="m-ptr" id="m-ptr-indicator"><i class="fas fa-arrow-down m-ptr-icon"></i></div>
 
         <div class="m-content">
-            <div class="m-hero m-abyss-hero" aria-label="LeviathanKit">
+            <div class="m-hero m-abyss-hero notranslate" aria-label="LEVIATHAN Kit" translate="no" data-no-translate="true">
                 <div class="logo-container m-abyss-logo">
                     <span class="m-abyss-crown" aria-hidden="true"></span>
-                    <img src="${MOBILE_LOGO_URL}" alt="Leviathan Logo" class="logo-image" fetchpriority="high" decoding="sync" loading="eager" width="156" height="156">
+                    <img src="${MOBILE_LOGO_URL}" alt="LEVIATHAN Logo" class="logo-image notranslate" translate="no" data-no-translate="true" fetchpriority="high" decoding="sync" loading="eager" width="156" height="156">
                     <div class="logo-particles" aria-hidden="true">
                         <span class="logo-particle" style="left:18%; width:5px; height:5px; animation-delay:0s;"></span>
                         <span class="logo-particle" style="left:38%; width:3px; height:3px; animation-delay:2.4s;"></span>
@@ -4014,7 +4523,7 @@ const mobileHTML = `
                         <span class="logo-particle" style="left:78%; width:3px; height:3px; animation-delay:6.2s;"></span>
                     </div>
                 </div>
-                <h1 class="m-brand-title m-abyss-title">Leviathan</h1>
+                <h1 class="m-brand-title m-abyss-title notranslate" translate="no" lang="zxx" data-brand-lock="LEVIATHAN" data-no-translate="true" aria-label="LEVIATHAN">LEVIATHAN</h1>
                 <div class="m-brand-sub m-abyss-sub">Sovrano degli abissi</div>
                 <div class="m-version-tag m-abyss-version" aria-label="Versione 3.1.0">
                     <span class="m-v-dot" aria-hidden="true"></span>
@@ -4107,9 +4616,9 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🍿 Catalogo rapido • film, serie e anime</span>
+                                <span class="m-reactor-desc">🍿 Catalogo completo e aggiornato</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
 
                                 <div id="m-sc-options" class="m-sc-subpanel">
@@ -4134,9 +4643,9 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎬 HD italiano • film e serie aggiornati</span>
+                                <span class="m-reactor-desc">🎬 Film e serie in alta qualità</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-shield-alt"></i> MFP</span>
+                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-check-circle"></i> OTTIMIZZATO</span>
                                 </div>
                             </div>
                         </div>
@@ -4153,9 +4662,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-purple"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">📺 Serie italiane • aggiornamento rapido</span>
+                                <span class="m-reactor-desc">📺 Serie TV italiane aggiornate</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
                             </div>
                         </div>
@@ -4172,9 +4681,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">📡 Serie italiane • No Proxy lazy-safe</span>
+                                <span class="m-reactor-desc">📡 Serie TV con ricerca rapida</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-shield-halved"></i> NO PROXY</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
                             </div>
                         </div>
@@ -4191,9 +4700,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🌍 Serie ITA • MFP + Uprot</span>
+                                <span class="m-reactor-desc">🌍 Serie italiane organizzate</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-shield-alt"></i> MFP</span>
+                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-check-circle"></i> OTTIMIZZATO</span>
                                 </div>
                             </div>
                         </div>
@@ -4210,9 +4719,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎬 Film & Serie ITA • MFP + Stayonline/Uprot</span>
+                                <span class="m-reactor-desc">🎬 Film e serie con catalogo ampio</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-shield-alt"></i> MFP</span>
+                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-check-circle"></i> OTTIMIZZATO</span>
                                 </div>
                             </div>
                         </div>
@@ -4229,9 +4738,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🐉 Anime ITA • mapping dedicato</span>
+                                <span class="m-reactor-desc">🐉 Anime italiani ben indicizzati</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
                             </div>
                         </div>
@@ -4248,9 +4757,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🌊 Kitsu + VixCloud • no proxy</span>
+                                <span class="m-reactor-desc">🌊 Anime e simulcast aggiornati</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
                             </div>
                         </div>
@@ -4267,9 +4776,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🪐 Fallback anime • mapping avanzato</span>
+                                <span class="m-reactor-desc">🪐 Anime classici e recenti</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
                             </div>
                         </div>
@@ -4286,9 +4795,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-green"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎞️ Film italiani • no proxy</span>
+                                <span class="m-reactor-desc">🎞️ Film italiani selezionati</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
                             </div>
                         </div>
@@ -4305,9 +4814,9 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎟️ Film e serie • direct mode</span>
+                                <span class="m-reactor-desc">🎟️ Catalogo cinema e serie</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> NO PROXY</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
                                 </div>
                             </div>
                         </div>
@@ -4649,7 +5158,7 @@ const mobileHTML = `
                 <div class="m-section-head">
                     <div class="sh-titles">
                         <span class="sh-title">🌉 Deep Bridge</span>
-                        <span class="sh-sub">Proxy, MFP e Debrid Ghost</span>
+                        <span class="sh-sub">Routing, bridge e Debrid Ghost</span>
                     </div>
                     <span class="sh-tag violet">NET</span>
                 </div>
@@ -5585,6 +6094,7 @@ function initMobileInterface() {
     }
 
     document.body.innerHTML = mobileHTML;
+    lockMobileBrandTitle();
     applyMobilePerformanceMode();
     initMobileViewportGuard();
     installMobileVisibilityGuard();
