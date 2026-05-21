@@ -77,6 +77,48 @@ const REGEX_TORRENTHAN_NEGATIVE = /(?:\bSUB(?:BED)?\s*ENG\b|\bENGLISH\b|\bENG\b|
 const REGEX_TORRENTHAN_MULTI = /\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b/i;
 const REGEX_TORRENTHAN_IT_CODEC = /\b(?:ITA|ITALIAN|ITALIANO)\b.*\b(?:AC3|EAC3|AAC|DTS|TRUEHD|ATMOS|DDP)\b/i;
 
+const REGEX_TORRENTIO_RD_DOWNLOAD_MARKER = /(?:⬇️|\[\s*RD\s*download\s*\]|\bRD\s*(?:download|DL)\b|\bReal[-\s]?Debrid\s*download\b|\bdownload\s*(?:to|in|su|nel|sul)?\s*(?:debrid|RD|Real[-\s]?Debrid|cloud)\b|\b(?:add|aggiungi|manda|send)\s*(?:to|al|in)?\s*(?:cloud|debrid|RD|Real[-\s]?Debrid)\b)/i;
+const REGEX_TORRENTIO_RD_CACHED_MARKER = /(?:⚡|\[\s*RD\s*\+\s*\]|\bRD\s*\+\b|\bRD\+\b|\bReal[-\s]?Debrid\s*(?:cached|instant|ready)\b|\binstant(?:ly)?\s*(?:available|ready)\b|\b(?:cached|cache)\s*(?:on|su)?\s*(?:RD|Real[-\s]?Debrid)\b)/i;
+
+function collectRdMarkerText(stream = {}, fallbackText = '') {
+    const hints = stream?.behaviorHints && typeof stream.behaviorHints === 'object' ? stream.behaviorHints : {};
+    const values = [
+        fallbackText,
+        stream?.title,
+        stream?.name,
+        stream?.description,
+        stream?.filename,
+        stream?.file_title,
+        stream?.provider,
+        stream?.source,
+        stream?.cachedStatus,
+        stream?.debridStatus,
+        stream?.availability,
+        stream?.cacheState,
+        stream?.rdCacheState,
+        stream?._rdCacheState,
+        hints.filename,
+        hints.cached,
+        hints.cacheState,
+        hints.rdCacheState,
+        hints.bingeGroup,
+        hints.infoHash
+    ];
+    return values.flatMap((value) => Array.isArray(value) ? value : [value]).filter(Boolean).join(' ');
+}
+
+function hasTorrentioRdDownloadMarkerFromStream(stream = {}, fallbackText = '') {
+    return REGEX_TORRENTIO_RD_DOWNLOAD_MARKER.test(collectRdMarkerText(stream, fallbackText));
+}
+
+function hasTorrentioRdCachedMarkerFromStream(stream = {}, fallbackText = '') {
+    const markerText = collectRdMarkerText(stream, fallbackText);
+    if (!markerText) return false;
+    if (stream?._dbCachedRd === true || stream?.cached_rd === true || stream?.isCached === true || stream?.cached === true) return true;
+    if (/^(?:cached|rd_cached|instant|instant_available)$/i.test(String(stream?._rdCacheState || stream?.rdCacheState || stream?.cacheState || '').trim())) return true;
+    return REGEX_TORRENTIO_RD_CACHED_MARKER.test(markerText);
+}
+
 const FETCH_CACHE_TTL = Number(process.env.EXTERNAL_ADDONS_CACHE_TTL || 30000);
 const NEGATIVE_CACHE_TTL = Number(process.env.EXTERNAL_ADDONS_NEGATIVE_CACHE_TTL || 12000);
 const MAX_TRACKERS_IN_MAGNET = Number(process.env.EXTERNAL_ADDONS_MAX_TRACKERS || 10);
@@ -416,10 +458,25 @@ function upsertTorrentioConfigPart(configText = '', key, value) {
     return parts.join('|');
 }
 
-function ensureTorrentioNoDownloadLinks(configText = '') {
-    if (process.env.EXT_TORRENTIO_ALLOW_DOWNLOAD_LINKS === 'true') return configText;
+function normalizeTorrentioDebridOptions(configText = '') {
     const text = String(configText || '').trim();
+    const forceNoDownload = process.env.EXT_TORRENTIO_FORCE_NO_DOWNLOAD_LINKS === 'true';
+    const allowDownload = process.env.EXT_TORRENTIO_ALLOW_DOWNLOAD_LINKS === 'true';
     const existing = text.split('|').find((part) => /^debridoptions=/i.test(part));
+
+    // Default compatto: nasconde i download-to-debrid di Torrentio.
+    // Si possono riabilitare solo esplicitamente con EXT_TORRENTIO_ALLOW_DOWNLOAD_LINKS=true.
+    if (!forceNoDownload && allowDownload) {
+        if (!existing) return text;
+        const value = existing.split('=').slice(1).join('=')
+            .split(',')
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .filter((part) => !/^nodownloadlinks$/i.test(part))
+            .join(',');
+        return value ? upsertTorrentioConfigPart(text, 'debridoptions', value) : upsertTorrentioConfigPart(text, 'debridoptions', '');
+    }
+
     if (!existing) return upsertTorrentioConfigPart(text, 'debridoptions', 'nodownloadlinks');
     const value = existing.split('=').slice(1).join('=');
     if (/(^|,)nodownloadlinks(,|$)/i.test(value)) return text;
@@ -428,7 +485,7 @@ function ensureTorrentioNoDownloadLinks(configText = '') {
 
 function buildTorrentioPipeConfig(baseConfig = '', apiKey = '') {
     let configText = stripTorrentioDebridTokens(safeDecodeURIComponent(baseConfig || process.env.EXT_TORRENTIO_BASE_CONFIG || ''));
-    configText = ensureTorrentioNoDownloadLinks(configText);
+    configText = normalizeTorrentioDebridOptions(configText);
     configText = upsertTorrentioConfigPart(configText, 'realdebrid', encodeURIComponent(String(apiKey || '').trim()));
     return configText;
 }
@@ -463,7 +520,7 @@ function buildTorrentioBaseUrl(baseUrl, userConfig) {
             url.pathname = `/${segments.join('/')}`;
             const injected = url.toString().replace(/\/+$/, '');
             if (injected !== baseUrl) {
-                infoLog(`[TORRENTIO CONFIG] RD native config injected tokenSig=${hashConfigSignature(apiKey)} baseHadConfig=${configIndex >= 0} nodownloadlinks=${process.env.EXT_TORRENTIO_ALLOW_DOWNLOAD_LINKS === 'true' ? 'false' : 'true'}`);
+                infoLog(`[TORRENTIO CONFIG] RD native config injected tokenSig=${hashConfigSignature(apiKey)} baseHadConfig=${configIndex >= 0} downloadRows=${process.env.EXT_TORRENTIO_ALLOW_DOWNLOAD_LINKS === 'true' && process.env.EXT_TORRENTIO_FORCE_NO_DOWNLOAD_LINKS !== 'true' ? 'true' : 'false'}`);
             }
             return injected;
         } catch {
@@ -735,12 +792,15 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
     const addonGroup = getAddonGroup(addonKey);
     const isTorrentioAddon = addonGroup === 'torrentio';
     const isMediaFusionAddon = addonGroup === 'mediafusion';            
-    const torrentioPlayableUrl = hasDirectUrl && isTorrentioAddon ? rawUrl : null;
+    const torrentioDownloadMarker = isTorrentioAddon && hasTorrentioRdDownloadMarkerFromStream(stream, text);
+    const torrentioCachedMarker = isTorrentioAddon && !torrentioDownloadMarker && hasTorrentioRdCachedMarkerFromStream(stream, text);
+    const torrentioPlayableUrl = hasDirectUrl && isTorrentioAddon && !torrentioDownloadMarker ? rawUrl : null;
     const mediaFusionPlayableUrl = hasDirectUrl && isMediaFusionAddon ? rawUrl : null;
-    const trustedTorrentioDirectUrl = hasDirectUrl && isTorrentioAddon && addon.trustDirectUrl !== false;
+    const trustedTorrentioDirectUrl = hasDirectUrl && isTorrentioAddon && !torrentioDownloadMarker && addon.trustDirectUrl !== false;
     const trustedMediaFusionDirectUrl = hasDirectUrl && isMediaFusionAddon && process.env.MEDIAFUSION_TRUST_NATIVE_RD_URLS !== 'false';
     const trustedDirectUrl = trustedTorrentioDirectUrl || trustedMediaFusionDirectUrl;
-    const externalCached = trustedDirectUrl;
+    const externalCached = trustedDirectUrl || torrentioCachedMarker;
+    const externalRdState = externalCached ? 'cached' : (torrentioDownloadMarker ? 'download' : 'unknown');
     const externalCachedBool = externalCached ? true : null;
 
     const potentialPack = Boolean(isSeriesType && packCandidate);
@@ -757,9 +817,11 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
         externalPlayableUrl: torrentioPlayableUrl || mediaFusionPlayableUrl, _torrentioPlayableUrl: torrentioPlayableUrl,
         _mediafusionPlayableUrl: mediaFusionPlayableUrl, _mediafusionPassthrough: Boolean(mediaFusionPlayableUrl),
         _torrentioPassthrough: Boolean(torrentioPlayableUrl), _externalOriginalUrl: rawUrl,
-        isCached: externalCached, cacheState: externalCached ? 'cached' : 'unknown', rdCacheState: externalCached ? 'cached' : 'unknown',
-        cached_rd: externalCachedBool, _dbCachedRd: externalCachedBool, _nexusBridgeRdChecked: trustedDirectUrl, _externalRdChecked: trustedDirectUrl,
-        _mediafusionRdAuthority: Boolean(trustedMediaFusionDirectUrl), _rdProof: trustedMediaFusionDirectUrl ? 'mediafusion_passthrough_url' : undefined,
+        isCached: externalCached, cacheState: externalRdState, rdCacheState: externalRdState,
+        cached_rd: externalCachedBool, _dbCachedRd: externalCachedBool, _nexusBridgeRdChecked: Boolean(trustedDirectUrl || torrentioCachedMarker || torrentioDownloadMarker), _externalRdChecked: Boolean(trustedDirectUrl || torrentioCachedMarker || torrentioDownloadMarker),
+        _torrentioRdAuthority: Boolean(torrentioCachedMarker || trustedTorrentioDirectUrl), _torrentioCached: Boolean(torrentioCachedMarker || trustedTorrentioDirectUrl),
+        _torrentioRdDirect: Boolean(trustedTorrentioDirectUrl), _torrentioRdDownload: Boolean(torrentioDownloadMarker),
+        _mediafusionRdAuthority: Boolean(trustedMediaFusionDirectUrl), _rdProof: trustedMediaFusionDirectUrl ? 'mediafusion_passthrough_url' : (torrentioDownloadMarker ? 'torrentio_download_marker' : (torrentioCachedMarker ? 'torrentio_cached_marker' : undefined)),
         pubDate: new Date().toISOString(), isItalian: languageInfo.isItalian, hasItalianAudio: languageInfo.hasAudioItalian,
         hasItalianSubs: languageInfo.hasSubItalian, languageInfo, techTags
     };
@@ -795,7 +857,12 @@ function mergeNormalizedStream(base, candidate) {
     winner._torrentioRdAuthority = winner._torrentioRdAuthority || loser._torrentioRdAuthority;
     winner._torrentioCached = winner._torrentioCached || loser._torrentioCached;
     winner._torrentioRdDirect = winner._torrentioRdDirect || loser._torrentioRdDirect;
+    winner._torrentioRdDownload = winner._torrentioRdDownload || loser._torrentioRdDownload;
     winner._rdProof = winner._rdProof || loser._rdProof;
+    if ((winner.rdCacheState || winner.cacheState) !== 'cached' && (loser.rdCacheState === 'download' || loser.cacheState === 'download')) {
+        winner.rdCacheState = 'download';
+        winner.cacheState = 'download';
+    }
     winner.magnetLink = winner.magnetLink || loser.magnetLink;
     winner.externalProvider = winner.externalProvider || loser.externalProvider;
     winner.source = winner.source || loser.source;
@@ -1010,6 +1077,9 @@ module.exports = {
     formatBytes,
     getTorrentioCredential,
     getRealDebridToken,
+    normalizeTorrentioDebridOptions,
+    hasTorrentioRdDownloadMarkerFromStream,
+    hasTorrentioRdCachedMarkerFromStream,
     sanitizeFetchType,
     normalizeExternalStream,
     mergeNormalizedStream,
