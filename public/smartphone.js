@@ -5395,6 +5395,237 @@ body.m-lowfx .m-caustic {
 }
 
 
+/* Setup action deck: install/copy live inside Setup, while bottom dock keeps only navigation. */
+:root {
+    --m-dock-h: 76px;
+}
+
+.m-dock-actions {
+    display: none !important;
+}
+
+.m-dock-container {
+    border-top-color: rgba(125, 249, 255, 0.18) !important;
+    box-shadow: 0 -10px 34px rgba(0, 0, 0, 0.78) !important;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom)) !important;
+}
+
+.m-dock-nav {
+    min-height: 62px !important;
+    padding: 9px 0 0 !important;
+    border-bottom: 0 !important;
+}
+
+.m-content-wrapper {
+    padding-bottom: calc(var(--m-dock-h) + var(--m-dock-gap)) !important;
+}
+
+/* Index.html style: clean final action area, not cards. */
+.m-setup-actions-panel {
+    margin: 32px 0 20px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    position: relative;
+    overflow: visible !important;
+}
+
+.m-setup-actions-panel::before,
+.m-setup-actions-panel::after {
+    display: none !important;
+    content: none !important;
+}
+
+.m-setup-actions-top {
+    display: none !important;
+}
+
+.m-setup-actions-grid {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 13px !important;
+    margin-top: 0 !important;
+    position: relative;
+    z-index: 1;
+}
+
+.m-setup-action {
+    width: 100% !important;
+    min-height: 56px !important;
+    border-radius: 8px !important;
+    padding: 15px 20px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 10px !important;
+    font-family: 'Rajdhani', sans-serif !important;
+    font-size: 1.02rem !important;
+    font-weight: 800 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 2.6px !important;
+    cursor: pointer !important;
+    position: relative !important;
+    overflow: hidden !important;
+    touch-action: manipulation !important;
+    user-select: none !important;
+    transition: transform 0.22s ease, background 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease, color 0.22s ease, letter-spacing 0.22s ease !important;
+}
+
+.m-setup-action::before {
+    content: '' !important;
+    position: absolute !important;
+    top: 0 !important;
+    left: -120% !important;
+    width: 200% !important;
+    height: 100% !important;
+    background: linear-gradient(90deg, transparent, rgba(0, 242, 255, 0.38), transparent) !important;
+    transform: skewX(-30deg) !important;
+    opacity: 0.9 !important;
+    pointer-events: none !important;
+    transition: left 0.48s ease !important;
+}
+
+.m-setup-action:active {
+    transform: translateY(-1px) scale(0.985) !important;
+}
+
+.m-setup-install {
+    flex: 2 !important;
+    color: var(--m-primary) !important;
+    background: rgba(0, 242, 255, 0.05) !important;
+    border: 1px solid var(--m-primary) !important;
+    box-shadow: 0 0 10px rgba(0, 242, 255, 0.05), inset 0 1px 0 rgba(255,255,255,0.04) !important;
+}
+
+.m-setup-install:active,
+.m-setup-install:focus-visible {
+    color: #001014 !important;
+    background: var(--m-primary) !important;
+    box-shadow: 0 0 20px var(--m-primary), 0 14px 30px rgba(0,0,0,0.25) !important;
+    letter-spacing: 3.2px !important;
+}
+
+.m-setup-install:active::before,
+.m-setup-install:focus-visible::before {
+    left: 100% !important;
+}
+
+.m-setup-copy {
+    flex: 1 !important;
+    color: #ffffff !important;
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.11) !important;
+    box-shadow: none !important;
+}
+
+.m-setup-copy::before {
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent) !important;
+}
+
+.m-setup-copy:active,
+.m-setup-copy:focus-visible {
+    border-color: rgba(255, 255, 255, 0.45) !important;
+    background: rgba(255, 255, 255, 0.10) !important;
+    box-shadow: 0 12px 24px rgba(0,0,0,0.22) !important;
+}
+
+.m-setup-copy:active::before,
+.m-setup-copy:focus-visible::before {
+    left: 100% !important;
+}
+
+.m-setup-action-icon {
+    display: none !important;
+}
+
+.m-setup-action-text {
+    display: contents !important;
+}
+
+.m-setup-action-text b {
+    font-family: inherit !important;
+    font-size: inherit !important;
+    line-height: 1 !important;
+    font-weight: inherit !important;
+    letter-spacing: inherit !important;
+    text-transform: inherit !important;
+}
+
+.m-setup-action-text small {
+    display: none !important;
+}
+
+.m-setup-action > i {
+    position: relative !important;
+    z-index: 1 !important;
+    font-size: 0.98rem !important;
+    opacity: 0.95 !important;
+    flex: 0 0 auto !important;
+}
+
+.m-setup-action-text b,
+.m-setup-action span,
+.m-setup-action i {
+    position: relative;
+    z-index: 1;
+}
+
+.m-setup-actions-note {
+    margin-top: 13px !important;
+    padding: 10px 12px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    border-radius: 9px !important;
+    border: 1px solid rgba(0, 242, 255, 0.12) !important;
+    background: rgba(0, 242, 255, 0.035) !important;
+    color: rgba(180, 226, 238, 0.66) !important;
+    font-family: 'Rajdhani', sans-serif !important;
+    font-size: 0.68rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.8px !important;
+    text-transform: uppercase !important;
+}
+
+.m-setup-actions-note i {
+    color: var(--m-primary) !important;
+    opacity: 0.8 !important;
+}
+
+@media (min-width: 430px) {
+    .m-setup-actions-grid {
+        flex-direction: row !important;
+    }
+    .m-setup-action {
+        min-height: 58px !important;
+    }
+}
+
+@media (max-width: 360px) {
+    .m-setup-actions-panel { margin-top: 26px !important; }
+    .m-setup-action {
+        min-height: 52px !important;
+        padding: 13px 14px !important;
+        font-size: 0.95rem !important;
+        letter-spacing: 2px !important;
+        border-radius: 8px !important;
+    }
+    .m-setup-actions-note {
+        font-size: 0.62rem !important;
+        padding: 9px 10px !important;
+    }
+}
+
+body.m-lowfx .m-setup-action::before {
+    display: none !important;
+}
+
+
 `;
 
 const mobileHTML = `
@@ -5769,6 +6000,20 @@ const mobileHTML = `
                         <div class="m-neural-footer">LEVIATHAN SYSTEM v2.7.0</div>
                     </div>
                 </div>
+
+                <div class="m-setup-actions-panel" aria-label="Azioni configurazione">
+                    <div class="m-setup-actions-grid">
+                        <button class="m-setup-action m-setup-install" onclick="mobileInstall()" type="button">
+                            <span class="m-setup-action-text"><b>INSTALLA</b></span>
+                            <i class="fas fa-radiation"></i>
+                        </button>
+                        <button class="m-setup-action m-setup-copy" onclick="openLinkModal()" type="button">
+                            <i class="fas fa-copy"></i>
+                            <span class="m-setup-action-text"><b>COPIA LINK</b></span>
+                        </button>
+                    </div>
+                    <div class="m-setup-actions-note"><i class="fas fa-shield-alt"></i> LINK GENERATO CON LE IMPOSTAZIONI ATTUALI</div>
+                </div>
             </div>
 
             <div id="page-filters" class="m-page">
@@ -5949,14 +6194,6 @@ const mobileHTML = `
     </div>
 
     <div class="m-dock-container">
-        <div class="m-dock-actions">
-            <button class="m-btn-install" onclick="mobileInstall()">
-                <span class="mf-btn-emoji">⚡</span><i class="fas fa-download"></i> INSTALLA
-            </button>
-            <button class="m-btn-copy" onclick="openLinkModal()">
-                <span class="mf-copy-emoji">📋</span><i class="fas fa-link"></i><span>COPIA</span>
-            </button>
-        </div>
         <div class="m-dock-nav">
             <div class="m-nav-item active" onclick="navTo('setup', this)">
                 <span class="mf-nav-emoji">🧩</span><i class="fas fa-sliders-h"></i><span>SETUP</span>
@@ -6672,7 +6909,7 @@ function syncMobileDockMetrics() {
         const dock = document.querySelector('.m-dock-container');
         if (!root || !dock) return;
         const rect = dock.getBoundingClientRect();
-        const h = Math.max(96, Math.ceil(rect.height || dock.offsetHeight || 118));
+        const h = Math.max(72, Math.ceil(rect.height || dock.offsetHeight || 76));
         root.style.setProperty('--m-dock-h', `${h}px`);
     } catch (_) {}
 }
