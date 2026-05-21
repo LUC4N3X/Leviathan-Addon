@@ -8,6 +8,7 @@ const { extractMixdrop } = require('../extractors/hosters/mixdrop');
 const { requestWithImpitRotating, isCanceledError } = require('../utils/bypass');
 
 const DEFAULT_BASE_URL = 'https://cb01uno.bar';
+const DEFAULT_BASE_URLS = Object.freeze(['https://cb01uno.bar']);
 const PROVIDER = 'CB01';
 const PROVIDER_CODE = 'CB01';
 const ICON = '🎬';
@@ -18,6 +19,7 @@ const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 
 const CB01_CODE_DEFAULTS = Object.freeze({
     CB01_BASE_URL: 'https://cb01uno.bar',
+    CB01_BASE_URLS: '',
     CB01_PROVIDER_TIMEOUT: '12000',
     CB01_DEBUG: '1',
     CB01_TRACE: '1',
@@ -143,9 +145,16 @@ function normalizeBaseUrl(value) {
 }
 
 function getBaseUrls() {
+    const expanded = String(envString('CB01_BASE_URLS', '') || '')
+        .split(/[\s,;]+/)
+        .map((value) => value.trim())
+        .filter(Boolean);
     const raw = [
         envString('CB01_BASE_URL', DEFAULT_BASE_URL),
-        envString('CB01_BASE_URL_2', '')
+        envString('CB01_BASE_URL_2', ''),
+        envString('CB01_BASE_URL_3', ''),
+        ...expanded,
+        ...DEFAULT_BASE_URLS
     ];
     const out = [...new Set(raw.map(normalizeBaseUrl).filter(Boolean))];
     cbDebug('trace', 'base urls resolved', { bases: out, source: 'code-defaults+env-override' });
@@ -857,19 +866,50 @@ async function buildMaxstreamStream(rawUrl, context) {
 
 function extractCardCandidates(html, baseUrl = null) {
     const candidates = [];
-    const cardRe = /<div\b[^>]*class=["'][^"']*card-content[^"']*["'][^>]*>([\s\S]*?)<\/div>/gi;
-    for (const cardMatch of String(html || '').matchAll(cardRe)) {
+    const seen = new Set();
+    const pushCandidate = (cardHtml, hrefRaw, titleRaw, dateRaw = '') => {
+        const href = normalizeRemoteUrl(hrefRaw || '', baseUrl);
+        const title = decodeHtml(titleRaw || '');
+        if (!href || !title) return;
+        const key = `${href}|${normalizeTitle(title)}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        candidates.push({ href, title, dateText: decodeHtml(dateRaw || ''), cardHtml: String(cardHtml || '') });
+    };
+
+    const source = String(html || '');
+    const cardRe = /<(?:div|article|li)\b[^>]*class=["'][^"']*(?:card-content|card|post|item|result)[^"']*["'][^>]*>([\s\S]*?)<\/(?:div|article|li)>/gi;
+    for (const cardMatch of source.matchAll(cardRe)) {
         const cardHtml = cardMatch?.[1] || '';
-        const titleRe = /<h3\b[^>]*class=["'][^"']*card-title[^"']*["'][^>]*>([\s\S]*?)<\/h3>/i;
-        const titleBlock = cardHtml.match(titleRe)?.[1] || '';
-        const linkRe = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i;
-        const linkMatch = titleBlock.match(linkRe);
+        const titleBlock = cardHtml.match(/<h[1-6]\b[^>]*class=["'][^"']*(?:card-title|entry-title|title)[^"']*["'][^>]*>([\s\S]*?)<\/h[1-6]>/i)?.[1]
+            || cardHtml.match(/<(?:h[1-6]|strong|b)\b[^>]*>([\s\S]{0,500}?)<\/(?:h[1-6]|strong|b)>/i)?.[1]
+            || cardHtml;
+        const linkMatch = titleBlock.match(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i)
+            || cardHtml.match(/<a\b[^>]*href=["']([^"']+)["'][^>]*title=["']([^"']+)["'][^>]*>/i)
+            || cardHtml.match(/<a\b[^>]*title=["']([^"']+)["'][^>]*href=["']([^"']+)["'][^>]*>/i);
         if (!linkMatch) continue;
-        const href = normalizeRemoteUrl(linkMatch?.[1] || '', baseUrl);
-        const title = decodeHtml(linkMatch?.[2] || '');
-        const dateSpanMatch = cardHtml.match(/<span\b[^>]*style=["'][^"']*color[^"']*["'][^>]*>([\s\S]*?)<\/span>/i);
-        const dateText = decodeHtml(dateSpanMatch?.[1] || '');
-        candidates.push({ href, title, dateText, cardHtml });
+        let href = linkMatch[1] || '';
+        let title = linkMatch[2] || '';
+        if (/^https?:|^\//i.test(title) && !/^https?:|^\//i.test(href)) {
+            const tmp = href;
+            href = title;
+            title = tmp;
+        }
+        const dateSpanMatch = cardHtml.match(/<span\b[^>]*(?:class=["'][^"']*(?:date|year|meta)[^"']*["']|style=["'][^"']*color[^"']*["'])[^>]*>([\s\S]*?)<\/span>/i)
+            || cardHtml.match(/(?:19|20)\d{2}/);
+        const dateText = dateSpanMatch?.[1] || dateSpanMatch?.[0] || '';
+        pushCandidate(cardHtml, href, title, dateText);
+    }
+
+    if (!candidates.length) {
+        const fallbackRe = /<a\b[^>]*href=["']([^"']+)["'][^>]*(?:title=["']([^"']+)["'])?[^>]*>([\s\S]{0,220}?)<\/a>/gi;
+        for (const match of source.matchAll(fallbackRe)) {
+            const href = match?.[1] || '';
+            if (!/(?:film|movie|serietv|serie|tv-series|streaming)/i.test(href)) continue;
+            const title = match?.[2] || match?.[3] || '';
+            pushCandidate(match?.[0] || '', href, title, match?.[0] || '');
+            if (candidates.length >= 40) break;
+        }
     }
     return candidates;
 }
@@ -1404,6 +1444,108 @@ function buildSearchQuery(title) {
     return new URLSearchParams({ s: normalized }).toString();
 }
 
+function normalizeSearchTitleVariant(value) {
+    return decodeHtml(value)
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[‘’]/g, "'")
+        .replace(/[“”]/g, '"')
+        .replace(/\b(?:stagione|season)\s+\d+\b/gi, ' ')
+        .replace(/\bs\d{1,2}e\d{1,2}\b/gi, ' ')
+        .replace(/\s*\((?:19|20)\d{2}\)\s*/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function buildSearchQueries(title) {
+    const cleaned = normalizeSearchTitleVariant(title);
+    const asciiLoose = cleaned
+        .replace(/[\'’]/g, ' ')
+        .replace(/[^a-zA-Z0-9]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const withoutArticles = asciiLoose
+        .replace(/^(?:il|lo|la|l|i|gli|le|un|uno|una|the|a|an)\s+/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const variants = [cleaned, asciiLoose, withoutArticles]
+        .filter((value) => value && value.length >= 2);
+    return [...new Set(variants)].slice(0, envInt('CB01_SEARCH_QUERY_VARIANTS', 3, 1, 5));
+}
+
+function buildSearchUrls(baseUrl, kind, title) {
+    const path = kind === 'series' ? '/serietv/' : '/';
+    const fallbackPath = kind === 'series' ? '/' : '/serietv/';
+    const urls = [];
+    for (const queryTitle of buildSearchQueries(title)) {
+        urls.push({ url: `${baseUrl}${path}?${buildSearchQuery(queryTitle)}`, queryTitle, scope: kind });
+    }
+    if (envFlag('CB01_SEARCH_CROSS_SCOPE_FALLBACK', true)) {
+        for (const queryTitle of buildSearchQueries(title).slice(0, 2)) {
+            urls.push({ url: `${baseUrl}${fallbackPath}?${buildSearchQuery(queryTitle)}`, queryTitle, scope: kind === 'series' ? 'all' : 'series-fallback' });
+        }
+    }
+    const seen = new Set();
+    return urls.filter((item) => {
+        if (!item?.url || seen.has(item.url)) return false;
+        seen.add(item.url);
+        return true;
+    });
+}
+
+function candidateYear(candidate = {}) {
+    if (!candidate) return null;
+    let value = extractYear(candidate.dateText) || extractYear(candidate.title) || extractYear(candidate.cardHtml);
+    if (value) return value;
+    try {
+        const parts = new URL(candidate.href || '').pathname.split('/').filter(Boolean);
+        value = extractYear(parts[parts.length - 1] || '') || extractYear(parts.join(' '));
+    } catch (_) {}
+    return value || null;
+}
+
+function scoreCandidate(candidate, title, year, kind = 'movie') {
+    if (!candidate?.href) return { score: 0, sim: 0, candidateYear: null, reason: 'missing_href' };
+    const sim = similarity(candidate.title, title) * 100;
+    const foundYear = candidateYear(candidate);
+    let score = sim;
+    const titleNorm = normalizeTitle(candidate.title);
+    const wantedNorm = normalizeTitle(title);
+    if (titleNorm === wantedNorm) score += 18;
+    else if (titleNorm.includes(wantedNorm) || wantedNorm.includes(titleNorm)) score += 10;
+    if (year && foundYear) {
+        const diff = Math.abs(Number(foundYear) - Number(year));
+        if (diff === 0) score += kind === 'series' ? 60 : 70;
+        else if (kind === 'series' && diff <= 1) score += 30;
+        else if (kind !== 'series' && diff <= 1) score += 8;
+        else score -= 35;
+    } else if (year && !foundYear) {
+        score -= kind === 'series' ? 4 : 8;
+    }
+    try {
+        const path = new URL(candidate.href).pathname;
+        if (kind === 'series' && /serietv|serie|tv-series/i.test(path)) score += 12;
+        if (kind !== 'series' && /film|movie/i.test(path)) score += 10;
+        if (kind !== 'series' && /serietv|serie|tv-series/i.test(path)) score -= 20;
+    } catch (_) {}
+    return { score, sim, candidateYear: foundYear, reason: 'scored' };
+}
+
+function pickBestCandidate(candidates, title, year, kind = 'movie') {
+    let best = null;
+    let bestMeta = { score: 0, sim: 0, candidateYear: null };
+    const minScore = envInt(kind === 'series' ? 'CB01_SERIES_MIN_SCORE' : 'CB01_MOVIE_MIN_SCORE', kind === 'series' ? 58 : 62, 20, 140);
+    for (const candidate of Array.isArray(candidates) ? candidates : []) {
+        const meta = scoreCandidate(candidate, title, year, kind);
+        if (meta.score > bestMeta.score) {
+            best = candidate;
+            bestMeta = meta;
+        }
+    }
+    if (best && bestMeta.score >= minScore) return { candidate: best, ...bestMeta, minScore };
+    return { candidate: null, ...bestMeta, minScore };
+}
+
 async function searchMovieUrl(client, baseUrl, title, year, config = {}) {
     if (!title) return null;
     const cacheKey = [baseUrl, normalizeTitle(title), year || 0];
@@ -1412,50 +1554,38 @@ async function searchMovieUrl(client, baseUrl, title, year, config = {}) {
     return withCbCoalescing('movieSearch', cacheKey, async () => {
         const afterWait = getCbCache('movieSearch', cacheKey);
         if (afterWait) return afterWait;
-        const query = buildSearchQuery(title);
-        const url = `${baseUrl}/?${query}`;
-        cbDebug('info', 'movie search start', { title, normalizedTitle: normalizeTitle(title), year: year || null, query, url: safeUrlForLog(url) });
-        const html = await fetchSearchHtml(client, url, baseUrl, config);
-        if (!html) {
-            cbDebug('warn', 'movie search failed: empty html', { title, year: year || null, url: safeUrlForLog(url) });
-            return null;
-        }
-        const candidates = extractCardCandidates(html, baseUrl);
-        cbDebug('info', 'movie search candidates', { title, year, count: candidates.length });
-        logCandidateTable('movie search', title, candidates, year);
-        let best = null;
-        let bestScore = 0;
-        for (const candidate of candidates) {
-            if (!candidate.href) continue;
-            let urlYear = null;
-            try {
-                const parts = new URL(candidate.href).pathname.split('/').filter(Boolean);
-                const slug = parts[parts.length - 1] || '';
-                urlYear = extractYear(slug);
-            } catch (_) {}
-            if (year && urlYear && Number(urlYear) === Number(year)) {
-                const score = similarity(candidate.title, title) * 100 + 50;
-                if (score > bestScore) { best = candidate; bestScore = score; }
+        let bestOverall = { candidate: null, score: 0, sim: 0, candidateYear: null, minScore: 0 };
+        for (const attempt of buildSearchUrls(baseUrl, 'movie', title)) {
+            cbDebug('info', 'movie search start', { title, queryTitle: attempt.queryTitle, normalizedTitle: normalizeTitle(attempt.queryTitle), year: year || null, url: safeUrlForLog(attempt.url), scope: attempt.scope });
+            const html = await fetchSearchHtml(client, attempt.url, baseUrl, config);
+            if (!html) {
+                cbDebug('warn', 'movie search failed: empty html', { title, year: year || null, url: safeUrlForLog(attempt.url), scope: attempt.scope });
                 continue;
             }
-            if (!year) {
-                const score = similarity(candidate.title, title) * 100;
-                if (score > bestScore && score >= 55) { best = candidate; bestScore = score; }
-            }
+            const candidates = extractCardCandidates(html, baseUrl);
+            cbDebug('info', 'movie search candidates', { title, queryTitle: attempt.queryTitle, year, count: candidates.length, scope: attempt.scope });
+            logCandidateTable('movie search', title, candidates, year);
+            const picked = pickBestCandidate(candidates, title, year, 'movie');
+            if (picked.score > bestOverall.score) bestOverall = { ...picked, scope: attempt.scope, queryTitle: attempt.queryTitle, url: attempt.url };
+            if (picked.candidate?.href) break;
         }
-        if (best?.href) {
+        if (bestOverall.candidate?.href) {
             cbDebug('info', 'movie search selected', {
                 title,
                 year: year || null,
-                selectedTitle: best.title,
-                score: Math.round(bestScore),
-                host: safeHost(best.href),
-                path: safePath(best.href)
+                selectedTitle: bestOverall.candidate.title,
+                score: Math.round(bestOverall.score),
+                sim: Math.round(bestOverall.sim),
+                candidateYear: bestOverall.candidateYear || null,
+                minScore: bestOverall.minScore,
+                scope: bestOverall.scope,
+                host: safeHost(bestOverall.candidate.href),
+                path: safePath(bestOverall.candidate.href)
             });
-            setCbCache('movieSearch', cacheKey, best.href, CB_CACHE_TTL.movieSearch);
-            return best.href;
+            setCbCache('movieSearch', cacheKey, bestOverall.candidate.href, CB_CACHE_TTL.movieSearch);
+            return bestOverall.candidate.href;
         }
-        cbDebug('warn', 'movie search no suitable candidate', { title, year: year || null, candidates: candidates.length, bestScore: Math.round(bestScore) });
+        cbDebug('warn', 'movie search no suitable candidate', { title, year: year || null, bestScore: Math.round(bestOverall.score), candidateYear: bestOverall.candidateYear || null, minScore: bestOverall.minScore });
         return null;
     });
 }
@@ -1468,50 +1598,67 @@ async function searchSeriesUrl(client, baseUrl, title, year, config = {}) {
     return withCbCoalescing('seriesSearch', cacheKey, async () => {
         const afterWait = getCbCache('seriesSearch', cacheKey);
         if (afterWait) return afterWait;
-        const query = buildSearchQuery(title);
-        const url = `${baseUrl}/serietv/?${query}`;
-        cbDebug('info', 'series search start', { title, normalizedTitle: normalizeTitle(title), year: year || null, query, url: safeUrlForLog(url) });
-        const html = await fetchSearchHtml(client, url, baseUrl, config);
-        if (!html) {
-            cbDebug('warn', 'series search failed: empty html', { title, year: year || null, url: safeUrlForLog(url) });
-            return null;
-        }
-        const candidates = extractCardCandidates(html, baseUrl);
-        cbDebug('info', 'series search candidates', { title, year, count: candidates.length });
-        logCandidateTable('series search', title, candidates, year);
-        let best = null;
-        let bestScore = 0;
-        for (const candidate of candidates) {
-            if (!candidate.href) continue;
-            const candidateYear = extractYear(candidate.dateText) || extractYear(candidate.cardHtml);
-            const sim = similarity(candidate.title, title) * 100;
-            let score = sim;
-            if (year && candidateYear) {
-                const diff = Math.abs(Number(candidateYear) - Number(year));
-                if (diff === 0) score += 60;
-                else if (diff <= 1) score += 30;
-                else continue;
+        let bestOverall = { candidate: null, score: 0, sim: 0, candidateYear: null, minScore: 0 };
+        for (const attempt of buildSearchUrls(baseUrl, 'series', title)) {
+            cbDebug('info', 'series search start', { title, queryTitle: attempt.queryTitle, normalizedTitle: normalizeTitle(attempt.queryTitle), year: year || null, url: safeUrlForLog(attempt.url), scope: attempt.scope });
+            const html = await fetchSearchHtml(client, attempt.url, baseUrl, config);
+            if (!html) {
+                cbDebug('warn', 'series search failed: empty html', { title, year: year || null, url: safeUrlForLog(attempt.url), scope: attempt.scope });
+                continue;
             }
-            if (score > bestScore && score >= 55) {
-                best = candidate;
-                bestScore = score;
-            }
+            const candidates = extractCardCandidates(html, baseUrl);
+            cbDebug('info', 'series search candidates', { title, queryTitle: attempt.queryTitle, year, count: candidates.length, scope: attempt.scope });
+            logCandidateTable('series search', title, candidates, year);
+            const picked = pickBestCandidate(candidates, title, year, 'series');
+            if (picked.score > bestOverall.score) bestOverall = { ...picked, scope: attempt.scope, queryTitle: attempt.queryTitle, url: attempt.url };
+            if (picked.candidate?.href) break;
         }
-        if (best?.href) {
+        if (bestOverall.candidate?.href) {
             cbDebug('info', 'series search selected', {
                 title,
                 year: year || null,
-                selectedTitle: best.title,
-                score: Math.round(bestScore),
-                host: safeHost(best.href),
-                path: safePath(best.href)
+                selectedTitle: bestOverall.candidate.title,
+                score: Math.round(bestOverall.score),
+                sim: Math.round(bestOverall.sim),
+                candidateYear: bestOverall.candidateYear || null,
+                minScore: bestOverall.minScore,
+                scope: bestOverall.scope,
+                host: safeHost(bestOverall.candidate.href),
+                path: safePath(bestOverall.candidate.href)
             });
-            setCbCache('seriesSearch', cacheKey, best.href, CB_CACHE_TTL.seriesSearch);
-            return best.href;
+            setCbCache('seriesSearch', cacheKey, bestOverall.candidate.href, CB_CACHE_TTL.seriesSearch);
+            return bestOverall.candidate.href;
         }
-        cbDebug('warn', 'series search no suitable candidate', { title, year: year || null, candidates: candidates.length, bestScore: Math.round(bestScore) });
+        cbDebug('warn', 'series search no suitable candidate', { title, year: year || null, bestScore: Math.round(bestOverall.score), candidateYear: bestOverall.candidateYear || null, minScore: bestOverall.minScore });
         return null;
     });
+}
+
+function collectHosterUrlsFromHtml(html, baseUrl = null) {
+    const urls = [];
+    const seen = new Set();
+    const push = (value) => {
+        const normalized = normalizeRemoteUrl(decodeHtml(value || ''), baseUrl);
+        if (!normalized || seen.has(normalized)) return;
+        if (!HOSTER_URL_RE.test(normalized)) return;
+        seen.add(normalized);
+        urls.push(normalized);
+    };
+    const source = String(html || '');
+    for (const match of source.matchAll(/(?:data-src|src|href)=["']([^"']+)["']/gi)) push(match?.[1] || '');
+    for (const match of source.matchAll(/https?:\/\/[^"'<>\s\\]+/gi)) push(match?.[0] || '');
+    return urls;
+}
+
+function pickHosterLinksFromUrls(urls = []) {
+    let mixdropLink = null;
+    let maxstreamLink = null;
+    for (const url of Array.isArray(urls) ? urls : []) {
+        if (!mixdropLink && isMixdropUrl(url)) mixdropLink = url;
+        if (!maxstreamLink && (isStayonlineUrl(url) || isUprotUrl(url) || isMaxstreamLikeUrl(url))) maxstreamLink = url;
+        if (mixdropLink && maxstreamLink) break;
+    }
+    return { mixdropLink, maxstreamLink };
 }
 
 async function extractMovieEmbedLinks(client, pageUrl, baseUrl, config = {}) {
@@ -1522,15 +1669,17 @@ async function extractMovieEmbedLinks(client, pageUrl, baseUrl, config = {}) {
     }
     const iframen2 = html.match(/<div\b[^>]*id=["']iframen2["'][^>]*data-src=["']([^"']+)["'][^>]*>/i)?.[1];
     const iframen1 = html.match(/<div\b[^>]*id=["']iframen1["'][^>]*data-src=["']([^"']+)["'][^>]*>/i)?.[1];
+    const fallbackLinks = pickHosterLinksFromUrls(collectHosterUrlsFromHtml(html, baseUrl));
     const links = {
-        mixdropLink: normalizeRemoteUrl(iframen2 || '', baseUrl),
-        maxstreamLink: normalizeRemoteUrl(iframen1 || '', baseUrl)
+        mixdropLink: normalizeRemoteUrl(iframen2 || fallbackLinks.mixdropLink || '', baseUrl),
+        maxstreamLink: normalizeRemoteUrl(iframen1 || fallbackLinks.maxstreamLink || '', baseUrl)
     };
     cbDebug((links.mixdropLink || links.maxstreamLink) ? 'info' : 'warn', 'movie embed extraction result', {
         pageHost: safeHost(pageUrl),
         pagePath: safePath(pageUrl),
         hasIframen2: Boolean(iframen2),
         hasIframen1: Boolean(iframen1),
+        fallbackHosterCount: collectHosterUrlsFromHtml(html, baseUrl).length,
         mixdropHost: safeHost(links.mixdropLink),
         mixdropPath: safePath(links.mixdropLink),
         maxstreamHost: safeHost(links.maxstreamLink),
@@ -1587,36 +1736,59 @@ function findStandardEpisodeLinks(blockHtml, season, episode, baseUrl = null) {
     const episodeVariants = [...new Set([String(safeEpisode), String(safeEpisode).padStart(2, '0')])];
     const sx = seasonVariants.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
     const ex = episodeVariants.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-    const separator = '(?:&#215;|&#x0?d7;|\\u00d7|×|x)';
+    const separator = '(?:&#215;|&#x0?d7;|\\u00d7|×|x|X)';
     const html = String(blockHtml || '');
     const patterns = [
-        `(?:^|>|\\b)(?:${sx})\\s*${separator}\\s*(?:${ex})[\\s\\S]{0,1000}?(?=<br|<\\/p>|<\\/li>|<\\/tr>|<\\/div>|$)`,
-        `(?:^|>|\\b)s\\s*0*${safeSeason}\\s*[-_. ]*e\\s*0*${safeEpisode}[\\s\\S]{0,1000}?(?=<br|<\\/p>|<\\/li>|<\\/tr>|<\\/div>|$)`,
-        `(?:^|>|\\b)stagione\\s*0*${safeSeason}\\D{0,20}episodio\\s*0*${safeEpisode}[\\s\\S]{0,1000}?(?=<br|<\\/p>|<\\/li>|<\\/tr>|<\\/div>|$)`,
-        `(?:^|>|\\b)ep(?:isodio)?\\.?\\s*0*${safeEpisode}\\b[\\s\\S]{0,1000}?(?=<br|<\\/p>|<\\/li>|<\\/tr>|<\\/div>|$)`
+        `(?:^|>|\\b)(?:${sx})\\s*${separator}\\s*(?:${ex})[\\s\\S]{0,1600}?(?=<br|<\\/p>|<\\/li>|<\\/tr>|<\\/div>|$)`,
+        `(?:^|>|\\b)s\\s*0*${safeSeason}\\s*[-_. ]*e\\s*0*${safeEpisode}[\\s\\S]{0,1600}?(?=<br|<\\/p>|<\\/li>|<\\/tr>|<\\/div>|$)`,
+        `(?:^|>|\\b)stagione\\s*0*${safeSeason}\\D{0,35}episodio\\s*0*${safeEpisode}[\\s\\S]{0,1600}?(?=<br|<\\/p>|<\\/li>|<\\/tr>|<\\/div>|$)`,
+        `(?:^|>|\\b)ep(?:isodio)?\\.?\\s*0*${safeEpisode}\\b[\\s\\S]{0,1600}?(?=<br|<\\/p>|<\\/li>|<\\/tr>|<\\/div>|$)`
     ];
 
-    for (const source of patterns) {
-        const match = html.match(new RegExp(source, 'i'));
-        if (!match) continue;
-        const anchors = collectAnchors(match[0], baseUrl);
+    const out = [];
+    const seen = new Set();
+    const addAnchors = (anchors, source) => {
+        for (const anchor of anchors) {
+            const href = anchor?.href || '';
+            if (!href || seen.has(href)) continue;
+            seen.add(href);
+            out.push(anchor);
+        }
         cbDebug(anchors.length ? 'info' : 'warn', 'series episode pattern matched', {
             season: safeSeason,
             episode: safeEpisode,
             anchors: anchors.length,
-            pattern: source.slice(0, 120),
+            source: String(source || '').slice(0, 120),
             labels: anchors.slice(0, 8).map((anchor) => anchor.label),
             hosts: anchors.slice(0, 8).map((anchor) => safeHost(anchor.href))
         });
-        if (anchors.length) return anchors;
+    };
+
+    for (const source of patterns) {
+        const re = new RegExp(source, 'ig');
+        for (const match of html.matchAll(re)) {
+            const chunk = match?.[0] || '';
+            const anchors = collectAnchors(chunk, baseUrl);
+            addAnchors(anchors, source);
+            if (out.length >= 4) return out;
+        }
     }
 
-    cbDebug('warn', 'series episode pattern not found in standard section', {
-        season: safeSeason,
-        episode: safeEpisode,
-        blockProbe: htmlProbe(html)
-    });
-    return [];
+    if (!out.length) {
+        const hosterUrls = collectHosterUrlsFromHtml(html, baseUrl);
+        if (hosterUrls.length && envFlag('CB01_SERIES_HOSTER_FALLBACK_WITHOUT_EPISODE_MATCH', false)) {
+            addAnchors(hosterUrls.map((href) => ({ href, label: safeHost(href) })), 'hoster_fallback_without_episode_match');
+        }
+    }
+
+    if (!out.length) {
+        cbDebug('warn', 'series episode pattern not found in standard section', {
+            season: safeSeason,
+            episode: safeEpisode,
+            blockProbe: htmlProbe(html)
+        });
+    }
+    return out;
 }
 
 function collectAnchors(html, baseUrl = null) {
@@ -1703,17 +1875,21 @@ async function resolveAliasSeasonEpisode(client, baseUrl, alias, seasonAliasHead
             }
         }
         const escapedPairs = pairs.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-        const re = new RegExp(`(?:${escapedPairs})[\\s\\S]{0,1200}?href=['"]([^'"]+)['"]`, 'i');
+        const re = new RegExp(`(?:${escapedPairs})[\\s\\S]{0,1800}?(?=<br|<\\/p>|<\\/li>|<\\/tr>|<\\/div>|$)`, 'i');
         cbDebug('trace', 'series alias regex probe', { pairs: pairs.slice(0, 16), htmlProbe: htmlProbe(html) });
         const match = html.match(re);
         if (!match) {
             cbDebug('warn', 'series alias episode link not found', { season, episode, aliasHost: safeHost(alias.href), aliasPath: safePath(alias.href), pairs: pairs.slice(0, 16), probe: htmlProbe(html) });
             return null;
         }
-        const out = { maxstreamLink: normalizeRemoteUrl(match[1] || '', baseUrl) };
-        cbDebug(out.maxstreamLink ? 'info' : 'warn', 'series alias episode resolved', {
+        const anchors = collectAnchors(match[0] || '', baseUrl);
+        const picked = pickEpisodeHostLinks(anchors);
+        const out = picked.maxstreamLink ? picked : { maxstreamLink: normalizeRemoteUrl((anchors[0] && anchors[0].href) || '', baseUrl), mixdropLink: picked.mixdropLink || null };
+        cbDebug((out.maxstreamLink || out.mixdropLink) ? 'info' : 'warn', 'series alias episode resolved', {
             season,
             episode,
+            anchors: anchors.length,
+            mixdropHost: safeHost(out.mixdropLink),
             maxstreamHost: safeHost(out.maxstreamLink),
             maxstreamPath: safePath(out.maxstreamLink)
         });
@@ -1790,9 +1966,9 @@ async function extractSeriesEpisodeLinks(client, pageUrl, baseUrl, season, episo
 
     if (aliasAnchor) {
         const aliasResult = await resolveAliasSeasonEpisode(client, baseUrl, aliasAnchor, aliasHeaderText, season, episode, config);
-        if (aliasResult?.maxstreamLink) {
-            cbDebug('info', 'series alias resolved', { season, episode, maxstream: safeHost(aliasResult.maxstreamLink), maxstreamPath: safePath(aliasResult.maxstreamLink) });
-            return { mixdropLink: null, maxstreamLink: aliasResult.maxstreamLink };
+        if (aliasResult?.maxstreamLink || aliasResult?.mixdropLink) {
+            cbDebug('info', 'series alias resolved', { season, episode, mixdrop: safeHost(aliasResult.mixdropLink), maxstream: safeHost(aliasResult.maxstreamLink), maxstreamPath: safePath(aliasResult.maxstreamLink) });
+            return { mixdropLink: aliasResult.mixdropLink || null, maxstreamLink: aliasResult.maxstreamLink || null };
         }
         cbDebug('warn', 'series alias resolve failed', { season, episode, aliasHost: safeHost(aliasAnchor?.href), aliasPath: safePath(aliasAnchor?.href) });
     }
@@ -2019,6 +2195,13 @@ module.exports = {
         isMaxstreamLikeUrl,
         normalizeMixdropForExtractor,
         buildSearchQuery,
+        buildSearchQueries,
+        buildSearchUrls,
+        candidateYear,
+        scoreCandidate,
+        pickBestCandidate,
+        collectHosterUrlsFromHtml,
+        pickHosterLinksFromUrls,
         buildCbBrowserHeaders,
         normalizeForwardProxyBase,
         getCbForwardProxy,
