@@ -1,7 +1,10 @@
 'use strict';
 
+const crypto = require('crypto');
+const path = require('path');
 const { buildMediaflowUrl, buildWebStream, normalizeRemoteUrl } = require('../extractors/common');
 const { ProviderRequestCache } = require('../../core/cache/provider_request_cache');
+const { captchaOrchestrator } = require('../../core/captcha_orchestrator');
 const { createMediaflowGateway, getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
 const { isUprotUrl, resolveUprotToMaxstream } = require('../extractors/hosters/uprot');
 const { extractMixdrop } = require('../extractors/hosters/mixdrop');
@@ -26,7 +29,21 @@ const ES_CACHE_TTL = Object.freeze({
     post: 30 * 60_000,
     directPage: 30 * 60_000,
     redirect: 20 * 60_000,
-    deltabitSource: 10 * 60_000
+    deltabitSource: 10 * 60_000,
+    safegoOcr: 10 * 60_000,
+    safegoResolve: 20_000
+});
+const SAFEGO_CAPTCHA_DEFAULTS = Object.freeze({
+    cookieFile: path.resolve(process.cwd(), 'config', 'safego_cookies.json'),
+    // SafeGo/ClickA currently emits 3-digit numeric challenges on some Eurostreaming hoster redirects.
+    // Keep this permissive by default; SAFEGO_CAPTCHA_MIN_DIGITS can still override it.
+    captchaMinDigits: 3,
+    captchaMaxDigits: 8,
+    ocrMinConfidence: 0,
+    ocrCacheTtlMs: ES_CACHE_TTL.safegoOcr,
+    orchestratorTtlMs: 30 * 60_000,
+    failureTtlMs: 90_000,
+    retryBudget: 2
 });
 const esMemoryCache = new Map();
 const esRequestCache = new ProviderRequestCache({ name: 'eurostreaming', maxEntries: 1200, inflightMaxEntries: 700 });
@@ -469,7 +486,7 @@ function loadJsonLikeFile(filePath) {
 function getSafegoCookiePath(options = {}) {
     return options.safegoCookieFile
         || process.env.SAFEGO_COOKIE_FILE
-        || require('path').resolve(process.cwd(), 'config', 'safego_cookies.json');
+        || SAFEGO_CAPTCHA_DEFAULTS.cookieFile;
 }
 
 function loadSafegoState(options = {}) {
@@ -514,13 +531,14 @@ function loadSafegoState(options = {}) {
 
 function saveSafegoState(cookies, options = {}) {
     const fs = require('fs');
-    const path = require('path');
     const filePath = getSafegoCookiePath(options);
     try {
         const dir = path.dirname(filePath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(filePath, JSON.stringify(cookies, null, 2), 'utf8');
-        esDebug('info', 'safego cookies saved', { path: filePath });
+        const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+        fs.writeFileSync(tmpPath, JSON.stringify(cookies, null, 2), 'utf8');
+        fs.renameSync(tmpPath, filePath);
+        esDebug('info', 'safego cookies saved', { path: filePath, cookieKeys: Object.keys(cookies || {}).length });
     } catch (err) {
         esDebug('warn', 'failed to save safego cookies', { error: err?.message || String(err) });
     }
@@ -567,25 +585,69 @@ function extractCaptchaBase64(html) {
     return { dataUri: match[1], base64: match[2] };
 }
 
+function sha1(value) {
+    return crypto.createHash('sha1').update(String(value || '')).digest('hex');
+}
+
+function numberFromEnv(name, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
+    const raw = process.env[name];
+    const parsed = Number.parseInt(String(raw ?? ''), 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(max, Math.max(min, parsed));
+}
+
+function validateSafegoCaptchaDigits(value) {
+    const digits = String(value || '').replace(/\D/g, '').trim();
+    const minDigits = numberFromEnv('SAFEGO_CAPTCHA_MIN_DIGITS', SAFEGO_CAPTCHA_DEFAULTS.captchaMinDigits, 1, 12);
+    const maxDigits = numberFromEnv('SAFEGO_CAPTCHA_MAX_DIGITS', SAFEGO_CAPTCHA_DEFAULTS.captchaMaxDigits, minDigits, 16);
+    if (digits.length < minDigits || digits.length > maxDigits) {
+        esDebug('warn', 'OCR captcha rejected by length guard', { length: digits.length, minDigits, maxDigits });
+        return null;
+    }
+    return digits;
+}
+
 async function solveCaptchaOCR(base64Data) {
     if (!Tesseract) {
         esDebug('warn', 'tesseract.js not available, cannot solve SafeGo CAPTCHA');
         return null;
     }
+
+    const hash = sha1(base64Data);
+    const cached = getEsCache('safegoOcr', [hash]);
+    if (cached) {
+        esDebug('info', 'OCR captcha cache hit', { hash: hash.slice(0, 10), digits: cached });
+        return cached;
+    }
+
+    let worker = null;
     try {
         const imageBuffer = Buffer.from(base64Data, 'base64');
-        const worker = await Tesseract.createWorker('eng');
+        worker = await Tesseract.createWorker('eng');
         await worker.setParameters({
-            tessedit_char_whitelist: '0123456789'
+            tessedit_char_whitelist: '0123456789',
+            tessedit_pageseg_mode: '7'
         });
-        const { data: { text } } = await worker.recognize(imageBuffer);
-        await worker.terminate();
-        const digits = String(text || '').replace(/\D/g, '').trim();
-        esDebug('info', 'OCR captcha result', { raw: text?.trim(), digits });
-        return digits || null;
+        const { data: { text, confidence } } = await worker.recognize(imageBuffer);
+        const digits = validateSafegoCaptchaDigits(text);
+        esDebug('info', 'OCR captcha result', { raw: text?.trim(), digits, confidence });
+        if (!digits) return null;
+
+        const minConfidence = numberFromEnv('SAFEGO_OCR_MIN_CONFIDENCE', SAFEGO_CAPTCHA_DEFAULTS.ocrMinConfidence, 0, 100);
+        if (minConfidence > 0 && Number.isFinite(confidence) && confidence < minConfidence) {
+            esDebug('warn', 'OCR captcha rejected by confidence guard', { confidence, minConfidence });
+            return null;
+        }
+
+        setEsCache('safegoOcr', [hash], digits, numberFromEnv('SAFEGO_OCR_CACHE_TTL_MS', SAFEGO_CAPTCHA_DEFAULTS.ocrCacheTtlMs, 1_000, 30 * 60_000));
+        return digits;
     } catch (err) {
         esDebug('warn', 'OCR captcha failed', { error: err?.message || String(err) });
         return null;
+    } finally {
+        if (worker && typeof worker.terminate === 'function') {
+            try { await worker.terminate(); } catch (_) {}
+        }
     }
 }
 
@@ -598,6 +660,41 @@ function buildSafegoHeaders(safegoUrl) {
         'Origin': origin,
         'Referer': safegoUrl
     };
+}
+
+
+function safegoCaptchaContext(safegoUrl) {
+    return {
+        provider: 'eurostreaming',
+        hoster: 'safego',
+        captchaType: 'image-ocr',
+        scope: normalizeRemoteUrl(safegoUrl) || safeHost(safegoUrl) || 'safego'
+    };
+}
+
+function safegoOrchestratorTtl() {
+    return numberFromEnv('SAFEGO_ORCHESTRATOR_TTL_MS', SAFEGO_CAPTCHA_DEFAULTS.orchestratorTtlMs, 5_000, 24 * 60 * 60_000);
+}
+
+function markSafegoCaptchaSuccess(context, cookies, reason = 'resolved', options = {}) {
+    captchaOrchestrator.markSuccess(context, {
+        cookieState: {
+            cookies: cookies || {},
+            captchaData: null
+        },
+        reason,
+        retryBudget: numberFromEnv('SAFEGO_RETRY_BUDGET', SAFEGO_CAPTCHA_DEFAULTS.retryBudget, 1, 10)
+    }, Number(options.safegoStateTtlMs || safegoOrchestratorTtl()));
+}
+
+function markSafegoCaptchaFailure(context, reason = 'failed') {
+    captchaOrchestrator.markFailure(context, reason, numberFromEnv('SAFEGO_FAILURE_TTL_MS', SAFEGO_CAPTCHA_DEFAULTS.failureTtlMs, 5_000, 15 * 60_000));
+}
+
+function returnSafegoSuccess(context, cookies, result, reason, options = {}) {
+    saveSafegoState(cookies, options);
+    markSafegoCaptchaSuccess(context, cookies, reason, options);
+    return result;
 }
 
 async function postSafegoWithCookies(client, url, headers, cookies) {
@@ -647,8 +744,23 @@ async function postSafegoCaptcha(client, url, headers, cookies, captchaCode) {
 }
 
 async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
+    const context = safegoCaptchaContext(safegoUrl);
+    if (!options.__safegoCoalesced) {
+        return captchaOrchestrator.singleFlight(context, () => resolveSafegoPage(client, safegoUrl, _headers, { ...options, __safegoCoalesced: true }));
+    }
+
+    const budget = captchaOrchestrator.shouldAttempt(context, numberFromEnv('SAFEGO_RETRY_BUDGET', SAFEGO_CAPTCHA_DEFAULTS.retryBudget, 1, 10));
+    if (!budget.ok) {
+        esDebug('warn', 'safego skipped by captcha orchestrator', { reason: budget.reason, failures: budget.record?.failures || 0 });
+        return null;
+    }
+
     const state = loadSafegoState(options);
     let cookies = state.cookies || {};
+    const orchestratedState = captchaOrchestrator.get(context);
+    if (!Object.keys(cookies || {}).length && orchestratedState?.cookieState?.cookies) {
+        cookies = orchestratedState.cookieState.cookies;
+    }
     const headers = buildSafegoHeaders(safegoUrl);
 
     esDebug('info', 'safego step 1: POST with saved cookies', { url: safegoUrl, hasCookies: Object.keys(cookies).length > 0 });
@@ -658,20 +770,19 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
 
         const finalUrl1 = finalResponseUrl(response1, safegoUrl);
         if (finalUrl1 && finalUrl1 !== safegoUrl && !SAFEGO_RE.test(finalUrl1)) {
-            saveSafegoState(cookies, options);
-            return finalUrl1;
+            return returnSafegoSuccess(context, cookies, finalUrl1, 'saved_cookies_redirect', options);
         }
 
         const html1 = responseText(response1);
         const anchor1 = extractAnchorHref(html1);
         if (anchor1 && !SAFEGO_RE.test(anchor1)) {
             esDebug('info', 'safego resolved via anchor (saved cookies)', { anchor: anchor1 });
-            saveSafegoState(cookies, options);
-            return anchor1;
+            return returnSafegoSuccess(context, cookies, anchor1, 'saved_cookies_anchor', options);
         }
 
         if (/The requested URL was not found on this server/i.test(html1)) {
             esDebug('warn', 'safego: URL not found on server');
+            markSafegoCaptchaFailure(context, 'url_not_found');
             return null;
         }
     }
@@ -685,6 +796,7 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
     const getCaptchaResponse = await getSafegoPage(client, safegoUrl, getHeaders);
     if (!getCaptchaResponse) {
         saveSafegoState(cookies, options);
+        markSafegoCaptchaFailure(context, 'captcha_page_missing');
         return null;
     }
 
@@ -697,16 +809,15 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
 
         const candidate = extractRedirectCandidate(captchaHtml, safegoUrl);
         if (candidate && !SAFEGO_RE.test(candidate)) {
-            saveSafegoState(cookies, options);
-            return candidate;
+            return returnSafegoSuccess(context, cookies, candidate, 'captcha_page_candidate', options);
         }
         const anchor = extractAnchorHref(captchaHtml);
         if (anchor && !SAFEGO_RE.test(anchor)) {
-            saveSafegoState(cookies, options);
-            return anchor;
+            return returnSafegoSuccess(context, cookies, anchor, 'captcha_page_anchor', options);
         }
         esDebug('warn', 'safego: no CAPTCHA image found on GET page');
         saveSafegoState(cookies, options);
+        markSafegoCaptchaFailure(context, 'captcha_image_missing');
         return null;
     }
 
@@ -715,6 +826,7 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
     if (!captchaCode) {
         esDebug('warn', 'safego: OCR failed or returned empty');
         saveSafegoState(cookies, options);
+        markSafegoCaptchaFailure(context, 'ocr_failed');
         return null;
     }
 
@@ -733,16 +845,20 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
         saveSafegoState(cookies, options);
 
         const finalUrl2 = finalResponseUrl(response2, safegoUrl);
-        if (finalUrl2 && finalUrl2 !== safegoUrl && !SAFEGO_RE.test(finalUrl2)) return finalUrl2;
+        if (finalUrl2 && finalUrl2 !== safegoUrl && !SAFEGO_RE.test(finalUrl2)) {
+            return returnSafegoSuccess(context, cookies, finalUrl2, 'ocr_redirect', options);
+        }
 
         const html2 = responseText(response2);
         const anchor2 = extractAnchorHref(html2);
         if (anchor2 && !SAFEGO_RE.test(anchor2)) {
             esDebug('info', 'safego resolved via anchor (post-captcha)', { anchor: anchor2 });
-            return anchor2;
+            return returnSafegoSuccess(context, cookies, anchor2, 'ocr_anchor', options);
         }
         const candidate2 = extractRedirectCandidate(html2, safegoUrl);
-        if (candidate2 && !SAFEGO_RE.test(candidate2)) return candidate2;
+        if (candidate2 && !SAFEGO_RE.test(candidate2)) {
+            return returnSafegoSuccess(context, cookies, candidate2, 'ocr_candidate', options);
+        }
 
         esDebug('warn', 'safego: captch5 POST did not yield a link, attempting retry with merged cookies');
 
@@ -752,20 +868,25 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
             saveSafegoState(cookies, options);
 
             const finalUrl3 = finalResponseUrl(response3, safegoUrl);
-            if (finalUrl3 && finalUrl3 !== safegoUrl && !SAFEGO_RE.test(finalUrl3)) return finalUrl3;
+            if (finalUrl3 && finalUrl3 !== safegoUrl && !SAFEGO_RE.test(finalUrl3)) {
+                return returnSafegoSuccess(context, cookies, finalUrl3, 'ocr_retry_redirect', options);
+            }
 
             const html3 = responseText(response3);
             const anchor3 = extractAnchorHref(html3);
             if (anchor3 && !SAFEGO_RE.test(anchor3)) {
                 esDebug('info', 'safego resolved via anchor (post-captcha retry)', { anchor: anchor3 });
-                return anchor3;
+                return returnSafegoSuccess(context, cookies, anchor3, 'ocr_retry_anchor', options);
             }
             const candidate3 = extractRedirectCandidate(html3, safegoUrl);
-            if (candidate3 && !SAFEGO_RE.test(candidate3)) return candidate3;
+            if (candidate3 && !SAFEGO_RE.test(candidate3)) {
+                return returnSafegoSuccess(context, cookies, candidate3, 'ocr_retry_candidate', options);
+            }
         }
     }
 
     saveSafegoState(cookies, options);
+    markSafegoCaptchaFailure(context, 'resolved_link_missing');
     return null;
 }
 
@@ -2136,6 +2257,8 @@ module.exports = {
         decodeHtml,
         normalizeTitle,
         titleMatches,
-        isDeltabitLikeUrl
+        isDeltabitLikeUrl,
+        SAFEGO_CAPTCHA_DEFAULTS,
+        validateSafegoCaptchaDigits
     }
 };
