@@ -5420,59 +5420,48 @@ body.m-lowfx .m-caustic {
     padding-bottom: calc(var(--m-dock-h) + var(--m-dock-gap)) !important;
 }
 
-/* Index.html style: clean final action area, not cards. */
+/* Setup actions: compact index.html style above GitHub, with a small copy console. */
 .m-setup-actions-panel {
-    margin: 32px 0 20px !important;
+    margin: 24px 0 22px !important;
     padding: 0 !important;
     border: 0 !important;
-    border-radius: 0 !important;
     background: transparent !important;
     box-shadow: none !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    position: relative;
-    overflow: visible !important;
-}
-
-.m-setup-actions-panel::before,
-.m-setup-actions-panel::after {
-    display: none !important;
-    content: none !important;
-}
-
-.m-setup-actions-top {
-    display: none !important;
-}
-
-.m-setup-actions-grid {
     display: flex !important;
     flex-direction: column !important;
-    gap: 13px !important;
-    margin-top: 0 !important;
-    position: relative;
-    z-index: 1;
+    gap: 10px !important;
+    position: relative !important;
+}
+
+.m-setup-action-row {
+    display: flex !important;
+    gap: 10px !important;
+    align-items: stretch !important;
 }
 
 .m-setup-action {
     width: 100% !important;
-    min-height: 56px !important;
+    min-height: 54px !important;
     border-radius: 8px !important;
-    padding: 15px 20px !important;
+    padding: 14px 18px !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
     gap: 10px !important;
+    border: 1px solid var(--m-primary) !important;
+    background: rgba(0, 242, 255, 0.05) !important;
+    color: var(--m-primary) !important;
     font-family: 'Rajdhani', sans-serif !important;
     font-size: 1.02rem !important;
     font-weight: 800 !important;
-    text-transform: uppercase !important;
     letter-spacing: 2.6px !important;
+    text-transform: uppercase !important;
     cursor: pointer !important;
     position: relative !important;
     overflow: hidden !important;
     touch-action: manipulation !important;
-    user-select: none !important;
-    transition: transform 0.22s ease, background 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease, color 0.22s ease, letter-spacing 0.22s ease !important;
+    transition: transform 0.22s ease, background 0.22s ease, box-shadow 0.22s ease, color 0.22s ease, letter-spacing 0.22s ease !important;
+    box-shadow: 0 0 10px rgba(0, 242, 255, 0.05), inset 0 1px 0 rgba(255,255,255,0.04) !important;
 }
 
 .m-setup-action::before {
@@ -5484,145 +5473,310 @@ body.m-lowfx .m-caustic {
     height: 100% !important;
     background: linear-gradient(90deg, transparent, rgba(0, 242, 255, 0.38), transparent) !important;
     transform: skewX(-30deg) !important;
-    opacity: 0.9 !important;
     pointer-events: none !important;
     transition: left 0.48s ease !important;
 }
 
-.m-setup-action:active {
-    transform: translateY(-1px) scale(0.985) !important;
-}
-
-.m-setup-install {
-    flex: 2 !important;
-    color: var(--m-primary) !important;
-    background: rgba(0, 242, 255, 0.05) !important;
-    border: 1px solid var(--m-primary) !important;
-    box-shadow: 0 0 10px rgba(0, 242, 255, 0.05), inset 0 1px 0 rgba(255,255,255,0.04) !important;
-}
-
-.m-setup-install:active,
-.m-setup-install:focus-visible {
-    color: #001014 !important;
+.m-setup-action:active,
+.m-setup-action:focus-visible {
+    transform: translateY(-1px) scale(0.99) !important;
     background: var(--m-primary) !important;
+    color: #001014 !important;
     box-shadow: 0 0 20px var(--m-primary), 0 14px 30px rgba(0,0,0,0.25) !important;
-    letter-spacing: 3.2px !important;
+    letter-spacing: 3px !important;
 }
 
-.m-setup-install:active::before,
-.m-setup-install:focus-visible::before {
+.m-setup-action:active::before,
+.m-setup-action:focus-visible::before {
     left: 100% !important;
 }
 
-.m-setup-copy {
-    flex: 1 !important;
-    color: #ffffff !important;
-    background: rgba(255, 255, 255, 0.05) !important;
-    border: 1px solid rgba(255, 255, 255, 0.11) !important;
-    box-shadow: none !important;
-}
-
-.m-setup-copy::before {
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent) !important;
-}
-
-.m-setup-copy:active,
-.m-setup-copy:focus-visible {
-    border-color: rgba(255, 255, 255, 0.45) !important;
-    background: rgba(255, 255, 255, 0.10) !important;
-    box-shadow: 0 12px 24px rgba(0,0,0,0.22) !important;
-}
-
-.m-setup-copy:active::before,
-.m-setup-copy:focus-visible::before {
-    left: 100% !important;
-}
-
-.m-setup-action-icon {
-    display: none !important;
-}
-
-.m-setup-action-text {
-    display: contents !important;
-}
-
-.m-setup-action-text b {
-    font-family: inherit !important;
-    font-size: inherit !important;
-    line-height: 1 !important;
-    font-weight: inherit !important;
-    letter-spacing: inherit !important;
-    text-transform: inherit !important;
-}
-
-.m-setup-action-text small {
-    display: none !important;
-}
-
-.m-setup-action > i {
-    position: relative !important;
-    z-index: 1 !important;
-    font-size: 0.98rem !important;
-    opacity: 0.95 !important;
-    flex: 0 0 auto !important;
-}
-
-.m-setup-action-text b,
 .m-setup-action span,
 .m-setup-action i {
-    position: relative;
-    z-index: 1;
+    position: relative !important;
+    z-index: 1 !important;
 }
 
-.m-setup-actions-note {
-    margin-top: 13px !important;
-    padding: 10px 12px !important;
+.m-setup-mini-console {
+    border-radius: 10px !important;
+    border: 1px solid rgba(0, 242, 255, 0.14) !important;
+    background: rgba(1, 8, 14, 0.72) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 10px 22px rgba(0,0,0,0.16) !important;
+    overflow: hidden !important;
+}
+
+.m-setup-mini-console-head {
+    min-height: 28px !important;
+    padding: 0 10px !important;
     display: flex !important;
     align-items: center !important;
-    justify-content: center !important;
-    gap: 8px !important;
-    border-radius: 9px !important;
-    border: 1px solid rgba(0, 242, 255, 0.12) !important;
+    justify-content: space-between !important;
+    gap: 10px !important;
+    border-bottom: 1px solid rgba(0, 242, 255, 0.10) !important;
     background: rgba(0, 242, 255, 0.035) !important;
-    color: rgba(180, 226, 238, 0.66) !important;
+}
+
+.m-setup-mini-console-title {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 7px !important;
+    color: rgba(205, 249, 255, 0.82) !important;
     font-family: 'Rajdhani', sans-serif !important;
+    font-size: 0.62rem !important;
+    font-weight: 800 !important;
+    letter-spacing: 1.4px !important;
+    text-transform: uppercase !important;
+    white-space: nowrap !important;
+}
+
+.m-setup-mini-console-title i {
+    color: var(--m-primary) !important;
     font-size: 0.68rem !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.8px !important;
+}
+
+.m-setup-mini-copy {
+    min-height: 24px !important;
+    padding: 0 9px !important;
+    border-radius: 7px !important;
+    border: 1px solid rgba(255,255,255,0.10) !important;
+    background: rgba(255,255,255,0.045) !important;
+    color: #fff !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 6px !important;
+    font-family: 'Rajdhani', sans-serif !important;
+    font-size: 0.62rem !important;
+    font-weight: 800 !important;
+    letter-spacing: 1.2px !important;
     text-transform: uppercase !important;
 }
 
-.m-setup-actions-note i {
+.m-setup-mini-copy:active,
+.m-setup-mini-copy:focus-visible {
+    border-color: rgba(0, 242, 255, 0.42) !important;
+    background: rgba(0, 242, 255, 0.10) !important;
+    transform: scale(0.985) !important;
+}
+
+.m-setup-mini-console-body {
+    display: flex !important;
+    align-items: stretch !important;
+    gap: 0 !important;
+    padding: 8px 10px 10px !important;
+}
+
+.m-setup-mini-url {
+    width: 100% !important;
+    min-height: 36px !important;
+    height: 36px !important;
+    resize: none !important;
+    border: 0 !important;
+    outline: 0 !important;
+    padding: 9px 0 0 !important;
+    background: transparent !important;
     color: var(--m-primary) !important;
-    opacity: 0.8 !important;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+    font-size: 0.63rem !important;
+    line-height: 1.35 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    user-select: text !important;
 }
 
-@media (min-width: 430px) {
-    .m-setup-actions-grid {
-        flex-direction: row !important;
-    }
-    .m-setup-action {
-        min-height: 58px !important;
-    }
-}
-
-@media (max-width: 360px) {
-    .m-setup-actions-panel { margin-top: 26px !important; }
-    .m-setup-action {
-        min-height: 52px !important;
-        padding: 13px 14px !important;
-        font-size: 0.95rem !important;
-        letter-spacing: 2px !important;
-        border-radius: 8px !important;
-    }
-    .m-setup-actions-note {
-        font-size: 0.62rem !important;
-        padding: 9px 10px !important;
-    }
+.m-setup-mini-url::selection {
+    background: rgba(0, 242, 255, 0.24) !important;
 }
 
 body.m-lowfx .m-setup-action::before {
     display: none !important;
+}
+
+@media (max-width: 360px) {
+    .m-setup-actions-panel { margin-top: 20px !important; }
+    .m-setup-action {
+        min-height: 50px !important;
+        padding: 13px 14px !important;
+        font-size: 0.95rem !important;
+        letter-spacing: 2px !important;
+    }
+    .m-setup-mini-console-head { padding: 0 9px !important; }
+    .m-setup-mini-url { font-size: 0.58rem !important; }
+}
+
+
+/* Bottom navigation only: Modern SaaS / soft glassmorphism style for Setup, Filtri, Net. */
+.m-dock-nav {
+    min-height: 62px !important;
+    padding: 7px 10px 6px !important;
+    gap: 8px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 22px !important;
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.115), rgba(255,255,255,0.040)),
+        radial-gradient(circle at 12% 0%, rgba(125,249,255,0.12), transparent 40%),
+        radial-gradient(circle at 88% 20%, rgba(139,92,246,0.12), transparent 36%) !important;
+    box-shadow:
+        0 18px 44px rgba(0,0,0,0.36),
+        inset 0 1px 0 rgba(255,255,255,0.13),
+        inset 0 -1px 0 rgba(255,255,255,0.035) !important;
+    backdrop-filter: blur(22px) saturate(1.18) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(1.18) !important;
+}
+
+.m-nav-item {
+    width: calc(33.333% - 6px) !important;
+    max-width: 104px !important;
+    min-height: 49px !important;
+    padding: 6px 7px 7px !important;
+    border-radius: 16px !important;
+    border: 1px solid rgba(255,255,255,0.095) !important;
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.028)),
+        rgba(3, 12, 24, 0.42) !important;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.08),
+        0 8px 18px rgba(0,0,0,0.18) !important;
+    overflow: hidden !important;
+    isolation: isolate !important;
+    opacity: 0.92 !important;
+    transform: translateY(0) scale(1) !important;
+    transition: transform 0.18s ease, opacity 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease !important;
+}
+
+.m-nav-item::before {
+    content: '' !important;
+    position: absolute !important;
+    inset: 0 !important;
+    border-radius: inherit !important;
+    background:
+        linear-gradient(120deg, rgba(255,255,255,0.13), transparent 32%, transparent 72%, rgba(255,255,255,0.055)),
+        radial-gradient(circle at 50% -10%, rgba(125,249,255,0.13), transparent 52%) !important;
+    opacity: 0.62 !important;
+    pointer-events: none !important;
+    z-index: -1 !important;
+}
+
+.m-nav-item::after {
+    content: '' !important;
+    position: absolute !important;
+    left: 24% !important;
+    right: 24% !important;
+    bottom: 4px !important;
+    height: 2px !important;
+    border-radius: 999px !important;
+    background: linear-gradient(90deg, transparent, rgba(125,249,255,0.85), rgba(139,92,246,0.65), transparent) !important;
+    opacity: 0 !important;
+    box-shadow: 0 0 10px rgba(125,249,255,0.34) !important;
+    transition: opacity 0.18s ease, left 0.18s ease, right 0.18s ease !important;
+}
+
+.m-nav-item:active {
+    transform: translateY(-1px) scale(0.985) !important;
+    opacity: 1 !important;
+}
+
+.m-nav-item .mf-nav-emoji {
+    width: 22px !important;
+    height: 22px !important;
+    border-radius: 9px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin-bottom: 1px !important;
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.035)),
+        rgba(255,255,255,0.035) !important;
+    border: 1px solid rgba(255,255,255,0.075) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08) !important;
+    font-size: 0.86rem !important;
+    line-height: 1 !important;
+}
+
+.m-nav-item i {
+    display: none !important;
+}
+
+.m-nav-item > span:last-child {
+    font-family: 'Rajdhani', sans-serif !important;
+    font-size: 0.55rem !important;
+    line-height: 1 !important;
+    font-weight: 800 !important;
+    letter-spacing: 1.15px !important;
+    color: rgba(226,246,255,0.76) !important;
+    text-shadow: none !important;
+}
+
+.m-nav-item.active {
+    opacity: 1 !important;
+    transform: translateY(-3px) scale(1.012) !important;
+    border-color: rgba(125,249,255,0.36) !important;
+    background:
+        linear-gradient(135deg, rgba(125,249,255,0.22), rgba(45,212,191,0.12) 42%, rgba(139,92,246,0.18)),
+        rgba(5, 18, 34, 0.60) !important;
+    box-shadow:
+        0 14px 28px rgba(0,0,0,0.28),
+        0 0 24px rgba(125,249,255,0.14),
+        inset 0 1px 0 rgba(255,255,255,0.18),
+        inset 0 -1px 0 rgba(125,249,255,0.08) !important;
+}
+
+.m-nav-item.active::before {
+    opacity: 1 !important;
+    background:
+        linear-gradient(120deg, rgba(255,255,255,0.20), transparent 34%, transparent 68%, rgba(255,255,255,0.08)),
+        radial-gradient(circle at 50% 0%, rgba(255,255,255,0.16), transparent 46%) !important;
+}
+
+.m-nav-item.active::after {
+    left: 16% !important;
+    right: 16% !important;
+    opacity: 1 !important;
+}
+
+.m-nav-item.active .mf-nav-emoji {
+    background:
+        linear-gradient(135deg, rgba(255,255,255,0.26), rgba(255,255,255,0.075)),
+        linear-gradient(135deg, rgba(125,249,255,0.28), rgba(139,92,246,0.16)) !important;
+    border-color: rgba(255,255,255,0.20) !important;
+    box-shadow:
+        0 0 18px rgba(125,249,255,0.18),
+        inset 0 1px 0 rgba(255,255,255,0.22) !important;
+}
+
+.m-nav-item.active > span:last-child {
+    color: #ffffff !important;
+    text-shadow: 0 0 10px rgba(125,249,255,0.28) !important;
+}
+
+@media (max-width: 360px) {
+    .m-dock-nav {
+        gap: 6px !important;
+        padding: 6px 8px 5px !important;
+    }
+    .m-nav-item {
+        min-height: 47px !important;
+        border-radius: 14px !important;
+        padding: 5px 5px 7px !important;
+    }
+    .m-nav-item .mf-nav-emoji {
+        width: 21px !important;
+        height: 21px !important;
+        font-size: 0.82rem !important;
+    }
+    .m-nav-item > span:last-child {
+        font-size: 0.51rem !important;
+        letter-spacing: 0.95px !important;
+    }
+}
+
+body.m-lowfx .m-dock-nav {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
 }
 
 
@@ -5968,6 +6122,28 @@ const mobileHTML = `
                     </div>
                 </div>
 
+                <div class="m-setup-actions-panel" aria-label="Azioni configurazione">
+                    <div class="m-setup-action-row">
+                        <button class="m-setup-action m-setup-install" onclick="mobileInstall()" type="button">
+                            <span>INSTALLA</span>
+                            <i class="fas fa-radiation"></i>
+                        </button>
+                    </div>
+
+                    <div class="m-setup-mini-console" aria-label="Console copia link">
+                        <div class="m-setup-mini-console-head">
+                            <span class="m-setup-mini-console-title"><i class="fas fa-terminal"></i> LINK CONFIGURAZIONE</span>
+                            <button class="m-setup-mini-copy" onclick="copyFromSetupPanel()" type="button">
+                                <i class="fas fa-copy"></i>
+                                <span>COPIA</span>
+                            </button>
+                        </div>
+                        <div class="m-setup-mini-console-body">
+                            <textarea id="m-setupGeneratedUrlBox" class="m-setup-mini-url" readonly>/// WAITING FOR DATA ///</textarea>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="m-credits-section">
                     <div class="m-neural-frame">
                         <div class="m-neural-header">
@@ -5999,20 +6175,6 @@ const mobileHTML = `
 
                         <div class="m-neural-footer">LEVIATHAN SYSTEM v2.7.0</div>
                     </div>
-                </div>
-
-                <div class="m-setup-actions-panel" aria-label="Azioni configurazione">
-                    <div class="m-setup-actions-grid">
-                        <button class="m-setup-action m-setup-install" onclick="mobileInstall()" type="button">
-                            <span class="m-setup-action-text"><b>INSTALLA</b></span>
-                            <i class="fas fa-radiation"></i>
-                        </button>
-                        <button class="m-setup-action m-setup-copy" onclick="openLinkModal()" type="button">
-                            <i class="fas fa-copy"></i>
-                            <span class="m-setup-action-text"><b>COPIA LINK</b></span>
-                        </button>
-                    </div>
-                    <div class="m-setup-actions-note"><i class="fas fa-shield-alt"></i> LINK GENERATO CON LE IMPOSTAZIONI ATTUALI</div>
                 </div>
             </div>
 
@@ -7797,27 +7959,62 @@ async function getMobileManifestUrl(config) {
 }
 
 let _linkModalTimer = 0;
+
+function setGeneratedLinkBoxesValue(value, tone = "primary") {
+    ["m-generatedUrlBox", "m-setupGeneratedUrlBox"].forEach(id => {
+        const box = document.getElementById(id);
+        if (!box) return;
+        if ("value" in box) box.value = value;
+        box.style.color = tone === "error" ? "var(--m-error)" : "var(--m-primary)";
+    });
+}
+
 async function updateLinkModalContent(immediate = false) {
     if (!immediate) {
         clearTimeout(_linkModalTimer);
         _linkModalTimer = setTimeout(() => updateLinkModalContent(true), 120);
         return;
     }
-    const box = document.getElementById('m-generatedUrlBox');
-    if(!box) return;
 
     const config = getMobileConfig();
     const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableCb01 || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableCc || config.filters.enableP2P;
 
     if(!config.key && !isWebEnabled) {
-        mSetValue('m-generatedUrlBox', "/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P");
-        box.style.color = "var(--m-error)";
+        setGeneratedLinkBoxesValue("/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P", "error");
         return;
     }
 
     const manifestUrl = `${window.location.protocol}//${await getMobileManifestUrl(config)}`;
-    mSetValue('m-generatedUrlBox', manifestUrl);
-    box.style.color = "var(--m-primary)";
+    setGeneratedLinkBoxesValue(manifestUrl, "primary");
+}
+
+async function copyGeneratedLinkValue(value, closeAfter = false) {
+    const textToCopy = String(value || "");
+    if (!textToCopy) return false;
+
+    if (textToCopy.includes("WAITING FOR") || textToCopy.includes("SYSTEM OFFLINE")) {
+        showToast("CONFIGURA PRIMA L'ADDON", "error");
+        return false;
+    }
+
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(textToCopy);
+        } else {
+            const dummy = document.createElement("textarea");
+            document.body.appendChild(dummy);
+            dummy.value = textToCopy;
+            dummy.select();
+            document.execCommand("copy");
+            document.body.removeChild(dummy);
+        }
+        if (closeAfter) closeLinkModal();
+        showToast("LINK COPIATO NEGLI APPUNTI", "success");
+        return true;
+    } catch (err) {
+        showToast("ERRORE COPIA MANUALE", "error");
+        return false;
+    }
 }
 
 async function mobileInstall() {
@@ -7842,34 +8039,17 @@ function closeLinkModal() {
     if (modal) modal.classList.remove('show');
 }
 
+async function copyFromSetupPanel() {
+    updateLinkModalContent(true);
+    const box = document.getElementById('m-setupGeneratedUrlBox');
+    const textToCopy = box && "value" in box ? String(box.value || "") : "";
+    await copyGeneratedLinkValue(textToCopy, false);
+}
+
 async function copyFromModal() {
     const box = document.getElementById('m-generatedUrlBox');
     const textToCopy = box && "value" in box ? String(box.value || "") : "";
-    if (!textToCopy) return;
-
-    if (textToCopy.includes("WAITING FOR")) {
-        showToast("CONFIGURA PRIMA L'ADDON", "error");
-        return;
-    }
-
-    try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(textToCopy);
-            closeLinkModal();
-            showToast("LINK COPIATO NEGLI APPUNTI", "success");
-        } else {
-            const dummy = document.createElement("textarea");
-            document.body.appendChild(dummy);
-            dummy.value = textToCopy;
-            dummy.select();
-            document.execCommand("copy");
-            document.body.removeChild(dummy);
-            closeLinkModal();
-            showToast("LINK COPIATO NEGLI APPUNTI", "success");
-        }
-    } catch (err) {
-        showToast("ERRORE COPIA MANUALE", "error");
-    }
+    await copyGeneratedLinkValue(textToCopy, true);
 }
 
 function exposeMobileInlineHandlers() {
@@ -7906,7 +8086,8 @@ function exposeMobileInlineHandlers() {
         mobileInstall,
         openLinkModal,
         closeLinkModal,
-        copyFromModal
+        copyFromModal,
+        copyFromSetupPanel
     });
 }
 
