@@ -2,10 +2,16 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 let axios = null;
 try { axios = require('axios'); } catch (_) { axios = null; }
+let Tesseract = null;
+try { Tesseract = require('tesseract.js'); } catch (_) { Tesseract = null; }
+let setCookieParser = null;
+try { setCookieParser = require('set-cookie-parser'); } catch (_) { setCookieParser = null; }
 const { getOrigin, normalizeRemoteUrl } = require('../common');
+const { captchaOrchestrator } = require('../../../core/captcha_orchestrator');
 const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
@@ -29,6 +35,22 @@ const PLAYER_LINK_PATTERNS = [
     /data-(?:url|href)=["']([^"']*(?:watchfree|maxstream|stayonline)[^"']*)["']/i,
     WATCHFREE_URL_RE
 ];
+
+const UPROT_AUTO_STATE_DEFAULTS = Object.freeze({
+    enabled: true,
+    bootstrapUrl: 'https://uprot.net/msf/r4hcq47tarq8',
+    generatedStateFile: path.resolve(process.cwd(), 'config', 'uprot_state.json'),
+    stateTtlMs: 45 * 60_000,
+    failureTtlMs: 2 * 60_000,
+    retryBudget: 2,
+    captchaMinDigits: 4,
+    captchaMaxDigits: 8,
+    ocrMinConfidence: 0,
+    ocrCacheTtlMs: 10 * 60_000,
+    imageTimeoutMs: 10_000,
+    bootstrapTimeoutMs: 12_000,
+    postTimeoutMs: 12_000
+});
 
 function uprotDebug(level, message, payload = null) {
     const enabled = envFlag('UPROT_DEBUG', envFlag('EUROSTREAMING_DEBUG', true));
@@ -237,10 +259,55 @@ function parseUprotTxtState(text) {
     return { cookies, captchaData };
 }
 
+
+function parseUprotStateFile(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return null;
+    const jsonState = parseObjectLike(raw);
+    if (jsonState) {
+        const cookies = parseCookieState(jsonState.cookies || jsonState.cookie || jsonState.cookieState || null);
+        const captchaData = parseObjectLike(jsonState.captchaData || jsonState.data || jsonState.captcha || null);
+        if (cookies || captchaData) return { cookies, captchaData };
+    }
+    return parseUprotTxtState(raw);
+}
+
+function getUprotGeneratedStateFile(options = {}) {
+    return options.uprotGeneratedStateFile
+        || options.uprotStateFile
+        || process.env.UPROT_GENERATED_STATE_FILE
+        || process.env.UPROT_STATE_FILE
+        || UPROT_AUTO_STATE_DEFAULTS.generatedStateFile;
+}
+
+function saveUprotStateToFile(state, options = {}) {
+    const filePath = getUprotGeneratedStateFile(options);
+    try {
+        const dir = path.dirname(filePath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const payload = {
+            cookies: state?.cookies || {},
+            captchaData: state?.captchaData || {},
+            generatedAt: new Date().toISOString(),
+            source: state?.source || 'auto'
+        };
+        const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+        fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf8');
+        fs.renameSync(tmpPath, filePath);
+        uprotDebug('info', 'auto-state saved', { path: filePath, cookieKeys: Object.keys(payload.cookies || {}).length, formKeys: Object.keys(payload.captchaData || {}) });
+        return true;
+    } catch (error) {
+        uprotDebug('warn', 'auto-state save failed', { error: error?.message || String(error) });
+        return false;
+    }
+}
+
 function loadUprotStateFromFile(options = {}) {
     const candidates = [
         options.uprotStateFile,
         process.env.UPROT_STATE_FILE,
+        process.env.UPROT_GENERATED_STATE_FILE,
+        UPROT_AUTO_STATE_DEFAULTS.generatedStateFile,
         path.join(__dirname, 'uprot.txt'),
         path.join(__dirname, '..', 'uprot.txt')
     ].filter(Boolean);
@@ -249,7 +316,7 @@ function loadUprotStateFromFile(options = {}) {
         try {
             const filePath = path.resolve(String(candidate));
             if (!fs.existsSync(filePath)) continue;
-            const parsed = parseUprotTxtState(fs.readFileSync(filePath, 'utf8'));
+            const parsed = parseUprotStateFile(fs.readFileSync(filePath, 'utf8'));
             if (parsed) return { ...parsed, source: filePath };
         } catch (_) {
             
@@ -583,44 +650,302 @@ async function resolveLanding(client, targetUrl, options = {}) {
     }, 'uprot-flare');
 }
 
+
+const uprotOcrCache = new Map();
+
+function getUprotBootstrapUrl(options = {}) {
+    return normalizeRemoteUrl(options.uprotBootstrapUrl || process.env.UPROT_BOOTSTRAP_URL || UPROT_AUTO_STATE_DEFAULTS.bootstrapUrl) || UPROT_AUTO_STATE_DEFAULTS.bootstrapUrl;
+}
+
+function uprotCaptchaContext(targetUrl, options = {}) {
+    return {
+        provider: options.provider || 'web',
+        hoster: 'uprot',
+        captchaType: 'image-ocr-state',
+        scope: safeHost(targetUrl) || 'uprot.net'
+    };
+}
+
+function uprotAutoStateEnabled(options = {}) {
+    if (options.uprotAutoStateEnabled !== undefined) return Boolean(options.uprotAutoStateEnabled);
+    return envFlag('UPROT_AUTO_STATE_ENABLED', UPROT_AUTO_STATE_DEFAULTS.enabled);
+}
+
+function uprotStateTtlMs(options = {}) {
+    return envNumber('UPROT_STATE_TTL_MS', Number(options.uprotStateTtlMs || UPROT_AUTO_STATE_DEFAULTS.stateTtlMs), 60_000, 24 * 60 * 60_000);
+}
+
+function uprotFailureTtlMs(options = {}) {
+    return envNumber('UPROT_FAILURE_TTL_MS', Number(options.uprotFailureTtlMs || UPROT_AUTO_STATE_DEFAULTS.failureTtlMs), 10_000, 30 * 60_000);
+}
+
+function mergeSetCookieHeaders(existingCookies, response) {
+    const merged = { ...(typeof existingCookies === 'object' && !Array.isArray(existingCookies) ? existingCookies : {}) };
+    const rawHeaders = response?.headers?.['set-cookie'] || response?.headers?.['Set-Cookie'];
+    if (!rawHeaders) return merged;
+
+    if (setCookieParser) {
+        const parsed = setCookieParser.parse(Array.isArray(rawHeaders) ? rawHeaders : [rawHeaders], { decodeValues: true });
+        for (const cookie of parsed) {
+            if (cookie.name) merged[cookie.name] = cookie.value;
+        }
+        return merged;
+    }
+
+    const list = Array.isArray(rawHeaders) ? rawHeaders : [rawHeaders];
+    for (const raw of list) {
+        const pair = String(raw || '').split(';')[0]?.trim();
+        const eq = pair.indexOf('=');
+        if (eq > 0) merged[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+    }
+    return merged;
+}
+
+function extractCaptchaImageSrc(html, baseUrl = null) {
+    const imgRe = /<img\b[^>]*src=["']([^"']+)["'][^>]*>/ig;
+    for (const match of String(html || '').matchAll(imgRe)) {
+        const src = String(match?.[1] || '').trim();
+        if (!src) continue;
+        if (/captcha|base64|data:image|verify|security/i.test(src) || !/avatar|logo|icon|banner/i.test(src)) {
+            return normalizeRemoteUrl(src, baseUrl) || src;
+        }
+    }
+    return null;
+}
+
+function extractBase64Image(value) {
+    const text = String(value || '').trim();
+    const dataUri = text.match(/^data:image\/[^;]+;base64,([A-Za-z0-9+/=_-]+)$/i);
+    if (dataUri) return dataUri[1];
+    const inline = text.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=_-]+)/i);
+    if (inline) return inline[1];
+    return null;
+}
+
+async function fetchCaptchaImageBase64(client, imageSrc, baseUrl, options = {}) {
+    const inline = extractBase64Image(imageSrc);
+    if (inline) return inline;
+    const imageUrl = normalizeRemoteUrl(imageSrc, baseUrl);
+    if (!imageUrl || !client || typeof client.get !== 'function') return null;
+
+    try {
+        const response = await client.get(imageUrl, {
+            headers: buildUprotHeaders(imageUrl, { ...options, referer: baseUrl, requestReferer: baseUrl, accept: 'image/avif,image/webp,image/png,image/svg+xml,image/*,*/*;q=0.8' }),
+            responseType: 'arraybuffer',
+            timeout: Number(options.imageTimeout || UPROT_AUTO_STATE_DEFAULTS.imageTimeoutMs),
+            maxRedirects: 5,
+            validateStatus: () => true
+        });
+        const status = Number(response?.status || response?.statusCode || 0);
+        if (status && status >= 400) return null;
+        const data = response?.data ?? response?.body;
+        if (Buffer.isBuffer(data)) return data.toString('base64');
+        if (data instanceof ArrayBuffer) return Buffer.from(data).toString('base64');
+        if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer).toString('base64');
+        const text = typeof data === 'string' ? data : responseText(response);
+        return extractBase64Image(text) || (text ? Buffer.from(text, 'binary').toString('base64') : null);
+    } catch (error) {
+        uprotDebug('warn', 'captcha image fetch failed', { imageHost: safeHost(imageUrl), error: error?.message || String(error) });
+        return null;
+    }
+}
+
+function validateUprotCaptchaDigits(value) {
+    const digits = String(value || '').replace(/\D/g, '').trim();
+    const minDigits = envNumber('UPROT_CAPTCHA_MIN_DIGITS', UPROT_AUTO_STATE_DEFAULTS.captchaMinDigits, 1, 12);
+    const maxDigits = envNumber('UPROT_CAPTCHA_MAX_DIGITS', UPROT_AUTO_STATE_DEFAULTS.captchaMaxDigits, minDigits, 16);
+    if (digits.length < minDigits || digits.length > maxDigits) return null;
+    return digits;
+}
+
+async function solveUprotCaptchaOCR(base64Data, options = {}) {
+    if (!Tesseract) {
+        uprotDebug('warn', 'tesseract.js not available, cannot generate auto-state');
+        return null;
+    }
+    const hash = crypto.createHash('sha1').update(String(base64Data || '')).digest('hex');
+    const cached = uprotOcrCache.get(hash);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+    let worker = null;
+    try {
+        worker = await Tesseract.createWorker('eng');
+        await worker.setParameters({
+            tessedit_char_whitelist: '0123456789',
+            tessedit_pageseg_mode: '7'
+        });
+        const { data: { text, confidence } } = await worker.recognize(Buffer.from(base64Data, 'base64'));
+        const digits = validateUprotCaptchaDigits(text);
+        uprotDebug('info', 'auto-state OCR result', { digits: Boolean(digits), confidence });
+        if (!digits) return null;
+        const minConfidence = envNumber('UPROT_OCR_MIN_CONFIDENCE', Number(options.uprotOcrMinConfidence ?? UPROT_AUTO_STATE_DEFAULTS.ocrMinConfidence), 0, 100);
+        if (minConfidence > 0 && Number.isFinite(confidence) && confidence < minConfidence) return null;
+        uprotOcrCache.set(hash, { value: digits, expiresAt: Date.now() + envNumber('UPROT_OCR_CACHE_TTL_MS', UPROT_AUTO_STATE_DEFAULTS.ocrCacheTtlMs, 1_000, 30 * 60_000) });
+        return digits;
+    } catch (error) {
+        uprotDebug('warn', 'auto-state OCR failed', { error: error?.message || String(error) });
+        return null;
+    } finally {
+        if (worker && typeof worker.terminate === 'function') {
+            try { await worker.terminate(); } catch (_) {}
+        }
+    }
+}
+
+async function requestUprotBootstrapPage(client, bootstrapUrl, headers, options = {}) {
+    const timeout = Number(options.bootstrapTimeout || UPROT_AUTO_STATE_DEFAULTS.bootstrapTimeoutMs);
+    if (client && typeof client.post === 'function') {
+        const posted = await postText(client, bootstrapUrl, '', { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout);
+        if (posted?.text) return posted;
+    }
+    if (client && typeof client.get === 'function') {
+        const fetched = await fetchText(client, bootstrapUrl, { headers, timeout });
+        return {
+            status: fetched.status,
+            text: fetched.text,
+            response: fetched.response || null,
+            finalUrl: bootstrapUrl
+        };
+    }
+    return null;
+}
+
+async function generateUprotAutoState(client, targetUrl, options = {}) {
+    if (!client || typeof client.post !== 'function') return null;
+    const bootstrapUrl = getUprotBootstrapUrl(options);
+    const headers = buildUprotHeaders(bootstrapUrl, options);
+    const page = await requestUprotBootstrapPage(client, bootstrapUrl, headers, options);
+    if (!page?.text) {
+        uprotDebug('warn', 'auto-state bootstrap page missing', { bootstrapHost: safeHost(bootstrapUrl), status: page?.status || 0 });
+        return null;
+    }
+
+    let cookies = mergeSetCookieHeaders({}, page.response);
+    const imageSrc = extractCaptchaImageSrc(page.text, page.finalUrl || bootstrapUrl);
+    if (!imageSrc) {
+        uprotDebug('warn', 'auto-state captcha image missing', { bootstrapHost: safeHost(bootstrapUrl) });
+        return null;
+    }
+    const imageBase64 = await fetchCaptchaImageBase64(client, imageSrc, page.finalUrl || bootstrapUrl, options);
+    if (!imageBase64) return null;
+
+    const captchaCode = await solveUprotCaptchaOCR(imageBase64, options);
+    if (!captchaCode) return null;
+
+    const captchaData = { captcha: captchaCode };
+    const postHeaders = {
+        ...buildUprotHeaders(bootstrapUrl, options),
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Cookie: cookieHeaderFromState(cookies)
+    };
+    const posted = await postText(client, bootstrapUrl, buildFormBody(captchaData), postHeaders, Number(options.postTimeout || UPROT_AUTO_STATE_DEFAULTS.postTimeoutMs));
+    if (posted.status < 200 || posted.status >= 400) {
+        uprotDebug('warn', 'auto-state captcha post failed', { status: posted.status, finalHost: safeHost(posted.finalUrl) });
+        return null;
+    }
+    cookies = mergeSetCookieHeaders(cookies, posted.response);
+    if (!cookieHeaderFromState(cookies)) return null;
+
+    const state = {
+        cookies,
+        captchaData,
+        source: `auto:${safeHost(bootstrapUrl) || 'uprot'}`,
+        targetHost: safeHost(targetUrl)
+    };
+    saveUprotStateToFile(state, options);
+    return state;
+}
+
+async function ensureUprotAutoState(client, targetUrl, options = {}) {
+    const existing = loadUprotState(options);
+    if (cookieHeaderFromState(existing.cookies) && buildFormBody(existing.captchaData)) return existing;
+    if (!uprotAutoStateEnabled(options)) return null;
+
+    const context = uprotCaptchaContext(targetUrl, options);
+    const ensured = await captchaOrchestrator.ensureState(
+        context,
+        () => generateUprotAutoState(client, targetUrl, options),
+        {
+            ttlMs: uprotStateTtlMs(options),
+            failureTtlMs: uprotFailureTtlMs(options),
+            retryBudget: envNumber('UPROT_AUTO_STATE_RETRY_BUDGET', UPROT_AUTO_STATE_DEFAULTS.retryBudget, 1, 10),
+            metadata: { bootstrapHost: safeHost(getUprotBootstrapUrl(options)) }
+        }
+    );
+    if (!ensured) return null;
+    return ensured;
+}
+
+function withUprotStateOptions(options = {}, state = null) {
+    if (!state) return options;
+    return {
+        ...options,
+        uprotCookies: state.cookies || options.uprotCookies,
+        uprotCaptchaData: state.captchaData || options.uprotCaptchaData
+    };
+}
+
 async function resolveUprotToMaxstream(client, url, options = {}) {
     const originalUrl = normalizeRemoteUrl(url);
     const targetUrl = normalizeUprotInput(url);
     if (!targetUrl || !client) return null;
 
-    // MammaMia's protected path is driven by a pre-generated captcha cookie + form data.
-    // Eurostreaming commonly exposes /msf/ links; normalizeUprotInput probes /mse/ first,
-    // then falls back to posting the stored state back to the matching /msf/ URL.
-    const stateReady = hasUprotState(options);
     const captchaUrl = toMsfCaptchaUrl(originalUrl || targetUrl);
+    let activeOptions = options;
+    let stateReady = hasUprotState(activeOptions);
 
     if (isMsfiUrl(targetUrl)) {
-        uprotDebug('info', 'resolve start', { path: 'msfi', stateReady, flareEnabled: flareEnabled(options), targetHost: safeHost(targetUrl) });
+        uprotDebug('info', 'resolve start', { path: 'msfi', stateReady, autoState: uprotAutoStateEnabled(options), flareEnabled: flareEnabled(options), targetHost: safeHost(targetUrl) });
+        if (!stateReady) {
+            const generated = await ensureUprotAutoState(client, targetUrl, activeOptions);
+            activeOptions = withUprotStateOptions(activeOptions, generated);
+            stateReady = hasUprotState(activeOptions);
+        }
         if (stateReady) {
-            const posted = await resolveMsfi(client, targetUrl, options);
-            if (posted) return posted;
+            const posted = await resolveMsfi(client, targetUrl, activeOptions);
+            if (posted) {
+                captchaOrchestrator.markSuccess(uprotCaptchaContext(targetUrl, activeOptions), {
+                    cookieState: loadUprotState(activeOptions),
+                    reason: 'msfi_resolved'
+                }, uprotStateTtlMs(activeOptions));
+                return posted;
+            }
+            captchaOrchestrator.markFailure(uprotCaptchaContext(targetUrl, activeOptions), 'msfi_post_failed', uprotFailureTtlMs(activeOptions));
         }
         if (typeof client.get === 'function') {
-            const landing = await resolveLanding(client, targetUrl, options);
+            const landing = await resolveLanding(client, targetUrl, activeOptions);
             if (landing) return landing;
         }
-        const fallback = stateReady ? null : await resolveMsfi(client, targetUrl, options);
-        if (!fallback) uprotDebug('warn', 'resolve returned null', { path: 'msfi', stateReady, flareEnabled: flareEnabled(options) });
+        const fallback = stateReady ? null : await resolveMsfi(client, targetUrl, activeOptions);
+        if (!fallback) uprotDebug('warn', 'resolve returned null', { path: 'msfi', stateReady, autoState: uprotAutoStateEnabled(options), flareEnabled: flareEnabled(options) });
         return fallback;
     }
 
     if (typeof client.get !== 'function') return null;
-    uprotDebug('info', 'resolve start', { path: 'landing', stateReady, targetHost: safeHost(targetUrl) });
-    const landing = await resolveLanding(client, targetUrl, options);
+    uprotDebug('info', 'resolve start', { path: 'landing', stateReady, autoState: uprotAutoStateEnabled(options), targetHost: safeHost(targetUrl) });
+    const landing = await resolveLanding(client, targetUrl, activeOptions);
     if (landing) return landing;
 
-    if (stateReady && captchaUrl) {
-        uprotDebug('info', 'landing failed; trying stored captcha state', { targetHost: safeHost(captchaUrl), fromPath: safeHost(targetUrl) });
-        const posted = await resolveMsfi(client, captchaUrl, options);
-        if (posted) return posted;
+    if (!stateReady && captchaUrl) {
+        const generated = await ensureUprotAutoState(client, captchaUrl, activeOptions);
+        activeOptions = withUprotStateOptions(activeOptions, generated);
+        stateReady = hasUprotState(activeOptions);
     }
 
-    uprotDebug('warn', 'resolve returned null', { path: 'landing', stateReady });
+    if (stateReady && captchaUrl) {
+        uprotDebug('info', 'landing failed; trying captcha state', { targetHost: safeHost(captchaUrl), autoState: uprotAutoStateEnabled(options) });
+        const posted = await resolveMsfi(client, captchaUrl, activeOptions);
+        if (posted) {
+            captchaOrchestrator.markSuccess(uprotCaptchaContext(captchaUrl, activeOptions), {
+                cookieState: loadUprotState(activeOptions),
+                reason: 'stored_or_auto_state_resolved'
+            }, uprotStateTtlMs(activeOptions));
+            return posted;
+        }
+        captchaOrchestrator.markFailure(uprotCaptchaContext(captchaUrl, activeOptions), 'stored_or_auto_state_failed', uprotFailureTtlMs(activeOptions));
+    }
+
+    uprotDebug('warn', 'resolve returned null', { path: 'landing', stateReady, autoState: uprotAutoStateEnabled(options) });
     return null;
 }
 
@@ -687,6 +1012,7 @@ module.exports = {
         extractContinueLink,
         loadUprotState,
         parseUprotTxtState,
-        toMsfCaptchaUrl
+        toMsfCaptchaUrl,
+        UPROT_AUTO_STATE_DEFAULTS
     }
 };
