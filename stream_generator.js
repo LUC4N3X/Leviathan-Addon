@@ -206,22 +206,63 @@ function shouldAllowRdLazyStreams(filters = {}) {
     return isTruthyConfigValue(filters.enableRdLazyStreams ?? process.env.RD_LAZY_STREAMS ?? 'false');
 }
 
-const RD_DIRECT_RESOLVE_MAX_RESULTS = 24;
+function shouldEnforceRdPlayableOnly(filters = {}) {
+    const explicit = filters.rdPlayableOnly
+        ?? filters.rdStrictPlayableOnly
+        ?? process.env.RD_PLAYABLE_ONLY
+        ?? process.env.RD_STRICT_PLAYABLE_ONLY;
+    if (explicit === undefined || explicit === null || String(explicit).trim() === '') return true;
+    return isTruthyConfigValue(explicit);
+}
+
+const RD_DIRECT_RESOLVE_MAX_RESULTS = 32;
+const RD_PLAYABLE_DEEP_DB_SCAN_MAX_RESULTS = 48;
 
 function getRdDirectResolveLimit(filters = {}, rankedCount = 0) {
     const hardMax = Math.max(1, Math.min(CONFIG.MAX_RESULTS || 12, RD_DIRECT_RESOLVE_MAX_RESULTS));
-    const configured = filters.rdDirectMaxResults ?? RD_DIRECT_RESOLVE_MAX_RESULTS;
+    const configured = filters.rdDirectMaxResults ?? process.env.RD_DIRECT_MAX_RESULTS ?? RD_DIRECT_RESOLVE_MAX_RESULTS;
+    return Math.min(Math.max(0, rankedCount), parseBoundedInt(configured, hardMax, 1, hardMax));
+}
+
+function getRdPlayableDeepDbScanLimit(filters = {}, rankedCount = 0) {
+    const hardMax = Math.max(1, Math.min(CONFIG.MAX_RESULTS || 70, RD_PLAYABLE_DEEP_DB_SCAN_MAX_RESULTS));
+    const configured = filters.rdPlayableDeepDbScanMaxResults
+        ?? filters.rdDeepDbScanMaxResults
+        ?? process.env.RD_PLAYABLE_DEEP_DB_SCAN_MAX_RESULTS
+        ?? process.env.RD_DEEP_DB_SCAN_MAX_RESULTS
+        ?? RD_PLAYABLE_DEEP_DB_SCAN_MAX_RESULTS;
     return Math.min(Math.max(0, rankedCount), parseBoundedInt(configured, hardMax, 1, hardMax));
 }
 
 function shouldShowRdDownloadToDebrid(filters = {}) {
-    const hardDisable = !isTruthyConfigValue(process.env.RD_ALLOW_DOWNLOAD_TO_DEBRID_ROWS || filters.allowRdDownloadToDebridRows || 'false');
-    if (hardDisable) return false;
-    return isTruthyConfigValue(filters.allowRdDownloadToDebridRows ?? process.env.RD_ALLOW_DOWNLOAD_TO_DEBRID_ROWS ?? 'false');
+    const explicit = filters.allowRdDownloadToDebridRows ?? process.env.RD_ALLOW_DOWNLOAD_TO_DEBRID_ROWS;
+    if (explicit !== undefined && explicit !== null && String(explicit).trim() !== '') return isTruthyConfigValue(explicit);
+    return false;
+}
+
+function shouldShowRdUnknownRows(filters = {}) {
+    const explicit = filters.allowRdUnknownRows ?? process.env.RD_ALLOW_UNKNOWN_ROWS;
+    if (explicit !== undefined && explicit !== null && String(explicit).trim() !== '') return isTruthyConfigValue(explicit);
+    return false;
+}
+
+function getRdCandidateState(item = {}) {
+    return String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || item?.rd_cache_state || '').toLowerCase().trim();
+}
+
+function isRdUnknownCandidate(item = {}) {
+    const state = getRdCandidateState(item);
+    return !state || state === 'unknown';
+}
+
+function shouldHideRdUnreadyCandidate(item = {}, filters = {}) {
+    if (isTorrentioRdDownloadCandidate(item) && !shouldShowRdDownloadToDebrid(filters)) return true;
+    if (isRdUnknownCandidate(item) && !shouldShowRdUnknownRows(filters)) return true;
+    return false;
 }
 
 function isKnownRdUnavailableCandidate(item = {}) {
-    const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || item?.rd_cache_state || '').toLowerCase().trim();
+    const state = getRdCandidateState(item);
     if (state === 'likely_uncached' || state === 'uncached' || state === 'uncached_terminal') return true;
     if (item?._dbCachedRd === false || item?.cached_rd === false) return true;
     return false;
@@ -658,16 +699,19 @@ function getSeriesDbFallbackLimit(filters = {}) {
     return Math.max(0, Math.min(40, parseInt(raw, 10) || 10));
 }
 
-function getMovieDbFallbackLimit(filters = {}) {
-    const raw = filters.movieDbFallbackLimit ?? process.env.MOVIE_DB_FALLBACK_LIMIT ?? '12';
-    return Math.max(0, Math.min(40, parseInt(raw, 10) || 12));
+function getMovieDbFallbackLimit(filters = {}, service = null) {
+    const normalizedService = String(service || '').toLowerCase();
+    const defaultLimit = normalizedService === 'rd' && shouldEnforceRdPlayableOnly(filters) ? '24' : '12';
+    const raw = filters.movieDbFallbackLimit ?? process.env.MOVIE_DB_FALLBACK_LIMIT ?? defaultLimit;
+    return Math.max(0, Math.min(50, parseInt(raw, 10) || parseInt(defaultLimit, 10) || 12));
 }
 
 function getMovieDbSnapshotRescueLimit(filters = {}, service = null) {
     const normalizedService = String(service || '').toLowerCase();
     if (normalizedService !== 'rd' && process.env.MOVIE_DB_SNAPSHOT_RESCUE_ALL_SERVICES !== 'true') return 0;
-    const raw = filters.movieDbSnapshotRescueLimit ?? process.env.MOVIE_DB_SNAPSHOT_RESCUE_LIMIT ?? '8';
-    return Math.max(0, Math.min(30, parseInt(raw, 10) || 8));
+    const defaultLimit = normalizedService === 'rd' && shouldEnforceRdPlayableOnly(filters) ? '24' : '8';
+    const raw = filters.movieDbSnapshotRescueLimit ?? process.env.MOVIE_DB_SNAPSHOT_RESCUE_LIMIT ?? defaultLimit;
+    return Math.max(0, Math.min(50, parseInt(raw, 10) || parseInt(defaultLimit, 10) || 8));
 }
 
 function shouldUseDbSnapshotRescueItem(item = {}) {
@@ -836,7 +880,7 @@ function preserveMovieLocalDbCoverage(rankedList = [], localDbPool = [], meta = 
     if (isSeries) return rankedList;
 
     const service = getNormalizedDebridService(config || {});
-    const limit = getMovieDbFallbackLimit(filters);
+    const limit = getMovieDbFallbackLimit(filters, service);
     const snapshotLimit = getMovieDbSnapshotRescueLimit(filters, service);
     const list = Array.isArray(rankedList) ? rankedList : [];
     const sourcePool = Array.isArray(localDbPool) ? localDbPool : [];
@@ -1547,6 +1591,7 @@ function isLeviathanCloudBuilderUrl(value = '') {
 function getTorrentioPassthroughUrl(item = {}) {
     if (process.env.RD_TORRENTIO_PASSTHROUGH === 'false') return null;
     if (!isTorrentioExternalItem(item)) return null;
+    if (hasTorrentioRdDownloadMarker(item)) return null;
     const candidates = [
         item?._torrentioPlayableUrl,
         item?.externalPlayableUrl,
@@ -3441,7 +3486,12 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
         }
 
         let streamData = null;
-        if (service === 'rd') streamData = await RD.getStreamLink(apiKey, item.magnet, runtimeItem.season, runtimeItem.episode, item.fileIdx);
+        if (service === 'rd') {
+            streamData = await RD.getStreamLink(apiKey, item.magnet, runtimeItem.season, runtimeItem.episode, item.fileIdx, {
+                validateDownloadUrl: shouldEnforceRdPlayableOnly(config?.filters || {}),
+                probeReason: 'stream_list_preflight'
+            });
+        }
 
         const resolvedSize = getObservedSizeBytes(
             streamData?.rd_file_size,
@@ -3702,13 +3752,18 @@ function buildRdVerifiedDbFallbackStreams({
     reqHost = '',
     userConfStr = ''
 } = {}) {
-    if (!rdDirectOnly || (Array.isArray(resolvedInstant) && resolvedInstant.length > 0)) return [];
+    if (!rdDirectOnly) return [];
     if (getNormalizedDebridService(resolverConfig) !== 'rd') return [];
 
+    const resolved = Array.isArray(resolvedInstant) ? resolvedInstant : [];
+    const existing = Array.isArray(existingStreams) ? existingStreams : [];
     const target = getRdVerifiedDbFallbackLimit(filters, CONFIG.MAX_RESULTS || 12);
+    const remaining = Math.max(0, target - resolved.length - existing.length);
+    if (remaining <= 0) return [];
+
     const occupiedHashes = collectExistingTorrentHashes([], [
-        ...(Array.isArray(resolvedInstant) ? resolvedInstant : []),
-        ...(Array.isArray(existingStreams) ? existingStreams : [])
+        ...resolved,
+        ...existing
     ]);
     const seen = new Set(occupiedHashes);
     const candidates = [];
@@ -3719,7 +3774,7 @@ function buildRdVerifiedDbFallbackStreams({
         if (!hash || seen.has(hash)) continue;
         seen.add(hash);
         candidates.push(item);
-        if (candidates.length >= target) break;
+        if (candidates.length >= remaining) break;
     }
 
     return candidates
@@ -3923,6 +3978,41 @@ function isTorrentioRdAuthorityCandidate(item = {}) {
     );
 }
 
+function isTorrentioRdDownloadCandidate(item = {}) {
+    const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || item?.rd_cache_state || '').toLowerCase().trim();
+    const proof = String(item?._rdProof || '').toLowerCase().trim();
+
+    // IMPORTANTE: un risultato Torrentio puo nascere come "download", ma poi essere
+    // promosso dal DB/availability overlay a RD cached. In quel caso NON va piu
+    // escluso dal direct resolve quando RD_ALLOW_DOWNLOAD_TO_DEBRID_ROWS=false.
+    // Era la causa dei casi con torrentioAuthority=3/0: candidati considerati
+    // autorevoli, ma mai tentati perche ancora marcati come download.
+    const hasCachedAuthority = Boolean(
+        item?._dbCachedRd === true ||
+        item?.cached_rd === true ||
+        item?.isCached === true ||
+        item?.cached === true ||
+        item?._torrentioRdAuthority === true ||
+        item?._torrentioCached === true ||
+        proof === 'torrentio_cached_marker' ||
+        proof === 'torrentio_direct_url' ||
+        proof === 'torrentio_passthrough_url' ||
+        state === 'cached' ||
+        state === 'rd_cached' ||
+        state === 'instant' ||
+        state === 'instant_available' ||
+        state === 'likely_cached'
+    );
+    if (hasCachedAuthority) return false;
+
+    return Boolean(
+        item?._torrentioRdDownload === true ||
+        proof === 'torrentio_download_marker' ||
+        state === 'download' ||
+        (isTorrentioExternalItem(item) && hasTorrentioRdDownloadMarker(item))
+    );
+}
+
 function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode = 'ita', config = {} } = {}) {
     if (!item) return null;
     const onlyItalian = langMode === 'ita';
@@ -3931,18 +4021,20 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
     const title = isSeriesQuery ? rawTitle : stripMoviePackLabel(rawTitle);
     const finalSeeders = parseInt(item.seeders, 10) || (title ? extractSeeders(title) : 0);
     const finalSize = item.mainFileSize || item.sizeBytes || (title ? extractSize(title) : 0);
-    const directUrl = getExternalDirectUrl(item);
-    const magnetOrDirect = item.magnetLink || item.magnet || directUrl || null;
-    const hash = item.infoHash || item.hash || extractInfoHash(item.magnetLink) || extractInfoHash(item.magnet) || extractInfoHash(directUrl);
+    const rawDirectUrl = getExternalDirectUrl(item);
     const isTorrentio = isTorrentioExternalItem(item);
     const isMediaFusion = isMediaFusionExternalItem(item);
+    const torrentioDownloadMarker = isTorrentio && hasTorrentioRdDownloadMarker(item);
+    const directUrl = torrentioDownloadMarker ? null : rawDirectUrl;
+    const magnetOrDirect = item.magnetLink || item.magnet || directUrl || null;
+    const hash = item.infoHash || item.hash || extractInfoHash(item.magnetLink) || extractInfoHash(item.magnet) || extractInfoHash(directUrl || rawDirectUrl);
     const currentDebridService = getNormalizedDebridService(config);
     const mediaFusionPassthroughUrl = currentDebridService === 'rd' ? getMediaFusionPassthroughUrl(item) : null;
     const torrentioLooseItalian = hasTorrentioLooseItalianEvidence(item);
     const externalLanguageOk = Boolean(item.isItalian || item.hasItalianAudio || item.languageInfo?.isItalian || item.languageInfo?.hasAudioItalian || torrentioLooseItalian);
     if (onlyItalian && isTorrentio && !externalLanguageOk) return null;
 
-    const torrentioRdAuthority = getTorrentioRdAuthority(item, {
+    const torrentioRdAuthority = torrentioDownloadMarker ? { trusted: false, direct: false, reason: 'torrentio_download_marker' } : getTorrentioRdAuthority(item, {
         service: currentDebridService,
         onlyItalian,
         externalLanguageOk,
@@ -3954,7 +4046,7 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
         (item.rdCacheState === 'cached' || item.cacheState === 'cached' || item.cached_rd === true || item._dbCachedRd === true)
     );
     const rdCached = Boolean(mediaFusionRdCached || torrentioRdAuthority.trusted);
-    const rdState = rdCached ? 'cached' : 'unknown';
+    const rdState = rdCached ? 'cached' : (torrentioDownloadMarker ? 'download' : 'unknown');
     const rdCachedBool = rdCached ? true : null;
     const externalPack = isConfidentSeasonPackItem({
         ...item,
@@ -4026,7 +4118,8 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
         _torrentioRdAuthority: Boolean(torrentioRdAuthority.trusted),
         _torrentioCached: Boolean(torrentioRdAuthority.trusted),
         _torrentioRdDirect: Boolean(torrentioRdAuthority.direct),
-        _rdProof: torrentioRdAuthority.trusted ? torrentioRdAuthority.reason : (mediaFusionPassthroughUrl ? 'mediafusion_passthrough_url' : undefined),
+        _torrentioRdDownload: Boolean(torrentioDownloadMarker),
+        _rdProof: torrentioDownloadMarker ? 'torrentio_download_marker' : (torrentioRdAuthority.trusted ? torrentioRdAuthority.reason : (mediaFusionPassthroughUrl ? 'mediafusion_passthrough_url' : undefined)),
         _mediafusionRdAuthority: Boolean(mediaFusionRdCached),
         potentialPack: Boolean(isSeriesQuery && externalPack),
         packTitle: (isSeriesQuery && externalPack) ? (item.packTitle || '') : '',
@@ -4036,8 +4129,8 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
         _dbCachedRd: rdCachedBool,
         cached_rd: rdCachedBool,
         _mediafusionRdChecked: Boolean(item._mediafusionRdChecked || mediaFusionRdCached),
-        _nexusBridgeRdChecked: Boolean(item._nexusBridgeRdChecked || torrentioRdAuthority.trusted || mediaFusionRdCached),
-        _externalRdChecked: Boolean(item._externalRdChecked || torrentioRdAuthority.trusted || mediaFusionRdCached)
+        _nexusBridgeRdChecked: Boolean(item._nexusBridgeRdChecked || torrentioRdAuthority.trusted || torrentioDownloadMarker || mediaFusionRdCached),
+        _externalRdChecked: Boolean(item._externalRdChecked || torrentioRdAuthority.trusted || torrentioDownloadMarker || mediaFusionRdCached)
     };
 }
 
@@ -4950,7 +5043,20 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           if (filters.maxPerQuality) rankedList = preserveRdStatusList(rankedList, filterByQualityLimit(rankedList, filters.maxPerQuality), { logger, stage: 'max-per-quality' });
           if (configuredDebridService === 'rd' && hasDebridKey && typeof applyRdDisplayPriority === 'function') {
               const beforeRdDisplayPriority = rankedList;
-              rankedList = preserveRdStatusList(beforeRdDisplayPriority, applyRdDisplayPriority(rankedList, config, meta), { logger, stage: 'rd-display-priority' });
+              const rdPriorityConfig = shouldEnforceRdPlayableOnly(filters)
+                  ? {
+                      ...config,
+                      filters: {
+                          ...(config?.filters || {}),
+                          ...filters,
+                          // In playable-only mode every candidate is preflighted with RD before it is shown.
+                          // Therefore we should not hide DB/snapshot/download/unknown rows too early: try them,
+                          // keep only the ones that resolve to a real playable RD link.
+                          rdHideDubiousWhenSafe: false
+                      }
+                  }
+                  : config;
+              rankedList = preserveRdStatusList(beforeRdDisplayPriority, applyRdDisplayPriority(rankedList, rdPriorityConfig, meta), { logger, stage: 'rd-display-priority' });
           }
 
           if (configuredDebridService === 'tb' && hasDebridKey) {
@@ -4963,25 +5069,50 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           logger.info(`[TORRENT PIPELINE] Disabled for ${meta.title} (solo provider web attivi, nessuna key debrid e P2P off)`);
       }
 
-      const finalRanked = rankedList.slice(0, CONFIG.MAX_RESULTS);
+      const rdPlayableOnlyForFinalRanked = configuredDebridService === 'rd' && hasDebridKey && shouldEnforceRdPlayableOnly(filters);
+      const finalRankedLimit = rdPlayableOnlyForFinalRanked
+          ? Math.max(CONFIG.MAX_RESULTS || 12, getRdPlayableDeepDbScanLimit(filters, rankedList.length))
+          : CONFIG.MAX_RESULTS;
+      const finalRanked = rankedList.slice(0, finalRankedLimit);
+      if (rdPlayableOnlyForFinalRanked && finalRanked.length > CONFIG.MAX_RESULTS) {
+          logger.info(`[RD DEEP DB] playable-only scan window expanded ${CONFIG.MAX_RESULTS}->${finalRanked.length} ranked=${rankedList.length}`);
+      }
       let debridStreams = [];
       let p2pStreams = [];
       const debridStageStartedAt = Date.now();
 
       if (finalRanked.length > 0 && hasDebridKey) {
-          const rdDirectOnly = configuredDebridService === 'rd' && !shouldAllowRdLazyStreams(filters);
+          const rdPlayableOnly = configuredDebridService === 'rd' && shouldEnforceRdPlayableOnly(filters);
+          const rdDirectOnly = configuredDebridService === 'rd' && (rdPlayableOnly || !shouldAllowRdLazyStreams(filters));
           const TOP_LIMIT = rdDirectOnly
               ? getRdDirectResolveLimit(filters, finalRanked.length)
               : Math.max(0, Math.min(10, parseInt(filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0));
           const serviceLimiter = getServiceResolverLimiter(configuredDebridService);
           const resolverConfig = { ...config, service: configuredDebridService, rawConf: userConfStr };
+          const showRdDownloadRows = shouldShowRdDownloadToDebrid(filters);
+          const showRdUnknownRows = shouldShowRdUnknownRows(filters);
+          const rdVisibleRanked = configuredDebridService === 'rd'
+              ? (rdPlayableOnly
+                  ? finalRanked.filter((item) => !isKnownRdUnavailableCandidate(item))
+                  : finalRanked.filter((item) => !shouldHideRdUnreadyCandidate(item, filters)))
+              : finalRanked;
           const rdAuthorityRanked = rdDirectOnly
               ? [
-                  ...finalRanked.filter(isTorrentioRdAuthorityCandidate),
-                  ...finalRanked.filter((item) => !isTorrentioRdAuthorityCandidate(item))
+                  ...rdVisibleRanked.filter(isTorrentioRdAuthorityCandidate),
+                  ...rdVisibleRanked.filter((item) => !isTorrentioRdAuthorityCandidate(item) && !isTorrentioRdDownloadCandidate(item)),
+                  ...rdVisibleRanked.filter(isTorrentioRdDownloadCandidate)
               ]
-              : finalRanked;
-          const immediateCandidates = rdAuthorityRanked.slice(0, TOP_LIMIT);
+              : rdVisibleRanked;
+          if (configuredDebridService === 'rd') {
+              const hiddenUnready = finalRanked.length - rdVisibleRanked.length;
+              if (hiddenUnready > 0) logger.info(`[RD DISPLAY] hidden download/unknown rows=${hiddenUnready} downloadRows=${showRdDownloadRows} unknownRows=${showRdUnknownRows}`);
+          }
+          const immediatePool = rdDirectOnly
+              ? (rdPlayableOnly
+                  ? rdAuthorityRanked.filter((item) => !isKnownRdUnavailableCandidate(item))
+                  : rdAuthorityRanked.filter((item) => showRdDownloadRows || !isTorrentioRdDownloadCandidate(item)))
+              : rdAuthorityRanked;
+          const immediateCandidates = immediatePool.slice(0, TOP_LIMIT);
           const immediatePromises = immediateCandidates.map((item) => {
               const runtimeItem = createRuntimeItem(item, meta);
               return serviceLimiter.schedule(async () => {
@@ -4994,24 +5125,26 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
                   return stream;
               });
           });
-          const lazyCandidates = rdDirectOnly ? [] : finalRanked.slice(TOP_LIMIT).map((item) => createRuntimeItem(item, meta));
+          const lazyCandidates = rdDirectOnly ? [] : rdAuthorityRanked.slice(TOP_LIMIT).map((item) => createRuntimeItem(item, meta));
           const lazyStreams = lazyCandidates
               .map((item) => generateLazyStream(item, resolverConfig, meta, reqHost, userConfStr, true))
               .filter(Boolean);
           const resolvedInstant = (await Promise.allSettled(immediatePromises)).flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : []);
           let rdDownloadFallbackStreams = [];
-          if (rdDirectOnly && shouldShowRdDownloadToDebrid(filters)) {
+          if (rdDirectOnly && showRdDownloadRows && !rdPlayableOnly) {
               const resolvedHashes = collectExistingTorrentHashes([], resolvedInstant);
               const downloadTarget = getRdDownloadFallbackTarget(filters, CONFIG.MAX_RESULTS || 12);
               const downloadLimit = Math.max(0, downloadTarget - resolvedInstant.length);
-              rdDownloadFallbackStreams = rdAuthorityRanked
+              const explicitDownload = rdAuthorityRanked.filter(isTorrentioRdDownloadCandidate);
+              const softFallback = rdAuthorityRanked.filter((item) => !isTorrentioRdDownloadCandidate(item));
+              rdDownloadFallbackStreams = [...explicitDownload, ...softFallback]
                   .filter((item) => !resolvedHashes.has(String(item?.hash || item?.infoHash || extractInfoHash(item?.magnet) || '').toLowerCase()))
                   .filter((item) => !isKnownRdUnavailableCandidate(item))
                   .slice(0, downloadLimit)
                   .map((item) => generateRdDownloadToDebridStream(item, resolverConfig, meta, reqHost, userConfStr))
                   .filter(Boolean);
           }
-          const rdVerifiedDbFallbackStreams = rdDirectOnly
+          const rdVerifiedDbFallbackStreams = (rdDirectOnly && !rdPlayableOnly)
               ? buildRdVerifiedDbFallbackStreams({
                   finalRanked: rdAuthorityRanked,
                   resolvedInstant,
@@ -5025,13 +5158,15 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               })
               : [];
           if (rdVerifiedDbFallbackStreams.length > 0) {
-              logger.info(`[RD DB FALLBACK] verified DB fallback streams=${rdVerifiedDbFallbackStreams.length} reason=rd_direct_zero_live`);
+              logger.info(`[RD DB FALLBACK] verified DB fallback streams=${rdVerifiedDbFallbackStreams.length} reason=rd_direct_fill resolved=${resolvedInstant.length}`);
           }
-          debridStreams = [...resolvedInstant, ...lazyStreams, ...rdDownloadFallbackStreams, ...rdVerifiedDbFallbackStreams];
+          debridStreams = rdPlayableOnly
+              ? resolvedInstant
+              : [...resolvedInstant, ...lazyStreams, ...rdDownloadFallbackStreams, ...rdVerifiedDbFallbackStreams];
           if (rdDirectOnly) {
               const rdAuthorityTotal = finalRanked.filter(isTorrentioRdAuthorityCandidate).length;
               const rdAuthorityAttempted = immediateCandidates.filter(isTorrentioRdAuthorityCandidate).length;
-              logger.info(`[RD DIRECT] lazy disabled | candidates=${finalRanked.length} resolved=${resolvedInstant.length} attempted=${TOP_LIMIT} downloadFallback=${rdDownloadFallbackStreams.length} dbVerifiedFallback=${rdVerifiedDbFallbackStreams.length} suppressed=${Math.max(0, finalRanked.length - TOP_LIMIT)} torrentioAuthority=${rdAuthorityTotal}/${rdAuthorityAttempted}`);
+              logger.info(`[RD DIRECT] playableOnly=${rdPlayableOnly} | candidates=${finalRanked.length} visible=${rdVisibleRanked.length} resolvePool=${immediatePool.length} resolved=${resolvedInstant.length} shown=${debridStreams.length} attempted=${immediateCandidates.length}/${TOP_LIMIT} downloadFallback=${rdDownloadFallbackStreams.length} dbVerifiedFallback=${rdVerifiedDbFallbackStreams.length} suppressed=${Math.max(0, rdVisibleRanked.length - immediateCandidates.length)} torrentioAuthority=${rdAuthorityTotal}/${rdAuthorityAttempted}`);
           } else {
               warmupLazyStreamsInBackground(resolverConfig, lazyCandidates, meta);
           }
