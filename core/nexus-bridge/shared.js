@@ -587,7 +587,13 @@ function sanitizeFetchType(type, id) {
 }
 
 function sanitizePathSegment(value) { return encodeURIComponent(String(value || '').trim()); }
-function normalizeAddonUrl(baseUrl) { return baseUrl ? String(baseUrl).replace(/\/+$/, '') : null; }
+function normalizeAddonUrl(baseUrl) {
+    if (!baseUrl) return null;
+    return String(baseUrl)
+        .replace(/\/+$/, '')
+        .replace(/\/manifest\.json$/i, '')
+        .replace(/\/stream$/i, '');
+}
 
 function getAddonHealth(addonKey) {
     const state = addonHealth.get(addonKey);
