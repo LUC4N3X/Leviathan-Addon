@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 const RD_BASE_URL = 'https://api.real-debrid.com/rest/1.0';
 const RD_TIMEOUT = 30000;
 const RD_FAST_TIMEOUT = 5000;
@@ -8,11 +10,15 @@ const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mpg|mpeg)$
 const PACK_TITLE_PATTERN = /\b(trilog(?:y)?|saga|collection|collezione|pack|complete|completa|integrale|filmografia)\b/i;
 const RD_CACHED_STATUSES = new Set(['downloaded']);
 const RD_TERMINAL_UNCACHED_STATUSES = new Set(['error', 'magnet_error', 'virus', 'dead']);
-// Default fissati nel codice: probe severo sui pack, nessun env necessario.
 const RD_SLOW_RECHECK_ATTEMPTS = 2;
 const RD_SLOW_RECHECK_DELAY_MS = 1200;
 const REQUIRE_EPISODE_HINT_FOR_PACKS = true;
 const RD_CACHED_RECHECK_HOURS = 168;
+const RD_PROBE_CACHE_HIT_TTL_MS = Math.max(30_000, Number(process.env.RD_PROBE_CACHE_HIT_TTL_MS || 300_000) || 300_000);
+const RD_PROBE_CACHE_MISS_TTL_MS = Math.max(10_000, Number(process.env.RD_PROBE_CACHE_MISS_TTL_MS || 90_000) || 90_000);
+const RD_PROBE_CACHE_DEFERRED_TTL_MS = Math.max(5_000, Number(process.env.RD_PROBE_CACHE_DEFERRED_TTL_MS || 35_000) || 35_000);
+const RD_PROBE_CACHE_MAX_ENTRIES = Math.max(100, Number(process.env.RD_PROBE_CACHE_MAX_ENTRIES || 2500) || 2500);
+const probeResultCache = new Map();
 const { findEpisodeFileHint } = require('../../../matching/season_pack_inspector');
 const { hasWrongExplicitEpisodeMarker } = require('../../../matching/episode_matcher');
 const { scheduleRealDebridRequest } = require('../utils/rd_rate_limiter');
@@ -32,6 +38,61 @@ function normalizeHash(hash) {
 
 function normalizeStatus(status) {
     return String(status || '').trim().toLowerCase();
+}
+
+function tokenCacheScope(token = '') {
+    return crypto.createHash('sha1').update(String(token || 'no-token')).digest('hex').slice(0, 12);
+}
+
+function getProbeCacheKey(item = {}, token = '') {
+    const hash = normalizeHash(item?.hash || item?.infoHash);
+    if (!hash) return null;
+    const season = Number(item?.season || item?._probeSeason || 0) || 0;
+    const episode = Number(item?.episode || item?._probeEpisode || 0) || 0;
+    const fileIdx = Number.isInteger(Number(item?.fileIdx ?? item?.file_index ?? item?.rd_file_index))
+        ? Number(item?.fileIdx ?? item?.file_index ?? item?.rd_file_index)
+        : -1;
+    return `${tokenCacheScope(token)}:${hash}:s${season}:e${episode}:f${fileIdx}`;
+}
+
+function pruneProbeResultCache() {
+    if (probeResultCache.size <= RD_PROBE_CACHE_MAX_ENTRIES) return;
+    const now = Date.now();
+    for (const [key, entry] of probeResultCache.entries()) {
+        if (!entry || Number(entry.expiresAt || 0) <= now) probeResultCache.delete(key);
+    }
+    while (probeResultCache.size > RD_PROBE_CACHE_MAX_ENTRIES) {
+        const firstKey = probeResultCache.keys().next().value;
+        if (firstKey === undefined) break;
+        probeResultCache.delete(firstKey);
+    }
+}
+
+function cloneProbeResult(result = {}) {
+    return JSON.parse(JSON.stringify(result || {}));
+}
+
+function readProbeResultCache(item = {}, token = '') {
+    const key = getProbeCacheKey(item, token);
+    if (!key) return null;
+    const entry = probeResultCache.get(key);
+    if (!entry) return null;
+    if (Number(entry.expiresAt || 0) <= Date.now()) {
+        probeResultCache.delete(key);
+        return null;
+    }
+    return cloneProbeResult(entry.result);
+}
+
+function writeProbeResultCache(item = {}, token = '', result = {}) {
+    const key = getProbeCacheKey(item, token);
+    if (!key || !result || !result.hash) return false;
+    const ttl = result.cached === true
+        ? RD_PROBE_CACHE_HIT_TTL_MS
+        : (result.deferred === true || result.state === 'probing' ? RD_PROBE_CACHE_DEFERRED_TTL_MS : RD_PROBE_CACHE_MISS_TTL_MS);
+    probeResultCache.set(key, { result: cloneProbeResult(result), expiresAt: Date.now() + ttl });
+    pruneProbeResultCache();
+    return true;
 }
 
 function isCachedStatus(status) {
@@ -527,6 +588,25 @@ function inspectSingleHashFast(infoHash, magnet, token, context = {}) {
     return performAvailabilityProbe(infoHash, magnet, token, { fast: true, backgroundDelete: true, context });
 }
 
+function projectProbeResultForBatch(result = {}) {
+    return {
+        cached: result.cached,
+        file_title: result.file_title,
+        file_size: result.file_size,
+        file_index: result.file_index,
+        episodeFileHint: result.episodeFileHint || null,
+        pack_without_episode_hint: result.pack_without_episode_hint === true,
+        rd_status: result.rd_status || null,
+        state: result.state || (result.cached === true ? 'cached' : 'unknown'),
+        torrent_title: result.torrent_title,
+        size: result.size,
+        is_pack: result.is_pack,
+        pack_name: result.pack_name,
+        files: result.files,
+        fromLiveCheck: true
+    };
+}
+
 async function probeAvailabilityFast(items, token, limit = 5, options = {}) {
     const results = {};
     const deferred = [];
@@ -543,29 +623,21 @@ async function probeAvailabilityFast(items, token, limit = 5, options = {}) {
         // I primi risultati visibili meritano una verifica completa, altrimenti RD spesso
         // risponde "magnet_conversion/downloading" per pochi istanti e in UI finisce ⏳
         // anche quando il file è già cached. Il resto resta fast+background.
+        const cachedResult = readProbeResultCache(item, token);
+        if (cachedResult) {
+            results[normalizeHash(cachedResult.hash)] = projectProbeResultForBatch(cachedResult);
+            continue;
+        }
+
         const result = exactForeground && i < exactLimit
             ? await inspectSingleHash(item?.hash, item?.magnet, token, item)
             : await inspectSingleHashFast(item?.hash, item?.magnet, token, item);
+        writeProbeResultCache(item, token, result);
 
         if (result.deferred) {
             deferred.push(item);
         } else {
-            results[normalizeHash(result.hash)] = {
-                cached: result.cached,
-                file_title: result.file_title,
-                file_size: result.file_size,
-                file_index: result.file_index,
-                episodeFileHint: result.episodeFileHint || null,
-                pack_without_episode_hint: result.pack_without_episode_hint === true,
-                rd_status: result.rd_status || null,
-                state: result.state || (result.cached === true ? 'cached' : 'unknown'),
-                torrent_title: result.torrent_title,
-                size: result.size,
-                is_pack: result.is_pack,
-                pack_name: result.pack_name,
-                files: result.files,
-                fromLiveCheck: true
-            };
+            results[normalizeHash(result.hash)] = projectProbeResultForBatch(result);
         }
 
         if (i < toCheck.length - 1) {
