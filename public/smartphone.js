@@ -359,8 +359,14 @@ body::before {
     scroll-behavior: smooth;
 }
 
+.m-hypervisor + .m-hypervisor,
+.m-visual-core-v2 + .m-hypervisor,
+.m-hypervisor + .m-visual-core-v2 {
+    margin-top: 18px;
+}
+
 .m-section-head {
-    display: flex; align-items: center; justify-content: space-between;
+    display: none; align-items: center; justify-content: space-between;
     margin: 0 4px 12px 4px;
     padding: 6px 0 6px 12px;
     border-left: 3px solid var(--m-primary);
@@ -407,7 +413,7 @@ body::before {
 
 .m-hero {
     text-align: center;
-    padding: 26px 10px 18px;
+    padding: 24px 8px 22px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -416,6 +422,51 @@ body::before {
     overflow: visible;
     z-index: 10;
     isolation: isolate;
+}
+
+.m-hero-panel {
+    width: 100%;
+    max-width: 400px;
+    padding: 18px 4px 24px;
+    position: relative;
+    overflow: visible;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+}
+
+.m-hero-panel::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 26px;
+    width: min(420px, 108vw);
+    height: 248px;
+    transform: translateX(-50%);
+    pointer-events: none;
+    z-index: -3;
+    background:
+        radial-gradient(ellipse at 50% 32%, rgba(91, 236, 255, 0.30), rgba(91, 236, 255, 0.12) 30%, rgba(60, 120, 255, 0.07) 54%, transparent 76%),
+        radial-gradient(ellipse at 50% 82%, rgba(0, 255, 210, 0.11), transparent 64%);
+    filter: blur(20px);
+}
+
+.m-hero-panel::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 188px;
+    width: min(360px, 92vw);
+    height: 106px;
+    transform: translateX(-50%);
+    pointer-events: none;
+    z-index: -2;
+    background:
+        linear-gradient(90deg, transparent 0%, rgba(115, 245, 255, 0.26) 18%, rgba(109, 94, 255, 0.16) 50%, rgba(115, 245, 255, 0.26) 82%, transparent 100%),
+        radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.13), transparent 58%);
+    border-radius: 999px;
+    filter: blur(18px);
+    opacity: 0.82;
 }
 
 .m-hero::before {
@@ -448,9 +499,9 @@ body::before {
 }
 
 .logo-container {
-    width: 156px;
-    height: 156px;
-    margin: 0 auto 13px;
+    width: 184px;
+    height: 184px;
+    margin: 0 auto 16px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -487,6 +538,35 @@ body::before {
     pointer-events: none;
 }
 
+.logo-container .m-abyss-crown {
+    position: absolute;
+    inset: -18px;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: -2;
+    background:
+        conic-gradient(from 210deg, transparent 0 16%, rgba(0,242,255,0.18) 22%, transparent 30% 48%, rgba(124,58,237,0.18) 55%, transparent 64% 82%, rgba(45,212,191,0.16) 88%, transparent 100%);
+    filter: blur(3px);
+    opacity: 0.9;
+}
+
+.logo-container .m-abyss-crown::before,
+.logo-container .m-abyss-crown::after {
+    content: '';
+    position: absolute;
+    inset: 14px;
+    border-radius: 50%;
+    border: 1px solid rgba(141, 250, 255, 0.18);
+    transform: rotate(-10deg) scaleX(1.22);
+    box-shadow: 0 0 18px rgba(0,242,255,0.12);
+}
+
+.logo-container .m-abyss-crown::after {
+    inset: 30px;
+    border-color: rgba(124, 58, 237, 0.17);
+    transform: rotate(16deg) scaleX(1.28);
+}
+
 @keyframes breathe {
     0%, 100% { transform: scale(1); }
     50% { transform: scale(1.018); }
@@ -495,7 +575,7 @@ body::before {
 .logo-image {
     width: 108%;
     height: auto;
-    max-width: 140px;
+    max-width: 152px;
     object-fit: contain;
     border-radius: 0;
     transform: translateY(5px) scale(1.03);
@@ -523,8 +603,8 @@ body::before {
     position: absolute;
     top: -20px;
     left: -20px;
-    width: 196px;
-    height: 196px;
+    width: 212px;
+    height: 212px;
     pointer-events: none;
     z-index: 1;
     overflow: visible;
@@ -548,11 +628,12 @@ body::before {
 
 .m-brand-title {
     font-family: 'Rajdhani', sans-serif;
-    font-size: 3.05rem; font-weight: 900; line-height: 0.90;
+    font-size: 3.38rem; font-weight: 900; line-height: 0.88;
+    display: inline-block;
     background: linear-gradient(180deg, #ffffff 0%, #9efcff 28%, #1fe6ff 58%, #6783ff 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     margin: 4px 0 0 0; letter-spacing: 0.8px;
-    filter: drop-shadow(0 0 11px rgba(0, 242, 255, 0.34));
+    filter: drop-shadow(0 0 14px rgba(0, 242, 255, 0.42)) drop-shadow(0 12px 24px rgba(0,0,0,0.32));
     position: relative; z-index: 10;
     animation: titleGlow 4.5s ease-in-out infinite alternate;
 }
@@ -561,8 +642,20 @@ body::before {
     from { opacity: 0.88; }
     to   { opacity: 1; }
 }
+
+.m-brand-title::after {
+    content: '';
+    display: block;
+    width: 86%;
+    height: 2px;
+    margin: 9px auto 0;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, rgba(141,250,255,0.72), rgba(124,58,237,0.42), transparent);
+    box-shadow: 0 0 16px rgba(0,242,255,0.26);
+    opacity: 0.72;
+}
 .m-brand-sub {
-    font-family: 'Rajdhani', sans-serif; font-size: 0.75rem; letter-spacing: 4.7px;
+    font-family: 'Rajdhani', sans-serif; font-size: 0.79rem; letter-spacing: 4.7px;
     color: var(--m-primary); text-transform: uppercase; margin-top: 8px;
     font-weight: 800; opacity: 0.95; display: flex; align-items: center; justify-content: center;
     width: 100%; text-shadow: 0 0 8px var(--m-primary); white-space: nowrap;
@@ -576,9 +669,48 @@ body::before {
 .m-brand-sub::after { background: linear-gradient(90deg, var(--m-primary), transparent); }
 
 .m-brand-desc {
-    font-family: 'Outfit', sans-serif; font-size: 0.74rem; color: var(--m-dim);
-    line-height: 1.38; margin-top: 8px; margin-bottom: 7px; max-width: 268px;
-    opacity: 0.9; position: relative; z-index: 10;
+    font-family: 'Outfit', sans-serif;
+    font-size: 0.79rem;
+    color: rgba(224,247,250,0.88);
+    line-height: 1.45;
+    margin-top: 13px;
+    margin-bottom: 13px;
+    max-width: 330px;
+    opacity: 0.95;
+    position: relative;
+    z-index: 10;
+}
+
+.m-hero-badges {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 10px;
+    margin-bottom: 8px;
+    position: relative;
+    z-index: 10;
+}
+
+.m-hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(125, 227, 255, 0.22);
+    background:
+        linear-gradient(180deg, rgba(11, 31, 48, 0.64), rgba(5, 15, 26, 0.34)),
+        radial-gradient(circle at 50% 0%, rgba(145, 245, 255, 0.13), transparent 62%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 8px 18px rgba(0,0,0,0.18), 0 0 18px rgba(0,242,255,0.08);
+    color: #dffcff;
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 800;
+    font-size: 0.68rem;
+    letter-spacing: 1.25px;
+    text-transform: uppercase;
+    backdrop-filter: blur(9px);
 }
 
 .m-version-tag {
@@ -1051,7 +1183,7 @@ body::before {
 }
 .tag-noproxy { border-color: #444; color: #777; background: rgba(255,255,255,0.02); }
 .tag-mfp { border-color: rgba(0, 242, 255, 0.3); color: var(--m-primary); background: rgba(0, 242, 255, 0.05); }
-.tag-kraken { border-color: rgba(56, 189, 248, 0.7); color: #bae6fd; background: rgba(56, 189, 248, 0.12); }
+.tag-kraken { border-color: rgba(34, 211, 238, 0.58); color: #b9f7ff; background: rgba(34, 211, 238, 0.10); box-shadow: 0 0 12px rgba(34, 211, 238, 0.12); }
 
 .m-reactor-module::after {
     content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -4693,15 +4825,20 @@ body::before {
 }
 
 .m-abyss-sub {
-    width: auto;
-    max-width: 92%;
-    margin-top: 10px;
-    padding: 6px 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: fit-content;
+    min-width: min(82vw, 330px);
+    max-width: 92vw;
+    margin: 10px auto 0;
+    padding: 8px 22px;
     border-radius: 999px;
     color: rgba(238, 252, 255, 0.92);
     background: linear-gradient(135deg, rgba(255,255,255,0.11), rgba(255,255,255,0.045));
     border: 1px solid rgba(255,255,255,0.13);
     letter-spacing: 3.6px;
+    text-align: center;
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 10px 28px rgba(0,0,0,0.20);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
@@ -4976,6 +5113,12 @@ body.m-typing .m-content {
         letter-spacing: 2.6px !important;
     }
 
+    .m-abyss-sub {
+        min-width: min(84vw, 304px) !important;
+        padding-left: 18px !important;
+        padding-right: 18px !important;
+    }
+
     .m-version-tag {
         margin-top: 6px !important;
     }
@@ -5149,6 +5292,109 @@ body.m-lowfx .m-caustic {
     display: none !important;
 }
 
+.m-section-head {
+    min-height: 0 !important;
+    margin: 16px 2px 12px !important;
+    padding: 8px 10px 8px 12px !important;
+    border-radius: 17px !important;
+    background:
+        linear-gradient(135deg, rgba(125,249,255,0.105), rgba(45,212,191,0.060) 46%, rgba(10,26,44,0.54)),
+        radial-gradient(circle at 8% 0%, rgba(226,255,255,0.11), transparent 36%) !important;
+    border: 1px solid rgba(125,249,255,0.18) !important;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.20), inset 0 1px 0 rgba(255,255,255,0.105) !important;
+}
+
+.m-section-head::before {
+    left: 9px !important;
+    top: 11px !important;
+    bottom: 11px !important;
+    width: 2px !important;
+    background: linear-gradient(180deg, #d8ffff, #7df9ff, #2dd4bf, #38bdf8) !important;
+    box-shadow: 0 0 12px rgba(125,249,255,0.34) !important;
+}
+
+.m-section-head .sh-titles {
+    padding-left: 9px !important;
+    gap: 1px !important;
+}
+
+.m-section-head .sh-title {
+    font-size: 0.90rem !important;
+    letter-spacing: 2.15px !important;
+    color: rgba(248,253,255,0.96) !important;
+    text-shadow: 0 0 12px rgba(125,249,255,0.20) !important;
+}
+
+.m-section-head .sh-sub {
+    font-size: 0.56rem !important;
+    letter-spacing: 1.22px !important;
+    color: rgba(210,242,249,0.58) !important;
+}
+
+.m-section-head .sh-tag {
+    padding: 4px 8px !important;
+    font-size: 0.54rem !important;
+    color: rgba(232,255,255,0.92) !important;
+    border-color: rgba(125,249,255,0.20) !important;
+    background: linear-gradient(135deg, rgba(125,249,255,0.12), rgba(45,212,191,0.055)) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08) !important;
+}
+
+.m-hyp-header {
+    font-size: 0.83rem !important;
+    letter-spacing: 2.35px !important;
+    color: rgba(248,253,255,0.96) !important;
+    text-shadow: 0 0 10px rgba(125,249,255,0.17) !important;
+    border-bottom-color: rgba(125,249,255,0.13) !important;
+}
+
+.m-hyp-header .m-hyp-icon {
+    background: linear-gradient(135deg, rgba(125,249,255,0.13), rgba(45,212,191,0.070)) !important;
+    border-color: rgba(125,249,255,0.23) !important;
+}
+
+
+.m-panel-desc {
+    margin: -6px 2px 14px;
+    padding: 10px 12px 11px 13px;
+    border-radius: 14px;
+    background:
+        linear-gradient(135deg, rgba(125,249,255,0.075), rgba(45,212,191,0.040) 48%, rgba(2,12,24,0.34)),
+        radial-gradient(circle at 0% 0%, rgba(226,255,255,0.08), transparent 34%);
+    border: 1px solid rgba(125,249,255,0.13);
+    color: rgba(214,244,250,0.72);
+    font-family: 'Outfit', sans-serif;
+    font-size: 0.68rem;
+    line-height: 1.38;
+    letter-spacing: 0.18px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.055), 0 10px 24px rgba(0,0,0,0.18);
+}
+
+.m-panel-desc b {
+    color: rgba(248,253,255,0.95);
+    font-weight: 800;
+}
+
+@media (max-width: 360px) {
+    .m-panel-desc { font-size: 0.63rem; padding: 9px 10px; }
+}
+
+@media (max-width: 360px) {
+    .m-section-head .sh-title { font-size: 0.84rem !important; letter-spacing: 1.7px !important; }
+    .m-section-head .sh-sub { font-size: 0.52rem !important; letter-spacing: 0.95px !important; }
+    .m-section-head .sh-tag { font-size: 0.50rem !important; padding: 3px 7px !important; }
+}
+
+
+@media (max-width: 370px) {
+    .logo-container { width: 164px; height: 164px; }
+    .logo-image { max-width: 136px; }
+    .m-brand-title { font-size: 3rem; }
+    .m-brand-desc { font-size: 0.73rem; max-width: 300px; }
+    .m-hero-badge { font-size: 0.62rem; padding: 0 9px; }
+}
+
+
 `;
 
 const mobileHTML = `
@@ -5171,39 +5417,40 @@ const mobileHTML = `
 
         <div class="m-content">
             <div class="m-hero m-abyss-hero notranslate" aria-label="LEVIATHAN Kit" translate="no" data-no-translate="true">
-                <div class="logo-container m-abyss-logo">
-                    <span class="m-abyss-crown" aria-hidden="true"></span>
-                    <img src="${MOBILE_LOGO_URL}" alt="LEVIATHAN Logo" class="logo-image notranslate" translate="no" data-no-translate="true" fetchpriority="high" decoding="sync" loading="eager" width="156" height="156">
-                    <div class="logo-particles" aria-hidden="true">
-                        <span class="logo-particle" style="left:18%; width:5px; height:5px; animation-delay:0s;"></span>
-                        <span class="logo-particle" style="left:38%; width:3px; height:3px; animation-delay:2.4s;"></span>
-                        <span class="logo-particle" style="left:63%; width:4px; height:4px; animation-delay:4.1s;"></span>
-                        <span class="logo-particle" style="left:78%; width:3px; height:3px; animation-delay:6.2s;"></span>
+                <div class="m-hero-panel">
+                    <div class="logo-container m-abyss-logo">
+                        <span class="m-abyss-crown" aria-hidden="true"></span>
+                        <img src="${MOBILE_LOGO_URL}" alt="LEVIATHAN Logo" class="logo-image notranslate" translate="no" data-no-translate="true" fetchpriority="high" decoding="sync" loading="eager" width="172" height="172">
+                        <div class="logo-particles" aria-hidden="true">
+                            <span class="logo-particle" style="left:18%; width:5px; height:5px; animation-delay:0s;"></span>
+                            <span class="logo-particle" style="left:38%; width:3px; height:3px; animation-delay:2.4s;"></span>
+                            <span class="logo-particle" style="left:63%; width:4px; height:4px; animation-delay:4.1s;"></span>
+                            <span class="logo-particle" style="left:78%; width:3px; height:3px; animation-delay:6.2s;"></span>
+                        </div>
                     </div>
-                </div>
-                <h1 class="m-brand-title m-abyss-title notranslate" translate="no" lang="zxx" data-brand-lock="LEVIATHAN" data-no-translate="true" aria-label="LEVIATHAN">LEVIATHAN</h1>
-                <div class="m-brand-sub m-abyss-sub">Sovrano degli abissi</div>
-                <div class="m-version-tag m-abyss-version" aria-label="Versione 3.1.0">
-                    <span class="m-v-dot" aria-hidden="true"></span>
-                    <span>v3.1.0</span>
+                    <h1 class="m-brand-title m-abyss-title notranslate" translate="no" lang="zxx" data-brand-lock="LEVIATHAN" data-no-translate="true" aria-label="LEVIATHAN">LEVIATHAN</h1>
+                    <div class="m-brand-sub m-abyss-sub">Sovrano degli abissi</div>
+                    <div class="m-brand-desc">Cinema, serie TV e anime italiani in una dashboard mobile elegante, luminosa e pulita come acqua profonda.</div>
+                    <div class="m-hero-badges">
+                        <span class="m-hero-badge">🐬 Real-Debrid</span>
+                        <span class="m-hero-badge">🧊 TorBox</span>
+                        <span class="m-hero-badge">🦈 P2P</span>
+                    </div>
+                    <div class="m-version-tag m-abyss-version" aria-label="Versione 3.1.0">
+                        <span class="m-v-dot" aria-hidden="true"></span>
+                        <span>v3.1.0</span>
+                    </div>
                 </div>
             </div>
 
             <div id="page-setup" class="m-page active">
 
-                <div class="m-section-head">
-                    <div class="sh-titles">
-                        <span class="sh-title">🔐 Access Console</span>
-                        <span class="sh-sub">Provider, API key &amp; routing</span>
-                    </div>
-                    <span class="sh-tag">01 / 03</span>
-                </div>
-
-                <div class="m-hypervisor">
+                <div class="m-hypervisor" style="margin-top:10px;">
                     <div class="m-hyp-header">
-                        <span>🔑 AUTH &amp; PROVIDERS</span>
+                        <span>🔑 ACCESSO & SERVIZI</span>
                         <i class="fas fa-fingerprint m-hyp-icon"></i>
                     </div>
+                    <p class="m-panel-desc"><b>Configura l'accesso</b> scegliendo Real-Debrid, TorBox o P2P. La verifica live ti conferma subito se la chiave è pronta ✨🔐.</p>
 
                     <div class="m-cred-deck">
                         <div class="m-cred-opt cred-rd m-srv-btn active" onclick="setMService('rd', this)">
@@ -5246,19 +5493,12 @@ const mobileHTML = `
 
                 </div>
 
-                <div class="m-section-head">
-                    <div class="sh-titles">
-                        <span class="sh-title">🍿 Provider Hub</span>
-                        <span class="sh-sub">Sorgenti italiane ottimizzate</span>
-                    </div>
-                    <span class="sh-tag violet">02 / 03</span>
-                </div>
-
                 <div class="m-hypervisor">
                      <div class="m-hyp-header">
-                        <span>🍿 PROVIDER STREAMS</span>
+                        <span>🍿 PROVIDER STREAMS ✨</span>
                         <i class="fas fa-cubes m-hyp-icon"></i>
                     </div>
+                    <p class="m-panel-desc"><b>Scegli le sorgenti da attivare</b>: Leviathan unisce cinema, serie e anime italiani in un catalogo pulito, veloce e facile da controllare 🍿📺✨.</p>
 
                     <div class="m-reactor-grid">
 
@@ -5274,9 +5514,9 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🍿 Film e serie TV italiani, catalogo ricco e player rapido</span>
+                                <span class="m-reactor-desc">Film e serie TV in italiano, catalogo ricco e player rapido 🍿.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
 
                                 <div id="m-sc-options" class="m-sc-subpanel">
@@ -5301,9 +5541,9 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎬 Film e serie TV in HD, con nuove uscite e schede ordinate</span>
+                                <span class="m-reactor-desc">Film e serie TV in alta definizione, nuove uscite e schede ordinate 🎬.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-check-circle"></i> OTTIMIZZATO</span>
+                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
                                 </div>
                             </div>
                         </div>
@@ -5320,9 +5560,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-purple"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">📺 Serie TV italiane, stagioni ed episodi facili da seguire</span>
+                                <span class="m-reactor-desc">Serie TV italiane organizzate per stagioni ed episodi 📺.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
                             </div>
                         </div>
@@ -5339,9 +5579,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">📡 Archivio serie TV ordinato per stagioni ed episodi</span>
+                                <span class="m-reactor-desc">Archivio serie TV ordinato, con navigazione semplice per episodio 📚.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
                             </div>
                         </div>
@@ -5358,9 +5598,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🌍 Storico portale italiano dedicato alle serie TV</span>
+                                <span class="m-reactor-desc">Portale italiano storico dedicato a serie TV e contenuti aggiornati ⭐.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-check-circle"></i> OTTIMIZZATO</span>
+                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
                                 </div>
                             </div>
                         </div>
@@ -5377,9 +5617,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎬 Ampio catalogo di film e serie TV, molto conosciuto in Italia</span>
+                                <span class="m-reactor-desc">Ampio catalogo di film e serie TV, tra i riferimenti più noti in Italia 🎞️.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-mfp"><i class="fas fa-check-circle"></i> OTTIMIZZATO</span>
+                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
                                 </div>
                             </div>
                         </div>
@@ -5396,9 +5636,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🐉 Anime sub-ita e doppiati, schede serie e catalogo ricco</span>
+                                <span class="m-reactor-desc">Anime sub-ita e doppiati, con schede serie e catalogo ampio 🌸.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
                             </div>
                         </div>
@@ -5415,9 +5655,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🌊 Anime, simulcast e doppiaggi con episodi aggiornati</span>
+                                <span class="m-reactor-desc">Anime, simulcast e doppiaggi con episodi aggiornati e ordinati 🪄.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
                             </div>
                         </div>
@@ -5434,9 +5674,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🪐 Anime classici e recenti, archivio ampio e veloce</span>
+                                <span class="m-reactor-desc">Anime classici e recenti, archivio ampio e consultazione rapida 🪐.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
                             </div>
                         </div>
@@ -5453,9 +5693,9 @@ const mobileHTML = `
                                         <span class="m-slider m-slider-green"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎞️ Film in streaming con raccolte per genere e ultime uscite</span>
+                                <span class="m-reactor-desc">Film in streaming con raccolte per genere e ultime uscite 🎥.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
                             </div>
                         </div>
@@ -5472,9 +5712,9 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">🎟️ Film e serie TV con catalogo aggiornato e navigazione semplice</span>
+                                <span class="m-reactor-desc">Film e serie TV con catalogo aggiornato e navigazione intuitiva 🎟️.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-bolt"></i> VELOCE</span>
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
                             </div>
                         </div>
@@ -5533,168 +5773,13 @@ const mobileHTML = `
 
             <div id="page-filters" class="m-page">
 
-                <div class="m-section-head">
-                    <div class="sh-titles">
-                        <span class="sh-title">🎨 Skin Studio</span>
-                        <span class="sh-sub">Anteprima formatter &amp; preset</span>
-                    </div>
-                    <span class="sh-tag">SKIN</span>
-                </div>
-
-                <div class="m-visual-core-v2" id="m-visual-core-v2">
-
-                     <div class="m-hyp-header" style="margin-bottom:15px; border:none; padding-bottom:0;">
-                        <span>🎨 FORMATTER PREVIEW</span>
-                        <i class="fas fa-swatchbook m-hyp-icon"></i>
-                     </div>
-
-                     <div class="m-aio-lock" id="m-aio-lock-overlay">
-                        <i class="fas fa-lock m-lock-icon"></i>
-                        <div class="m-lock-text">OVERRIDDEN BY AIO CORE</div>
-                        <div class="m-lock-sub">Disabilita "Compatibilita AIO" per sbloccare le skin.</div>
-                    </div>
-
-                    <div class="m-visual-preview" id="m-preview-box">
-                        <div class="m-recalc-overlay" id="m-recalc-layer">
-                            <div class="m-recalc-text"><i class="fas fa-cog fa-spin"></i> 🔄 AGGIORNO PREVIEW...</div>
-                        </div>
-
-                        <div class="m-vp-icon" id="m-prev-icon">♆</div>
-                        <div class="m-vp-text">
-                            <div class="m-vp-mode" id="m-prev-mode">LEVIATHAN CORE</div>
-                            <div class="m-vp-title" id="m-prev-title">LEVIATHAN</div>
-                            <div class="m-vp-sub" id="m-prev-info">...</div>
-                        </div>
-                    </div>
-
-                    <div class="m-cortex-grid">
-                        <div class="m-cortex-chip active" id="msk_leviathan" onclick="selectMobileSkin('leviathan')">
-                            <div class="m-chip-icon m-leviathan-rune">♆</div>
-                            <div class="m-chip-label">Leviathan</div>
-                            <div class="m-chip-sub">Signature</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_premium" onclick="selectMobileSkin('premium')">
-                            <div class="m-chip-icon">👑</div>
-                            <div class="m-chip-label">Apex Prime</div>
-                            <div class="m-chip-sub">Flagship</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_ultra_compact" onclick="selectMobileSkin('ultra_compact')">
-                            <div class="m-chip-icon">⚡️</div>
-                            <div class="m-chip-label">Pulse Compact</div>
-                            <div class="m-chip-sub">Dense</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_tv_compact" onclick="selectMobileSkin('tv_compact')">
-                            <div class="m-chip-icon">📺</div>
-                            <div class="m-chip-label">Neon TV</div>
-                            <div class="m-chip-sub">Big Screen</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_lev2" onclick="selectMobileSkin('lev2')">
-                            <div class="m-chip-icon">🧬</div>
-                            <div class="m-chip-label">Architect</div>
-                            <div class="m-chip-sub">Structured</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_fra" onclick="selectMobileSkin('fra')">
-                            <div class="m-chip-icon">⚡️</div>
-                            <div class="m-chip-label">Horizon</div>
-                            <div class="m-chip-sub">Classic</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_comet" onclick="selectMobileSkin('comet')">
-                            <div class="m-chip-icon">☄️</div>
-                            <div class="m-chip-label">Comet</div>
-                            <div class="m-chip-sub">Scan</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_stremio_ita" onclick="selectMobileSkin('stremio_ita')">
-                            <div class="m-chip-icon">🇮🇹</div>
-                            <div class="m-chip-label">ITA Mod</div>
-                            <div class="m-chip-sub">Compat</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_dav" onclick="selectMobileSkin('dav')">
-                            <div class="m-chip-icon">📼</div>
-                            <div class="m-chip-label">Datastream</div>
-                            <div class="m-chip-sub">Verbose</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_pri" onclick="selectMobileSkin('pri')">
-                            <div class="m-chip-icon">👑</div>
-                            <div class="m-chip-label">Eclipse</div>
-                            <div class="m-chip-sub">Prime</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_and" onclick="selectMobileSkin('and')">
-                            <div class="m-chip-icon">🎬</div>
-                            <div class="m-chip-label">Matrix</div>
-                            <div class="m-chip-sub">Cinema</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_lad" onclick="selectMobileSkin('lad')">
-                            <div class="m-chip-icon">🎟️</div>
-                            <div class="m-chip-label">Compact</div>
-                            <div class="m-chip-sub">Lean</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_torrentio" onclick="selectMobileSkin('torrentio')">
-                            <div class="m-chip-icon">📜</div>
-                            <div class="m-chip-label">Torrentio</div>
-                            <div class="m-chip-sub">Classic</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_vertical" onclick="selectMobileSkin('vertical')">
-                            <div class="m-chip-icon">📑</div>
-                            <div class="m-chip-label">Vertical</div>
-                            <div class="m-chip-sub">Stacked</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_complex" onclick="selectMobileSkin('complex')">
-                            <div class="m-chip-icon">🔲</div>
-                            <div class="m-chip-label">Template</div>
-                            <div class="m-chip-sub">Matrix</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_android" onclick="selectMobileSkin('android')">
-                            <div class="m-chip-icon">📺</div>
-                            <div class="m-chip-label">Android TV</div>
-                            <div class="m-chip-sub">Console</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_picture" onclick="selectMobileSkin('picture')">
-                            <div class="m-chip-icon">🖼️</div>
-                            <div class="m-chip-label">Picture</div>
-                            <div class="m-chip-sub">Poster</div>
-                        </div>
-                        <div class="m-cortex-chip" id="msk_custom" onclick="selectMobileSkin('custom')" style="grid-column: span 3; border-style: dashed; background: rgba(0,0,0,0.3);">
-                            <div class="m-chip-icon">⌨️</div>
-                            <div class="m-chip-label">Custom</div>
-                            <div class="m-chip-sub">Manual</div>
-                        </div>
-                    </div>
-
-                    <div id="m-custom-skin-area" class="m-custom-dash">
-                        <div class="m-custom-desc">
-                            Usa i tag dinamici per costruire il tuo formato. Incolla il template qui sotto:
-                        </div>
-                        <div class="m-tag-list">
-                            <div class="m-tag-item">{title}</div>
-                            <div class="m-tag-item">{quality}</div>
-                            <div class="m-tag-item">{size}</div>
-                            <div class="m-tag-item">{source}</div>
-                            <div class="m-tag-item">{service}</div>
-                            <div class="m-tag-item">{score_badge}</div>
-                            <div class="m-tag-item">{meter}</div>
-                            <div class="m-tag-item">{summary}</div>
-                        </div>
-                        <input type="text" class="m-input" id="m-customTemplate" placeholder="Es: Apex {quality} {score_badge} ||| {title}{n}{summary}" style="padding:10px; font-size:16px; border:1px solid rgba(255,255,255,0.3);" oninput="updateMobilePreview(); updateLinkModalContent()">
-                    </div>
-                </div>
-
-                <div class="m-section-head">
-                    <div class="sh-titles">
-                        <span class="sh-title">⚙️ Stream Rules</span>
-                        <span class="sh-sub">Sort, lingua, cache e limiti</span>
-                    </div>
-                    <span class="sh-tag warn">RULES</span>
-                </div>
-
                 <div class="m-hypervisor">
                     <div class="m-hyp-header">
-                        <span>⚙️ QUALITY RULES</span>
+                        <span>⚙️ REGOLE STREAM</span>
                         <i class="fas fa-microchip m-hyp-icon"></i>
                     </div>
 
-                    <p class="m-hyp-desc" style="margin-bottom:15px;">
-                        ⚡ Ottimizza risultati, lingua e filtri senza appesantire lo smartphone.
-                    </p>
+                    <p class="m-panel-desc"><b>Controlla cosa mostra Leviathan</b>: ordina per qualità, scegli la lingua, limita i risultati e mantieni la lista pulita anche su smartphone 🎯📱.</p>
 
                     <div class="m-flux-control">
                         <div class="m-flux-grid">
@@ -5716,13 +5801,13 @@ const mobileHTML = `
                             <i class="fas fa-info-circle m-fr-icon" id="flux-icon-display"></i>
                             <div class="m-fr-text">
                                 <span class="m-fr-title" id="flux-title-display">STANDARD MODE</span>
-                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan. Bilancia perfettamente qualita e velocita.</span>
+                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan ✨. Bilancia perfettamente qualita e velocita ⚡.</span>
                             </div>
                         </div>
                     </div>
 
                     <div class="m-hyp-header" style="margin-top:25px; border-top:none; padding-top:0; margin-bottom:10px;">
-                         <span>🗣️ AUDIO &amp; LANGUAGE</span>
+                         <span>🗣️ AUDIO &amp; LINGUA</span>
                          <i class="fas fa-globe-americas m-hyp-icon"></i>
                     </div>
 
@@ -5743,7 +5828,7 @@ const mobileHTML = `
 
                     <div id="lang-desc-container" style="background: rgba(0,0,0,0.2); border-radius: 8px; padding: 10px; margin-bottom: 25px; border-left: 3px solid var(--m-primary);">
                         <p id="lang-description" style="margin:0; font-size: 0.7rem; color: var(--m-dim); line-height: 1.3; font-family:'Outfit';">
-                             Cerca solo contenuti in Italiano. Ignora tutto il resto.
+                             Cerca solo contenuti in Italiano 🇮🇹. Ignora tutto il resto.
                         </p>
                     </div>
 
@@ -5759,27 +5844,27 @@ const mobileHTML = `
 
                     <div class="m-sys-grid">
                         <div class="m-sys-row">
-                            <div class="m-sys-info"><h4><i class="fas fa-layer-group" style="color:var(--m-accent)"></i> 🧩 AIO Mode <span class="m-status-text" id="st-aio">OFF</span></h4><p>Formatta per AIOStreams</p></div>
+                            <div class="m-sys-info"><h4><i class="fas fa-layer-group" style="color:var(--m-accent)"></i> 🧩 AIO Mode <span class="m-status-text" id="st-aio">OFF</span></h4><p>Formatta per AIOStreams 🧩</p></div>
                             <label class="m-switch"><input type="checkbox" id="m-aioMode" onchange="updateStatus('m-aioMode','st-aio')"><span class="m-slider m-slider-purple"></span></label>
                         </div>
                         <div class="m-sys-row">
-                            <div class="m-sys-info"><h4><i class="fas fa-cloud" style="color:var(--m-primary)"></i> ☁️ Debrid Cloud <span class="m-status-text" id="st-savedcloud">OFF</span></h4><p>File salvati RD/TorBox. Duplicati sempre esclusi.</p></div>
+                            <div class="m-sys-info"><h4><i class="fas fa-cloud" style="color:var(--m-primary)"></i> ☁️ Debrid Cloud <span class="m-status-text" id="st-savedcloud">OFF</span></h4><p>File salvati RD/TorBox 📦. Duplicati sempre esclusi ✨.</p></div>
                             <label class="m-switch"><input type="checkbox" id="m-enableSavedCloud" onchange="toggleSavedCloud()"><span class="m-slider"></span></label>
                         </div>
                         <div class="m-cloud-mode-panel" id="m-savedCloudPanel">
                             <div class="m-cloud-mode-grid">
-                                <div class="m-cloud-mode-btn active" id="m-cloud-smart" onclick="setSavedCloudMode('smart')">SMART<span>utile e pulito</span></div>
-                                <div class="m-cloud-mode-btn" id="m-cloud-fallback" onclick="setSavedCloudMode('fallback')">FALLBACK<span>solo se trova poco</span></div>
-                                <div class="m-cloud-mode-btn" id="m-cloud-always" onclick="setSavedCloudMode('always')">ALWAYS<span>sempre no doppioni</span></div>
+                                <div class="m-cloud-mode-btn active" id="m-cloud-smart" onclick="setSavedCloudMode('smart')">SMART<span>utile e pulito ✨</span></div>
+                                <div class="m-cloud-mode-btn" id="m-cloud-fallback" onclick="setSavedCloudMode('fallback')">FALLBACK<span>solo se trova poco 🪄</span></div>
+                                <div class="m-cloud-mode-btn" id="m-cloud-always" onclick="setSavedCloudMode('always')">ALWAYS<span>sempre no doppioni ✅</span></div>
                             </div>
-                            <p class="m-cloud-note">Usa solo Real-Debrid/TorBox configurati. Anche in ALWAYS, se Leviathan ha gia lo stesso hash/file, il Cloud non viene mostrato.</p>
+                            <p class="m-cloud-note">Usa solo Real-Debrid/TorBox configurati ☁️. Anche in ALWAYS, se Leviathan ha gia lo stesso hash/file, il Cloud non viene mostrato ✨.</p>
                         </div>
                     </div>
 
                     <div class="m-row" style="border:none; padding: 5px 0;">
                         <div class="m-label">
                             <h4><i class="fas fa-compress-arrows-alt" style="color:var(--m-error)"></i> 🚦 Signal Gate <span class="m-status-text" id="st-gate">OFF</span></h4>
-                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro qualità • max risultati per risoluzione</p>
+                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro qualità • max risultati per risoluzione 🚦</p>
                         </div>
                         <label class="m-switch"><input type="checkbox" id="m-gateActive" onchange="toggleGate()"><span class="m-slider"></span></label>
                     </div>
@@ -5789,13 +5874,13 @@ const mobileHTML = `
                             <input type="range" min="1" max="20" value="3" class="m-range" id="m-gateVal" oninput="updateGateDisplay(this.value)">
                             <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.2rem; color:var(--m-primary); width:30px; text-align:center;" id="m-gate-display">3</span>
                         </div>
-                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualita. Utile per dispositivi lenti.</p>
+                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualita 🎯. Utile per dispositivi lenti 📱.</p>
                     </div>
 
                     <div class="m-row" style="border:none; padding: 5px 0;">
                         <div class="m-label">
                             <h4><i class="fas fa-weight-hanging" style="color:var(--m-amber)"></i> ⚖️ Size Limit <span class="m-status-text" id="st-size">OFF</span></h4>
-                            <p style="font-size:0.65rem; color:var(--m-amber);">Filtro peso massimo • GB</p>
+                            <p style="font-size:0.65rem; color:var(--m-amber);">Filtro peso massimo • GB ⚖️</p>
                         </div>
                         <label class="m-switch"><input type="checkbox" id="m-sizeActive" onchange="toggleSize()"><span class="m-slider m-slider-aqua"></span></label>
                     </div>
@@ -5805,7 +5890,7 @@ const mobileHTML = `
                             <input type="range" min="1" max="100" step="1" value="0" class="m-range" id="m-sizeVal" oninput="updateSizeDisplay(this.value)" style="background:linear-gradient(90deg, #ff9900, #333)">
                             <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.1rem; color:var(--m-amber); width:45px; text-align:center;" id="m-size-display">INF</span>
                         </div>
-                         <p class="m-range-desc">Nasconde automaticamente tutti i file che superano la dimensione selezionata.</p>
+                         <p class="m-range-desc">Nasconde automaticamente tutti i file che superano la dimensione selezionata 📦.</p>
                     </div>
 
                 </div>
@@ -5813,23 +5898,16 @@ const mobileHTML = `
 
             <div id="page-network" class="m-page">
 
-                <div class="m-section-head">
-                    <div class="sh-titles">
-                        <span class="sh-title">🌉 Deep Bridge</span>
-                        <span class="sh-sub">Routing, bridge e Debrid Ghost</span>
-                    </div>
-                    <span class="sh-tag violet">NET</span>
-                </div>
-
                 <div class="m-hypervisor">
                     <div class="m-hyp-header">
-                        <span>🌉 NETWORK BRIDGE</span>
+                        <span>🌐 SERVER & PROXY ✨</span>
                         <i class="fas fa-network-wired m-hyp-icon" style="color:var(--m-secondary); border-color:rgba(112,0,255,0.35); background:rgba(112,0,255,0.08);"></i>
                     </div>
+                    <p class="m-panel-desc"><b>Imposta un proxy personalizzato</b> solo quando serve. Altrimenti Leviathan resta sulla configurazione standard, più semplice e pulita 🌊.</p>
 
                     <div style="padding:0 5px;">
                         <p style="font-size:0.8rem; color:var(--m-dim); margin-bottom:20px; line-height:1.4;">
-                            🌊 Proxy Server per moduli italiani. Se attivo, <b>Debrid Ghost</b> può instradare il traffico dal bridge configurato.
+                            Configura un endpoint proxy solo se ti serve un bridge personalizzato per le sorgenti italiane 🌊. Lascia vuoto per usare la gestione standard di Leviathan ✨.
                         </p>
 
                         <div class="m-field-group">
@@ -5895,11 +5973,11 @@ const mobileHTML = `
     <div class="m-action-modal" id="m-link-modal">
         <div class="m-am-card">
             <div class="m-am-title">🔗 LINK GENERATO</div>
-            <div class="m-am-subtitle">Installa, copia o condividi il link configurato</div>
+            <div class="m-am-subtitle">Installa, copia o condividi la configurazione pronta</div>
 
             <div class="m-flux-terminal">
                 <div class="m-flux-header">
-                    <span>🌊 FLUX DATA STREAM</span>
+                    <span>🌊 OCEAN LINK STREAM</span>
                     <i class="fas fa-network-wired"></i>
                 </div>
                 <textarea id="m-generatedUrlBox" class="m-flux-input" readonly>/// WAITING FOR DATA ///</textarea>
@@ -7622,5 +7700,4 @@ startMobileInterfaceWhenReady();
         document.body.classList.add('m-ui-ready');
     } catch (_) {}
 })();
-
 
