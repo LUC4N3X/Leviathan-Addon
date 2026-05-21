@@ -1,6 +1,6 @@
 'use strict';
 
-const HARDCODED_TORRENTIO_MAIN_URL = 'https://thorrentan.elninhostre.dpdns.org/e30';
+const HARDCODED_TORRENTIO_MAIN_URL = 'https://thorrentan.elninhostre.dpdns.org/layout=torrenthan|lang=ita|sort=quality|jackett=1';
 const HARDCODED_TORRENTIO_MIRROR_URL = 'https://torrentio.strem.fun';
 const HARDCODED_TORRENTIO_TIMEOUT_MS = 4500;
 const HARDCODED_EXT_ADDON_COOLDOWN_MS = 30000;
@@ -23,7 +23,7 @@ function envNumber(name, fallback) {
 
 const EXTERNAL_ADDONS = {
     torrentio_main: {
-        baseUrl: HARDCODED_TORRENTIO_MAIN_URL,
+        baseUrl: envFirst(['EXT_TORRENTIO_MAIN_URL', 'TORRENTIO_MAIN_URL'], HARDCODED_TORRENTIO_MAIN_URL),
         name: 'Torrentio Main',
         timeout: HARDCODED_TORRENTIO_TIMEOUT_MS,
         priority: 1,
