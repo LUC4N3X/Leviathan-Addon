@@ -5,7 +5,7 @@ const { fetchTorrentioFlat } = require('../nexus-bridge/torrentio');
 
 const HARDCODED_TMDB_API_KEY = '5bae8d11f2a7bc7a95c6d040a31d2163';
 const HARDCODED_TORRENTIO_SCAN = Object.freeze({
-    enabled: true,
+    enabled: false,
     leaderOnly: true,
     language: 'it-IT',
     region: 'IT',
@@ -116,6 +116,7 @@ function validSeriesEndpoint(value) {
 function createScannerConfig() {
     return {
         ...HARDCODED_TORRENTIO_SCAN,
+        enabled: readBoolean(process.env.TORRENTIO_SCAN_ENABLED, HARDCODED_TORRENTIO_SCAN.enabled),
         tmdbApiKey: HARDCODED_TMDB_API_KEY,
         movieEndpoints: HARDCODED_TORRENTIO_SCAN.movieEndpoints.map(validMovieEndpoint).filter(Boolean),
         seriesEndpoints: HARDCODED_TORRENTIO_SCAN.seriesEndpoints.map(validSeriesEndpoint).filter(Boolean),
@@ -728,7 +729,7 @@ function createTorrentioTmdbScanner({ dbHelper, logger, normalizeExternalCandida
 
     function start({ leader = true } = {}) {
         if (!config.enabled) {
-            logInfo('[TORRENTIO TMDB SCAN] disabled by TORRENTIO_SCAN_ENABLED=false');
+            logInfo('[TORRENTIO TMDB SCAN] paused/disabled; set TORRENTIO_SCAN_ENABLED=true to resume');
             return false;
         }
         if (config.leaderOnly && !leader) {
