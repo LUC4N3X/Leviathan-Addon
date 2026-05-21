@@ -779,10 +779,32 @@ function getMovieExternalFillLimit(filters = {}, dbPrimaryCount = 0) {
     return Math.min(base, Math.max(0, dbPrimaryCount - 1));
 }
 
-function getMovieDbVerifiedSkipExternalMin(filters = {}) {
-    const raw = filters.movieDbVerifiedSkipExternalMin ?? process.env.MOVIE_DB_VERIFIED_SKIP_EXTERNAL_MIN ?? '3';
+function getMovieDbVerifiedSkipExternalMin(filters = {}, service = null) {
+    const normalizedService = String(service || '').toLowerCase();
+    const raw = normalizedService === 'tb'
+        ? (filters.tbDbVerifiedSkipExternalMin ?? process.env.TB_DB_VERIFIED_SKIP_EXTERNAL_MIN ?? process.env.TORBOX_DB_VERIFIED_SKIP_EXTERNAL_MIN ?? '1')
+        : (filters.movieDbVerifiedSkipExternalMin ?? process.env.MOVIE_DB_VERIFIED_SKIP_EXTERNAL_MIN ?? '3');
     const parsed = parseInt(raw, 10);
-    return Number.isFinite(parsed) ? Math.max(1, Math.min(20, parsed)) : 3;
+    const fallback = normalizedService === 'tb' ? 1 : 3;
+    return Number.isFinite(parsed) ? Math.max(1, Math.min(20, parsed)) : fallback;
+}
+
+function getTorboxDbCoverageSkipExternalMin(filters = {}) {
+    const raw = filters.tbDbCoverageSkipExternalMin ?? process.env.TB_DB_COVERAGE_SKIP_EXTERNAL_MIN ?? process.env.TORBOX_DB_COVERAGE_SKIP_EXTERNAL_MIN ?? '3';
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) ? Math.max(1, Math.min(30, parsed)) : 3;
+}
+
+function getTorboxDbFastPathMin(filters = {}) {
+    const raw = filters.tbDbFastPathMin ?? process.env.TB_DB_FAST_PATH_MIN ?? process.env.TORBOX_DB_FAST_PATH_MIN ?? '3';
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) ? Math.max(1, Math.min(30, parsed)) : 3;
+}
+
+function shouldTorboxSkipExternalOnDbCoverage(filters = {}) {
+    const value = filters.tbSkipExternalOnDbCoverage ?? process.env.TB_SKIP_EXTERNAL_ON_DB_COVERAGE ?? process.env.TORBOX_SKIP_EXTERNAL_ON_DB_COVERAGE;
+    if (value !== undefined && value !== null && String(value).trim() !== '') return isTruthyConfigValue(value);
+    return true;
 }
 
 function getMovieDbExternalBypassMin(filters = {}) {
@@ -793,6 +815,7 @@ function getMovieDbExternalBypassMin(filters = {}) {
 
 function getMovieDbExternalBypassMinForService(filters = {}, service = null) {
     const normalizedService = String(service || '').toLowerCase();
+    if (normalizedService === 'tb') return getTorboxDbCoverageSkipExternalMin(filters);
     if (normalizedService === 'rd') {
         const raw = filters.movieDbExternalBypassMinRd ?? process.env.MOVIE_DB_EXTERNAL_BYPASS_MIN_RD ?? '12';
         const parsed = parseInt(raw, 10);
@@ -804,15 +827,20 @@ function getMovieDbExternalBypassMinForService(filters = {}, service = null) {
 function shouldBypassMovieExternalLive({ verifiedDbCount = 0, dbCandidateCount = 0, filters = {}, service = null, flags = {} } = {}) {
     if (flags?.useProviderCachedOnly) return false;
 
-    const verifiedMin = getMovieDbVerifiedSkipExternalMin(filters);
+    const normalizedService = String(service || '').toLowerCase();
+    const verifiedMin = getMovieDbVerifiedSkipExternalMin(filters, normalizedService);
+    const bypassMin = getMovieDbExternalBypassMinForService(filters, normalizedService);
+
+    if (normalizedService === 'tb') {
+        // TorBox fa comunque checkcached/live resolve sulla ranked list: se il DB ha copertura,
+        // evitiamo di far vincere subito Torrentio/MediaFusion/Meteor live.
+        if (shouldTorboxSkipExternalOnDbCoverage(filters) && dbCandidateCount >= bypassMin) return true;
+        return verifiedDbCount >= verifiedMin && dbCandidateCount >= bypassMin;
+    }
+
     if (verifiedDbCount < verifiedMin) return false;
 
-    const normalizedService = String(service || '').toLowerCase();
-
-    if (normalizedService === 'tb' || normalizedService === 'rd') {
-        const bypassMin = getMovieDbExternalBypassMinForService(filters, normalizedService);
-        return dbCandidateCount >= bypassMin;
-    }
+    if (normalizedService === 'rd') return dbCandidateCount >= bypassMin;
 
     return true;
 }
@@ -844,8 +872,27 @@ function countMovieDbVerifiedCandidates(items = []) {
     return count;
 }
 
-function hasEnoughMovieVerifiedDbResults(items = [], filters = {}) {
-    const min = getMovieDbVerifiedSkipExternalMin(filters);
+function countDbCoverageCandidates(items = []) {
+    const seen = new Set();
+    let count = 0;
+    for (const item of Array.isArray(items) ? items : []) {
+        if (!shouldUseDbCoverageItem(item)) continue;
+        const hash = getCandidateInfoHash(item) || `${String(item?.title || '').toLowerCase()}|${String(item?.source || item?.externalProvider || '').toLowerCase()}`;
+        const key = `${hash}:${Number.isInteger(item?.fileIdx) ? item.fileIdx : -1}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        count += 1;
+    }
+    return count;
+}
+
+function hasEnoughMovieVerifiedDbResults(items = [], filters = {}, service = null) {
+    const normalizedService = String(service || '').toLowerCase();
+    if (normalizedService === 'tb') {
+        return countDbCoverageCandidates(items) >= getTorboxDbFastPathMin(filters)
+            || countMovieDbVerifiedCandidates(items) >= getMovieDbVerifiedSkipExternalMin(filters, normalizedService);
+    }
+    const min = getMovieDbVerifiedSkipExternalMin(filters, normalizedService);
     return countMovieDbVerifiedCandidates(items) >= min;
 }
 
@@ -945,9 +992,10 @@ function preserveMovieLocalDbCoverage(rankedList = [], localDbPool = [], meta = 
     return output;
 }
 
-function shouldAllowSeriesDbFastPath(filters = {}) {
+function shouldAllowSeriesDbFastPath(filters = {}, service = null) {
     const value = filters.seriesDbFastPath ?? process.env.SERIES_DB_FAST_PATH;
-    return String(value || '0') === '1';
+    if (value !== undefined && value !== null && String(value).trim() !== '') return isTruthyConfigValue(value);
+    return String(service || '').toLowerCase() === 'tb';
 }
 
 function markFallbackGroup(items = [], group = 'fallback') {
@@ -4602,7 +4650,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
                     const externalRequestIds = buildExternalAddonRequestIds(type, finalId, meta);
                     const externalConfigSig = crypto.createHash("sha1").update(JSON.stringify({ service: config?.service || "", rd: config?.rd || config?.realdebrid || "", tb: config?.tb || config?.torbox || "", key: config?.key || "" })).digest("hex").slice(0, 12);
-                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}:torrentioItTrustV15Passthrough`;
+                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}:torrentioItTrustV16TbDbFirst`;
                     const createExternalPromise = () => disableLiveSources && !flags.useProviderCachedOnly
                         ? Promise.resolve([])
                         : Cache.fetchWithCache('ExternalAddons', externalCacheKey, 43200, () =>
@@ -4634,7 +4682,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                         ];
                         const verifiedDbCount = countMovieDbVerifiedCandidates(decisionPool);
                         const dbCandidateCount = dedupeByInfoHash(decisionPool, getDedupeContext(meta, { stage: 'external-skip-decision' }))?.results?.length || decisionPool.length;
-                        const verifiedMin = getMovieDbVerifiedSkipExternalMin(config?.filters || {});
+                        const verifiedMin = getMovieDbVerifiedSkipExternalMin(config?.filters || {}, config?.service);
 
                         if (shouldBypassMovieExternalLive({
                             verifiedDbCount,
@@ -4772,7 +4820,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const streamCacheVersionParts = [];
-  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v24|movieDbPriorityVerifiedSkip=v3|rdDirectNoLazy=v2|rdDownloadFallback=v1|torrentioRdNativeConfig=v1');
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v24|movieDbPriorityVerifiedSkip=v3|tbDbFirst=v1|rdDirectNoLazy=v2|rdDownloadFallback=v1|torrentioRdNativeConfig=v2');
   // Bust stale web-provider stream lists generated by the temporary MaxStream
   // .m3u8 route. This prevents Stremio/VLC from receiving old cached
   // /extractor/video.m3u8 URLs after the compatibility rollback.
@@ -4915,10 +4963,11 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               await normalizeCandidateResults(filterWithTorrentPackTrust(dbSeedResults, aggressiveFilter, { meta, type, langMode }), meta),
               filters
           );
-          localDbPrimaryFastPool = isMovieDbPriorityPolicy
+          const torboxDbFirst = configuredDebridService === 'tb' && hasDebridKey;
+          localDbPrimaryFastPool = isMovieDbPriorityPolicy && !torboxDbFirst
               ? localDbFastPool.filter(isMovieDbPrimaryCandidate)
               : localDbFastPool;
-          const localDbAssessmentPool = isMovieDbPriorityPolicy ? localDbPrimaryFastPool : localDbFastPool;
+          const localDbAssessmentPool = isMovieDbPriorityPolicy && !torboxDbFirst ? localDbPrimaryFastPool : localDbFastPool;
           const localDbAssessment = assessFastResultQuality(localDbAssessmentPool, meta, langMode, config);
           localDbSatisfaction = evaluatePoolSatisfaction(localDbAssessment, meta);
           const localVerified = isMovieDbPriorityPolicy ? countMovieDbVerifiedCandidates(localDbPrimaryFastPool) : 0;
@@ -4928,14 +4977,15 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           }
       }
 
-      const allowSeriesDbFastPath = !meta?.isSeries || shouldAllowSeriesDbFastPath(filters);
-      const fastPathPool = isMovieDbPriorityPolicy ? localDbPrimaryFastPool : localDbFastPool;
-      const movieVerifiedEnoughForFastPath = !isMovieDbPriorityPolicy || hasEnoughMovieVerifiedDbResults(fastPathPool, filters);
+      const allowSeriesDbFastPath = !meta?.isSeries || shouldAllowSeriesDbFastPath(filters, configuredDebridService);
+      const torboxDbFirst = configuredDebridService === 'tb' && hasDebridKey;
+      const fastPathPool = isMovieDbPriorityPolicy && !torboxDbFirst ? localDbPrimaryFastPool : localDbFastPool;
+      const movieVerifiedEnoughForFastPath = !isMovieDbPriorityPolicy || hasEnoughMovieVerifiedDbResults(fastPathPool, filters, configuredDebridService);
       const useLocalDbFastPath = fastPathPool.length > 0 && localDbSatisfaction.satisfied && movieVerifiedEnoughForFastPath && !sourceModeFlags.liveOnlyMode && allowSeriesDbFastPath;
       if (useLocalDbFastPath) {
           logger.info(`[DB FAST-PATH] Uso DB proprietario verificato, skip Remote/Torrentio/External | results=${fastPathPool.length} verified=${countMovieDbVerifiedCandidates(fastPathPool)} allDbRows=${localDbFastPool.length} reason=${localDbSatisfaction.reason}`);
       } else if (isMovieDbPriorityPolicy && fastPathPool.length > 0 && localDbSatisfaction.satisfied) {
-          logger.info(`[DB FAST-PATH] movie DB primary non abbastanza verificato | primary=${fastPathPool.length} verified=${countMovieDbVerifiedCandidates(fastPathPool)}/${getMovieDbVerifiedSkipExternalMin(filters)} -> Remote/Torrentio consentiti`);
+          logger.info(`[DB FAST-PATH] movie DB primary non abbastanza verificato | primary=${fastPathPool.length} verified=${countMovieDbVerifiedCandidates(fastPathPool)}/${getMovieDbVerifiedSkipExternalMin(filters, configuredDebridService)} -> Remote/Torrentio consentiti`);
       } else if (meta?.isSeries && localDbFastPool.length > 0 && localDbSatisfaction.satisfied) {
           logger.info(`[DB FAST-PATH] serie: skip disattivato, provo prima gruppi network/Torrentio | dbResults=${localDbFastPool.length} reason=${localDbSatisfaction.reason}`);
       }
