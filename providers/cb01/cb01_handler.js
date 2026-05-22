@@ -76,6 +76,7 @@ const CB_CACHE_TTL = Object.freeze({
     moviePage: 20 * 60_000,
     seriesPage: 20 * 60_000,
     stayonline: 15 * 60_000,
+    uprotLocalFail: 5 * 60_000,
     seasonAlias: 30 * 60_000
 });
 
@@ -451,8 +452,9 @@ function isSeriesMeta(meta = {}) {
 
 const STAYONLINE_URL_RE = /https?:\/\/(?:www\.)?stayonline\.[a-z.]+[^"'<>\s\\]+/i;
 const MIXDROP_URL_RE = /https?:\/\/(?:www\.)?(?:mixdrop|m1xdrop|mxcontent|mixdrp)[^"'<>\s\\]+/i;
-const MAXSTREAM_URL_RE = /https?:\/\/(?:www\.)?(?:uprot\.net|maxstream\.video|maxstream\.[a-z.]+|stayonline\.[a-z.]+)[^"'<>\s\\]+/i;
-const HOSTER_URL_RE = /https?:\/\/(?:www\.)?(?:mixdrop|m1xdrop|mxcontent|mixdrp|uprot\.net|maxstream\.video|maxstream\.[a-z.]+|stayonline\.[a-z.]+)[^"'<>\s\\]+/i;
+const UPROT_LIKE_URL_RE = /https?:\/\/(?:www\.)?(?:(?:uprot|uproat)\.(?:net|pro))[^"'<>\s\\]+/i;
+const MAXSTREAM_URL_RE = /https?:\/\/(?:www\.)?(?:(?:uprot|uproat)\.(?:net|pro)|maxstream\.video|maxstream\.[a-z.]+|stayonline\.[a-z.]+)[^"'<>\s\\]+/i;
+const HOSTER_URL_RE = /https?:\/\/(?:www\.)?(?:mixdrop|m1xdrop|mxcontent|mixdrp|(?:uprot|uproat)\.(?:net|pro)|maxstream\.video|maxstream\.[a-z.]+|stayonline\.[a-z.]+)[^"'<>\s\\]+/i;
 
 function isStayonlineUrl(value) {
     return STAYONLINE_URL_RE.test(String(value || ''));
@@ -460,6 +462,18 @@ function isStayonlineUrl(value) {
 
 function isMixdropUrl(value) {
     return MIXDROP_URL_RE.test(String(value || ''));
+}
+
+function isCbUprotUrl(value) {
+    return isUprotUrl(value) || UPROT_LIKE_URL_RE.test(String(value || ''));
+}
+
+function normalizeCbUprotUrl(value) {
+    const normalized = normalizeRemoteUrl(value);
+    if (!normalized || !isCbUprotUrl(normalized)) return null;
+    // Preserve uprot/uproat host aliases: the local extractor accepts them
+    // and this avoids cookie/state mismatch between the page host and post host.
+    return normalized;
 }
 
 function isMaxstreamLikeUrl(value) {
@@ -598,9 +612,9 @@ function extractorHeadersFor(targetUrl, kind = '') {
         return headers;
     }
     if (/max|uprot/i.test(kind)) {
-        const isUprot = /uprot\.net/i.test(String(targetUrl || ''));
-        headers.Referer = isUprot ? 'https://uprot.net/' : (origin ? `${origin}/` : 'https://uprot.net/');
-        headers.Origin = isUprot ? 'https://uprot.net' : (origin || 'https://uprot.net');
+        const isUprot = /(?:uprot|uproat)\.(?:net|pro)/i.test(String(targetUrl || ''));
+        headers.Referer = isUprot ? (origin ? `${origin}/` : 'https://uprot.net/') : (origin ? `${origin}/` : 'https://uprot.net/');
+        headers.Origin = isUprot ? (origin || 'https://uprot.net') : (origin || 'https://uprot.net');
         return headers;
     }
     if (origin) {
@@ -783,10 +797,14 @@ async function buildMaxstreamStream(rawUrl, context) {
         normalizedHost: safeHost(targetUrl),
         hasMfp: Boolean(getMediaflowBase(config))
     });
+    let stayonlineRefererForUprot = null;
     if (targetUrl && isStayonlineUrl(targetUrl)) {
         const beforeStayonline = targetUrl;
         const resolved = await resolveStayonline(client, targetUrl, options);
-        if (resolved) targetUrl = resolved;
+        if (resolved) {
+            targetUrl = resolved;
+            stayonlineRefererForUprot = beforeStayonline;
+        }
         cbDebug(resolved ? 'info' : 'warn', 'maxstream stayonline resolution result', {
             fromHost: safeHost(beforeStayonline),
             resolved: Boolean(resolved),
@@ -799,35 +817,66 @@ async function buildMaxstreamStream(rawUrl, context) {
         return null;
     }
 
-    const originalUprotUrl = isUprotUrl(targetUrl) ? targetUrl : null;
+    const originalUprotUrl = isCbUprotUrl(targetUrl) ? targetUrl : null;
+    const canonicalUprotUrl = originalUprotUrl ? normalizeCbUprotUrl(originalUprotUrl) : null;
     if (originalUprotUrl) {
-        cbDebug('info', 'uprot local resolve start', { host: safeHost(originalUprotUrl), path: safePath(originalUprotUrl) });
-        const resolved = await withCbCoalescing('uprotLocal', [originalUprotUrl], () =>
-            resolveUprotToMaxstream(client, targetUrl, options || {})
-        );
-        cbDebug(resolved?.playerUrl ? 'info' : 'warn', 'uprot local resolve result', {
-            ok: Boolean(resolved?.playerUrl),
-            playerHost: safeHost(resolved?.playerUrl),
-            playerPath: safePath(resolved?.playerUrl),
-            keys: resolved && typeof resolved === 'object' ? Object.keys(resolved).slice(0, 20) : []
-        });
+        const recentFail = getCbCache('uprotLocalFail', [canonicalUprotUrl || originalUprotUrl]);
+        let resolved = null;
+        if (recentFail) {
+            cbDebug('warn', 'uprot local resolve skipped: recent failure cooldown', {
+                host: safeHost(canonicalUprotUrl || originalUprotUrl),
+                path: safePath(canonicalUprotUrl || originalUprotUrl),
+                reason: recentFail?.reason || 'cached-failure'
+            });
+        } else {
+            cbDebug('info', 'uprot local resolve start', {
+                host: safeHost(canonicalUprotUrl || originalUprotUrl),
+                path: safePath(canonicalUprotUrl || originalUprotUrl),
+                originalHost: safeHost(originalUprotUrl)
+            });
+            const uprotOptions = stayonlineRefererForUprot
+                ? { ...(options || {}), referer: stayonlineRefererForUprot, requestReferer: stayonlineRefererForUprot }
+                : (options || {});
+            resolved = await withCbCoalescing('uprotLocal', [canonicalUprotUrl || originalUprotUrl], () =>
+                resolveUprotToMaxstream(client, canonicalUprotUrl || targetUrl, uprotOptions)
+            );
+            cbDebug(resolved?.playerUrl ? 'info' : 'warn', 'uprot local resolve result', {
+                ok: Boolean(resolved?.playerUrl),
+                playerHost: safeHost(resolved?.playerUrl),
+                playerPath: safePath(resolved?.playerUrl),
+                keys: resolved && typeof resolved === 'object' ? Object.keys(resolved).slice(0, 20) : []
+            });
+            if (!resolved?.playerUrl) {
+                setCbCache('uprotLocalFail', [canonicalUprotUrl || originalUprotUrl], {
+                    reason: 'local_resolve_failed'
+                }, envInt('CB01_UPROT_LOCAL_FAIL_TTL_MS', CB_CACHE_TTL.uprotLocalFail, 30_000, 30 * 60_000));
+            }
+        }
         targetUrl = resolved?.playerUrl || null;
         if (!targetUrl && getMediaflowBase(config)) {
-            cbDebug('warn', 'uprot local resolve failed; using MFP fallback', { hrefHost: safeHost(originalUprotUrl) });
-            return buildMfpExtractorStream({
-                config,
-                targetUrl: originalUprotUrl,
-                host: 'Maxstream',
-                label: 'MaxStream',
-                title,
-                via: 'uprot-fallback',
-                mediaflowOptions: {
-                    extractorPath: '/extractor/video.m3u8',
-                    redirectStream: true,
-                    headers: extractorHeadersFor(originalUprotUrl, 'uprot')
-                },
-                streamKind: 'hls'
+            if (envFlag('CB01_UPROT_MFP_FALLBACK', false)) {
+                cbDebug('warn', 'uprot local resolve failed; using MFP fallback because CB01_UPROT_MFP_FALLBACK=1', { hrefHost: safeHost(originalUprotUrl) });
+                return buildMfpExtractorStream({
+                    config,
+                    targetUrl: canonicalUprotUrl || originalUprotUrl,
+                    host: 'Maxstream',
+                    label: 'MaxStream',
+                    title,
+                    via: 'uprot-fallback',
+                    mediaflowOptions: {
+                        extractorPath: '/extractor/video.m3u8',
+                        redirectStream: true,
+                        headers: extractorHeadersFor(canonicalUprotUrl || originalUprotUrl, 'uprot')
+                    },
+                    streamKind: 'hls'
+                });
+            }
+            cbDebug('warn', 'uprot local resolve failed; MaxStream skipped instead of exposing broken MFP fallback', {
+                hrefHost: safeHost(originalUprotUrl),
+                canonicalHost: safeHost(canonicalUprotUrl || originalUprotUrl),
+                enableFallbackEnv: 'CB01_UPROT_MFP_FALLBACK=1'
             });
+            return null;
         }
     }
 
@@ -1655,7 +1704,7 @@ function pickHosterLinksFromUrls(urls = []) {
     let maxstreamLink = null;
     for (const url of Array.isArray(urls) ? urls : []) {
         if (!mixdropLink && isMixdropUrl(url)) mixdropLink = url;
-        if (!maxstreamLink && (isStayonlineUrl(url) || isUprotUrl(url) || isMaxstreamLikeUrl(url))) maxstreamLink = url;
+        if (!maxstreamLink && (isStayonlineUrl(url) || isCbUprotUrl(url) || isMaxstreamLikeUrl(url))) maxstreamLink = url;
         if (mixdropLink && maxstreamLink) break;
     }
     return { mixdropLink, maxstreamLink };
@@ -1815,7 +1864,7 @@ function pickEpisodeHostLinks(anchors) {
             mixdropLink = href;
             continue;
         }
-        if (!maxstreamLink && (/max\s*stream/i.test(label) || isStayonlineUrl(href) || isUprotUrl(href) || isMaxstreamLikeUrl(href))) {
+        if (!maxstreamLink && (/max\s*stream/i.test(label) || isStayonlineUrl(href) || isCbUprotUrl(href) || isMaxstreamLikeUrl(href))) {
             maxstreamLink = href;
             continue;
         }
