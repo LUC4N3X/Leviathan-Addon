@@ -21,8 +21,8 @@ const {
     responseText
 } = require('./shared');
 
-const UPROT_HOST_RE = /(?:^|\.)uprot\.net$/i;
-const UPROT_URL_RE = /^https?:\/\/(?:www\.)?uprot\.net\//i;
+const UPROT_HOST_RE = /(?:^|\.)(?:uprot|uproat)\.(?:net|pro)$/i;
+const UPROT_URL_RE = /^https?:\/\/(?:www\.)?(?:uprot|uproat)\.(?:net|pro)\//i;
 const SOURCE_PATTERNS = [
     /sources\s*:\s*\[\s*\{\s*(?:src|file)\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i,
     /(?:src|file)\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i,
@@ -43,13 +43,15 @@ const UPROT_AUTO_STATE_DEFAULTS = Object.freeze({
     stateTtlMs: 45 * 60_000,
     failureTtlMs: 2 * 60_000,
     retryBudget: 2,
-    captchaMinDigits: 4,
+    captchaMinDigits: 3,
     captchaMaxDigits: 8,
     ocrMinConfidence: 0,
     ocrCacheTtlMs: 10 * 60_000,
     imageTimeoutMs: 10_000,
     bootstrapTimeoutMs: 12_000,
-    postTimeoutMs: 12_000
+    postTimeoutMs: 12_000,
+    manualMode: true,
+    manualSessionTtlMs: 10 * 60_000
 });
 
 function uprotDebug(level, message, payload = null) {
@@ -66,6 +68,10 @@ function uprotDebug(level, message, payload = null) {
 
 function safeHost(value) {
     try { return new URL(String(value || '')).hostname; } catch (_) { return ''; }
+}
+
+function safePathForUprot(value) {
+    try { return new URL(String(value || '')).pathname; } catch (_) { return ''; }
 }
 
 
@@ -183,9 +189,9 @@ function normalizeUprotInput(url) {
 
 function isMsfiUrl(url) {
     try {
-        return /\/msfi\//i.test(new URL(String(url || '')).pathname);
+        return /\/m(?:sf|se)i\//i.test(new URL(String(url || '')).pathname);
     } catch (_) {
-        return /\/msfi\//i.test(String(url || ''));
+        return /\/m(?:sf|se)i\//i.test(String(url || ''));
     }
 }
 
@@ -194,11 +200,160 @@ function toMsfCaptchaUrl(url) {
     if (!normalized || !isUprotUrl(normalized)) return null;
     try {
         const parsed = new URL(normalized);
-        parsed.pathname = parsed.pathname.replace(/\/(?:mse|msfi)\//i, '/msf/');
+        parsed.pathname = parsed.pathname.replace(/\/(?:mse|msei|msfi|e)\//i, '/msf/');
         return parsed.toString();
     } catch (_) {
-        return normalized.replace(/\/(?:mse|msfi)\//i, '/msf/');
+        return normalized.replace(/\/(?:mse|msei|msfi|e)\//i, '/msf/');
     }
+}
+
+function extractUprotPathCode(url) {
+    const normalized = normalizeRemoteUrl(url);
+    if (!normalized || !isUprotUrl(normalized)) return null;
+    try {
+        const parts = new URL(normalized).pathname.split('/').filter(Boolean);
+        const prefix = String(parts[0] || '').toLowerCase();
+        if (!/^(?:mse|msei|msf|msfi|e)$/.test(prefix)) return null;
+        return parts[1] || null;
+    } catch (_) {
+        const match = String(normalized).match(/\/(?:mse|msei|msf|msfi|e)\/([^/?#]+)/i);
+        return match?.[1] || null;
+    }
+}
+
+function decodeUprotPathCodeCandidates(code) {
+    const out = [];
+    const push = (value) => {
+        const clean = String(value || '').trim();
+        if (!clean || clean.length < 4 || clean.length > 256 || out.includes(clean)) return;
+        // Keep only URL-path-safe-ish values. Uprot sometimes returns /msei/<b64>
+        // where the first decode is the real encrypted /e/<token> code.
+        if (!/^[A-Za-z0-9._~+=-]+$/.test(clean)) return;
+        out.push(clean);
+    };
+    push(code);
+    let current = String(code || '').replace(/-/g, '+').replace(/_/g, '/');
+    for (let i = 0; i < 2; i += 1) {
+        try {
+            const padded = current + '='.repeat((4 - (current.length % 4)) % 4);
+            const decoded = Buffer.from(padded, 'base64').toString('utf8').trim();
+            if (!decoded || decoded === current) break;
+            push(decoded);
+            current = decoded.replace(/-/g, '+').replace(/_/g, '/');
+        } catch (_) {
+            break;
+        }
+    }
+    return out;
+}
+
+
+function uprotHostAliasesFor(url) {
+    const aliases = [];
+    const push = (host) => {
+        const clean = String(host || '').trim().toLowerCase().replace(/^www\./, '');
+        if (!clean || !UPROT_HOST_RE.test(clean) || aliases.includes(clean)) return;
+        aliases.push(clean);
+    };
+    try { push(new URL(String(url || '')).hostname); } catch (_) {}
+    // Some Uprot deployments expose the captcha/encrypter page only on one
+    // alias while the CB01/stayonline embed points at another. Try the known
+    // aliases, but keep them behind the same path candidates and de-duplicate.
+    push('uprot.net');
+    push('uprot.pro');
+    push('uproat.pro');
+    push('uproat.net');
+    return aliases;
+}
+
+function withUprotHost(url, host) {
+    const normalized = normalizeRemoteUrl(url);
+    if (!normalized || !host) return null;
+    try {
+        const parsed = new URL(normalized);
+        parsed.hostname = String(host).replace(/^www\./, '');
+        return parsed.toString();
+    } catch (_) {
+        return null;
+    }
+}
+
+function withUprotCodePrefix(url, prefix, code) {
+    const normalized = normalizeRemoteUrl(url);
+    if (!normalized || !code) return null;
+    try {
+        const parsed = new URL(normalized);
+        const cleanPrefix = String(prefix || '').replace(/^\/+|\/+$/g, '').toLowerCase();
+        const safeCode = encodeURIComponent(String(code)).replace(/%3D/gi, '=');
+        parsed.pathname = cleanPrefix === 'e' ? `/e/${safeCode}/` : `/${cleanPrefix}/${safeCode}`;
+        parsed.search = '';
+        parsed.hash = '';
+        return parsed.toString();
+    } catch (_) {
+        return null;
+    }
+}
+
+function withUprotPathPrefix(url, prefix) {
+    const normalized = normalizeRemoteUrl(url);
+    const code = extractUprotPathCode(normalized);
+    if (!normalized || !code) return null;
+    try {
+        const parsed = new URL(normalized);
+        const cleanPrefix = String(prefix || '').replace(/^\/+|\/+$/g, '').toLowerCase();
+        parsed.pathname = cleanPrefix === 'e' ? `/e/${code}/` : `/${cleanPrefix}/${code}`;
+        parsed.search = '';
+        parsed.hash = '';
+        return parsed.toString();
+    } catch (_) {
+        return null;
+    }
+}
+
+function buildUprotBootstrapCandidates(targetUrl, options = {}) {
+    const normalized = normalizeRemoteUrl(targetUrl);
+    const configured = getUprotBootstrapUrl(options);
+    const candidates = [];
+    const push = (value) => {
+        const url = normalizeRemoteUrl(value);
+        if (!url || !isUprotUrl(url) || candidates.includes(url)) return;
+        candidates.push(url);
+    };
+    const pushAliases = (value, aliasMode = 'all') => {
+        const url = normalizeRemoteUrl(value);
+        if (!url || !isUprotUrl(url)) return;
+        push(url);
+        const aliases = uprotHostAliasesFor(url);
+        for (const host of aliases) {
+            const aliasUrl = withUprotHost(url, host);
+            if (!aliasUrl) continue;
+            // Alias probing is most useful for the /e/<code>/ captcha/encrypter
+            // page. For legacy /msf|mse paths, only try aliases when requested;
+            // otherwise we would multiply pointless 8122-byte placeholders.
+            if (aliasMode === 'e-only' && !/\/e\//i.test(safePathForUprot(aliasUrl))) continue;
+            push(aliasUrl);
+        }
+    };
+
+    // Uprot/Uproat can expose the captcha on /e/<id>/ and sometimes only on a
+    // sibling host alias (e.g. uproat.pro) while uprot.net returns the small
+    // URL-Encrypter placeholder (~8 KB). Prefer aliased /e routes before legacy
+    // /msf and landing variants.
+    const pathCode = normalized ? extractUprotPathCode(normalized) : null;
+    if (normalized && pathCode) {
+        const decodedCodes = decodeUprotPathCodeCandidates(pathCode);
+        for (const code of decodedCodes) pushAliases(withUprotCodePrefix(normalized, 'e', code), 'all');
+        pushAliases(withUprotPathPrefix(normalized, 'e'), 'all');
+        push(withUprotPathPrefix(normalized, 'msf'));
+        push(normalized);
+        push(withUprotPathPrefix(normalized, 'mse'));
+        push(withUprotPathPrefix(normalized, 'msei'));
+        push(withUprotPathPrefix(normalized, 'msfi'));
+    } else {
+        pushAliases(normalized, 'e-only');
+    }
+    push(configured);
+    return candidates;
 }
 
 function parseLooseObjectText(value) {
@@ -533,6 +688,34 @@ async function followContinueLink(client, continueUrl, options = {}) {
     return toMaxstreamPlayerUrl(current);
 }
 
+function getUprotForwardProxy(options = {}) {
+    const raw = String(
+        options.uprotForwardProxy
+        || process.env.UPROT_FORWARD_PROXY
+        || process.env.UPROT_FORWARDPROXY
+        || process.env.CB01_FORWARD_PROXY
+        || process.env.FORWARDPROXY
+        || ''
+    ).trim();
+    if (!raw || /^(?:0|false|off|no)$/i.test(raw)) return '';
+    return raw;
+}
+
+function buildUprotForwardRequestUrl(targetUrl, options = {}) {
+    const normalized = normalizeRemoteUrl(targetUrl);
+    const forwardProxy = getUprotForwardProxy(options);
+    if (!normalized || !forwardProxy) return normalized;
+    try {
+        if (forwardProxy.includes('{url}')) return forwardProxy.replace('{url}', encodeURIComponent(normalized));
+        if (/[?&][^=]+=\s*$/i.test(forwardProxy)) return `${forwardProxy}${encodeURIComponent(normalized)}`;
+        const parsed = new URL(forwardProxy);
+        if (!parsed.searchParams.has('url')) parsed.searchParams.set('url', normalized);
+        return parsed.toString();
+    } catch (_) {
+        return normalized;
+    }
+}
+
 function buildUprotHeaders(targetUrl, options = {}) {
     const userAgent = options.userAgent || DEFAULT_USER_AGENT;
     return buildRequestHeaders(targetUrl, {
@@ -558,7 +741,7 @@ async function resolveMsfi(client, targetUrl, options = {}) {
         Cookie: cookieHeader
     };
     uprotDebug('info', 'msfi post start', { targetHost: safeHost(targetUrl), stateSource: source, cookieKeys: typeof cookies === 'object' ? Object.keys(cookies).length : 'header', formKeys: typeof captchaData === 'object' ? Object.keys(captchaData) : 'raw' });
-    const posted = await postText(client, targetUrl, body, headers, Number(options.postTimeout || 12_000));
+    const posted = await postText(client, buildUprotForwardRequestUrl(targetUrl, options), body, headers, Number(options.postTimeout || 12_000));
     const finalPlayerFromRedirect = toMaxstreamPlayerUrl(posted.finalUrl);
     if (finalPlayerFromRedirect) {
         uprotDebug('info', 'msfi post redirected to player', { status: posted.status, finalHost: safeHost(posted.finalUrl) });
@@ -616,7 +799,10 @@ async function parseUprotLandingText(client, targetUrl, text, options = {}, via 
 
 async function resolveLanding(client, targetUrl, options = {}) {
     const headers = buildUprotHeaders(targetUrl, options);
-    const { status, text } = await fetchText(client, targetUrl, {
+    const { cookies } = loadUprotState(options);
+    const cookieHeader = cookieHeaderFromState(cookies);
+    if (cookieHeader) headers.Cookie = cookieHeader;
+    const { status, text } = await fetchText(client, buildUprotForwardRequestUrl(targetUrl, options), {
         headers,
         timeout: Number(options.landingTimeout || 12_000)
     });
@@ -652,6 +838,7 @@ async function resolveLanding(client, targetUrl, options = {}) {
 
 
 const uprotOcrCache = new Map();
+const uprotManualSessions = new Map();
 
 function getUprotBootstrapUrl(options = {}) {
     return normalizeRemoteUrl(options.uprotBootstrapUrl || process.env.UPROT_BOOTSTRAP_URL || UPROT_AUTO_STATE_DEFAULTS.bootstrapUrl) || UPROT_AUTO_STATE_DEFAULTS.bootstrapUrl;
@@ -669,6 +856,16 @@ function uprotCaptchaContext(targetUrl, options = {}) {
 function uprotAutoStateEnabled(options = {}) {
     if (options.uprotAutoStateEnabled !== undefined) return Boolean(options.uprotAutoStateEnabled);
     return envFlag('UPROT_AUTO_STATE_ENABLED', UPROT_AUTO_STATE_DEFAULTS.enabled);
+}
+
+function uprotMammaMiaMode(options = {}) {
+    if (options.uprotMammaMiaMode !== undefined) return Boolean(options.uprotMammaMiaMode);
+    if (options.uprotManualMode !== undefined) return Boolean(options.uprotManualMode);
+    return envFlag('UPROT_MAMMAMIA_MODE', UPROT_AUTO_STATE_DEFAULTS.manualMode);
+}
+
+function uprotManualSessionTtlMs(options = {}) {
+    return envNumber('UPROT_MANUAL_SESSION_TTL_MS', Number(options.uprotManualSessionTtlMs || UPROT_AUTO_STATE_DEFAULTS.manualSessionTtlMs), 60_000, 60 * 60_000);
 }
 
 function uprotStateTtlMs(options = {}) {
@@ -701,25 +898,119 @@ function mergeSetCookieHeaders(existingCookies, response) {
     return merged;
 }
 
+function decodeHtmlEntities(value) {
+    return String(value || '')
+        .replace(/&amp;/gi, '&')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;|&apos;/gi, "'")
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>');
+}
+
+function cleanInlineDataImage(value) {
+    const text = decodeHtmlEntities(value).trim();
+    const match = text.match(/data:image\/[a-z0-9.+-]+;base64,([A-Za-z0-9+/=_\s-]+)/i);
+    if (!match) return null;
+    const payload = String(match[1] || '').replace(/\s+/g, '');
+    if (!payload || payload.length < 32) return null;
+    const mime = (text.match(/data:image\/[a-z0-9.+-]+;base64,/i) || ['data:image/png;base64,'])[0];
+    return `${mime}${payload}`;
+}
+
 function extractCaptchaImageSrc(html, baseUrl = null) {
-    const imgRe = /<img\b[^>]*src=["']([^"']+)["'][^>]*>/ig;
-    for (const match of String(html || '').matchAll(imgRe)) {
-        const src = String(match?.[1] || '').trim();
-        if (!src) continue;
-        if (/captcha|base64|data:image|verify|security/i.test(src) || !/avatar|logo|icon|banner/i.test(src)) {
-            return normalizeRemoteUrl(src, baseUrl) || src;
-        }
+    const text = String(html || '');
+    const candidates = [];
+    const push = (src, score = 0) => {
+        const clean = cleanInlineDataImage(src) || decodeHtmlEntities(src).trim();
+        if (!clean) return;
+        candidates.push({ src: normalizeRemoteUrl(clean, baseUrl) || clean, score });
+    };
+
+    // Uprot/Uproat can embed the captcha directly as data:image/png;base64,...
+    // Scan the whole document first because a huge data URI can make tag-level
+    // regexes brittle when the upstream changes whitespace/quoting.
+    const inlineImage = cleanInlineDataImage(text);
+    if (inlineImage) push(inlineImage, 100);
+
+    for (const match of text.matchAll(/<img\b[\s\S]*?>/ig)) {
+        const tag = match[0];
+        const quoted = tag.match(/\bsrc\s*=\s*(["'])([\s\S]*?)\1/i);
+        const bare = quoted ? null : tag.match(/\bsrc\s*=\s*([^\s>]+)/i);
+        const src = quoted ? quoted[2] : bare?.[1];
+        const haystack = `${src || ''} ${htmlAttr(tag, 'id')} ${htmlAttr(tag, 'class')} ${htmlAttr(tag, 'alt')} ${htmlAttr(tag, 'name')}`;
+        const bad = /avatar|logo|icon|banner|poster|cover|thumb/i.test(haystack);
+        const good = /captcha|capcha|base64|data:image|verify|verification|security|code/i.test(haystack);
+        if (src && (good || !bad)) push(src, good ? 20 : 1);
     }
-    return null;
+
+    for (const match of text.matchAll(/url\((["']?)(data:image\/[^)'" ]+|[^)'" ]+)\1\)/ig)) {
+        const src = match[2];
+        const good = /captcha|capcha|data:image|verify|verification|security|code/i.test(src);
+        push(src, good ? 15 : 0);
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0]?.src || null;
 }
 
 function extractBase64Image(value) {
-    const text = String(value || '').trim();
-    const dataUri = text.match(/^data:image\/[^;]+;base64,([A-Za-z0-9+/=_-]+)$/i);
-    if (dataUri) return dataUri[1];
-    const inline = text.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=_-]+)/i);
-    if (inline) return inline[1];
-    return null;
+    const dataImage = cleanInlineDataImage(value);
+    if (!dataImage) return null;
+    const inline = dataImage.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=_-]+)/i);
+    return inline ? inline[1] : null;
+}
+
+function htmlAttr(tag, name) {
+    const escaped = String(name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`${escaped}\\s*=\\s*(["'])(.*?)\\1`, 'i');
+    const quoted = String(tag || '').match(re);
+    if (quoted) return quoted[2];
+    const bare = String(tag || '').match(new RegExp(`${escaped}\\s*=\\s*([^\\s>]+)`, 'i'));
+    return bare ? bare[1] : '';
+}
+
+function extractFormInputs(html) {
+    const fields = {};
+    for (const match of String(html || '').matchAll(/<input\b[^>]*>/ig)) {
+        const tag = match[0];
+        const name = htmlAttr(tag, 'name');
+        if (!name) continue;
+        const type = String(htmlAttr(tag, 'type') || 'text').toLowerCase();
+        if (/^(?:submit|button|reset|image|file)$/i.test(type)) continue;
+        fields[name] = htmlAttr(tag, 'value') || '';
+    }
+    return fields;
+}
+
+function extractCaptchaFormAction(html, baseUrl = null) {
+    const text = String(html || '');
+    for (const match of text.matchAll(/<form\b[\s\S]*?>/ig)) {
+        const tag = match[0];
+        const action = htmlAttr(tag, 'action');
+        const method = String(htmlAttr(tag, 'method') || 'get').toLowerCase();
+        const haystack = `${tag} ${text.slice(match.index, Math.min(text.length, match.index + 2000))}`;
+        if (method === 'post' || /captcha|capcha|verification|security/i.test(haystack)) {
+            if (!action) return baseUrl;
+            return normalizeRemoteUrl(decodeHtmlEntities(action), baseUrl) || baseUrl;
+        }
+    }
+    return baseUrl;
+}
+
+function detectCaptchaFieldName(html, fields = {}) {
+    const names = Object.keys(fields || {});
+    const fromExisting = names.find((name) => /captcha|capcha|code|verify|verification|security/i.test(name));
+    if (fromExisting) return fromExisting;
+    for (const match of String(html || '').matchAll(/<input\b[^>]*>/ig)) {
+        const tag = match[0];
+        const name = htmlAttr(tag, 'name');
+        if (name && /captcha|capcha|code|verify|verification|security/i.test(`${name} ${htmlAttr(tag, 'id')} ${htmlAttr(tag, 'placeholder')}`)) return name;
+    }
+    return 'captcha';
+}
+
+function hasCaptchaCandidate(html, baseUrl = null) {
+    return Boolean(extractCaptchaImageSrc(html, baseUrl) || /captcha|capcha|verification|security/i.test(String(html || '')));
 }
 
 async function fetchCaptchaImageBase64(client, imageSrc, baseUrl, options = {}) {
@@ -794,72 +1085,290 @@ async function solveUprotCaptchaOCR(base64Data, options = {}) {
 
 async function requestUprotBootstrapPage(client, bootstrapUrl, headers, options = {}) {
     const timeout = Number(options.bootstrapTimeout || UPROT_AUTO_STATE_DEFAULTS.bootstrapTimeoutMs);
-    if (client && typeof client.post === 'function') {
-        const posted = await postText(client, bootstrapUrl, '', { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout);
-        if (posted?.text) return posted;
-    }
+    const pages = [];
+
     if (client && typeof client.get === 'function') {
-        const fetched = await fetchText(client, bootstrapUrl, { headers, timeout });
-        return {
-            status: fetched.status,
-            text: fetched.text,
-            response: fetched.response || null,
-            finalUrl: bootstrapUrl
-        };
+        const requestUrl = buildUprotForwardRequestUrl(bootstrapUrl, options);
+        const fetched = await fetchText(client, requestUrl, { headers, timeout });
+        if (fetched?.text) {
+            pages.push({
+                status: fetched.status,
+                text: fetched.text,
+                response: fetched.response || null,
+                finalUrl: normalizeRemoteUrl(responseFinalUrl(fetched.response, bootstrapUrl)) && isUprotUrl(responseFinalUrl(fetched.response, bootstrapUrl)) ? responseFinalUrl(fetched.response, bootstrapUrl) : bootstrapUrl,
+                method: 'GET'
+            });
+        }
     }
-    return null;
+
+    if (client && typeof client.post === 'function') {
+        const posted = await postText(client, buildUprotForwardRequestUrl(bootstrapUrl, options), '', { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout);
+        if (posted?.text) pages.push({ ...posted, finalUrl: (posted.finalUrl && isUprotUrl(posted.finalUrl)) ? posted.finalUrl : bootstrapUrl, method: 'POST' });
+    }
+
+    if (!pages.length) return null;
+    return pages.find((page) => hasCaptchaCandidate(page.text, page.finalUrl || bootstrapUrl)) || pages[0];
 }
 
 async function generateUprotAutoState(client, targetUrl, options = {}) {
     if (!client || typeof client.post !== 'function') return null;
-    const bootstrapUrl = getUprotBootstrapUrl(options);
-    const headers = buildUprotHeaders(bootstrapUrl, options);
-    const page = await requestUprotBootstrapPage(client, bootstrapUrl, headers, options);
-    if (!page?.text) {
-        uprotDebug('warn', 'auto-state bootstrap page missing', { bootstrapHost: safeHost(bootstrapUrl), status: page?.status || 0 });
-        return null;
+
+    const bootstrapUrls = buildUprotBootstrapCandidates(targetUrl, options);
+
+    for (const bootstrapUrl of bootstrapUrls) {
+        const headers = buildUprotHeaders(bootstrapUrl, options);
+        const page = await requestUprotBootstrapPage(client, bootstrapUrl, headers, options);
+        if (!page?.text) {
+            uprotDebug('warn', 'auto-state bootstrap page missing', { bootstrapHost: safeHost(bootstrapUrl), bootstrapPath: safePathForUprot(bootstrapUrl), status: page?.status || 0 });
+            continue;
+        }
+
+        let cookies = mergeSetCookieHeaders({}, page.response);
+        const pageUrl = page.finalUrl || bootstrapUrl;
+        const imageSrc = extractCaptchaImageSrc(page.text, pageUrl);
+        if (!imageSrc) {
+            uprotDebug('warn', 'auto-state captcha image missing', {
+                bootstrapHost: safeHost(bootstrapUrl),
+                bootstrapPath: safePathForUprot(bootstrapUrl),
+                method: page.method || 'unknown',
+                bytes: String(page.text || '').length,
+                hasInlineDataImage: /data:image\/[^;]+;base64,/i.test(String(page.text || ''))
+            });
+            continue;
+        }
+        const imageBase64 = await fetchCaptchaImageBase64(client, imageSrc, pageUrl, options);
+        if (!imageBase64) {
+            uprotDebug('warn', 'auto-state captcha image decode failed', { bootstrapHost: safeHost(bootstrapUrl), bootstrapPath: safePathForUprot(bootstrapUrl), inline: /^data:image/i.test(String(imageSrc || '')) });
+            continue;
+        }
+
+        const captchaCode = await solveUprotCaptchaOCR(imageBase64, options);
+        if (!captchaCode) continue;
+
+        const formFields = extractFormInputs(page.text);
+        const captchaField = detectCaptchaFieldName(page.text, formFields);
+        const captchaData = { ...formFields, [captchaField]: captchaCode };
+        const formUrl = extractCaptchaFormAction(page.text, pageUrl) || pageUrl;
+        const postHeaders = {
+            ...buildUprotHeaders(formUrl, { ...options, referer: pageUrl, requestReferer: pageUrl }),
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Cookie: cookieHeaderFromState(cookies)
+        };
+        const posted = await postText(client, formUrl, buildFormBody(captchaData), postHeaders, Number(options.postTimeout || UPROT_AUTO_STATE_DEFAULTS.postTimeoutMs));
+        if (posted.status < 200 || posted.status >= 400) {
+            uprotDebug('warn', 'auto-state captcha post failed', { status: posted.status, finalHost: safeHost(posted.finalUrl), bootstrapPath: safePathForUprot(bootstrapUrl) });
+            continue;
+        }
+        cookies = mergeSetCookieHeaders(cookies, posted.response);
+
+        const redirectedPlayer = toMaxstreamPlayerUrl(posted.finalUrl);
+        const continueUrl = extractContinueLink(posted.text, formUrl);
+        const fallbackUrl = extractFirstUrl(posted.text, PLAYER_LINK_PATTERNS, formUrl);
+        const playerUrl = redirectedPlayer
+            || (continueUrl ? await followContinueLink(client, continueUrl, { ...options, sourceUrl: formUrl, requestReferer: pageUrl, referer: pageUrl }) : null)
+            || toMaxstreamPlayerUrl(fallbackUrl);
+
+        if (!cookieHeaderFromState(cookies) && !playerUrl) continue;
+
+        const state = {
+            cookies,
+            captchaData,
+            source: `auto:${safeHost(bootstrapUrl) || 'uprot'}:${safePathForUprot(bootstrapUrl) || '/'}`,
+            targetHost: safeHost(targetUrl),
+            captchaPageUrl: pageUrl,
+            formUrl
+        };
+        if (playerUrl) {
+            state.playerUrl = playerUrl;
+            state.sourceUrl = formUrl;
+        }
+        saveUprotStateToFile(state, options);
+        uprotDebug('info', 'auto-state captcha accepted', { bootstrapHost: safeHost(bootstrapUrl), bootstrapPath: safePathForUprot(bootstrapUrl), playerHost: safeHost(playerUrl), formHost: safeHost(formUrl) });
+        return state;
     }
 
-    let cookies = mergeSetCookieHeaders({}, page.response);
-    const imageSrc = extractCaptchaImageSrc(page.text, page.finalUrl || bootstrapUrl);
-    if (!imageSrc) {
-        uprotDebug('warn', 'auto-state captcha image missing', { bootstrapHost: safeHost(bootstrapUrl) });
-        return null;
+    return null;
+}
+
+
+function cleanupUprotManualSessions(now = Date.now()) {
+    for (const [token, session] of uprotManualSessions.entries()) {
+        if (!session || Number(session.expiresAt || 0) <= now) uprotManualSessions.delete(token);
     }
-    const imageBase64 = await fetchCaptchaImageBase64(client, imageSrc, page.finalUrl || bootstrapUrl, options);
-    if (!imageBase64) return null;
+}
 
-    const captchaCode = await solveUprotCaptchaOCR(imageBase64, options);
-    if (!captchaCode) return null;
+function htmlEscape(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
-    const captchaData = { captcha: captchaCode };
-    const postHeaders = {
-        ...buildUprotHeaders(bootstrapUrl, options),
+function renderUprotSetupHtml(payload = {}) {
+    const token = htmlEscape(payload.token || '');
+    const imageSrc = htmlEscape(payload.imageSrc || '');
+    const error = payload.error ? `<div class="msg err">${htmlEscape(payload.error)}</div>` : '';
+    const success = payload.success ? `<div class="msg ok">${htmlEscape(payload.success)}</div>` : '';
+    const detail = payload.detail ? `<p class="detail">${htmlEscape(payload.detail)}</p>` : '';
+    const stateFile = htmlEscape(payload.stateFile || getUprotGeneratedStateFile());
+    const form = imageSrc ? `
+        <div class="captcha-card">
+            <img src="${imageSrc}" alt="Uprot captcha" />
+            <form method="post" action="/uprot" autocomplete="off">
+                <input type="hidden" name="token" value="${token}" />
+                <label for="captcha">Codice Uprot</label>
+                <input id="captcha" name="captcha" inputmode="numeric" pattern="[0-9]{3,8}" maxlength="8" required autofocus />
+                <button type="submit">Salva state Uprot</button>
+            </form>
+        </div>` : `
+        <div class="captcha-card muted">
+            <p>Non sono riuscito a ottenere l'immagine captcha da Uprot. Riprova tra poco oppure controlla proxy/WARP.</p>
+            <a class="button" href="/uprot">Riprova</a>
+        </div>`;
+    return `<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Leviathan · Uprot setup</title>
+<style>
+:root{color-scheme:dark;--bg:#07111f;--panel:rgba(255,255,255,.09);--line:rgba(255,255,255,.16);--text:#eef6ff;--muted:#9db2c8;--accent:#37d7ff;--ok:#63e6be;--err:#ff8a8a}
+*{box-sizing:border-box} body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 15% 10%,rgba(55,215,255,.24),transparent 36%),radial-gradient(circle at 90% 80%,rgba(124,92,255,.22),transparent 34%),var(--bg);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--text);padding:22px}
+.wrap{width:min(520px,100%);background:var(--panel);border:1px solid var(--line);border-radius:28px;box-shadow:0 28px 80px rgba(0,0,0,.35);padding:28px;backdrop-filter:blur(18px)}
+h1{margin:0 0 8px;font-size:clamp(26px,6vw,38px);letter-spacing:-.04em} p{color:var(--muted);line-height:1.55}.captcha-card{margin-top:22px;padding:20px;border:1px solid var(--line);border-radius:22px;background:rgba(0,0,0,.22);display:grid;gap:18px}.captcha-card img{max-width:100%;justify-self:center;border-radius:12px;background:#fff;padding:8px}label{display:block;margin-bottom:8px;color:#dcecff;font-weight:700}input{width:100%;padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.1);color:var(--text);font-size:20px;letter-spacing:.12em;text-align:center}button,.button{display:inline-flex;justify-content:center;width:100%;margin-top:14px;padding:14px 18px;border:0;border-radius:14px;background:linear-gradient(135deg,var(--accent),#7c5cff);color:#00121d;font-weight:900;text-decoration:none;cursor:pointer}.msg{padding:12px 14px;border-radius:14px;margin:14px 0}.ok{background:rgba(99,230,190,.14);border:1px solid rgba(99,230,190,.4);color:var(--ok)}.err{background:rgba(255,138,138,.14);border:1px solid rgba(255,138,138,.4);color:var(--err)}code{word-break:break-all;background:rgba(255,255,255,.08);padding:2px 6px;border-radius:6px}.detail{font-size:14px}.muted{opacity:.9}
+</style>
+</head>
+<body><main class="wrap"><h1>Uprot setup</h1><p>Come MammaMia: prepara una volta lo state Uprot, poi CB01/MaxStream lo riusa senza provare captcha live durante lo stream.</p>${success}${error}${form}${detail}<p class="detail">State file: <code>${stateFile}</code></p></main></body></html>`;
+}
+
+async function prepareUprotManualChallenge(options = {}) {
+    cleanupUprotManualSessions();
+    const client = options.client || axios;
+    if (!client || typeof client.post !== 'function') {
+        return { ok: false, html: renderUprotSetupHtml({ error: 'Client HTTP non disponibile: impossibile preparare Uprot.' }) };
+    }
+
+    const bootstrapUrl = normalizeRemoteUrl(options.uprotBootstrapUrl || process.env.UPROT_BOOTSTRAP_URL || UPROT_AUTO_STATE_DEFAULTS.bootstrapUrl) || UPROT_AUTO_STATE_DEFAULTS.bootstrapUrl;
+    const headers = {
+        ...buildUprotHeaders(bootstrapUrl, {
+            ...options,
+            referer: bootstrapUrl,
+            requestReferer: bootstrapUrl,
+            accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        }),
         'Content-Type': 'application/x-www-form-urlencoded',
-        Cookie: cookieHeaderFromState(cookies)
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-User': '?1',
+        DNT: '1'
     };
-    const posted = await postText(client, bootstrapUrl, buildFormBody(captchaData), postHeaders, Number(options.postTimeout || UPROT_AUTO_STATE_DEFAULTS.postTimeoutMs));
-    if (posted.status < 200 || posted.status >= 400) {
-        uprotDebug('warn', 'auto-state captcha post failed', { status: posted.status, finalHost: safeHost(posted.finalUrl) });
-        return null;
-    }
-    cookies = mergeSetCookieHeaders(cookies, posted.response);
-    if (!cookieHeaderFromState(cookies)) return null;
 
-    const state = {
+    let page = await postText(client, buildUprotForwardRequestUrl(bootstrapUrl, options), '', headers, Number(options.bootstrapTimeout || UPROT_AUTO_STATE_DEFAULTS.bootstrapTimeoutMs));
+    let pageText = page?.text || '';
+    let pageUrl = (page?.finalUrl && isUprotUrl(page.finalUrl)) ? page.finalUrl : bootstrapUrl;
+    let cookies = mergeSetCookieHeaders({}, page?.response);
+    let imageSrc = extractCaptchaImageSrc(pageText, pageUrl);
+
+    if (!imageSrc) {
+        const fallback = await requestUprotBootstrapPage(client, bootstrapUrl, headers, options);
+        pageText = fallback?.text || pageText;
+        pageUrl = fallback?.finalUrl || pageUrl;
+        cookies = mergeSetCookieHeaders(cookies, fallback?.response);
+        imageSrc = extractCaptchaImageSrc(pageText, pageUrl);
+    }
+
+    if (!imageSrc) {
+        uprotDebug('warn', 'manual setup captcha image missing', { bootstrapHost: safeHost(bootstrapUrl), status: page?.status || 0, bytes: String(pageText || '').length, hasInlineDataImage: /data:image\/[^;]+;base64,/i.test(pageText) });
+        return {
+            ok: false,
+            html: renderUprotSetupHtml({
+                error: 'Captcha Uprot non trovato nella pagina ricevuta.',
+                detail: `bootstrap=${bootstrapUrl} status=${page?.status || 0} bytes=${String(pageText || '').length}`
+            })
+        };
+    }
+
+    const imageBase64 = await fetchCaptchaImageBase64(client, imageSrc, pageUrl, options);
+    const dataUri = imageBase64 ? `data:image/png;base64,${imageBase64}` : imageSrc;
+    const formFields = extractFormInputs(pageText);
+    const captchaField = detectCaptchaFieldName(pageText, formFields);
+    const formUrl = extractCaptchaFormAction(pageText, pageUrl) || pageUrl;
+    const token = crypto.randomBytes(18).toString('hex');
+    uprotManualSessions.set(token, {
         cookies,
+        formFields,
+        captchaField,
+        formUrl,
+        pageUrl,
+        bootstrapUrl,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + uprotManualSessionTtlMs(options)
+    });
+    uprotDebug('info', 'manual setup ready', { bootstrapHost: safeHost(bootstrapUrl), formHost: safeHost(formUrl), cookieKeys: Object.keys(cookies || {}).length, captchaField });
+    return { ok: true, html: renderUprotSetupHtml({ token, imageSrc: dataUri }) };
+}
+
+async function submitUprotManualChallenge({ token, captcha }, options = {}) {
+    cleanupUprotManualSessions();
+    const cleanToken = String(token || '').trim();
+    const digits = validateUprotCaptchaDigits(captcha);
+    const session = cleanToken ? uprotManualSessions.get(cleanToken) : null;
+    if (!session) {
+        return { ok: false, html: renderUprotSetupHtml({ error: 'Sessione Uprot scaduta. Riapri /uprot e riprova.' }) };
+    }
+    if (!digits) {
+        return { ok: false, html: renderUprotSetupHtml({ error: 'Codice captcha non valido. Usa solo le cifre mostrate.' }) };
+    }
+
+    const client = options.client || axios;
+    if (!client || typeof client.post !== 'function') {
+        return { ok: false, html: renderUprotSetupHtml({ error: 'Client HTTP non disponibile: impossibile salvare Uprot.' }) };
+    }
+
+    const captchaData = { ...(session.formFields || {}), [session.captchaField || 'captcha']: digits };
+    const headers = {
+        ...buildUprotHeaders(session.formUrl, { ...options, referer: session.pageUrl, requestReferer: session.pageUrl }),
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Cookie: cookieHeaderFromState(session.cookies)
+    };
+    const posted = await postText(client, buildUprotForwardRequestUrl(session.formUrl, options), buildFormBody(captchaData), headers, Number(options.postTimeout || UPROT_AUTO_STATE_DEFAULTS.postTimeoutMs));
+    if (posted.status < 200 || posted.status >= 400) {
+        return { ok: false, html: renderUprotSetupHtml({ error: `Uprot ha rifiutato il captcha. Status ${posted.status || 0}.` }) };
+    }
+
+    const mergedCookies = mergeSetCookieHeaders(session.cookies || {}, posted.response);
+    const state = {
+        cookies: mergedCookies,
         captchaData,
-        source: `auto:${safeHost(bootstrapUrl) || 'uprot'}`,
-        targetHost: safeHost(targetUrl)
+        source: 'manual:/uprot',
+        targetHost: safeHost(session.bootstrapUrl),
+        captchaPageUrl: session.pageUrl,
+        formUrl: session.formUrl
     };
     saveUprotStateToFile(state, options);
-    return state;
+    uprotManualSessions.delete(cleanToken);
+    captchaOrchestrator.markSuccess(uprotCaptchaContext(session.bootstrapUrl, options), { cookieState: state, reason: 'manual_uprot_setup' }, uprotStateTtlMs(options));
+    uprotDebug('info', 'manual setup saved', { stateFile: getUprotGeneratedStateFile(options), cookieKeys: Object.keys(mergedCookies || {}).length, formKeys: Object.keys(captchaData || {}).length });
+    return {
+        ok: true,
+        html: renderUprotSetupHtml({
+            success: 'State Uprot salvato. Ora CB01 | MaxStream può riusarlo come MammaMia.',
+            detail: 'Riavvia lo stream o svuota la cache del titolo se avevi già aperto la scheda.'
+        })
+    };
 }
 
 async function ensureUprotAutoState(client, targetUrl, options = {}) {
     const existing = loadUprotState(options);
     if (cookieHeaderFromState(existing.cookies) && buildFormBody(existing.captchaData)) return existing;
     if (!uprotAutoStateEnabled(options)) return null;
+    if (uprotMammaMiaMode(options)) {
+        uprotDebug('info', 'manual state mode active; skipping live OCR auto-state', { targetHost: safeHost(targetUrl), stateReady: false });
+        return null;
+    }
 
     const context = uprotCaptchaContext(targetUrl, options);
     const ensured = await captchaOrchestrator.ensureState(
@@ -898,6 +1407,7 @@ async function resolveUprotToMaxstream(client, url, options = {}) {
         uprotDebug('info', 'resolve start', { path: 'msfi', stateReady, autoState: uprotAutoStateEnabled(options), flareEnabled: flareEnabled(options), targetHost: safeHost(targetUrl) });
         if (!stateReady) {
             const generated = await ensureUprotAutoState(client, targetUrl, activeOptions);
+            if (generated?.playerUrl) return { playerUrl: generated.playerUrl, sourceUrl: generated.sourceUrl || targetUrl, via: 'uprot-auto-captcha' };
             activeOptions = withUprotStateOptions(activeOptions, generated);
             stateReady = hasUprotState(activeOptions);
         }
@@ -928,8 +1438,14 @@ async function resolveUprotToMaxstream(client, url, options = {}) {
 
     if (!stateReady && captchaUrl) {
         const generated = await ensureUprotAutoState(client, captchaUrl, activeOptions);
+        if (generated?.playerUrl) return { playerUrl: generated.playerUrl, sourceUrl: generated.sourceUrl || captchaUrl, via: 'uprot-auto-captcha' };
         activeOptions = withUprotStateOptions(activeOptions, generated);
         stateReady = hasUprotState(activeOptions);
+    }
+
+    if (stateReady) {
+        const stateLanding = await resolveLanding(client, targetUrl, activeOptions);
+        if (stateLanding) return stateLanding;
     }
 
     if (stateReady && captchaUrl) {
@@ -1001,6 +1517,8 @@ module.exports = {
     extractContinueLink,
     fetchWithFlareSolverr,
     loadUprotState,
+    prepareUprotManualChallenge,
+    submitUprotManualChallenge,
     extractUprot,
     isUprotUrl,
     normalizeUprotInput,
@@ -1008,11 +1526,21 @@ module.exports = {
     toMaxstreamPlayerUrl,
     _test: {
         buildFormBody,
+        cleanInlineDataImage,
         cookieHeaderFromState,
+        extractBase64Image,
+        extractCaptchaFormAction,
+        extractCaptchaImageSrc,
         extractContinueLink,
         loadUprotState,
+        prepareUprotManualChallenge,
+        submitUprotManualChallenge,
         parseUprotTxtState,
         toMsfCaptchaUrl,
+        buildUprotBootstrapCandidates,
+        extractUprotPathCode,
+        buildUprotForwardRequestUrl,
+        withUprotPathPrefix,
         UPROT_AUTO_STATE_DEFAULTS
     }
 };
