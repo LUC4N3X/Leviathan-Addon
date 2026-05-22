@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { incrementMetric } = require('../../utils/runtime');
 const { getRawStreamCache, setRawStreamCache } = require('../../cache/raw_stream_cache');
 const { getRequestClientIp, getRequestOrigin } = require('../../utils/url');
+const { prepareUprotManualChallenge, submitUprotManualChallenge } = require('../../../providers/extractors/hosters/uprot');
 
 const RECENT_STREAM_HINT_TTL_MS = 10 * 60 * 1000;
 const RECENT_STREAM_HINT_LIMIT = 256;
@@ -317,6 +318,37 @@ function registerStremioRoutes(app, {
         res.setHeader('Cache-Control', 'no-store, max-age=0');
         res.setHeader('Pragma', 'no-cache');
         return res.sendFile(path.join(publicDir, 'rd-scanner.html'));
+    });
+
+    app.get('/uprot', async (req, res) => {
+        res.setHeader('Cache-Control', 'no-store, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        try {
+            const result = await prepareUprotManualChallenge({
+                ...(req.query?.url ? { uprotBootstrapUrl: String(req.query.url) } : {})
+            });
+            return res.status(result.ok ? 200 : 502).send(result.html);
+        } catch (error) {
+            logger?.warn?.(`[UPROT] manual setup page failed | error=${error.message}`);
+            return res.status(500).send(`<pre>Uprot setup failed: ${String(error.message || error)}</pre>`);
+        }
+    });
+
+    app.post('/uprot', async (req, res) => {
+        res.setHeader('Cache-Control', 'no-store, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        try {
+            const result = await submitUprotManualChallenge({
+                token: req.body?.token,
+                captcha: req.body?.captcha || req.body?.user_input
+            });
+            return res.status(result.ok ? 200 : 400).send(result.html);
+        } catch (error) {
+            logger?.warn?.(`[UPROT] manual setup submit failed | error=${error.message}`);
+            return res.status(500).send(`<pre>Uprot submit failed: ${String(error.message || error)}</pre>`);
+        }
     });
 
     app.get('/manifest.json', (req, res) => {
