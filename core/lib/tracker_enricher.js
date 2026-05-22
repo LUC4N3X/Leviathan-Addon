@@ -13,11 +13,8 @@ const FALLBACK_TRACKERS = [
   'udp://open.demonii.com:1337/announce',
   'udp://exodus.desync.com:6969/announce',
   'udp://tracker.torrent.eu.org:451/announce',
-  'udp://tracker.openbittorrent.com:6969/announce',
   'udp://tracker.therarbg.to:6969/announce',
-  'udp://opentracker.i2p.rocks:6969/announce',
-  'udp://tracker.moeking.me:6969/announce',
-  'udp://tracker.dler.org:6969/announce'
+  'udp://opentracker.i2p.rocks:6969/announce'
 ];
 
 const MAX_TRACKERS = 24;
