@@ -42,10 +42,10 @@ const RAW_PROVIDER_STALE_GRACE_TTL = Math.max(parseInt(process.env.RAW_PROVIDER_
 const EMPTY_STREAM_TTL = Math.max(parseInt(process.env.EMPTY_STREAM_TTL || '60', 10) || 60, 15);
 const STREAM_STALE_GRACE_TTL = Math.max(parseInt(process.env.STREAM_STALE_GRACE_TTL || '180', 10) || 180, 30);
 const METADATA_CACHE_TTL = Math.max(parseInt(process.env.METADATA_CACHE_TTL || '1800', 10) || 1800, 60);
-const RESOLVED_URL_TTL = Math.max(parseInt(process.env.RESOLVED_URL_TTL || process.env.LAZY_LINK_TTL || '180', 10) || 180, 30);
+const RESOLVED_URL_TTL = Math.max(parseInt(process.env.RESOLVED_URL_TTL || process.env.LAZY_LINK_TTL || process.env.TORRENTIO_RESOLVED_URL_TTL || '10800', 10) || 10800, 60);
 const EMPTY_RESOLVED_URL_TTL = Math.max(parseInt(process.env.EMPTY_RESOLVED_URL_TTL || '60', 10) || 60, 15);
-const AVAILABILITY_CACHE_TTL = Math.max(parseInt(process.env.AVAILABILITY_CACHE_TTL || '900', 10) || 900, 30);
-const EMPTY_AVAILABILITY_TTL = Math.max(parseInt(process.env.EMPTY_AVAILABILITY_TTL || '120', 10) || 120, 15);
+const AVAILABILITY_CACHE_TTL = Math.max(parseInt(process.env.AVAILABILITY_CACHE_TTL || process.env.TORRENTIO_AVAILABILITY_TTL || '432000', 10) || 432000, 60);
+const EMPTY_AVAILABILITY_TTL = Math.max(parseInt(process.env.EMPTY_AVAILABILITY_TTL || '60', 10) || 60, 15);
 const DB_LOOKUP_CACHE_TTL = Math.max(parseInt(process.env.DB_LOOKUP_CACHE_TTL || '30', 10) || 30, 5);
 const SHARED_FETCH_INFLIGHT_MAX_ENTRIES = Math.max(128, Math.min(20000, parseInt(process.env.SHARED_FETCH_INFLIGHT_MAX_ENTRIES || '4096', 10) || 4096));
 const VERBOSE_CACHE_LOGS = String(process.env.VERBOSE_CACHE_LOGS || 'false').toLowerCase() === 'true';

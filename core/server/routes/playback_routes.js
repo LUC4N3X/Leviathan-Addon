@@ -78,15 +78,15 @@ async function readTbAvailabilityFastPayload(dbHelper, hash, fileIdx, meta = {})
     return null;
 }
 
-function getResolvedDbTtlSeconds(streamData = {}, fallback = 1800) {
+function getResolvedDbTtlSeconds(streamData = {}, fallback = 10800) {
     const explicit = Number(streamData.expires_in || streamData.expiresIn || streamData.ttl || 0) || 0;
-    if (explicit > 0) return Math.max(60, Math.min(explicit - 60, 2 * 60 * 60));
+    if (explicit > 0) return Math.max(60, Math.min(explicit - 60, 3 * 60 * 60));
     const expiresAt = streamData.expires_at || streamData.expiresAt || null;
     if (expiresAt) {
         const ms = new Date(expiresAt).getTime() - Date.now() - 60000;
-        if (Number.isFinite(ms) && ms > 0) return Math.max(60, Math.min(Math.floor(ms / 1000), 2 * 60 * 60));
+        if (Number.isFinite(ms) && ms > 0) return Math.max(60, Math.min(Math.floor(ms / 1000), 3 * 60 * 60));
     }
-    return Math.max(300, Math.min(Number(process.env.TB_RESOLVED_LINK_TTL_SECONDS || fallback) || fallback, 2 * 60 * 60));
+    return Math.max(300, Math.min(Number(process.env.TORRENTIO_RESOLVED_URL_TTL || process.env.TB_RESOLVED_LINK_TTL_SECONDS || fallback || 10800) || 10800, 3 * 60 * 60));
 }
 
 async function getPersistedResolvedLink(dbHelper, cacheKey) {
@@ -109,7 +109,7 @@ async function persistResolvedLink(dbHelper, cacheKey, service, tokenFp, streamD
             filename: streamData.filename || streamData.fileName || extra.filename || null,
             file_size: streamData.file_size || streamData.size || extra.fileSize || null,
             payload: { ...streamData, rawUrl: streamData.url, url: streamData.url },
-            ttlSeconds: getResolvedDbTtlSeconds(streamData, extra.ttlSeconds || 1800)
+            ttlSeconds: getResolvedDbTtlSeconds(streamData, extra.ttlSeconds || 10800)
         });
     } catch (_) {}
 }
@@ -375,7 +375,7 @@ function registerPlaybackRoutes(app, {
                     debrid: true,
                     filename: persistedLazy.filename || persistedLazy.fileName || cachedPlaybackMeta?.title || item.title
                 });
-                await Cache.cacheLazyLink(lazyCacheKey, { ...persistedLazy, rawUrl: cachedTargetUrl, url: cachedTargetUrl }, Math.min(getResolvedDbTtlSeconds(persistedLazy), 1800));
+                await Cache.cacheLazyLink(lazyCacheKey, { ...persistedLazy, rawUrl: cachedTargetUrl, url: cachedTargetUrl }, Math.min(getResolvedDbTtlSeconds(persistedLazy), 10800));
                 await markPlayableResultAsCached(requestedService, item, { ...persistedLazy, url: finalCachedUrl, rawUrl: cachedTargetUrl }, playbackMeta);
                 incrementMetric('lazyPlay.dbResolvedCacheHit');
                 recordDuration('lazyPlay.total', Date.now() - startedAt);
@@ -418,7 +418,7 @@ function registerPlaybackRoutes(app, {
                     debrid: true,
                     filename: streamData.filename || playbackMeta?.title || item.title
                 });
-                await Cache.cacheLazyLink(lazyCacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, Math.min(getResolvedDbTtlSeconds(streamData), 1800));
+                await Cache.cacheLazyLink(lazyCacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, Math.min(getResolvedDbTtlSeconds(streamData), 10800));
                 await persistResolvedLink(dbHelper, persistedLazyKey, requestedService, tokenFingerprint(apiKey), streamData, {
                     hash: item.hash,
                     fileId: streamData.file_id ?? streamData.tb_file_id ?? item.fileIdx,
@@ -505,7 +505,7 @@ function registerPlaybackRoutes(app, {
                     debrid: true,
                     filename: persistedSaved.filename || persistedSaved.fileName || ''
                 });
-                await Cache.cacheLazyLink(cacheKey, { ...persistedSaved, rawUrl: cachedTargetUrl, url: cachedTargetUrl }, Math.min(getResolvedDbTtlSeconds(persistedSaved), 1800));
+                await Cache.cacheLazyLink(cacheKey, { ...persistedSaved, rawUrl: cachedTargetUrl, url: cachedTargetUrl }, Math.min(getResolvedDbTtlSeconds(persistedSaved), 10800));
                 incrementMetric('savedCloudPlay.dbResolvedCacheHit');
                 recordDuration('savedCloudPlay.total', Date.now() - startedAt);
                 return res.redirect(finalCachedUrl);
@@ -528,7 +528,7 @@ function registerPlaybackRoutes(app, {
                 filename: streamData.filename || streamData.fileName || ''
             });
 
-            await Cache.cacheLazyLink(cacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, Math.min(getResolvedDbTtlSeconds(streamData), 1800));
+            await Cache.cacheLazyLink(cacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, Math.min(getResolvedDbTtlSeconds(streamData), 10800));
             await persistResolvedLink(dbHelper, persistedCacheKey, requestedService, tokenFp, streamData, {
                 torrentId,
                 fileId,

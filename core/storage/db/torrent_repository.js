@@ -924,6 +924,9 @@ function createTorrentRepository({
       file_index: normalizeFileIndex(row.file_index),
       matched_file_index: normalizeFileIndex(row.matched_file_index),
       matched_file_title: sanitizeText(row.matched_file_title),
+      matched_file_size: toSafeNumber(row.matched_file_size, 0),
+      file_title: sanitizeText(row.matched_file_title || row.title),
+      file_size: toSafeNumber(row.matched_file_size || row.size, 0),
       cached_rd: row.cached_rd === null || row.cached_rd === undefined ? null : Boolean(row.cached_rd),
       rd_cache_state: normalizeRdCacheState(row.rd_cache_state),
       rd_file_index: normalizeFileIndex(row.rd_file_index),
@@ -1044,6 +1047,7 @@ function createTorrentRepository({
           COALESCE(m.matched_file_index, t.file_index) AS file_index,
           m.matched_file_index,
           m.matched_file_title,
+          m.matched_file_size,
           t.cached_rd,
           t.rd_cache_state,
           COALESCE(o.rd_file_index, t.rd_file_index) AS rd_file_index,
@@ -1071,6 +1075,14 @@ function createTorrentRepository({
           CASE WHEN COALESCE(o.rd_file_index, t.rd_file_index) IS NOT NULL THEN 1 ELSE 0 END DESC,
           CASE WHEN t.cached_rd IS TRUE THEN 1 ELSE 0 END DESC,
           CASE WHEN (t.tb_cache_state = 'cached_verified' OR t.tb_cached IS TRUE) AND t.tb_last_cached_check >= NOW() - ($4::integer * INTERVAL '1 day') THEN 1 ELSE 0 END DESC,
+          CASE
+            WHEN COALESCE(t.resolution, t.title) ~* '(4320p|8k)' THEN 5
+            WHEN COALESCE(t.resolution, t.title) ~* '(2160p|4k|uhd)' THEN 4
+            WHEN COALESCE(t.resolution, t.title) ~* '(1440p|2k|qhd)' THEN 3
+            WHEN COALESCE(t.resolution, t.title) ~* '(1080p|1080i|fhd|full[-. ]?hd)' THEN 2
+            WHEN COALESCE(t.resolution, t.title) ~* '(720p|hd)' THEN 1
+            ELSE 0
+          END DESC,
           GREATEST(COALESCE(t.seeders, 0), COALESCE(t.max_seeders, 0)) DESC,
           COALESCE(t.seen_count, 0) DESC,
           COALESCE(t.last_seen_at, t.updated_at, t.created_at) DESC NULLS LAST,
@@ -1078,10 +1090,16 @@ function createTorrentRepository({
       `
       : `
         WITH matched_files AS (
-          SELECT DISTINCT info_hash_norm, file_index_norm
+          SELECT DISTINCT ON (info_hash_norm, file_index_norm)
+            info_hash_norm,
+            file_index_norm,
+            file_index AS matched_file_index,
+            title AS matched_file_title,
+            size AS matched_file_size
           FROM files
           WHERE imdb_id = $1
             AND (imdb_season IS NULL OR imdb_season = 0)
+          ORDER BY info_hash_norm, file_index_norm, COALESCE(size, 0) DESC, LENGTH(COALESCE(title, '')) DESC
         )
         SELECT DISTINCT ON (t.info_hash_norm, t.file_index_norm)
           t.title,
@@ -1106,9 +1124,10 @@ function createTorrentRepository({
           t.last_seen_at,
           t.seen_count,
           t.max_seeders,
-          t.file_index,
-          NULL::INTEGER AS matched_file_index,
-          NULL::TEXT AS matched_file_title,
+          COALESCE(f.matched_file_index, t.file_index) AS file_index,
+          f.matched_file_index,
+          f.matched_file_title,
+          f.matched_file_size,
           t.cached_rd,
           t.rd_cache_state,
           t.rd_file_index,
@@ -1137,6 +1156,14 @@ function createTorrentRepository({
           t.file_index_norm,
           CASE WHEN t.cached_rd IS TRUE THEN 1 ELSE 0 END DESC,
           CASE WHEN (t.tb_cache_state = 'cached_verified' OR t.tb_cached IS TRUE) AND t.tb_last_cached_check >= NOW() - ($2::integer * INTERVAL '1 day') THEN 1 ELSE 0 END DESC,
+          CASE
+            WHEN COALESCE(t.resolution, t.title) ~* '(4320p|8k)' THEN 5
+            WHEN COALESCE(t.resolution, t.title) ~* '(2160p|4k|uhd)' THEN 4
+            WHEN COALESCE(t.resolution, t.title) ~* '(1440p|2k|qhd)' THEN 3
+            WHEN COALESCE(t.resolution, t.title) ~* '(1080p|1080i|fhd|full[-. ]?hd)' THEN 2
+            WHEN COALESCE(t.resolution, t.title) ~* '(720p|hd)' THEN 1
+            ELSE 0
+          END DESC,
           GREATEST(COALESCE(t.seeders, 0), COALESCE(t.max_seeders, 0)) DESC,
           COALESCE(t.seen_count, 0) DESC,
           COALESCE(t.last_seen_at, t.updated_at, t.created_at) DESC NULLS LAST,
