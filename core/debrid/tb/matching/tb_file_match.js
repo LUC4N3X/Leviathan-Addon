@@ -126,15 +126,132 @@ function hasConflictingExplicitEpisode(name, season, episode) {
   return true;
 }
 
-function buildMovieScore(file) {
-  const name = normalizeName(getFileName(file));
+
+const MOVIE_QUALITY_PATTERN = /\b(?:2160p|1080p|720p|480p|4k|uhd|hdr|dv|dolby|vision|bluray|blu[- ]?ray|bdrip|brrip|web[- ]?dl|webrip|web|remux|x264|x265|h264|h265|hevc|avc|aac|ac3|eac3|dts|ita|eng|sub(?:bed)?|multi|dual|proper|repack|extended|unrated|directors?|cut|hdrip|dvdrip|cam|ts|tc|md|ld)\b/gi;
+const MOVIE_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'of', 'in', 'on', 'for', 'to', 'by', 'with',
+  'il', 'lo', 'la', 'i', 'gli', 'le', 'un', 'uno', 'una', 'e', 'di', 'del', 'della', 'dello', 'dei', 'degli', 'delle', 'da', 'con',
+  'film', 'movie', 'streaming', 'hd', 'ita', 'eng'
+]);
+const ROMAN_ORDINALS = new Map([
+  ['i', 1], ['ii', 2], ['iii', 3], ['iv', 4], ['v', 5], ['vi', 6], ['vii', 7], ['viii', 8], ['ix', 9], ['x', 10]
+]);
+const WORD_ORDINALS = new Map([
+  ['one', 1], ['two', 2], ['three', 3], ['four', 4], ['five', 5], ['six', 6], ['seven', 7], ['eight', 8], ['nine', 9], ['ten', 10],
+  ['uno', 1], ['due', 2], ['tre', 3], ['quattro', 4], ['cinque', 5], ['sei', 6], ['sette', 7], ['otto', 8], ['nove', 9], ['dieci', 10]
+]);
+
+function stripMovieNoise(value) {
+  return normalizeName(value)
+    .replace(/\.[a-z0-9]{2,4}$/i, ' ')
+    .replace(/\b(?:19|20)\d{2}\b/g, ' ')
+    .replace(MOVIE_QUALITY_PATTERN, ' ')
+    .replace(/\b(?:yts|rarbg|eztv|ettv|tgx|nahom|megatron|mux|max|crew|proper|repack)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractYears(value) {
+  const years = [];
+  const text = String(value || '');
+  const re = /\b(19\d{2}|20\d{2})\b/g;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    const year = safeInt(match[1], 0);
+    if (year >= 1900 && year <= 2099) years.push(year);
+  }
+  return [...new Set(years)];
+}
+
+function movieOrdinalSet(value) {
+  const text = stripMovieNoise(value);
+  const out = new Set();
+  const chapterRe = /\b(?:chapter|capitolo|part|parte|vol(?:ume)?|episodio)\s*(\d{1,2}|i{1,3}|iv|v|vi{0,3}|ix|x|one|two|three|four|five|six|seven|eight|nine|ten|uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci)\b/gi;
+  let match;
+  while ((match = chapterRe.exec(text)) !== null) {
+    const token = String(match[1] || '').toLowerCase();
+    const value = safeInt(token, NaN);
+    const mapped = Number.isFinite(value) ? value : (ROMAN_ORDINALS.get(token) || WORD_ORDINALS.get(token));
+    if (Number.isFinite(mapped) && mapped > 0) out.add(mapped);
+  }
+  const standaloneRe = /(?:^|\s)(\d{1,2}|ii|iii|iv|v|vi|vii|viii|ix|x)(?=\s|$)/gi;
+  while ((match = standaloneRe.exec(text)) !== null) {
+    const token = String(match[1] || '').toLowerCase();
+    const value = safeInt(token, NaN);
+    const mapped = Number.isFinite(value) ? value : ROMAN_ORDINALS.get(token);
+    if (Number.isFinite(mapped) && mapped > 0 && mapped <= 20) out.add(mapped);
+  }
+  return out;
+}
+
+function movieTitleTokens(value) {
+  return stripMovieNoise(value)
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2 && !MOVIE_STOPWORDS.has(token));
+}
+
+function collectTargetMovieTitles(options = {}) {
+  const titles = [];
+  const push = (value) => {
+    const text = String(value || '').trim();
+    if (text && !titles.some((entry) => entry.toLowerCase() === text.toLowerCase())) titles.push(text);
+  };
+  push(options.title);
+  push(options.targetTitle);
+  push(options.movieTitle);
+  push(options.originalTitle);
+  push(options.original_title);
+  if (Array.isArray(options.titles)) for (const title of options.titles) push(title);
+  return titles;
+}
+
+function isMovieNameCompatibleWithTarget(fileName, options = {}) {
+  const titles = collectTargetMovieTitles(options);
+  if (titles.length === 0) return true;
+
+  const fileYears = extractYears(fileName);
+  const targetYear = safeInt(options.year ?? options.movieYear ?? options.releaseYear, 0);
+  if (targetYear > 0 && fileYears.length > 0 && !fileYears.some((year) => Math.abs(year - targetYear) <= 1)) {
+    return false;
+  }
+
+  const fileKey = stripMovieNoise(fileName);
+  const fileOrdinals = movieOrdinalSet(fileName);
+
+  for (const title of titles) {
+    const targetTokens = movieTitleTokens(title);
+    if (targetTokens.length === 0) continue;
+    const targetOrdinals = movieOrdinalSet(title);
+    if (targetOrdinals.size > 0 && fileOrdinals.size > 0) {
+      const sharedOrdinal = [...targetOrdinals].some((ordinal) => fileOrdinals.has(ordinal));
+      if (!sharedOrdinal) continue;
+    }
+
+    const shared = targetTokens.filter((token) => fileKey.includes(token));
+    const required = targetTokens.length <= 2 ? targetTokens.length : Math.ceil(targetTokens.length * 0.55);
+    if (shared.length >= Math.max(1, required)) return true;
+  }
+  return false;
+}
+
+function isMovieFileCompatibleWithTarget(file, options = {}) {
+  return isMovieNameCompatibleWithTarget(getFileName(file), options);
+}
+
+function buildMovieScore(file, options = {}) {
+  const rawName = getFileName(file);
+  const name = normalizeName(rawName);
   const size = getFileSize(file);
   let score = 0;
-  if (isVideoFile(file)) score += 400;
+  if (!isVideoFile(file)) return -Infinity;
+  if (collectTargetMovieTitles(options).length > 0 && !isMovieFileCompatibleWithTarget(file, options)) return -Infinity;
+  score += 400;
   score += Math.min(size / (1024 * 1024 * 40), 180);
   if (isExtraFile(file)) score -= 300;
   if (/\b(sample|trailer|extras?|featurette|making of)\b/i.test(name)) score -= 350;
   if (/\b(2160p|1080p|720p|bluray|bdrip|web[- ]?dl|webrip|remux)\b/i.test(name)) score += 25;
+  if (collectTargetMovieTitles(options).length > 0) score += 220;
   return score;
 }
 
@@ -165,7 +282,7 @@ function buildEpisodeScore(file, season, episode) {
   return score;
 }
 
-function resolveForcedFileId(files, forcedFileIdx, season = 0, episode = 0) {
+function resolveForcedFileId(files, forcedFileIdx, season = 0, episode = 0, options = {}) {
   if (forcedFileIdx == null) return null;
   const raw = safeInt(forcedFileIdx, NaN);
   if (!Number.isFinite(raw) || raw < 0) return null;
@@ -174,6 +291,7 @@ function resolveForcedFileId(files, forcedFileIdx, season = 0, episode = 0) {
   const selected = byId || (raw < list.length ? list[raw] : null);
   if (!selected) return null;
   if (season > 0 && episode > 0 && hasConflictingExplicitEpisode(getFileName(selected), season, episode)) return null;
+  if (!(season > 0 && episode > 0) && collectTargetMovieTitles(options).length > 0 && !isMovieFileCompatibleWithTarget(selected, options)) return null;
   return getFileId(selected);
 }
 
@@ -186,7 +304,7 @@ function rankCandidateFiles(files, season, episode, options = {}) {
   const e = safeInt(episode, 0);
   const isMovie = s <= 0 && e <= 0;
   return candidates
-    .map((file) => ({ file, score: isMovie ? buildMovieScore(file) : buildEpisodeScore(file, s, e), size: getFileSize(file) }))
+    .map((file) => ({ file, score: isMovie ? buildMovieScore(file, options) : buildEpisodeScore(file, s, e), size: getFileSize(file) }))
     .filter((item) => Number.isFinite(item.score))
     .sort((a, b) => (b.score - a.score) || (b.size - a.size));
 }
@@ -211,7 +329,7 @@ function matchFileDetailed(files, season, episode, forcedFileIdx = null, options
   const s = safeInt(season, 0);
   const e = safeInt(episode, 0);
   const isSeries = s > 0 && e > 0;
-  const forced = resolveForcedFileId(list, forcedFileIdx, s, e);
+  const forced = resolveForcedFileId(list, forcedFileIdx, s, e, options);
   if (forced != null) {
     const forcedFile = getFileById(list, forced);
     return { fileId: forced, file: forcedFile, confidence: 1, reason: 'forced_file_id', score: Infinity, proofLevel: isSeries ? 'episode_exact' : 'file_exact' };
@@ -256,6 +374,8 @@ module.exports = {
   isExtraFile,
   getVideoFiles,
   hasConflictingExplicitEpisode,
+  isMovieNameCompatibleWithTarget,
+  isMovieFileCompatibleWithTarget,
   rankCandidateFiles,
   chooseBestFile,
   matchFile,
