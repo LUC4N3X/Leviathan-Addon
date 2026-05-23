@@ -45,7 +45,64 @@ function buildTbAvailabilityKeys(hash, fileIdx, meta = {}) {
     return [...new Set(keys)];
 }
 
-function getTbAvailabilityFastPayload(payload = {}, requestedFileIdx = null) {
+
+function normalizeMovieTextForTb(value = '') {
+    return String(value || '')
+        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\.[a-z0-9]{2,4}$/i, ' ')
+        .replace(/\b(?:19|20)\d{2}\b/g, ' ')
+        .replace(/\b(?:2160p|1080p|720p|480p|4k|uhd|hdr|bluray|bdrip|brrip|web[- ]?dl|webrip|remux|x264|x265|h264|h265|hevc|ita|eng|sub|multi|dual)\b/gi, ' ')
+        .replace(/[\[\](){}._:+\-–—]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function tbMovieYears(value = '') {
+    const years = [];
+    const re = /\b(19\d{2}|20\d{2})\b/g;
+    let match;
+    while ((match = re.exec(String(value || ''))) !== null) years.push(Number(match[1]));
+    return [...new Set(years)];
+}
+
+function tbMovieOrdinals(value = '') {
+    const text = normalizeMovieTextForTb(value);
+    const out = new Set();
+    const roman = { i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10 };
+    const re = /\b(?:chapter|capitolo|part|parte)\s*(\d{1,2}|ii|iii|iv|v|vi|vii|viii|ix|x)\b|(?:^|\s)(\d{1,2}|ii|iii|iv|v|vi|vii|viii|ix|x)(?=\s|$)/gi;
+    let match;
+    while ((match = re.exec(text)) !== null) {
+        const token = String(match[1] || match[2] || '').toLowerCase();
+        const n = Number.isInteger(Number(token)) ? Number(token) : roman[token];
+        if (Number.isFinite(n) && n > 0 && n <= 20) out.add(n);
+    }
+    return out;
+}
+
+function tbMovieFileTitleLooksCompatible(fileTitle = '', meta = {}) {
+    const targetTitles = [meta?.title, meta?.originalTitle, meta?.original_title].filter(Boolean);
+    if (!fileTitle || targetTitles.length === 0) return true;
+    const targetYear = Number(meta?.year || 0) || 0;
+    const years = tbMovieYears(fileTitle);
+    if (targetYear > 0 && years.length > 0 && !years.some((year) => Math.abs(year - targetYear) <= 1)) return false;
+    const fileKey = normalizeMovieTextForTb(fileTitle);
+    const fileOrdinals = tbMovieOrdinals(fileTitle);
+    for (const title of targetTitles) {
+        const targetKey = normalizeMovieTextForTb(title);
+        const targetTokens = targetKey.split(/\s+/).filter((token) => token.length >= 2 && !['the','and','of','il','lo','la','un','una','uno','di','del','della','e'].includes(token));
+        if (targetTokens.length === 0) continue;
+        const targetOrdinals = tbMovieOrdinals(title);
+        if (targetOrdinals.size > 0 && fileOrdinals.size > 0 && ![...targetOrdinals].some((n) => fileOrdinals.has(n))) continue;
+        const shared = targetTokens.filter((token) => fileKey.includes(token));
+        const required = targetTokens.length <= 2 ? targetTokens.length : Math.ceil(targetTokens.length * 0.55);
+        if (shared.length >= Math.max(1, required)) return true;
+    }
+    return false;
+}
+
+function getTbAvailabilityFastPayload(payload = {}, requestedFileIdx = null, meta = {}) {
     const state = String(payload.state || payload.tb_cache_state || payload.cache_state || '').toLowerCase();
     const confidence = Number(payload.confidence || 0) || 0;
     const fileId = parseFileIndex(payload.file_id ?? payload.tb_file_id ?? payload.fileId);
@@ -54,6 +111,7 @@ function getTbAvailabilityFastPayload(payload = {}, requestedFileIdx = null) {
     if (!Number.isInteger(fileId)) return null;
     if (confidence < 0.75) return null;
     if (Number.isInteger(requested) && requested !== fileId) return null;
+    if (String(meta?.type || '').toLowerCase() === 'movie' && !tbMovieFileTitleLooksCompatible(payload.file_title || payload.filename || '', meta)) return null;
     return {
         fileId,
         confidence,
@@ -71,22 +129,22 @@ async function readTbAvailabilityFastPayload(dbHelper, hash, fileIdx, meta = {})
         const persisted = await dbHelper.getDebridAvailabilityCache(keys);
         for (const key of keys) {
             const payload = persisted?.[key];
-            const fast = getTbAvailabilityFastPayload(payload, fileIdx);
+            const fast = getTbAvailabilityFastPayload(payload, fileIdx, meta);
             if (fast) return { ...fast, cacheKey: key };
         }
     } catch (_) {}
     return null;
 }
 
-function getResolvedDbTtlSeconds(streamData = {}, fallback = 10800) {
+function getResolvedDbTtlSeconds(streamData = {}, fallback = 1800) {
     const explicit = Number(streamData.expires_in || streamData.expiresIn || streamData.ttl || 0) || 0;
-    if (explicit > 0) return Math.max(60, Math.min(explicit - 60, 3 * 60 * 60));
+    if (explicit > 0) return Math.max(60, Math.min(explicit - 60, 2 * 60 * 60));
     const expiresAt = streamData.expires_at || streamData.expiresAt || null;
     if (expiresAt) {
         const ms = new Date(expiresAt).getTime() - Date.now() - 60000;
-        if (Number.isFinite(ms) && ms > 0) return Math.max(60, Math.min(Math.floor(ms / 1000), 3 * 60 * 60));
+        if (Number.isFinite(ms) && ms > 0) return Math.max(60, Math.min(Math.floor(ms / 1000), 2 * 60 * 60));
     }
-    return Math.max(300, Math.min(Number(process.env.TORRENTIO_RESOLVED_URL_TTL || process.env.TB_RESOLVED_LINK_TTL_SECONDS || fallback || 10800) || 10800, 3 * 60 * 60));
+    return Math.max(300, Math.min(Number(process.env.TB_RESOLVED_LINK_TTL_SECONDS || fallback) || fallback, 2 * 60 * 60));
 }
 
 async function getPersistedResolvedLink(dbHelper, cacheKey) {
@@ -109,7 +167,7 @@ async function persistResolvedLink(dbHelper, cacheKey, service, tokenFp, streamD
             filename: streamData.filename || streamData.fileName || extra.filename || null,
             file_size: streamData.file_size || streamData.size || extra.fileSize || null,
             payload: { ...streamData, rawUrl: streamData.url, url: streamData.url },
-            ttlSeconds: getResolvedDbTtlSeconds(streamData, extra.ttlSeconds || 10800)
+            ttlSeconds: getResolvedDbTtlSeconds(streamData, extra.ttlSeconds || 1800)
         });
     } catch (_) {}
 }
@@ -328,6 +386,8 @@ function registerPlaybackRoutes(app, {
                 episode: item.episode || 0,
                 type: (item.season || 0) > 0 || (item.episode || 0) > 0 ? 'series' : 'movie',
                 title: cachedPlaybackMeta?.title || item.title,
+                originalTitle: cachedPlaybackMeta?.originalTitle || cachedPlaybackMeta?.original_title || null,
+                year: cachedPlaybackMeta?.year || null,
                 source: cachedPlaybackMeta?.source || null,
                 seeders: Number(cachedPlaybackMeta?.seeders || 0) || 0,
                 size: Number(cachedPlaybackMeta?.size || 0) || 0
@@ -337,12 +397,16 @@ function registerPlaybackRoutes(app, {
                 episode: item.episode || cachedPlaybackMeta.episode || 0,
                 type: cachedPlaybackMeta.type || ((item.season || 0) > 0 || (item.episode || 0) > 0 ? 'series' : 'movie'),
                 title: cachedPlaybackMeta.title || item.title,
+                originalTitle: cachedPlaybackMeta.originalTitle || cachedPlaybackMeta.original_title || null,
+                year: cachedPlaybackMeta.year || null,
                 source: cachedPlaybackMeta.source || null,
                 seeders: Number(cachedPlaybackMeta?.seeders || 0) || 0,
                 size: Number(cachedPlaybackMeta?.size || 0) || 0
             } : null);
             if (playbackMeta?.title) item.title = playbackMeta.title;
             if (playbackMeta?.source) item.source = playbackMeta.source;
+            if (playbackMeta?.year) item.year = playbackMeta.year;
+            if (playbackMeta?.originalTitle) item.originalTitle = playbackMeta.originalTitle;
             if (Number(playbackMeta?.seeders || 0) > 0) item.seeders = Number(playbackMeta.seeders);
             if (Number(playbackMeta?.size || 0) > 0) {
                 item._size = Number(playbackMeta.size);
@@ -375,7 +439,7 @@ function registerPlaybackRoutes(app, {
                     debrid: true,
                     filename: persistedLazy.filename || persistedLazy.fileName || cachedPlaybackMeta?.title || item.title
                 });
-                await Cache.cacheLazyLink(lazyCacheKey, { ...persistedLazy, rawUrl: cachedTargetUrl, url: cachedTargetUrl }, Math.min(getResolvedDbTtlSeconds(persistedLazy), 10800));
+                await Cache.cacheLazyLink(lazyCacheKey, { ...persistedLazy, rawUrl: cachedTargetUrl, url: cachedTargetUrl }, Math.min(getResolvedDbTtlSeconds(persistedLazy), 1800));
                 await markPlayableResultAsCached(requestedService, item, { ...persistedLazy, url: finalCachedUrl, rawUrl: cachedTargetUrl }, playbackMeta);
                 incrementMetric('lazyPlay.dbResolvedCacheHit');
                 recordDuration('lazyPlay.total', Date.now() - startedAt);
@@ -399,7 +463,10 @@ function registerPlaybackRoutes(app, {
                             fileTitle: fastAvailability.fileTitle || null,
                             fileSize: fastAvailability.fileSize || null,
                             confidence: fastAvailability.confidence,
-                            matchReason: fastAvailability.matchReason
+                            matchReason: fastAvailability.matchReason,
+                            title: playbackMeta?.title || item.title,
+                            originalTitle: playbackMeta?.originalTitle || null,
+                            year: playbackMeta?.year || null
                         }
                     ));
                     if (streamData?.url) incrementMetric('lazyPlay.tbAvailabilityFastPath');
@@ -408,7 +475,7 @@ function registerPlaybackRoutes(app, {
 
             if (!streamData) {
                 streamData = await LIMITERS.lazyPlay.schedule(() =>
-                    resolveLazyStreamData(requestedService, apiKey, item, { season: item.season, episode: item.episode })
+                    resolveLazyStreamData(requestedService, apiKey, item, { ...(playbackMeta || {}), season: item.season, episode: item.episode, title: playbackMeta?.title || item.title, originalTitle: playbackMeta?.originalTitle || item.originalTitle || null, year: playbackMeta?.year || item.year || null })
                 );
             }
 
@@ -418,7 +485,7 @@ function registerPlaybackRoutes(app, {
                     debrid: true,
                     filename: streamData.filename || playbackMeta?.title || item.title
                 });
-                await Cache.cacheLazyLink(lazyCacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, Math.min(getResolvedDbTtlSeconds(streamData), 10800));
+                await Cache.cacheLazyLink(lazyCacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, Math.min(getResolvedDbTtlSeconds(streamData), 1800));
                 await persistResolvedLink(dbHelper, persistedLazyKey, requestedService, tokenFingerprint(apiKey), streamData, {
                     hash: item.hash,
                     fileId: streamData.file_id ?? streamData.tb_file_id ?? item.fileIdx,
@@ -505,7 +572,7 @@ function registerPlaybackRoutes(app, {
                     debrid: true,
                     filename: persistedSaved.filename || persistedSaved.fileName || ''
                 });
-                await Cache.cacheLazyLink(cacheKey, { ...persistedSaved, rawUrl: cachedTargetUrl, url: cachedTargetUrl }, Math.min(getResolvedDbTtlSeconds(persistedSaved), 10800));
+                await Cache.cacheLazyLink(cacheKey, { ...persistedSaved, rawUrl: cachedTargetUrl, url: cachedTargetUrl }, Math.min(getResolvedDbTtlSeconds(persistedSaved), 1800));
                 incrementMetric('savedCloudPlay.dbResolvedCacheHit');
                 recordDuration('savedCloudPlay.total', Date.now() - startedAt);
                 return res.redirect(finalCachedUrl);
@@ -528,7 +595,7 @@ function registerPlaybackRoutes(app, {
                 filename: streamData.filename || streamData.fileName || ''
             });
 
-            await Cache.cacheLazyLink(cacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, Math.min(getResolvedDbTtlSeconds(streamData), 10800));
+            await Cache.cacheLazyLink(cacheKey, { ...streamData, rawUrl: streamData.url, url: streamData.url }, Math.min(getResolvedDbTtlSeconds(streamData), 1800));
             await persistResolvedLink(dbHelper, persistedCacheKey, requestedService, tokenFp, streamData, {
                 torrentId,
                 fileId,
