@@ -7,6 +7,7 @@ const { ProviderRequestCache } = require('../../core/cache/provider_request_cach
 const { captchaOrchestrator } = require('../../core/captcha_orchestrator');
 const { createMediaflowGateway, getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
 const { isUprotUrl, resolveUprotToMaxstream } = require('../extractors/hosters/uprot');
+const { extractMaxstream } = require('../extractors/hosters/maxstream');
 const { extractMixdrop } = require('../extractors/hosters/mixdrop');
 
 let Tesseract = null;
@@ -430,6 +431,21 @@ function isDeltabitLikeUrl(value) {
 
 function isDirectMediaUrl(value) {
     return DIRECT_MEDIA_URL_RE.test(String(value || ''));
+}
+
+function isProbablyPlayableMediaUrl(value) {
+    const normalized = normalizeRemoteUrl(value);
+    if (!normalized || !/^https?:\/\//i.test(normalized)) return false;
+    if (isStaticAssetUrl(normalized)) return false;
+    try {
+        const parsed = new URL(normalized);
+        const pathname = decodeURIComponent(parsed.pathname || '');
+        if (/(?:site\.webmanifest|manifest\.json|favicon|apple-touch-icon)/i.test(pathname)) return false;
+        if (/(?:^|\/)(?:images?|img|assets?|static|css|js|fonts?)\//i.test(pathname)) return false;
+    } catch (_) {
+        return false;
+    }
+    return isDirectMediaUrl(normalized);
 }
 
 function isMaxstreamLikeUrl(value) {
@@ -1106,7 +1122,7 @@ function extractDeltabitSource(html, baseUrl = null) {
 
     const primary = text.match(/sources\s*:\s*\[\s*["']([^"']+)["']/is);
     const primaryUrl = compactRedirectCandidate(primary?.[1], baseUrl);
-    if (primaryUrl && /^https?:\/\//i.test(primaryUrl)) return primaryUrl;
+    if (isProbablyPlayableMediaUrl(primaryUrl)) return primaryUrl;
 
     const fallbackPatterns = [
         /sources\s*:\s*\[\s*\{[\s\S]{0,300}?(?:file|src)\s*:\s*["']([^"']+)["']/i,
@@ -1116,10 +1132,10 @@ function extractDeltabitSource(html, baseUrl = null) {
     ];
     for (const pattern of fallbackPatterns) {
         const candidate = compactRedirectCandidate(text.match(pattern)?.[1], baseUrl);
-        if (candidate && (/^https?:\/\//i.test(candidate) || isDirectMediaUrl(candidate))) return candidate;
+        if (isProbablyPlayableMediaUrl(candidate)) return candidate;
     }
     const direct = compactRedirectCandidate(text.match(DIRECT_MEDIA_URL_RE)?.[0], baseUrl);
-    return direct && isDirectMediaUrl(direct) ? direct : null;
+    return isProbablyPlayableMediaUrl(direct) ? direct : null;
 }
 
 function extractFormFieldsRaw(html) {
@@ -1282,12 +1298,15 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
 
     const cachedResolved = getEsCache('deltabitSource', getDeltabitSourceCacheKey(pageUrl));
     if (cachedResolved?.streamUrl) {
-        esDebug('info', 'deltabit source cache hit', { pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl), sourceHost: safeHost(cachedResolved.streamUrl) });
-        return cachedResolved;
+        if (isProbablyPlayableMediaUrl(cachedResolved.streamUrl)) {
+            esDebug('info', 'deltabit source cache hit', { pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl), sourceHost: safeHost(cachedResolved.streamUrl), sourcePath: safePath(cachedResolved.streamUrl) });
+            return cachedResolved;
+        }
+        esDebug('warn', 'deltabit source cache ignored non-playable', { pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl), sourceHost: safeHost(cachedResolved.streamUrl), sourcePath: safePath(cachedResolved.streamUrl) });
     }
 
     const userAgent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
-    const extractor = options.deltabitExtractor === 'Turbovid' ? 'Turbovid' : 'Deltabit';
+    let extractor = options.deltabitExtractor === 'Turbovid' ? 'Turbovid' : 'Deltabit';
 
     let deltabitCookies = {};
     const withDeltabitCookies = (headers = {}) => mergeCookieHeader(headers, deltabitCookies);
@@ -1414,6 +1433,11 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
         return null;
     }
 
+    if (/turbovid\./i.test(pageUrl)) {
+        extractor = 'Turbovid';
+        esDebug('info', 'deltabit switched extractor to Turbovid after redirect', { pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl) });
+    }
+
     const origin = (() => { try { return new URL(pageUrl).origin; } catch (_) { return ''; } })();
 
     const directSource = extractDeltabitSource(html, pageUrl);
@@ -1423,7 +1447,7 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
             streamUrl: directSource,
             pageUrl,
             fileName: earlyFields.fname || 'DeltaBit',
-            headers: mergeCookieHeader({ Referer: pageUrl, Origin: origin, 'User-Agent': userAgent }, deltabitCookies)
+            headers: buildDeltabitPlaybackHeaders(pageUrl, userAgent, deltabitCookies, directSource)
         });
     }
 
@@ -1505,7 +1529,7 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
         streamUrl: source,
         pageUrl,
         fileName,
-        headers: mergeCookieHeader({ Referer: pageUrl, Origin: origin, 'User-Agent': userAgent }, deltabitCookies)
+        headers: buildDeltabitPlaybackHeaders(pageUrl, userAgent, deltabitCookies, directSource)
     });
 }
 
@@ -1521,8 +1545,17 @@ function getDeltabitSourceCacheKey(pageUrl) {
 
 function cacheDeltabitResolved(pageUrl, resolved) {
     if (pageUrl && resolved?.streamUrl) {
+        if (!isProbablyPlayableMediaUrl(resolved.streamUrl)) {
+            esDebug('warn', 'deltabit extracted source rejected as non-playable', {
+                pageHost: safeHost(pageUrl),
+                pagePath: safePath(pageUrl),
+                sourceHost: safeHost(resolved.streamUrl),
+                sourcePath: safePath(resolved.streamUrl)
+            });
+            return null;
+        }
         setEsCache('deltabitSource', getDeltabitSourceCacheKey(pageUrl), resolved, ES_CACHE_TTL.deltabitSource);
-        esDebug('info', 'deltabit source cache saved', { pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl), sourceHost: safeHost(resolved.streamUrl) });
+        esDebug('info', 'deltabit source cache saved', { pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl), sourceHost: safeHost(resolved.streamUrl), sourcePath: safePath(resolved.streamUrl) });
     }
     return resolved;
 }
@@ -1551,7 +1584,7 @@ function envInt(name, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
 
 function getHostResolveTimeoutMs(host) {
     if (host === 'deltabit') return envInt('ES_DELTABIT_HOST_TIMEOUT_MS', 10000, 1000, 20000);
-    if (host === 'maxstream') return envInt('ES_MAXSTREAM_HOST_TIMEOUT_MS', 4500, 1000, 15000);
+    if (host === 'maxstream') return envInt('ES_MAXSTREAM_HOST_TIMEOUT_MS', 15000, 1000, 30000);
     if (host === 'mixdrop') return envInt('ES_MIXDROP_HOST_TIMEOUT_MS', 4500, 1000, 15000);
     return envInt('ES_HOST_TIMEOUT_MS', 5000, 1000, 20000);
 }
@@ -1598,11 +1631,47 @@ function isHlsStreamUrl(value) {
     return /\.m3u8(?:$|[?#])/i.test(String(value || ''));
 }
 
-function buildMfpProxyUrl(config = {}, targetUrl, headers = {}, { isHls = false } = {}) {
+function isDeltabitDirectCdnUrl(value) {
+    try {
+        const parsed = new URL(String(value || ''));
+        const host = parsed.hostname.toLowerCase();
+        const path = parsed.pathname.toLowerCase();
+        return /(?:^|\.)host-cdn\.net$/i.test(host)
+            || /(?:^|\.)deltabit(?:cdn|dl)?\./i.test(host)
+            || /\/(?:v|video)\.mp4$/i.test(path);
+    } catch (_) {
+        return false;
+    }
+}
+
+function buildDeltabitPlaybackHeaders(pageUrl, userAgent, cookies = {}, sourceUrl = null, { forProxy = false } = {}) {
+    const headers = {
+        Referer: pageUrl,
+        'User-Agent': userAgent || SAFEGO_FIREFOX_UA
+    };
+    // MammaMia returns the extracted CDN file directly. For Kraken/MFP proxying,
+    // forwarding Deltabit page cookies/origin to host-cdn often hurts playback more than it helps.
+    if (sourceUrl && isDeltabitDirectCdnUrl(sourceUrl)) return headers;
+    try {
+        const origin = new URL(String(pageUrl || '')).origin;
+        if (origin) headers.Origin = origin;
+    } catch (_) {}
+    if (!forProxy) return mergeCookieHeader(headers, cookies);
+    if (envFlag('ES_DELTABIT_PROXY_COOKIE', false)) return mergeCookieHeader(headers, cookies);
+    return headers;
+}
+
+function shouldAddDeltabitDirectFallback(value) {
+    return envFlag('EUROSTREAMING_DELTABIT_DIRECT_FALLBACK', true)
+        && isDeltabitDirectCdnUrl(value);
+}
+
+
+function buildMfpProxyUrl(config = {}, targetUrl, headers = {}, { isHls = false, allowCookie = null } = {}) {
     const gateway = createMediaflowGateway(config);
     const proxied = gateway.buildProxyUrl(targetUrl, headers, {
         isHls,
-        allowCookie: envFlag('ES_DELTABIT_PROXY_COOKIE', true)
+        allowCookie: allowCookie == null ? envFlag('ES_DELTABIT_PROXY_COOKIE', false) : allowCookie
     });
     return proxied && proxied !== targetUrl ? proxied : null;
 }
@@ -1629,6 +1698,83 @@ function buildDirectExtractorStream({ targetUrl, label, title, language, headers
             }
         },
         extra: { _priority: streamPriority(label) }
+    });
+}
+
+
+function shouldProxyMaxstreamExtracted() {
+    return envFlag('EUROSTREAMING_MAXSTREAM_PROXY_EXTRACTED', true);
+}
+
+function shouldTryMaxstreamLocalFirst() {
+    return envFlag('EUROSTREAMING_MAXSTREAM_LOCAL_FIRST', true);
+}
+
+function getMaxstreamLocalTimeoutMs() {
+    return envInt('ES_MAXSTREAM_LOCAL_TIMEOUT_MS', 14000, 1000, 30000);
+}
+
+function isMaxstreamExtractedPlayable(value) {
+    const normalized = normalizeRemoteUrl(value);
+    if (!normalized || !/^https?:\/\//i.test(normalized)) return false;
+    if (isStaticAssetUrl(normalized)) return false;
+    return isDirectMediaUrl(normalized) || /\/hls\/[^?#]+(?:master|index)\.m3u8(?:$|[?#])/i.test(normalized);
+}
+
+async function buildLocalMaxstreamStream({ client, config, targetUrl, originalUprotUrl = null, title, language, options = {} }) {
+    if (!targetUrl || !shouldTryMaxstreamLocalFirst()) return null;
+    const extracted = await withTimeout(
+        extractMaxstream(targetUrl, {
+            ...options,
+            client,
+            mediaflowBase: getMediaflowBase(config),
+            mediaflowApiPassword: config?.mediaflowApiPassword || config?.mediaFlowApiPassword || config?.mfpPassword || '',
+            requestReferer: originalUprotUrl || options?.baseUrl || getBaseUrl(),
+            referer: originalUprotUrl || options?.baseUrl || getBaseUrl(),
+            timeout: envInt('ES_MAXSTREAM_PAGE_TIMEOUT_MS', 12000, 1000, 30000),
+            forwardTimeout: envInt('ES_MAXSTREAM_FORWARD_TIMEOUT_MS', 12000, 1000, 30000)
+        }),
+        getMaxstreamLocalTimeoutMs(),
+        'Eurostreaming MaxStream local'
+    );
+    if (!extracted?.url) return null;
+    if (!isMaxstreamExtractedPlayable(extracted.url)) {
+        esDebug('warn', 'maxstream local source rejected as non-playable', { sourceHost: safeHost(extracted.url), sourcePath: safePath(extracted.url), via: extracted.via || null });
+        return null;
+    }
+
+    const isHls = isHlsStreamUrl(extracted.url);
+    const headers = extracted.headers || extractorHeadersFor(extracted.sourceUrl || targetUrl, 'maxstream');
+    if (getMediaflowBase(config) && shouldProxyMaxstreamExtracted()) {
+        const proxied = buildMfpProxyUrl(config, extracted.url, headers, { isHls });
+        if (proxied && proxied !== extracted.url) {
+            esDebug('info', 'maxstream source proxied via MFP/Kraken', {
+                sourceHost: safeHost(extracted.url),
+                sourcePath: safePath(extracted.url),
+                proxyPath: safePath(proxied),
+                isHls,
+                via: extracted.via || (originalUprotUrl ? 'uprot-local' : 'maxstream-local')
+            });
+            return buildDirectExtractorStream({
+                targetUrl: proxied,
+                label: 'MaxStream',
+                title,
+                language,
+                headers: null,
+                mediaflowUrl: getMediaflowBase(config),
+                via: originalUprotUrl ? 'uprot-mammamia-maxstream-proxy' : 'maxstream-local-proxy'
+            });
+        }
+    }
+
+    esDebug('info', 'maxstream local stream built', { sourceHost: safeHost(extracted.url), sourcePath: safePath(extracted.url), via: extracted.via || null });
+    return buildDirectExtractorStream({
+        targetUrl: extracted.url,
+        label: 'MaxStream',
+        title,
+        language,
+        headers: envFlag('ES_MAXSTREAM_DIRECT_HEADERS', false) ? headers : null,
+        via: originalUprotUrl ? 'uprot-mammamia-maxstream-direct' : 'maxstream-local-direct'
     });
 }
 
@@ -1714,17 +1860,34 @@ async function buildHostStream(link, context) {
         if (resolved?.streamUrl) {
             const isHls = isHlsStreamUrl(resolved.streamUrl);
             const shouldProxyExtracted = envFlag('EUROSTREAMING_DELTABIT_PROXY_EXTRACTED', true);
+            if (!isProbablyPlayableMediaUrl(resolved.streamUrl)) {
+                esDebug('warn', 'deltabit resolved source skipped because non-playable', { sourceHost: safeHost(resolved.streamUrl), sourcePath: safePath(resolved.streamUrl) });
+                return null;
+            }
+            const directFallback = buildDirectExtractorStream({
+                targetUrl: resolved.streamUrl,
+                label: 'DeltaBit Direct',
+                title,
+                language,
+                headers: envFlag('ES_DELTABIT_DIRECT_HEADERS', false) ? resolved.headers : null,
+                fileName: resolved.fileName,
+                via: 'deltabit-direct'
+            });
+
             if (getMediaflowBase(config) && shouldProxyExtracted) {
-                const mfpProxyUrl = buildMfpProxyUrl(config, resolved.streamUrl, resolved.headers || {}, { isHls });
+                const proxyHeaders = buildDeltabitPlaybackHeaders(resolved.pageUrl || targetUrl, SAFEGO_FIREFOX_UA, {}, resolved.streamUrl, { forProxy: true });
+                const allowCookie = !isDeltabitDirectCdnUrl(resolved.streamUrl) && envFlag('ES_DELTABIT_PROXY_COOKIE', false);
+                const mfpProxyUrl = buildMfpProxyUrl(config, resolved.streamUrl, proxyHeaders, { isHls, allowCookie });
                 if (mfpProxyUrl && mfpProxyUrl !== resolved.streamUrl) {
                     esDebug('info', 'deltabit source proxied via MFP/Kraken', {
                         sourceHost: safeHost(resolved.streamUrl),
                         sourcePath: safePath(resolved.streamUrl),
                         proxyPath: safePath(mfpProxyUrl),
                         isHls,
-                        hasCookie: Boolean((resolved.headers || {}).Cookie || (resolved.headers || {}).cookie)
+                        directCdn: isDeltabitDirectCdnUrl(resolved.streamUrl),
+                        hasCookie: Boolean((proxyHeaders || {}).Cookie || (proxyHeaders || {}).cookie)
                     });
-                    return buildDirectExtractorStream({
+                    const proxiedStream = buildDirectExtractorStream({
                         targetUrl: mfpProxyUrl,
                         label: 'DeltaBit',
                         title,
@@ -1734,18 +1897,13 @@ async function buildHostStream(link, context) {
                         mediaflowUrl: getMediaflowBase(config),
                         via: isHls ? 'deltabit-mfp-proxy-hls' : 'deltabit-mfp-proxy-stream'
                     });
+                    return shouldAddDeltabitDirectFallback(resolved.streamUrl)
+                        ? [proxiedStream, directFallback]
+                        : proxiedStream;
                 }
             }
 
-            return buildDirectExtractorStream({
-                targetUrl: resolved.streamUrl,
-                label: 'DeltaBit',
-                title,
-                language,
-                headers: envFlag('ES_DELTABIT_DIRECT_HEADERS', false) ? resolved.headers : null,
-                fileName: resolved.fileName,
-                via: 'deltabit-direct'
-            });
+            return directFallback;
         }
 
         if (targetUrl && REDIRECTOR_RE.test(targetUrl)) {
@@ -1833,41 +1991,121 @@ async function buildHostStream(link, context) {
 
         const originalUprotUrl = isUprotUrl(targetUrl) ? targetUrl : null;
         if (originalUprotUrl) {
-            const resolved = await withEsCoalescing('uprotLocal', [originalUprotUrl], () => resolveUprotToMaxstream(client, targetUrl, options));
-            targetUrl = resolved?.playerUrl || null;
-            if (!targetUrl && getMediaflowBase(config)) {
-                esDebug('warn', 'uprot local resolve failed; using MFP fallback', { hrefHost: safeHost(originalUprotUrl) });
-                return buildMfpExtractorStream({
-                    config,
-                    targetUrl: originalUprotUrl,
-                    host: 'Maxstream',
+            const resolved = await withEsCoalescing('uprotLocalMammaMia', [originalUprotUrl], () => resolveUprotToMaxstream(client, targetUrl, {
+                ...options,
+                uprotMammaMiaStrict: true
+            }));
+            if (resolved?.streamUrl) {
+                const isHls = isHlsStreamUrl(resolved.streamUrl);
+                const headers = extractorHeadersFor(resolved.sourceUrl || originalUprotUrl, 'maxstream');
+                if (getMediaflowBase(config) && shouldProxyMaxstreamExtracted()) {
+                    const proxied = buildMfpProxyUrl(config, resolved.streamUrl, headers, { isHls });
+                    if (proxied && proxied !== resolved.streamUrl) {
+                        esDebug('info', 'uprot direct stream proxied via MFP/Kraken', { sourceHost: safeHost(resolved.streamUrl), sourcePath: safePath(resolved.streamUrl), proxyPath: safePath(proxied), via: resolved.via });
+                        return buildDirectExtractorStream({
+                            targetUrl: proxied,
+                            label: 'MaxStream',
+                            title,
+                            language,
+                            headers: null,
+                            mediaflowUrl: getMediaflowBase(config),
+                            via: 'uprot-mammamia-direct-proxy'
+                        });
+                    }
+                }
+                return buildDirectExtractorStream({
+                    targetUrl: resolved.streamUrl,
                     label: 'MaxStream',
                     title,
                     language,
-                    via: 'uprot-fallback',
-                    mediaflowOptions: {
-                        extractorPath: getMaxstreamMfpPath(),
-                        redirectStream: getMaxstreamRedirectStream()
-                    },
-                    streamKind: 'hls'
+                    headers: envFlag('ES_MAXSTREAM_DIRECT_HEADERS', false) ? headers : null,
+                    via: 'uprot-mammamia-direct'
                 });
+            }
+            targetUrl = resolved?.playerUrl || null;
+            const local = await buildLocalMaxstreamStream({ client, config, targetUrl, originalUprotUrl, title, language, options });
+            if (local) return local;
+            if (!targetUrl) {
+                if (!envFlag('EUROSTREAMING_MAXSTREAM_BROKEN_UPROT_FALLBACK', false)) {
+                    esDebug('warn', 'uprot local resolve failed; skipping broken MFP fallback', {
+                        hrefHost: safeHost(originalUprotUrl),
+                        reason: 'uprot_state_required',
+                        hint: 'open /uprot once or set UPROT_STATE_FILE like MammaMia uprot.txt'
+                    });
+                    return null;
+                }
+                if (getMediaflowBase(config)) {
+                    esDebug('warn', 'uprot local resolve failed; using MFP fallback', { hrefHost: safeHost(originalUprotUrl) });
+                    return buildMfpExtractorStream({
+                        config,
+                        targetUrl: originalUprotUrl,
+                        host: 'Maxstream',
+                        label: 'MaxStream',
+                        title,
+                        language,
+                        via: 'uprot-fallback',
+                        mediaflowOptions: {
+                            extractorPath: getMaxstreamMfpPath(),
+                            redirectStream: getMaxstreamRedirectStream(),
+                            headers: extractorHeadersFor(originalUprotUrl, 'maxstream')
+                        },
+                        streamKind: 'hls'
+                    });
+                }
             }
         }
         if (!targetUrl || !isMaxstreamLikeUrl(targetUrl)) return null;
-        return buildMfpExtractorStream({
+
+        const local = await buildLocalMaxstreamStream({ client, config, targetUrl, originalUprotUrl, title, language, options });
+        if (local) return local;
+
+        if (originalUprotUrl && !envFlag('EUROSTREAMING_MAXSTREAM_BROKEN_UPROT_FALLBACK', false)) {
+            esDebug('warn', 'maxstream local extractor failed; skipping broken UProt fallback', {
+                targetHost: safeHost(targetUrl),
+                targetPath: safePath(targetUrl),
+                originalUprot: true,
+                hint: 'open /uprot once or set UPROT_STATE_FILE like MammaMia uprot.txt'
+            });
+            return null;
+        }
+
+        esDebug('warn', 'maxstream local extractor failed; using MFP extractor fallback', { targetHost: safeHost(targetUrl), targetPath: safePath(targetUrl), originalUprot: Boolean(originalUprotUrl) });
+        const fallbacks = [];
+        const playerFallback = buildMfpExtractorStream({
             config,
             targetUrl,
             host: 'Maxstream',
             label: 'MaxStream',
             title,
             language,
-            via: originalUprotUrl ? 'uprot-local' : 'maxstream',
+            via: originalUprotUrl ? 'uprot-local-fallback-player' : 'maxstream-fallback',
             mediaflowOptions: {
                 extractorPath: getMaxstreamMfpPath(),
-                redirectStream: getMaxstreamRedirectStream()
+                redirectStream: getMaxstreamRedirectStream(),
+                headers: extractorHeadersFor(targetUrl, 'maxstream')
             },
             streamKind: 'hls'
         });
+        if (playerFallback) fallbacks.push(playerFallback);
+        if (originalUprotUrl && originalUprotUrl !== targetUrl && envFlag('EUROSTREAMING_MAXSTREAM_ADD_UPROT_FALLBACK', true)) {
+            const uprotFallback = buildMfpExtractorStream({
+                config,
+                targetUrl: originalUprotUrl,
+                host: 'Maxstream',
+                label: 'MaxStream UProt',
+                title,
+                language,
+                via: 'uprot-original-fallback',
+                mediaflowOptions: {
+                    extractorPath: getMaxstreamMfpPath(),
+                    redirectStream: getMaxstreamRedirectStream(),
+                    headers: extractorHeadersFor(originalUprotUrl, 'maxstream')
+                },
+                streamKind: 'hls'
+            });
+            if (uprotFallback) fallbacks.push(uprotFallback);
+        }
+        return fallbacks.length > 1 ? fallbacks : (fallbacks[0] || null);
     }
 
     return null;
@@ -2162,15 +2400,17 @@ async function appendStreamsFromPost(post, context) {
         for (const result of results) {
             const value = result.status === 'fulfilled' ? result.value : null;
             const link = value?.link;
-            const stream = value?.stream;
-            const key = stream?.url;
-            if (!key) {
+            const streamList = Array.isArray(value?.stream) ? value.stream : (value?.stream ? [value.stream] : []);
+            if (!streamList.length) {
                 esDebug('warn', 'host stream returned null', { source, host: link?.host, label: link?.label, hrefHost: safeHost(link?.href) });
                 continue;
             }
-            if (seen.has(key)) continue;
-            seen.add(key);
-            streams.push(stream);
+            for (const stream of streamList) {
+                const key = stream?.url;
+                if (!key || seen.has(key)) continue;
+                seen.add(key);
+                streams.push(stream);
+            }
         }
     }
 
@@ -2259,6 +2499,13 @@ module.exports = {
         titleMatches,
         isDeltabitLikeUrl,
         SAFEGO_CAPTCHA_DEFAULTS,
-        validateSafegoCaptchaDigits
+        validateSafegoCaptchaDigits,
+        extractDeltabitSource,
+        isProbablyPlayableMediaUrl,
+        buildHostStream,
+        buildLocalMaxstreamStream,
+        isMaxstreamExtractedPlayable,
+        isDeltabitDirectCdnUrl,
+        buildDeltabitPlaybackHeaders
     }
 };
