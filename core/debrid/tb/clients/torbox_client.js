@@ -17,7 +17,8 @@ const {
   matchFile,
   matchFileDetailed,
   chooseBestFile,
-  hasConflictingExplicitEpisode
+  hasConflictingExplicitEpisode,
+  isMovieFileCompatibleWithTarget
 } = require("../matching/tb_file_match");
 const { CircuitBreaker } = require("../../utils/circuit_breaker");
 
@@ -553,14 +554,35 @@ const TB = {
       }
     }
 
+    let selectedFileForFastPath = null;
+    if ((safeInt(season, 0) <= 0 && safeInt(episode, 0) <= 0) && (options.title || options.originalTitle || options.year)) {
+      const info = torrent?.files ? torrent : await refreshTorrentInfo(key, torrentId);
+      const files = Array.isArray(info?.files) ? info.files : [];
+      selectedFileForFastPath = getFileById(files, resolvedFileId);
+      if (selectedFileForFastPath && !isMovieFileCompatibleWithTarget(selectedFileForFastPath, {
+        title: options.title || options.movieTitle || null,
+        originalTitle: options.originalTitle || options.original_title || null,
+        year: options.year || options.movieYear || null,
+        titles: options.titles || undefined
+      })) {
+        logTorboxEvent("torbox.availability.fastpath.rejected", {
+          hash: shortTorboxHash(targetHash),
+          fileId: resolvedFileId,
+          filename: getFileName(selectedFileForFastPath),
+          reason: "movie_file_mismatch"
+        }, "warn");
+        return null;
+      }
+    }
+
     const linkRes = await requestDownloadLink(key, torrentId, resolvedFileId, userIp);
     if (linkRes?.data?.success && linkRes.data.data) {
       return {
         url: linkRes.data.data,
-        filename: options.filename || options.fileTitle || null,
-        file_size: options.fileSize || null,
-        size: options.fileSize || null,
-        tb_file_size: options.fileSize || null,
+        filename: options.filename || options.fileTitle || getFileName(selectedFileForFastPath) || null,
+        file_size: options.fileSize || getFileSize(selectedFileForFastPath) || null,
+        size: options.fileSize || getFileSize(selectedFileForFastPath) || null,
+        tb_file_size: options.fileSize || getFileSize(selectedFileForFastPath) || null,
         tb_file_id: resolvedFileId,
         file_id: resolvedFileId,
         torrent_id: torrentId,
@@ -621,7 +643,7 @@ const TB = {
       .map(([hash]) => lower(hash));
   },
 
-  getStreamLink: async (key, magnet, season = null, episode = null, hash = null, forcedFileIdx = null, userIp = null) => {
+  getStreamLink: async (key, magnet, season = null, episode = null, hash = null, forcedFileIdx = null, userIp = null, options = {}) => {
     const targetHash = lower(hash || extractHash(magnet));
     const resolveStartedAt = Date.now();
     try {
@@ -691,7 +713,13 @@ const TB = {
       }
 
       files = await waitForFiles(key, torrentId, files);
-      let match = matchFileDetailed(files, season, episode, forcedFileIdx);
+      const matchOptions = {
+        title: options.title || options.movieTitle || null,
+        originalTitle: options.originalTitle || options.original_title || null,
+        year: options.year || options.movieYear || null,
+        titles: options.titles || undefined
+      };
+      let match = matchFileDetailed(files, season, episode, forcedFileIdx, matchOptions);
       let resolvedFileId = match.fileId;
 
       logTorboxEvent("torbox.pack.match", {
@@ -715,7 +743,7 @@ const TB = {
 
       if ((!linkRes?.data?.success || !linkRes?.data?.data) && (!files || files.length === 0)) {
         files = await waitForFiles(key, torrentId, files);
-        match = matchFileDetailed(files, season, episode, forcedFileIdx);
+        match = matchFileDetailed(files, season, episode, forcedFileIdx, matchOptions);
         const retryFileId = match.fileId;
         if (retryFileId != null && retryFileId !== resolvedFileId) {
           resolvedFileId = retryFileId;
