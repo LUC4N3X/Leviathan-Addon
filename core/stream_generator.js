@@ -600,7 +600,14 @@ async function resolveLazyStreamData(service, apiKey, item, meta) {
                     String(meta?.season || item.season || 0),
                     String(meta?.episode || item.episode || 0),
                     item.hash,
-                    item.fileIdx !== undefined && item.fileIdx !== null ? String(item.fileIdx) : undefined
+                    item.fileIdx !== undefined && item.fileIdx !== null ? String(item.fileIdx) : undefined,
+                    null,
+                    {
+                        title: meta?.title || item.title || null,
+                        originalTitle: meta?.originalTitle || meta?.original_title || item.originalTitle || null,
+                        year: meta?.year || item.year || null,
+                        titles: [meta?.title, meta?.originalTitle, meta?.original_title, item.title, item.originalTitle].filter(Boolean)
+                    }
                 )
             );
         }
@@ -3518,7 +3525,27 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
                 runtimeItem._size = realSize;
                 runtimeItem.sizeBytes = realSize;
             }
-            const proxyUrl = `${reqHost}/${rawConf}/play_tb/${item.hash}?s=${runtimeItem.season || 0}&e=${runtimeItem.episode || 0}&f=${(item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1}`;
+            const playbackContext = getLazyPlaybackEpisodeContext(item, meta);
+            const playbackSeason = playbackContext.season || 0;
+            const playbackEpisode = playbackContext.episode || 0;
+            const playbackFileIdx = (item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1;
+            const imdbParam = meta?.imdb_id ? `&imdb=${encodeURIComponent(meta.imdb_id)}` : '';
+            const proxyUrl = `${reqHost}/${rawConf}/play_lazy/tb/${item.hash}/${playbackFileIdx}?s=${playbackSeason}&e=${playbackEpisode}${imdbParam}`;
+            const lazyCacheKey = `tb:${item.hash}:${playbackSeason}:${playbackEpisode}:${playbackFileIdx}`;
+            Cache.cacheLazyMeta(lazyCacheKey, {
+                imdb_id: meta?.imdb_id || null,
+                season: playbackSeason,
+                episode: playbackEpisode,
+                type: isSeries ? 'series' : 'movie',
+                title: item?.title || displayTitle || meta?.title || null,
+                originalTitle: meta?.originalTitle || meta?.original_title || null,
+                year: meta?.year || null,
+                source: item?.source || null,
+                seeders: finalSeeders,
+                size: realSize > 0 ? realSize : 0,
+                fileIdx: playbackFileIdx,
+                folderSize: getObservedFolderSizeBytes(item) || 0
+            }, 43200).catch(() => {});
             return buildPlayableStream({
                 service: 'tb',
                 item: runtimeItem,
@@ -3766,7 +3793,9 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
         season: playbackSeason,
         episode: playbackEpisode,
         type: isSeries ? 'series' : 'movie',
-        title: item?.title || displayTitle || null,
+        title: item?.title || displayTitle || meta?.title || null,
+        originalTitle: meta?.originalTitle || meta?.original_title || null,
+        year: meta?.year || null,
         source: item?.source || null,
         seeders: finalSeeders,
         size: realSize > 0 ? realSize : 0,
