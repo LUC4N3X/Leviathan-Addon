@@ -41,6 +41,10 @@ const CB01_CODE_DEFAULTS = Object.freeze({
     CB01_SEARCH_TOTAL_BUDGET_MS: '10500',
     CB01_PAGE_TOTAL_BUDGET_MS: '14000',
 
+    CB01_DIRECT_SLUG_FALLBACK: '1',
+    CB01_DIRECT_SLUG_MAX_PROBES: '8',
+    CB01_DIRECT_MIN_SCORE: '54',
+
     CB01_IMPIT_PROXY_TIMEOUT_MS: '1',
     CB01_IMPIT_FORWARD_TIMEOUT_MS: '9500',
     CB01_IMPIT_DIRECT_TIMEOUT_MS: '1',
@@ -1595,6 +1599,105 @@ function pickBestCandidate(candidates, title, year, kind = 'movie') {
     return { candidate: null, ...bestMeta, minScore };
 }
 
+
+function stripCbNoiseFromTitle(value = '') {
+    return decodeHtml(value)
+        .replace(/\s*-\s*(?:FILM GRATIS|CB01|CINEBLOG01|Streaming).*$/i, ' ')
+        .replace(/\[[^\]]*\]/g, ' ')
+        .replace(/\((?:19|20)\d{2}\)/g, ' ')
+        .replace(/\b(?:streaming|ita|hd|fullhd|subita|download)\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function slugifyCbTitle(value = '') {
+    return stripCbNoiseFromTitle(value)
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/&/g, ' e ')
+        .replace(/[‘’'"“”]/g, '')
+        .replace(/[^a-zA-Z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .replace(/-{2,}/g, '-')
+        .toLowerCase();
+}
+
+function extractCbPageHeadline(html = '') {
+    const source = String(html || '');
+    const ogTitle = source.match(/<meta\b[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["'][^>]*>/i)?.[1]
+        || source.match(/<meta\b[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["'][^>]*>/i)?.[1];
+    const jsonHeadline = source.match(/"headline"\s*:\s*"([^"]+)"/i)?.[1];
+    const h1 = source.match(/<h1\b[^>]*>([\s\S]{0,260}?)<\/h1>/i)?.[1];
+    const titleTag = source.match(/<title\b[^>]*>([\s\S]{0,260}?)<\/title>/i)?.[1];
+    return decodeHtml(ogTitle || jsonHeadline || h1 || titleTag || '').trim();
+}
+
+function buildDirectMovieUrlCandidates(baseUrl, title, year = null) {
+    const slug = slugifyCbTitle(title);
+    if (!slug) return [];
+    const yearText = year ? String(year) : '';
+    const variants = [
+        yearText ? `${slug}-hd-${yearText}` : '',
+        yearText ? `${slug}-${yearText}-hd` : '',
+        yearText ? `${slug}-${yearText}` : '',
+        `${slug}-hd`,
+        slug
+    ].filter(Boolean);
+    const seen = new Set();
+    const max = envInt('CB01_DIRECT_SLUG_MAX_PROBES', 8, 1, 20);
+    return variants
+        .map((part) => `${String(baseUrl || '').replace(/\/+$/, '')}/${part.replace(/^\/+|\/+$/g, '')}/`)
+        .filter((url) => {
+            if (seen.has(url)) return false;
+            seen.add(url);
+            return true;
+        })
+        .slice(0, max);
+}
+
+function looksLikeDirectMoviePage(html, title, year, baseUrl) {
+    const source = String(html || '');
+    if (!source || (isChallengePage(source) && !hasCbUsableHtml(source))) return { ok: false, score: 0, headline: '', reason: 'empty_or_challenge' };
+    const hasHoster = HOSTER_URL_RE.test(source) || /id=["']iframen[12]["']/i.test(source) || /tabs-catch-all/i.test(source);
+    const headline = extractCbPageHeadline(source);
+    if (!headline) return { ok: false, score: 0, headline: '', reason: 'missing_headline' };
+    const meta = scoreCandidate({
+        href: `${String(baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '')}/`,
+        title: stripCbNoiseFromTitle(headline),
+        dateText: headline,
+        cardHtml: source.slice(0, 12000)
+    }, title, year, 'movie');
+    const minScore = envInt('CB01_DIRECT_MIN_SCORE', 54, 20, 120);
+    const ok = Boolean(hasHoster && meta.score >= minScore);
+    return { ok, score: Math.round(meta.score), sim: Math.round(meta.sim), candidateYear: meta.candidateYear || null, headline, hasHoster, minScore, reason: ok ? 'matched' : 'low_score_or_no_hoster' };
+}
+
+async function probeDirectMovieUrl(client, baseUrl, title, year, config = {}) {
+    if (!envFlag('CB01_DIRECT_SLUG_FALLBACK', true)) return null;
+    const candidates = buildDirectMovieUrlCandidates(baseUrl, title, year);
+    if (!candidates.length) return null;
+    cbDebug('info', 'movie direct slug fallback start', { title, year: year || null, count: candidates.length, sample: candidates.map((url) => safePath(url)).slice(0, 6) });
+    for (const url of candidates) {
+        const html = await fetchPageHtml(client, url, baseUrl, 'movieSearch', config);
+        const verdict = looksLikeDirectMoviePage(html, title, year, baseUrl);
+        cbDebug(verdict.ok ? 'info' : 'warn', 'movie direct slug probe', {
+            title,
+            year: year || null,
+            url: safeUrlForLog(url),
+            score: verdict.score,
+            sim: verdict.sim,
+            candidateYear: verdict.candidateYear,
+            hasHoster: verdict.hasHoster,
+            headline: verdict.headline,
+            minScore: verdict.minScore,
+            reason: verdict.reason,
+            probe: htmlProbe(html)
+        });
+        if (verdict.ok) return url;
+    }
+    return null;
+}
+
 async function searchMovieUrl(client, baseUrl, title, year, config = {}) {
     if (!title) return null;
     const cacheKey = [baseUrl, normalizeTitle(title), year || 0];
@@ -1633,6 +1736,12 @@ async function searchMovieUrl(client, baseUrl, title, year, config = {}) {
             });
             setCbCache('movieSearch', cacheKey, bestOverall.candidate.href, CB_CACHE_TTL.movieSearch);
             return bestOverall.candidate.href;
+        }
+        const directUrl = await probeDirectMovieUrl(client, baseUrl, title, year, config);
+        if (directUrl) {
+            cbDebug('info', 'movie search selected direct slug fallback', { title, year: year || null, host: safeHost(directUrl), path: safePath(directUrl) });
+            setCbCache('movieSearch', cacheKey, directUrl, CB_CACHE_TTL.movieSearch);
+            return directUrl;
         }
         cbDebug('warn', 'movie search no suitable candidate', { title, year: year || null, bestScore: Math.round(bestOverall.score), candidateYear: bestOverall.candidateYear || null, minScore: bestOverall.minScore });
         return null;
@@ -2246,6 +2355,11 @@ module.exports = {
         buildSearchQuery,
         buildSearchQueries,
         buildSearchUrls,
+        stripCbNoiseFromTitle,
+        slugifyCbTitle,
+        extractCbPageHeadline,
+        buildDirectMovieUrlCandidates,
+        looksLikeDirectMoviePage,
         candidateYear,
         scoreCandidate,
         pickBestCandidate,
