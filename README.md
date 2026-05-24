@@ -87,7 +87,7 @@ La logica cloud non sostituisce la pipeline principale: la potenzia. Se l'utente
 <tr>
 <td align="center" width="33%"><b>☁️ RD/TorBox Saved Cloud</b><br><sub>Layer opzionale che riconosce i file già salvati, marca i duplicati e usa <code>☁️ RD</code> / <code>☁️ TB</code>.</sub></td>
 <td align="center" width="33%"><b>🚀 Core Refactoring</b><br><sub>Motore riorganizzato per maggiore stabilità, leggibilità e tenuta sotto carico.</sub></td>
-<td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, CinemaCity, GuardaHD, GuardoSerie, Eurostreaming, AnimeWorld, AnimeUnity, AnimeSaturn e GuardaFlix.</sub></td>
+<td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, Altadefinizione, GuardaHD, GuardoSerie, Eurostreaming, AnimeWorld, AnimeUnity, AnimeSaturn e GuardaFlix.</sub></td>
 </tr>
 <tr>
 <td align="center" width="33%"><b>🎨 Polymorphic Formatter</b><br><sub>Rendering più pulito, gerarchico e leggibile dentro Stremio.</sub></td>
@@ -220,7 +220,7 @@ La decisione finale non dipende solo dal tempo: dipende da **confidence score**,
 
 In pratica il protocollo analizza pattern come `MULTI`, `SUB-ITA`, `AC3` e `DTS`, distingue release realmente italiane da risultati ambigui, riduce i falsi positivi e ordina le sorgenti con priorità più sensate per l'utente finale. Sul piano operativo decide dinamicamente quali provider meritano la corsia veloce e quali richiedono una scansione più profonda.
 
-A livello infrastrutturale integra **WAF handling**, **identity rotation**, **failover automatici**, **magnet enrichment**, un layer ibrido con **StreamingCommunity**, **CinemaCity**, **GuardaHD**, **GuardoSerie**, **Eurostreaming**, **AnimeWorld**, **AnimeUnity**, **AnimeSaturn** e **GuardaFlix**, e un layer cloud opzionale senza duplicati.
+A livello infrastrutturale integra **WAF handling**, **identity rotation**, **failover automatici**, **magnet enrichment**, un layer ibrido con **StreamingCommunity**, **Altadefinizione**, **GuardaHD**, **GuardoSerie**, **Eurostreaming**, **AnimeWorld**, **AnimeUnity**, **AnimeSaturn** e **GuardaFlix**, e un layer cloud opzionale senza duplicati.
 
 Il blocco viene completato da **Debrid Ghost Shell** per scenari proxy-based, **Polymorphic Formatter Engine** per una resa visiva superiore, **Linguistic Scope Control** per ITA / ENG / Hybrid, **Trailer Bridge** per le anteprime contestuali e **Direct Swarm Access** per la riproduzione P2P pura.
 
@@ -272,7 +272,7 @@ Il blocco viene completato da **Debrid Ghost Shell** per scenari proxy-based, **
 | Layer | Provider | Scope | Attivazione | Stato |
 |:---:|:---:|:---:|:---:|:---:|
 | **Web** | StreamingCommunity | 🇮🇹 ITA | `enableVix` / `enableStreamingCommunity` | 🟢 |
-| **Web** | CinemaCity | 🇮🇹 ITA | `enableCc` | 🟢 |
+| **Web** | Altadefinizione | 🇮🇹 ITA | `enableAltadefinizione` / `enableCc` | 🟢 |
 | **Web** | GuardaHD | 🇮🇹 ITA | `enableGhd` | 🟢 |
 | **Web** | GuardoSerie | 🇮🇹 ITA | `enableGs` | 🟢 |
 | **Web** | Eurostreaming | 🇮🇹 ITA Series | `enableEurostreaming` / `enableEs` | 🟢 |
@@ -396,7 +396,7 @@ http://localhost:7000
 |:---|:---|
 | `providers/extractors/provider_registry.js` | Registry centrale dei web/anime provider e timeout minimi |
 | `providers/streamingcommunity/vix_handler.js` | Provider StreamingCommunity / Vix |
-| `providers/cinemacity/cc_handler.js` | Provider CinemaCity |
+| `providers/altadefinizione/ads_handler.js` | Provider Altadefinizione |
 | `providers/guardahd/ghd_handler.js` | Provider GuardaHD |
 | `providers/guardoserie/gs_handler.js` | Provider GuardoSerie |
 | `providers/animeworld/aw_handler.js` | Provider AnimeWorld con supporto Kitsu/anime |
