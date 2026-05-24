@@ -111,9 +111,12 @@ const GS_BACKGROUND_PRIME_TIMEOUT_MS = GS_TOP_SPEED.backgroundPrimeTimeoutMs;
 const GS_BACKGROUND_TITLE_PRIME_MAX = GS_TOP_SPEED.backgroundTitlePrimeMax;
 const GS_PREWARM_START_DELAY_MS = GS_TOP_SPEED.prewarmStartDelayMs;
 const GS_PREWARM_WAIT_MS = GS_TOP_SPEED.prewarmWaitMs;
-const FLARE_WARMUP_TIMEOUT_MS = Math.min(
-  Math.max(12000, GS_TOP_SPEED.flareWarmupTimeoutMs),
-  Math.max(15000, GLOBAL_TIMEOUT_MS - 12000)
+const FLARE_WARMUP_TIMEOUT_MS = Math.max(
+  12000,
+  Math.min(
+    60000,
+    Number.parseInt(process.env.GUARDOSERIE_FLARE_TIMEOUT_MS || '40000', 10) || 40000
+  )
 );
 const GS_REQUEST_CLEARANCE_WAIT_MS = Math.max(
   GS_PREWARM_WAIT_MS,
@@ -232,7 +235,7 @@ function allowHotPathClearance() {
   // Default TOP mode: FlareSolverr runs in the daemon/warmup path, not inside every Stremio request.
   // If no endpoint exists, fall back to direct/Impit behavior.
   if (GS_HOTPATH_FLARE_FALLBACK) return true;
-  // When FlareSolverr is fully disabled (opt-out mode), ImpIt is the only bypass — no hot-path clearance.
+  // When FlareSolverr is fully disabled (opt-out mode), ImpIt is the only bypass â€” no hot-path clearance.
   if (!GS_BACKGROUND_CLEARANCE_ENABLED) return false;
   return !gsHttp.getEndpoint();
 }
@@ -742,7 +745,7 @@ function slugify(val) {
     .toLowerCase()
     // GuardoSerie often compacts apostrophes in movie root slugs:
     // "dall'oceano" -> "dalloceano", not always "dall-oceano".
-    .replace(/[\u2018\u2019'`´]/g, '')
+    .replace(/[\u2018\u2019'`Â´]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
@@ -756,14 +759,14 @@ function slugifyGsMovieVariants(val) {
     .trim();
   const variants = new Set();
 
-  const compactApostrophe = raw.replace(/[\u2018\u2019'`´]/g, '');
-  const hyphenApostrophe  = raw.replace(/[\u2018\u2019'`´]/g, '-');
+  const compactApostrophe = raw.replace(/[\u2018\u2019'`Â´]/g, '');
+  const hyphenApostrophe  = raw.replace(/[\u2018\u2019'`Â´]/g, '-');
   for (const value of [compactApostrophe, hyphenApostrophe, raw]) {
     const slug = value.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     if (slug) variants.add(slug);
   }
 
-  const firstPart = raw.split(/\s[-–—:]\s/)[0]?.trim();
+  const firstPart = raw.split(/\s[-â€“â€”:]\s/)[0]?.trim();
   if (firstPart && firstPart.length >= 3) {
     const firstSlug = slugify(firstPart);
     if (firstSlug) variants.add(firstSlug);
@@ -830,7 +833,7 @@ function buildGsTitleAliases(value) {
     .replace(/\s*\((?:19|20)\d{2}\)\s*$/i, '')
     .replace(/\s*\[(?:19|20)\d{2}\]\s*$/i, '')
     .replace(/\s+(?:us|u\.?s\.?|usa|uk|u\.?k\.?|gb|jp|japan|kr|korea|anime|tv|serie|series)\s*$/i, '')
-    .replace(/\s*[-–—:]\s*(?:us|u\.?s\.?|usa|uk|u\.?k\.?|hbo|max|netflix|prime|amazon|disney\+?)\s*$/i, '')
+    .replace(/\s*[-â€“â€”:]\s*(?:us|u\.?s\.?|usa|uk|u\.?k\.?|hbo|max|netflix|prime|amazon|disney\+?)\s*$/i, '')
     .replace(/\s+/g, ' ')
     .trim();
   if (plain && plain.length >= 2) aliases.add(plain);
