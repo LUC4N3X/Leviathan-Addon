@@ -97,6 +97,14 @@ const CINEMACITY_LISTING_TOTAL_MS = Math.max(CINEMACITY_LISTING_TIMEOUT_MS + 900
 const CINEMACITY_LISTING_CACHE_TTL_MS = Math.max(5 * 60 * 1000, Math.min(4 * 60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_LISTING_CACHE_TTL_MS || String(45 * 60 * 1000), 10) || (45 * 60 * 1000)));
 const CINEMACITY_LISTING_PAGE_CACHE_TTL_MS = Math.max(2 * 60 * 1000, Math.min(60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_LISTING_PAGE_CACHE_TTL_MS || String(20 * 60 * 1000), 10) || (20 * 60 * 1000)));
 const CINEMACITY_DEBUG = envFlag('CINEMACITY_DEBUG', false) || envFlag('DEBUG_CINEMACITY', false);
+const CINEMACITY_KRAKEN_FORWARD_URL = (
+    String(process.env.CINEMACITY_FORWARD_PROXY || '').trim()
+    || String(process.env.CINEMACITY_KRAKEN_FORWARD_URL || '').trim()
+    || 'https://krakenproxy.questoleviatanormio.dpdns.org/forward?url='
+);
+const CINEMACITY_KRAKEN_FORWARD_ENABLED = envFlag('CINEMACITY_FORWARD_PROXY_ENABLED', true);
+const CINEMACITY_KRAKEN_FORWARD_FIRST = envFlag('CINEMACITY_FORWARD_PROXY_FIRST', true);
+const CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS = Math.max(1500, Math.min(15000, Number.parseInt(process.env.CINEMACITY_FORWARD_PROXY_TIMEOUT_MS || '6000', 10) || 6000));
 // Serie CinemaCity: preferiamo il proxy locale CCCDN/ccproxy come nei film.
 // Il page extractor MediaFlow/Kraken resta fallback se la pagina non espone un file episodio sicuro.
 const CINEMACITY_SERIES_FORCE_CCDN = envFlag('CINEMACITY_SERIES_FORCE_CCDN', true);
@@ -479,7 +487,68 @@ async function fetchHtmlWithAxios(url, extraHeaders = {}, requestTimeout = FETCH
     }
 }
 
+function buildCinemaCityKrakenForwardUrl(targetUrl, headers = {}) {
+    if (!CINEMACITY_KRAKEN_FORWARD_ENABLED || !CINEMACITY_KRAKEN_FORWARD_URL || !targetUrl) return '';
+    const base = String(CINEMACITY_KRAKEN_FORWARD_URL || '').trim();
+    if (!base) return '';
+    const encoded = encodeURIComponent(targetUrl);
+    let forwardUrl;
+    if (base.includes('{url}')) forwardUrl = base.replace('{url}', encoded);
+    else if (/[?&][^=]+=$/.test(base)) forwardUrl = `${base}${encoded}`;
+    else forwardUrl = `${base}${targetUrl}`;
+    try {
+        const u = new URL(forwardUrl);
+        const ua = headers?.['User-Agent'] || headers?.['user-agent'];
+        const referer = headers?.Referer || headers?.referer;
+        const origin = headers?.Origin || headers?.origin;
+        if (ua && !u.searchParams.has('h_user-agent')) u.searchParams.set('h_user-agent', ua);
+        if (referer && !u.searchParams.has('h_referer')) u.searchParams.set('h_referer', referer);
+        if (origin && !u.searchParams.has('h_origin')) u.searchParams.set('h_origin', origin);
+        return u.toString();
+    } catch (_) {
+        return forwardUrl;
+    }
+}
 
+async function fetchHtmlWithKrakenForward(url, extraHeaders = {}, requestTimeout = CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS, requestContext = 'document', method = 'GET', body = null) {
+    if (!CINEMACITY_KRAKEN_FORWARD_ENABLED || !CINEMACITY_KRAKEN_FORWARD_URL) return null;
+    // Kraken /forward only supports GET (POST returns 405). Skip POST entirely.
+    if (String(method || 'GET').toUpperCase() !== 'GET') return null;
+    const { headers: mergedHeaders } = buildCinemaCityRequestHeaders(url, requestContext, extraHeaders);
+    const forwardUrl = buildCinemaCityKrakenForwardUrl(url, mergedHeaders);
+    if (!forwardUrl) return null;
+
+    const startedAt = Date.now();
+    try {
+        const config = {
+            headers: mergedHeaders,
+            responseType: 'text',
+            timeout: requestTimeout
+        };
+        const response = await httpClient.get(forwardUrl, config);
+        const status = Number(response?.status || 0);
+        const respBody = responseText(response?.data);
+        updateCookiesFromResponse(url, response.headers);
+
+        if (isCloudflareChallenge(respBody, status)) {
+            logCinemaCityDebug('kraken forward challenge', { url, status, ms: Date.now() - startedAt });
+            return null;
+        }
+        if ([403, 429, 503].includes(status)) {
+            logCinemaCityDebug('kraken forward blocked', { url, status, ms: Date.now() - startedAt });
+            return null;
+        }
+        if (status >= 200 && status < 400) {
+            logCinemaCityDebug('kraken forward ok', { url, status, bytes: respBody.length, ms: Date.now() - startedAt });
+            return respBody;
+        }
+        logCinemaCityDebug('kraken forward unusable', { url, status, ms: Date.now() - startedAt });
+        return null;
+    } catch (error) {
+        logCinemaCityDebug('kraken forward error', { url, error: error?.code || error?.message || String(error), ms: Date.now() - startedAt });
+        return null;
+    }
+}
 
 async function fetchHtmlPostWithAxios(url, formBody, extraHeaders = {}, requestTimeout = CINEMACITY_SEARCH_POST_TIMEOUT_MS) {
     const { headers: mergedHeaders } = buildCinemaCityRequestHeaders(url, 'ajax', {
@@ -590,6 +659,24 @@ async function fetchHtml(url, extraHeaders = {}, options = {}) {
         const attempts = rotatingEnabled
             ? Math.max(1, Math.min(2, Number.parseInt(String(options.attempts || 1), 10) || 1))
             : Math.max(1, Math.min(IMPIT_ATTEMPTS, Number.parseInt(String(options.attempts || IMPIT_ATTEMPTS), 10) || IMPIT_ATTEMPTS));
+
+        // Kraken forward proxy first-line: masks the leviathan IP from CinemaCity/Cloudflare
+        // and reuses Kraken's clean egress. Falls through to impit/axios/shield on miss.
+        if (
+            CINEMACITY_KRAKEN_FORWARD_ENABLED
+            && CINEMACITY_KRAKEN_FORWARD_FIRST
+            && options.krakenForward !== false
+        ) {
+            const krakenTimeout = Math.min(
+                CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS,
+                Math.max(2000, Number(options.krakenForwardTimeout || timeout) || timeout)
+            );
+            const krakenBody = await fetchHtmlWithKrakenForward(url, extraHeaders, krakenTimeout, context);
+            if (krakenBody) {
+                directFetchBreaker.success(url);
+                return krakenBody;
+            }
+        }
 
         if (directAllowed) {
             for (let attempt = 0; attempt < attempts; attempt++) {
@@ -1862,6 +1949,29 @@ async function fetchSearchCandidates(query) {
             story: cleanQuery
         }).toString();
 
+        if (CINEMACITY_KRAKEN_FORWARD_ENABLED && CINEMACITY_KRAKEN_FORWARD_FIRST) {
+            try {
+                const krakenHtml = await fetchHtmlWithKrakenForward(
+                    `${BASE_URL}/index.php`,
+                    {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Origin': BASE_URL,
+                        'Referer': `${BASE_URL}/`,
+                        'Cookie': getCinemaCitySessionCookie()
+                    },
+                    CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS,
+                    'ajax',
+                    'POST',
+                    formBody
+                );
+                if (krakenHtml) {
+                    networkFailed = false;
+                    const result = tryParse(krakenHtml);
+                    if (result) return result;
+                }
+            } catch (_) {}
+        }
+
         try {
             const postHtml = await fetchHtmlPostWithImpit(`${BASE_URL}/index.php`, formBody, {
                 'Cookie': getCinemaCitySessionCookie()
@@ -2544,7 +2654,12 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
         'Cookie': getCinemaCitySessionCookie(),
         'Sec-Fetch-Site': 'same-origin',
         'Sec-Fetch-User': '?1'
-    }, { timeout: 2500, attempts: 1 });
+    }, { timeout: 6000, attempts: 1 });
+
+    if (!html) {
+        logCinemaCityDebug('parse: html missing', { pageUrl });
+        return null;
+    }
 
     const pageMetadata = parseCinemaCityPageMetadata(html, pageUrl);
     pageMetadataCache.set(normalizeRemoteUrl(pageUrl), pageMetadata);
@@ -2553,13 +2668,24 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
     const atobRegex = /atob\s*\(\s*['"](.*?)['"]\s*\)/gi;
     let match;
     let fileData = null;
+    let atobMatches = 0;
+    let atobDecoded = 0;
+    const decodedSamples = [];
 
     while ((match = atobRegex.exec(html)) !== null) {
+        atobMatches += 1;
         const encoded = match[1];
         if (!encoded || encoded.length < 50) continue;
         let decoded = '';
         try { decoded = Buffer.from(encoded, 'base64').toString('utf8'); } catch (_) { continue; }
         if (!decoded) continue;
+        atobDecoded += 1;
+        if (decodedSamples.length < 4) {
+            decodedSamples.push({
+                len: decoded.length,
+                full: decoded.replace(/\s+/g, ' ')
+            });
+        }
 
         if (decoded.trim().startsWith('[')) {
             try { fileData = JSON.parse(decoded); } catch (_) {}
@@ -2577,7 +2703,58 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
                 fileData = fileMatch[1];
             }
         }
+        // Playerjs new format: file:'[{"title":"...","file":"https:\/\/..."}]' (single-quote wrapper)
+        if (!fileData) {
+            const arrayMatch = decoded.match(/(?:file|sources)\s*:\s*'(\[[\s\S]+?\])'/i);
+            if (arrayMatch) {
+                try { fileData = JSON.parse(arrayMatch[1]); }
+                catch (_) {
+                    try { fileData = JSON.parse(arrayMatch[1].replace(/\\(.)/g, '$1')); }
+                    catch (_) {}
+                }
+            }
+        }
+        // Last-resort: any .m3u8 / .mp4 URL inside the decoded script (handles \/ escapes)
+        if (!fileData) {
+            const urlMatch = decoded.match(/(https?:[\\\/]+[^"'\s]+?\.(?:m3u8|mp4)(?:[?#][^"'\s]*)?)/i);
+            if (urlMatch) {
+                fileData = urlMatch[1].replace(/\\\//g, '/');
+            }
+        }
         if (fileData) break;
+    }
+
+    if (!fileData) {
+        const playerjsBlockMatch = html.match(/<div[^>]+id=["']playerjs[^"']*["'][^>]*>[\s\S]{0,400}/i)
+            || html.match(/playerjs-\d+[^<]{0,400}/i);
+        const dataConfigMatches = [...html.matchAll(/data-(?:config|file|src|source|video|stream|playerjs)\s*=\s*["']([^"']{8,400})["']/gi)]
+            .slice(0, 4)
+            .map((m) => ({ attr: m[0].slice(0, m[0].indexOf('='))?.trim(), value: m[1].slice(0, 200) }));
+        const m3u8Hits = [...html.matchAll(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/gi)].slice(0, 3).map((m) => m[1].slice(0, 200));
+        const mp4Hits = [...html.matchAll(/(https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*)/gi)].slice(0, 3).map((m) => m[1].slice(0, 200));
+        const fetchHits = [...html.matchAll(/(?:fetch|axios|XMLHttpRequest|\.ajax|\.open)\s*\(\s*["']?(\/[^"'\s)]+|https?:\/\/[^"'\s)]+)/gi)].slice(0, 5).map((m) => m[1].slice(0, 200));
+        const dleHash = (html.match(/dle_(?:root|movie|player|file)[^<\n]{0,200}/i) || [])[0] || '';
+        logCinemaCityDebug('parse: fileData missing', {
+            pageUrl,
+            htmlBytes: html.length,
+            atobMatches,
+            atobDecoded,
+            decodedSamples,
+            hasPlayerIframe: /<iframe[^>]+(player|embed|stream)/i.test(html),
+            hasJwplayer: /jwplayer\(|jwPlayer/.test(html),
+            hasPlayerjs: /\bPlayerjs\b|new\s+Playerjs|window\.Playerjs|playerjs-\d/.test(html),
+            hasFileSources: /(?:file|sources)\s*:\s*['"]/.test(html),
+            hasEvalAtob: /eval\s*\(\s*atob/i.test(html),
+            hasDleFile: /dle_root|dle_movie|dle-player|dle_player/i.test(html),
+            hasCcEmbed: /cinemacity\.cc\/[a-z0-9_-]+\/embed|\/get_files\b|\/player\//i.test(html),
+            playerjsBlock: playerjsBlockMatch ? String(playerjsBlockMatch[0] || '').replace(/\s+/g, ' ') : '',
+            dataConfigMatches,
+            m3u8Hits,
+            mp4Hits,
+            fetchHits,
+            dleHash
+        });
+        return null;
     }
 
     const streamUrl = resolveUrl(
@@ -2589,7 +2766,15 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
             isSeries: meta?.isSeries === true || meta?.providerType === 'tv' || meta?.providerType === 'anime'
         })
     );
-    if (!streamUrl) return null;
+    if (!streamUrl) {
+        logCinemaCityDebug('parse: streamUrl missing after pickStream', {
+            pageUrl,
+            fileDataType: typeof fileData,
+            fileDataLen: Array.isArray(fileData) ? fileData.length : (typeof fileData === 'string' ? fileData.length : 0)
+        });
+        return null;
+    }
+    logCinemaCityDebug('parse: stream extracted', { pageUrl, streamUrl: streamUrl.slice(0, 160) });
 
     const streamContext = /\.m3u8($|\?)/i.test(streamUrl) ? 'hls' : 'media';
     const { headers: streamHeaders } = buildCinemaCityRequestHeaders(streamUrl, streamContext, {
