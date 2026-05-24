@@ -3687,7 +3687,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                         <div class="control-row">
                             <div class="control-info">
                                 <div class="control-title notranslate" translate="no">
-                                    <i class="fas fa-city" style="color: #ff4d6d"></i> CinemaCity
+                                    <i class="fas fa-film" style="color: #ff4d6d"></i> Altadefinizione
                                     <span class="proxy-tag tag-noproxy">NO PROXY</span>
                                 </div>
                                 <span class="control-desc">Catalogo Film e Serie TV con aggiornamenti costanti. Non richiede Kraken o MediaFlow Proxy.</span>
@@ -5336,7 +5336,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                         document.getElementById('enableAnimeUnity').checked = config.filters.enableAnimeUnity || false;
                         document.getElementById('enableAnimeSaturn').checked = config.filters.enableAnimeSaturn || false;
                         document.getElementById('enableGf').checked = config.filters.enableGf || false;
-                        document.getElementById('enableCc').checked = config.filters.enableCc || false;
+                        document.getElementById('enableCc').checked = config.filters.enableAltadefinizione || config.filters.enableCc || false;
                         document.getElementById('enableSavedCloud').checked = config.filters.enableSavedCloud || false;
                         document.getElementById('savedCloudMode').value = config.filters.savedCloudMode || 'smart';
                         toggleAuxCard('card_saved_cloud');
@@ -5515,6 +5515,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                     enableAnimeSaturn: document.getElementById('enableAnimeSaturn').checked,
                     enableGf: document.getElementById('enableGf').checked,
                     enableCc: document.getElementById('enableCc').checked,
+                    enableAltadefinizione: document.getElementById('enableCc').checked,
                     enableSavedCloud: document.getElementById('enableSavedCloud').checked,
                     savedCloudMode: document.getElementById('enableSavedCloud').checked ? document.getElementById('savedCloudMode').value : 'off',
                     savedCloudMax: 6,
@@ -5584,7 +5585,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             let auText = c.filters.enableAnimeUnity ? 'ATTIVO 🌀' : 'NO';
             let asText = c.filters.enableAnimeSaturn ? 'ATTIVO 🪐' : 'NO';
             let gfText = c.filters.enableGf ? 'ATTIVO 🎥' : 'NO';
-            let ccText = c.filters.enableCc ? 'ATTIVO 🌆' : 'NO';
+            let ccText = (c.filters.enableAltadefinizione || c.filters.enableCc) ? 'ATTIVO 🎞️' : 'NO';
             let savedCloudText = c.filters.enableSavedCloud ? `ATTIVO ☁️ (${String(c.filters.savedCloudMode || 'smart').toUpperCase()}, no duplicati)` : 'NO';
             let exclText = [];
             if(c.filters.no4k) exclText.push("4K");

@@ -6091,7 +6091,7 @@ const mobileHTML = `
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🎟️ CinemaCity</span>
+                                    <span class="m-reactor-title">🎞️ Altadefinizione</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableCc" onchange="updateStatus('m-enableCc','st-cc'); toggleModuleStyle('m-enableCc', 'mod-cc');">
                                         <span class="m-slider"></span>
@@ -7823,7 +7823,7 @@ async function loadMobileConfig() {
                 mSetChecked('m-enableGf', config.filters.enableGf || false);
                 toggleModuleStyle('m-enableGf', 'mod-gf');
 
-                mSetChecked('m-enableCc', config.filters.enableCc || false);
+                mSetChecked('m-enableCc', config.filters.enableAltadefinizione || config.filters.enableCc || false);
                 toggleModuleStyle('m-enableCc', 'mod-cc');
 
                 if(config.filters.language) {
@@ -7938,6 +7938,7 @@ function getMobileConfig() {
             enableAnimeSaturn: mChecked('m-enableAnimeSaturn'),
             enableGf: mChecked('m-enableGf'),
             enableCc: mChecked('m-enableCc'),
+            enableAltadefinizione: mChecked('m-enableCc'),
             enableTrailers: false,
             enableSavedCloud: savedCloudEnabled,
             savedCloudMode: savedCloudEnabled ? mSavedCloudMode : 'off',
@@ -8118,4 +8119,3 @@ startMobileInterfaceWhenReady();
         document.body.classList.add('m-ui-ready');
     } catch (_) {}
 })();
-
