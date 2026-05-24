@@ -2560,6 +2560,7 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
     let fileData = null;
     let atobMatches = 0;
     let atobDecoded = 0;
+    const decodedSamples = [];
 
     while ((match = atobRegex.exec(html)) !== null) {
         atobMatches += 1;
@@ -2569,6 +2570,12 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
         try { decoded = Buffer.from(encoded, 'base64').toString('utf8'); } catch (_) { continue; }
         if (!decoded) continue;
         atobDecoded += 1;
+        if (decodedSamples.length < 4) {
+            decodedSamples.push({
+                len: decoded.length,
+                head: decoded.slice(0, 240).replace(/\s+/g, ' ')
+            });
+        }
 
         if (decoded.trim().startsWith('[')) {
             try { fileData = JSON.parse(decoded); } catch (_) {}
@@ -2595,9 +2602,14 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
             htmlBytes: html.length,
             atobMatches,
             atobDecoded,
+            decodedSamples,
             hasPlayerIframe: /<iframe[^>]+(player|embed|stream)/i.test(html),
             hasJwplayer: /jwplayer\(|jwPlayer/.test(html),
-            hasFileSources: /(?:file|sources)\s*:\s*['"]/.test(html)
+            hasFileSources: /(?:file|sources)\s*:\s*['"]/.test(html),
+            hasEvalAtob: /eval\s*\(\s*atob/i.test(html),
+            hasDleFile: /dle_root|dle_movie|dle-player|dle_player/i.test(html),
+            hasCcEmbed: /cinemacity\.cc\/[a-z0-9_-]+\/embed|\/get_files\b|\/player\//i.test(html),
+            htmlHead: html.slice(0, 600).replace(/\s+/g, ' ')
         });
         return null;
     }
