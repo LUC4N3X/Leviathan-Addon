@@ -449,6 +449,7 @@ function createProviderHttpGuard(options = {}) {
     if ([403, 429, 503].includes(Number(status))) return true;
     if (isCloudflareChallenge(raw, status)) return true;
     if (typeof options.challengeDetector === 'function' && options.challengeDetector(raw, status)) return true;
+    if (options.strictChallengeOnly === true) return false;
 
     const signals = [
       'turnstile.cloudflare.com', 'cf-turnstile', 'cf_chl_', '__cf_chl_',
