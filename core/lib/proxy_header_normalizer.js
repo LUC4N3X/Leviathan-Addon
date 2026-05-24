@@ -54,6 +54,7 @@ const PROXY_ROUTE_HINTS = [
     '/extractor/video',
     '/extractor/',
     '/hls?',
+    '/lazy_extract/',
     '/vixsynthetic.m3u8',
     '/play_rd/',
     '/play_tb/'
@@ -268,6 +269,7 @@ function isAlreadyProxiedUrl(targetUrl, options = {}) {
         const parsed = new URL(normalized);
         const pathname = parsed.pathname || '/';
         const pathLooksProxy = PROXY_ROUTE_HINTS.some((hint) => pathname.startsWith(hint) || normalized.includes(hint));
+        if (pathname.startsWith('/lazy_extract/')) return true;
         const addonBase = normalizeUrl(options.addonBase || options.reqHost || '');
         if (addonBase && sameOrigin(normalized, addonBase) && pathLooksProxy) return true;
 

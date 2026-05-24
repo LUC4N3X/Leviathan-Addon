@@ -59,7 +59,8 @@ function migrateConfig(input = {}) {
 
   const aliasPairs = [
     ['enableStreamingCommunity', 'enableVix'],
-    ['streamingCommunityLast', 'vixLast']
+    ['streamingCommunityLast', 'vixLast'],
+    ['enableAltadefinizione', 'enableCc']
   ];
   for (const [primaryKey, legacyKey] of aliasPairs) {
     const primaryValue = config.filters[primaryKey];
@@ -122,7 +123,7 @@ function validateConfig(input = {}) {
     if (output.filters[key] !== undefined) output.filters[key] = normalizeStringArray(output.filters[key]);
   }
 
-  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableGstv', 'enableEs', 'enableCb01', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast'];
+  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableGstv', 'enableEs', 'enableCb01', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableAltadefinizione', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast'];
   for (const key of booleanFilterKeys) {
     if (output.filters[key] !== undefined) output.filters[key] = !!output.filters[key];
   }

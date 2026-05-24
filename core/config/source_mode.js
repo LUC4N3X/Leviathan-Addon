@@ -87,6 +87,7 @@ function hasWebProvidersEnabled(filters = {}) {
         || filters?.enableAnimeUnity === true
         || filters?.enableAnimeSaturn === true
         || filters?.enableGf === true
+        || filters?.enableAltadefinizione === true
         || filters?.enableCc === true
     );
 }

@@ -57,10 +57,10 @@ const DEFAULT_SCORE_PROFILE = Object.freeze({
         episode_mismatch_risk: -100,
         mismatch: -100
     }),
-    source: Object.freeze({
-        torrentio: 12,
-        cinemacity: 10,
-        animeworld: 10,
+        source: Object.freeze({
+            torrentio: 12,
+            altadefinizione: 10,
+            animeworld: 10,
         guardahd: 8,
         guardoserie: 6,
         guardaflix: 6,
@@ -140,7 +140,7 @@ function detectProviderReliability(item = {}, registry = {}) {
     const provider = normalizeKey(firstNonEmpty(item.providerId, item.provider, item.source, item.sourceName));
     const direct = normalizeKey(item._providerReliability || item.providerReliability || registry[provider]);
     if (direct && direct !== 'unknown') return direct;
-    if (/cinemacity|animeworld/.test(provider)) return 'excellent';
+    if (/altadefinizione|animeworld/.test(provider)) return 'excellent';
     if (/guardahd|guardaflix|animeunity|streamingcommunity/.test(provider)) return 'good';
     if (/guardoserie/.test(provider)) return 'unstable';
     return 'unknown';
@@ -149,7 +149,7 @@ function detectProviderReliability(item = {}, registry = {}) {
 function detectSource(item = {}) {
     const source = normalizeKey(firstNonEmpty(item.providerId, item.provider, item.source, item.sourceName));
     if (/torrentio/.test(source)) return 'torrentio';
-    if (/cinemacity/.test(source)) return 'cinemacity';
+    if (/altadefinizione/.test(source)) return 'altadefinizione';
     if (/animeworld/.test(source)) return 'animeworld';
     if (/guardahd/.test(source)) return 'guardahd';
     if (/guardoserie|guardaserie/.test(source)) return 'guardoserie';

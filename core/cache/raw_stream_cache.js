@@ -31,7 +31,7 @@ const RAW_STREAM_CACHE_COMPRESS = boolEnv(process.env.RAW_STREAM_CACHE_COMPRESS,
 const RAW_STREAM_CACHE_MAX_BYTES = boundedIntEnv('RAW_STREAM_CACHE_MAX_BYTES', 500000, 4096, 5_000_000);
 const RAW_STREAM_CACHE_MAX_KEYS = boundedIntEnv('RAW_STREAM_CACHE_MAX_KEYS', 12000, 32, 100000);
 const RAW_STREAM_CACHE_CODEC = 'deflate';
-const RAW_STREAM_CACHE_VERSION = 'raw-stream-v6-mfp-header-proxy';
+const RAW_STREAM_CACHE_VERSION = 'raw-stream-v11-altadefinizione-vidxgo-impit-mixdrop';
 
 const deflateAsync = promisify(zlib.deflate);
 const inflateAsync = promisify(zlib.inflate);
