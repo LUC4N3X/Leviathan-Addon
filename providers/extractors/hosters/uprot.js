@@ -974,20 +974,47 @@ function cleanInlineDataImage(value) {
     return `${mime}${payload}`;
 }
 
+function summarizeUprotPage(html) {
+    const text = String(html || '');
+    const imgs = [];
+    for (const match of text.matchAll(/<img\b[\s\S]*?>/ig)) {
+        if (imgs.length >= 5) break;
+        const tag = match[0];
+        const quoted = tag.match(/\bsrc\s*=\s*(["'])([\s\S]*?)\1/i);
+        const bare = quoted ? null : tag.match(/\bsrc\s*=\s*([^\s>]+)/i);
+        const src = (quoted ? quoted[2] : bare?.[1]) || '';
+        imgs.push({
+            src: src.length > 80 ? `${src.slice(0, 77)}...` : src,
+            id: htmlAttr(tag, 'id') || undefined,
+            cls: htmlAttr(tag, 'class') || undefined,
+            alt: htmlAttr(tag, 'alt') || undefined
+        });
+    }
+    return {
+        bytes: text.length,
+        imgCount: (text.match(/<img\b/ig) || []).length,
+        canvasCount: (text.match(/<canvas\b/ig) || []).length,
+        scriptCount: (text.match(/<script\b/ig) || []).length,
+        hasCaptchaKeyword: /captcha|capcha|verification|security[_-]?code/i.test(text),
+        hasInlineDataImage: /data:image\/[^;]+;base64,/i.test(text),
+        firstImgs: imgs
+    };
+}
+
 function extractCaptchaImageSrc(html, baseUrl = null) {
     const text = String(html || '');
     const candidates = [];
-    const push = (src, score = 0) => {
+    const push = (src, score = 0, why = '') => {
         const clean = cleanInlineDataImage(src) || decodeHtmlEntities(src).trim();
         if (!clean) return;
-        candidates.push({ src: normalizeRemoteUrl(clean, baseUrl) || clean, score });
+        candidates.push({ src: normalizeRemoteUrl(clean, baseUrl) || clean, score, why });
     };
 
     // Uprot/Uproat can embed the captcha directly as data:image/png;base64,...
     // Scan the whole document first because a huge data URI can make tag-level
     // regexes brittle when the upstream changes whitespace/quoting.
     const inlineImage = cleanInlineDataImage(text);
-    if (inlineImage) push(inlineImage, 100);
+    if (inlineImage) push(inlineImage, 100, 'inline-data-image');
 
     for (const match of text.matchAll(/<img\b[\s\S]*?>/ig)) {
         const tag = match[0];
@@ -995,15 +1022,19 @@ function extractCaptchaImageSrc(html, baseUrl = null) {
         const bare = quoted ? null : tag.match(/\bsrc\s*=\s*([^\s>]+)/i);
         const src = quoted ? quoted[2] : bare?.[1];
         const haystack = `${src || ''} ${htmlAttr(tag, 'id')} ${htmlAttr(tag, 'class')} ${htmlAttr(tag, 'alt')} ${htmlAttr(tag, 'name')}`;
-        const bad = /avatar|logo|icon|banner|poster|cover|thumb/i.test(haystack);
+        const bad = /avatar|logo|icon|banner|poster|cover|thumb|favicon|sprite/i.test(haystack);
         const good = /captcha|capcha|base64|data:image|verify|verification|security|code/i.test(haystack);
-        if (src && (good || !bad)) push(src, good ? 20 : 1);
+        // Only accept images with an explicit captcha tell. Previously we
+        // accepted any non-"bad" image with score 1, which caused OCR to run on
+        // decorative graphics and report confidence:0. False positives waste
+        // time and pollute the orchestrator's failure cache.
+        if (src && good) push(src, 20, 'img-tag-captcha-hint');
     }
 
     for (const match of text.matchAll(/url\((["']?)(data:image\/[^)'" ]+|[^)'" ]+)\1\)/ig)) {
         const src = match[2];
         const good = /captcha|capcha|data:image|verify|verification|security|code/i.test(src);
-        push(src, good ? 15 : 0);
+        if (good) push(src, 15, 'css-url-captcha-hint');
     }
 
     candidates.sort((a, b) => b.score - a.score);
@@ -1215,8 +1246,7 @@ async function generateUprotAutoState(client, targetUrl, options = {}) {
                 bootstrapHost: safeHost(bootstrapUrl),
                 bootstrapPath: safePathForUprot(bootstrapUrl),
                 method: page.method || 'unknown',
-                bytes: String(page.text || '').length,
-                hasInlineDataImage: /data:image\/[^;]+;base64,/i.test(String(page.text || ''))
+                page: summarizeUprotPage(page.text)
             });
             continue;
         }
