@@ -112,7 +112,13 @@ const providerShield = createBlockedFallbackGuard({
     // FlareSolverr fallback on by default (easystreams-style): on Cloudflare block,
     // request clearance cookies+UA from FlareSolverr and retry through provider_http_guard.
     useRustShield: CINEMACITY_USE_RUST_SHIELD,
-    useRustShieldForSession: CINEMACITY_USE_RUST_SHIELD
+    useRustShieldForSession: CINEMACITY_USE_RUST_SHIELD,
+    // CinemaCity movie pages are large DLE templates (~50-100KB) that contain text/css
+    // tokens ("cloudflare", "ray id", "cf-..." classes) which trip the heuristic scoring
+    // in provider_http_guard. Restrict the challenge detection to the canonical signals
+    // (status 403/429/503 + Cloudflare-specific bodies) so real pages aren't rejected
+    // after FlareSolverr clearance has been obtained.
+    strictChallengeOnly: true
 });
 const cinemaCityRustAccel = createRustShieldClient({
     providerName: 'cinemacity-accel',

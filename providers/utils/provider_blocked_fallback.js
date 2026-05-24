@@ -120,6 +120,7 @@ function createBlockedFallbackGuard(options = {}) {
     profiles: options.profiles || [],
     pickProfile: options.pickProfile,
     challengeDetector: options.challengeDetector,
+    strictChallengeOnly: options.strictChallengeOnly === true,
     sessionTtlMs: options.sessionTtlMs,
     maxCacheItems: options.maxCacheItems || 300,
     rustShieldUrl: options.rustShieldUrl,
