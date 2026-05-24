@@ -1137,6 +1137,21 @@ function validateUprotCaptchaDigits(value) {
     return digits;
 }
 
+function maybeSaveCaptchaSample(base64Data, hash) {
+    if (!envFlag('UPROT_DEBUG_SAVE_CAPTCHA', true)) return null;
+    try {
+        const dir = path.resolve(process.cwd(), 'config', 'uprot-debug');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const filePath = path.join(dir, `captcha-${hash.slice(0, 12)}.png`);
+        if (!fs.existsSync(filePath)) {
+            fs.writeFileSync(filePath, Buffer.from(String(base64Data || ''), 'base64'));
+        }
+        return filePath;
+    } catch (_) {
+        return null;
+    }
+}
+
 async function solveUprotCaptchaOCR(base64Data, options = {}) {
     if (!Tesseract) {
         uprotDebug('warn', 'tesseract.js not available, cannot generate auto-state');
@@ -1146,16 +1161,36 @@ async function solveUprotCaptchaOCR(base64Data, options = {}) {
     const cached = uprotOcrCache.get(hash);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
 
+    // Persist a copy of the first time we see each captcha image so a human can
+    // inspect what uprot is actually serving (digits? letters? canvas render?
+    // distorted noise?). Defaults on; disable with UPROT_DEBUG_SAVE_CAPTCHA=0.
+    const samplePath = maybeSaveCaptchaSample(base64Data, hash);
+
+    // Allow operators to broaden the whitelist when uprot serves alphanumeric
+    // captchas. Defaults to digit-only because that's the historical format.
+    const alphaMode = envFlag('UPROT_CAPTCHA_ALPHA', false);
+    const whitelist = alphaMode
+        ? '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+        : '0123456789';
+
     let worker = null;
     try {
         worker = await Tesseract.createWorker('eng');
         await worker.setParameters({
-            tessedit_char_whitelist: '0123456789',
+            tessedit_char_whitelist: whitelist,
             tessedit_pageseg_mode: '7'
         });
         const { data: { text, confidence } } = await worker.recognize(Buffer.from(base64Data, 'base64'));
+        const cleanText = String(text || '').replace(/\s+/g, '').slice(0, 32);
         const digits = validateUprotCaptchaDigits(text);
-        uprotDebug('info', 'auto-state OCR result', { digits: Boolean(digits), confidence });
+        uprotDebug('info', 'auto-state OCR result', {
+            digits: Boolean(digits),
+            confidence,
+            rawText: cleanText,
+            rawLen: cleanText.length,
+            alphaMode,
+            samplePath: samplePath || undefined
+        });
         if (!digits) return null;
         const minConfidence = envNumber('UPROT_OCR_MIN_CONFIDENCE', Number(options.uprotOcrMinConfidence ?? UPROT_AUTO_STATE_DEFAULTS.ocrMinConfidence), 0, 100);
         if (minConfidence > 0 && Number.isFinite(confidence) && confidence < minConfidence) return null;
