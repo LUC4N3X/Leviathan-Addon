@@ -86,6 +86,18 @@ function defaultExtractorPath(host = '', options = {}) {
         return normalizeExtractorPath(process.env.MEDIAFLOW_MAXSTREAM_EXTRACTOR_PATH || '/extractor/video.m3u8');
     }
 
+    // CinemaCity CITY extractor must be exposed as an HLS-style endpoint.
+    // Using /extractor/video can be displayed/handled by clients as a raw Direct
+    // URL, while Kraken/EasyProxy compatible addons use /extractor/video.m3u8.
+    if (/^(?:city|cccdn|cinemacity)$/i.test(hostName) || /cinemacity|cccdn|\bcity\b/i.test(hostName)) {
+        return normalizeExtractorPath(
+            process.env.MEDIAFLOW_CCCDN_EXTRACTOR_PATH
+            || process.env.MEDIAFLOW_CITY_EXTRACTOR_PATH
+            || process.env.MEDIAFLOW_CINEMACITY_EXTRACTOR_PATH
+            || '/extractor/video.m3u8'
+        );
+    }
+
     const hlsHosts = String(process.env.MEDIAFLOW_EXTRACTOR_HLS_HOSTS || '').toLowerCase()
         .split(',')
         .map((item) => item.trim())
