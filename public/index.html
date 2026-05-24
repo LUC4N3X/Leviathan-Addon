@@ -3588,6 +3588,17 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                         <div class="control-row">
                             <div class="control-info">
                                 <div class="control-title notranslate" translate="no">
+                                    <span style="color: #ff4d6d; font-size: 1.05em; margin-right: 6px;">🎟️</span>CinemaCity
+                                    <span class="proxy-tag tag-mfp">MFP</span>
+                                </div>
+                                <span class="control-desc">Catalogo Film e Serie TV via FlareSolverr e proxy CCCDN/Kraken per la riproduzione.</span>
+                            </div>
+                            <label class="switch mf-switch"><input type="checkbox" id="enableCc" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
+                        </div>
+
+                        <div class="control-row">
+                            <div class="control-info">
+                                <div class="control-title notranslate" translate="no">
                                     <i class="fas fa-film" style="color: #ff9900"></i> GuardaHD
                                     <span class="proxy-tag tag-mfp">MFP</span>
                                 </div>
@@ -3695,16 +3706,6 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                             <label class="switch mf-switch"><input type="checkbox" id="enableAltadefinizione" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
                         </div>
 
-                        <div class="control-row">
-                            <div class="control-info">
-                                <div class="control-title notranslate" translate="no">
-                                    <i class="fas fa-city" style="color: #ff4d6d"></i> CinemaCity
-                                    <span class="proxy-tag tag-noproxy">NO PROXY</span>
-                                </div>
-                                <span class="control-desc">Catalogo Film e Serie TV via FlareSolverr. Non richiede Kraken o MediaFlow Proxy.</span>
-                            </div>
-                            <label class="switch mf-switch"><input type="checkbox" id="enableCc" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
-                        </div>
 
                         <div class="control-row sub-row" id="webPriorityRow" style="display:none; margin-top:15px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top:10px;">
                              <div class="control-info">
@@ -5601,7 +5602,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             let asText = c.filters.enableAnimeSaturn ? 'ATTIVO 🪐' : 'NO';
             let gfText = c.filters.enableGf ? 'ATTIVO 🎥' : 'NO';
             let adsText = c.filters.enableAltadefinizione ? 'ATTIVO 🎞️' : 'NO';
-            let ccText = c.filters.enableCc ? 'ATTIVO 🏙️' : 'NO';
+            let ccText = c.filters.enableCc ? 'ATTIVO 🎟️' : 'NO';
             let savedCloudText = c.filters.enableSavedCloud ? `ATTIVO ☁️ (${String(c.filters.savedCloudMode || 'smart').toUpperCase()}, no duplicati)` : 'NO';
             let exclText = [];
             if(c.filters.no4k) exclText.push("4K");
