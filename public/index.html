@@ -3692,6 +3692,17 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                                 </div>
                                 <span class="control-desc">Catalogo Film e Serie TV con aggiornamenti costanti. Non richiede Kraken o MediaFlow Proxy.</span>
                             </div>
+                            <label class="switch mf-switch"><input type="checkbox" id="enableAltadefinizione" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
+                        </div>
+
+                        <div class="control-row">
+                            <div class="control-info">
+                                <div class="control-title notranslate" translate="no">
+                                    <i class="fas fa-city" style="color: #ff4d6d"></i> CinemaCity
+                                    <span class="proxy-tag tag-noproxy">NO PROXY</span>
+                                </div>
+                                <span class="control-desc">Catalogo Film e Serie TV via FlareSolverr. Non richiede Kraken o MediaFlow Proxy.</span>
+                            </div>
                             <label class="switch mf-switch"><input type="checkbox" id="enableCc" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
                         </div>
 
@@ -5144,6 +5155,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             const au = document.getElementById('enableAnimeUnity').checked;
             const as = document.getElementById('enableAnimeSaturn').checked;
             const gf = document.getElementById('enableGf').checked;
+            const ads = document.getElementById('enableAltadefinizione').checked;
             const cc = document.getElementById('enableCc').checked;
 
             const qContainer = document.getElementById('scQualityContainer');
@@ -5151,7 +5163,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             const pRow = document.getElementById('webPriorityRow');
             if(pRow) {
 
-                if(sc || ghd || gs || gstv || es || cb01 || aw || au || as || gf || cc) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
+                if(sc || ghd || gs || gstv || es || cb01 || aw || au || as || gf || ads || cc) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
                 else { pRow.style.display = 'none'; }
             }
         }
@@ -5336,7 +5348,8 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                         document.getElementById('enableAnimeUnity').checked = config.filters.enableAnimeUnity || false;
                         document.getElementById('enableAnimeSaturn').checked = config.filters.enableAnimeSaturn || false;
                         document.getElementById('enableGf').checked = config.filters.enableGf || false;
-                        document.getElementById('enableCc').checked = config.filters.enableAltadefinizione || config.filters.enableCc || false;
+                        document.getElementById('enableAltadefinizione').checked = config.filters.enableAltadefinizione || false;
+                        document.getElementById('enableCc').checked = config.filters.enableCc || false;
                         document.getElementById('enableSavedCloud').checked = config.filters.enableSavedCloud || false;
                         document.getElementById('savedCloudMode').value = config.filters.savedCloudMode || 'smart';
                         toggleAuxCard('card_saved_cloud');
@@ -5437,11 +5450,12 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             const auActive = document.getElementById('enableAnimeUnity').checked;
             const asActive = document.getElementById('enableAnimeSaturn').checked;
             const gfActive = document.getElementById('enableGf').checked;
+            const adsActive = document.getElementById('enableAltadefinizione').checked;
             const ccActive = document.getElementById('enableCc').checked;
             const isP2P = currentService === 'p2p';
             const sourceMode = document.getElementById('sourceMode').value;
 
-            const isWebEnabled = scActive || ghdActive || gsActive || gstvActive || esActive || cb01Active || awActive || auActive || asActive || gfActive || ccActive || isP2P;
+            const isWebEnabled = scActive || ghdActive || gsActive || gstvActive || esActive || cb01Active || awActive || auActive || asActive || gfActive || adsActive || ccActive || isP2P;
             const sourceModeBypassesKey = sourceMode === 'dbOnly' || sourceMode === 'globalCacheOnly';
 
             const el = document.getElementById('apiKey');
@@ -5477,6 +5491,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                     || document.getElementById('enableAnimeUnity').checked
                     || document.getElementById('enableAnimeSaturn').checked
                     || document.getElementById('enableGf').checked
+                    || document.getElementById('enableAltadefinizione').checked
                     || document.getElementById('enableCc').checked
                 )
             );
@@ -5515,7 +5530,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                     enableAnimeSaturn: document.getElementById('enableAnimeSaturn').checked,
                     enableGf: document.getElementById('enableGf').checked,
                     enableCc: document.getElementById('enableCc').checked,
-                    enableAltadefinizione: document.getElementById('enableCc').checked,
+                    enableAltadefinizione: document.getElementById('enableAltadefinizione').checked,
                     enableSavedCloud: document.getElementById('enableSavedCloud').checked,
                     savedCloudMode: document.getElementById('enableSavedCloud').checked ? document.getElementById('savedCloudMode').value : 'off',
                     savedCloudMax: 6,
@@ -5585,7 +5600,8 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             let auText = c.filters.enableAnimeUnity ? 'ATTIVO 🌀' : 'NO';
             let asText = c.filters.enableAnimeSaturn ? 'ATTIVO 🪐' : 'NO';
             let gfText = c.filters.enableGf ? 'ATTIVO 🎥' : 'NO';
-            let ccText = (c.filters.enableAltadefinizione || c.filters.enableCc) ? 'ATTIVO 🎞️' : 'NO';
+            let adsText = c.filters.enableAltadefinizione ? 'ATTIVO 🎞️' : 'NO';
+            let ccText = c.filters.enableCc ? 'ATTIVO 🏙️' : 'NO';
             let savedCloudText = c.filters.enableSavedCloud ? `ATTIVO ☁️ (${String(c.filters.savedCloudMode || 'smart').toUpperCase()}, no duplicati)` : 'NO';
             let exclText = [];
             if(c.filters.no4k) exclText.push("4K");
@@ -5615,7 +5631,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                 <li>Servizio Debrid <span>${serviceDisplay}</span></li>
                 <li>Visual Skin <span>${skinText}</span></li>
                 <li>Swarm P2P <span>${p2pText}</span></li>
-                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | GSTV: ${gstvText} | ES: ${esText} | CB01: ${cb01Text} | AW: ${awText} | AU: ${auText} | AS: ${asText} | GF: ${gfText} | CC: ${ccText}</span></li>
+                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | GSTV: ${gstvText} | ES: ${esText} | CB01: ${cb01Text} | AW: ${awText} | AU: ${auText} | AS: ${asText} | GF: ${gfText} | ADS: ${adsText} | CC: ${ccText}</span></li>
                 <li>Flux Priority <span>${sortText}</span></li>
                 <li>Source Policy <span>${sourceModeText}</span></li>
                 <li>Proxy Bridge <span>${c.mediaflow.url ? 'CONFIGURATO' : 'NON ATTIVO'}</span></li>
