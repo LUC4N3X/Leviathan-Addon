@@ -845,13 +845,17 @@ async function runCinemaCityBackgroundClearance(reason = 'startup') {
                 primeSearch: CINEMACITY_BACKGROUND_PRIME_SEARCH
             });
 
+            let clearanceOk = false;
             if (!alreadyFresh || CINEMACITY_BACKGROUND_CLEARANCE_FORCE) {
-                await providerShield.guard.ensureClearance(triggerUrl, {
+                const clearanceResult = await providerShield.guard.ensureClearance(triggerUrl, {
                     force: !alreadyFresh || CINEMACITY_BACKGROUND_CLEARANCE_FORCE,
                     isPost: true,
                     body: warmupBody,
                     ignoreProviderCooldown: true
                 });
+                clearanceOk = Boolean(clearanceResult);
+            } else {
+                clearanceOk = true;
             }
 
             let homeReady = false;
@@ -880,14 +884,26 @@ async function runCinemaCityBackgroundClearance(reason = 'startup') {
                 ? providerShield.guard.isSessionFresh(triggerUrl)
                 : false;
 
-            runSucceeded = Boolean(freshAfter);
-            cinemaCityBackgroundClearanceState.lastOkAt = freshAfter ? Date.now() : cinemaCityBackgroundClearanceState.lastOkAt;
+            // In alcuni casi CinemaCity restituisce cookie validi e la ricerca POST funziona,
+            // ma il guard non marca la sessione come "fresh" per l'URL trigger.
+            // Se il prime configurato Ã¨ riuscito, il daemon deve passare al refresh periodico
+            // invece di continuare con retry aggressivi ogni pochi secondi.
+            const backgroundOk = Boolean(
+                freshAfter
+                || clearanceOk
+                || (CINEMACITY_BACKGROUND_PRIME_HOME && homeReady)
+                || (CINEMACITY_BACKGROUND_PRIME_SEARCH && searchReady)
+            );
+
+            runSucceeded = backgroundOk;
+            cinemaCityBackgroundClearanceState.lastOkAt = backgroundOk ? Date.now() : cinemaCityBackgroundClearanceState.lastOkAt;
             cinemaCityBackgroundClearanceState.lastRunAt = Date.now();
-            cinemaCityBackgroundClearanceState.lastError = null;
+            cinemaCityBackgroundClearanceState.lastError = backgroundOk ? null : 'background_clearance_not_ready';
 
             logCinemaCityInfo('background clearance done', {
                 reason,
-                ok: freshAfter,
+                ok: backgroundOk,
+                clearanceOk,
                 sessionReady: freshAfter,
                 homeReady,
                 searchReady,
@@ -895,7 +911,7 @@ async function runCinemaCityBackgroundClearance(reason = 'startup') {
                 ms: Date.now() - startedAt
             });
 
-            return freshAfter;
+            return backgroundOk;
         } catch (error) {
             cinemaCityBackgroundClearanceState.lastRunAt = Date.now();
             cinemaCityBackgroundClearanceState.lastError = error?.message || String(error);
@@ -1385,17 +1401,17 @@ function buildCinemaCityLanguageLabel(pageMetadata = {}, config = {}) {
     const hasEnglish = languages.includes('english') || downloadLanguages.includes('english');
     const hasMulti = languages.includes('multi') || downloadLanguages.includes('multi') || pageMetadata?.isMultiAudio === true;
 
-    if (hasItalian && hasMulti) return '🇮🇹 ITA+MULTI';
-    if (hasItalian) return '🇮🇹 ITA';
+    if (hasItalian && hasMulti) return 'ðŸ‡®ðŸ‡¹ ITA+MULTI';
+    if (hasItalian) return 'ðŸ‡®ðŸ‡¹ ITA';
 
     if (wantsItalian && hasMulti && config?.filters?.allowMultiWhenItalianOnly === true) {
-        return '🌍 MULTI';
+        return 'ðŸŒ MULTI';
     }
 
-    if (hasEnglish && languages.length <= 1 && downloadLanguages.length <= 1) return '🇬🇧 ENG';
-    if (hasMulti || languages.length > 1 || downloadLanguages.length > 1) return '🌍 MULTI';
+    if (hasEnglish && languages.length <= 1 && downloadLanguages.length <= 1) return 'ðŸ‡¬ðŸ‡§ ENG';
+    if (hasMulti || languages.length > 1 || downloadLanguages.length > 1) return 'ðŸŒ MULTI';
 
-    return '🌐 WEB';
+    return 'ðŸŒ WEB';
 }
 
 function isDeferredCinemaCityExtractorStream(stream = {}) {
@@ -1529,7 +1545,7 @@ function titleAliasesFromOneTitle(title) {
     if (akaParts.length > 1) aliases.push(...akaParts);
 
     for (const part of [...aliases]) {
-        const colon = part.split(/\s*[:：]\s+/g).map((v) => v.trim()).filter(Boolean);
+        const colon = part.split(/\s*[:ï¼š]\s+/g).map((v) => v.trim()).filter(Boolean);
         if (colon.length > 1) {
             aliases.push(colon[0]);
             aliases.push(colon.slice(1).join(' '));
@@ -1539,7 +1555,7 @@ function titleAliasesFromOneTitle(title) {
     const ascii = cleaned.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
     if (ascii !== cleaned) aliases.push(ascii);
 
-    if (/\bone\s*piece\b/i.test(cleaned) || /\bwan\s*p[îi]?su\b/i.test(cleaned) || /\bwan\s*pi+su\b/i.test(ascii)) {
+    if (/\bone\s*piece\b/i.test(cleaned) || /\bwan\s*p[Ã®i]?su\b/i.test(cleaned) || /\bwan\s*pi+su\b/i.test(ascii)) {
         aliases.push('One Piece');
         aliases.push('Wan Pisu');
         aliases.push('Wan piisu');
@@ -1725,7 +1741,7 @@ async function resolveImdbFromTmdb(tmdbId, providerType) {
             tmdbImdbCache.set(cacheKey, { value: result });
             return result;
         } catch (error) {
-            console.error('[CinemaCity] TMDB→IMDb resolution error:', error.message);
+            console.error('[CinemaCity] TMDBâ†’IMDb resolution error:', error.message);
             tmdbImdbCache.set(cacheKey, { value: null });
             return null;
         }
@@ -2816,7 +2832,7 @@ function extractEpisodeNumberFromTitle(title) {
     match = text.match(/(?:^|[^a-z0-9])E0*(\d{1,4})(?:[^a-z0-9]|$)/i);
     if (match) return Number.parseInt(match[1], 10) || null;
 
-    match = text.match(/^\s*0*(\d{1,4})\s*[-–.]/);
+    match = text.match(/^\s*0*(\d{1,4})\s*[-â€“.]/);
     if (match) return Number.parseInt(match[1], 10) || null;
 
     return null;
@@ -3308,8 +3324,8 @@ function buildCinemaCityPageExtractorStream(pageExtractorUrl, {
     const displayTitle = buildDisplayTitle(enrichedMeta, basePageMetadata.title || searchResult.title, resolved.season, resolved.episode);
     const languageLabel = buildCinemaCityLanguageLabel(basePageMetadata, config);
     return buildWebStream({
-        name: `🎟️ CinemaCity | ${CINEMACITY_PAGE_EXTRACTOR_LABEL}`,
-        title: `${displayTitle}\n☁️ ${CINEMACITY_PAGE_EXTRACTOR_LABEL} • ${languageLabel}`,
+        name: `ðŸŽŸï¸ CinemaCity | ${CINEMACITY_PAGE_EXTRACTOR_LABEL}`,
+        title: `${displayTitle}\nâ˜ï¸ ${CINEMACITY_PAGE_EXTRACTOR_LABEL} â€¢ ${languageLabel}`,
         url: pageExtractorUrl,
         extractor: CINEMACITY_PAGE_EXTRACTOR_LABEL,
         provider: 'CinemaCity',
@@ -3550,8 +3566,8 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
         const streams = [];
         if (cinemaCityUrl) {
             streams.push(decorateStreamWithPlaylistIntelligence(buildWebStream({
-                name: `🎟️ CinemaCity | ${cinemaCityMode}`,
-                title: `${displayTitle}\n☁️ ${cinemaCityMode} • ${languageLabel}`,
+                name: `ðŸŽŸï¸ CinemaCity | ${cinemaCityMode}`,
+                title: `${displayTitle}\nâ˜ï¸ ${cinemaCityMode} â€¢ ${languageLabel}`,
                 url: cinemaCityUrl,
                 extractor: cinemaCityMode,
                 provider: 'CinemaCity',
@@ -3567,7 +3583,7 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
 
         // Serie CinemaCity: se il CDN locale risponde ma il player non parte, offri anche
         // il percorso CCCDN/MFP come backup esplicito. Prima lo usavamo solo quando
-        // l'estrazione locale falliva; così su Stremio/Android hai una seconda strada
+        // l'estrazione locale falliva; cosÃ¬ su Stremio/Android hai una seconda strada
         // cliccabile senza perdere il CCCDN principale.
         if (isSeriesRequest && pageExtractorUrl && cinemaCityUrl && cinemaCityUrl === localCinemaCityProxyUrl) {
             const cityFallbackStream = buildCinemaCityPageExtractorStream(pageExtractorUrl, {
@@ -3580,8 +3596,8 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
                 addonBase: reqHost
             });
             if (cityFallbackStream) {
-                cityFallbackStream.name = '🎟️ CinemaCity | CCCDN fallback';
-                cityFallbackStream.title = `${displayTitle}\n☁️ CCCDN fallback • ${languageLabel}`;
+                cityFallbackStream.name = 'ðŸŽŸï¸ CinemaCity | CCCDN fallback';
+                cityFallbackStream.title = `${displayTitle}\nâ˜ï¸ CCCDN fallback â€¢ ${languageLabel}`;
                 cityFallbackStream.extractor = CINEMACITY_PAGE_EXTRACTOR_LABEL;
                 cityFallbackStream.host = CINEMACITY_PAGE_EXTRACTOR_LABEL;
                 if (cityFallbackStream.behaviorHints) {
@@ -3604,8 +3620,8 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
             }) : null;
 
             if (cityFallbackStream) {
-                cityFallbackStream.name = '🎟️ CinemaCity | CCCDN fallback';
-                cityFallbackStream.title = `${displayTitle}\n☁️ CCCDN fallback • ${languageLabel}`;
+                cityFallbackStream.name = 'ðŸŽŸï¸ CinemaCity | CCCDN fallback';
+                cityFallbackStream.title = `${displayTitle}\nâ˜ï¸ CCCDN fallback â€¢ ${languageLabel}`;
                 cityFallbackStream.extractor = CINEMACITY_PAGE_EXTRACTOR_LABEL;
                 cityFallbackStream.host = CINEMACITY_PAGE_EXTRACTOR_LABEL;
                 if (cityFallbackStream.behaviorHints) {
@@ -3621,8 +3637,8 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
                 });
             } else if (envFlag('CINEMACITY_ALLOW_RAW_DIRECT', false)) {
                 streams.push(decorateStreamWithPlaylistIntelligence(buildWebStream({
-                    name: '🎟️ CinemaCity | Direct',
-                    title: `${displayTitle}\n☁️ ${extractorLabel} • ${languageLabel}`,
+                    name: 'ðŸŽŸï¸ CinemaCity | Direct',
+                    title: `${displayTitle}\nâ˜ï¸ ${extractorLabel} â€¢ ${languageLabel}`,
                     url: extracted.streamUrl,
                     extractor: extractorLabel,
                     provider: 'CinemaCity',
