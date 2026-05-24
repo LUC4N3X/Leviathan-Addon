@@ -2683,7 +2683,7 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
         if (decodedSamples.length < 4) {
             decodedSamples.push({
                 len: decoded.length,
-                head: decoded.slice(0, 240).replace(/\s+/g, ' ')
+                full: decoded.replace(/\s+/g, ' ')
             });
         }
 
@@ -2707,6 +2707,15 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
     }
 
     if (!fileData) {
+        const playerjsBlockMatch = html.match(/<div[^>]+id=["']playerjs[^"']*["'][^>]*>[\s\S]{0,400}/i)
+            || html.match(/playerjs-\d+[^<]{0,400}/i);
+        const dataConfigMatches = [...html.matchAll(/data-(?:config|file|src|source|video|stream|playerjs)\s*=\s*["']([^"']{8,400})["']/gi)]
+            .slice(0, 4)
+            .map((m) => ({ attr: m[0].slice(0, m[0].indexOf('='))?.trim(), value: m[1].slice(0, 200) }));
+        const m3u8Hits = [...html.matchAll(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/gi)].slice(0, 3).map((m) => m[1].slice(0, 200));
+        const mp4Hits = [...html.matchAll(/(https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*)/gi)].slice(0, 3).map((m) => m[1].slice(0, 200));
+        const fetchHits = [...html.matchAll(/(?:fetch|axios|XMLHttpRequest|\.ajax|\.open)\s*\(\s*["']?(\/[^"'\s)]+|https?:\/\/[^"'\s)]+)/gi)].slice(0, 5).map((m) => m[1].slice(0, 200));
+        const dleHash = (html.match(/dle_(?:root|movie|player|file)[^<\n]{0,200}/i) || [])[0] || '';
         logCinemaCityDebug('parse: fileData missing', {
             pageUrl,
             htmlBytes: html.length,
@@ -2715,11 +2724,17 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
             decodedSamples,
             hasPlayerIframe: /<iframe[^>]+(player|embed|stream)/i.test(html),
             hasJwplayer: /jwplayer\(|jwPlayer/.test(html),
+            hasPlayerjs: /\bPlayerjs\b|new\s+Playerjs|window\.Playerjs|playerjs-\d/.test(html),
             hasFileSources: /(?:file|sources)\s*:\s*['"]/.test(html),
             hasEvalAtob: /eval\s*\(\s*atob/i.test(html),
             hasDleFile: /dle_root|dle_movie|dle-player|dle_player/i.test(html),
             hasCcEmbed: /cinemacity\.cc\/[a-z0-9_-]+\/embed|\/get_files\b|\/player\//i.test(html),
-            htmlHead: html.slice(0, 600).replace(/\s+/g, ' ')
+            playerjsBlock: playerjsBlockMatch ? String(playerjsBlockMatch[0] || '').replace(/\s+/g, ' ') : '',
+            dataConfigMatches,
+            m3u8Hits,
+            mp4Hits,
+            fetchHits,
+            dleHash
         });
         return null;
     }
