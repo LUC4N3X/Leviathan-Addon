@@ -577,12 +577,15 @@ function toMaxstreamPlayerUrl(url) {
     try {
         const parsed = new URL(normalized);
         const isMaxstreamHost = /(?:^|\.)(?:maxstream\.video|stayonline\.pro)$/i.test(parsed.hostname);
-        if (isMaxstreamHost && /\/em[^/]*\//i.test(parsed.pathname)) return normalized;
+        // Only accept real player paths that start with "/em" (e.g. /emb/, /emhuih/,
+        // /emvvv/). The anchor stops false-positives such as /uprotem/<token>, which
+        // is a maxstream-hosted captcha mirror, not a playable embed.
+        if (isMaxstreamHost && /^\/em[^/]*\//i.test(parsed.pathname)) return normalized;
 
         const code = extractWatchfreeCode(normalized);
         if (code) return `https://maxstream.video/emvvv/${code}`;
 
-        return isMaxstreamHost ? normalized : null;
+        return null;
     } catch (_) {
         return null;
     }

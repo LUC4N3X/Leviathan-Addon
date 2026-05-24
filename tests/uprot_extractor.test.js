@@ -23,6 +23,20 @@ test('uprot helpers normalize escaped inputs and watchfree player URLs', () => {
         'https://maxstream.video/emvvv/abc123'
     );
     assert.equal(
+        toMaxstreamPlayerUrl('https://maxstream.video/emhuih/abc123'),
+        'https://maxstream.video/emhuih/abc123'
+    );
+    // /uprotem/ is a maxstream-hosted captcha mirror, not a playable embed.
+    // Accepting it as a player URL short-circuits the uprot captcha solver.
+    assert.equal(
+        toMaxstreamPlayerUrl('https://maxstream.video/uprotem/dTVZK1VSNWZVWmpOL1dIVlhpdG5LUT09'),
+        null
+    );
+    assert.equal(
+        toMaxstreamPlayerUrl('https://maxstream.video/'),
+        null
+    );
+    assert.equal(
         uprotTest.extractContinueLink('<a class="btn" href="/go/next">C o n t i n u e</a>', 'https://uprot.net/mse/abc'),
         'https://uprot.net/go/next'
     );
