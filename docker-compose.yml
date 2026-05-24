@@ -104,6 +104,10 @@ services:
       UPROT_MAMMAMIA_MODE: ${UPROT_MAMMAMIA_MODE:-false}
       UPROT_AUTO_STATE_ENABLED: ${UPROT_AUTO_STATE_ENABLED:-true}
       UPROT_FLARESOLVERR_URL: ${UPROT_FLARESOLVERR_URL:-${FLARESOLVERR_URL:-}}
+      # Reuse CB01's Kraken forward proxy so FlareSolverr and direct fetches
+      # toward uprot.net leave from Kraken's IP instead of the FlareSolverr
+      # container IP (which Cloudflare commonly bans for uprot).
+      UPROT_FORWARD_PROXY: ${UPROT_FORWARD_PROXY:-${CB01_FORWARD_PROXY:-https://krakenproxy.questoleviatanormio.dpdns.org/forward?url=}}
       # First-time UPROT captcha solving via OCR+FlareSolverr can take 20-30s.
       # Subsequent requests reuse the cached state (45 min TTL) and finish in <3s.
       ES_MAXSTREAM_LOCAL_TIMEOUT_MS: ${ES_MAXSTREAM_LOCAL_TIMEOUT_MS:-30000}

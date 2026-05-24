@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const {
     normalizeUprotInput,
     resolveUprotToMaxstream,
+    fetchWithFlareSolverr,
     toMaxstreamPlayerUrl,
     _test: uprotTest
 } = require('../providers/extractors/hosters/uprot');
@@ -163,4 +164,35 @@ test('uprot resolver follows javascript location redirects to watchfree players'
 
     assert.equal(resolved.playerUrl, 'https://maxstream.video/emvvv/jsid');
     assert.equal(resolved.via, 'uprot-landing');
+});
+
+test('fetchWithFlareSolverr wraps uprot URLs in the configured forward proxy', async () => {
+    const seen = [];
+    const flareClient = {
+        async post(endpoint, payload) {
+            seen.push({ endpoint, url: payload.url });
+            return {
+                status: 200,
+                data: {
+                    status: 'ok',
+                    solution: { response: '<html></html>', url: payload.url, cookies: [] }
+                }
+            };
+        }
+    };
+
+    const result = await fetchWithFlareSolverr('https://uprot.net/e/abc123/', {
+        uprotFlareEnabled: true,
+        uprotFlareEndpoint: 'http://flaresolverr.local:8191/v1',
+        uprotForwardProxy: 'https://krakenproxy.example/forward?url=',
+        flareClient
+    });
+
+    assert.ok(result, 'expected a FlareSolverr response');
+    assert.equal(seen.length, 1, 'flare client should be called once');
+    assert.equal(
+        seen[0].url,
+        'https://krakenproxy.example/forward?url=https%3A%2F%2Fuprot.net%2Fe%2Fabc123%2F',
+        'FlareSolverr must receive the proxy-wrapped URL so its egress IP is masked'
+    );
 });

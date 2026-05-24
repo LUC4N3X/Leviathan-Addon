@@ -168,9 +168,18 @@ async function fetchWithFlareSolverr(targetUrl, options = {}) {
     const endpoint = getFlareEndpoint(options);
     if (!flareEnabled(options) || !endpoint) return null;
 
+    // Route the request through the CB01/Kraken forward proxy when configured
+    // so FlareSolverr's egress IP is replaced by the proxy's IP. uprot.net's
+    // Cloudflare blocklist commonly bans FlareSolverr container IPs, but the
+    // Kraken proxy IP is generally accepted. The proxy URL pattern matches
+    // CB01_FORWARD_PROXY (https://krakenproxy.../forward?url=).
+    const proxyUrl = buildUprotForwardRequestUrl(targetUrl, options);
+    const fetchUrl = proxyUrl || targetUrl;
+    const flareViaProxy = Boolean(proxyUrl && proxyUrl !== targetUrl);
+
     const host = getFlareTargetHost(targetUrl);
     const bannedUntil = host ? flareHostBanCooldown.get(host) : 0;
-    if (bannedUntil && bannedUntil > Date.now()) {
+    if (bannedUntil && bannedUntil > Date.now() && !flareViaProxy) {
         uprotDebug('warn', 'flare host in ip-ban cooldown; skipping', { host, remainingMs: bannedUntil - Date.now() });
         return null;
     }
@@ -181,10 +190,14 @@ async function fetchWithFlareSolverr(targetUrl, options = {}) {
     const maxTimeout = envNumber('UPROT_FLARE_MAX_TIMEOUT_MS', Number(options.uprotFlareMaxTimeoutMs || timeout), 8_000, 90_000);
     const waitInSeconds = envNumber('UPROT_FLARE_WAIT_SECONDS', Number(options.uprotFlareWaitSeconds || 2), 0, 15);
 
+    if (flareViaProxy) {
+        uprotDebug('info', 'flare fetch via forward proxy', { targetHost: host, proxyHost: getFlareTargetHost(fetchUrl) });
+    }
+
     try {
         const payload = {
             cmd: 'request.get',
-            url: targetUrl,
+            url: fetchUrl,
             maxTimeout,
             returnOnlyCookies: false
         };
