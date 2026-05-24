@@ -897,6 +897,50 @@ async function resolveLanding(client, targetUrl, options = {}) {
 const uprotOcrCache = new Map();
 const uprotManualSessions = new Map();
 
+// Process-level circuit breaker. When OCR keeps returning confidence:0 with
+// empty raw text, the captcha image is not readable by Tesseract (canvas
+// render, JS-loaded asset, tracking pixel, ...). Each request wastes 5-15s
+// retrying. Once we cross the threshold, short-circuit the whole resolver
+// for a cooldown so DeltaBit/MixDrop attempts in the same Eurostreaming
+// bucket actually finish within the 22s parent timeout.
+const uprotCircuit = { emptyOcrStreak: 0, openUntil: 0, lastFailureAt: 0 };
+
+function uprotCircuitThreshold() {
+    return envNumber('UPROT_CIRCUIT_BREAKER_THRESHOLD', 3, 1, 50);
+}
+
+function uprotCircuitCooldownMs() {
+    return envNumber('UPROT_CIRCUIT_BREAKER_COOLDOWN_MS', 30 * 60_000, 60_000, 6 * 60 * 60_000);
+}
+
+function uprotCircuitOpen() {
+    if (!uprotCircuit.openUntil) return false;
+    if (uprotCircuit.openUntil <= Date.now()) {
+        uprotCircuit.openUntil = 0;
+        uprotCircuit.emptyOcrStreak = 0;
+        return false;
+    }
+    return true;
+}
+
+function recordUprotOcrOutcome(success) {
+    if (success) {
+        uprotCircuit.emptyOcrStreak = 0;
+        uprotCircuit.openUntil = 0;
+        return;
+    }
+    uprotCircuit.emptyOcrStreak += 1;
+    uprotCircuit.lastFailureAt = Date.now();
+    if (uprotCircuit.emptyOcrStreak >= uprotCircuitThreshold() && !uprotCircuit.openUntil) {
+        uprotCircuit.openUntil = Date.now() + uprotCircuitCooldownMs();
+        uprotDebug('warn', 'circuit breaker opened: uprot OCR consistently empty', {
+            streak: uprotCircuit.emptyOcrStreak,
+            cooldownMs: uprotCircuitCooldownMs(),
+            hint: 'inspect config/uprot-debug/*.png; auto-OCR cannot solve this captcha format'
+        });
+    }
+}
+
 function getUprotBootstrapUrl(options = {}) {
     return normalizeRemoteUrl(options.uprotBootstrapUrl || process.env.UPROT_BOOTSTRAP_URL || UPROT_AUTO_STATE_DEFAULTS.bootstrapUrl) || UPROT_AUTO_STATE_DEFAULTS.bootstrapUrl;
 }
@@ -1191,6 +1235,10 @@ async function solveUprotCaptchaOCR(base64Data, options = {}) {
             alphaMode,
             samplePath: samplePath || undefined
         });
+        // Feed the circuit breaker: blank/zero-confidence reads indicate the
+        // captcha is fundamentally unsolvable by Tesseract here.
+        const ocrUseless = !cleanText.length && (!Number.isFinite(confidence) || confidence <= 0);
+        recordUprotOcrOutcome(Boolean(digits) && !ocrUseless);
         if (!digits) return null;
         const minConfidence = envNumber('UPROT_OCR_MIN_CONFIDENCE', Number(options.uprotOcrMinConfidence ?? UPROT_AUTO_STATE_DEFAULTS.ocrMinConfidence), 0, 100);
         if (minConfidence > 0 && Number.isFinite(confidence) && confidence < minConfidence) return null;
@@ -1551,6 +1599,18 @@ async function resolveUprotToMaxstream(client, url, options = {}) {
     const captchaUrl = toMsfCaptchaUrl(originalUrl || targetUrl);
     let activeOptions = options;
     let stateReady = hasUprotState(activeOptions);
+
+    // Circuit breaker: when auto-OCR has proven unsolvable, short-circuit
+    // unless we already have a usable state file to skip the captcha entirely.
+    // Saves ~15s per request that would otherwise time out the parent bucket.
+    if (!stateReady && uprotCircuitOpen()) {
+        uprotDebug('warn', 'resolve short-circuited by ocr circuit breaker', {
+            targetHost: safeHost(targetUrl),
+            cooldownRemainingMs: Math.max(0, uprotCircuit.openUntil - Date.now()),
+            hint: 'open /uprot to seed state manually, or change FlareSolverr/proxy egress'
+        });
+        return null;
+    }
 
     if (isMsfiUrl(targetUrl)) {
         uprotDebug('info', 'resolve start', { path: 'msfi', stateReady, autoState: uprotAutoStateEnabled(options), flareEnabled: flareEnabled(options), targetHost: safeHost(targetUrl) });
