@@ -512,6 +512,8 @@ function buildCinemaCityKrakenForwardUrl(targetUrl, headers = {}) {
 
 async function fetchHtmlWithKrakenForward(url, extraHeaders = {}, requestTimeout = CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS, requestContext = 'document', method = 'GET', body = null) {
     if (!CINEMACITY_KRAKEN_FORWARD_ENABLED || !CINEMACITY_KRAKEN_FORWARD_URL) return null;
+    // Kraken /forward only supports GET (POST returns 405). Skip POST entirely.
+    if (String(method || 'GET').toUpperCase() !== 'GET') return null;
     const { headers: mergedHeaders } = buildCinemaCityRequestHeaders(url, requestContext, extraHeaders);
     const forwardUrl = buildCinemaCityKrakenForwardUrl(url, mergedHeaders);
     if (!forwardUrl) return null;
@@ -523,9 +525,7 @@ async function fetchHtmlWithKrakenForward(url, extraHeaders = {}, requestTimeout
             responseType: 'text',
             timeout: requestTimeout
         };
-        const response = method === 'POST'
-            ? await httpClient.post(forwardUrl, body, config)
-            : await httpClient.get(forwardUrl, config);
+        const response = await httpClient.get(forwardUrl, config);
         const status = Number(response?.status || 0);
         const respBody = responseText(response?.data);
         updateCookiesFromResponse(url, response.headers);
@@ -2701,6 +2701,24 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
             const fileMatch = decoded.match(/(?:file|sources)\s*:\s*['"](.*?)['"]/i);
             if (fileMatch && (fileMatch[1].includes('.m3u8') || fileMatch[1].includes('.mp4'))) {
                 fileData = fileMatch[1];
+            }
+        }
+        // Playerjs new format: file:'[{"title":"...","file":"https:\/\/..."}]' (single-quote wrapper)
+        if (!fileData) {
+            const arrayMatch = decoded.match(/(?:file|sources)\s*:\s*'(\[[\s\S]+?\])'/i);
+            if (arrayMatch) {
+                try { fileData = JSON.parse(arrayMatch[1]); }
+                catch (_) {
+                    try { fileData = JSON.parse(arrayMatch[1].replace(/\\(.)/g, '$1')); }
+                    catch (_) {}
+                }
+            }
+        }
+        // Last-resort: any .m3u8 / .mp4 URL inside the decoded script (handles \/ escapes)
+        if (!fileData) {
+            const urlMatch = decoded.match(/(https?:[\\\/]+[^"'\s]+?\.(?:m3u8|mp4)(?:[?#][^"'\s]*)?)/i);
+            if (urlMatch) {
+                fileData = urlMatch[1].replace(/\\\//g, '/');
             }
         }
         if (fileData) break;
