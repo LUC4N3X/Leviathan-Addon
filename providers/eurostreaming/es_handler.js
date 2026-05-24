@@ -1711,7 +1711,11 @@ function shouldTryMaxstreamLocalFirst() {
 }
 
 function getMaxstreamLocalTimeoutMs() {
-    return envInt('ES_MAXSTREAM_LOCAL_TIMEOUT_MS', 14000, 1000, 30000);
+    // First-time UPROT auto-state needs room for: page fetch (~3s), optional
+    // FlareSolverr fallback (~5-12s), Tesseract OCR (~1-2s), form POST (~2s),
+    // and redirect follow to maxstream player (~2s). 30s covers the cold path;
+    // subsequent requests reuse the cached state and finish well under 3s.
+    return envInt('ES_MAXSTREAM_LOCAL_TIMEOUT_MS', 30000, 1000, 60000);
 }
 
 function isMaxstreamExtractedPlayable(value) {

@@ -104,6 +104,9 @@ services:
       UPROT_MAMMAMIA_MODE: ${UPROT_MAMMAMIA_MODE:-false}
       UPROT_AUTO_STATE_ENABLED: ${UPROT_AUTO_STATE_ENABLED:-true}
       UPROT_FLARESOLVERR_URL: ${UPROT_FLARESOLVERR_URL:-${FLARESOLVERR_URL:-}}
+      # First-time UPROT captcha solving via OCR+FlareSolverr can take 20-30s.
+      # Subsequent requests reuse the cached state (45 min TTL) and finish in <3s.
+      ES_MAXSTREAM_LOCAL_TIMEOUT_MS: ${ES_MAXSTREAM_LOCAL_TIMEOUT_MS:-30000}
       # CB01: usa Kraken /forward; WARP resta installato/gestito nello stack Kraken.
       CB01_BASE_URL: "${CB01_BASE_URL:-https://cb01uno.bar}"
       CB01_DEBUG: "${CB01_DEBUG:-1}"
