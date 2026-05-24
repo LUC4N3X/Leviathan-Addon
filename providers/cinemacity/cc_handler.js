@@ -69,8 +69,8 @@ function envFlag(name, fallback = false) {
     if (raw == null || raw === '') return fallback;
     return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
 }
-const CINEMACITY_USE_RUST_SHIELD = envFlag('CINEMACITY_RUST_SHIELD', false);
-const CINEMACITY_USE_CF_FALLBACK = envFlag('CINEMACITY_CF_FALLBACK', false);
+const CINEMACITY_USE_RUST_SHIELD = envFlag('CINEMACITY_RUST_SHIELD', true);
+const CINEMACITY_USE_CF_FALLBACK = envFlag('CINEMACITY_CF_FALLBACK', true);
 const CINEMACITY_RUST_ACCEL = envFlag('CINEMACITY_RUST_ACCEL', true);
 const CINEMACITY_RUST_ACCEL_RACE = envFlag('CINEMACITY_RUST_ACCEL_RACE', true);
 const CINEMACITY_RUST_ACCEL_LISTING = envFlag('CINEMACITY_RUST_ACCEL_LISTING', true);
@@ -109,8 +109,8 @@ const providerShield = createBlockedFallbackGuard({
     baseUrl: BASE_URL,
     logPrefix: 'CC-SHIELD',
     enabled: CINEMACITY_USE_CF_FALLBACK,
-    // main_30 compatibility: CinemaCity works better through its own ImpIt/Axios path.
-    // Rust Shield stays enabled for the rest of Leviathan, but is opt-in for CinemaCity.
+    // FlareSolverr fallback on by default (easystreams-style): on Cloudflare block,
+    // request clearance cookies+UA from FlareSolverr and retry through provider_http_guard.
     useRustShield: CINEMACITY_USE_RUST_SHIELD,
     useRustShieldForSession: CINEMACITY_USE_RUST_SHIELD
 });
