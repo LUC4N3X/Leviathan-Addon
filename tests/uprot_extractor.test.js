@@ -86,7 +86,8 @@ test('uprot resolver follows landing continue links to MaxStream with injected c
     };
 
     const resolved = await resolveUprotToMaxstream(client, 'https://uprot.net/msf/abc', {
-        uprotFlareEnabled: false
+        uprotFlareEnabled: false,
+        uprotForwardProxy: 'false'
     });
 
     assert.equal(resolved.playerUrl, 'https://maxstream.video/emvvv/abc');
@@ -114,7 +115,8 @@ test('uprot resolver posts stored state and resolves redirect final URL', async 
     const resolved = await resolveUprotToMaxstream(client, 'https://uprot.net/msf/stateid', {
         uprotCookies: { xfss: 'cookie-secret' },
         uprotCaptchaData: { captcha: '12345' },
-        uprotFlareEnabled: false
+        uprotFlareEnabled: false,
+        uprotForwardProxy: 'false'
     });
 
     assert.equal(resolved.playerUrl, 'https://maxstream.video/emvvv/stateid');
@@ -138,7 +140,8 @@ test('uprot resolver extracts escaped direct stream URLs from landing scripts', 
     };
 
     const resolved = await resolveUprotToMaxstream(client, 'https://uprot.net/msf/direct', {
-        uprotFlareEnabled: false
+        uprotFlareEnabled: false,
+        uprotForwardProxy: 'false'
     });
 
     assert.equal(resolved.streamUrl, 'https://cdn.example/hls/master.m3u8?token=abc');
@@ -159,7 +162,8 @@ test('uprot resolver follows javascript location redirects to watchfree players'
     };
 
     const resolved = await resolveUprotToMaxstream(client, 'https://uprot.net/msf/jsid', {
-        uprotFlareEnabled: false
+        uprotFlareEnabled: false,
+        uprotForwardProxy: 'false'
     });
 
     assert.equal(resolved.playerUrl, 'https://maxstream.video/emvvv/jsid');

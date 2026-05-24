@@ -740,6 +740,11 @@ async function followContinueLink(client, continueUrl, options = {}) {
     return toMaxstreamPlayerUrl(current);
 }
 
+// Baked-in default: the Kraken forward proxy is what CB01 already uses to
+// bypass Cloudflare IP bans, so uprot.net (which bans FlareSolverr's container
+// IP) gets the same treatment without requiring env config.
+const UPROT_FORWARD_PROXY_DEFAULT = 'https://krakenproxy.questoleviatanormio.dpdns.org/forward?url=';
+
 function getUprotForwardProxy(options = {}) {
     const raw = String(
         options.uprotForwardProxy
@@ -747,7 +752,7 @@ function getUprotForwardProxy(options = {}) {
         || process.env.UPROT_FORWARDPROXY
         || process.env.CB01_FORWARD_PROXY
         || process.env.FORWARDPROXY
-        || ''
+        || UPROT_FORWARD_PROXY_DEFAULT
     ).trim();
     if (!raw || /^(?:0|false|off|no)$/i.test(raw)) return '';
     return raw;
