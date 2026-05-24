@@ -131,7 +131,7 @@ const WEB_PROVIDER_DEFINITIONS = [
         recipeId: 'cinemacity',
         sourceName: 'CinemaCity',
         cacheName: 'CinemaCity',
-        cacheKeyVersion: 'cccdn-extractor-v6',
+        cacheKeyVersion: 'cccdn-extractor-v9',
         icon: '🎟️',
         limiterKey: 'webCc',
         minTimeout: CINEMACITY_MIN_TIMEOUT,

@@ -61,6 +61,52 @@ const STREAM_CACHE_TTL_MS = 10 * 60 * 1000;
 const TMDB_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const KITSU_MAPPING_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const QUALITY_PROBE_CACHE_TTL_MS = 20 * 60 * 1000;
+
+// CinemaCity tuned defaults are embedded here, so the addon works without adding
+// the CinemaCity tuning block to .env. Real environment variables still win if set.
+const CINEMACITY_EMBEDDED_ENV_DEFAULTS = Object.freeze({
+    CINEMACITY_BACKGROUND_CLEARANCE: 'true',
+    CINEMACITY_BACKGROUND_CLEARANCE_DELAY_MS: '30000',
+    CINEMACITY_BACKGROUND_CLEARANCE_REFRESH_MS: '600000',
+    CINEMACITY_BACKGROUND_CLEARANCE_FORCE: 'false',
+    CINEMACITY_BACKGROUND_PRIME_HOME: 'false',
+    CINEMACITY_BACKGROUND_PRIME_SEARCH: 'true',
+
+    CINEMACITY_PAGE_EXTRACTOR_PATH: '/extractor/video.m3u8',
+    CINEMACITY_PAGE_EXTRACTOR_HOST: 'cccdn',
+    CINEMACITY_PAGE_EXTRACTOR_LABEL: 'CCCDN',
+    MEDIAFLOW_CCCDN_EXTRACTOR_PATH: '/extractor/video.m3u8',
+
+    CINEMACITY_SITEMAP_LOOKUP: 'false',
+    CINEMACITY_RUST_ACCEL_SITEMAP: 'false',
+    CINEMACITY_RUST_ACCEL_SEARCH_GET: 'false',
+    CINEMACITY_FORCE_CLEARANCE_BEFORE_SEARCH: 'true',
+    CINEMACITY_FORWARD_PROXY_FIRST: 'false',
+    CINEMACITY_FORWARD_PROXY_ENABLED: 'true',
+    CINEMACITY_SEARCH_POST_FIRST: 'true',
+    CINEMACITY_PAGE_EXTRACTOR_PRIMARY: 'true',
+    CINEMACITY_MOVIE_PAGE_EXTRACTOR_PRIMARY: 'true',
+    CINEMACITY_RUST_SHIELD_SESSION: 'false',
+    CINEMACITY_CF_FALLBACK: 'true',
+    CINEMACITY_ALLOW_RAW_DIRECT: 'false',
+    CINEMACITY_SERIES_FORCE_CCDN: 'true',
+
+    CINEMACITY_BACKGROUND_CLEARANCE_RETRY_MS: '30000',
+    CINEMACITY_FLARE_TIMEOUT: '60000',
+    CINEMACITY_SEARCH_POST_TIMEOUT_MS: '5000',
+    CINEMACITY_DIRECT_FETCH_TIMEOUT: '6500',
+
+    CC_PROVIDER_TIMEOUT: '42000',
+    CC_PROVIDER_EMPTY_TTL: '60',
+    CC_PROVIDER_ERROR_TTL: '10'
+});
+
+for (const [name, value] of Object.entries(CINEMACITY_EMBEDDED_ENV_DEFAULTS)) {
+    if (process.env[name] === undefined || process.env[name] === null || process.env[name] === '') {
+        process.env[name] = value;
+    }
+}
+
 const FAST_PLAYBACK_MODE = String(process.env.CINEMACITY_FAST_PLAYBACK || '1') !== '0';
 const QUALITY_PROBE_FAST_TIMEOUT_MS = Math.max(650, Math.min(6000, Number.parseInt(process.env.CINEMACITY_QUALITY_PROBE_TIMEOUT_MS || '1400', 10) || 1400));
 const QUALITY_PROBE_FULL_TIMEOUT_MS = Math.max(1500, Math.min(8000, Number.parseInt(process.env.CINEMACITY_QUALITY_PROBE_FULL_TIMEOUT_MS || '6000', 10) || 6000));
@@ -82,6 +128,17 @@ const CINEMACITY_RUST_ACCEL_STALE_TTL_MS = Math.max(CINEMACITY_RUST_ACCEL_CACHE_
 const CINEMACITY_SEARCH_WARMUP = envFlag('CINEMACITY_SEARCH_WARMUP', false);
 const CINEMACITY_SITEMAP_LOOKUP = envFlag('CINEMACITY_SITEMAP_LOOKUP', false);
 const CINEMACITY_FORCE_CLEARANCE_BEFORE_SEARCH = envFlag('CINEMACITY_FORCE_CLEARANCE_BEFORE_SEARCH', true);
+const CINEMACITY_BACKGROUND_CLEARANCE = envFlag('CINEMACITY_BACKGROUND_CLEARANCE', true)
+    && process.env.NODE_ENV !== 'test'
+    && !process.env.JEST_WORKER_ID
+    && !process.env.VITEST;
+const CINEMACITY_BACKGROUND_CLEARANCE_FORCE = envFlag('CINEMACITY_BACKGROUND_CLEARANCE_FORCE', true);
+const CINEMACITY_BACKGROUND_CLEARANCE_DELAY_MS = Math.max(0, Math.min(120000, Number.parseInt(process.env.CINEMACITY_BACKGROUND_CLEARANCE_DELAY_MS || '2500', 10) || 2500));
+const CINEMACITY_BACKGROUND_CLEARANCE_REFRESH_MS = Math.max(60000, Math.min(3600000, Number.parseInt(process.env.CINEMACITY_BACKGROUND_CLEARANCE_REFRESH_MS || String(10 * 60 * 1000), 10) || (10 * 60 * 1000)));
+const CINEMACITY_BACKGROUND_CLEARANCE_RETRY_MS = Math.max(5000, Math.min(300000, Number.parseInt(process.env.CINEMACITY_BACKGROUND_CLEARANCE_RETRY_MS || '30000', 10) || 30000));
+const CINEMACITY_BACKGROUND_PRIME_HOME = envFlag('CINEMACITY_BACKGROUND_PRIME_HOME', true);
+const CINEMACITY_BACKGROUND_PRIME_SEARCH = envFlag('CINEMACITY_BACKGROUND_PRIME_SEARCH', false);
+const CINEMACITY_BACKGROUND_PRIME_QUERY = String(process.env.CINEMACITY_BACKGROUND_PRIME_QUERY || 'a').trim() || 'a';
 const CINEMACITY_SITEMAP_TIMEOUT_MS = Math.max(900, Math.min(3500, Number.parseInt(process.env.CINEMACITY_SITEMAP_TIMEOUT_MS || '1400', 10) || 1400));
 const CINEMACITY_SITEMAP_TOTAL_MS = Math.max(CINEMACITY_SITEMAP_TIMEOUT_MS + 250, Math.min(4500, Number.parseInt(process.env.CINEMACITY_SITEMAP_TOTAL_MS || '2300', 10) || 2300));
 const CINEMACITY_SEARCH_GET_TIMEOUT_MS = Math.max(1200, Math.min(5000, Number.parseInt(process.env.CINEMACITY_SEARCH_GET_TIMEOUT_MS || '2400', 10) || 2400));
@@ -155,6 +212,13 @@ function logCinemaCityDebug(message, data = {}) {
         console.log(`[CinemaCity:debug] ${message}`, JSON.stringify(data));
     } catch (_) {
         console.log(`[CinemaCity:debug] ${message}`);
+    }
+}
+function logCinemaCityInfo(message, data = {}) {
+    try {
+        console.log(`[CinemaCity] ${message}`, JSON.stringify(data));
+    } catch (_) {
+        console.log(`[CinemaCity] ${message}`);
     }
 }
 const NEWS_SITEMAP_TTL_MS = 30 * 60 * 1000;
@@ -725,6 +789,147 @@ async function fetchHtml(url, extraHeaders = {}, options = {}) {
         fetchFailureCache.set(cacheKey, true);
         return null;
     });
+}
+
+
+const cinemaCityBackgroundClearanceState = {
+    started: false,
+    timer: null,
+    running: null,
+    lastOkAt: 0,
+    lastRunAt: 0,
+    lastError: null
+};
+
+function scheduleCinemaCityBackgroundClearance(delayMs, reason = 'scheduled') {
+    if (!CINEMACITY_BACKGROUND_CLEARANCE) return;
+    const safeDelay = Math.max(0, Number(delayMs) || 0);
+    if (cinemaCityBackgroundClearanceState.timer) {
+        clearTimeout(cinemaCityBackgroundClearanceState.timer);
+        cinemaCityBackgroundClearanceState.timer = null;
+    }
+    cinemaCityBackgroundClearanceState.timer = setTimeout(() => {
+        cinemaCityBackgroundClearanceState.timer = null;
+        runCinemaCityBackgroundClearance(reason).catch(() => {});
+    }, safeDelay);
+    if (typeof cinemaCityBackgroundClearanceState.timer.unref === 'function') {
+        cinemaCityBackgroundClearanceState.timer.unref();
+    }
+}
+
+async function runCinemaCityBackgroundClearance(reason = 'startup') {
+    if (!CINEMACITY_BACKGROUND_CLEARANCE || !providerShield?.guard?.ensureClearance) return false;
+    if (cinemaCityBackgroundClearanceState.running) return cinemaCityBackgroundClearanceState.running;
+
+    cinemaCityBackgroundClearanceState.running = (async () => {
+        const startedAt = Date.now();
+        let runSucceeded = false;
+        const triggerUrl = `${BASE_URL}/index.php`;
+        const warmupBody = new URLSearchParams({
+            do: 'search',
+            subaction: 'search',
+            story: CINEMACITY_BACKGROUND_PRIME_QUERY
+        }).toString();
+
+        try {
+            const alreadyFresh = typeof providerShield.guard.isSessionFresh === 'function'
+                ? providerShield.guard.isSessionFresh(triggerUrl)
+                : false;
+
+            logCinemaCityInfo('background clearance start', {
+                reason,
+                triggerUrl,
+                force: CINEMACITY_BACKGROUND_CLEARANCE_FORCE,
+                sessionFresh: alreadyFresh,
+                primeHome: CINEMACITY_BACKGROUND_PRIME_HOME,
+                primeSearch: CINEMACITY_BACKGROUND_PRIME_SEARCH
+            });
+
+            if (!alreadyFresh || CINEMACITY_BACKGROUND_CLEARANCE_FORCE) {
+                await providerShield.guard.ensureClearance(triggerUrl, {
+                    force: !alreadyFresh || CINEMACITY_BACKGROUND_CLEARANCE_FORCE,
+                    isPost: true,
+                    body: warmupBody,
+                    ignoreProviderCooldown: true
+                });
+            }
+
+            let homeReady = false;
+            if (CINEMACITY_BACKGROUND_PRIME_HOME) {
+                const homeHtml = await providerShield.fetchHtml(BASE_URL, {
+                    timeout: Math.min(4200, Math.max(2600, CINEMACITY_SEARCH_POST_TIMEOUT_MS)),
+                    ttl: SEARCH_CACHE_TTL_MS,
+                    allowFlareSolverr: false
+                }).catch(() => null);
+                homeReady = Boolean(homeHtml && homeHtml.length > 500);
+            }
+
+            let searchReady = false;
+            if (CINEMACITY_BACKGROUND_PRIME_SEARCH) {
+                const searchHtml = await providerShield.fetchHtml(triggerUrl, {
+                    method: 'POST',
+                    body: warmupBody,
+                    timeout: CINEMACITY_SEARCH_POST_TIMEOUT_MS,
+                    ttl: SEARCH_CACHE_TTL_MS,
+                    allowFlareSolverr: false
+                }).catch(() => null);
+                searchReady = Boolean(searchHtml && searchHtml.length > 500);
+            }
+
+            const freshAfter = typeof providerShield.guard.isSessionFresh === 'function'
+                ? providerShield.guard.isSessionFresh(triggerUrl)
+                : false;
+
+            runSucceeded = Boolean(freshAfter);
+            cinemaCityBackgroundClearanceState.lastOkAt = freshAfter ? Date.now() : cinemaCityBackgroundClearanceState.lastOkAt;
+            cinemaCityBackgroundClearanceState.lastRunAt = Date.now();
+            cinemaCityBackgroundClearanceState.lastError = null;
+
+            logCinemaCityInfo('background clearance done', {
+                reason,
+                ok: freshAfter,
+                sessionReady: freshAfter,
+                homeReady,
+                searchReady,
+                ageMs: cinemaCityBackgroundClearanceState.lastOkAt ? Date.now() - cinemaCityBackgroundClearanceState.lastOkAt : null,
+                ms: Date.now() - startedAt
+            });
+
+            return freshAfter;
+        } catch (error) {
+            cinemaCityBackgroundClearanceState.lastRunAt = Date.now();
+            cinemaCityBackgroundClearanceState.lastError = error?.message || String(error);
+            logCinemaCityInfo('background clearance failed', {
+                reason,
+                error: cinemaCityBackgroundClearanceState.lastError,
+                ms: Date.now() - startedAt
+            });
+            return false;
+        } finally {
+            cinemaCityBackgroundClearanceState.running = null;
+            const nextDelay = runSucceeded ? CINEMACITY_BACKGROUND_CLEARANCE_REFRESH_MS : CINEMACITY_BACKGROUND_CLEARANCE_RETRY_MS;
+            const nextReason = runSucceeded ? 'refresh' : 'retry';
+            if (nextDelay > 0) {
+                scheduleCinemaCityBackgroundClearance(nextDelay, nextReason);
+            }
+        }
+    })();
+
+    return cinemaCityBackgroundClearanceState.running;
+}
+
+function startCinemaCityBackgroundClearanceDaemon() {
+    if (!CINEMACITY_BACKGROUND_CLEARANCE || cinemaCityBackgroundClearanceState.started) return;
+    cinemaCityBackgroundClearanceState.started = true;
+    logCinemaCityInfo('background clearance daemon active', {
+        delayMs: CINEMACITY_BACKGROUND_CLEARANCE_DELAY_MS,
+        refreshMs: CINEMACITY_BACKGROUND_CLEARANCE_REFRESH_MS,
+        retryMs: CINEMACITY_BACKGROUND_CLEARANCE_RETRY_MS,
+        force: CINEMACITY_BACKGROUND_CLEARANCE_FORCE,
+        primeHome: CINEMACITY_BACKGROUND_PRIME_HOME,
+        primeSearch: CINEMACITY_BACKGROUND_PRIME_SEARCH
+    });
+    scheduleCinemaCityBackgroundClearance(CINEMACITY_BACKGROUND_CLEARANCE_DELAY_MS, 'startup');
 }
 
 async function warmupCinemaCitySession(reason = 'search') {
@@ -3485,6 +3690,9 @@ module.exports = {
         parseCinemaCityPageMetadata,
         extractDownloadLanguagesFromPage,
         buildCinemaCityLanguageLabel,
+        runCinemaCityBackgroundClearance,
+        startCinemaCityBackgroundClearanceDaemon,
+        cinemaCityBackgroundClearanceState,
         normalizeLanguageToken,
         normalizeLanguageList,
         getWantedLanguage,
@@ -3501,3 +3709,6 @@ module.exports = {
         cinemaCitySearchPostFirstEnabled: CINEMACITY_SEARCH_POST_FIRST
     }
 };
+
+startCinemaCityBackgroundClearanceDaemon();
+
