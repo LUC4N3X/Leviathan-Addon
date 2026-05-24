@@ -1405,13 +1405,13 @@ function buildCinemaCityLanguageLabel(pageMetadata = {}, config = {}) {
     if (hasItalian) return 'ðŸ‡®ðŸ‡¹ ITA';
 
     if (wantsItalian && hasMulti && config?.filters?.allowMultiWhenItalianOnly === true) {
-        return 'ðŸŒ MULTI';
+        return 'ðŸŒ  MULTI';
     }
 
     if (hasEnglish && languages.length <= 1 && downloadLanguages.length <= 1) return 'ðŸ‡¬ðŸ‡§ ENG';
-    if (hasMulti || languages.length > 1 || downloadLanguages.length > 1) return 'ðŸŒ MULTI';
+    if (hasMulti || languages.length > 1 || downloadLanguages.length > 1) return 'ðŸŒ  MULTI';
 
-    return 'ðŸŒ WEB';
+    return 'ðŸŒ  WEB';
 }
 
 function isDeferredCinemaCityExtractorStream(stream = {}) {
@@ -3179,7 +3179,7 @@ function buildDisplayTitle(meta = {}, fallbackTitle, season, episode) {
     const baseTitle = decodeHtmlEntities(
         meta?.title || meta?.name || meta?.originalTitle || fallbackTitle || 'CinemaCity'
     )
-        .replace(/\s*\(.*?\)\s*/g, ' ')
+        .replace(/\s*\((.*?)\)\s*/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
 
@@ -3324,8 +3324,8 @@ function buildCinemaCityPageExtractorStream(pageExtractorUrl, {
     const displayTitle = buildDisplayTitle(enrichedMeta, basePageMetadata.title || searchResult.title, resolved.season, resolved.episode);
     const languageLabel = buildCinemaCityLanguageLabel(basePageMetadata, config);
     return buildWebStream({
-        name: `ðŸŽŸï¸ CinemaCity | ${CINEMACITY_PAGE_EXTRACTOR_LABEL}`,
-        title: `${displayTitle}\nâ˜ï¸ ${CINEMACITY_PAGE_EXTRACTOR_LABEL} â€¢ ${languageLabel}`,
+        name: `ðŸŽŸï¸  CinemaCity | ${CINEMACITY_PAGE_EXTRACTOR_LABEL}`,
+        title: `${displayTitle}\nâ˜ ï¸  ${CINEMACITY_PAGE_EXTRACTOR_LABEL} â€¢ ${languageLabel}`,
         url: pageExtractorUrl,
         extractor: CINEMACITY_PAGE_EXTRACTOR_LABEL,
         provider: 'CinemaCity',
@@ -3566,8 +3566,8 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
         const streams = [];
         if (cinemaCityUrl) {
             streams.push(decorateStreamWithPlaylistIntelligence(buildWebStream({
-                name: `ðŸŽŸï¸ CinemaCity | ${cinemaCityMode}`,
-                title: `${displayTitle}\nâ˜ï¸ ${cinemaCityMode} â€¢ ${languageLabel}`,
+                name: `ðŸŽŸï¸  CinemaCity | ${cinemaCityMode}`,
+                title: `${displayTitle}\nâ˜ ï¸  ${cinemaCityMode} â€¢ ${languageLabel}`,
                 url: cinemaCityUrl,
                 extractor: cinemaCityMode,
                 provider: 'CinemaCity',
@@ -3596,8 +3596,8 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
                 addonBase: reqHost
             });
             if (cityFallbackStream) {
-                cityFallbackStream.name = 'ðŸŽŸï¸ CinemaCity | CCCDN fallback';
-                cityFallbackStream.title = `${displayTitle}\nâ˜ï¸ CCCDN fallback â€¢ ${languageLabel}`;
+                cityFallbackStream.name = 'ðŸŽŸï¸  CinemaCity | CCCDN fallback';
+                cityFallbackStream.title = `${displayTitle}\nâ˜ ï¸  CCCDN fallback â€¢ ${languageLabel}`;
                 cityFallbackStream.extractor = CINEMACITY_PAGE_EXTRACTOR_LABEL;
                 cityFallbackStream.host = CINEMACITY_PAGE_EXTRACTOR_LABEL;
                 if (cityFallbackStream.behaviorHints) {
@@ -3620,8 +3620,8 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
             }) : null;
 
             if (cityFallbackStream) {
-                cityFallbackStream.name = 'ðŸŽŸï¸ CinemaCity | CCCDN fallback';
-                cityFallbackStream.title = `${displayTitle}\nâ˜ï¸ CCCDN fallback â€¢ ${languageLabel}`;
+                cityFallbackStream.name = 'ðŸŽŸï¸  CinemaCity | CCCDN fallback';
+                cityFallbackStream.title = `${displayTitle}\nâ˜ ï¸  CCCDN fallback â€¢ ${languageLabel}`;
                 cityFallbackStream.extractor = CINEMACITY_PAGE_EXTRACTOR_LABEL;
                 cityFallbackStream.host = CINEMACITY_PAGE_EXTRACTOR_LABEL;
                 if (cityFallbackStream.behaviorHints) {
@@ -3637,8 +3637,8 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
                 });
             } else if (envFlag('CINEMACITY_ALLOW_RAW_DIRECT', false)) {
                 streams.push(decorateStreamWithPlaylistIntelligence(buildWebStream({
-                    name: 'ðŸŽŸï¸ CinemaCity | Direct',
-                    title: `${displayTitle}\nâ˜ï¸ ${extractorLabel} â€¢ ${languageLabel}`,
+                    name: 'ðŸŽŸï¸  CinemaCity | Direct',
+                    title: `${displayTitle}\nâ˜ ï¸  ${extractorLabel} â€¢ ${languageLabel}`,
                     url: extracted.streamUrl,
                     extractor: extractorLabel,
                     provider: 'CinemaCity',
@@ -3727,4 +3727,3 @@ module.exports = {
 };
 
 startCinemaCityBackgroundClearanceDaemon();
-
