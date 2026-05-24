@@ -2544,7 +2544,12 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
         'Cookie': getCinemaCitySessionCookie(),
         'Sec-Fetch-Site': 'same-origin',
         'Sec-Fetch-User': '?1'
-    }, { timeout: 2500, attempts: 1 });
+    }, { timeout: 6000, attempts: 1 });
+
+    if (!html) {
+        logCinemaCityDebug('parse: html missing', { pageUrl });
+        return null;
+    }
 
     const pageMetadata = parseCinemaCityPageMetadata(html, pageUrl);
     pageMetadataCache.set(normalizeRemoteUrl(pageUrl), pageMetadata);
@@ -2553,13 +2558,17 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
     const atobRegex = /atob\s*\(\s*['"](.*?)['"]\s*\)/gi;
     let match;
     let fileData = null;
+    let atobMatches = 0;
+    let atobDecoded = 0;
 
     while ((match = atobRegex.exec(html)) !== null) {
+        atobMatches += 1;
         const encoded = match[1];
         if (!encoded || encoded.length < 50) continue;
         let decoded = '';
         try { decoded = Buffer.from(encoded, 'base64').toString('utf8'); } catch (_) { continue; }
         if (!decoded) continue;
+        atobDecoded += 1;
 
         if (decoded.trim().startsWith('[')) {
             try { fileData = JSON.parse(decoded); } catch (_) {}
@@ -2580,6 +2589,19 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
         if (fileData) break;
     }
 
+    if (!fileData) {
+        logCinemaCityDebug('parse: fileData missing', {
+            pageUrl,
+            htmlBytes: html.length,
+            atobMatches,
+            atobDecoded,
+            hasPlayerIframe: /<iframe[^>]+(player|embed|stream)/i.test(html),
+            hasJwplayer: /jwplayer\(|jwPlayer/.test(html),
+            hasFileSources: /(?:file|sources)\s*:\s*['"]/.test(html)
+        });
+        return null;
+    }
+
     const streamUrl = resolveUrl(
         pageUrl,
         pickStream(fileData, meta?.isSeries || meta?.providerType === 'tv' || meta?.providerType === 'anime' ? 'tv' : 'movie', meta?.season || 1, meta?.episode || 1, {
@@ -2589,7 +2611,15 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
             isSeries: meta?.isSeries === true || meta?.providerType === 'tv' || meta?.providerType === 'anime'
         })
     );
-    if (!streamUrl) return null;
+    if (!streamUrl) {
+        logCinemaCityDebug('parse: streamUrl missing after pickStream', {
+            pageUrl,
+            fileDataType: typeof fileData,
+            fileDataLen: Array.isArray(fileData) ? fileData.length : (typeof fileData === 'string' ? fileData.length : 0)
+        });
+        return null;
+    }
+    logCinemaCityDebug('parse: stream extracted', { pageUrl, streamUrl: streamUrl.slice(0, 160) });
 
     const streamContext = /\.m3u8($|\?)/i.test(streamUrl) ? 'hls' : 'media';
     const { headers: streamHeaders } = buildCinemaCityRequestHeaders(streamUrl, streamContext, {
