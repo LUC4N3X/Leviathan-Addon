@@ -1,6 +1,7 @@
 'use strict';
 
 const { getOrigin, normalizeRemoteUrl } = require('../common');
+const { requestWithImpitRotating } = require('../../utils/bypass');
 const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
@@ -102,12 +103,60 @@ async function fetchVidxgoHtml(playerUrl, headers, options = {}) {
     return response.text || '';
 }
 
+async function bypassAndExtract(playerUrl, referer, options = {}) {
+    if (typeof options.bypassExtractor === 'function') {
+        const output = await options.bypassExtractor(playerUrl, referer, options).catch(() => null);
+        if (typeof output === 'string') return normalizeRemoteUrl(output);
+        if (output?.stream_url) return normalizeRemoteUrl(output.stream_url);
+        if (output?.url) return normalizeRemoteUrl(output.url);
+        return null;
+    }
+
+    const timeoutMs = Number.parseInt(options.bypassTimeoutMs || process.env.VIDXGO_IMPIT_TIMEOUT_MS || '12000', 10) || 12_000;
+    const impitFetch = typeof options.impitFetcher === 'function'
+        ? options.impitFetcher
+        : requestWithImpitRotating;
+    const headers = {
+        'User-Agent': String(process.env.VIDXGO_IMPIT_USER_AGENT || 'Mozilla/5.0 (X11; Linux x86_64; rv:150.0) Gecko/20100101 Firefox/150.0'),
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Sec-GPC': '1',
+        'Alt-Used': 'v.vidxgo.co',
+        Connection: 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'iframe',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        DNT: '1',
+        Referer: referer || 'https://altadefinizione.you/',
+        Priority: 'u=0, i'
+    };
+
+    const response = await impitFetch(playerUrl, {
+        method: 'GET',
+        headers,
+        timeout: timeoutMs,
+        totalTimeoutMs: timeoutMs + 1000,
+        maxBrowserAttempts: Number.parseInt(process.env.VIDXGO_IMPIT_ATTEMPTS || '3', 10) || 3,
+        browser: process.env.VIDXGO_IMPIT_BROWSER || 'firefox139',
+        browserFallbacks: ['firefox139', 'chrome136', 'chrome131'],
+        retryOnStatuses: [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524],
+        http3: /^(1|true|yes|on)$/i.test(String(process.env.VIDXGO_IMPIT_HTTP3 || '1')),
+        failSoft: true
+    }).catch(() => null);
+
+    const html = typeof response?.body === 'string'
+        ? response.body
+        : typeof response?.data === 'string' ? response.data : '';
+    return extractVidxgoStreamUrl(html, playerUrl);
+}
+
 async function extractVidxgo(url, options = {}) {
     const playerUrl = normalizeRemoteUrl(url);
     if (!playerUrl || !isVidxgoUrl(playerUrl)) return null;
 
     const userAgent = String(options.userAgent || process.env.VIDXGO_USER_AGENT || DEFAULT_USER_AGENT);
-    const referer = String(options.requestReferer || options.referer || options.pageUrl || process.env.VIDXGO_REFERER || playerUrl);
+    const referer = String(options.requestReferer || options.referer || options.pageUrl || process.env.VIDXGO_REFERER || 'https://altadefinizione.you/');
     const origin = getOrigin(playerUrl);
     const host = (() => {
         try { return new URL(playerUrl).hostname; } catch (_) { return 'v.vidxgo.co'; }
@@ -124,7 +173,10 @@ async function extractVidxgo(url, options = {}) {
     };
 
     const html = await fetchVidxgoHtml(playerUrl, pageHeaders, options);
-    const streamUrl = extractVidxgoStreamUrl(html, playerUrl);
+    let streamUrl = extractVidxgoStreamUrl(html, playerUrl);
+    if (!streamUrl) {
+        streamUrl = await bypassAndExtract(playerUrl, referer, options);
+    }
     if (!streamUrl) return null;
 
     const streamHeaders = {
