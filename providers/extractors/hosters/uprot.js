@@ -50,7 +50,7 @@ const UPROT_AUTO_STATE_DEFAULTS = Object.freeze({
     imageTimeoutMs: 10_000,
     bootstrapTimeoutMs: 12_000,
     postTimeoutMs: 12_000,
-    manualMode: true,
+    manualMode: false,
     manualSessionTtlMs: 10 * 60_000
 });
 
@@ -110,7 +110,7 @@ function getFlareEndpoint(options = {}) {
 
 function flareEnabled(options = {}) {
     if (options.uprotFlareEnabled !== undefined) return Boolean(options.uprotFlareEnabled);
-    return envFlag('UPROT_FLARE_ENABLED', envFlag('EUROSTREAMING_UPROT_FLARE_ENABLED', false));
+    return envFlag('UPROT_FLARE_ENABLED', envFlag('EUROSTREAMING_UPROT_FLARE_ENABLED', true));
 }
 
 function getFlareClient(options = {}) {
@@ -1106,8 +1106,35 @@ async function requestUprotBootstrapPage(client, bootstrapUrl, headers, options 
         if (posted?.text) pages.push({ ...posted, finalUrl: (posted.finalUrl && isUprotUrl(posted.finalUrl)) ? posted.finalUrl : bootstrapUrl, method: 'POST' });
     }
 
+    const directHit = pages.find((page) => hasCaptchaCandidate(page.text, page.finalUrl || bootstrapUrl));
+    if (directHit) return directHit;
+
+    // Direct fetches did not yield a captcha image (typical when uprot/uproat
+    // serves the small URL-Encrypter placeholder or sits behind Cloudflare).
+    // Fall back to FlareSolverr to fetch the real captcha page so MammaMia-style
+    // auto-state generation can complete without human help.
+    if (flareEnabled(options) && getFlareEndpoint(options)) {
+        const flare = await fetchWithFlareSolverr(bootstrapUrl, options);
+        if (flare?.text && hasCaptchaCandidate(flare.text, flare.finalUrl || bootstrapUrl)) {
+            uprotDebug('info', 'auto-state bootstrap rescued via FlareSolverr', {
+                bootstrapHost: safeHost(bootstrapUrl),
+                bootstrapPath: safePathForUprot(bootstrapUrl),
+                bytes: String(flare.text || '').length
+            });
+            const flareCookies = String(flare.cookies || '').trim();
+            const flareResponse = flareCookies ? { headers: { 'set-cookie': flareCookies.split(/;\s*/).filter(Boolean) } } : null;
+            return {
+                status: Number(flare.status) || 200,
+                text: flare.text,
+                response: flareResponse,
+                finalUrl: (flare.finalUrl && isUprotUrl(flare.finalUrl)) ? flare.finalUrl : bootstrapUrl,
+                method: 'FLARE'
+            };
+        }
+    }
+
     if (!pages.length) return null;
-    return pages.find((page) => hasCaptchaCandidate(page.text, page.finalUrl || bootstrapUrl)) || pages[0];
+    return pages[0];
 }
 
 async function generateUprotAutoState(client, targetUrl, options = {}) {
