@@ -12,6 +12,7 @@ const { searchAnimeUnity } = require('../animeunity/au_handler');
 const { searchAnimeSaturn } = require('../animesaturn/as_handler');
 const { searchGuardaFlix } = require('../guardaflix/gf_handler');
 const { searchAltadefinizione } = require('../altadefinizione/ads_handler');
+const { searchCinemaCity } = require('../cinemacity/cc_handler');
 const { getProviderRecipe } = require('../engine/provider_definition_engine');
 
 const STREAMING_COMMUNITY_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.SC_PROVIDER_TIMEOUT || '16000', 10) || 16000);
@@ -19,6 +20,9 @@ const ANIMEWORLD_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.AW_PROVIDER_
 const ALTADEFINIZIONE_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_TIMEOUT || process.env.CC_PROVIDER_TIMEOUT || '18000', 10) || 18000);
 const ALTADEFINIZIONE_EMPTY_TTL = Math.max(15, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_EMPTY_TTL || process.env.CC_PROVIDER_EMPTY_TTL || '60', 10) || 60);
 const ALTADEFINIZIONE_ERROR_TTL = Math.max(3, Math.min(ALTADEFINIZIONE_EMPTY_TTL, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_ERROR_TTL || process.env.CC_PROVIDER_ERROR_TTL || '10', 10) || 10));
+const CINEMACITY_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.CC_PROVIDER_TIMEOUT || process.env.CINEMACITY_PROVIDER_TIMEOUT || '18000', 10) || 18000);
+const CINEMACITY_EMPTY_TTL = Math.max(15, parseInt(process.env.CC_PROVIDER_EMPTY_TTL || process.env.CINEMACITY_PROVIDER_EMPTY_TTL || '60', 10) || 60);
+const CINEMACITY_ERROR_TTL = Math.max(3, Math.min(CINEMACITY_EMPTY_TTL, parseInt(process.env.CC_PROVIDER_ERROR_TTL || process.env.CINEMACITY_PROVIDER_ERROR_TTL || '10', 10) || 10));
 const GUARDO_SERIE_MIN_TIMEOUT = Math.max(30000, parseInt(process.env.GS_PROVIDER_TIMEOUT || '45000', 10) || 45000);
 const GUARDASERIETV_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.GSTV_PROVIDER_TIMEOUT || '22000', 10) || 22000);
 const EUROSTREAMING_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.ES_PROVIDER_TIMEOUT || '22000', 10) || 22000);
@@ -119,8 +123,22 @@ const WEB_PROVIDER_DEFINITIONS = [
         minTimeout: ALTADEFINIZIONE_MIN_TIMEOUT,
         emptyTtl: ALTADEFINIZIONE_EMPTY_TTL,
         errorTtl: ALTADEFINIZIONE_ERROR_TTL,
-        isEnabled: ({ filters }) => filters?.enableAltadefinizione === true || filters?.enableCc === true,
+        isEnabled: ({ filters }) => filters?.enableAltadefinizione === true,
         run: ({ originalId, finalId, meta, config, reqHost }) => searchAltadefinizione(originalId, finalId, meta, config, reqHost)
+    },
+    {
+        key: 'cinemacity',
+        recipeId: 'cinemacity',
+        sourceName: 'CinemaCity',
+        cacheName: 'CinemaCity',
+        cacheKeyVersion: 'cc-flaresolverr-v1',
+        icon: '🎟️',
+        limiterKey: 'webCc',
+        minTimeout: CINEMACITY_MIN_TIMEOUT,
+        emptyTtl: CINEMACITY_EMPTY_TTL,
+        errorTtl: CINEMACITY_ERROR_TTL,
+        isEnabled: ({ filters }) => filters?.enableCc === true,
+        run: ({ originalId, finalId, meta, config, reqHost }) => searchCinemaCity(originalId, finalId, meta, config, reqHost)
     },
     {
         key: 'guardaHD',

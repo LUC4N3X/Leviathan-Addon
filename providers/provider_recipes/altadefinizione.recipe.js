@@ -6,7 +6,7 @@ module.exports = webProviderRecipe({
     id: 'altadefinizione',
     key: 'altadefinizione',
     name: 'AltadefinizioneStreaming',
-    aliases: ['AltadefinizioneStreaming', 'AltaDefinizione', 'webAds', 'enableCc'],
+    aliases: ['AltadefinizioneStreaming', 'AltaDefinizione', 'webAds'],
     baseUrls: ['https://altadefinizionestreaming.com'],
     tags: ['movie', 'series', 'web', 'vidxgo', 'direct-first', 'lazy-extraction'],
     search: {
