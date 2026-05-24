@@ -41,8 +41,15 @@ const UPROT_AUTO_STATE_DEFAULTS = Object.freeze({
     bootstrapUrl: 'https://uprot.net/msf/r4hcq47tarq8',
     generatedStateFile: path.resolve(process.cwd(), 'config', 'uprot_state.json'),
     stateTtlMs: 45 * 60_000,
-    failureTtlMs: 2 * 60_000,
-    retryBudget: 2,
+    // Longer failure cooldown: when FlareSolverr's IP is Cloudflare-banned on
+    // uprot, or the captcha image is canvas-rendered and OCR can't read it,
+    // there is nothing the next request can do differently for a while.
+    // 10 minutes keeps user-facing latency low; the cooldown is global per host.
+    failureTtlMs: 10 * 60_000,
+    // Single attempt per request: each attempt already iterates 5+ bootstrap
+    // candidates (uprot.net/.pro/uproat aliases × /e/, /msf/, /mse/ paths).
+    // A second pass within the same request just doubles the wasted time.
+    retryBudget: 1,
     captchaMinDigits: 3,
     captchaMaxDigits: 8,
     ocrMinConfidence: 0,
@@ -141,9 +148,32 @@ function extractFlareSolution(response) {
     };
 }
 
+// Tracks hosts where FlareSolverr has reported a hard Cloudflare IP ban so we
+// stop wasting 2-5s per request hammering the same dead endpoint. Cleared on
+// process restart; cooldown is intentionally long because the ban itself is.
+const flareHostBanCooldown = new Map();
+const FLARE_HOST_BAN_COOLDOWN_MS = 15 * 60_000;
+
+function getFlareTargetHost(targetUrl) {
+    try { return new URL(String(targetUrl || '')).hostname.toLowerCase(); } catch (_) { return ''; }
+}
+
+function isFlareIpBanError(response) {
+    const body = response?.data;
+    const text = typeof body === 'string' ? body : (body && typeof body === 'object' ? (body.message || JSON.stringify(body)) : '');
+    return /cloudflare\s+has\s+blocked\s+this\s+request|your\s+ip\s+is\s+banned/i.test(String(text || ''));
+}
+
 async function fetchWithFlareSolverr(targetUrl, options = {}) {
     const endpoint = getFlareEndpoint(options);
     if (!flareEnabled(options) || !endpoint) return null;
+
+    const host = getFlareTargetHost(targetUrl);
+    const bannedUntil = host ? flareHostBanCooldown.get(host) : 0;
+    if (bannedUntil && bannedUntil > Date.now()) {
+        uprotDebug('warn', 'flare host in ip-ban cooldown; skipping', { host, remainingMs: bannedUntil - Date.now() });
+        return null;
+    }
 
     const client = getFlareClient(options);
     if (!client || typeof client.post !== 'function') return null;
@@ -165,7 +195,13 @@ async function fetchWithFlareSolverr(targetUrl, options = {}) {
             validateStatus: () => true
         });
         const status = Number(response?.status || 0);
-        if (status && status >= 400) return null;
+        if (status && status >= 400) {
+            if (host && isFlareIpBanError(response)) {
+                flareHostBanCooldown.set(host, Date.now() + FLARE_HOST_BAN_COOLDOWN_MS);
+                uprotDebug('warn', 'flare reports cloudflare ip-ban; cooldown set', { host, cooldownMs: FLARE_HOST_BAN_COOLDOWN_MS, status });
+            }
+            return null;
+        }
         return extractFlareSolution(response);
     } catch (_) {
         return null;
