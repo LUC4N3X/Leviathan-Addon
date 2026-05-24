@@ -5917,6 +5917,25 @@ const mobileHTML = `
                             </div>
                         </div>
 
+                        <div class="m-reactor-module" id="mod-cc">
+                            <div class="m-reactor-core">
+                                <span class="m-core-icon">🎟️</span>
+                            </div>
+                            <div class="m-reactor-body">
+                                <div class="m-reactor-top">
+                                    <span class="m-reactor-title">🎟️ CinemaCity</span>
+                                    <label class="m-switch">
+                                        <input type="checkbox" id="m-enableCc" onchange="updateStatus('m-enableCc','st-cc'); toggleModuleStyle('m-enableCc', 'mod-cc');">
+                                        <span class="m-slider"></span>
+                                    </label>
+                                </div>
+                                <span class="m-reactor-desc">Catalogo Film e Serie TV via FlareSolverr e proxy CCCDN/Kraken 🎟️.</span>
+                                <div class="m-tag-row">
+                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="m-reactor-module" id="mod-ghd">
                             <div class="m-reactor-core">
                                 <i class="fas fa-film m-core-icon"></i>
@@ -6107,24 +6126,6 @@ const mobileHTML = `
                             </div>
                         </div>
 
-                        <div class="m-reactor-module" id="mod-cc">
-                            <div class="m-reactor-core">
-                                <i class="fas fa-city m-core-icon"></i>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🏙️ CinemaCity</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableCc" onchange="updateStatus('m-enableCc','st-cc'); toggleModuleStyle('m-enableCc', 'mod-cc');">
-                                        <span class="m-slider"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Catalogo Film e Serie TV via FlareSolverr 🌆.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
-                                </div>
-                            </div>
-                        </div>
 
                     </div>
                 </div>
