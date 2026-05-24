@@ -188,7 +188,10 @@ async function fetchWithFlareSolverr(targetUrl, options = {}) {
     if (!client || typeof client.post !== 'function') return null;
     const timeout = envNumber('UPROT_FLARE_TIMEOUT_MS', Number(options.uprotFlareTimeoutMs || 25_000), 8_000, 60_000);
     const maxTimeout = envNumber('UPROT_FLARE_MAX_TIMEOUT_MS', Number(options.uprotFlareMaxTimeoutMs || timeout), 8_000, 90_000);
-    const waitInSeconds = envNumber('UPROT_FLARE_WAIT_SECONDS', Number(options.uprotFlareWaitSeconds || 2), 0, 15);
+    // 6s wait lets uprot's client-side JS finish injecting the captcha <img>
+    // into the static shell. Confirmed via user-shared sample: the captcha
+    // image is in the final DOM but the initial response is only ~1.5KB.
+    const waitInSeconds = envNumber('UPROT_FLARE_WAIT_SECONDS', Number(options.uprotFlareWaitSeconds || 6), 0, 15);
 
     if (flareViaProxy) {
         uprotDebug('info', 'flare fetch via forward proxy', { targetHost: host, proxyHost: getFlareTargetHost(fetchUrl) });
@@ -1034,14 +1037,23 @@ function summarizeUprotPage(html) {
             alt: htmlAttr(tag, 'alt') || undefined
         });
     }
+    const snippetSize = envNumber('UPROT_DEBUG_PAGE_SNIPPET_BYTES', 240, 0, 4000);
+    const headSnippet = snippetSize > 0 ? text.slice(0, snippetSize).replace(/\s+/g, ' ') : undefined;
+    const tailSnippet = snippetSize > 0 && text.length > snippetSize * 2
+        ? text.slice(-snippetSize).replace(/\s+/g, ' ')
+        : undefined;
     return {
         bytes: text.length,
         imgCount: (text.match(/<img\b/ig) || []).length,
         canvasCount: (text.match(/<canvas\b/ig) || []).length,
         scriptCount: (text.match(/<script\b/ig) || []).length,
+        formCount: (text.match(/<form\b/ig) || []).length,
         hasCaptchaKeyword: /captcha|capcha|verification|security[_-]?code/i.test(text),
         hasInlineDataImage: /data:image\/[^;]+;base64,/i.test(text),
-        firstImgs: imgs
+        hasUrlEncrypterTitle: /url\s*encrypter/i.test(text),
+        firstImgs: imgs,
+        headSnippet,
+        tailSnippet
     };
 }
 
