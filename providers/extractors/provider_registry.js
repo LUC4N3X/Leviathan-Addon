@@ -20,7 +20,7 @@ const ANIMEWORLD_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.AW_PROVIDER_
 const ALTADEFINIZIONE_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_TIMEOUT || process.env.CC_PROVIDER_TIMEOUT || '18000', 10) || 18000);
 const ALTADEFINIZIONE_EMPTY_TTL = Math.max(15, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_EMPTY_TTL || process.env.CC_PROVIDER_EMPTY_TTL || '60', 10) || 60);
 const ALTADEFINIZIONE_ERROR_TTL = Math.max(3, Math.min(ALTADEFINIZIONE_EMPTY_TTL, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_ERROR_TTL || process.env.CC_PROVIDER_ERROR_TTL || '10', 10) || 10));
-const CINEMACITY_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.CC_PROVIDER_TIMEOUT || process.env.CINEMACITY_PROVIDER_TIMEOUT || '18000', 10) || 18000);
+const CINEMACITY_MIN_TIMEOUT = Math.max(30000, parseInt(process.env.CC_PROVIDER_TIMEOUT || process.env.CINEMACITY_PROVIDER_TIMEOUT || '42000', 10) || 42000);
 const CINEMACITY_EMPTY_TTL = Math.max(15, parseInt(process.env.CC_PROVIDER_EMPTY_TTL || process.env.CINEMACITY_PROVIDER_EMPTY_TTL || '60', 10) || 60);
 const CINEMACITY_ERROR_TTL = Math.max(3, Math.min(CINEMACITY_EMPTY_TTL, parseInt(process.env.CC_PROVIDER_ERROR_TTL || process.env.CINEMACITY_PROVIDER_ERROR_TTL || '10', 10) || 10));
 const GUARDO_SERIE_MIN_TIMEOUT = Math.max(30000, parseInt(process.env.GS_PROVIDER_TIMEOUT || '45000', 10) || 45000);
@@ -131,7 +131,7 @@ const WEB_PROVIDER_DEFINITIONS = [
         recipeId: 'cinemacity',
         sourceName: 'CinemaCity',
         cacheName: 'CinemaCity',
-        cacheKeyVersion: 'cc-flaresolverr-v1',
+        cacheKeyVersion: 'cccdn-extractor-v6',
         icon: '🎟️',
         limiterKey: 'webCc',
         minTimeout: CINEMACITY_MIN_TIMEOUT,

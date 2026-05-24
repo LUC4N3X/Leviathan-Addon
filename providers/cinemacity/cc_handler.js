@@ -74,19 +74,22 @@ const CINEMACITY_USE_CF_FALLBACK = envFlag('CINEMACITY_CF_FALLBACK', true);
 const CINEMACITY_RUST_ACCEL = envFlag('CINEMACITY_RUST_ACCEL', true);
 const CINEMACITY_RUST_ACCEL_RACE = envFlag('CINEMACITY_RUST_ACCEL_RACE', true);
 const CINEMACITY_RUST_ACCEL_LISTING = envFlag('CINEMACITY_RUST_ACCEL_LISTING', true);
-const CINEMACITY_RUST_ACCEL_SEARCH_GET = envFlag('CINEMACITY_RUST_ACCEL_SEARCH_GET', true);
-const CINEMACITY_RUST_ACCEL_SITEMAP = envFlag('CINEMACITY_RUST_ACCEL_SITEMAP', true);
+const CINEMACITY_RUST_ACCEL_SEARCH_GET = envFlag('CINEMACITY_RUST_ACCEL_SEARCH_GET', false);
+const CINEMACITY_RUST_ACCEL_SITEMAP = envFlag('CINEMACITY_RUST_ACCEL_SITEMAP', false);
 const CINEMACITY_RUST_ACCEL_TIMEOUT_MS = Math.max(350, Math.min(2500, Number.parseInt(process.env.CINEMACITY_RUST_ACCEL_TIMEOUT_MS || '950', 10) || 950));
 const CINEMACITY_RUST_ACCEL_CACHE_TTL_MS = Math.max(30 * 1000, Math.min(60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_RUST_ACCEL_CACHE_TTL_MS || String(15 * 60 * 1000), 10) || (15 * 60 * 1000)));
 const CINEMACITY_RUST_ACCEL_STALE_TTL_MS = Math.max(CINEMACITY_RUST_ACCEL_CACHE_TTL_MS, Math.min(4 * 60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_RUST_ACCEL_STALE_TTL_MS || String(60 * 60 * 1000), 10) || (60 * 60 * 1000)));
 const CINEMACITY_SEARCH_WARMUP = envFlag('CINEMACITY_SEARCH_WARMUP', false);
+const CINEMACITY_SITEMAP_LOOKUP = envFlag('CINEMACITY_SITEMAP_LOOKUP', false);
+const CINEMACITY_FORCE_CLEARANCE_BEFORE_SEARCH = envFlag('CINEMACITY_FORCE_CLEARANCE_BEFORE_SEARCH', true);
 const CINEMACITY_SITEMAP_TIMEOUT_MS = Math.max(900, Math.min(3500, Number.parseInt(process.env.CINEMACITY_SITEMAP_TIMEOUT_MS || '1400', 10) || 1400));
 const CINEMACITY_SITEMAP_TOTAL_MS = Math.max(CINEMACITY_SITEMAP_TIMEOUT_MS + 250, Math.min(4500, Number.parseInt(process.env.CINEMACITY_SITEMAP_TOTAL_MS || '2300', 10) || 2300));
 const CINEMACITY_SEARCH_GET_TIMEOUT_MS = Math.max(1200, Math.min(5000, Number.parseInt(process.env.CINEMACITY_SEARCH_GET_TIMEOUT_MS || '2400', 10) || 2400));
 const CINEMACITY_SEARCH_GET_TOTAL_MS = Math.max(CINEMACITY_SEARCH_GET_TIMEOUT_MS + 500, Math.min(6500, Number.parseInt(process.env.CINEMACITY_SEARCH_GET_TOTAL_MS || '3800', 10) || 3800));
 const CINEMACITY_SEARCH_POST_TIMEOUT_MS = Math.max(1200, Math.min(5000, Number.parseInt(process.env.CINEMACITY_SEARCH_POST_TIMEOUT_MS || '2600', 10) || 2600));
 const CINEMACITY_SEARCH_POST_TOTAL_MS = Math.max(CINEMACITY_SEARCH_POST_TIMEOUT_MS + 600, Math.min(7000, Number.parseInt(process.env.CINEMACITY_SEARCH_POST_TOTAL_MS || '4300', 10) || 4300));
-const CINEMACITY_QUICK_TITLE_SEARCH = envFlag('CINEMACITY_QUICK_TITLE_SEARCH', false);
+const CINEMACITY_SEARCH_POST_FIRST = envFlag('CINEMACITY_SEARCH_POST_FIRST', true);
+const CINEMACITY_QUICK_TITLE_SEARCH = envFlag('CINEMACITY_QUICK_TITLE_SEARCH', true);
 const CINEMACITY_QUICK_TITLE_QUERIES = Math.max(1, Math.min(6, Number.parseInt(process.env.CINEMACITY_QUICK_TITLE_QUERIES || '3', 10) || 3));
 const CINEMACITY_AXIOS_ON_BLOCKED = envFlag('CINEMACITY_AXIOS_ON_BLOCKED', true);
 const CINEMACITY_LISTING_SCAN = envFlag('CINEMACITY_LISTING_SCAN', true);
@@ -103,11 +106,15 @@ const CINEMACITY_KRAKEN_FORWARD_URL = (
     || 'https://krakenproxy.questoleviatanormio.dpdns.org/forward?url='
 );
 const CINEMACITY_KRAKEN_FORWARD_ENABLED = envFlag('CINEMACITY_FORWARD_PROXY_ENABLED', true);
-const CINEMACITY_KRAKEN_FORWARD_FIRST = envFlag('CINEMACITY_FORWARD_PROXY_FIRST', true);
+const CINEMACITY_KRAKEN_FORWARD_FIRST = envFlag('CINEMACITY_FORWARD_PROXY_FIRST', false);
 const CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS = Math.max(1500, Math.min(15000, Number.parseInt(process.env.CINEMACITY_FORWARD_PROXY_TIMEOUT_MS || '6000', 10) || 6000));
 // Serie CinemaCity: preferiamo il proxy locale CCCDN/ccproxy come nei film.
 // Il page extractor MediaFlow/Kraken resta fallback se la pagina non espone un file episodio sicuro.
 const CINEMACITY_SERIES_FORCE_CCDN = envFlag('CINEMACITY_SERIES_FORCE_CCDN', true);
+const CINEMACITY_PAGE_EXTRACTOR_HOST = String(process.env.CINEMACITY_PAGE_EXTRACTOR_HOST || 'cccdn').trim() || 'cccdn';
+const CINEMACITY_PAGE_EXTRACTOR_LABEL = String(process.env.CINEMACITY_PAGE_EXTRACTOR_LABEL || 'CCCDN').trim() || 'CCCDN';
+const CINEMACITY_PAGE_EXTRACTOR_PRIMARY = envFlag('CINEMACITY_PAGE_EXTRACTOR_PRIMARY', true);
+const CINEMACITY_MOVIE_PAGE_EXTRACTOR_PRIMARY = envFlag('CINEMACITY_MOVIE_PAGE_EXTRACTOR_PRIMARY', CINEMACITY_PAGE_EXTRACTOR_PRIMARY);
 const CINEMACITY_SERIES_PAGE_EXTRACTOR_PRIMARY = envFlag('CINEMACITY_SERIES_PAGE_EXTRACTOR_PRIMARY', false);
 const MAPPING_API_BASE = 'https://anime.questoleviatanormio.dpdns.org';
 const NEWS_SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
@@ -120,7 +127,7 @@ const providerShield = createBlockedFallbackGuard({
     // FlareSolverr fallback on by default (easystreams-style): on Cloudflare block,
     // request clearance cookies+UA from FlareSolverr and retry through provider_http_guard.
     useRustShield: CINEMACITY_USE_RUST_SHIELD,
-    useRustShieldForSession: CINEMACITY_USE_RUST_SHIELD,
+    useRustShieldForSession: envFlag('CINEMACITY_RUST_SHIELD_SESSION', false),
     // CinemaCity movie pages are large DLE templates (~50-100KB) that contain text/css
     // tokens ("cloudflare", "ray id", "cf-..." classes) which trip the heuristic scoring
     // in provider_http_guard. Restrict the challenge detection to the canonical signals
@@ -1186,17 +1193,41 @@ function buildCinemaCityLanguageLabel(pageMetadata = {}, config = {}) {
     return '🌐 WEB';
 }
 
+function isDeferredCinemaCityExtractorStream(stream = {}) {
+    const url = String(stream?.url || '');
+    const extractor = String(stream?.extractor || stream?.host || stream?.behaviorHints?.extractor || stream?.behaviorHints?.vortexExtractor || '').toLowerCase();
+    const provider = String(stream?.provider || stream?.source || stream?.site || stream?.behaviorHints?.vortexSource || stream?.behaviorHints?.vortexMeta?.provider || '').toLowerCase();
+
+    return provider.includes('cinemacity') && (
+        extractor === 'city'
+        || extractor.includes('city fallback')
+        || stream?.behaviorHints?.lazyExtraction === true
+        || /[?&]host=city(?:&|$)/i.test(url)
+        || /\/extractor\/video(?:\.m3u8)?\?/i.test(url)
+    );
+}
+
 function hardFilterStreamsByLanguage(streams = [], config = {}) {
     const wanted = getWantedLanguage(config);
     if (!wanted || !isStrictSingleLanguageMode(config)) return streams;
 
     return streams.filter((stream) => {
+        const meta = stream?.behaviorHints?.vortexMeta || {};
+        const languageText = [
+            ...(Array.isArray(meta.audioLanguages) ? meta.audioLanguages : []),
+            ...(Array.isArray(meta.downloadLanguages) ? meta.downloadLanguages : []),
+            ...(Array.isArray(meta.subtitleLanguages) ? meta.subtitleLanguages : []),
+            meta.audio,
+            meta.language,
+            meta.qualityTag
+        ].filter(Boolean).join(' ');
         const text = [
             stream.name,
             stream.title,
             stream.description,
             stream.behaviorHints?.filename,
             stream.filename,
+            languageText,
             stream.url
         ].filter(Boolean).join(' ');
 
@@ -1205,10 +1236,19 @@ function hardFilterStreamsByLanguage(streams = [], config = {}) {
             if (/(?:^|[^a-z0-9])(multi|multiaudio|dual[-\s]?audio)(?:[^a-z0-9]|$)/i.test(text)
                 && config?.filters?.allowMultiWhenItalianOnly === true) return true;
             if (/(?:^|[^a-z0-9])(eng|en|english|inglese)(?:[^a-z0-9]|$)/i.test(text)) return false;
+
+            // CITY is a deferred page extractor: at provider-time we often only know the
+            // CinemaCity page URL, while Kraken/MediaFlow resolves the final media later.
+            // Do not kill a valid CinemaCity result just because the page-extractor stream
+            // has no explicit language token yet. This was the cause of raw=0/formatted=0
+            // after the locator had already found the correct movie page.
+            if (isDeferredCinemaCityExtractorStream(stream)) return true;
             return false;
         }
 
-        return normalizeLanguageToken(text).includes(wanted);
+        const normalized = normalizeLanguageToken(text);
+        if (normalized.includes(wanted)) return true;
+        return isDeferredCinemaCityExtractorStream(stream) && !/(?:^|[^a-z0-9])(eng|en|english|inglese)(?:[^a-z0-9]|$)/i.test(text);
     });
 }
 
@@ -1899,7 +1939,117 @@ async function fetchSearchCandidates(query) {
             return null;
         };
 
+        const tryPostSearch = async (source = 'post') => {
+            if (CINEMACITY_FORCE_CLEARANCE_BEFORE_SEARCH && providerShield?.guard?.ensureClearance) {
+                try {
+                    const fresh = typeof providerShield.guard.isSessionFresh === 'function'
+                        ? providerShield.guard.isSessionFresh(`${BASE_URL}/index.php`)
+                        : false;
+                    if (!fresh) {
+                        logCinemaCityDebug('pre-search clearance start', { query: cleanQuery, source });
+                        await providerShield.guard.ensureClearance(`${BASE_URL}/index.php`, {
+                            force: true,
+                            isPost: true,
+                            body: formBody,
+                            ignoreProviderCooldown: true
+                        });
+                        logCinemaCityDebug('pre-search clearance done', { query: cleanQuery, source });
+                    }
+                } catch (error) {
+                    logCinemaCityDebug('pre-search clearance failed', { query: cleanQuery, source, error: error?.message || String(error) });
+                }
+            }
+
+            try {
+                const shieldHtml = await providerShield.fetchHtml(`${BASE_URL}/index.php`, {
+                    method: 'POST',
+                    body: formBody,
+                    timeout: CINEMACITY_SEARCH_POST_TIMEOUT_MS,
+                    ttl: SEARCH_CACHE_TTL_MS
+                });
+                if (shieldHtml) {
+                    networkFailed = false;
+                    const result = tryParse(shieldHtml);
+                    if (result) {
+                        logCinemaCityDebug('locator search post hit', { query: cleanQuery, source, candidates: result.length });
+                        return result;
+                    }
+                    logCinemaCityDebug('locator search post empty', { query: cleanQuery, source, bytes: shieldHtml.length });
+                }
+            } catch (_) {}
+
+            if (CINEMACITY_KRAKEN_FORWARD_ENABLED && CINEMACITY_KRAKEN_FORWARD_FIRST) {
+                try {
+                    const krakenHtml = await fetchHtmlWithKrakenForward(
+                        `${BASE_URL}/index.php`,
+                        {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'Origin': BASE_URL,
+                            'Referer': `${BASE_URL}/`,
+                            'Cookie': getCinemaCitySessionCookie()
+                        },
+                        CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS,
+                        'ajax',
+                        'POST',
+                        formBody
+                    );
+                    if (krakenHtml) {
+                        networkFailed = false;
+                        const result = tryParse(krakenHtml);
+                        if (result) {
+                            logCinemaCityDebug('locator kraken post hit', { query: cleanQuery, source, candidates: result.length });
+                            return result;
+                        }
+                    }
+                } catch (_) {}
+            }
+
+            try {
+                const postHtml = await fetchHtmlPostWithImpit(`${BASE_URL}/index.php`, formBody, {
+                    'Cookie': getCinemaCitySessionCookie()
+                }, {
+                    timeout: CINEMACITY_SEARCH_POST_TIMEOUT_MS,
+                    totalTimeoutMs: CINEMACITY_SEARCH_POST_TOTAL_MS
+                });
+                if (postHtml) {
+                    networkFailed = false;
+                    const result = tryParse(postHtml);
+                    if (result) {
+                        logCinemaCityDebug('locator impit post hit', { query: cleanQuery, source, candidates: result.length });
+                        return result;
+                    }
+                }
+            } catch (_) {}
+
+            try {
+                const postAxiosHtml = await fetchHtmlPostWithAxios(`${BASE_URL}/index.php`, formBody, {
+                    'Cookie': getCinemaCitySessionCookie()
+                }, CINEMACITY_SEARCH_POST_TIMEOUT_MS);
+                if (postAxiosHtml) {
+                    networkFailed = false;
+                    const result = tryParse(postAxiosHtml);
+                    if (result) {
+                        logCinemaCityDebug('locator axios post hit', { query: cleanQuery, source, candidates: result.length });
+                        return result;
+                    }
+                }
+            } catch (_) {}
+
+            return null;
+        };
+
         let networkFailed = true;
+
+        const formBody = new URLSearchParams({
+            do: 'search',
+            subaction: 'search',
+            story: cleanQuery
+        }).toString();
+
+        if (CINEMACITY_SEARCH_POST_FIRST) {
+            const postFirstResult = await tryPostSearch('post-first');
+            if (postFirstResult) return postFirstResult;
+        }
 
         if (CINEMACITY_SEARCH_WARMUP) {
             try {
@@ -1943,59 +2093,10 @@ async function fetchSearchCandidates(query) {
             }
         } catch (_) {}
 
-        const formBody = new URLSearchParams({
-            do: 'search',
-            subaction: 'search',
-            story: cleanQuery
-        }).toString();
-
-        if (CINEMACITY_KRAKEN_FORWARD_ENABLED && CINEMACITY_KRAKEN_FORWARD_FIRST) {
-            try {
-                const krakenHtml = await fetchHtmlWithKrakenForward(
-                    `${BASE_URL}/index.php`,
-                    {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'Origin': BASE_URL,
-                        'Referer': `${BASE_URL}/`,
-                        'Cookie': getCinemaCitySessionCookie()
-                    },
-                    CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS,
-                    'ajax',
-                    'POST',
-                    formBody
-                );
-                if (krakenHtml) {
-                    networkFailed = false;
-                    const result = tryParse(krakenHtml);
-                    if (result) return result;
-                }
-            } catch (_) {}
+        if (!CINEMACITY_SEARCH_POST_FIRST) {
+            const postResult = await tryPostSearch('post-fallback');
+            if (postResult) return postResult;
         }
-
-        try {
-            const postHtml = await fetchHtmlPostWithImpit(`${BASE_URL}/index.php`, formBody, {
-                'Cookie': getCinemaCitySessionCookie()
-            }, {
-                timeout: CINEMACITY_SEARCH_POST_TIMEOUT_MS,
-                totalTimeoutMs: CINEMACITY_SEARCH_POST_TOTAL_MS
-            });
-            if (postHtml) {
-                networkFailed = false;
-                const result = tryParse(postHtml);
-                if (result) return result;
-            }
-        } catch (_) {}
-
-        try {
-            const postAxiosHtml = await fetchHtmlPostWithAxios(`${BASE_URL}/index.php`, formBody, {
-                'Cookie': getCinemaCitySessionCookie()
-            }, CINEMACITY_SEARCH_POST_TIMEOUT_MS);
-            if (postAxiosHtml) {
-                networkFailed = false;
-                const result = tryParse(postAxiosHtml);
-                if (result) return result;
-            }
-        } catch (_) {}
 
         if (!networkFailed) {
             searchCandidatesCache.set(cacheKey, { value: [] });
@@ -2034,6 +2135,7 @@ async function searchByTitleQueries(queryTitles, providerType, expectedTitles, r
 }
 
 async function searchSitemapCandidates(providerType, expectedTitles, { requestedImdbId = null, expectedYear = null, fastMode = true } = {}) {
+    if (!CINEMACITY_SITEMAP_LOOKUP) return null;
     try {
         const sitemapEntries = await getNewsSitemapEntries();
         const sitemapCandidates = sitemapEntries
@@ -2897,12 +2999,72 @@ function buildCinemaCityEpisodePageUrl(pageUrl, season, episode) {
     }
 }
 
-function buildCinemaCityPageExtractorUrl(config = {}, pageUrl, season, episode) {
-    const targetPage = buildCinemaCityEpisodePageUrl(pageUrl, season, episode);
-    if (!getMediaflowBase(config) || !targetPage) return null;
+function deriveCinemaCityExtractorBase(value = '') {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+        const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+        parsed.hash = '';
+        parsed.search = '';
+        parsed.pathname = parsed.pathname.replace(/\/forward\/?$/i, '').replace(/\/+$/g, '');
+        return parsed.toString().replace(/\/+$/g, '');
+    } catch (_) {
+        return raw
+            .replace(/[?#].*$/g, '')
+            .replace(/\/forward\/?$/i, '')
+            .replace(/\/+$/g, '');
+    }
+}
 
-    const proxied = buildMediaflowGatewayExtractorUrl(config, targetPage, 'city', {
-        redirectStream: true
+function getCinemaCityPageExtractorBase(config = {}) {
+    return getMediaflowBase(config)
+        || String(process.env.CINEMACITY_PAGE_EXTRACTOR_BASE || '').trim().replace(/\/+$/g, '')
+        || String(process.env.CINEMACITY_KRAKEN_EXTRACTOR_URL || '').trim().replace(/\/+$/g, '')
+        || String(process.env.KRAKEN_PROXY_URL || '').trim().replace(/\/+$/g, '')
+        || String(process.env.MEDIAFLOW_PROXY_URL || process.env.MEDIAFLOW_URL || '').trim().replace(/\/+$/g, '')
+        || deriveCinemaCityExtractorBase(CINEMACITY_KRAKEN_FORWARD_URL);
+}
+
+function buildCinemaCityPageExtractorUrl(config = {}, pageUrl, season, episode, options = {}) {
+    const targetPage = options?.isSeries === false
+        ? normalizeRemoteUrl(pageUrl)
+        : buildCinemaCityEpisodePageUrl(pageUrl, season, episode);
+    const extractorBase = getCinemaCityPageExtractorBase(config);
+    if (!extractorBase || !targetPage) return null;
+
+    const extractorConfig = getMediaflowBase(config)
+        ? config
+        : {
+            ...config,
+            mediaflow: {
+                ...(config?.mediaflow || {}),
+                url: extractorBase
+            }
+        };
+
+    // Kraken/MediaFlow receives only the target page URL here. Pass browser-like
+    // context as explicit extractor headers so the CinemaCity resolver is not invoked
+    // as a naked bot request. The cookie is intentionally omitted: a Cloudflare
+    // clearance is IP/UA scoped and a cookie solved by Leviathan is often invalid
+    // when Kraken resolves through its own egress/WARP.
+    const { headers: extractorContextHeaders } = buildCinemaCityRequestHeaders(targetPage, 'document', {
+        'Referer': `${BASE_URL}/`,
+        'Origin': BASE_URL
+    }, '');
+    const extractorHeaders = {
+        'User-Agent': extractorContextHeaders['User-Agent'],
+        'Referer': extractorContextHeaders.Referer || `${BASE_URL}/`,
+        'Origin': extractorContextHeaders.Origin || BASE_URL,
+        'Accept-Language': extractorContextHeaders['Accept-Language']
+    };
+
+    const proxied = buildMediaflowGatewayExtractorUrl(extractorConfig, targetPage, CINEMACITY_PAGE_EXTRACTOR_HOST, {
+        // CinemaCity behaves like the working EasyProxy integration: expose the
+        // resolver as an HLS manifest endpoint, never as a generic /extractor/video
+        // raw Direct URL. The public extractor label is CCCDN; host is configurable.
+        extractorPath: process.env.CINEMACITY_PAGE_EXTRACTOR_PATH || '/extractor/video.m3u8',
+        redirectStream: true,
+        headers: extractorHeaders
     });
     return proxied && proxied !== targetPage ? proxied : null;
 }
@@ -2941,18 +3103,24 @@ function buildCinemaCityPageExtractorStream(pageExtractorUrl, {
     const displayTitle = buildDisplayTitle(enrichedMeta, basePageMetadata.title || searchResult.title, resolved.season, resolved.episode);
     const languageLabel = buildCinemaCityLanguageLabel(basePageMetadata, config);
     return buildWebStream({
-        name: '🎟️ CinemaCity | CITY',
-        title: `${displayTitle}\n☁️ CITY • ${languageLabel}`,
+        name: `🎟️ CinemaCity | ${CINEMACITY_PAGE_EXTRACTOR_LABEL}`,
+        title: `${displayTitle}\n☁️ ${CINEMACITY_PAGE_EXTRACTOR_LABEL} • ${languageLabel}`,
         url: pageExtractorUrl,
-        extractor: 'CITY',
+        extractor: CINEMACITY_PAGE_EXTRACTOR_LABEL,
         provider: 'CinemaCity',
         providerCode: 'CC',
         quality: normalizeQuality(basePageMetadata.quality || '1080p'),
         headers: null,
-        mediaflowUrl: getMediaflowBase(config),
+        mediaflowUrl: getCinemaCityPageExtractorBase(config),
         addonBase,
         notWebReady: false,
+        extra: {
+            // Helps downstream UI layers avoid presenting this as a naked Direct stream.
+            deliveryMode: 'Proxy',
+            streamType: 'hls'
+        },
         extraBehaviorHints: {
+            deliveryMode: 'Proxy',
             bingeWatching: true,
             vortexMeta: {
                 pageTitle: basePageMetadata.title || '',
@@ -3021,17 +3189,17 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
             providerType: resolved.providerType
         };
 
-        const pageExtractorUrl = isSeriesRequest
-            ? buildCinemaCityPageExtractorUrl(config, searchResult.url, resolved.season, resolved.episode)
-            : null;
+        const pageExtractorUrl = buildCinemaCityPageExtractorUrl(config, searchResult.url, resolved.season, resolved.episode, {
+            isSeries: isSeriesRequest
+        });
         const basePageMetadataForSeries = isSeriesRequest && pageExtractorUrl
             ? (await fetchCinemaCityPageMetadata(searchResult.url).catch(() => null) || {})
             : {};
 
         if (
-            isSeriesRequest
-            && pageExtractorUrl
+            pageExtractorUrl
             && CINEMACITY_SERIES_PAGE_EXTRACTOR_PRIMARY
+            && isSeriesRequest
             && !shouldPreferCinemaCityLocalProxy(isSeriesRequest)
         ) {
             const cityExtractorStream = buildCinemaCityPageExtractorStream(pageExtractorUrl, {
@@ -3047,9 +3215,30 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
             return normalizeStreams(hardFilterStreamsByLanguage(dedupeStreamsByUrl(streams), config), { provider: 'cinemacity' });
         }
 
+        if (!isSeriesRequest && pageExtractorUrl && CINEMACITY_MOVIE_PAGE_EXTRACTOR_PRIMARY) {
+            const moviePageMetadata = CINEMACITY_FORCE_CLEARANCE_BEFORE_SEARCH
+                ? { title: searchResult.title || '', quality: '1080p' }
+                : (await fetchCinemaCityPageMetadata(targetPageUrl || searchResult.url).catch(() => null) || {});
+            const cityExtractorStream = buildCinemaCityPageExtractorStream(pageExtractorUrl, {
+                enrichedMeta,
+                basePageMetadata: moviePageMetadata,
+                searchResult,
+                resolved,
+                targetPageUrl,
+                config,
+                addonBase: reqHost
+            });
+            const streams = cityExtractorStream ? [cityExtractorStream] : [];
+            return normalizeStreams(hardFilterStreamsByLanguage(dedupeStreamsByUrl(streams), config), {
+                provider: 'cinemacity',
+                providerLabel: 'CinemaCity',
+                providerCode: 'CC'
+            });
+        }
+
         const extracted = await getParsedCinemaCityStream(targetPageUrl || searchResult.url, enrichedMeta);
         if (!extracted?.streamUrl || (isSeriesRequest && !isLikelyCinemaCityMediaUrl(extracted.streamUrl))) {
-            if (isSeriesRequest && pageExtractorUrl) {
+            if (pageExtractorUrl) {
                 const cityExtractorStream = buildCinemaCityPageExtractorStream(pageExtractorUrl, {
                     enrichedMeta,
                     basePageMetadata: basePageMetadataForSeries,
@@ -3061,9 +3250,10 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
                 });
                 const streams = cityExtractorStream ? [cityExtractorStream] : [];
                 if (streams.length) {
-                    logCinemaCityDebug('series local stream unavailable; using CITY extractor fallback', {
+                    logCinemaCityDebug('local stream unavailable; using CCCDN extractor fallback', {
                         page: targetPageUrl || searchResult.url,
                         streamUrl: extracted?.streamUrl || '',
+                        providerType: resolved.providerType,
                         season: resolved.season,
                         episode: resolved.episode
                     });
@@ -3071,7 +3261,7 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
                 }
             }
             if (isSeriesRequest && (config?.debug || process.env.DEBUG_CINEMACITY === '1' || process.env.DEBUG_CINEMACITY_EPISODE === '1')) {
-                console.warn(`[CinemaCity] Skip diretto serie: pagina=${targetPageUrl || searchResult.url} S=${resolved.season} E=${resolved.episode} non espone uno stream episodio sicuro. Configura MediaFlow/Kraken city extractor per le serie.`);
+                console.warn(`[CinemaCity] Skip diretto serie: pagina=${targetPageUrl || searchResult.url} S=${resolved.season} E=${resolved.episode} non espone uno stream episodio sicuro. Configura MediaFlow/Kraken cccdn extractor per le serie.`);
             }
             return [];
         }
@@ -3171,7 +3361,7 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
         }
 
         // Serie CinemaCity: se il CDN locale risponde ma il player non parte, offri anche
-        // il percorso CITY/MFP come backup esplicito. Prima lo usavamo solo quando
+        // il percorso CCCDN/MFP come backup esplicito. Prima lo usavamo solo quando
         // l'estrazione locale falliva; così su Stremio/Android hai una seconda strada
         // cliccabile senza perdere il CCCDN principale.
         if (isSeriesRequest && pageExtractorUrl && cinemaCityUrl && cinemaCityUrl === localCinemaCityProxyUrl) {
@@ -3185,33 +3375,61 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
                 addonBase: reqHost
             });
             if (cityFallbackStream) {
-                cityFallbackStream.name = '🎟️ CinemaCity | CITY fallback';
-                cityFallbackStream.title = `${displayTitle}\n☁️ CITY fallback • ${languageLabel}`;
-                cityFallbackStream.extractor = 'CITY';
-                cityFallbackStream.host = 'CITY';
+                cityFallbackStream.name = '🎟️ CinemaCity | CCCDN fallback';
+                cityFallbackStream.title = `${displayTitle}\n☁️ CCCDN fallback • ${languageLabel}`;
+                cityFallbackStream.extractor = CINEMACITY_PAGE_EXTRACTOR_LABEL;
+                cityFallbackStream.host = CINEMACITY_PAGE_EXTRACTOR_LABEL;
                 if (cityFallbackStream.behaviorHints) {
-                    cityFallbackStream.behaviorHints.extractor = 'CITY';
-                    cityFallbackStream.behaviorHints.vortexExtractor = 'CITY';
+                    cityFallbackStream.behaviorHints.extractor = CINEMACITY_PAGE_EXTRACTOR_LABEL;
+                    cityFallbackStream.behaviorHints.vortexExtractor = CINEMACITY_PAGE_EXTRACTOR_LABEL;
                 }
                 streams.push(cityFallbackStream);
             }
         }
 
         if (streams.length === 0) {
-            streams.push(decorateStreamWithPlaylistIntelligence(buildWebStream({
-                name: '🎟️ CinemaCity | Direct',
-                title: `${displayTitle}\n☁️ ${extractorLabel} • ${languageLabel}`,
-                url: extracted.streamUrl,
-                extractor: extractorLabel,
-                provider: 'CinemaCity',
-                providerCode: 'CC',
-                quality,
-                headers: extracted.headers,
-                mediaflowUrl: getMediaflowBase(config),
-                addonBase: reqHost,
-                notWebReady: true,
-                extraBehaviorHints: extraVortexMeta
-            }), playlistIntel));
+            const cityFallbackStream = pageExtractorUrl ? buildCinemaCityPageExtractorStream(pageExtractorUrl, {
+                enrichedMeta,
+                basePageMetadata: pageMetadata,
+                searchResult,
+                resolved,
+                targetPageUrl,
+                config,
+                addonBase: reqHost
+            }) : null;
+
+            if (cityFallbackStream) {
+                cityFallbackStream.name = '🎟️ CinemaCity | CCCDN fallback';
+                cityFallbackStream.title = `${displayTitle}\n☁️ CCCDN fallback • ${languageLabel}`;
+                cityFallbackStream.extractor = CINEMACITY_PAGE_EXTRACTOR_LABEL;
+                cityFallbackStream.host = CINEMACITY_PAGE_EXTRACTOR_LABEL;
+                if (cityFallbackStream.behaviorHints) {
+                    cityFallbackStream.behaviorHints.extractor = CINEMACITY_PAGE_EXTRACTOR_LABEL;
+                    cityFallbackStream.behaviorHints.vortexExtractor = CINEMACITY_PAGE_EXTRACTOR_LABEL;
+                    cityFallbackStream.behaviorHints.notWebReady = false;
+                }
+                streams.push(cityFallbackStream);
+                logCinemaCityDebug('raw direct suppressed; using CCCDN extractor fallback', {
+                    page: targetPageUrl || searchResult.url,
+                    streamHost: safeHostname(extracted.streamUrl),
+                    extractor: extractorLabel
+                });
+            } else if (envFlag('CINEMACITY_ALLOW_RAW_DIRECT', false)) {
+                streams.push(decorateStreamWithPlaylistIntelligence(buildWebStream({
+                    name: '🎟️ CinemaCity | Direct',
+                    title: `${displayTitle}\n☁️ ${extractorLabel} • ${languageLabel}`,
+                    url: extracted.streamUrl,
+                    extractor: extractorLabel,
+                    provider: 'CinemaCity',
+                    providerCode: 'CC',
+                    quality,
+                    headers: extracted.headers,
+                    mediaflowUrl: getMediaflowBase(config),
+                    addonBase: reqHost,
+                    notWebReady: true,
+                    extraBehaviorHints: extraVortexMeta
+                }), playlistIntel));
+            }
         }
 
         if (config?.debug || process.env.DEBUG_CINEMACITY === '1' || process.env.DEBUG_CINEMACITY_EPISODE === '1') {
@@ -3222,7 +3440,7 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
                 mode: cinemaCityMode,
                 hasLocalProxy: Boolean(localCinemaCityProxyUrl),
                 hasMediaflowProxy: Boolean(mediaflowProxyUrl),
-                hasCityFallback: Boolean(pageExtractorUrl && streams.some((s) => /CITY/i.test(String(s?.name || s?.extractor || '')))),
+                hasCccdnFallback: Boolean(pageExtractorUrl && streams.some((s) => /CCCDN/i.test(String(s?.name || s?.extractor || '')))),
                 count: streams.length
             });
         }
@@ -3274,6 +3492,12 @@ module.exports = {
         pageHasRequestedAudio,
         buildLanguageRejectReason,
         streamUrlHasForbiddenLanguage,
-        hardFilterStreamsByLanguage
+        hardFilterStreamsByLanguage,
+        isDeferredCinemaCityExtractorStream,
+        buildCinemaCityPageExtractorStream,
+        deriveCinemaCityExtractorBase,
+        getCinemaCityPageExtractorBase,
+        cinemaCityQuickTitleSearchEnabled: CINEMACITY_QUICK_TITLE_SEARCH,
+        cinemaCitySearchPostFirstEnabled: CINEMACITY_SEARCH_POST_FIRST
     }
 };
