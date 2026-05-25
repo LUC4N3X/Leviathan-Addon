@@ -909,7 +909,7 @@ const uprotManualSessions = new Map();
 const uprotCircuit = { emptyOcrStreak: 0, openUntil: 0, lastFailureAt: 0 };
 
 function uprotCircuitThreshold() {
-    return envNumber('UPROT_CIRCUIT_BREAKER_THRESHOLD', 3, 1, 50);
+    return envNumber('UPROT_CIRCUIT_BREAKER_THRESHOLD', 1, 1, 50);
 }
 
 function uprotCircuitCooldownMs() {
@@ -1323,7 +1323,13 @@ async function requestUprotBootstrapPage(client, bootstrapUrl, headers, options 
 async function generateUprotAutoState(client, targetUrl, options = {}) {
     if (!client || typeof client.post !== 'function') return null;
 
-    const bootstrapUrls = buildUprotBootstrapCandidates(targetUrl, options);
+    // Cap the number of bootstrap candidates we try per attempt. Each candidate
+    // costs ~5-7s when going via FlareSolverr; with the previous 8+ candidates
+    // the loop blew through Eurostreaming's 22s parent timeout long before any
+    // useful response arrived. 2 is enough to cover /e/ (preferred) + /mse/
+    // (fallback) and still leave room for the circuit breaker to fire fast.
+    const maxCandidates = envNumber('UPROT_BOOTSTRAP_MAX_CANDIDATES', 2, 1, 16);
+    const bootstrapUrls = buildUprotBootstrapCandidates(targetUrl, options).slice(0, maxCandidates);
 
     for (const bootstrapUrl of bootstrapUrls) {
         const headers = buildUprotHeaders(bootstrapUrl, options);
