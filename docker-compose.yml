@@ -1,8 +1,3 @@
-cd ~/leviathan
-
-cp docker-compose.yml docker-compose.yml.bak.$(date +%F_%H-%M-%S)
-
-cat > docker-compose.yml <<'YAML'
 services:
   stremio-addon:
     image: leviathan-addon:latest
@@ -58,6 +53,7 @@ services:
       TORRENTIO_SCAN_RD_API_KEY: "${TORRENTIO_SCAN_RD_API_KEY:-}"
       TORRENTIO_SCAN_TB_API_KEY: "${TORRENTIO_SCAN_TB_API_KEY:-}"
 
+      # Rust disattivato: non esiste più il servizio rust-shield nel compose.
       RUST_SHIELD_ENABLED: "false"
       RUST_SHIELD_URL: ""
       RUST_SHIELD_FIRST: "false"
@@ -175,6 +171,8 @@ services:
       TZ: "Europe/Rome"
       BROWSER_TIMEOUT: "40000"
 
+      # Quando FlareSolverr supera questa RAM, viene marcato unhealthy.
+      # Autoheal lo riavvia automaticamente.
       FLARESOLVERR_HEALTH_MAX_MEM_MB: "820"
 
     ports:
@@ -259,6 +257,8 @@ services:
       start_period: 60s
 
 
+
+
   autoheal:
     image: willfarrell/autoheal:latest
     container_name: autoheal
@@ -285,4 +285,3 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
-YAML
