@@ -1,3 +1,8 @@
+cd ~/leviathan
+
+cp docker-compose.yml docker-compose.yml.bak.$(date +%F_%H-%M-%S)
+
+cat > docker-compose.yml <<'YAML'
 services:
   stremio-addon:
     image: leviathan-addon:latest
@@ -53,29 +58,22 @@ services:
       TORRENTIO_SCAN_RD_API_KEY: "${TORRENTIO_SCAN_RD_API_KEY:-}"
       TORRENTIO_SCAN_TB_API_KEY: "${TORRENTIO_SCAN_TB_API_KEY:-}"
 
-      RUST_SHIELD_ENABLED: "${RUST_SHIELD_ENABLED:-true}"
-      RUST_SHIELD_URL: "${RUST_SHIELD_URL:-http://rust-shield:8787}"
-      RUST_SHIELD_FIRST: "${RUST_SHIELD_FIRST:-true}"
-      RUST_SHIELD_FAIL_OPEN: "${RUST_SHIELD_FAIL_OPEN:-true}"
-      RUST_SHIELD_CACHE_ENABLED: "${RUST_SHIELD_CACHE_ENABLED:-true}"
-      RUST_SHIELD_TIMEOUT_MS: "${RUST_SHIELD_TIMEOUT_MS:-1800}"
-      RUST_SHIELD_NODE_TIMEOUT_MS: "${RUST_SHIELD_NODE_TIMEOUT_MS:-2300}"
-      RUST_SHIELD_CACHE_TTL_MS: "${RUST_SHIELD_CACHE_TTL_MS:-1200000}"
-      RUST_SHIELD_STALE_TTL_MS: "${RUST_SHIELD_STALE_TTL_MS:-3600000}"
+      RUST_SHIELD_ENABLED: "false"
+      RUST_SHIELD_URL: ""
+      RUST_SHIELD_FIRST: "false"
+      RUST_SHIELD_FAIL_OPEN: "true"
+      RUST_SHIELD_CACHE_ENABLED: "false"
 
       FLARESOLVERR_URL: "http://flaresolverr:8191/v1"
       FLARESOLVERR_URLS: "http://flaresolverr:8191/v1"
       GUARDOSERIE_FLARE_ENABLED: "${GUARDOSERIE_FLARE_ENABLED:-true}"
 
-      CINEMACITY_RUST_SHIELD: "${CINEMACITY_RUST_SHIELD:-true}"
-      CINEMACITY_RUST_ACCEL: "${CINEMACITY_RUST_ACCEL:-true}"
-      CINEMACITY_RUST_ACCEL_RACE: "${CINEMACITY_RUST_ACCEL_RACE:-true}"
-      CINEMACITY_RUST_ACCEL_LISTING: "${CINEMACITY_RUST_ACCEL_LISTING:-true}"
-      CINEMACITY_RUST_ACCEL_SEARCH_GET: "${CINEMACITY_RUST_ACCEL_SEARCH_GET:-true}"
-      CINEMACITY_RUST_ACCEL_SITEMAP: "${CINEMACITY_RUST_ACCEL_SITEMAP:-true}"
-      CINEMACITY_RUST_ACCEL_TIMEOUT_MS: "${CINEMACITY_RUST_ACCEL_TIMEOUT_MS:-950}"
-      CINEMACITY_RUST_ACCEL_CACHE_TTL_MS: "${CINEMACITY_RUST_ACCEL_CACHE_TTL_MS:-900000}"
-      CINEMACITY_RUST_ACCEL_STALE_TTL_MS: "${CINEMACITY_RUST_ACCEL_STALE_TTL_MS:-3600000}"
+      CINEMACITY_RUST_SHIELD: "false"
+      CINEMACITY_RUST_ACCEL: "false"
+      CINEMACITY_RUST_ACCEL_RACE: "false"
+      CINEMACITY_RUST_ACCEL_LISTING: "false"
+      CINEMACITY_RUST_ACCEL_SEARCH_GET: "false"
+      CINEMACITY_RUST_ACCEL_SITEMAP: "false"
 
       CINEMACITY_CF_FALLBACK: "${CINEMACITY_CF_FALLBACK:-true}"
       CINEMACITY_FORWARD_PROXY: "${CINEMACITY_FORWARD_PROXY:-https://krakenproxy.questoleviatanormio.dpdns.org/forward?url=}"
@@ -145,8 +143,6 @@ services:
       UPROT_DEBUG: "${UPROT_DEBUG:-true}"
 
     depends_on:
-      rust-shield:
-        condition: service_started
       flaresolverr:
         condition: service_healthy
 
@@ -179,8 +175,6 @@ services:
       TZ: "Europe/Rome"
       BROWSER_TIMEOUT: "40000"
 
-      # Quando FlareSolverr supera questa RAM, viene marcato unhealthy.
-      # Autoheal lo riavvia automaticamente.
       FLARESOLVERR_HEALTH_MAX_MEM_MB: "820"
 
     ports:
@@ -265,51 +259,6 @@ services:
       start_period: 60s
 
 
-  rust-shield:
-    build:
-      context: ./services/rust-shield
-      dockerfile: Dockerfile
-    container_name: leviathan-rust-shield
-    restart: unless-stopped
-    init: true
-
-    mem_limit: "${RUST_SHIELD_MEM_LIMIT:-128m}"
-    cpus: "${RUST_SHIELD_CPUS:-0.50}"
-
-    environment:
-      TZ: "Europe/Rome"
-      RUST_LOG: "${RUST_SHIELD_LOG:-info}"
-      RUST_SHIELD_BIND: "0.0.0.0:8787"
-      RUST_SHIELD_TIMEOUT_MS: "${RUST_SHIELD_TIMEOUT_MS:-1800}"
-      RUST_SHIELD_CONNECT_TIMEOUT_MS: "${RUST_SHIELD_CONNECT_TIMEOUT_MS:-900}"
-      RUST_SHIELD_CLIENT_TIMEOUT_MS: "${RUST_SHIELD_CLIENT_TIMEOUT_MS:-2600}"
-      RUST_SHIELD_CACHE_MAX: "${RUST_SHIELD_CACHE_MAX:-2000}"
-      RUST_SHIELD_CACHE_TTL_MS: "${RUST_SHIELD_CACHE_TTL_MS:-1200000}"
-      RUST_SHIELD_STALE_TTL_MS: "${RUST_SHIELD_STALE_TTL_MS:-3600000}"
-      RUST_SHIELD_MAX_BODY_BYTES: "${RUST_SHIELD_MAX_BODY_BYTES:-2500000}"
-      RUST_SHIELD_POOL_MAX_IDLE_PER_HOST: "${RUST_SHIELD_POOL_MAX_IDLE_PER_HOST:-64}"
-      RUST_SHIELD_WARMUP_CONCURRENCY: "${RUST_SHIELD_WARMUP_CONCURRENCY:-4}"
-      RUST_SHIELD_ALLOW_PRIVATE: "${RUST_SHIELD_ALLOW_PRIVATE:-false}"
-
-    expose:
-      - "8787"
-
-    stop_grace_period: 10s
-
-    healthcheck:
-      test: ["CMD", "/usr/local/bin/rust-shield", "healthcheck"]
-      interval: 15s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
-
-    logging:
-      driver: json-file
-      options:
-        max-size: "5m"
-        max-file: "3"
-
-
   autoheal:
     image: willfarrell/autoheal:latest
     container_name: autoheal
@@ -336,3 +285,4 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+YAML
