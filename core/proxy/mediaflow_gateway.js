@@ -99,9 +99,6 @@ function defaultExtractorPath(host = '', options = {}) {
         return normalizeExtractorPath(process.env.MEDIAFLOW_MAXSTREAM_EXTRACTOR_PATH || '/extractor/video.m3u8');
     }
 
-    // CinemaCity CITY extractor must be exposed as an HLS-style endpoint.
-    // Using /extractor/video can be displayed/handled by clients as a raw Direct
-    // URL, while Kraken/EasyProxy compatible addons use /extractor/video.m3u8.
     if (/^(?:city|cccdn|cinemacity)$/i.test(hostName) || /cinemacity|cccdn|\bcity\b/i.test(hostName)) {
         return normalizeExtractorPath(
             process.env.MEDIAFLOW_CCCDN_EXTRACTOR_PATH
