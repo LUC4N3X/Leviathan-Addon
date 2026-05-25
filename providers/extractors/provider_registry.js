@@ -127,12 +127,12 @@ const WEB_PROVIDER_DEFINITIONS = [
         run: ({ originalId, finalId, meta, config, reqHost }) => searchAltadefinizione(originalId, finalId, meta, config, reqHost)
     },
     {
-        key: 'cinemacity',
+        key: 'cinemaCity',
         recipeId: 'cinemacity',
         sourceName: 'CinemaCity',
-        cacheName: 'CinemaCity',
+        cacheName: 'CinemaCityV3',
         cacheKeyVersion: 'cccdn-extractor-v9',
-        icon: '🎟️',
+        icon: '🏙️',
         limiterKey: 'webCc',
         minTimeout: CINEMACITY_MIN_TIMEOUT,
         emptyTtl: CINEMACITY_EMPTY_TTL,
