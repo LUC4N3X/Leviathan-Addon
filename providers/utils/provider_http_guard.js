@@ -1075,6 +1075,7 @@ function createProviderHttpGuard(options = {}) {
   }
 
   async function warmupRustShield(urls, requestOptions = {}) {
+    if (!rustShield.enabled) return null;
     const cleanUrls = Array.from(new Set((urls || []).filter(Boolean).map(String))).slice(0, Math.max(1, Number(requestOptions.max || 64) || 64));
     if (!cleanUrls.length) return null;
 

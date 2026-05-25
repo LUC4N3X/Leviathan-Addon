@@ -82,7 +82,18 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
+function isFlareBrowserCrash(error) {
+  // FlareSolverr returns 500 with these messages when the Chromium tab dies
+  // mid-solve. Retrying same endpoint immediately just spawns another doomed
+  // tab; treat these as endpoint-down so the cooldown kicks in.
+  const message = String(error?.message || error?.response?.data?.message || '').toLowerCase();
+  const body = String(error?.response?.data || '').toLowerCase();
+  const haystack = `${message} ${body}`;
+  return /tab crashed|target closed|session destroyed|browser has disconnected|chrome\s+crashed|context\s+disposed|protocol error/i.test(haystack);
+}
+
 function isRetryableFlareError(error) {
+  if (isFlareBrowserCrash(error)) return false;
   const status = Number(error?.response?.status || error?.status || 0);
   const code = String(error?.code || '').toUpperCase();
   const message = String(error?.message || '').toLowerCase();
@@ -515,7 +526,7 @@ function createCfClearanceManager(options = {}) {
   const solveTimeoutMs = Math.max(12_000, Number(options.solveTimeoutMs || 24_000));
   const endpointFailureCooldownMs = Math.max(5_000, Number(options.endpointFailureCooldownMs || DEFAULT_ENDPOINT_FAILURE_COOLDOWN_MS));
   const healthCacheMs = Math.max(0, Number(options.healthCacheMs ?? 10_000));
-  const healthTimeoutMs = Math.max(1500, Math.min(8000, Number(options.healthTimeoutMs || 3000)));
+  const healthTimeoutMs = Math.max(1500, Math.min(8000, Number(options.healthTimeoutMs || 6000)));
   const flareRetryCount = Math.max(0, Math.min(2, Number.isFinite(Number(options.flareRetryCount)) ? Number(options.flareRetryCount) : 1));
   const flareRetryBackoffMs = Math.max(100, Math.min(3000, Number(options.flareRetryBackoffMs || 750)));
   const providerFailureCooldownMs = Math.max(5_000, Number(options.providerFailureCooldownMs || 60_000));
@@ -620,6 +631,22 @@ function createCfClearanceManager(options = {}) {
         return response;
       } catch (error) {
         lastError = error;
+        // Browser-crash style failures from FlareSolverr (tab crashed, Target
+        // closed, ...) cannot be fixed by retrying the same endpoint
+        // immediately - the Chromium worker pool is stuck. Trip the per-
+        // endpoint cooldown so the next attempt picks a different endpoint
+        // (or waits before re-trying).
+        if (isFlareBrowserCrash(error)) {
+          markEndpointFailure(selectedEndpoint);
+          logger.warn('flaresolverr browser crash; endpoint cooldown', {
+            provider: providerName,
+            endpoint: selectedEndpoint,
+            label,
+            cooldownMs: endpointFailureCooldownMs,
+            reason: error?.message || String(error)
+          });
+          break;
+        }
         if (attempt >= flareRetryCount || !isRetryableFlareError(error) || signal?.aborted) break;
         const waitMs = flareRetryBackoffMs * (attempt + 1);
         logger.debug('solve retry', {

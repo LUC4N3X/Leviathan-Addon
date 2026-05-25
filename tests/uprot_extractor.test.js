@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const {
     normalizeUprotInput,
     resolveUprotToMaxstream,
+    fetchWithFlareSolverr,
     toMaxstreamPlayerUrl,
     _test: uprotTest
 } = require('../providers/extractors/hosters/uprot');
@@ -21,6 +22,20 @@ test('uprot helpers normalize escaped inputs and watchfree player URLs', () => {
     assert.equal(
         toMaxstreamPlayerUrl('https://watchfree.example/watchfree/title/abc123'),
         'https://maxstream.video/emvvv/abc123'
+    );
+    assert.equal(
+        toMaxstreamPlayerUrl('https://maxstream.video/emhuih/abc123'),
+        'https://maxstream.video/emhuih/abc123'
+    );
+    // /uprotem/ is a maxstream-hosted captcha mirror, not a playable embed.
+    // Accepting it as a player URL short-circuits the uprot captcha solver.
+    assert.equal(
+        toMaxstreamPlayerUrl('https://maxstream.video/uprotem/dTVZK1VSNWZVWmpOL1dIVlhpdG5LUT09'),
+        null
+    );
+    assert.equal(
+        toMaxstreamPlayerUrl('https://maxstream.video/'),
+        null
     );
     assert.equal(
         uprotTest.extractContinueLink('<a class="btn" href="/go/next">C o n t i n u e</a>', 'https://uprot.net/mse/abc'),
@@ -71,7 +86,8 @@ test('uprot resolver follows landing continue links to MaxStream with injected c
     };
 
     const resolved = await resolveUprotToMaxstream(client, 'https://uprot.net/msf/abc', {
-        uprotFlareEnabled: false
+        uprotFlareEnabled: false,
+        uprotForwardProxy: 'false'
     });
 
     assert.equal(resolved.playerUrl, 'https://maxstream.video/emvvv/abc');
@@ -99,7 +115,8 @@ test('uprot resolver posts stored state and resolves redirect final URL', async 
     const resolved = await resolveUprotToMaxstream(client, 'https://uprot.net/msf/stateid', {
         uprotCookies: { xfss: 'cookie-secret' },
         uprotCaptchaData: { captcha: '12345' },
-        uprotFlareEnabled: false
+        uprotFlareEnabled: false,
+        uprotForwardProxy: 'false'
     });
 
     assert.equal(resolved.playerUrl, 'https://maxstream.video/emvvv/stateid');
@@ -123,7 +140,8 @@ test('uprot resolver extracts escaped direct stream URLs from landing scripts', 
     };
 
     const resolved = await resolveUprotToMaxstream(client, 'https://uprot.net/msf/direct', {
-        uprotFlareEnabled: false
+        uprotFlareEnabled: false,
+        uprotForwardProxy: 'false'
     });
 
     assert.equal(resolved.streamUrl, 'https://cdn.example/hls/master.m3u8?token=abc');
@@ -144,9 +162,41 @@ test('uprot resolver follows javascript location redirects to watchfree players'
     };
 
     const resolved = await resolveUprotToMaxstream(client, 'https://uprot.net/msf/jsid', {
-        uprotFlareEnabled: false
+        uprotFlareEnabled: false,
+        uprotForwardProxy: 'false'
     });
 
     assert.equal(resolved.playerUrl, 'https://maxstream.video/emvvv/jsid');
     assert.equal(resolved.via, 'uprot-landing');
+});
+
+test('fetchWithFlareSolverr wraps uprot URLs in the configured forward proxy', async () => {
+    const seen = [];
+    const flareClient = {
+        async post(endpoint, payload) {
+            seen.push({ endpoint, url: payload.url });
+            return {
+                status: 200,
+                data: {
+                    status: 'ok',
+                    solution: { response: '<html></html>', url: payload.url, cookies: [] }
+                }
+            };
+        }
+    };
+
+    const result = await fetchWithFlareSolverr('https://uprot.net/e/abc123/', {
+        uprotFlareEnabled: true,
+        uprotFlareEndpoint: 'http://flaresolverr.local:8191/v1',
+        uprotForwardProxy: 'https://krakenproxy.example/forward?url=',
+        flareClient
+    });
+
+    assert.ok(result, 'expected a FlareSolverr response');
+    assert.equal(seen.length, 1, 'flare client should be called once');
+    assert.equal(
+        seen[0].url,
+        'https://krakenproxy.example/forward?url=https%3A%2F%2Fuprot.net%2Fe%2Fabc123%2F',
+        'FlareSolverr must receive the proxy-wrapped URL so its egress IP is masked'
+    );
 });

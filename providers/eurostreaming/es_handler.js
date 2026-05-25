@@ -362,6 +362,14 @@ function pickHostLinks(blockHtml) {
         }
 
         if (looksLikeMaxstream) {
+            // MaxStream links from Eurostreaming are wrapped in uprot.net,
+            // which currently refuses to serve us the captcha page (see
+            // providers/extractors/hosters/uprot.js circuit breaker). Including
+            // the link forces a 5-15s per-request stall that times out the
+            // whole Eurostreaming bucket and kills DeltaBit/MixDrop too.
+            // Re-enable by setting EUROSTREAMING_SKIP_MAXSTREAM_LINK=false once
+            // uprot is reachable again or the manual /uprot state is seeded.
+            if (envFlag('EUROSTREAMING_SKIP_MAXSTREAM_LINK', true)) continue;
             const maxstreamHref = (isUprotUrl(href) || isMaxstreamLikeUrl(href) || REDIRECTOR_RE.test(href))
                 ? href
                 : companionUprot?.href;
@@ -1711,7 +1719,11 @@ function shouldTryMaxstreamLocalFirst() {
 }
 
 function getMaxstreamLocalTimeoutMs() {
-    return envInt('ES_MAXSTREAM_LOCAL_TIMEOUT_MS', 14000, 1000, 30000);
+    // First-time UPROT auto-state needs room for: page fetch (~3s), optional
+    // FlareSolverr fallback (~5-12s), Tesseract OCR (~1-2s), form POST (~2s),
+    // and redirect follow to maxstream player (~2s). 30s covers the cold path;
+    // subsequent requests reuse the cached state and finish well under 3s.
+    return envInt('ES_MAXSTREAM_LOCAL_TIMEOUT_MS', 30000, 1000, 60000);
 }
 
 function isMaxstreamExtractedPlayable(value) {

@@ -200,11 +200,25 @@ const cinemaCityRustAccel = createRustShieldClient({
     }
 });
 let lastProviderBlockedFetch = null;
+// When Cloudflare bans the leviathan egress IP we keep getting 403/challenge
+// pages for several minutes. Routing every request through Kraken's clean IP
+// during that window saves the 5-7s wasted on impit/axios attempts that have
+// no chance of succeeding.
+let cloudflareIpBanUntil = 0;
+const CLOUDFLARE_IP_BAN_COOLDOWN_MS = Math.max(60_000, Math.min(60 * 60_000, Number.parseInt(process.env.CINEMACITY_CLOUDFLARE_BAN_COOLDOWN_MS || String(5 * 60_000), 10) || 5 * 60_000));
+
 function markProviderBlockedFetch(url, reason) {
     lastProviderBlockedFetch = { url: String(url || ''), reason: reason || 'blocked', at: Date.now() };
+    // Any block of a CC URL strongly suggests our egress IP is on CF's radar.
+    // Promote kraken-first mode for the cooldown window regardless of the
+    // static CINEMACITY_FORWARD_PROXY_FIRST env.
+    cloudflareIpBanUntil = Date.now() + CLOUDFLARE_IP_BAN_COOLDOWN_MS;
 }
 function wasProviderBlockedFetch(url) {
     return Boolean(lastProviderBlockedFetch && lastProviderBlockedFetch.url === String(url || '') && Date.now() - lastProviderBlockedFetch.at < 15000);
+}
+function isCloudflareIpBanActive() {
+    return cloudflareIpBanUntil > Date.now();
 }
 function logCinemaCityDebug(message, data = {}) {
     if (!CINEMACITY_DEBUG) return;
@@ -733,11 +747,20 @@ async function fetchHtml(url, extraHeaders = {}, options = {}) {
 
         // Kraken forward proxy first-line: masks the leviathan IP from CinemaCity/Cloudflare
         // and reuses Kraken's clean egress. Falls through to impit/axios/shield on miss.
+        // Promoted to first-line automatically when a recent block indicates the leviathan
+        // egress IP is on Cloudflare's blocklist (see CLOUDFLARE_IP_BAN_COOLDOWN_MS).
+        const krakenFirstNow = CINEMACITY_KRAKEN_FORWARD_FIRST || isCloudflareIpBanActive();
         if (
             CINEMACITY_KRAKEN_FORWARD_ENABLED
-            && CINEMACITY_KRAKEN_FORWARD_FIRST
+            && krakenFirstNow
             && options.krakenForward !== false
         ) {
+            if (!CINEMACITY_KRAKEN_FORWARD_FIRST && isCloudflareIpBanActive()) {
+                logCinemaCityDebug('kraken forward promoted to first-line (cf-ip-ban cooldown)', {
+                    url,
+                    remainingMs: Math.max(0, cloudflareIpBanUntil - Date.now())
+                });
+            }
             const krakenTimeout = Math.min(
                 CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS,
                 Math.max(2000, Number(options.krakenForwardTimeout || timeout) || timeout)

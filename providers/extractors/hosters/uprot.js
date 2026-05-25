@@ -41,8 +41,15 @@ const UPROT_AUTO_STATE_DEFAULTS = Object.freeze({
     bootstrapUrl: 'https://uprot.net/msf/r4hcq47tarq8',
     generatedStateFile: path.resolve(process.cwd(), 'config', 'uprot_state.json'),
     stateTtlMs: 45 * 60_000,
-    failureTtlMs: 2 * 60_000,
-    retryBudget: 2,
+    // Longer failure cooldown: when FlareSolverr's IP is Cloudflare-banned on
+    // uprot, or the captcha image is canvas-rendered and OCR can't read it,
+    // there is nothing the next request can do differently for a while.
+    // 10 minutes keeps user-facing latency low; the cooldown is global per host.
+    failureTtlMs: 10 * 60_000,
+    // Single attempt per request: each attempt already iterates 5+ bootstrap
+    // candidates (uprot.net/.pro/uproat aliases × /e/, /msf/, /mse/ paths).
+    // A second pass within the same request just doubles the wasted time.
+    retryBudget: 1,
     captchaMinDigits: 3,
     captchaMaxDigits: 8,
     ocrMinConfidence: 0,
@@ -50,7 +57,7 @@ const UPROT_AUTO_STATE_DEFAULTS = Object.freeze({
     imageTimeoutMs: 10_000,
     bootstrapTimeoutMs: 12_000,
     postTimeoutMs: 12_000,
-    manualMode: true,
+    manualMode: false,
     manualSessionTtlMs: 10 * 60_000
 });
 
@@ -110,7 +117,7 @@ function getFlareEndpoint(options = {}) {
 
 function flareEnabled(options = {}) {
     if (options.uprotFlareEnabled !== undefined) return Boolean(options.uprotFlareEnabled);
-    return envFlag('UPROT_FLARE_ENABLED', envFlag('EUROSTREAMING_UPROT_FLARE_ENABLED', false));
+    return envFlag('UPROT_FLARE_ENABLED', envFlag('EUROSTREAMING_UPROT_FLARE_ENABLED', true));
 }
 
 function getFlareClient(options = {}) {
@@ -141,20 +148,59 @@ function extractFlareSolution(response) {
     };
 }
 
+// Tracks hosts where FlareSolverr has reported a hard Cloudflare IP ban so we
+// stop wasting 2-5s per request hammering the same dead endpoint. Cleared on
+// process restart; cooldown is intentionally long because the ban itself is.
+const flareHostBanCooldown = new Map();
+const FLARE_HOST_BAN_COOLDOWN_MS = 15 * 60_000;
+
+function getFlareTargetHost(targetUrl) {
+    try { return new URL(String(targetUrl || '')).hostname.toLowerCase(); } catch (_) { return ''; }
+}
+
+function isFlareIpBanError(response) {
+    const body = response?.data;
+    const text = typeof body === 'string' ? body : (body && typeof body === 'object' ? (body.message || JSON.stringify(body)) : '');
+    return /cloudflare\s+has\s+blocked\s+this\s+request|your\s+ip\s+is\s+banned/i.test(String(text || ''));
+}
+
 async function fetchWithFlareSolverr(targetUrl, options = {}) {
     const endpoint = getFlareEndpoint(options);
     if (!flareEnabled(options) || !endpoint) return null;
+
+    // Route the request through the CB01/Kraken forward proxy when configured
+    // so FlareSolverr's egress IP is replaced by the proxy's IP. uprot.net's
+    // Cloudflare blocklist commonly bans FlareSolverr container IPs, but the
+    // Kraken proxy IP is generally accepted. The proxy URL pattern matches
+    // CB01_FORWARD_PROXY (https://krakenproxy.../forward?url=).
+    const proxyUrl = buildUprotForwardRequestUrl(targetUrl, options);
+    const fetchUrl = proxyUrl || targetUrl;
+    const flareViaProxy = Boolean(proxyUrl && proxyUrl !== targetUrl);
+
+    const host = getFlareTargetHost(targetUrl);
+    const bannedUntil = host ? flareHostBanCooldown.get(host) : 0;
+    if (bannedUntil && bannedUntil > Date.now() && !flareViaProxy) {
+        uprotDebug('warn', 'flare host in ip-ban cooldown; skipping', { host, remainingMs: bannedUntil - Date.now() });
+        return null;
+    }
 
     const client = getFlareClient(options);
     if (!client || typeof client.post !== 'function') return null;
     const timeout = envNumber('UPROT_FLARE_TIMEOUT_MS', Number(options.uprotFlareTimeoutMs || 25_000), 8_000, 60_000);
     const maxTimeout = envNumber('UPROT_FLARE_MAX_TIMEOUT_MS', Number(options.uprotFlareMaxTimeoutMs || timeout), 8_000, 90_000);
-    const waitInSeconds = envNumber('UPROT_FLARE_WAIT_SECONDS', Number(options.uprotFlareWaitSeconds || 2), 0, 15);
+    // 6s wait lets uprot's client-side JS finish injecting the captcha <img>
+    // into the static shell. Confirmed via user-shared sample: the captcha
+    // image is in the final DOM but the initial response is only ~1.5KB.
+    const waitInSeconds = envNumber('UPROT_FLARE_WAIT_SECONDS', Number(options.uprotFlareWaitSeconds || 6), 0, 15);
+
+    if (flareViaProxy) {
+        uprotDebug('info', 'flare fetch via forward proxy', { targetHost: host, proxyHost: getFlareTargetHost(fetchUrl) });
+    }
 
     try {
         const payload = {
             cmd: 'request.get',
-            url: targetUrl,
+            url: fetchUrl,
             maxTimeout,
             returnOnlyCookies: false
         };
@@ -165,7 +211,13 @@ async function fetchWithFlareSolverr(targetUrl, options = {}) {
             validateStatus: () => true
         });
         const status = Number(response?.status || 0);
-        if (status && status >= 400) return null;
+        if (status && status >= 400) {
+            if (host && isFlareIpBanError(response)) {
+                flareHostBanCooldown.set(host, Date.now() + FLARE_HOST_BAN_COOLDOWN_MS);
+                uprotDebug('warn', 'flare reports cloudflare ip-ban; cooldown set', { host, cooldownMs: FLARE_HOST_BAN_COOLDOWN_MS, status });
+            }
+            return null;
+        }
         return extractFlareSolution(response);
     } catch (_) {
         return null;
@@ -577,12 +629,15 @@ function toMaxstreamPlayerUrl(url) {
     try {
         const parsed = new URL(normalized);
         const isMaxstreamHost = /(?:^|\.)(?:maxstream\.video|stayonline\.pro)$/i.test(parsed.hostname);
-        if (isMaxstreamHost && /\/em[^/]*\//i.test(parsed.pathname)) return normalized;
+        // Only accept real player paths that start with "/em" (e.g. /emb/, /emhuih/,
+        // /emvvv/). The anchor stops false-positives such as /uprotem/<token>, which
+        // is a maxstream-hosted captcha mirror, not a playable embed.
+        if (isMaxstreamHost && /^\/em[^/]*\//i.test(parsed.pathname)) return normalized;
 
         const code = extractWatchfreeCode(normalized);
         if (code) return `https://maxstream.video/emvvv/${code}`;
 
-        return isMaxstreamHost ? normalized : null;
+        return null;
     } catch (_) {
         return null;
     }
@@ -688,6 +743,11 @@ async function followContinueLink(client, continueUrl, options = {}) {
     return toMaxstreamPlayerUrl(current);
 }
 
+// Baked-in default: the Kraken forward proxy is what CB01 already uses to
+// bypass Cloudflare IP bans, so uprot.net (which bans FlareSolverr's container
+// IP) gets the same treatment without requiring env config.
+const UPROT_FORWARD_PROXY_DEFAULT = 'https://krakenproxy.questoleviatanormio.dpdns.org/forward?url=';
+
 function getUprotForwardProxy(options = {}) {
     const raw = String(
         options.uprotForwardProxy
@@ -695,7 +755,7 @@ function getUprotForwardProxy(options = {}) {
         || process.env.UPROT_FORWARDPROXY
         || process.env.CB01_FORWARD_PROXY
         || process.env.FORWARDPROXY
-        || ''
+        || UPROT_FORWARD_PROXY_DEFAULT
     ).trim();
     if (!raw || /^(?:0|false|off|no)$/i.test(raw)) return '';
     return raw;
@@ -840,6 +900,50 @@ async function resolveLanding(client, targetUrl, options = {}) {
 const uprotOcrCache = new Map();
 const uprotManualSessions = new Map();
 
+// Process-level circuit breaker. When OCR keeps returning confidence:0 with
+// empty raw text, the captcha image is not readable by Tesseract (canvas
+// render, JS-loaded asset, tracking pixel, ...). Each request wastes 5-15s
+// retrying. Once we cross the threshold, short-circuit the whole resolver
+// for a cooldown so DeltaBit/MixDrop attempts in the same Eurostreaming
+// bucket actually finish within the 22s parent timeout.
+const uprotCircuit = { emptyOcrStreak: 0, openUntil: 0, lastFailureAt: 0 };
+
+function uprotCircuitThreshold() {
+    return envNumber('UPROT_CIRCUIT_BREAKER_THRESHOLD', 1, 1, 50);
+}
+
+function uprotCircuitCooldownMs() {
+    return envNumber('UPROT_CIRCUIT_BREAKER_COOLDOWN_MS', 30 * 60_000, 60_000, 6 * 60 * 60_000);
+}
+
+function uprotCircuitOpen() {
+    if (!uprotCircuit.openUntil) return false;
+    if (uprotCircuit.openUntil <= Date.now()) {
+        uprotCircuit.openUntil = 0;
+        uprotCircuit.emptyOcrStreak = 0;
+        return false;
+    }
+    return true;
+}
+
+function recordUprotOcrOutcome(success) {
+    if (success) {
+        uprotCircuit.emptyOcrStreak = 0;
+        uprotCircuit.openUntil = 0;
+        return;
+    }
+    uprotCircuit.emptyOcrStreak += 1;
+    uprotCircuit.lastFailureAt = Date.now();
+    if (uprotCircuit.emptyOcrStreak >= uprotCircuitThreshold() && !uprotCircuit.openUntil) {
+        uprotCircuit.openUntil = Date.now() + uprotCircuitCooldownMs();
+        uprotDebug('warn', 'circuit breaker opened: uprot OCR consistently empty', {
+            streak: uprotCircuit.emptyOcrStreak,
+            cooldownMs: uprotCircuitCooldownMs(),
+            hint: 'inspect config/uprot-debug/*.png; auto-OCR cannot solve this captcha format'
+        });
+    }
+}
+
 function getUprotBootstrapUrl(options = {}) {
     return normalizeRemoteUrl(options.uprotBootstrapUrl || process.env.UPROT_BOOTSTRAP_URL || UPROT_AUTO_STATE_DEFAULTS.bootstrapUrl) || UPROT_AUTO_STATE_DEFAULTS.bootstrapUrl;
 }
@@ -917,20 +1021,56 @@ function cleanInlineDataImage(value) {
     return `${mime}${payload}`;
 }
 
+function summarizeUprotPage(html) {
+    const text = String(html || '');
+    const imgs = [];
+    for (const match of text.matchAll(/<img\b[\s\S]*?>/ig)) {
+        if (imgs.length >= 5) break;
+        const tag = match[0];
+        const quoted = tag.match(/\bsrc\s*=\s*(["'])([\s\S]*?)\1/i);
+        const bare = quoted ? null : tag.match(/\bsrc\s*=\s*([^\s>]+)/i);
+        const src = (quoted ? quoted[2] : bare?.[1]) || '';
+        imgs.push({
+            src: src.length > 80 ? `${src.slice(0, 77)}...` : src,
+            id: htmlAttr(tag, 'id') || undefined,
+            cls: htmlAttr(tag, 'class') || undefined,
+            alt: htmlAttr(tag, 'alt') || undefined
+        });
+    }
+    const snippetSize = envNumber('UPROT_DEBUG_PAGE_SNIPPET_BYTES', 240, 0, 4000);
+    const headSnippet = snippetSize > 0 ? text.slice(0, snippetSize).replace(/\s+/g, ' ') : undefined;
+    const tailSnippet = snippetSize > 0 && text.length > snippetSize * 2
+        ? text.slice(-snippetSize).replace(/\s+/g, ' ')
+        : undefined;
+    return {
+        bytes: text.length,
+        imgCount: (text.match(/<img\b/ig) || []).length,
+        canvasCount: (text.match(/<canvas\b/ig) || []).length,
+        scriptCount: (text.match(/<script\b/ig) || []).length,
+        formCount: (text.match(/<form\b/ig) || []).length,
+        hasCaptchaKeyword: /captcha|capcha|verification|security[_-]?code/i.test(text),
+        hasInlineDataImage: /data:image\/[^;]+;base64,/i.test(text),
+        hasUrlEncrypterTitle: /url\s*encrypter/i.test(text),
+        firstImgs: imgs,
+        headSnippet,
+        tailSnippet
+    };
+}
+
 function extractCaptchaImageSrc(html, baseUrl = null) {
     const text = String(html || '');
     const candidates = [];
-    const push = (src, score = 0) => {
+    const push = (src, score = 0, why = '') => {
         const clean = cleanInlineDataImage(src) || decodeHtmlEntities(src).trim();
         if (!clean) return;
-        candidates.push({ src: normalizeRemoteUrl(clean, baseUrl) || clean, score });
+        candidates.push({ src: normalizeRemoteUrl(clean, baseUrl) || clean, score, why });
     };
 
     // Uprot/Uproat can embed the captcha directly as data:image/png;base64,...
     // Scan the whole document first because a huge data URI can make tag-level
     // regexes brittle when the upstream changes whitespace/quoting.
     const inlineImage = cleanInlineDataImage(text);
-    if (inlineImage) push(inlineImage, 100);
+    if (inlineImage) push(inlineImage, 100, 'inline-data-image');
 
     for (const match of text.matchAll(/<img\b[\s\S]*?>/ig)) {
         const tag = match[0];
@@ -938,15 +1078,19 @@ function extractCaptchaImageSrc(html, baseUrl = null) {
         const bare = quoted ? null : tag.match(/\bsrc\s*=\s*([^\s>]+)/i);
         const src = quoted ? quoted[2] : bare?.[1];
         const haystack = `${src || ''} ${htmlAttr(tag, 'id')} ${htmlAttr(tag, 'class')} ${htmlAttr(tag, 'alt')} ${htmlAttr(tag, 'name')}`;
-        const bad = /avatar|logo|icon|banner|poster|cover|thumb/i.test(haystack);
+        const bad = /avatar|logo|icon|banner|poster|cover|thumb|favicon|sprite/i.test(haystack);
         const good = /captcha|capcha|base64|data:image|verify|verification|security|code/i.test(haystack);
-        if (src && (good || !bad)) push(src, good ? 20 : 1);
+        // Only accept images with an explicit captcha tell. Previously we
+        // accepted any non-"bad" image with score 1, which caused OCR to run on
+        // decorative graphics and report confidence:0. False positives waste
+        // time and pollute the orchestrator's failure cache.
+        if (src && good) push(src, 20, 'img-tag-captcha-hint');
     }
 
     for (const match of text.matchAll(/url\((["']?)(data:image\/[^)'" ]+|[^)'" ]+)\1\)/ig)) {
         const src = match[2];
         const good = /captcha|capcha|data:image|verify|verification|security|code/i.test(src);
-        push(src, good ? 15 : 0);
+        if (good) push(src, 15, 'css-url-captcha-hint');
     }
 
     candidates.sort((a, b) => b.score - a.score);
@@ -1049,6 +1193,21 @@ function validateUprotCaptchaDigits(value) {
     return digits;
 }
 
+function maybeSaveCaptchaSample(base64Data, hash) {
+    if (!envFlag('UPROT_DEBUG_SAVE_CAPTCHA', true)) return null;
+    try {
+        const dir = path.resolve(process.cwd(), 'config', 'uprot-debug');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const filePath = path.join(dir, `captcha-${hash.slice(0, 12)}.png`);
+        if (!fs.existsSync(filePath)) {
+            fs.writeFileSync(filePath, Buffer.from(String(base64Data || ''), 'base64'));
+        }
+        return filePath;
+    } catch (_) {
+        return null;
+    }
+}
+
 async function solveUprotCaptchaOCR(base64Data, options = {}) {
     if (!Tesseract) {
         uprotDebug('warn', 'tesseract.js not available, cannot generate auto-state');
@@ -1058,16 +1217,40 @@ async function solveUprotCaptchaOCR(base64Data, options = {}) {
     const cached = uprotOcrCache.get(hash);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
 
+    // Persist a copy of the first time we see each captcha image so a human can
+    // inspect what uprot is actually serving (digits? letters? canvas render?
+    // distorted noise?). Defaults on; disable with UPROT_DEBUG_SAVE_CAPTCHA=0.
+    const samplePath = maybeSaveCaptchaSample(base64Data, hash);
+
+    // Allow operators to broaden the whitelist when uprot serves alphanumeric
+    // captchas. Defaults to digit-only because that's the historical format.
+    const alphaMode = envFlag('UPROT_CAPTCHA_ALPHA', false);
+    const whitelist = alphaMode
+        ? '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+        : '0123456789';
+
     let worker = null;
     try {
         worker = await Tesseract.createWorker('eng');
         await worker.setParameters({
-            tessedit_char_whitelist: '0123456789',
+            tessedit_char_whitelist: whitelist,
             tessedit_pageseg_mode: '7'
         });
         const { data: { text, confidence } } = await worker.recognize(Buffer.from(base64Data, 'base64'));
+        const cleanText = String(text || '').replace(/\s+/g, '').slice(0, 32);
         const digits = validateUprotCaptchaDigits(text);
-        uprotDebug('info', 'auto-state OCR result', { digits: Boolean(digits), confidence });
+        uprotDebug('info', 'auto-state OCR result', {
+            digits: Boolean(digits),
+            confidence,
+            rawText: cleanText,
+            rawLen: cleanText.length,
+            alphaMode,
+            samplePath: samplePath || undefined
+        });
+        // Feed the circuit breaker: blank/zero-confidence reads indicate the
+        // captcha is fundamentally unsolvable by Tesseract here.
+        const ocrUseless = !cleanText.length && (!Number.isFinite(confidence) || confidence <= 0);
+        recordUprotOcrOutcome(Boolean(digits) && !ocrUseless);
         if (!digits) return null;
         const minConfidence = envNumber('UPROT_OCR_MIN_CONFIDENCE', Number(options.uprotOcrMinConfidence ?? UPROT_AUTO_STATE_DEFAULTS.ocrMinConfidence), 0, 100);
         if (minConfidence > 0 && Number.isFinite(confidence) && confidence < minConfidence) return null;
@@ -1106,14 +1289,47 @@ async function requestUprotBootstrapPage(client, bootstrapUrl, headers, options 
         if (posted?.text) pages.push({ ...posted, finalUrl: (posted.finalUrl && isUprotUrl(posted.finalUrl)) ? posted.finalUrl : bootstrapUrl, method: 'POST' });
     }
 
+    const directHit = pages.find((page) => hasCaptchaCandidate(page.text, page.finalUrl || bootstrapUrl));
+    if (directHit) return directHit;
+
+    // Direct fetches did not yield a captcha image (typical when uprot/uproat
+    // serves the small URL-Encrypter placeholder or sits behind Cloudflare).
+    // Fall back to FlareSolverr to fetch the real captcha page so MammaMia-style
+    // auto-state generation can complete without human help.
+    if (flareEnabled(options) && getFlareEndpoint(options)) {
+        const flare = await fetchWithFlareSolverr(bootstrapUrl, options);
+        if (flare?.text && hasCaptchaCandidate(flare.text, flare.finalUrl || bootstrapUrl)) {
+            uprotDebug('info', 'auto-state bootstrap rescued via FlareSolverr', {
+                bootstrapHost: safeHost(bootstrapUrl),
+                bootstrapPath: safePathForUprot(bootstrapUrl),
+                bytes: String(flare.text || '').length
+            });
+            const flareCookies = String(flare.cookies || '').trim();
+            const flareResponse = flareCookies ? { headers: { 'set-cookie': flareCookies.split(/;\s*/).filter(Boolean) } } : null;
+            return {
+                status: Number(flare.status) || 200,
+                text: flare.text,
+                response: flareResponse,
+                finalUrl: (flare.finalUrl && isUprotUrl(flare.finalUrl)) ? flare.finalUrl : bootstrapUrl,
+                method: 'FLARE'
+            };
+        }
+    }
+
     if (!pages.length) return null;
-    return pages.find((page) => hasCaptchaCandidate(page.text, page.finalUrl || bootstrapUrl)) || pages[0];
+    return pages[0];
 }
 
 async function generateUprotAutoState(client, targetUrl, options = {}) {
     if (!client || typeof client.post !== 'function') return null;
 
-    const bootstrapUrls = buildUprotBootstrapCandidates(targetUrl, options);
+    // Cap the number of bootstrap candidates we try per attempt. Each candidate
+    // costs ~5-7s when going via FlareSolverr; with the previous 8+ candidates
+    // the loop blew through Eurostreaming's 22s parent timeout long before any
+    // useful response arrived. 2 is enough to cover /e/ (preferred) + /mse/
+    // (fallback) and still leave room for the circuit breaker to fire fast.
+    const maxCandidates = envNumber('UPROT_BOOTSTRAP_MAX_CANDIDATES', 2, 1, 16);
+    const bootstrapUrls = buildUprotBootstrapCandidates(targetUrl, options).slice(0, maxCandidates);
 
     for (const bootstrapUrl of bootstrapUrls) {
         const headers = buildUprotHeaders(bootstrapUrl, options);
@@ -1131,8 +1347,7 @@ async function generateUprotAutoState(client, targetUrl, options = {}) {
                 bootstrapHost: safeHost(bootstrapUrl),
                 bootstrapPath: safePathForUprot(bootstrapUrl),
                 method: page.method || 'unknown',
-                bytes: String(page.text || '').length,
-                hasInlineDataImage: /data:image\/[^;]+;base64,/i.test(String(page.text || ''))
+                page: summarizeUprotPage(page.text)
             });
             continue;
         }
@@ -1402,6 +1617,18 @@ async function resolveUprotToMaxstream(client, url, options = {}) {
     const captchaUrl = toMsfCaptchaUrl(originalUrl || targetUrl);
     let activeOptions = options;
     let stateReady = hasUprotState(activeOptions);
+
+    // Circuit breaker: when auto-OCR has proven unsolvable, short-circuit
+    // unless we already have a usable state file to skip the captcha entirely.
+    // Saves ~15s per request that would otherwise time out the parent bucket.
+    if (!stateReady && uprotCircuitOpen()) {
+        uprotDebug('warn', 'resolve short-circuited by ocr circuit breaker', {
+            targetHost: safeHost(targetUrl),
+            cooldownRemainingMs: Math.max(0, uprotCircuit.openUntil - Date.now()),
+            hint: 'open /uprot to seed state manually, or change FlareSolverr/proxy egress'
+        });
+        return null;
+    }
 
     if (isMsfiUrl(targetUrl)) {
         uprotDebug('info', 'resolve start', { path: 'msfi', stateReady, autoState: uprotAutoStateEnabled(options), flareEnabled: flareEnabled(options), targetHost: safeHost(targetUrl) });
