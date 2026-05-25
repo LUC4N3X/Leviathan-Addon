@@ -1149,6 +1149,10 @@ function createProviderHttpGuard(options = {}) {
     updateCurrentDomainFromUrl,
     normalizeBaseUrl,
     clearSession,
+    importSession: (session, resolvedUrl = null, setCookie = null) => {
+      persistSession(session, resolvedUrl, setCookie);
+      return activeSession;
+    },
     getSession: () => activeSession,
     warmupRustShield,
     isSessionFresh,
