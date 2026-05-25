@@ -95,8 +95,6 @@ function isAnimeUnityEnabled(filters = {}, meta = {}) {
     if (filters?.enableAnimeUnity === true) return isAnimeWebEligible(meta);
     if (filters?.enableAnimeUnity === false) return false;
 
-    // Backward compatibility: older installed URLs do not contain enableAnimeUnity.
-    // On Kitsu anime requests, auto-enable AU without forcing it on normal film/series IDs.
     return hasExplicitKitsuMeta(meta) && isAnimeWebEligible(meta);
 }
 
