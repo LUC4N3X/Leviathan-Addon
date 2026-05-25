@@ -49,7 +49,18 @@ function trimBaseUrl(value) {
 }
 
 function getMediaflowBase(config = {}) {
-    return trimBaseUrl(config?.mediaflow?.url || config?.mfp?.url || config?.kraken?.url || '');
+    return trimBaseUrl(
+        config?.mediaflow?.url
+        || config?.mfp?.url
+        || config?.kraken?.url
+        || process.env.MEDIAFLOW_URL
+        || process.env.MEDIAFLOW_PROXY_URL
+        || process.env.MFP_URL
+        || process.env.MFP_BASE_URL
+        || process.env.KRAKEN_URL
+        || process.env.KRAKEN_BASE_URL
+        || ''
+    );
 }
 
 function getMediaflowPassword(config = {}) {
@@ -61,6 +72,8 @@ function getMediaflowPassword(config = {}) {
         || process.env.MEDIAFLOW_PASS
         || process.env.MEDIAFLOW_PROXY_PASSWORD
         || process.env.MFP_API_PASSWORD
+        || process.env.KRAKEN_API_PASSWORD
+        || process.env.KRAKEN_PASS
         || ''
     ).trim();
 }
@@ -214,6 +227,103 @@ function proxyHeaderParamName(name) {
     return '';
 }
 
+
+function appendForwardExtras(params, config = {}, headers = {}, options = {}) {
+    addPassword(params, config);
+
+    const allowCookie = options.allowCookie === true;
+    for (const [rawName, rawValue] of Object.entries(headers || {})) {
+        const paramName = proxyHeaderParamName(rawName);
+        if (!paramName || rawValue === undefined || rawValue === null || rawValue === '') continue;
+        if (paramName === 'h_cookie' && !allowCookie) continue;
+        params.set(paramName, String(rawValue));
+    }
+
+    const extraParams = options?.extraParams || options?.params || {};
+    for (const [name, value] of Object.entries(extraParams)) {
+        if (!name || value === undefined || value === null || value === '') continue;
+        params.set(String(name), String(value));
+    }
+}
+
+function getForwardProxyBase(config = {}, options = {}) {
+    return trimBaseUrl(
+        options?.forwardProxy
+        || config?.mediaflow?.forwardProxy
+        || config?.mfp?.forwardProxy
+        || config?.kraken?.forwardProxy
+        || process.env.MEDIAFLOW_FORWARD_PROXY
+        || process.env.MFP_FORWARD_PROXY
+        || process.env.KRAKEN_FORWARD_PROXY
+        || process.env.CB01_FORWARD_PROXY
+        || process.env.UPROT_FORWARD_PROXY
+        || process.env.FORWARDPROXY
+        || ''
+    );
+}
+
+function appendParamsToUrl(rawUrl, params) {
+    const entries = [...params.entries()].filter(([, value]) => value !== undefined && value !== null && value !== '');
+    if (!entries.length) return rawUrl;
+    const glue = String(rawUrl || '').includes('?') ? '&' : '?';
+    return `${rawUrl}${glue}${entries.map(([key, value]) => `${enc(key)}=${enc(value)}`).join('&')}`;
+}
+
+function buildForwardUrl(config = {}, targetUrl, headers = {}, options = {}) {
+    const base = getMediaflowBase(config);
+    const normalizedTarget = normalizeRemoteUrl(targetUrl);
+    const explicitForward = getForwardProxyBase(config, options);
+
+    if (!normalizedTarget) {
+        mfpDebug('warn', 'forward url skipped', { reason: 'invalid_target', targetHost: safeUrlPart(targetUrl), targetPath: safeUrlPart(targetUrl, 'path') });
+        return normalizedTarget;
+    }
+    if (!base && !explicitForward) {
+        mfpDebug('warn', 'forward url skipped', { reason: 'missing_base', targetHost: safeUrlPart(targetUrl), targetPath: safeUrlPart(targetUrl, 'path') });
+        return normalizedTarget;
+    }
+
+    const params = new URLSearchParams();
+    appendForwardExtras(params, config, headers, options);
+
+    const urlParam = String(options?.urlParam || 'url').trim() || 'url';
+    let out = normalizedTarget;
+
+    if (explicitForward) {
+        try {
+            if (explicitForward.includes('{url}')) {
+                out = explicitForward.replace('{url}', encodeURIComponent(normalizedTarget));
+                out = appendParamsToUrl(out, params);
+            } else {
+                const parsed = new URL(explicitForward);
+                parsed.searchParams.set(urlParam, normalizedTarget);
+                for (const [key, value] of params.entries()) parsed.searchParams.set(key, value);
+                out = parsed.toString();
+            }
+        } catch (_) {
+            if (/[?&][^=]+=$/.test(explicitForward)) {
+                out = appendParamsToUrl(`${explicitForward}${encodeURIComponent(normalizedTarget)}`, params);
+            } else {
+                out = appendParamsToUrl(`${explicitForward.replace(/\/+$/, '')}/forward?${enc(urlParam)}=${enc(normalizedTarget)}`, params);
+            }
+        }
+    } else {
+        const forwardParams = new URLSearchParams();
+        forwardParams.set(urlParam, normalizedTarget);
+        for (const [key, value] of params.entries()) forwardParams.set(key, value);
+        out = `${base}/forward?${forwardParams.toString()}`;
+    }
+
+    mfpDebug('info', 'forward url built', {
+        targetHost: safeUrlPart(normalizedTarget),
+        targetPath: safeUrlPart(normalizedTarget, 'path'),
+        forwardHost: safeUrlPart(out),
+        forwardPath: safeUrlPart(out, 'path'),
+        headerParams: [...params.keys()].filter((key) => /^h_/i.test(key))
+    });
+    return out;
+}
+
 function buildProxyUrl(config = {}, targetUrl, headers = {}, options = {}) {
     const base = getMediaflowBase(config);
     const normalizedTarget = normalizeRemoteUrl(targetUrl);
@@ -266,6 +376,7 @@ function createMediaflowGateway(config = {}) {
         buildExtractorUrl: (targetUrl, host = 'Mixdrop', options = {}) => buildExtractorUrl(config, targetUrl, host, options),
         buildHlsUrl: (targetUrl) => buildHlsUrl(config, targetUrl),
         buildProxyUrl: (targetUrl, headers = {}, options = {}) => buildProxyUrl(config, targetUrl, headers, options),
+        buildForwardUrl: (targetUrl, headers = {}, options = {}) => buildForwardUrl(config, targetUrl, headers, options),
         buildMediaflowUrl: (targetUrl, type = 'hls', host = 'Mixdrop', options = {}) => buildMediaflowUrl(config, targetUrl, type, host, options)
     };
 }
@@ -275,6 +386,7 @@ module.exports = {
     buildHlsUrl,
     buildMediaflowUrl,
     buildProxyUrl,
+    buildForwardUrl,
     createMediaflowGateway,
     defaultExtractorPath,
     defaultRedirectStream,
