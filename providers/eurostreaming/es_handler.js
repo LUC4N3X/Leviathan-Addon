@@ -36,8 +36,6 @@ const ES_CACHE_TTL = Object.freeze({
 });
 const SAFEGO_CAPTCHA_DEFAULTS = Object.freeze({
     cookieFile: path.resolve(process.cwd(), 'config', 'safego_cookies.json'),
-    // SafeGo/ClickA currently emits 3-digit numeric challenges on some Eurostreaming hoster redirects.
-    // Keep this permissive by default; SAFEGO_CAPTCHA_MIN_DIGITS can still override it.
     captchaMinDigits: 3,
     captchaMaxDigits: 8,
     ocrMinConfidence: 0,
@@ -362,14 +360,7 @@ function pickHostLinks(blockHtml) {
         }
 
         if (looksLikeMaxstream) {
-            // MaxStream links from Eurostreaming are wrapped in uprot.net,
-            // which currently refuses to serve us the captcha page (see
-            // providers/extractors/hosters/uprot.js circuit breaker). Including
-            // the link forces a 5-15s per-request stall that times out the
-            // whole Eurostreaming bucket and kills DeltaBit/MixDrop too.
-            // Re-enable by setting EUROSTREAMING_SKIP_MAXSTREAM_LINK=false once
-            // uprot is reachable again or the manual /uprot state is seeded.
-            if (envFlag('EUROSTREAMING_SKIP_MAXSTREAM_LINK', true)) continue;
+            if (envFlag('EUROSTREAMING_SKIP_MAXSTREAM_LINK', false)) continue;
             const maxstreamHref = (isUprotUrl(href) || isMaxstreamLikeUrl(href) || REDIRECTOR_RE.test(href))
                 ? href
                 : companionUprot?.href;
@@ -1657,8 +1648,7 @@ function buildDeltabitPlaybackHeaders(pageUrl, userAgent, cookies = {}, sourceUr
         Referer: pageUrl,
         'User-Agent': userAgent || SAFEGO_FIREFOX_UA
     };
-    // MammaMia returns the extracted CDN file directly. For Kraken/MFP proxying,
-    // forwarding Deltabit page cookies/origin to host-cdn often hurts playback more than it helps.
+
     if (sourceUrl && isDeltabitDirectCdnUrl(sourceUrl)) return headers;
     try {
         const origin = new URL(String(pageUrl || '')).origin;
@@ -1718,11 +1708,12 @@ function shouldTryMaxstreamLocalFirst() {
     return envFlag('EUROSTREAMING_MAXSTREAM_LOCAL_FIRST', true);
 }
 
+function shouldResolveUprotLocally(options = {}) {
+    if (options.uprotLocalResolve !== undefined) return options.uprotLocalResolve === true;
+    return envFlag('EUROSTREAMING_UPROT_LOCAL_RESOLVE', false);
+}
+
 function getMaxstreamLocalTimeoutMs() {
-    // First-time UPROT auto-state needs room for: page fetch (~3s), optional
-    // FlareSolverr fallback (~5-12s), Tesseract OCR (~1-2s), form POST (~2s),
-    // and redirect follow to maxstream player (~2s). 30s covers the cold path;
-    // subsequent requests reuse the cached state and finish well under 3s.
     return envInt('ES_MAXSTREAM_LOCAL_TIMEOUT_MS', 30000, 1000, 60000);
 }
 
@@ -1847,6 +1838,53 @@ function buildMfpExtractorStream({ config, targetUrl, host, label, title, langua
             }
         },
         extra: { _priority: streamPriority(label) }
+    });
+}
+
+function shouldForwardMaxstreamViaKraken(options = {}) {
+    if (options?.maxstreamForwardProxy !== undefined) return options.maxstreamForwardProxy === true;
+    return envFlag('EUROSTREAMING_MAXSTREAM_FORWARD_PROXY', false);
+}
+
+function buildForwardedMaxstreamTarget(config = {}, targetUrl, kind = 'maxstream', options = {}) {
+    const normalized = normalizeRemoteUrl(targetUrl);
+    const headers = extractorHeadersFor(normalized, kind);
+    if (!normalized || !getMediaflowBase(config) || !shouldForwardMaxstreamViaKraken(options)) {
+        return { targetUrl: normalized, headers, forwarded: false };
+    }
+
+    const gateway = createMediaflowGateway(config);
+    const forwarded = gateway.buildForwardUrl(normalized, headers, { allowCookie: false });
+    const changed = Boolean(forwarded && forwarded !== normalized);
+    esDebug(changed ? 'info' : 'warn', 'maxstream forward target built', {
+        kind,
+        sourceHost: safeHost(normalized),
+        sourcePath: safePath(normalized),
+        forwardHost: safeHost(forwarded),
+        forwardPath: safePath(forwarded),
+        forwarded: changed
+    });
+    return { targetUrl: changed ? forwarded : normalized, headers, forwarded: changed };
+}
+
+function buildKrakenUprotMaxstreamStream({ config, targetUrl, title, language = 'ITA', options = {} }) {
+    const normalized = normalizeRemoteUrl(targetUrl);
+    if (!normalized || !isUprotUrl(normalized) || !getMediaflowBase(config)) return null;
+    const headers = extractorHeadersFor(normalized, 'uprot');
+    return buildMfpExtractorStream({
+        config,
+        targetUrl: normalized,
+        host: 'Maxstream',
+        label: 'MaxStream',
+        title,
+        language,
+        via: 'uprot-kraken',
+        mediaflowOptions: {
+            extractorPath: getMaxstreamMfpPath(),
+            redirectStream: getMaxstreamRedirectStream(),
+            headers
+        },
+        streamKind: 'hls'
     });
 }
 
@@ -2003,6 +2041,27 @@ async function buildHostStream(link, context) {
 
         const originalUprotUrl = isUprotUrl(targetUrl) ? targetUrl : null;
         if (originalUprotUrl) {
+            const krakenStream = buildKrakenUprotMaxstreamStream({
+                config,
+                targetUrl: originalUprotUrl,
+                title,
+                language,
+                options
+            });
+            if (krakenStream) {
+                esDebug('info', 'uprot sent to Kraken MaxStream extractor; Kraken handles WARP internally', { hrefHost: safeHost(originalUprotUrl), hrefPath: safePath(originalUprotUrl) });
+                return krakenStream;
+            }
+
+            if (!shouldResolveUprotLocally(options)) {
+                esDebug('warn', 'uprot local resolve disabled; MaxStream requires Kraken/MediaFlow', {
+                    hrefHost: safeHost(originalUprotUrl),
+                    configure: 'KRAKEN_URL or config.mediaflow.url',
+                    optInLocalEnv: 'EUROSTREAMING_UPROT_LOCAL_RESOLVE=1'
+                });
+                return null;
+            }
+
             const resolved = await withEsCoalescing('uprotLocalMammaMia', [originalUprotUrl], () => resolveUprotToMaxstream(client, targetUrl, {
                 ...options,
                 uprotMammaMiaStrict: true
@@ -2048,25 +2107,48 @@ async function buildHostStream(link, context) {
                 }
                 if (getMediaflowBase(config)) {
                     esDebug('warn', 'uprot local resolve failed; using MFP fallback', { hrefHost: safeHost(originalUprotUrl) });
-                    return buildMfpExtractorStream({
-                        config,
-                        targetUrl: originalUprotUrl,
-                        host: 'Maxstream',
-                        label: 'MaxStream',
-                        title,
-                        language,
-                        via: 'uprot-fallback',
-                        mediaflowOptions: {
-                            extractorPath: getMaxstreamMfpPath(),
-                            redirectStream: getMaxstreamRedirectStream(),
-                            headers: extractorHeadersFor(originalUprotUrl, 'maxstream')
-                        },
-                        streamKind: 'hls'
-                    });
+                    {
+                        const forwardedTarget = buildForwardedMaxstreamTarget(config, originalUprotUrl, 'uprot', options);
+                        return buildMfpExtractorStream({
+                            config,
+                            targetUrl: forwardedTarget.targetUrl,
+                            host: 'Maxstream',
+                            label: 'MaxStream',
+                            title,
+                            language,
+                            via: forwardedTarget.forwarded ? 'uprot-fallback-forward-kraken' : 'uprot-fallback',
+                            mediaflowOptions: {
+                                extractorPath: getMaxstreamMfpPath(),
+                                redirectStream: getMaxstreamRedirectStream(),
+                                headers: forwardedTarget.headers
+                            },
+                            streamKind: 'hls'
+                        });
+                    }
                 }
             }
         }
         if (!targetUrl || !isMaxstreamLikeUrl(targetUrl)) return null;
+
+        if (getMediaflowBase(config)) {
+            const forwardedTarget = buildForwardedMaxstreamTarget(config, targetUrl, 'maxstream', options);
+            const krakenStream = buildMfpExtractorStream({
+                config,
+                targetUrl: forwardedTarget.targetUrl,
+                host: 'Maxstream',
+                label: 'MaxStream',
+                title,
+                language,
+                via: forwardedTarget.forwarded ? 'maxstream-forward-kraken' : 'maxstream-kraken',
+                mediaflowOptions: {
+                    extractorPath: getMaxstreamMfpPath(),
+                    redirectStream: getMaxstreamRedirectStream(),
+                    headers: forwardedTarget.headers
+                },
+                streamKind: 'hls'
+            });
+            if (krakenStream) return krakenStream;
+        }
 
         const local = await buildLocalMaxstreamStream({ client, config, targetUrl, originalUprotUrl, title, language, options });
         if (local) return local;
@@ -2515,6 +2597,8 @@ module.exports = {
         extractDeltabitSource,
         isProbablyPlayableMediaUrl,
         buildHostStream,
+        buildKrakenUprotMaxstreamStream,
+        buildForwardedMaxstreamTarget,
         buildLocalMaxstreamStream,
         isMaxstreamExtractedPlayable,
         isDeltabitDirectCdnUrl,
