@@ -82,7 +82,47 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
+function isFlareBrowserCrash(error) {
+  // FlareSolverr returns 500 with these messages when the Chromium tab dies
+  // mid-solve. Retrying same endpoint immediately just spawns another doomed
+  // tab; treat these as endpoint-down so the cooldown kicks in.
+  const message = String(error?.message || error?.response?.data?.message || '').toLowerCase();
+  const body = String(error?.response?.data || '').toLowerCase();
+  const haystack = `${message} ${body}`;
+  return /tab crashed|target closed|session destroyed|browser has disconnected|chrome\s+crashed|context\s+disposed|protocol error/i.test(haystack);
+}
+
+function pushCookiesToRustShield(originUrl, cookieHeader, logger) {
+  // Best-effort: tell the local Rust shield the cf_clearance cookie we just
+  // earned via FlareSolverr. Without this the shield's own reqwest client
+  // gets 403/503 against challenged domains and silently falls back to Node,
+  // making it useless for cinemacity/guardoserie session traffic.
+  if (!cookieHeader || !originUrl) return;
+  if (process.env.RUST_SHIELD_COOKIE_SYNC === '0' || process.env.RUST_SHIELD_COOKIE_SYNC === 'false') return;
+  const endpoint = String(process.env.RUST_SHIELD_URL || 'http://rust-shield:8787').replace(/\/+$/, '');
+  axios.post(`${endpoint}/cookies`, { url: originUrl, cookie: cookieHeader }, {
+    timeout: Math.max(500, Number(process.env.RUST_SHIELD_COOKIE_SYNC_TIMEOUT_MS) || 1500),
+    headers: { 'Content-Type': 'application/json' },
+    validateStatus: () => true
+  }).then((response) => {
+    if (response?.status >= 200 && response?.status < 300) {
+      logger.debug?.('rust shield cookie sync ok', {
+        origin: originUrl,
+        pairs: response?.data?.pairs
+      });
+    } else {
+      logger.debug?.('rust shield cookie sync non-2xx', { origin: originUrl, status: response?.status });
+    }
+  }).catch((error) => {
+    logger.debug?.('rust shield cookie sync error', {
+      origin: originUrl,
+      reason: error?.message || String(error)
+    });
+  });
+}
+
 function isRetryableFlareError(error) {
+  if (isFlareBrowserCrash(error)) return false;
   const status = Number(error?.response?.status || error?.status || 0);
   const code = String(error?.code || '').toUpperCase();
   const message = String(error?.message || '').toLowerCase();
@@ -620,6 +660,22 @@ function createCfClearanceManager(options = {}) {
         return response;
       } catch (error) {
         lastError = error;
+        // Browser-crash style failures from FlareSolverr (tab crashed, Target
+        // closed, ...) cannot be fixed by retrying the same endpoint
+        // immediately - the Chromium worker pool is stuck. Trip the per-
+        // endpoint cooldown so the next attempt picks a different endpoint
+        // (or waits before re-trying).
+        if (isFlareBrowserCrash(error)) {
+          markEndpointFailure(selectedEndpoint);
+          logger.warn('flaresolverr browser crash; endpoint cooldown', {
+            provider: providerName,
+            endpoint: selectedEndpoint,
+            label,
+            cooldownMs: endpointFailureCooldownMs,
+            reason: error?.message || String(error)
+          });
+          break;
+        }
         if (attempt >= flareRetryCount || !isRetryableFlareError(error) || signal?.aborted) break;
         const waitMs = flareRetryBackoffMs * (attempt + 1);
         logger.debug('solve retry', {
@@ -848,6 +904,7 @@ function createCfClearanceManager(options = {}) {
             onSession(session);
             markEndpointSuccess(selectedEndpoint);
             clearProviderFailure();
+            pushCookiesToRustShield(session.url, session.cookies, logger);
             logger.info('solve ok', {
               provider: providerName,
               clearanceUrl,

@@ -124,6 +124,26 @@ struct WarmupItem {
     ms: u128,
 }
 
+/// Push cookies obtained out-of-band (e.g. cf_clearance from FlareSolverr in
+/// Node) into the shield's per-origin cookie store. Until Node calls this,
+/// any /fetch toward a Cloudflare-challenged domain will fail because the
+/// shield's reqwest client has no clearance cookie of its own.
+#[derive(Clone, Serialize, Deserialize)]
+struct CookiesRequest {
+    /// Either a full URL or an origin like "https://example.com"; we derive
+    /// the origin key the same way /fetch does.
+    url: String,
+    /// Cookie header value (semicolon-separated `name=value` pairs).
+    cookie: String,
+}
+
+#[derive(Clone, Serialize)]
+struct CookiesResponse {
+    ok: bool,
+    origin: String,
+    pairs: usize,
+}
+
 #[derive(Clone)]
 struct CacheEntry {
     response: FetchResponse,
@@ -218,6 +238,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/readyz", get(health))
         .route("/fetch", post(fetch_route))
         .route("/warmup", post(warmup_route))
+        .route("/cookies", post(cookies_route))
         .with_state(state);
 
     let listener = TcpListener::bind(&cfg.bind).await?;
@@ -370,6 +391,34 @@ async fn warmup_route(State(state): State<AppState>, Json(req): Json<WarmupReque
         ms: started.elapsed().as_millis(),
         results,
     })
+}
+
+async fn cookies_route(State(state): State<AppState>, Json(req): Json<CookiesRequest>) -> impl IntoResponse {
+    let origin = origin_key(&req.url);
+    if origin.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(CookiesResponse { ok: false, origin, pairs: 0 }),
+        );
+    }
+    let cookie = req.cookie.trim().to_string();
+    let pairs = if cookie.is_empty() {
+        state.cookies.write().await.remove(&origin);
+        0
+    } else {
+        // The header value is stored as-is; reqwest will include it on
+        // subsequent /fetch requests targeting the same origin (see
+        // apply_default_headers). Count semicolon-separated pairs for the
+        // response so callers can spot accidental empty pushes.
+        let count = cookie.split(';').filter(|p| p.contains('=')).count();
+        state.cookies.write().await.insert(origin.clone(), cookie);
+        count
+    };
+    info!(origin = %origin, pairs, "cookies stored");
+    (
+        StatusCode::OK,
+        Json(CookiesResponse { ok: true, origin, pairs }),
+    )
 }
 
 async fn fetch_inner(state: AppState, req: FetchRequest) -> FlightResult {
