@@ -362,6 +362,14 @@ function pickHostLinks(blockHtml) {
         }
 
         if (looksLikeMaxstream) {
+            // MaxStream links from Eurostreaming are wrapped in uprot.net,
+            // which currently refuses to serve us the captcha page (see
+            // providers/extractors/hosters/uprot.js circuit breaker). Including
+            // the link forces a 5-15s per-request stall that times out the
+            // whole Eurostreaming bucket and kills DeltaBit/MixDrop too.
+            // Re-enable by setting EUROSTREAMING_SKIP_MAXSTREAM_LINK=false once
+            // uprot is reachable again or the manual /uprot state is seeded.
+            if (envFlag('EUROSTREAMING_SKIP_MAXSTREAM_LINK', true)) continue;
             const maxstreamHref = (isUprotUrl(href) || isMaxstreamLikeUrl(href) || REDIRECTOR_RE.test(href))
                 ? href
                 : companionUprot?.href;
