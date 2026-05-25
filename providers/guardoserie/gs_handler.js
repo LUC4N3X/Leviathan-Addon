@@ -28,7 +28,7 @@ const { isCanceledError, isCloudflareChallenge, requestWithImpitRotating } = req
 const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
-const { createProviderHttpGuard, envFlag } = require('../utils/provider_http_guard');
+const { createCloudflareBypass, envFlag } = require('../utils/cloudflare_bypass');
 
 const INITIAL_GS_DOMAIN      = 'https://guardoserie.run';
 const GS_MOVIE_LIST_PATH     = '/guarda-film-streaming-ita/';
@@ -169,7 +169,7 @@ function gsInfo(message, meta = null) {
   console.log(`[GuardoSerie][Shield] ${message}${suffix}`);
 }
 
-const gsHttp = createProviderHttpGuard({
+const gsShield = createCloudflareBypass({
   providerName: PROVIDER_NAME,
   logPrefix: 'GS-SHIELD',
   initialBaseUrl: INITIAL_GS_DOMAIN,
@@ -222,9 +222,10 @@ const gsHttp = createProviderHttpGuard({
   impitChallengeStatuses: [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]
 });
 
+const gsHttp = gsShield.guard;
 const lightClient = gsHttp.lightClient;
-const smartFetch = (...args) => gsHttp.smartFetch(...args);
-gsInfo('HTTP Shield active', gsHttp.getImpitShieldState?.());
+const smartFetch = (...args) => gsShield.fetchHtml(...args);
+gsInfo('HTTP Shield active', gsShield.getState?.());
 const refreshTargetDomain = (...args) => gsHttp.refreshTargetDomain(...args);
 const buildGsUrl = pathname => gsHttp.buildProviderUrl(pathname);
 const getTargetDomain = () => gsHttp.getCurrentBaseUrl();
