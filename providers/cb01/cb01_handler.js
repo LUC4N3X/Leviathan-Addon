@@ -475,13 +475,15 @@ function isCbUprotUrl(value) {
 function normalizeCbUprotUrl(value) {
     const normalized = normalizeRemoteUrl(value);
     if (!normalized || !isCbUprotUrl(normalized)) return null;
-    // Preserve uprot/uproat host aliases: the local extractor accepts them
-    // and this avoids cookie/state mismatch between the page host and post host.
     return normalized;
 }
 
 function isMaxstreamLikeUrl(value) {
     return MAXSTREAM_URL_RE.test(String(value || ''));
+}
+
+function shouldResolveUprotLocally(options = {}) {
+    return envFlag('CB01_UPROT_LOCAL_RESOLVE_FORCE', false);
 }
 
 function normalizeMixdropForExtractor(value) {
@@ -698,6 +700,52 @@ function buildMfpExtractorStream({ config, targetUrl, host, label, title, via = 
     });
 }
 
+function shouldForwardMaxstreamViaKraken(options = {}) {
+    if (options?.maxstreamForwardProxy !== undefined) return options.maxstreamForwardProxy === true;
+    return envFlag('CB01_MAXSTREAM_FORWARD_PROXY', false);
+}
+
+function buildForwardedMaxstreamTarget(config = {}, targetUrl, kind = 'maxstream', options = {}) {
+    const normalized = normalizeRemoteUrl(targetUrl);
+    const headers = extractorHeadersFor(normalized, kind);
+    if (!normalized || !getMediaflowBase(config) || !shouldForwardMaxstreamViaKraken(options)) {
+        return { targetUrl: normalized, headers, forwarded: false };
+    }
+
+    const gateway = createMediaflowGateway(config);
+    const forwarded = gateway.buildForwardUrl(normalized, headers, { allowCookie: false });
+    const changed = Boolean(forwarded && forwarded !== normalized);
+    cbDebug(changed ? 'info' : 'warn', 'maxstream forward target built', {
+        kind,
+        sourceHost: safeHost(normalized),
+        sourcePath: safePath(normalized),
+        forwardHost: safeHost(forwarded),
+        forwardPath: safePath(forwarded),
+        forwarded: changed
+    });
+    return { targetUrl: changed ? forwarded : normalized, headers, forwarded: changed };
+}
+
+function buildKrakenUprotMaxstreamStream({ config, targetUrl, title, options = {} }) {
+    const normalized = normalizeCbUprotUrl(targetUrl);
+    if (!normalized || !getMediaflowBase(config)) return null;
+    const headers = extractorHeadersFor(normalized, 'uprot');
+    return buildMfpExtractorStream({
+        config,
+        targetUrl: normalized,
+        host: 'Maxstream',
+        label: 'MaxStream',
+        title,
+        via: 'uprot-kraken',
+        mediaflowOptions: {
+            extractorPath: '/extractor/video.m3u8',
+            redirectStream: true,
+            headers
+        },
+        streamKind: 'hls'
+    });
+}
+
 async function buildMixdropStream(rawUrl, context) {
     const { client, config, title } = context;
     let targetUrl = normalizeRemoteUrl(rawUrl);
@@ -824,64 +872,27 @@ async function buildMaxstreamStream(rawUrl, context) {
     const originalUprotUrl = isCbUprotUrl(targetUrl) ? targetUrl : null;
     const canonicalUprotUrl = originalUprotUrl ? normalizeCbUprotUrl(originalUprotUrl) : null;
     if (originalUprotUrl) {
-        const recentFail = getCbCache('uprotLocalFail', [canonicalUprotUrl || originalUprotUrl]);
-        let resolved = null;
-        if (recentFail) {
-            cbDebug('warn', 'uprot local resolve skipped: recent failure cooldown', {
-                host: safeHost(canonicalUprotUrl || originalUprotUrl),
-                path: safePath(canonicalUprotUrl || originalUprotUrl),
-                reason: recentFail?.reason || 'cached-failure'
+        const krakenStream = buildKrakenUprotMaxstreamStream({
+            config,
+            targetUrl: canonicalUprotUrl || originalUprotUrl,
+            title,
+            options
+        });
+        if (krakenStream) {
+            cbDebug('info', 'uprot sent to Kraken MaxStream extractor; Kraken handles WARP internally', {
+                targetHost: safeHost(canonicalUprotUrl || originalUprotUrl),
+                targetPath: safePath(canonicalUprotUrl || originalUprotUrl)
             });
-        } else {
-            cbDebug('info', 'uprot local resolve start', {
-                host: safeHost(canonicalUprotUrl || originalUprotUrl),
-                path: safePath(canonicalUprotUrl || originalUprotUrl),
-                originalHost: safeHost(originalUprotUrl)
-            });
-            const uprotOptions = stayonlineRefererForUprot
-                ? { ...(options || {}), referer: stayonlineRefererForUprot, requestReferer: stayonlineRefererForUprot }
-                : (options || {});
-            resolved = await withCbCoalescing('uprotLocal', [canonicalUprotUrl || originalUprotUrl], () =>
-                resolveUprotToMaxstream(client, canonicalUprotUrl || targetUrl, uprotOptions)
-            );
-            cbDebug(resolved?.playerUrl ? 'info' : 'warn', 'uprot local resolve result', {
-                ok: Boolean(resolved?.playerUrl),
-                playerHost: safeHost(resolved?.playerUrl),
-                playerPath: safePath(resolved?.playerUrl),
-                keys: resolved && typeof resolved === 'object' ? Object.keys(resolved).slice(0, 20) : []
-            });
-            if (!resolved?.playerUrl) {
-                setCbCache('uprotLocalFail', [canonicalUprotUrl || originalUprotUrl], {
-                    reason: 'local_resolve_failed'
-                }, envInt('CB01_UPROT_LOCAL_FAIL_TTL_MS', CB_CACHE_TTL.uprotLocalFail, 30_000, 30 * 60_000));
-            }
+            return krakenStream;
         }
-        targetUrl = resolved?.playerUrl || null;
-        if (!targetUrl && getMediaflowBase(config)) {
-            if (envFlag('CB01_UPROT_MFP_FALLBACK', false)) {
-                cbDebug('warn', 'uprot local resolve failed; using MFP fallback because CB01_UPROT_MFP_FALLBACK=1', { hrefHost: safeHost(originalUprotUrl) });
-                return buildMfpExtractorStream({
-                    config,
-                    targetUrl: canonicalUprotUrl || originalUprotUrl,
-                    host: 'Maxstream',
-                    label: 'MaxStream',
-                    title,
-                    via: 'uprot-fallback',
-                    mediaflowOptions: {
-                        extractorPath: '/extractor/video.m3u8',
-                        redirectStream: true,
-                        headers: extractorHeadersFor(canonicalUprotUrl || originalUprotUrl, 'uprot')
-                    },
-                    streamKind: 'hls'
-                });
-            }
-            cbDebug('warn', 'uprot local resolve failed; MaxStream skipped instead of exposing broken MFP fallback', {
-                hrefHost: safeHost(originalUprotUrl),
-                canonicalHost: safeHost(canonicalUprotUrl || originalUprotUrl),
-                enableFallbackEnv: 'CB01_UPROT_MFP_FALLBACK=1'
-            });
-            return null;
-        }
+
+        cbDebug('warn', 'uprot MaxStream skipped: Kraken/MediaFlow is required and local UProt resolver is intentionally disabled', {
+            hrefHost: safeHost(originalUprotUrl),
+            hrefPath: safePath(originalUprotUrl),
+            configure: 'KRAKEN_URL or config.mediaflow.url',
+            reason: 'cb01_maxstream_kraken_only'
+        });
+        return null;
     }
 
     if (!targetUrl || !isMaxstreamLikeUrl(targetUrl)) {
@@ -894,24 +905,28 @@ async function buildMaxstreamStream(rawUrl, context) {
         return null;
     }
 
+    const forwardedTarget = buildForwardedMaxstreamTarget(config, targetUrl, originalUprotUrl ? 'uprot' : 'maxstream', options);
     cbDebug('info', 'maxstream using MFP extractor', {
         targetHost: safeHost(targetUrl),
         targetPath: safePath(targetUrl),
-        via: originalUprotUrl ? 'uprot-local' : 'maxstream',
+        extractorTargetHost: safeHost(forwardedTarget.targetUrl),
+        extractorTargetPath: safePath(forwardedTarget.targetUrl),
+        via: originalUprotUrl ? (forwardedTarget.forwarded ? 'uprot-local-forward-kraken' : 'uprot-local') : (forwardedTarget.forwarded ? 'maxstream-forward-kraken' : 'maxstream'),
         extractorPath: '/extractor/video.m3u8',
-        redirectStream: true
+        redirectStream: true,
+        forwarded: forwardedTarget.forwarded
     });
     return buildMfpExtractorStream({
         config,
-        targetUrl,
+        targetUrl: forwardedTarget.targetUrl,
         host: 'Maxstream',
         label: 'MaxStream',
         title,
-        via: originalUprotUrl ? 'uprot-local' : 'maxstream',
+        via: originalUprotUrl ? (forwardedTarget.forwarded ? 'uprot-local-forward-kraken' : 'uprot-local') : (forwardedTarget.forwarded ? 'maxstream-forward-kraken' : 'maxstream'),
         mediaflowOptions: {
             extractorPath: '/extractor/video.m3u8',
             redirectStream: true,
-            headers: extractorHeadersFor(targetUrl, 'maxstream')
+            headers: forwardedTarget.headers
         },
         streamKind: 'hls'
     });
@@ -2173,7 +2188,7 @@ async function buildStreamsFromLinks({ mixdropLink, maxstreamLink } = {}, contex
     if (maxstreamLink) {
         tasks.push((async () => {
             try {
-                const timeoutMs = envInt('CB01_MAXSTREAM_HOST_TIMEOUT_MS', 6000, 1000, 20000);
+                const timeoutMs = envInt('CB01_MAXSTREAM_HOST_TIMEOUT_MS', 20000, 1000, 30000);
                 const stream = await withTimeout(buildMaxstreamStream(maxstreamLink, context), timeoutMs, 'CB01 MaxStream host');
                 if (stream?.url && !seen.has(stream.url)) {
                     seen.add(stream.url);
@@ -2366,6 +2381,9 @@ module.exports = {
         collectHosterUrlsFromHtml,
         pickHosterLinksFromUrls,
         buildCbBrowserHeaders,
+        buildKrakenUprotMaxstreamStream,
+        buildForwardedMaxstreamTarget,
+        buildMaxstreamStream,
         normalizeForwardProxyBase,
         getCbForwardProxy,
         getExplicitCbForwardProxy,
