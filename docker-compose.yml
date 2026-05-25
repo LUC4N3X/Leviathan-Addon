@@ -1,3 +1,8 @@
+cd ~/leviathan
+
+cp docker-compose.yml docker-compose.yml.bak.$(date +%F_%H-%M-%S)
+
+cat > docker-compose.yml <<'YAML'
 services:
   stremio-addon:
     image: leviathan-addon:latest
@@ -12,91 +17,103 @@ services:
     env_file:
       - .env
     environment:
-      NODE_ENV: production
-      PORT: 7000
-      TZ: Europe/Rome
-      TMDB_API_KEY: 5bae8d11f2a7bc7a95c6d040a31d2163
+      NODE_ENV: "production"
+      PORT: "7000"
+      TZ: "Europe/Rome"
+
+      TMDB_API_KEY: "${TMDB_API_KEY:-}"
+
       EXT_TORRENTIO_MAIN_URL: ""
-      EXT_TORRENTIO_MAIN_TIMEOUT: 4500
-      EXT_TORRENTIO_MIRROR_URL: 
-      EXT_TORRENTIO_MIRROR_TIMEOUT: 4500
-      EXT_TORRENTIO_MIRROR_TRUST_ITA: false
-      EXTERNAL_SNAPSHOT_TTL: ${EXTERNAL_SNAPSHOT_TTL:-2592000}
-      EXTERNAL_SNAPSHOT_READ_LIMIT: ${EXTERNAL_SNAPSHOT_READ_LIMIT:-120}
+      EXT_TORRENTIO_MAIN_TIMEOUT: "4500"
+      EXT_TORRENTIO_MIRROR_URL: ""
+      EXT_TORRENTIO_MIRROR_TIMEOUT: "4500"
+      EXT_TORRENTIO_MIRROR_TRUST_ITA: "false"
+
+      EXTERNAL_SNAPSHOT_TTL: "${EXTERNAL_SNAPSHOT_TTL:-2592000}"
+      EXTERNAL_SNAPSHOT_READ_LIMIT: "${EXTERNAL_SNAPSHOT_READ_LIMIT:-120}"
+
       TORRENTIO_SCAN_ENABLED: "false"
-      TORRENTIO_SCAN_LEADER_ONLY: true
-      TORRENTIO_SCAN_LANGUAGE: it-IT
-      TORRENTIO_SCAN_REGION: IT
-      TORRENTIO_SCAN_START_DELAY_SECONDS: ${TORRENTIO_SCAN_START_DELAY_SECONDS:-25}
-      TORRENTIO_SCAN_INTERVAL_SECONDS: ${TORRENTIO_SCAN_INTERVAL_SECONDS:-86400}
-      TORRENTIO_SCAN_WORKER_INTERVAL_SECONDS: ${TORRENTIO_SCAN_WORKER_INTERVAL_SECONDS:-2.5}
-      TORRENTIO_SCAN_MOVIE_ENDPOINTS: ${TORRENTIO_SCAN_MOVIE_ENDPOINTS:-popular,top_rated,now_playing,upcoming}
-      TORRENTIO_SCAN_SERIES_ENDPOINTS: ${TORRENTIO_SCAN_SERIES_ENDPOINTS:-popular,top_rated,on_the_air,airing_today}
-      TORRENTIO_SCAN_MOVIE_PAGES: ${TORRENTIO_SCAN_MOVIE_PAGES:-30}
-      TORRENTIO_SCAN_SERIES_PAGES: ${TORRENTIO_SCAN_SERIES_PAGES:-10}
-      TORRENTIO_SCAN_SERIES_MODE: ${TORRENTIO_SCAN_SERIES_MODE:-episodes}
-      TORRENTIO_SCAN_MAX_SEASONS_PER_SERIES: ${TORRENTIO_SCAN_MAX_SEASONS_PER_SERIES:-10}
-      TORRENTIO_SCAN_MAX_EPISODES_PER_SERIES: ${TORRENTIO_SCAN_MAX_EPISODES_PER_SERIES:-90}
-      TORRENTIO_SCAN_PAGE_DELAY_SECONDS: ${TORRENTIO_SCAN_PAGE_DELAY_SECONDS:-1.0}
-      TORRENTIO_SCAN_ITEM_DELAY_SECONDS: ${TORRENTIO_SCAN_ITEM_DELAY_SECONDS:-0.08}
-      TORRENTIO_SCAN_RETRY_SECONDS: ${TORRENTIO_SCAN_RETRY_SECONDS:-1800}
-      TORRENTIO_SCAN_REFRESH_SECONDS: ${TORRENTIO_SCAN_REFRESH_SECONDS:-604800}
-      TORRENTIO_SCAN_MAX_ATTEMPTS: ${TORRENTIO_SCAN_MAX_ATTEMPTS:-12}
-      TORRENTIO_SCAN_ONLY_ITALIAN: true
-      TORRENTIO_SCAN_MIN_ITALIAN_CONFIDENCE: 35
-      TORRENTIO_SCAN_ADDONS: torrentio_main,torrentio_mirror
-      TORRENTIO_SCAN_SERVICE: rd
-      TORRENTIO_SCAN_RD_API_KEY: ${TORRENTIO_SCAN_RD_API_KEY:-}
-      TORRENTIO_SCAN_TB_API_KEY: ${TORRENTIO_SCAN_TB_API_KEY:-}
-      # Rust shield service was removed - the Node fallback chain (impit /
-      # axios / FlareSolverr) provides the same effective coverage for this
-      # single-worker deployment. Re-introduce by restoring services/rust-shield.
-      CINEMACITY_CF_FALLBACK: ${CINEMACITY_CF_FALLBACK:-true}
-      CINEMACITY_FORWARD_PROXY: ${CINEMACITY_FORWARD_PROXY:-https://krakenproxy.questoleviatanormio.dpdns.org/forward?url=}
-      CINEMACITY_FORWARD_PROXY_ENABLED: ${CINEMACITY_FORWARD_PROXY_ENABLED:-true}
-      CINEMACITY_FORWARD_PROXY_FIRST: ${CINEMACITY_FORWARD_PROXY_FIRST:-true}
-      CINEMACITY_FORWARD_PROXY_TIMEOUT_MS: ${CINEMACITY_FORWARD_PROXY_TIMEOUT_MS:-6000}
-      CINEMACITY_SEARCH_WARMUP: ${CINEMACITY_SEARCH_WARMUP:-false}
-      CC_PROVIDER_TIMEOUT: ${CC_PROVIDER_TIMEOUT:-18000}
-      CINEMACITY_SITEMAP_TIMEOUT_MS: ${CINEMACITY_SITEMAP_TIMEOUT_MS:-1400}
-      CINEMACITY_SITEMAP_TOTAL_MS: ${CINEMACITY_SITEMAP_TOTAL_MS:-2300}
-      CINEMACITY_SEARCH_GET_TIMEOUT_MS: ${CINEMACITY_SEARCH_GET_TIMEOUT_MS:-2400}
-      CINEMACITY_SEARCH_GET_TOTAL_MS: ${CINEMACITY_SEARCH_GET_TOTAL_MS:-3800}
-      CINEMACITY_SEARCH_POST_TIMEOUT_MS: ${CINEMACITY_SEARCH_POST_TIMEOUT_MS:-2600}
-      CINEMACITY_SEARCH_POST_TOTAL_MS: ${CINEMACITY_SEARCH_POST_TOTAL_MS:-4300}
-      CINEMACITY_QUICK_TITLE_SEARCH: ${CINEMACITY_QUICK_TITLE_SEARCH:-false}
-      CINEMACITY_QUICK_TITLE_QUERIES: ${CINEMACITY_QUICK_TITLE_QUERIES:-3}
-      CINEMACITY_AXIOS_ON_BLOCKED: ${CINEMACITY_AXIOS_ON_BLOCKED:-true}
-      CINEMACITY_LISTING_SCAN: ${CINEMACITY_LISTING_SCAN:-true}
-      CINEMACITY_LISTING_MAX_PAGES: ${CINEMACITY_LISTING_MAX_PAGES:-55}
-      CINEMACITY_LISTING_CONCURRENCY: ${CINEMACITY_LISTING_CONCURRENCY:-3}
-      CINEMACITY_LISTING_TIMEOUT_MS: ${CINEMACITY_LISTING_TIMEOUT_MS:-2200}
-      CINEMACITY_LISTING_TOTAL_MS: ${CINEMACITY_LISTING_TOTAL_MS:-6500}
-      CINEMACITY_LISTING_CACHE_TTL_MS: ${CINEMACITY_LISTING_CACHE_TTL_MS:-2700000}
-      CINEMACITY_LISTING_PAGE_CACHE_TTL_MS: ${CINEMACITY_LISTING_PAGE_CACHE_TTL_MS:-1200000}
-      EUROSTREAMING_URL: ${EUROSTREAMING_URL:-https://eurostream.ing}
-      EUROSTREAMING_DEBUG: ${EUROSTREAMING_DEBUG:-true}
-      ES_RESOLVE_ALL_HOSTS: ${ES_RESOLVE_ALL_HOSTS:-true}
-      MEDIAFLOW_EXTRACTOR_PATH: ${MEDIAFLOW_EXTRACTOR_PATH:-/extractor/video}
-      # MaxStream/uProt: compatibilitÃ  Kraken/MFP legacy. Non usare /extractor/video.m3u8.
-      MEDIAFLOW_EXTRACTOR_HLS_PATH: ${MEDIAFLOW_EXTRACTOR_HLS_PATH:-/extractor/video}
-      MEDIAFLOW_EXTRACTOR_HLS_HOSTS: ${MEDIAFLOW_EXTRACTOR_HLS_HOSTS:-}
-      MEDIAFLOW_REDIRECT_STREAM: ${MEDIAFLOW_REDIRECT_STREAM:-true}
-      MEDIAFLOW_API_PASSWORD: ${MEDIAFLOW_API_PASSWORD:-}
-      EUROSTREAMING_DELTABIT_MFP_FALLBACK: ${EUROSTREAMING_DELTABIT_MFP_FALLBACK:-false}
-      EUROSTREAMING_UPROT_FLARE_ENABLED: ${EUROSTREAMING_UPROT_FLARE_ENABLED:-true}
-      UPROT_FLARE_ENABLED: ${UPROT_FLARE_ENABLED:-true}
-      UPROT_MAMMAMIA_MODE: ${UPROT_MAMMAMIA_MODE:-false}
-      UPROT_AUTO_STATE_ENABLED: ${UPROT_AUTO_STATE_ENABLED:-true}
-      UPROT_FLARESOLVERR_URL: ${UPROT_FLARESOLVERR_URL:-${FLARESOLVERR_URL:-}}
-      # Reuse CB01's Kraken forward proxy so FlareSolverr and direct fetches
-      # toward uprot.net leave from Kraken's IP instead of the FlareSolverr
-      # container IP (which Cloudflare commonly bans for uprot).
-      UPROT_FORWARD_PROXY: ${UPROT_FORWARD_PROXY:-${CB01_FORWARD_PROXY:-https://krakenproxy.questoleviatanormio.dpdns.org/forward?url=}}
-      # First-time UPROT captcha solving via OCR+FlareSolverr can take 20-30s.
-      # Subsequent requests reuse the cached state (45 min TTL) and finish in <3s.
-      ES_MAXSTREAM_LOCAL_TIMEOUT_MS: ${ES_MAXSTREAM_LOCAL_TIMEOUT_MS:-30000}
-      # CB01: usa Kraken /forward; WARP resta installato/gestito nello stack Kraken.
+      TORRENTIO_SCAN_LEADER_ONLY: "true"
+      TORRENTIO_SCAN_LANGUAGE: "it-IT"
+      TORRENTIO_SCAN_REGION: "IT"
+      TORRENTIO_SCAN_START_DELAY_SECONDS: "${TORRENTIO_SCAN_START_DELAY_SECONDS:-25}"
+      TORRENTIO_SCAN_INTERVAL_SECONDS: "${TORRENTIO_SCAN_INTERVAL_SECONDS:-86400}"
+      TORRENTIO_SCAN_WORKER_INTERVAL_SECONDS: "${TORRENTIO_SCAN_WORKER_INTERVAL_SECONDS:-2.5}"
+      TORRENTIO_SCAN_MOVIE_ENDPOINTS: "${TORRENTIO_SCAN_MOVIE_ENDPOINTS:-popular,top_rated,now_playing,upcoming}"
+      TORRENTIO_SCAN_SERIES_ENDPOINTS: "${TORRENTIO_SCAN_SERIES_ENDPOINTS:-popular,top_rated,on_the_air,airing_today}"
+      TORRENTIO_SCAN_MOVIE_PAGES: "${TORRENTIO_SCAN_MOVIE_PAGES:-30}"
+      TORRENTIO_SCAN_SERIES_PAGES: "${TORRENTIO_SCAN_SERIES_PAGES:-10}"
+      TORRENTIO_SCAN_SERIES_MODE: "${TORRENTIO_SCAN_SERIES_MODE:-episodes}"
+      TORRENTIO_SCAN_MAX_SEASONS_PER_SERIES: "${TORRENTIO_SCAN_MAX_SEASONS_PER_SERIES:-10}"
+      TORRENTIO_SCAN_MAX_EPISODES_PER_SERIES: "${TORRENTIO_SCAN_MAX_EPISODES_PER_SERIES:-90}"
+      TORRENTIO_SCAN_PAGE_DELAY_SECONDS: "${TORRENTIO_SCAN_PAGE_DELAY_SECONDS:-1.0}"
+      TORRENTIO_SCAN_ITEM_DELAY_SECONDS: "${TORRENTIO_SCAN_ITEM_DELAY_SECONDS:-0.08}"
+      TORRENTIO_SCAN_RETRY_SECONDS: "${TORRENTIO_SCAN_RETRY_SECONDS:-1800}"
+      TORRENTIO_SCAN_REFRESH_SECONDS: "${TORRENTIO_SCAN_REFRESH_SECONDS:-604800}"
+      TORRENTIO_SCAN_MAX_ATTEMPTS: "${TORRENTIO_SCAN_MAX_ATTEMPTS:-12}"
+      TORRENTIO_SCAN_ONLY_ITALIAN: "true"
+      TORRENTIO_SCAN_MIN_ITALIAN_CONFIDENCE: "35"
+      TORRENTIO_SCAN_ADDONS: "torrentio_main,torrentio_mirror"
+      TORRENTIO_SCAN_SERVICE: "rd"
+      TORRENTIO_SCAN_RD_API_KEY: "${TORRENTIO_SCAN_RD_API_KEY:-}"
+      TORRENTIO_SCAN_TB_API_KEY: "${TORRENTIO_SCAN_TB_API_KEY:-}"
+
+      RUST_SHIELD_ENABLED: "false"
+      RUST_SHIELD_URL: ""
+      RUST_SHIELD_FIRST: "false"
+      RUST_SHIELD_FAIL_OPEN: "true"
+      RUST_SHIELD_CACHE_ENABLED: "false"
+
+      FLARESOLVERR_URL: "http://flaresolverr:8191/v1"
+      FLARESOLVERR_URLS: "http://flaresolverr:8191/v1"
+      GUARDOSERIE_FLARE_ENABLED: "${GUARDOSERIE_FLARE_ENABLED:-true}"
+
+      CINEMACITY_RUST_SHIELD: "false"
+      CINEMACITY_RUST_ACCEL: "false"
+      CINEMACITY_RUST_ACCEL_RACE: "false"
+      CINEMACITY_RUST_ACCEL_LISTING: "false"
+      CINEMACITY_RUST_ACCEL_SEARCH_GET: "false"
+      CINEMACITY_RUST_ACCEL_SITEMAP: "false"
+
+      CINEMACITY_CF_FALLBACK: "${CINEMACITY_CF_FALLBACK:-true}"
+      CINEMACITY_FORWARD_PROXY: "${CINEMACITY_FORWARD_PROXY:-https://krakenproxy.questoleviatanormio.dpdns.org/forward?url=}"
+      CINEMACITY_FORWARD_PROXY_ENABLED: "${CINEMACITY_FORWARD_PROXY_ENABLED:-true}"
+      CINEMACITY_FORWARD_PROXY_FIRST: "${CINEMACITY_FORWARD_PROXY_FIRST:-true}"
+      CINEMACITY_FORWARD_PROXY_TIMEOUT_MS: "${CINEMACITY_FORWARD_PROXY_TIMEOUT_MS:-6000}"
+      CINEMACITY_SEARCH_WARMUP: "${CINEMACITY_SEARCH_WARMUP:-false}"
+      CC_PROVIDER_TIMEOUT: "${CC_PROVIDER_TIMEOUT:-42000}"
+
+      CINEMACITY_SITEMAP_TIMEOUT_MS: "${CINEMACITY_SITEMAP_TIMEOUT_MS:-1400}"
+      CINEMACITY_SITEMAP_TOTAL_MS: "${CINEMACITY_SITEMAP_TOTAL_MS:-2300}"
+      CINEMACITY_SEARCH_GET_TIMEOUT_MS: "${CINEMACITY_SEARCH_GET_TIMEOUT_MS:-2400}"
+      CINEMACITY_SEARCH_GET_TOTAL_MS: "${CINEMACITY_SEARCH_GET_TOTAL_MS:-3800}"
+      CINEMACITY_SEARCH_POST_TIMEOUT_MS: "${CINEMACITY_SEARCH_POST_TIMEOUT_MS:-2600}"
+      CINEMACITY_SEARCH_POST_TOTAL_MS: "${CINEMACITY_SEARCH_POST_TOTAL_MS:-4300}"
+      CINEMACITY_QUICK_TITLE_SEARCH: "${CINEMACITY_QUICK_TITLE_SEARCH:-true}"
+      CINEMACITY_QUICK_TITLE_QUERIES: "${CINEMACITY_QUICK_TITLE_QUERIES:-3}"
+      CINEMACITY_AXIOS_ON_BLOCKED: "${CINEMACITY_AXIOS_ON_BLOCKED:-true}"
+
+      CINEMACITY_LISTING_SCAN: "${CINEMACITY_LISTING_SCAN:-true}"
+      CINEMACITY_LISTING_MAX_PAGES: "${CINEMACITY_LISTING_MAX_PAGES:-55}"
+      CINEMACITY_LISTING_CONCURRENCY: "${CINEMACITY_LISTING_CONCURRENCY:-3}"
+      CINEMACITY_LISTING_TIMEOUT_MS: "${CINEMACITY_LISTING_TIMEOUT_MS:-2200}"
+      CINEMACITY_LISTING_TOTAL_MS: "${CINEMACITY_LISTING_TOTAL_MS:-6500}"
+      CINEMACITY_LISTING_CACHE_TTL_MS: "${CINEMACITY_LISTING_CACHE_TTL_MS:-2700000}"
+      CINEMACITY_LISTING_PAGE_CACHE_TTL_MS: "${CINEMACITY_LISTING_PAGE_CACHE_TTL_MS:-1200000}"
+
+      EUROSTREAMING_URL: "${EUROSTREAMING_URL:-https://eurostream.ing}"
+      EUROSTREAMING_DEBUG: "${EUROSTREAMING_DEBUG:-true}"
+      ES_RESOLVE_ALL_HOSTS: "${ES_RESOLVE_ALL_HOSTS:-true}"
+
+      MEDIAFLOW_EXTRACTOR_PATH: "${MEDIAFLOW_EXTRACTOR_PATH:-/extractor/video}"
+      MEDIAFLOW_EXTRACTOR_HLS_PATH: "${MEDIAFLOW_EXTRACTOR_HLS_PATH:-/extractor/video}"
+      MEDIAFLOW_EXTRACTOR_HLS_HOSTS: "${MEDIAFLOW_EXTRACTOR_HLS_HOSTS:-}"
+      MEDIAFLOW_REDIRECT_STREAM: "${MEDIAFLOW_REDIRECT_STREAM:-true}"
+      MEDIAFLOW_API_PASSWORD: "${MEDIAFLOW_API_PASSWORD:-}"
+
+      EUROSTREAMING_DELTABIT_MFP_FALLBACK: "${EUROSTREAMING_DELTABIT_MFP_FALLBACK:-false}"
+      EUROSTREAMING_UPROT_FLARE_ENABLED: "${EUROSTREAMING_UPROT_FLARE_ENABLED:-false}"
+
       CB01_BASE_URL: "${CB01_BASE_URL:-https://cb01uno.bar}"
       CB01_DEBUG: "${CB01_DEBUG:-1}"
       CB01_TRACE: "${CB01_TRACE:-1}"
@@ -122,11 +139,150 @@ services:
       CB01_IMPIT_RETRY_ON_CHALLENGE: "${CB01_IMPIT_RETRY_ON_CHALLENGE:-0}"
       CB01_IMPIT_HTTP3: "${CB01_IMPIT_HTTP3:-0}"
       CB01_IMPIT_BROWSER: "${CB01_IMPIT_BROWSER:-chrome125}"
-      UPROT_DEBUG: ${UPROT_DEBUG:-true}
+
+      UPROT_DEBUG: "${UPROT_DEBUG:-true}"
+
+    depends_on:
+      flaresolverr:
+        condition: service_healthy
+
     stop_grace_period: 20s
+
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 20s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    init: true
+
+    environment:
+      LOG_LEVEL: "info"
+      LOG_HTML: "false"
+      CAPTCHA_SOLVER: "none"
+      TZ: "Europe/Rome"
+      BROWSER_TIMEOUT: "40000"
+
+      FLARESOLVERR_HEALTH_MAX_MEM_MB: "820"
+
+    ports:
+      - "8191:8191"
+
+    mem_limit: 900m
+    memswap_limit: 1g
+    cpus: "1.0"
+    pids_limit: 256
+    shm_size: "256m"
+
+    security_opt:
+      - no-new-privileges:true
+
+    labels:
+      autoheal: "true"
+      autoheal.stop.timeout: "15"
+
+    stop_grace_period: 15s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          python - <<'PY'
+          import os
+          import sys
+          import json
+          import urllib.request
+
+          max_mb = int(os.environ.get("FLARESOLVERR_HEALTH_MAX_MEM_MB", "820"))
+          max_bytes = max_mb * 1024 * 1024
+
+          usage = None
+
+          for path in (
+              "/sys/fs/cgroup/memory.current",
+              "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+          ):
+              try:
+                  with open(path, "r") as f:
+                      usage = int(f.read().strip())
+                  break
+              except Exception:
+                  pass
+
+          if usage is not None and usage > max_bytes:
+              print(f"FlareSolverr memory too high: {usage // 1024 // 1024}MiB > {max_mb}MiB")
+              sys.exit(1)
+
+          try:
+              payload = json.dumps({"cmd": "sessions.list"}).encode("utf-8")
+              req = urllib.request.Request(
+                  "http://127.0.0.1:8191/v1",
+                  data=payload,
+                  headers={"Content-Type": "application/json"},
+                  method="POST",
+              )
+
+              with urllib.request.urlopen(req, timeout=8) as res:
+                  body = res.read(4096).decode("utf-8", "ignore")
+
+              if '"status": "ok"' not in body and '"status":"ok"' not in body:
+                  print("FlareSolverr API not ok")
+                  sys.exit(1)
+
+              sys.exit(0)
+
+          except Exception as exc:
+              print(f"FlareSolverr API check failed: {exc}")
+              sys.exit(1)
+          PY
+      interval: 20s
+      timeout: 10s
+      retries: 2
+      start_period: 60s
+
+
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: autoheal
+    restart: unless-stopped
+    init: true
+
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: "autoheal"
+      AUTOHEAL_INTERVAL: "10"
+      AUTOHEAL_START_PERIOD: "60"
+      AUTOHEAL_DEFAULT_STOP_TIMEOUT: "15"
+      TZ: "Europe/Rome"
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    network_mode: "none"
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+YAML
