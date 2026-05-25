@@ -62,8 +62,6 @@ const TMDB_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const KITSU_MAPPING_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const QUALITY_PROBE_CACHE_TTL_MS = 20 * 60 * 1000;
 
-// CinemaCity tuned defaults are embedded here, so the addon works without adding
-// the CinemaCity tuning block to .env. Real environment variables still win if set.
 const CINEMACITY_EMBEDDED_ENV_DEFAULTS = Object.freeze({
     CINEMACITY_BACKGROUND_CLEARANCE: 'true',
     CINEMACITY_BACKGROUND_CLEARANCE_DELAY_MS: '30000',
@@ -181,15 +179,9 @@ const providerShield = createCloudflareBypass({
     baseUrl: BASE_URL,
     logPrefix: 'CC-SHIELD',
     enabled: CINEMACITY_USE_CF_FALLBACK,
-    // FlareSolverr fallback on by default (easystreams-style): on Cloudflare block,
-    // request clearance cookies+UA from FlareSolverr and retry through provider_http_guard.
     useRustShield: CINEMACITY_USE_RUST_SHIELD,
     useRustShieldForSession: envFlag('CINEMACITY_RUST_SHIELD_SESSION', false),
-    // CinemaCity movie pages are large DLE templates (~50-100KB) that contain text/css
-    // tokens ("cloudflare", "ray id", "cf-..." classes) which trip the heuristic scoring
-    // in provider_http_guard. Restrict the challenge detection to the canonical signals
-    // (status 403/429/503 + Cloudflare-specific bodies) so real pages aren't rejected
-    // after FlareSolverr clearance has been obtained.
+
     strictChallengeOnly: true
 });
 const cinemaCityRustAccel = createRustShieldClient({
@@ -200,18 +192,12 @@ const cinemaCityRustAccel = createRustShieldClient({
     }
 });
 let lastProviderBlockedFetch = null;
-// When Cloudflare bans the leviathan egress IP we keep getting 403/challenge
-// pages for several minutes. Routing every request through Kraken's clean IP
-// during that window saves the 5-7s wasted on impit/axios attempts that have
-// no chance of succeeding.
 let cloudflareIpBanUntil = 0;
 const CLOUDFLARE_IP_BAN_COOLDOWN_MS = Math.max(60_000, Math.min(60 * 60_000, Number.parseInt(process.env.CINEMACITY_CLOUDFLARE_BAN_COOLDOWN_MS || String(5 * 60_000), 10) || 5 * 60_000));
 
 function markProviderBlockedFetch(url, reason) {
     lastProviderBlockedFetch = { url: String(url || ''), reason: reason || 'blocked', at: Date.now() };
-    // Any block of a CC URL strongly suggests our egress IP is on CF's radar.
-    // Promote kraken-first mode for the cooldown window regardless of the
-    // static CINEMACITY_FORWARD_PROXY_FIRST env.
+
     cloudflareIpBanUntil = Date.now() + CLOUDFLARE_IP_BAN_COOLDOWN_MS;
 }
 function wasProviderBlockedFetch(url) {
@@ -597,7 +583,6 @@ function buildCinemaCityKrakenForwardUrl(targetUrl, headers = {}) {
 
 async function fetchHtmlWithKrakenForward(url, extraHeaders = {}, requestTimeout = CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS, requestContext = 'document', method = 'GET', body = null) {
     if (!CINEMACITY_KRAKEN_FORWARD_ENABLED || !CINEMACITY_KRAKEN_FORWARD_URL) return null;
-    // Kraken /forward only supports GET (POST returns 405). Skip POST entirely.
     if (String(method || 'GET').toUpperCase() !== 'GET') return null;
     const { headers: mergedHeaders } = buildCinemaCityRequestHeaders(url, requestContext, extraHeaders);
     const forwardUrl = buildCinemaCityKrakenForwardUrl(url, mergedHeaders);
@@ -745,10 +730,7 @@ async function fetchHtml(url, extraHeaders = {}, options = {}) {
             ? Math.max(1, Math.min(2, Number.parseInt(String(options.attempts || 1), 10) || 1))
             : Math.max(1, Math.min(IMPIT_ATTEMPTS, Number.parseInt(String(options.attempts || IMPIT_ATTEMPTS), 10) || IMPIT_ATTEMPTS));
 
-        // Kraken forward proxy first-line: masks the leviathan IP from CinemaCity/Cloudflare
-        // and reuses Kraken's clean egress. Falls through to impit/axios/shield on miss.
-        // Promoted to first-line automatically when a recent block indicates the leviathan
-        // egress IP is on Cloudflare's blocklist (see CLOUDFLARE_IP_BAN_COOLDOWN_MS).
+
         const krakenFirstNow = CINEMACITY_KRAKEN_FORWARD_FIRST || isCloudflareIpBanActive();
         if (
             CINEMACITY_KRAKEN_FORWARD_ENABLED
@@ -907,10 +889,6 @@ async function runCinemaCityBackgroundClearance(reason = 'startup') {
                 ? providerShield.guard.isSessionFresh(triggerUrl)
                 : false;
 
-            // In alcuni casi CinemaCity restituisce cookie validi e la ricerca POST funziona,
-            // ma il guard non marca la sessione come "fresh" per l'URL trigger.
-            // Se il prime configurato Ã¨ riuscito, il daemon deve passare al refresh periodico
-            // invece di continuare con retry aggressivi ogni pochi secondi.
             const backgroundOk = Boolean(
                 freshAfter
                 || clearanceOk
@@ -1481,11 +1459,6 @@ function hardFilterStreamsByLanguage(streams = [], config = {}) {
                 && config?.filters?.allowMultiWhenItalianOnly === true) return true;
             if (/(?:^|[^a-z0-9])(eng|en|english|inglese)(?:[^a-z0-9]|$)/i.test(text)) return false;
 
-            // CITY is a deferred page extractor: at provider-time we often only know the
-            // CinemaCity page URL, while Kraken/MediaFlow resolves the final media later.
-            // Do not kill a valid CinemaCity result just because the page-extractor stream
-            // has no explicit language token yet. This was the cause of raw=0/formatted=0
-            // after the locator had already found the correct movie page.
             if (isDeferredCinemaCityExtractorStream(stream)) return true;
             return false;
         }
@@ -1816,9 +1789,6 @@ function extractCandidateLinksFromListing(html, sectionType) {
         addCandidate(href, title);
     });
 
-    // Raw HTML rescue: CinemaCity sometimes renders cards/links in attributes or minified chunks
-    // that cheerio does not expose as simple anchors. This keeps the locator independent from
-    // cosmetic HTML changes and fixes pages after /movies/page/1/ returning zero candidates.
     const rawPatterns = [
         /(?:href|data-href|data-url)\s*=\s*["']([^"']*(?:\/|%2F)(?:movies|anime|tv-series|series)(?:\/|%2F)\d+[-_][^"']+?\.html(?:\?[^"']*)?)["']/gi,
         /(https?:\\?\/\\?\/cinemacity\.cc\\?\/(?:movies|anime|tv-series|series)\\?\/\d+[-_][^\s"'<>\\]+?\.html(?:\?[^\s"'<>\\]*)?)/gi,
@@ -1860,8 +1830,6 @@ async function fetchListingPageHtml(pageUrl) {
         'Sec-Fetch-Mode': 'navigate'
     };
 
-    // Acceleration path: public listing pages do not need ImpIt first.
-    // Race Rust/reqwest keep-alive against Axios and return the first valid HTML.
     if (CINEMACITY_RUST_ACCEL_LISTING) {
         const fast = await fetchPublicHtmlFast(pageUrl, headers, {
             timeout: CINEMACITY_LISTING_TIMEOUT_MS,
@@ -1873,7 +1841,6 @@ async function fetchListingPageHtml(pageUrl) {
         if (fast?.html) return fast;
     }
 
-    // Legacy compatibility fallback: unchanged behavior if the fast path misses.
     const axiosHtml = await fetchHtmlWithAxios(pageUrl, headers, CINEMACITY_LISTING_TIMEOUT_MS, 'document').catch(() => null);
     if (axiosHtml && isUsableCinemaCityHtml(axiosHtml, 500)) return { html: axiosHtml, via: 'axios' };
 
@@ -2103,9 +2070,6 @@ async function pickBestCandidate(candidates, expectedTitles, { requestedImdbId =
 
     const normalizedRequestedImdbId = extractImdbId(requestedImdbId);
     if (normalizedRequestedImdbId) {
-        // Anti-mismatch guard: never fast-return a title candidate while we have an IMDb id.
-        // Failed CinemaCity searches can return generic homepage cards; those must never be
-        // accepted for another movie just because they are first in the HTML.
         const candidatesToCheck = scoredCandidates.slice(0, fastMode ? 4 : 8).filter(c => c.score >= 80);
         const imdbResults = await Promise.all(
             candidatesToCheck.map(c => verifyCandidateImdb(c.url, normalizedRequestedImdbId))
@@ -2897,8 +2861,6 @@ function flattenSeasonEpisodes(seasonEntries = []) {
 function pickStream(fileData, type, season = 1, episode = 1, options = {}) {
     const isSeriesLike = type === 'tv' || type === 'series' || type === 'anime' || options?.isSeries === true;
     if (typeof fileData === 'string') {
-        // A single string on a tv-series page is usually CinemaCity's default S01E01 payload.
-        // Do not reuse it for other episodes: better return no CinemaCity result than a wrong episode.
         return isSeriesLike ? null : fileData;
     }
 
@@ -3049,7 +3011,7 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
                 fileData = fileMatch[1];
             }
         }
-        // Playerjs new format: file:'[{"title":"...","file":"https:\/\/..."}]' (single-quote wrapper)
+
         if (!fileData) {
             const arrayMatch = decoded.match(/(?:file|sources)\s*:\s*'(\[[\s\S]+?\])'/i);
             if (arrayMatch) {
@@ -3060,7 +3022,7 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
                 }
             }
         }
-        // Last-resort: any .m3u8 / .mp4 URL inside the decoded script (handles \/ escapes)
+
         if (!fileData) {
             const urlMatch = decoded.match(/(https?:[\\\/]+[^"'\s]+?\.(?:m3u8|mp4)(?:[?#][^"'\s]*)?)/i);
             if (urlMatch) {
@@ -3187,8 +3149,6 @@ async function runPlaylistIntelligenceProbe(streamUrl, headers = {}, timeoutMs =
 }
 
 function warmPlaylistIntelligenceCache(qualityCacheKey, streamUrl, headers = {}) {
-    // Fire-and-cache only: the current Stremio response must not wait for this unless
-    // strict language filtering has no other proof. Later opens reuse the enriched cache.
     singleFlight(qualityCacheKey, async () => {
         const alreadyCached = qualityProbeCache.get(qualityCacheKey);
         if (alreadyCached) return { detected: alreadyCached.value, intelligence: alreadyCached.intelligence || null };
@@ -3286,11 +3246,6 @@ function buildCinemaCityPageExtractorUrl(config = {}, pageUrl, season, episode, 
             }
         };
 
-    // Kraken/MediaFlow receives only the target page URL here. Pass browser-like
-    // context as explicit extractor headers so the CinemaCity resolver is not invoked
-    // as a naked bot request. The cookie is intentionally omitted: a Cloudflare
-    // clearance is IP/UA scoped and a cookie solved by Leviathan is often invalid
-    // when Kraken resolves through its own egress/WARP.
     const { headers: extractorContextHeaders } = buildCinemaCityRequestHeaders(targetPage, 'document', {
         'Referer': `${BASE_URL}/`,
         'Origin': BASE_URL
@@ -3303,9 +3258,6 @@ function buildCinemaCityPageExtractorUrl(config = {}, pageUrl, season, episode, 
     };
 
     const proxied = buildMediaflowGatewayExtractorUrl(extractorConfig, targetPage, CINEMACITY_PAGE_EXTRACTOR_HOST, {
-        // CinemaCity behaves like the working EasyProxy integration: expose the
-        // resolver as an HLS manifest endpoint, never as a generic /extractor/video
-        // raw Direct URL. The public extractor label is CCCDN; host is configurable.
         extractorPath: process.env.CINEMACITY_PAGE_EXTRACTOR_PATH || '/extractor/video.m3u8',
         redirectStream: true,
         headers: extractorHeaders
@@ -3359,7 +3311,6 @@ function buildCinemaCityPageExtractorStream(pageExtractorUrl, {
         addonBase,
         notWebReady: false,
         extra: {
-            // Helps downstream UI layers avoid presenting this as a naked Direct stream.
             deliveryMode: 'Proxy',
             streamType: 'hls'
         },
@@ -3604,10 +3555,6 @@ async function searchCinemaCityImpl(originalId, finalId, meta, config = {}, reqH
             }), playlistIntel));
         }
 
-        // Serie CinemaCity: se il CDN locale risponde ma il player non parte, offri anche
-        // il percorso CCCDN/MFP come backup esplicito. Prima lo usavamo solo quando
-        // l'estrazione locale falliva; cosÃ¬ su Stremio/Android hai una seconda strada
-        // cliccabile senza perdere il CCCDN principale.
         if (isSeriesRequest && pageExtractorUrl && cinemaCityUrl && cinemaCityUrl === localCinemaCityProxyUrl) {
             const cityFallbackStream = buildCinemaCityPageExtractorStream(pageExtractorUrl, {
                 enrichedMeta,
