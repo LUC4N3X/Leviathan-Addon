@@ -13,7 +13,7 @@ const {
     requestWithImpitRotating,
     responseText
 } = require('../utils/bypass');
-const { createBlockedFallbackGuard } = require('../utils/provider_blocked_fallback');
+const { createCloudflareBypass } = require('../utils/cloudflare_bypass');
 const { SingleFlight, TtlLruCache } = require('../utils/provider_runtime');
 const { withProviderHealth } = require('../utils/provider_health');
 const { createRustShieldClient } = require('../utils/rust_shield_client');
@@ -175,7 +175,7 @@ const CINEMACITY_MOVIE_PAGE_EXTRACTOR_PRIMARY = envFlag('CINEMACITY_MOVIE_PAGE_E
 const CINEMACITY_SERIES_PAGE_EXTRACTOR_PRIMARY = envFlag('CINEMACITY_SERIES_PAGE_EXTRACTOR_PRIMARY', false);
 const MAPPING_API_BASE = 'https://anime.questoleviatanormio.dpdns.org';
 const NEWS_SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
-const providerShield = createBlockedFallbackGuard({
+const providerShield = createCloudflareBypass({
     providerName: 'cinemacity',
     envPrefix: 'CINEMACITY',
     baseUrl: BASE_URL,
