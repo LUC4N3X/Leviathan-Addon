@@ -48,24 +48,9 @@ services:
       TORRENTIO_SCAN_SERVICE: rd
       TORRENTIO_SCAN_RD_API_KEY: ${TORRENTIO_SCAN_RD_API_KEY:-}
       TORRENTIO_SCAN_TB_API_KEY: ${TORRENTIO_SCAN_TB_API_KEY:-}
-      RUST_SHIELD_ENABLED: ${RUST_SHIELD_ENABLED:-true}
-      RUST_SHIELD_URL: ${RUST_SHIELD_URL:-http://rust-shield:8787}
-      RUST_SHIELD_FIRST: ${RUST_SHIELD_FIRST:-true}
-      RUST_SHIELD_FAIL_OPEN: ${RUST_SHIELD_FAIL_OPEN:-true}
-      RUST_SHIELD_CACHE_ENABLED: ${RUST_SHIELD_CACHE_ENABLED:-true}
-      RUST_SHIELD_TIMEOUT_MS: ${RUST_SHIELD_TIMEOUT_MS:-1800}
-      RUST_SHIELD_NODE_TIMEOUT_MS: ${RUST_SHIELD_NODE_TIMEOUT_MS:-2300}
-      RUST_SHIELD_CACHE_TTL_MS: ${RUST_SHIELD_CACHE_TTL_MS:-1200000}
-      RUST_SHIELD_STALE_TTL_MS: ${RUST_SHIELD_STALE_TTL_MS:-3600000}
-      CINEMACITY_RUST_SHIELD: ${CINEMACITY_RUST_SHIELD:-true}
-      CINEMACITY_RUST_ACCEL: ${CINEMACITY_RUST_ACCEL:-true}
-      CINEMACITY_RUST_ACCEL_RACE: ${CINEMACITY_RUST_ACCEL_RACE:-true}
-      CINEMACITY_RUST_ACCEL_LISTING: ${CINEMACITY_RUST_ACCEL_LISTING:-true}
-      CINEMACITY_RUST_ACCEL_SEARCH_GET: ${CINEMACITY_RUST_ACCEL_SEARCH_GET:-true}
-      CINEMACITY_RUST_ACCEL_SITEMAP: ${CINEMACITY_RUST_ACCEL_SITEMAP:-true}
-      CINEMACITY_RUST_ACCEL_TIMEOUT_MS: ${CINEMACITY_RUST_ACCEL_TIMEOUT_MS:-950}
-      CINEMACITY_RUST_ACCEL_CACHE_TTL_MS: ${CINEMACITY_RUST_ACCEL_CACHE_TTL_MS:-900000}
-      CINEMACITY_RUST_ACCEL_STALE_TTL_MS: ${CINEMACITY_RUST_ACCEL_STALE_TTL_MS:-3600000}
+      # Rust shield service was removed - the Node fallback chain (impit /
+      # axios / FlareSolverr) provides the same effective coverage for this
+      # single-worker deployment. Re-introduce by restoring services/rust-shield.
       CINEMACITY_CF_FALLBACK: ${CINEMACITY_CF_FALLBACK:-true}
       CINEMACITY_FORWARD_PROXY: ${CINEMACITY_FORWARD_PROXY:-https://krakenproxy.questoleviatanormio.dpdns.org/forward?url=}
       CINEMACITY_FORWARD_PROXY_ENABLED: ${CINEMACITY_FORWARD_PROXY_ENABLED:-true}
@@ -138,9 +123,6 @@ services:
       CB01_IMPIT_HTTP3: "${CB01_IMPIT_HTTP3:-0}"
       CB01_IMPIT_BROWSER: "${CB01_IMPIT_BROWSER:-chrome125}"
       UPROT_DEBUG: ${UPROT_DEBUG:-true}
-    depends_on:
-      rust-shield:
-        condition: service_started
     stop_grace_period: 20s
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -148,37 +130,3 @@ services:
       timeout: 10s
       retries: 5
       start_period: 20s
-
-
-  rust-shield:
-    build:
-      context: ./services/rust-shield
-      dockerfile: Dockerfile
-    container_name: leviathan-rust-shield
-    restart: unless-stopped
-    init: true
-    mem_limit: ${RUST_SHIELD_MEM_LIMIT:-128m}
-    cpus: ${RUST_SHIELD_CPUS:-0.50}
-    environment:
-      TZ: Europe/Rome
-      RUST_LOG: ${RUST_SHIELD_LOG:-info}
-      RUST_SHIELD_BIND: 0.0.0.0:8787
-      RUST_SHIELD_TIMEOUT_MS: ${RUST_SHIELD_TIMEOUT_MS:-1800}
-      RUST_SHIELD_CONNECT_TIMEOUT_MS: ${RUST_SHIELD_CONNECT_TIMEOUT_MS:-900}
-      RUST_SHIELD_CLIENT_TIMEOUT_MS: ${RUST_SHIELD_CLIENT_TIMEOUT_MS:-2600}
-      RUST_SHIELD_CACHE_MAX: ${RUST_SHIELD_CACHE_MAX:-2000}
-      RUST_SHIELD_CACHE_TTL_MS: ${RUST_SHIELD_CACHE_TTL_MS:-1200000}
-      RUST_SHIELD_STALE_TTL_MS: ${RUST_SHIELD_STALE_TTL_MS:-3600000}
-      RUST_SHIELD_MAX_BODY_BYTES: ${RUST_SHIELD_MAX_BODY_BYTES:-2500000}
-      RUST_SHIELD_POOL_MAX_IDLE_PER_HOST: ${RUST_SHIELD_POOL_MAX_IDLE_PER_HOST:-64}
-      RUST_SHIELD_WARMUP_CONCURRENCY: ${RUST_SHIELD_WARMUP_CONCURRENCY:-4}
-      RUST_SHIELD_ALLOW_PRIVATE: ${RUST_SHIELD_ALLOW_PRIVATE:-false}
-    expose:
-      - "8787"
-    stop_grace_period: 10s
-    healthcheck:
-      test: ["CMD", "/usr/local/bin/rust-shield", "healthcheck"]
-      interval: 15s
-      timeout: 3s
-      retries: 5
-      start_period: 5s

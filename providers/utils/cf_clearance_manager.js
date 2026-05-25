@@ -92,35 +92,6 @@ function isFlareBrowserCrash(error) {
   return /tab crashed|target closed|session destroyed|browser has disconnected|chrome\s+crashed|context\s+disposed|protocol error/i.test(haystack);
 }
 
-function pushCookiesToRustShield(originUrl, cookieHeader, logger) {
-  // Best-effort: tell the local Rust shield the cf_clearance cookie we just
-  // earned via FlareSolverr. Without this the shield's own reqwest client
-  // gets 403/503 against challenged domains and silently falls back to Node,
-  // making it useless for cinemacity/guardoserie session traffic.
-  if (!cookieHeader || !originUrl) return;
-  if (process.env.RUST_SHIELD_COOKIE_SYNC === '0' || process.env.RUST_SHIELD_COOKIE_SYNC === 'false') return;
-  const endpoint = String(process.env.RUST_SHIELD_URL || 'http://rust-shield:8787').replace(/\/+$/, '');
-  axios.post(`${endpoint}/cookies`, { url: originUrl, cookie: cookieHeader }, {
-    timeout: Math.max(500, Number(process.env.RUST_SHIELD_COOKIE_SYNC_TIMEOUT_MS) || 1500),
-    headers: { 'Content-Type': 'application/json' },
-    validateStatus: () => true
-  }).then((response) => {
-    if (response?.status >= 200 && response?.status < 300) {
-      logger.debug?.('rust shield cookie sync ok', {
-        origin: originUrl,
-        pairs: response?.data?.pairs
-      });
-    } else {
-      logger.debug?.('rust shield cookie sync non-2xx', { origin: originUrl, status: response?.status });
-    }
-  }).catch((error) => {
-    logger.debug?.('rust shield cookie sync error', {
-      origin: originUrl,
-      reason: error?.message || String(error)
-    });
-  });
-}
-
 function isRetryableFlareError(error) {
   if (isFlareBrowserCrash(error)) return false;
   const status = Number(error?.response?.status || error?.status || 0);
@@ -904,7 +875,6 @@ function createCfClearanceManager(options = {}) {
             onSession(session);
             markEndpointSuccess(selectedEndpoint);
             clearProviderFailure();
-            pushCookiesToRustShield(session.url, session.cookies, logger);
             logger.info('solve ok', {
               provider: providerName,
               clearanceUrl,
