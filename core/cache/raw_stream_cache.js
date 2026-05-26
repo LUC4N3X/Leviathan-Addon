@@ -10,6 +10,7 @@ const {
     registerCacheAccess,
     registerCacheSet
 } = require('../utils/runtime');
+const { redisCache, writeJsonLater } = require('../utils/redis_cache');
 
 function boolEnv(value, fallback = false) {
     if (value === undefined || value === null || value === '') return fallback;
@@ -32,6 +33,8 @@ const RAW_STREAM_CACHE_MAX_BYTES = boundedIntEnv('RAW_STREAM_CACHE_MAX_BYTES', 5
 const RAW_STREAM_CACHE_MAX_KEYS = boundedIntEnv('RAW_STREAM_CACHE_MAX_KEYS', 12000, 32, 100000);
 const RAW_STREAM_CACHE_CODEC = 'deflate';
 const RAW_STREAM_CACHE_VERSION = 'raw-stream-v11-altadefinizione-vidxgo-impit-mixdrop';
+const RAW_STREAM_REDIS_ENABLED = boolEnv(process.env.RAW_STREAM_REDIS_ENABLED, true);
+const RAW_STREAM_REDIS_NAMESPACE = 'rawStream';
 
 const deflateAsync = promisify(zlib.deflate);
 const inflateAsync = promisify(zlib.inflate);
@@ -154,12 +157,44 @@ async function decodeEntry(entry) {
     return JSON.parse(Buffer.from(buffer).toString('utf8'));
 }
 
+function encodeEntryForRedis(entry) {
+    if (!entry || typeof entry !== 'object' || !Buffer.isBuffer(entry.payload)) return null;
+    return {
+        ...entry,
+        payload: entry.payload.toString('base64'),
+        payloadEncoding: 'base64'
+    };
+}
+
+function decodeEntryFromRedis(entry) {
+    if (!entry || typeof entry !== 'object' || typeof entry.payload !== 'string') return null;
+    return {
+        ...entry,
+        payload: Buffer.from(entry.payload, entry.payloadEncoding === 'base64' ? 'base64' : 'utf8')
+    };
+}
+
+async function getRedisRawStreamEntry(key) {
+    if (!RAW_STREAM_REDIS_ENABLED || !redisCache.isEnabled()) return null;
+    const entry = await redisCache.getJson(RAW_STREAM_REDIS_NAMESPACE, key);
+    return decodeEntryFromRedis(entry);
+}
+
 async function getRawStreamCache(type, id, userConfStr, options = {}) {
     if (!RAW_STREAM_CACHE_ENABLED) return null;
     const log = options.logger || defaultLogger;
     const key = buildRawStreamCacheKey(type, id, userConfStr);
     const label = buildRawStreamCacheLabel(type, id);
-    const entry = rawStreamCache.get(key);
+    let entry = rawStreamCache.get(key);
+
+    if (!entry) {
+        entry = await getRedisRawStreamEntry(key);
+        if (entry) {
+            rawStreamCache.set(key, entry, RAW_STREAM_CACHE_TTL_SECONDS);
+            indexRawStreamCacheKey(label, key);
+            incrementMetric('rawStreamCache.redisHit');
+        }
+    }
 
     if (!entry) {
         registerCacheAccess('raw', false);
@@ -210,6 +245,8 @@ async function setRawStreamCache(type, id, userConfStr, payload, options = {}) {
         };
         rawStreamCache.set(key, entry, RAW_STREAM_CACHE_TTL_SECONDS);
         indexRawStreamCacheKey(label, key);
+        const redisEntry = encodeEntryForRedis(entry);
+        if (redisEntry) writeJsonLater(RAW_STREAM_REDIS_NAMESPACE, key, redisEntry, RAW_STREAM_CACHE_TTL_SECONDS);
         registerCacheSet('raw');
         incrementMetric('rawStreamCache.set');
         log.info(`[RAW CACHE] saved key=${label} compressed=${entry.compressed === true} bytes=${entry.rawBytes}->${entry.storedBytes} ttl=${RAW_STREAM_CACHE_TTL_SECONDS}s`);
@@ -224,6 +261,7 @@ async function setRawStreamCache(type, id, userConfStr, payload, options = {}) {
 function flushRawStreamCache() {
     rawStreamCache.flushAll();
     rawStreamCacheIndexByLabel.clear();
+    redisCache.deleteNamespace(RAW_STREAM_REDIS_NAMESPACE).catch(() => {});
 }
 
 function invalidateRawStreamCacheByPage(type, id, options = {}) {
@@ -237,6 +275,7 @@ function invalidateRawStreamCacheByPage(type, id, options = {}) {
     let invalidated = 0;
     for (const key of Array.from(keys)) {
         const deleted = rawStreamCache.del(key);
+        redisCache.del(RAW_STREAM_REDIS_NAMESPACE, key).catch(() => {});
         invalidated += Number(deleted || 0);
     }
     rawStreamCacheIndexByLabel.delete(label);
@@ -257,7 +296,8 @@ function getRawStreamCacheStats() {
         keys: rawStreamCache.keys().length,
         indexedPages: rawStreamCacheIndexByLabel.size,
         indexedKeys,
-        maxKeys: RAW_STREAM_CACHE_MAX_KEYS
+        maxKeys: RAW_STREAM_CACHE_MAX_KEYS,
+        redisEnabled: RAW_STREAM_REDIS_ENABLED && redisCache.isEnabled()
     };
 }
 
