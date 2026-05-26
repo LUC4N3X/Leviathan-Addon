@@ -244,6 +244,7 @@ function isUsefulHtml(value, status = 200) {
 }
 
 function createBypassQueue(options = {}) {
+  const label = String(options.label || 'scrapling').trim() || 'scrapling';
   const maxConcurrent = Math.max(1, Number(options.maxConcurrent || envNumber('SCRAPLING_MAX_CONCURRENT', 2, 1, 12)) || 2);
   const maxQueue = Math.max(0, Number(options.maxQueue ?? envNumber('SCRAPLING_MAX_QUEUE', 20, 0, 1000)) || 0);
   const queueTimeoutMs = Math.max(1000, Number(options.queueTimeoutMs || envNumber('SCRAPLING_QUEUE_TIMEOUT_MS', 60_000, 1000)) || 60_000);
@@ -278,7 +279,7 @@ function createBypassQueue(options = {}) {
     }
 
     if (waiting.length >= maxQueue) {
-      return Promise.reject(new Error(`scrapling_queue_full:${providerName}:${waiting.length}/${maxQueue}:${url}`));
+      return Promise.reject(new Error(`${label}_queue_full:${providerName}:${waiting.length}/${maxQueue}:${url}`));
     }
 
     return new Promise((resolve, reject) => {
@@ -295,7 +296,7 @@ function createBypassQueue(options = {}) {
         entry.done = true;
         const index = waiting.indexOf(entry);
         if (index >= 0) waiting.splice(index, 1);
-        reject(new Error(`scrapling_queue_timeout:${providerName}:${queueTimeoutMs}`));
+        reject(new Error(`${label}_queue_timeout:${providerName}:${queueTimeoutMs}`));
       }, queueTimeoutMs);
       if (entry.timeoutId?.unref) entry.timeoutId.unref();
       waiting.push(entry);
@@ -304,15 +305,23 @@ function createBypassQueue(options = {}) {
 
   return {
     acquire,
-    state: () => ({ active, queued: waiting.length, maxConcurrent, maxQueue, queueTimeoutMs })
+    state: () => ({ label, active, queued: waiting.length, maxConcurrent, maxQueue, queueTimeoutMs })
   };
 }
 
-const defaultScraplingQueue = createBypassQueue();
+const defaultScraplingQueue = createBypassQueue({ label: 'scrapling' });
+const defaultCurlCffiQueue = createBypassQueue({
+  label: 'curl_cffi',
+  maxConcurrent: envNumber('CURL_CFFI_MAX_CONCURRENT', 4, 1, 24),
+  maxQueue: envNumber('CURL_CFFI_MAX_QUEUE', 40, 0, 1000),
+  queueTimeoutMs: envNumber('CURL_CFFI_QUEUE_TIMEOUT_MS', 20_000, 1000)
+});
 const activeScraplingBypasses = new Map();
+const activeCurlCffiBypasses = new Map();
+const DEFAULT_CURL_CFFI_SCRIPT = path.join(__dirname, 'cf_curl_cffi.py');
 
-function resolvePythonExecutable() {
-  const explicit = String(process.env.SCRAPLING_PYTHON || process.env.PYTHON_BIN || '').trim();
+function resolvePythonExecutable(preferredEnv = 'SCRAPLING_PYTHON') {
+  const explicit = String(process.env[preferredEnv] || process.env.SCRAPLING_PYTHON || process.env.PYTHON_BIN || '').trim();
   if (explicit) return explicit;
   const venvPython = path.join(process.cwd(), '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
   try { if (fs.existsSync(venvPython)) return venvPython; } catch (_) {}
@@ -383,6 +392,104 @@ async function runScraplingBypass(url, providerName = 'provider', options = {}) 
   return promise;
 }
 
+
+function resolveCurlCffiProxy(providerName = 'provider', options = {}) {
+  if (options.proxy) return String(options.proxy).trim();
+  const envPrefix = envPrefixFor(providerName, options.envPrefix);
+  return String(
+    process.env[`${envPrefix}_CURL_CFFI_PROXY`]
+    || process.env.CURL_CFFI_PROXY
+    || process.env.CF_CURL_CFFI_PROXY
+    || process.env.HTTPS_PROXY
+    || process.env.HTTP_PROXY
+    || process.env.https_proxy
+    || process.env.http_proxy
+    || ''
+  ).trim();
+}
+
+function resolveCurlCffiScriptPath(options = {}) {
+  const explicit = String(options.scriptPath || process.env.CURL_CFFI_SCRIPT_PATH || '').trim();
+  if (explicit) return path.isAbsolute(explicit) ? explicit : path.resolve(process.cwd(), explicit);
+  return DEFAULT_CURL_CFFI_SCRIPT;
+}
+
+function execCurlCffiBypass(url, providerName = 'provider', options = {}) {
+  return new Promise((resolve, reject) => {
+    const scriptPath = resolveCurlCffiScriptPath(options);
+    try {
+      if (!fs.existsSync(scriptPath)) return reject(new Error(`curl_cffi_script_missing:${scriptPath}`));
+    } catch (error) {
+      return reject(error);
+    }
+
+    const method = String(options.method || (options.isPost ? 'POST' : 'GET')).toUpperCase();
+    const timeout = Math.max(1000, Number(options.timeout || options.timeoutMs || process.env.CURL_CFFI_TIMEOUT_MS || 15_000) || 15_000);
+    const args = [
+      scriptPath,
+      String(url),
+      '--timeout', String(timeout),
+      '--impersonate', String(options.impersonate || process.env.CURL_CFFI_IMPERSONATE || 'chrome120')
+    ];
+    if (method) args.push('--method', method);
+    if (options.body || options.data) args.push('--data', String(options.body || options.data));
+    if (options.headers) args.push('--headers', JSON.stringify(options.headers));
+    const proxy = resolveCurlCffiProxy(providerName, options);
+    if (proxy) args.push('--proxy', proxy);
+    if (options.insecure || envFlag('CURL_CFFI_INSECURE', false)) args.push('--insecure');
+
+    const child = spawn(resolvePythonExecutable('CURL_CFFI_PYTHON'), args, {
+      windowsHide: true,
+      env: { ...process.env, PYTHONUNBUFFERED: '1' }
+    });
+    let stdout = '';
+    let stderr = '';
+    let killedByTimeout = false;
+    const killTimer = setTimeout(() => {
+      killedByTimeout = true;
+      try { child.kill('SIGKILL'); } catch (_) {}
+    }, timeout + 1000);
+    if (killTimer?.unref) killTimer.unref();
+
+    child.stdout.on('data', chunk => { stdout += chunk.toString(); });
+    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    child.on('error', error => {
+      clearTimeout(killTimer);
+      reject(error);
+    });
+    child.on('close', code => {
+      clearTimeout(killTimer);
+      const payload = parseJsonFromStdout(stdout);
+      if (payload?.status === 'ok') return resolve(payload);
+      if (payload?.status === 'error') return reject(new Error(payload.message || 'curl_cffi_error'));
+      if (killedByTimeout) return reject(new Error(`curl_cffi_timeout:${timeout}`));
+      if (code !== 0) return reject(new Error(stderr.trim() || `curl_cffi_exit_${code}`));
+      return reject(new Error('curl_cffi_invalid_output'));
+    });
+  });
+}
+
+async function runCurlCffiBypass(url, providerName = 'provider', options = {}) {
+  const queue = options.queue || defaultCurlCffiQueue;
+  const key = String(options.coalesceKey || providerName || 'provider');
+  if (activeCurlCffiBypasses.has(key)) return activeCurlCffiBypasses.get(key);
+
+  const promise = (async () => {
+    const release = await queue.acquire(providerName, url);
+    try {
+      const runner = typeof options.runner === 'function' ? options.runner : execCurlCffiBypass;
+      return await runner(url, providerName, options);
+    } finally {
+      release();
+    }
+  })().finally(() => {
+    activeCurlCffiBypasses.delete(key);
+  });
+
+  activeCurlCffiBypasses.set(key, promise);
+  return promise;
+}
+
 function normalizeCookieObject(cookie) {
   if (!cookie) return null;
   if (typeof cookie === 'string') {
@@ -447,6 +554,17 @@ function normalizeScraplingResult(result = {}, providerName = 'provider', fallba
   return session;
 }
 
+
+function normalizeCurlCffiResult(result = {}, providerName = 'provider', fallbackUrl = null) {
+  const session = normalizeScraplingResult(result, providerName, fallbackUrl);
+  session.scrapling = false;
+  session.curlCffi = true;
+  session.source = 'curl_cffi';
+  session.impersonate = result.impersonate || process.env.CURL_CFFI_IMPERSONATE || 'chrome120';
+  session.elapsedMs = Number(result.elapsedMs || 0) || 0;
+  return session;
+}
+
 function toAxiosLikeResponse({ url, html, status = 200, headers = {}, via = 'provider-shield' }) {
   return {
     data: html,
@@ -464,6 +582,8 @@ function createCloudflareBypass(options = {}) {
   const envPrefix = envPrefixFor(providerName, options.envPrefix);
   const baseUrl = normalizeOrigin(options.baseUrl || options.initialBaseUrl) || options.baseUrl || options.initialBaseUrl;
   const enabled = options.enabled ?? envFlag(`${envPrefix}_CF_FALLBACK`, true);
+  const curlCffiEnabled = options.curlCffiEnabled ?? envFlag(`${envPrefix}_CURL_CFFI_ENABLED`, envFlag('CURL_CFFI_ENABLED', true));
+  const curlCffiImpersonate = String(options.curlCffiImpersonate || process.env[`${envPrefix}_CURL_CFFI_IMPERSONATE`] || process.env.CURL_CFFI_IMPERSONATE || 'chrome120');
   const scraplingEnabled = options.scraplingEnabled ?? envFlag(`${envPrefix}_SCRAPLING_ENABLED`, envFlag('SCRAPLING_ENABLED', false));
   const useRustShield = options.useRustShield ?? envFlag(`${envPrefix}_RUST_SHIELD`, true);
   const useRustShieldForSession = options.useRustShieldForSession ?? useRustShield;
@@ -483,7 +603,24 @@ function createCloudflareBypass(options = {}) {
     debugCf: options.debugCf ?? envFlag(`${envPrefix}_DEBUG_CF`, envFlag('PROVIDER_SHIELD_DEBUG_CF', true)),
     maxCacheItems: options.maxCacheItems || 300,
     useRustShield,
-    useRustShieldForSession
+    useRustShieldForSession,
+    curlCffiBeforeFlare: options.curlCffiBeforeFlare ?? envFlagNotFalse(`${envPrefix}_CURL_CFFI_BEFORE_FLARE`, envFlagNotFalse('CURL_CFFI_BEFORE_FLARE', true)),
+    curlCffiBeforeFlareTimeoutMs: options.curlCffiBeforeFlareTimeoutMs || envNumber(`${envPrefix}_CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS`, envNumber('CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS', 6500, 1000, 15000), 1000, 15000),
+    curlCffiPreClearance: async (targetUrl, preOptions = {}) => {
+      if (!shouldAttemptCurlCffi(targetUrl, preOptions)) return null;
+      return runCurlCffi(targetUrl, {
+        ...preOptions,
+        method: 'GET',
+        isPost: false,
+        body: null,
+        timeoutMs: preOptions.timeoutMs || preOptions.timeout || envNumber(`${envPrefix}_CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS`, envNumber('CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS', 6500, 1000, 15000), 1000, 15000),
+        headers: preOptions.headers || {},
+        allowFlareSolverr: false,
+        allowScrapling: false,
+        allowCurlCffi: true,
+        curlCffiCoalesceKey: preOptions.curlCffiCoalesceKey || preOptions.sharedKey || `${providerName}:pre-flare`
+      });
+    }
   });
 
   function debug(message, meta = null) {
@@ -494,6 +631,30 @@ function createCloudflareBypass(options = {}) {
   function warn(message, meta = null) {
     if (logger?.warn) logger.warn(message, meta);
     else if (options.debug || options.debugCf) console.warn(`[${envPrefix}-BYPASS] ${message}${meta ? ` ${JSON.stringify(meta)}` : ''}`);
+  }
+
+  function shouldAttemptCurlCffi(url, fetchOptions = {}) {
+    if (!curlCffiEnabled || fetchOptions.allowCurlCffi === false) return false;
+    if (!isSameSiteUrl(url, baseUrl) || !isHtmlLikeUrl(url)) return false;
+    return true;
+  }
+
+  async function runCurlCffi(url, fetchOptions = {}) {
+    const method = String(fetchOptions.method || (fetchOptions.isPost ? 'POST' : 'GET')).toUpperCase();
+    const rawResult = await runCurlCffiBypass(url, providerName, {
+      ...fetchOptions,
+      method,
+      body: fetchOptions.body || fetchOptions.data || null,
+      timeout: fetchOptions.curlCffiTimeoutMs || fetchOptions.timeoutMs || fetchOptions.timeout,
+      headers: fetchOptions.headers || {},
+      impersonate: fetchOptions.impersonate || fetchOptions.curlCffiImpersonate || curlCffiImpersonate,
+      proxy: fetchOptions.proxy || fetchOptions.curlCffiProxy || null,
+      runner: options.curlCffiRunner,
+      queue: options.curlCffiQueue,
+      coalesceKey: fetchOptions.curlCffiCoalesceKey || providerName,
+      envPrefix
+    });
+    return normalizeCurlCffiResult(rawResult, providerName, url);
   }
 
   function shouldAttemptScrapling(url, fetchOptions = {}) {
@@ -526,9 +687,65 @@ function createCloudflareBypass(options = {}) {
     const allowFlareSolverr = fetchOptions.allowFlareSolverr !== false;
     const ttl = fetchOptions.ttl || 10 * 60 * 1000;
 
-    let html = null;
+    if (shouldAttemptCurlCffi(url, fetchOptions)) {
+      try {
+        const session = await runCurlCffi(url, {
+          ...fetchOptions,
+          isPost,
+          body,
+          method: isPost ? 'POST' : 'GET',
+          timeoutMs
+        });
+        if (session?.userAgent && session.cookies && typeof guard.importSession === 'function') {
+          guard.importSession(session, session.solvedUrl || url);
+        }
+        if (isUsefulHtml(session?.response, session?.solutionResponseStatus)) {
+          debug('curl_cffi response html used', {
+            url,
+            status: session.solutionResponseStatus,
+            bytes: String(session.response || '').length,
+            elapsedMs: session.elapsedMs || undefined
+          });
+          return session.response;
+        }
+        debug('curl_cffi did not return usable html, escalating', {
+          url,
+          status: session?.solutionResponseStatus || 0,
+          bytes: String(session?.response || '').length
+        });
+      } catch (error) {
+        warn('curl_cffi first-pass failed', { providerName, url, error: error?.message || String(error) });
+      }
+    }
+
+    if (shouldAttemptScrapling(url, { ...fetchOptions, allowFlareSolverr })) {
+      try {
+        const session = await runScrapling(url, {
+          ...fetchOptions,
+          isPost,
+          body,
+          method: isPost ? 'POST' : 'GET',
+          timeoutMs
+        });
+        if (session?.userAgent && session.cookies && typeof guard.importSession === 'function') {
+          guard.importSession(session, session.solvedUrl || url);
+        }
+        if (isUsefulHtml(session?.response, session?.solutionResponseStatus)) {
+          debug('scrapling response html used', { url, bytes: String(session.response || '').length });
+          return session.response;
+        }
+        debug('scrapling did not return usable html, escalating', {
+          url,
+          status: session?.solutionResponseStatus || 0,
+          bytes: String(session?.response || '').length
+        });
+      } catch (error) {
+        warn('scrapling fallback failed', { providerName, url, error: error?.message || String(error) });
+      }
+    }
+
     if (fetchOptions.skipGuard !== true && typeof guard.smartFetch === 'function') {
-      html = await guard.smartFetch(url, {
+      const html = await guard.smartFetch(url, {
         ...fetchOptions,
         isPost,
         body,
@@ -536,40 +753,10 @@ function createCloudflareBypass(options = {}) {
         allowFlareSolverr,
         timeoutMs
       });
-      if (html) return html;
+      return html || null;
     }
 
-    if (!shouldAttemptScrapling(url, { ...fetchOptions, allowFlareSolverr })) return null;
-
-    try {
-      const session = await runScrapling(url, {
-        ...fetchOptions,
-        isPost,
-        body,
-        method: isPost ? 'POST' : 'GET',
-        timeoutMs
-      });
-      if (session?.userAgent && session.cookies && typeof guard.importSession === 'function') {
-        guard.importSession(session, session.solvedUrl || url);
-      }
-      if (isUsefulHtml(session?.response, session?.solutionResponseStatus)) {
-        debug('scrapling response html used', { url, bytes: String(session.response || '').length });
-        return session.response;
-      }
-      if (typeof guard.smartFetch !== 'function') return null;
-      const replay = await guard.smartFetch(url, {
-        ...fetchOptions,
-        isPost,
-        body,
-        ttl,
-        allowFlareSolverr: false,
-        timeoutMs
-      });
-      return replay || null;
-    } catch (error) {
-      warn('scrapling fallback failed', { providerName, url, error: error?.message || String(error) });
-      return null;
-    }
+    return null;
   }
 
   async function fetchAxiosLike(url, fetchOptions = {}) {
@@ -580,13 +767,19 @@ function createCloudflareBypass(options = {}) {
 
   async function ensureReady(reason = 'request', ensureOptions = {}) {
     const targetUrl = ensureOptions.url || ensureOptions.triggerUrl || baseUrl;
-    if (!targetUrl || typeof guard.ensureClearance !== 'function') return false;
+    if (!targetUrl) return false;
     if (guard.isSessionFresh?.(targetUrl) && !ensureOptions.force) return true;
+
+    const html = await fetchHtml(targetUrl, {
+      ...ensureOptions,
+      ttl: ensureOptions.ttl || 60_000,
+      reason
+    });
+    if (html || guard.isSessionFresh?.(targetUrl)) return true;
+
+    if (typeof guard.ensureClearance !== 'function') return false;
     const session = await guard.ensureClearance(targetUrl, ensureOptions);
-    if (session || guard.isSessionFresh?.(targetUrl)) return true;
-    if (!shouldAttemptScrapling(targetUrl, { allowScrapling: ensureOptions.allowScrapling, allowFlareSolverr: ensureOptions.allowFlareSolverr ?? true })) return false;
-    const html = await fetchHtml(targetUrl, { ...ensureOptions, ttl: ensureOptions.ttl || 60_000, reason });
-    return Boolean(html || guard.isSessionFresh?.(targetUrl));
+    return Boolean(session || guard.isSessionFresh?.(targetUrl));
   }
 
   function getState() {
@@ -596,6 +789,9 @@ function createCloudflareBypass(options = {}) {
       enabled,
       providerName,
       baseUrl,
+      curlCffiEnabled,
+      curlCffiImpersonate,
+      curlCffi: defaultCurlCffiQueue.state(),
       scraplingEnabled,
       scrapling: defaultScraplingQueue.state(),
       centralBypass: true
@@ -612,6 +808,8 @@ function createCloudflareBypass(options = {}) {
     smartFetch: fetchHtml,
     fetchAxiosLike,
     ensureReady,
+    runCurlCffi,
+    runScrapling,
     shouldUseShield: params => enabled && shouldUseCloudflareBypass({ baseUrl, ...params }),
     shouldUseCloudflareBypass: params => enabled && shouldUseCloudflareBypass({ baseUrl, ...params }),
     isBlockedStatus,
@@ -632,7 +830,9 @@ module.exports = {
   createCloudflareBypass,
   createBlockedFallbackGuard,
   createBypassQueue,
+  runCurlCffiBypass,
   runScraplingBypass,
+  normalizeCurlCffiResult,
   normalizeScraplingResult,
   shouldUseCloudflareBypass,
   isBlockedStatus,
