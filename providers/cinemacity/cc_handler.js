@@ -14,6 +14,25 @@ const {
     responseText
 } = require('../utils/bypass');
 const { createCloudflareBypass } = require('../utils/cloudflare_bypass');
+const { buildCookieHeaderFromSession } = require('../utils/cf_clearance_manager');
+
+function mergeCookieStrings(...cookieStrings) {
+    const merged = new Map();
+    for (const raw of cookieStrings) {
+        if (!raw) continue;
+        for (const part of String(raw).split(';')) {
+            const trimmed = part.trim();
+            if (!trimmed) continue;
+            const eq = trimmed.indexOf('=');
+            if (eq <= 0) continue;
+            const name = trimmed.slice(0, eq).trim();
+            const value = trimmed.slice(eq + 1).trim();
+            if (!name) continue;
+            merged.set(name, value);
+        }
+    }
+    return [...merged.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
+}
 const { SingleFlight, TtlLruCache } = require('../utils/provider_runtime');
 const { withProviderHealth } = require('../utils/provider_health');
 const { createRustShieldClient } = require('../utils/rust_shield_client');
@@ -3085,10 +3104,25 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
     logCinemaCityDebug('parse: stream extracted', { pageUrl, streamUrl: streamUrl.slice(0, 160) });
 
     const streamContext = /\.m3u8($|\?)/i.test(streamUrl) ? 'hls' : 'media';
+    // The CDN that serves the stream lives on a different host than cinemacity.cc, so the
+    // domain-scoped cookie jar would not include the Cloudflare clearance / PHPSESSID
+    // cookies captured while loading the page. Merge the base session cookie with both
+    // the local jar entries for the page host and any clearance cookies held by the
+    // shield guard, then pass the full string explicitly so the proxy forwards it.
+    const pageJarCookie = getCookieHeaderForUrl(pageUrl, '') || '';
+    let guardClearanceCookie = '';
+    try {
+        const guardSession = providerShield?.guard?.getSession?.();
+        if (guardSession) {
+            guardClearanceCookie = buildCookieHeaderFromSession(guardSession, pageUrl) || '';
+        }
+    } catch (_) {}
+    const pageCookieHeader = mergeCookieStrings(getCinemaCitySessionCookie(), pageJarCookie, guardClearanceCookie);
     const { headers: streamHeaders } = buildCinemaCityRequestHeaders(streamUrl, streamContext, {
         'Referer': playerReferer,
-        'Origin': getOrigin(pageUrl)
-    }, getCinemaCitySessionCookie());
+        'Origin': getOrigin(pageUrl),
+        'Cookie': pageCookieHeader
+    }, pageCookieHeader);
 
     return {
         streamUrl,
