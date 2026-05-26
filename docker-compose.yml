@@ -9,12 +9,53 @@ services:
     init: true
     ports:
       - "51377:7000"
+
+    mem_limit: ${LEVIATHAN_MEM_LIMIT:-700m}
+    memswap_limit: ${LEVIATHAN_MEMSWAP_LIMIT:-850m}
+    cpus: "${LEVIATHAN_CPUS:-1.5}"
+    pids_limit: 512
     env_file:
       - .env
     environment:
       NODE_ENV: "production"
       PORT: "7000"
       TZ: "Europe/Rome"
+      MALLOC_ARENA_MAX: "2"
+      UV_THREADPOOL_SIZE: "8"
+      NODE_OPTIONS: "--max-old-space-size=${LEVI_NODE_OLD_SPACE_MB:-384} --max-semi-space-size=16"
+
+      # RAM saver: keep all functions, but rely more on DB/shared cache and less on huge in-process caches.
+      STREAM_CACHE_MAX_KEYS: "${STREAM_CACHE_MAX_KEYS:-3000}"
+      RAW_CACHE_MAX_KEYS: "${RAW_CACHE_MAX_KEYS:-6000}"
+      CLOUD_BUILD_CACHE_MAX_KEYS: "${CLOUD_BUILD_CACHE_MAX_KEYS:-2000}"
+      RAW_STREAM_CACHE_MAX_KEYS: "${RAW_STREAM_CACHE_MAX_KEYS:-3000}"
+      RAW_STREAM_CACHE_MAX_BYTES: "${RAW_STREAM_CACHE_MAX_BYTES:-262144}"
+      SHARED_FETCH_INFLIGHT_MAX_ENTRIES: "${SHARED_FETCH_INFLIGHT_MAX_ENTRIES:-1024}"
+      TIMED_CACHE_MAX_ENTRIES: "${TIMED_CACHE_MAX_ENTRIES:-900}"
+      TEXT_PARSED_TITLE_CACHE_MAX: "${TEXT_PARSED_TITLE_CACHE_MAX:-2000}"
+      TEXT_NORMALIZED_CACHE_MAX: "${TEXT_NORMALIZED_CACHE_MAX:-4000}"
+      TEXT_LANGUAGE_CACHE_MAX: "${TEXT_LANGUAGE_CACHE_MAX:-4000}"
+      RD_PROBE_CACHE_MAX_ENTRIES: "${RD_PROBE_CACHE_MAX_ENTRIES:-900}"
+      LOCAL_AVAILABILITY_MAX_ENTRIES: "${LOCAL_AVAILABILITY_MAX_ENTRIES:-2500}"
+      LOCAL_CHECK_MARKER_MAX_ENTRIES: "${LOCAL_CHECK_MARKER_MAX_ENTRIES:-900}"
+      LOCAL_DB_LOOKUP_INFLIGHT_MAX_ENTRIES: "${LOCAL_DB_LOOKUP_INFLIGHT_MAX_ENTRIES:-600}"
+      RD_CONCURRENCY: "${RD_CONCURRENCY:-4}"
+      TB_CACHE_MAX_CONCURRENCY: "${TB_CACHE_MAX_CONCURRENCY:-2}"
+      ENGINES_ENGINE_CONCURRENCY: "${ENGINES_ENGINE_CONCURRENCY:-3}"
+      ENGINES_DETAIL_CONCURRENCY: "${ENGINES_DETAIL_CONCURRENCY:-5}"
+      ENGINES_MAX_CONCURRENCY: "${ENGINES_MAX_CONCURRENCY:-8}"
+      ENGINES_FINAL_RESULT_LIMIT: "${ENGINES_FINAL_RESULT_LIMIT:-180}"
+      WEB_PROVIDER_DEBUG: "${WEB_PROVIDER_DEBUG:-false}"
+
+      # Redis RAM saver: cache esterna sacrificabile con limite duro e auto-eviction.
+      REDIS_ENABLED: "${REDIS_ENABLED:-true}"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      REDIS_CACHE_PREFIX: "${REDIS_CACHE_PREFIX:-leviathan:}"
+      REDIS_CACHE_MAX_VALUE_BYTES: "${REDIS_CACHE_MAX_VALUE_BYTES:-524288}"
+      REDIS_TIMEOUT_MS: "${REDIS_TIMEOUT_MS:-150}"
+      REDIS_ERROR_COOLDOWN_MS: "${REDIS_ERROR_COOLDOWN_MS:-5000}"
+      REDIS_LOCAL_HYDRATE_TTL: "${REDIS_LOCAL_HYDRATE_TTL:-120}"
+      RAW_STREAM_REDIS_ENABLED: "${RAW_STREAM_REDIS_ENABLED:-true}"
 
       TMDB_API_KEY: "${TMDB_API_KEY:-}"
 
@@ -72,9 +113,19 @@ services:
       CINEMACITY_RUST_ACCEL_SITEMAP: "false"
 
       CINEMACITY_CF_FALLBACK: "${CINEMACITY_CF_FALLBACK:-true}"
+      CINEMACITY_BACKGROUND_CLEARANCE: "${CINEMACITY_BACKGROUND_CLEARANCE:-false}"
+      CINEMACITY_FORCE_CLEARANCE_BEFORE_SEARCH: "${CINEMACITY_FORCE_CLEARANCE_BEFORE_SEARCH:-false}"
+      CINEMACITY_SITEMAP_LOOKUP: "${CINEMACITY_SITEMAP_LOOKUP:-true}"
+      CINEMACITY_SEARCH_POST_FIRST: "${CINEMACITY_SEARCH_POST_FIRST:-false}"
+      CINEMACITY_PAGE_EXTRACTOR_HOST: "${CINEMACITY_PAGE_EXTRACTOR_HOST:-city}"
+      CINEMACITY_PAGE_EXTRACTOR_LABEL: "${CINEMACITY_PAGE_EXTRACTOR_LABEL:-City}"
+      CINEMACITY_PAGE_EXTRACTOR_PRIMARY: "${CINEMACITY_PAGE_EXTRACTOR_PRIMARY:-true}"
+      CINEMACITY_MOVIE_PAGE_EXTRACTOR_PRIMARY: "${CINEMACITY_MOVIE_PAGE_EXTRACTOR_PRIMARY:-true}"
+      CINEMACITY_SERIES_PAGE_EXTRACTOR_PRIMARY: "${CINEMACITY_SERIES_PAGE_EXTRACTOR_PRIMARY:-true}"
+      CINEMACITY_SERIES_FORCE_CCDN: "${CINEMACITY_SERIES_FORCE_CCDN:-false}"
       CINEMACITY_FORWARD_PROXY: "${CINEMACITY_FORWARD_PROXY:-https://krakenproxy.questoleviatanormio.dpdns.org/forward?url=}"
       CINEMACITY_FORWARD_PROXY_ENABLED: "${CINEMACITY_FORWARD_PROXY_ENABLED:-true}"
-      CINEMACITY_FORWARD_PROXY_FIRST: "${CINEMACITY_FORWARD_PROXY_FIRST:-true}"
+      CINEMACITY_FORWARD_PROXY_FIRST: "${CINEMACITY_FORWARD_PROXY_FIRST:-false}"
       CINEMACITY_FORWARD_PROXY_TIMEOUT_MS: "${CINEMACITY_FORWARD_PROXY_TIMEOUT_MS:-6000}"
       CINEMACITY_SEARCH_WARMUP: "${CINEMACITY_SEARCH_WARMUP:-false}"
       CC_PROVIDER_TIMEOUT: "${CC_PROVIDER_TIMEOUT:-42000}"
@@ -98,10 +149,13 @@ services:
       CINEMACITY_LISTING_PAGE_CACHE_TTL_MS: "${CINEMACITY_LISTING_PAGE_CACHE_TTL_MS:-1200000}"
 
       EUROSTREAMING_URL: "${EUROSTREAMING_URL:-https://eurostream.ing}"
-      EUROSTREAMING_DEBUG: "${EUROSTREAMING_DEBUG:-true}"
+      EUROSTREAMING_DEBUG: "${EUROSTREAMING_DEBUG:-false}"
       ES_RESOLVE_ALL_HOSTS: "${ES_RESOLVE_ALL_HOSTS:-true}"
 
       MEDIAFLOW_EXTRACTOR_PATH: "${MEDIAFLOW_EXTRACTOR_PATH:-/extractor/video}"
+      MEDIAFLOW_CITY_EXTRACTOR_PATH: "${MEDIAFLOW_CITY_EXTRACTOR_PATH:-/extractor/video.m3u8}"
+      MEDIAFLOW_CINEMACITY_EXTRACTOR_PATH: "${MEDIAFLOW_CINEMACITY_EXTRACTOR_PATH:-/extractor/video.m3u8}"
+      MEDIAFLOW_CCCDN_EXTRACTOR_PATH: "${MEDIAFLOW_CCCDN_EXTRACTOR_PATH:-/extractor/video.m3u8}"
       MEDIAFLOW_EXTRACTOR_HLS_PATH: "${MEDIAFLOW_EXTRACTOR_HLS_PATH:-/extractor/video}"
       MEDIAFLOW_EXTRACTOR_HLS_HOSTS: "${MEDIAFLOW_EXTRACTOR_HLS_HOSTS:-}"
       MEDIAFLOW_REDIRECT_STREAM: "${MEDIAFLOW_REDIRECT_STREAM:-true}"
@@ -111,8 +165,8 @@ services:
       EUROSTREAMING_UPROT_FLARE_ENABLED: "${EUROSTREAMING_UPROT_FLARE_ENABLED:-false}"
 
       CB01_BASE_URL: "${CB01_BASE_URL:-https://cb01uno.bar}"
-      CB01_DEBUG: "${CB01_DEBUG:-1}"
-      CB01_TRACE: "${CB01_TRACE:-1}"
+      CB01_DEBUG: "${CB01_DEBUG:-0}"
+      CB01_TRACE: "${CB01_TRACE:-0}"
       CB01_IMPIT_STRATEGY: "${CB01_IMPIT_STRATEGY:-forward-only}"
       CB01_IMPIT_FORWARD_ENABLED: "${CB01_IMPIT_FORWARD_ENABLED:-1}"
       CB01_IMPIT_FORWARD_FALLBACK: "${CB01_IMPIT_FORWARD_FALLBACK:-0}"
@@ -136,9 +190,11 @@ services:
       CB01_IMPIT_HTTP3: "${CB01_IMPIT_HTTP3:-0}"
       CB01_IMPIT_BROWSER: "${CB01_IMPIT_BROWSER:-chrome125}"
 
-      UPROT_DEBUG: "${UPROT_DEBUG:-true}"
+      UPROT_DEBUG: "${UPROT_DEBUG:-false}"
 
     depends_on:
+      redis:
+        condition: service_healthy
       flaresolverr:
         condition: service_healthy
 
@@ -158,6 +214,52 @@ services:
         max-file: "3"
 
 
+  redis:
+    image: redis:7-alpine
+    container_name: leviathan-redis
+    restart: unless-stopped
+    init: true
+
+    # Redis non viene esposto fuori: lo vede solo Leviathan nella rete docker-compose.
+    command:
+      [
+        "redis-server",
+        "--save", "",
+        "--appendonly", "no",
+        "--maxmemory", "${REDIS_MAXMEMORY:-128mb}",
+        "--maxmemory-policy", "${REDIS_MAXMEMORY_POLICY:-allkeys-lfu}",
+        "--lazyfree-lazy-eviction", "yes",
+        "--lazyfree-lazy-expire", "yes",
+        "--tcp-keepalive", "60",
+        "--timeout", "0",
+        "--databases", "1"
+      ]
+
+    expose:
+      - "6379"
+
+    mem_limit: ${REDIS_MEM_LIMIT:-192m}
+    memswap_limit: ${REDIS_MEMSWAP_LIMIT:-256m}
+    cpus: "${REDIS_CPUS:-0.35}"
+    pids_limit: 128
+
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
     container_name: flaresolverr
@@ -169,20 +271,21 @@ services:
       LOG_HTML: "false"
       CAPTCHA_SOLVER: "none"
       TZ: "Europe/Rome"
-      BROWSER_TIMEOUT: "40000"
+      BROWSER_TIMEOUT: "30000"
+      MALLOC_ARENA_MAX: "2"
 
       # Quando FlareSolverr supera questa RAM, viene marcato unhealthy.
       # Autoheal lo riavvia automaticamente.
-      FLARESOLVERR_HEALTH_MAX_MEM_MB: "820"
+      FLARESOLVERR_HEALTH_MAX_MEM_MB: "620"
 
     ports:
       - "8191:8191"
 
-    mem_limit: 900m
-    memswap_limit: 1g
+    mem_limit: ${FLARESOLVERR_MEM_LIMIT:-700m}
+    memswap_limit: ${FLARESOLVERR_MEMSWAP_LIMIT:-850m}
     cpus: "1.0"
     pids_limit: 256
-    shm_size: "256m"
+    shm_size: "192m"
 
     security_opt:
       - no-new-privileges:true
