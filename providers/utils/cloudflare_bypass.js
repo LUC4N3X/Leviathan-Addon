@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 
 let providerHttpGuardFactory = null;
@@ -183,6 +184,15 @@ function hostOf(value) {
   catch (_) { return ''; }
 }
 
+function shortHash(value) {
+  return crypto.createHash('sha1').update(String(value || '')).digest('hex').slice(0, 12);
+}
+
+function buildCurlCffiCoalesceKey(providerName, method, url, body = '') {
+  const bodyKey = body ? `:${shortHash(body)}` : '';
+  return `${providerName || 'provider'}:curl_cffi:${String(method || 'GET').toUpperCase()}:${String(url || '')}${bodyKey}`;
+}
+
 function isSameSiteUrl(url, baseUrl) {
   const baseHost = hostOf(baseUrl);
   const targetHost = hostOf(url);
@@ -309,12 +319,28 @@ function createBypassQueue(options = {}) {
   };
 }
 
+
+const CURL_CFFI_DEFAULTS = Object.freeze({
+  maxConcurrent: 4,
+  maxQueue: 40,
+  queueTimeoutMs: 20_000,
+  timeoutMs: 15_000,
+  impersonate: 'auto',
+  retries: 1,
+  retryBackoffMs: 250,
+  warmupOrigin: true,
+  browserHeaders: true,
+  acceptLanguage: 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+  beforeFlare: true,
+  beforeFlareTimeoutMs: 6500
+});
+
 const defaultScraplingQueue = createBypassQueue({ label: 'scrapling' });
 const defaultCurlCffiQueue = createBypassQueue({
   label: 'curl_cffi',
-  maxConcurrent: envNumber('CURL_CFFI_MAX_CONCURRENT', 4, 1, 24),
-  maxQueue: envNumber('CURL_CFFI_MAX_QUEUE', 40, 0, 1000),
-  queueTimeoutMs: envNumber('CURL_CFFI_QUEUE_TIMEOUT_MS', 20_000, 1000)
+  maxConcurrent: envNumber('CURL_CFFI_MAX_CONCURRENT', CURL_CFFI_DEFAULTS.maxConcurrent, 1, 24),
+  maxQueue: envNumber('CURL_CFFI_MAX_QUEUE', CURL_CFFI_DEFAULTS.maxQueue, 0, 1000),
+  queueTimeoutMs: envNumber('CURL_CFFI_QUEUE_TIMEOUT_MS', CURL_CFFI_DEFAULTS.queueTimeoutMs, 1000)
 });
 const activeScraplingBypasses = new Map();
 const activeCurlCffiBypasses = new Map();
@@ -393,19 +419,44 @@ async function runScraplingBypass(url, providerName = 'provider', options = {}) 
 }
 
 
+
+function isUsableCurlCffiProxyUrl(value) {
+  const clean = String(value || '').trim();
+  if (!clean) return false;
+  try {
+    const parsed = new URL(clean);
+    const protocol = parsed.protocol.toLowerCase();
+    if (!['http:', 'https:', 'socks4:', 'socks4a:', 'socks5:', 'socks5h:'].includes(protocol)) return false;
+    // curl_cffi expects a real proxy listener, not a URL-forwarding endpoint.
+    // Kraken /forward?url= style URLs are fetch endpoints, so using them as a
+    // CONNECT proxy would break every request.
+    if (parsed.search || (parsed.pathname && parsed.pathname !== '/')) return false;
+    return Boolean(parsed.hostname);
+  } catch (_) {
+    return false;
+  }
+}
+
+function firstUsableCurlCffiProxy(values = []) {
+  for (const value of values) {
+    const clean = String(value || '').trim();
+    if (clean && isUsableCurlCffiProxyUrl(clean)) return clean;
+  }
+  return '';
+}
+
 function resolveCurlCffiProxy(providerName = 'provider', options = {}) {
-  if (options.proxy) return String(options.proxy).trim();
   const envPrefix = envPrefixFor(providerName, options.envPrefix);
-  return String(
-    process.env[`${envPrefix}_CURL_CFFI_PROXY`]
-    || process.env.CURL_CFFI_PROXY
-    || process.env.CF_CURL_CFFI_PROXY
-    || process.env.HTTPS_PROXY
-    || process.env.HTTP_PROXY
-    || process.env.https_proxy
-    || process.env.http_proxy
-    || ''
-  ).trim();
+  return firstUsableCurlCffiProxy([
+    options.proxy,
+    process.env[`${envPrefix}_CURL_CFFI_PROXY`],
+    process.env.CURL_CFFI_PROXY,
+    process.env.CF_CURL_CFFI_PROXY,
+    process.env.HTTPS_PROXY,
+    process.env.HTTP_PROXY,
+    process.env.https_proxy,
+    process.env.http_proxy
+  ]);
 }
 
 function resolveCurlCffiScriptPath(options = {}) {
@@ -424,16 +475,28 @@ function execCurlCffiBypass(url, providerName = 'provider', options = {}) {
     }
 
     const method = String(options.method || (options.isPost ? 'POST' : 'GET')).toUpperCase();
-    const timeout = Math.max(1000, Number(options.timeout || options.timeoutMs || process.env.CURL_CFFI_TIMEOUT_MS || 15_000) || 15_000);
+    const envPrefix = envPrefixFor(providerName, options.envPrefix);
+    const timeout = Math.max(1000, Number(options.timeout || options.timeoutMs || process.env[`${envPrefix}_CURL_CFFI_TIMEOUT_MS`] || process.env.CURL_CFFI_TIMEOUT_MS || CURL_CFFI_DEFAULTS.timeoutMs) || CURL_CFFI_DEFAULTS.timeoutMs);
+    const retries = Math.max(0, Math.min(5, Number(options.retries ?? process.env[`${envPrefix}_CURL_CFFI_RETRIES`] ?? process.env.CURL_CFFI_RETRIES ?? CURL_CFFI_DEFAULTS.retries) || 0));
+    const retryBackoffMs = Math.max(0, Math.min(5000, Number(options.retryBackoffMs ?? process.env[`${envPrefix}_CURL_CFFI_RETRY_BACKOFF_MS`] ?? process.env.CURL_CFFI_RETRY_BACKOFF_MS ?? CURL_CFFI_DEFAULTS.retryBackoffMs) || 0));
+    const warmupOrigin = options.warmupOrigin ?? envFlagNotFalse(`${envPrefix}_CURL_CFFI_WARMUP_ORIGIN`, envFlagNotFalse('CURL_CFFI_WARMUP_ORIGIN', CURL_CFFI_DEFAULTS.warmupOrigin));
+    const browserHeaders = options.browserHeaders ?? envFlagNotFalse(`${envPrefix}_CURL_CFFI_BROWSER_HEADERS`, envFlagNotFalse('CURL_CFFI_BROWSER_HEADERS', CURL_CFFI_DEFAULTS.browserHeaders));
+    const acceptLanguage = String(options.acceptLanguage || process.env[`${envPrefix}_CURL_CFFI_ACCEPT_LANGUAGE`] || process.env.CURL_CFFI_ACCEPT_LANGUAGE || CURL_CFFI_DEFAULTS.acceptLanguage).trim();
     const args = [
       scriptPath,
       String(url),
       '--timeout', String(timeout),
-      '--impersonate', String(options.impersonate || process.env.CURL_CFFI_IMPERSONATE || 'chrome120')
+      '--impersonate', String(options.impersonate || process.env[`${envPrefix}_CURL_CFFI_IMPERSONATE`] || process.env.CURL_CFFI_IMPERSONATE || CURL_CFFI_DEFAULTS.impersonate),
+      '--retries', String(retries),
+      '--retry-backoff', String(retryBackoffMs)
     ];
     if (method) args.push('--method', method);
     if (options.body || options.data) args.push('--data', String(options.body || options.data));
     if (options.headers) args.push('--headers', JSON.stringify(options.headers));
+    if (acceptLanguage) args.push('--accept-language', acceptLanguage);
+    if (options.referer) args.push('--referer', String(options.referer));
+    if (warmupOrigin) args.push('--warmup-origin');
+    if (browserHeaders) args.push('--browser-headers');
     const proxy = resolveCurlCffiProxy(providerName, options);
     if (proxy) args.push('--proxy', proxy);
     if (options.insecure || envFlag('CURL_CFFI_INSECURE', false)) args.push('--insecure');
@@ -448,7 +511,7 @@ function execCurlCffiBypass(url, providerName = 'provider', options = {}) {
     const killTimer = setTimeout(() => {
       killedByTimeout = true;
       try { child.kill('SIGKILL'); } catch (_) {}
-    }, timeout + 1000);
+    }, Math.max(timeout + 1000, timeout * (retries + 1) + 3000));
     if (killTimer?.unref) killTimer.unref();
 
     child.stdout.on('data', chunk => { stdout += chunk.toString(); });
@@ -560,8 +623,11 @@ function normalizeCurlCffiResult(result = {}, providerName = 'provider', fallbac
   session.scrapling = false;
   session.curlCffi = true;
   session.source = 'curl_cffi';
-  session.impersonate = result.impersonate || process.env.CURL_CFFI_IMPERSONATE || 'chrome120';
+  session.impersonate = result.impersonate || process.env.CURL_CFFI_IMPERSONATE || CURL_CFFI_DEFAULTS.impersonate;
+  session.impersonateChain = Array.isArray(result.impersonateChain) ? result.impersonateChain : [];
   session.elapsedMs = Number(result.elapsedMs || 0) || 0;
+  session.challengeDetected = Boolean(result.challengeDetected);
+  if (result.cookieHeader && !session.cookies) session.cookies = String(result.cookieHeader);
   return session;
 }
 
@@ -583,7 +649,12 @@ function createCloudflareBypass(options = {}) {
   const baseUrl = normalizeOrigin(options.baseUrl || options.initialBaseUrl) || options.baseUrl || options.initialBaseUrl;
   const enabled = options.enabled ?? envFlag(`${envPrefix}_CF_FALLBACK`, true);
   const curlCffiEnabled = options.curlCffiEnabled ?? envFlag(`${envPrefix}_CURL_CFFI_ENABLED`, envFlag('CURL_CFFI_ENABLED', true));
-  const curlCffiImpersonate = String(options.curlCffiImpersonate || process.env[`${envPrefix}_CURL_CFFI_IMPERSONATE`] || process.env.CURL_CFFI_IMPERSONATE || 'chrome120');
+  const curlCffiImpersonate = String(options.curlCffiImpersonate || process.env[`${envPrefix}_CURL_CFFI_IMPERSONATE`] || process.env.CURL_CFFI_IMPERSONATE || CURL_CFFI_DEFAULTS.impersonate);
+  const curlCffiRetries = envNumber(`${envPrefix}_CURL_CFFI_RETRIES`, envNumber('CURL_CFFI_RETRIES', CURL_CFFI_DEFAULTS.retries, 0, 5), 0, 5);
+  const curlCffiRetryBackoffMs = envNumber(`${envPrefix}_CURL_CFFI_RETRY_BACKOFF_MS`, envNumber('CURL_CFFI_RETRY_BACKOFF_MS', CURL_CFFI_DEFAULTS.retryBackoffMs, 0, 5000), 0, 5000);
+  const curlCffiWarmupOrigin = envFlagNotFalse(`${envPrefix}_CURL_CFFI_WARMUP_ORIGIN`, envFlagNotFalse('CURL_CFFI_WARMUP_ORIGIN', CURL_CFFI_DEFAULTS.warmupOrigin));
+  const curlCffiBrowserHeaders = envFlagNotFalse(`${envPrefix}_CURL_CFFI_BROWSER_HEADERS`, envFlagNotFalse('CURL_CFFI_BROWSER_HEADERS', CURL_CFFI_DEFAULTS.browserHeaders));
+  const curlCffiAcceptLanguage = String(process.env[`${envPrefix}_CURL_CFFI_ACCEPT_LANGUAGE`] || process.env.CURL_CFFI_ACCEPT_LANGUAGE || options.acceptLanguage || CURL_CFFI_DEFAULTS.acceptLanguage);
   const scraplingEnabled = options.scraplingEnabled ?? envFlag(`${envPrefix}_SCRAPLING_ENABLED`, envFlag('SCRAPLING_ENABLED', false));
   const useRustShield = options.useRustShield ?? envFlag(`${envPrefix}_RUST_SHIELD`, true);
   const useRustShieldForSession = options.useRustShieldForSession ?? useRustShield;
@@ -604,8 +675,8 @@ function createCloudflareBypass(options = {}) {
     maxCacheItems: options.maxCacheItems || 300,
     useRustShield,
     useRustShieldForSession,
-    curlCffiBeforeFlare: options.curlCffiBeforeFlare ?? envFlagNotFalse(`${envPrefix}_CURL_CFFI_BEFORE_FLARE`, envFlagNotFalse('CURL_CFFI_BEFORE_FLARE', true)),
-    curlCffiBeforeFlareTimeoutMs: options.curlCffiBeforeFlareTimeoutMs || envNumber(`${envPrefix}_CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS`, envNumber('CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS', 6500, 1000, 15000), 1000, 15000),
+    curlCffiBeforeFlare: options.curlCffiBeforeFlare ?? envFlagNotFalse(`${envPrefix}_CURL_CFFI_BEFORE_FLARE`, envFlagNotFalse('CURL_CFFI_BEFORE_FLARE', CURL_CFFI_DEFAULTS.beforeFlare)),
+    curlCffiBeforeFlareTimeoutMs: options.curlCffiBeforeFlareTimeoutMs || envNumber(`${envPrefix}_CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS`, envNumber('CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS', CURL_CFFI_DEFAULTS.beforeFlareTimeoutMs, 1000, 15000), 1000, 15000),
     curlCffiPreClearance: async (targetUrl, preOptions = {}) => {
       if (!shouldAttemptCurlCffi(targetUrl, preOptions)) return null;
       return runCurlCffi(targetUrl, {
@@ -613,7 +684,7 @@ function createCloudflareBypass(options = {}) {
         method: 'GET',
         isPost: false,
         body: null,
-        timeoutMs: preOptions.timeoutMs || preOptions.timeout || envNumber(`${envPrefix}_CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS`, envNumber('CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS', 6500, 1000, 15000), 1000, 15000),
+        timeoutMs: preOptions.timeoutMs || preOptions.timeout || envNumber(`${envPrefix}_CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS`, envNumber('CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS', CURL_CFFI_DEFAULTS.beforeFlareTimeoutMs, 1000, 15000), 1000, 15000),
         headers: preOptions.headers || {},
         allowFlareSolverr: false,
         allowScrapling: false,
@@ -649,9 +720,15 @@ function createCloudflareBypass(options = {}) {
       headers: fetchOptions.headers || {},
       impersonate: fetchOptions.impersonate || fetchOptions.curlCffiImpersonate || curlCffiImpersonate,
       proxy: fetchOptions.proxy || fetchOptions.curlCffiProxy || null,
+      retries: fetchOptions.curlCffiRetries ?? curlCffiRetries,
+      retryBackoffMs: fetchOptions.curlCffiRetryBackoffMs ?? curlCffiRetryBackoffMs,
+      warmupOrigin: fetchOptions.curlCffiWarmupOrigin ?? curlCffiWarmupOrigin,
+      browserHeaders: fetchOptions.curlCffiBrowserHeaders ?? curlCffiBrowserHeaders,
+      acceptLanguage: fetchOptions.acceptLanguage || fetchOptions.curlCffiAcceptLanguage || curlCffiAcceptLanguage,
+      referer: fetchOptions.referer || fetchOptions.headers?.Referer || fetchOptions.headers?.referer || '',
       runner: options.curlCffiRunner,
       queue: options.curlCffiQueue,
-      coalesceKey: fetchOptions.curlCffiCoalesceKey || providerName,
+      coalesceKey: fetchOptions.curlCffiCoalesceKey || buildCurlCffiCoalesceKey(providerName, method, url, fetchOptions.body || fetchOptions.data || ''),
       envPrefix
     });
     return normalizeCurlCffiResult(rawResult, providerName, url);
@@ -791,6 +868,10 @@ function createCloudflareBypass(options = {}) {
       baseUrl,
       curlCffiEnabled,
       curlCffiImpersonate,
+      curlCffiRetries,
+      curlCffiRetryBackoffMs,
+      curlCffiWarmupOrigin,
+      curlCffiBrowserHeaders,
       curlCffi: defaultCurlCffiQueue.state(),
       scraplingEnabled,
       scrapling: defaultScraplingQueue.state(),
@@ -830,6 +911,7 @@ module.exports = {
   createCloudflareBypass,
   createBlockedFallbackGuard,
   createBypassQueue,
+  buildCurlCffiCoalesceKey,
   runCurlCffiBypass,
   runScraplingBypass,
   normalizeCurlCffiResult,
