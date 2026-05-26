@@ -39,6 +39,7 @@ class LRUCache {
 // is reused by all addon requests and all users until the CookieJar session expires or is invalidated.
 const CF_SHARED_CLEARANCE_AUTHORITY = true;
 const CF_SHARED_CLEARANCE_FORCE_ORIGIN = true;
+const CURL_CFFI_GUARD_DEFAULTS = Object.freeze({ beforeFlare: true, beforeFlareTimeoutMs: 6500 });
 
 function envFlag(name, fallback = false) {
   const raw = process.env[name];
@@ -180,13 +181,13 @@ function createProviderHttpGuard(options = {}) {
   const curlCffiPreClearance = typeof options.curlCffiPreClearance === 'function' ? options.curlCffiPreClearance : null;
   const curlCffiBeforeFlare = Boolean(curlCffiPreClearance)
     && options.curlCffiBeforeFlare !== false
-    && envFlagNotFalse(`${providerEnvPrefix}_CURL_CFFI_BEFORE_FLARE`, envFlagNotFalse('CURL_CFFI_BEFORE_FLARE', true));
+    && envFlagNotFalse(`${providerEnvPrefix}_CURL_CFFI_BEFORE_FLARE`, envFlagNotFalse('CURL_CFFI_BEFORE_FLARE', CURL_CFFI_GUARD_DEFAULTS.beforeFlare));
   const curlCffiBeforeFlareTimeoutMs = Math.max(1000, Math.min(15000, Number(
     options.curlCffiBeforeFlareTimeoutMs
     || process.env[`${providerEnvPrefix}_CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS`]
     || process.env.CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS
-    || 6500
-  ) || 6500));
+    || CURL_CFFI_GUARD_DEFAULTS.beforeFlareTimeoutMs
+  ) || CURL_CFFI_GUARD_DEFAULTS.beforeFlareTimeoutMs));
 
   function loadStoredDomain() {
     try {
