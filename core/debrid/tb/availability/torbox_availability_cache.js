@@ -20,7 +20,7 @@ const RETRY_DELAY_BASE = 1600;
 const MAX_CONCURRENCY = Math.max(1, Math.min(8, parseInt(process.env.TB_CACHE_MAX_CONCURRENCY || '5', 10) || 5));
 const DEFAULT_SYNC_LIMIT = 20;
 const MIN_VIDEO_SIZE = 50 * 1024 * 1024;
-const LOCAL_AVAILABILITY_MAX_ENTRIES = 8000;
+const LOCAL_AVAILABILITY_MAX_ENTRIES = Math.max(500, Math.min(50000, parseInt(process.env.TB_LOCAL_AVAILABILITY_MAX_ENTRIES || process.env.LOCAL_AVAILABILITY_MAX_ENTRIES || '2500', 10) || 2500));
 const UNCACHED_TTL_SECONDS = Math.max(
   15 * 60,
   parseInt(process.env.TB_UNCACHED_TTL_SECONDS || String(2 * 60 * 60), 10) || 2 * 60 * 60
