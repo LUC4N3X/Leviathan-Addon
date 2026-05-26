@@ -4,14 +4,20 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=7000
-ENV PIP_BREAK_SYSTEM_PACKAGES=1
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/.venv/bin:$PATH"
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates python3 python3-pip \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        python3 \
+        python3-pip \
+        python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements-python.txt ./
-RUN python3 -m pip install --no-cache-dir -r requirements-python.txt
+RUN python3 -m venv /app/.venv \
+    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /app/.venv/bin/pip install --no-cache-dir "curl_cffi>=0.7.0"
 
 COPY package.json package-lock.json ./
 
