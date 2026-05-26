@@ -176,6 +176,17 @@ function createProviderHttpGuard(options = {}) {
     process.env.HTTP_PROXY ||
     'direct'
   ).trim() || 'direct';
+  const providerEnvPrefix = String(providerName || 'provider').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'PROVIDER';
+  const curlCffiPreClearance = typeof options.curlCffiPreClearance === 'function' ? options.curlCffiPreClearance : null;
+  const curlCffiBeforeFlare = Boolean(curlCffiPreClearance)
+    && options.curlCffiBeforeFlare !== false
+    && envFlagNotFalse(`${providerEnvPrefix}_CURL_CFFI_BEFORE_FLARE`, envFlagNotFalse('CURL_CFFI_BEFORE_FLARE', true));
+  const curlCffiBeforeFlareTimeoutMs = Math.max(1000, Math.min(15000, Number(
+    options.curlCffiBeforeFlareTimeoutMs
+    || process.env[`${providerEnvPrefix}_CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS`]
+    || process.env.CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS
+    || 6500
+  ) || 6500));
 
   function loadStoredDomain() {
     try {
@@ -695,6 +706,82 @@ function createProviderHttpGuard(options = {}) {
     if (next.url) updateCurrentDomainFromUrl(next.url);
   }
 
+  async function tryCurlCffiBeforeFlare(clearanceUrl, triggerUrl, { signal = null, startedAt = Date.now(), reason = 'pre-flare', sharedKey = null } = {}) {
+    if (!curlCffiBeforeFlare || signal?.aborted || !clearanceUrl) return null;
+
+    const profile = activeSession?.userAgent ? activeSession : pickProfile(profiles);
+    const headers = buildHeaders({
+      session: isSessionFreshForUrl(activeSession, clearanceUrl) ? activeSession : null,
+      directProfile: profile,
+      method: 'GET',
+      url: clearanceUrl
+    });
+
+    try {
+      const session = await curlCffiPreClearance(clearanceUrl, {
+        method: 'GET',
+        isPost: false,
+        body: null,
+        timeoutMs: Math.min(curlCffiBeforeFlareTimeoutMs, clearanceTimeoutMs),
+        headers,
+        allowCurlCffi: true,
+        allowScrapling: false,
+        allowFlareSolverr: false,
+        triggerUrl,
+        reason,
+        sharedKey,
+        curlCffiCoalesceKey: sharedKey ? `${sharedKey}:curl_cffi` : `${providerName}:${normalizeBaseUrl(clearanceUrl) || clearanceUrl}:curl_cffi`
+      });
+
+      if (!session) return null;
+      const cookieHeader = buildCookieHeaderFromSession(session, session.solvedUrl || clearanceUrl) || session.cookies || '';
+      const html = typeof session.response === 'string' ? session.response : String(session.response || session.solutionResponse || '');
+      const status = Number(session.solutionResponseStatus || session.status || 200) || 200;
+      const usefulHtml = html.length >= 32 && !isChallengePage(html, status);
+      const hasCfClearance = Boolean(session.cf_clearance) || /(?:^|;\s*)cf_clearance=/i.test(cookieHeader);
+
+      if (session.userAgent && cookieHeader) {
+        persistSession({
+          ...session,
+          cookies: cookieHeader,
+          url: session.url || normalizeBaseUrl(session.solvedUrl || clearanceUrl) || currentBaseUrl,
+          solvedUrl: session.solvedUrl || clearanceUrl,
+          timestamp: Date.now(),
+          egressKey: session.egressKey || clearanceEgressKey,
+          impitBrowser: session.impitBrowser || getImpitBrowserForFingerprint(session)
+        }, session.solvedUrl || clearanceUrl);
+      }
+
+      logger.debug('curl_cffi pre-flare result', {
+        clearanceUrl,
+        triggerUrl,
+        status,
+        bytes: html.length,
+        usefulHtml,
+        hasCookie: Boolean(cookieHeader),
+        hasCfClearance,
+        seededSession: Boolean(session.userAgent && cookieHeader),
+        freshForTrigger: isSessionFreshForUrl(activeSession, triggerUrl),
+        ms: Date.now() - startedAt
+      });
+
+      // curl_cffi is allowed to seed UA/cookies before FlareSolverr, but it should
+      // not suppress FlareSolverr unless it really obtained a Cloudflare clearance.
+      return hasCfClearance && isSessionFreshForUrl(activeSession, triggerUrl) ? activeSession : null;
+    } catch (error) {
+      if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
+      logger.debug('curl_cffi pre-flare skipped', {
+        clearanceUrl,
+        triggerUrl,
+        reason,
+        error: error?.message || String(error),
+        code: error?.code,
+        ms: Date.now() - startedAt
+      });
+      return null;
+    }
+  }
+
 
   async function tryRedirectedSessionReplay(originalUrl, redirectedUrl, { method = 'GET', body = null, signal = null, timeout = directFetchTimeoutMs, startedAt = Date.now(), reason = 'redirect' } = {}) {
     const originalBase = normalizeBaseUrl(originalUrl);
@@ -866,6 +953,20 @@ function createProviderHttpGuard(options = {}) {
       // A shared CF authority must not be canceled by one user closing Stremio.
       // The internal hard timeout still protects FlareSolverr from hanging forever.
       const solverSignal = sharedClearanceAuthority ? null : signal;
+      const curlSession = await tryCurlCffiBeforeFlare(primaryClearanceUrl, triggerUrl, {
+        signal: solverSignal,
+        reason: 'primary-pre-flare',
+        sharedKey
+      });
+      if (isSessionFreshForUrl(curlSession || activeSession, triggerUrl)) {
+        logger.debug('clearance satisfied by curl_cffi pre-flare', {
+          triggerUrl,
+          clearanceUrl: primaryClearanceUrl,
+          sharedKey
+        });
+        return curlSession || activeSession;
+      }
+
       let session = await clearanceManager.solve(primaryClearanceUrl, solverSignal, {
         triggerUrl,
         method: isPost ? 'POST' : 'GET',
@@ -887,6 +988,16 @@ function createProviderHttpGuard(options = {}) {
 
       for (const fallbackUrl of fallbacks) {
         if (signal?.aborted) return null;
+        const curlFallbackSession = await tryCurlCffiBeforeFlare(fallbackUrl, triggerUrl, {
+          signal,
+          reason: 'fallback-pre-flare',
+          sharedKey: sharedKey ? `${sharedKey}:fallback` : null
+        });
+        if (isSessionFreshForUrl(curlFallbackSession || activeSession, triggerUrl)) {
+          logger.debug('fallback clearance satisfied by curl_cffi pre-flare', { triggerUrl, clearanceUrl: fallbackUrl });
+          return curlFallbackSession || activeSession;
+        }
+
         session = await clearanceManager.solve(fallbackUrl, signal, {
           triggerUrl,
           method: isPost ? 'POST' : 'GET',
@@ -1168,6 +1279,8 @@ function createProviderHttpGuard(options = {}) {
       preClearanceRescue: impitPreClearanceRescue,
       flareEndpoints: clearanceManager.endpoints?.length || 0,
       cookieJarV2: true,
+      curlCffiBeforeFlare,
+      curlCffiBeforeFlareTimeoutMs,
       rustShield: rustShield.state?.() || { enabled: false },
       sharedClearanceAuthority,
       sharedClearanceForceOrigin,
