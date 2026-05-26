@@ -14,6 +14,25 @@ const {
     responseText
 } = require('../utils/bypass');
 const { createCloudflareBypass } = require('../utils/cloudflare_bypass');
+const { buildCookieHeaderFromSession } = require('../utils/cf_clearance_manager');
+
+function mergeCookieStrings(...cookieStrings) {
+    const merged = new Map();
+    for (const raw of cookieStrings) {
+        if (!raw) continue;
+        for (const part of String(raw).split(';')) {
+            const trimmed = part.trim();
+            if (!trimmed) continue;
+            const eq = trimmed.indexOf('=');
+            if (eq <= 0) continue;
+            const name = trimmed.slice(0, eq).trim();
+            const value = trimmed.slice(eq + 1).trim();
+            if (!name) continue;
+            merged.set(name, value);
+        }
+    }
+    return [...merged.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
+}
 const { SingleFlight, TtlLruCache } = require('../utils/provider_runtime');
 const { withProviderHealth } = require('../utils/provider_health');
 const { createRustShieldClient } = require('../utils/rust_shield_client');
@@ -79,7 +98,7 @@ const CINEMACITY_EMBEDDED_ENV_DEFAULTS = Object.freeze({
     CINEMACITY_RUST_ACCEL_SITEMAP: 'false',
     CINEMACITY_RUST_ACCEL_SEARCH_GET: 'false',
     CINEMACITY_FORCE_CLEARANCE_BEFORE_SEARCH: 'true',
-    CINEMACITY_FORWARD_PROXY_FIRST: 'false',
+    CINEMACITY_FORWARD_PROXY_FIRST: 'true',
     CINEMACITY_FORWARD_PROXY_ENABLED: 'true',
     CINEMACITY_SEARCH_POST_FIRST: 'true',
     CINEMACITY_PAGE_EXTRACTOR_PRIMARY: 'true',
@@ -155,14 +174,17 @@ const CINEMACITY_LISTING_TOTAL_MS = Math.max(CINEMACITY_LISTING_TIMEOUT_MS + 900
 const CINEMACITY_LISTING_CACHE_TTL_MS = Math.max(5 * 60 * 1000, Math.min(4 * 60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_LISTING_CACHE_TTL_MS || String(45 * 60 * 1000), 10) || (45 * 60 * 1000)));
 const CINEMACITY_LISTING_PAGE_CACHE_TTL_MS = Math.max(2 * 60 * 1000, Math.min(60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_LISTING_PAGE_CACHE_TTL_MS || String(20 * 60 * 1000), 10) || (20 * 60 * 1000)));
 const CINEMACITY_DEBUG = envFlag('CINEMACITY_DEBUG', false) || envFlag('DEBUG_CINEMACITY', false);
+// The /cinemacity/fetch endpoint is the CF-bypassed fetcher exposed by Kraken-Proxy.
+// It uses the same solver chain as the stream extractor, so the addon doesn't have to
+// keep its own FlareSolverr fleet hot just to grab the sitemap / search / page HTML.
 const CINEMACITY_KRAKEN_FORWARD_URL = (
     String(process.env.CINEMACITY_FORWARD_PROXY || '').trim()
     || String(process.env.CINEMACITY_KRAKEN_FORWARD_URL || '').trim()
-    || 'https://krakenproxy.questoleviatanormio.dpdns.org/forward?url='
+    || 'https://krakenproxy.questoleviatanormio.dpdns.org/cinemacity/fetch?d='
 );
 const CINEMACITY_KRAKEN_FORWARD_ENABLED = envFlag('CINEMACITY_FORWARD_PROXY_ENABLED', true);
-const CINEMACITY_KRAKEN_FORWARD_FIRST = envFlag('CINEMACITY_FORWARD_PROXY_FIRST', false);
-const CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS = Math.max(1500, Math.min(15000, Number.parseInt(process.env.CINEMACITY_FORWARD_PROXY_TIMEOUT_MS || '6000', 10) || 6000));
+const CINEMACITY_KRAKEN_FORWARD_FIRST = envFlag('CINEMACITY_FORWARD_PROXY_FIRST', true);
+const CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS = Math.max(1500, Math.min(20000, Number.parseInt(process.env.CINEMACITY_FORWARD_PROXY_TIMEOUT_MS || '12000', 10) || 12000));
 // Serie CinemaCity: preferiamo il proxy locale CCCDN/ccproxy come nei film.
 // Il page extractor MediaFlow/Kraken resta fallback se la pagina non espone un file episodio sicuro.
 const CINEMACITY_SERIES_FORCE_CCDN = envFlag('CINEMACITY_SERIES_FORCE_CCDN', true);
@@ -599,6 +621,16 @@ async function fetchHtmlWithKrakenForward(url, extraHeaders = {}, requestTimeout
         const status = Number(response?.status || 0);
         const respBody = responseText(response?.data);
         updateCookiesFromResponse(url, response.headers);
+        // Kraken's /cinemacity/fetch returns the dynamic cookies it captured during the
+        // CF bypass in X-CC-Bypass-Cookies. Replay them into the domain jar so the
+        // stream request (sent to the CDN) can forward CF_clearance / PHPSESSID / etc.
+        const bypassCookies = String(response?.headers?.['x-cc-bypass-cookies'] || response?.headers?.['X-CC-Bypass-Cookies'] || '');
+        if (bypassCookies) {
+            const setCookies = bypassCookies.split(';').map((part) => part.trim()).filter((part) => part.includes('='));
+            if (setCookies.length) {
+                updateCookiesFromResponse(url, { 'set-cookie': setCookies });
+            }
+        }
 
         if (isCloudflareChallenge(respBody, status)) {
             logCinemaCityDebug('kraken forward challenge', { url, status, ms: Date.now() - startedAt });
@@ -3085,10 +3117,25 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
     logCinemaCityDebug('parse: stream extracted', { pageUrl, streamUrl: streamUrl.slice(0, 160) });
 
     const streamContext = /\.m3u8($|\?)/i.test(streamUrl) ? 'hls' : 'media';
+    // The CDN that serves the stream lives on a different host than cinemacity.cc, so the
+    // domain-scoped cookie jar would not include the Cloudflare clearance / PHPSESSID
+    // cookies captured while loading the page. Merge the base session cookie with both
+    // the local jar entries for the page host and any clearance cookies held by the
+    // shield guard, then pass the full string explicitly so the proxy forwards it.
+    const pageJarCookie = getCookieHeaderForUrl(pageUrl, '') || '';
+    let guardClearanceCookie = '';
+    try {
+        const guardSession = providerShield?.guard?.getSession?.();
+        if (guardSession) {
+            guardClearanceCookie = buildCookieHeaderFromSession(guardSession, pageUrl) || '';
+        }
+    } catch (_) {}
+    const pageCookieHeader = mergeCookieStrings(getCinemaCitySessionCookie(), pageJarCookie, guardClearanceCookie);
     const { headers: streamHeaders } = buildCinemaCityRequestHeaders(streamUrl, streamContext, {
         'Referer': playerReferer,
-        'Origin': getOrigin(pageUrl)
-    }, getCinemaCitySessionCookie());
+        'Origin': getOrigin(pageUrl),
+        'Cookie': pageCookieHeader
+    }, pageCookieHeader);
 
     return {
         streamUrl,
