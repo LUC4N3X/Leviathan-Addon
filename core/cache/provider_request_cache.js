@@ -1,6 +1,7 @@
 'use strict';
 
 const { withSharedPromise } = require('../utils/common');
+const { redisCache, writeJsonLater } = require('../utils/redis_cache');
 
 function cloneValue(value) {
     if (value == null) return value;
@@ -18,11 +19,12 @@ function now() {
 }
 
 class ProviderRequestCache {
-    constructor({ name = 'provider-request-cache', maxEntries = 800, inflightMaxEntries = 400, cloneValues = true } = {}) {
+    constructor({ name = 'provider-request-cache', maxEntries = 800, inflightMaxEntries = 400, cloneValues = true, redisEnabled = true } = {}) {
         this.name = name;
         this.maxEntries = Math.max(1, Number(maxEntries) || 800);
         this.inflightMaxEntries = Math.max(1, Number(inflightMaxEntries) || 400);
         this.cloneValues = cloneValues !== false;
+        this.redisEnabled = redisEnabled !== false;
         this.cache = new Map();
         this.inflight = new Map();
         this.hits = 0;
@@ -31,6 +33,8 @@ class ProviderRequestCache {
         this.singleFlightHits = 0;
         this.singleFlightStarts = 0;
         this.evictions = 0;
+        this.redisHits = 0;
+        this.redisSets = 0;
     }
 
     _clone(value) {
@@ -101,14 +105,38 @@ class ProviderRequestCache {
         const cached = this.get(key);
         if (cached !== undefined) return cached;
 
+        const redisNamespace = `providerRequest:${this.name}`;
+        const redisTtlSeconds = Math.max(1, Math.ceil((Number(ttlMs) || 60_000) / 1000));
+        if (this.redisEnabled && options.redis !== false && redisCache.isEnabled()) {
+            const redisValue = await redisCache.getJson(redisNamespace, key);
+            if (redisValue !== undefined) {
+                this.redisHits += 1;
+                this.set(key, redisValue, ttlMs);
+                return this._clone(redisValue);
+            }
+        }
+
         return this.singleFlight(`cache:${key}`, async () => {
             const afterWait = this.get(key);
             if (afterWait !== undefined) return afterWait;
+            if (this.redisEnabled && options.redis !== false && redisCache.isEnabled()) {
+                const redisValue = await redisCache.getJson(redisNamespace, key);
+                if (redisValue !== undefined) {
+                    this.redisHits += 1;
+                    this.set(key, redisValue, ttlMs);
+                    return this._clone(redisValue);
+                }
+            }
             const value = await worker();
             const shouldCache = typeof options.shouldCache === 'function'
                 ? options.shouldCache(value)
                 : value !== undefined && value !== null;
-            if (shouldCache) this.set(key, value, ttlMs);
+            if (shouldCache) {
+                this.set(key, value, ttlMs);
+                if (this.redisEnabled && options.redis !== false) {
+                    if (writeJsonLater(redisNamespace, key, value, redisTtlSeconds)) this.redisSets += 1;
+                }
+            }
             return value;
         });
     }
@@ -124,6 +152,9 @@ class ProviderRequestCache {
             misses: this.misses,
             sets: this.sets,
             evictions: this.evictions,
+            redisEnabled: this.redisEnabled && redisCache.isEnabled(),
+            redisHits: this.redisHits,
+            redisSets: this.redisSets,
             singleFlightHits: this.singleFlightHits,
             singleFlightStarts: this.singleFlightStarts
         };
