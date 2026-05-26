@@ -8,25 +8,32 @@ const { createInvalidationBus } = require('../cache/invalidation_bus');
 const { logger, incrementMetric, registerCacheAccess, registerCacheSet } = require('./runtime');
 const { withSharedPromise } = require('./common');
 const { flushRawStreamCache, getRawStreamCacheStats } = require('../cache/raw_stream_cache');
+const { redisCache, writeJsonLater } = require('./redis_cache');
+
+function boundedCacheInt(name, fallback, min, max) {
+    const parsed = parseInt(process.env[name] || String(fallback), 10);
+    const safe = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    return Math.max(min, Math.min(max, safe));
+}
 
 const myCache = new NodeCache({
     stdTTL: 1800,
     checkperiod: Math.max(15, parseInt(process.env.STREAM_CACHE_CHECKPERIOD || '60', 10) || 60),
-    maxKeys: Math.max(5000, parseInt(process.env.STREAM_CACHE_MAX_KEYS || '20000', 10) || 20000),
+    maxKeys: boundedCacheInt('STREAM_CACHE_MAX_KEYS', 20000, 512, 50000),
     useClones: false,
     deleteOnExpire: true
 });
 const rawCache = new NodeCache({
     stdTTL: 43200,
     checkperiod: Math.max(60, parseInt(process.env.RAW_CACHE_CHECKPERIOD || '300', 10) || 300),
-    maxKeys: Math.max(15000, parseInt(process.env.RAW_CACHE_MAX_KEYS || '30000', 10) || 30000),
+    maxKeys: boundedCacheInt('RAW_CACHE_MAX_KEYS', 30000, 1000, 60000),
     useClones: false,
     deleteOnExpire: true
 });
 const cloudBuildCache = new NodeCache({
     stdTTL: 900,
     checkperiod: Math.max(15, parseInt(process.env.CLOUD_BUILD_CACHE_CHECKPERIOD || '60', 10) || 60),
-    maxKeys: Math.max(5000, parseInt(process.env.CLOUD_BUILD_CACHE_MAX_KEYS || '10000', 10) || 10000),
+    maxKeys: boundedCacheInt('CLOUD_BUILD_CACHE_MAX_KEYS', 10000, 256, 30000),
     useClones: false,
     deleteOnExpire: true
 });
@@ -47,8 +54,9 @@ const EMPTY_RESOLVED_URL_TTL = Math.max(parseInt(process.env.EMPTY_RESOLVED_URL_
 const AVAILABILITY_CACHE_TTL = Math.max(parseInt(process.env.AVAILABILITY_CACHE_TTL || process.env.TORRENTIO_AVAILABILITY_TTL || '432000', 10) || 432000, 60);
 const EMPTY_AVAILABILITY_TTL = Math.max(parseInt(process.env.EMPTY_AVAILABILITY_TTL || '60', 10) || 60, 15);
 const DB_LOOKUP_CACHE_TTL = Math.max(parseInt(process.env.DB_LOOKUP_CACHE_TTL || '30', 10) || 30, 5);
-const SHARED_FETCH_INFLIGHT_MAX_ENTRIES = Math.max(128, Math.min(20000, parseInt(process.env.SHARED_FETCH_INFLIGHT_MAX_ENTRIES || '4096', 10) || 4096));
+const SHARED_FETCH_INFLIGHT_MAX_ENTRIES = boundedCacheInt('SHARED_FETCH_INFLIGHT_MAX_ENTRIES', 4096, 64, 20000);
 const VERBOSE_CACHE_LOGS = String(process.env.VERBOSE_CACHE_LOGS || 'false').toLowerCase() === 'true';
+const REDIS_LOCAL_HYDRATE_TTL = Math.max(5, parseInt(process.env.REDIS_LOCAL_HYDRATE_TTL || '120', 10) || 120);
 const SHARED_STREAM_CACHE_ENABLED = String(process.env.SHARED_STREAM_CACHE_ENABLED || 'true').toLowerCase() !== 'false';
 const SHARED_STREAM_CACHE_MAX_BYTES = Math.max(4096, parseInt(process.env.SHARED_STREAM_CACHE_MAX_BYTES || String(1024 * 1024 * 2), 10) || (1024 * 1024 * 2));
 const SHARED_STREAM_CACHE_WRITE_CONCURRENCY = Math.max(1, parseInt(process.env.SHARED_STREAM_CACHE_WRITE_CONCURRENCY || '2', 10) || 2);
@@ -414,6 +422,20 @@ function invalidateDbTorrentsLocal(key) {
     const deleted = rawCache.del(getDbLookupStorageKey(normalizedKey));
     return { deleted, key: normalizedKey };
 }
+function redisLocalTtl(ttlSeconds) {
+    const ttl = Math.max(1, Number(ttlSeconds || REDIS_LOCAL_HYDRATE_TTL) || REDIS_LOCAL_HYDRATE_TTL);
+    return Math.max(1, Math.min(ttl, REDIS_LOCAL_HYDRATE_TTL));
+}
+
+async function getRedisJson(namespace, key) {
+    if (!redisCache.isEnabled()) return undefined;
+    return redisCache.getJson(namespace, key);
+}
+
+function setRedisJson(namespace, key, value, ttlSeconds) {
+    return writeJsonLater(namespace, key, value, Math.max(1, Number(ttlSeconds || 1) || 1));
+}
+
 
 function invalidateStreamsByHashesLocal(hashes) {
     const normalizedHashes = [...new Set((Array.isArray(hashes) ? hashes : [])
@@ -564,8 +586,22 @@ async function stopInvalidationSync() {
 }
 
 const Cache = {
-    getCachedMagnets: async (key) => myCache.get(`magnets:${key}`) || null,
-    cacheMagnets: async (key, value, ttl = 3600) => { myCache.set(`magnets:${key}`, value, ttl); },
+    getCachedMagnets: async (key) => {
+        const storageKey = `magnets:${key}`;
+        const local = myCache.get(storageKey);
+        if (local !== undefined) return local || null;
+        const remote = await getRedisJson('magnets', storageKey);
+        if (remote !== undefined) {
+            myCache.set(storageKey, remote, redisLocalTtl(3600));
+            return remote || null;
+        }
+        return null;
+    },
+    cacheMagnets: async (key, value, ttl = 3600) => {
+        const storageKey = `magnets:${key}`;
+        myCache.set(storageKey, value, ttl);
+        setRedisJson('magnets', storageKey, value, ttl);
+    },
     getCachedStream: async (key, options = {}) => {
         const normalizedKey = String(key || '').trim();
         const allowLocal = options?.allowLocal !== false;
@@ -657,55 +693,121 @@ const Cache = {
         }
     },
     getMetadata: async (key) => {
-        const data = myCache.get(`meta:${key}`) || null;
-        registerCacheAccess('metadata', !!data);
-        return data;
+        const storageKey = `meta:${key}`;
+        const data = myCache.get(storageKey);
+        if (data !== undefined) {
+            registerCacheAccess('metadata', !!data);
+            return data || null;
+        }
+        const remote = await getRedisJson('metadata', storageKey);
+        if (remote !== undefined) {
+            myCache.set(storageKey, remote, redisLocalTtl(METADATA_CACHE_TTL));
+            registerCacheAccess('metadata', !!remote);
+            return remote || null;
+        }
+        registerCacheAccess('metadata', false);
+        return null;
     },
     cacheMetadata: async (key, value, ttl = METADATA_CACHE_TTL) => {
         registerCacheSet('metadata');
-        myCache.set(`meta:${key}`, value, ttl);
+        const storageKey = `meta:${key}`;
+        myCache.set(storageKey, value, ttl);
+        setRedisJson('metadata', storageKey, value, ttl);
     },
     getResolvedUrl: async (key) => {
-        const data = myCache.get(`resolved:${key}`) || null;
-        registerCacheAccess('lazy', !!data);
-        return data;
+        const storageKey = `resolved:${key}`;
+        const data = myCache.get(storageKey);
+        if (data !== undefined) {
+            registerCacheAccess('lazy', !!data);
+            return data || null;
+        }
+        const remote = await getRedisJson('resolved', storageKey);
+        if (remote !== undefined) {
+            myCache.set(storageKey, remote, redisLocalTtl(RESOLVED_URL_TTL));
+            registerCacheAccess('lazy', !!remote);
+            return remote || null;
+        }
+        registerCacheAccess('lazy', false);
+        return null;
     },
     cacheResolvedUrl: async (key, value, ttl = RESOLVED_URL_TTL) => {
         registerCacheSet('lazy');
         const effectiveTtl = value ? ttl : Math.min(ttl, EMPTY_RESOLVED_URL_TTL);
-        myCache.set(`resolved:${key}`, value, effectiveTtl);
+        const storageKey = `resolved:${key}`;
+        myCache.set(storageKey, value, effectiveTtl);
+        setRedisJson('resolved', storageKey, value, effectiveTtl);
     },
     getLazyLink: async (key) => Cache.getResolvedUrl(key),
     cacheLazyLink: async (key, value, ttl = RESOLVED_URL_TTL) => Cache.cacheResolvedUrl(key, value, ttl),
     getAvailability: async (key) => {
-        const data = myCache.get(`availability:${key}`) || null;
-        registerCacheAccess('raw', !!data);
-        return data;
+        const storageKey = `availability:${key}`;
+        const data = myCache.get(storageKey);
+        if (data !== undefined) {
+            registerCacheAccess('raw', !!data);
+            return data || null;
+        }
+        const remote = await getRedisJson('availability', storageKey);
+        if (remote !== undefined) {
+            myCache.set(storageKey, remote, redisLocalTtl(AVAILABILITY_CACHE_TTL));
+            registerCacheAccess('raw', !!remote);
+            return remote || null;
+        }
+        registerCacheAccess('raw', false);
+        return null;
     },
     cacheAvailability: async (key, value, ttl = AVAILABILITY_CACHE_TTL) => {
         registerCacheSet('raw');
         const normalizedValue = value && typeof value === 'object' ? value : (value ? { value } : null);
         const effectiveTtl = normalizedValue ? ttl : Math.min(ttl, EMPTY_AVAILABILITY_TTL);
-        myCache.set(`availability:${key}`, normalizedValue, effectiveTtl);
+        const storageKey = `availability:${key}`;
+        myCache.set(storageKey, normalizedValue, effectiveTtl);
+        setRedisJson('availability', storageKey, normalizedValue, effectiveTtl);
     },
     getLazyMeta: async (key) => {
-        const data = myCache.get(`lazy_meta:${key}`) || null;
-        registerCacheAccess('lazy', !!data);
-        return data;
+        const storageKey = `lazy_meta:${key}`;
+        const data = myCache.get(storageKey);
+        if (data !== undefined) {
+            registerCacheAccess('lazy', !!data);
+            return data || null;
+        }
+        const remote = await getRedisJson('lazyMeta', storageKey);
+        if (remote !== undefined) {
+            myCache.set(storageKey, remote, redisLocalTtl(43200));
+            registerCacheAccess('lazy', !!remote);
+            return remote || null;
+        }
+        registerCacheAccess('lazy', false);
+        return null;
     },
     cacheLazyMeta: async (key, value, ttl = 43200) => {
         registerCacheSet('lazy');
-        myCache.set(`lazy_meta:${key}`, value, ttl);
+        const storageKey = `lazy_meta:${key}`;
+        myCache.set(storageKey, value, ttl);
+        setRedisJson('lazyMeta', storageKey, value, ttl);
     },
     getDbTorrents: async (key) => {
-        const data = rawCache.get(getDbLookupStorageKey(key));
-        const hit = data !== undefined;
-        registerCacheAccess('dbLookup', hit);
-        return hit ? data : null;
+        const storageKey = getDbLookupStorageKey(key);
+        const data = rawCache.get(storageKey);
+        if (data !== undefined) {
+            registerCacheAccess('dbLookup', true);
+            return data;
+        }
+        const remote = await getRedisJson('dbLookup', storageKey);
+        if (remote !== undefined) {
+            const normalized = Array.isArray(remote) ? remote : [];
+            rawCache.set(storageKey, normalized, redisLocalTtl(DB_LOOKUP_CACHE_TTL));
+            registerCacheAccess('dbLookup', true);
+            return normalized;
+        }
+        registerCacheAccess('dbLookup', false);
+        return null;
     },
     cacheDbTorrents: async (key, value, ttl = DB_LOOKUP_CACHE_TTL) => {
         registerCacheSet('dbLookup');
-        rawCache.set(getDbLookupStorageKey(key), Array.isArray(value) ? value : [], ttl);
+        const storageKey = getDbLookupStorageKey(key);
+        const normalized = Array.isArray(value) ? value : [];
+        rawCache.set(storageKey, normalized, ttl);
+        setRedisJson('dbLookup', storageKey, normalized, ttl);
     },
     invalidateDbTorrents: async (key, reason = 'db_update') => {
         const outcome = invalidateDbTorrentsLocal(key);
@@ -713,17 +815,31 @@ const Cache = {
             incrementMetric('cache.db.invalidations');
             logger.info(`[CACHE] DB lookup invalidation | reason=${reason} | key=${outcome.key}`);
         }
+        if (outcome.key) redisCache.del('dbLookup', getDbLookupStorageKey(outcome.key)).catch(() => {});
         await publishInvalidation({ scope: 'dblookup', key: outcome.key, reason, originPid: process.pid, originNodeId: SHARED_STREAM_CACHE_NODE_ID, ts: Date.now() });
         return outcome;
     },
     getCloudBuild: async (key) => {
-        const data = cloudBuildCache.get(`cloud:${key}`) || null;
-        registerCacheAccess('cloud', !!data);
-        return data;
+        const storageKey = `cloud:${key}`;
+        const data = cloudBuildCache.get(storageKey);
+        if (data !== undefined) {
+            registerCacheAccess('cloud', !!data);
+            return data || null;
+        }
+        const remote = await getRedisJson('cloudBuild', storageKey);
+        if (remote !== undefined) {
+            cloudBuildCache.set(storageKey, remote, redisLocalTtl(900));
+            registerCacheAccess('cloud', !!remote);
+            return remote || null;
+        }
+        registerCacheAccess('cloud', false);
+        return null;
     },
     setCloudBuild: async (key, value, ttl = 900) => {
         registerCacheSet('cloud');
-        cloudBuildCache.set(`cloud:${key}`, value, ttl);
+        const storageKey = `cloud:${key}`;
+        cloudBuildCache.set(storageKey, value, ttl);
+        setRedisJson('cloudBuild', storageKey, value, ttl);
     },
     startInvalidationSync,
     stopInvalidationSync,
@@ -750,6 +866,9 @@ const Cache = {
         streamCacheKeysByImdb.clear();
         streamCacheKeysByEpisode.clear();
         if (typeof flushRawStreamCache === 'function') flushRawStreamCache();
+        for (const namespace of ['magnets', 'metadata', 'resolved', 'availability', 'lazyMeta', 'dbLookup', 'cloudBuild', 'rawProvider', 'rawProviderStale']) {
+            redisCache.deleteNamespace(namespace).catch(() => {});
+        }
     },
     invalidateStreamsByHashes: async (hashes, reason = 'hash_update') => {
         const localOutcome = invalidateStreamsByHashesLocal(hashes);
@@ -821,16 +940,35 @@ const Cache = {
         staleEntries: rawCache.keys().filter((key) => String(key).startsWith('stream_shadow:')).length,
         dbLookupEntries: rawCache.keys().filter((key) => String(key).startsWith('dblookup:')).length,
         sharedEnabled: supportsSharedStreamCache(),
+        redisEnabled: redisCache.isEnabled(),
         rawStream: typeof getRawStreamCacheStats === 'function' ? getRawStreamCacheStats() : null
     }),
-    getRaw: (provider, id) => {
-        const data = rawCache.get(buildRawCacheStorageKey(provider, id));
-        registerCacheAccess('raw', !!data);
-        if (data && VERBOSE_CACHE_LOGS) logger.info(`🌍 GLOBAL CACHE HIT [${provider}]: ${id}`);
-        return data || null;
+    getRaw: async (provider, id) => {
+        const storageKey = buildRawCacheStorageKey(provider, id);
+        const data = rawCache.get(storageKey);
+        if (data !== undefined) {
+            registerCacheAccess('raw', true);
+            if (data && VERBOSE_CACHE_LOGS) logger.info(`🌍 GLOBAL CACHE HIT [${provider}]: ${id}`);
+            return data;
+        }
+        const remote = await getRedisJson('rawProvider', storageKey);
+        if (remote !== undefined) {
+            rawCache.set(storageKey, remote, redisLocalTtl(RAW_PROVIDER_CACHE_TTL));
+            registerCacheAccess('raw', true);
+            incrementMetric('cache.raw.redisHit');
+            if (VERBOSE_CACHE_LOGS) logger.info(`🌍 GLOBAL CACHE REDIS HIT [${provider}]: ${id}`);
+            return remote;
+        }
+        registerCacheAccess('raw', false);
+        return null;
     },
-    getRawStale: (provider, id) => {
-        const entry = rawCache.get(buildRawCacheStaleStorageKey(provider, id));
+    getRawStale: async (provider, id) => {
+        const storageKey = buildRawCacheStaleStorageKey(provider, id);
+        let entry = rawCache.get(storageKey);
+        if (entry === undefined) {
+            entry = await getRedisJson('rawProviderStale', storageKey);
+            if (entry !== undefined) rawCache.set(storageKey, entry, redisLocalTtl(RAW_PROVIDER_STALE_GRACE_TTL || RAW_PROVIDER_CACHE_TTL));
+        }
         const data = isPositiveRawProviderPayload(entry?.value) ? entry.value : null;
         registerCacheAccess('rawStale', !!data);
         if (data && VERBOSE_CACHE_LOGS) logger.info(`🌍 GLOBAL CACHE STALE HIT [${provider}]: ${id}`);
@@ -838,15 +976,18 @@ const Cache = {
     },
     setRaw: (provider, id, value, ttl = 43200) => {
         const effectiveTtl = Math.max(1, Number(ttl || 43200) || 43200);
+        const storageKey = buildRawCacheStorageKey(provider, id);
+        const staleKey = buildRawCacheStaleStorageKey(provider, id);
         registerCacheSet('raw');
-        rawCache.set(buildRawCacheStorageKey(provider, id), value, effectiveTtl);
+        rawCache.set(storageKey, value, effectiveTtl);
+        setRedisJson('rawProvider', storageKey, value, effectiveTtl);
         if (RAW_PROVIDER_STALE_GRACE_TTL > 0 && isPositiveRawProviderPayload(value)) {
-            rawCache.set(buildRawCacheStaleStorageKey(provider, id), {
-                value,
-                storedAt: Date.now()
-            }, effectiveTtl + RAW_PROVIDER_STALE_GRACE_TTL);
+            const staleEntry = { value, storedAt: Date.now() };
+            rawCache.set(staleKey, staleEntry, effectiveTtl + RAW_PROVIDER_STALE_GRACE_TTL);
+            setRedisJson('rawProviderStale', staleKey, staleEntry, effectiveTtl + RAW_PROVIDER_STALE_GRACE_TTL);
         } else {
-            rawCache.del(buildRawCacheStaleStorageKey(provider, id));
+            rawCache.del(staleKey);
+            redisCache.del('rawProviderStale', staleKey).catch(() => {});
         }
         if (VERBOSE_CACHE_LOGS) logger.info(`💾 GLOBAL CACHE SET [${provider}]: ${id}`);
     },
@@ -861,7 +1002,7 @@ const Cache = {
         const effectiveTtl = Math.max(1, Number(ttl || RAW_PROVIDER_CACHE_TTL) || RAW_PROVIDER_CACHE_TTL);
 
         if (!bypassCache) {
-            const cached = Cache.getRaw(providerKey, idKey);
+            const cached = await Cache.getRaw(providerKey, idKey);
             if (cached !== null) return cached;
             if (cacheOnly) {
                 incrementMetric('cache.raw.cacheOnlyMiss');
@@ -879,7 +1020,7 @@ const Cache = {
         const inflightKey = buildRawFetchInflightKey(providerKey, idKey, { bypassCache });
         return withSharedPromise(sharedFetchInflight, inflightKey, async () => {
             if (!bypassCache) {
-                const secondCacheHit = Cache.getRaw(providerKey, idKey);
+                const secondCacheHit = await Cache.getRaw(providerKey, idKey);
                 if (secondCacheHit !== null) return secondCacheHit;
             }
 
@@ -892,9 +1033,9 @@ const Cache = {
                 const message = error?.message || String(error || 'unknown error');
                 logger.warn(`[CACHE] Provider fetch failed | provider=${compactCacheLogValue(providerKey)} | id=${compactCacheLogValue(idKey)} | error=${compactCacheLogValue(message)}`);
                 const failureTtl = getProviderErrorCacheTtl(error, { errorTtl, rateLimitTtl });
-                const staleData = !bypassCache ? Cache.getRawStale(providerKey, idKey) : null;
+                const staleData = !bypassCache ? await Cache.getRawStale(providerKey, idKey) : null;
                 if (staleData !== null) {
-                    rawCache.set(buildRawCacheStorageKey(providerKey, idKey), staleData, failureTtl);
+                    Cache.setRaw(providerKey, idKey, staleData, failureTtl);
                     incrementMetric('cache.raw.staleIfError');
                     logger.info(`[CACHE] Provider stale fallback | provider=${compactCacheLogValue(providerKey)} | id=${compactCacheLogValue(idKey)} | ttl=${failureTtl}s | items=${staleData.length}`);
                     return staleData;
