@@ -1,0 +1,33 @@
+name = "leviathan-edge-gateway"
+main = "worker.js"
+compatibility_date = "2026-05-27"
+workers_dev = true
+
+[vars]
+# URL pubblico della tua VPS/Reverse proxy Leviathan, senza slash finale.
+ORIGIN_URL = "https://tuo-dominio-leviathan.example.com"
+
+# Deve essere uguale a LEVIATHAN_EDGE_SECRET nella .env di Leviathan.
+EDGE_SECRET = "cambia-questa-secret-lunga"
+
+# Header usato per autenticare il Worker verso la VPS.
+EDGE_SECRET_HEADER = "x-leviathan-edge-secret"
+
+# Cache edge leggera. Non mettere stream alto se usi config/token personali.
+EDGE_CACHE_MANIFEST_SECONDS = "3600"
+EDGE_CACHE_CONFIGURE_SECONDS = "600"
+EDGE_CACHE_ASSETS_SECONDS = "86400"
+EDGE_CACHE_STREAM_SECONDS = "0"
+EDGE_CACHE_CATALOG_SECONDS = "300"
+EDGE_CACHE_META_SECONDS = "900"
+EDGE_CACHE_SUBTITLES_SECONDS = "900"
+EDGE_STALE_FALLBACK_ENABLED = "true"
+EDGE_STALE_FALLBACK_SECONDS = "21600"
+EDGE_CACHE_VERSION = "v1"
+
+# Prewarm best-effort: il Worker avvisa Leviathan, il lavoro vero lo fa leviathan-worker Docker.
+EDGE_PREWARM_HINTS_ENABLED = "true"
+EDGE_PREWARM_TIMEOUT_MS = "1200"
+
+# Importante: lascia false per non bruciare richieste su segmenti HLS/proxy video.
+EDGE_PROXY_PLAYBACK = "false"

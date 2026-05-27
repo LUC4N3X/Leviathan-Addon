@@ -21,3 +21,11 @@ test('tracker enricher preserves direct playable urls', () => {
   assert.equal(item.hash, HASH);
   assert.equal(item._trackerEnriched, true);
 });
+
+
+test('tracker enricher adds anime profile trackers when anime/kitsu signals are present', () => {
+  const item = enrichTorrentItem({ title: 'Some Anime S01E01 1080p', source: 'NyaaSi', hash: HASH });
+  const trackers = extractTrackersFromMagnet(item.magnet);
+  assert.ok(item._trackerProfiles.includes('anime'));
+  assert.ok(trackers.some((tracker) => /nyaa|anidex/i.test(tracker)));
+});
