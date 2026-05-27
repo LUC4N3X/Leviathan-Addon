@@ -7,8 +7,8 @@ const { isUprotUrl, resolveUprotToMaxstream } = require('../extractors/hosters/u
 const { extractMixdrop } = require('../extractors/hosters/mixdrop');
 const { requestWithImpitRotating, isCanceledError } = require('../utils/bypass');
 
-const DEFAULT_BASE_URL = 'https://cb01uno.bar';
-const DEFAULT_BASE_URLS = Object.freeze(['https://cb01uno.bar']);
+const DEFAULT_BASE_URL = 'https://cb01uno.help';
+const DEFAULT_BASE_URLS = Object.freeze(['https://cb01uno.help']);
 const PROVIDER = 'CB01';
 const PROVIDER_CODE = 'CB01';
 const ICON = '🎬';
