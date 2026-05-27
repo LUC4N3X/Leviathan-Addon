@@ -24,7 +24,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev \
     && npm cache clean --force
 
-COPY addon.js manifest.js ./
+COPY addon.js manifest.js worker.js ./
 COPY core ./core
 COPY providers ./providers
 COPY public ./public

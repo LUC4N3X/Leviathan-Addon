@@ -12,7 +12,8 @@
     "format": "node scripts/format.js",
     "format:check": "node scripts/format-check.js",
     "check": "npm run lint && npm run format:check && npm test",
-    "bench": "node scripts/benchmark.js"
+    "bench": "node scripts/benchmark.js",
+    "worker": "node worker.js"
   },
   "dependencies": {
     "axios": "^1.16.1",
@@ -47,4 +48,3 @@
   "packageManager": "npm@10.9.2",
   "private": true
 }
-

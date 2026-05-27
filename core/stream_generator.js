@@ -48,6 +48,7 @@ const { applyResolutionOrderingGuard } = require('./debrid/guards/resolution_ord
 const { enqueueRdViewScan } = require('./debrid/rd/audit/rd_view_scanner');
 const { hasFolderSizeSeasonPackSignal } = require('./matching/season_pack_inspector');
 const { buildContentProxyUrlFromBase, shouldProxyContentUrl } = require('./proxy/content_proxy_engine');
+const { shouldDeferLiveScrapeToWorker, queueTorrentioPrefetchJob } = require('./workers/torrentio_prefetch_queue');
 const TorrentInfoLedger = require('./torrent/torrent_info_ledger');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
@@ -4620,7 +4621,8 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
     }
 
     const flags = sourceModeFlags || getSourceModeFlags(config?.filters || {});
-    const disableLiveSources = flags.useLiveSources !== true;
+    const deferLiveScrape = shouldDeferLiveScrapeToWorker(config) && flags.useLiveSources === true && !flags.liveOnlyMode;
+    const disableLiveSources = flags.useLiveSources !== true || deferLiveScrape;
     const titleKey = buildTitleSearchPipelineKey(meta, type, langMode, disableLiveSources, {
         ...(config?.filters || {}),
         sourceMode: flags.sourceMode
@@ -4629,6 +4631,20 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
     if (hotCached) {
         logger.info(`[TITLE-QUEUE] Hot cache hit | key=${titleKey} | results=${hotCached.length}`);
         return hotCached;
+    }
+
+    if (deferLiveScrape) {
+        await queueTorrentioPrefetchJob({
+            type,
+            finalId,
+            meta,
+            tmdbId: tmdbIdLookup,
+            priority: 90,
+            reason: 'deferred-live-scrape',
+            logger
+        });
+        logger.info(`[WORKER QUEUE] live scrape deferred to worker | key=${titleKey}`);
+        return setTimedCacheValue(titleSearchHotCache, titleKey, [], Math.min(TITLE_SEARCH_HOT_TTL_MS, 60_000));
     }
 
     return withSharedPromise(titleSearchInflight, `title_search:${titleKey}`, async () => {
@@ -5074,10 +5090,11 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               fastPath: useLocalDbFastPath
           });
 
-          const seedHealthPass = applySeedHealthRanking(cleanResults);
+          const seedRankingMode = hasDebridKey ? 'debrid' : 'p2p';
+          const seedHealthPass = applySeedHealthRanking(cleanResults, { mode: seedRankingMode });
           for (const line of getSeedHealthLogSamples(cleanResults, 3)) logger.info(line);
           if (seedHealthPass.stats.total > 0) {
-              logger.info(`[RANK] seedHealth summary healthy=${seedHealthPass.stats.healthy} weak=${seedHealthPass.stats.weak} dead=${seedHealthPass.stats.dead} unknown=${seedHealthPass.stats.unknown} protected=${seedHealthPass.stats.protected} kept=${seedHealthPass.stats.kept}/${seedHealthPass.stats.total} strict=${seedHealthPass.stats.strict} dropped=${seedHealthPass.stats.dropped}`);
+              logger.info(`[RANK] seedHealth summary mode=${seedHealthPass.stats.mode} healthy=${seedHealthPass.stats.healthy} weak=${seedHealthPass.stats.weak} dead=${seedHealthPass.stats.dead} unknown=${seedHealthPass.stats.unknown} protected=${seedHealthPass.stats.protected} kept=${seedHealthPass.stats.kept}/${seedHealthPass.stats.total} strict=${seedHealthPass.stats.strict} dropped=${seedHealthPass.stats.dropped}`);
           }
           cleanResults = seedHealthPass.results;
           trace.stage('seed-health', {
@@ -5086,7 +5103,8 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               dropped: seedHealthPass.stats.dropped,
               healthy: seedHealthPass.stats.healthy,
               weak: seedHealthPass.stats.weak,
-              dead: seedHealthPass.stats.dead
+              dead: seedHealthPass.stats.dead,
+              mode: seedHealthPass.stats.mode
           });
           logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
 
