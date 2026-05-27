@@ -114,13 +114,38 @@ function validSeriesEndpoint(value) {
 }
 
 function createScannerConfig() {
+    const movieEndpoints = splitList(process.env.TORRENTIO_SCAN_MOVIE_ENDPOINTS, HARDCODED_TORRENTIO_SCAN.movieEndpoints.join(','))
+        .map(validMovieEndpoint)
+        .filter(Boolean);
+    const seriesEndpoints = splitList(process.env.TORRENTIO_SCAN_SERIES_ENDPOINTS, HARDCODED_TORRENTIO_SCAN.seriesEndpoints.join(','))
+        .map(validSeriesEndpoint)
+        .filter(Boolean);
+
     return {
         ...HARDCODED_TORRENTIO_SCAN,
         enabled: readBoolean(process.env.TORRENTIO_SCAN_ENABLED, HARDCODED_TORRENTIO_SCAN.enabled),
-        tmdbApiKey: HARDCODED_TMDB_API_KEY,
-        movieEndpoints: HARDCODED_TORRENTIO_SCAN.movieEndpoints.map(validMovieEndpoint).filter(Boolean),
-        seriesEndpoints: HARDCODED_TORRENTIO_SCAN.seriesEndpoints.map(validSeriesEndpoint).filter(Boolean),
-        enabledAddons: [...HARDCODED_TORRENTIO_SCAN.enabledAddons]
+        leaderOnly: readBoolean(process.env.TORRENTIO_SCAN_LEADER_ONLY, HARDCODED_TORRENTIO_SCAN.leaderOnly),
+        language: process.env.TORRENTIO_SCAN_LANGUAGE || HARDCODED_TORRENTIO_SCAN.language,
+        region: process.env.TORRENTIO_SCAN_REGION || HARDCODED_TORRENTIO_SCAN.region,
+        startDelayMs: Math.round(clampFloat(process.env.TORRENTIO_SCAN_START_DELAY_SECONDS, HARDCODED_TORRENTIO_SCAN.startDelayMs / 1000, 0, 3600) * 1000),
+        catalogIntervalMs: Math.round(clampFloat(process.env.TORRENTIO_SCAN_INTERVAL_SECONDS, HARDCODED_TORRENTIO_SCAN.catalogIntervalMs / 1000, 300, 30 * 24 * 3600) * 1000),
+        workerIntervalMs: Math.round(clampFloat(process.env.TORRENTIO_SCAN_WORKER_INTERVAL_SECONDS, HARDCODED_TORRENTIO_SCAN.workerIntervalMs / 1000, 0.2, 60) * 1000),
+        retrySeconds: clampInt(process.env.TORRENTIO_SCAN_RETRY_SECONDS, HARDCODED_TORRENTIO_SCAN.retrySeconds, 60, 24 * 3600),
+        refreshSeconds: clampInt(process.env.TORRENTIO_SCAN_REFRESH_SECONDS, HARDCODED_TORRENTIO_SCAN.refreshSeconds, 3600, 60 * 24 * 3600),
+        maxAttempts: clampInt(process.env.TORRENTIO_SCAN_MAX_ATTEMPTS, HARDCODED_TORRENTIO_SCAN.maxAttempts, 1, 100),
+        moviePages: clampInt(process.env.TORRENTIO_SCAN_MOVIE_PAGES, HARDCODED_TORRENTIO_SCAN.moviePages, 1, 200),
+        seriesPages: clampInt(process.env.TORRENTIO_SCAN_SERIES_PAGES, HARDCODED_TORRENTIO_SCAN.seriesPages, 1, 200),
+        seriesMode: String(process.env.TORRENTIO_SCAN_SERIES_MODE || HARDCODED_TORRENTIO_SCAN.seriesMode).trim().toLowerCase() === 'roots' ? 'roots' : 'episodes',
+        maxSeasonsPerSeries: clampInt(process.env.TORRENTIO_SCAN_MAX_SEASONS_PER_SERIES, HARDCODED_TORRENTIO_SCAN.maxSeasonsPerSeries, 1, 50),
+        maxEpisodesPerSeries: clampInt(process.env.TORRENTIO_SCAN_MAX_EPISODES_PER_SERIES, HARDCODED_TORRENTIO_SCAN.maxEpisodesPerSeries, 1, 500),
+        pageDelayMs: Math.round(clampFloat(process.env.TORRENTIO_SCAN_PAGE_DELAY_SECONDS, HARDCODED_TORRENTIO_SCAN.pageDelayMs / 1000, 0, 60) * 1000),
+        itemDelayMs: Math.round(clampFloat(process.env.TORRENTIO_SCAN_ITEM_DELAY_SECONDS, HARDCODED_TORRENTIO_SCAN.itemDelayMs / 1000, 0, 10) * 1000),
+        onlyItalian: readBoolean(process.env.TORRENTIO_SCAN_ONLY_ITALIAN, HARDCODED_TORRENTIO_SCAN.onlyItalian),
+        minimumItalianConfidence: clampInt(process.env.TORRENTIO_SCAN_MIN_ITALIAN_CONFIDENCE, HARDCODED_TORRENTIO_SCAN.minimumItalianConfidence, 0, 100),
+        tmdbApiKey: process.env.TMDB_API_KEY || HARDCODED_TMDB_API_KEY,
+        movieEndpoints: movieEndpoints.length ? movieEndpoints : [...HARDCODED_TORRENTIO_SCAN.movieEndpoints],
+        seriesEndpoints: seriesEndpoints.length ? seriesEndpoints : [...HARDCODED_TORRENTIO_SCAN.seriesEndpoints],
+        enabledAddons: splitList(process.env.TORRENTIO_SCAN_ADDONS, HARDCODED_TORRENTIO_SCAN.enabledAddons.join(','))
     };
 }
 

@@ -46,6 +46,18 @@ function shouldUseCluster() {
     return getClusterWorkerCount() > 1;
 }
 
+function envFlag(name, fallback = false) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return fallback;
+    return /^(1|true|yes|y|on)$/i.test(String(raw).trim());
+}
+
+function shouldStartInlineBackgroundWorkers() {
+    // In Docker the background scanner now lives in worker.js, so the API stays
+    // light and does not run catalogue/prewarm scraping inside the HTTP process.
+    return envFlag('LEVIATHAN_API_BACKGROUND_WORKERS', false);
+}
+
 function getClusterRestartPolicy() {
     return {
         windowMs: Math.max(15_000, parseInt(process.env.CLUSTER_RESTART_WINDOW_MS || String(2 * 60 * 1000), 10) || (2 * 60 * 1000)),
@@ -324,7 +336,12 @@ function bootstrapServer() {
         logger,
         normalizeExternalCandidateForPipeline
     });
-    torrentioTmdbScanner.start({ leader: isClusterLeader || !shouldUseCluster() });
+    const inlineBackgroundWorkers = shouldStartInlineBackgroundWorkers();
+    if (inlineBackgroundWorkers) {
+        torrentioTmdbScanner.start({ leader: isClusterLeader || !shouldUseCluster() });
+    } else {
+        logger.info('[WORKER] API background scanner disabled; use npm run worker / leviathan-worker for scraping outside HTTP requests');
+    }
 
     const appServices = createAppServices({
         Cache,
@@ -426,6 +443,7 @@ function bootstrapServer() {
         console.log(`[PARSER] Enhanced`);
         console.log(`[P2P] Handler attivo`);
         console.log(`[CORE] Optimized for High Reliability`);
+        console.log(`[WORKER] API inline background scanner: ${inlineBackgroundWorkers ? 'enabled' : 'disabled (separate worker)'}`);
         console.log(`[CACHE] Global raw + user level active`);
         console.log(`[CACHE] Shared L2 ${process.env.SHARED_STREAM_CACHE_ENABLED === 'false' ? 'disabled' : 'active'}`);
         const rawStreamCacheStats = getRawStreamCacheStats();

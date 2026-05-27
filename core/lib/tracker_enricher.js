@@ -19,6 +19,21 @@ const FALLBACK_TRACKERS = [
 
 const MAX_TRACKERS = 24;
 
+const PROFILE_TRACKERS = Object.freeze({
+  anime: [
+    'udp://tracker.anidex.moe:6969/announce',
+    'http://nyaa.tracker.wf:7777/announce',
+    'udp://tracker.uw0.xyz:6969/announce',
+    'http://anidex.moe:6969/announce'
+  ],
+  ita: [
+    'udp://tracker.opentrackr.org:1337/announce',
+    'udp://open.stealth.si:80/announce',
+    'udp://tracker.torrent.eu.org:451/announce'
+  ],
+  public: []
+});
+
 function base32ToHex(base32) {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
   let bits = '';
@@ -103,10 +118,25 @@ function isDirectPlayableUrl(value) {
   return /^https?:\/\//i.test(String(value || '').trim());
 }
 
-function getRuntimeTrackers() {
+function detectTrackerProfiles(item = {}) {
+  const text = [
+    item?.title, item?.name, item?.filename, item?.source, item?.provider,
+    item?.type, item?.category, item?.language, Array.isArray(item?.languages) ? item.languages.join(' ') : ''
+  ].filter(Boolean).join(' ').toLowerCase();
+  const profiles = ['public'];
+  if (/anime|kitsu|nyaa|anidex|horriblesubs|tokyotosho|japanese|jpn/.test(text)) profiles.push('anime');
+  if (/\bita\b|italian|italiano|\bmulti\b|sub\s*ita|audio\s*ita/.test(text)) profiles.push('ita');
+  return profiles;
+}
+
+function getRuntimeTrackers(profiles = []) {
   const active = typeof trackerRegistry?.getActiveTrackers === 'function' ? trackerRegistry.getActiveTrackers() : [];
   const defaults = Array.isArray(trackerRegistry?.DEFAULT_TRACKERS) ? trackerRegistry.DEFAULT_TRACKERS : FALLBACK_TRACKERS;
-  return uniqueTrackers([...(Array.isArray(active) ? active : []), ...defaults, ...FALLBACK_TRACKERS]);
+  const profileTrackers = [];
+  for (const profile of Array.isArray(profiles) ? profiles : []) {
+    profileTrackers.push(...(PROFILE_TRACKERS[profile] || []));
+  }
+  return uniqueTrackers([...profileTrackers, ...(Array.isArray(active) ? active : []), ...defaults, ...FALLBACK_TRACKERS]);
 }
 
 function enrichTorrentItem(item = {}) {
@@ -119,7 +149,8 @@ function enrichTorrentItem(item = {}) {
     ? String(item.directUrl || item.url || item._externalDirectUrl || item.externalDirectUrl).trim()
     : null;
   const existingTrackers = extractTrackersFromMagnet(existingMagnet);
-  const trackers = uniqueTrackers([...existingTrackers, ...getRuntimeTrackers()]);
+  const trackerProfiles = detectTrackerProfiles(item);
+  const trackers = uniqueTrackers([...existingTrackers, ...getRuntimeTrackers(trackerProfiles)]);
   const enrichedMagnet = buildTrackerMagnetLocal(hash, trackers) || existingMagnet;
   const shouldReplaceMagnet = !directUrl && (!existingMagnet || /^magnet:/i.test(existingMagnet));
 
@@ -128,6 +159,7 @@ function enrichTorrentItem(item = {}) {
     hash,
     infoHash: hash,
     _trackerEnriched: true,
+    _trackerProfiles: trackerProfiles,
     _trackerCount: trackers.length,
     _trackerAdded: Math.max(0, trackers.length - existingTrackers.length)
   };
@@ -169,8 +201,10 @@ function enrichTorrentItems(items = []) {
 
 module.exports = {
   MAX_TRACKERS,
+  PROFILE_TRACKERS,
   enrichTorrentItem,
   enrichTorrentItems,
+  detectTrackerProfiles,
   extractInfoHash,
   extractTrackersFromMagnet,
   normalizeInfoHash,

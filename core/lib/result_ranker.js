@@ -551,6 +551,31 @@ function evaluateEpisodeFit(title, meta = {}, weights) {
   return { delta, reasons, isPack, exactEpisode: false };
 }
 
+
+function isDebridRankingContext(item = {}, configInput = {}) {
+  const service = String(configInput?.service || configInput?.debridService || '').toLowerCase();
+  const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || '').toLowerCase();
+  return service === 'rd'
+    || service === 'tb'
+    || item?._dbCachedRd === true
+    || item?.cached_rd === true
+    || item?._tbCached === true
+    || item?.tbCached === true
+    || item?.isCached === true
+    || item?.cached === true
+    || state === 'cached'
+    || state === 'likely_cached';
+}
+
+function getSeederWeightFactor(item = {}, weights = {}, configInput = {}) {
+  const base = Number(weights.seedersFactor || 0) || 0;
+  if (base <= 0) return 0;
+  // P2P needs swarm strength. Debrid mostly needs cache state/file precision, so
+  // seeders become a tiny tie-breaker instead of dominating the order.
+  if (isDebridRankingContext(item, configInput)) return Math.min(base, 2);
+  return base;
+}
+
 function computeScore(item, meta = {}, configInput = {}) {
   const { config, profileName, profile } = getProfileConfig(configInput);
   const weights = profile.weights;
@@ -719,10 +744,13 @@ function computeScore(item, meta = {}, configInput = {}) {
     }
   }
 
-  score += Math.min(seeders, 500) * weights.seedersFactor;
-  if (Number.isFinite(Number(item?._seedHealthDelta)) && Number(item._seedHealthDelta) !== 0) {
+  const seedersFactor = getSeederWeightFactor(item, weights, configInput);
+  score += Math.min(seeders, 500) * seedersFactor;
+  if (seedersFactor > 2 && Number.isFinite(Number(item?._seedHealthDelta)) && Number(item._seedHealthDelta) !== 0) {
     score += Number(item._seedHealthDelta);
     reasons.push(`SEED_HEALTH:${item._seedHealth || 'unknown'}`);
+  } else if (seedersFactor > 0 && seeders > 0) {
+    reasons.push(isDebridRankingContext(item, configInput) ? 'SEED_TIEBREAKER_DEBRID' : 'SEED');
   }
   score += Math.min(Math.floor(sizeBytes / Math.max(1, weights.sizeBucketBytes)), weights.sizeFactorCap);
   score += Math.min(title.length, weights.titleLengthCap);
@@ -835,7 +863,9 @@ function compareRankedItems(left, right, meta = {}, configInput = {}) {
 
   const seedA = normalizeNumber(a.seeders);
   const seedB = normalizeNumber(b.seeders);
-  if (seedB !== seedA) return seedB - seedA;
+  const debridTie = isDebridRankingContext(a, configInput) || isDebridRankingContext(b, configInput);
+  if (!debridTie && seedB !== seedA) return seedB - seedA;
+  if (debridTie && Math.abs(seedB - seedA) >= 50) return Math.sign(seedB - seedA);
 
   if (sizeB !== sizeA) return sizeB - sizeA;
 
@@ -873,6 +903,8 @@ module.exports = {
   detectOtherLanguage,
   detectMultiAudio,
   resolveLangMode,
+  isDebridRankingContext,
+  getSeederWeightFactor,
   shouldKeepByLanguageMode,
   getLanguageSignals,
   extractEpisodeContext

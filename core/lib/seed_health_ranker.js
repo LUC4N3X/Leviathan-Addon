@@ -66,8 +66,25 @@ function countHealth(counts, health) {
 
 function applySeedHealthRanking(results = [], options = {}) {
   const list = (Array.isArray(results) ? results : []).map(annotateSeedHealth);
+  const mode = String(options?.mode || options?.rankingMode || 'p2p').toLowerCase();
+
+  // RD/TorBox and other debrid flows do not depend on swarm health once a file is
+  // cached/resolved. Keep the seed annotation for tie-breaks/logs, but never drop
+  // low-seed candidates in debrid mode: cache state + file precision must win.
+  if (mode === 'debrid' || mode === 'cached' || mode === 'cloud') {
+    return {
+      results: list,
+      stats: buildSeedHealthStats(list, {
+        strict: false,
+        dropped: 0,
+        kept: list.length,
+        mode: 'debrid'
+      })
+    };
+  }
+
   if (list.length <= 1) {
-    return { results: list, stats: buildSeedHealthStats(list, { strict: false, dropped: 0 }) };
+    return { results: list, stats: buildSeedHealthStats(list, { strict: false, dropped: 0, kept: list.length, mode: 'p2p' }) };
   }
 
   const buckets = { healthy: [], weak: [], dead: [], unknown: [], protected: [] };
@@ -109,7 +126,7 @@ function applySeedHealthRanking(results = [], options = {}) {
 
   const keptSet = new Set(kept);
   const dropped = list.length - keptSet.size;
-  const stats = buildSeedHealthStats(list, { strict, dropped, kept: keptSet.size, counts });
+  const stats = buildSeedHealthStats(list, { strict, dropped, kept: keptSet.size, counts, mode: 'p2p' });
 
   if (options?.preserveOriginalOrder === true) {
     const allowed = new Set(kept);
@@ -133,6 +150,7 @@ function buildSeedHealthStats(list, extra = {}) {
     kept: Number.isInteger(extra.kept) ? extra.kept : list.length,
     dropped: Math.max(0, Number(extra.dropped || 0) || 0),
     strict: Boolean(extra.strict),
+    mode: extra.mode || 'p2p',
     ...counts
   };
 }
