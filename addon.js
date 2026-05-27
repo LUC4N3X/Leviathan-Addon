@@ -205,12 +205,14 @@ const { generateStream, resolveLazyStreamData, normalizeExternalCandidateForPipe
 const { createTorrentioTmdbScanner } = require('./core/prewarm/torrentio_tmdb_scanner');
 const { bootRealDebridAuditor } = require('./core/debrid/rd/audit/rd_auditor_boot');
 const { applyCommonMiddleware } = require('./core/server/middleware');
+const { applyEdgeGatewayGuard } = require('./core/server/edge_gateway');
 const { getRawStreamCacheStats } = require('./core/cache/raw_stream_cache');
 const { createAppServices } = require('./core/server/services/app_services');
 const { registerApiRoutes } = require('./core/server/routes/api_routes');
 const { registerPlaybackRoutes } = require('./core/server/routes/playback_routes');
 const { registerAdminRoutes } = require('./core/server/routes/admin_routes');
 const { registerStremioRoutes } = require('./core/server/routes/stremio_routes');
+const { registerEdgeRoutes } = require('./core/server/routes/edge_routes');
 
 function startSharedStreamCacheCleanupJob({ dbHelper, logger, enabled }) {
     if (!enabled) return null;
@@ -354,6 +356,8 @@ function bootstrapServer() {
         recordProviderMetric
     });
 
+    applyEdgeGatewayGuard(app);
+
     if (typeof handleCinemaCityProxy === 'function') {
         app.all(CC_MANIFEST_ROUTE, handleCinemaCityProxy);
         app.all(CC_STREAM_ROUTE, handleCinemaCityProxy);
@@ -366,6 +370,8 @@ function bootstrapServer() {
     });
 
     applyCommonMiddleware(app, { staticDir: publicDir });
+
+    registerEdgeRoutes(app, { logger });
 
     registerApiRoutes(app, {
         getStatsSnapshot,
@@ -450,6 +456,7 @@ function bootstrapServer() {
         console.log(`[RAW CACHE] active compressed=${rawStreamCacheStats.compressed} ttl=${rawStreamCacheStats.ttlSeconds}s maxBytes=${rawStreamCacheStats.maxBytes}`);
         console.log(`[RANK] Seed health smart gate active healthy>=5 weak>=1`);
         console.log(`[TRACKER] Enricher active + availability cache infoHash:fileIdx`);
+        console.log(`[EDGE] Gateway guard ${process.env.LEVIATHAN_EDGE_ENABLED === 'true' ? 'enabled' : 'optional/disabled'}`);
         console.log(`[PROXY HEADERS] normalizer active referer/origin/auth/range dedupe`);
         console.log(`[SECURITY] API guard active + plain config token mode`);
         console.log(`[SCRAPERS] Fallback scrapers ready`);

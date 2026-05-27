@@ -49,3 +49,17 @@ test('cached or file-indexed torrents are protected even with zero seeders', () 
   assert.equal(pass.results.some((item) => item.title === 'cached zero'), true);
   assert.equal(pass.results.some((item) => item.title === 'file zero'), true);
 });
+
+
+test('debrid mode annotates seed health without dropping low-seed items', () => {
+  const input = [
+    { title: 'Dead but cached', seeders: 0, _dbCachedRd: true },
+    { title: 'Weak debrid', seeders: 1 },
+    { title: 'Healthy debrid', seeders: 40 }
+  ];
+  const pass = applySeedHealthRanking(input, { mode: 'debrid' });
+  assert.equal(pass.results.length, input.length);
+  assert.equal(pass.stats.mode, 'debrid');
+  assert.equal(pass.stats.dropped, 0);
+  assert.equal(pass.results[0]._seedHealth, 'dead');
+});
