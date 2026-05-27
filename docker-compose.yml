@@ -14,18 +14,22 @@ services:
     memswap_limit: ${LEVIATHAN_MEMSWAP_LIMIT:-850m}
     cpus: "${LEVIATHAN_CPUS:-1.5}"
     pids_limit: 512
+
     env_file:
       - .env
+
     environment:
       NODE_ENV: "production"
       PORT: "7000"
       TZ: "Europe/Rome"
+      LEVI_PROCESS_ROLE: "api"
+
       MALLOC_ARENA_MAX: "2"
       UV_THREADPOOL_SIZE: "8"
       NODE_OPTIONS: "--max-old-space-size=${LEVI_NODE_OLD_SPACE_MB:-384} --max-semi-space-size=16"
       LEVIATHAN_API_BACKGROUND_WORKERS: "false"
       LEVIATHAN_DEFER_LIVE_SCRAPE_TO_WORKER: "${LEVIATHAN_DEFER_LIVE_SCRAPE_TO_WORKER:-false}"
-      LEVIATHAN_EDGE_ENABLED: "${LEVIATHAN_EDGE_ENABLED:-false}"
+      LEVIATHAN_EDGE_ENABLED: "${LEVIATHAN_EDGE_ENABLED:-true}"
       LEVIATHAN_EDGE_SECRET: "${LEVIATHAN_EDGE_SECRET:-}"
       LEVIATHAN_EDGE_ALLOW_DIRECT: "${LEVIATHAN_EDGE_ALLOW_DIRECT:-true}"
       LEVIATHAN_EDGE_REQUIRE_SECRET: "${LEVIATHAN_EDGE_REQUIRE_SECRET:-false}"
@@ -40,8 +44,6 @@ services:
       LEVIATHAN_EDGE_STALE_FALLBACK_ENABLED: "${LEVIATHAN_EDGE_STALE_FALLBACK_ENABLED:-true}"
       LEVIATHAN_EDGE_STALE_FALLBACK_SECONDS: "${LEVIATHAN_EDGE_STALE_FALLBACK_SECONDS:-21600}"
       LEVIATHAN_EDGE_PREWARM_HINTS_ENABLED: "${LEVIATHAN_EDGE_PREWARM_HINTS_ENABLED:-true}"
-
-      # RAM saver: keep all functions, but rely more on DB/shared cache and less on huge in-process caches.
       STREAM_CACHE_MAX_KEYS: "${STREAM_CACHE_MAX_KEYS:-3000}"
       RAW_CACHE_MAX_KEYS: "${RAW_CACHE_MAX_KEYS:-6000}"
       CLOUD_BUILD_CACHE_MAX_KEYS: "${CLOUD_BUILD_CACHE_MAX_KEYS:-2000}"
@@ -56,6 +58,7 @@ services:
       LOCAL_AVAILABILITY_MAX_ENTRIES: "${LOCAL_AVAILABILITY_MAX_ENTRIES:-2500}"
       LOCAL_CHECK_MARKER_MAX_ENTRIES: "${LOCAL_CHECK_MARKER_MAX_ENTRIES:-900}"
       LOCAL_DB_LOOKUP_INFLIGHT_MAX_ENTRIES: "${LOCAL_DB_LOOKUP_INFLIGHT_MAX_ENTRIES:-600}"
+
       RD_CONCURRENCY: "${RD_CONCURRENCY:-4}"
       TB_CACHE_MAX_CONCURRENCY: "${TB_CACHE_MAX_CONCURRENCY:-2}"
       ENGINES_ENGINE_CONCURRENCY: "${ENGINES_ENGINE_CONCURRENCY:-3}"
@@ -64,7 +67,6 @@ services:
       ENGINES_FINAL_RESULT_LIMIT: "${ENGINES_FINAL_RESULT_LIMIT:-180}"
       WEB_PROVIDER_DEBUG: "${WEB_PROVIDER_DEBUG:-false}"
 
-      # Redis RAM saver: cache esterna sacrificabile con limite duro e auto-eviction.
       REDIS_ENABLED: "${REDIS_ENABLED:-true}"
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
       REDIS_CACHE_PREFIX: "${REDIS_CACHE_PREFIX:-leviathan:}"
@@ -111,7 +113,6 @@ services:
       TORRENTIO_SCAN_RD_API_KEY: "${TORRENTIO_SCAN_RD_API_KEY:-}"
       TORRENTIO_SCAN_TB_API_KEY: "${TORRENTIO_SCAN_TB_API_KEY:-}"
 
-      # Rust disattivato: non esiste più il servizio rust-shield nel compose.
       RUST_SHIELD_ENABLED: "false"
       RUST_SHIELD_URL: ""
       RUST_SHIELD_FIRST: "false"
@@ -120,7 +121,9 @@ services:
 
       FLARESOLVERR_URL: "http://flaresolverr:8191/v1"
       FLARESOLVERR_URLS: "http://flaresolverr:8191/v1"
-      GUARDOSERIE_FLARE_ENABLED: "${GUARDOSERIE_FLARE_ENABLED:-true}"
+
+      GUARDOSERIE_FLARE_ENABLED: "${GUARDOSERIE_API_FLARE_ENABLED:-true}"
+      CINEMACITY_BACKGROUND_CLEARANCE: "${CINEMACITY_API_BACKGROUND_CLEARANCE:-false}"
 
       CINEMACITY_RUST_SHIELD: "false"
       CINEMACITY_RUST_ACCEL: "false"
@@ -130,7 +133,6 @@ services:
       CINEMACITY_RUST_ACCEL_SITEMAP: "false"
 
       CINEMACITY_CF_FALLBACK: "${CINEMACITY_CF_FALLBACK:-true}"
-      CINEMACITY_BACKGROUND_CLEARANCE: "${CINEMACITY_BACKGROUND_CLEARANCE:-false}"
       CINEMACITY_FORCE_CLEARANCE_BEFORE_SEARCH: "${CINEMACITY_FORCE_CLEARANCE_BEFORE_SEARCH:-false}"
       CINEMACITY_SITEMAP_LOOKUP: "${CINEMACITY_SITEMAP_LOOKUP:-true}"
       CINEMACITY_SEARCH_POST_FIRST: "${CINEMACITY_SEARCH_POST_FIRST:-false}"
@@ -212,8 +214,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      flaresolverr:
-        condition: service_healthy
 
     stop_grace_period: 20s
 
@@ -222,7 +222,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 20s
+      start_period: 10s
 
     logging:
       driver: json-file
@@ -237,22 +237,28 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["npm", "run", "worker"]
+
+    command: >
+      sh -lc "echo '[WORKER] delayed start ${LEVIATHAN_WORKER_BOOT_DELAY_SECONDS:-45}s';
+      sleep ${LEVIATHAN_WORKER_BOOT_DELAY_SECONDS:-45};
+      npm run worker"
+
     restart: unless-stopped
     init: true
+
     env_file:
       - .env
+
     environment:
       NODE_ENV: "production"
       TZ: "Europe/Rome"
       LEVI_PROCESS_ROLE: "worker"
       LEVIATHAN_WORKER_SCANNER_ENABLED: "${LEVIATHAN_WORKER_SCANNER_ENABLED:-true}"
+
       MALLOC_ARENA_MAX: "2"
       UV_THREADPOOL_SIZE: "4"
       NODE_OPTIONS: "--max-old-space-size=${LEVI_WORKER_NODE_OLD_SPACE_MB:-256} --max-semi-space-size=8"
 
-      # Worker separato: fa prewarm/scraping pianificato fuori dal processo HTTP.
-      # Rimane spento finché TORRENTIO_SCAN_ENABLED non viene impostato a true.
       TORRENTIO_SCAN_ENABLED: "${TORRENTIO_SCAN_ENABLED:-false}"
       TORRENTIO_SCAN_LEADER_ONLY: "true"
       TORRENTIO_SCAN_LANGUAGE: "it-IT"
@@ -284,7 +290,17 @@ services:
       REDIS_CACHE_PREFIX: "${REDIS_CACHE_PREFIX:-leviathan:}"
       REDIS_TIMEOUT_MS: "${REDIS_TIMEOUT_MS:-150}"
       RAW_STREAM_REDIS_ENABLED: "${RAW_STREAM_REDIS_ENABLED:-true}"
+
       TMDB_API_KEY: "${TMDB_API_KEY:-}"
+
+      FLARESOLVERR_URL: "http://flaresolverr:8191/v1"
+      FLARESOLVERR_URLS: "http://flaresolverr:8191/v1"
+
+      GUARDOSERIE_FLARE_ENABLED: "${GUARDOSERIE_WORKER_FLARE_ENABLED:-true}"
+      CINEMACITY_BACKGROUND_CLEARANCE: "${CINEMACITY_WORKER_BACKGROUND_CLEARANCE:-true}"
+      CINEMACITY_BACKGROUND_CLEARANCE_DELAY_MS: "${CINEMACITY_WORKER_BACKGROUND_CLEARANCE_DELAY_MS:-20000}"
+      CINEMACITY_BACKGROUND_PRIME_HOME: "${CINEMACITY_WORKER_BACKGROUND_PRIME_HOME:-false}"
+      CINEMACITY_BACKGROUND_PRIME_SEARCH: "${CINEMACITY_WORKER_BACKGROUND_PRIME_SEARCH:-true}"
 
     depends_on:
       redis:
@@ -309,7 +325,6 @@ services:
     restart: unless-stopped
     init: true
 
-    # Redis non viene esposto fuori: lo vede solo Leviathan nella rete docker-compose.
     command:
       [
         "redis-server",
@@ -363,8 +378,6 @@ services:
       BROWSER_TIMEOUT: "30000"
       MALLOC_ARENA_MAX: "2"
 
-      # Quando FlareSolverr supera questa RAM, viene marcato unhealthy.
-      # Autoheal lo riavvia automaticamente.
       FLARESOLVERR_HEALTH_MAX_MEM_MB: "620"
 
     ports:
@@ -447,8 +460,6 @@ services:
       timeout: 10s
       retries: 2
       start_period: 60s
-
-
 
 
   autoheal:
