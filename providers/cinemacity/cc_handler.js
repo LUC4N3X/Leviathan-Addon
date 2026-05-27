@@ -59,8 +59,11 @@ const {
 } = require('../../core/proxy/mediaflow_gateway');
 
 const BASE_URL = Buffer.from('aHR0cHM6Ly9jaW5lbWFjaXR5LmNj', 'base64').toString('utf8');
+// Session cookie reference (EasyProxy/extractors/cinemacity.py — dle_user_id=48827).
+// L'utente vuole il flusso allineato a quella implementazione: stesso cookie sia
+// nell'addon che nel proxy.
 const DEFAULT_SESSION_COOKIE = Buffer.from(
-    'ZGxlX3VzZXJfaWQ9MzI3Mjk7IGRsZV9wYXNzd29yZD04OTQxNzFjNmE4ZGFiMThlZTU5NGQ1YzY1MjAwOWEzNTs=',
+    'ZGxlX3VzZXJfaWQ9NDg4Mjc7IGRsZV9wYXNzd29yZD03N2VjM2E4MTZjOThmMTRlZWI5M2RlNGI0YWM0ZjBiZDs=',
     'base64'
 ).toString('utf8');
 const FETCH_TIMEOUT = 4500;
@@ -90,7 +93,8 @@ const CINEMACITY_EMBEDDED_ENV_DEFAULTS = Object.freeze({
     CINEMACITY_BACKGROUND_PRIME_SEARCH: 'true',
 
     CINEMACITY_PAGE_EXTRACTOR_PATH: '/extractor/video.m3u8',
-    CINEMACITY_PAGE_EXTRACTOR_HOST: 'cccdn',
+    // Reference easystreams cinemacity.js usa host=city → CinemaCityExtractor.
+    CINEMACITY_PAGE_EXTRACTOR_HOST: 'city',
     CINEMACITY_PAGE_EXTRACTOR_LABEL: 'CCCDN',
     MEDIAFLOW_CCCDN_EXTRACTOR_PATH: '/extractor/video.m3u8',
 
@@ -188,7 +192,7 @@ const CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS = Math.max(1500, Math.min(20000, Numb
 // Serie CinemaCity: preferiamo il proxy locale CCCDN/ccproxy come nei film.
 // Il page extractor MediaFlow/Kraken resta fallback se la pagina non espone un file episodio sicuro.
 const CINEMACITY_SERIES_FORCE_CCDN = envFlag('CINEMACITY_SERIES_FORCE_CCDN', true);
-const CINEMACITY_PAGE_EXTRACTOR_HOST = String(process.env.CINEMACITY_PAGE_EXTRACTOR_HOST || 'cccdn').trim() || 'cccdn';
+const CINEMACITY_PAGE_EXTRACTOR_HOST = String(process.env.CINEMACITY_PAGE_EXTRACTOR_HOST || 'city').trim() || 'city';
 const CINEMACITY_PAGE_EXTRACTOR_LABEL = String(process.env.CINEMACITY_PAGE_EXTRACTOR_LABEL || 'CCCDN').trim() || 'CCCDN';
 const CINEMACITY_PAGE_EXTRACTOR_PRIMARY = envFlag('CINEMACITY_PAGE_EXTRACTOR_PRIMARY', true);
 const CINEMACITY_MOVIE_PAGE_EXTRACTOR_PRIMARY = envFlag('CINEMACITY_MOVIE_PAGE_EXTRACTOR_PRIMARY', CINEMACITY_PAGE_EXTRACTOR_PRIMARY);
