@@ -6,46 +6,53 @@ const IMPIT_INSTANCE_CACHE = new Map();
 let impitModulePromise = null;
 
 const IMPIT_BROWSER_VERSIONS = Object.freeze({
-    chrome: Object.freeze([100, 101, 104, 107, 110, 116, 124, 125, 131, 136, 142]),
-    firefox: Object.freeze([128, 133, 135, 144]),
+    chrome: Object.freeze([100, 101, 104, 107, 110, 116, 124, 125, 131, 136, 137, 138, 142]),
+    firefox: Object.freeze([128, 133, 135, 137, 138, 144]),
     okhttp: Object.freeze([3, 4, 5])
 });
 
 const DEFAULT_FINGERPRINT_POOL = Object.freeze([
     Object.freeze({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
         browserType: 'chrome',
-        secChUa: '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
+        secChUa: '"Google Chrome";v="138", "Not A(Brand";v="8", "Chromium";v="138"',
         secChUaPlatform: '"Windows"',
         acceptLanguage: 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
     }),
     Object.freeze({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36 Edg/137.0.0.0',
         browserType: 'edge',
-        secChUa: '"Microsoft Edge";v="134", "Chromium";v="134", "Not:A-Brand";v="99"',
+        secChUa: '"Microsoft Edge";v="137", "Chromium";v="137", "Not(A:Brand";v="8"',
         secChUaPlatform: '"Windows"',
         acceptLanguage: 'it-IT,it;q=0.9,en;q=0.8'
     }),
     Object.freeze({
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
         browserType: 'chrome',
-        secChUa: '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
+        secChUa: '"Google Chrome";v="138", "Not A(Brand";v="8", "Chromium";v="138"',
         secChUaPlatform: '"macOS"',
         acceptLanguage: 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
     }),
     Object.freeze({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0',
         browserType: 'firefox',
         secChUa: null,
         secChUaPlatform: null,
         acceptLanguage: 'it-IT,it;q=0.8,en-US;q=0.5,en;q=0.3'
     }),
     Object.freeze({
-        userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
+        userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
         browserType: 'chrome',
-        secChUa: '"Google Chrome";v="135", "Not-A.Brand";v="8", "Chromium";v="135"',
+        secChUa: '"Google Chrome";v="137", "Not A(Brand";v="8", "Chromium";v="137"',
         secChUaPlatform: '"Linux"',
         acceptLanguage: 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
+    }),
+    Object.freeze({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
+        browserType: 'chrome',
+        secChUa: '"Google Chrome";v="137", "Not A(Brand";v="8", "Chromium";v="137"',
+        secChUaPlatform: '"Windows"',
+        acceptLanguage: 'en-US,en;q=0.9,it;q=0.8'
     })
 ]);
 
@@ -59,10 +66,13 @@ const DEFAULT_IMPIT_BROWSER_STICKY_TTL_MS = 45 * 60 * 1000;
 const DEFAULT_IMPIT_ROTATION_STATUSES = Object.freeze([403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
 const DEFAULT_IMPIT_BROWSER_FALLBACKS = Object.freeze([
     'chrome142',
+    'chrome138',
+    'chrome137',
     'chrome136',
     'chrome131',
     'firefox144',
-    'firefox135',
+    'firefox138',
+    'firefox137',
     'chrome125',
     'okhttp4'
 ]);
@@ -391,14 +401,42 @@ function setHeaderCaseInsensitive(headers, name, value) {
     if (value !== undefined && value !== null && value !== '') headers[name] = value;
 }
 
+const PLATFORM_PATTERNS = Object.freeze([
+    { regex: /Macintosh|Mac OS X/i, platform: '"macOS"', uaToken: 'Macintosh; Intel Mac OS X 10_15_7' },
+    { regex: /CrOS/i, platform: '"Chrome OS"', uaToken: 'X11; CrOS x86_64 14541.0.0' },
+    { regex: /Android/i, platform: '"Android"', uaToken: 'Linux; Android 13; Pixel 7' },
+    { regex: /Linux/i, platform: '"Linux"', uaToken: 'X11; Linux x86_64' },
+    { regex: /Windows/i, platform: '"Windows"', uaToken: 'Windows NT 10.0; Win64; x64' }
+]);
+
+function detectPlatformFromUserAgent(userAgent = '') {
+    for (const entry of PLATFORM_PATTERNS) {
+        if (entry.regex.test(userAgent)) return entry;
+    }
+    return PLATFORM_PATTERNS[PLATFORM_PATTERNS.length - 1];
+}
+
 function alignHeadersForImpitBrowser(headers = {}, browser = '') {
     const selected = safeString(browser).toLowerCase();
     const out = { ...(headers || {}) };
     const version = Number.parseInt(selected.match(/(\d+)/)?.[1] || '', 10);
+    const existingUa = safeString(out['User-Agent'] || out['user-agent'] || '');
+    const existingPlatformHeader = safeString(out['sec-ch-ua-platform'] || out['Sec-Ch-Ua-Platform'] || '').trim();
+    const detected = detectPlatformFromUserAgent(existingUa);
+    const platformLabel = existingPlatformHeader || detected.platform;
+    const isMobile = /Mobile|Android/i.test(existingUa) ? '?1' : '?0';
 
     if (selected.startsWith('firefox')) {
-        const major = Number.isInteger(version) ? version : 135;
-        setHeaderCaseInsensitive(out, 'User-Agent', `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:${major}.0) Gecko/20100101 Firefox/${major}.0`);
+        const major = Number.isInteger(version) ? version : 138;
+        const ffPlatformToken = detected.platform === '"macOS"'
+            ? 'Macintosh; Intel Mac OS X 10.15'
+            : detected.platform === '"Linux"'
+                ? 'X11; Linux x86_64'
+                : 'Windows NT 10.0; Win64; x64';
+        const ffUa = detected.platform === '"macOS"'
+            ? `Mozilla/5.0 (${ffPlatformToken}; rv:${major}.0) Gecko/20100101 Firefox/${major}.0`
+            : `Mozilla/5.0 (${ffPlatformToken}; rv:${major}.0) Gecko/20100101 Firefox/${major}.0`;
+        setHeaderCaseInsensitive(out, 'User-Agent', ffUa);
         setHeaderCaseInsensitive(out, 'Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
         setHeaderCaseInsensitive(out, 'Accept-Language', out['Accept-Language'] || out['accept-language'] || 'it-IT,it;q=0.8,en-US;q=0.5,en;q=0.3');
         setHeaderCaseInsensitive(out, 'Accept-Encoding', 'gzip, deflate, br, zstd');
@@ -416,14 +454,17 @@ function alignHeadersForImpitBrowser(headers = {}, browser = '') {
     }
 
     if (selected.startsWith('chrome')) {
-        const major = Number.isInteger(version) ? version : 136;
-        setHeaderCaseInsensitive(out, 'User-Agent', `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`);
+        const major = Number.isInteger(version) ? version : 138;
+        const brandStr = major >= 131
+            ? `"Google Chrome";v="${major}", "Not A(Brand";v="8", "Chromium";v="${major}"`
+            : `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not.A/Brand";v="99"`;
+        setHeaderCaseInsensitive(out, 'User-Agent', `Mozilla/5.0 (${detected.uaToken}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`);
         setHeaderCaseInsensitive(out, 'Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7');
         setHeaderCaseInsensitive(out, 'Accept-Language', out['Accept-Language'] || out['accept-language'] || 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7');
         setHeaderCaseInsensitive(out, 'Accept-Encoding', 'gzip, deflate, br, zstd');
-        setHeaderCaseInsensitive(out, 'sec-ch-ua', `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not.A/Brand";v="99"`);
-        setHeaderCaseInsensitive(out, 'sec-ch-ua-mobile', '?0');
-        setHeaderCaseInsensitive(out, 'sec-ch-ua-platform', '"Windows"');
+        setHeaderCaseInsensitive(out, 'sec-ch-ua', brandStr);
+        setHeaderCaseInsensitive(out, 'sec-ch-ua-mobile', isMobile);
+        setHeaderCaseInsensitive(out, 'sec-ch-ua-platform', platformLabel);
         setHeaderCaseInsensitive(out, 'Sec-Fetch-Dest', 'document');
         setHeaderCaseInsensitive(out, 'Sec-Fetch-Mode', 'navigate');
         setHeaderCaseInsensitive(out, 'Sec-Fetch-Site', 'none');
@@ -616,7 +657,7 @@ function shouldRotateImpitResponse(response, options = {}) {
     const classification = classifyBlockResponse(response.body ?? response.data, status, response.headers || {});
 
     if (classification.blocked && classification.retryable) return true;
-    if (options.retryOnChallenge !== false && isCloudflareChallenge(response.body ?? response.data, status)) return true;
+    if (options.retryOnChallenge !== false && isCloudflareChallenge(response.body ?? response.data, status, response.headers || {})) return true;
     return rotateStatuses.has(status);
 }
 
@@ -699,15 +740,31 @@ function responseText(data) {
     try { return JSON.stringify(data); } catch (_) { return String(data); }
 }
 
-function isCloudflareChallenge(body, status) {
-    if ([403, 429, 503].includes(Number(status))) return true;
-
-    const text = responseText(body);
-    return (
-        /just a moment|checking your browser|cloudflare ray id|cf-browser-verification/i.test(text)
-        || /enable javascript and cookies|<div id=["']cf-wrapper["']|cf-chl-widget|__cf_chl_opt|cf\.challenge\.orchestrate/i.test(text)
-        || (/challenge-platform|_cf_chl_opt|cf_clearance/i.test(text) && text.length < 20000)
+function hasCfResponseHeaders(headers = {}) {
+    const h = normalizeHeaders(headers);
+    return Boolean(
+        h['cf-ray'] ||
+        h['cf-cache-status'] ||
+        safeString(h.server).toLowerCase().includes('cloudflare')
     );
+}
+
+function isCloudflareChallenge(body, status, headers = null) {
+    const code = Number(status);
+    const text = responseText(body);
+
+    if (/just a moment|checking your browser|cloudflare ray id|cf-browser-verification/i.test(text)
+        || /enable javascript and cookies|<div id=["']cf-wrapper["']|cf-chl-widget|__cf_chl_opt|cf\.challenge\.orchestrate/i.test(text)
+        || (/challenge-platform|_cf_chl_opt|cf_clearance/i.test(text) && text.length < 20000)) {
+        return true;
+    }
+
+    if ([403, 429, 503].includes(code)) {
+        if (headers == null) return true;
+        return hasCfResponseHeaders(headers);
+    }
+
+    return false;
 }
 
 function classifyBlockResponse(body, status = 0, headers = {}) {
@@ -1042,6 +1099,7 @@ module.exports = {
     buildBrowserHeaders,
     createDomainCookieJar,
     getRandomFingerprint,
+    hasCfResponseHeaders,
     isCanceledError,
     isCloudflareChallenge,
     responseText,

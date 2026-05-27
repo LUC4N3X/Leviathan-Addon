@@ -283,7 +283,7 @@ async function fetchSmart(targetUrl, options = {}) {
             const result = await attempt();
             if (!result) continue;
 
-            if (providerShield.shouldUseShield({ targetUrl, url: targetUrl, status: result.status, body: result.data })) {
+            if (providerShield.shouldUseShield({ targetUrl, url: targetUrl, status: result.status, body: result.data, headers: result.headers })) {
                 if (hasUsefulEmbedHtml(result.data, targetUrl)) return result;
                 blockedCandidate = true;
                 break;

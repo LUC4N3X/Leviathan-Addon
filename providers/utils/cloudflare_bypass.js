@@ -204,32 +204,54 @@ function isHtmlLikeUrl(url) {
   return !/\.(?:m3u8|mpd|mp4|m4v|mkv|avi|mov|webm|ts|m4a|aac|mp3|vtt|srt|ass|jpg|jpeg|png|webp|gif|svg|css|woff2?|ttf|ico)(?:$|[?#])/i.test(clean);
 }
 
-function isBlockedStatus(status) {
-  return BLOCKED_STATUSES.has(Number(status || 0));
+function isBlockedStatus(status, headers = null) {
+  const code = Number(status || 0);
+  if (!BLOCKED_STATUSES.has(code)) return false;
+  if (headers == null) return true;
+  return hasCfResponseHeaders(headers);
 }
 
-function isCloudflareChallenge(body, status) {
-  if ([403, 429, 503].includes(Number(status))) return true;
+function hasCfResponseHeaders(headers = {}) {
+  if (!headers || typeof headers !== 'object') return false;
+  for (const [key, value] of Object.entries(headers)) {
+    const k = String(key).toLowerCase();
+    if (k === 'cf-ray' || k === 'cf-cache-status') return true;
+    if (k === 'server' && String(value).toLowerCase().includes('cloudflare')) return true;
+  }
+  return false;
+}
+
+function isCloudflareChallenge(body, status, headers = null) {
+  const code = Number(status);
   const text = safeString(body);
-  return (
-    /just a moment|checking your browser|cloudflare ray id|cf-browser-verification/i.test(text)
+
+  if (/just a moment|checking your browser|cloudflare ray id|cf-browser-verification/i.test(text)
     || /enable javascript and cookies|<div id=["']cf-wrapper["']|cf-chl-widget|__cf_chl_opt|cf\.challenge\.orchestrate/i.test(text)
-    || (/challenge-platform|_cf_chl_opt|cf_clearance/i.test(text) && text.length < 20000)
-  );
+    || (/challenge-platform|_cf_chl_opt|cf_clearance/i.test(text) && text.length < 20000)) {
+    return true;
+  }
+
+  if ([403, 429, 503].includes(code)) {
+    if (headers == null) return true;
+    return hasCfResponseHeaders(headers);
+  }
+
+  return false;
 }
 
-function isBlockedBody(body, status = 200) {
+function isBlockedBody(body, status = 200, headers = null) {
   const text = safeString(body);
   if (!text) return false;
-  return isCloudflareChallenge(text, Number(status || 200));
+  return isCloudflareChallenge(text, Number(status || 200), headers);
 }
 
 function isBlockedError(error) {
+  const headers = error?.response?.headers || error?.headers || null;
   const status = Number(error?.response?.status || error?.status || error?.statusCode || 0);
-  if (isBlockedStatus(status)) return true;
+  if (isBlockedStatus(status, headers)) return true;
 
   const body = error?.response?.data || error?.body || '';
-  if (body && isBlockedBody(body, status || 200)) return true;
+  if (body && isBlockedBody(body, status || 200, headers)) return true;
 
   const code = String(error?.code || '').toUpperCase();
   const msg = String(error?.message || error || '').toLowerCase();
@@ -237,18 +259,19 @@ function isBlockedError(error) {
   return /(?:timeout|timed out|socket hang up|cloudflare|captcha|challenge|forbidden|too many requests|econnreset|econnaborted)/i.test(msg);
 }
 
-function shouldUseCloudflareBypass({ url, baseUrl, status = 0, body = '', error = null, allowOnNetworkError = true } = {}) {
+function shouldUseCloudflareBypass({ url, baseUrl, status = 0, body = '', headers = null, error = null, allowOnNetworkError = true } = {}) {
   if (!url || !isSameSiteUrl(url, baseUrl) || !isHtmlLikeUrl(url)) return false;
-  if (isBlockedStatus(status)) return true;
-  if (isBlockedBody(body, status || 200)) return true;
+  const resolvedHeaders = headers || error?.response?.headers || error?.headers || null;
+  if (isBlockedStatus(status, resolvedHeaders)) return true;
+  if (isBlockedBody(body, status || 200, resolvedHeaders)) return true;
   if (error && allowOnNetworkError && isBlockedError(error)) return true;
   return false;
 }
 
-function isUsefulHtml(value, status = 200) {
+function isUsefulHtml(value, status = 200, headers = null) {
   const text = safeString(value).trim();
   if (!text || text.length < 32) return false;
-  if (isCloudflareChallenge(text, status)) return false;
+  if (isCloudflareChallenge(text, status, headers)) return false;
   if (/turnstile\.cloudflare\.com|cf-chl-widget|__cf_chl_opt|cf\.challenge\.orchestrate/i.test(text)) return false;
   return /<html[\s>]|<!doctype\s+html|<body[\s>]/i.test(text) || text.length >= 200;
 }
@@ -628,6 +651,7 @@ function normalizeCurlCffiResult(result = {}, providerName = 'provider', fallbac
   session.elapsedMs = Number(result.elapsedMs || 0) || 0;
   session.challengeDetected = Boolean(result.challengeDetected);
   if (result.cookieHeader && !session.cookies) session.cookies = String(result.cookieHeader);
+  if (result.headers && typeof result.headers === 'object') session.responseHeaders = result.headers;
   return session;
 }
 
@@ -776,7 +800,7 @@ function createCloudflareBypass(options = {}) {
         if (session?.userAgent && session.cookies && typeof guard.importSession === 'function') {
           guard.importSession(session, session.solvedUrl || url);
         }
-        if (isUsefulHtml(session?.response, session?.solutionResponseStatus)) {
+        if (isUsefulHtml(session?.response, session?.solutionResponseStatus, session?.responseHeaders || null)) {
           debug('curl_cffi response html used', {
             url,
             status: session.solutionResponseStatus,
@@ -917,9 +941,11 @@ module.exports = {
   normalizeCurlCffiResult,
   normalizeScraplingResult,
   shouldUseCloudflareBypass,
+  hasCfResponseHeaders,
   isBlockedStatus,
   isBlockedBody,
   isBlockedError,
+  isCloudflareChallenge,
   isSameSiteUrl,
   isHtmlLikeUrl,
   isUsefulHtml,

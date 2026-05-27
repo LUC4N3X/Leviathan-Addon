@@ -533,14 +533,14 @@ function createCfClearanceManager(options = {}) {
   const providerFailureCooldownMaxMs = Math.max(providerFailureCooldownMs, Number(options.providerFailureCooldownMaxMs || 300_000));
   const returnOnlyCookies = options.returnOnlyCookies !== false;
   const disableMedia = options.disableMedia !== false;
-  const waitInSeconds = Math.max(0, Math.min(5, Number(options.waitInSeconds || 0) || 0));
+  const waitInSeconds = Math.max(0, Math.min(5, Number(options.waitInSeconds ?? 1) || 0));
   const sessionTtlMinutes = Math.max(1, Math.ceil(sessionTtlMs / 60000));
   const solveLimiter = createAsyncLimiter(options.solveConcurrency || 1, { maxQueue: solveMaxQueue });
   const httpAgent = options.httpAgent || undefined;
   const httpsAgent = options.httpsAgent || undefined;
   const getFallbackUserAgent = typeof options.getFallbackUserAgent === 'function'
     ? options.getFallbackUserAgent
-    : () => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
+    : () => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
   const onSession = typeof options.onSession === 'function' ? options.onSession : () => {};
   const isCanceledError = typeof options.isCanceledError === 'function' ? options.isCanceledError : () => false;
 
