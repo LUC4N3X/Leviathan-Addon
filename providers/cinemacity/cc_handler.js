@@ -59,9 +59,7 @@ const {
 } = require('../../core/proxy/mediaflow_gateway');
 
 const BASE_URL = Buffer.from('aHR0cHM6Ly9jaW5lbWFjaXR5LmNj', 'base64').toString('utf8');
-// Session cookie reference (EasyProxy/extractors/cinemacity.py — dle_user_id=48827).
-// L'utente vuole il flusso allineato a quella implementazione: stesso cookie sia
-// nell'addon che nel proxy.
+
 const DEFAULT_SESSION_COOKIE = Buffer.from(
     'ZGxlX3VzZXJfaWQ9NDg4Mjc7IGRsZV9wYXNzd29yZD03N2VjM2E4MTZjOThmMTRlZWI5M2RlNGI0YWM0ZjBiZDs=',
     'base64'
@@ -93,7 +91,6 @@ const CINEMACITY_EMBEDDED_ENV_DEFAULTS = Object.freeze({
     CINEMACITY_BACKGROUND_PRIME_SEARCH: 'true',
 
     CINEMACITY_PAGE_EXTRACTOR_PATH: '/extractor/video.m3u8',
-    // Reference easystreams cinemacity.js usa host=city → CinemaCityExtractor.
     CINEMACITY_PAGE_EXTRACTOR_HOST: 'city',
     CINEMACITY_PAGE_EXTRACTOR_LABEL: 'CCCDN',
     MEDIAFLOW_CCCDN_EXTRACTOR_PATH: '/extractor/video.m3u8',
@@ -178,9 +175,6 @@ const CINEMACITY_LISTING_TOTAL_MS = Math.max(CINEMACITY_LISTING_TIMEOUT_MS + 900
 const CINEMACITY_LISTING_CACHE_TTL_MS = Math.max(5 * 60 * 1000, Math.min(4 * 60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_LISTING_CACHE_TTL_MS || String(45 * 60 * 1000), 10) || (45 * 60 * 1000)));
 const CINEMACITY_LISTING_PAGE_CACHE_TTL_MS = Math.max(2 * 60 * 1000, Math.min(60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_LISTING_PAGE_CACHE_TTL_MS || String(20 * 60 * 1000), 10) || (20 * 60 * 1000)));
 const CINEMACITY_DEBUG = envFlag('CINEMACITY_DEBUG', false) || envFlag('DEBUG_CINEMACITY', false);
-// The /cinemacity/fetch endpoint is the CF-bypassed fetcher exposed by Kraken-Proxy.
-// It uses the same solver chain as the stream extractor, so the addon doesn't have to
-// keep its own FlareSolverr fleet hot just to grab the sitemap / search / page HTML.
 const CINEMACITY_KRAKEN_FORWARD_URL = (
     String(process.env.CINEMACITY_FORWARD_PROXY || '').trim()
     || String(process.env.CINEMACITY_KRAKEN_FORWARD_URL || '').trim()
@@ -189,8 +183,6 @@ const CINEMACITY_KRAKEN_FORWARD_URL = (
 const CINEMACITY_KRAKEN_FORWARD_ENABLED = envFlag('CINEMACITY_FORWARD_PROXY_ENABLED', true);
 const CINEMACITY_KRAKEN_FORWARD_FIRST = envFlag('CINEMACITY_FORWARD_PROXY_FIRST', true);
 const CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS = Math.max(1500, Math.min(20000, Number.parseInt(process.env.CINEMACITY_FORWARD_PROXY_TIMEOUT_MS || '12000', 10) || 12000));
-// Serie CinemaCity: preferiamo il proxy locale CCCDN/ccproxy come nei film.
-// Il page extractor MediaFlow/Kraken resta fallback se la pagina non espone un file episodio sicuro.
 const CINEMACITY_SERIES_FORCE_CCDN = envFlag('CINEMACITY_SERIES_FORCE_CCDN', true);
 const CINEMACITY_PAGE_EXTRACTOR_HOST = String(process.env.CINEMACITY_PAGE_EXTRACTOR_HOST || 'city').trim() || 'city';
 const CINEMACITY_PAGE_EXTRACTOR_LABEL = String(process.env.CINEMACITY_PAGE_EXTRACTOR_LABEL || 'CCCDN').trim() || 'CCCDN';
@@ -625,9 +617,6 @@ async function fetchHtmlWithKrakenForward(url, extraHeaders = {}, requestTimeout
         const status = Number(response?.status || 0);
         const respBody = responseText(response?.data);
         updateCookiesFromResponse(url, response.headers);
-        // Kraken's /cinemacity/fetch returns the dynamic cookies it captured during the
-        // CF bypass in X-CC-Bypass-Cookies. Replay them into the domain jar so the
-        // stream request (sent to the CDN) can forward CF_clearance / PHPSESSID / etc.
         const bypassCookies = String(response?.headers?.['x-cc-bypass-cookies'] || response?.headers?.['X-CC-Bypass-Cookies'] || '');
         if (bypassCookies) {
             const setCookies = bypassCookies.split(';').map((part) => part.trim()).filter((part) => part.includes('='));
@@ -1817,7 +1806,6 @@ function extractCandidateLinksFromListing(html, sectionType) {
         results.push({ url: absoluteUrl, title: cleanTitle });
     };
 
-    // DOM path: works for normal cards and preserves human title when present.
     $('a[href], [data-href], [data-url]').each((_, node) => {
         const el = $(node);
         const href = el.attr('href') || el.attr('data-href') || el.attr('data-url') || '';
@@ -3121,11 +3109,6 @@ async function parseCinemaCityStream(pageUrl, meta = {}) {
     logCinemaCityDebug('parse: stream extracted', { pageUrl, streamUrl: streamUrl.slice(0, 160) });
 
     const streamContext = /\.m3u8($|\?)/i.test(streamUrl) ? 'hls' : 'media';
-    // The CDN that serves the stream lives on a different host than cinemacity.cc, so the
-    // domain-scoped cookie jar would not include the Cloudflare clearance / PHPSESSID
-    // cookies captured while loading the page. Merge the base session cookie with both
-    // the local jar entries for the page host and any clearance cookies held by the
-    // shield guard, then pass the full string explicitly so the proxy forwards it.
     const pageJarCookie = getCookieHeaderForUrl(pageUrl, '') || '';
     let guardClearanceCookie = '';
     try {
