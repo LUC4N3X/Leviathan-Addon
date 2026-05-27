@@ -6,6 +6,7 @@ const path = require('path');
 const { getSharedHttpAgents } = require('./provider_http_agents');
 const {
   getImpitBrowserForFingerprint,
+  hasCfResponseHeaders,
   isCanceledError: defaultIsCanceledError,
   isCloudflareChallenge,
   requestWithImpit,
@@ -224,7 +225,7 @@ function createProviderHttpGuard(options = {}) {
   let lastEmergencyClearanceAt = 0;
 
   function getProfileUserAgent(profile = null) {
-    const fallback = options.fallbackUserAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
+    const fallback = options.fallbackUserAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
     if (profile?.ua || profile?.userAgent) return profile.ua || profile.userAgent;
     const picked = pickProfile(profiles) || {};
     return picked.ua || picked.userAgent || fallback;
@@ -453,13 +454,19 @@ function createProviderHttpGuard(options = {}) {
     return domainRefreshPromise;
   }
 
-  function isChallengePage(html, status = 200) {
+  function isChallengePage(html, status = 200, responseHeaders = null) {
     const raw = typeof html === 'string' ? html : String(html || '');
     if (!raw) return true;
     const lower = raw.slice(0, 250000).toLowerCase();
+    const code = Number(status);
 
-    if ([403, 429, 503].includes(Number(status))) return true;
-    if (isCloudflareChallenge(raw, status)) return true;
+    if ([403, 429, 503].includes(code)) {
+      if (responseHeaders === null) return true;
+      if (hasCfResponseHeaders(responseHeaders)) return true;
+      // Non-CF server: fall through to body-based scoring below.
+    }
+
+    if (isCloudflareChallenge(raw, 0, responseHeaders)) return true;
     if (typeof options.challengeDetector === 'function' && options.challengeDetector(raw, status)) return true;
     if (options.strictChallengeOnly === true) return false;
 
@@ -498,8 +505,20 @@ function createProviderHttpGuard(options = {}) {
       const cookieHeader = buildCookieHeaderFromSession(session, url || currentBaseUrl);
       if (cookieHeader) headers.Cookie = cookieHeader;
     }
-    if (profile.sec_ch_ua) {
-      headers['sec-ch-ua'] = profile.sec_ch_ua;
+
+    const secChUaSource = profile.sec_ch_ua
+      ? profile.sec_ch_ua
+      : (() => {
+          const chromeMatch = userAgent.match(/Chrome\/(\d+)/);
+          if (!chromeMatch || userAgent.includes('Firefox')) return null;
+          const major = chromeMatch[1];
+          const majorInt = Number.parseInt(major, 10);
+          return majorInt >= 131
+            ? `"Google Chrome";v="${major}", "Not A(Brand";v="8", "Chromium";v="${major}"`
+            : `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not.A/Brand";v="99"`;
+        })();
+    if (secChUaSource) {
+      headers['sec-ch-ua'] = secChUaSource;
       headers['sec-ch-ua-mobile'] = '?0';
       headers['sec-ch-ua-platform'] = '"Windows"';
     }
@@ -509,11 +528,14 @@ function createProviderHttpGuard(options = {}) {
       headers['X-Requested-With'] = 'XMLHttpRequest';
       headers['Sec-Fetch-Dest'] = 'empty';
       headers['Sec-Fetch-Mode'] = 'cors';
+      headers['Sec-Fetch-Site'] = 'same-origin';
     } else {
       headers['Sec-Fetch-Dest'] = 'document';
       headers['Sec-Fetch-Mode'] = 'navigate';
+      headers['Sec-Fetch-Site'] = 'none';
       headers['Sec-Fetch-User'] = '?1';
       headers['Upgrade-Insecure-Requests'] = '1';
+      if (secChUaSource) headers['Priority'] = 'u=0, i';
     }
 
     return headers;
@@ -661,7 +683,7 @@ function createProviderHttpGuard(options = {}) {
 
       updateCurrentDomainFromUrl(response.url);
       const html = typeof response.data === 'string' ? response.data : String(response.data || '');
-      if (!isChallengePage(html, response.status)) {
+      if (!isChallengePage(html, response.status, response.headers || null)) {
         const setCookie = response.headers?.['set-cookie'];
         if (activeSession?.cookies || setCookie) {
           persistSession({
@@ -806,7 +828,7 @@ function createProviderHttpGuard(options = {}) {
 
       updateCurrentDomainFromUrl(response.url);
       const html = typeof response.data === 'string' ? response.data : String(response.data || '');
-      if (isChallengePage(html, response.status)) {
+      if (isChallengePage(html, response.status, response.headers || null)) {
         logger.debug('redirect session replay rejected', { method, originalUrl, redirectedUrl, status: response.status, bytes: html.length, via: response.via, ms: Date.now() - startedAt });
         return null;
       }
@@ -838,7 +860,7 @@ function createProviderHttpGuard(options = {}) {
 
     updateCurrentDomainFromUrl(response.url);
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
-    if (isChallengePage(html, response.status)) {
+    if (isChallengePage(html, response.status, response.headers || null)) {
       logger.debug('session fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, via: response.via, ms: Date.now() - startedAt });
 
       const replayed = await tryRedirectedSessionReplay(url, response.url, { method, body, signal, timeout, startedAt, reason: 'session-challenge' });
@@ -859,7 +881,7 @@ function createProviderHttpGuard(options = {}) {
           });
           updateCurrentDomainFromUrl(impitResponse.url);
           const impitHtml = typeof impitResponse.data === 'string' ? impitResponse.data : String(impitResponse.data || '');
-          if (!isChallengePage(impitHtml, impitResponse.status)) {
+          if (!isChallengePage(impitHtml, impitResponse.status, impitResponse.headers || null)) {
             persistSession(activeSession, impitResponse.url, impitResponse.headers?.['set-cookie']);
             logger.debug('session impit rescue ok', { method, url, status: impitResponse.status, bytes: impitHtml.length, via: impitResponse.via, ms: Date.now() - startedAt });
             return impitHtml;
@@ -908,7 +930,7 @@ function createProviderHttpGuard(options = {}) {
 
     updateCurrentDomainFromUrl(response.url);
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
-    if (isChallengePage(html, response.status)) {
+    if (isChallengePage(html, response.status, response.headers || null)) {
       logger.debug('direct fetch rejected', { method, url, status: response.status, bytes: html.length, challenge: true, ms: Date.now() - startedAt });
       const replayed = await tryRedirectedSessionReplay(url, response.url, { method, body, signal, timeout, startedAt, reason: 'direct-challenge' });
       if (replayed) return replayed;
