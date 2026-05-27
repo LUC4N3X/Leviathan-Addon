@@ -327,7 +327,7 @@ async function fetchSmart(url, options = {}) {
             }
         ));
 
-        if (providerShield.shouldUseShield({ url, status: response?.status, body: responseText(response) })) {
+        if (providerShield.shouldUseShield({ url, status: response?.status, body: responseText(response), headers: response?.headers })) {
             const shielded = await providerShield.fetchAxiosLike(url, {
                 method,
                 data: options.data,

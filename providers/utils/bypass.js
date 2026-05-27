@@ -401,14 +401,42 @@ function setHeaderCaseInsensitive(headers, name, value) {
     if (value !== undefined && value !== null && value !== '') headers[name] = value;
 }
 
+const PLATFORM_PATTERNS = Object.freeze([
+    { regex: /Macintosh|Mac OS X/i, platform: '"macOS"', uaToken: 'Macintosh; Intel Mac OS X 10_15_7' },
+    { regex: /CrOS/i, platform: '"Chrome OS"', uaToken: 'X11; CrOS x86_64 14541.0.0' },
+    { regex: /Android/i, platform: '"Android"', uaToken: 'Linux; Android 13; Pixel 7' },
+    { regex: /Linux/i, platform: '"Linux"', uaToken: 'X11; Linux x86_64' },
+    { regex: /Windows/i, platform: '"Windows"', uaToken: 'Windows NT 10.0; Win64; x64' }
+]);
+
+function detectPlatformFromUserAgent(userAgent = '') {
+    for (const entry of PLATFORM_PATTERNS) {
+        if (entry.regex.test(userAgent)) return entry;
+    }
+    return PLATFORM_PATTERNS[PLATFORM_PATTERNS.length - 1];
+}
+
 function alignHeadersForImpitBrowser(headers = {}, browser = '') {
     const selected = safeString(browser).toLowerCase();
     const out = { ...(headers || {}) };
     const version = Number.parseInt(selected.match(/(\d+)/)?.[1] || '', 10);
+    const existingUa = safeString(out['User-Agent'] || out['user-agent'] || '');
+    const existingPlatformHeader = safeString(out['sec-ch-ua-platform'] || out['Sec-Ch-Ua-Platform'] || '').trim();
+    const detected = detectPlatformFromUserAgent(existingUa);
+    const platformLabel = existingPlatformHeader || detected.platform;
+    const isMobile = /Mobile|Android/i.test(existingUa) ? '?1' : '?0';
 
     if (selected.startsWith('firefox')) {
         const major = Number.isInteger(version) ? version : 138;
-        setHeaderCaseInsensitive(out, 'User-Agent', `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:${major}.0) Gecko/20100101 Firefox/${major}.0`);
+        const ffPlatformToken = detected.platform === '"macOS"'
+            ? 'Macintosh; Intel Mac OS X 10.15'
+            : detected.platform === '"Linux"'
+                ? 'X11; Linux x86_64'
+                : 'Windows NT 10.0; Win64; x64';
+        const ffUa = detected.platform === '"macOS"'
+            ? `Mozilla/5.0 (${ffPlatformToken}; rv:${major}.0) Gecko/20100101 Firefox/${major}.0`
+            : `Mozilla/5.0 (${ffPlatformToken}; rv:${major}.0) Gecko/20100101 Firefox/${major}.0`;
+        setHeaderCaseInsensitive(out, 'User-Agent', ffUa);
         setHeaderCaseInsensitive(out, 'Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
         setHeaderCaseInsensitive(out, 'Accept-Language', out['Accept-Language'] || out['accept-language'] || 'it-IT,it;q=0.8,en-US;q=0.5,en;q=0.3');
         setHeaderCaseInsensitive(out, 'Accept-Encoding', 'gzip, deflate, br, zstd');
@@ -430,13 +458,13 @@ function alignHeadersForImpitBrowser(headers = {}, browser = '') {
         const brandStr = major >= 131
             ? `"Google Chrome";v="${major}", "Not A(Brand";v="8", "Chromium";v="${major}"`
             : `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not.A/Brand";v="99"`;
-        setHeaderCaseInsensitive(out, 'User-Agent', `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`);
+        setHeaderCaseInsensitive(out, 'User-Agent', `Mozilla/5.0 (${detected.uaToken}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`);
         setHeaderCaseInsensitive(out, 'Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7');
         setHeaderCaseInsensitive(out, 'Accept-Language', out['Accept-Language'] || out['accept-language'] || 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7');
         setHeaderCaseInsensitive(out, 'Accept-Encoding', 'gzip, deflate, br, zstd');
         setHeaderCaseInsensitive(out, 'sec-ch-ua', brandStr);
-        setHeaderCaseInsensitive(out, 'sec-ch-ua-mobile', '?0');
-        setHeaderCaseInsensitive(out, 'sec-ch-ua-platform', '"Windows"');
+        setHeaderCaseInsensitive(out, 'sec-ch-ua-mobile', isMobile);
+        setHeaderCaseInsensitive(out, 'sec-ch-ua-platform', platformLabel);
         setHeaderCaseInsensitive(out, 'Sec-Fetch-Dest', 'document');
         setHeaderCaseInsensitive(out, 'Sec-Fetch-Mode', 'navigate');
         setHeaderCaseInsensitive(out, 'Sec-Fetch-Site', 'none');
@@ -723,17 +751,20 @@ function hasCfResponseHeaders(headers = {}) {
 
 function isCloudflareChallenge(body, status, headers = null) {
     const code = Number(status);
-    if ([403, 429, 503].includes(code)) {
-        if (!headers) return true;
-        if (hasCfResponseHeaders(headers)) return true;
+    const text = responseText(body);
+
+    if (/just a moment|checking your browser|cloudflare ray id|cf-browser-verification/i.test(text)
+        || /enable javascript and cookies|<div id=["']cf-wrapper["']|cf-chl-widget|__cf_chl_opt|cf\.challenge\.orchestrate/i.test(text)
+        || (/challenge-platform|_cf_chl_opt|cf_clearance/i.test(text) && text.length < 20000)) {
+        return true;
     }
 
-    const text = responseText(body);
-    return (
-        /just a moment|checking your browser|cloudflare ray id|cf-browser-verification/i.test(text)
-        || /enable javascript and cookies|<div id=["']cf-wrapper["']|cf-chl-widget|__cf_chl_opt|cf\.challenge\.orchestrate/i.test(text)
-        || (/challenge-platform|_cf_chl_opt|cf_clearance/i.test(text) && text.length < 20000)
-    );
+    if ([403, 429, 503].includes(code)) {
+        if (headers == null) return true;
+        return hasCfResponseHeaders(headers);
+    }
+
+    return false;
 }
 
 function classifyBlockResponse(body, status = 0, headers = {}) {

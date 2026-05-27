@@ -461,7 +461,7 @@ function createProviderHttpGuard(options = {}) {
     const code = Number(status);
 
     if ([403, 429, 503].includes(code)) {
-      if (responseHeaders === null) return true;
+      if (responseHeaders == null) return true;
       if (hasCfResponseHeaders(responseHeaders)) return true;
       // Non-CF server: fall through to body-based scoring below.
     }
@@ -517,10 +517,19 @@ function createProviderHttpGuard(options = {}) {
             ? `"Google Chrome";v="${major}", "Not A(Brand";v="8", "Chromium";v="${major}"`
             : `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not.A/Brand";v="99"`;
         })();
+    const secChUaPlatformSource = profile.sec_ch_ua_platform
+      || profile.secChUaPlatform
+      || (() => {
+          if (/Macintosh|Mac OS X/i.test(userAgent)) return '"macOS"';
+          if (/Linux/i.test(userAgent) && !/Android/i.test(userAgent)) return '"Linux"';
+          if (/Android/i.test(userAgent)) return '"Android"';
+          if (/CrOS/i.test(userAgent)) return '"Chrome OS"';
+          return '"Windows"';
+        })();
     if (secChUaSource) {
       headers['sec-ch-ua'] = secChUaSource;
-      headers['sec-ch-ua-mobile'] = '?0';
-      headers['sec-ch-ua-platform'] = '"Windows"';
+      headers['sec-ch-ua-mobile'] = /Android|Mobile/i.test(userAgent) ? '?1' : '?0';
+      headers['sec-ch-ua-platform'] = secChUaPlatformSource;
     }
 
     if (method === 'POST' && body) {

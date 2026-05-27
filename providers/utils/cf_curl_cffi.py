@@ -229,6 +229,24 @@ def sec_ch_ua_for_chrome(major: str) -> str:
     return f'"Google Chrome";v="{major}", "Chromium";v="{major}", "Not.A/Brand";v="99"'
 
 
+def platform_label_from_ua(user_agent: str) -> str:
+    """Return the sec-ch-ua-platform value that matches the User-Agent."""
+    ua = user_agent or ""
+    if re.search(r"Macintosh|Mac OS X", ua, re.I):
+        return '"macOS"'
+    if re.search(r"CrOS", ua, re.I):
+        return '"Chrome OS"'
+    if re.search(r"Android", ua, re.I):
+        return '"Android"'
+    if re.search(r"Linux", ua, re.I):
+        return '"Linux"'
+    return '"Windows"'
+
+
+def is_mobile_ua(user_agent: str) -> bool:
+    return bool(re.search(r"Mobile|Android", user_agent or "", re.I))
+
+
 def normalize_headers(
     headers: Dict[str, Any],
     *,
@@ -277,8 +295,8 @@ def normalize_headers(
         if not impersonate or is_chromium_based(impersonate):
             chrome_major = chrome_major_from_ua(ua)
             set_header_if_missing(out, "sec-ch-ua", sec_ch_ua_for_chrome(chrome_major))
-            set_header_if_missing(out, "sec-ch-ua-mobile", "?0")
-            set_header_if_missing(out, "sec-ch-ua-platform", '"Windows"')
+            set_header_if_missing(out, "sec-ch-ua-mobile", "?1" if is_mobile_ua(ua) else "?0")
+            set_header_if_missing(out, "sec-ch-ua-platform", platform_label_from_ua(ua))
 
         if referer:
             set_header_if_missing(out, "Referer", referer)
