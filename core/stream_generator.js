@@ -2985,7 +2985,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
             const playbackContext = getLazyPlaybackEpisodeContext(item, meta);
             const playbackSeason = playbackContext.season || 0;
             const playbackEpisode = playbackContext.episode || 0;
-            const playbackFileIdx = (item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1;
+            const playbackFileIdx = getLazyPlaybackFileIdx('tb', item, meta);
             const imdbParam = meta?.imdb_id ? `&imdb=${encodeURIComponent(meta.imdb_id)}` : '';
             const proxyUrl = `${reqHost}/${rawConf}/play_lazy/tb/${item.hash}/${playbackFileIdx}?s=${playbackSeason}&e=${playbackEpisode}${imdbParam}`;
             const lazyCacheKey = `tb:${item.hash}:${playbackSeason}:${playbackEpisode}:${playbackFileIdx}`;
@@ -3001,6 +3001,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
                 seeders: finalSeeders,
                 size: realSize > 0 ? realSize : 0,
                 fileIdx: playbackFileIdx,
+                forceFileIdx: playbackFileIdx >= 0,
                 folderSize: getObservedFolderSizeBytes(item) || 0
             }, 43200).catch(() => {});
             return buildPlayableStream({
@@ -3123,6 +3124,21 @@ function getLazyPlaybackEpisodeContext(item = {}, meta = {}) {
     return { season, episode };
 }
 
+function getLazyPlaybackFileIdx(service, item = {}, meta = {}) {
+    const parsed = Number(item?.fileIdx);
+    if (!Number.isInteger(parsed) || parsed < 0) return -1;
+
+    const normalizedService = String(service || '').toLowerCase();
+    const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0 || Number(item?.season || 0) > 0 || Number(item?.episode || 0) > 0);
+
+    // TorBox pack playback must be selected at request time from S/E, not from a stale
+    // fileIdx learned from another episode of the same season pack. Keeping -1 here lets
+    // the TorBox matcher pick the real file for the requested episode.
+    if (normalizedService === 'tb' && isSeries) return -1;
+
+    return parsed;
+}
+
 function generateRdDownloadToDebridStream(item, config, meta, reqHost, userConfStr) {
     const service = getNormalizedDebridService(config);
     if (service !== 'rd' || !item?.hash) return null;
@@ -3241,7 +3257,7 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
     const playbackContext = getLazyPlaybackEpisodeContext(item, meta);
     const playbackSeason = playbackContext.season || 0;
     const playbackEpisode = playbackContext.episode || 0;
-    const playbackFileIdx = (item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1;
+    const playbackFileIdx = getLazyPlaybackFileIdx(service, item, meta);
     const imdbParam = meta?.imdb_id ? `&imdb=${encodeURIComponent(meta.imdb_id)}` : '';
     const lazyUrl = `${reqHost}/${userConfStr}/play_lazy/${service}/${item.hash}/${playbackFileIdx}?s=${playbackSeason}&e=${playbackEpisode}${imdbParam}`;
     const lazyCacheKey = `${service}:${item.hash}:${playbackSeason}:${playbackEpisode}:${playbackFileIdx}`;
@@ -3256,7 +3272,8 @@ function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = f
         source: item?.source || null,
         seeders: finalSeeders,
         size: realSize > 0 ? realSize : 0,
-        fileIdx: (item.fileIdx !== undefined && !isNaN(item.fileIdx)) ? item.fileIdx : -1,
+        fileIdx: playbackFileIdx,
+        forceFileIdx: playbackFileIdx >= 0,
         folderSize: getObservedFolderSizeBytes(item) || 0
     }, 43200).catch(() => {});
 
