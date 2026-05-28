@@ -4116,7 +4116,7 @@ body.m-lowfx .m-visual-core-v2 {
 }
 
 .m-abyss-version {
-    margin-top: 12px;
+    margin-top: 8px;
     padding: 5px 13px 5px 11px;
     border-radius: 999px;
     border: 1px solid rgba(103, 232, 249, 0.30);
@@ -4755,8 +4755,8 @@ body::before {
 .m-content { padding-top: 4px; }
 
 .m-abyss-hero {
-    padding: 25px 10px 22px;
-    margin: 8px 0 12px;
+    padding: 25px 10px 8px;
+    margin: 8px 0 2px;
 }
 
 .m-abyss-hero::before {
@@ -5152,14 +5152,10 @@ body.m-typing .m-content {
     pointer-events: none;
     image-rendering: auto;
 }
-body.m-lowfx #m-sea-vanta,
 body.m-page-hidden #m-sea-vanta,
 body.m-typing #m-sea-vanta,
 body.m-keyboard-open #m-sea-vanta {
     opacity: 0 !important;
-}
-body.m-lowfx #m-sea-vanta {
-    display: none !important;
 }
 @media (prefers-reduced-motion: reduce) {
     #m-sea-vanta { display: none !important; }
@@ -5872,7 +5868,7 @@ const mobileHTML = `
 
             <div id="page-setup" class="m-page active">
 
-                <div class="m-hypervisor" style="margin-top:10px;">
+                <div class="m-hypervisor" style="margin-top:2px;">
                     <div class="m-hyp-header">
                         <span>🔑 ACCESSO & SERVIZI</span>
                         <i class="fas fa-fingerprint m-hyp-icon"></i>
@@ -7001,9 +6997,15 @@ function createOceanParticles() {
 }
 
 const LEVIATHAN_SEA_CDN = {
-    three: 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js',
-    vanta: 'https://cdn.jsdelivr.net/npm/vanta@0.5.24/dist/vanta.waves.min.js'
+    three: 'https://cdn.jsdelivr.net/npm/three@0.134.0/build/three.min.js',
+    vanta: 'https://cdn.jsdelivr.net/npm/vanta@0.5.24/dist/vanta.waves.min.js',
+    threeFallback: 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js',
+    vantaFallback: 'https://unpkg.com/vanta@0.5.24/dist/vanta.waves.min.js'
 };
+
+function loadLeviathanSeaScriptWithFallback(primary, fallback) {
+    return loadLeviathanSeaScript(primary).catch(() => loadLeviathanSeaScript(fallback));
+}
 
 function loadLeviathanSeaScript(src) {
     return new Promise((resolve, reject) => {
@@ -7018,8 +7020,6 @@ function loadLeviathanSeaScript(src) {
         tag.src = src;
         tag.async = true;
         tag.defer = true;
-        tag.crossOrigin = 'anonymous';
-        tag.referrerPolicy = 'no-referrer';
         tag.dataset.leviathanSea = src;
         tag.addEventListener('load', () => { tag.dataset.loaded = '1'; resolve(); }, { once: true });
         tag.addEventListener('error', () => reject(new Error('script error: ' + src)), { once: true });
@@ -7029,13 +7029,12 @@ function loadLeviathanSeaScript(src) {
 
 function leviathanSeaShouldSkip() {
     if (!document.body) return true;
-    if (document.body.classList.contains('m-lowfx')) return true;
     try {
         if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return true;
     } catch (_) {}
     try {
         const test = document.createElement('canvas');
-        const gl = test.getContext('webgl', { failIfMajorPerformanceCaveat: true, antialias: false, alpha: true })
+        const gl = test.getContext('webgl', { antialias: false, alpha: true, powerPreference: 'low-power' })
                 || test.getContext('experimental-webgl');
         if (!gl) return true;
     } catch (_) { return true; }
@@ -7122,7 +7121,16 @@ function startLeviathanSeaVanta(mount) {
 
     const cores = navigator.hardwareConcurrency || 8;
     const memory = Number(navigator['deviceMemory'] || 0);
-    const modest = (cores <= 6) || (memory && memory <= 6);
+    const tinyMem = memory > 0 && memory <= 2;
+    const lowfx = document.body.classList.contains('m-lowfx');
+    const tier = tinyMem ? 'tiny' : (lowfx || cores <= 4 || (memory && memory <= 4) ? 'lite' : 'full');
+
+    const presets = {
+        full: { scaleMobile: 1.15, shininess: 38.0, waveHeight: 16.0, waveSpeed: 0.82, zoom: 0.86, dpr: 1.5 },
+        lite: { scaleMobile: 1.6,  shininess: 26.0, waveHeight: 12.0, waveSpeed: 0.72, zoom: 0.88, dpr: 1.2 },
+        tiny: { scaleMobile: 2.2,  shininess: 18.0, waveHeight: 8.5,  waveSpeed: 0.60, zoom: 0.92, dpr: 1.0 }
+    };
+    const p = presets[tier];
 
     const options = {
         el: mount,
@@ -7133,12 +7141,12 @@ function startLeviathanSeaVanta(mount) {
         minHeight: 200.0,
         minWidth: 200.0,
         scale: 1.0,
-        scaleMobile: modest ? 1.5 : 1.2,
+        scaleMobile: p.scaleMobile,
         color: 0x062744,
-        shininess: modest ? 28.0 : 38.0,
-        waveHeight: modest ? 12.5 : 16.0,
-        waveSpeed: 0.78,
-        zoom: 0.86
+        shininess: p.shininess,
+        waveHeight: p.waveHeight,
+        waveSpeed: p.waveSpeed,
+        zoom: p.zoom
     };
 
     let effect = null;
@@ -7151,8 +7159,7 @@ function startLeviathanSeaVanta(mount) {
 
     try {
         if (effect.renderer && typeof effect.renderer.setPixelRatio === 'function') {
-            const dpr = Math.min(window.devicePixelRatio || 1, modest ? 1.25 : 1.5);
-            effect.renderer.setPixelRatio(dpr);
+            effect.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, p.dpr));
             if (typeof effect.resize === 'function') effect.resize();
         }
     } catch (_) {}
@@ -7179,8 +7186,8 @@ function createSeaCanvas() {
     }
 
     const boot = () => {
-        loadLeviathanSeaScript(LEVIATHAN_SEA_CDN.three)
-            .then(() => loadLeviathanSeaScript(LEVIATHAN_SEA_CDN.vanta))
+        loadLeviathanSeaScriptWithFallback(LEVIATHAN_SEA_CDN.three, LEVIATHAN_SEA_CDN.threeFallback)
+            .then(() => loadLeviathanSeaScriptWithFallback(LEVIATHAN_SEA_CDN.vanta, LEVIATHAN_SEA_CDN.vantaFallback))
             .then(() => {
                 if (leviathanSeaShouldSkip()) return;
                 requestAnimationFrame(() => startLeviathanSeaVanta(mount));
