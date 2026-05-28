@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { buildCookieHeaderFromSession, mergeCookieHeaders, cookieHeaderToObjects } = require('./cf_clearance_manager');
 
 // cf_native_solver: in-process clearance cache + native IUAM solver. Loaded
 // lazily so a broken require() can't take down the rest of the bypass chain.
@@ -204,6 +205,88 @@ function shortHash(value) {
 function buildCurlCffiCoalesceKey(providerName, method, url, body = '') {
   const bodyKey = body ? `:${shortHash(body)}` : '';
   return `${providerName || 'provider'}:curl_cffi:${String(method || 'GET').toUpperCase()}:${String(url || '')}${bodyKey}`;
+}
+
+
+function getHeaderValue(headers = {}, name = '') {
+  if (!headers || typeof headers !== 'object') return '';
+  const wanted = String(name || '').toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (String(key).toLowerCase() === wanted) return value == null ? '' : String(value);
+  }
+  return '';
+}
+
+function setHeaderValue(headers = {}, name = '', value = '') {
+  if (!headers || typeof headers !== 'object' || !name || value == null || value === '') return headers;
+  const wanted = String(name).toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (String(key).toLowerCase() === wanted) {
+      headers[key] = String(value);
+      return headers;
+    }
+  }
+  headers[name] = String(value);
+  return headers;
+}
+
+function normalizeCurlCookieItems(value = [], url = null) {
+  const out = [];
+  const seen = new Set();
+  const targetHost = hostOf(url);
+  const push = (item = {}) => {
+    const name = String(item.name || item.key || '').trim();
+    const rawValue = item.value ?? item.val;
+    if (!name || rawValue == null) return;
+    const normalized = {
+      name,
+      value: String(rawValue),
+      path: item.path || '/'
+    };
+    const domain = item.domain || item.host || targetHost;
+    if (domain) normalized.domain = String(domain).replace(/^\./, '');
+    if (item.secure != null) normalized.secure = Boolean(item.secure);
+    if (item.expires != null) normalized.expires = item.expires;
+    const key = `${normalized.name}\u0000${normalized.domain || ''}\u0000${normalized.path || ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(normalized);
+  };
+
+  if (Array.isArray(value)) {
+    for (const item of value) push(item);
+  } else if (value && typeof value === 'object') {
+    for (const [name, cookieValue] of Object.entries(value)) {
+      if (cookieValue && typeof cookieValue === 'object') push({ name, ...cookieValue });
+      else push({ name, value: cookieValue });
+    }
+  }
+  return out;
+}
+
+function cookieItemsFromSession(session = {}, url = null) {
+  if (!session) return [];
+  try {
+    const items = cookieHeaderToObjects(session, url || session.solvedUrl || session.url || null);
+    return normalizeCurlCookieItems(items, url || session.solvedUrl || session.url || null);
+  } catch (_) {
+    const header = buildCookieHeaderFromSession(session, url || session.solvedUrl || session.url || null) || session.cookies || '';
+    try { return normalizeCurlCookieItems(cookieHeaderToObjects(header, url || session.solvedUrl || session.url || null), url); }
+    catch (__) { return []; }
+  }
+}
+
+function cookieHeaderFromCurlItems(items = []) {
+  const pairs = [];
+  const seen = new Set();
+  for (const item of items || []) {
+    const name = String(item?.name || '').trim();
+    const value = item?.value;
+    if (!name || value == null || seen.has(name)) continue;
+    seen.add(name);
+    pairs.push(`${name}=${value}`);
+  }
+  return pairs.join('; ');
 }
 
 function isSameSiteUrl(url, baseUrl) {
@@ -529,6 +612,7 @@ function execCurlCffiBypass(url, providerName = 'provider', options = {}) {
     if (method) args.push('--method', method);
     if (options.body || options.data) args.push('--data', String(options.body || options.data));
     if (options.headers) args.push('--headers', JSON.stringify(options.headers));
+    if (options.cookiesJson) args.push('--cookies-json', JSON.stringify(options.cookiesJson));
     if (acceptLanguage) args.push('--accept-language', acceptLanguage);
     if (options.referer) args.push('--referer', String(options.referer));
     if (warmupOrigin) args.push('--warmup-origin');
@@ -741,6 +825,53 @@ function createCloudflareBypass(options = {}) {
     else if (options.debug || options.debugCf) console.warn(`[${envPrefix}-BYPASS] ${message}${meta ? ` ${JSON.stringify(meta)}` : ''}`);
   }
 
+  async function hydrateCurlCffiSession(url, reason = 'curl-cffi-seed') {
+    if (typeof guard.hydrateSessionForUrl !== 'function') return false;
+    try {
+      return await guard.hydrateSessionForUrl(url, reason);
+    } catch (error) {
+      debug('curl_cffi redis/session hydrate skipped', { url, error: error?.message || String(error) });
+      return false;
+    }
+  }
+
+  function buildCurlCffiSeed(url, fetchOptions = {}) {
+    const headers = { ...(fetchOptions.headers || {}) };
+    const session = typeof guard.getSession === 'function' ? guard.getSession() : null;
+    const sessionFresh = session && (
+      typeof guard.isSessionFreshForUrl === 'function'
+        ? guard.isSessionFreshForUrl(session, url || session.solvedUrl || session.url || baseUrl)
+        : (typeof guard.isSessionFresh === 'function' ? guard.isSessionFresh(session) : true)
+    );
+    const cookieItems = [];
+
+    if (sessionFresh) {
+      const sessionCookieItems = cookieItemsFromSession(session, url || session.solvedUrl || session.url || baseUrl);
+      cookieItems.push(...sessionCookieItems);
+      const sessionCookie = cookieHeaderFromCurlItems(sessionCookieItems)
+        || buildCookieHeaderFromSession(session, url || session.solvedUrl || session.url || baseUrl)
+        || session.cookies
+        || '';
+      if (sessionCookie) {
+        const existingCookie = getHeaderValue(headers, 'cookie');
+        setHeaderValue(headers, 'Cookie', existingCookie ? mergeCookieHeaders(existingCookie, sessionCookie) : sessionCookie);
+      }
+      const sessionUa = session.userAgent || session.ua || '';
+      if (sessionUa && !getHeaderValue(headers, 'user-agent')) setHeaderValue(headers, 'User-Agent', sessionUa);
+      if (sessionCookie || sessionUa || sessionCookieItems.length) {
+        debug('curl_cffi seeded from shared session', {
+          url,
+          hasCookie: Boolean(sessionCookie || sessionCookieItems.length),
+          cookieCount: sessionCookieItems.length || undefined,
+          hasUserAgent: Boolean(sessionUa),
+          source: session.source || session.solver || (session.curlCffi ? 'curl_cffi' : 'flaresolverr')
+        });
+      }
+    }
+
+    return { headers, cookiesJson: cookieItems.length ? cookieItems : null };
+  }
+
   function shouldAttemptCurlCffi(url, fetchOptions = {}) {
     if (!curlCffiEnabled || fetchOptions.allowCurlCffi === false) return false;
     if (!isSameSiteUrl(url, baseUrl) || !isHtmlLikeUrl(url)) return false;
@@ -749,12 +880,15 @@ function createCloudflareBypass(options = {}) {
 
   async function runCurlCffi(url, fetchOptions = {}) {
     const method = String(fetchOptions.method || (fetchOptions.isPost ? 'POST' : 'GET')).toUpperCase();
+    await hydrateCurlCffiSession(url, fetchOptions.reason ? `curl-cffi-${fetchOptions.reason}` : 'curl-cffi-seed');
+    const curlCffiSeed = buildCurlCffiSeed(url, fetchOptions);
     const rawResult = await runCurlCffiBypass(url, providerName, {
       ...fetchOptions,
       method,
       body: fetchOptions.body || fetchOptions.data || null,
       timeout: fetchOptions.curlCffiTimeoutMs || fetchOptions.timeoutMs || fetchOptions.timeout,
-      headers: fetchOptions.headers || {},
+      headers: curlCffiSeed.headers,
+      cookiesJson: curlCffiSeed.cookiesJson,
       impersonate: fetchOptions.impersonate || fetchOptions.curlCffiImpersonate || curlCffiImpersonate,
       proxy: fetchOptions.proxy || fetchOptions.curlCffiProxy || null,
       retries: fetchOptions.curlCffiRetries ?? curlCffiRetries,
