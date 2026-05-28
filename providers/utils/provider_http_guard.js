@@ -14,6 +14,7 @@ const {
 } = require('./bypass');
 const { createCfClearanceManager, normalizeBaseUrl, mergeCookieHeaders, buildCookieHeaderFromSession, mergeSessionCookies } = require('./cf_clearance_manager');
 const { createRustShieldClient } = require('./rust_shield_client');
+const { cfRedisStore } = require('./cf_redis_store');
 
 class LRUCache {
   constructor(maxSize) {
@@ -190,6 +191,17 @@ function createProviderHttpGuard(options = {}) {
     || CURL_CFFI_GUARD_DEFAULTS.beforeFlareTimeoutMs
   ) || CURL_CFFI_GUARD_DEFAULTS.beforeFlareTimeoutMs));
 
+  const redisSessionSharing = options.redisSessionSharing !== false && cfRedisStore.isEnabled();
+  const redisLockSharing = options.redisLockSharing !== false && cfRedisStore.isLockEnabled();
+  const redisLockTtlMs = Math.max(
+    5000,
+    Math.min(5 * 60 * 1000, Number(options.redisLockTtlMs || process.env.CF_REDIS_LOCK_TTL_MS || Math.max(clearanceTimeoutMs + 15_000, 45_000)) || Math.max(clearanceTimeoutMs + 15_000, 45_000))
+  );
+  const redisLockWaitMs = Math.max(
+    1000,
+    Math.min(5 * 60 * 1000, Number(options.redisLockWaitMs || process.env.CF_REDIS_LOCK_WAIT_MS || Math.max(clearanceTimeoutMs + 8000, redisLockTtlMs)) || Math.max(clearanceTimeoutMs + 8000, redisLockTtlMs))
+  );
+
   function loadStoredDomain() {
     try {
       if (!fs.existsSync(domainFile)) return null;
@@ -291,6 +303,7 @@ function createProviderHttpGuard(options = {}) {
       delete persistedSession.solutionResponseUrl;
       delete persistedSession.solutionResponseStatus;
       saveSession(persistedSession);
+      persistRedisSession(persistedSession, activeSession.solvedUrl || activeSession.url || currentBaseUrl, 'flaresolverr');
       if (activeSession.url) updateCurrentDomainFromUrl(activeSession.url);
     }
   });
@@ -306,9 +319,73 @@ function createProviderHttpGuard(options = {}) {
     return Boolean(buildCookieHeaderFromSession(session, url || session.solvedUrl || session.url || currentBaseUrl));
   }
 
+  function persistRedisSession(session, url = null, reason = 'store') {
+    if (!redisSessionSharing || !session?.userAgent) return false;
+    const storageUrl = normalizeBaseUrl(url || session.url || session.solvedUrl || currentBaseUrl) || url || session.url || session.solvedUrl || currentBaseUrl;
+    cfRedisStore.saveProviderSession({
+      providerName,
+      url: storageUrl,
+      egressKey: session.egressKey || clearanceEgressKey,
+      session,
+      sessionTtlMs
+    }).then((ok) => {
+      if (ok) logger.debug('redis session stored', { provider: providerName, reason, url: storageUrl, egressKey: session.egressKey || clearanceEgressKey });
+    }).catch((error) => {
+      logger.debug('redis session store skipped', { provider: providerName, reason, error: error?.message || String(error) });
+    });
+    return true;
+  }
+
+  function activateRedisSession(session, targetUrl = currentBaseUrl, reason = 'hydrate') {
+    if (!session || !isSessionFreshForUrl(session, targetUrl || session.solvedUrl || session.url || currentBaseUrl)) return false;
+    const next = { ...session };
+    delete next.redisKey;
+    delete next.redisHydratedAt;
+    activeSession = next;
+    const persistedSession = { ...activeSession };
+    delete persistedSession.solutionResponse;
+    delete persistedSession.solutionResponseUrl;
+    delete persistedSession.solutionResponseStatus;
+    saveSession(persistedSession);
+    if (activeSession.url) updateCurrentDomainFromUrl(activeSession.url);
+    logger.debug('redis session hydrated', { provider: providerName, reason, url: targetUrl, solvedBase: activeSession.url, egressKey: activeSession.egressKey || clearanceEgressKey });
+    return true;
+  }
+
+  async function hydrateRedisSessionForUrl(url = currentBaseUrl, reason = 'hydrate') {
+    if (!redisSessionSharing) return false;
+    const targetUrl = url || currentBaseUrl;
+    if (isSessionFreshForUrl(activeSession, targetUrl)) return false;
+    try {
+      const session = await cfRedisStore.getProviderSession({
+        providerName,
+        url: normalizeBaseUrl(targetUrl) || normalizeBaseUrl(currentBaseUrl) || targetUrl,
+        egressKey: clearanceEgressKey,
+        sessionTtlMs
+      });
+      return activateRedisSession(session, targetUrl, reason);
+    } catch (error) {
+      logger.debug('redis session hydrate skipped', { provider: providerName, reason, url: targetUrl, error: error?.message || String(error) });
+      return false;
+    }
+  }
+
+  function deleteRedisSession(url = currentBaseUrl, reason = 'clear') {
+    if (!redisSessionSharing) return false;
+    const storageUrl = normalizeBaseUrl(url || currentBaseUrl) || url || currentBaseUrl;
+    cfRedisStore.deleteProviderSession({ providerName, url: storageUrl, egressKey: clearanceEgressKey })
+      .then((deleted) => {
+        if (deleted) logger.debug('redis session deleted', { provider: providerName, reason, url: storageUrl });
+      })
+      .catch((error) => logger.debug('redis session delete skipped', { provider: providerName, reason, error: error?.message || String(error) }));
+    return true;
+  }
+
   function clearSession() {
+    const previousUrl = activeSession?.url || currentBaseUrl;
     activeSession = {};
     try { fs.unlinkSync(sessionFile); } catch (_) {}
+    deleteRedisSession(previousUrl, 'local-clear');
   }
 
   function isTimeoutLikeError(error) {
@@ -735,6 +812,7 @@ function createProviderHttpGuard(options = {}) {
     delete persistedSession.solutionResponseUrl;
     delete persistedSession.solutionResponseStatus;
     saveSession(persistedSession);
+    persistRedisSession(persistedSession, cookieUrl, 'persist-session');
     if (next.url) updateCurrentDomainFromUrl(next.url);
   }
 
@@ -971,6 +1049,8 @@ function createProviderHttpGuard(options = {}) {
 
   async function solveClearance(triggerUrl, { isPost = false, body = null, signal = null, force = true, ignoreProviderCooldown = false } = {}) {
     if (!force && isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
+    await hydrateRedisSessionForUrl(triggerUrl, 'pre-solve');
+    if (!force && isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
 
     const targetClearanceUrl = buildClearanceUrl(triggerUrl, { isPost, body });
     const homepageClearanceUrl = buildHomepageClearanceUrl(triggerUrl);
@@ -979,7 +1059,7 @@ function createProviderHttpGuard(options = {}) {
       : (originClearance ? homepageClearanceUrl : targetClearanceUrl);
     const sharedKey = sharedClearanceAuthority ? buildSharedClearanceKey(primaryClearanceUrl) : null;
 
-    const runSolve = async () => {
+    const runActualSolve = async () => {
       if (!force && isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
 
       // A shared CF authority must not be canceled by one user closing Stremio.
@@ -1047,6 +1127,53 @@ function createProviderHttpGuard(options = {}) {
       return null;
     };
 
+    const runSolve = async () => {
+      if (!force && isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
+      await hydrateRedisSessionForUrl(primaryClearanceUrl, 'solve-before-lock');
+      if (isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
+
+      if (!sharedClearanceAuthority || !redisLockSharing) return runActualSolve();
+
+      const lockKey = cfRedisStore.lockKeyForProviderSession({
+        providerName,
+        url: primaryClearanceUrl,
+        egressKey: clearanceEgressKey
+      });
+      const token = await cfRedisStore.acquireLock(lockKey, { ttlMs: redisLockTtlMs });
+
+      if (!token) {
+        logger.debug('redis clearance lock wait', {
+          method: isPost ? 'POST' : 'GET',
+          triggerUrl,
+          clearanceUrl: primaryClearanceUrl,
+          sharedKey,
+          waitMs: redisLockWaitMs
+        });
+        const waited = await cfRedisStore.waitForProviderSession({
+          providerName,
+          url: primaryClearanceUrl,
+          egressKey: clearanceEgressKey,
+          sessionTtlMs,
+          timeoutMs: redisLockWaitMs
+        });
+        if (activateRedisSession(waited, triggerUrl, 'redis-lock-wait')) return activeSession;
+        logger.debug('redis clearance lock wait missed; falling back to local solve', {
+          triggerUrl,
+          clearanceUrl: primaryClearanceUrl,
+          sharedKey
+        });
+        return runActualSolve();
+      }
+
+      try {
+        logger.debug('redis clearance lock acquired', { triggerUrl, clearanceUrl: primaryClearanceUrl, sharedKey, ttlMs: redisLockTtlMs });
+        return await runActualSolve();
+      } finally {
+        cfRedisStore.releaseLock(lockKey, token)
+          .catch((error) => logger.debug('redis clearance lock release skipped', { sharedKey, error: error?.message || String(error) }));
+      }
+    };
+
     if (!sharedClearanceAuthority) return runSolve();
 
     if (sharedClearancePromise) {
@@ -1071,9 +1198,9 @@ function createProviderHttpGuard(options = {}) {
     return sharedClearancePromise;
   }
 
-
   async function ensureClearance(triggerUrl = currentBaseUrl, { signal = null, force = false, isPost = false, body = null, ignoreProviderCooldown = false } = {}) {
     const targetUrl = triggerUrl || currentBaseUrl;
+    await hydrateRedisSessionForUrl(targetUrl, 'ensure-clearance');
     if (!force && isSessionFreshForUrl(activeSession, targetUrl)) return activeSession;
     if (!clearanceManager.endpoint) return isSessionFreshForUrl(activeSession, targetUrl) ? activeSession : null;
     return solveClearance(targetUrl, { isPost, body, signal, force, ignoreProviderCooldown });
@@ -1083,6 +1210,7 @@ function createProviderHttpGuard(options = {}) {
     const startedAt = Date.now();
     const method = isPost ? 'POST' : 'GET';
     const hardFetchTimeout = Math.max(2500, Math.min(timeoutMs, directFetchTimeoutMs));
+    await hydrateRedisSessionForUrl(url, 'fetch-start');
     const hadFreshSessionAtStart = isSessionFreshForUrl(activeSession, url);
     let sessionFailureDetected = false;
     logger.debug('fetch start', { method, url, hasSession: hadFreshSessionAtStart, allowClearance: allowFlareSolverr, timeoutMs: hardFetchTimeout });
@@ -1297,6 +1425,8 @@ function createProviderHttpGuard(options = {}) {
       return activeSession;
     },
     getSession: () => activeSession,
+    hydrateSessionForUrl: hydrateRedisSessionForUrl,
+    isSessionFreshForUrl,
     warmupRustShield,
     isSessionFresh,
     isAbortLikeError: error => isAbortLikeError(error, isCanceledError),
