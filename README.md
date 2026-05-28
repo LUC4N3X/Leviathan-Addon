@@ -68,6 +68,23 @@
 
 ---
 
+## ⚖️ Legal & Usage Notice
+
+> [!IMPORTANT]
+> **Leviathan è un framework tecnico di aggregazione, parsing, normalizzazione e routing. Non ospita, non archivia, non vende e non distribuisce contenuti multimediali.**
+
+L'uso di Leviathan, dei provider configurati, dei servizi esterni, dei bridge, dei resolver, dei layer cloud e di eventuali componenti companion avviene sotto la piena responsabilità dell'utente finale. Chi installa, modifica, distribuisce o utilizza il progetto deve assicurarsi di operare nel rispetto delle leggi applicabili, dei diritti di terzi, delle licenze, dei termini di servizio dei provider coinvolti e delle regole dei servizi collegati.
+
+Il progetto è pubblicato per finalità tecniche, educative e di ricerca: studio di architetture di aggregazione, interoperabilità tra client e servizi, parsing, ranking, formatting, cache policy, resilienza operativa e delivery logic. Leviathan non concede accesso a contenuti, non crea licenze su materiale di terzi, non autorizza usi impropri e non trasferisce alcuna responsabilità legale dagli utenti ai maintainer.
+
+Il **Saved Cloud Layer** si limita a leggere e riconoscere elementi già presenti negli account Real-Debrid o TorBox configurati dall'utente. I componenti di routing, risoluzione hoster, challenge handling e runtime companion devono essere usati solo in contesti consentiti, autorizzati e conformi ai termini dei servizi interessati.
+
+**In sintesi:** Leviathan fornisce un motore software; l'utente resta responsabile di cosa configura, quali fonti abilita, quali servizi collega e come utilizza i risultati ottenuti.
+
+<sub>Usando, distribuendo o modificando questo repository, l'utente riconosce e accetta integralmente tali condizioni. Questa nota non costituisce consulenza legale.</sub>
+
+---
+
 ## Executive Overview
 
 > **Leviathan non è un semplice addon.**
@@ -252,6 +269,34 @@ Il blocco viene completato da **Debrid Ghost Shell** per scenari proxy-based, **
 
 </div>
 
+### Kraken Runtime & Provider Reliability
+
+<div align="center">
+
+`Leviathan-native companion · provider hardening · hoster/challenge orchestration`
+
+</div>
+
+**Kraken** è il runtime companion consigliato per Leviathan e rappresenta una componente fondamentale quando si vuole ottenere il comportamento completo dei provider web e degli hoster più complessi. Non va trattato come un proxy generico: è progettato per integrarsi con la logica di Leviathan, centralizzare i percorsi più delicati e rendere più stabile la risoluzione dei flussi dove entrano in gioco redirect, embed intermedi, sessioni, challenge, captcha o compatibilità MediaFlow.
+
+In particolare, Kraken è il punto tecnico più adatto per i flussi **MaxStream / UPROT**, dove la risoluzione captcha/challenge e le logiche hoster possono essere delegate a un runtime dedicato invece di appesantire direttamente il core dell'addon. Questo permette a Leviathan di mantenere una pipeline più pulita: il core resta concentrato su ricerca, ranking, dedupe, formatter e configurazione, mentre Kraken gestisce la parte operativa più fragile dei provider che richiedono routing avanzato.
+
+<div align="center">
+
+| Area | Ruolo di Kraken |
+|:---:|:---|
+| **Provider web** | Stabilizza i percorsi che richiedono forwarding, sessioni, cookie o gestione di pagine intermedie |
+| **MaxStream / UPROT** | Delega la risoluzione captcha/challenge e la trasformazione degli embed in stream utilizzabili |
+| **MediaFlow compatibility** | Espone un bridge coerente con i percorsi proxy/forward già supportati da Leviathan |
+| **Failover operativo** | Riduce i casi in cui un hoster fragile blocca l'intera pipeline provider |
+| **Core isolation** | Mantiene Leviathan più leggero, modulare e manutenibile separando scraping/ranking da runtime hoster |
+
+</div>
+
+> [!NOTE]
+> In self-hosting Kraken è fortemente raccomandato per replicare il comportamento più completo dell'ecosistema Leviathan. Senza Kraken alcuni provider possono continuare a funzionare, ma i flussi hoster più complessi — soprattutto MaxStream / UPROT e percorsi con challenge — possono risultare meno affidabili o non disponibili.
+
+
 ### Cloud & Bridge
 
 <div align="center">
@@ -262,6 +307,7 @@ Il blocco viene completato da **Debrid Ghost Shell** per scenari proxy-based, **
 | **Cloud** | TorBox Saved Cloud | 👤 USER | `enableSavedCloud` + TorBox token | 🟢 |
 | **Nexus Bridge** | Torrentio  | 🌍 GLB | Bridge esterno opzionale | 🟢 |
 | **Nexus Bridge** | MediaFusion | 🌍 RD-gated | `only_when_torrentio_zero_v3` | 🟢 |
+| **Runtime** | Kraken Companion Runtime | 🔱 Leviathan-native | `KRAKEN_URL` + `KRAKEN_API_PASSWORD` | 🟢 Recommended |
 
 </div>
 
@@ -321,7 +367,7 @@ Il blocco viene completato da **Debrid Ghost Shell** per scenari proxy-based, **
 | **Dropload** | Hoster resolver | 🟢 |
 | **LoadM** | Hoster resolver | 🟢 |
 | **DeltaBit** | Hoster resolver per Eurostreaming | 🟢 |
-| **MaxStream / UPROT** | Hoster resolver via MediaFlow/Kraken fallback | 🟢 |
+| **MaxStream / UPROT** | Hoster resolver con delega Kraken per captcha/challenge e bridge MediaFlow-compatible | 🟢 |
 
 </div>
 
@@ -337,6 +383,7 @@ Il blocco viene completato da **Debrid Ghost Shell** per scenari proxy-based, **
 | **MediaFusion RD check** | Il check cache Real-Debrid viene applicato a MediaFusion; Torrentio può restare più diretto |
 | **GuardaFlix scope** | GuardaFlix viene usato per i film e non forza percorsi serie |
 | **Eurostreaming scope** | Eurostreaming viene usato come provider web ITA per serie, con routing hoster dedicato |
+| **Kraken recommended** | Kraken è raccomandato come runtime companion per provider/hoster avanzati, in particolare MaxStream / UPROT e percorsi con challenge |
 
 </div>
 
@@ -441,30 +488,6 @@ Il **Saved Cloud Layer** resta comunque utile anche in self-hosting, perché dip
 | Vuoi vedere i file già salvati nel tuo RD/TorBox | **Attiva Debrid Cloud** |
 
 </div>
-
----
-
-## ⚖️ Legal Notice
-
-<div align="center">
-
-<img src="https://capsule-render.vercel.app/api?type=rect&color=0:060d18,50:ff9f1a,100:060d18&height=1&section=header" width="60%" />
-
-### `Framework Neutrality · User Responsibility · No Hosted Content`
-
-</div>
-
-**Leviathan** è distribuito esclusivamente come framework di aggregazione, parsing, normalizzazione e delivery logic. Il progetto **non ospita**, **non archivia** e **non distribuisce** contenuti: processa metadati, routing e risultati provenienti da fonti esterne configurate o interrogate dall'utente.
-
-Il Saved Cloud Layer non cambia questa natura: si limita a leggere e riconoscere elementi già presenti nell'account Real-Debrid o TorBox configurato dall'utente. Leviathan non fornisce contenuti, non crea licenze, non concede accesso a materiale di terzi e non sostituisce la responsabilità dell'utente nell'uso dei servizi collegati.
-
-L'installazione, la configurazione e l'utilizzo del software avvengono sotto la piena responsabilità dell'utente finale. Ogni decisione relativa a provider, ambiente di esecuzione, rete, credenziali, servizi terzi e conformità normativa resta interamente a carico di chi utilizza il progetto.
-
-Il repository viene pubblicato per finalità tecniche, educative e di ricerca: architetture di aggregazione, workflow di parsing, ranking, formatting, interoperabilità tra client e provider, studio di resilienza operativa e sperimentazione su pipeline ibride. Qualsiasi uso improprio, illecito o lesivo di diritti di terzi è estraneo al progetto e ricade esclusivamente sull'utilizzatore finale.
-
-**In sintesi:** il codice fornisce un motore; non fornisce contenuti, non concede licenze su contenuti di terzi e non trasferisce alcuna responsabilità legale dagli utenti ai maintainer del progetto.
-
-<sub>Usando, distribuendo o modificando questo repository, l'utente riconosce e accetta integralmente tali condizioni.</sub>
 
 ---
 
