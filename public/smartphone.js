@@ -5128,6 +5128,44 @@ body.m-typing .m-content {
 }
 
 
+/* Leviathan 3D ocean (Vanta WAVES + Three.js) — GPU-friendly, paused on typing/hidden */
+#m-sea-vanta {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -9;
+    pointer-events: none;
+    overflow: hidden;
+    contain: strict;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    will-change: transform;
+    opacity: 0;
+    transition: opacity 700ms ease-out;
+}
+#m-sea-vanta.is-ready { opacity: 1; }
+#m-sea-vanta canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    pointer-events: none;
+    image-rendering: auto;
+}
+body.m-lowfx #m-sea-vanta,
+body.m-page-hidden #m-sea-vanta,
+body.m-typing #m-sea-vanta,
+body.m-keyboard-open #m-sea-vanta {
+    opacity: 0 !important;
+}
+body.m-lowfx #m-sea-vanta {
+    display: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+    #m-sea-vanta { display: none !important; }
+}
+
+
 /* Static Marine SaaS Skin: no moving background, stronger ocean identity */
 body {
     background:
@@ -5786,6 +5824,7 @@ body.m-lowfx .m-dock-nav {
 `;
 
 const mobileHTML = `
+<div id="m-sea-vanta" aria-hidden="true"></div>
 <div class="m-caustic" aria-hidden="true">
     <div class="m-caustic-ray" style="--ray-x:8%;--ray-dur:14s;--ray-op:0.55;--ray-from:-12deg;--ray-to:6deg;width:50px;"></div>
     <div class="m-caustic-ray" style="--ray-x:28%;--ray-dur:11s;--ray-op:0.40;--ray-from:-6deg;--ray-to:14deg;width:35px;"></div>
@@ -6961,9 +7000,199 @@ function createOceanParticles() {
     if (container) container.textContent = '';
 }
 
+const LEVIATHAN_SEA_CDN = {
+    three: 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js',
+    vanta: 'https://cdn.jsdelivr.net/npm/vanta@0.5.24/dist/vanta.waves.min.js'
+};
+
+function loadLeviathanSeaScript(src) {
+    return new Promise((resolve, reject) => {
+        const existing = document.querySelector(`script[data-leviathan-sea="${src}"]`);
+        if (existing) {
+            if (existing.dataset.loaded === '1') return resolve();
+            existing.addEventListener('load', () => resolve(), { once: true });
+            existing.addEventListener('error', () => reject(new Error('script error')), { once: true });
+            return;
+        }
+        const tag = document.createElement('script');
+        tag.src = src;
+        tag.async = true;
+        tag.defer = true;
+        tag.crossOrigin = 'anonymous';
+        tag.referrerPolicy = 'no-referrer';
+        tag.dataset.leviathanSea = src;
+        tag.addEventListener('load', () => { tag.dataset.loaded = '1'; resolve(); }, { once: true });
+        tag.addEventListener('error', () => reject(new Error('script error: ' + src)), { once: true });
+        document.head.appendChild(tag);
+    });
+}
+
+function leviathanSeaShouldSkip() {
+    if (!document.body) return true;
+    if (document.body.classList.contains('m-lowfx')) return true;
+    try {
+        if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return true;
+    } catch (_) {}
+    try {
+        const test = document.createElement('canvas');
+        const gl = test.getContext('webgl', { failIfMajorPerformanceCaveat: true, antialias: false, alpha: true })
+                || test.getContext('experimental-webgl');
+        if (!gl) return true;
+    } catch (_) { return true; }
+    return false;
+}
+
+function bindLeviathanSeaLifecycle(effect, mount) {
+    if (!effect) return;
+    const body = document.body;
+    let paused = false;
+    let pendingRaf = 0;
+
+    const stop = () => {
+        if (paused) return;
+        paused = true;
+        try {
+            if (typeof effect.req !== 'undefined' && effect.req) {
+                cancelAnimationFrame(effect.req);
+                effect.req = 0;
+            }
+        } catch (_) {}
+    };
+    const go = () => {
+        if (!paused) return;
+        paused = false;
+        try {
+            if (typeof effect.animationLoop === 'function') {
+                effect.animationLoop();
+            }
+        } catch (_) {}
+    };
+    const shouldStop = () => {
+        return document.hidden
+            || body.classList.contains('m-typing')
+            || body.classList.contains('m-keyboard-open')
+            || body.classList.contains('m-page-hidden');
+    };
+    const sync = () => {
+        if (pendingRaf) return;
+        pendingRaf = requestAnimationFrame(() => {
+            pendingRaf = 0;
+            shouldStop() ? stop() : go();
+        });
+    };
+
+    document.addEventListener('visibilitychange', sync, { passive: true });
+
+    const obs = new MutationObserver(sync);
+    obs.observe(body, { attributes: true, attributeFilter: ['class'] });
+
+    let resizeRaf = 0;
+    const onResize = () => {
+        if (resizeRaf) cancelAnimationFrame(resizeRaf);
+        resizeRaf = requestAnimationFrame(() => {
+            resizeRaf = 0;
+            try { effect.resize && effect.resize(); } catch (_) {}
+        });
+    };
+    window.addEventListener('resize', onResize, { passive: true });
+    window.addEventListener('orientationchange', onResize, { passive: true });
+
+    const cleanup = () => {
+        try { obs.disconnect(); } catch (_) {}
+        document.removeEventListener('visibilitychange', sync);
+        window.removeEventListener('resize', onResize);
+        window.removeEventListener('orientationchange', onResize);
+        try { effect.destroy && effect.destroy(); } catch (_) {}
+        window.__leviathanVanta = null;
+    };
+    window.addEventListener('pagehide', cleanup, { once: true });
+
+    window.__leviathanVantaSync = sync;
+    window.__leviathanVantaCleanup = cleanup;
+
+    if (mount) {
+        requestAnimationFrame(() => mount.classList.add('is-ready'));
+    }
+    sync();
+}
+
+function startLeviathanSeaVanta(mount) {
+    if (!mount || !window.VANTA || !window.VANTA.WAVES || !window.THREE) return;
+    if (window.__leviathanVanta) return;
+
+    const cores = navigator.hardwareConcurrency || 8;
+    const memory = Number(navigator['deviceMemory'] || 0);
+    const modest = (cores <= 6) || (memory && memory <= 6);
+
+    const options = {
+        el: mount,
+        THREE: window.THREE,
+        mouseControls: false,
+        touchControls: false,
+        gyroControls: false,
+        minHeight: 200.0,
+        minWidth: 200.0,
+        scale: 1.0,
+        scaleMobile: modest ? 1.5 : 1.2,
+        color: 0x062744,
+        shininess: modest ? 28.0 : 38.0,
+        waveHeight: modest ? 12.5 : 16.0,
+        waveSpeed: 0.78,
+        zoom: 0.86
+    };
+
+    let effect = null;
+    try {
+        effect = window.VANTA.WAVES(options);
+    } catch (_) {
+        return;
+    }
+    if (!effect) return;
+
+    try {
+        if (effect.renderer && typeof effect.renderer.setPixelRatio === 'function') {
+            const dpr = Math.min(window.devicePixelRatio || 1, modest ? 1.25 : 1.5);
+            effect.renderer.setPixelRatio(dpr);
+            if (typeof effect.resize === 'function') effect.resize();
+        }
+    } catch (_) {}
+
+    window.__leviathanVanta = effect;
+    bindLeviathanSeaLifecycle(effect, mount);
+}
+
 function createSeaCanvas() {
-    const canvas = document.getElementById('m-sea-canvas');
-    if (canvas) canvas.remove();
+    const legacy = document.getElementById('m-sea-canvas');
+    if (legacy) legacy.remove();
+
+    if (window.__leviathanSeaVantaBoot) return;
+    window.__leviathanSeaVantaBoot = true;
+
+    if (leviathanSeaShouldSkip()) return;
+
+    let mount = document.getElementById('m-sea-vanta');
+    if (!mount) {
+        mount = document.createElement('div');
+        mount.id = 'm-sea-vanta';
+        mount.setAttribute('aria-hidden', 'true');
+        document.body.insertBefore(mount, document.body.firstChild);
+    }
+
+    const boot = () => {
+        loadLeviathanSeaScript(LEVIATHAN_SEA_CDN.three)
+            .then(() => loadLeviathanSeaScript(LEVIATHAN_SEA_CDN.vanta))
+            .then(() => {
+                if (leviathanSeaShouldSkip()) return;
+                requestAnimationFrame(() => startLeviathanSeaVanta(mount));
+            })
+            .catch(() => { window.__leviathanSeaVantaBoot = false; });
+    };
+
+    if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(boot, { timeout: 1500 });
+    } else {
+        setTimeout(boot, 350);
+    }
 }
 
 function initMobileViewportGuard() {
