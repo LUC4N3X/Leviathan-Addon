@@ -6997,10 +6997,10 @@ function createOceanParticles() {
 }
 
 const LEVIATHAN_SEA_CDN = {
-    three: 'https://cdn.jsdelivr.net/npm/three@0.134.0/build/three.min.js',
-    vanta: 'https://cdn.jsdelivr.net/npm/vanta@0.5.24/dist/vanta.waves.min.js',
-    threeFallback: 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js',
-    vantaFallback: 'https://unpkg.com/vanta@0.5.24/dist/vanta.waves.min.js'
+    three: '/vendor/three.r134.min.js',
+    vanta: '/vendor/vanta.waves.min.js',
+    threeFallback: 'https://cdn.jsdelivr.net/npm/three@0.134.0/build/three.min.js',
+    vantaFallback: 'https://cdn.jsdelivr.net/npm/vanta@0.5.24/dist/vanta.waves.min.js'
 };
 
 function loadLeviathanSeaScriptWithFallback(primary, fallback) {
