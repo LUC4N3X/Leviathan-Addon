@@ -33,6 +33,16 @@ require.cache[runtimeResolved] = {
 
 const { Cache } = require('../core/utils/cache');
 
+async function waitUntil(predicate, timeoutMs = 1000) {
+    const startedAt = Date.now();
+    while (!predicate()) {
+        if ((Date.now() - startedAt) > timeoutMs) {
+            throw new Error('Timed out waiting for async test precondition');
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+}
+
 test('fetchWithCache cacheOnly wins over bypass and never calls provider fetcher', async () => {
     await Cache.flushAll();
 
@@ -61,6 +71,8 @@ test('fetchWithCache keeps bypass inflight separate from normal cached fetches',
             releaseNormal = () => resolve([{ source: 'normal' }]);
         });
     });
+
+    await waitUntil(() => typeof releaseNormal === 'function');
 
     const bypassResult = await Cache.fetchWithCache('UnitProvider', 'series:tt456:1:1', 60, async () => {
         calls += 1;
