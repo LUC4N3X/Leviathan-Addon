@@ -44,6 +44,8 @@
  *   CF_NATIVE_TTL_MS      default 1500000 (25 min)
  *   CF_NATIVE_DISABLE_DISK  '1' to skip disk persistence
  *   CF_NATIVE_IUAM_TIMEOUT_MS  default 12000
+ *   CF_REDIS_NATIVE_ENABLED    default true when Redis is enabled
+ *   CF_CLEARANCE_EGRESS_KEY    separates clearances by outbound IP/proxy identity
  *
  * NOTE: this file is intentionally dependency-free (only built-in Node
  * modules) so it can ship from day one without touching package.json.
@@ -54,6 +56,7 @@ const os = require('os');
 const path = require('path');
 const vm = require('vm');
 const { URL } = require('url');
+const { cfRedisStore } = require('./cf_redis_store');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -71,6 +74,15 @@ const IUAM_TIMEOUT_MS = Math.max(2000, Number(process.env.CF_NATIVE_IUAM_TIMEOUT
 const HOST_FAIL_THRESHOLD = Math.max(1, Number(process.env.CF_NATIVE_HOST_FAIL_THRESHOLD) || 3);
 const HOST_FAIL_COOLDOWN_MS = Math.max(30_000, Number(process.env.CF_NATIVE_HOST_FAIL_COOLDOWN_MS) || 5 * 60 * 1000);
 const MAX_HOSTS = Math.max(32, Number(process.env.CF_NATIVE_MAX_HOSTS) || 256);
+const CLEARANCE_EGRESS_KEY = String(
+  process.env.CF_CLEARANCE_EGRESS_KEY
+  || process.env.PROVIDER_EGRESS_KEY
+  || process.env.OUTBOUND_PROXY_ID
+  || process.env.HTTPS_PROXY
+  || process.env.HTTP_PROXY
+  || 'direct'
+).trim() || 'direct';
+const REDIS_NATIVE_TTL_SECONDS = Math.max(60, Math.floor(CLEARANCE_TTL_MS / 1000));
 
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
   + '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -204,6 +216,24 @@ class ClearancePool {
     return bundle;
   }
 
+  async getShared(host, options = {}) {
+    const local = this.get(host);
+    if (local) return local;
+    if (!host) return null;
+    try {
+      const bundle = await cfRedisStore.getNativeClearance({
+        host,
+        egressKey: options.egressKey || CLEARANCE_EGRESS_KEY
+      });
+      if (!bundle || Number(bundle.expiresAt || 0) <= Date.now()) return null;
+      this._byHost[host] = { ...bundle };
+      flushToDiskSoon(this._byHost);
+      return this._byHost[host];
+    } catch (_) {
+      return null;
+    }
+  }
+
   put(host, bundle) {
     if (!host || !bundle) return;
     const expiresAt = Date.now() + CLEARANCE_TTL_MS;
@@ -214,6 +244,7 @@ class ClearancePool {
       acquiredAt: Date.now(),
       expiresAt,
       finalUrl: bundle.finalUrl || null,
+      egressKey: bundle.egressKey || CLEARANCE_EGRESS_KEY,
     };
     // LRU-style eviction by oldest acquiredAt
     const hosts = Object.keys(this._byHost);
@@ -225,14 +256,24 @@ class ClearancePool {
         .forEach(([h]) => { delete this._byHost[h]; });
     }
     flushToDiskSoon(this._byHost);
+    cfRedisStore.saveNativeClearance({
+      host,
+      egressKey: this._byHost[host].egressKey || CLEARANCE_EGRESS_KEY,
+      bundle: this._byHost[host],
+      ttlSeconds: REDIS_NATIVE_TTL_SECONDS
+    }).catch(() => {});
   }
 
-  invalidate(host) {
+  invalidate(host, options = {}) {
     if (!host) return;
     if (host in this._byHost) {
       delete this._byHost[host];
       flushToDiskSoon(this._byHost);
     }
+    cfRedisStore.deleteNativeClearance({
+      host,
+      egressKey: options.egressKey || CLEARANCE_EGRESS_KEY
+    }).catch(() => {});
   }
 
   cookieHeaderForUrl(url) {
@@ -250,6 +291,8 @@ class ClearancePool {
       hosts: Object.keys(this._byHost).length,
       diskPath: DISK_PATH,
       ttlMs: CLEARANCE_TTL_MS,
+      redisEnabled: cfRedisStore.isNativeEnabled(),
+      egressKey: CLEARANCE_EGRESS_KEY,
     };
   }
 }
@@ -509,7 +552,7 @@ async function solveIuamChallenge(html, url, options = {}) {
  */
 async function tryCachedBypass(url, options = {}) {
   const host = hostOf(url);
-  const bundle = _pool.get(host);
+  const bundle = _pool.get(host) || await _pool.getShared(host, options);
   if (!bundle) return null;
 
   const cookieHeader = Object.entries(bundle.cookies || {})
@@ -649,7 +692,12 @@ function rememberClearance(url, { cookies, userAgent, strategy = 'external' } = 
   if (!host || !cookies || typeof cookies !== 'object') return;
   const has = Object.keys(cookies).some((k) => /^cf_clearance|^__cf|^cf_chl/i.test(k));
   if (!has) return; // Only persist if we actually got the CF clearance cookie.
-  _pool.put(host, { cookies, userAgent: userAgent || DEFAULT_UA, strategy });
+  _pool.put(host, {
+    cookies,
+    userAgent: userAgent || DEFAULT_UA,
+    strategy,
+    egressKey: process.env.CF_CLEARANCE_EGRESS_KEY || process.env.PROVIDER_EGRESS_KEY || CLEARANCE_EGRESS_KEY
+  });
 }
 
 function isChallengeHtml(body) {
