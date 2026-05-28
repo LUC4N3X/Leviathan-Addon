@@ -50,6 +50,22 @@ const { hasFolderSizeSeasonPackSignal } = require('./matching/season_pack_inspec
 const { buildContentProxyUrlFromBase, shouldProxyContentUrl } = require('./proxy/content_proxy_engine');
 const { shouldDeferLiveScrapeToWorker, queueTorrentioPrefetchJob } = require('./workers/torrentio_prefetch_queue');
 const TorrentInfoLedger = require('./torrent/torrent_info_ledger');
+const { isTruthyConfigValue } = require('./config/config_flags');
+const { applyAnimeUnityKitsuBackCompat } = require('./stream/anime_unity_backcompat');
+const { buildQualityCompatibleBingeGroup } = require('./stream/binge_group');
+const { buildClientCacheMetadata } = require('./stream/client_cache_metadata');
+const {
+  getConfiguredDebridKey,
+  getNormalizedDebridService,
+  getRdDirectResolveLimit,
+  getRdDownloadFallbackTarget,
+  getRdPlayableDeepDbScanLimit,
+  getRdVerifiedDbFallbackLimit,
+  shouldAllowRdLazyStreams,
+  shouldEnforceRdPlayableOnly,
+  shouldShowRdDownloadToDebrid,
+  shouldShowRdUnknownRows
+} = require('./stream/debrid_runtime_options');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
 const {
@@ -80,113 +96,10 @@ const languageFilterTools = createLanguageFilterTools({
   hasStrongSeriesTitleMatch
 });
 
-const STREMIO_CACHE_MAX_AGE_DEFAULT = Math.max(60, parseInt(process.env.STREMIO_CACHE_MAX_AGE || '300', 10) || 300);
-const STREMIO_STALE_REVALIDATE_DEFAULT = Math.max(STREMIO_CACHE_MAX_AGE_DEFAULT, parseInt(process.env.STREMIO_STALE_REVALIDATE || '600', 10) || 600);
-const STREMIO_STALE_ERROR_DEFAULT = Math.max(STREMIO_STALE_REVALIDATE_DEFAULT, parseInt(process.env.STREMIO_STALE_ERROR || '1200', 10) || 1200);
-
-function isKitsuRequestId(value) {
-    const raw = String(value || '').replace(/^ai-recs:/i, '').trim();
-    return /^kitsu(?::|_)?\d+/i.test(raw);
-}
-
-function shouldAutoEnableAnimeUnityForKitsu(filters = {}, id = '') {
-    if (!filters || Object.prototype.hasOwnProperty.call(filters, 'enableAnimeUnity')) return false;
-    return isKitsuRequestId(id);
-}
-
-function applyAnimeUnityKitsuBackCompat(config = {}, id = '') {
-    const filters = config?.filters || {};
-    if (!shouldAutoEnableAnimeUnityForKitsu(filters, id)) {
-        return { config, autoAnimeUnity: false };
-    }
-
-    return {
-        config: {
-            ...config,
-            filters: {
-                ...filters,
-                enableAnimeUnity: true,
-                __autoAnimeUnityKitsu: true
-            }
-        },
-        autoAnimeUnity: true
-    };
-}
-
-function buildClientCacheMetadata(cachePolicy = {}, streamCount = 0) {
-    const policyLocalTtl = Math.max(0, Number(cachePolicy?.localTtl || 0) || 0);
-    const policyStaleGrace = Math.max(0, Number(cachePolicy?.staleGraceTtl || 0) || 0);
-    const baseMaxAge = streamCount > 0
-        ? Math.min(STREMIO_CACHE_MAX_AGE_DEFAULT, Math.max(120, policyLocalTtl || STREMIO_CACHE_MAX_AGE_DEFAULT))
-        : Math.min(120, Math.max(30, Math.min(policyLocalTtl || 60, 120)));
-    const staleRevalidate = Math.max(baseMaxAge, policyStaleGrace, streamCount > 0 ? STREMIO_STALE_REVALIDATE_DEFAULT : Math.max(60, Math.floor(STREMIO_STALE_REVALIDATE_DEFAULT / 2)));
-    const staleError = Math.max(staleRevalidate, streamCount > 0 ? STREMIO_STALE_ERROR_DEFAULT : Math.max(120, Math.floor(STREMIO_STALE_ERROR_DEFAULT / 2)));
-
-    return {
-        cacheMaxAge: baseMaxAge,
-        staleRevalidate,
-        staleError
-    };
-}
-
-function normalizeBingePart(value, fallback = 'x') {
-    const normalized = String(value || '')
-        .normalize('NFKD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[|]+/g, ' ')
-        .replace(/[^a-z0-9+._-]+/gi, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 48);
-    return normalized || fallback;
-}
-
-function buildQualityCompatibleBingeGroup({ service, quality, details = {}, infoHash, releaseGroup, language }) {
-    const hdr = Array.isArray(details.dynamicRange) && details.dynamicRange.length
-        ? details.dynamicRange.join('+')
-        : (/hdr|dolby\s*vision|\bdv\b/i.test(String(details.tags || '')) ? 'HDR' : 'SDR');
-    const codec = details.videoCodec || details.codec || '';
-    const audio = [details.audioCodec || details.audio, details.audioChannels].filter(Boolean).join('-');
-    const group = releaseGroup || details.releaseGroup || (infoHash ? `hash-${String(infoHash).slice(0, 12)}` : 'nohash');
-    return [
-        'Leviathan',
-        normalizeBingePart(service, 'svc'),
-        normalizeBingePart(quality, 'q'),
-        normalizeBingePart(hdr, 'sdr'),
-        normalizeBingePart(codec, 'codec'),
-        normalizeBingePart(audio, 'audio'),
-        normalizeBingePart(language, 'lang'),
-        normalizeBingePart(group, 'group')
-    ].join('|');
-}
-
 function getServiceResolverLimiter(service) {
     const normalized = String(service || '').toLowerCase();
     if (normalized === 'tb') return LIMITERS.tbResolve;
     return LIMITERS.rdResolve;
-}
-
-function getNormalizedDebridService(configOrService) {
-    const raw = typeof configOrService === 'object' && configOrService !== null
-        ? configOrService.service
-        : configOrService;
-    const normalized = String(raw || '').toLowerCase();
-    return normalized === 'rd' || normalized === 'tb' ? normalized : null;
-}
-
-function getConfiguredDebridKey(config, service = getNormalizedDebridService(config)) {
-    if (service === 'tb') return config?.key || config?.tb || config?.torbox || config?.rd || null;
-    if (service === 'rd') return config?.key || config?.rd || config?.realdebrid || null;
-    return null;
-}
-
-function parseBoundedInt(value, fallback, min, max) {
-    const parsed = parseInt(value, 10);
-    if (!Number.isFinite(parsed)) return fallback;
-    return Math.max(min, Math.min(max, parsed));
-}
-
-function isTruthyConfigValue(value) {
-    return /^(1|true|yes|on)$/i.test(String(value || '').trim());
 }
 
 function isWebDebugEnabled() {
@@ -203,49 +116,6 @@ function streamWebDebug(message, payload = null) {
     }
 }
 
-function shouldAllowRdLazyStreams(filters = {}) {
-    return isTruthyConfigValue(filters.enableRdLazyStreams ?? process.env.RD_LAZY_STREAMS ?? 'false');
-}
-
-function shouldEnforceRdPlayableOnly(filters = {}) {
-    const explicit = filters.rdPlayableOnly
-        ?? filters.rdStrictPlayableOnly
-        ?? process.env.RD_PLAYABLE_ONLY
-        ?? process.env.RD_STRICT_PLAYABLE_ONLY;
-    if (explicit === undefined || explicit === null || String(explicit).trim() === '') return true;
-    return isTruthyConfigValue(explicit);
-}
-
-const RD_DIRECT_RESOLVE_MAX_RESULTS = 32;
-const RD_PLAYABLE_DEEP_DB_SCAN_MAX_RESULTS = 48;
-
-function getRdDirectResolveLimit(filters = {}, rankedCount = 0) {
-    const hardMax = Math.max(1, Math.min(CONFIG.MAX_RESULTS || 12, RD_DIRECT_RESOLVE_MAX_RESULTS));
-    const configured = filters.rdDirectMaxResults ?? process.env.RD_DIRECT_MAX_RESULTS ?? RD_DIRECT_RESOLVE_MAX_RESULTS;
-    return Math.min(Math.max(0, rankedCount), parseBoundedInt(configured, hardMax, 1, hardMax));
-}
-
-function getRdPlayableDeepDbScanLimit(filters = {}, rankedCount = 0) {
-    const hardMax = Math.max(1, Math.min(CONFIG.MAX_RESULTS || 70, RD_PLAYABLE_DEEP_DB_SCAN_MAX_RESULTS));
-    const configured = filters.rdPlayableDeepDbScanMaxResults
-        ?? filters.rdDeepDbScanMaxResults
-        ?? process.env.RD_PLAYABLE_DEEP_DB_SCAN_MAX_RESULTS
-        ?? process.env.RD_DEEP_DB_SCAN_MAX_RESULTS
-        ?? RD_PLAYABLE_DEEP_DB_SCAN_MAX_RESULTS;
-    return Math.min(Math.max(0, rankedCount), parseBoundedInt(configured, hardMax, 1, hardMax));
-}
-
-function shouldShowRdDownloadToDebrid(filters = {}) {
-    const explicit = filters.allowRdDownloadToDebridRows ?? process.env.RD_ALLOW_DOWNLOAD_TO_DEBRID_ROWS;
-    if (explicit !== undefined && explicit !== null && String(explicit).trim() !== '') return isTruthyConfigValue(explicit);
-    return false;
-}
-
-function shouldShowRdUnknownRows(filters = {}) {
-    const explicit = filters.allowRdUnknownRows ?? process.env.RD_ALLOW_UNKNOWN_ROWS;
-    if (explicit !== undefined && explicit !== null && String(explicit).trim() !== '') return isTruthyConfigValue(explicit);
-    return false;
-}
 
 function getRdCandidateState(item = {}) {
     return String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || item?.rd_cache_state || '').toLowerCase().trim();
@@ -267,12 +137,6 @@ function isKnownRdUnavailableCandidate(item = {}) {
     if (state === 'likely_uncached' || state === 'uncached' || state === 'uncached_terminal') return true;
     if (item?._dbCachedRd === false || item?.cached_rd === false) return true;
     return false;
-}
-
-function getRdVerifiedDbFallbackLimit(filters = {}, fallback = CONFIG.MAX_RESULTS || 12) {
-    const hardMax = Math.max(1, Math.min(CONFIG.MAX_RESULTS || 12, 20));
-    const configured = filters.rdVerifiedDbFallbackMaxResults ?? process.env.RD_VERIFIED_DB_FALLBACK_MAX_RESULTS ?? String(fallback || hardMax);
-    return parseBoundedInt(configured, hardMax, 1, hardMax);
 }
 
 function isRdVerifiedDbFallbackCandidate(item = {}) {
@@ -334,12 +198,6 @@ function compactMagnetForCloudBuild(item = {}) {
     }
     for (const tracker of trackers) params.push(`tr=${encodeURIComponent(tracker)}`);
     return `magnet:?${params.join('&')}`;
-}
-
-function getRdDownloadFallbackTarget(filters = {}, fallback = CONFIG.MAX_RESULTS || 12) {
-    const hardMax = Math.max(1, Math.min(CONFIG.MAX_RESULTS || 12, 20));
-    const configured = filters.rdDownloadFallbackMaxResults ?? process.env.RD_DOWNLOAD_FALLBACK_MAX_RESULTS ?? String(fallback || hardMax);
-    return parseBoundedInt(configured, hardMax, 1, hardMax);
 }
 
 function uniqueTextList(values = []) {
@@ -5168,7 +5026,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
 
       const rdPlayableOnlyForFinalRanked = configuredDebridService === 'rd' && hasDebridKey && shouldEnforceRdPlayableOnly(filters);
       const finalRankedLimit = rdPlayableOnlyForFinalRanked
-          ? Math.max(CONFIG.MAX_RESULTS || 12, getRdPlayableDeepDbScanLimit(filters, rankedList.length))
+          ? Math.max(CONFIG.MAX_RESULTS || 12, getRdPlayableDeepDbScanLimit(filters, rankedList.length, CONFIG.MAX_RESULTS || 70))
           : CONFIG.MAX_RESULTS;
       const finalRanked = rankedList.slice(0, finalRankedLimit);
       if (rdPlayableOnlyForFinalRanked && finalRanked.length > CONFIG.MAX_RESULTS) {
@@ -5182,7 +5040,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           const rdPlayableOnly = configuredDebridService === 'rd' && shouldEnforceRdPlayableOnly(filters);
           const rdDirectOnly = configuredDebridService === 'rd' && (rdPlayableOnly || !shouldAllowRdLazyStreams(filters));
           const TOP_LIMIT = rdDirectOnly
-              ? getRdDirectResolveLimit(filters, finalRanked.length)
+              ? getRdDirectResolveLimit(filters, finalRanked.length, CONFIG.MAX_RESULTS || 12)
               : Math.max(0, Math.min(10, parseInt(filters?.instantDebridTop ?? process.env.INSTANT_DEBRID_TOP ?? '0', 10) || 0));
           const serviceLimiter = getServiceResolverLimiter(configuredDebridService);
           const resolverConfig = { ...config, service: configuredDebridService, rawConf: userConfStr };

@@ -20,7 +20,30 @@ function buildTrackerMagnet(hash, displayName = null) {
     return `magnet:?${params.join('&')}`;
 }
 
+function base32ToHex(base32) {
+    const base32chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    let bits = '';
+    let hex = '';
+    for (let i = 0; i < base32.length; i += 1) {
+        bits += base32chars.indexOf(base32.charAt(i).toUpperCase()).toString(2).padStart(5, '0');
+    }
+    for (let i = 0; i + 4 <= bits.length; i += 4) {
+        hex += parseInt(bits.substr(i, 4), 2).toString(16);
+    }
+    return hex;
+}
+
+function extractInfoHash(magnet) {
+    if (!magnet) return null;
+    const match = String(magnet).match(/btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})/i);
+    if (!match) return null;
+    const hash = match[1];
+    return hash.length === 32 ? base32ToHex(hash).toUpperCase() : hash.toUpperCase();
+}
+
 module.exports = {
+    base32ToHex,
+    extractInfoHash,
     TRACKERS,
     buildTrackerMagnet
 };
