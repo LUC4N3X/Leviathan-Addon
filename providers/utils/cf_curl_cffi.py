@@ -18,6 +18,7 @@ import sys
 import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
+from http.cookies import SimpleCookie
 
 
 # UA strings matched exactly to each curl_cffi impersonate target.
@@ -103,8 +104,6 @@ def is_firefox_based(impersonate: str) -> bool:
     return impersonate.lower().startswith("firefox")
 
 
-# Newer curl_cffi releases support the newest labels; older releases will raise
-# on unsupported labels, so we automatically walk down the chain.
 DEFAULT_IMPERSONATE_CHAIN = ["chrome138", "chrome137", "chrome136", "chrome133", "chrome124", "chrome120"]
 
 RETRY_STATUSES = {403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
@@ -288,10 +287,7 @@ def normalize_headers(
         set_header_if_missing(out, "Sec-Fetch-User", "?1")
         set_header_if_missing(out, "Priority", "u=0, i")
 
-        # Set sec-ch-ua only for Chromium-based impersonation targets.
-        # curl_cffi does NOT automatically inject these HTTP headers even when
-        # impersonating Chrome — the caller must supply them. Using values that
-        # match the impersonated Chrome major avoids a UA/TLS-fingerprint mismatch.
+        
         if not impersonate or is_chromium_based(impersonate):
             chrome_major = chrome_major_from_ua(ua)
             set_header_if_missing(out, "sec-ch-ua", sec_ch_ua_for_chrome(chrome_major))
@@ -382,6 +378,138 @@ def cookie_header_from_items(items: Iterable[Dict[str, Any]]) -> str:
             merged[name] = str(value)
     return "; ".join(f"{name}={value}" for name, value in merged.items())
 
+def cookie_header_to_items(cookie_header: str, url: str = "") -> List[Dict[str, Any]]:
+    raw = str(cookie_header or "").strip()
+    if not raw:
+        return []
+
+    parsed_url = urlparse(str(url or ""))
+    domain = parsed_url.hostname or ""
+    items: List[Dict[str, Any]] = []
+
+    try:
+        jar = SimpleCookie()
+        jar.load(raw)
+        for name, morsel in jar.items():
+            if not name:
+                continue
+            item: Dict[str, Any] = {"name": str(name), "value": str(morsel.value), "path": "/"}
+            if domain:
+                item["domain"] = domain
+            items.append(item)
+    except Exception:
+        items = []
+
+    if items:
+        return items
+
+    
+    ignored = {"path", "domain", "expires", "max-age", "secure", "httponly", "samesite"}
+    for part in raw.split(";"):
+        clean = part.strip()
+        if not clean or "=" not in clean:
+            continue
+        name, value = clean.split("=", 1)
+        name = name.strip()
+        if not name or name.lower() in ignored:
+            continue
+        item = {"name": name, "value": value.strip(), "path": "/"}
+        if domain:
+            item["domain"] = domain
+        items.append(item)
+    return items
+
+
+
+def parse_cookies_json(value: Optional[str], url: str = "") -> List[Dict[str, Any]]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return []
+
+    parsed_url = urlparse(str(url or ""))
+    default_domain = parsed_url.hostname or ""
+    out: List[Dict[str, Any]] = []
+
+    def push(item: Any) -> None:
+        if not item:
+            return
+        if isinstance(item, str):
+            out.extend(cookie_header_to_items(item, url))
+            return
+        if not isinstance(item, dict):
+            return
+        name = str(item.get("name") or item.get("key") or "").strip()
+        raw_value = item.get("value", item.get("val"))
+        if not name or raw_value is None:
+            return
+        cookie: Dict[str, Any] = {
+            "name": name,
+            "value": str(raw_value),
+            "path": str(item.get("path") or "/"),
+        }
+        domain = str(item.get("domain") or item.get("host") or default_domain or "").strip().lstrip(".")
+        if domain:
+            cookie["domain"] = domain
+        if item.get("secure") is not None:
+            cookie["secure"] = bool(item.get("secure"))
+        if item.get("expires") is not None:
+            cookie["expires"] = item.get("expires")
+        out.append(cookie)
+
+    if isinstance(parsed, list):
+        for entry in parsed:
+            push(entry)
+    elif isinstance(parsed, dict):
+        for name, raw_value in parsed.items():
+            if isinstance(raw_value, dict):
+                push({"name": name, **raw_value})
+            else:
+                push({"name": name, "value": raw_value})
+
+    deduped: List[Dict[str, Any]] = []
+    seen = set()
+    for item in out:
+        key = (item.get("name"), item.get("domain", ""), item.get("path", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def seed_session_cookies(session: Any, cookie_header: str, url: str, cookie_items: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    items = merge_cookie_items(cookie_header_to_items(cookie_header, url), cookie_items or [])
+    if not items:
+        return []
+
+    for item in items:
+        try:
+            kwargs: Dict[str, Any] = {"path": item.get("path") or "/"}
+            if item.get("domain"):
+                kwargs["domain"] = item.get("domain")
+            session.cookies.set(str(item["name"]), str(item["value"]), **kwargs)
+        except Exception:
+            try:
+                session.cookies.set(str(item["name"]), str(item["value"]))
+            except Exception:
+                pass
+    return items
+
+
+def merge_cookie_items(*groups: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    merged: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+    for group in groups:
+        for item in group or []:
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            key = (name, str(item.get("domain") or ""), str(item.get("path") or ""))
+            merged[key] = dict(item)
+    return list(merged.values())
+
 
 def is_usable_proxy_url(value: str) -> bool:
     clean = str(value or "").strip()
@@ -444,15 +572,15 @@ def is_challenge_page(text: str, status: int, response_headers: Optional[Dict[st
     body = str(text or "")
     code = int(status or 0)
 
-    # Body-pattern check is always authoritative regardless of status code.
+    
     if CF_CHALLENGE_RE.search(body[:60000]):
         return True
 
     if code in {403, 429, 503}:
         if response_headers is None:
-            # No headers available (backward-compat): treat as potential CF block.
+            
             return True
-        # Only flag status-code blocks when CF headers confirm origin is CF-protected.
+        
         return has_cf_response_headers(response_headers)
 
     return False
@@ -464,6 +592,7 @@ def main() -> None:
     parser.add_argument("--method", default="GET")
     parser.add_argument("--data")
     parser.add_argument("--headers")
+    parser.add_argument("--cookies-json", default="", help="Optional structured cookies from a shared FlareSolverr/Redis session")
     parser.add_argument("--timeout", type=int, default=cfg_int("CURL_CFFI_TIMEOUT_MS", 15000, minimum=1000), help="Timeout per request in milliseconds")
     parser.add_argument("--impersonate", default=cfg("CURL_CFFI_IMPERSONATE", "auto"), help="auto or comma-separated curl_cffi impersonation labels")
     parser.add_argument("--proxy", default=cfg("CURL_CFFI_PROXY", ""))
@@ -490,6 +619,7 @@ def main() -> None:
     proxies = build_proxies(args.proxy)
     impersonate_chain = parse_impersonate_chain(args.impersonate)
     raw_headers = parse_json_object(args.headers)
+    structured_cookie_items = parse_cookies_json(args.cookies_json, args.url)
 
     last_error = ""
     last_payload: Optional[Dict[str, Any]] = None
@@ -516,6 +646,11 @@ def main() -> None:
                 except TypeError:
                     session = requests.Session()
                     session_supports_impersonate = False
+
+                raw_cookie_header = header_get(headers, "cookie")
+                seeded_cookies = seed_session_cookies(session, raw_cookie_header, args.url, structured_cookie_items)
+                if seeded_cookies and not raw_cookie_header:
+                    headers["Cookie"] = cookie_header_from_items(seeded_cookies)
 
                 request_kwargs: Dict[str, Any] = {
                     "headers": headers,
@@ -553,7 +688,9 @@ def main() -> None:
                 response = session.request(method, args.url, **request_kwargs)
                 html = response.text or ""
                 response_headers = dict(response.headers or {})
-                cookies = serialize_cookies(getattr(response, "cookies", None))
+                response_cookies = serialize_cookies(getattr(response, "cookies", None))
+                session_cookies = serialize_cookies(getattr(session, "cookies", None))
+                cookies = merge_cookie_items(seeded_cookies, session_cookies, response_cookies)
                 status = int(getattr(response, "status_code", 0) or 0)
                 challenge = is_challenge_page(html, status, response_headers)
                 user_agent = header_get(headers, "user-agent") or matched_ua
@@ -565,6 +702,7 @@ def main() -> None:
                     "headers": response_headers,
                     "cookies": cookies,
                     "cookieHeader": cookie_header_from_items(cookies),
+                    "seededCookieHeader": cookie_header_from_items(seeded_cookies),
                     "userAgent": user_agent,
                     "requestHeaders": headers,
                     "impersonate": impersonate,
@@ -579,14 +717,14 @@ def main() -> None:
                     "retry": retry_index,
                     "status": status,
                     "challenge": challenge,
+                    "seededCookies": len(seeded_cookies),
                     "ms": int((time.time() - attempt_started) * 1000),
                 })
 
                 if status not in RETRY_STATUSES and not challenge:
                     emit(payload)
 
-                # A challenge page cannot be resolved by retrying the same
-                # impersonate target — move on to the next one immediately.
+                
                 if challenge:
                     break
 
