@@ -3,12 +3,18 @@
 const crypto = require('crypto');
 const path = require('path');
 const { buildMediaflowUrl, buildWebStream, normalizeRemoteUrl } = require('../extractors/common');
-const { ProviderRequestCache } = require('../../core/cache/provider_request_cache');
 const { captchaOrchestrator } = require('../../core/captcha_orchestrator');
 const { createMediaflowGateway, getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
 const { isUprotUrl, resolveUprotToMaxstream } = require('../extractors/hosters/uprot');
 const { extractMaxstream } = require('../extractors/hosters/maxstream');
 const { extractMixdrop } = require('../extractors/hosters/mixdrop');
+const {
+    buildProviderHtmlHeaders,
+    createProviderCache,
+    createProviderEnv,
+    createProviderLogger,
+    normalizeProviderBaseUrl
+} = require('../utils/provider_toolkit');
 
 let Tesseract = null;
 try { Tesseract = require('tesseract.js'); } catch (_) {}
@@ -44,57 +50,42 @@ const SAFEGO_CAPTCHA_DEFAULTS = Object.freeze({
     failureTtlMs: 90_000,
     retryBudget: 2
 });
-const esMemoryCache = new Map();
-const esRequestCache = new ProviderRequestCache({ name: 'eurostreaming', maxEntries: 1200, inflightMaxEntries: 700 });
+const esEnv = createProviderEnv();
+const esCache = createProviderCache({
+    providerName: 'eurostreaming',
+    maxEntries: ES_CACHE_LIMIT,
+    inflightMaxEntries: 700,
+    ttlByNamespace: ES_CACHE_TTL,
+    logger: (level, message, payload) => esDebug(level, message, payload)
+});
+const esLogger = createProviderLogger({
+    prefix: 'Eurostreaming',
+    enabled: true,
+    debugPrefix: '[Eurostreaming:debug]'
+});
 
 function cacheNamespaceKey(namespace, parts = []) {
-    return `${namespace}:${parts.map((part) => String(part ?? '').trim()).join('|')}`;
+    return esCache.key(namespace, parts);
 }
 
 function cloneCacheValue(value) {
-    if (value == null) return value;
-    try { return JSON.parse(JSON.stringify(value)); } catch (_) { return value; }
+    return esCache.clone(value);
 }
 
 function getEsCache(namespace, parts = []) {
-    const key = cacheNamespaceKey(namespace, parts);
-    const entry = esMemoryCache.get(key);
-    if (!entry) return null;
-    if (entry.expiresAt <= Date.now()) {
-        esMemoryCache.delete(key);
-        return null;
-    }
-    entry.lastHit = Date.now();
-    return cloneCacheValue(entry.value);
+    return esCache.get(namespace, parts);
 }
 
 function setEsCache(namespace, parts = [], value, ttlMs) {
-    if (value == null) return value;
-    const key = cacheNamespaceKey(namespace, parts);
-    esMemoryCache.set(key, {
-        value: cloneCacheValue(value),
-        expiresAt: Date.now() + Math.max(1_000, Number(ttlMs || ES_CACHE_TTL[namespace] || 60_000)),
-        lastHit: Date.now()
-    });
-    if (esMemoryCache.size > ES_CACHE_LIMIT) {
-        const victims = [...esMemoryCache.entries()]
-            .sort((a, b) => (a[1].expiresAt - b[1].expiresAt) || (a[1].lastHit - b[1].lastHit))
-            .slice(0, Math.ceil(ES_CACHE_LIMIT * 0.15));
-        for (const [victimKey] of victims) esMemoryCache.delete(victimKey);
-    }
-    return value;
+    return esCache.set(namespace, parts, value, ttlMs);
 }
 
 async function withEsCoalescing(namespace, parts = [], worker) {
-    const key = cacheNamespaceKey(namespace, parts);
-    if (esRequestCache.inflight.has(key)) {
-        esDebug('info', 'coalescing hit', { namespace, key: String(key).slice(0, 160) });
-    }
-    return esRequestCache.singleFlight(key, worker);
+    return esCache.withCoalescing(namespace, parts, worker);
 }
 
 function getBaseUrl() {
-    return String(process.env.EUROSTREAMING_URL || process.env.ES_DOMAIN || DEFAULT_BASE_URL).trim().replace(/\/+$/, '') || DEFAULT_BASE_URL;
+    return normalizeProviderBaseUrl(process.env.EUROSTREAMING_URL || process.env.ES_DOMAIN || DEFAULT_BASE_URL, DEFAULT_BASE_URL) || DEFAULT_BASE_URL;
 }
 
 function getDefaultClient() {
@@ -112,9 +103,7 @@ function getDefaultClient() {
 }
 
 function envFlag(name, defaultValue = false) {
-    const raw = process.env[name];
-    if (raw === undefined || raw === null || raw === '') return defaultValue;
-    return /^(?:1|true|yes|on)$/i.test(String(raw).trim());
+    return esEnv.flag(name, defaultValue);
 }
 
 function isDeltabitMfpFallbackEnabled() {
@@ -668,13 +657,12 @@ async function solveCaptchaOCR(base64Data) {
 
 function buildSafegoHeaders(safegoUrl) {
     const origin = (() => { try { return new URL(safegoUrl).origin; } catch (_) { return 'https://safego.cc'; } })();
-    return {
-        'User-Agent': SAFEGO_FIREFOX_UA,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Origin': origin,
-        'Referer': safegoUrl
-    };
+    return buildProviderHtmlHeaders({
+        userAgent: SAFEGO_FIREFOX_UA,
+        acceptLanguage: 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+        origin,
+        referer: safegoUrl
+    });
 }
 
 
@@ -1575,10 +1563,7 @@ function withTimeout(promise, ms, label = 'operation') {
 }
 
 function envInt(name, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
-    const raw = process.env[name];
-    const value = Number.parseInt(String(raw ?? fallback), 10);
-    if (!Number.isFinite(value)) return fallback;
-    return Math.max(min, Math.min(max, value));
+    return esEnv.int(name, fallback, min, max);
 }
 
 function getHostResolveTimeoutMs(host) {
@@ -2437,13 +2422,7 @@ async function fetchSiteSearchSlugs(client, title, baseUrl) {
 }
 
 function esDebug(level, message, payload = null) {
-    const logger = console[level] || console.info;
-    const prefix = '[Eurostreaming:debug]';
-    if (payload && typeof payload === 'object') {
-        logger(`${prefix} ${message} ${JSON.stringify(payload)}`);
-    } else {
-        logger(`${prefix} ${message}`);
-    }
+    esLogger.log(level, message, payload);
 }
 
 function safeHost(value) {
@@ -2605,3 +2584,4 @@ module.exports = {
         buildDeltabitPlaybackHeaders
     }
 };
+

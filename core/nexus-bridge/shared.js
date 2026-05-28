@@ -212,7 +212,7 @@ function getTorrentioLanguageEvidence(stream) {
     const normalized = normalizeForComparison(raw);
     const hasExplicitItalianAudio = /(?:🇮🇹|\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i.test(raw);
     const hasItalianSubtitleOnly = REGEX_SUB_ITA.test(raw) && !hasExplicitItalianAudio;
-    const hasLooseItalian = REGEX_TORRENTIO_LOOSE_ITA.test(raw) || REGEX_TORRENTIO_LOOSE_ITA.test(normalized);        
+    const hasLooseItalian = REGEX_TORRENTIO_LOOSE_ITA.test(raw) || REGEX_TORRENTIO_LOOSE_ITA.test(normalized);
     const hasItalian = Boolean(hasLooseItalian || REGEX_STRONG_ITA_AUDIO.test(raw) || REGEX_STRONG_ITA_AUDIO.test(normalized));
     const hasForeign = REGEX_NEGATIVE_LANGUAGE.test(raw) || REGEX_NEGATIVE_LANGUAGE.test(normalized);
     const onlyForeignFlagBlock = hasForeign && !hasItalian;
@@ -421,7 +421,7 @@ function safeDecodeURIComponent(value) {
     try { return decodeURIComponent(String(value || '')); } catch { return String(value || ''); }
 }
 
-function safeEncodeTorrentioConfigSegment(value) {        
+function safeEncodeTorrentioConfigSegment(value) {
     return encodeURIComponent(String(value || '').trim())
         .replace(/%7C/gi, '|')
         .replace(/%3D/gi, '=')
@@ -495,7 +495,7 @@ function buildTorrentioBaseUrl(baseUrl, userConfig) {
     const apiKey = getTorrentioCredential(userConfig, service);
     if (!service || !apiKey) return baseUrl;
     if (process.env.EXT_TORRENTIO_INJECT_DEBRID === 'false') return baseUrl;
-     
+
     if (service === 'rd') {
         try {
             const url = new URL(String(baseUrl || ''));
@@ -530,7 +530,7 @@ function buildTorrentioBaseUrl(baseUrl, userConfig) {
         }
     }
 
-    
+
     const torrentioConf = {};
     if (service === 'tb') torrentioConf.torbox = apiKey;
     else return baseUrl;
@@ -797,7 +797,7 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
     const hasDirectUrl = typeof rawUrl === 'string' && /^https?:\/\//i.test(rawUrl);
     const addonGroup = getAddonGroup(addonKey);
     const isTorrentioAddon = addonGroup === 'torrentio';
-    const isMediaFusionAddon = addonGroup === 'mediafusion';            
+    const isMediaFusionAddon = addonGroup === 'mediafusion';
     const torrentioDownloadMarker = isTorrentioAddon && hasTorrentioRdDownloadMarkerFromStream(stream, text);
     const torrentioCachedMarker = isTorrentioAddon && !torrentioDownloadMarker && hasTorrentioRdCachedMarkerFromStream(stream, text);
     const torrentioPlayableUrl = hasDirectUrl && isTorrentioAddon && !torrentioDownloadMarker ? rawUrl : null;

@@ -501,7 +501,7 @@ function extractReleaseGroupTag(item = {}) {
 function getSizeBucket(item = {}) {
   const bytes = getSizeBytes(item) || getFolderSizeBytes(item);
   if (!Number.isFinite(bytes) || bytes <= 0) return '';
-    
+
   return String(Math.max(1, Math.round(bytes / (128 * 1024 * 1024))));
 }
 
@@ -522,7 +522,7 @@ function buildSmartDedupeKey(item = {}, options = {}) {
   const encode = extractEncodeTag(item);
   const releaseGroup = extractReleaseGroupTag(item);
   const sizeBucket = getSizeBucket(item);
-  
+
   if (!sizeBucket && !resolution && !quality) return null;
 
   const isSeries = isSeriesContext(options);
@@ -540,7 +540,7 @@ function buildDedupeKeys(item = {}, options = {}) {
     const forcedKey = getForcedTorrentioExactKey(item, options);
     const keys = forcedKey ? [forcedKey] : [];
     const payloadKey = getForcedTorrentioMoviePayloadKey(item, options);
-    if (payloadKey) keys.push(payloadKey);         
+    if (payloadKey) keys.push(payloadKey);
     if (hash && !isSeries) keys.push(`infoHash:${hash}`);
     if (hash && isSeries && fileIdx !== null) keys.push(`infoHashFile:${hash}:${fileIdx}`);
     return [...new Set(keys)];
@@ -565,17 +565,17 @@ function buildDedupeKeys(item = {}, options = {}) {
     if (fileIdx === null && hintIdx === null && episodeKey) keys.push(`infoHashEpisode:${hash}:${episodeKey}`);
     if (fileIdx === null && hintIdx === null && !episodeKey) keys.push(`infoHashNoFile:${hash}`);
   }
-  
+
 
   if (isSeries && filenameKey && fileIdx === null && hintIdx === null) {
     keys.push(`infoHashFilename:${hash}:${filenameKey}`);
   }
 
-  
+
   if (smartKey && (!isSeries || (fileIdx === null && hintIdx === null))) {
     keys.push(smartKey);
   }
-  
+
   return [...new Set(keys)];
 }
 
@@ -676,7 +676,7 @@ function collectMergedCount(items = [], fallback = 1) {
 
 function sourcePriority(item = {}, options = {}) {
   const text = String(`${item?.source || ''} ${item?.provider || ''} ${item?.externalAddon || ''} ${item?.externalGroup || ''} ${item?.name || ''} ${item?.title || ''}`).toLowerCase();
-  const isSeries = isSeriesContext(options);       
+  const isSeries = isSeriesContext(options);
   if (isManualContributionItem(item)) return 1;
   if (isSeries && isTorrentioLike(item)) return 45;
   if (/mediafusion/.test(text)) return 25;

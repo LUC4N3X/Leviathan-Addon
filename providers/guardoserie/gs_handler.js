@@ -1088,7 +1088,7 @@ function pickPreferredPlayerLinks(links = [], options = {}) {
   const unique = Array.from(new Set((links || []).filter(Boolean)));
   const loadm = unique.filter(isLoadmPlayerUrl);
 
- 
+
   if (options.preferLoadm !== false && loadm.length) return loadm.slice(0, max);
   return unique.slice(0, max);
 }
@@ -1103,7 +1103,7 @@ function resolveGsMediaType(meta = {}) {
 
   if (meta?.isSeries === false || type === 'movie' || type === 'film') return 'movie';
 
-  
+
   return 'movie';
 }
 
