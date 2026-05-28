@@ -370,16 +370,30 @@ function registerPlaybackRoutes(app, {
             const apiKey = getDebridApiKey(config, requestedService);
             if (!apiKey) return res.status(400).send('API Key mancante.');
             const magnet = buildTrackerMagnet(hash);
+            const routeFileIdx = parseFileIndex(fileIdx);
             const item = {
                 title: `Unknown Video (${hash})`,
                 hash: String(hash || '').toUpperCase(),
                 season: parseInt(s, 10) || 0,
                 episode: parseInt(e, 10) || 0,
-                fileIdx: parseInt(fileIdx, 10) === -1 ? undefined : parseInt(fileIdx, 10),
+                fileIdx: Number.isInteger(routeFileIdx) ? routeFileIdx : undefined,
                 magnet
             };
+            const routeLazyCacheKey = `${requestedService}:${item.hash}:${item.season || 0}:${item.episode || 0}:${item.fileIdx !== undefined ? item.fileIdx : -1}`;
+            let cachedPlaybackMeta = await Cache.getLazyMeta(routeLazyCacheKey);
+
+            const isTbSeriesRequest = requestedService === 'tb' && item.season > 0 && item.episode > 0;
+            const shouldForceRouteFileIdx = !isTbSeriesRequest || cachedPlaybackMeta?.forceFileIdx === true;
+            if (isTbSeriesRequest && Number.isInteger(routeFileIdx) && !shouldForceRouteFileIdx) {
+                item._requestedRouteFileIdx = routeFileIdx;
+                item.fileIdx = undefined;
+                logger.info(`[LAZY PLAY] TB series route fileIdx deferred to matcher | hash=${item.hash} | routeIdx=${routeFileIdx} | S${item.season}E${item.episode}`);
+            }
+
             const lazyCacheKey = `${requestedService}:${item.hash}:${item.season || 0}:${item.episode || 0}:${item.fileIdx !== undefined ? item.fileIdx : -1}`;
-            const cachedPlaybackMeta = await Cache.getLazyMeta(lazyCacheKey);
+            if (!cachedPlaybackMeta && lazyCacheKey !== routeLazyCacheKey) {
+                cachedPlaybackMeta = await Cache.getLazyMeta(lazyCacheKey);
+            }
             const playbackMeta = imdb ? {
                 imdb_id: String(imdb),
                 season: item.season || 0,
@@ -448,7 +462,10 @@ function registerPlaybackRoutes(app, {
 
             let streamData = null;
             if (requestedService === 'tb') {
-                const fastAvailability = await readTbAvailabilityFastPayload(dbHelper, item.hash, item.fileIdx, playbackMeta || { imdb_id: imdb || null, season: item.season, episode: item.episode });
+                const skipFastAvailability = isTbSeriesRequest && Number.isInteger(item._requestedRouteFileIdx);
+                const fastAvailability = skipFastAvailability
+                    ? null
+                    : await readTbAvailabilityFastPayload(dbHelper, item.hash, item.fileIdx, playbackMeta || { imdb_id: imdb || null, season: item.season, episode: item.episode });
                 if (fastAvailability) {
                     streamData = await LIMITERS.lazyPlay.schedule(() => TB.resolveFromAvailability(
                         apiKey,
