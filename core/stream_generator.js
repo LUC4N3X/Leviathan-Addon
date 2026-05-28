@@ -9,7 +9,6 @@ const { TB_CACHE_STATES, normalizeTbCacheState, toRdCacheState, isTbVerified, sh
 const { scheduleKeyed } = require('./utils/limits');
 const { scheduleRequestTask } = require('./server/request_queue');
 const { formatStreamSelector, formatBytes } = require("./lib/stream_formatter");
-const { applyTorrentResultFilters } = require("./lib/torrent_result_filters");
 const P2P = require("./handlers/p2p_handler");
 const { generateSmartQueries, smartMatch } = require("./media_intelligence");
 const { rankAndFilterResults } = require("./lib/result_ranker");
@@ -55,6 +54,29 @@ const { applyAnimeUnityKitsuBackCompat } = require('./stream/anime_unity_backcom
 const { buildQualityCompatibleBingeGroup } = require('./stream/binge_group');
 const { buildClientCacheMetadata } = require('./stream/client_cache_metadata');
 const {
+  TIMED_CACHE_MAX_ENTRIES,
+  cleanupTimedCache,
+  getTimedCacheValue,
+  setTimedCacheValue
+} = require('./stream/timed_cache');
+const {
+  applyFinalStreamUserSort,
+  applyPremiumRankingPolicy,
+  getConfiguredSortMode
+} = require('./stream/ranking_policy');
+const {
+  buildTitleSearchPipelineKey,
+  buildValidatedFileSetKey
+} = require('./stream/search_keys');
+const {
+  applyConfiguredStreamFilters,
+  applyConfiguredTorrentFilters,
+  detectQualityLabel,
+  getTorrentioTrustDedupeKey,
+  mergeForcedTorrentioItItems,
+  shouldForceKeepTorrentioIt
+} = require('./stream/quality_filters');
+const {
   getConfiguredDebridKey,
   getNormalizedDebridService,
   getRdDirectResolveLimit,
@@ -69,7 +91,7 @@ const {
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
 const {
-  logger, Cache, LIMITERS, CONFIG, REGEX_QUALITY_FILTER, REGEX_SUB_ONLY, REGEX_AUDIO_CONFIRM, REGEX_YEAR, EMPTY_STREAM_TTL, METADATA_CACHE_TTL,
+  logger, Cache, LIMITERS, CONFIG, REGEX_SUB_ONLY, REGEX_AUDIO_CONFIRM, REGEX_YEAR, EMPTY_STREAM_TTL, METADATA_CACHE_TTL,
   getLanguageInfo, parseTitleDetails, formatLanguageLabel, isSeasonPack, isGoodShortQueryMatch, chooseBestPackTitle, shouldUpdatePackTitle,
   extractSeasonEpisodeFromFilename, deduplicateResults, filterByQualityLimit, extractInfoHash,
   withTimeout, normalizeSearchText, extractSeeders, extractSize, streamInflight, metadataInflight, withSharedPromise,
@@ -959,8 +981,6 @@ const BACKGROUND_DB_SAVE_DEDUP_MS = Math.max(1000, Math.min(120000, parseInt(pro
 const LAZY_WARMUP_LOAD_THRESHOLD = Math.max(1, Math.min(200, parseInt(process.env.LAZY_WARMUP_LOAD_THRESHOLD || '14', 10) || 14));
 const TITLE_SEARCH_HOT_TTL_MS = Math.max(5000, Math.min(5 * 60 * 1000, parseInt(process.env.TITLE_SEARCH_HOT_TTL_MS || '45000', 10) || 45000));
 const VALIDATED_FILE_SET_TTL_MS = Math.max(30 * 1000, Math.min(60 * 60 * 1000, parseInt(process.env.VALIDATED_FILE_SET_TTL_MS || String(20 * 60 * 1000), 10) || 20 * 60 * 1000));
-const TIMED_CACHE_MAX_ENTRIES = Math.max(200, Math.min(10000, parseInt(process.env.TIMED_CACHE_MAX_ENTRIES || '3000', 10) || 3000));
-const TIMED_CACHE_SWEEP_INTERVAL_MS = Math.max(1000, Math.min(60 * 1000, parseInt(process.env.TIMED_CACHE_SWEEP_INTERVAL_MS || '5000', 10) || 5000));
 const BACKGROUND_DB_SAVE_QUEUE_MAX = Math.max(10, Math.min(1000, parseInt(process.env.BACKGROUND_DB_SAVE_QUEUE_MAX || '120', 10) || 120));
 const PACK_RESOLUTION_QUEUE_MAX = Math.max(10, Math.min(1000, parseInt(process.env.PACK_RESOLUTION_QUEUE_MAX || '80', 10) || 80));
 const TORRENTIO_EXACT_ACCEPT_ALL = String(process.env.EXT_TORRENTIO_EXACT_ACCEPT_ALL || 'true').toLowerCase() !== 'false';
@@ -972,7 +992,6 @@ function shouldAcceptAllTorrentioExact(config = {}, key = '') {
 }
 const PACK_RESOLVER_HTTP_COOLDOWN_MS = Math.max(5000, Math.min(10 * 60 * 1000, parseInt(process.env.PACK_RESOLVER_HTTP_COOLDOWN_MS || '60000', 10) || 60000));
 const recentPackResolverHttpFailures = new Map();
-const timedCacheSweepState = new Map();
 
 function boundedSharedPromiseOptions(maxEntries, metricName) {
     return {
@@ -983,133 +1002,11 @@ function boundedSharedPromiseOptions(maxEntries, metricName) {
     };
 }
 
-function getTimedCacheState(map) {
-    let state = timedCacheSweepState.get(map);
-    if (!state) {
-        state = { nextSweepAt: 0 };
-        timedCacheSweepState.set(map, state);
-    }
-    return state;
-}
-
-function trimTimedCacheSize(map, maxEntries = TIMED_CACHE_MAX_ENTRIES) {
-    while (map.size > maxEntries) {
-        const oldestKey = map.keys().next().value;
-        if (oldestKey === undefined) break;
-        map.delete(oldestKey);
-    }
-}
-
-function cleanupTimedCache(map, maxEntries = TIMED_CACHE_MAX_ENTRIES, options = {}) {
-    if (!(map instanceof Map)) return;
-    if (map.size === 0) {
-        timedCacheSweepState.delete(map);
-        return;
-    }
-    const now = Date.now();
-    const state = getTimedCacheState(map);
-    const overCapacity = map.size > maxEntries;
-    if (options.force !== true && !overCapacity && now < state.nextSweepAt) return;
-
-    state.nextSweepAt = now + TIMED_CACHE_SWEEP_INTERVAL_MS;
-
-    for (const [key, entry] of map) {
-        if (!entry || Number(entry.expiresAt || 0) <= now) map.delete(key);
-    }
-
-    trimTimedCacheSize(map, maxEntries);
-}
-
-function getTimedCacheValue(map, key) {
-    cleanupTimedCache(map);
-    const entry = map.get(key);
-    if (!entry) return null;
-    if (Number(entry.expiresAt || 0) <= Date.now()) {
-        map.delete(key);
-        return null;
-    }
-    return entry.value;
-}
-
-function setTimedCacheValue(map, key, value, ttlMs, maxEntries = TIMED_CACHE_MAX_ENTRIES) {
-    if (!(map instanceof Map) || !key || ttlMs <= 0) return value;
-    cleanupTimedCache(map, maxEntries);
-    map.set(key, { value, expiresAt: Date.now() + ttlMs });
-    trimTimedCacheSize(map, maxEntries);
-    return value;
-}
-
 function isQueueOverflowError(error) {
     if (!error) return false;
     if (error.code === 'QUEUE_OVERFLOW') return true;
     const message = String(error.message || error);
     return /dropped by bottleneck|queue overflow|highwater/i.test(message);
-}
-
-function buildTitleSearchPipelineKey(meta, type, langMode, dbOnlyMode = false, filters = {}) {
-    const normalizeArray = (value) => Array.isArray(value)
-        ? value.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean).sort()
-        : [];
-    const titles = [meta?.title, meta?.originalTitle, meta?.name]
-        .filter(Boolean)
-        .map((value) => normalizeSearchText(value))
-        .filter(Boolean)
-        .slice(0, 6)
-        .sort();
-    const payload = {
-        type: String(type || '').toLowerCase(),
-        langMode: String(langMode || '').toLowerCase(),
-        dbOnly: dbOnlyMode === true,
-        year: Number(meta?.year || 0) || 0,
-        season: Number(meta?.season || 0) || 0,
-        episode: Number(meta?.episode || 0) || 0,
-        filters: {
-            sourceMode: String(filters?.sourceMode || (dbOnlyMode ? 'dbOnly' : 'balanced')).toLowerCase(),
-            no4k: filters?.no4k === true,
-            no1080: filters?.no1080 === true,
-            no720: filters?.no720 === true,
-            noScr: filters?.noScr === true,
-            noCam: filters?.noCam === true,
-            maxSizeGB: Number(filters?.maxSizeGB || 0) || 0,
-            minSizeGB: Number(filters?.minSizeGB || 0) || 0,
-            maxSizeBytes: Number(filters?.maxSizeBytes || 0) || 0,
-            minSizeBytes: Number(filters?.minSizeBytes || 0) || 0,
-            minSeeders: Number(filters?.minSeeders || 0) || 0,
-            maxSeeders: Number(filters?.maxSeeders || 0) || 0,
-            providers: normalizeArray(filters?.providers),
-            providerAllow: normalizeArray(filters?.providerAllow),
-            providerInclude: normalizeArray(filters?.providerInclude),
-            providerExclude: normalizeArray(filters?.providerExclude),
-            providerDeny: normalizeArray(filters?.providerDeny),
-            providerBlock: normalizeArray(filters?.providerBlock),
-            qualityAllow: normalizeArray(filters?.qualityAllow),
-            qualityInclude: normalizeArray(filters?.qualityInclude),
-            qualityExclude: normalizeArray(filters?.qualityExclude),
-            qualityDeny: normalizeArray(filters?.qualityDeny),
-            qualityFilter: normalizeArray(filters?.qualityFilter),
-            requireTags: normalizeArray(filters?.requireTags),
-            excludeTags: normalizeArray(filters?.excludeTags),
-            sizeFilter: Array.isArray(filters?.sizeFilter)
-                ? filters.sizeFilter.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean)
-                : (filters?.sizeFilter && typeof filters.sizeFilter === 'object'
-                    ? {
-                        min: String(filters.sizeFilter.min || filters.sizeFilter.from || filters.sizeFilter.gte || '').trim().toLowerCase(),
-                        max: String(filters.sizeFilter.max || filters.sizeFilter.to || filters.sizeFilter.lte || '').trim().toLowerCase()
-                    }
-                    : String(filters?.sizeFilter || '').trim().toLowerCase())
-        },
-        titles
-    };
-    return crypto.createHash('sha1').update(JSON.stringify(payload)).digest('hex').slice(0, 20);
-}
-
-function buildValidatedFileSetKey(item, meta) {
-    const hash = extractInfoHash(item?.hash || item?.infoHash || '');
-    if (!hash) return null;
-    const season = Number(meta?.season || item?.season || 0) || 0;
-    const episode = Number(meta?.episode || item?.episode || 0) || 0;
-    const mediaType = meta?.isSeries || season > 0 || episode > 0 ? 'series' : 'movie';
-    return `${hash}:${mediaType}:${season}:${episode}`;
 }
 
 function getValidatedFileSet(item, meta) {
@@ -1122,43 +1019,6 @@ function rememberValidatedFileSet(item, meta, payload) {
     const key = buildValidatedFileSetKey(item, meta);
     if (!key || !payload || typeof payload !== 'object') return;
     setTimedCacheValue(validatedFileSetCache, key, payload, VALIDATED_FILE_SET_TTL_MS);
-}
-
-function detectCodecBucket(text) {
-    const raw = String(text || '').toLowerCase();
-    if (/\b(?:av1)\b/.test(raw)) return 'av1';
-    if (/\b(?:x265|h265|hevc)\b/.test(raw)) return 'hevc';
-    if (/\b(?:x264|h264|avc)\b/.test(raw)) return 'avc';
-    return 'other';
-}
-
-function detectQualityBucket(text) {
-    const raw = String(text || '').toLowerCase();
-    if (/\b(?:2160p|4k|uhd)\b/.test(raw)) return '4k';
-    if (/\b(?:1080p|fhd|full[-.\s]?hd)\b/.test(raw)) return '1080p';
-    if (/\b(?:720p|hd)\b/.test(raw)) return '720p';
-    return 'sd';
-}
-
-function detectReleaseGroupKey(item) {
-    const title = String(item?.title || '');
-    const source = String(item?.source || item?.provider || '');
-    const fromSuffix = title.match(/-(\w{2,20})$/i);
-    if (fromSuffix && fromSuffix[1]) return fromSuffix[1].toLowerCase();
-    const fromBracket = title.match(/\[(\w{2,20})\]/i);
-    if (fromBracket && fromBracket[1]) return fromBracket[1].toLowerCase();
-    const trusted = `${title} ${source}`.match(/\b(?:mircrew|corsaro|lux|wms|dn[a4]?|idn_crew|speedvideo|rarbg|yts|yify|qxr|tgx|galaxyrg|framestor|epsilon|ntb|ctrlhd|flux|playweb)\b/i);
-    return trusted && trusted[0] ? trusted[0].toLowerCase() : 'generic';
-}
-
-function buildDiversityPolicy(config = {}) {
-    const filters = config?.filters || {};
-    return {
-        enabled: filters.disablePremiumDiversity !== true,
-        maxPerCodec: Math.max(1, Math.min(6, parseInt(filters.maxPerCodec || process.env.PREMIUM_MAX_PER_CODEC || '3', 10) || 3)),
-        maxPerReleaseGroup: Math.max(1, Math.min(5, parseInt(filters.maxPerReleaseGroup || process.env.PREMIUM_MAX_PER_RELEASE_GROUP || '2', 10) || 2)),
-        maxPerQuality: Math.max(1, Math.min(8, parseInt(filters.maxPerQualityBucket || filters.maxPerQuality || process.env.PREMIUM_MAX_PER_QUALITY || '4', 10) || 4))
-    };
 }
 
 function applyPackKnowledge(items, meta) {
@@ -1178,167 +1038,6 @@ function applyPackKnowledge(items, meta) {
         item._packTitleSource = known.titleSource || 'validated';
         return item;
     });
-}
-
-function getConfiguredSortMode(config = {}) {
-    const raw = String(
-        config?.ranking?.sortMode ||
-        config?.sortMode ||
-        config?.sort ||
-        config?.filters?.sortMode ||
-        config?.filters?.sortBy ||
-        config?.filters?.order ||
-        config?.filters?.sort ||
-        'balanced'
-    ).trim().toLowerCase();
-    if (['resolution', 'res', 'quality', 'qualita', 'qualità', 'risoluzione'].includes(raw)) return 'resolution';
-    if (['size', 'bitrate', 'peso'].includes(raw)) return 'size';
-    return 'balanced';
-}
-
-function applyPremiumRankingPolicy(results, meta, config) {
-    const list = Array.isArray(results) ? results : [];
-
-    const sortMode = getConfiguredSortMode(config);
-    if (sortMode === 'resolution' || sortMode === 'size') return list;
-
-    const policy = buildDiversityPolicy(config);
-    if (!policy.enabled || list.length <= 2) return list;
-
-    const codecCounts = new Map();
-    const groupCounts = new Map();
-    const qualityCounts = new Map();
-    const selected = [];
-    const overflow = [];
-
-    for (const item of list) {
-        const title = String(item?.title || '');
-        const codec = detectCodecBucket(title);
-        const group = detectReleaseGroupKey(item);
-        const quality = detectQualityBucket(title);
-        const mustKeep = item?._packValidated === true
-            || item?._tbCached === true
-            || item?._dbCachedRd === true
-            || item?.cached_rd === true
-            || (meta?.isSeries && Number.isInteger(item?.fileIdx));
-
-        const codecCount = codecCounts.get(codec) || 0;
-        const groupCount = groupCounts.get(group) || 0;
-        const qualityCount = qualityCounts.get(quality) || 0;
-        const overPolicy = codecCount >= policy.maxPerCodec || groupCount >= policy.maxPerReleaseGroup || qualityCount >= policy.maxPerQuality;
-
-        if (!overPolicy || mustKeep) {
-            selected.push(item);
-            codecCounts.set(codec, codecCount + 1);
-            groupCounts.set(group, groupCount + 1);
-            qualityCounts.set(quality, qualityCount + 1);
-        } else {
-            overflow.push(item);
-        }
-    }
-
-    return [...selected, ...overflow];
-}
-
-function getFinalStreamSortText(stream = {}) {
-    return String([
-        stream?.name,
-        stream?.title,
-        stream?.description,
-        stream?.behaviorHints?.filename,
-        stream?.behaviorHints?.bingeGroup,
-        stream?.behaviorHints?.vortexMeta?.quality
-    ].filter(Boolean).join(' '));
-}
-
-function normalizeResolutionSortText(value = '') {
-    return String(value || '')
-        .normalize('NFKC')
-        .replace(/[ᴋＫ]/g, 'k')
-        .replace(/[ᴘＰ]/g, 'p')
-        .toLowerCase();
-}
-
-function getFinalStreamResolutionTier(stream = {}) {
-    const text = normalizeResolutionSortText(getFinalStreamSortText(stream));
-    if (/\b(?:4320p|8k)\b/.test(text)) return 5;
-    if (/\b(?:2160p|4k|uhd)\b/.test(text)) return 4;
-    if (/\b(?:1440p|2k|qhd)\b/.test(text)) return 3.5;
-    if (/\b(?:1080p|1080i|fhd|full[-.\s]?hd)\b/.test(text)) return 3;
-    if (/\b(?:720p|hd)\b/.test(text)) return 2;
-    if (/\b(?:576p|480p|sd)\b/.test(text)) return 1;
-    return 0;
-}
-
-function parseFinalStreamSizeBytes(stream = {}) {
-    const text = getFinalStreamSortText(stream);
-    const match = text.match(/(\d+(?:[.,]\d+)?)\s*(tib|tb|gib|gb|mib|mb)\b/i);
-    if (!match) return 0;
-    const value = parseFloat(String(match[1]).replace(',', '.'));
-    if (!Number.isFinite(value) || value <= 0) return 0;
-    const unit = match[2].toLowerCase();
-    if (unit === 'tib' || unit === 'tb') return value * 1024 * 1024 * 1024 * 1024;
-    if (unit === 'gib' || unit === 'gb') return value * 1024 * 1024 * 1024;
-    return value * 1024 * 1024;
-}
-
-function getFinalStreamCacheState(stream = {}) {
-    const raw = stream?.cacheState || stream?.rdCacheState || stream?.behaviorHints?.cacheState || stream?.behaviorHints?.rdCacheState || '';
-    const normalized = String(raw || '').trim().toLowerCase();
-    if (normalized) return normalized;
-    const visibleText = `${stream?.name || ''}
-${stream?.title || ''}`;
-    if (/⚡/.test(visibleText) && /\b(RD|TB)\b/i.test(visibleText)) return 'cached';
-    if (/☁️/.test(visibleText) && /\b(RD|TB)\b/i.test(visibleText)) return 'uncached_terminal';
-    if (/⏳/.test(visibleText) && /\b(RD|TB)\b/i.test(visibleText)) return 'probing';
-    return 'unknown';
-}
-
-function getFinalStreamCacheTier(stream = {}) {
-    const state = getFinalStreamCacheState(stream);
-    if (state === 'cached') return 0;
-    if (state === 'likely_cached' || state === 'probing' || state === 'unknown') return 1;
-    if (state === 'likely_uncached') return 2;
-    if (state === 'uncached_terminal') return 3;
-    return 1;
-}
-
-function applyFinalStreamUserSort(streams = [], config = {}) {
-    const list = Array.isArray(streams) ? streams : [];
-    const sortMode = getConfiguredSortMode(config);
-
-    const sorted = list
-        .map((stream, index) => ({
-            stream,
-            index,
-            cacheTier: getFinalStreamCacheTier(stream),
-            resolutionTier: getFinalStreamResolutionTier(stream),
-            sizeBytes: parseFinalStreamSizeBytes(stream)
-        }))
-        .sort((a, b) => {
-            if (sortMode === 'resolution') {
-                const resDelta = b.resolutionTier - a.resolutionTier;
-                if (resDelta !== 0) return resDelta;
-                if (a.cacheTier !== b.cacheTier) return a.cacheTier - b.cacheTier;
-                return a.index - b.index;
-            }
-
-            if (a.cacheTier !== b.cacheTier) return a.cacheTier - b.cacheTier;
-
-            if (sortMode === 'size') {
-                const sizeDelta = b.sizeBytes - a.sizeBytes;
-                if (sizeDelta !== 0) return sizeDelta;
-            }
-            return a.index - b.index;
-        })
-        .map((entry) => entry.stream);
-
-    if (sortMode === 'resolution' || sortMode === 'size') {
-        const top = sorted.slice(0, 5).map((stream) => `${getFinalStreamResolutionTier(stream)}:${String(stream?.title || stream?.name || '').replace(/\s+/g, ' ').slice(0, 45)}`);
-        logger.info(`[FINAL SORT] mode=${sortMode} count=${sorted.length} top=${top.join(' | ')}`);
-    }
-
-    return sorted;
 }
 
 function getMetaDbLookupKey(meta) {
@@ -1704,107 +1403,6 @@ function pad2(value) {
 function getEpisodeDisplayTitle(meta, fallbackTitle) {
     if (!meta?.title || !(meta?.season > 0 || meta?.episode > 0)) return fallbackTitle;
     return `${meta.title} S${pad2(meta.season)}E${pad2(meta.episode)}`;
-}
-
-function detectQualityLabel(text, fallback = 'SD') {
-    const upper = String(text || '').toUpperCase();
-    if (/\b(?:4K|2160P|UHD)\b/.test(upper)) return '4K';
-    if (/\b(?:1080P|FHD|FULLHD)\b/.test(upper)) return '1080p';
-    if (/\b(?:720P|HD)\b/.test(upper)) return '720p';
-    if (/\b(?:480P|SD)\b/.test(upper)) return 'SD';
-    return fallback || 'SD';
-}
-
-const QUALITY_CAM_REGEX = /\b(?:cam|hdcam|ts|telesync|screener|scr)\b/i;
-
-function getQualityFilterSignals(text, options = {}) {
-    const raw = String(text || '');
-    const lower = raw.toLowerCase();
-    const upper = raw.toUpperCase();
-    const has4k = REGEX_QUALITY_FILTER["4K"].test(lower);
-    const has1080 = REGEX_QUALITY_FILTER["1080p"].test(lower);
-    const has720 = REGEX_QUALITY_FILTER["720p"].test(lower)
-        || Boolean(options.treatGenericHdAs720 && /\bHD\b/.test(upper) && !/\b(?:1080P|2160P|4K|FHD|UHD|FULLHD)\b/.test(upper));
-    const hasSd = REGEX_QUALITY_FILTER["SD"].test(lower);
-    const hasCam = QUALITY_CAM_REGEX.test(raw);
-    return { has4k, has1080, has720, hasSd, hasCam };
-}
-
-function shouldDropByConfiguredQuality(text, filters = {}, options = {}) {
-    const quality = getQualityFilterSignals(text, options);
-    if (filters.no4k && quality.has4k) return true;
-    if (filters.no1080 && quality.has1080) return true;
-    if (filters.no720 && quality.has720) return true;
-    if (filters.noScr && (quality.hasSd || quality.hasCam)) return true;
-    if (filters.noCam && quality.hasCam) return true;
-    return false;
-}
-
-function getConfiguredQualityFilterText(item = {}) {
-    return [
-        item?.title,
-        item?.name,
-        item?.filename,
-        item?.fileName,
-        item?.file_title,
-        item?.rawDescription,
-        item?.quality,
-        item?.resolution,
-        item?._releaseDetails?.quality,
-        item?._releaseDetails?.qualityLabel,
-        item?.behaviorHints?.filename,
-        item?.behaviorHints?.videoResolution,
-        item?.behaviorHints?.bingeGroup
-    ].filter(Boolean).join(' ');
-}
-
-function isBlockedByUserQualityFilters(item = {}, filters = {}) {
-    return shouldDropByConfiguredQuality(getConfiguredQualityFilterText(item), filters, { treatGenericHdAs720: true });
-}
-
-function getTorrentioTrustDedupeKey(item = {}) {
-    const hash = String(item?.hash || item?.infoHash || '').trim().toLowerCase();
-    const fileIdx = Number.isInteger(Number(item?.fileIdx)) ? Number(item.fileIdx) : -1;
-    const direct = String(item?.directUrl || item?.url || item?._externalDirectUrl || '').trim().toLowerCase();
-    const title = String(item?.title || item?.name || item?.filename || '').trim().toLowerCase();
-    const source = String(item?.source || item?.provider || item?.externalProvider || item?.externalAddon || item?._externalRequestId || '').trim().toLowerCase();
-    if (shouldForceKeepTorrentioIt(item)) {
-        return ['torrentio-force', hash || 'nohash', fileIdx, direct || 'nodirect', title || 'notitle', source || 'nosource'].join(':');
-    }
-    if (hash) return `${hash}:${fileIdx}`;
-    if (direct) return direct;
-    return title;
-}
-
-function shouldForceKeepTorrentioIt(item = {}) {
-    return Boolean(item?._torrentioLooseItForceKeep || item?._torrentioExactGuard);
-}
-
-function mergeForcedTorrentioItItems(filtered = [], original = [], filters = {}) {
-    const output = Array.isArray(filtered) ? [...filtered] : [];
-    const seen = new Set(output.map(getTorrentioTrustDedupeKey).filter(Boolean));
-    for (const item of Array.isArray(original) ? original : []) {
-        if (!shouldForceKeepTorrentioIt(item)) continue;
-        if (isBlockedByUserQualityFilters(item, filters)) continue;
-        const key = getTorrentioTrustDedupeKey(item);
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        output.push(item);
-    }
-    return output;
-}
-
-function applyConfiguredTorrentFilters(items, filters = {}) {
-    const list = Array.isArray(items) ? items : [];
-    if (!filters || Object.keys(filters).length === 0) return list;
-    const filtered = applyTorrentResultFilters(list, filters);
-    return mergeForcedTorrentioItItems(filtered, list, filters);
-}
-
-function applyConfiguredStreamFilters(streams, filters = {}) {
-    const list = Array.isArray(streams) ? streams : [];
-    if (!filters || Object.keys(filters).length === 0) return list;
-    return list.filter(stream => !isBlockedByUserQualityFilters(stream, filters));
 }
 
 async function normalizeCandidateResults(items, meta = {}) {
