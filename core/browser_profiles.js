@@ -23,6 +23,7 @@ const CANONICAL_BROWSER_PROFILES = Object.freeze([
             'Upgrade-Insecure-Requests': '1'
         })
     }),
+    
     Object.freeze({
         name: 'chrome-mac',
         family: 'chrome',
