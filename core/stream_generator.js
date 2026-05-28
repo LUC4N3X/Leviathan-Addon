@@ -20,7 +20,7 @@ const tmdbHelper = require("./utils/tmdb_helper");
 const kitsuHandler = require("./handlers/kitsu_handler");
 const RD = require("./debrid/rd/clients/realdebrid_client");
 const TB = require("./debrid/tb/clients/torbox_client");
-const dbHelper = require("./storage/db_repository"); 
+const dbHelper = require("./storage/db_repository");
 const { buildMagnet: buildTrackerMagnet } = require("./storage/tracker_registry");
 const { createDebridAvailabilityTools } = require("./debrid/availability/debrid_availability");
 const { createWebProviderTools } = require("./stream/web_providers");
@@ -3332,7 +3332,7 @@ function stripMoviePackLabel(title) {
         .trim();
 }
 
-async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, config, meta = {}) { 
+async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, config, meta = {}) {
     if (!CONFIG.INDEXER_URL || !tmdbId) return [];
     try {
         logger.info(`[REMOTE] Query VPS: ${CONFIG.INDEXER_URL} | ID: ${tmdbId} S:${season} E:${episode}`);
@@ -3341,7 +3341,7 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
         if (episode) url += `&episode=${episode}`;
         const { data } = await axios.get(url, { timeout: CONFIG.TIMEOUTS.REMOTE_INDEXER });
         if (!data || !data.torrents || !Array.isArray(data.torrents)) return [];
-        
+
         const isSeriesQuery = String(type || '').toLowerCase() === 'series' || Boolean(season || episode || meta?.isSeries);
         const mapped = data.torrents.map(t => {
             const safeDbTitle = isSeriesQuery ? t.title : stripMoviePackLabel(t.title);

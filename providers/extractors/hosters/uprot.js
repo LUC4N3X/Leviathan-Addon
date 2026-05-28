@@ -526,7 +526,7 @@ function loadUprotStateFromFile(options = {}) {
             const parsed = parseUprotStateFile(fs.readFileSync(filePath, 'utf8'));
             if (parsed) return { ...parsed, source: filePath };
         } catch (_) {
-            
+
         }
     }
     return null;

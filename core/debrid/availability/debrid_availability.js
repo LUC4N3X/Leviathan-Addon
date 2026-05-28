@@ -321,7 +321,7 @@ function deriveDbRdAvailability(row = {}) {
     const stalePositive = (cachedBool === true || rawState === 'cached') && isPastDueDate(row?.next_cached_check);
 
     if (stalePositive) {
-                        
+
         return {
             state: 'likely_cached',
             cached: null,
@@ -908,7 +908,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 if (result.cached === true) {
                     statePayload = { state: 'cached', cached: true, failures: 0, next_hours: 24 * 30 };
                 } else if (result.state === 'likely_cached' || result.pack_without_episode_hint === true) {
-                                        
+
                     statePayload = { state: 'likely_cached', cached: null, failures: 0, next_hours: 6 };
                 } else {
                     statePayload = resolveRdNegativeDecision(item, result);

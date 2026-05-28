@@ -15,6 +15,11 @@ const {
 } = require('../utils/bypass');
 const { createCloudflareBypass } = require('../utils/cloudflare_bypass');
 const { buildCookieHeaderFromSession } = require('../utils/cf_clearance_manager');
+const {
+    applyProviderEnvDefaults,
+    createProviderEnv,
+    createProviderLogger
+} = require('../utils/provider_toolkit');
 
 function mergeCookieStrings(...cookieStrings) {
     const merged = new Map();
@@ -119,19 +124,14 @@ const CINEMACITY_EMBEDDED_ENV_DEFAULTS = Object.freeze({
     CC_PROVIDER_ERROR_TTL: '10'
 });
 
-for (const [name, value] of Object.entries(CINEMACITY_EMBEDDED_ENV_DEFAULTS)) {
-    if (process.env[name] === undefined || process.env[name] === null || process.env[name] === '') {
-        process.env[name] = value;
-    }
-}
+applyProviderEnvDefaults(CINEMACITY_EMBEDDED_ENV_DEFAULTS);
+const cinemaCityEnv = createProviderEnv(CINEMACITY_EMBEDDED_ENV_DEFAULTS);
 
 const FAST_PLAYBACK_MODE = String(process.env.CINEMACITY_FAST_PLAYBACK || '1') !== '0';
 const QUALITY_PROBE_FAST_TIMEOUT_MS = Math.max(650, Math.min(6000, Number.parseInt(process.env.CINEMACITY_QUALITY_PROBE_TIMEOUT_MS || '1400', 10) || 1400));
 const QUALITY_PROBE_FULL_TIMEOUT_MS = Math.max(1500, Math.min(8000, Number.parseInt(process.env.CINEMACITY_QUALITY_PROBE_FULL_TIMEOUT_MS || '6000', 10) || 6000));
 function envFlag(name, fallback = false) {
-    const raw = process.env[name];
-    if (raw == null || raw === '') return fallback;
-    return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+    return cinemaCityEnv.flag(name, fallback);
 }
 const CINEMACITY_USE_RUST_SHIELD = envFlag('CINEMACITY_RUST_SHIELD', true);
 const CINEMACITY_USE_CF_FALLBACK = envFlag('CINEMACITY_CF_FALLBACK', true);
@@ -175,6 +175,11 @@ const CINEMACITY_LISTING_TOTAL_MS = Math.max(CINEMACITY_LISTING_TIMEOUT_MS + 900
 const CINEMACITY_LISTING_CACHE_TTL_MS = Math.max(5 * 60 * 1000, Math.min(4 * 60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_LISTING_CACHE_TTL_MS || String(45 * 60 * 1000), 10) || (45 * 60 * 1000)));
 const CINEMACITY_LISTING_PAGE_CACHE_TTL_MS = Math.max(2 * 60 * 1000, Math.min(60 * 60 * 1000, Number.parseInt(process.env.CINEMACITY_LISTING_PAGE_CACHE_TTL_MS || String(20 * 60 * 1000), 10) || (20 * 60 * 1000)));
 const CINEMACITY_DEBUG = envFlag('CINEMACITY_DEBUG', false) || envFlag('DEBUG_CINEMACITY', false);
+const cinemaCityLogger = createProviderLogger({
+    prefix: 'CinemaCity',
+    enabled: () => CINEMACITY_DEBUG,
+    debugPrefix: '[CinemaCity:debug]'
+});
 const CINEMACITY_KRAKEN_FORWARD_URL = (
     String(process.env.CINEMACITY_FORWARD_PROXY || '').trim()
     || String(process.env.CINEMACITY_KRAKEN_FORWARD_URL || '').trim()
@@ -225,12 +230,7 @@ function isCloudflareIpBanActive() {
     return cloudflareIpBanUntil > Date.now();
 }
 function logCinemaCityDebug(message, data = {}) {
-    if (!CINEMACITY_DEBUG) return;
-    try {
-        console.log(`[CinemaCity:debug] ${message}`, JSON.stringify(data));
-    } catch (_) {
-        console.log(`[CinemaCity:debug] ${message}`);
-    }
+    cinemaCityLogger.debug(message, data);
 }
 function logCinemaCityInfo(message, data = {}) {
     try {
@@ -3731,3 +3731,4 @@ module.exports = {
 };
 
 startCinemaCityBackgroundClearanceDaemon();
+

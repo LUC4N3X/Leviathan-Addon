@@ -653,7 +653,7 @@ function registerPlaybackRoutes(app, {
     }
 
     app.head('/:conf/add_to_cloud/:hash', async (req, res) => {
-        
+
         res.status(204).end();
     });
 
@@ -684,8 +684,8 @@ function registerPlaybackRoutes(app, {
             else {
                 const magnet = service === 'rd' ? (rdFallbackMagnet || pickRdCloudBuildMagnet(req, hash)) : null;
                 logger.info(`📥 [CACHE BUILDER] Richiesta aggiunta hash ${hash} su ${service.toUpperCase()}${magnet ? ' | magnet=external_context' : ''}`);
-                
-                
+
+
                 queueCloudBuild(service, hash, apiKey, { magnet }).catch((error) => {
                     logger.warn(`[CACHE BUILDER] async cloud build failed | service=${service.toUpperCase()} | hash=${hash} | error=${error?.message || error}`);
                 });

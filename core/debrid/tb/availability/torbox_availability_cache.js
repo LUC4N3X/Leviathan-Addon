@@ -590,7 +590,7 @@ function parseHashResult(hash, info, meta = null) {
   const totalSize = safeNum(info?.size, 0);
 
   if (!hasFiles) {
-    
+
     if (info?.cached === true) {
       return [lowerHash, makeCacheResult(TB_CACHE_STATES.LIKELY_CACHED, {
         torrent_title: info.name || null,
@@ -599,7 +599,7 @@ function parseHashResult(hash, info, meta = null) {
         match_reason: "metadata_without_files"
       })];
     }
-        
+
     if (totalSize > 0) {
       return [lowerHash, makeCacheResult(TB_CACHE_STATES.UNCERTAIN, {
         torrent_title: info.name || null,

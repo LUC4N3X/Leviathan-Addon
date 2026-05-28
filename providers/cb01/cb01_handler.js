@@ -1,11 +1,19 @@
 'use strict';
 
 const { buildWebStream, normalizeRemoteUrl } = require('../extractors/common');
-const { ProviderRequestCache } = require('../../core/cache/provider_request_cache');
 const { createMediaflowGateway, getMediaflowBase, buildMediaflowUrl } = require('../../core/proxy/mediaflow_gateway');
 const { isUprotUrl, resolveUprotToMaxstream } = require('../extractors/hosters/uprot');
 const { extractMixdrop } = require('../extractors/hosters/mixdrop');
 const { requestWithImpitRotating, isCanceledError } = require('../utils/bypass');
+const {
+    buildProviderHtmlHeaders,
+    createProviderCache,
+    createProviderEnv,
+    createProviderLogger,
+    normalizeProviderBaseUrl,
+    resolveProviderBaseUrls,
+    sanitizeLogValue: sanitizeProviderLogValue
+} = require('../utils/provider_toolkit');
 
 const DEFAULT_BASE_URL = 'https://cb01uno.help';
 const DEFAULT_BASE_URLS = Object.freeze(['https://cb01uno.help']);
@@ -84,84 +92,55 @@ const CB_CACHE_TTL = Object.freeze({
     seasonAlias: 30 * 60_000
 });
 
-const cbMemoryCache = new Map();
-const cbRequestCache = new ProviderRequestCache({ name: 'cb01', maxEntries: 900, inflightMaxEntries: 500 });
+const cbEnv = createProviderEnv(CB01_CODE_DEFAULTS);
+const cbCache = createProviderCache({
+    providerName: 'cb01',
+    maxEntries: CB_CACHE_LIMIT,
+    inflightMaxEntries: 500,
+    ttlByNamespace: CB_CACHE_TTL,
+    logger: (level, message, payload) => cbDebug(level, message, payload),
+    traceCache: true
+});
+const cbLogger = createProviderLogger({
+    prefix: 'CB01',
+    enabled: () => isCbDebugEnabled(),
+    traceEnabled: () => isCbTraceEnabled(),
+    debugPrefix: '[CB01:debug]',
+    tracePrefix: '[CB01:trace]'
+});
 
 function cacheNamespaceKey(namespace, parts = []) {
-    return `${namespace}:${parts.map((part) => String(part ?? '').trim()).join('|')}`;
+    return cbCache.key(namespace, parts);
 }
 
 function cloneCacheValue(value) {
-    if (value == null) return value;
-    try { return JSON.parse(JSON.stringify(value)); } catch (_) { return value; }
+    return cbCache.clone(value);
 }
 
 function getCbCache(namespace, parts = []) {
-    const key = cacheNamespaceKey(namespace, parts);
-    const entry = cbMemoryCache.get(key);
-    if (!entry) {
-        cbDebug('trace', 'cache miss', { namespace, key: String(key).slice(0, 160) });
-        return null;
-    }
-    if (entry.expiresAt <= Date.now()) {
-        cbMemoryCache.delete(key);
-        cbDebug('trace', 'cache expired', { namespace, key: String(key).slice(0, 160) });
-        return null;
-    }
-    entry.lastHit = Date.now();
-    cbDebug('trace', 'cache hit', { namespace, key: String(key).slice(0, 160), ttlLeftMs: Math.max(0, entry.expiresAt - Date.now()) });
-    return cloneCacheValue(entry.value);
+    return cbCache.get(namespace, parts);
 }
 
 function setCbCache(namespace, parts = [], value, ttlMs) {
-    if (value == null) return value;
-    const key = cacheNamespaceKey(namespace, parts);
-    const effectiveTtl = Math.max(1_000, Number(ttlMs || CB_CACHE_TTL[namespace] || 60_000));
-    cbMemoryCache.set(key, {
-        value: cloneCacheValue(value),
-        expiresAt: Date.now() + effectiveTtl,
-        lastHit: Date.now()
-    });
-    cbDebug('trace', 'cache set', { namespace, key: String(key).slice(0, 160), ttlMs: effectiveTtl, size: cbMemoryCache.size });
-    if (cbMemoryCache.size > CB_CACHE_LIMIT) {
-        const victims = [...cbMemoryCache.entries()]
-            .sort((a, b) => (a[1].expiresAt - b[1].expiresAt) || (a[1].lastHit - b[1].lastHit))
-            .slice(0, Math.ceil(CB_CACHE_LIMIT * 0.15));
-        for (const [victimKey] of victims) cbMemoryCache.delete(victimKey);
-    }
-    return value;
+    return cbCache.set(namespace, parts, value, ttlMs);
 }
 
 async function withCbCoalescing(namespace, parts = [], worker) {
-    const key = cacheNamespaceKey(namespace, parts);
-    if (cbRequestCache.inflight.has(key)) {
-        cbDebug('info', 'coalescing hit', { namespace, key: String(key).slice(0, 160) });
-    }
-    return cbRequestCache.singleFlight(key, worker);
+    return cbCache.withCoalescing(namespace, parts, worker);
 }
 
 function normalizeBaseUrl(value) {
-    const raw = String(value || '').trim().replace(/\/+$/, '');
-    if (!raw) return '';
-    if (/^https?:\/\//i.test(raw)) {
-        try { return new URL(raw).origin; } catch (_) { return raw; }
-    }
-    try { return new URL(`https://${raw}`).origin; } catch (_) { return `https://${raw}`; }
+    return normalizeProviderBaseUrl(value);
 }
 
 function getBaseUrls() {
-    const expanded = String(envString('CB01_BASE_URLS', '') || '')
-        .split(/[\s,;]+/)
-        .map((value) => value.trim())
-        .filter(Boolean);
     const raw = [
         envString('CB01_BASE_URL', DEFAULT_BASE_URL),
         envString('CB01_BASE_URL_2', ''),
         envString('CB01_BASE_URL_3', ''),
-        ...expanded,
-        ...DEFAULT_BASE_URLS
+        ...cbEnv.list('CB01_BASE_URLS', []),
     ];
-    const out = [...new Set(raw.map(normalizeBaseUrl).filter(Boolean))];
+    const out = resolveProviderBaseUrls(raw, DEFAULT_BASE_URLS);
     cbDebug('trace', 'base urls resolved', { bases: out, source: 'code-defaults+env-override' });
     return out;
 }
@@ -190,28 +169,19 @@ function getDefaultClient() {
 }
 
 function envRaw(name, fallback = '') {
-    const raw = process.env[name];
-    if (raw !== undefined && raw !== null && raw !== '') return raw;
-    const coded = CB01_CODE_DEFAULTS[name];
-    if (coded !== undefined && coded !== null && coded !== '') return coded;
-    return fallback;
+    return cbEnv.raw(name, fallback);
 }
 
 function envString(name, fallback = '') {
-    return String(envRaw(name, fallback) ?? '').trim();
+    return cbEnv.string(name, fallback);
 }
 
 function envFlag(name, defaultValue = false) {
-    const raw = envRaw(name, defaultValue ? '1' : '0');
-    if (raw === undefined || raw === null || raw === '') return defaultValue;
-    return /^(?:1|true|yes|on)$/i.test(String(raw).trim());
+    return cbEnv.flag(name, defaultValue);
 }
 
 function envInt(name, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
-    const raw = envRaw(name, fallback);
-    const value = Number.parseInt(String(raw ?? fallback), 10);
-    if (!Number.isFinite(value)) return fallback;
-    return Math.max(min, Math.min(max, value));
+    return cbEnv.int(name, fallback, min, max);
 }
 
 function isCbDebugEnabled() {
@@ -223,33 +193,9 @@ function isCbTraceEnabled() {
 }
 
 function sanitizeLogValue(value, depth = 0) {
-    if (value === null || value === undefined) return value;
-    if (typeof value === 'string') {
-        let out = value;
-        out = out.replace(/(api_password=)[^&\s]+/gi, '$1***');
-        out = out.replace(/([?&](?:api|key|token|pass|password|apikey|api_key)=)[^&\s]+/gi, '$1***');
-        out = out.replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+/gi, '$1***');
-        return out.length > 650 ? `${out.slice(0, 650)}…` : out;
-    }
-    if (typeof value === 'number' || typeof value === 'boolean') return value;
-    if (Array.isArray(value)) {
-        if (depth > 2) return `[array:${value.length}]`;
-        return value.slice(0, 12).map((item) => sanitizeLogValue(item, depth + 1));
-    }
-    if (typeof value === 'object') {
-        if (depth > 2) return '[object]';
-        const out = {};
-        for (const [key, item] of Object.entries(value).slice(0, 40)) {
-            if (/password|pass|token|apikey|api_key|key/i.test(key)) {
-                out[key] = item ? '***' : item;
-            } else {
-                out[key] = sanitizeLogValue(item, depth + 1);
-            }
-        }
-        return out;
-    }
-    return String(value);
+    return sanitizeProviderLogValue(value, depth);
 }
+
 
 function cbDebug(level, message, payload = null) {
     const normalizedLevel = String(level || 'info').toLowerCase();
@@ -1109,16 +1055,16 @@ function buildCbForwardProxyUrl(targetUrl, config = {}, headers = {}) {
 function buildCbBrowserHeaders(baseUrl, targetUrl = '', label = 'fetch') {
     const isSeriesSearch = /\/serietv\/?\?/i.test(String(targetUrl || ''));
     const referer = isSeriesSearch ? `${baseUrl}/serietv/` : `${baseUrl}/`;
-    return {
-        'User-Agent': pickSimpleUa(),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.6,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-        'Referer': referer,
-        'Upgrade-Insecure-Requests': '1'
-    };
+    return buildProviderHtmlHeaders({
+        userAgent: pickSimpleUa(),
+        referer,
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        acceptLanguage: 'it-IT,it;q=0.9,en-US;q=0.6,en;q=0.5',
+        acceptEncoding: 'gzip, deflate, br',
+        cacheControl: 'no-cache',
+        pragma: 'no-cache',
+        upgradeInsecureRequests: true
+    });
 }
 
 function toAxiosProxyConfig(proxyUrl) {
@@ -2391,3 +2337,4 @@ module.exports = {
         toAxiosProxyConfig
     }
 };
+

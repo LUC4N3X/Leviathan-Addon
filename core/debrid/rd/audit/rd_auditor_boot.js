@@ -4,7 +4,7 @@ function bootRealDebridAuditor({ dbHelper, logger, Cache }) {
     let rdAuditorBoot = { enabled: false, started: false, reason: 'disabled' };
     let getRdAuditorStatus = () => ({ ...rdAuditorBoot });
 
-    
+
     if (String(process.env.RD_CACHE_SCANNER_ENABLED || 'true').toLowerCase() !== 'false') {
         try {
             const { startRealDebridAuditor, getRealDebridAuditorStatus: workerStatusGetter } = require('./realdebrid_auditor');

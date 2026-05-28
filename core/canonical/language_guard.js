@@ -30,7 +30,7 @@ function buildLanguageEvidence(title = '', sourceName = '', parsedInfo = null) {
   const scanTitle = stripFalseItalianDomainTokens(rawTitle);
   const scanCombined = stripFalseItalianDomainTokens(combined);
   const parsed = parsedInfo || parseTitleDetails(rawTitle);
- 
+
   const langInfo = getLanguageInfo(rawTitle, null, rawSource, parsed);
   const detected = new Set(Array.isArray(langInfo?.detectedLanguages) ? langInfo.detectedLanguages.map((v) => String(v)) : []);
 
