@@ -5132,12 +5132,13 @@ body.m-typing .m-content {
 #m-sea-vanta {
     position: fixed;
     inset: 0;
-    width: 100%;
-    height: 100%;
-    z-index: -9;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    z-index: 0;
     pointer-events: none;
     overflow: hidden;
-    contain: strict;
+    contain: layout paint;
     transform: translateZ(0);
     backface-visibility: hidden;
     will-change: transform;
@@ -5159,6 +5160,16 @@ body.m-keyboard-open #m-sea-vanta {
 }
 @media (prefers-reduced-motion: reduce) {
     #m-sea-vanta { display: none !important; }
+}
+
+/* With Vanta on, suppress the legacy decorative ocean layers so the
+   3D water reads cleanly. The app UI is naturally above (#app-container
+   is positioned later in the DOM and forms a higher paint layer). */
+body .m-caustic,
+body .m-sea-motion,
+body .m-ocean-particles,
+body #m-sea-canvas {
+    display: none !important;
 }
 
 
@@ -7126,9 +7137,9 @@ function startLeviathanSeaVanta(mount) {
     const tier = tinyMem ? 'tiny' : (lowfx || cores <= 4 || (memory && memory <= 4) ? 'lite' : 'full');
 
     const presets = {
-        full: { scaleMobile: 1.15, shininess: 38.0, waveHeight: 16.0, waveSpeed: 0.82, zoom: 0.86, dpr: 1.5 },
-        lite: { scaleMobile: 1.6,  shininess: 26.0, waveHeight: 12.0, waveSpeed: 0.72, zoom: 0.88, dpr: 1.2 },
-        tiny: { scaleMobile: 2.2,  shininess: 18.0, waveHeight: 8.5,  waveSpeed: 0.60, zoom: 0.92, dpr: 1.0 }
+        full: { scaleMobile: 1.0, shininess: 60.0, waveHeight: 36.0, waveSpeed: 1.10, zoom: 0.75, dpr: 1.75 },
+        lite: { scaleMobile: 1.2, shininess: 45.0, waveHeight: 28.0, waveSpeed: 0.95, zoom: 0.78, dpr: 1.35 },
+        tiny: { scaleMobile: 1.8, shininess: 32.0, waveHeight: 20.0, waveSpeed: 0.80, zoom: 0.82, dpr: 1.0 }
     };
     const p = presets[tier];
 
@@ -7142,7 +7153,7 @@ function startLeviathanSeaVanta(mount) {
         minWidth: 200.0,
         scale: 1.0,
         scaleMobile: p.scaleMobile,
-        color: 0x062744,
+        color: 0x0a3a5e,
         shininess: p.shininess,
         waveHeight: p.waveHeight,
         waveSpeed: p.waveSpeed,
