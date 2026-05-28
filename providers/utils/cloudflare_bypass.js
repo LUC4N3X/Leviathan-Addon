@@ -5,6 +5,19 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
+// cf_native_solver: in-process clearance cache + native IUAM solver. Loaded
+// lazily so a broken require() can't take down the rest of the bypass chain.
+let cfNativeSolver = null;
+try {
+  // eslint-disable-next-line global-require
+  cfNativeSolver = require('./cf_native_solver');
+} catch (err) {
+  try {
+    process.stderr.write(`[cloudflare_bypass] cf_native_solver unavailable: ${err && err.message}\n`);
+  } catch (_) { /* ignore */ }
+  cfNativeSolver = null;
+}
+
 let providerHttpGuardFactory = null;
 
 const BLOCKED_STATUSES = new Set([403, 429, 503]);
@@ -788,6 +801,47 @@ function createCloudflareBypass(options = {}) {
     const allowFlareSolverr = fetchOptions.allowFlareSolverr !== false;
     const ttl = fetchOptions.ttl || 10 * 60 * 1000;
 
+    // PRE-CHAIN: native CF layer. If we have a fresh clearance bundle for this
+    // host (in-memory + disk pool, 25-min TTL) we send it directly and skip
+    // every Python child process. Saves ~150-500ms per request on hits and
+    // bypasses the Scrapling queue entirely.
+    //
+    // For an IUAM math challenge we solve it in-process via vm. Turnstile
+    // pages we recognise but refuse - those still need a real browser
+    // (Scrapling/Playwright) which the existing chain provides.
+    //
+    // Only applies to GET (POST bodies aren't covered by cookie cache).
+    if (!isPost && cfNativeSolver && fetchOptions.skipNativeBypass !== true) {
+      try {
+        const native = await cfNativeSolver.tryNativeBypass(url, {
+          userAgent: fetchOptions.userAgent || fetchOptions.headers?.['User-Agent'],
+          cookieHeader: fetchOptions.cookieHeader,
+          extraHeaders: fetchOptions.headers || {},
+          timeoutMs: Math.min(timeoutMs || 6000, 8000)
+        });
+        if (native && isUsefulHtml(native.html, native.status)) {
+          debug('cf_native_solver hit', {
+            url,
+            strategy: native.strategy,
+            status: native.status,
+            bytes: String(native.html || '').length
+          });
+          if (native.userAgent && native.cookies && typeof guard.importSession === 'function') {
+            try {
+              guard.importSession({
+                userAgent: native.userAgent,
+                cookies: native.cookies,
+                solvedUrl: native.url || url
+              }, native.url || url);
+            } catch (_) { /* importSession is best-effort */ }
+          }
+          return native.html;
+        }
+      } catch (err) {
+        debug('cf_native_solver error (ignored)', { url, error: err && err.message });
+      }
+    }
+
     if (shouldAttemptCurlCffi(url, fetchOptions)) {
       try {
         const session = await runCurlCffi(url, {
@@ -799,6 +853,17 @@ function createCloudflareBypass(options = {}) {
         });
         if (session?.userAgent && session.cookies && typeof guard.importSession === 'function') {
           guard.importSession(session, session.solvedUrl || url);
+        }
+        // Persist the freshly solved clearance to the native pool so the next
+        // request to this host can short-circuit via the cache hit above.
+        if (cfNativeSolver && session?.cookies) {
+          try {
+            cfNativeSolver.rememberClearance(session.solvedUrl || url, {
+              cookies: session.cookies,
+              userAgent: session.userAgent,
+              strategy: 'curl_cffi'
+            });
+          } catch (_) { /* ignore */ }
         }
         if (isUsefulHtml(session?.response, session?.solutionResponseStatus, session?.responseHeaders || null)) {
           debug('curl_cffi response html used', {
@@ -830,6 +895,15 @@ function createCloudflareBypass(options = {}) {
         });
         if (session?.userAgent && session.cookies && typeof guard.importSession === 'function') {
           guard.importSession(session, session.solvedUrl || url);
+        }
+        if (cfNativeSolver && session?.cookies) {
+          try {
+            cfNativeSolver.rememberClearance(session.solvedUrl || url, {
+              cookies: session.cookies,
+              userAgent: session.userAgent,
+              strategy: 'scrapling'
+            });
+          } catch (_) { /* ignore */ }
         }
         if (isUsefulHtml(session?.response, session?.solutionResponseStatus)) {
           debug('scrapling response html used', { url, bytes: String(session.response || '').length });
