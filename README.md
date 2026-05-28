@@ -122,6 +122,31 @@ La logica cloud non sostituisce la pipeline principale: la potenzia. Se l'utente
 
 ---
 
+
+## 🛡️ Redis-backed Cloudflare Session Store
+
+Leviathan può condividere clearance Cloudflare, cookie jar e fingerprint browser tra processo API, worker e istanze multiple tramite Redis. Quando un provider richiede FlareSolverr, il primo processo che incontra la challenge acquisisce un lock Redis temporaneo; gli altri aspettano la sessione condivisa invece di aprire solve duplicati.
+
+Questo riduce solve ripetuti, carico Chromium, timeout e rischio di ban su deploy con `CLUSTER_WORKERS`, container API+worker o più istanze dietro lo stesso Redis. Il disco locale resta fallback automatico: se Redis non è disponibile, Leviathan continua a usare il comportamento precedente.
+
+Quando una sessione FlareSolverr valida è già disponibile, anche la first-pass `curl_cffi` viene seedata con gli stessi cookie, cookie jar e User-Agent prima di provare il fetch. In pratica: FlareSolverr risolve una volta, poi `curl_cffi` può riutilizzare quella clearance leggera sui tentativi successivi.
+
+Variabili principali:
+
+```env
+CF_REDIS_SESSION_ENABLED=true
+CF_REDIS_NATIVE_ENABLED=true
+CF_REDIS_LOCK_ENABLED=true
+CF_REDIS_SESSION_TTL_SECONDS=21600
+CF_REDIS_NATIVE_TTL_SECONDS=1500
+CF_REDIS_LOCK_TTL_MS=45000
+CF_REDIS_LOCK_WAIT_MS=52000
+```
+
+> Nota: il `docker-compose.yml` usa Redis come cache volatile. Per mantenere le clearance anche dopo un riavvio del container Redis, abilita persistenza Redis/AOF oppure conserva il fallback su disco.
+
+---
+
 ## ☁️ Debrid Saved Cloud
 
 <div align="center">
