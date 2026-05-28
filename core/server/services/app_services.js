@@ -71,9 +71,13 @@ function createAppServices({
         if (!dbHelper || typeof updateFn !== 'function') return false;
 
         const requestedItemFileIndex = item?.fileIdx;
+        const firstPresent = (...values) => values.find((value) => value !== null && value !== undefined && value !== '');
+        const streamResolvedFileIndex = isTb
+            ? firstPresent(streamData?.tb_file_id, streamData?.file_id, streamData?.file_index, streamData?.fileIdx)
+            : firstPresent(streamData?.rd_file_index, streamData?.file_id, streamData?.file_index, streamData?.fileIdx);
         const rawFileIndex = isTb
-            ? (requestedItemFileIndex ?? streamData?.tb_file_id ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx)
-            : (streamData?.rd_file_index ?? streamData?.file_id ?? streamData?.file_index ?? streamData?.fileIdx ?? requestedItemFileIndex);
+            ? firstPresent(streamResolvedFileIndex, requestedItemFileIndex)
+            : firstPresent(streamResolvedFileIndex, requestedItemFileIndex);
         const rawFileSize = streamData?.rd_file_size ?? streamData?.tb_file_size ?? streamData?.file_size ?? streamData?.filesize ?? streamData?.size ?? item?._size ?? item?.sizeBytes ?? null;
         const parsedFileIndex = rawFileIndex === null || rawFileIndex === undefined || rawFileIndex === ''
             ? NaN
@@ -87,7 +91,7 @@ function createAppServices({
             ? NaN
             : Number(streamData.tb_file_id);
         if (isTb && Number.isInteger(parsedRequestedFileIndex) && parsedRequestedFileIndex >= 0 && Number.isInteger(parsedStreamFileIndex) && parsedStreamFileIndex >= 0 && parsedRequestedFileIndex !== parsedStreamFileIndex) {
-            logger.warn(`[LAZY PLAY] TorBox fileIdx mismatch streamData ignored | hash=${item.hash} | requested=${parsedRequestedFileIndex} | streamData=${parsedStreamFileIndex}`);
+            logger.warn(`[LAZY PLAY] TorBox fileIdx mismatch corrected with resolved file | hash=${item.hash} | requested=${parsedRequestedFileIndex} | resolved=${parsedStreamFileIndex}`);
         }
 
         try {
