@@ -7113,7 +7113,9 @@ function bindLeviathanSeaLifecycle(effect, mount) {
         window.removeEventListener('resize', onResize);
         window.removeEventListener('orientationchange', onResize);
         try { effect.destroy && effect.destroy(); } catch (_) {}
+        if (mount) mount.classList.remove('is-ready');
         window.__leviathanVanta = null;
+        window.__leviathanSeaVantaBoot = false;
     };
     window.addEventListener('pagehide', cleanup, { once: true });
 
@@ -7179,7 +7181,24 @@ function startLeviathanSeaVanta(mount) {
     bindLeviathanSeaLifecycle(effect, mount);
 }
 
+function installLeviathanSeaBfcacheRestart() {
+    if (window.__leviathanSeaVantaBfcacheRestart) return;
+    window.__leviathanSeaVantaBfcacheRestart = true;
+    window.addEventListener('pageshow', (event) => {
+        if (!event || !event.persisted) return;
+        if (window.__leviathanVanta) {
+            const sync = window.__leviathanVantaSync;
+            if (typeof sync === 'function') sync();
+            return;
+        }
+        window.__leviathanSeaVantaBoot = false;
+        requestAnimationFrame(createSeaCanvas);
+    }, { passive: true });
+}
+
 function createSeaCanvas() {
+    installLeviathanSeaBfcacheRestart();
+
     const legacy = document.getElementById('m-sea-canvas');
     if (legacy) legacy.remove();
 
