@@ -258,6 +258,59 @@ class RedisCacheFacade {
     }
   }
 
+
+  async get(namespace, key) {
+    if (!this.isEnabled()) return undefined;
+    try {
+      const value = await this.client.command('GET', this.key(namespace, key));
+      if (value === null || value === undefined) return undefined;
+      return normalizeRedisValue(value);
+    } catch (_) {
+      this._onError();
+      return undefined;
+    }
+  }
+
+  async set(namespace, key, value, ttlSeconds = 300) {
+    if (!this.isEnabled()) return false;
+    try {
+      const ttl = Math.max(1, Math.floor(Number(ttlSeconds) || 1));
+      const payload = Buffer.isBuffer(value) ? value : Buffer.from(String(value), 'utf8');
+      if (payload.length > this.maxValueBytes) return false;
+      await this.client.command('SET', this.key(namespace, key), payload, 'EX', String(ttl));
+      return true;
+    } catch (_) {
+      this._onError();
+      return false;
+    }
+  }
+
+  async setIfAbsent(namespace, key, value, ttlMs = 30000) {
+    if (!this.isEnabled()) return false;
+    try {
+      const safeTtl = Math.max(1, Math.floor(Number(ttlMs) || 1));
+      const payload = Buffer.isBuffer(value) ? value : Buffer.from(String(value), 'utf8');
+      if (payload.length > 4096) return false;
+      const result = await this.client.command('SET', this.key(namespace, key), payload, 'NX', 'PX', String(safeTtl));
+      return String(normalizeRedisValue(result) || '').toUpperCase() === 'OK';
+    } catch (_) {
+      this._onError();
+      return false;
+    }
+  }
+
+  async releaseLock(namespace, key, token) {
+    if (!this.isEnabled()) return false;
+    try {
+      const script = "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end";
+      const released = await this.client.command('EVAL', script, '1', this.key(namespace, key), String(token || ''));
+      return Number(released || 0) > 0;
+    } catch (_) {
+      this._onError();
+      return false;
+    }
+  }
+
   async getJson(namespace, key) {
     if (!this.isEnabled()) return undefined;
     try {
