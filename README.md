@@ -559,7 +559,7 @@ Una valutazione positiva aumenta autorevolezza, fiducia e visibilità del protoc
 <br>
 
 <a href="https://github.com/LUC4N3X">
-  <img src="https://github.com/LUC4N3X.png" width="130" style="border-radius:50%" alt="LUC4N3X" />
+  <img src="https://i.ibb.co/ymv906Cg/file-00000000c0d07246bebd0b9dd9dcd3d8.png" width="190" style="border-radius:50%; box-shadow: 0 0 24px rgba(0, 224, 255, 0.35);" alt="LUC4N3X" />
 </a>
 
 <br><br>
