@@ -5152,6 +5152,18 @@ body.m-typing .m-content {
     height: 100% !important;
     pointer-events: none;
     image-rendering: auto;
+    filter: blur(0.45px) saturate(1.08) contrast(1.04) brightness(1.02);
+    -webkit-filter: blur(0.45px) saturate(1.08) contrast(1.04) brightness(1.02);
+}
+#m-sea-vanta::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(ellipse at 50% 0%, rgba(125, 249, 255, 0.14) 0%, transparent 38%),
+        linear-gradient(180deg, rgba(8, 32, 60, 0.18) 0%, transparent 28%, transparent 70%, rgba(0, 8, 20, 0.45) 100%);
+    mix-blend-mode: screen;
 }
 body.m-page-hidden #m-sea-vanta,
 body.m-typing #m-sea-vanta,
@@ -5162,14 +5174,34 @@ body.m-keyboard-open #m-sea-vanta {
     #m-sea-vanta { display: none !important; }
 }
 
-/* With Vanta on, suppress the legacy decorative ocean layers so the
-   3D water reads cleanly. The app UI is naturally above (#app-container
-   is positioned later in the DOM and forms a higher paint layer). */
-body .m-caustic,
+/* Hide the legacy sea-band / ocean-particle layers; keep .m-caustic
+   as the underwater-light overlay sitting ABOVE the 3D water. */
 body .m-sea-motion,
 body .m-ocean-particles,
 body #m-sea-canvas {
     display: none !important;
+}
+body .m-caustic {
+    z-index: 1 !important;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    opacity: 0.55 !important;
+}
+
+/* Restore opacity on the settings cards so the moving water doesn't
+   bleed through and hurt readability. Solid dark base under the glass
+   highlights that were defined later in the file. */
+body.m-mf-plus .m-hypervisor,
+body.m-mf-plus .m-visual-core-v2,
+body.m-mf-plus .m-ghost-panel,
+body.m-mf-plus .m-p2p-module,
+body.m-mf-plus .m-input-fuselage {
+    background:
+        linear-gradient(145deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02)),
+        radial-gradient(circle at 0 0, rgba(45, 212, 191, 0.06), transparent 42%),
+        linear-gradient(155deg, rgba(5, 14, 26, 0.965), rgba(2, 7, 14, 0.985)) !important;
+    backdrop-filter: blur(8px) saturate(1.1) !important;
+    -webkit-backdrop-filter: blur(8px) saturate(1.1) !important;
 }
 
 
@@ -7139,9 +7171,9 @@ function startLeviathanSeaVanta(mount) {
     const tier = tinyMem ? 'tiny' : (lowfx || cores <= 4 || (memory && memory <= 4) ? 'lite' : 'full');
 
     const presets = {
-        full: { scaleMobile: 1.0, shininess: 60.0, waveHeight: 36.0, waveSpeed: 1.10, zoom: 0.75, dpr: 1.75 },
-        lite: { scaleMobile: 1.2, shininess: 45.0, waveHeight: 28.0, waveSpeed: 0.95, zoom: 0.78, dpr: 1.35 },
-        tiny: { scaleMobile: 1.8, shininess: 32.0, waveHeight: 20.0, waveSpeed: 0.80, zoom: 0.82, dpr: 1.0 }
+        full: { scaleMobile: 1.05, shininess: 110.0, waveHeight: 22.0, waveSpeed: 1.05, zoom: 0.68, dpr: 1.75 },
+        lite: { scaleMobile: 1.25, shininess: 90.0,  waveHeight: 17.0, waveSpeed: 0.95, zoom: 0.72, dpr: 1.35 },
+        tiny: { scaleMobile: 1.8,  shininess: 65.0,  waveHeight: 12.0, waveSpeed: 0.85, zoom: 0.78, dpr: 1.0 }
     };
     const p = presets[tier];
 
@@ -7155,7 +7187,7 @@ function startLeviathanSeaVanta(mount) {
         minWidth: 200.0,
         scale: 1.0,
         scaleMobile: p.scaleMobile,
-        color: 0x0a3a5e,
+        color: 0x0e4870,
         shininess: p.shininess,
         waveHeight: p.waveHeight,
         waveSpeed: p.waveSpeed,
