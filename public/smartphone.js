@@ -5128,8 +5128,8 @@ body.m-typing .m-content {
 }
 
 
-/* Leviathan 3D ocean (Vanta WAVES + Three.js) — GPU-friendly, paused on typing/hidden */
-#m-sea-vanta {
+/* Leviathan WebGL ocean — one fragment-shader layer, no external runtime */
+#m-sea-webgl {
     position: fixed;
     inset: 0;
     width: 100vw;
@@ -5141,38 +5141,40 @@ body.m-typing .m-content {
     contain: layout paint;
     transform: translateZ(0);
     backface-visibility: hidden;
-    will-change: transform;
+    will-change: opacity;
     opacity: 0;
-    transition: opacity 700ms ease-out;
+    transition: opacity 620ms ease-out;
+    filter: saturate(1.08) contrast(1.04) brightness(1.02);
+    -webkit-filter: saturate(1.08) contrast(1.04) brightness(1.02);
 }
-#m-sea-vanta.is-ready { opacity: 1; }
-#m-sea-vanta canvas {
+#m-sea-webgl.is-ready { opacity: 0.92; }
+#m-sea-webgl.is-paused { opacity: 0.42; }
+#m-sea-webgl canvas {
     display: block;
     width: 100% !important;
     height: 100% !important;
     pointer-events: none;
     image-rendering: auto;
-    filter: blur(0.45px) saturate(1.08) contrast(1.04) brightness(1.02);
-    -webkit-filter: blur(0.45px) saturate(1.08) contrast(1.04) brightness(1.02);
 }
-#m-sea-vanta::after {
+#m-sea-webgl::after {
     content: "";
     position: absolute;
     inset: 0;
     pointer-events: none;
     background:
-        radial-gradient(ellipse at 50% 0%, rgba(125, 249, 255, 0.14) 0%, transparent 38%),
-        linear-gradient(180deg, rgba(8, 32, 60, 0.18) 0%, transparent 28%, transparent 70%, rgba(0, 8, 20, 0.45) 100%);
+        radial-gradient(ellipse at 50% 0%, rgba(125, 249, 255, 0.12) 0%, transparent 38%),
+        linear-gradient(180deg, rgba(8, 32, 60, 0.18) 0%, transparent 30%, transparent 70%, rgba(0, 8, 20, 0.52) 100%);
     mix-blend-mode: screen;
 }
-body.m-page-hidden #m-sea-vanta,
-body.m-typing #m-sea-vanta,
-body.m-keyboard-open #m-sea-vanta {
+body.m-page-hidden #m-sea-webgl,
+body.m-typing #m-sea-webgl,
+body.m-keyboard-open #m-sea-webgl {
     opacity: 0 !important;
 }
 @media (prefers-reduced-motion: reduce) {
-    #m-sea-vanta { display: none !important; }
+    #m-sea-webgl { display: none !important; }
 }
+
 
 /* Hide the legacy sea-band / ocean-particle layers; keep .m-caustic
    as the underwater-light overlay sitting ABOVE the 3D water. */
@@ -5860,21 +5862,111 @@ body.m-lowfx .m-dock-nav {
 }
 
 
+/* Solid card pass over the shader ocean: readable panels, less glass, no washed-out cards */
+:root {
+    --m-surface: rgba(7, 15, 28, 0.94);
+    --m-surface-2: rgba(3, 8, 18, 0.97);
+}
+
+.m-saas-topbar,
+.m-saas-code-card,
+.m-saas-metric,
+.m-section-head,
+.m-hypervisor,
+.m-visual-core-v2,
+.m-flux-readout,
+.m-reactor-module,
+.m-sys-grid,
+.m-visual-preview,
+.m-input-fuselage,
+.m-cred-opt,
+.m-flux-opt,
+.m-lang-opt,
+.m-qual-chip,
+.m-cloud-mode-panel,
+.m-cloud-mode-btn,
+.m-sc-subpanel,
+.m-link-card,
+.m-summary-card,
+.m-output-card,
+.m-ghost-panel,
+.m-p2p-module {
+    background:
+        linear-gradient(145deg, rgba(8, 17, 32, 0.94), rgba(2, 7, 16, 0.985)),
+        radial-gradient(circle at 100% 0%, rgba(77, 231, 255, 0.075), transparent 42%) !important;
+    border-color: rgba(115, 230, 255, 0.18) !important;
+    box-shadow:
+        0 16px 44px rgba(0, 0, 0, 0.52),
+        inset 0 1px 0 rgba(255,255,255,0.055),
+        inset 0 0 0 1px rgba(255,255,255,0.018) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+.m-saas-secondary,
+.m-saas-nav-pill,
+.m-hero-badge,
+.m-version-tag,
+.m-get-link,
+.m-mini-tab,
+.m-toast,
+.m-dock-container,
+.m-bottom-nav {
+    background:
+        linear-gradient(145deg, rgba(7, 17, 31, 0.91), rgba(2, 8, 18, 0.97)) !important;
+    border-color: rgba(115, 230, 255, 0.16) !important;
+    box-shadow:
+        0 10px 30px rgba(0,0,0,0.44),
+        inset 0 1px 0 rgba(255,255,255,0.052) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+.m-cred-opt.active,
+.m-flux-opt.active-bal,
+.m-flux-opt.active-res,
+.m-flux-opt.active-sz,
+.m-lang-opt.active-ita,
+.m-lang-opt.active-hyb,
+.m-lang-opt.active-eng,
+.m-cloud-mode-btn.active,
+.m-cortex-chip.active,
+.m-reactor-module.active {
+    background:
+        linear-gradient(145deg, rgba(10, 32, 50, 0.98), rgba(4, 11, 24, 0.99)),
+        radial-gradient(circle at 0 0, rgba(77, 231, 255, 0.16), transparent 44%) !important;
+    border-color: rgba(99, 232, 249, 0.44) !important;
+    box-shadow:
+        0 16px 42px rgba(0,0,0,0.50),
+        inset 0 0 18px rgba(77, 231, 255, 0.075),
+        inset 0 1px 0 rgba(255,255,255,0.070) !important;
+}
+
+.m-hypervisor::after,
+.m-visual-core-v2::after {
+    opacity: 0.18 !important;
+}
+
+.m-saas-metric,
+.m-cred-opt,
+.m-flux-opt,
+.m-lang-opt,
+.m-qual-chip,
+.m-cloud-mode-btn {
+    text-shadow: 0 1px 2px rgba(0,0,0,0.35);
+}
+
+
 `;
 
 const mobileHTML = `
-<div id="m-sea-vanta" aria-hidden="true"></div>
+<div id="m-sea-webgl" aria-hidden="true"></div>
 <div class="m-caustic" aria-hidden="true">
     <div class="m-caustic-ray" style="--ray-x:8%;--ray-dur:14s;--ray-op:0.55;--ray-from:-12deg;--ray-to:6deg;width:50px;"></div>
     <div class="m-caustic-ray" style="--ray-x:28%;--ray-dur:11s;--ray-op:0.40;--ray-from:-6deg;--ray-to:14deg;width:35px;"></div>
     <div class="m-caustic-ray" style="--ray-x:50%;--ray-dur:16s;--ray-op:0.65;--ray-from:-10deg;--ray-to:8deg;width:65px;"></div>
     <div class="m-caustic-ray" style="--ray-x:68%;--ray-dur:9s;--ray-op:0.35;--ray-from:5deg;--ray-to:-12deg;width:40px;"></div>
     <div class="m-caustic-ray" style="--ray-x:85%;--ray-dur:13s;--ray-op:0.50;--ray-from:8deg;--ray-to:-6deg;width:55px;"></div>
-</div>
-<div class="m-sea-motion" aria-hidden="true">
-    <div class="m-sea-band band-1"></div>
-    <div class="m-sea-band band-2"></div>
-    <div class="m-sea-band band-3"></div>
 </div>
 <div class="m-ocean-particles" id="m-ocean-particles" aria-hidden="true"></div>
 <div id="app-container">
@@ -7039,36 +7131,99 @@ function createOceanParticles() {
     if (container) container.textContent = '';
 }
 
-const LEVIATHAN_SEA_CDN = {
-    three: '/vendor/three.r134.min.js',
-    vanta: '/vendor/vanta.waves.min.js',
-    threeFallback: 'https://cdn.jsdelivr.net/npm/three@0.134.0/build/three.min.js',
-    vantaFallback: 'https://cdn.jsdelivr.net/npm/vanta@0.5.24/dist/vanta.waves.min.js'
-};
-
-function loadLeviathanSeaScriptWithFallback(primary, fallback) {
-    return loadLeviathanSeaScript(primary).catch(() => loadLeviathanSeaScript(fallback));
-}
-
-function loadLeviathanSeaScript(src) {
-    return new Promise((resolve, reject) => {
-        const existing = document.querySelector(`script[data-leviathan-sea="${src}"]`);
-        if (existing) {
-            if (existing.dataset.loaded === '1') return resolve();
-            existing.addEventListener('load', () => resolve(), { once: true });
-            existing.addEventListener('error', () => reject(new Error('script error')), { once: true });
-            return;
+const LEVIATHAN_SEA_SHADER = {
+    vertex: `
+        attribute vec2 a_position;
+        varying vec2 v_uv;
+        void main() {
+            v_uv = a_position * 0.5 + 0.5;
+            gl_Position = vec4(a_position, 0.0, 1.0);
         }
-        const tag = document.createElement('script');
-        tag.src = src;
-        tag.async = true;
-        tag.defer = true;
-        tag.dataset.leviathanSea = src;
-        tag.addEventListener('load', () => { tag.dataset.loaded = '1'; resolve(); }, { once: true });
-        tag.addEventListener('error', () => reject(new Error('script error: ' + src)), { once: true });
-        document.head.appendChild(tag);
-    });
-}
+    `,
+    fragment: `
+        precision mediump float;
+
+        uniform vec2 u_resolution;
+        uniform float u_time;
+        uniform float u_intensity;
+        varying vec2 v_uv;
+
+        float hash(vec2 p) {
+            p = fract(p * vec2(123.34, 456.21));
+            p += dot(p, p + 45.32);
+            return fract(p.x * p.y);
+        }
+
+        float noise(vec2 p) {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(
+                mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), u.x),
+                mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
+                u.y
+            );
+        }
+
+        float fbm(vec2 p) {
+            float v = 0.0;
+            float a = 0.5;
+            mat2 r = mat2(0.80, -0.60, 0.60, 0.80);
+            for (int i = 0; i < 4; i++) {
+                v += a * noise(p);
+                p = r * p * 2.03 + 13.7;
+                a *= 0.52;
+            }
+            return v;
+        }
+
+        float waveLine(vec2 p, float speed, float scale, float sharpness) {
+            float n = fbm(vec2(p.x * 0.42 + u_time * speed, p.y * 1.35 - u_time * speed * 0.42));
+            float w = sin((p.x + n * 2.4) * scale - u_time * speed * 5.2 + p.y * 2.6);
+            return pow(max(0.0, 0.5 + 0.5 * w), sharpness);
+        }
+
+        void main() {
+            vec2 uv = gl_FragCoord.xy / max(u_resolution.xy, vec2(1.0));
+            vec2 p = uv * 2.0 - 1.0;
+            p.x *= u_resolution.x / max(u_resolution.y, 1.0);
+
+            float t = u_time;
+            float depth = smoothstep(0.02, 1.0, uv.y);
+            float horizon = smoothstep(0.78, 0.18, abs(uv.y - 0.44));
+
+            vec2 flowA = vec2(p.x * 1.05 + t * 0.075, p.y * 1.55 - t * 0.035);
+            vec2 flowB = vec2(p.x * 1.80 - t * 0.060, p.y * 1.08 + t * 0.045);
+            float current = fbm(flowA) * 0.62 + fbm(flowB + 8.3) * 0.38;
+            float swell = sin(p.x * 2.3 + current * 3.1 + t * 0.62) * 0.040;
+            swell += sin(p.x * 5.4 - p.y * 2.1 + t * 0.36) * 0.018;
+
+            float foamA = waveLine(p + vec2(current * 0.22, swell), 0.18, 8.2, 9.0);
+            float foamB = waveLine(p.yx + vec2(swell, current * 0.16), -0.14, 10.8, 11.0);
+            float foam = (foamA * 0.55 + foamB * 0.34) * smoothstep(0.04, 0.92, uv.y) * horizon;
+
+            float caustic = fbm((p + vec2(current * 0.28, swell)) * 5.8 + vec2(t * 0.22, -t * 0.18));
+            caustic = pow(max(0.0, caustic), 3.2) * (0.38 + depth * 0.45);
+
+            vec3 deep = vec3(0.005, 0.020, 0.055);
+            vec3 mid = vec3(0.015, 0.155, 0.250);
+            vec3 cyan = vec3(0.120, 0.760, 0.950);
+            vec3 violet = vec3(0.160, 0.095, 0.440);
+
+            vec3 col = mix(deep, mid, depth);
+            col = mix(col, violet, smoothstep(0.72, 1.0, uv.x) * 0.18);
+            col += cyan * (caustic * 0.42 + foam * 0.28) * u_intensity;
+            col += vec3(0.20, 0.88, 1.00) * pow(max(0.0, 1.0 - length(p - vec2(-0.18, 0.30))), 3.0) * 0.14;
+            col += vec3(0.05, 0.22, 0.55) * smoothstep(0.86, 0.05, uv.y) * 0.26;
+
+            float vignette = smoothstep(1.48, 0.22, length(p * vec2(0.76, 0.92)));
+            col *= 0.62 + vignette * 0.58;
+
+            float alpha = mix(0.68, 0.94, smoothstep(0.08, 0.92, uv.y));
+            gl_FragColor = vec4(col, alpha);
+        }
+    `
+};
 
 function leviathanSeaShouldSkip() {
     if (!document.body) return true;
@@ -7077,153 +7232,267 @@ function leviathanSeaShouldSkip() {
     } catch (_) {}
     try {
         const test = document.createElement('canvas');
-        const gl = test.getContext('webgl', { antialias: false, alpha: true, powerPreference: 'low-power' })
+        const gl = test.getContext('webgl', { antialias: false, alpha: true, depth: false, stencil: false, powerPreference: 'low-power' })
                 || test.getContext('experimental-webgl');
         if (!gl) return true;
+        const lose = gl.getExtension && gl.getExtension('WEBGL_lose_context');
+        if (lose && typeof lose.loseContext === 'function') lose.loseContext();
     } catch (_) { return true; }
     return false;
 }
 
-function bindLeviathanSeaLifecycle(effect, mount) {
-    if (!effect) return;
-    const body = document.body;
-    let paused = false;
-    let pendingRaf = 0;
+function createSeaShaderProgram(gl, vertexSource, fragmentSource) {
+    const compile = (type, source) => {
+        const shader = gl.createShader(type);
+        if (!shader) throw new Error('shader allocation failed');
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            const info = gl.getShaderInfoLog(shader) || 'shader compile failed';
+            gl.deleteShader(shader);
+            throw new Error(info);
+        }
+        return shader;
+    };
+
+    const vertex = compile(gl.VERTEX_SHADER, vertexSource);
+    const fragment = compile(gl.FRAGMENT_SHADER, fragmentSource);
+    const program = gl.createProgram();
+    if (!program) throw new Error('program allocation failed');
+    gl.attachShader(program, vertex);
+    gl.attachShader(program, fragment);
+    gl.linkProgram(program);
+    gl.deleteShader(vertex);
+    gl.deleteShader(fragment);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || 'program link failed';
+        gl.deleteProgram(program);
+        throw new Error(info);
+    }
+    return program;
+}
+
+function getLeviathanSeaProfile() {
+    const cores = navigator.hardwareConcurrency || 8;
+    const memory = Number(navigator['deviceMemory'] || 0);
+    const lowfx = !!document.body?.classList?.contains('m-lowfx');
+    const tiny = (memory > 0 && memory <= 2) || (cores && cores <= 2);
+    const lite = lowfx || tiny || (cores && cores <= 4) || (memory && memory <= 4);
+    if (tiny) return { dpr: 0.72, fps: 18, intensity: 0.72 };
+    if (lite) return { dpr: 0.88, fps: 24, intensity: 0.86 };
+    return { dpr: 1.15, fps: 30, intensity: 1.0 };
+}
+
+function startLeviathanSeaShader(mount) {
+    if (!mount || window.__leviathanSea) return;
+
+    const profile = getLeviathanSeaProfile();
+    const canvas = document.createElement('canvas');
+    canvas.setAttribute('aria-hidden', 'true');
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    mount.textContent = '';
+    mount.appendChild(canvas);
+
+    const gl = canvas.getContext('webgl', {
+        alpha: true,
+        antialias: false,
+        depth: false,
+        stencil: false,
+        preserveDrawingBuffer: false,
+        powerPreference: 'low-power'
+    }) || canvas.getContext('experimental-webgl');
+
+    if (!gl) {
+        mount.remove();
+        window.__leviathanSeaShaderBoot = false;
+        return;
+    }
+
+    let program = null;
+    let buffer = null;
+    let resizeRaf = 0;
+    let classObserver = null;
+    let disposed = false;
+    let contextLost = false;
+
+    try {
+        program = createSeaShaderProgram(gl, LEVIATHAN_SEA_SHADER.vertex, LEVIATHAN_SEA_SHADER.fragment);
+        buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    } catch (_) {
+        try { if (program) gl.deleteProgram(program); } catch (__) {}
+        try { if (buffer) gl.deleteBuffer(buffer); } catch (__) {}
+        mount.remove();
+        window.__leviathanSeaShaderBoot = false;
+        return;
+    }
+
+    const locPosition = gl.getAttribLocation(program, 'a_position');
+    const locResolution = gl.getUniformLocation(program, 'u_resolution');
+    const locTime = gl.getUniformLocation(program, 'u_time');
+    const locIntensity = gl.getUniformLocation(program, 'u_intensity');
+    const minFrameMs = Math.max(16, Math.round(1000 / Math.max(12, profile.fps || 24)));
+    const bornAt = performance.now();
+
+    const state = {
+        raf: 0,
+        lastFrame: 0,
+        paused: false,
+        sync: null,
+        cleanup: null
+    };
+
+    const resize = () => {
+        if (disposed || contextLost) return;
+        const rect = mount.getBoundingClientRect();
+        const dpr = Math.max(0.65, Math.min(window.devicePixelRatio || 1, profile.dpr));
+        const width = Math.max(2, Math.floor((rect.width || window.innerWidth || 390) * dpr));
+        const height = Math.max(2, Math.floor((rect.height || window.innerHeight || 760) * dpr));
+        if (canvas.width !== width || canvas.height !== height) {
+            canvas.width = width;
+            canvas.height = height;
+        }
+        gl.viewport(0, 0, width, height);
+    };
+
+    const draw = (now) => {
+        state.raf = 0;
+        if (disposed || contextLost || state.paused) return;
+        if (state.lastFrame && now - state.lastFrame < minFrameMs) {
+            state.raf = requestAnimationFrame(draw);
+            return;
+        }
+        state.lastFrame = now;
+
+        try {
+            resize();
+            gl.useProgram(program);
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.enableVertexAttribArray(locPosition);
+            gl.vertexAttribPointer(locPosition, 2, gl.FLOAT, false, 0, 0);
+            gl.uniform2f(locResolution, canvas.width, canvas.height);
+            gl.uniform1f(locTime, (now - bornAt) * 0.001);
+            gl.uniform1f(locIntensity, profile.intensity);
+            gl.disable(gl.DEPTH_TEST);
+            gl.disable(gl.CULL_FACE);
+            gl.enable(gl.BLEND);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            gl.clearColor(0, 0, 0, 0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        } catch (_) {
+            state.cleanup && state.cleanup();
+            return;
+        }
+
+        state.raf = requestAnimationFrame(draw);
+    };
+
+    const shouldPause = () => document.hidden
+        || document.body.classList.contains('m-typing')
+        || document.body.classList.contains('m-keyboard-open')
+        || document.body.classList.contains('m-page-hidden');
 
     const stop = () => {
-        if (paused) return;
-        paused = true;
-        try {
-            if (typeof effect.req !== 'undefined' && effect.req) {
-                cancelAnimationFrame(effect.req);
-                effect.req = 0;
-            }
-        } catch (_) {}
+        if (state.paused) return;
+        state.paused = true;
+        if (state.raf) cancelAnimationFrame(state.raf);
+        state.raf = 0;
+        mount.classList.add('is-paused');
     };
+
     const go = () => {
-        if (!paused) return;
-        paused = false;
-        try {
-            if (typeof effect.animationLoop === 'function') {
-                effect.animationLoop();
-            }
-        } catch (_) {}
+        if (disposed || contextLost || shouldPause()) return stop();
+        if (!state.paused && state.raf) return;
+        state.paused = false;
+        state.lastFrame = 0;
+        mount.classList.remove('is-paused');
+        state.raf = requestAnimationFrame(draw);
     };
-    const shouldStop = () => {
-        return document.hidden
-            || body.classList.contains('m-typing')
-            || body.classList.contains('m-keyboard-open')
-            || body.classList.contains('m-page-hidden');
-    };
+
+    let pendingSync = 0;
     const sync = () => {
-        if (pendingRaf) return;
-        pendingRaf = requestAnimationFrame(() => {
-            pendingRaf = 0;
-            shouldStop() ? stop() : go();
+        if (pendingSync || disposed) return;
+        pendingSync = requestAnimationFrame(() => {
+            pendingSync = 0;
+            shouldPause() ? stop() : go();
         });
     };
 
-    document.addEventListener('visibilitychange', sync, { passive: true });
-
-    const obs = new MutationObserver(sync);
-    obs.observe(body, { attributes: true, attributeFilter: ['class'] });
-
-    let resizeRaf = 0;
     const onResize = () => {
         if (resizeRaf) cancelAnimationFrame(resizeRaf);
         resizeRaf = requestAnimationFrame(() => {
             resizeRaf = 0;
-            try { effect.resize && effect.resize(); } catch (_) {}
+            resize();
         });
     };
-    window.addEventListener('resize', onResize, { passive: true });
-    window.addEventListener('orientationchange', onResize, { passive: true });
 
-    const cleanup = () => {
-        try { obs.disconnect(); } catch (_) {}
+    const onContextLost = (event) => {
+        event.preventDefault();
+        contextLost = true;
+        stop();
+        mount.classList.remove('is-ready');
+    };
+
+    const onContextRestored = () => {
+        state.cleanup && state.cleanup();
+        window.__leviathanSeaShaderBoot = false;
+        requestAnimationFrame(createSeaCanvas);
+    };
+
+    state.cleanup = () => {
+        if (disposed) return;
+        disposed = true;
+        if (pendingSync) cancelAnimationFrame(pendingSync);
+        if (resizeRaf) cancelAnimationFrame(resizeRaf);
+        if (state.raf) cancelAnimationFrame(state.raf);
         document.removeEventListener('visibilitychange', sync);
         window.removeEventListener('resize', onResize);
         window.removeEventListener('orientationchange', onResize);
-        try { effect.destroy && effect.destroy(); } catch (_) {}
-        if (mount) mount.classList.remove('is-ready');
-        window.__leviathanVanta = null;
-        window.__leviathanSeaVantaBoot = false;
+        canvas.removeEventListener('webglcontextlost', onContextLost);
+        canvas.removeEventListener('webglcontextrestored', onContextRestored);
+        try { classObserver && classObserver.disconnect(); } catch (_) {}
+        try { gl.deleteBuffer(buffer); } catch (_) {}
+        try { gl.deleteProgram(program); } catch (_) {}
+        mount.classList.remove('is-ready', 'is-paused');
+        window.__leviathanSea = null;
+        window.__leviathanSeaShaderBoot = false;
     };
-    window.addEventListener('pagehide', cleanup, { once: true });
 
-    window.__leviathanVantaSync = sync;
-    window.__leviathanVantaCleanup = cleanup;
+    state.sync = sync;
+    window.__leviathanSea = state;
+    window.__leviathanSeaSync = sync;
+    window.__leviathanSeaCleanup = state.cleanup;
 
-    if (mount) {
-        requestAnimationFrame(() => mount.classList.add('is-ready'));
-    }
+    document.addEventListener('visibilitychange', sync, { passive: true });
+    window.addEventListener('resize', onResize, { passive: true });
+    window.addEventListener('orientationchange', onResize, { passive: true });
+    canvas.addEventListener('webglcontextlost', onContextLost, false);
+    canvas.addEventListener('webglcontextrestored', onContextRestored, false);
+
+    try {
+        classObserver = new MutationObserver(sync);
+        classObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    } catch (_) {}
+
+    window.addEventListener('pagehide', state.cleanup, { once: true });
+    resize();
+    requestAnimationFrame(() => mount.classList.add('is-ready'));
     sync();
 }
 
-function startLeviathanSeaVanta(mount) {
-    if (!mount || !window.VANTA || !window.VANTA.WAVES || !window.THREE) return;
-    if (window.__leviathanVanta) return;
-
-    const cores = navigator.hardwareConcurrency || 8;
-    const memory = Number(navigator['deviceMemory'] || 0);
-    const tinyMem = memory > 0 && memory <= 2;
-    const lowfx = document.body.classList.contains('m-lowfx');
-    const tier = tinyMem ? 'tiny' : (lowfx || cores <= 4 || (memory && memory <= 4) ? 'lite' : 'full');
-
-    const presets = {
-        full: { scaleMobile: 1.05, shininess: 110.0, waveHeight: 22.0, waveSpeed: 1.05, zoom: 0.68, dpr: 1.75 },
-        lite: { scaleMobile: 1.25, shininess: 90.0,  waveHeight: 17.0, waveSpeed: 0.95, zoom: 0.72, dpr: 1.35 },
-        tiny: { scaleMobile: 1.8,  shininess: 65.0,  waveHeight: 12.0, waveSpeed: 0.85, zoom: 0.78, dpr: 1.0 }
-    };
-    const p = presets[tier];
-
-    const options = {
-        el: mount,
-        THREE: window.THREE,
-        mouseControls: false,
-        touchControls: false,
-        gyroControls: false,
-        minHeight: 200.0,
-        minWidth: 200.0,
-        scale: 1.0,
-        scaleMobile: p.scaleMobile,
-        color: 0x0e4870,
-        shininess: p.shininess,
-        waveHeight: p.waveHeight,
-        waveSpeed: p.waveSpeed,
-        zoom: p.zoom
-    };
-
-    let effect = null;
-    try {
-        effect = window.VANTA.WAVES(options);
-    } catch (_) {
-        return;
-    }
-    if (!effect) return;
-
-    try {
-        if (effect.renderer && typeof effect.renderer.setPixelRatio === 'function') {
-            effect.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, p.dpr));
-            if (typeof effect.resize === 'function') effect.resize();
-        }
-    } catch (_) {}
-
-    window.__leviathanVanta = effect;
-    bindLeviathanSeaLifecycle(effect, mount);
-}
-
 function installLeviathanSeaBfcacheRestart() {
-    if (window.__leviathanSeaVantaBfcacheRestart) return;
-    window.__leviathanSeaVantaBfcacheRestart = true;
+    if (window.__leviathanSeaBfcacheRestart) return;
+    window.__leviathanSeaBfcacheRestart = true;
     window.addEventListener('pageshow', (event) => {
         if (!event || !event.persisted) return;
-        if (window.__leviathanVanta) {
-            const sync = window.__leviathanVantaSync;
-            if (typeof sync === 'function') sync();
+        if (window.__leviathanSea && typeof window.__leviathanSea.sync === 'function') {
+            window.__leviathanSea.sync();
             return;
         }
-        window.__leviathanSeaVantaBoot = false;
+        window.__leviathanSeaShaderBoot = false;
         requestAnimationFrame(createSeaCanvas);
     }, { passive: true });
 }
@@ -7231,36 +7500,30 @@ function installLeviathanSeaBfcacheRestart() {
 function createSeaCanvas() {
     installLeviathanSeaBfcacheRestart();
 
-    const legacy = document.getElementById('m-sea-canvas');
-    if (legacy) legacy.remove();
+    const legacyCanvas = document.getElementById('m-sea-canvas');
+    if (legacyCanvas) legacyCanvas.remove();
 
-    if (window.__leviathanSeaVantaBoot) return;
-    window.__leviathanSeaVantaBoot = true;
+    if (window.__leviathanSeaShaderBoot) return;
+    window.__leviathanSeaShaderBoot = true;
 
-    if (leviathanSeaShouldSkip()) return;
+    if (leviathanSeaShouldSkip()) {
+        window.__leviathanSeaShaderBoot = false;
+        return;
+    }
 
-    let mount = document.getElementById('m-sea-vanta');
+    let mount = document.getElementById('m-sea-webgl');
     if (!mount) {
         mount = document.createElement('div');
-        mount.id = 'm-sea-vanta';
+        mount.id = 'm-sea-webgl';
         mount.setAttribute('aria-hidden', 'true');
         document.body.insertBefore(mount, document.body.firstChild);
     }
 
-    const boot = () => {
-        loadLeviathanSeaScriptWithFallback(LEVIATHAN_SEA_CDN.three, LEVIATHAN_SEA_CDN.threeFallback)
-            .then(() => loadLeviathanSeaScriptWithFallback(LEVIATHAN_SEA_CDN.vanta, LEVIATHAN_SEA_CDN.vantaFallback))
-            .then(() => {
-                if (leviathanSeaShouldSkip()) return;
-                requestAnimationFrame(() => startLeviathanSeaVanta(mount));
-            })
-            .catch(() => { window.__leviathanSeaVantaBoot = false; });
-    };
-
+    const boot = () => requestAnimationFrame(() => startLeviathanSeaShader(mount));
     if (typeof requestIdleCallback === 'function') {
-        requestIdleCallback(boot, { timeout: 1500 });
+        requestIdleCallback(boot, { timeout: 700 });
     } else {
-        setTimeout(boot, 350);
+        setTimeout(boot, 80);
     }
 }
 
@@ -8444,3 +8707,4 @@ startMobileInterfaceWhenReady();
         document.body.classList.add('m-ui-ready');
     } catch (_) {}
 })();
+
