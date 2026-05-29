@@ -5957,6 +5957,789 @@ body.m-lowfx .m-dock-nav {
 }
 
 
+
+/* =========================================================================
+   LEVIATHAN · SaaS DEVELOPER-TOOL SKIN  (mediaflow-proxy inspired)
+   Soft glassmorphism · gradient UI · clean dashboard · ocean preserved
+   Scoped to body.m-mf-plus, cascades last. Logic/IDs untouched.
+   ========================================================================= */
+
+body.m-mf-plus {
+    --s-indigo: #6366f1;
+    --s-violet: #8b5cf6;
+    --s-sky: #38bdf8;
+    --s-cyan: #22d3ee;
+    --s-grad: linear-gradient(120deg, #22d3ee 0%, #38bdf8 45%, #3b82f6 100%);
+    --s-grad-soft: linear-gradient(135deg, rgba(34,211,238,0.16), rgba(56,189,248,0.10) 50%, rgba(59,130,246,0.12));
+    --s-glass: rgba(13, 22, 38, 0.55);
+    --s-glass-2: rgba(10, 17, 30, 0.62);
+    --s-stroke: rgba(148, 197, 255, 0.14);
+    --s-stroke-soft: rgba(148, 197, 255, 0.09);
+    --s-txt: #eaf2ff;
+    --s-dim: #93a7c4;
+    --s-radius: 20px;
+    --s-radius-sm: 13px;
+    --s-shadow: 0 18px 48px -16px rgba(0, 8, 24, 0.7), 0 2px 10px rgba(0,0,0,0.25);
+}
+
+/* ---- Background: keep the sea, soften the noise/scanlines for a clean SaaS feel ---- */
+body.m-mf-plus::after { opacity: 0.025 !important; }   /* kill heavy CRT scanlines */
+body.m-mf-plus::before { opacity: 0.5; }               /* dim the tech grid */
+
+/* Content rhythm — more breathing room like a dashboard */
+body.m-mf-plus .m-content { padding-left: 16px; padding-right: 16px; }
+body.m-mf-plus .m-hypervisor + .m-hypervisor,
+body.m-mf-plus .m-visual-core-v2 + .m-hypervisor,
+body.m-mf-plus .m-hypervisor + .m-visual-core-v2 { margin-top: 16px; }
+
+/* =======================  GLASS CARDS  ======================= */
+body.m-mf-plus .m-hypervisor,
+body.m-mf-plus .m-visual-core-v2 {
+    background: var(--s-glass) !important;
+    border: 1px solid var(--s-stroke) !important;
+    border-radius: var(--s-radius) !important;
+    box-shadow: var(--s-shadow) !important;
+    backdrop-filter: blur(22px) saturate(140%) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(140%) !important;
+    padding: 18px 16px 20px !important;
+    overflow: hidden;
+}
+
+/* soft gradient sheen across the top instead of the neon flowing bar */
+body.m-mf-plus .m-hypervisor::before,
+body.m-mf-plus .m-visual-core-v2::before {
+    height: 100% !important;
+    inset: 0;
+    background: radial-gradient(120% 80% at 0% 0%, rgba(99,102,241,0.10), transparent 55%),
+                radial-gradient(120% 90% at 100% 0%, rgba(34,211,238,0.08), transparent 55%) !important;
+    box-shadow: none !important;
+    animation: none !important;
+    opacity: 1 !important;
+    pointer-events: none;
+    z-index: -1;
+}
+/* thin gradient hairline at the very top edge */
+body.m-mf-plus .m-hypervisor { position: relative; }
+body.m-mf-plus .m-hypervisor > .m-hyp-header::before {
+    content: '';
+    position: absolute; top: -18px; left: -16px; right: -16px; height: 2.5px;
+    background: var(--s-grad);
+    opacity: 0.85;
+    border-radius: 3px;
+}
+body.m-mf-plus .m-hypervisor::after,
+body.m-mf-plus .m-visual-core-v2::after { opacity: 0 !important; }
+
+/* card header — calmer, modern */
+body.m-mf-plus .m-hyp-header {
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.4px !important;
+    font-size: 0.95rem !important;
+    text-transform: none !important;
+    color: var(--s-txt) !important;
+    text-shadow: none !important;
+    border-bottom: 1px solid var(--s-stroke-soft) !important;
+    padding-bottom: 13px !important;
+    margin-bottom: 15px !important;
+    position: relative;
+}
+body.m-mf-plus .m-hyp-icon {
+    background: var(--s-grad-soft) !important;
+    border: 1px solid var(--s-stroke) !important;
+    color: #c7d8ff !important;
+    filter: none !important;
+    border-radius: 10px !important;
+    width: 30px !important; height: 30px !important;
+}
+body.m-mf-plus .m-panel-desc {
+    color: var(--s-dim) !important;
+    font-size: 0.78rem !important;
+    line-height: 1.5 !important;
+}
+body.m-mf-plus .m-panel-desc b { color: #cdddf6 !important; }
+
+/* =======================  INPUTS (pill / soft)  ======================= */
+body.m-mf-plus .m-input-fuselage { margin-top: 14px; }
+body.m-mf-plus .m-if-label {
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 0.68rem !important;
+    letter-spacing: 0.6px !important;
+    color: var(--s-dim) !important;
+    text-transform: uppercase !important;
+}
+body.m-mf-plus .m-if-inner {
+    background: rgba(8, 14, 26, 0.6) !important;
+    border: 1px solid var(--s-stroke) !important;
+    border-radius: 14px !important;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.25) !important;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+body.m-mf-plus .m-if-inner:focus-within {
+    border-color: rgba(99,102,241,0.6) !important;
+    box-shadow: 0 0 0 3px rgba(99,102,241,0.16), inset 0 1px 2px rgba(0,0,0,0.25) !important;
+}
+body.m-mf-plus .m-if-field { color: var(--s-txt) !important; font-family: 'Outfit', sans-serif !important; }
+body.m-mf-plus .m-if-icon { color: #8ea4c9 !important; }
+body.m-mf-plus .m-if-action {
+    color: #aebfe0 !important;
+    border-radius: 10px !important;
+    transition: background 0.18s ease, color 0.18s ease;
+}
+body.m-mf-plus .m-if-action:active { background: rgba(99,102,241,0.18) !important; color: #fff !important; }
+body.m-mf-plus .m-get-link {
+    background: var(--s-grad) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 10px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 4px 14px -4px rgba(99,102,241,0.6) !important;
+}
+
+/* =======================  SERVICE / PILL SELECTORS  ======================= */
+body.m-mf-plus .m-cred-opt,
+body.m-mf-plus .m-flux-opt,
+body.m-mf-plus .m-lang-opt,
+body.m-mf-plus .m-cortex-chip,
+body.m-mf-plus .m-cloud-mode-btn {
+    background: rgba(255,255,255,0.035) !important;
+    border: 1px solid var(--s-stroke-soft) !important;
+    border-radius: 14px !important;
+    box-shadow: none !important;
+    transition: transform 0.18s cubic-bezier(.2,.8,.2,1), border-color 0.18s ease, background 0.18s ease !important;
+}
+body.m-mf-plus .m-cred-opt:active,
+body.m-mf-plus .m-flux-opt:active,
+body.m-mf-plus .m-lang-opt:active { transform: scale(0.97); }
+
+body.m-mf-plus .m-cred-opt.active,
+body.m-mf-plus .m-srv-btn.active,
+body.m-mf-plus .m-lang-opt.active-hyb,
+body.m-mf-plus .m-lang-opt.active-eng,
+body.m-mf-plus .m-cloud-mode-btn.active,
+body.m-mf-plus .m-cortex-chip.active {
+    background: var(--s-grad-soft) !important;
+    border-color: rgba(124, 142, 255, 0.55) !important;
+    box-shadow: 0 8px 24px -10px rgba(99,102,241,0.5), inset 0 0 0 1px rgba(255,255,255,0.04) !important;
+}
+body.m-mf-plus .m-cred-name { color: var(--s-txt) !important; font-weight: 600 !important; }
+
+/* =======================  PROVIDER / REACTOR MODULES (the dashboard rows)  ======================= */
+body.m-mf-plus .m-reactor-module {
+    background: rgba(255,255,255,0.028) !important;
+    border: 1px solid var(--s-stroke-soft) !important;
+    border-radius: 16px !important;
+    box-shadow: none !important;
+    transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease !important;
+}
+body.m-mf-plus .m-reactor-module.active {
+    background: linear-gradient(150deg, rgba(99,102,241,0.10), rgba(34,211,238,0.06)) !important;
+    border-color: rgba(124, 142, 255, 0.45) !important;
+    box-shadow: 0 12px 30px -14px rgba(99,102,241,0.45) !important;
+}
+body.m-mf-plus .m-reactor-core {
+    background: var(--s-grad-soft) !important;
+    border: 1px solid var(--s-stroke) !important;
+    border-radius: 12px !important;
+}
+body.m-mf-plus .m-reactor-module.active .m-reactor-core { background: var(--s-grad) !important; border-color: transparent !important; }
+body.m-mf-plus .m-core-icon { color: #cdd9ff !important; filter: none !important; }
+body.m-mf-plus .m-reactor-module.active .m-core-icon { color: #fff !important; }
+body.m-mf-plus .m-reactor-title { color: var(--s-txt) !important; font-weight: 600 !important; }
+body.m-mf-plus .m-reactor-desc { color: var(--s-dim) !important; }
+
+/* tech tags → soft pills */
+body.m-mf-plus .m-tech-tag {
+    border-radius: 999px !important;
+    border: 1px solid var(--s-stroke) !important;
+    background: rgba(255,255,255,0.04) !important;
+    color: #b6c6e6 !important;
+    font-weight: 600 !important;
+}
+
+/* =======================  SWITCHES (iOS-style gradient)  ======================= */
+body.m-mf-plus .m-switch input:checked + .m-slider {
+    background: var(--s-grad) !important;
+    box-shadow: 0 0 0 1px rgba(124,142,255,0.4), 0 2px 8px -2px rgba(99,102,241,0.6) !important;
+}
+
+/* =======================  MINI-TABS / QUALITY CHIPS  ======================= */
+body.m-mf-plus .m-mini-tab,
+body.m-mf-plus .m-qual-chip {
+    border-radius: 10px !important;
+    border: 1px solid var(--s-stroke-soft) !important;
+    background: rgba(255,255,255,0.03) !important;
+    color: var(--s-dim) !important;
+    font-weight: 600 !important;
+}
+body.m-mf-plus .m-mini-tab.active,
+body.m-mf-plus .m-qual-chip:not(.excluded) {
+    background: var(--s-grad-soft) !important;
+    border-color: rgba(124,142,255,0.5) !important;
+    color: #eaf2ff !important;
+}
+
+/* =======================  HERO  ======================= */
+body.m-mf-plus .m-brand-title,
+body.m-mf-plus .m-abyss-title {
+    background: linear-gradient(120deg, #e9efff 0%, #a9bdff 40%, #7fe6ff 75%, #c5b3ff 100%) !important;
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    color: transparent !important;
+    text-shadow: none !important;
+    letter-spacing: 1px !important;
+}
+body.m-mf-plus .m-brand-sub,
+body.m-mf-plus .m-abyss-sub { color: #9fb3d6 !important; font-weight: 500 !important; }
+body.m-mf-plus .m-brand-desc { color: var(--s-dim) !important; }
+body.m-mf-plus .m-hero-badge {
+    background: var(--s-glass) !important;
+    border: 1px solid var(--s-stroke) !important;
+    border-radius: 999px !important;
+    color: #c4d4f2 !important;
+    backdrop-filter: blur(10px) !important;
+    -webkit-backdrop-filter: blur(10px) !important;
+}
+body.m-mf-plus .m-version-tag,
+body.m-mf-plus .m-abyss-version {
+    background: var(--s-grad-soft) !important;
+    border: 1px solid var(--s-stroke) !important;
+    border-radius: 999px !important;
+    color: #cfe0ff !important;
+}
+
+/* =======================  BOTTOM NAV (frosted dock)  ======================= */
+body.m-mf-plus .m-bottom-nav,
+body.m-mf-plus .m-dock-container {
+    background: rgba(9, 15, 27, 0.72) !important;
+    border-top: 1px solid var(--s-stroke) !important;
+    backdrop-filter: blur(28px) saturate(150%) !important;
+    -webkit-backdrop-filter: blur(28px) saturate(150%) !important;
+}
+body.m-mf-plus .m-nav-item.active i,
+body.m-mf-plus .m-nav-item.active .mf-nav-emoji {
+    color: #fff !important;
+    filter: drop-shadow(0 0 8px rgba(124,142,255,0.7)) !important;
+}
+body.m-mf-plus .m-nav-item.active::after {
+    background: var(--s-grad) !important;
+    box-shadow: 0 0 10px rgba(124,142,255,0.6) !important;
+}
+
+/* =======================  PRIMARY ACTION BUTTONS  ======================= */
+body.m-mf-plus .m-btn-install,
+body.m-mf-plus .m-get-link,
+body.m-mf-plus .m-act-btn.primary,
+body.m-mf-plus .m-act-btn.install {
+    background: var(--s-grad) !important;
+    border: none !important;
+    color: #fff !important;
+    border-radius: 14px !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.3px !important;
+    box-shadow: 0 10px 28px -10px rgba(99,102,241,0.65) !important;
+    transition: transform 0.16s ease, box-shadow 0.2s ease !important;
+}
+body.m-mf-plus .m-btn-install:active,
+body.m-mf-plus .m-act-btn.primary:active { transform: translateY(1px) scale(0.99); }
+body.m-mf-plus .m-btn-copy,
+body.m-mf-plus .m-act-btn:not(.primary):not(.install) {
+    background: rgba(255,255,255,0.05) !important;
+    border: 1px solid var(--s-stroke) !important;
+    color: #d2def5 !important;
+    border-radius: 14px !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+}
+
+/* generated-link box → terminal-clean */
+body.m-mf-plus #m-generatedUrlBox,
+body.m-mf-plus #m-setupGeneratedUrlBox {
+    background: rgba(6, 11, 20, 0.7) !important;
+    border: 1px solid var(--s-stroke) !important;
+    border-radius: 14px !important;
+    color: #9fe9ff !important;
+    font-family: 'JetBrains Mono', ui-monospace, monospace !important;
+}
+
+/* =======================  MODALS  ======================= */
+body.m-mf-plus .m-link-modal-card,
+body.m-mf-plus .m-modal-card,
+body.m-mf-plus [class*="modal"] .m-card {
+    background: rgba(11, 18, 32, 0.85) !important;
+    border: 1px solid var(--s-stroke) !important;
+    border-radius: var(--s-radius) !important;
+    backdrop-filter: blur(26px) saturate(150%) !important;
+    -webkit-backdrop-filter: blur(26px) saturate(150%) !important;
+    box-shadow: var(--s-shadow) !important;
+}
+
+/* =======================  SECTION HEADS  ======================= */
+body.m-mf-plus .m-section-head {
+    border-left-color: var(--s-violet) !important;
+    box-shadow: -3px 0 12px -3px rgba(139,92,246,0.5) !important;
+}
+body.m-mf-plus .m-section-head .sh-title { letter-spacing: 1.5px !important; }
+
+/* Low-FX devices: drop the heavy blurs so it stays buttery (0 lag) */
+body.m-mf-plus.m-lowfx .m-hypervisor,
+body.m-mf-plus.m-lowfx .m-visual-core-v2,
+body.m-mf-plus.m-lowfx .m-bottom-nav,
+body.m-mf-plus.m-lowfx .m-dock-container,
+body.m-mf-plus.m-lowfx .m-hero-badge,
+body.m-mf-plus.m-lowfx .m-btn-copy,
+body.m-mf-plus.m-lowfx .m-link-modal-card,
+body.m-mf-plus.m-lowfx .m-modal-card {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(11, 18, 32, 0.92) !important;
+}
+
+/* While typing/scrolling: suspend backdrop blur on cards to guarantee 60fps */
+body.m-mf-plus.m-typing .m-hypervisor,
+body.m-mf-plus.m-typing .m-visual-core-v2,
+body.m-mf-plus.m-switching .m-hypervisor,
+body.m-mf-plus.m-switching .m-visual-core-v2 {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(12, 19, 33, 0.9) !important;
+}
+
+/* =========================================================================
+   LEVIATHAN · SaaS SKIN v2  — refinements
+   1) placeholder leggibile  2) hero→card più compatto  3) nav tabs mediaflow
+   4) card ancora più "mediaflow" (flat, neutre, soft)
+   ========================================================================= */
+
+/* ---- 1. INPUT PLACEHOLDER: leggibile, niente clipping ---- */
+body.m-mf-plus .m-if-field {
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 0.92rem !important;
+    letter-spacing: 0 !important;
+    text-overflow: ellipsis !important;
+    min-width: 0 !important;
+}
+body.m-mf-plus .m-if-field::placeholder {
+    color: #6f84a6 !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 0.88rem !important;
+    letter-spacing: 0 !important;
+    text-transform: none !important;
+    opacity: 1 !important;
+}
+/* dai più respiro al testo: icona/azioni leggermente più strette */
+body.m-mf-plus .m-if-inner { padding-left: 4px !important; gap: 2px !important; }
+body.m-mf-plus .m-if-icon { width: 34px !important; flex: 0 0 34px !important; }
+body.m-mf-plus .m-if-action { padding: 7px !important; }
+body.m-mf-plus .m-get-link { padding: 7px 11px !important; font-size: 0.72rem !important; flex-shrink: 0 !important; }
+
+/* label flottante in stile SaaS (chip neutro, non neon) */
+body.m-mf-plus .m-if-label {
+    background: #121d31 !important;
+    border: 1px solid var(--s-stroke) !important;
+    border-radius: 8px !important;
+    color: #9fb3d6 !important;
+    top: -10px !important;
+}
+body.m-mf-plus .m-input-fuselage:focus-within .m-if-label {
+    color: #c7d5ff !important;
+    border-color: rgba(99,102,241,0.55) !important;
+}
+
+/* ---- 2. HERO → CARD: meno spazio, versione compatta ---- */
+body.m-mf-plus .m-hero { padding-bottom: 10px !important; }
+body.m-mf-plus .m-hero-panel { padding-bottom: 8px !important; }
+body.m-mf-plus .m-hero-badges { margin-bottom: 4px !important; margin-top: 8px !important; }
+body.m-mf-plus .m-version-tag,
+body.m-mf-plus .m-abyss-version {
+    margin-top: 4px !important;
+    padding: 3px 10px !important;
+    font-size: 0.56rem !important;
+    animation: none !important;            /* niente pulse: più SaaS, meno gaming */
+}
+body.m-mf-plus .m-version-tag::before { display: none !important; }  /* via lo shimmer */
+body.m-mf-plus #page-setup .m-hypervisor:first-child { margin-top: 0 !important; }
+/* taglia il margine extra sotto l'hero prima della prima card */
+body.m-mf-plus .m-hero::after { bottom: 4px !important; }
+
+/* ---- 3. NAV TABS (SETUP / FILTRI / NET) full mediaflow ---- */
+body.m-mf-plus .m-dock-container {
+    background: rgba(10, 16, 28, 0.78) !important;
+    border-top: 1px solid var(--s-stroke) !important;
+    box-shadow: 0 -8px 30px -12px rgba(0,0,0,0.6) !important;
+}
+body.m-mf-plus .m-dock-nav { gap: 8px !important; padding: 10px 12px 6px !important; }
+
+body.m-mf-plus .m-nav-item {
+    border-radius: 14px !important;
+    border: 1px solid var(--s-stroke-soft) !important;
+    background: rgba(255,255,255,0.035) !important;
+    box-shadow: none !important;
+    transform: none !important;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.18s cubic-bezier(.2,.8,.2,1) !important;
+    min-height: 58px !important;
+}
+body.m-mf-plus .m-nav-item::before { display: none !important; }   /* via sheen */
+body.m-mf-plus .m-nav-item::after { display: none !important; }    /* via underline neon */
+
+/* icona = emoji dentro badge arrotondato mediaflow (la <i> FA resta nascosta) */
+body.m-mf-plus .m-nav-item > i { display: none !important; }
+body.m-mf-plus .m-nav-item .mf-nav-emoji {
+    display: inline-flex !important;
+    align-items: center; justify-content: center;
+    width: 30px !important; height: 30px !important;
+    border-radius: 10px !important;
+    background: rgba(255,255,255,0.05) !important;
+    border: 1px solid var(--s-stroke-soft) !important;
+    box-shadow: none !important;
+    font-size: 0.95rem !important;
+    margin-bottom: 1px !important;
+    filter: none !important;
+    transform: none !important;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease !important;
+}
+body.m-mf-plus .m-nav-item > span:last-child {
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 0.58rem !important;
+    letter-spacing: 0.8px !important;
+    color: #8ba0c2 !important;
+    text-shadow: none !important;
+}
+
+/* ATTIVO: gradient mediaflow uniforme (niente colori diversi per tab) */
+body.m-mf-plus .m-nav-item.active,
+body.m-mf-plus .m-nav-item:nth-child(1).active,
+body.m-mf-plus .m-nav-item:nth-child(2).active,
+body.m-mf-plus .m-nav-item:nth-child(3).active {
+    transform: translateY(-3px) !important;
+    border-color: rgba(124,142,255,0.45) !important;
+    background: var(--s-grad-soft) !important;
+    box-shadow: 0 12px 28px -12px rgba(99,102,241,0.55) !important;
+}
+body.m-mf-plus .m-nav-item.active .mf-nav-emoji {
+    background: var(--s-grad) !important;
+    border-color: transparent !important;
+    box-shadow: 0 6px 16px -6px rgba(99,102,241,0.7) !important;
+    filter: none !important;
+    transform: translateY(-1px) scale(1.04) !important;
+}
+body.m-mf-plus .m-nav-item.active > span:last-child {
+    color: #ffffff !important;
+    text-shadow: none !important;
+}
+body.m-mf-plus .m-nav-item:not(.active):active {
+    transform: scale(0.97) !important;
+    background: rgba(99,102,241,0.10) !important;
+    border-color: rgba(124,142,255,0.3) !important;
+}
+
+/* lowfx: niente blur/animazioni pesanti sul dock */
+body.m-mf-plus.m-lowfx .m-nav-item.active { box-shadow: none !important; }
+
+/* ---- 4. CARD ancora più mediaflow: flat-neutre, header sobrio ---- */
+body.m-mf-plus .m-hypervisor,
+body.m-mf-plus .m-visual-core-v2 {
+    background: rgba(13, 21, 36, 0.62) !important;
+    border: 1px solid rgba(255,255,255,0.07) !important;
+}
+/* hairline gradient più discreto */
+body.m-mf-plus .m-hypervisor > .m-hyp-header::before { opacity: 0.6 !important; height: 2px !important; }
+/* header: peso normale, niente uppercase aggressivo */
+body.m-mf-plus .m-hyp-header { font-size: 0.92rem !important; gap: 8px; }
+/* descrizione panel più compatta */
+body.m-mf-plus .m-panel-desc { font-size: 0.76rem !important; margin: 0 0 4px !important; }
+/* deck servizi: gap coerente, meno perspective gaming */
+body.m-mf-plus .m-cred-deck { perspective: none !important; margin-bottom: 16px !important; }
+body.m-mf-plus .m-cred-icon { filter: none !important; }
+
+/* ---- 5. INSTALL / COPY / footer buttons → mediaflow gradient ---- */
+body.m-mf-plus .m-setup-install {
+    background: var(--s-grad) !important;
+    border: none !important;
+    color: #fff !important;
+    border-radius: 16px !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.5px !important;
+    text-shadow: none !important;
+    box-shadow: 0 14px 34px -12px rgba(99,102,241,0.7) !important;
+    transition: transform 0.16s ease, box-shadow 0.2s ease !important;
+}
+body.m-mf-plus .m-setup-install::before,
+body.m-mf-plus .m-setup-install::after { display: none !important; }
+body.m-mf-plus .m-setup-install span { color: #fff !important; text-shadow: none !important; }
+body.m-mf-plus .m-setup-install i { color: #fff !important; }
+body.m-mf-plus .m-setup-install:active { transform: translateY(1px) scale(0.99) !important; }
+
+body.m-mf-plus .m-setup-mini-copy,
+body.m-mf-plus .m-act-copy {
+    background: var(--s-grad) !important;
+    border: none !important;
+    color: #fff !important;
+    border-radius: 12px !important;
+    font-weight: 700 !important;
+    text-shadow: none !important;
+    box-shadow: 0 6px 18px -6px rgba(99,102,241,0.6) !important;
+}
+body.m-mf-plus .m-setup-mini-copy i,
+body.m-mf-plus .m-setup-mini-copy span,
+body.m-mf-plus .m-act-copy i { color: #fff !important; }
+
+body.m-mf-plus .m-act-close {
+    background: rgba(255,255,255,0.05) !important;
+    border: 1px solid var(--s-stroke) !important;
+    color: #c9d6ef !important;
+    border-radius: 12px !important;
+}
+
+/* mini console / link box → terminal pulito */
+body.m-mf-plus .m-setup-mini-console,
+body.m-mf-plus .m-flux-terminal {
+    background: rgba(8, 14, 26, 0.6) !important;
+    border: 1px solid var(--s-stroke) !important;
+    border-radius: 16px !important;
+}
+body.m-mf-plus .m-setup-mini-console-title,
+body.m-mf-plus .m-flux-header span { color: #9fb3d6 !important; letter-spacing: 0.5px !important; }
+
+/* ---- 6. PROVIDER MODULES: via stripe colorata, look mediaflow neutro ---- */
+body.m-mf-plus .m-reactor-module {
+    background: rgba(255,255,255,0.028) !important;
+    border: 1px solid rgba(255,255,255,0.07) !important;
+    border-radius: 16px !important;
+}
+body.m-mf-plus .m-reactor-module::before {
+    width: 3.5px !important;
+    left: 0 !important;
+    top: 14px !important; bottom: 14px !important;
+    border-radius: 0 4px 4px 0 !important;
+    background: linear-gradient(180deg, #22d3ee, #3b82f6) !important;
+    box-shadow: 0 0 10px rgba(34,211,238,0.35) !important;
+    opacity: 0.55 !important;
+    transition: opacity 0.2s ease !important;
+}
+body.m-mf-plus .m-reactor-module.active::before {
+    opacity: 1 !important;
+    background: linear-gradient(180deg, #22d3ee, #38bdf8 50%, #3b82f6) !important;
+    box-shadow: 0 0 14px rgba(34,211,238,0.55) !important;
+}
+body.m-mf-plus .m-reactor-module.active {
+    background: linear-gradient(150deg, rgba(99,102,241,0.10), rgba(34,211,238,0.06)) !important;
+    border-color: rgba(124,142,255,0.45) !important;
+    box-shadow: 0 12px 30px -14px rgba(99,102,241,0.45) !important;
+}
+
+/* ---- 7. NEURAL SIGNATURE / footer credits → toni SaaS ---- */
+body.m-mf-plus .m-credits-panel,
+body.m-mf-plus .m-signature-panel { border-radius: var(--s-radius) !important; }
+body.m-mf-plus .m-kofi-btn { border-radius: 12px !important; }
+
+/* =========================================================================
+   SaaS SKIN v4 — gradient azzurro Leviathan + input full leggibile
+   ========================================================================= */
+
+/* ombre dei bottoni gradient → azzurro invece di indaco */
+body.m-mf-plus .m-setup-install { box-shadow: 0 14px 34px -12px rgba(34,211,238,0.6) !important; }
+body.m-mf-plus .m-setup-mini-copy,
+body.m-mf-plus .m-act-copy { box-shadow: 0 6px 18px -6px rgba(34,211,238,0.55) !important; }
+body.m-mf-plus .m-get-link { box-shadow: 0 4px 14px -4px rgba(34,211,238,0.6) !important; }
+body.m-mf-plus .m-btn-install,
+body.m-mf-plus .m-act-btn.primary,
+body.m-mf-plus .m-act-btn.install { box-shadow: 0 10px 28px -10px rgba(34,211,238,0.6) !important; }
+body.m-mf-plus .m-nav-item.active > i,
+body.m-mf-plus .m-nav-item.active .mf-nav-emoji { box-shadow: 0 6px 16px -6px rgba(34,211,238,0.65) !important; }
+body.m-mf-plus .m-nav-item.active,
+body.m-mf-plus .m-nav-item:nth-child(1).active,
+body.m-mf-plus .m-nav-item:nth-child(2).active,
+body.m-mf-plus .m-nav-item:nth-child(3).active { box-shadow: 0 12px 28px -12px rgba(34,211,238,0.5) !important; }
+body.m-mf-plus .m-reactor-module.active { box-shadow: 0 12px 30px -14px rgba(34,211,238,0.45) !important; }
+
+/* bordi/focus attivi → azzurro */
+body.m-mf-plus .m-if-inner:focus-within {
+    border-color: rgba(56,189,248,0.6) !important;
+    box-shadow: 0 0 0 3px rgba(56,189,248,0.16), inset 0 1px 2px rgba(0,0,0,0.25) !important;
+}
+body.m-mf-plus .m-input-fuselage:focus-within .m-if-label { border-color: rgba(56,189,248,0.55) !important; }
+body.m-mf-plus .m-cred-opt.active,
+body.m-mf-plus .m-srv-btn.active,
+body.m-mf-plus .m-reactor-module.active,
+body.m-mf-plus .m-nav-item.active { border-color: rgba(72,196,255,0.5) !important; }
+
+/* ---- INPUT: il campo testo deve avere priorità di spazio, GET compatto ---- */
+body.m-mf-plus .m-if-inner {
+    display: flex !important;
+    align-items: center !important;
+    flex-wrap: nowrap !important;
+    gap: 2px !important;
+    padding: 0 6px 0 4px !important;
+}
+body.m-mf-plus .m-if-icon {
+    width: 30px !important; flex: 0 0 30px !important;
+    font-size: 0.9rem !important;
+}
+body.m-mf-plus .m-if-field {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    width: 100% !important;
+    font-size: 0.9rem !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+body.m-mf-plus .m-if-field::placeholder {
+    font-size: 0.86rem !important;
+    color: #7e93b4 !important;
+}
+/* azioni compatte e non comprimibili */
+body.m-mf-plus .m-if-action {
+    flex: 0 0 auto !important;
+    padding: 6px !important;
+    font-size: 0.85rem !important;
+}
+body.m-mf-plus .m-get-link {
+    flex: 0 0 auto !important;
+    padding: 6px 10px !important;
+    font-size: 0.68rem !important;
+    gap: 4px !important;
+    white-space: nowrap !important;
+}
+
+/* =========================================================================
+   SaaS SKIN v5 — card più chiare (slate) + provider stripe ripristinata
+   ========================================================================= */
+body.m-mf-plus {
+    --s-glass: rgba(26, 38, 58, 0.55);
+    --s-glass-2: rgba(22, 33, 52, 0.6);
+    --s-stroke: rgba(150, 185, 230, 0.18);
+    --s-stroke-soft: rgba(150, 185, 230, 0.12);
+}
+
+/* card principali un filo più chiare/grigie */
+body.m-mf-plus .m-hypervisor,
+body.m-mf-plus .m-visual-core-v2 {
+    background: rgba(24, 35, 54, 0.58) !important;
+    border: 1px solid rgba(150, 185, 230, 0.16) !important;
+}
+
+/* moduli provider: superficie slate chiara */
+body.m-mf-plus .m-reactor-module {
+    background: rgba(38, 51, 74, 0.42) !important;
+    border: 1px solid rgba(150, 185, 230, 0.13) !important;
+}
+body.m-mf-plus .m-reactor-module.active {
+    background: linear-gradient(150deg, rgba(34,211,238,0.12), rgba(56,189,248,0.06)) !important;
+    border-color: rgba(72,196,255,0.45) !important;
+}
+
+/* riquadro core icona provider: leggermente più chiaro */
+body.m-mf-plus .m-reactor-core {
+    background: rgba(150, 185, 230, 0.10) !important;
+    border: 1px solid rgba(150, 185, 230, 0.16) !important;
+}
+
+/* box descrizione "Configura l'accesso" + input slate chiari */
+body.m-mf-plus .m-input-fuselage .m-if-inner {
+    background: rgba(30, 43, 64, 0.55) !important;
+    border: 1px solid rgba(150, 185, 230, 0.16) !important;
+}
+
+/* lowfx: card chiare ma opache */
+body.m-mf-plus.m-lowfx .m-hypervisor,
+body.m-mf-plus.m-lowfx .m-visual-core-v2 { background: rgba(24, 35, 54, 0.92) !important; }
+body.m-mf-plus.m-typing .m-hypervisor,
+body.m-mf-plus.m-typing .m-visual-core-v2,
+body.m-mf-plus.m-switching .m-hypervisor,
+body.m-mf-plus.m-switching .m-visual-core-v2 { background: rgba(24, 35, 54, 0.9) !important; }
+
+/* =========================================================================
+   SaaS SKIN v6 — angoli più arrotondati (come riferimento)
+   ========================================================================= */
+body.m-mf-plus .m-hypervisor,
+body.m-mf-plus .m-visual-core-v2 { border-radius: 23px !important; }
+body.m-mf-plus .m-reactor-module { border-radius: 21px !important; }
+body.m-mf-plus .m-reactor-core { border-radius: 18px !important; }
+body.m-mf-plus .m-cred-opt,
+body.m-mf-plus .m-flux-opt,
+body.m-mf-plus .m-lang-opt,
+body.m-mf-plus .m-cortex-chip,
+body.m-mf-plus .m-cloud-mode-btn { border-radius: 18px !important; }
+body.m-mf-plus .m-if-inner { border-radius: 18px !important; }
+body.m-mf-plus .m-setup-mini-console,
+body.m-mf-plus .m-flux-terminal,
+body.m-mf-plus #m-generatedUrlBox,
+body.m-mf-plus #m-setupGeneratedUrlBox { border-radius: 18px !important; }
+body.m-mf-plus .m-setup-install { border-radius: 20px !important; }
+body.m-mf-plus .m-nav-item { border-radius: 18px !important; }
+/* lo stripe laterale segue gli angoli più morbidi */
+body.m-mf-plus .m-reactor-module::before { border-radius: 0 5px 5px 0 !important; }
+
+/* =========================================================================
+   SaaS SKIN v7 — spaziatura provider + tag proxy colorati
+   ========================================================================= */
+
+/* core icona: altezza fissa, allineata in alto, niente più stretch verticale */
+body.m-mf-plus .m-reactor-module {
+    align-items: flex-start !important;
+}
+body.m-mf-plus .m-reactor-core {
+    width: 50px !important;
+    height: 50px !important;
+    flex: 0 0 50px !important;
+    margin: 14px 0 0 12px !important;
+    align-self: flex-start !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+body.m-mf-plus .m-reactor-body {
+    padding: 14px 14px 14px 12px !important;
+    min-width: 0 !important;
+}
+/* titolo provider: niente wrap brutto, ellissi se troppo lungo */
+body.m-mf-plus .m-reactor-title {
+    font-size: 1.02rem !important;
+    line-height: 1.25 !important;
+    word-break: normal !important;
+    overflow-wrap: anywhere !important;
+}
+body.m-mf-plus .m-reactor-top { align-items: flex-start !important; gap: 8px !important; }
+body.m-mf-plus .m-reactor-desc { margin-top: 6px !important; line-height: 1.45 !important; }
+body.m-mf-plus .m-tag-row { margin-top: 10px !important; }
+
+/* badge OFF/ON in basso a destra: più staccato dal bordo */
+body.m-mf-plus .m-reactor-body::after { right: 12px !important; bottom: 11px !important; }
+
+/* ---- TAG PROXY: colori distinti ---- */
+/* NO PROXY → neutro/grigio (nessun proxy attivo) */
+body.m-mf-plus .m-tech-tag.tag-noproxy {
+    border: 1px solid rgba(150, 170, 200, 0.28) !important;
+    background: rgba(150, 170, 200, 0.08) !important;
+    color: #aab8d0 !important;
+}
+body.m-mf-plus .m-tech-tag.tag-noproxy i { color: #aab8d0 !important; }
+
+/* KRAKEN → azzurro/ciano Leviathan */
+body.m-mf-plus .m-tech-tag.tag-kraken {
+    border: 1px solid rgba(34, 211, 238, 0.5) !important;
+    background: rgba(34, 211, 238, 0.12) !important;
+    color: #7fe9ff !important;
+    box-shadow: 0 0 12px -4px rgba(34, 211, 238, 0.4) !important;
+}
+body.m-mf-plus .m-tech-tag.tag-kraken i { color: #22d3ee !important; }
+
+/* MFP (MediaFlow Proxy) → viola/indaco */
+body.m-mf-plus .m-tech-tag.tag-mfp {
+    border: 1px solid rgba(139, 92, 246, 0.5) !important;
+    background: rgba(139, 92, 246, 0.12) !important;
+    color: #c9b6ff !important;
+    box-shadow: 0 0 12px -4px rgba(139, 92, 246, 0.4) !important;
+}
+body.m-mf-plus .m-tech-tag.tag-mfp i { color: #a78bfa !important; }
+
+
 `;
 
 const mobileHTML = `
@@ -6029,7 +6812,7 @@ const mobileHTML = `
                         <div class="m-if-label">🔑 API KEY</div>
                         <div class="m-if-inner">
                             <div class="m-if-icon"><i class="fas fa-key"></i></div>
-                            <input type="text" id="m-apiKey" class="m-if-field" placeholder="🔑 INCOLLA KEY..." oninput="handleMobileApiKeyInput()">
+                            <input type="text" id="m-apiKey" class="m-if-field" placeholder="Incolla key" oninput="handleMobileApiKeyInput()">
                             <div class="m-if-action" onclick="pasteTo('m-apiKey')"><i class="fas fa-paste"></i></div>
                             <div class="m-get-link" onclick="openApiPage()">GET <i class="fas fa-external-link-alt"></i></div>
                         </div>
@@ -6043,7 +6826,7 @@ const mobileHTML = `
                         <div class="m-if-label opt">🎬 TMDB OPTIONAL</div>
                         <div class="m-if-inner">
                             <div class="m-if-icon"><i class="fas fa-film"></i></div>
-                            <input type="text" id="m-tmdb" class="m-if-field" placeholder="🎬 PERSONAL KEY..." oninput="updateLinkModalContent()">
+                            <input type="text" id="m-tmdb" class="m-if-field" placeholder="Personal key" oninput="updateLinkModalContent()">
                             <div class="m-if-action" onclick="pasteTo('m-tmdb')"><i class="fas fa-paste"></i></div>
                             <div class="m-get-link" style="color:var(--m-accent); border-color:var(--m-accent); background:rgba(124, 58, 237,0.05);" onclick="openApiPage('tmdb')">GET <i class="fas fa-external-link-alt"></i></div>
                         </div>
@@ -7966,12 +8749,12 @@ function setMService(srv, btn, keepInput = false) {
 
     if (input) {
         if (srv === 'p2p') {
-            mSetPlaceholder('m-apiKey', "P2P BYPASS MODE");
+            mSetPlaceholder('m-apiKey', "P2P attivo");
             mSetDisabled('m-apiKey', true);
             if(box) box.classList.add('is-p2p');
         } else {
-            const placeholders = { 'rd': "INCOLLA RD KEY...", 'tb': "INCOLLA TB KEY..." };
-            mSetPlaceholder('m-apiKey', placeholders[srv] || "INCOLLA API KEY...");
+            const placeholders = { 'rd': "Incolla RD key", 'tb': "Incolla TB key" };
+            mSetPlaceholder('m-apiKey', placeholders[srv] || "Incolla API key");
             mSetDisabled('m-apiKey', false);
             if(box) box.classList.remove('is-p2p');
         }
