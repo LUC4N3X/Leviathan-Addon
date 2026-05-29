@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { incrementMetric } = require('../../utils/runtime');
 const { getRawStreamCache, setRawStreamCache } = require('../../cache/raw_stream_cache');
+const { streamRequestCoalescer, buildRequestCoalescingKey } = require('../../cache/request_coalescer');
 const { getRequestClientIp, getRequestOrigin } = require('../../utils/url');
 const { prepareUprotManualChallenge, submitUprotManualChallenge } = require('../../../providers/extractors/hosters/uprot');
 
@@ -293,6 +294,20 @@ function queueBingePredictionWarmup({
     if (typeof timer.unref === 'function') timer.unref();
 }
 
+
+function buildStreamRouteCoalescingKey(type, requestId, conf) {
+    return buildRequestCoalescingKey([
+        'stremio-stream',
+        String(type || '').toLowerCase(),
+        String(requestId || '').replace(/\.json$/i, ''),
+        getConfigFingerprint(conf) || 'no-conf'
+    ]);
+}
+
+function isStreamRequestCoalescingLogEnabled() {
+    return /^(1|true|yes|y|on)$/i.test(String(process.env.STREAM_REQUEST_COALESCING_LOGS || '').trim());
+}
+
 function registerStremioRoutes(app, {
     publicDir,
     getManifest,
@@ -436,32 +451,47 @@ function registerStremioRoutes(app, {
                 }
             };
 
-            const result = await generateStream(
-                req.params.type,
-                requestId,
-                userConf,
-                req.params.conf,
-                reqHost,
-                runtimeContext
-            );
+            const coalescingKey = buildStreamRouteCoalescingKey(req.params.type, requestId, req.params.conf);
+            const coalesced = await streamRequestCoalescer.runDetailed(coalescingKey, async () => {
+                const generated = await generateStream(
+                    req.params.type,
+                    requestId,
+                    userConf,
+                    req.params.conf,
+                    reqHost,
+                    runtimeContext
+                );
+                await setRawStreamCache(req.params.type, requestId, req.params.conf, generated, { logger }).catch(() => false);
+                return generated;
+            }, {
+                readCached: () => getRawStreamCache(req.params.type, requestId, req.params.conf, { logger }),
+                resultTtlSeconds: Math.max(15, Math.min(300, parseInt(process.env.STREAM_REQUEST_RESULT_TTL_SECONDS || '90', 10) || 90)),
+                shouldStoreResult: (value) => value && typeof value === 'object' && Array.isArray(value.streams),
+                logger
+            });
 
-            setRawStreamCache(req.params.type, requestId, req.params.conf, result, { logger }).catch(() => {});
+            const result = coalesced.value || { streams: [], cacheMaxAge: 30, staleRevalidate: 60, staleError: 120 };
+            if (isStreamRequestCoalescingLogEnabled()) {
+                logger.info(`[CACHE LOCK] stream origin=${coalesced.origin} worker=${coalesced.didRunWorker === true} waitMs=${coalesced.waitedMs || 0} key=${coalescingKey}`);
+            }
             if (maybeSendNotModified(req, res, result)) return;
             applyStremioStreamCacheHeaders(res, result);
-            queueBingePredictionWarmup({
-                req,
-                logger,
-                generateStream,
-                Cache,
-                type: req.params.type,
-                requestId,
-                userConf,
-                userConfStr: req.params.conf,
-                reqHost,
-                streamInflight,
-                lastResult: result,
-                meta: runtimeContext.generatedMeta
-            });
+            if (coalesced.didRunWorker === true) {
+                queueBingePredictionWarmup({
+                    req,
+                    logger,
+                    generateStream,
+                    Cache,
+                    type: req.params.type,
+                    requestId,
+                    userConf,
+                    userConfStr: req.params.conf,
+                    reqHost,
+                    streamInflight,
+                    lastResult: result,
+                    meta: runtimeContext.generatedMeta
+                });
+            }
             res.json(result);
         } catch (err) {
             logger.error('Validazione/Stream Fallito', {
