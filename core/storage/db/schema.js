@@ -226,6 +226,66 @@ async function ensureDatabaseOptimizations(pool) {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`,
+    `CREATE TABLE IF NOT EXISTS cache_maintenance_history (
+      run_id TEXT PRIMARY KEY,
+      started_at TIMESTAMPTZ DEFAULT NOW(),
+      finished_at TIMESTAMPTZ,
+      status TEXT DEFAULT 'running',
+      deleted_shared_stream_cache INTEGER DEFAULT 0,
+      deleted_external_snapshots INTEGER DEFAULT 0,
+      deleted_debrid_availability INTEGER DEFAULT 0,
+      deleted_debrid_links INTEGER DEFAULT 0,
+      deleted_saved_cloud_snapshots INTEGER DEFAULT 0,
+      deleted_rank_history INTEGER DEFAULT 0,
+      error TEXT,
+      payload_json JSONB
+    )`,
+    `CREATE TABLE IF NOT EXISTS torrent_rank_history (
+      rank_key TEXT PRIMARY KEY,
+      media_id TEXT,
+      imdb_id TEXT,
+      imdb_season INTEGER,
+      imdb_episode INTEGER,
+      info_hash_norm TEXT,
+      file_index_norm INTEGER DEFAULT -1,
+      score INTEGER DEFAULT 0,
+      rank_position INTEGER,
+      cache_state TEXT,
+      quality TEXT,
+      provider TEXT,
+      reasons TEXT[] DEFAULT ARRAY[]::TEXT[],
+      payload_json JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS cache_metrics_history (
+      metric_key TEXT PRIMARY KEY,
+      metric_group TEXT NOT NULL,
+      metric_name TEXT NOT NULL,
+      metric_value NUMERIC DEFAULT 0,
+      labels_json JSONB,
+      recorded_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS debrid_account_snapshots (
+      snapshot_key TEXT PRIMARY KEY,
+      service TEXT NOT NULL,
+      token_fp TEXT NOT NULL,
+      torrent_id TEXT,
+      info_hash TEXT,
+      info_hash_norm TEXT,
+      title TEXT,
+      state TEXT,
+      progress NUMERIC(7,2) DEFAULT 0,
+      files_json JSONB,
+      file_count INTEGER DEFAULT 0,
+      total_size BIGINT DEFAULT 0,
+      payload_json JSONB,
+      first_seen_at TIMESTAMPTZ DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ DEFAULT NOW(),
+      seen_count INTEGER DEFAULT 1,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
     `CREATE TABLE IF NOT EXISTS torrent_items (
       info_hash TEXT NOT NULL,
       info_hash_norm TEXT PRIMARY KEY,
@@ -1251,6 +1311,13 @@ async function ensureDatabaseOptimizations(pool) {
     `CREATE INDEX IF NOT EXISTS idx_debrid_resolved_link_expires ON debrid_resolved_link_cache (expires_at)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_resolved_link_service_hash ON debrid_resolved_link_cache (service, token_fp, info_hash_norm, file_id, expires_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_resolved_link_saved ON debrid_resolved_link_cache (service, token_fp, torrent_id, file_id, expires_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_cache_maintenance_started ON cache_maintenance_history (started_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_torrent_rank_history_media ON torrent_rank_history (imdb_id, imdb_season, imdb_episode, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_torrent_rank_history_hash ON torrent_rank_history (info_hash_norm, file_index_norm, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_cache_metrics_history_group ON cache_metrics_history (metric_group, metric_name, recorded_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_debrid_account_snapshots_lookup ON debrid_account_snapshots (service, token_fp, info_hash_norm, expires_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_debrid_account_snapshots_expires ON debrid_account_snapshots (expires_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_debrid_account_snapshots_seen ON debrid_account_snapshots (service, token_fp, last_seen_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_check_jobs_due ON debrid_check_jobs (service, status, priority ASC, run_after ASC)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_check_jobs_hash ON debrid_check_jobs (service, info_hash_norm, file_index_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_check_markers_lookup ON debrid_cache_check_markers (service, user_hash, media_id, expires_at)`,
@@ -1314,6 +1381,9 @@ async function ensureDatabaseOptimizations(pool) {
     await pool.query(`DELETE FROM debrid_availability_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
     await pool.query(`DELETE FROM debrid_resolved_link_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
     await pool.query(`DELETE FROM debrid_cache_check_markers WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
+    await pool.query(`DELETE FROM debrid_account_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
+    await pool.query(`DELETE FROM torrent_rank_history WHERE created_at < NOW() - INTERVAL '30 days'`);
+    await pool.query(`DELETE FROM cache_metrics_history WHERE recorded_at < NOW() - INTERVAL '30 days'`);
   } catch (error) {
     console.warn(`⚠️ DB optimization skipped: ${error.message}`);
   }

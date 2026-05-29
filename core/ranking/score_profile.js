@@ -2,6 +2,7 @@
 
 const { evaluateEpisodeTruth } = require('../matching/episode_truth_engine');
 const { getSeedHealth } = require('../lib/seed_health_ranker');
+const { evaluateTorrentIntelligence } = require('./torrent_intelligence');
 
 const DEFAULT_SCORE_PROFILE = Object.freeze({
     resolution: Object.freeze({
@@ -80,6 +81,9 @@ const DEFAULT_SCORE_PROFILE = Object.freeze({
         seasonPack: 6,
         multiSeasonPack: -12,
         unknown: 0
+    }),
+    torrentIntelligence: Object.freeze({
+        enabled: 1
     })
 });
 
@@ -221,7 +225,8 @@ function formatComponentLabel(group, key) {
         episodeTruth: 'match',
         source: 'fonte',
         sourceConsensus: 'consenso',
-        pack: 'pack'
+        pack: 'pack',
+        torrentIntelligence: 'torrent intelligence'
     };
     return `${labels[group] || group}=${key}`;
 }
@@ -259,6 +264,9 @@ function componentBadge(group, key) {
     if (group === 'sourceConsensus') {
         if (key === 'strong_consensus') return '🤝 consenso forte';
         if (key === 'consensus') return '🤝 consenso';
+    }
+    if (group === 'torrentIntelligence') {
+        return '🧠 torrent-intel';
     }
     return '';
 }
@@ -319,6 +327,9 @@ function evaluateLeviathanScore(item = {}, meta = {}, options = {}) {
     const source = detectSource(item);
     const sourceConsensus = detectSourceConsensus(item);
     const pack = detectPackState(item);
+    const torrentIntelligence = evaluateTorrentIntelligence(item, meta, {
+        weight: options?.ranking?.torrentIntelligenceWeight ?? options?.torrentIntelligenceWeight ?? 1
+    });
     const episodeTruth = item._episodeTruth || evaluateEpisodeTruth(item, meta, { strict: false });
     const episodeTruthType = episodeTruth?.type || 'not_required';
 
@@ -331,6 +342,12 @@ function evaluateLeviathanScore(item = {}, meta = {}, options = {}) {
     addComponent(parts, profile, 'source', source, source);
     addComponent(parts, profile, 'sourceConsensus', sourceConsensus, sourceConsensus);
     addComponent(parts, profile, 'pack', pack, pack);
+    if (options?.ranking?.useTorrentIntelligenceRanking !== false && options?.useTorrentIntelligenceRanking !== false) {
+        const tiScore = Number(torrentIntelligence.score || 0) || 0;
+        parts.score += tiScore;
+        parts.components.torrentIntelligence = { key: 'enabled', score: tiScore, features: torrentIntelligence.features };
+        parts.explain.push(`${tiScore >= 0 ? '+' : ''}${tiScore} torrentIntelligence=${torrentIntelligence.text || 'n/a'}`);
+    }
 
     const brutalExplain = buildBrutalRankExplain({
         finalScore: parts.score,
@@ -345,7 +362,8 @@ function evaluateLeviathanScore(item = {}, meta = {}, options = {}) {
         explain: parts.explain,
         brutalExplain,
         components: parts.components,
-        episodeTruth
+        episodeTruth,
+        torrentIntelligence
     };
 }
 
@@ -392,6 +410,7 @@ module.exports = {
     detectSource,
     detectSourceConsensus,
     evaluateLeviathanScore,
+    evaluateTorrentIntelligence,
     formatRankExplain,
     mergeProfile,
     rankWithLeviathanScore

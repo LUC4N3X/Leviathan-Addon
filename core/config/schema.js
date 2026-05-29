@@ -2,8 +2,10 @@
 
 const CURRENT_CONFIG_VERSION = 1;
 const { isEncryptedConfigToken, decryptConfigToken } = require('../security/user_config_crypto');
-const MAX_CONFIG_LENGTH = Math.max(parseInt(process.env.MAX_CONFIG_LENGTH || '16384', 10) || 16384, 2048);
-const ADMIN_PASS = String(process.env.ADMIN_PASS || '').trim();
+const { getCachedAppSettings, normalizeBool, normalizeInt } = require('./app_settings');
+const APP_SETTINGS = getCachedAppSettings();
+const MAX_CONFIG_LENGTH = APP_SETTINGS.config.maxConfigLength;
+const ADMIN_PASS = APP_SETTINGS.config.adminPass;
 const ALLOWED_SERVICES = new Set(['rd', 'tb', 'p2p', 'web']);
 const { SOURCE_MODES, normalizeSourceMode } = require('./source_mode');
 
@@ -95,7 +97,7 @@ function validateConfig(input = {}) {
   delete output.alldebrid;
   if (output.service === 'ad') output.service = getDefaultConfig().service;
 
-  const numericFilterKeys = ['maxPerQuality', 'maxSizeGB', 'minSizeGB', 'maxSizeBytes', 'minSizeBytes', 'instantDebridTop', 'warmupTop', 'savedCloudMax', 'minSeeders', 'maxSeeders'];
+  const numericFilterKeys = ['maxPerQuality', 'maxSizeGB', 'minSizeGB', 'maxSizeBytes', 'minSizeBytes', 'instantDebridTop', 'warmupTop', 'savedCloudMax', 'savedCloudScanLimit', 'savedCloudSnapshotTtlSeconds', 'externalSnapshotTtl', 'minSeeders', 'maxSeeders'];
   for (const key of numericFilterKeys) {
     if (output.filters[key] !== undefined && output.filters[key] !== null && output.filters[key] !== '') {
       const value = parseInt(output.filters[key], 10);
@@ -123,7 +125,7 @@ function validateConfig(input = {}) {
     if (output.filters[key] !== undefined) output.filters[key] = normalizeStringArray(output.filters[key]);
   }
 
-  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableGstv', 'enableEs', 'enableCb01', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableAltadefinizione', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast'];
+  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableGstv', 'enableEs', 'enableCb01', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableAltadefinizione', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast', 'savedCloudAggressive', 'savedCloudSnapshotEnabled', 'useTorrentIntelligenceRanking', 'useLeviathanScoreProfile'];
   for (const key of booleanFilterKeys) {
     if (output.filters[key] !== undefined) output.filters[key] = !!output.filters[key];
   }
@@ -144,6 +146,22 @@ function validateConfig(input = {}) {
     : (output.filters.enableSavedCloud ? 'smart' : 'off');
   if (output.filters.savedCloudMode === 'off') output.filters.enableSavedCloud = false;
   if (output.filters.enableSavedCloud && (!output.filters.savedCloudMax || output.filters.savedCloudMax < 1)) output.filters.savedCloudMax = 6;
+
+
+  output.filters.savedCloudAggressive = output.filters.savedCloudAggressive !== undefined
+    ? output.filters.savedCloudAggressive
+    : APP_SETTINGS.savedCloud.aggressive;
+  output.filters.savedCloudSnapshotEnabled = output.filters.savedCloudSnapshotEnabled !== undefined
+    ? output.filters.savedCloudSnapshotEnabled
+    : APP_SETTINGS.savedCloud.snapshotEnabled;
+  output.filters.savedCloudScanLimit = normalizeInt(output.filters.savedCloudScanLimit, APP_SETTINGS.savedCloud.scanLimit, 20, 500);
+  output.filters.savedCloudSnapshotTtlSeconds = normalizeInt(output.filters.savedCloudSnapshotTtlSeconds, APP_SETTINGS.savedCloud.snapshotTtlSec, 60, 604800);
+
+  output.ranking = output.ranking && typeof output.ranking === 'object' && !Array.isArray(output.ranking) ? { ...output.ranking } : {};
+  output.ranking.useTorrentIntelligenceRanking = output.filters.useTorrentIntelligenceRanking !== undefined
+    ? normalizeBool(output.filters.useTorrentIntelligenceRanking, APP_SETTINGS.ranking.torrentIntelligenceEnabled)
+    : normalizeBool(output.ranking.useTorrentIntelligenceRanking, APP_SETTINGS.ranking.torrentIntelligenceEnabled);
+  output.ranking.torrentIntelligenceWeight = Math.max(0, Math.min(5, Number(output.ranking.torrentIntelligenceWeight || APP_SETTINGS.ranking.torrentIntelligenceWeight) || APP_SETTINGS.ranking.torrentIntelligenceWeight));
 
   output.configVersion = CURRENT_CONFIG_VERSION;
   return output;

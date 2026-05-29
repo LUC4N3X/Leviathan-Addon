@@ -3,9 +3,12 @@
 const crypto = require("crypto");
 const RD = require("../rd/clients/realdebrid_client");
 const TB = require("../tb/clients/torbox_client");
+const { getCachedAppSettings } = require("../../config/app_settings");
+const SnapshotRepo = require("./saved_cloud_snapshot_repository");
 
+const APP_SETTINGS = getCachedAppSettings();
 const DEFAULT_MAX_RESULTS = Math.max(1, Math.min(20, parseInt(process.env.SAVED_CLOUD_MAX || "6", 10) || 6));
-const DEFAULT_SCAN_LIMIT = Math.max(20, Math.min(250, parseInt(process.env.SAVED_CLOUD_SCAN_LIMIT || "90", 10) || 90));
+const DEFAULT_SCAN_LIMIT = Math.max(20, Math.min(500, parseInt(process.env.SAVED_CLOUD_SCAN_LIMIT || String(APP_SETTINGS.savedCloud.scanLimit || 180), 10) || APP_SETTINGS.savedCloud.scanLimit || 180));
 const SAVED_CACHE_TTL_MS = Math.max(15_000, Math.min(10 * 60_000, parseInt(process.env.SAVED_CLOUD_CACHE_TTL_MS || "90000", 10) || 90_000));
 const VIDEO_EXT_RE = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|iso)$/i;
 const JUNK_RE = /\b(sample|trailer|extras?|featurettes?|behind[\s._-]?the[\s._-]?scenes|interview|proof|preview|screens?|nfo|cover|poster|thumb|ost|soundtrack|creditless|ncop|nced)\b/i;
@@ -369,6 +372,79 @@ function createCloudItem({ service, torrent, info, fileEntry, meta }) {
   };
 }
 
+function getSnapshotScanLimit(filters = {}) {
+  return Math.max(20, Math.min(1000, safeInt(filters.savedCloudScanLimit, APP_SETTINGS.savedCloud.snapshotWarmMax || DEFAULT_SCAN_LIMIT)));
+}
+
+function getSnapshotTtlSeconds(filters = {}) {
+  return Math.max(60, Math.min(604800, safeInt(filters.savedCloudSnapshotTtlSeconds, APP_SETTINGS.savedCloud.snapshotTtlSec || 21600)));
+}
+
+function isSnapshotEnabled(filters = {}) {
+  if (filters.savedCloudSnapshotEnabled === false) return false;
+  return APP_SETTINGS.savedCloud.snapshotEnabled !== false;
+}
+
+function createCloudItemFromSnapshot(snapshot = {}, meta = {}, logger = null) {
+  const service = String(snapshot.service || '').toLowerCase();
+  const torrent = {
+    ...(snapshot.torrent || {}),
+    id: snapshot.torrent?.id || snapshot.torrentId,
+    torrent_id: snapshot.torrent?.torrent_id || snapshot.torrentId,
+    hash: snapshot.torrent?.hash || snapshot.hash,
+    info_hash: snapshot.torrent?.info_hash || snapshot.hash,
+    name: snapshot.torrent?.name || snapshot.title,
+    filename: snapshot.torrent?.filename || snapshot.title
+  };
+  const info = {
+    ...(snapshot.info || {}),
+    id: snapshot.info?.id || snapshot.torrentId,
+    hash: snapshot.info?.hash || snapshot.hash,
+    info_hash: snapshot.info?.info_hash || snapshot.hash,
+    filename: snapshot.info?.filename || snapshot.title,
+    name: snapshot.info?.name || snapshot.title,
+    status: snapshot.info?.status || (service === 'rd' ? 'downloaded' : snapshot.state),
+    files: Array.isArray(snapshot.files) ? snapshot.files : (Array.isArray(snapshot.info?.files) ? snapshot.info.files : [])
+  };
+  if (service === 'tb') torrent.files = Array.isArray(snapshot.files) ? snapshot.files : (Array.isArray(torrent.files) ? torrent.files : []);
+  const state = String(service === 'tb' ? (torrent.download_state || torrent.state || torrent.status || snapshot.state || '') : (info.status || snapshot.state || '')).toLowerCase();
+  const progress = safeNum(torrent.progress ?? info.progress ?? snapshot.progress, 0);
+  if (service === 'rd' && state && state !== 'downloaded') return null;
+  if (service === 'tb' && state && !['completed', 'seeding', 'ready'].includes(state) && progress < 100) return null;
+  const title = getTorrentTitle(torrent, info);
+  if (title && hasYearMismatch(title, meta)) return null;
+  if (title && !hasTitleMatch(title, meta) && !meta?.isSeries) return null;
+  const files = service === 'tb' ? getTbPlayableFiles(torrent) : getRdPlayableFiles(info);
+  if (!files.length) return null;
+  const best = chooseBestFile(files, meta, service, title);
+  if (!best) return null;
+  if (meta?.isSeries && !hasTitleMatch(`${title} ${best.name}`, meta)) return null;
+  debugLog(logger, `${service.toUpperCase()} snapshot match | hash=${getTorrentHash(torrent, info).slice(0, 12) || 'n/a'} torrentId=${torrent.id || torrent.torrent_id || 'n/a'} fileId=${best.id} file="${safeDebugText(best.name)}"`);
+  return createCloudItem({ service, torrent, info, fileEntry: best, meta });
+}
+
+async function findSavedCloudItemsFromSnapshots({ service, apiKey, meta, max, existingHashes, filters, logger }) {
+  if (!isSnapshotEnabled(filters)) return [];
+  const snapshots = await SnapshotRepo.getFreshSavedCloudSnapshots({ service, apiKey, limit: getSnapshotScanLimit(filters) });
+  if (!Array.isArray(snapshots) || snapshots.length === 0) return [];
+  const skipHashes = normalizeExistingHashes(existingHashes);
+  const out = [];
+  for (const snapshot of snapshots) {
+    if (out.length >= max) break;
+    const hash = String(snapshot.hash || snapshot.torrent?.hash || snapshot.info?.hash || '').toLowerCase();
+    if (hash && skipHashes.has(hash)) continue;
+    const item = createCloudItemFromSnapshot({ ...snapshot, service }, meta, logger);
+    if (!item) continue;
+    if (item.hash) skipHashes.add(String(item.hash).toLowerCase());
+    item._savedCloudSnapshot = true;
+    item._savedCloudSnapshotSeenCount = snapshot.seenCount || 0;
+    item._savedCloudSnapshotLastSeenAt = snapshot.lastSeenAt || null;
+    out.push(item);
+  }
+  if (out.length > 0) logger?.info?.(`[SAVED CLOUD] snapshot hit | service=${String(service).toUpperCase()} count=${out.length} scanned=${snapshots.length}`);
+  return out;
+}
+
 async function findRdSavedCloudItems({ apiKey, meta, max, existingHashes, logger }) {
   const out = [];
   const stats = {
@@ -432,6 +508,14 @@ async function findRdSavedCloudItems({ apiKey, meta, max, existingHashes, logger
       incStat(stats, "info_missing");
       addSample(samples, "info_missing", listTitle);
       continue;
+    }
+    if (isSnapshotEnabled({ savedCloudSnapshotEnabled: true })) {
+      SnapshotRepo.upsertSavedCloudSnapshots({
+        service: "rd",
+        apiKey,
+        torrents: [{ torrent, info }],
+        ttlSeconds: getSnapshotTtlSeconds({})
+      }).catch(() => {});
     }
     if (info.status !== "downloaded") {
       incStat(stats, "not_downloaded");
@@ -503,6 +587,14 @@ async function findTbSavedCloudItems({ apiKey, meta, max, existingHashes, logger
   const list = await TB.listSavedTorrents(apiKey, { limit: DEFAULT_SCAN_LIMIT });
   const safeList = Array.isArray(list) ? list : [];
   debugLog(logger, `TB list response | torrents=${safeList.length}`);
+  if (safeList.length > 0 && isSnapshotEnabled({ savedCloudSnapshotEnabled: true })) {
+    SnapshotRepo.upsertSavedCloudSnapshots({
+      service: "tb",
+      apiKey,
+      torrents: safeList,
+      ttlSeconds: getSnapshotTtlSeconds({})
+    }).catch(() => {});
+  }
   for (const torrent of safeList) {
     if (out.length >= max) break;
     stats.scanned++;
@@ -665,13 +757,33 @@ async function findSavedCloudItems(options = {}) {
   }
 
   try {
-    const args = { apiKey: options.apiKey, meta: options.meta || {}, max, existingHashes, logger: options.logger };
-    const results = service === "tb"
+    const snapshotResults = await findSavedCloudItemsFromSnapshots({
+      service,
+      apiKey: options.apiKey,
+      meta: options.meta || {},
+      max,
+      existingHashes,
+      filters,
+      logger: options.logger
+    });
+    const liveFallback = APP_SETTINGS.savedCloud.liveFallback !== false;
+    if (snapshotResults.length >= max || !liveFallback) {
+      const slicedSnapshots = snapshotResults.slice(0, max);
+      debugLog(options.logger, `resolver done | service=${service.toUpperCase()} source=snapshot returned=${slicedSnapshots.length} max=${max}`);
+      return setCached(cacheKey, slicedSnapshots);
+    }
+
+    const snapshotHashes = new Set([
+      ...Array.from(existingHashes),
+      ...snapshotResults.map((item) => String(item.hash || item.infoHash || '').toLowerCase()).filter(Boolean)
+    ]);
+    const args = { apiKey: options.apiKey, meta: options.meta || {}, max, existingHashes: snapshotHashes, logger: options.logger };
+    const liveResults = service === "tb"
       ? await findTbSavedCloudItems(args)
       : await findRdSavedCloudItems(args);
-    const sliced = results.slice(0, max);
-    debugLog(options.logger, `resolver done | service=${service.toUpperCase()} raw=${results.length} returned=${sliced.length} max=${max}`);
-    return setCached(cacheKey, sliced);
+    const results = [...snapshotResults, ...liveResults].slice(0, max);
+    debugLog(options.logger, `resolver done | service=${service.toUpperCase()} snapshot=${snapshotResults.length} live=${liveResults.length} returned=${results.length} max=${max}`);
+    return setCached(cacheKey, results);
   } catch (error) {
     options.logger?.warn?.(`[SAVED CLOUD] ${service.toUpperCase()} fallito: ${error?.message || error}`);
     return setCached(cacheKey, []);
@@ -683,5 +795,7 @@ module.exports = {
   findSavedCloudDuplicateHashes,
   getMode,
   getLimit,
+  getSnapshotScanLimit,
+  getSnapshotTtlSeconds,
   normalizeName
 };

@@ -4644,6 +4644,11 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           ? Math.max(CONFIG.MAX_RESULTS || 12, getRdPlayableDeepDbScanLimit(filters, rankedList.length, CONFIG.MAX_RESULTS || 70))
           : CONFIG.MAX_RESULTS;
       const finalRanked = rankedList.slice(0, finalRankedLimit);
+      if (typeof dbHelper?.recordTorrentRankHistory === 'function' && finalRanked.length > 0 && String(process.env.RANK_HISTORY_ENABLED || '1') !== '0') {
+          dbHelper.recordTorrentRankHistory(meta, finalRanked, {
+              limit: Math.max(10, Math.min(80, parseInt(process.env.RANK_HISTORY_LIMIT || '40', 10) || 40))
+          }).catch((error) => logger.warn(`[RANK HISTORY] save failed: ${error?.message || error}`));
+      }
       if (rdPlayableOnlyForFinalRanked && finalRanked.length > CONFIG.MAX_RESULTS) {
           logger.info(`[RD DEEP DB] playable-only scan window expanded ${CONFIG.MAX_RESULTS}->${finalRanked.length} ranked=${rankedList.length}`);
       }

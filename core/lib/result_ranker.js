@@ -780,9 +780,14 @@ function computeScore(item, meta = {}, configInput = {}) {
   const useScoreProfile = configInput?.useLeviathanScoreProfile === true
     || configInput?.ranking?.useLeviathanScoreProfile === true
     || configInput?.ranking?.useScoreProfile === true;
+  const useTorrentIntelligence = configInput?.useTorrentIntelligenceRanking === true
+    || configInput?.ranking?.useTorrentIntelligenceRanking === true;
   if (useScoreProfile) {
     score += scoreProfile.finalScore;
     reasons.push("LEV_SCORE_PROFILE");
+  } else if (useTorrentIntelligence && scoreProfile?.torrentIntelligence) {
+    score += Number(scoreProfile.torrentIntelligence.score || 0) || 0;
+    reasons.push("TORRENT_INTELLIGENCE");
   }
 
   if (invalid) {
@@ -814,7 +819,8 @@ function computeScore(item, meta = {}, configInput = {}) {
       isMulti: signals.langInfo.isMulti,
       subOnly: signals.subOnly,
       sourceConsensus,
-      scoreProfile
+      scoreProfile,
+      torrentIntelligence: scoreProfile?.torrentIntelligence || null
     }
   };
 }

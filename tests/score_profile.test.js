@@ -66,3 +66,22 @@ test('leviathan score profile rewards cross-provider consensus evidence', () => 
     assert.ok(consensus.finalScore > single.finalScore);
     assert.ok(consensus.explain.some((entry) => entry.includes('sourceConsensus=strong_consensus')));
 });
+
+test('torrent intelligence rewards exact cached Italian WEB-DL episode and explains it', () => {
+    const scored = evaluateLeviathanScore(
+        {
+            title: 'FROM.S01E07.1080p.WEB-DL.ITA.ENG.x265-GRP.mkv',
+            source: 'Torrentio',
+            seeders: 20,
+            _rdCacheState: 'cached',
+            cached_rd: true,
+            fileIdx: 2
+        },
+        { title: 'FROM', season: 1, episode: 7, isSeries: true },
+        { ranking: { useTorrentIntelligenceRanking: true, torrentIntelligenceWeight: 1 } }
+    );
+
+    assert.ok(scored.torrentIntelligence.score > 80);
+    assert.equal(scored.torrentIntelligence.features.episodeMatch, 'exact');
+    assert.ok(scored.explain.some((entry) => entry.includes('torrentIntelligence=')));
+});
