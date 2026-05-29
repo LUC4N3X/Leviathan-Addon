@@ -6511,21 +6511,9 @@ body.m-mf-plus .m-reactor-module {
     border: 1px solid rgba(255,255,255,0.07) !important;
     border-radius: 16px !important;
 }
-body.m-mf-plus .m-reactor-module::before {
-    width: 3.5px !important;
-    left: 0 !important;
-    top: 14px !important; bottom: 14px !important;
-    border-radius: 0 4px 4px 0 !important;
-    background: linear-gradient(180deg, #22d3ee, #3b82f6) !important;
-    box-shadow: 0 0 10px rgba(34,211,238,0.35) !important;
-    opacity: 0.55 !important;
-    transition: opacity 0.2s ease !important;
-}
-body.m-mf-plus .m-reactor-module.active::before {
-    opacity: 1 !important;
-    background: linear-gradient(180deg, #22d3ee, #38bdf8 50%, #3b82f6) !important;
-    box-shadow: 0 0 14px rgba(34,211,238,0.55) !important;
-}
+/* striscia laterale RIMOSSA */
+body.m-mf-plus .m-reactor-module::before { display: none !important; }
+body.m-mf-plus .m-reactor-module.active::before { display: none !important; }
 body.m-mf-plus .m-reactor-module.active {
     background: linear-gradient(150deg, rgba(99,102,241,0.10), rgba(34,211,238,0.06)) !important;
     border-color: rgba(124,142,255,0.45) !important;
@@ -6680,32 +6668,42 @@ body.m-mf-plus .m-reactor-module::before { border-radius: 0 5px 5px 0 !important
    SaaS SKIN v7 — spaziatura provider + tag proxy colorati
    ========================================================================= */
 
-/* core icona: altezza fissa, allineata in alto, niente più stretch verticale */
+/* core icona: colonna sinistra a tutta altezza, icona centrata */
 body.m-mf-plus .m-reactor-module {
-    align-items: flex-start !important;
+    align-items: stretch !important;
 }
 body.m-mf-plus .m-reactor-core {
-    width: 50px !important;
-    height: 50px !important;
-    flex: 0 0 50px !important;
-    margin: 14px 0 0 12px !important;
-    align-self: flex-start !important;
+    width: 64px !important;
+    flex: 0 0 64px !important;
+    height: auto !important;
+    align-self: stretch !important;
+    margin: 12px 0 12px 12px !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
+    border-radius: 16px !important;
 }
 body.m-mf-plus .m-reactor-body {
-    padding: 14px 14px 14px 12px !important;
+    padding: 14px 14px 14px 14px !important;
     min-width: 0 !important;
+    flex: 1 1 auto !important;
 }
-/* titolo provider: niente wrap brutto, ellissi se troppo lungo */
+body.m-mf-plus .m-reactor-top { align-items: center !important; gap: 8px !important; flex-wrap: nowrap !important; }
+/* titolo provider: cede spazio allo switch, niente sovrapposizione */
 body.m-mf-plus .m-reactor-title {
-    font-size: 1.02rem !important;
-    line-height: 1.25 !important;
-    word-break: normal !important;
-    overflow-wrap: anywhere !important;
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    font-size: 0.92rem !important;
+    line-height: 1.2 !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+    hyphens: none !important;
 }
-body.m-mf-plus .m-reactor-top { align-items: flex-start !important; gap: 8px !important; }
+/* lo switch non si comprime mai */
+body.m-mf-plus .m-reactor-top .m-switch,
+body.m-mf-plus .m-reactor-top .m-switch * { flex-shrink: 0 !important; }
+body.m-mf-plus .m-reactor-top .m-switch { transform: scale(0.85) !important; transform-origin: right center !important; margin-left: auto !important; }
 body.m-mf-plus .m-reactor-desc { margin-top: 6px !important; line-height: 1.45 !important; }
 body.m-mf-plus .m-tag-row { margin-top: 10px !important; }
 
@@ -6738,6 +6736,371 @@ body.m-mf-plus .m-tech-tag.tag-mfp {
     box-shadow: 0 0 12px -4px rgba(139, 92, 246, 0.4) !important;
 }
 body.m-mf-plus .m-tech-tag.tag-mfp i { color: #a78bfa !important; }
+
+/* =========================================================================
+   SaaS SKIN v9 — FLOATING PILL DOCK (capsula flottante IN ALTO, fissa)
+   ========================================================================= */
+body.m-mf-plus .m-dock-container {
+    position: fixed !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    top: calc(10px + env(safe-area-inset-top)) !important;
+    bottom: auto !important;
+    width: auto !important;
+    max-width: calc(100% - 24px) !important;
+    border-radius: 999px !important;
+    border: 1px solid rgba(150, 185, 230, 0.18) !important;
+    background: rgba(14, 23, 40, 0.82) !important;
+    box-shadow: 0 12px 34px -10px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06) !important;
+    backdrop-filter: blur(30px) saturate(160%) !important;
+    -webkit-backdrop-filter: blur(30px) saturate(160%) !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    flex-direction: row !important;
+}
+/* via la barra luminosa superiore: ora è una capsula */
+body.m-mf-plus .m-dock-container::before { display: none !important; }
+
+body.m-mf-plus .m-dock-nav {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    gap: 4px !important;
+    padding: 7px 9px !important;
+}
+
+/* item: pill orizzontale; inattivo = solo icona, attivo = icona+label */
+body.m-mf-plus .m-nav-item {
+    flex-direction: row !important;
+    width: auto !important;
+    min-height: 44px !important;
+    gap: 0 !important;
+    padding: 8px 13px !important;
+    border-radius: 999px !important;
+    border: 1px solid transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    transform: none !important;
+    overflow: hidden !important;
+    transition: background 0.25s ease, padding 0.25s cubic-bezier(.2,.8,.2,1), border-color 0.2s ease !important;
+}
+body.m-mf-plus .m-nav-item::before,
+body.m-mf-plus .m-nav-item::after { display: none !important; }
+
+/* icona emoji come glifo pulito (niente più badge quadrato) */
+body.m-mf-plus .m-nav-item .mf-nav-emoji {
+    width: auto !important; height: auto !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    font-size: 1.15rem !important;
+    margin: 0 !important;
+    filter: grayscale(0.2) opacity(0.78) !important;
+    transition: filter 0.2s ease, transform 0.2s ease !important;
+}
+body.m-mf-plus .m-nav-item > i { display: none !important; }
+
+/* label: nascosta di default, appare scorrendo quando attiva */
+body.m-mf-plus .m-nav-item > span:last-child {
+    max-width: 0 !important;
+    margin-left: 0 !important;
+    opacity: 0 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    color: #fff !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 0.72rem !important;
+    letter-spacing: 0.4px !important;
+    text-shadow: none !important;
+    transition: max-width 0.3s cubic-bezier(.2,.8,.2,1), opacity 0.25s ease, margin-left 0.25s ease !important;
+}
+
+/* ATTIVO: capsula gradient azzurra che si espande con la label */
+body.m-mf-plus .m-nav-item.active,
+body.m-mf-plus .m-nav-item:nth-child(1).active,
+body.m-mf-plus .m-nav-item:nth-child(2).active,
+body.m-mf-plus .m-nav-item:nth-child(3).active {
+    background: var(--s-grad) !important;
+    border-color: transparent !important;
+    box-shadow: 0 8px 22px -8px rgba(34,211,238,0.65) !important;
+    transform: none !important;
+    padding: 8px 16px !important;
+}
+body.m-mf-plus .m-nav-item.active .mf-nav-emoji {
+    filter: none !important;
+    transform: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+body.m-mf-plus .m-nav-item.active > span:last-child {
+    max-width: 90px !important;
+    opacity: 1 !important;
+    margin-left: 8px !important;
+}
+body.m-mf-plus .m-nav-item:not(.active):active {
+    background: rgba(150,185,230,0.12) !important;
+    transform: scale(0.95) !important;
+}
+
+/* contenuto: spazio in alto per il dock fisso, niente più spazio enorme in basso */
+body.m-mf-plus { --m-dock-h: 64px; }
+body.m-mf-plus .m-content {
+    padding-top: calc(76px + env(safe-area-inset-top)) !important;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom)) !important;
+}
+/* l'hero parte subito sotto il dock, ridotto lo spazio */
+body.m-mf-plus .m-hero { padding-top: 6px !important; }
+
+/* lowfx: niente blur pesante sulla capsula */
+body.m-mf-plus.m-lowfx .m-dock-container {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(16, 26, 44, 0.95) !important;
+}
+
+
+/* dock fisso in alto: neutralizza i vecchi spostamenti da tastiera (erano per il dock in basso) */
+body.m-mf-plus.m-keyboard-open .m-dock-container,
+body.m-mf-plus.m-typing .m-dock-container,
+body.m-mf-plus.m-input-active .m-dock-container,
+body.m-mf-plus.m-keyboard-open:not(.m-input-active) .m-dock-container,
+body.m-mf-plus.m-input-active.m-keyboard-open .m-dock-container {
+    transform: translateX(-50%) !important;
+    opacity: 1 !important;
+    top: calc(10px + env(safe-area-inset-top)) !important;
+    bottom: auto !important;
+}
+/* il dock in alto non ha più la sezione azioni: nascondila se presente */
+body.m-mf-plus .m-dock-actions { display: none !important; }
+body.m-mf-plus .m-dock-container::before { display: none !important; }
+
+/* =========================================================================
+   HOTFIX v10 — top navigation reale, niente barra blu/reserve in basso
+   ========================================================================= */
+body.m-mf-plus {
+    --m-dock-h: 0px !important;
+    --m-dock-gap: 0px !important;
+    --m-top-dock-h: 60px;
+}
+
+body.m-mf-plus #app-container,
+body.m-mf-plus .m-content-wrapper {
+    height: var(--m-vvh, 100dvh) !important;
+    max-height: var(--m-vvh, 100dvh) !important;
+    padding-bottom: 0 !important;
+    margin-bottom: 0 !important;
+    overflow: hidden !important;
+}
+
+body.m-mf-plus .m-content {
+    padding-top: calc(var(--m-top-dock-h) + 18px + env(safe-area-inset-top)) !important;
+    padding-right: 14px !important;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom)) !important;
+    padding-left: 14px !important;
+    scroll-padding-top: calc(var(--m-top-dock-h) + 18px + env(safe-area-inset-top)) !important;
+}
+
+body.m-mf-plus .m-hero {
+    padding-top: 4px !important;
+}
+
+body.m-mf-plus .m-dock-container {
+    position: fixed !important;
+    top: calc(8px + env(safe-area-inset-top)) !important;
+    right: auto !important;
+    bottom: auto !important;
+    left: 50% !important;
+    width: min(368px, calc(100% - 24px)) !important;
+    height: var(--m-top-dock-h) !important;
+    min-height: 0 !important;
+    max-height: var(--m-top-dock-h) !important;
+    padding: 5px !important;
+    margin: 0 !important;
+    transform: translate3d(-50%, 0, 0) !important;
+    border-radius: 999px !important;
+    border: 1px solid rgba(148, 209, 255, 0.25) !important;
+    background:
+        linear-gradient(135deg, rgba(20, 32, 52, 0.94), rgba(8, 16, 31, 0.90)),
+        radial-gradient(circle at 16% 0%, rgba(56, 189, 248, 0.28), transparent 44%),
+        radial-gradient(circle at 86% 14%, rgba(124, 58, 237, 0.22), transparent 40%) !important;
+    box-shadow:
+        0 16px 36px -18px rgba(0, 0, 0, 0.72),
+        0 0 0 1px rgba(255,255,255,0.035) inset,
+        0 1px 0 rgba(255,255,255,0.10) inset !important;
+    backdrop-filter: blur(22px) saturate(1.18) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(1.18) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    overflow: hidden !important;
+    z-index: 10030 !important;
+    touch-action: manipulation !important;
+    pointer-events: auto !important;
+}
+
+body.m-mf-plus .m-dock-container::before,
+body.m-mf-plus .m-dock-container::after,
+body.m-mf-plus .m-bottom-nav,
+body.m-mf-plus .m-dock-actions {
+    display: none !important;
+    pointer-events: none !important;
+}
+
+body.m-mf-plus .m-dock-nav {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 6px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 999px !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+body.m-mf-plus .m-nav-item {
+    width: 100% !important;
+    height: 48px !important;
+    min-height: 48px !important;
+    min-width: 0 !important;
+    padding: 0 10px !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 7px !important;
+    border-radius: 999px !important;
+    border: 1px solid rgba(255,255,255,0.07) !important;
+    background: rgba(255,255,255,0.035) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06) !important;
+    color: rgba(218, 239, 255, 0.80) !important;
+    opacity: 1 !important;
+    transform: translateZ(0) !important;
+    overflow: hidden !important;
+}
+
+body.m-mf-plus .m-nav-item::before,
+body.m-mf-plus .m-nav-item::after,
+body.m-mf-plus .m-nav-item > i {
+    display: none !important;
+}
+
+body.m-mf-plus .m-nav-item .mf-nav-emoji {
+    width: 22px !important;
+    height: 22px !important;
+    min-width: 22px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    font-size: 1.05rem !important;
+    line-height: 1 !important;
+    filter: saturate(1.05) opacity(0.78) !important;
+}
+
+body.m-mf-plus .m-nav-item > span:last-child {
+    max-width: none !important;
+    margin: 0 !important;
+    opacity: 1 !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    text-overflow: ellipsis !important;
+    color: rgba(226, 241, 255, 0.80) !important;
+    font-family: 'Rajdhani', sans-serif !important;
+    font-size: 0.74rem !important;
+    font-weight: 900 !important;
+    letter-spacing: 1.25px !important;
+    text-transform: uppercase !important;
+    text-shadow: none !important;
+}
+
+body.m-mf-plus .m-nav-item.active,
+body.m-mf-plus .m-nav-item:nth-child(1).active,
+body.m-mf-plus .m-nav-item:nth-child(2).active,
+body.m-mf-plus .m-nav-item:nth-child(3).active {
+    padding: 0 12px !important;
+    border-color: rgba(120, 232, 255, 0.56) !important;
+    background:
+        linear-gradient(135deg, rgba(51, 214, 255, 0.95), rgba(63, 142, 255, 0.92) 54%, rgba(116, 83, 255, 0.90)) !important;
+    color: #ffffff !important;
+    box-shadow:
+        0 12px 26px -15px rgba(34, 211, 238, 0.85),
+        inset 0 1px 0 rgba(255,255,255,0.28),
+        inset 0 -1px 0 rgba(0,0,0,0.12) !important;
+    transform: translateZ(0) !important;
+}
+
+body.m-mf-plus .m-nav-item.active .mf-nav-emoji {
+    filter: none !important;
+    transform: scale(1.02) !important;
+}
+
+body.m-mf-plus .m-nav-item.active > span:last-child {
+    color: #ffffff !important;
+    opacity: 1 !important;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.18) !important;
+}
+
+body.m-mf-plus .m-nav-item:not(.active):active {
+    background: rgba(148, 209, 255, 0.14) !important;
+    transform: scale(0.97) !important;
+}
+
+body.m-mf-plus.m-keyboard-open .m-content-wrapper,
+body.m-mf-plus.m-typing .m-content-wrapper,
+body.m-mf-plus.m-input-active .m-content-wrapper {
+    padding-bottom: 0 !important;
+}
+
+body.m-mf-plus.m-keyboard-open .m-content,
+body.m-mf-plus.m-typing .m-content,
+body.m-mf-plus.m-input-active .m-content {
+    padding-top: calc(var(--m-top-dock-h) + 18px + env(safe-area-inset-top)) !important;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom)) !important;
+}
+
+body.m-mf-plus.m-keyboard-open .m-dock-container,
+body.m-mf-plus.m-typing .m-dock-container,
+body.m-mf-plus.m-input-active .m-dock-container,
+body.m-mf-plus.m-keyboard-open:not(.m-input-active) .m-dock-container,
+body.m-mf-plus.m-input-active.m-keyboard-open .m-dock-container {
+    top: calc(8px + env(safe-area-inset-top)) !important;
+    bottom: auto !important;
+    transform: translate3d(-50%, 0, 0) !important;
+    opacity: 1 !important;
+}
+
+@media (max-width: 360px) {
+    body.m-mf-plus { --m-top-dock-h: 56px; }
+    body.m-mf-plus .m-dock-container {
+        width: calc(100% - 18px) !important;
+        padding: 4px !important;
+    }
+    body.m-mf-plus .m-dock-nav { gap: 4px !important; }
+    body.m-mf-plus .m-nav-item {
+        height: 46px !important;
+        min-height: 46px !important;
+        gap: 5px !important;
+        padding: 0 7px !important;
+    }
+    body.m-mf-plus .m-nav-item .mf-nav-emoji { font-size: 1rem !important; }
+    body.m-mf-plus .m-nav-item > span:last-child {
+        font-size: 0.66rem !important;
+        letter-spacing: 0.8px !important;
+    }
+}
 
 
 `;
@@ -9490,4 +9853,5 @@ startMobileInterfaceWhenReady();
         document.body.classList.add('m-ui-ready');
     } catch (_) {}
 })();
+
 
