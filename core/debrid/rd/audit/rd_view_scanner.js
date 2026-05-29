@@ -6,7 +6,7 @@ const dbHelper = require('../../../storage/db_repository');
 const RealDebridProbe = require('../probe/realdebrid_probe');
 const EpisodePrecision = require('../../../stream/episode_precision');
 const RdOracle = require('../state/cache_oracle');
-const { shouldSkipRecentWork } = require('../../../recent_work');
+const { shouldSkipRecentWork } = require('../../../utils/recent_work');
 let RawStreamCache = null;
 try {
     RawStreamCache = require('../../../cache/raw_stream_cache');

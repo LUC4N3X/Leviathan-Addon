@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 const { extractInfoHash } = require('../utils');
-const { parseSeasonEpisode } = require('../pack_intelligence');
+const { parseSeasonEpisode } = require('../intelligence/pack_intelligence');
 
 function normalizeHash(value) {
     const normalized = String(value || '').trim().toUpperCase();

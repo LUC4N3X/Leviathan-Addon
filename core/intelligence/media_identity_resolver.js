@@ -1,8 +1,8 @@
 const axios = require("axios");
 const http = require("http");
 const https = require("https");
-const dbRepository = require("./storage/db_repository");
-const tmdbHelper = require("./utils/tmdb_helper");
+const dbRepository = require("../storage/db_repository");
+const tmdbHelper = require("../utils/tmdb_helper");
 
 const CONFIG = {
     DEFAULT_TMDB_KEY: tmdbHelper.TMDB_KEY,

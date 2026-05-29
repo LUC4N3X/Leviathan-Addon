@@ -4,7 +4,7 @@ const https = require("https");
 const pLimitModule = require("p-limit");
 const pLimit = typeof pLimitModule === "function" ? pLimitModule : pLimitModule.default;
 const he = require("he");
-const { ENGINE_BROWSER_PROFILES } = require('../core/browser_profiles');
+const { ENGINE_BROWSER_PROFILES } = require('../core/security/browser_profiles');
 const { TtlLruCache } = require('./utils/provider_runtime');
 const { requestWithImpit } = require('./utils/bypass');
 

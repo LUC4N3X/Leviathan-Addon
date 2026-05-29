@@ -5,7 +5,7 @@ const runtimeState = require('../../runtime_state');
 const tmdbHelper = require('../../utils/tmdb_helper');
 const RealDebridProbe = require('../../debrid/rd/probe/realdebrid_probe');
 const TorboxClient = require('../../debrid/tb/clients/torbox_client');
-const { parseSeasonEpisode } = require('../../pack_intelligence');
+const { parseSeasonEpisode } = require('../../intelligence/pack_intelligence');
 const {
     normalizeHash,
     parseMagnetInput,

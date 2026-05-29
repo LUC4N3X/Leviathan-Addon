@@ -2,7 +2,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
-const mediaIdentity = require('../../core/media_identity_resolver');
+const mediaIdentity = require('../../core/intelligence/media_identity_resolver');
 const kitsuProvider = require('../animeworld/kitsu_provider');
 const animeProviderUtils = require('../anime/provider_utils');
 const {

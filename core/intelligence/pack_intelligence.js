@@ -1,4 +1,4 @@
-const { tokenizeTitle: canonicalTokenizeTitle } = require('./canonical/title_parser');
+const { tokenizeTitle: canonicalTokenizeTitle } = require('../canonical/title_parser');
 const axios = require('axios');
 const crypto = require('crypto');
 
