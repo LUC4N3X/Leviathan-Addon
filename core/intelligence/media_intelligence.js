@@ -1,4 +1,4 @@
-const { resolveLangMode: canonicalResolveLangMode } = require('./canonical/language_rules');
+const { resolveLangMode: canonicalResolveLangMode } = require('../canonical/language_rules');
 
 const STOP_WORDS = new Set([
   'il','lo','la','i','gli','le','l','un','uno','una','di','a','da','in','con','su','per','tra','fra',

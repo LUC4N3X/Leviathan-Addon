@@ -7,7 +7,7 @@ const tmdbHelper        = require('../../core/utils/tmdb_helper');
 const animeIdentity     = require('../anime/anime_identity');
 const kitsuProvider     = require('../animeworld/kitsu_provider');
 const animeProviderUtils = require('../anime/provider_utils');
-const browserProfiles   = require('../../core/browser_profiles');
+const browserProfiles   = require('../../core/security/browser_profiles');
 const { pickRandomProfile } = browserProfiles;
 const {
   buildWebStream,

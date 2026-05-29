@@ -25,7 +25,7 @@ try {
         });
     };
 }
-const { LEGACY_BROWSER_PROFILES } = require('../browser_profiles');
+const { LEGACY_BROWSER_PROFILES } = require('../security/browser_profiles');
 let logger; try { ({ logger } = require('../utils/runtime')); } catch { logger = console; }
 const { EXTERNAL_ADDONS, getAddon, getAddonGroup, getAddonEmoji } = require('./addons');
 const { getImpitBrowserForFingerprint, requestWithImpit } = require('../../providers/utils/bypass');

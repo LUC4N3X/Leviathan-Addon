@@ -11,7 +11,7 @@ try { Tesseract = require('tesseract.js'); } catch (_) { Tesseract = null; }
 let setCookieParser = null;
 try { setCookieParser = require('set-cookie-parser'); } catch (_) { setCookieParser = null; }
 const { getOrigin, normalizeRemoteUrl } = require('../common');
-const { captchaOrchestrator } = require('../../../core/captcha_orchestrator');
+const { captchaOrchestrator } = require('../../../core/security/captcha_orchestrator');
 const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,

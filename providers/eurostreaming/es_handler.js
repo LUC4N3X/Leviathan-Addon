@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 const path = require('path');
 const { buildMediaflowUrl, buildWebStream, normalizeRemoteUrl } = require('../extractors/common');
-const { captchaOrchestrator } = require('../../core/captcha_orchestrator');
+const { captchaOrchestrator } = require('../../core/security/captcha_orchestrator');
 const { createMediaflowGateway, getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
 const { isUprotUrl, resolveUprotToMaxstream } = require('../extractors/hosters/uprot');
 const { extractMaxstream } = require('../extractors/hosters/maxstream');

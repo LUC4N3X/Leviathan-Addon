@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseSeasonEpisode } = require('../core/pack_intelligence');
+const { parseSeasonEpisode } = require('../core/intelligence/pack_intelligence');
 
 const cases = [
   {

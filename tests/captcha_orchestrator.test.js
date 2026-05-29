@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { CaptchaOrchestrator, createCaptchaKey } = require('../core/captcha_orchestrator');
+const { CaptchaOrchestrator, createCaptchaKey } = require('../core/security/captcha_orchestrator');
 
 test('captcha orchestrator stores scoped state and enforces retry budget', async () => {
     const orchestrator = new CaptchaOrchestrator({ defaultTtlMs: 10_000, failureTtlMs: 10_000, defaultRetryBudget: 2 });
