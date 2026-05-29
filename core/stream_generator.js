@@ -90,6 +90,20 @@ const {
 } = require('./stream/debrid_runtime_options');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
+// Smart Torrentio fallback policy: keep this hardcoded on purpose.
+// Torrentio main wins only when it has enough authoritative cached rows;
+// otherwise mirror is allowed to fill the gap, and MediaFusion is used only as
+// a RealDebrid-checked rescue when Torrentio coverage is still thin.
+const TORRENTIO_MAIN_STRONG_STOP_MIN = 3;
+const TORRENTIO_TOTAL_STRONG_STOP_MIN = 5;
+
+// DB-heavy policy: the internal DB is intentionally treated as a strong source.
+// No new env knobs: if the DB already has good episode/movie candidates, use it
+// before widening to external addons.
+const DB_HEAVY_SERIES_PRIMARY_MIN = 2;
+const DB_HEAVY_SERIES_FALLBACK_LIMIT = 30;
+const DB_HEAVY_SERIES_EXTERNAL_FILL_LIMIT = 8;
+
 const {
   logger, Cache, LIMITERS, CONFIG, REGEX_SUB_ONLY, REGEX_AUDIO_CONFIRM, REGEX_YEAR, EMPTY_STREAM_TTL, METADATA_CACHE_TTL,
   getLanguageInfo, parseTitleDetails, formatLanguageLabel, isSeasonPack, isGoodShortQueryMatch, chooseBestPackTitle, shouldUpdatePackTitle,
@@ -517,6 +531,29 @@ function isMediaFusionExternalItem(item = {}) {
     return group === 'mediafusion' || addon === 'mediafusion' || source.includes('mediafusion');
 }
 
+function hasExternalCachedRdState(item = {}) {
+    const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || '').toLowerCase();
+    return state === 'cached' || state === 'likely_cached' || item?.cached_rd === true || item?._dbCachedRd === true || item?.isCached === true || item?.cached === true;
+}
+
+function isStrongTorrentioCachedResult(item = {}) {
+    if (!isTorrentioExternalItem(item)) return false;
+    if (hasTorrentioRdDownloadMarker(item)) return false;
+    return Boolean(
+        item?._torrentioRdAuthority === true ||
+        item?._torrentioCached === true ||
+        item?._rdProof === 'torrentio_cached_marker' ||
+        item?._rdProof === 'torrentio_direct_url' ||
+        item?._rdProof === 'torrentio_passthrough_url' ||
+        getTorrentioPassthroughUrl(item) ||
+        hasExternalCachedRdState(item)
+    );
+}
+
+function countStrongTorrentioCachedResults(items = []) {
+    return dedupeExternalCandidates((Array.isArray(items) ? items : []).filter(isStrongTorrentioCachedResult)).length;
+}
+
 function collectTorrentioItalianEvidenceText(item = {}) {
     const info = item?._externalLanguageInfo && typeof item._externalLanguageInfo === 'object'
         ? item._externalLanguageInfo
@@ -583,8 +620,8 @@ function assessFastResultQuality(items, meta, langMode, config) {
 }
 
 function getSeriesDbFallbackLimit(filters = {}) {
-    const raw = filters.seriesDbFallbackLimit ?? process.env.SERIES_DB_FALLBACK_LIMIT ?? '10';
-    return Math.max(0, Math.min(40, parseInt(raw, 10) || 10));
+    const raw = filters.seriesDbFallbackLimit ?? DB_HEAVY_SERIES_FALLBACK_LIMIT;
+    return Math.max(0, Math.min(60, parseInt(raw, 10) || DB_HEAVY_SERIES_FALLBACK_LIMIT));
 }
 
 function getMovieDbFallbackLimit(filters = {}, service = null) {
@@ -810,6 +847,18 @@ function shouldUseDbCoverageItem(item = {}) {
     return getDbCoverageScore(item) > 0;
 }
 
+function shouldUseSeriesDbCoverageItem(item = {}) {
+    if (!item || !getCandidateInfoHash(item)) return false;
+    if (isKnownRdUnavailableCandidate(item)) return false;
+    return Boolean(
+        isLocalDbCandidate(item) ||
+        isMovieDbPrimaryCandidate(item) ||
+        item?._myDb === true ||
+        item?._dbPrimary === true ||
+        item?._dbEpisodeMapping === true
+    );
+}
+
 function preserveMovieLocalDbCoverage(rankedList = [], localDbPool = [], meta = {}, filters = {}, config = {}) {
     const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
     if (isSeries) return rankedList;
@@ -880,10 +929,60 @@ function preserveMovieLocalDbCoverage(rankedList = [], localDbPool = [], meta = 
     return output;
 }
 
+
+function preserveSeriesLocalDbCoverage(rankedList = [], localDbPool = [], meta = {}, filters = {}) {
+    const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
+    if (!isSeries) return rankedList;
+
+    const limit = getSeriesDbFallbackLimit(filters);
+    if (limit <= 0) return rankedList;
+
+    const list = Array.isArray(rankedList) ? rankedList : [];
+    const sourcePool = Array.isArray(localDbPool) ? localDbPool : [];
+    const dbPool = sourcePool
+        .filter(shouldUseSeriesDbCoverageItem)
+        .sort((a, b) => getDbCoverageScore(b) - getDbCoverageScore(a));
+    if (dbPool.length === 0) return list;
+
+    const keyFor = (item = {}) => {
+        const hash = getCandidateInfoHash(item);
+        if (!hash) return null;
+        const fileIdx = Number.isInteger(Number(item?.fileIdx)) ? Number(item.fileIdx) : -1;
+        return `${hash}:${fileIdx}`;
+    };
+
+    const existing = new Set(list.map(keyFor).filter(Boolean));
+    const currentDbCount = list.filter(shouldUseSeriesDbCoverageItem).length;
+    const wanted = Math.max(0, Math.min(limit, dbPool.length) - currentDbCount);
+    if (wanted <= 0) return list;
+
+    const additions = [];
+    for (const item of dbPool) {
+        const key = keyFor(item);
+        if (!key || existing.has(key)) continue;
+        existing.add(key);
+        additions.push({
+            ...item,
+            _myDb: true,
+            _dbPrimary: true,
+            _sourceGroup: item?._sourceGroup || 'local_db',
+            _fallbackGroup: item?._fallbackGroup || 'series_db_coverage'
+        });
+        if (additions.length >= wanted) break;
+    }
+
+    if (additions.length > 0) {
+        logger.info(`[DB COVERAGE] series DB coverage promoted=${additions.length} current=${currentDbCount} limit=${limit} dbPool=${dbPool.length}`);
+        return [...additions, ...list];
+    }
+
+    return list;
+}
+
 function shouldAllowSeriesDbFastPath(filters = {}, service = null) {
     const value = filters.seriesDbFastPath ?? process.env.SERIES_DB_FAST_PATH;
     if (value !== undefined && value !== null && String(value).trim() !== '') return isTruthyConfigValue(value);
-    return String(service || '').toLowerCase() === 'tb';
+    return true;
 }
 
 function markFallbackGroup(items = [], group = 'fallback') {
@@ -937,6 +1036,29 @@ function buildGroupedFallbackCandidatePool({ localDbPool = [], networkResults = 
         return [...snapshotFill, ...externalFromNetwork];
     }
 
+    const primaryFromDb = dbList.filter(shouldUseSeriesDbCoverageItem);
+    const primaryFromNetworkDb = networkList.filter((item) => isMovieDbPrimaryCandidate(item) || shouldUseSeriesDbCoverageItem(item));
+    const externalFromNetwork = networkList.filter((item) => !isMovieDbPrimaryCandidate(item) && !shouldUseSeriesDbCoverageItem(item));
+    const dbPrimary = [...primaryFromDb, ...primaryFromNetworkDb];
+    const dbAssessment = assessFastResultQuality(dbPrimary, meta, langMode, config);
+    const dbSatisfaction = evaluatePoolSatisfaction(dbAssessment, meta);
+    const dbCoverage = countDbCoverageCandidates(dbPrimary);
+    const dbIsPrimarySatisfied = dbPrimary.length > 0 && (
+        dbSatisfaction.satisfied ||
+        Number(dbAssessment.exactEpisodeCount || 0) >= 1 ||
+        Number(dbAssessment.strongCount || 0) >= DB_HEAVY_SERIES_PRIMARY_MIN ||
+        dbCoverage >= DB_HEAVY_SERIES_PRIMARY_MIN
+    );
+
+    if (dbIsPrimarySatisfied) {
+        const externalFill = externalFromNetwork.slice(0, DB_HEAVY_SERIES_EXTERNAL_FILL_LIMIT);
+        logger.info(`[GROUP FALLBACK] series DB-primary wins | dbPrimary=${dbPrimary.length} local=${primaryFromDb.length} remoteDb=${primaryFromNetworkDb.length} exact=${dbAssessment.exactEpisodeCount} strong=${dbAssessment.strongCount} coverage=${dbCoverage} reason=${dbSatisfaction.reason} externalFill=${externalFill.length}/${externalFromNetwork.length}`);
+        return [
+            ...markFallbackGroup(dbPrimary, 'series_db_primary'),
+            ...markFallbackGroup(externalFill, 'network_fill')
+        ];
+    }
+
     const networkAssessment = assessFastResultQuality(networkList, meta, langMode, config);
     const networkSatisfaction = evaluatePoolSatisfaction(networkAssessment, meta);
     const dbLimit = getSeriesDbFallbackLimit(filters);
@@ -951,10 +1073,10 @@ function buildGroupedFallbackCandidatePool({ localDbPool = [], networkResults = 
         ];
     }
 
-    logger.info(`[GROUP FALLBACK] series network not enough reason=${networkSatisfaction.reason} exact=${networkAssessment.exactEpisodeCount} strong=${networkAssessment.strongCount} -> include full DB fallback=${dbList.length}`);
+    logger.info(`[GROUP FALLBACK] series network not enough reason=${networkSatisfaction.reason} exact=${networkAssessment.exactEpisodeCount} strong=${networkAssessment.strongCount} -> DB-heavy fallback=${dbList.length}`);
     return [
-        ...markFallbackGroup(networkList, 'network_primary'),
-        ...markFallbackGroup(dbList, 'db_full_fallback')
+        ...markFallbackGroup(dbList, 'db_full_fallback'),
+        ...markFallbackGroup(networkList, 'network_primary')
     ];
 }
 
@@ -4011,33 +4133,54 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
             return base;
         };
 
-        const torrentioResults = await withTimeout(
-            runBatch(['torrentio_main', 'torrentio_mirror'], 'Torrentio'),
+        const torrentioMainResults = await withTimeout(
+            runBatch(['torrentio_main'], 'Torrentio Main'),
             Math.max(CONFIG.TIMEOUTS.EXTERNAL, 4500),
-            'Torrentio External Addons'
+            'Torrentio Main External Addon'
         );
+        const torrentioMainStrong = countStrongTorrentioCachedResults(torrentioMainResults);
 
-        if (torrentioResults.length > 0) {
-            logger.info(`[EXTERNAL] Torrentio aggregate=${torrentioResults.length} ids=${requestIds.length} -> MediaFusion SKIP`);
-            const supplemented = await withMeteorSupplement(torrentioResults, 'with Torrentio');
+        if (torrentioMainStrong >= TORRENTIO_MAIN_STRONG_STOP_MIN) {
+            logger.info(`[EXTERNAL] Torrentio main strong=${torrentioMainStrong}/${torrentioMainResults.length} >= ${TORRENTIO_MAIN_STRONG_STOP_MIN} ids=${requestIds.length} -> mirror/mediafusion SKIP`);
+            const supplemented = await withMeteorSupplement(torrentioMainResults, 'with Torrentio main');
             logger.info(`[EXTERNAL] Trovati ${supplemented.length} risultati ids=${requestIds.length}`);
             return supplemented;
         }
 
-        logger.info(`[EXTERNAL] Torrentio aggregate=0 ids=${requestIds.length} -> MediaFusion RUN`);
+        logger.info(`[EXTERNAL] Torrentio main strong=${torrentioMainStrong}/${torrentioMainResults.length} < ${TORRENTIO_MAIN_STRONG_STOP_MIN} ids=${requestIds.length} -> mirror RUN`);
+        const torrentioMirrorResults = await withTimeout(
+            runBatch(['torrentio_mirror'], 'Torrentio Mirror'),
+            Math.max(CONFIG.TIMEOUTS.EXTERNAL, 4500),
+            'Torrentio Mirror External Addon'
+        );
+
+        const torrentioResults = dedupeExternalCandidates([...torrentioMainResults, ...torrentioMirrorResults]);
+        const torrentioTotalStrong = countStrongTorrentioCachedResults(torrentioResults);
+
+        if (torrentioTotalStrong >= TORRENTIO_TOTAL_STRONG_STOP_MIN) {
+            logger.info(`[EXTERNAL] Torrentio total strong=${torrentioTotalStrong}/${torrentioResults.length} >= ${TORRENTIO_TOTAL_STRONG_STOP_MIN} ids=${requestIds.length} -> MediaFusion SKIP`);
+            const supplemented = await withMeteorSupplement(torrentioResults, 'with Torrentio main+mirror');
+            logger.info(`[EXTERNAL] Trovati ${supplemented.length} risultati ids=${requestIds.length}`);
+            return supplemented;
+        }
+
+        logger.info(`[EXTERNAL] Torrentio total strong=${torrentioTotalStrong}/${torrentioResults.length} < ${TORRENTIO_TOTAL_STRONG_STOP_MIN} ids=${requestIds.length} -> MediaFusion RD-check RUN`);
         const mediaFusionResults = await withTimeout(
             runBatch(['mediafusion'], 'MediaFusion'),
             Math.max(CONFIG.TIMEOUTS.EXTERNAL, 4500),
             'MediaFusion External Addons'
         );
 
-        if (mediaFusionResults.length > 0) {
-            const supplemented = await withMeteorSupplement(mediaFusionResults, 'with MediaFusion');
+        const mergedExternalResults = dedupeExternalCandidates([...torrentioResults, ...mediaFusionResults]);
+        if (mergedExternalResults.length > 0) {
+            const stageLabel = mediaFusionResults.length > 0 ? 'with Torrentio + MediaFusion' : 'with scarce Torrentio';
+            logger.info(`[EXTERNAL] Torrentio strong=${torrentioTotalStrong}/${torrentioResults.length} MediaFusion=${mediaFusionResults.length} merged=${mergedExternalResults.length} ids=${requestIds.length}`);
+            const supplemented = await withMeteorSupplement(mergedExternalResults, stageLabel);
             logger.info(`[EXTERNAL] Trovati ${supplemented.length} risultati ids=${requestIds.length}`);
             return supplemented;
         }
 
-        logger.info(`[EXTERNAL] MediaFusion aggregate=0 ids=${requestIds.length} -> Meteor ONLY`);
+        logger.info(`[EXTERNAL] Torrentio+MediaFusion aggregate=0 ids=${requestIds.length} -> Meteor ONLY`);
         const meteorResults = await meteorSupplementPromise;
 
         if (meteorResults.length > 0) {
@@ -4168,7 +4311,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
                     const externalRequestIds = buildExternalAddonRequestIds(type, finalId, meta);
                     const externalConfigSig = crypto.createHash("sha1").update(JSON.stringify({ service: config?.service || "", rd: config?.rd || config?.realdebrid || "", tb: config?.tb || config?.torbox || "", key: config?.key || "" })).digest("hex").slice(0, 12);
-                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}:torrentioItTrustV16TbDbFirst`;
+                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}:torrentioSmartFallbackNoEnvV18`;
                     const createExternalPromise = () => disableLiveSources && !flags.useProviderCachedOnly
                         ? Promise.resolve([])
                         : Cache.fetchWithCache('ExternalAddons', externalCacheKey, 43200, () =>
@@ -4338,7 +4481,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const streamCacheVersionParts = [];
-  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v24|movieDbPriorityVerifiedSkip=v3|tbDbFirst=v1|rdDirectNoLazy=v2|rdDownloadFallback=v1|torrentioRdNativeConfig=v2');
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v24|movieDbPriorityVerifiedSkip=v3|tbDbFirst=v1|rdDirectNoLazy=v2|rdDownloadFallback=v1|torrentioSmartFallback=v1');
   // Bust stale web-provider stream lists generated by the temporary MaxStream
   // .m3u8 route. This prevents Stremio/VLC from receiving old cached
   // /extractor/video.m3u8 URLs after the compatibility rollback.
@@ -4599,11 +4742,12 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               logger.info(`[DEDUPE INFOHASH] ranked removed=${infoHashRankDedupe.removed} kept=${infoHashRankDedupe.results.length} title="${String(meta?.title || '').slice(0, 80)}" s=${meta?.season || '-'} e=${meta?.episode || '-'}`);
           }
           rankedList = preserveRdStatusList(beforeInfoHashDedupe, infoHashRankDedupe.results, { logger, stage: 'ranked-dedupe' });
-          const movieDbPrimaryCoveragePool = [
+          const dbPrimaryCoveragePool = [
               ...(localDbFastPool.length > 0 ? localDbFastPool : dbSeedResults),
-              ...(Array.isArray(networkResults) ? networkResults.filter(isMovieDbPrimaryCandidate) : [])
+              ...(Array.isArray(networkResults) ? networkResults.filter((item) => isMovieDbPrimaryCandidate(item) || shouldUseSeriesDbCoverageItem(item)) : [])
           ];
-          rankedList = preserveMovieLocalDbCoverage(rankedList, movieDbPrimaryCoveragePool, meta, filters, config);
+          rankedList = preserveMovieLocalDbCoverage(rankedList, dbPrimaryCoveragePool, meta, filters, config);
+          rankedList = preserveSeriesLocalDbCoverage(rankedList, dbPrimaryCoveragePool, meta, filters, config);
           trace.stage('ranked-dedupe', {
               in: beforeInfoHashDedupe.length,
               kept: rankedList.length,
