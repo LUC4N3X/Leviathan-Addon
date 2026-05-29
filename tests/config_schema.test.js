@@ -53,3 +53,25 @@ test('decodeConfigBase64 supports encrypted user config tokens', async () => {
   assert.equal(decoded.key, 'secret-token');
   assert.equal(decoded.filters.enableGhd, true);
 });
+
+test('validateConfig normalizes saved cloud aggressive and torrent intelligence settings', () => {
+  const config = validateConfig({
+    filters: {
+      enableSavedCloud: true,
+      savedCloudAggressive: true,
+      savedCloudScanLimit: '333',
+      savedCloudSnapshotTtlSeconds: '3600',
+      useTorrentIntelligenceRanking: true
+    },
+    ranking: {
+      torrentIntelligenceWeight: '1.5'
+    }
+  });
+
+  assert.equal(config.filters.enableSavedCloud, true);
+  assert.equal(config.filters.savedCloudAggressive, true);
+  assert.equal(config.filters.savedCloudScanLimit, 333);
+  assert.equal(config.filters.savedCloudSnapshotTtlSeconds, 3600);
+  assert.equal(config.ranking.useTorrentIntelligenceRanking, true);
+  assert.equal(config.ranking.torrentIntelligenceWeight, 1.5);
+});

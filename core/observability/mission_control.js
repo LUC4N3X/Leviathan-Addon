@@ -20,10 +20,11 @@ async function buildMissionControlPayload({
     traceLimit = 12
 } = {}) {
     const snapshot = typeof getStatsSnapshot === 'function' ? (getStatsSnapshot() || {}) : {};
-    const [rdScanProgress, externalSnapshots, availabilityCache] = await Promise.all([
+    const [rdScanProgress, externalSnapshots, availabilityCache, postgresCache] = await Promise.all([
         safeMissionSection('rd_scan_progress', async () => (typeof dbHelper?.getRdScanProgress === 'function' ? dbHelper.getRdScanProgress() : null)),
         safeMissionSection('external_snapshots', async () => (typeof dbHelper?.getExternalSnapshotStats === 'function' ? dbHelper.getExternalSnapshotStats() : null)),
-        safeMissionSection('availability_cache', async () => (typeof dbHelper?.getAvailabilityCacheStats === 'function' ? dbHelper.getAvailabilityCacheStats() : null))
+        safeMissionSection('availability_cache', async () => (typeof dbHelper?.getAvailabilityCacheStats === 'function' ? dbHelper.getAvailabilityCacheStats() : null)),
+        safeMissionSection('postgres_cache_overview', async () => (typeof dbHelper?.getPostgresCacheOverview === 'function' ? dbHelper.getPostgresCacheOverview() : null))
     ]);
 
     return {
@@ -35,7 +36,8 @@ async function buildMissionControlPayload({
         cache: {
             health: typeof getCacheHealthStatus === 'function' ? getCacheHealthStatus() : null,
             streamIndex: typeof Cache?.getStreamCacheIndexStats === 'function' ? Cache.getStreamCacheIndexStats() : null,
-            counters: snapshot?.cache || null
+            counters: snapshot?.cache || null,
+            postgres: postgresCache
         },
         debrid: {
             scanner: typeof getRdAuditorStatus === 'function' ? getRdAuditorStatus() : null,
