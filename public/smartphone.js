@@ -396,7 +396,7 @@ body::before {
     position: absolute; top: -70px; left: 0; width: 100%; height: 70px;
     display: flex; align-items: flex-end; justify-content: center;
     padding-bottom: 15px; color: var(--m-primary);
-    z-index: 100;
+    z-index: 10040;
     pointer-events: none; opacity: 0; transition: opacity 0.2s ease-out;
 }
 .m-ptr-icon {
@@ -1236,6 +1236,15 @@ body::before {
 
 #mod-es { --glow-color: rgba(45, 212, 191, 0.8); --border-color: #2dd4bf; --border-color-dim: rgba(45, 212, 191,0.3); --core-bg: rgba(45, 212, 191,0.2); }
 #mod-es .m-core-icon { color: #2dd4bf; }
+
+#mod-cb01 { --glow-color: rgba(245, 158, 11, 0.8); --border-color: #f59e0b; --border-color-dim: rgba(245, 158, 11,0.3); --core-bg: rgba(245, 158, 11,0.2); }
+#mod-cb01 .m-core-icon { color: #f59e0b; }
+
+#mod-au { --glow-color: rgba(236, 72, 153, 0.8); --border-color: #ec4899; --border-color-dim: rgba(236, 72, 153,0.3); --core-bg: rgba(236, 72, 153,0.2); }
+#mod-au .m-core-icon { color: #ec4899; }
+
+#mod-gstv { --glow-color: rgba(99, 102, 241, 0.8); --border-color: #6366f1; --border-color-dim: rgba(99, 102, 241,0.3); --core-bg: rgba(99, 102, 241,0.2); }
+#mod-gstv .m-core-icon { color: #6366f1; }
 
 .m-reactor-top .m-switch { transform: scale(0.85); transform-origin: right center; }
 
@@ -2898,50 +2907,68 @@ body.m-mf-plus .m-reactor-grid {
 
 body.m-mf-plus .m-reactor-module {
     min-height: 82px;
-    border-radius: 23px;
+    border-radius: 22px;
+    padding-top: 5px;
     background:
-        radial-gradient(circle at 0 0, rgba(255,255,255,0.045), transparent 40%),
-        linear-gradient(145deg, rgba(12, 31, 49, 0.91), rgba(3, 10, 19, 0.98));
+        radial-gradient(circle at 0 0, rgba(255,255,255,0.04), transparent 42%),
+        linear-gradient(145deg, rgba(11, 27, 44, 0.86), rgba(3, 9, 17, 0.97));
     border: 1px solid var(--lc-card-line-soft);
-    box-shadow: var(--lc-card-shadow-soft), inset 0 1px 0 rgba(255,255,255,0.045);
+    box-shadow: var(--lc-card-shadow-soft), inset 0 1px 0 rgba(255,255,255,0.04);
+    transition: border-color 0.32s ease, box-shadow 0.32s ease, transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), background 0.32s ease;
 }
 
 body.m-mf-plus .m-reactor-module::before {
     content: "";
     position: absolute;
     left: 0;
-    top: 12px;
-    bottom: 12px;
-    width: 4px;
-    border-radius: 999px;
-    background: var(--border-color, var(--m-primary));
-    opacity: 0.34;
-    box-shadow: 0 0 12px var(--glow-color, rgba(0,242,255,0.28));
+    right: 0;
+    top: 0;
+    height: 3px;
+    border-radius: 22px 22px 0 0;
+    background: linear-gradient(90deg, var(--border-color, var(--m-primary)), color-mix(in srgb, var(--border-color, var(--m-primary)) 30%, transparent) 88%);
+    opacity: 0.26;
+    box-shadow: 0 0 14px var(--glow-color, rgba(0,242,255,0.26));
+    transition: opacity 0.32s ease, height 0.32s ease;
+    z-index: 4;
 }
 
 body.m-mf-plus .m-reactor-module.active {
-    border-color: var(--border-color);
+    border-color: var(--border-color-dim);
+    transform: translateY(-2px);
     background:
-        radial-gradient(circle at 0 0, var(--glow-color), transparent 45%),
-        linear-gradient(145deg, rgba(16, 42, 65, 0.98), rgba(3, 10, 19, 0.99));
-    box-shadow: 0 10px 24px rgba(0,0,0,0.42), 0 0 0 1px var(--border-color-dim), inset 0 1px 0 rgba(255,255,255,0.06);
+        radial-gradient(circle at 0 0, var(--glow-color), transparent 48%),
+        linear-gradient(145deg, rgba(15, 38, 60, 0.96), rgba(3, 10, 19, 0.99));
+    box-shadow: 0 14px 30px rgba(0,0,0,0.46), 0 0 0 1px var(--border-color-dim), 0 8px 22px -8px var(--glow-color, rgba(0,242,255,0.3)), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 
 body.m-mf-plus .m-reactor-module.active::before {
     opacity: 1;
+    height: 4px;
 }
 
 body.m-mf-plus .m-reactor-core {
-    width: 54px;
-    margin: 11px 0 11px 11px;
-    border-radius: 18px;
+    width: 50px;
+    height: 50px;
+    align-self: center;
+    margin: 11px 2px 11px 13px;
+    border-radius: 15px;
     border-right: 0;
-    background: rgba(255,255,255,0.055);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+    background:
+        linear-gradient(145deg, color-mix(in srgb, var(--border-color, var(--m-primary)) 16%, rgba(255,255,255,0.02)), rgba(255,255,255,0.015));
+    border: 1px solid color-mix(in srgb, var(--border-color, var(--m-primary)) 22%, transparent);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.07);
+    transition: background 0.32s ease, box-shadow 0.32s ease, border-color 0.32s ease;
 }
 
 body.m-mf-plus .m-reactor-module.active .m-reactor-core {
-    background: color-mix(in srgb, var(--border-color) 18%, rgba(255,255,255,0.04));
+    background: linear-gradient(145deg, var(--border-color), color-mix(in srgb, var(--border-color) 55%, #000));
+    border-color: transparent;
+    box-shadow: 0 6px 16px -4px var(--glow-color, rgba(0,242,255,0.45)), inset 0 1px 0 rgba(255,255,255,0.22);
+}
+
+body.m-mf-plus .m-reactor-module.active .m-core-icon {
+    opacity: 1;
+    filter: drop-shadow(0 1px 3px rgba(0,0,0,0.5));
 }
 
 body.m-mf-plus .m-core-icon {
@@ -3206,14 +3233,46 @@ body.m-mf-plus .m-am-card {
 }
 
 body.m-mf-plus .m-act-btn {
-    border-radius: 19px;
+    border-radius: 14px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    text-transform: none;
+    transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.22s ease, background 0.22s ease, border-color 0.22s ease;
 }
 
 body.m-mf-plus .m-act-copy {
-    background: linear-gradient(135deg, #00f2ff, #22d3ee 42%, #8b5cf6 110%);
-    color: #00151b;
-    border: 1px solid rgba(255,255,255,0.25);
-    box-shadow: 0 8px 18px rgba(0, 213, 255, 0.21);
+    background: linear-gradient(180deg, rgba(20, 50, 70, 0.6), rgba(8, 22, 34, 0.72));
+    color: #eafcff;
+    border: 1px solid rgba(134, 232, 255, 0.22);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.07) inset, 0 8px 20px -10px rgba(0, 200, 255, 0.4);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    text-shadow: none;
+}
+
+body.m-mf-plus .m-act-copy:active {
+    transform: scale(0.985);
+    background: linear-gradient(180deg, rgba(26, 62, 86, 0.7), rgba(10, 28, 42, 0.8));
+    border-color: rgba(134, 232, 255, 0.4);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.1) inset, 0 6px 16px -8px rgba(0, 200, 255, 0.5);
+}
+
+body.m-mf-plus .m-act-close {
+    border-radius: 14px;
+    background: rgba(255,255,255,0.035);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(224,247,250,0.6);
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: none;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+body.m-mf-plus .m-act-close:active {
+    transform: scale(0.985);
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.14);
 }
 
 body.m-mf-plus .m-toast {
@@ -3234,15 +3293,19 @@ body.m-keyboard-open.m-mf-plus .m-cred-opt {
 @media (max-width: 370px) {
     body.m-mf-plus .m-content { padding-left: 9px; padding-right: 9px; }
     body.m-mf-plus .m-hypervisor { padding: 11px; border-radius: 23px; }
-    body.m-mf-plus .m-reactor-core { width: 48px; margin-left: 9px; }
+    body.m-mf-plus .m-reactor-core { width: 46px; height: 46px; margin-left: 9px; }
     body.m-mf-plus .m-reactor-title { font-size: 0.88rem; }
     body.m-mf-plus .m-reactor-desc { font-size: 0.60rem; }
     body.m-mf-plus .m-cred-name { font-size: 0.56rem; }
 }
 
 @supports not (color: color-mix(in srgb, red, blue)) {
+    body.m-mf-plus .m-reactor-core {
+        background: rgba(255,255,255,0.05);
+        border-color: rgba(0,242,255,0.20);
+    }
     body.m-mf-plus .m-reactor-module.active .m-reactor-core {
-        background: rgba(0,242,255,0.10);
+        background: var(--border-color, rgba(0,242,255,0.9));
     }
 }
 
@@ -5175,6 +5238,128 @@ body.m-keyboard-open #m-sea-webgl {
     #m-sea-webgl { display: none !important; }
 }
 
+/* ============================================================
+   LIVELLO 3 — Fallback CSS animato del mare.
+   Si attiva solo quando lo shader WebGL non parte
+   (no GL / contesto perso / dispositivo troppo debole).
+   Tutto su transform+opacity, zero costo di layout.
+   ============================================================ */
+#m-sea-css {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+    display: none;
+    opacity: 0;
+    transition: opacity 700ms ease-out;
+    contain: layout paint;
+    transform: translateZ(0);
+    background:
+        radial-gradient(ellipse 120% 80% at 50% -8%, rgba(18, 64, 104, 0.55), transparent 60%),
+        radial-gradient(ellipse 90% 70% at 82% 18%, rgba(70, 32, 150, 0.30), transparent 64%),
+        linear-gradient(180deg, #04223f 0%, #031a33 28%, #02101f 60%, #01070f 100%);
+}
+body.m-sea-fallback #m-sea-css { display: block; opacity: 0.96; }
+
+#m-sea-css .m-seacss-layer {
+    position: absolute;
+    left: -25%;
+    width: 150%;
+    border-radius: 44% 56% 50% 50% / 100% 100% 0 0;
+    will-change: transform;
+    backface-visibility: hidden;
+}
+#m-sea-css .m-seacss-swell1 {
+    bottom: -14%;
+    height: 62%;
+    background: radial-gradient(ellipse at 30% 0%, rgba(0, 196, 255, 0.18), transparent 58%),
+                linear-gradient(180deg, rgba(10, 78, 128, 0.55), rgba(3, 22, 42, 0.0) 78%);
+    animation: seacssSwell 16s ease-in-out infinite alternate;
+    opacity: 0.85;
+}
+#m-sea-css .m-seacss-swell2 {
+    bottom: -22%;
+    height: 74%;
+    background: radial-gradient(ellipse at 68% 0%, rgba(108, 60, 220, 0.20), transparent 60%),
+                linear-gradient(180deg, rgba(6, 52, 92, 0.50), rgba(2, 14, 28, 0.0) 80%);
+    animation: seacssSwell 22s ease-in-out infinite alternate-reverse;
+    opacity: 0.7;
+}
+#m-sea-css .m-seacss-swell3 {
+    bottom: -30%;
+    height: 86%;
+    background: linear-gradient(180deg, rgba(4, 36, 66, 0.55), rgba(1, 9, 18, 0.0) 82%);
+    animation: seacssSwell 30s ease-in-out infinite alternate;
+    opacity: 0.6;
+}
+@keyframes seacssSwell {
+    0%   { transform: translate3d(-4%, 2%, 0) scaleY(0.96) rotate(-0.6deg); }
+    50%  { transform: translate3d(3%, -1%, 0) scaleY(1.05) rotate(0.5deg); }
+    100% { transform: translate3d(5%, 1%, 0) scaleY(0.99) rotate(0.8deg); }
+}
+
+#m-sea-css .m-seacss-caustic {
+    position: absolute;
+    inset: -20% -20% 30% -20%;
+    background:
+        repeating-linear-gradient(118deg, rgba(0, 220, 255, 0.05) 0 14px, transparent 14px 46px),
+        repeating-linear-gradient(62deg, rgba(120, 80, 255, 0.04) 0 18px, transparent 18px 60px);
+    mix-blend-mode: screen;
+    opacity: 0.5;
+    animation: seacssCaustic 18s linear infinite;
+    -webkit-mask-image: radial-gradient(ellipse at 50% 0%, #000 0%, rgba(0,0,0,0.4) 55%, transparent 100%);
+    mask-image: radial-gradient(ellipse at 50% 0%, #000 0%, rgba(0,0,0,0.4) 55%, transparent 100%);
+}
+@keyframes seacssCaustic {
+    from { transform: translate3d(0, 0, 0); }
+    to   { transform: translate3d(-46px, 28px, 0); }
+}
+
+#m-sea-css .m-seacss-ray {
+    position: absolute;
+    top: -12%;
+    width: 46%;
+    height: 90%;
+    background: linear-gradient(180deg, rgba(120, 240, 255, 0.10) 0%, rgba(70, 200, 255, 0.04) 46%, transparent 100%);
+    filter: blur(8px);
+    transform-origin: top center;
+    mix-blend-mode: screen;
+    border-radius: 50%;
+    animation: seacssRay 14s ease-in-out infinite alternate;
+}
+#m-sea-css .m-seacss-ray.r2 { left: 8%;  animation-duration: 14s; opacity: 0.55; }
+#m-sea-css .m-seacss-ray.r1 { left: 44%; animation-duration: 19s; opacity: 0.72; width: 30%; }
+#m-sea-css .m-seacss-ray.r3 { left: 70%; animation-duration: 11s; opacity: 0.45; width: 38%; }
+@keyframes seacssRay {
+    0%   { transform: rotate(-7deg) scaleX(1); opacity: 0.55; }
+    100% { transform: rotate(7deg)  scaleX(1.3); opacity: 0.28; }
+}
+
+#m-sea-css::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(ellipse at 50% 0%, rgba(125, 249, 255, 0.10) 0%, transparent 40%),
+        linear-gradient(180deg, transparent 60%, rgba(0, 6, 16, 0.55) 100%);
+    mix-blend-mode: screen;
+}
+
+body.m-page-hidden #m-sea-css,
+body.m-typing #m-sea-css,
+body.m-keyboard-open #m-sea-css { opacity: 0 !important; }
+
+@media (prefers-reduced-motion: reduce) {
+    #m-sea-css .m-seacss-layer,
+    #m-sea-css .m-seacss-caustic,
+    #m-sea-css .m-seacss-ray { animation: none !important; }
+}
+
 
 /* Hide the legacy sea-band / ocean-particle layers; keep .m-caustic
    as the underwater-light overlay sitting ABOVE the 3D water. */
@@ -6905,6 +7090,12 @@ body.m-mf-plus .m-hero {
     padding-top: 4px !important;
 }
 
+body.m-mf-plus .m-ptr {
+    position: fixed !important;
+    top: -64px !important;
+    z-index: 10050 !important;
+}
+
 body.m-mf-plus .m-dock-container {
     position: fixed !important;
     top: calc(8px + env(safe-area-inset-top)) !important;
@@ -7103,6 +7294,203 @@ body.m-mf-plus.m-input-active.m-keyboard-open .m-dock-container {
 }
 
 
+/* =========================================================================
+   SaaS SKIN v10 — provider visual rail rifatto e icone perfettamente centrate
+   ========================================================================= */
+body.m-mf-plus .m-reactor-grid {
+    gap: 12px !important;
+}
+
+body.m-mf-plus .m-reactor-module {
+    display: grid !important;
+    grid-template-columns: 64px minmax(0, 1fr) !important;
+    align-items: stretch !important;
+    min-height: 88px !important;
+    overflow: hidden !important;
+}
+
+body.m-mf-plus .m-reactor-core {
+    width: auto !important;
+    min-width: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    align-self: center !important;
+    margin: 0 0 0 12px !important;
+    padding: 0 !important;
+    display: grid !important;
+    place-items: center !important;
+    position: relative !important;
+    overflow: visible !important;
+    border-radius: 0 !important;
+    border: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+}
+
+body.m-mf-plus .m-reactor-core::before {
+    content: none !important;
+    display: none !important;
+}
+
+body.m-mf-plus .m-reactor-core::after {
+    content: none !important;
+    display: none !important;
+}
+
+body.m-mf-plus .m-provider-glyph,
+body.m-mf-plus .m-reactor-core .m-core-icon {
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: grid !important;
+    place-items: center !important;
+    position: relative !important;
+    z-index: 3 !important;
+    border-radius: 13px !important;
+    background:
+        radial-gradient(circle at 35% 26%, rgba(255,255,255,0.22), transparent 40%),
+        linear-gradient(145deg, color-mix(in srgb, var(--border-color, #34d3ee) 26%, rgba(255,255,255,0.03)), rgba(15,23,42,0.30)) !important;
+    border: 1px solid color-mix(in srgb, var(--border-color, #34d3ee) 30%, transparent) !important;
+    color: #eef7ff !important;
+    font-size: 1.18rem !important;
+    line-height: 1 !important;
+    text-align: center !important;
+    font-style: normal !important;
+    letter-spacing: 0 !important;
+    opacity: 1 !important;
+    filter: drop-shadow(0 4px 8px rgba(0,0,0,0.28)) !important;
+    transform: translate3d(0, 0, 0) !important;
+    transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease, background 0.3s ease !important;
+}
+
+body.m-mf-plus .m-reactor-core .m-core-icon::before {
+    display: block !important;
+    line-height: 1 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+body.m-mf-plus .m-reactor-body {
+    min-width: 0 !important;
+    padding: 12px 14px 12px 13px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+}
+
+body.m-mf-plus .m-reactor-title {
+    font-size: clamp(0.94rem, 4vw, 1.06rem) !important;
+    line-height: 1.12 !important;
+}
+
+body.m-mf-plus .m-reactor-desc {
+    max-width: 95% !important;
+    line-height: 1.38 !important;
+}
+
+body.m-mf-plus .m-reactor-module.active .m-reactor-core {
+    background: none !important;
+    border: 0 !important;
+    box-shadow: none !important;
+}
+
+body.m-mf-plus .m-reactor-module.active .m-provider-glyph,
+body.m-mf-plus .m-reactor-module.active .m-reactor-core .m-core-icon {
+    background:
+        radial-gradient(circle at 35% 26%, rgba(255,255,255,0.30), transparent 42%),
+        linear-gradient(145deg, var(--border-color, #34d3ee), color-mix(in srgb, var(--border-color, #34d3ee) 52%, #000)) !important;
+    border-color: transparent !important;
+    transform: translate3d(0, -1px, 0) scale(1.03) !important;
+    box-shadow: 0 6px 16px -5px var(--glow-color, rgba(34,211,238,0.7)), inset 0 1px 0 rgba(255,255,255,0.25) !important;
+}
+
+@media (max-width: 380px) {
+    body.m-mf-plus .m-reactor-module {
+        grid-template-columns: 58px minmax(0, 1fr) !important;
+        min-height: 84px !important;
+    }
+    body.m-mf-plus .m-reactor-core {
+        margin: 0 0 0 10px !important;
+    }
+    body.m-mf-plus .m-provider-glyph,
+    body.m-mf-plus .m-reactor-core .m-core-icon {
+        width: 40px !important;
+        height: 40px !important;
+        min-width: 40px !important;
+        min-height: 40px !important;
+        font-size: 1.08rem !important;
+        border-radius: 12px !important;
+    }
+    body.m-mf-plus .m-reactor-body {
+        padding: 16px 14px 16px 16px !important;
+    }
+    body.m-mf-plus .m-reactor-title {
+        font-size: 1.02rem !important;
+    }
+}
+/* =========================================================================
+   SaaS SKIN v11 — top accent bar colorata su OGNI card (look MediaFlow),
+   sempre visibile, su base nera/abisso Leviathan. Vince sugli override
+   precedenti che l'avevano rimossa.
+   ========================================================================= */
+body.m-mf-plus .m-reactor-module {
+    position: relative !important;
+    overflow: hidden !important;
+    border-radius: 18px !important;
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.022), transparent 30%),
+        linear-gradient(150deg, rgba(15, 23, 42, 0.55), rgba(6, 10, 20, 0.72)) !important;
+    border: 1px solid rgba(255,255,255,0.07) !important;
+}
+
+body.m-mf-plus .m-reactor-module::before {
+    content: "" !important;
+    display: block !important;
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: auto !important;
+    width: auto !important;
+    height: 4px !important;
+    border-radius: 0 !important;
+    background: linear-gradient(90deg,
+        var(--border-color, #34d3ee),
+        color-mix(in srgb, var(--border-color, #34d3ee) 62%, #fff 8%) 52%,
+        var(--border-color, #34d3ee)) !important;
+    opacity: 0.95 !important;
+    box-shadow: 0 0 12px -2px var(--glow-color, rgba(52,211,238,0.5)) !important;
+    z-index: 5 !important;
+    pointer-events: none !important;
+}
+
+body.m-mf-plus .m-reactor-module.active::before {
+    display: block !important;
+    height: 4px !important;
+    opacity: 1 !important;
+    box-shadow: 0 0 18px -1px var(--glow-color, rgba(52,211,238,0.75)) !important;
+}
+
+body.m-mf-plus .m-reactor-module.active {
+    border-color: var(--border-color-dim, rgba(124,142,255,0.45)) !important;
+    background:
+        radial-gradient(circle at 0 0, var(--glow-color, rgba(52,211,238,0.18)), transparent 46%),
+        linear-gradient(150deg, rgba(18, 30, 52, 0.72), rgba(6, 10, 20, 0.82)) !important;
+    box-shadow:
+        0 14px 30px -16px rgba(0,0,0,0.7),
+        0 8px 26px -14px var(--glow-color, rgba(52,211,238,0.6)) !important;
+}
+
+@supports not (color: color-mix(in srgb, red, blue)) {
+    body.m-mf-plus .m-reactor-module::before {
+        background: var(--border-color, #34d3ee) !important;
+    }
+}
+
+
 `;
 
 const mobileHTML = `
@@ -7116,8 +7504,8 @@ const mobileHTML = `
 </div>
 <div class="m-ocean-particles" id="m-ocean-particles" aria-hidden="true"></div>
 <div id="app-container">
+    <div class="m-ptr" id="m-ptr-indicator"><i class="fas fa-arrow-down m-ptr-icon"></i></div>
     <div class="m-content-wrapper">
-        <div class="m-ptr" id="m-ptr-indicator"><i class="fas fa-arrow-down m-ptr-icon"></i></div>
 
         <div class="m-content">
             <div class="m-hero m-abyss-hero notranslate" aria-label="LEVIATHAN Kit" translate="no" data-no-translate="true">
@@ -7208,7 +7596,7 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-vix">
                             <div class="m-reactor-core">
-                                <i class="fas fa-play-circle m-core-icon"></i>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🍿</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
@@ -7235,7 +7623,7 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-cc">
                             <div class="m-reactor-core">
-                                <span class="m-core-icon">🎟️</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎟️</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
@@ -7254,7 +7642,7 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-ghd">
                             <div class="m-reactor-core">
-                                <i class="fas fa-film m-core-icon"></i>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
@@ -7273,7 +7661,7 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-gs">
                             <div class="m-reactor-core">
-                                <i class="fas fa-tv m-core-icon"></i>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📺</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
@@ -7292,7 +7680,7 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-gstv">
                             <div class="m-reactor-core">
-                                <i class="fas fa-satellite-dish m-core-icon"></i>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📡</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
@@ -7311,7 +7699,7 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-es">
                             <div class="m-reactor-core">
-                                <i class="fas fa-globe-europe m-core-icon"></i>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌍</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
@@ -7330,7 +7718,7 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-cb01">
                             <div class="m-reactor-core">
-                                <i class="fas fa-film m-core-icon"></i>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
@@ -7349,7 +7737,7 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-aw">
                             <div class="m-reactor-core">
-                                <i class="fas fa-torii-gate m-core-icon"></i>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🐉</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
@@ -7368,7 +7756,7 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-au">
                             <div class="m-reactor-core">
-                                <i class="fas fa-water m-core-icon"></i>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌊</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
@@ -7387,7 +7775,7 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-as">
                             <div class="m-reactor-core">
-                                <i class="fas fa-satellite-dish m-core-icon"></i>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🪐</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
@@ -7406,7 +7794,7 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-gf">
                             <div class="m-reactor-core">
-                                <i class="fas fa-play m-core-icon"></i>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎞️</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
@@ -7425,7 +7813,7 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-ads">
                             <div class="m-reactor-core">
-                                <i class="fas fa-film m-core-icon"></i>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎞️</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
@@ -8343,29 +8731,46 @@ const LEVIATHAN_SEA_SHADER = {
             float current = fbm(flowA) * 0.62 + fbm(flowB + 8.3) * 0.38;
             float swell = sin(p.x * 2.3 + current * 3.1 + t * 0.62) * 0.040;
             swell += sin(p.x * 5.4 - p.y * 2.1 + t * 0.36) * 0.018;
+            swell += sin(p.x * 9.1 + current * 4.0 - t * 0.27) * 0.009;
 
             float foamA = waveLine(p + vec2(current * 0.22, swell), 0.18, 8.2, 9.0);
             float foamB = waveLine(p.yx + vec2(swell, current * 0.16), -0.14, 10.8, 11.0);
-            float foam = (foamA * 0.55 + foamB * 0.34) * smoothstep(0.04, 0.92, uv.y) * horizon;
+            float foamC = waveLine(p + vec2(current * 0.30, swell * 1.4), 0.26, 14.5, 13.0);
+            float foam = (foamA * 0.50 + foamB * 0.32 + foamC * 0.22) * smoothstep(0.04, 0.92, uv.y) * horizon;
 
-            float caustic = fbm((p + vec2(current * 0.28, swell)) * 5.8 + vec2(t * 0.22, -t * 0.18));
+            vec2 cp = (p + vec2(current * 0.28, swell)) * 5.8 + vec2(t * 0.22, -t * 0.18);
+            float caustic = fbm(cp);
             caustic = pow(max(0.0, caustic), 3.2) * (0.38 + depth * 0.45);
+            float caustic2 = fbm(cp * 1.9 + vec2(-t * 0.16, t * 0.12));
+            caustic += pow(max(0.0, caustic2), 4.0) * 0.30 * depth;
 
-            vec3 deep = vec3(0.005, 0.020, 0.055);
-            vec3 mid = vec3(0.015, 0.155, 0.250);
-            vec3 cyan = vec3(0.120, 0.760, 0.950);
-            vec3 violet = vec3(0.160, 0.095, 0.440);
+            float rays = 0.0;
+            float rx = p.x * 0.5 + sin(t * 0.18) * 0.18;
+            rays += smoothstep(0.34, 0.0, abs(rx + 0.42 + sin(t * 0.21) * 0.05));
+            rays += smoothstep(0.30, 0.0, abs(rx - 0.10 + sin(t * 0.16 + 1.7) * 0.05)) * 0.8;
+            rays += smoothstep(0.26, 0.0, abs(rx + 0.78 + sin(t * 0.13 + 3.1) * 0.04)) * 0.6;
+            rays *= smoothstep(1.02, 0.06, uv.y) * (0.5 + 0.5 * fbm(vec2(p.x * 3.0, t * 0.4)));
+
+            vec3 deep = vec3(0.004, 0.016, 0.048);
+            vec3 mid = vec3(0.012, 0.150, 0.250);
+            vec3 cyan = vec3(0.120, 0.770, 0.960);
+            vec3 violet = vec3(0.180, 0.085, 0.470);
 
             vec3 col = mix(deep, mid, depth);
-            col = mix(col, violet, smoothstep(0.72, 1.0, uv.x) * 0.18);
-            col += cyan * (caustic * 0.42 + foam * 0.28) * u_intensity;
-            col += vec3(0.20, 0.88, 1.00) * pow(max(0.0, 1.0 - length(p - vec2(-0.18, 0.30))), 3.0) * 0.14;
+            col = mix(col, violet, smoothstep(0.58, 1.0, uv.x) * 0.22 * (1.0 - depth * 0.4));
+            col = mix(col, deep, smoothstep(0.30, 0.0, uv.y) * 0.55);
+            col += cyan * (caustic * 0.46 + foam * 0.30) * u_intensity;
+            col += vec3(0.45, 0.92, 1.00) * rays * 0.085 * u_intensity;
+            col += vec3(0.22, 0.90, 1.00) * pow(max(0.0, 1.0 - length(p - vec2(-0.18, 0.34))), 3.0) * 0.16;
+            col += violet * pow(max(0.0, 1.0 - length(p - vec2(0.62, -0.12))), 3.4) * 0.12;
             col += vec3(0.05, 0.22, 0.55) * smoothstep(0.86, 0.05, uv.y) * 0.26;
 
-            float vignette = smoothstep(1.48, 0.22, length(p * vec2(0.76, 0.92)));
-            col *= 0.62 + vignette * 0.58;
+            float vignette = smoothstep(1.50, 0.20, length(p * vec2(0.74, 0.90)));
+            col *= 0.58 + vignette * 0.62;
 
-            float alpha = mix(0.68, 0.94, smoothstep(0.08, 0.92, uv.y));
+            col = pow(max(col, 0.0), vec3(0.92));
+
+            float alpha = mix(0.66, 0.95, smoothstep(0.08, 0.92, uv.y));
             gl_FragColor = vec4(col, alpha);
         }
     `
@@ -8452,6 +8857,7 @@ function startLeviathanSeaShader(mount) {
     if (!gl) {
         mount.remove();
         window.__leviathanSeaShaderBoot = false;
+        activateLeviathanSeaFallback();
         return;
     }
 
@@ -8472,6 +8878,7 @@ function startLeviathanSeaShader(mount) {
         try { if (buffer) gl.deleteBuffer(buffer); } catch (__) {}
         mount.remove();
         window.__leviathanSeaShaderBoot = false;
+        activateLeviathanSeaFallback();
         return;
     }
 
@@ -8530,6 +8937,7 @@ function startLeviathanSeaShader(mount) {
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         } catch (_) {
             state.cleanup && state.cleanup();
+            activateLeviathanSeaFallback();
             return;
         }
 
@@ -8625,7 +9033,10 @@ function startLeviathanSeaShader(mount) {
 
     window.addEventListener('pagehide', state.cleanup, { once: true });
     resize();
-    requestAnimationFrame(() => mount.classList.add('is-ready'));
+    requestAnimationFrame(() => {
+        mount.classList.add('is-ready');
+        deactivateLeviathanSeaFallback();
+    });
     sync();
 }
 
@@ -8643,6 +9054,32 @@ function installLeviathanSeaBfcacheRestart() {
     }, { passive: true });
 }
 
+function activateLeviathanSeaFallback() {
+    if (!document.body) return;
+    try {
+        let layer = document.getElementById('m-sea-css');
+        if (!layer) {
+            layer = document.createElement('div');
+            layer.id = 'm-sea-css';
+            layer.setAttribute('aria-hidden', 'true');
+            layer.innerHTML =
+                '<div class="m-seacss-caustic"></div>' +
+                '<div class="m-seacss-ray r2"></div>' +
+                '<div class="m-seacss-ray r1"></div>' +
+                '<div class="m-seacss-ray r3"></div>' +
+                '<div class="m-seacss-layer m-seacss-swell3"></div>' +
+                '<div class="m-seacss-layer m-seacss-swell2"></div>' +
+                '<div class="m-seacss-layer m-seacss-swell1"></div>';
+            document.body.insertBefore(layer, document.body.firstChild);
+        }
+        document.body.classList.add('m-sea-fallback');
+    } catch (_) {}
+}
+
+function deactivateLeviathanSeaFallback() {
+    try { document.body.classList.remove('m-sea-fallback'); } catch (_) {}
+}
+
 function createSeaCanvas() {
     installLeviathanSeaBfcacheRestart();
 
@@ -8654,6 +9091,7 @@ function createSeaCanvas() {
 
     if (leviathanSeaShouldSkip()) {
         window.__leviathanSeaShaderBoot = false;
+        activateLeviathanSeaFallback();
         return;
     }
 
@@ -9853,5 +10291,4 @@ startMobileInterfaceWhenReady();
         document.body.classList.add('m-ui-ready');
     } catch (_) {}
 })();
-
 
