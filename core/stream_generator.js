@@ -61,7 +61,9 @@ const {
 } = require('./stream/timed_cache');
 const {
   applyFinalStreamUserSort,
+  applyMaxPerResolutionPolicy,
   applyPremiumRankingPolicy,
+  applySmartStreamDedupPolicy,
   getConfiguredSortMode
 } = require('./stream/ranking_policy');
 const {
@@ -1105,6 +1107,7 @@ const TITLE_SEARCH_HOT_TTL_MS = Math.max(5000, Math.min(5 * 60 * 1000, parseInt(
 const VALIDATED_FILE_SET_TTL_MS = Math.max(30 * 1000, Math.min(60 * 60 * 1000, parseInt(process.env.VALIDATED_FILE_SET_TTL_MS || String(20 * 60 * 1000), 10) || 20 * 60 * 1000));
 const BACKGROUND_DB_SAVE_QUEUE_MAX = Math.max(10, Math.min(1000, parseInt(process.env.BACKGROUND_DB_SAVE_QUEUE_MAX || '120', 10) || 120));
 const PACK_RESOLUTION_QUEUE_MAX = Math.max(10, Math.min(1000, parseInt(process.env.PACK_RESOLUTION_QUEUE_MAX || '80', 10) || 80));
+const BACKGROUND_PACK_MAX_PER_REQUEST = Math.max(1, Math.min(100, parseInt(process.env.BACKGROUND_PACK_MAX_PER_REQUEST || '20', 10) || 20));
 const TORRENTIO_EXACT_ACCEPT_ALL = String(process.env.EXT_TORRENTIO_EXACT_ACCEPT_ALL || 'true').toLowerCase() !== 'false';
 const TORRENTIO_EXACT_ACCEPT_MAX = Math.max(1, Math.min(50, parseInt(process.env.EXT_TORRENTIO_EXACT_ACCEPT_MAX || '24', 10) || 24));
 
@@ -2310,8 +2313,16 @@ function resolvePackNamesInBackground(meta, results, config, type = null) {
     const effectiveType = String(type || meta?.type || meta?.contentType || (meta?.isSeries || meta?.season || meta?.episode ? 'series' : 'movie')).toLowerCase();
     const hasResolvableService = !!((config.service === 'rd' && (config.key || config.rd)) || (config.service === 'tb' && (config.key || config.rd || config.torbox || config.tb)));
     if (!hasResolvableService) return;
-    const packCandidates = results.filter(item => item && isConfidentSeasonPackItem(item, meta, effectiveType));
-    if (packCandidates.length === 0) return;
+    const allPackCandidates = results.filter(item => item && isConfidentSeasonPackItem(item, meta, effectiveType));
+    if (allPackCandidates.length === 0) return;
+    const hasItaSignal = (item) => /\b(?:ita|italian|italiano|multi)\b|🇮🇹/i.test([item?.title, item?.name, item?.filename, item?.fileName, item?.packTitle, item?.source, item?.externalProvider].filter(Boolean).join(' '));
+    const packCandidates = [...allPackCandidates]
+        .sort((a, b) => Number(hasItaSignal(b)) - Number(hasItaSignal(a)) || Number(b?.seeders || 0) - Number(a?.seeders || 0))
+        .slice(0, BACKGROUND_PACK_MAX_PER_REQUEST);
+    const skippedPackCandidates = Math.max(0, allPackCandidates.length - packCandidates.length);
+    if (skippedPackCandidates > 0) {
+        logger.info(`[PACK] Background candidates capped | selected=${packCandidates.length} skipped=${skippedPackCandidates} max=${BACKGROUND_PACK_MAX_PER_REQUEST}`);
+    }
 
     LIMITERS.bgPackJobs.schedule(async () => {
         for (const item of packCandidates) {
@@ -4055,7 +4066,9 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
         const batchIds = [...new Set((Array.isArray(idsForBatch) ? idsForBatch : [idsForBatch]).map((id) => String(id || '').trim()).filter(Boolean))];
         const tasks = batchIds.map((id) => fetchExternalAddonsFlat(type, id, {
             userConfig: config,
-            onlyItalian,
+            // Fetch broad/raw external rows and let Leviathan filter after cache/DB snapshot.
+            // This keeps the self-filling DB useful across ITA/ENG/ALL profiles.
+            onlyItalian: false,
             languageMode: langMode,
             enabledAddons,
             meteorLimit: 2
@@ -4311,7 +4324,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
                     const externalRequestIds = buildExternalAddonRequestIds(type, finalId, meta);
                     const externalConfigSig = crypto.createHash("sha1").update(JSON.stringify({ service: config?.service || "", rd: config?.rd || config?.realdebrid || "", tb: config?.tb || config?.torbox || "", key: config?.key || "" })).digest("hex").slice(0, 12);
-                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:${langMode}:${externalConfigSig}:torrentioSmartFallbackNoEnvV18`;
+                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:global-post-filter:${externalConfigSig}:torrentioSmartFallbackNoEnvV19`;
                     const createExternalPromise = () => disableLiveSources && !flags.useProviderCachedOnly
                         ? Promise.resolve([])
                         : Cache.fetchWithCache('ExternalAddons', externalCacheKey, 43200, () =>
@@ -4971,12 +4984,19 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           logger.info(`[DEDUPE INFOHASH] stream removed=${infoHashStreamDedupe.removed} kept=${infoHashStreamDedupe.results.length} title="${String(meta?.title || '').slice(0, 80)}" s=${meta?.season || '-'} e=${meta?.episode || '-'}`);
       }
       finalStreams = infoHashStreamDedupe.results;
+      const smartStreamDedupe = applySmartStreamDedupPolicy(finalStreams, config, { logger });
+      finalStreams = smartStreamDedupe.results;
+      const resolutionCap = applyMaxPerResolutionPolicy(finalStreams, config, { logger });
+      finalStreams = resolutionCap.results;
       finalStreams = applyFinalStreamUserSort(finalStreams, config);
       trace.stage('final-merge', {
           debrid: debridStreams.length,
           web: webStreams.length,
           webBuckets: webBucketNames.length,
-          removed: infoHashStreamDedupe.removed,
+          removed: infoHashStreamDedupe.removed + smartStreamDedupe.removed + resolutionCap.removed,
+          infoHashRemoved: infoHashStreamDedupe.removed,
+          smartRemoved: smartStreamDedupe.removed,
+          resolutionCapRemoved: resolutionCap.removed,
           streams: finalStreams.length
       });
 
