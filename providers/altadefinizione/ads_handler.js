@@ -8,7 +8,6 @@ const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const {
     buildWebStream,
-    buildMediaflowUrl,
     dedupeStreamsByUrl,
     normalizeQuality,
     normalizeRemoteUrl,
@@ -18,6 +17,7 @@ const {
     qualityRank
 } = require('../extractors/common');
 const { extractFromUrl, resolveExtractorDefinition } = require('../extractors/registry');
+const { createMediaflowGateway, getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
 
 const PROVIDER_ID = 'altadefinizione';
 const PROVIDER_LABEL = 'AltadefinizioneStreaming';
@@ -29,6 +29,8 @@ const STREAM_TTL_MS = Math.max(60_000, Number.parseInt(process.env.ALTADEFINIZIO
 const JSON_TTL_MS = Math.max(60_000, Number.parseInt(process.env.ALTADEFINIZIONE_JSON_TTL_MS || String(30 * 60 * 1000), 10) || 30 * 60 * 1000);
 const MAX_SOURCES = Math.max(1, Math.min(8, Number.parseInt(process.env.ALTADEFINIZIONE_MAX_SOURCES || '4', 10) || 4));
 const DEBUG = /^(1|true|yes|on)$/i.test(String(process.env.ALTADEFINIZIONE_DEBUG || '0'));
+const KRAKEN_FIRST = /^(1|true|yes|on)$/i.test(String(process.env.ALTADEFINIZIONE_KRAKEN_FIRST || process.env.VIDXGO_KRAKEN_FIRST || '1'));
+const KRAKEN_EXTRACTOR_PATH = String(process.env.ALTADEFINIZIONE_KRAKEN_EXTRACTOR_PATH || process.env.KRAKEN_EXTRACTOR_PATH || '/extractor/video.m3u8').trim() || '/extractor/video.m3u8';
 
 const http = axios.create({
     timeout: TIMEOUT_MS,
@@ -75,6 +77,39 @@ function headersFor(url, referer = BASE_URL) {
         Referer: referer || `${BASE_URL}/`,
         Origin: originOf(referer || url, BASE_URL)
     };
+}
+
+function isDirectHls(url) {
+    return /\.m3u8(?:$|[?#])/i.test(String(url || ''));
+}
+
+function isDirectVideo(url) {
+    return /\.(?:mp4|mkv|webm)(?:$|[?#])/i.test(String(url || ''));
+}
+
+function getKrakenGateway(config = {}) {
+    const gateway = createMediaflowGateway(config);
+    return gateway.isConfigured ? gateway : null;
+}
+
+function getSourceLanguageLabel(source = {}, playlistIntel = null) {
+    const audio = Array.isArray(playlistIntel?.audioLanguages) ? playlistIntel.audioLanguages.map((item) => String(item).toLowerCase()) : [];
+    if (audio.includes('ita')) return 'ITA';
+    if (audio.length && !audio.includes('ita')) return 'UND';
+
+    const text = `${source.language || ''} ${source.lang || ''} ${source.provider || ''} ${source.extractor || ''} ${source.title || ''}`;
+    if (/🇮🇹|\b(?:ita|it|italiano|italian)\b/i.test(text)) return 'ITA';
+    if (/\bmulti(?:audio)?\b/i.test(text)) return 'MULTI';
+    return 'ITA';
+}
+
+function languageSortRank(stream = {}) {
+    const meta = stream?.behaviorHints?.vortexMeta || {};
+    const text = [stream.title, stream.name, meta.language, ...(Array.isArray(meta.audioLanguages) ? meta.audioLanguages : [])].filter(Boolean).join(' ');
+    if (/🇮🇹|\b(?:ita|it|italiano|italian)\b/i.test(text)) return 0;
+    if (/\bmulti\b/i.test(text)) return 1;
+    if (/\bund\b|unknown|sconosciut/i.test(text)) return 2;
+    return 3;
 }
 
 async function fetchJson(url, { ttlMs = JSON_TTL_MS } = {}) {
@@ -169,10 +204,8 @@ function shouldExposeLazyFallback() {
 function buildSyntheticVidxgoUrl(imdbId, type, season = 1, episode = 1) {
     const normalized = normalizeImdbId(imdbId);
     if (!normalized) return null;
-    const numeric = normalized.replace(/^tt/i, '');
-    if (!numeric) return null;
-    if (normalizeProviderType(type) === 'movie') return `https://v.vidxgo.co/${numeric}`;
-    return `https://v.vidxgo.co/${numeric}/${Number(season) || 1}/${Number(episode) || 1}`;
+    if (normalizeProviderType(type) === 'movie') return `https://v.vidxgo.co/${normalized}`;
+    return `https://v.vidxgo.co/${normalized}/${Number(season) || 1}/${Number(episode) || 1}`;
 }
 
 function collectPlayableSources({ payload = {}, imdbId = null, type = 'movie', season = 1, episode = 1 } = {}) {
@@ -244,37 +277,75 @@ async function collectDownloadSources({ tmdbId, type, season, episode }) {
     }];
 }
 
-function buildMediaflowFallbackStream(source, def, { title, config = {}, pageUrl = BASE_URL } = {}) {
-    if (!config?.mediaflow?.url) return null;
-    const host = def?.label || source.extractor || source.provider || 'VidxGo';
-    const mediaflowUrl = buildMediaflowUrl(config, source.url, 'extractor', host, {
-        redirectStream: true,
-        headers: headersFor(source.url, pageUrl)
-    });
-    if (!mediaflowUrl || mediaflowUrl === source.url) return null;
+function buildKrakenResolvedStream(source, def = null, { title, config = {}, pageUrl = BASE_URL, playlistIntel = null, via = 'kraken-first' } = {}) {
+    const gateway = getKrakenGateway(config);
+    if (!gateway) return null;
+
+    const host = def?.label || source.extractor || source.provider || sourceExtractorLabel(source) || 'VidxGo';
+    const requestHeaders = headersFor(source.url, pageUrl);
+    const label = host || 'Web';
+    let url = null;
+    let kind = 'extractor';
+
+    if (isDirectHls(source.url)) {
+        url = gateway.buildProxyUrl(source.url, requestHeaders, { isHls: true });
+        kind = 'hls-proxy';
+    } else if (isDirectVideo(source.url)) {
+        url = gateway.buildProxyUrl(source.url, requestHeaders, { isHls: false });
+        kind = 'direct-proxy';
+    } else {
+        url = gateway.buildExtractorUrl(source.url, label, {
+            extractorPath: KRAKEN_EXTRACTOR_PATH,
+            redirectStream: true,
+            headers: requestHeaders
+        });
+        kind = 'extractor';
+    }
+
+    if (!url || url === source.url) return null;
+
+    const languageLabel = getSourceLanguageLabel(source, playlistIntel);
+    const quality = pickBetterQuality(playlistIntel?.quality || 'Unknown', source.quality || 'Unknown');
+    const audioLanguages = languageLabel === 'ITA' ? ['ita'] : (languageLabel === 'MULTI' ? ['multi'] : ['und']);
 
     return buildWebStream({
-        name: `${PROVIDER_LABEL} | ${host} MFP`,
-        title: `${title}\n${host} ITA`,
-        url: mediaflowUrl,
-        extractor: host,
+        name: `${PROVIDER_LABEL} | ${label} Kraken`,
+        title: `${title}\n${label} ${languageLabel}`,
+        url,
+        extractor: label,
         provider: PROVIDER_LABEL,
         providerCode: PROVIDER_CODE,
-        quality: source.quality || 'Unknown',
+        quality,
         headers: null,
-        mediaflowUrl: config.mediaflow.url,
+        mediaflowUrl: getMediaflowBase(config),
         extraBehaviorHints: {
+            bingeWatching: true,
             vortexMeta: {
-                via: 'altadefinizione-mfp',
-                sourceUrl: source.url
+                via,
+                resolver: 'kraken',
+                streamKind: kind,
+                language: languageLabel,
+                audioLanguages,
+                sourceUrl: source.url,
+                sourceProvider: source.provider || label
             }
         },
-        extra: { _priority: source.priority ?? def?.priority ?? 9 }
+        extra: { _priority: source.priority ?? def?.priority ?? 9, _italian: languageLabel === 'ITA' }
     });
+}
+
+function buildMediaflowFallbackStream(source, def, { title, config = {}, pageUrl = BASE_URL } = {}) {
+    return buildKrakenResolvedStream(source, def, { title, config, pageUrl, via: 'kraken-fallback' });
 }
 
 async function resolveSourceToStream(source, { title, reqHost, pageUrl = BASE_URL, signal = null, config = {}, extract = extractFromUrl } = {}) {
     const def = resolveExtractorDefinition(source.url);
+
+    if (KRAKEN_FIRST) {
+        const krakenStream = buildKrakenResolvedStream(source, def, { title, config, pageUrl, via: 'kraken-first' });
+        if (krakenStream) return krakenStream;
+    }
+
     if (def) {
         const extracted = await extract(source.url, {
             client: http,
@@ -284,7 +355,7 @@ async function resolveSourceToStream(source, { title, reqHost, pageUrl = BASE_UR
         }).catch(() => null);
 
         if (!extracted?.url) {
-            log('skip unresolved hoster instead of exposing lazy stream', {
+            log('skip unresolved local hoster; trying kraken fallback', {
                 extractor: source.extractor || def.label,
                 host: (() => { try { return new URL(source.url).hostname; } catch (_) { return ''; } })()
             });
@@ -296,7 +367,7 @@ async function resolveSourceToStream(source, { title, reqHost, pageUrl = BASE_UR
 
         let quality = pickBetterQuality(extracted.quality || 'Unknown', source.quality || 'Unknown');
         let playlistIntel = null;
-        if (/\.m3u8(?:$|[?#])/i.test(String(extracted.url || ''))) {
+        if (isDirectHls(extracted.url)) {
             playlistIntel = await probePlaylistIntelligence(http, extracted.url, {
                 headers: extracted.headers || headersFor(extracted.url, source.url),
                 timeout: Number.parseInt(process.env.ALTADEFINIZIONE_PLAYLIST_TIMEOUT_MS || '5000', 10) || 5000,
@@ -305,32 +376,64 @@ async function resolveSourceToStream(source, { title, reqHost, pageUrl = BASE_UR
             quality = pickBetterQuality(playlistIntel?.quality || 'Unknown', quality);
         }
 
+        const languageLabel = getSourceLanguageLabel(source, playlistIntel);
         let stream = buildWebStream({
             name: `${PROVIDER_LABEL} | ${extracted.name || source.extractor || def.label}`,
-            title: `${title}\n${extracted.name || source.extractor || def.label} ITA`,
+            title: `${title}\n${extracted.name || source.extractor || def.label} ${languageLabel}`,
             url: extracted.url,
             extractor: extracted.name || source.extractor || def.label,
             provider: PROVIDER_LABEL,
             providerCode: PROVIDER_CODE,
             quality,
             headers: extracted.headers || headersFor(extracted.url, source.url),
-            extra: { _priority: source.priority ?? extracted.priority ?? def.priority ?? 9 }
+            extraBehaviorHints: {
+                vortexMeta: {
+                    language: languageLabel,
+                    audioLanguages: languageLabel === 'ITA' ? ['ita'] : (languageLabel === 'MULTI' ? ['multi'] : ['und']),
+                    via: 'local-extractor',
+                    sourceUrl: source.url
+                }
+            },
+            extra: { _priority: source.priority ?? extracted.priority ?? def.priority ?? 9, _italian: languageLabel === 'ITA' }
         });
         stream = decorateStreamWithPlaylistIntelligence(stream, playlistIntel);
         return stream;
     }
 
-    return buildWebStream({
+    let playlistIntel = null;
+    if (isDirectHls(source.url)) {
+        playlistIntel = await probePlaylistIntelligence(http, source.url, {
+            headers: headersFor(source.url, pageUrl),
+            timeout: Number.parseInt(process.env.ALTADEFINIZIONE_PLAYLIST_TIMEOUT_MS || '5000', 10) || 5000,
+            signal
+        }).catch(() => null);
+    }
+
+    const krakenDirect = buildKrakenResolvedStream(source, null, { title, config, pageUrl, playlistIntel, via: 'kraken-direct' });
+    if (krakenDirect) return krakenDirect;
+
+    const languageLabel = getSourceLanguageLabel(source, playlistIntel);
+    let stream = buildWebStream({
         name: `${PROVIDER_LABEL} | ${source.extractor || 'Direct'}`,
-        title: `${title}\n${source.extractor || 'Direct'} ITA`,
+        title: `${title}\n${source.extractor || 'Direct'} ${languageLabel}`,
         url: source.url,
         extractor: source.extractor || 'Direct',
         provider: PROVIDER_LABEL,
         providerCode: PROVIDER_CODE,
-        quality: source.quality || 'Unknown',
+        quality: pickBetterQuality(playlistIntel?.quality || 'Unknown', source.quality || 'Unknown'),
         headers: headersFor(source.url, pageUrl),
-        extra: { _priority: source.priority ?? 80 }
+        extraBehaviorHints: {
+            vortexMeta: {
+                language: languageLabel,
+                audioLanguages: languageLabel === 'ITA' ? ['ita'] : (languageLabel === 'MULTI' ? ['multi'] : ['und']),
+                via: 'direct',
+                sourceUrl: source.url
+            }
+        },
+        extra: { _priority: source.priority ?? 80, _italian: languageLabel === 'ITA' }
     });
+    stream = decorateStreamWithPlaylistIntelligence(stream, playlistIntel);
+    return stream;
 }
 
 async function resolveMedia(meta = {}, finalId = null, config = {}) {
@@ -341,13 +444,21 @@ async function resolveMedia(meta = {}, finalId = null, config = {}) {
     const imdbId = normalizeImdbId(meta.imdb_id || meta.imdbId || meta.imdb || meta.id || finalId);
 
     if (explicitTmdbId) {
+        const info = await tmdbHelper.getMediaInfoFull(explicitTmdbId, type, {
+            language: 'it-IT',
+            userKey: config?.tmdbApiKey || config?.tmdbKey || null
+        }).catch(() => null);
+        const resolvedImdbId = normalizeImdbId(info?.imdbId || info?.imdb_id || imdbId)
+            || await tmdbHelper.getImdbFromTmdb(explicitTmdbId, type, {
+                userKey: config?.tmdbApiKey || config?.tmdbKey || null
+            }).catch(() => null);
         return {
             tmdbId: explicitTmdbId,
-            imdbId,
+            imdbId: normalizeImdbId(resolvedImdbId),
             type,
             season,
             episode,
-            title: meta.title || meta.name || (type === 'movie' ? 'Film' : 'Serie')
+            title: info?.title || info?.name || meta.title || meta.name || (type === 'movie' ? 'Film' : 'Serie')
         };
     }
 
@@ -419,10 +530,15 @@ async function searchAltadefinizioneImpl(originalId, finalId, meta = {}, config 
         config
     }).catch(() => null))))
         .filter(Boolean)
-        .sort((a, b) => (a._priority ?? 99) - (b._priority ?? 99));
+        .sort((a, b) =>
+            (languageSortRank(a) - languageSortRank(b))
+            || ((a._priority ?? 99) - (b._priority ?? 99))
+            || (qualityRank(b.quality) - qualityRank(a.quality))
+        );
 
     const normalized = normalizeStreams(dedupeStreamsByUrl(streams).map((stream) => {
         delete stream._priority;
+        delete stream._italian;
         return stream;
     }), {
         provider: PROVIDER_ID,
@@ -448,12 +564,14 @@ module.exports = {
     searchAltadefinizione,
     searchAltadefinizioneStreaming: searchAltadefinizione,
     __private: {
+        buildKrakenResolvedStream,
         buildPlayerSourcesEndpoint,
         buildSyntheticVidxgoUrl,
         collectPlayableSources,
         normalizeImdbId,
         resolveDownloadToHoster,
         resolveSourceToStream,
+        getSourceLanguageLabel,
         resolveMedia,
         shouldExposeLazyFallback,
         sourceExtractorLabel

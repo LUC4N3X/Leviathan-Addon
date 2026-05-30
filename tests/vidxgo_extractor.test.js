@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { extractVidxgo, isVidxgoUrl } = require('../providers/extractors/hosters/vidxgo');
+const { extractVidxgo, extractVidxgoStreamUrl, isVidxgoUrl } = require('../providers/extractors/hosters/vidxgo');
 const { resolveExtractorDefinition } = require('../providers/extractors/registry');
 
 function xorBase64(text, key) {
@@ -52,4 +52,25 @@ test('vidxgo extractor decodes xor/atob payload and returns playable stream head
     assert.equal(result.quality, '1080p');
     assert.equal(result.priority, 0);
     assert.equal(result.headers.Referer, 'https://v.vidxgo.co/e/abc123');
+});
+
+
+test('vidxgo parser recognizes plain base64 payloads with m3u8 urls', () => {
+    const streamUrl = 'https://cdn.vidxgo.example/playlist/master.m3u8?token=abc';
+    const encoded = Buffer.from(JSON.stringify({ stream_url: streamUrl }), 'utf8').toString('base64');
+    const html = `<script>const p = atob('${encoded}');</script>`;
+    assert.equal(extractVidxgoStreamUrl(html, 'https://v.vidxgo.co/e/abc123'), streamUrl);
+});
+
+test('altadefinizione synthetic VidxGo URL keeps the full IMDb tt id', () => {
+    const { __private } = require('../providers/altadefinizione/ads_handler');
+
+    assert.equal(
+        __private.buildSyntheticVidxgoUrl('tt32362890', 'movie'),
+        'https://v.vidxgo.co/tt32362890'
+    );
+    assert.equal(
+        __private.buildSyntheticVidxgoUrl('tt32362890', 'series', 2, 7),
+        'https://v.vidxgo.co/tt32362890/2/7'
+    );
 });
