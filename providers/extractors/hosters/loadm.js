@@ -2,8 +2,12 @@
 
 const crypto = require('crypto');
 const { getOrigin, normalizeRemoteUrl } = require('../common');
-
-const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const {
+    DEFAULT_USER_AGENT,
+    cleanCandidateUrl,
+    probeStreamQuality,
+    responseText
+} = require('./shared');
 const LOADM_REGEX = /loadm/i;
 const LOADM_KEY = Buffer.from('kiemtienmua911ca');
 const LOADM_IV = Buffer.from('1234567890oiuytr');
@@ -28,7 +32,7 @@ function decryptLoadmPayload(rawPayload) {
     const normalizedText = lastBraceIndex !== -1 ? plainText.slice(0, lastBraceIndex + 1) : plainText;
     const payload = JSON.parse(normalizedText);
 
-    return payload?.source || payload?.cf || null;
+    return payload?.source || payload?.cf || payload?.url || payload?.file || null;
 }
 
 function extractVideoId(playerUrl) {
@@ -55,9 +59,11 @@ async function fetchLoadmPayload(apiUrl, headers, options = {}) {
 
     const response = await client.get(apiUrl, {
         headers,
-        responseType: 'text'
+        responseType: 'text',
+        timeout: Number(options?.timeout || 10_000),
+        validateStatus: () => true
     });
-    return typeof response?.data === 'string' ? response.data : JSON.stringify(response?.data || '');
+    return responseText(response);
 }
 
 async function extractLoadm(url, options = {}) {
@@ -68,6 +74,7 @@ async function extractLoadm(url, options = {}) {
         const videoId = extractVideoId(playerUrl);
         if (!videoId) return null;
 
+        const userAgent = options?.userAgent || DEFAULT_USER_AGENT;
         const origin = getOrigin(playerUrl);
         const baseUrl = `${origin}/`;
         const requestReferer = String(options?.requestReferer || options?.pageUrl || options?.referer || baseUrl).trim();
@@ -79,24 +86,31 @@ async function extractLoadm(url, options = {}) {
         });
         const apiUrl = `${baseUrl}api/v1/video?${query.toString()}`;
         const headers = {
-            'User-Agent': options?.userAgent || DEFAULT_USER_AGENT,
+            'User-Agent': userAgent,
             'Referer': baseUrl,
             'X-Requested-With': 'XMLHttpRequest',
             'Accept': 'application/json, text/plain, */*'
         };
         const payload = await fetchLoadmPayload(apiUrl, headers, options);
-        const streamUrl = decryptLoadmPayload(payload);
+        const streamUrl = cleanCandidateUrl(decryptLoadmPayload(payload), playerUrl);
         if (!streamUrl) return null;
+
+        const playbackHeaders = {
+            Referer: baseUrl,
+            Origin: origin,
+            'User-Agent': userAgent
+        };
+        const quality = await probeStreamQuality(options.client, streamUrl, {
+            headers: playbackHeaders,
+            fallback: options.quality || 'Unknown'
+        });
 
         return {
             url: streamUrl,
-            headers: {
-                Referer: baseUrl,
-                Origin: origin
-            },
+            headers: playbackHeaders,
             extractor: 'LoadM',
             name: 'LoadM',
-            quality: 'Unknown',
+            quality,
             priority: 0
         };
     } catch (_) {

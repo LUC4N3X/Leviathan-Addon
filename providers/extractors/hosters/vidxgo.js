@@ -5,7 +5,9 @@ const { requestWithImpitRotating } = require('../../utils/bypass');
 const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
+    extractMediaUrl,
     fetchText,
+    normalizeEscapedText,
     probeStreamQuality
 } = require('./shared');
 
@@ -22,7 +24,7 @@ function isVidxgoUrl(url) {
 }
 
 function cleanUrl(value, baseUrl = null) {
-    const raw = String(value || '')
+    const raw = normalizeEscapedText(value)
         .trim()
         .replace(/\\u0026/gi, '&')
         .replace(/\\\//g, '/')
@@ -47,7 +49,7 @@ function xorDecode(base64Text, key) {
 }
 
 function extractStreamUrlFromText(text, baseUrl = null) {
-    const source = String(text || '');
+    const source = normalizeEscapedText(text);
     const patterns = [
         /currentSrc[^"']*["'](https?:\\?\/\\?\/[^"';\s<>]+)/i,
         /(?:stream_url|streamUrl|video_url|videoUrl|playlist|file|source|src)\s*[:=]\s*["'](https?:\\?\/\\?\/[^"'\s<>]+)["']/i,
@@ -61,6 +63,9 @@ function extractStreamUrlFromText(text, baseUrl = null) {
         const normalized = cleanUrl(match?.[1], baseUrl);
         if (normalized) return normalized;
     }
+
+    const generic = extractMediaUrl(source, patterns, baseUrl);
+    if (generic) return generic;
 
     STREAM_URL_RE.lastIndex = 0;
     const direct = STREAM_URL_RE.exec(source)?.[0];
@@ -83,10 +88,7 @@ function extractVidxgoStreamUrl(html, baseUrl = null) {
         if (streamUrl) return streamUrl;
     }
 
-    const escaped = source
-        .replace(/\\u0026/gi, '&')
-        .replace(/\\\\//g, '/')
-        .replace(/&amp;/gi, '&');
+    const escaped = normalizeEscapedText(source);
     const escapedStream = extractStreamUrlFromText(escaped, baseUrl);
     if (escapedStream) return escapedStream;
 

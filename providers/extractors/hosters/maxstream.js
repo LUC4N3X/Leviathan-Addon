@@ -6,6 +6,7 @@ const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
     extractFirstUrl,
+    extractMediaUrl,
     fetchText,
     probeStreamQuality,
     unpackDeanEdwards
@@ -138,7 +139,7 @@ async function extractMaxstream(url, options = {}) {
         const canonicalUrl = extractCanonicalUrl(text, playerUrl);
         const unpacked = unpackDeanEdwards(text) || '';
         const searchSpace = `${text}\n${unpacked}`;
-        let streamUrl = extractFirstUrl(searchSpace, SOURCE_PATTERNS, playerUrl);
+        let streamUrl = extractMediaUrl(searchSpace, SOURCE_PATTERNS, playerUrl);
 
         if (!streamUrl) {
             streamUrl = reconstructHostCdnMaster(parseDeanEdwardsParts(text));

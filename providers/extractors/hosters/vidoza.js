@@ -4,8 +4,9 @@ const { normalizeRemoteUrl } = require('../common');
 const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
-    extractFirstUrl,
-    fetchText
+    extractMediaUrl,
+    fetchText,
+    probeStreamQuality
 } = require('./shared');
 
 const VIDOZA_REGEX = /vidoza/i;
@@ -29,20 +30,26 @@ async function extractVidoza(url, options = {}) {
         referer: options?.requestReferer || playerUrl
     });
     const { status, text } = await fetchText(client, playerUrl, { headers });
-    if (status !== 200 || !text) return null;
+    if (status < 200 || status >= 400 || !text) return null;
 
-    const streamUrl = extractFirstUrl(text, SOURCE_PATTERNS, playerUrl);
+    const streamUrl = extractMediaUrl(text, SOURCE_PATTERNS, playerUrl);
     if (!streamUrl) return null;
+
+    const playbackHeaders = {
+        Referer: playerUrl,
+        'User-Agent': headers['User-Agent']
+    };
+    const quality = await probeStreamQuality(client, streamUrl, {
+        headers: playbackHeaders,
+        fallback: 'Unknown'
+    });
 
     return {
         url: streamUrl,
-        headers: {
-            Referer: playerUrl,
-            'User-Agent': headers['User-Agent']
-        },
+        headers: playbackHeaders,
         extractor: 'Vidoza',
         name: 'Vidoza',
-        quality: 'Unknown',
+        quality,
         priority: 8
     };
 }

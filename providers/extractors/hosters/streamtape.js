@@ -1,10 +1,12 @@
 'use strict';
 
-const { normalizeRemoteUrl } = require('../common');
+const { getOrigin, normalizeRemoteUrl } = require('../common');
 const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
-    fetchText
+    extractMediaUrl,
+    fetchText,
+    normalizeEscapedText
 } = require('./shared');
 
 const STREAMTAPE_REGEX = /streamtape/i;
@@ -17,9 +19,27 @@ function isStreamtapeUrl(url) {
 }
 
 function resolveExpressionToUrl(expression, baseUrl) {
-    const pieces = String(expression || '').match(/["']([^"']+)["']/g) || [];
-    const joined = pieces.map((part) => part.replace(/^["']|["']$/g, '')).join('');
+    const source = normalizeEscapedText(expression);
+    const pieces = source.match(/["'`]([^"'`]+)["'`]/g) || [];
+    const joined = pieces.map((part) => part.replace(/^["'`]|["'`]$/g, '')).join('');
     return normalizeRemoteUrl(joined, baseUrl);
+}
+
+function extractRobotLink(text, playerUrl) {
+    const html = normalizeEscapedText(text);
+    const robotMatch = html.match(ROBOTLINK_RE);
+    if (robotMatch?.[1]) {
+        const resolved = resolveExpressionToUrl(robotMatch[1], playerUrl);
+        if (resolved) return resolved;
+    }
+
+    const tag = normalizeRemoteUrl(html.match(ROBOTLINK_TAG_RE)?.[1], playerUrl);
+    if (tag) return tag;
+
+    const raw = normalizeRemoteUrl(html.match(RAW_DIRECT_RE)?.[1], playerUrl);
+    if (raw) return raw;
+
+    return extractMediaUrl(html, [], playerUrl);
 }
 
 async function extractStreamtape(url, options = {}) {
@@ -32,29 +52,20 @@ async function extractStreamtape(url, options = {}) {
         referer: options?.requestReferer || options?.pageUrl || playerUrl
     });
 
-    const { status, text } = await fetchText(client, playerUrl, { headers });
-    if (status !== 200 || !text) return null;
+    const { status, text } = await fetchText(client, playerUrl, {
+        headers,
+        timeout: Number(options?.timeout || 10_000)
+    });
+    if (status < 200 || status >= 400 || !text) return null;
 
-    let streamUrl = null;
-    const robotMatch = text.match(ROBOTLINK_RE);
-    if (robotMatch?.[1]) {
-        streamUrl = resolveExpressionToUrl(robotMatch[1], playerUrl);
-    }
-
-    if (!streamUrl) {
-        streamUrl = normalizeRemoteUrl(text.match(ROBOTLINK_TAG_RE)?.[1], playerUrl);
-    }
-
-    if (!streamUrl) {
-        streamUrl = normalizeRemoteUrl(text.match(RAW_DIRECT_RE)?.[1], playerUrl);
-    }
-
+    const streamUrl = extractRobotLink(text, playerUrl);
     if (!streamUrl) return null;
 
     return {
         url: streamUrl,
         headers: {
             Referer: playerUrl,
+            Origin: getOrigin(playerUrl),
             'User-Agent': headers['User-Agent']
         },
         extractor: 'StreamTape',
@@ -65,6 +76,8 @@ async function extractStreamtape(url, options = {}) {
 }
 
 module.exports = {
+    extractRobotLink,
     extractStreamtape,
-    isStreamtapeUrl
+    isStreamtapeUrl,
+    resolveExpressionToUrl
 };

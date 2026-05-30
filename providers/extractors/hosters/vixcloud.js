@@ -4,7 +4,9 @@ const { getOrigin, normalizeRemoteUrl } = require('../common');
 const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
+    extractMediaUrl,
     fetchText,
+    normalizeEscapedText,
     probeStreamQuality
 } = require('./shared');
 
@@ -34,7 +36,7 @@ function isVixcloudUrl(url) {
 }
 
 function normalizeEscapedUrl(value) {
-    let out = String(value || '').trim().replace(/^['"]|['"]$/g, '');
+    let out = normalizeEscapedText(value).trim().replace(/^['"]|['"]$/g, '');
     let previous = null;
     for (let index = 0; index < 4; index += 1) {
         if (out === previous) break;
@@ -98,15 +100,24 @@ async function extractVixcloud(url, options = {}) {
         userAgent: options?.userAgent || DEFAULT_USER_AGENT,
         referer: options?.requestReferer || `${getOrigin(playerUrl)}/`
     });
-    const { status, text } = await fetchText(client, playerUrl, { headers });
-    if (status !== 200 || !text) return null;
+    const { status, text } = await fetchText(client, playerUrl, {
+        headers,
+        timeout: Number(options?.timeout || 10_000)
+    });
+    if (status < 200 || status >= 400 || !text) return null;
 
-    const token = extractFirst(TOKEN_PATTERNS, text);
-    const expires = extractFirst(EXPIRES_PATTERNS, text);
-    const mediaBase = extractFirst(URL_PATTERNS, text);
-    if (!(token && expires && mediaBase)) return null;
+    const normalizedText = normalizeEscapedText(text);
+    const token = extractFirst(TOKEN_PATTERNS, normalizedText);
+    const expires = extractFirst(EXPIRES_PATTERNS, normalizedText);
+    const mediaBase = extractFirst(URL_PATTERNS, normalizedText);
 
-    const streamUrl = buildMasterUrl(mediaBase, token, expires, FHD_RE.test(text), B_FLAG_RE.test(mediaBase));
+    let streamUrl = null;
+    if (token && expires && mediaBase) {
+        streamUrl = buildMasterUrl(mediaBase, token, expires, FHD_RE.test(normalizedText), B_FLAG_RE.test(mediaBase));
+    }
+    if (!streamUrl) {
+        streamUrl = extractMediaUrl(normalizedText, URL_PATTERNS, playerUrl);
+    }
     if (!streamUrl) return null;
 
     const playbackHeaders = {

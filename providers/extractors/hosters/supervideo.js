@@ -4,8 +4,9 @@ const { normalizeRemoteUrl } = require('../common');
 const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
-    extractFirstUrl,
+    extractMediaUrl,
     fetchText,
+    normalizeEscapedText,
     probeStreamQuality,
     unpackDeanEdwards
 } = require('./shared');
@@ -27,12 +28,7 @@ function isSupervideoUrl(url) {
 }
 
 function decodeHtmlEntities(value) {
-    return String(value || '')
-        .replace(/&amp;/gi, '&')
-        .replace(/&#038;/gi, '&')
-        .replace(/&quot;/gi, '"')
-        .replace(/&#039;/gi, "'")
-        .replace(/&apos;/gi, "'");
+    return normalizeEscapedText(value);
 }
 
 function cleanCandidateUrl(value, baseUrl = null) {
@@ -82,16 +78,12 @@ function buildSupervideoCandidates(url) {
 function extractStreamUrl(html, playerUrl) {
     const text = String(html || '');
     const unpacked = unpackDeanEdwards(text);
-    const spaces = [unpacked, text]
+    const searchSpace = [unpacked, text]
         .filter(Boolean)
-        .map((value) => decodeHtmlEntities(value).replace(/\\\//g, '/'));
+        .map((value) => decodeHtmlEntities(value).replace(/\\\//g, '/'))
+        .join('\n');
 
-    for (const space of spaces) {
-        const found = extractFirstUrl(space, SOURCE_PATTERNS, playerUrl);
-        if (found) return found;
-    }
-
-    return null;
+    return extractMediaUrl(searchSpace, SOURCE_PATTERNS, playerUrl);
 }
 
 async function extractSupervideo(url, options = {}) {
@@ -112,7 +104,7 @@ async function extractSupervideo(url, options = {}) {
         lastPlayerUrl = playerUrl;
 
         const { status, text } = await fetchText(client, playerUrl, { headers, timeout: options?.timeout || 10_000 });
-        if (status && status !== 200) continue;
+        if (status < 200 || status >= 400) continue;
         if (!text) continue;
 
         const streamUrl = extractStreamUrl(text, playerUrl);
