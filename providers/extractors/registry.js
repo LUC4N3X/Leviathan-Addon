@@ -40,7 +40,6 @@ const HOSTER_DEFINITIONS = [
         extract: extractSupervideo,
         priority: 0
     },
-
     {
         key: 'maxstream',
         label: 'MaxStream',
@@ -53,6 +52,13 @@ const HOSTER_DEFINITIONS = [
         label: 'Uprot',
         matches: isUprotUrl,
         extract: extractUprot,
+        priority: 0
+    },
+    {
+        key: 'vidxgo',
+        label: 'VidxGo',
+        matches: isVidxgoUrl,
+        extract: extractVidxgo,
         priority: 0
     },
     {
@@ -69,14 +75,6 @@ const HOSTER_DEFINITIONS = [
         extract: extractVixcloud,
         priority: 1
     },
-
-    {
-        key: 'vidxgo',
-        label: 'VidxGo',
-        matches: isVidxgoUrl,
-        extract: extractVidxgo,
-        priority: 0
-    },
     {
         key: 'dropload',
         label: 'DropLoad',
@@ -85,18 +83,18 @@ const HOSTER_DEFINITIONS = [
         priority: 2
     },
     {
-        key: 'loadm',
-        label: 'LoadM',
-        matches: isLoadmUrl,
-        extract: extractLoadm,
-        priority: 4
-    },
-    {
         key: 'mixdrop',
         label: 'MixDrop',
         matches: isMixdropUrl,
         extract: extractMixdrop,
         priority: 3
+    },
+    {
+        key: 'loadm',
+        label: 'LoadM',
+        matches: isLoadmUrl,
+        extract: extractLoadm,
+        priority: 4
     },
     {
         key: 'upstream',
@@ -128,24 +126,202 @@ const HOSTER_DEFINITIONS = [
     }
 ];
 
-function resolveExtractorDefinition(url) {
-    return HOSTER_DEFINITIONS.find((definition) => definition.matches(url)) || null;
+const SORTED_HOSTER_DEFINITIONS = HOSTER_DEFINITIONS
+    .map((definition, index) => ({ ...definition, order: index }))
+    .sort((a, b) => {
+        const byPriority = Number(a.priority || 0) - Number(b.priority || 0);
+        if (byPriority !== 0) return byPriority;
+        return a.order - b.order;
+    });
+
+function decodeHtmlEntities(value) {
+    return String(value || '')
+        .replace(/&amp;/gi, '&')
+        .replace(/&#38;/g, '&')
+        .replace(/&#038;/g, '&')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#34;/g, '"')
+        .replace(/&#034;/g, '"')
+        .replace(/&apos;/gi, "'")
+        .replace(/&#39;/g, "'")
+        .replace(/&#039;/g, "'")
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>');
 }
 
-async function extractFromUrl(url, options = {}) {
-    const definition = resolveExtractorDefinition(url);
-    if (!definition) return null;
+function decodeCommonEscapes(value) {
+    return String(value || '')
+        .replace(/\\u0026/gi, '&')
+        .replace(/\\u003d/gi, '=')
+        .replace(/\\u003f/gi, '?')
+        .replace(/\\u002f/gi, '/')
+        .replace(/\\u003a/gi, ':')
+        .replace(/\\u002e/gi, '.')
+        .replace(/\\x26/gi, '&')
+        .replace(/\\x3d/gi, '=')
+        .replace(/\\x3f/gi, '?')
+        .replace(/\\x2f/gi, '/')
+        .replace(/\\x3a/gi, ':')
+        .replace(/\\x2e/gi, '.')
+        .replace(/\\\//g, '/');
+}
 
-    const extracted = await definition.extract(url, options);
-    if (!extracted?.url) return null;
+function safeDecodeUri(value) {
+    const input = String(value || '');
+    try {
+        const decoded = decodeURI(input);
+        if (decoded && decoded !== input) return decoded;
+    } catch (_) {
+        return input;
+    }
+    return input;
+}
+
+function cleanUrlBoundary(value) {
+    return String(value || '')
+        .trim()
+        .replace(/^[`"'([{<]+/g, '')
+        .replace(/[`"'\])}>;,]+$/g, '');
+}
+
+function normalizeHosterUrl(value) {
+    let normalized = cleanUrlBoundary(value);
+    normalized = decodeHtmlEntities(normalized);
+    normalized = decodeCommonEscapes(normalized);
+    normalized = safeDecodeUri(normalized);
+    normalized = cleanUrlBoundary(normalized);
+
+    if (normalized.startsWith('//')) {
+        normalized = `https:${normalized}`;
+    }
+
+    return normalized;
+}
+
+function uniqueValues(values) {
+    return [...new Set(values.filter(Boolean))];
+}
+
+function buildUrlCandidates(url) {
+    const raw = String(url || '').trim();
+    const normalized = normalizeHosterUrl(raw);
+    const decodedRaw = safeDecodeUri(raw);
+    const decodedNormalized = safeDecodeUri(normalized);
+
+    return uniqueValues([
+        raw,
+        normalized,
+        decodedRaw,
+        decodedNormalized,
+        normalizeHosterUrl(decodedRaw),
+        normalizeHosterUrl(decodedNormalized)
+    ]);
+}
+
+function isValidExtractedUrl(value) {
+    const url = normalizeHosterUrl(value);
+    return /^https?:\/\//i.test(url);
+}
+
+function getExtractedUrl(extracted) {
+    if (typeof extracted === 'string') return extracted;
+    if (!extracted || typeof extracted !== 'object') return null;
+
+    return extracted.url
+        || extracted.file
+        || extracted.src
+        || extracted.hls
+        || extracted.stream
+        || extracted.streamUrl
+        || extracted.video
+        || extracted.videoUrl
+        || null;
+}
+
+function normalizeExtractedResult(extracted) {
+    const url = getExtractedUrl(extracted);
+    if (!url || !isValidExtractedUrl(url)) return null;
+
+    if (typeof extracted === 'string') {
+        return { url: normalizeHosterUrl(url) };
+    }
 
     return {
         ...extracted,
-        key: definition.key,
-        extractor: extracted.extractor || definition.label,
-        name: extracted.name || definition.label,
-        priority: extracted.priority ?? definition.priority
+        url: normalizeHosterUrl(url)
     };
+}
+
+function resolveExtractorEntry(url) {
+    const candidates = buildUrlCandidates(url);
+
+    for (const candidate of candidates) {
+        for (const definition of SORTED_HOSTER_DEFINITIONS) {
+            try {
+                if (definition.matches(candidate)) {
+                    return {
+                        definition,
+                        url: candidate
+                    };
+                }
+            } catch (_) {
+                continue;
+            }
+        }
+    }
+
+    return null;
+}
+
+function resolveExtractorDefinition(url) {
+    return resolveExtractorEntry(url)?.definition || null;
+}
+
+function getExtractorDefinitionByKey(key) {
+    const normalizedKey = String(key || '').trim().toLowerCase();
+    if (!normalizedKey) return null;
+
+    return HOSTER_DEFINITIONS.find((definition) => definition.key === normalizedKey) || null;
+}
+
+function listSupportedHosters() {
+    return HOSTER_DEFINITIONS.map((definition) => ({
+        key: definition.key,
+        label: definition.label,
+        priority: definition.priority
+    }));
+}
+
+async function extractFromUrl(url, options = {}) {
+    const entry = resolveExtractorEntry(url);
+    if (!entry) return null;
+
+    const { definition, url: normalizedUrl } = entry;
+
+    try {
+        const extracted = await definition.extract(normalizedUrl, options);
+        const normalized = normalizeExtractedResult(extracted);
+        if (!normalized?.url) return null;
+
+        return {
+            ...normalized,
+            key: definition.key,
+            extractor: normalized.extractor || definition.label,
+            name: normalized.name || definition.label,
+            priority: normalized.priority ?? definition.priority
+        };
+    } catch (error) {
+        if (options.throwOnExtractorError || options.throwOnError) {
+            throw error;
+        }
+
+        const logger = options.logger || options.log;
+        if (logger?.warn) {
+            logger.warn(`[ExtractorRegistry] ${definition.label} failed: ${error.message || error}`);
+        }
+
+        return null;
+    }
 }
 
 module.exports = {
@@ -153,5 +329,7 @@ module.exports = {
     HOSTER_DIRECT_LINK_PATTERN,
     HOSTER_ESCAPED_DIRECT_LINK_PATTERN,
     resolveExtractorDefinition,
+    getExtractorDefinitionByKey,
+    listSupportedHosters,
     extractFromUrl
 };
