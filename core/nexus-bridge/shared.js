@@ -214,14 +214,32 @@ function getTorrentioLanguageEvidence(stream) {
     ].filter(Boolean).join(' ');
 
     const normalized = normalizeForComparison(raw);
-    const hasExplicitItalianAudio = /(?:🇮🇹|\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i.test(raw);
-    const hasItalianSubtitleOnly = REGEX_SUB_ITA.test(raw) && !hasExplicitItalianAudio;
+    const scanText = `${raw} ${normalized}`;
+    const hasItalianFlag = /🇮🇹/.test(raw);
+    const hasItalianFlagPair = /(?:🇮🇹.*(?:🇬🇧|🇺🇸)|(?:🇬🇧|🇺🇸).*🇮🇹)/.test(raw);
+    const hasTextualItalian = /\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b/i.test(scanText);
+    const hasItalianAudioContext = /(?:\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i.test(scanText);
+    const hasItalianPair = /(?:\b(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\s*[\/+,_. -]\s*(?:ENG|EN|ENGLISH)\b|\b(?:ENG|EN|ENGLISH)\s*[\/+,_. -]\s*(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\b)/i.test(scanText);
+    const hasMultiItalian = /(?:\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b.*\b(?:ITA|ITALIAN|ITALIANO|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|IT)\b.*\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b)/i.test(scanText);
+    const hasTrustedItalian = REGEX_TORRENTHAN_BRAND.test(scanText) || REGEX_TRUSTED_ITA.test(scanText);
+    const hasItalianSubtitleOnly = REGEX_SUB_ITA.test(raw) && !(hasItalianAudioContext || hasItalianPair || hasMultiItalian || hasItalianFlagPair);
     const hasLooseItalian = REGEX_TORRENTIO_LOOSE_ITA.test(raw) || REGEX_TORRENTIO_LOOSE_ITA.test(normalized);
-    const hasItalian = Boolean(hasLooseItalian || REGEX_STRONG_ITA_AUDIO.test(raw) || REGEX_STRONG_ITA_AUDIO.test(normalized));
+    const hasStrongItalian = Boolean(hasItalianAudioContext || hasItalianPair || hasMultiItalian || hasTrustedItalian || hasItalianFlagPair || hasTextualItalian);
+    const hasFlagOnlyItalian = Boolean(hasItalianFlag && !hasStrongItalian);
+    const hasItalian = Boolean(hasStrongItalian && !hasItalianSubtitleOnly);
     const hasForeign = REGEX_NEGATIVE_LANGUAGE.test(raw) || REGEX_NEGATIVE_LANGUAGE.test(normalized);
     const onlyForeignFlagBlock = hasForeign && !hasItalian;
 
-    return { hasItalian, hasForeign, onlyForeignFlagBlock, hasItalianSubtitleOnly, hasLooseItalian };
+    return {
+        hasItalian,
+        hasForeign,
+        onlyForeignFlagBlock,
+        hasItalianSubtitleOnly,
+        hasLooseItalian,
+        hasFlagOnlyItalian,
+        hasItalianFlagPair,
+        hasStrongItalian
+    };
 }
 
 function looksLikeSeasonPackTitle(value) {
@@ -824,15 +842,27 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
                 ...languageInfo,
                 isItalian: true,
                 hasAudioItalian: true,
+                isFlagOnlyItalian: false,
                 confidence: Math.max(Number(languageInfo.confidence || 0), 98),
                 hasNegativeLanguage: false,
-                reason: languageInfo.reason && languageInfo.reason !== 'none' ? `torrentio_it_token|${languageInfo.reason}` : 'torrentio_it_token'
+                reason: languageInfo.reason && languageInfo.reason !== 'none' ? `torrentio_strict_it_token|${languageInfo.reason}` : 'torrentio_strict_it_token'
+            };
+        } else if (evidence.hasFlagOnlyItalian) {
+            languageInfo = {
+                ...languageInfo,
+                isItalian: false,
+                hasAudioItalian: false,
+                isFlagOnlyItalian: true,
+                confidence: Math.min(Number(languageInfo.confidence || 0), 18),
+                hasNegativeLanguage: Boolean(languageInfo.hasNegativeLanguage),
+                reason: languageInfo.reason && languageInfo.reason !== 'none' ? `torrentio_flag_only_rejected|${languageInfo.reason}` : 'torrentio_flag_only_rejected'
             };
         } else if (evidence.hasForeign) {
             languageInfo = {
                 ...languageInfo,
                 isItalian: false,
                 hasAudioItalian: false,
+                isFlagOnlyItalian: false,
                 confidence: Math.min(Number(languageInfo.confidence || 0), -80),
                 hasNegativeLanguage: true,
                 reason: languageInfo.reason && languageInfo.reason !== 'none' ? `torrentio_foreign|${languageInfo.reason}` : 'torrentio_foreign'
@@ -985,7 +1015,7 @@ function filterNormalizedExternalStreams(streams, addonKey, options = {}) {
                 provider: stream.externalProvider || stream.provider
             });
             if (evidence.hasItalian) return true;
-            if (evidence.hasForeign) return false;
+            if (evidence.hasFlagOnlyItalian || evidence.hasForeign) return false;
         }
         const info = stream.languageInfo || {};
         if (info.isItalian === true && Number(info.confidence || 0) >= minimumConfidence) return true;
