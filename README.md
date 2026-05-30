@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://i.ibb.co/MbmdvP6/file-0000000018387243a2da8535139f6423.png" alt="Leviathan Logo" width="250" />
+<img src="https://i.ibb.co/kg1dqmDg/logo-1.png" alt="Leviathan Logo" width="250" />
 
 # LEVIATHAN
 
