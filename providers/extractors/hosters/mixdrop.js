@@ -6,8 +6,13 @@ const {
     getOrigin,
     normalizeRemoteUrl
 } = require('../common');
-
-const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const {
+    DEFAULT_USER_AGENT,
+    extractMediaUrl,
+    fetchText,
+    probeStreamQuality,
+    unpackDeanEdwards
+} = require('./shared');
 const MIXDROP_REGEX = /mixdrop|m1xdrop|mxcontent|mixdrp/i;
 const NOT_FOUND_REGEX = /can't find the (?:file|video)|deleted|expired/i;
 const DIRECT_URL_REGEX = /(?:MDCore|Core|wurl)\s*(?:\.wurl)?\s*=\s*["']([^"']+)["']/i;
@@ -15,39 +20,6 @@ const M3U8_REGEX = /file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i;
 
 function isMixdropUrl(url) {
     return MIXDROP_REGEX.test(String(url || ''));
-}
-
-function unpackDeanEdwards(html) {
-    if (!html || typeof html !== 'string') return null;
-    try {
-        const packedMatch = html.match(/eval\(function\(p,a,c,k,e,?[rd]?\).*?\}\('(.*?)',\s*(\d+),\s*(\d+),\s*'([^']+)'\.split\('\|'\).*?\)\)/s);
-        if (!packedMatch) return null;
-
-        let [_, payload, base, count, dictionary] = packedMatch;
-        base = parseInt(base, 10);
-        count = parseInt(count, 10);
-        dictionary = dictionary.split('|');
-
-        const encode = (value) => {
-            const alphabet = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-            if (value === 0) return alphabet[0];
-            let output = '';
-            while (value > 0) {
-                output = alphabet[value % base] + output;
-                value = Math.floor(value / base);
-            }
-            return output;
-        };
-
-        let unpacked = payload;
-        for (let index = count - 1; index >= 0; index -= 1) {
-            if (!dictionary[index]) continue;
-            unpacked = unpacked.replace(new RegExp(`\\b${encode(index)}\\b`, 'g'), dictionary[index]);
-        }
-        return unpacked;
-    } catch (_) {
-        return null;
-    }
 }
 
 function normalizeMixdropUrl(url) {
@@ -106,8 +78,10 @@ async function extractMixdrop(url, options = {}) {
 
     try {
         const filePageUrl = embedUrl.replace('/e/', '/f/');
-        const fileResponse = await client.get(filePageUrl, { headers: requestHeaders });
-        const fileHtml = typeof fileResponse?.data === 'string' ? fileResponse.data : '';
+        const { text: fileHtml } = await fetchText(client, filePageUrl, {
+            headers: requestHeaders,
+            timeout: Number(options?.metadataTimeout || 7000)
+        });
         if (fileHtml && !NOT_FOUND_REGEX.test(fileHtml)) {
             quality = detectStreamQuality(fileHtml, quality);
             size = extractSizeText(fileHtml);
@@ -115,18 +89,28 @@ async function extractMixdrop(url, options = {}) {
     } catch (_) {}
 
     try {
-        const response = await client.get(embedUrl, { headers: requestHeaders });
-        const html = typeof response?.data === 'string' ? response.data : '';
+        const { status, text: html } = await fetchText(client, embedUrl, {
+            headers: requestHeaders,
+            timeout: Number(options?.timeout || 10000)
+        });
+        if (status < 200 || status >= 400 || !html) return null;
         const unpacked = unpackDeanEdwards(html);
-        const streamUrl = extractDirectUrl(unpacked || html, embedUrl);
+        const streamUrl = extractDirectUrl(`${html}\n${unpacked || ''}`, embedUrl)
+            || extractMediaUrl(`${html}\n${unpacked || ''}`, [], embedUrl);
         if (!streamUrl) return null;
+
+        const playbackHeaders = buildMixdropHeaders(embedUrl, userAgent);
+        const probedQuality = await probeStreamQuality(client, streamUrl, {
+            headers: playbackHeaders,
+            fallback: detectStreamQuality(streamUrl, quality)
+        });
 
         return {
             url: streamUrl,
-            headers: buildMixdropHeaders(embedUrl, userAgent),
+            headers: playbackHeaders,
             extractor: 'MixDrop',
             name: 'MixDrop',
-            quality: detectStreamQuality(streamUrl, quality),
+            quality: probedQuality,
             size,
             priority: 1
         };

@@ -4,7 +4,9 @@ const { normalizeRemoteUrl } = require('../common');
 const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
-    fetchText
+    extractMediaUrl,
+    fetchText,
+    probeStreamQuality
 } = require('./shared');
 
 const UQLOAD_REGEX = /uqload/i;
@@ -27,28 +29,27 @@ async function extractUqload(url, options = {}) {
         referer: 'https://uqload.io/'
     });
     const { status, text } = await fetchText(client, playerUrl, { headers });
-    if (status !== 200 || !text) return null;
+    if (status < 200 || status >= 400 || !text) return null;
 
-    let streamUrl = null;
-    for (const pattern of SOURCE_PATTERNS) {
-        const match = text.match(pattern);
-        if (!match?.[1]) continue;
-        streamUrl = normalizeRemoteUrl(match[1], playerUrl);
-        if (streamUrl) break;
-    }
-
+    const streamUrl = extractMediaUrl(text, SOURCE_PATTERNS, playerUrl);
     if (!streamUrl) return null;
+
+    const playbackHeaders = {
+        Referer: 'https://uqload.io/',
+        Origin: 'https://uqload.io',
+        'User-Agent': headers['User-Agent']
+    };
+    const quality = await probeStreamQuality(client, streamUrl, {
+        headers: playbackHeaders,
+        fallback: 'Unknown'
+    });
 
     return {
         url: streamUrl,
-        headers: {
-            Referer: 'https://uqload.io/',
-            Origin: 'https://uqload.io',
-            'User-Agent': headers['User-Agent']
-        },
+        headers: playbackHeaders,
         extractor: 'Uqload',
         name: 'Uqload',
-        quality: 'Unknown',
+        quality,
         priority: 6
     };
 }

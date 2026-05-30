@@ -22,6 +22,7 @@ const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
     extractFirstUrl,
+    extractMediaUrl,
     fetchText,
     probeStreamQuality,
     responseText
@@ -820,7 +821,7 @@ async function resolveMsfi(client, targetUrl, options = {}) {
 async function parseUprotLandingText(client, targetUrl, text, options = {}, via = 'uprot-landing') {
     if (!text) return null;
 
-    const directStream = extractFirstUrl(text, SOURCE_PATTERNS, targetUrl);
+    const directStream = extractMediaUrl(text, SOURCE_PATTERNS, targetUrl);
     if (directStream) {
         return {
             streamUrl: directStream,

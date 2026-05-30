@@ -4,8 +4,9 @@ const { normalizeRemoteUrl } = require('../common');
 const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
-    extractFirstUrl,
+    extractMediaUrl,
     fetchText,
+    probeStreamQuality,
     unpackDeanEdwards
 } = require('./shared');
 
@@ -29,21 +30,27 @@ async function extractUpstream(url, options = {}) {
         referer: 'https://upstream.to/'
     });
     const { status, text } = await fetchText(client, playerUrl, { headers });
-    if (status !== 200 || !text) return null;
+    if (status < 200 || status >= 400 || !text) return null;
 
-    const streamUrl = extractFirstUrl(unpackDeanEdwards(text) || text, FILE_PATTERNS, playerUrl);
+    const streamUrl = extractMediaUrl(`${text}\n${unpackDeanEdwards(text) || ''}`, FILE_PATTERNS, playerUrl);
     if (!streamUrl) return null;
+
+    const playbackHeaders = {
+        Referer: 'https://upstream.to/',
+        Origin: 'https://upstream.to',
+        'User-Agent': headers['User-Agent']
+    };
+    const quality = await probeStreamQuality(client, streamUrl, {
+        headers: playbackHeaders,
+        fallback: 'Unknown'
+    });
 
     return {
         url: streamUrl,
-        headers: {
-            Referer: 'https://upstream.to/',
-            Origin: 'https://upstream.to',
-            'User-Agent': headers['User-Agent']
-        },
+        headers: playbackHeaders,
         extractor: 'Upstream',
         name: 'Upstream',
-        quality: 'Unknown',
+        quality,
         priority: 5
     };
 }

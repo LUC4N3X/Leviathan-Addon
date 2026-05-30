@@ -4,7 +4,7 @@ const { normalizeRemoteUrl } = require('../common');
 const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
-    extractFirstUrl,
+    extractMediaUrl,
     fetchText,
     probeStreamQuality,
     unpackDeanEdwards
@@ -31,10 +31,10 @@ async function extractDropload(url, options = {}) {
         referer: options?.requestReferer || `${new URL(playerUrl).origin}/`
     });
     const { status, text } = await fetchText(client, playerUrl, { headers });
-    if (status !== 200 || !text) return null;
+    if (status < 200 || status >= 400 || !text) return null;
 
-    const searchSpace = unpackDeanEdwards(text) || text;
-    const streamUrl = extractFirstUrl(searchSpace, SOURCE_PATTERNS, playerUrl);
+    const searchSpace = `${text}\n${unpackDeanEdwards(text) || ''}`;
+    const streamUrl = extractMediaUrl(searchSpace, SOURCE_PATTERNS, playerUrl);
     if (!streamUrl) return null;
 
     const playbackHeaders = {

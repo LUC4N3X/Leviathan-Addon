@@ -5,6 +5,7 @@ const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
     extractFirstUrl,
+    extractMediaUrl,
     fetchText,
     probeStreamQuality,
     responseText
@@ -151,7 +152,7 @@ async function extractDeltabit(url, options = {}) {
         });
         if (status < 200 || status >= 400 || !text) return null;
 
-        const directStream = extractFirstUrl(text, SOURCE_PATTERNS, targetUrl);
+        const directStream = extractMediaUrl(text, SOURCE_PATTERNS, targetUrl);
         if (directStream) {
             const headers = buildPlaybackHeaders(targetUrl, userAgent);
             const quality = await probeStreamQuality(client, directStream, { headers, fallback: 'Unknown' });
@@ -194,7 +195,7 @@ async function extractDeltabit(url, options = {}) {
         const posted = await postForm(client, targetUrl, form.toString(), postHeaders, Number(options?.postTimeout || 12_000));
         if (posted.status < 200 || posted.status >= 400 || !posted.text) return null;
 
-        const finalStream = extractFirstUrl(posted.text, SOURCE_PATTERNS, targetUrl);
+        const finalStream = extractMediaUrl(posted.text, SOURCE_PATTERNS, targetUrl);
         if (!finalStream) return null;
 
         const headers = buildPlaybackHeaders(targetUrl, userAgent);
