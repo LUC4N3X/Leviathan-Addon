@@ -50,8 +50,10 @@ function extractStreamUrlFromText(text, baseUrl = null) {
     const source = String(text || '');
     const patterns = [
         /currentSrc[^"']*["'](https?:\\?\/\\?\/[^"';\s<>]+)/i,
-        /(?:file|source|src)\s*[:=]\s*["'](https?:\\?\/\\?\/[^"'\s<>]+)["']/i,
-        /<source\b[^>]+src=["']([^"']+)["']/i
+        /(?:stream_url|streamUrl|video_url|videoUrl|playlist|file|source|src)\s*[:=]\s*["'](https?:\\?\/\\?\/[^"'\s<>]+)["']/i,
+        /(?:file|src)\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i,
+        /<source\b[^>]+src=["']([^"']+)["']/i,
+        /data-(?:src|file|hls|url)=["']([^"']+\.m3u8[^"']*)["']/i
     ];
 
     for (const pattern of patterns) {
@@ -79,6 +81,21 @@ function extractVidxgoStreamUrl(html, baseUrl = null) {
     for (const decoded of decodedSpaces) {
         const streamUrl = extractStreamUrlFromText(decoded, baseUrl);
         if (streamUrl) return streamUrl;
+    }
+
+    const escaped = source
+        .replace(/\\u0026/gi, '&')
+        .replace(/\\\\//g, '/')
+        .replace(/&amp;/gi, '&');
+    const escapedStream = extractStreamUrlFromText(escaped, baseUrl);
+    if (escapedStream) return escapedStream;
+
+    for (const match of source.matchAll(/atob\(\s*['"]([A-Za-z0-9+/=]{24,})['"]\s*\)/ig)) {
+        try {
+            const decoded = Buffer.from(match[1], 'base64').toString('utf8');
+            const streamUrl = extractStreamUrlFromText(decoded, baseUrl);
+            if (streamUrl) return streamUrl;
+        } catch (_) {}
     }
 
     return extractStreamUrlFromText(source, baseUrl);
@@ -211,5 +228,6 @@ module.exports = {
     extractVidxgo,
     extractVidxGo: extractVidxgo,
     extractVidxGO: extractVidxgo,
+    extractVidxgoStreamUrl,
     isVidxgoUrl
 };

@@ -115,7 +115,7 @@ const WEB_PROVIDER_DEFINITIONS = [
         recipeId: 'altadefinizione',
         sourceName: 'AltadefinizioneStreaming',
         cacheName: 'AltadefinizioneStreaming',
-        cacheKeyVersion: 'vidxgo-impit-mixdrop-v1',
+        cacheKeyVersion: 'ads-kraken-first-vidxgo-v2',
         icon: '🎞️',
         limiterKey: 'webAds',
         minTimeout: ALTADEFINIZIONE_MIN_TIMEOUT,
