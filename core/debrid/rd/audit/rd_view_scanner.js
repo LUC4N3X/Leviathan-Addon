@@ -103,10 +103,14 @@ function hasEnoughProbeData(item = {}) {
     return Boolean(getCandidateHash(item) && item.magnet);
 }
 
-function buildViewScanKey(service, item = {}) {
+function tokenScanScope(token = '') {
+    return crypto.createHash('sha1').update(String(token || 'no-token')).digest('hex').slice(0, 12);
+}
+
+function buildViewScanKey(service, item = {}, token = '') {
     const hash = getCandidateHash(item);
     if (!hash) return null;
-    return `${String(service || 'rd').toLowerCase()}:${hash}:${normalizeFileIdxForAvailability(item.fileIdx ?? item.file_index ?? item.rd_file_index)}`;
+    return `${String(service || 'rd').toLowerCase()}:${tokenScanScope(token)}:${hash}:${normalizeFileIdxForAvailability(item.fileIdx ?? item.file_index ?? item.rd_file_index)}`;
 }
 
 function getMetaLabel(meta = {}) {
@@ -182,7 +186,7 @@ function collectViewScanCandidates(items = [], meta = {}, options = {}) {
         else if (state === 'probing') probing += 1;
         else if (state === 'likely_cached') likely += 1;
 
-        const key = buildViewScanKey('rd', item);
+        const key = buildViewScanKey('rd', item, options.apiKey);
         if (!key || seen.has(key)) continue;
         seen.add(key);
 
@@ -218,6 +222,9 @@ function isTerminalUncachedStatus(status) {
 
 function mapProbeResultToState(result = {}) {
     if (result.cached === true) return { state: 'cached', cached: true, failures: 0, next_hours: 24 * 30 };
+    if (result.deferred === true || result.state === 'probing') {
+        return { state: 'probing', cached: null, failures: 0, next_hours: 2 };
+    }
     if (result.state === 'likely_cached' || result.pack_without_episode_hint === true) {
         return { state: 'likely_cached', cached: null, failures: 0, next_hours: 6 };
     }
@@ -316,7 +323,7 @@ function removePendingCandidateByKey(key, minPriorityValue) {
         const job = pendingQueue[i];
         if (Number(job?.priorityValue || 0) >= minPriorityValue) continue;
         const before = Array.isArray(job.candidates) ? job.candidates.length : 0;
-        job.candidates = (job.candidates || []).filter((item) => buildViewScanKey('rd', item) !== key);
+        job.candidates = (job.candidates || []).filter((item) => buildViewScanKey('rd', item, job.apiKey) !== key);
         removed += before - job.candidates.length;
         if (!job.candidates.length) pendingQueue.splice(i, 1);
     }
@@ -395,7 +402,11 @@ async function processBatch(job, batch) {
         normalizedBatch,
         apiKey,
         normalizedBatch.length,
-        { exactForeground: true, exactLimit: Math.min(RD_VIEW_SCAN_EXACT_LIMIT, normalizedBatch.length) }
+        {
+            exactForeground: true,
+            exactLimit: Math.min(RD_VIEW_SCAN_EXACT_LIMIT, normalizedBatch.length),
+            priority: 'view_scan'
+        }
     );
 
     const updates = [];
@@ -510,7 +521,8 @@ function enqueueRdViewScan(params = {}) {
     const priorityValue = getPriorityValue(priority);
     const { candidates, stats } = collectViewScanCandidates(params.items || params.results || [], meta, {
         maxScan: params.maxScan || RD_VIEW_SCAN_TOP,
-        getRdAvailabilityState: params.getRdAvailabilityState
+        getRdAvailabilityState: params.getRdAvailabilityState,
+        apiKey
     });
 
     if (candidates.length === 0) {
@@ -519,7 +531,7 @@ function enqueueRdViewScan(params = {}) {
     }
 
     const fingerprint = crypto.createHash('sha1')
-        .update(`${getMetaLabel(requestPage)}|${kind}|${candidates.map((item) => buildViewScanKey('rd', item)).join('|')}`)
+        .update(`${getMetaLabel(requestPage)}|${kind}|${candidates.map((item) => buildViewScanKey('rd', item, apiKey)).join('|')}`)
         .digest('hex')
         .slice(0, 16);
     const collectionKey = `${getMetaLabel(requestPage)}:${kind}:${fingerprint}`;
@@ -530,7 +542,7 @@ function enqueueRdViewScan(params = {}) {
 
     const deduped = [];
     for (const item of candidates) {
-        const key = buildViewScanKey('rd', item);
+        const key = buildViewScanKey('rd', item, apiKey);
         if (!key) continue;
         if (!reserveViewScanKey(key, priorityValue, requestPage)) {
             logger.info?.(`[RD VIEW SCAN] skip duplicate hash=${String(item.hash).toLowerCase()} fileIdx=${item.fileIdx ?? 'auto'} page=${getMetaLabel(requestPage)} priority=${priority}`);
@@ -580,6 +592,7 @@ module.exports = {
     __private: {
         normalizeHash,
         getAvailabilityCacheKey,
+        buildViewScanKey,
         mapProbeResultToState,
         buildDbUpdate,
         normalizePriorityLabel,

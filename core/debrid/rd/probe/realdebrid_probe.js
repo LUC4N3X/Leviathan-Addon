@@ -23,6 +23,7 @@ const { findEpisodeFileHint } = require('../../../matching/season_pack_inspector
 const { hasWrongExplicitEpisodeMarker } = require('../../../matching/episode_matcher');
 const { scheduleRealDebridRequest } = require('../utils/rd_rate_limiter');
 const { withRealDebridMagnetLock } = require('../utils/rd_magnet_lock');
+const { scheduleRdProbe } = require('./rd_probe_coordinator');
 
 function isVideoFile(path) {
     return VIDEO_EXTENSIONS.test(path || '');
@@ -93,6 +94,10 @@ function writeProbeResultCache(item = {}, token = '', result = {}) {
     probeResultCache.set(key, { result: cloneProbeResult(result), expiresAt: Date.now() + ttl });
     pruneProbeResultCache();
     return true;
+}
+
+function shouldDeferCachedProbeResult(result = {}) {
+    return result.deferred === true || result.state === 'probing';
 }
 
 function isCachedStatus(status) {
@@ -491,20 +496,20 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
     return withRealDebridMagnetLock(token, hash, async () => {
     try {
         const addRes = await request('POST', `${RD_BASE_URL}/torrents/addMagnet`, token, buildMagnetBody(magnet));
-        if (!addRes) return fast ? buildDeferredProbeResult(hash, null, 'Failed to add magnet') : { hash, cached: false, error: 'Failed to add magnet' };
-        if (addRes._deferred) return { hash, cached: false, deferred: true, error: addRes._reason };
-        if (!addRes.id) return fast ? buildDeferredProbeResult(hash, null, 'No torrent ID') : { hash, cached: false, error: 'No torrent ID' };
+        if (!addRes) return buildDeferredProbeResult(hash, null, 'Failed to add magnet');
+        if (addRes._deferred) return buildDeferredProbeResult(hash, null, addRes._reason);
+        if (!addRes.id) return buildDeferredProbeResult(hash, null, 'No torrent ID');
 
         torrentId = addRes.id;
 
         let info = await request('GET', `${RD_BASE_URL}/torrents/info/${torrentId}`, token);
         if (!info) {
             await cleanup();
-            return fast ? buildDeferredProbeResult(hash, null, 'Failed to get torrent info') : { hash, cached: false, error: 'Failed to get torrent info' };
+            return buildDeferredProbeResult(hash, null, 'Failed to get torrent info');
         }
         if (info._deferred) {
             await cleanup();
-            return { hash, cached: false, deferred: true, error: info._reason };
+            return buildDeferredProbeResult(hash, null, info._reason);
         }
 
         let initialStatus = normalizeStatus(info?.status);
@@ -527,7 +532,7 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
             }
             if (!selectionResult?.info) {
                 await cleanup();
-                return fast ? buildDeferredProbeResult(hash, initialStatus, selectionResult?.reason || 'select_failed') : { hash, cached: false, error: selectionResult?.reason || 'select_failed', rd_status: initialStatus };
+                return buildDeferredProbeResult(hash, initialStatus, selectionResult?.reason || 'select_failed');
             }
             info = selectionResult.info;
             initialStatus = normalizeStatus(info?.status);
@@ -554,7 +559,7 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
             }
             if (latestInfo._deferred) {
                 await cleanup();
-                return buildDeferredProbeResult(hash, latestInfo._reason || initialStatus);
+                return buildDeferredProbeResult(hash, initialStatus, latestInfo._reason);
             }
 
             const polledStatus = normalizeStatus(latestInfo?.status);
@@ -569,23 +574,44 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
         return buildDeferredProbeResult(hash, latestInfo?.status || initialStatus);
     } catch (error) {
         await cleanup();
-        return fast
-            ? buildDeferredProbeResult(hash, null, error?.message || 'unknown_error')
-            : {
-                hash,
-                cached: false,
-                error: error?.message || 'unknown_error'
-            };
+        return buildDeferredProbeResult(hash, null, error?.message || 'unknown_error');
     }
     });
 }
 
-function inspectSingleHash(infoHash, magnet, token, context = {}) {
-    return performAvailabilityProbe(infoHash, magnet, token, { fast: false, backgroundDelete: false, context });
+function resolveProbePriority(options = {}) {
+    if (options.priority) return options.priority;
+    return options.fast === true ? 'view_scan' : 'foreground';
 }
 
-function inspectSingleHashFast(infoHash, magnet, token, context = {}) {
-    return performAvailabilityProbe(infoHash, magnet, token, { fast: true, backgroundDelete: true, context });
+function scheduleAvailabilityProbe(infoHash, magnet, token, options = {}, dependencies = {}) {
+    const coordinatorSchedule = dependencies.scheduleRdProbe || scheduleRdProbe;
+    const executeProbe = dependencies.performAvailabilityProbe || performAvailabilityProbe;
+    return coordinatorSchedule({
+        token,
+        hash: infoHash,
+        context: options.context || {},
+        priority: resolveProbePriority(options),
+        execute: () => executeProbe(infoHash, magnet, token, options)
+    });
+}
+
+function inspectSingleHash(infoHash, magnet, token, context = {}, options = {}) {
+    return scheduleAvailabilityProbe(infoHash, magnet, token, {
+        ...options,
+        fast: false,
+        backgroundDelete: false,
+        context
+    });
+}
+
+function inspectSingleHashFast(infoHash, magnet, token, context = {}, options = {}) {
+    return scheduleAvailabilityProbe(infoHash, magnet, token, {
+        ...options,
+        fast: true,
+        backgroundDelete: true,
+        context
+    });
 }
 
 function projectProbeResultForBatch(result = {}) {
@@ -625,13 +651,17 @@ async function probeAvailabilityFast(items, token, limit = 5, options = {}) {
         // anche quando il file è già cached. Il resto resta fast+background.
         const cachedResult = readProbeResultCache(item, token);
         if (cachedResult) {
+            if (shouldDeferCachedProbeResult(cachedResult)) {
+                deferred.push(item);
+                continue;
+            }
             results[normalizeHash(cachedResult.hash)] = projectProbeResultForBatch(cachedResult);
             continue;
         }
 
         const result = exactForeground && i < exactLimit
-            ? await inspectSingleHash(item?.hash, item?.magnet, token, item)
-            : await inspectSingleHashFast(item?.hash, item?.magnet, token, item);
+            ? await inspectSingleHash(item?.hash, item?.magnet, token, item, { priority: options?.priority || 'foreground' })
+            : await inspectSingleHashFast(item?.hash, item?.magnet, token, item, { priority: options?.priority || 'view_scan' });
         writeProbeResultCache(item, token, result);
 
         if (result.deferred) {
@@ -683,7 +713,7 @@ async function backfillAvailabilityInBackground(items, token, dbHelper, onUpdate
                 for (const item of normalizedItems) {
                     if (knownHashes[item.hash] !== undefined) continue;
                     await sleep(1000);
-                    const inspected = await inspectSingleHash(item.hash, item.magnet, token, item);
+                    const inspected = await inspectSingleHash(item.hash, item.magnet, token, item, { priority: 'backfill' });
                     if (!inspected?.deferred) results.push({ ...inspected, _probeContext: item });
                 }
 
@@ -758,6 +788,12 @@ module.exports = {
     inspectSingleHashFast,
     probeAvailabilityFast,
     backfillAvailabilityInBackground,
-    isValidPackName
+    isValidPackName,
+    __private: {
+        buildDeferredProbeResult,
+        performAvailabilityProbe,
+        resolveProbePriority,
+        scheduleAvailabilityProbe,
+        shouldDeferCachedProbeResult
+    }
 };
-

@@ -2,6 +2,7 @@
 
 const runtimeState = require('../runtime_state');
 const { getRecentStreamTraces } = require('../lib/stream_trace');
+const { getRdProbeCoordinatorStatus: readRdProbeCoordinatorStatus } = require('../debrid/rd/probe/rd_probe_coordinator');
 
 async function safeMissionSection(name, fn) {
     try {
@@ -14,6 +15,7 @@ async function safeMissionSection(name, fn) {
 async function buildMissionControlPayload({
     getStatsSnapshot,
     getRdAuditorStatus,
+    getRdProbeCoordinatorStatus = readRdProbeCoordinatorStatus,
     dbHelper,
     Cache,
     getCacheHealthStatus,
@@ -41,6 +43,7 @@ async function buildMissionControlPayload({
         },
         debrid: {
             scanner: typeof getRdAuditorStatus === 'function' ? getRdAuditorStatus() : null,
+            probeCoordinator: typeof getRdProbeCoordinatorStatus === 'function' ? getRdProbeCoordinatorStatus() : null,
             progress: rdScanProgress,
             availabilityCache
         },

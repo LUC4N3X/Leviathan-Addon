@@ -2,6 +2,11 @@
 
 const { buildWebStream, normalizeRemoteUrl } = require('../extractors/common');
 const { createMediaflowGateway, getMediaflowBase, buildMediaflowUrl } = require('../../core/proxy/mediaflow_gateway');
+const {
+    buildForwardProxyUrl,
+    getForwardProxyBase,
+    normalizeForwardProxyBase: normalizeSharedForwardProxyBase
+} = require('../../core/proxy/forward_proxy_config');
 const { isUprotUrl, resolveUprotToMaxstream } = require('../extractors/hosters/uprot');
 const { extractMixdrop } = require('../extractors/hosters/mixdrop');
 const { requestWithImpitRotating, isCanceledError } = require('../utils/bypass');
@@ -38,8 +43,6 @@ const CB01_CODE_DEFAULTS = Object.freeze({
 
     CB01_IMPIT_FORWARD_ENABLED: '1',
     CB01_IMPIT_FORWARD_FALLBACK: '0',
-    CB01_FORWARD_PROXY_FROM_MFP: '0',
-    CB01_FORWARD_PROXY: 'https://krakenproxy.questoleviatanormio.dpdns.org/forward?url=',
 
     CB01_IMPIT_DIRECT_FALLBACK: '0',
     CB01_STOP_ON_CHALLENGE: '1',
@@ -994,62 +997,19 @@ function pickSimpleUa() {
 }
 
 function normalizeForwardProxyBase(value) {
-    const raw = String(value || '').trim();
-    if (!raw) return '';
-    if (raw.includes('{url}')) return raw;
-    if (/[?&][^=]+=$/.test(raw)) return raw;
-    return raw.endsWith('/') ? raw : `${raw}/`;
+    return normalizeSharedForwardProxyBase(value, 'cb01');
 }
 
 function getExplicitCbForwardProxy() {
-    return envString('CB01_FORWARD_PROXY', '') || envString('FORWARDPROXY', '');
+    return getForwardProxyBase({ context: 'cb01' });
 }
 
-function getCbForwardProxy(config = {}) {
-    const explicit = getExplicitCbForwardProxy();
-    if (explicit) return normalizeForwardProxyBase(explicit);
-
-    if (!envFlag('CB01_FORWARD_PROXY_FROM_MFP', true)) return '';
-
-    const mfpBase = getMediaflowBase(config);
-    if (!mfpBase) return '';
-    return normalizeForwardProxyBase(mfpBase);
+function getCbForwardProxy() {
+    return normalizeForwardProxyBase(getExplicitCbForwardProxy());
 }
 
-function buildCbForwardProxyUrl(targetUrl, config = {}, headers = {}) {
-    const explicit = getExplicitCbForwardProxy();
-    if (explicit) {
-        const forwardProxy = normalizeForwardProxyBase(explicit);
-        if (forwardProxy.includes('{url}')) return forwardProxy.replace('{url}', encodeURIComponent(targetUrl));
-        if (/[?&][^=]+=$/.test(forwardProxy)) return `${forwardProxy}${encodeURIComponent(targetUrl)}`;
-        return `${forwardProxy}${targetUrl}`;
-    }
-
-    if (!envFlag('CB01_FORWARD_PROXY_FROM_MFP', true) || !getMediaflowBase(config)) return targetUrl;
-
-    try {
-        const base = String(getMediaflowBase(config) || '').replace(/\/+$/, '');
-        if (!base) return targetUrl;
-        const forwardUrl = new URL(`${base}/forward`);
-        forwardUrl.searchParams.set('url', targetUrl);
-
-        const userAgent = headers?.['User-Agent'] || headers?.['user-agent'] || DESKTOP_UA;
-        const referer = headers?.Referer || headers?.referer || '';
-        if (userAgent) forwardUrl.searchParams.set('h_user-agent', userAgent);
-        if (referer) forwardUrl.searchParams.set('h_referer', referer);
-
-        const apiPassword = String(config?.mediaflowApiPassword || config?.mediaFlowApiPassword || config?.mfpPassword || envString('MEDIAFLOW_API_PASSWORD', '') || envString('KRAKEN_API_PASSWORD', '') || '').trim();
-        if (apiPassword) forwardUrl.searchParams.set('api_password', apiPassword);
-
-        return forwardUrl.toString();
-    } catch (error) {
-        cbDebug('warn', 'mediaflow forward html url build failed', {
-            url: safeUrlForLog(targetUrl),
-            error: error?.message || String(error)
-        });
-    }
-
-    return targetUrl;
+function buildCbForwardProxyUrl(targetUrl) {
+    return buildForwardProxyUrl(targetUrl, { context: 'cb01' });
 }
 
 function buildCbBrowserHeaders(baseUrl, targetUrl = '', label = 'fetch') {
@@ -2211,7 +2171,6 @@ async function searchCb01(meta = {}, config = {}, reqHost = null, options = {}) 
             strategy: envString('CB01_IMPIT_STRATEGY', ''),
             useProxy: envFlag('CB01_USE_PROXY', false),
             proxyMaxAttempts: envInt('CB01_PROXY_MAX_ATTEMPTS', 0, 0, 10),
-            forwardFromMfp: envFlag('CB01_FORWARD_PROXY_FROM_MFP', true),
             totalBudgetSearchMs: envInt('CB01_SEARCH_TOTAL_BUDGET_MS', 13500, 3000, 30000)
         },
         proxyPool: proxyPoolState
@@ -2337,4 +2296,3 @@ module.exports = {
         toAxiosProxyConfig
     }
 };
-

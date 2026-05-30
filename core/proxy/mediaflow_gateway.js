@@ -1,5 +1,6 @@
 'use strict';
 
+const { buildForwardProxyUrl } = require('./forward_proxy_config');
 
 function envDebugFlag(name, defaultValue = false) {
     const raw = process.env[name];
@@ -243,40 +244,11 @@ function appendForwardExtras(params, config = {}, headers = {}, options = {}) {
     }
 }
 
-function getForwardProxyBase(config = {}, options = {}) {
-    return trimBaseUrl(
-        options?.forwardProxy
-        || config?.mediaflow?.forwardProxy
-        || config?.mfp?.forwardProxy
-        || config?.kraken?.forwardProxy
-        || process.env.MEDIAFLOW_FORWARD_PROXY
-        || process.env.MFP_FORWARD_PROXY
-        || process.env.KRAKEN_FORWARD_PROXY
-        || process.env.CB01_FORWARD_PROXY
-        || process.env.UPROT_FORWARD_PROXY
-        || process.env.FORWARDPROXY
-        || ''
-    );
-}
-
-function appendParamsToUrl(rawUrl, params) {
-    const entries = [...params.entries()].filter(([, value]) => value !== undefined && value !== null && value !== '');
-    if (!entries.length) return rawUrl;
-    const glue = String(rawUrl || '').includes('?') ? '&' : '?';
-    return `${rawUrl}${glue}${entries.map(([key, value]) => `${enc(key)}=${enc(value)}`).join('&')}`;
-}
-
 function buildForwardUrl(config = {}, targetUrl, headers = {}, options = {}) {
-    const base = getMediaflowBase(config);
     const normalizedTarget = normalizeRemoteUrl(targetUrl);
-    const explicitForward = getForwardProxyBase(config, options);
 
     if (!normalizedTarget) {
         mfpDebug('warn', 'forward url skipped', { reason: 'invalid_target', targetHost: safeUrlPart(targetUrl), targetPath: safeUrlPart(targetUrl, 'path') });
-        return normalizedTarget;
-    }
-    if (!base && !explicitForward) {
-        mfpDebug('warn', 'forward url skipped', { reason: 'missing_base', targetHost: safeUrlPart(targetUrl), targetPath: safeUrlPart(targetUrl, 'path') });
         return normalizedTarget;
     }
 
@@ -284,32 +256,15 @@ function buildForwardUrl(config = {}, targetUrl, headers = {}, options = {}) {
     appendForwardExtras(params, config, headers, options);
 
     const urlParam = String(options?.urlParam || 'url').trim() || 'url';
-    let out = normalizedTarget;
-
-    if (explicitForward) {
-        try {
-            if (explicitForward.includes('{url}')) {
-                out = explicitForward.replace('{url}', encodeURIComponent(normalizedTarget));
-                out = appendParamsToUrl(out, params);
-            } else {
-                const parsed = new URL(explicitForward);
-                parsed.searchParams.set(urlParam, normalizedTarget);
-                for (const [key, value] of params.entries()) parsed.searchParams.set(key, value);
-                out = parsed.toString();
-            }
-        } catch (_) {
-            if (/[?&][^=]+=$/.test(explicitForward)) {
-                out = appendParamsToUrl(`${explicitForward}${encodeURIComponent(normalizedTarget)}`, params);
-            } else {
-                out = appendParamsToUrl(`${explicitForward.replace(/\/+$/, '')}/forward?${enc(urlParam)}=${enc(normalizedTarget)}`, params);
-            }
-        }
-    } else {
-        const forwardParams = new URLSearchParams();
-        forwardParams.set(urlParam, normalizedTarget);
-        for (const [key, value] of params.entries()) forwardParams.set(key, value);
-        out = `${base}/forward?${forwardParams.toString()}`;
+    const forwardOptions = {
+        context: 'mediaflow',
+        params: Object.fromEntries(params.entries()),
+        urlParam
+    };
+    if (Object.prototype.hasOwnProperty.call(options, 'forwardProxy')) {
+        forwardOptions.base = options.forwardProxy;
     }
+    const out = buildForwardProxyUrl(normalizedTarget, forwardOptions);
 
     mfpDebug('info', 'forward url built', {
         targetHost: safeUrlPart(normalizedTarget),

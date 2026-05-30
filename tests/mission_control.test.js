@@ -17,6 +17,11 @@ test('mission control aggregates runtime, cache, debrid and external snapshot st
       timers: { stream: { avgMs: 12 } }
     }),
     getRdAuditorStatus: () => ({ enabled: true, running: true }),
+    getRdProbeCoordinatorStatus: () => ({
+      running: 2,
+      queued: { foreground: 1, view_scan: 0, backfill: 0, auditor: 3, total: 4 },
+      metrics: { coalescedHits: 5 }
+    }),
     dbHelper: {
       getRdScanProgress: async () => ({ total_with_hash: 10, cached_true: 7 }),
       getExternalSnapshotStats: async () => ({ active: 5, torrentio: 3, mediafusion: 2 }),
@@ -32,5 +37,7 @@ test('mission control aggregates runtime, cache, debrid and external snapshot st
   assert.equal(payload.debrid.progress.cached_true, 7);
   assert.equal(payload.externalSnapshots.mediafusion, 2);
   assert.equal(payload.debrid.availabilityCache[0].service, 'rd');
+  assert.equal(payload.debrid.probeCoordinator.running, 2);
+  assert.equal(payload.debrid.probeCoordinator.metrics.coalescedHits, 5);
   assert.equal(payload.providers.torrentio.ok, 2);
 });

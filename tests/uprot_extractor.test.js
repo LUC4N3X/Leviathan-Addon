@@ -10,6 +10,23 @@ const {
     _test: uprotTest
 } = require('../providers/extractors/hosters/uprot');
 
+function withEnvironment(values, fn) {
+    const previous = {};
+    for (const [name, value] of Object.entries(values)) {
+        previous[name] = process.env[name];
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+    }
+    try {
+        return fn();
+    } finally {
+        for (const [name, value] of Object.entries(previous)) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+        }
+    }
+}
+
 test('uprot helpers normalize escaped inputs and watchfree player URLs', () => {
     assert.equal(
         normalizeUprotInput('https:\\/\\/uprot.net\\/msf\\/abc123?token=one&amp;x=2'),
@@ -199,4 +216,31 @@ test('fetchWithFlareSolverr wraps uprot URLs in the configured forward proxy', a
         'https://krakenproxy.example/forward?url=https%3A%2F%2Fuprot.net%2Fe%2Fabc123%2F',
         'FlareSolverr must receive the proxy-wrapped URL so its egress IP is masked'
     );
+});
+
+test('uprot reads the shared FORWARD_PROXY env without embedded fallback', () => {
+    withEnvironment({
+        FORWARD_PROXY: 'https://proxy.example/forward?url=',
+        UPROT_FORWARD_PROXY: 'https://legacy.example/forward?url=',
+        FORWARDPROXY: 'https://legacy-alias.example/forward?url='
+    }, () => {
+        assert.equal(
+            uprotTest.buildUprotForwardRequestUrl('https://uprot.net/e/abc123/'),
+            'https://proxy.example/forward?url=https%3A%2F%2Fuprot.net%2Fe%2Fabc123%2F'
+        );
+    });
+});
+
+test('uprot reports a configuration error when shared FORWARD_PROXY is missing', () => {
+    withEnvironment({
+        FORWARD_PROXY: undefined,
+        UPROT_FORWARD_PROXY: undefined,
+        FORWARDPROXY: undefined,
+        CB01_FORWARD_PROXY: undefined
+    }, () => {
+        assert.throws(
+            () => uprotTest.buildUprotForwardRequestUrl('https://uprot.net/e/abc123/'),
+            (error) => error.code === 'FORWARD_PROXY_CONFIG_ERROR'
+        );
+    });
 });
