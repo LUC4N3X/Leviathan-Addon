@@ -262,7 +262,7 @@ function tokenize(input) {
             push(TOKEN.OP, ch); i += 1; continue;
         }
 
-        if ('(),[]'.includes(ch)) {
+        if ('(),[]?:'.includes(ch)) {
             push(TOKEN.PUNC, ch); i += 1; continue;
         }
 
@@ -300,9 +300,20 @@ class Parser {
     }
 
     parse() {
-        const ast = this.parseOr();
+        const ast = this.parseTernary();
         if (this.peek().type !== TOKEN.EOF) throw new Error(`unexpected:${this.peek().value}`);
         return ast;
+    }
+
+    parseTernary() {
+        const condition = this.parseOr();
+        if (this.match('?')) {
+            const consequent = this.parseTernary();
+            this.expect(':');
+            const alternate = this.parseTernary();
+            return { type: 'ternary', condition, consequent, alternate };
+        }
+        return condition;
     }
 
     parseOr() {
@@ -400,9 +411,58 @@ function includesValue(left, right) {
     return String(l).includes(String(r));
 }
 
+function aggregateField(subContext, field) {
+    const key = String(field || 'seeders');
+    if (key === 'size' || key === 'sizeBytes') return Number(subContext.sizeBytes || 0) || 0;
+    if (key === 'size_gb' || key === 'sizeGB' || key === 'gb') return Number(subContext.sizeGB || 0) || 0;
+    const value = Number(subContext[key]);
+    return Number.isFinite(value) ? value : 0;
+}
+
+// Collection-aware overloads. They only trigger when the first argument is an
+// array of stream sub-contexts (i.e. the `streams` identifier), so per-item
+// usage like `resolution("1080p")` keeps its original boolean behaviour.
+function evalCollectionCall(n, values) {
+    const collection = values[0];
+    const args = values.slice(1);
+    const normalizedArgs = args.map(normalizeText);
+
+    switch (n) {
+        case 'count': return collection.length;
+        case 'sum': return collection.reduce((acc, c) => acc + aggregateField(c, args[0]), 0);
+        case 'avg': return collection.length ? collection.reduce((acc, c) => acc + aggregateField(c, args[0]), 0) / collection.length : 0;
+        case 'max': return collection.reduce((acc, c) => Math.max(acc, aggregateField(c, args[0])), -Infinity);
+        case 'min': return collection.reduce((acc, c) => Math.min(acc, aggregateField(c, args[0])), Infinity);
+        case 'resolution': return collection.filter((c) => normalizedArgs.includes(c.resolution));
+        case 'quality': return collection.filter((c) => normalizedArgs.includes(c.quality));
+        case 'encode': return collection.filter((c) => normalizedArgs.includes(c.encode));
+        case 'language': case 'lang': return collection.filter((c) => normalizedArgs.some((v) => c.languages.includes(v)));
+        case 'service': case 'debrid': return collection.filter((c) => normalizedArgs.includes(c.service));
+        case 'source': return collection.filter((c) => normalizedArgs.some((v) => normalizeText(c.source).includes(v)));
+        case 'text': return collection.filter((c) => normalizedArgs.some((v) => c.textLower.includes(v)));
+        case 'cached': return collection.filter((c) => c.cached);
+        case 'likelyCached': return collection.filter((c) => c.likelyCached);
+        case 'uncached': return collection.filter((c) => c.uncached);
+        case 'savedCloud': return collection.filter((c) => c.savedCloud);
+        case 'http': return collection.filter((c) => c.http);
+        case 'regex': {
+            try {
+                const re = new RegExp(String(args[0] || '').slice(0, 300), String(args[1] || 'i').replace(/[^gimsuy]/g, '') || 'i');
+                return collection.filter((c) => re.test(c.text));
+            } catch (_) {
+                return [];
+            }
+        }
+        default: return collection;
+    }
+}
+
 function evalCall(name, args, ctx) {
     const values = args.map((arg) => evaluateAst(arg, ctx));
     const n = String(name || '').trim();
+
+    if (Array.isArray(values[0])) return evalCollectionCall(n, values);
+    if (n === 'count') return Number(values[0]) || 0;
 
     if (n === 'resolution') return values.map(normalizeText).includes(ctx.resolution);
     if (n === 'quality') return values.map(normalizeText).includes(ctx.quality);
@@ -437,6 +497,9 @@ function evaluateAst(node, ctx) {
         case 'ident': return getValue(ctx, node.name);
         case 'array': return node.values.map((value) => evaluateAst(value, ctx));
         case 'unary': return !Boolean(evaluateAst(node.value, ctx));
+        case 'ternary': return Boolean(evaluateAst(node.condition, ctx))
+            ? evaluateAst(node.consequent, ctx)
+            : evaluateAst(node.alternate, ctx);
         case 'call': return evalCall(node.name, node.args, ctx);
         case 'binary': {
             if (node.op === '&&') return Boolean(evaluateAst(node.left, ctx)) && Boolean(evaluateAst(node.right, ctx));
@@ -503,10 +566,51 @@ function selectByExpression(items = [], expression = '', meta = {}, options = {}
     return list.filter((item, index) => evaluateExpression(expression, item, meta, { ...options, rank: index + 1 }));
 }
 
+function buildCollectionContext(items = [], meta = {}) {
+    const streams = items.map((item, index) => buildStreamExpressionContext(item, meta, { rank: index + 1 }));
+    return { streams, meta, total: streams.length };
+}
+
+// Evaluates a collection-aware expression once over the whole set. The result
+// is expected to be the subset of stream sub-contexts to remove (typically the
+// "then"/"else" branch of a ternary). Returns the raw evaluation result.
+function evaluateCollectionExpression(items = [], expression = '', meta = {}, options = {}) {
+    try {
+        const ast = compileExpression(expression);
+        if (!ast) return null;
+        const ctx = buildCollectionContext(items, meta);
+        return evaluateAst(ast, ctx);
+    } catch (error) {
+        if (options.logger && typeof options.logger.warn === 'function') {
+            options.logger.warn(`[SEL] collection expression failed | expr=${String(expression).slice(0, 120)} | error=${error.message}`);
+        }
+        return null;
+    }
+}
+
+// Removes the streams selected by a collection expression. Only an array result
+// prunes items; anything else is a safe no-op so a malformed or boolean
+// expression never silently drops the whole list.
+function selectStreamsByCollectionExpression(items = [], expression = '', meta = {}, options = {}) {
+    const list = Array.isArray(items) ? items : [];
+    if (!String(expression || '').trim() || list.length === 0) return { results: list, removed: 0 };
+
+    const result = evaluateCollectionExpression(list, expression, meta, options);
+    if (!Array.isArray(result) || result.length === 0) return { results: list, removed: 0 };
+
+    const removeSet = new Set(result.map((entry) => entry && entry.item).filter(Boolean));
+    if (removeSet.size === 0) return { results: list, removed: 0 };
+
+    const results = list.filter((item) => !removeSet.has(item));
+    return { results, removed: list.length - results.length };
+}
+
 module.exports = {
     buildStreamExpressionContext,
     evaluateExpression,
     selectByExpression,
+    evaluateCollectionExpression,
+    selectStreamsByCollectionExpression,
     compileExpression,
     normalizeText,
     detectResolution,

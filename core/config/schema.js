@@ -119,10 +119,24 @@ function validateConfig(input = {}) {
     'qualityDeny',
     'qualityFilter',
     'requireTags',
-    'excludeTags'
+    'excludeTags',
+    'preferredResolutions',
+    'preferredLanguages',
+    'preferredQualities',
+    'preferredVisualTags',
+    'preferredHdr'
   ];
   for (const key of arrayFilterKeys) {
     if (output.filters[key] !== undefined) output.filters[key] = normalizeStringArray(output.filters[key]);
+  }
+
+  const stringFilterKeys = ['streamExpression'];
+  for (const key of stringFilterKeys) {
+    if (output.filters[key] !== undefined && output.filters[key] !== null) {
+      const value = String(output.filters[key]).trim().slice(0, 1000);
+      if (value) output.filters[key] = value;
+      else delete output.filters[key];
+    }
   }
 
   const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableGstv', 'enableEs', 'enableCb01', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableAltadefinizione', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast', 'savedCloudAggressive', 'savedCloudSnapshotEnabled', 'useTorrentIntelligenceRanking', 'useLeviathanScoreProfile'];

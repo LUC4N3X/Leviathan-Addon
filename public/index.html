@@ -3982,10 +3982,25 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                 <input type="hidden" id="selectedSkin" value="leviathan">
 
                 <div class="custom-area" id="customSkinArea">
-                    <input type="text" class="custom-input" id="customTemplate" placeholder="Lev {quality} ||| {title} - {size}" style="padding:15px; font-size:1rem;" oninput="updateCustomPreview()" disabled>
+                    <input type="text" class="custom-input" id="customTemplate" placeholder="{service.name} {stream.resolution} ||| 🎬 {stream.title}{n}{summary}" style="padding:15px; font-size:1rem;" oninput="updateCustomPreview()" disabled>
                     <div class="custom-helper">
-                        <strong>Vars:</strong> <code>{title}</code> <code>{quality}</code> <code>{size}</code> <code>{source}</code> <code>{audio}</code> <code>{lang}</code> <code>{service}</code><br>
-                        Usa <code>|||</code> per separare titolo e descrizione.
+                        <strong>Legacy vars:</strong> <code>{title}</code> <code>{quality}</code> <code>{size}</code> <code>{source}</code> <code>{audio}</code> <code>{lang}</code> <code>{service}</code> <code>{summary}</code><br>
+                        <strong>Namespaced:</strong> <code>{stream.resolution}</code> <code>{stream.quality}</code> <code>{stream.encode}</code> <code>{stream.audio}</code> <code>{stream.languages}</code> <code>{stream.hdr}</code> <code>{stream.group}</code> <code>{stream.size}</code> <code>{stream.seeders}</code> <code>{stream.scoreBadge}</code> <code>{service.name}</code> <code>{service.cached}</code><br>
+                        <strong>Modificatori:</strong> <code>{stream.size::bytes}</code> <code>{stream.languages::join(" / ")}</code> <code>{stream.group::upper}</code> <code>{stream.group::default(Unknown)}</code><br>
+                        <strong>Condizionali:</strong> <code>{service.cached::["⚡ Cached"||"⏳ Download"]}</code> (rami innestabili)<br>
+                        Usa <code>|||</code> per separare nome e descrizione, <code>{n}</code> per andare a capo.
+                    </div>
+                </div>
+
+                <div class="custom-area" style="margin-top:14px;">
+                    <div class="custom-helper" style="margin-bottom:8px;"><strong>⚙️ Ordinamento &amp; filtri avanzati (opzionali)</strong></div>
+                    <input type="text" class="custom-input" id="preferredResolutions" placeholder="Risoluzioni preferite es: 4k, 1080p, 720p" style="padding:12px; font-size:.95rem; margin-bottom:8px;">
+                    <input type="text" class="custom-input" id="preferredLanguages" placeholder="Lingue preferite es: ita, eng" style="padding:12px; font-size:.95rem; margin-bottom:8px;">
+                    <input type="text" class="custom-input" id="preferredQualities" placeholder="Qualità preferite es: remux, bluray, web-dl, webrip" style="padding:12px; font-size:.95rem; margin-bottom:8px;">
+                    <input type="text" class="custom-input" id="preferredHdr" placeholder="HDR preferito es: dv, hdr10+, hdr, sdr" style="padding:12px; font-size:.95rem; margin-bottom:8px;">
+                    <input type="text" class="custom-input" id="streamExpression" placeholder='Filtro espressione es: count(resolution(streams, "1080p")) > 5 ? resolution(streams, "720p") : false' style="padding:12px; font-size:.9rem;">
+                    <div class="custom-helper">
+                        Le liste di preferenza sono separate da virgola e agiscono come tie-breaker (la cache vince sempre). L'espressione rimuove il sottoinsieme restituito (deve risolvere a una lista, tipicamente via ternario).
                     </div>
                 </div>
             </div>
@@ -5322,6 +5337,15 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                          }
                     }
                     if (config.customTemplate) document.getElementById('customTemplate').value = config.customTemplate;
+                    const _setVal = (id, value) => { const el = document.getElementById(id); if (el && value !== undefined && value !== null) el.value = Array.isArray(value) ? value.join(', ') : value; };
+                    if (config.customNameTemplate) _setVal('customNameTemplate', config.customNameTemplate);
+                    if (config.filters) {
+                        _setVal('streamExpression', config.filters.streamExpression);
+                        _setVal('preferredResolutions', config.filters.preferredResolutions);
+                        _setVal('preferredLanguages', config.filters.preferredLanguages);
+                        _setVal('preferredQualities', config.filters.preferredQualities || config.filters.preferredVisualTags);
+                        _setVal('preferredHdr', config.filters.preferredHdr);
+                    }
                     if (config.aiostreams_mode) {
                         document.getElementById('aiostreams_mode').checked = true;
                         document.getElementById('card_aio').classList.add('active');
@@ -5497,6 +5521,23 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                 )
             );
 
+            // Advanced / opt-in extras — only included when the user filled them in,
+            // so the config token stays compact for everyone else.
+            const _val = (id) => ((document.getElementById(id) || {}).value || '').trim();
+            const _csv = (id) => _val(id).split(',').map((s) => s.trim()).filter(Boolean);
+            const advancedFilters = {};
+            const _streamExpression = _val('streamExpression');
+            if (_streamExpression) advancedFilters.streamExpression = _streamExpression;
+            const _preferredResolutions = _csv('preferredResolutions');
+            if (_preferredResolutions.length) advancedFilters.preferredResolutions = _preferredResolutions;
+            const _preferredLanguages = _csv('preferredLanguages');
+            if (_preferredLanguages.length) advancedFilters.preferredLanguages = _preferredLanguages;
+            const _preferredQualities = _csv('preferredQualities');
+            if (_preferredQualities.length) advancedFilters.preferredQualities = _preferredQualities;
+            const _preferredHdr = _csv('preferredHdr');
+            if (_preferredHdr.length) advancedFilters.preferredHdr = _preferredHdr;
+            const _customNameTemplate = _val('customNameTemplate');
+
             return {
                 service: isP2P ? '' : (webOnlyService ? 'web' : currentService),
                 key: apiKey,
@@ -5504,6 +5545,7 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                 sort: document.getElementById('sortMode').value,
                 formatter: document.getElementById('selectedSkin').value,
                 customTemplate: document.getElementById('customTemplate').value,
+                ...(_customNameTemplate ? { customNameTemplate: _customNameTemplate } : {}),
                 aiostreams_mode: document.getElementById('aiostreams_mode').checked,
                 mediaflow: {
                     url: document.getElementById('mfUrl').value.trim().replace(/\/$/, ""),
@@ -5539,7 +5581,8 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
                     vixLast: document.getElementById('vixLast').checked,
                     scQuality: currentSCQuality,
                     maxPerQuality: gateActive ? gateVal : 0,
-                    maxSizeGB: sizeVal > 0 ? sizeVal : null
+                    maxSizeGB: sizeVal > 0 ? sizeVal : null,
+                    ...advancedFilters
                 }
             };
         }

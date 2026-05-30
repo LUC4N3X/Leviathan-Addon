@@ -9954,6 +9954,15 @@ async function loadMobileConfig() {
 
             if(config.formatter) selectMobileSkin(config.formatter);
             if(config.customTemplate) mSetValue('m-customTemplate', config.customTemplate);
+            if(config.customNameTemplate) mSetValue('m-customNameTemplate', config.customNameTemplate);
+            if(config.filters) {
+                const mJoin = (v) => Array.isArray(v) ? v.join(', ') : (v || '');
+                if(config.filters.streamExpression) mSetValue('m-streamExpression', config.filters.streamExpression);
+                if(config.filters.preferredResolutions) mSetValue('m-preferredResolutions', mJoin(config.filters.preferredResolutions));
+                if(config.filters.preferredLanguages) mSetValue('m-preferredLanguages', mJoin(config.filters.preferredLanguages));
+                if(config.filters.preferredQualities || config.filters.preferredVisualTags) mSetValue('m-preferredQualities', mJoin(config.filters.preferredQualities || config.filters.preferredVisualTags));
+                if(config.filters.preferredHdr) mSetValue('m-preferredHdr', mJoin(config.filters.preferredHdr));
+            }
 
             if(config.mediaflow) {
                 mSetValue('m-mfUrl', config.mediaflow.url || "");
@@ -10077,6 +10086,20 @@ function getMobileConfig() {
     const webOnlyService = !isP2P && !apiKey && webModules.some(id => mChecked(id));
     const savedCloudEnabled = !isP2P && !!apiKey && ['rd', 'tb'].includes(String(mCurrentService || '').toLowerCase()) && mChecked('m-enableSavedCloud');
 
+    const mCsv = (id) => mValue(id).split(',').map((s) => s.trim()).filter(Boolean);
+    const mAdvancedFilters = {};
+    const mStreamExpression = mValue('m-streamExpression').trim();
+    if (mStreamExpression) mAdvancedFilters.streamExpression = mStreamExpression;
+    const mPreferredResolutions = mCsv('m-preferredResolutions');
+    if (mPreferredResolutions.length) mAdvancedFilters.preferredResolutions = mPreferredResolutions;
+    const mPreferredLanguages = mCsv('m-preferredLanguages');
+    if (mPreferredLanguages.length) mAdvancedFilters.preferredLanguages = mPreferredLanguages;
+    const mPreferredQualities = mCsv('m-preferredQualities');
+    if (mPreferredQualities.length) mAdvancedFilters.preferredQualities = mPreferredQualities;
+    const mPreferredHdr = mCsv('m-preferredHdr');
+    if (mPreferredHdr.length) mAdvancedFilters.preferredHdr = mPreferredHdr;
+    const mCustomNameTemplate = mValue('m-customNameTemplate').trim();
+
     return {
         service: isP2P ? '' : (webOnlyService ? 'web' : mCurrentService),
         key: apiKey,
@@ -10084,6 +10107,7 @@ function getMobileConfig() {
         sort: mSortMode,
         formatter: mSkin,
         customTemplate: mValue('m-customTemplate'),
+        ...(mCustomNameTemplate ? { customNameTemplate: mCustomNameTemplate } : {}),
         aiostreams_mode: mChecked('m-aioMode'),
         mediaflow: {
             url: mValue('m-mfUrl').trim().replace(/\/$/, ""),
@@ -10118,7 +10142,8 @@ function getMobileConfig() {
             vixLast: mChecked('m-vixLast'),
             scQuality: mScQuality,
             maxPerQuality: gateActive ? gateVal : 0,
-            maxSizeGB: finalMaxSizeGB > 0 ? finalMaxSizeGB : null
+            maxSizeGB: finalMaxSizeGB > 0 ? finalMaxSizeGB : null,
+            ...mAdvancedFilters
         }
     };
 }
