@@ -123,6 +123,9 @@ const FETCH_CACHE_TTL = Number(process.env.EXTERNAL_ADDONS_CACHE_TTL || 30000);
 const NEGATIVE_CACHE_TTL = Number(process.env.EXTERNAL_ADDONS_NEGATIVE_CACHE_TTL || 12000);
 const MAX_TRACKERS_IN_MAGNET = Number(process.env.EXTERNAL_ADDONS_MAX_TRACKERS || 10);
 const MAX_CONCURRENCY = Number(process.env.EXTERNAL_ADDONS_MAX_CONCURRENCY || 3);
+const ADDON_MAX_CONCURRENCY = Math.max(1, Number(process.env.EXTERNAL_ADDONS_PER_ADDON_MAX_CONCURRENCY || 3) || 3);
+const ADDON_QUEUE_MAX = Math.max(1, Number(process.env.EXTERNAL_ADDONS_PER_ADDON_QUEUE_MAX || 40) || 40);
+const RATE_LIMIT_COOLDOWN_MS = Math.max(10_000, Number(process.env.EXTERNAL_ADDONS_RATE_LIMIT_COOLDOWN_MS || 120_000) || 120_000);
 const FETCH_CACHE_MAX_ENTRIES = Math.max(100, Number(process.env.EXTERNAL_ADDONS_CACHE_MAX_ENTRIES || 600) || 600);
 const FETCH_CACHE_SWEEP_INTERVAL_MS = Math.max(1000, Number(process.env.EXTERNAL_ADDONS_CACHE_SWEEP_INTERVAL_MS || 15000) || 15000);
 
@@ -183,6 +186,7 @@ const fetchCache = new TimedLruCache({
 });
 const inflightFetches = new Map();
 const addonHealth = new Map();
+const addonSemaphores = new Map();
 
 function now() { return Date.now(); }
 function debugLog(...args) { if (DEBUG_MODE) logger.debug(require('util').format(...args)); }
@@ -605,11 +609,21 @@ function getAddonHealth(addonKey) {
     return state;
 }
 
-function registerAddonFailure(addonKey, addon, errorMessage) {
+function registerAddonFailure(addonKey, addon, errorMessage, status = 0) {
     const state = getAddonHealth(addonKey);
+    const httpStatus = Number(status || 0);
     state.failures += 1;
     state.lastError = errorMessage || 'Unknown error';
-    if (state.failures >= (addon.maxFailures || 3)) state.cooldownUntil = now() + (addon.cooldownMs || 30000);
+    state.lastStatus = httpStatus || null;
+
+    if (httpStatus === 429) {
+        state.cooldownUntil = now() + (addon.rateLimitCooldownMs || RATE_LIMIT_COOLDOWN_MS);
+        state.failures = Math.max(state.failures, addon.maxFailures || 3);
+        infoLog(`🚫 [${addon.name}] HTTP 429: cooldown ${(state.cooldownUntil - now()) / 1000}s, no retry`);
+    } else if (state.failures >= (addon.maxFailures || 3)) {
+        state.cooldownUntil = now() + (addon.cooldownMs || 30000);
+    }
+
     addonHealth.set(addonKey, state);
 }
 
@@ -619,6 +633,7 @@ function registerAddonSuccess(addonKey, latency) {
     state.cooldownUntil = 0;
     state.lastLatency = latency || 0;
     state.lastError = null;
+    state.lastStatus = 200;
     addonHealth.set(addonKey, state);
 }
 
@@ -631,17 +646,58 @@ function shouldSkipAddon(addonKey, addon) {
     return false;
 }
 
+function getAddonSemaphore(addonKey, addon = {}) {
+    let state = addonSemaphores.get(addonKey);
+    if (!state) {
+        state = { active: 0, queue: [] };
+        addonSemaphores.set(addonKey, state);
+    }
+    state.maxConcurrent = Math.max(1, Number(addon.maxConcurrent || ADDON_MAX_CONCURRENCY) || ADDON_MAX_CONCURRENCY);
+    state.maxQueue = Math.max(1, Number(addon.maxQueue || ADDON_QUEUE_MAX) || ADDON_QUEUE_MAX);
+    return state;
+}
+
+function releaseAddonSlot(addonKey) {
+    const state = addonSemaphores.get(addonKey);
+    if (!state) return;
+    state.active = Math.max(0, state.active - 1);
+    const next = state.queue.shift();
+    if (next) {
+        state.active += 1;
+        next(() => releaseAddonSlot(addonKey));
+    } else if (state.active === 0 && state.queue.length === 0) {
+        addonSemaphores.delete(addonKey);
+    }
+}
+
+function acquireAddonSlot(addonKey, addon = {}) {
+    const state = getAddonSemaphore(addonKey, addon);
+    if (state.active < state.maxConcurrent) {
+        state.active += 1;
+        return Promise.resolve(() => releaseAddonSlot(addonKey));
+    }
+    if (state.queue.length >= state.maxQueue) {
+        const error = new Error(`External addon queue overflow for ${addonKey}`);
+        error.code = 'EXTERNAL_ADDON_QUEUE_OVERFLOW';
+        throw error;
+    }
+    return new Promise((resolve) => {
+        state.queue.push(resolve);
+    });
+}
+
 function buildAddonCacheKey(addonKey, type, id, options = {}) {
     const conf = options.userConfig || {};
     const service = conf.service || '';
     const token = getTorrentioCredential(conf, service) || getRealDebridToken(conf) || '';
     return JSON.stringify({
-        addonKey, type: sanitizeFetchType(type, id), id: String(id || ''),
-        onlyItalian: options.onlyItalian !== false,
-        languageMode: String(options.languageMode || ''),
-        minConfidence: Number(options.minimumItalianConfidence || 35),
+        cache: 'raw-post-filter-v2',
+        addonKey,
+        type: sanitizeFetchType(type, id),
+        id: String(id || ''),
         rdOnly: options.requireRdCached === true || getAddon(addonKey)?.requireRdCached === true || addonKey === 'mediafusion',
-        service, tokenSig: token ? hashConfigSignature(token) : ''
+        service,
+        tokenSig: token ? hashConfigSignature(token) : ''
     });
 }
 
@@ -913,6 +969,31 @@ function countRealResults(streams) {
     return (Array.isArray(streams) ? streams : []).filter(isRealExternalResult).length;
 }
 
+function filterNormalizedExternalStreams(streams, addonKey, options = {}) {
+    const list = Array.isArray(streams) ? streams : [];
+    if (options.onlyItalian === false) return list;
+    const minimumConfidence = Number(options.minimumItalianConfidence || 35);
+    return list.filter((stream) => {
+        if (!stream) return false;
+        if (addonKey === 'torrentio_mirror') {
+            const text = [stream.title, stream.filename, stream.fileName, stream.packTitle, stream.externalProvider, stream.source].filter(Boolean).join(' ');
+            const evidence = getTorrentioLanguageEvidence({
+                title: text,
+                name: stream.name,
+                description: stream.description,
+                filename: stream.filename || stream.fileName,
+                provider: stream.externalProvider || stream.provider
+            });
+            if (evidence.hasItalian) return true;
+            if (evidence.hasForeign) return false;
+        }
+        const info = stream.languageInfo || {};
+        if (info.isItalian === true && Number(info.confidence || 0) >= minimumConfidence) return true;
+        const analysis = analyzeItalianSignals(stream);
+        return analysis.isItalian && analysis.confidence >= minimumConfidence;
+    });
+}
+
 function pickBrowserProfile(addonKey, id) {
     const seed = crypto.createHash('sha1').update(`${addonKey}:${id}`).digest('hex');
     const idx = parseInt(seed.slice(0, 4), 16) % BROWSER_PROFILES.length;
@@ -968,14 +1049,14 @@ async function fetchConfiguredExternalAddon(addonKey, type, id, options = {}) {
         return [];
     }
 
-    if (shouldSkipAddon(addonKey, addon)) return [];
-
     const cacheKey = buildAddonCacheKey(addonKey, type, id, options);
     const cached = getCache(fetchCache, cacheKey);
-    if (cached) return cached;
+    if (cached) return filterNormalizedExternalStreams(cached, addonKey, options);
+
+    if (shouldSkipAddon(addonKey, addon)) return [];
 
     const inflight = inflightFetches.get(cacheKey);
-    if (inflight) return inflight;
+    if (inflight) return filterNormalizedExternalStreams(await inflight, addonKey, options);
 
     const task = fetchLimiter(async () => {
         let baseUrl = normalizeAddonUrl(addon.baseUrl);
@@ -984,6 +1065,7 @@ async function fetchConfiguredExternalAddon(addonKey, type, id, options = {}) {
         if (addonGroup === 'mediafusion') baseUrl = buildMediaFusionBaseUrl(baseUrl, options.userConfig || null);
         if (!baseUrl) return [];
 
+        const release = await acquireAddonSlot(addonKey, addon);
         const fetchType = sanitizeFetchType(type, id);
         const safeId = sanitizePathSegment(id);
         const url = `${baseUrl}/stream/${fetchType}/${safeId}.json`;
@@ -1009,56 +1091,62 @@ async function fetchConfiguredExternalAddon(addonKey, type, id, options = {}) {
                 responseType: 'text'
             });
 
+            const status = Number(response?.statusCode || response?.status || 0) || 200;
+            if (status === 429) {
+                const error = new Error('HTTP 429 Rate Limited');
+                error.status = 429;
+                error.noRetry = true;
+                throw error;
+            }
+            if (status < 200 || status >= 300) {
+                const error = new Error(`HTTP ${status}`);
+                error.status = status;
+                throw error;
+            }
+
             let data;
             try {
                 data = JSON.parse(response.body);
             } catch {
-                throw new Error(`Invalid JSON response (status ${response.statusCode})`);
+                throw new Error(`Invalid JSON response (status ${status})`);
             }
 
             const streams = Array.isArray(data?.streams) ? data.streams : [];
-            const trustItalian = addonKey === 'torrentio_mirror' && addon.trustItalian === true && options.onlyItalian !== false;
-            const filteredStreams = options.onlyItalian === false
-                ? streams
-                : streams.filter((stream) => {
-                    if (trustItalian) return true;
-                    const analysis = analyzeItalianSignals(stream);
-                    if (addonKey === 'torrentio_mirror') {
-                        const evidence = getTorrentioLanguageEvidence(stream);
-                        if (evidence.hasItalian) return true;
-                        if (!evidence.hasItalian && evidence.hasForeign) return false;
-                    }
-                    return analysis.isItalian && analysis.confidence >= Number(options.minimumItalianConfidence || 35);
-                });
-            debugLog(`🇮🇹 [${addon.name}] Filter ${streams.length} -> ${filteredStreams.length}${trustItalian ? ' (forced-trusted-mirror)' : ''}`);
-            if (streams.length > 0 && filteredStreams.length === 0 && options.onlyItalian !== false) {
-                infoLog(`[${addon.name}] raw=${streams.length} ma filtro lingua ITA=0`);
+            const normalizedAll = dedupeNormalizedStreams(
+                streams.map((stream) => normalizeExternalStream(stream, addonKey, fetchType)).filter(Boolean)
+            );
+            const postFiltered = filterNormalizedExternalStreams(normalizedAll, addonKey, options);
+
+            debugLog(`🇮🇹 [${addon.name}] Post-filter ${normalizedAll.length} -> ${postFiltered.length}`);
+            if (normalizedAll.length > 0 && postFiltered.length === 0 && options.onlyItalian !== false) {
+                infoLog(`[${addon.name}] raw-normalized=${normalizedAll.length} ma post-filtro lingua ITA=0`);
             }
 
-            const normalized = dedupeNormalizedStreams(
-                filteredStreams.map((stream) => normalizeExternalStream(stream, addonKey, fetchType)).filter(Boolean)
-            );
-
             registerAddonSuccess(addonKey, now() - startedAt);
-            const ttl = normalized.length > 0 ? FETCH_CACHE_TTL : NEGATIVE_CACHE_TTL;
-            setCache(fetchCache, cacheKey, normalized, ttl);
-            return normalized;
+            const ttl = normalizedAll.length > 0 ? FETCH_CACHE_TTL : NEGATIVE_CACHE_TTL;
+            setCache(fetchCache, cacheKey, normalizedAll, ttl);
+            return normalizedAll;
         } catch (error) {
+            const status = Number(error?.status || error?.response?.status || 0);
             const isTimeout = error.name === 'TimeoutError' || error.code === 'ETIMEDOUT' || error.code === 'ESOCKETTIMEDOUT';
             const errorMessage = isTimeout ? `Timeout after ${addon.timeout}ms` : (error?.message || String(error));
 
-            registerAddonFailure(addonKey, addon, errorMessage);
-            if (isTimeout) logger.warn(`⏱️ [${addon.name}] ${errorMessage}`);
+            registerAddonFailure(addonKey, addon, errorMessage, status);
+            if (status === 429) logger.warn(`🚫 [${addon.name}] HTTP 429 Rate Limited — skipped retry and opened cooldown`);
+            else if (isTimeout) logger.warn(`⏱️ [${addon.name}] ${errorMessage}`);
             else logger.warn(`❌ [${addon.name}] Error: ${errorMessage}`);
 
             setCache(fetchCache, cacheKey, [], NEGATIVE_CACHE_TTL);
             return [];
+        } finally {
+            release();
         }
     });
 
     inflightFetches.set(cacheKey, task);
     try {
-        return await task;
+        const raw = await task;
+        return filterNormalizedExternalStreams(raw, addonKey, options);
     } finally {
         inflightFetches.delete(cacheKey);
     }
@@ -1093,6 +1181,7 @@ module.exports = {
     passesItalianFilter,
     isRealExternalResult,
     countRealResults,
+    filterNormalizedExternalStreams,
     fetchConfiguredExternalAddon
 };
 
