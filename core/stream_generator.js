@@ -570,6 +570,15 @@ function collectTorrentioItalianEvidenceText(item = {}) {
     return values.flatMap((value) => Array.isArray(value) ? value : [value]).filter(Boolean).join(' ');
 }
 
+function collectTorrentioReleaseEvidenceText(item = {}) {
+    const values = [
+        item?.title, item?.name, item?.filename, item?.file_title, item?.packTitle,
+        item?.websiteTitle, item?.rawDescription, item?.audio, item?.audio_tag,
+        item?.releaseGroup, item?.source, item?.provider, item?.externalProvider
+    ];
+    return values.flatMap((value) => Array.isArray(value) ? value : [value]).filter(Boolean).join(' ');
+}
+
 function hasLooseItalianToken(value = '') {
     const text = String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, ' ');
     return /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|(?:^|[^A-Z0-9])IT(?:[^A-Z0-9]|$))/i.test(text);
@@ -580,23 +589,57 @@ function hasEnglishLanguageToken(value = '') {
     return /(?:🇬🇧|🇺🇸|\b(?:ENG|ENGLISH)\b|(?:^|[^A-Z0-9])EN(?:[^A-Z0-9]|$))/i.test(text);
 }
 
+function getTorrentioLanguageInfoObject(item = {}) {
+    return item?._externalLanguageInfo && typeof item._externalLanguageInfo === 'object'
+        ? item._externalLanguageInfo
+        : (item?.languageInfo && typeof item.languageInfo === 'object' ? item.languageInfo : {});
+}
+
+function hasStrongTorrentioItalianAudioText(value = '') {
+    const text = String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, ' ');
+    return /(?:🇮🇹.*(?:🇬🇧|🇺🇸)|(?:🇬🇧|🇺🇸).*🇮🇹)/.test(text)
+        || /\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b/i.test(text)
+        || /(?:\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i.test(text)
+        || /(?:\b(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\s*[\/+,_. -]\s*(?:ENG|EN|ENGLISH)\b|\b(?:ENG|EN|ENGLISH)\s*[\/+,_. -]\s*(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\b)/i.test(text)
+        || /(?:\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b.*\b(?:ITA|ITALIAN|ITALIANO|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|IT)\b.*\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b)/i.test(text)
+        || /\b(?:CORSARO|MIRCrew|iDN_CreW|DDN|TRIDIM|DARKSIDEMUX|LUX|MUX)\b/i.test(text);
+}
+
+function isTorrentioFlagOnlyItalianTrap(item = {}) {
+    if (!isTorrentioExternalItem(item)) return false;
+    const info = getTorrentioLanguageInfoObject(item);
+    if (info?.isFlagOnlyItalian === true) return true;
+    if (/torrentio_flag_only_rejected/i.test(String(info?.reason || ''))) return true;
+
+    const releaseEvidenceText = collectTorrentioReleaseEvidenceText(item);
+    const infoLabel = String(info?.displayLabel || info?.icon || '').trim();
+    const hasSingleItalianLabel = infoLabel === '🇮🇹' || infoLabel === '🇮🇹 ITA';
+    const hasItalianFlag = /🇮🇹/.test(releaseEvidenceText) || hasSingleItalianLabel;
+    if (!hasItalianFlag) return false;
+    if (/(?:🇬🇧|🇺🇸)/.test(releaseEvidenceText) || /(?:🇬🇧|🇺🇸)/.test(infoLabel)) return false;
+    if (hasStrongTorrentioItalianAudioText(releaseEvidenceText)) return false;
+    if (!hasStrongTorrentioItalianAudioText(releaseEvidenceText) && /torrentio_(?:it|loose_it)_token/i.test(String(info?.reason || ''))) return true;
+    if (hasSingleItalianLabel && !hasStrongTorrentioItalianAudioText(releaseEvidenceText)) return true;
+    return /🇮🇹/.test(releaseEvidenceText);
+}
+
 function hasTorrentioLooseItalianEvidence(item = {}) {
     if (!isTorrentioExternalItem(item)) return false;
-    if (String(item?.externalAddon || '').toLowerCase() === 'torrentio_mirror') return true;
-    return hasLooseItalianToken(collectTorrentioItalianEvidenceText(item));
+    if (isTorrentioFlagOnlyItalianTrap(item)) return false;
+    return hasStrongTorrentioItalianAudioText(collectTorrentioReleaseEvidenceText(item));
 }
 
 function getExternalLanguageAudit(item = {}) {
-    const info = item?._externalLanguageInfo && typeof item._externalLanguageInfo === 'object'
-        ? item._externalLanguageInfo
-        : (item?.languageInfo && typeof item.languageInfo === 'object' ? item.languageInfo : {});
-    const torrentioLooseItalian = hasTorrentioLooseItalianEvidence(item);
-    const confidence = Math.max(Number(item?._externalLanguageConfidence ?? info.confidence ?? 0) || 0, torrentioLooseItalian ? 98 : 0);
-    const hasItalianAudio = Boolean(item?._externalHasItalianAudio || info.hasAudioItalian || torrentioLooseItalian);
+    const info = getTorrentioLanguageInfoObject(item);
+    const flagOnlyItalianTrap = isTorrentioFlagOnlyItalianTrap(item);
+    const torrentioLooseItalian = flagOnlyItalianTrap ? false : hasTorrentioLooseItalianEvidence(item);
+    const baseConfidence = Number(item?._externalLanguageConfidence ?? info.confidence ?? 0) || 0;
+    const confidence = flagOnlyItalianTrap ? Math.min(baseConfidence, 18) : Math.max(baseConfidence, torrentioLooseItalian ? 98 : 0);
+    const hasItalianAudio = flagOnlyItalianTrap ? false : Boolean(item?._externalHasItalianAudio || info.hasAudioItalian || torrentioLooseItalian);
     const hasItalianSubs = Boolean(item?._externalHasItalianSubs || info.hasSubItalian);
     const hasNegativeLanguage = Boolean(info.hasNegativeLanguage);
-    const isItalian = Boolean(item?._externalIsItalian || info.isItalian || hasItalianAudio || torrentioLooseItalian);
-    return { info, confidence, hasItalianAudio, hasItalianSubs, hasNegativeLanguage, isItalian, torrentioLooseItalian };
+    const isItalian = flagOnlyItalianTrap ? false : Boolean(item?._externalIsItalian || info.isItalian || hasItalianAudio || torrentioLooseItalian);
+    return { info, confidence, hasItalianAudio, hasItalianSubs, hasNegativeLanguage, isItalian, torrentioLooseItalian, flagOnlyItalianTrap };
 }
 
 function isExternalStrictItalianCandidate(item = {}) {
@@ -1461,7 +1504,11 @@ function appendExternalLanguageSignalsForFormatter(title = '', item = {}) {
     ].filter(Boolean).join(' ');
 
     const tokens = [];
-    if (item?._externalHasItalianAudio || item?._externalIsItalian || item?.hasItalianAudio || item?.isItalian || languageInfo?.hasAudioItalian || languageInfo?.isItalian || hasLooseItalianToken(evidenceText)) {
+    const audit = getExternalLanguageAudit(item);
+    const italianFormatterEvidence = isTorrentioExternalItem(item)
+        ? Boolean(!audit.flagOnlyItalianTrap && (audit.hasItalianAudio || audit.isItalian || hasStrongTorrentioItalianAudioText(evidenceText)))
+        : Boolean(item?._externalHasItalianAudio || item?._externalIsItalian || item?.hasItalianAudio || item?.isItalian || languageInfo?.hasAudioItalian || languageInfo?.isItalian || hasLooseItalianToken(evidenceText));
+    if (italianFormatterEvidence) {
         tokens.push('ITA');
     }
     if (languageInfo?.hasEnglish || hasEnglishLanguageToken(evidenceText)) tokens.push('ENG');
@@ -3715,8 +3762,9 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
     const hash = item.infoHash || item.hash || extractInfoHash(item.magnetLink) || extractInfoHash(item.magnet) || extractInfoHash(directUrl || rawDirectUrl);
     const currentDebridService = getNormalizedDebridService(config);
     const mediaFusionPassthroughUrl = currentDebridService === 'rd' ? getMediaFusionPassthroughUrl(item) : null;
-    const torrentioLooseItalian = hasTorrentioLooseItalianEvidence(item);
-    const externalLanguageOk = Boolean(item.isItalian || item.hasItalianAudio || item.languageInfo?.isItalian || item.languageInfo?.hasAudioItalian || torrentioLooseItalian);
+    const torrentioFlagOnlyItalianTrap = isTorrentioFlagOnlyItalianTrap(item);
+    const torrentioLooseItalian = torrentioFlagOnlyItalianTrap ? false : hasTorrentioLooseItalianEvidence(item);
+    const externalLanguageOk = !torrentioFlagOnlyItalianTrap && Boolean(item.isItalian || item.hasItalianAudio || item.languageInfo?.isItalian || item.languageInfo?.hasAudioItalian || torrentioLooseItalian);
     if (onlyItalian && isTorrentio && !externalLanguageOk) return null;
 
     const torrentioRdAuthority = torrentioDownloadMarker ? { trusted: false, direct: false, reason: 'torrentio_download_marker' } : getTorrentioRdAuthority(item, {
@@ -3783,22 +3831,32 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
         externalAddon: item.externalAddon || null,
         externalGroup: item.externalGroup || null,
         _preferTorrentioSeries: Boolean(isSeriesQuery && isTorrentio),
-        _externalLanguageInfo: item.languageInfo || (torrentioLooseItalian ? {
+        _externalLanguageInfo: torrentioFlagOnlyItalianTrap ? {
+            ...(item.languageInfo && typeof item.languageInfo === 'object' ? item.languageInfo : {}),
+            isItalian: false,
+            hasAudioItalian: false,
+            isFlagOnlyItalian: true,
+            hasSubItalian: Boolean(item.hasItalianSubs || item.languageInfo?.hasSubItalian),
+            hasNegativeLanguage: Boolean(item.languageInfo?.hasNegativeLanguage),
+            confidence: Math.min(Number(item.languageInfo?.confidence || 0) || 0, 18),
+            reason: item.languageInfo?.reason && item.languageInfo.reason !== 'none' ? `torrentio_flag_only_rejected|${item.languageInfo.reason}` : 'torrentio_flag_only_rejected'
+        } : (item.languageInfo || (torrentioLooseItalian ? {
             isItalian: true,
             hasAudioItalian: true,
             hasSubItalian: Boolean(item.hasItalianSubs),
             hasNegativeLanguage: false,
             confidence: 98,
-            reason: 'torrentio_loose_it_token'
-        } : null),
+            reason: 'torrentio_strict_it_token'
+        } : null)),
         _externalRequestId: item._externalRequestId || null,
         _externalIdMatched: item._externalIdMatched === true,
         _externalBatch: item._externalBatch || null,
-        _externalIsItalian: Boolean(item.isItalian || item.languageInfo?.isItalian || externalLanguageOk || (torrentioRdAuthority.direct && externalLanguageOk)),
-        _externalHasItalianAudio: Boolean(item.hasItalianAudio || item.languageInfo?.hasAudioItalian || externalLanguageOk || (torrentioRdAuthority.direct && externalLanguageOk)),
+        _externalIsItalian: !torrentioFlagOnlyItalianTrap && Boolean(item.isItalian || item.languageInfo?.isItalian || externalLanguageOk || (torrentioRdAuthority.direct && externalLanguageOk)),
+        _externalHasItalianAudio: !torrentioFlagOnlyItalianTrap && Boolean(item.hasItalianAudio || item.languageInfo?.hasAudioItalian || externalLanguageOk || (torrentioRdAuthority.direct && externalLanguageOk)),
         _externalHasItalianSubs: Boolean(item.hasItalianSubs || item.languageInfo?.hasSubItalian),
-        _externalLanguageConfidence: Math.max(Number(item.languageInfo?.confidence || 0) || 0, externalLanguageOk ? 98 : 0),
+        _externalLanguageConfidence: torrentioFlagOnlyItalianTrap ? Math.min(Number(item.languageInfo?.confidence || 0) || 0, 18) : Math.max(Number(item.languageInfo?.confidence || 0) || 0, externalLanguageOk ? 98 : 0),
         _torrentioLooseItalian: Boolean(torrentioLooseItalian),
+        _torrentioFlagOnlyItalianRejected: Boolean(torrentioFlagOnlyItalianTrap),
         _torrentioLooseItForceKeep: Boolean(isTorrentio && externalLanguageOk && item._externalIdMatched === true),
         _torrentioRdAuthority: Boolean(torrentioRdAuthority.trusted),
         _torrentioCached: Boolean(torrentioRdAuthority.trusted),
