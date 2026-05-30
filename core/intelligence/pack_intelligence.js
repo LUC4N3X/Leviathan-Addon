@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const DEBUG_MODE = process.env.DEBUG_MODE === 'true';
 const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mpg|mpeg|iso)$/i;
 const MIN_VIDEO_BYTES = 25 * 1024 * 1024;
-const RD_SCAN_DELAY_MS = Math.max(0, parseInt(process.env.PACK_RD_SCAN_DELAY_MS || '250', 10) || 250);
+const RD_SCAN_DELAY_MS = Math.max(0, parseInt(process.env.PACK_RD_SCAN_DELAY_MS || '2000', 10) || 2000);
 const MEMORY_TTL_MS = Math.max(30_000, parseInt(process.env.PACK_RESOLVER_TTL_MS || String(10 * 60 * 1000), 10) || 10 * 60 * 1000);
 const NEGATIVE_CACHE_TTL_MS = Math.max(15_000, parseInt(process.env.PACK_RESOLVER_NEGATIVE_TTL_MS || String(2 * 60 * 1000), 10) || 2 * 60 * 1000);
 const RD_INFO_RETRY_ATTEMPTS = Math.max(2, parseInt(process.env.PACK_RD_INFO_RETRY_ATTEMPTS || '4', 10) || 4);
@@ -15,6 +15,7 @@ const TB_INFO_RETRY_DELAY_MS = Math.max(500, parseInt(process.env.PACK_TB_INFO_R
 const MAX_MEMORY_ENTRIES = Math.max(50, parseInt(process.env.PACK_RESOLVER_CACHE_SIZE || '500', 10) || 500);
 const DB_MOVIE_FILE_LIMIT = Math.max(10, parseInt(process.env.PACK_DB_MOVIE_LIMIT || '30', 10) || 30);
 const DB_SERIES_FILE_LIMIT = Math.max(25, parseInt(process.env.PACK_DB_SERIES_LIMIT || '400', 10) || 400);
+const PACK_RD_QUEUE_MAX = Math.max(5, parseInt(process.env.PACK_RD_QUEUE_MAX || '200', 10) || 200);
 
 
 const PUBLIC_TORRENT_CACHE_ENABLED = process.env.PACK_PUBLIC_TORRENT_CACHE !== 'false';
@@ -30,14 +31,21 @@ const PUBLIC_TORRENT_CACHE_SOURCES = Object.freeze([
 const TORBOX_CREATE_TORRENT_IN_PACK_RESOLVER = false;
 
 class RequestQueue {
-    constructor(concurrency = 1) {
+    constructor(concurrency = 1, maxQueued = 200) {
         this.concurrency = Math.max(1, concurrency);
+        this.maxQueued = Math.max(1, maxQueued);
         this.running = 0;
         this.queue = [];
     }
 
     add(task) {
         return new Promise((resolve, reject) => {
+            if ((this.running + this.queue.length) >= this.maxQueued) {
+                const err = new Error(`PACK_RD_QUEUE_OVERFLOW max=${this.maxQueued}`);
+                err.code = 'PACK_RD_QUEUE_OVERFLOW';
+                reject(err);
+                return;
+            }
             this.queue.push(async () => {
                 try {
                     resolve(await task());
@@ -63,16 +71,19 @@ class RequestQueue {
     }
 }
 
-const rdQueue = new RequestQueue(1);
+const rdQueue = new RequestQueue(1, PACK_RD_QUEUE_MAX);
 const pendingScans = new Map();
 const memoryCache = new Map();
 
 const SEASON_EPISODE_PATTERNS = [
     { pattern: /(?:^|\b)s(\d{1,2})\s*e(\d{1,3})(?:\b|[^\d])/i, extract: m => ({ season: parseInt(m[1], 10), episode: parseInt(m[2], 10) }) },
+    { pattern: /(?:^|\b)s(\d{1,2})\s*[-–—]\s*e(?:p)?\.?(\d{1,3})(?!\d)/i, extract: m => ({ season: parseInt(m[1], 10), episode: parseInt(m[2], 10) }) },
+    { pattern: /(?:^|\b)s(\d{1,2})\s*[-–—]\s*(\d{1,3})(?!\d)/i, extract: m => ({ season: parseInt(m[1], 10), episode: parseInt(m[2], 10) }) },
     { pattern: /(?:^|\b)(\d{1,2})x(\d{1,3})(?:\b|[^\d])/i, extract: m => ({ season: parseInt(m[1], 10), episode: parseInt(m[2], 10) }) },
     { pattern: /season\s*(\d{1,2}).{0,20}?episode\s*(\d{1,3})/i, extract: m => ({ season: parseInt(m[1], 10), episode: parseInt(m[2], 10) }) },
     { pattern: /stagione\s*(\d{1,2}).{0,20}?episodio\s*(\d{1,3})/i, extract: m => ({ season: parseInt(m[1], 10), episode: parseInt(m[2], 10) }) },
-    { pattern: /(?:^|[^a-z])ep?\.?\s*(\d{1,3})(?:[^\d]|$)/i, extract: (m, defaultSeason) => ({ season: defaultSeason, episode: parseInt(m[1], 10) }) }
+    { pattern: /(?:^|[^a-z])ep?\.?\s*(\d{1,3})(?:[^\d]|$)/i, extract: (m, defaultSeason) => ({ season: defaultSeason, episode: parseInt(m[1], 10) }) },
+    { pattern: /[-–—]\s*(\d{1,3})\s*[-–—]/, extract: (m, defaultSeason) => ({ season: defaultSeason, episode: parseInt(m[1], 10) }) }
 ];
 
 function isAnimeMeta(meta = {}) {
@@ -332,37 +343,40 @@ async function fetchFilesFromPublicTorrentCaches(infoHash, logger = console) {
         throw createExpectedMissError('PUBLIC_TORRENT_CACHE_DISABLED_OR_INVALID_HASH', 'public_cache_disabled');
     }
 
-    const errors = [];
-    for (const source of PUBLIC_TORRENT_CACHE_SOURCES) {
-        try {
-            const response = await axios.get(source.url(normalizedHash), {
-                responseType: 'arraybuffer',
-                timeout: PUBLIC_TORRENT_CACHE_TIMEOUT_MS,
-                maxContentLength: PUBLIC_TORRENT_CACHE_MAX_BYTES,
-                maxBodyLength: PUBLIC_TORRENT_CACHE_MAX_BYTES,
-                headers: {
-                    'User-Agent': 'Leviathan-PackResolver/3.1 (+torrent-metadata-only)',
-                    'Accept': 'application/x-bittorrent,application/octet-stream,*/*;q=0.5'
-                },
-                validateStatus: (status) => status >= 200 && status < 300
-            });
-            const buffer = Buffer.from(response?.data || []);
-            if (buffer.length <= 0 || buffer.length > PUBLIC_TORRENT_CACHE_MAX_BYTES) {
-                throw new Error('PUBLIC_TORRENT_CACHE_BAD_SIZE');
-            }
-            const parsed = parseTorrentMetadata(buffer, normalizedHash);
-            const files = filterVideoFiles(parsed.files);
-            if (files.length <= 0) throw createExpectedMissError('PUBLIC_TORRENT_CACHE_NO_VIDEO_FILES', 'public_cache_no_video');
-            logger?.info?.(`[PACK-PUBLIC] ${source.name} hit hash=${normalizedHash.slice(0, 12)} files=${files.length}`);
-            return { ...parsed, sourceName: source.name, files };
-        } catch (err) {
-            errors.push(`${source.name}:${err?.message || err}`);
+    const fetchOne = async (source) => {
+        const response = await axios.get(source.url(normalizedHash), {
+            responseType: 'arraybuffer',
+            timeout: PUBLIC_TORRENT_CACHE_TIMEOUT_MS,
+            maxContentLength: PUBLIC_TORRENT_CACHE_MAX_BYTES,
+            maxBodyLength: PUBLIC_TORRENT_CACHE_MAX_BYTES,
+            maxRedirects: 5,
+            headers: {
+                'User-Agent': 'Leviathan-PackResolver/3.1 (+torrent-metadata-only)',
+                'Accept': 'application/x-bittorrent,application/octet-stream,*/*;q=0.5'
+            },
+            validateStatus: (status) => status >= 200 && status < 300
+        });
+        const buffer = Buffer.from(response?.data || []);
+        if (buffer.length <= 0 || buffer.length > PUBLIC_TORRENT_CACHE_MAX_BYTES) {
+            throw new Error(`${source.name}:PUBLIC_TORRENT_CACHE_BAD_SIZE`);
         }
-    }
+        const parsed = parseTorrentMetadata(buffer, normalizedHash);
+        const files = filterVideoFiles(parsed.files);
+        if (files.length <= 0) throw createExpectedMissError(`${source.name}:PUBLIC_TORRENT_CACHE_NO_VIDEO_FILES`, 'public_cache_no_video');
+        return { ...parsed, sourceName: source.name, files };
+    };
 
-    const miss = createExpectedMissError('PUBLIC_TORRENT_CACHE_MISS', 'public_cache_miss');
-    miss.errors = errors;
-    throw miss;
+    try {
+        const parsed = await Promise.any(PUBLIC_TORRENT_CACHE_SOURCES.map(fetchOne));
+        logger?.info?.(`[PACK-PUBLIC] ${parsed.sourceName} hit hash=${normalizedHash.slice(0, 12)} files=${parsed.files.length}`);
+        return parsed;
+    } catch (aggregateError) {
+        const miss = createExpectedMissError('PUBLIC_TORRENT_CACHE_MISS', 'public_cache_miss');
+        miss.errors = Array.isArray(aggregateError?.errors)
+            ? aggregateError.errors.map((err) => err?.message || String(err))
+            : [aggregateError?.message || String(aggregateError)];
+        throw miss;
+    }
 }
 
 function isVideoFile(filename) {
