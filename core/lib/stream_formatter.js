@@ -1,4 +1,5 @@
 const { REGEX_TRUSTED_GROUPS } = require('../utils/text');
+const { renderTemplate } = require('./format_template_engine');
 function basicParseTitle(title) {
   const source = String(title || '');
   const cleaned = source
@@ -1296,30 +1297,113 @@ function styleAndroidCompact(p) {
   };
 }
 
-function styleCustom(p, template) {
-  if (!template) return styleLeviathan(p);
-  const vars = {
-    '{title}': p.cleanName,
-    '{originalTitle}': p.fileTitle,
-    '{ep}': p.epTag || '',
-    '{quality}': p.quality,
-    '{quality_bold}': toStylized(p.quality, 'bold'),
-    '{size}': p.sizeString,
-    '{source}': p.displaySource,
-    '{service}': p.serviceTag,
-    '{lang}': p.lang,
-    '{audio}': p.audioInfo,
-    '{seeders}': p.seedersStr,
-    '{codec}': p.codec,
-    '{group}': p.releaseGroup,
-    '{n}': '\n',
+function buildCustomFormatterContext(p) {
+  const cleanTags = Array.isArray(p.cleanTags) ? p.cleanTags : [];
+  const hdrTags = cleanTags.filter((tag) => /DV\+HDR|DV|HDR10\+|HDR/i.test(tag));
+  const langEmojis = safeString(p.lang).split(LANG_SEP).map((value) => value.trim()).filter(Boolean);
+  const summary = [
+    joinNonEmpty([p.quality, ...cleanTags], ' • '),
+    joinNonEmpty([p.audioTag, p.audioChannels, p.compactLang || p.lang], ' • '),
+    joinNonEmpty([p.sizeString, p.seedersStr], ' • '),
+    joinNonEmpty([p.displaySource, p.releaseGroup], ' • '),
+  ].filter(Boolean).join('\n');
+
+  const stream = {
+    title: p.cleanName,
+    filename: p.fileTitle,
+    resolution: p.quality,
+    quality: p.primarySourceTag || getPrimarySourceTag(cleanTags),
+    encode: p.codec,
+    codec: p.codec,
+    audio: p.audioTag,
+    audioChannels: p.audioChannels,
+    audioInfo: p.audioInfo,
+    language: p.lang,
+    languages: langEmojis,
+    languageCompact: p.compactLang || p.lang,
+    hdr: hdrTags.join(' '),
+    visualTags: cleanTags,
+    group: p.releaseGroup,
+    size: p.size,
+    sizeString: p.sizeString,
+    seeders: p.seeders,
+    score: p.visualScore,
+    scoreBadge: p.scoreBadge,
+    scoreTier: p.scoreTier,
+    tier: p.scoreTier,
+    episode: p.epTag,
+    bingeGroup: p.bingeGroup,
+    source: p.displaySource,
+    indexer: p.displaySource,
+    provider: p.providerLabel,
+    qualityIcon: p.qIcon,
+    cacheIcon: p.cacheIcon,
+    pack: p.isPackItem,
+    lazy: p.isLazy,
   };
-  let output = safeString(template);
-  for (const [key, value] of Object.entries(vars)) {
-    output = output.replace(new RegExp(key.replace(/[{}]/g, '\\$&'), 'g'), value);
+
+  const service = {
+    name: p.serviceTag,
+    shortName: p.serviceTag,
+    icon: p.serviceIconTitle,
+    cached: p.isCached,
+    cacheState: p.cacheState,
+    savedCloud: p.isSavedCloud,
+    cloudBadge: p.cloudBadge,
+  };
+  // Legacy `{service}` resolves to the bare tag, while `{service.name}` and
+  // friends read the structured object — the toString bridges both.
+  Object.defineProperty(service, 'toString', { value: () => safeString(p.serviceTag), enumerable: false });
+
+  const addon = { name: 'Leviathan' };
+
+  return {
+    stream,
+    service,
+    addon,
+    // Flat legacy aliases — keep older customTemplate strings working verbatim.
+    title: p.cleanName,
+    originalTitle: p.fileTitle,
+    ep: p.epTag || '',
+    quality: p.quality,
+    quality_bold: toStylized(p.quality, 'bold'),
+    size: p.sizeString,
+    source: p.displaySource,
+    lang: p.lang,
+    audio: p.audioInfo,
+    seeders: p.seedersStr,
+    codec: p.codec,
+    group: p.releaseGroup,
+    score_badge: p.scoreBadge || '',
+    score: p.visualScore,
+    summary,
+    n: '\n',
+  };
+}
+
+const DEFAULT_CUSTOM_NAME_TEMPLATE = 'Leviathan {quality}';
+
+function styleCustom(p, config = {}) {
+  const template = safeString(config?.customTemplate || config || '');
+  if (!template) return styleLeviathan(p);
+
+  const ctx = buildCustomFormatterContext(p);
+
+  // A single `|||` splits the template into "name ||| description", matching the
+  // configurator preview convention. Without it the description uses the whole
+  // template and the name falls back to an optional dedicated name template.
+  let nameTemplate = safeString(config?.customNameTemplate || '');
+  let descriptionTemplate = template;
+  const separatorIndex = template.indexOf('|||');
+  if (separatorIndex !== -1) {
+    nameTemplate = template.slice(0, separatorIndex);
+    descriptionTemplate = template.slice(separatorIndex + 3);
   }
-  output = output.replace(/\\n/g, '\n');
-  return { name: `Leviathan ${p.quality}`, title: output };
+  if (!nameTemplate.trim()) nameTemplate = DEFAULT_CUSTOM_NAME_TEMPLATE;
+
+  const name = normalizeSpaces(renderTemplate(nameTemplate, ctx)) || `Leviathan ${p.quality}`;
+  const title = renderTemplate(descriptionTemplate, ctx);
+  return { name, title };
 }
 
 const STYLE_BUILDERS = {
@@ -1340,7 +1424,7 @@ const STYLE_BUILDERS = {
   stremio_ita: styleStremioIta,
   torrentio: styleTorrentio,
   vertical: styleVertical,
-  custom: (params, config) => styleCustom(params, config.customTemplate || ''),
+  custom: (params, config) => styleCustom(params, config),
 };
 
 function extractStreamInfo(title, source, config = {}) {

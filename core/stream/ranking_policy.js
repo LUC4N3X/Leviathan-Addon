@@ -349,23 +349,87 @@ function applyMaxPerResolutionPolicy(streams = [], config = {}, options = {}) {
     return { results: selected, removed };
 }
 
+const PREFERRED_SYNONYMS = {
+    '4k': ['4k', '2160p', 'uhd'], '2160p': ['2160p', '4k', 'uhd'], '8k': ['8k', '4320p'],
+    '1440p': ['1440p', '2k', 'qhd'], '1080p': ['1080p', '1080i', 'fhd'], '720p': ['720p'],
+    '480p': ['480p'], 'sd': ['sd', '480p', '360p'],
+    'ita': ['ita', 'italian', 'italiano'], 'eng': ['eng', 'english'], 'jpn': ['jpn', 'jap', 'japanese'],
+    'multi': ['multi', 'dual'],
+    'remux': ['remux'], 'bluray': ['bluray', 'blu ray', 'bdrip', 'brrip'],
+    'web-dl': ['web dl', 'webdl'], 'webdl': ['web dl', 'webdl'], 'webrip': ['webrip', 'web rip'],
+    'web': ['web'], 'hdtv': ['hdtv'],
+    'dv': ['dolby vision', 'dovi', ' dv '], 'hdr10+': ['hdr10+', 'hdr10plus'], 'hdr': ['hdr'], 'sdr': ['sdr']
+};
+
+function normalizePreferredList(value) {
+    if (Array.isArray(value)) return value.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean);
+    if (typeof value === 'string') return value.split(/[,|;]/).map((entry) => entry.trim().toLowerCase()).filter(Boolean);
+    return [];
+}
+
+function getPreferredLists(config = {}) {
+    const filters = config?.filters || {};
+    return {
+        resolutions: normalizePreferredList(filters.preferredResolutions),
+        languages: normalizePreferredList(filters.preferredLanguages),
+        visualTags: normalizePreferredList(filters.preferredQualities || filters.preferredVisualTags),
+        hdr: normalizePreferredList(filters.preferredHdr)
+    };
+}
+
+function preferredTokenMatches(paddedText, token) {
+    const synonyms = PREFERRED_SYNONYMS[token] || [token];
+    return synonyms.some((synonym) => {
+        const normalized = String(synonym || '').toLowerCase().replace(/[^a-z0-9+]+/g, ' ').trim();
+        return normalized && paddedText.includes(` ${normalized} `);
+    });
+}
+
+// Returns the index of the first preferred token matched by the stream (lower is
+// better). An empty list yields 0 for every stream, so unconfigured preferences
+// are a pure no-op that leaves the existing ordering untouched.
+function getPreferredRank(paddedText, list) {
+    for (let i = 0; i < list.length; i += 1) {
+        if (preferredTokenMatches(paddedText, list[i])) return i;
+    }
+    return list.length;
+}
+
 function applyFinalStreamUserSort(streams = [], config = {}, options = {}) {
     const list = Array.isArray(streams) ? streams : [];
     const sortMode = getConfiguredSortMode(config);
+    const preferred = getPreferredLists(config);
+
+    const comparePreferred = (a, b) => {
+        if (a.resPref !== b.resPref) return a.resPref - b.resPref;
+        if (a.langPref !== b.langPref) return a.langPref - b.langPref;
+        if (a.tagPref !== b.tagPref) return a.tagPref - b.tagPref;
+        if (a.hdrPref !== b.hdrPref) return a.hdrPref - b.hdrPref;
+        return 0;
+    };
 
     const sorted = list
-        .map((stream, index) => ({
-            stream,
-            index,
-            cacheTier: getFinalStreamCacheTier(stream),
-            resolutionTier: getFinalStreamResolutionTier(stream),
-            sizeBytes: parseFinalStreamSizeBytes(stream)
-        }))
+        .map((stream, index) => {
+            const paddedText = ` ${normalizeResolutionSortText(getFinalStreamSortText(stream)).replace(/[^a-z0-9+]+/g, ' ')} `;
+            return {
+                stream,
+                index,
+                cacheTier: getFinalStreamCacheTier(stream),
+                resolutionTier: getFinalStreamResolutionTier(stream),
+                sizeBytes: parseFinalStreamSizeBytes(stream),
+                resPref: getPreferredRank(paddedText, preferred.resolutions),
+                langPref: getPreferredRank(paddedText, preferred.languages),
+                tagPref: getPreferredRank(paddedText, preferred.visualTags),
+                hdrPref: getPreferredRank(paddedText, preferred.hdr)
+            };
+        })
         .sort((a, b) => {
             if (sortMode === 'resolution') {
                 const resDelta = b.resolutionTier - a.resolutionTier;
                 if (resDelta !== 0) return resDelta;
                 if (a.cacheTier !== b.cacheTier) return a.cacheTier - b.cacheTier;
+                const prefDelta = comparePreferred(a, b);
+                if (prefDelta !== 0) return prefDelta;
                 return a.index - b.index;
             }
 
@@ -375,6 +439,8 @@ function applyFinalStreamUserSort(streams = [], config = {}, options = {}) {
                 const sizeDelta = b.sizeBytes - a.sizeBytes;
                 if (sizeDelta !== 0) return sizeDelta;
             }
+            const prefDelta = comparePreferred(a, b);
+            if (prefDelta !== 0) return prefDelta;
             return a.index - b.index;
         })
         .map((entry) => entry.stream);

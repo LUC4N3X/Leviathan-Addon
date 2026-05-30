@@ -66,6 +66,7 @@ const {
   applySmartStreamDedupPolicy,
   getConfiguredSortMode
 } = require('./stream/ranking_policy');
+const { selectStreamsByCollectionExpression } = require('./policies/stream_expression');
 const {
   buildTitleSearchPipelineKey,
   buildValidatedFileSetKey
@@ -4986,6 +4987,11 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       finalStreams = infoHashStreamDedupe.results;
       const smartStreamDedupe = applySmartStreamDedupPolicy(finalStreams, config, { logger });
       finalStreams = smartStreamDedupe.results;
+      const expressionFilter = selectStreamsByCollectionExpression(finalStreams, filters.streamExpression, meta, { logger });
+      if (expressionFilter.removed > 0) {
+          logger.info(`[SEL FILTER] removed=${expressionFilter.removed} kept=${expressionFilter.results.length} expr="${String(filters.streamExpression || '').slice(0, 80)}"`);
+      }
+      finalStreams = expressionFilter.results;
       const resolutionCap = applyMaxPerResolutionPolicy(finalStreams, config, { logger });
       finalStreams = resolutionCap.results;
       finalStreams = applyFinalStreamUserSort(finalStreams, config);
@@ -4993,9 +4999,10 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           debrid: debridStreams.length,
           web: webStreams.length,
           webBuckets: webBucketNames.length,
-          removed: infoHashStreamDedupe.removed + smartStreamDedupe.removed + resolutionCap.removed,
+          removed: infoHashStreamDedupe.removed + smartStreamDedupe.removed + expressionFilter.removed + resolutionCap.removed,
           infoHashRemoved: infoHashStreamDedupe.removed,
           smartRemoved: smartStreamDedupe.removed,
+          expressionRemoved: expressionFilter.removed,
           resolutionCapRemoved: resolutionCap.removed,
           streams: finalStreams.length
       });
