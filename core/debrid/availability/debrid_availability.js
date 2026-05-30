@@ -76,6 +76,30 @@ function buildDebridUserHash(apiKey) {
     return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16);
 }
 
+// Debrid services whose cached/uncached status is service-wide (CDN-level), not
+// tied to the requesting account. For these, one availability check answers for
+// every user — mirroring MediaFusion's GLOBAL_CACHE_CHECK_PROVIDERS.
+const GLOBAL_CACHE_SERVICES = new Set(['tb', 'torbox', 'premiumize', 'pm', 'offcloud', 'stremthru']);
+
+function isGlobalCacheCheckEnabled() {
+    const raw = process.env.DEBRID_GLOBAL_CACHE_CHECK_ENABLED;
+    if (raw === undefined || raw === null || raw === '') return true;
+    return /^(1|true|yes|y|on)$/i.test(String(raw).trim());
+}
+
+function isGlobalCacheService(service) {
+    return GLOBAL_CACHE_SERVICES.has(String(service || '').trim().toLowerCase());
+}
+
+// Resolve the user-scope component of a debrid check marker. Global-cache
+// services share a single 'global' marker (so a TorBox check is performed once
+// for the whole instance instead of once per user); per-user services such as
+// Real-Debrid keep a token-scoped marker because availability is account-bound.
+function resolveDebridCheckUserHash(service, apiKey) {
+    if (isGlobalCacheCheckEnabled() && isGlobalCacheService(service)) return 'global';
+    return buildDebridUserHash(apiKey);
+}
+
 function buildDebridMediaId(meta = {}) {
     const imdb = String(meta?.imdb_id || meta?.imdbId || meta?.id || '').trim().toLowerCase();
     const tmdb = String(meta?.tmdb_id || meta?.tmdbId || meta?.tmdb || '').trim().toLowerCase();
@@ -150,7 +174,7 @@ function rememberLocalAvailabilityPayload(cacheKey, payload, ttlSeconds) {
 function buildDebridCheckMarkerLocalKey(service, apiKey, meta = {}) {
     const mediaId = buildDebridMediaId(meta);
     if (!mediaId) return null;
-    return `${String(service || 'rd').trim().toLowerCase() || 'rd'}:${buildDebridUserHash(apiKey)}:${mediaId}`;
+    return `${String(service || 'rd').trim().toLowerCase() || 'rd'}:${resolveDebridCheckUserHash(service, apiKey)}:${mediaId}`;
 }
 
 async function isRecentDebridMediaCheck(service, apiKey, meta, logger = console) {
@@ -164,7 +188,7 @@ async function isRecentDebridMediaCheck(service, apiKey, meta, logger = console)
     try {
         const marked = await dbHelper.isDebridCacheCheckMarked({
             service,
-            userHash: buildDebridUserHash(apiKey),
+            userHash: resolveDebridCheckUserHash(service, apiKey),
             mediaId
         });
         if (marked && localKey) {
@@ -190,7 +214,7 @@ async function markDebridMediaCheckDone(service, apiKey, meta, logger = console)
     try {
         return await dbHelper.markDebridCacheCheckDone({
             service,
-            userHash: buildDebridUserHash(apiKey),
+            userHash: resolveDebridCheckUserHash(service, apiKey),
             mediaId,
             ttlSeconds: DEBRID_CACHE_CHECK_MARKER_TTL
         });
@@ -1234,6 +1258,10 @@ module.exports = {
         getAvailabilityMediaId,
         getAvailabilityCacheKey,
         getAvailabilityCacheKeys,
-        buildAvailabilityCachePayload
+        buildAvailabilityCachePayload,
+        buildDebridUserHash,
+        resolveDebridCheckUserHash,
+        isGlobalCacheService,
+        buildDebridCheckMarkerLocalKey
     }
 };
