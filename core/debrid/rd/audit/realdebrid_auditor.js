@@ -1,5 +1,6 @@
-const axios = require('axios');
 const { buildMagnet } = require('../../../storage/tracker_registry');
+const RealDebridProbe = require('../probe/realdebrid_probe');
+const { getRdProbeCoordinatorStatus } = require('../probe/rd_probe_coordinator');
 
 let started = false;
 const auditorState = {
@@ -27,9 +28,6 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Leviathan RD Audit v2: default fissati nel codice, non nel file .env.
 const RD_CACHED_RECHECK_HOURS = 168; // 7 giorni
-const RD_SCAN_HTTP_TIMEOUT_MS = 30000;
-const RD_SCAN_MAX_POLLS = 2;
-const RD_SCAN_POLL_MS = 8000;
 const RD_SCAN_BATCH = 2;
 const RD_SCAN_SLEEP_MS = 15000;
 const RD_SCAN_IDLE_MS = 90000;
@@ -37,6 +35,7 @@ const RD_SCAN_NORMALIZE_CHUNK = 10000;
 const RD_SCAN_ENABLE_BY_DEFAULT = true;
 const PACK_VIDEO_MIN_BYTES = 25 * 1024 * 1024;
 const VIDEO_EXT_RE = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts|mpg|mpeg)$/i;
+const TERMINAL_RD_NEGATIVE_STATUSES = new Set(['error', 'magnet_error', 'virus', 'dead']);
 
 function normalizeAuditVideoFile(file) {
     const id = Number(file?.id);
@@ -63,34 +62,6 @@ function getAuditVideoFiles(files) {
         .sort((a, b) => Number(b?.bytes || 0) - Number(a?.bytes || 0));
 }
 
-function pickAuditFileId(files) {
-    const best = getAuditVideoFiles(files)[0];
-    const id = Number(best?.id);
-    return Number.isInteger(id) && id >= 0 ? id : null;
-}
-
-function getAuditFileSize(files, selectedId = null) {
-    const videoFiles = getAuditVideoFiles(files);
-    const exact = selectedId !== null ? videoFiles.find((file) => Number(file?.id) === Number(selectedId)) : null;
-    return Number((exact || videoFiles[0])?.bytes || 0) || null;
-}
-
-function buildAuditSelection(files) {
-    const videoFiles = getAuditVideoFiles(files);
-    const fileIds = videoFiles
-        .map((file) => Number(file.id))
-        .filter((id) => Number.isInteger(id) && id >= 0);
-
-    // Se RD espone un pack, lo verifichiamo selezionando TUTTI i file video.
-    // Così non segniamo ⚡ un pack dove è pronto solo il file più grande ma non l'episodio richiesto.
-    const primary = videoFiles[0] || null;
-    return {
-        videoFiles,
-        primaryFileId: Number.isInteger(Number(primary?.id)) ? Number(primary.id) : null,
-        filesToSelect: fileIds.length > 1 ? fileIds.join(',') : (fileIds.length === 1 ? String(fileIds[0]) : 'all')
-    };
-}
-
 function buildPackRowsFromAudit(hash, files) {
     const videoFiles = getAuditVideoFiles(files);
     if (videoFiles.length <= 1) return [];
@@ -103,85 +74,95 @@ function buildPackRowsFromAudit(hash, files) {
     }));
 }
 
-function createRealDebridHttpClient(token) {
-    return axios.create({
-        baseURL: 'https://api.real-debrid.com/rest/1.0',
-        timeout: RD_SCAN_HTTP_TIMEOUT_MS,
-        headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/x-www-form-urlencoded'
-        }
-    });
+function mapAuditorProbeResult(hash, result = {}) {
+    const normalizedHash = String(result.hash || hash || '').trim().toLowerCase();
+    const status = String(result.rd_status || '').trim().toLowerCase();
+    const files = getAuditVideoFiles(result.files);
+    const requestedFileIndex = Number(result.file_index ?? result.episodeFileHint?.fileIndex);
+    const selectedFileIndex = Number.isInteger(requestedFileIndex) && requestedFileIndex >= 0
+        ? requestedFileIndex
+        : null;
+    const matchingFile = selectedFileIndex !== null
+        ? files.find((file) => Number(file.id) === selectedFileIndex)
+        : files[0];
+    const selectedFileSize = Number(result.file_size || matchingFile?.bytes || 0) || null;
+    const base = {
+        hash: normalizedHash,
+        cached: null,
+        rd_file_index: selectedFileIndex,
+        rd_file_size: selectedFileSize,
+        files,
+        is_pack: result.is_pack === true || files.length > 1
+    };
+
+    if (result.cached === true) {
+        return {
+            ...base,
+            state: 'likely_cached',
+            verified: true,
+            failures: 0,
+            next_hours: RD_CACHED_RECHECK_HOURS,
+            reason: 'personal_scan_cached_hint'
+        };
+    }
+
+    if (TERMINAL_RD_NEGATIVE_STATUSES.has(status)) {
+        return {
+            ...base,
+            state: 'likely_uncached',
+            verified: true,
+            failures: 1,
+            next_hours: RD_CACHED_RECHECK_HOURS,
+            reason: `personal_scan_terminal_hint:${status}`
+        };
+    }
+
+    if (result.deferred === true || result.state === 'probing' || result.error) {
+        return {
+            ...base,
+            state: 'probing',
+            verified: false,
+            failures: 1,
+            next_hours: 12,
+            reason: `personal_scan_deferred:${result.error || status || 'unknown'}`
+        };
+    }
+
+    if (result.state === 'likely_cached' || result.pack_without_episode_hint === true) {
+        return {
+            ...base,
+            state: 'likely_cached',
+            verified: true,
+            failures: 0,
+            next_hours: RD_CACHED_RECHECK_HOURS,
+            reason: 'personal_scan_likely_cached_hint'
+        };
+    }
+
+    return {
+        ...base,
+        state: 'likely_uncached',
+        verified: false,
+        failures: 1,
+        next_hours: 12,
+        reason: `personal_scan_inconclusive:${status || result.state || 'unknown'}`
+    };
 }
 
-async function auditHashSlow(http, hash) {
-    let torrentId = null;
+async function auditHashSlow(hash, token, dependencies = {}) {
+    const probe = dependencies.RealDebridProbe || RealDebridProbe;
     try {
         const magnet = buildMagnet(hash);
-        const addRes = await http.post('/torrents/addMagnet', `magnet=${encodeURIComponent(magnet)}`);
-        torrentId = addRes?.data?.id;
-        if (!torrentId) return { hash, state: 'probing', cached: null, failures: 1, next_hours: 12, reason: 'missing_torrent_id' };
-
-        const pollCount = RD_SCAN_MAX_POLLS;
-        const pollSleepMs = RD_SCAN_POLL_MS;
-
-        let selectedFileId = null;
-
-        for (let attempt = 0; attempt < pollCount; attempt += 1) {
-            await sleep(pollSleepMs);
-            let infoRes = await http.get(`/torrents/info/${torrentId}`);
-            let data = infoRes?.data || {};
-            let status = String(data.status || '').toLowerCase();
-            let files = Array.isArray(data.files) ? data.files : [];
-
-            if (status === 'waiting_files_selection') {
-                const selection = buildAuditSelection(files);
-                selectedFileId = selection.primaryFileId;
-                try {
-                    await http.post(`/torrents/selectFiles/${torrentId}`, `files=${encodeURIComponent(selection.filesToSelect || 'all')}`);
-                    await sleep(Math.max(1000, Math.min(3000, Math.floor(pollSleepMs / 2))));
-                    infoRes = await http.get(`/torrents/info/${torrentId}`);
-                    data = infoRes?.data || {};
-                    status = String(data.status || '').toLowerCase();
-                    files = Array.isArray(data.files) ? data.files : files;
-                } catch (selectError) {
-                    return { hash, state: 'probing', cached: null, failures: 1, next_hours: 4, reason: `select_failed:${selectError?.response?.status || selectError.message}` };
-                }
-            }
-
-            if (status === 'downloaded' && Array.isArray(data.links) && data.links.length > 0) {
-                const videoFiles = getAuditVideoFiles(files);
-                const selectedId = Number.isInteger(selectedFileId) ? selectedFileId : pickAuditFileId(files);
-                return {
-                    hash,
-                    state: 'cached',
-                    cached: true,
-                    rd_file_index: selectedId,
-                    rd_file_size: getAuditFileSize(files, selectedId),
-                    files: videoFiles,
-                    is_pack: videoFiles.length > 1,
-                    failures: 0,
-                    next_hours: RD_CACHED_RECHECK_HOURS,
-                    reason: 'downloaded_links'
-                };
-            }
-
-            if (['error', 'magnet_error', 'virus', 'dead'].includes(status)) {
-                return { hash, state: 'uncached_terminal', cached: false, failures: 0, next_hours: 24 * 7, reason: status };
-            }
-        }
-
-        return { hash, state: 'likely_uncached', cached: null, failures: 1, next_hours: 12, reason: 'poll_exhausted' };
+        const result = await probe.inspectSingleHash(hash, magnet, token, {}, { priority: 'auditor' });
+        return mapAuditorProbeResult(hash, result);
     } catch (err) {
-        const status = Number(err?.response?.status || 0);
-        const retryHours = status === 429 || status === 503 ? 24 : 12;
-        return { hash, state: 'probing', cached: null, failures: 1, next_hours: retryHours, reason: status ? `http_${status}` : (err?.message || 'request_error') };
-    } finally {
-        if (torrentId) {
-            try {
-                await http.delete(`/torrents/delete/${torrentId}`);
-            } catch (_) {}
-        }
+        return mapAuditorProbeResult(hash, {
+            hash,
+            cached: false,
+            deferred: true,
+            state: 'probing',
+            error: err?.message || 'request_error'
+        });
     }
 }
 
@@ -196,7 +177,7 @@ function formatProgress(progress) {
 }
 
 function getRealDebridAuditorStatus() {
-    return { ...auditorState };
+    return { ...auditorState, probeCoordinator: getRdProbeCoordinatorStatus() };
 }
 
 function startRealDebridAuditor({ dbHelper, logger = console, onBatchUpdated = null } = {}) {
@@ -225,7 +206,6 @@ function startRealDebridAuditor({ dbHelper, logger = console, onBatchUpdated = n
     }
 
     started = true;
-    const http = createRealDebridHttpClient(token);
     const batchSize = RD_SCAN_BATCH;
     const sleepMs = RD_SCAN_SLEEP_MS;
     const idleMs = RD_SCAN_IDLE_MS;
@@ -274,11 +254,11 @@ function startRealDebridAuditor({ dbHelper, logger = console, onBatchUpdated = n
                     auditorState.currentHash = hash;
                     auditorState.currentTitle = String(item?.title || '').slice(0, 180) || null;
                     logger.info?.(`[RD AUDIT] Controllo hash=${hash} | title=${auditorState.currentTitle || 'n/a'}`);
-                    const outcome = await auditHashSlow(http, hash);
+                    const outcome = await auditHashSlow(hash, token);
                     auditorState.lastOutcome = { ...outcome, at: new Date().toISOString() };
                     auditorState.totalScanned += 1;
                     logger.info?.(`[RD AUDIT] Esito hash=${hash} | cached=${outcome.cached} | state=${outcome.state || 'n/a'} | reason=${outcome.reason || 'n/a'} | file=${outcome.rd_file_index ?? 'n/a'} | size=${outcome.rd_file_size ?? 'n/a'} | packFiles=${Array.isArray(outcome.files) ? outcome.files.length : 0} | next_hours=${outcome.next_hours}`);
-                    if (outcome.cached === true && outcome.is_pack === true) {
+                    if (outcome.verified === true && outcome.state === 'likely_cached' && outcome.is_pack === true) {
                         packRows.push(...buildPackRowsFromAudit(hash, outcome.files));
                     }
                     results.push(outcome);
@@ -334,4 +314,12 @@ function startRealDebridAuditor({ dbHelper, logger = console, onBatchUpdated = n
     return { enabled: true, started: true, reason: 'started' };
 }
 
-module.exports = { startRealDebridAuditor, getRealDebridAuditorStatus };
+module.exports = {
+    startRealDebridAuditor,
+    getRealDebridAuditorStatus,
+    __private: {
+        auditHashSlow,
+        buildPackRowsFromAudit,
+        mapAuditorProbeResult
+    }
+};

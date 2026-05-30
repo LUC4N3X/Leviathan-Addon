@@ -4,6 +4,23 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { __private } = require('../providers/cinemacity/cc_handler');
 
+function withEnvironment(values, fn) {
+    const previous = {};
+    for (const [name, value] of Object.entries(values)) {
+        previous[name] = process.env[name];
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+    }
+    try {
+        return fn();
+    } finally {
+        for (const [name, value] of Object.entries(previous)) {
+            if (value === undefined) delete process.env[name];
+            else process.env[name] = value;
+        }
+    }
+}
+
 test('CinemaCity anime detection recognizes kitsu/anime metadata', () => {
     assert.equal(__private.looksLikeAnimeMeta({
         type: 'anime',
@@ -45,4 +62,38 @@ test('CinemaCity anime search variants include normalized titles and anime listi
 
     assert.match(queries.join(' | '), /Solo Leveling/i);
     assert.ok(__private.getListingBaseUrls('anime').some((url) => /\/anime\/$/i.test(url)));
+});
+
+test('CinemaCity builds generic forward URLs from the shared FORWARD_PROXY env', () => {
+    withEnvironment({
+        FORWARD_PROXY: 'https://proxy.example/forward?url=',
+        CINEMACITY_FORWARD_PROXY: 'https://legacy.example/cinemacity/fetch?d='
+    }, () => {
+        assert.equal(
+            __private.buildCinemaCityKrakenForwardUrl('https://cinemacity.cc/movies/one.html', {
+                'User-Agent': 'Leviathan Test',
+                Referer: 'https://cinemacity.cc/',
+                Origin: 'https://cinemacity.cc'
+            }),
+            'https://proxy.example/forward?url=https%3A%2F%2Fcinemacity.cc%2Fmovies%2Fone.html&h_user-agent=Leviathan+Test&h_referer=https%3A%2F%2Fcinemacity.cc%2F&h_origin=https%3A%2F%2Fcinemacity.cc'
+        );
+    });
+});
+
+test('CinemaCity derives extractor base from the shared generic forward endpoint', () => {
+    withEnvironment({
+        FORWARD_PROXY: 'https://proxy.example/forward?url=',
+        CINEMACITY_FORWARD_PROXY: 'https://legacy.example/cinemacity/fetch?d=',
+        CINEMACITY_PAGE_EXTRACTOR_BASE: undefined,
+        CINEMACITY_KRAKEN_EXTRACTOR_URL: undefined,
+        KRAKEN_PROXY_URL: undefined,
+        MEDIAFLOW_PROXY_URL: undefined,
+        MEDIAFLOW_URL: undefined,
+        MFP_URL: undefined,
+        MFP_BASE_URL: undefined,
+        KRAKEN_URL: undefined,
+        KRAKEN_BASE_URL: undefined
+    }, () => {
+        assert.equal(__private.getCinemaCityPageExtractorBase({}), 'https://proxy.example');
+    });
 });

@@ -62,6 +62,10 @@ const {
     buildProxyUrl: buildMediaflowGatewayProxyUrl,
     getMediaflowBase
 } = require('../../core/proxy/mediaflow_gateway');
+const {
+    buildForwardProxyUrl,
+    getForwardProxyBase
+} = require('../../core/proxy/forward_proxy_config');
 
 const BASE_URL = Buffer.from('aHR0cHM6Ly9jaW5lbWFjaXR5LmNj', 'base64').toString('utf8');
 
@@ -180,11 +184,6 @@ const cinemaCityLogger = createProviderLogger({
     enabled: () => CINEMACITY_DEBUG,
     debugPrefix: '[CinemaCity:debug]'
 });
-const CINEMACITY_KRAKEN_FORWARD_URL = (
-    String(process.env.CINEMACITY_FORWARD_PROXY || '').trim()
-    || String(process.env.CINEMACITY_KRAKEN_FORWARD_URL || '').trim()
-    || 'https://krakenproxy.questoleviatanormio.dpdns.org/cinemacity/fetch?d='
-);
 const CINEMACITY_KRAKEN_FORWARD_ENABLED = envFlag('CINEMACITY_FORWARD_PROXY_ENABLED', true);
 const CINEMACITY_KRAKEN_FORWARD_FIRST = envFlag('CINEMACITY_FORWARD_PROXY_FIRST', true);
 const CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS = Math.max(1500, Math.min(20000, Number.parseInt(process.env.CINEMACITY_FORWARD_PROXY_TIMEOUT_MS || '12000', 10) || 12000));
@@ -577,30 +576,19 @@ async function fetchHtmlWithAxios(url, extraHeaders = {}, requestTimeout = FETCH
 }
 
 function buildCinemaCityKrakenForwardUrl(targetUrl, headers = {}) {
-    if (!CINEMACITY_KRAKEN_FORWARD_ENABLED || !CINEMACITY_KRAKEN_FORWARD_URL || !targetUrl) return '';
-    const base = String(CINEMACITY_KRAKEN_FORWARD_URL || '').trim();
-    if (!base) return '';
-    const encoded = encodeURIComponent(targetUrl);
-    let forwardUrl;
-    if (base.includes('{url}')) forwardUrl = base.replace('{url}', encoded);
-    else if (/[?&][^=]+=$/.test(base)) forwardUrl = `${base}${encoded}`;
-    else forwardUrl = `${base}${targetUrl}`;
-    try {
-        const u = new URL(forwardUrl);
-        const ua = headers?.['User-Agent'] || headers?.['user-agent'];
-        const referer = headers?.Referer || headers?.referer;
-        const origin = headers?.Origin || headers?.origin;
-        if (ua && !u.searchParams.has('h_user-agent')) u.searchParams.set('h_user-agent', ua);
-        if (referer && !u.searchParams.has('h_referer')) u.searchParams.set('h_referer', referer);
-        if (origin && !u.searchParams.has('h_origin')) u.searchParams.set('h_origin', origin);
-        return u.toString();
-    } catch (_) {
-        return forwardUrl;
-    }
+    if (!CINEMACITY_KRAKEN_FORWARD_ENABLED || !targetUrl) return '';
+    return buildForwardProxyUrl(targetUrl, {
+        context: 'cinemacity',
+        params: {
+            'h_user-agent': headers?.['User-Agent'] || headers?.['user-agent'],
+            h_referer: headers?.Referer || headers?.referer,
+            h_origin: headers?.Origin || headers?.origin
+        }
+    });
 }
 
 async function fetchHtmlWithKrakenForward(url, extraHeaders = {}, requestTimeout = CINEMACITY_KRAKEN_FORWARD_TIMEOUT_MS, requestContext = 'document', method = 'GET', body = null) {
-    if (!CINEMACITY_KRAKEN_FORWARD_ENABLED || !CINEMACITY_KRAKEN_FORWARD_URL) return null;
+    if (!CINEMACITY_KRAKEN_FORWARD_ENABLED) return null;
     if (String(method || 'GET').toUpperCase() !== 'GET') return null;
     const { headers: mergedHeaders } = buildCinemaCityRequestHeaders(url, requestContext, extraHeaders);
     const forwardUrl = buildCinemaCityKrakenForwardUrl(url, mergedHeaders);
@@ -3260,7 +3248,7 @@ function getCinemaCityPageExtractorBase(config = {}) {
         || String(process.env.CINEMACITY_KRAKEN_EXTRACTOR_URL || '').trim().replace(/\/+$/g, '')
         || String(process.env.KRAKEN_PROXY_URL || '').trim().replace(/\/+$/g, '')
         || String(process.env.MEDIAFLOW_PROXY_URL || process.env.MEDIAFLOW_URL || '').trim().replace(/\/+$/g, '')
-        || deriveCinemaCityExtractorBase(CINEMACITY_KRAKEN_FORWARD_URL);
+        || deriveCinemaCityExtractorBase(getForwardProxyBase({ context: 'cinemacity' }));
 }
 
 function buildCinemaCityPageExtractorUrl(config = {}, pageUrl, season, episode, options = {}) {
@@ -3704,6 +3692,7 @@ module.exports = {
         getListingBaseUrls,
         pickStream,
         buildCinemaCityEpisodePageUrl,
+        buildCinemaCityKrakenForwardUrl,
         buildCinemaCityPageExtractorUrl,
         shouldPreferCinemaCityLocalProxy,
         isLikelyCinemaCityMediaUrl,
@@ -3731,4 +3720,3 @@ module.exports = {
 };
 
 startCinemaCityBackgroundClearanceDaemon();
-

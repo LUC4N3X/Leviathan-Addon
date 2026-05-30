@@ -13,6 +13,12 @@ try { setCookieParser = require('set-cookie-parser'); } catch (_) { setCookiePar
 const { getOrigin, normalizeRemoteUrl } = require('../common');
 const { captchaOrchestrator } = require('../../../core/security/captcha_orchestrator');
 const {
+    buildForwardProxyUrl,
+    getForwardProxyBase,
+    isDisabledForwardProxyValue,
+    requireForwardProxyBase
+} = require('../../../core/proxy/forward_proxy_config');
+const {
     DEFAULT_USER_AGENT,
     buildRequestHeaders,
     extractFirstUrl,
@@ -168,11 +174,10 @@ async function fetchWithFlareSolverr(targetUrl, options = {}) {
     const endpoint = getFlareEndpoint(options);
     if (!flareEnabled(options) || !endpoint) return null;
 
-    // Route the request through the CB01/Kraken forward proxy when configured
+    // Route the request through the shared forward proxy when configured
     // so FlareSolverr's egress IP is replaced by the proxy's IP. uprot.net's
     // Cloudflare blocklist commonly bans FlareSolverr container IPs, but the
-    // Kraken proxy IP is generally accepted. The proxy URL pattern matches
-    // CB01_FORWARD_PROXY (https://krakenproxy.../forward?url=).
+    // configured proxy IP is generally accepted.
     const proxyUrl = buildUprotForwardRequestUrl(targetUrl, options);
     const fetchUrl = proxyUrl || targetUrl;
     const flareViaProxy = Boolean(proxyUrl && proxyUrl !== targetUrl);
@@ -743,37 +748,19 @@ async function followContinueLink(client, continueUrl, options = {}) {
     return toMaxstreamPlayerUrl(current);
 }
 
-// Baked-in default: the Kraken forward proxy is what CB01 already uses to
-// bypass Cloudflare IP bans, so uprot.net (which bans FlareSolverr's container
-// IP) gets the same treatment without requiring env config.
-const UPROT_FORWARD_PROXY_DEFAULT = 'https://krakenproxy.questoleviatanormio.dpdns.org/forward?url=';
-
 function getUprotForwardProxy(options = {}) {
-    const raw = String(
-        options.uprotForwardProxy
-        || process.env.UPROT_FORWARD_PROXY
-        || process.env.UPROT_FORWARDPROXY
-        || process.env.CB01_FORWARD_PROXY
-        || process.env.FORWARDPROXY
-        || UPROT_FORWARD_PROXY_DEFAULT
-    ).trim();
-    if (!raw || /^(?:0|false|off|no)$/i.test(raw)) return '';
-    return raw;
+    if (Object.prototype.hasOwnProperty.call(options, 'uprotForwardProxy')) {
+        if (isDisabledForwardProxyValue(options.uprotForwardProxy)) return '';
+        return getForwardProxyBase({ base: options.uprotForwardProxy, context: 'uprot' });
+    }
+    return requireForwardProxyBase('uprot');
 }
 
 function buildUprotForwardRequestUrl(targetUrl, options = {}) {
     const normalized = normalizeRemoteUrl(targetUrl);
     const forwardProxy = getUprotForwardProxy(options);
     if (!normalized || !forwardProxy) return normalized;
-    try {
-        if (forwardProxy.includes('{url}')) return forwardProxy.replace('{url}', encodeURIComponent(normalized));
-        if (/[?&][^=]+=\s*$/i.test(forwardProxy)) return `${forwardProxy}${encodeURIComponent(normalized)}`;
-        const parsed = new URL(forwardProxy);
-        if (!parsed.searchParams.has('url')) parsed.searchParams.set('url', normalized);
-        return parsed.toString();
-    } catch (_) {
-        return normalized;
-    }
+    return buildForwardProxyUrl(normalized, { base: forwardProxy, context: 'uprot' });
 }
 
 function buildUprotHeaders(targetUrl, options = {}) {
