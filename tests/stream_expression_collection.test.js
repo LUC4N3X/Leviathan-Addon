@@ -61,3 +61,22 @@ test('malformed expressions do not throw and prune nothing', () => {
     assert.equal(removed, 0);
     assert.equal(results.length, streams.length);
 });
+
+test('unknown collection functions are a safe no-op instead of pruning every stream', () => {
+    const streams = makeStreams();
+    const { results, removed } = selectStreamsByCollectionExpression(streams, 'resoluton(streams, "720p")');
+    assert.equal(removed, 0);
+    assert.deepEqual(results, streams);
+});
+
+test('collection regex resets stateful expressions before testing each stream', () => {
+    const streams = [
+        { title: 'Movie 1080p WEB-DL' },
+        { title: 'Show 1080p BluRay' },
+        { title: 'Series 1080p WEBRip' },
+        { title: 'Film 1080p REMUX' }
+    ];
+    const { results, removed } = selectStreamsByCollectionExpression(streams, 'regex(streams, "1080p", "g")');
+    assert.equal(removed, streams.length);
+    assert.deepEqual(results, []);
+});

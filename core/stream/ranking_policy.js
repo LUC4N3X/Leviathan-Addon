@@ -379,7 +379,10 @@ function getPreferredLists(config = {}) {
 
 function preferredTokenMatches(paddedText, token) {
     const synonyms = PREFERRED_SYNONYMS[token] || [token];
-    return synonyms.some((synonym) => paddedText.includes(synonym));
+    return synonyms.some((synonym) => {
+        const normalized = String(synonym || '').toLowerCase().replace(/[^a-z0-9+]+/g, ' ').trim();
+        return normalized && paddedText.includes(` ${normalized} `);
+    });
 }
 
 // Returns the index of the first preferred token matched by the stream (lower is

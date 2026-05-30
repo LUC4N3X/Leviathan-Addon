@@ -448,12 +448,15 @@ function evalCollectionCall(n, values) {
         case 'regex': {
             try {
                 const re = new RegExp(String(args[0] || '').slice(0, 300), String(args[1] || 'i').replace(/[^gimsuy]/g, '') || 'i');
-                return collection.filter((c) => re.test(c.text));
+                return collection.filter((c) => {
+                    re.lastIndex = 0;
+                    return re.test(c.text);
+                });
             } catch (_) {
                 return [];
             }
         }
-        default: return collection;
+        default: return [];
     }
 }
 

@@ -4904,6 +4904,143 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             updateFluxStream();
         }
 
+        function previewTemplateTruthy(value) {
+            if (Array.isArray(value)) return value.length > 0;
+            if (value === null || value === undefined) return false;
+            if (typeof value === 'number') return value !== 0 && !Number.isNaN(value);
+            if (typeof value === 'string') return value.trim().length > 0;
+            return Boolean(value);
+        }
+
+        function previewTemplateStringify(value) {
+            if (value === null || value === undefined) return '';
+            if (typeof value === 'boolean') return value ? 'true' : '';
+            if (Array.isArray(value)) return value.filter((entry) => entry !== null && entry !== undefined && entry !== '').join(' ');
+            return String(value);
+        }
+
+        function previewTemplateSplitTopLevel(value, separator) {
+            const parts = [];
+            let buffer = '', depth = 0, quote = '';
+            for (let index = 0; index < value.length; index += 1) {
+                const char = value[index];
+                if (quote) {
+                    buffer += char;
+                    if (char === quote) quote = '';
+                    continue;
+                }
+                if (char === '"' || char === "'") { quote = char; buffer += char; continue; }
+                if (char === '[') { depth += 1; buffer += char; continue; }
+                if (char === ']') { depth = Math.max(0, depth - 1); buffer += char; continue; }
+                if (depth === 0 && value.startsWith(separator, index)) {
+                    parts.push(buffer);
+                    buffer = '';
+                    index += separator.length - 1;
+                    continue;
+                }
+                buffer += char;
+            }
+            parts.push(buffer);
+            return parts;
+        }
+
+        function previewTemplateUnquote(value) {
+            const trimmed = String(value || '').trim();
+            if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) return trimmed.slice(1, -1);
+            return trimmed;
+        }
+
+        function previewTemplateResolve(context, path) {
+            const key = String(path || '').trim();
+            if (!key) return '';
+            if (Object.prototype.hasOwnProperty.call(context, key)) return context[key];
+            let value = context;
+            for (const part of key.split('.')) {
+                if (value === null || value === undefined) return undefined;
+                value = value[part];
+            }
+            return value;
+        }
+
+        function previewTemplateFormatBytes(bytes) {
+            const value = Number(bytes);
+            if (!Number.isFinite(value) || value <= 0) return '';
+            const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+            const unitIndex = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+            return `${(value / Math.pow(1024, unitIndex)).toFixed(unitIndex === 0 ? 0 : 2)} ${units[unitIndex]}`;
+        }
+
+        function previewTemplateApplyModifier(value, modifierRaw, context, depth) {
+            const modifier = String(modifierRaw || '').trim();
+            if (!modifier) return value;
+            if (modifier.startsWith('[') && modifier.endsWith(']')) {
+                const branches = previewTemplateSplitTopLevel(modifier.slice(1, -1), '||');
+                const selected = previewTemplateTruthy(value) ? branches[0] : (branches[1] === undefined ? '' : branches[1]);
+                return previewRenderTemplate(previewTemplateUnquote(selected), context, depth + 1);
+            }
+            const match = modifier.match(/^([a-zA-Z_][\w]*)\s*(?:\((.*)\))?$/s);
+            if (!match) return value;
+            const args = match[2] === undefined ? [] : previewTemplateSplitTopLevel(match[2], ',').map(previewTemplateUnquote);
+            const stringValue = () => previewTemplateStringify(value);
+            switch (match[1].toLowerCase()) {
+                case 'upper': return stringValue().toUpperCase();
+                case 'lower': return stringValue().toLowerCase();
+                case 'title': return stringValue().replace(/\b\w/g, (char) => char.toUpperCase());
+                case 'trim': return stringValue().trim();
+                case 'bytes': return previewTemplateFormatBytes(value);
+                case 'join': return Array.isArray(value) ? value.filter(previewTemplateTruthy).join(args[0] === undefined ? ' ' : args[0]) : stringValue();
+                case 'first': return Array.isArray(value) ? (value[0] === undefined ? '' : value[0]) : stringValue();
+                case 'length': case 'count': return Array.isArray(value) ? value.length : stringValue().length;
+                case 'default': case 'or': return previewTemplateTruthy(value) ? value : (args[0] === undefined ? '' : args[0]);
+                case 'prefix': return previewTemplateTruthy(value) ? `${args[0] === undefined ? '' : args[0]}${stringValue()}` : '';
+                case 'suffix': return previewTemplateTruthy(value) ? `${stringValue()}${args[0] === undefined ? '' : args[0]}` : '';
+                case 'replace': return stringValue().split(args[0] === undefined ? '' : args[0]).join(args[1] === undefined ? '' : args[1]);
+                case 'exists': return previewTemplateTruthy(value);
+                case 'number': case 'int': { const number = Number(value); return Number.isFinite(number) ? number : ''; }
+                default: return value;
+            }
+        }
+
+        function previewRenderTemplate(template, context, depth = 0) {
+            const source = String(template || '');
+            if (!source || depth > 6) return source;
+            let output = '';
+            for (let index = 0; index < source.length;) {
+                if (source[index] !== '{') { output += source[index]; index += 1; continue; }
+                let braceDepth = 1, quote = '', end = index + 1;
+                while (end < source.length && braceDepth > 0) {
+                    const char = source[end];
+                    if (quote) { if (char === quote) quote = ''; }
+                    else if (char === '"' || char === "'") quote = char;
+                    else if (char === '{') braceDepth += 1;
+                    else if (char === '}') { braceDepth -= 1; if (braceDepth === 0) break; }
+                    end += 1;
+                }
+                if (braceDepth !== 0) { output += source.slice(index); break; }
+                const segments = previewTemplateSplitTopLevel(source.slice(index + 1, end), '::');
+                let value = previewTemplateResolve(context, segments[0]);
+                for (let modifierIndex = 1; modifierIndex < segments.length; modifierIndex += 1) value = previewTemplateApplyModifier(value, segments[modifierIndex], context, depth);
+                output += previewTemplateStringify(value);
+                index = end + 1;
+                if (output.length > 8000) break;
+            }
+            return output.replace(/\\n/g, '\n');
+        }
+
+        function buildPreviewTemplateContext(p) {
+            const cached = ['RD', 'TB'].includes(p.serviceTag);
+            const stream = {
+                title: p.cleanName, filename: p.fileTitle, resolution: p.quality, quality: 'Remux', encode: p.codec, codec: p.codec,
+                audio: p.audioTag, audioChannels: p.audioChannels, audioInfo: p.audioInfo, language: p.lang, languages: [p.lang],
+                languageCompact: 'ITA', hdr: 'DV+HDR', visualTags: p.cleanTags, group: 'LEVIATHAN', size: 64.2 * Math.pow(1024, 3),
+                sizeString: p.sizeString, seeders: p.seeders, episode: p.epTag, source: p.displaySource, indexer: p.displaySource, provider: p.displaySource
+            };
+            const service = { name: p.serviceTag, shortName: p.serviceTag, icon: p.serviceIconTitle, cached, cacheState: cached ? 'cached' : 'uncached' };
+            service.toString = () => p.serviceTag;
+            const summary = `${p.quality} • ${p.cleanTags.join(' • ')}\n${p.audioInfo} • ITA\n${p.sizeString} • ${p.seedersStr}\n${p.displaySource} • LEVIATHAN`;
+            return { stream, service, addon: { name: 'Leviathan' }, title: p.cleanName, originalTitle: p.fileTitle, ep: p.epTag, quality: p.quality, size: p.sizeString, source: p.displaySource, lang: p.lang, audio: p.audioInfo, seeders: p.seedersStr, codec: p.codec, group: 'LEVIATHAN', summary, n: '\n' };
+        }
+
         function updateCustomPreview() { updatePreview('custom'); updateFluxStream(); }
 
         function updatePreview(skin) {
@@ -5073,20 +5210,18 @@ input:checked + .slider:before{ background:#fff!important; box-shadow:0 1px 4px 
             else if (skin === 'custom') {
                 let tpl = document.getElementById('customTemplate').value;
                 if(!tpl || tpl.trim() === "") tpl = "Lev {quality} ||| {title} - {size}";
-
-                tpl = tpl.replace("{title}", p.cleanName).replace("{quality}", p.quality)
-                         .replace("{size}", p.sizeString).replace("{source}", p.displaySource)
-                         .replace("{service}", p.serviceTag).replace("{lang}", "ITA")
-                         .replace("{audio}", p.audioInfo).replace(/\\n/g, "\n");
-
-                if (tpl.includes("|||")) {
-                    const parts = tpl.split("|||");
-                    name = parts[0].trim();
-                    desc = parts[1].trim();
-                } else {
-                    name = `Leviathan ${p.serviceTag}\n${p.quality}`;
-                    desc = tpl;
+                const context = buildPreviewTemplateContext(p);
+                const separatorIndex = tpl.indexOf("|||");
+                const configuredName = document.getElementById('customNameTemplate')?.value || '';
+                let nameTemplate = configuredName;
+                let descriptionTemplate = tpl;
+                if (separatorIndex !== -1) {
+                    nameTemplate = tpl.slice(0, separatorIndex);
+                    descriptionTemplate = tpl.slice(separatorIndex + 3);
                 }
+                if (!nameTemplate.trim()) nameTemplate = 'Leviathan {quality}';
+                name = previewRenderTemplate(nameTemplate, context).replace(/\s+/g, ' ').trim() || `Leviathan ${p.quality}`;
+                desc = previewRenderTemplate(descriptionTemplate, context).trim();
             }
             document.getElementById('prev-name').innerText = name;
             document.getElementById('prev-desc').innerText = desc;

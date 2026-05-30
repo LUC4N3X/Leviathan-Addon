@@ -56,3 +56,17 @@ test('no preferred lists leaves ordering identical to baseline', () => {
     const sorted = applyFinalStreamUserSort(streams, { filters: { sortMode: 'resolution' } }, { logger: silentLogger });
     assert.deepEqual(sorted.map((s) => s.title), ['C 1080p', 'B 1080p', 'A 720p']);
 });
+
+test('preferred language aliases only match complete normalized tokens', () => {
+    const streams = [
+        { title: 'Titanic 1080p WEB-DL ENG', cacheState: 'cached' },
+        { title: 'Movie 1080p WEB-DL ITA', cacheState: 'cached' }
+    ];
+    const sorted = applyFinalStreamUserSort(streams, {
+        filters: { preferredLanguages: ['ita', 'eng'] }
+    }, { logger: silentLogger });
+    assert.deepEqual(sorted.map((stream) => stream.title), [
+        'Movie 1080p WEB-DL ITA',
+        'Titanic 1080p WEB-DL ENG'
+    ]);
+});
