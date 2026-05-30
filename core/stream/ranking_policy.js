@@ -160,6 +160,195 @@ function getFinalStreamCacheTier(stream = {}) {
     return 1;
 }
 
+
+function normalizeSmartFingerprintText(value = '') {
+    return String(value || '')
+        .normalize('NFKC')
+        .toLowerCase()
+        .replace(/https?:\/\/\S+/g, ' ')
+        .replace(/\b(?:www|com|org|net|io)\b/g, ' ')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/\b(?:ita|italian|multi|eng|english|sub|subs|dubbed|dub|audio|x264|x265|h264|h265|hevc|avc|aac|ac3|eac3|ddp|dts|atmos|truehd)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function getSmartStreamInfoHash(stream = {}) {
+    const values = [
+        stream?.infoHash,
+        stream?.hash,
+        stream?.behaviorHints?.infoHash,
+        stream?.streamData?.torrent?.infoHash,
+        stream?.streamData?.torrent?.hash,
+        stream?.behaviorHints?.magnet,
+        stream?.url,
+        stream?.externalUrl
+    ];
+    for (const value of values) {
+        if (!value) continue;
+        const text = String(value);
+        const direct = text.match(/^[a-f0-9]{40}$/i);
+        if (direct) return direct[0].toLowerCase();
+        const btih = text.match(/btih:([a-f0-9]{40})/i);
+        if (btih) return btih[1].toLowerCase();
+    }
+    return '';
+}
+
+function getSmartStreamFileIndex(stream = {}) {
+    const values = [
+        stream?.fileIdx,
+        stream?.file_index,
+        stream?.behaviorHints?.fileIdx,
+        stream?.streamData?.torrent?.fileIdx,
+        stream?.streamData?.torrent?.file_index
+    ];
+    for (const value of values) {
+        const n = Number(value);
+        if (Number.isInteger(n) && n >= 0) return String(n);
+    }
+    return '';
+}
+
+function getSmartStreamFilename(stream = {}) {
+    const values = [
+        stream?.behaviorHints?.filename,
+        stream?.filename,
+        stream?.streamData?.filename,
+        stream?.streamData?.torrent?.filename,
+        stream?.streamData?.torrent?.file?.name,
+        stream?.name,
+        stream?.title
+    ];
+    for (const value of values) {
+        const text = String(value || '').trim();
+        if (text) return text.split(/[\\/]/).pop();
+    }
+    return '';
+}
+
+function getSizeBucket(bytes) {
+    const value = Number(bytes || 0);
+    if (!Number.isFinite(value) || value <= 0) return '0';
+    const gib = value / (1024 ** 3);
+    if (gib >= 20) return String(Math.round(gib));
+    if (gib >= 1) return String(Math.round(gib * 2) / 2);
+    return `${Math.max(1, Math.round(value / (100 * 1024 * 1024)))}00mb`;
+}
+
+function getSmartStreamFingerprint(stream = {}) {
+    const infoHash = getSmartStreamInfoHash(stream);
+    const fileIndex = getSmartStreamFileIndex(stream);
+    if (infoHash && fileIndex) return `hash-file:${infoHash}:${fileIndex}`;
+
+    const filename = normalizeSmartFingerprintText(getSmartStreamFilename(stream));
+    const size = getSizeBucket(parseFinalStreamSizeBytes(stream) || stream?.behaviorHints?.videoSize || stream?.size || stream?.streamData?.size);
+    if (infoHash && !/\b(?:pack|season|stagione|complete|collection)\b/i.test(getSmartStreamSortText(stream))) {
+        return `hash:${infoHash}`;
+    }
+    if (filename && size !== '0') return `file:${filename}:${size}`;
+
+    const title = normalizeSmartFingerprintText(getFinalStreamSortText(stream));
+    const resolution = getFinalStreamResolutionTier(stream);
+    const group = detectReleaseGroupKey({ title: getFinalStreamSortText(stream), source: stream?.streamData?.addon || stream?.source || stream?.provider });
+    return title ? `smart:${title}:${resolution}:${group}:${size}` : '';
+}
+
+function getSmartDedupPreferenceScore(stream = {}) {
+    const cacheTier = getFinalStreamCacheTier(stream);
+    const resolutionTier = getFinalStreamResolutionTier(stream);
+    const sizeBytes = parseFinalStreamSizeBytes(stream) || Number(stream?.behaviorHints?.videoSize || stream?.size || 0) || 0;
+    const hasPlayableUrl = stream?.url || stream?.externalUrl || stream?.infoHash ? 1 : 0;
+    const hasFilename = getSmartStreamFilename(stream) ? 1 : 0;
+    const titleText = getFinalStreamSortText(stream);
+    const qualityBonus = /\b(?:remux|bluray|web[-. ]?dl|webrip)\b/i.test(titleText) ? 40 : 0;
+    const italianBonus = /\b(?:ita|italian|italiano|multi)\b/i.test(titleText) ? 20 : 0;
+    return (4 - Math.min(3, cacheTier)) * 10000
+        + resolutionTier * 1000
+        + Math.min(900, Math.log2(sizeBytes + 1) * 20)
+        + qualityBonus
+        + italianBonus
+        + hasPlayableUrl * 50
+        + hasFilename * 15;
+}
+
+function applySmartStreamDedupPolicy(streams = [], config = {}, options = {}) {
+    const list = Array.isArray(streams) ? streams : [];
+    const filters = config?.filters || {};
+    if (filters.disableSmartStreamDedup === true || filters.disableSmartDedup === true || list.length <= 1) {
+        return { results: list, removed: 0 };
+    }
+
+    const bestByKey = new Map();
+    const noKey = [];
+    for (const stream of list) {
+        const key = getSmartStreamFingerprint(stream);
+        if (!key) {
+            noKey.push(stream);
+            continue;
+        }
+        const current = bestByKey.get(key);
+        if (!current || getSmartDedupPreferenceScore(stream) > current.score) {
+            bestByKey.set(key, { stream, score: getSmartDedupPreferenceScore(stream) });
+        }
+    }
+
+    const winners = new Set([...bestByKey.values()].map((entry) => entry.stream));
+    const results = list.filter((stream) => winners.has(stream) || noKey.includes(stream));
+    const removed = list.length - results.length;
+    if (removed > 0) {
+        const activeLogger = options.logger || defaultLogger;
+        activeLogger.info(`[SMART DEDUP] removed=${removed} kept=${results.length}`);
+    }
+    return { results, removed };
+}
+
+function getConfiguredMaxPerResolution(config = {}) {
+    const filters = config?.filters || {};
+    const raw = filters.maxStreamsPerResolution
+        || filters.maxPerResolution
+        || config?.maxStreamsPerResolution
+        || process.env.FINAL_MAX_STREAMS_PER_RESOLUTION
+        || '12';
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+    return Math.max(1, Math.min(50, parsed));
+}
+
+function applyMaxPerResolutionPolicy(streams = [], config = {}, options = {}) {
+    const list = Array.isArray(streams) ? streams : [];
+    const filters = config?.filters || {};
+    if (filters.disableMaxPerResolution === true || list.length <= 1) return { results: list, removed: 0 };
+
+    const maxPerResolution = getConfiguredMaxPerResolution(config);
+    if (!maxPerResolution) return { results: list, removed: 0 };
+
+    const counts = new Map();
+    const selected = [];
+    const overflow = [];
+    for (const stream of list) {
+        const tier = getFinalStreamResolutionTier(stream) || 0;
+        const key = String(tier);
+        const count = counts.get(key) || 0;
+        const mustKeep = getFinalStreamCacheTier(stream) === 0
+            || getSmartStreamInfoHash(stream) && getSmartStreamFileIndex(stream)
+            || /\b(?:pack|season|stagione|complete|collection)\b/i.test(getFinalStreamSortText(stream));
+        if (count < maxPerResolution || mustKeep) {
+            selected.push(stream);
+            counts.set(key, count + 1);
+        } else {
+            overflow.push(stream);
+        }
+    }
+
+    const removed = overflow.length;
+    if (removed > 0) {
+        const activeLogger = options.logger || defaultLogger;
+        activeLogger.info(`[MAX PER RES] max=${maxPerResolution} removed=${removed} kept=${selected.length}`);
+    }
+    return { results: selected, removed };
+}
+
 function applyFinalStreamUserSort(streams = [], config = {}, options = {}) {
     const list = Array.isArray(streams) ? streams : [];
     const sortMode = getConfiguredSortMode(config);
@@ -201,6 +390,8 @@ function applyFinalStreamUserSort(streams = [], config = {}, options = {}) {
 
 module.exports = {
     applyFinalStreamUserSort,
+    applyMaxPerResolutionPolicy,
+    applySmartStreamDedupPolicy,
     applyPremiumRankingPolicy,
     getConfiguredSortMode,
     getFinalStreamCacheState,
