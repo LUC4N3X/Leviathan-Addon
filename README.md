@@ -1,7 +1,7 @@
 <div align="center">
 
   <a href="https://leviathanaddon.dpdns.org" target="_blank">
-    <img src="https://chatgpt.com/backend-api/estuary/content?id=file_000000003e4471f48fd7dc9e945c1bd2&ts=494515&p=fsns&cid=1&sig=55bf91b185025688fef3419ee019d719949c3fa3033798051292d72e060872f7&v=0" alt="Leviathan Presentation Banner" width="100%" />
+    <img src="https://i.ibb.co/zTyBmmpZ/Chat-GPT-Image-31-mag-2026-21-39-55.png" alt="Leviathan Presentation Banner" width="100%" />
   </a>
 
   <br><br>
