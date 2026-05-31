@@ -14,11 +14,38 @@ const {
 } = require('../anime/shared');
 const kitsuProvider = require('./kitsu_provider');
 
-const AW_DOMAIN = 'https://www.animeworld.ac';
+function normalizeBaseDomain(value, fallback = 'https://www.animeworld.ac') {
+    try {
+        const parsed = new URL(String(value || fallback).trim());
+        if (!['http:', 'https:'].includes(parsed.protocol)) return fallback;
+        return `${parsed.protocol}//${parsed.host}`;
+    } catch (_) {
+        return fallback;
+    }
+}
+
+function envFlag(name, fallback = false) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return fallback;
+    return /^(1|true|yes|y|on)$/i.test(String(raw).trim());
+}
+
+const AW_DOMAIN = normalizeBaseDomain(process.env.AW_DOMAIN || process.env.ANIMEWORLD_DOMAIN || 'https://www.animeworld.ac');
 const AW_FETCH_TIMEOUT = Math.max(
     FETCH_TIMEOUT,
     Number.parseInt(String(process.env.AW_PROVIDER_FETCH_TIMEOUT || process.env.AW_FETCH_TIMEOUT || '12000'), 10) || 12000
 );
+const AW_FORWARD_PROXY = normalizeForwardProxyBase(
+    process.env.AW_FORWARD_PROXY ||
+    process.env.ANIMEWORLD_FORWARD_PROXY ||
+    process.env.ANIMEWORLD_FORWARD_PROXY_URL ||
+    process.env.FORWARD_PROXY ||
+    ''
+);
+const AW_FORWARD_PROXY_ENABLED = envFlag('AW_FORWARD_PROXY_ENABLED', Boolean(AW_FORWARD_PROXY));
+const AW_FORWARD_PROXY_STREAMS = envFlag('AW_FORWARD_PROXY_STREAMS', envFlag('ANIMEWORLD_FORWARD_PROXY_STREAMS', false));
+const AW_FORWARD_PROXY_API = envFlag('AW_FORWARD_PROXY_API', envFlag('ANIMEWORLD_FORWARD_PROXY_API', false));
+const AW_PLAYLIST_QUALITY_ENABLED = envFlag('AW_PLAYLIST_QUALITY_ENABLED', true);
 const BLOCKED_DOMAINS = [];
 const TTL = {
     info: 5 * 60 * 1000,
@@ -39,6 +66,75 @@ const MONTHS = {
     novembre: 10,
     dicembre: 11
 };
+
+const awMemoryCache = new Map();
+
+function normalizeForwardProxyBase(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+        const parsed = new URL(raw.replace(/\{url\}/g, 'https://example.com/'));
+        if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+        return raw;
+    } catch (_) {
+        return '';
+    }
+}
+
+function buildForwardProxyUrl(targetUrl, options = {}) {
+    const target = String(targetUrl || '').trim();
+    if (!/^https?:\/\//i.test(target)) return null;
+    const enabled = options.force === true || (options.stream ? AW_FORWARD_PROXY_STREAMS : AW_FORWARD_PROXY_ENABLED);
+    if (!enabled || !AW_FORWARD_PROXY) return null;
+
+    try {
+        const targetHost = new URL(target).host;
+        const proxyHost = new URL(AW_FORWARD_PROXY.replace(/\{url\}/g, encodeURIComponent(target))).host;
+        if (targetHost && proxyHost && targetHost === proxyHost) return target;
+    } catch (_) {}
+
+    if (AW_FORWARD_PROXY.includes('{url}')) {
+        return AW_FORWARD_PROXY.replace(/\{url\}/g, encodeURIComponent(target));
+    }
+
+    if (/([?&][^=]*url=|=)$/i.test(AW_FORWARD_PROXY)) {
+        return `${AW_FORWARD_PROXY}${encodeURIComponent(target)}`;
+    }
+
+    const separator = AW_FORWARD_PROXY.includes('?')
+        ? (/[?&]$/.test(AW_FORWARD_PROXY) ? '' : '&')
+        : '?';
+    return `${AW_FORWARD_PROXY}${separator}url=${encodeURIComponent(target)}`;
+}
+
+function getFetchUrl(targetUrl, options = {}) {
+    if (options.forwardProxy === false || options.useForwardProxy === false) return targetUrl;
+    if (options.forwardProxy === true || options.useForwardProxy === true) {
+        return buildForwardProxyUrl(targetUrl, { ...options, force: true }) || targetUrl;
+    }
+    return buildForwardProxyUrl(targetUrl, options) || targetUrl;
+}
+
+function getMemoryCache(key) {
+    const entry = awMemoryCache.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+        awMemoryCache.delete(key);
+        return null;
+    }
+    return entry.value;
+}
+
+function setMemoryCache(key, value, ttlMs) {
+    if (!ttlMs || ttlMs <= 0) return value;
+    awMemoryCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+    while (awMemoryCache.size > 300) {
+        const firstKey = awMemoryCache.keys().next().value;
+        if (firstKey === undefined) break;
+        awMemoryCache.delete(firstKey);
+    }
+    return value;
+}
 
 let awSecurityCookie = null;
 
@@ -199,6 +295,67 @@ function extractQualityHint(value) {
     return match ? match[1] : '720p';
 }
 
+async function checkQualityFromPlaylist(mediaUrl, headers = {}) {
+    if (!AW_PLAYLIST_QUALITY_ENABLED || !/\.m3u8(?:[?#].*)?$/i.test(String(mediaUrl || ''))) return null;
+    try {
+        const playlist = await fetchAnimeWorldResource(mediaUrl, {
+            ttlMs: TTL.info,
+            cacheKey: `animeworld-playlist:${mediaUrl}`,
+            timeoutMs: Math.min(AW_FETCH_TIMEOUT, 6000),
+            forwardProxy: AW_FORWARD_PROXY_STREAMS,
+            headers
+        });
+        const text = String(playlist || '');
+        const heights = [...text.matchAll(/RESOLUTION=\d+x(\d{3,4})/gi)]
+            .map((match) => Number.parseInt(match[1], 10))
+            .filter((value) => Number.isFinite(value) && value > 0);
+        if (heights.length > 0) return `${Math.max(...heights)}p`;
+        const names = [...text.matchAll(/(?:NAME|VIDEO)=['"]?(\d{3,4})p/gi)]
+            .map((match) => Number.parseInt(match[1], 10))
+            .filter((value) => Number.isFinite(value) && value > 0);
+        return names.length > 0 ? `${Math.max(...names)}p` : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function buildOutputStreamUrl(mediaUrl) {
+    return buildForwardProxyUrl(mediaUrl, { stream: true }) || mediaUrl;
+}
+
+async function buildAnimeWorldStream(mediaUrl, context = {}) {
+    const sourceUrl = normalizePlayableMediaUrl(mediaUrl);
+    if (!sourceUrl) return null;
+    const lowerUrl = sourceUrl.toLowerCase();
+    if (lowerUrl.endsWith('.mkv.mp4') || BLOCKED_DOMAINS.some((domain) => lowerUrl.includes(domain))) return null;
+
+    const referer = context.referer || context.animeUrl || AW_DOMAIN;
+    const quality = await checkQualityFromPlaylist(sourceUrl, {
+        'User-Agent': USER_AGENT,
+        Referer: referer
+    }) || extractQualityHint(sourceUrl);
+    const hostLabel = normalizeHostLabel(sourceUrl) || 'Direct';
+
+    return {
+        name: `⛩️ AnimeWorld | ${quality}`,
+        title: `${context.displayTitle || 'Anime'}\n${context.languageLine || '🇯🇵 JPN • Sub ITA'} • ${quality}\n☁️ ${hostLabel} • AnimeWorld`,
+        url: buildOutputStreamUrl(sourceUrl),
+        language: context.streamLanguage || 'jpn',
+        extractor: hostLabel,
+        behaviorHints: {
+            notWebReady: false,
+            extractor: hostLabel,
+            bingieGroup: `animeworld|${String(context.sourceTag || 'sub').toLowerCase()}`,
+            proxyHeaders: {
+                request: {
+                    'User-Agent': USER_AGENT,
+                    Referer: referer
+                }
+            }
+        }
+    };
+}
+
 function normalizeHostLabel(rawUrl) {
     try {
         const host = new URL(String(rawUrl || '')).hostname.replace(/^www\./i, '').toLowerCase();
@@ -290,24 +447,56 @@ function normalizeEpisodesList(sourceEpisodes = []) {
 function parseEpisodesFromPageHtml(html) {
     const raw = String(html || '');
     const episodes = [];
-    const anchorRegex = /<a\b[^>]*(?:data-episode-num=(?:"[^"]*"|'[^']*'))[^>]*(?:data-id=(?:"[^"]*"|'[^']*'))[^>]*>|<a\b[^>]*(?:data-id=(?:"[^"]*"|'[^']*'))[^>]*(?:data-episode-num=(?:"[^"]*"|'[^']*'))[^>]*>/gi;
-    const tags = raw.match(anchorRegex) || [];
+    const seen = new Set();
 
-    for (let index = 0; index < tags.length; index += 1) {
-        const attrs = parseTagAttributes(tags[index]);
-        const episodeId = parsePositiveInt(attrs['data-episode-id'] || attrs['data-id']);
-        const episodeToken = String(attrs['data-id'] || '').trim() || null;
-        if (!episodeId && !episodeToken) continue;
+    function push(attrs = {}, text = '', fallbackIndex = 0) {
+        const get = (...names) => {
+            for (const name of names) {
+                const value = attrs[name] ?? attrs[String(name || '').toLowerCase()];
+                if (value != null && String(value).trim()) return String(value).trim();
+            }
+            return '';
+        };
+
+        const episodeId = parsePositiveInt(get('data-episode-id', 'episode-id', 'episodeId'))
+            || parsePositiveInt(get('data-id', 'id'));
+        const episodeToken = get('data-id', 'data-token', 'token', 'data-episode-token') || (episodeId ? String(episodeId) : null);
+        if (!episodeId && !episodeToken) return;
+
+        const numSource = get('data-episode-num', 'data-num', 'data-episode', 'episode', 'data-base', 'data-index') || text;
+        const num = parseEpisodeNumber(numSource, fallbackIndex + 1);
+        const key = `${num}|${episodeId || ''}|${episodeToken || ''}|${get('data-num')}|${get('data-base')}|${get('data-comment')}`;
+        if (seen.has(key)) return;
+        seen.add(key);
 
         episodes.push({
-            num: parseEpisodeNumber(attrs['data-episode-num'], index + 1),
-            episodeId,
+            num,
+            episodeId: episodeId || null,
             episodeToken,
-            rangeLabel: attrs['data-num'] || null,
-            baseLabel: attrs['data-base'] || null,
-            commentLabel: attrs['data-comment'] || null
+            rangeLabel: get('data-num') || null,
+            baseLabel: get('data-base') || null,
+            commentLabel: get('data-comment') || null
         });
     }
+
+    try {
+        const $ = cheerio.load(raw);
+        $('[data-id], [data-episode-id], a[href*="/play/"], a[href*="/anime/"]').each((index, element) => {
+            const attrs = {};
+            for (const [key, value] of Object.entries(element.attribs || {})) attrs[String(key).toLowerCase()] = value;
+            const href = attrs.href || '';
+            if (!attrs['data-id'] && !attrs['data-episode-id']) {
+                const hrefMatch = String(href).match(/(?:episode|episodio|ep)[-_/]?(\d{1,4})/i)
+                    || String(href).match(/(?:^|[-_/])(\d{1,4})(?:$|[-_/])/);
+                if (hrefMatch) attrs['data-id'] = hrefMatch[1];
+            }
+            push(attrs, collapseWhitespace($(element).text()), index);
+        });
+    } catch (_) {}
+
+    const anchorRegex = /<a\b[^>]*(?:data-episode-num=(?:"[^"]*"|'[^']*'))[^>]*(?:data-id=(?:"[^"]*"|'[^']*'))[^>]*>|<a\b[^>]*(?:data-id=(?:"[^"]*"|'[^']*'))[^>]*(?:data-episode-num=(?:"[^"]*"|'[^']*'))[^>]*>/gi;
+    const tags = raw.match(anchorRegex) || [];
+    for (let index = 0; index < tags.length; index += 1) push(parseTagAttributes(tags[index]), '', index);
 
     return normalizeEpisodesList(episodes);
 }
@@ -347,26 +536,54 @@ function getEpisodeDisplayLabel(entry, requestedNumber = null) {
 
 function collectGrabberCandidates(infoData) {
     const urls = [];
+    const seen = new Set();
+    const urlKeys = new Set([
+        'grabber', 'url', 'link', 'file', 'stream', 'src', 'source', 'target', 'embed', 'iframe', 'player',
+        'download', 'playlist', 'hls', 'mp4', 'm3u8', 'video', 'contenturl'
+    ]);
 
-    for (const key of ['grabber', 'url', 'link', 'file', 'stream']) {
-        const value = infoData?.[key];
-        if (typeof value === 'string' && value.trim()) urls.push(value.trim());
+    function push(value) {
+        const text = String(value || '').trim();
+        if (!text || seen.has(text)) return;
+        seen.add(text);
+        urls.push(text);
     }
 
-    for (const key of ['links', 'streams', 'servers', 'sources']) {
-        const value = infoData?.[key];
-        if (!Array.isArray(value)) continue;
-        for (const item of value) {
-            if (typeof item === 'string' && item.trim()) {
-                urls.push(item.trim());
+    function shouldTreatAsUrl(key, value) {
+        const normalizedKey = String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const text = String(value || '').trim();
+        return urlKeys.has(normalizedKey)
+            || /^https?:\/\//i.test(text)
+            || /^\/\//.test(text)
+            || /\.(?:mp4|m3u8)(?:[?#].*)?$/i.test(text)
+            || /https?%3A%2F%2F/i.test(text);
+    }
+
+    function visit(value, depth = 0, key = '') {
+        if (value == null || depth > 6) return;
+
+        if (typeof value === 'string') {
+            if (shouldTreatAsUrl(key, value)) push(value);
+            return;
+        }
+
+        if (Array.isArray(value)) {
+            for (const item of value) visit(item, depth + 1, key);
+            return;
+        }
+
+        if (typeof value !== 'object') return;
+
+        for (const [childKey, childValue] of Object.entries(value)) {
+            if (typeof childValue === 'string' && shouldTreatAsUrl(childKey, childValue)) {
+                push(childValue);
                 continue;
             }
-            if (!item || typeof item !== 'object') continue;
-            const candidate = item.grabber || item.url || item.link || item.file || item.stream || null;
-            if (candidate && String(candidate).trim()) urls.push(String(candidate).trim());
+            visit(childValue, depth + 1, childKey);
         }
     }
 
+    visit(infoData);
     return uniqueStrings(urls);
 }
 
@@ -414,16 +631,20 @@ function extractSecurityCookie(html, setCookieHeader = '') {
 
 async function requestAnimeWorldResponse(url, options = {}) {
     const timeoutMs = options.timeoutMs || AW_FETCH_TIMEOUT;
+    const requestUrl = getFetchUrl(url);
     const baseHeaders = {
         'user-agent': USER_AGENT,
         'accept-language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
         ...(options.headers || {})
     };
 
-    const initialCookie = buildCookieHeader(baseHeaders.cookie, awSecurityCookie);
-    if (initialCookie) baseHeaders.cookie = initialCookie;
+    const initialCookie = buildCookieHeader(baseHeaders.cookie, baseHeaders.Cookie, awSecurityCookie);
+    if (initialCookie) {
+        delete baseHeaders.Cookie;
+        baseHeaders.cookie = initialCookie;
+    }
 
-    let response = await fetchWithTimeout(url, {
+    let response = await fetchWithTimeout(requestUrl, {
         method: options.method || 'GET',
         headers: baseHeaders,
         body: options.body,
@@ -435,13 +656,10 @@ async function requestAnimeWorldResponse(url, options = {}) {
     if ((response.status === 202 || securityCookie) && securityCookie) {
         awSecurityCookie = securityCookie;
         const retryCookie = buildCookieHeader(baseHeaders.cookie, awSecurityCookie);
-
-        const retryHeaders = {
-            ...baseHeaders
-        };
+        const retryHeaders = { ...baseHeaders };
         if (retryCookie) retryHeaders.cookie = retryCookie;
 
-        response = await fetchWithTimeout(url, {
+        response = await fetchWithTimeout(requestUrl, {
             method: options.method || 'GET',
             headers: retryHeaders,
             body: options.body,
@@ -454,7 +672,15 @@ async function requestAnimeWorldResponse(url, options = {}) {
         throw new Error(`HTTP ${response.status} ${response.statusText} for ${url}`);
     }
 
-    return { response, html };
+    return { response, html, requestUrl };
+}
+
+async function fetchAnimeWorldResource(url, options = {}) {
+    const requestUrl = getFetchUrl(url);
+    return fetchResource(requestUrl, {
+        ...options,
+        cacheKey: options.cacheKey || url
+    });
 }
 
 function parseIsoDate(value) {
@@ -732,8 +958,12 @@ async function resolveAnimeWorldPaths(searchContext) {
 }
 
 async function fetchAnimePageContext(animeUrl) {
+    const cacheKey = `animeworld-page:${animeUrl}:${awSecurityCookie || 'nosec'}`;
+    const cached = getMemoryCache(cacheKey);
+    if (cached) return cached;
+
     const { response, html } = await requestAnimeWorldResponse(animeUrl);
-    return {
+    const context = {
         html,
         sessionCookie: buildCookieHeader(
             extractSessionCookie(response.headers.get('set-cookie') || ''),
@@ -741,6 +971,8 @@ async function fetchAnimePageContext(animeUrl) {
         ),
         csrfToken: extractCsrfTokenFromHtml(html)
     };
+
+    return setMemoryCache(cacheKey, context, TTL.page);
 }
 
 async function fetchEpisodeInfo(episodeRef, refererUrl, pageContext = null) {
@@ -754,19 +986,37 @@ async function fetchEpisodeInfo(episodeRef, refererUrl, pageContext = null) {
     const cookieHeader = buildCookieHeader(sessionCookie, awSecurityCookie);
     if (cookieHeader) extraHeaders.cookie = cookieHeader;
 
+    const apiUrl = `${AW_DOMAIN}/api/episode/info?id=${encodeURIComponent(token)}`;
+    const requestOptions = {
+        as: 'json',
+        ttlMs: TTL.info,
+        cacheKey: `animeworld-info:${token}:${csrfToken ? 'csrf' : 'nocsrf'}:${sessionCookie ? 'cookie' : 'nocookie'}:direct`,
+        timeoutMs: AW_FETCH_TIMEOUT,
+        forwardProxy: false,
+        headers: {
+            referer: refererUrl,
+            origin: AW_DOMAIN,
+            accept: 'application/json, text/javascript, */*; q=0.01',
+            'x-requested-with': 'XMLHttpRequest',
+            ...extraHeaders
+        }
+    };
+
     try {
-        return await fetchResource(`${AW_DOMAIN}/api/episode/info?id=${encodeURIComponent(token)}`, {
-            as: 'json',
-            ttlMs: TTL.info,
-            cacheKey: `animeworld-info:${token}:${csrfToken ? 'csrf' : 'nocsrf'}:${sessionCookie ? 'cookie' : 'nocookie'}`,
-            timeoutMs: AW_FETCH_TIMEOUT,
-            headers: {
-                referer: refererUrl,
-                'x-requested-with': 'XMLHttpRequest',
-                ...extraHeaders
-            }
-        });
+        return await fetchAnimeWorldResource(apiUrl, requestOptions);
     } catch (error) {
+        if (AW_FORWARD_PROXY_API) {
+            try {
+                return await fetchAnimeWorldResource(apiUrl, {
+                    ...requestOptions,
+                    cacheKey: requestOptions.cacheKey.replace(':direct', ':proxy'),
+                    forwardProxy: true
+                });
+            } catch (proxyError) {
+                console.error('[AnimeWorld] episode info request failed:', proxyError.message);
+                return null;
+            }
+        }
         console.error('[AnimeWorld] episode info request failed:', error.message);
         return null;
     }
@@ -808,34 +1058,17 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaTyp
     for (const candidate of collectGrabberCandidates(infoData)) {
         const mediaUrl = normalizePlayableMediaUrl(candidate);
         if (!mediaUrl || seen.has(mediaUrl)) continue;
-
-        const lowerUrl = mediaUrl.toLowerCase();
-        if (lowerUrl.endsWith('.mkv.mp4') || BLOCKED_DOMAINS.some((domain) => lowerUrl.includes(domain))) continue;
-
-        seen.add(mediaUrl);
-        const quality = extractQualityHint(mediaUrl);
-        const hostLabel = normalizeHostLabel(mediaUrl) || 'Direct';
-
-        streams.push({
-            name: `⛩️ AnimeWorld | ${quality}`,
-            title: `${displayTitle}
-${languageLine} • ${quality}
-☁️ ${hostLabel} • AnimeWorld`,
-            url: mediaUrl,
-            language: streamLanguage,
-            extractor: hostLabel,
-            behaviorHints: {
-                notWebReady: false,
-                extractor: hostLabel,
-                bingieGroup: `animeworld|${String(parsedPage.sourceTag || 'sub').toLowerCase()}`,
-                proxyHeaders: {
-                    request: {
-                        'User-Agent': USER_AGENT,
-                        Referer: animeUrl
-                    }
-                }
-            }
+        const stream = await buildAnimeWorldStream(mediaUrl, {
+            animeUrl,
+            referer: animeUrl,
+            displayTitle,
+            languageLine,
+            streamLanguage,
+            sourceTag: parsedPage.sourceTag
         });
+        if (!stream) continue;
+        seen.add(mediaUrl);
+        streams.push(stream);
     }
 
     if (streams.length === 0) {
@@ -860,7 +1093,7 @@ ${languageLine} • ${quality}
                 const cookieHeader = buildCookieHeader(sessionCookie, awSecurityCookie);
                 if (cookieHeader) extraHeaders.cookie = cookieHeader;
 
-                const targetHtml = await fetchResource(targetUrl, {
+                const targetHtml = await fetchAnimeWorldResource(targetUrl, {
                     ttlMs: TTL.info,
                     cacheKey: `animeworld-target:${targetUrl}`,
                     timeoutMs: AW_FETCH_TIMEOUT,
@@ -873,33 +1106,17 @@ ${languageLine} • ${quality}
 
                 for (const mediaUrl of collectMediaLinksFromHtml(targetHtml)) {
                     if (!mediaUrl || seen.has(mediaUrl)) continue;
-                    const lowerUrl = mediaUrl.toLowerCase();
-                    if (lowerUrl.endsWith('.mkv.mp4') || BLOCKED_DOMAINS.some((domain) => lowerUrl.includes(domain))) continue;
-
-                    seen.add(mediaUrl);
-                    const quality = extractQualityHint(mediaUrl);
-                    const hostLabel = normalizeHostLabel(mediaUrl) || 'Direct';
-
-                    streams.push({
-                        name: `⛩️ AnimeWorld | ${quality}`,
-                        title: `${displayTitle}
-${languageLine} • ${quality}
-☁️ ${hostLabel} • AnimeWorld`,
-                        url: mediaUrl,
-                        language: streamLanguage,
-                        extractor: hostLabel,
-                        behaviorHints: {
-                            notWebReady: false,
-                            extractor: hostLabel,
-                            bingieGroup: `animeworld|${String(parsedPage.sourceTag || 'sub').toLowerCase()}`,
-                            proxyHeaders: {
-                                request: {
-                                    'User-Agent': USER_AGENT,
-                                    Referer: targetUrl
-                                }
-                            }
-                        }
+                    const stream = await buildAnimeWorldStream(mediaUrl, {
+                        animeUrl,
+                        referer: targetUrl,
+                        displayTitle,
+                        languageLine,
+                        streamLanguage,
+                        sourceTag: parsedPage.sourceTag
                     });
+                    if (!stream) continue;
+                    seen.add(mediaUrl);
+                    streams.push(stream);
                 }
 
                 if (streams.length > 0) break;
@@ -940,6 +1157,7 @@ module.exports = {
     searchAnimeWorld,
     resolveAnimeWorldPaths,
     extractStreamsFromAnimePath,
+    buildForwardProxyUrl,
     resolveAnimeWorldPathsFromMapping,
     extractAnimeWorldPathsFromMappingPayload
 };
