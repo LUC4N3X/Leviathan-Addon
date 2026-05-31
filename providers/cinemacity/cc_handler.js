@@ -7,6 +7,7 @@ const {
     dedupeStreamsByUrl
 } = require('../extractors/common');
 const { getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
+const { buildForwardProxyUrl, getForwardProxyBase } = require('../../core/proxy/forward_proxy_config');
 
 let buildCinemaCityProxyUrl = null;
 let prewarmCinemaCityPlayback = null;
@@ -924,29 +925,32 @@ function extractCandidateLinksFromListing(html, type = 'movie') {
     return results;
 }
 
-function appendHeaderParams(target, headers = {}) {
-    const params = new URLSearchParams();
+function buildForwardHeaderParams(headers = {}) {
+    const params = {};
     for (const [name, value] of Object.entries(headers || {})) {
         if (value === undefined || value === null || value === '') continue;
-        params.append(`h_${String(name).trim().toLowerCase()}`, String(value));
+        const key = String(name || '').trim().toLowerCase();
+        if (!key || !/^[a-z0-9-]+$/i.test(key)) continue;
+        params[`h_${key}`] = String(value);
     }
-    const suffix = params.toString();
-    return suffix ? `${target}${target.includes('?') ? '&' : '?'}${suffix}` : target;
+    return params;
 }
 
 function buildCinemaCityKrakenForwardUrl(targetUrl, headers = {}) {
-    const endpoint = String(process.env.FORWARD_PROXY || process.env.CINEMACITY_FORWARD_PROXY || '').trim();
     const normalizedTarget = resolveUrl(BASE_URL, targetUrl);
-    if (!endpoint || !/^https?:\/\//i.test(endpoint) || !/^https?:\/\//i.test(normalizedTarget)) return null;
+    if (!/^https?:\/\//i.test(normalizedTarget)) return null;
 
-    let forwardUrl;
-    if (/[?&][^=]*=$/.test(endpoint) || endpoint.endsWith('=')) {
-        forwardUrl = `${endpoint}${encodeURIComponent(normalizedTarget)}`;
-    } else {
-        const joiner = endpoint.includes('?') ? (/[?&]$/.test(endpoint) ? '' : '&') : '?';
-        forwardUrl = `${endpoint}${joiner}url=${encodeURIComponent(normalizedTarget)}`;
+    try {
+        const base = getForwardProxyBase({ context: 'cinemacity' });
+        if (!base) return null;
+        return buildForwardProxyUrl(normalizedTarget, {
+            base,
+            context: 'cinemacity',
+            params: buildForwardHeaderParams(headers)
+        });
+    } catch (_) {
+        return null;
     }
-    return appendHeaderParams(forwardUrl, headers);
 }
 
 function getCinemaCityPageExtractorBase(config = {}) {
@@ -966,7 +970,6 @@ function getCinemaCityPageExtractorBase(config = {}) {
         || process.env.KRAKEN_URL
         || process.env.KRAKEN_BASE_URL
         || process.env.FORWARD_PROXY
-        || process.env.CINEMACITY_FORWARD_PROXY
         || ''
     ).trim();
     if (!raw) return '';
@@ -1286,6 +1289,7 @@ module.exports = {
         getListingBaseUrls,
         buildCinemaCityKrakenForwardUrl,
         getCinemaCityPageExtractorBase,
+        buildForwardHeaderParams,
         buildCinemaCityPlaybackUrl,
         isUsableCinemaCityHtml,
         isUsableCurlCffiResult,
