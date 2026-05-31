@@ -1,65 +1,11 @@
 'use strict';
 
-/**
- * providers/utils/cf_native_solver.js
- *
- * Native (pure-Node) Cloudflare challenge layer for Leviathan.
- *
- * WHY
- * ---
- * `cloudflare_bypass.js` already orchestrates Scrapling + curl_cffi via
- * spawned Python children. Each spawn costs ~150-500ms cold and goes through
- * a queue. For sites where we have a fresh cf_clearance cookie cached, we
- * shouldn't spawn anything at all - we should just send the cookie directly.
- * For the simpler IUAM ("Just a moment...") math challenge we can solve it
- * in-process via Node's built-in `vm` module without external help.
- *
- * This module provides three primitives that cloudflare_bypass.js layers on
- * top of its existing chain:
- *
- *   1. ClearancePool - in-memory + disk-persisted store of CF clearance
- *      cookies + UA, keyed by host. 25-minute TTL. Hits avoid all bypass
- *      work entirely.
- *
- *   2. solveIuamChallenge(html, url, opts) - if the response is the legacy
- *      "I'm Under Attack Mode" challenge, parse + eval the math via vm and
- *      submit the answer. Returns a cookie jar on success. Modern Turnstile
- *      challenges are detected and refused (caller falls back to Scrapling).
- *
- *   3. HostMemory - per-host LRU of which strategy worked last and which
- *      ones have failed N times in cooldown, so we skip dead ends.
- *
- * PUBLIC API
- *   const cf = require('./cf_native_solver');
- *   const bundle = await cf.acquireClearance(url, { hintCookies });
- *   // bundle: { cookies: {...}, userAgent, strategy, expiresAt }
- *
- *   const cookieHeader = cf.cookieHeaderForUrl(url);
- *
- *   const native = await cf.tryNativeBypass(url, { providerName });
- *   // returns null when not handled, otherwise { html, url, status, cookies }
- *
- * ENV
- *   CF_NATIVE_DISK_PATH   default ~/.leviathan/cf_clearance.json (or /tmp)
- *   CF_NATIVE_TTL_MS      default 1500000 (25 min)
- *   CF_NATIVE_DISABLE_DISK  '1' to skip disk persistence
- *   CF_NATIVE_IUAM_TIMEOUT_MS  default 12000
- *   CF_REDIS_NATIVE_ENABLED    default true when Redis is enabled
- *   CF_CLEARANCE_EGRESS_KEY    separates clearances by outbound IP/proxy identity
- *
- * NOTE: this file is intentionally dependency-free (only built-in Node
- * modules) so it can ship from day one without touching package.json.
- */
-
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
 const { URL } = require('url');
 const { cfRedisStore } = require('./cf_redis_store');
-
-// ---------------------------------------------------------------------------
-// Config
 
 const DISK_PATH = (() => {
   if (process.env.CF_NATIVE_DISABLE_DISK === '1') return null;
@@ -117,7 +63,6 @@ function isChallengeBody(body) {
 
 function isIuamChallengeBody(body) {
   if (!body) return false;
-  // IUAM has the jschl_vc form; Turnstile has the cf-turnstile-response div.
   const turnstile = TURNSTILE_MARKERS.some((r) => r.test(body));
   if (turnstile) return false;
   const iuam = IUAM_MARKERS.filter((r) => r.test(body)).length;
@@ -146,9 +91,6 @@ function originOf(value) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Disk persistence (best-effort, never blocks)
-
 let diskPending = null;
 function flushToDiskSoon(state) {
   if (!DISK_PATH || diskPending) return;
@@ -160,10 +102,9 @@ function flushToDiskSoon(state) {
       fs.writeFileSync(tmp, JSON.stringify(state), 'utf8');
       fs.renameSync(tmp, DISK_PATH);
     } catch (err) {
-      // Log to stderr so it shows up in `docker logs` but don't crash.
       try {
         process.stderr.write(`[cf_native_solver] disk flush failed: ${err && err.message}\n`);
-      } catch (_) { /* ignore */ }
+      } catch (_) {}
     }
   }, 100);
   if (diskPending.unref) diskPending.unref();
@@ -195,9 +136,6 @@ function loadFromDisk() {
     return {};
   }
 }
-
-// ---------------------------------------------------------------------------
-// ClearancePool
 
 class ClearancePool {
   constructor() {
@@ -238,7 +176,7 @@ class ClearancePool {
     if (!host || !bundle) return;
     const expiresAt = Date.now() + CLEARANCE_TTL_MS;
     this._byHost[host] = {
-      cookies: bundle.cookies || {},
+      cookies: normalizeCookieObject(bundle.cookies || {}),
       userAgent: bundle.userAgent || DEFAULT_UA,
       strategy: bundle.strategy || 'unknown',
       acquiredAt: Date.now(),
@@ -246,7 +184,6 @@ class ClearancePool {
       finalUrl: bundle.finalUrl || null,
       egressKey: bundle.egressKey || CLEARANCE_EGRESS_KEY,
     };
-    // LRU-style eviction by oldest acquiredAt
     const hosts = Object.keys(this._byHost);
     if (hosts.length > MAX_HOSTS) {
       hosts
@@ -280,10 +217,7 @@ class ClearancePool {
     const host = hostOf(url);
     const bundle = this.get(host);
     if (!bundle || !bundle.cookies) return '';
-    return Object.entries(bundle.cookies)
-      .filter(([k, v]) => k && v != null)
-      .map(([k, v]) => `${k}=${v}`)
-      .join('; ');
+    return cookiesToHeader(bundle.cookies);
   }
 
   stats() {
@@ -298,9 +232,6 @@ class ClearancePool {
 }
 
 const _pool = new ClearancePool();
-
-// ---------------------------------------------------------------------------
-// HostMemory
 
 class HostMemory {
   constructor() {
@@ -358,9 +289,6 @@ class HostMemory {
 
 const _memory = new HostMemory();
 
-// ---------------------------------------------------------------------------
-// HTTP helpers (native, no axios required for this layer)
-
 async function httpRequest(targetUrl, {
   method = 'GET',
   headers = {},
@@ -370,66 +298,135 @@ async function httpRequest(targetUrl, {
   followRedirects = true,
   maxRedirects = 5,
 } = {}) {
-  // Use the global fetch if available (Node 18+), fall back to https.request.
-  if (typeof fetch === 'function') {
-    const controller = typeof AbortController === 'function' ? new AbortController() : null;
-    const timeoutId = controller
-      ? setTimeout(() => controller.abort(), timeoutMs)
-      : null;
-    try {
-      const finalHeaders = { ...headers };
-      if (cookieHeader) finalHeaders.Cookie = cookieHeader;
-      const res = await fetch(targetUrl, {
-        method,
-        headers: finalHeaders,
-        body: body || undefined,
-        redirect: followRedirects ? 'follow' : 'manual',
-        signal: controller ? controller.signal : undefined,
-      });
-      const text = await res.text();
-      const respHeaders = {};
-      const setCookies = [];
-      res.headers.forEach((value, key) => {
-        respHeaders[key.toLowerCase()] = value;
-        if (key.toLowerCase() === 'set-cookie') setCookies.push(value);
-      });
-      // fetch concatenates multiple Set-Cookie into one - try to split.
-      const rawSetCookie = respHeaders['set-cookie'] || '';
-      const splitCookies = rawSetCookie ? rawSetCookie.split(/,(?=\s*[^;,\s]+=)/g) : setCookies;
-      return {
-        status: res.status,
-        url: res.url,
-        headers: respHeaders,
-        body: text,
-        setCookies: splitCookies,
-      };
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-    }
+  if (typeof fetch !== 'function') {
+    throw new Error('cf_native_solver: fetch() non disponibile (richiede Node 18+)');
   }
-  throw new Error('cf_native_solver: fetch() non disponibile (richiede Node 18+)');
+
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+
+  if (timeoutId?.unref) timeoutId.unref();
+
+  try {
+    const finalHeaders = { ...headers };
+    const normalizedCookieHeader = cookiesToHeader(cookieHeader);
+    if (normalizedCookieHeader) finalHeaders.Cookie = normalizedCookieHeader;
+
+    const res = await fetch(targetUrl, {
+      method,
+      headers: finalHeaders,
+      body: body == null ? undefined : body,
+      redirect: followRedirects ? 'follow' : 'manual',
+      signal: controller ? controller.signal : undefined,
+    });
+
+    const text = await res.text();
+    const respHeaders = {};
+    const setCookies = [];
+
+    if (typeof res.headers.getSetCookie === 'function') {
+      try {
+        setCookies.push(...res.headers.getSetCookie().filter(Boolean).map(String));
+      } catch (_) {}
+    }
+
+    res.headers.forEach((value, key) => {
+      const normalizedKey = key.toLowerCase();
+      respHeaders[normalizedKey] = value;
+      if (normalizedKey === 'set-cookie' && !setCookies.length) {
+        setCookies.push(...splitSetCookieHeader(value));
+      }
+    });
+
+    if (!setCookies.length && respHeaders['set-cookie']) {
+      setCookies.push(...splitSetCookieHeader(respHeaders['set-cookie']));
+    }
+
+    return {
+      status: res.status,
+      url: res.url,
+      headers: respHeaders,
+      body: text,
+      setCookies,
+    };
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+function splitSetCookieHeader(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return [];
+  return raw.split(/,(?=\s*[^;,\s]+=)/g).map((item) => item.trim()).filter(Boolean);
 }
 
 function parseSetCookieValue(rawCookie) {
-  // Extract just the name=value part (drop attributes).
   if (!rawCookie) return null;
-  const first = rawCookie.split(';')[0].trim();
+  if (typeof rawCookie === 'object') {
+    const name = rawCookie.name || rawCookie.key;
+    const value = rawCookie.value ?? rawCookie.val;
+    if (!name || value == null) return null;
+    return [String(name).trim(), String(value)];
+  }
+  const first = String(rawCookie).split(';')[0].trim();
   const eq = first.indexOf('=');
   if (eq <= 0) return null;
   return [first.slice(0, eq).trim(), first.slice(eq + 1).trim()];
 }
 
 function mergeSetCookies(jar, setCookies) {
-  if (!Array.isArray(setCookies)) return jar;
+  const target = jar && typeof jar === 'object' ? jar : {};
+  if (!Array.isArray(setCookies)) return target;
   for (const raw of setCookies) {
     const parsed = parseSetCookieValue(raw);
-    if (parsed) jar[parsed[0]] = parsed[1];
+    if (parsed && parsed[0]) target[parsed[0]] = parsed[1];
   }
-  return jar;
+  return target;
 }
 
-// ---------------------------------------------------------------------------
-// IUAM solver (legacy "Just a moment..." challenge)
+function cookieHeaderToObject(cookieHeader) {
+  if (!cookieHeader) return {};
+  if (typeof cookieHeader === 'object' && !Array.isArray(cookieHeader)) return { ...cookieHeader };
+
+  const out = {};
+  const items = Array.isArray(cookieHeader) ? cookieHeader : String(cookieHeader).split(';');
+
+  for (const item of items) {
+    const parsed = parseSetCookieValue(item);
+    if (parsed && parsed[0]) out[parsed[0]] = parsed[1];
+  }
+
+  return out;
+}
+
+function normalizeCookieObject(cookies) {
+  if (!cookies) return {};
+  if (Array.isArray(cookies)) return mergeSetCookies({}, cookies);
+  if (typeof cookies === 'string') return cookieHeaderToObject(cookies);
+  if (typeof cookies === 'object') {
+    const out = {};
+    for (const [key, value] of Object.entries(cookies)) {
+      if (key && value != null) out[key] = String(value);
+    }
+    return out;
+  }
+  return {};
+}
+
+function cookiesToHeader(cookies) {
+  return Object.entries(normalizeCookieObject(cookies))
+    .filter(([key, value]) => key && value != null)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('; ');
+}
+
+function mergeCookieSources(...sources) {
+  const out = {};
+  for (const source of sources) {
+    Object.assign(out, normalizeCookieObject(source));
+  }
+  return out;
+}
 
 function _decodeHtmlEntities(s) {
   if (!s) return '';
@@ -442,7 +439,6 @@ function _decodeHtmlEntities(s) {
 }
 
 function _extractFormFields(html) {
-  // jschl_vc
   const vcMatch = html.match(/name="jschl_vc"\s+value="([^"]+)"/i);
   const passMatch = html.match(/name="pass"\s+value="([^"]+)"/i);
   const actionMatch = html.match(/id="challenge-form"[^>]*action="([^"]+)"/i);
@@ -455,9 +451,6 @@ function _extractFormFields(html) {
 }
 
 function _extractChallengeScript(html) {
-  // Cloudflare ships the IUAM math inside a setTimeout(function(){ ... }, 4000)
-  // block. We can capture a slice of the script that contains the math
-  // assignments and run it in a tightly sandboxed vm to compute the answer.
   const setTimeoutMatch = html.match(/setTimeout\(function\(\){\s*(var\s+[\s\S]+?)\s*a\.value\s*=/);
   if (!setTimeoutMatch) return null;
   return setTimeoutMatch[1];
@@ -471,24 +464,15 @@ async function solveIuamChallenge(html, url, options = {}) {
   const challengeScript = _extractChallengeScript(html);
   if (!challengeScript) return null;
 
-  // Sandboxed vm: no require, no process, only a fake `t` (innerHTML of an
-  // element CF reads from - the document hostname). We feed it the hostname.
   const hostname = (() => { try { return new URL(url).hostname; } catch (_) { return ''; } })();
 
   let answer;
   try {
     const sandbox = {
-      // Cloudflare reads `t` as the innerHTML of the `a` tag with the hostname.
-      // We expose just enough scaffolding for the script to run without window.
       t: { innerHTML: hostname },
       a: { value: 0 },
-      // The script only uses arithmetic; no fetch/timer needed.
     };
     const context = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
-    // Wrap the snippet in code that captures the final value through a
-    // synthetic `a.value = <expr>;` continuation. The original script ends
-    // with `a.value = parseInt(<varname>.<key>, 10) + t.length;`. We
-    // re-emit that tail by parsing the variable name.
     const baseVarMatch = challengeScript.match(/var\s+([a-zA-Z_$][\w$]*)\s*=\s*\{"([^"]+)"\s*:/);
     if (!baseVarMatch) return null;
     const baseVar = baseVarMatch[1];
@@ -505,7 +489,6 @@ async function solveIuamChallenge(html, url, options = {}) {
     return { solved: false, reason: 'iuam-answer-nan' };
   }
 
-  // CF expects ~4s of think-time before answering. Configurable via env.
   const thinkMs = Math.max(0, Number(process.env.CF_NATIVE_IUAM_THINK_MS) || 4000);
   if (thinkMs > 0) await new Promise((r) => setTimeout(r, thinkMs));
 
@@ -528,7 +511,7 @@ async function solveIuamChallenge(html, url, options = {}) {
     timeoutMs: IUAM_TIMEOUT_MS,
   });
 
-  const jar = {};
+  const jar = cookieHeaderToObject(options.cookieHeader || '');
   mergeSetCookies(jar, response.setCookies);
   const stillChallenge = isChallengeBody(response.body);
   return {
@@ -541,23 +524,12 @@ async function solveIuamChallenge(html, url, options = {}) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Cached pass-through bypass
-
-/**
- * If we have a fresh clearance bundle for this URL's host, try to fetch
- * directly using it. Returns null when nothing in cache or when the
- * cached cookies didn't work (forces caller to fall back to the heavier
- * Scrapling/curl_cffi chain).
- */
 async function tryCachedBypass(url, options = {}) {
   const host = hostOf(url);
   const bundle = _pool.get(host) || await _pool.getShared(host, options);
   if (!bundle) return null;
 
-  const cookieHeader = Object.entries(bundle.cookies || {})
-    .map(([k, v]) => `${k}=${v}`)
-    .join('; ');
+  const cookieHeader = cookiesToHeader(bundle.cookies || {});
   if (!cookieHeader) return null;
 
   try {
@@ -584,7 +556,6 @@ async function tryCachedBypass(url, options = {}) {
         strategy: 'native:cached',
       };
     }
-    // Cached cookies no longer work - drop the bundle so the next try refreshes.
     _pool.invalidate(host);
     _memory.noteFailure(host, 'native:cached');
     return null;
@@ -594,11 +565,6 @@ async function tryCachedBypass(url, options = {}) {
   }
 }
 
-/**
- * Try to solve the challenge in-process via the native IUAM solver.
- * Returns null if the page doesn't look like a solvable IUAM challenge
- * (e.g. Turnstile). On success, updates the ClearancePool.
- */
 async function tryNativeIuamBypass(url, html, options = {}) {
   const host = hostOf(url);
   if (_memory.isStrategyCooled(host, 'native:iuam')) return null;
@@ -609,18 +575,21 @@ async function tryNativeIuamBypass(url, html, options = {}) {
       _memory.noteFailure(host, 'native:iuam');
       return null;
     }
-    _pool.put(host, {
-      cookies: result.cookies || {},
-      userAgent: options.userAgent || DEFAULT_UA,
-      strategy: 'native:iuam',
-      finalUrl: result.finalUrl,
-    });
+    const resultCookies = normalizeCookieObject(result.cookies || {});
+    if (Object.keys(resultCookies).length) {
+      _pool.put(host, {
+        cookies: resultCookies,
+        userAgent: options.userAgent || DEFAULT_UA,
+        strategy: 'native:iuam',
+        finalUrl: result.finalUrl,
+      });
+    }
     _memory.noteSuccess(host, 'native:iuam');
     return {
       html: result.body,
       url: result.finalUrl,
       status: result.status,
-      cookies: result.cookies,
+      cookies: normalizeCookieObject(result.cookies || {}),
       userAgent: options.userAgent || DEFAULT_UA,
       strategy: 'native:iuam',
     };
@@ -630,18 +599,10 @@ async function tryNativeIuamBypass(url, html, options = {}) {
   }
 }
 
-/**
- * High-level: combine cached bypass + (optionally) a fresh fetch + IUAM solver.
- * Returns the same shape as the Scrapling/curl_cffi result so the existing
- * cloudflare_bypass.js chain can drop us in.
- */
 async function tryNativeBypass(url, options = {}) {
-  // 1) Cached clearance
   const cached = await tryCachedBypass(url, options);
   if (cached) return cached;
 
-  // 2) Fresh fetch + IUAM solve (only useful if the server sent us an IUAM
-  // page; otherwise let the Python helpers take over)
   let firstResponse;
   try {
     firstResponse = await httpRequest(url, {
@@ -660,40 +621,38 @@ async function tryNativeBypass(url, options = {}) {
     return null;
   }
 
-  // Lucky pass - no challenge at all.
   if (firstResponse.status >= 200 && firstResponse.status < 400 && !isChallengeBody(firstResponse.body)) {
     return {
       html: firstResponse.body,
       url: firstResponse.url,
       status: firstResponse.status,
-      cookies: mergeSetCookies({}, firstResponse.setCookies),
+      cookies: mergeCookieSources(options.cookieHeader || '', firstResponse.setCookies || []),
       userAgent: options.userAgent || DEFAULT_UA,
       strategy: 'native:direct',
     };
   }
 
-  // Turnstile -> only the Python helpers can solve it (real browser).
   if (isTurnstileBody(firstResponse.body)) return null;
 
-  // IUAM math challenge -> attempt in-process solve.
   if (isIuamChallengeBody(firstResponse.body)) {
-    return tryNativeIuamBypass(url, firstResponse.body, options);
+    const challengeCookies = mergeCookieSources(options.cookieHeader || '', firstResponse.setCookies || []);
+    return tryNativeIuamBypass(url, firstResponse.body, {
+      ...options,
+      cookieHeader: cookiesToHeader(challengeCookies),
+    });
   }
 
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// Persist learned clearance from an external bypass (call this after a
-// Scrapling/curl_cffi/FlareSolverr success so the next request hits cache).
-
 function rememberClearance(url, { cookies, userAgent, strategy = 'external' } = {}) {
   const host = hostOf(url);
-  if (!host || !cookies || typeof cookies !== 'object') return;
-  const has = Object.keys(cookies).some((k) => /^cf_clearance|^__cf|^cf_chl/i.test(k));
-  if (!has) return; // Only persist if we actually got the CF clearance cookie.
+  const normalizedCookies = normalizeCookieObject(cookies);
+  if (!host || !Object.keys(normalizedCookies).length) return;
+  const has = Object.keys(normalizedCookies).some((key) => /^cf_clearance|^__cf|^cf_chl/i.test(key));
+  if (!has) return;
   _pool.put(host, {
-    cookies,
+    cookies: normalizedCookies,
     userAgent: userAgent || DEFAULT_UA,
     strategy,
     egressKey: process.env.CF_CLEARANCE_EGRESS_KEY || process.env.PROVIDER_EGRESS_KEY || CLEARANCE_EGRESS_KEY
@@ -720,28 +679,23 @@ function stats() {
   return _pool.stats();
 }
 
-// One-line stderr banner on first import so it's visible in docker logs.
 try {
   process.stderr.write(
     `[cf_native_solver] online disk=${DISK_PATH || 'off'} ttl=${CLEARANCE_TTL_MS}ms `
     + `hosts_cached=${stats().hosts}\n`
   );
-} catch (_) { /* ignore */ }
+} catch (_) {}
 
 module.exports = {
-  // High-level pipeline
   tryNativeBypass,
   tryCachedBypass,
   tryNativeIuamBypass,
-  // Learning
   rememberClearance,
-  // Inspectors
   isChallengeHtml,
   cookieHeaderForUrl,
   getBundle,
   invalidate,
   stats,
-  // Internals exposed for tests
   _ClearancePool: ClearancePool,
   _HostMemory: HostMemory,
 };
