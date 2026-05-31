@@ -1,30 +1,5 @@
 'use strict';
 
-/**
- * CinemaCity Resolution Memory
- * ----------------------------
- * A self-learning layer that remembers how a media identity (imdb/tmdb id +
- * content type) maps to a resolved CinemaCity content URL, so repeat lookups can
- * skip the expensive sitemap scan + IMDb-verification page fetches entirely.
- *
- * Design goals (strictly additive, cannot break the provider):
- *   - Positive memory: id -> { url, title } with a confidence that decays over
- *     time (half-life), so stale guesses are re-resolved while verified hits stay.
- *   - Negative memory: remember "not confidently on CinemaCity" with a SHORT ttl
- *     so we stop paying for full catalog scans on content that isn't there yet.
- *   - Self-reinforcement: every successful playback resolution strengthens the
- *     entry (more hits, higher confidence, failures reset).
- *   - Auto-invalidation / self-healing: when a remembered URL stops producing a
- *     stream (page blocked/gone), confidence drops and the entry is evicted after
- *     a few consecutive failures, forcing a fresh resolve next time.
- *   - Best-effort persistence to a local JSON file (same dir cc_proxy uses for its
- *     secret), so learning survives restarts. Every file op is wrapped: a
- *     read-only / serverless filesystem just degrades to in-memory only.
- *
- * Every exported function is defensive and never throws: callers can fire-and-
- * forget without guarding, and a memory failure can never affect resolution.
- */
-
 const fs = require('fs');
 const path = require('path');
 
@@ -63,7 +38,6 @@ let loaded = false;
 let dirty = false;
 let saveTimer = null;
 
-// Injectable clock so time-dependent behaviour (ttl/decay) is testable.
 let clock = () => Date.now();
 
 function normalizeId(id) {
@@ -119,7 +93,7 @@ function load() {
             store.set(key, entry);
         }
     } catch (_) {
-        // Corrupt / unreadable cache file: start from an empty memory.
+        
     }
 }
 
@@ -133,7 +107,7 @@ function flush() {
         fs.writeFileSync(tmpPath, payload, { mode: 0o600 });
         fs.renameSync(tmpPath, PERSIST_PATH);
     } catch (_) {
-        // Read-only / ephemeral filesystem: in-memory store still works.
+       
     }
 }
 
@@ -150,18 +124,11 @@ function scheduleSave() {
 
 function prune() {
     if (store.size <= MAX_ENTRIES) return;
-    // Evict least-recently-seen entries first (LRU).
     const ordered = [...store.entries()].sort((a, b) => (a[1].lastSeen || 0) - (b[1].lastSeen || 0));
     const removeCount = store.size - MAX_ENTRIES;
     for (let i = 0; i < removeCount; i++) store.delete(ordered[i][0]);
 }
 
-/**
- * Look up a remembered resolution.
- * @returns {null
- *   | { negative: true, misses: number }
- *   | { url: string, title: string, kind: string, confidence: number, verifiedImdb: boolean, hits: number }}
- */
 function recall(id, type) {
     if (!ENABLED) return null;
     try {
@@ -184,8 +151,6 @@ function recall(id, type) {
         if (!entry.url) return null;
 
         const confidence = effectiveConfidence(entry, now);
-        // Verified entries are trusted past the decay floor; fuzzy ones must re-prove
-        // themselves once their confidence has decayed too far.
         if (!entry.verifiedImdb && confidence < CONFIDENCE_FLOOR) {
             return null;
         }
@@ -203,9 +168,6 @@ function recall(id, type) {
     }
 }
 
-/**
- * Record (or strengthen) a positive resolution.
- */
 function remember(id, type, { url, title, kind, score, verifiedImdb } = {}) {
     if (!ENABLED || !url) return;
     try {
@@ -231,15 +193,10 @@ function remember(id, type, { url, title, kind, score, verifiedImdb } = {}) {
         prune();
         scheduleSave();
     } catch (_) {
-        // Never let a memory write break resolution.
+       
     }
 }
 
-/**
- * Record a confident "not on CinemaCity" miss, so we can skip the full catalog
- * scan for a short window. Refuses to overwrite a still-trusted positive entry,
- * so a single transient miss cannot erase hard-won knowledge.
- */
 function rememberNegative(id, type) {
     if (!ENABLED) return;
     try {
@@ -259,13 +216,10 @@ function rememberNegative(id, type) {
         prune();
         scheduleSave();
     } catch (_) {
-        // ignore
+        
     }
 }
 
-/**
- * Positive feedback: a remembered (or freshly resolved) URL produced a stream.
- */
 function reinforce(id, type) {
     if (!ENABLED) return;
     try {
@@ -277,14 +231,10 @@ function reinforce(id, type) {
         entry.confidence = Math.min(0.99, (entry.confidence || 0.6) + 0.02);
         scheduleSave();
     } catch (_) {
-        // ignore
+        
     }
 }
 
-/**
- * Negative feedback: a remembered URL failed to produce a stream (blocked/gone).
- * Drops confidence and evicts the entry after MAX_FAILURES consecutive failures.
- */
 function penalize(id, type) {
     if (!ENABLED) return;
     try {
@@ -299,7 +249,7 @@ function penalize(id, type) {
         }
         scheduleSave();
     } catch (_) {
-        // ignore
+        
     }
 }
 
@@ -307,7 +257,7 @@ function forget(id, type) {
     try {
         if (store.delete(buildKey(id, type))) scheduleSave();
     } catch (_) {
-        // ignore
+        
     }
 }
 
@@ -334,7 +284,7 @@ function stats() {
     };
 }
 
-// Test-only helpers (not part of the public contract).
+
 function __reset() {
     store.clear();
     dirty = false;
