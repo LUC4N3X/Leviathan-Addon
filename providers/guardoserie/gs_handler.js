@@ -44,9 +44,6 @@ const PROVIDER_BUDGET_MS     = 15000;
 const GLOBAL_TIMEOUT_MS      = PROVIDER_BUDGET_MS;
 const SEARCH_QUERY_TIMEOUT_MS = 5000;
 
-// GuardoSerie fast-path defaults mirror the CinemaCity approach:
-// ImpIt (browser fingerprint impersonation) is the PRIMARY bypass method.
-// FlareSolverr background clearance is enabled by default for GuardoSerie; set GUARDOSERIE_FLARE_ENABLED=0 to disable it.
 const GS_TOP_SPEED = Object.freeze({
   flareEndpoint: process.env.FLARESOLVERR_URL || 'http://flaresolverr:8191/v1',
   directFetchTimeoutMs: 3000,
@@ -188,9 +185,6 @@ const gsShield = createCloudflareBypass({
     Math.min(12000, GS_TOP_SPEED.postClearanceReplayTimeoutMs)
   ),
   clearSessionOnTransportFailure: GS_TOP_SPEED.clearSessionOnTransportFailure,
-  // Rust shield is useful for anonymous warmup/direct probes, but in front of a valid
-  // cf_clearance it can waste ~2s on every candidate when the Rust service returns 502.
-  // Keep session/post-clearance fetches on the cookie-bearing Axios path by default.
   useRustShieldForSession: GS_TOP_SPEED.useRustShieldForSession,
   emergencyClearanceAfterSessionFailure: GS_TOP_SPEED.staleSessionEmergencyClearance,
   emergencyClearanceMinIntervalMs: GS_TOP_SPEED.staleSessionEmergencyCooldownMs,
@@ -233,10 +227,7 @@ const normalizeBaseUrl = value => gsHttp.normalizeBaseUrl(value);
 const isAbortLikeError = error => gsHttp.isAbortLikeError(error);
 
 function allowHotPathClearance() {
-  // Default TOP mode: FlareSolverr runs in the daemon/warmup path, not inside every Stremio request.
-  // If no endpoint exists, fall back to direct/Impit behavior.
   if (GS_HOTPATH_FLARE_FALLBACK) return true;
-  // When FlareSolverr is fully disabled (opt-out mode), ImpIt is the only bypass â€” no hot-path clearance.
   if (!GS_BACKGROUND_CLEARANCE_ENABLED) return false;
   return !gsHttp.getEndpoint();
 }
@@ -383,9 +374,6 @@ function warmupGsClearanceInBackground(reason = 'startup', options = {}) {
     if (primeHome || !sessionReady) {
       const html = await smartFetch(url, {
         ttl: TTL_SERIES,
-        // The daemon already attempted the expensive FlareSolverr solve above.
-        // Prime the home page only with the fresh session/direct probe to avoid
-        // a duplicate solve storm when FlareSolverr returns transient 500s.
         allowFlareSolverr: false,
         timeoutMs: sessionReady ? GS_BACKGROUND_PRIME_TIMEOUT_MS : DIRECT_FETCH_TIMEOUT_MS
       });
@@ -627,8 +615,7 @@ function buildFastSlugTargetCandidates(expectedTitles = [], mediaType = 'series'
       }
     }
 
-    // Vecchio repo speed trick: real movie pages are usually root slugs.
-    // Root first, then guarda-* fallback, only then weak /film/ and /movie/ shells.
+
     for (const slug of slugs) pushPath(`/${slug}/`);
     for (const slug of slugs) pushPath(`/guarda-${slug}-streaming-ita/`);
     for (const slug of slugs.slice(0, 3)) pushPath(`/film/${slug}/`);
@@ -639,8 +626,6 @@ function buildFastSlugTargetCandidates(expectedTitles = [], mediaType = 'series'
   for (const title of titles) {
     const slug = slugify(title);
     if (!slug) continue;
-    // GuardoSerie stores TV show landing pages primarily below /serie/<slug>/.
-    // Root slugs are noisy and can be movie/category shells, so keep them as a fallback.
     for (const p of [`/serie/${slug}/`, `/serietv/${slug}/`, `/${slug}/`]) pushPath(p);
   }
   return candidates;
@@ -648,9 +633,6 @@ function buildFastSlugTargetCandidates(expectedTitles = [], mediaType = 'series'
 
 function allowExactGsSlugClearance(mediaType = 'series') {
   if (allowHotPathClearance()) return true;
-  // If the request gate could not obtain a fresh CF session, exact slug probes are
-  // the highest-confidence GuardoSerie path. Allow one shared FlareSolverr bridge
-  // for both series and movies instead of burning 30s of 403 probes and caching zero results.
   return ['series', 'movie'].includes(String(mediaType || '').toLowerCase()) && Boolean(gsHttp.getEndpoint()) && !gsHttp.isSessionFresh();
 }
 
@@ -744,8 +726,6 @@ function slugify(val) {
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
-    // GuardoSerie often compacts apostrophes in movie root slugs:
-    // "dall'oceano" -> "dalloceano", not always "dall-oceano".
     .replace(/[\u2018\u2019'`Â´]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
@@ -1207,8 +1187,6 @@ async function searchProviderSequential(query, signal) {
     return '';
   });
 
-  // CinemaCity-style parallel search: AJAX + GET search + WP REST API all race concurrently.
-  // ImpIt (browser fingerprint impersonation) is the primary bypass; no FlareSolverr required.
   const [fallbackHtml, ajaxHtml, restResults] = await Promise.all([
     fetchFallback(),
     fetchAjax(),
@@ -1629,7 +1607,6 @@ async function findGsTargetPage(expectedTitles = [], targetYear = null, signal =
 
   let allResults = [...(options.mappedResults || []), ...fastSlugResults];
   if (!fastSlugResults.length) {
-    // CinemaCity-style: text search + WP sitemap lookup race in parallel.
     const [searchResults, sitemapResults] = await Promise.all([
       searchProviderParallel(queries, signal),
       searchGsSitemapCandidates(expectedTitles).catch(() => [])
