@@ -61,8 +61,7 @@ function migrateConfig(input = {}) {
 
   const aliasPairs = [
     ['enableStreamingCommunity', 'enableVix'],
-    ['streamingCommunityLast', 'vixLast'],
-    ['enableAltadefinizione', 'enableCc']
+    ['streamingCommunityLast', 'vixLast']
   ];
   for (const [primaryKey, legacyKey] of aliasPairs) {
     const primaryValue = config.filters[primaryKey];

@@ -8,6 +8,14 @@ const {
 } = require('../extractors/common');
 const { getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
 
+let buildCinemaCityProxyUrl = null;
+let prewarmCinemaCityPlayback = null;
+try {
+    ({ buildCinemaCityProxyUrl, prewarmCinemaCityPlayback } = require('./cc_proxy'));
+} catch (_) {
+    // Unit-test/dev environments may load this provider without optional runtime deps.
+}
+
 const HTTP_FETCH_TIMEOUT = 30000;
 
 function createTimeoutSignal(timeoutMs) {
@@ -106,6 +114,14 @@ const TMDB_API_KEY = '68e094699525b18a70bab2f86b1fa706';
 const SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
 const SITEMAP_CACHE_MS = 60 * 60 * 1000;
 const WORKER_HOST = base64Decode('Y2MubGVhbmhodTA2MTIwNi53b3JrZXJzLmRldg==');
+const PROVIDER_LABEL = 'CinemaCity';
+const PROVIDER_CODE = 'CC';
+const EXTRACTOR_LABEL = 'CCCDN';
+const DEFAULT_STREAM_HEADERS = Object.freeze({
+    Referer: `${BASE_URL}/`,
+    Origin: BASE_URL,
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+});
 
 let sitemapCache = null;
 
@@ -194,7 +210,7 @@ function getSignificantTokens(value) {
 
 function parseSitemapEntries(xml) {
     const entries = [];
-    const regex = /<loc>(https:\/\/cinemacity\.cc\/(movies|tv-series)\/\d+-([a-z0-9-]+)\.html)<\/loc>/gi;
+    const regex = /<loc>(https:\/\/cinemacity\.cc\/(movies|tv-series|anime)\/\d+-([a-z0-9-]+)\.html)<\/loc>/gi;
     let match;
 
     while ((match = regex.exec(String(xml || ''))) !== null) {
@@ -364,7 +380,7 @@ async function searchBySitemap(id, providerType, providerContext = null) {
     const expectedImdbId = /^tt\d{5,}$/i.test(String(id || '').trim())
         ? String(id).trim().toLowerCase()
         : null;
-    const metadata = await getTmdbMetadata(id, providerType);
+    const metadata = await getTmdbMetadata(id, providerType === 'anime' ? 'tv' : providerType);
     const expectedTitles = Array.from(new Set([
         metadata?.title,
         metadata?.name,
@@ -377,7 +393,11 @@ async function searchBySitemap(id, providerType, providerContext = null) {
     }
 
     const expectedYear = extractYearFromMetadata(metadata);
-    const expectedKind = providerType === 'movie' ? 'movies' : 'tv-series';
+    const expectedKinds = providerType === 'movie'
+        ? new Set(['movies'])
+        : providerType === 'anime'
+            ? new Set(['anime', 'tv-series'])
+            : new Set(['tv-series', 'anime']);
 
     let entries;
     try {
@@ -397,7 +417,7 @@ async function searchBySitemap(id, providerType, providerContext = null) {
     const ranked = [];
 
     for (const entry of entries) {
-        if (entry.kind !== expectedKind) continue;
+        if (!expectedKinds.has(entry.kind)) continue;
         const score = scoreSitemapEntry(entry, expectedTitles, expectedYear);
         if (score >= 250) {
             ranked.push({ entry, score });
@@ -651,14 +671,175 @@ function buildProviderContext(meta = {}, config = {}) {
     };
 }
 
-async function getEasystreamsStreams(id, type, season, episode, providerContext = null) {
+function looksLikeAnimeMeta(meta = {}) {
+    const type = String(meta?.type || '').toLowerCase();
+    const ids = [meta?.id, meta?.imdb_id, meta?.imdbId, meta?.kitsu_id, meta?.kitsuId, meta?.stremioId];
+    const text = [
+        meta?.title,
+        meta?.name,
+        meta?.originalTitle,
+        meta?.original_name,
+        ...(Array.isArray(meta?.genres) ? meta.genres : [])
+    ].filter(Boolean).join(' ');
+
+    return type === 'anime'
+        || ids.some((value) => /^kitsu(?::|_)?\d+/i.test(String(value || '').trim()))
+        || /\banime\b/i.test(text);
+}
+
+function isCinemaCityContentUrlForType(rawUrl, type = 'movie') {
+    try {
+        const parsed = new URL(String(rawUrl || ''), BASE_URL);
+        const pathname = parsed.pathname.toLowerCase();
+        const normalizedType = String(type || '').toLowerCase();
+        if (!/^https?:$/i.test(parsed.protocol) || !/cinemacity\.cc$/i.test(parsed.hostname)) return false;
+        if (normalizedType === 'movie') return /\/movies\/\d+-[^/]+\.html$/i.test(pathname);
+        if (normalizedType === 'anime') return /\/(?:anime|tv-series)\/\d+-[^/]+\.html$/i.test(pathname);
+        return /\/(?:tv-series|anime)\/\d+-[^/]+\.html$/i.test(pathname);
+    } catch (_) {
+        return false;
+    }
+}
+
+function getListingBaseUrls(type = 'movie') {
+    const normalizedType = String(type || '').toLowerCase();
+    if (normalizedType === 'movie') return [`${BASE_URL}/movies/`];
+    if (normalizedType === 'anime') return [`${BASE_URL}/anime/`, `${BASE_URL}/tv-series/`];
+    return [`${BASE_URL}/tv-series/`, `${BASE_URL}/anime/`];
+}
+
+function buildSearchQueryVariants(titles = []) {
+    const out = [];
+    const push = (value) => {
+        const clean = decodeHtmlEntities(String(value || ''))
+            .replace(/\s+/g, ' ')
+            .replace(/^[\s:|•-]+|[\s:|•-]+$/g, '')
+            .trim();
+        if (clean && !out.some((item) => item.toLowerCase() === clean.toLowerCase())) out.push(clean);
+    };
+
+    for (const title of Array.isArray(titles) ? titles : [titles]) {
+        push(title);
+        push(normalizeTitle(title));
+        push(String(title || '').replace(/[:–—-]+/g, ' '));
+    }
+
+    return out.filter(Boolean);
+}
+
+function extractCandidateLinksFromListing(html, type = 'movie') {
+    const results = [];
+    const seen = new Set();
+    const anchorRegex = /<a\s[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+    let match;
+
+    while ((match = anchorRegex.exec(String(html || ''))) !== null) {
+        const absoluteUrl = resolveUrl(BASE_URL, decodeHtmlEntities(match[1]));
+        if (!isCinemaCityContentUrlForType(absoluteUrl, type)) continue;
+        const key = absoluteUrl.replace(/[?#].*$/, '');
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        const innerText = decodeHtmlEntities(match[2].replace(/<[^>]+>/g, ' '))
+            .replace(/\s+/g, ' ')
+            .trim();
+        const slugMatch = key.match(/\/\d+-([^/]+)\.html$/i);
+        const slugTitle = slugMatch ? slugMatch[1].replace(/-\d{4}$/, '').replace(/-/g, ' ') : '';
+        const yearMatch = key.match(/-(\d{4})\.html$/);
+        results.push({
+            url: key,
+            title: innerText || slugTitle,
+            normalizedTitle: normalizeTitle(innerText || slugTitle),
+            compactTitle: compactTitle(innerText || slugTitle),
+            year: yearMatch ? Number.parseInt(yearMatch[1], 10) : null
+        });
+    }
+
+    return results;
+}
+
+function appendHeaderParams(target, headers = {}) {
+    const params = new URLSearchParams();
+    for (const [name, value] of Object.entries(headers || {})) {
+        if (value === undefined || value === null || value === '') continue;
+        params.append(`h_${String(name).trim().toLowerCase()}`, String(value));
+    }
+    const suffix = params.toString();
+    return suffix ? `${target}${target.includes('?') ? '&' : '?'}${suffix}` : target;
+}
+
+function buildCinemaCityKrakenForwardUrl(targetUrl, headers = {}) {
+    const endpoint = String(process.env.FORWARD_PROXY || process.env.CINEMACITY_FORWARD_PROXY || '').trim();
+    const normalizedTarget = resolveUrl(BASE_URL, targetUrl);
+    if (!endpoint || !/^https?:\/\//i.test(endpoint) || !/^https?:\/\//i.test(normalizedTarget)) return null;
+
+    let forwardUrl;
+    if (/[?&][^=]*=$/.test(endpoint) || endpoint.endsWith('=')) {
+        forwardUrl = `${endpoint}${encodeURIComponent(normalizedTarget)}`;
+    } else {
+        const joiner = endpoint.includes('?') ? (/[?&]$/.test(endpoint) ? '' : '&') : '?';
+        forwardUrl = `${endpoint}${joiner}url=${encodeURIComponent(normalizedTarget)}`;
+    }
+    return appendHeaderParams(forwardUrl, headers);
+}
+
+function getCinemaCityPageExtractorBase(config = {}) {
+    const raw = String(
+        config?.cinemacity?.pageExtractorBase
+        || config?.cinemacity?.extractorBase
+        || config?.mediaflow?.url
+        || config?.mfp?.url
+        || config?.kraken?.url
+        || process.env.CINEMACITY_PAGE_EXTRACTOR_BASE
+        || process.env.CINEMACITY_KRAKEN_EXTRACTOR_URL
+        || process.env.KRAKEN_PROXY_URL
+        || process.env.MEDIAFLOW_PROXY_URL
+        || process.env.MEDIAFLOW_URL
+        || process.env.MFP_URL
+        || process.env.MFP_BASE_URL
+        || process.env.KRAKEN_URL
+        || process.env.KRAKEN_BASE_URL
+        || process.env.FORWARD_PROXY
+        || process.env.CINEMACITY_FORWARD_PROXY
+        || ''
+    ).trim();
+    if (!raw) return '';
+    try {
+        const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+        return parsed.origin;
+    } catch (_) {
+        return raw.replace(/\/.*$/, '').replace(/\/+$/, '');
+    }
+}
+
+function buildCinemaCityPlaybackUrl(streamUrl, headers, reqHost, options = {}) {
+    if (typeof buildCinemaCityProxyUrl !== 'function') return streamUrl;
+    const base = String(reqHost || process.env.PUBLIC_BASE_URL || process.env.ADDON_URL || '').trim();
+    if (!base) return streamUrl;
+    return buildCinemaCityProxyUrl(streamUrl, headers, reqHost, options) || streamUrl;
+}
+
+function maybePrewarmCinemaCityPlayback(streamUrl, headers, reqHost, options = {}) {
+    if (typeof prewarmCinemaCityPlayback !== 'function') return false;
+    const base = String(reqHost || process.env.PUBLIC_BASE_URL || process.env.ADDON_URL || '').trim();
+    if (!base) return false;
+    try {
+        return prewarmCinemaCityPlayback(streamUrl, headers, reqHost, options);
+    } catch (_) {
+        return false;
+    }
+}
+
+async function getCinemaCityStreams(id, type, season, episode, providerContext = null) {
     const parsedRequest = parseCompositeSeriesId(id, season, episode);
     id = parsedRequest.normalizedId;
     season = parsedRequest.season;
     episode = parsedRequest.episode;
 
     let imdbId = String(id || '').trim();
-    const providerType = (type === 'tv' || type === 'series' || type === 'anime') ? 'tv' : 'movie';
+    const normalizedType = String(type || '').toLowerCase();
+    const providerType = normalizedType === 'movie' ? 'movie' : (normalizedType === 'anime' ? 'anime' : 'tv');
+    const tmdbApiType = providerType === 'movie' ? 'movie' : 'tv';
     const contextTmdbId = providerContext && /^\d+$/.test(String(providerContext.tmdbId || ''))
         ? String(providerContext.tmdbId)
         : null;
@@ -703,7 +884,7 @@ async function getEasystreamsStreams(id, type, season, episode, providerContext 
             try {
                 const tmdbId = imdbId.replace(/\D/g, '');
                 if (tmdbId) {
-                    const externalUrl = providerType === 'movie'
+                    const externalUrl = tmdbApiType === 'movie'
                         ? `https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}`
                         : `https://api.themoviedb.org/3/tv/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`;
                     const response = await fetchWithTimeout(externalUrl, { timeout: FETCH_TIMEOUT });
@@ -785,20 +966,35 @@ async function getEasystreamsStreams(id, type, season, episode, providerContext 
         if (!selectedUrl) selectedUrl = links[0].url;
 
         const streamUrl = resolveUrl(movieUrl, selectedUrl);
-        console.log(`[CinemaCity] Direct stream: ${streamUrl}`);
+        console.log(`[CinemaCity] CCCDN stream: ${streamUrl}`);
 
         return [{
-            name: 'CinemaCity',
+            name: PROVIDER_LABEL,
             title,
             url: streamUrl,
             quality: '1080p',
             type: 'hls',
+            extractor: EXTRACTOR_LABEL,
+            provider: PROVIDER_LABEL,
+            providerCode: PROVIDER_CODE,
             language: hasItalian ? 'Italian' : '',
-            behaviorHints: { notWebReady: true },
-            headers: {
-                Referer: 'https://cinemacity.cc/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
-            }
+            audioLanguages: hasItalian ? ['ita'] : [],
+            behaviorHints: {
+                notWebReady: true,
+                extractor: EXTRACTOR_LABEL,
+                vortexExtractor: EXTRACTOR_LABEL,
+                vortexSource: PROVIDER_LABEL,
+                vortexProviderCode: PROVIDER_CODE,
+                vortexMeta: {
+                    provider: PROVIDER_LABEL,
+                    source: PROVIDER_LABEL,
+                    site: PROVIDER_LABEL,
+                    extractor: EXTRACTOR_LABEL,
+                    quality: '1080p',
+                    audioLanguages: hasItalian ? ['ita'] : []
+                }
+            },
+            headers: { ...DEFAULT_STREAM_HEADERS }
         }];
     } catch (e) {
         console.error('[CinemaCity] Error:', e);
@@ -826,28 +1022,58 @@ async function searchCinemaCityImpl(originalId, finalId, meta = {}, config = {},
 
         const type = String(meta?.type || (meta?.isSeries ? 'series' : 'movie')).toLowerCase();
         const providerContext = buildProviderContext(meta, config);
-        const esStreams = await getEasystreamsStreams(id, type, season, episode, providerContext);
+        const esStreams = await getCinemaCityStreams(id, type, season, episode, providerContext);
         if (!esStreams.length) return [];
 
-        const languageSuffix = esStreams[0].language === 'Italian' ? ' | ITA' : '';
-        const streams = esStreams.map((stream) => buildWebStream({
-            name: 'CinemaCity',
-            title: `${stream.title || 'Stream'}${languageSuffix}`,
-            url: stream.url,
-            extractor: 'Direct',
-            provider: 'CinemaCity',
-            providerCode: 'CC',
-            quality: stream.quality || '1080p',
-            headers: stream.headers,
-            mediaflowUrl: getMediaflowBase(config),
-            addonBase: reqHost,
-            notWebReady: stream.behaviorHints?.notWebReady !== false
-        }));
+        const streams = esStreams.map((stream) => {
+            const isHls = stream.type === 'hls' || /\.m3u8(?:$|[?#])/i.test(String(stream.url || ''));
+            const headers = stream.headers || { ...DEFAULT_STREAM_HEADERS };
+            const playbackUrl = buildCinemaCityPlaybackUrl(stream.url, headers, reqHost, { isHls });
+            const proxied = playbackUrl && playbackUrl !== stream.url;
+            if (proxied) maybePrewarmCinemaCityPlayback(stream.url, headers, reqHost, { isHls });
+
+            return buildWebStream({
+                name: `${PROVIDER_LABEL} | ${EXTRACTOR_LABEL}`,
+                title: stream.title || 'Stream',
+                url: playbackUrl || stream.url,
+                extractor: EXTRACTOR_LABEL,
+                provider: PROVIDER_LABEL,
+                providerCode: PROVIDER_CODE,
+                quality: stream.quality || '1080p',
+                headers: proxied ? null : headers,
+                mediaflowUrl: getMediaflowBase(config),
+                addonBase: reqHost,
+                notWebReady: proxied ? false : stream.behaviorHints?.notWebReady !== false,
+                extraBehaviorHints: {
+                    ...(stream.behaviorHints || {}),
+                    notWebReady: proxied ? false : stream.behaviorHints?.notWebReady !== false,
+                    extractor: EXTRACTOR_LABEL,
+                    vortexExtractor: EXTRACTOR_LABEL,
+                    vortexSource: PROVIDER_LABEL,
+                    vortexProviderCode: PROVIDER_CODE,
+                    vortexMeta: {
+                        ...(stream.behaviorHints?.vortexMeta || {}),
+                        provider: PROVIDER_LABEL,
+                        source: PROVIDER_LABEL,
+                        site: PROVIDER_LABEL,
+                        providerCode: PROVIDER_CODE,
+                        extractor: EXTRACTOR_LABEL,
+                        quality: stream.quality || '1080p',
+                        deliveryMode: EXTRACTOR_LABEL,
+                        audioLanguages: stream.audioLanguages || []
+                    }
+                },
+                extra: {
+                    audioLanguages: stream.audioLanguages || [],
+                    language: stream.language
+                }
+            });
+        });
 
         return normalizeStreams(dedupeStreamsByUrl(streams), {
             provider: 'cinemacity',
-            providerLabel: 'CinemaCity',
-            providerCode: 'CC'
+            providerLabel: PROVIDER_LABEL,
+            providerCode: PROVIDER_CODE
         });
     } catch (error) {
         console.error('[CinemaCity] Error:', error.message);
@@ -872,6 +1098,14 @@ module.exports = {
         extractDownloadLinks,
         buildDownloadUrl,
         normalizeTitle,
-        base64Decode
+        base64Decode,
+        looksLikeAnimeMeta,
+        isCinemaCityContentUrlForType,
+        extractCandidateLinksFromListing,
+        buildSearchQueryVariants,
+        getListingBaseUrls,
+        buildCinemaCityKrakenForwardUrl,
+        getCinemaCityPageExtractorBase,
+        buildCinemaCityPlaybackUrl
     }
 };

@@ -6,8 +6,8 @@ module.exports = webProviderRecipe({
     id: 'cinemacity',
     key: 'cinemaCity',
     name: 'CinemaCity',
-    aliases: ['CinemaCity', 'CinemaCityV3', 'webCc'],
-    tags: ['movie', 'series', 'web', 'direct-first', 'lazy-extraction'],
+    aliases: ['CinemaCity', 'CinemaCityV3', 'webCc', 'CCCDN', 'City'],
+    tags: ['movie', 'series', 'anime', 'web', 'cccdn', 'native-proxy', 'ita-preferred'],
     selectors: {
         resultItems: '[data-provider-result], .movie-item, .result-item, article',
         title: '[data-title], .title, .name, h2, h3',
@@ -20,12 +20,12 @@ module.exports = webProviderRecipe({
         titleCleaner: 'standardMovieTitle',
         episodePolicy: 'strict-season-episode-or-pack',
         languagePolicy: 'ita-preferred',
-        resolverPolicy: 'lazy-direct-first',
+        resolverPolicy: 'cccdn-native-proxy',
         gotAttempts: 2,
         headerMode: 'manual'
     },
     antiBot: {
-        mode: 'direct-first',
+        mode: 'worker-first',
         proxy: 'disabled-by-default',
         sessionReuse: true
     },

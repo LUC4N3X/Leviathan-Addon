@@ -178,6 +178,19 @@ function normalizeWebExtractorLabel(value) {
 }
 
 function inferWebExtractorLabel(stream, sourceName) {
+    const source = String(sourceName || '');
+    const cinemaCitySignals = [
+        source,
+        stream?.provider,
+        stream?.source,
+        stream?.site,
+        stream?.name,
+        stream?.behaviorHints?.vortexSource,
+        stream?.behaviorHints?.vortexMeta?.provider,
+        stream?.behaviorHints?.vortexMeta?.source,
+        stream?.behaviorHints?.vortexMeta?.site
+    ];
+    const isCinemaCity = cinemaCitySignals.some((value) => /cinemacity/i.test(String(value || '')));
     const directCandidates = [
         stream?.behaviorHints?.extractor,
         stream?.behaviorHints?.vortexExtractor,
@@ -189,18 +202,21 @@ function inferWebExtractorLabel(stream, sourceName) {
 
     for (const candidate of directCandidates) {
         const normalized = normalizeWebExtractorLabel(candidate);
-        if (normalized) return normalized;
+        if (!normalized) continue;
+        if (isCinemaCity && /^(?:direct|web|hls|proxy|mfp|cinemacity)$/i.test(normalized)) return 'CCCDN';
+        return normalized;
     }
 
     const textCandidates = [stream?.title, stream?.name, stream?.url].filter(Boolean);
     for (const candidate of textCandidates) {
         const normalized = normalizeWebExtractorLabel(candidate);
-        if (normalized) return normalized;
+        if (!normalized) continue;
+        if (isCinemaCity && /^(?:direct|web|hls|proxy|mfp|cinemacity)$/i.test(normalized)) return 'CCCDN';
+        return normalized;
     }
 
-    const source = String(sourceName || '');
     if (/streamingcommunity|vix/i.test(source)) return 'VixCloud';
-    if (/cinemacity/i.test(source)) return 'CCCDN';
+    if (isCinemaCity || /cinemacity/i.test(source)) return 'CCCDN';
     return 'Web';
 }
 
@@ -526,8 +542,8 @@ function buildWebStreamDisplay(stream, providerDefinition, meta = {}, config = {
     const behaviorHints = {
         ...(stream.behaviorHints || {}),
         notWebReady: stream.behaviorHints?.notWebReady ?? stream.notWebReady ?? false,
-        extractor: stream.behaviorHints?.extractor || extractorLabel,
-        vortexExtractor: stream.behaviorHints?.vortexExtractor || extractorLabel,
+        extractor: extractorLabel,
+        vortexExtractor: extractorLabel,
         vortexSource: stream.behaviorHints?.vortexSource || providerLabel,
         vortexProviderCode: stream.behaviorHints?.vortexProviderCode || providerDefinition?.key || providerLabel,
         bingeGroup,
