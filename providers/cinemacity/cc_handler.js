@@ -23,6 +23,17 @@ try {
     // Resolution memory is optional: provider works fully without it.
 }
 
+let runCurlCffiBypass = null;
+try {
+    ({ runCurlCffiBypass } = require('../utils/cloudflare_bypass'));
+} catch (_) {
+    // The shared Cloudflare bypass infra (Python curl_cffi) is optional. When it is
+    // absent (no axios / no curl_cffi installed) the worker stays the only fetch path.
+}
+
+// Test seam: lets unit tests inject a fake curl_cffi runner without the Python deps.
+let curlCffiRunnerOverride = null;
+
 // Defensive accessors: a failure in the learning layer must never affect resolution.
 function memRecall(id, type) {
     try {
@@ -188,6 +199,86 @@ async function fetchViaWorker(url) {
     return await response.text();
 }
 
+function getCurlCffiRunner() {
+    return curlCffiRunnerOverride || runCurlCffiBypass || null;
+}
+
+function isCurlCffiFallbackEnabled() {
+    const disabledValues = ['0', 'false', 'no', 'off', 'disabled'];
+    const local = String(process.env.CC_CURL_CFFI_FALLBACK ?? '').trim().toLowerCase();
+    if (disabledValues.includes(local)) return false;
+    const global = String(process.env.CURL_CFFI_ENABLED ?? '').trim().toLowerCase();
+    if (disabledValues.includes(global)) return false;
+    return true;
+}
+
+// A worker page is "usable" when it is a real, non-challenge document. Mirrors the
+// inline checks getCinemaCityStreams already performs, so behaviour stays identical.
+function isUsableCinemaCityHtml(html) {
+    const text = String(html || '');
+    if (text.length < 500) return false;
+    if (text.includes('Just a moment')) return false;
+    if (text.includes('admin') && text.includes('Unlimited')) return false;
+    return true;
+}
+
+function isUsableCurlCffiResult(result) {
+    if (!result || result.status !== 'ok') return false;
+    if (result.challengeDetected === true) return false;
+    const code = Number(result.code || 0);
+    if (code && code >= 400) return false;
+    return isUsableCinemaCityHtml(result.html);
+}
+
+// Direct-to-origin fetch using the shared curl_cffi (browser TLS impersonation)
+// infra — the same runner gs_handler uses. Throws when the fallback is unavailable
+// or returns an unusable page, so callers can keep the worker as source of truth.
+async function fetchViaCurlCffi(url, options = {}) {
+    const runner = getCurlCffiRunner();
+    if (typeof runner !== 'function' || !isCurlCffiFallbackEnabled()) {
+        throw new Error('curl_cffi_unavailable');
+    }
+    const targetUrl = resolveUrl(BASE_URL, url);
+    const result = await runner(targetUrl, 'cinemacity', {
+        headers: { ...DEFAULT_STREAM_HEADERS, ...(options.headers || {}) },
+        referer: `${BASE_URL}/`,
+        timeout: options.timeout || FETCH_TIMEOUT,
+        coalesceKey: `cinemacity:${targetUrl}`
+    });
+    if (!isUsableCurlCffiResult(result)) {
+        throw new Error('curl_cffi_unusable');
+    }
+    return String(result.html);
+}
+
+// Worker-first fetch with a curl_cffi safety net. The worker is tried first and,
+// when it is healthy, is returned without ever spawning Python. curl_cffi is only
+// used when the worker throws or returns a blocked/empty page. If curl_cffi also
+// fails we hand back whatever the worker gave us (or rethrow) so existing
+// blocked/empty handling and error messages are preserved exactly.
+async function fetchCinemaCityHtml(url, options = {}) {
+    let workerHtml = null;
+    let workerError = null;
+    try {
+        workerHtml = await fetchViaWorker(url);
+    } catch (error) {
+        workerError = error;
+    }
+
+    if (workerHtml !== null && isUsableCinemaCityHtml(workerHtml)) {
+        return workerHtml;
+    }
+
+    try {
+        const curlHtml = await fetchViaCurlCffi(url, options);
+        console.log(`[CinemaCity] curl_cffi fallback served ${url} (${curlHtml.length} chars)`);
+        return curlHtml;
+    } catch (_) {
+        if (workerHtml !== null) return workerHtml;
+        throw workerError || new Error('cinemacity_fetch_failed');
+    }
+}
+
 function decodeHtmlEntities(str) {
     return String(str || '')
         .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
@@ -329,12 +420,24 @@ async function fetchSitemapEntries(providerContext = null) {
         ? `${sitemapProxy}${sitemapPath.replace(/^\//, '')}`
         : `${sitemapProxy}${sitemapPath}`;
     console.log(`[CinemaCity] Fetching sitemap via CF Proxy (full): ${targetUrl}`);
-    const response = await fetchWithTimeout(targetUrl, {
-        timeout: FETCH_TIMEOUT,
-        headers: { 'User-Agent': USER_AGENT }
-    });
-    if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`);
-    const xml = await response.text();
+    let xml = null;
+    try {
+        const response = await fetchWithTimeout(targetUrl, {
+            timeout: FETCH_TIMEOUT,
+            headers: { 'User-Agent': USER_AGENT }
+        });
+        if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`);
+        xml = await response.text();
+    } catch (workerError) {
+        // Last resort when the worker is fully unavailable: pull the raw sitemap
+        // straight from the origin via curl_cffi (no pagination, parsed as-is).
+        try {
+            xml = await fetchViaCurlCffi(SITEMAP_URL, { timeout: Math.max(FETCH_TIMEOUT, 20000) });
+            console.log('[CinemaCity] curl_cffi fallback served sitemap');
+        } catch (_) {
+            throw workerError;
+        }
+    }
     const entries = parseSitemapEntries(xml);
     sitemapCache = { entries, expiresAt: Date.now() + SITEMAP_CACHE_MS };
     console.log(`[CinemaCity] Sitemap catalog loaded: ${entries.length} entries`);
@@ -397,7 +500,7 @@ async function verifyCandidateImdb(candidateUrl, expectedImdbId) {
     }
 
     try {
-        const html = await fetchViaWorker(candidateUrl);
+        const html = await fetchCinemaCityHtml(candidateUrl);
         const imdbId = extractImdbIdFromHtml(html);
         if (imdbId) {
             console.log(`[CinemaCity] IMDb check ${candidateUrl}: ${imdbId}`);
@@ -991,7 +1094,7 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
 
         let html;
         try {
-            html = await fetchViaWorker(movieUrl);
+            html = await fetchCinemaCityHtml(movieUrl);
         } catch (e) {
             console.warn(`[CinemaCity] Worker fetch failed: ${e.message}`);
             return [];
@@ -1194,6 +1297,12 @@ module.exports = {
         getListingBaseUrls,
         buildCinemaCityKrakenForwardUrl,
         getCinemaCityPageExtractorBase,
-        buildCinemaCityPlaybackUrl
+        buildCinemaCityPlaybackUrl,
+        isUsableCinemaCityHtml,
+        isUsableCurlCffiResult,
+        isCurlCffiFallbackEnabled,
+        fetchViaCurlCffi,
+        fetchCinemaCityHtml,
+        __setCurlCffiRunner: (runner) => { curlCffiRunnerOverride = runner; }
     }
 };
