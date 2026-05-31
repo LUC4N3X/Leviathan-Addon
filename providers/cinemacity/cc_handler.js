@@ -16,6 +16,42 @@ try {
     // Unit-test/dev environments may load this provider without optional runtime deps.
 }
 
+let ccMemory = null;
+try {
+    ccMemory = require('./cc_memory');
+} catch (_) {
+    // Resolution memory is optional: provider works fully without it.
+}
+
+// Defensive accessors: a failure in the learning layer must never affect resolution.
+function memRecall(id, type) {
+    try {
+        return ccMemory ? ccMemory.recall(id, type) : null;
+    } catch (_) {
+        return null;
+    }
+}
+function memRemember(id, type, payload) {
+    try {
+        if (ccMemory) ccMemory.remember(id, type, payload);
+    } catch (_) { /* ignore */ }
+}
+function memRememberNegative(id, type) {
+    try {
+        if (ccMemory) ccMemory.rememberNegative(id, type);
+    } catch (_) { /* ignore */ }
+}
+function memReinforce(id, type) {
+    try {
+        if (ccMemory) ccMemory.reinforce(id, type);
+    } catch (_) { /* ignore */ }
+}
+function memPenalize(id, type) {
+    try {
+        if (ccMemory) ccMemory.penalize(id, type);
+    } catch (_) { /* ignore */ }
+}
+
 const HTTP_FETCH_TIMEOUT = 30000;
 
 function createTimeoutSignal(timeoutMs) {
@@ -380,6 +416,20 @@ async function searchBySitemap(id, providerType, providerContext = null) {
     const expectedImdbId = /^tt\d{5,}$/i.test(String(id || '').trim())
         ? String(id).trim().toLowerCase()
         : null;
+
+    const remembered = memRecall(id, providerType);
+    if (remembered) {
+        if (remembered.negative) {
+            console.log(`[CinemaCity] Memory: negative hit for ${id} (${providerType}) — skipping sitemap scan`);
+            return null;
+        }
+        if (remembered.url) {
+            const confidenceLabel = Number.isFinite(remembered.confidence) ? remembered.confidence.toFixed(2) : remembered.confidence;
+            console.log(`[CinemaCity] Memory: resolved ${id} -> ${remembered.url} [conf=${confidenceLabel}${remembered.verifiedImdb ? ', imdb✓' : ''}] — skipping sitemap scan`);
+            return { url: remembered.url, title: remembered.title || '', fromMemory: true };
+        }
+    }
+
     const metadata = await getTmdbMetadata(id, providerType === 'anime' ? 'tv' : providerType);
     const expectedTitles = Array.from(new Set([
         metadata?.title,
@@ -430,6 +480,11 @@ async function searchBySitemap(id, providerType, providerContext = null) {
 
     if (!bestEntry || bestScore < 250) {
         console.log(`[CinemaCity] Sitemap no confident match for ${expectedTitles.join(' / ')} (best=${Math.round(bestScore)})`);
+        // Only learn a negative when the catalog was actually fetched: an empty
+        // listing means a transient fetch failure, not "absent from CinemaCity".
+        if (Array.isArray(entries) && entries.length > 0) {
+            memRememberNegative(id, providerType);
+        }
         return null;
     }
 
@@ -440,10 +495,18 @@ async function searchBySitemap(id, providerType, providerContext = null) {
             const candidateImdbId = await verifyCandidateImdb(candidate.entry.url, expectedImdbId);
             if (candidateImdbId === expectedImdbId) {
                 console.log(`[CinemaCity] Sitemap IMDb verified: ${expectedTitles[0]} -> ${candidate.entry.url}`);
-                return {
+                const verifiedResult = {
                     url: candidate.entry.url,
                     title: expectedTitles[0] || candidate.entry.title
                 };
+                memRemember(id, providerType, {
+                    url: verifiedResult.url,
+                    title: verifiedResult.title,
+                    kind: candidate.entry.kind,
+                    score: candidate.score,
+                    verifiedImdb: true
+                });
+                return verifiedResult;
             }
             if (candidateImdbId && candidateImdbId !== expectedImdbId) {
                 console.log(`[CinemaCity] Sitemap IMDb mismatch: ${candidate.entry.url} has ${candidateImdbId}, expected ${expectedImdbId}`);
@@ -458,10 +521,18 @@ async function searchBySitemap(id, providerType, providerContext = null) {
     }
 
     console.log(`[CinemaCity] Sitemap match: ${expectedTitles[0]} -> ${bestEntry.url} [score=${Math.round(bestScore)}]`);
-    return {
+    const matchResult = {
         url: bestEntry.url,
         title: expectedTitles[0] || bestEntry.title
     };
+    memRemember(id, providerType, {
+        url: matchResult.url,
+        title: matchResult.title,
+        kind: bestEntry.kind,
+        score: bestScore,
+        verifiedImdb: false
+    });
+    return matchResult;
 }
 
 async function getTmdbMetadata(id, providerType) {
@@ -911,6 +982,7 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
             return [];
         }
 
+        const fromMemory = searchResult.fromMemory === true;
         const movieUrl = searchResult.url;
         const movieTitle = (searchResult.title || imdbId).replace(/\s*\(.*?\)\s*/g, '').trim();
         const title = (type === 'tv' || type === 'series')
@@ -927,6 +999,9 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
 
         if (html.length < 500 || html.includes('Just a moment') || (html.includes('admin') && html.includes('Unlimited'))) {
             console.warn(`[CinemaCity] Page blocked or empty (${html.length} chars)`);
+            // A remembered URL that no longer serves a page is decayed and, after a
+            // couple of consecutive failures, evicted so the next lookup re-resolves.
+            if (fromMemory) memPenalize(imdbId, providerType);
             return [];
         }
 
@@ -967,6 +1042,9 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
 
         const streamUrl = resolveUrl(movieUrl, selectedUrl);
         console.log(`[CinemaCity] CCCDN stream: ${streamUrl}`);
+
+        // Positive feedback: this resolution produced a playable stream.
+        memReinforce(imdbId, providerType);
 
         return [{
             name: PROVIDER_LABEL,
@@ -1088,10 +1166,20 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost 
     });
 }
 
+function getCinemaCityMemoryStats() {
+    try {
+        return ccMemory ? ccMemory.stats() : { enabled: false };
+    } catch (_) {
+        return { enabled: false };
+    }
+}
+
 module.exports = {
     searchCinemaCity,
     buildProviderContext,
+    getCinemaCityMemoryStats,
     __private: {
+        memory: ccMemory,
         parseSitemapEntries,
         scoreSitemapEntry,
         extractStreamFromAtob,
