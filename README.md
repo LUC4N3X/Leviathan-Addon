@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://i.ibb.co/kg1dqmDg/logo-1.png" alt="Leviathan Logo" width="240" />
+<img src="https://i.ibb.co/k6QpvmqQ/Chat-GPT-Image-31-mag-2026-14-13-41-2.png" alt="Leviathan Logo" width="240" />
 
 # LEVIATHAN
 
