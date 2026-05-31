@@ -12,10 +12,12 @@ const BROWSER_PROFILES = ENGINE_BROWSER_PROFILES;
 
 const DEFAULT_TRACKERS = [
     "udp://tracker.opentrackr.org:1337/announce",
+    "udp://tracker.openbittorrent.com:6969/announce",
     "udp://open.demonoid.ch:6969/announce",
     "udp://open.demonii.com:1337/announce",
     "udp://open.stealth.si:80/announce",
     "udp://tracker.torrent.eu.org:451/announce",
+    "udp://tracker.tiny-vps.com:6969/announce",
     "udp://tracker.therarbg.to:6969/announce",
     "udp://tracker.doko.moe:6969/announce",
     "udp://opentracker.i2p.rocks:6969/announce",
@@ -50,6 +52,18 @@ const CONFIG = {
     UINDEX_MAX_DETAIL_CANDIDATES: Number(process.env.UINDEX_MAX_DETAIL_CANDIDATES || 20),
     UINDEX_FRESH_TTL_MS: Number(process.env.UINDEX_FRESH_TTL_MS || 15 * 60 * 1000),
     UINDEX_STALE_TTL_MS: Number(process.env.UINDEX_STALE_TTL_MS || 12 * 60 * 60 * 1000),
+    YTS_TIMEOUT_MS: Number(process.env.YTS_TIMEOUT_MS || 6000),
+    YTS_FRESH_TTL_MS: Number(process.env.YTS_FRESH_TTL_MS || 30 * 60 * 1000),
+    YTS_STALE_TTL_MS: Number(process.env.YTS_STALE_TTL_MS || 12 * 60 * 60 * 1000),
+    EZTV_TIMEOUT_MS: Number(process.env.EZTV_TIMEOUT_MS || 7000),
+    EZTV_FRESH_TTL_MS: Number(process.env.EZTV_FRESH_TTL_MS || 30 * 60 * 1000),
+    EZTV_STALE_TTL_MS: Number(process.env.EZTV_STALE_TTL_MS || 12 * 60 * 60 * 1000),
+    SOLID_QUERY_CONCURRENCY: Number(process.env.SOLID_QUERY_CONCURRENCY || 1),
+    SOLID_TIMEOUT_MS: Number(process.env.SOLID_TIMEOUT_MS || 6500),
+    SOLID_MIN_INTERVAL_MS: Number(process.env.SOLID_MIN_INTERVAL_MS || 2000),
+    SOLID_MAX_QUERY_VARIANTS: Number(process.env.SOLID_MAX_QUERY_VARIANTS || 2),
+    SOLID_FRESH_TTL_MS: Number(process.env.SOLID_FRESH_TTL_MS || 20 * 60 * 1000),
+    SOLID_STALE_TTL_MS: Number(process.env.SOLID_STALE_TTL_MS || 12 * 60 * 60 * 1000),
     SEARCH_CACHE_TTL: Number(process.env.ENGINES_SEARCH_CACHE_TTL || 180000),
     HTML_CACHE_TTL: Number(process.env.ENGINES_HTML_CACHE_TTL || 45000),
     NEGATIVE_CACHE_TTL: Number(process.env.ENGINES_NEGATIVE_CACHE_TTL || 20000),
@@ -92,9 +106,35 @@ const uindexCache = new TtlLruCache({
     staleTtlMs: CONFIG.UINDEX_STALE_TTL_MS,
     staleMode: 'extension'
 });
+const ytsCache = new TtlLruCache({
+    name: 'engines:yts:fresh-stale',
+    max: 400,
+    ttlMs: CONFIG.YTS_FRESH_TTL_MS,
+    staleTtlMs: CONFIG.YTS_STALE_TTL_MS,
+    staleMode: 'extension'
+});
+const eztvCache = new TtlLruCache({
+    name: 'engines:eztv:fresh-stale',
+    max: 400,
+    ttlMs: CONFIG.EZTV_FRESH_TTL_MS,
+    staleTtlMs: CONFIG.EZTV_STALE_TTL_MS,
+    staleMode: 'extension'
+});
+const solidCache = new TtlLruCache({
+    name: 'engines:solid:fresh-stale',
+    max: 400,
+    ttlMs: CONFIG.SOLID_FRESH_TTL_MS,
+    staleTtlMs: CONFIG.SOLID_STALE_TTL_MS,
+    staleMode: 'extension'
+});
 const knabenRefreshInflight = new Map();
 const corsaroRefreshInflight = new Map();
 const uindexRefreshInflight = new Map();
+const ytsRefreshInflight = new Map();
+const eztvRefreshInflight = new Map();
+const solidRefreshInflight = new Map();
+const engineProviderCooldowns = new Map();
+const engineProviderQueues = new Map();
 const inflightRequests = new Map();
 
 async function requestWithImpitFallback(url, config = {}) {
@@ -139,6 +179,9 @@ const SOURCE_WEIGHTS = {
     BitSearch: 22,
     RARBG: 21,
     LimeTorrents: 19,
+    YTS: 22,
+    EZTV: 22,
+    SolidTorrents: 21,
     "TPB Mirror": 18,
     TPB: 17,
     UIndex: 14
@@ -931,6 +974,50 @@ async function resolveProviderCache(cache, inflight, key, label, producer) {
     return await startProviderRefresh(cache, inflight, key, label, producer);
 }
 
+function getHostFallbackList(envName, defaults = []) {
+    const explicit = String(process.env[envName] || '').trim();
+    const source = explicit ? explicit.split(/[\s,;]+/g) : defaults;
+    return [...new Set(source.map(host => String(host || '').trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '')).filter(Boolean))];
+}
+
+function isProviderOnCooldown(provider) {
+    const until = engineProviderCooldowns.get(provider);
+    return Boolean(until && Date.now() < until);
+}
+
+function setProviderCooldown(provider, ms) {
+    const duration = Math.max(0, Number(ms) || 0);
+    if (!duration) return;
+    engineProviderCooldowns.set(provider, Date.now() + duration);
+    console.log(`[${provider}] cooldown attivo per ${Math.round(duration / 1000)}s.`);
+}
+
+function runProviderSerial(provider, minIntervalMs, fn) {
+    const previous = engineProviderQueues.get(provider) || Promise.resolve();
+    const next = previous.then(async () => {
+        const key = `${provider}:lastCall`;
+        const last = engineProviderCooldowns.get(key) || 0;
+        const waitMs = Math.max(0, Number(minIntervalMs || 0) - (Date.now() - last));
+        if (waitMs > 0) await sleep(waitMs);
+        engineProviderCooldowns.set(key, Date.now());
+        return fn();
+    });
+    engineProviderQueues.set(provider, next.catch(() => null));
+    return next;
+}
+
+function firstTitleToken(value) {
+    return tokenizeTitle(value)[0] || '';
+}
+
+function looksLikeSameMovieTitle(candidate, expected) {
+    if (!candidate || !expected) return true;
+    const overlap = titleMatchScore(candidate, expected);
+    if (overlap >= 0.34) return true;
+    const expectedFirst = firstTitleToken(expected);
+    return Boolean(expectedFirst && tokenizeTitle(candidate).includes(expectedFirst));
+}
+
 function decodeHref(value) {
     return he.decode(String(value || '').replace(/&amp;/g, '&')).trim();
 }
@@ -1319,6 +1406,180 @@ async function searchKnaben(context) {
         return finalResults;
     } catch (error) {
         console.log(`[Knaben] Errore durante la ricerca: ${error.message}`);
+        return [];
+    }
+}
+
+async function fetchJsonFromHosts(hosts, pathBuilder, options = {}) {
+    let lastError = null;
+    for (const host of hosts) {
+        const url = pathBuilder(host);
+        try {
+            const { data, status } = await axios.get(url, {
+                timeout: options.timeout || CONFIG.TIMEOUT_API,
+                httpsAgent,
+                maxRedirects: options.maxRedirects ?? 3,
+                headers: {
+                    Accept: 'application/json, text/plain, */*',
+                    'Accept-Language': getAcceptLanguage(options.langMode || 'all'),
+                    ...(options.headers || {})
+                },
+                validateStatus: code => code >= 200 && code < 500
+            });
+            if (status === 429) {
+                setProviderCooldown(options.provider || host, options.cooldownMs || 60_000);
+                return null;
+            }
+            if (status === 403 || status >= 400) {
+                lastError = new Error(`${host}: http_${status}`);
+                continue;
+            }
+            return data;
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    if (lastError && options.provider) console.log(`[${options.provider}] host fallback fallito: ${lastError.message}`);
+    return null;
+}
+
+async function searchYTS(context) {
+    if (context.normalizedType !== 'movie') return [];
+    if (context.langMode === 'ita') return [];
+    if (isProviderOnCooldown('YTS')) return [];
+    console.log(`[YTS] Avvio ricerca per: ${context.title}...`);
+    const cacheKey = buildEngineCacheKey('yts', context);
+
+    const producer = async () => {
+        const hosts = getHostFallbackList('YTS_HOST', ['yts.am', 'yts.mx']);
+        const query = clean(context.title);
+        if (!query) return [];
+        const data = await fetchJsonFromHosts(
+            hosts,
+            host => `https://${host}/api/v2/list_movies.json?query_term=${encodeURIComponent(query)}&limit=30`,
+            { provider: 'YTS', timeout: CONFIG.YTS_TIMEOUT_MS, langMode: context.langMode, cooldownMs: 60_000 }
+        );
+        const movies = data?.data?.movies;
+        if (!Array.isArray(movies)) return [];
+
+        const rows = [];
+        for (const movie of movies) {
+            if (context.year && movie.year && Math.abs(Number(movie.year) - Number(context.year)) > 1) continue;
+            const movieTitle = movie.title_long || movie.title || '';
+            if (!looksLikeSameMovieTitle(movieTitle, context.title)) continue;
+            for (const torrent of movie.torrents || []) {
+                if (!torrent?.hash) continue;
+                const title = normalizeSpaces(`${movieTitle} ${torrent.quality || ''} ${torrent.type || ''} ${torrent.video_codec || ''}`);
+                rows.push(normalizeResult({
+                    title,
+                    magnet: buildMagnetFromHash(torrent.hash, title),
+                    sizeBytes: Number(torrent.size_bytes) || parseSize(torrent.size || ''),
+                    size: torrent.size || '',
+                    seeders: Number(torrent.seeds) || 0,
+                    tracker: 'yts'
+                }, context, 'YTS'));
+            }
+        }
+
+        return dedupeResults(rows.filter(Boolean)).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+    };
+
+    try {
+        return await resolveProviderCache(ytsCache, ytsRefreshInflight, cacheKey, 'YTS', producer);
+    } catch (error) {
+        console.log(`[YTS] Errore: ${error.message}`);
+        return [];
+    }
+}
+
+async function searchEZTV(context) {
+    if (context.normalizedType !== 'series' || context.isAnime) return [];
+    if (context.langMode === 'ita') return [];
+    if (isProviderOnCooldown('EZTV')) return [];
+    console.log(`[EZTV] Avvio ricerca per: ${context.title}...`);
+    const cacheKey = buildEngineCacheKey('eztv', context);
+
+    const producer = async () => {
+        const imdb = String(context.imdbId || '').match(/tt(\d+)/i)?.[1];
+        if (!imdb) return [];
+        const hosts = getHostFallbackList('EZTV_HOST', ['eztv.tf', 'eztvx.to']);
+        const data = await fetchJsonFromHosts(
+            hosts,
+            host => `https://${host}/api/get-torrents?imdb_id=${encodeURIComponent(imdb)}&limit=100`,
+            { provider: 'EZTV', timeout: CONFIG.EZTV_TIMEOUT_MS, langMode: context.langMode, cooldownMs: 60_000 }
+        );
+        const torrents = data?.torrents;
+        if (!Array.isArray(torrents)) return [];
+
+        const rows = [];
+        for (const torrent of torrents) {
+            const season = Number(torrent.season) || 0;
+            const episode = Number(torrent.episode) || 0;
+            if (context.reqSeason && season && season !== Number(context.reqSeason)) continue;
+            if (context.reqEpisode && episode && episode !== Number(context.reqEpisode)) continue;
+            const hash = torrent.hash || extractInfoHash(torrent.magnet_url || torrent.magnet || '');
+            if (!hash) continue;
+            const title = normalizeSpaces(torrent.title || `${context.title} S${String(season || context.reqSeason || 1).padStart(2, '0')}E${String(episode || context.reqEpisode || 1).padStart(2, '0')}`);
+            rows.push(normalizeResult({
+                title,
+                magnet: torrent.magnet_url || torrent.magnet || buildMagnetFromHash(hash, title),
+                sizeBytes: Number(torrent.size_bytes) || 0,
+                size: Number(torrent.size_bytes) > 0 ? bytesToSize(Number(torrent.size_bytes)) : '',
+                seeders: Number(torrent.seeds) || 0,
+                tracker: 'eztv'
+            }, context, 'EZTV'));
+        }
+
+        return dedupeResults(rows.filter(Boolean)).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+    };
+
+    try {
+        return await resolveProviderCache(eztvCache, eztvRefreshInflight, cacheKey, 'EZTV', producer);
+    } catch (error) {
+        console.log(`[EZTV] Errore: ${error.message}`);
+        return [];
+    }
+}
+
+async function fetchSolidQuery(context, query) {
+    if (isProviderOnCooldown('SolidTorrents')) return [];
+    const hosts = getHostFallbackList('SOLID_HOST', ['solidtorrents.eu', 'solidtorrents.to']);
+    const data = await runProviderSerial('SolidTorrents', CONFIG.SOLID_MIN_INTERVAL_MS, () => fetchJsonFromHosts(
+        hosts,
+        host => `https://${host}/api/v1/search?q=${encodeURIComponent(query)}&sort=seeders`,
+        { provider: 'SolidTorrents', timeout: CONFIG.SOLID_TIMEOUT_MS, langMode: context.langMode, cooldownMs: 300_000 }
+    ));
+    const results = data?.results;
+    if (!Array.isArray(results)) return [];
+
+    return results.map(item => normalizeResult({
+        title: item.title,
+        magnet: item.magnet || buildMagnetFromHash(item.infohash || item.infoHash || item.hash, item.title),
+        sizeBytes: Number(item.size) || Number(item.size_bytes) || 0,
+        size: Number(item.size) > 0 ? bytesToSize(Number(item.size)) : '',
+        seeders: Number(item.swarm?.seeders ?? item.seeders ?? item.seeds) || 0,
+        tracker: 'solidtorrents'
+    }, context, 'SolidTorrents')).filter(Boolean);
+}
+
+async function searchSolid(context) {
+    if (context.isAnime) return [];
+    if (isProviderOnCooldown('SolidTorrents')) return [];
+    console.log(`[SolidTorrents] Avvio ricerca per: ${context.title}...`);
+    const cacheKey = buildEngineCacheKey('solid', context);
+
+    const producer = async () => {
+        const results = await collectQueryResultsParallel(context, query => fetchSolidQuery(context, query), {
+            maxQueries: Math.min(CONFIG.SOLID_MAX_QUERY_VARIANTS, context.langMode === 'all' ? 4 : 2),
+            concurrency: CONFIG.SOLID_QUERY_CONCURRENCY
+        });
+        return dedupeResults(results).slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+    };
+
+    try {
+        return await resolveProviderCache(solidCache, solidRefreshInflight, cacheKey, 'SolidTorrents', producer);
+    } catch (error) {
+        console.log(`[SolidTorrents] Errore: ${error.message}`);
         return [];
     }
 }
@@ -1752,8 +2013,11 @@ const ACTIVE_ENGINES = [
     { name: "Knaben", fn: searchKnaben, timeout: CONFIG.ENGINE_TIMEOUT },
     { name: "Nyaa", fn: searchNyaa, timeout: CONFIG.ENGINE_TIMEOUT },
     { name: "SubsPlease", fn: searchSubsPlease, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "YTS", fn: searchYTS, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "EZTV", fn: searchEZTV, timeout: CONFIG.ENGINE_TIMEOUT },
     { name: "TPB", fn: searchTPB, timeout: CONFIG.ENGINE_TIMEOUT },
     { name: "TPB Mirror", fn: searchTPBMirror, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "SolidTorrents", fn: searchSolid, timeout: CONFIG.ENGINE_TIMEOUT + 2000 },
     { name: "1337x", fn: search1337x, timeout: CONFIG.ENGINE_TIMEOUT + 2000 },
     { name: "BitSearch", fn: searchBitSearch, timeout: CONFIG.ENGINE_TIMEOUT },
     { name: "LimeTorrents", fn: searchLime, timeout: CONFIG.ENGINE_TIMEOUT },
@@ -1883,6 +2147,10 @@ module.exports = {
         parseUindexDetailPayload,
         parseCorsaroSearchRows,
         rankDetailCandidates,
+        fetchSolidQuery,
+        searchYTS,
+        searchEZTV,
+        searchSolid,
         computeResultScore,
         normalizeResult
     }
