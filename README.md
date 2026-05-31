@@ -1,10 +1,14 @@
 <div align="center">
 
   <a href="https://leviathanaddon.dpdns.org" target="_blank">
-    <img src="https://i.ibb.co/kVj07dhf/Chat-GPT-Image-31-mag-2026-21-51-31.png" alt="Leviathan Presentation Banner" width="100%" />
+    <img src="https://i.ibb.co/zTyBmmpZ/Chat-GPT-Image-31-mag-2026-21-39-55.png" alt="Leviathan Presentation Banner" width="130%" />
   </a>
 
+  <br><br>
 
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:08111F,45:00E7FF,100:7C3AED&height=3&section=header" width="92%" />
+
+  <br><br>
 
   <p align="center">
     <b>A high-performance aggregation protocol for Stremio.</b><br>
