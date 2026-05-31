@@ -8,6 +8,8 @@ try {
 }
 const { normalizeProviderResults, normalizeUrl } = require('./provider_result_normalizer');
 const { ProviderFallbackManager, shouldTryFallback } = require('./provider_fallback_manager');
+const { classifyProviderFailure } = require('../../core/intelligence/provider_failure_classifier');
+const { runProviderRecoveryBridge } = require('./provider_recovery_bridge');
 
 function asArray(value) {
     if (!value) return [];
@@ -111,28 +113,55 @@ async function runProviderPipeline({ recipe = {}, context = {}, fetcher, logger 
     const stageLog = [];
     let rawResults = [];
     let error = null;
+    let response = null;
+    let failure = null;
+    let recoveryAttempt = null;
 
     try {
         if (typeof recipe.preflight === 'function') await recipe.preflight(context, recipe);
         if (typeof fetcher !== 'function') throw new Error('provider pipeline fetcher is required');
-        const response = await fetcher(request, { recipe, context });
+        response = await fetcher(request, { recipe, context });
         rawResults = parseProviderResponse(response, recipe, context);
-        stageLog.push({ stage: 'search', ok: true, count: asArray(rawResults).length });
+        failure = classifyProviderFailure({ error: null, response, rawResults, recipe, context, request });
+        stageLog.push({
+            stage: 'search',
+            ok: true,
+            count: asArray(rawResults).length,
+            failureType: failure.type,
+            failureReason: failure.reason
+        });
     } catch (caught) {
         error = caught;
-        stageLog.push({ stage: 'search', ok: false, error: caught?.message || String(caught) });
+        failure = classifyProviderFailure({ error: caught, response: caught?.response || null, rawResults, recipe, context, request });
+        stageLog.push({
+            stage: 'search',
+            ok: false,
+            error: caught?.message || String(caught),
+            failureType: failure.type,
+            failureReason: failure.reason
+        });
+    }
+
+    if ((!rawResults || rawResults.length === 0) && failure?.recoverable === true && response) {
+        const recoveryPass = await runProviderRecoveryBridge({ response, recipe, context, failure, logger });
+        recoveryAttempt = recoveryPass.attempt;
+        stageLog.push(recoveryAttempt);
+        if (recoveryPass.results.length > 0) {
+            rawResults = recoveryPass.results;
+            failure = classifyProviderFailure({ error: null, response, rawResults, recipe, context, request });
+        }
     }
 
     let fallbackAttempts = [];
-    if ((!rawResults || rawResults.length === 0) && shouldTryFallback(error)) {
+    if ((!rawResults || rawResults.length === 0) && shouldTryFallback(failure || error)) {
         const fallbackPass = await manager.runFallbacks({
             recipe,
             context,
-            reason: error,
-            runner: async (fallback) => {
-                if (typeof recipe.runFallback === 'function') return recipe.runFallback(fallback, context, recipe);
+            reason: failure || error,
+            runner: async (fallback, _context, normalizedReason) => {
+                if (typeof recipe.runFallback === 'function') return recipe.runFallback(fallback, context, recipe, normalizedReason);
                 if (typeof fetcher === 'function') {
-                    return fetcher({ fallback, recipe, context }, { fallback, recipe, context });
+                    return fetcher({ fallback, recipe, context, reason: normalizedReason }, { fallback, recipe, context, reason: normalizedReason });
                 }
                 return [];
             }
@@ -152,6 +181,13 @@ async function runProviderPipeline({ recipe = {}, context = {}, fetcher, logger 
         ms: Date.now() - startedAt,
         stages: stageLog,
         fallbackAttempts,
+        recoveryAttempt,
+        failure: failure ? {
+            type: failure.type,
+            reason: failure.reason,
+            status: failure.status || 0,
+            recoverable: failure.recoverable === true
+        } : null,
         error: error ? { message: error.message || String(error), status: error.status || error.statusCode || error.response?.status || 0 } : null
     };
 }
