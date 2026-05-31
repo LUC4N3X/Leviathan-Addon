@@ -30,3 +30,6 @@ Thumbs.db
 
 data/rd-magnet-locks/
 services/rust-shield/target/
+
+# Runtime-generated provider artifacts (proxy secret, CinemaCity resolution memory)
+providers/config/

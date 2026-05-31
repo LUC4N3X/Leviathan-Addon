@@ -16,6 +16,53 @@ try {
     // Unit-test/dev environments may load this provider without optional runtime deps.
 }
 
+let ccMemory = null;
+try {
+    ccMemory = require('./cc_memory');
+} catch (_) {
+    // Resolution memory is optional: provider works fully without it.
+}
+
+let runCurlCffiBypass = null;
+try {
+    ({ runCurlCffiBypass } = require('../utils/cloudflare_bypass'));
+} catch (_) {
+    // The shared Cloudflare bypass infra (Python curl_cffi) is optional. When it is
+    // absent (no axios / no curl_cffi installed) the worker stays the only fetch path.
+}
+
+// Test seam: lets unit tests inject a fake curl_cffi runner without the Python deps.
+let curlCffiRunnerOverride = null;
+
+// Defensive accessors: a failure in the learning layer must never affect resolution.
+function memRecall(id, type) {
+    try {
+        return ccMemory ? ccMemory.recall(id, type) : null;
+    } catch (_) {
+        return null;
+    }
+}
+function memRemember(id, type, payload) {
+    try {
+        if (ccMemory) ccMemory.remember(id, type, payload);
+    } catch (_) { /* ignore */ }
+}
+function memRememberNegative(id, type) {
+    try {
+        if (ccMemory) ccMemory.rememberNegative(id, type);
+    } catch (_) { /* ignore */ }
+}
+function memReinforce(id, type) {
+    try {
+        if (ccMemory) ccMemory.reinforce(id, type);
+    } catch (_) { /* ignore */ }
+}
+function memPenalize(id, type) {
+    try {
+        if (ccMemory) ccMemory.penalize(id, type);
+    } catch (_) { /* ignore */ }
+}
+
 const HTTP_FETCH_TIMEOUT = 30000;
 
 function createTimeoutSignal(timeoutMs) {
@@ -150,6 +197,86 @@ async function fetchViaWorker(url) {
     });
     if (!response.ok) throw new Error(`Worker HTTP ${response.status}`);
     return await response.text();
+}
+
+function getCurlCffiRunner() {
+    return curlCffiRunnerOverride || runCurlCffiBypass || null;
+}
+
+function isCurlCffiFallbackEnabled() {
+    const disabledValues = ['0', 'false', 'no', 'off', 'disabled'];
+    const local = String(process.env.CC_CURL_CFFI_FALLBACK ?? '').trim().toLowerCase();
+    if (disabledValues.includes(local)) return false;
+    const global = String(process.env.CURL_CFFI_ENABLED ?? '').trim().toLowerCase();
+    if (disabledValues.includes(global)) return false;
+    return true;
+}
+
+// A worker page is "usable" when it is a real, non-challenge document. Mirrors the
+// inline checks getCinemaCityStreams already performs, so behaviour stays identical.
+function isUsableCinemaCityHtml(html) {
+    const text = String(html || '');
+    if (text.length < 500) return false;
+    if (text.includes('Just a moment')) return false;
+    if (text.includes('admin') && text.includes('Unlimited')) return false;
+    return true;
+}
+
+function isUsableCurlCffiResult(result) {
+    if (!result || result.status !== 'ok') return false;
+    if (result.challengeDetected === true) return false;
+    const code = Number(result.code || 0);
+    if (code && code >= 400) return false;
+    return isUsableCinemaCityHtml(result.html);
+}
+
+// Direct-to-origin fetch using the shared curl_cffi (browser TLS impersonation)
+// infra — the same runner gs_handler uses. Throws when the fallback is unavailable
+// or returns an unusable page, so callers can keep the worker as source of truth.
+async function fetchViaCurlCffi(url, options = {}) {
+    const runner = getCurlCffiRunner();
+    if (typeof runner !== 'function' || !isCurlCffiFallbackEnabled()) {
+        throw new Error('curl_cffi_unavailable');
+    }
+    const targetUrl = resolveUrl(BASE_URL, url);
+    const result = await runner(targetUrl, 'cinemacity', {
+        headers: { ...DEFAULT_STREAM_HEADERS, ...(options.headers || {}) },
+        referer: `${BASE_URL}/`,
+        timeout: options.timeout || FETCH_TIMEOUT,
+        coalesceKey: `cinemacity:${targetUrl}`
+    });
+    if (!isUsableCurlCffiResult(result)) {
+        throw new Error('curl_cffi_unusable');
+    }
+    return String(result.html);
+}
+
+// Worker-first fetch with a curl_cffi safety net. The worker is tried first and,
+// when it is healthy, is returned without ever spawning Python. curl_cffi is only
+// used when the worker throws or returns a blocked/empty page. If curl_cffi also
+// fails we hand back whatever the worker gave us (or rethrow) so existing
+// blocked/empty handling and error messages are preserved exactly.
+async function fetchCinemaCityHtml(url, options = {}) {
+    let workerHtml = null;
+    let workerError = null;
+    try {
+        workerHtml = await fetchViaWorker(url);
+    } catch (error) {
+        workerError = error;
+    }
+
+    if (workerHtml !== null && isUsableCinemaCityHtml(workerHtml)) {
+        return workerHtml;
+    }
+
+    try {
+        const curlHtml = await fetchViaCurlCffi(url, options);
+        console.log(`[CinemaCity] curl_cffi fallback served ${url} (${curlHtml.length} chars)`);
+        return curlHtml;
+    } catch (_) {
+        if (workerHtml !== null) return workerHtml;
+        throw workerError || new Error('cinemacity_fetch_failed');
+    }
 }
 
 function decodeHtmlEntities(str) {
@@ -293,12 +420,24 @@ async function fetchSitemapEntries(providerContext = null) {
         ? `${sitemapProxy}${sitemapPath.replace(/^\//, '')}`
         : `${sitemapProxy}${sitemapPath}`;
     console.log(`[CinemaCity] Fetching sitemap via CF Proxy (full): ${targetUrl}`);
-    const response = await fetchWithTimeout(targetUrl, {
-        timeout: FETCH_TIMEOUT,
-        headers: { 'User-Agent': USER_AGENT }
-    });
-    if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`);
-    const xml = await response.text();
+    let xml = null;
+    try {
+        const response = await fetchWithTimeout(targetUrl, {
+            timeout: FETCH_TIMEOUT,
+            headers: { 'User-Agent': USER_AGENT }
+        });
+        if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`);
+        xml = await response.text();
+    } catch (workerError) {
+        // Last resort when the worker is fully unavailable: pull the raw sitemap
+        // straight from the origin via curl_cffi (no pagination, parsed as-is).
+        try {
+            xml = await fetchViaCurlCffi(SITEMAP_URL, { timeout: Math.max(FETCH_TIMEOUT, 20000) });
+            console.log('[CinemaCity] curl_cffi fallback served sitemap');
+        } catch (_) {
+            throw workerError;
+        }
+    }
     const entries = parseSitemapEntries(xml);
     sitemapCache = { entries, expiresAt: Date.now() + SITEMAP_CACHE_MS };
     console.log(`[CinemaCity] Sitemap catalog loaded: ${entries.length} entries`);
@@ -361,7 +500,7 @@ async function verifyCandidateImdb(candidateUrl, expectedImdbId) {
     }
 
     try {
-        const html = await fetchViaWorker(candidateUrl);
+        const html = await fetchCinemaCityHtml(candidateUrl);
         const imdbId = extractImdbIdFromHtml(html);
         if (imdbId) {
             console.log(`[CinemaCity] IMDb check ${candidateUrl}: ${imdbId}`);
@@ -380,6 +519,20 @@ async function searchBySitemap(id, providerType, providerContext = null) {
     const expectedImdbId = /^tt\d{5,}$/i.test(String(id || '').trim())
         ? String(id).trim().toLowerCase()
         : null;
+
+    const remembered = memRecall(id, providerType);
+    if (remembered) {
+        if (remembered.negative) {
+            console.log(`[CinemaCity] Memory: negative hit for ${id} (${providerType}) — skipping sitemap scan`);
+            return null;
+        }
+        if (remembered.url) {
+            const confidenceLabel = Number.isFinite(remembered.confidence) ? remembered.confidence.toFixed(2) : remembered.confidence;
+            console.log(`[CinemaCity] Memory: resolved ${id} -> ${remembered.url} [conf=${confidenceLabel}${remembered.verifiedImdb ? ', imdb✓' : ''}] — skipping sitemap scan`);
+            return { url: remembered.url, title: remembered.title || '', fromMemory: true };
+        }
+    }
+
     const metadata = await getTmdbMetadata(id, providerType === 'anime' ? 'tv' : providerType);
     const expectedTitles = Array.from(new Set([
         metadata?.title,
@@ -430,6 +583,11 @@ async function searchBySitemap(id, providerType, providerContext = null) {
 
     if (!bestEntry || bestScore < 250) {
         console.log(`[CinemaCity] Sitemap no confident match for ${expectedTitles.join(' / ')} (best=${Math.round(bestScore)})`);
+        // Only learn a negative when the catalog was actually fetched: an empty
+        // listing means a transient fetch failure, not "absent from CinemaCity".
+        if (Array.isArray(entries) && entries.length > 0) {
+            memRememberNegative(id, providerType);
+        }
         return null;
     }
 
@@ -440,10 +598,18 @@ async function searchBySitemap(id, providerType, providerContext = null) {
             const candidateImdbId = await verifyCandidateImdb(candidate.entry.url, expectedImdbId);
             if (candidateImdbId === expectedImdbId) {
                 console.log(`[CinemaCity] Sitemap IMDb verified: ${expectedTitles[0]} -> ${candidate.entry.url}`);
-                return {
+                const verifiedResult = {
                     url: candidate.entry.url,
                     title: expectedTitles[0] || candidate.entry.title
                 };
+                memRemember(id, providerType, {
+                    url: verifiedResult.url,
+                    title: verifiedResult.title,
+                    kind: candidate.entry.kind,
+                    score: candidate.score,
+                    verifiedImdb: true
+                });
+                return verifiedResult;
             }
             if (candidateImdbId && candidateImdbId !== expectedImdbId) {
                 console.log(`[CinemaCity] Sitemap IMDb mismatch: ${candidate.entry.url} has ${candidateImdbId}, expected ${expectedImdbId}`);
@@ -458,10 +624,18 @@ async function searchBySitemap(id, providerType, providerContext = null) {
     }
 
     console.log(`[CinemaCity] Sitemap match: ${expectedTitles[0]} -> ${bestEntry.url} [score=${Math.round(bestScore)}]`);
-    return {
+    const matchResult = {
         url: bestEntry.url,
         title: expectedTitles[0] || bestEntry.title
     };
+    memRemember(id, providerType, {
+        url: matchResult.url,
+        title: matchResult.title,
+        kind: bestEntry.kind,
+        score: bestScore,
+        verifiedImdb: false
+    });
+    return matchResult;
 }
 
 async function getTmdbMetadata(id, providerType) {
@@ -911,6 +1085,7 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
             return [];
         }
 
+        const fromMemory = searchResult.fromMemory === true;
         const movieUrl = searchResult.url;
         const movieTitle = (searchResult.title || imdbId).replace(/\s*\(.*?\)\s*/g, '').trim();
         const title = (type === 'tv' || type === 'series')
@@ -919,7 +1094,7 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
 
         let html;
         try {
-            html = await fetchViaWorker(movieUrl);
+            html = await fetchCinemaCityHtml(movieUrl);
         } catch (e) {
             console.warn(`[CinemaCity] Worker fetch failed: ${e.message}`);
             return [];
@@ -927,6 +1102,9 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
 
         if (html.length < 500 || html.includes('Just a moment') || (html.includes('admin') && html.includes('Unlimited'))) {
             console.warn(`[CinemaCity] Page blocked or empty (${html.length} chars)`);
+            // A remembered URL that no longer serves a page is decayed and, after a
+            // couple of consecutive failures, evicted so the next lookup re-resolves.
+            if (fromMemory) memPenalize(imdbId, providerType);
             return [];
         }
 
@@ -967,6 +1145,9 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
 
         const streamUrl = resolveUrl(movieUrl, selectedUrl);
         console.log(`[CinemaCity] CCCDN stream: ${streamUrl}`);
+
+        // Positive feedback: this resolution produced a playable stream.
+        memReinforce(imdbId, providerType);
 
         return [{
             name: PROVIDER_LABEL,
@@ -1088,10 +1269,20 @@ async function searchCinemaCity(originalId, finalId, meta, config = {}, reqHost 
     });
 }
 
+function getCinemaCityMemoryStats() {
+    try {
+        return ccMemory ? ccMemory.stats() : { enabled: false };
+    } catch (_) {
+        return { enabled: false };
+    }
+}
+
 module.exports = {
     searchCinemaCity,
     buildProviderContext,
+    getCinemaCityMemoryStats,
     __private: {
+        memory: ccMemory,
         parseSitemapEntries,
         scoreSitemapEntry,
         extractStreamFromAtob,
@@ -1106,6 +1297,12 @@ module.exports = {
         getListingBaseUrls,
         buildCinemaCityKrakenForwardUrl,
         getCinemaCityPageExtractorBase,
-        buildCinemaCityPlaybackUrl
+        buildCinemaCityPlaybackUrl,
+        isUsableCinemaCityHtml,
+        isUsableCurlCffiResult,
+        isCurlCffiFallbackEnabled,
+        fetchViaCurlCffi,
+        fetchCinemaCityHtml,
+        __setCurlCffiRunner: (runner) => { curlCffiRunnerOverride = runner; }
     }
 };
