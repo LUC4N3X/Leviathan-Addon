@@ -36,9 +36,6 @@ class LRUCache {
   delete(key) { this._map.delete(key); }
 }
 
-
-// Shared Cloudflare clearance is intentionally hardcoded: one FlareSolverr solve per provider/domain
-// is reused by all addon requests and all users until the CookieJar session expires or is invalidated.
 const CF_SHARED_CLEARANCE_AUTHORITY = true;
 const CF_SHARED_CLEARANCE_FORCE_ORIGIN = true;
 const CURL_CFFI_GUARD_DEFAULTS = Object.freeze({ beforeFlare: true, beforeFlareTimeoutMs: 6500 });
@@ -104,8 +101,7 @@ function createProviderHttpGuard(options = {}) {
     endpoint: options.rustShieldUrl || process.env.RUST_SHIELD_URL,
     logger
   });
-  // Per-provider kill-switch: keeps Rust Shield available globally while allowing
-  // fragile providers (CinemaCity) to use the legacy main_30 path unchanged.
+
   const useRustShieldDefault = options.useRustShield !== false;
   const useRustShieldForSession = useRustShieldDefault && options.useRustShieldForSession !== false;
 
@@ -166,9 +162,6 @@ function createProviderHttpGuard(options = {}) {
   const clearSessionOnTransportFailure = Boolean(options.clearSessionOnTransportFailure);
   const emergencyClearanceAfterSessionFailure = Boolean(options.emergencyClearanceAfterSessionFailure);
   const emergencyClearanceMinIntervalMs = Math.max(0, Math.min(30000, Number(options.emergencyClearanceMinIntervalMs ?? 6000) || 0));
-  // Bridge mode keeps FlareSolverr out of the hot path: it asks FlareSolverr only
-  // for cookies/user-agent, then immediately replays the real request through Axios.
-  // Keep this opt-in per provider to avoid changing legacy providers accidentally.
   const clearanceBridgeMode = Boolean(options.clearanceBridgeMode);
   const clearanceEgressKey = String(
     options.clearanceEgressKey ||
@@ -875,8 +868,6 @@ function createProviderHttpGuard(options = {}) {
         ms: Date.now() - startedAt
       });
 
-      // curl_cffi is allowed to seed UA/cookies before FlareSolverr, but it should
-      // not suppress FlareSolverr unless it really obtained a Cloudflare clearance.
       return hasCfClearance && isSessionFreshForUrl(activeSession, triggerUrl) ? activeSession : null;
     } catch (error) {
       if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
@@ -891,7 +882,6 @@ function createProviderHttpGuard(options = {}) {
       return null;
     }
   }
-
 
   async function tryRedirectedSessionReplay(originalUrl, redirectedUrl, { method = 'GET', body = null, signal = null, timeout = directFetchTimeoutMs, startedAt = Date.now(), reason = 'redirect' } = {}) {
     const originalBase = normalizeBaseUrl(originalUrl);
@@ -1002,7 +992,6 @@ function createProviderHttpGuard(options = {}) {
         timeout,
         signal,
         browserProfile: profile,
-        // Cheap probe first. If FlareSolverr exists, do not pay Impit cost unless the probe is blocked.
         useImpit: !clearanceManager.endpoint
       });
     } catch (error) {
@@ -1062,8 +1051,6 @@ function createProviderHttpGuard(options = {}) {
     const runActualSolve = async () => {
       if (!force && isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
 
-      // A shared CF authority must not be canceled by one user closing Stremio.
-      // The internal hard timeout still protects FlareSolverr from hanging forever.
       const solverSignal = sharedClearanceAuthority ? null : signal;
       const curlSession = await tryCurlCffiBeforeFlare(primaryClearanceUrl, triggerUrl, {
         signal: solverSignal,
