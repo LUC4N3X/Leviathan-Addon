@@ -176,8 +176,8 @@ function detectDeliveryMode(stream = {}, finalUrl = '') {
     const extractor = String(stream.extractor || stream.host || hints.extractor || meta.extractor || '').toLowerCase();
     const provider = String(stream.provider || stream.source || stream.site || hints.vortexSource || meta.provider || '').toLowerCase();
     if (hints.lazyExtraction === true || meta.lazyExtraction === true || /\/lazy_extract\//i.test(url)) return 'Lazy';
-    if (/\/ccproxy\//i.test(url) || (provider.includes('cinemacity') && /(?:cc(?:c|d)dn|city)/i.test(extractor))) return 'CCCDN';
-    if (provider.includes('cinemacity') && /^(?:hls|mfp|proxy)$/i.test(extractor)) return 'Proxy';
+    if (/\/ccproxy\//i.test(url) || (provider.includes('cinemacity') && /(?:cc(?:c|d)dn|city|direct|hls|mfp|proxy|web)/i.test(extractor))) return 'CCCDN';
+    if (provider.includes('cinemacity')) return 'CCCDN';
     if (/\/extractor\/video(?:\.m3u8)?|\/hls\?|\/proxy\/|mediaflow|kraken/i.test(url)) return 'Proxy';
     if (hints.proxyHeaders?.request || hints.headers || stream.headers) return 'Direct+Headers';
     if (hints.notWebReady === true || stream.notWebReady === true) return 'Needs Proxy';
@@ -385,7 +385,8 @@ function streamScore(stream = {}) {
 function mergeBehaviorHints(stream = {}, opts = {}, preparedProxy = null) {
     const providerName = opts.providerLabel || stream.provider || stream.source || stream.site || opts.provider || 'Provider';
     const providerCode = opts.providerCode || stream.providerCode || stream.behaviorHints?.vortexProviderCode || providerName;
-    const extractor = stream.extractor || stream.host || stream.behaviorHints?.extractor || 'Web';
+    let extractor = stream.extractor || stream.host || stream.behaviorHints?.extractor || 'Web';
+    if (/cinemacity/i.test(String(providerName || '')) && /^(?:direct|web|hls|mfp|proxy|hls\s+proxy)$/i.test(String(extractor || '').trim())) extractor = 'CCCDN';
     const quality = normalizeQuality(stream.quality || stream.behaviorHints?.quality || stream.behaviorHints?.vortexMeta?.quality || 'Unknown');
     const existing = isPlainObject(stream.behaviorHints) ? { ...stream.behaviorHints } : {};
 
@@ -483,7 +484,8 @@ function normalizeStream(stream, opts = {}) {
 
     const providerName = opts.providerLabel || stream.provider || stream.source || stream.site || opts.provider || 'Provider';
     const providerCode = opts.providerCode || stream.providerCode || stream.behaviorHints?.vortexProviderCode || providerName;
-    const extractor = stream.extractor || stream.host || stream.behaviorHints?.extractor || 'Web';
+    let extractor = stream.extractor || stream.host || stream.behaviorHints?.extractor || 'Web';
+    if (/cinemacity/i.test(String(providerName || '')) && /^(?:direct|web|hls|mfp|proxy|hls\s+proxy)$/i.test(String(extractor || '').trim())) extractor = 'CCCDN';
     const quality = normalizeQuality(stream.quality || stream.behaviorHints?.quality || stream.behaviorHints?.vortexMeta?.quality || stream.title || stream.name);
     const headers = existingHeaderSource(stream);
     let finalUrl = rawUrl;
