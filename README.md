@@ -1,7 +1,7 @@
 <div align="center">
 
   <a href="https://leviathanaddon.dpdns.org" target="_blank">
-    <img src="https://i.ibb.co/LdPYYPFd/Chat-GPT-Image-31-mag-2026-21-47-02.png" alt="Leviathan Presentation Banner" width="130%" />
+    <img src="https://i.ibb.co/LdPYYPFd/Chat-GPT-Image-31-mag-2026-21-47-02.png" alt="Leviathan Presentation Banner" width="100%" />
   </a>
 
 
