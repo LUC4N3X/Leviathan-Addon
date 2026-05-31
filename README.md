@@ -1,22 +1,18 @@
 <div align="center">
 
   <a href="https://leviathanaddon.dpdns.org" target="_blank">
-    <img src="https://i.ibb.co/zTyBmmpZ/Chat-GPT-Image-31-mag-2026-21-39-55.png" alt="Leviathan Presentation Banner" width="100%" />
+    <img src="https://i.ibb.co/LdPYYPFd/Chat-GPT-Image-31-mag-2026-21-47-02.png" alt="Leviathan Presentation Banner" width="130%" />
   </a>
 
   <br><br>
 
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:08111F,45:00E7FF,100:7C3AED&height=3&section=header" width="96%" />
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:08111F,45:00E7FF,100:7C3AED&height=3&section=header" width="92%" />
 
-  <br>
-
-  <h1>🔱 LEVIATHAN</h1>
-
-  <h3>Dual-Language Aggregation Protocol for Stremio</h3>
+  <br><br>
 
   <p align="center">
-    <b>One pipeline. Torrent intelligence, web providers, anime mapping, RD/TorBox cloud awareness and Kraken runtime orchestration.</b><br>
-    <sub>Built to reduce noise, remove duplicates, prioritize credible ITA/ENG results and present cleaner streams inside Stremio.</sub>
+    <b>A high-performance aggregation protocol for Stremio.</b><br>
+    <i>Combines torrent intelligence, web providers, RD/TorBox cloud awareness and anime mapping into one clean bilingual pipeline with intelligent ranking and zero-duplicate delivery.</i>
   </p>
 
   <br>
@@ -25,35 +21,32 @@
     <a href="https://leviathanaddon.dpdns.org" target="_blank">
       <img alt="Install Leviathan" src="https://img.shields.io/badge/INSTALL_LEVIATHAN-00E7FF?style=for-the-badge&labelColor=07111F&color=00E7FF&logo=stremio&logoColor=ffffff" />
     </a>
-    <img alt="Status" src="https://img.shields.io/badge/STATUS-OPERATIONAL-2EE6A6?style=for-the-badge&logo=githubactions&logoColor=081018&labelColor=07111F" />
-    <img alt="Runtime" src="https://img.shields.io/badge/KRAKEN-RUNTIME_READY-7C3AED?style=for-the-badge&logo=dependabot&logoColor=white&labelColor=07111F" />
-    <img alt="Language" src="https://img.shields.io/badge/ITA_%2F_ENG-SMART_SCOPE-FF335F?style=for-the-badge&labelColor=07111F" />
+    <img alt="Status" src="https://img.shields.io/badge/Status-Operational-2EE6A6?style=for-the-badge&logo=githubactions&logoColor=081018&labelColor=07111F" />
+    <img alt="Architecture" src="https://img.shields.io/badge/Architecture-Hypermode-7C3AED?style=for-the-badge&logo=dependabot&logoColor=white&labelColor=07111F" />
   </p>
 
   <br>
 
   <table align="center" width="100%">
     <tr>
-      <td align="center" width="25%">
-        <h3>🎯 Match Engine</h3>
-        <sub>Semantic title checks, episode control, quality signals and strict duplicate suppression.</sub>
+      <td align="center" width="33%">
+        <h3>🔱 Precision Core</h3>
+        <p>Advanced semantic matching, smart <b>ITA/ENG</b> filtering, dynamic deduplication and ranking designed to reduce noise and false positives.</p>
       </td>
-      <td align="center" width="25%">
-        <h3>☁️ Saved Cloud</h3>
-        <sub>RD/TorBox files already saved by the user are recognized, marked and routed without double entries.</sub>
+      <td align="center" width="33%">
+        <h3>☁️ Debrid Cloud</h3>
+        <p>Native recognition of files already stored in <b>Real-Debrid</b> and <b>TorBox</b>, with dedicated cloud output and strict duplicate control.</p>
       </td>
-      <td align="center" width="25%">
-        <h3>🌐 Provider Mesh</h3>
-        <sub>Torrent engines, Italian web providers, anime sources and hoster extractors coordinated as one layer.</sub>
-      </td>
-      <td align="center" width="25%">
-        <h3>⚡ Fast Output</h3>
-        <sub>Adaptive cache, ranking, formatter polish and clean Stremio-ready stream presentation.</sub>
+      <td align="center" width="33%">
+        <h3>🌊 Hybrid Network</h3>
+        <p>Torrent engines, web providers, anime sources and <b>Kraken runtime</b> work together through a fast, coordinated delivery layer.</p>
       </td>
     </tr>
   </table>
 
   <br>
+
+  <h3 align="center">⚙️ Core Specifications</h3>
 
   <p align="center">
     <img src="https://img.shields.io/badge/Node.js-%E2%89%A520.19-339933?style=flat-square&logo=nodedotjs&logoColor=white" />
@@ -61,31 +54,16 @@
     <img src="https://img.shields.io/badge/RealDebrid-Native-A8BFFF?style=flat-square&labelColor=061018" />
     <img src="https://img.shields.io/badge/TorBox-Ready-7A4EE3?style=flat-square&labelColor=061018" />
     <img src="https://img.shields.io/badge/P2P-Direct_Swarm-FF335F?style=flat-square&labelColor=061018&logo=qbittorrent&logoColor=white" />
-    <img src="https://img.shields.io/badge/Anime-Kitsu_Aware-00E7FF?style=flat-square&labelColor=061018" />
+    <img src="https://img.shields.io/badge/Runtime-Kraken-00E7FF?style=flat-square&labelColor=061018" />
   </p>
 
   <br>
 
-  <table align="center" width="92%">
-    <tr>
-      <td align="center">
-        <b>⚡ Instant setup</b><br><sub>public instance ready</sub>
-      </td>
-      <td align="center">
-        <b>🧬 Smart ranking</b><br><sub>cache, quality and language aware</sub>
-      </td>
-      <td align="center">
-        <b>🛰️ Hybrid routing</b><br><sub>torrent + web + cloud layers</sub>
-      </td>
-      <td align="center">
-        <b>🛡️ Resilient runtime</b><br><sub>Cloudflare/session handling ready</sub>
-      </td>
-    </tr>
-  </table>
+  <p align="center">
+    <sub>⚡ Instant setup &nbsp;·&nbsp; 🌍 Public instance &nbsp;·&nbsp; 💎 Premium output layer &nbsp;·&nbsp; 🇮🇹/🇬🇧 ITA-First & ENG stream intelligence</sub>
+  </p>
 
-  <br>
-
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:08111F,45:00E7FF,100:7C3AED&height=2&section=footer" width="84%" />
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:08111F,45:00E7FF,100:7C3AED&height=2&section=footer" width="80%" />
 
 </div>
 
