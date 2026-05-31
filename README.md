@@ -6,7 +6,7 @@
 
   <br>
 
-  <img src="https://capsule-render.vercel.app/api?type=transparent&height=120&section=header&text=LEVIATHAN&fontSize=80&fontColor=00E7FF&animation=fadeIn&fontAlignY=40&desc=Italy-First%20Aggregation%20Protocol%20for%20Stremio&descSize=18&descAlignY=75&descColor=A8BFFF" alt="Leviathan" width="100%" />
+  <img src="https://capsule-render.vercel.app/api?type=transparent&height=120&section=header&text=LEVIATHAN&fontSize=80&fontColor=00E7FF&animation=fadeIn&fontAlignY=40&desc=Dual-Language%20(ITA%2FENG)%20Aggregation%20Protocol&descSize=18&descAlignY=75&descColor=A8BFFF" alt="Leviathan" width="100%" />
 
   <img src="https://capsule-render.vercel.app/api?type=rect&color=0:0B1220,50:00E7FF,100:0B1220&height=2&section=header" width="85%" />
 
@@ -14,7 +14,7 @@
 
   <p align="center">
     <b>Un protocollo operativo ad alte prestazioni per Stremio.</b><br>
-    <i>Fonde torrent intelligence, web providers, cloud RD/TorBox e anime mapping in una pipeline unificata,<br>restituendo un output premium pulito, intelligente e senza duplicati.</i>
+    <i>Fonde torrent intelligence, web providers, cloud RD/TorBox e anime mapping in una pipeline unificata,<br>restituendo un output bilingue (ITA/ENG) pulito, intelligente e senza duplicati.</i>
   </p>
 
   <br>
@@ -33,7 +33,7 @@
     <tr>
       <td align="center" width="33%">
         <h3>🔱 Precision Core</h3>
-        <p>Matching semantico avanzato, filtri <b>ITA-first</b>, deduplicazione dinamica e ranking. Progettato per abbattere rumore e falsi positivi.</p>
+        <p>Matching semantico avanzato, filtri intelligenti <b>ITA/ENG</b>, deduplicazione dinamica e ranking. Progettato per abbattere rumore e falsi positivi.</p>
       </td>
       <td align="center" width="33%">
         <h3>☁️ Debrid Cloud</h3>
@@ -62,13 +62,12 @@
   <br>
 
   <p align="center">
-    <sub>⚡ Instant setup &nbsp;·&nbsp; 🌍 Public instance &nbsp;·&nbsp; 💎 Premium output layer &nbsp;·&nbsp; 🇮🇹 Italy-first stream intelligence</sub>
+    <sub>⚡ Instant setup &nbsp;·&nbsp; 🌍 Public instance &nbsp;·&nbsp; 💎 Premium output layer &nbsp;·&nbsp; 🇮🇹/🇬🇧 ITA-First & ENG Stream Intelligence</sub>
   </p>
 
   <img src="https://capsule-render.vercel.app/api?type=rect&color=0:0B1220,50:00E7FF,100:0B1220&height=2&section=footer" width="70%" />
 
 </div>
-
 ---
 
 ## ⚖️ Legal & Usage Notice
