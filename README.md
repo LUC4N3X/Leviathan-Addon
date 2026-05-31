@@ -1,18 +1,20 @@
 <div align="center">
 
   <a href="https://leviathanaddon.dpdns.org" target="_blank">
-    <img src="https://i.ibb.co/zTyBmmpZ/Chat-GPT-Image-31-mag-2026-21-39-55.png" alt="Leviathan Presentation Banner" width="130%" />
+    <img src="https://i.ibb.co/xSm1phHP/Chat-GPT-Image-31-mag-2026-14-39-32-1.png" alt="Leviathan Logo" width="220" />
   </a>
 
-  <br><br>
+  <br>
 
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:08111F,45:00E7FF,100:7C3AED&height=3&section=header" width="92%" />
+  <img src="https://capsule-render.vercel.app/api?type=transparent&height=120&section=header&text=LEVIATHAN&fontSize=80&fontColor=00E7FF&animation=fadeIn&fontAlignY=40&desc=Dual-Language%20(ITA%2FENG)%20Aggregation%20Protocol&descSize=18&descAlignY=75&descColor=A8BFFF" alt="Leviathan" width="100%" />
+
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:0B1220,50:00E7FF,100:0B1220&height=2&section=header" width="85%" />
 
   <br><br>
 
   <p align="center">
-    <b>A high-performance aggregation protocol for Stremio.</b><br>
-    <i>Combines torrent intelligence, web providers, RD/TorBox cloud awareness and anime mapping into one clean bilingual pipeline with intelligent ranking and zero-duplicate delivery.</i>
+    <b>Un protocollo operativo ad alte prestazioni per Stremio.</b><br>
+    <i>Fonde torrent intelligence, web providers, cloud RD/TorBox e anime mapping in una pipeline unificata,<br>restituendo un output bilingue (ITA/ENG) pulito, intelligente e senza duplicati.</i>
   </p>
 
   <br>
@@ -31,15 +33,15 @@
     <tr>
       <td align="center" width="33%">
         <h3>🔱 Precision Core</h3>
-        <p>Advanced semantic matching, smart <b>ITA/ENG</b> filtering, dynamic deduplication and ranking designed to reduce noise and false positives.</p>
+        <p>Matching semantico avanzato, filtri intelligenti <b>ITA/ENG</b>, deduplicazione dinamica e ranking. Progettato per abbattere rumore e falsi positivi.</p>
       </td>
       <td align="center" width="33%">
         <h3>☁️ Debrid Cloud</h3>
-        <p>Native recognition of files already stored in <b>Real-Debrid</b> and <b>TorBox</b>, with dedicated cloud output and strict duplicate control.</p>
+        <p>Riconoscimento nativo dei file già presenti su <b>Real-Debrid</b> e <b>TorBox</b>. Output cloud dedicato con tolleranza zero ai doppioni.</p>
       </td>
       <td align="center" width="33%">
         <h3>🌊 Hybrid Network</h3>
-        <p>Torrent engines, web providers, anime sources and <b>Kraken runtime</b> work together through a fast, coordinated delivery layer.</p>
+        <p>Torrent engine, provider web, anime source e <b>Kraken runtime</b> operano in sinergia tramite bridge esterni ad alta velocità.</p>
       </td>
     </tr>
   </table>
@@ -60,10 +62,10 @@
   <br>
 
   <p align="center">
-    <sub>⚡ Instant setup &nbsp;·&nbsp; 🌍 Public instance &nbsp;·&nbsp; 💎 Premium output layer &nbsp;·&nbsp; 🇮🇹/🇬🇧 ITA-First & ENG stream intelligence</sub>
+    <sub>⚡ Instant setup &nbsp;·&nbsp; 🌍 Public instance &nbsp;·&nbsp; 💎 Premium output layer &nbsp;·&nbsp; 🇮🇹/🇬🇧 ITA-First & ENG Stream Intelligence</sub>
   </p>
 
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:08111F,45:00E7FF,100:7C3AED&height=2&section=footer" width="80%" />
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:0B1220,50:00E7FF,100:0B1220&height=2&section=footer" width="70%" />
 
 </div>
 
