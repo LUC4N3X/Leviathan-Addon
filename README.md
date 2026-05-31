@@ -1,60 +1,38 @@
 <div align="center">
 
-<img src="https://i.ibb.co/xSm1phHP/Chat-GPT-Image-31-mag-2026-14-39-32-1.png" alt="Leviathan Logo" width="300" />
-
-<br>
+<img src="https://i.ibb.co/xSm1phHP/Chat-GPT-Image-31-mag-2026-14-39-32-1.png" alt="Leviathan Logo" width="285" />
 
 <img src="https://capsule-render.vercel.app/api?type=transparent&height=128&section=header&text=LEVIATHAN&fontSize=76&fontColor=00E7FF&animation=fadeIn&fontAlignY=44&desc=Italy-First%20Aggregation%20Protocol%20for%20Stremio&descSize=17&descAlignY=76&descColor=A8BFFF" alt="Leviathan" width="100%" />
 
-<img src="https://capsule-render.vercel.app/api?type=rect&color=0:020617,18:00E7FF,50:7C3AED,82:00E7FF,100:020617&height=3&section=header" width="86%" />
-
-<br><br>
-
 <p align="center">
-  <b>Leviathan</b> è un motore di aggregazione progettato per unire <b>torrent intelligence</b>, <b>web extraction</b>, <b>routing adattivo</b>, <b>Debrid cloud awareness</b> e <b>presentazione premium dei risultati</b> in un’unica pipeline costruita per Stremio.<br>
-  L’obiettivo non è soltanto trovare release: è restituire output <b>più puliti</b>, <b>più coerenti</b>, <b>più rapidi</b> e davvero <b>più leggibili</b>.
-</p>
-
-<br>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Node.js-20.19--24.x-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" />
-  <img src="https://img.shields.io/badge/Architecture-Hypermode-7c3aed?style=for-the-badge&logo=dependabot&logoColor=white" />
-  <img src="https://img.shields.io/badge/Status-Operational-00eaff?style=for-the-badge&logo=githubactions&logoColor=081018" />
+  <b>Un protocollo operativo per Stremio che unisce torrent intelligence, provider web, cloud RD/TorBox, anime mapping e output premium in una pipeline unica, più pulita e più leggibile.</b>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/RealDebrid-Native-a8bfff?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/TorBox-Ready-7A4EE3?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Saved_Cloud-RD_%2B_TorBox-00E7FF?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/P2P-Direct_Swarm-ff0055?style=for-the-badge&logo=qbittorrent&logoColor=white" />
+  <a href="https://leviathanaddon.dpdns.org" target="_blank">
+    <img alt="Install Leviathan" src="https://img.shields.io/badge/INSTALL-LEVIATHAN-00E7FF?style=for-the-badge&labelColor=07111F&color=00E7FF&logo=stremio&logoColor=ffffff" />
+  </a>
+  <img src="https://img.shields.io/badge/Status-Operational-2EE6A6?style=for-the-badge&logo=githubactions&logoColor=081018&labelColor=07111F" />
+  <img src="https://img.shields.io/badge/Architecture-Hypermode-7C3AED?style=for-the-badge&logo=dependabot&logoColor=white&labelColor=07111F" />
 </p>
+
+<table align="center">
+<tr>
+<td align="center" width="33%"><b>🔱 Precision Core</b><br><sub>Matching semantico, filtri ITA-first, dedupe e ranking contro rumore e falsi positivi.</sub></td>
+<td align="center" width="33%"><b>☁️ Debrid Cloud</b><br><sub>Riconosce file già salvati su Real-Debrid e TorBox con output cloud dedicato e zero doppioni.</sub></td>
+<td align="center" width="33%"><b>🌊 Hybrid Network</b><br><sub>Torrent engine, provider web, anime source, Kraken runtime e bridge esterni in una sola logica.</sub></td>
+</tr>
+</table>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Semantic-Validation-00eaff?style=flat-square&labelColor=061018" />
-  <img src="https://img.shields.io/badge/Adaptive-Latency_Routing-00eaff?style=flat-square&labelColor=061018" />
-  <img src="https://img.shields.io/badge/Hybrid-Delivery-00eaff?style=flat-square&labelColor=061018" />
-  <img src="https://img.shields.io/badge/Shared_Cache-Volatility--Aware-00eaff?style=flat-square&labelColor=061018" />
-  <img src="https://img.shields.io/badge/Cloud_Dedupe-Always_On-00eaff?style=flat-square&labelColor=061018" />
-  <img src="https://img.shields.io/badge/Language-ITA_%7C_ENG_%7C_Hybrid-00eaff?style=flat-square&labelColor=061018" />
-  <img src="https://img.shields.io/badge/Kitsu-Anime_Ready-00eaff?style=flat-square&labelColor=061018" />
-  <img src="https://img.shields.io/badge/AnimeUnity-Enabled-00eaff?style=flat-square&labelColor=061018" />
-  <img src="https://img.shields.io/badge/AnimeSaturn-Enabled-00eaff?style=flat-square&labelColor=061018" />
+  <img src="https://img.shields.io/badge/Node.js-20.19--24.x-339933?style=flat-square&logo=nodedotjs&logoColor=white" />
+  <img src="https://img.shields.io/badge/Engine-Leviathan_Core-00E7FF?style=flat-square&labelColor=061018" />
+  <img src="https://img.shields.io/badge/RealDebrid-Native-A8BFFF?style=flat-square&labelColor=061018" />
+  <img src="https://img.shields.io/badge/TorBox-Ready-7A4EE3?style=flat-square&labelColor=061018" />
+  <img src="https://img.shields.io/badge/Saved_Cloud-RD_%2B_TorBox-00E7FF?style=flat-square&labelColor=061018" />
+  <img src="https://img.shields.io/badge/P2P-Direct_Swarm-FF335F?style=flat-square&labelColor=061018&logo=qbittorrent&logoColor=white" />
+  <img src="https://img.shields.io/badge/Kraken-Runtime_Ready-00E7FF?style=flat-square&labelColor=061018" />
 </p>
-
-<br>
-
-<a href="https://leviathanaddon.dpdns.org" target="_blank">
-  <img alt="Installa Leviathan" src="https://img.shields.io/badge/INSTALLA-LEVIATHAN-00E7FF?style=for-the-badge&labelColor=07111f&color=00E7FF&logo=stremio&logoColor=ffffff" />
-</a>
-
-<br>
-
-<p align="center">
-  <sub>Instant setup · Public instance · Premium output layer · RD/TorBox Saved Cloud</sub>
-</p>
-
-<br>
 
 <table align="center">
 <tr>
@@ -62,12 +40,16 @@
 <td align="center"><b>MODE</b><br><code>HYBRID</code></td>
 <td align="center"><b>SCOPE</b><br><code>ITA-FIRST</code></td>
 <td align="center"><b>CLOUD</b><br><code>RD/TB</code></td>
+<td align="center"><b>RUNTIME</b><br><code>KRAKEN</code></td>
 <td align="center"><b>OUTPUT</b><br><code>PREMIUM</code></td>
 </tr>
 </table>
 
-</div>
+<sub>Instant setup · Public instance · Premium output layer · RD/TorBox Saved Cloud · Italy-first stream intelligence</sub>
 
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:061018,50:00E7FF,100:061018&height=2&section=footer" width="70%" />
+
+</div>
 ---
 
 ## ⚖️ Legal & Usage Notice
