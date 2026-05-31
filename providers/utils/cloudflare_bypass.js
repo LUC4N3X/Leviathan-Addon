@@ -6,16 +6,14 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { buildCookieHeaderFromSession, mergeCookieHeaders, cookieHeaderToObjects } = require('./cf_clearance_manager');
 
-// cf_native_solver: in-process clearance cache + native IUAM solver. Loaded
-// lazily so a broken require() can't take down the rest of the bypass chain.
 let cfNativeSolver = null;
 try {
-  // eslint-disable-next-line global-require
+  
   cfNativeSolver = require('./cf_native_solver');
 } catch (err) {
   try {
     process.stderr.write(`[cloudflare_bypass] cf_native_solver unavailable: ${err && err.message}\n`);
-  } catch (_) { /* ignore */ }
+  } catch (_) {}
   cfNativeSolver = null;
 }
 
@@ -50,11 +48,13 @@ def cookie_header_to_scrapling(cookie_header, url):
         return cookies
     host = urlparse(url).hostname or ''
     domain = host if host.startswith('.') else ('.' + host if host else '')
+    ignored = {'path', 'domain', 'expires', 'max-age', 'secure', 'httponly', 'samesite', 'priority', 'partitioned'}
     for raw in str(cookie_header).split(';'):
         if '=' not in raw:
             continue
         name, value = raw.strip().split('=', 1)
-        if not name:
+        name = name.strip()
+        if not name or name.lower() in ignored:
             continue
         item = {'name': name, 'value': value, 'path': '/'}
         if domain:
@@ -141,8 +141,7 @@ def main():
         emit({'status': 'error', 'message': str(exc)}, 1)
 
 if __name__ == '__main__':
-    main()
-`;
+    main()`;
 
 function envNumber(name, fallback, min = 0, max = Number.POSITIVE_INFINITY) {
   const parsed = Number.parseInt(String(process.env[name] || ''), 10);
@@ -206,7 +205,6 @@ function buildCurlCffiCoalesceKey(providerName, method, url, body = '') {
   const bodyKey = body ? `:${shortHash(body)}` : '';
   return `${providerName || 'provider'}:curl_cffi:${String(method || 'GET').toUpperCase()}:${String(url || '')}${bodyKey}`;
 }
-
 
 function getHeaderValue(headers = {}, name = '') {
   if (!headers || typeof headers !== 'object') return '';
@@ -438,7 +436,6 @@ function createBypassQueue(options = {}) {
   };
 }
 
-
 const CURL_CFFI_DEFAULTS = Object.freeze({
   maxConcurrent: 4,
   maxQueue: 40,
@@ -496,8 +493,9 @@ function execScraplingBypass(url, providerName = 'provider', options = {}) {
       '--timeout', String(timeout),
       '--wait-until', String(options.waitUntil || process.env.SCRAPLING_WAIT_UNTIL || 'domcontentloaded')
     ];
+    const requestBody = options.body ?? options.data;
     if (method) args.push('--method', method);
-    if (options.body || options.data) args.push('--data', String(options.body || options.data));
+    if (requestBody != null) args.push('--data', String(requestBody));
     if (options.headers) args.push('--headers', JSON.stringify(options.headers));
 
     const child = spawn(resolvePythonExecutable(), args, { windowsHide: true });
@@ -537,8 +535,6 @@ async function runScraplingBypass(url, providerName = 'provider', options = {}) 
   return promise;
 }
 
-
-
 function isUsableCurlCffiProxyUrl(value) {
   const clean = String(value || '').trim();
   if (!clean) return false;
@@ -546,9 +542,6 @@ function isUsableCurlCffiProxyUrl(value) {
     const parsed = new URL(clean);
     const protocol = parsed.protocol.toLowerCase();
     if (!['http:', 'https:', 'socks4:', 'socks4a:', 'socks5:', 'socks5h:'].includes(protocol)) return false;
-    // curl_cffi expects a real proxy listener, not a URL-forwarding endpoint.
-    // Kraken /forward?url= style URLs are fetch endpoints, so using them as a
-    // CONNECT proxy would break every request.
     if (parsed.search || (parsed.pathname && parsed.pathname !== '/')) return false;
     return Boolean(parsed.hostname);
   } catch (_) {
@@ -609,8 +602,9 @@ function execCurlCffiBypass(url, providerName = 'provider', options = {}) {
       '--retries', String(retries),
       '--retry-backoff', String(retryBackoffMs)
     ];
+    const requestBody = options.body ?? options.data;
     if (method) args.push('--method', method);
-    if (options.body || options.data) args.push('--data', String(options.body || options.data));
+    if (requestBody != null) args.push('--data', String(requestBody));
     if (options.headers) args.push('--headers', JSON.stringify(options.headers));
     if (options.cookiesJson) args.push('--cookies-json', JSON.stringify(options.cookiesJson));
     if (acceptLanguage) args.push('--accept-language', acceptLanguage);
@@ -693,10 +687,61 @@ function normalizeCookieObject(cookie) {
   };
 }
 
+function cookieObjectMapFromCookies(cookies = null, url = null) {
+  const out = {};
+  const push = cookie => {
+    const normalized = normalizeCookieObject(cookie);
+    if (normalized?.name && normalized.value != null) out[normalized.name] = normalized.value;
+  };
+
+  if (!cookies) return out;
+
+  if (typeof cookies === 'string') {
+    try {
+      for (const item of cookieHeaderToObjects(cookies, url)) push(item);
+    } catch (_) {
+      for (const item of String(cookies).split(';')) push(item);
+    }
+    return out;
+  }
+
+  if (Array.isArray(cookies)) {
+    for (const item of cookies) push(item);
+    return out;
+  }
+
+  if (typeof cookies === 'object') {
+    if (cookies.cookies || cookies.cookieJar) {
+      try {
+        for (const item of cookieHeaderToObjects(cookies, url)) push(item);
+        return out;
+      } catch (_) {}
+    }
+
+    for (const [name, value] of Object.entries(cookies)) {
+      if (value && typeof value === 'object') push({ name, ...value });
+      else push({ name, value });
+    }
+  }
+
+  return out;
+}
+
+function cookieHeaderFromCookieMap(cookies = {}) {
+  return Object.entries(cookies || {})
+    .filter(([name, value]) => name && value != null)
+    .map(([name, value]) => `${name}=${value}`)
+    .join('; ');
+}
+
 function normalizeScraplingResult(result = {}, providerName = 'provider', fallbackUrl = null) {
   const solvedUrl = String(result.url || result.solvedUrl || fallbackUrl || '').trim();
   const baseUrl = normalizeOrigin(solvedUrl) || normalizeOrigin(fallbackUrl) || null;
-  const rawCookies = Array.isArray(result.cookies) ? result.cookies : [];
+  const rawCookies = Array.isArray(result.cookies)
+    ? result.cookies
+    : (result.cookies && typeof result.cookies === 'object'
+      ? Object.entries(result.cookies).map(([name, value]) => (value && typeof value === 'object' ? { name, ...value } : { name, value }))
+      : []);
   const cookies = [];
   const cookieDomains = [];
   const seenCookies = new Set();
@@ -737,7 +782,6 @@ function normalizeScraplingResult(result = {}, providerName = 'provider', fallba
   return session;
 }
 
-
 function normalizeCurlCffiResult(result = {}, providerName = 'provider', fallbackUrl = null) {
   const session = normalizeScraplingResult(result, providerName, fallbackUrl);
   session.scrapling = false;
@@ -747,7 +791,11 @@ function normalizeCurlCffiResult(result = {}, providerName = 'provider', fallbac
   session.impersonateChain = Array.isArray(result.impersonateChain) ? result.impersonateChain : [];
   session.elapsedMs = Number(result.elapsedMs || 0) || 0;
   session.challengeDetected = Boolean(result.challengeDetected);
-  if (result.cookieHeader && !session.cookies) session.cookies = String(result.cookieHeader);
+  if (result.cookieHeader) {
+    session.cookies = session.cookies
+      ? mergeCookieHeaders(session.cookies, result.cookieHeader)
+      : String(result.cookieHeader);
+  }
   if (result.headers && typeof result.headers === 'object') session.responseHeaders = result.headers;
   return session;
 }
@@ -825,6 +873,47 @@ function createCloudflareBypass(options = {}) {
     else if (options.debug || options.debugCf) console.warn(`[${envPrefix}-BYPASS] ${message}${meta ? ` ${JSON.stringify(meta)}` : ''}`);
   }
 
+  function rememberNativeClearance(url, session, strategy) {
+    if (!cfNativeSolver || !session?.cookies) return;
+    const cookies = cookieObjectMapFromCookies(session.cookies, session.solvedUrl || url);
+    if (!Object.keys(cookies).length) return;
+    try {
+      cfNativeSolver.rememberClearance(session.solvedUrl || url, {
+        cookies,
+        userAgent: session.userAgent,
+        strategy
+      });
+    } catch (_) {}
+  }
+
+  function importNativeSession(native, url) {
+    if (!native?.userAgent || !native.cookies || typeof guard.importSession !== 'function') return;
+    const cookies = cookieObjectMapFromCookies(native.cookies, native.url || url);
+    const cookieHeader = cookieHeaderFromCookieMap(cookies);
+    if (!cookieHeader) return;
+    try {
+      guard.importSession({
+        userAgent: native.userAgent,
+        cookies: cookieHeader,
+        solvedUrl: native.url || url
+      }, native.url || url);
+    } catch (_) {}
+  }
+
+  function isGuardSessionFreshForUrl(targetUrl) {
+    const session = typeof guard.getSession === 'function' ? guard.getSession() : null;
+    if (typeof guard.isSessionFreshForUrl === 'function') {
+      try { return Boolean(guard.isSessionFreshForUrl(session, targetUrl)); } catch (_) {}
+    }
+    if (typeof guard.isSessionFresh === 'function') {
+      if (session) {
+        try { if (guard.isSessionFresh(session)) return true; } catch (_) {}
+      }
+      try { return Boolean(guard.isSessionFresh(targetUrl)); } catch (_) {}
+    }
+    return false;
+  }
+
   async function hydrateCurlCffiSession(url, reason = 'curl-cffi-seed') {
     if (typeof guard.hydrateSessionForUrl !== 'function') return false;
     try {
@@ -885,7 +974,7 @@ function createCloudflareBypass(options = {}) {
     const rawResult = await runCurlCffiBypass(url, providerName, {
       ...fetchOptions,
       method,
-      body: fetchOptions.body || fetchOptions.data || null,
+      body: fetchOptions.body ?? fetchOptions.data ?? null,
       timeout: fetchOptions.curlCffiTimeoutMs || fetchOptions.timeoutMs || fetchOptions.timeout,
       headers: curlCffiSeed.headers,
       cookiesJson: curlCffiSeed.cookiesJson,
@@ -899,7 +988,7 @@ function createCloudflareBypass(options = {}) {
       referer: fetchOptions.referer || fetchOptions.headers?.Referer || fetchOptions.headers?.referer || '',
       runner: options.curlCffiRunner,
       queue: options.curlCffiQueue,
-      coalesceKey: fetchOptions.curlCffiCoalesceKey || buildCurlCffiCoalesceKey(providerName, method, url, fetchOptions.body || fetchOptions.data || ''),
+      coalesceKey: fetchOptions.curlCffiCoalesceKey || buildCurlCffiCoalesceKey(providerName, method, url, fetchOptions.body ?? fetchOptions.data ?? ''),
       envPrefix
     });
     return normalizeCurlCffiResult(rawResult, providerName, url);
@@ -917,7 +1006,7 @@ function createCloudflareBypass(options = {}) {
     const rawResult = await runScraplingBypass(url, providerName, {
       ...fetchOptions,
       method,
-      body: fetchOptions.body || fetchOptions.data || null,
+      body: fetchOptions.body ?? fetchOptions.data ?? null,
       timeout: fetchOptions.scraplingTimeoutMs || fetchOptions.timeoutMs || fetchOptions.timeout,
       headers: fetchOptions.headers || {},
       runner: options.scraplingRunner,
@@ -930,26 +1019,16 @@ function createCloudflareBypass(options = {}) {
   async function fetchHtml(url, fetchOptions = {}) {
     if (!enabled) return null;
     const isPost = Boolean(fetchOptions.isPost || fetchOptions.method === 'POST');
-    const body = fetchOptions.body || fetchOptions.data || null;
+    const body = fetchOptions.body ?? fetchOptions.data ?? null;
     const timeoutMs = fetchOptions.timeoutMs || fetchOptions.timeout || guard.directFetchTimeoutMs;
     const allowFlareSolverr = fetchOptions.allowFlareSolverr !== false;
     const ttl = fetchOptions.ttl || 10 * 60 * 1000;
 
-    // PRE-CHAIN: native CF layer. If we have a fresh clearance bundle for this
-    // host (in-memory + disk pool, 25-min TTL) we send it directly and skip
-    // every Python child process. Saves ~150-500ms per request on hits and
-    // bypasses the Scrapling queue entirely.
-    //
-    // For an IUAM math challenge we solve it in-process via vm. Turnstile
-    // pages we recognise but refuse - those still need a real browser
-    // (Scrapling/Playwright) which the existing chain provides.
-    //
-    // Only applies to GET (POST bodies aren't covered by cookie cache).
     if (!isPost && cfNativeSolver && fetchOptions.skipNativeBypass !== true) {
       try {
         const native = await cfNativeSolver.tryNativeBypass(url, {
-          userAgent: fetchOptions.userAgent || fetchOptions.headers?.['User-Agent'],
-          cookieHeader: fetchOptions.cookieHeader,
+          userAgent: fetchOptions.userAgent || getHeaderValue(fetchOptions.headers || {}, 'user-agent'),
+          cookieHeader: fetchOptions.cookieHeader || getHeaderValue(fetchOptions.headers || {}, 'cookie'),
           extraHeaders: fetchOptions.headers || {},
           timeoutMs: Math.min(timeoutMs || 6000, 8000)
         });
@@ -960,15 +1039,7 @@ function createCloudflareBypass(options = {}) {
             status: native.status,
             bytes: String(native.html || '').length
           });
-          if (native.userAgent && native.cookies && typeof guard.importSession === 'function') {
-            try {
-              guard.importSession({
-                userAgent: native.userAgent,
-                cookies: native.cookies,
-                solvedUrl: native.url || url
-              }, native.url || url);
-            } catch (_) { /* importSession is best-effort */ }
-          }
+          importNativeSession(native, url);
           return native.html;
         }
       } catch (err) {
@@ -988,17 +1059,7 @@ function createCloudflareBypass(options = {}) {
         if (session?.userAgent && session.cookies && typeof guard.importSession === 'function') {
           guard.importSession(session, session.solvedUrl || url);
         }
-        // Persist the freshly solved clearance to the native pool so the next
-        // request to this host can short-circuit via the cache hit above.
-        if (cfNativeSolver && session?.cookies) {
-          try {
-            cfNativeSolver.rememberClearance(session.solvedUrl || url, {
-              cookies: session.cookies,
-              userAgent: session.userAgent,
-              strategy: 'curl_cffi'
-            });
-          } catch (_) { /* ignore */ }
-        }
+        rememberNativeClearance(url, session, 'curl_cffi');
         if (isUsefulHtml(session?.response, session?.solutionResponseStatus, session?.responseHeaders || null)) {
           debug('curl_cffi response html used', {
             url,
@@ -1030,15 +1091,7 @@ function createCloudflareBypass(options = {}) {
         if (session?.userAgent && session.cookies && typeof guard.importSession === 'function') {
           guard.importSession(session, session.solvedUrl || url);
         }
-        if (cfNativeSolver && session?.cookies) {
-          try {
-            cfNativeSolver.rememberClearance(session.solvedUrl || url, {
-              cookies: session.cookies,
-              userAgent: session.userAgent,
-              strategy: 'scrapling'
-            });
-          } catch (_) { /* ignore */ }
-        }
+        rememberNativeClearance(url, session, 'scrapling');
         if (isUsefulHtml(session?.response, session?.solutionResponseStatus)) {
           debug('scrapling response html used', { url, bytes: String(session.response || '').length });
           return session.response;
@@ -1077,18 +1130,18 @@ function createCloudflareBypass(options = {}) {
   async function ensureReady(reason = 'request', ensureOptions = {}) {
     const targetUrl = ensureOptions.url || ensureOptions.triggerUrl || baseUrl;
     if (!targetUrl) return false;
-    if (guard.isSessionFresh?.(targetUrl) && !ensureOptions.force) return true;
+    if (isGuardSessionFreshForUrl(targetUrl) && !ensureOptions.force) return true;
 
     const html = await fetchHtml(targetUrl, {
       ...ensureOptions,
       ttl: ensureOptions.ttl || 60_000,
       reason
     });
-    if (html || guard.isSessionFresh?.(targetUrl)) return true;
+    if (html || isGuardSessionFreshForUrl(targetUrl)) return true;
 
     if (typeof guard.ensureClearance !== 'function') return false;
     const session = await guard.ensureClearance(targetUrl, ensureOptions);
-    return Boolean(session || guard.isSessionFresh?.(targetUrl));
+    return Boolean(session || isGuardSessionFreshForUrl(targetUrl));
   }
 
   function getState() {
