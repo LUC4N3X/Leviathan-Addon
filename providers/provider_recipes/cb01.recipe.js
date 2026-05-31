@@ -16,6 +16,15 @@ module.exports = webProviderRecipe({
         quality: '.quality',
         language: ''
     },
+    recovery: {
+        enabled: true,
+        triggerOn: ['selector_miss', 'layout_changed'],
+        strategy: 'anchor-candidate-scoring',
+        minScore: 0.6,
+        maxCandidates: 8,
+        allowDomains: ['same-origin'],
+        denyPatterns: ['/login', '/register', '/privacy', '/cookie', '/dmca', '/category', '/tag', '/search']
+    },
     parsing: {
         titleCleaner: 'standardSeriesTitle',
         episodePolicy: 'strict-season-episode-with-range-alias',
