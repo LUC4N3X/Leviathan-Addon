@@ -39,6 +39,7 @@ class ProviderDefinitionEngine {
             tags: recipe.tags || [],
             antiBot: recipe.antiBot || {},
             reliability: recipe.reliability || {},
+            recovery: recipe.recovery || {},
             fallback: recipe.fallback || []
         }));
     }

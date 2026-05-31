@@ -32,6 +32,15 @@ function webProviderRecipe(input = {}) {
             languagePolicy: 'ita-preferred',
             resultLimit: 40
         },
+        recovery: {
+            enabled: false,
+            triggerOn: ['selector_miss', 'layout_changed'],
+            strategy: 'anchor-candidate-scoring',
+            minScore: 0.62,
+            maxCandidates: 8,
+            allowDomains: ['same-origin'],
+            denyPatterns: []
+        },
         fallback: [
             { id: 'direct-slug', stopOnHit: true },
             { id: 'site-search', stopOnHit: true },
