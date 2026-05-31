@@ -43,6 +43,7 @@ function normalizeRecipe(rawRecipe = {}) {
         search: rawRecipe.search || {},
         selectors: rawRecipe.selectors || {},
         parsing: rawRecipe.parsing || {},
+        recovery: rawRecipe.recovery || {},
         fallback: rawRecipe.fallback || rawRecipe.fallbacks || [],
         timeouts: rawRecipe.timeouts || {},
         reliability: rawRecipe.reliability || { initial: 'good' },
@@ -60,6 +61,7 @@ function validateProviderRecipe(recipe = {}) {
     if (recipe.selectors && typeof recipe.selectors !== 'object') errors.push('selectors must be an object');
     if (recipe.headers && typeof recipe.headers !== 'object') errors.push('headers must be an object');
     if (recipe.fallback && !Array.isArray(recipe.fallback)) errors.push('fallback must be an array');
+    if (recipe.recovery && typeof recipe.recovery !== 'object') errors.push('recovery must be an object');
     return { ok: errors.length === 0, errors };
 }
 
