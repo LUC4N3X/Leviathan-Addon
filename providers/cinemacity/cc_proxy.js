@@ -7,6 +7,7 @@ const path = require('path');
 const zlib = require('zlib');
 const { getRequestOrigin, isSafeRemoteUrl } = require('../../core/utils/url');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
+const { buildForwardProxyUrl, getForwardProxyBase } = require('../../core/proxy/forward_proxy_config');
 const {
     prepareProxyTarget,
     maybeLogProxyHeaderDecision
@@ -213,6 +214,39 @@ function buildRequestHeaders(targetUrl, sourceHeaders = {}, options = {}) {
     return prepared.headers;
 }
 
+
+function getCinemaCityForwardProxyBase() {
+    try {
+        return getForwardProxyBase({ context: 'cinemacity_cc_proxy' });
+    } catch (_) {
+        return '';
+    }
+}
+
+function buildForwardHeaderParams(headers = {}) {
+    const params = {};
+    for (const [rawName, rawValue] of Object.entries(headers || {})) {
+        if (rawValue === undefined || rawValue === null || rawValue === '') continue;
+        const name = String(rawName || '').trim().toLowerCase();
+        if (!name || !/^[a-z0-9-]+$/i.test(name)) continue;
+        params[`h_${name}`] = String(rawValue);
+    }
+    return params;
+}
+
+function buildCinemaCityForwardProxyUrl(targetUrl, headers = {}) {
+    const base = getCinemaCityForwardProxyBase();
+    if (!base) return null;
+    try {
+        return buildForwardProxyUrl(targetUrl, {
+            base,
+            context: 'cinemacity_cc_proxy',
+            params: buildForwardHeaderParams(headers)
+        });
+    } catch (_) {
+        return null;
+    }
+}
 
 function isHlsUrl(targetUrl, contentType = '') {
     return /mpegurl|x-mpegurl|application\/vnd\.apple\.mpegurl/i.test(contentType || '') || /\.m3u8(?:$|[?#])/i.test(String(targetUrl || ''));
@@ -753,7 +787,8 @@ async function fetchUpstream(sourceUrl, headers, req, signal, { allowRange = tru
     if (allowRange && range && isSafeSingleRange(range)) requestHeaders.Range = resumeBootstrap?.upstreamRange || range;
     else delete requestHeaders.Range;
     maybeLogProxyHeaderDecision(prepared, sourceUrl);
-    const response = await axios.get(sourceUrl, {
+    const requestUrl = buildCinemaCityForwardProxyUrl(sourceUrl, requestHeaders) || sourceUrl;
+    const response = await axios.get(requestUrl, {
         headers: requestHeaders,
         timeout: UPSTREAM_TIMEOUT_MS,
         maxRedirects: MAX_UPSTREAM_REDIRECTS,
@@ -761,8 +796,8 @@ async function fetchUpstream(sourceUrl, headers, req, signal, { allowRange = tru
         validateStatus: () => true,
         proxy: false,
         decompress: false,
-        httpAgent: getAgentForUrl(sourceUrl),
-        httpsAgent: getAgentForUrl(sourceUrl),
+        httpAgent: getAgentForUrl(requestUrl),
+        httpsAgent: getAgentForUrl(requestUrl),
         signal
     });
     if (resumeBootstrap) response.ccRangeBootstrap = resumeBootstrap;
@@ -1118,6 +1153,10 @@ module.exports = {
     CC_STREAM_ROUTE,
     buildCinemaCityProxyUrl,
     prewarmCinemaCityPlayback,
-    handleCinemaCityProxy
+    handleCinemaCityProxy,
+    __private: {
+        buildCinemaCityForwardProxyUrl,
+        buildForwardHeaderParams
+    }
 };
 
