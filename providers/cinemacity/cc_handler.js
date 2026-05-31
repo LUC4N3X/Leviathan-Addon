@@ -110,7 +110,7 @@ const WORKER_HOST = base64Decode('Y2MubGVhbmhodTA2MTIwNi53b3JrZXJzLmRldg==');
 let sitemapCache = null;
 
 function getMappingApiUrl() {
-    return 'https://animemapping.realbestia.com';
+    return 'https://anime.questoleviatanormio.dpdns.org';
 }
 
 function normalizeConfigBoolean(value) {
