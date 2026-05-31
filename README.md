@@ -4,6 +4,8 @@
 
 <img src="https://capsule-render.vercel.app/api?type=transparent&height=128&section=header&text=LEVIATHAN&fontSize=76&fontColor=00E7FF&animation=fadeIn&fontAlignY=44&desc=Italy-First%20Aggregation%20Protocol%20for%20Stremio&descSize=17&descAlignY=76&descColor=A8BFFF" alt="Leviathan" width="100%" />
 
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0B1220,50:00E7FF,100:0B1220&height=2&section=header" width="82%" />
+
 <p align="center">
   <b>Un protocollo operativo per Stremio che unisce torrent intelligence, provider web, cloud RD/TorBox, anime mapping e output premium in una pipeline unica, più pulita e più leggibile.</b>
 </p>
@@ -50,6 +52,7 @@
 <img src="https://capsule-render.vercel.app/api?type=rect&color=0:061018,50:00E7FF,100:061018&height=2&section=footer" width="70%" />
 
 </div>
+
 ---
 
 ## ⚖️ Legal & Usage Notice
