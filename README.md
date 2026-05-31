@@ -68,6 +68,7 @@
   <img src="https://capsule-render.vercel.app/api?type=rect&color=0:0B1220,50:00E7FF,100:0B1220&height=2&section=footer" width="70%" />
 
 </div>
+
 ---
 
 ## ⚖️ Legal & Usage Notice
