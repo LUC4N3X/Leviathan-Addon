@@ -4680,22 +4680,113 @@ body { background: transparent !important; }
     </div>
 
     <script>
-        function isMobileDevice() { return (typeof window.orientation !== "undefined") || (navigator.userAgent.indexOf('IEMobile') !== -1) || window.innerWidth < 768; }
-        if (isMobileDevice()) {
-            var css = '.ocean-bg, .particles, .main-wrapper, .modal-backdrop { display: none !important; }',
-                head = document.head || document.getElementsByTagName('head')[0], style = document.createElement('style');
-            head.appendChild(style); style.type = 'text/css'; style.appendChild(document.createTextNode(css));
-            var version = new Date().getTime();
-            var script = document.createElement('script'); script.src = '/smartphone.js?v=' + version;
-            script.onload = function() { if(typeof initMobileInterface === "function") initMobileInterface(); };
-            script.onerror = function() {
-                var backupScript = document.createElement('script'); backupScript.src = '../smartphone.js?v=' + version;
-                backupScript.onload = function() { if(typeof initMobileInterface === "function") initMobileInterface(); };
-                document.body.appendChild(backupScript);
-            };
-            document.body.appendChild(script);
-            window.stopDesktopLogic = true;
+        function isMobileDevice() {
+            return (typeof window.orientation !== "undefined") ||
+                (navigator.userAgent.indexOf('IEMobile') !== -1) ||
+                window.innerWidth < 768;
         }
+
+        (function bootMobileConfigurator() {
+            if (!isMobileDevice()) return;
+
+            window.stopDesktopLogic = true;
+            window.__leviathanMobileBooting = true;
+
+            var head = document.head || document.getElementsByTagName('head')[0];
+            var bootStyle = document.createElement('style');
+            bootStyle.id = 'leviathan-mobile-boot-style';
+            bootStyle.type = 'text/css';
+            bootStyle.appendChild(document.createTextNode(
+                '.ocean-bg,.particles,.main-wrapper,.modal-backdrop{display:none!important}' +
+                'body{margin:0;background:radial-gradient(ellipse at 50% 0%,rgba(0,242,255,.18),transparent 52%),linear-gradient(180deg,#031a2e 0%,#020914 58%,#00030a 100%);min-height:100dvh;overflow:hidden}' +
+                '#leviathan-mobile-boot{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:28px;text-align:center;color:#eaffff;font-family:Arial,sans-serif;background:radial-gradient(circle at 50% 16%,rgba(0,242,255,.16),transparent 46%),linear-gradient(180deg,rgba(2,12,28,.35),rgba(0,0,0,.18))}' +
+                '#leviathan-mobile-boot .lm-card{width:min(360px,92vw);padding:24px 18px;border:1px solid rgba(0,242,255,.24);border-radius:24px;background:rgba(2,10,24,.62);box-shadow:0 22px 70px rgba(0,0,0,.38),inset 0 1px 0 rgba(255,255,255,.08);backdrop-filter:blur(16px)}' +
+                '#leviathan-mobile-boot .lm-title{font-size:22px;font-weight:900;letter-spacing:4px;margin-bottom:8px;color:#fff;text-shadow:0 0 20px rgba(0,242,255,.45)}' +
+                '#leviathan-mobile-boot .lm-sub{font-size:13px;line-height:1.45;color:rgba(216,246,255,.78)}' +
+                '#leviathan-mobile-boot .lm-loader{width:42px;height:42px;border-radius:50%;margin:0 auto 16px;border:2px solid rgba(0,242,255,.16);border-top-color:#00f2ff;animation:lmspin .9s linear infinite}' +
+                '@keyframes lmspin{to{transform:rotate(360deg)}}'
+            ));
+            head.appendChild(bootStyle);
+
+            function ensureBootScreen() {
+                if (document.getElementById('leviathan-mobile-boot')) return;
+                var boot = document.createElement('div');
+                boot.id = 'leviathan-mobile-boot';
+                boot.innerHTML = '<div class="lm-card"><div class="lm-loader"></div><div class="lm-title">LEVIATHAN</div><div class="lm-sub">Caricamento interfaccia mobile...</div></div>';
+                document.body.appendChild(boot);
+            }
+
+            function cleanupBootScreen() {
+                var boot = document.getElementById('leviathan-mobile-boot');
+                if (boot) boot.remove();
+                var style = document.getElementById('leviathan-mobile-boot-style');
+                if (style && document.getElementById('app-container')) style.remove();
+                window.__leviathanMobileBooting = false;
+            }
+
+            function restoreDesktopFallback() {
+                window.__leviathanMobileBooting = false;
+                window.stopDesktopLogic = false;
+                var boot = document.getElementById('leviathan-mobile-boot');
+                if (boot) boot.remove();
+                var style = document.getElementById('leviathan-mobile-boot-style');
+                if (style) style.remove();
+                document.querySelectorAll('.ocean-bg,.particles,.main-wrapper,.modal-backdrop').forEach(function(el) {
+                    el.style.removeProperty('display');
+                });
+            }
+
+            function startMobileInterface() {
+                try {
+                    if (window.__leviathanMobileRuntime && typeof window.__leviathanMobileRuntime.start === 'function') {
+                        window.__leviathanMobileRuntime.start();
+                    } else if (typeof initMobileInterface === 'function') {
+                        initMobileInterface();
+                    }
+                    if (document.getElementById('app-container')) cleanupBootScreen();
+                    setTimeout(function() {
+                        if (document.getElementById('app-container')) cleanupBootScreen();
+                    }, 120);
+                } catch (error) {
+                    console.error('[Leviathan Mobile] bootstrap failed:', error);
+                    restoreDesktopFallback();
+                }
+            }
+
+            function loadMobileScript(urls, index) {
+                if (index >= urls.length) {
+                    restoreDesktopFallback();
+                    return;
+                }
+                var script = document.createElement('script');
+                script.id = 'leviathan-smartphone-loader';
+                script.src = urls[index];
+                script.async = false;
+                script.onload = startMobileInterface;
+                script.onerror = function() {
+                    script.remove();
+                    loadMobileScript(urls, index + 1);
+                };
+                document.body.appendChild(script);
+            }
+
+            var start = function() {
+                ensureBootScreen();
+                var version = String(Date.now());
+                var urls = [
+                    '/smartphone.js?v=' + version,
+                    './smartphone.js?v=' + version,
+                    '../smartphone.js?v=' + version
+                ];
+                loadMobileScript(urls.filter(function(value, index, arr) { return arr.indexOf(value) === index; }), 0);
+                setTimeout(function() {
+                    if (!document.getElementById('app-container')) restoreDesktopFallback();
+                }, 4500);
+            };
+
+            if (document.body) start();
+            else document.addEventListener('DOMContentLoaded', start, { once: true });
+        })();
 
         function createParticles() {}
         function createLogoParticles() {
@@ -6478,6 +6569,8 @@ body { background: transparent !important; }
     </script>
 
 <script id="leviathan-desktop-effects">
+if (!window.stopDesktopLogic && !window.__leviathanMobileBooting) {
+(function(){
 
 
 const LEVIATHAN_SEA_SHADER = {
@@ -6935,6 +7028,8 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', __leviathanInit);
 } else {
     __leviathanInit();
+}
+})();
 }
 </script>
 </body>
