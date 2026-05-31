@@ -13,28 +13,25 @@ let prewarmCinemaCityPlayback = null;
 try {
     ({ buildCinemaCityProxyUrl, prewarmCinemaCityPlayback } = require('./cc_proxy'));
 } catch (_) {
-    // Unit-test/dev environments may load this provider without optional runtime deps.
+   
 }
 
 let ccMemory = null;
 try {
     ccMemory = require('./cc_memory');
 } catch (_) {
-    // Resolution memory is optional: provider works fully without it.
+   
 }
 
 let runCurlCffiBypass = null;
 try {
     ({ runCurlCffiBypass } = require('../utils/cloudflare_bypass'));
 } catch (_) {
-    // The shared Cloudflare bypass infra (Python curl_cffi) is optional. When it is
-    // absent (no axios / no curl_cffi installed) the worker stays the only fetch path.
+  
 }
 
-// Test seam: lets unit tests inject a fake curl_cffi runner without the Python deps.
 let curlCffiRunnerOverride = null;
 
-// Defensive accessors: a failure in the learning layer must never affect resolution.
 function memRecall(id, type) {
     try {
         return ccMemory ? ccMemory.recall(id, type) : null;
@@ -251,11 +248,7 @@ async function fetchViaCurlCffi(url, options = {}) {
     return String(result.html);
 }
 
-// Worker-first fetch with a curl_cffi safety net. The worker is tried first and,
-// when it is healthy, is returned without ever spawning Python. curl_cffi is only
-// used when the worker throws or returns a blocked/empty page. If curl_cffi also
-// fails we hand back whatever the worker gave us (or rethrow) so existing
-// blocked/empty handling and error messages are preserved exactly.
+
 async function fetchCinemaCityHtml(url, options = {}) {
     let workerHtml = null;
     let workerError = null;
@@ -429,8 +422,7 @@ async function fetchSitemapEntries(providerContext = null) {
         if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`);
         xml = await response.text();
     } catch (workerError) {
-        // Last resort when the worker is fully unavailable: pull the raw sitemap
-        // straight from the origin via curl_cffi (no pagination, parsed as-is).
+
         try {
             xml = await fetchViaCurlCffi(SITEMAP_URL, { timeout: Math.max(FETCH_TIMEOUT, 20000) });
             console.log('[CinemaCity] curl_cffi fallback served sitemap');
@@ -1102,8 +1094,6 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
 
         if (html.length < 500 || html.includes('Just a moment') || (html.includes('admin') && html.includes('Unlimited'))) {
             console.warn(`[CinemaCity] Page blocked or empty (${html.length} chars)`);
-            // A remembered URL that no longer serves a page is decayed and, after a
-            // couple of consecutive failures, evicted so the next lookup re-resolves.
             if (fromMemory) memPenalize(imdbId, providerType);
             return [];
         }
@@ -1146,7 +1136,6 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
         const streamUrl = resolveUrl(movieUrl, selectedUrl);
         console.log(`[CinemaCity] CCCDN stream: ${streamUrl}`);
 
-        // Positive feedback: this resolution produced a playable stream.
         memReinforce(imdbId, providerType);
 
         return [{
