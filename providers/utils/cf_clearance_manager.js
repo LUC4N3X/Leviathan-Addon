@@ -6,19 +6,16 @@ let setCookieParser = null;
 try {
   setCookieParser = require('set-cookie-parser');
 } catch (_) {
-  // Optional at runtime during tests/dev before npm install. Fallback parsers below stay active.
 }
 
 let toughCookie = null;
 try {
   toughCookie = require('tough-cookie');
 } catch (_) {
-  // Optional guard for old installs: string-cookie fallback below stays active.
 }
 
 const DEFAULT_FLARESOLVERR_URL = null;
 const DEFAULT_ENDPOINT_FAILURE_COOLDOWN_MS = 45_000;
-
 
 function normalizeBaseUrl(value) {
   try {
@@ -76,20 +73,21 @@ function normalizeSetCookieHeaders(value) {
   return [String(value)].filter(Boolean);
 }
 
-
-
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
 function isFlareBrowserCrash(error) {
-  // FlareSolverr returns 500 with these messages when the Chromium tab dies
-  // mid-solve. Retrying same endpoint immediately just spawns another doomed
-  // tab; treat these as endpoint-down so the cooldown kicks in.
   const message = String(error?.message || error?.response?.data?.message || '').toLowerCase();
-  const body = String(error?.response?.data || '').toLowerCase();
+  const body = stringifyErrorPayload(error?.response?.data).toLowerCase();
   const haystack = `${message} ${body}`;
   return /tab crashed|target closed|session destroyed|browser has disconnected|chrome\s+crashed|context\s+disposed|protocol error/i.test(haystack);
+}
+
+function stringifyErrorPayload(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value); } catch (_) { return String(value); }
 }
 
 function isRetryableFlareError(error) {
@@ -344,6 +342,19 @@ function isCookieExpired(cookie) {
     if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) return true;
   }
   return false;
+}
+
+function hasCookieInput(value) {
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === 'object') return true;
+  return String(value || '').trim() !== '';
+}
+
+function firstCookieInput(...values) {
+  for (const value of values) {
+    if (hasCookieInput(value)) return value;
+  }
+  return '';
 }
 
 function cookieHeaderToObjects(cookieHeader, url = null) {
@@ -631,11 +642,6 @@ function createCfClearanceManager(options = {}) {
         return response;
       } catch (error) {
         lastError = error;
-        // Browser-crash style failures from FlareSolverr (tab crashed, Target
-        // closed, ...) cannot be fixed by retrying the same endpoint
-        // immediately - the Chromium worker pool is stuck. Trip the per-
-        // endpoint cooldown so the next attempt picks a different endpoint
-        // (or waits before re-trying).
         if (isFlareBrowserCrash(error)) {
           markEndpointFailure(selectedEndpoint);
           logger.warn('flaresolverr browser crash; endpoint cooldown', {
@@ -715,7 +721,6 @@ function createCfClearanceManager(options = {}) {
     }
   }
 
-
   function formatAbortReason(reason) {
     if (reason == null) return null;
     if (typeof reason === 'string') return reason;
@@ -779,7 +784,8 @@ function createCfClearanceManager(options = {}) {
       }, maxTimeout + 8000);
       if (hardTimer?.unref) hardTimer.unref();
 
-      const cookieObjects = cookieHeaderToObjects(meta.cookies || meta.cookieHeader || '');
+      const inputCookies = firstCookieInput(meta.cookies, meta.cookieHeader);
+      const cookieObjects = cookieHeaderToObjects(inputCookies);
       const candidates = getEndpointCandidates(Boolean(meta.force));
       let lastError = null;
 
@@ -828,14 +834,14 @@ function createCfClearanceManager(options = {}) {
             }
 
             const solution = payload.solution || {};
-            const rawSolutionCookies = solution.cookies || payload.cookies || '';
+            const rawSolutionCookies = firstCookieInput(solution.cookies, payload.cookies);
             const userAgent = solution.userAgent || payload.userAgent || meta.userAgent || getFallbackUserAgent();
             const solvedUrl = solution.url || clearanceUrl;
             const solutionStatus = solution.status || response.status;
             const solutionBody = solution.response || payload.response || '';
             const usefulSolutionHtml = isUsefulSolutionHtml(solutionBody, solutionStatus);
             const cookieState = createCookieStateForUrl(solvedUrl || clearanceUrl, rawSolutionCookies, {
-              cookies: meta.cookies || meta.cookieHeader || '',
+              cookies: inputCookies,
               userAgent,
               url: normalizeBaseUrl(solvedUrl) || normalizeBaseUrl(clearanceUrl) || null
             });
