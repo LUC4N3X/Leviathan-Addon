@@ -8,6 +8,7 @@ const { createMediaflowGateway, getMediaflowBase } = require('../../core/proxy/m
 const { isUprotUrl, resolveUprotToMaxstream } = require('../extractors/hosters/uprot');
 const { extractMaxstream } = require('../extractors/hosters/maxstream');
 const { extractMixdrop } = require('../extractors/hosters/mixdrop');
+const { extractTurbovid, isTurbovidUrl: isTurbovidHosterUrl, normalizeTurbovidUrl } = require('../extractors/hosters/turbovid');
 const {
     buildProviderHtmlHeaders,
     createProviderCache,
@@ -122,6 +123,18 @@ function getDeltabitMfpHost() {
 
 function getDeltabitMfpPath() {
     return String(process.env.EUROSTREAMING_DELTABIT_MFP_PATH || process.env.ES_DELTABIT_MFP_PATH || process.env.MEDIAFLOW_EXTRACTOR_VIDEO_PATH || '/extractor/video').trim() || '/extractor/video';
+}
+
+function getTurbovidMfpHost() {
+    return String(process.env.EUROSTREAMING_TURBOVID_MFP_HOST || process.env.ES_TURBOVID_MFP_HOST || 'TurboVidPlay').trim() || 'TurboVidPlay';
+}
+
+function getTurbovidMfpPath() {
+    return String(process.env.EUROSTREAMING_TURBOVID_MFP_PATH || process.env.ES_TURBOVID_MFP_PATH || process.env.MEDIAFLOW_TURBOVID_EXTRACTOR_PATH || '/extractor/video.m3u8').trim() || '/extractor/video.m3u8';
+}
+
+function getTurbovidRedirectStream() {
+    return envFlag('EUROSTREAMING_TURBOVID_REDIRECT_STREAM', true);
 }
 
 function getMaxstreamMfpPath() {
@@ -276,7 +289,7 @@ function extractEurostreamingEpisodeBlocks(description, season, episode) {
 
         const html = segment.replace(marker, '').replace(/^\s*[\-–—:).]+\s*/, '').trim() || segment;
 
-        if (!extractAnchors(html).some((anchor) => /delta\s*bit|mix\s*drop|max\s*stream|uprot|adelta|amix|amax/i.test(`${anchor.label} ${anchor.href}`))) {
+        if (!extractAnchors(html).some(isKnownEurostreamingHostAnchor)) {
             if (!markerPatterns.slice(0, 3).some((pattern) => new RegExp(pattern, 'i').test(segment)) && !/x|episodio|episode|ep\.?/i.test(segment)) continue;
         }
         blocks.push({
@@ -287,7 +300,7 @@ function extractEurostreamingEpisodeBlocks(description, season, episode) {
 
     if (!blocks.length) {
         const anchors = extractAnchors(description);
-        const hostAnchors = anchors.filter((anchor) => /delta\s*bit|mix\s*drop|max\s*stream|uprot|adelta|amix|amax/i.test(`${anchor.label} ${anchor.href}`));
+        const hostAnchors = anchors.filter(isKnownEurostreamingHostAnchor);
         if (hostAnchors.length && !anyEpisodeRe.test(decodeHtml(description))) {
             blocks.push({ html: description, language: detectEpisodeLanguage(description, 0, '') });
         }
@@ -311,10 +324,20 @@ function findFirstUprotAnchor(anchors = []) {
     return anchors.find((anchor) => isUprotUrl(anchor?.href)) || null;
 }
 
+function isKnownEurostreamingHostAnchor(anchor = {}) {
+    const haystack = `${anchor.label || ''} ${anchor.href || ''}`;
+    return /delta\s*bit|mix\s*drop|max\s*stream|uprot|adelta|amix|amax|turbo\s*vid(?:eo|play)?|turbovid|aturbo|turboviplay|emturbovid|tuborstb|javggvideo|stbturbo|turbovidhls/i.test(haystack)
+        || isTurbovidLikeUrl(anchor.href)
+        || isDeltabitLikeUrl(anchor.href)
+        || isMixdropUrl(anchor.href)
+        || isMaxstreamLikeUrl(anchor.href);
+}
+
 function pickHostLinks(blockHtml) {
     const anchors = extractAnchors(blockHtml);
     const deltabitLinks = [];
     const mixdropLinks = [];
+    const turbovidLinks = [];
     const maxstreamLinks = [];
     const seen = new Set();
     const companionUprot = findFirstUprotAnchor(anchors);
@@ -328,10 +351,19 @@ function pickHostLinks(blockHtml) {
     for (const anchor of anchors) {
         const href = anchor.href;
         const label = anchor.label;
-        const labelSaysDeltabit = /delta\s*bit/i.test(label) || /turbovid/i.test(label);
+        const labelSaysDeltabit = /delta\s*bit/i.test(label);
+        const labelSaysTurbovid = /turbo\s*vid(?:eo|play)?|turbovid/i.test(label);
         const looksLikeDeltabit = labelSaysDeltabit || /\/adelta\//i.test(href) || /\/delta\//i.test(href) || isDeltabitLikeUrl(href);
+        const looksLikeTurbovid = labelSaysTurbovid || /\/(?:a)?turbo(?:vid)?\//i.test(href) || isTurbovidLikeUrl(href);
         const looksLikeMixdrop = /mix\s*drop/i.test(label) || /\/amix\//i.test(href) || /\/mix\//i.test(href) || /mixdrop|m1xdrop|mxcontent|mixdrp/i.test(href);
         const looksLikeMaxstream = /max\s*stream|uprot/i.test(label) || /\/amax\//i.test(href) || /uprot\.net|maxstream\.video|stayonline\.pro/i.test(href);
+
+        if (looksLikeTurbovid) {
+            if (labelSaysTurbovid ? /^https?:\/\//i.test(href) : (isTurbovidLikeUrl(href) || REDIRECTOR_RE.test(href))) {
+                pushLink(turbovidLinks, { host: 'turbovid', label: 'TurboVid', href });
+            }
+            continue;
+        }
 
         if (looksLikeDeltabit) {
 
@@ -359,16 +391,17 @@ function pickHostLinks(blockHtml) {
         }
     }
 
-    return [...deltabitLinks, ...mixdropLinks, ...maxstreamLinks];
+    return [...deltabitLinks, ...turbovidLinks, ...mixdropLinks, ...maxstreamLinks];
 }
 
 const CLICKA_RE = /clicka\./i;
 const SAFEGO_RE = /safego\./i;
 const REDIRECTOR_RE = /(?:safego|clicka)\./i;
 const MIXDROP_URL_RE = /https?:\/\/(?:www\.)?(?:mixdrop|m1xdrop|mxcontent|mixdrp)[^"'<>\s\\]+/i;
-const DELTABIT_URL_RE = /https?:\/\/(?:www\.)?(?:deltabit\.[a-z.]+|loadm\.cam|turbovid\.[a-z.]+)[^"'<>\s\\]+/i;
+const TURBOVID_URL_RE = /https?:\/\/(?:www\.)?(?:turbovid\.me|turboviplay\.com|emturbovid\.com|tuborstb\.co|javggvideo\.xyz|stbturbo\.xyz|turbovidhls\.com)[^"'<>\s\\]+/i;
+const DELTABIT_URL_RE = /https?:\/\/(?:www\.)?(?:deltabit\.[a-z.]+|loadm\.cam)[^"'<>\s\\]+/i;
 const MAXSTREAM_URL_RE = /https?:\/\/(?:www\.)?(?:uprot\.net|maxstream\.video|stayonline\.pro|maxstream)[^"'<>\s\\]+/i;
-const HOSTER_URL_RE = /https?:\/\/(?:www\.)?(?:mixdrop|m1xdrop|mxcontent|mixdrp|deltabit\.[a-z.]+|loadm\.cam|turbovid\.[a-z.]+|uprot\.net|maxstream\.video|stayonline\.pro|maxstream)[^"'<>\s\\]+/i;
+const HOSTER_URL_RE = /https?:\/\/(?:www\.)?(?:mixdrop|m1xdrop|mxcontent|mixdrp|turbovid\.me|turboviplay\.com|emturbovid\.com|tuborstb\.co|javggvideo\.xyz|stbturbo\.xyz|turbovidhls\.com|deltabit\.[a-z.]+|loadm\.cam|uprot\.net|maxstream\.video|stayonline\.pro|maxstream)[^"'<>\s\\]+/i;
 const DIRECT_MEDIA_URL_RE = /https?:\/\/[^"'<>\s\\]+\.(?:m3u8|mp4|mkv|webm)(?:\?[^"'<>\s\\]*)?/i;
 const REDIRECTOR_URL_RE = /https?:\/\/(?:www\.)?(?:safego|clicka)\.[^"'<>\s\\]+/i;
 const STATIC_ASSET_RE = /(?:^|\/)(?:assets?|css|fonts?|images?|img|js|scripts?|static)\//i;
@@ -386,6 +419,10 @@ function isStaticAssetUrl(value) {
 
 function isMixdropUrl(value) {
     return MIXDROP_URL_RE.test(String(value || ''));
+}
+
+function isTurbovidLikeUrl(value) {
+    return isTurbovidHosterUrl(value) || TURBOVID_URL_RE.test(String(value || ''));
 }
 
 function normalizeMixdropForExtractor(value) {
@@ -1570,6 +1607,7 @@ function getHostResolveTimeoutMs(host) {
     if (host === 'deltabit') return envInt('ES_DELTABIT_HOST_TIMEOUT_MS', 10000, 1000, 20000);
     if (host === 'maxstream') return envInt('ES_MAXSTREAM_HOST_TIMEOUT_MS', 15000, 1000, 30000);
     if (host === 'mixdrop') return envInt('ES_MIXDROP_HOST_TIMEOUT_MS', 4500, 1000, 15000);
+    if (host === 'turbovid') return envInt('ES_TURBOVID_HOST_TIMEOUT_MS', 6500, 1000, 18000);
     return envInt('ES_HOST_TIMEOUT_MS', 5000, 1000, 20000);
 }
 
@@ -1582,6 +1620,7 @@ function getDeltabitMaxRetries(options = {}) {
 function streamPriority(label) {
     if (/delta/i.test(label)) return 1;
     if (/mix/i.test(label)) return 2;
+    if (/turbo/i.test(label)) return 2;
     if (/max/i.test(label)) return 3;
     return 9;
 }
@@ -1596,6 +1635,11 @@ function extractorHeadersFor(targetUrl, kind = '') {
     if (/mix/i.test(kind)) {
         headers.Referer = origin ? `${origin}/` : 'https://mixdrop.vip/';
         headers.Origin = origin || 'https://mixdrop.vip';
+        return headers;
+    }
+    if (/turbo/i.test(kind)) {
+        headers.Referer = origin ? `${origin}/` : 'https://turbovid.me/';
+        headers.Origin = origin || 'https://turbovid.me';
         return headers;
     }
     if (/max|uprot/i.test(kind)) {
@@ -2014,6 +2058,83 @@ async function buildHostStream(link, context) {
                 headers: extractorHeadersFor(normalizedMixdrop, 'mixdrop')
             },
             streamKind: 'video'
+        });
+    }
+
+    if (link.host === 'turbovid') {
+        let targetUrl = normalizeRemoteUrl(link.href);
+        if (targetUrl && !isTurbovidLikeUrl(targetUrl) && REDIRECTOR_RE.test(targetUrl)) {
+            targetUrl = await resolveRedirectLinkCached(client, targetUrl, options?.baseUrl || getBaseUrl(), options);
+        }
+        if (!targetUrl || !isTurbovidLikeUrl(targetUrl)) return null;
+
+        const normalizedTurbovid = normalizeTurbovidUrl(targetUrl) || targetUrl;
+        if (normalizedTurbovid !== targetUrl) {
+            esDebug('info', 'turbovid canonicalized for local extractor', { fromPath: safePath(targetUrl), toPath: safePath(normalizedTurbovid), host: safeHost(normalizedTurbovid) });
+        }
+
+        if (getMediaflowBase(config) && envFlag('EUROSTREAMING_TURBOVID_LOCAL_PROXY_FIRST', true)) {
+            try {
+                const extracted = await withTimeout(
+                    extractTurbovid(normalizedTurbovid, {
+                        ...options,
+                        client,
+                        userAgent: SAFEGO_FIREFOX_UA,
+                        requestReferer: options?.baseUrl || getBaseUrl(),
+                        referer: options?.baseUrl || getBaseUrl()
+                    }),
+                    envInt('ES_TURBOVID_LOCAL_TIMEOUT_MS', 4500, 800, 12000),
+                    'Eurostreaming TurboVid local'
+                );
+                if (extracted?.url && isProbablyPlayableMediaUrl(extracted.url)) {
+                    const isHls = isHlsStreamUrl(extracted.url);
+                    const proxied = buildMfpProxyUrl(config, extracted.url, extracted.headers || extractorHeadersFor(extracted.sourceUrl || normalizedTurbovid, 'turbovid'), { isHls });
+                    if (proxied && proxied !== extracted.url) {
+                        esDebug('info', 'turbovid source proxied via MFP/Kraken', {
+                            sourceHost: safeHost(extracted.url),
+                            sourcePath: safePath(extracted.url),
+                            proxyPath: safePath(proxied),
+                            isHls,
+                            hasHeaders: Boolean(extracted.headers)
+                        });
+                        return buildDirectExtractorStream({
+                            targetUrl: proxied,
+                            label: 'TurboVid',
+                            title,
+                            language,
+                            headers: null,
+                            mediaflowUrl: getMediaflowBase(config),
+                            via: isHls ? 'turbovid-local-mfp-hls' : 'turbovid-local-mfp-stream'
+                        });
+                    }
+                }
+            } catch (error) {
+                esDebug('warn', 'turbovid local proxy failed; using MFP extractor fallback', { error: error?.message || String(error) });
+            }
+        }
+
+        const turbovidKrakenHost = getTurbovidMfpHost();
+        const turbovidKrakenPath = getTurbovidMfpPath();
+        esDebug('info', 'turbovid sent to MFP/Kraken extractor', {
+            hrefHost: safeHost(link.href),
+            targetHost: safeHost(normalizedTurbovid),
+            targetPath: safePath(normalizedTurbovid),
+            host: turbovidKrakenHost,
+            path: turbovidKrakenPath
+        });
+        return buildMfpExtractorStream({
+            config,
+            targetUrl: normalizedTurbovid,
+            host: turbovidKrakenHost,
+            label: 'TurboVid',
+            title,
+            language,
+            mediaflowOptions: {
+                extractorPath: turbovidKrakenPath,
+                redirectStream: getTurbovidRedirectStream(),
+                headers: extractorHeadersFor(normalizedTurbovid, 'turbovid')
+            },
+            streamKind: 'hls'
         });
     }
 
@@ -2571,6 +2692,7 @@ module.exports = {
         normalizeTitle,
         titleMatches,
         isDeltabitLikeUrl,
+        isTurbovidLikeUrl,
         SAFEGO_CAPTCHA_DEFAULTS,
         validateSafegoCaptchaDigits,
         extractDeltabitSource,

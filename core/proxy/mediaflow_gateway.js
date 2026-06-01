@@ -100,6 +100,10 @@ function defaultExtractorPath(host = '', options = {}) {
         return normalizeExtractorPath(process.env.MEDIAFLOW_MAXSTREAM_EXTRACTOR_PATH || '/extractor/video.m3u8');
     }
 
+    if (/turbovid|turbovideo|turbovidplay|turboviplay/i.test(hostName)) {
+        return normalizeExtractorPath(process.env.MEDIAFLOW_TURBOVID_EXTRACTOR_PATH || '/extractor/video.m3u8');
+    }
+
     if (/^(?:city|cccdn|cinemacity)$/i.test(hostName) || /cinemacity|cccdn|\bcity\b/i.test(hostName)) {
         return normalizeExtractorPath(
             process.env.MEDIAFLOW_CCCDN_EXTRACTOR_PATH

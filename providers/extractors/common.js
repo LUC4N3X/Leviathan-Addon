@@ -253,10 +253,10 @@ function getMediaflowExtractorPath(host = '', options = {}) {
 
     const hostName = String(host || '').trim().toLowerCase();
 
-    // MaxStream/UPROT needs the HLS-looking extractor URL for Stremio/VLC.
-    // Do not downgrade it to the generic extractor endpoint, or playback can
+    // MaxStream/UPROT and TurboVid/TurboVidPlay need the HLS-looking extractor URL for Stremio/VLC.
+    // Do not downgrade them to the generic extractor endpoint, or playback can
     // remain stuck on the external-player loading screen.
-    if (/maxstream|uprot/i.test(hostName)) {
+    if (/maxstream|uprot|turbovid|turbovideo|turbovidplay|turboviplay/i.test(hostName)) {
         return normalizeExtractorPath('/extractor/video.m3u8');
     }
 
