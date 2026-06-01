@@ -10,77 +10,100 @@ const {
     unpackDeanEdwards
 } = require('./shared');
 
-const STREAMHG_REGEX = /dhcplay|vibuxer/i;
+const STREAMHG_REGEX = /(?:^|\/|\.)(?:dhcplay|vibuxer)\./i;
 
-// Prefer hls2 > hls4 > generic file/m3u8 — mirrors easystreams extraction order
 const SOURCE_PATTERNS = [
+    // StreamHG-specific: hls2 > hls4 priority
     /"hls2"\s*:\s*"([^"]+)"/i,
-    /\bhls2\s*[:=,]\s*["']([^"']+)["']/i,
+    /\bhls2\s*[:=]\s*["']([^"']+)["']/i,
     /"hls4"\s*:\s*"([^"]+)"/i,
-    /\bhls4\s*[:=,]\s*["']([^"']+)["']/i,
-    /file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i,
-    /["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i
+    /\bhls4\s*[:=]\s*["']([^"']+)["']/i,
+    // Common player patterns
+    /sources\s*:\s*\[\s*\{[\s\S]{0,500}?file\s*:\s*["']([^"']+)["']/i,
+    /["']?file["']?\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/i,
+    /["']?src["']?\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/i,
+    /["']?hls["']?\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/i,
+    /<source[^>]+src=["']([^"']+\.m3u8[^"']*)["']/i,
+    /(https?:\\?\/\\?\/[^"'<>\s]+\.m3u8[^"'<>\s]*)/i
 ];
 
 function isStreamhgUrl(url) {
     return STREAMHG_REGEX.test(String(url || ''));
 }
 
-function extractEmbedId(url) {
-    try {
-        const parts = new URL(url).pathname.split('/').filter(Boolean);
-        return parts[parts.length - 1] || null;
-    } catch (_) {
-        return null;
-    }
-}
-
-function buildCandidateUrls(url) {
+function buildStreamhgCandidates(url) {
     let normalized = String(url || '').trim();
     if (normalized.startsWith('//')) normalized = `https:${normalized}`;
 
-    const candidates = [normalized];
-    const id = extractEmbedId(normalized);
-    if (id) {
-        if (normalized.includes('dhcplay')) {
-            candidates.push(`https://vibuxer.com/e/${id}`);
-        } else if (normalized.includes('vibuxer')) {
-            candidates.push(`https://dhcplay.com/e/${id}`);
-        }
+    let parsed;
+    try {
+        parsed = new URL(normalized);
+    } catch (_) {
+        return [normalized];
     }
-    return candidates;
+
+    const host = parsed.hostname;
+    const id = parsed.pathname.split('/').filter(Boolean).pop();
+    if (!id) return [normalized];
+
+    const mirrorHost = /dhcplay/i.test(host) ? 'vibuxer.com' : 'dhcplay.com';
+    const candidates = [normalized];
+
+    // Try embed path variants on same domain
+    for (const prefix of ['/e/', '/embed/', '/v/']) {
+        const variant = new URL(parsed.toString());
+        variant.pathname = `${prefix}${id}`;
+        variant.search = '';
+        variant.hash = '';
+        candidates.push(variant.toString());
+    }
+
+    // Try same variants on mirror domain
+    for (const prefix of ['/e/', '/embed/', '/v/']) {
+        candidates.push(`https://${mirrorHost}${prefix}${id}`);
+    }
+
+    return [...new Set(candidates)];
+}
+
+function extractStreamUrl(html, playerUrl) {
+    const text = String(html || '');
+    const unpacked = unpackDeanEdwards(text);
+    const searchSpace = [unpacked, text]
+        .filter(Boolean)
+        .join('\n');
+    return extractMediaUrl(searchSpace, SOURCE_PATTERNS, playerUrl);
 }
 
 async function extractStreamhg(url, options = {}) {
     const client = options?.client;
     if (!client || typeof client.get !== 'function') return null;
 
-    const userAgent = options?.userAgent || DEFAULT_USER_AGENT;
-    const candidates = buildCandidateUrls(url);
+    const candidates = buildStreamhgCandidates(url);
+    if (!candidates.length) return null;
 
-    for (const candidate of candidates) {
+    for (const playerUrl of candidates) {
         try {
-            const origin = new URL(candidate).origin;
-            const headers = buildRequestHeaders(candidate, {
-                userAgent,
+            const origin = new URL(playerUrl).origin;
+            const headers = buildRequestHeaders(playerUrl, {
+                userAgent: options?.userAgent || DEFAULT_USER_AGENT,
                 referer: options?.requestReferer || options?.referer || `${origin}/`
             });
 
-            const { status, text } = await fetchText(client, candidate, {
+            const { status, text } = await fetchText(client, playerUrl, {
                 headers,
                 timeout: Number(options?.timeout || 12000)
             });
 
             if (status < 200 || status >= 400 || !text) continue;
 
-            const unpacked = unpackDeanEdwards(text) || '';
-            const streamUrl = extractMediaUrl(`${text}\n${unpacked}`, SOURCE_PATTERNS, candidate);
+            const streamUrl = extractStreamUrl(text, playerUrl);
             if (!streamUrl) continue;
 
             const playbackHeaders = {
                 Referer: `${origin}/`,
                 Origin: origin,
-                'User-Agent': userAgent
+                'User-Agent': headers['User-Agent']
             };
 
             const quality = await probeStreamQuality(client, streamUrl, {
@@ -101,6 +124,9 @@ async function extractStreamhg(url, options = {}) {
         }
     }
 
+    if (process.env.STREAMHG_DEBUG === '1') {
+        console.warn(`[StreamHG] extract empty url=${url} tried=${candidates.length}`);
+    }
     return null;
 }
 
