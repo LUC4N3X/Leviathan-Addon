@@ -3,6 +3,10 @@ const http = require('http');
 const https = require('https');
 const { getRequestOrigin, isSafeRemoteUrl } = require('../../core/utils/url');
 const {
+    buildForwardProxyUrl: buildSharedForwardProxyUrl,
+    normalizeForwardProxyBase: normalizeSharedForwardProxyBase
+} = require('../../core/proxy/forward_proxy_config');
+const {
     resolveTransitKey,
     issueHlsTransitKey,
     normalizeRequestHeaders,
@@ -20,6 +24,78 @@ const UPSTREAM_RETRY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const KEEP_ALIVE_HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 128, maxFreeSockets: 32, timeout: UPSTREAM_TIMEOUT_MS + 5000 });
 const KEEP_ALIVE_HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 128, maxFreeSockets: 32, timeout: UPSTREAM_TIMEOUT_MS + 5000 });
 const VIX_STRICT_HOST_BINDING = String(process.env.VIX_STRICT_HOST_BINDING || '').trim() === '1';
+
+const SC_FORWARD_PROXY_CONTEXT = 'streamingcommunity-playback';
+
+function envFlag(name, fallback = false) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return fallback;
+    const value = String(raw).trim();
+    if (/^(1|true|yes|y|on)$/i.test(value)) return true;
+    if (/^(0|false|no|n|off)$/i.test(value)) return false;
+    return fallback;
+}
+
+function envInt(name, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
+    const parsed = Number.parseInt(String(process.env[name] || ''), 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+}
+
+function getScForwardProxyBase() {
+    const raw = String(
+        process.env.SC_FORWARD_PROXY
+        || process.env.STREAMINGCOMMUNITY_FORWARD_PROXY
+        || process.env.STREAMINGCOMMUNITY_FORWARD_PROXY_URL
+        || process.env.VIXSRC_FORWARD_PROXY
+        || process.env.VIX_FORWARD_PROXY
+        || process.env.FORWARD_PROXY
+        || ''
+    ).trim();
+
+    if (!raw) return '';
+    try {
+        return normalizeSharedForwardProxyBase(raw, SC_FORWARD_PROXY_CONTEXT);
+    } catch (error) {
+        console.error(`[VIX PROXY] Invalid StreamingCommunity forward proxy: ${error.message}`);
+        return '';
+    }
+}
+
+function isScForwardProxyEnabled(kind = 'media') {
+    const base = getScForwardProxyBase();
+    if (!base) return false;
+    if (!envFlag('SC_FORWARD_PROXY_ENABLED', envFlag('STREAMINGCOMMUNITY_FORWARD_PROXY_ENABLED', true))) return false;
+    if (kind === 'media') {
+        return envFlag('SC_FORWARD_PROXY_STREAMS', envFlag('STREAMINGCOMMUNITY_FORWARD_PROXY_STREAMS', true));
+    }
+    return true;
+}
+
+function shouldFallbackDirectAfterForward() {
+    return envFlag('SC_FORWARD_PROXY_DIRECT_FALLBACK', envFlag('STREAMINGCOMMUNITY_FORWARD_PROXY_DIRECT_FALLBACK', false));
+}
+
+function buildScForwardProxyUrl(targetUrl, kind = 'media') {
+    if (!isScForwardProxyEnabled(kind)) return null;
+    const base = getScForwardProxyBase();
+    if (!base) return null;
+    try {
+        const proxied = buildSharedForwardProxyUrl(targetUrl, { base, context: SC_FORWARD_PROXY_CONTEXT });
+        return proxied && proxied !== targetUrl ? proxied : null;
+    } catch (error) {
+        console.error(`[VIX PROXY] Forward proxy url build failed: ${error.message}`);
+        return null;
+    }
+}
+
+function safeLogHost(value) {
+    try {
+        return new URL(String(value || '')).host;
+    } catch {
+        return '';
+    }
+}
 
 function getSelfBase(req) {
     return getRequestOrigin(req);
@@ -342,18 +418,47 @@ async function fetchUpstreamOnce(targetUrl, referer, upstreamHeaders = null, req
     const range = String(req?.headers?.range || '').trim();
     if (range && /^bytes=\d*-\d*(?:,\d*-\d*)*$/i.test(range)) headers.Range = range;
 
-    return axios.get(targetUrl, {
-        headers,
-        timeout: UPSTREAM_TIMEOUT_MS,
-        maxRedirects: MAX_UPSTREAM_REDIRECTS,
-        responseType: 'arraybuffer',
-        validateStatus: () => true,
-        proxy: false,
-        decompress: true,
-        httpAgent: KEEP_ALIVE_HTTP_AGENT,
-        httpsAgent: KEEP_ALIVE_HTTPS_AGENT,
-        transitional: { clarifyTimeoutError: true }
-    });
+    const forwardUrl = buildScForwardProxyUrl(targetUrl, 'media');
+    const attempts = [];
+    if (forwardUrl) attempts.push({ requestUrl: forwardUrl, forwarded: true });
+    if (!forwardUrl || shouldFallbackDirectAfterForward()) attempts.push({ requestUrl: targetUrl, forwarded: false });
+
+    let lastResponse = null;
+    let lastError = null;
+
+    for (const attempt of attempts) {
+        try {
+            const response = await axios.get(attempt.requestUrl, {
+                headers,
+                timeout: attempt.forwarded
+                    ? envInt('SC_FORWARD_PROXY_STREAM_TIMEOUT_MS', UPSTREAM_TIMEOUT_MS, 1000, 120000)
+                    : UPSTREAM_TIMEOUT_MS,
+                maxRedirects: MAX_UPSTREAM_REDIRECTS,
+                responseType: 'arraybuffer',
+                validateStatus: () => true,
+                proxy: false,
+                decompress: true,
+                httpAgent: KEEP_ALIVE_HTTP_AGENT,
+                httpsAgent: KEEP_ALIVE_HTTPS_AGENT,
+                transitional: { clarifyTimeoutError: true }
+            });
+            response._scForwarded = attempt.forwarded;
+            response._scTargetUrl = targetUrl;
+            response._scRequestUrl = attempt.requestUrl;
+            lastResponse = response;
+
+            const status = Number(response?.status || 0);
+            if (!attempt.forwarded || !UPSTREAM_RETRY_STATUSES.has(status) || !shouldFallbackDirectAfterForward()) return response;
+            console.warn(`[VIX PROXY] Forward proxy retryable status ${status}; trying direct fallback for ${safeLogHost(targetUrl)}`);
+        } catch (error) {
+            lastError = error;
+            if (!attempt.forwarded || !shouldFallbackDirectAfterForward()) throw error;
+            console.warn(`[VIX PROXY] Forward proxy error; trying direct fallback for ${safeLogHost(targetUrl)} via=${safeLogHost(attempt.requestUrl)} error=${error.message}`);
+        }
+    }
+
+    if (lastResponse) return lastResponse;
+    throw lastError || new Error('Vix upstream request failed');
 }
 
 async function fetchUpstream(targetUrl, referer, upstreamHeaders = null, req = null) {
