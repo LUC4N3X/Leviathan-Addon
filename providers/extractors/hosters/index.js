@@ -13,6 +13,7 @@ const { extractUprot, isUprotUrl, resolveUprotToMaxstream } = require('./uprot')
 const { extractVidoza, isVidozaUrl } = require('./vidoza');
 const { extractVixcloud, isVixcloudUrl } = require('./vixcloud');
 const { extractVidxgo, isVidxgoUrl } = require('./vidxgo');
+const { extractStreamhg, isStreamhgUrl } = require('./streamhg');
 
 module.exports = {
     extractDeltabit,
@@ -41,5 +42,7 @@ module.exports = {
     extractVixcloud,
     isVixcloudUrl,
     extractVidxgo,
-    isVidxgoUrl
+    isVidxgoUrl,
+    extractStreamhg,
+    isStreamhgUrl
 };
