@@ -24,6 +24,7 @@ const dbHelper = require("./storage/db_repository");
 const { buildMagnet: buildTrackerMagnet } = require("./storage/tracker_registry");
 const { createDebridAvailabilityTools } = require("./debrid/availability/debrid_availability");
 const { createWebProviderTools } = require("./stream/web_providers");
+const { proxyStreamHgWebBuckets } = require('./stream/web_stream_proxy');
 const SavedCloud = require("./debrid/saved_cloud/debrid_saved_cloud");
 const sourceHealth = require("./lib/source_health");
 const { createSearchPlan, evaluatePoolSatisfaction } = require("./lib/search_planner");
@@ -5024,7 +5025,11 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           buckets: Object.fromEntries(Object.entries(rawWebBuckets || {}).map(([key, bucket]) => [key, Array.isArray(bucket) ? bucket.length : 0]))
       });
 
-      const formattedWebBuckets = formatWebProviderBuckets(rawWebBuckets, meta, config);
+      const formattedWebBuckets = proxyStreamHgWebBuckets(formatWebProviderBuckets(rawWebBuckets, meta, config), {
+          baseUrl: reqHost,
+          rawConf: userConfStr,
+          config
+      });
       const webStreams = Object.values(formattedWebBuckets || {}).flatMap((bucket) => Array.isArray(bucket) ? bucket : []);
       const webBucketNames = Object.entries(formattedWebBuckets || {})
           .filter(([, bucket]) => Array.isArray(bucket) && bucket.length > 0)
