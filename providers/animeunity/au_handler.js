@@ -27,11 +27,16 @@ const {
     getMediaflowBase
 } = require('../../core/proxy/mediaflow_gateway');
 
-const AU_BASE = 'https://www.animeunity.so';
+const DEFAULT_AU_BASE = 'https://www.animeunity.so';
+const AU_BASE = normalizeProviderBaseUrl(process.env.ANIMEUNITY_BASE_URL || process.env.AU_BASE_URL || DEFAULT_AU_BASE);
 const PROVIDER_NAME = 'AnimeUnity';
 const PROVIDER_CODE = 'AU';
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
-const REQUEST_TIMEOUT = 10000;
+const USER_AGENT = String(
+    process.env.ANIMEUNITY_USER_AGENT
+    || process.env.AU_USER_AGENT
+    || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36'
+).trim();
+const REQUEST_TIMEOUT = Math.max(3000, Number.parseInt(String(process.env.ANIMEUNITY_TIMEOUT_MS || process.env.AU_TIMEOUT_MS || '10000'), 10) || 10000);
 const SESSION_TTL_MS = 20 * 60 * 1000;
 const SEARCH_TTL_MS = 10 * 60 * 1000;
 const PAGE_TTL_MS = 10 * 60 * 1000;
@@ -62,6 +67,7 @@ const cache = {
     page: new TtlLruCache({ max: 1000, ttlMs: PAGE_TTL_MS, staleTtlMs: PAGE_STALE_TTL_MS }),
     episode: new TtlLruCache({ max: 3000, ttlMs: EPISODE_TTL_MS, staleTtlMs: EPISODE_STALE_TTL_MS }),
     embed: new TtlLruCache({ max: 3000, ttlMs: EPISODE_TTL_MS, staleTtlMs: EPISODE_STALE_TTL_MS }),
+    embedMedia: new TtlLruCache({ max: 1000, ttlMs: MANIFEST_TTL_MS, staleTtlMs: MANIFEST_STALE_TTL_MS }),
     manifest: new TtlLruCache({ max: 1000, ttlMs: MANIFEST_TTL_MS, staleTtlMs: MANIFEST_STALE_TTL_MS }),
     fhdProbe: new TtlLruCache({ max: 1000, ttlMs: FHD_PROBE_TTL_MS, staleTtlMs: FHD_PROBE_STALE_TTL_MS }),
     inflight: new SingleFlight('animeunity')
@@ -86,6 +92,100 @@ function now() {
 const getCached = cacheGet;
 const getStaleCached = cacheGetStale;
 const setCached = cacheSet;
+
+function normalizeProviderBaseUrl(value) {
+    const fallback = DEFAULT_AU_BASE;
+    try {
+        const parsed = new URL(String(value || fallback).trim());
+        if (!['http:', 'https:'].includes(parsed.protocol)) return fallback;
+        return `${parsed.protocol}//${parsed.host}`.replace(/\/+$/, '');
+    } catch (_) {
+        return fallback;
+    }
+}
+
+function envFlag(name, fallback = false) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return fallback;
+    if (/^(1|true|yes|y|on)$/i.test(String(raw).trim())) return true;
+    if (/^(0|false|no|n|off)$/i.test(String(raw).trim())) return false;
+    return fallback;
+}
+
+function envInt(name, fallback, min = 0, max = Number.POSITIVE_INFINITY) {
+    const parsed = Number.parseInt(String(process.env[name] || ''), 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+}
+
+function getForwardProxyBase() {
+    return String(
+        process.env.AU_FORWARD_PROXY
+        || process.env.ANIMEUNITY_FORWARD_PROXY
+        || process.env.ANIMEUNITY_FORWARD_PROXY_URL
+        || process.env.FORWARD_PROXY
+        || ''
+    ).trim();
+}
+
+function isForwardProxyEnabled() {
+    return Boolean(getForwardProxyBase()) && envFlag('AU_FORWARD_PROXY_ENABLED', envFlag('ANIMEUNITY_FORWARD_PROXY_ENABLED', true));
+}
+
+function buildForwardProxyUrl(targetUrl, options = {}) {
+    const cleanTarget = String(targetUrl || '').trim();
+    if (!cleanTarget || !isForwardProxyEnabled() || options.allowForwardProxy === false) return null;
+
+    const method = String(options.method || 'GET').toUpperCase();
+    if (!['GET', 'HEAD'].includes(method) && !envFlag('AU_FORWARD_PROXY_POST', envFlag('ANIMEUNITY_FORWARD_PROXY_POST', false))) {
+        return null;
+    }
+
+    const proxy = getForwardProxyBase();
+    const encoded = encodeURIComponent(cleanTarget);
+    if (proxy.includes('{url}')) return proxy.replace(/\{url\}/g, encoded);
+    if (proxy.includes('{target}')) return proxy.replace(/\{target\}/g, encoded);
+    if (/[?&](?:url|target|u)=$/i.test(proxy)) return `${proxy}${encoded}`;
+
+    try {
+        const parsed = new URL(proxy);
+        for (const key of ['url', 'target', 'u']) {
+            if (parsed.searchParams.has(key)) {
+                parsed.searchParams.set(key, cleanTarget);
+                return parsed.toString();
+            }
+        }
+        parsed.searchParams.set('url', cleanTarget);
+        return parsed.toString();
+    } catch (_) {
+        return null;
+    }
+}
+
+function appendParamsToUrl(url, params = null) {
+    if (!params || typeof params !== 'object') return String(url || '');
+    try {
+        const parsed = new URL(String(url || ''));
+        for (const [key, value] of Object.entries(params)) {
+            if (value === undefined || value === null) continue;
+            if (Array.isArray(value)) {
+                for (const entry of value) parsed.searchParams.append(key, String(entry));
+            } else {
+                parsed.searchParams.set(key, String(value));
+            }
+        }
+        return parsed.toString();
+    } catch (_) {
+        return String(url || '');
+    }
+}
+
+function isRetryableNetworkError(error) {
+    const code = String(error?.code || '').toUpperCase();
+    const message = String(error?.message || '').toLowerCase();
+    return ['ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'ERR_SOCKET_CLOSED'].includes(code)
+        || /timeout|timed out|socket hang up|econnreset|econnaborted/i.test(message);
+}
 
 async function singleFlight(key, worker) {
     return cache.inflight.do(key, worker);
@@ -301,29 +401,64 @@ function buildHeaders(referer = `${AU_BASE}/`, extra = {}) {
 
 async function request(url, options = {}) {
     const attempts = Math.max(1, Number(options.attempts || 2));
+    const method = String(options.method || 'GET').toUpperCase();
+    const directTimeout = options.timeout || REQUEST_TIMEOUT;
+    const proxyTimeout = options.proxyTimeout || envInt('AU_FORWARD_PROXY_TIMEOUT_MS', Math.max(directTimeout, REQUEST_TIMEOUT), 1000, 60000);
+    const headers = options.headers || buildHeaders();
+    const directUrl = appendParamsToUrl(url, null);
+
+    async function perform(targetUrl, useProxy = false) {
+        return http.request({
+            url: targetUrl,
+            method,
+            headers,
+            params: useProxy ? undefined : options.params,
+            data: options.data,
+            timeout: useProxy ? proxyTimeout : directTimeout,
+            responseType: options.responseType,
+            validateStatus: () => true,
+            proxy: false
+        });
+    }
+
     let last = null;
+    let lastError = null;
+
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
         try {
-            const response = await http.request({
-                url,
-                method: options.method || 'GET',
-                headers: options.headers || buildHeaders(),
-                params: options.params,
-                data: options.data,
-                timeout: options.timeout || REQUEST_TIMEOUT,
-                responseType: options.responseType,
-                validateStatus: () => true,
-                proxy: false
-            });
+            const response = await perform(directUrl, false);
             last = response;
             const status = Number(response?.status || 0);
-            if (!RETRYABLE_STATUSES.has(status) || attempt === attempts) return response;
+            if (!RETRYABLE_STATUSES.has(status) || attempt === attempts) {
+                if (!RETRYABLE_STATUSES.has(status)) return response;
+                break;
+            }
         } catch (error) {
-            if (attempt === attempts) throw error;
+            lastError = error;
+            if (attempt === attempts || !isRetryableNetworkError(error)) break;
         }
+
         await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
     }
-    return last;
+
+    const proxiedUrl = buildForwardProxyUrl(appendParamsToUrl(url, options.params), { ...options, method });
+    if (proxiedUrl) {
+        try {
+            const response = await perform(proxiedUrl, true);
+            const status = Number(response?.status || 0);
+            if (!last || !RETRYABLE_STATUSES.has(status) || RETRYABLE_STATUSES.has(Number(last?.status || 0))) {
+                return response;
+            }
+        } catch (proxyError) {
+            if (last) return last;
+            if (lastError) throw lastError;
+            throw proxyError;
+        }
+    }
+
+    if (last) return last;
+    if (lastError) throw lastError;
+    return null;
 }
 
 async function fetchSession() {
@@ -728,7 +863,7 @@ function normalizeAnimeUnityMappingItem(item = null) {
     }
 
     if (typeof item !== 'object') return null;
-    const path = normalizeAnimeUrl(item.path || item.url || item.href || item.link || item.playPath, AU_BASE);
+    const path = normalizeAnimeUrl(item.path || item.url || item.href || item.link || item.playPath || item.animePath || item.anime_path || item.page || item.slugPath, AU_BASE);
     const id = safeInt(item.id || item.anime_id || item.animeId || item.au_id || item.auId);
     const slug = String(item.slug || item.title_slug || item.titleSlug || item.name_slug || item.nameSlug || '').trim();
     const candidate = { ...item };
@@ -739,17 +874,70 @@ function normalizeAnimeUnityMappingItem(item = null) {
     return buildAnimePath(candidate) ? candidate : null;
 }
 
-function extractAnimeUnityCandidatesFromMapping(mappingPayload, isDubbed = false) {
-    const raw = mappingPayload?.mappings?.animeunity
-        || mappingPayload?.providers?.animeunity
-        || mappingPayload?.animeunity
-        || mappingPayload?.mapping?.animeunity
+function collectAnimeUnityMappingBuckets(payload) {
+    const buckets = [];
+    const stack = [{ value: payload, depth: 0 }];
+    const visited = new Set();
+    const keyRegex = /^(animeunity|anime_unity|au|animeunitypath|animeunityurl|animeunityhref|animeunitylink)$/i;
+
+    while (stack.length && buckets.length < 48) {
+        const { value, depth } = stack.pop();
+        if (!value || depth > 6) continue;
+
+        if (typeof value === 'string') {
+            if (/animeunity\.|\/anime\/|\/play\//i.test(value)) buckets.push(value);
+            continue;
+        }
+
+        if (typeof value !== 'object') continue;
+        if (visited.has(value)) continue;
+        visited.add(value);
+
+        if (Array.isArray(value)) {
+            for (const item of value) stack.push({ value: item, depth: depth + 1 });
+            continue;
+        }
+
+        for (const [key, child] of Object.entries(value)) {
+            if (keyRegex.test(String(key || ''))) {
+                if (Array.isArray(child)) buckets.push(...child);
+                else buckets.push(child);
+            }
+
+            if (/^(providers|mappings|mapping|sites|sources)$/i.test(String(key || '')) && child && typeof child === 'object') {
+                stack.push({ value: child, depth: depth + 1 });
+                continue;
+            }
+
+            if (typeof child === 'string' && /animeunity\.|\/anime\/|\/play\//i.test(child)) buckets.push(child);
+            else if (child && typeof child === 'object') stack.push({ value: child, depth: depth + 1 });
+        }
+    }
+
+    const direct = payload?.mappings?.animeunity
+        || payload?.mappings?.animeUnity
+        || payload?.mappings?.anime_unity
+        || payload?.mappings?.au
+        || payload?.mappings?.providers?.animeunity
+        || payload?.providers?.animeunity
+        || payload?.providers?.animeUnity
+        || payload?.animeunity
+        || payload?.animeUnity
+        || payload?.anime_unity
+        || payload?.mapping?.animeunity
         || null;
-    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+
+    if (Array.isArray(direct)) buckets.unshift(...direct);
+    else if (direct) buckets.unshift(direct);
+
+    return buckets;
+}
+
+function extractAnimeUnityCandidatesFromMapping(mappingPayload, isDubbed = false) {
     const output = [];
     const seen = new Set();
 
-    for (const item of list) {
+    for (const item of collectAnimeUnityMappingBuckets(mappingPayload)) {
         const candidate = normalizeAnimeUnityMappingItem(item);
         if (!candidate) continue;
         const dubValue = candidate.dub ?? candidate.dubbed ?? candidate.isDubbed ?? candidate.italianDub;
@@ -1222,30 +1410,148 @@ async function inferCachedCanPlayFHD(streamUrl, referer) {
     });
 }
 
-async function buildStreamsFromEmbed(embedUrl, title, langTag, emoji, episodeNumber, config, reqHost) {
-    const manifest = await resolveCachedAnimeManifest(embedUrl);
-    if (!manifest?.streamUrl) return [];
+function normalizePlayableMediaUrl(rawUrl, baseUrl = AU_BASE) {
+    const absolute = normalizeAnimeUrl(rawUrl, baseUrl);
+    if (!absolute) return null;
 
-    const fastStart = boolOption(config?.filters?.animeUnityFastStart, true);
-    let canPlayFhd = manifest?.payload?.canPlayFHD === true;
+    try {
+        const parsed = new URL(absolute);
+        const path = String(parsed.pathname || '').toLowerCase();
+        if (/\.(?:m3u8|mp4)(?:$|[?#])/i.test(path)) return parsed.toString();
 
-    if (!canPlayFhd && !fastStart) {
-        canPlayFhd = await inferCachedCanPlayFHD(manifest.streamUrl, manifest.referer || embedUrl);
+        for (const key of ['url', 'src', 'file', 'link', 'stream']) {
+            const nested = parsed.searchParams.get(key);
+            if (!nested) continue;
+            let decoded = nested;
+            try { decoded = decodeURIComponent(nested); } catch (_) {}
+            const resolved = normalizePlayableMediaUrl(decoded, parsed.origin);
+            if (resolved) return resolved;
+        }
+    } catch (_) {}
+
+    return null;
+}
+
+function collectMediaLinksFromEmbedHtml(html, baseUrl = AU_BASE) {
+    const raw = String(html || '');
+    const links = [];
+    const seen = new Set();
+
+    function add(value) {
+        const normalized = normalizePlayableMediaUrl(value, baseUrl);
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        links.push(normalized);
     }
 
-    if (!fastStart && !canPlayFhd) return [];
+    const $ = cheerio.load(raw);
+    $('source[src], video[src], a[href], iframe[src]').each((_, element) => {
+        add($(element).attr('src') || $(element).attr('href'));
+    });
 
-    return [buildStream({
-        sourceUrl: manifest.streamUrl,
-        referer: manifest.referer || embedUrl,
-        quality: '1080p',
+    for (const text of [raw, raw.replace(/\\\//g, '/')]) {
+        let match;
+        const direct = /https?:\/\/[^\s"'<>\\]+(?:\.m3u8|\.mp4)(?:[^\s"'<>\\]*)?/gi;
+        while ((match = direct.exec(text)) !== null) add(match[0]);
+
+        const encoded = /https%3A%2F%2F[^\s"'<>\\]+/gi;
+        while ((match = encoded.exec(text)) !== null) {
+            try { add(decodeURIComponent(match[0])); } catch (_) {}
+        }
+
+        const source = /(?:file|src|url|link|stream)\s*[:=]\s*["']([^"']+)["']/gi;
+        while ((match = source.exec(text)) !== null) add(match[1]);
+    }
+
+    return links;
+}
+
+function inferQualityFromUrl(value) {
+    const text = String(value || '');
+    if (/\b(?:2160p|4k)\b/i.test(text)) return '4K';
+    if (/\b1440p\b/i.test(text)) return '1440p';
+    if (/\b1080p\b|fullhd|fhd/i.test(text)) return '1080p';
+    if (/\b720p\b|[^0-9]hd[^0-9]/i.test(text)) return '720p';
+    if (/\b576p\b/i.test(text)) return '576p';
+    if (/\b480p\b/i.test(text)) return '480p';
+    return 'Unknown';
+}
+
+async function resolveEmbedMediaFallback(embedUrl) {
+    const normalized = normalizeAnimeUrl(embedUrl, AU_BASE);
+    if (!normalized) return [];
+    const cacheKey = `embed-media:${normalized}`;
+    const cached = getCached(cache.embedMedia, cacheKey);
+    if (cached !== undefined) return cached;
+
+    return singleFlight(`au:${cacheKey}`, async () => {
+        const second = getCached(cache.embedMedia, cacheKey);
+        if (second !== undefined) return second;
+
+        try {
+            const response = await request(normalized, {
+                headers: buildHeaders(AU_BASE, { Referer: AU_BASE }),
+                timeout: REQUEST_TIMEOUT,
+                attempts: 2
+            });
+            if (Number(response?.status || 0) < 200 || Number(response?.status || 0) >= 400) {
+                const stale = getStaleCached(cache.embedMedia, cacheKey);
+                if (stale !== undefined) return stale;
+                return setCached(cache.embedMedia, cacheKey, [], NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
+            }
+            const links = collectMediaLinksFromEmbedHtml(responseText(response), normalized);
+            return setCached(cache.embedMedia, cacheKey, links, links.length ? MANIFEST_TTL_MS : NEGATIVE_TTL_MS, MANIFEST_STALE_TTL_MS);
+        } catch (error) {
+            const stale = getStaleCached(cache.embedMedia, cacheKey);
+            if (stale !== undefined) {
+                console.warn(`[AnimeUnity] embed media stale fallback | embed=${normalized} reason=${error.message}`);
+                return stale;
+            }
+            return setCached(cache.embedMedia, cacheKey, [], NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
+        }
+    });
+}
+
+async function buildStreamsFromEmbed(embedUrl, title, langTag, emoji, episodeNumber, config, reqHost) {
+    const manifest = await resolveCachedAnimeManifest(embedUrl);
+    const fastStart = boolOption(config?.filters?.animeUnityFastStart, true);
+
+    if (manifest?.streamUrl) {
+        let canPlayFhd = manifest?.payload?.canPlayFHD === true;
+
+        if (!canPlayFhd && !fastStart) {
+            canPlayFhd = await inferCachedCanPlayFHD(manifest.streamUrl, manifest.referer || embedUrl);
+        }
+
+        if (!fastStart && !canPlayFhd) return [];
+
+        return [buildStream({
+            sourceUrl: manifest.streamUrl,
+            referer: manifest.referer || embedUrl,
+            quality: '1080p',
+            title,
+            langTag,
+            emoji,
+            reqHost,
+            config,
+            branch: fastStart ? 'animeunity-vix-1080-fast' : 'animeunity-vix-1080'
+        })].filter(Boolean);
+    }
+
+    if (boolOption(config?.filters?.animeUnityEmbedMediaFallback, true) === false) return [];
+
+    const fallbackLinks = await resolveEmbedMediaFallback(embedUrl);
+    return fallbackLinks.slice(0, 4).map((sourceUrl) => buildStream({
+        sourceUrl,
+        referer: embedUrl,
+        quality: inferQualityFromUrl(sourceUrl),
         title,
         langTag,
         emoji,
         reqHost,
         config,
-        branch: fastStart ? 'animeunity-vix-1080-fast' : 'animeunity-vix-1080'
-    })].filter(Boolean);
+        branch: 'animeunity-embed-media-fallback'
+    })).filter(Boolean);
 }
 
 async function resolveAnimeUnityCandidate(candidate, title, mode, requestedEpisode, isMovie, config, reqHost, triedPaths) {
