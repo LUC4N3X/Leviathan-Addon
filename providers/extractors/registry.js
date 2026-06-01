@@ -68,7 +68,8 @@ const HOSTER_DEFINITIONS = [
         label: 'StreamHG',
         matches: isStreamhgUrl,
         extract: extractStreamhg,
-        priority: 1
+        priority: 1,
+        noLazy: true
     },
     {
         key: 'deltabit',
@@ -89,7 +90,8 @@ const HOSTER_DEFINITIONS = [
         label: 'DropLoad',
         matches: isDroploadUrl,
         extract: extractDropload,
-        priority: 2
+        priority: 2,
+        noLazy: true
     },
     {
         key: 'mixdrop',

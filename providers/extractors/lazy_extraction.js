@@ -142,7 +142,7 @@ function buildLazyExtractorStream({
 } = {}) {
     if (!embedUrl || !isLazyExtractionEnabled(provider)) return null;
     const definition = resolveExtractorDefinition(embedUrl);
-    if (!definition) return null;
+    if (!definition || definition.noLazy) return null;
     const extractorName = name || definition.label || hostLabel(embedUrl);
     const token = encodeLazyExtractionToken({
         url: embedUrl,
