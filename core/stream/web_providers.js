@@ -153,13 +153,26 @@ function normalizeWebExtractorLabel(value) {
     if (/dood/i.test(raw)) return 'DoodStream';
     if (/filemoon/i.test(raw)) return 'FileMoon';
     if (/srv\s*12|srv12/i.test(raw)) return 'Srv12';
+    if (/dropload|dr0pstream/i.test(raw)) return 'DropLoad';
+    if (/dhcplay|vibuxer|streamhg/i.test(raw)) return 'StreamHG';
+    if (/uqload/i.test(raw)) return 'Uqload';
+    if (/upstream/i.test(raw)) return 'Upstream';
+    if (/vidoza/i.test(raw)) return 'Vidoza';
+    if (/deltabit/i.test(raw)) return 'DeltaBit';
     if (/direct/i.test(raw)) return 'Direct';
     if (/^(?:hls|direct)\s+proxy$/i.test(raw)) return '';
     if (/^(?:mfp|cinemacity)$/i.test(raw)) return '';
     if (/^https?:\/\//i.test(raw)) {
         try {
-            const host = new URL(raw).hostname.replace(/^www\./i, '').split('.')[0];
-            return normalizeWebExtractorLabel(host);
+            const hostname = new URL(raw).hostname.replace(/^www\./i, '');
+            const parts = hostname.split('.');
+            // Check the second-level domain first (e.g. 'dropload' in direct123.dropload.io)
+            // to avoid misidentifying CDN subdomains like 'direct123' as 'Direct'.
+            if (parts.length >= 3) {
+                const sld = normalizeWebExtractorLabel(parts[parts.length - 2]);
+                if (sld) return sld;
+            }
+            return normalizeWebExtractorLabel(parts[0]);
         } catch (_) {
             return '';
         }
@@ -172,7 +185,7 @@ function normalizeWebExtractorLabel(value) {
         .trim();
 
     // Only trust free-form labels when they look like a hoster/extractor, not a media title.
-    return /^(?:web|hls|city|loadm|deltabit|delta\s*bit|turbovid|vixcloud|vidxgo|sweetpixel|srv12|cccdn|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|uprot|direct)$/i.test(cleaned)
+    return /^(?:web|hls|city|loadm|deltabit|delta\s*bit|turbovid|vixcloud|vidxgo|sweetpixel|srv12|cccdn|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|uprot|dropload|dr0pstream|streamhg|dhcplay|vibuxer|uqload|upstream|vidoza|direct)$/i.test(cleaned)
         ? cleaned
         : '';
 }

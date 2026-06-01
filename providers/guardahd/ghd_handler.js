@@ -80,7 +80,8 @@ const REGEX = {
     SIZE: /([\d.,]+\s?(?:G|M)B)/i,
     NOT_FOUND: /can't find the (?:file|video)|file not found|video not found/i,
     MIXDROP: /mixdr(?:op|p)|m1xdrop|mxcontent/i,
-    DIRECT_URL: /https?:\/\/(?:www\.)?(?:dropload|dr0pstream|mixdrop|mixdrp|m1xdrop|mxcontent)[^"'<>\s\\]+/ig,
+    STREAMHG: /dhcplay|vibuxer/i,
+    DIRECT_URL: /https?:\/\/(?:www\.)?(?:dropload|dr0pstream|mixdrop|mixdrp|m1xdrop|mxcontent|dhcplay|vibuxer)[^"'<>\s\\]+/ig,
     IFRAME: /<iframe\b[^>]+src=["']([^"']+)["']/ig,
     DATA_LINK: /data-link=["']([^"']+)["']/ig,
     SRC_HREF: /(?:src|href)=["']([^"']+)["']/ig,
@@ -100,11 +101,12 @@ const REGEX = {
     M3U8_480: /RESOLUTION=(?:\d+x480|480)/i
 };
 
-const ALLOWED_HOSTERS = new Set(['mixdrop', 'dropload']);
+const ALLOWED_HOSTERS = new Set(['mixdrop', 'dropload', 'streamhg']);
 
 const HOSTER_PRIORITY = {
     dropload: 0,
-    mixdrop: 1,
+    streamhg: 1,
+    mixdrop: 2,
     unknown: 9
 };
 
@@ -218,6 +220,7 @@ function hosterFromUrl(url) {
     const lower = safeText(url).toLowerCase();
     if (REGEX.MIXDROP.test(lower)) return 'mixdrop';
     if (lower.includes('dropload') || lower.includes('dr0pstream')) return 'dropload';
+    if (REGEX.STREAMHG.test(lower)) return 'streamhg';
     return 'unknown';
 }
 
@@ -229,6 +232,7 @@ function hosterLabel(hoster) {
     switch (hoster) {
         case 'dropload': return 'DropLoad';
         case 'mixdrop': return 'MixDrop';
+        case 'streamhg': return 'StreamHG';
         default: return 'Hoster';
     }
 }

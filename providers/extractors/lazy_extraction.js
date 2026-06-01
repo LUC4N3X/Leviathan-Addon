@@ -11,6 +11,29 @@ const TOKEN_VERSION = 1;
 const DEFAULT_TTL_MS = Math.max(60_000, Number.parseInt(process.env.LAZY_EXTRACT_TTL_MS || String(6 * 60 * 60 * 1000), 10) || (6 * 60 * 60 * 1000));
 const MAX_URL_LEN = 4096;
 
+const FAILURE_CACHE = new Map();
+const FAILURE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function getFailureCache(token) {
+    const entry = FAILURE_CACHE.get(token);
+    if (!entry) return null;
+    if (Date.now() - entry.ts > FAILURE_CACHE_TTL_MS) {
+        FAILURE_CACHE.delete(token);
+        return null;
+    }
+    return entry.error;
+}
+
+function setFailureCache(token, error) {
+    FAILURE_CACHE.set(token, { ts: Date.now(), error });
+    if (FAILURE_CACHE.size > 1000) {
+        const now = Date.now();
+        for (const [key, entry] of FAILURE_CACHE) {
+            if (now - entry.ts > FAILURE_CACHE_TTL_MS) FAILURE_CACHE.delete(key);
+        }
+    }
+}
+
 function envFlag(name, fallback = false) {
     const value = process.env[name];
     if (value === undefined || value === null || value === '') return fallback;
@@ -119,7 +142,7 @@ function buildLazyExtractorStream({
 } = {}) {
     if (!embedUrl || !isLazyExtractionEnabled(provider)) return null;
     const definition = resolveExtractorDefinition(embedUrl);
-    if (!definition) return null;
+    if (!definition || definition.noLazy) return null;
     const extractorName = name || definition.label || hostLabel(embedUrl);
     const token = encodeLazyExtractionToken({
         url: embedUrl,
@@ -160,6 +183,9 @@ function buildLazyExtractorStream({
 }
 
 async function resolveLazyExtractionToken(token, options = {}) {
+    const cached = getFailureCache(token);
+    if (cached) throw cached;
+
     const payload = decodeLazyExtractionToken(token);
     const started = Date.now();
     const headers = normalizeHeaders({
@@ -215,6 +241,7 @@ async function resolveLazyExtractionToken(token, options = {}) {
             classified,
             line: formatProviderError(payload.provider, error, { classified, url: payload.url, ms: Date.now() - started })
         };
+        setFailureCache(token, error);
         throw error;
     }
 }
@@ -232,6 +259,7 @@ function registerLazyExtractionRoute(app, { logger = console } = {}) {
         } catch (error) {
             const line = error?.lazyExtraction?.line || formatProviderError('lazy_extract', error, { ms: Date.now() - started });
             logger.warn?.(line);
+            res.set('Cache-Control', 'private, max-age=300');
             return res.status(Number(error.statusCode || error.status || 502)).send('Lazy extraction non riuscita: link hoster non risolto o scaduto.');
         }
     });
