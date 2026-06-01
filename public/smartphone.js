@@ -7737,11 +7737,11 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-aw">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🐉</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">⛩️</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🐉 AnimeWorld</span>
+                                    <span class="m-reactor-title">⛩️ AnimeWorld</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableAnimeWorld" onchange="updateStatus('m-enableAnimeWorld','st-aw'); toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');">
                                         <span class="m-slider m-slider-aqua"></span>
@@ -7813,11 +7813,11 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-ads">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎞️</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🎞️ Altadefinizione</span>
+                                    <span class="m-reactor-title">🎬 Altadefinizione</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableAltadefinizione" onchange="updateStatus('m-enableAltadefinizione','st-ads'); toggleModuleStyle('m-enableAltadefinizione', 'mod-ads');">
                                         <span class="m-slider"></span>
