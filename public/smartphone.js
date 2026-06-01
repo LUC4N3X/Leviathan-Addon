@@ -7635,6 +7635,7 @@ const mobileHTML = `
                                 </div>
                                 <span class="m-reactor-desc">Catalogo Film e Serie TV via FlareSolverr e proxy CCCDN/Kraken 🎟️.</span>
                                 <div class="m-tag-row">
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                     <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
                                 </div>
                             </div>
@@ -7813,11 +7814,11 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-ads">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📽️</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🎬 Altadefinizione</span>
+                                    <span class="m-reactor-title">📽️ Altadefinizione</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableAltadefinizione" onchange="updateStatus('m-enableAltadefinizione','st-ads'); toggleModuleStyle('m-enableAltadefinizione', 'mod-ads');">
                                         <span class="m-slider"></span>
