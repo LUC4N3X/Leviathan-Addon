@@ -28,11 +28,13 @@ const {
     isVixcloudUrl,
     isVidxgoUrl,
     extractStreamhg,
-    isStreamhgUrl
+    isStreamhgUrl,
+    extractTurbovid,
+    isTurbovidUrl
 } = require('./hosters');
 
-const HOSTER_DIRECT_LINK_PATTERN = String.raw`https?:\/\/(?:www\.)?(?:supervideo|vixcloud|(?:v\.)?vidxgo|dropload|dr0pstream|mixdrop|m1xdrop|mxcontent|loadm(?:\.cam)?|deltabit|safego|clicka|uprot\.net|maxstream\.video|stayonline\.pro|maxstream|upstream|uqload|streamtape|vidoza|dhcplay|vibuxer)[^"'<\s]+`;
-const HOSTER_ESCAPED_DIRECT_LINK_PATTERN = String.raw`https?:\\\/\\\/(?:www\\.)?(?:supervideo|vixcloud|(?:v\.)?vidxgo|dropload|dr0pstream|mixdrop|m1xdrop|mxcontent|loadm(?:\\.cam)?|deltabit|safego|clicka|uprot\\.net|maxstream\\.video|stayonline\\.pro|maxstream|upstream|uqload|streamtape|vidoza|dhcplay|vibuxer)[^"'<\s]+`;
+const HOSTER_DIRECT_LINK_PATTERN = String.raw`https?:\/\/(?:www\.)?(?:supervideo|vixcloud|(?:v\.)?vidxgo|dropload|dr0pstream|mixdrop|m1xdrop|mxcontent|loadm(?:\.cam)?|deltabit|safego|clicka|uprot\.net|maxstream\.video|stayonline\.pro|maxstream|upstream|uqload|streamtape|vidoza|dhcplay|vibuxer|turbovid\.me|turboviplay\.com|emturbovid\.com|tuborstb\.co|javggvideo\.xyz|stbturbo\.xyz|turbovidhls\.com)[^"'<\s]+`;
+const HOSTER_ESCAPED_DIRECT_LINK_PATTERN = String.raw`https?:\\\/\\\/(?:www\\.)?(?:supervideo|vixcloud|(?:v\.)?vidxgo|dropload|dr0pstream|mixdrop|m1xdrop|mxcontent|loadm(?:\\.cam)?|deltabit|safego|clicka|uprot\\.net|maxstream\\.video|stayonline\\.pro|maxstream|upstream|uqload|streamtape|vidoza|dhcplay|vibuxer|turbovid\.me|turboviplay\.com|emturbovid\.com|tuborstb\.co|javggvideo\.xyz|stbturbo\.xyz|turbovidhls\.com)[^"'<\s]+`;
 
 const HOSTER_DEFINITIONS = [
     {
@@ -70,6 +72,13 @@ const HOSTER_DEFINITIONS = [
         extract: extractStreamhg,
         priority: 1,
         noLazy: true
+    },
+    {
+        key: 'turbovid',
+        label: 'TurboVid',
+        matches: isTurbovidUrl,
+        extract: extractTurbovid,
+        priority: 3
     },
     {
         key: 'deltabit',
