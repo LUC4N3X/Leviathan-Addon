@@ -17,7 +17,59 @@ const {
 } = require('../anime/shared');
 const kitsuProvider = require('../animeworld/kitsu_provider');
 
-const SATURN_BASE_URL = 'https://www.animesaturn.cx';
+function envFlag(name, fallback = false) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return fallback;
+    return /^(1|true|yes|y|on)$/i.test(String(raw).trim());
+}
+
+function envFlagNotFalse(name, fallback = true) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return fallback;
+    return !/^(0|false|no|n|off)$/i.test(String(raw).trim());
+}
+
+function normalizeSaturnBaseUrl(value) {
+    const fallback = 'https://www.animesaturn.cx';
+    try {
+        const parsed = new URL(String(value || fallback).trim().replace(/\/+$/, ''));
+        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('bad protocol');
+        if (!/^www\./i.test(parsed.hostname)) parsed.hostname = `www.${parsed.hostname.replace(/^www\./i, '')}`;
+        return parsed.origin;
+    } catch (_) {
+        return fallback;
+    }
+}
+
+function normalizeForwardProxyUrl(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+        const parsed = new URL(raw);
+        if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+        const hasPlaceholder = /\{(?:url|target|u)\}/i.test(raw);
+        const hasForwardShape = parsed.search || /\/(?:proxy\/)?forward\/?$/i.test(parsed.pathname) || /proxy|forward/i.test(parsed.pathname);
+        return hasPlaceholder || hasForwardShape ? raw : '';
+    } catch (_) {
+        return '';
+    }
+}
+
+const SATURN_BASE_URL = normalizeSaturnBaseUrl(process.env.ANIMESATURN_BASE_URL || process.env.AS_BASE_URL || process.env.SATURN_BASE_URL || 'https://www.animesaturn.cx');
+const AS_FETCH_TIMEOUT = Math.max(
+    FETCH_TIMEOUT,
+    Number.parseInt(String(process.env.ANIMESATURN_FETCH_TIMEOUT_MS || process.env.AS_FETCH_TIMEOUT_MS || process.env.ANIMESATURN_FETCH_TIMEOUT || ''), 10) || FETCH_TIMEOUT
+);
+const AS_FORWARD_PROXY = normalizeForwardProxyUrl(
+    process.env.AS_FORWARD_PROXY
+    || process.env.ANIMESATURN_FORWARD_PROXY
+    || process.env.ANIMESATURN_FORWARD_PROXY_URL
+    || process.env.SATURN_FORWARD_PROXY
+    || process.env.FORWARD_PROXY
+    || ''
+);
+const AS_FORWARD_PROXY_ENABLED = Boolean(AS_FORWARD_PROXY) && envFlagNotFalse('AS_FORWARD_PROXY_ENABLED', envFlagNotFalse('ANIMESATURN_FORWARD_PROXY_ENABLED', true));
+const AS_FORWARD_PROXY_STREAMS = envFlag('AS_FORWARD_PROXY_STREAMS', envFlag('ANIMESATURN_FORWARD_PROXY_STREAMS', false));
 const BLOCKED_DOMAINS = [
     'jujutsukaisenanime.com',
     'onepunchman.it',
@@ -79,6 +131,73 @@ async function singleFlight(key, worker) {
 function getFilterValue(config, key, fallback) {
     const filters = config?.filters || {};
     return Object.prototype.hasOwnProperty.call(filters, key) ? filters[key] : fallback;
+}
+
+function shouldUseForwardProxy(kind = 'page') {
+    if (!AS_FORWARD_PROXY_ENABLED) return false;
+    if (kind === 'media') return AS_FORWARD_PROXY_STREAMS;
+    return true;
+}
+
+function buildForwardProxyUrl(targetUrl, kind = 'page') {
+    if (!shouldUseForwardProxy(kind)) return null;
+    const target = String(targetUrl || '').trim();
+    if (!/^https?:\/\//i.test(target)) return null;
+    const encoded = encodeURIComponent(target);
+    const template = AS_FORWARD_PROXY;
+
+    if (/\{url\}/i.test(template)) return template.replace(/\{url\}/ig, encoded);
+    if (/\{target\}/i.test(template)) return template.replace(/\{target\}/ig, encoded);
+    if (/\{u\}/i.test(template)) return template.replace(/\{u\}/ig, encoded);
+
+    try {
+        const parsed = new URL(template);
+        const params = [...parsed.searchParams.keys()].map((key) => key.toLowerCase());
+        if (params.includes('url')) parsed.searchParams.set('url', target);
+        else if (params.includes('target')) parsed.searchParams.set('target', target);
+        else if (params.includes('u')) parsed.searchParams.set('u', target);
+        else parsed.searchParams.set('url', target);
+        return parsed.toString();
+    } catch (_) {
+        const joiner = template.includes('?') ? (template.endsWith('?') || template.endsWith('&') || template.endsWith('=') ? '' : '&') : '?url=';
+        return `${template}${joiner}${encoded}`;
+    }
+}
+
+function buildStreamOutputUrl(url) {
+    return buildForwardProxyUrl(url, 'media') || url;
+}
+
+function buildSaturnHeaders(referer = SATURN_BASE_URL, extraHeaders = {}) {
+    return {
+        'user-agent': USER_AGENT,
+        'accept-language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+        referer: referer || SATURN_BASE_URL,
+        ...extraHeaders
+    };
+}
+
+async function saturnFetchResource(url, options = {}, kind = 'page') {
+    const originalUrl = buildSaturnUrl(url) || String(url || '').trim();
+    if (!originalUrl) return null;
+
+    const requestOptions = {
+        ...options,
+        timeoutMs: options.timeoutMs || AS_FETCH_TIMEOUT,
+        circuitKey: options.circuitKey || SATURN_BASE_URL,
+        headers: buildSaturnHeaders(options.referer || SATURN_BASE_URL, options.headers || {})
+    };
+
+    const proxiedUrl = buildForwardProxyUrl(originalUrl, kind);
+    if (proxiedUrl && proxiedUrl !== originalUrl) {
+        try {
+            return await fetchResource(proxiedUrl, requestOptions);
+        } catch (error) {
+            console.error(`[AnimeSaturn] forward proxy fallback direct | kind=${kind} | error=${error.message}`);
+        }
+    }
+
+    return fetchResource(originalUrl, requestOptions);
 }
 
 function buildSaturnUrl(pathOrUrl) {
@@ -482,17 +601,22 @@ async function resolveWatchUrlsForEpisodeEntry(source, episodeEntry) {
     const urls = [];
     const hasEpisodePath = Boolean(episodeEntry?.episodePath);
 
-    if (episodeEntry?.watchUrl) urls.push(...extractWatchUrlsFromHtml(episodeEntry.watchUrl));
+    if (episodeEntry?.watchUrl) {
+        if (isDirectMediaPath(episodeEntry.watchUrl)) urls.push(episodeEntry.watchUrl);
+        urls.push(...extractWatchUrlsFromHtml(episodeEntry.watchUrl));
+    }
 
     if (urls.length === 0 && episodeEntry?.episodePath) {
         const episodeUrl = buildSaturnUrl(episodeEntry.episodePath);
         if (episodeUrl) {
             try {
-                const html = await fetchResource(episodeUrl, {
+                const html = await saturnFetchResource(episodeUrl, {
                     ttlMs: TTL.watch,
                     cacheKey: `animesaturn-episode:${episodeEntry.episodePath}`,
-                    timeoutMs: FETCH_TIMEOUT
-                });
+                    timeoutMs: AS_FETCH_TIMEOUT,
+                    referer: source?.animePath ? buildSaturnUrl(source.animePath) : SATURN_BASE_URL
+                }, 'episode');
+                urls.push(...collectMediaLinksFromWatchHtml(html));
                 urls.push(...extractWatchUrlsFromHtml(html));
             } catch (error) {
                 console.error('[AnimeSaturn] episode page request failed:', error.message);
@@ -506,11 +630,13 @@ async function resolveWatchUrlsForEpisodeEntry(source, episodeEntry) {
         const animeUrl = buildSaturnUrl(source.animePath);
         if (animeUrl) {
             try {
-                const html = await fetchResource(animeUrl, {
+                const html = await saturnFetchResource(animeUrl, {
                     ttlMs: TTL.watch,
                     cacheKey: `animesaturn-fallback:${source.animePath}`,
-                    timeoutMs: FETCH_TIMEOUT
-                });
+                    timeoutMs: AS_FETCH_TIMEOUT,
+                    referer: SATURN_BASE_URL
+                }, 'page');
+                urls.push(...collectMediaLinksFromWatchHtml(html));
                 urls.push(...extractWatchUrlsFromHtml(html));
             } catch (error) {
                 console.error('[AnimeSaturn] anime watch fallback failed:', error.message);
@@ -545,11 +671,12 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaTyp
         let parsedPage = localCache.parsedPages.get(normalizedPath);
         if (!parsedPage) {
             try {
-                const html = await fetchResource(animeUrl, {
+                const html = await saturnFetchResource(animeUrl, {
                     ttlMs: TTL.page,
                     cacheKey: `animesaturn-page:${normalizedPath}`,
-                    timeoutMs: FETCH_TIMEOUT
-                });
+                    timeoutMs: AS_FETCH_TIMEOUT,
+                    referer: SATURN_BASE_URL
+                }, 'page');
                 parsedPage = parseAnimeSaturnPage(html, { animePath: normalizedPath });
                 localCache.parsedPages.set(normalizedPath, parsedPage, TTL.page, STREAM_CACHE_STALE_MS);
             } catch (error) {
@@ -580,11 +707,12 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaTyp
             try {
                 const relatedUrl = buildSaturnUrl(related);
                 if (!relatedUrl) continue;
-                const html = await fetchResource(relatedUrl, {
+                const html = await saturnFetchResource(relatedUrl, {
                     ttlMs: TTL.page,
                     cacheKey: `animesaturn-related:${related}`,
-                    timeoutMs: FETCH_TIMEOUT
-                });
+                    timeoutMs: AS_FETCH_TIMEOUT,
+                    referer: animeUrl
+                }, 'page');
                 const relatedParsed = parseAnimeSaturnPage(html, { animePath: related, title: parsedPage.title });
                 episodes = mergeEpisodeLists(episodes, relatedParsed.episodes);
             } catch (_) {}
@@ -632,6 +760,40 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaTyp
         }
     })();
 
+    function addStreamFromMediaUrl(mediaUrl, refererUrl) {
+        const normalizedUrl = normalizePlayableMediaUrl(mediaUrl);
+        if (!normalizedUrl || seenMedia.has(normalizedUrl)) return;
+
+        const lowerUrl = normalizedUrl.toLowerCase();
+        if (lowerUrl.endsWith('.mkv.mp4') || BLOCKED_DOMAINS.some((domain) => lowerUrl.includes(domain))) return;
+
+        seenMedia.add(normalizedUrl);
+        const quality = extractQualityHint(normalizedUrl);
+        const hostLabel = normalizeHostLabel(normalizedUrl) || 'Direct';
+
+        streams.push({
+            name: `🪐 AnimeSaturn | ${quality}`,
+            title: `${displayTitle}
+${resolveLanguageLine(parsedPage.sourceTag)} • ${quality}
+☁️ ${hostLabel} • AnimeSaturn`,
+            url: buildStreamOutputUrl(normalizedUrl),
+            language: streamLanguage,
+            extractor: hostLabel,
+            behaviorHints: {
+                notWebReady: false,
+                extractor: hostLabel,
+                bingieGroup: `animesaturn|${String(parsedPage.sourceTag || 'sub').toLowerCase()}`,
+                proxyHeaders: {
+                    request: {
+                        'User-Agent': USER_AGENT,
+                        Referer: refererUrl || animeUrl,
+                        Origin: SATURN_BASE_URL
+                    }
+                }
+            }
+        });
+    }
+
     let processed = 0;
     while (queue.length > 0 && processed < MAX_WATCH_PAGES) {
         const watchUrl = queue.shift();
@@ -639,50 +801,30 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaTyp
         visited.add(watchUrl);
         processed += 1;
 
+        if (isDirectMediaPath(watchUrl)) {
+            addStreamFromMediaUrl(watchUrl, animeUrl);
+            continue;
+        }
+
         let html = '';
         try {
-            html = await fetchResource(watchUrl, {
+            html = await saturnFetchResource(watchUrl, {
                 ttlMs: TTL.watch,
                 cacheKey: `animesaturn-watch:${watchUrl}`,
-                timeoutMs: FETCH_TIMEOUT
-            });
+                timeoutMs: AS_FETCH_TIMEOUT,
+                referer: animeUrl,
+                headers: {
+                    accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'upgrade-insecure-requests': '1'
+                }
+            }, 'watch');
         } catch (error) {
             console.error('[AnimeSaturn] watch page request failed:', error.message);
             continue;
         }
 
         for (const mediaUrl of collectMediaLinksFromWatchHtml(html)) {
-            const normalizedUrl = normalizePlayableMediaUrl(mediaUrl);
-            if (!normalizedUrl || seenMedia.has(normalizedUrl)) continue;
-
-            const lowerUrl = normalizedUrl.toLowerCase();
-            if (lowerUrl.endsWith('.mkv.mp4') || BLOCKED_DOMAINS.some((domain) => lowerUrl.includes(domain))) continue;
-
-            seenMedia.add(normalizedUrl);
-            const quality = extractQualityHint(normalizedUrl);
-            const hostLabel = normalizeHostLabel(normalizedUrl) || 'Direct';
-
-            streams.push({
-                name: `🪐 AnimeSaturn | ${quality}`,
-                title: `${displayTitle}
-${resolveLanguageLine(parsedPage.sourceTag)} • ${quality}
-☁️ ${hostLabel} • AnimeSaturn`,
-                url: normalizedUrl,
-                language: streamLanguage,
-                extractor: hostLabel,
-                behaviorHints: {
-                    notWebReady: false,
-                    extractor: hostLabel,
-                    bingieGroup: `animesaturn|${String(parsedPage.sourceTag || 'sub').toLowerCase()}`,
-                    proxyHeaders: {
-                        request: {
-                            'User-Agent': USER_AGENT,
-                            Referer: watchUrl,
-                            Origin: SATURN_BASE_URL
-                        }
-                    }
-                }
-            });
+            addStreamFromMediaUrl(mediaUrl, watchUrl);
         }
 
         for (const extra of extractWatchUrlsFromHtml(html, expectedFileId)) {
@@ -974,17 +1116,17 @@ async function searchAnimeSaturnCandidates(query) {
     if (!encodedQuery) return [];
 
     try {
-        const payload = await fetchResource(`${SATURN_BASE_URL}/index.php?search=1&key=${encodedQuery}&page=1`, {
+        const payload = await saturnFetchResource(`${SATURN_BASE_URL}/index.php?search=1&key=${encodedQuery}&page=1`, {
             as: 'json',
             ttlMs: TTL.search,
             cacheKey: `animesaturn-search:${encodedQuery}`,
-            timeoutMs: FETCH_TIMEOUT,
+            timeoutMs: AS_FETCH_TIMEOUT,
+            referer: `${SATURN_BASE_URL}/animelist`,
             headers: {
-                referer: `${SATURN_BASE_URL}/animelist`,
                 accept: 'application/json, text/javascript, */*; q=0.01',
                 'x-requested-with': 'XMLHttpRequest'
             }
-        });
+        }, 'search');
 
         if (!Array.isArray(payload)) return [];
 
@@ -1144,19 +1286,65 @@ async function fetchAnimeSaturnMapping(searchContext = {}, requestedEpisode = 1)
     }
 }
 
-function extractAnimeSaturnPathsFromMapping(mappingPayload) {
-    const raw = mappingPayload?.mappings?.animesaturn;
-    const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
-    const paths = [];
+function normalizeAnimeSaturnMappingValue(value) {
+    if (!value) return null;
+    const raw = typeof value === 'string'
+        ? value
+        : value && typeof value === 'object'
+            ? value.path || value.url || value.href || value.link || value.playPath || value.animePath || value.anime_path || value.page || null
+            : null;
+    if (!raw) return null;
+    return normalizeAnimeSaturnCandidatePath(raw);
+}
 
-    for (const item of list) {
-        const candidate = typeof item === 'string'
-            ? item
-            : item && typeof item === 'object'
-                ? item.path || item.url || item.href || item.playPath
-                : null;
-        const normalized = normalizeAnimeSaturnPath(candidate);
-        if (normalized) paths.push(normalized);
+function extractAnimeSaturnPathsFromMapping(mappingPayload) {
+    const paths = [];
+    const seen = new Set();
+
+    const push = (value) => {
+        const normalized = normalizeAnimeSaturnMappingValue(value);
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        paths.push(normalized);
+    };
+
+    const buckets = [
+        mappingPayload?.mappings?.animesaturn,
+        mappingPayload?.mappings?.animeSaturn,
+        mappingPayload?.mappings?.anime_saturn,
+        mappingPayload?.mappings?.as,
+        mappingPayload?.mappings?.providers?.animesaturn,
+        mappingPayload?.mappings?.providers?.animeSaturn,
+        mappingPayload?.providers?.animesaturn,
+        mappingPayload?.providers?.animeSaturn,
+        mappingPayload?.animesaturn,
+        mappingPayload?.animeSaturn,
+        mappingPayload?.anime_saturn,
+        mappingPayload?.as
+    ];
+
+    for (const bucket of buckets) {
+        if (Array.isArray(bucket)) bucket.forEach(push);
+        else push(bucket);
+    }
+
+    const stack = [{ value: mappingPayload, depth: 0 }];
+    const visited = new Set();
+    while (stack.length && paths.length < 16) {
+        const { value, depth } = stack.pop();
+        if (!value || typeof value !== 'object' || depth > 5 || visited.has(value)) continue;
+        visited.add(value);
+
+        for (const [key, child] of Object.entries(value)) {
+            const normalizedKey = String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (/^(animesaturn|saturn|as|animesaturnpath|animesaturnurl|animesaturnhref)$/.test(normalizedKey)) {
+                if (Array.isArray(child)) child.forEach(push);
+                else push(child);
+            }
+
+            if (typeof child === 'string' && /animesaturn\.|\/anime\/|\/ep\//i.test(child)) push(child);
+            if (child && typeof child === 'object') stack.push({ value: child, depth: depth + 1 });
+        }
     }
 
     return uniqueStrings(paths);
@@ -1313,3 +1501,4 @@ async function searchAnimeSaturn(requestId, meta = {}, config = {}) {
 }
 
 module.exports = { searchAnimeSaturn };
+
