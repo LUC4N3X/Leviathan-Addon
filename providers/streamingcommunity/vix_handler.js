@@ -2,6 +2,10 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
+const {
+    buildForwardProxyUrl: buildSharedForwardProxyUrl,
+    normalizeForwardProxyBase: normalizeSharedForwardProxyBase
+} = require('../../core/proxy/forward_proxy_config');
 const mediaIdentity = require('../../core/intelligence/media_identity_resolver');
 const kitsuProvider = require('../animeworld/kitsu_provider');
 const animeProviderUtils = require('../anime/provider_utils');
@@ -46,6 +50,78 @@ const AU_BASE = 'https://www.animeunity.so';
 const ANIME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
 const HLS_PLAYBACK_TOKEN_TTL_MS = Math.max(10 * 60 * 1000, Number.parseInt(process.env.VIX_HLS_TOKEN_TTL_MS || String(2 * 60 * 60 * 1000), 10) || (2 * 60 * 60 * 1000));
 const VIX_STRICT_HOST_BINDING = String(process.env.VIX_STRICT_HOST_BINDING || '').trim() === '1';
+
+const SC_FORWARD_PROXY_CONTEXT = 'streamingcommunity';
+
+function envFlag(name, fallback = false) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return fallback;
+    const value = String(raw).trim();
+    if (/^(1|true|yes|y|on)$/i.test(value)) return true;
+    if (/^(0|false|no|n|off)$/i.test(value)) return false;
+    return fallback;
+}
+
+function envInt(name, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
+    const parsed = Number.parseInt(String(process.env[name] || ''), 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+}
+
+function getScForwardProxyBase() {
+    const raw = String(
+        process.env.SC_FORWARD_PROXY
+        || process.env.STREAMINGCOMMUNITY_FORWARD_PROXY
+        || process.env.STREAMINGCOMMUNITY_FORWARD_PROXY_URL
+        || process.env.VIXSRC_FORWARD_PROXY
+        || process.env.VIX_FORWARD_PROXY
+        || process.env.FORWARD_PROXY
+        || ''
+    ).trim();
+
+    if (!raw) return '';
+    try {
+        return normalizeSharedForwardProxyBase(raw, SC_FORWARD_PROXY_CONTEXT);
+    } catch (error) {
+        console.error(`[WEB][StreamingCommunity] invalid forward proxy | ${error.message}`);
+        return '';
+    }
+}
+
+function isScForwardProxyEnabled(kind = 'page') {
+    const base = getScForwardProxyBase();
+    if (!base) return false;
+    if (!envFlag('SC_FORWARD_PROXY_ENABLED', envFlag('STREAMINGCOMMUNITY_FORWARD_PROXY_ENABLED', true))) return false;
+    if (kind === 'playlist') {
+        return envFlag('SC_FORWARD_PROXY_PLAYLISTS', envFlag('STREAMINGCOMMUNITY_FORWARD_PROXY_PLAYLISTS', true));
+    }
+    return true;
+}
+
+function shouldFallbackDirectAfterForward() {
+    return envFlag('SC_FORWARD_PROXY_DIRECT_FALLBACK', envFlag('STREAMINGCOMMUNITY_FORWARD_PROXY_DIRECT_FALLBACK', false));
+}
+
+function buildScForwardProxyUrl(targetUrl, kind = 'page') {
+    if (!isScForwardProxyEnabled(kind)) return null;
+    const base = getScForwardProxyBase();
+    if (!base) return null;
+    try {
+        const proxied = buildSharedForwardProxyUrl(targetUrl, { base, context: SC_FORWARD_PROXY_CONTEXT });
+        return proxied && proxied !== targetUrl ? proxied : null;
+    } catch (error) {
+        console.error(`[WEB][StreamingCommunity] forward proxy url build failed | kind=${kind} | ${error.message}`);
+        return null;
+    }
+}
+
+function safeLogHost(value) {
+    try {
+        return new URL(String(value || '')).host;
+    } catch {
+        return '';
+    }
+}
 
 const http = axios.create({
     timeout: REQUEST_TIMEOUT,
@@ -195,6 +271,7 @@ function responseText(response) {
 }
 
 function responseUrl(response, fallback) {
+    if (response?._scForwarded) return response._scTargetUrl || fallback;
     return response?.request?.res?.responseUrl || response?.config?.url || fallback;
 }
 
@@ -224,7 +301,8 @@ async function getWithRetries(url, {
     headers = {},
     timeout = REQUEST_TIMEOUT,
     responseType,
-    data
+    data,
+    kind = 'page'
 } = {}) {
     const domain = (() => {
         try {
@@ -234,55 +312,88 @@ async function getWithRetries(url, {
         }
     })();
 
-    try {
-        const response = await requestBreaker.run(domain, async () => resilientCall(
-            async () => http.request({
-                url,
-                method,
-                headers,
-                timeout,
-                responseType,
-                data
-            }),
-            {
-                attempts: MAX_FETCH_RETRIES,
-                shouldRetry: ({ error, status }) => (
-                    status != null
-                        ? RETRYABLE_STATUSES.has(Number(status))
-                        : Boolean(error)
-                )
-            }
-        ));
-
-        if (providerShield.shouldUseShield({ url, status: response?.status, body: responseText(response), headers: response?.headers })) {
-            const shielded = await providerShield.fetchAxiosLike(url, {
-                method,
-                data,
-                ttl: DIRECT_PAGE_CACHE_TTL_MS,
-                timeout: Math.min(timeout || REQUEST_TIMEOUT, 6000),
-                via: 'vixsrc-shield'
-            });
-            if (shielded) return shielded;
-        }
-
-        return response;
-    } catch (error) {
-        if (providerShield.shouldUseShield({ url, error })) {
-            const shielded = await providerShield.fetchAxiosLike(url, {
-                method,
-                data,
-                ttl: DIRECT_PAGE_CACHE_TTL_MS,
-                timeout: Math.min(timeout || REQUEST_TIMEOUT, 6000),
-                via: 'vixsrc-shield'
-            });
-            if (shielded) return shielded;
-        }
-        return null;
+    const forwardUrl = buildScForwardProxyUrl(url, kind);
+    const attempts = [];
+    if (forwardUrl) {
+        attempts.push({ requestUrl: forwardUrl, forwarded: true, via: 'forward-proxy' });
     }
+    if (!forwardUrl || shouldFallbackDirectAfterForward()) {
+        attempts.push({ requestUrl: url, forwarded: false, via: forwardUrl ? 'direct-fallback' : 'direct' });
+    }
+
+    let lastError = null;
+    let lastResponse = null;
+
+    for (const attempt of attempts) {
+        try {
+            const response = await requestBreaker.run(`${domain}:${attempt.via}`, async () => resilientCall(
+                async () => http.request({
+                    url: attempt.requestUrl,
+                    method,
+                    headers,
+                    timeout: attempt.forwarded
+                        ? envInt('SC_FORWARD_PROXY_TIMEOUT_MS', timeout || REQUEST_TIMEOUT, 1000, 60000)
+                        : timeout,
+                    responseType,
+                    data
+                }),
+                {
+                    attempts: MAX_FETCH_RETRIES,
+                    shouldRetry: ({ error, status }) => (
+                        status != null
+                            ? RETRYABLE_STATUSES.has(Number(status))
+                            : Boolean(error)
+                    )
+                }
+            ));
+
+            if (response) {
+                response._scForwarded = attempt.forwarded;
+                response._scTargetUrl = url;
+                response._scRequestUrl = attempt.requestUrl;
+                response._scVia = attempt.via;
+            }
+
+            lastResponse = response;
+            const status = Number(response?.status || 0);
+            const text = responseText(response);
+            const shouldShield = !attempt.forwarded && providerShield.shouldUseShield({ url, status: response?.status, body: text, headers: response?.headers });
+            if (shouldShield) {
+                const shielded = await providerShield.fetchAxiosLike(url, {
+                    method,
+                    data,
+                    ttl: DIRECT_PAGE_CACHE_TTL_MS,
+                    timeout: Math.min(timeout || REQUEST_TIMEOUT, 6000),
+                    via: 'vixsrc-shield'
+                });
+                if (shielded) return shielded;
+            }
+
+            if (!RETRYABLE_STATUSES.has(status) || attempt === attempts[attempts.length - 1]) return response;
+        } catch (error) {
+            lastError = error;
+            if (!attempt.forwarded || !shouldFallbackDirectAfterForward()) break;
+            console.error(`[WEB][StreamingCommunity] forward proxy fallback direct | kind=${kind} | host=${safeLogHost(url)} | proxy=${safeLogHost(attempt.requestUrl)} | error=${error.message}`);
+        }
+    }
+
+    const shieldFallbackAllowed = !forwardUrl || shouldFallbackDirectAfterForward();
+    if (shieldFallbackAllowed && providerShield.shouldUseShield({ url, error: lastError })) {
+        const shielded = await providerShield.fetchAxiosLike(url, {
+            method,
+            data,
+            ttl: DIRECT_PAGE_CACHE_TTL_MS,
+            timeout: Math.min(timeout || REQUEST_TIMEOUT, 6000),
+            via: 'vixsrc-shield'
+        });
+        if (shielded) return shielded;
+    }
+
+    return lastResponse || null;
 }
 
 async function fetchText(url, referer = null, kind = 'html') {
-    const response = await getWithRetries(url, { headers: buildHeaders(referer, kind) });
+    const response = await getWithRetries(url, { headers: buildHeaders(referer, kind), kind });
     const status = Number(response?.status || 0);
     const text = responseText(response);
     if (status === 200 && text) {
@@ -828,7 +939,7 @@ async function resolveScEmbedUrl(tmdbId, pageUrl, season = null, episode = null)
     const apiBase = buildScApiUrl(tmdbId, season, episode);
     const candidates = [`${apiBase}?lang=${PREFERRED_LANG}`, apiBase];
     for (const apiUrl of candidates) {
-        const response = await getWithRetries(apiUrl, { headers: buildHeaders(pageUrl, 'json') });
+        const response = await getWithRetries(apiUrl, { headers: buildHeaders(pageUrl, 'json'), kind: 'json' });
         if (Number(response?.status || 0) !== 200) continue;
 
         let payload = response?.data;
@@ -1005,7 +1116,7 @@ async function tryDirectVixsrcStream(pageUrl, cleanTitle, season, episode, quali
     if (cached) {
         ({ status, pageHtml } = cached);
     } else {
-        const response = await getWithRetries(pageUrl, { headers: buildHeaders(`${VIX_BASE}/`, 'html') });
+        const response = await getWithRetries(pageUrl, { headers: buildHeaders(`${VIX_BASE}/`, 'html'), kind: 'html' });
         status = Number(response?.status || 0);
         pageHtml = responseText(response);
         if (status === 200 && pageHtml) {
