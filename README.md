@@ -431,47 +431,167 @@ http://localhost:7000
 
 ---
 
-## 🧩 File principali — Saved Cloud Layer
+## 🧩 Core File Atlas
 
 <div align="center">
 
-| File | Ruolo |
-|:---|:---|
-| `core/stream/debrid_saved_cloud.js` | Scanner e matching dei file cloud RD/TorBox |
-| `core/stream_generator.js` | Innesto del layer cloud nella pipeline stream e gestione dedupe/annotazione |
-| `core/server/routes/playback_routes.js` | Route sicure per riproduzione cloud salvata |
-| `core/config/schema.js` | Normalizzazione config `enableSavedCloud`, `savedCloudMode`, `savedCloudMax` |
-| `debrid/realdebrid.js` | Supporto lettura/risoluzione cloud Real-Debrid |
-| `debrid/torbox.js` | Supporto lettura/risoluzione cloud TorBox |
-| `core/lib/stream_formatter.js` | Formatter principale con badge `☁️` per cloud salvato |
-| `core/lib/pulse_formatter.cjs` | Formatter AIO/Pulse aggiornato per riconoscere cloud salvato |
-| `public/index.html` | Configuratore desktop aggiornato |
-| `public/smartphone.js` | Configuratore mobile aggiornato |
+### `Operational map of the most important Leviathan files`
+
+Una vista più leggibile dei file chiave del progetto:  
+**cosa fanno, dove stanno e quale layer controllano davvero.**
+
+<br>
+
+<img src="https://img.shields.io/badge/SAVED_CLOUD-RD_/_TORBOX-00E7FF?style=for-the-badge&labelColor=07111F" />
+<img src="https://img.shields.io/badge/PROVIDERS-WEB_+_ANIME-2EE6A6?style=for-the-badge&labelColor=07111F" />
+<img src="https://img.shields.io/badge/TORRENT-ENGINES-7C3AED?style=for-the-badge&labelColor=07111F" />
+<img src="https://img.shields.io/badge/HOSTERS-RUNTIME_FLOW-FF5A7A?style=for-the-badge&labelColor=07111F" />
 
 </div>
 
 ---
 
-## 🧩 File principali — Provider Layer
+## ☁️ Saved Cloud Layer
 
 <div align="center">
 
-| File | Ruolo |
-|:---|:---|
-| `providers/extractors/provider_registry.js` | Registry centrale dei web/anime provider e timeout minimi |
-| `providers/streamingcommunity/vix_handler.js` | Provider StreamingCommunity / Vix |
-| `providers/altadefinizione/ads_handler.js` | Provider Altadefinizione |
-| `providers/guardahd/ghd_handler.js` | Provider GuardaHD |
-| `providers/guardoserie/gs_handler.js` | Provider GuardoSerie |
-| `providers/animeworld/aw_handler.js` | Provider AnimeWorld con supporto Kitsu/anime |
-| `providers/animeunity/au_handler.js` | Provider AnimeUnity |
-| `providers/animesaturn/as_handler.js` | Provider AnimeSaturn |
-| `providers/guardaflix/gf_handler.js` | Provider GuardaFlix |
-| `providers/eurostreaming/es_handler.js` | Provider Eurostreaming con routing Safego/Clicka e hoster DeltaBit, MixDrop e MaxStream |
-| `providers/engines.js` | Engine torrent: Corsaro, Knaben, Nyaa, SubsPlease, TPB, TPB Mirror, 1337x, BitSearch, LimeTorrents, RARBG e UIndex |
-| `core/nexus-bridge/torrentio.js` | Bridge Torrentio Main/Mirror |
-| `core/nexus-bridge/mediafusion.js` | Bridge MediaFusion con gate RD/cache |
-| `providers/extractors/hosters/` | Resolver hoster: VixCloud, Mixdrop, SuperVideo, Streamtape, UpStream, Uqload, Vidoza, Dropload, LoadM, DeltaBit e MaxStream/UPROT |
+### `RD/TorBox recognition · cloud playback · formatter awareness · UI config`
+
+</div>
+
+<table align="center" width="100%">
+<tr>
+<td valign="top" width="50%">
+
+### 🔎 Cloud Intelligence
+
+- `core/stream/debrid_saved_cloud.js`  
+  Scanner e matching dei file cloud **RD/TorBox**.
+
+- `debrid/realdebrid.js`  
+  Supporto lettura e risoluzione cloud **Real-Debrid**.
+
+- `debrid/torbox.js`  
+  Supporto lettura e risoluzione cloud **TorBox**.
+
+- `core/config/schema.js`  
+  Normalizzazione di `enableSavedCloud`, `savedCloudMode`, `savedCloudMax`.
+
+</td>
+<td valign="top" width="50%">
+
+### 🚀 Stream Delivery & UI
+
+- `core/stream_generator.js`  
+  Innesta il layer cloud nella pipeline stream e gestisce dedupe/annotazione.
+
+- `core/server/routes/playback_routes.js`  
+  Route sicure per la riproduzione cloud salvata.
+
+- `core/lib/stream_formatter.js`  
+  Formatter principale con badge `☁️` per gli stream cloud salvati.
+
+- `core/lib/pulse_formatter.cjs`  
+  Formatter AIO/Pulse aggiornato per riconoscere il cloud salvato.
+
+- `public/index.html`  
+  Configuratore desktop aggiornato.
+
+- `public/smartphone.js`  
+  Configuratore mobile aggiornato.
+
+</td>
+</tr>
+</table>
+
+<div align="center">
+
+<sub>Il Saved Cloud Layer legge, riconosce, formatta e consegna in playback i file già presenti negli account RD/TorBox dell'utente.</sub>
+
+</div>
+
+---
+
+## 🌐 Provider & Runtime Layer
+
+<div align="center">
+
+### `Web providers · anime providers · bridges · torrent engines · hoster resolvers`
+
+</div>
+
+<table align="center" width="100%">
+<tr>
+<td valign="top" width="50%">
+
+### 🧭 Provider Orchestration
+
+- `providers/extractors/provider_registry.js`  
+  Registry centrale dei provider web/anime e gestione timeout minimi.
+
+- `core/nexus-bridge/torrentio.js`  
+  Bridge **Torrentio** main/mirror.
+
+- `core/nexus-bridge/mediafusion.js`  
+  Bridge **MediaFusion** con gate RD/cache.
+
+- `providers/engines.js`  
+  Engine torrent: **Corsaro, Knaben, TPB, TPB Mirror, 1337x, BitSearch, LimeTorrents, RARBG, UIndex, Nyaa, SubsPlease**.
+
+</td>
+<td valign="top" width="50%">
+
+### 🇮🇹 Web Provider Modules
+
+- `providers/streamingcommunity/vix_handler.js`  
+  Provider **StreamingCommunity / Vix**.
+
+- `providers/altadefinizione/ads_handler.js`  
+  Provider **Altadefinizione**.
+
+- `providers/guardahd/ghd_handler.js`  
+  Provider **GuardaHD**.
+
+- `providers/guardoserie/gs_handler.js`  
+  Provider **GuardoSerie**.
+
+- `providers/guardaflix/gf_handler.js`  
+  Provider **GuardaFlix**.
+
+- `providers/eurostreaming/es_handler.js`  
+  Provider **Eurostreaming** con routing **Safego/Clicka** e hoster **DeltaBit / MixDrop / MaxStream**.
+
+</td>
+</tr>
+<tr>
+<td valign="top" width="50%">
+
+### 🈶 Anime & Specialized Sources
+
+- `providers/animeworld/aw_handler.js`  
+  Provider **AnimeWorld** con supporto **Kitsu/anime**.
+
+- `providers/animeunity/au_handler.js`  
+  Provider **AnimeUnity**.
+
+- `providers/animesaturn/as_handler.js`  
+  Provider **AnimeSaturn**.
+
+</td>
+<td valign="top" width="50%">
+
+### 🔌 Hoster Resolution Runtime
+
+- `providers/extractors/hosters/`  
+  Resolver hoster: **VixCloud, Mixdrop, SuperVideo, Streamtape, UpStream, Uqload, Vidoza, Dropload, LoadM, DeltaBit, MaxStream/UPROT**.
+
+</td>
+</tr>
+</table>
+
+<div align="center">
+
+<sub>Questo layer è il cuore operativo che coordina discovery, bridge, provider web, anime sources, torrent engines e risoluzione hoster.</sub>
 
 </div>
 
