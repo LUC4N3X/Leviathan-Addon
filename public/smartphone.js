@@ -7294,9 +7294,6 @@ body.m-mf-plus.m-input-active.m-keyboard-open .m-dock-container {
 }
 
 
-/* =========================================================================
-   SaaS SKIN v10 — provider visual rail rifatto e icone perfettamente centrate
-   ========================================================================= */
 body.m-mf-plus .m-reactor-grid {
     gap: 12px !important;
 }
