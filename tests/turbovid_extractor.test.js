@@ -67,6 +67,106 @@ test('TurboVid extractor supports Proceed-to-video form fallback', async () => {
     assert.equal(client.requests.some((request) => request.method === 'POST'), true);
 });
 
+
+test('TurboVid extractor clicks Proceed-to-video with page cookies before proxying the real HLS', async () => {
+    const playerUrl = 'https://turbovid.me/gs9b1wvoqch1';
+    const hlsUrl = 'https://turbovidhls.com/hls/gs9b1wvoqch1/master.m3u8';
+    const formHtml = `
+        <script src="https://turbovid.me/js/jquery.cookie.js"></script>
+        <script>$.cookie('file_id', '21947', { expires: 10 }); $.cookie('aff', '4', { expires: 10 });</script>
+        <Form method="POST" action='/gs9b1wvoqch1'>
+          <input type="hidden" name="op" value="download1">
+          <input type="hidden" name="usr_login" value="">
+          <input type="hidden" name="id" value="gs9b1wvoqch1">
+          <input type="hidden" name="fname" value="I.misteri.Di.Brokenwood.1x02.La.Volpe.E.L.Uva.ITA.DTTRip.x264-UBi.mkv">
+          <input type="hidden" name="hash" value="1780343225-2c20bda8f5146a72038cea503edcbcaf">
+          <button type="submit" name="imhuman" value="Proceed to video" id="btn_download">
+            <span id="countdown_str">Wait <span id="cxc">5</span> seconds</span>
+            Proceed to video
+          </button>
+        </Form>`;
+    const client = new FakeClient({
+        [`GET ${playerUrl}`]: { status: 200, data: formHtml },
+        [`POST ${playerUrl}`]: (_url, body, options) => {
+            assert.match(body, /op=download1/);
+            assert.match(body, /id=gs9b1wvoqch1/);
+            assert.match(body, /imhuman=Proceed\+to\+video/);
+            assert.match(options.headers.Cookie, /file_id=21947/);
+            assert.match(options.headers.Cookie, /aff=4/);
+            return { status: 200, data: `<script>const streamUrl = '${hlsUrl}';</script>` };
+        },
+        [`GET ${hlsUrl}`]: { status: 200, data: '#EXTM3U' }
+    });
+
+    const result = await extractTurbovid(playerUrl, { client, proceedWaitMs: 0 });
+
+    assert.equal(result.url, hlsUrl);
+    assert.match(result.headers.Cookie, /file_id=21947/);
+});
+
+
+
+test('TurboVid extractor accepts Proceed-to-video MP4 CDN links for direct proxy playback', async () => {
+    const playerUrl = 'https://turbovid.me/wfhp99er11ln';
+    const mp4Url = 'https://tu01.host-cdn.net/v/04/00004/hogu7zkqffwp_n/n.mp4?t=token&s=1780351264&e=43200&v=4301319&sp=250&i=0.0';
+    const formHtml = `
+        <script>$.cookie('file_id', '21960', { expires: 10 }); $.cookie('aff', '4', { expires: 10 });</script>
+        <form method="POST" action="/wfhp99er11ln">
+          <input type="hidden" name="op" value="download1">
+          <input type="hidden" name="id" value="wfhp99er11ln">
+          <button type="submit" name="imhuman" value="Proceed to video">Proceed to video</button>
+        </form>`;
+    const client = new FakeClient({
+        [`GET ${playerUrl}`]: { status: 200, data: formHtml },
+        [`POST ${playerUrl}`]: (_url, body, options) => {
+            assert.match(body, /op=download1/);
+            assert.match(options.headers.Cookie, /file_id=21960/);
+            return { status: 200, data: `<script>const streamUrl = '${mp4Url}';</script>` };
+        }
+    });
+
+    const result = await extractTurbovid(playerUrl, { client, proceedWaitMs: 0 });
+
+    assert.equal(result.url, mp4Url);
+    assert.equal(result.kind, 'mp4');
+    assert.equal(result.quality, 'HD');
+    assert.match(result.headers.Cookie, /file_id=21960/);
+});
+
+test('Eurostreaming proxies locally resolved TurboVid MP4 directly through Kraken stream endpoint', async () => {
+    const previousLocalFirst = process.env.EUROSTREAMING_TURBOVID_LOCAL_PROXY_FIRST;
+    process.env.EUROSTREAMING_TURBOVID_LOCAL_PROXY_FIRST = 'true';
+
+    try {
+        const playerUrl = 'https://turbovid.me/wfhp99er11ln';
+        const mp4Url = 'https://tu01.host-cdn.net/v/04/00004/hogu7zkqffwp_n/n.mp4?t=token&s=1780351264&e=43200&v=4301319&sp=250&i=0.0';
+        const client = new FakeClient({
+            [`GET ${playerUrl}`]: { status: 200, data: `<form method="POST" action="/wfhp99er11ln"><input name="op" value="download1"><button name="imhuman" value="Proceed to video">Proceed to video</button></form>` },
+            [`POST ${playerUrl}`]: { status: 200, data: `<script>const streamUrl = '${mp4Url}';</script>` }
+        });
+
+        const stream = await esPrivate.buildHostStream(
+            { host: 'turbovid', label: 'TurboVid', href: playerUrl },
+            {
+                client,
+                config: { mediaflow: { url: 'https://kraken.test', pass: 'secret' } },
+                title: 'I misteri di Brokenwood — S01E02',
+                language: 'ITA',
+                options: { baseUrl: 'https://eurostreaming.test', proceedWaitMs: 0 }
+            }
+        );
+
+        assert.ok(stream);
+        assert.match(stream.url, /^https:\/\/kraken\.test\/proxy\/stream\?/);
+        assert.match(stream.url, /(?:\?|&)d=https%3A%2F%2Ftu01\.host-cdn\.net%2F/);
+        assert.doesNotMatch(stream.url, /\/extractor\/video\.m3u8/i);
+        assert.equal(stream.behaviorHints?.vortexMeta?.via, 'turbovid-local-mfp-stream');
+    } finally {
+        if (previousLocalFirst === undefined) delete process.env.EUROSTREAMING_TURBOVID_LOCAL_PROXY_FIRST;
+        else process.env.EUROSTREAMING_TURBOVID_LOCAL_PROXY_FIRST = previousLocalFirst;
+    }
+});
+
 test('TurboVid is exposed through the shared extractor registry', async () => {
     const playerUrl = 'https://turbovid.me/abc123';
     const hlsUrl = 'https://turbovidhls.com/hls/abc123/master.m3u8';
@@ -115,7 +215,7 @@ test('TurboVid URL helpers recognize all known host variants', () => {
     assert.equal(normalizeTurbovidUrl('https://proxy.test/extractor/video?d=https%3A%2F%2Fturboviplay.com%2Fabc&api_password=x'), 'https://turboviplay.com/abc');
 });
 
-test('Eurostreaming sends TurboVid fallback to Kraken TurboVidPlay HLS extractor', async () => {
+test('Eurostreaming delegates TurboVid playback to Kraken video extractor', async () => {
     const previousLocalFirst = process.env.EUROSTREAMING_TURBOVID_LOCAL_PROXY_FIRST;
     delete process.env.EUROSTREAMING_TURBOVID_MFP_HOST;
     delete process.env.EUROSTREAMING_TURBOVID_MFP_PATH;
@@ -134,13 +234,13 @@ test('Eurostreaming sends TurboVid fallback to Kraken TurboVidPlay HLS extractor
         );
 
         assert.ok(stream);
-        assert.match(stream.url, /^https:\/\/kraken\.test\/extractor\/video\.m3u8\?/);
+        assert.match(stream.url, /^https:\/\/kraken\.test\/extractor\/video\?/);
         assert.match(stream.url, /(?:\?|&)host=TurboVidPlay(?:&|$)/);
         assert.match(stream.url, /(?:\?|&)d=https%3A%2F%2Fturbovid\.me%2Fw3lup4ug0ps7(?:&|$)/);
         assert.match(stream.url, /(?:\?|&)redirect_stream=true(?:&|$)/);
         assert.match(stream.url, /(?:\?|&)h_referer=https%3A%2F%2Fturbovid\.me%2F(?:&|$)/);
-        assert.equal(stream.behaviorHints?.vortexMeta?.streamKind, 'hls');
-        assert.equal(stream.behaviorHints?.vortexMeta?.via, 'mfp');
+        assert.equal(stream.behaviorHints?.vortexMeta?.streamKind, 'video');
+        assert.equal(stream.behaviorHints?.vortexMeta?.via, 'turbovid-kraken-extractor');
     } finally {
         if (previousLocalFirst === undefined) delete process.env.EUROSTREAMING_TURBOVID_LOCAL_PROXY_FIRST;
         else process.env.EUROSTREAMING_TURBOVID_LOCAL_PROXY_FIRST = previousLocalFirst;
