@@ -286,7 +286,8 @@ function buildHeaders(referer = null, kind = 'html') {
     if (kind === 'script') {
         headers.Accept = 'application/javascript,text/javascript,*/*;q=0.8';
     } else if (kind === 'playlist') {
-        headers.Accept = '*/*';
+        headers.Accept = 'application/vnd.apple.mpegurl, application/x-mpegURL, */*';
+        headers['Accept-Encoding'] = 'identity';
     } else if (kind === 'json') {
         headers.Accept = 'application/json,text/plain,*/*';
     } else {
@@ -957,6 +958,13 @@ async function resolveScEmbedUrl(tmdbId, pageUrl, season = null, episode = null)
     return null;
 }
 
+function syntheticVariantForQuality(quality) {
+    const normalized = normalizeQuality(quality);
+    if (normalized === '1080p') return '1080';
+    if (normalized === '720p') return '720';
+    return 'auto';
+}
+
 function buildSyntheticUrl(masterSource, quality, referer, reqHost) {
     const addonBase = normalizeAddonBase(reqHost);
     const token = issueHlsTransitKey(masterSource, {
@@ -969,7 +977,8 @@ function buildSyntheticUrl(masterSource, quality, referer, reqHost) {
         profile: 'synthetic-stream',
         meta: {
             syntheticQuality: quality,
-            syntheticVariant: quality === '1080p' ? 'max' : 'mid'
+            syntheticVariant: syntheticVariantForQuality(quality),
+            stablePlayback: true
         },
         tokenTtlMs: HLS_PLAYBACK_TOKEN_TTL_MS,
         tokenMaxUses: 0,
