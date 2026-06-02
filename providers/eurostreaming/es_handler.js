@@ -130,7 +130,15 @@ function getTurbovidMfpHost() {
 }
 
 function getTurbovidMfpPath() {
-    return String(process.env.EUROSTREAMING_TURBOVID_MFP_PATH || process.env.ES_TURBOVID_MFP_PATH || process.env.MEDIAFLOW_TURBOVID_EXTRACTOR_PATH || '/extractor/video.m3u8').trim() || '/extractor/video.m3u8';
+    // TurboVid returns a final MP4, not a playlist. Keep it on the generic
+    // video extractor endpoint so Stremio does not treat it as an HLS manifest.
+    // The old /extractor/video.m3u8 route is intentionally ignored unless the
+    // operator explicitly opts back into it for regression testing.
+    if (!envFlag('EUROSTREAMING_TURBOVID_ALLOW_M3U8_PATH', false)) {
+        return '/extractor/video';
+    }
+    const raw = String(process.env.EUROSTREAMING_TURBOVID_MFP_PATH || process.env.ES_TURBOVID_MFP_PATH || process.env.MEDIAFLOW_TURBOVID_EXTRACTOR_PATH || '/extractor/video').trim();
+    return raw || '/extractor/video';
 }
 
 function getTurbovidRedirectStream() {
@@ -1607,7 +1615,7 @@ function getHostResolveTimeoutMs(host) {
     if (host === 'deltabit') return envInt('ES_DELTABIT_HOST_TIMEOUT_MS', 10000, 1000, 20000);
     if (host === 'maxstream') return envInt('ES_MAXSTREAM_HOST_TIMEOUT_MS', 15000, 1000, 30000);
     if (host === 'mixdrop') return envInt('ES_MIXDROP_HOST_TIMEOUT_MS', 4500, 1000, 15000);
-    if (host === 'turbovid') return envInt('ES_TURBOVID_HOST_TIMEOUT_MS', 6500, 1000, 18000);
+    if (host === 'turbovid') return envInt('ES_TURBOVID_HOST_TIMEOUT_MS', 11000, 1000, 18000);
     return envInt('ES_HOST_TIMEOUT_MS', 5000, 1000, 20000);
 }
 
@@ -2073,7 +2081,7 @@ async function buildHostStream(link, context) {
             esDebug('info', 'turbovid canonicalized for local extractor', { fromPath: safePath(targetUrl), toPath: safePath(normalizedTurbovid), host: safeHost(normalizedTurbovid) });
         }
 
-        if (getMediaflowBase(config) && envFlag('EUROSTREAMING_TURBOVID_LOCAL_PROXY_FIRST', true)) {
+        if (getMediaflowBase(config) && envFlag('EUROSTREAMING_TURBOVID_LOCAL_PROXY_FIRST', false)) {
             try {
                 const extracted = await withTimeout(
                     extractTurbovid(normalizedTurbovid, {
@@ -2083,12 +2091,12 @@ async function buildHostStream(link, context) {
                         requestReferer: options?.baseUrl || getBaseUrl(),
                         referer: options?.baseUrl || getBaseUrl()
                     }),
-                    envInt('ES_TURBOVID_LOCAL_TIMEOUT_MS', 4500, 800, 12000),
+                    envInt('ES_TURBOVID_LOCAL_TIMEOUT_MS', 16000, 800, 30000),
                     'Eurostreaming TurboVid local'
                 );
                 if (extracted?.url && isProbablyPlayableMediaUrl(extracted.url)) {
                     const isHls = isHlsStreamUrl(extracted.url);
-                    const proxied = buildMfpProxyUrl(config, extracted.url, extracted.headers || extractorHeadersFor(extracted.sourceUrl || normalizedTurbovid, 'turbovid'), { isHls });
+                    const proxied = buildMfpProxyUrl(config, extracted.url, extracted.headers || extractorHeadersFor(extracted.sourceUrl || normalizedTurbovid, 'turbovid'), { isHls, allowCookie: true });
                     if (proxied && proxied !== extracted.url) {
                         esDebug('info', 'turbovid source proxied via MFP/Kraken', {
                             sourceHost: safeHost(extracted.url),
@@ -2115,7 +2123,7 @@ async function buildHostStream(link, context) {
 
         const turbovidKrakenHost = getTurbovidMfpHost();
         const turbovidKrakenPath = getTurbovidMfpPath();
-        esDebug('info', 'turbovid sent to MFP/Kraken extractor', {
+        esDebug('info', 'turbovid delegated to Kraken extractor', {
             hrefHost: safeHost(link.href),
             targetHost: safeHost(normalizedTurbovid),
             targetPath: safePath(normalizedTurbovid),
@@ -2134,7 +2142,7 @@ async function buildHostStream(link, context) {
                 redirectStream: getTurbovidRedirectStream(),
                 headers: extractorHeadersFor(normalizedTurbovid, 'turbovid')
             },
-            streamKind: 'hls'
+            streamKind: 'video'
         });
     }
 
