@@ -6,13 +6,11 @@
 
   <br>
 
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:070B13,18:071B2D,35:00E7FF,50:246BFF,66:7C3AED,82:00BFFF,100:070B13&height=14&section=header" width="56%" alt="Leviathan ocean glow" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:070B13,18:081A2E,34:00D9FF,52:1E90FF,68:7C3AED,84:00CFFF,100:070B13&height=72&section=header&reversal=false&animation=fadeIn" width="56%" alt="Leviathan sea wave" />
 
   <br>
 
   <img src="https://capsule-render.vercel.app/api?type=transparent&height=92&section=header&text=LEVIATHAN&fontSize=74&fontColor=00E7FF&animation=fadeIn&fontAlignY=42&desc=ITA-first%20%2F%20ENG-ready%20Stremio%20Aggregation%20Engine&descSize=18&descAlignY=78&descColor=A8F7FF" alt="Leviathan" width="100%" />
-
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:070B13,30:00E7FF,50:7C3AED,70:00BFFF,100:070B13&height=2&section=header" width="58%" alt="divider" />
 
   <br>
 
