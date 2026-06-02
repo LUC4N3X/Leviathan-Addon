@@ -2838,7 +2838,7 @@ body.m-mf-plus .m-cred-opt.active {
 }
 
 body.m-mf-plus .m-cred-opt.active::after {
-    content: "✓" !important;
+    content: "âœ“" !important;
     display: flex !important;
     align-items: center;
     justify-content: center;
@@ -4762,7 +4762,7 @@ body.m-lowfx .m-sea-band.band-2 { display: none; }
 body.m-typing .m-sea-motion,
 body.m-keyboard-open .m-sea-motion { display: none !important; }
 
-/* Leviathan SaaS skin — keeps original layout, upgrades only the visual layer */
+/* Leviathan SaaS skin â€” keeps original layout, upgrades only the visual layer */
 :root {
     --m-bg: #020817;
     --m-bg-deep: #01040d;
@@ -5191,7 +5191,7 @@ body.m-typing .m-content {
 }
 
 
-/* Leviathan WebGL ocean — one fragment-shader layer, no external runtime */
+/* Leviathan WebGL ocean â€” one fragment-shader layer, no external runtime */
 #m-sea-webgl {
     position: fixed;
     inset: 0;
@@ -5239,7 +5239,7 @@ body.m-keyboard-open #m-sea-webgl {
 }
 
 /* ============================================================
-   LIVELLO 3 — Fallback CSS animato del mare.
+   LIVELLO 3 â€” Fallback CSS animato del mare.
    Si attiva solo quando lo shader WebGL non parte
    (no GL / contesto perso / dispositivo troppo debole).
    Tutto su transform+opacity, zero costo di layout.
@@ -6144,8 +6144,8 @@ body.m-lowfx .m-dock-nav {
 
 
 /* =========================================================================
-   LEVIATHAN · SaaS DEVELOPER-TOOL SKIN  (mediaflow-proxy inspired)
-   Soft glassmorphism · gradient UI · clean dashboard · ocean preserved
+   LEVIATHAN Â· SaaS DEVELOPER-TOOL SKIN  (mediaflow-proxy inspired)
+   Soft glassmorphism Â· gradient UI Â· clean dashboard Â· ocean preserved
    Scoped to body.m-mf-plus, cascades last. Logic/IDs untouched.
    ========================================================================= */
 
@@ -6171,7 +6171,7 @@ body.m-mf-plus {
 body.m-mf-plus::after { opacity: 0.025 !important; }   /* kill heavy CRT scanlines */
 body.m-mf-plus::before { opacity: 0.5; }               /* dim the tech grid */
 
-/* Content rhythm — more breathing room like a dashboard */
+/* Content rhythm â€” more breathing room like a dashboard */
 body.m-mf-plus .m-content { padding-left: 16px; padding-right: 16px; }
 body.m-mf-plus .m-hypervisor + .m-hypervisor,
 body.m-mf-plus .m-visual-core-v2 + .m-hypervisor,
@@ -6215,7 +6215,7 @@ body.m-mf-plus .m-hypervisor > .m-hyp-header::before {
 body.m-mf-plus .m-hypervisor::after,
 body.m-mf-plus .m-visual-core-v2::after { opacity: 0 !important; }
 
-/* card header — calmer, modern */
+/* card header â€” calmer, modern */
 body.m-mf-plus .m-hyp-header {
     font-family: 'Outfit', sans-serif !important;
     font-weight: 700 !important;
@@ -6334,7 +6334,7 @@ body.m-mf-plus .m-reactor-module.active .m-core-icon { color: #fff !important; }
 body.m-mf-plus .m-reactor-title { color: var(--s-txt) !important; font-weight: 600 !important; }
 body.m-mf-plus .m-reactor-desc { color: var(--s-dim) !important; }
 
-/* tech tags → soft pills */
+/* tech tags â†’ soft pills */
 body.m-mf-plus .m-tech-tag {
     border-radius: 999px !important;
     border: 1px solid var(--s-stroke) !important;
@@ -6439,7 +6439,7 @@ body.m-mf-plus .m-act-btn:not(.primary):not(.install) {
     -webkit-backdrop-filter: blur(12px) !important;
 }
 
-/* generated-link box → terminal-clean */
+/* generated-link box â†’ terminal-clean */
 body.m-mf-plus #m-generatedUrlBox,
 body.m-mf-plus #m-setupGeneratedUrlBox {
     background: rgba(6, 11, 20, 0.7) !important;
@@ -6493,9 +6493,9 @@ body.m-mf-plus.m-switching .m-visual-core-v2 {
 }
 
 /* =========================================================================
-   LEVIATHAN · SaaS SKIN v2  — refinements
-   1) placeholder leggibile  2) hero→card più compatto  3) nav tabs mediaflow
-   4) card ancora più "mediaflow" (flat, neutre, soft)
+   LEVIATHAN Â· SaaS SKIN v2  â€” refinements
+   1) placeholder leggibile  2) heroâ†’card piÃ¹ compatto  3) nav tabs mediaflow
+   4) card ancora piÃ¹ "mediaflow" (flat, neutre, soft)
    ========================================================================= */
 
 /* ---- 1. INPUT PLACEHOLDER: leggibile, niente clipping ---- */
@@ -6514,7 +6514,7 @@ body.m-mf-plus .m-if-field::placeholder {
     text-transform: none !important;
     opacity: 1 !important;
 }
-/* dai più respiro al testo: icona/azioni leggermente più strette */
+/* dai piÃ¹ respiro al testo: icona/azioni leggermente piÃ¹ strette */
 body.m-mf-plus .m-if-inner { padding-left: 4px !important; gap: 2px !important; }
 body.m-mf-plus .m-if-icon { width: 34px !important; flex: 0 0 34px !important; }
 body.m-mf-plus .m-if-action { padding: 7px !important; }
@@ -6533,7 +6533,7 @@ body.m-mf-plus .m-input-fuselage:focus-within .m-if-label {
     border-color: rgba(99,102,241,0.55) !important;
 }
 
-/* ---- 2. HERO → CARD: meno spazio, versione compatta ---- */
+/* ---- 2. HERO â†’ CARD: meno spazio, versione compatta ---- */
 body.m-mf-plus .m-hero { padding-bottom: 10px !important; }
 body.m-mf-plus .m-hero-panel { padding-bottom: 8px !important; }
 body.m-mf-plus .m-hero-badges { margin-bottom: 4px !important; margin-top: 8px !important; }
@@ -6542,7 +6542,7 @@ body.m-mf-plus .m-abyss-version {
     margin-top: 4px !important;
     padding: 3px 10px !important;
     font-size: 0.56rem !important;
-    animation: none !important;            /* niente pulse: più SaaS, meno gaming */
+    animation: none !important;            /* niente pulse: piÃ¹ SaaS, meno gaming */
 }
 body.m-mf-plus .m-version-tag::before { display: none !important; }  /* via lo shimmer */
 body.m-mf-plus #page-setup .m-hypervisor:first-child { margin-top: 0 !important; }
@@ -6624,23 +6624,23 @@ body.m-mf-plus .m-nav-item:not(.active):active {
 /* lowfx: niente blur/animazioni pesanti sul dock */
 body.m-mf-plus.m-lowfx .m-nav-item.active { box-shadow: none !important; }
 
-/* ---- 4. CARD ancora più mediaflow: flat-neutre, header sobrio ---- */
+/* ---- 4. CARD ancora piÃ¹ mediaflow: flat-neutre, header sobrio ---- */
 body.m-mf-plus .m-hypervisor,
 body.m-mf-plus .m-visual-core-v2 {
     background: rgba(13, 21, 36, 0.62) !important;
     border: 1px solid rgba(255,255,255,0.07) !important;
 }
-/* hairline gradient più discreto */
+/* hairline gradient piÃ¹ discreto */
 body.m-mf-plus .m-hypervisor > .m-hyp-header::before { opacity: 0.6 !important; height: 2px !important; }
 /* header: peso normale, niente uppercase aggressivo */
 body.m-mf-plus .m-hyp-header { font-size: 0.92rem !important; gap: 8px; }
-/* descrizione panel più compatta */
+/* descrizione panel piÃ¹ compatta */
 body.m-mf-plus .m-panel-desc { font-size: 0.76rem !important; margin: 0 0 4px !important; }
 /* deck servizi: gap coerente, meno perspective gaming */
 body.m-mf-plus .m-cred-deck { perspective: none !important; margin-bottom: 16px !important; }
 body.m-mf-plus .m-cred-icon { filter: none !important; }
 
-/* ---- 5. INSTALL / COPY / footer buttons → mediaflow gradient ---- */
+/* ---- 5. INSTALL / COPY / footer buttons â†’ mediaflow gradient ---- */
 body.m-mf-plus .m-setup-install {
     background: var(--s-grad) !important;
     border: none !important;
@@ -6680,7 +6680,7 @@ body.m-mf-plus .m-act-close {
     border-radius: 12px !important;
 }
 
-/* mini console / link box → terminal pulito */
+/* mini console / link box â†’ terminal pulito */
 body.m-mf-plus .m-setup-mini-console,
 body.m-mf-plus .m-flux-terminal {
     background: rgba(8, 14, 26, 0.6) !important;
@@ -6705,16 +6705,16 @@ body.m-mf-plus .m-reactor-module.active {
     box-shadow: 0 12px 30px -14px rgba(99,102,241,0.45) !important;
 }
 
-/* ---- 7. NEURAL SIGNATURE / footer credits → toni SaaS ---- */
+/* ---- 7. NEURAL SIGNATURE / footer credits â†’ toni SaaS ---- */
 body.m-mf-plus .m-credits-panel,
 body.m-mf-plus .m-signature-panel { border-radius: var(--s-radius) !important; }
 body.m-mf-plus .m-kofi-btn { border-radius: 12px !important; }
 
 /* =========================================================================
-   SaaS SKIN v4 — gradient azzurro Leviathan + input full leggibile
+   SaaS SKIN v4 â€” gradient azzurro Leviathan + input full leggibile
    ========================================================================= */
 
-/* ombre dei bottoni gradient → azzurro invece di indaco */
+/* ombre dei bottoni gradient â†’ azzurro invece di indaco */
 body.m-mf-plus .m-setup-install { box-shadow: 0 14px 34px -12px rgba(34,211,238,0.6) !important; }
 body.m-mf-plus .m-setup-mini-copy,
 body.m-mf-plus .m-act-copy { box-shadow: 0 6px 18px -6px rgba(34,211,238,0.55) !important; }
@@ -6730,7 +6730,7 @@ body.m-mf-plus .m-nav-item:nth-child(2).active,
 body.m-mf-plus .m-nav-item:nth-child(3).active { box-shadow: 0 12px 28px -12px rgba(34,211,238,0.5) !important; }
 body.m-mf-plus .m-reactor-module.active { box-shadow: 0 12px 30px -14px rgba(34,211,238,0.45) !important; }
 
-/* bordi/focus attivi → azzurro */
+/* bordi/focus attivi â†’ azzurro */
 body.m-mf-plus .m-if-inner:focus-within {
     border-color: rgba(56,189,248,0.6) !important;
     box-shadow: 0 0 0 3px rgba(56,189,248,0.16), inset 0 1px 2px rgba(0,0,0,0.25) !important;
@@ -6741,7 +6741,7 @@ body.m-mf-plus .m-srv-btn.active,
 body.m-mf-plus .m-reactor-module.active,
 body.m-mf-plus .m-nav-item.active { border-color: rgba(72,196,255,0.5) !important; }
 
-/* ---- INPUT: il campo testo deve avere priorità di spazio, GET compatto ---- */
+/* ---- INPUT: il campo testo deve avere prioritÃ  di spazio, GET compatto ---- */
 body.m-mf-plus .m-if-inner {
     display: flex !important;
     align-items: center !important;
@@ -6781,7 +6781,7 @@ body.m-mf-plus .m-get-link {
 }
 
 /* =========================================================================
-   SaaS SKIN v5 — card più chiare (slate) + provider stripe ripristinata
+   SaaS SKIN v5 â€” card piÃ¹ chiare (slate) + provider stripe ripristinata
    ========================================================================= */
 body.m-mf-plus {
     --s-glass: rgba(26, 38, 58, 0.55);
@@ -6790,7 +6790,7 @@ body.m-mf-plus {
     --s-stroke-soft: rgba(150, 185, 230, 0.12);
 }
 
-/* card principali un filo più chiare/grigie */
+/* card principali un filo piÃ¹ chiare/grigie */
 body.m-mf-plus .m-hypervisor,
 body.m-mf-plus .m-visual-core-v2 {
     background: rgba(24, 35, 54, 0.58) !important;
@@ -6807,7 +6807,7 @@ body.m-mf-plus .m-reactor-module.active {
     border-color: rgba(72,196,255,0.45) !important;
 }
 
-/* riquadro core icona provider: leggermente più chiaro */
+/* riquadro core icona provider: leggermente piÃ¹ chiaro */
 body.m-mf-plus .m-reactor-core {
     background: rgba(150, 185, 230, 0.10) !important;
     border: 1px solid rgba(150, 185, 230, 0.16) !important;
@@ -6828,7 +6828,7 @@ body.m-mf-plus.m-switching .m-hypervisor,
 body.m-mf-plus.m-switching .m-visual-core-v2 { background: rgba(24, 35, 54, 0.9) !important; }
 
 /* =========================================================================
-   SaaS SKIN v6 — angoli più arrotondati (come riferimento)
+   SaaS SKIN v6 â€” angoli piÃ¹ arrotondati (come riferimento)
    ========================================================================= */
 body.m-mf-plus .m-hypervisor,
 body.m-mf-plus .m-visual-core-v2 { border-radius: 23px !important; }
@@ -6846,11 +6846,11 @@ body.m-mf-plus #m-generatedUrlBox,
 body.m-mf-plus #m-setupGeneratedUrlBox { border-radius: 18px !important; }
 body.m-mf-plus .m-setup-install { border-radius: 20px !important; }
 body.m-mf-plus .m-nav-item { border-radius: 18px !important; }
-/* lo stripe laterale segue gli angoli più morbidi */
+/* lo stripe laterale segue gli angoli piÃ¹ morbidi */
 body.m-mf-plus .m-reactor-module::before { border-radius: 0 5px 5px 0 !important; }
 
 /* =========================================================================
-   SaaS SKIN v7 — spaziatura provider + tag proxy colorati
+   SaaS SKIN v7 â€” spaziatura provider + tag proxy colorati
    ========================================================================= */
 
 /* core icona: colonna sinistra a tutta altezza, icona centrata */
@@ -6892,11 +6892,11 @@ body.m-mf-plus .m-reactor-top .m-switch { transform: scale(0.85) !important; tra
 body.m-mf-plus .m-reactor-desc { margin-top: 6px !important; line-height: 1.45 !important; }
 body.m-mf-plus .m-tag-row { margin-top: 10px !important; }
 
-/* badge OFF/ON in basso a destra: più staccato dal bordo */
+/* badge OFF/ON in basso a destra: piÃ¹ staccato dal bordo */
 body.m-mf-plus .m-reactor-body::after { right: 12px !important; bottom: 11px !important; }
 
 /* ---- TAG PROXY: colori distinti ---- */
-/* NO PROXY → neutro/grigio (nessun proxy attivo) */
+/* NO PROXY â†’ neutro/grigio (nessun proxy attivo) */
 body.m-mf-plus .m-tech-tag.tag-noproxy {
     border: 1px solid rgba(150, 170, 200, 0.28) !important;
     background: rgba(150, 170, 200, 0.08) !important;
@@ -6904,7 +6904,7 @@ body.m-mf-plus .m-tech-tag.tag-noproxy {
 }
 body.m-mf-plus .m-tech-tag.tag-noproxy i { color: #aab8d0 !important; }
 
-/* KRAKEN → azzurro/ciano Leviathan */
+/* KRAKEN â†’ azzurro/ciano Leviathan */
 body.m-mf-plus .m-tech-tag.tag-kraken {
     border: 1px solid rgba(34, 211, 238, 0.5) !important;
     background: rgba(34, 211, 238, 0.12) !important;
@@ -6913,7 +6913,7 @@ body.m-mf-plus .m-tech-tag.tag-kraken {
 }
 body.m-mf-plus .m-tech-tag.tag-kraken i { color: #22d3ee !important; }
 
-/* MFP (MediaFlow Proxy) → viola/indaco */
+/* MFP (MediaFlow Proxy) â†’ viola/indaco */
 body.m-mf-plus .m-tech-tag.tag-mfp {
     border: 1px solid rgba(139, 92, 246, 0.5) !important;
     background: rgba(139, 92, 246, 0.12) !important;
@@ -6923,7 +6923,7 @@ body.m-mf-plus .m-tech-tag.tag-mfp {
 body.m-mf-plus .m-tech-tag.tag-mfp i { color: #a78bfa !important; }
 
 /* =========================================================================
-   SaaS SKIN v9 — FLOATING PILL DOCK (capsula flottante IN ALTO, fissa)
+   SaaS SKIN v9 â€” FLOATING PILL DOCK (capsula flottante IN ALTO, fissa)
    ========================================================================= */
 body.m-mf-plus .m-dock-container {
     position: fixed !important;
@@ -6943,7 +6943,7 @@ body.m-mf-plus .m-dock-container {
     overflow: visible !important;
     flex-direction: row !important;
 }
-/* via la barra luminosa superiore: ora è una capsula */
+/* via la barra luminosa superiore: ora Ã¨ una capsula */
 body.m-mf-plus .m-dock-container::before { display: none !important; }
 
 body.m-mf-plus .m-dock-nav {
@@ -6972,7 +6972,7 @@ body.m-mf-plus .m-nav-item {
 body.m-mf-plus .m-nav-item::before,
 body.m-mf-plus .m-nav-item::after { display: none !important; }
 
-/* icona emoji come glifo pulito (niente più badge quadrato) */
+/* icona emoji come glifo pulito (niente piÃ¹ badge quadrato) */
 body.m-mf-plus .m-nav-item .mf-nav-emoji {
     width: auto !important; height: auto !important;
     background: transparent !important;
@@ -7028,7 +7028,7 @@ body.m-mf-plus .m-nav-item:not(.active):active {
     transform: scale(0.95) !important;
 }
 
-/* contenuto: spazio in alto per il dock fisso, niente più spazio enorme in basso */
+/* contenuto: spazio in alto per il dock fisso, niente piÃ¹ spazio enorme in basso */
 body.m-mf-plus { --m-dock-h: 64px; }
 body.m-mf-plus .m-content {
     padding-top: calc(76px + env(safe-area-inset-top)) !important;
@@ -7056,12 +7056,12 @@ body.m-mf-plus.m-input-active.m-keyboard-open .m-dock-container {
     top: calc(10px + env(safe-area-inset-top)) !important;
     bottom: auto !important;
 }
-/* il dock in alto non ha più la sezione azioni: nascondila se presente */
+/* il dock in alto non ha piÃ¹ la sezione azioni: nascondila se presente */
 body.m-mf-plus .m-dock-actions { display: none !important; }
 body.m-mf-plus .m-dock-container::before { display: none !important; }
 
 /* =========================================================================
-   HOTFIX v10 — top navigation reale, niente barra blu/reserve in basso
+   HOTFIX v10 â€” top navigation reale, niente barra blu/reserve in basso
    ========================================================================= */
 body.m-mf-plus {
     --m-dock-h: 0px !important;
@@ -7295,7 +7295,7 @@ body.m-mf-plus.m-input-active.m-keyboard-open .m-dock-container {
 
 
 /* =========================================================================
-   SaaS SKIN v10 — provider visual rail rifatto e icone perfettamente centrate
+   SaaS SKIN v10 â€” provider visual rail rifatto e icone perfettamente centrate
    ========================================================================= */
 body.m-mf-plus .m-reactor-grid {
     gap: 12px !important;
@@ -7432,7 +7432,7 @@ body.m-mf-plus .m-reactor-module.active .m-reactor-core .m-core-icon {
     }
 }
 /* =========================================================================
-   SaaS SKIN v11 — top accent bar colorata su OGNI card (look MediaFlow),
+   SaaS SKIN v11 â€” top accent bar colorata su OGNI card (look MediaFlow),
    sempre visibile, su base nera/abisso Leviathan. Vince sugli override
    precedenti che l'avevano rimossa.
    ========================================================================= */
@@ -7524,9 +7524,9 @@ const mobileHTML = `
                     <div class="m-brand-sub m-abyss-sub">Sovrano degli abissi</div>
                     <div class="m-brand-desc">Cinema, serie TV e anime italiani in una dashboard mobile elegante, luminosa e pulita come acqua profonda.</div>
                     <div class="m-hero-badges">
-                        <span class="m-hero-badge">🐬 Real-Debrid</span>
-                        <span class="m-hero-badge">🧊 TorBox</span>
-                        <span class="m-hero-badge">🦈 P2P</span>
+                        <span class="m-hero-badge">ðŸ¬ Real-Debrid</span>
+                        <span class="m-hero-badge">ðŸ§Š TorBox</span>
+                        <span class="m-hero-badge">ðŸ¦ˆ P2P</span>
                     </div>
                     <div class="m-version-tag m-abyss-version" aria-label="Versione 3.1.0">
                         <span class="m-v-dot" aria-hidden="true"></span>
@@ -7539,28 +7539,28 @@ const mobileHTML = `
 
                 <div class="m-hypervisor" style="margin-top:2px;">
                     <div class="m-hyp-header">
-                        <span>🔑 ACCESSO & SERVIZI</span>
+                        <span>ðŸ”‘ ACCESSO & SERVIZI</span>
                         <i class="fas fa-fingerprint m-hyp-icon"></i>
                     </div>
-                    <p class="m-panel-desc"><b>Configura l'accesso</b> scegliendo Real-Debrid, TorBox o P2P. La verifica live ti conferma subito se la chiave è pronta ✨🔐.</p>
+                    <p class="m-panel-desc"><b>Configura l'accesso</b> scegliendo Real-Debrid, TorBox o P2P. La verifica live ti conferma subito se la chiave Ã¨ pronta âœ¨ðŸ”.</p>
 
                     <div class="m-cred-deck">
                         <div class="m-cred-opt cred-rd m-srv-btn active" onclick="setMService('rd', this)">
-                            <div class="m-cred-icon">🐬</div>
-                            <div class="m-cred-name">🐬 REAL-DEBRID</div>
+                            <div class="m-cred-icon">ðŸ¬</div>
+                            <div class="m-cred-name">ðŸ¬ REAL-DEBRID</div>
                         </div>
                         <div class="m-cred-opt cred-tb m-srv-btn" onclick="setMService('tb', this)">
-                            <div class="m-cred-icon">🧊</div>
-                            <div class="m-cred-name">🧊 TORBOX</div>
+                            <div class="m-cred-icon">ðŸ§Š</div>
+                            <div class="m-cred-name">ðŸ§Š TORBOX</div>
                         </div>
                         <div class="m-cred-opt cred-p2p m-srv-btn" onclick="setMService('p2p', this)">
-                            <div class="m-cred-icon">🦈</div>
-                            <div class="m-cred-name">🦈 P2P MODE</div>
+                            <div class="m-cred-icon">ðŸ¦ˆ</div>
+                            <div class="m-cred-name">ðŸ¦ˆ P2P MODE</div>
                         </div>
                     </div>
 
                     <div class="m-input-fuselage" id="box-apikey">
-                        <div class="m-if-label">🔑 API KEY</div>
+                        <div class="m-if-label">ðŸ”‘ API KEY</div>
                         <div class="m-if-inner">
                             <div class="m-if-icon"><i class="fas fa-key"></i></div>
                             <input type="text" id="m-apiKey" class="m-if-field" placeholder="Incolla key" oninput="handleMobileApiKeyInput()">
@@ -7569,12 +7569,12 @@ const mobileHTML = `
                         </div>
                         <div class="m-key-status idle" id="m-keyStatus" aria-live="polite" aria-atomic="true">
                             <span class="m-key-status-dot"></span>
-                            <span id="m-keyStatusText">🐬 RD / 🧊 TB live check disponibile.</span>
+                            <span id="m-keyStatusText">ðŸ¬ RD / ðŸ§Š TB live check disponibile.</span>
                         </div>
                     </div>
 
                     <div class="m-input-fuselage tmdb-box" id="box-tmdb">
-                        <div class="m-if-label opt">🎬 TMDB OPTIONAL</div>
+                        <div class="m-if-label opt">ðŸŽ¬ TMDB OPTIONAL</div>
                         <div class="m-if-inner">
                             <div class="m-if-icon"><i class="fas fa-film"></i></div>
                             <input type="text" id="m-tmdb" class="m-if-field" placeholder="Personal key" oninput="updateLinkModalContent()">
@@ -7587,53 +7587,45 @@ const mobileHTML = `
 
                 <div class="m-hypervisor">
                      <div class="m-hyp-header">
-                        <span>🍿 PROVIDER STREAMS ✨</span>
+                        <span>ðŸ¿ PROVIDER STREAMS âœ¨</span>
                         <i class="fas fa-cubes m-hyp-icon"></i>
                     </div>
-                    <p class="m-panel-desc"><b>Scegli le sorgenti da attivare</b>: Leviathan unisce cinema, serie e anime italiani in un catalogo pulito, veloce e facile da controllare 🍿📺✨.</p>
+                    <p class="m-panel-desc"><b>Scegli le sorgenti da attivare</b>: Leviathan unisce cinema, serie e anime italiani in un catalogo pulito, veloce e facile da controllare ðŸ¿ðŸ“ºâœ¨.</p>
 
                     <div class="m-reactor-grid">
 
                         <div class="m-reactor-module" id="mod-vix">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🍿</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">ðŸ¿</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🍿 StreamingCommunity</span>
+                                    <span class="m-reactor-title">ðŸ¿ StreamingCommunity</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableVix" onchange="updateStatus('m-enableVix','st-vix'); toggleModuleStyle('m-enableVix', 'mod-vix');">
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Film e serie TV in italiano, catalogo ricco e player rapido 🍿.</span>
+                                <span class="m-reactor-desc">Film e serie TV in italiano, catalogo ricco e player rapido ðŸ¿.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
-
-                                <div id="m-sc-options" class="m-sc-subpanel">
-                                    <div class="m-mini-tabs">
-                                        <div class="m-mini-tab active" id="mq-sc-all" onclick="setScQuality('all')">HYBRID</div>
-                                        <div class="m-mini-tab" id="mq-sc-1080" onclick="setScQuality('1080')">1080p</div>
-                                        <div class="m-mini-tab" id="mq-sc-720" onclick="setScQuality('720')">720p</div>
-                                    </div>
-                                </div>
-                            </div>
+</div>
                         </div>
 
                         <div class="m-reactor-module" id="mod-cc">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎟️</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">ðŸŽŸï¸</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🎟️ CinemaCity</span>
+                                    <span class="m-reactor-title">ðŸŽŸï¸ CinemaCity</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableCc" onchange="updateStatus('m-enableCc','st-cc'); toggleModuleStyle('m-enableCc', 'mod-cc');">
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Catalogo Film e Serie TV via FlareSolverr e proxy CCCDN/Kraken 🎟️.</span>
+                                <span class="m-reactor-desc">Catalogo Film e Serie TV via FlareSolverr e proxy CCCDN/Kraken ðŸŽŸï¸.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                     <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
@@ -7643,17 +7635,17 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-ghd">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">ðŸŽ¬</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🎬 GuardaHD</span>
+                                    <span class="m-reactor-title">ðŸŽ¬ GuardaHD</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableGhd" onchange="updateStatus('m-enableGhd','st-ghd'); toggleModuleStyle('m-enableGhd', 'mod-ghd');">
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Film e serie TV in alta definizione, nuove uscite e schede ordinate 🎬.</span>
+                                <span class="m-reactor-desc">Film e serie TV in alta definizione, nuove uscite e schede ordinate ðŸŽ¬.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
                                 </div>
@@ -7662,17 +7654,17 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-gs">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📺</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">ðŸ“º</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">📺 GuardoSerie</span>
+                                    <span class="m-reactor-title">ðŸ“º GuardoSerie</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableGs" onchange="updateStatus('m-enableGs','st-gs'); toggleModuleStyle('m-enableGs', 'mod-gs');">
                                         <span class="m-slider m-slider-purple"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Serie TV italiane organizzate per stagioni ed episodi 📺.</span>
+                                <span class="m-reactor-desc">Serie TV italiane organizzate per stagioni ed episodi ðŸ“º.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
@@ -7681,17 +7673,17 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-gstv">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📡</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">ðŸ“¡</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">📡 GuardaserieTV</span>
+                                    <span class="m-reactor-title">ðŸ“¡ GuardaserieTV</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableGstv" onchange="updateStatus('m-enableGstv','st-gstv'); toggleModuleStyle('m-enableGstv', 'mod-gstv');">
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Archivio serie TV ordinato, con navigazione semplice per episodio 📚.</span>
+                                <span class="m-reactor-desc">Archivio serie TV ordinato, con navigazione semplice per episodio ðŸ“š.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
@@ -7700,17 +7692,17 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-es">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌍</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">ðŸŒ</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🌍 Eurostreaming</span>
+                                    <span class="m-reactor-title">ðŸŒ Eurostreaming</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableEs" onchange="updateStatus('m-enableEs','st-es'); toggleModuleStyle('m-enableEs', 'mod-es');">
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Portale italiano storico dedicato a serie TV e contenuti aggiornati ⭐.</span>
+                                <span class="m-reactor-desc">Portale italiano storico dedicato a serie TV e contenuti aggiornati â­.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
                                 </div>
@@ -7719,17 +7711,17 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-cb01">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">ðŸŽ¬</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🎬 CB01</span>
+                                    <span class="m-reactor-title">ðŸŽ¬ CB01</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableCb01" onchange="updateStatus('m-enableCb01','st-cb01'); toggleModuleStyle('m-enableCb01', 'mod-cb01');">
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Ampio catalogo di film e serie TV, tra i riferimenti più noti in Italia 🎞️.</span>
+                                <span class="m-reactor-desc">Ampio catalogo di film e serie TV, tra i riferimenti piÃ¹ noti in Italia ðŸŽžï¸.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
                                 </div>
@@ -7738,17 +7730,17 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-aw">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">⛩️</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">â›©ï¸</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">⛩️ AnimeWorld</span>
+                                    <span class="m-reactor-title">â›©ï¸ AnimeWorld</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableAnimeWorld" onchange="updateStatus('m-enableAnimeWorld','st-aw'); toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');">
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Anime sub-ita e doppiati, con schede serie e catalogo ampio 🌸.</span>
+                                <span class="m-reactor-desc">Anime sub-ita e doppiati, con schede serie e catalogo ampio ðŸŒ¸.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
@@ -7757,17 +7749,17 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-au">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌊</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">ðŸŒŠ</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🌊 AnimeUnity</span>
+                                    <span class="m-reactor-title">ðŸŒŠ AnimeUnity</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableAnimeUnity" onchange="updateStatus('m-enableAnimeUnity','st-au'); toggleModuleStyle('m-enableAnimeUnity', 'mod-au');">
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Anime, simulcast e doppiaggi con episodi aggiornati e ordinati 🪄.</span>
+                                <span class="m-reactor-desc">Anime, simulcast e doppiaggi con episodi aggiornati e ordinati ðŸª„.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
@@ -7776,17 +7768,17 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-as">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🪐</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">ðŸª</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🪐 AnimeSaturn</span>
+                                    <span class="m-reactor-title">ðŸª AnimeSaturn</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableAnimeSaturn" onchange="updateStatus('m-enableAnimeSaturn','st-as'); toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');">
                                         <span class="m-slider m-slider-aqua"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Anime classici e recenti, archivio ampio e consultazione rapida 🪐.</span>
+                                <span class="m-reactor-desc">Anime classici e recenti, archivio ampio e consultazione rapida ðŸª.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
@@ -7795,17 +7787,17 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-gf">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎞️</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">ðŸŽžï¸</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🎞️ GuardaFlix</span>
+                                    <span class="m-reactor-title">ðŸŽžï¸ GuardaFlix</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableGf" onchange="updateStatus('m-enableGf','st-gf'); toggleModuleStyle('m-enableGf', 'mod-gf');">
                                         <span class="m-slider m-slider-green"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Film in streaming con raccolte per genere e ultime uscite 🎥.</span>
+                                <span class="m-reactor-desc">Film in streaming con raccolte per genere e ultime uscite ðŸŽ¥.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
@@ -7814,17 +7806,17 @@ const mobileHTML = `
 
                         <div class="m-reactor-module" id="mod-ads">
                             <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📽️</span>
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">ðŸ“½ï¸</span>
                             </div>
                             <div class="m-reactor-body">
                                 <div class="m-reactor-top">
-                                    <span class="m-reactor-title">📽️ Altadefinizione</span>
+                                    <span class="m-reactor-title">ðŸ“½ï¸ Altadefinizione</span>
                                     <label class="m-switch">
                                         <input type="checkbox" id="m-enableAltadefinizione" onchange="updateStatus('m-enableAltadefinizione','st-ads'); toggleModuleStyle('m-enableAltadefinizione', 'mod-ads');">
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Film e serie TV con catalogo aggiornato e navigazione intuitiva 🎟️.</span>
+                                <span class="m-reactor-desc">Film e serie TV con catalogo aggiornato e navigazione intuitiva ðŸŽŸï¸.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
@@ -7839,7 +7831,7 @@ const mobileHTML = `
                     <div style="margin-top:5px; padding:15px; border-radius:16px; background:linear-gradient(90deg, rgba(112,0,255,0.1), transparent); border-left:4px solid var(--m-secondary);">
                         <div style="display:flex; justify-content:space-between; align-items:center;">
                             <div>
-                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">🚀 PRIORITÀ WEB</h5>
+                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">ðŸš€ PRIORITÃ€ WEB</h5>
                                 <p id="priority-desc" style="margin:5px 0 0; font-size:0.8rem; color:var(--m-dim);">Mostra Web in cima</p>
                             </div>
                             <label class="m-switch">
@@ -7910,25 +7902,25 @@ const mobileHTML = `
 
                 <div class="m-hypervisor">
                     <div class="m-hyp-header">
-                        <span>⚙️ REGOLE STREAM</span>
+                        <span>âš™ï¸ REGOLE STREAM</span>
                         <i class="fas fa-microchip m-hyp-icon"></i>
                     </div>
 
-                    <p class="m-panel-desc"><b>Controlla cosa mostra Leviathan</b>: ordina per qualità, scegli la lingua, limita i risultati e mantieni la lista pulita anche su smartphone 🎯📱.</p>
+                    <p class="m-panel-desc"><b>Controlla cosa mostra Leviathan</b>: ordina per qualitÃ , scegli la lingua, limita i risultati e mantieni la lista pulita anche su smartphone ðŸŽ¯ðŸ“±.</p>
 
                     <div class="m-flux-control">
                         <div class="m-flux-grid">
                             <div class="m-flux-opt active-bal" id="sort-balanced" onclick="setSortMode('balanced')">
                                 <i class="fas fa-dragon"></i>
-                                <span>🐉 SMART</span>
+                                <span>ðŸ‰ SMART</span>
                             </div>
                             <div class="m-flux-opt" id="sort-resolution" onclick="setSortMode('resolution')">
                                 <i class="fas fa-gem"></i>
-                                <span>💎 QUALITY</span>
+                                <span>ðŸ’Ž QUALITY</span>
                             </div>
                             <div class="m-flux-opt" id="sort-size" onclick="setSortMode('size')">
                                 <i class="fas fa-hdd"></i>
-                                <span>💾 SIZE</span>
+                                <span>ðŸ’¾ SIZE</span>
                             </div>
                         </div>
 
@@ -7936,70 +7928,70 @@ const mobileHTML = `
                             <i class="fas fa-info-circle m-fr-icon" id="flux-icon-display"></i>
                             <div class="m-fr-text">
                                 <span class="m-fr-title" id="flux-title-display">STANDARD MODE</span>
-                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan ✨. Bilancia perfettamente qualita e velocita ⚡.</span>
+                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan âœ¨. Bilancia perfettamente qualita e velocita âš¡.</span>
                             </div>
                         </div>
                     </div>
 
                     <div class="m-hyp-header" style="margin-top:25px; border-top:none; padding-top:0; margin-bottom:10px;">
-                         <span>🗣️ AUDIO &amp; LINGUA</span>
+                         <span>ðŸ—£ï¸ AUDIO &amp; LINGUA</span>
                          <i class="fas fa-globe-americas m-hyp-icon"></i>
                     </div>
 
                     <div class="m-lang-grid">
                         <div class="m-lang-opt active-ita" id="lang-ita" onclick="setLangMode('ita')">
                             <i class="fas fa-flag"></i>
-                            <span class="m-lang-txt">🇮🇹 ITA</span>
+                            <span class="m-lang-txt">ðŸ‡®ðŸ‡¹ ITA</span>
                         </div>
                         <div class="m-lang-opt" id="lang-all" onclick="setLangMode('all')">
                             <i class="fas fa-comments"></i>
-                            <span class="m-lang-txt">🇮🇹+🇬🇧</span>
+                            <span class="m-lang-txt">ðŸ‡®ðŸ‡¹+ðŸ‡¬ðŸ‡§</span>
                         </div>
                         <div class="m-lang-opt" id="lang-eng" onclick="setLangMode('eng')">
                             <i class="fas fa-flag-usa"></i>
-                            <span class="m-lang-txt">🇬🇧 ENG</span>
+                            <span class="m-lang-txt">ðŸ‡¬ðŸ‡§ ENG</span>
                         </div>
                     </div>
 
                     <div id="lang-desc-container" style="background: rgba(0,0,0,0.2); border-radius: 8px; padding: 10px; margin-bottom: 25px; border-left: 3px solid var(--m-primary);">
                         <p id="lang-description" style="margin:0; font-size: 0.7rem; color: var(--m-dim); line-height: 1.3; font-family:'Outfit';">
-                             Cerca solo contenuti in Italiano 🇮🇹. Ignora tutto il resto.
+                             Cerca solo contenuti in Italiano ðŸ‡®ðŸ‡¹. Ignora tutto il resto.
                         </p>
                     </div>
 
-                    <div class="m-hyp-label">📺 Resolution Filter</div>
-                    <p class="m-hyp-desc">Tocca per escludere qualità specifiche.</p>
+                    <div class="m-hyp-label">ðŸ“º Resolution Filter</div>
+                    <p class="m-hyp-desc">Tocca per escludere qualitÃ  specifiche.</p>
 
                     <div class="m-chip-grid">
-                        <div class="m-qual-chip" id="mq-4k" onclick="toggleFilter('mq-4k')">💎 4K</div>
-                        <div class="m-qual-chip" id="mq-1080" onclick="toggleFilter('mq-1080')">🎬 1080p</div>
-                        <div class="m-qual-chip" id="mq-720" onclick="toggleFilter('mq-720')">📺 720p <span class="mini-tag">HD</span></div>
-                        <div class="m-qual-chip" id="mq-sd" onclick="toggleFilter('mq-sd')">📼 CAM/SD</div>
+                        <div class="m-qual-chip" id="mq-4k" onclick="toggleFilter('mq-4k')">ðŸ’Ž 4K</div>
+                        <div class="m-qual-chip" id="mq-1080" onclick="toggleFilter('mq-1080')">ðŸŽ¬ 1080p</div>
+                        <div class="m-qual-chip" id="mq-720" onclick="toggleFilter('mq-720')">ðŸ“º 720p <span class="mini-tag">HD</span></div>
+                        <div class="m-qual-chip" id="mq-sd" onclick="toggleFilter('mq-sd')">ðŸ“¼ CAM/SD</div>
                     </div>
 
                     <div class="m-sys-grid">
                         <div class="m-sys-row">
-                            <div class="m-sys-info"><h4><i class="fas fa-layer-group" style="color:var(--m-accent)"></i> 🧩 AIO Mode <span class="m-status-text" id="st-aio">OFF</span></h4><p>Formatta per AIOStreams 🧩</p></div>
+                            <div class="m-sys-info"><h4><i class="fas fa-layer-group" style="color:var(--m-accent)"></i> ðŸ§© AIO Mode <span class="m-status-text" id="st-aio">OFF</span></h4><p>Formatta per AIOStreams ðŸ§©</p></div>
                             <label class="m-switch"><input type="checkbox" id="m-aioMode" onchange="updateStatus('m-aioMode','st-aio')"><span class="m-slider m-slider-purple"></span></label>
                         </div>
                         <div class="m-sys-row">
-                            <div class="m-sys-info"><h4><i class="fas fa-cloud" style="color:var(--m-primary)"></i> ☁️ Debrid Cloud <span class="m-status-text" id="st-savedcloud">OFF</span></h4><p>File salvati RD/TorBox 📦. Duplicati sempre esclusi ✨.</p></div>
+                            <div class="m-sys-info"><h4><i class="fas fa-cloud" style="color:var(--m-primary)"></i> â˜ï¸ Debrid Cloud <span class="m-status-text" id="st-savedcloud">OFF</span></h4><p>File salvati RD/TorBox ðŸ“¦. Duplicati sempre esclusi âœ¨.</p></div>
                             <label class="m-switch"><input type="checkbox" id="m-enableSavedCloud" onchange="toggleSavedCloud()"><span class="m-slider"></span></label>
                         </div>
                         <div class="m-cloud-mode-panel" id="m-savedCloudPanel">
                             <div class="m-cloud-mode-grid">
-                                <div class="m-cloud-mode-btn active" id="m-cloud-smart" onclick="setSavedCloudMode('smart')">SMART<span>utile e pulito ✨</span></div>
-                                <div class="m-cloud-mode-btn" id="m-cloud-fallback" onclick="setSavedCloudMode('fallback')">FALLBACK<span>solo se trova poco 🪄</span></div>
-                                <div class="m-cloud-mode-btn" id="m-cloud-always" onclick="setSavedCloudMode('always')">ALWAYS<span>sempre no doppioni ✅</span></div>
+                                <div class="m-cloud-mode-btn active" id="m-cloud-smart" onclick="setSavedCloudMode('smart')">SMART<span>utile e pulito âœ¨</span></div>
+                                <div class="m-cloud-mode-btn" id="m-cloud-fallback" onclick="setSavedCloudMode('fallback')">FALLBACK<span>solo se trova poco ðŸª„</span></div>
+                                <div class="m-cloud-mode-btn" id="m-cloud-always" onclick="setSavedCloudMode('always')">ALWAYS<span>sempre no doppioni âœ…</span></div>
                             </div>
-                            <p class="m-cloud-note">Usa solo Real-Debrid/TorBox configurati ☁️. Anche in ALWAYS, se Leviathan ha gia lo stesso hash/file, il Cloud non viene mostrato ✨.</p>
+                            <p class="m-cloud-note">Usa solo Real-Debrid/TorBox configurati â˜ï¸. Anche in ALWAYS, se Leviathan ha gia lo stesso hash/file, il Cloud non viene mostrato âœ¨.</p>
                         </div>
                     </div>
 
                     <div class="m-row" style="border:none; padding: 5px 0;">
                         <div class="m-label">
-                            <h4><i class="fas fa-compress-arrows-alt" style="color:var(--m-error)"></i> 🚦 Signal Gate <span class="m-status-text" id="st-gate">OFF</span></h4>
-                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro qualità • max risultati per risoluzione 🚦</p>
+                            <h4><i class="fas fa-compress-arrows-alt" style="color:var(--m-error)"></i> ðŸš¦ Signal Gate <span class="m-status-text" id="st-gate">OFF</span></h4>
+                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro qualitÃ  â€¢ max risultati per risoluzione ðŸš¦</p>
                         </div>
                         <label class="m-switch"><input type="checkbox" id="m-gateActive" onchange="toggleGate()"><span class="m-slider"></span></label>
                     </div>
@@ -8009,13 +8001,13 @@ const mobileHTML = `
                             <input type="range" min="1" max="20" value="3" class="m-range" id="m-gateVal" oninput="updateGateDisplay(this.value)">
                             <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.2rem; color:var(--m-primary); width:30px; text-align:center;" id="m-gate-display">3</span>
                         </div>
-                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualita 🎯. Utile per dispositivi lenti 📱.</p>
+                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualita ðŸŽ¯. Utile per dispositivi lenti ðŸ“±.</p>
                     </div>
 
                     <div class="m-row" style="border:none; padding: 5px 0;">
                         <div class="m-label">
-                            <h4><i class="fas fa-weight-hanging" style="color:var(--m-amber)"></i> ⚖️ Size Limit <span class="m-status-text" id="st-size">OFF</span></h4>
-                            <p style="font-size:0.65rem; color:var(--m-amber);">Filtro peso massimo • GB ⚖️</p>
+                            <h4><i class="fas fa-weight-hanging" style="color:var(--m-amber)"></i> âš–ï¸ Size Limit <span class="m-status-text" id="st-size">OFF</span></h4>
+                            <p style="font-size:0.65rem; color:var(--m-amber);">Filtro peso massimo â€¢ GB âš–ï¸</p>
                         </div>
                         <label class="m-switch"><input type="checkbox" id="m-sizeActive" onchange="toggleSize()"><span class="m-slider m-slider-aqua"></span></label>
                     </div>
@@ -8025,7 +8017,7 @@ const mobileHTML = `
                             <input type="range" min="1" max="100" step="1" value="0" class="m-range" id="m-sizeVal" oninput="updateSizeDisplay(this.value)" style="background:linear-gradient(90deg, #ff9900, #333)">
                             <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.1rem; color:var(--m-amber); width:45px; text-align:center;" id="m-size-display">INF</span>
                         </div>
-                         <p class="m-range-desc">Nasconde automaticamente tutti i file che superano la dimensione selezionata 📦.</p>
+                         <p class="m-range-desc">Nasconde automaticamente tutti i file che superano la dimensione selezionata ðŸ“¦.</p>
                     </div>
 
                 </div>
@@ -8035,18 +8027,18 @@ const mobileHTML = `
 
                 <div class="m-hypervisor">
                     <div class="m-hyp-header">
-                        <span>🌐 SERVER & PROXY ✨</span>
+                        <span>ðŸŒ SERVER & PROXY âœ¨</span>
                         <i class="fas fa-network-wired m-hyp-icon" style="color:var(--m-secondary); border-color:rgba(112,0,255,0.35); background:rgba(112,0,255,0.08);"></i>
                     </div>
-                    <p class="m-panel-desc"><b>Imposta un proxy personalizzato</b> solo quando serve. Altrimenti Leviathan resta sulla configurazione standard, più semplice e pulita 🌊.</p>
+                    <p class="m-panel-desc"><b>Imposta un proxy personalizzato</b> solo quando serve. Altrimenti Leviathan resta sulla configurazione standard, piÃ¹ semplice e pulita ðŸŒŠ.</p>
 
                     <div style="padding:0 5px;">
                         <p style="font-size:0.8rem; color:var(--m-dim); margin-bottom:20px; line-height:1.4;">
-                            Configura un endpoint proxy solo se ti serve un bridge personalizzato per le sorgenti italiane 🌊. Lascia vuoto per usare la gestione standard di Leviathan ✨.
+                            Configura un endpoint proxy solo se ti serve un bridge personalizzato per le sorgenti italiane ðŸŒŠ. Lascia vuoto per usare la gestione standard di Leviathan âœ¨.
                         </p>
 
                         <div class="m-field-group">
-                            <div class="m-field-header"><span class="m-field-label">🌐 SERVER URL</span></div>
+                            <div class="m-field-header"><span class="m-field-label">ðŸŒ SERVER URL</span></div>
                             <div class="m-input-box">
                                 <i class="fas fa-server m-input-ico"></i>
                                 <input type="text" id="m-mfUrl" class="m-input-tech" placeholder="https://tuo-proxy.com" oninput="updateLinkModalContent()">
@@ -8055,7 +8047,7 @@ const mobileHTML = `
                         </div>
 
                         <div class="m-field-group">
-                            <div class="m-field-header"><span class="m-field-label">🔒 PASSWORD</span></div>
+                            <div class="m-field-header"><span class="m-field-label">ðŸ”’ PASSWORD</span></div>
                             <div class="m-input-box">
                                 <i class="fas fa-lock m-input-ico"></i>
                                 <input type="password" id="m-mfPass" class="m-input-tech" placeholder="********" oninput="updateLinkModalContent()">
@@ -8064,7 +8056,7 @@ const mobileHTML = `
 
                         <div class="m-ghost-panel" id="ghost-zone-box">
                             <div class="m-ghost-head">
-                                <div class="m-ghost-title"><i class="fas fa-user-shield"></i> 👻 DEBRID GHOST</div>
+                                <div class="m-ghost-title"><i class="fas fa-user-shield"></i> ðŸ‘» DEBRID GHOST</div>
                                 <div class="m-ghost-status" id="ghost-status-text">VISIBLE</div>
                             </div>
                             <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -8086,36 +8078,36 @@ const mobileHTML = `
     <div class="m-dock-container">
         <div class="m-dock-nav">
             <div class="m-nav-item active" onclick="navTo('setup', this)">
-                <span class="mf-nav-emoji">🧩</span><i class="fas fa-sliders-h"></i><span>SETUP</span>
+                <span class="mf-nav-emoji">ðŸ§©</span><i class="fas fa-sliders-h"></i><span>SETUP</span>
             </div>
             <div class="m-nav-item" onclick="navTo('filters', this)">
-                <span class="mf-nav-emoji">🎛️</span><i class="fas fa-filter"></i><span>FILTRI</span>
+                <span class="mf-nav-emoji">ðŸŽ›ï¸</span><i class="fas fa-filter"></i><span>FILTRI</span>
             </div>
             <div class="m-nav-item" onclick="navTo('network', this)">
-                <span class="mf-nav-emoji">🌐</span><i class="fas fa-globe"></i><span>NET</span>
+                <span class="mf-nav-emoji">ðŸŒ</span><i class="fas fa-globe"></i><span>NET</span>
             </div>
         </div>
     </div>
 
     <div class="m-action-modal" id="m-link-modal">
         <div class="m-am-card">
-            <div class="m-am-title">🔗 LINK GENERATO</div>
+            <div class="m-am-title">ðŸ”— LINK GENERATO</div>
             <div class="m-am-subtitle">Installa, copia o condividi la configurazione pronta</div>
 
             <div class="m-flux-terminal">
                 <div class="m-flux-header">
-                    <span>🌊 OCEAN LINK STREAM</span>
+                    <span>ðŸŒŠ OCEAN LINK STREAM</span>
                     <i class="fas fa-network-wired"></i>
                 </div>
                 <textarea id="m-generatedUrlBox" class="m-flux-input" readonly>/// WAITING FOR DATA ///</textarea>
             </div>
 
             <div class="m-act-btn m-act-copy" onclick="copyFromModal()">
-                <i class="fas fa-copy"></i> 📋 COPIA NEGLI APPUNTI
+                <i class="fas fa-copy"></i> ðŸ“‹ COPIA NEGLI APPUNTI
             </div>
 
             <div class="m-act-btn m-act-close" onclick="closeLinkModal()">
-                ✕ CHIUDI
+                âœ• CHIUDI
             </div>
         </div>
     </div>
@@ -8126,7 +8118,7 @@ const mobileHTML = `
 `;
 
 let mCurrentService = 'rd';
-let mScQuality = 'all';
+let mScQuality = '1080';
 let mSortMode = 'balanced';
 let mSkin = 'leviathan';
 let mLangMode = 'ita';
@@ -8141,26 +8133,26 @@ const mDebridValidationState = {
 
 const fluxData = {
     'balanced': {
-        title: "🐉 SMART BALANCE",
-        desc: "Profilo intelligente: bilancia qualità, seed/cache e velocità.",
+        title: "ðŸ‰ SMART BALANCE",
+        desc: "Profilo intelligente: bilancia qualitÃ , seed/cache e velocitÃ .",
         icon: "fa-dragon"
     },
     'resolution': {
-        title: "💎 QUALITY FIRST",
-        desc: "4K e 1080p sopra: priorità alla qualità visiva.",
+        title: "ðŸ’Ž QUALITY FIRST",
+        desc: "4K e 1080p sopra: prioritÃ  alla qualitÃ  visiva.",
         icon: "fa-gem"
     },
     'size': {
-        title: "💾 BITRATE HEAVY",
+        title: "ðŸ’¾ BITRATE HEAVY",
         desc: "Ordina per peso/file: utile per massimo bitrate.",
         icon: "fa-hdd"
     }
 };
 
 const langDescriptions = {
-    'ita': "🇮🇹 Solo contenuti in Italiano. Ignora tutto il resto.",
-    'all': "🇮🇹 Prima Italiano, poi 🇬🇧 Inglese se serve.",
-    'eng': "🇬🇧 Solo contenuti in Inglese."
+    'ita': "ðŸ‡®ðŸ‡¹ Solo contenuti in Italiano. Ignora tutto il resto.",
+    'all': "ðŸ‡®ðŸ‡¹ Prima Italiano, poi ðŸ‡¬ðŸ‡§ Inglese se serve.",
+    'eng': "ðŸ‡¬ðŸ‡§ Solo contenuti in Inglese."
 };
 
 function toStylized(text, type = 'std') {
@@ -8168,17 +8160,17 @@ function toStylized(text, type = 'std') {
             text = String(text);
             const maps = {
                 'bold': {
-                    nums: {'0':'𝟬','1':'𝟭','2':'𝟮','3':'𝟯','4':'𝟰','5':'𝟱','6':'𝟲','7':'𝟳','8':'𝟴','9':'𝟵'},
-                    chars: {'A':'𝗔','B':'𝗕','C':'𝗖','D':'𝗗','E':'𝗘','F':'𝗙','G':'𝗚','H':'𝗛','I':'𝗜','J':'𝗝','K':'𝗞','L':'𝗟','M':'𝗠','N':'𝗡','O':'𝗢','P':'𝗣','Q':'𝗤','R':'𝗥','S':'𝗦','T':'𝗧','U':'𝗨','V':'𝗩','W':'𝗪','X':'𝗫','Y':'𝗬','Z':'𝗭','a':'𝗮','b':'𝗯','c':'𝗰','d':'𝗱','e':'𝗲','f':'𝗳','g':'𝗴','h':'𝗵','i':'𝗶','j':'𝗷','k':'𝗸','l':'𝗹','m':'𝗺','n':'𝗻','o':'𝗼','p':'𝗽','q':'𝗾','r':'𝗿','s':'𝘀','t':'𝘁','u':'𝘂','v':'𝘃','w':'ᴡ','x':'𝘅','y':'𝘆','z':'𝘇'}
+                    nums: {'0':'ðŸ¬','1':'ðŸ­','2':'ðŸ®','3':'ðŸ¯','4':'ðŸ°','5':'ðŸ±','6':'ðŸ²','7':'ðŸ³','8':'ðŸ´','9':'ðŸµ'},
+                    chars: {'A':'ð—”','B':'ð—•','C':'ð—–','D':'ð——','E':'ð—˜','F':'ð—™','G':'ð—š','H':'ð—›','I':'ð—œ','J':'ð—','K':'ð—ž','L':'ð—Ÿ','M':'ð— ','N':'ð—¡','O':'ð—¢','P':'ð—£','Q':'ð—¤','R':'ð—¥','S':'ð—¦','T':'ð—§','U':'ð—¨','V':'ð—©','W':'ð—ª','X':'ð—«','Y':'ð—¬','Z':'ð—­','a':'ð—®','b':'ð—¯','c':'ð—°','d':'ð—±','e':'ð—²','f':'ð—³','g':'ð—´','h':'ð—µ','i':'ð—¶','j':'ð—·','k':'ð—¸','l':'ð—¹','m':'ð—º','n':'ð—»','o':'ð—¼','p':'ð—½','q':'ð—¾','r':'ð—¿','s':'ð˜€','t':'ð˜','u':'ð˜‚','v':'ð˜ƒ','w':'á´¡','x':'ð˜…','y':'ð˜†','z':'ð˜‡'}
                 },
                 'spaced': {
 
                     nums: {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9'},
-                    chars: {'A':'𝗔','B':'𝗕','C':'𝗖','D':'𝗗','E':'𝗘','F':'𝗙','G':'𝗚','H':'𝗛','I':'𝗜','J':'𝗝','K':'𝗞','L':'𝗟','M':'𝗠','N':'𝗡','O':'𝗢','P':'𝗣','Q':'𝗤','R':'𝗥','S':'𝗦','T':'𝗧','U':'𝗨','V':'𝗩','W':'𝗪','X':'𝗫','Y':'𝗬','Z':'𝗭'}
+                    chars: {'A':'ð—”','B':'ð—•','C':'ð—–','D':'ð——','E':'ð—˜','F':'ð—™','G':'ð—š','H':'ð—›','I':'ð—œ','J':'ð—','K':'ð—ž','L':'ð—Ÿ','M':'ð— ','N':'ð—¡','O':'ð—¢','P':'ð—£','Q':'ð—¤','R':'ð—¥','S':'ð—¦','T':'ð—§','U':'ð—¨','V':'ð—©','W':'ð—ª','X':'ð—«','Y':'ð—¬','Z':'ð—­'}
                 },
                 'small': {
                     nums: {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9'},
-                    chars: {'A':'ᴀ','B':'ʙ','C':'ᴄ','D':'ᴅ','E':'ᴇ','F':'ꜰ','G':'ɢ','H':'ʜ','I':'ɪ','J':'ᴊ','K':'ᴋ','L':'ʟ','M':'ᴍ','N':'ɴ','O':'ᴏ','P':'ᴘ','Q':'ǫ','R':'ʀ','S':'ꜱ','T':'ᴛ','U':'ᴜ','V':'ᴠ','W':'ᴡ','X':'x','Y':'ʏ','Z':'ᴢ','a':'ᴀ','b':'ʙ','c':'ᴄ','d':'ᴅ','e':'ᴇ','f':'ꜰ','g':'ɢ','h':'ʜ','i':'ɪ','j':'ᴊ','k':'ᴋ','l':'ʟ','m':'ᴍ','n':'ɴ','o':'ᴏ','p':'ᴘ','q':'ǫ','r':'ʀ','s':'ꜱ','t':'ᴛ','u':'ᴜ','v':'ᴠ','w':'ᴡ','x':'x','y':'ʏ','z':'ᴢ'}
+                    chars: {'A':'á´€','B':'Ê™','C':'á´„','D':'á´…','E':'á´‡','F':'êœ°','G':'É¢','H':'Êœ','I':'Éª','J':'á´Š','K':'á´‹','L':'ÊŸ','M':'á´','N':'É´','O':'á´','P':'á´˜','Q':'Ç«','R':'Ê€','S':'êœ±','T':'á´›','U':'á´œ','V':'á´ ','W':'á´¡','X':'x','Y':'Ê','Z':'á´¢','a':'á´€','b':'Ê™','c':'á´„','d':'á´…','e':'á´‡','f':'êœ°','g':'É¢','h':'Êœ','i':'Éª','j':'á´Š','k':'á´‹','l':'ÊŸ','m':'á´','n':'É´','o':'á´','p':'á´˜','q':'Ç«','r':'Ê€','s':'êœ±','t':'á´›','u':'á´œ','v':'á´ ','w':'á´¡','x':'x','y':'Ê','z':'á´¢'}
                 }
             };
             if (type === 'spaced') {
@@ -8228,24 +8220,24 @@ function triggerPreviewUpdateEffect() {
 }
 
 const MOBILE_FORMATTER_META = {
-    leviathan: { label: 'Leviathan', preview: 'LEVIATHAN', icon: '♆', sub: 'Abyssal' },
-    premium: { label: 'Apex Prime', preview: 'APEX PRIME', icon: '👑', sub: 'Flagship' },
-    ultra_compact: { label: 'Pulse Compact', preview: 'PULSE COMPACT', icon: '⚡️', sub: 'Dense' },
-    tv_compact: { label: 'Neon TV', preview: 'NEON TV', icon: '📺', sub: 'Big Screen' },
-    lev2: { label: 'Architect', preview: 'ARCHITECT', icon: '🧬', sub: 'Structured' },
-    fra: { label: 'Horizon', preview: 'HORIZON', icon: '⚡️', sub: 'Classic' },
-    comet: { label: 'Comet', preview: 'COMET', icon: '☄️', sub: 'Scan' },
-    stremio_ita: { label: 'ITA Mod', preview: 'ITA MOD', icon: '🇮🇹', sub: 'Compat' },
-    dav: { label: 'Datastream', preview: 'DATASTREAM', icon: '📼', sub: 'Verbose' },
-    pri: { label: 'Eclipse', preview: 'ECLIPSE', icon: '👑', sub: 'Prime' },
-    and: { label: 'Matrix', preview: 'MATRIX', icon: '🎬', sub: 'Cinema' },
-    lad: { label: 'Compact', preview: 'COMPACT', icon: '🎟️', sub: 'Lean' },
-    torrentio: { label: 'Torrentio', preview: 'TORRENTIO', icon: '📜', sub: 'Classic' },
-    vertical: { label: 'Vertical', preview: 'VERTICAL', icon: '📑', sub: 'Stacked' },
-    android: { label: 'Android TV', preview: 'ANDROID TV', icon: '📺', sub: 'Console' },
-    picture: { label: 'Picture', preview: 'PICTURE', icon: '🖼️', sub: 'Poster' },
-    complex: { label: 'Template', preview: 'TEMPLATE', icon: '🔲', sub: 'Matrix' },
-    custom: { label: 'Custom Builder', preview: 'CUSTOM OVERRIDE', icon: '⌨️', sub: 'Manual' }
+    leviathan: { label: 'Leviathan', preview: 'LEVIATHAN', icon: 'â™†', sub: 'Abyssal' },
+    premium: { label: 'Apex Prime', preview: 'APEX PRIME', icon: 'ðŸ‘‘', sub: 'Flagship' },
+    ultra_compact: { label: 'Pulse Compact', preview: 'PULSE COMPACT', icon: 'âš¡ï¸', sub: 'Dense' },
+    tv_compact: { label: 'Neon TV', preview: 'NEON TV', icon: 'ðŸ“º', sub: 'Big Screen' },
+    lev2: { label: 'Architect', preview: 'ARCHITECT', icon: 'ðŸ§¬', sub: 'Structured' },
+    fra: { label: 'Horizon', preview: 'HORIZON', icon: 'âš¡ï¸', sub: 'Classic' },
+    comet: { label: 'Comet', preview: 'COMET', icon: 'â˜„ï¸', sub: 'Scan' },
+    stremio_ita: { label: 'ITA Mod', preview: 'ITA MOD', icon: 'ðŸ‡®ðŸ‡¹', sub: 'Compat' },
+    dav: { label: 'Datastream', preview: 'DATASTREAM', icon: 'ðŸ“¼', sub: 'Verbose' },
+    pri: { label: 'Eclipse', preview: 'ECLIPSE', icon: 'ðŸ‘‘', sub: 'Prime' },
+    and: { label: 'Matrix', preview: 'MATRIX', icon: 'ðŸŽ¬', sub: 'Cinema' },
+    lad: { label: 'Compact', preview: 'COMPACT', icon: 'ðŸŽŸï¸', sub: 'Lean' },
+    torrentio: { label: 'Torrentio', preview: 'TORRENTIO', icon: 'ðŸ“œ', sub: 'Classic' },
+    vertical: { label: 'Vertical', preview: 'VERTICAL', icon: 'ðŸ“‘', sub: 'Stacked' },
+    android: { label: 'Android TV', preview: 'ANDROID TV', icon: 'ðŸ“º', sub: 'Console' },
+    picture: { label: 'Picture', preview: 'PICTURE', icon: 'ðŸ–¼ï¸', sub: 'Poster' },
+    complex: { label: 'Template', preview: 'TEMPLATE', icon: 'ðŸ”²', sub: 'Matrix' },
+    custom: { label: 'Custom Builder', preview: 'CUSTOM OVERRIDE', icon: 'âŒ¨ï¸', sub: 'Manual' }
 };
 
 const MOBILE_FORMATTER_ALIASES = {
@@ -8322,17 +8314,17 @@ function updateMobilePreviewLegacy() {
 function updateMobilePreview() {
     const skin = resolveMobileFormatterSkin(mSkin);
 
-    let langStr = '🇮🇹 ITA';
-    if (mLangMode === 'all') langStr = '🇮🇹 ITA • 🇬🇧 ENG';
-    if (mLangMode === 'eng') langStr = '🇬🇧 ENG';
+    let langStr = 'ðŸ‡®ðŸ‡¹ ITA';
+    if (mLangMode === 'all') langStr = 'ðŸ‡®ðŸ‡¹ ITA â€¢ ðŸ‡¬ðŸ‡§ ENG';
+    if (mLangMode === 'eng') langStr = 'ðŸ‡¬ðŸ‡§ ENG';
 
     let serviceTag = 'RD';
     if (mCurrentService === 'tb') serviceTag = 'TB';
     if (mCurrentService === 'p2p') serviceTag = 'P2P';
 
-    let serviceIconTitle = '🦈';
-    if (serviceTag === 'RD') serviceIconTitle = '🐬';
-    else if (serviceTag === 'TB') serviceIconTitle = '⚓';
+    let serviceIconTitle = 'ðŸ¦ˆ';
+    if (serviceTag === 'RD') serviceIconTitle = 'ðŸ¬';
+    else if (serviceTag === 'TB') serviceIconTitle = 'âš“';
 
     const p = {
         cleanName: 'Dune Parte Due',
@@ -8346,42 +8338,42 @@ function updateMobilePreview() {
         lang: langStr,
         audioTag: 'TrueHD Atmos',
         audioChannels: '7.1',
-        audioInfo: 'TrueHD Atmos ┃ 7.1',
+        audioInfo: 'TrueHD Atmos â”ƒ 7.1',
         codec: 'HEVC',
-        videoTags: ['💎 𝗥𝗘𝗠𝗨𝗫', '👁️ 𝗗𝗩+𝗛𝗗𝗥', '⚙️ 𝗛𝗘𝗩𝗖'],
+        videoTags: ['ðŸ’Ž ð—¥ð—˜ð— ð—¨ð—«', 'ðŸ‘ï¸ ð——ð—©+ð—›ð——ð—¥', 'âš™ï¸ ð—›ð—˜ð—©ð—–'],
         cleanTags: ['Remux', 'DV+HDR', 'HEVC'],
         seeders: 152,
-        seedersStr: '👥 152',
+        seedersStr: 'ðŸ‘¥ 152',
         epTag: '',
         releaseGroup: 'Leviathan',
         sourceLine: `${serviceIconTitle} [${serviceTag}] ilCorSaRoNeRo`,
         providerLabel: 'Netflix',
         streamScore: 94,
         scoreTier: 'S+',
-        scoreBadge: '🏆 S+ 94',
-        visualMeter: '▰▰▰▰▰',
-        featureSummary: '4K • DV+HDR • HEVC • Atmos'
+        scoreBadge: 'ðŸ† S+ 94',
+        visualMeter: 'â–°â–°â–°â–°â–°',
+        featureSummary: '4K â€¢ DV+HDR â€¢ HEVC â€¢ Atmos'
     };
 
     const isDebrid = ['RD', 'TB'].includes(p.serviceTag);
-    const statusIcon = isDebrid ? serviceIconTitle : '☁️';
+    const statusIcon = isDebrid ? serviceIconTitle : 'â˜ï¸';
 
     const styleLeviathan = () => {
-        const serviceIcon = p.serviceTag === 'RD' ? '🐬' : p.serviceTag === 'TB' ? '⚓' : '🦈';
-        const stateIcon = isDebrid ? serviceIcon : '⏳';
+        const serviceIcon = p.serviceTag === 'RD' ? 'ðŸ¬' : p.serviceTag === 'TB' ? 'âš“' : 'ðŸ¦ˆ';
+        const stateIcon = isDebrid ? serviceIcon : 'â³';
         const brandName = toStylized('LEVIATHAN', 'small');
         const serviceStyled = toStylized(p.serviceTag, 'bold');
         const techLine = [...new Set([p.quality, ...p.cleanTags].filter(Boolean))]
             .map(t => toStylized(t, 'small'))
-            .join(' • ');
+            .join(' â€¢ ');
         return {
-            name: `${stateIcon} ${serviceStyled} ♆ ${brandName}`,
+            name: `${stateIcon} ${serviceStyled} â™† ${brandName}`,
             title: [
-                `▶️ ${toStylized(p.cleanName, 'bold')} ${p.epTag}`.trim(),
-                techLine ? `🔱 ${techLine}` : '',
-                `🗣️ ${p.lang}  |  🫧 ${p.audioTag} ${p.audioChannels}`,
-                `🧲 ${p.sizeString}  |  ${p.seedersStr}`,
-                `${serviceIcon} ${p.displaySource} | 🏷️ ${toStylized(p.releaseGroup, 'small')}`
+                `â–¶ï¸ ${toStylized(p.cleanName, 'bold')} ${p.epTag}`.trim(),
+                techLine ? `ðŸ”± ${techLine}` : '',
+                `ðŸ—£ï¸ ${p.lang}  |  ðŸ«§ ${p.audioTag} ${p.audioChannels}`,
+                `ðŸ§² ${p.sizeString}  |  ${p.seedersStr}`,
+                `${serviceIcon} ${p.displaySource} | ðŸ·ï¸ ${toStylized(p.releaseGroup, 'small')}`
             ].filter(Boolean).join('\n')
         };
     };
@@ -8389,128 +8381,128 @@ function updateMobilePreview() {
     const stylePremium = () => ({
         name: `${statusIcon} ${p.quality} ${p.scoreBadge}`,
         title: [
-            `🎬 ${toStylized(p.cleanName, 'bold')}`,
-            `🏅 ${p.scoreBadge}  ${p.visualMeter}`,
-            `🧪 ${[...new Set([p.quality, ...p.cleanTags, p.codec].filter(Boolean))].slice(0, 4).join(' • ')}`,
-            `🔊 ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang], ' • ')}`,
-            `📦 ${p.sizeString} • ${p.seedersStr}`,
-            `${statusIcon} ${p.displaySource} • ${p.releaseGroup} • ${p.serviceTag}`
+            `ðŸŽ¬ ${toStylized(p.cleanName, 'bold')}`,
+            `ðŸ… ${p.scoreBadge}  ${p.visualMeter}`,
+            `ðŸ§ª ${[...new Set([p.quality, ...p.cleanTags, p.codec].filter(Boolean))].slice(0, 4).join(' â€¢ ')}`,
+            `ðŸ”Š ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang], ' â€¢ ')}`,
+            `ðŸ“¦ ${p.sizeString} â€¢ ${p.seedersStr}`,
+            `${statusIcon} ${p.displaySource} â€¢ ${p.releaseGroup} â€¢ ${p.serviceTag}`
         ].join('\n')
     });
 
     const styleUltraCompact = () => ({
-        name: joinMobilePreviewParts([statusIcon, p.quality, 'DV+HDR', p.serviceTag, `•${p.scoreTier}`], ' '),
+        name: joinMobilePreviewParts([statusIcon, p.quality, 'DV+HDR', p.serviceTag, `â€¢${p.scoreTier}`], ' '),
         title: [
-            `🎬 ${p.cleanName}`,
-            joinMobilePreviewParts([`🔊 ${p.audioTag} ${p.audioChannels}`, removeMobilePreviewEmoji(p.lang), `📦 ${p.sizeString}`], ' • '),
-            joinMobilePreviewParts([`🌐 ${p.displaySource}`, p.seedersStr, p.releaseGroup], ' • ')
+            `ðŸŽ¬ ${p.cleanName}`,
+            joinMobilePreviewParts([`ðŸ”Š ${p.audioTag} ${p.audioChannels}`, removeMobilePreviewEmoji(p.lang), `ðŸ“¦ ${p.sizeString}`], ' â€¢ '),
+            joinMobilePreviewParts([`ðŸŒ ${p.displaySource}`, p.seedersStr, p.releaseGroup], ' â€¢ ')
         ].join('\n')
     });
 
     const styleTVCompact = () => ({
         name: joinMobilePreviewParts([p.quality, 'DV+HDR', p.serviceTag], ' | '),
         title: [
-            `🎞️ ${p.codec}`,
-            `🎧 ${p.audioTag} ${p.audioChannels}`,
-            `🌐 ${removeMobilePreviewEmoji(p.lang) || p.lang}`,
-            `🏅 ${p.scoreBadge}`,
-            `📦 ${p.sizeString} • ${p.seedersStr}`,
-            `⚙️ ${p.displaySource}`,
-            `📂 ${p.fileTitle}`
+            `ðŸŽžï¸ ${p.codec}`,
+            `ðŸŽ§ ${p.audioTag} ${p.audioChannels}`,
+            `ðŸŒ ${removeMobilePreviewEmoji(p.lang) || p.lang}`,
+            `ðŸ… ${p.scoreBadge}`,
+            `ðŸ“¦ ${p.sizeString} â€¢ ${p.seedersStr}`,
+            `âš™ï¸ ${p.displaySource}`,
+            `ðŸ“‚ ${p.fileTitle}`
         ].join('\n')
     });
 
     const styleLeviathanTwo = () => ({
-        name: `♆ ${toStylized('LEVIATHAN', 'small')} ${p.serviceIconTitle} │ ${p.quality}`,
+        name: `â™† ${toStylized('LEVIATHAN', 'small')} ${p.serviceIconTitle} â”‚ ${p.quality}`,
         title: [
-            `🎬 ${toStylized(p.cleanName, 'bold')}`,
-            `📦 ${p.sizeString} │ ${p.codec} ${p.cleanTags.filter(x => !String(x).includes(p.codec)).join(' ')}`,
-            `🔊 ${p.audioTag} ${p.audioChannels} • ${p.lang}`,
-            `🔗 ${p.sourceLine} ${p.seedersStr}`
+            `ðŸŽ¬ ${toStylized(p.cleanName, 'bold')}`,
+            `ðŸ“¦ ${p.sizeString} â”‚ ${p.codec} ${p.cleanTags.filter(x => !String(x).includes(p.codec)).join(' ')}`,
+            `ðŸ”Š ${p.audioTag} ${p.audioChannels} â€¢ ${p.lang}`,
+            `ðŸ”— ${p.sourceLine} ${p.seedersStr}`
         ].join('\n')
     });
 
     const styleFra = () => ({
-        name: '⚡️ Leviathan 4K',
+        name: 'âš¡ï¸ Leviathan 4K',
         title: [
-            `📄 ❯ ${p.fileTitle}`,
-            `🌎 ❯ ${p.lang} • ${p.audioTag}`,
-            `✨ ❯ ${p.serviceTag} • ${p.displaySource}`,
-            `🔥 ❯ ${p.quality} • ${p.cleanTags.join(' • ')}`,
-            `💾 ❯ ${p.sizeString} / 👥 ❯ ${p.seeders}`
+            `ðŸ“„ â¯ ${p.fileTitle}`,
+            `ðŸŒŽ â¯ ${p.lang} â€¢ ${p.audioTag}`,
+            `âœ¨ â¯ ${p.serviceTag} â€¢ ${p.displaySource}`,
+            `ðŸ”¥ â¯ ${p.quality} â€¢ ${p.cleanTags.join(' â€¢ ')}`,
+            `ðŸ’¾ â¯ ${p.sizeString} / ðŸ‘¥ â¯ ${p.seeders}`
         ].join('\n')
     });
 
     const styleComet = () => ({
-        name: `[${p.serviceTag} ⚡]
+        name: `[${p.serviceTag} âš¡]
 Leviathan
 ${p.quality}`,
         title: [
-            `📄 ${p.fileTitle}`,
-            `📹 ${joinMobilePreviewParts([p.codec, ...p.cleanTags].filter(Boolean), ' • ')} | ${p.audioTag}`,
-            `⭐ ${p.displaySource}`,
-            `💾 ${p.sizeString} 👥 ${p.seeders}`,
-            `🌍 ${p.lang}`
+            `ðŸ“„ ${p.fileTitle}`,
+            `ðŸ“¹ ${joinMobilePreviewParts([p.codec, ...p.cleanTags].filter(Boolean), ' â€¢ ')} | ${p.audioTag}`,
+            `â­ ${p.displaySource}`,
+            `ðŸ’¾ ${p.sizeString} ðŸ‘¥ ${p.seeders}`,
+            `ðŸŒ ${p.lang}`
         ].join('\n')
     });
 
     const styleStremioIta = () => ({
-        name: '⚡️ Leviathan 4K',
+        name: 'âš¡ï¸ Leviathan 4K',
         title: [
-            `📄 ❯ ${p.fileTitle}`,
-            `🌎 ❯ ${String(p.lang || '').replace(/ITA/gi, 'ita').replace(/ENG/gi, 'eng')}`,
-            `✨ ❯ ${p.serviceTag} • ${p.displaySource}`,
-            `🔥 ❯ ${p.quality} • ${p.cleanTags.join(' • ')}`,
-            `💾 ❯ ${p.sizeString}`,
-            `🔉 ❯ ${p.audioTag} • ${p.audioChannels}`
+            `ðŸ“„ â¯ ${p.fileTitle}`,
+            `ðŸŒŽ â¯ ${String(p.lang || '').replace(/ITA/gi, 'ita').replace(/ENG/gi, 'eng')}`,
+            `âœ¨ â¯ ${p.serviceTag} â€¢ ${p.displaySource}`,
+            `ðŸ”¥ â¯ ${p.quality} â€¢ ${p.cleanTags.join(' â€¢ ')}`,
+            `ðŸ’¾ â¯ ${p.sizeString}`,
+            `ðŸ”‰ â¯ ${p.audioTag} â€¢ ${p.audioChannels}`
         ].join('\n')
     });
 
     const styleDav = () => ({
-        name: '🎥 4K UHD HEVC',
+        name: 'ðŸŽ¥ 4K UHD HEVC',
         title: [
-            `📺 ${p.cleanName}`,
-            `🎧 ${p.audioTag} ${p.audioChannels} | 🎞️ ${p.codec}`,
-            `🗣️ ${p.lang} | 📦 ${p.sizeString}`,
-            `⏱️ ${p.seeders} Seeds | 🏷️ ${p.displaySource}`,
-            `${p.serviceIconTitle} Leviathan 📡 ${p.serviceTag}`,
-            `📂 ${p.fileTitle}`
+            `ðŸ“º ${p.cleanName}`,
+            `ðŸŽ§ ${p.audioTag} ${p.audioChannels} | ðŸŽžï¸ ${p.codec}`,
+            `ðŸ—£ï¸ ${p.lang} | ðŸ“¦ ${p.sizeString}`,
+            `â±ï¸ ${p.seeders} Seeds | ðŸ·ï¸ ${p.displaySource}`,
+            `${p.serviceIconTitle} Leviathan ðŸ“¡ ${p.serviceTag}`,
+            `ðŸ“‚ ${p.fileTitle}`
         ].join('\n')
     });
 
     const stylePri = () => ({
-        name: `[${p.serviceTag}]⚡️☁️
-4K🔥UHD
+        name: `[${p.serviceTag}]âš¡ï¸â˜ï¸
+4KðŸ”¥UHD
 [Leviathan]`,
         title: [
-            `🎬 ${p.cleanName}`,
+            `ðŸŽ¬ ${p.cleanName}`,
             `${p.cleanTags.join(' ')}`,
-            `🎧 ${p.audioTag} | 🔊 ${p.audioChannels} | 🗣️ ${p.lang}`,
-            `📁 ${p.sizeString} | 🏷️ ${p.displaySource}`,
-            `📄 ▶️ ${p.fileTitle} ◀️`
+            `ðŸŽ§ ${p.audioTag} | ðŸ”Š ${p.audioChannels} | ðŸ—£ï¸ ${p.lang}`,
+            `ðŸ“ ${p.sizeString} | ðŸ·ï¸ ${p.displaySource}`,
+            `ðŸ“„ â–¶ï¸ ${p.fileTitle} â—€ï¸`
         ].join('\n')
     });
 
     const styleAnd = () => ({
-        name: `🎬 ${p.cleanName}`,
+        name: `ðŸŽ¬ ${p.cleanName}`,
         title: [
-            `${p.quality} ${p.serviceTag === 'RD' ? '⚡' : '⏳'}`,
-            '─ ─ ─ ─ ─ ─ ─ ─ ─ ─',
+            `${p.quality} ${p.serviceTag === 'RD' ? 'âš¡' : 'â³'}`,
+            'â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€',
             `Lingue: ${p.lang}`,
-            `Specifiche: ${p.quality} | 📺 ${p.cleanTags.join(' ')} | 🔊 ${p.audioTag}`,
-            '─ ─ ─ ─ ─ ─ ─ ─ ─ ─',
-            `📂 ${p.sizeString} | ☁️ ${p.serviceTag} | 🛰️ Leviathan`
+            `Specifiche: ${p.quality} | ðŸ“º ${p.cleanTags.join(' ')} | ðŸ”Š ${p.audioTag}`,
+            'â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€ â”€',
+            `ðŸ“‚ ${p.sizeString} | â˜ï¸ ${p.serviceTag} | ðŸ›°ï¸ Leviathan`
         ].join('\n')
     });
 
     const styleLad = () => ({
-        name: `🖥️ ${p.quality} ${p.serviceTag}`,
+        name: `ðŸ–¥ï¸ ${p.quality} ${p.serviceTag}`,
         title: [
-            `🎟️ ${p.cleanName}`,
-            `📜 ${p.epTag || 'Movie'}`,
-            `🎥 ${p.quality} 🎞️ ${p.codec} 🎧 ${p.audioTag}`,
-            `📦 ${p.sizeString} • 🔗 Leviathan`,
-            `🌐 ${p.lang}`
+            `ðŸŽŸï¸ ${p.cleanName}`,
+            `ðŸ“œ ${p.epTag || 'Movie'}`,
+            `ðŸŽ¥ ${p.quality} ðŸŽžï¸ ${p.codec} ðŸŽ§ ${p.audioTag}`,
+            `ðŸ“¦ ${p.sizeString} â€¢ ðŸ”— Leviathan`,
+            `ðŸŒ ${p.lang}`
         ].join('\n')
     });
 
@@ -8518,56 +8510,56 @@ ${p.quality}`,
         name: `[${p.serviceTag}]
 ${p.quality}`,
         title: [
-            `📄 ${p.fileTitle}`,
-            `📦 ${p.sizeString} 👤 ${p.seeders}`,
-            `🔍 ${p.displaySource}`,
-            `🔊 ${removeMobilePreviewEmoji(p.lang) || p.lang}`
+            `ðŸ“„ ${p.fileTitle}`,
+            `ðŸ“¦ ${p.sizeString} ðŸ‘¤ ${p.seeders}`,
+            `ðŸ” ${p.displaySource}`,
+            `ðŸ”Š ${removeMobilePreviewEmoji(p.lang) || p.lang}`
         ].join('\n')
     });
 
     const styleVertical = () => ({
-        name: `♆ Leviathan ${p.quality} ${isDebrid ? '⚡' : '☁️'} Cached`,
+        name: `â™† Leviathan ${p.quality} ${isDebrid ? 'âš¡' : 'â˜ï¸'} Cached`,
         title: [
-            `🍿 ${p.cleanName}`,
-            `📼 WEB-DL • ${p.cleanTags[0]}`,
-            `⚙️ ${p.codec}`,
-            `🔊 ${p.audioTag} (${p.audioChannels})`,
-            `💬 ${p.lang}`,
-            `🧲 ${p.sizeString}`
+            `ðŸ¿ ${p.cleanName}`,
+            `ðŸ“¼ WEB-DL â€¢ ${p.cleanTags[0]}`,
+            `âš™ï¸ ${p.codec}`,
+            `ðŸ”Š ${p.audioTag} (${p.audioChannels})`,
+            `ðŸ’¬ ${p.lang}`,
+            `ðŸ§² ${p.sizeString}`
         ].join('\n')
     });
 
     const styleComplex = () => ({
-        name: `🔲 4K │ ⛁ ${p.sizeString}`,
+        name: `ðŸ”² 4K â”‚ â› ${p.sizeString}`,
         title: [
-            `☰ ${joinMobilePreviewParts([p.lang, p.audioTag, p.audioChannels], ' · ')}`,
-            `☲ ${joinMobilePreviewParts([p.quality, p.codec, p.cleanTags.join(' · ')], ' · ')}`,
-            `☵ ${joinMobilePreviewParts(['Leviathan', p.releaseGroup, p.displaySource, `[${p.serviceTag}]`], ' · ')}`,
-            `☶ ${joinMobilePreviewParts([p.cleanName, p.epTag], ' · ')}`
+            `â˜° ${joinMobilePreviewParts([p.lang, p.audioTag, p.audioChannels], ' Â· ')}`,
+            `â˜² ${joinMobilePreviewParts([p.quality, p.codec, p.cleanTags.join(' Â· ')], ' Â· ')}`,
+            `â˜µ ${joinMobilePreviewParts(['Leviathan', p.releaseGroup, p.displaySource, `[${p.serviceTag}]`], ' Â· ')}`,
+            `â˜¶ ${joinMobilePreviewParts([p.cleanName, p.epTag], ' Â· ')}`
         ].join('\n')
     });
 
     const styleAndroid = () => ({
         name: joinMobilePreviewParts([p.quality, 'DV+HDR', p.serviceTag], ' | '),
         title: [
-            `🎞️ ${p.codec}`,
-            `🎧 ${p.audioTag} ${p.audioChannels}`,
-            `⚙️ ${p.displaySource}`,
+            `ðŸŽžï¸ ${p.codec}`,
+            `ðŸŽ§ ${p.audioTag} ${p.audioChannels}`,
+            `âš™ï¸ ${p.displaySource}`,
             p.lang,
-            `📂 ${p.fileTitle}`
+            `ðŸ“‚ ${p.fileTitle}`
         ].join('\n')
     });
 
     const stylePicture = () => ({
-        name: `✅ UHD HDR ATMOS ${p.quality}`,
+        name: `âœ… UHD HDR ATMOS ${p.quality}`,
         title: [
-            `🎬 ${p.cleanName}`,
-            `✨ ${p.quality} 🔆 DV | HDR`,
-            `🎧 ${p.audioTag} 🔊 ${p.audioChannels}`,
-            '💿 Blu-ray Remux',
-            `📦 ${p.sizeString}`,
-            `🏷️ Blu-ray Remux T1 (${p.releaseGroup})`,
-            `⚡ Comet ${p.serviceTag}`
+            `ðŸŽ¬ ${p.cleanName}`,
+            `âœ¨ ${p.quality} ðŸ”† DV | HDR`,
+            `ðŸŽ§ ${p.audioTag} ðŸ”Š ${p.audioChannels}`,
+            'ðŸ’¿ Blu-ray Remux',
+            `ðŸ“¦ ${p.sizeString}`,
+            `ðŸ·ï¸ Blu-ray Remux T1 (${p.releaseGroup})`,
+            `âš¡ Comet ${p.serviceTag}`
         ].join('\n')
     });
 
@@ -8630,7 +8622,7 @@ ${p.quality}`,
     const infoEl = document.getElementById('m-prev-info');
 
     if (modeEl) modeEl.innerText = meta.preview;
-    if (iconEl) iconEl.innerText = meta.icon || '♆';
+    if (iconEl) iconEl.innerText = meta.icon || 'â™†';
     if (titleEl) titleEl.innerText = result.name;
     if (infoEl) infoEl.innerText = result.title;
 }
@@ -9656,9 +9648,8 @@ function toggleSavedCloud() {
 }
 
 function toggleScOptions() {
+    mScQuality = '1080';
     const chk = mChecked('m-enableVix');
-    const opts = document.getElementById('m-sc-options');
-    if (opts) opts.style.display = chk ? 'block' : 'none';
 
     const lbl = document.getElementById('st-vix');
     if(lbl) {
@@ -9722,14 +9713,8 @@ function openApiPage(type) {
     const links = { 'rd': 'https://real-debrid.com/apitoken', 'tb': 'https://torbox.app/settings' };
     if (links[mCurrentService]) window.open(links[mCurrentService], '_blank');
 }
-function setScQuality(val) {
-    mScQuality = val;
-    ['all','1080','720'].forEach(q => {
-        const el = document.getElementById('mq-sc-'+q);
-        if(el) el.classList.remove('active');
-    });
-    const activeEl = document.getElementById('mq-sc-' + val);
-    if(activeEl) activeEl.classList.add('active');
+function setScQuality() {
+    mScQuality = '1080';
     updateLinkModalContent();
     mVibrate(10);
 }
@@ -10024,7 +10009,7 @@ async function loadMobileConfig() {
 
                 const qMap = {'no4k':'mq-4k', 'no1080':'mq-1080', 'no720':'mq-720', 'noScr':'mq-sd'};
                 for(let k in qMap) if(config.filters[k]) mAddClass(qMap[k], 'excluded');
-                if(config.filters.scQuality) setScQuality(config.filters.scQuality);
+                setScQuality('1080');
 
                 if(config.filters.maxPerQuality && config.filters.maxPerQuality > 0) {
                     const val = config.filters.maxPerQuality;
@@ -10141,7 +10126,7 @@ function getMobileConfig() {
             savedCloudMode: savedCloudEnabled ? mSavedCloudMode : 'off',
             savedCloudMax: 6,
             vixLast: mChecked('m-vixLast'),
-            scQuality: mScQuality,
+            scQuality: '1080',
             maxPerQuality: gateActive ? gateVal : 0,
             maxSizeGB: finalMaxSizeGB > 0 ? finalMaxSizeGB : null,
             ...mAdvancedFilters
