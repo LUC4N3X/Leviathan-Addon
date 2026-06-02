@@ -262,14 +262,54 @@ function splitEpisodeSegments(description) {
     return segments;
 }
 
-function detectEpisodeLanguage(segment, index, previousText = '') {
-    const haystack = decodeHtml(`${previousText} ${segment}`).toLowerCase();
-    if (/sub\s*[- ]?ita|sottotitol/i.test(haystack)) return 'SUB-ITA';
-    if (/\bita\b|italian[ao]/i.test(haystack)) return 'ITA';
-    return index === 0 ? 'ITA' : 'SUB-ITA';
+const EUROSTREAMING_SUB_ITA_RE = /(?:sub\s*[-_ ]?ita|subbed\s*[-_ ]?ita|ita\s*sub|sottotitoli?\s*(?:in\s*)?italian[oi]?|sottotitolat[aoie]?|vost(?:fr)?|audio\s*originale|lingua\s*originale|versione\s*originale|original\s*(?:audio|version|language)|\beng\b|\benglish\b|\bjap\b|\bjpn\b)/i;
+const EUROSTREAMING_ITA_RE = /(?:\bita\b|\bitalian[aoie]?\b|doppiat[aoie]?|audio\s*ita|lingua\s*ita|versione\s*ita|italian\s*audio)/i;
+
+function normalizeEurostreamingLanguage(value, fallback = 'SUB-ITA') {
+    const text = decodeHtml(value || '');
+    if (EUROSTREAMING_SUB_ITA_RE.test(text)) return 'SUB-ITA';
+    if (EUROSTREAMING_ITA_RE.test(text)) return 'ITA';
+    return fallback === 'ITA' ? 'ITA' : 'SUB-ITA';
 }
 
-function extractEurostreamingEpisodeBlocks(description, season, episode) {
+function isEurostreamingSubIta(value) {
+    return normalizeEurostreamingLanguage(value, 'SUB-ITA') === 'SUB-ITA';
+}
+
+function eurostreamingLanguageLabel(language) {
+    return isEurostreamingSubIta(language) ? '🌐 SUB-ITA' : '🇮🇹 ITA';
+}
+
+function eurostreamingAudioLanguages(language) {
+    return isEurostreamingSubIta(language) ? ['original'] : ['ita'];
+}
+
+function eurostreamingSubtitleLanguages(language) {
+    return isEurostreamingSubIta(language) ? ['ita'] : [];
+}
+
+function detectEurostreamingPostLanguage(postTitle = '', content = '') {
+    const titleText = decodeHtml(postTitle);
+    const earlyContent = decodeHtml(String(content || '').slice(0, 4000));
+    const contextText = `${titleText} ${earlyContent}`;
+
+    if (EUROSTREAMING_SUB_ITA_RE.test(contextText)) return 'SUB-ITA';
+    if (EUROSTREAMING_ITA_RE.test(contextText)) return 'ITA';
+
+    return 'SUB-ITA';
+}
+
+function detectEpisodeLanguage(segment, index, previousText = '', fallbackLanguage = 'SUB-ITA') {
+    const ownText = decodeHtml(segment);
+    const contextText = decodeHtml(`${previousText} ${segment}`);
+
+    if (EUROSTREAMING_SUB_ITA_RE.test(contextText)) return 'SUB-ITA';
+    if (EUROSTREAMING_ITA_RE.test(ownText)) return 'ITA';
+
+    return fallbackLanguage === 'ITA' ? 'ITA' : 'SUB-ITA';
+}
+
+function extractEurostreamingEpisodeBlocks(description, season, episode, fallbackLanguage = 'SUB-ITA') {
     const safeSeason = Math.max(1, Number.parseInt(String(season || 1), 10) || 1);
     const safeEpisode = Math.max(1, Number.parseInt(String(episode || 1), 10) || 1);
     const markerPatterns = [
@@ -302,7 +342,7 @@ function extractEurostreamingEpisodeBlocks(description, season, episode) {
         }
         blocks.push({
             html,
-            language: detectEpisodeLanguage(segment, blocks.length, previousText)
+            language: detectEpisodeLanguage(segment, blocks.length, previousText, fallbackLanguage)
         });
     }
 
@@ -310,7 +350,7 @@ function extractEurostreamingEpisodeBlocks(description, season, episode) {
         const anchors = extractAnchors(description);
         const hostAnchors = anchors.filter(isKnownEurostreamingHostAnchor);
         if (hostAnchors.length && !anyEpisodeRe.test(decodeHtml(description))) {
-            blocks.push({ html: description, language: detectEpisodeLanguage(description, 0, '') });
+            blocks.push({ html: description, language: detectEpisodeLanguage(description, 0, '', fallbackLanguage) });
         }
     }
 
@@ -1625,6 +1665,12 @@ function getDeltabitMaxRetries(options = {}) {
     return Number.isFinite(value) ? Math.max(0, Math.min(value, 2)) : 1;
 }
 
+function eurostreamingLanguageRank(stream = {}) {
+    const meta = stream?.behaviorHints?.vortexMeta || {};
+    const language = meta.language || stream.language || stream.title || '';
+    return isEurostreamingSubIta(language) ? 1 : 0;
+}
+
 function streamPriority(label) {
     if (/delta/i.test(label)) return 1;
     if (/mix/i.test(label)) return 2;
@@ -1714,7 +1760,7 @@ function buildMfpProxyUrl(config = {}, targetUrl, headers = {}, { isHls = false,
 function buildDirectExtractorStream({ targetUrl, label, title, language, headers = null, fileName = '', mediaflowUrl = null, via = 'direct' }) {
     return buildWebStream({
         name: `🌍 ${PROVIDER} | ${label}`,
-        title: `${title}\n☁️ ${label} • ${language === 'SUB-ITA' ? '🇮🇹 SUB-ITA' : '🇮🇹 ITA'}${fileName ? `\n${fileName}` : ''}`,
+        title: `${title}\n☁️ ${label} • ${eurostreamingLanguageLabel(language)}${fileName ? `\n${fileName}` : ''}`,
         url: targetUrl,
         extractor: label,
         provider: PROVIDER,
@@ -1727,8 +1773,8 @@ function buildDirectExtractorStream({ targetUrl, label, title, language, headers
             bingeWatching: true,
             vortexMeta: {
                 language,
-                audioLanguages: language === 'SUB-ITA' ? [] : ['ita'],
-                subtitleLanguages: language === 'SUB-ITA' ? ['ita'] : [],
+                audioLanguages: eurostreamingAudioLanguages(language),
+                subtitleLanguages: eurostreamingSubtitleLanguages(language),
                 via
             }
         },
@@ -1855,7 +1901,7 @@ function buildMfpExtractorStream({ config, targetUrl, host, label, title, langua
     });
     return buildWebStream({
         name: `🌍 ${PROVIDER} | ${label}`,
-        title: `${title}\n☁️ ${label} • ${language === 'SUB-ITA' ? '🇮🇹 SUB-ITA' : '🇮🇹 ITA'}`,
+        title: `${title}\n☁️ ${label} • ${eurostreamingLanguageLabel(language)}`,
         url: mfpUrl,
         extractor: label,
         provider: PROVIDER,
@@ -1868,8 +1914,8 @@ function buildMfpExtractorStream({ config, targetUrl, host, label, title, langua
             bingeWatching: true,
             vortexMeta: {
                 language,
-                audioLanguages: language === 'SUB-ITA' ? [] : ['ita'],
-                subtitleLanguages: language === 'SUB-ITA' ? ['ita'] : [],
+                audioLanguages: eurostreamingAudioLanguages(language),
+                subtitleLanguages: eurostreamingSubtitleLanguages(language),
                 via,
                 streamKind
             }
@@ -1904,7 +1950,7 @@ function buildForwardedMaxstreamTarget(config = {}, targetUrl, kind = 'maxstream
     return { targetUrl: changed ? forwarded : normalized, headers, forwarded: changed };
 }
 
-function buildKrakenUprotMaxstreamStream({ config, targetUrl, title, language = 'ITA', options = {} }) {
+function buildKrakenUprotMaxstreamStream({ config, targetUrl, title, language = 'SUB-ITA', options = {} }) {
     const normalized = normalizeRemoteUrl(targetUrl);
     if (!normalized || !isUprotUrl(normalized) || !getMediaflowBase(config)) return null;
     const headers = extractorHeadersFor(normalized, 'uprot');
@@ -2572,7 +2618,8 @@ async function appendStreamsFromPost(post, context) {
         return false;
     }
 
-    const blocks = extractEurostreamingEpisodeBlocks(content, season, episode);
+    const postLanguage = detectEurostreamingPostLanguage(postTitle, content);
+    const blocks = extractEurostreamingEpisodeBlocks(content, season, episode, postLanguage);
     esDebug('info', 'candidate parsed', { source, postTitle: decodeHtml(postTitle).slice(0, 120), blocks: blocks.length, season, episode });
 
     for (const block of blocks) {
@@ -2583,11 +2630,12 @@ async function appendStreamsFromPost(post, context) {
         const tasks = linksToResolve.map(async (link) => {
             try {
                 const timeoutMs = getHostResolveTimeoutMs(link?.host);
+                const streamLanguage = normalizeEurostreamingLanguage(link?.language || block.language, block.language);
                 const stream = await withTimeout(buildHostStream(link, {
                     client,
                     config,
                     title: `${title} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`,
-                    language: block.language,
+                    language: streamLanguage,
                     reqHost,
                     options
                 }), timeoutMs, `Eurostreaming ${link?.label || link?.host || 'host'}`);
@@ -2608,8 +2656,12 @@ async function appendStreamsFromPost(post, context) {
                 continue;
             }
             for (const stream of streamList) {
-                const key = stream?.url;
-                if (!key || seen.has(key)) continue;
+                const langKey = normalizeEurostreamingLanguage(
+                    stream?.behaviorHints?.vortexMeta?.language || stream?.language || stream?.title || block.language,
+                    block.language
+                );
+                const key = `${stream?.url || ''}|${langKey}|${stream?.extractor || link?.label || link?.host || ''}`;
+                if (!stream?.url || seen.has(key)) continue;
                 seen.add(key);
                 streams.push(stream);
             }
@@ -2684,11 +2736,11 @@ async function searchEurostreaming(meta = {}, config = {}, reqHost = null, optio
         }
     } catch (error) {
         esDebug('warn', 'search failed', { title, season, episode, error: error?.message || String(error) });
-        return streams.sort((a, b) => (a?._priority ?? 9) - (b?._priority ?? 9));
+        return streams.sort((a, b) => (eurostreamingLanguageRank(a) - eurostreamingLanguageRank(b)) || ((a?._priority ?? 9) - (b?._priority ?? 9)));
     }
 
     if (!streams.length) esDebug('warn', 'search returned no streams', { title, season, episode, baseUrl });
-    return streams.sort((a, b) => (a?._priority ?? 9) - (b?._priority ?? 9));
+    return streams.sort((a, b) => (eurostreamingLanguageRank(a) - eurostreamingLanguageRank(b)) || ((a?._priority ?? 9) - (b?._priority ?? 9)));
 }
 
 module.exports = {
@@ -2711,7 +2763,11 @@ module.exports = {
         buildLocalMaxstreamStream,
         isMaxstreamExtractedPlayable,
         isDeltabitDirectCdnUrl,
-        buildDeltabitPlaybackHeaders
+        buildDeltabitPlaybackHeaders,
+        normalizeEurostreamingLanguage,
+        eurostreamingLanguageLabel,
+        eurostreamingAudioLanguages,
+        eurostreamingSubtitleLanguages
     }
 };
 
