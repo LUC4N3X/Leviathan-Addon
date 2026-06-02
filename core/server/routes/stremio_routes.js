@@ -410,7 +410,20 @@ function registerStremioRoutes(app, {
         res.json({ metas: [] });
     });
 
-    app.get('/vixsynthetic.m3u8', handleVixSynthetic);
+    const vixPlaybackRoutes = [
+        '/vixsynthetic.m3u8',
+        '/vixsegment.ts',
+        '/vixsegment.m4s',
+        '/vixsegment.mp4',
+        '/vixaudio.m4a',
+        '/vixaudio.aac',
+        '/vixkey.key',
+        '/vixsubtitle.vtt',
+        '/vixmedia.bin'
+    ];
+    for (const route of vixPlaybackRoutes) {
+        app.all(route, handleVixSynthetic);
+    }
 
     app.get('/:conf', (req, res, next) => {
         const conf = String(req.params.conf || '').trim();
