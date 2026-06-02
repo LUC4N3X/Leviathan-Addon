@@ -715,6 +715,27 @@ Una valutazione positiva aumenta autorevolezza, fiducia e visibilità del protoc
 
 <br><br>
 
+### Special Thanks
+
+<table align="center" width="88%">
+<tr>
+<td align="center" width="50%">
+<a href="https://github.com/UrloMythus/MammaMia" target="_blank"><b>MammaMia</b></a><br>
+<sub>Thanks to the MammaMia project for openly sharing provider-flow ideas and logic patterns that helped inform parts of Leviathan's provider strategy.</sub>
+</td>
+<td align="center" width="50%">
+<a href="https://github.com/mhdzumair/mediaflow-proxy" target="_blank"><b>MediaFlow Proxy</b></a><br>
+<sub>Thanks to MediaFlow Proxy for its extractor ecosystem and media-routing concepts, used as a valuable technical reference while shaping Leviathan's runtime integrations.</sub>
+</td>
+</tr>
+</table>
+
+<br>
+
+<sub>Open-source references matter. Leviathan remains independently designed, maintained and evolved under its own protocol identity.</sub>
+
+<br><br>
+
 <sub>Not a simple addon. Not a simple scraper. An operational layer built to push Stremio beyond default behavior.</sub>
 
 <br>
