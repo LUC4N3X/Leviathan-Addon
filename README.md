@@ -12,7 +12,9 @@
 
   <img src="https://capsule-render.vercel.app/api?type=transparent&height=92&section=header&text=LEVIATHAN&fontSize=74&fontColor=00E7FF&animation=fadeIn&fontAlignY=42&desc=ITA-first%20%2F%20ENG-ready%20Stremio%20Aggregation%20Engine&descSize=18&descAlignY=78&descColor=A8F7FF" alt="Leviathan" width="100%" />
 
-  <br>
+  <p>
+    <img alt="Stremio Native" src="https://img.shields.io/badge/Stremio-Native%20Addon-7C3AED?style=for-the-badge&logo=stremio&logoColor=ffffff&labelColor=07111F" />
+  </p>
 
   <h3>🔱 High-performance stream intelligence layer for Stremio</h3>
 
