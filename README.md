@@ -278,15 +278,27 @@ Il blocco viene completato da **Debrid Ghost Shell** per scenari proxy-based, **
 
 ---
 
-## 🌐 Leviathan Network Nodes
+## 🌐 Leviathan Network Map
 
 <div align="center">
 
-*Provider matrix sincronizzata con il codice attuale*
+### `Cloud · Web Providers · Torrent Engines · Hoster Extractors`
+
+Leviathan usa più layer sincronizzati, ma la logica è semplice:  
+**prima normalizza la richiesta, poi cerca le sorgenti migliori, deduplica i risultati e li consegna a Stremio con ranking pulito.**
+
+<br>
+
+<img src="https://img.shields.io/badge/CLOUD-RD_/_TORBOX-00E7FF?style=for-the-badge&labelColor=07111F" />
+<img src="https://img.shields.io/badge/WEB-ITALIAN_PROVIDERS-2EE6A6?style=for-the-badge&labelColor=07111F" />
+<img src="https://img.shields.io/badge/TORRENT-ITA_+_GLOBAL-7C3AED?style=for-the-badge&labelColor=07111F" />
+<img src="https://img.shields.io/badge/RUNTIME-KRAKEN_READY-FF5A7A?style=for-the-badge&labelColor=07111F" />
 
 </div>
 
-### 🦑 Kraken Runtime & Provider Reliability
+---
+
+### 🦑 Kraken Runtime
 
 <div align="center">
 
@@ -294,99 +306,86 @@ Il blocco viene completato da **Debrid Ghost Shell** per scenari proxy-based, **
 
 </div>
 
-**Kraken** è il runtime companion consigliato per Leviathan e rappresenta una componente fondamentale quando si vuole ottenere il comportamento completo dei provider web e degli hoster più complessi. Non va trattato come un proxy generico: è progettato per integrarsi con la logica di Leviathan, centralizzare i percorsi più delicati e rendere più stabile la risoluzione dei flussi dove entrano in gioco redirect, embed intermedi, sessioni, challenge, captcha o compatibilità MediaFlow.
+**Kraken** è il runtime companion consigliato per Leviathan. Non è un proxy generico: centralizza i percorsi più delicati dei provider web e degli hoster quando entrano in gioco redirect, embed intermedi, sessioni, challenge, captcha o compatibilità MediaFlow.
 
-In particolare, Kraken è il punto tecnico più adatto per i flussi **MaxStream / UPROT**, dove la risoluzione captcha/challenge e le logiche hoster possono essere delegate a un runtime dedicato invece di appesantire direttamente il core dell'addon. Questo permette a Leviathan di mantenere una pipeline più pulita: il core resta concentrato su ricerca, ranking, dedupe, formatter e configurazione, mentre Kraken gestisce la parte operativa più fragile dei provider che richiedono routing avanzato.
-
-Sul piano operativo Kraken stabilizza i percorsi web che richiedono forwarding, sessioni e cookie, trasforma gli embed MaxStream / UPROT in stream utilizzabili gestendone captcha e challenge, espone un bridge coerente con i percorsi proxy/forward già supportati da Leviathan, riduce i casi in cui un hoster fragile blocca l'intera pipeline provider e mantiene il core più leggero e manutenibile separando scraping e ranking dal runtime hoster.
+È particolarmente utile per i flussi **MaxStream / UPROT**, dove la risoluzione può essere delegata a un runtime dedicato invece di appesantire il core dell'addon. In questo modo Leviathan resta concentrato su ricerca, ranking, dedupe, formatter e configurazione, mentre Kraken gestisce la parte operativa più fragile.
 
 <div align="center">
 
+| Runtime | Scope | Configurazione | Stato |
+|:---:|:---:|:---:|:---:|
+| **Kraken Companion Runtime** | 🔱 Leviathan-native | `KRAKEN_URL` + `KRAKEN_API_PASSWORD` | 🟢 Recommended |
+
 <br>
 
-<img src="https://img.shields.io/badge/RUNTIME-LEVIATHAN_NATIVE-00eaff?style=for-the-badge&labelColor=061018" />
-<img src="https://img.shields.io/badge/MAXSTREAM_/_UPROT-CHALLENGE_SOLVE-7c3aed?style=for-the-badge&labelColor=061018" />
-<img src="https://img.shields.io/badge/MEDIAFLOW-COMPATIBLE_BRIDGE-2ee6a6?style=for-the-badge&labelColor=061018" />
-<img src="https://img.shields.io/badge/CORE-ISOLATION-ff5a7a?style=for-the-badge&labelColor=061018" />
+<img src="https://img.shields.io/badge/MAXSTREAM_/_UPROT-CHALLENGE_SOLVE-7C3AED?style=for-the-badge&labelColor=07111F" />
+<img src="https://img.shields.io/badge/MEDIAFLOW-COMPATIBLE_BRIDGE-2EE6A6?style=for-the-badge&labelColor=07111F" />
+<img src="https://img.shields.io/badge/CORE-ISOLATION-00E7FF?style=for-the-badge&labelColor=07111F" />
 
 </div>
 
 > [!NOTE]
-> In self-hosting Kraken è fortemente raccomandato per replicare il comportamento più completo dell'ecosistema Leviathan. Senza Kraken alcuni provider possono continuare a funzionare, ma i flussi hoster più complessi — soprattutto MaxStream / UPROT e percorsi con challenge — possono risultare meno affidabili o non disponibili.
+> In self-hosting Kraken è fortemente raccomandato per replicare il comportamento più completo dell'ecosistema Leviathan. Senza Kraken alcuni provider possono continuare a funzionare, ma gli hoster più complessi possono risultare meno affidabili.
 
-### ☁️ Cloud & Bridge
+---
+
+### ☁️ Cloud & Bridge Layer
 
 <div align="center">
 
-| Layer | Provider | Scope | Attivazione | Stato |
-|:---:|:---:|:---:|:---:|:---:|
-| **Cloud** | Real-Debrid Saved Cloud | 👤 USER | `enableSavedCloud` + RD token | 🟢 |
-| **Cloud** | TorBox Saved Cloud | 👤 USER | `enableSavedCloud` + TorBox token | 🟢 |
-| **Nexus Bridge** | Torrentio | 🌍 GLB | Bridge esterno opzionale | 🟢 |
-| **Nexus Bridge** | MediaFusion | 🌍 RD-gated | `only_when_torrentio_zero_v3` | 🟢 |
-| **Runtime** | Kraken Companion Runtime | 🔱 Leviathan-native | `KRAKEN_URL` + `KRAKEN_API_PASSWORD` | 🟢 Recommended |
+| Layer | Componenti | Attivazione | Stato |
+|:---:|:---|:---|:---:|
+| **Saved Cloud** | Real-Debrid Saved Cloud · TorBox Saved Cloud | `enableSavedCloud` + token utente | 🟢 |
+| **Nexus Bridge** | Torrentio · MediaFusion | Bridge esterno opzionale · `only_when_torrentio_zero_v3` | 🟢 |
 
 </div>
+
+---
 
 ### 🇮🇹 Web Provider Layer
 
 <div align="center">
 
-| Layer | Provider | Scope | Attivazione | Stato |
-|:---:|:---:|:---:|:---:|:---:|
-| **Web** | StreamingCommunity | 🇮🇹 ITA | `enableVix` / `enableStreamingCommunity` | 🟢 |
-| **Web** | Altadefinizione | 🇮🇹 ITA | `enableAltadefinizione` / `enableCc` | 🟢 |
-| **Web** | GuardaHD | 🇮🇹 ITA | `enableGhd` | 🟢 |
-| **Web** | GuardoSerie | 🇮🇹 ITA | `enableGs` | 🟢 |
-| **Web** | Eurostreaming | 🇮🇹 ITA Series | `enableEurostreaming` / `enableEs` | 🟢 |
-| **Web** | GuardaFlix | 🇮🇹 Movie | `enableGf` solo film | 🟢 |
-| **Anime Web** | AnimeWorld | 🇮🇹 Anime | `enableAnimeWorld` + anime/Kitsu eligible | 🟢 |
-| **Anime Web** | AnimeUnity | 🇮🇹 Anime | `enableAnimeUnity` oppure auto su Kitsu legacy | 🟢 |
-| **Anime Web** | AnimeSaturn | 🇮🇹 Anime | `enableAnimeSaturn` + anime/Kitsu eligible | 🟢 |
+| Categoria | Provider | Attivazione |
+|:---:|:---|:---|
+| **Web ITA** | StreamingCommunity · Altadefinizione · GuardaHD · GuardoSerie · Eurostreaming | `enableStreamingCommunity` · `enableAltadefinizione` · `enableGhd` · `enableGs` · `enableEurostreaming` |
+| **Movie ITA** | GuardaFlix | `enableGf` |
+| **Anime ITA** | AnimeWorld · AnimeUnity · AnimeSaturn | `enableAnimeWorld` · `enableAnimeUnity` · `enableAnimeSaturn` |
 
 </div>
+
+> **Policy veloce:** gli anime provider partono solo su richieste anime/Kitsu compatibili; GuardaFlix resta su film; Eurostreaming lavora come provider ITA per serie con routing hoster dedicato.
+
+---
 
 ### 🌐 Torrent Engine Layer
 
 <div align="center">
 
-| Engine | Scope | Mode | Note | Stato |
-|:---:|:---:|:---:|:---:|:---:|
-| **Il Corsaro Nero** | 🇮🇹 ITA | Torrent Fast Lane | Priorità alta per release italiane | 🟢 |
-| **Knaben** | 🌍 GLB | API JSON | Categorie movie/series filtrate | 🟢 |
-| **The Pirate Bay** | 🌍 GLB | ApiBay JSON | Magnet generati da info hash | 🟢 |
-| **TPB Mirror** | 🌍 GLB | Mirror HTML | Fallback mirror separato | 🟢 |
-| **1337x** | 🌍 GLB | Protected JSON/HTML | Parsing con filtri anti-rumore | 🟢 |
-| **BitSearch** | 🌍 GLB | API Search | Hash magnet diretto | 🟢 |
-| **LimeTorrents** | 🌍 GLB | Deep Scan | Query variant limitate | 🟢 |
-| **RARBG** | 🌍 GLB | Mirror Cluster | Fetch dettaglio + magnet extraction | 🟢 |
-| **UIndex** | 🌍 GLB | Hybrid Aggregator | Parsing magnet da risultati HTML | 🟢 |
-| **Nyaa** | 🇯🇵 Anime | Anime Torrent | Attivo solo per contesto anime | 🟢 |
-| **SubsPlease** | 🇯🇵 Anime | Anime Release API | Attivo solo per contesto anime | 🟢 |
+| Categoria | Engine | Note |
+|:---:|:---|:---|
+| **ITA Fast Lane** | Il Corsaro Nero | Priorità alta per release italiane |
+| **Global Search** | Knaben · The Pirate Bay · TPB Mirror · 1337x · BitSearch · LimeTorrents · RARBG · UIndex | Ricerca globale con filtri qualità, lingua e anti-rumore |
+| **Anime Torrent** | Nyaa · SubsPlease | Attivi solo in contesto anime |
 
 </div>
+
+---
 
 ### 🔌 Hoster Extractor Layer
 
-> Gli hoster sotto non sono provider di ricerca autonomi: sono risolutori usati dai provider web quando una pagina restituisce embed, player o link intermedi.
-
 <div align="center">
 
-| Extractor | Ruolo | Stato |
-|:---:|:---:|:---:|
-| **VixCloud** | Risoluzione StreamingCommunity / player compatibili | 🟢 |
-| **Mixdrop** | Hoster resolver | 🟢 |
-| **SuperVideo** | Hoster resolver | 🟢 |
-| **Streamtape** | Hoster resolver | 🟢 |
-| **UpStream** | Hoster resolver | 🟢 |
-| **Uqload** | Hoster resolver | 🟢 |
-| **Vidoza** | Hoster resolver | 🟢 |
-| **Dropload** | Hoster resolver | 🟢 |
-| **LoadM** | Hoster resolver | 🟢 |
-| **DeltaBit** | Hoster resolver per Eurostreaming | 🟢 |
-| **MaxStream / UPROT** | Hoster resolver con delega Kraken per captcha/challenge e bridge MediaFlow-compatible | 🟢 |
+| Gruppo | Extractor | Ruolo |
+|:---:|:---|:---|
+| **Player Web** | VixCloud | Risoluzione StreamingCommunity / player compatibili |
+| **Hoster Standard** | Mixdrop · SuperVideo · Streamtape · UpStream · Uqload · Vidoza · Dropload · LoadM | Resolver hoster usati dai provider web |
+| **Eurostreaming** | DeltaBit · MixDrop · MaxStream / UPROT | Routing dedicato da Safego/Clicka verso hoster finali |
+| **Kraken Assisted** | MaxStream / UPROT | Delega captcha/challenge e bridge MediaFlow-compatible |
 
 </div>
+
+---
 
 ### 📑 Provider Policy Notes
 
@@ -400,11 +399,12 @@ Sul piano operativo Kraken stabilizza i percorsi web che richiedono forwarding, 
 | **MediaFusion RD check** | Il check cache Real-Debrid viene applicato a MediaFusion; Torrentio può restare più diretto |
 | **GuardaFlix scope** | GuardaFlix viene usato per i film e non forza percorsi serie |
 | **Eurostreaming scope** | Eurostreaming viene usato come provider web ITA per serie, con routing hoster dedicato |
-| **Kraken recommended** | Kraken è raccomandato come runtime companion per provider/hoster avanzati, in particolare MaxStream / UPROT e percorsi con challenge |
+| **Kraken recommended** | Kraken è raccomandato per provider/hoster avanzati, soprattutto MaxStream / UPROT e percorsi con challenge |
 
 </div>
 
 ---
+
 
 ## 🐳 Deployment Protocol
 
