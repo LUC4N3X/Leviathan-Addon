@@ -45,10 +45,14 @@ const INTERMEDIATE_PATTERNS = [
     /\$\.post\s*\(\s*["']([^"']+)["']/i
 ];
 
+const PLAYABLE_MEDIA_RE = /\.(?:m3u8|mp4)(?:$|[?#])/i;
+const HLS_MEDIA_RE = /\.m3u8(?:$|[?#])/i;
+const MP4_MEDIA_RE = /\.mp4(?:$|[?#])/i;
+
 const SOURCE_PATTERNS = [
-    /["'](?:file|src|source|url|hls|playlist|stream|video_url|videoUrl|stream_url|streamUrl|master|link)["']?\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/i,
-    /<source\b[^>]+src=["']([^"']+\.m3u8[^"']*)["']/i,
-    /(https?:\\?\/\\?\/[^"'<>\s]+\.m3u8[^"'<>\s]*)/i
+    /["'](?:file|src|source|url|hls|playlist|stream|video_url|videoUrl|stream_url|streamUrl|master|link)["']?\s*[:=]\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i,
+    /<source\b[^>]+src=["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i,
+    /(https?:\\?\/\\?\/[^"'<>\s]+\.(?:m3u8|mp4)[^"'<>\s]*)/i
 ];
 
 const FORM_RE = /<form\b([^>]*)>([\s\S]*?)<\/form>/ig;
@@ -72,6 +76,88 @@ function decodeHtmlEntities(value) {
 
 function safeDecodeURIComponent(value) {
     try { return decodeURIComponent(String(value || '')); } catch (_) { return String(value || ''); }
+}
+
+
+function sleep(ms) {
+    const delay = Number(ms || 0);
+    if (!Number.isFinite(delay) || delay <= 0) return Promise.resolve();
+    return new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+function clampInt(value, fallback, min, max) {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(parsed, max));
+}
+
+function parseCookiePairs(value) {
+    const pairs = [];
+    const raw = Array.isArray(value) ? value.join('; ') : String(value || '');
+    for (const chunk of raw.split(/;\s*|,(?=\s*[^=;,\s]+=)/g)) {
+        const part = String(chunk || '').trim();
+        if (!part || /^(?:expires|max-age|path|domain|secure|httponly|samesite)\b/i.test(part)) continue;
+        const index = part.indexOf('=');
+        if (index <= 0) continue;
+        const name = part.slice(0, index).trim();
+        const val = part.slice(index + 1).trim();
+        if (!name || /[\s;,]/.test(name)) continue;
+        pairs.push([name, val]);
+    }
+    return pairs;
+}
+
+function mergeCookieHeaders(...values) {
+    const jar = new Map();
+    for (const value of values) {
+        for (const [name, val] of parseCookiePairs(value)) jar.set(name, val);
+    }
+    return [...jar.entries()].map(([name, val]) => `${name}=${val}`).join('; ');
+}
+
+function extractHtmlCookies(html) {
+    const pairs = [];
+    const text = String(html || '');
+
+    for (const match of text.matchAll(/\$\s*\.\s*cookie\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*)['"]/ig)) {
+        const name = decodeHtmlEntities(match?.[1] || '').trim();
+        const val = decodeHtmlEntities(match?.[2] || '').trim();
+        if (name) pairs.push(`${name}=${val}`);
+    }
+
+    for (const match of text.matchAll(/document\.cookie\s*=\s*['"]([^'"]+)['"]/ig)) {
+        const cookie = decodeHtmlEntities(match?.[1] || '').split(';')[0].trim();
+        if (cookie) pairs.push(cookie);
+    }
+
+    return mergeCookieHeaders(pairs);
+}
+
+function extractResponseCookies(response) {
+    const headers = response?.headers || {};
+    const setCookie = headers['set-cookie'] || headers['Set-Cookie'] || headers['SET-COOKIE'];
+    if (!setCookie) return '';
+    const values = Array.isArray(setCookie) ? setCookie : [setCookie];
+    return mergeCookieHeaders(values.map((entry) => String(entry || '').split(';')[0]).filter(Boolean));
+}
+
+function extractProceedWaitMs(html, options = {}) {
+    const explicit = options?.proceedWaitMs ?? process.env.TURBOVID_PROCEED_WAIT_MS;
+    const maxWaitMs = clampInt(options?.proceedMaxWaitMs ?? process.env.TURBOVID_PROCEED_MAX_WAIT_MS, 5000, 0, 5000);
+    if (explicit !== undefined && explicit !== null && explicit !== '') {
+        return Math.min(clampInt(explicit, 0, 0, 5000), maxWaitMs);
+    }
+
+    const text = normalizeEscapedText(html);
+    const seconds = [];
+    const cxc = text.match(/id=["']cxc["'][^>]*>\s*(\d{1,2})\s*</i);
+    const waitLabel = text.match(/wait\s+(\d{1,2})\s+seconds?/i);
+    const countdown = text.match(/countdown[_-]?str[\s\S]{0,180}?(\d{1,2})\s*seconds?/i);
+    if (cxc?.[1]) seconds.push(Number.parseInt(cxc[1], 10));
+    if (waitLabel?.[1]) seconds.push(Number.parseInt(waitLabel[1], 10));
+    if (countdown?.[1]) seconds.push(Number.parseInt(countdown[1], 10));
+    const best = seconds.filter(Number.isFinite).find((value) => value > 0) || 0;
+    return Math.min(best * 1000, maxWaitMs);
 }
 
 function stripApiPassword(url) {
@@ -159,6 +245,18 @@ function normalizeMaybeRelativeUrl(value, baseUrl) {
     return normalizeRemoteUrl(decoded, baseUrl);
 }
 
+function isPlayableMediaUrl(value) {
+    return PLAYABLE_MEDIA_RE.test(String(value || ''));
+}
+
+function isHlsMediaUrl(value) {
+    return HLS_MEDIA_RE.test(String(value || ''));
+}
+
+function isMp4MediaUrl(value) {
+    return MP4_MEDIA_RE.test(String(value || ''));
+}
+
 function extractFirstMediaUrl(searchSpace, baseUrl) {
     return extractMediaUrl(normalizeEscapedText(searchSpace), SOURCE_PATTERNS, baseUrl);
 }
@@ -234,20 +332,20 @@ function buildFormPayloads(fields, html) {
         payloads.push(data);
     };
 
-    addPayload();
-    addPayload({ imhuman: 'Proceed to video' });
-    addPayload({ imhuman: 'Watch video' });
-    addPayload({ imhuman: 'Guarda lo streaming' });
-    addPayload({ imhuman: 'GUARDA LO STREAMING' });
-    addPayload({ method_free: '', imhuman: fields.imhuman || '' });
-    addPayload({ method_free: 'streaming', imhuman: fields.imhuman || '' });
-    addPayload({ op: fields.op || 'download1', imhuman: 'Proceed to video' });
-
     const buttons = extractSubmitButtons(html);
     for (const button of buttons.slice(0, 5)) {
         if (!button.name) continue;
-        addPayload({ [button.name]: button.value || 'Proceed to video', imhuman: fields.imhuman || '' });
+        addPayload({ [button.name]: button.value || 'Proceed to video' });
     }
+
+    addPayload({ imhuman: fields.imhuman || 'Proceed to video' });
+    addPayload({ imhuman: 'Watch video' });
+    addPayload({ imhuman: 'Guarda lo streaming' });
+    addPayload({ imhuman: 'GUARDA LO STREAMING' });
+    addPayload({ method_free: '', imhuman: fields.imhuman || 'Proceed to video' });
+    addPayload({ method_free: 'streaming', imhuman: fields.imhuman || 'Proceed to video' });
+    addPayload({ op: fields.op || 'download1', imhuman: 'Proceed to video' });
+    addPayload();
 
     return payloads.slice(0, 10);
 }
@@ -287,11 +385,14 @@ function buildTurbovidPlaybackHeaders(playerUrl, userAgent = DEFAULT_USER_AGENT)
     };
 }
 
-async function submitFormForVideo(client, playerUrl, html, headers, timeout) {
+async function submitFormForVideo(client, playerUrl, html, headers, timeout, options = {}) {
     if (!client || typeof client.get !== 'function') return null;
 
     const forms = pickPlayableForms(html);
     if (!forms.length) return null;
+
+    const waitMs = extractProceedWaitMs(html, options);
+    if (waitMs > 0) await sleep(waitMs);
 
     const origin = getOrigin(playerUrl, 'https://turbovid.me');
 
@@ -337,8 +438,17 @@ async function submitFormForVideo(client, playerUrl, html, headers, timeout) {
 
                 const status = Number(response?.status ?? response?.statusCode ?? 0) || 0;
                 const text = responseText(response);
-                if (status >= 200 && status < 400 && text) {
-                    return { text, url: finalResponseUrl(response, actionUrl) || actionUrl };
+                if (status >= 200 && status < 400) {
+                    const responseUrl = finalResponseUrl(response, actionUrl) || actionUrl;
+                    if (isPlayableMediaUrl(responseUrl)) {
+                        return { text, url: responseUrl, mediaUrl: responseUrl };
+                    }
+                    if (text) {
+                        const hasResolvableMedia = extractFirstMediaUrl(text, responseUrl) || extractIntermediateUrl(text, responseUrl);
+                        if (hasResolvableMedia || payload === payloads[payloads.length - 1]) {
+                            return { text, url: responseUrl };
+                        }
+                    }
                 }
             } catch (_) {}
         }
@@ -354,7 +464,7 @@ async function resolveFinalStream(client, playerUrl, html, headers, options = {}
     const intermediate = extractIntermediateUrl(html, playerUrl);
     if (!intermediate) return null;
 
-    if (/\.m3u8(?:$|[?#])/i.test(intermediate)) return intermediate;
+    if (isPlayableMediaUrl(intermediate)) return intermediate;
 
     const mediaHeaders = {
         ...headers,
@@ -381,28 +491,43 @@ async function extractTurbovid(url, options = {}) {
         referer: options?.requestReferer || options?.referer || `${getOrigin(playerUrl)}/`
     });
 
-    const { status, text: html } = await fetchText(client, playerUrl, {
-        headers,
+    const initialCookie = mergeCookieHeaders(options?.cookie || options?.cookies || options?.headers?.Cookie || options?.headers?.cookie);
+    const requestHeaders = initialCookie ? { ...headers, Cookie: initialCookie } : headers;
+
+    const { status, text: html, response } = await fetchText(client, playerUrl, {
+        headers: requestHeaders,
         timeout: Number(options?.timeout || 12_000)
     });
     if (status < 200 || status >= 400 || !html) return null;
 
-    let streamUrl = await resolveFinalStream(client, playerUrl, html, headers, options);
+    const cookieHeader = mergeCookieHeaders(initialCookie, extractResponseCookies(response), extractHtmlCookies(html));
+    const pageHeaders = cookieHeader ? { ...headers, Cookie: cookieHeader } : headers;
+
+    let finalCookieHeader = cookieHeader;
+    let streamUrl = await resolveFinalStream(client, playerUrl, html, pageHeaders, options);
     if (!streamUrl) {
-        const submitted = await submitFormForVideo(client, playerUrl, html, headers, Number(options?.postTimeout || options?.timeout || 12_000));
-        if (submitted?.text) {
-            streamUrl = await resolveFinalStream(client, submitted.url || playerUrl, submitted.text, headers, options)
+        const submitted = await submitFormForVideo(client, playerUrl, html, pageHeaders, Number(options?.postTimeout || options?.timeout || 12_000), options);
+        if (submitted?.mediaUrl) {
+            streamUrl = submitted.mediaUrl;
+        } else if (submitted?.text) {
+            const submittedCookies = mergeCookieHeaders(cookieHeader, extractHtmlCookies(submitted.text));
+            if (submittedCookies) finalCookieHeader = submittedCookies;
+            const submittedHeaders = submittedCookies ? { ...headers, Cookie: submittedCookies } : pageHeaders;
+            streamUrl = await resolveFinalStream(client, submitted.url || playerUrl, submitted.text, submittedHeaders, options)
                 || extractFirstMediaUrl(submitted.text, submitted.url || playerUrl);
         }
     }
-    if (!streamUrl || !/\.m3u8(?:$|[?#])/i.test(streamUrl)) return null;
+    if (!streamUrl || !isPlayableMediaUrl(streamUrl)) return null;
 
     const playbackHeaders = buildTurbovidPlaybackHeaders(playerUrl, userAgent);
-    const quality = await probeStreamQuality(client, streamUrl, {
-        headers: playbackHeaders,
-        timeout: Number(options?.playlistTimeoutMs || 5000),
-        fallback: options?.quality || 'Unknown'
-    });
+    if (finalCookieHeader) playbackHeaders.Cookie = finalCookieHeader;
+    const quality = isHlsMediaUrl(streamUrl)
+        ? await probeStreamQuality(client, streamUrl, {
+            headers: playbackHeaders,
+            timeout: Number(options?.playlistTimeoutMs || 5000),
+            fallback: options?.quality || 'Unknown'
+        })
+        : (options?.quality || 'HD');
 
     return {
         url: streamUrl,
@@ -412,7 +537,8 @@ async function extractTurbovid(url, options = {}) {
         name: 'TurboVid',
         quality,
         priority: 3,
-        via: 'turbovid-local'
+        kind: isHlsMediaUrl(streamUrl) ? 'hls' : (isMp4MediaUrl(streamUrl) ? 'mp4' : 'video'),
+        via: isHlsMediaUrl(streamUrl) ? 'turbovid-local-hls' : 'turbovid-local-mp4'
     };
 }
 
