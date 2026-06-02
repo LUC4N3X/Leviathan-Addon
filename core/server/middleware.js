@@ -101,7 +101,7 @@ function resolveTrustProxySetting() {
 
 function isPlaybackProxyPath(pathname) {
     const value = String(pathname || '').split('?')[0];
-    return value === '/vixsynthetic.m3u8' || value.startsWith('/ccproxy/');
+    return value === '/vixsynthetic.m3u8' || value.startsWith('/vixsegment') || value.startsWith('/vixaudio') || value.startsWith('/vixkey') || value.startsWith('/vixsubtitle') || value.startsWith('/vixmedia') || value.startsWith('/ccproxy/');
 }
 
 function smartResponseCompressionMiddleware(req, res, next) {
