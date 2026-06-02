@@ -4977,14 +4977,7 @@ body { background: transparent !important; }
     </div>
     <label class="switch mf-switch"><input type="checkbox" id="enableVix" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
 </div>
-                        <div class="sc-quality-container" id="scQualityContainer">
-                           <div class="quality-label">Seleziona Qualità Flusso</div>
-                            <div class="quality-grid">
-                                <div class="q-btn active" id="btnQ_all" onclick="setSCQuality('all')">Hybrid (Tutto)</div>
-                                <div class="q-btn" id="btnQ_1080" onclick="setSCQuality('1080')">Solo 1080p</div>
-                                <div class="q-btn" id="btnQ_720" onclick="setSCQuality('720')">Solo 720p</div>
-                            </div>
-                        </div>
+                        <div class="sc-quality-container" id="scQualityContainer" hidden aria-hidden="true"></div>
 
                         <div class="control-row">
                             <div class="control-info">
@@ -6087,7 +6080,7 @@ body { background: transparent !important; }
         })();
 
         let currentService = 'rd';
-        let currentSCQuality = 'all';
+        let currentSCQuality = '1080';
         const debridValidationState = {
             timer: null,
             requestId: 0,
@@ -6797,7 +6790,7 @@ body { background: transparent !important; }
             const cc = document.getElementById('enableCc').checked;
 
             const qContainer = document.getElementById('scQualityContainer');
-            if(qContainer) qContainer.style.display = sc ? 'block' : 'none';
+            if(qContainer) qContainer.style.display = 'none';
             const pRow = document.getElementById('webPriorityRow');
             if(pRow) {
 
@@ -6806,10 +6799,8 @@ body { background: transparent !important; }
             }
         }
 
-        function setSCQuality(val) {
-            currentSCQuality = val;
-            document.querySelectorAll('.q-btn').forEach(btn => btn.classList.remove('active'));
-            document.getElementById('btnQ_' + val).classList.add('active');
+        function setSCQuality() {
+            currentSCQuality = '1080';
             updateFluxStream();
         }
 
@@ -7005,7 +6996,7 @@ body { background: transparent !important; }
                         setSpecState('btn_1080', config.filters.no1080);
                         setSpecState('btn_720', config.filters.no720);
                         setSpecState('btn_sd', config.filters.noScr || config.filters.noCam);
-                        if(config.filters.scQuality) setSCQuality(config.filters.scQuality); else setSCQuality('all');
+                        setSCQuality('1080');
                         if (config.filters.maxPerQuality && config.filters.maxPerQuality > 0) {
                             document.getElementById('gateActive').checked = true;
                             document.getElementById('gateSlider').value = config.filters.maxPerQuality;
@@ -7200,7 +7191,7 @@ body { background: transparent !important; }
                     savedCloudMax: 6,
                     enableTrailers: false,
                     vixLast: document.getElementById('vixLast').checked,
-                    scQuality: currentSCQuality,
+                    scQuality: '1080',
                     maxPerQuality: gateActive ? gateVal : 0,
                     maxSizeGB: sizeVal > 0 ? sizeVal : null,
                     ...advancedFilters
@@ -7249,12 +7240,7 @@ body { background: transparent !important; }
             }
             const c = getConfigObject();
             const list = document.getElementById('modalSummary');
-            let scText = c.filters.enableVix ? 'ATTIVO' : 'NO';
-            if (c.filters.enableVix) {
-                if (c.filters.scQuality === '1080') scText += ' (1080p)';
-                else if (c.filters.scQuality === '720') scText += ' (720p)';
-                else scText += ' (Hybrid)';
-            }
+            let scText = c.filters.enableVix ? 'ATTIVO (1080p)' : 'NO';
             let p2pText = c.filters.enableP2P ? 'ATTIVO (⚠️)' : 'DISATTIVATO';
             let ghdText = c.filters.enableGhd ? 'ATTIVO 🦁' : 'NO';
             let gsText = c.filters.enableGs ? 'ATTIVO 🛡️' : 'NO';
