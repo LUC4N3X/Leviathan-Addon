@@ -1,14 +1,20 @@
 <div align="center">
 
   <a href="https://leviathanaddon.dpdns.org" target="_blank">
-    <img src="https://i.ibb.co/xSm1phHP/Chat-GPT-Image-31-mag-2026-14-39-32-1.png" alt="Leviathan Logo" width="172" />
+    <img src="https://i.ibb.co/xSm1phHP/Chat-GPT-Image-31-mag-2026-14-39-32-1.png" alt="Leviathan Logo" width="188" />
   </a>
 
-  <img src="https://capsule-render.vercel.app/api?type=waving&height=46&section=header&color=0:050A13,18:071B2D,38:00E7FF,58:246BFF,76:7C3AED,100:050A13&reversal=false&animation=fadeIn" width="72%" alt="Leviathan ocean glow" />
+  <br>
 
-  <img src="https://capsule-render.vercel.app/api?type=transparent&height=96&section=header&text=LEVIATHAN&fontSize=76&fontColor=00E7FF&animation=fadeIn&fontAlignY=40&desc=ITA-first%20%2F%20ENG-ready%20Stremio%20Aggregation%20Engine&descSize=18&descAlignY=78&descColor=A8F7FF" alt="Leviathan" width="100%" />
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:070B13,18:071B2D,35:00E7FF,50:246BFF,66:7C3AED,82:00BFFF,100:070B13&height=14&section=header" width="56%" alt="Leviathan ocean glow" />
 
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:050A13,20:102040,45:00E7FF,62:7C3AED,80:00BFFF,100:050A13&height=2&section=header" width="64%" alt="divider" />
+  <br>
+
+  <img src="https://capsule-render.vercel.app/api?type=transparent&height=92&section=header&text=LEVIATHAN&fontSize=74&fontColor=00E7FF&animation=fadeIn&fontAlignY=42&desc=ITA-first%20%2F%20ENG-ready%20Stremio%20Aggregation%20Engine&descSize=18&descAlignY=78&descColor=A8F7FF" alt="Leviathan" width="100%" />
+
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:070B13,30:00E7FF,50:7C3AED,70:00BFFF,100:070B13&height=2&section=header" width="58%" alt="divider" />
+
+  <br>
 
   <h3>🔱 High-performance stream intelligence layer for Stremio</h3>
 
@@ -58,9 +64,10 @@
     </sub>
   </p>
 
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:050A13,35:00E7FF,50:7C3AED,65:00E7FF,100:050A13&height=2&section=footer" width="48%" alt="divider" />
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:070B13,35:00E7FF,50:7C3AED,65:00BFFF,100:070B13&height=2&section=footer" width="46%" alt="divider" />
 
 </div>
+
 ---
 
 ## ⚖️ Legal & Usage Notice
