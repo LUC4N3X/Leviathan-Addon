@@ -1,15 +1,7 @@
-/**
- * Leviathan Edge Gateway - Cloudflare Worker
- *
- * Ruolo: front-door leggero per manifest/config/assets/catalog/meta/stream metadata.
- * NON è un FlareSolverr, NON fa scraping provider, NON deve proxyare segmenti HLS.
- * Non riscrive l'URL di installazione generato da index.html/smartphone.js.
- */
-
 const DEFAULT_TIMEOUT_MS = 25000;
 const DEFAULT_STREAM_TIMEOUT_MS = 35000;
 const MAX_PREFETCH_BODY_BYTES = 2048;
-const DEFAULT_STALE_SECONDS = 21600; // 6h di fallback solo per risposte leggere già cacheate.
+const DEFAULT_STALE_SECONDS = 21600; 
 const MAX_CACHE_SECONDS = 604800;
 
 function envBool(env, name, fallback = false) {
@@ -81,6 +73,11 @@ function isLightStremioJson(pathname) {
 
 function isPlaybackProxyPath(pathname) {
   return pathname === '/vixsynthetic.m3u8'
+    || pathname.startsWith('/vixsegment')
+    || pathname.startsWith('/vixaudio')
+    || pathname.startsWith('/vixkey')
+    || pathname.startsWith('/vixsubtitle')
+    || pathname.startsWith('/vixmedia')
     || pathname.startsWith('/ccproxy/')
     || pathname.startsWith('/proxy/')
     || pathname.startsWith('/mfp/')
@@ -324,9 +321,6 @@ export default {
     } catch (error) {
       return fallbackResponse(error, incoming.pathname);
     }
-
-    // Non tocchiamo la generazione URL installazione in index.html/smartphone.js.
-    // Il Worker accelera/forwarda la pagina, ma non riscrive link o manifest URL.
 
     if (isPlaybackProxyPath(incoming.pathname) && !envBool(env, 'EDGE_PROXY_PLAYBACK', false)) {
       return directOriginRedirect(originUrl);
