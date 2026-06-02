@@ -10287,9 +10287,6 @@ function startMobileInterfaceWhenReady() {
 
 startMobileInterfaceWhenReady();
 
-
-
-
 (function ensureMobileMarkupVisible(){
     try {
         if (document.readyState === 'loading') {
