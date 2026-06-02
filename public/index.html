@@ -4634,6 +4634,246 @@ body { background: transparent !important; }
 
 </style>
 
+
+
+<style id="leviathan-mediaflow-right-cards-logo-v3">
+/* v3 - MediaFlow-style right cards: neutral surface, colored top strip only */
+.aux-grid{
+  gap:18px !important;
+}
+.aux-card,
+.aux-card.active,
+.aux-card.aio-card,
+.aux-card.cine-card,
+#card_audio,
+#card_source_mode,
+#card_aio,
+#card_saved_cloud{
+  --mf-right-rgb:43,214,245;
+  --mf-right-a:#2bd6f5;
+  --mf-right-b:#0891b2;
+  position:relative !important;
+  isolation:isolate !important;
+  overflow:hidden !important;
+  border-radius:24px !important;
+  border:1px solid rgba(202,231,255,.13) !important;
+  background:
+    linear-gradient(180deg, rgba(8,18,31,.88), rgba(2,8,16,.96)) !important;
+  box-shadow:
+    0 24px 58px -42px rgba(0,0,0,.96),
+    inset 0 1px 0 rgba(255,255,255,.075),
+    inset 0 0 0 1px rgba(255,255,255,.018) !important;
+  backdrop-filter:blur(18px) saturate(1.16) !important;
+  -webkit-backdrop-filter:blur(18px) saturate(1.16) !important;
+}
+#card_audio{ --mf-right-rgb:43,214,245; --mf-right-a:#2bd6f5; --mf-right-b:#22c1d6; }
+#card_source_mode{ --mf-right-rgb:96,165,250; --mf-right-a:#60a5fa; --mf-right-b:#2bd6f5; }
+#card_aio{ --mf-right-rgb:168,85,247; --mf-right-a:#a855f7; --mf-right-b:#ec4899; }
+#card_saved_cloud{ --mf-right-rgb:245,158,11; --mf-right-a:#f59e0b; --mf-right-b:#f97316; }
+.aux-card::before{
+  content:'' !important;
+  position:absolute !important;
+  top:0 !important;
+  left:0 !important;
+  right:0 !important;
+  height:5px !important;
+  border-radius:24px 24px 0 0 !important;
+  background:linear-gradient(90deg, var(--mf-right-a), var(--mf-right-b)) !important;
+  box-shadow:0 0 20px rgba(var(--mf-right-rgb), .45) !important;
+  opacity:.94 !important;
+  z-index:2 !important;
+}
+.aux-card::after{
+  content:'' !important;
+  position:absolute !important;
+  inset:0 !important;
+  z-index:0 !important;
+  pointer-events:none !important;
+  background:
+    linear-gradient(120deg, transparent 0%, rgba(255,255,255,.055) 42%, transparent 62%),
+    radial-gradient(80% 60% at 50% -18%, rgba(202,231,255,.075), transparent 62%) !important;
+  opacity:.58 !important;
+  transform:translateX(-130%) skewX(-12deg) !important;
+  transition:transform .62s cubic-bezier(.22,1,.36,1), opacity .26s ease !important;
+}
+.aux-card > *{
+  position:relative !important;
+  z-index:3 !important;
+}
+.aux-card:hover,
+.aux-card.active{
+  transform:translateY(-4px) !important;
+  border-color:rgba(var(--mf-right-rgb), .34) !important;
+  background:
+    linear-gradient(180deg, rgba(10,22,38,.92), rgba(3,10,20,.98)) !important;
+  box-shadow:
+    0 28px 70px -44px rgba(var(--mf-right-rgb), .58),
+    0 24px 58px -38px rgba(0,0,0,.98),
+    inset 0 1px 0 rgba(255,255,255,.10),
+    inset 0 0 0 1px rgba(var(--mf-right-rgb), .08) !important;
+}
+.aux-card:hover::after,
+.aux-card.active::after{
+  transform:translateX(130%) skewX(-12deg) !important;
+}
+.aux-card.active::before{
+  opacity:1 !important;
+  height:6px !important;
+  box-shadow:0 0 26px rgba(var(--mf-right-rgb), .62) !important;
+}
+.aux-header{
+  display:flex !important;
+  align-items:center !important;
+  gap:13px !important;
+  margin-bottom:13px !important;
+  font-family:'Outfit','Plus Jakarta Sans',sans-serif !important;
+  font-size:1.05rem !important;
+  font-weight:800 !important;
+  letter-spacing:-.025em !important;
+  line-height:1.08 !important;
+  color:#f4fbff !important;
+  text-shadow:none !important;
+}
+.aux-header span{
+  display:inline-block !important;
+  color:#f4fbff !important;
+  text-shadow:none !important;
+}
+.aux-card .aux-icon{
+  width:46px !important;
+  height:46px !important;
+  min-width:46px !important;
+  margin:0 !important;
+  border-radius:15px !important;
+  display:inline-flex !important;
+  align-items:center !important;
+  justify-content:center !important;
+  color:var(--mf-right-a) !important;
+  font-size:1.08rem !important;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.018)) !important;
+  border:1px solid rgba(var(--mf-right-rgb), .26) !important;
+  box-shadow:
+    0 14px 28px -24px rgba(var(--mf-right-rgb), .72),
+    inset 0 1px 0 rgba(255,255,255,.09),
+    inset 0 0 0 1px rgba(255,255,255,.018) !important;
+  filter:none !important;
+  text-shadow:none !important;
+  transform:none !important;
+  transition:transform .26s cubic-bezier(.22,1,.36,1), color .26s ease, border-color .26s ease, box-shadow .26s ease, background .26s ease !important;
+}
+.aux-card:hover .aux-icon,
+.aux-card.active .aux-icon{
+  transform:translateY(-2px) !important;
+  color:#ffffff !important;
+  background:
+    linear-gradient(135deg, rgba(var(--mf-right-rgb), .22), rgba(255,255,255,.035)) !important;
+  border-color:rgba(var(--mf-right-rgb), .48) !important;
+  box-shadow:
+    0 18px 36px -22px rgba(var(--mf-right-rgb), .85),
+    0 0 22px -12px rgba(var(--mf-right-rgb), .95),
+    inset 0 1px 0 rgba(255,255,255,.13) !important;
+}
+.aux-desc{
+  color:rgba(205,225,240,.70) !important;
+  font-size:.92rem !important;
+  line-height:1.55 !important;
+  text-shadow:none !important;
+}
+.aux-card .cyber-switch-container,
+.aux-card .select-wrapper{
+  background:rgba(0,7,15,.52) !important;
+  border:1px solid rgba(202,231,255,.12) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.045) !important;
+}
+.aux-card:hover .cyber-switch-container,
+.aux-card:hover .select-wrapper,
+.aux-card.active .cyber-switch-container,
+.aux-card.active .select-wrapper{
+  border-color:rgba(var(--mf-right-rgb), .30) !important;
+}
+
+/* v3 - Logo fused into the deep-sea background: softer disc, stronger ocean halo */
+.main-wrapper.leviathan-safe-refresh > header::after{
+  width:min(560px,90vw) !important;
+  height:330px !important;
+  top:-8px !important;
+  background:
+    radial-gradient(ellipse 44% 38% at 50% 38%, rgba(43,214,245,.13) 0%, rgba(43,214,245,.06) 32%, transparent 72%),
+    radial-gradient(ellipse 60% 52% at 50% 54%, rgba(9,36,58,.46) 0%, rgba(5,19,34,.20) 48%, transparent 76%),
+    radial-gradient(ellipse 68% 60% at 48% 70%, rgba(99,102,241,.08) 0%, transparent 68%) !important;
+  filter:blur(18px) !important;
+  opacity:.95 !important;
+}
+.main-wrapper.leviathan-safe-refresh .logo-container{
+  width:184px !important;
+  height:184px !important;
+  margin:0 auto 18px !important;
+  border-radius:50% !important;
+  isolation:isolate !important;
+}
+.main-wrapper.leviathan-safe-refresh .logo-container::before{
+  inset:8px !important;
+  border-radius:50% !important;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(7,42,60,.46) 0%, rgba(3,21,36,.24) 46%, rgba(0,5,13,.10) 64%, transparent 78%) !important;
+  border:1px solid rgba(116,233,255,.075) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.025),
+    inset 0 -12px 24px rgba(0,0,0,.18),
+    0 0 18px rgba(43,214,245,.075),
+    0 0 44px rgba(20,80,120,.08) !important;
+  backdrop-filter:blur(1px) saturate(1.06) !important;
+  -webkit-backdrop-filter:blur(1px) saturate(1.06) !important;
+  opacity:.92 !important;
+}
+.main-wrapper.leviathan-safe-refresh .logo-container::after{
+  inset:-14px !important;
+  border-radius:50% !important;
+  background:
+    radial-gradient(circle at 50% 43%, rgba(43,214,245,.16) 0%, rgba(43,214,245,.055) 38%, rgba(99,102,241,.045) 55%, transparent 76%) !important;
+  filter:blur(18px) !important;
+  opacity:.82 !important;
+}
+.main-wrapper.leviathan-safe-refresh .logo-image{
+  max-width:172px !important;
+  transform:translateY(5px) scale(1.01) !important;
+  filter:
+    drop-shadow(0 13px 18px rgba(0,0,0,.42))
+    drop-shadow(0 0 10px rgba(43,214,245,.105))
+    brightness(1.035) saturate(1.02) !important;
+  animation:none !important;
+}
+.main-wrapper.leviathan-safe-refresh .logo-particles{
+  opacity:.25 !important;
+  filter:blur(.4px) !important;
+}
+@media (max-width:768px){
+  .main-wrapper.leviathan-safe-refresh > header::after{
+    width:min(380px,92vw) !important;
+    height:230px !important;
+    top:-4px !important;
+  }
+  .main-wrapper.leviathan-safe-refresh .logo-container{
+    width:148px !important;
+    height:148px !important;
+    margin-bottom:12px !important;
+  }
+  .main-wrapper.leviathan-safe-refresh .logo-container::before{ inset:7px !important; }
+  .main-wrapper.leviathan-safe-refresh .logo-image{
+    max-width:139px !important;
+    transform:translateY(4px) scale(1.0) !important;
+  }
+  .aux-card{ border-radius:20px !important; }
+  .aux-card::before{ border-radius:20px 20px 0 0 !important; }
+  .aux-card .aux-icon{ width:42px !important; height:42px !important; min-width:42px !important; border-radius:14px !important; }
+}
+@media (max-width:420px){
+  .main-wrapper.leviathan-safe-refresh .logo-container{ width:128px !important; height:128px !important; }
+  .main-wrapper.leviathan-safe-refresh .logo-image{ max-width:121px !important; }
+}
+</style>
+
 </head>
 <body>
     <canvas id="deepSeaCanvas"></canvas>
@@ -4951,7 +5191,7 @@ body { background: transparent !important; }
                         <div class="aux-grid">
                             <div class="aux-card active" id="card_audio">
                                 <div class="aux-header">
-                                    <i class="fas fa-globe-americas aux-icon"></i><span>🌍 LINGUA & AUDIO</span>
+                                    <i class="fas fa-language aux-icon"></i><span>Lingua & Audio</span>
                                 </div>
                                 <div class="aux-desc" style="margin-bottom: 5px;">
                                     Seleziona il protocollo linguistico di ricerca.
@@ -4969,7 +5209,7 @@ body { background: transparent !important; }
 
                             <div class="aux-card" id="card_source_mode">
                                 <div class="aux-header">
-                                    <i class="fas fa-database aux-icon"></i><span>🗄️ Source Policy</span>
+                                    <i class="fas fa-database aux-icon"></i><span>Source Policy</span>
                                 </div>
                                 <div class="aux-desc" style="margin-bottom: 5px;">Scegli se usare DB globale, cache condivisa o scraping live.</div>
 
@@ -4986,7 +5226,7 @@ body { background: transparent !important; }
 
                             <div class="aux-card aio-card" id="card_aio">
                                 <div class="aux-header">
-                                    <i class="fas fa-microchip aux-icon"></i><span>🧬 Core AIO</span>
+                                    <i class="fas fa-microchip aux-icon"></i><span>Core AIO</span>
                                 </div>
                                 <div class="aux-desc">Ottimizza la lista risultati specificamente per l'addon <strong>AIOStreams</strong>.</div>
                                 <label class="cyber-switch-container">
@@ -5000,7 +5240,7 @@ body { background: transparent !important; }
 
                             <div class="aux-card cine-card" id="card_saved_cloud">
                                 <div class="aux-header">
-                                    <i class="fas fa-cloud aux-icon"></i><span>☁️ Debrid Cloud</span>
+                                    <i class="fas fa-cloud-arrow-up aux-icon"></i><span>Debrid Cloud</span>
                                 </div>
                                 <div class="aux-desc">Aggiunge i file già salvati nel tuo RD/TorBox. I duplicati vengono esclusi sempre.</div>
                                 <label class="cyber-switch-container" style="margin-bottom:10px;">
