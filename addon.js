@@ -20,8 +20,6 @@ function envFlag(name, fallback = false) {
 }
 
 function shouldStartInlineBackgroundWorkers() {
-    // In Docker the background scanner now lives in worker.js, so the API stays
-    // light and does not run catalogue/prewarm scraping inside the HTTP process.
     return envFlag('LEVIATHAN_API_BACKGROUND_WORKERS', false);
 }
 
@@ -242,8 +240,10 @@ function bootstrapServer() {
         recordProviderMetric,
         incrementMetric,
         markPlayableResultAsCached: appServices.markPlayableResultAsCached,
+        markPlayableResultAsUnavailable: appServices.markPlayableResultAsUnavailable,
         queueCloudBuild: appServices.queueCloudBuild,
-        getBuildKey: appServices.getBuildKey
+        getBuildKey: appServices.getBuildKey,
+        dbHelper
     });
 
     registerAdminRoutes(app, {
@@ -290,7 +290,7 @@ function bootstrapServer() {
         console.log(`[GUARDAFLIX] Modulo integrato`);
         console.log(`[CINEMACITY] Modulo integrato`);
         console.log(`[TRAILER] Attivabile da config`);
-        console.log(`ðŸ“¦ TORBOX: ADVANCED SMART CACHE`);
+        console.log(`Ã°Å¸â€œÂ¦ TORBOX: ADVANCED SMART CACHE`);
         console.log(`[PARSER] Enhanced`);
         console.log(`[P2P] Handler attivo`);
         console.log(`[CORE] Optimized for High Reliability`);
