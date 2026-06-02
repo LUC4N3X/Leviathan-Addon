@@ -1,14 +1,14 @@
 <div align="center">
 
   <a href="https://leviathanaddon.dpdns.org" target="_blank">
-    <img src="https://i.ibb.co/xSm1phHP/Chat-GPT-Image-31-mag-2026-14-39-32-1.png" alt="Leviathan Logo" width="176" />
+    <img src="https://i.ibb.co/xSm1phHP/Chat-GPT-Image-31-mag-2026-14-39-32-1.png" alt="Leviathan Logo" width="172" />
   </a>
 
-  <img src="https://capsule-render.vercel.app/api?type=waving&height=78&section=header&color=0:050A13,25:071B2D,50:00E7FF,72:7C3AED,100:050A13&reversal=false&animation=fadeIn" width="86%" alt="Leviathan ocean wave" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&height=46&section=header&color=0:050A13,18:071B2D,38:00E7FF,58:246BFF,76:7C3AED,100:050A13&reversal=false&animation=fadeIn" width="72%" alt="Leviathan ocean glow" />
 
-  <img src="https://capsule-render.vercel.app/api?type=transparent&height=108&section=header&text=LEVIATHAN&fontSize=78&fontColor=00E7FF&animation=fadeIn&fontAlignY=38&desc=ITA-first%20%2F%20ENG-ready%20Stremio%20Aggregation%20Engine&descSize=18&descAlignY=76&descColor=A8F7FF" alt="Leviathan" width="100%" />
+  <img src="https://capsule-render.vercel.app/api?type=transparent&height=96&section=header&text=LEVIATHAN&fontSize=76&fontColor=00E7FF&animation=fadeIn&fontAlignY=40&desc=ITA-first%20%2F%20ENG-ready%20Stremio%20Aggregation%20Engine&descSize=18&descAlignY=78&descColor=A8F7FF" alt="Leviathan" width="100%" />
 
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:050A13,18:102040,46:00E7FF,64:7C3AED,82:00E7FF,100:050A13&height=2&section=header" width="72%" alt="divider" />
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:050A13,20:102040,45:00E7FF,62:7C3AED,80:00BFFF,100:050A13&height=2&section=header" width="64%" alt="divider" />
 
   <h3>🔱 High-performance stream intelligence layer for Stremio</h3>
 
@@ -27,7 +27,7 @@
     <img alt="Language" src="https://img.shields.io/badge/Language-ITA_%2F_ENG-A8BFFF?style=for-the-badge&labelColor=07111F" />
   </p>
 
-  <table align="center" width="96%">
+  <table align="center" width="94%">
     <tr>
       <td align="center" width="25%">
         <b>🧠 Semantic Core</b><br>
@@ -58,10 +58,9 @@
     </sub>
   </p>
 
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:050A13,35:00E7FF,50:7C3AED,65:00E7FF,100:050A13&height=2&section=footer" width="54%" alt="divider" />
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:050A13,35:00E7FF,50:7C3AED,65:00E7FF,100:050A13&height=2&section=footer" width="48%" alt="divider" />
 
 </div>
-
 ---
 
 ## ⚖️ Legal & Usage Notice
