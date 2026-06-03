@@ -10,6 +10,7 @@ test('validateConfig migrates aliases and version', () => {
     filters: {
       enableVix: true,
       enableCc: true,
+      enableToonItalia: true,
       vixLast: true,
       language: 'ITA',
       providers: 'torrentio,comet'
@@ -19,6 +20,7 @@ test('validateConfig migrates aliases and version', () => {
   assert.equal(config.configVersion, CURRENT_CONFIG_VERSION);
   assert.equal(config.filters.enableStreamingCommunity, true);
   assert.equal(config.filters.enableCc, true);
+  assert.equal(config.filters.enableToonItalia, true);
   assert.equal(config.filters.streamingCommunityLast, true);
   assert.deepEqual(config.filters.providers, ['torrentio', 'comet']);
   assert.equal(config.filters.language, 'ita');
