@@ -159,8 +159,7 @@ function validateConfig(input = {}) {
     : (output.filters.enableSavedCloud ? 'smart' : 'off');
   if (output.filters.savedCloudMode === 'off') output.filters.enableSavedCloud = false;
   if (output.filters.enableSavedCloud && (!output.filters.savedCloudMax || output.filters.savedCloudMax < 1)) output.filters.savedCloudMax = 6;
-
-
+  
   output.filters.savedCloudAggressive = output.filters.savedCloudAggressive !== undefined
     ? output.filters.savedCloudAggressive
     : APP_SETTINGS.savedCloud.aggressive;
