@@ -7294,6 +7294,9 @@ body.m-mf-plus.m-input-active.m-keyboard-open .m-dock-container {
 }
 
 
+/* =========================================================================
+   SaaS SKIN v10 — provider visual rail rifatto e icone perfettamente centrate
+   ========================================================================= */
 body.m-mf-plus .m-reactor-grid {
     gap: 12px !important;
 }
@@ -7622,9 +7625,10 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Catalogo Film e Serie TV in modalità diretta No Proxy 🎟️.</span>
+                                <span class="m-reactor-desc">Catalogo Film e Serie TV via FlareSolverr e proxy CCCDN/Kraken 🎟️.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
+                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
                                 </div>
                             </div>
                         </div>
@@ -7775,6 +7779,25 @@ const mobileHTML = `
                                     </label>
                                 </div>
                                 <span class="m-reactor-desc">Anime classici e recenti, archivio ampio e consultazione rapida 🪐.</span>
+                                <div class="m-tag-row">
+                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="m-reactor-module" id="mod-ti">
+                            <div class="m-reactor-core">
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🐙</span>
+                            </div>
+                            <div class="m-reactor-body">
+                                <div class="m-reactor-top">
+                                    <span class="m-reactor-title">🐙 ToonItalia</span>
+                                    <label class="m-switch">
+                                        <input type="checkbox" id="m-enableToonItalia" onchange="updateStatus('m-enableToonItalia','st-ti'); toggleModuleStyle('m-enableToonItalia', 'mod-ti');">
+                                        <span class="m-slider m-slider-aqua"></span>
+                                    </label>
+                                </div>
+                                <span class="m-reactor-desc">Cartoon e anime in italiano, con resolver VOE, LoadM/RPMShare e MaxStream.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>
@@ -9598,7 +9621,7 @@ function setLangMode(mode) {
 }
 
 function checkWebPriorityVisibility() {
-    const enabled = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableCb01', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableAltadefinizione', 'm-enableCc'].some(id => mChecked(id));
+    const enabled = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableCb01', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableToonItalia', 'm-enableGf', 'm-enableAltadefinizione', 'm-enableCc'].some(id => mChecked(id));
     const panel = document.getElementById('m-priority-panel');
     if (panel) panel.classList.toggle('show', enabled);
 }
@@ -9979,6 +10002,9 @@ async function loadMobileConfig() {
                 mSetChecked('m-enableAnimeSaturn', config.filters.enableAnimeSaturn || false);
                 toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');
 
+                mSetChecked('m-enableToonItalia', config.filters.enableToonItalia || false);
+                toggleModuleStyle('m-enableToonItalia', 'mod-ti');
+
                 mSetChecked('m-enableGf', config.filters.enableGf || false);
                 toggleModuleStyle('m-enableGf', 'mod-gf');
 
@@ -10039,6 +10065,7 @@ async function loadMobileConfig() {
             updateStatus('m-enableAnimeWorld', 'st-aw');
             updateStatus('m-enableAnimeUnity', 'st-au');
             updateStatus('m-enableAnimeSaturn', 'st-as');
+            updateStatus('m-enableToonItalia', 'st-ti');
             updateStatus('m-enableGf', 'st-gf');
             updateStatus('m-enableAltadefinizione', 'st-ads');
             updateStatus('m-enableCc', 'st-cc');
@@ -10064,7 +10091,7 @@ function getMobileConfig() {
 
     const isP2P = mCurrentService === 'p2p';
     const apiKey = mValue('m-apiKey').trim();
-    const webModules = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableCb01', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableGf', 'm-enableAltadefinizione', 'm-enableCc'];
+    const webModules = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableCb01', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableToonItalia', 'm-enableGf', 'm-enableAltadefinizione', 'm-enableCc'];
     const webOnlyService = !isP2P && !apiKey && webModules.some(id => mChecked(id));
     const savedCloudEnabled = !isP2P && !!apiKey && ['rd', 'tb'].includes(String(mCurrentService || '').toLowerCase()) && mChecked('m-enableSavedCloud');
 
@@ -10114,6 +10141,7 @@ function getMobileConfig() {
             enableAnimeWorld: mChecked('m-enableAnimeWorld'),
             enableAnimeUnity: mChecked('m-enableAnimeUnity'),
             enableAnimeSaturn: mChecked('m-enableAnimeSaturn'),
+            enableToonItalia: mChecked('m-enableToonItalia'),
             enableGf: mChecked('m-enableGf'),
             enableCc: mChecked('m-enableCc'),
             enableAltadefinizione: mChecked('m-enableAltadefinizione'),
@@ -10157,7 +10185,7 @@ async function updateLinkModalContent(immediate = false) {
     }
 
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableCb01 || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableAltadefinizione || config.filters.enableCc || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableCb01 || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableToonItalia || config.filters.enableGf || config.filters.enableAltadefinizione || config.filters.enableCc || config.filters.enableP2P;
 
     if(!config.key && !isWebEnabled) {
         setGeneratedLinkBoxesValue("/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P", "error");
@@ -10199,7 +10227,7 @@ async function copyGeneratedLinkValue(value, closeAfter = false) {
 
 async function mobileInstall() {
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableCb01 || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableGf || config.filters.enableAltadefinizione || config.filters.enableCc || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableCb01 || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableToonItalia || config.filters.enableGf || config.filters.enableAltadefinizione || config.filters.enableCc || config.filters.enableP2P;
     if(!config.key && !isWebEnabled) {
         showToast("ERRORE: API KEY MANCANTE", "error"); return;
     }
