@@ -15,6 +15,7 @@ const { extractVixcloud, isVixcloudUrl } = require('./vixcloud');
 const { extractVidxgo, isVidxgoUrl } = require('./vidxgo');
 const { extractStreamhg, isStreamhgUrl } = require('./streamhg');
 const { extractTurbovid, isTurbovidUrl, normalizeTurbovidUrl } = require('./turbovid');
+const { extractVoe, isVoeUrl } = require('./voe');
 
 module.exports = {
     extractDeltabit,
@@ -48,5 +49,7 @@ module.exports = {
     isStreamhgUrl,
     extractTurbovid,
     isTurbovidUrl,
-    normalizeTurbovidUrl
+    normalizeTurbovidUrl,
+    extractVoe,
+    isVoeUrl
 };
