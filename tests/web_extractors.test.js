@@ -10,7 +10,8 @@ const {
     extractPlaylistQuality,
     normalizeRemoteUrl
 } = require('../providers/extractors/common');
-const { resolveExtractorDefinition } = require('../providers/extractors/registry');
+const { resolveExtractorDefinition, isBridgeResolverCandidate } = require('../providers/extractors/registry');
+const { extractBridgeTarget } = require('../providers/extractors/bridge_resolver');
 const { getWebProviderDefinition, getWebProviderIcon } = require('../providers/extractors/provider_registry');
 const { createWebProviderTools } = require('../core/stream/web_providers');
 const { buildExtractorUrl, buildProxyUrl, defaultExtractorPath } = require('../core/proxy/mediaflow_gateway');
@@ -31,11 +32,20 @@ test('detectStreamQuality recognizes common web qualities', () => {
 test('resolveExtractorDefinition recognizes supported hosters', () => {
     assert.equal(resolveExtractorDefinition('https://loadm.xyz/e/123').key, 'loadm');
     assert.equal(resolveExtractorDefinition('https://mixdrop.co/e/abc').key, 'mixdrop');
+    assert.equal(resolveExtractorDefinition('https://mixdrop.bz/e/abc').key, 'mixdrop');
+    assert.equal(resolveExtractorDefinition('https://md3b0.example/e/abc').key, 'mixdrop');
     assert.equal(resolveExtractorDefinition('https://supervideo.tv/e/xyz').key, 'supervideo');
     assert.equal(resolveExtractorDefinition('https://vixcloud.co/embed/xyz').key, 'vixcloud');
     assert.equal(resolveExtractorDefinition('https://streamtape.com/e/xyz').key, 'streamtape');
     assert.equal(resolveExtractorDefinition('https://vidoza.net/embed-xyz').key, 'vidoza');
     assert.equal(resolveExtractorDefinition('https://example.com/player'), null);
+});
+
+
+test('bridge resolver extracts safe redirect candidates before hoster matching', () => {
+    const html = '<script>window.location.replace("https://mixdrop.bz/e/abc123")</script>';
+    assert.equal(isBridgeResolverCandidate('https://mysync.mov/stream/abc'), true);
+    assert.equal(extractBridgeTarget(html, 'https://mysync.mov/stream/abc'), 'https://mixdrop.bz/e/abc123');
 });
 
 test('extractPlaylistQuality infers the highest advertised rendition', () => {
