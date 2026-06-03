@@ -2,97 +2,125 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+
 const { __private } = require('../providers/onlineserietv/onlineserietv_handler');
 
-function withEnvironment(values, fn) {
-    const previous = {};
-    for (const [name, value] of Object.entries(values)) {
-        previous[name] = process.env[name];
-        if (value === undefined) delete process.env[name];
-        else process.env[name] = value;
+function withEnvironment(overrides, callback) {
+    const previousValues = new Map();
+
+    for (const [key, value] of Object.entries(overrides)) {
+        previousValues.set(key, process.env[key]);
+
+        if (value === undefined) {
+            delete process.env[key];
+        } else {
+            process.env[key] = value;
+        }
     }
+
     try {
-        return fn();
+        return callback();
     } finally {
-        for (const [name, value] of Object.entries(previous)) {
-            if (value === undefined) delete process.env[name];
-            else process.env[name] = value;
+        for (const [key, value] of previousValues.entries()) {
+            if (value === undefined) {
+                delete process.env[key];
+            } else {
+                process.env[key] = value;
+            }
         }
     }
 }
 
-test('OnlineSerieTV builds the SearchWP admin-ajax URL like MammaMia', () => {
+test('OnlineSerieTV builds SearchWP admin-ajax URLs compatible with MammaMia', () => {
     assert.equal(__private.cleanShowName("Marvel's Daredevil"), 'Marvel s Daredevil');
-    const url = __private.buildSearchUrl('https://onlineserietv.lol', 'Breaking Bad');
-    assert.ok(url.startsWith('https://onlineserietv.lol/wp-admin/admin-ajax.php?'));
-    assert.ok(url.includes('action=searchwp_live_search'));
-    assert.ok(url.includes('s=Breaking%20Bad'));
-    assert.ok(url.includes('swpquery=Breaking%20Bad'));
-    assert.ok(url.includes('origin_id=50141'));
+
+    const searchUrl = __private.buildSearchUrl('https://onlineserietv.lol', 'Breaking Bad');
+
+    assert.ok(searchUrl.startsWith('https://onlineserietv.lol/wp-admin/admin-ajax.php?'));
+    assert.ok(searchUrl.includes('action=searchwp_live_search'));
+    assert.ok(searchUrl.includes('s=Breaking%20Bad'));
+    assert.ok(searchUrl.includes('swpquery=Breaking%20Bad'));
+    assert.ok(searchUrl.includes('origin_id=50141'));
 });
 
-test('OnlineSerieTV ranks film/serietv candidates and resolves relative hrefs', () => {
+test('OnlineSerieTV collects anchors, resolves relative URLs, and ranks candidates', () => {
     const html = `
         <a href="https://onlineserietv.lol/serietv/breaking-bad/">Breaking Bad</a>
         <a href="/film/qualche-film-2019/">Qualche Film</a>
         <a href="https://onlineserietv.lol/serietv/altro/">Altro Show</a>
     `;
+
     const anchors = __private.collectAnchors(html, 'https://onlineserietv.lol');
+
     assert.equal(anchors.length, 3);
     assert.equal(anchors[1].href, 'https://onlineserietv.lol/film/qualche-film-2019/');
 
-    const series = __private.rankCandidates(anchors, 'series', 'Breaking Bad');
-    assert.equal(series[0].href, 'https://onlineserietv.lol/serietv/breaking-bad/');
-    assert.ok(series[0].score >= series[1].score);
+    const seriesCandidates = __private.rankCandidates(anchors, 'series', 'Breaking Bad');
 
-    const movies = __private.rankCandidates(anchors, 'movie', 'Qualche Film');
-    assert.equal(movies.length, 1);
-    assert.equal(movies[0].href, 'https://onlineserietv.lol/film/qualche-film-2019/');
+    assert.equal(seriesCandidates[0].href, 'https://onlineserietv.lol/serietv/breaking-bad/');
+    assert.ok(seriesCandidates[0].score >= seriesCandidates[1].score);
+
+    const movieCandidates = __private.rankCandidates(anchors, 'movie', 'Qualche Film');
+
+    assert.equal(movieCandidates.length, 1);
+    assert.equal(movieCandidates[0].href, 'https://onlineserietv.lol/film/qualche-film-2019/');
 });
 
-test('OnlineSerieTV extracts the uprot/msf link for the requested episode', () => {
-    const seriesPage = `
+test('OnlineSerieTV extracts uprot/msf links for the requested series episode', () => {
+    const html = `
         <div>Anno: <i>2008</i></div>
         <div>01x01 <a href="https://uprot.net/msf/AAAA">MaxStream</a></div>
         <div>01x02 <a href="https://uprot.net/msf/BBBB">MaxStream</a></div>
         <div>02x05 <a href="https://uprot.net/msf/CCCC">MaxStream</a></div>
     `;
-    assert.equal(__private.extractPageYear(seriesPage), 2008);
-    assert.equal(__private.extractSeriesUprot(seriesPage, 1, 2), 'https://uprot.net/msf/BBBB');
-    assert.equal(__private.extractSeriesUprot(seriesPage, 2, 5), 'https://uprot.net/msf/CCCC');
-    assert.equal(__private.extractSeriesUprot(seriesPage, 9, 9), null);
 
-    const moviePage = '<div>Anno: <i>1999</i></div> <a href="https://uprot.net/msf/MOVIE?x=1">play</a>';
-    assert.equal(__private.extractMovieUprot(moviePage), 'https://uprot.net/msf/MOVIE?x=1');
+    assert.equal(__private.extractPageYear(html), 2008);
+    assert.equal(__private.extractSeriesUprot(html, 1, 2), 'https://uprot.net/msf/BBBB');
+    assert.equal(__private.extractSeriesUprot(html, 2, 5), 'https://uprot.net/msf/CCCC');
+    assert.equal(__private.extractSeriesUprot(html, 9, 9), null);
 });
 
-test('OnlineSerieTV year matching is exact-first with a small tolerance', () => {
+test('OnlineSerieTV extracts uprot/msf links from movie pages', () => {
+    const html = `
+        <div>Anno: <i>1999</i></div>
+        <a href="https://uprot.net/msf/MOVIE?x=1">play</a>
+    `;
+
+    assert.equal(__private.extractPageYear(html), 1999);
+    assert.equal(__private.extractMovieUprot(html), 'https://uprot.net/msf/MOVIE?x=1');
+});
+
+test('OnlineSerieTV accepts exact years and nearby release years', () => {
     assert.equal(__private.yearAccepted(2008, 2008), true);
-    assert.equal(__private.yearAccepted(2008, 2009), true); // default tolerance 1
+    assert.equal(__private.yearAccepted(2008, 2009), true);
     assert.equal(__private.yearAccepted(2008, 2011), false);
-    assert.equal(__private.yearAccepted(null, 2008), true); // lenient when page year missing
-    assert.equal(__private.yearAccepted(2008, null), true); // lenient when meta year missing
+    assert.equal(__private.yearAccepted(null, 2008), true);
+    assert.equal(__private.yearAccepted(2008, null), true);
 });
 
-test('OnlineSerieTV builds forward fetch URLs from the single FORWARD_PROXY env (like CB01)', () => {
+test('OnlineSerieTV builds forward proxy URLs from FORWARD_PROXY like CB01', () => {
     withEnvironment({ FORWARD_PROXY: 'https://proxy.example/forward?url=' }, () => {
+        const sourceUrl = 'https://onlineserietv.lol/serietv/show/?x=1&y=2';
+        const forwardedUrl = __private.buildOstForwardProxyUrl(sourceUrl);
+
         assert.equal(__private.getOstForwardProxy(), 'https://proxy.example/forward?url=');
-        const forwarded = __private.buildOstForwardProxyUrl('https://onlineserietv.lol/serietv/show/?x=1&y=2');
-        assert.ok(forwarded.startsWith('https://proxy.example/forward?url='));
-        assert.ok(/onlineserietv\.lol/.test(decodeURIComponent(forwarded)));
+        assert.ok(forwardedUrl.startsWith('https://proxy.example/forward?url='));
+        assert.ok(/onlineserietv\.lol/.test(decodeURIComponent(forwardedUrl)));
     });
+
     withEnvironment({ FORWARD_PROXY: '0' }, () => {
         assert.equal(__private.getOstForwardProxy(), '');
     });
 });
 
-test('OnlineSerieTV is registered as a web provider gated by enableOnlineserietv', () => {
-    const reg = require('../providers/extractors/provider_registry');
-    const def = reg.getWebProviderDefinition('onlineserietv');
-    assert.ok(def, 'definition present');
-    assert.equal(def.recipeId, 'onlineserietv');
-    assert.equal(def.limiterKey, 'webOnlineserietv');
-    assert.equal(def.isEnabled({ filters: { enableOnlineserietv: true } }), true);
-    assert.equal(def.isEnabled({ filters: {} }), false);
-    assert.equal(typeof def.run, 'function');
+test('OnlineSerieTV is registered as a gated web provider', () => {
+    const registry = require('../providers/extractors/provider_registry');
+    const definition = registry.getWebProviderDefinition('onlineserietv');
+
+    assert.ok(definition, 'definition present');
+    assert.equal(definition.recipeId, 'onlineserietv');
+    assert.equal(definition.limiterKey, 'webOnlineserietv');
+    assert.equal(definition.isEnabled({ filters: { enableOnlineserietv: true } }), true);
+    assert.equal(definition.isEnabled({ filters: {} }), false);
+    assert.equal(typeof definition.run, 'function');
 });
