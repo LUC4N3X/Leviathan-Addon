@@ -5081,6 +5081,17 @@ body { background: transparent !important; }
                         <div class="control-row">
                             <div class="control-info">
                                 <div class="control-title notranslate" translate="no">
+                                    <i class="fas fa-dragon" style="color: #22d3ee"></i> ToonItalia
+                                    <span class="proxy-tag tag-noproxy">NO PROXY</span>
+                                </div>
+                                <span class="control-desc">Catalogo cartoon/anime italiano con resolver dedicato per VOE, LoadM/RPMShare e MaxStream.</span>
+                            </div>
+                            <label class="switch mf-switch"><input type="checkbox" id="enableToonItalia" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
+                        </div>
+
+                        <div class="control-row">
+                            <div class="control-info">
+                                <div class="control-title notranslate" translate="no">
                                     <i class="fas fa-play" style="color: #00e676"></i> GuardaFlix
                                     <span class="proxy-tag tag-noproxy">NO PROXY</span>
                                 </div>
@@ -6785,6 +6796,7 @@ body { background: transparent !important; }
             const aw = document.getElementById('enableAnimeWorld').checked;
             const au = document.getElementById('enableAnimeUnity').checked;
             const as = document.getElementById('enableAnimeSaturn').checked;
+            const ti = document.getElementById('enableToonItalia').checked;
             const gf = document.getElementById('enableGf').checked;
             const ads = document.getElementById('enableAltadefinizione').checked;
             const cc = document.getElementById('enableCc').checked;
@@ -6794,7 +6806,7 @@ body { background: transparent !important; }
             const pRow = document.getElementById('webPriorityRow');
             if(pRow) {
 
-                if(sc || ghd || gs || gstv || es || cb01 || aw || au || as || gf || ads || cc) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
+                if(sc || ghd || gs || gstv || es || cb01 || aw || au || as || ti || gf || ads || cc) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
                 else { pRow.style.display = 'none'; }
             }
         }
@@ -6985,6 +6997,7 @@ body { background: transparent !important; }
                         document.getElementById('enableAnimeWorld').checked = config.filters.enableAnimeWorld || false;
                         document.getElementById('enableAnimeUnity').checked = config.filters.enableAnimeUnity || false;
                         document.getElementById('enableAnimeSaturn').checked = config.filters.enableAnimeSaturn || false;
+                        document.getElementById('enableToonItalia').checked = config.filters.enableToonItalia || false;
                         document.getElementById('enableGf').checked = config.filters.enableGf || false;
                         document.getElementById('enableAltadefinizione').checked = config.filters.enableAltadefinizione || false;
                         document.getElementById('enableCc').checked = config.filters.enableCc || false;
@@ -7087,13 +7100,14 @@ body { background: transparent !important; }
             const awActive = document.getElementById('enableAnimeWorld').checked;
             const auActive = document.getElementById('enableAnimeUnity').checked;
             const asActive = document.getElementById('enableAnimeSaturn').checked;
+            const tiActive = document.getElementById('enableToonItalia').checked;
             const gfActive = document.getElementById('enableGf').checked;
             const adsActive = document.getElementById('enableAltadefinizione').checked;
             const ccActive = document.getElementById('enableCc').checked;
             const isP2P = currentService === 'p2p';
             const sourceMode = document.getElementById('sourceMode').value;
 
-            const isWebEnabled = scActive || ghdActive || gsActive || gstvActive || esActive || cb01Active || awActive || auActive || asActive || gfActive || adsActive || ccActive || isP2P;
+            const isWebEnabled = scActive || ghdActive || gsActive || gstvActive || esActive || cb01Active || awActive || auActive || asActive || tiActive || gfActive || adsActive || ccActive || isP2P;
             const sourceModeBypassesKey = sourceMode === 'dbOnly' || sourceMode === 'globalCacheOnly';
 
             const el = document.getElementById('apiKey');
@@ -7128,6 +7142,7 @@ body { background: transparent !important; }
                     || document.getElementById('enableAnimeWorld').checked
                     || document.getElementById('enableAnimeUnity').checked
                     || document.getElementById('enableAnimeSaturn').checked
+                    || document.getElementById('enableToonItalia').checked
                     || document.getElementById('enableGf').checked
                     || document.getElementById('enableAltadefinizione').checked
                     || document.getElementById('enableCc').checked
@@ -7183,6 +7198,7 @@ body { background: transparent !important; }
                     enableAnimeWorld: document.getElementById('enableAnimeWorld').checked,
                     enableAnimeUnity: document.getElementById('enableAnimeUnity').checked,
                     enableAnimeSaturn: document.getElementById('enableAnimeSaturn').checked,
+                    enableToonItalia: document.getElementById('enableToonItalia').checked,
                     enableGf: document.getElementById('enableGf').checked,
                     enableCc: document.getElementById('enableCc').checked,
                     enableAltadefinizione: document.getElementById('enableAltadefinizione').checked,
@@ -7250,6 +7266,7 @@ body { background: transparent !important; }
             let awText = c.filters.enableAnimeWorld ? 'ATTIVO ⛩️' : 'NO';
             let auText = c.filters.enableAnimeUnity ? 'ATTIVO 🌀' : 'NO';
             let asText = c.filters.enableAnimeSaturn ? 'ATTIVO 🪐' : 'NO';
+            let tiText = c.filters.enableToonItalia ? 'ATTIVO 🐙' : 'NO';
             let gfText = c.filters.enableGf ? 'ATTIVO 🎥' : 'NO';
             let adsText = c.filters.enableAltadefinizione ? 'ATTIVO 🎞️' : 'NO';
             let ccText = c.filters.enableCc ? 'ATTIVO 🎟️' : 'NO';
@@ -7282,7 +7299,7 @@ body { background: transparent !important; }
                 <li>Servizio Debrid <span>${serviceDisplay}</span></li>
                 <li>Visual Skin <span>${skinText}</span></li>
                 <li>Swarm P2P <span>${p2pText}</span></li>
-                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | GSTV: ${gstvText} | ES: ${esText} | CB01: ${cb01Text} | AW: ${awText} | AU: ${auText} | AS: ${asText} | GF: ${gfText} | ADS: ${adsText} | CC: ${ccText}</span></li>
+                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | GSTV: ${gstvText} | ES: ${esText} | CB01: ${cb01Text} | AW: ${awText} | AU: ${auText} | AS: ${asText} | TI: ${tiText} | GF: ${gfText} | ADS: ${adsText} | CC: ${ccText}</span></li>
                 <li>Flux Priority <span>${sortText}</span></li>
                 <li>Source Policy <span>${sourceModeText}</span></li>
                 <li>Proxy Bridge <span>${c.mediaflow.url ? 'CONFIGURATO' : 'NON ATTIVO'}</span></li>
