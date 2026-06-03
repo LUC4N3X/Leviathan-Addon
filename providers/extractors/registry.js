@@ -30,11 +30,14 @@ const {
     extractStreamhg,
     isStreamhgUrl,
     extractTurbovid,
-    isTurbovidUrl
+    isTurbovidUrl,
+    extractVoe,
+    isVoeUrl
 } = require('./hosters');
+const { isBridgeResolverCandidate, resolveBridgeUrl } = require('./bridge_resolver');
 
-const HOSTER_DIRECT_LINK_PATTERN = String.raw`https?:\/\/(?:www\.)?(?:supervideo|vixcloud|(?:v\.)?vidxgo|dropload|dr0pstream|mixdrop|m1xdrop|mxcontent|loadm(?:\.cam)?|deltabit|safego|clicka|uprot\.net|maxstream\.video|stayonline\.pro|maxstream|upstream|uqload|streamtape|vidoza|dhcplay|vibuxer|turbovid\.me|turboviplay\.com|emturbovid\.com|tuborstb\.co|javggvideo\.xyz|stbturbo\.xyz|turbovidhls\.com)[^"'<\s]+`;
-const HOSTER_ESCAPED_DIRECT_LINK_PATTERN = String.raw`https?:\\\/\\\/(?:www\\.)?(?:supervideo|vixcloud|(?:v\.)?vidxgo|dropload|dr0pstream|mixdrop|m1xdrop|mxcontent|loadm(?:\\.cam)?|deltabit|safego|clicka|uprot\\.net|maxstream\\.video|stayonline\\.pro|maxstream|upstream|uqload|streamtape|vidoza|dhcplay|vibuxer|turbovid\.me|turboviplay\.com|emturbovid\.com|tuborstb\.co|javggvideo\.xyz|stbturbo\.xyz|turbovidhls\.com)[^"'<\s]+`;
+const HOSTER_DIRECT_LINK_PATTERN = String.raw`https?:\/\/(?:www\.)?(?:supervideo|vixcloud|(?:v\.)?vidxgo|dropload|dr0pstream|mixdrop|mixdrp|m1xdrop|miiixdrop|mxdrop|mxcontent|md[3bfyz][a-z0-9]*|loadm(?:\.cam)?|deltabit|safego|clicka|uprot\.net|maxstream\.video|stayonline\.pro|maxstream|upstream|uqload|streamtape|vidoza|dhcplay|vibuxer|turbovid\.me|turboviplay\.com|emturbovid\.com|tuborstb\.co|javggvideo\.xyz|stbturbo\.xyz|turbovidhls\.com|voe\.sx|voe\.to|voe-unblock\.com|v-o-e-unblock\.com)[^"'<\s]+`;
+const HOSTER_ESCAPED_DIRECT_LINK_PATTERN = String.raw`https?:\\\/\\\/(?:www\\.)?(?:supervideo|vixcloud|(?:v\.)?vidxgo|dropload|dr0pstream|mixdrop|mixdrp|m1xdrop|miiixdrop|mxdrop|mxcontent|md[3bfyz][a-z0-9]*|loadm(?:\\.cam)?|deltabit|safego|clicka|uprot\\.net|maxstream\\.video|stayonline\\.pro|maxstream|upstream|uqload|streamtape|vidoza|dhcplay|vibuxer|turbovid\.me|turboviplay\.com|emturbovid\.com|tuborstb\.co|javggvideo\.xyz|stbturbo\.xyz|turbovidhls\.com|voe\.sx|voe\.to|voe-unblock\.com|v-o-e-unblock\.com)[^"'<\s]+`;
 
 const HOSTER_DEFINITIONS = [
     {
@@ -103,9 +106,40 @@ const HOSTER_DEFINITIONS = [
         noLazy: true
     },
     {
+        key: 'voe',
+        label: 'VOE',
+        matches: isVoeUrl,
+        aliases: [
+            'voe.sx',
+            'voe.to',
+            'voe-unblock.com',
+            'v-o-e-unblock.com',
+            'smoki.cc',
+            'kinoger.ru'
+        ],
+        serverNames: ['voe', 'voesx', 'v-o-e'],
+        extract: extractVoe,
+        priority: 2
+    },
+    {
         key: 'mixdrop',
         label: 'MixDrop',
         matches: isMixdropUrl,
+        aliases: [
+            'mixdrop.co',
+            'mixdrop.bz',
+            'mixdrop.ag',
+            'mixdrop.ch',
+            'mixdrop.to',
+            'mixdrop.cv',
+            'mixdrop.club',
+            'mxdrop.to',
+            'm1xdrop.net',
+            'miiixdrop.net',
+            'mxcontent.net'
+        ],
+        rotatingDomains: [/^md[3bfyz][a-z0-9]*\.[a-z0-9.-]+$/i],
+        serverNames: ['mixdrop', 'mixdrp', 'm1xdrop', 'miiixdrop', 'mxdrop'],
         extract: extractMixdrop,
         priority: 3
     },
@@ -238,6 +272,54 @@ function buildUrlCandidates(url) {
     ]);
 }
 
+function getUrlHost(value) {
+    try {
+        return new URL(normalizeHosterUrl(value)).hostname.toLowerCase().replace(/^www\./i, '');
+    } catch (_) {
+        return '';
+    }
+}
+
+function normalizeAliasHost(value) {
+    const raw = String(value || '').trim().toLowerCase().replace(/^www\./i, '');
+    if (!raw) return '';
+    try {
+        return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.toLowerCase().replace(/^www\./i, '');
+    } catch (_) {
+        return raw.replace(/^https?:\/\//i, '').split('/')[0].replace(/^www\./i, '');
+    }
+}
+
+function hostMatchesAlias(host, alias) {
+    const candidate = String(host || '').toLowerCase().replace(/^www\./i, '');
+    const wanted = normalizeAliasHost(alias);
+    return Boolean(candidate && wanted && (candidate === wanted || candidate.endsWith(`.${wanted}`)));
+}
+
+function serverNameMatches(definition, candidate) {
+    const text = String(candidate || '').toLowerCase();
+    const host = getUrlHost(candidate);
+    return (definition.serverNames || []).some((name) => {
+        const needle = String(name || '').toLowerCase();
+        return needle && (host.includes(needle) || text.includes(needle));
+    });
+}
+
+function definitionMatchesCandidate(definition, candidate) {
+    try {
+        if (definition.matches(candidate)) return true;
+    } catch (_) {}
+
+    const host = getUrlHost(candidate);
+    if (host && (definition.aliases || []).some((alias) => hostMatchesAlias(host, alias))) return true;
+    if (host && (definition.rotatingDomains || []).some((pattern) => pattern.test(host))) return true;
+    return serverNameMatches(definition, candidate);
+}
+
+function isDirectMediaUrl(value) {
+    return /^https?:\/\//i.test(String(value || '')) && /(?:\.m3u8|\.mp4|\/hls\/|\/playlist\/|\/master\.m3u8)(?:$|[?#/])/i.test(String(value || ''));
+}
+
 function isValidExtractedUrl(value) {
     const url = normalizeHosterUrl(value);
     return /^https?:\/\//i.test(url);
@@ -277,15 +359,11 @@ function resolveExtractorEntry(url) {
 
     for (const candidate of candidates) {
         for (const definition of SORTED_HOSTER_DEFINITIONS) {
-            try {
-                if (definition.matches(candidate)) {
-                    return {
-                        definition,
-                        url: candidate
-                    };
-                }
-            } catch (_) {
-                continue;
+            if (definitionMatchesCandidate(definition, candidate)) {
+                return {
+                    definition,
+                    url: candidate
+                };
             }
         }
     }
@@ -313,7 +391,24 @@ function listSupportedHosters() {
 }
 
 async function extractFromUrl(url, options = {}) {
-    const entry = resolveExtractorEntry(url);
+    let entry = resolveExtractorEntry(url);
+    let bridgedUrl = null;
+
+    if (!entry && options.bridgeResolver !== false && isBridgeResolverCandidate(url)) {
+        bridgedUrl = await resolveBridgeUrl(url, options);
+        if (bridgedUrl) entry = resolveExtractorEntry(bridgedUrl);
+        if (!entry && isDirectMediaUrl(bridgedUrl)) {
+            return {
+                url: normalizeHosterUrl(bridgedUrl),
+                key: 'bridge',
+                extractor: 'Bridge',
+                name: 'Bridge',
+                priority: 9,
+                bridgeSourceUrl: normalizeHosterUrl(url)
+            };
+        }
+    }
+
     if (!entry) return null;
 
     const { definition, url: normalizedUrl } = entry;
@@ -328,7 +423,8 @@ async function extractFromUrl(url, options = {}) {
             key: definition.key,
             extractor: normalized.extractor || definition.label,
             name: normalized.name || definition.label,
-            priority: normalized.priority ?? definition.priority
+            priority: normalized.priority ?? definition.priority,
+            ...(bridgedUrl ? { bridgeSourceUrl: normalizeHosterUrl(url) } : {})
         };
     } catch (error) {
         if (options.throwOnExtractorError || options.throwOnError) {
@@ -351,5 +447,6 @@ module.exports = {
     resolveExtractorDefinition,
     getExtractorDefinitionByKey,
     listSupportedHosters,
+    isBridgeResolverCandidate,
     extractFromUrl
 };
