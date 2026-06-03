@@ -13,6 +13,8 @@ const { searchAnimeSaturn } = require('../animesaturn/as_handler');
 const { searchGuardaFlix } = require('../guardaflix/gf_handler');
 const { searchAltadefinizione } = require('../altadefinizione/ads_handler');
 const { searchCinemaCity } = require('../cinemacity/cc_handler');
+const { searchMoflix, isMoflixRuntimeEnabled } = require('../moflix/moflix_handler');
+const { searchToonItalia, isToonItaliaRuntimeEnabled } = require('../toonitalia/toonitalia_handler');
 const { getProviderRecipe } = require('../engine/provider_definition_engine');
 
 const STREAMING_COMMUNITY_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.SC_PROVIDER_TIMEOUT || '16000', 10) || 16000);
@@ -23,6 +25,12 @@ const ALTADEFINIZIONE_ERROR_TTL = Math.max(3, Math.min(ALTADEFINIZIONE_EMPTY_TTL
 const CINEMACITY_MIN_TIMEOUT = Math.max(30000, parseInt(process.env.CC_PROVIDER_TIMEOUT || process.env.CINEMACITY_PROVIDER_TIMEOUT || '42000', 10) || 42000);
 const CINEMACITY_EMPTY_TTL = Math.max(15, parseInt(process.env.CC_PROVIDER_EMPTY_TTL || process.env.CINEMACITY_PROVIDER_EMPTY_TTL || '60', 10) || 60);
 const CINEMACITY_ERROR_TTL = Math.max(3, Math.min(CINEMACITY_EMPTY_TTL, parseInt(process.env.CC_PROVIDER_ERROR_TTL || process.env.CINEMACITY_PROVIDER_ERROR_TTL || '10', 10) || 10));
+const MOFLIX_MIN_TIMEOUT = Math.max(8000, parseInt(process.env.MOFLIX_PROVIDER_TIMEOUT || '14000', 10) || 14000);
+const TOONITALIA_MIN_TIMEOUT = Math.max(10000, parseInt(process.env.TOONITALIA_PROVIDER_TIMEOUT || '18000', 10) || 18000);
+const MOFLIX_EMPTY_TTL = Math.max(15, parseInt(process.env.MOFLIX_PROVIDER_EMPTY_TTL || '45', 10) || 45);
+const TOONITALIA_EMPTY_TTL = Math.max(15, parseInt(process.env.TOONITALIA_PROVIDER_EMPTY_TTL || '45', 10) || 45);
+const MOFLIX_ERROR_TTL = Math.max(3, Math.min(MOFLIX_EMPTY_TTL, parseInt(process.env.MOFLIX_PROVIDER_ERROR_TTL || '10', 10) || 10));
+const TOONITALIA_ERROR_TTL = Math.max(3, Math.min(TOONITALIA_EMPTY_TTL, parseInt(process.env.TOONITALIA_PROVIDER_ERROR_TTL || '10', 10) || 10));
 const GUARDO_SERIE_MIN_TIMEOUT = Math.max(30000, parseInt(process.env.GS_PROVIDER_TIMEOUT || '45000', 10) || 45000);
 const GUARDASERIETV_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.GSTV_PROVIDER_TIMEOUT || '22000', 10) || 22000);
 const EUROSTREAMING_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.ES_PROVIDER_TIMEOUT || '22000', 10) || 22000);
@@ -247,6 +255,33 @@ const WEB_PROVIDER_DEFINITIONS = [
         minTimeout: 7000,
         isEnabled: ({ filters, meta }) => filters?.enableGf === true && !meta?.isSeries,
         run: ({ meta, config, reqHost }) => searchGuardaFlix(meta, config, reqHost)
+    },
+    {
+        key: 'toonItalia',
+        recipeId: null,
+        sourceName: 'ToonItalia',
+        cacheName: 'ToonItalia',
+        cacheKeyVersion: 'wp-voe-loadm-maxstream-v1',
+        icon: '🐙',
+        limiterKey: 'webToonItalia',
+        minTimeout: TOONITALIA_MIN_TIMEOUT,
+        emptyTtl: TOONITALIA_EMPTY_TTL,
+        errorTtl: TOONITALIA_ERROR_TTL,
+        isEnabled: ({ filters }) => isToonItaliaRuntimeEnabled({ filters }),
+        run: ({ meta, config, reqHost }) => searchToonItalia(meta, config, reqHost)
+    },
+    {
+        key: 'moflix',
+        recipeId: null,
+        sourceName: 'Moflix',
+        cacheName: 'MoflixPOC',
+        icon: '🧪',
+        limiterKey: 'webMoflix',
+        minTimeout: MOFLIX_MIN_TIMEOUT,
+        emptyTtl: MOFLIX_EMPTY_TTL,
+        errorTtl: MOFLIX_ERROR_TTL,
+        isEnabled: ({ filters }) => isMoflixRuntimeEnabled({ filters }),
+        run: ({ meta, config, reqHost }) => searchMoflix(meta, config, reqHost)
     }
 ];
 
