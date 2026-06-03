@@ -10,6 +10,8 @@ let Tesseract = null;
 try { Tesseract = require('tesseract.js'); } catch (_) { Tesseract = null; }
 let setCookieParser = null;
 try { setCookieParser = require('set-cookie-parser'); } catch (_) { setCookieParser = null; }
+let runCurlCffiBypass = null;
+try { ({ runCurlCffiBypass } = require('../../utils/cloudflare_bypass')); } catch (_) { runCurlCffiBypass = null; }
 const { getOrigin, normalizeRemoteUrl } = require('../common');
 const { captchaOrchestrator } = require('../../../core/security/captcha_orchestrator');
 const {
@@ -54,7 +56,7 @@ const UPROT_AUTO_STATE_DEFAULTS = Object.freeze({
     // 10 minutes keeps user-facing latency low; the cooldown is global per host.
     failureTtlMs: 10 * 60_000,
     // Single attempt per request: each attempt already iterates 5+ bootstrap
-    // candidates (uprot.net/.pro/uproat aliases × /e/, /msf/, /mse/ paths).
+    // candidates (uprot.net/.pro/uproat aliases Ã— /e/, /msf/, /mse/ paths).
     // A second pass within the same request just doubles the wasted time.
     retryBudget: 1,
     captchaMinDigits: 3,
@@ -968,6 +970,99 @@ function uprotFailureTtlMs(options = {}) {
     return envNumber('UPROT_FAILURE_TTL_MS', Number(options.uprotFailureTtlMs || UPROT_AUTO_STATE_DEFAULTS.failureTtlMs), 10_000, 30 * 60_000);
 }
 
+function uprotCurlCffiBootstrapEnabled(options = {}) {
+    if (options.uprotCurlCffiBootstrap !== undefined) return Boolean(options.uprotCurlCffiBootstrap);
+    if (options.uprotCurlCffiBootstrapEnabled !== undefined) return Boolean(options.uprotCurlCffiBootstrapEnabled);
+    return envFlag('UPROT_CURL_CFFI_BOOTSTRAP', false);
+}
+
+function curlCffiSetCookieHeaders(result = {}) {
+    const out = [];
+    const pushPair = (name, value, cookie = {}) => {
+        const cleanName = String(name || '').trim();
+        if (!cleanName || value === undefined || value === null) return;
+        let header = `${cleanName}=${String(value)}`;
+        if (cookie.path) header += `; Path=${cookie.path}`;
+        if (cookie.domain) header += `; Domain=${cookie.domain}`;
+        out.push(header);
+    };
+
+    if (Array.isArray(result.cookies)) {
+        for (const cookie of result.cookies) {
+            if (!cookie || typeof cookie !== 'object') continue;
+            pushPair(cookie.name || cookie.key, cookie.value ?? cookie.val, cookie);
+        }
+    }
+
+    if (!out.length && result.cookieHeader) {
+        for (const pair of String(result.cookieHeader || '').split(/;\s*/)) {
+            const eq = pair.indexOf('=');
+            if (eq > 0) pushPair(pair.slice(0, eq), pair.slice(eq + 1));
+        }
+    }
+    return out;
+}
+
+function curlCffiBootstrapPageFromResult(result, bootstrapUrl) {
+    const text = typeof result?.html === 'string' ? result.html : (typeof result?.response === 'string' ? result.response : '');
+    if (!text) return null;
+    const finalUrl = normalizeRemoteUrl(result?.url || result?.finalUrl || bootstrapUrl, bootstrapUrl) || bootstrapUrl;
+    const headers = result?.headers && typeof result.headers === 'object' ? { ...result.headers } : {};
+    const setCookie = curlCffiSetCookieHeaders(result || {});
+    if (setCookie.length) headers['set-cookie'] = setCookie;
+
+    return {
+        status: Number(result?.code || result?.statusCode || 0) || 200,
+        text,
+        response: { headers },
+        finalUrl: isUprotUrl(finalUrl) ? finalUrl : bootstrapUrl,
+        method: 'CURL_CFFI'
+    };
+}
+
+async function requestUprotBootstrapPageViaCurlCffi(bootstrapUrl, headers, options = {}) {
+    if (!uprotCurlCffiBootstrapEnabled(options)) return null;
+    const customRunner = options.uprotCurlCffiRunner || options.curlCffiRunner;
+    if (!runCurlCffiBypass && typeof customRunner !== 'function') {
+        uprotDebug('warn', 'curl_cffi bootstrap requested but runner is unavailable', { bootstrapHost: safeHost(bootstrapUrl) });
+        return null;
+    }
+
+    try {
+        const timeout = Number(options.bootstrapTimeout || UPROT_AUTO_STATE_DEFAULTS.bootstrapTimeoutMs);
+        const curlOptions = {
+            method: 'GET',
+            timeout,
+            headers,
+            referer: headers?.Referer || headers?.referer || bootstrapUrl,
+            coalesceKey: `uprot:bootstrap:${bootstrapUrl}`,
+            impersonate: options.uprotCurlCffiImpersonate || options.curlCffiImpersonate,
+            retries: options.uprotCurlCffiRetries ?? options.curlCffiRetries,
+            retryBackoffMs: options.uprotCurlCffiRetryBackoffMs ?? options.curlCffiRetryBackoffMs,
+            warmupOrigin: options.uprotCurlCffiWarmupOrigin ?? options.curlCffiWarmupOrigin,
+            browserHeaders: options.uprotCurlCffiBrowserHeaders ?? options.curlCffiBrowserHeaders,
+            acceptLanguage: headers?.['Accept-Language'],
+            envPrefix: 'UPROT'
+        };
+        const result = typeof customRunner === 'function'
+            ? await customRunner(bootstrapUrl, 'uprot', curlOptions)
+            : await runCurlCffiBypass(bootstrapUrl, 'uprot', curlOptions);
+        const page = curlCffiBootstrapPageFromResult(result, bootstrapUrl);
+        if (page?.text) {
+            uprotDebug('info', 'auto-state bootstrap fetched via curl_cffi', {
+                bootstrapHost: safeHost(bootstrapUrl),
+                bootstrapPath: safePathForUprot(bootstrapUrl),
+                status: page.status,
+                bytes: page.text.length
+            });
+        }
+        return page;
+    } catch (error) {
+        uprotDebug('warn', 'curl_cffi bootstrap failed', { bootstrapHost: safeHost(bootstrapUrl), error: error?.message || String(error) });
+        return null;
+    }
+}
+
 function mergeSetCookieHeaders(existingCookies, response) {
     const merged = { ...(typeof existingCookies === 'object' && !Array.isArray(existingCookies) ? existingCookies : {}) };
     const rawHeaders = response?.headers?.['set-cookie'] || response?.headers?.['Set-Cookie'];
@@ -1258,6 +1353,12 @@ async function requestUprotBootstrapPage(client, bootstrapUrl, headers, options 
     const timeout = Number(options.bootstrapTimeout || UPROT_AUTO_STATE_DEFAULTS.bootstrapTimeoutMs);
     const pages = [];
 
+    const curlCffiPage = await requestUprotBootstrapPageViaCurlCffi(bootstrapUrl, headers, options);
+    if (curlCffiPage?.text) {
+        if (hasCaptchaCandidate(curlCffiPage.text, curlCffiPage.finalUrl || bootstrapUrl)) return curlCffiPage;
+        pages.push(curlCffiPage);
+    }
+
     if (client && typeof client.get === 'function') {
         const requestUrl = buildUprotForwardRequestUrl(bootstrapUrl, options);
         const fetched = await fetchText(client, requestUrl, { headers, timeout });
@@ -1435,7 +1536,7 @@ function renderUprotSetupHtml(payload = {}) {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Leviathan · Uprot setup</title>
+<title>Leviathan Â· Uprot setup</title>
 <style>
 :root{color-scheme:dark;--bg:#07111f;--panel:rgba(255,255,255,.09);--line:rgba(255,255,255,.16);--text:#eef6ff;--muted:#9db2c8;--accent:#37d7ff;--ok:#63e6be;--err:#ff8a8a}
 *{box-sizing:border-box} body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 15% 10%,rgba(55,215,255,.24),transparent 36%),radial-gradient(circle at 90% 80%,rgba(124,92,255,.22),transparent 34%),var(--bg);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--text);padding:22px}
@@ -1558,8 +1659,8 @@ async function submitUprotManualChallenge({ token, captcha }, options = {}) {
     return {
         ok: true,
         html: renderUprotSetupHtml({
-            success: 'State Uprot salvato. Ora CB01 | MaxStream può riusarlo come MammaMia.',
-            detail: 'Riavvia lo stream o svuota la cache del titolo se avevi già aperto la scheda.'
+            success: 'State Uprot salvato. Ora CB01 | MaxStream puÃ² riusarlo come MammaMia.',
+            detail: 'Riavvia lo stream o svuota la cache del titolo se avevi giÃ  aperto la scheda.'
         })
     };
 }
