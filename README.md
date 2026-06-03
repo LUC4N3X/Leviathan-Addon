@@ -106,7 +106,7 @@ La logica cloud non sostituisce la pipeline principale: la potenzia. Se l'utente
 <tr>
 <td align="center" width="33%"><b>☁️ RD/TorBox Saved Cloud</b><br><sub>Layer opzionale che riconosce i file già salvati, marca i duplicati e usa <code>☁️ RD</code> / <code>☁️ TB</code>.</sub></td>
 <td align="center" width="33%"><b>🚀 Core Refactoring</b><br><sub>Motore riorganizzato per maggiore stabilità, leggibilità e tenuta sotto carico.</sub></td>
-<td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, Altadefinizione, GuardaHD, GuardoSerie, Eurostreaming, AnimeWorld, AnimeUnity, AnimeSaturn e GuardaFlix.</sub></td>
+<td align="center" width="33%"><b>🌐 Web Provider Routing</b><br><sub>Gestione coordinata di StreamingCommunity, Altadefinizione, GuardaHD, GuardoSerie, Eurostreaming, ToonItalia, OnlineSerieTV, AnimeWorld, AnimeUnity, AnimeSaturn e GuardaFlix.</sub></td>
 </tr>
 <tr>
 <td align="center" width="33%"><b>🎨 Polymorphic Formatter</b><br><sub>Rendering più pulito, gerarchico e leggibile dentro Stremio.</sub></td>
@@ -294,7 +294,36 @@ Leviathan usa più layer sincronizzati, ma la logica è semplice:
 <img src="https://img.shields.io/badge/TORRENT-ITA_+_GLOBAL-7C3AED?style=for-the-badge&labelColor=07111F" />
 <img src="https://img.shields.io/badge/RUNTIME-KRAKEN_READY-FF5A7A?style=for-the-badge&labelColor=07111F" />
 
+
 </div>
+
+---
+
+### 🧭 Web Provider Expansion
+
+<div align="center">
+
+`ToonItalia · OnlineSerieTV · Moflix POC · bridge-first resolving`
+
+</div>
+
+Leviathan integra un layer provider modulare pensato per separare in modo chiaro **discovery**, **mirror extraction**, **hoster resolution** e **playback delivery**. I provider web non vengono trattati come semplici scraper: ogni modulo può avere policy, timeout, fallback, runtime e parser dedicati.
+
+Oltre ai provider principali, il protocollo include moduli specializzati per sorgenti come **ToonItalia** e **OnlineSerieTV**, con flussi orientati a link hoster, episodi serie, server multipli, SearchWP, pagine ponte e resolver esterni. I provider sperimentali restano isolati e controllabili da configurazione, così possono essere testati senza compromettere la stabilità della pipeline principale.
+
+<div align="center">
+
+| Provider | Scope | Routing | Stato |
+|:---:|:---|:---|:---:|
+| **ToonItalia** | Anime, cartoon, pagine web | VOE · MaxStream · LoadM/RPM | 🟢 Optional |
+| **OnlineSerieTV** | Serie TV ITA | SearchWP · Kraken Forward · UPROT/MaxStream | 🧪 Experimental |
+| **Moflix POC** | TMDB-based fallback | Server discovery · extractor registry | 🧪 Disabled by default |
+| **Bridge Resolver** | Pagine ponte / embed intermedi | URL normalization · hoster handoff | 🟢 Optional |
+
+</div>
+
+> [!NOTE]
+> I provider sperimentali sono pensati come fallback controllati. Leviathan non li usa per sostituire la pipeline principale, ma per aumentare copertura quando torrent, cloud o provider stabili non sono sufficienti.
 
 ---
 
@@ -302,23 +331,26 @@ Leviathan usa più layer sincronizzati, ma la logica è semplice:
 
 <div align="center">
 
-`Leviathan-native companion · provider hardening · hoster/challenge orchestration`
+`Leviathan-native companion · provider hardening · forward transport · hoster orchestration`
 
 </div>
 
-**Kraken** è il runtime companion consigliato per Leviathan. Non è un proxy generico: centralizza i percorsi più delicati dei provider web e degli hoster quando entrano in gioco redirect, embed intermedi, sessioni, challenge, captcha o compatibilità MediaFlow.
+**Kraken** è il runtime companion consigliato per Leviathan. Non è un proxy generico: centralizza i percorsi più delicati dei provider web e degli hoster quando entrano in gioco redirect, embed intermedi, sessioni, challenge, captcha, header richiesti o compatibilità MediaFlow.
 
-È particolarmente utile per i flussi **MaxStream / UPROT**, dove la risoluzione può essere delegata a un runtime dedicato invece di appesantire il core dell'addon. In questo modo Leviathan resta concentrato su ricerca, ranking, dedupe, formatter e configurazione, mentre Kraken gestisce la parte operativa più fragile.
+È particolarmente utile per i flussi **MaxStream / UPROT**, **VOE**, **VidGuard/listeamed** e per provider che richiedono un trasporto più vicino a un browser reale. In questo modo Leviathan resta concentrato su ricerca, ranking, dedupe, formatter e configurazione, mentre Kraken gestisce la parte operativa più fragile.
 
 <div align="center">
 
 | Runtime | Scope | Configurazione | Stato |
 |:---:|:---:|:---:|:---:|
 | **Kraken Companion Runtime** | 🔱 Leviathan-native | `KRAKEN_URL` + `KRAKEN_API_PASSWORD` | 🟢 Recommended |
+| **Kraken Forward** | Provider origin fetch | `FORWARD_PROXY` / forward endpoint | 🟢 Recommended |
+| **MediaFlow-compatible Bridge** | Playback/runtime handoff | Proxy HLS/stream compatible | 🟢 Optional |
 
 <br>
 
 <img src="https://img.shields.io/badge/MAXSTREAM_/_UPROT-CHALLENGE_SOLVE-7C3AED?style=for-the-badge&labelColor=07111F" />
+<img src="https://img.shields.io/badge/VOE_/_VIDGUARD-RUNTIME_READY-00E7FF?style=for-the-badge&labelColor=07111F" />
 <img src="https://img.shields.io/badge/MEDIAFLOW-COMPATIBLE_BRIDGE-2EE6A6?style=for-the-badge&labelColor=07111F" />
 <img src="https://img.shields.io/badge/CORE-ISOLATION-00E7FF?style=for-the-badge&labelColor=07111F" />
 
@@ -326,6 +358,34 @@ Leviathan usa più layer sincronizzati, ma la logica è semplice:
 
 > [!NOTE]
 > In self-hosting Kraken è fortemente raccomandato per replicare il comportamento più completo dell'ecosistema Leviathan. Senza Kraken alcuni provider possono continuare a funzionare, ma gli hoster più complessi possono risultare meno affidabili.
+
+---
+
+### 🧬 Kraken Forward Strategy
+
+<div align="center">
+
+`Chrome-like fetching · forward proxy · safer provider transport`
+
+</div>
+
+Per alcuni provider non è sufficiente usare una richiesta HTTP tradizionale o forzare FlareSolverr. Leviathan può delegare il fetch delle pagine più delicate a **Kraken Forward**, ottenendo un comportamento più adatto ai provider che richiedono fingerprint, cookie, redirect, header coerenti o sessioni riutilizzabili.
+
+Questa strategia è particolarmente utile per flussi come **OnlineSerieTV**, dove il percorso più corretto non è sempre browser automation, ma una richiesta forward con comportamento più vicino a `curl_cffi` / Chrome impersonation, lasciando FlareSolverr come fallback mirato e non come soluzione forzata.
+
+<div align="center">
+
+| Strategia | Uso consigliato |
+|:---|:---|
+| **Direct fetch** | Provider semplici o pagine statiche |
+| **Kraken Forward** | Provider con blocchi, fingerprint o SearchWP fragile |
+| **FlareSolverr** | Challenge Cloudflare reali dove Chromium è utile |
+| **Extractor Runtime** | Hoster finali con embed, token, captcha o HLS fragile |
+
+</div>
+
+> [!IMPORTANT]
+> FlareSolverr non è sempre la risposta migliore. Quando un provider blocca Chromium o ignora header custom, il percorso più affidabile può essere Kraken Forward / curl_cffi-like transport.
 
 ---
 
@@ -348,13 +408,14 @@ Leviathan usa più layer sincronizzati, ma la logica è semplice:
 
 | Categoria | Provider | Attivazione |
 |:---:|:---|:---|
-| **Web ITA** | StreamingCommunity · Altadefinizione · GuardaHD · GuardoSerie · Eurostreaming | `enableStreamingCommunity` · `enableAltadefinizione` · `enableGhd` · `enableGs` · `enableEurostreaming` |
+| **Web ITA** | StreamingCommunity · Altadefinizione · GuardaHD · GuardoSerie · Eurostreaming · ToonItalia · OnlineSerieTV | `enableStreamingCommunity` · `enableAltadefinizione` · `enableGhd` · `enableGs` · `enableEurostreaming` · `enableToonItalia` · `enableOnlineserietv` |
 | **Movie ITA** | GuardaFlix | `enableGf` |
 | **Anime ITA** | AnimeWorld · AnimeUnity · AnimeSaturn | `enableAnimeWorld` · `enableAnimeUnity` · `enableAnimeSaturn` |
+| **Experimental / Fallback** | Moflix POC · Bridge Resolver | `enableMoflix` · provider-controlled fallback |
 
 </div>
 
-> **Policy veloce:** gli anime provider partono solo su richieste anime/Kitsu compatibili; GuardaFlix resta su film; Eurostreaming lavora come provider ITA per serie con routing hoster dedicato.
+> **Policy veloce:** gli anime provider partono solo su richieste anime/Kitsu compatibili; GuardaFlix resta su film; Eurostreaming, ToonItalia e OnlineSerieTV lavorano come provider web ITA con routing hoster dedicato; i moduli sperimentali restano opt-in o fallback controllati.
 
 ---
 
@@ -378,10 +439,25 @@ Leviathan usa più layer sincronizzati, ma la logica è semplice:
 
 | Gruppo | Extractor | Ruolo |
 |:---:|:---|:---|
-| **Player Web** | VixCloud | Risoluzione StreamingCommunity / player compatibili |
-| **Hoster Standard** | Mixdrop · SuperVideo · Streamtape · UpStream · Uqload · Vidoza · Dropload · LoadM | Resolver hoster usati dai provider web |
-| **Eurostreaming** | DeltaBit · MixDrop · MaxStream / UPROT | Routing dedicato da Safego/Clicka verso hoster finali |
-| **Kraken Assisted** | MaxStream / UPROT | Delega captcha/challenge e bridge MediaFlow-compatible |
+| **Player Web** | VixCloud · VixSrc/Vix aliases | Risoluzione StreamingCommunity / player compatibili |
+| **VOE Family** | VOE · voe.sx · alias compatibili | Estrazione HLS/MP4 da embed VOE e provider compatibili |
+| **VidGuard Family** | VidGuard · listeamed · vembed · bembed · vgfplay | Resolver usato da AnimeWorld e provider con embed listeamed |
+| **Hoster Standard** | MixDrop · MixDrop aliases · SuperVideo · StreamTape · UpStream · Uqload · Vidoza · Dropload · LoadM | Resolver hoster usati dai provider web |
+| **Eurostreaming / Web ITA** | DeltaBit · MixDrop · MaxStream / UPROT | Routing dedicato da Safego/Clicka e pagine ponte verso hoster finali |
+| **Bridge Resolver** | Pagine ponte · iframe · data-link · data-url | Normalizza URL intermedi prima dell'extractor finale |
+| **Kraken Assisted** | MaxStream / UPROT · VOE · VidGuard | Delega captcha/challenge, headers, proxy HLS e bridge MediaFlow-compatible |
+
+</div>
+
+<div align="center">
+
+```text
+Provider web
+→ bridge resolver
+→ hoster detection
+→ extractor locale o Kraken
+→ stream Stremio pulito
+```
 
 </div>
 
@@ -399,7 +475,11 @@ Leviathan usa più layer sincronizzati, ma la logica è semplice:
 | **MediaFusion RD check** | Il check cache Real-Debrid viene applicato a MediaFusion; Torrentio può restare più diretto |
 | **GuardaFlix scope** | GuardaFlix viene usato per i film e non forza percorsi serie |
 | **Eurostreaming scope** | Eurostreaming viene usato come provider web ITA per serie, con routing hoster dedicato |
-| **Kraken recommended** | Kraken è raccomandato per provider/hoster avanzati, soprattutto MaxStream / UPROT e percorsi con challenge |
+| **ToonItalia scope** | ToonItalia è opzionale e lavora su pagine anime/cartoon con handoff verso VOE, MaxStream e LoadM/RPM |
+| **OnlineSerieTV scope** | OnlineSerieTV è sperimentale, serie-oriented e preferisce SearchWP + Kraken Forward per il fetch origin |
+| **Moflix POC** | Moflix resta disattivato di default e può essere usato come fallback TMDB-based controllato |
+| **Bridge resolver** | Le pagine ponte vengono risolte prima del registry hoster per ridurre link non supportati |
+| **Kraken recommended** | Kraken è raccomandato per provider/hoster avanzati, soprattutto MaxStream / UPROT, VOE, VidGuard e percorsi con challenge |
 
 </div>
 
@@ -561,6 +641,15 @@ Una vista più leggibile dei file chiave del progetto:
 - `providers/eurostreaming/es_handler.js`  
   Provider **Eurostreaming** con routing **Safego/Clicka** e hoster **DeltaBit / MixDrop / MaxStream**.
 
+- `providers/toonitalia/toonitalia_handler.js`  
+  Provider **ToonItalia** con handoff verso **VOE / MaxStream / LoadM-RPM**.
+
+- `providers/onlineserietv/onlineserietv_handler.js`  
+  Provider **OnlineSerieTV** con SearchWP, Kraken Forward e routing **UPROT / MaxStream**.
+
+- `providers/moflix/moflix_handler.js`  
+  POC **Moflix** disattivata di default, utile come fallback sperimentale TMDB-based.
+
 </td>
 </tr>
 <tr>
@@ -569,7 +658,7 @@ Una vista più leggibile dei file chiave del progetto:
 ### 🈶 Anime & Specialized Sources
 
 - `providers/animeworld/aw_handler.js`  
-  Provider **AnimeWorld** con supporto **Kitsu/anime**.
+  Provider **AnimeWorld** con supporto **Kitsu/anime**, API episode info e handoff verso **VidGuard/listeamed** quando disponibile.
 
 - `providers/animeunity/au_handler.js`  
   Provider **AnimeUnity**.
@@ -583,7 +672,10 @@ Una vista più leggibile dei file chiave del progetto:
 ### 🔌 Hoster Resolution Runtime
 
 - `providers/extractors/hosters/`  
-  Resolver hoster: **VixCloud, Mixdrop, SuperVideo, Streamtape, UpStream, Uqload, Vidoza, Dropload, LoadM, DeltaBit, MaxStream/UPROT**.
+  Resolver hoster: **VixCloud, VOE, VidGuard/listeamed, MixDrop + aliases, SuperVideo, StreamTape, UpStream, Uqload, Vidoza, Dropload, LoadM, DeltaBit, MaxStream/UPROT**.
+
+- `providers/extractors/bridge_resolver.js`  
+  Resolver intermedio per pagine ponte, iframe, redirect e URL hoster non esposti direttamente.
 
 </td>
 </tr>
