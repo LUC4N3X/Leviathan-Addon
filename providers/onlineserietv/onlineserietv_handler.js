@@ -1,19 +1,5 @@
 'use strict';
 
-// OnlineSerieTV provider — ported from MammaMia (UrloMythus) Src/API/onlineserietv.py
-// and adapted to the Leviathan provider architecture.
-//
-// Flow (same as MammaMia):
-//   1. SearchWP live-search AJAX on the OST WordPress site to find the film/serietv page.
-//   2. Open the detail page, verify the release year (Anno: <i>YYYY</i>).
-//   3. Extract the uprot.net/msf link (for movies the first one, for series the one
-//      that follows the SSxEE marker).
-//   4. Resolve uprot -> maxstream and build a playable stream.
-//
-// HTTP fetches go through the shared forward proxy + impit Chrome impersonation,
-// exactly like the CB01 provider (FORWARD_PROXY env). uprot/maxstream resolution
-// reuses the shared MediaFlow/Kraken gateway, with a local extractor fallback.
-
 const { buildWebStream, normalizeRemoteUrl } = require('../extractors/common');
 const { createMediaflowGateway, getMediaflowBase, buildMediaflowUrl } = require('../../core/proxy/mediaflow_gateway');
 const {
@@ -76,10 +62,6 @@ const OST_BROWSER_FALLBACKS = Object.freeze(['chrome142', 'chrome136', 'chrome13
 
 const ostEnv = createProviderEnv(OST_CODE_DEFAULTS);
 
-// ---------------------------------------------------------------------------
-// env helpers + logging
-// ---------------------------------------------------------------------------
-
 function envString(name, fallback = '') {
     return ostEnv.string(name, fallback);
 }
@@ -131,10 +113,6 @@ function safeUrlForLog(value) {
     const path = safePath(value);
     return host ? `${host}${path}` : String(value || '').slice(0, 80);
 }
-
-// ---------------------------------------------------------------------------
-// base urls + http client + forward proxy
-// ---------------------------------------------------------------------------
 
 function getBaseUrls() {
     const raw = [
@@ -342,10 +320,6 @@ async function fetchOstHtml(url, baseUrl, { label = 'page', headers = null, time
     return { text: '', status: lastStatus, via: lastVia || 'error' };
 }
 
-// ---------------------------------------------------------------------------
-// meta helpers (same semantics as CB01)
-// ---------------------------------------------------------------------------
-
 function decodeHtml(value) {
     return String(value || '')
         .replace(/&#(\d+);/g, (_, code) => { try { return String.fromCodePoint(Number(code)); } catch (_) { return ''; } })
@@ -402,15 +376,10 @@ function isSeriesMeta(meta = {}) {
     return Boolean(season && episode);
 }
 
-// ---------------------------------------------------------------------------
-// search + detail parsing (mirrors MammaMia onlineserietv.py)
-// ---------------------------------------------------------------------------
-
 const UPROT_MSF_RE = /https?:\/\/(?:www\.)?uprot\.(?:net|pro)\/msf\/[^\s"'<>\\]+/i;
 const UPROT_ANY_RE = /https?:\/\/(?:www\.)?uprot\.(?:net|pro)\/[^\s"'<>\\]+/i;
 
 function cleanShowName(title) {
-    // MammaMia replaces apostrophes with spaces before searching.
     return decodeHtml(title).replace(/['’]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -445,7 +414,7 @@ function extractPageYear(html) {
 }
 
 function yearAccepted(pageYear, metaYear) {
-    if (!metaYear || !pageYear) return true; // lenient when one side is missing
+    if (!metaYear || !pageYear) return true; 
     const tolerance = envInt('OST_YEAR_TOLERANCE', 1, 0, 5);
     return Math.abs(pageYear - metaYear) <= tolerance;
 }
@@ -457,8 +426,6 @@ function extractMovieUprot(html) {
     return any ? any[0] : null;
 }
 
-// For series, find the uprot link that follows the SSxEE marker (MammaMia behaviour),
-// with a fallback to the bare "0EE" marker.
 function extractSeriesUprot(html, season, episode) {
     const text = String(html || '');
     const ss = String(season).padStart(2, '0');
@@ -481,7 +448,6 @@ function extractSeriesUprot(html, season, episode) {
         if (any) return any[0];
     }
 
-    // MammaMia fallback: "0{episode}" preceding a uprot link.
     const fallbackIdx = text.indexOf(`0${ee}`);
     if (fallbackIdx !== -1) {
         const window = text.slice(fallbackIdx, fallbackIdx + 4000);
@@ -525,7 +491,6 @@ async function findUprotLink({ client, baseUrl, showName, metaYear, isSeries, se
     const maxPages = envInt('OST_MAX_DETAIL_PAGES', 6, 1, 12);
     const pageHeaders = buildOstHeaders(baseUrl, { referer: `${baseUrl}/`, cookie: 'player_opt=fx' });
 
-    // Pass 1: respect the release year (faithful to MammaMia). Pass 2: ignore it.
     for (const enforceYear of [true, false]) {
         let probed = 0;
         for (const candidate of candidates) {
@@ -560,10 +525,6 @@ async function findUprotLink({ client, baseUrl, showName, metaYear, isSeries, se
     ostDebug('warn', 'no uprot link found', { baseUrl, showName, isSeries, season, episode });
     return null;
 }
-
-// ---------------------------------------------------------------------------
-// stream building (MFP/Kraken first like CB01, local maxstream fallback)
-// ---------------------------------------------------------------------------
 
 function uprotPlaybackHeaders() {
     return { 'User-Agent': FIREFOX_UA, Referer: 'https://uprot.net/', Origin: 'https://uprot.net' };
@@ -655,12 +616,8 @@ async function buildStreamsFromUprot(uprotUrl, context) {
         }
     };
 
-    // Primary: hand the uprot link to MediaFlow/Kraken, which resolves uprot -> maxstream
-    // server-side (same approach CB01 uses for uprot links).
     push(buildKrakenUprotStream(config, normalized, title));
 
-    // Fallback: resolve uprot -> maxstream locally and proxy the resulting CDN stream
-    // (mirrors MammaMia's bypass_uprot + maxstream extractor path).
     if (!streams.length) {
         push(await buildLocalMaxstreamStream(config, client, normalized, title));
     }
@@ -674,10 +631,6 @@ async function buildStreamsFromUprot(uprotUrl, context) {
     }
     return streams.sort((a, b) => (a?.extra?._priority ?? 9) - (b?.extra?._priority ?? 9));
 }
-
-// ---------------------------------------------------------------------------
-// main entry
-// ---------------------------------------------------------------------------
 
 async function searchOnlineserietv(meta = {}, config = {}, reqHost = null, options = {}) {
     if (config?.filters?.enableOnlineserietv !== true) {
