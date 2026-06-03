@@ -199,6 +199,13 @@ function cacheSet(cache, key, value, ttlMs) {
     return value;
 }
 
+function cacheDelete(cache, key) {
+    if (!cache || !key) return false;
+    if (typeof cache.delete === 'function') return cache.delete(key);
+    if (cache.store && typeof cache.store.delete === 'function') return cache.store.delete(key);
+    return false;
+}
+
 async function singleFlight(key, worker) {
     return inflight.do(key, worker);
 }
@@ -483,7 +490,19 @@ function appendOrReplaceQuery(url, params) {
     }
 }
 
-function buildMasterUrl(base, token, expires, h = false, b = false, asn = null) {
+function preferredVixLanguage() {
+    const lang = String(process.env.VIXSRC_LANGUAGE || process.env.SC_LANGUAGE || PREFERRED_LANG || 'it').trim().toLowerCase();
+    return lang || 'it';
+}
+
+function isExpiredVixPayload(payload, skewMs = 60_000) {
+    const expires = Number(payload?.expires || 0);
+    if (!Number.isFinite(expires) || expires <= 0) return false;
+    const expiresMs = expires > 10_000_000_000 ? expires : expires * 1000;
+    return expiresMs <= Date.now() + Math.max(0, Number(skewMs) || 0);
+}
+
+function buildMasterUrl(base, token, expires, h = false, b = false, asn = null, lang = preferredVixLanguage()) {
     const cleanBase = normalizeMediaBaseUrl(base);
     if (!cleanBase) return '';
     const parsed = new URL(cleanBase);
@@ -493,6 +512,7 @@ function buildMasterUrl(base, token, expires, h = false, b = false, asn = null) 
     parsed.searchParams.set('expires', String(expires));
     if (asn) parsed.searchParams.set('asn', String(asn));
     if (h) parsed.searchParams.set('h', '1');
+    if (lang) parsed.searchParams.set('lang', String(lang).toLowerCase());
     return parsed.toString();
 }
 
@@ -639,14 +659,18 @@ function inferQualityFromStream(stream) {
 
 async function fetchPlaylistSnapshot(url, referer) {
     const cached = cacheGet(playlistCache, url);
-    if (cached) return cached;
+    if (cached && cached.status !== 410 && cached.text) return cached;
 
     return singleFlight(`playlist:${url}`, async () => {
         const secondCached = cacheGet(playlistCache, url);
-        if (secondCached) return secondCached;
-        const { text } = await fetchText(url, referer, 'playlist');
-        const snapshot = { text: text || '', quality: extractQualityFromPlaylist(text || '') };
-        cacheSet(playlistCache, url, snapshot, PLAYLIST_CACHE_TTL_MS);
+        if (secondCached && secondCached.status !== 410 && secondCached.text) return secondCached;
+        const { text, status } = await fetchText(url, referer, 'playlist');
+        const snapshot = { text: text || '', quality: extractQualityFromPlaylist(text || ''), status };
+        if (status === 410) {
+            cacheDelete(playlistCache, url);
+            return { ...snapshot, gone: true };
+        }
+        if (text) cacheSet(playlistCache, url, snapshot, PLAYLIST_CACHE_TTL_MS);
         return snapshot;
     });
 }
@@ -788,18 +812,20 @@ async function parseVixPayload(html, referer) {
 
 async function resolveCachedPayload(url) {
     const cached = cacheGet(payloadCache, url);
-    if (cached) return { payload: cached, referer: url };
+    if (cached && !isExpiredVixPayload(cached)) return { payload: cached, referer: url };
+    if (cached) cacheDelete(payloadCache, url);
 
     return singleFlight(`payload:${url}`, async () => {
         const secondCached = cacheGet(payloadCache, url);
-        if (secondCached) return { payload: secondCached, referer: url };
+        if (secondCached && !isExpiredVixPayload(secondCached)) return { payload: secondCached, referer: url };
+        if (secondCached) cacheDelete(payloadCache, url);
 
         const page = await getRealVixPage(url);
         if (!page?.html) return { payload: null, referer: page?.finalReferer || url, status: page?.status || 0 };
 
         const referer = page.finalReferer || page.finalUrl || url;
         const payload = await parseVixPayload(page.html, referer);
-        if (!payload) return { payload: null, referer, status: 200 };
+        if (!payload || isExpiredVixPayload(payload, 0)) return { payload: null, referer, status: 200 };
 
         cacheSet(payloadCache, url, payload, PAYLOAD_CACHE_TTL_MS);
         cacheSet(payloadCache, referer, payload, PAYLOAD_CACHE_TTL_MS);
@@ -1146,7 +1172,7 @@ async function tryDirectVixsrcStream(pageUrl, cleanTitle, season, episode, quali
     }
     if (!streamUrl) return [];
 
-    streamUrl = appendOrReplaceQuery(streamUrl, { lang: PREFERRED_LANG });
+    streamUrl = appendOrReplaceQuery(streamUrl, { lang: preferredVixLanguage() });
     const { quality, headers, languageIntel, allowed } = await fetchPlaylistQualityAndHeaders(streamUrl, pageUrl, qualityFilter);
     if (!allowed) return [];
 
