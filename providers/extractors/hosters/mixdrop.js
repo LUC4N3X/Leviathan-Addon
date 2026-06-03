@@ -13,10 +13,11 @@ const {
     probeStreamQuality,
     unpackDeanEdwards
 } = require('./shared');
-const MIXDROP_REGEX = /mixdrop|m1xdrop|mxcontent|mixdrp/i;
+const MIXDROP_REGEX = /mixdrop|mixdrp|m1xdrop|miiixdrop|mxdrop|mxcontent|(?:^|[/.])md[3bfyz][a-z0-9]*\.[a-z0-9]+/i;
 const NOT_FOUND_REGEX = /can't find the (?:file|video)|deleted|expired/i;
 const DIRECT_URL_REGEX = /(?:MDCore|Core|wurl)\s*(?:\.wurl)?\s*=\s*["']([^"']+)["']/i;
 const M3U8_REGEX = /file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i;
+const MIXDROP_CANONICAL_HOST = 'mixdrop.ag';
 
 function isMixdropUrl(url) {
     return MIXDROP_REGEX.test(String(url || ''));
@@ -35,16 +36,18 @@ function normalizeMixdropUrl(url) {
             parsed.pathname = `/e/${fileId}`;
             parsed.search = '';
             parsed.hash = '';
+            if (/mixdrop\.club$/i.test(parsed.hostname)) parsed.hostname = MIXDROP_CANONICAL_HOST;
             return parsed.toString();
         }
     } catch (_) {}
-    return absolute
+    const normalized = absolute
         .replace('/emb/', '/e/')
         .replace('/embed/', '/e/')
         .replace('/f/', '/e/')
         .replace('/file/', '/e/')
         .replace('/watch/', '/e/')
         .replace('/video/', '/e/');
+    return normalized.replace(/https?:\/\/mixdrop\.club\//i, `https://${MIXDROP_CANONICAL_HOST}/`);
 }
 
 function buildMixdropHeaders(embedUrl, userAgent) {
