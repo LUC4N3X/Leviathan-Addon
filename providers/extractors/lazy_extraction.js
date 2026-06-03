@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 const axios = require('axios');
 const { buildWebStream, normalizeQuality } = require('./common');
-const { extractFromUrl, resolveExtractorDefinition } = require('./registry');
+const { extractFromUrl, resolveExtractorDefinition, isBridgeResolverCandidate } = require('./registry');
 const { classifyProviderError, formatProviderError } = require('../utils/provider_errors');
 const { probePlaylistIntelligence } = require('../utils/playlist_intelligence');
 
@@ -142,8 +142,9 @@ function buildLazyExtractorStream({
 } = {}) {
     if (!embedUrl || !isLazyExtractionEnabled(provider)) return null;
     const definition = resolveExtractorDefinition(embedUrl);
-    if (!definition || definition.noLazy) return null;
-    const extractorName = name || definition.label || hostLabel(embedUrl);
+    const bridgeCandidate = !definition && isBridgeResolverCandidate(embedUrl);
+    if ((!definition && !bridgeCandidate) || definition?.noLazy) return null;
+    const extractorName = name || definition?.label || (bridgeCandidate ? 'Bridge' : hostLabel(embedUrl));
     const token = encodeLazyExtractionToken({
         url: embedUrl,
         provider,
@@ -177,7 +178,7 @@ function buildLazyExtractorStream({
         },
         extra: {
             ...extra,
-            _priority: extra._priority ?? definition.priority ?? 9
+            _priority: extra._priority ?? definition?.priority ?? 9
         }
     });
 }
