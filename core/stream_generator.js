@@ -5020,7 +5020,8 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               as: filters.enableAnimeSaturn === true,
               gf: filters.enableGf === true,
               ads: filters.enableAltadefinizione === true,
-              cc: filters.enableCc === true
+              cc: filters.enableCc === true,
+              toonItalia: filters.enableToonItalia === true
           },
           buckets: Object.fromEntries(Object.entries(rawWebBuckets || {}).map(([key, bucket]) => [key, Array.isArray(bucket) ? bucket.length : 0]))
       });
@@ -5083,7 +5084,8 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           filters.enableAnimeSaturn,
           filters.enableGf,
           filters.enableAltadefinizione,
-          filters.enableCc
+          filters.enableCc,
+          filters.enableToonItalia
       ].filter(Boolean).length;
       const cachePolicyBase = buildSharedStreamCachePolicy(meta, {
           cleanResults,
