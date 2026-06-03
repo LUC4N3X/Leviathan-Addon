@@ -1240,6 +1240,9 @@ body::before {
 #mod-cb01 { --glow-color: rgba(245, 158, 11, 0.8); --border-color: #f59e0b; --border-color-dim: rgba(245, 158, 11,0.3); --core-bg: rgba(245, 158, 11,0.2); }
 #mod-cb01 .m-core-icon { color: #f59e0b; }
 
+#mod-onlineserietv { --glow-color: rgba(56, 189, 248, 0.8); --border-color: #38bdf8; --border-color-dim: rgba(56, 189, 248,0.3); --core-bg: rgba(56, 189, 248,0.2); }
+#mod-onlineserietv .m-core-icon { color: #38bdf8; }
+
 #mod-au { --glow-color: rgba(236, 72, 153, 0.8); --border-color: #ec4899; --border-color-dim: rgba(236, 72, 153,0.3); --core-bg: rgba(236, 72, 153,0.2); }
 #mod-au .m-core-icon { color: #ec4899; }
 
@@ -7728,6 +7731,25 @@ const mobileHTML = `
                             </div>
                         </div>
 
+                        <div class="m-reactor-module" id="mod-onlineserietv">
+                            <div class="m-reactor-core">
+                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🖥️</span>
+                            </div>
+                            <div class="m-reactor-body">
+                                <div class="m-reactor-top">
+                                    <span class="m-reactor-title">🖥️ OnlineSerieTV</span>
+                                    <label class="m-switch">
+                                        <input type="checkbox" id="m-enableOnlineserietv" onchange="updateStatus('m-enableOnlineserietv','st-onlineserietv'); toggleModuleStyle('m-enableOnlineserietv', 'mod-onlineserietv');">
+                                        <span class="m-slider m-slider-aqua"></span>
+                                    </label>
+                                </div>
+                                <span class="m-reactor-desc">Film e serie TV italiani, risolti via uprot/MaxStream con forward proxy 🛰️.</span>
+                                <div class="m-tag-row">
+                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="m-reactor-module" id="mod-aw">
                             <div class="m-reactor-core">
                                 <span class="m-provider-glyph m-core-icon" aria-hidden="true">⛩️</span>
@@ -9621,7 +9643,7 @@ function setLangMode(mode) {
 }
 
 function checkWebPriorityVisibility() {
-    const enabled = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableCb01', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableToonItalia', 'm-enableGf', 'm-enableAltadefinizione', 'm-enableCc'].some(id => mChecked(id));
+    const enabled = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableCb01', 'm-enableOnlineserietv', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableToonItalia', 'm-enableGf', 'm-enableAltadefinizione', 'm-enableCc'].some(id => mChecked(id));
     const panel = document.getElementById('m-priority-panel');
     if (panel) panel.classList.toggle('show', enabled);
 }
@@ -9993,6 +10015,9 @@ async function loadMobileConfig() {
                 mSetChecked('m-enableCb01', config.filters.enableCb01 || false);
                 toggleModuleStyle('m-enableCb01', 'mod-cb01');
 
+                mSetChecked('m-enableOnlineserietv', config.filters.enableOnlineserietv || false);
+                toggleModuleStyle('m-enableOnlineserietv', 'mod-onlineserietv');
+
                 mSetChecked('m-enableAnimeWorld', config.filters.enableAnimeWorld || false);
                 toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');
 
@@ -10062,6 +10087,7 @@ async function loadMobileConfig() {
             updateStatus('m-enableGstv', 'st-gstv');
             updateStatus('m-enableEs', 'st-es');
             updateStatus('m-enableCb01', 'st-cb01');
+            updateStatus('m-enableOnlineserietv', 'st-onlineserietv');
             updateStatus('m-enableAnimeWorld', 'st-aw');
             updateStatus('m-enableAnimeUnity', 'st-au');
             updateStatus('m-enableAnimeSaturn', 'st-as');
@@ -10091,7 +10117,7 @@ function getMobileConfig() {
 
     const isP2P = mCurrentService === 'p2p';
     const apiKey = mValue('m-apiKey').trim();
-    const webModules = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableCb01', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableToonItalia', 'm-enableGf', 'm-enableAltadefinizione', 'm-enableCc'];
+    const webModules = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableGstv', 'm-enableEs', 'm-enableCb01', 'm-enableOnlineserietv', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableToonItalia', 'm-enableGf', 'm-enableAltadefinizione', 'm-enableCc'];
     const webOnlyService = !isP2P && !apiKey && webModules.some(id => mChecked(id));
     const savedCloudEnabled = !isP2P && !!apiKey && ['rd', 'tb'].includes(String(mCurrentService || '').toLowerCase()) && mChecked('m-enableSavedCloud');
 
@@ -10138,6 +10164,7 @@ function getMobileConfig() {
             enableGstv: mChecked('m-enableGstv'),
             enableEs: mChecked('m-enableEs'),
             enableCb01: mChecked('m-enableCb01'),
+            enableOnlineserietv: mChecked('m-enableOnlineserietv'),
             enableAnimeWorld: mChecked('m-enableAnimeWorld'),
             enableAnimeUnity: mChecked('m-enableAnimeUnity'),
             enableAnimeSaturn: mChecked('m-enableAnimeSaturn'),
@@ -10185,7 +10212,7 @@ async function updateLinkModalContent(immediate = false) {
     }
 
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableCb01 || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableToonItalia || config.filters.enableGf || config.filters.enableAltadefinizione || config.filters.enableCc || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableCb01 || config.filters.enableOnlineserietv || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableToonItalia || config.filters.enableGf || config.filters.enableAltadefinizione || config.filters.enableCc || config.filters.enableP2P;
 
     if(!config.key && !isWebEnabled) {
         setGeneratedLinkBoxesValue("/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P", "error");
@@ -10227,7 +10254,7 @@ async function copyGeneratedLinkValue(value, closeAfter = false) {
 
 async function mobileInstall() {
     const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableCb01 || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableToonItalia || config.filters.enableGf || config.filters.enableAltadefinizione || config.filters.enableCc || config.filters.enableP2P;
+    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableGstv || config.filters.enableEs || config.filters.enableCb01 || config.filters.enableOnlineserietv || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableToonItalia || config.filters.enableGf || config.filters.enableAltadefinizione || config.filters.enableCc || config.filters.enableP2P;
     if(!config.key && !isWebEnabled) {
         showToast("ERRORE: API KEY MANCANTE", "error"); return;
     }

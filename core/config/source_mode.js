@@ -83,6 +83,7 @@ function hasWebProvidersEnabled(filters = {}) {
         || filters?.enableGstv === true
         || filters?.enableEs === true
         || filters?.enableCb01 === true
+        || filters?.enableOnlineserietv === true
         || filters?.enableAnimeWorld === true
         || filters?.enableAnimeUnity === true
         || filters?.enableAnimeSaturn === true

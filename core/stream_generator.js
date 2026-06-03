@@ -5015,6 +5015,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               gstv: filters.enableGstv === true,
               es: filters.enableEs === true,
               cb01: filters.enableCb01 === true,
+              onlineserietv: filters.enableOnlineserietv === true,
               aw: filters.enableAnimeWorld === true,
               au: filters.enableAnimeUnity === true,
               as: filters.enableAnimeSaturn === true,
@@ -5079,6 +5080,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           filters.enableGstv,
           filters.enableEs,
           filters.enableCb01,
+          filters.enableOnlineserietv,
           filters.enableAnimeWorld,
           filters.enableAnimeUnity,
           filters.enableAnimeSaturn,
@@ -5117,11 +5119,15 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       const emptyCb01OnlyLocalTtl = finalStreams.length === 0 && isCb01OnlyWebRequest
           ? Math.min(Math.max(1, Number(emptyEurostreamingOnlyLocalTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 20)
           : emptyEurostreamingOnlyLocalTtl;
+      const isOnlineserietvOnlyWebRequest = cacheScope === 'webonly' && enabledWebProvidersCount === 1 && filters.enableOnlineserietv === true;
+      const emptyOnlineserietvOnlyLocalTtl = finalStreams.length === 0 && isOnlineserietvOnlyWebRequest
+          ? Math.min(Math.max(1, Number(emptyCb01OnlyLocalTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 20)
+          : emptyCb01OnlyLocalTtl;
       const cachePolicy = {
           ...cachePolicyBase,
           allowSharedWrite: sourceModeFlags.useSharedCache ? cachePolicyBase.allowSharedWrite : false,
           sharedTtl: sourceModeFlags.useSharedCache ? cachePolicyBase.sharedTtl : 0,
-          localTtl: sourceModeFlags.liveOnlyMode ? 0 : emptyCb01OnlyLocalTtl,
+          localTtl: sourceModeFlags.liveOnlyMode ? 0 : emptyOnlineserietvOnlyLocalTtl,
           staleGraceTtl: sourceModeFlags.liveOnlyMode ? 0 : cachePolicyBase.staleGraceTtl
       };
 
