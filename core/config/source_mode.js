@@ -88,6 +88,8 @@ function hasWebProvidersEnabled(filters = {}) {
         || filters?.enableAnimeSaturn === true
         || filters?.enableGf === true
         || filters?.enableAltadefinizione === true
+        || filters?.enableToonItalia === true
+        || filters?.enableMoflix === true
         || filters?.enableCc === true
     );
 }
