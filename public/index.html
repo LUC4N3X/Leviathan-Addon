@@ -3524,6 +3524,8 @@ body { background: transparent !important; }
 
 .control-row:has(#enableCb01) { --lev-color: #f59e0b; --lev-glow: rgba(245,158,11,0.35); --lev-dim: rgba(245,158,11,0.18); }
 
+.control-row:has(#enableOnlineserietv) { --lev-color: #38bdf8; --lev-glow: rgba(56,189,248,0.35); --lev-dim: rgba(56,189,248,0.18); }
+
 .control-row:has(#enableAnimeWorld) { --lev-color: #0ea5e9; --lev-glow: rgba(14,165,233,0.35); --lev-dim: rgba(14,165,233,0.18); }
 
 .control-row:has(#enableAnimeUnity) { --lev-color: #ec4899; --lev-glow: rgba(236,72,153,0.35); --lev-dim: rgba(236,72,153,0.18); }
@@ -5043,6 +5045,17 @@ body { background: transparent !important; }
                                 <span class="control-desc">Portale italiano per film e serie TV, con un catalogo ricco e aggiornato nel tempo.</span>
                             </div>
                             <label class="switch mf-switch"><input type="checkbox" id="enableCb01" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
+                        </div>
+
+                        <div class="control-row">
+                            <div class="control-info">
+                                <div class="control-title notranslate" translate="no">
+                                    <i class="fas fa-tv" style="color: #38bdf8"></i> OnlineSerieTV
+                                    <span class="proxy-tag tag-proxy">PROXY</span>
+                                </div>
+                                <span class="control-desc">Catalogo italiano di film e serie TV, risolto via uprot/MaxStream attraverso il forward proxy.</span>
+                            </div>
+                            <label class="switch mf-switch"><input type="checkbox" id="enableOnlineserietv" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
                         </div>
 
                         <div class="control-row">
@@ -6793,6 +6806,7 @@ body { background: transparent !important; }
             const gstv = document.getElementById('enableGstv').checked;
             const es = document.getElementById('enableEs').checked;
             const cb01 = document.getElementById('enableCb01').checked;
+            const onlineserietv = document.getElementById('enableOnlineserietv').checked;
             const aw = document.getElementById('enableAnimeWorld').checked;
             const au = document.getElementById('enableAnimeUnity').checked;
             const as = document.getElementById('enableAnimeSaturn').checked;
@@ -6806,7 +6820,7 @@ body { background: transparent !important; }
             const pRow = document.getElementById('webPriorityRow');
             if(pRow) {
 
-                if(sc || ghd || gs || gstv || es || cb01 || aw || au || as || ti || gf || ads || cc) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
+                if(sc || ghd || gs || gstv || es || cb01 || onlineserietv || aw || au || as || ti || gf || ads || cc) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
                 else { pRow.style.display = 'none'; }
             }
         }
@@ -6993,6 +7007,7 @@ body { background: transparent !important; }
                         document.getElementById('enableGstv').checked = config.filters.enableGstv || false;
                         document.getElementById('enableEs').checked = config.filters.enableEs || false;
                         document.getElementById('enableCb01').checked = config.filters.enableCb01 || false;
+                        document.getElementById('enableOnlineserietv').checked = config.filters.enableOnlineserietv || false;
 
                         document.getElementById('enableAnimeWorld').checked = config.filters.enableAnimeWorld || false;
                         document.getElementById('enableAnimeUnity').checked = config.filters.enableAnimeUnity || false;
@@ -7097,6 +7112,7 @@ body { background: transparent !important; }
             const gstvActive = document.getElementById('enableGstv').checked;
             const esActive = document.getElementById('enableEs').checked;
             const cb01Active = document.getElementById('enableCb01').checked;
+            const onlineserietvActive = document.getElementById('enableOnlineserietv').checked;
             const awActive = document.getElementById('enableAnimeWorld').checked;
             const auActive = document.getElementById('enableAnimeUnity').checked;
             const asActive = document.getElementById('enableAnimeSaturn').checked;
@@ -7107,7 +7123,7 @@ body { background: transparent !important; }
             const isP2P = currentService === 'p2p';
             const sourceMode = document.getElementById('sourceMode').value;
 
-            const isWebEnabled = scActive || ghdActive || gsActive || gstvActive || esActive || cb01Active || awActive || auActive || asActive || tiActive || gfActive || adsActive || ccActive || isP2P;
+            const isWebEnabled = scActive || ghdActive || gsActive || gstvActive || esActive || cb01Active || onlineserietvActive || awActive || auActive || asActive || tiActive || gfActive || adsActive || ccActive || isP2P;
             const sourceModeBypassesKey = sourceMode === 'dbOnly' || sourceMode === 'globalCacheOnly';
 
             const el = document.getElementById('apiKey');
@@ -7139,6 +7155,7 @@ body { background: transparent !important; }
                     || document.getElementById('enableGstv').checked
                     || document.getElementById('enableEs').checked
                     || document.getElementById('enableCb01').checked
+                    || document.getElementById('enableOnlineserietv').checked
                     || document.getElementById('enableAnimeWorld').checked
                     || document.getElementById('enableAnimeUnity').checked
                     || document.getElementById('enableAnimeSaturn').checked
@@ -7195,6 +7212,7 @@ body { background: transparent !important; }
                     enableGstv: document.getElementById('enableGstv').checked,
                     enableEs: document.getElementById('enableEs').checked,
                     enableCb01: document.getElementById('enableCb01').checked,
+                    enableOnlineserietv: document.getElementById('enableOnlineserietv').checked,
                     enableAnimeWorld: document.getElementById('enableAnimeWorld').checked,
                     enableAnimeUnity: document.getElementById('enableAnimeUnity').checked,
                     enableAnimeSaturn: document.getElementById('enableAnimeSaturn').checked,
@@ -7263,6 +7281,7 @@ body { background: transparent !important; }
             let gstvText = c.filters.enableGstv ? 'ATTIVO 📺' : 'NO';
             let esText = c.filters.enableEs ? 'ATTIVO 🌍' : 'NO';
             let cb01Text = c.filters.enableCb01 ? 'ATTIVO 🎬' : 'NO';
+            let onlineserietvText = c.filters.enableOnlineserietv ? 'ATTIVO 🖥️' : 'NO';
             let awText = c.filters.enableAnimeWorld ? 'ATTIVO ⛩️' : 'NO';
             let auText = c.filters.enableAnimeUnity ? 'ATTIVO 🌀' : 'NO';
             let asText = c.filters.enableAnimeSaturn ? 'ATTIVO 🪐' : 'NO';
@@ -7299,7 +7318,7 @@ body { background: transparent !important; }
                 <li>Servizio Debrid <span>${serviceDisplay}</span></li>
                 <li>Visual Skin <span>${skinText}</span></li>
                 <li>Swarm P2P <span>${p2pText}</span></li>
-                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | GSTV: ${gstvText} | ES: ${esText} | CB01: ${cb01Text} | AW: ${awText} | AU: ${auText} | AS: ${asText} | TI: ${tiText} | GF: ${gfText} | ADS: ${adsText} | CC: ${ccText}</span></li>
+                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | GSTV: ${gstvText} | ES: ${esText} | CB01: ${cb01Text} | OST: ${onlineserietvText} | AW: ${awText} | AU: ${auText} | AS: ${asText} | TI: ${tiText} | GF: ${gfText} | ADS: ${adsText} | CC: ${ccText}</span></li>
                 <li>Flux Priority <span>${sortText}</span></li>
                 <li>Source Policy <span>${sourceModeText}</span></li>
                 <li>Proxy Bridge <span>${c.mediaflow.url ? 'CONFIGURATO' : 'NON ATTIVO'}</span></li>

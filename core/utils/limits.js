@@ -51,6 +51,7 @@ const LIMITERS = {
     webGstv: createLimiter({ maxConcurrent: 4, minTime: 45 }, 'WEB_GSTV'),
     webEs: createLimiter({ maxConcurrent: 3, minTime: 60, highWater: 12, strategy: Bottleneck.strategy.OVERFLOW }, 'WEB_ES'),
     webCb01: createLimiter({ maxConcurrent: 3, minTime: 70, highWater: 10, strategy: Bottleneck.strategy.OVERFLOW }, 'WEB_CB01'),
+    webOnlineserietv: createLimiter({ maxConcurrent: 3, minTime: 70, highWater: 10, strategy: Bottleneck.strategy.OVERFLOW }, 'WEB_OST'),
     webAw: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_AW'),
     webAu: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_AU'),
     webAs: createLimiter({ maxConcurrent: 4, minTime: 40 }, 'WEB_AS'),

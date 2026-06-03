@@ -7,6 +7,7 @@ const { searchGuardoSerie } = require('../guardoserie/gs_handler');
 const { searchGuardaserieTv } = require('../guardaserietv/gstv_handler');
 const { searchEurostreaming } = require('../eurostreaming/es_handler');
 const { searchCb01 } = require('../cb01/cb01_handler');
+const { searchOnlineserietv } = require('../onlineserietv/onlineserietv_handler');
 const { searchAnimeWorld } = require('../animeworld/aw_handler');
 const { searchAnimeUnity } = require('../animeunity/au_handler');
 const { searchAnimeSaturn } = require('../animesaturn/as_handler');
@@ -43,6 +44,9 @@ const EUROSTREAMING_EMPTY_TTL = Math.max(15, parseInt(process.env.ES_PROVIDER_EM
 const EUROSTREAMING_ERROR_TTL = Math.max(3, Math.min(EUROSTREAMING_EMPTY_TTL, parseInt(process.env.ES_PROVIDER_ERROR_TTL || '8', 10) || 8));
 const CB01_EMPTY_TTL = Math.max(15, parseInt(process.env.CB01_PROVIDER_EMPTY_TTL || '45', 10) || 45);
 const CB01_ERROR_TTL = Math.max(3, Math.min(CB01_EMPTY_TTL, parseInt(process.env.CB01_PROVIDER_ERROR_TTL || '8', 10) || 8));
+const ONLINESERIETV_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.OST_PROVIDER_TIMEOUT || '22000', 10) || 22000);
+const ONLINESERIETV_EMPTY_TTL = Math.max(15, parseInt(process.env.OST_PROVIDER_EMPTY_TTL || '45', 10) || 45);
+const ONLINESERIETV_ERROR_TTL = Math.max(3, Math.min(ONLINESERIETV_EMPTY_TTL, parseInt(process.env.OST_PROVIDER_ERROR_TTL || '8', 10) || 8));
 
 
 function firstEnvValue(...names) {
@@ -209,6 +213,20 @@ const WEB_PROVIDER_DEFINITIONS = [
         errorTtl: CB01_ERROR_TTL,
         isEnabled: ({ filters }) => filters?.enableCb01 === true,
         run: ({ meta, config, reqHost }) => searchCb01(meta, config, reqHost)
+    },
+    {
+        key: 'onlineserietv',
+        recipeId: 'onlineserietv',
+        sourceName: 'OnlineSerieTV',
+        cacheName: 'OnlineSerieTV',
+        cacheKeyVersion: 'ost-forward-proxy-uprot-maxstream-v1',
+        icon: '🖥️',
+        limiterKey: 'webOnlineserietv',
+        minTimeout: ONLINESERIETV_MIN_TIMEOUT,
+        emptyTtl: ONLINESERIETV_EMPTY_TTL,
+        errorTtl: ONLINESERIETV_ERROR_TTL,
+        isEnabled: ({ filters }) => filters?.enableOnlineserietv === true,
+        run: ({ meta, config, reqHost }) => searchOnlineserietv(meta, config, reqHost)
     },
     {
         key: 'animeWorld',
