@@ -14,12 +14,14 @@ test('hasWebProvidersEnabled detects active web providers', () => {
   assert.equal(hasWebProvidersEnabled({ enableCc: true }), true);
   assert.equal(hasWebProvidersEnabled({ enableCb01: true }), true);
   assert.equal(hasWebProvidersEnabled({ enableStreamingCommunity: true }), true);
+  assert.equal(hasWebProvidersEnabled({ enableToonItalia: true }), true);
 });
 
 test('shouldUseTorrentPipeline disables torrent search in web-only mode', () => {
   const filters = {
     enableAnimeWorld: true,
     enableAnimeSaturn: true,
+    enableToonItalia: true,
     enableP2P: false
   };
 
@@ -35,11 +37,13 @@ test('validateConfig preserves explicit web service', () => {
     filters: {
       enableAnimeWorld: true,
       enableCc: true,
-      enableCb01: true
+      enableCb01: true,
+      enableToonItalia: true
     }
   });
 
   assert.equal(config.service, 'web');
   assert.equal(config.filters.enableCc, true);
   assert.equal(config.filters.enableCb01, true);
+  assert.equal(config.filters.enableToonItalia, true);
 });
