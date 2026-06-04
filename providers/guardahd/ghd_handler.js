@@ -32,6 +32,7 @@ const { AsyncSemaphore, SingleFlight, TtlLruCache } = require('../utils/provider
 const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
+const { extractResilientEmbeds } = require('../extractors/semantic_candidate_extractor');
 
 const CONFIG = {
     CACHE: {
@@ -649,6 +650,10 @@ async function scrapeEmbedUrls(identity) {
         for (const value of safeText(html).match(REGEX.DIRECT_URL) || []) push(value);
         if (registryDirectLinkRegex) {
             for (const value of safeText(html).match(registryDirectLinkRegex) || []) push(value);
+        }
+
+        for (const semanticUrl of extractResilientEmbeds(html, { baseUrl: endpoint, maxCandidates: CONFIG.SCRAPER.MAX_EMBEDS || 24 })) {
+            push(semanticUrl);
         }
 
         return links;

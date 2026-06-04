@@ -8,6 +8,7 @@ const {
     normalizeForwardProxyBase: normalizeSharedForwardProxyBase
 } = require('../../core/proxy/forward_proxy_config');
 const { extractMaxstream } = require('../extractors/hosters/maxstream');
+const { extractResilientEmbeds } = require('../extractors/semantic_candidate_extractor');
 const { requestWithImpitRotating, isCanceledError } = require('../utils/bypass');
 const {
     buildProviderHtmlHeaders,
@@ -419,14 +420,21 @@ function yearAccepted(pageYear, metaYear) {
     return Math.abs(pageYear - metaYear) <= tolerance;
 }
 
-function extractMovieUprot(html) {
+function pickSemanticUprot(html, baseUrl = null) {
+    const candidates = extractResilientEmbeds(html, { baseUrl, maxCandidates: 24 });
+    return candidates.find((url) => /(?:uprot|uproat)\./i.test(url))
+        || candidates.find((url) => /maxstream|stayonline/i.test(url))
+        || null;
+}
+
+function extractMovieUprot(html, baseUrl = null) {
     const msf = String(html || '').match(UPROT_MSF_RE);
     if (msf) return msf[0];
     const any = String(html || '').match(UPROT_ANY_RE);
-    return any ? any[0] : null;
+    return any ? any[0] : pickSemanticUprot(html, baseUrl);
 }
 
-function extractSeriesUprot(html, season, episode) {
+function extractSeriesUprot(html, season, episode, baseUrl = null) {
     const text = String(html || '');
     const ss = String(season).padStart(2, '0');
     const ee = String(episode).padStart(2, '0');
@@ -446,6 +454,8 @@ function extractSeriesUprot(html, season, episode) {
         if (msf) return msf[0];
         const any = window.match(UPROT_ANY_RE);
         if (any) return any[0];
+        const semantic = pickSemanticUprot(window, baseUrl);
+        if (semantic) return semantic;
     }
 
     const fallbackIdx = text.indexOf(`0${ee}`);
@@ -455,6 +465,8 @@ function extractSeriesUprot(html, season, episode) {
         if (msf) return msf[0];
         const any = window.match(UPROT_ANY_RE);
         if (any) return any[0];
+        const semantic = pickSemanticUprot(window, baseUrl);
+        if (semantic) return semantic;
     }
 
     return null;
@@ -506,8 +518,8 @@ async function findUprotLink({ client, baseUrl, showName, metaYear, isSeries, se
             }
 
             const uprotLink = isSeries
-                ? extractSeriesUprot(pageHtml, season, episode)
-                : extractMovieUprot(pageHtml);
+                ? extractSeriesUprot(pageHtml, season, episode, candidate.href || baseUrl)
+                : extractMovieUprot(pageHtml, candidate.href || baseUrl);
 
             if (uprotLink) {
                 ostDebug('info', 'uprot link found', {

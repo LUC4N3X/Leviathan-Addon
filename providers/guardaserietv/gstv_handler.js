@@ -23,6 +23,7 @@ const {
     HOSTER_DIRECT_LINK_PATTERN,
     HOSTER_ESCAPED_DIRECT_LINK_PATTERN
 } = require('../extractors/registry');
+const { extractEmbedCandidates } = require('../extractors/semantic_candidate_extractor');
 
 const PROVIDER_ID = 'guardaserietv';
 const PROVIDER_LABEL = 'GuardaserieTV';
@@ -502,6 +503,15 @@ function extractLinksFromBlock(blockHtml, pageUrl) {
         }
     }
 
+    for (const semanticCandidate of extractEmbedCandidates(blockHtml, { baseUrl: pageUrl, maxCandidates: MAX_EMBEDS })) {
+        const href = absoluteUrl(semanticCandidate.url, pageUrl);
+        if (!href || seen.has(href)) continue;
+        const def = resolveExtractorDefinition(href);
+        if (!def) continue;
+        seen.add(href);
+        links.push({ url: href, label: semanticCandidate.label || def.label, priority: getLinkPriority(href, def) });
+    }
+
     return links.sort((a, b) => a.priority - b.priority);
 }
 
@@ -529,13 +539,21 @@ function parseEpisodeLinks(html, season, episode, pageUrl) {
     if (!new RegExp(`\\b${wanted.replace('x', '\\s*x\\s*')}\\b`, 'i').test(text)) return [];
 
     const links = [];
-    $('a[href]').each((_, el) => {
-        const href = absoluteUrl($(el).attr('href'), pageUrl);
-        if (!href) return;
+    const seen = new Set();
+    const pushLink = (href, label = 'Hoster') => {
+        if (!href || seen.has(href)) return;
         const def = resolveExtractorDefinition(href);
         if (!def && !/\.m3u8(?:$|[?#])/i.test(href)) return;
-        links.push({ url: href, label: cleanText($(el).text()) || def?.label || 'Hoster', priority: def?.priority ?? 9 });
+        seen.add(href);
+        links.push({ url: href, label: label || def?.label || 'Hoster', priority: def?.priority ?? 9 });
+    };
+    $('a[href]').each((_, el) => {
+        const href = absoluteUrl($(el).attr('href'), pageUrl);
+        pushLink(href, cleanText($(el).text()));
     });
+    for (const semanticCandidate of extractEmbedCandidates(html, { baseUrl: pageUrl, maxCandidates: MAX_EMBEDS })) {
+        pushLink(absoluteUrl(semanticCandidate.url, pageUrl), semanticCandidate.label);
+    }
     return links.sort((a, b) => a.priority - b.priority).slice(0, MAX_EMBEDS);
 }
 

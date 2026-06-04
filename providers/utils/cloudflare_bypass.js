@@ -607,10 +607,13 @@ function execCurlCffiBypass(url, providerName = 'provider', options = {}) {
     if (requestBody != null) args.push('--data', String(requestBody));
     if (options.headers) args.push('--headers', JSON.stringify(options.headers));
     if (options.cookiesJson) args.push('--cookies-json', JSON.stringify(options.cookiesJson));
+    if (options.signalsJson || options.signals) args.push('--signals-json', JSON.stringify(options.signalsJson || options.signals));
+    if (options.profileState === false) args.push('--no-profile-state');
+    if (options.profileStatePath) args.push('--profile-state-path', String(options.profileStatePath));
     if (acceptLanguage) args.push('--accept-language', acceptLanguage);
     if (options.referer) args.push('--referer', String(options.referer));
-    if (warmupOrigin) args.push('--warmup-origin');
-    if (browserHeaders) args.push('--browser-headers');
+    args.push(warmupOrigin ? '--warmup-origin' : '--no-warmup-origin');
+    args.push(browserHeaders ? '--browser-headers' : '--no-browser-headers');
     const proxy = resolveCurlCffiProxy(providerName, options);
     if (proxy) args.push('--proxy', proxy);
     if (options.insecure || envFlag('CURL_CFFI_INSECURE', false)) args.push('--insecure');
@@ -791,6 +794,12 @@ function normalizeCurlCffiResult(result = {}, providerName = 'provider', fallbac
   session.impersonateChain = Array.isArray(result.impersonateChain) ? result.impersonateChain : [];
   session.elapsedMs = Number(result.elapsedMs || 0) || 0;
   session.challengeDetected = Boolean(result.challengeDetected);
+  session.challengeReason = result.challengeReason || '';
+  session.profileScore = result.profileScore;
+  session.profileStats = result.profileStats || null;
+  session.httpVersionMode = result.httpVersionMode || '';
+  session.inputSignals = result.inputSignals || null;
+  session.attempts = Array.isArray(result.attempts) ? result.attempts : [];
   if (result.cookieHeader) {
     session.cookies = session.cookies
       ? mergeCookieHeaders(session.cookies, result.cookieHeader)
@@ -986,6 +995,9 @@ function createCloudflareBypass(options = {}) {
       browserHeaders: fetchOptions.curlCffiBrowserHeaders ?? curlCffiBrowserHeaders,
       acceptLanguage: fetchOptions.acceptLanguage || fetchOptions.curlCffiAcceptLanguage || curlCffiAcceptLanguage,
       referer: fetchOptions.referer || fetchOptions.headers?.Referer || fetchOptions.headers?.referer || '',
+      signalsJson: fetchOptions.signalsJson || fetchOptions.signals || null,
+      profileState: fetchOptions.profileState,
+      profileStatePath: fetchOptions.profileStatePath || null,
       runner: options.curlCffiRunner,
       queue: options.curlCffiQueue,
       coalesceKey: fetchOptions.curlCffiCoalesceKey || buildCurlCffiCoalesceKey(providerName, method, url, fetchOptions.body ?? fetchOptions.data ?? ''),
