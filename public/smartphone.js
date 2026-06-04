@@ -7631,7 +7631,6 @@ const mobileHTML = `
                                 <span class="m-reactor-desc">Catalogo Film e Serie TV via FlareSolverr e proxy CCCDN/Kraken 🎟️.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
-                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
                                 </div>
                             </div>
                         </div>
@@ -7821,7 +7820,7 @@ const mobileHTML = `
                                 </div>
                                 <span class="m-reactor-desc">Cartoon e anime in italiano, con resolver VOE, LoadM/RPMShare e MaxStream.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
+                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
                                 </div>
                             </div>
                         </div>
@@ -7859,7 +7858,7 @@ const mobileHTML = `
                                 </div>
                                 <span class="m-reactor-desc">Film e serie TV con catalogo aggiornato e navigazione intuitiva 🎟️.</span>
                                 <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
+                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
                                 </div>
                             </div>
                         </div>
@@ -10350,4 +10349,3 @@ startMobileInterfaceWhenReady();
         document.body.classList.add('m-ui-ready');
     } catch (_) {}
 })();
-
