@@ -1,17 +1,16 @@
 <div align="center">
 
   <a href="https://leviathanaddon.dpdns.org" target="_blank">
-    <img src="https://i.ibb.co/BKZNKbq3/logo.png" alt="Leviathan Logo" width="188" />
+    <img src="https://i.ibb.co/BKZNKbq3/logo.png" alt="Leviathan Logo" width="226" />
   </a>
 
   <br>
+
+  <img src="./assets/leviathan-sea-wave.svg" width="63%" alt="Leviathan animated sea wave" />
+
   <br>
 
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:070B13,24:00D9FF,50:7C3AED,76:00CFFF,100:070B13&height=5&section=header&animation=fadeIn" width="44%" alt="Leviathan sea glow" />
-
-  <br>
-
-  <img src="https://capsule-render.vercel.app/api?type=transparent&height=92&section=header&text=LEVIATHAN&fontSize=74&fontColor=00E7FF&animation=fadeIn&fontAlignY=42&desc=ITA-first%20%2F%20ENG-ready%20Stremio%20Aggregation%20Engine&descSize=18&descAlignY=78&descColor=A8F7FF" alt="Leviathan" width="100%" />
+  <img src="./assets/leviathan-wordmark.svg" width="66%" alt="Leviathan - ITA-first / ENG-ready Stremio Aggregation Engine" />
 
   <p>
     <img alt="Stremio Native" src="https://img.shields.io/badge/Stremio-Native%20Addon-7C3AED?style=for-the-badge&logo=stremio&logoColor=ffffff&labelColor=07111F" />
@@ -34,7 +33,7 @@
     <img alt="Language" src="https://img.shields.io/badge/Language-ITA_%2F_ENG-A8BFFF?style=for-the-badge&labelColor=07111F" />
   </p>
 
-  <table align="center" width="94%">
+  <table align="center" width="88%">
     <tr>
       <td align="center" width="25%">
         <b>🧠 Semantic Core</b><br>
