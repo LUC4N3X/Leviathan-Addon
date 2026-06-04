@@ -6,11 +6,11 @@
 
   <br>
 
-  <img src="./assets/leviathan-sea-wave.svg" width="63%" alt="Leviathan animated sea wave" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:070B13,16:081A2E,32:00D9FF,50:1E90FF,68:7C3AED,84:00CFFF,100:070B13&height=64&section=header&reversal=false&animation=fadeIn" width="58%" alt="Leviathan animated sea wave" />
 
   <br>
 
-  <img src="./assets/leviathan-wordmark.svg" width="66%" alt="Leviathan - ITA-first / ENG-ready Stremio Aggregation Engine" />
+  <img src="https://capsule-render.vercel.app/api?type=transparent&height=104&section=header&text=LEVIATHAN&fontSize=82&fontColor=FFFFFF&animation=fadeIn&fontAlignY=43&desc=ITA-first%20%2F%20ENG-ready%20Stremio%20Aggregation%20Engine&descSize=18&descAlignY=78&descColor=00E7FF" alt="Leviathan - ITA-first / ENG-ready Stremio Aggregation Engine" width="100%" />
 
   <p>
     <img alt="Stremio Native" src="https://img.shields.io/badge/Stremio-Native%20Addon-7C3AED?style=for-the-badge&logo=stremio&logoColor=ffffff&labelColor=07111F" />
