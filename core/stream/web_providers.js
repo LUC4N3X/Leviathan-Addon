@@ -140,6 +140,7 @@ function normalizeWebExtractorLabel(value) {
     if (/^(unknown|unknow|n\/a|null|undefined)$/i.test(raw)) return '';
     if (/vix(?:cloud|src)?/i.test(raw)) return 'VixCloud';
     if (/vidx\s*go|vidxgo/i.test(raw)) return 'VidxGo';
+    if (/\b(?:adn|cdn)\b|altadefinizionestreaming\.com\/api\/player-sources/i.test(raw)) return 'ADN/CDN';
     if (/sweet\s*pixel|sweetpixel/i.test(raw)) return 'SweetPixel';
     if (/cccdn/i.test(raw)) return 'CCCDN';
     if (/^(?:city|cinemacity\s*city|kraken\s*city)$/i.test(raw)) return 'CCCDN';
@@ -159,12 +160,18 @@ function normalizeWebExtractorLabel(value) {
     if (/upstream/i.test(raw)) return 'Upstream';
     if (/vidoza/i.test(raw)) return 'Vidoza';
     if (/deltabit/i.test(raw)) return 'DeltaBit';
-    if (/direct/i.test(raw)) return 'Direct';
+    if (/^(?:direct|direct\s+(?:link|stream|cdn))$/i.test(raw)) return 'Direct';
     if (/^(?:hls|direct)\s+proxy$/i.test(raw)) return '';
     if (/^(?:mfp|cinemacity)$/i.test(raw)) return '';
     if (/^https?:\/\//i.test(raw)) {
         try {
-            const hostname = new URL(raw).hostname.replace(/^www\./i, '');
+            const parsed = new URL(raw);
+            const hostParam = parsed.searchParams.get('host') || parsed.searchParams.get('extractor') || '';
+            const dataParam = parsed.searchParams.get('d') || parsed.searchParams.get('url') || '';
+            const normalizedHostParam = hostParam ? normalizeWebExtractorLabel(hostParam) : '';
+            if (normalizedHostParam) return normalizedHostParam;
+            if (/altadefinizionestreaming\.com\/api\/player-sources/i.test(dataParam)) return 'ADN/CDN';
+            const hostname = parsed.hostname.replace(/^www\./i, '');
             const parts = hostname.split('.');
             // Check the second-level domain first (e.g. 'dropload' in direct123.dropload.io)
             // to avoid misidentifying CDN subdomains like 'direct123' as 'Direct'.
@@ -185,7 +192,7 @@ function normalizeWebExtractorLabel(value) {
         .trim();
 
     // Only trust free-form labels when they look like a hoster/extractor, not a media title.
-    return /^(?:web|hls|city|loadm|deltabit|delta\s*bit|turbovid|vixcloud|vidxgo|sweetpixel|srv12|cccdn|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|uprot|dropload|dr0pstream|streamhg|dhcplay|vibuxer|uqload|upstream|vidoza|direct)$/i.test(cleaned)
+    return /^(?:web|hls|city|adn|cdn|adn\/cdn|loadm|deltabit|delta\s*bit|turbovid|vixcloud|vidxgo|sweetpixel|srv12|cccdn|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|uprot|dropload|dr0pstream|streamhg|dhcplay|vibuxer|uqload|upstream|vidoza|direct)$/i.test(cleaned)
         ? cleaned
         : '';
 }
@@ -747,4 +754,11 @@ function createWebProviderTools({ Cache, LIMITERS, CONFIG, guardedProviderCall }
     };
 }
 
-module.exports = { createWebProviderTools };
+module.exports = {
+    createWebProviderTools,
+    __private: {
+        normalizeWebExtractorLabel,
+        inferWebExtractorLabel,
+        buildWebStreamDisplay
+    }
+};
