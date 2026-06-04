@@ -1,7 +1,7 @@
 <div align="center">
 
   <a href="https://leviathanaddon.dpdns.org" target="_blank">
-    <img src="https://i.ibb.co/BKZNKbq3/logo.png" alt="Leviathan Logo" width="206" />
+    <img src="https://i.ibb.co/BKZNKbq3/logo.png" alt="Leviathan Logo" width="208" />
   </a>
 
   <br>
