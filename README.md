@@ -783,7 +783,7 @@ Una valutazione positiva aumenta autorevolezza, fiducia e visibilità del protoc
 
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:07111F,16:081A2E,34:00E7FF,52:7C3AED,72:00BFFF,100:07111F&height=128&section=header&text=Credits&fontSize=42&fontColor=FFFFFF&animation=fadeIn&fontAlignY=35" width="100%" alt="Credits" />
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:07111F,16:081A2E,34:00E7FF,52:7C3AED,72:00BFFF,100:07111F&height=112&section=header&text=Credits&fontSize=40&fontColor=FFFFFF&animation=fadeIn&fontAlignY=36" width="100%" alt="Credits" />
 
 <br>
 
@@ -791,15 +791,15 @@ Una valutazione positiva aumenta autorevolezza, fiducia e visibilità del protoc
   <img src="https://i.ibb.co/BK2VQxGH/github-circle-transparent.png" width="164" alt="LUC4N3X" />
 </a>
 
-<br><br>
+<br>
 
-<img src="https://capsule-render.vercel.app/api?type=transparent&height=72&section=header&text=%E2%9C%A6%20L%20U%20C%204%20N%203%20X%20%E2%9C%A6&fontSize=32&fontColor=FFFFFF&animation=fadeIn&fontAlignY=50" width="78%" alt="LUC4N3X" />
+<img src="https://capsule-render.vercel.app/api?type=transparent&height=58&section=header&text=%E2%9C%A6%20L%20U%20C%204%20N%203%20X%20%E2%9C%A6&fontSize=30&fontColor=FFFFFF&animation=fadeIn&fontAlignY=50" width="72%" alt="LUC4N3X" />
 
 <br>
 
-<img src="https://capsule-render.vercel.app/api?type=rect&color=0:07111F,28:00E7FF,50:7C3AED,72:00BFFF,100:07111F&height=2&section=footer" width="58%" alt="Credits divider" />
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:07111F,28:00E7FF,50:7C3AED,72:00BFFF,100:07111F&height=2&section=footer" width="54%" alt="Credits divider" />
 
-<br><br>
+<br>
 
 <h3>Founder · Core Architect · Lead Engineering</h3>
 
@@ -815,7 +815,7 @@ Una valutazione positiva aumenta autorevolezza, fiducia e visibilità del protoc
 <img src="https://img.shields.io/badge/Core-Engineering-FFFFFF?style=for-the-badge&labelColor=07111F&color=FFFFFF" alt="Core Engineering" />
 <img src="https://img.shields.io/badge/Stremio-Ecosystem-7CF29C?style=for-the-badge&labelColor=07111F" alt="Stremio Ecosystem" />
 
-<br><br>
+<br>
 
 <table align="center" width="92%">
 <tr>
@@ -842,9 +842,9 @@ Una valutazione positiva aumenta autorevolezza, fiducia e visibilità del protoc
 
 <br>
 
-<img src="https://capsule-render.vercel.app/api?type=rect&color=0:07111F,50:00E7FF,100:07111F&height=1&section=footer" width="64%" alt="Open source divider" />
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:07111F,50:00E7FF,100:07111F&height=1&section=footer" width="58%" alt="Open source divider" />
 
-<br><br>
+<br>
 
 <h2>Special Thanks</h2>
 
@@ -900,6 +900,6 @@ Open-source references matter. Leviathan remains independently designed, maintai
 
 <br><br>
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:07111F,25:00E7FF,50:7C3AED,75:00BFFF,100:07111F&height=105&section=footer&animation=fadeIn" width="100%" alt="Credits footer wave" />
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:07111F,25:00E7FF,50:7C3AED,75:00BFFF,100:07111F&height=88&section=footer&animation=fadeIn" width="100%" alt="Credits footer wave" />
 
 </div>
