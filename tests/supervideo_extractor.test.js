@@ -32,7 +32,7 @@ test('SuperVideo extractor tries original /v/ URL and returns playable stream', 
         }
     };
 
-    const result = await extractSupervideo('https://supervideo.cc/v/abc', { client, requestReferer: 'https://guardaserietv.rest/demo.html' });
+    const result = await extractSupervideo('https://supervideo.cc/v/abc', { client, requestReferer: 'https://example.com/demo.html' });
 
     assert.equal(calls[0], 'https://supervideo.cc/v/abc');
     assert.equal(result.url, 'https://cdn.supervideo.cc/master.m3u8');

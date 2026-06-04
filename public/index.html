@@ -3518,7 +3518,7 @@ body { background: transparent !important; }
 
 .control-row:has(#enableGs) { --lev-color: #7c3aed; --lev-glow: rgba(124,58,237,0.35); --lev-dim: rgba(124,58,237,0.18); }
 
-.control-row:has(#enableGstv) { --lev-color: #6366f1; --lev-glow: rgba(99,102,241,0.35); --lev-dim: rgba(99,102,241,0.18); }
+.control-row:has(#enableVidxgo) { --lev-color: #6366f1; --lev-glow: rgba(99,102,241,0.35); --lev-dim: rgba(99,102,241,0.18); }
 
 .control-row:has(#enableEs) { --lev-color: #2dd4bf; --lev-glow: rgba(45,212,191,0.35); --lev-dim: rgba(45,212,191,0.18); }
 
@@ -5017,12 +5017,12 @@ body { background: transparent !important; }
                         <div class="control-row">
                             <div class="control-info">
                                 <div class="control-title notranslate" translate="no">
-                                    <i class="fas fa-satellite-dish" style="color: #00e5ff"></i> GuardaserieTV
+                                    <i class="fas fa-bolt" style="color: #00e5ff"></i> VidxGo
                                     <span class="proxy-tag tag-noproxy">NO PROXY</span>
                                 </div>
-                                <span class="control-desc">Portale dedicato alle serie TV, utile per trovare stagioni ed episodi in modo semplice.</span>
+                                <span class="control-desc">Player diretto per film e serie TV: risoluzione rapida del flusso a partire dal codice IMDb.</span>
                             </div>
-                            <label class="switch mf-switch"><input type="checkbox" id="enableGstv" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
+                            <label class="switch mf-switch"><input type="checkbox" id="enableVidxgo" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider"></span></label>
                         </div>
 
                         <div class="control-row">
@@ -5128,7 +5128,7 @@ body { background: transparent !important; }
                         <div class="control-row sub-row" id="webPriorityRow" style="display:none; margin-top:15px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top:10px;">
                              <div class="control-info">
                                  <div class="control-title"><i class="fas fa-sort-amount-down"></i> Gerarchia Sorgenti</div>
-                                 <span class="control-desc">Sposta i risultati Web (SC, GHD, GS, GSTV, ES, AW, AS, GF, CC) dopo i Torrent.</span>
+                                 <span class="control-desc">Sposta i risultati Web (SC, GHD, GS, VXG, ES, AW, AS, GF, CC) dopo i Torrent.</span>
                              </div>
                              <label class="switch mf-switch"><input type="checkbox" id="vixLast" onchange="updateFluxStream()"><span class="slider"></span></label>
                          </div>
@@ -6803,7 +6803,7 @@ body { background: transparent !important; }
             const sc = document.getElementById('enableVix').checked;
             const ghd = document.getElementById('enableGhd').checked;
             const gs = document.getElementById('enableGs').checked;
-            const gstv = document.getElementById('enableGstv').checked;
+            const vidxgo = document.getElementById('enableVidxgo').checked;
             const es = document.getElementById('enableEs').checked;
             const cb01 = document.getElementById('enableCb01').checked;
             const onlineserietv = document.getElementById('enableOnlineserietv').checked;
@@ -6820,7 +6820,7 @@ body { background: transparent !important; }
             const pRow = document.getElementById('webPriorityRow');
             if(pRow) {
 
-                if(sc || ghd || gs || gstv || es || cb01 || onlineserietv || aw || au || as || ti || gf || ads || cc) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
+                if(sc || ghd || gs || vidxgo || es || cb01 || onlineserietv || aw || au || as || ti || gf || ads || cc) { pRow.style.display = 'flex'; pRow.style.animation = 'fadeInRow 0.3s ease'; }
                 else { pRow.style.display = 'none'; }
             }
         }
@@ -7004,7 +7004,7 @@ body { background: transparent !important; }
                         document.getElementById('vixLast').checked = config.filters.vixLast || false;
                         document.getElementById('enableGhd').checked = config.filters.enableGhd || false;
                         document.getElementById('enableGs').checked = config.filters.enableGs || false;
-                        document.getElementById('enableGstv').checked = config.filters.enableGstv || false;
+                        document.getElementById('enableVidxgo').checked = config.filters.enableVidxgo || false;
                         document.getElementById('enableEs').checked = config.filters.enableEs || false;
                         document.getElementById('enableCb01').checked = config.filters.enableCb01 || false;
                         document.getElementById('enableOnlineserietv').checked = config.filters.enableOnlineserietv || false;
@@ -7109,7 +7109,7 @@ body { background: transparent !important; }
             const scActive = document.getElementById('enableVix').checked;
             const ghdActive = document.getElementById('enableGhd').checked;
             const gsActive = document.getElementById('enableGs').checked;
-            const gstvActive = document.getElementById('enableGstv').checked;
+            const vidxgoActive = document.getElementById('enableVidxgo').checked;
             const esActive = document.getElementById('enableEs').checked;
             const cb01Active = document.getElementById('enableCb01').checked;
             const onlineserietvActive = document.getElementById('enableOnlineserietv').checked;
@@ -7123,7 +7123,7 @@ body { background: transparent !important; }
             const isP2P = currentService === 'p2p';
             const sourceMode = document.getElementById('sourceMode').value;
 
-            const isWebEnabled = scActive || ghdActive || gsActive || gstvActive || esActive || cb01Active || onlineserietvActive || awActive || auActive || asActive || tiActive || gfActive || adsActive || ccActive || isP2P;
+            const isWebEnabled = scActive || ghdActive || gsActive || vidxgoActive || esActive || cb01Active || onlineserietvActive || awActive || auActive || asActive || tiActive || gfActive || adsActive || ccActive || isP2P;
             const sourceModeBypassesKey = sourceMode === 'dbOnly' || sourceMode === 'globalCacheOnly';
 
             const el = document.getElementById('apiKey');
@@ -7152,7 +7152,7 @@ body { background: transparent !important; }
                     document.getElementById('enableVix').checked
                     || document.getElementById('enableGhd').checked
                     || document.getElementById('enableGs').checked
-                    || document.getElementById('enableGstv').checked
+                    || document.getElementById('enableVidxgo').checked
                     || document.getElementById('enableEs').checked
                     || document.getElementById('enableCb01').checked
                     || document.getElementById('enableOnlineserietv').checked
@@ -7209,7 +7209,7 @@ body { background: transparent !important; }
                     enableVix: document.getElementById('enableVix').checked,
                     enableGhd: document.getElementById('enableGhd').checked,
                     enableGs: document.getElementById('enableGs').checked,
-                    enableGstv: document.getElementById('enableGstv').checked,
+                    enableVidxgo: document.getElementById('enableVidxgo').checked,
                     enableEs: document.getElementById('enableEs').checked,
                     enableCb01: document.getElementById('enableCb01').checked,
                     enableOnlineserietv: document.getElementById('enableOnlineserietv').checked,
@@ -7278,7 +7278,7 @@ body { background: transparent !important; }
             let p2pText = c.filters.enableP2P ? 'ATTIVO (⚠️)' : 'DISATTIVATO';
             let ghdText = c.filters.enableGhd ? 'ATTIVO 🦁' : 'NO';
             let gsText = c.filters.enableGs ? 'ATTIVO 🛡️' : 'NO';
-            let gstvText = c.filters.enableGstv ? 'ATTIVO 📺' : 'NO';
+            let vidxgoText = c.filters.enableVidxgo ? 'ATTIVO 🎯' : 'NO';
             let esText = c.filters.enableEs ? 'ATTIVO 🌍' : 'NO';
             let cb01Text = c.filters.enableCb01 ? 'ATTIVO 🎬' : 'NO';
             let onlineserietvText = c.filters.enableOnlineserietv ? 'ATTIVO 🖥️' : 'NO';
@@ -7318,7 +7318,7 @@ body { background: transparent !important; }
                 <li>Servizio Debrid <span>${serviceDisplay}</span></li>
                 <li>Visual Skin <span>${skinText}</span></li>
                 <li>Swarm P2P <span>${p2pText}</span></li>
-                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | GSTV: ${gstvText} | ES: ${esText} | CB01: ${cb01Text} | OST: ${onlineserietvText} | AW: ${awText} | AU: ${auText} | AS: ${asText} | TI: ${tiText} | GF: ${gfText} | ADS: ${adsText} | CC: ${ccText}</span></li>
+                <li>Sorgenti Web <span>SC: ${scText} | GHD: ${ghdText} | GS: ${gsText} | VXG: ${vidxgoText} | ES: ${esText} | CB01: ${cb01Text} | OST: ${onlineserietvText} | AW: ${awText} | AU: ${auText} | AS: ${asText} | TI: ${tiText} | GF: ${gfText} | ADS: ${adsText} | CC: ${ccText}</span></li>
                 <li>Flux Priority <span>${sortText}</span></li>
                 <li>Source Policy <span>${sourceModeText}</span></li>
                 <li>Proxy Bridge <span>${c.mediaflow.url ? 'CONFIGURATO' : 'NON ATTIVO'}</span></li>

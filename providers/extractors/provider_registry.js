@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { searchVix: searchStreamingCommunity } = require('../streamingcommunity/vix_handler');
 const { searchGuardaHD } = require('../guardahd/ghd_handler');
 const { searchGuardoSerie } = require('../guardoserie/gs_handler');
-const { searchGuardaserieTv } = require('../guardaserietv/gstv_handler');
+const { searchVidxgo } = require('../vidxgo/vidxgo_handler');
 const { searchEurostreaming } = require('../eurostreaming/es_handler');
 const { searchCb01 } = require('../cb01/cb01_handler');
 const { searchOnlineserietv } = require('../onlineserietv/onlineserietv_handler');
@@ -33,13 +33,13 @@ const TOONITALIA_EMPTY_TTL = Math.max(15, parseInt(process.env.TOONITALIA_PROVID
 const MOFLIX_ERROR_TTL = Math.max(3, Math.min(MOFLIX_EMPTY_TTL, parseInt(process.env.MOFLIX_PROVIDER_ERROR_TTL || '10', 10) || 10));
 const TOONITALIA_ERROR_TTL = Math.max(3, Math.min(TOONITALIA_EMPTY_TTL, parseInt(process.env.TOONITALIA_PROVIDER_ERROR_TTL || '10', 10) || 10));
 const GUARDO_SERIE_MIN_TIMEOUT = Math.max(30000, parseInt(process.env.GS_PROVIDER_TIMEOUT || '45000', 10) || 45000);
-const GUARDASERIETV_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.GSTV_PROVIDER_TIMEOUT || '22000', 10) || 22000);
+const VIDXGO_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.VIDXGO_PROVIDER_TIMEOUT || '22000', 10) || 22000);
 const EUROSTREAMING_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.ES_PROVIDER_TIMEOUT || '22000', 10) || 22000);
 const CB01_MIN_TIMEOUT = Math.max(15000, parseInt(process.env.CB01_PROVIDER_TIMEOUT || '22000', 10) || 22000);
 const GUARDO_SERIE_EMPTY_TTL = Math.max(15, parseInt(process.env.GS_PROVIDER_EMPTY_TTL || '45', 10) || 45);
 const GUARDO_SERIE_ERROR_TTL = Math.max(3, Math.min(GUARDO_SERIE_EMPTY_TTL, parseInt(process.env.GS_PROVIDER_ERROR_TTL || '5', 10) || 5));
-const GUARDASERIETV_EMPTY_TTL = Math.max(15, parseInt(process.env.GSTV_PROVIDER_EMPTY_TTL || '45', 10) || 45);
-const GUARDASERIETV_ERROR_TTL = Math.max(3, Math.min(GUARDASERIETV_EMPTY_TTL, parseInt(process.env.GSTV_PROVIDER_ERROR_TTL || '8', 10) || 8));
+const VIDXGO_EMPTY_TTL = Math.max(15, parseInt(process.env.VIDXGO_PROVIDER_EMPTY_TTL || '45', 10) || 45);
+const VIDXGO_ERROR_TTL = Math.max(3, Math.min(VIDXGO_EMPTY_TTL, parseInt(process.env.VIDXGO_PROVIDER_ERROR_TTL || '8', 10) || 8));
 const EUROSTREAMING_EMPTY_TTL = Math.max(15, parseInt(process.env.ES_PROVIDER_EMPTY_TTL || '45', 10) || 45);
 const EUROSTREAMING_ERROR_TTL = Math.max(3, Math.min(EUROSTREAMING_EMPTY_TTL, parseInt(process.env.ES_PROVIDER_ERROR_TTL || '8', 10) || 8));
 const CB01_EMPTY_TTL = Math.max(15, parseInt(process.env.CB01_PROVIDER_EMPTY_TTL || '45', 10) || 45);
@@ -175,17 +175,17 @@ const WEB_PROVIDER_DEFINITIONS = [
         run: ({ meta, config, reqHost }) => searchGuardoSerie(meta, config, reqHost)
     },
     {
-        key: 'guardaserieTv',
-        recipeId: 'guardaserietv',
-        sourceName: 'GuardaserieTV',
-        cacheName: 'GuardaserieTV',
-        icon: '📺',
-        limiterKey: 'webGstv',
-        minTimeout: GUARDASERIETV_MIN_TIMEOUT,
-        emptyTtl: GUARDASERIETV_EMPTY_TTL,
-        errorTtl: GUARDASERIETV_ERROR_TTL,
-        isEnabled: ({ filters }) => filters?.enableGstv === true,
-        run: ({ meta, config, reqHost }) => searchGuardaserieTv(meta, config, reqHost)
+        key: 'vidxgo',
+        recipeId: null,
+        sourceName: 'VidxGo',
+        cacheName: 'VidxGo',
+        icon: '🎯',
+        limiterKey: 'webVidxgo',
+        minTimeout: VIDXGO_MIN_TIMEOUT,
+        emptyTtl: VIDXGO_EMPTY_TTL,
+        errorTtl: VIDXGO_ERROR_TTL,
+        isEnabled: ({ filters }) => filters?.enableVidxgo === true,
+        run: ({ meta, config, reqHost }) => searchVidxgo(meta, config, reqHost)
     },
     {
         key: 'eurostreaming',

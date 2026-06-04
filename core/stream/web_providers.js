@@ -265,7 +265,7 @@ function inferWebQuality(stream, sourceName) {
         if (normalized) return normalized;
     }
 
-    const textToCheck = `${stream?.title || ''} ${stream?.name || ''} ${stream?.filename || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|GUARDASERIETV|STREAMINGCOMMUNITY|CINEMACITY|LEVIATHAN|VIX|GUARDAFLIX|CB01|ANIMEWORLD|ANIMEUNITY|ANIMESATURN/g, '');
+    const textToCheck = `${stream?.title || ''} ${stream?.name || ''} ${stream?.filename || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|VIDXGO|STREAMINGCOMMUNITY|CINEMACITY|LEVIATHAN|VIX|GUARDAFLIX|CB01|ANIMEWORLD|ANIMEUNITY|ANIMESATURN/g, '');
     if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) return '4K';
     if (/\b(1440P|2K|QHD)\b/.test(textToCheck)) return '1440p';
     if (/\b(1080P|FHD|FULLHD)\b/.test(textToCheck)) return '1080p';

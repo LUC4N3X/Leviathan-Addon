@@ -27,6 +27,29 @@ test('validateConfig migrates aliases and version', () => {
   assert.equal(config.filters.sourceMode, 'balanced');
 });
 
+test('validateConfig migrates the legacy GuardaserieTV toggle to VidxGo', () => {
+  const config = validateConfig({
+    filters: {
+      enableGstv: true
+    }
+  });
+
+  assert.equal(config.filters.enableVidxgo, true);
+  assert.equal(config.filters.enableGstv, undefined);
+});
+
+test('validateConfig keeps an explicit VidxGo toggle over the legacy flag', () => {
+  const config = validateConfig({
+    filters: {
+      enableGstv: true,
+      enableVidxgo: false
+    }
+  });
+
+  assert.equal(config.filters.enableVidxgo, false);
+  assert.equal(config.filters.enableGstv, undefined);
+});
+
 test('validateConfig normalizes source mode aliases', () => {
   const config = validateConfig({
     filters: {
