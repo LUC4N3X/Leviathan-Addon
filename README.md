@@ -1,19 +1,21 @@
 <div align="center">
 
   <a href="https://leviathanaddon.dpdns.org" target="_blank">
-    <img src="https://i.ibb.co/BKZNKbq3/logo.png" alt="Leviathan Logo" width="188" />
+    <img src="https://i.ibb.co/BKZNKbq3/logo.png" alt="Leviathan Logo" width="202" />
   </a>
 
+  <br><br>
+
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:070B13,15:081A2E,32:00E7FF,50:1E90FF,68:7C3AED,84:00CFFF,100:070B13&height=86&section=header&reversal=false&animation=fadeIn" width="68%" alt="Leviathan sea wave" />
+
   <br>
 
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:070B13,18:081A2E,34:00D9FF,52:1E90FF,68:7C3AED,84:00CFFF,100:070B13&height=72&section=header&reversal=false&animation=fadeIn" width="56%" alt="Leviathan sea wave" />
-
-  <br>
-
-  <img src="https://capsule-render.vercel.app/api?type=transparent&height=92&section=header&text=LEVIATHAN&fontSize=74&fontColor=00E7FF&animation=fadeIn&fontAlignY=42&desc=ITA-first%20%2F%20ENG-ready%20Stremio%20Aggregation%20Engine&descSize=18&descAlignY=78&descColor=A8F7FF" alt="Leviathan" width="100%" />
+  <img src="https://capsule-render.vercel.app/api?type=transparent&height=108&section=header&text=LEVIATHAN&fontSize=78&fontColor=00E7FF&animation=fadeIn&fontAlignY=40&desc=ITA-first%20%2F%20ENG-ready%20Stremio%20Intelligence%20Protocol&descSize=18&descAlignY=76&descColor=A8F7FF" alt="Leviathan" width="100%" />
 
   <p>
+    <img alt="Protocol" src="https://img.shields.io/badge/Leviathan-Protocol-00E7FF?style=for-the-badge&labelColor=07111F" />
     <img alt="Stremio Native" src="https://img.shields.io/badge/Stremio-Native%20Addon-7C3AED?style=for-the-badge&logo=stremio&logoColor=ffffff&labelColor=07111F" />
+    <img alt="Kraken Ready" src="https://img.shields.io/badge/Kraken-Ready-2EE6A6?style=for-the-badge&labelColor=07111F" />
   </p>
 
   <h3>🔱 High-performance stream intelligence layer for Stremio</h3>
@@ -25,6 +27,10 @@
   </p>
 
   <p>
+    <sub><b>Built to keep Stremio clean, fast and focused on real results.</b></sub>
+  </p>
+
+  <p>
     <a href="https://leviathanaddon.dpdns.org" target="_blank">
       <img alt="Install Leviathan" src="https://img.shields.io/badge/Install-Leviathan-00E7FF?style=for-the-badge&logo=stremio&logoColor=ffffff&labelColor=07111F" />
     </a>
@@ -33,22 +39,28 @@
     <img alt="Language" src="https://img.shields.io/badge/Language-ITA_%2F_ENG-A8BFFF?style=for-the-badge&labelColor=07111F" />
   </p>
 
-  <table align="center" width="94%">
+  <br>
+
+  <table align="center" width="92%">
     <tr>
       <td align="center" width="25%">
-        <b>🧠 Semantic Core</b><br>
-        <sub>Matching avanzato, ranking intelligente e filtri anti-rumore.</sub>
+        <img alt="Semantic Core" src="https://img.shields.io/badge/Semantic-Core-00E7FF?style=flat-square&labelColor=07111F" /><br><br>
+        <b>🧠 Intelligent Matching</b><br>
+        <sub>Ranking semantico, dedupe reale e filtri anti-rumore.</sub>
       </td>
       <td align="center" width="25%">
-        <b>🇮🇹 ITA-First Logic</b><br>
-        <sub>Priorità ai risultati italiani reali, con fallback ENG controllato.</sub>
+        <img alt="ITA First" src="https://img.shields.io/badge/ITA-First-2EE6A6?style=flat-square&labelColor=07111F" /><br><br>
+        <b>🇮🇹 Real ITA Priority</b><br>
+        <sub>Priorità ai risultati italiani credibili, con fallback ENG controllato.</sub>
       </td>
       <td align="center" width="25%">
-        <b>☁️ Debrid Cloud</b><br>
-        <sub>Riconoscimento RD/TorBox senza doppioni inutili.</sub>
+        <img alt="Debrid Cloud" src="https://img.shields.io/badge/Debrid-Cloud-7C3AED?style=flat-square&labelColor=07111F" /><br><br>
+        <b>☁️ RD / TorBox Aware</b><br>
+        <sub>Riconoscimento cloud salvato senza doppioni inutili.</sub>
       </td>
       <td align="center" width="25%">
-        <b>🌊 Hybrid Network</b><br>
+        <img alt="Hybrid Network" src="https://img.shields.io/badge/Hybrid-Network-00BFFF?style=flat-square&labelColor=07111F" /><br><br>
+        <b>🌊 Unified Flow</b><br>
         <sub>Torrent, web provider, anime source e Kraken in un unico flusso.</sub>
       </td>
     </tr>
@@ -64,7 +76,7 @@
     </sub>
   </p>
 
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:070B13,35:00E7FF,50:7C3AED,65:00BFFF,100:070B13&height=2&section=footer" width="46%" alt="divider" />
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:070B13,30:00E7FF,50:7C3AED,70:00BFFF,100:070B13&height=3&section=footer" width="54%" alt="divider" />
 
 </div>
 
