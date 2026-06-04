@@ -5012,7 +5012,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               sc: isStreamingCommunityEnabled(filters),
               ghd: filters.enableGhd === true,
               gs: filters.enableGs === true,
-              gstv: filters.enableGstv === true,
+              vidxgo: filters.enableVidxgo === true,
               es: filters.enableEs === true,
               cb01: filters.enableCb01 === true,
               onlineserietv: filters.enableOnlineserietv === true,
@@ -5077,7 +5077,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           isStreamingCommunityEnabled(filters),
           filters.enableGhd,
           filters.enableGs,
-          filters.enableGstv,
+          filters.enableVidxgo,
           filters.enableEs,
           filters.enableCb01,
           filters.enableOnlineserietv,
@@ -5107,7 +5107,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       const emptyAnimeUnityLocalTtl = finalStreams.length === 0 && isAnimeUnityKitsuRequest
           ? Math.min(Math.max(1, Number(cachePolicyBase.localTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 30)
           : cachePolicyBase.localTtl;
-      const isGsOnlyWebRequest = cacheScope === 'webonly' && enabledWebProvidersCount === 1 && (filters.enableGs === true || filters.enableGstv === true);
+      const isGsOnlyWebRequest = cacheScope === 'webonly' && enabledWebProvidersCount === 1 && (filters.enableGs === true || filters.enableVidxgo === true);
       const emptyGsOnlyLocalTtl = finalStreams.length === 0 && isGsOnlyWebRequest
           ? Math.min(Math.max(1, Number(emptyAnimeUnityLocalTtl || EMPTY_STREAM_TTL) || EMPTY_STREAM_TTL), 5)
           : emptyAnimeUnityLocalTtl;

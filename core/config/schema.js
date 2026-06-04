@@ -138,7 +138,7 @@ function validateConfig(input = {}) {
     }
   }
 
-  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableGstv', 'enableEs', 'enableCb01', 'enableOnlineserietv', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableAltadefinizione', 'enableToonItalia', 'enableMoflix', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast', 'savedCloudAggressive', 'savedCloudSnapshotEnabled', 'useTorrentIntelligenceRanking', 'useLeviathanScoreProfile'];
+  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableVidxgo', 'enableEs', 'enableCb01', 'enableOnlineserietv', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableAltadefinizione', 'enableToonItalia', 'enableMoflix', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast', 'savedCloudAggressive', 'savedCloudSnapshotEnabled', 'useTorrentIntelligenceRanking', 'useLeviathanScoreProfile'];
   for (const key of booleanFilterKeys) {
     if (output.filters[key] !== undefined) output.filters[key] = !!output.filters[key];
   }
@@ -159,7 +159,7 @@ function validateConfig(input = {}) {
     : (output.filters.enableSavedCloud ? 'smart' : 'off');
   if (output.filters.savedCloudMode === 'off') output.filters.enableSavedCloud = false;
   if (output.filters.enableSavedCloud && (!output.filters.savedCloudMax || output.filters.savedCloudMax < 1)) output.filters.savedCloudMax = 6;
-  
+
   output.filters.savedCloudAggressive = output.filters.savedCloudAggressive !== undefined
     ? output.filters.savedCloudAggressive
     : APP_SETTINGS.savedCloud.aggressive;
