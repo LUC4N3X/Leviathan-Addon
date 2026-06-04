@@ -5,8 +5,9 @@
   </a>
 
   <br>
+  <br>
 
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:070B13,18:081A2E,34:00D9FF,52:1E90FF,68:7C3AED,84:00CFFF,100:070B13&height=72&section=header&reversal=false&animation=fadeIn" width="56%" alt="Leviathan sea wave" />
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:070B13,24:00D9FF,50:7C3AED,76:00CFFF,100:070B13&height=5&section=header&animation=fadeIn" width="44%" alt="Leviathan sea glow" />
 
   <br>
 
