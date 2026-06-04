@@ -119,6 +119,12 @@ DEFAULT_CONFIG: Dict[str, str] = {
     "CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS": "6500",
     "CURL_CFFI_PROXY": "",
     "CURL_CFFI_PYTHON": "",
+    "CURL_CFFI_PROFILE_STATE": "true",
+    "CURL_CFFI_PROFILE_STATE_PATH": "/tmp/curl_cffi_profile_state.json",
+    "CURL_CFFI_PROFILE_STATE_TTL_SECONDS": "604800",
+    "CURL_CFFI_PROFILE_STATE_MAX_HOSTS": "256",
+    "CURL_CFFI_ADAPTIVE_HTTP_VERSION": "true",
+    "CURL_CFFI_HTTP_VERSION_ON_RETRY": "1.1",
 }
 
 CF_CHALLENGE_RE = re.compile(
@@ -806,6 +812,186 @@ def save_cookie_jar(base_dir: str, url: str, impersonate: str, proxy: str, items
         pass
 
 
+
+
+def profile_state_file_path(raw_path: str) -> Path:
+    clean = str(raw_path or "").strip() or "/tmp/curl_cffi_profile_state.json"
+    return Path(clean).expanduser().resolve()
+
+
+def load_profile_state(path: Path, *, ttl_seconds: int) -> Dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"version": 1, "hosts": {}}
+    if not isinstance(data, dict):
+        return {"version": 1, "hosts": {}}
+    hosts = data.get("hosts")
+    if not isinstance(hosts, dict):
+        data["hosts"] = {}
+        return data
+    current = now_ts()
+    ttl = max(60, int(ttl_seconds or 604800))
+    for host in list(hosts.keys()):
+        entry = hosts.get(host)
+        if not isinstance(entry, dict):
+            hosts.pop(host, None)
+            continue
+        profiles = entry.get("profiles")
+        if not isinstance(profiles, dict):
+            entry["profiles"] = {}
+            continue
+        for key in list(profiles.keys()):
+            profile = profiles.get(key)
+            if not isinstance(profile, dict):
+                profiles.pop(key, None)
+                continue
+            last_seen = int(profile.get("lastSeen") or 0)
+            if last_seen and current - last_seen > ttl:
+                profiles.pop(key, None)
+        if not profiles and int(entry.get("updatedAt") or 0) and current - int(entry.get("updatedAt") or 0) > ttl:
+            hosts.pop(host, None)
+    return data
+
+
+def save_profile_state(path: Path, state: Dict[str, Any], *, max_hosts: int) -> None:
+    try:
+        hosts = state.setdefault("hosts", {})
+        if isinstance(hosts, dict) and len(hosts) > max(1, int(max_hosts or 256)):
+            ordered = sorted(
+                hosts.items(),
+                key=lambda item: int((item[1] or {}).get("updatedAt") or 0),
+                reverse=True,
+            )[: max(1, int(max_hosts or 256))]
+            state["hosts"] = dict(ordered)
+        state["version"] = 1
+        state["updatedAt"] = now_ts()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        pass
+
+
+def host_state_for(state: Dict[str, Any], url: str) -> Dict[str, Any]:
+    host = host_from_url(url) or "unknown-host"
+    hosts = state.setdefault("hosts", {})
+    if not isinstance(hosts, dict):
+        state["hosts"] = hosts = {}
+    entry = hosts.setdefault(host, {"profiles": {}, "updatedAt": now_ts()})
+    if not isinstance(entry, dict):
+        entry = {"profiles": {}, "updatedAt": now_ts()}
+        hosts[host] = entry
+    profiles = entry.setdefault("profiles", {})
+    if not isinstance(profiles, dict):
+        entry["profiles"] = {}
+    return entry
+
+
+def profile_state_key(impersonate: str, proxy: str) -> str:
+    return f"{impersonate or 'default'}|{proxy_fingerprint(proxy)}"
+
+
+def profile_entry_for(state: Dict[str, Any], url: str, impersonate: str, proxy: str) -> Dict[str, Any]:
+    host_state = host_state_for(state, url)
+    profiles = host_state.setdefault("profiles", {})
+    key = profile_state_key(impersonate, proxy)
+    entry = profiles.setdefault(key, {"profile": impersonate, "proxyKey": proxy_fingerprint(proxy), "success": 0, "fail": 0, "challenge": 0, "avgMs": 0, "score": 0.5, "lastSeen": 0})
+    if not isinstance(entry, dict):
+        entry = {"profile": impersonate, "proxyKey": proxy_fingerprint(proxy), "success": 0, "fail": 0, "challenge": 0, "avgMs": 0, "score": 0.5, "lastSeen": 0}
+        profiles[key] = entry
+    return entry
+
+
+def score_profile_entry(entry: Dict[str, Any]) -> float:
+    success = max(0.0, float(entry.get("success") or 0))
+    fail = max(0.0, float(entry.get("fail") or 0))
+    challenge = max(0.0, float(entry.get("challenge") or 0))
+    avg_ms = max(0.0, float(entry.get("avgMs") or 0))
+    total = success + fail + challenge
+    if total <= 0:
+        return 0.5
+    success_ratio = (success + 0.35) / (total + 0.7)
+    challenge_penalty = min(0.45, challenge * 0.08)
+    latency_penalty = min(0.18, avg_ms / 30000.0)
+    status_penalty = 0.08 if int(entry.get("lastStatus") or 0) in RETRY_STATUSES else 0.0
+    return max(0.01, min(0.99, success_ratio - challenge_penalty - latency_penalty - status_penalty))
+
+
+def reorder_impersonate_chain(chain: List[str], state: Dict[str, Any], url: str, proxy: str) -> List[str]:
+    if not chain:
+        return chain
+    host_state = host_state_for(state, url)
+    profiles = host_state.get("profiles") or {}
+    proxy_key = proxy_fingerprint(proxy)
+
+    def best_score(profile: str) -> float:
+        scored = []
+        direct_key = profile_state_key(profile, proxy)
+        if isinstance(profiles.get(direct_key), dict):
+            scored.append(float(profiles[direct_key].get("score") or score_profile_entry(profiles[direct_key])))
+        for _key, value in profiles.items():
+            if not isinstance(value, dict):
+                continue
+            if value.get("profile") == profile:
+                weight = 1.0 if value.get("proxyKey") == proxy_key else 0.75
+                scored.append(float(value.get("score") or score_profile_entry(value)) * weight)
+        return max(scored) if scored else 0.5
+
+    indexed = list(enumerate(dict.fromkeys(chain)))
+    indexed.sort(key=lambda item: (best_score(item[1]), -item[0]), reverse=True)
+    return [profile for _, profile in indexed]
+
+
+def record_profile_result(
+    state: Dict[str, Any],
+    url: str,
+    impersonate: str,
+    proxy: str,
+    *,
+    status: int = 0,
+    challenge: bool = False,
+    elapsed_ms: int = 0,
+    error: str = "",
+) -> Dict[str, Any]:
+    entry = profile_entry_for(state, url, impersonate, proxy)
+    previous_avg = float(entry.get("avgMs") or 0)
+    elapsed = max(0, int(elapsed_ms or 0))
+    if elapsed:
+        entry["avgMs"] = int(elapsed if previous_avg <= 0 else (previous_avg * 0.72 + elapsed * 0.28))
+
+    code = int(status or 0)
+    ok = bool(code and 200 <= code < 400 and not challenge and not error)
+    if ok:
+        entry["success"] = int(entry.get("success") or 0) + 1
+    elif challenge:
+        entry["challenge"] = int(entry.get("challenge") or 0) + 1
+        entry["fail"] = int(entry.get("fail") or 0) + 1
+    else:
+        entry["fail"] = int(entry.get("fail") or 0) + 1
+
+    entry["lastStatus"] = code
+    entry["lastError"] = str(error or "")[:160]
+    entry["lastSeen"] = now_ts()
+    entry["score"] = round(score_profile_entry(entry), 4)
+    host_state_for(state, url)["updatedAt"] = now_ts()
+    return entry
+
+
+def adaptive_http_version_mode(requested: str, profile_entry: Dict[str, Any], retry_index: int, input_signals: Dict[str, Any]) -> str:
+    raw = str(requested or "auto").strip().lower() or "auto"
+    if raw not in {"", "auto"}:
+        return raw
+    if not cfg_bool("CURL_CFFI_ADAPTIVE_HTTP_VERSION", True):
+        return raw
+    preferred = str(input_signals.get("preferHttpVersion") or input_signals.get("httpVersion") or "").strip().lower()
+    if preferred in {"1.1", "http1.1", "2", "h2", "http2", "3", "h3", "http3"}:
+        return preferred
+    if retry_index > 0 and int(profile_entry.get("fail") or 0) >= 1:
+        return cfg("CURL_CFFI_HTTP_VERSION_ON_RETRY", "1.1") or "1.1"
+    return raw
+
 def is_usable_proxy_url(value: str) -> bool:
     clean = str(value or "").strip()
     if not clean:
@@ -999,6 +1185,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=int, default=cfg_int("CURL_CFFI_TIMEOUT_MS", 15000, minimum=1000), help="Timeout per request in milliseconds")
     parser.add_argument("--impersonate", default=cfg("CURL_CFFI_IMPERSONATE", "auto"), help="auto or comma-separated curl_cffi impersonation labels")
     parser.add_argument("--proxy", default=cfg("CURL_CFFI_PROXY", ""))
+    parser.add_argument("--signals-json", default="", help="Optional decision hints supplied by the Node.js provider layer")
+    parser.add_argument("--profile-state", dest="profile_state", action="store_true", default=cfg_bool("CURL_CFFI_PROFILE_STATE", True), help="Reorder impersonation profiles per host using recent reliability feedback")
+    parser.add_argument("--no-profile-state", dest="profile_state", action="store_false")
+    parser.add_argument("--profile-state-path", default=cfg("CURL_CFFI_PROFILE_STATE_PATH", "/tmp/curl_cffi_profile_state.json"))
+    parser.add_argument("--profile-state-ttl", type=int, default=cfg_int("CURL_CFFI_PROFILE_STATE_TTL_SECONDS", 604800, minimum=60, maximum=31536000))
     parser.add_argument("--retries", type=int, default=cfg_int("CURL_CFFI_RETRIES", 1, minimum=0, maximum=5))
     parser.add_argument("--retry-backoff", type=int, default=cfg_int("CURL_CFFI_RETRY_BACKOFF_MS", 250, minimum=0, maximum=5000), help="Base backoff in milliseconds")
     parser.add_argument("--accept-language", default=cfg("CURL_CFFI_ACCEPT_LANGUAGE", "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"))
@@ -1039,6 +1230,9 @@ def response_payload_from(
     attempts: List[Dict[str, Any]],
     started: float,
     args: argparse.Namespace,
+    input_signals: Optional[Dict[str, Any]] = None,
+    profile_state_entry: Optional[Dict[str, Any]] = None,
+    http_version_mode: str = "auto",
 ) -> Dict[str, Any]:
     html = getattr(response, "text", "") or ""
     response_headers = dict(getattr(response, "headers", None) or {})
@@ -1063,6 +1257,10 @@ def response_payload_from(
         "requestHeaders": headers,
         "impersonate": impersonate,
         "impersonateChain": impersonate_chain,
+        "profileScore": (profile_state_entry or {}).get("score"),
+        "profileStats": {key: (profile_state_entry or {}).get(key) for key in ("success", "fail", "challenge", "avgMs", "lastStatus") if (profile_state_entry or {}).get(key) is not None},
+        "httpVersionMode": http_version_mode,
+        "inputSignals": input_signals or {},
         "challengeDetected": challenge,
         "challengeReason": challenge_reason(html, status, response_headers, final_url),
         "shouldRotateProxy": bool(challenge or status in {429, 503}),
@@ -1105,6 +1303,11 @@ def main() -> None:
     structured_cookie_items = parse_cookies_json(args.cookies_json, args.url)
     accept_encoding = effective_accept_encoding(args.accept_encoding)
     explicit_referer = choose_referer(args.url, args.referer, args.referer_pool)
+    input_signals = parse_json_object(args.signals_json)
+    profile_state_path = profile_state_file_path(args.profile_state_path)
+    profile_state = load_profile_state(profile_state_path, ttl_seconds=args.profile_state_ttl) if args.profile_state else {"version": 1, "hosts": {}}
+    if args.profile_state:
+        impersonate_chain = reorder_impersonate_chain(impersonate_chain, profile_state, args.url, args.proxy)
     last_error = ""
     last_payload: Optional[Dict[str, Any]] = None
 
@@ -1114,6 +1317,7 @@ def main() -> None:
     for impersonate in impersonate_chain:
         matched_ua = ua_for_impersonate(impersonate)
         persistent_cookies = load_cookie_jar(args.cookie_jar_dir, args.url, impersonate, args.proxy, cf_ttl_seconds=args.cf_cookie_ttl) if args.cookie_jar else []
+        current_profile_entry = profile_entry_for(profile_state, args.url, impersonate, args.proxy) if args.profile_state else {}
         challenge_seen_for_profile = False
 
         for retry_index in range(retry_budget + 1):
@@ -1167,6 +1371,7 @@ def main() -> None:
                         seeded_cookies = seed_session_cookies(session, header_get(headers, "cookie"), args.url, merge_cookie_items(seeded_cookies, hook_cookies), cf_ttl_seconds=args.cf_cookie_ttl)
                         put_header(headers, "Cookie", cookie_header_from_items(seeded_cookies), force=True)
 
+                http_version_mode = adaptive_http_version_mode(args.http_version, current_profile_entry, retry_index, input_signals)
                 request_kwargs: Dict[str, Any] = {
                     "headers": headers,
                     "timeout": timeout_seconds,
@@ -1180,7 +1385,7 @@ def main() -> None:
                     request_kwargs["impersonate"] = impersonate
                 if request_supports_accept_encoding:
                     request_kwargs["accept_encoding"] = accept_encoding
-                http_version_value = curl_http_version_value(args.http_version, impersonate)
+                http_version_value = curl_http_version_value(http_version_mode, impersonate)
                 if request_supports_http_version and http_version_value is not None:
                     request_kwargs["http_version"] = http_version_value
 
@@ -1219,6 +1424,9 @@ def main() -> None:
                     attempts=attempts,
                     started=started,
                     args=args,
+                    input_signals=input_signals,
+                    profile_state_entry=current_profile_entry,
+                    http_version_mode=http_version_mode,
                 )
 
                 cookies = payload.get("cookies") or []
@@ -1229,6 +1437,21 @@ def main() -> None:
                 challenge = bool(payload.get("challengeDetected"))
                 last_payload = payload
 
+                attempt_elapsed_ms = int((time.time() - attempt_started) * 1000)
+                if args.profile_state:
+                    current_profile_entry = record_profile_result(
+                        profile_state,
+                        args.url,
+                        impersonate,
+                        args.proxy,
+                        status=status,
+                        challenge=challenge,
+                        elapsed_ms=attempt_elapsed_ms,
+                    )
+                    save_profile_state(profile_state_path, profile_state, max_hosts=cfg_int("CURL_CFFI_PROFILE_STATE_MAX_HOSTS", 256, minimum=1, maximum=10000))
+                    payload["profileScore"] = current_profile_entry.get("score")
+                    payload["profileStats"] = {key: current_profile_entry.get(key) for key in ("success", "fail", "challenge", "avgMs", "lastStatus") if current_profile_entry.get(key) is not None}
+
                 attempts.append({
                     "impersonate": impersonate,
                     "retry": retry_index,
@@ -1236,7 +1459,9 @@ def main() -> None:
                     "challenge": challenge,
                     "challengeReason": payload.get("challengeReason") or "",
                     "seededCookies": len(seeded_cookies),
-                    "ms": int((time.time() - attempt_started) * 1000),
+                    "httpVersionMode": http_version_mode,
+                    "profileScore": current_profile_entry.get("score") if isinstance(current_profile_entry, dict) else None,
+                    "ms": attempt_elapsed_ms,
                 })
 
                 if challenge and args.before_flare and args.before_flare_cmd and not challenge_seen_for_profile:
@@ -1276,6 +1501,9 @@ def main() -> None:
                             attempts=attempts,
                             started=started,
                             args=args,
+                            input_signals=input_signals,
+                            profile_state_entry=current_profile_entry,
+                            http_version_mode=http_version_mode,
                         )
                         last_payload = retry_payload
                         if args.cookie_jar:
@@ -1308,7 +1536,20 @@ def main() -> None:
 
             except Exception as exc:
                 last_error = str(exc)
-                attempts.append({"impersonate": impersonate, "retry": retry_index, "error": last_error[:240], "ms": int((time.time() - attempt_started) * 1000)})
+                attempt_elapsed_ms = int((time.time() - attempt_started) * 1000)
+                if args.profile_state:
+                    current_profile_entry = record_profile_result(
+                        profile_state,
+                        args.url,
+                        impersonate,
+                        args.proxy,
+                        status=0,
+                        challenge=False,
+                        elapsed_ms=attempt_elapsed_ms,
+                        error=last_error,
+                    )
+                    save_profile_state(profile_state_path, profile_state, max_hosts=cfg_int("CURL_CFFI_PROFILE_STATE_MAX_HOSTS", 256, minimum=1, maximum=10000))
+                attempts.append({"impersonate": impersonate, "retry": retry_index, "error": last_error[:240], "profileScore": current_profile_entry.get("score") if isinstance(current_profile_entry, dict) else None, "ms": attempt_elapsed_ms})
 
                 if retry_index < retry_budget:
                     sleep_before_retry(backoff_ms, retry_index)

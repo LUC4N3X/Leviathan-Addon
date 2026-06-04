@@ -25,6 +25,7 @@ const { SingleFlight, TtlLruCache, createLimiter } = require('../utils/provider_
 const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
+const { extractEmbedCandidates } = require('../extractors/semantic_candidate_extractor');
 const { requestWithImpit } = require('../utils/bypass');
 
 const CONFIG = Object.freeze({
@@ -686,6 +687,12 @@ function parsePageJobs(html, pageUrl) {
     if (jobs.length === 0) {
         for (const embed of extractScriptEmbeds(html, pageUrl)) {
             pushJob(embed, defaultIsSub, 'script-url');
+        }
+    }
+
+    if (jobs.length === 0) {
+        for (const candidate of extractEmbedCandidates(html, { baseUrl: pageUrl, maxCandidates: CONFIG.MAX_IFRAMES_PER_PAGE })) {
+            pushJob(candidate.url, defaultIsSub, 'semantic-embed');
         }
     }
 

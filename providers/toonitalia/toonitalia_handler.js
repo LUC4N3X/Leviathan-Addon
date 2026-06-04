@@ -12,6 +12,7 @@ const {
     pickBetterQuality
 } = require('../extractors/common');
 const { extractFromUrl, resolveExtractorDefinition, HOSTER_DIRECT_LINK_PATTERN } = require('../extractors/registry');
+const { extractResilientEmbeds } = require('../extractors/semantic_candidate_extractor');
 const { isVoeUrl } = require('../extractors/hosters/voe');
 const { isLoadmUrl } = require('../extractors/hosters/loadm');
 const { isMaxstreamUrl } = require('../extractors/hosters/maxstream');
@@ -326,6 +327,8 @@ function extractLinksFromHtml(html) {
 
     const directRe = new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'gi');
     for (const match of decoded.matchAll(directRe)) add(match[0]);
+
+    for (const semanticUrl of extractResilientEmbeds(decoded, { maxCandidates: 40 })) add(semanticUrl);
 
     return links;
 }

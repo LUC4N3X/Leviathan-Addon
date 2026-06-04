@@ -17,6 +17,7 @@ const {
     qualityRank
 } = require('../extractors/common');
 const { extractFromUrl, resolveExtractorDefinition } = require('../extractors/registry');
+const { extractEmbedCandidates } = require('../extractors/semantic_candidate_extractor');
 const { createMediaflowGateway, getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
 
 const PROVIDER_ID = 'altadefinizione';
@@ -227,6 +228,14 @@ function collectPlayableSources({ payload = {}, imdbId = null, type = 'movie', s
     };
 
     for (const source of Array.isArray(payload?.sources) ? payload.sources : []) add(source);
+
+    for (const semanticCandidate of extractEmbedCandidates(payload, { baseUrl: BASE_URL, maxCandidates: MAX_SOURCES })) {
+        add({
+            url: semanticCandidate.url,
+            provider: semanticCandidate.label,
+            quality: 'Unknown'
+        });
+    }
 
     if (!out.some((source) => source.extractor === 'VidxGo')) {
         const synthetic = buildSyntheticVidxgoUrl(imdbId, type, season, episode);

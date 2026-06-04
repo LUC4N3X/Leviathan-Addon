@@ -28,6 +28,7 @@ const { isCanceledError, isCloudflareChallenge, requestWithImpitRotating } = req
 const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
+const { extractResilientEmbeds } = require('../extractors/semantic_candidate_extractor');
 const { createCloudflareBypass, envFlag } = require('../utils/cloudflare_bypass');
 
 const INITIAL_GS_DOMAIN      = 'https://guardoserie.run';
@@ -1394,6 +1395,11 @@ function extractPlayerLinksFromHtml(html) {
       const c = normalize(m);
       if (c && isLikelyPlayerUrl(c)) links.add(c);
     }
+  }
+
+  for (const semanticUrl of extractResilientEmbeds(raw, { baseUrl, maxCandidates: 32 })) {
+    const c = normalize(semanticUrl);
+    if (c && isLikelyPlayerUrl(c)) links.add(c);
   }
 
   return Array.from(links);

@@ -9,7 +9,11 @@ const {
 } = require('../../core/proxy/forward_proxy_config');
 const { isUprotUrl, resolveUprotToMaxstream } = require('../extractors/hosters/uprot');
 const { extractMixdrop } = require('../extractors/hosters/mixdrop');
+const { extractResilientEmbeds } = require('../extractors/semantic_candidate_extractor');
 const { requestWithImpitRotating, isCanceledError } = require('../utils/bypass');
+let runCurlCffiBypass = null;
+try { ({ runCurlCffiBypass } = require('../utils/cloudflare_bypass')); } catch (_) { runCurlCffiBypass = null; }
+let curlCffiRunnerOverride = null;
 const {
     buildProviderHtmlHeaders,
     createProviderCache,
@@ -64,7 +68,16 @@ const CB01_CODE_DEFAULTS = Object.freeze({
     CB01_IMPIT_INNER_RETRY: '0',
     CB01_IMPIT_RETRY_ON_CHALLENGE: '0',
     CB01_IMPIT_HTTP3: '0',
-    CB01_IMPIT_BROWSER: 'chrome125'
+    CB01_IMPIT_BROWSER: 'chrome125',
+
+    CB01_CURL_CFFI_FALLBACK: '1',
+    CB01_CURL_CFFI_IMPERSONATE: 'auto',
+    CB01_CURL_CFFI_SEARCH_TIMEOUT_MS: '4200',
+    CB01_CURL_CFFI_PAGE_TIMEOUT_MS: '5200',
+    CB01_CURL_CFFI_MIN_REMAINING_MS: '2600',
+    CB01_CURL_CFFI_RETRIES: '0',
+    CB01_CURL_CFFI_RETRY_BACKOFF_MS: '0',
+    CB01_CURL_CFFI_WARMUP_ORIGIN: '0'
 });
 
 const CB_SIMPLE_UAS = Object.freeze([
@@ -1071,6 +1084,133 @@ function impitResponseStatus(response) {
     return Number.isFinite(value) ? value : 0;
 }
 
+function getCbCurlCffiRunner() {
+    return curlCffiRunnerOverride || runCurlCffiBypass || null;
+}
+
+function isCbCurlCffiFallbackEnabled() {
+    if (!envFlag('CB01_CURL_CFFI_FALLBACK', true)) return false;
+    const global = String(process.env.CURL_CFFI_ENABLED ?? '').trim().toLowerCase();
+    return !['0', 'false', 'no', 'off', 'disabled'].includes(global);
+}
+
+function isUsableCbCurlCffiResult(result) {
+    if (!result || result.status !== 'ok') return false;
+    const status = Number(result.code || result.statusCode || 0);
+    const html = String(result.html || result.response || '');
+    if (!status || status >= 400) return false;
+    if (!html) return false;
+    const usableHtml = hasCbUsableHtml(html);
+    const challenge = result.challengeDetected === true || isChallengePage(html);
+    return !challenge || usableHtml;
+}
+
+async function fetchViaCbCurlCffi(url, baseUrl, {
+    label = 'fetch',
+    headers = null,
+    timeoutMs = 4500,
+    totalBudgetMs = 0,
+    startedAt = Date.now(),
+    previousVia = '',
+    previousStatus = 0,
+    previousError = '',
+    previousChallenge = false
+} = {}) {
+    const runner = getCbCurlCffiRunner();
+    if (typeof runner !== 'function' || !isCbCurlCffiFallbackEnabled()) {
+        return null;
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    const remainingBudgetMs = Number(totalBudgetMs || 0) > 0 ? Number(totalBudgetMs) - elapsedMs : Number(timeoutMs || 0);
+    const minRemainingMs = envInt('CB01_CURL_CFFI_MIN_REMAINING_MS', 2600, 1000, 12000);
+    if (remainingBudgetMs < minRemainingMs) {
+        cbDebug('trace', 'curl_cffi fallback skipped: not enough budget', {
+            label,
+            url: safeUrlForLog(url),
+            elapsedMs,
+            remainingBudgetMs,
+            minRemainingMs
+        });
+        return null;
+    }
+
+    const isSearch = label === 'search';
+    const configuredTimeout = envInt(
+        isSearch ? 'CB01_CURL_CFFI_SEARCH_TIMEOUT_MS' : 'CB01_CURL_CFFI_PAGE_TIMEOUT_MS',
+        isSearch ? 4200 : 5200,
+        1200,
+        15000
+    );
+    const effectiveTimeoutMs = Math.max(1200, Math.min(Number(timeoutMs || configuredTimeout), configuredTimeout, remainingBudgetMs - 350));
+    const requestHeaders = headers || buildCbBrowserHeaders(baseUrl, url, label);
+    const referer = requestHeaders.Referer || requestHeaders.referer || `${baseUrl}/`;
+
+    cbDebug('info', 'curl_cffi fallback attempt', {
+        label,
+        url: safeUrlForLog(url),
+        timeoutMs: effectiveTimeoutMs,
+        remainingBudgetMs,
+        previousVia,
+        previousStatus,
+        previousChallenge
+    });
+
+    try {
+        const result = await runner(url, 'cb01', {
+            headers: requestHeaders,
+            referer,
+            timeout: effectiveTimeoutMs,
+            retries: envInt('CB01_CURL_CFFI_RETRIES', 0, 0, 2),
+            retryBackoffMs: envInt('CB01_CURL_CFFI_RETRY_BACKOFF_MS', 0, 0, 3000),
+            warmupOrigin: envFlag('CB01_CURL_CFFI_WARMUP_ORIGIN', false),
+            browserHeaders: true,
+            impersonate: envString('CB01_CURL_CFFI_IMPERSONATE', 'auto'),
+            signalsJson: {
+                provider: 'cb01',
+                label,
+                previousVia,
+                previousStatus,
+                previousError: String(previousError || '').slice(0, 160),
+                previousChallenge: Boolean(previousChallenge),
+                budgetRemainingMs: remainingBudgetMs
+            },
+            coalesceKey: `cb01:curl_cffi:${label}:${url}`
+        });
+
+        const html = String(result?.html || result?.response || '');
+        const status = Number(result?.code || result?.statusCode || 0);
+        const challenge = result?.challengeDetected === true || isChallengePage(html);
+        const usableHtml = hasCbUsableHtml(html);
+        const ok = isUsableCbCurlCffiResult(result);
+
+        cbDebug(ok ? 'info' : 'warn', 'curl_cffi fallback result', {
+            label,
+            url: safeUrlForLog(url),
+            status,
+            bytes: Buffer.byteLength(html || '', 'utf8'),
+            challenge,
+            usableHtml,
+            impersonate: result?.impersonate || '',
+            profileScore: result?.profileScore,
+            httpVersionMode: result?.httpVersionMode || '',
+            elapsedMs: result?.elapsedMs || undefined,
+            probe: htmlProbe(html)
+        });
+
+        if (!ok) return null;
+        return { text: html, status, proxyHost: '', via: 'curl-cffi-fast-fallback' };
+    } catch (error) {
+        cbDebug('warn', 'curl_cffi fallback failed', {
+            label,
+            url: safeUrlForLog(url),
+            error: error?.message || String(error),
+            ms: Date.now() - startedAt
+        });
+        return null;
+    }
+}
+
 function buildCbImpitAttempts(url, baseUrl, label, config = {}, hardTimeoutMs = 9000) {
     const attempts = [];
     const upstreamHeaders = buildCbBrowserHeaders(baseUrl, url, label);
@@ -1319,6 +1459,19 @@ async function fetchViaCbProxy(url, baseUrl, { timeoutMs, label = 'fetch', confi
             break;
         }
     }
+
+    const curlFallback = await fetchViaCbCurlCffi(url, baseUrl, {
+        label,
+        headers: buildCbBrowserHeaders(baseUrl, url, label),
+        timeoutMs: envInt(label === 'search' ? 'CB01_CURL_CFFI_SEARCH_TIMEOUT_MS' : 'CB01_CURL_CFFI_PAGE_TIMEOUT_MS', label === 'search' ? 4200 : 5200, 1200, 15000),
+        totalBudgetMs,
+        startedAt,
+        previousVia: lastVia,
+        previousStatus: lastStatus,
+        previousError: lastError,
+        previousChallenge: lastError === 'challenge' || lastStatus === 403 || lastStatus === 429 || lastStatus === 503
+    });
+    if (curlFallback?.text) return curlFallback;
 
     cbDebug('warn', 'impit html fetch exhausted attempts', {
         label,
@@ -1726,6 +1879,7 @@ function collectHosterUrlsFromHtml(html, baseUrl = null) {
     const source = String(html || '');
     for (const match of source.matchAll(/(?:data-src|src|href)=["']([^"']+)["']/gi)) push(match?.[1] || '');
     for (const match of source.matchAll(/https?:\/\/[^"'<>\s\\]+/gi)) push(match?.[0] || '');
+    for (const semanticUrl of extractResilientEmbeds(source, { baseUrl, maxCandidates: 32 })) push(semanticUrl);
     return urls;
 }
 
@@ -2293,6 +2447,9 @@ module.exports = {
         getCbForwardProxy,
         getExplicitCbForwardProxy,
         buildCbForwardProxyUrl,
-        toAxiosProxyConfig
+        toAxiosProxyConfig,
+        fetchViaCbCurlCffi,
+        isUsableCbCurlCffiResult,
+        __setCurlCffiRunner: (runner) => { curlCffiRunnerOverride = runner; }
     }
 };
