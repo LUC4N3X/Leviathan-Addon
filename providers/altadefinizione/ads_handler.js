@@ -30,7 +30,7 @@ const STREAM_TTL_MS = Math.max(60_000, Number.parseInt(process.env.ALTADEFINIZIO
 const JSON_TTL_MS = Math.max(60_000, Number.parseInt(process.env.ALTADEFINIZIONE_JSON_TTL_MS || String(30 * 60 * 1000), 10) || 30 * 60 * 1000);
 const MAX_SOURCES = Math.max(1, Math.min(8, Number.parseInt(process.env.ALTADEFINIZIONE_MAX_SOURCES || '4', 10) || 4));
 const DEBUG = /^(1|true|yes|on)$/i.test(String(process.env.ALTADEFINIZIONE_DEBUG || '0'));
-const KRAKEN_FIRST = /^(1|true|yes|on)$/i.test(String(process.env.ALTADEFINIZIONE_KRAKEN_FIRST || process.env.VIDXGO_KRAKEN_FIRST || '1'));
+const KRAKEN_FIRST = /^(1|true|yes|on)$/i.test(String(process.env.ALTADEFINIZIONE_KRAKEN_FIRST || '1'));
 const KRAKEN_EXTRACTOR_PATH = String(process.env.ALTADEFINIZIONE_KRAKEN_EXTRACTOR_PATH || process.env.KRAKEN_EXTRACTOR_PATH || '/extractor/video.m3u8').trim() || '/extractor/video.m3u8';
 
 const http = axios.create({
@@ -167,49 +167,38 @@ function buildDownloadEndpoint({ tmdbId, type }) {
         : `${BASE_URL}/api/download-episodes/${cleanTmdbId}`;
 }
 
-function isVidxgoUrl(url) {
-    try {
-        const host = new URL(String(url || '')).hostname.replace(/^www\./i, '').toLowerCase();
-        return /(?:^|\.)(?:v\.)?vidxgo\.(?:co|com|net|to)$/i.test(host);
-    } catch (_) {
-        return /vidxgo/i.test(String(url || ''));
-    }
-}
-
 function isBlockedSource(source = {}) {
     const text = `${source.provider || ''} ${source.url || ''}`;
     return /vixsrc\.to|vixsrc/i.test(text);
 }
 
+function isCdnSource(source = {}, url = '') {
+    const text = String(source.provider || source.name || source.label || '').toLowerCase();
+    return /\bcdn\b/.test(text) || isDirectHls(url) || isDirectVideo(url);
+}
+
 function sourceExtractorLabel(source = {}) {
-    const text = String(source.provider || source.name || source.label || source.url || '').trim();
     const url = String(source.url || '');
-    if (/vidx\s*go|vidxgo/i.test(text) || isVidxgoUrl(url)) return 'VidxGo';
-    if (/cdn/i.test(text)) return 'CDN';
     const def = resolveExtractorDefinition(url);
-    return def?.label || (text ? text.replace(/\s+/g, ' ') : 'Direct');
+    if (def?.label) return def.label;
+    if (isCdnSource(source, url)) return 'CDN';
+    const text = String(source.provider || source.name || source.label || '').trim();
+    return text ? text.replace(/\s+/g, ' ') : 'Direct';
 }
 
 function sourcePriority(source = {}) {
-    const extractor = String(source.extractor || sourceExtractorLabel(source)).toLowerCase();
-    if (/vidxgo|vidx\s*go/i.test(extractor)) return 0;
-    if (/cdn/.test(extractor)) return 20;
-    const def = resolveExtractorDefinition(source.url);
-    return def?.priority != null ? 30 + def.priority : 80;
+    const url = String(source.url || '');
+    const def = resolveExtractorDefinition(url);
+    if (def?.priority != null) return 30 + def.priority;
+    if (isCdnSource(source, url)) return 10;
+    return 80;
 }
 
 function shouldExposeLazyFallback() {
     return false;
 }
 
-function buildSyntheticVidxgoUrl(imdbId, type, season = 1, episode = 1) {
-    const normalized = normalizeImdbId(imdbId);
-    if (!normalized) return null;
-    if (normalizeProviderType(type) === 'movie') return `https://v.vidxgo.co/${normalized}`;
-    return `https://v.vidxgo.co/${normalized}/${Number(season) || 1}/${Number(episode) || 1}`;
-}
-
-function collectPlayableSources({ payload = {}, imdbId = null, type = 'movie', season = 1, episode = 1 } = {}) {
+function collectPlayableSources({ payload = {} } = {}) {
     const out = [];
     const seen = new Set();
     const add = (source = {}) => {
@@ -235,11 +224,6 @@ function collectPlayableSources({ payload = {}, imdbId = null, type = 'movie', s
             provider: semanticCandidate.label,
             quality: 'Unknown'
         });
-    }
-
-    if (!out.some((source) => source.extractor === 'VidxGo')) {
-        const synthetic = buildSyntheticVidxgoUrl(imdbId, type, season, episode);
-        if (synthetic) add({ provider: 'VidxGo', url: synthetic, quality: 'Unknown' });
     }
 
     return out.sort((a, b) => (a.priority - b.priority) || (qualityRank(b.quality) - qualityRank(a.quality)));
@@ -290,7 +274,7 @@ function buildKrakenResolvedStream(source, def = null, { title, config = {}, pag
     const gateway = getKrakenGateway(config);
     if (!gateway) return null;
 
-    const host = def?.label || source.extractor || source.provider || sourceExtractorLabel(source) || 'VidxGo';
+    const host = def?.label || source.extractor || sourceExtractorLabel(source) || 'CDN';
     const requestHeaders = headersFor(source.url, pageUrl);
     const label = host || 'Web';
     let url = null;
@@ -510,13 +494,7 @@ async function searchAltadefinizioneImpl(originalId, finalId, meta = {}, config 
         return null;
     });
 
-    const apiSources = collectPlayableSources({
-        payload,
-        imdbId: media.imdbId,
-        type: media.type,
-        season: media.season,
-        episode: media.episode
-    });
+    const apiSources = collectPlayableSources({ payload });
     const downloadSources = await collectDownloadSources(media).catch(() => []);
     const sources = Array.from(new Map([...apiSources, ...downloadSources]
         .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
@@ -575,7 +553,6 @@ module.exports = {
     __private: {
         buildKrakenResolvedStream,
         buildPlayerSourcesEndpoint,
-        buildSyntheticVidxgoUrl,
         collectPlayableSources,
         normalizeImdbId,
         resolveDownloadToHoster,
