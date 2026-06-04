@@ -979,7 +979,9 @@ async function fetchMappingPayload(lookup, providerContext = null, mappingApiBas
         }
 
         if (cached?.value !== undefined) return cached.value;
-        caches.negative.set(cacheKey, true, DEFAULT_NEGATIVE_TTL_MS, 0);
+        if (!lastError || isHttpNotFoundError(lastError)) {
+            caches.negative.set(cacheKey, true, DEFAULT_NEGATIVE_TTL_MS, 0);
+        }
         if (lastError && !isHttpNotFoundError(lastError)) {
             console.error('[AnimeProvider] mapping request failed:', lastError?.message || 'unknown error');
         } else if (process.env.LEVIATHAN_VERBOSE_MAPPING_MISS === '1') {

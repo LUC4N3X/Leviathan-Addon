@@ -496,6 +496,15 @@ function shouldRetryStatus(status, retryStatuses = DEFAULT_RETRY_STATUSES) {
     return retryStatuses instanceof Set ? retryStatuses.has(status) : new Set(retryStatuses || []).has(status);
 }
 
+function retryAfterMs(headerValue) {
+    if (!headerValue) return null;
+    const seconds = Number.parseInt(String(headerValue).trim(), 10);
+    if (Number.isInteger(seconds) && seconds >= 0) return Math.min(seconds * 1000, 30000);
+    const dateMs = Date.parse(String(headerValue));
+    if (Number.isFinite(dateMs)) return Math.max(0, Math.min(dateMs - now(), 30000));
+    return null;
+}
+
 function isHttpNotFoundError(error) {
     const status = Number(error?.status || error?.response?.status || 0);
     if (status === 404) return true;
@@ -614,6 +623,7 @@ async function fetchResource(url, options = {}) {
                         const error = new Error(`HTTP ${response.status} ${response.statusText} for ${url}`);
                         error.status = response.status;
                         error.retryable = shouldRetryStatus(response.status, retryStatuses);
+                        error.retryAfterMs = retryAfterMs(response.headers.get('retry-after'));
                         throw error;
                     }
 
@@ -628,7 +638,10 @@ async function fetchResource(url, options = {}) {
                 lastError = error;
                 const retryable = error?.name === 'AbortError' || error?.retryable || /timeout|network|fetch failed|ECONNRESET|ETIMEDOUT/i.test(String(error?.message || ''));
                 if (!retryable || attempt >= attempts - 1) break;
-                const delay = Math.min(2500, 180 * Math.pow(2, attempt)) + Math.floor(Math.random() * 120);
+                const backoff = Math.min(2500, 180 * Math.pow(2, attempt)) + Math.floor(Math.random() * 120);
+                const delay = Number.isFinite(error?.retryAfterMs) && error.retryAfterMs > 0
+                    ? Math.min(error.retryAfterMs, 30000)
+                    : backoff;
                 await sleep(delay);
             }
         }
@@ -851,7 +864,9 @@ async function fetchMappingPayload(lookup, providerContext = null, mappingApiBas
         }
 
         if (cached?.value !== undefined) return cached.value;
-        caches.negative.set(negativeKey, true, DEFAULT_NEGATIVE_TTL, 0);
+        if (!lastError || isHttpNotFoundError(lastError)) {
+            caches.negative.set(negativeKey, true, DEFAULT_NEGATIVE_TTL, 0);
+        }
         if (lastError && !isHttpNotFoundError(lastError)) {
             console.error('[AnimeShared] mapping request failed:', lastError?.message || 'unknown error');
         } else if (process.env.LEVIATHAN_VERBOSE_MAPPING_MISS === '1') {
