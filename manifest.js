@@ -1,7 +1,7 @@
 'use strict';
 
 const MANIFEST_ID = 'org.corsaro.brain.v2';
-const MANIFEST_VERSION = '3.1.0';
+const MANIFEST_VERSION = '3.2.0';
 const ADDON_NAME = 'Leviathan';
 const LOGO_URL = 'https://i.ibb.co/BKZNKbq3/logo.png';
 const SUPPORTED_TYPES = ['movie', 'series', 'anime'];
