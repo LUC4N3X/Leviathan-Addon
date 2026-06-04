@@ -783,55 +783,123 @@ Una valutazione positiva aumenta autorevolezza, fiducia e visibilità del protoc
 
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,100:00E0FF&height=120&section=header&text=Credits&fontSize=38&fontColor=ffffff&animation=fadeIn&fontAlignY=38" width="100%" />
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:07111F,16:081A2E,34:00E7FF,52:7C3AED,72:00BFFF,100:07111F&height=128&section=header&text=Credits&fontSize=42&fontColor=FFFFFF&animation=fadeIn&fontAlignY=35" width="100%" alt="Credits" />
 
 <br>
 
-<a href="https://github.com/LUC4N3X">
-  <img src="https://i.ibb.co/BK2VQxGH/github-circle-transparent.png" width="190" style="border-radius:50%; box-shadow: 0 0 24px rgba(0, 224, 255, 0.35);" alt="LUC4N3X" />
+<a href="https://github.com/LUC4N3X" target="_blank">
+  <img src="https://i.ibb.co/BK2VQxGH/github-circle-transparent.png" width="164" alt="LUC4N3X" />
 </a>
 
 <br><br>
 
-## ✦ L U C 4 N 3 X ✦
-
-### Founder · Core Architect · Lead Engineering
-
-<p>Ideazione, architettura, design del protocollo, integrazione dei moduli core, pipeline di aggregazione, identità del progetto e direzione evolutiva del sistema.</p>
+<img src="https://capsule-render.vercel.app/api?type=transparent&height=72&section=header&text=%E2%9C%A6%20L%20U%20C%204%20N%203%20X%20%E2%9C%A6&fontSize=32&fontColor=FFFFFF&animation=fadeIn&fontAlignY=50" width="78%" alt="LUC4N3X" />
 
 <br>
 
-<img src="https://img.shields.io/badge/Protocol-Creator-00eaff?style=for-the-badge&labelColor=0d1117" />
-<img src="https://img.shields.io/badge/Core-Engineering-ffffff?style=for-the-badge&labelColor=0d1117&color=ffffff" />
-<img src="https://img.shields.io/badge/Stremio-Ecosystem-7cf29c?style=for-the-badge&labelColor=0d1117" />
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:07111F,28:00E7FF,50:7C3AED,72:00BFFF,100:07111F&height=2&section=footer" width="58%" alt="Credits divider" />
 
 <br><br>
 
-### Special Thanks
+<h3>Founder · Core Architect · Lead Engineering</h3>
 
-<table align="center" width="88%">
+<p>
+  <b>Ideazione, architettura e direzione tecnica di Leviathan.</b><br>
+  Design del protocollo, integrazione dei moduli core, pipeline di aggregazione,<br>
+  identità del progetto e guida evolutiva dell'intero sistema.
+</p>
+
+<br>
+
+<img src="https://img.shields.io/badge/Protocol-Creator-00E7FF?style=for-the-badge&labelColor=07111F" alt="Protocol Creator" />
+<img src="https://img.shields.io/badge/Core-Engineering-FFFFFF?style=for-the-badge&labelColor=07111F&color=FFFFFF" alt="Core Engineering" />
+<img src="https://img.shields.io/badge/Stremio-Ecosystem-7CF29C?style=for-the-badge&labelColor=07111F" alt="Stremio Ecosystem" />
+
+<br><br>
+
+<table align="center" width="92%">
 <tr>
-<td align="center" width="50%">
-<a href="https://github.com/UrloMythus/MammaMia" target="_blank"><b>MammaMia</b></a><br>
-<sub>Thanks to the MammaMia project for openly sharing provider-flow ideas and logic patterns that helped inform parts of Leviathan's provider strategy.</sub>
+<td align="center" width="33%">
+
+### 🔱 Protocol Identity
+<sub>Visione del progetto, naming, struttura narrativa e direzione dell'esperienza Leviathan.</sub>
+
 </td>
-<td align="center" width="50%">
-<a href="https://github.com/mhdzumair/mediaflow-proxy" target="_blank"><b>MediaFlow Proxy</b></a><br>
-<sub>Thanks to MediaFlow Proxy for its extractor ecosystem and media-routing concepts, used as a valuable technical reference while shaping Leviathan's runtime integrations.</sub>
+<td align="center" width="33%">
+
+### 🧠 Core Architecture
+<sub>Coordinamento tra torrent engine, web providers, anime mapping, cloud layer e formatter.</sub>
+
+</td>
+<td align="center" width="33%">
+
+### 🌊 Runtime Direction
+<sub>Integrazione con Kraken, routing ibrido, provider hardening e flussi di delivery più puliti.</sub>
+
 </td>
 </tr>
 </table>
 
 <br>
 
-<sub>Open-source references matter. Leviathan remains independently designed, maintained and evolved under its own protocol identity.</sub>
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:07111F,50:00E7FF,100:07111F&height=1&section=footer" width="64%" alt="Open source divider" />
 
 <br><br>
 
-<sub>Not a simple addon. Not a simple scraper. An operational layer built to push Stremio beyond default behavior.</sub>
+<h2>Special Thanks</h2>
+
+<table align="center" width="92%">
+<tr>
+<td align="center" width="50%">
+
+<a href="https://github.com/UrloMythus/MammaMia" target="_blank">
+  <img src="https://img.shields.io/badge/MammaMia-Provider%20Flow%20Reference-00E7FF?style=for-the-badge&labelColor=07111F" alt="MammaMia" />
+</a>
+
+<br><br>
+
+<sub>
+Thanks to the <b>MammaMia</b> project for openly sharing provider-flow ideas and logic patterns<br>
+that helped inform parts of Leviathan's provider strategy.
+</sub>
+
+</td>
+<td align="center" width="50%">
+
+<a href="https://github.com/mhdzumair/mediaflow-proxy" target="_blank">
+  <img src="https://img.shields.io/badge/MediaFlow%20Proxy-Runtime%20Reference-7C3AED?style=for-the-badge&labelColor=07111F" alt="MediaFlow Proxy" />
+</a>
+
+<br><br>
+
+<sub>
+Thanks to <b>MediaFlow Proxy</b> for its extractor ecosystem and media-routing concepts,<br>
+used as a valuable technical reference while shaping Leviathan's runtime integrations.
+</sub>
+
+</td>
+</tr>
+</table>
 
 <br>
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:00E0FF,100:0d1117&height=100&section=footer" width="100%" />
+<img src="https://img.shields.io/badge/Open--source-References%20Matter-00E7FF?style=flat-square&labelColor=07111F" alt="Open-source references matter" />
+<img src="https://img.shields.io/badge/Identity-Independently%20Designed-FFFFFF?style=flat-square&labelColor=07111F&color=FFFFFF" alt="Independently designed" />
+<img src="https://img.shields.io/badge/Protocol-Evolved%20by%20LUC4N3X-7CF29C?style=flat-square&labelColor=07111F" alt="Evolved by LUC4N3X" />
+
+<br><br>
+
+<sub>
+Open-source references matter. Leviathan remains independently designed, maintained and evolved under its own protocol identity.
+</sub>
+
+<br><br>
+
+<b>Not a simple addon. Not a simple scraper.</b><br>
+<sub>An operational layer built to push Stremio beyond default behavior.</sub>
+
+<br><br>
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:07111F,25:00E7FF,50:7C3AED,75:00BFFF,100:07111F&height=105&section=footer&animation=fadeIn" width="100%" alt="Credits footer wave" />
 
 </div>
