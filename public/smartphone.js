@@ -1,4 +1,4 @@
-const MOBILE_LOGO_URL = "https://i.ibb.co/MbmdvP6/file-0000000018387243a2da8535139f6423.png";
+const MOBILE_LOGO_URL = "https://i.ibb.co/BKZNKbq3/logo.png";
 const MOBILE_LOGO_HINTS_ID = "leviathan-mobile-logo-hints";
 const MOBILE_LOGO_PRELOAD_ID = "leviathan-mobile-logo-preload";
 
@@ -10349,3 +10349,4 @@ startMobileInterfaceWhenReady();
         document.body.classList.add('m-ui-ready');
     } catch (_) {}
 })();
+
