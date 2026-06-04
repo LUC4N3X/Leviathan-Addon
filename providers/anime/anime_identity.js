@@ -798,12 +798,27 @@ async function buildAnimeSearchContextForProvider({
         tmdbTimeoutMs
     };
 
-    const [kitsuContext, mapping] = await Promise.all([
+    const [resolvedKitsuContext, mapping] = await Promise.all([
         buildKitsuContext(candidateIds, meta, { kitsuTimeoutMs }),
         fetchBestMapping(candidateIds, meta, config, mappingOptions)
     ]);
 
     const mappedIds = mapping?.ids || {};
+
+    let kitsuContext = resolvedKitsuContext;
+    if (!kitsuContext?.kitsuId) {
+        const discoveredKitsuId = mappedIds.kitsuId
+            || candidateIds.map(extractKitsuId).find(Boolean)
+            || null;
+        if (discoveredKitsuId) {
+            const enrichedKitsuContext = await buildKitsuContext([`kitsu:${discoveredKitsuId}`], meta, { kitsuTimeoutMs });
+            if (enrichedKitsuContext?.kitsuId) {
+                kitsuContext = kitsuContext
+                    ? mergeContexts(enrichedKitsuContext, kitsuContext)
+                    : enrichedKitsuContext;
+            }
+        }
+    }
     const metadata = await resolveTmdbMetadataFromIds(mappedIds, meta, {
         language,
         mediaType: mappedIds.tmdbType || (meta?.isSeries === false ? 'movie' : 'tv'),
