@@ -70,6 +70,16 @@ function migrateConfig(input = {}) {
     if (legacyValue !== undefined && primaryValue === undefined) config.filters[primaryKey] = legacyValue;
   }
 
+  const renamedFilterKeys = [
+    ['enableGstv', 'enableVidxgo']
+  ];
+  for (const [legacyKey, currentKey] of renamedFilterKeys) {
+    if (config.filters[legacyKey] !== undefined) {
+      if (config.filters[currentKey] === undefined) config.filters[currentKey] = config.filters[legacyKey];
+      delete config.filters[legacyKey];
+    }
+  }
+
   if (version < 1) {
     if (!config.configVersion) config.configVersion = CURRENT_CONFIG_VERSION;
   }
