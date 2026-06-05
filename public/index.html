@@ -5178,6 +5178,345 @@ body { background: transparent !important; }
 }
 </style>
 
+<style id="leviathan-pro-polish-v1">
+/* ===== Pro polish: gerarchia titoli, marker raffinati, niente side-stripe ===== */
+
+/* Header pannello: badge contenuto + eyebrow + titolo */
+.panel-header { align-items: center !important; gap: 16px !important; }
+.panel-badge {
+  flex: 0 0 auto;
+  width: 46px; height: 46px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 13px;
+  color: var(--primary);
+  font-size: 1.25rem;
+  background:
+    radial-gradient(120% 120% at 30% 20%, rgba(0,242,255,0.18), transparent 60%),
+    linear-gradient(150deg, rgba(0,242,255,0.10), rgba(112,0,255,0.10));
+  border: 1px solid rgba(0,242,255,0.28);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 0 18px rgba(0,242,255,0.12);
+}
+.panel-badge svg { width: 22px; height: 22px; }
+.panel-headings { display: flex; flex-direction: column; gap: 3px; line-height: 1; }
+.panel-eyebrow {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 0.72rem; font-weight: 700;
+  letter-spacing: 3.2px; text-transform: uppercase;
+  color: rgba(139,170,194,0.78);
+}
+.panel-header .panel-title { margin: 0 !important; }
+
+/* Section header: via il blocco da 4px, marker a barre "sonar" + tipografia pulita */
+.section-header {
+  border-left: 0 !important;
+  padding-left: 22px !important;
+  position: relative;
+  display: flex; align-items: center;
+  font-size: 1.32rem !important;
+  letter-spacing: 3px !important;
+  color: #eafcff !important;
+  text-shadow: 0 0 14px rgba(0,242,255,0.18) !important;
+}
+.section-header::before {
+  content: '';
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 5px; height: 18px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, var(--primary), var(--secondary));
+  box-shadow: 0 0 14px rgba(0,242,255,0.45);
+}
+.section-header::after {
+  content: '';
+  position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 5px; height: 18px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, var(--primary), var(--secondary));
+  filter: blur(6px); opacity: 0.55;
+}
+.section-header.sh-violet::before { background: linear-gradient(180deg, var(--secondary), var(--primary)); box-shadow: 0 0 14px rgba(112,0,255,0.5); }
+.section-header.sh-violet::after  { background: linear-gradient(180deg, var(--secondary), var(--primary)); }
+.section-header.sh-violet { color: #f1ecff !important; text-shadow: 0 0 14px rgba(112,0,255,0.20) !important; }
+
+/* Module label e unit title: respiro e peso coerenti */
+.module-label { letter-spacing: 2.4px !important; }
+.unit-title { letter-spacing: 2.4px !important; }
+.unit-title i { filter: drop-shadow(0 0 8px rgba(0,242,255,0.4)); }
+
+/* Flux priority: pulsanti più premium, stato attivo netto */
+.spectrum-grid .spec-btn {
+  border-color: rgba(112,0,255,0.35) !important;
+  background: rgba(112,0,255,0.05) !important;
+  color: rgba(224,247,250,0.78) !important;
+  letter-spacing: 1px;
+  transition: transform .28s cubic-bezier(.22,1,.36,1), background .28s ease, box-shadow .28s ease, color .28s ease !important;
+}
+.spectrum-grid .spec-btn:hover { transform: translateY(-2px); color: #fff !important; box-shadow: 0 8px 20px -10px rgba(112,0,255,0.7) !important; }
+.spectrum-grid .spec-btn.active {
+  background: linear-gradient(135deg, rgba(112,0,255,0.22), rgba(0,242,255,0.10)) !important;
+  border-color: rgba(112,0,255,0.7) !important;
+  color: #fff !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 0 18px rgba(112,0,255,0.28) !important;
+  text-shadow: 0 0 8px rgba(112,0,255,0.5) !important;
+}
+.spectrum-grid .spec-btn i { opacity: 0.92; }
+
+/* Flux info box: titolo e icona allineati, niente stripe */
+#flux-info-box #flux-title i { color: var(--secondary); }
+
+@media (max-width: 768px) {
+  .panel-badge { width: 40px; height: 40px; font-size: 1.05rem; border-radius: 11px; }
+  .panel-eyebrow { font-size: 0.64rem; letter-spacing: 2.6px; }
+  .section-header { font-size: 1.12rem !important; letter-spacing: 2px !important; }
+}
+</style>
+
+<style id="leviathan-pro-polish-v2">
+/* ===== Formatter / Visual Core: coerenza con il linguaggio pro ===== */
+
+/* Header FORMATTER: chip icona + gerarchia editoriale sul titolo */
+.vc-head { align-items: flex-start !important; }
+.vc-head > span:first-child { align-items: center !important; }
+.vc-head .fa-palette {
+  width: 38px; height: 38px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 11px; font-size: 1.05rem; color: var(--primary);
+  background:
+    radial-gradient(120% 120% at 30% 20%, rgba(0,242,255,0.18), transparent 60%),
+    linear-gradient(150deg, rgba(0,242,255,0.10), rgba(112,0,255,0.10));
+  border: 1px solid rgba(0,242,255,0.28);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 0 16px rgba(0,242,255,0.12);
+  margin-right: 2px;
+}
+.vc-head-title {
+  font-family: 'Rajdhani', sans-serif; font-weight: 700;
+  font-size: 1.5rem; letter-spacing: 2.5px; text-transform: uppercase;
+  color: #eafcff; text-shadow: 0 0 14px rgba(0,242,255,0.18);
+}
+.vc-head-accent { color: var(--secondary); text-shadow: 0 0 12px rgba(112,0,255,0.4); font-weight: 600; }
+
+/* Live preview header: icona in chip + badge modalità pro */
+.preview-header { align-items: center !important; }
+.preview-header > span:first-child {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: 'Rajdhani', sans-serif; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+  color: #d8f4fb !important;
+}
+.preview-header > span:first-child i {
+  width: 30px; height: 30px; margin: 0 !important;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 9px; font-size: 0.85rem; color: var(--primary) !important;
+  background: linear-gradient(150deg, rgba(0,242,255,0.10), rgba(112,0,255,0.10));
+  border: 1px solid rgba(0,242,255,0.22);
+}
+#prev-mode-label {
+  font-family: 'Rajdhani', sans-serif; font-weight: 800; letter-spacing: 2px; text-transform: uppercase;
+  font-size: 0.78rem; color: #eafcff;
+  padding: 5px 14px; border-radius: 999px;
+  background: linear-gradient(135deg, rgba(0,242,255,0.16), rgba(112,0,255,0.16));
+  border: 1px solid rgba(0,242,255,0.35);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 14px rgba(0,242,255,0.12);
+}
+
+/* Skin risultati: card coese, icona in tondo, attiva con accento cyan->violet */
+.skin-btn {
+  border-radius: 16px !important;
+  border: 1px solid rgba(0,242,255,0.10) !important;
+  background:
+    radial-gradient(120% 120% at 30% 0%, rgba(0,242,255,0.05), transparent 55%),
+    linear-gradient(160deg, rgba(11,27,44,0.7), rgba(3,9,17,0.92)) !important;
+  transition: transform .3s cubic-bezier(.22,1,.36,1), border-color .3s ease, box-shadow .3s ease !important;
+}
+.skin-btn:hover {
+  transform: translateY(-3px) !important;
+  border-color: rgba(0,242,255,0.32) !important;
+  box-shadow: 0 14px 30px -16px rgba(0,242,255,0.7) !important;
+}
+.skin-btn .skin-icon {
+  width: 46px; height: 46px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 13px; font-size: 1.35rem;
+  background: linear-gradient(150deg, rgba(0,242,255,0.08), rgba(112,0,255,0.08));
+  border: 1px solid rgba(0,242,255,0.14);
+  transition: transform .35s cubic-bezier(.22,1,.36,1), box-shadow .3s ease, border-color .3s ease;
+}
+.skin-btn:hover .skin-icon { transform: scale(1.06) !important; border-color: rgba(0,242,255,0.3); box-shadow: 0 0 16px rgba(0,242,255,0.2); }
+.skin-btn.active {
+  border-color: rgba(0,242,255,0.55) !important;
+  background:
+    radial-gradient(120% 120% at 30% 0%, rgba(0,242,255,0.12), transparent 55%),
+    linear-gradient(160deg, rgba(15,38,60,0.92), rgba(3,10,19,0.96)) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 0 0 1px rgba(112,0,255,0.25), 0 14px 30px -14px rgba(0,242,255,0.6) !important;
+}
+.skin-btn.active .skin-icon {
+  border-color: rgba(0,242,255,0.4) !important;
+  box-shadow: 0 0 18px rgba(0,242,255,0.3) !important;
+  background: linear-gradient(150deg, rgba(0,242,255,0.16), rgba(112,0,255,0.16)) !important;
+}
+.skin-btn.active .skin-name { color: #eafcff !important; text-shadow: 0 0 10px rgba(0,242,255,0.5) !important; }
+
+/* Manual override: chip terminale + status pill */
+.custom-mode-trigger {
+  border-radius: 16px !important;
+  border: 1px solid rgba(0,242,255,0.12) !important;
+  background: linear-gradient(160deg, rgba(11,27,44,0.6), rgba(3,9,17,0.9)) !important;
+  transition: border-color .3s ease, background .3s ease, transform .3s cubic-bezier(.22,1,.36,1) !important;
+}
+.custom-mode-trigger:hover { transform: translateY(-2px) !important; border-color: rgba(0,242,255,0.3) !important; }
+.custom-mode-trigger .trigger-icon {
+  width: 44px; height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 12px; font-size: 1.15rem !important; color: var(--primary) !important;
+  background: linear-gradient(150deg, rgba(0,242,255,0.10), rgba(112,0,255,0.10));
+  border: 1px solid rgba(0,242,255,0.2);
+}
+.custom-mode-trigger.active { border-color: rgba(112,0,255,0.45) !important; }
+.trigger-status {
+  font-family: 'Rajdhani', sans-serif; font-weight: 800; letter-spacing: 1.5px;
+  padding: 5px 14px !important; border-radius: 999px !important;
+  border: 1px solid rgba(139,170,194,0.25) !important;
+  color: rgba(139,170,194,0.8) !important;
+  background: rgba(0,0,0,0.3) !important;
+}
+.custom-mode-trigger.active .trigger-status {
+  color: #eafcff !important;
+  border-color: rgba(0,242,255,0.5) !important;
+  background: linear-gradient(135deg, rgba(0,242,255,0.18), rgba(112,0,255,0.18)) !important;
+  box-shadow: 0 0 14px rgba(0,242,255,0.2) !important;
+}
+
+/* ===== Pulsanti di installazione: hero del CTA, cyan->violet ===== */
+.action-area .btn-install, .btn-install {
+  background: linear-gradient(135deg, var(--primary), var(--secondary)) !important;
+  color: #02060a !important;
+  border: none !important;
+  border-radius: 14px !important;
+  font-family: 'Rajdhani', sans-serif !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 3px !important;
+  padding: 17px 22px !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 16px 38px -16px rgba(0,242,255,0.85) !important;
+  transition: transform .3s cubic-bezier(.22,1,.36,1), box-shadow .3s ease, letter-spacing .3s ease, filter .3s ease !important;
+}
+.btn-install i { color: #02060a !important; }
+.btn-install:hover {
+  transform: translateY(-2px) !important;
+  filter: brightness(1.06) !important;
+  letter-spacing: 4px !important;
+  color: #02060a !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 22px 46px -16px rgba(112,0,255,0.9) !important;
+}
+.btn-install::before { background: linear-gradient(90deg, transparent, rgba(255,255,255,0.45), transparent) !important; }
+
+.btn-copy {
+  background: rgba(255,255,255,0.03) !important;
+  border: 1px solid rgba(0,242,255,0.2) !important;
+  color: #d8f4fb !important;
+  border-radius: 14px !important;
+  font-family: 'Rajdhani', sans-serif !important;
+  font-weight: 700 !important;
+  letter-spacing: 2px !important;
+  text-transform: uppercase !important;
+  transition: transform .3s cubic-bezier(.22,1,.36,1), border-color .3s ease, background .3s ease !important;
+}
+.btn-copy:hover {
+  transform: translateY(-2px) !important;
+  border-color: rgba(0,242,255,0.5) !important;
+  background: rgba(0,242,255,0.06) !important;
+  color: #fff !important;
+}
+
+/* Pulsante INSTALLA del modale di conferma */
+.m-go {
+  background: linear-gradient(135deg, var(--primary), var(--secondary)) !important;
+  color: #02060a !important;
+  border-radius: 12px !important;
+  letter-spacing: 2px !important;
+  font-weight: 800 !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 12px 28px -12px rgba(0,242,255,0.8) !important;
+  transition: transform .25s cubic-bezier(.22,1,.36,1), box-shadow .25s ease, filter .25s ease !important;
+}
+.m-go:hover {
+  transform: translateY(-1px) scale(1.01) !important;
+  filter: brightness(1.06) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 16px 34px -12px rgba(112,0,255,0.85) !important;
+}
+.m-close {
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid rgba(139,170,194,0.25) !important;
+  color: #d8f4fb !important;
+  border-radius: 12px !important;
+  letter-spacing: 2px !important;
+  transition: border-color .25s ease, background .25s ease !important;
+}
+.m-close:hover { border-color: rgba(0,242,255,0.4) !important; background: rgba(0,242,255,0.05) !important; }
+
+@media (max-width: 768px) {
+  .vc-head-title { font-size: 1.18rem; letter-spacing: 1.6px; }
+  .vc-head .fa-palette { width: 34px; height: 34px; }
+  .skin-btn .skin-icon { width: 40px; height: 40px; font-size: 1.15rem; }
+  .btn-install { letter-spacing: 2px !important; }
+}
+</style>
+
+<style id="leviathan-aux-fantasy-v3">
+/* ===== Aux cards: identità per-card, watermark, segnale che scorre ===== */
+
+/* Accent vividi e distinti per ciascuna card */
+#card_audio        { --mf-card-rgb: 43,214,245;  --mf-card-from:#2bd6f5; --mf-card-to:#2f6df6; }
+#card_source_mode  { --mf-card-rgb: 99,102,241;  --mf-card-from:#6366f1; --mf-card-to:#22d3ee; }
+.aux-card.aio-card { --mf-card-rgb: 168,85,247;  --mf-card-from:#a855f7; --mf-card-to:#ec4899; }
+.aux-card.cine-card{ --mf-card-rgb: 245,197,66;  --mf-card-from:#f5c542; --mf-card-to:#f97316; }
+
+/* Glyph watermark gigante in tinta: profondità + identità immediata */
+.aux-card { isolation: isolate !important; }
+.aux-card > .aux-wm {
+  position: absolute !important;
+  right: -14px; bottom: -22px;
+  z-index: 0 !important;
+  font-size: 132px; line-height: 1;
+  color: var(--mf-card-from);
+  opacity: 0.08;
+  pointer-events: none !important;
+  transform: rotate(-8deg);
+  filter: drop-shadow(0 0 22px rgba(var(--mf-card-rgb), 0.35));
+  -webkit-mask-image: radial-gradient(135% 135% at 100% 100%, #000 22%, transparent 76%);
+  mask-image: radial-gradient(135% 135% at 100% 100%, #000 22%, transparent 76%);
+  transition: opacity .45s ease, transform .55s cubic-bezier(.22,1,.36,1), color .45s ease;
+}
+.aux-card:hover > .aux-wm { opacity: 0.14; transform: rotate(-4deg) scale(1.05); }
+.aux-card.active > .aux-wm { opacity: 0.15; animation: auxWmBreath 4.6s ease-in-out infinite; }
+@keyframes auxWmBreath { 0%,100% { opacity: 0.11; } 50% { opacity: 0.2; } }
+
+/* Stripe: impulso di colore che scorre come un segnale */
+.aux-card::before, .info-card::before {
+  background: linear-gradient(90deg, var(--mf-card-from), var(--mf-card-to), var(--mf-card-from)) !important;
+  background-size: 220% 100% !important;
+  animation: auxStripeFlow 7s linear infinite !important;
+}
+.aux-card:hover::before, .aux-card.active::before { animation-duration: 3.4s !important; }
+@keyframes auxStripeFlow { 0% { background-position: 0% 0; } 100% { background-position: -220% 0; } }
+
+/* Secondo punto luce d'angolo, coordinato col watermark */
+.aux-card::after {
+  background:
+    linear-gradient(120deg, transparent 0%, rgba(255,255,255,.075) 38%, transparent 62%),
+    radial-gradient(60% 60% at 100% 100%, rgba(var(--mf-card-rgb), .14), transparent 70%) !important;
+  opacity: 1 !important;
+}
+.aux-card:hover::after { transform: translateX(125%) skewX(-10deg) !important; }
+
+/* Active: bordo identitario più deciso + alone vivo */
+.aux-card.active {
+  border-color: rgba(var(--mf-card-rgb), 0.6) !important;
+}
+.aux-card.active .aux-header span { color: #fff !important; }
+
+@media (max-width: 768px) {
+  .aux-card > .aux-wm { font-size: 104px; right: -10px; bottom: -16px; }
+}
+</style>
+
 </head>
 <body>
     <canvas id="deepSeaCanvas"></canvas>
@@ -5197,8 +5536,11 @@ body { background: transparent !important; }
         </header>
         <div class="glass-panel">
             <div class="panel-header">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px;color:var(--primary);flex:0 0 auto"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 7V4M14 7V4M10 20v-3M14 20v-3M7 10H4M7 14H4M20 10h-3M20 14h-3"/></svg>
-                <div class="panel-title">🧭 SISTEMI DI BORDO ⚙️</div>
+                <span class="panel-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="width:22px;height:22px"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 7V4M14 7V4M10 20v-3M14 20v-3M7 10H4M7 14H4M20 10h-3M20 14h-3"/></svg></span>
+                <div class="panel-headings">
+                    <div class="panel-eyebrow">Leviathan · Panoramica</div>
+                    <div class="panel-title">SISTEMI DI BORDO</div>
+                </div>
             </div>
             <div class="info-grid">
                 <div class="info-card lev-c1">
@@ -5227,13 +5569,16 @@ body { background: transparent !important; }
 
         <div class="glass-panel" id="config-area">
             <div class="panel-header">
-                <i class="fas fa-sliders-h" style="color:var(--primary)"></i>
-                <div class="panel-title">🚢 STAZIONE DI COMANDO 🎛️</div>
+                <span class="panel-badge"><i class="fas fa-sliders-h"></i></span>
+                <div class="panel-headings">
+                    <div class="panel-eyebrow">Leviathan · Configuratore</div>
+                    <div class="panel-title">STAZIONE DI COMANDO</div>
+                </div>
             </div>
 
             <div class="desktop-grid-container">
                 <div class="col-left">
-                    <div class="section-header" style="margin-top:0;">🐬 PROTOCOLLI DI CONNESSIONE 🔌</div>
+                    <div class="section-header" style="margin-top:0;">PROTOCOLLI DI CONNESSIONE</div>
 
                     <div class="service-tabs">
                         <div class="service-tab active" onclick="selectService('rd')">
@@ -5270,7 +5615,7 @@ body { background: transparent !important; }
                     </div>
 
                     <div class="module-box" id="webModule">
-                        <div class="module-label">🎬 MODULO SORGENTI WEB</div>
+                        <div class="module-label">MODULO SORGENTI WEB</div>
                         <div class="control-row">
     <div class="control-info">
         <div class="control-title notranslate" translate="no">
@@ -5439,7 +5784,7 @@ body { background: transparent !important; }
                 </div>
 
                 <div class="col-right">
-                    <div class="section-header" style="margin-top:0;">🧠 CENTRO DI CONTROLLO RICERCA 🎯</div>
+                    <div class="section-header sh-violet" style="margin-top:0;">CENTRO DI CONTROLLO RICERCA</div>
 
                     <div class="filters-container">
                         <div class="spectrum-container" style="border-color: var(--secondary); background: linear-gradient(135deg, rgba(0, 5, 10, 0.6), rgba(112, 0, 255, 0.05)); margin-bottom: 20px;">
@@ -5448,11 +5793,11 @@ body { background: transparent !important; }
                                 <span class="spectrum-desc" style="margin:0; text-align:right; font-size: 0.85rem; opacity: 0.7;">Scegli come ordinare i risultati.</span>
                             </div>
                             <div class="spectrum-grid" style="grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 15px;">
-                                <div class="spec-btn active" id="sort_balanced" onclick="setSortMode('balanced')" style="border-color: var(--secondary);">🦑 LEVIATHAN</div>
+                                <div class="spec-btn active" id="sort_balanced" onclick="setSortMode('balanced')" style="border-color: var(--secondary);"><i class="fas fa-water"></i> LEVIATHAN</div>
                                 <div class="spec-btn" id="sort_resolution" onclick="setSortMode('resolution')" style="border-color: var(--secondary);"><i class="fas fa-eye"></i> RISOLUZIONE</div>
                                 <div class="spec-btn" id="sort_size" onclick="setSortMode('size')" style="border-color: var(--secondary);"><i class="fas fa-hdd"></i> BITRATE</div>
                             </div>
-                            <div id="flux-info-box" style="background: rgba(0,0,0,0.4); border-left: 3px solid var(--secondary); padding: 12px; border-radius: 0 8px 8px 0;">
+                            <div id="flux-info-box" style="background: linear-gradient(135deg, rgba(112,0,255,0.06), rgba(0,0,0,0.45)); border: 1px solid rgba(112,0,255,0.22); padding: 14px 16px; border-radius: 12px;">
                                 <div id="flux-title" style="color: #fff; font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 1rem; margin-bottom: 4px; text-transform: uppercase;">
                                     <i class="fas fa-info-circle"></i> MODALITÀ: LEVIATHAN (Consigliata)
                                 </div>
@@ -5465,7 +5810,7 @@ body { background: transparent !important; }
 
                         <div class="filter-unit">
                             <div class="unit-header">
-                                <div class="unit-title"><i class="fas fa-layer-group" style="color:var(--primary)"></i> 📡 UNITÀ ELABORAZIONE SEGNALE</div>
+                                <div class="unit-title"><i class="fas fa-layer-group" style="color:var(--primary)"></i> UNITÀ ELABORAZIONE SEGNALE</div>
                             </div>
 
                             <div class="filter-row">
@@ -5509,6 +5854,7 @@ body { background: transparent !important; }
 
                         <div class="aux-grid">
                             <div class="aux-card active" id="card_audio">
+                                <i class="fas fa-language aux-wm" aria-hidden="true"></i>
                                 <div class="aux-header">
                                     <i class="fas fa-language aux-icon"></i><span>Lingua & Audio</span>
                                 </div>
@@ -5527,6 +5873,7 @@ body { background: transparent !important; }
                             </div>
 
                             <div class="aux-card" id="card_source_mode">
+                                <i class="fas fa-database aux-wm" aria-hidden="true"></i>
                                 <div class="aux-header">
                                     <i class="fas fa-database aux-icon"></i><span>Source Policy</span>
                                 </div>
@@ -5544,6 +5891,7 @@ body { background: transparent !important; }
                             </div>
 
                             <div class="aux-card aio-card" id="card_aio">
+                                <i class="fas fa-microchip aux-wm" aria-hidden="true"></i>
                                 <div class="aux-header">
                                     <i class="fas fa-microchip aux-icon"></i><span>Core AIO</span>
                                 </div>
@@ -5558,6 +5906,7 @@ body { background: transparent !important; }
                             </div>
 
                             <div class="aux-card cine-card" id="card_saved_cloud">
+                                <i class="fas fa-cloud-arrow-up aux-wm" aria-hidden="true"></i>
                                 <div class="aux-header">
                                     <i class="fas fa-cloud-arrow-up aux-icon"></i><span>Debrid Cloud</span>
                                 </div>
@@ -5587,7 +5936,7 @@ body { background: transparent !important; }
                         </div>
 
                         <div class="module-box" id="netModule" style="border-color: rgba(0, 242, 255, 0.3); margin-top: 20px;">
-                            <div class="module-label" style="border-color: rgba(0, 242, 255, 0.4); color: var(--primary);">🌉 NETWORK BRIDGE</div>
+                            <div class="module-label" style="border-color: rgba(0, 242, 255, 0.4); color: var(--primary);">NETWORK BRIDGE</div>
                             <div class="mf-group" style="margin-top:0; border:none; padding:0; background:transparent;">
                                 <input type="text" id="mfUrl" class="mf-input" placeholder="URL MediaFlow Proxy" oninput="updateFluxStream()">
                                 <input type="password" id="mfPass" class="mf-input" style="margin-top: 10px;" placeholder="Password Proxy (Opzionale)" oninput="updateFluxStream()">
@@ -5614,9 +5963,9 @@ body { background: transparent !important; }
                     <div style="color:#aaa; font-size:0.9rem; margin-top:5px;">Disabilita "Compatibilità AIO" per sbloccare le skin.</div>
                 </div>
 
-                <div class="spectrum-header" style="margin-bottom:20px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 15px;">
-                    <span style="display:flex; align-items:center; gap:10px;">
-                        <i class="fas fa-palette" style="color:var(--primary)"></i> FORMATTER PROTOCOL // VISUAL CORE
+                <div class="spectrum-header vc-head" style="margin-bottom:20px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 15px;">
+                    <span style="display:flex; align-items:center; gap:12px;">
+                        <i class="fas fa-palette"></i> <span class="vc-head-title">FORMATTER PROTOCOL <span class="vc-head-accent">// VISUAL CORE</span></span>
                     </span>
                     <span class="spectrum-desc" style="text-align:right;">Personalizza l'aspetto dei risultati.</span>
                 </div>
