@@ -4,7 +4,7 @@
     <img src="https://i.ibb.co/BKZNKbq3/logo.png" alt="Leviathan Logo" width="190" />
   </a>
 
-  <br><br>
+  <br>
 
   <img src="https://capsule-render.vercel.app/api?type=waving&color=0:06101F,20:071A30,42:00D9FF,60:7C3AED,78:00BFFF,100:06101F&height=70&section=header&animation=fadeIn" width="62%" alt="Leviathan wave" />
 
@@ -42,7 +42,7 @@
 ---
 
 <div align="center">
-  <h2>What Leviathan is</h2>
+  <h2>✨ What Leviathan is</h2>
   <p><b>Not a simple scraper. Not a simple addon.</b></p>
 </div>
 
@@ -52,11 +52,11 @@ Il suo obiettivo è semplice: ridurre il rumore, evitare doppioni inutili, migli
 
 Lavora su più sorgenti sincronizzate:
 
-- **Torrent engine** per risultati P2P e magnet.
-- **Web provider** per fonti italiane e percorsi hoster.
-- **Anime provider** con logica Kitsu-aware.
-- **Saved Cloud Layer** per file già presenti su Real-Debrid e TorBox.
-- **Kraken Runtime** per i flussi più delicati: forward, challenge, embed, hoster e compatibilità MediaFlow.
+- **Torrent engine** per risultati P2P e magnet. 🔎
+- **Web provider** per fonti italiane e percorsi hoster. 🇮🇹
+- **Anime provider** con logica Kitsu-aware. 🈶
+- **Saved Cloud Layer** per file già presenti su Real-Debrid e TorBox. ☁️
+- **Kraken Runtime** per i flussi più delicati: forward, challenge, embed, hoster e compatibilità MediaFlow. 🦑
 
 <div align="center">
   <img src="https://img.shields.io/badge/Semantic_Core-Strict_Matching-00E7FF?style=for-the-badge&labelColor=07111F" />
@@ -67,7 +67,7 @@ Lavora su più sorgenti sincronizzate:
 ---
 
 <div align="center">
-  <h2>Legal & Usage Notice</h2>
+  <h2>⚖️ Legal & Usage Notice</h2>
 </div>
 
 > [!IMPORTANT]
@@ -86,7 +86,7 @@ Il **Saved Cloud Layer** si limita a riconoscere elementi già presenti negli ac
 ---
 
 <div align="center">
-  <h2>Why Leviathan feels different</h2>
+  <h2>🚀 Why Leviathan feels different</h2>
 </div>
 
 Leviathan non si limita ad aggiungere fonti. Cerca di capire quali risultati hanno senso.
@@ -109,7 +109,7 @@ I provider più fragili possono essere delegati a Kraken, lasciando Leviathan co
 ---
 
 <div align="center">
-  <h2>Release Focus</h2>
+  <h2>🌊 Release Focus</h2>
 </div>
 
 <div align="center">
@@ -131,7 +131,7 @@ I provider più fragili possono essere delegati a Kraken, lasciando Leviathan co
 ---
 
 <div align="center">
-  <h2>Saved Cloud Layer</h2>
+  <h2>☁️ Saved Cloud Layer</h2>
   <p><code>RD/TorBox cloud-aware · opzionale · zero duplicati</code></p>
 </div>
 
@@ -155,7 +155,7 @@ Gli stream cloud vengono marcati con `☁️ RD` o `☁️ TB` e possono usare r
 ---
 
 <div align="center">
-  <h2>Anime & Kitsu Intelligence</h2>
+  <h2>🈶 Anime & Kitsu Intelligence</h2>
   <p><code>Anime-first matching · Kitsu-aware context · episode collision control</code></p>
 </div>
 
@@ -183,7 +183,7 @@ Provider e engine allineati al flusso anime:
 ---
 
 <div align="center">
-  <h2>Adaptive Cache Intelligence</h2>
+  <h2>🧠 Adaptive Cache Intelligence</h2>
   <p><code>Volatility-aware · confidence-weighted · safer fresh releases</code></p>
 </div>
 
@@ -201,7 +201,7 @@ In pratica:
 ---
 
 <div align="center">
-  <h2>Cloudflare Session Store</h2>
+  <h2>🛡️ Cloudflare Session Store</h2>
   <p><code>Redis-backed clearance sharing · fewer duplicate solves · better multi-worker behavior</code></p>
 </div>
 
@@ -229,7 +229,7 @@ CF_REDIS_LOCK_WAIT_MS=52000
 ---
 
 <div align="center">
-  <h2>Kraken Runtime</h2>
+  <h2>🦑 Kraken Runtime</h2>
   <p><code>Leviathan-native companion · forward transport · hoster orchestration</code></p>
 </div>
 
@@ -260,7 +260,7 @@ FORWARD_PROXY=https://your-kraken-instance.example/forward
 ---
 
 <div align="center">
-  <h2>Network Map</h2>
+  <h2>🌐 Network Map</h2>
   <p><code>Cloud · Web providers · Torrent engines · Hoster extractors</code></p>
 </div>
 
@@ -335,7 +335,7 @@ Request Stremio
 ---
 
 <div align="center">
-  <h2>Provider Policy</h2>
+  <h2>🎯 Provider Policy</h2>
 </div>
 
 Leviathan evita di usare ogni provider in ogni contesto. Ogni modulo ha uno scope più preciso.
@@ -352,7 +352,7 @@ Leviathan evita di usare ogni provider in ogni contesto. Ogni modulo ha uno scop
 ---
 
 <div align="center">
-  <h2>Deployment</h2>
+  <h2>🐳 Deployment</h2>
 </div>
 
 <div align="center">
@@ -379,7 +379,7 @@ http://localhost:7000
 ---
 
 <div align="center">
-  <h2>Core File Atlas</h2>
+  <h2>🧩 Core File Atlas</h2>
   <p><code>A compact map of the most important Leviathan files</code></p>
 </div>
 
@@ -436,7 +436,7 @@ http://localhost:7000
 ---
 
 <div align="center">
-  <h2>Self-Hosting Reality Check</h2>
+  <h2>⚠️ Self-Hosting Reality Check</h2>
 </div>
 
 > [!IMPORTANT]
@@ -457,13 +457,13 @@ Il **Saved Cloud Layer** resta utile anche in self-hosting perché dipende dal c
 ---
 
 <div align="center">
-  <h2>Support the Protocol</h2>
+  <h2>💠 Support the Protocol</h2>
 
   <img src="https://capsule-render.vercel.app/api?type=rect&color=0:06101F,50:00E7FF,100:06101F&height=1&section=header" width="58%" alt="support divider" />
 
   <br><br>
 
-  Leviathan è un progetto open-source costruito con attenzione a qualità del risultato, continuità evolutiva e identità tecnica.
+  Leviathan è un progetto open-source costruito con attenzione a qualità del risultato, continuità evolutiva e identità tecnica. ✨
 
   <br><br>
 
@@ -495,7 +495,7 @@ Il **Saved Cloud Layer** resta utile anche in self-hosting perché dipende dal c
 
   <img src="https://capsule-render.vercel.app/api?type=transparent&height=58&section=header&text=%E2%9C%A6%20L%20U%20C%204%20N%203%20X%20%E2%9C%A6&fontSize=30&fontColor=FFFFFF&animation=fadeIn&fontAlignY=50" width="72%" alt="LUC4N3X" />
 
-  <h3>Founder · Core Architect · Lead Engineering</h3>
+  <h3>👤 Founder · Core Architect · Lead Engineering</h3>
 
   <p>
     <b>Ideazione, architettura e direzione tecnica di Leviathan.</b><br>
@@ -509,7 +509,7 @@ Il **Saved Cloud Layer** resta utile anche in self-hosting perché dipende dal c
 
   <br><br>
 
-  <h2>Special Thanks</h2>
+  <h2>🤝 Special Thanks</h2>
 
   <p>
     <a href="https://github.com/UrloMythus/MammaMia" target="_blank">
