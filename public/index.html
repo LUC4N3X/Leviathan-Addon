@@ -5517,6 +5517,56 @@ body { background: transparent !important; }
 }
 </style>
 
+
+
+<style id="luca-equal-command-cards-fix">
+/* Fix layout desktop: la colonna sinistra ora riempie la stessa altezza della destra.
+   Non tocca mobile e non cambia la struttura HTML. */
+@media (min-width: 1024px) {
+  #config-area .desktop-grid-container {
+    align-items: stretch !important;
+  }
+
+  #config-area .col-left,
+  #config-area .col-right {
+    display: flex !important;
+    flex-direction: column !important;
+    min-height: 0 !important;
+  }
+
+  #config-area .col-left > .section-header,
+  #config-area .col-right > .section-header,
+  #config-area .col-left > .service-tabs,
+  #config-area .col-left > .input-group {
+    flex: 0 0 auto !important;
+  }
+
+  #config-area .col-left > #webModule {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    align-content: start !important;
+    background:
+      radial-gradient(80% 60% at 50% 100%, rgba(0,242,255,0.055), transparent 62%),
+      radial-gradient(70% 50% at 0% 0%, rgba(112,0,255,0.075), transparent 58%),
+      linear-gradient(145deg, rgba(5, 18, 32, .84), rgba(1, 7, 15, .96)) !important;
+  }
+
+  #config-area .col-left > #webModule::after {
+    content: '' !important;
+    grid-column: 1 / -1 !important;
+    display: block !important;
+    min-height: 24px !important;
+    align-self: end !important;
+    border-radius: 18px !important;
+    opacity: .55 !important;
+    background:
+      linear-gradient(90deg, transparent, rgba(0,242,255,.08), transparent),
+      radial-gradient(circle at 50% 100%, rgba(0,242,255,.10), transparent 58%) !important;
+    pointer-events: none !important;
+  }
+}
+</style>
+
 </head>
 <body>
     <canvas id="deepSeaCanvas"></canvas>
