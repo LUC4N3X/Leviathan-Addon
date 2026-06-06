@@ -94,16 +94,9 @@ const {
 } = require('./stream/debrid_runtime_options');
 const SCRAPER_MODULES = [ require("../providers/engines") ];
 
-// Smart Torrentio fallback policy: keep this hardcoded on purpose.
-// Torrentio main wins only when it has enough authoritative cached rows;
-// otherwise mirror is allowed to fill the gap, and MediaFusion is used only as
-// a RealDebrid-checked rescue when Torrentio coverage is still thin.
 const TORRENTIO_MAIN_STRONG_STOP_MIN = 3;
 const TORRENTIO_TOTAL_STRONG_STOP_MIN = 5;
 
-// DB-heavy policy: the internal DB is intentionally treated as a strong source.
-// No new env knobs: if the DB already has good episode/movie candidates, use it
-// before widening to external addons.
 const DB_HEAVY_SERIES_PRIMARY_MIN = 2;
 const DB_HEAVY_SERIES_FALLBACK_LIMIT = 30;
 const DB_HEAVY_SERIES_EXTERNAL_FILL_LIMIT = 8;
