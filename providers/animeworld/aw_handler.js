@@ -26,8 +26,6 @@ function normalizeBaseDomain(value, fallback = 'https://www.animeworld.ac') {
     try {
         const parsed = new URL(String(value || fallback).trim());
         if (!['http:', 'https:'].includes(parsed.protocol)) return fallback;
-        // AnimeWorld is picky: the apex host can issue a security cookie that does
-        // not unlock the www/play pages. Keep Leviathan on the canonical surface.
         if (/animeworld\./i.test(parsed.hostname) && !/^www\./i.test(parsed.hostname)) {
             parsed.hostname = `www.${parsed.hostname.replace(/^www\./i, '')}`;
         }
