@@ -43,3 +43,9 @@ test('AltaDefinizione ranks the CDN source ahead of hoster embeds', () => {
 
     assert.equal(sources[0].extractor, 'CDN');
 });
+
+test('AltaDefinizione maps multi-audio source labels to concrete ITA and ENG flags', () => {
+    assert.equal(__private.getSourceLanguageLabel({ language: 'multi audio' }), 'MULTI ITA/ENG');
+    assert.equal(__private.getSourceLanguageLabel({ title: 'Film 1080p ITA ENG' }), 'MULTI ITA/ENG');
+    assert.deepEqual(__private.audioLanguagesForLabel('MULTI ITA/ENG'), ['ita', 'eng']);
+});

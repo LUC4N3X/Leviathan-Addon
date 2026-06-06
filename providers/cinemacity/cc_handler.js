@@ -14,21 +14,21 @@ let prewarmCinemaCityPlayback = null;
 try {
     ({ buildCinemaCityProxyUrl, prewarmCinemaCityPlayback } = require('./cc_proxy'));
 } catch (_) {
-   
+
 }
 
 let ccMemory = null;
 try {
     ccMemory = require('./cc_memory');
 } catch (_) {
-   
+
 }
 
 let runCurlCffiBypass = null;
 try {
     ({ runCurlCffiBypass } = require('../utils/cloudflare_bypass'));
 } catch (_) {
-  
+
 }
 
 let curlCffiRunnerOverride = null;
@@ -894,6 +894,37 @@ function buildSearchQueryVariants(titles = []) {
     return out.filter(Boolean);
 }
 
+function inferCinemaCityAudioLanguages(...values) {
+    const text = values.map((value) => String(value || '')).join(' ');
+    const out = [];
+    const push = (lang) => {
+        if (lang && !out.includes(lang)) out.push(lang);
+    };
+    const isSubOnly = /\b(?:sub\s*ita|vost(?:it)?|sottotitoli?\s*ita)\b/i.test(text)
+        && !/\b(?:dub\s*ita|audio\s*ita|ita\s*(?:dub|audio)|doppiat[oa])\b/i.test(text);
+    const multiAudio = /\b(?:multi(?:[\s._-]*audio)?|dual[\s._-]*audio)\b/i.test(text)
+        && !/\b(?:multi[\s._-]*sub|multisub|sub[\s._-]*multi)\b/i.test(text);
+
+    if (multiAudio) {
+        push('ita');
+        push('eng');
+    }
+    if (!isSubOnly && /🇮🇹|\b(?:ita|it|italiano|italian)\b/i.test(text)) push('ita');
+    if (/🇬🇧|\b(?:eng|en|inglese|english)\b/i.test(text)) push('eng');
+    if (/🇯🇵|\b(?:jpn|jp|jap|ja|giapponese|japanese)\b/i.test(text)) push('jpn');
+    return out;
+}
+
+function cinemaCityLanguageLabel(audioLanguages = []) {
+    if (!Array.isArray(audioLanguages) || !audioLanguages.length) return '';
+    if (audioLanguages.length === 1) {
+        if (audioLanguages[0] === 'ita') return 'Italian';
+        if (audioLanguages[0] === 'eng') return 'English';
+        if (audioLanguages[0] === 'jpn') return 'Japanese';
+    }
+    return audioLanguages.map((lang) => String(lang || '').slice(0, 3).toUpperCase()).join('/');
+}
+
 function extractCandidateLinksFromListing(html, type = 'movie') {
     const results = [];
     const seen = new Set();
@@ -1118,23 +1149,26 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
             return [];
         }
 
-        let selectedUrl = null;
+        let selectedLink = null;
         for (const link of links) {
             const text = link.text;
             if (text.includes('ita') || text.includes('italian') || text.includes('italiano')) {
-                selectedUrl = link.url;
-                hasItalian = true;
+                selectedLink = link;
                 break;
             }
         }
-        if (!selectedUrl) {
+        if (!selectedLink) {
             for (const link of links) {
                 if (link.text.includes('eng') || link.text.includes('sub')) continue;
-                selectedUrl = link.url;
+                selectedLink = link;
                 break;
             }
         }
-        if (!selectedUrl) selectedUrl = links[0].url;
+        if (!selectedLink) selectedLink = links[0];
+
+        const selectedUrl = selectedLink.url;
+        const audioLanguages = inferCinemaCityAudioLanguages(selectedLink.text);
+        hasItalian = audioLanguages.includes('ita');
 
         const streamUrl = resolveUrl(movieUrl, selectedUrl);
         console.log(`[CinemaCity] CCCDN stream: ${streamUrl}`);
@@ -1150,8 +1184,8 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
             extractor: EXTRACTOR_LABEL,
             provider: PROVIDER_LABEL,
             providerCode: PROVIDER_CODE,
-            language: hasItalian ? 'Italian' : '',
-            audioLanguages: hasItalian ? ['ita'] : [],
+            language: cinemaCityLanguageLabel(audioLanguages),
+            audioLanguages,
             behaviorHints: {
                 notWebReady: true,
                 extractor: EXTRACTOR_LABEL,
@@ -1164,7 +1198,7 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
                     site: PROVIDER_LABEL,
                     extractor: EXTRACTOR_LABEL,
                     quality: '1080p',
-                    audioLanguages: hasItalian ? ['ita'] : []
+                    audioLanguages
                 }
             },
             headers: { ...DEFAULT_STREAM_HEADERS }
@@ -1286,6 +1320,7 @@ module.exports = {
         isCinemaCityContentUrlForType,
         extractCandidateLinksFromListing,
         buildSearchQueryVariants,
+        inferCinemaCityAudioLanguages,
         getListingBaseUrls,
         buildCinemaCityKrakenForwardUrl,
         getCinemaCityPageExtractorBase,

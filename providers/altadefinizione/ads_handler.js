@@ -95,20 +95,94 @@ function getKrakenGateway(config = {}) {
 
 function getSourceLanguageLabel(source = {}, playlistIntel = null) {
     const audio = Array.isArray(playlistIntel?.audioLanguages) ? playlistIntel.audioLanguages.map((item) => String(item).toLowerCase()) : [];
-    if (audio.includes('ita')) return 'ITA';
-    if (audio.length && !audio.includes('ita')) return 'UND';
+    if (audio.length) return languageLabelForAudioLanguages(audio);
 
     const text = `${source.language || ''} ${source.lang || ''} ${source.provider || ''} ${source.extractor || ''} ${source.title || ''}`;
-    if (/🇮🇹|\b(?:ita|it|italiano|italian)\b/i.test(text)) return 'ITA';
-    if (/\bmulti(?:audio)?\b/i.test(text)) return 'MULTI';
+    const inferred = audioLanguagesFromText(text);
+    if (inferred.length) return languageLabelForAudioLanguages(inferred);
     return 'ITA';
+}
+
+function normalizeAudioLanguage(value) {
+    const clean = String(value || '').trim().toLowerCase();
+    if (!clean) return '';
+    if (/^(?:it|ita|italian|italiano)$/.test(clean)) return 'ita';
+    if (/^(?:en|eng|english|inglese)$/.test(clean)) return 'eng';
+    if (/^(?:ja|jp|jpn|jap|japanese|giapponese)$/.test(clean)) return 'jpn';
+    if (/^(?:fr|fra|fre|french|francese)$/.test(clean)) return 'fra';
+    if (/^(?:es|esp|spa|spanish|spagnolo)$/.test(clean)) return 'spa';
+    if (/^(?:de|deu|ger|german|tedesco)$/.test(clean)) return 'deu';
+    if (/^(?:und|unknown|sconosciuto)$/.test(clean)) return 'und';
+    return clean.slice(0, 12);
+}
+
+function audioLanguagesFromText(...values) {
+    const text = values.map((value) => String(value || '')).join(' ');
+    const out = [];
+    const push = (lang) => {
+        const normalized = normalizeAudioLanguage(lang);
+        if (normalized && !out.includes(normalized)) out.push(normalized);
+    };
+
+    const isSubOnly = /\b(?:sub\s*ita|vost(?:it)?|sottotitoli?\s*ita)\b/i.test(text)
+        && !/\b(?:dub\s*ita|audio\s*ita|ita\s*(?:dub|audio)|doppiat[oa])\b/i.test(text);
+    const multiAudio = /\b(?:multi(?:[\s._-]*audio)?|dual[\s._-]*audio)\b/i.test(text)
+        && !/\b(?:multi[\s._-]*sub|multisub|sub[\s._-]*multi)\b/i.test(text);
+
+    if (multiAudio) {
+        push('ita');
+        push('eng');
+    }
+    if (!isSubOnly && /🇮🇹|\b(?:ita|it|italiano|italian)\b/i.test(text)) push('ita');
+    if (/🇬🇧|\b(?:eng|en|inglese|english)\b/i.test(text)) push('eng');
+    if (/🇯🇵|\b(?:jpn|jp|jap|ja|giapponese|japanese)\b/i.test(text)) push('jpn');
+    if (/🇫🇷|\b(?:fra|fre|fr|francese|french)\b/i.test(text)) push('fra');
+    if (/🇪🇸|\b(?:spa|esp|es|spagnolo|spanish)\b/i.test(text)) push('spa');
+    if (/🇩🇪|\b(?:deu|ger|de|tedesco|german)\b/i.test(text)) push('deu');
+    return out;
+}
+
+function languageLabelForAudioLanguages(languages = []) {
+    const labels = {
+        ita: 'ITA',
+        eng: 'ENG',
+        jpn: 'JPN',
+        fra: 'FRA',
+        spa: 'SPA',
+        deu: 'DEU',
+        und: 'UND'
+    };
+    const unique = [];
+    for (const item of Array.isArray(languages) ? languages : [languages]) {
+        const normalized = normalizeAudioLanguage(item);
+        if (normalized && !unique.includes(normalized)) unique.push(normalized);
+    }
+    if (!unique.length) return 'ITA';
+    if (unique.includes('ita')) {
+        const ordered = ['ita', ...unique.filter((lang) => lang !== 'ita')];
+        return ordered.length > 1 ? `MULTI ${ordered.map((lang) => labels[lang] || lang.toUpperCase()).join('/')}` : 'ITA';
+    }
+    if (unique.length > 1) return `MULTI ${unique.map((lang) => labels[lang] || lang.toUpperCase()).join('/')}`;
+    return labels[unique[0]] || unique[0].toUpperCase();
+}
+
+function audioLanguagesForLabel(label = '') {
+    const fromText = audioLanguagesFromText(label);
+    if (fromText.length) return fromText;
+    const clean = String(label || '').trim().toUpperCase();
+    if (!clean) return ['ita'];
+    if (/\bMULTI\b/.test(clean)) return ['ita', 'eng'];
+    if (/\bITA\b/.test(clean)) return ['ita'];
+    if (/\bENG\b/.test(clean)) return ['eng'];
+    if (/\bUND\b|UNKNOWN|SCONOSCIUT/.test(clean)) return ['und'];
+    return ['ita'];
 }
 
 function languageSortRank(stream = {}) {
     const meta = stream?.behaviorHints?.vortexMeta || {};
     const text = [stream.title, stream.name, meta.language, ...(Array.isArray(meta.audioLanguages) ? meta.audioLanguages : [])].filter(Boolean).join(' ');
-    if (/🇮🇹|\b(?:ita|it|italiano|italian)\b/i.test(text)) return 0;
     if (/\bmulti\b/i.test(text)) return 1;
+    if (/🇮🇹|\b(?:ita|it|italiano|italian)\b/i.test(text)) return 0;
     if (/\bund\b|unknown|sconosciut/i.test(text)) return 2;
     return 3;
 }
@@ -299,7 +373,7 @@ function buildKrakenResolvedStream(source, def = null, { title, config = {}, pag
 
     const languageLabel = getSourceLanguageLabel(source, playlistIntel);
     const quality = pickBetterQuality(playlistIntel?.quality || 'Unknown', source.quality || 'Unknown');
-    const audioLanguages = languageLabel === 'ITA' ? ['ita'] : (languageLabel === 'MULTI' ? ['multi'] : ['und']);
+    const audioLanguages = audioLanguagesForLabel(languageLabel);
 
     return buildWebStream({
         name: `${PROVIDER_LABEL} | ${label} Kraken`,
@@ -382,7 +456,7 @@ async function resolveSourceToStream(source, { title, reqHost, pageUrl = BASE_UR
             extraBehaviorHints: {
                 vortexMeta: {
                     language: languageLabel,
-                    audioLanguages: languageLabel === 'ITA' ? ['ita'] : (languageLabel === 'MULTI' ? ['multi'] : ['und']),
+                    audioLanguages: audioLanguagesForLabel(languageLabel),
                     via: 'local-extractor',
                     sourceUrl: source.url
                 }
@@ -418,7 +492,7 @@ async function resolveSourceToStream(source, { title, reqHost, pageUrl = BASE_UR
         extraBehaviorHints: {
             vortexMeta: {
                 language: languageLabel,
-                audioLanguages: languageLabel === 'ITA' ? ['ita'] : (languageLabel === 'MULTI' ? ['multi'] : ['und']),
+                audioLanguages: audioLanguagesForLabel(languageLabel),
                 via: 'direct',
                 sourceUrl: source.url
             }
@@ -557,6 +631,7 @@ module.exports = {
         normalizeImdbId,
         resolveDownloadToHoster,
         resolveSourceToStream,
+        audioLanguagesForLabel,
         getSourceLanguageLabel,
         resolveMedia,
         shouldExposeLazyFallback,

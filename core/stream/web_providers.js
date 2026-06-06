@@ -397,6 +397,12 @@ function collectLanguages(stream = {}, sourceName = '') {
                 push('jpn');
                 continue;
             }
+            const isMultiAudio = /\b(?:multi(?:[\s._-]*audio)?|dual[\s._-]*audio)\b/i.test(str)
+                && !/\b(?:multi[\s._-]*sub|multisub|sub[\s._-]*multi)\b/i.test(str);
+            if (isMultiAudio) {
+                push('ita');
+                push('eng');
+            }
             if (/🇮🇹|\b(?:ita|it|italiano|italian)\b/i.test(str)) push('ita');
             if (/🇬🇧|\b(?:eng|en|inglese|english)\b/i.test(str)) push('eng');
             if (/🇯🇵|\b(?:jpn|jp|jap|ja|giapponese|japanese)\b/i.test(str)) push('jpn');

@@ -246,3 +246,71 @@ test('web formatter normalizes legacy CinemaCity proxy labels to CCCDN', () => {
     assert.match(formatted.cinemaCity[0].title, /CCCDN/i);
     assert.doesNotMatch(formatted.cinemaCity[0].title, /HLS Proxy/i);
 });
+
+test('web formatter shows multiple audio flags when provider streams expose them', () => {
+    const tools = createWebProviderTools({
+        Cache: {},
+        LIMITERS: {},
+        CONFIG: { TIMEOUTS: { SCRAPER: 0 } },
+        guardedProviderCall: async () => []
+    });
+
+    const formatted = tools.formatWebProviderBuckets({
+        cinemaCity: [{
+            name: '🏙️ CinemaCity | CCCDN',
+            title: 'The Rip\nCCCDN ITA ENG',
+            url: 'https://example.com/master.m3u8',
+            quality: '1080p',
+            extractor: 'CCCDN',
+            audioLanguages: ['ita', 'eng'],
+            behaviorHints: {
+                extractor: 'CCCDN',
+                vortexMeta: {
+                    quality: '1080p',
+                    extractor: 'CCCDN',
+                    provider: 'CinemaCity',
+                    audioLanguages: ['ita', 'eng']
+                }
+            }
+        }]
+    }, { title: 'The Rip', type: 'movie' }, { formatter: 'leviathan', filters: {} });
+
+    assert.equal(formatted.cinemaCity.length, 1);
+    assert.match(formatted.cinemaCity[0].name, /🇮🇹\/🇬🇧/);
+    assert.match(formatted.cinemaCity[0].title, /🗣️ 🇮🇹\/🇬🇧 \|/);
+    assert.equal(formatted.cinemaCity[0].behaviorHints.vortexMeta.language, 'MULTI ITA/ENG');
+});
+
+test('web formatter expands legacy multi audio markers to concrete ITA and ENG flags', () => {
+    const tools = createWebProviderTools({
+        Cache: {},
+        LIMITERS: {},
+        CONFIG: { TIMEOUTS: { SCRAPER: 0 } },
+        guardedProviderCall: async () => []
+    });
+
+    const formatted = tools.formatWebProviderBuckets({
+        altadefinizione: [{
+            name: '🎞️ AltadefinizioneStreaming | ADN/CDN',
+            title: 'The Rip\nADN/CDN MULTI',
+            url: 'https://example.com/master.m3u8',
+            quality: '1080p',
+            extractor: 'ADN/CDN',
+            behaviorHints: {
+                extractor: 'ADN/CDN',
+                vortexMeta: {
+                    quality: '1080p',
+                    extractor: 'ADN/CDN',
+                    provider: 'AltadefinizioneStreaming',
+                    language: 'MULTI',
+                    audioLanguages: ['multi']
+                }
+            }
+        }]
+    }, { title: 'The Rip', type: 'movie' }, { formatter: 'leviathan', filters: {} });
+
+    assert.equal(formatted.altadefinizione.length, 1);
+    assert.match(formatted.altadefinizione[0].name, /🇮🇹\/🇬🇧/);
+    assert.match(formatted.altadefinizione[0].title, /🗣️ 🇮🇹\/🇬🇧 \|/);
+    assert.equal(formatted.altadefinizione[0].behaviorHints.vortexMeta.language, 'MULTI ITA/ENG');
+});
