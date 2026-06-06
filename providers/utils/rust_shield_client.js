@@ -1,13 +1,5 @@
 'use strict';
 
-// The Rust shield service was removed because in this single-worker deployment
-// its benefits (LRU cache, single-flight, connection pool) were marginal vs
-// the operational cost (extra container, extra language, extra failure mode).
-// All call sites already gate on `rustShield.enabled`, so this stub keeps
-// every existing surface intact while skipping the Rust path entirely.
-// Re-introduce the service by restoring services/rust-shield/ and reverting
-// this file.
-
 function envFlag(name, fallback = false) {
   const value = process.env[name];
   if (value === undefined || value === null || value === '') return fallback;
