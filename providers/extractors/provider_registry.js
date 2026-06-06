@@ -259,7 +259,7 @@ const WEB_PROVIDER_DEFINITIONS = [
         cacheName: 'AnimeSaturn',
         icon: '🪐',
         limiterKey: 'webAs',
-        minTimeout: 0,
+        minTimeout: Math.max(9000, parseInt(process.env.ANIMESATURN_PROVIDER_TIMEOUT || '10000', 10) || 10000),
         isEnabled: ({ filters, meta }) => filters?.enableAnimeSaturn === true && isAnimeWebEligible(meta),
         run: ({ originalId, meta, config }) => searchAnimeSaturn(originalId, meta, config)
     },

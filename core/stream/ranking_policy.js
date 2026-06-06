@@ -227,6 +227,33 @@ function getSmartStreamFilename(stream = {}) {
     return '';
 }
 
+function collectSmartStreamLanguageText(stream = {}) {
+    return [
+        stream?.language,
+        stream?.lang,
+        stream?.audio,
+        stream?.audioLanguage,
+        Array.isArray(stream?.audioLanguages) ? stream.audioLanguages.join(' ') : stream?.audioLanguages,
+        stream?.behaviorHints?.language,
+        stream?.behaviorHints?.audio,
+        stream?.behaviorHints?.vortexMeta?.language,
+        stream?.behaviorHints?.vortexMeta?.audio,
+        Array.isArray(stream?.behaviorHints?.vortexMeta?.audioLanguages) ? stream.behaviorHints.vortexMeta.audioLanguages.join(' ') : stream?.behaviorHints?.vortexMeta?.audioLanguages,
+        stream?.name,
+        stream?.title
+    ].filter(Boolean).join(' ');
+}
+
+function getSmartStreamLanguageVariant(stream = {}) {
+    const text = collectSmartStreamLanguageText(stream);
+    if (!text) return '';
+    if (/🇮🇹|\b(?:ita|it|italian|italiano|dub\s*ita|doppiat[oa])\b/i.test(text) && !/sub\s*ita|vost(?:it)?/i.test(text)) return 'ita';
+    if (/🇯🇵|\b(?:jpn|jp|jap|ja|japanese|giapponese)\b|sub\s*ita|vost(?:it)?|raw/i.test(text)) return 'jpn';
+    if (/🇬🇧|🇺🇸|\b(?:eng|en|english|inglese)\b/i.test(text)) return 'eng';
+    if (/\b(?:multi|dual\s*audio|multiaudio)\b/i.test(text)) return 'multi';
+    return '';
+}
+
 function getSizeBucket(bytes) {
     const value = Number(bytes || 0);
     if (!Number.isFinite(value) || value <= 0) return '0';
@@ -243,15 +270,17 @@ function getSmartStreamFingerprint(stream = {}) {
 
     const filename = normalizeSmartFingerprintText(getSmartStreamFilename(stream));
     const size = getSizeBucket(parseFinalStreamSizeBytes(stream) || stream?.behaviorHints?.videoSize || stream?.size || stream?.streamData?.size);
+    const languageVariant = getSmartStreamLanguageVariant(stream);
+    const languageKey = languageVariant ? `:${languageVariant}` : '';
     if (infoHash && !/\b(?:pack|season|stagione|complete|collection)\b/i.test(getSmartStreamSortText(stream))) {
-        return `hash:${infoHash}`;
+        return `hash:${infoHash}${languageKey}`;
     }
-    if (filename && size !== '0') return `file:${filename}:${size}`;
+    if (filename && size !== '0') return `file:${filename}:${size}${languageKey}`;
 
     const title = normalizeSmartFingerprintText(getFinalStreamSortText(stream));
     const resolution = getFinalStreamResolutionTier(stream);
     const group = detectReleaseGroupKey({ title: getFinalStreamSortText(stream), source: stream?.streamData?.addon || stream?.source || stream?.provider });
-    return title ? `smart:${title}:${resolution}:${group}:${size}` : '';
+    return title ? `smart:${title}:${resolution}:${group}:${size}${languageKey}` : '';
 }
 
 function getSmartDedupPreferenceScore(stream = {}) {
