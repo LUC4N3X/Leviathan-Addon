@@ -5,10 +5,12 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { buildCookieHeaderFromSession, mergeCookieHeaders, cookieHeaderToObjects } = require('./cf_clearance_manager');
+const { createClearanceBroker } = require('./cf_clearance_broker');
+const { h2ReplayRequest, h2ReplayPool } = require('./cf_h2_replay');
 
 let cfNativeSolver = null;
 try {
-  
+
   cfNativeSolver = require('./cf_native_solver');
 } catch (err) {
   try {
@@ -834,6 +836,18 @@ function createCloudflareBypass(options = {}) {
   const curlCffiBrowserHeaders = envFlagNotFalse(`${envPrefix}_CURL_CFFI_BROWSER_HEADERS`, envFlagNotFalse('CURL_CFFI_BROWSER_HEADERS', CURL_CFFI_DEFAULTS.browserHeaders));
   const curlCffiAcceptLanguage = String(process.env[`${envPrefix}_CURL_CFFI_ACCEPT_LANGUAGE`] || process.env.CURL_CFFI_ACCEPT_LANGUAGE || options.acceptLanguage || CURL_CFFI_DEFAULTS.acceptLanguage);
   const scraplingEnabled = options.scraplingEnabled ?? envFlag(`${envPrefix}_SCRAPLING_ENABLED`, envFlag('SCRAPLING_ENABLED', false));
+  const h2ReplayEnabled = options.h2ReplayEnabled ?? envFlag(`${envPrefix}_H2_REPLAY_ENABLED`, envFlag('CF_H2_REPLAY_ENABLED', false));
+  const h2ReplayTimeoutMs = options.h2ReplayTimeoutMs || envNumber(`${envPrefix}_H2_REPLAY_TIMEOUT_MS`, envNumber('CF_H2_REPLAY_TIMEOUT_MS', 1200, 250, 5000), 250, 5000);
+  const h2ReplayMaxBodyBytes = options.h2ReplayMaxBodyBytes || envNumber(`${envPrefix}_H2_REPLAY_MAX_BODY_BYTES`, envNumber('CF_H2_REPLAY_MAX_BODY_BYTES', 2 * 1024 * 1024, 32 * 1024, 8 * 1024 * 1024), 32 * 1024, 8 * 1024 * 1024);
+  const h2ReplayFailureCooldownMs = options.h2ReplayFailureCooldownMs || envNumber(`${envPrefix}_H2_REPLAY_FAILURE_COOLDOWN_MS`, envNumber('CF_H2_REPLAY_FAILURE_COOLDOWN_MS', 30_000, 0, 10 * 60_000), 0, 10 * 60_000);
+  const clearanceBrokerEnabled = options.clearanceBrokerEnabled ?? envFlag(`${envPrefix}_CLEARANCE_BROKER_ENABLED`, envFlag('CF_CLEARANCE_BROKER_ENABLED', true));
+  const clearanceBrokerMaxCooldownMs = options.clearanceBrokerMaxCooldownMs || envNumber(`${envPrefix}_CLEARANCE_BROKER_MAX_COOLDOWN_MS`, envNumber('CF_CLEARANCE_BROKER_MAX_COOLDOWN_MS', 5 * 60_000, 0, 60 * 60_000), 0, 60 * 60_000);
+  const clearanceBrokerMaxHosts = options.clearanceBrokerMaxHosts || envNumber(`${envPrefix}_CLEARANCE_BROKER_MAX_HOSTS`, envNumber('CF_CLEARANCE_BROKER_MAX_HOSTS', 300, 10, 10_000), 10, 10_000);
+  const clearanceBroker = options.clearanceBroker || createClearanceBroker({
+    enabled: clearanceBrokerEnabled,
+    maxCooldownMs: clearanceBrokerMaxCooldownMs,
+    maxHosts: clearanceBrokerMaxHosts
+  });
   const useRustShield = options.useRustShield ?? envFlag(`${envPrefix}_RUST_SHIELD`, true);
   const useRustShieldForSession = options.useRustShieldForSession ?? useRustShield;
   const logger = options.logger || null;
@@ -880,6 +894,20 @@ function createCloudflareBypass(options = {}) {
   function warn(message, meta = null) {
     if (logger?.warn) logger.warn(message, meta);
     else if (options.debug || options.debugCf) console.warn(`[${envPrefix}-BYPASS] ${message}${meta ? ` ${JSON.stringify(meta)}` : ''}`);
+  }
+
+  function brokerHtmlMeta(html, status = 0) {
+    return {
+      statusCode: Number(status || 0) || 0,
+      bytes: String(html || '').length
+    };
+  }
+
+  function recordBrokerOutcome(strategy, outcome, targetUrl, meta = {}) {
+    if (!clearanceBroker || typeof clearanceBroker.record !== 'function') return;
+    try {
+      clearanceBroker.record(targetUrl, strategy, outcome, meta);
+    } catch (_) {}
   }
 
   function rememberNativeClearance(url, session, strategy) {
@@ -931,6 +959,115 @@ function createCloudflareBypass(options = {}) {
       debug('curl_cffi redis/session hydrate skipped', { url, error: error?.message || String(error) });
       return false;
     }
+  }
+
+  async function hydrateH2ReplaySession(url, reason = 'h2-replay-seed') {
+    if (typeof guard.hydrateSessionForUrl !== 'function') return false;
+    try {
+      return await guard.hydrateSessionForUrl(url, reason);
+    } catch (error) {
+      debug('h2 replay redis/session hydrate skipped', { url, error: error?.message || String(error) });
+      return false;
+    }
+  }
+
+  function getFreshGuardSessionForUrl(url) {
+    const session = typeof guard.getSession === 'function' ? guard.getSession() : null;
+    if (!session) return null;
+    try {
+      if (typeof guard.isSessionFreshForUrl === 'function') {
+        return guard.isSessionFreshForUrl(session, url || session.solvedUrl || session.url || baseUrl) ? session : null;
+      }
+      if (typeof guard.isSessionFresh === 'function') {
+        return guard.isSessionFresh(session) ? session : null;
+      }
+    } catch (_) {
+      return null;
+    }
+    return session;
+  }
+
+  function buildH2ReplaySeed(url, fetchOptions = {}) {
+    const headers = fetchOptions.headers || {};
+    let cookieHeader = fetchOptions.cookieHeader || getHeaderValue(headers, 'cookie');
+    let userAgent = fetchOptions.userAgent || getHeaderValue(headers, 'user-agent');
+    const session = getFreshGuardSessionForUrl(url);
+
+    if (session) {
+      const sessionCookie = buildCookieHeaderFromSession(session, url || session.solvedUrl || session.url || baseUrl)
+        || session.cookies
+        || '';
+      if (sessionCookie) {
+        cookieHeader = cookieHeader ? mergeCookieHeaders(cookieHeader, sessionCookie) : sessionCookie;
+      }
+      userAgent = userAgent || session.userAgent || session.ua || '';
+    }
+
+    return {
+      cookieHeader: String(cookieHeader || '').trim(),
+      userAgent: String(userAgent || '').trim(),
+      session
+    };
+  }
+
+  function shouldAttemptH2Replay(url, fetchOptions = {}, seed = null) {
+    if (!h2ReplayEnabled || fetchOptions.allowH2Replay === false || fetchOptions.skipH2Replay === true) return false;
+    if (!isSameSiteUrl(url, baseUrl) || !isHtmlLikeUrl(url)) return false;
+    if (!seed?.cookieHeader) return false;
+    return true;
+  }
+
+  async function prepareH2Replay(url, fetchOptions = {}) {
+    await hydrateH2ReplaySession(url, fetchOptions.reason ? `h2-replay-${fetchOptions.reason}` : 'h2-replay-seed');
+    const seed = buildH2ReplaySeed(url, fetchOptions);
+    return {
+      seed,
+      canAttempt: shouldAttemptH2Replay(url, fetchOptions, seed)
+    };
+  }
+
+  async function runH2Replay(url, fetchOptions = {}, prepared = null) {
+    const replaySeed = prepared || await prepareH2Replay(url, fetchOptions);
+    const seed = replaySeed.seed;
+    if (!replaySeed.canAttempt) return null;
+
+    const runner = typeof options.h2ReplayRunner === 'function' ? options.h2ReplayRunner : h2ReplayRequest;
+    const timeout = Math.max(250, Math.min(
+      Number(fetchOptions.h2ReplayTimeoutMs || fetchOptions.timeoutMs || fetchOptions.timeout || h2ReplayTimeoutMs) || h2ReplayTimeoutMs,
+      h2ReplayTimeoutMs
+    ));
+    const result = await runner(url, {
+      ...fetchOptions,
+      method: fetchOptions.method || 'GET',
+      body: fetchOptions.body ?? fetchOptions.data ?? null,
+      cookieHeader: seed.cookieHeader,
+      userAgent: seed.userAgent || undefined,
+      headers: fetchOptions.headers || {},
+      timeoutMs: timeout,
+      maxBodyBytes: fetchOptions.h2ReplayMaxBodyBytes || h2ReplayMaxBodyBytes,
+      maxRedirects: fetchOptions.h2ReplayMaxRedirects ?? 3,
+      pool: options.h2ReplayPool || h2ReplayPool
+    });
+
+    return { result, seed };
+  }
+
+  function importH2ReplaySession(url, replayResult, seed) {
+    const setCookies = Array.isArray(replayResult?.setCookies) ? replayResult.setCookies : [];
+    if (!setCookies.length || typeof guard.importSession !== 'function') return;
+    const mergedCookies = mergeCookieHeaders(seed?.cookieHeader || '', setCookies);
+    if (!mergedCookies) return;
+    try {
+      guard.importSession({
+        ...(seed?.session && typeof seed.session === 'object' ? seed.session : {}),
+        userAgent: seed?.userAgent || seed?.session?.userAgent || seed?.session?.ua || '',
+        cookies: mergedCookies,
+        solvedUrl: replayResult.url || url,
+        h2Replay: true,
+        source: 'h2_replay',
+        timestamp: Date.now()
+      }, replayResult.url || url, setCookies);
+    } catch (_) {}
   }
 
   function buildCurlCffiSeed(url, fetchOptions = {}) {
@@ -1036,6 +1173,73 @@ function createCloudflareBypass(options = {}) {
     const allowFlareSolverr = fetchOptions.allowFlareSolverr !== false;
     const ttl = fetchOptions.ttl || 10 * 60 * 1000;
 
+    if (!isPost) {
+      try {
+        const h2Options = {
+          ...fetchOptions,
+          isPost: false,
+          body: null,
+          method: 'GET',
+          timeoutMs
+        };
+        const preparedReplay = await prepareH2Replay(url, h2Options);
+        const replayAttempt = preparedReplay.canAttempt
+          ? await clearanceBroker.run({
+            strategy: 'h2_replay',
+            url,
+            coalesceKey: `GET:${url}`,
+            cooldownMs: h2ReplayFailureCooldownMs,
+            runner: () => runH2Replay(url, h2Options, preparedReplay),
+            isUsable: replay => {
+              const replayResult = replay?.result || null;
+              return Boolean(replayResult && isUsefulHtml(replayResult.body, replayResult.status, replayResult.headers || null));
+            },
+            describeResult: replay => {
+              const replayResult = replay?.result || {};
+              return {
+                statusCode: replayResult.status || 0,
+                bytes: String(replayResult.body || '').length
+              };
+            }
+          })
+          : null;
+        const replay = replayAttempt?.result || null;
+        const replayResult = replay?.result || null;
+        if (replayAttempt?.status === 'hit' && replayResult) {
+          importH2ReplaySession(url, replayResult, replay.seed);
+          debug('h2 replay hit', {
+            url,
+            status: replayResult.status,
+            bytes: String(replayResult.body || '').length,
+            setCookies: Array.isArray(replayResult.setCookies) ? replayResult.setCookies.length : 0,
+            shared: replayAttempt.shared === true
+          });
+          return replayResult.body;
+        }
+        if (replayAttempt?.status === 'miss' && replayResult) {
+          debug('h2 replay did not return usable html', {
+            url,
+            status: replayResult.status || 0,
+            bytes: String(replayResult.body || '').length,
+            cooldownMs: Math.round(replayAttempt.cooldownRemainingMs || 0)
+          });
+        } else if (replayAttempt?.status === 'error') {
+          debug('h2 replay error (ignored)', {
+            url,
+            error: replayAttempt.error?.message || String(replayAttempt.error || 'unknown_error'),
+            cooldownMs: Math.round(replayAttempt.cooldownRemainingMs || 0)
+          });
+        } else if (replayAttempt?.status === 'skipped' && replayAttempt.reason === 'cooldown') {
+          debug('h2 replay skipped by clearance broker cooldown', {
+            url,
+            cooldownMs: Math.round(replayAttempt.cooldownRemainingMs || 0)
+          });
+        }
+      } catch (err) {
+        debug('h2 replay error (ignored)', { url, error: err?.message || String(err) });
+      }
+    }
+
     if (!isPost && cfNativeSolver && fetchOptions.skipNativeBypass !== true) {
       try {
         const native = await cfNativeSolver.tryNativeBypass(url, {
@@ -1045,6 +1249,7 @@ function createCloudflareBypass(options = {}) {
           timeoutMs: Math.min(timeoutMs || 6000, 8000)
         });
         if (native && isUsefulHtml(native.html, native.status)) {
+          recordBrokerOutcome('native', 'hit', url, brokerHtmlMeta(native.html, native.status));
           debug('cf_native_solver hit', {
             url,
             strategy: native.strategy,
@@ -1054,7 +1259,9 @@ function createCloudflareBypass(options = {}) {
           importNativeSession(native, url);
           return native.html;
         }
+        if (native) recordBrokerOutcome('native', 'miss', url, brokerHtmlMeta(native.html, native.status));
       } catch (err) {
+        recordBrokerOutcome('native', 'error', url, { error: err });
         debug('cf_native_solver error (ignored)', { url, error: err && err.message });
       }
     }
@@ -1072,7 +1279,14 @@ function createCloudflareBypass(options = {}) {
           guard.importSession(session, session.solvedUrl || url);
         }
         rememberNativeClearance(url, session, 'curl_cffi');
-        if (isUsefulHtml(session?.response, session?.solutionResponseStatus, session?.responseHeaders || null)) {
+        const curlUseful = isUsefulHtml(session?.response, session?.solutionResponseStatus, session?.responseHeaders || null);
+        recordBrokerOutcome(
+          'curl_cffi',
+          curlUseful ? 'hit' : 'miss',
+          url,
+          brokerHtmlMeta(session?.response, session?.solutionResponseStatus)
+        );
+        if (curlUseful) {
           debug('curl_cffi response html used', {
             url,
             status: session.solutionResponseStatus,
@@ -1087,6 +1301,7 @@ function createCloudflareBypass(options = {}) {
           bytes: String(session?.response || '').length
         });
       } catch (error) {
+        recordBrokerOutcome('curl_cffi', 'error', url, { error });
         warn('curl_cffi first-pass failed', { providerName, url, error: error?.message || String(error) });
       }
     }
@@ -1104,7 +1319,14 @@ function createCloudflareBypass(options = {}) {
           guard.importSession(session, session.solvedUrl || url);
         }
         rememberNativeClearance(url, session, 'scrapling');
-        if (isUsefulHtml(session?.response, session?.solutionResponseStatus)) {
+        const scraplingUseful = isUsefulHtml(session?.response, session?.solutionResponseStatus);
+        recordBrokerOutcome(
+          'scrapling',
+          scraplingUseful ? 'hit' : 'miss',
+          url,
+          brokerHtmlMeta(session?.response, session?.solutionResponseStatus)
+        );
+        if (scraplingUseful) {
           debug('scrapling response html used', { url, bytes: String(session.response || '').length });
           return session.response;
         }
@@ -1114,20 +1336,28 @@ function createCloudflareBypass(options = {}) {
           bytes: String(session?.response || '').length
         });
       } catch (error) {
+        recordBrokerOutcome('scrapling', 'error', url, { error });
         warn('scrapling fallback failed', { providerName, url, error: error?.message || String(error) });
       }
     }
 
     if (fetchOptions.skipGuard !== true && typeof guard.smartFetch === 'function') {
-      const html = await guard.smartFetch(url, {
-        ...fetchOptions,
-        isPost,
-        body,
-        ttl,
-        allowFlareSolverr,
-        timeoutMs
-      });
-      return html || null;
+      try {
+        const html = await guard.smartFetch(url, {
+          ...fetchOptions,
+          isPost,
+          body,
+          ttl,
+          allowFlareSolverr,
+          timeoutMs
+        });
+        const guardUseful = isUsefulHtml(html, html ? 200 : 0);
+        recordBrokerOutcome('guard', guardUseful ? 'hit' : 'miss', url, brokerHtmlMeta(html, guardUseful ? 200 : 0));
+        return html || null;
+      } catch (error) {
+        recordBrokerOutcome('guard', 'error', url, { error });
+        throw error;
+      }
     }
 
     return null;
@@ -1158,17 +1388,28 @@ function createCloudflareBypass(options = {}) {
 
   function getState() {
     const impitState = typeof guard.getImpitShieldState === 'function' ? guard.getImpitShieldState() : {};
+    const clearanceBrokerState = typeof clearanceBroker.state === 'function' ? clearanceBroker.state() : {};
     return {
       ...impitState,
       enabled,
       providerName,
       baseUrl,
+      clearanceBrokerEnabled,
+      clearanceBroker: clearanceBrokerState,
       curlCffiEnabled,
       curlCffiImpersonate,
       curlCffiRetries,
       curlCffiRetryBackoffMs,
       curlCffiWarmupOrigin,
       curlCffiBrowserHeaders,
+      h2ReplayEnabled,
+      h2Replay: {
+        enabled: h2ReplayEnabled,
+        timeoutMs: h2ReplayTimeoutMs,
+        maxBodyBytes: h2ReplayMaxBodyBytes,
+        failureCooldownMs: h2ReplayFailureCooldownMs,
+        pool: typeof h2ReplayPool.state === 'function' ? h2ReplayPool.state() : undefined
+      },
       curlCffi: defaultCurlCffiQueue.state(),
       scraplingEnabled,
       scrapling: defaultScraplingQueue.state(),

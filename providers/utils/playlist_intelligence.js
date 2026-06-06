@@ -124,6 +124,26 @@ function addLanguage(target, value, meta = {}) {
     if (value && entry.samples.length < 3) entry.samples.push(String(value));
 }
 
+function normalizeLanguageList(value) {
+    const values = Array.isArray(value) ? value : [value];
+    const out = [];
+    for (const item of values) {
+        const normalized = normalizeLanguage(item) || safeText(item).trim().toLowerCase();
+        if (normalized && !out.includes(normalized)) out.push(normalized);
+    }
+    return out;
+}
+
+function mergeLanguageLists(...lists) {
+    const out = [];
+    for (const list of lists) {
+        for (const lang of normalizeLanguageList(list)) {
+            if (!out.includes(lang)) out.push(lang);
+        }
+    }
+    return out;
+}
+
 function extractPlaylistIntelligence(playlistText) {
     const text = safeText(playlistText);
     const heights = [];
@@ -238,25 +258,28 @@ function decorateStreamWithPlaylistIntelligence(stream, intelligence = null) {
             playlistLanguageConfidence: intelligence.confidence || 0
         }
     };
+    const existingAudioLanguages = mergeLanguageLists(stream.audioLanguages, behaviorHints.vortexMeta.audioLanguages);
+    const mergedAudioLanguages = mergeLanguageLists(existingAudioLanguages, audioLanguages);
+    const existingSubtitleLanguages = mergeLanguageLists(stream.subtitleLanguages, behaviorHints.vortexMeta.subtitleLanguages);
+    const mergedSubtitleLanguages = mergeLanguageLists(existingSubtitleLanguages, subtitleLanguages);
 
-    if (audioLanguages.length) {
-        behaviorHints.vortexMeta.audioLanguages = Array.from(new Set([
-            ...(Array.isArray(behaviorHints.vortexMeta.audioLanguages) ? behaviorHints.vortexMeta.audioLanguages : []),
-            ...audioLanguages
-        ])).sort();
-        behaviorHints.vortexMeta.isMultiAudio = behaviorHints.vortexMeta.audioLanguages.length > 1;
+    if (mergedAudioLanguages.length) {
+        behaviorHints.vortexMeta.audioLanguages = mergedAudioLanguages;
+        behaviorHints.vortexMeta.isMultiAudio = mergedAudioLanguages.length > 1;
+        behaviorHints.vortexMeta.hasItalianAudio = mergedAudioLanguages.includes('ita') || behaviorHints.vortexMeta.hasItalianAudio === true;
     }
 
-    if (subtitleLanguages.length) {
-        behaviorHints.vortexMeta.subtitleLanguages = Array.from(new Set([
-            ...(Array.isArray(behaviorHints.vortexMeta.subtitleLanguages) ? behaviorHints.vortexMeta.subtitleLanguages : []),
-            ...subtitleLanguages
-        ])).sort();
+    if (mergedSubtitleLanguages.length) {
+        behaviorHints.vortexMeta.subtitleLanguages = mergedSubtitleLanguages;
     }
 
     return {
         ...stream,
         quality,
+        audioLanguages: mergedAudioLanguages.length ? mergedAudioLanguages : stream.audioLanguages,
+        subtitleLanguages: mergedSubtitleLanguages.length ? mergedSubtitleLanguages : stream.subtitleLanguages,
+        isMultiAudio: mergedAudioLanguages.length > 1 || stream.isMultiAudio === true,
+        hasItalianAudio: mergedAudioLanguages.includes('ita') || stream.hasItalianAudio === true,
         behaviorHints
     };
 }

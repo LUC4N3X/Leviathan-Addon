@@ -4,7 +4,9 @@ const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const {
     buildWebStream,
-    dedupeStreamsByUrl
+    dedupeStreamsByUrl,
+    probePlaylistIntelligence,
+    decorateStreamWithPlaylistIntelligence
 } = require('../extractors/common');
 const { getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
 const { buildForwardProxyUrl, getForwardProxyBase } = require('../../core/proxy/forward_proxy_config');
@@ -14,21 +16,21 @@ let prewarmCinemaCityPlayback = null;
 try {
     ({ buildCinemaCityProxyUrl, prewarmCinemaCityPlayback } = require('./cc_proxy'));
 } catch (_) {
-   
+
 }
 
 let ccMemory = null;
 try {
     ccMemory = require('./cc_memory');
 } catch (_) {
-   
+
 }
 
 let runCurlCffiBypass = null;
 try {
     ({ runCurlCffiBypass } = require('../utils/cloudflare_bypass'));
 } catch (_) {
-  
+
 }
 
 let curlCffiRunnerOverride = null;
@@ -894,6 +896,84 @@ function buildSearchQueryVariants(titles = []) {
     return out.filter(Boolean);
 }
 
+function inferCinemaCityAudioLanguages(...values) {
+    const text = values.map((value) => String(value || '')).join(' ');
+    const out = [];
+    const push = (lang) => {
+        if (lang && !out.includes(lang)) out.push(lang);
+    };
+    const isSubOnly = /\b(?:sub\s*ita|vost(?:it)?|sottotitoli?\s*ita)\b/i.test(text)
+        && !/\b(?:dub\s*ita|audio\s*ita|ita\s*(?:dub|audio)|doppiat[oa])\b/i.test(text);
+    const multiAudio = /\b(?:multi(?:[\s._-]*audio)?|dual[\s._-]*audio)\b/i.test(text)
+        && !/\b(?:multi[\s._-]*sub|multisub|sub[\s._-]*multi)\b/i.test(text);
+
+    if (multiAudio) {
+        push('ita');
+        push('eng');
+    }
+    if (!isSubOnly && /🇮🇹|\b(?:ita|it|italiano|italian)\b/i.test(text)) push('ita');
+    if (/🇬🇧|\b(?:eng|en|inglese|english)\b/i.test(text)) push('eng');
+    if (/🇯🇵|\b(?:jpn|jp|jap|ja|giapponese|japanese)\b/i.test(text)) push('jpn');
+    return out;
+}
+
+function normalizeCinemaCityAudioLanguage(value) {
+    const clean = String(value || '').trim().toLowerCase();
+    if (!clean) return '';
+    if (/^(?:it|ita|italian|italiano)$/.test(clean)) return 'ita';
+    if (/^(?:en|eng|english|inglese)$/.test(clean)) return 'eng';
+    if (/^(?:ja|jp|jpn|jap|japanese|giapponese)$/.test(clean)) return 'jpn';
+    if (/^(?:fr|fra|fre|french|francese)$/.test(clean)) return 'fra';
+    if (/^(?:es|esp|spa|spanish|spagnolo)$/.test(clean)) return 'spa';
+    if (/^(?:de|deu|ger|german|tedesco)$/.test(clean)) return 'deu';
+    return clean.slice(0, 12);
+}
+
+function mergeCinemaCityAudioLanguages(baseLanguages = [], playlistIntel = null) {
+    const out = [];
+    const push = (value) => {
+        const normalized = normalizeCinemaCityAudioLanguage(value);
+        if (normalized && !out.includes(normalized)) out.push(normalized);
+    };
+
+    for (const lang of Array.isArray(baseLanguages) ? baseLanguages : [baseLanguages]) push(lang);
+    for (const lang of Array.isArray(playlistIntel?.audioLanguages) ? playlistIntel.audioLanguages : []) push(lang);
+    return out;
+}
+
+function cinemaCityLanguageLabel(audioLanguages = []) {
+    if (!Array.isArray(audioLanguages) || !audioLanguages.length) return '';
+    if (audioLanguages.length === 1) {
+        if (audioLanguages[0] === 'ita') return 'Italian';
+        if (audioLanguages[0] === 'eng') return 'English';
+        if (audioLanguages[0] === 'jpn') return 'Japanese';
+    }
+    return audioLanguages.map((lang) => String(lang || '').slice(0, 3).toUpperCase()).join('/');
+}
+
+const cinemaCityPlaylistClient = {
+    async get(targetUrl, { headers = {}, timeout = FETCH_TIMEOUT, signal = undefined } = {}) {
+        const response = await fetchWithTimeout(targetUrl, {
+            headers,
+            timeout,
+            signal
+        });
+        return {
+            status: response.status,
+            data: await response.text()
+        };
+    }
+};
+
+async function probeCinemaCityPlaylist(streamUrl, headers = DEFAULT_STREAM_HEADERS) {
+    if (!/\.m3u8(?:$|[?#])/i.test(String(streamUrl || ''))) return null;
+    const timeout = Number.parseInt(process.env.CC_PLAYLIST_TIMEOUT_MS || '5000', 10) || 5000;
+    return probePlaylistIntelligence(cinemaCityPlaylistClient, streamUrl, {
+        headers,
+        timeout
+    }).catch(() => null);
+}
+
 function extractCandidateLinksFromListing(html, type = 'movie') {
     const results = [];
     const seen = new Set();
@@ -1102,14 +1182,12 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
         }
 
         const links = extractDownloadLinks(html);
-        let hasItalian = false;
         if (links.length === 0) {
             const useSeason = providerType === 'tv' ? season : null;
             const useEpisode = providerType === 'tv' ? episode : null;
             const atobResult = extractStreamFromAtob(html, useSeason, useEpisode);
             if (atobResult) {
                 links.push({ url: atobResult.url, text: '' });
-                hasItalian = atobResult.hasItalian;
             }
         }
 
@@ -1118,30 +1196,34 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
             return [];
         }
 
-        let selectedUrl = null;
+        let selectedLink = null;
         for (const link of links) {
             const text = link.text;
             if (text.includes('ita') || text.includes('italian') || text.includes('italiano')) {
-                selectedUrl = link.url;
-                hasItalian = true;
+                selectedLink = link;
                 break;
             }
         }
-        if (!selectedUrl) {
+        if (!selectedLink) {
             for (const link of links) {
                 if (link.text.includes('eng') || link.text.includes('sub')) continue;
-                selectedUrl = link.url;
+                selectedLink = link;
                 break;
             }
         }
-        if (!selectedUrl) selectedUrl = links[0].url;
+        if (!selectedLink) selectedLink = links[0];
+
+        const selectedUrl = selectedLink.url;
+        const labelAudioLanguages = inferCinemaCityAudioLanguages(selectedLink.text);
 
         const streamUrl = resolveUrl(movieUrl, selectedUrl);
+        const playlistIntel = await probeCinemaCityPlaylist(streamUrl, DEFAULT_STREAM_HEADERS);
+        const audioLanguages = mergeCinemaCityAudioLanguages(labelAudioLanguages, playlistIntel);
         console.log(`[CinemaCity] CCCDN stream: ${streamUrl}`);
 
         memReinforce(imdbId, providerType);
 
-        return [{
+        let stream = {
             name: PROVIDER_LABEL,
             title,
             url: streamUrl,
@@ -1150,8 +1232,8 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
             extractor: EXTRACTOR_LABEL,
             provider: PROVIDER_LABEL,
             providerCode: PROVIDER_CODE,
-            language: hasItalian ? 'Italian' : '',
-            audioLanguages: hasItalian ? ['ita'] : [],
+            language: cinemaCityLanguageLabel(audioLanguages),
+            audioLanguages,
             behaviorHints: {
                 notWebReady: true,
                 extractor: EXTRACTOR_LABEL,
@@ -1164,11 +1246,13 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
                     site: PROVIDER_LABEL,
                     extractor: EXTRACTOR_LABEL,
                     quality: '1080p',
-                    audioLanguages: hasItalian ? ['ita'] : []
+                    audioLanguages
                 }
             },
             headers: { ...DEFAULT_STREAM_HEADERS }
-        }];
+        };
+        stream = decorateStreamWithPlaylistIntelligence(stream, playlistIntel);
+        return [stream];
     } catch (e) {
         console.error('[CinemaCity] Error:', e);
         return [];
@@ -1204,6 +1288,7 @@ async function searchCinemaCityImpl(originalId, finalId, meta = {}, config = {},
             const playbackUrl = buildCinemaCityPlaybackUrl(stream.url, headers, reqHost, { isHls });
             const proxied = playbackUrl && playbackUrl !== stream.url;
             if (proxied) maybePrewarmCinemaCityPlayback(stream.url, headers, reqHost, { isHls });
+            const audioLanguages = mergeCinemaCityAudioLanguages(stream.audioLanguages || [], stream.behaviorHints?.vortexMeta || {});
 
             return buildWebStream({
                 name: `${PROVIDER_LABEL} | ${EXTRACTOR_LABEL}`,
@@ -1233,11 +1318,11 @@ async function searchCinemaCityImpl(originalId, finalId, meta = {}, config = {},
                         extractor: EXTRACTOR_LABEL,
                         quality: stream.quality || '1080p',
                         deliveryMode: EXTRACTOR_LABEL,
-                        audioLanguages: stream.audioLanguages || []
+                        audioLanguages
                     }
                 },
                 extra: {
-                    audioLanguages: stream.audioLanguages || [],
+                    audioLanguages,
                     language: stream.language
                 }
             });
@@ -1286,6 +1371,9 @@ module.exports = {
         isCinemaCityContentUrlForType,
         extractCandidateLinksFromListing,
         buildSearchQueryVariants,
+        inferCinemaCityAudioLanguages,
+        mergeCinemaCityAudioLanguages,
+        probeCinemaCityPlaylist,
         getListingBaseUrls,
         buildCinemaCityKrakenForwardUrl,
         getCinemaCityPageExtractorBase,

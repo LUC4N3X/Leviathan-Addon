@@ -64,6 +64,20 @@ test('CinemaCity anime search variants include normalized titles and anime listi
     assert.ok(__private.getListingBaseUrls('anime').some((url) => /\/anime\/$/i.test(url)));
 });
 
+test('CinemaCity infers concrete audio languages from selected playback labels', () => {
+    assert.deepEqual(__private.inferCinemaCityAudioLanguages('Server ITA ENG 1080p'), ['ita', 'eng']);
+    assert.deepEqual(__private.inferCinemaCityAudioLanguages('Multi audio HD'), ['ita', 'eng']);
+    assert.deepEqual(__private.inferCinemaCityAudioLanguages('Server ITA'), ['ita']);
+    assert.deepEqual(__private.inferCinemaCityAudioLanguages('Server ENG'), ['eng']);
+});
+
+test('CinemaCity merges selected playback label and playlist audio languages', () => {
+    assert.deepEqual(
+        __private.mergeCinemaCityAudioLanguages(['ita'], { audioLanguages: ['eng'] }),
+        ['ita', 'eng']
+    );
+});
+
 test('CinemaCity builds generic forward URLs from the shared FORWARD_PROXY env', () => {
     withEnvironment({
         FORWARD_PROXY: 'https://proxy.example/forward?url=',
