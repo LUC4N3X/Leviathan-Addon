@@ -349,7 +349,7 @@ function hasStrictSeasonPackCue(item = {}, meta = {}, type = '') {
     if (/\bS\d{1,2}E\d{1,3}\s*(?:-|~|to|a)\s*(?:E)?\d{1,3}\b/i.test(joined)) return true;
     if (/\b\d{1,2}x\d{1,3}\s*(?:-|~|to|a)\s*(?:\d{1,2}x)?\d{1,3}\b/i.test(joined)) return true;
     if (/\b(?:episodes?|episodi?)\s*\d{1,3}\s*(?:-|~|to|a)\s*\d{1,3}\b/i.test(joined)) return true;
-    if (/\b(?:batch|complete|completa|full|integrale|collection|raccolta|全集|合集)\b/i.test(joined)) return true;
+    if (/\b(?:batch|complete|completa|full|integrale|collection|raccolta|å…¨é›†|åˆé›†)\b/i.test(joined)) return true;
 
     const hasSingleEpisodeCue = /\bS\d{1,2}E\d{1,3}\b/i.test(joined) || /\b\d{1,2}x\d{1,3}\b/i.test(joined);
     if (hasSingleEpisodeCue) return false;
@@ -582,12 +582,12 @@ function collectTorrentioReleaseEvidenceText(item = {}) {
 
 function hasLooseItalianToken(value = '') {
     const text = String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, ' ');
-    return /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|(?:^|[^A-Z0-9])IT(?:[^A-Z0-9]|$))/i.test(text);
+    return /(?:ðŸ‡®ðŸ‡¹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|(?:^|[^A-Z0-9])IT(?:[^A-Z0-9]|$))/i.test(text);
 }
 
 function hasEnglishLanguageToken(value = '') {
     const text = String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, ' ');
-    return /(?:🇬🇧|🇺🇸|\b(?:ENG|ENGLISH)\b|(?:^|[^A-Z0-9])EN(?:[^A-Z0-9]|$))/i.test(text);
+    return /(?:ðŸ‡¬ðŸ‡§|ðŸ‡ºðŸ‡¸|\b(?:ENG|ENGLISH)\b|(?:^|[^A-Z0-9])EN(?:[^A-Z0-9]|$))/i.test(text);
 }
 
 function getTorrentioLanguageInfoObject(item = {}) {
@@ -598,7 +598,7 @@ function getTorrentioLanguageInfoObject(item = {}) {
 
 function hasStrongTorrentioItalianAudioText(value = '') {
     const text = String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, ' ');
-    return /(?:🇮🇹.*(?:🇬🇧|🇺🇸)|(?:🇬🇧|🇺🇸).*🇮🇹)/.test(text)
+    return /(?:ðŸ‡®ðŸ‡¹.*(?:ðŸ‡¬ðŸ‡§|ðŸ‡ºðŸ‡¸)|(?:ðŸ‡¬ðŸ‡§|ðŸ‡ºðŸ‡¸).*ðŸ‡®ðŸ‡¹)/.test(text)
         || /\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b/i.test(text)
         || /(?:\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i.test(text)
         || /(?:\b(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\s*[\/+,_. -]\s*(?:ENG|EN|ENGLISH)\b|\b(?:ENG|EN|ENGLISH)\s*[\/+,_. -]\s*(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\b)/i.test(text)
@@ -614,14 +614,14 @@ function isTorrentioFlagOnlyItalianTrap(item = {}) {
 
     const releaseEvidenceText = collectTorrentioReleaseEvidenceText(item);
     const infoLabel = String(info?.displayLabel || info?.icon || '').trim();
-    const hasSingleItalianLabel = infoLabel === '🇮🇹' || infoLabel === '🇮🇹 ITA';
-    const hasItalianFlag = /🇮🇹/.test(releaseEvidenceText) || hasSingleItalianLabel;
+    const hasSingleItalianLabel = infoLabel === 'ðŸ‡®ðŸ‡¹' || infoLabel === 'ðŸ‡®ðŸ‡¹ ITA';
+    const hasItalianFlag = /ðŸ‡®ðŸ‡¹/.test(releaseEvidenceText) || hasSingleItalianLabel;
     if (!hasItalianFlag) return false;
-    if (/(?:🇬🇧|🇺🇸)/.test(releaseEvidenceText) || /(?:🇬🇧|🇺🇸)/.test(infoLabel)) return false;
+    if (/(?:ðŸ‡¬ðŸ‡§|ðŸ‡ºðŸ‡¸)/.test(releaseEvidenceText) || /(?:ðŸ‡¬ðŸ‡§|ðŸ‡ºðŸ‡¸)/.test(infoLabel)) return false;
     if (hasStrongTorrentioItalianAudioText(releaseEvidenceText)) return false;
     if (!hasStrongTorrentioItalianAudioText(releaseEvidenceText) && /torrentio_(?:it|loose_it)_token/i.test(String(info?.reason || ''))) return true;
     if (hasSingleItalianLabel && !hasStrongTorrentioItalianAudioText(releaseEvidenceText)) return true;
-    return /🇮🇹/.test(releaseEvidenceText);
+    return /ðŸ‡®ðŸ‡¹/.test(releaseEvidenceText);
 }
 
 function hasTorrentioLooseItalianEvidence(item = {}) {
@@ -1811,7 +1811,7 @@ async function resolveTorboxRankedList(rankedList, apiKey) {
         if (verifiedList.length >= Math.min(12, CONFIG.MAX_RESULTS) || checkLimit === progressiveWindows[progressiveWindows.length - 1]) break;
     }
 
-    logger.info(`📦 [TB CLEANUP] Finestra usata: ${usedWindow} -> Rimasti: ${verifiedList.length}`);
+    logger.info(`ðŸ“¦ [TB CLEANUP] Finestra usata: ${usedWindow} -> Rimasti: ${verifiedList.length}`);
 
     const remainingItems = sourceRanked.slice(usedWindow);
     if (remainingItems.length > 0) TorboxAvailabilityCache.enrichCacheBackground(remainingItems, apiKey, dbHelper);
@@ -1914,9 +1914,9 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
                 source: formatterSource,
                 seeders,
                 infoHash: item?.hash,
-                techInfo: `🎞️ ${quality} ${details.tags}`.trim(),
+                techInfo: `ðŸŽžï¸ ${quality} ${details.tags}`.trim(),
                 providerLine: undefined,
-                sourceIcon: '🔎'
+                sourceIcon: 'ðŸ”Ž'
             }),
             url: streamUrl,
             infoHash: item?.hash,
@@ -2364,7 +2364,7 @@ function resolvePackNamesInBackground(meta, results, config, type = null) {
     if (!hasResolvableService) return;
     const allPackCandidates = results.filter(item => item && isConfidentSeasonPackItem(item, meta, effectiveType));
     if (allPackCandidates.length === 0) return;
-    const hasItaSignal = (item) => /\b(?:ita|italian|italiano|multi)\b|🇮🇹/i.test([item?.title, item?.name, item?.filename, item?.fileName, item?.packTitle, item?.source, item?.externalProvider].filter(Boolean).join(' '));
+    const hasItaSignal = (item) => /\b(?:ita|italian|italiano|multi)\b|ðŸ‡®ðŸ‡¹/i.test([item?.title, item?.name, item?.filename, item?.fileName, item?.packTitle, item?.source, item?.externalProvider].filter(Boolean).join(' '));
     const packCandidates = [...allPackCandidates]
         .sort((a, b) => Number(hasItaSignal(b)) - Number(hasItaSignal(a)) || Number(b?.seeders || 0) - Number(a?.seeders || 0))
         .slice(0, BACKGROUND_PACK_MAX_PER_REQUEST);
@@ -2457,7 +2457,7 @@ async function getMetadata(id, type, config = {}) {
 
           if (kitsuId) {
               const kitsuUrl = `${CONFIG.KITSU_URL}/meta/anime/kitsu:${kitsuId}.json`;
-              logger.info(`⛩️ [META] Fetching Kitsu (Direct): ${kitsuUrl}`);
+              logger.info(`â›©ï¸ [META] Fetching Kitsu (Direct): ${kitsuUrl}`);
               try {
                   const { data } = await axios.get(kitsuUrl, { timeout: CONFIG.TIMEOUTS.TMDB });
                   if (data && data.meta) {
@@ -2583,7 +2583,7 @@ async function getMetadata(id, type, config = {}) {
           finalMeta = cData?.meta ? {
             title: cData.meta.name,
             originalTitle: cData.meta.name,
-            year: String(cData.meta.year || "").split(/[–-]/)[0],
+            year: String(cData.meta.year || "").split(/[â€“-]/)[0],
             imdb_id: cleanId,
             isSeries: cleanType === "series",
             season: season,
@@ -2824,24 +2824,24 @@ function addSavedCloudBadgeToStream(stream = {}, serviceLabel = 'RD') {
     const currentTitle = String(stream?.title || '');
 
     let nextName = currentName
-        .replace(/☁️\s*CLOUD\s*SALVATO\s*•?\s*(?:RD|TB)?/gi, '')
-        .replace(/CLOUD\s*SALVATO\s*•?\s*(?:RD|TB)?/gi, '')
-        .replace(/💾/g, '')
-        .replace(/⚡/, '☁️')
-        .replace(/☁️\s*☁️/g, '☁️')
+        .replace(/â˜ï¸\s*CLOUD\s*SALVATO\s*â€¢?\s*(?:RD|TB)?/gi, '')
+        .replace(/CLOUD\s*SALVATO\s*â€¢?\s*(?:RD|TB)?/gi, '')
+        .replace(/ðŸ’¾/g, '')
+        .replace(/âš¡/, 'â˜ï¸')
+        .replace(/â˜ï¸\s*â˜ï¸/g, 'â˜ï¸')
         .replace(/\s{2,}/g, ' ')
         .trim();
 
-    if (!/☁️/.test(nextName)) {
-        const cleanBase = currentName.replace(/⚡/g, '').replace(/💾/g, '').replace(/\s{2,}/g, ' ').trim();
-        nextName = cleanBase ? `☁️ ${cleanBase}` : `☁️ ${serviceLabel} LEVIATHAN`;
+    if (!/â˜ï¸/.test(nextName)) {
+        const cleanBase = currentName.replace(/âš¡/g, '').replace(/ðŸ’¾/g, '').replace(/\s{2,}/g, ' ').trim();
+        nextName = cleanBase ? `â˜ï¸ ${cleanBase}` : `â˜ï¸ ${serviceLabel} LEVIATHAN`;
     }
 
     const nextTitle = currentTitle
         .split(/\r?\n/)
         .filter((line) => !/CLOUD\s*SALVATO/i.test(line))
         .join('\n')
-        .replace(/💾/g, '')
+        .replace(/ðŸ’¾/g, '')
         .trim();
 
     return {
@@ -3282,7 +3282,7 @@ async function resolveDebridLink(config, item, showFake, reqHost, meta) {
         if (showFake) {
             return {
                 name: `[P2P WARNING]`,
-                title: `${item.title}\n⚠️ Cache Assente`,
+                title: `${item.title}\nâš ï¸ Cache Assente`,
                 url: item.magnet,
                 behaviorHints: { notWebReady: true }
             };
@@ -3337,7 +3337,7 @@ function generateRdDownloadToDebridStream(item, config, meta, reqHost, userConfS
         _torrentioRdAuthority: Boolean(item?._torrentioRdAuthority),
         _torrentioCached: Boolean(item?._torrentioCached),
         _rdProof: item?._rdProof,
-        source: `${item?.source || 'Torrent'} · ${isTorrentioRdAuthorityCandidate(item) ? 'RD cached candidate' : 'RD download'}`
+        source: `${item?.source || 'Torrent'} Â· ${isTorrentioRdAuthorityCandidate(item) ? 'RD cached candidate' : 'RD download'}`
     }, meta);
 
     let displayTitle = item.title;
@@ -3375,8 +3375,8 @@ function generateRdDownloadToDebridStream(item, config, meta, reqHost, userConfS
 
     if (!stream) return null;
     const note = isTorrentioRdAuthorityCandidate(item)
-        ? '⏳ Torrentio RD cached • se non parte, aggiungi al cloud e aggiorna'
-        : '⬇️ RD download • aggiungi al cloud, poi aggiorna';
+        ? 'â³ Torrentio RD cached â€¢ se non parte, aggiungi al cloud e aggiorna'
+        : 'â¬‡ï¸ RD download â€¢ aggiungi al cloud, poi aggiorna';
     stream.title = `${stream.title || displayTitle || item.title}
 ${note}`;
     stream.cacheState = 'download';
@@ -3524,7 +3524,7 @@ function buildRdVerifiedDbFallbackStreams({
 
 function stripMoviePackLabel(title) {
     return String(title || '')
-        .replace(/\s*📦\s*(?:SEASON\s*)?PACK\b/ig, '')
+        .replace(/\s*ðŸ“¦\s*(?:SEASON\s*)?PACK\b/ig, '')
         .replace(/\bSEASON\s+PACK\b/ig, '')
         .replace(/\bSTAGIONE\s+PACK\b/ig, '')
         .replace(/\s{2,}/g, ' ')
@@ -3568,6 +3568,22 @@ async function queryRemoteIndexer(tmdbId, type, season = null, episode = null, c
                 rdCacheState: t.rd_cache_state || t.rdCacheState || t.cacheState || undefined,
                 _dbCachedRd: t.cached_rd === true ? true : (t.cached_rd === false ? false : undefined),
                 cached_rd: t.cached_rd === true ? true : (t.cached_rd === false ? false : undefined),
+                cached_tb: t.cached_tb === true ? true : (t.cached_tb === false ? false : undefined),
+                _dbCachedTb: t.cached_tb === true ? true : (t.cached_tb === false ? false : undefined),
+                tbCacheState: t.tb_cache_state || t.tbCacheState || undefined,
+                _tbCacheState: t.tb_cache_state || t.tbCacheState || undefined,
+                resolution: t.resolution || undefined,
+                quality: t.quality_tag || t.qualityTag || undefined,
+                qualityTag: t.quality_tag || t.qualityTag || undefined,
+                codec: t.codec_tag || t.codecTag || undefined,
+                codecTag: t.codec_tag || t.codecTag || undefined,
+                hdr: t.hdr_tag || t.hdrTag || undefined,
+                hdrTag: t.hdr_tag || t.hdrTag || undefined,
+                audio: t.audio_tag || t.audioTag || undefined,
+                audioTag: t.audio_tag || t.audioTag || undefined,
+                releaseGroup: t.release_group || t.releaseGroup || undefined,
+                languages: t.languages || undefined,
+                matchScore: Number(t.match_score || t.quality_score || 0) || undefined,
                 _isPack: Boolean(isSeriesQuery && isConfidentSeasonPackItem({ title: safeDbTitle || t.title, sizeBytes: parseInt(t.size), folderSize: Number(t.folder_size || t.folderSize || t.total_size || 0) || undefined }, meta, type))
             };
         });
@@ -3586,7 +3602,7 @@ function cleanTorrentioProviderLabel(value = '') {
     const raw = String(value || '').replace(/\[EXT\]\s*/gi, '').replace(/LeviathanDB/gi, '').replace(/[()]/g, '').trim();
     if (!raw) return '';
     const cleaned = raw
-        .replace(/^Torrentio\s*(?:·|:|-|\/)?\s*/i, '')
+        .replace(/^Torrentio\s*(?:Â·|:|-|\/)?\s*/i, '')
         .replace(/^Torrentio\s+/i, '')
         .trim();
     return cleaned || raw;
@@ -3599,7 +3615,7 @@ function getExternalSourceLabel(item = {}) {
     const fallback = String(item.source || '').replace(/\[EXT\]\s*/, '').trim();
 
     if (group === 'torrentio' || addon.startsWith('torrentio')) return cleanTorrentioProviderLabel(provider || fallback) || 'Torrentio';
-    if (group === 'mediafusion' || addon === 'mediafusion') return provider ? `MediaFusion · ${provider}` : 'MediaFusion';
+    if (group === 'mediafusion' || addon === 'mediafusion') return provider ? `MediaFusion Â· ${provider}` : 'MediaFusion';
     return provider || fallback || 'External';
 }
 
@@ -3677,7 +3693,7 @@ function collectTorrentioRdAuthorityText(item = {}) {
 
 function hasTorrentioRdDownloadMarker(item = {}) {
     const text = collectTorrentioRdAuthorityText(item);
-    return /(?:⬇️|\bRD\s*download\b|\bdownload\s+to\s+debrid\b|\baggiungi\s+al\s+cloud\b|\badd\s+to\s+cloud\b)/i.test(text);
+    return /(?:â¬‡ï¸|\bRD\s*download\b|\bdownload\s+to\s+debrid\b|\baggiungi\s+al\s+cloud\b|\badd\s+to\s+cloud\b)/i.test(text);
 }
 
 function hasTorrentioRdCachedMarker(item = {}) {
@@ -3685,7 +3701,7 @@ function hasTorrentioRdCachedMarker(item = {}) {
     if (!text) return false;
     if (item?._dbCachedRd === true || item?.cached_rd === true || item?.isCached === true || item?.cached === true) return true;
     if (/^(?:cached|rd_cached|instant|instant_available)$/i.test(String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || '').trim())) return true;
-    return /(?:⚡|\bRD\s*\+\b|\bRD\+\b|\bReal[-\s]?Debrid\s*(?:cached|instant|ready)\b|\binstant(?:ly)?\s*(?:available|ready)\b|\bcached\b)/i.test(text);
+    return /(?:âš¡|\bRD\s*\+\b|\bRD\+\b|\bReal[-\s]?Debrid\s*(?:cached|instant|ready)\b|\binstant(?:ly)?\s*(?:available|ready)\b|\bcached\b)/i.test(text);
 }
 
 function getTorrentioRdAuthority(item = {}, { service = null, onlyItalian = false, externalLanguageOk = false, directUrl = null } = {}) {
