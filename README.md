@@ -132,7 +132,7 @@ More fragile providers can be delegated to Kraken, allowing Leviathan to stay fo
 
 <div align="center">
   <h2>Saved Cloud Layer</h2>
-  <p><code>RD/TorBox cloud-aware · opzionale · zero duplicati</code></p>
+  <p><code>RD/TorBox cloud-aware · optional · zero duplicates</code></p>
 </div>
 
 The **Saved Cloud Layer** checks files already saved in the user's personal cloud on **Real-Debrid** or **TorBox** and integrates them cleanly into the stream list.
@@ -211,7 +211,7 @@ When a provider requires FlareSolverr, the first process that encounters the cha
 
 This reduces Chromium load, timeouts, and ban risk in deployments with multiple workers or containers.
 
-Variabili principali:
+Main variables:
 
 ```env
 CF_REDIS_SESSION_ENABLED=true
@@ -246,7 +246,7 @@ It is especially useful for:
 - MediaFlow-compatible bridges;
 - handoff to local or remote extractors.
 
-Configurazione tipica:
+Typical configuration:
 
 ```env
 KRAKEN_URL=https://your-kraken-instance.example
@@ -294,7 +294,7 @@ Request Stremio
 - Eurostreaming
 - ToonItalia
 - OnlineSerieTV
-- Moflix POC, disattivato di default
+- Moflix POC, disabled by default
 
 **Anime layer**
 
@@ -457,27 +457,31 @@ The **Saved Cloud Layer** remains useful even in self-hosting because it depends
 ---
 
 <div align="center">
-  <h2>Support the Protocol</h2>
+  <h2>Recommended Setup</h2>
+  <p><code>Clean install · balanced configuration · best results first</code></p>
 
-  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:06101F,50:00E7FF,100:06101F&height=1&section=header" width="58%" alt="support divider" />
-
-  <br><br>
-
-  Leviathan is an open-source project built with care for result quality, long-term evolution, and technical identity.
-
-  <br><br>
-
-  <a href="https://ko-fi.com/luc4n3x" target="_blank">
-    <img src="https://img.shields.io/badge/Support-Leviathan-ff5f5f?style=for-the-badge&logo=ko-fi&logoColor=white&labelColor=07111F" alt="Support Leviathan on Ko-fi" />
-  </a>
-  <a href="https://stremio-addons.net/addons/leviathan" target="_blank">
-    <img src="https://img.shields.io/badge/Rate-Leviathan-2ea043?style=for-the-badge&logo=github&logoColor=white&labelColor=07111F" alt="Rate Leviathan" />
-  </a>
-
-  <br><br>
-
-  <sub>Every contribution helps Leviathan stay fast, solid, and constantly evolving.</sub>
+  <img src="https://capsule-render.vercel.app/api?type=rect&color=0:06101F,50:00E7FF,100:06101F&height=1&section=header" width="58%" alt="setup divider" />
 </div>
+
+Leviathan works best when it is kept simple, focused, and connected only to the services you actually use.
+
+For most users, the ideal setup is:
+
+- enable **ITA-first** when Italian results are the priority;
+- use **Hybrid** mode only when ENG fallback is useful;
+- connect **Real-Debrid** or **TorBox** if you want saved-cloud discovery;
+- keep **Kraken** available for fragile providers, embeds, and hoster routes;
+- avoid enabling every experimental provider unless you are testing or developing.
+
+<div align="center">
+  <img src="https://img.shields.io/badge/Recommended-ITA_First-00E7FF?style=for-the-badge&labelColor=07111F" />
+  <img src="https://img.shields.io/badge/Optional-RD_/_TorBox-7C3AED?style=for-the-badge&labelColor=07111F" />
+  <img src="https://img.shields.io/badge/Advanced-Kraken_Runtime-2EE6A6?style=for-the-badge&labelColor=07111F" />
+</div>
+
+> [!TIP]
+> If you are self-hosting, start with the default configuration, verify the core stream output, then enable advanced providers and runtime integrations one layer at a time.
+
 
 ---
 
@@ -547,3 +551,4 @@ The **Saved Cloud Layer** remains useful even in self-hosting because it depends
   <img src="https://capsule-render.vercel.app/api?type=waving&color=0:07111F,25:00E7FF,50:7C3AED,75:00BFFF,100:07111F&height=88&section=footer&animation=fadeIn" width="100%" alt="Credits footer wave" />
 
 </div>
+
