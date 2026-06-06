@@ -455,6 +455,34 @@ function joinedSignalText(item = {}) {
   ].filter(Boolean).join(' ');
 }
 
+function collectLanguageSignalText(item = {}) {
+  return [
+    item.language,
+    item.lang,
+    item.audioLanguage,
+    item.audio,
+    item.audio_tag,
+    Array.isArray(item.audioLanguages) ? item.audioLanguages.join(' ') : item.audioLanguages,
+    item.behaviorHints?.language,
+    item.behaviorHints?.audio,
+    item.behaviorHints?.vortexMeta?.language,
+    item.behaviorHints?.vortexMeta?.audio,
+    Array.isArray(item.behaviorHints?.vortexMeta?.audioLanguages) ? item.behaviorHints.vortexMeta.audioLanguages.join(' ') : item.behaviorHints?.vortexMeta?.audioLanguages,
+    item.title,
+    item.name
+  ].filter(Boolean).join(' ');
+}
+
+function extractLanguageVariant(item = {}) {
+  const text = collectLanguageSignalText(item);
+  if (!text) return '';
+  if (/🇮🇹|\b(?:ita|it|italian|italiano|dub\s*ita|doppiat[oa])\b/i.test(text) && !/sub\s*ita|vost(?:it)?/i.test(text)) return 'ita';
+  if (/🇯🇵|\b(?:jpn|jp|jap|ja|japanese|giapponese)\b|sub\s*ita|vost(?:it)?|raw/i.test(text)) return 'jpn';
+  if (/🇬🇧|🇺🇸|\b(?:eng|en|english|inglese)\b/i.test(text)) return 'eng';
+  if (/\b(?:multi|dual\s*audio|multiaudio)\b/i.test(text)) return 'multi';
+  return '';
+}
+
 function normalizeStoredSmartDedupeKey(item = {}) {
   const value = item.smart_dedupe_key
     || item.smartDedupeKey
@@ -522,13 +550,14 @@ function buildSmartDedupeKey(item = {}, options = {}) {
   const encode = extractEncodeTag(item);
   const releaseGroup = extractReleaseGroupTag(item);
   const sizeBucket = getSizeBucket(item);
+  const languageVariant = extractLanguageVariant(item);
 
   if (!sizeBucket && !resolution && !quality) return null;
 
   const isSeries = isSeriesContext(options);
   const episodeKey = isSeries ? getSeasonEpisodeKey(options) : '';
   const scope = isSeries ? `series:${episodeKey || 'unknown'}` : 'movie';
-  const sig = stableSmartSignature([scope, filenameKey, sizeBucket, resolution, quality, encode, releaseGroup]);
+  const sig = stableSmartSignature([scope, filenameKey, languageVariant ? `lang:${languageVariant}` : '', sizeBucket, resolution, quality, encode, releaseGroup]);
   return sig ? `smartDetect:${sig}` : null;
 }
 
@@ -556,19 +585,23 @@ function buildDedupeKeys(item = {}, options = {}) {
   const hintIdx = parseIntegerId(item?.episodeFileHint?.fileIdx ?? item?.episodeFileHint?.fileIndex ?? item?._episodeFileHint?.fileIdx ?? item?._episodeFileHint?.fileIndex);
   const episodeKey = getSeasonEpisodeKey(options);
   const filenameKey = extractFilename(item);
+  const languageVariant = extractLanguageVariant(item);
+  const languageSuffix = languageVariant ? `:lang:${languageVariant}` : '';
 
   if (!isSeries) {
-    keys.push(`infoHash:${hash}`);
+    // Movie infohashes stay strict, but keep explicit language variants separated
+    // when providers expose ITA/JP/ENG versions through the same synthetic host id.
+    keys.push(`infoHash:${hash}${languageSuffix}`);
   } else {
-    if (fileIdx !== null) keys.push(`infoHashFile:${hash}:${fileIdx}`);
-    if (hintIdx !== null) keys.push(`infoHashFile:${hash}:${hintIdx}`);
-    if (fileIdx === null && hintIdx === null && episodeKey) keys.push(`infoHashEpisode:${hash}:${episodeKey}`);
-    if (fileIdx === null && hintIdx === null && !episodeKey) keys.push(`infoHashNoFile:${hash}`);
+    if (fileIdx !== null) keys.push(`infoHashFile:${hash}:${fileIdx}${languageSuffix}`);
+    if (hintIdx !== null) keys.push(`infoHashFile:${hash}:${hintIdx}${languageSuffix}`);
+    if (fileIdx === null && hintIdx === null && episodeKey) keys.push(`infoHashEpisode:${hash}:${episodeKey}${languageSuffix}`);
+    if (fileIdx === null && hintIdx === null && !episodeKey) keys.push(`infoHashNoFile:${hash}${languageSuffix}`);
   }
 
 
   if (isSeries && filenameKey && fileIdx === null && hintIdx === null) {
-    keys.push(`infoHashFilename:${hash}:${filenameKey}`);
+    keys.push(`infoHashFilename:${hash}:${filenameKey}${languageSuffix}`);
   }
 
 

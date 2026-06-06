@@ -391,6 +391,12 @@ function collectLanguages(stream = {}, sourceName = '') {
     const scan = (values) => {
         for (const value of values) {
             const str = String(value || '');
+            const isSubItaOnly = /\b(?:sub\s*ita|vost(?:it)?|sottotitoli?\s*ita)\b/i.test(str)
+                && !/\b(?:dub\s*ita|audio\s*ita|ita\s*(?:dub|audio)|doppiat[oa])\b/i.test(str);
+            if (isSubItaOnly) {
+                push('jpn');
+                continue;
+            }
             if (/🇮🇹|\b(?:ita|it|italiano|italian)\b/i.test(str)) push('ita');
             if (/🇬🇧|\b(?:eng|en|inglese|english)\b/i.test(str)) push('eng');
             if (/🇯🇵|\b(?:jpn|jp|jap|ja|giapponese|japanese)\b/i.test(str)) push('jpn');
@@ -583,7 +589,7 @@ function buildWebStreamDisplay(stream, providerDefinition, meta = {}, config = {
 
     return {
         ...stream,
-        name: `🌊 𝗪𝗘𝗕 🦑 ʟᴇᴠɪᴀᴛʜᴀɴ`,
+        name: `🌊 𝗪𝗘𝗕 ${languages.flags} 🦑 ʟᴇᴠɪᴀᴛʜᴀɴ`,
         title: titleLines.join('\n'),
         quality,
         language: stream.language,

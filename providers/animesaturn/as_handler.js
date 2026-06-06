@@ -113,7 +113,15 @@ const TITLE_FIXES = new Map([
     ['oshi no ko', ['Oshi no Ko']],
     ['jujutsu kaisen ii', ['Jujutsu Kaisen Season 2']],
     ['jujutsu kaisen 2', ['Jujutsu Kaisen Season 2']],
-    ['one piece fan letter', ['ONE PIECE FAN LETTER']]
+    ['one piece fan letter', ['ONE PIECE FAN LETTER']],
+    ['fullmetal alchemist brotherhood', ['Fullmetal Alchemist Brotherhood']],
+    ['parasyte the maxim', ['Kiseijuu']],
+    ['jojos bizarre adventure 2012', ['Le Bizzarre Avventure di JoJo']],
+    ['jojos bizarre adventure stardust crusaders', ['Le Bizzarre Avventure di JoJo Stardust Crusaders']],
+    ['link click season 2', ['Link Click 2']],
+    ['record of ragnarok ii', ['Record of Ragnarok 2']],
+    ['hells paradise season 2', ['Jigokuraku 2']],
+    ['my hero academia final season', ['Boku no Hero Academia Final Season']]
 ]);
 
 const localCache = {
@@ -276,8 +284,8 @@ function inferSourceTag(title, animePath) {
 
 function resolveLanguageLine(sourceTag) {
     return String(sourceTag || '').toUpperCase() === 'ITA'
-        ? '🇮🇹 ITA • Dub'
-        : '🇯🇵 JPN • Sub ITA';
+        ? '🇮🇹 • Dub'
+        : '🇯🇵 • Sub';
 }
 
 function resolveStreamLanguage(sourceTag) {
@@ -771,18 +779,40 @@ async function extractStreamsFromAnimePath(animePath, requestedEpisode, mediaTyp
         const quality = extractQualityHint(normalizedUrl);
         const hostLabel = normalizeHostLabel(normalizedUrl) || 'Direct';
 
+        const languageLine = resolveLanguageLine(parsedPage.sourceTag);
+        const languageBadge = streamLanguage === 'ita' ? '🇮🇹' : '🇯🇵';
+
         streams.push({
-            name: `🪐 AnimeSaturn | ${quality}`,
+            name: `🪐 AnimeSaturn | ${languageBadge} | ${quality}`,
             title: `${displayTitle}
-${resolveLanguageLine(parsedPage.sourceTag)} • ${quality}
+${languageLine} • ${quality}
 ☁️ ${hostLabel} • AnimeSaturn`,
             url: buildStreamOutputUrl(normalizedUrl),
             language: streamLanguage,
+            audioLanguages: [streamLanguage],
             extractor: hostLabel,
+            provider: 'AnimeSaturn',
+            source: 'AnimeSaturn',
+            site: 'AnimeSaturn',
             behaviorHints: {
                 notWebReady: false,
+                language: streamLanguage,
+                audioLanguages: [streamLanguage],
                 extractor: hostLabel,
+                vortexExtractor: hostLabel,
+                vortexSource: 'AnimeSaturn',
+                vortexProviderCode: 'AS',
+                bingeGroup: `animesaturn|${String(parsedPage.sourceTag || 'sub').toLowerCase()}`,
                 bingieGroup: `animesaturn|${String(parsedPage.sourceTag || 'sub').toLowerCase()}`,
+                vortexMeta: {
+                    provider: 'AnimeSaturn',
+                    source: 'AnimeSaturn',
+                    site: 'AnimeSaturn',
+                    extractor: hostLabel,
+                    language: streamLanguage,
+                    audioLanguages: [streamLanguage],
+                    quality
+                },
                 proxyHeaders: {
                     request: {
                         'User-Agent': USER_AGENT,
@@ -1111,6 +1141,83 @@ function matchesAnimeSaturnDate(candidateDate, targetDate) {
         && candidateDate.date.getUTCMonth() === targetDate.getUTCMonth();
 }
 
+
+function parseAnimeSaturnHtmlCandidates(html) {
+    const $ = cheerio.load(String(html || ''));
+    const candidates = [];
+    const seen = new Set();
+
+    function push(rawTitle, rawHref, rawRelease = '') {
+        const name = sanitizeAnimeTitle(rawTitle || '');
+        const link = String(rawHref || '').trim();
+        const path = normalizeAnimeSaturnCandidatePath(link);
+        if (!name || !path) return;
+        const key = `${name}|${path}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        candidates.push({ name, link: path, release: String(rawRelease || '').trim() });
+    }
+
+    $('.list-group-item').each((_, element) => {
+        const item = $(element);
+        const anchor = item.find('.badge.badge-archivio.badge-light[href], a[href*="/anime/"]').first();
+        push(
+            anchor.text() || anchor.attr('title') || item.text(),
+            anchor.attr('href'),
+            item.find('.badge:contains("Data"), .release, .date').first().text()
+        );
+    });
+
+    $('.anime-card-newanime.main-anime-card, .sebox, .w-100').each((_, element) => {
+        const item = $(element);
+        const anchor = item.find('a[href*="/anime/"]').first();
+        push(
+            item.find('.badge.badge-light, .headsebox h2 a, span').first().text() || anchor.attr('title') || anchor.text(),
+            anchor.attr('href'),
+            item.text()
+        );
+    });
+
+    return candidates;
+}
+
+async function searchAnimeSaturnHtmlCandidates(query) {
+    const encodedQuery = encodeURIComponent(String(query || '').trim()).replace(/%20/g, '+');
+    if (!encodedQuery) return [];
+
+    const out = [];
+    const seen = new Set();
+    for (let page = 1; page <= 3; page += 1) {
+        const url = page === 1
+            ? `${SATURN_BASE_URL}/animelist?search=${encodedQuery}`
+            : `${SATURN_BASE_URL}/animelist?page=${page}&search=${encodedQuery}`;
+        try {
+            const html = await saturnFetchResource(url, {
+                ttlMs: TTL.search,
+                cacheKey: `animesaturn-html-search:${encodedQuery}:${page}`,
+                timeoutMs: AS_FETCH_TIMEOUT,
+                referer: `${SATURN_BASE_URL}/animelist`,
+                headers: { accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' }
+            }, 'search');
+            const candidates = parseAnimeSaturnHtmlCandidates(html);
+            if (candidates.length === 0) break;
+            for (const candidate of candidates) {
+                const key = `${candidate.name}|${candidate.link}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                out.push(candidate);
+            }
+            const $ = cheerio.load(String(html || ''));
+            const hasNext = $('a[href*="page="]').toArray().some((element) => String($(element).attr('href') || '').includes(`page=${page + 1}`));
+            if (!hasNext) break;
+        } catch (error) {
+            console.error(`[AnimeSaturn] html search failed page=${page}:`, error.message);
+            break;
+        }
+    }
+    return out;
+}
+
 async function searchAnimeSaturnCandidates(query) {
     const encodedQuery = encodeURIComponent(String(query || '').trim()).replace(/%20/g, '+');
     if (!encodedQuery) return [];
@@ -1128,9 +1235,11 @@ async function searchAnimeSaturnCandidates(query) {
             }
         }, 'search');
 
-        if (!Array.isArray(payload)) return [];
+        if (!Array.isArray(payload)) {
+            return searchAnimeSaturnHtmlCandidates(query);
+        }
 
-        return payload
+        const apiCandidates = payload
             .filter((item) => item && typeof item === 'object')
             .map((item) => ({
                 name: String(item.name || '').trim(),
@@ -1138,9 +1247,12 @@ async function searchAnimeSaturnCandidates(query) {
                 release: String(item.release || '').trim()
             }))
             .filter((item) => item.name && item.link);
+
+        if (apiCandidates.length > 0) return apiCandidates;
+        return searchAnimeSaturnHtmlCandidates(query);
     } catch (error) {
         console.error('[AnimeSaturn] search request failed:', error.message);
-        return [];
+        return searchAnimeSaturnHtmlCandidates(query);
     }
 }
 

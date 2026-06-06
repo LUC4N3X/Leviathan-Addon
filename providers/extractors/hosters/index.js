@@ -6,6 +6,7 @@ const { extractMaxstream, isMaxstreamUrl } = require('./maxstream');
 const { extractMixdrop, isMixdropUrl } = require('./mixdrop');
 const { extractSupervideo, isSupervideoUrl } = require('./supervideo');
 const { extractDropload, isDroploadUrl } = require('./dropload');
+const { extractDoodstream, isDoodstreamUrl } = require('./doodstream');
 const { extractStreamtape, isStreamtapeUrl } = require('./streamtape');
 const { extractUqload, isUqloadUrl } = require('./uqload');
 const { extractUpstream, isUpstreamUrl } = require('./upstream');
@@ -16,6 +17,7 @@ const { extractVidxgo, isVidxgoUrl } = require('./vidxgo');
 const { extractStreamhg, isStreamhgUrl } = require('./streamhg');
 const { extractTurbovid, isTurbovidUrl, normalizeTurbovidUrl } = require('./turbovid');
 const { extractVoe, isVoeUrl } = require('./voe');
+const { extractVidguard, isVidguardUrl } = require('./vidguard');
 
 module.exports = {
     extractDeltabit,
@@ -30,6 +32,8 @@ module.exports = {
     isSupervideoUrl,
     extractDropload,
     isDroploadUrl,
+    extractDoodstream,
+    isDoodstreamUrl,
     extractStreamtape,
     isStreamtapeUrl,
     extractUqload,
@@ -51,5 +55,7 @@ module.exports = {
     isTurbovidUrl,
     normalizeTurbovidUrl,
     extractVoe,
-    isVoeUrl
+    isVoeUrl,
+    extractVidguard,
+    isVidguardUrl
 };

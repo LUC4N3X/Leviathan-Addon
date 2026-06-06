@@ -82,7 +82,15 @@ const TITLE_FIXES = new Map([
     ['oshi no ko', 'Oshi no Ko'],
     ['jujutsu kaisen ii', 'Jujutsu Kaisen Season 2'],
     ['jujutsu kaisen 2', 'Jujutsu Kaisen Season 2'],
-    ['one piece fan letter', 'ONE PIECE FAN LETTER']
+    ['one piece fan letter', 'ONE PIECE FAN LETTER'],
+    ['fullmetal alchemist brotherhood', 'Fullmetal Alchemist Brotherhood'],
+    ['parasyte the maxim', 'Kiseijuu'],
+    ['jojos bizarre adventure 2012', 'Le Bizzarre Avventure di JoJo'],
+    ['jojos bizarre adventure stardust crusaders', 'Le Bizzarre Avventure di JoJo Stardust Crusaders'],
+    ['link click season 2', 'Link Click 2'],
+    ['record of ragnarok ii', 'Record of Ragnarok 2'],
+    ['hells paradise season 2', 'Jigokuraku 2'],
+    ['my hero academia final season', 'Boku no Hero Academia Final Season'],
 ]);
 
 function now() {
@@ -469,16 +477,34 @@ async function fetchSession() {
         const second = getCached(cache.session, 'session');
         if (second !== undefined) return second;
 
+        const bootstrapUrls = uniqueNonEmpty([
+            `${AU_BASE}/archivio/`,
+            `${AU_BASE}/archivio`,
+            `${AU_BASE}/`
+        ]);
+
         try {
-            const response = await request(AU_BASE, { headers: buildHeaders(`${AU_BASE}/`), attempts: 3 });
-            if (Number(response?.status || 0) !== 200) return setCached(cache.session, 'session', null, NEGATIVE_TTL_MS);
-            const html = responseText(response);
-            const $ = cheerio.load(html || '');
-            const session = {
-                csrfToken: $('meta[name="csrf-token"]').attr('content') || '',
-                cookie: extractSetCookieHeader(response)
-            };
-            return setCached(cache.session, 'session', session, SESSION_TTL_MS);
+            let bestSession = null;
+            for (const bootstrapUrl of bootstrapUrls) {
+                const response = await request(bootstrapUrl, { headers: buildHeaders(`${AU_BASE}/`), attempts: 3 });
+                if (Number(response?.status || 0) !== 200) continue;
+
+                const html = responseText(response);
+                const $ = cheerio.load(html || '');
+                const session = {
+                    csrfToken: $('meta[name="csrf-token"]').attr('content') || '',
+                    cookie: extractSetCookieHeader(response),
+                    bootstrapUrl: responseUrl(response, bootstrapUrl)
+                };
+
+                if (session.csrfToken && session.cookie) {
+                    return setCached(cache.session, 'session', session, SESSION_TTL_MS);
+                }
+
+                if (!bestSession && (session.csrfToken || session.cookie)) bestSession = session;
+            }
+
+            return setCached(cache.session, 'session', bestSession, bestSession ? SESSION_TTL_MS : NEGATIVE_TTL_MS);
         } catch (error) {
             console.error(`[AnimeUnity] session error: ${error.message}`);
             return setCached(cache.session, 'session', null, NEGATIVE_TTL_MS);
@@ -990,6 +1016,26 @@ async function fetchAnimeUnityMapping(searchContext = {}, requestedEpisode = 1) 
     }
 }
 
+function parseLayoutRelatedAnime($) {
+    const output = [];
+    const seen = new Set();
+
+    function add(item) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return;
+        const key = `${item.id || item.anime_id || ''}|${item.slug || item.title_slug || ''}|${buildCandidateTitle(item)}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        output.push(item);
+    }
+
+    $('layout-items[items-json], [items-json]').each((_, element) => {
+        const parsed = parseJsonMaybe($(element).attr('items-json'));
+        if (Array.isArray(parsed)) parsed.forEach(add);
+    });
+
+    return output;
+}
+
 function parseVideoPlayer(html) {
     const $ = cheerio.load(String(html || ''));
     const player = $('video-player').first();
@@ -998,12 +1044,14 @@ function parseVideoPlayer(html) {
     const episode = parseJsonMaybe(player.attr('episode')) || {};
     const episodes = parseJsonMaybe(player.attr('episodes')) || [];
     const animeList = parseJsonMaybe(player.attr('anime_list')) || [];
+    const relatedAnime = parseLayoutRelatedAnime($);
     const embedUrl = normalizeAnimeUrl(player.attr('embed_url'), AU_BASE);
     return {
         anime: anime && typeof anime === 'object' && !Array.isArray(anime) ? anime : {},
         episode: episode && typeof episode === 'object' && !Array.isArray(episode) ? episode : {},
         episodes: Array.isArray(episodes) ? episodes : [],
         animeList: Array.isArray(animeList) ? animeList : [],
+        relatedAnime,
         embedUrl,
         html: String(html || '')
     };
@@ -1169,7 +1217,11 @@ async function fetchAnimePage(animeUrl, episodeId = null) {
 
 function selectRelatedVariant(pageData, isDubbed) {
     const anime = pageData?.anime || {};
-    const related = Array.isArray(anime.related) ? anime.related : [];
+    const related = [
+        ...(Array.isArray(anime.related) ? anime.related : []),
+        ...(Array.isArray(pageData?.relatedAnime) ? pageData.relatedAnime : []),
+        ...(Array.isArray(pageData?.animeList) ? pageData.animeList : [])
+    ];
     if (!related.length) return null;
     const currentDub = anime.dub === 1 || anime.dub === true || containsDubMarker(buildCandidateTitle(anime));
     if (Boolean(currentDub) === Boolean(isDubbed)) return anime;
@@ -1325,6 +1377,8 @@ function buildStream({ sourceUrl, referer, quality, title, langTag, emoji, reqHo
     const extractor = 'VixCloud';
     const behaviorHints = {
         notWebReady: false,
+        language: String(langTag || '').toUpperCase().includes('ITA') && !String(langTag || '').toUpperCase().includes('SUB') ? 'ita' : 'jpn',
+        audioLanguages: [String(langTag || '').toUpperCase().includes('ITA') && !String(langTag || '').toUpperCase().includes('SUB') ? 'ita' : 'jpn'],
         bingeGroup,
         bingieGroup: bingeGroup,
         extractor,
@@ -1344,16 +1398,22 @@ function buildStream({ sourceUrl, referer, quality, title, langTag, emoji, reqHo
             seriesTitle: title,
             quality,
             language: langTag,
+            audioLanguages: [String(langTag || '').toUpperCase().includes('ITA') && !String(langTag || '').toUpperCase().includes('SUB') ? 'ita' : 'jpn'],
             branch: viaMfp ? `${branch}-mfp` : branch
         }
     };
 
+    const isItaDub = String(langTag || '').toUpperCase().includes('ITA') && !String(langTag || '').toUpperCase().includes('SUB');
+    const languageCode = isItaDub ? 'ita' : 'jpn';
+    const languageBadge = isItaDub ? '🇮🇹' : '🇯🇵';
+
     return {
-        name: `🌀 AnimeUnity | ${quality}`,
+        name: `🌀 AnimeUnity | ${languageBadge} | ${quality}`,
         title: `${title}\n${emoji} ${langTag} • ${quality}\n☁️ VixCloud${viaMfp ? ' • MFP' : ' • Proxy interno'}`,
         url,
         quality,
-        language: String(langTag || '').toUpperCase().includes('ITA') && !String(langTag || '').toUpperCase().includes('SUB') ? 'ita' : 'jpn',
+        language: languageCode,
+        audioLanguages: [languageCode],
         extractor,
         host: extractor,
         provider: PROVIDER_NAME,

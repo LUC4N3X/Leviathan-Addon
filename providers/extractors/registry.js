@@ -3,6 +3,7 @@
 const {
     extractDeltabit,
     extractDropload,
+    extractDoodstream,
     extractLoadm,
     extractMixdrop,
     extractMaxstream,
@@ -16,6 +17,7 @@ const {
     extractVidxgo,
     isDeltabitUrl,
     isDroploadUrl,
+    isDoodstreamUrl,
     isLoadmUrl,
     isMixdropUrl,
     isMaxstreamUrl,
@@ -32,12 +34,14 @@ const {
     extractTurbovid,
     isTurbovidUrl,
     extractVoe,
-    isVoeUrl
+    isVoeUrl,
+    extractVidguard,
+    isVidguardUrl
 } = require('./hosters');
 const { isBridgeResolverCandidate, resolveBridgeUrl } = require('./bridge_resolver');
 
-const HOSTER_DIRECT_LINK_PATTERN = String.raw`https?:\/\/(?:www\.)?(?:supervideo|vixcloud|(?:v\.)?vidxgo|dropload|dr0pstream|mixdrop|mixdrp|m1xdrop|miiixdrop|mxdrop|mxcontent|md[3bfyz][a-z0-9]*|loadm(?:\.cam)?|deltabit|safego|clicka|uprot\.net|maxstream\.video|stayonline\.pro|maxstream|upstream|uqload|streamtape|vidoza|dhcplay|vibuxer|turbovid\.me|turboviplay\.com|emturbovid\.com|tuborstb\.co|javggvideo\.xyz|stbturbo\.xyz|turbovidhls\.com|voe\.sx|voe\.to|voe-unblock\.com|v-o-e-unblock\.com)[^"'<\s]+`;
-const HOSTER_ESCAPED_DIRECT_LINK_PATTERN = String.raw`https?:\\\/\\\/(?:www\\.)?(?:supervideo|vixcloud|(?:v\.)?vidxgo|dropload|dr0pstream|mixdrop|mixdrp|m1xdrop|miiixdrop|mxdrop|mxcontent|md[3bfyz][a-z0-9]*|loadm(?:\\.cam)?|deltabit|safego|clicka|uprot\\.net|maxstream\\.video|stayonline\\.pro|maxstream|upstream|uqload|streamtape|vidoza|dhcplay|vibuxer|turbovid\.me|turboviplay\.com|emturbovid\.com|tuborstb\.co|javggvideo\.xyz|stbturbo\.xyz|turbovidhls\.com|voe\.sx|voe\.to|voe-unblock\.com|v-o-e-unblock\.com)[^"'<\s]+`;
+const HOSTER_DIRECT_LINK_PATTERN = String.raw`https?:\/\/(?:www\.)?(?:supervideo|vixcloud|(?:v\.)?vidxgo|dropload|dr0pstream|dood(?:stream)?\.(?:com|to|watch|so|pm|wf|sh|la|ws|re|yt)|ds2play\.com|doodcdn\.(?:com|co)|d0o0d\.(?:com|to|watch|so|pm|wf|sh|la|ws|re|yt)|mixdrop|mixdrp|m1xdrop|miiixdrop|mxdrop|mxcontent|md[3bfyz][a-z0-9]*|loadm(?:\.cam)?|deltabit|safego|clicka|uprot\.net|maxstream\.video|stayonline\.pro|maxstream|upstream|uqload|streamtape|vidoza|dhcplay|vibuxer|turbovid\.me|turboviplay\.com|emturbovid\.com|tuborstb\.co|javggvideo\.xyz|stbturbo\.xyz|turbovidhls\.com|voe\.sx|voe\.to|voe-unblock\.com|v-o-e-unblock\.com|listeamed\.net|vidguard[^/\s"'<>]*)[^"'<\s]+`;
+const HOSTER_ESCAPED_DIRECT_LINK_PATTERN = String.raw`https?:\\\/\\\/(?:www\\.)?(?:supervideo|vixcloud|(?:v\.)?vidxgo|dropload|dr0pstream|dood(?:stream)?\.(?:com|to|watch|so|pm|wf|sh|la|ws|re|yt)|ds2play\.com|doodcdn\.(?:com|co)|d0o0d\.(?:com|to|watch|so|pm|wf|sh|la|ws|re|yt)|mixdrop|mixdrp|m1xdrop|miiixdrop|mxdrop|mxcontent|md[3bfyz][a-z0-9]*|loadm(?:\\.cam)?|deltabit|safego|clicka|uprot\\.net|maxstream\\.video|stayonline\\.pro|maxstream|upstream|uqload|streamtape|vidoza|dhcplay|vibuxer|turbovid\.me|turboviplay\.com|emturbovid\.com|tuborstb\.co|javggvideo\.xyz|stbturbo\.xyz|turbovidhls\.com|voe\.sx|voe\.to|voe-unblock\.com|v-o-e-unblock\.com|listeamed\.net|vidguard[^/\s"'<>]*)[^"'<\s]+`;
 
 const HOSTER_DEFINITIONS = [
     {
@@ -106,6 +110,24 @@ const HOSTER_DEFINITIONS = [
         noLazy: true
     },
     {
+        key: 'doodstream',
+        label: 'DoodStream',
+        matches: isDoodstreamUrl,
+        aliases: [
+            'doodstream.com',
+            'dood.to',
+            'dood.watch',
+            'dood.la',
+            'dood.ws',
+            'dood.pm',
+            'ds2play.com',
+            'doodcdn.com'
+        ],
+        serverNames: ['doodstream', 'dood'],
+        extract: extractDoodstream,
+        priority: 3
+    },
+    {
         key: 'voe',
         label: 'VOE',
         matches: isVoeUrl,
@@ -119,6 +141,22 @@ const HOSTER_DEFINITIONS = [
         ],
         serverNames: ['voe', 'voesx', 'v-o-e'],
         extract: extractVoe,
+        priority: 2
+    },
+    {
+        key: 'vidguard',
+        label: 'VidGuard',
+        matches: isVidguardUrl,
+        aliases: [
+            'listeamed.net',
+            'vidguard.to',
+            'vidguard.net',
+            'vidguard.pro',
+            'vgfplay.com',
+            'vgembed.com'
+        ],
+        serverNames: ['vidguard', 'listeamed'],
+        extract: extractVidguard,
         priority: 2
     },
     {
