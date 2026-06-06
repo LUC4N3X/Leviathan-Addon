@@ -71,6 +71,13 @@ test('CinemaCity infers concrete audio languages from selected playback labels',
     assert.deepEqual(__private.inferCinemaCityAudioLanguages('Server ENG'), ['eng']);
 });
 
+test('CinemaCity merges selected playback label and playlist audio languages', () => {
+    assert.deepEqual(
+        __private.mergeCinemaCityAudioLanguages(['ita'], { audioLanguages: ['eng'] }),
+        ['ita', 'eng']
+    );
+});
+
 test('CinemaCity builds generic forward URLs from the shared FORWARD_PROXY env', () => {
     withEnvironment({
         FORWARD_PROXY: 'https://proxy.example/forward?url=',

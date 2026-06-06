@@ -95,10 +95,9 @@ function getKrakenGateway(config = {}) {
 
 function getSourceLanguageLabel(source = {}, playlistIntel = null) {
     const audio = Array.isArray(playlistIntel?.audioLanguages) ? playlistIntel.audioLanguages.map((item) => String(item).toLowerCase()) : [];
-    if (audio.length) return languageLabelForAudioLanguages(audio);
-
     const text = `${source.language || ''} ${source.lang || ''} ${source.provider || ''} ${source.extractor || ''} ${source.title || ''}`;
     const inferred = audioLanguagesFromText(text);
+    if (audio.length) return languageLabelForAudioLanguages([...(inferred.length ? inferred : ['ita']), ...audio]);
     if (inferred.length) return languageLabelForAudioLanguages(inferred);
     return 'ITA';
 }
@@ -375,7 +374,7 @@ function buildKrakenResolvedStream(source, def = null, { title, config = {}, pag
     const quality = pickBetterQuality(playlistIntel?.quality || 'Unknown', source.quality || 'Unknown');
     const audioLanguages = audioLanguagesForLabel(languageLabel);
 
-    return buildWebStream({
+    const stream = buildWebStream({
         name: `${PROVIDER_LABEL} | ${label} Kraken`,
         title: `${title}\n${label} ${languageLabel}`,
         url,
@@ -399,6 +398,8 @@ function buildKrakenResolvedStream(source, def = null, { title, config = {}, pag
         },
         extra: { _priority: source.priority ?? def?.priority ?? 9, _italian: languageLabel === 'ITA' }
     });
+
+    return decorateStreamWithPlaylistIntelligence(stream, playlistIntel);
 }
 
 function buildMediaflowFallbackStream(source, def, { title, config = {}, pageUrl = BASE_URL } = {}) {
@@ -407,9 +408,17 @@ function buildMediaflowFallbackStream(source, def, { title, config = {}, pageUrl
 
 async function resolveSourceToStream(source, { title, reqHost, pageUrl = BASE_URL, signal = null, config = {}, extract = extractFromUrl } = {}) {
     const def = resolveExtractorDefinition(source.url);
+    let sourcePlaylistIntel = null;
+    if (isDirectHls(source.url)) {
+        sourcePlaylistIntel = await probePlaylistIntelligence(http, source.url, {
+            headers: headersFor(source.url, pageUrl),
+            timeout: Number.parseInt(process.env.ALTADEFINIZIONE_PLAYLIST_TIMEOUT_MS || '5000', 10) || 5000,
+            signal
+        }).catch(() => null);
+    }
 
     if (KRAKEN_FIRST) {
-        const krakenStream = buildKrakenResolvedStream(source, def, { title, config, pageUrl, via: 'kraken-first' });
+        const krakenStream = buildKrakenResolvedStream(source, def, { title, config, pageUrl, playlistIntel: sourcePlaylistIntel, via: 'kraken-first' });
         if (krakenStream) return krakenStream;
     }
 
@@ -467,8 +476,8 @@ async function resolveSourceToStream(source, { title, reqHost, pageUrl = BASE_UR
         return stream;
     }
 
-    let playlistIntel = null;
-    if (isDirectHls(source.url)) {
+    let playlistIntel = sourcePlaylistIntel;
+    if (!playlistIntel && isDirectHls(source.url)) {
         playlistIntel = await probePlaylistIntelligence(http, source.url, {
             headers: headersFor(source.url, pageUrl),
             timeout: Number.parseInt(process.env.ALTADEFINIZIONE_PLAYLIST_TIMEOUT_MS || '5000', 10) || 5000,

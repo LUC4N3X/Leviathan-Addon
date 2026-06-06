@@ -49,3 +49,10 @@ test('AltaDefinizione maps multi-audio source labels to concrete ITA and ENG fla
     assert.equal(__private.getSourceLanguageLabel({ title: 'Film 1080p ITA ENG' }), 'MULTI ITA/ENG');
     assert.deepEqual(__private.audioLanguagesForLabel('MULTI ITA/ENG'), ['ita', 'eng']);
 });
+
+test('AltaDefinizione merges Italian source evidence with English playlist tracks', () => {
+    assert.equal(
+        __private.getSourceLanguageLabel({ language: 'ITA' }, { audioLanguages: ['eng'] }),
+        'MULTI ITA/ENG'
+    );
+});
