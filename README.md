@@ -24,9 +24,9 @@
   <h3>🔱 A clean stream intelligence layer for Stremio</h3>
 
   <p>
-    <b>Leviathan unifica torrent engine, web provider, anime mapping e cloud RD/TorBox</b><br>
-    in una pipeline rapida, ordinata e deduplicata, progettata per dare priorità ai risultati <b>ITA</b><br>
-    mantenendo supporto <b>ENG</b> quando serve.
+    <b>Leviathan unifies torrent engines, web providers, anime mapping, and RD/TorBox cloud</b><br>
+    into a fast, structured, deduplicated pipeline designed to prioritize real <b>ITA</b> results<br>
+    while keeping <b>ENG</b> support available when needed.
   </p>
 
   <p>
@@ -46,17 +46,17 @@
   <p><b>Not a simple scraper. Not a simple addon.</b></p>
 </div>
 
-Leviathan è un motore di aggregazione per Stremio pensato per cercare, normalizzare, filtrare e presentare risultati in modo più intelligente.
+Leviathan is an aggregation engine for Stremio, designed to search, normalize, filter, and present results in a smarter way.
 
-Il suo obiettivo è semplice: ridurre il rumore, evitare doppioni inutili, migliorare la qualità del matching e dare all'utente una lista stream più pulita, più leggibile e più vicina a ciò che sta davvero cercando.
+Its goal is simple: reduce noise, avoid unnecessary duplicates, improve matching quality, and give the user a cleaner, more readable stream list that is closer to what they are actually looking for.
 
-Lavora su più sorgenti sincronizzate:
+It works across multiple synchronized sources:
 
-- **Torrent engine** per risultati P2P e magnet. 🔎
-- **Web provider** per fonti italiane e percorsi hoster. 🇮🇹
-- **Anime provider** con logica Kitsu-aware. 🈶
-- **Saved Cloud Layer** per file già presenti su Real-Debrid e TorBox. ☁️
-- **Kraken Runtime** per i flussi più delicati: forward, challenge, embed, hoster e compatibilità MediaFlow. 🦑
+- **Torrent engine** for P2P and magnet results. 🔎
+- **Web providers** for Italian sources and hoster routes. 🇮🇹
+- **Anime providers** with Kitsu-aware logic. 🈶
+- **Saved Cloud Layer** for files already available on Real-Debrid and TorBox. ☁️
+- **Kraken Runtime** for the most delicate flows: forwarding, challenges, embeds, hosters, and MediaFlow compatibility. 🦑
 
 <div align="center">
   <img src="https://img.shields.io/badge/Semantic_Core-Strict_Matching-00E7FF?style=for-the-badge&labelColor=07111F" />
@@ -71,17 +71,17 @@ Lavora su più sorgenti sincronizzate:
 </div>
 
 > [!IMPORTANT]
-> **Leviathan è un framework tecnico di aggregazione, parsing, normalizzazione e routing. Non ospita, non archivia, non vende e non distribuisce contenuti multimediali.**
+> **Leviathan is a technical framework for aggregation, parsing, normalization, and routing. It does not host, store, sell, or distribute media content.**
 
-L'uso del progetto, dei provider configurati, dei servizi esterni, dei bridge, dei resolver, dei layer cloud e di eventuali componenti companion avviene sotto la piena responsabilità dell'utente finale.
+Use of the project, configured providers, external services, bridges, resolvers, cloud layers, and any companion components is entirely the responsibility of the end user.
 
-Chi installa, modifica, distribuisce o utilizza Leviathan deve assicurarsi di operare nel rispetto delle leggi applicabili, dei diritti di terzi, delle licenze, dei termini di servizio dei provider coinvolti e delle regole dei servizi collegati.
+Anyone who installs, modifies, distributes, or uses Leviathan must ensure they operate in compliance with applicable laws, third-party rights, licenses, the terms of service of the providers involved, and the rules of connected services.
 
-Leviathan viene pubblicato per finalità tecniche, educative e di ricerca: studio di architetture di aggregazione, interoperabilità tra client e servizi, parsing, ranking, formatting, cache policy, resilienza operativa e delivery logic.
+Leviathan is published for technical, educational, and research purposes: the study of aggregation architectures, interoperability between clients and services, parsing, ranking, formatting, cache policies, operational resilience, and delivery logic.
 
-Il **Saved Cloud Layer** si limita a riconoscere elementi già presenti negli account Real-Debrid o TorBox configurati dall'utente. Leviathan fornisce il motore software; l'utente resta responsabile di cosa abilita, collega e utilizza.
+The **Saved Cloud Layer** only recognizes items already present in the Real-Debrid or TorBox accounts configured by the user. Leviathan provides the software engine; the user remains responsible for what they enable, connect, and use.
 
-<sub>Questa nota non costituisce consulenza legale.</sub>
+<sub>This notice does not constitute legal advice.</sub>
 
 ---
 
@@ -89,22 +89,22 @@ Il **Saved Cloud Layer** si limita a riconoscere elementi già presenti negli ac
   <h2>🚀 Why Leviathan feels different</h2>
 </div>
 
-Leviathan non si limita ad aggiungere fonti. Cerca di capire quali risultati hanno senso.
+Leviathan does not simply add more sources. It tries to understand which results actually make sense.
 
 **Semantic Core**  
-Analizza titolo, anno, stagione, episodio, qualità, lingua, pattern release e segnali di affidabilità. Il risultato non viene trattato come valido solo perché contiene parole simili.
+It analyzes title, year, season, episode, quality, language, release patterns, and reliability signals. A result is not treated as valid just because it contains similar words.
 
 **ITA-first Logic**  
-Dà priorità ai risultati italiani reali, distinguendo meglio tra ITA, MULTI, SUB-ITA, ENG e release ambigue.
+It prioritizes real Italian results, with clearer distinction between ITA, MULTI, SUB-ITA, ENG, and ambiguous releases.
 
 **Clean Deduplication**  
-Evita di mostrare più volte lo stesso contenuto quando viene trovato da sorgenti diverse. Se un risultato normale è già presente anche nel cloud dell'utente, Leviathan lo valorizza senza creare confusione.
+It avoids showing the same content multiple times when it is found through different sources. If a regular result is also already available in the user's cloud, Leviathan highlights it without creating confusion.
 
 **Adaptive Cache**  
-Non usa cache cieca. I contenuti appena usciti vengono trattati con più prudenza, mentre i contenuti stabili possono essere riusati in modo più aggressivo.
+It does not use blind caching. Freshly released content is handled more carefully, while stable content can be reused more aggressively.
 
 **Kraken-ready Runtime**  
-I provider più fragili possono essere delegati a Kraken, lasciando Leviathan concentrato su ricerca, ranking, dedupe e formattazione.
+More fragile providers can be delegated to Kraken, allowing Leviathan to stay focused on search, ranking, deduplication, and formatting.
 
 ---
 
@@ -121,12 +121,12 @@ I provider più fragili possono essere delegati a Kraken, lasciando Leviathan co
 
 <br>
 
-- **RD/TorBox Saved Cloud**: riconosce i file già salvati nel cloud dell'utente e li integra senza doppioni.
-- **Core Refactoring**: pipeline più ordinata, più leggibile e più stabile sotto carico.
-- **Web Provider Routing**: gestione coordinata di provider italiani, anime provider, bridge intermedi e hoster extractor.
-- **Polymorphic Formatter**: output Stremio più pulito, gerarchico e facile da leggere.
-- **Language Control**: modalità dedicate per ITA, ENG e Hybrid.
-- **Direct Swarm Access**: supporto P2P diretto per scenari senza debrid.
+- **RD/TorBox Saved Cloud**: recognizes files already saved in the user's cloud and integrates them without duplicates.
+- **Core Refactoring**: a cleaner, more readable, and more stable pipeline under load.
+- **Web Provider Routing**: coordinated handling of Italian providers, anime providers, intermediate bridges, and hoster extractors.
+- **Polymorphic Formatter**: cleaner, hierarchical, and easier-to-read Stremio output.
+- **Language Control**: dedicated modes for ITA, ENG, and Hybrid.
+- **Direct Swarm Access**: direct P2P support for scenarios without debrid.
 
 ---
 
@@ -135,17 +135,17 @@ I provider più fragili possono essere delegati a Kraken, lasciando Leviathan co
   <p><code>RD/TorBox cloud-aware · opzionale · zero duplicati</code></p>
 </div>
 
-Il **Saved Cloud Layer** controlla i file già salvati nel cloud personale dell'utente su **Real-Debrid** o **TorBox** e li integra nella lista stream in modo pulito.
+The **Saved Cloud Layer** checks files already saved in the user's personal cloud on **Real-Debrid** or **TorBox** and integrates them cleanly into the stream list.
 
-La pipeline principale resta invariata: Leviathan cerca prima torrent, cache, provider esterni e risultati web. Dopo il ranking, se il cloud è attivo, confronta i file salvati con titolo, anno, stagione, episodio, anime/episodio assoluto, qualità e lingua.
+The main pipeline remains unchanged: Leviathan first searches torrents, cache, external providers, and web results. After ranking, if cloud mode is enabled, it compares saved files by title, year, season, episode, anime/absolute episode, quality, and language.
 
-Funziona in tre modalità:
+It works in three modes:
 
-- **smart**: usa il cloud quando può migliorare davvero il risultato.
-- **fallback**: interviene soprattutto quando la pipeline principale non basta.
-- **always**: controlla sempre il cloud, continuando a escludere duplicati.
+- **smart**: uses the cloud when it can genuinely improve the result.
+- **fallback**: steps in mainly when the main pipeline is not enough.
+- **always**: always checks the cloud while still excluding duplicates.
 
-Gli stream cloud vengono marcati con `☁️ RD` o `☁️ TB` e possono usare route dedicate:
+Cloud streams are marked with `☁️ RD` or `☁️ TB` and can use dedicated routes:
 
 ```text
 /play_saved_cloud/rd/...
@@ -159,20 +159,20 @@ Gli stream cloud vengono marcati con `☁️ RD` o `☁️ TB` e possono usare r
   <p><code>Anime-first matching · Kitsu-aware context · episode collision control</code></p>
 </div>
 
-Leviathan include una logica dedicata per contenuti anime e flussi Kitsu-based.
+Leviathan includes dedicated logic for anime content and Kitsu-based flows.
 
-Il layer anime aiuta a ridurre mismatch tra stagioni, episodi assoluti, titoli alternativi e serie con naming complesso. Questo è utile per contenuti come **One Piece**, **Jujutsu Kaisen** e altri anime dove numerazione, archi, special e release pack possono creare confusione.
+The anime layer helps reduce mismatches between seasons, absolute episodes, alternative titles, and series with complex naming. This is useful for titles like **One Piece**, **Jujutsu Kaisen**, and other anime where numbering, arcs, specials, and release packs can create confusion.
 
-Il sistema combina:
+The system combines:
 
-- matching anime-first;
-- contesto Kitsu;
-- controllo stagione/episodio;
-- query più mirate;
-- ranking anti-collisione;
-- provider anime dedicati.
+- anime-first matching;
+- Kitsu context;
+- season/episode control;
+- more targeted queries;
+- anti-collision ranking;
+- dedicated anime providers.
 
-Provider e engine allineati al flusso anime:
+Providers and engines aligned with the anime flow:
 
 - **AnimeWorld**
 - **AnimeUnity**
@@ -187,16 +187,16 @@ Provider e engine allineati al flusso anime:
   <p><code>Volatility-aware · confidence-weighted · safer fresh releases</code></p>
 </div>
 
-La cache di Leviathan non lavora come un contenitore passivo.
+Leviathan's cache does not behave like a passive container.
 
-Valuta età del contenuto, solidità del matching, qualità dei risultati, concordanza tra fonti e rischio di cristallizzare troppo presto uno stato instabile.
+It evaluates content age, matching strength, result quality, agreement between sources, and the risk of freezing an unstable state too early.
 
-In pratica:
+In practice:
 
-- contenuti appena usciti ricevono riuso più prudente;
-- release già assestate possono sfruttare cache più aggressiva;
-- risultati deboli non vengono promossi troppo presto;
-- la cache diventa parte del ranking, non solo uno strato di velocità.
+- freshly released content is reused more carefully;
+- established releases can benefit from more aggressive caching;
+- weak results are not promoted too early;
+- cache becomes part of the ranking, not just a speed layer.
 
 ---
 
@@ -205,11 +205,11 @@ In pratica:
   <p><code>Redis-backed clearance sharing · fewer duplicate solves · better multi-worker behavior</code></p>
 </div>
 
-Leviathan può condividere clearance Cloudflare, cookie jar e fingerprint browser tra API, worker e istanze multiple tramite Redis.
+Leviathan can share Cloudflare clearances, cookie jars, and browser fingerprints between the API, workers, and multiple instances through Redis.
 
-Quando un provider richiede FlareSolverr, il primo processo che incontra la challenge acquisisce un lock temporaneo. Gli altri processi attendono la sessione condivisa invece di aprire solve duplicati.
+When a provider requires FlareSolverr, the first process that encounters the challenge acquires a temporary lock. Other processes wait for the shared session instead of opening duplicate solves.
 
-Questo riduce carico Chromium, timeout e rischio di ban nei deploy con più worker o più container.
+This reduces Chromium load, timeouts, and ban risk in deployments with multiple workers or containers.
 
 Variabili principali:
 
@@ -224,7 +224,7 @@ CF_REDIS_LOCK_WAIT_MS=52000
 ```
 
 > [!NOTE]
-> Se Redis non è disponibile, Leviathan può continuare a usare il fallback locale. Per mantenere le clearance dopo un riavvio di Redis, abilita persistenza Redis/AOF.
+> If Redis is not available, Leviathan can continue using the local fallback. To preserve clearances after a Redis restart, enable Redis/AOF persistence.
 
 ---
 
@@ -233,18 +233,18 @@ CF_REDIS_LOCK_WAIT_MS=52000
   <p><code>Leviathan-native companion · forward transport · hoster orchestration</code></p>
 </div>
 
-**Kraken** è il runtime companion consigliato per Leviathan.
+**Kraken** is the recommended companion runtime for Leviathan.
 
-Non è un proxy generico: centralizza i percorsi più delicati quando entrano in gioco redirect, embed intermedi, sessioni, challenge, captcha, header richiesti o compatibilità MediaFlow.
+It is not a generic proxy: it centralizes the most delicate paths when redirects, intermediate embeds, sessions, challenges, captchas, required headers, or MediaFlow compatibility are involved.
 
-È particolarmente utile per:
+It is especially useful for:
 
 - MaxStream / UPROT;
-- VOE e alias compatibili;
+- VOE and compatible aliases;
 - VidGuard / listeamed;
-- provider con fetch fragile;
-- bridge MediaFlow-compatible;
-- handoff verso extractor locali o remoti.
+- providers with fragile fetching;
+- MediaFlow-compatible bridges;
+- handoff to local or remote extractors.
 
 Configurazione tipica:
 
@@ -255,7 +255,7 @@ FORWARD_PROXY=https://your-kraken-instance.example/forward
 ```
 
 > [!IMPORTANT]
-> FlareSolverr non è sempre la risposta migliore. Quando Chromium viene bloccato o gli header custom vengono ignorati, il percorso più affidabile può essere Kraken Forward / curl_cffi-like transport.
+> FlareSolverr is not always the best answer. When Chromium is blocked or custom headers are ignored, the most reliable path may be Kraken Forward / curl_cffi-like transport.
 
 ---
 
@@ -264,7 +264,7 @@ FORWARD_PROXY=https://your-kraken-instance.example/forward
   <p><code>Cloud · Web providers · Torrent engines · Hoster extractors</code></p>
 </div>
 
-Leviathan usa più layer, ma il flusso resta lineare:
+Leviathan uses multiple layers, but the flow remains linear:
 
 ```text
 Request Stremio
@@ -338,16 +338,16 @@ Request Stremio
   <h2>🎯 Provider Policy</h2>
 </div>
 
-Leviathan evita di usare ogni provider in ogni contesto. Ogni modulo ha uno scope più preciso.
+Leviathan avoids using every provider in every context. Each module has a more precise scope.
 
-- Gli anime provider partono solo quando la richiesta è compatibile con anime/Kitsu.
-- GuardaFlix resta orientato ai film.
-- Eurostreaming lavora come provider web ITA con routing hoster dedicato.
-- ToonItalia è opzionale e pensato per anime/cartoon.
-- OnlineSerieTV è sperimentale e preferisce SearchWP + Kraken Forward.
-- Moflix resta disattivato di default e può essere usato come fallback TMDB-based controllato.
-- MediaFusion viene usato come bridge esterno opzionale, non come sostituto della pipeline principale.
-- Kraken è raccomandato per provider/hoster avanzati, soprattutto quando sono presenti challenge, embed fragili o proxy HLS.
+- Anime providers run only when the request is compatible with anime/Kitsu.
+- GuardaFlix remains movie-oriented.
+- Eurostreaming works as an ITA web provider with dedicated hoster routing.
+- ToonItalia is optional and designed for anime/cartoons.
+- OnlineSerieTV is experimental and prefers SearchWP + Kraken Forward.
+- Moflix remains disabled by default and can be used as a controlled TMDB-based fallback.
+- MediaFusion is used as an optional external bridge, not as a replacement for the main pipeline.
+- Kraken is recommended for advanced providers/hosters, especially when challenges, fragile embeds, or HLS proxying are involved.
 
 ---
 
@@ -386,26 +386,26 @@ http://localhost:7000
 <details>
 <summary><b>☁️ Saved Cloud Layer</b></summary>
 
-- `core/stream/debrid_saved_cloud.js` — scanner e matching RD/TorBox.
-- `debrid/realdebrid.js` — lettura e risoluzione cloud Real-Debrid.
-- `debrid/torbox.js` — lettura e risoluzione cloud TorBox.
-- `core/config/schema.js` — normalizzazione opzioni cloud.
-- `core/stream_generator.js` — innesto cloud nella pipeline stream.
-- `core/server/routes/playback_routes.js` — route playback dedicate.
-- `core/lib/stream_formatter.js` — formatter principale.
-- `public/index.html` e `public/smartphone.js` — configuratori desktop/mobile.
+- `core/stream/debrid_saved_cloud.js` — RD/TorBox scanner and matching.
+- `debrid/realdebrid.js` — Real-Debrid cloud reading and resolving.
+- `debrid/torbox.js` — TorBox cloud reading and resolving.
+- `core/config/schema.js` — cloud options normalization.
+- `core/stream_generator.js` — cloud insertion into the stream pipeline.
+- `core/server/routes/playback_routes.js` — dedicated playback routes.
+- `core/lib/stream_formatter.js` — main formatter.
+- `public/index.html` and `public/smartphone.js` — desktop/mobile configurators.
 
 </details>
 
 <details>
 <summary><b>🌐 Provider & Runtime Layer</b></summary>
 
-- `providers/extractors/provider_registry.js` — registry centrale provider/extractor.
-- `providers/engines.js` — engine torrent.
-- `core/nexus-bridge/torrentio.js` — bridge Torrentio.
-- `core/nexus-bridge/mediafusion.js` — bridge MediaFusion.
-- `providers/extractors/bridge_resolver.js` — normalizzazione pagine ponte e iframe.
-- `providers/extractors/hosters/` — resolver hoster locali e Kraken-assisted.
+- `providers/extractors/provider_registry.js` — central provider/extractor registry.
+- `providers/engines.js` — torrent engines.
+- `core/nexus-bridge/torrentio.js` — Torrentio bridge.
+- `core/nexus-bridge/mediafusion.js` — MediaFusion bridge.
+- `providers/extractors/bridge_resolver.js` — bridge page and iframe normalization.
+- `providers/extractors/hosters/` — local and Kraken-assisted hoster resolvers.
 
 </details>
 
@@ -440,19 +440,19 @@ http://localhost:7000
 </div>
 
 > [!IMPORTANT]
-> **Leviathan può essere self-hostato, ma la versione pubblica può avere vantaggi operativi non inclusi nel repository.**
+> **Leviathan can be self-hosted, but the public version may have operational advantages that are not included in the repository.**
 
-Il repository contiene il codice del progetto, ma non include necessariamente:
+The repository contains the project code, but it does not necessarily include:
 
-- database della istanza pubblica;
-- cache pre-costruite lato server;
-- storico operativo;
-- tuning privato della live instance;
-- vantaggi di warm cache e infrastruttura già ottimizzata.
+- the public instance database;
+- prebuilt server-side caches;
+- operational history;
+- private tuning from the live instance;
+- warm-cache advantages and already optimized infrastructure.
 
-In self-hosting, Leviathan può richiedere più scraping live, più dipendenza dalla VPS e più attenzione alla configurazione dei provider. Resta valido per studio, sviluppo e uso personale, ma non replica automaticamente il comportamento della live instance.
+In self-hosting, Leviathan may require more live scraping, greater VPS dependency, and more attention to provider configuration. It remains useful for study, development, and personal use, but it does not automatically replicate the behavior of the live instance.
 
-Il **Saved Cloud Layer** resta utile anche in self-hosting perché dipende dal cloud personale RD/TorBox dell'utente.
+The **Saved Cloud Layer** remains useful even in self-hosting because it depends on the user's personal RD/TorBox cloud.
 
 ---
 
@@ -463,7 +463,7 @@ Il **Saved Cloud Layer** resta utile anche in self-hosting perché dipende dal c
 
   <br><br>
 
-  Leviathan è un progetto open-source costruito con attenzione a qualità del risultato, continuità evolutiva e identità tecnica. ✨
+  Leviathan is an open-source project built with care for result quality, long-term evolution, and technical identity. ✨
 
   <br><br>
 
@@ -476,7 +476,7 @@ Il **Saved Cloud Layer** resta utile anche in self-hosting perché dipende dal c
 
   <br><br>
 
-  <sub>Ogni contributo aiuta Leviathan a restare veloce, solido e in continua evoluzione.</sub>
+  <sub>Every contribution helps Leviathan stay fast, solid, and constantly evolving.</sub>
 </div>
 
 ---
@@ -498,9 +498,9 @@ Il **Saved Cloud Layer** resta utile anche in self-hosting perché dipende dal c
   <h3>👤 Founder · Core Architect · Lead Engineering</h3>
 
   <p>
-    <b>Ideazione, architettura e direzione tecnica di Leviathan.</b><br>
-    Design del protocollo, integrazione dei moduli core, pipeline di aggregazione,<br>
-    identità del progetto e guida evolutiva dell'intero sistema.
+    <b>Concept, architecture, and technical direction of Leviathan.</b><br>
+    Protocol design, core module integration, aggregation pipeline,<br>
+    project identity, and evolutionary guidance for the entire system.
   </p>
 
   <img src="https://img.shields.io/badge/Protocol-Creator-00E7FF?style=for-the-badge&labelColor=07111F" />
