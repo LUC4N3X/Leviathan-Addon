@@ -70,6 +70,7 @@ const CONFIG = {
     RETRIES: Number(process.env.ENGINES_RETRIES || 2),
     RETRY_BACKOFF_MS: Number(process.env.ENGINES_RETRY_BACKOFF_MS || 350),
     KNABEN_API: "https://api.knaben.org/v1",
+    MAGNET_MAX_TRACKERS: Number(process.env.ENGINES_MAGNET_MAX_TRACKERS || 30),
     TRACKERS: [...DEFAULT_TRACKERS],
     HTTPS_AGENT_OPTIONS: {
         rejectUnauthorized: false,
@@ -463,6 +464,26 @@ async function requestHtml(url, config = {}, retries = CONFIG.RETRIES) {
     }
 }
 
+let _centralTrackerRegistry;
+function getCentralTrackers() {
+    if (_centralTrackerRegistry === undefined) {
+        try {
+            _centralTrackerRegistry = require('../core/storage/tracker_registry');
+        } catch (_) {
+            _centralTrackerRegistry = null;
+        }
+    }
+    if (_centralTrackerRegistry && typeof _centralTrackerRegistry.getActiveTrackers === 'function') {
+        try {
+            const list = _centralTrackerRegistry.getActiveTrackers();
+            return Array.isArray(list) ? list : [];
+        } catch (_) {
+            return [];
+        }
+    }
+    return [];
+}
+
 function buildMagnetFromHash(hash, name = "") {
     if (!hash) return null;
     const dn = name ? `&dn=${encodeURIComponent(name)}` : "";
@@ -478,7 +499,7 @@ function extractInfoHash(magnet) {
 function appendTrackers(magnet) {
     if (!magnet) return null;
     if (magnet.includes("&tr=") || magnet.includes("?tr=")) return magnet;
-    const trackers = [...new Set(CONFIG.TRACKERS.filter(Boolean))].slice(0, 20);
+    const trackers = [...new Set([...CONFIG.TRACKERS, ...getCentralTrackers()].filter(Boolean))].slice(0, CONFIG.MAGNET_MAX_TRACKERS);
     if (!trackers.length) return magnet;
     return `${magnet}${magnet.includes("?") ? "&" : "?"}${trackers.map(tracker => `tr=${encodeURIComponent(tracker)}`).join("&")}`;
 }
@@ -2096,28 +2117,26 @@ async function searchMagnet(title, year, type, imdbId, options = {}) {
 }
 
 async function updateTrackers() {
+    let fetched = [];
     try {
         const { data } = await axios.get("https://ngosang.github.io/trackerslist/trackers_best.txt", {
             timeout: 4000,
             httpsAgent,
             headers: { "Accept-Language": getAcceptLanguage('all') }
         });
-        const trackers = String(data || "")
+        fetched = String(data || "")
             .split("\n")
             .map(line => line.trim())
             .filter(Boolean)
             .filter(line => /^udp:\/\/|^https?:\/\//i.test(line));
-
-        if (trackers.length) {
-            CONFIG.TRACKERS = [...new Set(trackers)].slice(0, 40);
-            console.log(`[Trackers] Aggiornati correttamente. Totale tracker: ${CONFIG.TRACKERS.length}`);
-            return CONFIG.TRACKERS;
-        }
     } catch {
         console.log(`[Trackers] Impossibile aggiornare i tracker dal master list.`);
     }
 
-    CONFIG.TRACKERS = [...DEFAULT_TRACKERS];
+    const merged = [...new Set([...fetched, ...getCentralTrackers(), ...DEFAULT_TRACKERS].filter(Boolean))]
+        .slice(0, 50);
+    CONFIG.TRACKERS = merged.length ? merged : [...DEFAULT_TRACKERS];
+    console.log(`[Trackers] Pool unificato: ${CONFIG.TRACKERS.length} tracker (upstream=${fetched.length}, central=${getCentralTrackers().length}).`);
     return CONFIG.TRACKERS;
 }
 
