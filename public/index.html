@@ -5661,7 +5661,7 @@ body { background: transparent !important; }
   box-shadow:inset 0 1px 0 rgba(255,255,255,.12), 0 12px 30px -14px rgba(0,242,255,.65), 0 0 0 1px rgba(0,242,255,.18) !important;
 }
 
-.main-wrapper .custom-input:focus{
+.main-wrapper .custom-input:focus:not(.token-valid):not(.token-invalid):not(.input-error){
   border-color:rgba(0,242,255,.6) !important;
   box-shadow:0 0 0 3px rgba(0,242,255,.14), 0 0 22px -8px rgba(0,242,255,.7) !important;
 }
