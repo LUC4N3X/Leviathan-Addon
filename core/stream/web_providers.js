@@ -606,7 +606,7 @@ function buildWebStreamDisplay(stream, providerDefinition, meta = {}, config = {
 
     return {
         ...stream,
-        name: '🌊 𝗪𝗘𝗕 🇮🇹 🦑 ʟᴇᴠɪᴀᴛʜᴀɴ',
+        name: `🌊 𝗪𝗘𝗕 ${languages.flags} 🦑 ʟᴇᴠɪᴀᴛʜᴀɴ`,
         title: titleLines.join('\n'),
         quality,
         language: stream.language,
