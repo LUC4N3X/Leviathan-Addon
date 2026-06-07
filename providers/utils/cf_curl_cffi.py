@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 from __future__ import annotations
 
 import argparse
@@ -19,6 +17,35 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
 
 UA_BY_IMPERSONATE: Dict[str, str] = {
+    "chrome": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/146.0.0.0 Safari/537.36"
+    ),
+    "firefox": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:147.0) "
+        "Gecko/20100101 Firefox/147.0"
+    ),
+    "safari": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/26.0 Safari/605.1.15"
+    ),
+    "chrome146": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/146.0.0.0 Safari/537.36"
+    ),
+    "chrome145": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/145.0.0.0 Safari/537.36"
+    ),
+    "chrome142": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/142.0.0.0 Safari/537.36"
+    ),
     "chrome138": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -33,6 +60,11 @@ UA_BY_IMPERSONATE: Dict[str, str] = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/136.0.0.0 Safari/537.36"
+    ),
+    "chrome133a": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/133.0.0.0 Safari/537.36"
     ),
     "chrome133": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -49,10 +81,23 @@ UA_BY_IMPERSONATE: Dict[str, str] = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
+    "chrome123": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/123.0.0.0 Safari/537.36"
+    ),
     "chrome120": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "firefox147": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:147.0) "
+        "Gecko/20100101 Firefox/147.0"
+    ),
+    "firefox144": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) "
+        "Gecko/20100101 Firefox/144.0"
     ),
     "firefox137": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) "
@@ -62,9 +107,38 @@ UA_BY_IMPERSONATE: Dict[str, str] = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) "
         "Gecko/20100101 Firefox/135.0"
     ),
+    "firefox133": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) "
+        "Gecko/20100101 Firefox/133.0"
+    ),
     "firefox128": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) "
         "Gecko/20100101 Firefox/128.0"
+    ),
+    "safari260": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/26.0 Safari/605.1.15"
+    ),
+    "safari260_ios": (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/26.0 Mobile/15E148 Safari/604.1"
+    ),
+    "safari184": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/18.4 Safari/605.1.15"
+    ),
+    "safari18_4": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/18.4 Safari/605.1.15"
+    ),
+    "safari180": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/18.0 Safari/605.1.15"
     ),
     "safari18_2": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -72,9 +146,41 @@ UA_BY_IMPERSONATE: Dict[str, str] = {
         "Version/18.2 Safari/605.1.15"
     ),
 }
+DEFAULT_FALLBACK_UA = UA_BY_IMPERSONATE["chrome146"]
+DEFAULT_IMPERSONATE_CHAIN = [
+    "chrome",
+    "chrome146",
+    "chrome145",
+    "chrome142",
+    "firefox",
+    "firefox147",
+    "firefox144",
+    "chrome138",
+    "firefox137",
+    "chrome136",
+    "firefox135",
+    "chrome133a",
+    "chrome131",
+    "safari260",
+    "safari260_ios",
+    "safari184",
+    "chrome124",
+    "chrome120",
+]
 
-DEFAULT_FALLBACK_UA = UA_BY_IMPERSONATE["chrome136"]
-DEFAULT_IMPERSONATE_CHAIN = ["chrome138", "chrome137", "chrome136", "chrome133", "chrome131", "chrome124", "chrome120"]
+# curl_cffi only accepts labels compiled into the installed package. Some UA profiles
+# are useful as logical browser headers even when their exact TLS target was skipped
+# upstream because the fingerprint did not materially change. These aliases keep the
+# chain fresh without crashing on unsupported targets such as chrome138/firefox137.
+IMPERSONATE_TLS_ALIASES: Dict[str, str] = {
+    "chrome138": "chrome136",
+    "chrome137": "chrome136",
+    "chrome133": "chrome133a",
+    "firefox137": "firefox135",
+    "firefox128": "firefox135",
+    "safari18_2": "safari184",
+    "safari18_4": "safari184",
+}
 RETRY_STATUSES = {403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
 HOP_BY_HOP_HEADERS = {
     "connection",
@@ -93,6 +199,7 @@ CF_COOKIE_NAMES = {"cf_clearance", "__cf_bm", "__cfseq", "cf_chl_rc_i", "cf_chl_
 DEFAULT_CONFIG: Dict[str, str] = {
     "CURL_CFFI_ENABLED": "true",
     "CURL_CFFI_IMPERSONATE": "auto",
+    "CURL_CFFI_IMPERSONATE_COMPAT_ALIASES": "true",
     "CURL_CFFI_TIMEOUT_MS": "15000",
     "CURL_CFFI_RETRIES": "1",
     "CURL_CFFI_RETRY_BACKOFF_MS": "250",
@@ -239,6 +346,15 @@ def ua_for_impersonate(impersonate: str) -> str:
         if value.startswith(key):
             return UA_BY_IMPERSONATE[key]
     return DEFAULT_FALLBACK_UA
+
+
+def tls_impersonate_for(impersonate: str) -> str:
+    value = str(impersonate or "").strip()
+    if not value:
+        return value
+    if not cfg_bool("CURL_CFFI_IMPERSONATE_COMPAT_ALIASES", True):
+        return value
+    return IMPERSONATE_TLS_ALIASES.get(value, value)
 
 
 def is_chromium_based(impersonate: str, user_agent: str = "") -> bool:
@@ -1183,7 +1299,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--headers")
     parser.add_argument("--cookies-json", default="", help="Optional structured cookies from a shared authorized session")
     parser.add_argument("--timeout", type=int, default=cfg_int("CURL_CFFI_TIMEOUT_MS", 15000, minimum=1000), help="Timeout per request in milliseconds")
-    parser.add_argument("--impersonate", default=cfg("CURL_CFFI_IMPERSONATE", "auto"), help="auto or comma-separated curl_cffi impersonation labels")
+    parser.add_argument("--impersonate", default=cfg("CURL_CFFI_IMPERSONATE", "auto"), help="auto or comma-separated logical/browser curl_cffi impersonation labels")
     parser.add_argument("--proxy", default=cfg("CURL_CFFI_PROXY", ""))
     parser.add_argument("--signals-json", default="", help="Optional decision hints supplied by the Node.js provider layer")
     parser.add_argument("--profile-state", dest="profile_state", action="store_true", default=cfg_bool("CURL_CFFI_PROFILE_STATE", True), help="Reorder impersonation profiles per host using recent reliability feedback")
@@ -1226,6 +1342,7 @@ def response_payload_from(
     headers: Dict[str, str],
     matched_ua: str,
     impersonate: str,
+    tls_impersonate: str,
     impersonate_chain: List[str],
     attempts: List[Dict[str, Any]],
     started: float,
@@ -1256,6 +1373,7 @@ def response_payload_from(
         "userAgent": user_agent,
         "requestHeaders": headers,
         "impersonate": impersonate,
+        "tlsImpersonate": tls_impersonate,
         "impersonateChain": impersonate_chain,
         "profileScore": (profile_state_entry or {}).get("score"),
         "profileStats": {key: (profile_state_entry or {}).get(key) for key in ("success", "fail", "challenge", "avgMs", "lastStatus") if (profile_state_entry or {}).get(key) is not None},
@@ -1315,6 +1433,7 @@ def main() -> None:
     request_supports_accept_encoding = callable_accepts_kw(requests.Session.request, "accept_encoding")
 
     for impersonate in impersonate_chain:
+        tls_impersonate = tls_impersonate_for(impersonate)
         matched_ua = ua_for_impersonate(impersonate)
         persistent_cookies = load_cookie_jar(args.cookie_jar_dir, args.url, impersonate, args.proxy, cf_ttl_seconds=args.cf_cookie_ttl) if args.cookie_jar else []
         current_profile_entry = profile_entry_for(profile_state, args.url, impersonate, args.proxy) if args.profile_state else {}
@@ -1337,7 +1456,7 @@ def main() -> None:
                 )
 
                 try:
-                    session = requests.Session(impersonate=impersonate)
+                    session = requests.Session(impersonate=tls_impersonate)
                     session_supports_impersonate = True
                 except TypeError:
                     session = requests.Session()
@@ -1361,11 +1480,12 @@ def main() -> None:
                         "method": method,
                         "headers": headers,
                         "impersonate": impersonate,
+                        "tlsImpersonate": tls_impersonate,
                         "proxyConfigured": bool(proxies),
                         "host": host_from_url(args.url),
                     }
                     hook_result = run_before_flare_hook(args.before_flare_cmd, hook_context, args.before_flare_timeout)
-                    attempts.append({"impersonate": impersonate, "retry": retry_index, "hookPhase": "before_request", "hookStatus": hook_result.get("status", "ok")})
+                    attempts.append({"impersonate": impersonate, "tlsImpersonate": tls_impersonate, "retry": retry_index, "hookPhase": "before_request", "hookStatus": hook_result.get("status", "ok")})
                     headers, hook_cookies = apply_hook_result(headers, hook_result, args.url)
                     if hook_cookies:
                         seeded_cookies = seed_session_cookies(session, header_get(headers, "cookie"), args.url, merge_cookie_items(seeded_cookies, hook_cookies), cf_ttl_seconds=args.cf_cookie_ttl)
@@ -1382,10 +1502,10 @@ def main() -> None:
                 if proxies:
                     request_kwargs["proxies"] = proxies
                 if not session_supports_impersonate:
-                    request_kwargs["impersonate"] = impersonate
+                    request_kwargs["impersonate"] = tls_impersonate
                 if request_supports_accept_encoding:
                     request_kwargs["accept_encoding"] = accept_encoding
-                http_version_value = curl_http_version_value(http_version_mode, impersonate)
+                http_version_value = curl_http_version_value(http_version_mode, tls_impersonate)
                 if request_supports_http_version and http_version_value is not None:
                     request_kwargs["http_version"] = http_version_value
 
@@ -1404,10 +1524,10 @@ def main() -> None:
                         warm_kwargs["headers"] = warm_headers
                         warm_resp = session.get(origin, **warm_kwargs)
                         warm_status = int(getattr(warm_resp, "status_code", 0) or 0)
-                        attempts.append({"impersonate": impersonate, "retry": retry_index, "warmupStatus": warm_status})
+                        attempts.append({"impersonate": impersonate, "tlsImpersonate": tls_impersonate, "retry": retry_index, "warmupStatus": warm_status})
                         sleep_jitter(args.warmup_jitter_min, args.warmup_jitter_max)
                     except Exception as warm_exc:
-                        attempts.append({"impersonate": impersonate, "retry": retry_index, "warmupError": str(warm_exc)[:240]})
+                        attempts.append({"impersonate": impersonate, "tlsImpersonate": tls_impersonate, "retry": retry_index, "warmupError": str(warm_exc)[:240]})
 
                 if method not in {"GET", "HEAD"} and args.data is not None:
                     request_kwargs["data"] = args.data
@@ -1420,6 +1540,7 @@ def main() -> None:
                     headers=headers,
                     matched_ua=matched_ua,
                     impersonate=impersonate,
+                    tls_impersonate=tls_impersonate,
                     impersonate_chain=impersonate_chain,
                     attempts=attempts,
                     started=started,
@@ -1454,6 +1575,7 @@ def main() -> None:
 
                 attempts.append({
                     "impersonate": impersonate,
+                    "tlsImpersonate": tls_impersonate,
                     "retry": retry_index,
                     "status": status,
                     "challenge": challenge,
@@ -1476,12 +1598,13 @@ def main() -> None:
                         "responseHeaders": payload.get("headers") or {},
                         "cookies": cookies,
                         "impersonate": impersonate,
+                        "tlsImpersonate": tls_impersonate,
                         "proxyConfigured": bool(proxies),
                         "host": host_from_url(args.url),
                         "challengeReason": payload.get("challengeReason") or "",
                     }
                     hook_result = run_before_flare_hook(args.before_flare_cmd, hook_context, args.before_flare_timeout)
-                    attempts.append({"impersonate": impersonate, "retry": retry_index, "hookPhase": "challenge_detected", "hookStatus": hook_result.get("status", "ok")})
+                    attempts.append({"impersonate": impersonate, "tlsImpersonate": tls_impersonate, "retry": retry_index, "hookPhase": "challenge_detected", "hookStatus": hook_result.get("status", "ok")})
                     retry_headers, hook_cookies = apply_hook_result(headers, hook_result, args.url)
                     if hook_cookies:
                         retry_session = session
@@ -1497,6 +1620,7 @@ def main() -> None:
                             headers=retry_headers,
                             matched_ua=matched_ua,
                             impersonate=impersonate,
+                            tls_impersonate=tls_impersonate,
                             impersonate_chain=impersonate_chain,
                             attempts=attempts,
                             started=started,
@@ -1510,6 +1634,7 @@ def main() -> None:
                             save_cookie_jar(args.cookie_jar_dir, args.url, impersonate, args.proxy, retry_payload.get("cookies") or [], cf_ttl_seconds=args.cf_cookie_ttl)
                         attempts.append({
                             "impersonate": impersonate,
+                            "tlsImpersonate": tls_impersonate,
                             "retry": retry_index,
                             "afterHookStatus": retry_payload.get("code"),
                             "afterHookChallenge": retry_payload.get("challengeDetected"),
@@ -1549,7 +1674,7 @@ def main() -> None:
                         error=last_error,
                     )
                     save_profile_state(profile_state_path, profile_state, max_hosts=cfg_int("CURL_CFFI_PROFILE_STATE_MAX_HOSTS", 256, minimum=1, maximum=10000))
-                attempts.append({"impersonate": impersonate, "retry": retry_index, "error": last_error[:240], "profileScore": current_profile_entry.get("score") if isinstance(current_profile_entry, dict) else None, "ms": attempt_elapsed_ms})
+                attempts.append({"impersonate": impersonate, "tlsImpersonate": tls_impersonate, "retry": retry_index, "error": last_error[:240], "profileScore": current_profile_entry.get("score") if isinstance(current_profile_entry, dict) else None, "ms": attempt_elapsed_ms})
 
                 if retry_index < retry_budget:
                     sleep_before_retry(backoff_ms, retry_index)
