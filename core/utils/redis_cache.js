@@ -348,6 +348,61 @@ class RedisCacheFacade {
     }
   }
 
+  async hmget(namespace, key, fields) {
+    if (!this.isEnabled()) return [];
+    const list = (Array.isArray(fields) ? fields : []).filter((field) => field !== undefined && field !== null);
+    if (list.length === 0) return [];
+    try {
+      const values = await this.client.command('HMGET', this.key(namespace, key), ...list);
+      return (Array.isArray(values) ? values : []).map((value) => (value === null || value === undefined ? null : String(normalizeRedisValue(value))));
+    } catch (_) {
+      this._onError();
+      return [];
+    }
+  }
+
+  async hsetMany(namespace, key, pairs) {
+    if (!this.isEnabled()) return false;
+    const flat = [];
+    for (const [field, value] of Array.isArray(pairs) ? pairs : []) {
+      if (field === undefined || field === null) continue;
+      flat.push(String(field), String(value));
+    }
+    if (flat.length === 0) return false;
+    try {
+      await this.client.command('HSET', this.key(namespace, key), ...flat);
+      return true;
+    } catch (_) {
+      this._onError();
+      return false;
+    }
+  }
+
+  async hdel(namespace, key, fields) {
+    if (!this.isEnabled()) return 0;
+    const list = (Array.isArray(fields) ? fields : []).filter((field) => field !== undefined && field !== null).map(String);
+    if (list.length === 0) return 0;
+    try {
+      const removed = await this.client.command('HDEL', this.key(namespace, key), ...list);
+      return Number(removed || 0);
+    } catch (_) {
+      this._onError();
+      return 0;
+    }
+  }
+
+  async expire(namespace, key, ttlSeconds) {
+    if (!this.isEnabled()) return false;
+    try {
+      const ttl = Math.max(1, Math.floor(Number(ttlSeconds) || 1));
+      await this.client.command('EXPIRE', this.key(namespace, key), String(ttl));
+      return true;
+    } catch (_) {
+      this._onError();
+      return false;
+    }
+  }
+
   async deleteNamespace(namespace, { maxKeys = 5000 } = {}) {
     if (!this.isEnabled()) return 0;
     const ns = this._namespace(namespace);

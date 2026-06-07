@@ -1427,20 +1427,48 @@ const STYLE_BUILDERS = {
   custom: (params, config) => styleCustom(params, config),
 };
 
+function mergeParsedInfo(releaseInfo, fileInfo) {
+  if (!fileInfo || typeof fileInfo !== 'object') return releaseInfo;
+  if (!releaseInfo || typeof releaseInfo !== 'object') return fileInfo;
+
+  const merged = { ...releaseInfo };
+  for (const key of ['resolution', 'source', 'codec', 'audio', 'channels', 'hdr', 'group']) {
+    const value = fileInfo[key];
+    if (value !== undefined && value !== null && value !== '' && !(Array.isArray(value) && value.length === 0)) {
+      merged[key] = value;
+    }
+  }
+
+  merged.remux = Boolean(releaseInfo.remux) || Boolean(fileInfo.remux);
+  merged.dubbed = Boolean(releaseInfo.dubbed) || Boolean(fileInfo.dubbed);
+
+  const languages = new Set([
+    ...(Array.isArray(releaseInfo.languages) ? releaseInfo.languages : []),
+    ...(Array.isArray(fileInfo.languages) ? fileInfo.languages : [])
+  ]);
+  if (languages.size > 0) merged.languages = [...languages];
+
+  return merged;
+}
+
 function extractStreamInfo(title, source, config = {}) {
-  const cacheKey = JSON.stringify([title, source, config.season, config.episode]);
+  const fileName = normalizeSpaces(config.fileName || config.fileTitle || '');
+  const cacheKey = JSON.stringify([title, source, config.season, config.episode, fileName]);
   const cached = getCached(EXTRACT_CACHE, cacheKey);
   if (cached) return cached;
 
   const rawTitle = normalizeSpaces(title);
-  const parsed = parseTitleCached(rawTitle);
-  const upperTitle = compactTitleForRegex(rawTitle);
+  const hasDistinctFile = Boolean(fileName) && fileName.toLowerCase() !== rawTitle.toLowerCase();
+  const releaseParsed = parseTitleCached(rawTitle);
+  const parsed = hasDistinctFile ? mergeParsedInfo(releaseParsed, parseTitleCached(fileName)) : releaseParsed;
+  const upperTitle = compactTitleForRegex(hasDistinctFile ? `${rawTitle} ${fileName}` : rawTitle);
 
   const { quality, qDetails, qIcon } = deriveQuality(parsed, upperTitle);
   const { videoTags, cleanTags } = deriveVideoTags(parsed, upperTitle);
   const parsedLanguageContext = [
     source,
     rawTitle,
+    hasDistinctFile ? fileName : '',
     parsed?.language,
     parsed?.lang,
     parsed?.audio_lang,
@@ -1450,7 +1478,7 @@ function extractStreamInfo(title, source, config = {}) {
     Array.isArray(parsed?.languages) ? parsed.languages.join(' ') : parsed?.languages,
     Array.isArray(parsed?.subtitleLanguages) ? parsed.subtitleLanguages.join(' ') : parsed?.subtitleLanguages,
   ].filter(Boolean).join(' ');
-  const lang = deriveLanguages(rawTitle, parsedLanguageContext);
+  const lang = deriveLanguages(hasDistinctFile ? `${rawTitle} ${fileName}` : rawTitle, parsedLanguageContext);
   const { codec, audioTag, audioChannels } = deriveAudio(parsed, upperTitle, quality, cleanTags);
   const releaseGroup = deriveReleaseGroup(rawTitle, parsed);
   const cleanName = cleanFilename(rawTitle);
