@@ -414,9 +414,6 @@ function preferredTokenMatches(paddedText, token) {
     });
 }
 
-// Returns the index of the first preferred token matched by the stream (lower is
-// better). An empty list yields 0 for every stream, so unconfigured preferences
-// are a pure no-op that leaves the existing ordering untouched.
 function getPreferredRank(paddedText, list) {
     for (let i = 0; i < list.length; i += 1) {
         if (preferredTokenMatches(paddedText, list[i])) return i;
