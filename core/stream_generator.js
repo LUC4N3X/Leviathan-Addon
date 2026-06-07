@@ -4986,7 +4986,9 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           }
       } else if (finalRanked.length > 0 && isP2PEnabled) {
           logger.info(`[P2P MODE] Generating direct streams for ${meta.title}`);
-          p2pStreams = finalRanked.map((item) => P2P.formatP2PStream(item, config));
+          p2pStreams = finalRanked
+              .map((item) => P2P.formatP2PStream(item, config))
+              .filter(Boolean);
           debridStreams = p2pStreams;
       }
       trace.stage('debrid-streams', {
