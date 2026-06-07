@@ -176,23 +176,32 @@ function udpScrape(trackerUrl, infoHashes, { packetTimeoutMs, budgetMs }) {
 }
 
 function collectTrackers(items, maxTrackers) {
+  const counts = new Map();
+  for (const item of items) {
+    for (const tracker of extractUdpTrackersFromMagnet(item?.magnet || item?.magnetLink)) {
+      const target = parseUdpTracker(tracker);
+      if (!target) continue;
+      const key = `udp://${target.host}:${target.port}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+  }
+  const magnetTrackers = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([key]) => key);
+
   const seen = new Set();
   const ordered = [];
   const push = (url) => {
     const target = parseUdpTracker(url);
     if (!target) return;
-    const key = `${target.host}:${target.port}`;
+    const key = `udp://${target.host}:${target.port}`;
     if (seen.has(key)) return;
     seen.add(key);
-    ordered.push(`udp://${key}`);
+    ordered.push(key);
   };
 
   const active = typeof trackerRegistry?.getActiveTrackers === 'function' ? trackerRegistry.getActiveTrackers() : [];
+  for (const tracker of magnetTrackers) push(tracker);
   for (const tracker of Array.isArray(active) ? active : []) push(tracker);
   for (const tracker of FALLBACK_TRACKERS) push(tracker);
-  for (const item of items) {
-    for (const tracker of extractUdpTrackersFromMagnet(item?.magnet || item?.magnetLink)) push(tracker);
-  }
 
   return ordered.slice(0, maxTrackers);
 }
@@ -261,5 +270,6 @@ module.exports = {
   enrichItemsWithLiveSeeders,
   udpScrape,
   parseUdpTracker,
-  extractUdpTrackersFromMagnet
+  extractUdpTrackersFromMagnet,
+  collectTrackers
 };

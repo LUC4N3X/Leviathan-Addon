@@ -9,6 +9,7 @@ const {
   extractUdpTrackersFromMagnet,
   udpScrape,
   enrichItemsWithLiveSeeders,
+  collectTrackers,
   isEnabled
 } = require('../core/lib/udp_tracker_scraper');
 
@@ -29,6 +30,17 @@ test('extractUdpTrackersFromMagnet returns only udp trackers', () => {
     + `&tr=${encodeURIComponent('udp://t.example:80/announce')}`
     + `&tr=${encodeURIComponent('http://t.example/announce')}`;
   assert.deepEqual(extractUdpTrackersFromMagnet(magnet), ['udp://t.example:80/announce']);
+});
+
+test('collectTrackers prioritizes magnet trackers by frequency before fallbacks', () => {
+  const shared = encodeURIComponent('udp://shared.example:6969/announce');
+  const unique = encodeURIComponent('udp://unique.example:1234/announce');
+  const items = [
+    { magnet: `magnet:?xt=urn:btih:${HASH_A}&tr=${shared}` },
+    { magnet: `magnet:?xt=urn:btih:${HASH_B}&tr=${shared}&tr=${unique}` }
+  ];
+  const trackers = collectTrackers(items, 2);
+  assert.deepEqual(trackers, ['udp://shared.example:6969', 'udp://unique.example:1234']);
 });
 
 test('enrichItemsWithLiveSeeders is a no-op when disabled', async () => {

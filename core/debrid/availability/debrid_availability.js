@@ -692,21 +692,28 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
 
         if (CacheFederation.isEnabled()) {
             try {
-                const fedHashes = await CacheFederation.getFederatedCachedHashes('rd', hashes);
-                let fedApplied = 0;
-                if (fedHashes.size > 0) {
-                    for (const item of list) {
-                        const hash = String(item?.hash || item?.infoHash || '').trim().toLowerCase();
-                        if (!hash || !fedHashes.has(hash)) continue;
-                        const currentState = getRdAvailabilityState('rd', item, meta);
-                        if (RdOracle.shouldUpgradeState(currentState, 'likely_cached')) {
-                            RdOracle.applyRdStateToItem(item, 'likely_cached', { cached: null, clearNegative: false });
-                            item._rdFederationHint = true;
-                            fedApplied += 1;
-                        }
+                const [rdFed, tbFed] = await Promise.all([
+                    CacheFederation.getFederatedCachedHashes('rd', hashes),
+                    CacheFederation.getFederatedCachedHashes('tb', hashes)
+                ]);
+                let rdApplied = 0;
+                let tbApplied = 0;
+                for (const item of list) {
+                    const hash = String(item?.hash || item?.infoHash || '').trim().toLowerCase();
+                    if (!hash) continue;
+                    if (rdFed.has(hash) && RdOracle.shouldUpgradeState(getRdAvailabilityState('rd', item, meta), 'likely_cached')) {
+                        RdOracle.applyRdStateToItem(item, 'likely_cached', { cached: null, clearNegative: false });
+                        item._rdFederationHint = true;
+                        rdApplied += 1;
+                    }
+                    if (tbFed.has(hash) && getRdAvailabilityState('tb', item, meta) === 'unknown') {
+                        item._tbCacheState = 'likely_cached';
+                        item.tbCacheState = 'likely_cached';
+                        item._tbFederationHint = true;
+                        tbApplied += 1;
                     }
                 }
-                if (fedApplied > 0) logger.info(`[CACHE FEDERATION] RD likely_cached applied to ${fedApplied} item(s) from shared cache`);
+                if (rdApplied > 0 || tbApplied > 0) logger.info(`[CACHE FEDERATION] likely_cached applied rd=${rdApplied} tb=${tbApplied} from shared cache`);
             } catch (fedErr) {
                 logger.warn(`[CACHE FEDERATION] read overlay failed: ${fedErr.message}`);
             }
