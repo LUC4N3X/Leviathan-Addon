@@ -16,6 +16,7 @@ const {
     mapLimit
 } = require('../anime/shared');
 const kitsuProvider = require('../animeworld/kitsu_provider');
+const { getProviderDomain } = require('../utils/provider_domain_registry');
 
 function envFlag(name, fallback = false) {
     const raw = process.env[name];
@@ -55,7 +56,7 @@ function normalizeForwardProxyUrl(value) {
     }
 }
 
-const SATURN_BASE_URL = normalizeSaturnBaseUrl(process.env.ANIMESATURN_BASE_URL || process.env.AS_BASE_URL || process.env.SATURN_BASE_URL || 'https://www.animesaturn.cx');
+const SATURN_BASE_URL = normalizeSaturnBaseUrl(process.env.ANIMESATURN_BASE_URL || process.env.AS_BASE_URL || process.env.SATURN_BASE_URL || getProviderDomain('animesaturn', 'https://www.animesaturn.cx'));
 const AS_FETCH_TIMEOUT = Math.max(
     FETCH_TIMEOUT,
     Number.parseInt(String(process.env.ANIMESATURN_FETCH_TIMEOUT_MS || process.env.AS_FETCH_TIMEOUT_MS || process.env.ANIMESATURN_FETCH_TIMEOUT || ''), 10) || FETCH_TIMEOUT

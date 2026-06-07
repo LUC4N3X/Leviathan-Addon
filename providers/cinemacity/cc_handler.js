@@ -10,6 +10,7 @@ const {
 } = require('../extractors/common');
 const { getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
 const { buildForwardProxyUrl, getForwardProxyBase } = require('../../core/proxy/forward_proxy_config');
+const { getProviderDomain } = require('../utils/provider_domain_registry');
 
 let buildCinemaCityProxyUrl = null;
 let prewarmCinemaCityPlayback = null;
@@ -154,7 +155,7 @@ function base64Decode(str) {
     }
 }
 
-const BASE_URL = base64Decode('aHR0cHM6Ly9jaW5lbWFjaXR5LmNj');
+const BASE_URL = getProviderDomain('cinemacity', base64Decode('aHR0cHM6Ly9jaW5lbWFjaXR5LmNj'));
 const USER_AGENT = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 const FETCH_TIMEOUT = 10000;
 const TMDB_API_KEY = '68e094699525b18a70bab2f86b1fa706';

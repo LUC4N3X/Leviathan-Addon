@@ -14,6 +14,7 @@ const {
     mapLimit
 } = require('../anime/shared');
 const kitsuProvider = require('./kitsu_provider');
+const { getProviderDomain } = require('../utils/provider_domain_registry');
 
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const {
@@ -41,7 +42,7 @@ function envFlag(name, fallback = false) {
     return /^(1|true|yes|y|on)$/i.test(String(raw).trim());
 }
 
-const AW_DOMAIN = normalizeBaseDomain(process.env.AW_DOMAIN || process.env.ANIMEWORLD_DOMAIN || 'https://www.animeworld.ac');
+const AW_DOMAIN = normalizeBaseDomain(process.env.AW_DOMAIN || process.env.ANIMEWORLD_DOMAIN || getProviderDomain('animeworld', 'https://www.animeworld.ac'));
 const AW_FETCH_TIMEOUT = Math.max(
     FETCH_TIMEOUT,
     Number.parseInt(String(process.env.AW_PROVIDER_FETCH_TIMEOUT || process.env.AW_FETCH_TIMEOUT || '12000'), 10) || 12000

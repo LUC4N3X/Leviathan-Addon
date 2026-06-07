@@ -33,6 +33,7 @@ const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
 const { extractResilientEmbeds } = require('../extractors/semantic_candidate_extractor');
+const { getProviderDomain } = require('../utils/provider_domain_registry');
 
 const CONFIG = {
     CACHE: {
@@ -43,7 +44,7 @@ const CONFIG = {
         SAVE_DEBOUNCE_MS: 1200
     },
     SCRAPER: {
-        BASE_URL: String(process.env.GUARDAHD_BASE || 'https://guardahd.stream').replace(/\/+$/, ''),
+        BASE_URL: String(process.env.GUARDAHD_BASE || getProviderDomain('guardahd', 'https://guardahd.stream')).replace(/\/+$/, ''),
         TIMEOUT: Math.max(8000, parseInt(process.env.GUARDAHD_TIMEOUT || '15000', 10) || 15000),
         PLAYLIST_TIMEOUT: Math.max(2500, parseInt(process.env.GUARDAHD_PLAYLIST_TIMEOUT || '4500', 10) || 4500),
         RETRIES: Math.max(1, parseInt(process.env.GUARDAHD_RETRIES || '3', 10) || 3),

@@ -22,8 +22,9 @@ const {
     normalizeLanguage: normalizePlaylistLanguage
 } = require('../utils/playlist_intelligence');
 const { createBlockedFallbackGuard } = require('../utils/provider_blocked_fallback');
+const { getProviderDomain } = require('../utils/provider_domain_registry');
 
-const VIX_BASE = 'https://vixsrc.to';
+const VIX_BASE = getProviderDomain('streamingcommunity', 'https://vixsrc.to');
 const CINEMETA_BASE = 'https://v3-cinemeta.strem.io/meta';
 const DEFAULT_ADDON_URL = 'https://leviata96n.questoleviatanormio.dpdns.org';
 const TMDB_API_BASE = 'https://api.themoviedb.org/3';
@@ -46,7 +47,7 @@ const DIRECT_PAGE_CACHE_TTL_MS = 45 * 1000;
 const PLAYLIST_CACHE_TTL_MS = 120 * 1000;
 const TMDB_META_CACHE_TTL_MS = 30 * 60 * 1000;
 const PREFERRED_LANG = 'it';
-const AU_BASE = 'https://www.animeunity.so';
+const AU_BASE = getProviderDomain('animeunity', 'https://www.animeunity.so');
 const ANIME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
 const HLS_PLAYBACK_TOKEN_TTL_MS = Math.max(10 * 60 * 1000, Number.parseInt(process.env.VIX_HLS_TOKEN_TTL_MS || String(2 * 60 * 60 * 1000), 10) || (2 * 60 * 60 * 1000));
 const VIX_STRICT_HOST_BINDING = String(process.env.VIX_STRICT_HOST_BINDING || '').trim() === '1';
