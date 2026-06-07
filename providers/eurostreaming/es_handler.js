@@ -16,6 +16,7 @@ const {
     createProviderLogger,
     normalizeProviderBaseUrl
 } = require('../utils/provider_toolkit');
+const { getProviderDomain } = require('../utils/provider_domain_registry');
 
 let Tesseract = null;
 try { Tesseract = require('tesseract.js'); } catch (_) {}
@@ -25,7 +26,7 @@ try { setCookieParser = require('set-cookie-parser'); } catch (_) {}
 
 const SAFEGO_FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0';
 
-const DEFAULT_BASE_URL = 'https://eurostream.ing';
+const DEFAULT_BASE_URL = getProviderDomain('eurostreaming', 'https://eurostream.ing');
 const PROVIDER = 'Eurostreaming';
 const PROVIDER_CODE = 'ES';
 const SEARCH_TTL_FALLBACK_MS = 12_000;

@@ -20,6 +20,7 @@ const { TtlLruCache, SingleFlight } = require('../utils/provider_runtime');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const { requestWithImpit } = require('../utils/bypass');
 const { buildExtractorUrl, buildProxyUrl, getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
+const { getProviderDomains } = require('../utils/provider_domain_registry');
 
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
 
@@ -109,7 +110,7 @@ function providerDomains() {
         .split(/[,;|\s]+/)
         .map((value) => value.trim())
         .filter(Boolean);
-    return [...new Set([...extra, ...DEFAULT_DOMAINS].map((value) => value.replace(/\/+$/g, '')))].filter((value) => /^https?:\/\//i.test(value));
+    return [...new Set([...extra, ...getProviderDomains('toonitalia', DEFAULT_DOMAINS)].map((value) => value.replace(/\/+$/g, '')))].filter((value) => /^https?:\/\//i.test(value));
 }
 
 function normalizeText(value) {

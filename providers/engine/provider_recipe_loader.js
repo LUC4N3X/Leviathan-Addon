@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { normalizeProviderId } = require('./provider_result_normalizer');
+const { getProviderDomains } = require('../utils/provider_domain_registry');
 
 const DEFAULT_RECIPE_DIR = path.join(__dirname, '..', 'provider_recipes');
 
@@ -28,7 +29,7 @@ function uniqueList(values = []) {
 function normalizeRecipe(rawRecipe = {}) {
     const id = normalizeProviderId(rawRecipe.id || rawRecipe.key || rawRecipe.name);
     const name = String(rawRecipe.name || rawRecipe.label || id || '').trim();
-    const baseUrls = uniqueList(rawRecipe.baseUrls || rawRecipe.baseUrl || rawRecipe.domains);
+    const baseUrls = getProviderDomains(id, uniqueList(rawRecipe.baseUrls || rawRecipe.baseUrl || rawRecipe.domains));
     const tags = uniqueList(rawRecipe.tags || rawRecipe.capabilities);
 
     return {
@@ -37,7 +38,7 @@ function normalizeRecipe(rawRecipe = {}) {
         key: rawRecipe.key || id,
         name,
         baseUrls,
-        baseUrl: rawRecipe.baseUrl || baseUrls[0] || '',
+        baseUrl: baseUrls[0] || rawRecipe.baseUrl || '',
         tags,
         headers: rawRecipe.headers || {},
         search: rawRecipe.search || {},

@@ -23,9 +23,10 @@ const {
     resolveProviderBaseUrls,
     sanitizeLogValue: sanitizeProviderLogValue
 } = require('../utils/provider_toolkit');
+const { getProviderDomains } = require('../utils/provider_domain_registry');
 
-const DEFAULT_BASE_URL = 'https://cb01uno.help';
-const DEFAULT_BASE_URLS = Object.freeze(['https://cb01uno.help']);
+const DEFAULT_BASE_URLS = Object.freeze(getProviderDomains('cb01', ['https://cb01uno.help']));
+const DEFAULT_BASE_URL = DEFAULT_BASE_URLS[0] || 'https://cb01uno.help';
 const PROVIDER = 'CB01';
 const PROVIDER_CODE = 'CB01';
 const ICON = '🎬';

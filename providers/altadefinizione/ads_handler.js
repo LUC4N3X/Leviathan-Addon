@@ -19,11 +19,12 @@ const {
 const { extractFromUrl, resolveExtractorDefinition } = require('../extractors/registry');
 const { extractEmbedCandidates } = require('../extractors/semantic_candidate_extractor');
 const { createMediaflowGateway, getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
+const { getProviderDomain } = require('../utils/provider_domain_registry');
 
 const PROVIDER_ID = 'altadefinizione';
 const PROVIDER_LABEL = 'AltadefinizioneStreaming';
 const PROVIDER_CODE = 'ADS';
-const BASE_URL = String(process.env.ALTADEFINIZIONE_BASE_URL || 'https://altadefinizionestreaming.com').replace(/\/+$/, '');
+const BASE_URL = String(process.env.ALTADEFINIZIONE_BASE_URL || getProviderDomain('altadefinizione', 'https://altadefinizionestreaming.com')).replace(/\/+$/, '');
 const USER_AGENT = String(process.env.ALTADEFINIZIONE_USER_AGENT || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36');
 const TIMEOUT_MS = Math.max(5000, Number.parseInt(process.env.ALTADEFINIZIONE_TIMEOUT_MS || '12000', 10) || 12000);
 const STREAM_TTL_MS = Math.max(60_000, Number.parseInt(process.env.ALTADEFINIZIONE_STREAM_TTL_MS || String(10 * 60 * 1000), 10) || 10 * 60 * 1000);

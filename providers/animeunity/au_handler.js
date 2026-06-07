@@ -26,8 +26,9 @@ const {
     buildProxyUrl: buildMediaflowGatewayProxyUrl,
     getMediaflowBase
 } = require('../../core/proxy/mediaflow_gateway');
+const { getProviderDomain } = require('../utils/provider_domain_registry');
 
-const DEFAULT_AU_BASE = 'https://www.animeunity.so';
+const DEFAULT_AU_BASE = getProviderDomain('animeunity', 'https://www.animeunity.so');
 const AU_BASE = normalizeProviderBaseUrl(process.env.ANIMEUNITY_BASE_URL || process.env.AU_BASE_URL || DEFAULT_AU_BASE);
 const PROVIDER_NAME = 'AnimeUnity';
 const PROVIDER_CODE = 'AU';

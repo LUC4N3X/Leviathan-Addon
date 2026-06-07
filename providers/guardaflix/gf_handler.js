@@ -27,9 +27,10 @@ const { normalizeStreams } = require('../utils/stream_normalizer');
 const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
 const { extractEmbedCandidates } = require('../extractors/semantic_candidate_extractor');
 const { requestWithImpit } = require('../utils/bypass');
+const { getProviderDomain } = require('../utils/provider_domain_registry');
 
 const CONFIG = Object.freeze({
-    BASE_URL: 'https://guardaplay.live/',
+    BASE_URL: getProviderDomain('guardaflix', 'https://guardaplay.live'),
     TIMEOUT: 15000,
     PROBE_TIMEOUT: 5000,
     SEARCH_ACCEPT_THRESHOLD: 1.45,
