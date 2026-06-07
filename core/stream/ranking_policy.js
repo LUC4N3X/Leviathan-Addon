@@ -272,7 +272,7 @@ function getSmartStreamFingerprint(stream = {}) {
     const size = getSizeBucket(parseFinalStreamSizeBytes(stream) || stream?.behaviorHints?.videoSize || stream?.size || stream?.streamData?.size);
     const languageVariant = getSmartStreamLanguageVariant(stream);
     const languageKey = languageVariant ? `:${languageVariant}` : '';
-    if (infoHash && !/\b(?:pack|season|stagione|complete|collection)\b/i.test(getSmartStreamSortText(stream))) {
+    if (infoHash && !/\b(?:pack|season|stagione|complete|collection)\b/i.test(getFinalStreamSortText(stream))) {
         return `hash:${infoHash}${languageKey}`;
     }
     if (filename && size !== '0') return `file:${filename}:${size}${languageKey}`;
