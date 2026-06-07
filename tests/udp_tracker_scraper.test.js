@@ -43,6 +43,17 @@ test('collectTrackers prioritizes magnet trackers by frequency before fallbacks'
   assert.deepEqual(trackers, ['udp://shared.example:6969', 'udp://unique.example:1234']);
 });
 
+test('collectTrackers keeps magnet trackers ahead of the default tracker cap', () => {
+  const embedded = encodeURIComponent('udp://embedded.example:2710/announce');
+  const trackers = collectTrackers([
+    { magnet: `magnet:?xt=urn:btih:${HASH_A}&tr=${embedded}` }
+  ], 5);
+
+  assert.equal(trackers[0], 'udp://embedded.example:2710');
+  assert.equal(trackers.length, 5);
+  assert.ok(trackers.includes('udp://embedded.example:2710'));
+});
+
 test('enrichItemsWithLiveSeeders is a no-op when disabled', async () => {
   assert.equal(isEnabled(), false);
   const items = [{ hash: HASH_A, seeders: 0 }];
