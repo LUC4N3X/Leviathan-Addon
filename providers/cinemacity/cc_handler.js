@@ -240,12 +240,21 @@ async function fetchViaCurlCffi(url, options = {}) {
         throw new Error('curl_cffi_unavailable');
     }
     const targetUrl = resolveUrl(BASE_URL, url);
-    const result = await runner(targetUrl, 'cinemacity', {
-        headers: { ...DEFAULT_STREAM_HEADERS, ...(options.headers || {}) },
-        referer: `${BASE_URL}/`,
-        timeout: options.timeout || FETCH_TIMEOUT,
-        coalesceKey: `cinemacity:${targetUrl}`
-    });
+    let result;
+    try {
+        result = await runner(targetUrl, 'cinemacity', {
+            headers: { ...DEFAULT_STREAM_HEADERS, ...(options.headers || {}) },
+            referer: `${BASE_URL}/`,
+            timeout: options.timeout || FETCH_TIMEOUT,
+            coalesceKey: `cinemacity:${targetUrl}`
+        });
+    } catch (error) {
+        const message = String(error?.message || error || '');
+        if (/curl_cffi_(?:not_available|unavailable)|No module named ['"]curl_cffi['"]/i.test(message)) {
+            throw new Error('curl_cffi_unavailable');
+        }
+        throw error;
+    }
     if (!isUsableCurlCffiResult(result)) {
         throw new Error('curl_cffi_unusable');
     }

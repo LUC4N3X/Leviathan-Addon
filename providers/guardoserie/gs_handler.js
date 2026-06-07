@@ -24,12 +24,13 @@ const {
   HOSTER_ESCAPED_DIRECT_LINK_PATTERN,
   resolveExtractorDefinition
 } = require('../extractors/registry');
-const { isCanceledError, isCloudflareChallenge, requestWithImpitRotating } = require('../utils/bypass');
+const { isCanceledError, requestWithImpitRotating } = require('../utils/bypass');
 const { withProviderHealth } = require('../utils/provider_health');
 const { normalizeStreams } = require('../utils/stream_normalizer');
 const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
 const { extractResilientEmbeds } = require('../extractors/semantic_candidate_extractor');
 const { createCloudflareBypass, envFlag } = require('../utils/cloudflare_bypass');
+const { createLayeredFetchClient } = require('../utils/provider_fetch_orchestrator');
 const { getProviderDomain } = require('../utils/provider_domain_registry');
 
 const INITIAL_GS_DOMAIN      = process.env.GUARDOSERIE_BASE_URL || process.env.GUARDOSERIE_DOMAIN || getProviderDomain('guardoserie', 'https://guardoserie.watch');
@@ -273,83 +274,38 @@ function shouldForceGsClearanceNow(reason = 'request') {
   return isGsRequestClearanceGate(reason) || /(?:startup|daemon|retry|prime|movie|series)/i.test(String(reason || ''));
 }
 
-const gsExtractorClient = {
-  async get(url, options = {}) {
-    const headers = options.headers || {};
-    const rawTimeout = Number(options.timeout || DIRECT_FETCH_TIMEOUT_MS) || DIRECT_FETCH_TIMEOUT_MS;
-    const directTimeout = Math.max(1200, Math.min(rawTimeout, GS_EXTRACTOR_DIRECT_TIMEOUT_MS));
-    const validateStatus = typeof options.validateStatus === 'function'
-      ? options.validateStatus
-      : status => status >= 200 && status < 400;
-
-    const directOptions = {
-      ...options,
-      headers,
-      timeout: directTimeout,
-      responseType: options.responseType || 'text',
-      validateStatus: status => status >= 200 && status < 600
-    };
-
-    let directResponse = null;
-    let directError = null;
-    try {
-      directResponse = await lightClient.get(url, directOptions);
-      const directData = typeof directResponse.data === 'string' ? directResponse.data : String(directResponse.data || '');
-      const isBlocked = isCloudflareChallenge(directData, directResponse.status) || [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(Number(directResponse.status));
-      if (validateStatus(directResponse.status) && !isBlocked) return directResponse;
-      gsDebug('extractor direct blocked', { url, status: directResponse.status, bytes: directData.length });
-    } catch (error) {
-      if (isAbortLikeError(error) && options.signal?.aborted) throw error;
-      directError = error;
-      gsDebug('extractor direct fallback', { url, error: error?.code || error?.message || String(error), timeout: directTimeout });
-    }
-
-    const directStatus = Number(directResponse?.status || directError?.response?.status || 0);
-    const allowImpitFallback = !directError || ['ERR_BAD_REQUEST', 'ERR_BAD_RESPONSE'].includes(String(directError?.code || '')) || [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(directStatus);
-
-    if (allowImpitFallback) {
-      try {
-        const impitTimeout = Math.max(1000, Math.min(rawTimeout, GS_EXTRACTOR_IMPIT_TIMEOUT_MS));
-        const response = await requestWithImpitRotating(url, {
-          method: 'GET',
-          headers,
-          timeout: impitTimeout,
-          signal: options.signal,
-          responseType: options.responseType || 'text',
-          innerRetry: { limit: 0 },
-          maxBrowserAttempts: 1,
-          totalTimeoutMs: impitTimeout + 250,
-          retryOnStatuses: [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524],
-          retryOnChallenge: true,
-          http3: GS_IMPIT_HTTP3,
-          browserFallbacks: GS_IMPIT_BROWSER_FALLBACKS,
-          ignoreTlsErrors: true,
-          fingerprint: {
-            userAgent: headers['User-Agent'] || headers['user-agent'] || gsHttp.getSession()?.userAgent
-          }
-        });
-
-        if (response && validateStatus(response.statusCode)) {
-          return {
-            data: response.data,
-            status: response.statusCode,
-            statusCode: response.statusCode,
-            headers: response.headers || {},
-            request: { res: { responseUrl: response.url || url } },
-            config: { url }
-          };
-        }
-      } catch (error) {
-        if (isAbortLikeError(error) && options.signal?.aborted) throw error;
-        gsDebug('extractor impit rescue failed', { url, error: error?.code || error?.message || String(error), timeout: GS_EXTRACTOR_IMPIT_TIMEOUT_MS });
-      }
-    }
-
-    if (directResponse && validateStatus(directResponse.status)) return directResponse;
-    if (directError) throw directError;
-    return directResponse || lightClient.get(url, options);
-  }
-};
+const gsExtractorClient = createLayeredFetchClient({
+  providerName: PROVIDER_NAME,
+  directClient: lightClient,
+  impitRunner: requestWithImpitRotating,
+  curlCffiRunner: (targetUrl, _providerName, curlOptions) => gsShield.runCurlCffi(targetUrl, curlOptions),
+  flareSolverrRunner: (targetUrl, fetchOptions) => gsShield.fetchHtml(targetUrl, {
+    ...fetchOptions,
+    allowCurlCffi: false,
+    allowScrapling: false,
+    skipNativeBypass: true,
+    reason: fetchOptions.reason || 'extractor-layered-flare'
+  }),
+  allowCurlCffi: envFlag('GUARDOSERIE_EXTRACTOR_CURL_CFFI', true),
+  allowFlareSolverr: envFlag('GUARDOSERIE_EXTRACTOR_FLARESOLVERR', false),
+  directTimeout: GS_EXTRACTOR_DIRECT_TIMEOUT_MS,
+  impitTimeout: GS_EXTRACTOR_IMPIT_TIMEOUT_MS,
+  impitTotalTimeoutMs: GS_EXTRACTOR_IMPIT_TIMEOUT_MS + 250,
+  impitMaxBrowserAttempts: 1,
+  impitHttp3: GS_IMPIT_HTTP3,
+  browserFallbacks: GS_IMPIT_BROWSER_FALLBACKS,
+  retryOnStatuses: [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524],
+  retryOnChallenge: true,
+  ignoreTlsErrors: true,
+  curlCffiRetries: 0,
+  curlCffiWarmupOrigin: false,
+  curlCffiBrowserHeaders: true,
+  envPrefix: 'GUARDOSERIE',
+  onLayerError: (layer, error, targetUrl) => gsDebug(`extractor ${layer} fallback failed`, {
+    url: targetUrl,
+    error: error?.code || error?.message || String(error)
+  })
+});
 let gsClearanceWarmupPromise = null;
 let gsBackgroundInterval = null;
 let gsBackgroundRetryTimer = null;

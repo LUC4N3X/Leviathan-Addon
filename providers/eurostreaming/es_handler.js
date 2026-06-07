@@ -2184,6 +2184,7 @@ async function buildHostStream(link, context) {
             label: 'TurboVid',
             title,
             language,
+            via: 'turbovid-kraken-extractor',
             mediaflowOptions: {
                 extractorPath: turbovidKrakenPath,
                 redirectStream: getTurbovidRedirectStream(),
