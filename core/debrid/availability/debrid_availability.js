@@ -10,6 +10,7 @@ const { shouldSkipRecentWork } = require('../../utils/recent_work');
 const RdOracle = require('../rd/state/cache_oracle');
 const EpisodePrecision = require('../../stream/episode_precision');
 const { normalizeTbCacheState, toRdCacheState } = require('../tb/availability/torbox_cache_state');
+const CacheFederation = require('./cache_federation');
 
 const LOCAL_DB_CACHE_TTL = 25;
 const RD_PRIORITY_DEDUP_MS = 15000;
@@ -689,6 +690,35 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             logger.warn(`[DB READ] Overlay stato RD per hash fallito: ${err.message}`);
         }
 
+        if (CacheFederation.isEnabled()) {
+            try {
+                const [rdFed, tbFed] = await Promise.all([
+                    CacheFederation.getFederatedCachedHashes('rd', hashes),
+                    CacheFederation.getFederatedCachedHashes('tb', hashes)
+                ]);
+                let rdApplied = 0;
+                let tbApplied = 0;
+                for (const item of list) {
+                    const hash = String(item?.hash || item?.infoHash || '').trim().toLowerCase();
+                    if (!hash) continue;
+                    if (rdFed.has(hash) && RdOracle.shouldUpgradeState(getRdAvailabilityState('rd', item, meta), 'likely_cached')) {
+                        RdOracle.applyRdStateToItem(item, 'likely_cached', { cached: null, clearNegative: false });
+                        item._rdFederationHint = true;
+                        rdApplied += 1;
+                    }
+                    if (tbFed.has(hash) && getRdAvailabilityState('tb', item, meta) === 'unknown') {
+                        item._tbCacheState = 'likely_cached';
+                        item.tbCacheState = 'likely_cached';
+                        item._tbFederationHint = true;
+                        tbApplied += 1;
+                    }
+                }
+                if (rdApplied > 0 || tbApplied > 0) logger.info(`[CACHE FEDERATION] likely_cached applied rd=${rdApplied} tb=${tbApplied} from shared cache`);
+            } catch (fedErr) {
+                logger.warn(`[CACHE FEDERATION] read overlay failed: ${fedErr.message}`);
+            }
+        }
+
         return propagateRdKnownStatesByHash(list, meta);
     }
 
@@ -1228,6 +1258,9 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                         }
                         logger.info(`[AVAILABILITY CACHE] saved key=infoHash:fileIdx service=${normalizedService} state=cached`);
                     }
+                }
+                if (CacheFederation.isEnabled()) {
+                    CacheFederation.storeFederatedCachedHashes(normalizedService, item.hash);
                 }
                 logger.info(`[RD AVAILABILITY] Persisted resolved hit | reason=${reason} | service=${normalizedService} | hash=${item.hash} | updated=${updated}`);
                 return true;

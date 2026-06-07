@@ -15,6 +15,7 @@ const { rankAndFilterResults } = require("./lib/result_ranker");
 const { applySeedHealthRanking, getSeedHealthLogSamples } = require("./lib/seed_health_ranker");
 const { applySootioPriorityPolicy } = require("./lib/sootio_priority_policy");
 const { enrichTorrentItems } = require("./lib/tracker_enricher");
+const { enrichItemsWithLiveSeeders, isEnabled: isUdpScrapeEnabled } = require("./lib/udp_tracker_scraper");
 const { tmdbToImdb, imdbToTmdb, getTmdbAltTitles } = require("./intelligence/media_identity_resolver");
 const tmdbHelper = require("./utils/tmdb_helper");
 const kitsuHandler = require("./handlers/kitsu_handler");
@@ -1950,7 +1951,8 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         forceMovie: !hasSeriesContext,
         savedCloud: isSavedCloudStream,
         isSavedCloud: isSavedCloudStream,
-        savedCloudService: serviceLabel
+        savedCloudService: serviceLabel,
+        fileName: item?.episodeFileHint?.fileName || item?._episodeFileHint?.fileName || item?.filename || item?.fileName || item?.file_title || ''
     };
     const safeIsPack = Boolean(hasSeriesContext && isPack);
     const { name, title, bingeGroup } = formatStreamSelector(baseParseTitle, formatterSource, sizeBytes, seeders, serviceLabel, selectorConfig, item?.hash, isLazy, safeIsPack, availabilityState);
@@ -4789,6 +4791,17 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           });
 
           const seedRankingMode = hasDebridKey ? 'debrid' : 'p2p';
+          if (seedRankingMode === 'p2p' && isUdpScrapeEnabled()) {
+              try {
+                  const udpStats = await enrichItemsWithLiveSeeders(cleanResults);
+                  if (udpStats.candidates > 0) {
+                      logger.info(`[UDP SCRAPE] candidates=${udpStats.candidates} trackers=${udpStats.trackers} updated=${udpStats.updated}`);
+                      trace.stage('udp-seeders', udpStats);
+                  }
+              } catch (udpErr) {
+                  logger.warn(`[UDP SCRAPE] live seeder enrichment failed: ${udpErr.message}`);
+              }
+          }
           const seedHealthPass = applySeedHealthRanking(cleanResults, { mode: seedRankingMode });
           for (const line of getSeedHealthLogSamples(cleanResults, 3)) logger.info(line);
           if (seedHealthPass.stats.total > 0) {
