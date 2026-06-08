@@ -159,6 +159,8 @@ services:
       GUARDOSERIE_FLARE_ENABLED: "${GUARDOSERIE_API_FLARE_ENABLED:-false}"
       GUARDOSERIE_BACKGROUND_OWNER_ROLE: "${GUARDOSERIE_BACKGROUND_OWNER_ROLE:-worker}"
       GUARDOSERIE_API_CLEARANCE_FALLBACK: "${GUARDOSERIE_API_CLEARANCE_FALLBACK:-false}"
+      GUARDOSERIE_EXTRACTOR_CLOUDFLARE_BYPASS: "true"
+      GUARDOSERIE_EXTRACTOR_CLOUDFLARE_BYPASS_MIRROR_FALLBACK: "true"
       CINEMACITY_BACKGROUND_CLEARANCE: "${CINEMACITY_API_BACKGROUND_CLEARANCE:-false}"
 
       CINEMACITY_RUST_SHIELD: "false"
@@ -371,6 +373,8 @@ services:
       GUARDOSERIE_FLARE_ENABLED: "${GUARDOSERIE_WORKER_FLARE_ENABLED:-true}"
       GUARDOSERIE_BACKGROUND_OWNER_ROLE: "${GUARDOSERIE_BACKGROUND_OWNER_ROLE:-worker}"
       GUARDOSERIE_API_CLEARANCE_FALLBACK: "${GUARDOSERIE_API_CLEARANCE_FALLBACK:-false}"
+      GUARDOSERIE_EXTRACTOR_CLOUDFLARE_BYPASS: "true"
+      GUARDOSERIE_EXTRACTOR_CLOUDFLARE_BYPASS_MIRROR_FALLBACK: "true"
       CINEMACITY_BACKGROUND_CLEARANCE: "${CINEMACITY_WORKER_BACKGROUND_CLEARANCE:-true}"
       CINEMACITY_BACKGROUND_CLEARANCE_DELAY_MS: "${CINEMACITY_WORKER_BACKGROUND_CLEARANCE_DELAY_MS:-20000}"
       CINEMACITY_BACKGROUND_PRIME_HOME: "${CINEMACITY_WORKER_BACKGROUND_PRIME_HOME:-false}"
@@ -441,10 +445,12 @@ services:
 
 
   cloudflare-bypass:
-    image: ghcr.io/sarperavci/cloudflarebypassforscraping:latest
+    image: "${CLOUDFLARE_BYPASS_IMAGE:-ghcr.io/sarperavci/cloudflarebypassforscraping:latest}"
     container_name: cloudflare-bypass
     restart: unless-stopped
     init: true
+    working_dir: /data
+    command: ["python3", "/app/server.py"]
 
     environment:
       WORKERS: "${CLOUDFLARE_BYPASS_WORKERS:-1}"
@@ -453,6 +459,9 @@ services:
 
     ports:
       - "${CLOUDFLARE_BYPASS_PORT:-8008}:8000"
+
+    volumes:
+      - cloudflare-bypass-cache:/data
 
     shm_size: "${CLOUDFLARE_BYPASS_SHM_SIZE:-512m}"
     mem_limit: ${CLOUDFLARE_BYPASS_MEM_LIMIT:-1400m}
@@ -522,3 +531,6 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+
+volumes:
+  cloudflare-bypass-cache:

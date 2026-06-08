@@ -155,26 +155,12 @@ async function runCurlCffiLayer(url, options = {}) {
   return normalizeCurlCffiResponse(result, url);
 }
 
-async function runCloudflareBypassLayer(url, options = {}) {
-  const runner = options.cloudflareBypassRunner || options.bypassRunner || options.cloudflareBypassRunner || options.flareRunner || options.shieldRunner;
-  if (typeof runner === 'function') {
-    const result = await runner(url, {
-      ...options,
-      allowCloudflareBypass: options.allowCloudflareBypass !== false,
-      allowCloudflareBypass: options.allowCloudflareBypass !== false,
-      allowCurlCffi: false
-    });
-    if (typeof result === 'string' || Buffer.isBuffer(result)) {
-      return { status: 200, statusCode: 200, data: responseText(result), body: responseText(result), headers: {}, url };
-    }
-    return result;
-  }
-
+async function runCloudflareBypassMirror(url, options = {}) {
   const endpoint = (getConfiguredBypassEndpoints(options.cloudflareBypassEndpoint, options.bypassEndpoint)[0] || '').trim();
   if (!endpoint) return null;
   const client = createCloudflareBypassServiceClient({ endpoint });
   const method = String(options.method || 'GET').toUpperCase();
-  const result = await client.mirror(url, {
+  return client.mirror(url, {
     method,
     headers: options.headers || {},
     body: method === 'GET' || method === 'HEAD' ? undefined : options.body ?? options.data,
@@ -183,7 +169,27 @@ async function runCloudflareBypassLayer(url, options = {}) {
     bypassCache: options.bypassCache || options.forceBypassCache,
     signal: options.signal
   });
-  return result;
+}
+
+async function runCloudflareBypassLayer(url, options = {}) {
+  const runner = options.cloudflareBypassRunner || options.bypassRunner || options.flareRunner || options.shieldRunner;
+  if (typeof runner === 'function') {
+    const result = await runner(url, {
+      ...options,
+      allowCloudflareBypass: options.allowCloudflareBypass !== false,
+      allowCurlCffi: false
+    });
+    if (typeof result === 'string' || Buffer.isBuffer(result)) {
+      return { status: 200, statusCode: 200, data: responseText(result), body: responseText(result), headers: {}, url };
+    }
+    if (options.cloudflareBypassMirrorFallback === true && isBlockedResponse(result, options)) {
+      const mirrored = await runCloudflareBypassMirror(url, options);
+      if (mirrored) return mirrored;
+    }
+    return result;
+  }
+
+  return runCloudflareBypassMirror(url, options);
 }
 
 async function tryLayer(name, url, options, runner) {
@@ -201,7 +207,7 @@ async function fetchLayeredText(url, options = {}) {
   const allowDirect = options.allowDirect !== false;
   const allowImpit = options.allowImpit !== false;
   const allowCurlCffi = options.allowCurlCffi !== false;
-  const allowCloudflareBypass = options.allowCloudflareBypass !== false && options.allowCloudflareBypass !== false;
+  const allowCloudflareBypass = options.allowCloudflareBypass !== false;
   let lastResponse = null;
 
   const layers = [
