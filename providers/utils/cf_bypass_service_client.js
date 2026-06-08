@@ -1,6 +1,13 @@
 'use strict';
 
 const axios = require('axios');
+const {
+  envNumber,
+  makeBypassCacheKey,
+  runWithBypassTrafficGuard,
+  withBypassRequestCoalescing,
+  withBypassResponseCache
+} = require('./bypass_traffic_guard');
 
 function splitList(value) {
   if (Array.isArray(value)) return value;
@@ -64,6 +71,28 @@ function cleanHeaders(headers = {}) {
     out[key] = value;
   }
   return out;
+}
+
+
+function providerNameForGuard(requestOptions = {}) {
+  return requestOptions.providerName || requestOptions.provider || requestOptions.hoster || 'cloudflare-bypass';
+}
+
+function guardOptionsFor(kind, requestOptions = {}) {
+  return {
+    kind,
+    providerName: providerNameForGuard(requestOptions),
+    signal: requestOptions.signal,
+    proxy: requestOptions.proxy || requestOptions.proxyUrl || requestOptions.egressKey || 'default',
+    minIntervalMs: requestOptions.guardMinIntervalMs,
+    maxConcurrency: requestOptions.guardMaxConcurrency,
+    maxQueue: requestOptions.guardMaxQueue
+  };
+}
+
+function cacheTtlFromOptions(requestOptions = {}, envName, fallback = 0) {
+  if (Number.isFinite(Number(requestOptions.cacheTtlMs))) return Math.max(0, Number(requestOptions.cacheTtlMs));
+  return envNumber(envName, fallback, 0, 24 * 60 * 60 * 1000);
 }
 
 function cookieObjectToHeader(cookies = {}) {
@@ -187,31 +216,48 @@ function createCloudflareBypassServiceClient(options = {}) {
     const timeout = Math.max(5000, Number(requestOptions.timeout || requestOptions.timeoutMs || 30000));
     const retries = Math.max(1, Math.min(10, Number(requestOptions.retries || defaultRetries) || defaultRetries));
     const proxy = requestOptions.proxy || requestOptions.proxyUrl || null;
-    const response = await requestWithRetry(() => httpClient.get(buildUrl(endpoint, '/cookies', { url: targetUrl, retries, proxy }), {
-      timeout,
-      signal: requestOptions.signal,
-      validateStatus: status => status >= 200 && status < 600,
-      headers: { Accept: 'application/json' }
-    }), { retries: requestOptions.httpRetries || 1, retryBackoffMs: requestOptions.retryBackoffMs });
-    if (response.status >= 400) {
-      const detail = response.data?.detail || response.data?.message || response.statusText || `http_${response.status}`;
-      const error = new Error(String(detail));
-      error.status = response.status;
-      error.response = response;
-      throw error;
-    }
-    const payload = parseJsonMaybe(response.data) || {};
-    const solution = payload.solution || {};
-    const cookies = payload.cookies || solution.cookies || {};
-    return {
-      cookies,
-      cookieHeader: cookieObjectToHeader(cookies),
-      setCookie: cookiesObjectToSetCookieArray(cookies, targetUrl),
-      userAgent: payload.user_agent || payload.userAgent || solution.userAgent || responseHeaderValue(response.headers, 'x-cf-bypasser-user-agent') || '',
-      url: solution.url || payload.url || targetUrl,
-      status: solution.status || payload.statusCode || response.status,
-      headers: response.headers || {}
-    };
+    const bypassCookieCache = requestOptions.bypassCache || requestOptions.bypassCookieCache || requestOptions.force || false;
+    const coalesceKey = makeBypassCacheKey(`cfbypass:cookies:${endpoint}`, targetUrl, {
+      method: 'GET',
+      proxy,
+      vary: `${retries}:${bypassCookieCache ? 'force' : 'cached'}`
+    });
+    const cacheTtlMs = bypassCookieCache ? 0 : cacheTtlFromOptions(requestOptions, 'BYPASS_COOKIE_RESPONSE_CACHE_TTL_MS', 30_000);
+    const staleMs = Math.max(cacheTtlMs, Number(requestOptions.cacheStaleMs || process.env.BYPASS_COOKIE_RESPONSE_CACHE_STALE_MS || cacheTtlMs * 2) || cacheTtlMs * 2);
+
+    const run = () => runWithBypassTrafficGuard(targetUrl, async () => {
+      const response = await requestWithRetry(() => httpClient.get(buildUrl(endpoint, '/cookies', { url: targetUrl, retries, proxy }), {
+        timeout,
+        signal: requestOptions.signal,
+        validateStatus: status => status >= 200 && status < 600,
+        headers: { Accept: 'application/json' }
+      }), { retries: requestOptions.httpRetries || 1, retryBackoffMs: requestOptions.retryBackoffMs });
+      if (response.status >= 400) {
+        const detail = response.data?.detail || response.data?.message || response.statusText || `http_${response.status}`;
+        const error = new Error(String(detail));
+        error.status = response.status;
+        error.response = response;
+        throw error;
+      }
+      const payload = parseJsonMaybe(response.data) || {};
+      const solution = payload.solution || {};
+      const cookies = payload.cookies || solution.cookies || {};
+      return {
+        cookies,
+        cookieHeader: cookieObjectToHeader(cookies),
+        setCookie: cookiesObjectToSetCookieArray(cookies, targetUrl),
+        userAgent: payload.user_agent || payload.userAgent || solution.userAgent || responseHeaderValue(response.headers, 'x-cf-bypasser-user-agent') || '',
+        url: solution.url || payload.url || targetUrl,
+        status: solution.status || payload.statusCode || response.status,
+        headers: response.headers || {}
+      };
+    }, guardOptionsFor('solve', requestOptions));
+
+    return withBypassResponseCache(coalesceKey, run, {
+      enabled: requestOptions.coalesce !== false,
+      ttlMs: cacheTtlMs,
+      staleMs
+    });
   }
 
   async function getHtml(url, requestOptions = {}) {
@@ -221,68 +267,104 @@ function createCloudflareBypassServiceClient(options = {}) {
     const retries = Math.max(1, Math.min(10, Number(requestOptions.retries || defaultRetries) || defaultRetries));
     const proxy = requestOptions.proxy || requestOptions.proxyUrl || null;
     const bypassCookieCache = requestOptions.bypassCache || requestOptions.bypassCookieCache || requestOptions.force || false;
-    const response = await requestWithRetry(() => httpClient.get(buildUrl(endpoint, '/html', { url: targetUrl, retries, proxy, bypassCookieCache }), {
-      timeout,
-      signal: requestOptions.signal,
-      responseType: 'text',
-      transformResponse: [data => data],
-      validateStatus: status => status >= 200 && status < 600,
-      headers: { Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' }
-    }), { retries: requestOptions.httpRetries || 1, retryBackoffMs: requestOptions.retryBackoffMs });
-    if (response.status >= 400) {
-      const error = new Error(`cloudflare_bypass_http_${response.status}`);
-      error.status = response.status;
-      error.response = response;
-      throw error;
-    }
-    const payload = parseJsonMaybe(response.data);
-    const solution = payload && typeof payload === 'object' ? (payload.solution || {}) : {};
-    const html = typeof solution.response === 'string'
-      ? solution.response
-      : (typeof payload === 'string' ? payload : String(response.data || ''));
-    return {
-      html,
-      status: solution.status || response.status,
-      headers: response.headers || {},
-      userAgent: solution.userAgent || responseHeaderValue(response.headers, 'x-cf-bypasser-user-agent') || '',
-      finalUrl: solution.url || responseHeaderValue(response.headers, 'x-cf-bypasser-final-url') || targetUrl,
-      cookiesCount: Number(responseHeaderValue(response.headers, 'x-cf-bypasser-cookies') || 0) || 0
-    };
+    const cacheTtlMs = bypassCookieCache ? 0 : cacheTtlFromOptions(requestOptions, 'BYPASS_HTML_CACHE_TTL_MS', 0);
+    const staleMs = Math.max(cacheTtlMs, Number(requestOptions.cacheStaleMs || process.env.BYPASS_HTML_CACHE_STALE_MS || cacheTtlMs * 2) || cacheTtlMs * 2);
+    const coalesceKey = makeBypassCacheKey(`cfbypass:html:${endpoint}`, targetUrl, {
+      method: 'GET',
+      proxy,
+      vary: `${retries}:${bypassCookieCache ? 'force' : 'cached'}`
+    });
+
+    const run = () => runWithBypassTrafficGuard(targetUrl, async () => {
+      const response = await requestWithRetry(() => httpClient.get(buildUrl(endpoint, '/html', { url: targetUrl, retries, proxy, bypassCookieCache }), {
+        timeout,
+        signal: requestOptions.signal,
+        responseType: 'text',
+        transformResponse: [data => data],
+        validateStatus: status => status >= 200 && status < 600,
+        headers: { Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' }
+      }), { retries: requestOptions.httpRetries || 1, retryBackoffMs: requestOptions.retryBackoffMs });
+      if (response.status >= 400) {
+        const error = new Error(`cloudflare_bypass_http_${response.status}`);
+        error.status = response.status;
+        error.response = response;
+        throw error;
+      }
+      const payload = parseJsonMaybe(response.data);
+      const solution = payload && typeof payload === 'object' ? (payload.solution || {}) : {};
+      const html = typeof solution.response === 'string'
+        ? solution.response
+        : (typeof payload === 'string' ? payload : String(response.data || ''));
+      return {
+        html,
+        status: solution.status || response.status,
+        headers: response.headers || {},
+        userAgent: solution.userAgent || responseHeaderValue(response.headers, 'x-cf-bypasser-user-agent') || '',
+        finalUrl: solution.url || responseHeaderValue(response.headers, 'x-cf-bypasser-final-url') || targetUrl,
+        cookiesCount: Number(responseHeaderValue(response.headers, 'x-cf-bypasser-cookies') || 0) || 0
+      };
+    }, guardOptionsFor('service', requestOptions));
+
+    return withBypassResponseCache(coalesceKey, run, {
+      enabled: requestOptions.coalesce !== false,
+      ttlMs: cacheTtlMs,
+      staleMs
+    });
   }
 
   async function mirror(url, requestOptions = {}) {
     const target = new URL(String(url || ''));
     const timeout = Math.max(5000, Number(requestOptions.timeout || requestOptions.timeoutMs || 30000));
     const method = String(requestOptions.method || 'GET').toUpperCase();
-    const mirrorUrl = `${endpoint}${target.pathname || '/'}${target.search || ''}`;
-    const headers = {
-      ...cleanHeaders(requestOptions.headers || {}),
-      'x-hostname': target.host
-    };
     const proxy = requestOptions.proxy || requestOptions.proxyUrl || null;
-    if (proxy) headers['x-proxy'] = proxy;
-    if (requestOptions.bypassCache || requestOptions.force) headers['x-bypass-cache'] = 'true';
-    const response = await requestWithRetry(() => httpClient.request({
-      url: mirrorUrl,
+    const bypassCache = requestOptions.bypassCache || requestOptions.force;
+    const cacheTtlMs = method === 'GET' && !bypassCache
+      ? cacheTtlFromOptions(requestOptions, 'BYPASS_MIRROR_CACHE_TTL_MS', 30_000)
+      : 0;
+    const staleMs = Math.max(cacheTtlMs, Number(requestOptions.cacheStaleMs || process.env.BYPASS_MIRROR_CACHE_STALE_MS || cacheTtlMs * 2) || cacheTtlMs * 2);
+    const coalesceKey = makeBypassCacheKey(`cfbypass:mirror:${endpoint}`, target.toString(), {
       method,
-      data: method === 'GET' || method === 'HEAD' ? undefined : requestOptions.body ?? requestOptions.data ?? null,
-      headers,
-      timeout,
-      signal: requestOptions.signal,
-      responseType: requestOptions.responseType || 'text',
-      transformResponse: [data => data],
-      validateStatus: status => status >= 200 && status < 600,
-      maxRedirects: 0
-    }), { retries: requestOptions.httpRetries || 1, retryBackoffMs: requestOptions.retryBackoffMs });
-    return {
-      status: response.status,
-      statusCode: response.status,
-      data: response.data,
-      body: response.data,
-      headers: response.headers || {},
-      url: responseHeaderValue(response.headers, 'x-cf-bypasser-final-url') || url,
-      via: 'cloudflare-bypass-service'
-    };
+      proxy,
+      body: requestOptions.body ?? requestOptions.data ?? '',
+      vary: bypassCache ? 'force' : 'cached'
+    });
+
+    const run = () => runWithBypassTrafficGuard(target.toString(), async () => {
+      const mirrorUrl = `${endpoint}${target.pathname || '/'}${target.search || ''}`;
+      const headers = {
+        ...cleanHeaders(requestOptions.headers || {}),
+        'x-hostname': target.host
+      };
+      if (proxy) headers['x-proxy'] = proxy;
+      if (bypassCache) headers['x-bypass-cache'] = 'true';
+      const response = await requestWithRetry(() => httpClient.request({
+        url: mirrorUrl,
+        method,
+        data: method === 'GET' || method === 'HEAD' ? undefined : requestOptions.body ?? requestOptions.data ?? null,
+        headers,
+        timeout,
+        signal: requestOptions.signal,
+        responseType: requestOptions.responseType || 'text',
+        transformResponse: [data => data],
+        validateStatus: status => status >= 200 && status < 600,
+        maxRedirects: 0
+      }), { retries: requestOptions.httpRetries || 1, retryBackoffMs: requestOptions.retryBackoffMs });
+      return {
+        status: response.status,
+        statusCode: response.status,
+        data: response.data,
+        body: response.data,
+        headers: response.headers || {},
+        url: responseHeaderValue(response.headers, 'x-cf-bypasser-final-url') || url,
+        via: 'cloudflare-bypass-service'
+      };
+    }, guardOptionsFor('service', requestOptions));
+
+    return withBypassResponseCache(coalesceKey, run, {
+      enabled: requestOptions.coalesce !== false,
+      ttlMs: cacheTtlMs,
+      staleMs
+    });
   }
 
   return {

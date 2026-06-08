@@ -642,14 +642,19 @@ function createCfClearanceManager(options = {}) {
         const wantResponse = payload.returnOnlyCookies === false;
         const requestTimeout = Math.max(5000, Number(timeout || payload.maxTimeout || solveTimeoutMs));
         const requestOptions = {
+          providerName,
           timeout: requestTimeout,
           timeoutMs: requestTimeout,
           signal,
           retries: Math.max(1, Math.min(10, Number(payload.retries || options.bypassRetries || 5) || 5)),
           proxy: payload.proxy || options.proxy || options.proxyUrl || null,
+          egressKey: options.egressKey || 'direct',
           bypassCache: Boolean(payload.bypassCookieCache || payload.force || payload.bypassCache),
           httpRetries: 1,
-          retryBackoffMs: flareRetryBackoffMs
+          retryBackoffMs: flareRetryBackoffMs,
+          guardMinIntervalMs: options.solveMinIntervalMs,
+          guardMaxConcurrency: options.solveMaxConcurrency,
+          guardMaxQueue: options.solveMaxQueue
         };
 
         let htmlResult = null;
