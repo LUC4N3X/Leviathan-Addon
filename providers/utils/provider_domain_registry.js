@@ -15,7 +15,7 @@ const DEFAULT_PROVIDER_DOMAINS = Object.freeze({
     eurostreaming: Object.freeze(['https://eurostream.ing']),
     guardaflix: Object.freeze(['https://guardaplay.live']),
     guardahd: Object.freeze(['https://guardahd.stream']),
-    guardoserie: Object.freeze(['https://guardoserie.watch']),
+    guardoserie: Object.freeze(['https://guardoserie.world']),
     streamingcommunity: Object.freeze(['https://vixsrc.to']),
     toonitalia: Object.freeze([
         'https://toonitalia.xyz',
