@@ -33,7 +33,7 @@ const { createCloudflareBypass, envFlag } = require('../utils/cloudflare_bypass'
 const { createLayeredFetchClient } = require('../utils/provider_fetch_orchestrator');
 const { getProviderDomain } = require('../utils/provider_domain_registry');
 
-const INITIAL_GS_DOMAIN      = process.env.GUARDOSERIE_BASE_URL || process.env.GUARDOSERIE_DOMAIN || getProviderDomain('guardoserie', 'https://guardoserie.watch');
+const INITIAL_GS_DOMAIN      = process.env.GUARDOSERIE_BASE_URL || process.env.GUARDOSERIE_DOMAIN || getProviderDomain('guardoserie', 'https://guardoserie.world');
 const GS_MOVIE_LIST_PATH     = '/guarda-film-streaming-ita/';
 const PROVIDER_NAME          = 'guardoserie';
 const BROWSER_PROFILES       = browserProfiles.GUARDO_SERIE_BROWSER_PROFILES || browserProfiles.GUARDA_SERIE_BROWSER_PROFILES || [];
