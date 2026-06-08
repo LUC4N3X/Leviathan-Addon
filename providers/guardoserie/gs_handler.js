@@ -314,6 +314,8 @@ const gsExtractorClient = createLayeredFetchClient({
   }),
   allowCurlCffi: envFlag('GUARDOSERIE_EXTRACTOR_CURL_CFFI', true),
   allowCloudflareBypass: envFlag('GUARDOSERIE_EXTRACTOR_CLOUDFLARE_BYPASS', false),
+  cloudflareBypassEndpoint: GS_TOP_SPEED.cloudflareBypassEndpoint,
+  cloudflareBypassMirrorFallback: envFlag('GUARDOSERIE_EXTRACTOR_CLOUDFLARE_BYPASS_MIRROR_FALLBACK', false),
   directTimeout: GS_EXTRACTOR_DIRECT_TIMEOUT_MS,
   impitTimeout: GS_EXTRACTOR_IMPIT_TIMEOUT_MS,
   impitTotalTimeoutMs: GS_EXTRACTOR_IMPIT_TIMEOUT_MS + 250,
