@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const {
     normalizeUprotInput,
     resolveUprotToMaxstream,
-    fetchWithFlareSolverr,
+    fetchWithCloudflareBypass,
     toMaxstreamPlayerUrl,
     _test: uprotTest
 } = require('../providers/extractors/hosters/uprot');
@@ -103,7 +103,7 @@ test('uprot resolver follows landing continue links to MaxStream with injected c
     };
 
     const resolved = await resolveUprotToMaxstream(client, 'https://uprot.net/msf/abc', {
-        uprotFlareEnabled: false,
+        uprotCloudflareBypassEnabled: false,
         uprotForwardProxy: 'false'
     });
 
@@ -132,7 +132,7 @@ test('uprot resolver posts stored state and resolves redirect final URL', async 
     const resolved = await resolveUprotToMaxstream(client, 'https://uprot.net/msf/stateid', {
         uprotCookies: { xfss: 'cookie-secret' },
         uprotCaptchaData: { captcha: '12345' },
-        uprotFlareEnabled: false,
+        uprotCloudflareBypassEnabled: false,
         uprotForwardProxy: 'false'
     });
 
@@ -157,7 +157,7 @@ test('uprot resolver extracts escaped direct stream URLs from landing scripts', 
     };
 
     const resolved = await resolveUprotToMaxstream(client, 'https://uprot.net/msf/direct', {
-        uprotFlareEnabled: false,
+        uprotCloudflareBypassEnabled: false,
         uprotForwardProxy: 'false'
     });
 
@@ -179,7 +179,7 @@ test('uprot resolver follows javascript location redirects to watchfree players'
     };
 
     const resolved = await resolveUprotToMaxstream(client, 'https://uprot.net/msf/jsid', {
-        uprotFlareEnabled: false,
+        uprotCloudflareBypassEnabled: false,
         uprotForwardProxy: 'false'
     });
 
@@ -187,34 +187,32 @@ test('uprot resolver follows javascript location redirects to watchfree players'
     assert.equal(resolved.via, 'uprot-landing');
 });
 
-test('fetchWithFlareSolverr wraps uprot URLs in the configured forward proxy', async () => {
+test('fetchWithCloudflareBypass wraps uprot URLs in the configured forward proxy', async () => {
     const seen = [];
-    const flareClient = {
-        async post(endpoint, payload) {
-            seen.push({ endpoint, url: payload.url });
-            return {
-                status: 200,
-                data: {
-                    status: 'ok',
-                    solution: { response: '<html></html>', url: payload.url, cookies: [] }
-                }
-            };
+    const cloudflareBypassClient = {
+        async getHtml(url) {
+            seen.push({ endpoint: 'getHtml', url });
+            return { status: 200, html: '<html></html>', finalUrl: url, userAgent: 'Mozilla/5.0 UnitTest' };
+        },
+        async getCookies(url) {
+            seen.push({ endpoint: 'getCookies', url });
+            return { status: 200, cookieHeader: 'cf_clearance=ok', userAgent: 'Mozilla/5.0 UnitTest' };
         }
     };
 
-    const result = await fetchWithFlareSolverr('https://uprot.net/e/abc123/', {
-        uprotFlareEnabled: true,
-        uprotFlareEndpoint: 'http://flaresolverr.local:8191/v1',
+    const result = await fetchWithCloudflareBypass('https://uprot.net/e/abc123/', {
+        uprotCloudflareBypassEnabled: true,
+        uprotCloudflareBypassEndpoint: 'http://cloudflare-bypass.local:8000',
         uprotForwardProxy: 'https://krakenproxy.example/forward?url=',
-        flareClient
+        cloudflareBypassClient
     });
 
-    assert.ok(result, 'expected a FlareSolverr response');
-    assert.equal(seen.length, 1, 'flare client should be called once');
+    assert.ok(result, 'expected a CloudflareBypass response');
+    assert.equal(seen.length, 2, 'CloudflareBypass client should fetch html and cookies');
     assert.equal(
         seen[0].url,
         'https://krakenproxy.example/forward?url=https%3A%2F%2Fuprot.net%2Fe%2Fabc123%2F',
-        'FlareSolverr must receive the proxy-wrapped URL so its egress IP is masked'
+        'CloudflareBypass must receive the proxy-wrapped URL so its egress IP is masked'
     );
 });
 

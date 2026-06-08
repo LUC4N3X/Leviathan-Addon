@@ -1,6 +1,12 @@
 'use strict';
 
 const axios = require('axios');
+const {
+  normalizeBypassEndpoint,
+  normalizeBypassEndpoints,
+  getConfiguredBypassEndpoints,
+  createCloudflareBypassServiceClient
+} = require('./cf_bypass_service_client');
 
 let setCookieParser = null;
 try {
@@ -14,7 +20,7 @@ try {
 } catch (_) {
 }
 
-const DEFAULT_FLARESOLVERR_URL = null;
+const DEFAULT_CLOUDFLARE_BYPASS_URL = null;
 const DEFAULT_ENDPOINT_FAILURE_COOLDOWN_MS = 45_000;
 
 function normalizeBaseUrl(value) {
@@ -27,30 +33,13 @@ function normalizeBaseUrl(value) {
 }
 
 function normalizeFlareEndpoint(value) {
-  const raw = String(value || '').trim().replace(/\/+$/, '');
-  if (!raw) return null;
-  try {
-    const url = new URL(raw);
-    if (!['http:', 'https:'].includes(url.protocol)) return null;
-  } catch (_) {
-    return null;
-  }
-  return raw.endsWith('/v1') ? raw : `${raw}/v1`;
+  // Backward-compatible export name: now normalizes CloudflareBypassForScraping base URLs.
+  return normalizeBypassEndpoint(value);
 }
 
 function normalizeFlareEndpoints(...values) {
-  const out = [];
-  const seen = new Set();
-  for (const value of values) {
-    const parts = Array.isArray(value) ? value : String(value || '').split(/[\s,;]+/g);
-    for (const part of parts) {
-      const endpoint = normalizeFlareEndpoint(part);
-      if (!endpoint || seen.has(endpoint)) continue;
-      seen.add(endpoint);
-      out.push(endpoint);
-    }
-  }
-  return out;
+  // Backward-compatible export name: now returns /cookies-/html-capable bypass service bases, not /v1 endpoints.
+  return normalizeBypassEndpoints(...values);
 }
 
 function normalizeSetCookieHeaders(value) {
@@ -527,7 +516,7 @@ function defaultLogger() {
 
 function createCfClearanceManager(options = {}) {
   const logger = options.logger || defaultLogger();
-  const endpoints = normalizeFlareEndpoints(options.endpoints, options.endpoint, process.env.FLARESOLVERR_URLS, process.env.FLARESOLVERR_URL);
+  const endpoints = getConfiguredBypassEndpoints(options.endpoints, options.endpoint, options.bypassEndpoints, options.bypassEndpoint);
   const endpoint = endpoints[0] || null;
   const providerName = options.providerName || 'provider';
   const sessionTtlMs = Math.max(60_000, Number(options.sessionTtlMs || 6 * 60 * 60 * 1000));
@@ -603,7 +592,7 @@ function createCfClearanceManager(options = {}) {
       providerFailureCooldownMaxMs
     );
     providerFailureUntil = now + duration;
-    providerFailureReason = error?.message || String(error || 'flaresolverr_failure');
+    providerFailureReason = error?.message || String(error || 'cloudflare_bypass_failure');
     logger.warn('solve provider cooldown', {
       provider: providerName,
       cooldownMs: duration,
@@ -618,41 +607,78 @@ function createCfClearanceManager(options = {}) {
     providerFailureReason = null;
   }
 
+  const bypassClientCache = new Map();
+
+  function getBypassClient(selectedEndpoint) {
+    const endpointKey = normalizeBypassEndpoint(selectedEndpoint);
+    if (!endpointKey) throw new Error('invalid_cloudflare_bypass_endpoint');
+    if (!bypassClientCache.has(endpointKey)) {
+      bypassClientCache.set(endpointKey, createCloudflareBypassServiceClient({
+        endpoint: endpointKey,
+        retries: Math.max(1, Number(options.bypassRetries || options.retries || 5) || 5),
+        httpClient: axios
+      }));
+    }
+    return bypassClientCache.get(endpointKey);
+  }
+
   async function postFlareWithRetry(selectedEndpoint, payload, timeout, signal, label = 'request') {
     let lastError = null;
     for (let attempt = 0; attempt <= flareRetryCount; attempt += 1) {
       try {
-        const response = await axios.post(selectedEndpoint, payload, {
-          timeout,
-          signal,
-          httpAgent,
-          httpsAgent,
-          validateStatus: status => status >= 200 && status < 600,
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          }
-        });
-        if (response.status >= 500 && attempt < flareRetryCount) {
-          const error = new Error(`http_${response.status}`);
-          error.status = response.status;
-          error.response = response;
-          throw error;
+        const client = getBypassClient(selectedEndpoint);
+        const cmd = String(payload?.cmd || '').toLowerCase();
+
+        if (cmd === 'sessions.list') {
+          await client.health({ timeout, signal });
+          return { status: 200, data: { status: 'ok' } };
         }
-        return response;
+
+        if (cmd !== 'request.get') {
+          throw new Error(`unsupported_cloudflare_bypass_cmd_${payload?.cmd || 'unknown'}`);
+        }
+
+        const targetUrl = payload.url;
+        const wantResponse = payload.returnOnlyCookies === false;
+        const requestTimeout = Math.max(5000, Number(timeout || payload.maxTimeout || solveTimeoutMs));
+        const requestOptions = {
+          timeout: requestTimeout,
+          timeoutMs: requestTimeout,
+          signal,
+          retries: Math.max(1, Math.min(10, Number(payload.retries || options.bypassRetries || 5) || 5)),
+          proxy: payload.proxy || options.proxy || options.proxyUrl || null,
+          bypassCache: Boolean(payload.bypassCookieCache || payload.force || payload.bypassCache),
+          httpRetries: 1,
+          retryBackoffMs: flareRetryBackoffMs
+        };
+
+        let htmlResult = null;
+        if (wantResponse) {
+          htmlResult = await client.getHtml(targetUrl, requestOptions);
+        }
+
+        const cookieResult = await client.getCookies(targetUrl, requestOptions);
+        const solutionUrl = htmlResult?.finalUrl || cookieResult.url || targetUrl;
+        const responseBody = wantResponse ? (htmlResult?.html || '') : '';
+        const solutionStatus = htmlResult?.status || cookieResult.status || 200;
+        const solutionCookies = cookieResult.setCookie || cookieResult.cookieHeader || cookieResult.cookies || [];
+        const userAgent = cookieResult.userAgent || htmlResult?.userAgent || getFallbackUserAgent();
+
+        return {
+          status: 200,
+          data: {
+            status: 'ok',
+            solution: {
+              url: solutionUrl,
+              status: solutionStatus,
+              response: responseBody,
+              cookies: solutionCookies,
+              userAgent
+            }
+          }
+        };
       } catch (error) {
         lastError = error;
-        if (isFlareBrowserCrash(error)) {
-          markEndpointFailure(selectedEndpoint);
-          logger.warn('flaresolverr browser crash; endpoint cooldown', {
-            provider: providerName,
-            endpoint: selectedEndpoint,
-            label,
-            cooldownMs: endpointFailureCooldownMs,
-            reason: error?.message || String(error)
-          });
-          break;
-        }
         if (attempt >= flareRetryCount || !isRetryableFlareError(error) || signal?.aborted) break;
         const waitMs = flareRetryBackoffMs * (attempt + 1);
         logger.debug('solve retry', {
@@ -732,7 +758,7 @@ function createCfClearanceManager(options = {}) {
     if (!endpoints.length) {
       if (!missingEndpointWarned) {
         missingEndpointWarned = true;
-        logger.warn('solve skipped', { provider: providerName, reason: 'missing_FLARESOLVERR_URL' });
+        logger.warn('solve skipped', { provider: providerName, reason: 'missing_CLOUDFLARE_BYPASS_URL' });
       }
       return null;
     }
@@ -780,7 +806,7 @@ function createCfClearanceManager(options = {}) {
       else if (signal) signal.addEventListener('abort', abortFromParent, { once: true });
 
       const hardTimer = setTimeout(() => {
-        if (!controller.signal.aborted) controller.abort('flaresolverr hard timeout');
+        if (!controller.signal.aborted) controller.abort('cloudflare bypass hard timeout');
       }, maxTimeout + 8000);
       if (hardTimer?.unref) hardTimer.unref();
 
@@ -957,7 +983,7 @@ module.exports = {
   normalizeSetCookieHeaders,
   parseSetCookiePairs,
   parseCookieHeaderPairs,
-  DEFAULT_FLARESOLVERR_URL,
+  DEFAULT_CLOUDFLARE_BYPASS_URL,
   parseSingleCookie,
   joinCookieHeader,
   readCookieValue,

@@ -95,7 +95,7 @@ test('fetchHtml uses H2 replay fast path only when enabled and seeded with cooki
   let curlCalled = false;
   const guard = {
     getSession: () => ({
-      source: 'flaresolverr',
+      source: 'cloudflare-bypass',
       userAgent: 'Mozilla/5.0 Session',
       cookies: 'cf_clearance=session-clear; sid=1',
       solvedUrl: 'https://guardoserie.run/',
@@ -172,7 +172,7 @@ test('fetchHtml coalesces concurrent H2 replay attempts through the clearance br
   });
   const guard = {
     getSession: () => ({
-      source: 'flaresolverr',
+      source: 'cloudflare-bypass',
       userAgent: 'Mozilla/5.0 Session',
       cookies: 'cf_clearance=session-clear; sid=1',
       solvedUrl: 'https://guardoserie.run/',

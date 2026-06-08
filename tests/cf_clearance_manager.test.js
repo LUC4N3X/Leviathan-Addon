@@ -8,18 +8,30 @@ const Module = require('node:module');
 const originalLoad = Module._load;
 Module._load = function patchedLoad(request, parent, isMain) {
   if (request === 'axios') {
-    return {
-      async post(url, body, options = {}) {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: options.headers || {},
-          body: JSON.stringify(body),
-          signal: options.signal
-        });
-        const text = await response.text();
-        let data = text;
+    async function axiosLike(url, options = {}) {
+      const method = String(options.method || 'GET').toUpperCase();
+      const response = await fetch(url, {
+        method,
+        headers: options.headers || {},
+        body: method === 'GET' || method === 'HEAD' ? undefined : options.body,
+        signal: options.signal
+      });
+      const text = await response.text();
+      let data = text;
+      if (!options.transformResponse && options.responseType !== 'text') {
         try { data = text ? JSON.parse(text) : {}; } catch (_) {}
-        return { status: response.status, data, headers: Object.fromEntries(response.headers.entries()) };
+      }
+      return { status: response.status, data, headers: Object.fromEntries(response.headers.entries()) };
+    }
+    return {
+      async get(url, options = {}) {
+        return axiosLike(url, { ...options, method: 'GET' });
+      },
+      async post(url, body, options = {}) {
+        return axiosLike(url, { ...options, method: 'POST', body: JSON.stringify(body) });
+      },
+      async request(options = {}) {
+        return axiosLike(options.url, options);
       }
     };
   }
@@ -49,7 +61,7 @@ function listen(handler) {
       const address = server.address();
       resolve({
         server,
-        url: `http://127.0.0.1:${address.port}/v1`,
+        url: `http://127.0.0.1:${address.port}`,
         close: () => new Promise((done) => server.close(done))
       });
     });
@@ -65,10 +77,10 @@ function readJson(req) {
   });
 }
 
-test('normalizeFlareEndpoints accepts comma and semicolon failover lists', () => {
+test('normalizeFlareEndpoints accepts comma and semicolon CloudflareBypass endpoint lists', () => {
   assert.deepEqual(
     normalizeFlareEndpoints('http://a:8191, http://b:8191/v1; bad-url', ['https://c.example/base/']),
-    ['http://a:8191/v1', 'http://b:8191/v1', 'https://c.example/base/v1']
+    ['http://a:8191', 'http://b:8191', 'https://c.example/base']
   );
 });
 
@@ -144,15 +156,14 @@ test('cookie jar v2 keeps path/domain-aware cookies when tough-cookie is install
   assert.doesNotMatch(header, /loadm=abc/);
 });
 
-test('clearance manager fails over FlareSolverr-compatible endpoints', async (t) => {
+test('clearance manager fails over CloudflareBypass-compatible endpoints', async (t) => {
   const seenPayloads = [];
   const bad = await listen(async (_req, res) => {
     res.writeHead(500, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ status: 'error', message: 'bad endpoint' }));
   });
   const good = await listen(async (req, res) => {
-    const payload = await readJson(req);
-    if (payload.cmd !== 'sessions.list') seenPayloads.push(payload);
+    if (!req.url.startsWith('/cache/stats')) seenPayloads.push(new URL(req.url, good.url).pathname);
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       status: 'ok',
@@ -186,17 +197,13 @@ test('clearance manager fails over FlareSolverr-compatible endpoints', async (t)
   assert.equal(session.endpoint, good.url);
   assert.equal(session.cf_clearance, 'clear');
   assert.equal(session.userAgent, 'Mozilla/5.0 UnitTest');
-  assert.equal(seenPayloads.length, 1);
-  assert.equal(seenPayloads[0].disableMedia, true);
-  assert.equal(seenPayloads[0].returnOnlyCookies, true);
-  assert.equal(seenPayloads[0].cookies.length, 2);
+  assert.deepEqual(seenPayloads, ['/cookies']);
 });
 
 test('clearance manager coalesces concurrent solves with the same shared key', async (t) => {
   let calls = 0;
   const good = await listen(async (req, res) => {
-    const payload = await readJson(req);
-    if (payload.cmd !== 'sessions.list') calls += 1;
+    if (!req.url.startsWith('/cache/stats')) calls += 1;
     await new Promise(resolve => setTimeout(resolve, 80));
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
@@ -239,8 +246,7 @@ test('clearance manager coalesces concurrent solves with the same shared key', a
 test('clearance manager returns null instead of growing an unbounded solve queue', async (t) => {
   let calls = 0;
   const good = await listen(async (req, res) => {
-    const payload = await readJson(req);
-    if (payload.cmd !== 'sessions.list') calls += 1;
+    if (!req.url.startsWith('/cache/stats')) calls += 1;
     await new Promise(resolve => setTimeout(resolve, 120));
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
@@ -284,13 +290,12 @@ test('clearance manager can keep useful solution HTML for immediate reuse', asyn
   let requestGetPayload = null;
   const html = `<!doctype html><html><head><title>OK</title></head><body>${'valid html '.repeat(40)}</body></html>`;
   const good = await listen(async (req, res) => {
-    const payload = await readJson(req);
-    if (payload.cmd === 'sessions.list') {
+    if (req.url.startsWith('/cache/stats')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ status: 'ok', sessions: [] }));
       return;
     }
-    requestGetPayload = payload;
+    if (req.url.startsWith('/html') || !requestGetPayload) requestGetPayload = { returnOnlyCookies: !req.url.startsWith('/html') };
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       status: 'ok',
@@ -325,12 +330,12 @@ test('clearance manager can keep useful solution HTML for immediate reuse', asyn
   assert.equal(session.solutionResponseUrl, 'https://guardoserie.run/film/a/');
 });
 
-test('clearance manager caches FlareSolverr health checks briefly', async (t) => {
+test('clearance manager caches CloudflareBypass health checks briefly', async (t) => {
   let healthCalls = 0;
   let solveCalls = 0;
   const good = await listen(async (req, res) => {
-    const payload = await readJson(req);
-    if (payload.cmd === 'sessions.list') {
+    const url = new URL(req.url, good.url);
+    if (url.pathname === '/cache/stats') {
       healthCalls += 1;
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ status: 'ok', sessions: [] }));
@@ -341,7 +346,7 @@ test('clearance manager caches FlareSolverr health checks briefly', async (t) =>
     res.end(JSON.stringify({
       status: 'ok',
       solution: {
-        url: payload.url,
+        url: url.searchParams.get('url'),
         status: 200,
         userAgent: 'Mozilla/5.0 HealthUnitTest',
         cookies: [{ name: 'cf_clearance', value: `health-${solveCalls}` }]
