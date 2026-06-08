@@ -38,6 +38,27 @@ const GS_MOVIE_LIST_PATH     = '/guarda-film-streaming-ita/';
 const PROVIDER_NAME          = 'guardoserie';
 const BROWSER_PROFILES       = browserProfiles.GUARDO_SERIE_BROWSER_PROFILES || browserProfiles.GUARDA_SERIE_BROWSER_PROFILES || [];
 
+function normalizeGsProcessRole(value = process.env.LEVI_PROCESS_ROLE) {
+  return String(value || 'api').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '') || 'api';
+}
+
+function isGsBackgroundOwnerProcess() {
+  const role = normalizeGsProcessRole();
+  const owner = String(process.env.GUARDOSERIE_BACKGROUND_OWNER_ROLE || 'worker').trim().toLowerCase();
+  if (envFlag('GUARDOSERIE_FORCE_BACKGROUND_DAEMON', false)) return true;
+  if (envFlag('GUARDOSERIE_DISABLE_BACKGROUND_DAEMON', false)) return false;
+  if (owner === 'all' || owner === '*') return true;
+  if (owner === 'none' || owner === 'off' || owner === 'false' || owner === '0') return false;
+  if (owner === 'api') return role === 'api' || role === 'server' || role === 'addon';
+  if (owner === 'worker') return role === 'worker' || role === 'background-worker' || role === 'background';
+  return role === owner;
+}
+
+const GS_PROCESS_ROLE = normalizeGsProcessRole();
+const GS_BACKGROUND_OWNER_PROCESS = isGsBackgroundOwnerProcess();
+const GS_API_CLEARANCE_FALLBACK = envFlag('GUARDOSERIE_API_CLEARANCE_FALLBACK', false);
+const GS_CAN_SOLVE_CLEARANCE = GS_BACKGROUND_OWNER_PROCESS || GS_API_CLEARANCE_FALLBACK;
+
 const TTL_SEARCH             = 1000 * 60 * 30;
 const TTL_EPISODE            = 1000 * 60 * 30;
 const TTL_MOVIE              = 1000 * 60 * 30;
@@ -48,7 +69,7 @@ const GLOBAL_TIMEOUT_MS      = PROVIDER_BUDGET_MS;
 const SEARCH_QUERY_TIMEOUT_MS = 5000;
 
 const GS_TOP_SPEED = Object.freeze({
-  flareEndpoint: process.env.FLARESOLVERR_URL || 'http://flaresolverr:8191/v1',
+  cloudflareBypassEndpoint: process.env.CLOUDFLARE_BYPASS_URL || process.env.CF_BYPASS_URL || 'http://cloudflare-bypass:8000',
   directFetchTimeoutMs: Math.max(2500, Math.min(8000, Number.parseInt(process.env.GUARDOSERIE_DIRECT_TIMEOUT_MS || '4200', 10) || 4200)),
   sessionTimeoutFloorMs: 2600,
   postClearanceReplayTimeoutMs: Math.max(5000, Math.min(14000, Number.parseInt(process.env.GUARDOSERIE_POST_CLEARANCE_TIMEOUT_MS || '9000', 10) || 9000)),
@@ -68,7 +89,7 @@ const GS_TOP_SPEED = Object.freeze({
   staleSessionEmergencyCooldownMs: 0,
   clearanceBridgeMode: true,
   enableImpitFallback: true,
-  backgroundClearanceEnabled: envFlag('GUARDOSERIE_FLARE_ENABLED', true),
+  backgroundClearanceEnabled: envFlag('GUARDOSERIE_FLARE_ENABLED', true) && GS_BACKGROUND_OWNER_PROCESS,
   backgroundPrimeHome: envFlag('GUARDOSERIE_PRIME_HOME', true),
   backgroundTitlePrime: true,
   backgroundRefreshMs: 600_000,
@@ -127,7 +148,7 @@ const GS_REQUEST_CLEARANCE_WAIT_MS = Math.max(
 );
 
 const DEBUG_GS              = envFlag('GUARDOSERIE_DEBUG', false);
-const DEBUG_CF              = DEBUG_GS || envFlag('GUARDOSERIE_DEBUG_CF', envFlag('PROVIDER_SHIELD_DEBUG_CF', true)) || envFlag('FLARESOLVERR_DEBUG', false);
+const DEBUG_CF              = DEBUG_GS || envFlag('GUARDOSERIE_DEBUG_CF', envFlag('PROVIDER_SHIELD_DEBUG_CF', true)) || envFlag('CLOUDFLARE_BYPASS_DEBUG', false);
 const GS_FLARE_PROVIDER_FAILURE_COOLDOWN_MS = GS_TOP_SPEED.flareProviderFailureCooldownMs;
 const GS_FLARE_PROVIDER_FAILURE_COOLDOWN_MAX_MS = Math.max(GS_FLARE_PROVIDER_FAILURE_COOLDOWN_MS, GS_TOP_SPEED.flareProviderFailureCooldownMaxMs);
 const GS_FLARE_ENDPOINT_FAILURE_COOLDOWN_MS = GS_TOP_SPEED.flareEndpointFailureCooldownMs;
@@ -138,7 +159,7 @@ const GS_BACKGROUND_FORCE_STARTUP = GS_TOP_SPEED.backgroundForceStartup;
 const GS_BACKGROUND_IGNORE_PROVIDER_COOLDOWN = GS_TOP_SPEED.backgroundIgnoreProviderCooldown;
 const GS_SKIP_AJAX_AFTER_FALLBACK_HIT = true;
 const GS_FAST_SLUG_FIRST           = true;
-// TOP speed mode: background daemon owns FlareSolverr; hot Stremio requests stay Axios/session-only by default.
+// TOP speed mode: background daemon owns CloudflareBypass; hot Stremio requests stay Axios/session-only by default.
 const GS_HOTPATH_FLARE_FALLBACK      = GS_TOP_SPEED.hotpathFlareFallback;
 const GS_BACKGROUND_STATIC_PRIME     = GS_TOP_SPEED.backgroundStaticPrime;
 const GS_MOVIE_FAST_SLUG_MAX         = GS_TOP_SPEED.movieFastSlugMax;
@@ -206,7 +227,7 @@ const gsShield = createCloudflareBypass({
   providerFailureCooldownMaxMs: GS_FLARE_PROVIDER_FAILURE_COOLDOWN_MAX_MS,
   flareRetryCount: GS_FLARE_RETRY_COUNT,
   flareRetryBackoffMs: GS_FLARE_RETRY_BACKOFF_MS,
-  flareEndpoint: GS_TOP_SPEED.flareEndpoint,
+  cloudflareBypassEndpoint: GS_TOP_SPEED.cloudflareBypassEndpoint,
   clearanceBridgeMode: GS_CLEARANCE_BRIDGE_MODE,
   preferImpit: GS_PREFER_IMPIT,
   impitTurbo: true,
@@ -229,7 +250,7 @@ function smartFetch(url, fetchOptions = {}) {
 
   return gsShield.fetchHtml(url, {
     ...fetchOptions,
-    allowFlareSolverr: false,
+    allowCloudflareBypass: false,
     allowCurlCffi: false,
     allowScrapling: false,
     skipNativeBypass: true,
@@ -244,6 +265,7 @@ const normalizeBaseUrl = value => gsHttp.normalizeBaseUrl(value);
 const isAbortLikeError = error => gsHttp.isAbortLikeError(error);
 
 function allowHotPathClearance() {
+  if (!GS_CAN_SOLVE_CLEARANCE) return false;
   if (gsHttp.isSessionFresh()) return false;
   if (GS_HOTPATH_FLARE_FALLBACK) return true;
   if (!GS_BACKGROUND_CLEARANCE_ENABLED) return false;
@@ -251,7 +273,8 @@ function allowHotPathClearance() {
 }
 
 function allowGsFlareForReason(reason = 'request') {
-  if (!GS_BACKGROUND_CLEARANCE_ENABLED) return false;
+  if (!GS_CAN_SOLVE_CLEARANCE) return false;
+  if (!GS_BACKGROUND_CLEARANCE_ENABLED && !GS_API_CLEARANCE_FALLBACK) return false;
   if (!gsHttp.getEndpoint()) return false;
   if (allowHotPathClearance()) return true;
   return !gsHttp.isSessionFresh() && /(?:request|search|movie|series|episode|slug|prime|daemon|startup|retry)/i.test(String(reason || ''));
@@ -264,7 +287,10 @@ function getGsShieldSnapshot() {
     sessionFresh: gsHttp.isSessionFresh(),
     sessionAgeMs: getGsSessionAgeMs(),
     hotpathFlare: GS_HOTPATH_FLARE_FALLBACK,
-    backgroundEnabled: GS_BACKGROUND_CLEARANCE_ENABLED
+    backgroundEnabled: GS_BACKGROUND_CLEARANCE_ENABLED,
+    processRole: GS_PROCESS_ROLE,
+    backgroundOwner: GS_BACKGROUND_OWNER_PROCESS,
+    apiClearanceFallback: GS_API_CLEARANCE_FALLBACK
   };
 }
 
@@ -279,15 +305,15 @@ const gsExtractorClient = createLayeredFetchClient({
   directClient: lightClient,
   impitRunner: requestWithImpitRotating,
   curlCffiRunner: (targetUrl, _providerName, curlOptions) => gsShield.runCurlCffi(targetUrl, curlOptions),
-  flareSolverrRunner: (targetUrl, fetchOptions) => gsShield.fetchHtml(targetUrl, {
+  cloudflareBypassRunner: (targetUrl, fetchOptions) => gsShield.fetchHtml(targetUrl, {
     ...fetchOptions,
     allowCurlCffi: false,
     allowScrapling: false,
     skipNativeBypass: true,
-    reason: fetchOptions.reason || 'extractor-layered-flare'
+    reason: fetchOptions.reason || 'extractor-layered-cloudflare-bypass'
   }),
   allowCurlCffi: envFlag('GUARDOSERIE_EXTRACTOR_CURL_CFFI', true),
-  allowFlareSolverr: envFlag('GUARDOSERIE_EXTRACTOR_FLARESOLVERR', false),
+  allowCloudflareBypass: envFlag('GUARDOSERIE_EXTRACTOR_CLOUDFLARE_BYPASS', false),
   directTimeout: GS_EXTRACTOR_DIRECT_TIMEOUT_MS,
   impitTimeout: GS_EXTRACTOR_IMPIT_TIMEOUT_MS,
   impitTotalTimeoutMs: GS_EXTRACTOR_IMPIT_TIMEOUT_MS + 250,
@@ -370,7 +396,7 @@ function warmupGsClearanceInBackground(reason = 'startup', options = {}) {
     if (primeHome || !sessionReady) {
       const html = await smartFetch(url, {
         ttl: TTL_SERIES,
-        allowFlareSolverr: allowGsFlareForReason(reason),
+        allowCloudflareBypass: allowGsFlareForReason(reason),
         timeoutMs: sessionReady ? GS_BACKGROUND_PRIME_TIMEOUT_MS : Math.max(DIRECT_FETCH_TIMEOUT_MS, GS_BACKGROUND_PRIME_TIMEOUT_MS)
       });
       homeReady = Boolean(html);
@@ -479,7 +505,7 @@ async function fetchGsWpSitemapEntries() {
     const sitemapIndexUrl = baseUrl.replace(/\/+$/, '') + '/wp-sitemap.xml';
     const indexXml = await smartFetch(sitemapIndexUrl, {
       ttl: GS_WP_SITEMAP_TTL_MS,
-      allowFlareSolverr: false,
+      allowCloudflareBypass: false,
       timeoutMs: GS_WP_REST_TIMEOUT_MS
     }).catch(() => null);
 
@@ -490,7 +516,7 @@ async function fetchGsWpSitemapEntries() {
 
     const subXmls = await Promise.all(
       subUrls.slice(0, 3).map(u =>
-        smartFetch(u, { ttl: GS_WP_SITEMAP_TTL_MS, allowFlareSolverr: false, timeoutMs: GS_WP_REST_TIMEOUT_MS }).catch(() => null)
+        smartFetch(u, { ttl: GS_WP_SITEMAP_TTL_MS, allowCloudflareBypass: false, timeoutMs: GS_WP_REST_TIMEOUT_MS }).catch(() => null)
       )
     );
 
@@ -535,7 +561,7 @@ async function searchGsViaRestApi(query, signal) {
       const raw = await smartFetch(restUrl, {
         ttl: TTL_SEARCH,
         signal,
-        allowFlareSolverr: allowGsFlareForReason('search-rest'),
+        allowCloudflareBypass: allowGsFlareForReason('search-rest'),
         timeoutMs: gsHttp.isSessionFresh() ? GS_WP_REST_TIMEOUT_MS : Math.max(GS_WP_REST_TIMEOUT_MS, 6500)
       }).catch(() => null);
       if (!raw || typeof raw !== 'string') continue;
@@ -628,6 +654,7 @@ function buildFastSlugTargetCandidates(expectedTitles = [], mediaType = 'series'
 }
 
 function allowExactGsSlugClearance(mediaType = 'series') {
+  if (!GS_CAN_SOLVE_CLEARANCE) return false;
   if (gsHttp.isSessionFresh()) return false;
   if (allowHotPathClearance()) return true;
   return ['series', 'movie'].includes(String(mediaType || '').toLowerCase()) && Boolean(gsHttp.getEndpoint());
@@ -668,7 +695,7 @@ function primeGsUrlsInBackground(urls = [], options = {}) {
       try {
         const html = await smartFetch(url, {
           ttl,
-          allowFlareSolverr: options.allowFlareSolverr === true || allowGsFlareForReason(reason),
+          allowCloudflareBypass: GS_CAN_SOLVE_CLEARANCE && (options.allowCloudflareBypass === true || allowGsFlareForReason(reason)),
           timeoutMs: GS_BACKGROUND_PRIME_TIMEOUT_MS
         });
         if (html) ok += 1;
@@ -695,14 +722,23 @@ function primeGsStaticPagesInBackground(reason = 'startup-static-prime') {
   });
 }
 
-startGsBackgroundClearanceDaemon();
-scheduleGsClearanceWarmup('startup-static-after-clearance', Math.max(600, GS_PREWARM_START_DELAY_MS + 600), {
-  primeHome: true,
-  force: GS_BACKGROUND_FORCE_STARTUP,
-  ignoreProviderCooldown: GS_BACKGROUND_IGNORE_PROVIDER_COOLDOWN,
-  retry: true
-});
-primeGsStaticPagesInBackground('startup-static-prime');
+if (GS_BACKGROUND_CLEARANCE_ENABLED) {
+  startGsBackgroundClearanceDaemon();
+  scheduleGsClearanceWarmup('startup-static-after-clearance', Math.max(600, GS_PREWARM_START_DELAY_MS + 600), {
+    primeHome: true,
+    force: GS_BACKGROUND_FORCE_STARTUP,
+    ignoreProviderCooldown: GS_BACKGROUND_IGNORE_PROVIDER_COOLDOWN,
+    retry: true
+  });
+  primeGsStaticPagesInBackground('startup-static-prime');
+} else {
+  gsDebug('background clearance daemon disabled for process role', {
+    role: GS_PROCESS_ROLE,
+    ownerRole: process.env.GUARDOSERIE_BACKGROUND_OWNER_ROLE || 'worker',
+    backgroundOwner: GS_BACKGROUND_OWNER_PROCESS,
+    apiClearanceFallback: GS_API_CLEARANCE_FALLBACK
+  });
+}
 
 const IT_STOPWORDS = /\b(the|a|an|un|una|il|lo|la|gli|le|di|de|del|della|degli|delle|dei|alle|nei|nelle|negli|serie|stagione|season|episodio|episode)\b/g;
 
@@ -1163,7 +1199,7 @@ async function searchProviderSequential(query, signal) {
   const fetchFallback = () => smartFetch(fallbackUrl, {
     ttl: TTL_SEARCH,
     signal,
-    allowFlareSolverr: allowClearance,
+    allowCloudflareBypass: allowClearance,
     timeoutMs: hotPathTimeout
   }).catch((e) => {
     if (isAbortLikeError(e)) throw e;
@@ -1176,7 +1212,7 @@ async function searchProviderSequential(query, signal) {
     body: ajaxBody,
     ttl: TTL_SEARCH,
     signal,
-    allowFlareSolverr: allowClearance,
+    allowCloudflareBypass: allowClearance,
     timeoutMs: hotPathTimeout
   }).catch((e) => {
     if (isAbortLikeError(e)) throw e;
@@ -1644,7 +1680,7 @@ async function findGsTargetPage(expectedTitles = [], targetYear = null, signal =
     const html = result.html || await smartFetch(result.url, {
       ttl: mediaType === 'movie' ? TTL_MOVIE : TTL_SERIES,
       signal,
-      allowFlareSolverr: allowExactGsSlugClearance(mediaType),
+      allowCloudflareBypass: allowExactGsSlugClearance(mediaType),
       timeoutMs: DIRECT_FETCH_TIMEOUT_MS
     });
     if (!html) continue;
@@ -1746,7 +1782,7 @@ async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal
       const html = await smartFetch(url, {
         ttl: mediaType === 'movie' ? TTL_MOVIE : TTL_SERIES,
         signal,
-        allowFlareSolverr: allowExactGsSlugClearance(mediaType),
+        allowCloudflareBypass: allowExactGsSlugClearance(mediaType),
         timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, mediaType === 'movie' ? 2800 : 3600)
       });
       if (!html) return null;
@@ -1853,7 +1889,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
   primeGsUrlsInBackground(buildFastSlugTargetCandidates(expectedTitles, 'series', 6), {
     ttl: TTL_SERIES,
     reason: 'series-title-prime',
-    allowFlareSolverr: true
+    allowCloudflareBypass: true
   });
 
   showName = showName || expectedTitles[0] || null;
@@ -1872,7 +1908,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
     outer: for (const slug of slugs) {
       for (const p of [`/serie/${slug}/`, `/serietv/${slug}/`, `/${slug}/`]) {
         const url  = buildGsUrl(p);
-        const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowFlareSolverr: allowExactGsSlugClearance('series'), timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+        const html = await smartFetch(url, { ttl: TTL_SERIES, signal, allowCloudflareBypass: allowExactGsSlugClearance('series'), timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
         if (html) {
           const pageTitle = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
           if (normalizeTitleScoreMany(pageTitle, expectedTitles) >= 2) {
@@ -1891,7 +1927,7 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
 
   let episodeUrl    = extractEpisodeUrlFromSeriesPage(target.html, season, episode, { strictEpisode: strictKitsu });
   let absoluteEpUrl = episodeUrl ? new URL(episodeUrl, getTargetDomain()).toString() : null;
-  let finalHtml     = absoluteEpUrl ? await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: allowExactGsSlugClearance('series'), timeoutMs: DIRECT_FETCH_TIMEOUT_MS }) : '';
+  let finalHtml     = absoluteEpUrl ? await smartFetch(absoluteEpUrl, { ttl: TTL_EPISODE, signal, allowCloudflareBypass: allowExactGsSlugClearance('series'), timeoutMs: DIRECT_FETCH_TIMEOUT_MS }) : '';
   let playerLinks   = pickPreferredPlayerLinks(extractPlayerLinksFromHtml(finalHtml), { preferLoadm: true, max: 5 });
 
   if (!playerLinks.length) {
@@ -1900,12 +1936,12 @@ async function _searchGuardaserie(meta, config, season, episode, signal, reqHost
       ttl: TTL_EPISODE,
       reason: 'episode-slug-prime',
       max: Math.min(GS_BACKGROUND_TITLE_PRIME_MAX, 8),
-      allowFlareSolverr: true
+      allowCloudflareBypass: true
     });
     for (const directUrl of directCandidates) {
       if (signal?.aborted) return [];
       try {
-        const directHtml = await smartFetch(directUrl, { ttl: TTL_EPISODE, signal, allowFlareSolverr: allowExactGsSlugClearance('series'), timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+        const directHtml = await smartFetch(directUrl, { ttl: TTL_EPISODE, signal, allowCloudflareBypass: allowExactGsSlugClearance('series'), timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
         const directLinks = pickPreferredPlayerLinks(extractPlayerLinksFromHtml(directHtml), { preferLoadm: true, max: 5 });
         if (directLinks.length) {
           episodeUrl = directUrl;
@@ -1950,7 +1986,7 @@ async function _searchGuardaserieMovie(meta, config, signal, reqHost = null) {
     ttl: TTL_MOVIE,
     reason: 'movie-title-prime',
     max: Math.max(GS_BACKGROUND_TITLE_PRIME_MAX, GS_MOVIE_FAST_SLUG_MAX),
-    allowFlareSolverr: true
+    allowCloudflareBypass: true
   });
   if (!movieName || !expectedTitles.length) return [];
 
@@ -1961,7 +1997,7 @@ async function _searchGuardaserieMovie(meta, config, signal, reqHost = null) {
     outer: for (const slug of slugs) {
       for (const p of [`/${slug}/`, `/movie/${slug}/`, `/film/${slug}/`, `/guarda-${slug}-streaming-ita/`]) {
         const url = buildGsUrl(p);
-        const html = await smartFetch(url, { ttl: TTL_MOVIE, signal, allowFlareSolverr: allowExactGsSlugClearance('movie'), timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
+        const html = await smartFetch(url, { ttl: TTL_MOVIE, signal, allowCloudflareBypass: allowExactGsSlugClearance('movie'), timeoutMs: Math.min(DIRECT_FETCH_TIMEOUT_MS, 4200) });
         if (html) {
           const pageTitle = getGsPageTitle(html);
           if (!isGenericGsShellPage(html, pageTitle) && normalizeTitleScoreMany(pageTitle, expectedTitles) >= 2) {

@@ -28,7 +28,7 @@ test('fetchLayeredText returns direct response without calling heavier fallbacks
     directClient,
     impitRunner: async () => calls.push('impit'),
     curlCffiRunner: async () => calls.push('curl_cffi'),
-    flareSolverrRunner: async () => calls.push('flaresolverr')
+    cloudflareBypassRunner: async () => calls.push('cloudflare_bypass')
   });
 
   assert.equal(result.status, 200);
@@ -52,7 +52,7 @@ test('fetchLayeredText falls back from blocked direct response to impit', async 
       return response(200, '<html>impit ok</html>', { url: 'https://example.test/page' });
     },
     curlCffiRunner: async () => calls.push('curl_cffi'),
-    flareSolverrRunner: async () => calls.push('flaresolverr')
+    cloudflareBypassRunner: async () => calls.push('cloudflare_bypass')
   });
 
   assert.equal(result.status, 200);
@@ -61,7 +61,7 @@ test('fetchLayeredText falls back from blocked direct response to impit', async 
   assert.deepEqual(calls, ['direct', 'impit']);
 });
 
-test('fetchLayeredText promotes curl_cffi before FlareSolverr after impit miss', async () => {
+test('fetchLayeredText promotes curl_cffi before CloudflareBypass after impit miss', async () => {
   const calls = [];
   const directClient = {
     get: async () => {
@@ -80,7 +80,7 @@ test('fetchLayeredText promotes curl_cffi before FlareSolverr after impit miss',
       calls.push('curl_cffi');
       return { status: 'ok', code: 200, html: '<html>curl ok</html>' };
     },
-    flareSolverrRunner: async () => calls.push('flaresolverr')
+    cloudflareBypassRunner: async () => calls.push('cloudflare_bypass')
   });
 
   assert.equal(result.status, 200);
@@ -89,7 +89,7 @@ test('fetchLayeredText promotes curl_cffi before FlareSolverr after impit miss',
   assert.deepEqual(calls, ['direct', 'impit', 'curl_cffi']);
 });
 
-test('fetchLayeredText uses FlareSolverr only after direct impit and curl_cffi miss', async () => {
+test('fetchLayeredText uses CloudflareBypass only after direct impit and curl_cffi miss', async () => {
   const calls = [];
   const directClient = {
     get: async () => {
@@ -108,16 +108,16 @@ test('fetchLayeredText uses FlareSolverr only after direct impit and curl_cffi m
       calls.push('curl_cffi');
       return { status: 'ok', code: 403, html: '<title>Just a moment</title>', challengeDetected: true };
     },
-    flareSolverrRunner: async () => {
-      calls.push('flaresolverr');
-      return '<html>flare ok</html>';
+    cloudflareBypassRunner: async () => {
+      calls.push('cloudflare_bypass');
+      return '<html>bypass ok</html>';
     }
   });
 
   assert.equal(result.status, 200);
-  assert.equal(result.data, '<html>flare ok</html>');
-  assert.equal(result.via, 'flaresolverr');
-  assert.deepEqual(calls, ['direct', 'impit', 'curl_cffi', 'flaresolverr']);
+  assert.equal(result.data, '<html>bypass ok</html>');
+  assert.equal(result.via, 'cloudflare_bypass');
+  assert.deepEqual(calls, ['direct', 'impit', 'curl_cffi', 'cloudflare_bypass']);
 });
 
 test('fetchLayeredText preserves non-retryable direct 404 without heavier fallbacks', async () => {
@@ -133,7 +133,7 @@ test('fetchLayeredText preserves non-retryable direct 404 without heavier fallba
     directClient,
     impitRunner: async () => calls.push('impit'),
     curlCffiRunner: async () => calls.push('curl_cffi'),
-    flareSolverrRunner: async () => calls.push('flaresolverr')
+    cloudflareBypassRunner: async () => calls.push('cloudflare_bypass')
   });
 
   assert.equal(result.status, 404);

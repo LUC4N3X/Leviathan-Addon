@@ -7628,7 +7628,7 @@ const mobileHTML = `
                                         <span class="m-slider"></span>
                                     </label>
                                 </div>
-                                <span class="m-reactor-desc">Catalogo Film e Serie TV via FlareSolverr e proxy CCCDN/Kraken 🎟️.</span>
+                                <span class="m-reactor-desc">Catalogo Film e Serie TV via CloudflareBypass e proxy CCCDN/Kraken 🎟️.</span>
                                 <div class="m-tag-row">
                                     <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
                                 </div>

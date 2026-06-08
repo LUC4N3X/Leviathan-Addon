@@ -2,6 +2,7 @@
 
 const { isCloudflareChallenge, requestWithImpitRotating } = require('./bypass');
 const { runCurlCffiBypass } = require('./cloudflare_bypass');
+const { createCloudflareBypassServiceClient, getConfiguredBypassEndpoints } = require('./cf_bypass_service_client');
 
 const RETRYABLE_STATUSES = new Set([403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
 
@@ -58,7 +59,7 @@ function isUsableResponse(response, options = {}) {
 }
 
 function toAxiosLikeResponse(response, via, fallbackUrl) {
-  const status = statusOf(response) || (via === 'flaresolverr' ? 200 : 0);
+  const status = statusOf(response) || (via === 'cloudflare_bypass' ? 200 : 0);
   const data = dataOf(response);
   return {
     data,
@@ -154,17 +155,34 @@ async function runCurlCffiLayer(url, options = {}) {
   return normalizeCurlCffiResponse(result, url);
 }
 
-async function runFlareSolverrLayer(url, options = {}) {
-  const runner = options.flareSolverrRunner || options.flareRunner || options.shieldRunner;
-  if (typeof runner !== 'function') return null;
-  const result = await runner(url, {
-    ...options,
-    allowFlareSolverr: options.allowFlareSolverr !== false,
-    allowCurlCffi: false
-  });
-  if (typeof result === 'string' || Buffer.isBuffer(result)) {
-    return { status: 200, statusCode: 200, data: responseText(result), body: responseText(result), headers: {}, url };
+async function runCloudflareBypassLayer(url, options = {}) {
+  const runner = options.cloudflareBypassRunner || options.bypassRunner || options.cloudflareBypassRunner || options.flareRunner || options.shieldRunner;
+  if (typeof runner === 'function') {
+    const result = await runner(url, {
+      ...options,
+      allowCloudflareBypass: options.allowCloudflareBypass !== false,
+      allowCloudflareBypass: options.allowCloudflareBypass !== false,
+      allowCurlCffi: false
+    });
+    if (typeof result === 'string' || Buffer.isBuffer(result)) {
+      return { status: 200, statusCode: 200, data: responseText(result), body: responseText(result), headers: {}, url };
+    }
+    return result;
   }
+
+  const endpoint = (getConfiguredBypassEndpoints(options.cloudflareBypassEndpoint, options.bypassEndpoint)[0] || '').trim();
+  if (!endpoint) return null;
+  const client = createCloudflareBypassServiceClient({ endpoint });
+  const method = String(options.method || 'GET').toUpperCase();
+  const result = await client.mirror(url, {
+    method,
+    headers: options.headers || {},
+    body: method === 'GET' || method === 'HEAD' ? undefined : options.body ?? options.data,
+    timeout: options.cloudflareBypassTimeout || options.bypassTimeout || options.timeout,
+    proxy: options.proxyUrl || options.proxy,
+    bypassCache: options.bypassCache || options.forceBypassCache,
+    signal: options.signal
+  });
   return result;
 }
 
@@ -183,14 +201,14 @@ async function fetchLayeredText(url, options = {}) {
   const allowDirect = options.allowDirect !== false;
   const allowImpit = options.allowImpit !== false;
   const allowCurlCffi = options.allowCurlCffi !== false;
-  const allowFlareSolverr = options.allowFlareSolverr !== false;
+  const allowCloudflareBypass = options.allowCloudflareBypass !== false && options.allowCloudflareBypass !== false;
   let lastResponse = null;
 
   const layers = [
     allowDirect && ['direct', runDirectLayer],
     allowImpit && ['impit', runImpitLayer],
     allowCurlCffi && ['curl_cffi', runCurlCffiLayer],
-    allowFlareSolverr && ['flaresolverr', runFlareSolverrLayer]
+    allowCloudflareBypass && ['cloudflare_bypass', runCloudflareBypassLayer]
   ].filter(Boolean);
 
   for (const [name, runner] of layers) {

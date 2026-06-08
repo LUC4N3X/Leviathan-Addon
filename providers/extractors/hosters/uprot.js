@@ -12,6 +12,8 @@ let setCookieParser = null;
 try { setCookieParser = require('set-cookie-parser'); } catch (_) { setCookieParser = null; }
 let runCurlCffiBypass = null;
 try { ({ runCurlCffiBypass } = require('../../utils/cloudflare_bypass')); } catch (_) { runCurlCffiBypass = null; }
+let cfBypassClientTools = null;
+try { cfBypassClientTools = require('../../utils/cf_bypass_service_client'); } catch (_) { cfBypassClientTools = null; }
 const { getOrigin, normalizeRemoteUrl } = require('../common');
 const { captchaOrchestrator } = require('../../../core/security/captcha_orchestrator');
 const {
@@ -50,7 +52,7 @@ const UPROT_AUTO_STATE_DEFAULTS = Object.freeze({
     bootstrapUrl: 'https://uprot.net/msf/r4hcq47tarq8',
     generatedStateFile: path.resolve(process.cwd(), 'config', 'uprot_state.json'),
     stateTtlMs: 45 * 60_000,
-    // Longer failure cooldown: when FlareSolverr's IP is Cloudflare-banned on
+    // Longer failure cooldown: when CloudflareBypass's IP is Cloudflare-banned on
     // uprot, or the captcha image is canvas-rendered and OCR can't read it,
     // there is nothing the next request can do differently for a while.
     // 10 minutes keeps user-facing latency low; the cooldown is global per host.
@@ -103,131 +105,92 @@ function envNumber(name, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
     return Math.max(min, Math.min(max, value));
 }
 
-function normalizeFlareEndpoint(value) {
+function normalizeCloudflareBypassEndpoint(value) {
+    if (cfBypassClientTools?.normalizeBypassEndpoint) return cfBypassClientTools.normalizeBypassEndpoint(value);
     const raw = String(value || '').trim().replace(/\/+$/, '');
     if (!raw) return null;
     try {
         const parsed = new URL(raw);
-        if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+        if (!/^https?:$/.test(parsed.protocol)) return null;
+        if (parsed.pathname === '/v1') parsed.pathname = '';
+        parsed.search = '';
+        parsed.hash = '';
+        return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, '')}`;
     } catch (_) {
         return null;
     }
-    return raw.endsWith('/v1') ? raw : `${raw}/v1`;
 }
 
-function getFlareEndpoint(options = {}) {
-    return normalizeFlareEndpoint(
-        options.uprotFlareEndpoint
-        || process.env.UPROT_FLARESOLVERR_URL
-        || process.env.FLARESOLVERR_URL
+function getCloudflareBypassEndpoint(options = {}) {
+    return normalizeCloudflareBypassEndpoint(
+        options.uprotCloudflareBypassEndpoint
+        || options.cloudflareBypassEndpoint
+        || options.uprotFlareEndpoint
+        || process.env.UPROT_CLOUDFLARE_BYPASS_URL
+        || process.env.CLOUDFLARE_BYPASS_URL
+        || process.env.CF_BYPASS_URL
         || ''
     );
 }
 
-function flareEnabled(options = {}) {
+function cloudflareBypassEnabled(options = {}) {
+    if (options.uprotCloudflareBypassEnabled !== undefined) return Boolean(options.uprotCloudflareBypassEnabled);
     if (options.uprotFlareEnabled !== undefined) return Boolean(options.uprotFlareEnabled);
-    return envFlag('UPROT_FLARE_ENABLED', envFlag('EUROSTREAMING_UPROT_FLARE_ENABLED', true));
+    return envFlag('UPROT_CLOUDFLARE_BYPASS_ENABLED', envFlag('EUROSTREAMING_UPROT_CLOUDFLARE_BYPASS_ENABLED', true));
 }
 
-function getFlareClient(options = {}) {
-    if (options.flareClient && typeof options.flareClient.post === 'function') return options.flareClient;
-    if (options.axios && typeof options.axios.post === 'function') return options.axios;
-    return axios;
-}
+const cloudflareBypassHostCooldown = new Map();
+const CLOUDFLARE_BYPASS_HOST_COOLDOWN_MS = 15 * 60_000;
 
-function extractFlareSolution(response) {
-    const payload = response?.data || response || {};
-    if (payload?.status && String(payload.status).toLowerCase() !== 'ok') return null;
-    const solution = payload.solution || {};
-    const text = solution.response || payload.response || '';
-    const finalUrl = normalizeRemoteUrl(solution.url || payload.url || '');
-    const userAgent = solution.userAgent || payload.userAgent || null;
-    const cookies = Array.isArray(solution.cookies || payload.cookies)
-        ? (solution.cookies || payload.cookies)
-            .map((cookie) => cookie?.name ? `${cookie.name}=${cookie.value ?? ''}` : '')
-            .filter(Boolean)
-            .join('; ')
-        : String(solution.cookies || payload.cookies || '').trim();
-    return {
-        status: Number(solution.status || payload.statusCode || response?.status || 0) || 0,
-        text: typeof text === 'string' ? text : '',
-        finalUrl,
-        userAgent,
-        cookies
-    };
-}
-
-// Tracks hosts where FlareSolverr has reported a hard Cloudflare IP ban so we
-// stop wasting 2-5s per request hammering the same dead endpoint. Cleared on
-// process restart; cooldown is intentionally long because the ban itself is.
-const flareHostBanCooldown = new Map();
-const FLARE_HOST_BAN_COOLDOWN_MS = 15 * 60_000;
-
-function getFlareTargetHost(targetUrl) {
+function getCloudflareBypassTargetHost(targetUrl) {
     try { return new URL(String(targetUrl || '')).hostname.toLowerCase(); } catch (_) { return ''; }
 }
 
-function isFlareIpBanError(response) {
-    const body = response?.data;
-    const text = typeof body === 'string' ? body : (body && typeof body === 'object' ? (body.message || JSON.stringify(body)) : '');
+function isCloudflareBypassIpBanError(error) {
+    const body = error?.response?.data;
+    const text = typeof body === 'string' ? body : (body && typeof body === 'object' ? (body.message || body.detail || JSON.stringify(body)) : (error?.message || ''));
     return /cloudflare\s+has\s+blocked\s+this\s+request|your\s+ip\s+is\s+banned/i.test(String(text || ''));
 }
 
-async function fetchWithFlareSolverr(targetUrl, options = {}) {
-    const endpoint = getFlareEndpoint(options);
-    if (!flareEnabled(options) || !endpoint) return null;
+async function fetchWithCloudflareBypass(targetUrl, options = {}) {
+    const endpoint = getCloudflareBypassEndpoint(options);
+    if (!cloudflareBypassEnabled(options) || !endpoint || (!options.cloudflareBypassClient && !cfBypassClientTools?.createCloudflareBypassServiceClient)) return null;
 
-    // Route the request through the shared forward proxy when configured
-    // so FlareSolverr's egress IP is replaced by the proxy's IP. uprot.net's
-    // Cloudflare blocklist commonly bans FlareSolverr container IPs, but the
-    // configured proxy IP is generally accepted.
     const proxyUrl = buildUprotForwardRequestUrl(targetUrl, options);
     const fetchUrl = proxyUrl || targetUrl;
-    const flareViaProxy = Boolean(proxyUrl && proxyUrl !== targetUrl);
+    const viaForwardProxy = Boolean(proxyUrl && proxyUrl !== targetUrl);
 
-    const host = getFlareTargetHost(targetUrl);
-    const bannedUntil = host ? flareHostBanCooldown.get(host) : 0;
-    if (bannedUntil && bannedUntil > Date.now() && !flareViaProxy) {
-        uprotDebug('warn', 'flare host in ip-ban cooldown; skipping', { host, remainingMs: bannedUntil - Date.now() });
+    const host = getCloudflareBypassTargetHost(targetUrl);
+    const bannedUntil = host ? cloudflareBypassHostCooldown.get(host) : 0;
+    if (bannedUntil && bannedUntil > Date.now() && !viaForwardProxy) {
+        uprotDebug('warn', 'cloudflare-bypass host in ip-ban cooldown; skipping', { host, remainingMs: bannedUntil - Date.now() });
         return null;
     }
 
-    const client = getFlareClient(options);
-    if (!client || typeof client.post !== 'function') return null;
-    const timeout = envNumber('UPROT_FLARE_TIMEOUT_MS', Number(options.uprotFlareTimeoutMs || 25_000), 8_000, 60_000);
-    const maxTimeout = envNumber('UPROT_FLARE_MAX_TIMEOUT_MS', Number(options.uprotFlareMaxTimeoutMs || timeout), 8_000, 90_000);
-    // 6s wait lets uprot's client-side JS finish injecting the captcha <img>
-    // into the static shell. Confirmed via user-shared sample: the captcha
-    // image is in the final DOM but the initial response is only ~1.5KB.
-    const waitInSeconds = envNumber('UPROT_FLARE_WAIT_SECONDS', Number(options.uprotFlareWaitSeconds || 6), 0, 15);
+    const timeout = envNumber('UPROT_CLOUDFLARE_BYPASS_TIMEOUT_MS', Number(options.uprotCloudflareBypassTimeoutMs || 25_000), 8_000, 60_000);
+    const maxTimeout = envNumber('UPROT_CLOUDFLARE_BYPASS_MAX_TIMEOUT_MS', Number(options.uprotCloudflareBypassMaxTimeoutMs || timeout), 8_000, 90_000);
+    const retries = envNumber('UPROT_CLOUDFLARE_BYPASS_RETRIES', Number(options.uprotCloudflareBypassRetries || 5), 1, 10);
 
-    if (flareViaProxy) {
-        uprotDebug('info', 'flare fetch via forward proxy', { targetHost: host, proxyHost: getFlareTargetHost(fetchUrl) });
+    if (viaForwardProxy) {
+        uprotDebug('info', 'cloudflare-bypass fetch via forward proxy', { targetHost: host, proxyHost: getCloudflareBypassTargetHost(fetchUrl) });
     }
 
     try {
-        const payload = {
-            cmd: 'request.get',
-            url: fetchUrl,
-            maxTimeout,
-            returnOnlyCookies: false
+        const service = options.cloudflareBypassClient || cfBypassClientTools.createCloudflareBypassServiceClient({ endpoint, retries });
+        const html = await service.getHtml(fetchUrl, { timeout: maxTimeout + 7_000, retries, bypassCache: options.bypassCache });
+        const cookies = service.getCookies ? await service.getCookies(fetchUrl, { timeout: maxTimeout, retries }).catch(() => null) : null;
+        return {
+            status: Number(html?.status) || 200,
+            text: typeof html?.html === 'string' ? html.html : '',
+            finalUrl: normalizeRemoteUrl(html?.finalUrl || fetchUrl),
+            userAgent: cookies?.userAgent || html?.userAgent || options.userAgent || null,
+            cookies: cookies?.cookieHeader || ''
         };
-        if (waitInSeconds) payload.waitInSeconds = waitInSeconds;
-
-        const response = await client.post(endpoint, payload, {
-            timeout: maxTimeout + 7_000,
-            validateStatus: () => true
-        });
-        const status = Number(response?.status || 0);
-        if (status && status >= 400) {
-            if (host && isFlareIpBanError(response)) {
-                flareHostBanCooldown.set(host, Date.now() + FLARE_HOST_BAN_COOLDOWN_MS);
-                uprotDebug('warn', 'flare reports cloudflare ip-ban; cooldown set', { host, cooldownMs: FLARE_HOST_BAN_COOLDOWN_MS, status });
-            }
-            return null;
+    } catch (error) {
+        if (host && isCloudflareBypassIpBanError(error)) {
+            cloudflareBypassHostCooldown.set(host, Date.now() + CLOUDFLARE_BYPASS_HOST_COOLDOWN_MS);
+            uprotDebug('warn', 'cloudflare-bypass reports ip-ban; cooldown set', { host, cooldownMs: CLOUDFLARE_BYPASS_HOST_COOLDOWN_MS });
         }
-        return extractFlareSolution(response);
-    } catch (_) {
         return null;
     }
 }
@@ -829,7 +792,7 @@ async function parseUprotLandingText(client, targetUrl, text, options = {}, via 
             streamUrl: directStream,
             playerUrl: targetUrl,
             sourceUrl: targetUrl,
-            via: via === 'uprot-flare' ? 'uprot-flare-direct' : 'uprot-direct'
+            via: via === 'uprot-cloudflare-bypass' ? 'uprot-cloudflare-bypass-direct' : 'uprot-direct'
         };
     }
 
@@ -862,10 +825,10 @@ async function resolveLanding(client, targetUrl, options = {}) {
         if (parsed) return parsed;
     }
 
-    const flare = await fetchWithFlareSolverr(targetUrl, options);
-    if (!flare?.text) return null;
+    const bypass = await fetchWithCloudflareBypass(targetUrl, options);
+    if (!bypass?.text) return null;
 
-    const flareClient = {
+    const bypassClient = {
         ...client,
         async head(url, requestOptions = {}) {
             if (client && typeof client.head === 'function') return client.head(url, requestOptions);
@@ -878,12 +841,12 @@ async function resolveLanding(client, targetUrl, options = {}) {
             return { status: 0, data: '' };
         }
     };
-    return parseUprotLandingText(flareClient, flare.finalUrl || targetUrl, flare.text, {
+    return parseUprotLandingText(bypassClient, bypass.finalUrl || targetUrl, bypass.text, {
         ...options,
-        userAgent: flare.userAgent || options.userAgent,
+        userAgent: bypass.userAgent || options.userAgent,
         requestReferer: targetUrl,
         referer: targetUrl
-    }, 'uprot-flare');
+    }, 'uprot-cloudflare-bypass');
 }
 
 
@@ -1383,24 +1346,24 @@ async function requestUprotBootstrapPage(client, bootstrapUrl, headers, options 
 
     // Direct fetches did not yield a captcha image (typical when uprot/uproat
     // serves the small URL-Encrypter placeholder or sits behind Cloudflare).
-    // Fall back to FlareSolverr to fetch the real captcha page so MammaMia-style
+    // Fall back to CloudflareBypass to fetch the real captcha page so MammaMia-style
     // auto-state generation can complete without human help.
-    if (flareEnabled(options) && getFlareEndpoint(options)) {
-        const flare = await fetchWithFlareSolverr(bootstrapUrl, options);
-        if (flare?.text && hasCaptchaCandidate(flare.text, flare.finalUrl || bootstrapUrl)) {
-            uprotDebug('info', 'auto-state bootstrap rescued via FlareSolverr', {
+    if (cloudflareBypassEnabled(options) && getCloudflareBypassEndpoint(options)) {
+        const bypass = await fetchWithCloudflareBypass(bootstrapUrl, options);
+        if (bypass?.text && hasCaptchaCandidate(bypass.text, bypass.finalUrl || bootstrapUrl)) {
+            uprotDebug('info', 'auto-state bootstrap rescued via CloudflareBypass', {
                 bootstrapHost: safeHost(bootstrapUrl),
                 bootstrapPath: safePathForUprot(bootstrapUrl),
-                bytes: String(flare.text || '').length
+                bytes: String(bypass.text || '').length
             });
-            const flareCookies = String(flare.cookies || '').trim();
-            const flareResponse = flareCookies ? { headers: { 'set-cookie': flareCookies.split(/;\s*/).filter(Boolean) } } : null;
+            const bypassCookies = String(bypass.cookies || '').trim();
+            const bypassResponse = bypassCookies ? { headers: { 'set-cookie': bypassCookies.split(/;\s*/).filter(Boolean) } } : null;
             return {
-                status: Number(flare.status) || 200,
-                text: flare.text,
-                response: flareResponse,
-                finalUrl: (flare.finalUrl && isUprotUrl(flare.finalUrl)) ? flare.finalUrl : bootstrapUrl,
-                method: 'FLARE'
+                status: Number(bypass.status) || 200,
+                text: bypass.text,
+                response: bypassResponse,
+                finalUrl: (bypass.finalUrl && isUprotUrl(bypass.finalUrl)) ? bypass.finalUrl : bootstrapUrl,
+                method: 'CLOUDFLARE_BYPASS'
             };
         }
     }
@@ -1413,7 +1376,7 @@ async function generateUprotAutoState(client, targetUrl, options = {}) {
     if (!client || typeof client.post !== 'function') return null;
 
     // Cap the number of bootstrap candidates we try per attempt. Each candidate
-    // costs ~5-7s when going via FlareSolverr; with the previous 8+ candidates
+    // costs ~5-7s when going via CloudflareBypass; with the previous 8+ candidates
     // the loop blew through Eurostreaming's 22s parent timeout long before any
     // useful response arrived. 2 is enough to cover /e/ (preferred) + /mse/
     // (fallback) and still leave room for the circuit breaker to fire fast.
@@ -1714,13 +1677,13 @@ async function resolveUprotToMaxstream(client, url, options = {}) {
         uprotDebug('warn', 'resolve short-circuited by ocr circuit breaker', {
             targetHost: safeHost(targetUrl),
             cooldownRemainingMs: Math.max(0, uprotCircuit.openUntil - Date.now()),
-            hint: 'open /uprot to seed state manually, or change FlareSolverr/proxy egress'
+            hint: 'open /uprot to seed state manually, or change CloudflareBypass/proxy egress'
         });
         return null;
     }
 
     if (isMsfiUrl(targetUrl)) {
-        uprotDebug('info', 'resolve start', { path: 'msfi', stateReady, autoState: uprotAutoStateEnabled(options), flareEnabled: flareEnabled(options), targetHost: safeHost(targetUrl) });
+        uprotDebug('info', 'resolve start', { path: 'msfi', stateReady, autoState: uprotAutoStateEnabled(options), cloudflareBypassEnabled: cloudflareBypassEnabled(options), targetHost: safeHost(targetUrl) });
         if (!stateReady) {
             const generated = await ensureUprotAutoState(client, targetUrl, activeOptions);
             if (generated?.playerUrl) return { playerUrl: generated.playerUrl, sourceUrl: generated.sourceUrl || targetUrl, via: 'uprot-auto-captcha' };
@@ -1743,7 +1706,7 @@ async function resolveUprotToMaxstream(client, url, options = {}) {
             if (landing) return landing;
         }
         const fallback = stateReady ? null : await resolveMsfi(client, targetUrl, activeOptions);
-        if (!fallback) uprotDebug('warn', 'resolve returned null', { path: 'msfi', stateReady, autoState: uprotAutoStateEnabled(options), flareEnabled: flareEnabled(options) });
+        if (!fallback) uprotDebug('warn', 'resolve returned null', { path: 'msfi', stateReady, autoState: uprotAutoStateEnabled(options), cloudflareBypassEnabled: cloudflareBypassEnabled(options) });
         return fallback;
     }
 
@@ -1831,7 +1794,7 @@ async function extractUprot(url, options = {}) {
 
 module.exports = {
     extractContinueLink,
-    fetchWithFlareSolverr,
+    fetchWithCloudflareBypass,
     loadUprotState,
     prepareUprotManualChallenge,
     submitUprotManualChallenge,

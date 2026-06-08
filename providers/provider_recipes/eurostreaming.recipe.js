@@ -23,7 +23,7 @@ module.exports = webProviderRecipe({
         resolverPolicy: 'mfp-uprot-first'
     },
     antiBot: {
-        mode: 'flaresolverr-compatible',
+        mode: 'cloudflare-bypass-compatible',
         proxy: 'mfp-for-hosters',
         sessionReuse: true
     },

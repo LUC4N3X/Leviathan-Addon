@@ -259,7 +259,7 @@ function createProviderHttpGuard(options = {}) {
 
   const clearanceManager = createCfClearanceManager({
     providerName,
-    endpoint: options.flareEndpoint || process.env.FLARESOLVERR_URL,
+    endpoint: options.cloudflareBypassEndpoint || options.bypassEndpoint || options.flareEndpoint || process.env.CF_BYPASS_URL || process.env.CLOUDFLARE_BYPASS_URL,
     sessionTtlMs,
     cooldownMs: options.clearanceCooldownMs || 8000,
     cooldownMaxEntries: options.clearanceCooldownMaxEntries,
@@ -296,7 +296,7 @@ function createProviderHttpGuard(options = {}) {
       delete persistedSession.solutionResponseUrl;
       delete persistedSession.solutionResponseStatus;
       saveSession(persistedSession);
-      persistRedisSession(persistedSession, activeSession.solvedUrl || activeSession.url || currentBaseUrl, 'flaresolverr');
+      persistRedisSession(persistedSession, activeSession.solvedUrl || activeSession.url || currentBaseUrl, 'cloudflare-bypass');
       if (activeSession.url) updateCurrentDomainFromUrl(activeSession.url);
     }
   });
@@ -401,7 +401,7 @@ function createProviderHttpGuard(options = {}) {
     // A timeout/502/socket reset after a valid cf_clearance is usually a transport hiccup
     // or an overloaded Rust/Axios bridge, not proof that the CF cookie is invalid.
     // Clearing here causes the next candidate URL to start with hasSession:false and may
-    // waste the remaining provider budget solving FlareSolverr again. Challenge HTML is
+    // waste the remaining provider budget solving CloudflareBypass again. Challenge HTML is
     // still handled inside fetchWithSession(), where the session is invalidated correctly.
     if (!clearSessionOnTransportFailure) {
       logger.debug('session kept after transport failure', meta);
@@ -829,7 +829,7 @@ function createProviderHttpGuard(options = {}) {
         headers,
         allowCurlCffi: true,
         allowScrapling: false,
-        allowFlareSolverr: false,
+        allowCloudflareBypass: false,
         triggerUrl,
         reason,
         sharedKey,
@@ -1193,14 +1193,14 @@ function createProviderHttpGuard(options = {}) {
     return solveClearance(targetUrl, { isPost, body, signal, force, ignoreProviderCooldown });
   }
 
-  async function executeSmartFetch(url, isPost = false, body = null, signal = null, allowFlareSolverr = true, timeoutMs = directFetchTimeoutMs) {
+  async function executeSmartFetch(url, isPost = false, body = null, signal = null, allowCloudflareBypass = true, timeoutMs = directFetchTimeoutMs) {
     const startedAt = Date.now();
     const method = isPost ? 'POST' : 'GET';
     const hardFetchTimeout = Math.max(2500, Math.min(timeoutMs, directFetchTimeoutMs));
     await hydrateRedisSessionForUrl(url, 'fetch-start');
     const hadFreshSessionAtStart = isSessionFreshForUrl(activeSession, url);
     let sessionFailureDetected = false;
-    logger.debug('fetch start', { method, url, hasSession: hadFreshSessionAtStart, allowClearance: allowFlareSolverr, timeoutMs: hardFetchTimeout });
+    logger.debug('fetch start', { method, url, hasSession: hadFreshSessionAtStart, allowClearance: allowCloudflareBypass, timeoutMs: hardFetchTimeout });
 
     if (hadFreshSessionAtStart) {
       try {
@@ -1225,8 +1225,8 @@ function createProviderHttpGuard(options = {}) {
 
     const canEmergencyClearance = emergencyClearanceAfterSessionFailure && clearanceManager.endpoint && hadFreshSessionAtStart && sessionFailureDetected;
     const emergencyCoolingDown = canEmergencyClearance && lastEmergencyClearanceAt && (Date.now() - lastEmergencyClearanceAt < emergencyClearanceMinIntervalMs);
-    if (!allowFlareSolverr && canEmergencyClearance && !emergencyCoolingDown && !signal?.aborted) {
-      allowFlareSolverr = true;
+    if (!allowCloudflareBypass && canEmergencyClearance && !emergencyCoolingDown && !signal?.aborted) {
+      allowCloudflareBypass = true;
       lastEmergencyClearanceAt = Date.now();
       logger.info('emergency clearance enabled after stale session failure', {
         method,
@@ -1234,11 +1234,11 @@ function createProviderHttpGuard(options = {}) {
         reason: 'session_failed_then_direct_blocked',
         ms: Date.now() - startedAt
       });
-    } else if (!allowFlareSolverr && canEmergencyClearance && emergencyCoolingDown) {
+    } else if (!allowCloudflareBypass && canEmergencyClearance && emergencyCoolingDown) {
       logger.debug('emergency clearance skipped by cooldown', { method, url, cooldownMs: emergencyClearanceMinIntervalMs, ms: Date.now() - startedAt });
     }
 
-    if (!allowFlareSolverr || signal?.aborted) return null;
+    if (!allowCloudflareBypass || signal?.aborted) return null;
 
     const session = await solveClearance(url, { isPost, body, signal, force: clearanceForce });
     if (!isSessionFreshForUrl(session, url)) {
@@ -1277,7 +1277,7 @@ function createProviderHttpGuard(options = {}) {
     return null;
   }
 
-  async function smartFetch(url, { isPost = false, body = null, ttl = 30 * 60 * 1000, signal = null, allowFlareSolverr = true, timeoutMs = directFetchTimeoutMs } = {}) {
+  async function smartFetch(url, { isPost = false, body = null, ttl = 30 * 60 * 1000, signal = null, allowCloudflareBypass = true, timeoutMs = directFetchTimeoutMs } = {}) {
     const cacheKey = `${isPost ? 'POST' : 'GET'}:${url}:${body || ''}`;
     const cached = requestCache.get(cacheKey);
 
@@ -1285,7 +1285,7 @@ function createProviderHttpGuard(options = {}) {
       const now = Date.now();
       if (now < cached.expires) return cached.data;
       if (cached.stale && now < cached.stale && !pendingRequests.has(cacheKey)) {
-        setImmediate(() => smartFetch(url, { isPost, body, ttl, signal, allowFlareSolverr, timeoutMs }).catch(() => {}));
+        setImmediate(() => smartFetch(url, { isPost, body, ttl, signal, allowCloudflareBypass, timeoutMs }).catch(() => {}));
         return cached.data;
       }
       requestCache.delete(cacheKey);
@@ -1293,7 +1293,7 @@ function createProviderHttpGuard(options = {}) {
 
     if (pendingRequests.has(cacheKey)) return pendingRequests.get(cacheKey);
 
-    const fetchPromise = executeSmartFetch(url, isPost, body, signal, allowFlareSolverr, timeoutMs)
+    const fetchPromise = executeSmartFetch(url, isPost, body, signal, allowCloudflareBypass, timeoutMs)
       .then(html => {
         if (html) {
           requestCache.set(cacheKey, {
@@ -1426,6 +1426,7 @@ function createProviderHttpGuard(options = {}) {
       http3: impitHttp3,
       sessionFastPath: impitSessionFastPath,
       preClearanceRescue: impitPreClearanceRescue,
+      cloudflareBypassEndpoints: clearanceManager.endpoints?.length || 0,
       flareEndpoints: clearanceManager.endpoints?.length || 0,
       cookieJarV2: true,
       curlCffiBeforeFlare,

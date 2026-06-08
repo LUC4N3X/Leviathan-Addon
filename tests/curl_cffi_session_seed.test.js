@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createCloudflareBypass } = require('../providers/utils/cloudflare_bypass');
 
-test('curl_cffi is seeded with hydrated FlareSolverr/Redis session cookies', async () => {
+test('curl_cffi is seeded with hydrated CloudflareBypass/Redis session cookies', async () => {
   let session = null;
   const runnerCalls = [];
 
@@ -13,7 +13,7 @@ test('curl_cffi is seeded with hydrated FlareSolverr/Redis session cookies', asy
       assert.equal(url, 'https://guardoserie.run/movie/apex/');
       assert.equal(reason, 'curl-cffi-seed');
       session = {
-        source: 'flaresolverr',
+        source: 'cloudflare-bypass',
         userAgent: 'Mozilla/5.0 Test Chrome/138.0.0.0 Safari/537.36',
         cookies: 'cf_clearance=abc123; guardoserie_sid=sid456',
         url: 'https://guardoserie.run',

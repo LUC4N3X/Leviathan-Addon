@@ -878,7 +878,7 @@ function createCloudflareBypass(options = {}) {
         body: null,
         timeoutMs: preOptions.timeoutMs || preOptions.timeout || envNumber(`${envPrefix}_CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS`, envNumber('CURL_CFFI_BEFORE_FLARE_TIMEOUT_MS', CURL_CFFI_DEFAULTS.beforeFlareTimeoutMs, 1000, 15000), 1000, 15000),
         headers: preOptions.headers || {},
-        allowFlareSolverr: false,
+        allowCloudflareBypass: false,
         allowScrapling: false,
         allowCurlCffi: true,
         curlCffiCoalesceKey: preOptions.curlCffiCoalesceKey || preOptions.sharedKey || `${providerName}:pre-flare`
@@ -1099,7 +1099,7 @@ function createCloudflareBypass(options = {}) {
           hasCookie: Boolean(sessionCookie || sessionCookieItems.length),
           cookieCount: sessionCookieItems.length || undefined,
           hasUserAgent: Boolean(sessionUa),
-          source: session.source || session.solver || (session.curlCffi ? 'curl_cffi' : 'flaresolverr')
+          source: session.source || session.solver || (session.curlCffi ? 'curl_cffi' : 'cloudflare-bypass')
         });
       }
     }
@@ -1145,7 +1145,7 @@ function createCloudflareBypass(options = {}) {
 
   function shouldAttemptScrapling(url, fetchOptions = {}) {
     if (!scraplingEnabled || fetchOptions.allowScrapling === false) return false;
-    if (fetchOptions.allowFlareSolverr === false && fetchOptions.allowScrapling !== true) return false;
+    if (fetchOptions.allowCloudflareBypass === false && fetchOptions.allowScrapling !== true) return false;
     if (!isSameSiteUrl(url, baseUrl) || !isHtmlLikeUrl(url)) return false;
     return true;
   }
@@ -1170,7 +1170,7 @@ function createCloudflareBypass(options = {}) {
     const isPost = Boolean(fetchOptions.isPost || fetchOptions.method === 'POST');
     const body = fetchOptions.body ?? fetchOptions.data ?? null;
     const timeoutMs = fetchOptions.timeoutMs || fetchOptions.timeout || guard.directFetchTimeoutMs;
-    const allowFlareSolverr = fetchOptions.allowFlareSolverr !== false;
+    const allowCloudflareBypass = fetchOptions.allowCloudflareBypass !== false;
     const ttl = fetchOptions.ttl || 10 * 60 * 1000;
 
     if (!isPost) {
@@ -1306,7 +1306,7 @@ function createCloudflareBypass(options = {}) {
       }
     }
 
-    if (shouldAttemptScrapling(url, { ...fetchOptions, allowFlareSolverr })) {
+    if (shouldAttemptScrapling(url, { ...fetchOptions, allowCloudflareBypass })) {
       try {
         const session = await runScrapling(url, {
           ...fetchOptions,
@@ -1348,7 +1348,7 @@ function createCloudflareBypass(options = {}) {
           isPost,
           body,
           ttl,
-          allowFlareSolverr,
+          allowCloudflareBypass,
           timeoutMs
         });
         const guardUseful = isUsefulHtml(html, html ? 200 : 0);

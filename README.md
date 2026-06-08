@@ -207,7 +207,7 @@ In practice:
 
 Leviathan can share Cloudflare clearances, cookie jars, and browser fingerprints between the API, workers, and multiple instances through Redis.
 
-When a provider requires FlareSolverr, the first process that encounters the challenge acquires a temporary lock. Other processes wait for the shared session instead of opening duplicate solves.
+When a provider requires CloudflareBypassForScraping, the first process that encounters the challenge acquires a temporary lock. Other processes wait for the shared session instead of opening duplicate solves.
 
 This reduces Chromium load, timeouts, and ban risk in deployments with multiple workers or containers.
 
@@ -255,7 +255,7 @@ FORWARD_PROXY=https://your-kraken-instance.example/forward
 ```
 
 > [!IMPORTANT]
-> FlareSolverr is not always the best answer. When Chromium is blocked or custom headers are ignored, the most reliable path may be Kraken Forward / curl_cffi-like transport.
+> CloudflareBypassForScraping is now the browser-based Cloudflare layer. When a full browser solve is too heavy, Kraken Forward / curl_cffi-like transport remains the faster first path.
 
 ---
 

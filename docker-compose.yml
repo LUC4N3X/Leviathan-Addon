@@ -135,10 +135,14 @@ services:
       RUST_SHIELD_FAIL_OPEN: "true"
       RUST_SHIELD_CACHE_ENABLED: "false"
 
-      FLARESOLVERR_URL: "http://flaresolverr:8191/v1"
-      FLARESOLVERR_URLS: "http://flaresolverr:8191/v1"
+      CLOUDFLARE_BYPASS_URL: "http://cloudflare-bypass:8000"
+      CLOUDFLARE_BYPASS_URLS: "http://cloudflare-bypass:8000"
+      CF_BYPASS_URL: "http://cloudflare-bypass:8000"
+      CF_BYPASS_URLS: "http://cloudflare-bypass:8000"
 
-      GUARDOSERIE_FLARE_ENABLED: "${GUARDOSERIE_API_FLARE_ENABLED:-true}"
+      GUARDOSERIE_FLARE_ENABLED: "${GUARDOSERIE_API_FLARE_ENABLED:-false}"
+      GUARDOSERIE_BACKGROUND_OWNER_ROLE: "${GUARDOSERIE_BACKGROUND_OWNER_ROLE:-worker}"
+      GUARDOSERIE_API_CLEARANCE_FALLBACK: "${GUARDOSERIE_API_CLEARANCE_FALLBACK:-false}"
       CINEMACITY_BACKGROUND_CLEARANCE: "${CINEMACITY_API_BACKGROUND_CLEARANCE:-false}"
 
       CINEMACITY_RUST_SHIELD: "false"
@@ -197,7 +201,9 @@ services:
       MEDIAFLOW_API_PASSWORD: "${MEDIAFLOW_API_PASSWORD:-}"
 
       EUROSTREAMING_DELTABIT_MFP_FALLBACK: "${EUROSTREAMING_DELTABIT_MFP_FALLBACK:-false}"
-      EUROSTREAMING_UPROT_FLARE_ENABLED: "${EUROSTREAMING_UPROT_FLARE_ENABLED:-false}"
+      UPROT_CLOUDFLARE_BYPASS_ENABLED: "${UPROT_CLOUDFLARE_BYPASS_ENABLED:-true}"
+      EUROSTREAMING_UPROT_CLOUDFLARE_BYPASS_ENABLED: "${EUROSTREAMING_UPROT_CLOUDFLARE_BYPASS_ENABLED:-true}"
+      UPROT_CLOUDFLARE_BYPASS_URL: "${UPROT_CLOUDFLARE_BYPASS_URL:-http://cloudflare-bypass:8000}"
 
       CB01_BASE_URL: "${CB01_BASE_URL:-https://cb01uno.bar}"
       CB01_DEBUG: "${CB01_DEBUG:-0}"
@@ -228,6 +234,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      cloudflare-bypass:
+        condition: service_started
 
     stop_grace_period: 20s
 
@@ -323,10 +331,14 @@ services:
 
       TMDB_API_KEY: "${TMDB_API_KEY:-}"
 
-      FLARESOLVERR_URL: "http://flaresolverr:8191/v1"
-      FLARESOLVERR_URLS: "http://flaresolverr:8191/v1"
+      CLOUDFLARE_BYPASS_URL: "http://cloudflare-bypass:8000"
+      CLOUDFLARE_BYPASS_URLS: "http://cloudflare-bypass:8000"
+      CF_BYPASS_URL: "http://cloudflare-bypass:8000"
+      CF_BYPASS_URLS: "http://cloudflare-bypass:8000"
 
       GUARDOSERIE_FLARE_ENABLED: "${GUARDOSERIE_WORKER_FLARE_ENABLED:-true}"
+      GUARDOSERIE_BACKGROUND_OWNER_ROLE: "${GUARDOSERIE_BACKGROUND_OWNER_ROLE:-worker}"
+      GUARDOSERIE_API_CLEARANCE_FALLBACK: "${GUARDOSERIE_API_CLEARANCE_FALLBACK:-false}"
       CINEMACITY_BACKGROUND_CLEARANCE: "${CINEMACITY_WORKER_BACKGROUND_CLEARANCE:-true}"
       CINEMACITY_BACKGROUND_CLEARANCE_DELAY_MS: "${CINEMACITY_WORKER_BACKGROUND_CLEARANCE_DELAY_MS:-20000}"
       CINEMACITY_BACKGROUND_PRIME_HOME: "${CINEMACITY_WORKER_BACKGROUND_PRIME_HOME:-false}"
@@ -335,6 +347,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      cloudflare-bypass:
+        condition: service_started
 
     mem_limit: ${LEVIATHAN_WORKER_MEM_LIMIT:-420m}
     memswap_limit: ${LEVIATHAN_WORKER_MEMSWAP_LIMIT:-520m}
@@ -394,24 +408,25 @@ services:
         max-file: "2"
 
 
-  flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
-    container_name: flaresolverr
+  cloudflare-bypass:
+    image: ghcr.io/sarperavci/cloudflarebypassforscraping:latest
+    container_name: cloudflare-bypass
     restart: unless-stopped
     init: true
 
     environment:
-      LOG_LEVEL: "info"
-      LOG_HTML: "false"
-      CAPTCHA_SOLVER: "none"
+      WORKERS: "${CLOUDFLARE_BYPASS_WORKERS:-1}"
       TZ: "Europe/Rome"
-      BROWSER_TIMEOUT: "60000"
-      MALLOC_ARENA_MAX: "2"
+      PYTHONUNBUFFERED: "1"
 
     ports:
-      - "8191:8191"
+      - "${CLOUDFLARE_BYPASS_PORT:-8008}:8000"
 
-    shm_size: "1g"
+    shm_size: "${CLOUDFLARE_BYPASS_SHM_SIZE:-512m}"
+    mem_limit: ${CLOUDFLARE_BYPASS_MEM_LIMIT:-1400m}
+    memswap_limit: ${CLOUDFLARE_BYPASS_MEMSWAP_LIMIT:-1800m}
+    cpus: "${CLOUDFLARE_BYPASS_CPUS:-1.0}"
+    pids_limit: 512
 
     security_opt:
       - no-new-privileges:true
@@ -434,34 +449,18 @@ services:
         - |
           python - <<'PY'
           import sys
-          import json
           import urllib.request
 
           try:
-              payload = json.dumps({"cmd": "sessions.list"}).encode("utf-8")
-              req = urllib.request.Request(
-                  "http://127.0.0.1:8191/v1",
-                  data=payload,
-                  headers={"Content-Type": "application/json"},
-                  method="POST",
-              )
-
-              with urllib.request.urlopen(req, timeout=10) as res:
-                  body = res.read(4096).decode("utf-8", "ignore")
-
-              if '"status": "ok"' not in body and '"status":"ok"' not in body:
-                  print("FlareSolverr API not ok")
-                  sys.exit(1)
-
-              sys.exit(0)
-
+              with urllib.request.urlopen("http://127.0.0.1:8000/cache/stats", timeout=10) as res:
+                  sys.exit(0 if 200 <= res.status < 500 else 1)
           except Exception as exc:
-              print(f"FlareSolverr API check failed: {exc}")
+              print(f"CloudflareBypass health check failed: {exc}")
               sys.exit(1)
           PY
       interval: 30s
       timeout: 15s
-      retries: 3
+      retries: 5
       start_period: 90s
 
 

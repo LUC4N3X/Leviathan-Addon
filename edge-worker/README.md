@@ -32,7 +32,7 @@ In practice, users of the public instance already get the gateway benefits when 
 
 ## What it does NOT do
 
-- it does not replace FlareSolverr;
+- it does not replace the local CloudflareBypassForScraping service;
 - it does not solve Cloudflare challenges from providers;
 - it does not scrape;
 - it should not proxy heavy `.ts`, `.m4s`, or `.m3u8` segments;
