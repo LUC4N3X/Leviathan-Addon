@@ -15,6 +15,7 @@ const {
 const { createCfClearanceManager, normalizeBaseUrl, mergeCookieHeaders, buildCookieHeaderFromSession, mergeSessionCookies } = require('./cf_clearance_manager');
 const { createRustShieldClient } = require('./rust_shield_client');
 const { cfRedisStore } = require('./cf_redis_store');
+const { envNumber, runWithBypassTrafficGuard } = require('./bypass_traffic_guard');
 
 class LRUCache {
   constructor(maxSize) {
@@ -172,6 +173,14 @@ function createProviderHttpGuard(options = {}) {
     process.env.HTTP_PROXY ||
     'direct'
   ).trim() || 'direct';
+  const siteTrafficGuardOptions = {
+    kind: 'site',
+    providerName,
+    egressKey: clearanceEgressKey,
+    minIntervalMs: Number.isFinite(Number(options.siteRateLimitMinIntervalMs)) ? Number(options.siteRateLimitMinIntervalMs) : envNumber('BYPASS_SITE_MIN_INTERVAL_MS', 250, 0, 120000),
+    maxConcurrency: Number.isFinite(Number(options.siteRateLimitMaxConcurrency)) ? Number(options.siteRateLimitMaxConcurrency) : envNumber('BYPASS_SITE_MAX_CONCURRENCY', 2, 1, 16),
+    maxQueue: Number.isFinite(Number(options.siteRateLimitMaxQueue)) ? Number(options.siteRateLimitMaxQueue) : envNumber('BYPASS_SITE_MAX_QUEUE', 300, 0, 5000)
+  };
   const providerEnvPrefix = String(providerName || 'provider').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'PROVIDER';
   const curlCffiPreClearance = typeof options.curlCffiPreClearance === 'function' ? options.curlCffiPreClearance : null;
   const curlCffiBeforeFlare = Boolean(curlCffiPreClearance)
@@ -1204,7 +1213,10 @@ function createProviderHttpGuard(options = {}) {
 
     if (hadFreshSessionAtStart) {
       try {
-        const html = await fetchWithSession(url, { method, body, signal, timeout: hardFetchTimeout, startedAt });
+        const html = await runWithBypassTrafficGuard(url, () => fetchWithSession(url, { method, body, signal, timeout: hardFetchTimeout, startedAt }), {
+          ...siteTrafficGuardOptions,
+          signal
+        });
         if (html) return html;
         sessionFailureDetected = true;
       } catch (error) {
@@ -1216,7 +1228,10 @@ function createProviderHttpGuard(options = {}) {
     }
 
     try {
-      const html = await fetchDirectFast(url, { method, body, signal, timeout: hardFetchTimeout, startedAt });
+      const html = await runWithBypassTrafficGuard(url, () => fetchDirectFast(url, { method, body, signal, timeout: hardFetchTimeout, startedAt }), {
+        ...siteTrafficGuardOptions,
+        signal
+      });
       if (html) return html;
     } catch (error) {
       if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
@@ -1257,12 +1272,15 @@ function createProviderHttpGuard(options = {}) {
     }
 
     try {
-      const html = await fetchWithSession(url, {
+      const html = await runWithBypassTrafficGuard(url, () => fetchWithSession(url, {
         method,
         body,
         signal,
         timeout: Math.max(hardFetchTimeout, postClearanceReplayTimeoutMs),
         startedAt
+      }), {
+        ...siteTrafficGuardOptions,
+        signal
       });
       if (html) {
         logger.info('post-clearance fetch ok', { method, url, transport: 'session-fastpath', sessionFresh: isSessionFreshForUrl(activeSession, url), ms: Date.now() - startedAt });

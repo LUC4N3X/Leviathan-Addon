@@ -209,7 +209,9 @@ Leviathan can share Cloudflare clearances, cookie jars, and browser fingerprints
 
 When a provider requires CloudflareBypassForScraping, the first process that encounters the challenge acquires a temporary lock. Other processes wait for the shared session instead of opening duplicate solves.
 
-This reduces Chromium load, timeouts, and ban risk in deployments with multiple workers or containers.
+After a clearance is available, Leviathan also applies a shared traffic guard to protected providers: identical requests are coalesced, hot pages can be served from short-lived cache, and per-domain pacing prevents hundreds of users from triggering hundreds of live scrapes at once.
+
+This reduces browser load, origin pressure, timeouts, and ban risk in deployments with multiple workers or containers.
 
 Main variables:
 
