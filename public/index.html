@@ -334,6 +334,12 @@
             transition: all 0.3s ease !important;
         }
 
+        .cyber-select {
+            appearance: none !important;
+            -webkit-appearance: none !important;
+            -moz-appearance: none !important;
+        }
+
         .custom-input:focus, .mf-input:focus, .cyber-select:focus {
             border-color: rgba(38, 223, 251, 0.45) !important;
             background: rgba(5, 11, 28, 0.9) !important;
@@ -645,90 +651,252 @@
         .protocol-deck {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 16px;
+            gap: 18px;
             width: 100%;
         }
 
         .protocol-card {
             position: relative;
-            background: linear-gradient(180deg, rgba(14, 22, 44, 0.65) 0%, rgba(6, 10, 24, 0.85) 100%);
+            background: linear-gradient(180deg, rgba(8, 14, 32, 0.75) 0%, rgba(3, 7, 18, 0.93) 100%);
             border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 20px;
+            border-radius: 24px;
             padding: 24px 20px;
             cursor: pointer;
-            transition: all 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
             overflow: hidden;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
+            box-shadow: 0 12px 30px -15px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.05);
         }
 
         .protocol-card::before {
             content: '';
             position: absolute;
             inset: 0;
-            background: radial-gradient(circle at 50% 0%, var(--proto-glow), transparent 65%);
+            background-image: 
+                radial-gradient(circle at 50% 0%, var(--proto-glow) 0%, transparent 70%),
+                linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+            background-size: 100% 100%, 16px 16px, 16px 16px;
             opacity: 0;
-            transition: opacity 0.35s ease;
+            transition: opacity 0.4s ease;
             pointer-events: none;
         }
 
         .protocol-card::after {
             content: '';
             position: absolute;
-            left: 0; right: 0; top: 0; height: 3px;
+            left: 50%;
+            right: 50%;
+            top: 0;
+            height: 3px;
             background: var(--proto-color);
-            opacity: 0;
-            transition: opacity 0.35s ease, box-shadow 0.35s ease;
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            border-radius: 0 0 4px 4px;
         }
 
         .protocol-card:hover {
-            transform: translateY(-4px);
+            transform: translateY(-5px);
             border-color: rgba(255, 255, 255, 0.12);
-            box-shadow: 0 15px 35px -10px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.8), 0 0 15px color-mix(in srgb, var(--proto-color) 8%, transparent);
+        }
+
+        .protocol-card:hover::before {
+            opacity: 0.15;
+        }
+
+        .protocol-card:hover::after {
+            left: 20%;
+            right: 20%;
+            box-shadow: 0 0 10px var(--proto-color);
         }
 
         .protocol-card.active {
             border-color: var(--proto-color-semi) !important;
-            background: linear-gradient(180deg, rgba(14, 22, 44, 0.85) 0%, rgba(3, 5, 12, 0.95) 100%) !important;
-            box-shadow: 0 20px 40px -15px var(--proto-glow-heavy), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+            background: linear-gradient(180deg, rgba(10, 20, 42, 0.9) 0%, rgba(2, 5, 12, 0.98) 100%) !important;
+            box-shadow: 0 25px 45px -15px var(--proto-glow-heavy), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
         }
 
         .protocol-card.active::before {
-            opacity: 0.15;
+            opacity: 0.4;
         }
 
         .protocol-card.active::after {
-            opacity: 1;
-            box-shadow: 0 0 15px var(--proto-color);
+            left: 0;
+            right: 0;
+            box-shadow: 0 0 20px var(--proto-color), 0 0 8px var(--proto-color);
         }
 
         .protocol-card .proto-indicator {
-            width: 8px;
-            height: 8px;
+            width: 6px;
+            height: 6px;
             border-radius: 50%;
             background: #475569;
-            transition: all 0.3s ease;
-            box-shadow: none;
+            transition: all 0.4s ease;
+            position: relative;
+            z-index: 2;
         }
 
         .protocol-card.active .proto-indicator {
             background: var(--proto-color-bright);
-            box-shadow: 0 0 10px var(--proto-color);
+            box-shadow: 0 0 10px var(--proto-color-bright);
+        }
+
+        .proto-indicator-ring {
+            position: absolute;
+            inset: -4px;
+            border-radius: 50%;
+            border: 1.5px solid var(--proto-color-semi);
+            opacity: 0;
+            transform: scale(0.6);
+            transition: all 0.4s ease;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .protocol-card.active .proto-indicator-ring {
+            opacity: 1;
+            transform: scale(1);
+            animation: indicatorPulse 2.5s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+        }
+
+        @keyframes indicatorPulse {
+            0% { transform: scale(0.6); opacity: 1; }
+            100% { transform: scale(1.8); opacity: 0; }
+        }
+
+        .proto-icon-frame {
+            width: 52px;
+            height: 52px;
+            border-radius: 16px;
+            background: rgba(3, 8, 20, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            position: relative;
+            overflow: hidden;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+        }
+
+        .proto-icon-frame::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle, var(--proto-glow) 0%, transparent 70%);
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+
+        .protocol-card:hover .proto-icon-frame {
+            border-color: rgba(255, 255, 255, 0.15);
+            background: rgba(3, 8, 20, 0.5);
+            transform: translateY(-2px) scale(1.03);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 6px 15px rgba(0, 0, 0, 0.5);
+        }
+
+        .protocol-card:hover .proto-icon-frame::before {
+            opacity: 0.3;
+        }
+
+        .protocol-card.active .proto-icon-frame {
+            border-color: var(--proto-color-semi);
+            background: color-mix(in srgb, var(--proto-color) 10%, rgba(3, 8, 20, 0.9));
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 15px var(--proto-glow);
+        }
+
+        .protocol-card.active .proto-icon-frame::before {
+            opacity: 0.6;
         }
 
         .protocol-card .proto-icon {
-            font-size: 2.2rem;
-            transition: transform 0.3s ease;
-            filter: drop-shadow(0 0 8px rgba(0,0,0,0.5));
+            font-size: 1.8rem;
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            filter: drop-shadow(0 4px 6px rgba(0,0,0,0.5));
+            z-index: 2;
         }
 
         .protocol-card:hover .proto-icon {
-            transform: scale(1.08) rotate(2deg);
+            transform: scale(1.1) rotate(4deg);
         }
 
         .protocol-card.active .proto-icon {
-            filter: drop-shadow(0 0 12px var(--proto-color-bright));
+            transform: scale(1.15);
+            filter: drop-shadow(0 0 10px var(--proto-color-bright)) drop-shadow(0 4px 6px rgba(0,0,0,0.5));
+        }
+
+        .proto-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 8px;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            background: color-mix(in srgb, var(--proto-color) 8%, rgba(3, 8, 20, 0.8));
+            border: 1px solid color-mix(in srgb, var(--proto-color) 20%, rgba(255, 255, 255, 0.03));
+            color: color-mix(in srgb, var(--proto-color) 85%, #ffffff);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02), 0 2px 4px rgba(0,0,0,0.3);
+            margin-top: 10px;
+            width: fit-content;
+        }
+
+        .proto-badge span {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background-color: var(--proto-color-bright);
+            box-shadow: 0 0 6px var(--proto-color-bright);
+        }
+
+        .input-icon-left {
+            position: absolute;
+            left: 18px;
+            color: #475569;
+            font-size: 1.1rem;
+            transition: all 0.3s ease;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+
+        #apiKey, #tmdbKey {
+            padding-left: 52px !important;
+            transition: all 0.3s ease !important;
+        }
+
+        .custom-input:focus {
+            border-color: var(--primary) !important;
+            background: rgba(3, 8, 24, 0.85) !important;
+            box-shadow: 0 0 25px color-mix(in srgb, var(--primary) 20%, transparent) !important;
+        }
+
+        .custom-input:focus ~ .input-icon-left {
+            color: var(--primary) !important;
+            filter: drop-shadow(0 0 8px var(--primary));
+        }
+
+        .btn-copy i {
+            color: var(--primary);
+            transition: all 0.3s ease;
+        }
+
+        .btn-copy:hover {
+            border-color: var(--primary) !important;
+            background: color-mix(in srgb, var(--primary) 8%, transparent) !important;
+            box-shadow: 0 0 15px color-mix(in srgb, var(--primary) 25%, transparent) !important;
+            color: #ffffff !important;
+        }
+
+        .btn-copy:hover i {
+            color: var(--primary) !important;
+            filter: drop-shadow(0 0 6px var(--primary));
         }
 
         @media (max-width: 640px) {
@@ -825,66 +993,95 @@
                         <div class="protocol-card active" id="proto_rd" onclick="selectService('rd')" style="--proto-color: #26dffb; --proto-glow: rgba(38, 223, 251, 0.25); --proto-glow-heavy: rgba(38, 223, 251, 0.35); --proto-color-semi: rgba(38, 223, 251, 0.5); --proto-color-bright: #26dffb;">
                             <div class="flex justify-between items-center w-full mb-3">
                                 <span class="text-[10px] font-mono tracking-wider text-slate-400">SAT-LINK RD</span>
-                                <span class="proto-indicator"></span>
+                                <div class="relative flex items-center justify-center w-4 h-4">
+                                    <span class="proto-indicator-ring"></span>
+                                    <span class="proto-indicator"></span>
+                                </div>
                             </div>
-                            <div class="proto-icon mb-4">🐬</div>
-                            <div class="text-left">
-                                <div class="text-white font-bold text-base tracking-wide uppercase font-mono">Real-Debrid</div>
-                                <div class="text-[10px] text-cyan-400/80 font-mono mt-1">SPEED: LIGHTSPEED</div>
+                            <div class="proto-icon-frame mb-4">
+                                <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/1f42c.svg" class="proto-icon w-8 h-8 object-contain" alt="Dolphin">
+                            </div>
+                            <div class="text-left flex flex-col">
+                                <span class="text-white font-bold text-base tracking-wide uppercase font-mono">Real-Debrid</span>
+                                <div class="proto-badge">
+                                    <span class="animate-pulse"></span> SPEED: LIGHTSPEED
+                                </div>
                             </div>
                         </div>
 
                         <div class="protocol-card" id="proto_tb" onclick="selectService('tb')" style="--proto-color: #9b6cff; --proto-glow: rgba(155, 108, 255, 0.25); --proto-glow-heavy: rgba(155, 108, 255, 0.35); --proto-color-semi: rgba(155, 108, 255, 0.5); --proto-color-bright: #9b6cff;">
                             <div class="flex justify-between items-center w-full mb-3">
                                 <span class="text-[10px] font-mono tracking-wider text-slate-400">SAT-LINK TB</span>
-                                <span class="proto-indicator"></span>
+                                <div class="relative flex items-center justify-center w-4 h-4">
+                                    <span class="proto-indicator-ring"></span>
+                                    <span class="proto-indicator"></span>
+                                </div>
                             </div>
-                            <div class="proto-icon mb-4">⚓</div>
-                            <div class="text-left">
-                                <div class="text-white font-bold text-base tracking-wide uppercase font-mono">TorBox</div>
-                                <div class="text-[10px] text-purple-400/80 font-mono mt-1">SEEDING: HYBRID</div>
+                            <div class="proto-icon-frame mb-4">
+                                <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/2693.svg" class="proto-icon w-8 h-8 object-contain" alt="Anchor">
+                            </div>
+                            <div class="text-left flex flex-col">
+                                <span class="text-white font-bold text-base tracking-wide uppercase font-mono">TorBox</span>
+                                <div class="proto-badge">
+                                    <span class="animate-pulse"></span> SEEDING: HYBRID
+                                </div>
                             </div>
                         </div>
 
                         <div class="protocol-card" id="proto_p2p" onclick="selectService('p2p')" style="--proto-color: #fb923c; --proto-glow: rgba(249, 115, 22, 0.25); --proto-glow-heavy: rgba(249, 115, 22, 0.35); --proto-color-semi: rgba(249, 115, 22, 0.5); --proto-color-bright: #fb923c;">
                             <div class="flex justify-between items-center w-full mb-3">
                                 <span class="text-[10px] font-mono tracking-wider text-slate-400">DIRECT P2P</span>
-                                <span class="proto-indicator"></span>
+                                <div class="relative flex items-center justify-center w-4 h-4">
+                                    <span class="proto-indicator-ring"></span>
+                                    <span class="proto-indicator"></span>
+                                </div>
                             </div>
-                            <div class="proto-icon mb-4">🦈</div>
-                            <div class="text-left">
-                                <div class="text-white font-bold text-base tracking-wide uppercase font-mono">P2P Mode</div>
-                                <div class="text-[10px] text-amber-500/80 font-mono mt-1">WARNING: EXPOSED IP</div>
+                            <div class="proto-icon-frame mb-4">
+                                <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/1f988.svg" class="proto-icon w-8 h-8 object-contain" alt="Shark">
+                            </div>
+                            <div class="text-left flex flex-col">
+                                <span class="text-white font-bold text-base tracking-wide uppercase font-mono">P2P Mode</span>
+                                <div class="proto-badge">
+                                    <span class="animate-pulse"></span> WARNING: EXPOSED IP
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <div class="input-group mb-6 relative">
-                        <div class="relative">
+                        <div class="relative flex items-center w-full">
                             <input type="text" id="apiKey" class="custom-input w-full py-4 px-5 pr-40 text-cyan-300 placeholder-slate-500 font-mono text-base shadow-inner" placeholder="INSERIRE CHIAVE DEBRID..." oninput="handleApiKeyInput(this)">
+                            <div class="input-icon-left">
+                                <i class="fas fa-shield-alt"></i>
+                            </div>
                             <a href="https://real-debrid.com/apitoken" target="_blank" id="apiLink" class="btn-copy absolute right-2 top-2 bottom-2 px-4 flex items-center text-xs font-bold uppercase gap-2 rounded-xl">
-                                <i class="fas fa-key text-cyan-400"></i> PRELEVA KEY
+                                <i class="fas fa-key"></i> PRELEVA KEY
                             </a>
                         </div>
                         <span class="error-msg text-rose-500 text-xs mt-1 hidden">⚠️ Chiave mancante</span>
-                        <div id="debridValidationStatus" class="debrid-status idle mt-3 flex items-center gap-3 p-3 border border-white/5 rounded-xl bg-black/40">
-                            <span class="debrid-status-dot w-2.5 h-2.5 rounded-full bg-slate-500"></span>
-                            <span id="debridValidationText" class="text-xs text-slate-400">Verifica live disponibile per Real-Debrid e TorBox.</span>
+                        <div id="debridValidationStatus" class="debrid-status idle mt-3 flex items-center gap-3 p-3.5 border border-white/5 rounded-xl bg-slate-950/40 backdrop-blur-md">
+                            <div class="relative flex items-center justify-center">
+                                <span class="debrid-status-dot w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+                            </div>
+                            <span id="debridValidationText" class="text-xs text-slate-400 font-mono tracking-wide">Verifica live disponibile per Real-Debrid e TorBox.</span>
                         </div>
                     </div>
 
                     <div class="input-group mb-8 relative">
-                        <div class="relative">
+                        <div class="relative flex items-center w-full">
                             <input type="text" id="tmdbKey" class="custom-input w-full py-4 px-5 pr-40 text-cyan-300 placeholder-slate-500 font-mono text-base shadow-inner" placeholder="CHIAVE TMDB (OPZIONALE)" oninput="clearError(this); updateFluxStream()">
+                            <div class="input-icon-left">
+                                <i class="fas fa-database"></i>
+                            </div>
                             <a href="https://www.themoviedb.org/settings/api" target="_blank" class="btn-copy absolute right-2 top-2 bottom-2 px-4 flex items-center text-xs font-bold uppercase gap-2 rounded-xl">
-                                <i class="fas fa-database text-cyan-400"></i> PRELEVA KEY
+                                <i class="fas fa-key"></i> PRELEVA KEY
                             </a>
                         </div>
                     </div>
 
                     <div class="module-box p-6 bg-black/40 border border-white/5 rounded-2xl flex-grow" id="webModule">
                         <div class="module-label text-xs uppercase tracking-widest text-[#26dffb] font-bold font-mono mb-6 flex items-center gap-2">
-                            <span class="w-1.5 h-1.5 rounded-full bg-[#26dffb] animate-ping"></span> SCANDAGLIATORE ABISSALE // SORGENTI WEB
+                            <span class="w-1.5 h-1.5 rounded-full bg-[#26dffb] animate-ping"></span> CONFIGURAZIONE // SORGENTI WEB
                         </div>
                         
                         <div class="control-row p-4 mb-3 flex justify-between items-center" style="--lev-color: #7000ff; --lev-glow: rgba(112,0,255,0.45);">
@@ -1372,21 +1569,26 @@
                 </div>
             </div>
 
-            <div class="footer-hub mt-20 pt-8 border-t border-cyan-400/10 flex flex-col items-center gap-6 relative">
+            <div class="footer-hub mt-24 pt-10 border-t border-cyan-400/10 flex flex-col items-center gap-6 relative">
                 <div class="hub-grid w-full flex justify-center">
-                    <a href="https://github.com/LUC4N3X/stremio-leviathan-addon" target="_blank" class="hub-card cmd-card flex items-center gap-4 py-4 px-8 border border-white/5 rounded-2xl bg-black/30 hover:border-cyan-400/20 hover:bg-black/40 transition-all shadow-xl">
-                        <div class="cmd-visual relative w-[58px] h-[58px]">
-                            <img src="https://i.ibb.co/gLkrjxXT/Whats-App-Image-2026-01-12-at-20-15-37.jpg" alt="LUC4N3X" class="cmd-img w-full h-full rounded-full border-2 border-cyan-400/40 object-cover">
-                            <div class="git-badge absolute -bottom-1 -right-1 w-6 h-6 flex items-center justify-center bg-gradient-to-tr from-cyan-400 to-indigo-500 text-white rounded-full text-[10px] border border-black shadow-lg"><i class="fab fa-github"></i></div>
+                    <a href="https://github.com/LUC4N3X/stremio-leviathan-addon" target="_blank" class="hub-card cmd-card flex items-center gap-5 py-4 px-8 border border-white/5 rounded-2xl bg-black/40 hover:border-cyan-400/30 hover:bg-slate-950/60 transition-all duration-300 shadow-[0_15px_35px_-15px_rgba(0,0,0,0.8)] relative overflow-hidden group">
+                        <div class="absolute inset-0 bg-gradient-to-r from-cyan-500/5 via-indigo-500/5 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                        <div class="cmd-visual relative w-[62px] h-[62px] flex-shrink-0">
+                            <div class="absolute inset-0 rounded-full bg-gradient-to-tr from-cyan-400 to-indigo-500 blur-sm opacity-30 group-hover:opacity-100 transition-opacity duration-300"></div>
+                            <img src="https://avatars.githubusercontent.com/LUC4N3X" alt="LUC4N3X" class="cmd-img w-full h-full rounded-full border border-cyan-400/40 object-cover relative z-10 transition-transform duration-500 group-hover:scale-105">
+                            <div class="git-badge absolute -bottom-1 -right-1 w-6 h-6 flex items-center justify-center bg-slate-950 text-slate-300 rounded-full text-[11px] border border-cyan-400/30 shadow-lg z-20 transition-colors group-hover:text-cyan-400 group-hover:border-cyan-400/60"><i class="fab fa-github"></i></div>
                         </div>
-                        <div class="cmd-data flex flex-col">
-                            <span class="cmd-role text-[9px] uppercase tracking-widest text-[#a3b6dd]/70 font-mono font-bold">Sottomarino Amministratore</span>
-                            <span class="cmd-nick text-lg font-bold text-white tracking-wider font-mono">LUC4N3X</span>
+                        <div class="cmd-data flex flex-col relative z-10">
+                            <span class="cmd-role text-[9px] uppercase tracking-widest text-cyan-400/80 font-mono font-bold flex items-center gap-1.5">
+                                <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span> PROJECT LEADER &amp; CORE ARCHITECT
+                            </span>
+                            <span class="cmd-nick text-xl font-extrabold text-white tracking-wide font-mono mt-1 group-hover:text-cyan-300 transition-colors">LUC4N3X</span>
+                            <span class="text-[10px] text-slate-400 mt-1 font-mono">EXPLORE REPOSITORY &bull; OPEN-SOURCE CONTRIBUTION</span>
                         </div>
                     </a>
                 </div>
 
-                <div class="signature text-[10px] uppercase tracking-widest text-slate-500 font-mono">
+                <div class="signature text-[9px] uppercase tracking-[0.2em] text-slate-500 font-mono">
                     Codice forgiato negli abissi oceanici &bull; 2026
                 </div>
             </div>
