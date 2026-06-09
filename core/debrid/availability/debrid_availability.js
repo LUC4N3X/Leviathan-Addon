@@ -363,7 +363,7 @@ function deriveDbRdAvailability(row = {}) {
             state: 'likely_cached',
             cached: null,
             stale: true,
-            needsLiveVerification: true
+            needsLiveVerification: false
         };
     }
 
