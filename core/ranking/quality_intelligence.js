@@ -80,7 +80,8 @@ function detectResolution(text = '', item = {}) {
     if (/\b(?:2160p|4k|uhd)\b/i.test(raw)) return '2160p';
     if (/\b(?:1440p|qhd|2k)\b/i.test(raw)) return '1440p';
     if (/\b(?:1080p|1080i|fhd|full\s*hd)\b/i.test(raw)) return '1080p';
-    if (/\b(?:720p|hd)\b/i.test(raw)) return '720p';
+    if (/\b720p\b/i.test(raw)) return '720p';
+    if (/\b(?:hdtv|hd[-.\s]?rip)\b/i.test(raw)) return '720p';
     if (/\b(?:576p|480p|sd)\b/i.test(raw)) return '480p';
     return 'unknown';
 }
