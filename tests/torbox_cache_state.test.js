@@ -93,3 +93,10 @@ test('TorBox cache-state normalization maps display states without mixing verifi
   assert.equal(toRdCacheState(TB_CACHE_STATES.UNCERTAIN), 'probing');
   assert.equal(toRdCacheState(TB_CACHE_STATES.ERROR), 'unknown');
 });
+
+test('TorBox max mode uses full documented checkcached batches by default', () => {
+  const tuning = TorboxAvailabilityCache.__private.getRuntimeTuning();
+
+  assert.equal(tuning.chunkSize, 100);
+  assert.ok(tuning.maxConcurrency >= 6);
+});

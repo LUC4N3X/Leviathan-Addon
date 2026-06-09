@@ -13,12 +13,12 @@ const { matchTorboxFile, getFileId: getMatchedFileId, getFileName: getMatchedFil
 
 const TB_BASE_URL = "https://api.torbox.app/v1/api";
 
-const CHUNK_SIZE = 40;
+const CHUNK_SIZE = Math.max(1, Math.min(100, parseInt(process.env.TB_CACHE_CHUNK_SIZE || '100', 10) || 100));
 const API_TIMEOUT = 14000;
 const MAX_RETRIES = 4;
 const RETRY_DELAY_BASE = 1600;
-const MAX_CONCURRENCY = Math.max(1, Math.min(8, parseInt(process.env.TB_CACHE_MAX_CONCURRENCY || '5', 10) || 5));
-const DEFAULT_SYNC_LIMIT = 20;
+const MAX_CONCURRENCY = Math.max(1, Math.min(12, parseInt(process.env.TB_CACHE_MAX_CONCURRENCY || '8', 10) || 8));
+const DEFAULT_SYNC_LIMIT = Math.max(20, Math.min(300, parseInt(process.env.TB_CACHE_SYNC_LIMIT || '100', 10) || 100));
 const MIN_VIDEO_SIZE = 50 * 1024 * 1024;
 const LOCAL_AVAILABILITY_MAX_ENTRIES = Math.max(500, Math.min(50000, parseInt(process.env.TB_LOCAL_AVAILABILITY_MAX_ENTRIES || process.env.LOCAL_AVAILABILITY_MAX_ENTRIES || '2500', 10) || 2500));
 const UNCACHED_TTL_SECONDS = Math.max(
@@ -824,6 +824,15 @@ async function checkHashes(entries, token) {
   return runInBatches(chunks, token);
 }
 
+function getRuntimeTuning() {
+  return {
+    chunkSize: CHUNK_SIZE,
+    maxConcurrency: MAX_CONCURRENCY,
+    defaultSyncLimit: DEFAULT_SYNC_LIMIT,
+    apiTimeout: API_TIMEOUT
+  };
+}
+
 function buildDbUpdate(hash, apiRes, meta = null) {
   const state = normalizeTbCacheState(
     apiRes?.state || apiRes?.cache_state || apiRes?.tb_cache_state || (apiRes?.cached === true ? TB_CACHE_STATES.CACHED_VERIFIED : (apiRes?.cached === false ? TB_CACHE_STATES.UNCACHED : TB_CACHE_STATES.UNCERTAIN))
@@ -927,6 +936,7 @@ module.exports = {
     getAvailabilityCacheKey,
     buildAvailabilityPayload,
     cacheResultFromPayload,
+    getRuntimeTuning,
     normalizeTbCacheState,
     TB_CACHE_STATES
   }

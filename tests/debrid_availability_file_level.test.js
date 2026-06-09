@@ -63,6 +63,34 @@ test('RD availability payload stores file-level and episode proof metadata', () 
   assert.equal(payload.episode, 5);
 });
 
+test('RD strict-fast treats DB positives without a fresh recheck as verification hints', () => {
+  const missingRecheck = __private.deriveDbRdAvailability({
+    cached_rd: true,
+    rd_cache_state: 'cached',
+    next_cached_check: null
+  });
+  const staleRecheck = __private.deriveDbRdAvailability({
+    cached_rd: true,
+    rd_cache_state: 'cached',
+    next_cached_check: new Date(Date.now() - 60_000).toISOString()
+  });
+  const freshRecheck = __private.deriveDbRdAvailability({
+    cached_rd: true,
+    rd_cache_state: 'cached',
+    next_cached_check: new Date(Date.now() + 60 * 60_000).toISOString()
+  });
+
+  assert.equal(missingRecheck.state, 'likely_cached');
+  assert.equal(missingRecheck.cached, null);
+  assert.equal(missingRecheck.needsLiveVerification, true);
+  assert.equal(staleRecheck.state, 'likely_cached');
+  assert.equal(staleRecheck.cached, null);
+  assert.equal(staleRecheck.needsLiveVerification, true);
+  assert.equal(freshRecheck.state, 'cached');
+  assert.equal(freshRecheck.cached, true);
+  assert.equal(freshRecheck.needsLiveVerification, false);
+});
+
 test('TorBox DB cache is only a hint until a foreground live check confirms it', () => {
   const tools = makeTools();
 

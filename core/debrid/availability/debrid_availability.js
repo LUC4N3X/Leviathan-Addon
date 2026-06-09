@@ -14,11 +14,12 @@ const CacheFederation = require('./cache_federation');
 
 const LOCAL_DB_CACHE_TTL = 25;
 const RD_PRIORITY_DEDUP_MS = 15000;
-const RD_FOREGROUND_VISIBLE_WINDOW = 9;
-const RD_FOREGROUND_CACHE_LIMIT = 9;
-const RD_FOREGROUND_MIN_KNOWN = 4;
-const RD_FOREGROUND_FALLBACK_PROBE_LIMIT = 3;
-const RD_FOREGROUND_EXACT_LIMIT = 4;
+const RD_FOREGROUND_VISIBLE_WINDOW = clampEnvInt('RD_FOREGROUND_VISIBLE_WINDOW', 9, 1, 120);
+const RD_FOREGROUND_CACHE_LIMIT = clampEnvInt('RD_FOREGROUND_CACHE_LIMIT', 9, 1, 120);
+const RD_FOREGROUND_MIN_KNOWN = clampEnvInt('RD_FOREGROUND_MIN_KNOWN', 4, 1, 120);
+const RD_FOREGROUND_FALLBACK_PROBE_LIMIT = clampEnvInt('RD_FOREGROUND_FALLBACK_PROBE_LIMIT', 3, 0, 120);
+const RD_FOREGROUND_EXACT_LIMIT = clampEnvInt('RD_FOREGROUND_EXACT_LIMIT', 4, 0, 40);
+const RD_FOREGROUND_PROBE_DEADLINE_MS = clampEnvInt('RD_FOREGROUND_PROBE_DEADLINE_MS', 3500, 0, 60000);
 const RD_PRIORITY_TOP = 18;
 const RD_PRIORITY_WINDOW_MIN = 5;
 const RD_HIDE_DUBIOUS_WHEN_ENOUGH_SAFE = true;
@@ -39,6 +40,22 @@ const localDebridCheckMarkers = new Map();
 const VALID_RD_STATES = new Set(['cached', 'likely_cached', 'probing', 'likely_uncached', 'uncached_terminal', 'unknown']);
 const TERMINAL_RD_NEGATIVE_STATUSES = new Set(['error', 'magnet_error', 'virus', 'dead']);
 const TRUSTED_RELEASE_GROUP_RE = /\b(rarbg|yts|yify|qxr|ntb|evo|tgx|galaxyrg|vxt|cmrg|tigole|framestor|epsilon|sparks|ctrlhd|flux|playweb|webrip|web-dl|bluray|remux)\b/i;
+
+function clampEnvInt(name, fallback, min, max) {
+    const parsed = Number.parseInt(process.env[name], 10);
+    const value = Number.isFinite(parsed) ? parsed : fallback;
+    return Math.min(max, Math.max(min, value));
+}
+
+function envFlag(name, fallback = false) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return fallback;
+    return /^(1|true|yes|y|on)$/i.test(String(raw).trim());
+}
+
+function isRdStrictFastEnabled() {
+    return envFlag('RD_STRICT_FAST_ENABLED', true);
+}
 
 function normalizeRdStateValue(state) {
     const normalized = String(state || '').trim().toLowerCase();
@@ -334,30 +351,36 @@ function hasHeavyNegativeProtection(item) {
     );
 }
 
-function isPastDueDate(value, skewMs = 15000) {
-    if (!value) return false;
-    const ts = value instanceof Date ? value.getTime() : Date.parse(String(value));
-    return Number.isFinite(ts) && ts <= (Date.now() + skewMs);
-}
-
 function deriveDbRdAvailability(row = {}) {
     const rawState = normalizeRdStateValue(row?.rd_cache_state);
     const cachedBool = row?.cached_rd === true ? true : (row?.cached_rd === false ? false : null);
-    const stalePositive = (cachedBool === true || rawState === 'cached') && isPastDueDate(row?.next_cached_check);
+    const positive = cachedBool === true || rawState === 'cached' || rawState === 'likely_cached';
+    const freshPositive = (cachedBool === true || rawState === 'cached') && isFreshFuture(row?.next_cached_check);
+    const stalePositive = positive && !freshPositive;
 
-    if (stalePositive) {
-
+    if (isRdStrictFastEnabled() && stalePositive) {
         return {
             state: 'likely_cached',
             cached: null,
-            stale: true
+            stale: true,
+            needsLiveVerification: true
+        };
+    }
+
+    if (stalePositive) {
+        return {
+            state: 'likely_cached',
+            cached: null,
+            stale: true,
+            needsLiveVerification: true
         };
     }
 
     return {
         state: rawState || (cachedBool === true ? 'cached' : (cachedBool === false ? 'likely_uncached' : null)),
         cached: cachedBool,
-        stale: false
+        stale: false,
+        needsLiveVerification: false
     };
 }
 
@@ -943,12 +966,34 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                 }
             }
 
-            const { results = {}, deferred = [] } = await LIMITERS.rdResolve.schedule(() =>
+            const probePromise = LIMITERS.rdResolve.schedule(() =>
                 RealDebridProbe.probeAvailabilityFast(unknownCandidates, apiKey, unknownCandidates.length, {
                     exactForeground: true,
                     exactLimit: RD_FOREGROUND_EXACT_LIMIT
                 })
             );
+
+            let timeoutId = null;
+            const deadlineMs = Math.max(0, Number(options.probeDeadlineMs ?? RD_FOREGROUND_PROBE_DEADLINE_MS) || 0);
+            const probeOutcome = deadlineMs > 0
+                ? await Promise.race([
+                    probePromise.then((value) => ({ ...(value || {}), timedOut: false })),
+                    new Promise((resolve) => {
+                        timeoutId = setTimeout(() => resolve({
+                            results: {},
+                            deferred: unknownCandidates,
+                            timedOut: true
+                        }), deadlineMs);
+                    })
+                ]).finally(() => {
+                    if (timeoutId) clearTimeout(timeoutId);
+                })
+                : await probePromise;
+            if (probeOutcome?.timedOut === true) {
+                probePromise.catch(() => {});
+                logger.info(`[RD PROBE] deadline=${deadlineMs}ms reached | deferred=${unknownCandidates.length} | background=on`);
+            }
+            const { results = {}, deferred = [] } = probeOutcome || {};
 
             const dbUpdates = [];
             const packFileInserts = [];
@@ -1292,6 +1337,7 @@ module.exports = {
         getAvailabilityCacheKey,
         getAvailabilityCacheKeys,
         buildAvailabilityCachePayload,
+        deriveDbRdAvailability,
         buildDebridUserHash,
         resolveDebridCheckUserHash,
         isGlobalCacheService,

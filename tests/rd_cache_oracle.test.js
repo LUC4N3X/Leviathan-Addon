@@ -29,6 +29,20 @@ test('series positive hash with exact episode proof is cached', () => {
   assert.equal(state, 'cached');
 });
 
+test('series likely cache with exact episode proof stays likely until live cache verification', () => {
+  const state = Oracle.resolveEffectiveRdState({
+    _dbCachedRd: null,
+    cached_rd: null,
+    _rdCacheState: 'likely_cached',
+    rdCacheState: 'likely_cached',
+    fileIdx: 12,
+    _episodeExact: true,
+    matched_file_index: 12,
+    matched_file_title: 'Example.Show.S01E03.1080p.mkv'
+  }, META);
+  assert.equal(state, 'likely_cached');
+});
+
 test('series positive hash with filename SxxEyy proof is cached', () => {
   const item = {
     _dbCachedRd: true,
