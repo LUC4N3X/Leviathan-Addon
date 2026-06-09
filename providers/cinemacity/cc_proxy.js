@@ -44,6 +44,9 @@ const RESUME_BOOTSTRAP_MIN_OFFSET_BYTES = Math.max(0, Math.min(256 * 1024 * 1024
 const RANGE_RETRY_ATTEMPTS = Math.max(1, Math.min(2, Number.parseInt(process.env.CC_PROXY_RANGE_RETRY_ATTEMPTS || '1', 10) || 1));
 const PLAYBACK_PREWARM_ENABLED = String(process.env.CC_PROXY_PLAYBACK_PREWARM || '1') !== '0';
 const PLAYBACK_PREWARM_TIMEOUT_MS = Math.max(800, Math.min(8000, Number.parseInt(process.env.CC_PROXY_PLAYBACK_PREWARM_TIMEOUT_MS || '2600', 10) || 2600));
+const CC_PROXY_MASTER_FILTER_PATCH = 'ccproxy-master-filter-1080-v1';
+const CC_PROXY_FORCE_QUALITY_ENABLED = String(process.env.CC_PROXY_FORCE_QUALITY || process.env.CC_PROXY_MASTER_FILTER || '1') !== '0';
+const CC_PROXY_FORCE_QUALITY_VALUE = Math.max(360, Math.min(4320, Number.parseInt(process.env.CC_PROXY_FORCE_QUALITY_VALUE || '1080', 10) || 1080));
 const proxyUrlCache = new Map();
 const manifestCache = new Map();
 const smallObjectCache = new Map();
@@ -110,8 +113,7 @@ function getProxySecret() {
             throw writeError;
         }
     } catch (_) {
-        // Last-resort fallback is process-local on purpose: secure enough for playback,
-        // but tokens issued before a restart will expire. Set CC_PROXY_SECRET for multi-instance deployments.
+        
         cachedSecret = PROCESS_FALLBACK_SECRET;
         return cachedSecret;
     }
@@ -317,7 +319,8 @@ function getManifestCacheKey(req, sourceUrl, headers = {}) {
     return sha256Base64Url([
         getRequestBase(req),
         String(sourceUrl || ''),
-        stableStringify(headers || {})
+        stableStringify(headers || {}),
+        CC_PROXY_FORCE_QUALITY_ENABLED ? `q${CC_PROXY_FORCE_QUALITY_VALUE}:${CC_PROXY_MASTER_FILTER_PATCH}` : 'qoff'
     ].join('\n'));
 }
 
@@ -542,6 +545,115 @@ async function readStreamLimited(stream, maxBytes) {
     return Buffer.concat(chunks).toString('utf8');
 }
 
+function isCinemaCityCccdnUrl(value = '') {
+    try {
+        const parsed = new URL(String(value || ''));
+        const host = String(parsed.hostname || '').toLowerCase();
+        const pathName = String(parsed.pathname || '').toLowerCase();
+        return host.includes('cccdn.net') || (pathName.includes('/public_files/') && pathName.includes('.urlset/'));
+    } catch (_) {
+        return /cccdn\.net|\/public_files\/.*\.urlset\//i.test(String(value || ''));
+    }
+}
+
+function getAttributeValue(line = '', name = '') {
+    const pattern = new RegExp(`(?:^|,)${String(name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=("[^"]*"|[^,]*)`, 'i');
+    const match = String(line || '').match(pattern);
+    if (!match) return '';
+    return String(match[1] || '').replace(/^"|"$/g, '').trim();
+}
+
+function inferHlsVariantQuality(streamInfLine = '', uriLine = '') {
+    const resolution = getAttributeValue(streamInfLine, 'RESOLUTION');
+    const resMatch = String(resolution || '').match(/(\d{3,5})\s*x\s*(\d{3,5})/i);
+    if (resMatch) {
+        const width = Number.parseInt(resMatch[1], 10) || 0;
+        const height = Number.parseInt(resMatch[2], 10) || 0;
+        if (width >= 3800 || height >= 2000) return 2160;
+        if (width >= 2500 || height >= 1300) return 1440;
+        if (width >= 1900 || height >= 1000) return 1080;
+        if (width >= 1200 || height >= 650) return 720;
+        if (width >= 900 || height >= 520) return 576;
+        if (width >= 700 || height >= 430) return 480;
+        return height || width || 0;
+    }
+    const qualityMatch = `${streamInfLine} ${uriLine}`.match(/(?:^|[^0-9])(2160|1440|1080|720|576|480|360)p(?:[^0-9]|$)/i);
+    if (qualityMatch) return Number.parseInt(qualityMatch[1], 10) || 0;
+    const bandwidth = Number.parseInt(getAttributeValue(streamInfLine, 'BANDWIDTH') || '0', 10) || 0;
+    if (bandwidth >= 7000000) return 1080;
+    if (bandwidth >= 2500000) return 720;
+    if (bandwidth >= 1200000) return 480;
+    return 0;
+}
+
+function filterCinemaCityMasterManifest(manifestText, sourceUrl = '') {
+    const body = String(manifestText || '');
+    if (!CC_PROXY_FORCE_QUALITY_ENABLED || !isCinemaCityCccdnUrl(sourceUrl) || !body.includes('#EXT-X-STREAM-INF')) {
+        return { body, changed: false };
+    }
+
+    const lines = body.replace(/\r\n/g, '\n').split('\n');
+    const variants = [];
+
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = String(lines[i] || '').trim();
+        if (!line.startsWith('#EXT-X-STREAM-INF')) continue;
+        let uriIndex = -1;
+        for (let j = i + 1; j < lines.length; j += 1) {
+            const next = String(lines[j] || '').trim();
+            if (!next) continue;
+            if (next.startsWith('#')) break;
+            uriIndex = j;
+            break;
+        }
+        if (uriIndex < 0) continue;
+        variants.push({
+            streamIndex: i,
+            uriIndex,
+            quality: inferHlsVariantQuality(lines[i], lines[uriIndex]),
+            bandwidth: Number.parseInt(getAttributeValue(lines[i], 'BANDWIDTH') || '0', 10) || 0,
+            uri: String(lines[uriIndex] || '').trim()
+        });
+    }
+
+    if (variants.length <= 1) return { body, changed: false, variantsBefore: variants.length };
+
+    const exact = variants
+        .filter((variant) => variant.quality === CC_PROXY_FORCE_QUALITY_VALUE)
+        .sort((a, b) => (b.bandwidth || 0) - (a.bandwidth || 0))[0];
+    const selected = exact || variants
+        .slice()
+        .sort((a, b) => (b.quality || 0) - (a.quality || 0) || (b.bandwidth || 0) - (a.bandwidth || 0))[0];
+
+    if (!selected) return { body, changed: false, variantsBefore: variants.length };
+
+    const keep = new Set([selected.streamIndex, selected.uriIndex]);
+    const drop = new Set();
+    for (const variant of variants) {
+        if (variant === selected) continue;
+        drop.add(variant.streamIndex);
+        drop.add(variant.uriIndex);
+    }
+
+    const filtered = [];
+    for (let i = 0; i < lines.length; i += 1) {
+        if (drop.has(i) && !keep.has(i)) continue;
+        filtered.push(lines[i]);
+    }
+
+    const result = filtered.join('\n');
+    return {
+        body: result.endsWith('\n') ? result : `${result}\n`,
+        changed: true,
+        patch: CC_PROXY_MASTER_FILTER_PATCH,
+        selectedQuality: selected.quality || 0,
+        selectedUri: selected.uri,
+        variantsBefore: variants.length,
+        variantsAfter: 1,
+        removed: Math.max(0, variants.length - 1)
+    };
+}
+
 function rewriteDirectiveUri(line, baseUrl, req, headers) {
     const requestBase = getRequestBase(req);
     return String(line || '').replace(/URI=("([^"]*)"|'([^']*)'|([^,\s]+))/ig, (full, rawValue, doubleQuoted, singleQuoted, bareValue) => {
@@ -689,12 +801,10 @@ function shouldFastPipeWithoutSniff({ req, upstream, sourceUrl, contentType }) {
     const hasRange = Boolean(req?.headers?.range);
     const type = String(contentType || '').toLowerCase();
 
-    // A 206 response already proves the upstream accepted the seek Range. Do not
-    // wait for an anti-block sniff here: this is the hot path when the user jumps ahead.
+    
     if (status === 206 && hasRange) return true;
 
-    // Fast-start non-range media only when upstream explicitly says media/octet-stream.
-    // HTML/challenge pages keep the sniff path.
+    
     if (status === 200 && !hasRange && isKnownMediaUrl(sourceUrl) && isMediaContentType(type) && !type.includes('text/html')) return true;
 
     return false;
@@ -720,8 +830,7 @@ function getAgentForUrl(sourceUrl) {
 }
 
 function tunePlaybackSockets(req, res) {
-    // Stremio seeks generate many short-lived Range requests. Disabling Nagle on both
-    // sockets reduces the small latency spikes between headers, first bytes and aborts.
+    
     try { req?.socket?.setNoDelay?.(true); } catch (_) {}
     try { res?.socket?.setNoDelay?.(true); } catch (_) {}
 }
@@ -973,7 +1082,11 @@ async function getRewrittenManifestEntry({ req, sourceUrl, headers, signal }) {
                 error.code = 'INVALID_MANIFEST';
                 throw error;
             }
-            const rewritten = rewriteManifest(manifestText, sourceUrl, req, headers);
+            const filtered = filterCinemaCityMasterManifest(manifestText, sourceUrl);
+            if (filtered.changed) {
+                console.log(`[CinemaCity] ccproxy.master_filter | patch=${filtered.patch} | desired=${CC_PROXY_FORCE_QUALITY_VALUE} | selected=${filtered.selectedQuality} | variants_before=${filtered.variantsBefore} | variants_after=${filtered.variantsAfter} | removed=${filtered.removed} | uri=${String(filtered.selectedUri || '').slice(0, 180)}`);
+            }
+            const rewritten = rewriteManifest(filtered.body, sourceUrl, req, headers);
             return setCachedManifest(manifestKey, rewritten, upstream.headers || {});
         });
 
@@ -1139,7 +1252,7 @@ function prewarmCinemaCityPlayback(streamUrl, headers = {}, reqHost = null, opti
             });
             destroyUpstreamQuietly(upstream);
         } catch (_) {
-            // Best-effort only: playback must never wait for warmup.
+            
         } finally {
             clearTimeout(timer);
         }
@@ -1156,7 +1269,8 @@ module.exports = {
     handleCinemaCityProxy,
     __private: {
         buildCinemaCityForwardProxyUrl,
-        buildForwardHeaderParams
+        buildForwardHeaderParams,
+        filterCinemaCityMasterManifest
     }
 };
 
