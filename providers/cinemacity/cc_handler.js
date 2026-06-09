@@ -120,7 +120,7 @@ async function fetchWithTimeout(url, options = {}) {
 
 const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
 
-function base64Decode(str) {
+function decodeB64Utf8(str) {
     try {
         if (typeof atob === 'function') {
             return decodeURIComponent(escape(atob(str)));
@@ -155,13 +155,13 @@ function base64Decode(str) {
     }
 }
 
-const BASE_URL = getProviderDomain('cinemacity', base64Decode('aHR0cHM6Ly9jaW5lbWFjaXR5LmNj'));
+const BASE_URL = getProviderDomain('cinemacity', decodeB64Utf8('aHR0cHM6Ly9jaW5lbWFjaXR5LmNj'));
 const USER_AGENT = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 const FETCH_TIMEOUT = 10000;
 const TMDB_API_KEY = '68e094699525b18a70bab2f86b1fa706';
 const SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
 const SITEMAP_CACHE_MS = 60 * 60 * 1000;
-const WORKER_HOST = base64Decode('Y2MubGVhbmhodTA2MTIwNi53b3JrZXJzLmRldg==');
+const WORKER_HOST = decodeB64Utf8('Y2MubGVhbmhodTA2MTIwNi53b3JrZXJzLmRldg==');
 const PROVIDER_LABEL = 'CinemaCity';
 const PROVIDER_CODE = 'CC';
 const EXTRACTOR_LABEL = 'CCCDN';
@@ -170,31 +170,33 @@ const DEFAULT_STREAM_HEADERS = Object.freeze({
     Origin: BASE_URL,
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
 });
+const AUTH_COOKIE_ENV_NAMES = Object.freeze(['CINEMACITY_AUTH_COOKIE', 'CC_AUTH_COOKIE']);
+const AUTH_COOKIE_B64_ENV_NAMES = Object.freeze(['CINEMACITY_AUTH_COOKIE_B64', 'CC_AUTH_COOKIE_B64']);
 
 let sitemapCache = null;
 
-function getMappingApiUrl() {
+function mappingServiceBaseUrl() {
     return 'https://anime.questoleviatanormio.dpdns.org';
 }
 
-function normalizeConfigBoolean(value) {
+function isEnabledConfigValue(value) {
     if (value === true) return true;
     const normalized = String(value || '').trim().toLowerCase();
     return ['1', 'true', 'yes', 'on', 'enabled', 'checked'].includes(normalized);
 }
 
-function getMappingLanguage(providerContext = null) {
+function mappingLocaleFromContext(providerContext = null) {
     const explicit = String(providerContext?.mappingLanguage || '').trim().toLowerCase();
     if (explicit === 'it') return 'it';
-    return normalizeConfigBoolean(providerContext?.easyCatalogsLangIt) ? 'it' : null;
+    return isEnabledConfigValue(providerContext?.easyCatalogsLangIt) ? 'it' : null;
 }
 
-async function fetchViaWorker(url) {
+async function fetchWithCinemaCityWorker(url) {
     const path = url.startsWith('http') ? new URL(url).pathname + new URL(url).search : url;
     const targetUrl = (`https://${WORKER_HOST}`).replace(/\/+$/, '') + (path.startsWith('/') ? path : `/${path}`);
     const response = await fetchWithTimeout(targetUrl, {
         timeout: FETCH_TIMEOUT,
-        headers: { 'User-Agent': USER_AGENT }
+        headers: withCinemaCityAuthHeaders({ 'User-Agent': USER_AGENT })
     });
     if (!response.ok) throw new Error(`Worker HTTP ${response.status}`);
     return await response.text();
@@ -213,8 +215,49 @@ function isCurlCffiFallbackEnabled() {
     return true;
 }
 
-// A worker page is "usable" when it is a real, non-challenge document. Mirrors the
-// inline checks getCinemaCityStreams already performs, so behaviour stays identical.
+function firstConfiguredEnv(names = []) {
+    for (const name of names) {
+        const value = String(process.env[name] || '').trim();
+        if (value) return value;
+    }
+    return '';
+}
+
+function decodeConfiguredBase64(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+        return Buffer.from(raw, 'base64').toString('utf8');
+    } catch (_) {
+        return '';
+    }
+}
+
+function cleanCookieHeader(value) {
+    return String(value || '')
+        .split(';')
+        .map((part) => part.trim())
+        .filter((part) => /^[^=;\s]+=[^;]*$/.test(part))
+        .join('; ');
+}
+
+function getCinemaCityAuthCookie() {
+    const direct = cleanCookieHeader(firstConfiguredEnv(AUTH_COOKIE_ENV_NAMES));
+    if (direct) return direct;
+    return cleanCookieHeader(decodeConfiguredBase64(firstConfiguredEnv(AUTH_COOKIE_B64_ENV_NAMES)));
+}
+
+function withCinemaCityAuthHeaders(headers = {}) {
+    const out = { ...(headers || {}) };
+    const authCookie = getCinemaCityAuthCookie();
+    if (!authCookie) return out;
+
+    const cookieKey = Object.keys(out).find((name) => String(name).toLowerCase() === 'cookie') || 'Cookie';
+    const existing = cleanCookieHeader(out[cookieKey]);
+    out[cookieKey] = existing ? `${existing}; ${authCookie}` : authCookie;
+    return out;
+}
+
 function isUsableCinemaCityHtml(html) {
     const text = String(html || '');
     if (text.length < 500) return false;
@@ -231,19 +274,16 @@ function isUsableCurlCffiResult(result) {
     return isUsableCinemaCityHtml(result.html);
 }
 
-// Direct-to-origin fetch using the shared curl_cffi (browser TLS impersonation)
-// infra — the same runner gs_handler uses. Throws when the fallback is unavailable
-// or returns an unusable page, so callers can keep the worker as source of truth.
 async function fetchViaCurlCffi(url, options = {}) {
     const runner = getCurlCffiRunner();
     if (typeof runner !== 'function' || !isCurlCffiFallbackEnabled()) {
         throw new Error('curl_cffi_unavailable');
     }
-    const targetUrl = resolveUrl(BASE_URL, url);
+    const targetUrl = resolveCinemaCityUrl(BASE_URL, url);
     let result;
     try {
         result = await runner(targetUrl, 'cinemacity', {
-            headers: { ...DEFAULT_STREAM_HEADERS, ...(options.headers || {}) },
+            headers: withCinemaCityAuthHeaders({ ...DEFAULT_STREAM_HEADERS, ...(options.headers || {}) }),
             referer: `${BASE_URL}/`,
             timeout: options.timeout || FETCH_TIMEOUT,
             coalesceKey: `cinemacity:${targetUrl}`
@@ -266,7 +306,7 @@ async function fetchCinemaCityHtml(url, options = {}) {
     let workerHtml = null;
     let workerError = null;
     try {
-        workerHtml = await fetchViaWorker(url);
+        workerHtml = await fetchWithCinemaCityWorker(url);
     } catch (error) {
         workerError = error;
     }
@@ -285,90 +325,110 @@ async function fetchCinemaCityHtml(url, options = {}) {
     }
 }
 
-function decodeHtmlEntities(str) {
-    return String(str || '')
-        .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
-        .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-        .replace(/&quot;/g, '"')
-        .replace(/&#039;/g, "'")
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&ndash;|&mdash;/g, '-')
-        .replace(/\u2013|\u2014/g, '-');
+function unescapeCinemaCityText(value) {
+    const named = {
+        amp: '&',
+        lt: '<',
+        gt: '>',
+        quot: '"',
+        '#039': "'",
+        ndash: '-',
+        mdash: '-'
+    };
+    return String(value || '')
+        .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (_, entity) => {
+            const key = String(entity || '').toLowerCase();
+            if (key[0] !== '#') return Object.prototype.hasOwnProperty.call(named, key) ? named[key] : _;
+            const rawCode = key[1] === 'x' ? key.slice(2) : key.slice(1);
+            const code = Number.parseInt(rawCode, key[1] === 'x' ? 16 : 10);
+            return Number.isFinite(code) ? String.fromCodePoint(code) : _;
+        })
+        .replace(/[\u2013\u2014]/g, '-');
 }
 
-function getHttpStatusFromError(error) {
+function statusFromFetchFailure(error) {
     const responseStatus = Number.parseInt(String(error?.response?.status || ''), 10);
     if (Number.isInteger(responseStatus)) return responseStatus;
     const match = String(error && error.message ? error.message : error).match(/HTTP\s+(\d+)/i);
     return match ? Number.parseInt(match[1], 10) : null;
 }
 
-function isCloudflareBlockedError(error) {
+function isChallengeSolverFailure(error) {
     const message = [error?.message, error?.response?.data?.message, error?.response?.data].filter(Boolean).join(' ');
     return /Cloudflare has blocked this request|Error solving the challenge/i.test(message);
 }
 
-function normalizeTitle(value) {
-    return decodeHtmlEntities(String(value || ''))
+function cinemaCityTitleKey(value) {
+    return unescapeCinemaCityText(value)
         .normalize('NFKD')
         .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
         .toLowerCase()
-        .replace(/\([^)]*\)/g, ' ')
-        .replace(/[^a-z0-9]+/g, ' ')
-        .trim();
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean)
+        .join(' ');
 }
 
-function compactTitle(value) {
-    return normalizeTitle(value).replace(/\s+/g, '');
+function cinemaCityCompactKey(value) {
+    return cinemaCityTitleKey(value).split(' ').join('');
 }
 
-function extractYearFromMetadata(metadata) {
-    const date = metadata?.release_date || metadata?.first_air_date || '';
-    const year = Number.parseInt(String(date).slice(0, 4), 10);
-    return Number.isInteger(year) ? year : null;
+function mediaReleaseYear(metadata) {
+    const found = String(metadata?.release_date || metadata?.first_air_date || '').match(/\b(19|20)\d{2}\b/);
+    return found ? Number.parseInt(found[0], 10) : null;
 }
 
-function getSignificantTokens(value) {
-    const stopwords = new Set([
-        'the', 'a', 'an', 'of', 'and', 'in', 'on', 'to', 'for', 'at', 'by', 'is', 'it',
-        'il', 'lo', 'la', 'gli', 'le', 'un', 'uno', 'una', 'di', 'da', 'del', 'della',
-        'dei', 'e', 'o', 'con', 'per', 'su', 'tra', 'fra'
-    ]);
-    return normalizeTitle(value)
-        .split(/\s+/)
-        .filter((token) => token.length > 1 && !stopwords.has(token));
-}
-
-function parseSitemapEntries(xml) {
-    const entries = [];
-    const regex = /<loc>(https:\/\/cinemacity\.cc\/(movies|tv-series|anime)\/\d+-([a-z0-9-]+)\.html)<\/loc>/gi;
-    let match;
-
-    while ((match = regex.exec(String(xml || ''))) !== null) {
-        const url = match[1];
-        const kind = match[2];
-        const slug = match[3];
-        const yearMatch = slug.match(/-(\d{4})$/);
-        const year = yearMatch ? Number.parseInt(yearMatch[1], 10) : null;
-        const titleSlug = yearMatch ? slug.slice(0, -5) : slug;
-        const title = titleSlug.replace(/-/g, ' ');
-        entries.push({
-            url,
-            kind,
-            title,
-            normalizedTitle: normalizeTitle(title),
-            compactTitle: compactTitle(title),
-            tokens: getSignificantTokens(title),
-            year: Number.isInteger(year) ? year : null
-        });
+function titleSignalTokens(value) {
+    const stopwords = new Set('the a an of and in on to for at by is it il lo la gli le un uno una di da del della dei e o con per su tra fra'.split(' '));
+    const out = [];
+    for (const token of cinemaCityTitleKey(value).split(' ')) {
+        if (token.length > 1 && !stopwords.has(token) && !out.includes(token)) out.push(token);
     }
-
-    return entries;
+    return out;
 }
 
-async function fetchSitemapEntries(providerContext = null) {
+function catalogRecordFromUrl(rawUrl) {
+    let parsed;
+    try {
+        parsed = new URL(rawUrl);
+    } catch (_) {
+        return null;
+    }
+    if (!/cinemacity\.cc$/i.test(parsed.hostname)) return null;
+    const match = parsed.pathname.match(/^\/(movies|tv-series|anime)\/\d+-([^/]+)\.html$/i);
+    if (!match) return null;
+
+    const slugParts = match[2].split('-').filter(Boolean);
+    let year = null;
+    const last = slugParts[slugParts.length - 1];
+    if (/^(19|20)\d{2}$/.test(last || '')) {
+        year = Number.parseInt(slugParts.pop(), 10);
+    }
+    const title = slugParts.join(' ');
+    return {
+        url: parsed.toString(),
+        kind: match[1].toLowerCase(),
+        title,
+        normalizedTitle: cinemaCityTitleKey(title),
+        compactTitle: cinemaCityCompactKey(title),
+        tokens: titleSignalTokens(title),
+        year
+    };
+}
+
+function catalogRecordsFromSitemap(xml) {
+    const records = [];
+    const seen = new Set();
+    for (const match of String(xml || '').matchAll(/<loc>\s*([^<]+)\s*<\/loc>/gi)) {
+        const record = catalogRecordFromUrl(unescapeCinemaCityText(match[1]));
+        if (!record || seen.has(record.url)) continue;
+        seen.add(record.url);
+        records.push(record);
+    }
+    return records;
+}
+
+async function loadCinemaCityCatalogSnapshot(providerContext = null) {
     if (sitemapCache && sitemapCache.expiresAt > Date.now()) {
         return sitemapCache.entries;
     }
@@ -383,13 +443,13 @@ async function fetchSitemapEntries(providerContext = null) {
     console.log(`[CinemaCity] Fetching sitemap page 1 via CF Proxy: ${firstPageUrl}`);
     const firstResp = await fetchWithTimeout(firstPageUrl, {
         timeout: FETCH_TIMEOUT,
-        headers: { 'User-Agent': USER_AGENT }
+        headers: withCinemaCityAuthHeaders({ 'User-Agent': USER_AGENT })
     });
 
     if (firstResp.ok) {
         const totalEntries = parseInt(firstResp.headers.get('x-total-entries') || '0', 10);
         const firstXml = await firstResp.text();
-        let allEntries = parseSitemapEntries(firstXml);
+        let allEntries = catalogRecordsFromSitemap(firstXml);
 
         if (totalEntries > 0) {
             const perPage = 500;
@@ -400,10 +460,10 @@ async function fetchSitemapEntries(providerContext = null) {
                     ? `${sitemapProxy.slice(0, -1)}${sitemapPath}?page=${p}&perPage=500`
                     : `${sitemapProxy}${sitemapPath}?page=${p}&perPage=500`;
                 pageFetches.push(
-                    fetchWithTimeout(pageUrl, { timeout: FETCH_TIMEOUT, headers: { 'User-Agent': USER_AGENT } })
+                    fetchWithTimeout(pageUrl, { timeout: FETCH_TIMEOUT, headers: withCinemaCityAuthHeaders({ 'User-Agent': USER_AGENT }) })
                         .then((r) => (r.ok ? r.text() : ''))
                         .then((xml) => {
-                            if (xml) allEntries = allEntries.concat(parseSitemapEntries(xml));
+                            if (xml) allEntries = allEntries.concat(catalogRecordsFromSitemap(xml));
                         })
                         .catch(() => {})
                 );
@@ -430,7 +490,7 @@ async function fetchSitemapEntries(providerContext = null) {
     try {
         const response = await fetchWithTimeout(targetUrl, {
             timeout: FETCH_TIMEOUT,
-            headers: { 'User-Agent': USER_AGENT }
+            headers: withCinemaCityAuthHeaders({ 'User-Agent': USER_AGENT })
         });
         if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`);
         xml = await response.text();
@@ -443,62 +503,45 @@ async function fetchSitemapEntries(providerContext = null) {
             throw workerError;
         }
     }
-    const entries = parseSitemapEntries(xml);
+    const entries = catalogRecordsFromSitemap(xml);
     sitemapCache = { entries, expiresAt: Date.now() + SITEMAP_CACHE_MS };
     console.log(`[CinemaCity] Sitemap catalog loaded: ${entries.length} entries`);
     return entries;
 }
 
-function scoreSitemapEntry(entry, expectedTitles, expectedYear) {
-    let bestScore = 0;
+function scoreTitleAgainstRecord(record, title) {
+    const titleKey = cinemaCityTitleKey(title);
+    const tightTitleKey = cinemaCityCompactKey(title);
+    if (!titleKey || !tightTitleKey) return 0;
+    if (record.normalizedTitle === titleKey || record.compactTitle === tightTitleKey) return 1000;
+    if (record.normalizedTitle.startsWith(titleKey) || titleKey.startsWith(record.normalizedTitle)) return 500;
+    if (record.compactTitle.includes(tightTitleKey) || tightTitleKey.includes(record.compactTitle)) return 420;
 
-    for (const title of expectedTitles) {
-        const normalized = normalizeTitle(title);
-        const compact = compactTitle(title);
-        if (!normalized || !compact) continue;
-
-        let score = 0;
-        if (entry.normalizedTitle === normalized || entry.compactTitle === compact) {
-            score = 1000;
-        } else if (entry.normalizedTitle.startsWith(normalized) || normalized.startsWith(entry.normalizedTitle)) {
-            score = 500;
-        } else if (entry.compactTitle.includes(compact) || compact.includes(entry.compactTitle)) {
-            score = 420;
-        } else {
-            const expectedTokens = getSignificantTokens(title);
-            if (expectedTokens.length > 0 && entry.tokens.length > 0) {
-                let hits = 0;
-                const entryTokenSet = new Set(entry.tokens);
-                for (const token of expectedTokens) {
-                    if (entryTokenSet.has(token)) hits++;
-                }
-                const coverage = hits / expectedTokens.length;
-                const extraTokens = Math.max(0, entry.tokens.length - expectedTokens.length);
-                score = coverage * 300 - extraTokens * 20 - Math.abs(entry.tokens.length - expectedTokens.length) * 2;
-            }
-        }
-
-        if (expectedYear && entry.year) {
-            score += entry.year === expectedYear ? 50 : -Math.abs(entry.year - expectedYear) * 3;
-        }
-
-        bestScore = Math.max(bestScore, score);
-    }
-
-    return bestScore;
+    const wanted = titleSignalTokens(title);
+    if (!wanted.length || !record.tokens.length) return 0;
+    const have = new Set(record.tokens);
+    const hits = wanted.reduce((count, token) => count + (have.has(token) ? 1 : 0), 0);
+    const coverage = hits / wanted.length;
+    const surplus = Math.max(0, record.tokens.length - wanted.length);
+    return coverage * 300 - surplus * 20 - Math.abs(record.tokens.length - wanted.length) * 2;
 }
 
-function extractImdbIdFromHtml(html) {
-    const matches = String(html || '').match(/\btt\d{5,}\b/gi) || [];
-    for (const match of matches) {
-        if (/^tt\d{5,}$/i.test(match)) {
-            return match.toLowerCase();
-        }
+function rankCatalogRecord(record, expectedTitles, expectedYear) {
+    const scores = (Array.isArray(expectedTitles) ? expectedTitles : [expectedTitles])
+        .map((title) => scoreTitleAgainstRecord(record, title));
+    let best = Math.max(0, ...scores);
+    if (expectedYear && record.year) {
+        best += record.year === expectedYear ? 50 : -Math.abs(record.year - expectedYear) * 3;
     }
-    return null;
+    return best;
 }
 
-async function verifyCandidateImdb(candidateUrl, expectedImdbId) {
+function readImdbMarker(html) {
+    const match = String(html || '').match(/\btt\d{5,}\b/i);
+    return match ? match[0].toLowerCase() : null;
+}
+
+async function confirmImdbOnCandidatePage(candidateUrl, expectedImdbId) {
     const normalizedExpected = String(expectedImdbId || '').trim().toLowerCase();
     if (!/^tt\d{5,}$/.test(normalizedExpected)) {
         return null;
@@ -506,21 +549,21 @@ async function verifyCandidateImdb(candidateUrl, expectedImdbId) {
 
     try {
         const html = await fetchCinemaCityHtml(candidateUrl);
-        const imdbId = extractImdbIdFromHtml(html);
+        const imdbId = readImdbMarker(html);
         if (imdbId) {
             console.log(`[CinemaCity] IMDb check ${candidateUrl}: ${imdbId}`);
         }
         return imdbId;
     } catch (e) {
-        const status = getHttpStatusFromError(e);
-        if (status !== 403 && status !== 503 && !isCloudflareBlockedError(e)) {
+        const status = statusFromFetchFailure(e);
+        if (status !== 403 && status !== 503 && !isChallengeSolverFailure(e)) {
             console.error(`[CinemaCity] IMDb check error for ${candidateUrl}:`, e);
         }
         return null;
     }
 }
 
-async function searchBySitemap(id, providerType, providerContext = null) {
+async function resolveCinemaCityCatalogPage(id, providerType, providerContext = null) {
     const expectedImdbId = /^tt\d{5,}$/i.test(String(id || '').trim())
         ? String(id).trim().toLowerCase()
         : null;
@@ -538,7 +581,7 @@ async function searchBySitemap(id, providerType, providerContext = null) {
         }
     }
 
-    const metadata = await getTmdbMetadata(id, providerType === 'anime' ? 'tv' : providerType);
+    const metadata = await loadTmdbIdentity(id, providerType === 'anime' ? 'tv' : providerType);
     const expectedTitles = Array.from(new Set([
         metadata?.title,
         metadata?.name,
@@ -550,7 +593,7 @@ async function searchBySitemap(id, providerType, providerContext = null) {
         return null;
     }
 
-    const expectedYear = extractYearFromMetadata(metadata);
+    const expectedYear = mediaReleaseYear(metadata);
     const expectedKinds = providerType === 'movie'
         ? new Set(['movies'])
         : providerType === 'anime'
@@ -559,10 +602,10 @@ async function searchBySitemap(id, providerType, providerContext = null) {
 
     let entries;
     try {
-        entries = await fetchSitemapEntries(providerContext);
+        entries = await loadCinemaCityCatalogSnapshot(providerContext);
     } catch (e) {
-        const status = getHttpStatusFromError(e);
-        if (status === 403 || status === 404 || status === 503 || isCloudflareBlockedError(e)) {
+        const status = statusFromFetchFailure(e);
+        if (status === 403 || status === 404 || status === 503 || isChallengeSolverFailure(e)) {
             console.warn(`[CinemaCity] Sitemap fetch failed: HTTP ${status || 'unknown/Cloudflare'}`);
         } else {
             console.warn(`[CinemaCity] Sitemap fetch failed: ${e.message || e}`);
@@ -576,7 +619,7 @@ async function searchBySitemap(id, providerType, providerContext = null) {
 
     for (const entry of entries) {
         if (!expectedKinds.has(entry.kind)) continue;
-        const score = scoreSitemapEntry(entry, expectedTitles, expectedYear);
+        const score = rankCatalogRecord(entry, expectedTitles, expectedYear);
         if (score >= 250) {
             ranked.push({ entry, score });
         }
@@ -588,8 +631,6 @@ async function searchBySitemap(id, providerType, providerContext = null) {
 
     if (!bestEntry || bestScore < 250) {
         console.log(`[CinemaCity] Sitemap no confident match for ${expectedTitles.join(' / ')} (best=${Math.round(bestScore)})`);
-        // Only learn a negative when the catalog was actually fetched: an empty
-        // listing means a transient fetch failure, not "absent from CinemaCity".
         if (Array.isArray(entries) && entries.length > 0) {
             memRememberNegative(id, providerType);
         }
@@ -600,7 +641,7 @@ async function searchBySitemap(id, providerType, providerContext = null) {
         ranked.sort((a, b) => b.score - a.score);
         const candidatesToVerify = ranked.slice(0, 3);
         for (const candidate of candidatesToVerify) {
-            const candidateImdbId = await verifyCandidateImdb(candidate.entry.url, expectedImdbId);
+            const candidateImdbId = await confirmImdbOnCandidatePage(candidate.entry.url, expectedImdbId);
             if (candidateImdbId === expectedImdbId) {
                 console.log(`[CinemaCity] Sitemap IMDb verified: ${expectedTitles[0]} -> ${candidate.entry.url}`);
                 const verifiedResult = {
@@ -643,7 +684,7 @@ async function searchBySitemap(id, providerType, providerContext = null) {
     return matchResult;
 }
 
-async function getTmdbMetadata(id, providerType) {
+async function loadTmdbIdentity(id, providerType) {
     try {
         let metadataUrl = null;
         const normalizedId = String(id || '').trim();
@@ -673,7 +714,7 @@ async function getTmdbMetadata(id, providerType) {
     }
 }
 
-async function getIdsFromKitsu(kitsuId, season, episode, providerContext = null) {
+async function translateKitsuIdentity(kitsuId, season, episode, providerContext = null) {
     try {
         if (!kitsuId) return null;
 
@@ -685,12 +726,12 @@ async function getIdsFromKitsu(kitsuId, season, episode, providerContext = null)
             params.set('s', String(parsedSeason));
         }
 
-        const mappingLanguage = getMappingLanguage(providerContext);
+        const mappingLanguage = mappingLocaleFromContext(providerContext);
         if (mappingLanguage) {
             params.set('lang', mappingLanguage);
         }
 
-        const url = `${getMappingApiUrl()}/kitsu/${encodeURIComponent(String(kitsuId).trim())}?${params.toString()}`;
+        const url = `${mappingServiceBaseUrl()}/kitsu/${encodeURIComponent(String(kitsuId).trim())}?${params.toString()}`;
         const response = await fetchWithTimeout(url, { timeout: FETCH_TIMEOUT });
         if (!response.ok) return null;
 
@@ -727,91 +768,87 @@ async function getIdsFromKitsu(kitsuId, season, episode, providerContext = null)
     }
 }
 
-function parseCompositeSeriesId(rawId, season, episode) {
-    const parsed = {
-        normalizedId: String(rawId || '').trim(),
-        season: Number.isInteger(season) ? season : (Number.parseInt(season, 10) || 1),
-        episode: Number.isInteger(episode) ? episode : (Number.parseInt(episode, 10) || 1)
-    };
-    const match = parsed.normalizedId.match(/^(tt\d+|\d+|tmdb:\d+):(\d+):(\d+)$/i);
-    if (match) {
-        parsed.normalizedId = match[1];
-        parsed.season = Number.parseInt(match[2], 10) || parsed.season;
-        parsed.episode = Number.parseInt(match[3], 10) || parsed.episode;
+function numberOrDefault(value, fallback = 1) {
+    const parsed = Number.parseInt(String(value ?? ''), 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function splitSeriesRequestId(rawId, season, episode) {
+    const fallbackSeason = Number.isInteger(season) ? season : numberOrDefault(season, 1);
+    const fallbackEpisode = Number.isInteger(episode) ? episode : numberOrDefault(episode, 1);
+    const raw = String(rawId || '').trim();
+    const parts = raw.split(':');
+    if (parts.length === 3 && /^(tt\d+|\d+|tmdb:\d+)$/i.test(parts[0])) {
+        return {
+            normalizedId: parts[0],
+            season: numberOrDefault(parts[1], fallbackSeason),
+            episode: numberOrDefault(parts[2], fallbackEpisode)
+        };
     }
-    return parsed;
+    return { normalizedId: raw, season: fallbackSeason, episode: fallbackEpisode };
 }
 
-function buildDownloadUrl(fileVal) {
-    const baseEnd = fileVal.indexOf('/public_files/');
-    if (baseEnd === -1) return null;
-    const cdnBase = fileVal.substring(0, baseEnd + '/public_files/'.length);
-    const rest = fileVal.substring(baseEnd + '/public_files/'.length);
+function makeCdnPlaylistCandidate(fileValue) {
+    const value = String(fileValue || '');
+    const marker = '/public_files/';
+    const markerIndex = value.indexOf(marker);
+    if (markerIndex < 0) return null;
 
-    const parts = rest.split(',');
-    const video = parts.find((p) => p.includes('1080p') && p.endsWith('.mp4')) || parts.find((p) => p.endsWith('.mp4'));
-    if (!video) return null;
+    const prefix = value.slice(0, markerIndex + marker.length);
+    const manifestSeed = value.slice(markerIndex + marker.length);
+    const assets = manifestSeed.split(',').map((part) => part.trim()).filter(Boolean);
+    const hasVideo = assets.some((part) => /\.mp4(?:$|[?#])/i.test(part));
+    if (!hasVideo) return null;
 
-    const itaAudio = parts.find((p) => /italian|italiano/i.test(p) && p.endsWith('.m4a'));
-    const m3u8Entry = parts.find((p) => p.includes('.m3u8'));
-    const url = cdnBase + rest + (m3u8Entry ? '' : '.urlset/master.m3u8');
-    return { url, hasItalian: !!itaAudio };
+    const hasNativeManifest = assets.some((part) => /\.m3u8(?:$|[?#])/i.test(part));
+    const hasItalian = assets.some((part) => /\.m4a(?:$|[?#])/i.test(part) && /italian|italiano/i.test(part));
+    return {
+        url: `${prefix}${manifestSeed}${hasNativeManifest ? '' : '.urlset/master.m3u8'}`,
+        hasItalian
+    };
 }
 
-function extractStreamFromAtob(html, season, episode) {
-    const atobRegex = /atob\s*\(\s*['"]([^"']{20,})['"]\s*\)/gi;
-    let match;
-    while ((match = atobRegex.exec(html)) !== null) {
+function firstPlayableFileFromInlineTree(items, season, episode) {
+    if (!Array.isArray(items) || !items.length) return null;
+    const seasonIndex = numberOrDefault(season, 1) - 1;
+    const episodeIndex = numberOrDefault(episode, 1) - 1;
+    const seasonNode = Array.isArray(items[seasonIndex]?.folder) ? items[seasonIndex] : null;
+    if (seasonNode) {
+        const episodeNode = seasonNode.folder[episodeIndex];
+        if (episodeNode?.file) return episodeNode.file;
+    }
+    return typeof items[0]?.file === 'string' && /^https?:\/\//i.test(items[0].file) ? items[0].file : null;
+}
+
+function recoverCdnPlaylistFromInlinePayload(html, season, episode) {
+    for (const match of String(html || '').matchAll(/atob\s*\(\s*['"]([^"']{20,})['"]\s*\)/gi)) {
+        const decoded = decodeB64Utf8(match[1]);
+        if (!decoded || decoded.length < 20) continue;
+        const jsonMatch = decoded.match(/file\s*:\s*'(\[[\s\S]*?\])'/);
+        if (!jsonMatch) continue;
         try {
-            const decoded = base64Decode(match[1]);
-            if (!decoded || decoded.length < 20) continue;
-
-            const jsonMatch = decoded.match(/file\s*:\s*'(\[.*?\])'/s);
-            if (!jsonMatch) continue;
-
-            try {
-                const parsed = JSON.parse(jsonMatch[1]);
-                if (!Array.isArray(parsed) || parsed.length === 0) continue;
-
-                if (parsed[0].folder && Array.isArray(parsed[0].folder)) {
-                    const seasonIdx = (season || 1) - 1;
-                    const s = parsed[seasonIdx];
-                    if (s?.folder) {
-                        const epIdx = (episode || 1) - 1;
-                        const ep = s.folder[epIdx];
-                        if (ep?.file) {
-                            const dlUrl = buildDownloadUrl(ep.file);
-                            if (dlUrl) return dlUrl;
-                        }
-                    }
-                }
-
-                const fileVal = parsed[0].file;
-                if (fileVal && fileVal.startsWith('http')) {
-                    const dlUrl = buildDownloadUrl(fileVal);
-                    if (dlUrl) return dlUrl;
-                }
-            } catch (_) {}
+            const fileValue = firstPlayableFileFromInlineTree(JSON.parse(jsonMatch[1]), season, episode);
+            const candidate = makeCdnPlaylistCandidate(fileValue);
+            if (candidate) return candidate;
         } catch (_) {}
     }
     return null;
 }
 
-function extractDownloadLinks(html) {
+function collectPlayableAnchors(html) {
     const links = [];
-    const anchorRegex = /<a\s[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-    let match;
-    while ((match = anchorRegex.exec(html)) !== null) {
-        const href = match[1].trim();
-        const innerText = match[2].replace(/<[^>]+>/g, '').trim();
-        if (!/\.(mp4|m3u8|mkv|avi|mov|webm)([?#].*)?$/i.test(href)) continue;
-        if (href.length < 10) continue;
-        links.push({ url: href, text: innerText.toLowerCase() });
+    for (const match of String(html || '').matchAll(/<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+        const href = String(match[1] || '').trim();
+        if (href.length < 10 || !/\.(mp4|m3u8|mkv|avi|mov|webm)(?:$|[?#])/i.test(href)) continue;
+        links.push({
+            url: href,
+            text: unescapeCinemaCityText(String(match[2] || '').replace(/<[^>]+>/g, ' ')).trim().toLowerCase()
+        });
     }
     return links;
 }
 
-function resolveUrl(base, relative) {
+function resolveCinemaCityUrl(base, relative) {
     try {
         return new URL(relative, base).toString();
     } catch (_) {
@@ -890,7 +927,7 @@ function getListingBaseUrls(type = 'movie') {
 function buildSearchQueryVariants(titles = []) {
     const out = [];
     const push = (value) => {
-        const clean = decodeHtmlEntities(String(value || ''))
+        const clean = unescapeCinemaCityText(String(value || ''))
             .replace(/\s+/g, ' ')
             .replace(/^[\s:|•-]+|[\s:|•-]+$/g, '')
             .trim();
@@ -899,7 +936,7 @@ function buildSearchQueryVariants(titles = []) {
 
     for (const title of Array.isArray(titles) ? titles : [titles]) {
         push(title);
-        push(normalizeTitle(title));
+        push(cinemaCityTitleKey(title));
         push(String(title || '').replace(/[:–—-]+/g, ' '));
     }
 
@@ -991,13 +1028,13 @@ function extractCandidateLinksFromListing(html, type = 'movie') {
     let match;
 
     while ((match = anchorRegex.exec(String(html || ''))) !== null) {
-        const absoluteUrl = resolveUrl(BASE_URL, decodeHtmlEntities(match[1]));
+        const absoluteUrl = resolveCinemaCityUrl(BASE_URL, unescapeCinemaCityText(match[1]));
         if (!isCinemaCityContentUrlForType(absoluteUrl, type)) continue;
         const key = absoluteUrl.replace(/[?#].*$/, '');
         if (seen.has(key)) continue;
         seen.add(key);
 
-        const innerText = decodeHtmlEntities(match[2].replace(/<[^>]+>/g, ' '))
+        const innerText = unescapeCinemaCityText(match[2].replace(/<[^>]+>/g, ' '))
             .replace(/\s+/g, ' ')
             .trim();
         const slugMatch = key.match(/\/\d+-([^/]+)\.html$/i);
@@ -1006,8 +1043,8 @@ function extractCandidateLinksFromListing(html, type = 'movie') {
         results.push({
             url: key,
             title: innerText || slugTitle,
-            normalizedTitle: normalizeTitle(innerText || slugTitle),
-            compactTitle: compactTitle(innerText || slugTitle),
+            normalizedTitle: cinemaCityTitleKey(innerText || slugTitle),
+            compactTitle: cinemaCityCompactKey(innerText || slugTitle),
             year: yearMatch ? Number.parseInt(yearMatch[1], 10) : null
         });
     }
@@ -1027,7 +1064,7 @@ function buildForwardHeaderParams(headers = {}) {
 }
 
 function buildCinemaCityKrakenForwardUrl(targetUrl, headers = {}) {
-    const normalizedTarget = resolveUrl(BASE_URL, targetUrl);
+    const normalizedTarget = resolveCinemaCityUrl(BASE_URL, targetUrl);
     if (!/^https?:\/\//i.test(normalizedTarget)) return null;
 
     try {
@@ -1090,7 +1127,7 @@ function maybePrewarmCinemaCityPlayback(streamUrl, headers, reqHost, options = {
 }
 
 async function getCinemaCityStreams(id, type, season, episode, providerContext = null) {
-    const parsedRequest = parseCompositeSeriesId(id, season, episode);
+    const parsedRequest = splitSeriesRequestId(id, season, episode);
     id = parsedRequest.normalizedId;
     season = parsedRequest.season;
     episode = parsedRequest.episode;
@@ -1113,7 +1150,7 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
     if (imdbId.startsWith('kitsu:') || contextKitsuId) {
         const kitsuId = contextKitsuId || ((imdbId.match(/^kitsu:(\d+)/i) || [])[1] || null);
         const seasonHintForKitsu = shouldIncludeSeasonHintForKitsu ? season : null;
-        const mapped = kitsuId ? await getIdsFromKitsu(kitsuId, seasonHintForKitsu, episode, providerContext) : null;
+        const mapped = kitsuId ? await translateKitsuIdentity(kitsuId, seasonHintForKitsu, episode, providerContext) : null;
 
         if (mapped) {
             if (mapped.imdbId) {
@@ -1165,7 +1202,7 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
     }
 
     try {
-        const searchResult = await searchBySitemap(imdbId, providerType, providerContext);
+        const searchResult = await resolveCinemaCityCatalogPage(imdbId, providerType, providerContext);
         if (!searchResult?.url) {
             return [];
         }
@@ -1191,11 +1228,11 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
             return [];
         }
 
-        const links = extractDownloadLinks(html);
+        const links = collectPlayableAnchors(html);
         if (links.length === 0) {
             const useSeason = providerType === 'tv' ? season : null;
             const useEpisode = providerType === 'tv' ? episode : null;
-            const atobResult = extractStreamFromAtob(html, useSeason, useEpisode);
+            const atobResult = recoverCdnPlaylistFromInlinePayload(html, useSeason, useEpisode);
             if (atobResult) {
                 links.push({ url: atobResult.url, text: '' });
             }
@@ -1226,7 +1263,7 @@ async function getCinemaCityStreams(id, type, season, episode, providerContext =
         const selectedUrl = selectedLink.url;
         const labelAudioLanguages = inferCinemaCityAudioLanguages(selectedLink.text);
 
-        const streamUrl = resolveUrl(movieUrl, selectedUrl);
+        const streamUrl = resolveCinemaCityUrl(movieUrl, selectedUrl);
         const playlistIntel = await probeCinemaCityPlaylist(streamUrl, DEFAULT_STREAM_HEADERS);
         const audioLanguages = mergeCinemaCityAudioLanguages(labelAudioLanguages, playlistIntel);
         console.log(`[CinemaCity] CCCDN stream: ${streamUrl}`);
@@ -1370,13 +1407,13 @@ module.exports = {
     getCinemaCityMemoryStats,
     __private: {
         memory: ccMemory,
-        parseSitemapEntries,
-        scoreSitemapEntry,
-        extractStreamFromAtob,
-        extractDownloadLinks,
-        buildDownloadUrl,
-        normalizeTitle,
-        base64Decode,
+        parseSitemapEntries: catalogRecordsFromSitemap,
+        scoreSitemapEntry: rankCatalogRecord,
+        extractStreamFromAtob: recoverCdnPlaylistFromInlinePayload,
+        extractDownloadLinks: collectPlayableAnchors,
+        buildDownloadUrl: makeCdnPlaylistCandidate,
+        normalizeTitle: cinemaCityTitleKey,
+        base64Decode: decodeB64Utf8,
         looksLikeAnimeMeta,
         isCinemaCityContentUrlForType,
         extractCandidateLinksFromListing,
@@ -1392,6 +1429,8 @@ module.exports = {
         isUsableCinemaCityHtml,
         isUsableCurlCffiResult,
         isCurlCffiFallbackEnabled,
+        getCinemaCityAuthCookie,
+        withCinemaCityAuthHeaders,
         fetchViaCurlCffi,
         fetchCinemaCityHtml,
         __setCurlCffiRunner: (runner) => { curlCffiRunnerOverride = runner; }
