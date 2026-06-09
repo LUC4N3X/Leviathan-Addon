@@ -36,5 +36,6 @@ test('cached app settings can be reset for tests', () => {
   resetAppSettingsCache();
   const settings = getCachedAppSettings();
   assert.equal(settings.ranking.torrentIntelligenceEnabled, true);
+  assert.equal(settings.ranking.qualityIntelligenceEnabled, true);
   assert.ok(settings.savedCloud.scanLimit >= 20);
 });

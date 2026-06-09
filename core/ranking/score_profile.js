@@ -3,6 +3,7 @@
 const { evaluateEpisodeTruth } = require('../matching/episode_truth_engine');
 const { getSeedHealth } = require('../lib/seed_health_ranker');
 const { evaluateTorrentIntelligence } = require('./torrent_intelligence');
+const { evaluateQualityIntelligence } = require('./quality_intelligence');
 
 const DEFAULT_SCORE_PROFILE = Object.freeze({
     resolution: Object.freeze({
@@ -83,6 +84,9 @@ const DEFAULT_SCORE_PROFILE = Object.freeze({
         unknown: 0
     }),
     torrentIntelligence: Object.freeze({
+        enabled: 1
+    }),
+    qualityIntelligence: Object.freeze({
         enabled: 1
     })
 });
@@ -226,7 +230,8 @@ function formatComponentLabel(group, key) {
         source: 'fonte',
         sourceConsensus: 'consenso',
         pack: 'pack',
-        torrentIntelligence: 'torrent intelligence'
+        torrentIntelligence: 'torrent intelligence',
+        qualityIntelligence: 'quality intelligence'
     };
     return `${labels[group] || group}=${key}`;
 }
@@ -268,6 +273,9 @@ function componentBadge(group, key) {
     if (group === 'torrentIntelligence') {
         return '🧠 torrent-intel';
     }
+    if (group === 'qualityIntelligence') {
+        return '🎚️ qualità release';
+    }
     return '';
 }
 
@@ -296,6 +304,7 @@ function buildBrutalRankExplain({ finalScore = 0, components = {}, episodeTruth 
     );
     const fileIdx = item.fileIdx ?? item.file_index ?? item.behaviorHints?.fileIdx;
     if (fileIdx !== undefined && fileIdx !== null && fileIdx !== '') badges.push(`📁 fileIdx=${fileIdx}`);
+    if (item._qualityIntelligence?.badges?.length) badges.push(`🎚️ ${item._qualityIntelligence.badges.slice(0, 4).join(' · ')}`);
     if (item._externalSnapshot === true || item._fromExternalSnapshot === true) badges.push('🧠 snapshot DB');
     if (item._localDb === true || item._fromDb === true) badges.push('🗄️ DB locale');
     if (proof) positives.push(`proof=${proof}`);
@@ -330,6 +339,7 @@ function evaluateLeviathanScore(item = {}, meta = {}, options = {}) {
     const torrentIntelligence = evaluateTorrentIntelligence(item, meta, {
         weight: options?.ranking?.torrentIntelligenceWeight ?? options?.torrentIntelligenceWeight ?? 1
     });
+    const qualityIntelligence = item._qualityIntelligence || evaluateQualityIntelligence(item, meta);
     const episodeTruth = item._episodeTruth || evaluateEpisodeTruth(item, meta, { strict: false });
     const episodeTruthType = episodeTruth?.type || 'not_required';
 
@@ -342,6 +352,17 @@ function evaluateLeviathanScore(item = {}, meta = {}, options = {}) {
     addComponent(parts, profile, 'source', source, source);
     addComponent(parts, profile, 'sourceConsensus', sourceConsensus, sourceConsensus);
     addComponent(parts, profile, 'pack', pack, pack);
+    if (options?.ranking?.useQualityIntelligenceRanking !== false && options?.useQualityIntelligenceRanking !== false) {
+        const qiScore = Number(qualityIntelligence.score || 0) || 0;
+        parts.score += qiScore;
+        parts.components.qualityIntelligence = {
+            key: qualityIntelligence.releaseSource || 'unknown',
+            score: qiScore,
+            badges: qualityIntelligence.badges,
+            signals: qualityIntelligence
+        };
+        parts.explain.push(`${qiScore >= 0 ? '+' : ''}${qiScore} qualityIntelligence=${(qualityIntelligence.badges || []).join(',') || 'n/a'}`);
+    }
     if (options?.ranking?.useTorrentIntelligenceRanking !== false && options?.useTorrentIntelligenceRanking !== false) {
         const tiScore = Number(torrentIntelligence.score || 0) || 0;
         parts.score += tiScore;
@@ -353,7 +374,7 @@ function evaluateLeviathanScore(item = {}, meta = {}, options = {}) {
         finalScore: parts.score,
         components: parts.components,
         episodeTruth,
-        item,
+        item: { ...item, _qualityIntelligence: qualityIntelligence },
         meta
     });
 
@@ -363,7 +384,8 @@ function evaluateLeviathanScore(item = {}, meta = {}, options = {}) {
         brutalExplain,
         components: parts.components,
         episodeTruth,
-        torrentIntelligence
+        torrentIntelligence,
+        qualityIntelligence
     };
 }
 
@@ -375,7 +397,8 @@ function annotateWithLeviathanScore(item = {}, meta = {}, options = {}) {
         _leviathanScoreExplain: scoreProfile.explain,
         _leviathanExplain: scoreProfile.brutalExplain,
         _leviathanExplainText: scoreProfile.brutalExplain?.text,
-        _leviathanScoreProfile: scoreProfile
+        _leviathanScoreProfile: scoreProfile,
+        _qualityIntelligence: scoreProfile.qualityIntelligence
     };
 }
 

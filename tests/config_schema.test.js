@@ -86,7 +86,8 @@ test('validateConfig normalizes saved cloud aggressive and torrent intelligence 
       savedCloudAggressive: true,
       savedCloudScanLimit: '333',
       savedCloudSnapshotTtlSeconds: '3600',
-      useTorrentIntelligenceRanking: true
+      useTorrentIntelligenceRanking: true,
+      useQualityIntelligenceRanking: true
     },
     ranking: {
       torrentIntelligenceWeight: '1.5'
@@ -98,5 +99,6 @@ test('validateConfig normalizes saved cloud aggressive and torrent intelligence 
   assert.equal(config.filters.savedCloudScanLimit, 333);
   assert.equal(config.filters.savedCloudSnapshotTtlSeconds, 3600);
   assert.equal(config.ranking.useTorrentIntelligenceRanking, true);
+  assert.equal(config.ranking.useQualityIntelligenceRanking, true);
   assert.equal(config.ranking.torrentIntelligenceWeight, 1.5);
 });

@@ -13,6 +13,7 @@ const {
   isTrustedSource
 } = require("../utils/text");
 const { detectSourceConsensus, evaluateLeviathanScore } = require('../ranking/score_profile');
+const { evaluateQualityIntelligence } = require('../ranking/quality_intelligence');
 const { shouldKeepStrictItalianCandidate, hasStrictItalianEvidence } = require('../canonical/language_guard');
 
 const REGEX_SCENE_RELEASE = /\b(?:web[-.\s]?dl|webrip|blu[-.\s]?ray|bd[-.\s]?rip|remux|uhd|hevc|x265|x264|ddp|truehd|dts|atmos|hdr|dv|dolby[\s.-]?vision)\b/i;
@@ -76,6 +77,8 @@ const DEFAULT_PROFILES = {
       titleSimilarityFactor: 12000,
       tbCachedBonus: 9000,
       rdCachedBonus: 9000,
+      qualityIntelligenceFactor: 360,
+      qualityIntelligenceCap: 26000,
       seriesOnMoviePenalty: -9000
     }
   },
@@ -120,6 +123,8 @@ const DEFAULT_PROFILES = {
       titleSimilarityFactor: 4000,
       tbCachedBonus: 6000,
       rdCachedBonus: 6000,
+      qualityIntelligenceFactor: 140,
+      qualityIntelligenceCap: 9000,
       seriesOnMoviePenalty: -18000
     }
   }
@@ -712,6 +717,23 @@ function computeScore(item, meta = {}, configInput = {}) {
     score += weights.hdrBonus;
     reasons.push("HDR");
   }
+
+  const useQualityIntelligence = configInput?.useQualityIntelligenceRanking !== false
+    && configInput?.ranking?.useQualityIntelligenceRanking !== false;
+  const qualityIntelligence = useQualityIntelligence
+    ? (item?._qualityIntelligence || evaluateQualityIntelligence(item, meta))
+    : null;
+  const qiRawScore = Number(qualityIntelligence?.score || 0) || 0;
+  const qiFactor = Number(weights.qualityIntelligenceFactor || 0) || 0;
+  const qiCap = Math.max(0, Number(weights.qualityIntelligenceCap || 0) || 0);
+  if (useQualityIntelligence && qiFactor > 0 && qiRawScore !== 0) {
+    const qiDeltaUncapped = Math.round(qiRawScore * qiFactor);
+    const qiDelta = qiCap > 0
+      ? Math.max(-qiCap, Math.min(qiCap, qiDeltaUncapped))
+      : qiDeltaUncapped;
+    score += qiDelta;
+    reasons.push(`QUALITY_INTEL:${qualityIntelligence.badges?.join(',') || qualityIntelligence.releaseSource || 'unknown'}:${qiDelta}`);
+  }
   if (signals.subOnly) {
     score += weights.subtitleOnlyPenalty;
     reasons.push("SUB_ONLY");
@@ -819,6 +841,7 @@ function computeScore(item, meta = {}, configInput = {}) {
       isMulti: signals.langInfo.isMulti,
       subOnly: signals.subOnly,
       sourceConsensus,
+      qualityIntelligence,
       scoreProfile,
       torrentIntelligence: scoreProfile?.torrentIntelligence || null
     }

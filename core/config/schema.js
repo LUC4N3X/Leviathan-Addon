@@ -148,7 +148,7 @@ function validateConfig(input = {}) {
     }
   }
 
-  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableVidxgo', 'enableEs', 'enableCb01', 'enableOnlineserietv', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableAltadefinizione', 'enableToonItalia', 'enableMoflix', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast', 'savedCloudAggressive', 'savedCloudSnapshotEnabled', 'useTorrentIntelligenceRanking', 'useLeviathanScoreProfile'];
+  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableVidxgo', 'enableEs', 'enableCb01', 'enableOnlineserietv', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableAltadefinizione', 'enableToonItalia', 'enableMoflix', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast', 'savedCloudAggressive', 'savedCloudSnapshotEnabled', 'useTorrentIntelligenceRanking', 'useQualityIntelligenceRanking', 'useLeviathanScoreProfile'];
   for (const key of booleanFilterKeys) {
     if (output.filters[key] !== undefined) output.filters[key] = !!output.filters[key];
   }
@@ -183,6 +183,9 @@ function validateConfig(input = {}) {
   output.ranking.useTorrentIntelligenceRanking = output.filters.useTorrentIntelligenceRanking !== undefined
     ? normalizeBool(output.filters.useTorrentIntelligenceRanking, APP_SETTINGS.ranking.torrentIntelligenceEnabled)
     : normalizeBool(output.ranking.useTorrentIntelligenceRanking, APP_SETTINGS.ranking.torrentIntelligenceEnabled);
+  output.ranking.useQualityIntelligenceRanking = output.filters.useQualityIntelligenceRanking !== undefined
+    ? normalizeBool(output.filters.useQualityIntelligenceRanking, APP_SETTINGS.ranking.qualityIntelligenceEnabled)
+    : normalizeBool(output.ranking.useQualityIntelligenceRanking, APP_SETTINGS.ranking.qualityIntelligenceEnabled);
   output.ranking.torrentIntelligenceWeight = Math.max(0, Math.min(5, Number(output.ranking.torrentIntelligenceWeight || APP_SETTINGS.ranking.torrentIntelligenceWeight) || APP_SETTINGS.ranking.torrentIntelligenceWeight));
 
   output.configVersion = CURRENT_CONFIG_VERSION;

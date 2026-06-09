@@ -11,6 +11,8 @@ function detectQualityLabel(text, fallback = 'SD') {
 }
 
 const QUALITY_CAM_REGEX = /\b(?:cam|hdcam|ts|telesync|screener|scr)\b/i;
+const QUALITY_FAKE_REGEX = /\b(?:sample|trailer|teaser|featurette|behind\s*the\s*scenes|xbet|betwinner|1xbet|watermarked|bad\s*audio|mic\s*audio)\b/i;
+const QUALITY_HARDCODED_SUBS_REGEX = /\b(?:hc|hardcoded)\s*sub/i;
 
 function getQualityFilterSignals(text, options = {}) {
     const raw = String(text || '');
@@ -22,7 +24,9 @@ function getQualityFilterSignals(text, options = {}) {
         || Boolean(options.treatGenericHdAs720 && /\bHD\b/.test(upper) && !/\b(?:1080P|2160P|4K|FHD|UHD|FULLHD)\b/.test(upper));
     const hasSd = REGEX_QUALITY_FILTER["SD"].test(lower);
     const hasCam = QUALITY_CAM_REGEX.test(raw);
-    return { has4k, has1080, has720, hasSd, hasCam };
+    const hasFake = QUALITY_FAKE_REGEX.test(raw);
+    const hasHardcodedSubs = QUALITY_HARDCODED_SUBS_REGEX.test(raw);
+    return { has4k, has1080, has720, hasSd, hasCam, hasFake, hasHardcodedSubs };
 }
 
 function shouldDropByConfiguredQuality(text, filters = {}, options = {}) {
@@ -32,6 +36,8 @@ function shouldDropByConfiguredQuality(text, filters = {}, options = {}) {
     if (filters.no720 && quality.has720) return true;
     if (filters.noScr && (quality.hasSd || quality.hasCam)) return true;
     if (filters.noCam && quality.hasCam) return true;
+    if (!filters.showFake && quality.hasFake) return true;
+    if (filters.noScr && quality.hasHardcodedSubs) return true;
     return false;
 }
 
