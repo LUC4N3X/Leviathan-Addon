@@ -2,33 +2,39 @@ FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-ENV NODE_ENV=production
-ENV PORT=7000
-ENV PYTHONUNBUFFERED=1
-ENV PATH="/app/.venv/bin:$PATH"
+ENV NODE_ENV=production \
+    PORT=7000 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:$PATH" \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_AUDIT=false
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         python3 \
-        python3-pip \
         python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m venv /app/.venv \
-    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /app/.venv/bin/pip install --no-cache-dir "curl_cffi>=0.7.0"
+RUN chown -R node:node /app
 
-COPY package.json package-lock.json ./
+USER node
+
+RUN python3 -m venv /app/.venv \
+    && /app/.venv/bin/python -m pip install --no-cache-dir --upgrade pip \
+    && /app/.venv/bin/python -m pip install --no-cache-dir "curl_cffi>=0.7.0"
+
+COPY --chown=node:node package.json package-lock.json ./
 
 RUN npm ci --omit=dev \
     && npm cache clean --force
 
-COPY addon.js manifest.js worker.js ./
-COPY core ./core
-COPY providers ./providers
-COPY public ./public
-COPY browser-extension ./browser-extension
+COPY --chown=node:node addon.js manifest.js worker.js ./
+COPY --chown=node:node core ./core
+COPY --chown=node:node providers ./providers
+COPY --chown=node:node public ./public
+COPY --chown=node:node browser-extension ./browser-extension
 
 EXPOSE 7000
 
