@@ -15,6 +15,9 @@ services:
     cpus: "${LEVIATHAN_CPUS:-1.5}"
     pids_limit: 512
 
+    security_opt:
+      - no-new-privileges:true
+
     env_file:
       - .env
 
@@ -270,7 +273,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 10s
+      start_period: 20s
 
     logging:
       driver: json-file
@@ -398,6 +401,10 @@ services:
     memswap_limit: ${LEVIATHAN_WORKER_MEMSWAP_LIMIT:-520m}
     cpus: "${LEVIATHAN_WORKER_CPUS:-0.75}"
     pids_limit: 256
+
+    security_opt:
+      - no-new-privileges:true
+
     stop_grace_period: 20s
 
     logging:
@@ -496,7 +503,7 @@ services:
       test:
         - CMD-SHELL
         - |
-          python - <<'PY'
+          python3 - <<'PY'
           import sys
           import urllib.request
 
