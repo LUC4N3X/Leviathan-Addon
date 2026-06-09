@@ -3,7 +3,7 @@
 const MANIFEST_ID = 'org.corsaro.brain.v2';
 const MANIFEST_VERSION = '3.2.0';
 const ADDON_NAME = 'Leviathan';
-const LOGO_URL = 'https://i.ibb.co/XfGCXt6j/leviathan.png';
+const LOGO_URL = 'https://i.ibb.co/YTKfXc1z/logo.png';
 const SUPPORTED_TYPES = ['movie', 'series', 'anime'];
 const STREAM_ID_PREFIXES = ['tt', 'tmdb:', 'kitsu:'];
 
