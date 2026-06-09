@@ -111,3 +111,21 @@ test('CinemaCity derives extractor base from the shared generic forward endpoint
         assert.equal(__private.getCinemaCityPageExtractorBase({}), 'https://proxy.example');
     });
 });
+
+test('CinemaCity auth cookie is decoded from env and merged without hardcoding secrets', () => {
+    withEnvironment({
+        CINEMACITY_AUTH_COOKIE_B64: 'ZGxlX3VzZXJfaWQ9MTA7IGRsZV9wYXNzd29yZD1mYWtlOw==',
+        CINEMACITY_AUTH_COOKIE: undefined,
+        CC_AUTH_COOKIE_B64: undefined,
+        CC_AUTH_COOKIE: undefined
+    }, () => {
+        assert.equal(__private.getCinemaCityAuthCookie(), 'dle_user_id=10; dle_password=fake');
+        assert.deepEqual(
+            __private.withCinemaCityAuthHeaders({ 'User-Agent': 'Leviathan Test', Cookie: 'sid=abc' }),
+            {
+                'User-Agent': 'Leviathan Test',
+                Cookie: 'sid=abc; dle_user_id=10; dle_password=fake'
+            }
+        );
+    });
+});
