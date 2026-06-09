@@ -718,22 +718,20 @@ function computeScore(item, meta = {}, configInput = {}) {
     reasons.push("HDR");
   }
 
-  const rawConfig = meta?.originalConfig || meta?.rawConfig || configInput;
-  const useQualityIntelligence = rawConfig?.useQualityIntelligenceRanking !== false
-    && rawConfig?.ranking?.useQualityIntelligenceRanking !== false
-    && rawConfig?.filters?.useQualityIntelligenceRanking !== false
-    && configInput?.useQualityIntelligenceRanking !== false
-    && configInput?.ranking?.useQualityIntelligenceRanking !== false;
+  const useLeviathanScoreProfile = configInput?.useLeviathanScoreProfile === true
+    || configInput?.ranking?.useLeviathanScoreProfile === true
+    || configInput?.ranking?.useScoreProfile === true;
+  const originalConfig = meta?.originalConfig || configInput?._originalConfig || configInput;
+  const useQualityIntelligence = originalConfig?.useQualityIntelligenceRanking !== false
+    && originalConfig?.ranking?.useQualityIntelligenceRanking !== false
+    && originalConfig?.filters?.useQualityIntelligenceRanking !== false;
   const qualityIntelligence = useQualityIntelligence
     ? (item?._qualityIntelligence || evaluateQualityIntelligence(item, meta))
     : null;
   const qiRawScore = Number(qualityIntelligence?.score || 0) || 0;
   const qiFactor = Number(weights.qualityIntelligenceFactor || 0) || 0;
   const qiCap = Math.max(0, Number(weights.qualityIntelligenceCap || 0) || 0);
-  const useLeviathanScoreProfile = configInput?.useLeviathanScoreProfile === true
-    || configInput?.ranking?.useLeviathanScoreProfile === true
-    || configInput?.ranking?.useScoreProfile === true;
-  if (useQualityIntelligence && qiFactor > 0 && qiRawScore !== 0 && !useLeviathanScoreProfile) {
+  if (useQualityIntelligence && !useLeviathanScoreProfile && qiFactor > 0 && qiRawScore !== 0) {
     const qiDeltaUncapped = Math.round(qiRawScore * qiFactor);
     const qiDelta = qiCap > 0
       ? Math.max(-qiCap, Math.min(qiCap, qiDeltaUncapped))
@@ -806,12 +804,9 @@ function computeScore(item, meta = {}, configInput = {}) {
   }
 
   const scoreProfile = evaluateLeviathanScore(item, meta, configInput);
-  const useScoreProfile = configInput?.useLeviathanScoreProfile === true
-    || configInput?.ranking?.useLeviathanScoreProfile === true
-    || configInput?.ranking?.useScoreProfile === true;
   const useTorrentIntelligence = configInput?.useTorrentIntelligenceRanking === true
     || configInput?.ranking?.useTorrentIntelligenceRanking === true;
-  if (useScoreProfile) {
+  if (useLeviathanScoreProfile) {
     score += scoreProfile.finalScore;
     reasons.push("LEV_SCORE_PROFILE");
   } else if (useTorrentIntelligence && scoreProfile?.torrentIntelligence) {
