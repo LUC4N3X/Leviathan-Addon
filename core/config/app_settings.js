@@ -114,6 +114,7 @@ function getAppSettings() {
     ranking: {
       torrentIntelligenceEnabled: normalizeBool(readRawEnv('TORRENT_INTELLIGENCE_RANKING', '1'), true),
       torrentIntelligenceWeight: normalizeFloat(readRawEnv('TORRENT_INTELLIGENCE_WEIGHT'), 1, 0, 5),
+      qualityIntelligenceEnabled: normalizeBool(readRawEnv('QUALITY_INTELLIGENCE_RANKING', '1'), true),
       explain: normalizeBool(readRawEnv('RANKING_EXPLAIN', '1'), true)
     },
     savedCloud: {
