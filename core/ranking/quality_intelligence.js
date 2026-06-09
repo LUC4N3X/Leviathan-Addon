@@ -54,9 +54,17 @@ function parseSizeToBytes(value) {
     if (/^\d+$/.test(raw)) return Number(raw);
     const match = raw.match(/([\d.,]+)\s*(B|KB|KIB|MB|MIB|GB|GIB|TB|TIB)/i);
     if (!match) return 0;
-    const amount = Number(match[1].includes(',') && match[1].includes('.')
-        ? match[1].replace(/,/g, '')
-        : match[1].replace(',', '.'));
+    let amountText = match[1];
+    if (amountText.includes(',') && amountText.includes('.')) {
+        amountText = amountText.replace(/,/g, '');
+    } else if (amountText.includes(',')) {
+        if (/^\d{1,3}(?:,\d{3})+$/.test(amountText)) {
+            amountText = amountText.replace(/,/g, '');
+        } else {
+            amountText = amountText.replace(',', '.');
+        }
+    }
+    const amount = Number(amountText);
     if (!Number.isFinite(amount)) return 0;
     const unit = match[2].toUpperCase();
     const multipliers = {

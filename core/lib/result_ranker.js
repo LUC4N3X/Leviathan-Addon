@@ -718,7 +718,11 @@ function computeScore(item, meta = {}, configInput = {}) {
     reasons.push("HDR");
   }
 
-  const useQualityIntelligence = configInput?.useQualityIntelligenceRanking !== false
+  const rawConfig = meta?.originalConfig || meta?.rawConfig || configInput;
+  const useQualityIntelligence = rawConfig?.useQualityIntelligenceRanking !== false
+    && rawConfig?.ranking?.useQualityIntelligenceRanking !== false
+    && rawConfig?.filters?.useQualityIntelligenceRanking !== false
+    && configInput?.useQualityIntelligenceRanking !== false
     && configInput?.ranking?.useQualityIntelligenceRanking !== false;
   const qualityIntelligence = useQualityIntelligence
     ? (item?._qualityIntelligence || evaluateQualityIntelligence(item, meta))
@@ -726,7 +730,10 @@ function computeScore(item, meta = {}, configInput = {}) {
   const qiRawScore = Number(qualityIntelligence?.score || 0) || 0;
   const qiFactor = Number(weights.qualityIntelligenceFactor || 0) || 0;
   const qiCap = Math.max(0, Number(weights.qualityIntelligenceCap || 0) || 0);
-  if (useQualityIntelligence && qiFactor > 0 && qiRawScore !== 0) {
+  const useLeviathanScoreProfile = configInput?.useLeviathanScoreProfile === true
+    || configInput?.ranking?.useLeviathanScoreProfile === true
+    || configInput?.ranking?.useScoreProfile === true;
+  if (useQualityIntelligence && qiFactor > 0 && qiRawScore !== 0 && !useLeviathanScoreProfile) {
     const qiDeltaUncapped = Math.round(qiRawScore * qiFactor);
     const qiDelta = qiCap > 0
       ? Math.max(-qiCap, Math.min(qiCap, qiDeltaUncapped))

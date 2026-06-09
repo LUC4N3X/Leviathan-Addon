@@ -12,7 +12,7 @@ function detectQualityLabel(text, fallback = 'SD') {
 
 const QUALITY_CAM_REGEX = /\b(?:cam|hdcam|ts|telesync|screener|scr)\b/i;
 const QUALITY_FAKE_REGEX = /\b(?:sample|trailer|teaser|featurette|behind\s*the\s*scenes|xbet|betwinner|1xbet|watermarked|bad\s*audio|mic\s*audio)\b/i;
-const QUALITY_HARDCODED_SUBS_REGEX = /\b(?:hc|hardcoded)\s*sub/i;
+const QUALITY_HARDCODED_SUBS_REGEX = /\b(?:hc|hardcoded)[\s.]*(?:sub|subs|subtitles?)\b/i;
 
 function getQualityFilterSignals(text, options = {}) {
     const raw = String(text || '');
@@ -37,7 +37,7 @@ function shouldDropByConfiguredQuality(text, filters = {}, options = {}) {
     if (filters.noScr && (quality.hasSd || quality.hasCam)) return true;
     if (filters.noCam && quality.hasCam) return true;
     if (!filters.showFake && quality.hasFake) return true;
-    if (filters.noScr && quality.hasHardcodedSubs) return true;
+    if (filters.noHardcodedSubs && quality.hasHardcodedSubs) return true;
     return false;
 }
 
