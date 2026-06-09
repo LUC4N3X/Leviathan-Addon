@@ -148,23 +148,22 @@ function validateConfig(input = {}) {
     }
   }
 
-  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableVidxgo', 'enableEs', 'enableCb01', 'enableOnlineserietv', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableAltadefinizione', 'enableToonItalia', 'enableMoflix', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'enableTrailers', 'vixLast', 'streamingCommunityLast', 'savedCloudAggressive', 'savedCloudSnapshotEnabled', 'useTorrentIntelligenceRanking', 'useQualityIntelligenceRanking', 'useLeviathanScoreProfile', 'noHardcodedSubs'];
+  const booleanFilterKeys = ['enableVix', 'enableStreamingCommunity', 'enableGhd', 'enableGs', 'enableVidxgo', 'enableEs', 'enableCb01', 'enableOnlineserietv', 'enableAnimeWorld', 'enableAnimeUnity', 'enableAnimeSaturn', 'enableGf', 'enableCc', 'enableAltadefinizione', 'enableToonItalia', 'enableMoflix', 'enableSavedCloud', 'enableP2P', 'showFake', 'dbOnly', 'allowEng', 'no4k', 'no1080', 'no720', 'noScr', 'noCam', 'noHardcodedSubs', 'enableTrailers', 'vixLast', 'streamingCommunityLast', 'savedCloudAggressive', 'savedCloudSnapshotEnabled', 'useTorrentIntelligenceRanking', 'useQualityIntelligenceRanking', 'useLeviathanScoreProfile'];
   for (const key of booleanFilterKeys) {
     if (output.filters[key] !== undefined) {
-      const value = output.filters[key];
-      if (typeof value === 'boolean') {
-        output.filters[key] = value;
-      } else if (typeof value === 'string') {
-        const lower = value.toLowerCase();
+      if (typeof output.filters[key] === 'boolean') {
+        // leave as-is
+      } else if (typeof output.filters[key] === 'string') {
+        const lower = output.filters[key].toLowerCase();
         if (lower === 'false' || lower === '0' || lower === 'no' || lower === 'off') {
           output.filters[key] = false;
         } else if (lower === 'true' || lower === '1' || lower === 'yes' || lower === 'on') {
           output.filters[key] = true;
         } else {
-          output.filters[key] = Boolean(value);
+          output.filters[key] = Boolean(output.filters[key]);
         }
       } else {
-        output.filters[key] = Boolean(value);
+        output.filters[key] = Boolean(output.filters[key]);
       }
     }
   }
