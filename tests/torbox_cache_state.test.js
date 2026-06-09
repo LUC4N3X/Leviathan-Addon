@@ -93,3 +93,46 @@ test('TorBox cache-state normalization maps display states without mixing verifi
   assert.equal(toRdCacheState(TB_CACHE_STATES.UNCERTAIN), 'probing');
   assert.equal(toRdCacheState(TB_CACHE_STATES.ERROR), 'unknown');
 });
+
+test('TorBox max mode uses full documented checkcached batches by default', () => {
+  const tuning = TorboxAvailabilityCache.__private.getRuntimeTuning();
+
+  assert.equal(tuning.chunkSize, 100);
+  assert.ok(tuning.maxConcurrency >= 6);
+});
+
+test('TorBox getRuntimeTuning returns all required fields with correct types', () => {
+  const tuning = TorboxAvailabilityCache.__private.getRuntimeTuning();
+
+  assert.ok(Object.prototype.hasOwnProperty.call(tuning, 'chunkSize'), 'missing chunkSize');
+  assert.ok(Object.prototype.hasOwnProperty.call(tuning, 'maxConcurrency'), 'missing maxConcurrency');
+  assert.ok(Object.prototype.hasOwnProperty.call(tuning, 'defaultSyncLimit'), 'missing defaultSyncLimit');
+  assert.ok(Object.prototype.hasOwnProperty.call(tuning, 'apiTimeout'), 'missing apiTimeout');
+
+  assert.equal(typeof tuning.chunkSize, 'number');
+  assert.equal(typeof tuning.maxConcurrency, 'number');
+  assert.equal(typeof tuning.defaultSyncLimit, 'number');
+  assert.equal(typeof tuning.apiTimeout, 'number');
+});
+
+test('TorBox getRuntimeTuning default syncLimit is 100', () => {
+  const tuning = TorboxAvailabilityCache.__private.getRuntimeTuning();
+  assert.equal(tuning.defaultSyncLimit, 100);
+});
+
+test('TorBox getRuntimeTuning apiTimeout is 14000ms', () => {
+  const tuning = TorboxAvailabilityCache.__private.getRuntimeTuning();
+  assert.equal(tuning.apiTimeout, 14000);
+});
+
+test('TorBox getRuntimeTuning chunkSize is clamped between 1 and 100', () => {
+  const tuning = TorboxAvailabilityCache.__private.getRuntimeTuning();
+  assert.ok(tuning.chunkSize >= 1, 'chunkSize must be >= 1');
+  assert.ok(tuning.chunkSize <= 100, 'chunkSize must be <= 100');
+});
+
+test('TorBox getRuntimeTuning maxConcurrency is clamped between 1 and 12', () => {
+  const tuning = TorboxAvailabilityCache.__private.getRuntimeTuning();
+  assert.ok(tuning.maxConcurrency >= 1, 'maxConcurrency must be >= 1');
+  assert.ok(tuning.maxConcurrency <= 12, 'maxConcurrency must be <= 12');
+});

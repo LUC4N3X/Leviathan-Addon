@@ -1771,9 +1771,20 @@ function applyTorboxCacheResultToItem(item, result = {}) {
     return state;
 }
 
+function getTorboxProgressiveWindows() {
+    const raw = String(process.env.TB_CACHE_PROGRESSIVE_WINDOWS || '').trim();
+    const parsed = raw
+        .split(',')
+        .map((part) => Number.parseInt(part.trim(), 10))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .map((value) => Math.min(500, value));
+    const windows = parsed.length > 0 ? parsed : [100, 200, 300];
+    return [...new Set(windows)].sort((a, b) => a - b);
+}
+
 async function resolveTorboxRankedList(rankedList, apiKey) {
     const sourceRanked = Array.isArray(rankedList) ? [...rankedList] : [];
-    const progressiveWindows = [30, 60, 90];
+    const progressiveWindows = getTorboxProgressiveWindows();
     let verifiedList = [];
     let usedWindow = 0;
 

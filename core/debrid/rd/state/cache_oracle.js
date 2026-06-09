@@ -99,6 +99,7 @@ function resolveEffectiveRdState(item = {}, meta = {}) {
     if (series) {
       // Serie/pack: un infoHash cached non basta. Cached forte solo con prova episodio
       // (DB imdb:s:e -> fileIdx, episodeFileHint RD, filename SxxEyy, single-video probe trusted).
+      if (explicitState === 'likely_cached' && !positive) return 'likely_cached';
       if (EpisodePrecision.hasExactEpisodeProof(item, meta)) return 'cached';
       return 'likely_cached';
     }

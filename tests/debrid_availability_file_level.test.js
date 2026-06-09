@@ -63,6 +63,108 @@ test('RD availability payload stores file-level and episode proof metadata', () 
   assert.equal(payload.episode, 5);
 });
 
+test('RD strict-fast treats DB positives without a fresh recheck as verification hints', () => {
+  const missingRecheck = __private.deriveDbRdAvailability({
+    cached_rd: true,
+    rd_cache_state: 'cached',
+    next_cached_check: null
+  });
+  const staleRecheck = __private.deriveDbRdAvailability({
+    cached_rd: true,
+    rd_cache_state: 'cached',
+    next_cached_check: new Date(Date.now() - 60_000).toISOString()
+  });
+  const freshRecheck = __private.deriveDbRdAvailability({
+    cached_rd: true,
+    rd_cache_state: 'cached',
+    next_cached_check: new Date(Date.now() + 60 * 60_000).toISOString()
+  });
+
+  assert.equal(missingRecheck.state, 'likely_cached');
+  assert.equal(missingRecheck.cached, null);
+  assert.equal(missingRecheck.needsLiveVerification, true);
+  assert.equal(staleRecheck.state, 'likely_cached');
+  assert.equal(staleRecheck.cached, null);
+  assert.equal(staleRecheck.needsLiveVerification, true);
+  assert.equal(freshRecheck.state, 'cached');
+  assert.equal(freshRecheck.cached, true);
+  assert.equal(freshRecheck.needsLiveVerification, false);
+});
+
+test('RD strict-fast disabled via env reverts positives to cached without needsLiveVerification', () => {
+  const previous = process.env.RD_STRICT_FAST_ENABLED;
+  process.env.RD_STRICT_FAST_ENABLED = 'false';
+  try {
+    const staleRecheck = __private.deriveDbRdAvailability({
+      cached_rd: true,
+      rd_cache_state: 'cached',
+      next_cached_check: new Date(Date.now() - 60_000).toISOString()
+    });
+    // With strict-fast disabled a stale positive still becomes likely_cached
+    // (the shared stalePositive path) but needsLiveVerification stays set
+    assert.equal(staleRecheck.state, 'likely_cached');
+    assert.equal(staleRecheck.stale, true);
+    assert.equal(staleRecheck.needsLiveVerification, true);
+  } finally {
+    if (previous === undefined) delete process.env.RD_STRICT_FAST_ENABLED;
+    else process.env.RD_STRICT_FAST_ENABLED = previous;
+  }
+});
+
+test('RD deriveDbRdAvailability returns unknown state for null/empty row', () => {
+  const empty = __private.deriveDbRdAvailability({});
+  assert.equal(empty.state, null);
+  assert.equal(empty.cached, null);
+  assert.equal(empty.stale, false);
+  assert.equal(empty.needsLiveVerification, false);
+
+  const nullRow = __private.deriveDbRdAvailability(null);
+  assert.equal(nullRow.state, null);
+  assert.equal(nullRow.cached, null);
+});
+
+test('RD deriveDbRdAvailability returns likely_cached for likely_cached state without fresh recheck', () => {
+  const result = __private.deriveDbRdAvailability({
+    cached_rd: null,
+    rd_cache_state: 'likely_cached',
+    next_cached_check: null
+  });
+  assert.equal(result.state, 'likely_cached');
+  assert.equal(result.needsLiveVerification, true);
+});
+
+test('RD deriveDbRdAvailability preserves non-positive states unchanged', () => {
+  const probing = __private.deriveDbRdAvailability({
+    cached_rd: null,
+    rd_cache_state: 'probing',
+    next_cached_check: null
+  });
+  assert.equal(probing.state, 'probing');
+  assert.equal(probing.stale, false);
+  assert.equal(probing.needsLiveVerification, false);
+
+  const uncached = __private.deriveDbRdAvailability({
+    cached_rd: false,
+    rd_cache_state: 'likely_uncached',
+    next_cached_check: null
+  });
+  assert.equal(uncached.state, 'likely_uncached');
+  assert.equal(uncached.stale, false);
+});
+
+test('RD deriveDbRdAvailability fresh recheck prevents stale-positive reclassification', () => {
+  const future = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+  const result = __private.deriveDbRdAvailability({
+    cached_rd: true,
+    rd_cache_state: 'cached',
+    next_cached_check: future
+  });
+  assert.equal(result.state, 'cached');
+  assert.equal(result.cached, true);
+  assert.equal(result.stale, false);
+  assert.equal(result.needsLiveVerification, false);
+});
+
 test('TorBox DB cache is only a hint until a foreground live check confirms it', () => {
   const tools = makeTools();
 
