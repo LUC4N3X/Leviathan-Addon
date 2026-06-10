@@ -50,7 +50,10 @@ function clampEnvInt(name, fallback, min, max) {
 function envFlag(name, fallback = false) {
     const raw = process.env[name];
     if (raw === undefined || raw === null || raw === '') return fallback;
-    return /^(1|true|yes|y|on)$/i.test(String(raw).trim());
+    const normalized = String(raw).trim();
+    if (/^(1|true|yes|y|on)$/i.test(normalized)) return true;
+    if (/^(0|false|no|n|off)$/i.test(normalized)) return false;
+    return fallback;
 }
 
 function isRdStrictFastEnabled() {
@@ -87,6 +90,20 @@ function normalizeFileIdxForAvailability(fileIdx) {
     return Number.isInteger(parsed) && parsed >= 0 ? String(parsed) : 'auto';
 }
 
+function toPositiveNumber(value, fallback = 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function toNonNegativeInteger(value, fallback = null) {
+    if (value === undefined || value === null || value === '') return fallback;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function normalizeServiceName(service, fallback = 'rd') {
+    return String(service || fallback).trim().toLowerCase() || fallback;
+}
 
 function buildDebridUserHash(apiKey) {
     const raw = String(apiKey || '').trim();
@@ -94,25 +111,16 @@ function buildDebridUserHash(apiKey) {
     return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16);
 }
 
-// Debrid services whose cached/uncached status is service-wide (CDN-level), not
-// tied to the requesting account. For these, one availability check answers for
-// every user — mirroring MediaFusion's GLOBAL_CACHE_CHECK_PROVIDERS.
 const GLOBAL_CACHE_SERVICES = new Set(['tb', 'torbox', 'premiumize', 'pm', 'offcloud', 'stremthru']);
 
 function isGlobalCacheCheckEnabled() {
-    const raw = process.env.DEBRID_GLOBAL_CACHE_CHECK_ENABLED;
-    if (raw === undefined || raw === null || raw === '') return true;
-    return /^(1|true|yes|y|on)$/i.test(String(raw).trim());
+    return envFlag('DEBRID_GLOBAL_CACHE_CHECK_ENABLED', true);
 }
 
 function isGlobalCacheService(service) {
-    return GLOBAL_CACHE_SERVICES.has(String(service || '').trim().toLowerCase());
+    return GLOBAL_CACHE_SERVICES.has(normalizeServiceName(service, ''));
 }
 
-// Resolve the user-scope component of a debrid check marker. Global-cache
-// services share a single 'global' marker (so a TorBox check is performed once
-// for the whole instance instead of once per user); per-user services such as
-// Real-Debrid keep a token-scoped marker because availability is account-bound.
 function resolveDebridCheckUserHash(service, apiKey) {
     if (isGlobalCacheCheckEnabled() && isGlobalCacheService(service)) return 'global';
     return buildDebridUserHash(apiKey);
@@ -124,8 +132,8 @@ function buildDebridMediaId(meta = {}) {
     const kitsu = String(meta?.kitsu_id || meta?.kitsuId || '').trim().toLowerCase();
     const providerId = imdb || (tmdb ? `tmdb:${tmdb}` : '') || (kitsu ? `kitsu:${kitsu}` : '');
     if (!providerId) return null;
-    const season = Number(meta?.season || 0) || 0;
-    const episode = Number(meta?.episode || 0) || 0;
+    const season = toPositiveNumber(meta?.season, 0);
+    const episode = toPositiveNumber(meta?.episode, 0);
     if (season > 0 && episode > 0) return `${providerId}:s${season}:e${episode}`;
     return providerId;
 }
@@ -179,9 +187,18 @@ function setTimedMapValue(map, key, value, ttlSeconds, maxEntries) {
     return true;
 }
 
-function getLocalAvailabilityPayload(cacheKey, legacyKey = null) {
-    return getTimedMapValue(localAvailabilityCache, cacheKey) ||
-        (legacyKey && legacyKey !== cacheKey ? getTimedMapValue(localAvailabilityCache, legacyKey) : null);
+function getLocalAvailabilityPayload(cacheKey, fallbackKeys = []) {
+    const primaryPayload = getTimedMapValue(localAvailabilityCache, cacheKey);
+    if (primaryPayload) return primaryPayload;
+
+    const keys = Array.isArray(fallbackKeys) ? fallbackKeys : [fallbackKeys];
+    for (const fallbackKey of keys) {
+        if (!fallbackKey || fallbackKey === cacheKey) continue;
+        const payload = getTimedMapValue(localAvailabilityCache, fallbackKey);
+        if (payload) return payload;
+    }
+
+    return null;
 }
 
 function rememberLocalAvailabilityPayload(cacheKey, payload, ttlSeconds) {
@@ -192,7 +209,7 @@ function rememberLocalAvailabilityPayload(cacheKey, payload, ttlSeconds) {
 function buildDebridCheckMarkerLocalKey(service, apiKey, meta = {}) {
     const mediaId = buildDebridMediaId(meta);
     if (!mediaId) return null;
-    return `${String(service || 'rd').trim().toLowerCase() || 'rd'}:${resolveDebridCheckUserHash(service, apiKey)}:${mediaId}`;
+    return `${normalizeServiceName(service)}:${resolveDebridCheckUserHash(service, apiKey)}:${mediaId}`;
 }
 
 async function isRecentDebridMediaCheck(service, apiKey, meta, logger = console) {
@@ -243,7 +260,7 @@ async function markDebridMediaCheckDone(service, apiKey, meta, logger = console)
 }
 
 function getAvailabilityCacheKey(service, hash, fileIdx = null, meta = null) {
-    const normalizedService = String(service || 'rd').trim().toLowerCase();
+    const normalizedService = normalizeServiceName(service);
     const normalizedHash = String(hash || '').trim().toUpperCase();
     if (!/^[A-F0-9]{40}$/.test(normalizedHash)) return null;
     const baseKey = `${normalizedService}:${normalizedHash}:${normalizeFileIdxForAvailability(fileIdx)}`;
@@ -255,22 +272,20 @@ function getAvailabilityCacheKeys(service, hash, fileIdx = null, meta = {}) {
     const primary = getAvailabilityCacheKey(service, hash, fileIdx, meta);
     if (!primary) return { primary: null, fallbacks: [] };
 
-    const normalizedService = String(service || 'rd').trim().toLowerCase();
+    const normalizedService = normalizeServiceName(service);
     const normalizedHash = String(hash || '').trim().toUpperCase();
     const filePart = normalizeFileIdxForAvailability(fileIdx);
     const fallbacks = [];
     const fileScoped = `${normalizedService}:${normalizedHash}:${filePart}`;
 
     if (fileScoped !== primary) fallbacks.push(fileScoped);
-    // Hash-only legacy cache is safe for movies. For series it can leak a pack
-    // result from another episode, so allow it only when a concrete file id exists.
     if (!isSeriesAvailabilityMeta(meta) || filePart !== 'auto') fallbacks.push(`${normalizedService}:${normalizedHash}`);
 
     return { primary, fallbacks: [...new Set(fallbacks.filter(Boolean))] };
 }
 
 function getLegacyAvailabilityCacheKey(service, hash) {
-    const normalizedService = String(service || 'rd').trim().toLowerCase();
+    const normalizedService = normalizeServiceName(service);
     const normalizedHash = String(hash || '').trim().toUpperCase();
     if (!/^[A-F0-9]{40}$/.test(normalizedHash)) return null;
     return `${normalizedService}:${normalizedHash}`;
@@ -541,7 +556,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
     }
 
     function getRdAvailabilityState(service, item, meta = {}) {
-        const normalizedService = String(service || '').toLowerCase();
+        const normalizedService = normalizeServiceName(service, '');
 
         if (normalizedService === 'tb') {
             if (item?._savedCloud === true || item?.isSavedCloud === true) return 'cached';
@@ -704,8 +719,9 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
                     }
                 }
 
-                if ((item?.fileIdx === undefined || item?.fileIdx === null) && Number.isInteger(row?.rd_file_index) && row.rd_file_index >= 0) {
-                    item.fileIdx = row.rd_file_index;
+                const rdFileIndex = toNonNegativeInteger(row?.rd_file_index, null);
+                if ((item?.fileIdx === undefined || item?.fileIdx === null) && rdFileIndex !== null) {
+                    item.fileIdx = rdFileIndex;
                 }
                 if (isSeriesMeta(meta)) EpisodePrecision.applyEpisodePrecisionToItem(item, meta);
             }
@@ -894,27 +910,27 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
         const cachedUnknownCandidates = [];
         let availabilityCacheHits = 0;
         for (const item of allUnknownCandidates) {
-                const { primary: cacheKey, fallbacks } = getAvailabilityCacheKeys('rd', item?.hash, item?.fileIdx, meta);
+            const { primary: cacheKey, fallbacks } = getAvailabilityCacheKeys('rd', item?.hash, item?.fileIdx, meta);
             if (!cacheKey || typeof Cache.getAvailability !== 'function') {
                 cachedUnknownCandidates.push(item);
                 continue;
             }
             try {
-                    let cachedPayload = getLocalAvailabilityPayload(cacheKey, fallbacks[0] || null);
+                let cachedPayload = getLocalAvailabilityPayload(cacheKey, fallbacks);
                 if (!cachedPayload) {
                     cachedPayload = await Cache.getAvailability(cacheKey);
-                        for (const fallbackKey of fallbacks) {
-                            if (cachedPayload) break;
-                            cachedPayload = await Cache.getAvailability(fallbackKey);
-                        }
+                    for (const fallbackKey of fallbacks) {
+                        if (cachedPayload) break;
+                        cachedPayload = await Cache.getAvailability(fallbackKey);
+                    }
                     if (cachedPayload) {
                         rememberLocalAvailabilityPayload(cacheKey, cachedPayload, Math.min(AVAILABILITY_CACHE_HIT_TTL, 3600));
                     }
                 }
                 if (!cachedPayload && typeof dbHelper?.getDebridAvailabilityCache === 'function') {
-                        const lookupKeys = [cacheKey, ...fallbacks].filter(Boolean);
-                        const persisted = await dbHelper.getDebridAvailabilityCache(lookupKeys);
-                        cachedPayload = persisted?.[cacheKey] || fallbacks.map((key) => persisted?.[key]).find(Boolean) || null;
+                    const lookupKeys = [cacheKey, ...fallbacks].filter(Boolean);
+                    const persisted = await dbHelper.getDebridAvailabilityCache(lookupKeys);
+                    cachedPayload = persisted?.[cacheKey] || fallbacks.map((key) => persisted?.[key]).find(Boolean) || null;
                     if (cachedPayload) {
                         rememberLocalAvailabilityPayload(cacheKey, cachedPayload, Math.min(AVAILABILITY_CACHE_HIT_TTL, 3600));
                     }
@@ -1208,7 +1224,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
     }
 
     async function persistResolvedDebridAvailability(meta, item, streamData, service, reason = 'direct_resolve') {
-        const normalizedService = String(service || '').toLowerCase();
+        const normalizedService = normalizeServiceName(service, '');
         if (!item?.hash) return false;
         if (!['rd', 'tb'].includes(normalizedService)) return false;
         if (!dbHelper) return false;
@@ -1288,8 +1304,13 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
 
             if (updated > 0) {
                 await Cache.invalidateStreamsByHashes([item.hash], `${reason}_cached`);
-                if (meta?.imdb_id && Number.isInteger(meta?.season) && meta.season > 0 && Number.isInteger(meta?.episode) && meta.episode > 0 && typeof Cache.invalidateStreamsByEpisode === 'function') await Cache.invalidateStreamsByEpisode({ imdbId: meta.imdb_id, season: meta.season, episode: meta.episode }, `${reason}_cached`);
-                else if (meta?.imdb_id) await Cache.invalidateStreamsByImdb(meta.imdb_id, `${reason}_cached`);
+                const normalizedSeason = toPositiveNumber(meta?.season, 0);
+                const normalizedEpisode = toPositiveNumber(meta?.episode, 0);
+                if (meta?.imdb_id && normalizedSeason > 0 && normalizedEpisode > 0 && typeof Cache.invalidateStreamsByEpisode === 'function') {
+                    await Cache.invalidateStreamsByEpisode({ imdbId: meta.imdb_id, season: normalizedSeason, episode: normalizedEpisode }, `${reason}_cached`);
+                } else if (meta?.imdb_id) {
+                    await Cache.invalidateStreamsByImdb(meta.imdb_id, `${reason}_cached`);
+                }
                 const dbLookupKey = getMetaDbLookupKey(meta);
                 if (dbLookupKey) await Cache.invalidateDbTorrents(dbLookupKey, `${reason}_cached`);
                 if (typeof Cache.cacheAvailability === 'function') {
