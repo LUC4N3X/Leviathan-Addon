@@ -48,3 +48,15 @@ test('provider error classifier keeps bare 429 as rate_limited', () => {
   const classified = classifyProviderError({ statusCode: 429, message: 'Too Many Requests' });
   assert.equal(classified.status, 'rate_limited');
 });
+
+test('failure classifier gives http_401_unauthorized reason for bare 401 (no antibot)', () => {
+  const failure = classifyProviderFailure({ error: { status: 401, message: 'Unauthorized' } });
+  assert.equal(failure.type, 'blocked');
+  assert.equal(failure.reason, 'http_401_unauthorized');
+});
+
+test('failure classifier (no-error path) gives http_401_unauthorized for bare 401', () => {
+  const failure = classifyProviderFailure({ response: { status: 401, data: '' }, rawResults: [] });
+  assert.equal(failure.type, 'blocked');
+  assert.equal(failure.reason, 'http_401_unauthorized');
+});

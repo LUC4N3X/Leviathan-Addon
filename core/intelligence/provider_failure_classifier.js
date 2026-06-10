@@ -99,7 +99,7 @@ function classifyProviderFailure({ error = null, response = null, rawResults = [
             return { type: 'timeout', reason: 'request_timeout', status, recoverable: false, canFallback: true, isError: true };
         }
         if (status === 403 || status === 401 || antiBotBlock) {
-            return { type: 'blocked', reason: antiBotBlock ? blockReason : (status === 403 ? 'http_403_blocked' : 'http_401_unauthorized'), status, recoverable: false, canFallback: true, isError: true, details: blockDetails };
+            return { type: 'blocked', reason: status === 403 ? 'http_403_blocked' : (status === 401 && !antiBotBlock ? 'http_401_unauthorized' : blockReason), status, recoverable: false, canFallback: true, isError: true, details: blockDetails };
         }
         if (status === 429) {
             return { type: 'rate_limited', reason: 'rate_limited', status, recoverable: false, canFallback: true, isError: true };
@@ -117,7 +117,7 @@ function classifyProviderFailure({ error = null, response = null, rawResults = [
     }
 
     if (status === 403 || status === 401 || antiBotBlock) {
-        return { type: 'blocked', reason: antiBotBlock ? blockReason : (status === 403 ? 'http_403_blocked' : 'http_401_unauthorized'), status, recoverable: false, canFallback: true, isError: false, details: blockDetails };
+        return { type: 'blocked', reason: status === 403 ? 'http_403_blocked' : (status === 401 && !antiBotBlock ? 'http_401_unauthorized' : blockReason), status, recoverable: false, canFallback: true, isError: false, details: blockDetails };
     }
     if (status === 429) return { type: 'rate_limited', reason: 'rate_limited', status, recoverable: false, canFallback: true, isError: false };
     if (status === 404) return { type: 'not_found', reason: 'http_404', status, recoverable: false, canFallback: true, isError: false };
