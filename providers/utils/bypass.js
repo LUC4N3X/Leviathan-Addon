@@ -762,15 +762,22 @@ function classifyBlockResponse(body, status = 0, headers = {}) {
     const low = text.slice(0, 80000).toLowerCase();
     const server = safeString(normalized.server).toLowerCase();
     const hasCfHeaders = Boolean(normalized['cf-ray'] || normalized['cf-cache-status'] || normalized['cf-mitigated'] || server.includes('cloudflare'));
-    const hasCfChallenge = antibotSignatures.bodyHasCloudflareChallenge(text)
-        || antibotSignatures.headersIndicateCloudflareChallenge(normalized);
+    const bodyHasCfChallenge = antibotSignatures.bodyHasCloudflareChallenge(text);
+    const headerHasCfChallenge = antibotSignatures.headersIndicateCloudflareChallenge(normalized);
+    const hasCfChallenge = bodyHasCfChallenge || headerHasCfChallenge;
     const vendorDetection = antibotSignatures.detectAntibot(text, code, normalized);
     const hasWaf = (vendorDetection.kind === 'waf' && vendorDetection.vendor !== 'cloudflare')
         || /access denied|request blocked|forbidden|ddos-guard|sucuri|incapsula|akamai|perimeterx|datadome|bot protection|security check/i.test(text);
     const isTinyBody = !text || text.trim().length < 32;
 
     if (hasCfChallenge || (hasCfHeaders && [403, 429, 503].includes(code) && text.length < 120000)) {
-        return { blocked: true, type: 'cloudflare_challenge', retryable: true, status: code, reason: hasCfChallenge ? 'cf_challenge_body' : 'cf_headers_status', vendor: 'cloudflare' };
+        let reason = 'cf_headers_status';
+        if (bodyHasCfChallenge) {
+            reason = 'cf_challenge_body';
+        } else if (headerHasCfChallenge) {
+            reason = 'cf_challenge_header';
+        }
+        return { blocked: true, type: 'cloudflare_challenge', retryable: true, status: code, reason, vendor: 'cloudflare' };
     }
 
     if (code === 429) {
