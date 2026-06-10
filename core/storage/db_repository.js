@@ -8,9 +8,12 @@ const { createCacheRepository } = require('./db/cache_repository');
 
 let pool = null;
 let databaseOptimizationsPromise = null;
+let databaseShuttingDown = false;
+
 let notificationClient = null;
 let notificationReconnectPromise = null;
 let notificationReconnectTimer = null;
+
 const notificationHandlers = new Map();
 const subscribedChannels = new Set();
 
@@ -25,27 +28,40 @@ const DB_NOTIFICATION_RECONNECT_DELAY_MS = normalizers.clampInt(process.env.DB_N
 
 function buildPoolConfig(config = {}) {
   const sslEnabled = normalizers.normalizeBooleanEnv(process.env.DB_SSL, false);
-  const sslConfig = sslEnabled ? { rejectUnauthorized: false } : false;
+  const ssl = sslEnabled ? { rejectUnauthorized: false } : false;
+
+  const baseConfig = {
+    ssl,
+    statement_timeout: DB_STATEMENT_TIMEOUT_MS,
+    query_timeout: DB_QUERY_TIMEOUT_MS,
+    lock_timeout: DB_LOCK_TIMEOUT_MS,
+    idle_in_transaction_session_timeout: DB_IDLE_TX_TIMEOUT_MS
+  };
 
   if (process.env.DATABASE_URL) {
     return {
-      connectionString: process.env.DATABASE_URL,
-      ssl: sslConfig
+      ...baseConfig,
+      connectionString: process.env.DATABASE_URL
     };
   }
 
   return {
+    ...baseConfig,
     host: config.host || process.env.DB_HOST || 'localhost',
     port: normalizers.clampInt(config.port || process.env.DB_PORT, 5432, 1, 65535),
     database: config.database || process.env.DB_NAME || 'torrent_library',
     user: config.user || process.env.DB_USER || 'postgres',
-    password: config.password || process.env.DB_PASSWORD,
-    ssl: sslConfig
+    password: config.password || process.env.DB_PASSWORD
   };
 }
 
+function describePoolTarget(poolConfig) {
+  if (poolConfig.connectionString) return 'DATABASE_URL';
+  return `${poolConfig.host}:${poolConfig.port}/${poolConfig.database}`;
+}
+
 function scheduleDatabaseOptimizations() {
-  if (!pool) return null;
+  if (!pool || databaseShuttingDown) return null;
   if (databaseOptimizationsPromise) return databaseOptimizationsPromise;
 
   databaseOptimizationsPromise = ensureDatabaseOptimizations(pool)
@@ -54,7 +70,9 @@ function scheduleDatabaseOptimizations() {
       throw error;
     })
     .finally(() => {
-      if (!pool) databaseOptimizationsPromise = null;
+      if (!pool || databaseShuttingDown) {
+        databaseOptimizationsPromise = null;
+      }
     });
 
   return databaseOptimizationsPromise;
@@ -63,7 +81,10 @@ function scheduleDatabaseOptimizations() {
 function initDatabase(config = {}) {
   if (pool) return pool;
 
+  databaseShuttingDown = false;
+
   const poolConfig = buildPoolConfig(config);
+
   pool = new Pool({
     ...poolConfig,
     max: DB_POOL_MAX,
@@ -82,12 +103,12 @@ function initDatabase(config = {}) {
     console.warn(`⚠️ DB optimization bootstrap failed: ${error.message}`);
   });
 
-  console.log(`✅ DB Pool inizializzato (${poolConfig.host || 'DATABASE_URL'})`);
+  console.log(`✅ DB Pool inizializzato (${describePoolTarget(poolConfig)})`);
   return pool;
 }
 
 async function awaitDatabaseOptimizations() {
-  if (!pool) return false;
+  if (!pool || databaseShuttingDown) return false;
 
   try {
     await scheduleDatabaseOptimizations();
@@ -100,13 +121,42 @@ async function awaitDatabaseOptimizations() {
 
 function assertNotificationChannel(channel) {
   const normalized = String(channel || '').trim().toLowerCase();
-  if (!/^[a-z0-9_]+$/.test(normalized)) throw new Error(`Invalid notification channel: ${channel}`);
+
+  if (!/^[a-z0-9_]+$/.test(normalized)) {
+    throw new Error(`Invalid notification channel: ${channel}`);
+  }
+
   return normalized;
+}
+
+function quoteNotificationChannel(channel) {
+  return `"${String(channel).replace(/"/g, '""')}"`;
+}
+
+function parseNotificationPayload(message) {
+  if (!message?.payload) return null;
+
+  try {
+    return JSON.parse(message.payload);
+  } catch (_) {
+    return { raw: message.payload };
+  }
+}
+
+function stringifyNotificationPayload(payload) {
+  const serialized = JSON.stringify(payload ?? {});
+  return serialized === undefined ? '{}' : serialized;
 }
 
 function releaseNotificationClient(client, error = null) {
   if (!client || client.__leviReleased === true) return;
+
   client.__leviReleased = true;
+
+  if (client.__leviListeningChannels) {
+    client.__leviListeningChannels.clear();
+  }
+
   try {
     client.release(error || undefined);
   } catch (_) {}
@@ -114,25 +164,24 @@ function releaseNotificationClient(client, error = null) {
 
 function clearNotificationReconnectTimer() {
   if (!notificationReconnectTimer) return;
+
   clearTimeout(notificationReconnectTimer);
   notificationReconnectTimer = null;
 }
 
 function scheduleNotificationReconnect(reason = 'unknown') {
-  if (!pool || subscribedChannels.size === 0) return;
+  if (databaseShuttingDown || !pool || subscribedChannels.size === 0) return;
   if (notificationClient || notificationReconnectPromise || notificationReconnectTimer) return;
+
+  const reconnectReason = reason instanceof Error ? reason.message : String(reason || 'unknown');
 
   notificationReconnectTimer = setTimeout(() => {
     notificationReconnectTimer = null;
-    notificationReconnectPromise = ensureNotificationClient()
-      .catch((error) => {
-        console.warn(`⚠️ DB notification reconnect failed (${reason}): ${error.message}`);
-        scheduleNotificationReconnect('retry');
-        return null;
-      })
-      .finally(() => {
-        notificationReconnectPromise = null;
-      });
+
+    ensureNotificationClient().catch((error) => {
+      console.warn(`⚠️ DB notification reconnect failed (${reconnectReason}): ${error.message}`);
+      scheduleNotificationReconnect('retry');
+    });
   }, DB_NOTIFICATION_RECONNECT_DELAY_MS);
 
   if (typeof notificationReconnectTimer.unref === 'function') {
@@ -141,133 +190,243 @@ function scheduleNotificationReconnect(reason = 'unknown') {
 }
 
 function handleNotificationClientLoss(client, reason) {
-  if (notificationClient === client) notificationClient = null;
-  releaseNotificationClient(client, reason instanceof Error ? reason : new Error(String(reason || 'notification_client_lost')));
-  scheduleNotificationReconnect(reason instanceof Error ? reason.message : String(reason || 'lost'));
+  if (notificationClient === client) {
+    notificationClient = null;
+  }
+
+  const error = reason instanceof Error
+    ? reason
+    : new Error(String(reason || 'notification_client_lost'));
+
+  releaseNotificationClient(client, error);
+  scheduleNotificationReconnect(error.message);
+}
+
+function attachNotificationClientListeners(client) {
+  client.on('notification', (message) => {
+    const channel = String(message?.channel || '').trim().toLowerCase();
+    const handlers = notificationHandlers.get(channel);
+
+    if (!handlers || handlers.size === 0) return;
+
+    const payload = parseNotificationPayload(message);
+
+    for (const handler of [...handlers]) {
+      try {
+        handler(payload);
+      } catch (error) {
+        console.warn(`⚠️ Notification handler failed on ${channel}: ${error.message}`);
+      }
+    }
+  });
+
+  client.on('error', (error) => {
+    console.warn(`⚠️ DB notification client error: ${error.message}`);
+    handleNotificationClientLoss(client, error);
+  });
+
+  client.on('end', () => {
+    console.warn('⚠️ DB notification client ended.');
+    handleNotificationClientLoss(client, 'end');
+  });
+}
+
+async function listenNotificationChannel(client, channel) {
+  if (!client || client.__leviReleased === true) {
+    throw new Error('Notification client is not available');
+  }
+
+  if (!client.__leviListeningChannels) {
+    client.__leviListeningChannels = new Set();
+  }
+
+  if (client.__leviListeningChannels.has(channel)) {
+    return false;
+  }
+
+  await client.query(`LISTEN ${quoteNotificationChannel(channel)}`);
+  client.__leviListeningChannels.add(channel);
+
+  return true;
+}
+
+async function unlistenNotificationChannel(client, channel) {
+  if (!client || client.__leviReleased === true) return false;
+
+  if (!client.__leviListeningChannels) {
+    client.__leviListeningChannels = new Set();
+  }
+
+  if (!client.__leviListeningChannels.has(channel)) {
+    return false;
+  }
+
+  await client.query(`UNLISTEN ${quoteNotificationChannel(channel)}`);
+  client.__leviListeningChannels.delete(channel);
+
+  return true;
+}
+
+function removeNotificationHandler(channel, handler) {
+  const handlers = notificationHandlers.get(channel);
+
+  if (handlers) {
+    handlers.delete(handler);
+
+    if (handlers.size === 0) {
+      notificationHandlers.delete(channel);
+    }
+  }
+
+  if (!notificationHandlers.has(channel)) {
+    subscribedChannels.delete(channel);
+    return true;
+  }
+
+  return false;
 }
 
 async function ensureNotificationClient() {
-  if (!pool) throw new Error('Pool not initialized');
-  if (notificationClient) return notificationClient;
-  if (notificationReconnectPromise) return notificationReconnectPromise;
+  if (!pool || databaseShuttingDown) {
+    throw new Error('Pool not initialized');
+  }
 
-  notificationReconnectPromise = (async () => {
+  if (notificationClient && notificationClient.__leviReleased !== true) {
+    return notificationClient;
+  }
+
+  if (notificationReconnectPromise) {
+    return notificationReconnectPromise;
+  }
+
+  const pendingConnection = (async () => {
     clearNotificationReconnectTimer();
 
     const client = await pool.connect();
+
     client.__leviReleased = false;
-    notificationClient = client;
+    client.__leviListeningChannels = new Set();
 
-    client.on('notification', (message) => {
-      const channel = String(message?.channel || '').trim().toLowerCase();
-      const handlers = notificationHandlers.get(channel);
-      if (!handlers || handlers.size === 0) return;
+    attachNotificationClientListeners(client);
 
-      let payload = null;
-      try {
-        payload = message?.payload ? JSON.parse(message.payload) : null;
-      } catch (_) {
-        payload = { raw: message?.payload || null };
-      }
-
-      for (const handler of handlers) {
-        try {
-          handler(payload);
-        } catch (error) {
-          console.warn(`⚠️ Notification handler failed on ${channel}: ${error.message}`);
-        }
-      }
-    });
-
-    client.on('error', (error) => {
-      console.warn(`⚠️ DB notification client error: ${error.message}`);
-      handleNotificationClientLoss(client, error);
-    });
-
-    client.on('end', () => {
-      console.warn('⚠️ DB notification client ended.');
-      handleNotificationClientLoss(client, 'end');
-    });
+    if (databaseShuttingDown || !pool) {
+      releaseNotificationClient(client, new Error('shutdown'));
+      throw new Error('Pool not initialized');
+    }
 
     try {
-      for (const channel of subscribedChannels) {
-        await client.query(`LISTEN ${channel}`);
+      for (const channel of [...subscribedChannels]) {
+        await listenNotificationChannel(client, channel);
       }
     } catch (error) {
-      if (notificationClient === client) notificationClient = null;
       releaseNotificationClient(client, error);
       throw error;
     }
 
+    notificationClient = client;
     return client;
-  })().finally(() => {
-    notificationReconnectPromise = null;
-  });
+  })();
 
-  return notificationReconnectPromise;
+  notificationReconnectPromise = pendingConnection;
+
+  try {
+    return await pendingConnection;
+  } finally {
+    if (notificationReconnectPromise === pendingConnection) {
+      notificationReconnectPromise = null;
+    }
+  }
 }
 
 async function subscribeNotifications(channel, handler) {
   const normalizedChannel = assertNotificationChannel(channel);
-  if (typeof handler !== 'function') throw new Error('Notification handler must be a function');
+
+  if (typeof handler !== 'function') {
+    throw new Error('Notification handler must be a function');
+  }
 
   let handlers = notificationHandlers.get(normalizedChannel);
+
   if (!handlers) {
     handlers = new Set();
     notificationHandlers.set(normalizedChannel, handlers);
   }
+
   handlers.add(handler);
   subscribedChannels.add(normalizedChannel);
 
-  const client = await ensureNotificationClient();
-  await client.query(`LISTEN ${normalizedChannel}`);
+  try {
+    const client = await ensureNotificationClient();
+    await listenNotificationChannel(client, normalizedChannel);
+  } catch (error) {
+    removeNotificationHandler(normalizedChannel, handler);
+    throw error;
+  }
+
+  let unsubscribed = false;
 
   return async () => {
-    const currentHandlers = notificationHandlers.get(normalizedChannel);
-    if (currentHandlers) {
-      currentHandlers.delete(handler);
-      if (currentHandlers.size === 0) notificationHandlers.delete(normalizedChannel);
-    }
+    if (unsubscribed) return;
 
-    if (!notificationHandlers.has(normalizedChannel)) {
-      subscribedChannels.delete(normalizedChannel);
-      if (notificationClient) {
-        try {
-          await notificationClient.query(`UNLISTEN ${normalizedChannel}`);
-        } catch (_) {}
-      }
+    unsubscribed = true;
+
+    const shouldUnlisten = removeNotificationHandler(normalizedChannel, handler);
+
+    if (shouldUnlisten && notificationClient) {
+      try {
+        await unlistenNotificationChannel(notificationClient, normalizedChannel);
+      } catch (_) {}
     }
   };
 }
 
 async function publishNotification(channel, payload = {}) {
   const normalizedChannel = assertNotificationChannel(channel);
-  if (!pool) throw new Error('Pool not initialized');
-  await pool.query('SELECT pg_notify($1, $2)', [normalizedChannel, JSON.stringify(payload || {})]);
+
+  if (!pool || databaseShuttingDown) {
+    throw new Error('Pool not initialized');
+  }
+
+  await pool.query('SELECT pg_notify($1, $2)', [
+    normalizedChannel,
+    stringifyNotificationPayload(payload)
+  ]);
+
   return true;
 }
 
 async function shutdownDatabase() {
   trackerRegistry.shutdownTrackerRegistry();
+
   if (!pool) return;
+
+  databaseShuttingDown = true;
 
   const currentPool = pool;
   pool = null;
+
   databaseOptimizationsPromise = null;
+  notificationReconnectPromise = null;
+
   notificationHandlers.clear();
   subscribedChannels.clear();
   clearNotificationReconnectTimer();
-  notificationReconnectPromise = null;
+
   if (notificationClient) {
     releaseNotificationClient(notificationClient, new Error('shutdown'));
     notificationClient = null;
   }
+
   await currentPool.end();
 }
 
 async function withClient(fn) {
-  if (!pool) throw new Error('Pool not initialized');
+  if (!pool || databaseShuttingDown) {
+    throw new Error('Pool not initialized');
+  }
+
   const client = await pool.connect();
+
   try {
     return await fn(client);
   } finally {
@@ -278,6 +437,7 @@ async function withClient(fn) {
 async function runInTransaction(fn) {
   return withClient(async (client) => {
     await client.query('BEGIN');
+
     try {
       const result = await fn(client);
       await client.query('COMMIT');
@@ -286,13 +446,17 @@ async function runInTransaction(fn) {
       try {
         await client.query('ROLLBACK');
       } catch (_) {}
+
       throw error;
     }
   });
 }
 
 async function healthCheck() {
-  if (!pool) throw new Error('Pool not initialized');
+  if (!pool || databaseShuttingDown) {
+    throw new Error('Pool not initialized');
+  }
+
   await pool.query('SELECT 1');
   return true;
 }
