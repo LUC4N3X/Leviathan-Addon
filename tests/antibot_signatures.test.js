@@ -545,28 +545,34 @@ test('detectAntibot detects CF headers with mixed-case names', () => {
 
 test('env extra markers support pipe separator for multiple patterns', () => {
   const prev = process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS;
-  process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS = 'my-wall-alpha|my-wall-beta';
-  delete require.cache[require.resolve('../providers/utils/antibot_signatures')];
-  const fresh = require('../providers/utils/antibot_signatures');
-  assert.equal(fresh.bodyHasCloudflareChallenge('blocked by MY-WALL-ALPHA'), true);
-  assert.equal(fresh.bodyHasCloudflareChallenge('blocked by MY-WALL-BETA'), true);
-  if (prev == null) delete process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS;
-  else process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS = prev;
-  delete require.cache[require.resolve('../providers/utils/antibot_signatures')];
+  try {
+    process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS = 'my-wall-alpha|my-wall-beta';
+    delete require.cache[require.resolve('../providers/utils/antibot_signatures')];
+    const fresh = require('../providers/utils/antibot_signatures');
+    assert.equal(fresh.bodyHasCloudflareChallenge('blocked by MY-WALL-ALPHA'), true);
+    assert.equal(fresh.bodyHasCloudflareChallenge('blocked by MY-WALL-BETA'), true);
+  } finally {
+    if (prev == null) delete process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS;
+    else process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS = prev;
+    delete require.cache[require.resolve('../providers/utils/antibot_signatures')];
+  }
 });
 
 test('env extra markers with invalid regex are skipped silently', () => {
   const prev = process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS;
-  process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS = '[invalid-regex|valid-marker';
-  delete require.cache[require.resolve('../providers/utils/antibot_signatures')];
-  const fresh = require('../providers/utils/antibot_signatures');
-  // invalid regex is skipped, valid marker still works
-  assert.equal(fresh.bodyHasCloudflareChallenge('valid-marker detected'), true);
-  // invalid regex does not throw
-  assert.equal(fresh.bodyHasCloudflareChallenge('nothing here'), false);
-  if (prev == null) delete process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS;
-  else process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS = prev;
-  delete require.cache[require.resolve('../providers/utils/antibot_signatures')];
+  try {
+    process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS = '[invalid-regex|valid-marker';
+    delete require.cache[require.resolve('../providers/utils/antibot_signatures')];
+    const fresh = require('../providers/utils/antibot_signatures');
+    // invalid regex is skipped, valid marker still works
+    assert.equal(fresh.bodyHasCloudflareChallenge('valid-marker detected'), true);
+    // invalid regex does not throw
+    assert.equal(fresh.bodyHasCloudflareChallenge('nothing here'), false);
+  } finally {
+    if (prev == null) delete process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS;
+    else process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS = prev;
+    delete require.cache[require.resolve('../providers/utils/antibot_signatures')];
+  }
 });
 
 test('env extra markers empty string results in no extra markers', () => {
