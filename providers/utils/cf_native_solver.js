@@ -6,6 +6,7 @@ const path = require('path');
 const vm = require('vm');
 const { URL } = require('url');
 const { cfRedisStore } = require('./cf_redis_store');
+const antibotSignatures = require('./antibot_signatures');
 
 const DISK_PATH = (() => {
   if (process.env.CF_NATIVE_DISABLE_DISK === '1') return null;
@@ -31,7 +32,7 @@ const CLEARANCE_EGRESS_KEY = String(
 const REDIS_NATIVE_TTL_SECONDS = Math.max(60, Math.floor(CLEARANCE_TTL_MS / 1000));
 
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-  + '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  + '(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
 
 const CF_CHALLENGE_MARKERS = [
   /just a moment/i,
@@ -58,7 +59,8 @@ const TURNSTILE_MARKERS = [
 
 function isChallengeBody(body) {
   if (!body) return false;
-  return CF_CHALLENGE_MARKERS.some((r) => r.test(body));
+  if (CF_CHALLENGE_MARKERS.some((r) => r.test(body))) return true;
+  return antibotSignatures.bodyHasCloudflareChallenge(body);
 }
 
 function isIuamChallengeBody(body) {

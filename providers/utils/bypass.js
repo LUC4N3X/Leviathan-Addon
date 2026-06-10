@@ -1,6 +1,7 @@
 'use strict';
 
 const axios = require('axios');
+const antibotSignatures = require('./antibot_signatures');
 
 const IMPIT_INSTANCE_CACHE = new Map();
 let impitModulePromise = null;
@@ -745,26 +746,13 @@ function hasCfResponseHeaders(headers = {}) {
     return Boolean(
         h['cf-ray'] ||
         h['cf-cache-status'] ||
+        h['cf-mitigated'] ||
         safeString(h.server).toLowerCase().includes('cloudflare')
     );
 }
 
 function isCloudflareChallenge(body, status, headers = null) {
-    const code = Number(status);
-    const text = responseText(body);
-
-    if (/just a moment|checking your browser|cloudflare ray id|cf-browser-verification/i.test(text)
-        || /enable javascript and cookies|<div id=["']cf-wrapper["']|cf-chl-widget|__cf_chl_opt|cf\.challenge\.orchestrate/i.test(text)
-        || (/challenge-platform|_cf_chl_opt|cf_clearance/i.test(text) && text.length < 20000)) {
-        return true;
-    }
-
-    if ([403, 429, 503].includes(code)) {
-        if (headers == null) return true;
-        return hasCfResponseHeaders(headers);
-    }
-
-    return false;
+    return antibotSignatures.isCloudflareChallenge(responseText(body), status, headers);
 }
 
 function classifyBlockResponse(body, status = 0, headers = {}) {
@@ -773,17 +761,20 @@ function classifyBlockResponse(body, status = 0, headers = {}) {
     const text = responseText(body);
     const low = text.slice(0, 80000).toLowerCase();
     const server = safeString(normalized.server).toLowerCase();
-    const hasCfHeaders = Boolean(normalized['cf-ray'] || normalized['cf-cache-status'] || server.includes('cloudflare'));
-    const hasCfChallenge = /just a moment|checking your browser|cloudflare ray id|cf-browser-verification|cf-chl-widget|__cf_chl_opt|cf\.challenge\.orchestrate|challenge-platform|turnstile\.cloudflare\.com/i.test(text);
-    const hasWaf = /access denied|request blocked|forbidden|ddos-guard|sucuri|incapsula|akamai|perimeterx|datadome|bot protection|security check/i.test(text);
+    const hasCfHeaders = Boolean(normalized['cf-ray'] || normalized['cf-cache-status'] || normalized['cf-mitigated'] || server.includes('cloudflare'));
+    const hasCfChallenge = antibotSignatures.bodyHasCloudflareChallenge(text)
+        || antibotSignatures.headersIndicateCloudflareChallenge(normalized);
+    const vendorDetection = antibotSignatures.detectAntibot(text, code, normalized);
+    const hasWaf = (vendorDetection.kind === 'waf' && vendorDetection.vendor !== 'cloudflare')
+        || /access denied|request blocked|forbidden|ddos-guard|sucuri|incapsula|akamai|perimeterx|datadome|bot protection|security check/i.test(text);
     const isTinyBody = !text || text.trim().length < 32;
 
     if (hasCfChallenge || (hasCfHeaders && [403, 429, 503].includes(code) && text.length < 120000)) {
-        return { blocked: true, type: 'cloudflare_challenge', retryable: true, status: code, reason: hasCfChallenge ? 'cf_challenge_body' : 'cf_headers_status' };
+        return { blocked: true, type: 'cloudflare_challenge', retryable: true, status: code, reason: hasCfChallenge ? 'cf_challenge_body' : 'cf_headers_status', vendor: 'cloudflare' };
     }
 
     if (code === 429) {
-        return { blocked: true, type: 'rate_limit', retryable: true, status: code, reason: 'http_429' };
+        return { blocked: true, type: 'rate_limit', retryable: true, status: code, reason: 'http_429', vendor: vendorDetection.vendor };
     }
 
     if ([502, 503, 504, 520, 521, 522, 523, 524].includes(code)) {
@@ -791,7 +782,7 @@ function classifyBlockResponse(body, status = 0, headers = {}) {
     }
 
     if (code === 403 && hasWaf) {
-        return { blocked: true, type: 'waf_block', retryable: true, status: code, reason: 'waf_body' };
+        return { blocked: true, type: 'waf_block', retryable: true, status: code, reason: 'waf_body', vendor: vendorDetection.vendor !== 'none' ? vendorDetection.vendor : 'unknown' };
     }
 
     if (code === 403) {
@@ -1099,6 +1090,7 @@ module.exports = {
     buildBrowserHeaders,
     createDomainCookieJar,
     getRandomFingerprint,
+    detectAntibot: antibotSignatures.detectAntibot,
     hasCfResponseHeaders,
     isCanceledError,
     isCloudflareChallenge,

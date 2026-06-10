@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { buildCookieHeaderFromSession, mergeCookieHeaders, cookieHeaderToObjects } = require('./cf_clearance_manager');
+const antibotSignatures = require('./antibot_signatures');
 const { createClearanceBroker } = require('./cf_clearance_broker');
 const { h2ReplayRequest, h2ReplayPool } = require('./cf_h2_replay');
 
@@ -308,31 +309,11 @@ function isBlockedStatus(status, headers = null) {
 }
 
 function hasCfResponseHeaders(headers = {}) {
-  if (!headers || typeof headers !== 'object') return false;
-  for (const [key, value] of Object.entries(headers)) {
-    const k = String(key).toLowerCase();
-    if (k === 'cf-ray' || k === 'cf-cache-status') return true;
-    if (k === 'server' && String(value).toLowerCase().includes('cloudflare')) return true;
-  }
-  return false;
+  return antibotSignatures.headersHaveCloudflare(headers);
 }
 
 function isCloudflareChallenge(body, status, headers = null) {
-  const code = Number(status);
-  const text = safeString(body);
-
-  if (/just a moment|checking your browser|cloudflare ray id|cf-browser-verification/i.test(text)
-    || /enable javascript and cookies|<div id=["']cf-wrapper["']|cf-chl-widget|__cf_chl_opt|cf\.challenge\.orchestrate/i.test(text)
-    || (/challenge-platform|_cf_chl_opt|cf_clearance/i.test(text) && text.length < 20000)) {
-    return true;
-  }
-
-  if ([403, 429, 503].includes(code)) {
-    if (headers == null) return true;
-    return hasCfResponseHeaders(headers);
-  }
-
-  return false;
+  return antibotSignatures.isCloudflareChallenge(safeString(body), status, headers);
 }
 
 function isBlockedBody(body, status = 200, headers = null) {
