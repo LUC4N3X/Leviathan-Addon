@@ -2,7 +2,7 @@
 
 This file is managed by Release Please.
 
-## [3.2.0](https://github.com/LUC4N3X/stremio-leviathan-addon/compare/v3.0.0...v3.1.0) - 2026-04-18
+## [3.2.0](https://github.com/LUC4N3X/stremio-leviathan-addon/compare/v3.0.0...v3.1.0) - 2026-06-18
 
 ### Added
 
