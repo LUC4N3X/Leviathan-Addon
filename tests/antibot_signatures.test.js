@@ -75,11 +75,26 @@ test('clean 200 response is not blocked', () => {
 
 test('env-provided extra markers extend Cloudflare detection', () => {
   const prev = process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS;
-  process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS = 'super-secret-wall';
-  delete require.cache[require.resolve('../providers/utils/antibot_signatures')];
-  const fresh = require('../providers/utils/antibot_signatures');
-  assert.equal(fresh.bodyHasCloudflareChallenge('please pass the SUPER-SECRET-WALL'), true);
-  if (prev == null) delete process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS;
-  else process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS = prev;
-  delete require.cache[require.resolve('../providers/utils/antibot_signatures')];
+  try {
+    process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS = 'super-secret-wall';
+    delete require.cache[require.resolve('../providers/utils/antibot_signatures')];
+    const fresh = require('../providers/utils/antibot_signatures');
+    assert.equal(fresh.bodyHasCloudflareChallenge('please pass the SUPER-SECRET-WALL'), true);
+  } finally {
+    if (prev == null) delete process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS;
+    else process.env.ANTIBOT_EXTRA_CHALLENGE_MARKERS = prev;
+    delete require.cache[require.resolve('../providers/utils/antibot_signatures')];
+  }
+});
+
+test('vendor presence headers on 200 responses are not blocked', () => {
+  const queue = detectAntibot('<html><body>passed queue</body></html>', 200, { 'x-queueit-passed': 'true' });
+  assert.equal(queue.vendor, 'queue-it');
+  assert.equal(queue.blocked, false);
+  assert.equal(queue.retryable, false);
+
+  const cdn = detectAntibot('<html><body>regular cdn page</body></html>', 200, { 'x-cdn': 'incapsula' });
+  assert.equal(cdn.vendor, 'incapsula');
+  assert.equal(cdn.blocked, false);
+  assert.equal(cdn.retryable, false);
 });

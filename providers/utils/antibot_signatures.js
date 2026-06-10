@@ -183,7 +183,7 @@ function detectAntibot(body, status = 0, headers = null) {
     const headerHit = sig.headerKeys.some((key) => map[key] != null);
     const cookieHit = (sig.cookieMarkers || []).some((re) => re.test(cookieJar));
     if (bodyHit || headerHit || cookieHit) {
-      const blocked = bodyHit || headerHit || CHALLENGE_BLOCK_STATUSES.has(code);
+      const blocked = bodyHit || CHALLENGE_BLOCK_STATUSES.has(code);
       return {
         blocked,
         vendor: sig.vendor,
