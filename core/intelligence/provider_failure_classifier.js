@@ -349,14 +349,6 @@ function classifyProviderFailure({
             };
         }
 
-        if (status === 403 || status === 401 || antibotInfo.blocked) {
-            return makeBlockedFailure({
-                status,
-                isError: true,
-                antibotInfo
-            });
-        }
-
         if (status === 429) {
             return {
                 type: 'rate_limited',
@@ -366,6 +358,14 @@ function classifyProviderFailure({
                 canFallback: true,
                 isError: true
             };
+        }
+
+        if (status === 403 || status === 401 || antibotInfo.blocked) {
+            return makeBlockedFailure({
+                status,
+                isError: true,
+                antibotInfo
+            });
         }
 
         if (status === 404) {
@@ -422,14 +422,6 @@ function classifyProviderFailure({
         };
     }
 
-    if (status === 403 || status === 401 || antibotInfo.blocked) {
-        return makeBlockedFailure({
-            status,
-            isError: false,
-            antibotInfo
-        });
-    }
-
     if (status === 429) {
         return {
             type: 'rate_limited',
@@ -439,6 +431,14 @@ function classifyProviderFailure({
             canFallback: true,
             isError: false
         };
+    }
+
+    if (status === 403 || status === 401 || antibotInfo.blocked) {
+        return makeBlockedFailure({
+            status,
+            isError: false,
+            antibotInfo
+        });
     }
 
     if (status === 404) {

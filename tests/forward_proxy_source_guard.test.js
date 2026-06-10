@@ -65,8 +65,10 @@ test('deployment configuration exposes one forward proxy endpoint env', () => {
   for (const name of LEGACY_ENDPOINT_ENV_NAMES) {
     assert.doesNotMatch(compose, new RegExp(`^\\s+${name}:`, 'm'));
   }
-  assert.match(
-    envExample,
-    /^FORWARD_PROXY=https:\/\/krakenproxy\.questoleviatanormio\.dpdns\.org\/forward\?url=$/m
-  );
+  const forwardProxyLines = envExample
+    .split(/\r?\n/)
+    .filter((line) => /^FORWARD_PROXY=/.test(line));
+  assert.equal(forwardProxyLines.length, 1);
+  assert.equal(forwardProxyLines[0], 'FORWARD_PROXY=');
+  assert.doesNotMatch(envExample, /krakenproxy\.questoleviatanormio\.dpdns\.org/i);
 });

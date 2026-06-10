@@ -290,7 +290,7 @@ function bootstrapServer() {
         console.log(`[GUARDAFLIX] Modulo integrato`);
         console.log(`[CINEMACITY] Modulo integrato`);
         console.log(`[TRAILER] Attivabile da config`);
-        console.log(`Ã°Å¸â€œÂ¦ TORBOX: ADVANCED SMART CACHE`);
+        console.log(`📦 TORBOX: ADVANCED SMART CACHE`);
         console.log(`[PARSER] Enhanced`);
         console.log(`[P2P] Handler attivo`);
         console.log(`[CORE] Optimized for High Reliability`);
