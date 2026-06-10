@@ -98,3 +98,23 @@ test('vendor presence headers on 200 responses are not blocked', () => {
   assert.equal(cdn.blocked, false);
   assert.equal(cdn.retryable, false);
 });
+
+test('block-specific vendor headers on 200 responses are blocked', () => {
+  const perimeterx = detectAntibot('x', 200, { 'x-px-block': '1' });
+  assert.equal(perimeterx.vendor, 'perimeterx');
+  assert.equal(perimeterx.blocked, true);
+  assert.equal(perimeterx.retryable, true);
+  assert.equal(perimeterx.reason, 'perimeterx_header');
+
+  const kasada = detectAntibot('', 200, { 'x-kpsdk-cd': 'challenge-data' });
+  assert.equal(kasada.vendor, 'kasada');
+  assert.equal(kasada.blocked, true);
+  assert.equal(kasada.retryable, true);
+  assert.equal(kasada.reason, 'kasada_header');
+
+  const ddosGuard = detectAntibot('ok', 200, { 'x-ddg': 'protected' });
+  assert.equal(ddosGuard.vendor, 'ddos-guard');
+  assert.equal(ddosGuard.blocked, true);
+  assert.equal(ddosGuard.retryable, true);
+  assert.equal(ddosGuard.reason, 'ddos-guard_header');
+});
