@@ -61,6 +61,7 @@ const VENDOR_SIGNATURES = [
     vendor: 'incapsula',
     bodyMarkers: [/incapsula/i, /imperva/i, /_incap_/i, /incident id/i, /support id is/i],
     headerKeys: ['x-iinfo', 'x-cdn'],
+    presenceHeaderKeys: ['x-cdn'],
     cookieMarkers: [/visid_incap_/i, /incap_ses_/i],
   },
   {
@@ -73,6 +74,7 @@ const VENDOR_SIGNATURES = [
     vendor: 'queue-it',
     bodyMarkers: [/queue-it/i, /queue\.it/i, /you are now in line/i],
     headerKeys: ['x-queueit-passed'],
+    presenceHeaderKeys: ['x-queueit-passed'],
     cookieMarkers: [/QueueITAccepted/i],
   },
   {
@@ -180,10 +182,12 @@ function detectAntibot(body, status = 0, headers = null) {
 
   for (const sig of VENDOR_SIGNATURES) {
     const bodyHit = sig.bodyMarkers.some((re) => re.test(text));
+    const presenceHeaderKeys = new Set(sig.presenceHeaderKeys || []);
     const headerHit = sig.headerKeys.some((key) => map[key] != null);
+    const blockingHeaderHit = sig.headerKeys.some((key) => map[key] != null && !presenceHeaderKeys.has(key));
     const cookieHit = (sig.cookieMarkers || []).some((re) => re.test(cookieJar));
     if (bodyHit || headerHit || cookieHit) {
-      const blocked = bodyHit || headerHit || CHALLENGE_BLOCK_STATUSES.has(code);
+      const blocked = bodyHit || blockingHeaderHit || CHALLENGE_BLOCK_STATUSES.has(code);
       return {
         blocked,
         vendor: sig.vendor,
