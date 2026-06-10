@@ -65,8 +65,10 @@ test('deployment configuration exposes one forward proxy endpoint env', () => {
   for (const name of LEGACY_ENDPOINT_ENV_NAMES) {
     assert.doesNotMatch(compose, new RegExp(`^\\s+${name}:`, 'm'));
   }
-  // FORWARD_PROXY must exist as the single canonical env, but the private
-  // endpoint must never be committed to the example file (see baed141).
-  assert.match(envExample, /^FORWARD_PROXY=$/m);
+  const forwardProxyLines = envExample
+    .split(/\r?\n/)
+    .filter((line) => /^FORWARD_PROXY=/.test(line));
+  assert.equal(forwardProxyLines.length, 1);
+  assert.equal(forwardProxyLines[0], 'FORWARD_PROXY=');
   assert.doesNotMatch(envExample, /krakenproxy\.questoleviatanormio\.dpdns\.org/i);
 });
