@@ -842,7 +842,7 @@ function collectPlayableAnchors(html) {
         if (href.length < 10 || !/\.(mp4|m3u8|mkv|avi|mov|webm)(?:$|[?#])/i.test(href)) continue;
         links.push({
             url: href,
-            text: unescapeCinemaCityText(String(match[2] || '').replace(/<[^>]+>/g, ' ')).trim().toLowerCase()
+            text: unescapeCinemaCityText(String(match[2] || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().toLowerCase()
         });
     }
     return links;

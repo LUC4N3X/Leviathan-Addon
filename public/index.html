@@ -91,7 +91,7 @@
             inset: 0;
             z-index: -1;
             pointer-events: none;
-            background-image: 
+            background-image:
                 linear-gradient(rgba(125, 240, 255, 0.012) 1px, transparent 1px),
                 linear-gradient(90deg, rgba(125, 240, 255, 0.01) 1px, transparent 1px);
             background-size: 64px 64px;
@@ -204,11 +204,11 @@
             z-index: 1 !important;
             pointer-events: none !important;
             background: linear-gradient(
-                90deg, 
-                transparent 0%, 
-                rgba(255, 255, 255, 0) 30%, 
-                rgba(255, 255, 255, 0.15) 50%, 
-                rgba(255, 255, 255, 0) 70%, 
+                90deg,
+                transparent 0%,
+                rgba(255, 255, 255, 0) 30%,
+                rgba(255, 255, 255, 0.15) 50%,
+                rgba(255, 255, 255, 0) 70%,
                 transparent 100%
             ) !important;
             transform: translateX(-150%) skewX(-25deg) !important;
@@ -491,7 +491,7 @@
         #deepSeaCanvas { display: none !important; }
         .ocean-bg { display: none !important; }
         .particles { display: none !important; }
-        
+
         #m-sea-webgl {
             position: fixed !important;
             inset: 0;
@@ -601,7 +601,7 @@
             0% { background-position: 0 0; transform: translate3d(-3%, -2%, 0); }
             100% { background-position: 0 260px; transform: translate3d(3%, 2%, 0); }
         }
-        
+
         .main-wrapper {
             position: relative;
             z-index: 1;
@@ -612,7 +612,7 @@
         .main-wrapper > header {
             margin-bottom: 34px !important;
         }
-        
+
         .control-row:has(#enableVix) { --lev-color: #7000ff; --lev-glow: rgba(112,0,255,0.45); --lev-dim: rgba(112,0,255,0.2); }
         .control-row:has(#enableCc) { --lev-color: #ff4d6d; --lev-glow: rgba(255,77,109,0.45); --lev-dim: rgba(255,77,109,0.2); }
         .control-row:has(#enableGhd) { --lev-color: #00f2ff; --lev-glow: rgba(0,242,255,0.45); --lev-dim: rgba(0,242,255,0.2); }
@@ -842,7 +842,7 @@
             content: '';
             position: absolute;
             inset: 0;
-            background-image: 
+            background-image:
                 radial-gradient(circle at 50% 0%, var(--proto-glow) 0%, transparent 70%),
                 linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
                 linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
@@ -1224,7 +1224,7 @@
     <div class="sonar-scanner" style="bottom: 20%; right: 5%;"></div>
 
     <div class="container mx-auto px-4 max-w-[1320px] py-12 relative z-10 main-wrapper">
-        
+
         <header class="text-center mb-16 relative">
             <div class="logo-wrapper">
                 <div class="logo-aura"></div>
@@ -1237,10 +1237,10 @@
                 <div class="logo-glass-plate"></div>
                 <img src="https://i.ibb.co/YTKfXc1z/logo.png" alt="Leviathan Logo" class="w-[125px] h-[125px] object-contain relative z-10 filter drop-shadow-[0_4px_15px_rgba(0,0,0,0.5)] transition-transform duration-500 group-hover:scale-105" fetchpriority="high" decoding="async">
             </div>
-            
+
             <h1 class="brand-title notranslate" translate="no">LEVIATHAN</h1>
             <div class="brand-subtitle notranslate mt-3" translate="no">SOVRANO DEGLI ABISSI</div>
-            
+
             <div class="lev-hero-meta mt-6 flex items-center justify-center gap-3">
                 <span class="version-badge px-5 py-1.5 rounded-full bg-black/50 border border-cyan-400/40 text-cyan-300 font-mono text-sm font-bold shadow-[0_0_15px_rgba(38,223,251,0.2)]">
                     <i class="fas fa-radiation-alt mr-2 text-xs animate-spin" style="animation-duration: 3s;"></i>v3.0.2
@@ -1258,7 +1258,7 @@
                     <h2 class="board-overview-title">PROTOCOLLO FLUSSI</h2>
                 </div>
             </div>
-            
+
             <div class="info-grid grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div class="info-card p-6" style="--mf-card-rgb:38,223,251; --mf-card-from:#2bd6f5; --mf-card-to:#4f46e5;">
                     <div class="info-icon w-12 h-12 flex items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300 mb-4 border border-cyan-400/20 shadow-[0_0_15px_rgba(38,223,251,0.2)]">
@@ -1299,10 +1299,10 @@
             </div>
 
             <div class="desktop-grid-container lg:grid lg:grid-cols-2 gap-12 items-stretch">
-                
+
                 <div class="col-left flex flex-col">
                     <div class="section-header mb-6">PROTOCOLLI DI CONNESSIONE</div>
-                    
+
                     <div class="protocol-deck mb-8">
                         <div class="protocol-card active" id="proto_rd" onclick="selectService('rd')" style="--proto-color: #26dffb; --proto-glow: rgba(38, 223, 251, 0.25); --proto-glow-heavy: rgba(38, 223, 251, 0.35); --proto-color-semi: rgba(38, 223, 251, 0.5); --proto-color-bright: #26dffb;">
                             <div class="flex justify-between items-center w-full mb-3">
@@ -1397,7 +1397,7 @@
                         <div class="module-label text-xs uppercase tracking-widest text-[#26dffb] font-bold font-mono mb-6 flex items-center gap-2">
                             <span class="w-1.5 h-1.5 rounded-full bg-[#26dffb] animate-ping"></span> CONFIGURAZIONE // SORGENTI WEB
                         </div>
-                        
+
                         <div class="control-row p-4 mb-3 flex justify-between items-center" style="--lev-color: #7000ff; --lev-glow: rgba(112,0,255,0.45);">
                             <div class="control-info">
                                 <div class="control-title font-bold flex items-center gap-2 text-white">
@@ -1569,13 +1569,13 @@
                     <div class="section-header sh-violet mb-6">CENTRO DI CONTROLLO RICERCA</div>
 
                     <div class="filters-container flex flex-col gap-6">
-                        
+
                         <div class="spectrum-container p-6 bg-black/40 border border-violet-500/20 rounded-2xl relative">
                             <div class="spectrum-header flex justify-between items-end pb-3 mb-4 border-b border-violet-500/20">
                                 <span class="flex items-center gap-2 text-lg font-bold text-violet-300"><i class="fas fa-network-wired text-violet-400"></i> ALGORITMO DI SINTESI</span>
                                 <span class="text-xs text-slate-400/80 font-mono">Flux Priority</span>
                             </div>
-                            
+
                             <div class="spectrum-grid grid grid-cols-3 gap-3 mb-4">
                                 <button class="spec-btn active py-3 text-xs font-bold flex flex-col sm:flex-row items-center justify-center gap-2 rounded-xl transition-all" id="sort_balanced" onclick="setSortMode('balanced')">
                                     <i class="fas fa-water"></i> LEVIATHAN
@@ -1587,7 +1587,7 @@
                                     <i class="fas fa-hdd"></i> BITRATE
                                 </button>
                             </div>
-                            
+
                             <div id="flux-info-box" class="p-4 rounded-xl bg-violet-950/10 border border-violet-500/20 transition-all duration-300">
                                 <div id="flux-title" class="font-bold text-white text-sm mb-1 uppercase flex items-center gap-2">
                                     <i class="fas fa-info-circle text-violet-400"></i> ALGORITMO: LEVIATHAN (Consigliato)
@@ -1728,7 +1728,7 @@
                                 <input type="text" id="mfUrl" class="mf-input w-full py-3.5 px-4 text-sm font-mono shadow-inner" placeholder="URL MediaFlow Proxy" oninput="updateFluxStream()">
                                 <input type="password" id="mfPass" class="mf-input w-full py-3.5 px-4 text-sm font-mono shadow-inner" placeholder="Password Proxy (Opzionale)" oninput="updateFluxStream()">
                             </div>
-                            
+
                             <div class="control-row p-4 mt-4 flex justify-between items-center" style="--lev-color: #2bd6f5; --lev-glow: rgba(43,214,245,.4);">
                                 <div class="control-info">
                                     <div class="control-title font-bold flex items-center gap-2 text-white">
@@ -2099,7 +2099,7 @@
                     const meta = getValidationServiceMeta(service);
                     const expiration = formatValidationExpiration(payload.expiration);
                     let message = `Token ${meta.name} valido.`;
-                    
+
                     if (service === 'rd' && payload.username) {
                         message = `Token RD valido • ${payload.username}`;
                     }
@@ -2143,7 +2143,7 @@
             const dot = document.querySelector('.debrid-status-dot');
             const txtEl = document.getElementById('debridValidationText');
             if (!dot || !txtEl) return;
-            
+
             dot.className = 'debrid-status-dot w-2.5 h-2.5 rounded-full';
             if (status === 'idle') {
                 dot.classList.add('bg-slate-500');
@@ -2620,7 +2620,7 @@
                 name = previewRenderTemplate(nameTemplate || 'Leviathan {quality}', context).replace(/\s+/g, ' ').trim() || `Leviathan ${p.quality}`;
                 desc = previewRenderTemplate(descriptionTemplate, context).trim();
             }
-            
+
             const nameEl = document.getElementById('prev-name');
             const descEl = document.getElementById('prev-desc');
             if (nameEl) nameEl.innerText = name;
@@ -2641,7 +2641,7 @@
             const customArea = document.getElementById('customSkinArea');
             const customTrigger = document.getElementById('customTriggerBtn');
             const overlay = document.getElementById('aioLockOverlay');
-            
+
             if (isAIO) {
                 if (skinContainer) skinContainer.classList.add('disabled-core');
                 if (customArea) customArea.classList.add('disabled-core');
@@ -2660,7 +2660,7 @@
         function setSortMode(mode) {
             const sortInput = document.getElementById('sortMode');
             if (sortInput) sortInput.value = mode;
-            
+
             const infoData = {
                 'balanced': { title: "ALGORITMO: LEVIATHAN (Consigliato)", desc: "Metodologia standard di Leviathan. Cerca il bilanciamento perfetto tra stabilità delle sorgenti, risoluzione nativa e velocità di riproduzione." },
                 'resolution': { title: "ALGORITMO: PRIORITÀ RISOLUZIONE", desc: "Forza un ordine matematico basato sulla risoluzione. I file 4K saranno mostrati per primi, seguiti da 1080p e 720p indipendentemente dal bitrate." },
@@ -2759,30 +2759,30 @@
             const display = document.getElementById('gateDisplay');
             const slider = document.getElementById('gateSlider');
             if (!wrap || !display) return;
-            
+
             if (active) {
-                wrap.classList.add('active'); 
+                wrap.classList.add('active');
                 if (slider) display.innerText = slider.value;
                 showToast("SIGNAL GATE ATTIVATO CON SUCCESSO", "warning");
-            } else { 
-                wrap.classList.remove('active'); 
-                display.innerText = "∞"; 
+            } else {
+                wrap.classList.remove('active');
+                display.innerText = "∞";
             }
             updateFluxStream();
         }
 
-        function updateGateVal(val) { 
+        function updateGateVal(val) {
             const display = document.getElementById('gateDisplay');
-            if (display) display.innerText = val; 
+            if (display) display.innerText = val;
         }
-        
+
         function updateSizeVal(val) {
             const display = document.getElementById('sizeDisplay');
             if (display) display.innerText = (val == 0) ? "∞" : val;
         }
 
-        function clearError(input) { 
-            if (input) input.classList.remove('input-error', 'token-invalid', 'token-valid'); 
+        function clearError(input) {
+            if (input) input.classList.remove('input-error', 'token-invalid', 'token-valid');
         }
 
         function encodeConfigToPathToken(config) {
@@ -2888,7 +2888,7 @@
             const apiKeyInput = document.getElementById('apiKey');
             if(currentService !== service && !skipReset && apiKeyInput) { apiKeyInput.value = ""; }
             currentService = service;
-            
+
             document.querySelectorAll('.protocol-card').forEach(el => {
                 el.classList.remove('active');
             });
@@ -2989,18 +2989,18 @@
             const gateActive = document.getElementById('gateActive')?.checked;
             const gateSlider = document.getElementById('gateSlider');
             const gateVal = gateSlider ? parseInt(gateSlider.value) : 5;
-            
+
             const maxSizeSlider = document.getElementById('maxSizeSlider');
             const sizeVal = maxSizeSlider ? parseInt(maxSizeSlider.value) : 0;
-            
+
             const langInput = document.getElementById('langMode');
             const lang = langInput ? langInput.value : 'ita';
-            
+
             const isP2P = currentService === 'p2p';
-            
+
             const apiKeyInput = document.getElementById('apiKey');
             const apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
-            
+
             const webOnlyService = (
                 !isP2P
                 && !apiKey
@@ -3025,7 +3025,7 @@
             const _val = (id) => ((document.getElementById(id) || {}).value || '').trim();
             const _csv = (id) => _val(id).split(',').map((s) => s.trim()).filter(Boolean);
             const advancedFilters = {};
-            
+
             const _streamExpression = _val('streamExpression');
             if (_streamExpression) advancedFilters.streamExpression = _streamExpression;
             const _preferredResolutions = _csv('preferredResolutions');
@@ -3040,22 +3040,22 @@
 
             const sourceModeInput = document.getElementById('sourceMode');
             const sourceMode = sourceModeInput ? sourceModeInput.value : 'balanced';
-            
+
             const selectedSkinInput = document.getElementById('selectedSkin');
             const formatterSkin = selectedSkinInput ? selectedSkinInput.value : 'leviathan';
-            
+
             const customTemplateInput = document.getElementById('customTemplate');
             const customTemplate = customTemplateInput ? customTemplateInput.value : '';
 
             const tmdbKeyInput = document.getElementById('tmdbKey');
             const tmdbKey = tmdbKeyInput ? tmdbKeyInput.value.trim() : '';
-            
+
             const mfUrlInput = document.getElementById('mfUrl');
             const mfUrl = mfUrlInput ? mfUrlInput.value.trim().replace(/\/$/, "") : '';
-            
+
             const mfPassInput = document.getElementById('mfPass');
             const mfPass = mfPassInput ? mfPassInput.value.trim() : '';
-            
+
             const proxyDebridInput = document.getElementById('proxyDebrid');
             const proxyDebrid = proxyDebridInput ? proxyDebridInput.checked : false;
 
@@ -3142,7 +3142,7 @@
             if(!validateInputs()) {
                 showToast("CONFIGURAZIONE INCOMPLETA", "error");
                 const configArea = document.getElementById('config-area');
-                if (configArea) configArea.scrollIntoView({ behavior: 'smooth' }); 
+                if (configArea) configArea.scrollIntoView({ behavior: 'smooth' });
                 return;
             }
             const url = await getBaseManifestUrl();
@@ -3167,8 +3167,8 @@
                     document.execCommand("copy");
                     document.body.removeChild(dummy);
                     triggerCopyAnimation();
-                } catch (e) { 
-                    showToast("Copia fallita, copia l'URL manualmente dalla console in basso.", "error"); 
+                } catch (e) {
+                    showToast("Copia fallita, copia l'URL manualmente dalla console in basso.", "error");
                 }
             }
         }
@@ -3189,7 +3189,7 @@
                 if (cb) row.classList.toggle('lev-active', cb.checked);
             });
         }
-        
+
         function applyDefaultAIOOff() {
             const aio = document.getElementById('aiostreams_mode');
             if (aio) {
@@ -3355,7 +3355,7 @@
     <script id="leviathan-desktop-effects">
     if (!window.stopDesktopLogic && !window.__leviathanMobileBooting) {
     (function(){
-    
+
     const LEVIATHAN_SEA_SHADER = {
         vertex: `
             attribute vec2 a_position;
@@ -3367,18 +3367,18 @@
         `,
         fragment: `
             precision mediump float;
-    
+
             uniform vec2 u_resolution;
             uniform float u_time;
             uniform float u_intensity;
             varying vec2 v_uv;
-    
+
             float hash(vec2 p) {
                 p = fract(p * vec2(123.34, 456.21));
                 p += dot(p, p + 45.32);
                 return fract(p.x * p.y);
             }
-    
+
             float noise(vec2 p) {
                 vec2 i = floor(p);
                 vec2 f = fract(p);
@@ -3389,7 +3389,7 @@
                     u.y
                 );
             }
-    
+
             float fbm(vec2 p) {
                 float v = 0.0;
                 float a = 0.5;
@@ -3401,7 +3401,7 @@
                 }
                 return v;
             }
-    
+
             float caustic(vec2 p, float t) {
                 vec2 q = p;
                 q += 0.55 * vec2(fbm(p * 1.6 + vec2(t * 0.22, 0.0)), fbm(p * 1.6 + vec2(0.0, t * 0.18)));
@@ -3411,56 +3411,56 @@
                 float ridge2 = 1.0 - abs(2.0 * n2 - 1.0);
                 return pow(ridge1, 3.0) * 0.7 + pow(ridge2, 4.0) * 0.3;
             }
-    
+
             void main() {
                 vec2 res = max(u_resolution.xy, vec2(1.0));
                 vec2 uv = gl_FragCoord.xy / res;
                 float aspect = res.x / max(res.y, 1.0);
-                
+
                 vec2 autoOffset = vec2(sin(u_time * 0.25) * 0.06, cos(u_time * 0.18) * 0.03);
                 vec2 p = vec2((uv.x - 0.5) * aspect, uv.y) - autoOffset;
-                
+
                 float t = u_time * 0.28;
-    
+
                 float depth = uv.y;
                 vec3 deep = vec3(0.002, 0.015, 0.038);
                 vec3 surf = vec3(0.010, 0.070, 0.130);
                 vec3 col = mix(deep, surf, smoothstep(0.0, 1.0, depth));
-    
+
                 float env = smoothstep(0.02, 0.85, depth);
-    
+
                 vec2 cuv = p * 2.1 + vec2(0.0, -u_time * 0.012);
                 float c = caustic(cuv, t);
                 col += vec3(0.12, 0.48, 0.65) * c * env * 0.45;
-    
+
                 float c2 = caustic(cuv * 0.58 + 8.0, t * 0.65);
                 col += vec3(0.07, 0.32, 0.48) * c2 * env * 0.25;
-    
+
                 float rays = 0.0;
                 float autoSlope = sin(u_time * 0.15) * 0.22;
                 float rx = p.x * 0.75 + sin(u_time * 0.10) * 0.15 - p.y * autoSlope;
-                
+
                 rays += smoothstep(0.55, 0.0, abs(rx + 0.25 + sin(u_time * 0.12) * 0.05));
                 rays += smoothstep(0.48, 0.0, abs(rx - 0.20 + sin(u_time * 0.10 + 1.6) * 0.04)) * 0.75;
                 rays += smoothstep(0.42, 0.0, abs(rx + 0.75 + sin(u_time * 0.08 + 3.2) * 0.03)) * 0.55;
                 rays *= smoothstep(0.05, 1.0, depth) * (0.42 + 0.58 * fbm(vec2(p.x * 2.2, u_time * 0.16)));
                 col += vec3(0.15, 0.46, 0.60) * rays * 0.095;
-    
+
                 float motes = smoothstep(0.993, 1.0, hash(floor((p + vec2(0.0, u_time * 0.008)) * 110.0)));
                 col += vec3(0.25, 0.55, 0.70) * motes * 0.15;
-    
+
                 col += vec3(0.060, 0.025, 0.110) * smoothstep(0.55, 1.0, uv.x) * 0.18;
-    
+
                 float vign = smoothstep(1.35, 0.22, length((uv - 0.5) * vec2(aspect * 0.42, 1.0)));
                 col *= 0.75 + vign * 0.32;
-    
+
                 col *= 0.85 + 0.15 * u_intensity;
                 col = pow(max(col, 0.0), vec3(0.88));
                 gl_FragColor = vec4(col, 1.0);
             }
         `
     };
-    
+
     function getLeviathanSeaProfile() {
         var w = window.innerWidth || 1280;
         var mem = (navigator && navigator.deviceMemory) || 4;
@@ -3474,7 +3474,7 @@
         }
         return { fps: weak ? 30 : 50, dpr: weak ? 1.1 : 1.5, intensity: 1.15 };
     }
-    
+
     function leviathanSeaShouldSkip() {
         if (!document.body) return true;
         try {
@@ -3487,7 +3487,7 @@
         } catch (_) { return true; }
         return false;
     }
-    
+
     function createSeaShaderProgram(gl, vertexSource, fragmentSource) {
         const compile = (type, source) => {
             const shader = gl.createShader(type);
@@ -3501,7 +3501,7 @@
             }
             return shader;
         };
-    
+
         const vertex = compile(gl.VERTEX_SHADER, vertexSource);
         const fragment = compile(gl.FRAGMENT_SHADER, fragmentSource);
         const program = gl.createProgram();
@@ -3518,10 +3518,10 @@
         }
         return program;
     }
-    
+
     function startLeviathanSeaShader(mount) {
         if (!mount || window.__leviathanSea) return;
-    
+
         const profile = getLeviathanSeaProfile();
         const canvas = document.createElement('canvas');
         canvas.id = 'leviathan-sea-canvas';
@@ -3531,7 +3531,7 @@
         canvas.style.height = '100%';
         mount.textContent = '';
         mount.appendChild(canvas);
-    
+
         const gl = canvas.getContext('webgl', {
             alpha: true,
             antialias: false,
@@ -3540,21 +3540,21 @@
             preserveDrawingBuffer: false,
             powerPreference: 'low-power'
         }) || canvas.getContext('experimental-webgl');
-    
+
         if (!gl) {
             mount.remove();
             window.__leviathanSeaShaderBoot = false;
             activateLeviathanSeaFallback();
             return;
         }
-    
+
         let program = null;
         let buffer = null;
         let resizeRaf = 0;
         let classObserver = null;
         let disposed = false;
         let contextLost = false;
-    
+
         try {
             program = createSeaShaderProgram(gl, LEVIATHAN_SEA_SHADER.vertex, LEVIATHAN_SEA_SHADER.fragment);
             buffer = gl.createBuffer();
@@ -3568,14 +3568,14 @@
             activateLeviathanSeaFallback();
             return;
         }
-    
+
         const locPosition = gl.getAttribLocation(program, 'a_position');
         const locResolution = gl.getUniformLocation(program, 'u_resolution');
         const locTime = gl.getUniformLocation(program, 'u_time');
         const locIntensity = gl.getUniformLocation(program, 'u_intensity');
         const minFrameMs = Math.max(16, Math.round(1000 / Math.max(12, profile.fps || 24)));
         const bornAt = performance.now();
-    
+
         const state = {
             raf: 0,
             lastFrame: 0,
@@ -3583,7 +3583,7 @@
             sync: null,
             cleanup: null
         };
-    
+
         const resize = () => {
             if (disposed || contextLost) return;
             const rect = mount.getBoundingClientRect();
@@ -3596,7 +3596,7 @@
             }
             gl.viewport(0, 0, width, height);
         };
-    
+
         const draw = (now) => {
             state.raf = 0;
             if (disposed || contextLost || state.paused) return;
@@ -3605,7 +3605,7 @@
                 return;
             }
             state.lastFrame = now;
-    
+
             try {
                 resize();
                 gl.useProgram(program);
@@ -3615,7 +3615,7 @@
                 gl.uniform2f(locResolution, canvas.width, canvas.height);
                 gl.uniform1f(locTime, (now - bornAt) * 0.001);
                 gl.uniform1f(locIntensity, profile.intensity);
-                
+
                 gl.disable(gl.DEPTH_TEST);
                 gl.disable(gl.CULL_FACE);
                 gl.enable(gl.BLEND);
@@ -3628,15 +3628,15 @@
                 activateLeviathanSeaFallback();
                 return;
             }
-    
+
             state.raf = requestAnimationFrame(draw);
         };
-    
+
         const shouldPause = () => document.hidden
             || document.body.classList.contains('m-typing')
             || document.body.classList.contains('m-keyboard-open')
             || document.body.classList.contains('m-page-hidden');
-    
+
         const stop = () => {
             if (state.paused) return;
             state.paused = true;
@@ -3644,7 +3644,7 @@
             state.raf = 0;
             mount.classList.add('is-paused');
         };
-    
+
         const go = () => {
             if (disposed || contextLost || shouldPause()) return stop();
             if (!state.paused && state.raf) return;
@@ -3653,7 +3653,7 @@
             mount.classList.remove('is-paused');
             state.raf = requestAnimationFrame(draw);
         };
-    
+
         let pendingSync = 0;
         const sync = () => {
             if (pendingSync || disposed) return;
@@ -3662,7 +3662,7 @@
                 shouldPause() ? stop() : go();
             });
         };
-    
+
         const onResize = () => {
             if (resizeRaf) cancelAnimationFrame(resizeRaf);
             resizeRaf = requestAnimationFrame(() => {
@@ -3670,20 +3670,20 @@
                 resize();
             });
         };
-    
+
         const onContextLost = (event) => {
             event.preventDefault();
             contextLost = true;
             stop();
             mount.classList.remove('is-ready');
         };
-    
+
         const onContextRestored = () => {
             state.cleanup && state.cleanup();
             window.__leviathanSeaShaderBoot = false;
             requestAnimationFrame(createSeaCanvas);
         };
-    
+
         state.cleanup = () => {
             if (disposed) return;
             disposed = true;
@@ -3702,23 +3702,23 @@
             window.__leviathanSea = null;
             window.__leviathanSeaShaderBoot = false;
         };
-    
+
         state.sync = sync;
         window.__leviathanSea = state;
         window.__leviathanSeaSync = sync;
         window.__leviathanSeaCleanup = state.cleanup;
-    
+
         document.addEventListener('visibilitychange', sync, { passive: true });
         window.addEventListener('resize', onResize, { passive: true });
         window.addEventListener('orientationchange', onResize, { passive: true });
         canvas.addEventListener('webglcontextlost', onContextLost, false);
         canvas.addEventListener('webglcontextrestored', onContextRestored, false);
-    
+
         try {
             classObserver = new MutationObserver(sync);
             classObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
         } catch (_) {}
-    
+
         window.addEventListener('pagehide', state.cleanup, { once: true });
         resize();
         requestAnimationFrame(() => {
@@ -3727,7 +3727,7 @@
         });
         sync();
     }
-    
+
     function installLeviathanSeaBfcacheRestart() {
         if (window.__leviathanSeaBfcacheRestart) return;
         window.__leviathanSeaBfcacheRestart = true;
@@ -3741,7 +3741,7 @@
             requestAnimationFrame(createSeaCanvas);
         }, { passive: true });
     }
-    
+
     function activateLeviathanSeaFallback() {
         if (!document.body) return;
         try {
@@ -3762,26 +3762,26 @@
             document.body.classList.add('m-sea-fallback');
         } catch (_) {}
     }
-    
+
     function deactivateLeviathanSeaFallback() {
         try { document.body.classList.remove('m-sea-fallback'); } catch (_) {}
     }
-    
+
     function createSeaCanvas() {
         installLeviathanSeaBfcacheRestart();
-    
+
         const legacyCanvas = document.getElementById('m-sea-canvas');
         if (legacyCanvas) legacyCanvas.remove();
-    
+
         if (window.__leviathanSeaShaderBoot) return;
         window.__leviathanSeaShaderBoot = true;
-    
+
         if (leviathanSeaShouldSkip()) {
             window.__leviathanSeaShaderBoot = false;
             activateLeviathanSeaFallback();
             return;
         }
-    
+
         let mount = document.getElementById('m-sea-webgl');
         if (!mount) {
             mount = document.createElement('div');
@@ -3791,10 +3791,10 @@
         } else {
             mount.setAttribute('data-leviathan-sea', 'true');
         }
-    
+
         requestAnimationFrame(function() { startLeviathanSeaShader(mount); });
     }
-    
+
     function __leviathanInit() {
         if (window.__leviathanInitDone) return;
         window.__leviathanInitDone = true;

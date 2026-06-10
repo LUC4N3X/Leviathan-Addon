@@ -761,7 +761,7 @@ function slugify(val) {
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
-    .replace(/[\u2018\u2019'`Â´]/g, '')
+    .replace(/[\u2018\u2019'`´]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
@@ -775,14 +775,14 @@ function slugifyGsMovieVariants(val) {
     .trim();
   const variants = new Set();
 
-  const compactApostrophe = raw.replace(/[\u2018\u2019'`Â´]/g, '');
-  const hyphenApostrophe  = raw.replace(/[\u2018\u2019'`Â´]/g, '-');
+  const compactApostrophe = raw.replace(/[\u2018\u2019'`´]/g, '');
+  const hyphenApostrophe  = raw.replace(/[\u2018\u2019'`´]/g, '-');
   for (const value of [compactApostrophe, hyphenApostrophe, raw]) {
     const slug = value.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     if (slug) variants.add(slug);
   }
 
-  const firstPart = raw.split(/\s[-â€“â€”:]\s/)[0]?.trim();
+  const firstPart = raw.split(/\s[-–—:]\s/)[0]?.trim();
   if (firstPart && firstPart.length >= 3) {
     const firstSlug = slugify(firstPart);
     if (firstSlug) variants.add(firstSlug);
@@ -849,7 +849,7 @@ function buildGsTitleAliases(value) {
     .replace(/\s*\((?:19|20)\d{2}\)\s*$/i, '')
     .replace(/\s*\[(?:19|20)\d{2}\]\s*$/i, '')
     .replace(/\s+(?:us|u\.?s\.?|usa|uk|u\.?k\.?|gb|jp|japan|kr|korea|anime|tv|serie|series)\s*$/i, '')
-    .replace(/\s*[-â€“â€”:]\s*(?:us|u\.?s\.?|usa|uk|u\.?k\.?|hbo|max|netflix|prime|amazon|disney\+?)\s*$/i, '')
+    .replace(/\s*[-–—:]\s*(?:us|u\.?s\.?|usa|uk|u\.?k\.?|hbo|max|netflix|prime|amazon|disney\+?)\s*$/i, '')
     .replace(/\s+/g, ' ')
     .trim();
   if (plain && plain.length >= 2) aliases.add(plain);

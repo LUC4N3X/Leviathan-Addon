@@ -2,7 +2,7 @@
 
 This file is managed by Release Please.
 
-## [3.2.0](https://github.com/LUC4N3X/stremio-leviathan-addon/compare/v3.0.0...v3.1.0) - 2026-06-18
+## [3.2.0](https://github.com/LUC4N3X/stremio-leviathan-addon/compare/v3.1.0...v3.2.0) - 2026-06-18
 
 ### Added
 
@@ -52,7 +52,7 @@ This file is managed by Release Please.
 - Improved TorBox integration with the internal stream ranking and deduplication system.
 - Improved TorBox handling when external sources return too many noisy results.
 - Improved TorBox behavior when cached sources are present but not immediately playable.
-- Improved TorBox compatibility with the addonâ€™s Debrid/P2P result separation.
+- Improved TorBox compatibility with the addon’s Debrid/P2P result separation.
 
 ### Real-Debrid Improvements
 

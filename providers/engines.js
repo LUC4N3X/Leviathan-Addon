@@ -251,7 +251,7 @@ function clean(title) {
     return decoded
         .normalize("NFKD")
         .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[:"'Ã¢â‚¬â„¢`Ã‚Â´]/g, "")
+        .replace(/[:"'`´‘’]/g, "")
         .replace(/[^a-zA-Z0-9\s\-.\[\]()/]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
@@ -2074,14 +2074,14 @@ async function runEngine(engine, context) {
 
 async function searchMagnet(title, year, type, imdbId, options = {}) {
     console.log(`\n======================================================`);
-    console.log(`Ã°Å¸Å¡â‚¬ AVVIO RICERCA GLOBALE: "${title}" (Anno: ${year || "N/D"})`);
+    console.log(`🚀 AVVIO RICERCA GLOBALE: "${title}" (Anno: ${year || "N/D"})`);
     console.log(`======================================================\n`);
 
     const context = buildSearchContext(title, year, type, imdbId, options);
     const cacheKey = buildSearchCacheKey(context);
     const cached = getCache(searchCache, cacheKey);
     if (cached) {
-        console.log(`Ã¢Å¡Â¡ [CACHE] Hit per "${title}" -> ${cached.length} risultati.`);
+        console.log(`⚡ [CACHE] Hit per "${title}" -> ${cached.length} risultati.`);
         return cached;
     }
 
@@ -2112,7 +2112,7 @@ async function searchMagnet(title, year, type, imdbId, options = {}) {
     const ttl = uniqueResults.length > 0 ? CONFIG.SEARCH_CACHE_TTL : CONFIG.NEGATIVE_CACHE_TTL;
     setCache(searchCache, cacheKey, uniqueResults, ttl);
 
-    console.log(`\nÃ¢Å“â€¦ RICERCA CONCLUSA. Trovati ${uniqueResults.length} risultati unici totali per "${title}".\n`);
+    console.log(`\n✅ RICERCA CONCLUSA. Trovati ${uniqueResults.length} risultati unici totali per "${title}".\n`);
     return uniqueResults;
 }
 
