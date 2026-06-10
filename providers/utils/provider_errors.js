@@ -1,5 +1,7 @@
 'use strict';
 
+const { detectAntibot, bodyHasCloudflareChallenge, headersHaveCloudflare } = require('./antibot_signatures');
+
 function safeText(value, fallback = '') {
     if (value === undefined || value === null) return fallback;
     return String(value);
@@ -50,15 +52,33 @@ function classifyProviderError(error) {
     const code = statusCodeOf(error);
     const message = compactMessage(error);
     const body = safeText(error?.body || error?.data || error?.response?.data || '');
-    const headerText = headersToText(error?.headers || error?.response?.headers);
+    const rawHeaders = error?.headers || error?.response?.headers || null;
+    const headerText = headersToText(rawHeaders);
     const combined = `${message}\n${body}\n${headerText}`;
 
-    if (isCloudflareLike(combined) || ([403, 429, 503].includes(code) && isCloudflareLike(headerText || body || message))) {
+    const detection = detectAntibot(body, code, rawHeaders || {});
+    const isCloudflare = bodyHasCloudflareChallenge(combined)
+        || headersHaveCloudflare(rawHeaders)
+        || isCloudflareLike(combined)
+        || ([403, 429, 503].includes(code) && isCloudflareLike(headerText || body || message));
+
+    if (isCloudflare) {
         return {
             status: 'blocked_cf',
             reason: code ? `cf_${code}` : 'cf_challenge',
             code,
             friendly: 'blocco Cloudflare / challenge anti-bot',
+            retryable: true,
+            shortMessage: message
+        };
+    }
+
+    if (detection.blocked && detection.kind === 'waf' && detection.vendor !== 'none' && detection.vendor !== 'unknown') {
+        return {
+            status: 'blocked_cf',
+            reason: `waf_${detection.vendor}`,
+            code,
+            friendly: `blocco anti-bot (${detection.vendor})`,
             retryable: true,
             shortMessage: message
         };
