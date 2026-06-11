@@ -222,6 +222,14 @@ function stripYearTokens(value) {
         .trim();
 }
 
+function stripEurostreamingTitleNoise(value) {
+    return stripYearTokens(value)
+        .replace(/\b(?:streaming|serie\s*tv|serie|sub\s*ita|subita|ita|hd|full\s*hd|download|gratis)\b/g, ' ')
+        .replace(/\b(?:stagione|season)\b.*$/i, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 function titleMatches(postTitle, expectedTitle, content, expectedYear) {
     const actual = normalizeTitle(postTitle);
     const expected = normalizeTitle(expectedTitle);
@@ -230,11 +238,14 @@ function titleMatches(postTitle, expectedTitle, content, expectedYear) {
     if (actual === expected) return true;
 
     const actualNoYear = stripYearTokens(postTitle);
-    if (actualNoYear === expected) return true;
+    const actualClean = stripEurostreamingTitleNoise(postTitle);
+    const expectedClean = stripEurostreamingTitleNoise(expectedTitle) || expected;
+
+    if (actualNoYear === expected || actualClean === expected || actualClean === expectedClean) return true;
 
     if (expectedYear) {
         const year = extractYear(postTitle) || extractYear(content);
-        if (year && Math.abs(Number(year) - Number(expectedYear)) <= 1 && actualNoYear === expected) return true;
+        if (year && Math.abs(Number(year) - Number(expectedYear)) <= 1 && actualClean === expectedClean) return true;
     }
 
     return false;
@@ -551,12 +562,39 @@ function parseLooseObject(value) {
     return null;
 }
 
+function cookieHeaderToObject(cookieHeader) {
+    const out = {};
+    for (const part of String(cookieHeader || '').split(/;\s*/)) {
+        const eq = part.indexOf('=');
+        if (eq <= 0) continue;
+        const key = part.slice(0, eq).trim();
+        const value = part.slice(eq + 1).trim();
+        if (!key || /^(?:path|domain|expires|max-age|secure|httponly|samesite)$/i.test(key)) continue;
+        out[key] = value;
+    }
+    return out;
+}
+
+function normalizeCookieMap(cookies) {
+    if (!cookies) return {};
+    if (typeof cookies === 'string') return cookieHeaderToObject(cookies);
+    if (typeof cookies !== 'object' || Array.isArray(cookies)) return {};
+
+    const out = {};
+    for (const [key, value] of Object.entries(cookies)) {
+        if (!key || value === undefined || value === null) continue;
+        if (/^\d+$/.test(key)) continue;
+        out[key] = String(value);
+    }
+    return out;
+}
+
+function cookieCount(cookies) {
+    return Object.keys(normalizeCookieMap(cookies)).length;
+}
+
 function cookiesToHeader(cookies) {
-    if (!cookies) return '';
-    if (typeof cookies === 'string') return cookies.trim();
-    if (typeof cookies !== 'object') return '';
-    return Object.entries(cookies)
-        .filter(([key, value]) => key && value !== undefined && value !== null)
+    return Object.entries(normalizeCookieMap(cookies))
         .map(([key, value]) => `${key}=${value}`)
         .join('; ');
 }
@@ -616,19 +654,20 @@ function loadSafegoState(options = {}) {
         if (captchaData.captcha && !captchaData.captch5) captchaData = { ...captchaData, captch5: captchaData.captcha };
     }
 
-    return { cookies: cookies || {}, captchaData };
+    return { cookies: normalizeCookieMap(cookies), captchaData };
 }
 
 function saveSafegoState(cookies, options = {}) {
     const fs = require('fs');
     const filePath = getSafegoCookiePath(options);
+    const normalizedCookies = normalizeCookieMap(cookies);
     try {
         const dir = path.dirname(filePath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-        fs.writeFileSync(tmpPath, JSON.stringify(cookies, null, 2), 'utf8');
+        fs.writeFileSync(tmpPath, JSON.stringify(normalizedCookies, null, 2), 'utf8');
         fs.renameSync(tmpPath, filePath);
-        esDebug('info', 'safego cookies saved', { path: filePath, cookieKeys: Object.keys(cookies || {}).length });
+        esDebug('info', 'safego cookies saved', { path: filePath, cookieKeys: cookieCount(normalizedCookies) });
     } catch (err) {
         esDebug('warn', 'failed to save safego cookies', { error: err?.message || String(err) });
     }
@@ -641,7 +680,7 @@ function mergeCookieHeader(headers, cookies) {
 }
 
 function mergeSetCookieHeaders(existingCookies, response) {
-    const merged = { ...(existingCookies || {}) };
+    const merged = normalizeCookieMap(existingCookies);
     const rawHeaders = response?.headers?.['set-cookie'] || response?.headers?.['Set-Cookie'];
     if (!rawHeaders) return merged;
 
@@ -651,7 +690,9 @@ function mergeSetCookieHeaders(existingCookies, response) {
             { decodeValues: true }
         );
         for (const cookie of parsed) {
-            if (cookie.name) merged[cookie.name] = cookie.value;
+            if (!cookie.name) continue;
+            if (Number(cookie.maxAge) === 0) delete merged[cookie.name];
+            else merged[cookie.name] = cookie.value || '';
         }
     } else {
         const list = Array.isArray(rawHeaders) ? rawHeaders : [rawHeaders];
@@ -750,7 +791,6 @@ function buildSafegoHeaders(safegoUrl) {
         referer: safegoUrl
     });
 }
-
 
 function safegoCaptchaContext(safegoUrl) {
     return {
@@ -852,7 +892,7 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
     }
     const headers = buildSafegoHeaders(safegoUrl);
 
-    esDebug('info', 'safego step 1: POST with saved cookies', { url: safegoUrl, hasCookies: Object.keys(cookies).length > 0 });
+    esDebug('info', 'safego step 1: POST with saved cookies', { url: safegoUrl, hasCookies: cookieCount(cookies) > 0 });
     const response1 = await postSafegoWithCookies(client, safegoUrl, headers, cookies);
     if (response1) {
         cookies = mergeSetCookieHeaders(cookies, response1);
@@ -890,7 +930,7 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
     }
 
     const getCookies = mergeSetCookieHeaders({}, getCaptchaResponse);
-    esDebug('info', 'safego GET cookies', { cookieKeys: Object.keys(getCookies) });
+    esDebug('info', 'safego GET cookies', { cookieKeys: Object.keys(normalizeCookieMap(getCookies)) });
 
     const captchaHtml = responseText(getCaptchaResponse);
     const captchaData = extractCaptchaBase64(captchaHtml);
@@ -919,7 +959,7 @@ async function resolveSafegoPage(client, safegoUrl, _headers, options = {}) {
         return null;
     }
 
-    esDebug('info', 'safego step 4: POST captch5', { code: captchaCode, cookieKeys: Object.keys(getCookies) });
+    esDebug('info', 'safego step 4: POST captch5', { code: captchaCode, cookieKeys: Object.keys(normalizeCookieMap(getCookies)) });
     const captchaPostHeaders = {
         ...headers,
         'Origin': 'https://safego.cc',
@@ -1334,7 +1374,8 @@ function buildDeltabitPostPayloads(fields, html, extractor, pageUrl, options = {
         payloads.push({ data: normalized, reason });
     };
 
-    addPayload({ imhuman: extractor === 'Turbovid' ? 'Proceed+to+video' : (options.deltabitImhuman ?? '') }, 'mammamia-imhuman');
+    addPayload({ imhuman: extractor === 'Turbovid' ? 'Proceed to video' : (options.deltabitImhuman ?? '') }, 'mammamia-imhuman');
+    if (extractor === 'Turbovid') addPayload({ imhuman: 'Proceed+to+video' }, 'mammamia-imhuman-legacy-plus');
 
     const preferred = submitButtons.filter((button) => /guarda|stream|watch|video/i.test(`${button.name} ${button.value} ${button.label}`));
     const others = submitButtons.filter((button) => !preferred.includes(button));
@@ -1349,7 +1390,8 @@ function buildDeltabitPostPayloads(fields, html, extractor, pageUrl, options = {
     addPayload({ method_free: '', imhuman: fields.imhuman ?? '' }, 'method_free-empty');
     addPayload({ method_free: 'Guarda lo streaming', imhuman: fields.imhuman ?? '' }, 'method_free-streaming');
 
-    return payloads.slice(0, 7);
+    const maxPayloads = Math.max(1, Math.min(12, Number.parseInt(String(options.deltabitPayloadMax ?? process.env.ES_DELTABIT_PAYLOAD_MAX ?? '9'), 10) || 9));
+    return payloads.slice(0, maxPayloads);
 }
 
 async function resolveDeltabitDirectStream(client, href, referer, options = {}, attempt = 0) {
@@ -1385,7 +1427,7 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
     const withDeltabitCookies = (headers = {}) => mergeCookieHeader(headers, deltabitCookies);
     const rememberDeltabitCookies = (response) => {
         const next = mergeSetCookieHeaders(deltabitCookies, response);
-        if (Object.keys(next).length !== Object.keys(deltabitCookies).length) {
+        if (Object.keys(next).length !== Object.keys(normalizeCookieMap(deltabitCookies)).length) {
             esDebug('info', 'deltabit cookies updated', { cookieKeys: Object.keys(next) });
         }
         deltabitCookies = next;
@@ -1602,7 +1644,7 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
         streamUrl: source,
         pageUrl,
         fileName,
-        headers: buildDeltabitPlaybackHeaders(pageUrl, userAgent, deltabitCookies, directSource)
+        headers: buildDeltabitPlaybackHeaders(pageUrl, userAgent, deltabitCookies, source)
     });
 }
 
@@ -1748,7 +1790,6 @@ function shouldAddDeltabitDirectFallback(value) {
         && isDeltabitDirectCdnUrl(value);
 }
 
-
 function buildMfpProxyUrl(config = {}, targetUrl, headers = {}, { isHls = false, allowCookie = null } = {}) {
     const gateway = createMediaflowGateway(config);
     const proxied = gateway.buildProxyUrl(targetUrl, headers, {
@@ -1782,7 +1823,6 @@ function buildDirectExtractorStream({ targetUrl, label, title, language, headers
         extra: { _priority: streamPriority(label) }
     });
 }
-
 
 function shouldProxyMaxstreamExtracted() {
     return envFlag('EUROSTREAMING_MAXSTREAM_PROXY_EXTRACTED', true);
@@ -2752,11 +2792,14 @@ module.exports = {
     __private: {
         decodeHtml,
         normalizeTitle,
+        stripEurostreamingTitleNoise,
         titleMatches,
         isDeltabitLikeUrl,
         isTurbovidLikeUrl,
         SAFEGO_CAPTCHA_DEFAULTS,
         validateSafegoCaptchaDigits,
+        normalizeCookieMap,
+        cookiesToHeader,
         extractDeltabitSource,
         isProbablyPlayableMediaUrl,
         buildHostStream,
