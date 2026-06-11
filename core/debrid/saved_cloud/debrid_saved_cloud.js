@@ -57,7 +57,7 @@ function buildMetaDebug(meta = {}) {
     `year=${meta.year || "n/a"}`,
     `s=${meta.season || 0}`,
     `e=${meta.episode || 0}`,
-    `series=${Boolean(meta.isSeries || meta.season || meta.episode)}`,
+    `series=${isSeriesMeta(meta)}`,
     `anime=${Boolean(meta.kitsu_id || meta.isAnime)}`
   ].join(" ");
 }
@@ -76,6 +76,14 @@ function stableKeyFingerprint(key) {
   const raw = String(key || "");
   if (!raw) return "empty";
   return crypto.createHash("sha1").update(raw).digest("hex").slice(0, 12);
+}
+
+function isSeriesMeta(meta = {}) {
+  return Boolean(
+    meta.isSeries ||
+    safeInt(meta.season, 0) > 0 ||
+    safeInt(meta.episode, 0) > 0
+  );
 }
 
 function normalizeName(value) {
@@ -110,16 +118,23 @@ function getTitleVariants(meta = {}) {
     meta.title,
     meta.originalTitle,
     meta.original_title,
+    meta.originalName,
+    meta.original_name,
     meta.name,
     meta.englishTitle,
-    meta.romajiTitle
-  ].map((v) => String(v || "").trim()).filter(Boolean)));
+    meta.english_title,
+    meta.romajiTitle,
+    meta.romaji_title,
+    meta.nativeTitle,
+    meta.native_title
+  ].map((value) => String(value || "").trim()).filter(Boolean)));
 }
 
 function hasTitleMatch(text, meta = {}) {
   const haystack = normalizeName(text);
   if (!haystack) return false;
   const variants = getTitleVariants(meta);
+
   for (const variant of variants) {
     const tokens = tokenize(variant);
     if (tokens.length === 0) continue;
@@ -127,6 +142,7 @@ function hasTitleMatch(text, meta = {}) {
     const hits = tokens.filter((token) => haystack.includes(token)).length;
     if (hits >= required) return true;
   }
+
   return false;
 }
 
@@ -183,6 +199,7 @@ function parseEpisodeRange(name) {
     /\bE?(\d{1,3})\s*[-~]\s*E?(\d{1,3})\b/i,
     /\b(?:episodes?|eps?|episodi)\s*(\d{1,3})\s*[-~]\s*(\d{1,3})\b/i
   ];
+
   for (const pattern of patterns) {
     const match = raw.match(pattern);
     if (!match) continue;
@@ -190,6 +207,7 @@ function parseEpisodeRange(name) {
     const end = safeInt(match[2], 0);
     if (start > 0 && end >= start) return { start, end };
   }
+
   return null;
 }
 
@@ -204,9 +222,11 @@ function episodeRegexes(season, episode, anime = false) {
     { score: 1600, regex: new RegExp(`(^|\\D)${s}${e2}(\\D|$)`, "i") },
     { score: 1420, regex: new RegExp(`\\b(?:episode|episodio|ep)\\s*0*${e}\\b`, "i") }
   ];
+
   if (anime) {
     list.push({ score: 1350, regex: new RegExp(`(?:^|[\\s._\\-\\[\\]()])0*${e}(?:$|[\\s._\\-\\]\\[()])`, "i") });
   }
+
   return list;
 }
 
@@ -220,6 +240,7 @@ function hasConflictingEpisode(name, season, episode, anime = false) {
     /\b(\d{1,2})x(\d{1,3})\b/gi,
     /\b(?:episode|episodio|ep)\s*0*(\d{1,3})\b/gi
   ];
+
   for (const pattern of patterns) {
     let match;
     while ((match = pattern.exec(raw)) !== null) {
@@ -227,6 +248,7 @@ function hasConflictingEpisode(name, season, episode, anime = false) {
       else hints.push({ season: anime ? 0 : s, episode: safeInt(match[1], 0) });
     }
   }
+
   if (hints.length === 0) return false;
   return !hints.some((hint) => hint.episode === e && (hint.season === s || (anime && hint.season === 0)));
 }
@@ -235,6 +257,7 @@ function scoreSeriesFile(name, size, meta = {}) {
   const season = safeInt(meta.season, 1) || 1;
   const episode = safeInt(meta.episode, 0);
   if (!episode) return -Infinity;
+
   const raw = String(name || "");
   const anime = Boolean(meta.kitsu_id || meta.isAnime);
   if (!isVideoName(raw)) return -Infinity;
@@ -262,6 +285,7 @@ function scoreMovieFile(name, size, meta = {}, torrentTitle = "") {
   if (SERIES_MARKER_RE.test(combined)) return -Infinity;
   if (hasYearMismatch(combined, meta)) return -Infinity;
   if (!hasTitleMatch(combined, meta) && !hasTitleMatch(raw, meta)) return -Infinity;
+
   let score = 500;
   if (/\b(?:2160p|4k|uhd)\b/i.test(combined)) score += 70;
   else if (/\b(?:1080p|fhd)\b/i.test(combined)) score += 55;
@@ -273,14 +297,16 @@ function scoreMovieFile(name, size, meta = {}, torrentTitle = "") {
 
 function chooseBestFile(files, meta = {}, service, torrentTitle = "") {
   const list = Array.isArray(files) ? files : [];
-  const isSeries = Boolean(meta.isSeries || safeInt(meta.season, 0) > 0 || safeInt(meta.episode, 0) > 0);
-  const mapped = list.map((file) => {
-    const name = service === "rd" ? getRdFileName(file) : getTbFileName(file);
-    const size = service === "rd" ? getRdFileSize(file) : getTbFileSize(file);
-    const id = service === "rd" ? getRdFileId(file) : getTbFileId(file);
-    const score = isSeries ? scoreSeriesFile(name, size, meta) : scoreMovieFile(name, size, meta, torrentTitle);
-    return { file, name, size, id, score };
-  }).filter((entry) => Number.isFinite(entry.score) && entry.score > -Infinity && entry.id !== null);
+  const isSeries = isSeriesMeta(meta);
+  const mapped = list
+    .map((file) => {
+      const name = service === "rd" ? getRdFileName(file) : getTbFileName(file);
+      const size = service === "rd" ? getRdFileSize(file) : getTbFileSize(file);
+      const id = service === "rd" ? getRdFileId(file) : getTbFileId(file);
+      const score = isSeries ? scoreSeriesFile(name, size, meta) : scoreMovieFile(name, size, meta, torrentTitle);
+      return { file, name, size, id, score };
+    })
+    .filter((entry) => Number.isFinite(entry.score) && entry.score > -Infinity && entry.id !== null);
 
   mapped.sort((a, b) => b.score - a.score || b.size - a.size);
   return mapped[0] || null;
@@ -316,7 +342,24 @@ function getLimit(filters = {}, explicitMax = null) {
 
 function getCacheKey({ service, apiKey, meta, mode, max, existingHashes }) {
   const hashSig = Array.from(existingHashes || []).sort().slice(0, 80).join(",");
-  return `${service}:${stableKeyFingerprint(apiKey)}:${mode}:${max}:${meta?.imdb_id || meta?.id || meta?.title || ""}:${meta?.season || 0}:${meta?.episode || 0}:${hashSig}`;
+  const metaId = meta?.imdb_id || meta?.imdb || meta?.tmdb_id || meta?.id || meta?.title || meta?.name || "";
+  const year = meta?.year || "";
+  const season = meta?.season || 0;
+  const episode = meta?.episode || 0;
+  const anime = meta?.kitsu_id || meta?.isAnime ? "anime" : "std";
+
+  return [
+    service,
+    stableKeyFingerprint(apiKey),
+    mode,
+    max,
+    metaId,
+    year,
+    season,
+    episode,
+    anime,
+    hashSig
+  ].join(":");
 }
 
 function getFreshCached(key) {
@@ -326,16 +369,37 @@ function getFreshCached(key) {
     savedSearchCache.delete(key);
     return null;
   }
+  savedSearchCache.delete(key);
+  savedSearchCache.set(key, cached);
   return cached.v;
 }
 
 function setCached(key, value) {
-  if (savedSearchCache.size > 400) {
+  if (savedSearchCache.has(key)) savedSearchCache.delete(key);
+  while (savedSearchCache.size >= 400) {
     const first = savedSearchCache.keys().next().value;
-    if (first) savedSearchCache.delete(first);
+    if (!first) break;
+    savedSearchCache.delete(first);
   }
   savedSearchCache.set(key, { t: Date.now(), v: value });
   return value;
+}
+
+function isCloudTorrentReady(service, torrent = {}, info = {}) {
+  const normalizedService = String(service || "").toLowerCase();
+
+  if (normalizedService === "rd") {
+    const status = String(info.status || torrent.status || "").toLowerCase();
+    return !status || status === "downloaded";
+  }
+
+  if (normalizedService === "tb") {
+    const state = String(torrent.download_state || torrent.state || torrent.status || info.status || "").toLowerCase();
+    const progress = safeNum(torrent.progress ?? info.progress, 0);
+    return !state || ["completed", "seeding", "ready"].includes(state) || progress >= 100;
+  }
+
+  return false;
 }
 
 function createCloudItem({ service, torrent, info, fileEntry, meta }) {
@@ -343,6 +407,7 @@ function createCloudItem({ service, torrent, info, fileEntry, meta }) {
   const torrentTitle = getTorrentTitle(torrent, info);
   const sourceLabel = service === "tb" ? "TorBox" : "Real-Debrid";
   const title = fileEntry.name || torrentTitle || `${sourceLabel} ${hash}`;
+
   return {
     title,
     fileTitle: fileEntry.name || title,
@@ -386,7 +451,7 @@ function isSnapshotEnabled(filters = {}) {
 }
 
 function createCloudItemFromSnapshot(snapshot = {}, meta = {}, logger = null) {
-  const service = String(snapshot.service || '').toLowerCase();
+  const service = String(snapshot.service || "").toLowerCase();
   const torrent = {
     ...(snapshot.torrent || {}),
     id: snapshot.torrent?.id || snapshot.torrentId,
@@ -403,45 +468,68 @@ function createCloudItemFromSnapshot(snapshot = {}, meta = {}, logger = null) {
     info_hash: snapshot.info?.info_hash || snapshot.hash,
     filename: snapshot.info?.filename || snapshot.title,
     name: snapshot.info?.name || snapshot.title,
-    status: snapshot.info?.status || (service === 'rd' ? 'downloaded' : snapshot.state),
+    status: snapshot.info?.status || (service === "rd" ? "downloaded" : snapshot.state),
     files: Array.isArray(snapshot.files) ? snapshot.files : (Array.isArray(snapshot.info?.files) ? snapshot.info.files : [])
   };
-  if (service === 'tb') torrent.files = Array.isArray(snapshot.files) ? snapshot.files : (Array.isArray(torrent.files) ? torrent.files : []);
-  const state = String(service === 'tb' ? (torrent.download_state || torrent.state || torrent.status || snapshot.state || '') : (info.status || snapshot.state || '')).toLowerCase();
+
+  if (service === "tb") {
+    torrent.files = Array.isArray(snapshot.files) ? snapshot.files : (Array.isArray(torrent.files) ? torrent.files : []);
+  }
+
+  const state = String(service === "tb" ? (torrent.download_state || torrent.state || torrent.status || snapshot.state || "") : (info.status || snapshot.state || "")).toLowerCase();
   const progress = safeNum(torrent.progress ?? info.progress ?? snapshot.progress, 0);
-  if (service === 'rd' && state && state !== 'downloaded') return null;
-  if (service === 'tb' && state && !['completed', 'seeding', 'ready'].includes(state) && progress < 100) return null;
+
+  if (service === "rd" && state && state !== "downloaded") return null;
+  if (service === "tb" && state && !["completed", "seeding", "ready"].includes(state) && progress < 100) return null;
+
   const title = getTorrentTitle(torrent, info);
   if (title && hasYearMismatch(title, meta)) return null;
-  if (title && !hasTitleMatch(title, meta) && !meta?.isSeries) return null;
-  const files = service === 'tb' ? getTbPlayableFiles(torrent) : getRdPlayableFiles(info);
+  if (title && !hasTitleMatch(title, meta) && !isSeriesMeta(meta)) return null;
+
+  const files = service === "tb" ? getTbPlayableFiles(torrent) : getRdPlayableFiles(info);
   if (!files.length) return null;
+
   const best = chooseBestFile(files, meta, service, title);
   if (!best) return null;
-  if (meta?.isSeries && !hasTitleMatch(`${title} ${best.name}`, meta)) return null;
-  debugLog(logger, `${service.toUpperCase()} snapshot match | hash=${getTorrentHash(torrent, info).slice(0, 12) || 'n/a'} torrentId=${torrent.id || torrent.torrent_id || 'n/a'} fileId=${best.id} file="${safeDebugText(best.name)}"`);
+  if (isSeriesMeta(meta) && !hasTitleMatch(`${title} ${best.name}`, meta)) return null;
+
+  debugLog(logger, `${service.toUpperCase()} snapshot match | hash=${getTorrentHash(torrent, info).slice(0, 12) || "n/a"} torrentId=${torrent.id || torrent.torrent_id || "n/a"} fileId=${best.id} file="${safeDebugText(best.name)}"`);
   return createCloudItem({ service, torrent, info, fileEntry: best, meta });
 }
 
 async function findSavedCloudItemsFromSnapshots({ service, apiKey, meta, max, existingHashes, filters, logger }) {
   if (!isSnapshotEnabled(filters)) return [];
-  const snapshots = await SnapshotRepo.getFreshSavedCloudSnapshots({ service, apiKey, limit: getSnapshotScanLimit(filters) });
+
+  const snapshots = await SnapshotRepo.getFreshSavedCloudSnapshots({
+    service,
+    apiKey,
+    limit: getSnapshotScanLimit(filters)
+  });
+
   if (!Array.isArray(snapshots) || snapshots.length === 0) return [];
+
   const skipHashes = normalizeExistingHashes(existingHashes);
   const out = [];
+
   for (const snapshot of snapshots) {
     if (out.length >= max) break;
-    const hash = String(snapshot.hash || snapshot.torrent?.hash || snapshot.info?.hash || '').toLowerCase();
+    const hash = String(snapshot.hash || snapshot.torrent?.hash || snapshot.info?.hash || "").toLowerCase();
     if (hash && skipHashes.has(hash)) continue;
+
     const item = createCloudItemFromSnapshot({ ...snapshot, service }, meta, logger);
     if (!item) continue;
+
     if (item.hash) skipHashes.add(String(item.hash).toLowerCase());
     item._savedCloudSnapshot = true;
     item._savedCloudSnapshotSeenCount = snapshot.seenCount || 0;
     item._savedCloudSnapshotLastSeenAt = snapshot.lastSeenAt || null;
     out.push(item);
   }
-  if (out.length > 0) logger?.info?.(`[SAVED CLOUD] snapshot hit | service=${String(service).toUpperCase()} count=${out.length} scanned=${snapshots.length}`);
+
+  if (out.length > 0) {
+    logger?.info?.(`[SAVED CLOUD] snapshot hit | service=${String(service).toUpperCase()} count=${out.length} scanned=${snapshots.length}`);
+  }
+
   return out;
 }
 
@@ -465,30 +553,39 @@ async function findRdSavedCloudItems({ apiKey, meta, max, existingHashes, logger
   };
   const samples = [];
   const skipHashes = normalizeExistingHashes(existingHashes);
+
   debugLog(logger, `RD scan start | max=${max} scanLimit=${DEFAULT_SCAN_LIMIT} existingHashes=${skipHashes.size} ${buildMetaDebug(meta)}`);
+
   const list = await RD.listSavedTorrents(apiKey, { limit: DEFAULT_SCAN_LIMIT });
   const safeList = Array.isArray(list) ? list : [];
+
   debugLog(logger, `RD list response | torrents=${safeList.length}`);
+
   for (const torrent of safeList) {
     if (out.length >= max) break;
     stats.scanned++;
+
     const listHash = getTorrentHash(torrent);
     const listTitle = getTorrentTitle(torrent);
+
     if (listHash && skipHashes.has(listHash)) {
       incStat(stats, "duplicate_list_hash");
       addSample(samples, "dup_hash_list", listTitle, listHash.slice(0, 12));
       continue;
     }
+
     if (listTitle && hasYearMismatch(listTitle, meta)) {
       incStat(stats, "list_year_mismatch");
       addSample(samples, "year_mismatch_list", listTitle);
       continue;
     }
-    if (listTitle && !hasTitleMatch(listTitle, meta) && !meta?.isSeries) {
+
+    if (listTitle && !hasTitleMatch(listTitle, meta) && !isSeriesMeta(meta)) {
       incStat(stats, "list_title_no_match");
       addSample(samples, "title_no_match_list", listTitle);
       continue;
     }
+
     if (!torrent?.id) {
       incStat(stats, "missing_torrent_id");
       addSample(samples, "missing_torrent_id", listTitle);
@@ -509,6 +606,7 @@ async function findRdSavedCloudItems({ apiKey, meta, max, existingHashes, logger
       addSample(samples, "info_missing", listTitle);
       continue;
     }
+
     if (isSnapshotEnabled({ savedCloudSnapshotEnabled: true })) {
       SnapshotRepo.upsertSavedCloudSnapshots({
         service: "rd",
@@ -517,24 +615,29 @@ async function findRdSavedCloudItems({ apiKey, meta, max, existingHashes, logger
         ttlSeconds: getSnapshotTtlSeconds({})
       }).catch(() => {});
     }
+
     if (info.status !== "downloaded") {
       incStat(stats, "not_downloaded");
       addSample(samples, "not_downloaded", listTitle || getTorrentTitle(torrent, info), String(info.status || "unknown"));
       continue;
     }
+
     const hash = getTorrentHash(torrent, info);
     if (hash && skipHashes.has(hash)) {
       incStat(stats, "duplicate_info_hash");
       addSample(samples, "dup_hash_info", listTitle || getTorrentTitle(torrent, info), hash.slice(0, 12));
       continue;
     }
+
     const torrentTitle = getTorrentTitle(torrent, info);
+
     if (hasYearMismatch(torrentTitle, meta)) {
       incStat(stats, "info_year_mismatch");
       addSample(samples, "year_mismatch_info", torrentTitle);
       continue;
     }
-    if (!hasTitleMatch(torrentTitle, meta) && !meta?.isSeries) {
+
+    if (!hasTitleMatch(torrentTitle, meta) && !isSeriesMeta(meta)) {
       incStat(stats, "info_title_no_match");
       addSample(samples, "title_no_match_info", torrentTitle);
       continue;
@@ -546,24 +649,29 @@ async function findRdSavedCloudItems({ apiKey, meta, max, existingHashes, logger
       addSample(samples, "no_playable_files", torrentTitle, `files=${Array.isArray(info.files) ? info.files.length : 0}`);
       continue;
     }
+
     const best = chooseBestFile(files, meta, "rd", torrentTitle);
     if (!best) {
       incStat(stats, "no_best_file");
       addSample(samples, "no_best_file", torrentTitle, `playable=${files.length}`);
       continue;
     }
-    if (meta?.isSeries && !hasTitleMatch(`${torrentTitle} ${best.name}`, meta)) {
+
+    if (isSeriesMeta(meta) && !hasTitleMatch(`${torrentTitle} ${best.name}`, meta)) {
       incStat(stats, "series_title_no_match");
       addSample(samples, "series_title_no_match", `${torrentTitle} / ${best.name}`);
       continue;
     }
 
     stats.added++;
+    if (hash) skipHashes.add(hash);
     debugLog(logger, `RD match | hash=${hash ? hash.slice(0, 12) : "n/a"} torrentId=${torrent.id} fileId=${best.id} size=${best.size || 0} score=${Math.round(best.score || 0)} file="${safeDebugText(best.name)}"`);
     out.push(createCloudItem({ service: "rd", torrent, info, fileEntry: best, meta }));
   }
+
   logger?.info?.(`[SAVED CLOUD] RD scan done | found=${out.length} ${summarizeStats(stats) || "no_stats"}`);
   if (samples.length > 0) debugLog(logger, `RD skip samples | ${samples.join(" || ")}`);
+
   return out;
 }
 
@@ -583,10 +691,14 @@ async function findTbSavedCloudItems({ apiKey, meta, max, existingHashes, logger
   };
   const samples = [];
   const skipHashes = normalizeExistingHashes(existingHashes);
+
   debugLog(logger, `TB scan start | max=${max} scanLimit=${DEFAULT_SCAN_LIMIT} existingHashes=${skipHashes.size} ${buildMetaDebug(meta)}`);
+
   const list = await TB.listSavedTorrents(apiKey, { limit: DEFAULT_SCAN_LIMIT });
   const safeList = Array.isArray(list) ? list : [];
+
   debugLog(logger, `TB list response | torrents=${safeList.length}`);
+
   if (safeList.length > 0 && isSnapshotEnabled({ savedCloudSnapshotEnabled: true })) {
     SnapshotRepo.upsertSavedCloudSnapshots({
       service: "tb",
@@ -595,33 +707,40 @@ async function findTbSavedCloudItems({ apiKey, meta, max, existingHashes, logger
       ttlSeconds: getSnapshotTtlSeconds({})
     }).catch(() => {});
   }
+
   for (const torrent of safeList) {
     if (out.length >= max) break;
     stats.scanned++;
+
     const state = String(torrent.download_state || torrent.state || torrent.status || "").toLowerCase();
     const progress = safeNum(torrent.progress, 0);
     const torrentTitle = getTorrentTitle(torrent);
+
     if (state && !["completed", "seeding", "ready"].includes(state) && progress < 100) {
       incStat(stats, "not_ready");
       addSample(samples, "not_ready", torrentTitle, `state=${state || "n/a"} progress=${progress}`);
       continue;
     }
+
     const hash = getTorrentHash(torrent);
     if (hash && skipHashes.has(hash)) {
       incStat(stats, "duplicate_hash");
       addSample(samples, "dup_hash", torrentTitle, hash.slice(0, 12));
       continue;
     }
+
     if (hasYearMismatch(torrentTitle, meta)) {
       incStat(stats, "year_mismatch");
       addSample(samples, "year_mismatch", torrentTitle);
       continue;
     }
-    if (torrentTitle && !hasTitleMatch(torrentTitle, meta) && !meta?.isSeries) {
+
+    if (torrentTitle && !hasTitleMatch(torrentTitle, meta) && !isSeriesMeta(meta)) {
       incStat(stats, "title_no_match");
       addSample(samples, "title_no_match", torrentTitle);
       continue;
     }
+
     if (!torrent?.id && !torrent?.torrent_id) {
       incStat(stats, "missing_torrent_id");
       addSample(samples, "missing_torrent_id", torrentTitle);
@@ -634,27 +753,31 @@ async function findTbSavedCloudItems({ apiKey, meta, max, existingHashes, logger
       addSample(samples, "no_playable_files", torrentTitle, `files=${Array.isArray(torrent.files) ? torrent.files.length : 0}`);
       continue;
     }
+
     const best = chooseBestFile(files, meta, "tb", torrentTitle);
     if (!best) {
       incStat(stats, "no_best_file");
       addSample(samples, "no_best_file", torrentTitle, `playable=${files.length}`);
       continue;
     }
-    if (meta?.isSeries && !hasTitleMatch(`${torrentTitle} ${best.name}`, meta)) {
+
+    if (isSeriesMeta(meta) && !hasTitleMatch(`${torrentTitle} ${best.name}`, meta)) {
       incStat(stats, "series_title_no_match");
       addSample(samples, "series_title_no_match", `${torrentTitle} / ${best.name}`);
       continue;
     }
 
     stats.added++;
+    if (hash) skipHashes.add(hash);
     debugLog(logger, `TB match | hash=${hash ? hash.slice(0, 12) : "n/a"} torrentId=${torrent.id || torrent.torrent_id} fileId=${best.id} size=${best.size || 0} score=${Math.round(best.score || 0)} file="${safeDebugText(best.name)}"`);
     out.push(createCloudItem({ service: "tb", torrent, info: torrent, fileEntry: best, meta }));
   }
+
   logger?.info?.(`[SAVED CLOUD] TB scan done | found=${out.length} ${summarizeStats(stats) || "no_stats"}`);
   if (samples.length > 0) debugLog(logger, `TB skip samples | ${samples.join(" || ")}`);
+
   return out;
 }
-
 
 async function findSavedCloudDuplicateHashes(options = {}) {
   const service = String(options.service || "").toLowerCase();
@@ -662,6 +785,7 @@ async function findSavedCloudDuplicateHashes(options = {}) {
   const apiKey = options.apiKey;
   const meta = options.meta || {};
   const logger = options.logger;
+
   if (!apiKey || !existing.size || !["rd", "tb"].includes(service)) {
     debugLog(logger, `duplicate scan skip | service=${service || "n/a"} existing=${existing.size} hasKey=${Boolean(apiKey)}`);
     return [];
@@ -676,6 +800,7 @@ async function findSavedCloudDuplicateHashes(options = {}) {
     const stats = {
       scanned: 0,
       missing_hash: 0,
+      not_ready: 0,
       not_existing: 0,
       year_mismatch: 0,
       matched: 0
@@ -684,21 +809,32 @@ async function findSavedCloudDuplicateHashes(options = {}) {
 
     for (const torrent of safeList) {
       stats.scanned++;
+
       const hash = getTorrentHash(torrent, torrent);
       const title = getTorrentTitle(torrent, torrent) || "Magnet";
+
       if (!hash) {
         incStat(stats, "missing_hash");
         continue;
       }
+
+      if (!isCloudTorrentReady(service, torrent, torrent)) {
+        incStat(stats, "not_ready");
+        addSample(samples, "dup_not_ready", title, hash.slice(0, 12));
+        continue;
+      }
+
       if (!existing.has(hash)) {
         incStat(stats, "not_existing");
         continue;
       }
+
       if (title && hasYearMismatch(title, meta)) {
         incStat(stats, "year_mismatch");
         addSample(samples, "dup_year_mismatch", title, hash.slice(0, 12));
         continue;
       }
+
       if (!matches.has(hash)) {
         matches.set(hash, {
           service,
@@ -733,24 +869,35 @@ async function findSavedCloudItems(options = {}) {
   const mode = getMode(filters);
   const keyFp = stableKeyFingerprint(options.apiKey || "");
   const existingHashes = normalizeExistingHashes(options.existingHashes);
+
   debugLog(options.logger, `resolver enter | service=${service || "n/a"} mode=${mode} enabled=${filters.enableSavedCloud === true} hasKey=${Boolean(options.apiKey)} keyfp=${keyFp} existingHashes=${existingHashes.size} ${buildMetaDebug(options.meta || {})}`);
 
   if (mode === "off") {
     debugLog(options.logger, "resolver stop | reason=mode_off_or_toggle_disabled");
     return [];
   }
+
   if (!options.apiKey) {
     debugLog(options.logger, "resolver stop | reason=missing_api_key");
     return [];
   }
+
   if (!["rd", "tb"].includes(service)) {
     debugLog(options.logger, `resolver stop | reason=invalid_service service=${service || "n/a"}`);
     return [];
   }
 
   const max = getLimit(filters, options.max);
-  const cacheKey = getCacheKey({ service, apiKey: options.apiKey, meta: options.meta || {}, mode, max, existingHashes });
+  const cacheKey = getCacheKey({
+    service,
+    apiKey: options.apiKey,
+    meta: options.meta || {},
+    mode,
+    max,
+    existingHashes
+  });
   const cached = getFreshCached(cacheKey);
+
   if (cached) {
     options.logger?.info?.(`[SAVED CLOUD] cache hit | service=${service.toUpperCase()} count=${Array.isArray(cached) ? cached.length : 0} mode=${mode}`);
     return cached;
@@ -766,7 +913,9 @@ async function findSavedCloudItems(options = {}) {
       filters,
       logger: options.logger
     });
+
     const liveFallback = APP_SETTINGS.savedCloud.liveFallback !== false;
+
     if (snapshotResults.length >= max || !liveFallback) {
       const slicedSnapshots = snapshotResults.slice(0, max);
       debugLog(options.logger, `resolver done | service=${service.toUpperCase()} source=snapshot returned=${slicedSnapshots.length} max=${max}`);
@@ -775,13 +924,27 @@ async function findSavedCloudItems(options = {}) {
 
     const snapshotHashes = new Set([
       ...Array.from(existingHashes),
-      ...snapshotResults.map((item) => String(item.hash || item.infoHash || '').toLowerCase()).filter(Boolean)
+      ...snapshotResults.map((item) => String(item.hash || item.infoHash || "").toLowerCase()).filter(Boolean)
     ]);
-    const args = { apiKey: options.apiKey, meta: options.meta || {}, max, existingHashes: snapshotHashes, logger: options.logger };
+    const args = {
+      apiKey: options.apiKey,
+      meta: options.meta || {},
+      max,
+      existingHashes: snapshotHashes,
+      logger: options.logger
+    };
     const liveResults = service === "tb"
       ? await findTbSavedCloudItems(args)
       : await findRdSavedCloudItems(args);
     const results = [...snapshotResults, ...liveResults].slice(0, max);
+
+    if (results.length > 0) {
+      debugLog(
+        options.logger,
+        `resolver results | service=${service.toUpperCase()} items=${results.map((item) => `${item._savedCloudSnapshot ? "snapshot" : "live"}:${safeDebugText(item.fileTitle || item.title, 48)}`).join(" | ")}`
+      );
+    }
+
     debugLog(options.logger, `resolver done | service=${service.toUpperCase()} snapshot=${snapshotResults.length} live=${liveResults.length} returned=${results.length} max=${max}`);
     return setCached(cacheKey, results);
   } catch (error) {

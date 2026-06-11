@@ -660,7 +660,7 @@ function collectEpisodeWindows(text, season, episode) {
         const idx = normalized.toLowerCase().indexOf(marker.toLowerCase());
         if (idx === -1) continue;
 
-        const start = Math.max(0, idx - 800);
+        const start = idx;
         const end = Math.min(normalized.length, idx + 5200);
         const key = `${start}:${end}`;
 
@@ -675,7 +675,7 @@ function collectEpisodeWindows(text, season, episode) {
         if (!match) continue;
 
         const idx = match.index || 0;
-        const start = Math.max(0, idx - 800);
+        const start = idx;
         const end = Math.min(normalized.length, idx + 5200);
         const key = `${start}:${end}`;
 
