@@ -11,7 +11,8 @@ const {
   getLanguageInfo,
   isSeasonPack,
   isTrustedSource
-} = require("../utils/text");
+} = require('../utils/text');
+
 const { detectSourceConsensus, evaluateLeviathanScore } = require('../ranking/score_profile');
 const { evaluateQualityIntelligence } = require('../ranking/quality_intelligence');
 const { shouldKeepStrictItalianCandidate, hasStrictItalianEvidence } = require('../canonical/language_guard');
@@ -28,11 +29,31 @@ const REGEX_EXPLICIT_MULTI = /\b(?:MULTI|MULTILANG(?:UAGE)?|DUAL[\s.-]?AUDIO)\b/
 const REGEX_TITLE_PUNCTUATION = /[\[\]{}()]/g;
 const REGEX_TITLE_SPACING = /[._:+\-]+/g;
 const REGEX_TITLE_NOISE = /\b(?:2160p|1080p|720p|480p|x264|x265|h264|h265|hevc|hdr10\+?|hdr|dv|dolby\s*vision|web[- ]?dl|webrip|bluray|brrip|dvdrip|remux|proper|repack|nf|amzn|dsnp|atvp|ita|italian|italiano|multi|dual|audio|sub|subs|subbed|vostfr|subita)\b/g;
+
 const SOURCE_CONSENSUS_BONUS = Object.freeze({
   strong_consensus: 9000,
   consensus: 5500,
   mirror: 2500,
   none: 0
+});
+
+const QUALITY_PRIORITY = Object.freeze({
+  '4K': 4,
+  '1080p': 3,
+  '720p': 2,
+  SD: 1
+});
+
+const SORT_MODE_ALIASES = Object.freeze({
+  resolution: 'resolution',
+  res: 'resolution',
+  quality: 'resolution',
+  qualita: 'resolution',
+  qualità: 'resolution',
+  risoluzione: 'resolution',
+  size: 'size',
+  bitrate: 'size',
+  peso: 'size'
 });
 
 const DEFAULT_PROFILES = {
@@ -131,39 +152,43 @@ const DEFAULT_PROFILES = {
 };
 
 const DEFAULT_CONFIG = {
-  profile: "stream",
-  sortMode: "balanced",
+  profile: 'stream',
+  sortMode: 'balanced',
   keepByLanguage: true,
   profiles: DEFAULT_PROFILES
 };
 
 function normalizeNumber(value) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-  if (typeof value === "string") {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+
+  if (typeof value === 'string') {
     const cleaned = value
-      .replace(/[^\d.,-]/g, "")
-      .replace(/(\d)[,](\d{3})(?!\d)/g, "$1$2")
-      .replace(",", ".");
+      .replace(/[^\d.,-]/g, '')
+      .replace(/(\d)[,](\d{3})(?!\d)/g, '$1$2')
+      .replace(',', '.');
+
     const parsed = parseFloat(cleaned);
     return Number.isFinite(parsed) ? parsed : 0;
   }
+
   return 0;
 }
 
 function parseSizeToBytes(value) {
   if (!value) return 0;
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
 
   const raw = String(value).trim();
   if (/^\d+$/.test(raw)) return parseInt(raw, 10);
 
-  const normalized = raw.replace(/\s+/g, " ");
+  const normalized = raw.replace(/\s+/g, ' ');
   const match = normalized.match(/([\d.,]+)\s*(B|BYTE|BYTES|KB|KIB|MB|MIB|GB|GIB|TB|TIB)/i);
   if (!match) return 0;
 
-  const amountText = match[1].includes(",") && match[1].includes(".")
-    ? match[1].replace(/,/g, "")
-    : match[1].replace(",", ".");
+  const amountText = match[1].includes(',') && match[1].includes('.')
+    ? match[1].replace(/,/g, '')
+    : match[1].replace(',', '.');
+
   const amount = parseFloat(amountText);
   if (!Number.isFinite(amount)) return 0;
 
@@ -185,7 +210,7 @@ function parseSizeToBytes(value) {
 }
 
 function normalizeText(value) {
-  return String(value || "").trim();
+  return String(value || '').trim();
 }
 
 function lowerText(value) {
@@ -193,23 +218,22 @@ function lowerText(value) {
 }
 
 function stripAccents(value) {
-  return normalizeText(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  return normalizeText(value).normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
 }
 
 function normalizeLooseTitle(value) {
   return stripAccents(value)
     .toLowerCase()
-    .replace(REGEX_TITLE_PUNCTUATION, " ")
-    .replace(REGEX_TITLE_SPACING, " ")
-    .replace(REGEX_TITLE_NOISE, " ")
-    .replace(/\s+/g, " ")
+    .replace(REGEX_TITLE_PUNCTUATION, ' ')
+    .replace(REGEX_TITLE_SPACING, ' ')
+    .replace(REGEX_TITLE_NOISE, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
 function tokenizeTitle(value) {
   const normalized = normalizeLooseTitle(value);
-  if (!normalized) return [];
-  return normalized.split(" ").filter((token) => token.length >= 2);
+  return normalized ? normalized.split(' ').filter((token) => token.length >= 2) : [];
 }
 
 function mergeProfile(baseProfile, overrideProfile = {}) {
@@ -223,18 +247,27 @@ function mergeProfile(baseProfile, overrideProfile = {}) {
   };
 }
 
+function normalizeSortMode(value) {
+  const raw = String(value || DEFAULT_CONFIG.sortMode).trim().toLowerCase();
+  return SORT_MODE_ALIASES[raw] || 'balanced';
+}
+
 function buildPreparedConfig(input = {}) {
   if (input && input.__rankingPrepared) return input;
 
-  const ranking = input && typeof input.ranking === "object" ? input.ranking : {};
-  const rawSortMode = String(ranking.sortMode || input.sortMode || input.sort || input.filters?.sortMode || input.filters?.sortBy || input.filters?.sort || DEFAULT_CONFIG.sortMode).trim().toLowerCase();
-  const sortMode = ['resolution', 'res', 'quality', 'qualita', 'qualità', 'risoluzione'].includes(rawSortMode)
-    ? 'resolution'
-    : (['size', 'bitrate', 'peso'].includes(rawSortMode) ? 'size' : 'balanced');
+  const ranking = input && typeof input.ranking === 'object' ? input.ranking : {};
+  const rawSortMode = ranking.sortMode
+    || input.sortMode
+    || input.sort
+    || input.filters?.sortMode
+    || input.filters?.sortBy
+    || input.filters?.sort
+    || DEFAULT_CONFIG.sortMode;
+
   const config = {
     __rankingPrepared: true,
     profile: ranking.profile || input.profile || DEFAULT_CONFIG.profile,
-    sortMode,
+    sortMode: normalizeSortMode(rawSortMode),
     keepByLanguage: ranking.keepByLanguage ?? input.keepByLanguage ?? DEFAULT_CONFIG.keepByLanguage,
     profiles: {
       stream: mergeProfile(DEFAULT_PROFILES.stream, ranking.profiles?.stream || input.profiles?.stream),
@@ -243,8 +276,8 @@ function buildPreparedConfig(input = {}) {
   };
 
   const directProfileOverride = ranking.profileConfig || input.profileConfig;
-  if (directProfileOverride && typeof directProfileOverride === "object") {
-    const targetProfile = config.profile === "dedupe" ? "dedupe" : "stream";
+  if (directProfileOverride && typeof directProfileOverride === 'object') {
+    const targetProfile = config.profile === 'dedupe' ? 'dedupe' : 'stream';
     config.profiles[targetProfile] = mergeProfile(config.profiles[targetProfile], directProfileOverride);
   }
 
@@ -253,12 +286,13 @@ function buildPreparedConfig(input = {}) {
 
 function resolveProfileName(configInput = {}) {
   const config = buildPreparedConfig(configInput);
-  return config.profile === "dedupe" ? "dedupe" : "stream";
+  return config.profile === 'dedupe' ? 'dedupe' : 'stream';
 }
 
 function getProfileConfig(configInput = {}) {
   const config = buildPreparedConfig(configInput);
   const profileName = resolveProfileName(config);
+
   return {
     config,
     profileName,
@@ -270,9 +304,8 @@ function isAnimeMeta(meta = {}) {
   return Boolean(meta?.kitsu_id || meta?.isAnime);
 }
 
-
 function hasExplicitSeasonMarker(text = '') {
-  return /\b(?:S(?:EASON)?\s*0?\d{1,2}|\d{1,2}x\d{1,3}|STAGIONE\s*0?\d{1,2}|(?:1ST|2ND|3RD|4TH)\s+SEASON)\b/i.test(String(text || ""));
+  return /\b(?:S(?:EASON)?\s*0?\d{1,2}|\d{1,2}x\d{1,3}|STAGIONE\s*0?\d{1,2}|(?:1ST|2ND|3RD|4TH)\s+SEASON)\b/i.test(String(text || ''));
 }
 
 function shouldIgnoreAnimeSeason(meta = {}, title = '') {
@@ -281,6 +314,7 @@ function shouldIgnoreAnimeSeason(meta = {}, title = '') {
 
 function extractEpisodeContext(title, defaultSeason = 1, options = {}) {
   const safeTitle = normalizeText(title);
+
   let match = safeTitle.match(/\bS(\d{1,2})E(\d{1,3})\b/i);
   if (match) return { season: parseInt(match[1], 10), episode: parseInt(match[2], 10) };
 
@@ -312,33 +346,39 @@ function extractEpisodeContext(title, defaultSeason = 1, options = {}) {
   return null;
 }
 
+function getCandidateText(value) {
+  if (typeof value === 'object' && value !== null) {
+    return [value.title, value.name, value.description, value.quality, value.resolution]
+      .map(normalizeText)
+      .filter(Boolean)
+      .join(' ');
+  }
+
+  return normalizeText(value);
+}
+
 function detectQuality(value) {
-    const text = typeof value === "object" && value !== null
-        ? [value.title, value.name, value.description, value.quality, value.resolution].map(normalizeText).filter(Boolean).join(" ")
-        : normalizeText(value);
+  const text = getCandidateText(value);
+  const parsed = typeof value === 'object' && value !== null && value._releaseDetails
+    ? value._releaseDetails
+    : parseTitleDetails(text);
 
-    const parsed = typeof value === "object" && value !== null && value._releaseDetails
-        ? value._releaseDetails
-        : parseTitleDetails(text);
-    const parsedQuality = normalizeText(parsed?.quality || parsed?.qualityLabel);
-    if (/^(?:4k|2160p|uhd)$/i.test(parsedQuality) || /\b4K\b/i.test(parsedQuality)) return "4K";
-    if (/1080/i.test(parsedQuality)) return "1080p";
-    if (/720/i.test(parsedQuality)) return "720p";
-    if (/480/i.test(parsedQuality)) return "SD";
+  const parsedQuality = normalizeText(parsed?.quality || parsed?.qualityLabel);
+  if (/^(?:4k|2160p|uhd)$/i.test(parsedQuality) || /\b4K\b/i.test(parsedQuality)) return '4K';
+  if (/1080/i.test(parsedQuality)) return '1080p';
+  if (/720/i.test(parsedQuality)) return '720p';
+  if (/480/i.test(parsedQuality)) return 'SD';
 
-    const lowerTextValue = text.toLowerCase();
-    if (REGEX_QUALITY_FILTER["4K"].test(lowerTextValue)) return "4K";
-    if (REGEX_QUALITY_FILTER["1080p"].test(lowerTextValue)) return "1080p";
-  if (REGEX_QUALITY_FILTER["720p"].test(lowerTextValue)) return "720p";
-  return "SD";
+  const lowerTextValue = text.toLowerCase();
+  if (REGEX_QUALITY_FILTER['4K'].test(lowerTextValue)) return '4K';
+  if (REGEX_QUALITY_FILTER['1080p'].test(lowerTextValue)) return '1080p';
+  if (REGEX_QUALITY_FILTER['720p'].test(lowerTextValue)) return '720p';
+
+  return 'SD';
 }
 
 function getQualityPriority(item) {
-  const quality = item?._rankMeta?.quality || detectQuality(item);
-  if (quality === "4K") return 4;
-  if (quality === "1080p") return 3;
-  if (quality === "720p") return 2;
-  return 1;
+  return QUALITY_PRIORITY[item?._rankMeta?.quality || detectQuality(item)] || QUALITY_PRIORITY.SD;
 }
 
 function resolveLangMode(meta = {}, configInput = {}) {
@@ -346,22 +386,25 @@ function resolveLangMode(meta = {}, configInput = {}) {
   const directMeta = lowerText(meta.langMode || meta.languageMode || meta.language);
   const explicit = lowerText(configInput.filters?.language || configInput.langMode || configInput.language);
 
-  if (directMeta === "ita" || directMeta === "eng" || directMeta === "all") return directMeta;
-  if (explicit === "ita" || explicit === "eng" || explicit === "all") return explicit;
+  if (directMeta === 'ita' || directMeta === 'eng' || directMeta === 'all') return directMeta;
+  if (explicit === 'ita' || explicit === 'eng' || explicit === 'all') return explicit;
+  if (configInput.filters?.allowEng === true || configInput.allowEng === true) return 'all';
+  if (config.profile === 'dedupe' && explicit === '') return 'all';
 
-  if (configInput.filters?.allowEng === true || configInput.allowEng === true) return "all";
-  if (config.profile === "dedupe" && explicit === "") return "all";
-  return "ita";
+  return 'ita';
 }
 
 function getExpectedTitles(meta = {}) {
   const titles = new Set();
+
   const pushValue = (value) => {
     if (!value) return;
+
     if (Array.isArray(value)) {
       value.forEach(pushValue);
       return;
     }
+
     const text = normalizeText(value);
     if (text) titles.add(text);
   };
@@ -370,21 +413,26 @@ function getExpectedTitles(meta = {}) {
   pushValue(meta.name);
   pushValue(meta.originalTitle);
   pushValue(meta.originalName);
+  pushValue(meta.original_title);
+  pushValue(meta.original_name);
   pushValue(meta.alternativeTitles);
   pushValue(meta.altTitles);
   pushValue(meta.aka_titles);
   pushValue(meta.aliases);
   pushValue(meta.titles);
   pushValue(meta.aka);
+
   return [...titles];
 }
 
 function computeTitleSimilarity(candidateTitle, expectedTitles = []) {
   const candidateTokens = new Set(tokenizeTitle(candidateTitle));
-  if (!candidateTokens.size || expectedTitles.length === 0) return { score: 0, matchedTitle: "" };
+  if (!candidateTokens.size || expectedTitles.length === 0) {
+    return { score: 0, matchedTitle: '' };
+  }
 
   let bestScore = 0;
-  let matchedTitle = "";
+  let matchedTitle = '';
 
   for (const expected of expectedTitles) {
     const expectedTokens = new Set(tokenizeTitle(expected));
@@ -397,6 +445,7 @@ function computeTitleSimilarity(candidateTitle, expectedTitles = []) {
 
     const union = new Set([...candidateTokens, ...expectedTokens]).size || 1;
     const score = Math.max(intersection / union, intersection / expectedTokens.size);
+
     if (score > bestScore) {
       bestScore = score;
       matchedTitle = expected;
@@ -409,17 +458,20 @@ function computeTitleSimilarity(candidateTitle, expectedTitles = []) {
 function matchesExpectedYear(title, meta = {}) {
   const expectedYear = parseInt(meta.year || meta.releaseYear || meta.firstAirYear, 10);
   if (!Number.isFinite(expectedYear)) return true;
+
   const yearMatch = normalizeText(title).match(REGEX_YEAR);
   if (!yearMatch) return true;
+
   return Math.abs(parseInt(yearMatch[0], 10) - expectedYear) <= 1;
 }
 
 function getLanguageSignals(item, meta = {}) {
   const title = normalizeText(item?.title || item?.name);
   const source = normalizeText(item?.source || item?.provider);
-  const parsed = parseTitleDetails(title);
+  const parsed = item?._releaseDetails || parseTitleDetails(title);
   const langInfo = getLanguageInfo(title, meta?.title || meta?.originalTitle || null, source, parsed);
   const upperTitle = title.toUpperCase();
+
   const explicitEng = REGEX_EXPLICIT_ENG.test(upperTitle);
   const explicitIta = hasStrictItalianEvidence(title, source, parsed);
   const explicitMulti = langInfo.isMulti || REGEX_MULTI_ITA.test(title) || REGEX_EXPLICIT_MULTI.test(upperTitle);
@@ -447,8 +499,18 @@ function shouldKeepItalianCandidate(title, source, meta = {}) {
 
 function hasTrustedExternalItalianEvidence(item = {}) {
   const languageInfo = item?._externalLanguageInfo || item?.languageInfo || {};
-  const isTrustedExternal = Boolean(item?.isExternal || item?.externalAddon || item?.externalGroup || item?._externalIdMatched || item?._sourceGroup === 'external');
-  if (!isTrustedExternal && !item?._torrentioLooseItForceKeep && !item?._torrentioExactGuard) return false;
+  const isTrustedExternal = Boolean(
+    item?.isExternal ||
+    item?.externalAddon ||
+    item?.externalGroup ||
+    item?._externalIdMatched ||
+    item?._sourceGroup === 'external'
+  );
+
+  if (!isTrustedExternal && !item?._torrentioLooseItForceKeep && !item?._torrentioExactGuard) {
+    return false;
+  }
+
   return Boolean(
     item?._torrentioLooseItForceKeep ||
     item?._torrentioExactGuard ||
@@ -464,30 +526,31 @@ function hasTrustedExternalItalianEvidence(item = {}) {
 function shouldKeepByLanguageMode(item, meta = {}, configInput = {}) {
   const title = normalizeText(item?.title || item?.name);
   const source = normalizeText(item?.source || item?.provider);
-  const signals = getLanguageSignals({ title, source }, meta);
+  const signals = getLanguageSignals({ ...item, title, source }, meta);
   const langMode = resolveLangMode(meta, configInput);
   const normalizedTitle = normalizeSearchText(title);
-  const normalizedMeta = normalizeSearchText(meta?.title || meta?.originalTitle || "");
+  const normalizedMeta = normalizeSearchText(meta?.title || meta?.originalTitle || '');
   const yearMatches = matchesExpectedYear(title, meta);
 
-  if (langMode === "ita" && hasTrustedExternalItalianEvidence(item)) return true;
+  if (langMode === 'ita' && hasTrustedExternalItalianEvidence(item)) return true;
 
-  if (langMode === "eng") {
+  if (langMode === 'eng') {
     if (signals.explicitEng) return true;
     if (signals.explicitOther && !signals.explicitEng) return false;
     if (signals.subOnly && !signals.explicitEng) return false;
     if (signals.explicitIta && !signals.explicitEng) return false;
     if (signals.explicitMulti && !signals.explicitEng) return false;
-
     if (signals.neutralScene && yearMatches) return true;
     if (normalizedMeta && normalizedTitle.includes(normalizedMeta) && yearMatches) return true;
+
     return !signals.explicitOther && !signals.explicitIta && !signals.explicitMulti && yearMatches;
   }
 
-  if (langMode === "all") {
+  if (langMode === 'all') {
     if (shouldKeepItalianCandidate(title, source, meta)) return true;
     if (signals.explicitMulti) return true;
     if (signals.explicitOther && !signals.explicitEng) return false;
+
     return !signals.subOnly || signals.explicitEng;
   }
 
@@ -510,56 +573,68 @@ function detectMultiAudio(item, meta = {}) {
   return getLanguageSignals(item, meta).explicitMulti;
 }
 
+function parseEpisodeNumber(value) {
+  const parsed = Number.isInteger(value) ? value : parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function evaluateEpisodeFit(title, meta = {}, weights) {
-  const season = Number.isInteger(meta.season) ? meta.season : parseInt(meta.season, 10);
-  const episode = Number.isInteger(meta.episode) ? meta.episode : parseInt(meta.episode, 10);
-  const isSeries = meta?.isSeries || (Number.isFinite(season) && Number.isFinite(episode));
+  const season = parseEpisodeNumber(meta.season);
+  const episode = parseEpisodeNumber(meta.episode);
+  const isSeries = Boolean(meta?.isSeries || (season !== null && episode !== null));
   const isPack = isSeasonPack(title) || REGEX_PACK.test(title);
-  const context = Number.isFinite(season) && Number.isFinite(episode) ? { season, episode } : null;
+  const context = season !== null && episode !== null ? { season, episode } : null;
   const episodeContext = context ? extractEpisodeContext(title, context.season || 1, { anime: isAnimeMeta(meta) }) : null;
   const ignoreAnimeSeason = shouldIgnoreAnimeSeason(meta, title);
+
   let delta = 0;
   const reasons = [];
 
   if (!isSeries) {
     if (REGEX_SERIES_MARKER.test(title)) {
       delta += weights.seriesOnMoviePenalty;
-      reasons.push("SERIES_ON_MOVIE");
+      reasons.push('SERIES_ON_MOVIE');
     }
+
     return { delta, reasons, isPack, exactEpisode: false };
   }
 
-  if (episodeContext && episodeContext.episode === context?.episode && (episodeContext.season === context?.season || ignoreAnimeSeason)) {
+  if (
+    episodeContext &&
+    episodeContext.episode === context?.episode &&
+    (episodeContext.season === context?.season || ignoreAnimeSeason)
+  ) {
     delta += weights.exactEpisodeBoost;
-    reasons.push("EXACT_EPISODE");
+    reasons.push('EXACT_EPISODE');
+
     return { delta, reasons, isPack, exactEpisode: true };
   }
 
-  if (isPack && context?.season && new RegExp(`(?:s|season|stagione)\\s*0?${context.season}(?!\\d)`, "i").test(title)) {
+  if (isPack && context?.season && new RegExp(`(?:s|season|stagione)\\s*0?${context.season}(?!\\d)`, 'i').test(title)) {
     delta += weights.seasonPackBonus;
-    reasons.push("SEASON_PACK");
+    reasons.push('SEASON_PACK');
   }
 
   if (isPack) {
     delta += weights.packBonus;
-    reasons.push("PACK");
+    reasons.push('PACK');
   }
 
   if (episodeContext && context?.season && episodeContext.season !== context.season && !ignoreAnimeSeason) {
     delta += weights.wrongSeasonPenalty;
-    reasons.push("WRONG_SEASON");
+    reasons.push('WRONG_SEASON');
   } else if (episodeContext && context?.episode && episodeContext.episode !== context.episode) {
     delta += weights.wrongEpisodePenalty;
-    reasons.push("WRONG_EPISODE");
+    reasons.push('WRONG_EPISODE');
   }
 
   return { delta, reasons, isPack, exactEpisode: false };
 }
 
-
 function isDebridRankingContext(item = {}, configInput = {}) {
   const service = String(configInput?.service || configInput?.debridService || '').toLowerCase();
   const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || '').toLowerCase();
+
   return service === 'rd'
     || service === 'tb'
     || item?._dbCachedRd === true
@@ -575,10 +650,137 @@ function isDebridRankingContext(item = {}, configInput = {}) {
 function getSeederWeightFactor(item = {}, weights = {}, configInput = {}) {
   const base = Number(weights.seedersFactor || 0) || 0;
   if (base <= 0) return 0;
-  // P2P needs swarm strength. Debrid mostly needs cache state/file precision, so
-  // seeders become a tiny tie-breaker instead of dominating the order.
   if (isDebridRankingContext(item, configInput)) return Math.min(base, 2);
   return base;
+}
+
+function getRdCacheState(item = {}) {
+  const state = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || '').toLowerCase();
+
+  return {
+    cached: item?._dbCachedRd === true
+      || item?.cached_rd === true
+      || item?.isCached === true
+      || item?.cached === true
+      || state === 'cached',
+    likely: item?.likely_cached === true || state === 'likely_cached'
+  };
+}
+
+function shouldUseLeviathanScoreProfile(configInput = {}) {
+  return configInput?.useLeviathanScoreProfile === true
+    || configInput?.ranking?.useLeviathanScoreProfile === true
+    || configInput?.ranking?.useScoreProfile === true;
+}
+
+function shouldUseTorrentIntelligence(configInput = {}) {
+  return configInput?.useTorrentIntelligenceRanking === true
+    || configInput?.ranking?.useTorrentIntelligenceRanking === true;
+}
+
+function shouldUseQualityIntelligence(meta = {}, configInput = {}) {
+  const originalConfig = meta?.originalConfig || configInput?._originalConfig || configInput;
+
+  return originalConfig?.useQualityIntelligenceRanking !== false
+    && originalConfig?.ranking?.useQualityIntelligenceRanking !== false
+    && originalConfig?.filters?.useQualityIntelligenceRanking !== false;
+}
+
+function applyQualityScore(score, reasons, quality, weights) {
+  if (quality === '4K') {
+    reasons.push('4K');
+    return score + weights.quality4K;
+  }
+
+  if (quality === '1080p') {
+    reasons.push('1080p');
+    return score + weights.quality1080p;
+  }
+
+  if (quality === '720p') {
+    reasons.push('720p');
+    return score + weights.quality720p;
+  }
+
+  reasons.push('SD');
+  return score + weights.qualitySD;
+}
+
+function applyLanguageScore(score, reasons, signals, langMode, weights) {
+  if (langMode === 'eng') {
+    if (signals.explicitEng) {
+      score += weights.languageEng;
+      reasons.push('ENG');
+
+      if (signals.explicitMulti) {
+        score += Math.max(0, Math.floor(Math.abs(weights.languageMultiPenaltyInEng || 0) * 0.35));
+        reasons.push('ENG_MULTI_OK');
+      }
+    } else if (signals.neutralScene) {
+      score += weights.languageNeutral;
+      reasons.push('NEUTRAL');
+    }
+
+    if (signals.explicitIta && !signals.explicitEng) {
+      score += weights.languageItaPenaltyInEng;
+      reasons.push('ITA_PENALTY');
+    }
+
+    if (signals.explicitMulti && !signals.explicitEng) {
+      score += weights.languageMultiPenaltyInEng;
+      reasons.push('MULTI_PENALTY');
+    }
+
+    if (signals.explicitOther && !signals.explicitEng) {
+      score += weights.languageOtherPenalty;
+      reasons.push('OTHER_LANG');
+    }
+
+    return score;
+  }
+
+  if (langMode === 'all') {
+    if (signals.explicitIta || signals.langInfo.isItalian) {
+      score += weights.languageIta;
+      reasons.push('ITA');
+    } else if (signals.explicitEng) {
+      score += weights.languageEng;
+      reasons.push('ENG');
+    } else if (signals.explicitMulti) {
+      score += weights.languageMulti;
+      reasons.push('MULTI');
+    } else {
+      score += weights.languageNeutral;
+      reasons.push('NEUTRAL');
+    }
+
+    if (signals.explicitOther && !signals.explicitEng && !signals.explicitIta && !signals.explicitMulti) {
+      score += weights.languageOtherPenalty;
+      reasons.push('OTHER_LANG');
+    }
+
+    return score;
+  }
+
+  if (signals.langInfo.isItalian) {
+    score += weights.languageIta;
+    reasons.push('ITA');
+  } else if (signals.langInfo.isMaybeItalian) {
+    score += weights.languageMaybeIta;
+    reasons.push('MAYBE_ITA');
+  }
+
+  if (signals.explicitMulti) {
+    score += Math.round(weights.languageMulti * 0.35);
+    reasons.push('MULTI');
+  }
+
+  if (signals.explicitEng || (signals.explicitOther && !signals.explicitIta)) {
+    score += Math.round(weights.languageOtherPenalty * 0.65);
+    reasons.push('NON_ITA');
+  }
+
+  return score;
 }
 
 function computeScore(item, meta = {}, configInput = {}) {
@@ -591,161 +793,100 @@ function computeScore(item, meta = {}, configInput = {}) {
   const langMode = resolveLangMode(meta, configInput);
   const sizeBytes = parseSizeToBytes(item?._size || item?.sizeBytes || item?.size);
   const seeders = Math.max(0, normalizeNumber(item?.seeders));
-  const hasFileIdx = item?.fileIdx !== undefined && item?.fileIdx !== null && item?.fileIdx !== "";
+  const hasFileIdx = item?.fileIdx !== undefined && item?.fileIdx !== null && item?.fileIdx !== '';
   const yearMatches = matchesExpectedYear(title, meta);
   const expectedTitles = getExpectedTitles(meta);
   const titleSimilarity = computeTitleSimilarity(title, expectedTitles);
   const episodeFit = evaluateEpisodeFit(title, meta, weights);
   const invalid = profile.minimalSizeBytes > 0 && sizeBytes > 0 && sizeBytes < profile.minimalSizeBytes;
+  const sourceConsensus = detectSourceConsensus(item);
+  const consensusBonus = SOURCE_CONSENSUS_BONUS[sourceConsensus] || 0;
+  const useLeviathanScoreProfile = shouldUseLeviathanScoreProfile(configInput);
+  const useTorrentIntelligence = shouldUseTorrentIntelligence(configInput);
+  const useQualityIntelligence = shouldUseQualityIntelligence(meta, configInput);
+  const qualityIntelligence = useQualityIntelligence
+    ? item?._qualityIntelligence || evaluateQualityIntelligence(item, meta)
+    : null;
+  const scoreProfile = evaluateLeviathanScore(item, meta, configInput);
 
   let score = 0;
   const reasons = [];
 
-  if (quality === "4K") {
-    score += weights.quality4K;
-    reasons.push("4K");
-  } else if (quality === "1080p") {
-    score += weights.quality1080p;
-    reasons.push("1080p");
-  } else if (quality === "720p") {
-    score += weights.quality720p;
-    reasons.push("720p");
-  } else {
-    score += weights.qualitySD;
-    reasons.push("SD");
-  }
-
-  if (langMode === "eng") {
-    if (signals.explicitEng) {
-      score += weights.languageEng;
-      reasons.push("ENG");
-      if (signals.explicitMulti) {
-        score += Math.max(0, Math.floor(Math.abs(weights.languageMultiPenaltyInEng || 0) * 0.35));
-        reasons.push("ENG_MULTI_OK");
-      }
-    } else if (signals.neutralScene) {
-      score += weights.languageNeutral;
-      reasons.push("NEUTRAL");
-    }
-    if (signals.explicitIta && !signals.explicitEng) {
-      score += weights.languageItaPenaltyInEng;
-      reasons.push("ITA_PENALTY");
-    }
-    if (signals.explicitMulti && !signals.explicitEng) {
-      score += weights.languageMultiPenaltyInEng;
-      reasons.push("MULTI_PENALTY");
-    }
-    if (signals.explicitOther && !signals.explicitEng) {
-      score += weights.languageOtherPenalty;
-      reasons.push("OTHER_LANG");
-    }
-  } else if (langMode === "all") {
-    if (signals.explicitIta || signals.langInfo.isItalian) {
-      score += weights.languageIta;
-      reasons.push("ITA");
-    } else if (signals.explicitEng) {
-      score += weights.languageEng;
-      reasons.push("ENG");
-    } else if (signals.explicitMulti) {
-      score += weights.languageMulti;
-      reasons.push("MULTI");
-    } else {
-      score += weights.languageNeutral;
-      reasons.push("NEUTRAL");
-    }
-    if (signals.explicitOther && !signals.explicitEng && !signals.explicitIta && !signals.explicitMulti) {
-      score += weights.languageOtherPenalty;
-      reasons.push("OTHER_LANG");
-    }
-  } else {
-    if (signals.langInfo.isItalian) {
-      score += weights.languageIta;
-      reasons.push("ITA");
-    } else if (signals.langInfo.isMaybeItalian) {
-      score += weights.languageMaybeIta;
-      reasons.push("MAYBE_ITA");
-    }
-    if (signals.explicitMulti) {
-      score += Math.round(weights.languageMulti * 0.35);
-      reasons.push("MULTI");
-    }
-    if (signals.explicitEng || (signals.explicitOther && !signals.explicitIta)) {
-      score += Math.round(weights.languageOtherPenalty * 0.65);
-      reasons.push("NON_ITA");
-    }
-  }
+  score = applyQualityScore(score, reasons, quality, weights);
+  score = applyLanguageScore(score, reasons, signals, langMode, weights);
 
   if (REGEX_AUDIO_CONFIRM.test(title)) {
     score += weights.audioConfirm;
-    reasons.push("AUDIO");
+    reasons.push('AUDIO');
   }
+
   if (REGEX_STRONG_ITA.test(title)) {
     score += weights.strongIta;
-    reasons.push("ITA_MARKER");
+    reasons.push('ITA_MARKER');
   }
+
   if (REGEX_MULTI_ITA.test(title)) {
     score += weights.multiIta;
-    reasons.push("MULTI_ITA");
+    reasons.push('MULTI_ITA');
   }
+
   if (REGEX_TRUSTED_GROUPS.test(title)) {
     score += weights.trustedGroup;
-    reasons.push("GROUP");
+    reasons.push('GROUP');
   }
+
   if (source && isTrustedSource(source, null)) {
     score += weights.trustedSource;
-    reasons.push("SOURCE");
+    reasons.push('SOURCE');
   }
-  const sourceConsensus = detectSourceConsensus(item);
-  const consensusBonus = SOURCE_CONSENSUS_BONUS[sourceConsensus] || 0;
+
   if (consensusBonus > 0) {
     score += consensusBonus;
     reasons.push(`SOURCE_CONSENSUS:${sourceConsensus}`);
   }
+
   if (hasFileIdx) {
     score += weights.fileIdxBonus;
-    reasons.push("FILE_IDX");
-  }
-  if (REGEX_SCENE_RELEASE.test(title)) {
-    score += weights.sceneRelease;
-    reasons.push("SCENE");
-  }
-  if (REGEX_HEVC.test(title)) {
-    score += weights.hevcBonus;
-    reasons.push("HEVC");
-  }
-  if (REGEX_HDR.test(title)) {
-    score += weights.hdrBonus;
-    reasons.push("HDR");
+    reasons.push('FILE_IDX');
   }
 
-  const useLeviathanScoreProfile = configInput?.useLeviathanScoreProfile === true
-    || configInput?.ranking?.useLeviathanScoreProfile === true
-    || configInput?.ranking?.useScoreProfile === true;
-  const originalConfig = meta?.originalConfig || configInput?._originalConfig || configInput;
-  const useQualityIntelligence = originalConfig?.useQualityIntelligenceRanking !== false
-    && originalConfig?.ranking?.useQualityIntelligenceRanking !== false
-    && originalConfig?.filters?.useQualityIntelligenceRanking !== false;
-  const qualityIntelligence = useQualityIntelligence
-    ? (item?._qualityIntelligence || evaluateQualityIntelligence(item, meta))
-    : null;
+  if (REGEX_SCENE_RELEASE.test(title)) {
+    score += weights.sceneRelease;
+    reasons.push('SCENE');
+  }
+
+  if (REGEX_HEVC.test(title)) {
+    score += weights.hevcBonus;
+    reasons.push('HEVC');
+  }
+
+  if (REGEX_HDR.test(title)) {
+    score += weights.hdrBonus;
+    reasons.push('HDR');
+  }
+
   const qiRawScore = Number(qualityIntelligence?.score || 0) || 0;
   const qiFactor = Number(weights.qualityIntelligenceFactor || 0) || 0;
   const qiCap = Math.max(0, Number(weights.qualityIntelligenceCap || 0) || 0);
+
   if (useQualityIntelligence && !useLeviathanScoreProfile && qiFactor > 0 && qiRawScore !== 0) {
     const qiDeltaUncapped = Math.round(qiRawScore * qiFactor);
     const qiDelta = qiCap > 0
       ? Math.max(-qiCap, Math.min(qiCap, qiDeltaUncapped))
       : qiDeltaUncapped;
+
     score += qiDelta;
     reasons.push(`QUALITY_INTEL:${qualityIntelligence.badges?.join(',') || qualityIntelligence.releaseSource || 'unknown'}:${qiDelta}`);
   }
+
   if (signals.subOnly) {
     score += weights.subtitleOnlyPenalty;
-    reasons.push("SUB_ONLY");
+    reasons.push('SUB_ONLY');
   }
+
   if (REGEX_CAM.test(title)) {
     score += weights.camPenalty;
-    reasons.push("CAM");
+    reasons.push('CAM');
   }
 
   score += episodeFit.delta;
@@ -754,69 +895,66 @@ function computeScore(item, meta = {}, configInput = {}) {
   if (expectedTitles.length > 0) {
     if (titleSimilarity.score > 0) {
       score += Math.round(titleSimilarity.score * weights.titleSimilarityFactor);
-      reasons.push(`TITLE:${titleSimilarity.matchedTitle || "best"}`);
+      reasons.push(`TITLE:${titleSimilarity.matchedTitle || 'best'}`);
     } else if (!episodeFit.isPack) {
       score += weights.titleMismatchPenalty;
-      reasons.push("TITLE_MISMATCH");
+      reasons.push('TITLE_MISMATCH');
     }
   }
 
   if (meta?.year && title.match(REGEX_YEAR)) {
     if (yearMatches) {
       score += weights.exactYearBonus;
-      reasons.push("YEAR");
+      reasons.push('YEAR');
     } else {
       score += weights.yearMismatchPenalty;
-      reasons.push("YEAR_MISMATCH");
+      reasons.push('YEAR_MISMATCH');
     }
   }
 
   const seedersFactor = getSeederWeightFactor(item, weights, configInput);
   score += Math.min(seeders, 500) * seedersFactor;
+
   if (seedersFactor > 2 && Number.isFinite(Number(item?._seedHealthDelta)) && Number(item._seedHealthDelta) !== 0) {
     score += Number(item._seedHealthDelta);
     reasons.push(`SEED_HEALTH:${item._seedHealth || 'unknown'}`);
   } else if (seedersFactor > 0 && seeders > 0) {
     reasons.push(isDebridRankingContext(item, configInput) ? 'SEED_TIEBREAKER_DEBRID' : 'SEED');
   }
+
   score += Math.min(Math.floor(sizeBytes / Math.max(1, weights.sizeBucketBytes)), weights.sizeFactorCap);
   score += Math.min(title.length, weights.titleLengthCap);
 
-  const rankerService = String(configInput?.service || "").toLowerCase();
-  if (rankerService === "tb" && item?._tbCached) {
+  const rankerService = String(configInput?.service || '').toLowerCase();
+
+  if (rankerService === 'tb' && item?._tbCached) {
     score += weights.tbCachedBonus;
-    reasons.push("TB_CACHED");
+    reasons.push('TB_CACHED');
   }
-  // Symmetric to TB: RD users had no cache bonus even though rd_cache_state is known,
-  // so a cached RD result could rank below an uncached one of equal quality.
-  if (rankerService === "rd") {
-    const rdStateText = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || "").toLowerCase();
-    const rdCached = item?._dbCachedRd === true || item?.cached_rd === true || item?.isCached === true
-      || item?.cached === true || rdStateText === "cached";
-    const rdLikely = !rdCached && (item?.likely_cached === true || rdStateText === "likely_cached");
-    if (rdCached) {
+
+  if (rankerService === 'rd') {
+    const rdState = getRdCacheState(item);
+
+    if (rdState.cached) {
       score += weights.rdCachedBonus;
-      reasons.push("RD_CACHED");
-    } else if (rdLikely) {
+      reasons.push('RD_CACHED');
+    } else if (rdState.likely) {
       score += Math.round(weights.rdCachedBonus * 0.5);
-      reasons.push("RD_LIKELY_CACHED");
+      reasons.push('RD_LIKELY_CACHED');
     }
   }
 
-  const scoreProfile = evaluateLeviathanScore(item, meta, configInput);
-  const useTorrentIntelligence = configInput?.useTorrentIntelligenceRanking === true
-    || configInput?.ranking?.useTorrentIntelligenceRanking === true;
   if (useLeviathanScoreProfile) {
     score += scoreProfile.finalScore;
-    reasons.push("LEV_SCORE_PROFILE");
+    reasons.push('LEV_SCORE_PROFILE');
   } else if (useTorrentIntelligence && scoreProfile?.torrentIntelligence) {
     score += Number(scoreProfile.torrentIntelligence.score || 0) || 0;
-    reasons.push("TORRENT_INTELLIGENCE");
+    reasons.push('TORRENT_INTELLIGENCE');
   }
 
   if (invalid) {
     score = Math.min(score, -999999999);
-    reasons.push("SIZE_TOO_SMALL");
+    reasons.push('SIZE_TOO_SMALL');
   }
 
   return {
@@ -852,6 +990,7 @@ function computeScore(item, meta = {}, configInput = {}) {
 
 function annotateResult(item, meta = {}, configInput = {}) {
   const { score, reasons, details } = computeScore(item, meta, configInput);
+
   return {
     ...item,
     _score: score,
@@ -867,25 +1006,36 @@ function annotateResult(item, meta = {}, configInput = {}) {
 
 function ensureAnnotated(item, meta = {}, configInput = {}) {
   const profileName = resolveProfileName(configInput);
-  if (item?._rankProfile === profileName && typeof item?._score === "number" && item?._rankMeta) return item;
+
+  if (
+    item?._rankProfile === profileName &&
+    typeof item?._score === 'number' &&
+    item?._rankMeta
+  ) {
+    return item;
+  }
+
   return annotateResult(item, meta, configInput);
 }
 
 function compareRankedItems(left, right, meta = {}, configInput = {}) {
   const { config, profileName } = getProfileConfig(configInput);
-  const sortMode = config.sortMode || "balanced";
-  const a = ensureAnnotated(left, meta, { ...config, profile: profileName });
-  const b = ensureAnnotated(right, meta, { ...config, profile: profileName });
+  const sortMode = config.sortMode || 'balanced';
+  const rankingConfig = { ...config, profile: profileName };
+  const a = ensureAnnotated(left, meta, rankingConfig);
+  const b = ensureAnnotated(right, meta, rankingConfig);
 
   const invalidA = Boolean(a._rankMeta?.invalid);
   const invalidB = Boolean(b._rankMeta?.invalid);
+
   if (invalidA !== invalidB) return invalidA ? 1 : -1;
 
   const sizeA = normalizeNumber(a._rankMeta?.sizeBytes || a._size || a.sizeBytes || a.size);
   const sizeB = normalizeNumber(b._rankMeta?.sizeBytes || b._size || b.sizeBytes || b.size);
-  if (sortMode === "size" && sizeB !== sizeA) return sizeB - sizeA;
 
-  if (sortMode === "resolution") {
+  if (sortMode === 'size' && sizeB !== sizeA) return sizeB - sizeA;
+
+  if (sortMode === 'resolution') {
     const qualityDelta = getQualityPriority(b) - getQualityPriority(a);
     if (qualityDelta !== 0) return qualityDelta;
   }
@@ -895,12 +1045,12 @@ function compareRankedItems(left, right, meta = {}, configInput = {}) {
   const seedA = normalizeNumber(a.seeders);
   const seedB = normalizeNumber(b.seeders);
   const debridTie = isDebridRankingContext(a, configInput) || isDebridRankingContext(b, configInput);
+
   if (!debridTie && seedB !== seedA) return seedB - seedA;
   if (debridTie && Math.abs(seedB - seedA) >= 50) return Math.sign(seedB - seedA);
-
   if (sizeB !== sizeA) return sizeB - sizeA;
 
-  if (profileName === "dedupe") {
+  if (profileName === 'dedupe') {
     const titleLengthDelta = normalizeText(b.title || b.name).length - normalizeText(a.title || a.name).length;
     if (titleLengthDelta !== 0) return titleLengthDelta;
   }
@@ -909,7 +1059,7 @@ function compareRankedItems(left, right, meta = {}, configInput = {}) {
 }
 
 function rankAndFilterResults(results = [], meta = {}, configInput = {}) {
-  const config = buildPreparedConfig({ ...configInput, profile: "stream" });
+  const config = buildPreparedConfig({ ...configInput, profile: 'stream' });
   if (!Array.isArray(results)) return [];
 
   const ranked = results
