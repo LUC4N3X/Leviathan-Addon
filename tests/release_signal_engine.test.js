@@ -31,11 +31,15 @@ test('extractReleaseSignals never mistakes leading title words for languages', (
 
   const fraPreposition = extractReleaseSignals('Benvenuti.fra.noi.2023.1080p.WEBRip.x264');
   assert.ok(!fraPreposition.languages.includes('french'));
+
+  const dutchTitle = extractReleaseSignals('Dutch.1991.1080p.BluRay.x264');
+  assert.ok(!dutchTitle.languages.includes('dutch'));
 });
 
 test('extractReleaseSignals still honors guarded tags placed after release markers', () => {
   assert.ok(extractReleaseSignals('Movie.2023.1080p.WEB-DL.EN.x264').languages.includes('english'));
   assert.ok(extractReleaseSignals('Movie.2023.1080p.FRENCH.WEB-DL.x264').languages.includes('french'));
+  assert.ok(extractReleaseSignals('Movie.2023.1080p.DUTCH.WEB-DL.x264').languages.includes('dutch'));
   assert.ok(extractReleaseSignals('La.Casa.en.Llamas.2023.ES.EN.SUBS.1080p').languages.includes('english'));
 });
 
@@ -48,6 +52,11 @@ test('extractReleaseSignals separates multi subs from multi audio', () => {
   const audio = extractReleaseSignals('Movie.2022.1080p.WEB-DL.MULTi.AUDiO.x264');
   assert.ok(audio.languages.includes('multi audio'));
   assert.equal(audio.dubbed, true);
+
+  const dubbed = extractReleaseSignals('Movie.2022.1080p.WEB-DL.MULTi-DUB.x264');
+  assert.ok(dubbed.languages.includes('multi audio'));
+  assert.ok(!dubbed.languages.includes('multi subs'));
+  assert.equal(dubbed.dubbed, true);
 });
 
 test('extractReleaseSignals flags dual audio and dubbed releases', () => {
@@ -67,6 +76,7 @@ test('extractReleaseSignals reads HDR profiles, bit depth and 3D variants', () =
   assert.ok(hdr.hdr.includes('DV'));
   assert.ok(hdr.hdr.includes('HDR10+'));
   assert.equal(hdr.bitDepth, '10bit');
+  assert.equal(extractReleaseSignals('Movie.2023.1080p.WEB-DL.10 - bit.x265').bitDepth, '10bit');
 
   assert.equal(extractReleaseSignals('Movie.2010.1080p.BluRay.3D.Half-SBS.x264').threeD, '3D HSBS');
   assert.equal(extractReleaseSignals('Movie.2010.1080p.BluRay.x264').threeD, null);

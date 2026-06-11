@@ -20,8 +20,8 @@ const RELEASE_MARKERS = Object.freeze([
 ]);
 
 const LANGUAGE_SIGNALS = Object.freeze([
-  { tag: 'multi subs', pattern: /\bmulti(?:ple)?[ .-]*(?:su?$|sub\w*|dub\w*)\b|msub/i, consumes: true },
-  { tag: 'multi audio', pattern: /\bmulti(?:ple)?[ .-]*(?:lang(?:uages?)?|audio|VF2)?\b/i },
+  { tag: 'multi subs', pattern: /\bmulti(?:ple)?[ .-]*(?:su?$|sub\w*)\b|msub/i, consumes: true },
+  { tag: 'multi audio', pattern: /\bmulti(?:ple)?[ .-]*(?:lang(?:uages?)?|audio|dub\w*|VF2)?\b/i },
   { tag: 'multi audio', pattern: /\btri(?:ple)?[ .-]*(?:audio|dub\w*)\b/i },
   { tag: 'dual audio', pattern: /\bdual[ .-]*(?:au?$|[aá]udio|line)\b/i },
   { tag: 'dual audio', pattern: /\bdual\b(?![ .-]*sub)/i },
@@ -87,7 +87,7 @@ const LANGUAGE_SIGNALS = Object.freeze([
   { tag: 'estonian', pattern: /\bestonian\b/i, guarded: true },
   { tag: 'greek', pattern: /\bgreek[ .-]*(?:audio|lang(?:uage)?|subs?(?:titles?)?)?\b/i, guarded: true },
   { tag: 'dutch', pattern: /\b(?:(?<!w{3}\.\w+\.)NL|dut|holand[eê]s)\b/i },
-  { tag: 'dutch', pattern: /\bdutch\b/i },
+  { tag: 'dutch', pattern: /\bdutch\b/i, guarded: true },
   { tag: 'dutch', pattern: /\bflemish\b/i },
   { tag: 'danish', pattern: /\b(?:DK|danska|dansub|nordic)\b/i },
   { tag: 'danish', pattern: /\b(?:danish|dinamarqu[eê]s)\b/i },
@@ -131,7 +131,7 @@ const HDR_SIGNALS = Object.freeze([
 ]);
 
 const DEPTH_SIGNALS = Object.freeze([
-  { tag: null, pattern: /(?:8|10|12)[- ]?bit/i },
+  { tag: null, pattern: /(?:8|10|12)(?:[ -]+)?bit/i },
   { tag: '10bit', pattern: /\bhevc\s?10\b/i },
   { tag: '10bit', pattern: /\bhdr10\b/i },
   { tag: '10bit', pattern: /\bhi10\b/i }
@@ -231,7 +231,7 @@ function extractReleaseSignals(rawTitle) {
   signals.hdr = scanSignals(title, HDR_SIGNALS, markerIndex);
 
   const depth = scanSignals(title, DEPTH_SIGNALS, markerIndex, true)[0] || null;
-  signals.bitDepth = depth ? depth.toLowerCase().replace(/[ -]/, '') : null;
+  signals.bitDepth = depth ? depth.toLowerCase().replace(/[ -]/g, '') : null;
 
   signals.threeD = scanSignals(title, STEREO_SIGNALS, markerIndex, true)[0] || null;
 
