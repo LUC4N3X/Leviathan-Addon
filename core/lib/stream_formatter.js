@@ -41,7 +41,11 @@ function basicParseTitle(title) {
 
 function loadTitleParser() {
   try {
-    return require('parse-torrent-title');
+    const parser = require('parse-torrent-title');
+    try {
+      require('./release_signal_engine');
+    } catch (_extError) {}
+    return parser;
   } catch (_error) {
     return { parse: basicParseTitle };
   }

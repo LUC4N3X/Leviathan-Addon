@@ -468,8 +468,8 @@ function matchesExpectedYear(title, meta = {}) {
 function getLanguageSignals(item, meta = {}) {
   const title = normalizeText(item?.title || item?.name);
   const source = normalizeText(item?.source || item?.provider);
-  const parsed = item?._releaseDetails || parseTitleDetails(title);
-  const langInfo = getLanguageInfo(title, meta?.title || meta?.originalTitle || null, source, parsed);
+  const parsed = parseTitleDetails(title);
+  const langInfo = getLanguageInfo(title, meta?.title || meta?.originalTitle || null, source, parsed, meta?.originalTitle || null);
   const upperTitle = title.toUpperCase();
 
   const explicitEng = REGEX_EXPLICIT_ENG.test(upperTitle);

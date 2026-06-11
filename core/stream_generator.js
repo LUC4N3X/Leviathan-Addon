@@ -576,7 +576,8 @@ function collectTorrentioReleaseEvidenceText(item = {}) {
 
 function hasLooseItalianToken(value = '') {
     const text = String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, ' ');
-    return /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|(?:^|[^A-Z0-9])IT(?:[^A-Z0-9]|$))/i.test(text);
+    return /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b)/i.test(text)
+        || /(?:^|[^A-Za-z0-9])IT(?:[^A-Za-z0-9]|$)/.test(text);
 }
 
 function hasEnglishLanguageToken(value = '') {
@@ -1297,22 +1298,23 @@ function setTitleSignalCache(cacheKey, value) {
     return value;
 }
 
-function getTitleSignalCacheKey(title, metaTitle, sourceName) {
+function getTitleSignalCacheKey(title, metaTitle, sourceName, originalTitle) {
     return crypto.createHash('sha1')
-        .update(JSON.stringify([String(title || ''), String(metaTitle || ''), String(sourceName || '')]))
+        .update(JSON.stringify([String(title || ''), String(metaTitle || ''), String(sourceName || ''), String(originalTitle || '')]))
         .digest('hex');
 }
 
-function getTitleDiagnostics(title, metaTitle, sourceName) {
+function getTitleDiagnostics(title, metaTitle, sourceName, originalTitle = null) {
     const safeTitle = String(title || '');
     const safeMetaTitle = String(metaTitle || '');
     const safeSource = String(sourceName || '');
-    const cacheKey = getTitleSignalCacheKey(safeTitle, safeMetaTitle, safeSource);
+    const safeOriginalTitle = String(originalTitle || '');
+    const cacheKey = getTitleSignalCacheKey(safeTitle, safeMetaTitle, safeSource, safeOriginalTitle);
     const cached = TITLE_SIGNAL_CACHE.get(cacheKey);
     if (cached) return cached;
 
     const parsed = parseTitleDetails(safeTitle);
-    const langInfo = getLanguageInfo(safeTitle, safeMetaTitle, safeSource, parsed);
+    const langInfo = getLanguageInfo(safeTitle, safeMetaTitle, safeSource, parsed, safeOriginalTitle || null);
     const detected = new Set(Array.isArray(langInfo?.detectedLanguages) ? langInfo.detectedLanguages.map(v => String(v)) : []);
     const upper = safeTitle.toUpperCase();
 
@@ -1894,7 +1896,7 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
     }
 
     const details = parseTitleDetails(baseParseTitle);
-    const languageInfo = getLanguageInfo(baseParseTitle, meta?.title, item?.source, details);
+    const languageInfo = getLanguageInfo(baseParseTitle, meta?.title, item?.source, details, meta?.originalTitle);
     const quality = details.qualityLabel && details.qualityLabel !== 'Other'
         ? details.qualityLabel
         : detectQualityLabel(baseParseTitle, details.quality || 'SD');
@@ -2063,7 +2065,7 @@ function getSourceConsensusRankBonus(item = {}) {
 function getCompositeRankScore(item, meta, config) {
     const title = String(item?.title || '');
     const source = item?.source || item?.provider || null;
-    const diagnostics = getTitleDiagnostics(title, meta?.title, source);
+    const diagnostics = getTitleDiagnostics(title, meta?.title, source, meta?.originalTitle);
     const langInfo = diagnostics.langInfo;
     const sizeBytes = Number(item?._size || item?.sizeBytes || 0);
     const seeders = parseInt(item?.seeders, 10) || 0;

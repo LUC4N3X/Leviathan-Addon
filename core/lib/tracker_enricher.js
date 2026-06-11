@@ -24,7 +24,10 @@ const PROFILE_TRACKERS = Object.freeze({
     'udp://tracker.anidex.moe:6969/announce',
     'http://nyaa.tracker.wf:7777/announce',
     'udp://tracker.uw0.xyz:6969/announce',
-    'http://anidex.moe:6969/announce'
+    'http://anidex.moe:6969/announce',
+    'http://tracker.anirena.com:80/announce',
+    'http://share.camoe.cn:8080/announce',
+    'http://t.nyaatracker.com:80/announce'
   ],
   ita: [
     'udp://tracker.opentrackr.org:1337/announce',
