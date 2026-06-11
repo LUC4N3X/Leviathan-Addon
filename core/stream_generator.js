@@ -13,7 +13,7 @@ const P2P = require("./handlers/p2p_handler");
 const { generateSmartQueries, smartMatch } = require("./intelligence/media_intelligence");
 const { rankAndFilterResults } = require("./lib/result_ranker");
 const { applySeedHealthRanking, getSeedHealthLogSamples } = require("./lib/seed_health_ranker");
-const { applySootioPriorityPolicy } = require("./lib/sootio_priority_policy");
+const { applyStreamPriorityPolicy } = require("./lib/stream_priority_policy");
 const { enrichTorrentItems } = require("./lib/tracker_enricher");
 const { enrichItemsWithLiveSeeders, isEnabled: isUdpScrapeEnabled } = require("./lib/udp_tracker_scraper");
 const { tmdbToImdb, imdbToTmdb, getTmdbAltTitles } = require("./intelligence/media_identity_resolver");
@@ -4843,7 +4843,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
 
           rankedList = await reprioritizeRdRankedList(rankedList, meta, config, hasDebridKey);
           rankedList = applyPremiumRankingPolicy(rankedList, meta, config);
-          rankedList = applySootioPriorityPolicy(rankedList, meta, config);
+          rankedList = applyStreamPriorityPolicy(rankedList, meta, config);
           const beforeInfoHashDedupe = rankedList;
           const infoHashRankDedupe = dedupeByInfoHash(rankedList, getDedupeContext(meta, { stage: 'ranked' }));
           if (infoHashRankDedupe.removed > 0) {
