@@ -8,8 +8,8 @@ const SUPPORTED_TYPES = ['movie', 'series', 'anime'];
 const STREAM_ID_PREFIXES = ['tt', 'tmdb:', 'kitsu:'];
 
 const DESCRIPTION = [
-    'Leviathan è un protocollo di aggregazione Italy-first per Stremio, progettato per unire torrent intelligence, web extraction, routing adattivo, cache condivisa e presentazione premium dei risultati.',
-    'Supporta film, serie e anime con Real-Debrid, TorBox, Saved Cloud opzionale con dedupe, modalità P2P, filtri ITA/ENG/Hybrid, provider web italiani, anime/Kitsu intelligence e formatter avanzato per release 4K/HDR, WEB, BluRay e italiane.'
+    'Leviathan is an Italy-first aggregation protocol for Stremio, engineered to unify torrent intelligence, web extraction, adaptive routing, shared caching and premium result presentation into a single streamlined experience.',
+    'It supports movies, series and anime with Real-Debrid, TorBox, optional Saved Cloud with deduplication, P2P mode, ITA/ENG/Hybrid filters, Italian web providers, anime/Kitsu intelligence and an advanced release formatter for 4K/HDR, WEB, BluRay and Italian releases.'
 ].join(' ');
 
 function getManifest() {
@@ -34,7 +34,6 @@ function getManifest() {
             configurable: true,
             configurationRequired: false
         },
-
         stremioAddonsConfig: {
             issuer: 'https://stremio-addons.net',
             signature: 'eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..guRYCFSZxJ-zbESKkZicTg.R-jeN-fyn1-6JWfMqJREy66fhEopTajTGkAKoDmwimetqMzI8zRhFoHYOckwb6KncfR4XK1g_8h9u7gYq2LFdvF5Lwm2Hr3iLcpO5vygwbSpIX7DmtV9fzKh0Z-Fe5l0.5Uy2bL0SyUSZ0mPlOSeiaA'
