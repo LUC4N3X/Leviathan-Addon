@@ -465,7 +465,15 @@ services:
     restart: unless-stopped
     init: true
     working_dir: /data
-    command: ["python3", "/app/server.py"]
+    user: "0:0"
+    command:
+      - sh
+      - -lc
+      - |
+        set -e
+        mkdir -p /data
+        chown -R ubuntu:ubuntu /data
+        exec su ubuntu -c "cd /data && python3 /app/server.py"
 
     environment:
       WORKERS: "${CLOUDFLARE_BYPASS_WORKERS:-1}"
