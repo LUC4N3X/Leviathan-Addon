@@ -264,7 +264,7 @@ services:
       redis:
         condition: service_healthy
       cloudflare-bypass:
-        condition: service_started
+        condition: service_healthy
 
     stop_grace_period: 20s
 
@@ -395,7 +395,7 @@ services:
       redis:
         condition: service_healthy
       cloudflare-bypass:
-        condition: service_started
+        condition: service_healthy
 
     mem_limit: ${LEVIATHAN_WORKER_MEM_LIMIT:-420m}
     memswap_limit: ${LEVIATHAN_WORKER_MEMSWAP_LIMIT:-520m}
@@ -511,7 +511,7 @@ services:
       test:
         - CMD-SHELL
         - |
-          python3 - <<'PY'
+          /app/venv/bin/python3 - <<'PY'
           import sys
           import urllib.request
 
