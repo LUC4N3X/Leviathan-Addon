@@ -473,7 +473,7 @@ services:
         set -e
         mkdir -p /data
         chown -R ubuntu:ubuntu /data
-        exec su ubuntu -c "cd /data && python3 /app/server.py"
+        exec su ubuntu -c "cd /data && /app/venv/bin/python3 /app/server.py"
 
     environment:
       WORKERS: "${CLOUDFLARE_BYPASS_WORKERS:-1}"
