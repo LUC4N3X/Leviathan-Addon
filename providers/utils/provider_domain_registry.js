@@ -13,7 +13,7 @@ const DEFAULT_PROVIDER_DOMAINS = Object.freeze({
     cb01: Object.freeze(['https://cb01uno.sbs', 'https://cb01uno.sbs']),
     cinemacity: Object.freeze(['https://cinemacity.cc']),
     eurostreaming: Object.freeze(['https://eurostream.ing']),
-    guardaflix: Object.freeze(['https://guardaplay.live']),
+    guardaflix: Object.freeze(['https://guardaplay.xyz']),
     guardahd: Object.freeze(['https://guardahd.stream']),
     guardoserie: Object.freeze(['https://guardoserie.world']),
     streamingcommunity: Object.freeze(['https://vixsrc.to']),
