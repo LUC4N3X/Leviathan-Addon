@@ -34,7 +34,7 @@ const REGEX_MULTI_ITA = /\b(MULTI|DUAL|TRIPLE).*(ITA|ITALIAN)\b/i;
 const REGEX_TRUSTED_GROUPS = /\b(iDN_CreW|CORSARO|MUX|WMS|TRIDIM|SPEEDVIDEO|EAGLE|TRL|MEA|LUX|DNA|LEST|GHIZZO|USAbit|Bric|Dtone|Gaiage|BlackBit|Pantry|Vics|Papeete|Lidri|MirCrew)\b/i;
 const REGEX_FALSE_IT = /\b(10BIT|BIT|WIT|HIT|FIT|KIT|SIT|LIT|PIT)\b/i;
 const REGEX_SUB_ONLY = /\b(SUB|SUBS|SUBBED|SOTTOTITOLI|VOST|VOSTIT)\s*[:.\-_]?\s*(ITA|IT|ITALIAN)\b/i;
-const REGEX_AUDIO_CONFIRM = /(?:🇮🇹|\b(?:AUDIO|AC3|AAC|DTS|MD|LD|DDP|MP3|LINGUA)[\s.\-_]+(?:ITA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO)[\s.\-_]+(?:AUDIO|DUB|DUBBED|AC3|AAC|DTS|DDP|EAC3|TRUEHD|ATMOS)\b)/i;
+const REGEX_AUDIO_CONFIRM = /(?:🇮🇹|\b(?:AUDIO|AC3|AAC|DTS|MD|LD|DDP|MP3|LINGUA)[\s.\-_]+(?:\d[\s.,]?\d[\s.\-_]+)?(?:ITA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO)[\s.\-_]+(?:\d[\s.,]?\d[\s.\-_]+)?(?:AUDIO|DUB|DUBBED|AC3|AAC|DTS|DDP|EAC3|TRUEHD|ATMOS)\b)/i;
 
 const languageMapping = {
     'english': '🇬🇧 ENG',
@@ -335,14 +335,22 @@ function normalizeSearchText(value) {
     return normalized;
 }
 
-function isItalianByTitleMatch(title, italianMovieTitle = null) {
+const TITLE_MATCH_STOPWORDS = new Set(['del', 'al', 'dal', 'nel', 'sul', 'un', 'il', 'lo', 'la', 'gli', 'le', 'con', 'per', 'che', 'non']);
+
+function significantTitleWords(value) {
+    return normalizeSearchText(value).split(' ')
+        .filter((word) => word.length > 2)
+        .filter((word) => !TITLE_MATCH_STOPWORDS.has(word));
+}
+
+function isItalianByTitleMatch(title, italianMovieTitle = null, originalTitle = null) {
     if (!title || !italianMovieTitle) return false;
     const normalizedTorrentTitle = normalizeSearchText(title);
-    const italianWords = normalizeSearchText(italianMovieTitle).split(' ')
-        .filter((word) => word.length > 2)
-        .filter((word) => !['del', 'al', 'dal', 'nel', 'sul', 'un', 'il', 'lo', 'la', 'gli', 'le', 'con', 'per', 'che', 'non'].includes(word));
+    const originalWords = new Set(originalTitle ? significantTitleWords(originalTitle) : []);
+    const italianWords = significantTitleWords(italianMovieTitle).filter((word) => !originalWords.has(word));
 
     if (italianWords.length === 0) return false;
+    if (originalWords.size === 0 && italianWords.length < 2) return false;
     const matchingWords = italianWords.filter((word) => normalizedTorrentTitle.includes(word));
     return (matchingWords.length / italianWords.length) > 0.6;
 }
@@ -361,10 +369,12 @@ function isTrustedSource(source, provider = null) {
     return false;
 }
 
-function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedInfo = null) {
+const NEUTRAL_LANGUAGE_TOKENS = new Set(['Italian', 'English', 'Multi', 'Dual Audio', 'Multi subs', 'Multi audio']);
+
+function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedInfo = null, originalTitle = null) {
     if (!title) return { icon: '', isItalian: false, isMaybeItalian: false, isMulti: false, isSubOnly: false, displayLabel: '', detectedLanguages: [], confidence: 0 };
 
-    const cacheKey = `${String(title)}|${String(italianMovieTitle || '')}|${String(source || '')}`;
+    const cacheKey = `${String(title)}|${String(italianMovieTitle || '')}|${String(source || '')}|${String(originalTitle || '')}`;
     const cached = languageInfoCache.get(cacheKey);
     if (cached) return cached;
 
@@ -395,8 +405,9 @@ function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedI
     const multiIta = REGEX_MULTI_ITA.test(scanTitle);
     const isolatedIt = REGEX_ISOLATED_IT.test(scanTitle) && !REGEX_FALSE_IT.test(scanTitle);
     const trustedGroup = REGEX_TRUSTED_GROUPS.test(title);
-    const titleMatched = italianMovieTitle ? isItalianByTitleMatch(title, italianMovieTitle) : false;
+    const titleMatched = italianMovieTitle ? isItalianByTitleMatch(title, italianMovieTitle, originalTitle) : false;
     const trustedSource = !!(source && isTrustedSource(source, null));
+    const foreignDeclared = detectedLanguages.some((lang) => !NEUTRAL_LANGUAGE_TOKENS.has(lang)) && !detectedLanguages.includes('Italian');
 
     let hasIta = detectedLanguages.includes('Italian');
     const hasEng = detectedLanguages.includes('English');
@@ -413,6 +424,7 @@ function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedI
     if (trustedSource) confidence = Math.max(confidence, 5);
     if (hasMulti && (explicitIta || audioConfirmedIta || trustedGroup || trustedSource || titleMatched)) confidence = Math.max(confidence, 7);
 
+    if (foreignDeclared && !explicitIta && !audioConfirmedIta && !multiIta && !trustedGroup) confidence = Math.min(confidence, 2);
     if (subOnly && !audioConfirmedIta && !multiIta && !trustedGroup && !trustedSource && !titleMatched) confidence = Math.min(confidence, 2);
 
     hasIta = confidence >= 5;

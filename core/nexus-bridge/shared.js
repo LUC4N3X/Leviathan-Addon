@@ -47,10 +47,11 @@ const REGEX_AUDIO_ITA = /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|\b(?:
 const REGEX_SUB_ITA = /(?:\b(?:SUB[-.\s_]*ITA|SOFTSUB[-.\s_]*ITA|VOST(?:ITA)?|ITALIAN\s*SUBS?|SUB(?:TITLE)?S?\s*(?:ITALIAN|ITALIANO|ITA))\b|🇮🇹\s*SUB)/i;
 const REGEX_TRUSTED_ITA = /\b(?:CORSARO|MEGAPHONE|IDN[_\s-]*CREW|DDN|MUX(?:\s*ITA)?|TRIDIM|LUX|WMS|MIRCREW|CINEFILE)\b/i;
 const REGEX_ENGLISH_LANGUAGE = /(?:🇬🇧|🇺🇸|\b(?:ENG|ENGLISH)\b|(?:^|[^A-Z0-9])EN(?:[^A-Z0-9]|$))/i;
-const REGEX_NEGATIVE_LANGUAGE = /(?:🇬🇧|🇺🇸|🇷🇺|🇺🇦|🇫🇷|🇩🇪|🇪🇸|🇵🇱|🇯🇵|🇰🇷|🇨🇳|🇮🇳|\b(?:ENGLISH(?:\s*(?:DUBBED|DUB|AUDIO|ONLY))?|ENG(?:\s*(?:DUBBED|DUB|AUDIO|ONLY))?|TRUEFRENCH|FRENCH|FRA|GERMAN|GER|DEU|SPANISH|SPA|ESP|LATINO|RUSSIAN|RUS|UKRAINIAN|UKR|POLISH|POL|HINDI|TAMIL|TELUGU|KOREAN|JAPANESE|JPN|CHINESE|MANDARIN)\b)/i;
+const REGEX_NEGATIVE_LANGUAGE = /(?:🇬🇧|🇺🇸|🇷🇺|🇺🇦|🇫🇷|🇩🇪|🇪🇸|🇵🇱|🇯🇵|🇰🇷|🇨🇳|🇮🇳|\b(?:ENGLISH(?:\s*(?:DUBBED|DUB|AUDIO|ONLY))?|ENG(?:\s*(?:DUBBED|DUB|AUDIO|ONLY))?|TRUEFRENCH|FRENCH|FRA|GERMAN|GER|DEU|SPANISH|SPA|ESP|LATINO|RUSSIAN|RUS|UKRAINIAN|UKR|POLISH|POL|LEKTOR|NAPISY|PLDUB|PLSUB(?:BED)?|DUBBING[\s.]?PL|HINDI|TAMIL|TELUGU|KOREAN|JAPANESE|JPN|CHINESE|MANDARIN)\b|(?:^|[^A-Za-z0-9])PL(?:[^A-Za-z0-9]|$))/i;
 const REGEX_MULTI_LANGUAGE = /\b(?:MULTI|DUAL\s*AUDIO|VOST)\b/i;
 const REGEX_STRONG_ITA_AUDIO = /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i;
-const REGEX_TORRENTIO_LOOSE_ITA = /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|(?:^|[^A-Z0-9])IT(?:[^A-Z0-9]|$))/i;
+const REGEX_TORRENTIO_LOOSE_ITA = /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b)/i;
+const REGEX_TORRENTIO_LOOSE_IT_TOKEN = /(?:^|[^A-Za-z0-9])IT(?:[^A-Za-z0-9]|$)/;
 const VIDEO_FILE_REGEX = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts)$/i;
 const SIZE_REGEX = /(?:📦|💾|💽|Size:?|Dimensione:?|File\s*Size:?|Peso:?)[\s:]*([\d.,]+)\s*(B|KB|MB|GB|TB|KIB|MIB|GIB|TIB)/i;
 const SEEDERS_REGEX = /(?:👤|👥|Seeders?:?|Peers?:?)\s*[:\-]?\s*(\d+)/i;
@@ -64,11 +65,12 @@ const FAKE_RESULT_REGEX = /\b(?:no\s*(?:result|stream)s?|nessun\s*risultato|not\
 
 const TORRENTHAN_ITALIAN_BRANDS = [
     'ilcorsaronero', 'corsaronero', 'mircrew', 'tntvillage', 'ddlstreamitaly',
-    'darksidemux', 'pir8', 'giuseppetornatore', 'megaphone', 'idn crew', 'ddn', 'mux', 'tridim'
+    'darksidemux', 'pir8', 'giuseppetornatore', 'megaphone', 'idn crew', 'ddn',
+    'mux', 'dlmux', 'webmux', 'bdmux', 'dvdmux', 'tridim'
 ];
 const TORRENTHAN_BAD_TOKENS = ['cam', 'hdcam', 'ts', 'hdts', 'telesync', 'telecine', 'tc', 'workprint', 'wp', 'xxx'];
 const REGEX_TORRENTHAN_BAD = new RegExp(`(?:^|[^A-Z0-9])(?:${TORRENTHAN_BAD_TOKENS.join('|')})(?:[^A-Z0-9]|$)`, 'i');
-const REGEX_TORRENTHAN_BRAND = new RegExp(TORRENTHAN_ITALIAN_BRANDS.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s._-]*')).join('|'), 'i');
+const REGEX_TORRENTHAN_BRAND = new RegExp(`(?<![a-z0-9])(?:${TORRENTHAN_ITALIAN_BRANDS.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s._-]*')).join('|')})(?![a-z0-9])`, 'i');
 const REGEX_TORRENTHAN_IT_COMBO = /(?:🇮🇹|\bIT\s*[\/+,_\-. ]\s*(?:GB|UK|US|EN|ENG|ENGLISH|MULTI)\b|\b(?:GB|UK|US|EN|ENG|ENGLISH|MULTI)\s*[\/+,_\-. ]\s*IT\b|\bITA\s*[\/+,_\-. ]\s*(?:ENG|EN|ENGLISH|MULTI)\b|\b(?:ENG|EN|ENGLISH|MULTI)\s*[\/+,_\-. ]\s*ITA\b)/i;
 const REGEX_TORRENTHAN_POSITIVE_ITA = /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO)\b|\bAUDIO\s*ITA\b|\bITA\s*(?:AAC|AC3|EAC3|DD|DDP|DTS|TRUEHD|ATMOS)\b|\b(?:AUDIO|LANG|LANGUAGE|LINGUA)\s*(?:ITA|ITALIAN|ITALIANO)\b|\b(?:ITA|ITALIAN|ITALIANO)\s*(?:DUB|DUBBED|MUX|MULTI)\b|\b(?:MULTI|MULTI-AUDIO|DUAL\s*AUDIO|DUAL-AUDIO)\b.*\b(?:ITA|ITALIAN|ITALIANO|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|IT)\b.*\b(?:MULTI|MULTI-AUDIO|DUAL\s*AUDIO|DUAL-AUDIO)\b|\bSUB\s*ITA\b|\bSUBS?\s*ITA\b|\bSOFTSUB\s*ITA\b|\bFORCED\s*ITA\b|\bACCOPPIALO\b)/i;
 const REGEX_TORRENTHAN_AUDIO_ITA = /(?:\bAUDIO\s*ITA\b|\bITA\s*(?:AAC|AC3|EAC3|DD|DDP|DTS|TRUEHD|ATMOS)\b|\b(?:AUDIO|LANG|LANGUAGE|LINGUA)\s*(?:ITA|ITALIAN|ITALIANO)\b|\b(?:ITA|ITALIAN|ITALIANO)\s*(?:AUDIO|DUB|DUBBED|MUX|MULTI|AAC|AC3|EAC3|DD|DDP|DTS|TRUEHD|ATMOS)\b|\b(?:MULTI|MULTI-AUDIO|DUAL\s*AUDIO|DUAL-AUDIO)\b.*\b(?:ITA|ITALIAN|ITALIANO|IT)\b)/i;
@@ -223,7 +225,7 @@ function getTorrentioLanguageEvidence(stream) {
     const hasMultiItalian = /(?:\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b.*\b(?:ITA|ITALIAN|ITALIANO|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|IT)\b.*\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b)/i.test(scanText);
     const hasTrustedItalian = REGEX_TORRENTHAN_BRAND.test(scanText) || REGEX_TRUSTED_ITA.test(scanText);
     const hasItalianSubtitleOnly = REGEX_SUB_ITA.test(raw) && !(hasItalianAudioContext || hasItalianPair || hasMultiItalian || hasItalianFlagPair);
-    const hasLooseItalian = REGEX_TORRENTIO_LOOSE_ITA.test(raw) || REGEX_TORRENTIO_LOOSE_ITA.test(normalized);
+    const hasLooseItalian = REGEX_TORRENTIO_LOOSE_ITA.test(raw) || REGEX_TORRENTIO_LOOSE_ITA.test(normalized) || REGEX_TORRENTIO_LOOSE_IT_TOKEN.test(raw);
     const hasStrongItalian = Boolean(hasItalianAudioContext || hasItalianPair || hasMultiItalian || hasTrustedItalian || hasItalianFlagPair || hasTextualItalian);
     const hasFlagOnlyItalian = Boolean(hasItalianFlag && !hasStrongItalian);
     const hasItalian = Boolean(hasStrongItalian && !hasItalianSubtitleOnly);
