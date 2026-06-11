@@ -12,10 +12,10 @@ function read(name) {
 }
 
 function serviceBlock(compose, serviceName) {
-  const marker = `  ${serviceName}:`;
-  const start = compose.indexOf(marker);
-  assert.notEqual(start, -1, `${serviceName} service is missing`);
-  const rest = compose.slice(start + marker.length);
+  const marker = new RegExp(`^  ${serviceName}:\\r?$`, 'm');
+  const match = marker.exec(compose);
+  assert.ok(match, `${serviceName} service is missing`);
+  const rest = compose.slice(match.index + match[0].length);
   const nextService = rest.search(/\r?\n  [a-zA-Z0-9_-]+:\r?\n/);
   return nextService === -1 ? rest : rest.slice(0, nextService);
 }
@@ -23,14 +23,17 @@ function serviceBlock(compose, serviceName) {
 test('cloudflare-bypass compose service supports image pinning and persistent cache state', () => {
   const compose = read('docker-compose.yml');
   const envExample = read('.env.example');
+  const block = serviceBlock(compose, 'cloudflare-bypass');
 
   assert.match(
     compose,
     /image:\s*"\$\{CLOUDFLARE_BYPASS_IMAGE:-ghcr\.io\/sarperavci\/cloudflarebypassforscraping:latest\}"/
   );
-  assert.match(compose, /working_dir:\s*\/data/);
-  assert.match(compose, /command:\s*\["python3",\s*"\/app\/server\.py"\]/);
-  assert.match(compose, /-\s*cloudflare-bypass-cache:\/data\b/);
+  assert.match(block, /working_dir:\s*\/data/);
+  assert.match(block, /user:\s*"0:0"/);
+  assert.match(block, /chown -R ubuntu:ubuntu \/data/);
+  assert.match(block, /exec su ubuntu -c "cd \/data && python3 \/app\/server\.py"/);
+  assert.match(block, /-\s*cloudflare-bypass-cache:\/data\b/);
   assert.match(compose, /^volumes:\s*\r?\n\s+cloudflare-bypass-cache:/m);
 
   assert.match(envExample, /CLOUDFLARE_BYPASS_IMAGE=ghcr\.io\/sarperavci\/cloudflarebypassforscraping:latest/);
