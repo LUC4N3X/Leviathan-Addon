@@ -38,7 +38,7 @@ const OST_CODE_DEFAULTS = Object.freeze({
     OST_IMPIT_STRATEGY: 'forward-first',
     OST_IMPIT_FORWARD_ENABLED: '1',
     OST_IMPIT_DIRECT_FALLBACK: '1',
-    OST_STOP_ON_CHALLENGE: '1',
+    OST_STOP_ON_CHALLENGE: '0',
 
     OST_SEARCH_TIMEOUT_MS: '12000',
     OST_PAGE_TIMEOUT_MS: '12000',
@@ -47,6 +47,7 @@ const OST_CODE_DEFAULTS = Object.freeze({
 
     OST_MAX_DETAIL_PAGES: '6',
     OST_YEAR_TOLERANCE: '1',
+    OST_SERIES_SINGLE_LINK_FALLBACK: '1',
 
     OST_IMPIT_FORWARD_TIMEOUT_MS: '9500',
     OST_IMPIT_DIRECT_TIMEOUT_MS: '6000',
@@ -131,6 +132,14 @@ function safeUrlForLog(value) {
     return host ? `${host}${path}` : String(value || '').slice(0, 80);
 }
 
+function safeDecodeUri(value) {
+    try {
+        return decodeURI(String(value || ''));
+    } catch (_) {
+        return String(value || '');
+    }
+}
+
 function getBaseUrls() {
     const raw = [
         envString('OST_BASE_URL', DEFAULT_BASE_URL),
@@ -184,6 +193,7 @@ function userAgentForBrowser(browser = '') {
 
 function buildOstHeaders(baseUrl, { referer = null, cookie = null, browser = null } = {}) {
     const selectedBrowser = browser || pickOstBrowser();
+
     const headers = buildProviderHtmlHeaders({
         userAgent: userAgentForBrowser(selectedBrowser),
         referer: referer || `${baseUrl}/`,
@@ -225,16 +235,16 @@ function isChallengePage(html = '') {
     const text = String(html || '');
     if (!text) return false;
 
-    return /cf-browser-verification|cf_chl_opt|just a moment|attention required|challenge-platform|_cf_chl|cloudflare|checking your browser/i.test(text);
+    return /cf-browser-verification|cf_chl_opt|just a moment|attention required|challenge-platform|_cf_chl|cloudflare|checking your browser|verify you are human/i.test(text);
 }
 
 function hasUsableHtml(html = '') {
     const text = String(html || '');
     if (text.length <= 600) return false;
-    return /<a\b|<iframe\b|uprot\.|uproat\.|maxstream|serietv|\/film\b|searchwp_live_search/i.test(text);
+    return /<a\b|<iframe\b|upro(?:t|at)\.|maxstream|stayonline|serietv|\/film\b|searchwp_live_search/i.test(text);
 }
 
-async function fetchOstHtml(url, baseUrl, { label = 'page', headers = null, timeoutMs = null } = {}) {
+async function fetchOstHtml(url, baseUrl, { label = 'page', referer = null, cookie = null, timeoutMs = null } = {}) {
     const startedAt = Date.now();
     const isSearch = label === 'search';
 
@@ -250,6 +260,7 @@ async function fetchOstHtml(url, baseUrl, { label = 'page', headers = null, time
         24000
     );
 
+    const refererValue = referer || `${baseUrl}/`;
     const forwardBase = getOstForwardProxy();
     let forwardUrl = '';
 
@@ -268,9 +279,11 @@ async function fetchOstHtml(url, baseUrl, { label = 'page', headers = null, time
     const directTimeoutMs = envInt('OST_IMPIT_DIRECT_TIMEOUT_MS', 6000, 1500, 18000);
 
     const attempts = [];
+
     const addForward = (via) => {
         if (hasForward) attempts.push({ via, requestUrl: forwardUrl, timeoutMs: forwardTimeoutMs });
     };
+
     const addDirect = (via) => {
         attempts.push({ via, requestUrl: url, timeoutMs: hasForward ? directTimeoutMs : hardTimeoutMs });
     };
@@ -310,7 +323,7 @@ async function fetchOstHtml(url, baseUrl, { label = 'page', headers = null, time
         const attempt = attempts[index];
         const browser = pickOstBrowser(label);
         const perAttemptTimeout = Math.max(1500, Math.min(Number(attempt.timeoutMs || hardTimeoutMs), remaining - 500));
-        const requestHeaders = headers || buildOstHeaders(baseUrl, { browser });
+        const requestHeaders = buildOstHeaders(baseUrl, { browser, referer: refererValue, cookie });
 
         lastVia = attempt.via;
 
@@ -362,13 +375,12 @@ async function fetchOstHtml(url, baseUrl, { label = 'page', headers = null, time
             ms: Date.now() - startedAt
         });
 
-        if (ok) {
-            return { text, status, via: attempt.via };
-        }
+        if (ok) return { text, status, via: attempt.via };
 
-        if (challenge && !usable && envFlag('OST_STOP_ON_CHALLENGE', true)) {
-            break;
-        }
+        const isLastAttempt = index >= attempts.length - 1;
+        const stopOnChallenge = envFlag('OST_STOP_ON_CHALLENGE', false);
+
+        if (challenge && !usable && stopOnChallenge && isLastAttempt) break;
     }
 
     ostDebug('warn', 'html fetch exhausted', {
@@ -515,15 +527,21 @@ function yearAccepted(pageYear, metaYear) {
 function normalizeEmbeddedText(html = '') {
     return String(html || '')
         .replace(/\\\//g, '/')
-        .replace(/&amp;/gi, '&')
+        .replace(/\\u002f/gi, '/')
+        .replace(/\\u003a/gi, ':')
         .replace(/\\u0026/gi, '&')
         .replace(/\\u003d/gi, '=')
-        .replace(/\\u003f/gi, '?');
+        .replace(/\\u003f/gi, '?')
+        .replace(/\\u002d/gi, '-')
+        .replace(/&amp;/gi, '&')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#0?39;|&apos;/gi, "'");
 }
 
 function cleanCandidateUrl(value, baseUrl = null) {
     const raw = decodeHtml(String(value || ''))
         .replace(/\\\//g, '/')
+        .replace(/\\u002f/gi, '/')
         .replace(/[)\],.;]+$/g, '')
         .trim();
 
@@ -532,21 +550,40 @@ function cleanCandidateUrl(value, baseUrl = null) {
     return normalizeRemoteUrl(raw, baseUrl || undefined);
 }
 
-function firstDirectUprot(text, baseUrl = null) {
+function collectDirectUprotLinks(text, baseUrl = null) {
     const normalized = normalizeEmbeddedText(text);
+    const seen = new Set();
+    const links = [];
 
-    const msf = normalized.match(UPROT_MSF_RE);
-    if (msf) return cleanCandidateUrl(msf[0], baseUrl);
+    const collect = (re) => {
+        let match;
+        while ((match = re.exec(normalized)) !== null) {
+            const cleaned = cleanCandidateUrl(match[0], baseUrl);
+            if (!cleaned || seen.has(cleaned)) continue;
+            seen.add(cleaned);
+            links.push(cleaned);
+        }
+    };
 
-    const any = normalized.match(UPROT_ANY_RE);
-    if (any) return cleanCandidateUrl(any[0], baseUrl);
+    collect(/https?:\/\/(?:www\.)?upro(?:t|at)\.(?:net|pro)\/msf\/[^\s"'<>\\)]+/ig);
+    collect(/https?:\/\/(?:www\.)?upro(?:t|at)\.(?:net|pro)\/[^\s"'<>\\)]+/ig);
 
-    return null;
+    return links;
 }
 
-function pickSemanticUprot(html, baseUrl = null) {
+function firstDirectUprot(text, baseUrl = null) {
+    return collectDirectUprotLinks(text, baseUrl)[0] || null;
+}
+
+function pickSemanticHoster(html, baseUrl = null) {
     const normalized = normalizeEmbeddedText(html);
-    const candidates = extractResilientEmbeds(normalized, { baseUrl, maxCandidates: 24 });
+
+    let candidates = [];
+    try {
+        candidates = extractResilientEmbeds(normalized, { baseUrl, maxCandidates: 24 }) || [];
+    } catch (_) {
+        candidates = [];
+    }
 
     const uprot = candidates.find((url) => /(?:uprot|uproat)\./i.test(url));
     if (uprot) return cleanCandidateUrl(uprot, baseUrl);
@@ -555,8 +592,16 @@ function pickSemanticUprot(html, baseUrl = null) {
     return fallback ? cleanCandidateUrl(fallback, baseUrl) : null;
 }
 
+function pickSemanticUprot(html, baseUrl = null) {
+    return pickSemanticHoster(html, baseUrl);
+}
+
 function extractMovieUprot(html, baseUrl = null) {
-    return firstDirectUprot(html, baseUrl) || pickSemanticUprot(html, baseUrl);
+    return firstDirectUprot(html, baseUrl) || pickSemanticHoster(html, baseUrl);
+}
+
+function escapeRegExp(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function buildEpisodeMarkers(season, episode) {
@@ -575,6 +620,8 @@ function buildEpisodeMarkers(season, episode) {
         `${s}x${e}`,
         `s${ss}e${ee}`,
         `s${s}e${ee}`,
+        `s${ss} e${ee}`,
+        `s${s} e${ee}`,
         `stagione ${s} episodio ${e}`,
         `stagione ${ss} episodio ${ee}`,
         `episodio ${e}`,
@@ -584,25 +631,80 @@ function buildEpisodeMarkers(season, episode) {
     ];
 }
 
-function extractSeriesUprot(html, season, episode, baseUrl = null) {
-    const text = normalizeEmbeddedText(html);
-    const lower = text.toLowerCase();
-    const markers = buildEpisodeMarkers(season, episode);
+function buildEpisodePatterns(season, episode) {
+    const s = Number.parseInt(String(season || 0), 10);
+    const e = Number.parseInt(String(episode || 0), 10);
 
-    for (const marker of markers) {
-        const idx = lower.indexOf(marker.toLowerCase());
+    if (!s || !e) return [];
+
+    const ss = String(s).padStart(2, '0');
+    const ee = String(e).padStart(2, '0');
+
+    return [
+        new RegExp(`\\b0?${escapeRegExp(s)}x0?${escapeRegExp(e)}\\b`, 'i'),
+        new RegExp(`\\bs0?${escapeRegExp(s)}\\s*e0?${escapeRegExp(e)}\\b`, 'i'),
+        new RegExp(`\\bstagione\\s*0?${escapeRegExp(s)}.{0,80}?episodio\\s*0?${escapeRegExp(e)}\\b`, 'i'),
+        new RegExp(`\\bseason\\s*0?${escapeRegExp(s)}.{0,80}?episode\\s*0?${escapeRegExp(e)}\\b`, 'i'),
+        new RegExp(`\\bepisodio\\s*0?${escapeRegExp(e)}\\b`, 'i'),
+        new RegExp(`\\bep\\.?\\s*0?${escapeRegExp(e)}\\b`, 'i'),
+        new RegExp(`\\b${escapeRegExp(ss)}x${escapeRegExp(ee)}\\b`, 'i')
+    ];
+}
+
+function collectEpisodeWindows(text, season, episode) {
+    const normalized = normalizeEmbeddedText(text);
+    const windows = [];
+    const seen = new Set();
+
+    for (const marker of buildEpisodeMarkers(season, episode)) {
+        const idx = normalized.toLowerCase().indexOf(marker.toLowerCase());
         if (idx === -1) continue;
 
-        const window = text.slice(Math.max(0, idx - 600), idx + 5000);
+        const start = Math.max(0, idx - 800);
+        const end = Math.min(normalized.length, idx + 5200);
+        const key = `${start}:${end}`;
+
+        if (!seen.has(key)) {
+            seen.add(key);
+            windows.push(normalized.slice(start, end));
+        }
+    }
+
+    for (const pattern of buildEpisodePatterns(season, episode)) {
+        const match = pattern.exec(normalized);
+        if (!match) continue;
+
+        const idx = match.index || 0;
+        const start = Math.max(0, idx - 800);
+        const end = Math.min(normalized.length, idx + 5200);
+        const key = `${start}:${end}`;
+
+        if (!seen.has(key)) {
+            seen.add(key);
+            windows.push(normalized.slice(start, end));
+        }
+    }
+
+    return windows;
+}
+
+function extractSeriesUprot(html, season, episode, baseUrl = null) {
+    const text = normalizeEmbeddedText(html);
+    const windows = collectEpisodeWindows(text, season, episode);
+
+    for (const window of windows) {
         const direct = firstDirectUprot(window, baseUrl);
         if (direct) return direct;
 
-        const semantic = pickSemanticUprot(window, baseUrl);
+        const semantic = pickSemanticHoster(window, baseUrl);
         if (semantic) return semantic;
     }
 
-    const direct = firstDirectUprot(text, baseUrl);
-    if (direct && markers.length <= 1) return direct;
+    const directLinks = collectDirectUprotLinks(text, baseUrl);
+
+    if (directLinks.length === 1 && envFlag('OST_SERIES_SINGLE_LINK_FALLBACK', true)) {
+        return directLinks[0];
+    }
 
     return null;
 }
@@ -612,24 +714,25 @@ function rankCandidates(anchors, kind, showName) {
 
     return anchors
         .filter((anchor) => wanted.test(anchor.href))
-        .map((anchor) => ({
-            ...anchor,
-            score: similarity(anchor.text || anchor.href, showName)
-        }))
+        .map((anchor) => {
+            const textScore = similarity(anchor.text || anchor.href, showName);
+            const hrefScore = similarity(safeDecodeUri(anchor.href || ''), showName) * 0.9;
+
+            return {
+                ...anchor,
+                score: Math.max(textScore, hrefScore)
+            };
+        })
         .sort((a, b) => b.score - a.score);
 }
 
 async function findUprotLink({ baseUrl, showName, metaYear, isSeries, season, episode }) {
     const searchUrl = buildSearchUrl(baseUrl, showName);
-    const searchHeaders = buildOstHeaders(baseUrl, {
-        referer: `${baseUrl}/`,
-        cookie: 'player_opt=fx',
-        browser: pickOstBrowser('search')
-    });
 
     const { text: searchHtml } = await fetchOstHtml(searchUrl, baseUrl, {
         label: 'search',
-        headers: searchHeaders
+        referer: `${baseUrl}/`,
+        cookie: 'player_opt=fx'
     });
 
     if (!searchHtml) {
@@ -655,11 +758,20 @@ async function findUprotLink({ baseUrl, showName, metaYear, isSeries, season, ep
     if (!candidates.length) return null;
 
     const maxPages = envInt('OST_MAX_DETAIL_PAGES', 6, 1, 12);
-    const pageHeaders = buildOstHeaders(baseUrl, {
-        referer: `${baseUrl}/`,
-        cookie: 'player_opt=fx',
-        browser: pickOstBrowser('detail')
-    });
+    const pageCache = new Map();
+
+    const fetchDetail = async (href) => {
+        if (pageCache.has(href)) return pageCache.get(href);
+
+        const { text } = await fetchOstHtml(href, baseUrl, {
+            label: 'detail',
+            referer: `${baseUrl}/`,
+            cookie: 'player_opt=fx'
+        });
+
+        pageCache.set(href, text || '');
+        return text || '';
+    };
 
     for (const enforceYear of [true, false]) {
         let probed = 0;
@@ -668,11 +780,7 @@ async function findUprotLink({ baseUrl, showName, metaYear, isSeries, season, ep
             if (probed >= maxPages) break;
             probed += 1;
 
-            const { text: pageHtml } = await fetchOstHtml(candidate.href, baseUrl, {
-                label: 'detail',
-                headers: pageHeaders
-            });
-
+            const pageHtml = await fetchDetail(candidate.href);
             if (!pageHtml) continue;
 
             const pageYear = extractPageYear(pageHtml);
