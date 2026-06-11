@@ -25,6 +25,18 @@ test('extractReleaseSignals never mistakes leading title words for languages', (
 
   const spanishAffair = extractReleaseSignals('Spanish.Affair.2014.720p.WEBRip.x264');
   assert.ok(!spanishAffair.languages.includes('spanish'));
+
+  const enPreposition = extractReleaseSignals('La.Casa.en.Llamas.2023.1080p.WEB-DL.x264');
+  assert.ok(!enPreposition.languages.includes('english'));
+
+  const fraPreposition = extractReleaseSignals('Benvenuti.fra.noi.2023.1080p.WEBRip.x264');
+  assert.ok(!fraPreposition.languages.includes('french'));
+});
+
+test('extractReleaseSignals still honors guarded tags placed after release markers', () => {
+  assert.ok(extractReleaseSignals('Movie.2023.1080p.WEB-DL.EN.x264').languages.includes('english'));
+  assert.ok(extractReleaseSignals('Movie.2023.1080p.FRENCH.WEB-DL.x264').languages.includes('french'));
+  assert.ok(extractReleaseSignals('La.Casa.en.Llamas.2023.ES.EN.SUBS.1080p').languages.includes('english'));
 });
 
 test('extractReleaseSignals separates multi subs from multi audio', () => {
@@ -93,6 +105,9 @@ test('detectLanguageBucket leverages parsed languages for positional tokens', ()
 test('detectPack classifies anthologies and box sets as multi-title packs', () => {
   const trilogy = extractReleaseSignals('The.Matrix.Trilogy.1999-2003.1080p.BluRay');
   assert.equal(detectPack('The Matrix Trilogy 1999-2003 1080p BluRay', {}, trilogy), 'multiSeason');
+
+  const trilogyPack = extractReleaseSignals('The.Matrix.Trilogy.Pack.1080p.BluRay');
+  assert.equal(detectPack('The Matrix Trilogy Pack 1080p BluRay', {}, trilogyPack), 'multiSeason');
 
   const seasonPack = extractReleaseSignals('Show.S01.Complete.Pack.1080p');
   assert.equal(detectPack('Show S01 Complete Pack 1080p', {}, seasonPack), 'season');

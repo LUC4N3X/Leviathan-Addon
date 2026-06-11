@@ -33,7 +33,7 @@ const LANGUAGE_SIGNALS = Object.freeze([
   { tag: 'english', pattern: /\beng?sub[A-Z]*\b/i },
   { tag: 'english', pattern: /\bing(?:l[eéê]s)?\b/i },
   { tag: 'english', pattern: /\benglish\W+(?:subs?|sdh|hi)\b/i },
-  { tag: 'english', pattern: /\bEN\b/i },
+  { tag: 'english', pattern: /\bEN\b/i, guarded: true },
   { tag: 'english', pattern: /\benglish?\b/i, guarded: true },
   { tag: 'latino', pattern: /\bspanish\W?latin|american\W*(?:spa|esp?)/i, consumes: true },
   { tag: 'latino', pattern: /\b(?:audio.)?lat(?:i|ino)?\b/i },
@@ -52,7 +52,7 @@ const LANGUAGE_SIGNALS = Object.freeze([
   { tag: 'portuguese', pattern: /\bPT[. -]*(?:PT|ENG?|sub(?:s|titles?))\b/i },
   { tag: 'portuguese', pattern: /\bpt(?=\.(?:ass|ssa|srt|sub|idx)$)/i },
   { tag: 'portuguese', pattern: /\bpor\b/i },
-  { tag: 'french', pattern: /\bFR(?:ench|a|e|anc[eê]s)?\b/i },
+  { tag: 'french', pattern: /\bFR(?:ench|a|e|anc[eê]s)?\b/i, guarded: true },
   { tag: 'french', pattern: /\b(?:Truefrench|VF[FI])\b/i },
   { tag: 'french', pattern: /\b(?:VOST(?:FR?|A)?|SUBFRENCH)\b/i },
   { tag: 'german', pattern: /\b(?:GER|DEU)\b/i },
@@ -176,17 +176,34 @@ function firstMarkerIndex(title) {
   return earliest;
 }
 
+function matchSignal(scope, pattern, minIndex) {
+  if (minIndex === null || minIndex <= 0) return scope.match(pattern);
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  const seeker = new RegExp(pattern.source, flags);
+  let match;
+  while ((match = seeker.exec(scope)) !== null) {
+    if (match.index >= minIndex) return match;
+    if (seeker.lastIndex === match.index) seeker.lastIndex += 1;
+  }
+  return null;
+}
+
 function scanSignals(title, signals, markerIndex, firstOnly = false) {
   let scope = title;
   const tags = [];
   for (const signal of signals) {
-    const match = scope.match(signal.pattern);
+    const match = signal.guarded
+      ? matchSignal(scope, signal.pattern, markerIndex)
+      : scope.match(signal.pattern);
     if (!match) continue;
-    if (signal.guarded && markerIndex !== null && match.index < markerIndex) continue;
     const tag = signal.tag === null ? match[0] : signal.tag;
     if (!tags.includes(tag)) tags.push(tag);
     if (firstOnly) break;
-    if (signal.consumes) scope = scope.slice(0, match.index) + scope.slice(match.index + match[0].length);
+    if (signal.consumes) {
+      scope = scope.slice(0, match.index)
+        + ' '.repeat(match[0].length)
+        + scope.slice(match.index + match[0].length);
+    }
   }
   return tags;
 }

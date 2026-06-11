@@ -155,8 +155,9 @@ function detectLanguageBucket(text = '', item = {}, parsed = null) {
 function detectPack(text = '', item = {}, parsed = null) {
   const raw = `${text} ${item?._isSeasonPack ? 'season_pack' : ''} ${item?._isMultiSeasonPack ? 'multi_season' : ''}`.toLowerCase();
   if (/\b(?:complete\s+series|serie\s+completa|s\d{1,2}\s*[-+]\s*s\d{1,2})\b/.test(raw)) return 'multiSeason';
-  if (/\b(?:season\s*pack|stagione\s*completa|complete\s+season|pack|s\d{1,2})\b/.test(raw)) return 'season';
+  if (/\b(?:season\s*pack|stagione\s*completa|complete\s+season|s\d{1,2})\b/.test(raw)) return 'season';
   if (parsed?.anthology === true) return 'multiSeason';
+  if (/\bpack\b/.test(raw)) return 'season';
   return 'single';
 }
 
