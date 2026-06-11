@@ -1,4 +1,7 @@
 const ptt = require('parse-torrent-title');
+try {
+    require('../lib/release_signal_engine');
+} catch (_) {}
 const { TinyLruCache } = require('./tiny_lru_cache');
 
 const parsedTitleCache = new TinyLruCache({

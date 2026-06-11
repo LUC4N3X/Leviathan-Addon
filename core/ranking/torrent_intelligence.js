@@ -7,6 +7,13 @@ try {
   parseTorrentTitle = null;
 }
 
+let releaseSignals = null;
+try {
+  releaseSignals = require('../lib/release_signal_engine');
+} catch (_) {
+  releaseSignals = null;
+}
+
 const QUALITY_SCORE = Object.freeze({
   remux: 34,
   bluray: 28,
@@ -113,21 +120,43 @@ function detectAudio(text = '') {
   return 'unknown';
 }
 
-function detectLanguageBucket(text = '', item = {}) {
-  const explicit = firstText(item.language, item.lang, Array.isArray(item.languages) ? item.languages.join(' ') : '', item.behaviorHints?.language);
-  const raw = `${explicit} ${text}`;
-  if (/\b(?:sub\s*ita|subita|ita\s*sub|subs?\s*ita)\b/i.test(raw) && !/\b(?:audio\s*ita|ita\s*(?:ac3|aac|eac3|ddp|dts|truehd)|italian(?:o)?\s*audio)\b/i.test(raw)) return 'sub_only';
-  if (/\b(?:ita|italiano|italian|audio\s*ita|true\s*ita)\b/i.test(raw) && /\b(?:multi|dual|eng|english)\b/i.test(raw)) return 'multi_ita';
-  if (/\b(?:ita|italiano|italian|audio\s*ita|true\s*ita)\b/i.test(raw)) return 'ita';
-  if (/\b(?:eng|english|audio\s*eng)\b/i.test(raw)) return 'eng';
-  if (/\b(?:french|german|spanish|latino|russian|rus|hindi|korean|japanese|vostfr)\b/i.test(raw)) return 'other';
-  return 'neutral';
+const NON_AUDIO_LANGUAGE_TOKENS = new Set(['multi subs']);
+const MULTI_AUDIO_TOKENS = new Set(['multi audio', 'dual audio']);
+
+function refineLanguageBucket(base, parsed) {
+  const langs = Array.isArray(parsed?.languages) ? parsed.languages : [];
+  if (langs.length === 0 || base === 'sub_only') return base;
+  const audioLangs = langs.filter((lang) => !NON_AUDIO_LANGUAGE_TOKENS.has(lang) && !MULTI_AUDIO_TOKENS.has(lang));
+  const hasMultiAudio = langs.some((lang) => MULTI_AUDIO_TOKENS.has(lang));
+  const hasIta = audioLangs.includes('italian');
+  const foreign = audioLangs.filter((lang) => lang !== 'italian');
+  if (hasIta) {
+    if (hasMultiAudio || foreign.length > 0 || base === 'multi_ita') return 'multi_ita';
+    return 'ita';
+  }
+  if (base !== 'neutral') return base;
+  if (audioLangs.includes('english')) return 'eng';
+  if (foreign.length > 0) return 'other';
+  return base;
 }
 
-function detectPack(text = '', item = {}) {
+function detectLanguageBucket(text = '', item = {}, parsed = null) {
+  const explicit = firstText(item.language, item.lang, Array.isArray(item.languages) ? item.languages.join(' ') : '', item.behaviorHints?.language);
+  const raw = `${explicit} ${text}`;
+  let bucket = 'neutral';
+  if (/\b(?:sub\s*ita|subita|ita\s*sub|subs?\s*ita)\b/i.test(raw) && !/\b(?:audio\s*ita|ita\s*(?:ac3|aac|eac3|ddp|dts|truehd)|italian(?:o)?\s*audio)\b/i.test(raw)) bucket = 'sub_only';
+  else if (/\b(?:ita|italiano|italian|audio\s*ita|true\s*ita)\b/i.test(raw) && /\b(?:multi|dual|eng|english)\b/i.test(raw)) bucket = 'multi_ita';
+  else if (/\b(?:ita|italiano|italian|audio\s*ita|true\s*ita)\b/i.test(raw)) bucket = 'ita';
+  else if (/\b(?:eng|english|audio\s*eng)\b/i.test(raw)) bucket = 'eng';
+  else if (/\b(?:french|german|spanish|latino|russian|rus|hindi|korean|japanese|vostfr)\b/i.test(raw)) bucket = 'other';
+  return refineLanguageBucket(bucket, parsed);
+}
+
+function detectPack(text = '', item = {}, parsed = null) {
   const raw = `${text} ${item?._isSeasonPack ? 'season_pack' : ''} ${item?._isMultiSeasonPack ? 'multi_season' : ''}`.toLowerCase();
   if (/\b(?:complete\s+series|serie\s+completa|s\d{1,2}\s*[-+]\s*s\d{1,2})\b/.test(raw)) return 'multiSeason';
   if (/\b(?:season\s*pack|stagione\s*completa|complete\s+season|pack|s\d{1,2})\b/.test(raw)) return 'season';
+  if (parsed?.anthology === true) return 'multiSeason';
   return 'single';
 }
 
@@ -169,14 +198,17 @@ function evaluateTorrentIntelligence(item = {}, meta = {}, options = {}) {
     item.behaviorHints?.filename,
     item.description
   ));
-  const parsed = parseTitle(text);
+  let parsed = parseTitle(text);
+  if (!parsed && releaseSignals && typeof releaseSignals.extractReleaseSignals === 'function') {
+    parsed = releaseSignals.extractReleaseSignals(text);
+  }
   const resolution = detectResolution(text, parsed);
   const quality = detectQuality(text, parsed);
   const codec = detectCodec(text);
   const hdr = detectHdr(text);
   const audio = detectAudio(text);
-  const language = detectLanguageBucket(text, item);
-  const pack = detectPack(text, item);
+  const language = detectLanguageBucket(text, item, parsed);
+  const pack = detectPack(text, item, parsed);
   const episodeHint = extractEpisode(text, parsed);
   const episodeMatch = compareEpisode(meta, episodeHint);
   const sourceProof = getSourceProof(item);
@@ -231,6 +263,11 @@ function evaluateTorrentIntelligence(item = {}, meta = {}, options = {}) {
       hdr,
       audio,
       language,
+      languages: Array.isArray(parsed?.languages) ? parsed.languages : [],
+      dubbed: parsed?.dubbed === true,
+      bitDepth: parsed?.bitDepth || null,
+      threeD: parsed?.threeD || null,
+      complete: parsed?.complete === true,
       pack,
       episodeMatch,
       episodeHint,
