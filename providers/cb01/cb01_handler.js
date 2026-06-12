@@ -10,7 +10,7 @@ const {
 const { isUprotUrl, resolveUprotToMaxstream } = require('../extractors/hosters/uprot');
 const { extractMixdrop } = require('../extractors/hosters/mixdrop');
 const { extractResilientEmbeds } = require('../extractors/semantic_candidate_extractor');
-const { requestWithImpitRotating, isCanceledError } = require('../utils/bypass');
+const { requestWithImpitRotating, isCanceledError, normalizeImpitBrowser } = require('../utils/bypass');
 let runCurlCffiBypass = null;
 try { ({ runCurlCffiBypass } = require('../utils/cloudflare_bypass')); } catch (_) { runCurlCffiBypass = null; }
 let curlCffiRunnerOverride = null;
@@ -1065,9 +1065,9 @@ function toAxiosProxyConfig(proxyUrl) {
 
 function pickCbImpitBrowser(label = '') {
     const preferred = envString('CB01_IMPIT_BROWSER', '');
-    if (preferred) return preferred;
+    if (preferred) return normalizeImpitBrowser(preferred, 'chrome125');
     if (label === 'search') return 'chrome125';
-    return CB_IMPIT_BROWSER_FALLBACKS[Math.floor(Math.random() * CB_IMPIT_BROWSER_FALLBACKS.length)] || 'chrome125';
+    return normalizeImpitBrowser(CB_IMPIT_BROWSER_FALLBACKS[Math.floor(Math.random() * CB_IMPIT_BROWSER_FALLBACKS.length)], 'chrome125');
 }
 
 function impitResponseToText(response) {
