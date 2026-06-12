@@ -1,25 +1,28 @@
-# Contributing
+# Contributing to Leviathan
+
+Thanks for helping improve Leviathan.
 
 ## Local setup
 
-1. Use Node.js 20.19 or newer.
-2. Install dependencies with `npm ci`.
-3. Run `npm run check` before opening a pull request.
-4. For Docker changes, verify the image locally with `docker build -t leviathan:local .`.
+Use Node.js 20.19 or newer.
 
-## Commit style
+```bash
+npm ci
+npm test
+```
 
-Use short Conventional Commit style messages where it makes sense:
+For quick validation before opening a pull request:
 
-- `feat:` new functionality
-- `fix:` bug fix
-- `perf:` performance improvement
-- `refactor:` internal cleanup
-- `docs:` documentation only
-- `test:` test changes
-- `ci:` workflow or automation changes
-- `chore:` maintenance
+```bash
+npm run lint
+npm run format:check
+node --test tests/config_schema.test.js tests/source_mode.test.js tests/title_parser.test.js tests/language_guard.test.js tests/stream_quality_filters.test.js
+```
 
-## Quality gates
+## Pull requests
 
-Keep changes small, keep provider-specific logic isolated, and add tests for title parsing, language detection, debrid matching, provider routing and extractor regressions whenever you touch those areas.
+Keep pull requests focused. Mention the provider, extractor, cache layer or UI area touched by the change. Include logs only after removing tokens, cookies, IPs and API keys.
+
+## Provider work
+
+Provider fixes should prefer deterministic parsing, conservative fallbacks and clear failure classification. Avoid hardcoding private proxy endpoints or secrets.
