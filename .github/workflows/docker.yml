@@ -17,6 +17,7 @@ on:
       - providers/**
       - public/**
       - browser-extension/**
+      - edge-worker/**
       - .github/workflows/docker.yml
   pull_request:
     paths:
@@ -30,6 +31,7 @@ on:
       - providers/**
       - public/**
       - browser-extension/**
+      - edge-worker/**
       - .github/workflows/docker.yml
   workflow_dispatch:
     inputs:
