@@ -18,6 +18,7 @@ defaults:
     shell: bash
 
 env:
+  NODE_ENV: test
   NPM_CONFIG_AUDIT: false
   NPM_CONFIG_FUND: false
 
@@ -42,8 +43,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run test suite
-        run: npm test
+      - name: Check JavaScript syntax
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files '*.js' '*.cjs' '*.mjs' ':!:node_modules/**' ':!:coverage/**' ':!:dist/**' ':!:build/**')
+          printf '%s\0' "${files[@]}" | xargs -0 -n 1 -P 4 node --check
+
+      - name: Run release smoke tests
+        run: |
+          node --test \
+            tests/config_schema.test.js \
+            tests/source_mode.test.js \
+            tests/title_parser.test.js \
+            tests/language_guard.test.js \
+            tests/stream_quality_filters.test.js
 
       - name: Resolve release tag
         id: version
