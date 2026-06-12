@@ -1,0 +1,52 @@
+name: Full Test Suite
+
+on:
+  workflow_dispatch:
+    inputs:
+      node-version:
+        description: Node.js version
+        required: true
+        default: 22.x
+        type: choice
+        options:
+          - 20.19.x
+          - 22.x
+          - 24.x
+
+concurrency:
+  group: full-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  NODE_ENV: test
+  NPM_CONFIG_AUDIT: false
+  NPM_CONFIG_FUND: false
+
+jobs:
+  full-tests:
+    name: Full tests · Node ${{ inputs.node-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run full test suite
+        run: npm test
