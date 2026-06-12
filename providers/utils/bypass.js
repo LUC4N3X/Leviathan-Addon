@@ -7,10 +7,15 @@ const IMPIT_INSTANCE_CACHE = new Map();
 let impitModulePromise = null;
 
 const IMPIT_BROWSER_VERSIONS = Object.freeze({
-    chrome: Object.freeze([100, 101, 104, 107, 110, 116, 124, 125, 131, 136, 137, 138, 142]),
-    firefox: Object.freeze([128, 133, 135, 137, 138, 144]),
+    chrome: Object.freeze([100, 101, 104, 107, 110, 116, 124, 125, 131, 136, 142]),
+    firefox: Object.freeze([128, 133, 135, 144]),
     okhttp: Object.freeze([3, 4, 5])
 });
+
+const SUPPORTED_IMPIT_BROWSERS = new Set(Object.entries(IMPIT_BROWSER_VERSIONS).flatMap(([prefix, versions]) => [
+    prefix,
+    ...versions.map((version) => `${prefix}${version}`)
+]));
 
 const DEFAULT_FINGERPRINT_POOL = Object.freeze([
     Object.freeze({
@@ -67,13 +72,10 @@ const DEFAULT_IMPIT_BROWSER_STICKY_TTL_MS = 45 * 60 * 1000;
 const DEFAULT_IMPIT_ROTATION_STATUSES = Object.freeze([403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
 const DEFAULT_IMPIT_BROWSER_FALLBACKS = Object.freeze([
     'chrome142',
-    'chrome138',
-    'chrome137',
     'chrome136',
     'chrome131',
     'firefox144',
-    'firefox138',
-    'firefox137',
+    'firefox135',
     'chrome125',
     'okhttp4'
 ]);
@@ -344,6 +346,17 @@ function pickNearestImpitBrowser(prefix, version, fallback) {
     return `${prefix}${selected}`;
 }
 
+function normalizeImpitBrowser(browser, fallback = 'chrome136') {
+    const value = safeString(browser).trim().toLowerCase();
+    if (!value) return fallback;
+    if (SUPPORTED_IMPIT_BROWSERS.has(value)) return value;
+
+    const match = value.match(/^(chrome|firefox|okhttp)(\d+)$/);
+    if (match) return pickNearestImpitBrowser(match[1], match[2], fallback);
+
+    return fallback;
+}
+
 function getImpitBrowserForFingerprint(fp = null) {
     const browserType = safeString(fp?.browserType || fp?.family || fp?.browser || fp?.name).toLowerCase();
     const userAgent = safeString(fp?.userAgent || fp?.ua).toLowerCase();
@@ -364,7 +377,7 @@ function getImpitBrowserForFingerprint(fp = null) {
 function normalizeBrowserList(list = []) {
     const out = [];
     for (const item of Array.isArray(list) ? list : [list]) {
-        const browser = safeString(item).trim();
+        const browser = normalizeImpitBrowser(item, '');
         if (browser && !out.includes(browser)) out.push(browser);
     }
     return out;
@@ -527,8 +540,9 @@ async function loadImpitModule() {
 }
 
 function buildImpitClientKey(options = {}) {
+    const browser = normalizeImpitBrowser(options.browser || 'chrome136', 'chrome136');
     return JSON.stringify({
-        browser: options.browser || 'chrome136',
+        browser,
         ignoreTlsErrors: options.ignoreTlsErrors === true,
         vanillaFallback: options.vanillaFallback !== false,
         followRedirects: options.followRedirects !== false,
@@ -540,8 +554,9 @@ function buildImpitClientKey(options = {}) {
 }
 
 async function getImpitClient(options = {}) {
+    const browser = normalizeImpitBrowser(options.browser || 'chrome136', 'chrome136');
     const clientOptions = {
-        browser: options.browser || 'chrome136',
+        browser,
         ignoreTlsErrors: options.ignoreTlsErrors === true,
         vanillaFallback: options.vanillaFallback !== false,
         followRedirects: options.followRedirects !== false,
@@ -589,7 +604,7 @@ async function requestWithImpit(input, config = {}) {
 
     const timeout = resolveImpitTimeout(options.timeout);
     const method = safeString(options.method || 'GET').toUpperCase() || 'GET';
-    const selectedBrowser = options.browser || getImpitBrowserForFingerprint(options.fingerprint || options.fp);
+    const selectedBrowser = normalizeImpitBrowser(options.browser || getImpitBrowserForFingerprint(options.fingerprint || options.fp), 'chrome136');
     const client = await getImpitClient({
         browser: selectedBrowser,
         ignoreTlsErrors: options.ignoreTlsErrors ?? options.https?.rejectUnauthorized === false,
@@ -1112,6 +1127,7 @@ module.exports = {
     createSingleFlight,
     getGoodImpitBrowser,
     getImpitBrowserCandidatesForFingerprint,
+    normalizeImpitBrowser,
     alignHeadersForImpitBrowser,
     getImpitBrowserForFingerprint,
     getImpitClient,
@@ -1127,4 +1143,3 @@ module.exports = {
     retry,
     sleep
 };
-
