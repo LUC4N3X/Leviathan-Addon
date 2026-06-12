@@ -4,13 +4,30 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
-    labels:
-      - dependencies
+      day: monday
+      time: "08:00"
+      timezone: Europe/Rome
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+      npm-major:
+        update-types:
+          - major
+    commit-message:
+      prefix: deps
+      include: scope
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-    labels:
-      - github-actions
+      interval: monthly
+      day: monday
+      time: "08:15"
+      timezone: Europe/Rome
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+      include: scope
