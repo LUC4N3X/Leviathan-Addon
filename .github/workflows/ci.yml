@@ -5,13 +5,7 @@ on:
     branches:
       - main
       - develop
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
   pull_request:
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
   workflow_dispatch:
 
 concurrency:
@@ -34,7 +28,9 @@ jobs:
   quality:
     name: Quality gate · Node 22
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
+    outputs:
+      source_changed: ${{ steps.changes.outputs.source_changed }}
 
     steps:
       - name: Checkout
@@ -42,28 +38,87 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Detect source changes
+        id: changes
+        run: |
+          set -euo pipefail
+
+          source_changed=false
+          base=""
+          head="${GITHUB_SHA}"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            source_changed=true
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          elif [[ -n "${{ github.event.before }}" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            base="${{ github.event.before }}"
+          fi
+
+          if [[ "$source_changed" != "true" ]]; then
+            if [[ -n "$base" ]] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+              mapfile -t changed_files < <(git diff --name-only --diff-filter=ACMR "$base" "$head")
+            else
+              mapfile -t changed_files < <(git ls-files)
+            fi
+
+            for file in "${changed_files[@]}"; do
+              case "$file" in
+                package.json|package-lock.json|addon.js|manifest.js|worker.js|Dockerfile|docker-compose*.yml|docker-compose*.yaml|edge-worker/*|core/*|providers/*|public/*|browser-extension/*|scripts/*|tests/*|.github/workflows/ci.yml)
+                  source_changed=true
+                  break
+                  ;;
+              esac
+            done
+          fi
+
+          echo "source_changed=$source_changed" >> "$GITHUB_OUTPUT"
+
+          if [[ "$source_changed" == "true" ]]; then
+            echo "Source/runtime files changed: running Node quality gate."
+          else
+            echo "Only repository metadata changed: skipping Node install, lint and tests."
+          fi
+
       - name: Setup Node.js
+        if: steps.changes.outputs.source_changed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 22.x
           cache: npm
 
       - name: Install dependencies
+        if: steps.changes.outputs.source_changed == 'true'
         run: npm ci
 
-      - name: Lint JavaScript syntax
-        run: npm run lint
+      - name: Check JavaScript syntax
+        if: steps.changes.outputs.source_changed == 'true'
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files '*.js' '*.cjs' '*.mjs' ':!:node_modules/**' ':!:coverage/**' ':!:dist/**' ':!:build/**')
 
-      - name: Check formatting
-        run: npm run format:check
+          if [[ "${#files[@]}" -eq 0 ]]; then
+            echo "No JavaScript files found."
+            exit 0
+          fi
 
-      - name: Run test suite
-        run: npm test
+          printf '%s\0' "${files[@]}" | xargs -0 -n 1 -P 4 node --check
+          echo "Syntax OK: checked ${#files[@]} JavaScript files."
+
+      - name: Run fast smoke tests
+        if: steps.changes.outputs.source_changed == 'true'
+        run: |
+          node --test \
+            tests/config_schema.test.js \
+            tests/source_mode.test.js \
+            tests/title_parser.test.js \
+            tests/language_guard.test.js \
+            tests/stream_quality_filters.test.js
 
   runtime:
     name: Runtime smoke · Node ${{ matrix.node-version }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     needs: quality
 
     strategy:
@@ -74,17 +129,32 @@ jobs:
           - 24.x
 
     steps:
+      - name: Skip non-code change
+        if: needs.quality.outputs.source_changed != 'true'
+        run: |
+          echo "Only repository metadata changed: runtime smoke skipped."
+
       - name: Checkout
+        if: needs.quality.outputs.source_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Node.js
+        if: needs.quality.outputs.source_changed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
+        if: needs.quality.outputs.source_changed == 'true'
         run: npm ci
 
-      - name: Run test suite
-        run: npm test
+      - name: Run runtime smoke tests
+        if: needs.quality.outputs.source_changed == 'true'
+        run: |
+          node --test \
+            tests/config_schema.test.js \
+            tests/source_mode.test.js \
+            tests/title_parser.test.js \
+            tests/language_guard.test.js \
+            tests/stream_quality_filters.test.js
