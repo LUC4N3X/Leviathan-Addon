@@ -1,14 +1,9 @@
 ## Summary
 
--
+Explain what changed and why.
 
-## Validation
+## Checklist
 
-- [ ] `npm run lint`
-- [ ] `npm run format:check`
-- [ ] `npm test`
-- [ ] Docker build checked when runtime files changed
-
-## Risk notes
-
--
+- [ ] Tested locally or with GitHub Actions
+- [ ] Updated docs/config examples if needed
+- [ ] No secrets, tokens, cookies or private endpoints committed
