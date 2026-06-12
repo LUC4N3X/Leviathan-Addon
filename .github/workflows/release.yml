@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  NPM_CONFIG_AUDIT: false
+  NPM_CONFIG_FUND: false
+
+jobs:
+  release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test suite
+        run: npm test
+
+      - name: Resolve release tag
+        id: version
+        run: |
+          set -euo pipefail
+
+          package_version="v$(node -p "require('./package.json').version")"
+          tag_name="${GITHUB_REF_NAME:-}"
+
+          if [[ "${GITHUB_REF_TYPE:-}" != "tag" ]]; then
+            tag_name="$package_version"
+          fi
+
+          if [[ "$tag_name" != "$package_version" ]]; then
+            echo "Tag $tag_name does not match package.json version $package_version."
+            exit 1
+          fi
+
+          echo "tag=$tag_name" >> "$GITHUB_OUTPUT"
+
+      - name: Create source archive
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          git archive --format=zip --prefix=leviathan-${{ steps.version.outputs.tag }}/ HEAD > dist/leviathan-${{ steps.version.outputs.tag }}.zip
+
+      - name: Generate release notes
+        run: |
+          set -euo pipefail
+
+          current_tag="${{ steps.version.outputs.tag }}"
+          previous_tag="$(git tag --list 'v*' --sort=-v:refname | grep -v "^${current_tag}$" | head -n 1 || true)"
+
+          {
+            echo "## ${current_tag}"
+            echo
+            if [[ -n "$previous_tag" ]]; then
+              git log --no-merges --pretty=format:'- %s (%h)' "${previous_tag}..HEAD"
+              echo
+              echo
+              echo "Full changelog: ${previous_tag}...${current_tag}"
+            else
+              git log --no-merges --pretty=format:'- %s (%h)' HEAD
+            fi
+          } > dist/release-notes.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          tag="${{ steps.version.outputs.tag }}"
+          archive="dist/leviathan-${tag}.zip"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "$tag" --notes-file dist/release-notes.md
+            gh release upload "$tag" "$archive" --clobber
+          else
+            gh release create "$tag" "$archive" --title "$tag" --notes-file dist/release-notes.md
+          fi
