@@ -4,7 +4,31 @@ on:
   push:
     branches:
       - main
+    paths:
+      - package.json
+      - package-lock.json
+      - addon.js
+      - manifest.js
+      - worker.js
+      - core/**
+      - providers/**
+      - public/**
+      - browser-extension/**
+      - edge-worker/**
+      - .github/workflows/security.yml
   pull_request:
+    paths:
+      - package.json
+      - package-lock.json
+      - addon.js
+      - manifest.js
+      - worker.js
+      - core/**
+      - providers/**
+      - public/**
+      - browser-extension/**
+      - edge-worker/**
+      - .github/workflows/security.yml
   schedule:
     - cron: "23 4 * * 1"
   workflow_dispatch:
@@ -49,7 +73,7 @@ jobs:
 
   dependency-review:
     name: Dependency review
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && !github.event.repository.private
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
