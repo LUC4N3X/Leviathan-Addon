@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a reproducible Leviathan problem
+title: "fix: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Explain the bug clearly and include the provider, route or feature involved.
+      placeholder: StreamingCommunity returns no streams for...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Configure...
+        2. Open...
+        3. See...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste only redacted logs. Remove tokens, cookies, IPs and API keys.
+      render: shell
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options:
+        - Docker Compose
+        - Node.js local
+        - VPS
+        - Other
+    validations:
+      required: true
