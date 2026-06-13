@@ -1,251 +1,201 @@
-const MOBILE_LOGO_URL = "https://i.ibb.co/YTKfXc1z/logo.png";
-const MOBILE_LOGO_HINTS_ID = "leviathan-mobile-logo-hints";
-const MOBILE_LOGO_PRELOAD_ID = "leviathan-mobile-logo-preload";
-
-const MOBILE_PERF = {
-    maxDpr: 1.0,
-    targetFps: 24,
-    lowFxFps: 14,
-    keyboardDeltaPx: 110,
-    inputIdleMs: 420,
-    viewportRaf: 0,
-    inputIdleTimer: null
-};
-
+const MOBILE_LOGO_URL = "https://i.ibb.co/YTKfXc1z/logo.png",
+    MOBILE_LOGO_HINTS_ID = "leviathan-mobile-logo-hints",
+    MOBILE_LOGO_PRELOAD_ID = "leviathan-mobile-logo-preload",
+    MOBILE_PERF = {
+        maxDpr: 1,
+        targetFps: 24,
+        lowFxFps: 14,
+        keyboardDeltaPx: 110,
+        inputIdleMs: 420,
+        viewportRaf: 0,
+        inputIdleTimer: null,
+    };
 function isMobileCoarsePointer() {
     try {
-        return window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-    } catch (_) {
-        return true;
+        return window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    } catch (n) {
+        return !0;
     }
 }
-
 function ensureMobileLogoHints() {
     try {
         if (!document.head) return;
         if (!document.getElementById(MOBILE_LOGO_HINTS_ID)) {
-            const frag = document.createDocumentFragment();
-
-            const preconnect = document.createElement("link");
-            preconnect.id = MOBILE_LOGO_HINTS_ID;
-            preconnect.rel = "preconnect";
-            preconnect.href = "https://i.ibb.co";
-            preconnect.crossOrigin = "anonymous";
-            frag.appendChild(preconnect);
-
-            const dns = document.createElement("link");
-            dns.rel = "dns-prefetch";
-            dns.href = "https://i.ibb.co";
-            frag.appendChild(dns);
-
-            document.head.appendChild(frag);
+            const n = document.createDocumentFragment(),
+                e = document.createElement("link");
+            ((e.id = MOBILE_LOGO_HINTS_ID),
+                (e.rel = "preconnect"),
+                (e.href = "https://i.ibb.co"),
+                (e.crossOrigin = "anonymous"),
+                n.appendChild(e));
+            const t = document.createElement("link");
+            ((t.rel = "dns-prefetch"),
+                (t.href = "https://i.ibb.co"),
+                n.appendChild(t),
+                document.head.appendChild(n));
         }
-
         if (!document.getElementById(MOBILE_LOGO_PRELOAD_ID)) {
-            const preload = document.createElement("link");
-            preload.id = MOBILE_LOGO_PRELOAD_ID;
-            preload.rel = "preload";
-            preload.as = "image";
-            preload.href = MOBILE_LOGO_URL;
-            preload.setAttribute("fetchpriority", "high");
-            document.head.appendChild(preload);
+            const n = document.createElement("link");
+            ((n.id = MOBILE_LOGO_PRELOAD_ID),
+                (n.rel = "preload"),
+                (n.as = "image"),
+                (n.href = MOBILE_LOGO_URL),
+                n.setAttribute("fetchpriority", "high"),
+                document.head.appendChild(n));
         }
-
-        if (!document.getElementById("leviathan-mobile-fonts")) {
-            const hasJakarta = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
-                .some((l) => (l.href || "").includes("Plus+Jakarta+Sans"));
-            if (!hasJakarta) {
-                const fonts = document.createElement("link");
-                fonts.id = "leviathan-mobile-fonts";
-                fonts.rel = "stylesheet";
-                fonts.href = "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&family=Rajdhani:wght@500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap";
-                document.head.appendChild(fonts);
-            }
+        if (
+            !document.getElementById("leviathan-mobile-fonts") &&
+            !Array.from(document.querySelectorAll('link[rel="stylesheet"]')).some((n) =>
+                (n.href || "").includes("Plus+Jakarta+Sans"),
+            )
+        ) {
+            const n = document.createElement("link");
+            ((n.id = "leviathan-mobile-fonts"),
+                (n.rel = "stylesheet"),
+                (n.href =
+                    "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&family=Rajdhani:wght@500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap"),
+                document.head.appendChild(n));
         }
-    } catch (_) {}
+    } catch (n) {}
 }
-
 function primeMobileLogo() {
     ensureMobileLogoHints();
     try {
-        const img = new Image();
-        img.decoding = "async";
-        img.fetchPriority = "high";
-        img.src = MOBILE_LOGO_URL;
-    } catch (_) {}
+        const n = new Image();
+        ((n.decoding = "async"), (n.fetchPriority = "high"), (n.src = MOBILE_LOGO_URL));
+    } catch (n) {}
 }
-
 function hydrateMobileLogo() {
-    const img = document.querySelector(".logo-image");
-    if (!img) return;
-
-    const markLoaded = () => {
-        img.classList.add("is-loaded");
-        img.removeAttribute("data-loading");
+    const n = document.querySelector(".logo-image");
+    if (!n) return;
+    const e = () => {
+        (n.classList.add("is-loaded"), n.removeAttribute("data-loading"));
     };
-
-    if ("complete" in img && img.complete) {
-        markLoaded();
-        return;
-    }
-
-    img.setAttribute("data-loading", "1");
-    img.addEventListener("load", markLoaded, { once: true });
-    img.addEventListener("error", () => img.removeAttribute("data-loading"), { once: true });
+    "complete" in n && n.complete
+        ? e()
+        : (n.setAttribute("data-loading", "1"),
+          n.addEventListener("load", e, { once: !0 }),
+          n.addEventListener("error", () => n.removeAttribute("data-loading"), { once: !0 }));
 }
-
-
 const MOBILE_BRAND_LOCK_TEXT = "LEVIATHAN";
-
 function lockMobileBrandTitle() {
     try {
-        const title = document.querySelector(".m-abyss-title") || document.querySelector(".m-brand-title");
-        if (!title) return;
-
-        if (title.textContent !== MOBILE_BRAND_LOCK_TEXT) {
-            title.textContent = MOBILE_BRAND_LOCK_TEXT;
-        }
-
-        title.classList.add("notranslate");
-        title.setAttribute("translate", "no");
-        title.setAttribute("lang", "zxx");
-        title.setAttribute("aria-label", MOBILE_BRAND_LOCK_TEXT);
-        title.setAttribute("data-brand-lock", MOBILE_BRAND_LOCK_TEXT);
-        title.setAttribute("data-no-translate", "true");
-
-        const hero = title.closest(".m-abyss-hero, .m-hero");
-        if (hero) {
-            hero.classList.add("notranslate");
-            hero.setAttribute("translate", "no");
-            hero.setAttribute("data-no-translate", "true");
-        }
-
-        if (window.__leviathanBrandLockObserver) return;
-
-        const observer = new MutationObserver(() => {
-            const lockedTitle = document.querySelector("[data-brand-lock]");
-            if (lockedTitle && lockedTitle.textContent !== MOBILE_BRAND_LOCK_TEXT) {
-                lockedTitle.textContent = MOBILE_BRAND_LOCK_TEXT;
-            }
+        const n =
+            document.querySelector(".m-abyss-title") || document.querySelector(".m-brand-title");
+        if (!n) return;
+        ("LEVIATHAN" !== n.textContent && (n.textContent = "LEVIATHAN"),
+            n.classList.add("notranslate"),
+            n.setAttribute("translate", "no"),
+            n.setAttribute("lang", "zxx"),
+            n.setAttribute("aria-label", "LEVIATHAN"),
+            n.setAttribute("data-brand-lock", "LEVIATHAN"),
+            n.setAttribute("data-no-translate", "true"));
+        const e = n.closest(".m-abyss-hero, .m-hero");
+        if (
+            (e &&
+                (e.classList.add("notranslate"),
+                e.setAttribute("translate", "no"),
+                e.setAttribute("data-no-translate", "true")),
+            window.__leviathanBrandLockObserver)
+        )
+            return;
+        const t = new MutationObserver(() => {
+            const n = document.querySelector("[data-brand-lock]");
+            n && "LEVIATHAN" !== n.textContent && (n.textContent = "LEVIATHAN");
         });
-        observer.observe(title, { childList: true, characterData: true, subtree: true });
-        window.__leviathanBrandLockObserver = observer;
-    } catch (_) {}
+        (t.observe(n, { childList: !0, characterData: !0, subtree: !0 }),
+            (window.__leviathanBrandLockObserver = t));
+    } catch (n) {}
 }
-
 function applyMobilePerformanceMode() {
-    if (!document.body) return;
-    try {
-        const cores = navigator.hardwareConcurrency || 0;
-        const memory = Number(navigator['deviceMemory'] || 0);
-        const width = Math.min(window.innerWidth || 390, screen.width || 390);
-        const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-        const coarse = isMobileCoarsePointer();
-        const lowFx = reduceMotion || (cores && cores <= 4) || (memory && memory <= 4) || width <= 360;
-
-        document.body.classList.add('m-mf-lite', 'm-mf-plus');
-        document.body.classList.toggle('m-lowfx', !!lowFx);
-        document.body.classList.toggle('m-touch', !!coarse);
-        document.documentElement.style.setProperty('--m-vvh', `${window.innerHeight}px`);
-    } catch (_) {
-        document.body.classList.add('m-mf-lite', 'm-mf-plus');
-    }
+    if (document.body)
+        try {
+            const n = navigator.hardwareConcurrency || 0,
+                e = Number(navigator.deviceMemory || 0),
+                t = Math.min(window.innerWidth || 390, screen.width || 390),
+                a = !(
+                    !window.matchMedia ||
+                    !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+                ),
+                i = isMobileCoarsePointer(),
+                o = a || (n && n <= 4) || (e && e <= 4) || t <= 360;
+            (document.body.classList.add("m-mf-lite", "m-mf-plus"),
+                document.body.classList.toggle("m-lowfx", !!o),
+                document.body.classList.toggle("m-touch", !!i),
+                document.documentElement.style.setProperty("--m-vvh", `${window.innerHeight}px`));
+        } catch (n) {
+            document.body.classList.add("m-mf-lite", "m-mf-plus");
+        }
 }
-
-function isMobileTextField(el = document.activeElement) {
-    return !!el?.matches?.(
-        'input:not([type]), input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], input[type="tel"], input[type="number"], textarea, [contenteditable="true"]'
+function isMobileTextField(n = document.activeElement) {
+    return !!n?.matches?.(
+        'input:not([type]), input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="url"], input[type="tel"], input[type="number"], textarea, [contenteditable="true"]',
     );
 }
-
-function mById(id) {
-    return document.getElementById(id);
+function mById(n) {
+    return document.getElementById(n);
 }
-
-function mAsElement(value) {
-    return value && value.nodeType === 1 ? value : null;
+function mAsElement(n) {
+    return n && 1 === n.nodeType ? n : null;
 }
-
-function mClosest(value, selector) {
-    return mAsElement(value)?.closest?.(selector) || null;
+function mClosest(n, e) {
+    return mAsElement(n)?.closest?.(e) || null;
 }
-
-function mChecked(id, fallback = false) {
-    const el = mById(id);
-    return !!(el && "checked" in el ? el.checked : fallback);
+function mChecked(n, e = !1) {
+    const t = mById(n);
+    return !!(t && "checked" in t ? t.checked : e);
 }
-
-function mSetChecked(id, value) {
-    const el = mById(id);
-    if (el && "checked" in el) el.checked = !!value;
-    return el;
+function mSetChecked(n, e) {
+    const t = mById(n);
+    return (t && "checked" in t && (t.checked = !!e), t);
 }
-
-function mValue(id, fallback = "") {
-    const el = mById(id);
-    return el && "value" in el ? String(el.value ?? "") : fallback;
+function mValue(n, e = "") {
+    const t = mById(n);
+    return t && "value" in t ? String(t.value ?? "") : e;
 }
-
-function mSetValue(id, value) {
-    const el = mById(id);
-    if (el && "value" in el) el.value = value == null ? "" : String(value);
-    return el;
+function mSetValue(n, e) {
+    const t = mById(n);
+    return (t && "value" in t && (t.value = null == e ? "" : String(e)), t);
 }
-
-function mSetDisabled(id, value) {
-    const el = mById(id);
-    if (el && "disabled" in el) el.disabled = !!value;
-    return el;
+function mSetDisabled(n, e) {
+    const t = mById(n);
+    return (t && "disabled" in t && (t.disabled = !!e), t);
 }
-
-function mSetPlaceholder(id, value) {
-    const el = mById(id);
-    if (el && "placeholder" in el) el.placeholder = value == null ? "" : String(value);
-    return el;
+function mSetPlaceholder(n, e) {
+    const t = mById(n);
+    return (t && "placeholder" in t && (t.placeholder = null == e ? "" : String(e)), t);
 }
-
-function mSetText(id, value) {
-    const el = mById(id);
-    if (el) el.innerText = value == null ? "" : String(value);
-    return el;
+function mSetText(n, e) {
+    const t = mById(n);
+    return (t && (t.innerText = null == e ? "" : String(e)), t);
 }
-
-function mHasClass(id, cls) {
-    return !!mById(id)?.classList?.contains(cls);
+function mHasClass(n, e) {
+    return !!mById(n)?.classList?.contains(e);
 }
-
-function mAddClass(id, cls) {
-    const el = mById(id);
-    if (el) el.classList.add(cls);
-    return el;
+function mAddClass(n, e) {
+    const t = mById(n);
+    return (t && t.classList.add(e), t);
 }
-
-function mToggleClass(id, cls, force) {
-    const el = mById(id);
-    if (el) el.classList.toggle(cls, !!force);
-    return el;
+function mToggleClass(n, e, t) {
+    const a = mById(n);
+    return (a && a.classList.toggle(e, !!t), a);
 }
-
-function mSetStyle(el, prop, value) {
-    if (el?.style) el.style[prop] = String(value);
+function mSetStyle(n, e, t) {
+    n?.style && (n.style[e] = String(t));
 }
-
-function mVibrate(pattern) {
+function mVibrate(n) {
     try {
-        if (navigator && typeof navigator.vibrate === 'function') navigator.vibrate(pattern);
-    } catch (_) {}
+        navigator && "function" == typeof navigator.vibrate && navigator.vibrate(n);
+    } catch (n) {}
 }
-
 const mobileCSS = `
 :root {
-    /* Base Color Palette */
     --bg-dark: #020713;
     --bg-deep: #00030a;
     --text-main: #f0f7ff;
     --text-dim: #9fb4d7;
     --text-faint: rgba(159, 180, 215, 0.4);
 
-    /* Neons & Accents */
     --neon-cyan: #22d3ee;
     --neon-cyan-glow: rgba(34, 211, 238, 0.4);
     --neon-violet: #9b6cff;
@@ -257,13 +207,11 @@ const mobileCSS = `
     --neon-orange: #f59e0b;
     --neon-orange-glow: rgba(245, 158, 11, 0.4);
 
-    /* Semantic Branding */
     --primary: var(--neon-cyan);
     --primary-glow: var(--neon-cyan-glow);
     --secondary: var(--neon-violet);
     --secondary-glow: var(--neon-violet-glow);
 
-    /* Glass Surfaces */
     --glass-card: rgba(10, 20, 38, 0.6);
     --glass-card-hover: rgba(15, 28, 54, 0.7);
     --glass-card-active: rgba(16, 32, 62, 0.85);
@@ -271,12 +219,10 @@ const mobileCSS = `
     --glass-border-glow: rgba(34, 211, 238, 0.2);
     --glass-blur: blur(20px);
 
-    /* Corner Radius */
     --radius-lg: 20px;
     --radius-md: 14px;
     --radius-sm: 10px;
 
-    /* Safe Area Inset */
     --safe-bottom: env(safe-area-inset-bottom);
     --safe-top: env(safe-area-inset-top);
 }
@@ -619,7 +565,7 @@ body.m-sea-fallback #m-sea-css {
     border: 1px solid transparent !important;
     color: var(--text-dim) !important;
     cursor: pointer !important;
-    transition: all 0.28s cubic-bezier(0.22, 1, 0.36, 1) !important;
+    transition: background 0.28s ease, color 0.28s ease, border-color 0.28s ease !important;
 }
 
 .m-nav-item .mf-nav-emoji {
@@ -681,7 +627,7 @@ body.m-lowfx .m-dock-container {
 
 .m-hero {
     text-align: center;
-    padding: 12px 6px 20px 6px;
+    padding: 12px 6px 0px 6px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -692,7 +638,7 @@ body.m-lowfx .m-dock-container {
 .m-hero-panel {
     width: 100%;
     max-width: 400px;
-    padding: 15px 4px 20px 4px;
+    padding: 15px 4px 0px 4px;
     position: relative;
     background: transparent;
 }
@@ -1330,7 +1276,7 @@ body.m-lowfx .m-dock-container {
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 34px;
-    transition: .3s cubic-bezier(0.22, 1, 0.36, 1);
+    transition: background-color .3s cubic-bezier(0.22, 1, 0.36, 1), border-color .3s, box-shadow .3s;
 }
 .m-slider::before {
     position: absolute;
@@ -1341,7 +1287,7 @@ body.m-lowfx .m-dock-container {
     bottom: 3px;
     background-color: var(--text-dim);
     border-radius: 50%;
-    transition: .3s cubic-bezier(0.22, 1, 0.36, 1);
+    transition: background-color .3s cubic-bezier(0.22, 1, 0.36, 1), border-color .3s, box-shadow .3s;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
 }
 
@@ -2155,7 +2101,7 @@ body.m-lowfx .m-dock-container {
     height: 40px !important;
     padding: 0 6px 0 10px !important;
     gap: 8px !important;
-}
+ transform: translateZ(0); }
 .m-input-ico {
     font-size: 0.8rem !important;
     color: var(--text-dim) !important;
@@ -2169,7 +2115,7 @@ body.m-lowfx .m-dock-container {
     font-size: 0.8rem !important;
     padding: 0 !important;
     height: 100% !important;
-}
+ transform: translateZ(0); will-change: transform; }
 .m-input-tech::placeholder {
     color: var(--text-faint) !important;
 }
@@ -2524,2844 +2470,2084 @@ body.m-lowfx .m-dock-container {
     opacity: 0.45;
     pointer-events: none;
     filter: grayscale(0.85);
-}
-`;
-const mobileHTML = `
-<div id="m-sea-webgl" aria-hidden="true"></div>
-<div class="m-caustic" aria-hidden="true">
-    <div class="m-caustic-ray" style="--ray-x:8%;--ray-dur:14s;--ray-op:0.55;--ray-from:-12deg;--ray-to:6deg;width:50px;"></div>
-    <div class="m-caustic-ray" style="--ray-x:28%;--ray-dur:11s;--ray-op:0.40;--ray-from:-6deg;--ray-to:14deg;width:35px;"></div>
-    <div class="m-caustic-ray" style="--ray-x:50%;--ray-dur:16s;--ray-op:0.65;--ray-from:-10deg;--ray-to:8deg;width:65px;"></div>
-    <div class="m-caustic-ray" style="--ray-x:68%;--ray-dur:9s;--ray-op:0.35;--ray-from:5deg;--ray-to:-12deg;width:40px;"></div>
-    <div class="m-caustic-ray" style="--ray-x:85%;--ray-dur:13s;--ray-op:0.50;--ray-from:8deg;--ray-to:-6deg;width:55px;"></div>
-</div>
-<div class="m-ocean-particles" id="m-ocean-particles" aria-hidden="true"></div>
-<div id="app-container">
-    <div class="m-ptr" id="m-ptr-indicator"><i class="fas fa-arrow-down m-ptr-icon"></i></div>
-    <div class="m-content-wrapper">
-
-        <div class="m-content">
-            <div class="m-hero m-abyss-hero notranslate" aria-label="LEVIATHAN Kit" translate="no" data-no-translate="true">
-                <div class="m-hero-panel">
-                    <div class="logo-container m-abyss-logo">
-                        <span class="m-abyss-crown" aria-hidden="true"></span>
-                        <span class="m-cyber-corner cc-tl" aria-hidden="true"></span>
-                        <span class="m-cyber-corner cc-tr" aria-hidden="true"></span>
-                        <span class="m-cyber-corner cc-bl" aria-hidden="true"></span>
-                        <span class="m-cyber-corner cc-br" aria-hidden="true"></span>
-                        <img src="${MOBILE_LOGO_URL}" alt="LEVIATHAN Logo" class="logo-image notranslate" translate="no" data-no-translate="true" fetchpriority="high" decoding="sync" loading="eager" width="110" height="110">
-                        <div class="logo-particles" aria-hidden="true">
-                            <span class="logo-particle" style="left:18%; width:5px; height:5px; animation-delay:0s;"></span>
-                            <span class="logo-particle" style="left:38%; width:3px; height:3px; animation-delay:2.4s;"></span>
-                            <span class="logo-particle" style="left:63%; width:4px; height:4px; animation-delay:4.1s;"></span>
-                            <span class="logo-particle" style="left:78%; width:3px; height:3px; animation-delay:6.2s;"></span>
-                        </div>
-                    </div>
-                    <h1 class="m-brand-title m-abyss-title notranslate" translate="no" lang="zxx" data-brand-lock="LEVIATHAN" data-no-translate="true" aria-label="LEVIATHAN">LEVIATHAN</h1>
-                    <div class="m-brand-sub m-abyss-sub">Sovrano degli abissi</div>
-                    <div class="m-hero-badges">
-                        <span class="m-hero-badge">🐬 Real-Debrid</span>
-                        <span class="m-hero-badge">🧊 TorBox</span>
-                        <span class="m-hero-badge">🦈 P2P</span>
-                    </div>
-                    <div class="m-version-tag m-abyss-version" aria-label="Versione 3.2.0">
-                        <span class="m-v-dot" aria-hidden="true"></span>
-                        <span>v3.2.0</span>
-                    </div>
-                </div>
-            </div>
-
-            <div id="page-setup" class="m-page active">
-
-                <div class="m-hypervisor" style="margin-top:2px;">
-                    <div class="m-hyp-header">
-                        <span>🔑 ACCESSO & SERVIZI</span>
-                        <i class="fas fa-fingerprint m-hyp-icon"></i>
-                    </div>
-                    <p class="m-panel-desc"><b>Configura l'accesso</b> scegliendo Real-Debrid, TorBox o P2P. La verifica live ti conferma subito se la chiave è pronta ✨🔐.</p>
-
-                    <div class="m-cred-deck">
-                        <div class="m-cred-opt cred-rd m-srv-btn active" onclick="setMService('rd', this)">
-                            <div class="m-cred-icon">🐬</div>
-                            <div class="m-cred-name">🐬 REAL-DEBRID</div>
-                        </div>
-                        <div class="m-cred-opt cred-tb m-srv-btn" onclick="setMService('tb', this)">
-                            <div class="m-cred-icon">🧊</div>
-                            <div class="m-cred-name">🧊 TORBOX</div>
-                        </div>
-                        <div class="m-cred-opt cred-p2p m-srv-btn" onclick="setMService('p2p', this)">
-                            <div class="m-cred-icon">🦈</div>
-                            <div class="m-cred-name">🦈 P2P MODE</div>
-                        </div>
-                    </div>
-
-                    <div class="m-input-fuselage" id="box-apikey">
-                        <div class="m-if-label">🔑 API KEY</div>
-                        <div class="m-if-inner">
-                            <div class="m-if-icon"><i class="fas fa-key"></i></div>
-                            <input type="text" id="m-apiKey" class="m-if-field" placeholder="Incolla key" oninput="handleMobileApiKeyInput()">
-                            <div class="m-if-action" onclick="pasteTo('m-apiKey')"><i class="fas fa-paste"></i></div>
-                            <div class="m-get-link" onclick="openApiPage()">GET <i class="fas fa-external-link-alt"></i></div>
-                        </div>
-                        <div class="m-key-status idle" id="m-keyStatus" aria-live="polite" aria-atomic="true">
-                            <span class="m-key-status-dot"></span>
-                            <span id="m-keyStatusText">🐬 RD / 🧊 TB live check disponibile.</span>
-                        </div>
-                    </div>
-
-                    <div class="m-input-fuselage tmdb-box" id="box-tmdb">
-                        <div class="m-if-label opt">🎬 TMDB OPTIONAL</div>
-                        <div class="m-if-inner">
-                            <div class="m-if-icon"><i class="fas fa-film"></i></div>
-                            <input type="text" id="m-tmdb" class="m-if-field" placeholder="Personal key" oninput="updateLinkModalContent()">
-                            <div class="m-if-action" onclick="pasteTo('m-tmdb')"><i class="fas fa-paste"></i></div>
-                            <div class="m-get-link" style="color:var(--m-accent); border-color:var(--m-accent); background:rgba(155, 108, 255,0.05);" onclick="openApiPage('tmdb')">GET <i class="fas fa-external-link-alt"></i></div>
-                        </div>
-                    </div>
-
-                </div>
-
-                <div class="m-hypervisor">
-                     <div class="m-hyp-header">
-                        <span>🍿 PROVIDER STREAMS ✨</span>
-                        <i class="fas fa-cubes m-hyp-icon"></i>
-                    </div>
-                    <p class="m-panel-desc"><b>Scegli le sorgenti da attivare</b>: Leviathan unisce cinema, serie e anime italiani in un catalogo pulito, veloce e facile da controllare 🍿📺✨.</p>
-
-                    <div class="m-reactor-grid">
-
-                        <div class="m-reactor-module" id="mod-vix">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🍿</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🍿 StreamingCommunity</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableVix" onchange="updateStatus('m-enableVix','st-vix'); toggleModuleStyle('m-enableVix', 'mod-vix');">
-                                        <span class="m-slider"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Film e serie TV in italiano, catalogo ricco e player rapido 🍿.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
-                                </div>
-</div>
-                        </div>
-
-                        <div class="m-reactor-module" id="mod-cc">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎟️</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🎟️ CinemaCity</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableCc" onchange="updateStatus('m-enableCc','st-cc'); toggleModuleStyle('m-enableCc', 'mod-cc');">
-                                        <span class="m-slider"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Catalogo Film e Serie TV via CloudflareBypass e proxy CCCDN/Kraken 🎟️.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="m-reactor-module" id="mod-ghd">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🎬 GuardaHD</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableGhd" onchange="updateStatus('m-enableGhd','st-ghd'); toggleModuleStyle('m-enableGhd', 'mod-ghd');">
-                                        <span class="m-slider"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Film e serie TV in alta definizione, nuove uscite e schede ordinate 🎬.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="m-reactor-module" id="mod-gs">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📺</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">📺 GuardoSerie</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableGs" onchange="updateStatus('m-enableGs','st-gs'); toggleModuleStyle('m-enableGs', 'mod-gs');">
-                                        <span class="m-slider m-slider-purple"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Serie TV italiane organizzate per stagioni ed episodi 📺.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="m-reactor-module" id="mod-vidxgo">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎯</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🎯 VidxGo</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableVidxgo" onchange="updateStatus('m-enableVidxgo','st-vidxgo'); toggleModuleStyle('m-enableVidxgo', 'mod-vidxgo');">
-                                        <span class="m-slider m-slider-aqua"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Player diretto per film e serie TV, flusso risolto dal codice IMDb ⚡.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="m-reactor-module" id="mod-es">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌍</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🌍 Eurostreaming</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableEs" onchange="updateStatus('m-enableEs','st-es'); toggleModuleStyle('m-enableEs', 'mod-es');">
-                                        <span class="m-slider m-slider-aqua"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Portale italiano storico dedicato a serie TV e contenuti aggiornati ⭐.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="m-reactor-module" id="mod-cb01">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🎬 CB01</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableCb01" onchange="updateStatus('m-enableCb01','st-cb01'); toggleModuleStyle('m-enableCb01', 'mod-cb01');">
-                                        <span class="m-slider m-slider-aqua"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Ampio catalogo di film e serie TV, tra i riferimenti più noti in Italia 🎞️.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="m-reactor-module" id="mod-onlineserietv">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🖥️</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🖥️ OnlineSerieTV</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableOnlineserietv" onchange="updateStatus('m-enableOnlineserietv','st-onlineserietv'); toggleModuleStyle('m-enableOnlineserietv', 'mod-onlineserietv');">
-                                        <span class="m-slider m-slider-aqua"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Film e serie TV italiani, risolti via uprot/MaxStream con forward proxy 🛰️.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="m-reactor-module" id="mod-aw">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">⛩️</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">⛩️ AnimeWorld</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableAnimeWorld" onchange="updateStatus('m-enableAnimeWorld','st-aw'); toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');">
-                                        <span class="m-slider m-slider-aqua"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Anime sub-ita e doppiati, con schede serie e catalogo ampio 🌸.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="m-reactor-module" id="mod-au">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌊</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🌊 AnimeUnity</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableAnimeUnity" onchange="updateStatus('m-enableAnimeUnity','st-au'); toggleModuleStyle('m-enableAnimeUnity', 'mod-au');">
-                                        <span class="m-slider m-slider-aqua"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Anime, simulcast e doppiaggi con episodi aggiornati e ordinati 🪄.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="m-reactor-module" id="mod-as">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🪐</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🪐 AnimeSaturn</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableAnimeSaturn" onchange="updateStatus('m-enableAnimeSaturn','st-as'); toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');">
-                                        <span class="m-slider m-slider-aqua"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Anime classici e recenti, archivio ampio e consultazione rapida 🪐.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="m-reactor-module" id="mod-ti">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🐙</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🐙 ToonItalia</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableToonItalia" onchange="updateStatus('m-enableToonItalia','st-ti'); toggleModuleStyle('m-enableToonItalia', 'mod-ti');">
-                                        <span class="m-slider m-slider-aqua"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Cartoon e anime in italiano, con resolver VOE, LoadM/RPMShare e MaxStream.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="m-reactor-module" id="mod-gf">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎞️</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">🎞️ GuardaFlix</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableGf" onchange="updateStatus('m-enableGf','st-gf'); toggleModuleStyle('m-enableGf', 'mod-gf');">
-                                        <span class="m-slider m-slider-green"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Film in streaming con raccolte per genere e ultime uscite 🎥.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="m-reactor-module" id="mod-ads">
-                            <div class="m-reactor-core">
-                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📽️</span>
-                            </div>
-                            <div class="m-reactor-body">
-                                <div class="m-reactor-top">
-                                    <span class="m-reactor-title">📽️ Altadefinizione</span>
-                                    <label class="m-switch">
-                                        <input type="checkbox" id="m-enableAltadefinizione" onchange="updateStatus('m-enableAltadefinizione','st-ads'); toggleModuleStyle('m-enableAltadefinizione', 'mod-ads');">
-                                        <span class="m-slider"></span>
-                                    </label>
-                                </div>
-                                <span class="m-reactor-desc">Film e serie TV con catalogo aggiornato e navigazione intuitiva 🎟️.</span>
-                                <div class="m-tag-row">
-                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>
-                                </div>
-                            </div>
-                        </div>
-
-
-                    </div>
-                </div>
-
-                <div id="m-priority-panel" class="m-priority-wrapper">
-                    <div style="margin-top:5px; padding:15px; border-radius:16px; background:linear-gradient(90deg, rgba(155,108,255,0.1), transparent); border-left:4px solid var(--m-secondary);">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <div>
-                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">🚀 PRIORITÀ WEB</h5>
-                                <p id="priority-desc" style="margin:5px 0 0; font-size:0.8rem; color:var(--m-dim);">Mostra Web in cima</p>
-                            </div>
-                            <label class="m-switch">
-                                <input type="checkbox" id="m-vixLast" onchange="updatePriorityLabel()">
-                                <span class="m-slider" style="border-color:var(--m-secondary)"></span>
-                            </label>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="m-setup-actions-panel" aria-label="Azioni configurazione">
-                    <div class="m-setup-action-row">
-                        <button class="m-setup-action m-setup-install" onclick="mobileInstall()" type="button">
-                            <span>INSTALLA</span>
-                            <i class="fas fa-radiation"></i>
-                        </button>
-                    </div>
-
-                    <div class="m-setup-mini-console" aria-label="Console copia link">
-                        <div class="m-setup-mini-console-head">
-                            <span class="m-setup-mini-console-title"><i class="fas fa-terminal"></i> LINK CONFIGURAZIONE</span>
-                            <button class="m-setup-mini-copy" onclick="copyFromSetupPanel()" type="button">
-                                <i class="fas fa-copy"></i>
-                                <span>COPIA</span>
-                            </button>
-                        </div>
-                        <div class="m-setup-mini-console-body">
-                            <textarea id="m-setupGeneratedUrlBox" class="m-setup-mini-url" readonly>/// WAITING FOR DATA ///</textarea>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="m-credits-section">
-                    <div class="m-neural-frame">
-                        <div class="m-neural-header">
-                            <span class="m-nh-title">/// NEURAL SIGNATURE ///</span>
-                            <span class="m-nh-id">ID: L3V-2026</span>
-                        </div>
-
-                        <div class="m-neural-grid">
-                            <a href="https://github.com/LUC4N3X/stremio-leviathan-addon" target="_blank" class="m-dev-module">
-                                <img src="https://i.ibb.co/gLkrjxXT/Whats-App-Image-2026-01-12-at-20-15-37.jpg" alt="Dev" class="m-dev-img">
-                                <div class="m-dev-data">
-                                    <span class="m-dev-role">ARCHITECT</span>
-                                    <span class="m-dev-nick">LUC4N3X</span>
-                                </div>
-                                <i class="fab fa-github" style="position:absolute; right:10px; top:10px; color:rgba(255,255,255,0.1); font-size:1.5rem;"></i>
-                            </a>
-
-                            <a href="https://ko-fi.com/luc4n3x" target="_blank" class="m-support-module">
-                                <i class="fas fa-mug-hot m-kofi-ico"></i>
-                                <span class="m-support-txt">KO-FI</span>
-                            </a>
-                        </div>
-
-                        <a href="https://stremio-addons.net/addons/leviathan" target="_blank" class="m-star-btn">
-                            <i class="fas fa-star spin-star"></i>
-                            <span>LASCIAMI UNA STELLA</span>
-                            <i class="fas fa-star spin-star"></i>
-                        </a>
-
-                        <div class="m-neural-footer">LEVIATHAN SYSTEM v2.7.0</div>
-                    </div>
-                </div>
-            </div>
-
-            <div id="page-filters" class="m-page">
-
-                <div class="m-hypervisor">
-                    <div class="m-hyp-header">
-                        <span>⚙️ REGOLE STREAM</span>
-                        <i class="fas fa-microchip m-hyp-icon"></i>
-                    </div>
-
-                    <p class="m-panel-desc"><b>Controlla cosa mostra Leviathan</b>: ordina per qualità, scegli la lingua, limita i risultati e mantieni la lista pulita anche su smartphone 🎯📱.</p>
-
-                    <div class="m-flux-control">
-                        <div class="m-flux-grid">
-                            <div class="m-flux-opt active-bal" id="sort-balanced" onclick="setSortMode('balanced')">
-                                <i class="fas fa-dragon"></i>
-                                <span>🐉 SMART</span>
-                            </div>
-                            <div class="m-flux-opt" id="sort-resolution" onclick="setSortMode('resolution')">
-                                <i class="fas fa-gem"></i>
-                                <span>💎 QUALITY</span>
-                            </div>
-                            <div class="m-flux-opt" id="sort-size" onclick="setSortMode('size')">
-                                <i class="fas fa-hdd"></i>
-                                <span>💾 SIZE</span>
-                            </div>
-                        </div>
-
-                        <div class="m-flux-readout mode-bal" id="flux-readout-box">
-                            <i class="fas fa-info-circle m-fr-icon" id="flux-icon-display"></i>
-                            <div class="m-fr-text">
-                                <span class="m-fr-title" id="flux-title-display">STANDARD MODE</span>
-                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan ✨. Bilancia perfettamente qualita e velocita ⚡.</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="m-hyp-header" style="margin-top:25px; border-top:none; padding-top:0; margin-bottom:10px;">
-                         <span>🗣️ AUDIO &amp; LINGUA</span>
-                         <i class="fas fa-globe-americas m-hyp-icon"></i>
-                    </div>
-
-                    <div class="m-lang-grid">
-                        <div class="m-lang-opt active-ita" id="lang-ita" onclick="setLangMode('ita')">
-                            <i class="fas fa-flag"></i>
-                            <span class="m-lang-txt">🇮🇹 ITA</span>
-                        </div>
-                        <div class="m-lang-opt" id="lang-all" onclick="setLangMode('all')">
-                            <i class="fas fa-comments"></i>
-                            <span class="m-lang-txt">🇮🇹+🇬🇧</span>
-                        </div>
-                        <div class="m-lang-opt" id="lang-eng" onclick="setLangMode('eng')">
-                            <i class="fas fa-flag-usa"></i>
-                            <span class="m-lang-txt">🇬🇧 ENG</span>
-                        </div>
-                    </div>
-
-                    <div id="lang-desc-container" style="background: rgba(0,0,0,0.2); border-radius: 8px; padding: 10px; margin-bottom: 25px; border-left: 3px solid var(--m-primary);">
-                        <p id="lang-description" style="margin:0; font-size: 0.7rem; color: var(--m-dim); line-height: 1.3; font-family:'Outfit';">
-                             Cerca solo contenuti in Italiano 🇮🇹. Ignora tutto il resto.
-                        </p>
-                    </div>
-
-                    <div class="m-hyp-label">📺 Resolution Filter</div>
-                    <p class="m-hyp-desc">Tocca per escludere qualità specifiche.</p>
-
-                    <div class="m-chip-grid">
-                        <div class="m-qual-chip" id="mq-4k" onclick="toggleFilter('mq-4k')">💎 4K</div>
-                        <div class="m-qual-chip" id="mq-1080" onclick="toggleFilter('mq-1080')">🎬 1080p</div>
-                        <div class="m-qual-chip" id="mq-720" onclick="toggleFilter('mq-720')">📺 720p <span class="mini-tag">HD</span></div>
-                        <div class="m-qual-chip" id="mq-sd" onclick="toggleFilter('mq-sd')">📼 CAM/SD</div>
-                    </div>
-
-                    <div class="m-sys-grid">
-                        <div class="m-sys-row">
-                            <div class="m-sys-info"><h4><i class="fas fa-layer-group" style="color:var(--m-accent)"></i> 🧩 AIO Mode <span class="m-status-text" id="st-aio">OFF</span></h4><p>Formatta per AIOStreams 🧩</p></div>
-                            <label class="m-switch"><input type="checkbox" id="m-aioMode" onchange="updateStatus('m-aioMode','st-aio')"><span class="m-slider m-slider-purple"></span></label>
-                        </div>
-                        <div class="m-sys-row">
-                            <div class="m-sys-info"><h4><i class="fas fa-cloud" style="color:var(--m-primary)"></i> ☁️ Debrid Cloud <span class="m-status-text" id="st-savedcloud">OFF</span></h4><p>File salvati RD/TorBox 📦. Duplicati sempre esclusi ✨.</p></div>
-                            <label class="m-switch"><input type="checkbox" id="m-enableSavedCloud" onchange="toggleSavedCloud()"><span class="m-slider"></span></label>
-                        </div>
-                        <div class="m-cloud-mode-panel" id="m-savedCloudPanel">
-                            <div class="m-cloud-mode-grid">
-                                <div class="m-cloud-mode-btn active" id="m-cloud-smart" onclick="setSavedCloudMode('smart')">SMART<span>utile e pulito ✨</span></div>
-                                <div class="m-cloud-mode-btn" id="m-cloud-fallback" onclick="setSavedCloudMode('fallback')">FALLBACK<span>solo se trova poco 🪄</span></div>
-                                <div class="m-cloud-mode-btn" id="m-cloud-always" onclick="setSavedCloudMode('always')">ALWAYS<span>sempre no doppioni ✅</span></div>
-                            </div>
-                            <p class="m-cloud-note">Usa solo Real-Debrid/TorBox configurati ☁️. Anche in ALWAYS, se Leviathan ha gia lo stesso hash/file, il Cloud non viene mostrato ✨.</p>
-                        </div>
-                    </div>
-
-                    <div class="m-row" style="border:none; padding: 5px 0;">
-                        <div class="m-label">
-                            <h4><i class="fas fa-compress-arrows-alt" style="color:var(--m-error)"></i> 🚦 Signal Gate <span class="m-status-text" id="st-gate">OFF</span></h4>
-                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro qualità • max risultati per risoluzione 🚦</p>
-                        </div>
-                        <label class="m-switch"><input type="checkbox" id="m-gateActive" onchange="toggleGate()"><span class="m-slider"></span></label>
-                    </div>
-                    <div id="m-gate-wrapper" class="m-gate-wrapper">
-                        <div class="m-gate-control">
-                            <span style="font-size:0.8rem; color:#666;">1</span>
-                            <input type="range" min="1" max="20" value="3" class="m-range" id="m-gateVal" oninput="updateGateDisplay(this.value)">
-                            <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.2rem; color:var(--m-primary); width:30px; text-align:center;" id="m-gate-display">3</span>
-                        </div>
-                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualita 🎯. Utile per dispositivi lenti 📱.</p>
-                    </div>
-
-                    <div class="m-row" style="border:none; padding: 5px 0;">
-                        <div class="m-label">
-                            <h4><i class="fas fa-weight-hanging" style="color:var(--m-amber)"></i> ⚖️ Size Limit <span class="m-status-text" id="st-size">OFF</span></h4>
-                            <p style="font-size:0.65rem; color:var(--m-amber);">Filtro peso massimo • GB ⚖️</p>
-                        </div>
-                        <label class="m-switch"><input type="checkbox" id="m-sizeActive" onchange="toggleSize()"><span class="m-slider m-slider-aqua"></span></label>
-                    </div>
-                     <div id="m-size-wrapper" class="m-gate-wrapper">
-                        <div class="m-gate-control">
-                            <span style="font-size:0.8rem; color:#666;">1GB</span>
-                            <input type="range" min="1" max="100" step="1" value="0" class="m-range" id="m-sizeVal" oninput="updateSizeDisplay(this.value)" style="background:linear-gradient(90deg, #ff9900, #333)">
-                            <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.1rem; color:var(--m-amber); width:45px; text-align:center;" id="m-size-display">INF</span>
-                        </div>
-                         <p class="m-range-desc">Nasconde automaticamente tutti i file che superano la dimensione selezionata 📦.</p>
-                    </div>
-
-                </div>
-            </div>
-
-            <div id="page-network" class="m-page">
-
-                <div class="m-hypervisor">
-                    <div class="m-hyp-header">
-                        <span>🌐 SERVER & PROXY ✨</span>
-                        <i class="fas fa-network-wired m-hyp-icon" style="color:var(--m-secondary); border-color:rgba(155,108,255,0.35); background:rgba(155,108,255,0.08);"></i>
-                    </div>
-                    <p class="m-panel-desc"><b>Imposta un proxy personalizzato</b> solo quando serve. Altrimenti Leviathan resta sulla configurazione standard, più semplice e pulita 🌊.</p>
-
-                    <div style="padding:0 5px;">
-                        <p style="font-size:0.8rem; color:var(--m-dim); margin-bottom:20px; line-height:1.4;">
-                            Configura un endpoint proxy solo se ti serve un bridge personalizzato per le sorgenti italiane 🌊. Lascia vuoto per usare la gestione standard di Leviathan ✨.
-                        </p>
-
-                        <div class="m-field-group">
-                            <div class="m-field-header"><span class="m-field-label">🌐 SERVER URL</span></div>
-                            <div class="m-input-box">
-                                <i class="fas fa-server m-input-ico"></i>
-                                <input type="text" id="m-mfUrl" class="m-input-tech" placeholder="https://tuo-proxy.com" oninput="updateLinkModalContent()">
-                                <div class="m-paste-action" onclick="pasteTo('m-mfUrl')"><i class="fas fa-paste"></i></div>
-                            </div>
-                        </div>
-
-                        <div class="m-field-group">
-                            <div class="m-field-header"><span class="m-field-label">🔒 PASSWORD</span></div>
-                            <div class="m-input-box">
-                                <i class="fas fa-lock m-input-ico"></i>
-                                <input type="password" id="m-mfPass" class="m-input-tech" placeholder="********" oninput="updateLinkModalContent()">
-                            </div>
-                        </div>
-
-                        <div class="m-ghost-panel" id="ghost-zone-box">
-                            <div class="m-ghost-head">
-                                <div class="m-ghost-title"><i class="fas fa-user-shield"></i> 👻 DEBRID GHOST</div>
-                                <div class="m-ghost-status" id="ghost-status-text">VISIBLE</div>
-                            </div>
-                            <div style="display:flex; justify-content:space-between; align-items:center;">
-                                <p style="margin:0; font-size:0.75rem; color:rgba(255,255,255,0.6); max-width:70%;">
-                                    Instrada il traffico Debrid attraverso il Proxy configurato.
-                                </p>
-                                <label class="m-switch">
-                                    <input type="checkbox" id="m-proxyDebrid" onchange="updateGhostVisuals(); updateLinkModalContent()">
-                                    <span class="m-slider m-slider-purple"></span>
-                                </label>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="m-dock-container">
-        <div class="m-dock-nav">
-            <div class="m-nav-item active" onclick="navTo('setup', this)">
-                <span class="mf-nav-emoji">🧩</span><i class="fas fa-sliders-h"></i><span>SETUP</span>
-            </div>
-            <div class="m-nav-item" onclick="navTo('filters', this)">
-                <span class="mf-nav-emoji">🎛️</span><i class="fas fa-filter"></i><span>FILTRI</span>
-            </div>
-            <div class="m-nav-item" onclick="navTo('network', this)">
-                <span class="mf-nav-emoji">🌐</span><i class="fas fa-globe"></i><span>NET</span>
-            </div>
-        </div>
-    </div>
-
-    <div class="m-action-modal" id="m-link-modal">
-        <div class="m-am-card">
-            <div class="m-am-title">🔗 LINK GENERATO</div>
-            <div class="m-am-subtitle">Installa, copia o condividi la configurazione pronta</div>
-
-            <div class="m-flux-terminal">
-                <div class="m-flux-header">
-                    <span>🌊 OCEAN LINK STREAM</span>
-                    <i class="fas fa-network-wired"></i>
-                </div>
-                <textarea id="m-generatedUrlBox" class="m-flux-input" readonly>/// WAITING FOR DATA ///</textarea>
-            </div>
-
-            <div class="m-act-btn m-act-copy" onclick="copyFromModal()">
-                <i class="fas fa-copy"></i> 📋 COPIA NEGLI APPUNTI
-            </div>
-
-            <div class="m-act-btn m-act-close" onclick="closeLinkModal()">
-                ✕ CHIUDI
-            </div>
-        </div>
-    </div>
-
-    <div class="m-toast-container" id="m-toast-area"></div>
-
-</div>
-`;
-
-let mCurrentService = 'rd';
-let mScQuality = '1080';
-let mSortMode = 'balanced';
-let mSkin = 'leviathan';
-let mLangMode = 'ita';
-let mSavedCloudMode = 'smart';
+}`,
+    mobileHTML = `\n<div id="m-sea-webgl" aria-hidden="true"></div>\n<div class="m-caustic" aria-hidden="true">\n    <div class="m-caustic-ray" style="--ray-x:8%;--ray-dur:14s;--ray-op:0.55;--ray-from:-12deg;--ray-to:6deg;width:50px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:28%;--ray-dur:11s;--ray-op:0.40;--ray-from:-6deg;--ray-to:14deg;width:35px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:50%;--ray-dur:16s;--ray-op:0.65;--ray-from:-10deg;--ray-to:8deg;width:65px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:68%;--ray-dur:9s;--ray-op:0.35;--ray-from:5deg;--ray-to:-12deg;width:40px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:85%;--ray-dur:13s;--ray-op:0.50;--ray-from:8deg;--ray-to:-6deg;width:55px;"></div>\n</div>\n<div class="m-ocean-particles" id="m-ocean-particles" aria-hidden="true"></div>\n<div id="app-container">\n    <div class="m-ptr" id="m-ptr-indicator"><i class="fas fa-arrow-down m-ptr-icon"></i></div>\n    <div class="m-content-wrapper">\n\n        <div class="m-content">\n            <div class="m-hero m-abyss-hero notranslate" aria-label="LEVIATHAN Kit" translate="no" data-no-translate="true">\n                <div class="m-hero-panel">\n                    <div class="logo-container m-abyss-logo">\n                        <span class="m-abyss-crown" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-tl" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-tr" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-bl" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-br" aria-hidden="true"></span>\n                        <img src="${MOBILE_LOGO_URL}" alt="LEVIATHAN Logo" class="logo-image notranslate" translate="no" data-no-translate="true" fetchpriority="high" decoding="sync" loading="eager" width="110" height="110">\n                        <div class="logo-particles" aria-hidden="true">\n                            <span class="logo-particle" style="left:18%; width:5px; height:5px; animation-delay:0s;"></span>\n                            <span class="logo-particle" style="left:38%; width:3px; height:3px; animation-delay:2.4s;"></span>\n                            <span class="logo-particle" style="left:63%; width:4px; height:4px; animation-delay:4.1s;"></span>\n                            <span class="logo-particle" style="left:78%; width:3px; height:3px; animation-delay:6.2s;"></span>\n                        </div>\n                    </div>\n                    <h1 class="m-brand-title m-abyss-title notranslate" translate="no" lang="zxx" data-brand-lock="LEVIATHAN" data-no-translate="true" aria-label="LEVIATHAN">LEVIATHAN</h1>\n                    <div class="m-brand-sub m-abyss-sub">Sovrano degli abissi</div>\n                    <div class="m-hero-badges">\n                        <span class="m-hero-badge">🐬 Real-Debrid</span>\n                        <span class="m-hero-badge">🧊 TorBox</span>\n                        <span class="m-hero-badge">🦈 P2P</span>\n                    </div>\n                    <div class="m-version-tag m-abyss-version" aria-label="Versione 3.2.0">\n                        <span class="m-v-dot" aria-hidden="true"></span>\n                        <span>v3.2.0</span>\n                    </div>\n                </div>\n            </div>\n\n            <div id="page-setup" class="m-page active">\n\n                <div class="m-hypervisor" style="margin-top:2px;">\n                    <div class="m-hyp-header">\n                        <span>🔑 ACCESSO & SERVIZI</span>\n                        <i class="fas fa-fingerprint m-hyp-icon"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Configura l'accesso</b> scegliendo Real-Debrid, TorBox o P2P. La verifica live ti conferma subito se la chiave è pronta ✨🔐.</p>\n\n                    <div class="m-cred-deck">\n                        <div class="m-cred-opt cred-rd m-srv-btn active" onclick="setMService('rd', this)">\n                            <div class="m-cred-icon">🐬</div>\n                            <div class="m-cred-name">🐬 REAL-DEBRID</div>\n                        </div>\n                        <div class="m-cred-opt cred-tb m-srv-btn" onclick="setMService('tb', this)">\n                            <div class="m-cred-icon">🧊</div>\n                            <div class="m-cred-name">🧊 TORBOX</div>\n                        </div>\n                        <div class="m-cred-opt cred-p2p m-srv-btn" onclick="setMService('p2p', this)">\n                            <div class="m-cred-icon">🦈</div>\n                            <div class="m-cred-name">🦈 P2P MODE</div>\n                        </div>\n                    </div>\n\n                    <div class="m-input-fuselage" id="box-apikey">\n                        <div class="m-if-label">🔑 API KEY</div>\n                        <div class="m-if-inner">\n                            <div class="m-if-icon"><i class="fas fa-key"></i></div>\n                            <input type="text" id="m-apiKey" class="m-if-field" placeholder="Incolla key" oninput="handleMobileApiKeyInput()">\n                            <div class="m-if-action" onclick="pasteTo('m-apiKey')"><i class="fas fa-paste"></i></div>\n                            <div class="m-get-link" onclick="openApiPage()">GET <i class="fas fa-external-link-alt"></i></div>\n                        </div>\n                        <div class="m-key-status idle" id="m-keyStatus" aria-live="polite" aria-atomic="true">\n                            <span class="m-key-status-dot"></span>\n                            <span id="m-keyStatusText">🐬 RD / 🧊 TB live check disponibile.</span>\n                        </div>\n                    </div>\n\n                    <div class="m-input-fuselage tmdb-box" id="box-tmdb">\n                        <div class="m-if-label opt">🎬 TMDB OPTIONAL</div>\n                        <div class="m-if-inner">\n                            <div class="m-if-icon"><i class="fas fa-film"></i></div>\n                            <input type="text" id="m-tmdb" class="m-if-field" placeholder="Personal key" oninput="updateLinkModalContent()">\n                            <div class="m-if-action" onclick="pasteTo('m-tmdb')"><i class="fas fa-paste"></i></div>\n                            <div class="m-get-link" style="color:var(--m-accent); border-color:var(--m-accent); background:rgba(155, 108, 255,0.05);" onclick="openApiPage('tmdb')">GET <i class="fas fa-external-link-alt"></i></div>\n                        </div>\n                    </div>\n\n                </div>\n\n                <div class="m-hypervisor">\n                     <div class="m-hyp-header">\n                        <span>🍿 PROVIDER STREAMS ✨</span>\n                        <i class="fas fa-cubes m-hyp-icon"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Scegli le sorgenti da attivare</b>: Leviathan unisce cinema, serie e anime italiani in un catalogo pulito, veloce e facile da controllare 🍿📺✨.</p>\n\n                    <div class="m-reactor-grid">\n\n                        <div class="m-reactor-module" id="mod-vix">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🍿</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🍿 StreamingCommunity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableVix" onchange="updateStatus('m-enableVix','st-vix'); toggleModuleStyle('m-enableVix', 'mod-vix');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV in italiano, catalogo ricco e player rapido 🍿.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n</div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-cc">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎟️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎟️ CinemaCity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableCc" onchange="updateStatus('m-enableCc','st-cc'); toggleModuleStyle('m-enableCc', 'mod-cc');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Catalogo Film e Serie TV via CloudflareBypass e proxy CCCDN/Kraken 🎟️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ghd">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎬 GuardaHD</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGhd" onchange="updateStatus('m-enableGhd','st-ghd'); toggleModuleStyle('m-enableGhd', 'mod-ghd');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV in alta definizione, nuove uscite e schede ordinate 🎬.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-gs">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📺</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">📺 GuardoSerie</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGs" onchange="updateStatus('m-enableGs','st-gs'); toggleModuleStyle('m-enableGs', 'mod-gs');">\n                                        <span class="m-slider m-slider-purple"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Serie TV italiane organizzate per stagioni ed episodi 📺.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-vidxgo">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎯</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎯 VidxGo</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableVidxgo" onchange="updateStatus('m-enableVidxgo','st-vidxgo'); toggleModuleStyle('m-enableVidxgo', 'mod-vidxgo');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Player diretto per film e serie TV, flusso risolto dal codice IMDb ⚡.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-es">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌍</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🌍 Eurostreaming</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableEs" onchange="updateStatus('m-enableEs','st-es'); toggleModuleStyle('m-enableEs', 'mod-es');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Portale italiano storico dedicato a serie TV e contenuti aggiornati ⭐.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-cb01">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎬 CB01</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableCb01" onchange="updateStatus('m-enableCb01','st-cb01'); toggleModuleStyle('m-enableCb01', 'mod-cb01');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Ampio catalogo di film e serie TV, tra i riferimenti più noti in Italia 🎞️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-onlineserietv">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🖥️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🖥️ OnlineSerieTV</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableOnlineserietv" onchange="updateStatus('m-enableOnlineserietv','st-onlineserietv'); toggleModuleStyle('m-enableOnlineserietv', 'mod-onlineserietv');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV italiani, risolti via uprot/MaxStream con forward proxy 🛰️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-aw">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">⛩️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">⛩️ AnimeWorld</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeWorld" onchange="updateStatus('m-enableAnimeWorld','st-aw'); toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime sub-ita e doppiati, con schede serie e catalogo ampio 🌸.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-au">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌊</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🌊 AnimeUnity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeUnity" onchange="updateStatus('m-enableAnimeUnity','st-au'); toggleModuleStyle('m-enableAnimeUnity', 'mod-au');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime, simulcast e doppiaggi con episodi aggiornati e ordinati 🪄.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-as">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🪐</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🪐 AnimeSaturn</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeSaturn" onchange="updateStatus('m-enableAnimeSaturn','st-as'); toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime classici e recenti, archivio ampio e consultazione rapida 🪐.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ti">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🐙</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🐙 ToonItalia</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableToonItalia" onchange="updateStatus('m-enableToonItalia','st-ti'); toggleModuleStyle('m-enableToonItalia', 'mod-ti');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Cartoon e anime in italiano, con resolver VOE, LoadM/RPMShare e MaxStream.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-gf">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎞️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎞️ GuardaFlix</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGf" onchange="updateStatus('m-enableGf','st-gf'); toggleModuleStyle('m-enableGf', 'mod-gf');">\n                                        <span class="m-slider m-slider-green"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film in streaming con raccolte per genere e ultime uscite 🎥.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ads">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📽️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">📽️ Altadefinizione</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAltadefinizione" onchange="updateStatus('m-enableAltadefinizione','st-ads'); toggleModuleStyle('m-enableAltadefinizione', 'mod-ads');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV con catalogo aggiornato e navigazione intuitiva 🎟️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n\n                    </div>\n                </div>\n\n                <div id="m-priority-panel" class="m-priority-wrapper">\n                    <div style="margin-top:5px; padding:15px; border-radius:16px; background:linear-gradient(90deg, rgba(155,108,255,0.1), transparent); border-left:4px solid var(--m-secondary);">\n                        <div style="display:flex; justify-content:space-between; align-items:center;">\n                            <div>\n                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">🚀 PRIORITÀ WEB</h5>\n                                <p id="priority-desc" style="margin:5px 0 0; font-size:0.8rem; color:var(--m-dim);">Mostra Web in cima</p>\n                            </div>\n                            <label class="m-switch">\n                                <input type="checkbox" id="m-vixLast" onchange="updatePriorityLabel()">\n                                <span class="m-slider" style="border-color:var(--m-secondary)"></span>\n                            </label>\n                        </div>\n                    </div>\n                </div>\n\n                <div class="m-setup-actions-panel" aria-label="Azioni configurazione">\n                    <div class="m-setup-action-row">\n                        <button class="m-setup-action m-setup-install" onclick="mobileInstall()" type="button">\n                            <span>INSTALLA</span>\n                            <i class="fas fa-radiation"></i>\n                        </button>\n                    </div>\n\n                    <div class="m-setup-mini-console" aria-label="Console copia link">\n                        <div class="m-setup-mini-console-head">\n                            <span class="m-setup-mini-console-title"><i class="fas fa-terminal"></i> LINK CONFIGURAZIONE</span>\n                            <button class="m-setup-mini-copy" onclick="copyFromSetupPanel()" type="button">\n                                <i class="fas fa-copy"></i>\n                                <span>COPIA</span>\n                            </button>\n                        </div>\n                        <div class="m-setup-mini-console-body">\n                            <textarea id="m-setupGeneratedUrlBox" class="m-setup-mini-url" readonly>/// WAITING FOR DATA ///</textarea>\n                        </div>\n                    </div>\n                </div>\n\n                <div class="m-credits-section">\n                    <div class="m-neural-frame">\n                        <div class="m-neural-header">\n                            <span class="m-nh-title">/// NEURAL SIGNATURE ///</span>\n                            <span class="m-nh-id">ID: L3V-2026</span>\n                        </div>\n\n                        <div class="m-neural-grid">\n                            <a href="https://github.com/LUC4N3X/stremio-leviathan-addon" target="_blank" class="m-dev-module">\n                                <img src="https://i.ibb.co/gLkrjxXT/Whats-App-Image-2026-01-12-at-20-15-37.jpg" alt="Dev" class="m-dev-img">\n                                <div class="m-dev-data">\n                                    <span class="m-dev-role">ARCHITECT</span>\n                                    <span class="m-dev-nick">LUC4N3X</span>\n                                </div>\n                                <i class="fab fa-github" style="position:absolute; right:10px; top:10px; color:rgba(255,255,255,0.1); font-size:1.5rem;"></i>\n                            </a>\n\n                            <a href="https://ko-fi.com/luc4n3x" target="_blank" class="m-support-module">\n                                <i class="fas fa-mug-hot m-kofi-ico"></i>\n                                <span class="m-support-txt">KO-FI</span>\n                            </a>\n                        </div>\n\n                        <a href="https://stremio-addons.net/addons/leviathan" target="_blank" class="m-star-btn">\n                            <i class="fas fa-star spin-star"></i>\n                            <span>LASCIAMI UNA STELLA</span>\n                            <i class="fas fa-star spin-star"></i>\n                        </a>\n\n                        <div class="m-neural-footer">LEVIATHAN SYSTEM v2.7.0</div>\n                    </div>\n                </div>\n            </div>\n\n            <div id="page-filters" class="m-page">\n\n                <div class="m-hypervisor">\n                    <div class="m-hyp-header">\n                        <span>⚙️ REGOLE STREAM</span>\n                        <i class="fas fa-microchip m-hyp-icon"></i>\n                    </div>\n\n                    <p class="m-panel-desc"><b>Controlla cosa mostra Leviathan</b>: ordina per qualità, scegli la lingua, limita i risultati e mantieni la lista pulita anche su smartphone 🎯📱.</p>\n\n                    <div class="m-flux-control">\n                        <div class="m-flux-grid">\n                            <div class="m-flux-opt active-bal" id="sort-balanced" onclick="setSortMode('balanced')">\n                                <i class="fas fa-dragon"></i>\n                                <span>🐉 SMART</span>\n                            </div>\n                            <div class="m-flux-opt" id="sort-resolution" onclick="setSortMode('resolution')">\n                                <i class="fas fa-gem"></i>\n                                <span>💎 QUALITY</span>\n                            </div>\n                            <div class="m-flux-opt" id="sort-size" onclick="setSortMode('size')">\n                                <i class="fas fa-hdd"></i>\n                                <span>💾 SIZE</span>\n                            </div>\n                        </div>\n\n                        <div class="m-flux-readout mode-bal" id="flux-readout-box">\n                            <i class="fas fa-info-circle m-fr-icon" id="flux-icon-display"></i>\n                            <div class="m-fr-text">\n                                <span class="m-fr-title" id="flux-title-display">STANDARD MODE</span>\n                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan ✨. Bilancia perfettamente qualita e velocita ⚡.</span>\n                            </div>\n                        </div>\n                    </div>\n\n                    <div class="m-hyp-header" style="margin-top:25px; border-top:none; padding-top:0; margin-bottom:10px;">\n                         <span>🗣️ AUDIO &amp; LINGUA</span>\n                         <i class="fas fa-globe-americas m-hyp-icon"></i>\n                    </div>\n\n                    <div class="m-lang-grid">\n                        <div class="m-lang-opt active-ita" id="lang-ita" onclick="setLangMode('ita')">\n                            <i class="fas fa-flag"></i>\n                            <span class="m-lang-txt">🇮🇹 ITA</span>\n                        </div>\n                        <div class="m-lang-opt" id="lang-all" onclick="setLangMode('all')">\n                            <i class="fas fa-comments"></i>\n                            <span class="m-lang-txt">🇮🇹+🇬🇧</span>\n                        </div>\n                        <div class="m-lang-opt" id="lang-eng" onclick="setLangMode('eng')">\n                            <i class="fas fa-flag-usa"></i>\n                            <span class="m-lang-txt">🇬🇧 ENG</span>\n                        </div>\n                    </div>\n\n                    <div id="lang-desc-container" style="background: rgba(0,0,0,0.2); border-radius: 8px; padding: 10px; margin-bottom: 25px; border-left: 3px solid var(--m-primary);">\n                        <p id="lang-description" style="margin:0; font-size: 0.7rem; color: var(--m-dim); line-height: 1.3; font-family:'Outfit';">\n                             Cerca solo contenuti in Italiano 🇮🇹. Ignora tutto il resto.\n                        </p>\n                    </div>\n\n                    <div class="m-hyp-label">📺 Resolution Filter</div>\n                    <p class="m-hyp-desc">Tocca per escludere qualità specifiche.</p>\n\n                    <div class="m-chip-grid">\n                        <div class="m-qual-chip" id="mq-4k" onclick="toggleFilter('mq-4k')">💎 4K</div>\n                        <div class="m-qual-chip" id="mq-1080" onclick="toggleFilter('mq-1080')">🎬 1080p</div>\n                        <div class="m-qual-chip" id="mq-720" onclick="toggleFilter('mq-720')">📺 720p <span class="mini-tag">HD</span></div>\n                        <div class="m-qual-chip" id="mq-sd" onclick="toggleFilter('mq-sd')">📼 CAM/SD</div>\n                    </div>\n\n                    <div class="m-sys-grid">\n                        <div class="m-sys-row">\n                            <div class="m-sys-info"><h4><i class="fas fa-layer-group" style="color:var(--m-accent)"></i> 🧩 AIO Mode <span class="m-status-text" id="st-aio">OFF</span></h4><p>Formatta per AIOStreams 🧩</p></div>\n                            <label class="m-switch"><input type="checkbox" id="m-aioMode" onchange="updateStatus('m-aioMode','st-aio')"><span class="m-slider m-slider-purple"></span></label>\n                        </div>\n                        <div class="m-sys-row">\n                            <div class="m-sys-info"><h4><i class="fas fa-cloud" style="color:var(--m-primary)"></i> ☁️ Debrid Cloud <span class="m-status-text" id="st-savedcloud">OFF</span></h4><p>File salvati RD/TorBox 📦. Duplicati sempre esclusi ✨.</p></div>\n                            <label class="m-switch"><input type="checkbox" id="m-enableSavedCloud" onchange="toggleSavedCloud()"><span class="m-slider"></span></label>\n                        </div>\n                        <div class="m-cloud-mode-panel" id="m-savedCloudPanel">\n                            <div class="m-cloud-mode-grid">\n                                <div class="m-cloud-mode-btn active" id="m-cloud-smart" onclick="setSavedCloudMode('smart')">SMART<span>utile e pulito ✨</span></div>\n                                <div class="m-cloud-mode-btn" id="m-cloud-fallback" onclick="setSavedCloudMode('fallback')">FALLBACK<span>solo se trova poco 🪄</span></div>\n                                <div class="m-cloud-mode-btn" id="m-cloud-always" onclick="setSavedCloudMode('always')">ALWAYS<span>sempre no doppioni ✅</span></div>\n                            </div>\n                            <p class="m-cloud-note">Usa solo Real-Debrid/TorBox configurati ☁️. Anche in ALWAYS, se Leviathan ha gia lo stesso hash/file, il Cloud non viene mostrato ✨.</p>\n                        </div>\n                    </div>\n\n                    <div class="m-row" style="border:none; padding: 5px 0;">\n                        <div class="m-label">\n                            <h4><i class="fas fa-compress-arrows-alt" style="color:var(--m-error)"></i> 🚦 Signal Gate <span class="m-status-text" id="st-gate">OFF</span></h4>\n                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro qualità • max risultati per risoluzione 🚦</p>\n                        </div>\n                        <label class="m-switch"><input type="checkbox" id="m-gateActive" onchange="toggleGate()"><span class="m-slider"></span></label>\n                    </div>\n                    <div id="m-gate-wrapper" class="m-gate-wrapper">\n                        <div class="m-gate-control">\n                            <span style="font-size:0.8rem; color:#666;">1</span>\n                            <input type="range" min="1" max="20" value="3" class="m-range" id="m-gateVal" oninput="updateGateDisplay(this.value)">\n                            <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.2rem; color:var(--m-primary); width:30px; text-align:center;" id="m-gate-display">3</span>\n                        </div>\n                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualita 🎯. Utile per dispositivi lenti 📱.</p>\n                    </div>\n\n                    <div class="m-row" style="border:none; padding: 5px 0;">\n                        <div class="m-label">\n                            <h4><i class="fas fa-weight-hanging" style="color:var(--m-amber)"></i> ⚖️ Size Limit <span class="m-status-text" id="st-size">OFF</span></h4>\n                            <p style="font-size:0.65rem; color:var(--m-amber);">Filtro peso massimo • GB ⚖️</p>\n                        </div>\n                        <label class="m-switch"><input type="checkbox" id="m-sizeActive" onchange="toggleSize()"><span class="m-slider m-slider-aqua"></span></label>\n                    </div>\n                     <div id="m-size-wrapper" class="m-gate-wrapper">\n                        <div class="m-gate-control">\n                            <span style="font-size:0.8rem; color:#666;">1GB</span>\n                            <input type="range" min="1" max="100" step="1" value="0" class="m-range" id="m-sizeVal" oninput="updateSizeDisplay(this.value)" style="background:linear-gradient(90deg, #ff9900, #333)">\n                            <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.1rem; color:var(--m-amber); width:45px; text-align:center;" id="m-size-display">INF</span>\n                        </div>\n                         <p class="m-range-desc">Nasconde automaticamente tutti i file che superano la dimensione selezionata 📦.</p>\n                    </div>\n\n                </div>\n            </div>\n\n            <div id="page-network" class="m-page">\n\n                <div class="m-hypervisor">\n                    <div class="m-hyp-header">\n                        <span>🌐 SERVER & PROXY ✨</span>\n                        <i class="fas fa-network-wired m-hyp-icon" style="color:var(--m-secondary); border-color:rgba(155,108,255,0.35); background:rgba(155,108,255,0.08);"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Imposta un proxy personalizzato</b> solo quando serve. Altrimenti Leviathan resta sulla configurazione standard, più semplice e pulita 🌊.</p>\n\n                    <div style="padding:0 5px;">\n                        <p style="font-size:0.8rem; color:var(--m-dim); margin-bottom:20px; line-height:1.4;">\n                            Configura un endpoint proxy solo se ti serve un bridge personalizzato per le sorgenti italiane 🌊. Lascia vuoto per usare la gestione standard di Leviathan ✨.\n                        </p>\n\n                        <div class="m-field-group">\n                            <div class="m-field-header"><span class="m-field-label">🌐 SERVER URL</span></div>\n                            <div class="m-input-box">\n                                <i class="fas fa-server m-input-ico"></i>\n                                <input type="text" id="m-mfUrl" class="m-input-tech" placeholder="https://tuo-proxy.com" oninput="updateLinkModalContent()">\n                                <div class="m-paste-action" onclick="pasteTo('m-mfUrl')"><i class="fas fa-paste"></i></div>\n                            </div>\n                        </div>\n\n                        <div class="m-field-group">\n                            <div class="m-field-header"><span class="m-field-label">🔒 PASSWORD</span></div>\n                            <div class="m-input-box">\n                                <i class="fas fa-lock m-input-ico"></i>\n                                <input type="password" id="m-mfPass" class="m-input-tech" placeholder="********" oninput="updateLinkModalContent()">\n                            </div>\n                        </div>\n\n                        <div class="m-ghost-panel" id="ghost-zone-box">\n                            <div class="m-ghost-head">\n                                <div class="m-ghost-title"><i class="fas fa-user-shield"></i> 👻 DEBRID GHOST</div>\n                                <div class="m-ghost-status" id="ghost-status-text">VISIBLE</div>\n                            </div>\n                            <div style="display:flex; justify-content:space-between; align-items:center;">\n                                <p style="margin:0; font-size:0.75rem; color:rgba(255,255,255,0.6); max-width:70%;">\n                                    Instrada il traffico Debrid attraverso il Proxy configurato.\n                                </p>\n                                <label class="m-switch">\n                                    <input type="checkbox" id="m-proxyDebrid" onchange="updateGhostVisuals(); updateLinkModalContent()">\n                                    <span class="m-slider m-slider-purple"></span>\n                                </label>\n                            </div>\n                        </div>\n                    </div>\n                </div>\n            </div>\n        </div>\n    </div>\n\n    <div class="m-dock-container">\n        <div class="m-dock-nav">\n            <div class="m-nav-item active" onclick="navTo('setup', this)">\n                <span class="mf-nav-emoji">🧩</span><i class="fas fa-sliders-h"></i><span>SETUP</span>\n            </div>\n            <div class="m-nav-item" onclick="navTo('filters', this)">\n                <span class="mf-nav-emoji">🎛️</span><i class="fas fa-filter"></i><span>FILTRI</span>\n            </div>\n            <div class="m-nav-item" onclick="navTo('network', this)">\n                <span class="mf-nav-emoji">🌐</span><i class="fas fa-globe"></i><span>NET</span>\n            </div>\n        </div>\n    </div>\n\n    <div class="m-action-modal" id="m-link-modal">\n        <div class="m-am-card">\n            <div class="m-am-title">🔗 LINK GENERATO</div>\n            <div class="m-am-subtitle">Installa, copia o condividi la configurazione pronta</div>\n\n            <div class="m-flux-terminal">\n                <div class="m-flux-header">\n                    <span>🌊 OCEAN LINK STREAM</span>\n                    <i class="fas fa-network-wired"></i>\n                </div>\n                <textarea id="m-generatedUrlBox" class="m-flux-input" readonly>/// WAITING FOR DATA ///</textarea>\n            </div>\n\n            <div class="m-act-btn m-act-copy" onclick="copyFromModal()">\n                <i class="fas fa-copy"></i> 📋 COPIA NEGLI APPUNTI\n            </div>\n\n            <div class="m-act-btn m-act-close" onclick="closeLinkModal()">\n                ✕ CHIUDI\n            </div>\n        </div>\n    </div>\n\n    <div class="m-toast-container" id="m-toast-area"></div>\n\n</div>\n`;
+let mCurrentService = "rd",
+    mScQuality = "1080",
+    mSortMode = "balanced",
+    mSkin = "leviathan",
+    mLangMode = "ita",
+    mSavedCloudMode = "smart";
 const mDebridValidationState = {
-    timer: null,
-    requestId: 0,
-    status: 'idle',
-    resolvedKey: '',
-    resolvedService: ''
-};
-
-const fluxData = {
-    'balanced': {
-        title: "🐉 SMART BALANCE",
-        desc: "Profilo intelligente: bilancia qualità, seed/cache e velocità.",
-        icon: "fa-dragon"
+        timer: null,
+        requestId: 0,
+        status: "idle",
+        resolvedKey: "",
+        resolvedService: "",
     },
-    'resolution': {
-        title: "💎 QUALITY FIRST",
-        desc: "4K e 1080p sopra: priorità alla qualità visiva.",
-        icon: "fa-gem"
+    fluxData = {
+        balanced: {
+            title: "🐉 SMART BALANCE",
+            desc: "Profilo intelligente: bilancia qualità, seed/cache e velocità.",
+            icon: "fa-dragon",
+        },
+        resolution: {
+            title: "💎 QUALITY FIRST",
+            desc: "4K e 1080p sopra: priorità alla qualità visiva.",
+            icon: "fa-gem",
+        },
+        size: {
+            title: "💾 BITRATE HEAVY",
+            desc: "Ordina per peso/file: utile per massimo bitrate.",
+            icon: "fa-hdd",
+        },
     },
-    'size': {
-        title: "💾 BITRATE HEAVY",
-        desc: "Ordina per peso/file: utile per massimo bitrate.",
-        icon: "fa-hdd"
-    }
-};
-
-const langDescriptions = {
-    'ita': "🇮🇹 Solo contenuti in Italiano. Ignora tutto il resto.",
-    'all': "🇮🇹 Prima Italiano, poi 🇬🇧 Inglese se serve.",
-    'eng': "🇬🇧 Solo contenuti in Inglese."
-};
-
-function toStylized(text, type = 'std') {
-            if (!text) return "";
-            text = String(text);
-            const maps = {
-                'bold': {
-                    nums: {'0':'𝟬','1':'𝟭','2':'𝟮','3':'𝟯','4':'𝟰','5':'𝟱','6':'𝟲','7':'𝟳','8':'𝟴','9':'𝟵'},
-                    chars: {'A':'𝗔','B':'𝗕','C':'𝗖','D':'𝗗','E':'𝗘','F':'𝗙','G':'𝗚','H':'𝗛','I':'𝗜','J':'𝗝','K':'𝗞','L':'𝗟','M':'𝗠','N':'𝗡','O':'𝗢','P':'𝗣','Q':'𝗤','R':'𝗥','S':'𝗦','T':'𝗧','U':'𝗨','V':'𝗩','W':'𝗪','X':'𝗫','Y':'𝗬','Z':'𝗭','a':'𝗮','b':'𝗯','c':'𝗰','d':'𝗱','e':'𝗲','f':'𝗳','g':'𝗴','h':'𝗵','i':'𝗶','j':'𝗷','k':'𝗸','l':'𝗹','m':'𝗺','n':'𝗻','o':'𝗼','p':'𝗽','q':'𝗾','r':'𝗿','s':'𝘀','t':'𝘁','u':'𝘂','v':'𝘃','w':'ᴡ','x':'𝘅','y':'𝘆','z':'𝘇'}
-                },
-                'spaced': {
-
-                    nums: {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9'},
-                    chars: {'A':'𝗔','B':'𝗕','C':'𝗖','D':'𝗗','E':'𝗘','F':'𝗙','G':'𝗚','H':'𝗛','I':'𝗜','J':'𝗝','K':'𝗞','L':'𝗟','M':'𝗠','N':'𝗡','O':'𝗢','P':'𝗣','Q':'𝗤','R':'𝗥','S':'𝗦','T':'𝗧','U':'𝗨','V':'𝗩','W':'𝗪','X':'𝗫','Y':'𝗬','Z':'𝗭'}
-                },
-                'small': {
-                    nums: {'0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9'},
-                    chars: {'A':'ᴀ','B':'ʙ','C':'ᴄ','D':'ᴅ','E':'ᴇ','F':'ꜰ','G':'ɢ','H':'ʜ','I':'ɪ','J':'ᴊ','K':'ᴋ','L':'ʟ','M':'ᴍ','N':'ɴ','O':'ᴏ','P':'ᴘ','Q':'ǫ','R':'ʀ','S':'ꜱ','T':'ᴛ','U':'ᴜ','V':'ᴠ','W':'ᴡ','X':'x','Y':'ʏ','Z':'ᴢ','a':'ᴀ','b':'ʙ','c':'ᴄ','d':'ᴅ','e':'ᴇ','f':'ꜰ','g':'ɢ','h':'ʜ','i':'ɪ','j':'ᴊ','k':'ᴋ','l':'ʟ','m':'ᴍ','n':'ɴ','o':'ᴏ','p':'ᴘ','q':'ǫ','r':'ʀ','s':'ꜱ','t':'ᴛ','u':'ᴜ','v':'ᴠ','w':'ᴡ','x':'x','y':'ʏ','z':'ᴢ'}
-                }
-            };
-            if (type === 'spaced') {
-                return text.split('').map(c => {
-                    const map = maps['spaced'];
-                    const char = (/[0-9]/.test(c) ? map.nums[c] : map.chars[c]) || c;
-                    return char + ' ';
-                }).join('').trim();
-            }
-            const map = maps[type] || maps['bold'];
-            return text.split('').map(c => {
-                if (/[0-9]/.test(c)) return map.nums[c] || c;
-                return map.chars[c] || c;
-            }).join('');
-        }
-
-function showToast(msg, type = 'info') {
-    const container = document.getElementById('m-toast-area');
-    if(!container) return;
-    const el = document.createElement('div');
-    el.className = `m-toast ${type}`;
-
-    let icon = 'fa-info-circle';
-    if(type === 'warning') icon = 'fa-exclamation-triangle';
-    if(type === 'error') icon = 'fa-bug';
-    if(type === 'success') icon = 'fa-check-circle';
-
-    el.innerHTML = `<i class="fas ${icon}"></i> <span>${msg}</span>`;
-    container.appendChild(el);
-
-    mVibrate(20);
-
-    setTimeout(() => {
-        el.classList.add('out');
-        setTimeout(() => el.remove(), 300);
-    }, 3000);
+    langDescriptions = {
+        ita: "🇮🇹 Solo contenuti in Italiano. Ignora tutto il resto.",
+        all: "🇮🇹 Prima Italiano, poi 🇬🇧 Inglese se serve.",
+        eng: "🇬🇧 Solo contenuti in Inglese.",
+    };
+function toStylized(n, e = "std") {
+    if (!n) return "";
+    n = String(n);
+    const t = {
+        bold: {
+            nums: {
+                0: "𝟬",
+                1: "𝟭",
+                2: "𝟮",
+                3: "𝟯",
+                4: "𝟰",
+                5: "𝟱",
+                6: "𝟲",
+                7: "𝟳",
+                8: "𝟴",
+                9: "𝟵",
+            },
+            chars: {
+                A: "𝗔",
+                B: "𝗕",
+                C: "𝗖",
+                D: "𝗗",
+                E: "𝗘",
+                F: "𝗙",
+                G: "𝗚",
+                H: "𝗛",
+                I: "𝗜",
+                J: "𝗝",
+                K: "𝗞",
+                L: "𝗟",
+                M: "𝗠",
+                N: "𝗡",
+                O: "𝗢",
+                P: "𝗣",
+                Q: "𝗤",
+                R: "𝗥",
+                S: "𝗦",
+                T: "𝗧",
+                U: "𝗨",
+                V: "𝗩",
+                W: "𝗪",
+                X: "𝗫",
+                Y: "𝗬",
+                Z: "𝗭",
+                a: "𝗮",
+                b: "𝗯",
+                c: "𝗰",
+                d: "𝗱",
+                e: "𝗲",
+                f: "𝗳",
+                g: "𝗴",
+                h: "𝗵",
+                i: "𝗶",
+                j: "𝗷",
+                k: "𝗸",
+                l: "𝗹",
+                m: "𝗺",
+                n: "𝗻",
+                o: "𝗼",
+                p: "𝗽",
+                q: "𝗾",
+                r: "𝗿",
+                s: "𝘀",
+                t: "𝘁",
+                u: "𝘂",
+                v: "𝘃",
+                w: "ᴡ",
+                x: "𝘅",
+                y: "𝘆",
+                z: "𝘇",
+            },
+        },
+        spaced: {
+            nums: {
+                0: "0",
+                1: "1",
+                2: "2",
+                3: "3",
+                4: "4",
+                5: "5",
+                6: "6",
+                7: "7",
+                8: "8",
+                9: "9",
+            },
+            chars: {
+                A: "𝗔",
+                B: "𝗕",
+                C: "𝗖",
+                D: "𝗗",
+                E: "𝗘",
+                F: "𝗙",
+                G: "𝗚",
+                H: "𝗛",
+                I: "𝗜",
+                J: "𝗝",
+                K: "𝗞",
+                L: "𝗟",
+                M: "𝗠",
+                N: "𝗡",
+                O: "𝗢",
+                P: "𝗣",
+                Q: "𝗤",
+                R: "𝗥",
+                S: "𝗦",
+                T: "𝗧",
+                U: "𝗨",
+                V: "𝗩",
+                W: "𝗪",
+                X: "𝗫",
+                Y: "𝗬",
+                Z: "𝗭",
+            },
+        },
+        small: {
+            nums: {
+                0: "0",
+                1: "1",
+                2: "2",
+                3: "3",
+                4: "4",
+                5: "5",
+                6: "6",
+                7: "7",
+                8: "8",
+                9: "9",
+            },
+            chars: {
+                A: "ᴀ",
+                B: "ʙ",
+                C: "ᴄ",
+                D: "ᴅ",
+                E: "ᴇ",
+                F: "ꜰ",
+                G: "ɢ",
+                H: "ʜ",
+                I: "ɪ",
+                J: "ᴊ",
+                K: "ᴋ",
+                L: "ʟ",
+                M: "ᴍ",
+                N: "ɴ",
+                O: "ᴏ",
+                P: "ᴘ",
+                Q: "ǫ",
+                R: "ʀ",
+                S: "ꜱ",
+                T: "ᴛ",
+                U: "ᴜ",
+                V: "ᴠ",
+                W: "ᴡ",
+                X: "x",
+                Y: "ʏ",
+                Z: "ᴢ",
+                a: "ᴀ",
+                b: "ʙ",
+                c: "ᴄ",
+                d: "ᴅ",
+                e: "ᴇ",
+                f: "ꜰ",
+                g: "ɢ",
+                h: "ʜ",
+                i: "ɪ",
+                j: "ᴊ",
+                k: "ᴋ",
+                l: "ʟ",
+                m: "ᴍ",
+                n: "ɴ",
+                o: "ᴏ",
+                p: "ᴘ",
+                q: "ǫ",
+                r: "ʀ",
+                s: "ꜱ",
+                t: "ᴛ",
+                u: "ᴜ",
+                v: "ᴠ",
+                w: "ᴡ",
+                x: "x",
+                y: "ʏ",
+                z: "ᴢ",
+            },
+        },
+    };
+    if ("spaced" === e)
+        return n
+            .split("")
+            .map((n) => {
+                const e = t.spaced;
+                return ((/[0-9]/.test(n) ? e.nums[n] : e.chars[n]) || n) + " ";
+            })
+            .join("")
+            .trim();
+    const a = t[e] || t.bold;
+    return n
+        .split("")
+        .map((n) => (/[0-9]/.test(n) ? a.nums[n] || n : a.chars[n] || n))
+        .join("");
 }
-
+function showToast(n, e = "info") {
+    const t = document.getElementById("m-toast-area");
+    if (!t) return;
+    const a = document.createElement("div");
+    a.className = `m-toast ${e}`;
+    let i = "fa-info-circle";
+    ("warning" === e && (i = "fa-exclamation-triangle"),
+        "error" === e && (i = "fa-bug"),
+        "success" === e && (i = "fa-check-circle"),
+        (a.innerHTML = `<i class="fas ${i}"></i> <span>${n}</span>`),
+        t.appendChild(a),
+        mVibrate(20),
+        setTimeout(() => {
+            (a.classList.add("out"), setTimeout(() => a.remove(), 300));
+        }, 3e3));
+}
 function triggerPreviewUpdateEffect() {
-    const layer = document.getElementById('m-recalc-layer');
-    if(!layer) return;
-
-    layer.classList.add('visible');
-    setTimeout(() => {
-        layer.classList.remove('visible');
-    }, 400);
+    const n = document.getElementById("m-recalc-layer");
+    n &&
+        (n.classList.add("visible"),
+        setTimeout(() => {
+            n.classList.remove("visible");
+        }, 400));
 }
-
 const MOBILE_FORMATTER_META = {
-    leviathan: { label: 'Leviathan', preview: 'LEVIATHAN', icon: '♆', sub: 'Abyssal' },
-    premium: { label: 'Apex Prime', preview: 'APEX PRIME', icon: '👑', sub: 'Flagship' },
-    ultra_compact: { label: 'Pulse Compact', preview: 'PULSE COMPACT', icon: '⚡️', sub: 'Dense' },
-    tv_compact: { label: 'Neon TV', preview: 'NEON TV', icon: '📺', sub: 'Big Screen' },
-    lev2: { label: 'Architect', preview: 'ARCHITECT', icon: '🧬', sub: 'Structured' },
-    fra: { label: 'Horizon', preview: 'HORIZON', icon: '⚡️', sub: 'Classic' },
-    comet: { label: 'Comet', preview: 'COMET', icon: '☄️', sub: 'Scan' },
-    stremio_ita: { label: 'ITA Mod', preview: 'ITA MOD', icon: '🇮🇹', sub: 'Compat' },
-    dav: { label: 'Datastream', preview: 'DATASTREAM', icon: '📼', sub: 'Verbose' },
-    pri: { label: 'Eclipse', preview: 'ECLIPSE', icon: '👑', sub: 'Prime' },
-    and: { label: 'Matrix', preview: 'MATRIX', icon: '🎬', sub: 'Cinema' },
-    lad: { label: 'Compact', preview: 'COMPACT', icon: '🎟️', sub: 'Lean' },
-    torrentio: { label: 'Torrentio', preview: 'TORRENTIO', icon: '📜', sub: 'Classic' },
-    vertical: { label: 'Vertical', preview: 'VERTICAL', icon: '📑', sub: 'Stacked' },
-    android: { label: 'Android TV', preview: 'ANDROID TV', icon: '📺', sub: 'Console' },
-    picture: { label: 'Picture', preview: 'PICTURE', icon: '🖼️', sub: 'Poster' },
-    complex: { label: 'Template', preview: 'TEMPLATE', icon: '🔲', sub: 'Matrix' },
-    custom: { label: 'Custom Builder', preview: 'CUSTOM OVERRIDE', icon: '⌨️', sub: 'Manual' }
-};
-
-const MOBILE_FORMATTER_ALIASES = {
-    default: 'leviathan',
-    pro: 'premium',
-    cine: 'premium',
-    cinema: 'premium',
-    ultra: 'ultra_compact',
-    ultracompact: 'ultra_compact',
-    compact: 'ultra_compact',
-    tv: 'tv_compact',
-    tvcompact: 'tv_compact',
-    android_tv: 'tv_compact'
-};
-
-function resolveMobileFormatterSkin(skinId) {
-    const raw = String(skinId || 'leviathan').toLowerCase().trim();
-    return MOBILE_FORMATTER_ALIASES[raw] || raw;
+        leviathan: { label: "Leviathan", preview: "LEVIATHAN", icon: "♆", sub: "Abyssal" },
+        premium: { label: "Apex Prime", preview: "APEX PRIME", icon: "👑", sub: "Flagship" },
+        ultra_compact: {
+            label: "Pulse Compact",
+            preview: "PULSE COMPACT",
+            icon: "⚡️",
+            sub: "Dense",
+        },
+        tv_compact: { label: "Neon TV", preview: "NEON TV", icon: "📺", sub: "Big Screen" },
+        lev2: { label: "Architect", preview: "ARCHITECT", icon: "🧬", sub: "Structured" },
+        fra: { label: "Horizon", preview: "HORIZON", icon: "⚡️", sub: "Classic" },
+        comet: { label: "Comet", preview: "COMET", icon: "☄️", sub: "Scan" },
+        stremio_ita: { label: "ITA Mod", preview: "ITA MOD", icon: "🇮🇹", sub: "Compat" },
+        dav: { label: "Datastream", preview: "DATASTREAM", icon: "📼", sub: "Verbose" },
+        pri: { label: "Eclipse", preview: "ECLIPSE", icon: "👑", sub: "Prime" },
+        and: { label: "Matrix", preview: "MATRIX", icon: "🎬", sub: "Cinema" },
+        lad: { label: "Compact", preview: "COMPACT", icon: "🎟️", sub: "Lean" },
+        torrentio: { label: "Torrentio", preview: "TORRENTIO", icon: "📜", sub: "Classic" },
+        vertical: { label: "Vertical", preview: "VERTICAL", icon: "📑", sub: "Stacked" },
+        android: { label: "Android TV", preview: "ANDROID TV", icon: "📺", sub: "Console" },
+        picture: { label: "Picture", preview: "PICTURE", icon: "🖼️", sub: "Poster" },
+        complex: { label: "Template", preview: "TEMPLATE", icon: "🔲", sub: "Matrix" },
+        custom: { label: "Custom Builder", preview: "CUSTOM OVERRIDE", icon: "⌨️", sub: "Manual" },
+    },
+    MOBILE_FORMATTER_ALIASES = {
+        default: "leviathan",
+        pro: "premium",
+        cine: "premium",
+        cinema: "premium",
+        ultra: "ultra_compact",
+        ultracompact: "ultra_compact",
+        compact: "ultra_compact",
+        tv: "tv_compact",
+        tvcompact: "tv_compact",
+        android_tv: "tv_compact",
+    };
+function resolveMobileFormatterSkin(n) {
+    const e = String(n || "leviathan")
+        .toLowerCase()
+        .trim();
+    return MOBILE_FORMATTER_ALIASES[e] || e;
 }
-
-function getMobileFormatterMeta(skinId) {
-    const resolved = resolveMobileFormatterSkin(skinId);
-    return MOBILE_FORMATTER_META[resolved] || { label: resolved.toUpperCase(), preview: resolved.toUpperCase() };
+function getMobileFormatterMeta(n) {
+    const e = resolveMobileFormatterSkin(n);
+    return MOBILE_FORMATTER_META[e] || { label: e.toUpperCase(), preview: e.toUpperCase() };
 }
-
-function joinMobilePreviewParts(parts, sep = ' | ') {
-    return parts.filter(Boolean).join(sep);
+function joinMobilePreviewParts(n, e = " | ") {
+    return n.filter(Boolean).join(e);
 }
-
-function removeMobilePreviewEmoji(value = '') {
-    return String(value).replace(/[^A-Za-z0-9\s.\-|+()[\]\/&]/g, '').replace(/\s+/g, ' ').trim();
+function removeMobilePreviewEmoji(n = "") {
+    return String(n)
+        .replace(/[^A-Za-z0-9\s.\-|+()[\]\/&]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
 }
-
-function selectMobileSkin(skinId) {
-    skinId = resolveMobileFormatterSkin(skinId);
-    const isAIO = mChecked('m-aioMode');
-
-    if (isAIO && skinId !== 'leviathan') {
-        const lockOverlay = document.getElementById('m-aio-lock-overlay');
-        if (lockOverlay) {
-            lockOverlay.classList.remove('m-denied-anim');
-            void lockOverlay.offsetWidth;
-            lockOverlay.classList.add('m-denied-anim');
-        }
-
-        mVibrate([50, 50, 50]);
-        showToast("SKIN BLOCCATA DA AIO MODE", "warning");
-        return;
+function selectMobileSkin(n) {
+    if (((n = resolveMobileFormatterSkin(n)), mChecked("m-aioMode") && "leviathan" !== n)) {
+        const n = document.getElementById("m-aio-lock-overlay");
+        return (
+            n &&
+                (n.classList.remove("m-denied-anim"),
+                n.offsetWidth,
+                n.classList.add("m-denied-anim")),
+            mVibrate([50, 50, 50]),
+            void showToast("SKIN BLOCCATA DA AIO MODE", "warning")
+        );
     }
-
-    mSkin = skinId;
-    document.querySelectorAll('.m-cortex-chip').forEach(b => b.classList.remove('active'));
-    const selectedBtn = document.getElementById('msk_' + skinId);
-    if(selectedBtn) selectedBtn.classList.add('active');
-
-    const customArea = document.getElementById('m-custom-skin-area');
-    if (customArea) customArea.style.display = skinId === 'custom' ? 'block' : 'none';
-
-    const previewBox = document.getElementById('m-preview-box');
-    if(previewBox) {
-        previewBox.classList.remove('glitching');
-        void previewBox.offsetWidth;
-        previewBox.classList.add('glitching');
-    }
-    updateMobilePreview();
-    updateLinkModalContent();
-    mVibrate(10);
+    ((mSkin = n),
+        document.querySelectorAll(".m-cortex-chip").forEach((n) => n.classList.remove("active")));
+    const e = document.getElementById("msk_" + n);
+    e && e.classList.add("active");
+    const t = document.getElementById("m-custom-skin-area");
+    t && (t.style.display = "custom" === n ? "block" : "none");
+    const a = document.getElementById("m-preview-box");
+    (a && (a.classList.remove("glitching"), a.offsetWidth, a.classList.add("glitching")),
+        updateMobilePreview(),
+        updateLinkModalContent(),
+        mVibrate(10));
 }
-
 function updateMobilePreviewLegacy() {
     return updateMobilePreview();
 }
-
 function updateMobilePreview() {
-    const skin = resolveMobileFormatterSkin(mSkin);
-
-    let langStr = '🇮🇹 ITA';
-    if (mLangMode === 'all') langStr = '🇮🇹 ITA • 🇬🇧 ENG';
-    if (mLangMode === 'eng') langStr = '🇬🇧 ENG';
-
-    let serviceTag = 'RD';
-    if (mCurrentService === 'tb') serviceTag = 'TB';
-    if (mCurrentService === 'p2p') serviceTag = 'P2P';
-
-    let serviceIconTitle = '🦈';
-    if (serviceTag === 'RD') serviceIconTitle = '🐬';
-    else if (serviceTag === 'TB') serviceIconTitle = '⚓';
-
-    const p = {
-        cleanName: 'Dune Parte Due',
-        fileTitle: 'Dune.Parte.Due.2024.2160p.ITA.ENG.TrueHD.7.1.x265-Leviathan',
-        quality: '4K',
-        qDetails: '4K',
-        sizeString: '67.81 GB',
-        displaySource: 'ilCorSaRoNeRo',
-        serviceTag,
-        serviceIconTitle,
-        lang: langStr,
-        audioTag: 'TrueHD Atmos',
-        audioChannels: '7.1',
-        audioInfo: 'TrueHD Atmos ┃ 7.1',
-        codec: 'HEVC',
-        videoTags: ['💎 𝗥𝗘𝗠𝗨𝗫', '👁️ 𝗗𝗩+𝗛𝗗𝗥', '⚙️ 𝗛𝗘𝗩𝗖'],
-        cleanTags: ['Remux', 'DV+HDR', 'HEVC'],
-        seeders: 152,
-        seedersStr: '👥 152',
-        epTag: '',
-        releaseGroup: 'Leviathan',
-        sourceLine: `${serviceIconTitle} [${serviceTag}] ilCorSaRoNeRo`,
-        providerLabel: 'Netflix',
-        streamScore: 94,
-        scoreTier: 'S+',
-        scoreBadge: '🏆 S+ 94',
-        visualMeter: '▰▰▰▰▰',
-        featureSummary: '4K • DV+HDR • HEVC • Atmos'
-    };
-
-    const isDebrid = ['RD', 'TB'].includes(p.serviceTag);
-    const statusIcon = isDebrid ? serviceIconTitle : '☁️';
-
-    const styleLeviathan = () => {
-        const serviceIcon = p.serviceTag === 'RD' ? '🐬' : p.serviceTag === 'TB' ? '⚓' : '🦈';
-        const stateIcon = isDebrid ? serviceIcon : '⏳';
-        const brandName = toStylized('LEVIATHAN', 'small');
-        const serviceStyled = toStylized(p.serviceTag, 'bold');
-        const techLine = [...new Set([p.quality, ...p.cleanTags].filter(Boolean))]
-            .map(t => toStylized(t, 'small'))
-            .join(' • ');
-        return {
-            name: `${stateIcon} ${serviceStyled} ♆ ${brandName}`,
-            title: [
-                `▶️ ${toStylized(p.cleanName, 'bold')} ${p.epTag}`.trim(),
-                techLine ? `🔱 ${techLine}` : '',
-                `🗣️ ${p.lang}  |  🫧 ${p.audioTag} ${p.audioChannels}`,
-                `🧲 ${p.sizeString}  |  ${p.seedersStr}`,
-                `${serviceIcon} ${p.displaySource} | 🏷️ ${toStylized(p.releaseGroup, 'small')}`
-            ].filter(Boolean).join('\n')
-        };
-    };
-
-    const stylePremium = () => ({
-        name: `${statusIcon} ${p.quality} ${p.scoreBadge}`,
-        title: [
-            `🎬 ${toStylized(p.cleanName, 'bold')}`,
-            `🏅 ${p.scoreBadge}  ${p.visualMeter}`,
-            `🧪 ${[...new Set([p.quality, ...p.cleanTags, p.codec].filter(Boolean))].slice(0, 4).join(' • ')}`,
-            `🔊 ${joinMobilePreviewParts([p.audioTag, p.audioChannels, p.lang], ' • ')}`,
-            `📦 ${p.sizeString} • ${p.seedersStr}`,
-            `${statusIcon} ${p.displaySource} • ${p.releaseGroup} • ${p.serviceTag}`
-        ].join('\n')
-    });
-
-    const styleUltraCompact = () => ({
-        name: joinMobilePreviewParts([statusIcon, p.quality, 'DV+HDR', p.serviceTag, `•${p.scoreTier}`], ' '),
-        title: [
-            `🎬 ${p.cleanName}`,
-            joinMobilePreviewParts([`🔊 ${p.audioTag} ${p.audioChannels}`, removeMobilePreviewEmoji(p.lang), `📦 ${p.sizeString}`], ' • '),
-            joinMobilePreviewParts([`🌐 ${p.displaySource}`, p.seedersStr, p.releaseGroup], ' • ')
-        ].join('\n')
-    });
-
-    const styleTVCompact = () => ({
-        name: joinMobilePreviewParts([p.quality, 'DV+HDR', p.serviceTag], ' | '),
-        title: [
-            `🎞️ ${p.codec}`,
-            `🎧 ${p.audioTag} ${p.audioChannels}`,
-            `🌐 ${removeMobilePreviewEmoji(p.lang) || p.lang}`,
-            `🏅 ${p.scoreBadge}`,
-            `📦 ${p.sizeString} • ${p.seedersStr}`,
-            `⚙️ ${p.displaySource}`,
-            `📂 ${p.fileTitle}`
-        ].join('\n')
-    });
-
-    const styleLeviathanTwo = () => ({
-        name: `♆ ${toStylized('LEVIATHAN', 'small')} ${p.serviceIconTitle} │ ${p.quality}`,
-        title: [
-            `🎬 ${toStylized(p.cleanName, 'bold')}`,
-            `📦 ${p.sizeString} │ ${p.codec} ${p.cleanTags.filter(x => !String(x).includes(p.codec)).join(' ')}`,
-            `🔊 ${p.audioTag} ${p.audioChannels} • ${p.lang}`,
-            `🔗 ${p.sourceLine} ${p.seedersStr}`
-        ].join('\n')
-    });
-
-    const styleFra = () => ({
-        name: '⚡️ Leviathan 4K',
-        title: [
-            `📄 ❯ ${p.fileTitle}`,
-            `🌎 ❯ ${p.lang} • ${p.audioTag}`,
-            `✨ ❯ ${p.serviceTag} • ${p.displaySource}`,
-            `🔥 ❯ ${p.quality} • ${p.cleanTags.join(' • ')}`,
-            `💾 ❯ ${p.sizeString} / 👥 ❯ ${p.seeders}`
-        ].join('\n')
-    });
-
-    const styleComet = () => ({
-        name: `[${p.serviceTag} ⚡]
-Leviathan
-${p.quality}`,
-        title: [
-            `📄 ${p.fileTitle}`,
-            `📹 ${joinMobilePreviewParts([p.codec, ...p.cleanTags].filter(Boolean), ' • ')} | ${p.audioTag}`,
-            `⭐ ${p.displaySource}`,
-            `💾 ${p.sizeString} 👥 ${p.seeders}`,
-            `🌍 ${p.lang}`
-        ].join('\n')
-    });
-
-    const styleStremioIta = () => ({
-        name: '⚡️ Leviathan 4K',
-        title: [
-            `📄 ❯ ${p.fileTitle}`,
-            `🌎 ❯ ${String(p.lang || '').replace(/ITA/gi, 'ita').replace(/ENG/gi, 'eng')}`,
-            `✨ ❯ ${p.serviceTag} • ${p.displaySource}`,
-            `🔥 ❯ ${p.quality} • ${p.cleanTags.join(' • ')}`,
-            `💾 ❯ ${p.sizeString}`,
-            `🔉 ❯ ${p.audioTag} • ${p.audioChannels}`
-        ].join('\n')
-    });
-
-    const styleDav = () => ({
-        name: '🎥 4K UHD HEVC',
-        title: [
-            `📺 ${p.cleanName}`,
-            `🎧 ${p.audioTag} ${p.audioChannels} | 🎞️ ${p.codec}`,
-            `🗣️ ${p.lang} | 📦 ${p.sizeString}`,
-            `⏱️ ${p.seeders} Seeds | 🏷️ ${p.displaySource}`,
-            `${p.serviceIconTitle} Leviathan 📡 ${p.serviceTag}`,
-            `📂 ${p.fileTitle}`
-        ].join('\n')
-    });
-
-    const stylePri = () => ({
-        name: `[${p.serviceTag}]⚡️☁️
-4K🔥UHD
-[Leviathan]`,
-        title: [
-            `🎬 ${p.cleanName}`,
-            `${p.cleanTags.join(' ')}`,
-            `🎧 ${p.audioTag} | 🔊 ${p.audioChannels} | 🗣️ ${p.lang}`,
-            `📁 ${p.sizeString} | 🏷️ ${p.displaySource}`,
-            `📄 ▶️ ${p.fileTitle} ◀️`
-        ].join('\n')
-    });
-
-    const styleAnd = () => ({
-        name: `🎬 ${p.cleanName}`,
-        title: [
-            `${p.quality} ${p.serviceTag === 'RD' ? '⚡' : '⏳'}`,
-            '─ ─ ─ ─ ─ ─ ─ ─ ─ ─',
-            `Lingue: ${p.lang}`,
-            `Specifiche: ${p.quality} | 📺 ${p.cleanTags.join(' ')} | 🔊 ${p.audioTag}`,
-            '─ ─ ─ ─ ─ ─ ─ ─ ─ ─',
-            `📂 ${p.sizeString} | ☁️ ${p.serviceTag} | 🛰️ Leviathan`
-        ].join('\n')
-    });
-
-    const styleLad = () => ({
-        name: `🖥️ ${p.quality} ${p.serviceTag}`,
-        title: [
-            `🎟️ ${p.cleanName}`,
-            `📜 ${p.epTag || 'Movie'}`,
-            `🎥 ${p.quality} 🎞️ ${p.codec} 🎧 ${p.audioTag}`,
-            `📦 ${p.sizeString} • 🔗 Leviathan`,
-            `🌐 ${p.lang}`
-        ].join('\n')
-    });
-
-    const styleTorrentio = () => ({
-        name: `[${p.serviceTag}]
-${p.quality}`,
-        title: [
-            `📄 ${p.fileTitle}`,
-            `📦 ${p.sizeString} 👤 ${p.seeders}`,
-            `🔍 ${p.displaySource}`,
-            `🔊 ${removeMobilePreviewEmoji(p.lang) || p.lang}`
-        ].join('\n')
-    });
-
-    const styleVertical = () => ({
-        name: `♆ Leviathan ${p.quality} ${isDebrid ? '⚡' : '☁️'} Cached`,
-        title: [
-            `🍿 ${p.cleanName}`,
-            `📼 WEB-DL • ${p.cleanTags[0]}`,
-            `⚙️ ${p.codec}`,
-            `🔊 ${p.audioTag} (${p.audioChannels})`,
-            `💬 ${p.lang}`,
-            `🧲 ${p.sizeString}`
-        ].join('\n')
-    });
-
-    const styleComplex = () => ({
-        name: `🔲 4K │ ⛁ ${p.sizeString}`,
-        title: [
-            `☰ ${joinMobilePreviewParts([p.lang, p.audioTag, p.audioChannels], ' · ')}`,
-            `☲ ${joinMobilePreviewParts([p.quality, p.codec, p.cleanTags.join(' · ')], ' · ')}`,
-            `☵ ${joinMobilePreviewParts(['Leviathan', p.releaseGroup, p.displaySource, `[${p.serviceTag}]`], ' · ')}`,
-            `☶ ${joinMobilePreviewParts([p.cleanName, p.epTag], ' · ')}`
-        ].join('\n')
-    });
-
-    const styleAndroid = () => ({
-        name: joinMobilePreviewParts([p.quality, 'DV+HDR', p.serviceTag], ' | '),
-        title: [
-            `🎞️ ${p.codec}`,
-            `🎧 ${p.audioTag} ${p.audioChannels}`,
-            `⚙️ ${p.displaySource}`,
-            p.lang,
-            `📂 ${p.fileTitle}`
-        ].join('\n')
-    });
-
-    const stylePicture = () => ({
-        name: `✅ UHD HDR ATMOS ${p.quality}`,
-        title: [
-            `🎬 ${p.cleanName}`,
-            `✨ ${p.quality} 🔆 DV | HDR`,
-            `🎧 ${p.audioTag} 🔊 ${p.audioChannels}`,
-            '💿 Blu-ray Remux',
-            `📦 ${p.sizeString}`,
-            `🏷️ Blu-ray Remux T1 (${p.releaseGroup})`,
-            `⚡ Comet ${p.serviceTag}`
-        ].join('\n')
-    });
-
-    const styleCustom = () => {
-        let tpl = mValue('m-customTemplate') || 'Apex {quality} {score_badge} ||| {title}{n}{summary}';
-        const vars = {
-            '{title}': p.cleanName,
-            '{originalTitle}': p.fileTitle,
-            '{ep}': p.epTag || '',
-            '{quality}': p.quality,
-            '{quality_bold}': toStylized(p.quality, 'bold'),
-            '{size}': p.sizeString,
-            '{source}': p.displaySource,
-            '{service}': p.serviceTag,
-            '{lang}': p.lang,
-            '{audio}': p.audioInfo,
-            '{seeders}': p.seedersStr,
-            '{score}': String(p.streamScore),
-            '{score_badge}': p.scoreBadge,
-            '{score_tier}': p.scoreTier,
-            '{meter}': p.visualMeter,
-            '{summary}': p.featureSummary,
-            '{n}': '\n'
-        };
-        Object.keys(vars).forEach((key) => {
-            tpl = tpl.replace(new RegExp(key.replace(/[{}]/g, '\$&'), 'g'), vars[key]);
-        });
-        if (tpl.includes('|||')) {
-            const parts = tpl.split('|||');
-            return { name: parts[0].trim(), title: parts[1].trim() };
-        }
-        return { name: `Leviathan ${p.quality}`, title: tpl };
-    };
-
-    const result = ({
-        premium: stylePremium,
-        ultra_compact: styleUltraCompact,
-        tv_compact: styleTVCompact,
-        lev2: styleLeviathanTwo,
-        fra: styleFra,
-        dav: styleDav,
-        and: styleAnd,
-        lad: styleLad,
-        pri: stylePri,
-        comet: styleComet,
-        stremio_ita: styleStremioIta,
-        torrentio: styleTorrentio,
-        vertical: styleVertical,
-        complex: styleComplex,
-        android: styleAndroid,
-        picture: stylePicture,
-        custom: styleCustom,
-        leviathan: styleLeviathan
-    }[skin] || styleLeviathan)();
-
-    const meta = getMobileFormatterMeta(skin);
-    const modeEl = document.getElementById('m-prev-mode');
-    const iconEl = document.getElementById('m-prev-icon');
-    const titleEl = document.getElementById('m-prev-title');
-    const infoEl = document.getElementById('m-prev-info');
-
-    if (modeEl) modeEl.innerText = meta.preview;
-    if (iconEl) iconEl.innerText = meta.icon || '♆';
-    if (titleEl) titleEl.innerText = result.name;
-    if (infoEl) infoEl.innerText = result.title;
+    const n = resolveMobileFormatterSkin(mSkin);
+    let e = "🇮🇹 ITA";
+    ("all" === mLangMode && (e = "🇮🇹 ITA • 🇬🇧 ENG"), "eng" === mLangMode && (e = "🇬🇧 ENG"));
+    let t = "RD";
+    ("tb" === mCurrentService && (t = "TB"), "p2p" === mCurrentService && (t = "P2P"));
+    let a = "🦈";
+    "RD" === t ? (a = "🐬") : "TB" === t && (a = "⚓");
+    const i = {
+            cleanName: "Dune Parte Due",
+            fileTitle: "Dune.Parte.Due.2024.2160p.ITA.ENG.TrueHD.7.1.x265-Leviathan",
+            quality: "4K",
+            qDetails: "4K",
+            sizeString: "67.81 GB",
+            displaySource: "ilCorSaRoNeRo",
+            serviceTag: t,
+            serviceIconTitle: a,
+            lang: e,
+            audioTag: "TrueHD Atmos",
+            audioChannels: "7.1",
+            audioInfo: "TrueHD Atmos ┃ 7.1",
+            codec: "HEVC",
+            videoTags: ["💎 𝗥𝗘𝗠𝗨𝗫", "👁️ 𝗗𝗩+𝗛𝗗𝗥", "⚙️ 𝗛𝗘𝗩𝗖"],
+            cleanTags: ["Remux", "DV+HDR", "HEVC"],
+            seeders: 152,
+            seedersStr: "👥 152",
+            epTag: "",
+            releaseGroup: "Leviathan",
+            sourceLine: `${a} [${t}] ilCorSaRoNeRo`,
+            providerLabel: "Netflix",
+            streamScore: 94,
+            scoreTier: "S+",
+            scoreBadge: "🏆 S+ 94",
+            visualMeter: "▰▰▰▰▰",
+            featureSummary: "4K • DV+HDR • HEVC • Atmos",
+        },
+        o = ["RD", "TB"].includes(i.serviceTag),
+        r = o ? a : "☁️",
+        s = () => {
+            const n = "RD" === i.serviceTag ? "🐬" : "TB" === i.serviceTag ? "⚓" : "🦈",
+                e = o ? n : "⏳",
+                t = toStylized("LEVIATHAN", "small"),
+                a = toStylized(i.serviceTag, "bold"),
+                r = [...new Set([i.quality, ...i.cleanTags].filter(Boolean))]
+                    .map((n) => toStylized(n, "small"))
+                    .join(" • ");
+            return {
+                name: `${e} ${a} ♆ ${t}`,
+                title: [
+                    `▶️ ${toStylized(i.cleanName, "bold")} ${i.epTag}`.trim(),
+                    r ? `🔱 ${r}` : "",
+                    `🗣️ ${i.lang}  |  🫧 ${i.audioTag} ${i.audioChannels}`,
+                    `🧲 ${i.sizeString}  |  ${i.seedersStr}`,
+                    `${n} ${i.displaySource} | 🏷️ ${toStylized(i.releaseGroup, "small")}`,
+                ]
+                    .filter(Boolean)
+                    .join("\n"),
+            };
+        },
+        l = (
+            {
+                premium: () => ({
+                    name: `${r} ${i.quality} ${i.scoreBadge}`,
+                    title: [
+                        `🎬 ${toStylized(i.cleanName, "bold")}`,
+                        `🏅 ${i.scoreBadge}  ${i.visualMeter}`,
+                        `🧪 ${[...new Set([i.quality, ...i.cleanTags, i.codec].filter(Boolean))].slice(0, 4).join(" • ")}`,
+                        `🔊 ${joinMobilePreviewParts([i.audioTag, i.audioChannels, i.lang], " • ")}`,
+                        `📦 ${i.sizeString} • ${i.seedersStr}`,
+                        `${r} ${i.displaySource} • ${i.releaseGroup} • ${i.serviceTag}`,
+                    ].join("\n"),
+                }),
+                ultra_compact: () => ({
+                    name: joinMobilePreviewParts(
+                        [r, i.quality, "DV+HDR", i.serviceTag, `•${i.scoreTier}`],
+                        " ",
+                    ),
+                    title: [
+                        `🎬 ${i.cleanName}`,
+                        joinMobilePreviewParts(
+                            [
+                                `🔊 ${i.audioTag} ${i.audioChannels}`,
+                                removeMobilePreviewEmoji(i.lang),
+                                `📦 ${i.sizeString}`,
+                            ],
+                            " • ",
+                        ),
+                        joinMobilePreviewParts(
+                            [`🌐 ${i.displaySource}`, i.seedersStr, i.releaseGroup],
+                            " • ",
+                        ),
+                    ].join("\n"),
+                }),
+                tv_compact: () => ({
+                    name: joinMobilePreviewParts([i.quality, "DV+HDR", i.serviceTag], " | "),
+                    title: [
+                        `🎞️ ${i.codec}`,
+                        `🎧 ${i.audioTag} ${i.audioChannels}`,
+                        `🌐 ${removeMobilePreviewEmoji(i.lang) || i.lang}`,
+                        `🏅 ${i.scoreBadge}`,
+                        `📦 ${i.sizeString} • ${i.seedersStr}`,
+                        `⚙️ ${i.displaySource}`,
+                        `📂 ${i.fileTitle}`,
+                    ].join("\n"),
+                }),
+                lev2: () => ({
+                    name: `♆ ${toStylized("LEVIATHAN", "small")} ${i.serviceIconTitle} │ ${i.quality}`,
+                    title: [
+                        `🎬 ${toStylized(i.cleanName, "bold")}`,
+                        `📦 ${i.sizeString} │ ${i.codec} ${i.cleanTags.filter((n) => !String(n).includes(i.codec)).join(" ")}`,
+                        `🔊 ${i.audioTag} ${i.audioChannels} • ${i.lang}`,
+                        `🔗 ${i.sourceLine} ${i.seedersStr}`,
+                    ].join("\n"),
+                }),
+                fra: () => ({
+                    name: "⚡️ Leviathan 4K",
+                    title: [
+                        `📄 ❯ ${i.fileTitle}`,
+                        `🌎 ❯ ${i.lang} • ${i.audioTag}`,
+                        `✨ ❯ ${i.serviceTag} • ${i.displaySource}`,
+                        `🔥 ❯ ${i.quality} • ${i.cleanTags.join(" • ")}`,
+                        `💾 ❯ ${i.sizeString} / 👥 ❯ ${i.seeders}`,
+                    ].join("\n"),
+                }),
+                dav: () => ({
+                    name: "🎥 4K UHD HEVC",
+                    title: [
+                        `📺 ${i.cleanName}`,
+                        `🎧 ${i.audioTag} ${i.audioChannels} | 🎞️ ${i.codec}`,
+                        `🗣️ ${i.lang} | 📦 ${i.sizeString}`,
+                        `⏱️ ${i.seeders} Seeds | 🏷️ ${i.displaySource}`,
+                        `${i.serviceIconTitle} Leviathan 📡 ${i.serviceTag}`,
+                        `📂 ${i.fileTitle}`,
+                    ].join("\n"),
+                }),
+                and: () => ({
+                    name: `🎬 ${i.cleanName}`,
+                    title: [
+                        `${i.quality} ${"RD" === i.serviceTag ? "⚡" : "⏳"}`,
+                        "─ ─ ─ ─ ─ ─ ─ ─ ─ ─",
+                        `Lingue: ${i.lang}`,
+                        `Specifiche: ${i.quality} | 📺 ${i.cleanTags.join(" ")} | 🔊 ${i.audioTag}`,
+                        "─ ─ ─ ─ ─ ─ ─ ─ ─ ─",
+                        `📂 ${i.sizeString} | ☁️ ${i.serviceTag} | 🛰️ Leviathan`,
+                    ].join("\n"),
+                }),
+                lad: () => ({
+                    name: `🖥️ ${i.quality} ${i.serviceTag}`,
+                    title: [
+                        `🎟️ ${i.cleanName}`,
+                        `📜 ${i.epTag || "Movie"}`,
+                        `🎥 ${i.quality} 🎞️ ${i.codec} 🎧 ${i.audioTag}`,
+                        `📦 ${i.sizeString} • 🔗 Leviathan`,
+                        `🌐 ${i.lang}`,
+                    ].join("\n"),
+                }),
+                pri: () => ({
+                    name: `[${i.serviceTag}]⚡️☁️\n4K🔥UHD\n[Leviathan]`,
+                    title: [
+                        `🎬 ${i.cleanName}`,
+                        `${i.cleanTags.join(" ")}`,
+                        `🎧 ${i.audioTag} | 🔊 ${i.audioChannels} | 🗣️ ${i.lang}`,
+                        `📁 ${i.sizeString} | 🏷️ ${i.displaySource}`,
+                        `📄 ▶️ ${i.fileTitle} ◀️`,
+                    ].join("\n"),
+                }),
+                comet: () => ({
+                    name: `[${i.serviceTag} ⚡]\nLeviathan\n${i.quality}`,
+                    title: [
+                        `📄 ${i.fileTitle}`,
+                        `📹 ${joinMobilePreviewParts([i.codec, ...i.cleanTags].filter(Boolean), " • ")} | ${i.audioTag}`,
+                        `⭐ ${i.displaySource}`,
+                        `💾 ${i.sizeString} 👥 ${i.seeders}`,
+                        `🌍 ${i.lang}`,
+                    ].join("\n"),
+                }),
+                stremio_ita: () => ({
+                    name: "⚡️ Leviathan 4K",
+                    title: [
+                        `📄 ❯ ${i.fileTitle}`,
+                        `🌎 ❯ ${String(i.lang || "")
+                            .replace(/ITA/gi, "ita")
+                            .replace(/ENG/gi, "eng")}`,
+                        `✨ ❯ ${i.serviceTag} • ${i.displaySource}`,
+                        `🔥 ❯ ${i.quality} • ${i.cleanTags.join(" • ")}`,
+                        `💾 ❯ ${i.sizeString}`,
+                        `🔉 ❯ ${i.audioTag} • ${i.audioChannels}`,
+                    ].join("\n"),
+                }),
+                torrentio: () => ({
+                    name: `[${i.serviceTag}]\n${i.quality}`,
+                    title: [
+                        `📄 ${i.fileTitle}`,
+                        `📦 ${i.sizeString} 👤 ${i.seeders}`,
+                        `🔍 ${i.displaySource}`,
+                        `🔊 ${removeMobilePreviewEmoji(i.lang) || i.lang}`,
+                    ].join("\n"),
+                }),
+                vertical: () => ({
+                    name: `♆ Leviathan ${i.quality} ${o ? "⚡" : "☁️"} Cached`,
+                    title: [
+                        `🍿 ${i.cleanName}`,
+                        `📼 WEB-DL • ${i.cleanTags[0]}`,
+                        `⚙️ ${i.codec}`,
+                        `🔊 ${i.audioTag} (${i.audioChannels})`,
+                        `💬 ${i.lang}`,
+                        `🧲 ${i.sizeString}`,
+                    ].join("\n"),
+                }),
+                complex: () => ({
+                    name: `🔲 4K │ ⛁ ${i.sizeString}`,
+                    title: [
+                        `☰ ${joinMobilePreviewParts([i.lang, i.audioTag, i.audioChannels], " · ")}`,
+                        `☲ ${joinMobilePreviewParts([i.quality, i.codec, i.cleanTags.join(" · ")], " · ")}`,
+                        `☵ ${joinMobilePreviewParts(["Leviathan", i.releaseGroup, i.displaySource, `[${i.serviceTag}]`], " · ")}`,
+                        `☶ ${joinMobilePreviewParts([i.cleanName, i.epTag], " · ")}`,
+                    ].join("\n"),
+                }),
+                android: () => ({
+                    name: joinMobilePreviewParts([i.quality, "DV+HDR", i.serviceTag], " | "),
+                    title: [
+                        `🎞️ ${i.codec}`,
+                        `🎧 ${i.audioTag} ${i.audioChannels}`,
+                        `⚙️ ${i.displaySource}`,
+                        i.lang,
+                        `📂 ${i.fileTitle}`,
+                    ].join("\n"),
+                }),
+                picture: () => ({
+                    name: `✅ UHD HDR ATMOS ${i.quality}`,
+                    title: [
+                        `🎬 ${i.cleanName}`,
+                        `✨ ${i.quality} 🔆 DV | HDR`,
+                        `🎧 ${i.audioTag} 🔊 ${i.audioChannels}`,
+                        "💿 Blu-ray Remux",
+                        `📦 ${i.sizeString}`,
+                        `🏷️ Blu-ray Remux T1 (${i.releaseGroup})`,
+                        `⚡ Comet ${i.serviceTag}`,
+                    ].join("\n"),
+                }),
+                custom: () => {
+                    let n =
+                        mValue("m-customTemplate") ||
+                        "Apex {quality} {score_badge} ||| {title}{n}{summary}";
+                    const e = {
+                        "{title}": i.cleanName,
+                        "{originalTitle}": i.fileTitle,
+                        "{ep}": i.epTag || "",
+                        "{quality}": i.quality,
+                        "{quality_bold}": toStylized(i.quality, "bold"),
+                        "{size}": i.sizeString,
+                        "{source}": i.displaySource,
+                        "{service}": i.serviceTag,
+                        "{lang}": i.lang,
+                        "{audio}": i.audioInfo,
+                        "{seeders}": i.seedersStr,
+                        "{score}": String(i.streamScore),
+                        "{score_badge}": i.scoreBadge,
+                        "{score_tier}": i.scoreTier,
+                        "{meter}": i.visualMeter,
+                        "{summary}": i.featureSummary,
+                        "{n}": "\n",
+                    };
+                    if (
+                        (Object.keys(e).forEach((t) => {
+                            n = n.replace(new RegExp(t.replace(/[{}]/g, "$&"), "g"), e[t]);
+                        }),
+                        n.includes("|||"))
+                    ) {
+                        const e = n.split("|||");
+                        return { name: e[0].trim(), title: e[1].trim() };
+                    }
+                    return { name: `Leviathan ${i.quality}`, title: n };
+                },
+                leviathan: s,
+            }[n] || s
+        )(),
+        m = getMobileFormatterMeta(n),
+        d = document.getElementById("m-prev-mode"),
+        c = document.getElementById("m-prev-icon"),
+        p = document.getElementById("m-prev-title"),
+        g = document.getElementById("m-prev-info");
+    (d && (d.innerText = m.preview),
+        c && (c.innerText = m.icon || "♆"),
+        p && (p.innerText = l.name),
+        g && (g.innerText = l.title));
 }
-
 function toggleMobileAIOLock() {
-    const isAIO = mChecked('m-aioMode');
-    const lock = document.getElementById('m-aio-lock-overlay');
-    if (!lock) return;
-    lock.classList.toggle('active', isAIO);
+    const n = mChecked("m-aioMode"),
+        e = document.getElementById("m-aio-lock-overlay");
+    e && e.classList.toggle("active", n);
 }
-
 function createLogoParticles() {
-    const container = document.getElementById('logoParticles');
-    if(!container) return;
-    const count = document.body.classList.contains('m-lowfx') ? 0 : 5;
-    container.textContent = '';
-    for(let i=0; i < count; i++) {
-        const p = document.createElement('div');
-        p.classList.add('logo-particle');
-        const size = Math.random() * 4 + 2;
-        p.style.width = `${size}px`; p.style.height = `${size}px`;
-        p.style.left = `${Math.random() * 100}%`;
-        p.style.animationDuration = `${Math.random() * 10 + 5}s`;
-        p.style.animationDelay = `-${Math.random() * 10}s`;
-        const sway = Math.random() * 8 - 4;
-        p.style.transform = `translateX(${sway}px)`;
-        container.appendChild(p);
+    const n = document.getElementById("logoParticles");
+    if (!n) return;
+    const e = document.body.classList.contains("m-lowfx") ? 0 : 5;
+    n.textContent = "";
+    for (let t = 0; t < e; t++) {
+        const e = document.createElement("div");
+        e.classList.add("logo-particle");
+        const t = 4 * Math.random() + 2;
+        ((e.style.width = `${t}px`),
+            (e.style.height = `${t}px`),
+            (e.style.left = 100 * Math.random() + "%"),
+            (e.style.animationDuration = 10 * Math.random() + 5 + "s"),
+            (e.style.animationDelay = `-${10 * Math.random()}s`));
+        const a = 8 * Math.random() - 4;
+        ((e.style.transform = `translateX(${a}px)`), n.appendChild(e));
     }
 }
-
 function createOceanParticles() {
-    const container = document.getElementById('m-ocean-particles');
-    if (container) container.textContent = '';
+    const n = document.getElementById("m-ocean-particles");
+    n && (n.textContent = "");
 }
-
 const LEVIATHAN_SEA_SHADER = {
-    vertex: `
-        attribute vec2 a_position;
-        varying vec2 v_uv;
-        void main() {
-            v_uv = a_position * 0.5 + 0.5;
-            gl_Position = vec4(a_position, 0.0, 1.0);
-        }
-    `,
-    fragment: `
-        precision mediump float;
-
-        uniform vec2 u_resolution;
-        uniform float u_time;
-        uniform float u_intensity;
-        varying vec2 v_uv;
-
-        float hash(vec2 p) {
-            p = fract(p * vec2(123.34, 456.21));
-            p += dot(p, p + 45.32);
-            return fract(p.x * p.y);
-        }
-
-        float noise(vec2 p) {
-            vec2 i = floor(p);
-            vec2 f = fract(p);
-            vec2 u = f * f * (3.0 - 2.0 * f);
-            return mix(
-                mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), u.x),
-                mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
-                u.y
-            );
-        }
-
-        float fbm(vec2 p) {
-            float v = 0.0;
-            float a = 0.5;
-            mat2 r = mat2(0.80, -0.60, 0.60, 0.80);
-            for (int i = 0; i < 5; i++) {
-                v += a * noise(p);
-                p = r * p * 2.02 + 11.3;
-                a *= 0.53;
-            }
-            return v;
-        }
-
-        float caustic(vec2 p, float t) {
-            vec2 q = p;
-            q += 0.55 * vec2(fbm(p * 1.6 + vec2(t * 0.22, 0.0)), fbm(p * 1.6 + vec2(0.0, t * 0.18)));
-            float n1 = fbm(q * 2.4 - vec2(t * 0.12, t * 0.15));
-            float n2 = fbm(q * 4.1 + vec2(t * 0.10, -t * 0.08));
-            float ridge1 = 1.0 - abs(2.0 * n1 - 1.0);
-            float ridge2 = 1.0 - abs(2.0 * n2 - 1.0);
-            return pow(ridge1, 3.0) * 0.7 + pow(ridge2, 4.0) * 0.3;
-        }
-
-        void main() {
-            vec2 res = max(u_resolution.xy, vec2(1.0));
-            vec2 uv = gl_FragCoord.xy / res;
-            float aspect = res.x / max(res.y, 1.0);
-
-            vec2 autoOffset = vec2(sin(u_time * 0.25) * 0.06, cos(u_time * 0.18) * 0.03);
-            vec2 p = vec2((uv.x - 0.5) * aspect, uv.y) - autoOffset;
-
-            float t = u_time * 0.28;
-
-            float depth = uv.y;
-            vec3 deep = vec3(0.002, 0.015, 0.038);
-            vec3 surf = vec3(0.010, 0.070, 0.130);
-            vec3 col = mix(deep, surf, smoothstep(0.0, 1.0, depth));
-
-            float env = smoothstep(0.02, 0.85, depth);
-
-            vec2 cuv = p * 2.1 + vec2(0.0, -u_time * 0.012);
-            float c = caustic(cuv, t);
-            col += vec3(0.12, 0.48, 0.65) * c * env * 0.45;
-
-            float c2 = caustic(cuv * 0.58 + 8.0, t * 0.65);
-            col += vec3(0.07, 0.32, 0.48) * c2 * env * 0.25;
-
-            float rays = 0.0;
-            float autoSlope = sin(u_time * 0.15) * 0.22;
-            float rx = p.x * 0.75 + sin(u_time * 0.10) * 0.15 - p.y * autoSlope;
-
-            rays += smoothstep(0.55, 0.0, abs(rx + 0.25 + sin(u_time * 0.12) * 0.05));
-            rays += smoothstep(0.48, 0.0, abs(rx - 0.20 + sin(u_time * 0.10 + 1.6) * 0.04)) * 0.75;
-            rays += smoothstep(0.42, 0.0, abs(rx + 0.75 + sin(u_time * 0.08 + 3.2) * 0.03)) * 0.55;
-            rays *= smoothstep(0.05, 1.0, depth) * (0.42 + 0.58 * fbm(vec2(p.x * 2.2, u_time * 0.16)));
-            col += vec3(0.15, 0.46, 0.60) * rays * 0.095;
-
-            float motes = smoothstep(0.993, 1.0, hash(floor((p + vec2(0.0, u_time * 0.008)) * 110.0)));
-            col += vec3(0.25, 0.55, 0.70) * motes * 0.15;
-
-            col += vec3(0.060, 0.025, 0.110) * smoothstep(0.55, 1.0, uv.x) * 0.18;
-
-            float vign = smoothstep(1.35, 0.22, length((uv - 0.5) * vec2(aspect * 0.42, 1.0)));
-            col *= 0.75 + vign * 0.32;
-
-            col *= 0.85 + 0.15 * u_intensity;
-            col = pow(max(col, 0.0), vec3(0.88));
-            gl_FragColor = vec4(col, 1.0);
-        }
-    `
+    vertex: "\n        attribute vec2 a_position;\n        varying vec2 v_uv;\n        void main() {\n            v_uv = a_position * 0.5 + 0.5;\n            gl_Position = vec4(a_position, 0.0, 1.0);\n        }\n    ",
+    fragment:
+        "\n        precision mediump float;\n\n        uniform vec2 u_resolution;\n        uniform float u_time;\n        uniform float u_intensity;\n        varying vec2 v_uv;\n\n        float hash(vec2 p) {\n            p = fract(p * vec2(123.34, 456.21));\n            p += dot(p, p + 45.32);\n            return fract(p.x * p.y);\n        }\n\n        float noise(vec2 p) {\n            vec2 i = floor(p);\n            vec2 f = fract(p);\n            vec2 u = f * f * (3.0 - 2.0 * f);\n            return mix(\n                mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), u.x),\n                mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),\n                u.y\n            );\n        }\n\n        float fbm(vec2 p) {\n            float v = 0.0;\n            float a = 0.5;\n            mat2 r = mat2(0.80, -0.60, 0.60, 0.80);\n            for (int i = 0; i < 5; i++) {\n                v += a * noise(p);\n                p = r * p * 2.02 + 11.3;\n                a *= 0.53;\n            }\n            return v;\n        }\n\n        float caustic(vec2 p, float t) {\n            vec2 q = p;\n            q += 0.55 * vec2(fbm(p * 1.6 + vec2(t * 0.22, 0.0)), fbm(p * 1.6 + vec2(0.0, t * 0.18)));\n            float n1 = fbm(q * 2.4 - vec2(t * 0.12, t * 0.15));\n            float n2 = fbm(q * 4.1 + vec2(t * 0.10, -t * 0.08));\n            float ridge1 = 1.0 - abs(2.0 * n1 - 1.0);\n            float ridge2 = 1.0 - abs(2.0 * n2 - 1.0);\n            return pow(ridge1, 3.0) * 0.7 + pow(ridge2, 4.0) * 0.3;\n        }\n\n        void main() {\n            vec2 res = max(u_resolution.xy, vec2(1.0));\n            vec2 uv = gl_FragCoord.xy / res;\n            float aspect = res.x / max(res.y, 1.0);\n\n            vec2 autoOffset = vec2(sin(u_time * 0.25) * 0.06, cos(u_time * 0.18) * 0.03);\n            vec2 p = vec2((uv.x - 0.5) * aspect, uv.y) - autoOffset;\n\n            float t = u_time * 0.28;\n\n            float depth = uv.y;\n            vec3 deep = vec3(0.002, 0.015, 0.038);\n            vec3 surf = vec3(0.010, 0.070, 0.130);\n            vec3 col = mix(deep, surf, smoothstep(0.0, 1.0, depth));\n\n            float env = smoothstep(0.02, 0.85, depth);\n\n            vec2 cuv = p * 2.1 + vec2(0.0, -u_time * 0.012);\n            float c = caustic(cuv, t);\n            col += vec3(0.12, 0.48, 0.65) * c * env * 0.45;\n\n            float c2 = caustic(cuv * 0.58 + 8.0, t * 0.65);\n            col += vec3(0.07, 0.32, 0.48) * c2 * env * 0.25;\n\n            float rays = 0.0;\n            float autoSlope = sin(u_time * 0.15) * 0.22;\n            float rx = p.x * 0.75 + sin(u_time * 0.10) * 0.15 - p.y * autoSlope;\n\n            rays += smoothstep(0.55, 0.0, abs(rx + 0.25 + sin(u_time * 0.12) * 0.05));\n            rays += smoothstep(0.48, 0.0, abs(rx - 0.20 + sin(u_time * 0.10 + 1.6) * 0.04)) * 0.75;\n            rays += smoothstep(0.42, 0.0, abs(rx + 0.75 + sin(u_time * 0.08 + 3.2) * 0.03)) * 0.55;\n            rays *= smoothstep(0.05, 1.0, depth) * (0.42 + 0.58 * fbm(vec2(p.x * 2.2, u_time * 0.16)));\n            col += vec3(0.15, 0.46, 0.60) * rays * 0.095;\n\n            float motes = smoothstep(0.993, 1.0, hash(floor((p + vec2(0.0, u_time * 0.008)) * 110.0)));\n            col += vec3(0.25, 0.55, 0.70) * motes * 0.15;\n\n            col += vec3(0.060, 0.025, 0.110) * smoothstep(0.55, 1.0, uv.x) * 0.18;\n\n            float vign = smoothstep(1.35, 0.22, length((uv - 0.5) * vec2(aspect * 0.42, 1.0)));\n            col *= 0.75 + vign * 0.32;\n\n            col *= 0.85 + 0.15 * u_intensity;\n            col = pow(max(col, 0.0), vec3(0.88));\n            gl_FragColor = vec4(col, 1.0);\n        }\n    ",
 };
-
 function leviathanSeaShouldSkip() {
-    return true; // Bypassed WebGL to always use the lightweight CSS ocean fallback on mobile
+    return !0;
 }
-
-function createSeaShaderProgram(gl, vertexSource, fragmentSource) {
-    const compile = (type, source) => {
-        const shader = gl.createShader(type);
-        if (!shader) throw new Error('shader allocation failed');
-        gl.shaderSource(shader, source);
-        gl.compileShader(shader);
-        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-            const info = gl.getShaderInfoLog(shader) || 'shader compile failed';
-            gl.deleteShader(shader);
-            throw new Error(info);
-        }
-        return shader;
-    };
-
-    const vertex = compile(gl.VERTEX_SHADER, vertexSource);
-    const fragment = compile(gl.FRAGMENT_SHADER, fragmentSource);
-    const program = gl.createProgram();
-    if (!program) throw new Error('program allocation failed');
-    gl.attachShader(program, vertex);
-    gl.attachShader(program, fragment);
-    gl.linkProgram(program);
-    gl.deleteShader(vertex);
-    gl.deleteShader(fragment);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        const info = gl.getProgramInfoLog(program) || 'program link failed';
-        gl.deleteProgram(program);
-        throw new Error(info);
+function createSeaShaderProgram(n, e, t) {
+    const a = (e, t) => {
+            const a = n.createShader(e);
+            if (!a) throw new Error("shader allocation failed");
+            if (
+                (n.shaderSource(a, t),
+                n.compileShader(a),
+                !n.getShaderParameter(a, n.COMPILE_STATUS))
+            ) {
+                const e = n.getShaderInfoLog(a) || "shader compile failed";
+                throw (n.deleteShader(a), new Error(e));
+            }
+            return a;
+        },
+        i = a(n.VERTEX_SHADER, e),
+        o = a(n.FRAGMENT_SHADER, t),
+        r = n.createProgram();
+    if (!r) throw new Error("program allocation failed");
+    if (
+        (n.attachShader(r, i),
+        n.attachShader(r, o),
+        n.linkProgram(r),
+        n.deleteShader(i),
+        n.deleteShader(o),
+        !n.getProgramParameter(r, n.LINK_STATUS))
+    ) {
+        const e = n.getProgramInfoLog(r) || "program link failed";
+        throw (n.deleteProgram(r), new Error(e));
     }
-    return program;
+    return r;
 }
-
 function getLeviathanSeaProfile() {
-    const cores = navigator.hardwareConcurrency || 8;
-    const memory = Number(navigator['deviceMemory'] || 0);
-    const lowfx = !!document.body?.classList?.contains('m-lowfx');
-    const tiny = (memory > 0 && memory <= 2) || (cores && cores <= 2);
-    const lite = lowfx || tiny || (cores && cores <= 4) || (memory && memory <= 4);
-    if (tiny) return { dpr: 0.72, fps: 18, intensity: 0.72 };
-    if (lite) return { dpr: 0.88, fps: 24, intensity: 0.86 };
-    return { dpr: 1.15, fps: 30, intensity: 1.0 };
+    const n = navigator.hardwareConcurrency || 8,
+        e = Number(navigator.deviceMemory || 0),
+        t = !!document.body?.classList?.contains("m-lowfx"),
+        a = (e > 0 && e <= 2) || (n && n <= 2);
+    return a
+        ? { dpr: 0.72, fps: 18, intensity: 0.72 }
+        : t || a || (n && n <= 4) || (e && e <= 4)
+          ? { dpr: 0.88, fps: 24, intensity: 0.86 }
+          : { dpr: 1.15, fps: 30, intensity: 1 };
 }
-
-function startLeviathanSeaShader(mount) {
-    if (!mount || window.__leviathanSea) return;
-
-    const profile = getLeviathanSeaProfile();
-    const canvas = document.createElement('canvas');
-    canvas.setAttribute('aria-hidden', 'true');
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    mount.textContent = '';
-    mount.appendChild(canvas);
-
-    const gl = canvas.getContext('webgl', {
-        alpha: true,
-        antialias: false,
-        depth: false,
-        stencil: false,
-        preserveDrawingBuffer: false,
-        powerPreference: 'low-power'
-    }) || canvas.getContext('experimental-webgl');
-
-    if (!gl) {
-        mount.remove();
-        window.__leviathanSeaShaderBoot = false;
-        activateLeviathanSeaFallback();
-        return;
-    }
-
-    let program = null;
-    let buffer = null;
-    let resizeRaf = 0;
-    let classObserver = null;
-    let disposed = false;
-    let contextLost = false;
-
+function startLeviathanSeaShader(n) {
+    if (!n || window.__leviathanSea) return;
+    const e = getLeviathanSeaProfile(),
+        t = document.createElement("canvas");
+    (t.setAttribute("aria-hidden", "true"),
+        (t.style.width = "100%"),
+        (t.style.height = "100%"),
+        (n.textContent = ""),
+        n.appendChild(t));
+    const a =
+        t.getContext("webgl", {
+            alpha: !0,
+            antialias: !1,
+            depth: !1,
+            stencil: !1,
+            preserveDrawingBuffer: !1,
+            powerPreference: "low-power",
+        }) || t.getContext("experimental-webgl");
+    if (!a)
+        return (
+            n.remove(),
+            (window.__leviathanSeaShaderBoot = !1),
+            void activateLeviathanSeaFallback()
+        );
+    let i = null,
+        o = null,
+        r = 0,
+        s = null,
+        l = !1,
+        m = !1;
     try {
-        program = createSeaShaderProgram(gl, LEVIATHAN_SEA_SHADER.vertex, LEVIATHAN_SEA_SHADER.fragment);
-        buffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-    } catch (_) {
-        try { if (program) gl.deleteProgram(program); } catch (__) {}
-        try { if (buffer) gl.deleteBuffer(buffer); } catch (__) {}
-        mount.remove();
-        window.__leviathanSeaShaderBoot = false;
-        activateLeviathanSeaFallback();
-        return;
-    }
-
-    const locPosition = gl.getAttribLocation(program, 'a_position');
-    const locResolution = gl.getUniformLocation(program, 'u_resolution');
-    const locTime = gl.getUniformLocation(program, 'u_time');
-    const locIntensity = gl.getUniformLocation(program, 'u_intensity');
-    const minFrameMs = Math.max(16, Math.round(1000 / Math.max(12, profile.fps || 24)));
-    const bornAt = performance.now();
-
-    const state = {
-        raf: 0,
-        lastFrame: 0,
-        paused: false,
-        sync: null,
-        cleanup: null
-    };
-
-    const resize = () => {
-        if (disposed || contextLost) return;
-        const rect = mount.getBoundingClientRect();
-        const dpr = Math.max(0.65, Math.min(window.devicePixelRatio || 1, profile.dpr));
-        const width = Math.max(2, Math.floor((rect.width || window.innerWidth || 390) * dpr));
-        const height = Math.max(2, Math.floor((rect.height || window.innerHeight || 760) * dpr));
-        if (canvas.width !== width || canvas.height !== height) {
-            canvas.width = width;
-            canvas.height = height;
-        }
-        gl.viewport(0, 0, width, height);
-    };
-
-    const draw = (now) => {
-        state.raf = 0;
-        if (disposed || contextLost || state.paused) return;
-        if (state.lastFrame && now - state.lastFrame < minFrameMs) {
-            state.raf = requestAnimationFrame(draw);
-            return;
-        }
-        state.lastFrame = now;
-
+        ((i = createSeaShaderProgram(
+            a,
+            LEVIATHAN_SEA_SHADER.vertex,
+            LEVIATHAN_SEA_SHADER.fragment,
+        )),
+            (o = a.createBuffer()),
+            a.bindBuffer(a.ARRAY_BUFFER, o),
+            a.bufferData(
+                a.ARRAY_BUFFER,
+                new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+                a.STATIC_DRAW,
+            ));
+    } catch (e) {
         try {
-            resize();
-            gl.useProgram(program);
-            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-            gl.enableVertexAttribArray(locPosition);
-            gl.vertexAttribPointer(locPosition, 2, gl.FLOAT, false, 0, 0);
-            gl.uniform2f(locResolution, canvas.width, canvas.height);
-            gl.uniform1f(locTime, (now - bornAt) * 0.001);
-            gl.uniform1f(locIntensity, profile.intensity);
-            gl.disable(gl.DEPTH_TEST);
-            gl.disable(gl.CULL_FACE);
-            gl.enable(gl.BLEND);
-            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-            gl.clearColor(0, 0, 0, 0);
-            gl.clear(gl.COLOR_BUFFER_BIT);
-            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        } catch (_) {
-            state.cleanup && state.cleanup();
-            activateLeviathanSeaFallback();
-            return;
+            i && a.deleteProgram(i);
+        } catch (n) {}
+        try {
+            o && a.deleteBuffer(o);
+        } catch (n) {}
+        return (
+            n.remove(),
+            (window.__leviathanSeaShaderBoot = !1),
+            void activateLeviathanSeaFallback()
+        );
+    }
+    const d = a.getAttribLocation(i, "a_position"),
+        c = a.getUniformLocation(i, "u_resolution"),
+        p = a.getUniformLocation(i, "u_time"),
+        g = a.getUniformLocation(i, "u_intensity"),
+        u = Math.max(16, Math.round(1e3 / Math.max(12, e.fps || 24))),
+        b = performance.now(),
+        f = { raf: 0, lastFrame: 0, paused: !1, sync: null, cleanup: null },
+        v = () => {
+            if (l || m) return;
+            const i = n.getBoundingClientRect(),
+                o = Math.max(0.65, Math.min(window.devicePixelRatio || 1, e.dpr)),
+                r = Math.max(2, Math.floor((i.width || window.innerWidth || 390) * o)),
+                s = Math.max(2, Math.floor((i.height || window.innerHeight || 760) * o));
+            ((t.width === r && t.height === s) || ((t.width = r), (t.height = s)),
+                a.viewport(0, 0, r, s));
+        },
+        x = (n) => {
+            if (((f.raf = 0), !(l || m || f.paused)))
+                if (f.lastFrame && n - f.lastFrame < u) f.raf = requestAnimationFrame(x);
+                else {
+                    f.lastFrame = n;
+                    try {
+                        (v(),
+                            a.useProgram(i),
+                            a.bindBuffer(a.ARRAY_BUFFER, o),
+                            a.enableVertexAttribArray(d),
+                            a.vertexAttribPointer(d, 2, a.FLOAT, !1, 0, 0),
+                            a.uniform2f(c, t.width, t.height),
+                            a.uniform1f(p, 0.001 * (n - b)),
+                            a.uniform1f(g, e.intensity),
+                            a.disable(a.DEPTH_TEST),
+                            a.disable(a.CULL_FACE),
+                            a.enable(a.BLEND),
+                            a.blendFunc(a.SRC_ALPHA, a.ONE_MINUS_SRC_ALPHA),
+                            a.clearColor(0, 0, 0, 0),
+                            a.clear(a.COLOR_BUFFER_BIT),
+                            a.drawArrays(a.TRIANGLE_STRIP, 0, 4));
+                    } catch (n) {
+                        return (f.cleanup && f.cleanup(), void activateLeviathanSeaFallback());
+                    }
+                    f.raf = requestAnimationFrame(x);
+                }
+        },
+        h = () =>
+            document.hidden ||
+            document.body.classList.contains("m-typing") ||
+            document.body.classList.contains("m-keyboard-open") ||
+            document.body.classList.contains("m-page-hidden"),
+        y = () => {
+            f.paused ||
+                ((f.paused = !0),
+                f.raf && cancelAnimationFrame(f.raf),
+                (f.raf = 0),
+                n.classList.add("is-paused"));
+        };
+    let w = 0;
+    const k = () => {
+            w ||
+                l ||
+                (w = requestAnimationFrame(() => {
+                    ((w = 0),
+                        h()
+                            ? y()
+                            : (() => {
+                                  if (l || m || h()) return y();
+                                  (!f.paused && f.raf) ||
+                                      ((f.paused = !1),
+                                      (f.lastFrame = 0),
+                                      n.classList.remove("is-paused"),
+                                      (f.raf = requestAnimationFrame(x)));
+                              })());
+                }));
+        },
+        S = () => {
+            (r && cancelAnimationFrame(r),
+                (r = requestAnimationFrame(() => {
+                    ((r = 0), v());
+                })));
+        },
+        M = (e) => {
+            (e.preventDefault(), (m = !0), y(), n.classList.remove("is-ready"));
+        },
+        L = () => {
+            (f.cleanup && f.cleanup(),
+                (window.__leviathanSeaShaderBoot = !1),
+                requestAnimationFrame(createSeaCanvas));
+        };
+    ((f.cleanup = () => {
+        if (!l) {
+            ((l = !0),
+                w && cancelAnimationFrame(w),
+                r && cancelAnimationFrame(r),
+                f.raf && cancelAnimationFrame(f.raf),
+                document.removeEventListener("visibilitychange", k),
+                window.removeEventListener("resize", S),
+                window.removeEventListener("orientationchange", S),
+                t.removeEventListener("webglcontextlost", M),
+                t.removeEventListener("webglcontextrestored", L));
+            try {
+                s && s.disconnect();
+            } catch (n) {}
+            try {
+                a.deleteBuffer(o);
+            } catch (n) {}
+            try {
+                a.deleteProgram(i);
+            } catch (n) {}
+            (n.classList.remove("is-ready", "is-paused"),
+                (window.__leviathanSea = null),
+                (window.__leviathanSeaShaderBoot = !1));
         }
-
-        state.raf = requestAnimationFrame(draw);
-    };
-
-    const shouldPause = () => document.hidden
-        || document.body.classList.contains('m-typing')
-        || document.body.classList.contains('m-keyboard-open')
-        || document.body.classList.contains('m-page-hidden');
-
-    const stop = () => {
-        if (state.paused) return;
-        state.paused = true;
-        if (state.raf) cancelAnimationFrame(state.raf);
-        state.raf = 0;
-        mount.classList.add('is-paused');
-    };
-
-    const go = () => {
-        if (disposed || contextLost || shouldPause()) return stop();
-        if (!state.paused && state.raf) return;
-        state.paused = false;
-        state.lastFrame = 0;
-        mount.classList.remove('is-paused');
-        state.raf = requestAnimationFrame(draw);
-    };
-
-    let pendingSync = 0;
-    const sync = () => {
-        if (pendingSync || disposed) return;
-        pendingSync = requestAnimationFrame(() => {
-            pendingSync = 0;
-            shouldPause() ? stop() : go();
-        });
-    };
-
-    const onResize = () => {
-        if (resizeRaf) cancelAnimationFrame(resizeRaf);
-        resizeRaf = requestAnimationFrame(() => {
-            resizeRaf = 0;
-            resize();
-        });
-    };
-
-    const onContextLost = (event) => {
-        event.preventDefault();
-        contextLost = true;
-        stop();
-        mount.classList.remove('is-ready');
-    };
-
-    const onContextRestored = () => {
-        state.cleanup && state.cleanup();
-        window.__leviathanSeaShaderBoot = false;
-        requestAnimationFrame(createSeaCanvas);
-    };
-
-    state.cleanup = () => {
-        if (disposed) return;
-        disposed = true;
-        if (pendingSync) cancelAnimationFrame(pendingSync);
-        if (resizeRaf) cancelAnimationFrame(resizeRaf);
-        if (state.raf) cancelAnimationFrame(state.raf);
-        document.removeEventListener('visibilitychange', sync);
-        window.removeEventListener('resize', onResize);
-        window.removeEventListener('orientationchange', onResize);
-        canvas.removeEventListener('webglcontextlost', onContextLost);
-        canvas.removeEventListener('webglcontextrestored', onContextRestored);
-        try { classObserver && classObserver.disconnect(); } catch (_) {}
-        try { gl.deleteBuffer(buffer); } catch (_) {}
-        try { gl.deleteProgram(program); } catch (_) {}
-        mount.classList.remove('is-ready', 'is-paused');
-        window.__leviathanSea = null;
-        window.__leviathanSeaShaderBoot = false;
-    };
-
-    state.sync = sync;
-    window.__leviathanSea = state;
-    window.__leviathanSeaSync = sync;
-    window.__leviathanSeaCleanup = state.cleanup;
-
-    document.addEventListener('visibilitychange', sync, { passive: true });
-    window.addEventListener('resize', onResize, { passive: true });
-    window.addEventListener('orientationchange', onResize, { passive: true });
-    canvas.addEventListener('webglcontextlost', onContextLost, false);
-    canvas.addEventListener('webglcontextrestored', onContextRestored, false);
-
+    }),
+        (f.sync = k),
+        (window.__leviathanSea = f),
+        (window.__leviathanSeaSync = k),
+        (window.__leviathanSeaCleanup = f.cleanup),
+        document.addEventListener("visibilitychange", k, { passive: !0 }),
+        window.addEventListener("resize", S, { passive: !0 }),
+        window.addEventListener("orientationchange", S, { passive: !0 }),
+        t.addEventListener("webglcontextlost", M, !1),
+        t.addEventListener("webglcontextrestored", L, !1));
     try {
-        classObserver = new MutationObserver(sync);
-        classObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
-    } catch (_) {}
-
-    window.addEventListener('pagehide', state.cleanup, { once: true });
-    resize();
-    requestAnimationFrame(() => {
-        mount.classList.add('is-ready');
-        deactivateLeviathanSeaFallback();
-    });
-    sync();
+        ((s = new MutationObserver(k)),
+            s.observe(document.body, { attributes: !0, attributeFilter: ["class"] }));
+    } catch (n) {}
+    (window.addEventListener("pagehide", f.cleanup, { once: !0 }),
+        v(),
+        requestAnimationFrame(() => {
+            (n.classList.add("is-ready"), deactivateLeviathanSeaFallback());
+        }),
+        k());
 }
-
 function installLeviathanSeaBfcacheRestart() {
-    if (window.__leviathanSeaBfcacheRestart) return;
-    window.__leviathanSeaBfcacheRestart = true;
-    window.addEventListener('pageshow', (event) => {
-        if (!event || !event.persisted) return;
-        if (window.__leviathanSea && typeof window.__leviathanSea.sync === 'function') {
-            window.__leviathanSea.sync();
-            return;
-        }
-        window.__leviathanSeaShaderBoot = false;
-        requestAnimationFrame(createSeaCanvas);
-    }, { passive: true });
+    window.__leviathanSeaBfcacheRestart ||
+        ((window.__leviathanSeaBfcacheRestart = !0),
+        window.addEventListener(
+            "pageshow",
+            (n) => {
+                n &&
+                    n.persisted &&
+                    (window.__leviathanSea && "function" == typeof window.__leviathanSea.sync
+                        ? window.__leviathanSea.sync()
+                        : ((window.__leviathanSeaShaderBoot = !1),
+                          requestAnimationFrame(createSeaCanvas)));
+            },
+            { passive: !0 },
+        ));
 }
-
 function activateLeviathanSeaFallback() {
-    if (!document.body) return;
-    try {
-        let layer = document.getElementById('m-sea-css');
-        if (!layer) {
-            layer = document.createElement('div');
-            layer.id = 'm-sea-css';
-            layer.setAttribute('aria-hidden', 'true');
-            layer.innerHTML =
-                '<div class="m-seacss-caustic"></div>' +
-                '<div class="m-seacss-ray r2"></div>' +
-                '<div class="m-seacss-ray r1"></div>' +
-                '<div class="m-seacss-ray r3"></div>' +
-                '<div class="m-seacss-layer m-seacss-swell3"></div>' +
-                '<div class="m-seacss-layer m-seacss-swell2"></div>' +
-                '<div class="m-seacss-layer m-seacss-swell1"></div>';
-            document.body.insertBefore(layer, document.body.firstChild);
-        }
-        document.body.classList.add('m-sea-fallback');
-    } catch (_) {}
+    if (document.body)
+        try {
+            let n = document.getElementById("m-sea-css");
+            (n ||
+                ((n = document.createElement("div")),
+                (n.id = "m-sea-css"),
+                n.setAttribute("aria-hidden", "true"),
+                (n.innerHTML =
+                    '<div class="m-seacss-caustic"></div><div class="m-seacss-ray r2"></div><div class="m-seacss-ray r1"></div><div class="m-seacss-ray r3"></div><div class="m-seacss-layer m-seacss-swell3"></div><div class="m-seacss-layer m-seacss-swell2"></div><div class="m-seacss-layer m-seacss-swell1"></div>'),
+                document.body.insertBefore(n, document.body.firstChild)),
+                document.body.classList.add("m-sea-fallback"));
+        } catch (n) {}
 }
-
 function deactivateLeviathanSeaFallback() {
-    try { document.body.classList.remove('m-sea-fallback'); } catch (_) {}
+    try {
+        document.body.classList.remove("m-sea-fallback");
+    } catch (n) {}
 }
-
 function createSeaCanvas() {
     installLeviathanSeaBfcacheRestart();
-
-    const legacyCanvas = document.getElementById('m-sea-canvas');
-    if (legacyCanvas) legacyCanvas.remove();
-
-    if (window.__leviathanSeaShaderBoot) return;
-    window.__leviathanSeaShaderBoot = true;
-
-    if (leviathanSeaShouldSkip()) {
-        window.__leviathanSeaShaderBoot = false;
-        activateLeviathanSeaFallback();
-        return;
-    }
-
-    let mount = document.getElementById('m-sea-webgl');
-    if (!mount) {
-        mount = document.createElement('div');
-        mount.id = 'm-sea-webgl';
-        mount.setAttribute('aria-hidden', 'true');
-        document.body.insertBefore(mount, document.body.firstChild);
-    }
-
-    const boot = () => requestAnimationFrame(() => startLeviathanSeaShader(mount));
-    if (typeof requestIdleCallback === 'function') {
-        requestIdleCallback(boot, { timeout: 700 });
-    } else {
-        setTimeout(boot, 80);
-    }
+    const n = document.getElementById("m-sea-canvas");
+    if ((n && n.remove(), window.__leviathanSeaShaderBoot)) return;
+    if (((window.__leviathanSeaShaderBoot = !0), leviathanSeaShouldSkip()))
+        return ((window.__leviathanSeaShaderBoot = !1), void activateLeviathanSeaFallback());
+    let e = document.getElementById("m-sea-webgl");
+    e ||
+        ((e = document.createElement("div")),
+        (e.id = "m-sea-webgl"),
+        e.setAttribute("aria-hidden", "true"),
+        document.body.insertBefore(e, document.body.firstChild));
+    const t = () => requestAnimationFrame(() => startLeviathanSeaShader(e));
+    "function" == typeof requestIdleCallback
+        ? requestIdleCallback(t, { timeout: 700 })
+        : setTimeout(t, 80);
 }
-
 function initMobileViewportGuard() {
-    const root = document.documentElement;
-    let blurTimer = 0;
-    let stableH = 0;
-
-    const setStableHeight = () => {
-        const h = Math.max(320, Math.round(window.innerHeight || document.documentElement.clientHeight || 0));
-        if (h) { stableH = h; root.style.setProperty('--m-vvh', `${h}px`); }
-    };
-
-    const isTextField = isMobileTextField;
-
-    const openKeyboardMode = () => {
-        window.clearTimeout(blurTimer);
-        document.body.classList.add('m-input-active', 'm-keyboard-open', 'm-typing');
-    };
-
-    const closeKeyboardMode = (force = false) => {
-        window.clearTimeout(blurTimer);
-        blurTimer = window.setTimeout(() => {
-            if (!force && isTextField()) return;
-            document.body.classList.remove('m-input-active', 'm-keyboard-open', 'm-typing');
-        }, 250);
-    };
-
-    setStableHeight();
-    window.addEventListener('orientationchange', () => window.setTimeout(setStableHeight, 260), { passive: true });
-    if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', () => {
-            const vvh = window.visualViewport.height;
-            const base = stableH || window.innerHeight;
-            if (vvh >= base * 0.8 && document.body.classList.contains('m-keyboard-open')) {
-                closeKeyboardMode(true);
-            }
-        }, { passive: true });
-    }
-
-    document.addEventListener('focusin', (event) => {
-        if (!isTextField(mAsElement(event.target))) return;
-        openKeyboardMode();
-    }, { passive: true });
-
-    document.addEventListener('focusout', (event) => {
-        if (!isTextField(mAsElement(event.target))) return;
-        closeKeyboardMode();
-    }, { passive: true });
-
-    document.addEventListener('pointerdown', (event) => {
-        const target = mAsElement(event.target);
-        if (isMobileTextField(mClosest(target, 'input, textarea, [contenteditable="true"]'))) return;
-        if (mClosest(target, '.m-switch, input[type="checkbox"], button, .m-qual-chip, .m-cloud-mode-btn, .m-reactor-module, .m-flux-opt, .m-lang-opt, .m-cortex-chip, .m-cred-opt, .m-act-btn, .m-nav-item, .m-paste-action, .m-if-action, .m-get-link')) return;
-        closeKeyboardMode();
-    }, { passive: true });
+    const n = document.documentElement;
+    let e = 0,
+        t = 0;
+    const a = () => {
+            if (
+                document.body.classList.contains("m-keyboard-open") ||
+                (document.activeElement &&
+                    document.activeElement.tagName &&
+                    ("INPUT" === document.activeElement.tagName ||
+                        "TEXTAREA" === document.activeElement.tagName))
+            )
+                return;
+            const e = Math.max(
+                320,
+                Math.round(window.innerHeight || document.documentElement.clientHeight || 0),
+            );
+            e && ((t = e), n.style.setProperty("--m-vvh", `${e}px`));
+        },
+        i = isMobileTextField,
+        o = (n = !1) => {
+            (window.clearTimeout(e),
+                (e = window.setTimeout(() => {
+                    (!n && i()) ||
+                        document.body.classList.remove(
+                            "m-input-active",
+                            "m-keyboard-open",
+                            "m-typing",
+                        );
+                }, 250)));
+        };
+    (a(),
+        window.addEventListener("orientationchange", () => window.setTimeout(a, 260), {
+            passive: !0,
+        }),
+        window.visualViewport &&
+            window.visualViewport.addEventListener(
+                "resize",
+                () => {
+                    window.visualViewport.height >= 0.8 * (t || window.innerHeight) &&
+                        document.body.classList.contains("m-keyboard-open") &&
+                        o(!0);
+                },
+                { passive: !0 },
+            ),
+        document.addEventListener(
+            "focusin",
+            (n) => {
+                i(mAsElement(n.target)) &&
+                    (window.clearTimeout(e),
+                    document.body.classList.add("m-input-active", "m-keyboard-open", "m-typing"));
+            },
+            { passive: !0 },
+        ),
+        document.addEventListener(
+            "focusout",
+            (n) => {
+                i(mAsElement(n.target)) && o();
+            },
+            { passive: !0 },
+        ),
+        document.addEventListener(
+            "pointerdown",
+            (n) => {
+                const e = mAsElement(n.target);
+                isMobileTextField(mClosest(e, 'input, textarea, [contenteditable="true"]')) ||
+                    mClosest(
+                        e,
+                        '.m-switch, input[type="checkbox"], button, .m-qual-chip, .m-cloud-mode-btn, .m-reactor-module, .m-flux-opt, .m-lang-opt, .m-cortex-chip, .m-cred-opt, .m-act-btn, .m-nav-item, .m-paste-action, .m-if-action, .m-get-link',
+                    ) ||
+                    o();
+            },
+            { passive: !0 },
+        ));
 }
-
 function installMobileVisibilityGuard() {
-    const sync = () => document.body.classList.toggle('m-page-hidden', document.hidden);
-    document.addEventListener('visibilitychange', sync, { passive: true });
-    sync();
+    const n = () => document.body.classList.toggle("m-page-hidden", document.hidden);
+    (document.addEventListener("visibilitychange", n, { passive: !0 }), n());
 }
-
 function installMobileInputPerformanceGuard() {
-    const isTextInput = isMobileTextField;
-    const isToggleInput = (el) => !!el?.matches?.('input[type="checkbox"], input[type="radio"], input[type="range"]');
-    const clearTyping = () => {
-        if (isTextInput(document.activeElement)) return;
-        clearTimeout(MOBILE_PERF.inputIdleTimer);
-        document.body.classList.remove('m-typing', 'm-input-active', 'm-keyboard-open');
-    };
-    const markTyping = () => {
-        document.body.classList.add('m-typing');
-        clearTimeout(MOBILE_PERF.inputIdleTimer);
-        MOBILE_PERF.inputIdleTimer = setTimeout(() => {
-            if (!isTextInput(document.activeElement)) document.body.classList.remove('m-typing');
-        }, MOBILE_PERF.inputIdleMs);
-    };
-    document.addEventListener('input', (event) => {
-        const target = mAsElement(event.target);
-        if (isToggleInput(target)) return clearTyping();
-        if (isTextInput(target)) markTyping();
-    }, { passive: true });
-    document.addEventListener('touchstart', (event) => {
-        const action = mClosest(event.target, '.m-if-action, .m-paste-action, .m-get-link, .m-nav-item, .m-btn-install, .m-btn-copy, .m-act-btn');
-        if (!action) return;
-        action.classList.add('is-touching');
-        setTimeout(() => action.classList.remove('is-touching'), 140);
-    }, { passive: true });
+    const n = isMobileTextField;
+    (document.addEventListener(
+        "input",
+        (e) => {
+            const t = mAsElement(e.target);
+            var a;
+            ((a = t),
+                a?.matches?.('input[type="checkbox"], input[type="radio"], input[type="range"]')
+                    ? n(document.activeElement) ||
+                      (clearTimeout(MOBILE_PERF.inputIdleTimer),
+                      document.body.classList.remove(
+                          "m-typing",
+                          "m-input-active",
+                          "m-keyboard-open",
+                      ))
+                    : n(t) &&
+                      (document.body.classList.add("m-typing"),
+                      clearTimeout(MOBILE_PERF.inputIdleTimer),
+                      (MOBILE_PERF.inputIdleTimer = setTimeout(() => {
+                          n(document.activeElement) || document.body.classList.remove("m-typing");
+                      }, MOBILE_PERF.inputIdleMs))));
+        },
+        { passive: !0 },
+    ),
+        document.addEventListener(
+            "touchstart",
+            (n) => {
+                const e = mClosest(
+                    n.target,
+                    ".m-if-action, .m-paste-action, .m-get-link, .m-nav-item, .m-btn-install, .m-btn-copy, .m-act-btn",
+                );
+                e &&
+                    (e.classList.add("is-touching"),
+                    setTimeout(() => e.classList.remove("is-touching"), 140));
+            },
+            { passive: !0 },
+        ));
 }
-
 function installMobileNoFlickerGuard() {
-    let switchTimer = 0;
-    const switchSelector = '.m-switch, input[type="checkbox"], input[type="radio"], input[type="range"]';
-    const cleanTyping = () => {
-        if (isMobileTextField(document.activeElement)) return;
-        clearTimeout(MOBILE_PERF.inputIdleTimer);
-        document.body.classList.remove('m-typing', 'm-input-active', 'm-keyboard-open');
-    };
-    const markSwitching = () => {
-        document.body.classList.add('m-switching');
-        cleanTyping();
-        clearTimeout(switchTimer);
-        switchTimer = setTimeout(() => document.body.classList.remove('m-switching'), 360);
-    };
-    const bind = (type) => document.addEventListener(type, (event) => {
-        if (mClosest(event.target, switchSelector)) markSwitching();
-    }, { passive: true });
-    bind('pointerdown');
-    bind('touchstart');
-    bind('input');
-    bind('change');
-    requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.add('m-ui-ready')));
+    let n = 0;
+    const e = () => {
+            (document.body.classList.add("m-switching"),
+                isMobileTextField(document.activeElement) ||
+                    (clearTimeout(MOBILE_PERF.inputIdleTimer),
+                    document.body.classList.remove(
+                        "m-typing",
+                        "m-input-active",
+                        "m-keyboard-open",
+                    )),
+                clearTimeout(n),
+                (n = setTimeout(() => document.body.classList.remove("m-switching"), 360)));
+        },
+        t = (n) =>
+            document.addEventListener(
+                n,
+                (n) => {
+                    mClosest(
+                        n.target,
+                        '.m-switch, input[type="checkbox"], input[type="radio"], input[type="range"]',
+                    ) && e();
+                },
+                { passive: !0 },
+            );
+    (t("pointerdown"),
+        t("touchstart"),
+        t("input"),
+        t("change"),
+        requestAnimationFrame(() =>
+            requestAnimationFrame(() => document.body.classList.add("m-ui-ready")),
+        ));
 }
-
-function scheduleMobileAfterPaint(fn) {
-    if (typeof requestIdleCallback === 'function') {
-        requestIdleCallback(fn, { timeout: 900 });
-    } else {
-        setTimeout(fn, 80);
-    }
+function scheduleMobileAfterPaint(n) {
+    "function" == typeof requestIdleCallback
+        ? requestIdleCallback(n, { timeout: 900 })
+        : setTimeout(n, 80);
 }
-
-
 function syncMobileDockMetrics() {
     try {
-        const root = document.documentElement;
-        const dock = document.querySelector('.m-dock-container');
-        if (!root || !dock) return;
-        const rect = dock.getBoundingClientRect();
-        const h = Math.max(72, Math.ceil(rect.height || dock.offsetHeight || 76));
-        root.style.setProperty('--m-dock-h', `${h}px`);
-    } catch (_) {}
+        const n = document.documentElement,
+            e = document.querySelector(".m-dock-container");
+        if (!n || !e) return;
+        const t = e.getBoundingClientRect(),
+            a = Math.max(72, Math.ceil(t.height || e.offsetHeight || 76));
+        n.style.setProperty("--m-dock-h", `${a}px`);
+    } catch (n) {}
 }
-
 function installMobileDockMetricsGuard() {
     try {
-        syncMobileDockMetrics();
-        requestAnimationFrame(syncMobileDockMetrics);
-        setTimeout(syncMobileDockMetrics, 250);
-        setTimeout(syncMobileDockMetrics, 900);
-        window.addEventListener('resize', () => requestAnimationFrame(syncMobileDockMetrics), { passive: true });
-        window.addEventListener('orientationchange', () => setTimeout(syncMobileDockMetrics, 220), { passive: true });
-        if ('ResizeObserver' in window) {
-            const dock = document.querySelector('.m-dock-container');
-            if (dock) {
-                const ro = new ResizeObserver(() => syncMobileDockMetrics());
-                ro.observe(dock);
-                window.__leviathanDockMetricsObserver = ro;
+        if (
+            (syncMobileDockMetrics(),
+            requestAnimationFrame(syncMobileDockMetrics),
+            setTimeout(syncMobileDockMetrics, 250),
+            setTimeout(syncMobileDockMetrics, 900),
+            window.addEventListener(
+                "resize",
+                () => {
+                    (clearTimeout(window._dockT),
+                        (window._dockT = setTimeout(syncMobileDockMetrics, 150)));
+                },
+                { passive: !0 },
+            ),
+            window.addEventListener(
+                "orientationchange",
+                () => setTimeout(syncMobileDockMetrics, 220),
+                { passive: !0 },
+            ),
+            "ResizeObserver" in window)
+        ) {
+            const n = document.querySelector(".m-dock-container");
+            if (n) {
+                const e = new ResizeObserver(() => syncMobileDockMetrics());
+                (e.observe(n), (window.__leviathanDockMetricsObserver = e));
             }
         }
-    } catch (_) {}
+    } catch (n) {}
 }
-
 function initMobileInterface() {
     if (!document.head || !document.body) return;
-    if (window['__leviathanMobileInitialized']) return;
-    window['__leviathanMobileInitialized'] = true;
-
-    ensureMobileLogoHints();
-    primeMobileLogo();
-
-    let styleSheet = document.getElementById('leviathan-mobile-style');
-    if (!styleSheet) {
-        styleSheet = document.createElement("style");
-        styleSheet.id = 'leviathan-mobile-style';
-        styleSheet.textContent = mobileCSS;
-        document.head.appendChild(styleSheet);
-    }
-
-    if (!document.getElementById('app-container')) document.body.innerHTML = mobileHTML;
-    installMobileDockMetricsGuard();
-    lockMobileBrandTitle();
-    applyMobilePerformanceMode();
-    initMobileViewportGuard();
-    installMobileVisibilityGuard();
-    installMobileInputPerformanceGuard();
-    installMobileNoFlickerGuard();
-    hydrateMobileLogo();
-    initPullToRefresh();
-    loadMobileConfig();
-    updateMobilePreview();
-
-    scheduleMobileAfterPaint(() => {
-        createLogoParticles();
-        createOceanParticles();
-        createSeaCanvas();
-    });
+    if (window.__leviathanMobileInitialized) return;
+    ((window.__leviathanMobileInitialized = !0), ensureMobileLogoHints(), primeMobileLogo());
+    let n = document.getElementById("leviathan-mobile-style");
+    (n ||
+        ((n = document.createElement("style")),
+        (n.id = "leviathan-mobile-style"),
+        (n.textContent = mobileCSS),
+        document.head.appendChild(n)),
+        document.getElementById("app-container") || (document.body.innerHTML = mobileHTML),
+        installMobileDockMetricsGuard(),
+        lockMobileBrandTitle(),
+        applyMobilePerformanceMode(),
+        initMobileViewportGuard(),
+        installMobileVisibilityGuard(),
+        installMobileInputPerformanceGuard(),
+        installMobileNoFlickerGuard(),
+        hydrateMobileLogo(),
+        initPullToRefresh(),
+        loadMobileConfig(),
+        updateMobilePreview(),
+        scheduleMobileAfterPaint(() => {
+            (createLogoParticles(), createOceanParticles(), createSeaCanvas());
+        }));
 }
-
 function initPullToRefresh() {
-    const content = document.querySelector('.m-content');
-    const ptr = document.getElementById('m-ptr-indicator');
-    const icon = ptr?.querySelector?.('i');
-    if (!content || !ptr || !icon) return;
-
-    let startY = 0;
-    let pulling = false;
-    let threshold = 80;
-    let rAF = null;
-
-    content.addEventListener('touchstart', (e) => {
-        const touch = e['touches']?.[0];
-        if (!touch) return;
-        if (content.scrollTop === 0) { startY = touch.pageY; pulling = true; }
-    }, {passive: true});
-
-    content.addEventListener('touchmove', (e) => {
-        if (!pulling) return;
-        const touch = e['touches']?.[0];
-        if (!touch) return;
-        const currentY = touch.pageY;
-        const diff = currentY - startY;
-
-        if (diff > 0 && content.scrollTop <= 0) {
-            if (rAF) return;
-            rAF = requestAnimationFrame(() => {
-                ptr.style.opacity = String(Math.min(diff / 100, 1));
-                const move = Math.min(diff * 0.4, 80);
-                ptr.style.transform = `translate3d(0, ${move}px, 0)`;
-                icon.style.transform = `rotate(${move * 3}deg)`;
-
-                if (diff > threshold) {
-                    icon.classList.remove('fa-arrow-down');
-                    icon.classList.add('fa-sync-alt');
-                } else {
-                    icon.classList.remove('fa-sync-alt');
-                    icon.classList.add('fa-arrow-down');
+    const n = document.querySelector(".m-content"),
+        e = document.getElementById("m-ptr-indicator"),
+        t = e?.querySelector?.("i");
+    if (!n || !e || !t) return;
+    let a = 0,
+        i = !1,
+        o = null;
+    (n.addEventListener(
+        "touchstart",
+        (e) => {
+            const t = e.touches?.[0];
+            t && 0 === n.scrollTop && ((a = t.pageY), (i = !0));
+        },
+        { passive: !0 },
+    ),
+        n.addEventListener(
+            "touchmove",
+            (r) => {
+                if (!i) return;
+                const s = r.touches?.[0];
+                if (!s) return;
+                const l = s.pageY - a;
+                if (l > 0 && n.scrollTop <= 0) {
+                    if (o) return;
+                    o = requestAnimationFrame(() => {
+                        e.style.opacity = String(Math.min(l / 100, 1));
+                        const n = Math.min(0.4 * l, 80);
+                        ((e.style.transform = `translate3d(0, ${n}px, 0)`),
+                            (t.style.transform = `rotate(${3 * n}deg)`),
+                            l > 80
+                                ? (t.classList.remove("fa-arrow-down"),
+                                  t.classList.add("fa-sync-alt"))
+                                : (t.classList.remove("fa-sync-alt"),
+                                  t.classList.add("fa-arrow-down")),
+                            (o = null));
+                    });
                 }
-                rAF = null;
-            });
-        }
-    }, {passive: true});
-
-    content.addEventListener('touchend', (e) => {
-        if (!pulling) return;
-        pulling = false;
-        const touch = e['changedTouches']?.[0];
-        if (!touch) return;
-        const currentY = touch.pageY;
-        const diff = currentY - startY;
-
-        if (diff > threshold && content.scrollTop <= 0) {
-            ptr.classList.add('loading');
-            ptr.style.transform = `translate3d(0, 50px, 0)`;
-            mVibrate(50);
-            setTimeout(() => { location.reload(); }, 500);
-        } else {
-            ptr.style.transform = '';
-            ptr.style.opacity = '0';
-        }
-        if (rAF) { cancelAnimationFrame(rAF); rAF = null; }
-    }, { passive: true });
-}
-
-let _navPageCache = null;
-let _navItemCache = null;
-let _navContentCache = null;
-function navTo(pageId, btn) {
-    if (!_navPageCache) _navPageCache = Array.from(document.querySelectorAll('.m-page'));
-    if (!_navItemCache) _navItemCache = Array.from(document.querySelectorAll('.m-nav-item'));
-    if (!_navContentCache) _navContentCache = document.querySelector('.m-content');
-    _navPageCache.forEach(p => p.classList.remove('active'));
-    _navItemCache.forEach(i => i.classList.remove('active'));
-    const target = document.getElementById('page-' + pageId);
-    if (target) target.classList.add('active');
-    if (btn) btn.classList.add('active');
-    if (_navContentCache) _navContentCache.scrollTop = 0;
-    mVibrate(10);
-}
-
-function clearMobileDebridValidationTimer() {
-    if (mDebridValidationState.timer) {
-        clearTimeout(mDebridValidationState.timer);
-        mDebridValidationState.timer = null;
-    }
-}
-
-function formatMobileValidationExpiration(value) {
-    if (!value) return null;
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return null;
-    return parsed.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
-
-function getMobileValidationServiceMeta(service) {
-    if (service === 'tb') {
-        return { code: 'TB', name: 'TorBox' };
-    }
-    return { code: 'RD', name: 'Real-Debrid' };
-}
-
-function setMobileDebridValidationStatus(status, message, details = null) {
-    const statusEl = document.getElementById('m-keyStatus');
-    const textEl = document.getElementById('m-keyStatusText');
-    const box = document.getElementById('box-apikey');
-    if (!statusEl || !textEl || !box) return;
-
-    statusEl.className = `m-key-status ${status}`;
-    textEl.innerText = message;
-    mDebridValidationState.status = status;
-
-    box.classList.remove('is-valid', 'is-invalid', 'is-checking');
-    if (status === 'valid') box.classList.add('is-valid');
-    if (status === 'invalid') box.classList.add('is-invalid');
-    if (status === 'checking') box.classList.add('is-checking');
-
-    if (details?.titleParts?.length) {
-        const parts = details.titleParts.filter(Boolean);
-        statusEl.title = parts.join(' | ');
-    } else {
-        statusEl.removeAttribute('title');
-    }
-}
-
-async function runMobileDebridValidation(requestId, service, key) {
-    try {
-        const response = await fetch('/api/debrid/validate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ service, key })
-        });
-        const payload = await response.json().catch(() => null);
-        if (requestId !== mDebridValidationState.requestId) return;
-
-        mDebridValidationState.resolvedKey = key;
-        mDebridValidationState.resolvedService = service;
-
-        if (response.ok && payload?.ok) {
-            const meta = getMobileValidationServiceMeta(service);
-            const expiration = formatMobileValidationExpiration(payload.expiration);
-            let message = `Token ${meta.name} valido.`;
-            const titleParts = [meta.name];
-            if (service === 'rd' && payload.username) {
-                message = `Token RD valido | ${payload.username}`;
-                titleParts.push(`Account ${payload.username}`);
-            }
-            if (service === 'tb' && Number.isFinite(Number(payload.items))) {
-                message = `Token TorBox valido | ${Number(payload.items)} item cloud`;
-                titleParts.push(`Item cloud ${Number(payload.items)}`);
-            }
-            if (expiration) {
-                message += ` | ${expiration}`;
-                titleParts.push(`Scadenza ${expiration}`);
-            }
-            setMobileDebridValidationStatus('valid', message, { titleParts });
-            return;
+            { passive: !0 },
+        ),
+        n.addEventListener(
+            "touchend",
+            (t) => {
+                if (!i) return;
+                i = !1;
+                const r = t.changedTouches?.[0];
+                r &&
+                    (r.pageY - a > 80 && n.scrollTop <= 0
+                        ? (e.classList.add("loading"),
+                          (e.style.transform = "translate3d(0, 50px, 0)"),
+                          mVibrate(50),
+                          setTimeout(() => {
+                              location.reload();
+                          }, 500))
+                        : ((e.style.transform = ""), (e.style.opacity = "0")),
+                    o && (cancelAnimationFrame(o), (o = null)));
+            },
+            { passive: !0 },
+        ));
+}
+function navTo(n, e) {
+    (document.querySelectorAll(".m-page").forEach((n) => n.classList.remove("active")),
+        document.querySelectorAll(".m-nav-item").forEach((n) => n.classList.remove("active")));
+    const t = document.getElementById("page-" + n);
+    (t && t.classList.add("active"), e && e.classList.add("active"));
+    const a = document.querySelector(".m-content");
+    (a && (a.scrollTop = 0), mVibrate(10));
+}
+function clearMobileDebridValidationTimer() {
+    mDebridValidationState.timer &&
+        (clearTimeout(mDebridValidationState.timer), (mDebridValidationState.timer = null));
+}
+function formatMobileValidationExpiration(n) {
+    if (!n) return null;
+    const e = new Date(n);
+    return Number.isNaN(e.getTime())
+        ? null
+        : e.toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+function getMobileValidationServiceMeta(n) {
+    return "tb" === n ? { code: "TB", name: "TorBox" } : { code: "RD", name: "Real-Debrid" };
+}
+function setMobileDebridValidationStatus(n, e, t = null) {
+    const a = document.getElementById("m-keyStatus"),
+        i = document.getElementById("m-keyStatusText"),
+        o = document.getElementById("box-apikey");
+    if (a && i && o)
+        if (
+            ((a.className = `m-key-status ${n}`),
+            (i.innerText = e),
+            (mDebridValidationState.status = n),
+            o.classList.remove("is-valid", "is-invalid", "is-checking"),
+            "valid" === n && o.classList.add("is-valid"),
+            "invalid" === n && o.classList.add("is-invalid"),
+            "checking" === n && o.classList.add("is-checking"),
+            t?.titleParts?.length)
+        ) {
+            const n = t.titleParts.filter(Boolean);
+            a.title = n.join(" | ");
+        } else a.removeAttribute("title");
+}
+async function runMobileDebridValidation(n, e, t) {
+    try {
+        const a = await fetch("/api/debrid/validate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ service: e, key: t }),
+            }),
+            i = await a.json().catch(() => null);
+        if (n !== mDebridValidationState.requestId) return;
+        if (
+            ((mDebridValidationState.resolvedKey = t),
+            (mDebridValidationState.resolvedService = e),
+            a.ok && i?.ok)
+        ) {
+            const n = getMobileValidationServiceMeta(e),
+                t = formatMobileValidationExpiration(i.expiration);
+            let a = `Token ${n.name} valido.`;
+            const o = [n.name];
+            return (
+                "rd" === e &&
+                    i.username &&
+                    ((a = `Token RD valido | ${i.username}`), o.push(`Account ${i.username}`)),
+                "tb" === e &&
+                    Number.isFinite(Number(i.items)) &&
+                    ((a = `Token TorBox valido | ${Number(i.items)} item cloud`),
+                    o.push(`Item cloud ${Number(i.items)}`)),
+                t && ((a += ` | ${t}`), o.push(`Scadenza ${t}`)),
+                void setMobileDebridValidationStatus("valid", a, { titleParts: o })
+            );
         }
-
-        const code = String(payload?.code || '').toLowerCase();
-        if (code === 'invalid_token') {
-            setMobileDebridValidationStatus('invalid', service === 'tb'
-                ? 'Token TorBox non valido o scaduto.'
-                : 'Token RD non valido o scaduto.');
-            return;
-        }
-
-        if (code === 'unsupported_service') {
-            setMobileDebridValidationStatus('idle', 'Live check disponibile solo per RD e TB.');
-            return;
-        }
-
-        setMobileDebridValidationStatus('warning', payload?.message || 'Verifica non disponibile.');
-    } catch (_) {
-        if (requestId !== mDebridValidationState.requestId) return;
-        mDebridValidationState.resolvedKey = key;
-        mDebridValidationState.resolvedService = service;
-        setMobileDebridValidationStatus('warning', 'Verifica non disponibile.');
+        const o = String(i?.code || "").toLowerCase();
+        if ("invalid_token" === o)
+            return void setMobileDebridValidationStatus(
+                "invalid",
+                "tb" === e
+                    ? "Token TorBox non valido o scaduto."
+                    : "Token RD non valido o scaduto.",
+            );
+        if ("unsupported_service" === o)
+            return void setMobileDebridValidationStatus(
+                "idle",
+                "Live check disponibile solo per RD e TB.",
+            );
+        setMobileDebridValidationStatus("warning", i?.message || "Verifica non disponibile.");
+    } catch (a) {
+        if (n !== mDebridValidationState.requestId) return;
+        ((mDebridValidationState.resolvedKey = t),
+            (mDebridValidationState.resolvedService = e),
+            setMobileDebridValidationStatus("warning", "Verifica non disponibile."));
     }
 }
-
-function scheduleMobileDebridValidation(options = {}) {
-    const force = options.force === true;
-    const key = mValue('m-apiKey').trim();
-    const service = String(mCurrentService || '').trim().toLowerCase();
-
-    clearMobileDebridValidationTimer();
-    mDebridValidationState.requestId += 1;
-
-    if (service === 'p2p') {
-        setMobileDebridValidationStatus('idle', 'P2P attivo: nessuna key richiesta.');
-        return;
-    }
-
-    if (!['rd', 'tb'].includes(service)) {
-        setMobileDebridValidationStatus('idle', 'Live check disponibile solo per RD e TB.');
-        return;
-    }
-
-    const meta = getMobileValidationServiceMeta(service);
-
-    if (!key) {
-        setMobileDebridValidationStatus('idle', `Incolla una key ${meta.code} per la verifica live.`);
-        return;
-    }
-
-    if (key.length < 8) {
-        setMobileDebridValidationStatus('idle', `Completa la key ${meta.code} per la verifica.`);
-        return;
-    }
-
+function scheduleMobileDebridValidation(n = {}) {
+    const e = !0 === n.force,
+        t = mValue("m-apiKey").trim(),
+        a = String(mCurrentService || "")
+            .trim()
+            .toLowerCase();
+    if ((clearMobileDebridValidationTimer(), (mDebridValidationState.requestId += 1), "p2p" === a))
+        return void setMobileDebridValidationStatus("idle", "P2P attivo: nessuna key richiesta.");
+    if (!["rd", "tb"].includes(a))
+        return void setMobileDebridValidationStatus(
+            "idle",
+            "Live check disponibile solo per RD e TB.",
+        );
+    const i = getMobileValidationServiceMeta(a);
+    if (!t)
+        return void setMobileDebridValidationStatus(
+            "idle",
+            `Incolla una key ${i.code} per la verifica live.`,
+        );
+    if (t.length < 8)
+        return void setMobileDebridValidationStatus(
+            "idle",
+            `Completa la key ${i.code} per la verifica.`,
+        );
     if (
-        !force &&
-        mDebridValidationState.resolvedService === service &&
-        mDebridValidationState.resolvedKey === key &&
-        ['valid', 'invalid', 'warning'].includes(mDebridValidationState.status)
-    ) {
+        !e &&
+        mDebridValidationState.resolvedService === a &&
+        mDebridValidationState.resolvedKey === t &&
+        ["valid", "invalid", "warning"].includes(mDebridValidationState.status)
+    )
         return;
-    }
-
-    const requestId = mDebridValidationState.requestId;
-    setMobileDebridValidationStatus('checking', `Verifica token ${meta.name}...`);
-    mDebridValidationState.timer = setTimeout(() => {
-        runMobileDebridValidation(requestId, service, key);
-    }, 650);
+    const o = mDebridValidationState.requestId;
+    (setMobileDebridValidationStatus("checking", `Verifica token ${i.name}...`),
+        (mDebridValidationState.timer = setTimeout(() => {
+            runMobileDebridValidation(o, a, t);
+        }, 650)));
 }
-
 function handleMobileApiKeyInput() {
-    scheduleMobileDebridValidation();
-    updateLinkModalContent();
+    (scheduleMobileDebridValidation(), updateLinkModalContent());
 }
-
-function setMService(srv, btn, keepInput = false) {
-    if(mCurrentService === srv && !keepInput) return;
-    mCurrentService = srv;
-    if (!keepInput) mSetValue('m-apiKey', '');
-
-    document.querySelectorAll('.m-srv-btn').forEach(b => {
-        b.classList.remove('active');
-    });
-    if(btn) {
-        btn.classList.add('active');
-    }
-
-    const input = document.getElementById('m-apiKey');
-    const box = document.getElementById('box-apikey');
-
-    if (input) {
-        if (srv === 'p2p') {
-            mSetPlaceholder('m-apiKey', "P2P attivo");
-            mSetDisabled('m-apiKey', true);
-            if(box) box.classList.add('is-p2p');
-        } else {
-            const placeholders = { 'rd': "Incolla RD key", 'tb': "Incolla TB key" };
-            mSetPlaceholder('m-apiKey', placeholders[srv] || "Incolla API key");
-            mSetDisabled('m-apiKey', false);
-            if(box) box.classList.remove('is-p2p');
-        }
-    }
-
-    updateMobilePreview();
-    scheduleMobileDebridValidation({ force: true });
-    toggleSavedCloud();
-    updateLinkModalContent();
-    mVibrate(10);
+function setMService(n, e, t = !1) {
+    if (mCurrentService === n && !t) return;
+    ((mCurrentService = n),
+        t || mSetValue("m-apiKey", ""),
+        document.querySelectorAll(".m-srv-btn").forEach((n) => {
+            n.classList.remove("active");
+        }),
+        e && e.classList.add("active"));
+    const a = document.getElementById("m-apiKey"),
+        i = document.getElementById("box-apikey");
+    (a &&
+        ("p2p" === n
+            ? (mSetPlaceholder("m-apiKey", "P2P attivo"),
+              mSetDisabled("m-apiKey", !0),
+              i && i.classList.add("is-p2p"))
+            : (mSetPlaceholder(
+                  "m-apiKey",
+                  { rd: "Incolla RD key", tb: "Incolla TB key" }[n] || "Incolla API key",
+              ),
+              mSetDisabled("m-apiKey", !1),
+              i && i.classList.remove("is-p2p"))),
+        updateMobilePreview(),
+        scheduleMobileDebridValidation({ force: !0 }),
+        toggleSavedCloud(),
+        updateLinkModalContent(),
+        mVibrate(10));
 }
-
-function updateStatus(inputId, statusId) {
-    const chk = mChecked(inputId);
-    const lbl = document.getElementById(statusId);
-    if(lbl) {
-        lbl.innerText = chk ? "ON" : "OFF";
-        lbl.classList.toggle('on', chk);
-    }
-
-    if(inputId === 'm-enableVix') toggleScOptions();
-    if(inputId === 'm-aioMode') toggleMobileAIOLock();
-    checkWebPriorityVisibility();
-    updateLinkModalContent();
-    mVibrate(10);
+function updateStatus(n, e) {
+    const t = mChecked(n),
+        a = document.getElementById(e);
+    (a && ((a.innerText = t ? "ON" : "OFF"), a.classList.toggle("on", t)),
+        "m-enableVix" === n && toggleScOptions(),
+        "m-aioMode" === n && toggleMobileAIOLock(),
+        checkWebPriorityVisibility(),
+        updateLinkModalContent(),
+        mVibrate(10));
 }
-
-function setLangMode(mode) {
-    mLangMode = ['ita', 'all', 'eng'].includes(mode) ? mode : 'ita';
-    const btnIta = document.getElementById('lang-ita');
-    const btnHyb = document.getElementById('lang-all');
-    const btnEng = document.getElementById('lang-eng');
-    [btnIta, btnHyb, btnEng].forEach(b => {
-        if (b) b.className = 'm-lang-opt';
-    });
-    if(mLangMode === 'ita' && btnIta) btnIta.classList.add('active-ita');
-    if(mLangMode === 'all' && btnHyb) btnHyb.classList.add('active-hyb');
-    if(mLangMode === 'eng' && btnEng) btnEng.classList.add('active-eng');
-
-    const descEl = document.getElementById('lang-description');
-    if(descEl) {
-        descEl.style.opacity = '0';
+function setLangMode(n) {
+    mLangMode = ["ita", "all", "eng"].includes(n) ? n : "ita";
+    const e = document.getElementById("lang-ita"),
+        t = document.getElementById("lang-all"),
+        a = document.getElementById("lang-eng");
+    ([e, t, a].forEach((n) => {
+        n && (n.className = "m-lang-opt");
+    }),
+        "ita" === mLangMode && e && e.classList.add("active-ita"),
+        "all" === mLangMode && t && t.classList.add("active-hyb"),
+        "eng" === mLangMode && a && a.classList.add("active-eng"));
+    const i = document.getElementById("lang-description");
+    (i &&
+        ((i.style.opacity = "0"),
         setTimeout(() => {
-            descEl.innerText = langDescriptions[mLangMode] || langDescriptions.ita;
-            descEl.style.opacity = '1';
-        }, 200);
-    }
-    updateMobilePreview();
-    updateLinkModalContent();
-    mVibrate(10);
+            ((i.innerText = langDescriptions[mLangMode] || langDescriptions.ita),
+                (i.style.opacity = "1"));
+        }, 200)),
+        updateMobilePreview(),
+        updateLinkModalContent(),
+        mVibrate(10));
 }
-
 function checkWebPriorityVisibility() {
-    const enabled = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableVidxgo', 'm-enableEs', 'm-enableCb01', 'm-enableOnlineserietv', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableToonItalia', 'm-enableGf', 'm-enableAltadefinizione', 'm-enableCc'].some(id => mChecked(id));
-    const panel = document.getElementById('m-priority-panel');
-    if (panel) panel.classList.toggle('show', enabled);
+    const n = [
+            "m-enableVix",
+            "m-enableGhd",
+            "m-enableGs",
+            "m-enableVidxgo",
+            "m-enableEs",
+            "m-enableCb01",
+            "m-enableOnlineserietv",
+            "m-enableAnimeWorld",
+            "m-enableAnimeUnity",
+            "m-enableAnimeSaturn",
+            "m-enableToonItalia",
+            "m-enableGf",
+            "m-enableAltadefinizione",
+            "m-enableCc",
+        ].some((n) => mChecked(n)),
+        e = document.getElementById("m-priority-panel");
+    e && e.classList.toggle("show", n);
 }
-
 function updatePriorityLabel() {
-    const isLast = mChecked('m-vixLast');
-    const desc = document.getElementById('priority-desc');
-    if (desc) {
-        desc.innerText = isLast ? "Priorita bassa: risultati dopo i torrent" : "Priorita alta: risultati in cima";
-        desc.style.color = isLast ? "var(--m-secondary)" : "var(--m-primary)";
-    }
-    updateLinkModalContent();
-    mVibrate([15, 10, 15]);
+    const n = mChecked("m-vixLast"),
+        e = document.getElementById("priority-desc");
+    (e &&
+        ((e.innerText = n
+            ? "Priorita bassa: risultati dopo i torrent"
+            : "Priorita alta: risultati in cima"),
+        (e.style.color = n ? "var(--m-secondary)" : "var(--m-primary)")),
+        updateLinkModalContent(),
+        mVibrate([15, 10, 15]));
 }
-
-function setSavedCloudMode(mode) {
-    const allowed = ['smart', 'fallback', 'always'];
-    mSavedCloudMode = allowed.includes(mode) ? mode : 'smart';
-    document.querySelectorAll('.m-cloud-mode-btn').forEach(btn => btn.classList.remove('active'));
-    const activeBtn = document.getElementById('m-cloud-' + mSavedCloudMode);
-    if(activeBtn) activeBtn.classList.add('active');
-    updateLinkModalContent();
-    mVibrate(8);
+function setSavedCloudMode(n) {
+    ((mSavedCloudMode = ["smart", "fallback", "always"].includes(n) ? n : "smart"),
+        document
+            .querySelectorAll(".m-cloud-mode-btn")
+            .forEach((n) => n.classList.remove("active")));
+    const e = document.getElementById("m-cloud-" + mSavedCloudMode);
+    (e && e.classList.add("active"), updateLinkModalContent(), mVibrate(8));
 }
-
 function toggleSavedCloud() {
-    const input = document.getElementById('m-enableSavedCloud');
-    const panel = document.getElementById('m-savedCloudPanel');
-    const status = document.getElementById('st-savedcloud');
-    if(!input || !panel || !status) return;
-
-    const active = mChecked('m-enableSavedCloud');
-    panel.classList.toggle('show', active);
-    status.innerText = active ? 'ON' : 'OFF';
-    status.classList.toggle('on', active);
-
-    if(active && mCurrentService === 'p2p') {
-        showToast('Debrid Cloud richiede RD o TorBox, non P2P.', 'warning');
-    }
-
-    updateLinkModalContent();
-    mVibrate(10);
+    const n = document.getElementById("m-enableSavedCloud"),
+        e = document.getElementById("m-savedCloudPanel"),
+        t = document.getElementById("st-savedcloud");
+    if (!n || !e || !t) return;
+    const a = mChecked("m-enableSavedCloud");
+    (e.classList.toggle("show", a),
+        (t.innerText = a ? "ON" : "OFF"),
+        t.classList.toggle("on", a),
+        a &&
+            "p2p" === mCurrentService &&
+            showToast("Debrid Cloud richiede RD o TorBox, non P2P.", "warning"),
+        updateLinkModalContent(),
+        mVibrate(10));
 }
-
 function toggleScOptions() {
-    mScQuality = '1080';
-    const chk = mChecked('m-enableVix');
-
-    const lbl = document.getElementById('st-vix');
-    if(lbl) {
-        lbl.innerText = chk ? "ON" : "OFF";
-        lbl.classList.toggle('on', chk);
-    }
-    checkWebPriorityVisibility();
+    mScQuality = "1080";
+    const n = mChecked("m-enableVix"),
+        e = document.getElementById("st-vix");
+    (e && ((e.innerText = n ? "ON" : "OFF"), e.classList.toggle("on", n)),
+        checkWebPriorityVisibility());
 }
-
 function toggleGate() {
-    const active = mChecked('m-gateActive');
-    const wrapper = document.getElementById('m-gate-wrapper');
-    const lbl = document.getElementById('st-gate');
-
-    if (wrapper) wrapper.classList.toggle('show', active);
-    if(lbl) {
-        lbl.innerText = active ? "ON" : "OFF";
-        lbl.classList.toggle('on', active);
-    }
-    if(active) showToast("Signal Gate Attivo: Risultati Limitati", "warning");
-    updateLinkModalContent();
-    mVibrate(10);
+    const n = mChecked("m-gateActive"),
+        e = document.getElementById("m-gate-wrapper"),
+        t = document.getElementById("st-gate");
+    (e && e.classList.toggle("show", n),
+        t && ((t.innerText = n ? "ON" : "OFF"), t.classList.toggle("on", n)),
+        n && showToast("Signal Gate Attivo: Risultati Limitati", "warning"),
+        updateLinkModalContent(),
+        mVibrate(10));
 }
-
-function updateGateDisplay(val) {
-    mSetText('m-gate-display', val);
-    updateLinkModalContent();
+function updateGateDisplay(n) {
+    (mSetText("m-gate-display", n), updateLinkModalContent());
 }
-
 function toggleSize() {
-    const active = mChecked('m-sizeActive');
-    const wrapper = document.getElementById('m-size-wrapper');
-    const lbl = document.getElementById('st-size');
-    const sliderValue = mValue('m-sizeVal', '0');
-
-    if (wrapper) wrapper.classList.toggle('show', active);
-    if(lbl) {
-        lbl.innerText = active ? "ON" : "OFF";
-        lbl.classList.toggle('on', active);
-    }
-    if(active) {
-        updateSizeDisplay(sliderValue);
-    } else {
-        mSetText('m-size-display', "INF");
-    }
-    updateLinkModalContent();
-    mVibrate(10);
+    const n = mChecked("m-sizeActive"),
+        e = document.getElementById("m-size-wrapper"),
+        t = document.getElementById("st-size"),
+        a = mValue("m-sizeVal", "0");
+    (e && e.classList.toggle("show", n),
+        t && ((t.innerText = n ? "ON" : "OFF"), t.classList.toggle("on", n)),
+        n ? updateSizeDisplay(a) : mSetText("m-size-display", "INF"),
+        updateLinkModalContent(),
+        mVibrate(10));
 }
-
-function updateSizeDisplay(val) {
-    const display = document.getElementById('m-size-display');
-    if (display) display.innerText = val == 0 ? "INF" : String(val);
-    updateLinkModalContent();
+function updateSizeDisplay(n) {
+    const e = document.getElementById("m-size-display");
+    (e && (e.innerText = 0 == n ? "INF" : String(n)), updateLinkModalContent());
 }
-
-function openApiPage(type) {
-    if(type === 'tmdb') {
-         window.open('https://www.themoviedb.org/settings/api', '_blank');
-         return;
-    }
-    const links = { 'rd': 'https://real-debrid.com/apitoken', 'tb': 'https://torbox.app/settings' };
-    if (links[mCurrentService]) window.open(links[mCurrentService], '_blank');
+function openApiPage(n) {
+    if ("tmdb" === n) return void window.open("https://www.themoviedb.org/settings/api", "_blank");
+    const e = { rd: "https://real-debrid.com/apitoken", tb: "https://torbox.app/settings" };
+    e[mCurrentService] && window.open(e[mCurrentService], "_blank");
 }
 function setScQuality() {
-    mScQuality = '1080';
-    updateLinkModalContent();
-    mVibrate(10);
+    ((mScQuality = "1080"), updateLinkModalContent(), mVibrate(10));
 }
-
-function setSortMode(mode) {
-    mSortMode = fluxData[mode] ? mode : 'balanced';
-    ['balanced', 'resolution', 'size'].forEach(m => {
-        const btn = document.getElementById('sort-' + m);
-        const map = {'balanced':'active-bal', 'resolution':'active-res', 'size':'active-sz'};
-        if (!btn) return;
-        btn.classList.remove('active-bal', 'active-res', 'active-sz');
-
-        if(m === mSortMode) btn.classList.add(map[m]);
-    });
-
-    const readout = document.getElementById('flux-readout-box');
-    const title = document.getElementById('flux-title-display');
-    const desc = document.getElementById('flux-desc-display');
-    const icon = document.getElementById('flux-icon-display');
-
-    if (readout) {
-        readout.className = "m-flux-readout";
-        readout.style.opacity = '0.5';
-    }
-    setTimeout(() => {
-        const data = fluxData[mSortMode] || fluxData.balanced;
-        if(readout) {
-            if(mSortMode === 'balanced') readout.classList.add('mode-bal');
-            if(mSortMode === 'resolution') readout.classList.add('mode-res');
-            if(mSortMode === 'size') readout.classList.add('mode-sz');
-            readout.style.opacity = '1';
-        }
-
-        if (title) title.innerText = data.title;
-        if (desc) desc.innerText = data.desc;
-        if (icon) icon.className = `fas ${data.icon} m-fr-icon`;
-    }, 150);
-
-    updateLinkModalContent();
-    mVibrate(10);
+function setSortMode(n) {
+    ((mSortMode = fluxData[n] ? n : "balanced"),
+        ["balanced", "resolution", "size"].forEach((n) => {
+            const e = document.getElementById("sort-" + n);
+            e &&
+                (e.classList.remove("active-bal", "active-res", "active-sz"),
+                n === mSortMode &&
+                    e.classList.add(
+                        { balanced: "active-bal", resolution: "active-res", size: "active-sz" }[n],
+                    ));
+        }));
+    const e = document.getElementById("flux-readout-box"),
+        t = document.getElementById("flux-title-display"),
+        a = document.getElementById("flux-desc-display"),
+        i = document.getElementById("flux-icon-display");
+    (e && ((e.className = "m-flux-readout"), (e.style.opacity = "0.5")),
+        setTimeout(() => {
+            const n = fluxData[mSortMode] || fluxData.balanced;
+            (e &&
+                ("balanced" === mSortMode && e.classList.add("mode-bal"),
+                "resolution" === mSortMode && e.classList.add("mode-res"),
+                "size" === mSortMode && e.classList.add("mode-sz"),
+                (e.style.opacity = "1")),
+                t && (t.innerText = n.title),
+                a && (a.innerText = n.desc),
+                i && (i.className = `fas ${n.icon} m-fr-icon`));
+        }, 150),
+        updateLinkModalContent(),
+        mVibrate(10));
 }
-
 function updateGhostVisuals() {
-    const chk = mChecked('m-proxyDebrid');
-    const box = document.getElementById('ghost-zone-box');
-    const txt = document.getElementById('ghost-status-text');
-
-    if (box) box.classList.toggle('active', chk);
-    if(txt) txt.innerText = chk ? "STEALTH" : "VISIBLE";
-
-    const lbl = document.getElementById('st-ghost');
-    if(lbl) {
-         lbl.innerText = chk ? "ON" : "OFF";
-         lbl.classList.toggle('on', chk);
-    }
-    mVibrate(15);
+    const n = mChecked("m-proxyDebrid"),
+        e = document.getElementById("ghost-zone-box"),
+        t = document.getElementById("ghost-status-text");
+    (e && e.classList.toggle("active", n), t && (t.innerText = n ? "STEALTH" : "VISIBLE"));
+    const a = document.getElementById("st-ghost");
+    (a && ((a.innerText = n ? "ON" : "OFF"), a.classList.toggle("on", n)), mVibrate(15));
 }
-
-function toggleModuleStyle(inputId, boxId) {
-    const chk = mChecked(inputId);
-    const box = document.getElementById(boxId);
-    if(box) box.classList.toggle('active', chk);
-    updateLinkModalContent();
+function toggleModuleStyle(n, e) {
+    const t = mChecked(n),
+        a = document.getElementById(e);
+    (a && a.classList.toggle("active", t), updateLinkModalContent());
 }
-
-function toggleFilter(id) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.classList.toggle('excluded');
-    const isExcluded = el.classList.contains('excluded');
-    if(isExcluded) {
-        mVibrate(20);
-        triggerPreviewUpdateEffect();
-    }
-    updateLinkModalContent();
+function toggleFilter(n) {
+    const e = document.getElementById(n);
+    e &&
+        (e.classList.toggle("excluded"),
+        e.classList.contains("excluded") && (mVibrate(20), triggerPreviewUpdateEffect()),
+        updateLinkModalContent());
 }
-
-async function pasteTo(id) {
-    const input = document.getElementById(id);
-    if (!input || ("disabled" in input && input.disabled)) return;
-
-    try {
-        const text = await navigator.clipboard.readText();
-        mSetValue(id, text);
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-
-        if(id === 'm-apiKey') scheduleMobileDebridValidation({ force: true });
-        updateLinkModalContent();
-
-        const wrapper = input.closest('.m-if-inner') || input.closest('.m-input-box') || input.parentElement;
-        let btn = wrapper?.querySelector?.('.m-if-action') || wrapper?.querySelector?.('.m-paste-action');
-        if(btn) {
-            const originalHTML = btn.innerHTML;
-            btn.innerHTML = '<i class="fas fa-check"></i>';
-            setTimeout(() => { btn.innerHTML = originalHTML; }, 900);
+async function pasteTo(n) {
+    const e = document.getElementById(n);
+    if (!(!e || ("disabled" in e && e.disabled)))
+        try {
+            (mSetValue(n, await navigator.clipboard.readText()),
+                e.dispatchEvent(new Event("input", { bubbles: !0 })),
+                "m-apiKey" === n && scheduleMobileDebridValidation({ force: !0 }),
+                updateLinkModalContent());
+            const t = e.closest(".m-if-inner") || e.closest(".m-input-box") || e.parentElement;
+            let a = t?.querySelector?.(".m-if-action") || t?.querySelector?.(".m-paste-action");
+            if (a) {
+                const n = a.innerHTML;
+                ((a.innerHTML = '<i class="fas fa-check"></i>'),
+                    setTimeout(() => {
+                        a.innerHTML = n;
+                    }, 900));
+            }
+            (e.focus({ preventScroll: !0 }), showToast("INCOLLATO", "success"));
+        } catch (e) {
+            const t = document.getElementById(n);
+            (t && t.focus({ preventScroll: !1 }),
+                showToast("APPUNTI BLOCCATI: INCOLLA MANUALMENTE", "warning"));
         }
-
-        input.focus({ preventScroll: true });
-        showToast("INCOLLATO", "success");
-    } catch (err) {
-        const input = document.getElementById(id);
-        if (input) input.focus({ preventScroll: false });
-        showToast("APPUNTI BLOCCATI: INCOLLA MANUALMENTE", "warning");
+}
+const LEVIATHAN_MOBILE_CONFIG_TOKEN_PREFIX = "lcfg1_";
+function decodeMobileBase64UrlToBytes(n) {
+    const e = String(n || "")
+            .trim()
+            .replace(/-/g, "+")
+            .replace(/_/g, "/"),
+        t = e + "=".repeat((4 - (e.length % 4)) % 4),
+        a = atob(t),
+        i = new Uint8Array(a.length);
+    for (let n = 0; n < a.length; n++) i[n] = a.charCodeAt(n);
+    return i;
+}
+function decodeMobileBase64UrlToUtf8(n) {
+    return new TextDecoder().decode(decodeMobileBase64UrlToBytes(n));
+}
+function encodeMobileConfigToPathToken(n) {
+    const e = JSON.stringify(n || {}),
+        t = new TextEncoder().encode(e);
+    let a = "";
+    return (
+        t.forEach((n) => {
+            a += String.fromCharCode(n);
+        }),
+        btoa(a).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
+    );
+}
+function normalizeMobileConfigPathToken(n) {
+    try {
+        return decodeURIComponent(String(n || "").trim());
+    } catch (e) {
+        return String(n || "").trim();
     }
 }
-
-const LEVIATHAN_MOBILE_CONFIG_TOKEN_PREFIX = 'lcfg1_';
-
-function decodeMobileBase64UrlToBytes(value) {
-    const normalized = String(value || '').trim().replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
-    const binary = atob(padded);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-}
-
-function decodeMobileBase64UrlToUtf8(value) {
-    return new TextDecoder().decode(decodeMobileBase64UrlToBytes(value));
-}
-
-function encodeMobileConfigToPathToken(config) {
-    const json = JSON.stringify(config || {});
-    const bytes = new TextEncoder().encode(json);
-    let binary = '';
-    bytes.forEach(byte => { binary += String.fromCharCode(byte); });
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
-function normalizeMobileConfigPathToken(rawToken) {
-    try { return decodeURIComponent(String(rawToken || '').trim()); }
-    catch (_) { return String(rawToken || '').trim(); }
-}
-
-function extractMobileConfigTokenFromUrlLike(value) {
-    const text = normalizeMobileConfigPathToken(value);
-    if (!text) return null;
-
+function extractMobileConfigTokenFromUrlLike(n) {
+    const e = normalizeMobileConfigPathToken(n);
+    if (!e) return null;
     try {
-        const urlText = text.replace(/^stremio:\/\//i, `${window.location.protocol}//`);
-        const url = new URL(urlText, window.location.origin);
-        const part = url.pathname.split('/').filter(Boolean).find(segment => {
-            return segment.length > 10 && !/^(?:configure|manifest\.json)$/i.test(segment);
-        });
-        if (part) return part;
-    } catch (_) {}
-
-    const match = text.match(/\/([^\/?#]{11,})\/(?:manifest\.json|configure)(?:$|[?#])/i)
-        || text.match(/^([^\/?#]{11,})$/i);
-    return match ? match[1] : null;
+        const n = e.replace(/^stremio:\/\//i, `${window.location.protocol}//`),
+            t = new URL(n, window.location.origin).pathname
+                .split("/")
+                .filter(Boolean)
+                .find((n) => n.length > 10 && !/^(?:configure|manifest\.json)$/i.test(n));
+        if (t) return t;
+    } catch (n) {}
+    const t =
+        e.match(/\/([^\/?#]{11,})\/(?:manifest\.json|configure)(?:$|[?#])/i) ||
+        e.match(/^([^\/?#]{11,})$/i);
+    return t ? t[1] : null;
 }
-
 function getMobileConfigTokenFromLocation() {
-    const pathToken = window.location.pathname.split('/').filter(Boolean).find(segment => {
-        return segment.length > 10 && !/^(?:configure|manifest\.json)$/i.test(segment);
-    });
-    if (pathToken) return pathToken;
-
-    const params = new URLSearchParams(window.location.search || '');
-    const keys = ['conf', 'config', 'token', 'configToken', 'manifest', 'manifestUrl', 'addon', 'addonUrl', 'url'];
-    for (const key of keys) {
-        const value = params.get(key);
-        const token = extractMobileConfigTokenFromUrlLike(value);
-        if (token) return token;
+    const n = window.location.pathname
+        .split("/")
+        .filter(Boolean)
+        .find((n) => n.length > 10 && !/^(?:configure|manifest\.json)$/i.test(n));
+    if (n) return n;
+    const e = new URLSearchParams(window.location.search || ""),
+        t = [
+            "conf",
+            "config",
+            "token",
+            "configToken",
+            "manifest",
+            "manifestUrl",
+            "addon",
+            "addonUrl",
+            "url",
+        ];
+    for (const n of t) {
+        const t = extractMobileConfigTokenFromUrlLike(e.get(n));
+        if (t) return t;
     }
-
-    const hash = String(window.location.hash || '').replace(/^#/, '');
-    return extractMobileConfigTokenFromUrlLike(hash);
+    return extractMobileConfigTokenFromUrlLike(
+        String(window.location.hash || "").replace(/^#/, ""),
+    );
 }
-
-async function fetchMobileConfigForEditor(token) {
-    const response = await fetch('/api/config/decode', {
-        method: 'POST',
-        cache: 'no-store',
-        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token })
+async function fetchMobileConfigForEditor(n) {
+    const e = await fetch("/api/config/decode", {
+        method: "POST",
+        cache: "no-store",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ token: n }),
     });
-    if (!response.ok) throw new Error(`decode_http_${response.status}`);
-    const payload = await response.json();
-    if (!payload || payload.ok !== true || !payload.config) throw new Error('decode_bad_payload');
-    return payload.config;
+    if (!e.ok) throw new Error(`decode_http_${e.status}`);
+    const t = await e.json();
+    if (!t || !0 !== t.ok || !t.config) throw new Error("decode_bad_payload");
+    return t.config;
 }
-
-async function loadMobileConfigFromPathToken(rawToken) {
-    const token = normalizeMobileConfigPathToken(rawToken);
-    if (!token || token === 'configure' || token === 'manifest.json') return null;
-
-    if (/^lcfg1_/i.test(token)) {
-        return fetchMobileConfigForEditor(token);
-    }
-
+async function loadMobileConfigFromPathToken(n) {
+    const e = normalizeMobileConfigPathToken(n);
+    if (!e || "configure" === e || "manifest.json" === e) return null;
+    if (/^lcfg1_/i.test(e)) return fetchMobileConfigForEditor(e);
     try {
-        return JSON.parse(decodeMobileBase64UrlToUtf8(token));
-    } catch (_) {
-        return fetchMobileConfigForEditor(token);
+        return JSON.parse(decodeMobileBase64UrlToUtf8(e));
+    } catch (n) {
+        return fetchMobileConfigForEditor(e);
     }
 }
-
 async function loadMobileConfig() {
     try {
-        const configToken = getMobileConfigTokenFromLocation();
-        if (configToken) {
-            const config = await loadMobileConfigFromPathToken(configToken);
-            if (!config) throw new Error('empty_mobile_config_token');
-            if(config.service) {
-                const srvMap = {'rd':0, 'tb':1};
-                const railBtns = document.querySelectorAll('#page-setup .m-srv-btn');
-                if(railBtns.length > 0 && srvMap[config.service] !== undefined) {
-                     setMService(config.service, railBtns[srvMap[config.service]], true);
-                }
-            } else if (config.filters && config.filters.enableP2P) {
-                 const railBtns = document.querySelectorAll('#page-setup .m-srv-btn');
-                 setMService('p2p', railBtns[2], true);
+        const n = getMobileConfigTokenFromLocation();
+        if (n) {
+            const e = await loadMobileConfigFromPathToken(n);
+            if (!e) throw new Error("empty_mobile_config_token");
+            if (e.service) {
+                const n = { rd: 0, tb: 1 },
+                    t = document.querySelectorAll("#page-setup .m-srv-btn");
+                t.length > 0 &&
+                    void 0 !== n[e.service] &&
+                    setMService(e.service, t[n[e.service]], !0);
+            } else
+                e.filters &&
+                    e.filters.enableP2P &&
+                    setMService("p2p", document.querySelectorAll("#page-setup .m-srv-btn")[2], !0);
+            if (
+                (e.key && mSetValue("m-apiKey", e.key),
+                e.tmdb && mSetValue("m-tmdb", e.tmdb),
+                e.aiostreams_mode && mSetChecked("m-aioMode", !0),
+                e.sort ? setSortMode(e.sort) : setSortMode("balanced"),
+                e.formatter && selectMobileSkin(e.formatter),
+                e.customTemplate && mSetValue("m-customTemplate", e.customTemplate),
+                e.customNameTemplate && mSetValue("m-customNameTemplate", e.customNameTemplate),
+                e.filters)
+            ) {
+                const n = (n) => (Array.isArray(n) ? n.join(", ") : n || "");
+                (e.filters.streamExpression &&
+                    mSetValue("m-streamExpression", e.filters.streamExpression),
+                    e.filters.preferredResolutions &&
+                        mSetValue("m-preferredResolutions", n(e.filters.preferredResolutions)),
+                    e.filters.preferredLanguages &&
+                        mSetValue("m-preferredLanguages", n(e.filters.preferredLanguages)),
+                    (e.filters.preferredQualities || e.filters.preferredVisualTags) &&
+                        mSetValue(
+                            "m-preferredQualities",
+                            n(e.filters.preferredQualities || e.filters.preferredVisualTags),
+                        ),
+                    e.filters.preferredHdr &&
+                        mSetValue("m-preferredHdr", n(e.filters.preferredHdr)));
             }
-
-            if(config.key) mSetValue('m-apiKey', config.key);
-
-            if(config.tmdb) mSetValue('m-tmdb', config.tmdb);
-            if(config.aiostreams_mode) mSetChecked('m-aioMode', true);
-
-            if(config.sort) setSortMode(config.sort);
-            else setSortMode('balanced');
-
-            if(config.formatter) selectMobileSkin(config.formatter);
-            if(config.customTemplate) mSetValue('m-customTemplate', config.customTemplate);
-            if(config.customNameTemplate) mSetValue('m-customNameTemplate', config.customNameTemplate);
-            if(config.filters) {
-                const mJoin = (v) => Array.isArray(v) ? v.join(', ') : (v || '');
-                if(config.filters.streamExpression) mSetValue('m-streamExpression', config.filters.streamExpression);
-                if(config.filters.preferredResolutions) mSetValue('m-preferredResolutions', mJoin(config.filters.preferredResolutions));
-                if(config.filters.preferredLanguages) mSetValue('m-preferredLanguages', mJoin(config.filters.preferredLanguages));
-                if(config.filters.preferredQualities || config.filters.preferredVisualTags) mSetValue('m-preferredQualities', mJoin(config.filters.preferredQualities || config.filters.preferredVisualTags));
-                if(config.filters.preferredHdr) mSetValue('m-preferredHdr', mJoin(config.filters.preferredHdr));
+            if (
+                (e.mediaflow &&
+                    (mSetValue("m-mfUrl", e.mediaflow.url || ""),
+                    mSetValue("m-mfPass", e.mediaflow.pass || ""),
+                    mSetChecked("m-proxyDebrid", e.mediaflow.proxyDebrid || !1)),
+                e.filters)
+            ) {
+                (mSetChecked("m-enableVix", e.filters.enableVix || !1),
+                    toggleModuleStyle("m-enableVix", "mod-vix"),
+                    mSetChecked("m-enableGhd", e.filters.enableGhd || !1),
+                    toggleModuleStyle("m-enableGhd", "mod-ghd"),
+                    mSetChecked("m-enableGs", e.filters.enableGs || !1),
+                    toggleModuleStyle("m-enableGs", "mod-gs"),
+                    mSetChecked("m-enableVidxgo", e.filters.enableVidxgo || !1),
+                    toggleModuleStyle("m-enableVidxgo", "mod-vidxgo"),
+                    mSetChecked("m-enableEs", e.filters.enableEs || !1),
+                    toggleModuleStyle("m-enableEs", "mod-es"),
+                    mSetChecked("m-enableCb01", e.filters.enableCb01 || !1),
+                    toggleModuleStyle("m-enableCb01", "mod-cb01"),
+                    mSetChecked("m-enableOnlineserietv", e.filters.enableOnlineserietv || !1),
+                    toggleModuleStyle("m-enableOnlineserietv", "mod-onlineserietv"),
+                    mSetChecked("m-enableAnimeWorld", e.filters.enableAnimeWorld || !1),
+                    toggleModuleStyle("m-enableAnimeWorld", "mod-aw"),
+                    mSetChecked("m-enableAnimeUnity", e.filters.enableAnimeUnity || !1),
+                    toggleModuleStyle("m-enableAnimeUnity", "mod-au"),
+                    mSetChecked("m-enableAnimeSaturn", e.filters.enableAnimeSaturn || !1),
+                    toggleModuleStyle("m-enableAnimeSaturn", "mod-as"),
+                    mSetChecked("m-enableToonItalia", e.filters.enableToonItalia || !1),
+                    toggleModuleStyle("m-enableToonItalia", "mod-ti"),
+                    mSetChecked("m-enableGf", e.filters.enableGf || !1),
+                    toggleModuleStyle("m-enableGf", "mod-gf"),
+                    mSetChecked("m-enableAltadefinizione", e.filters.enableAltadefinizione || !1),
+                    toggleModuleStyle("m-enableAltadefinizione", "mod-ads"),
+                    mSetChecked("m-enableCc", e.filters.enableCc || !1),
+                    toggleModuleStyle("m-enableCc", "mod-cc"),
+                    e.filters.language
+                        ? setLangMode(e.filters.language)
+                        : setLangMode(e.filters.allowEng ? "all" : "ita"),
+                    mSetChecked("m-enableSavedCloud", e.filters.enableSavedCloud || !1),
+                    setSavedCloudMode(e.filters.savedCloudMode || "smart"),
+                    toggleSavedCloud(),
+                    e.filters.vixLast && (mSetChecked("m-vixLast", !0), updatePriorityLabel()));
+                const n = { no4k: "mq-4k", no1080: "mq-1080", no720: "mq-720", noScr: "mq-sd" };
+                for (let t in n) e.filters[t] && mAddClass(n[t], "excluded");
+                if (
+                    (setScQuality("1080"), e.filters.maxPerQuality && e.filters.maxPerQuality > 0)
+                ) {
+                    const n = e.filters.maxPerQuality;
+                    (mSetChecked("m-gateActive", !0),
+                        mSetValue("m-gateVal", n),
+                        updateGateDisplay(n),
+                        toggleGate());
+                } else (mSetChecked("m-gateActive", !1), toggleGate());
+                if (e.filters.maxSizeGB && e.filters.maxSizeGB > 0) {
+                    const n = e.filters.maxSizeGB;
+                    (mSetChecked("m-sizeActive", !0),
+                        mSetValue("m-sizeVal", n),
+                        updateSizeDisplay(n),
+                        toggleSize());
+                } else (mSetChecked("m-sizeActive", !1), toggleSize());
             }
-
-            if(config.mediaflow) {
-                mSetValue('m-mfUrl', config.mediaflow.url || "");
-                mSetValue('m-mfPass', config.mediaflow.pass || "");
-                mSetChecked('m-proxyDebrid', config.mediaflow.proxyDebrid || false);
-            }
-            if(config.filters) {
-                mSetChecked('m-enableVix', config.filters.enableVix || false);
-                toggleModuleStyle('m-enableVix', 'mod-vix');
-
-                mSetChecked('m-enableGhd', config.filters.enableGhd || false);
-                toggleModuleStyle('m-enableGhd', 'mod-ghd');
-
-                mSetChecked('m-enableGs', config.filters.enableGs || false);
-                toggleModuleStyle('m-enableGs', 'mod-gs');
-
-                mSetChecked('m-enableVidxgo', config.filters.enableVidxgo || false);
-                toggleModuleStyle('m-enableVidxgo', 'mod-vidxgo');
-
-                mSetChecked('m-enableEs', config.filters.enableEs || false);
-                toggleModuleStyle('m-enableEs', 'mod-es');
-
-                mSetChecked('m-enableCb01', config.filters.enableCb01 || false);
-                toggleModuleStyle('m-enableCb01', 'mod-cb01');
-
-                mSetChecked('m-enableOnlineserietv', config.filters.enableOnlineserietv || false);
-                toggleModuleStyle('m-enableOnlineserietv', 'mod-onlineserietv');
-
-                mSetChecked('m-enableAnimeWorld', config.filters.enableAnimeWorld || false);
-                toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');
-
-                mSetChecked('m-enableAnimeUnity', config.filters.enableAnimeUnity || false);
-                toggleModuleStyle('m-enableAnimeUnity', 'mod-au');
-
-                mSetChecked('m-enableAnimeSaturn', config.filters.enableAnimeSaturn || false);
-                toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');
-
-                mSetChecked('m-enableToonItalia', config.filters.enableToonItalia || false);
-                toggleModuleStyle('m-enableToonItalia', 'mod-ti');
-
-                mSetChecked('m-enableGf', config.filters.enableGf || false);
-                toggleModuleStyle('m-enableGf', 'mod-gf');
-
-                mSetChecked('m-enableAltadefinizione', config.filters.enableAltadefinizione || false);
-                toggleModuleStyle('m-enableAltadefinizione', 'mod-ads');
-
-                mSetChecked('m-enableCc', config.filters.enableCc || false);
-                toggleModuleStyle('m-enableCc', 'mod-cc');
-
-                if(config.filters.language) {
-                    setLangMode(config.filters.language);
-                } else {
-                    setLangMode(config.filters.allowEng ? 'all' : 'ita');
-                }
-
-                mSetChecked('m-enableSavedCloud', config.filters.enableSavedCloud || false);
-                setSavedCloudMode(config.filters.savedCloudMode || 'smart');
-                toggleSavedCloud();
-
-                if(config.filters.vixLast) {
-                    mSetChecked('m-vixLast', true);
-                    updatePriorityLabel();
-                }
-
-                const qMap = {'no4k':'mq-4k', 'no1080':'mq-1080', 'no720':'mq-720', 'noScr':'mq-sd'};
-                for(let k in qMap) if(config.filters[k]) mAddClass(qMap[k], 'excluded');
-                setScQuality('1080');
-
-                if(config.filters.maxPerQuality && config.filters.maxPerQuality > 0) {
-                    const val = config.filters.maxPerQuality;
-                    mSetChecked('m-gateActive', true);
-                    mSetValue('m-gateVal', val);
-                    updateGateDisplay(val);
-                    toggleGate();
-                } else {
-                    mSetChecked('m-gateActive', false);
-                    toggleGate();
-                }
-
-                if(config.filters.maxSizeGB && config.filters.maxSizeGB > 0) {
-                    const valGB = config.filters.maxSizeGB;
-                    mSetChecked('m-sizeActive', true);
-                    mSetValue('m-sizeVal', valGB);
-                    updateSizeDisplay(valGB);
-                    toggleSize();
-                } else {
-                    mSetChecked('m-sizeActive', false);
-                    toggleSize();
-                }
-            }
-
-            updateStatus('m-enableVix', 'st-vix');
-            updateStatus('m-enableGhd', 'st-ghd');
-            updateStatus('m-enableGs', 'st-gs');
-            updateStatus('m-enableVidxgo', 'st-vidxgo');
-            updateStatus('m-enableEs', 'st-es');
-            updateStatus('m-enableCb01', 'st-cb01');
-            updateStatus('m-enableOnlineserietv', 'st-onlineserietv');
-            updateStatus('m-enableAnimeWorld', 'st-aw');
-            updateStatus('m-enableAnimeUnity', 'st-au');
-            updateStatus('m-enableAnimeSaturn', 'st-as');
-            updateStatus('m-enableToonItalia', 'st-ti');
-            updateStatus('m-enableGf', 'st-gf');
-            updateStatus('m-enableAltadefinizione', 'st-ads');
-            updateStatus('m-enableCc', 'st-cc');
-            updateStatus('m-aioMode', 'st-aio');
-            toggleSavedCloud();
-            updateGhostVisuals();
-            toggleScOptions();
-            checkWebPriorityVisibility();
-            toggleMobileAIOLock();
-            updateMobilePreview();
-            scheduleMobileDebridValidation({ force: true });
-            updateLinkModalContent();
+            (updateStatus("m-enableVix", "st-vix"),
+                updateStatus("m-enableGhd", "st-ghd"),
+                updateStatus("m-enableGs", "st-gs"),
+                updateStatus("m-enableVidxgo", "st-vidxgo"),
+                updateStatus("m-enableEs", "st-es"),
+                updateStatus("m-enableCb01", "st-cb01"),
+                updateStatus("m-enableOnlineserietv", "st-onlineserietv"),
+                updateStatus("m-enableAnimeWorld", "st-aw"),
+                updateStatus("m-enableAnimeUnity", "st-au"),
+                updateStatus("m-enableAnimeSaturn", "st-as"),
+                updateStatus("m-enableToonItalia", "st-ti"),
+                updateStatus("m-enableGf", "st-gf"),
+                updateStatus("m-enableAltadefinizione", "st-ads"),
+                updateStatus("m-enableCc", "st-cc"),
+                updateStatus("m-aioMode", "st-aio"),
+                toggleSavedCloud(),
+                updateGhostVisuals(),
+                toggleScOptions(),
+                checkWebPriorityVisibility(),
+                toggleMobileAIOLock(),
+                updateMobilePreview(),
+                scheduleMobileDebridValidation({ force: !0 }),
+                updateLinkModalContent());
         }
-    } catch(e) { console.log("No config loaded"); }
+    } catch (n) {
+        console.log("No config loaded");
+    }
 }
-
 function getMobileConfig() {
-    const gateActive = mChecked('m-gateActive');
-    const gateVal = parseInt(mValue('m-gateVal', '0'), 10) || 0;
-    const sizeActive = mChecked('m-sizeActive');
-    const sizeVal = parseInt(mValue('m-sizeVal', '0'), 10) || 0;
-    const finalMaxSizeGB = sizeActive ? sizeVal : 0;
-
-    const isP2P = mCurrentService === 'p2p';
-    const apiKey = mValue('m-apiKey').trim();
-    const webModules = ['m-enableVix', 'm-enableGhd', 'm-enableGs', 'm-enableVidxgo', 'm-enableEs', 'm-enableCb01', 'm-enableOnlineserietv', 'm-enableAnimeWorld', 'm-enableAnimeUnity', 'm-enableAnimeSaturn', 'm-enableToonItalia', 'm-enableGf', 'm-enableAltadefinizione', 'm-enableCc'];
-    const webOnlyService = !isP2P && !apiKey && webModules.some(id => mChecked(id));
-    const savedCloudEnabled = !isP2P && !!apiKey && ['rd', 'tb'].includes(String(mCurrentService || '').toLowerCase()) && mChecked('m-enableSavedCloud');
-
-    const mCsv = (id) => mValue(id).split(',').map((s) => s.trim()).filter(Boolean);
-    const mAdvancedFilters = {};
-    const mStreamExpression = mValue('m-streamExpression').trim();
-    if (mStreamExpression) mAdvancedFilters.streamExpression = mStreamExpression;
-    const mPreferredResolutions = mCsv('m-preferredResolutions');
-    if (mPreferredResolutions.length) mAdvancedFilters.preferredResolutions = mPreferredResolutions;
-    const mPreferredLanguages = mCsv('m-preferredLanguages');
-    if (mPreferredLanguages.length) mAdvancedFilters.preferredLanguages = mPreferredLanguages;
-    const mPreferredQualities = mCsv('m-preferredQualities');
-    if (mPreferredQualities.length) mAdvancedFilters.preferredQualities = mPreferredQualities;
-    const mPreferredHdr = mCsv('m-preferredHdr');
-    if (mPreferredHdr.length) mAdvancedFilters.preferredHdr = mPreferredHdr;
-    const mCustomNameTemplate = mValue('m-customNameTemplate').trim();
-
+    const n = mChecked("m-gateActive"),
+        e = parseInt(mValue("m-gateVal", "0"), 10) || 0,
+        t = mChecked("m-sizeActive"),
+        a = parseInt(mValue("m-sizeVal", "0"), 10) || 0,
+        i = t ? a : 0,
+        o = "p2p" === mCurrentService,
+        r = mValue("m-apiKey").trim(),
+        s =
+            !o &&
+            !r &&
+            [
+                "m-enableVix",
+                "m-enableGhd",
+                "m-enableGs",
+                "m-enableVidxgo",
+                "m-enableEs",
+                "m-enableCb01",
+                "m-enableOnlineserietv",
+                "m-enableAnimeWorld",
+                "m-enableAnimeUnity",
+                "m-enableAnimeSaturn",
+                "m-enableToonItalia",
+                "m-enableGf",
+                "m-enableAltadefinizione",
+                "m-enableCc",
+            ].some((n) => mChecked(n)),
+        l =
+            !o &&
+            !!r &&
+            ["rd", "tb"].includes(String(mCurrentService || "").toLowerCase()) &&
+            mChecked("m-enableSavedCloud"),
+        m = (n) =>
+            mValue(n)
+                .split(",")
+                .map((n) => n.trim())
+                .filter(Boolean),
+        d = {},
+        c = mValue("m-streamExpression").trim();
+    c && (d.streamExpression = c);
+    const p = m("m-preferredResolutions");
+    p.length && (d.preferredResolutions = p);
+    const g = m("m-preferredLanguages");
+    g.length && (d.preferredLanguages = g);
+    const u = m("m-preferredQualities");
+    u.length && (d.preferredQualities = u);
+    const b = m("m-preferredHdr");
+    b.length && (d.preferredHdr = b);
+    const f = mValue("m-customNameTemplate").trim();
     return {
-        service: isP2P ? '' : (webOnlyService ? 'web' : mCurrentService),
-        key: apiKey,
-        tmdb: mValue('m-tmdb').trim(),
+        service: o ? "" : s ? "web" : mCurrentService,
+        key: r,
+        tmdb: mValue("m-tmdb").trim(),
         sort: mSortMode,
         formatter: mSkin,
-        customTemplate: mValue('m-customTemplate'),
-        ...(mCustomNameTemplate ? { customNameTemplate: mCustomNameTemplate } : {}),
-        aiostreams_mode: mChecked('m-aioMode'),
+        customTemplate: mValue("m-customTemplate"),
+        ...(f ? { customNameTemplate: f } : {}),
+        aiostreams_mode: mChecked("m-aioMode"),
         mediaflow: {
-            url: mValue('m-mfUrl').trim().replace(/\/$/, ""),
-            pass: mValue('m-mfPass').trim(),
-            proxyDebrid: mChecked('m-proxyDebrid')
+            url: mValue("m-mfUrl").trim().replace(/\/$/, ""),
+            pass: mValue("m-mfPass").trim(),
+            proxyDebrid: mChecked("m-proxyDebrid"),
         },
         filters: {
             language: mLangMode,
-            allowEng: (mLangMode === 'all' || mLangMode === 'eng'),
-            enableP2P: isP2P,
-            no4k: mHasClass('mq-4k', 'excluded'),
-            no1080: mHasClass('mq-1080', 'excluded'),
-            no720: mHasClass('mq-720', 'excluded'),
-            noScr: mHasClass('mq-sd', 'excluded'),
-            noCam: mHasClass('mq-sd', 'excluded'),
-            enableVix: mChecked('m-enableVix'),
-            enableGhd: mChecked('m-enableGhd'),
-            enableGs: mChecked('m-enableGs'),
-            enableVidxgo: mChecked('m-enableVidxgo'),
-            enableEs: mChecked('m-enableEs'),
-            enableCb01: mChecked('m-enableCb01'),
-            enableOnlineserietv: mChecked('m-enableOnlineserietv'),
-            enableAnimeWorld: mChecked('m-enableAnimeWorld'),
-            enableAnimeUnity: mChecked('m-enableAnimeUnity'),
-            enableAnimeSaturn: mChecked('m-enableAnimeSaturn'),
-            enableToonItalia: mChecked('m-enableToonItalia'),
-            enableGf: mChecked('m-enableGf'),
-            enableCc: mChecked('m-enableCc'),
-            enableAltadefinizione: mChecked('m-enableAltadefinizione'),
-            enableTrailers: false,
-            enableSavedCloud: savedCloudEnabled,
-            savedCloudMode: savedCloudEnabled ? mSavedCloudMode : 'off',
+            allowEng: "all" === mLangMode || "eng" === mLangMode,
+            enableP2P: o,
+            no4k: mHasClass("mq-4k", "excluded"),
+            no1080: mHasClass("mq-1080", "excluded"),
+            no720: mHasClass("mq-720", "excluded"),
+            noScr: mHasClass("mq-sd", "excluded"),
+            noCam: mHasClass("mq-sd", "excluded"),
+            enableVix: mChecked("m-enableVix"),
+            enableGhd: mChecked("m-enableGhd"),
+            enableGs: mChecked("m-enableGs"),
+            enableVidxgo: mChecked("m-enableVidxgo"),
+            enableEs: mChecked("m-enableEs"),
+            enableCb01: mChecked("m-enableCb01"),
+            enableOnlineserietv: mChecked("m-enableOnlineserietv"),
+            enableAnimeWorld: mChecked("m-enableAnimeWorld"),
+            enableAnimeUnity: mChecked("m-enableAnimeUnity"),
+            enableAnimeSaturn: mChecked("m-enableAnimeSaturn"),
+            enableToonItalia: mChecked("m-enableToonItalia"),
+            enableGf: mChecked("m-enableGf"),
+            enableCc: mChecked("m-enableCc"),
+            enableAltadefinizione: mChecked("m-enableAltadefinizione"),
+            enableTrailers: !1,
+            enableSavedCloud: l,
+            savedCloudMode: l ? mSavedCloudMode : "off",
             savedCloudMax: 6,
-            vixLast: mChecked('m-vixLast'),
-            scQuality: '1080',
-            maxPerQuality: gateActive ? gateVal : 0,
-            maxSizeGB: finalMaxSizeGB > 0 ? finalMaxSizeGB : null,
-            ...mAdvancedFilters
-        }
+            vixLast: mChecked("m-vixLast"),
+            scQuality: "1080",
+            maxPerQuality: n ? e : 0,
+            maxSizeGB: i > 0 ? i : null,
+            ...d,
+        },
     };
 }
-
-function getMobileLegacyManifestUrl(config) {
-    return `${window.location.host}/${encodeMobileConfigToPathToken(config)}/manifest.json`;
+function getMobileLegacyManifestUrl(n) {
+    return `${window.location.host}/${encodeMobileConfigToPathToken(n)}/manifest.json`;
 }
-
-async function getMobileManifestUrl(config) {
-    return getMobileLegacyManifestUrl(config);
+async function getMobileManifestUrl(n) {
+    return getMobileLegacyManifestUrl(n);
 }
-
 let _linkModalTimer = 0;
-
-function setGeneratedLinkBoxesValue(value, tone = "primary") {
-    ["m-generatedUrlBox", "m-setupGeneratedUrlBox"].forEach(id => {
-        const box = document.getElementById(id);
-        if (!box) return;
-        if ("value" in box) box.value = value;
-        box.style.color = tone === "error" ? "var(--m-error)" : "var(--m-primary)";
+function setGeneratedLinkBoxesValue(n, e = "primary") {
+    ["m-generatedUrlBox", "m-setupGeneratedUrlBox"].forEach((t) => {
+        const a = document.getElementById(t);
+        a &&
+            ("value" in a && (a.value = n),
+            (a.style.color = "error" === e ? "var(--m-error)" : "var(--m-primary)"));
     });
 }
-
-async function updateLinkModalContent(immediate = false) {
-    if (!immediate) {
-        clearTimeout(_linkModalTimer);
-        _linkModalTimer = setTimeout(() => updateLinkModalContent(true), 120);
-        return;
-    }
-
-    const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableVidxgo || config.filters.enableEs || config.filters.enableCb01 || config.filters.enableOnlineserietv || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableToonItalia || config.filters.enableGf || config.filters.enableAltadefinizione || config.filters.enableCc || config.filters.enableP2P;
-
-    if(!config.key && !isWebEnabled) {
-        setGeneratedLinkBoxesValue("/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P", "error");
-        return;
-    }
-
-    const manifestUrl = `${window.location.protocol}//${await getMobileManifestUrl(config)}`;
-    setGeneratedLinkBoxesValue(manifestUrl, "primary");
+async function updateLinkModalContent(n = !1) {
+    if (!n)
+        return (
+            clearTimeout(_linkModalTimer),
+            void (_linkModalTimer = setTimeout(() => updateLinkModalContent(!0), 380))
+        );
+    const e = getMobileConfig(),
+        t =
+            e.filters.enableVix ||
+            e.filters.enableGhd ||
+            e.filters.enableGs ||
+            e.filters.enableVidxgo ||
+            e.filters.enableEs ||
+            e.filters.enableCb01 ||
+            e.filters.enableOnlineserietv ||
+            e.filters.enableAnimeWorld ||
+            e.filters.enableAnimeUnity ||
+            e.filters.enableAnimeSaturn ||
+            e.filters.enableToonItalia ||
+            e.filters.enableGf ||
+            e.filters.enableAltadefinizione ||
+            e.filters.enableCc ||
+            e.filters.enableP2P;
+    e.key || t
+        ? setGeneratedLinkBoxesValue(
+              `${window.location.protocol}//${await getMobileManifestUrl(e)}`,
+              "primary",
+          )
+        : setGeneratedLinkBoxesValue(
+              "/// SYSTEM OFFLINE: WAITING FOR CONFIGURATION DATA ///\n[!] Inserisci API Key o Attiva Sorgenti Web/P2P",
+              "error",
+          );
 }
-
-async function copyGeneratedLinkValue(value, closeAfter = false) {
-    const textToCopy = String(value || "");
-    if (!textToCopy) return false;
-
-    if (textToCopy.includes("WAITING FOR") || textToCopy.includes("SYSTEM OFFLINE")) {
-        showToast("CONFIGURA PRIMA L'ADDON", "error");
-        return false;
-    }
-
+async function copyGeneratedLinkValue(n, e = !1) {
+    const t = String(n || "");
+    if (!t) return !1;
+    if (t.includes("WAITING FOR") || t.includes("SYSTEM OFFLINE"))
+        return (showToast("CONFIGURA PRIMA L'ADDON", "error"), !1);
     try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(textToCopy);
-        } else {
-            const dummy = document.createElement("textarea");
-            document.body.appendChild(dummy);
-            dummy.value = textToCopy;
-            dummy.select();
-            document.execCommand("copy");
-            document.body.removeChild(dummy);
+        if (navigator.clipboard && navigator.clipboard.writeText)
+            await navigator.clipboard.writeText(t);
+        else {
+            const n = document.createElement("textarea");
+            (document.body.appendChild(n),
+                (n.value = t),
+                n.select(),
+                document.execCommand("copy"),
+                document.body.removeChild(n));
         }
-        if (closeAfter) closeLinkModal();
-        showToast("LINK COPIATO NEGLI APPUNTI", "success");
-        return true;
-    } catch (err) {
-        showToast("ERRORE COPIA MANUALE", "error");
-        return false;
+        return (e && closeLinkModal(), showToast("LINK COPIATO NEGLI APPUNTI", "success"), !0);
+    } catch (n) {
+        return (showToast("ERRORE COPIA MANUALE", "error"), !1);
     }
 }
-
 async function mobileInstall() {
-    const config = getMobileConfig();
-    const isWebEnabled = config.filters.enableVix || config.filters.enableGhd || config.filters.enableGs || config.filters.enableVidxgo || config.filters.enableEs || config.filters.enableCb01 || config.filters.enableOnlineserietv || config.filters.enableAnimeWorld || config.filters.enableAnimeUnity || config.filters.enableAnimeSaturn || config.filters.enableToonItalia || config.filters.enableGf || config.filters.enableAltadefinizione || config.filters.enableCc || config.filters.enableP2P;
-    if(!config.key && !isWebEnabled) {
-        showToast("ERRORE: API KEY MANCANTE", "error"); return;
-    }
-    const manifestUrl = await getMobileManifestUrl(config);
-    window.location.href = `stremio://${manifestUrl}`;
+    const n = getMobileConfig(),
+        e =
+            n.filters.enableVix ||
+            n.filters.enableGhd ||
+            n.filters.enableGs ||
+            n.filters.enableVidxgo ||
+            n.filters.enableEs ||
+            n.filters.enableCb01 ||
+            n.filters.enableOnlineserietv ||
+            n.filters.enableAnimeWorld ||
+            n.filters.enableAnimeUnity ||
+            n.filters.enableAnimeSaturn ||
+            n.filters.enableToonItalia ||
+            n.filters.enableGf ||
+            n.filters.enableAltadefinizione ||
+            n.filters.enableCc ||
+            n.filters.enableP2P;
+    if (!n.key && !e) return void showToast("ERRORE: API KEY MANCANTE", "error");
+    const t = await getMobileManifestUrl(n);
+    window.location.href = `stremio://${t}`;
 }
-
 function openLinkModal() {
-    updateLinkModalContent(true);
-    const modal = document.getElementById('m-link-modal');
-    if (modal) modal.classList.add('show');
-    mVibrate(10);
+    updateLinkModalContent(!0);
+    const n = document.getElementById("m-link-modal");
+    (n && n.classList.add("show"), mVibrate(10));
 }
-
 function closeLinkModal() {
-    const modal = document.getElementById('m-link-modal');
-    if (modal) modal.classList.remove('show');
+    const n = document.getElementById("m-link-modal");
+    n && n.classList.remove("show");
 }
-
 async function copyFromSetupPanel() {
-    updateLinkModalContent(true);
-    const box = document.getElementById('m-setupGeneratedUrlBox');
-    const textToCopy = box && "value" in box ? String(box.value || "") : "";
-    await copyGeneratedLinkValue(textToCopy, false);
+    updateLinkModalContent(!0);
+    const n = document.getElementById("m-setupGeneratedUrlBox"),
+        e = n && "value" in n ? String(n.value || "") : "";
+    await copyGeneratedLinkValue(e, !1);
 }
-
 async function copyFromModal() {
-    const box = document.getElementById('m-generatedUrlBox');
-    const textToCopy = box && "value" in box ? String(box.value || "") : "";
-    await copyGeneratedLinkValue(textToCopy, true);
+    const n = document.getElementById("m-generatedUrlBox"),
+        e = n && "value" in n ? String(n.value || "") : "";
+    await copyGeneratedLinkValue(e, !0);
 }
-
 function exposeMobileInlineHandlers() {
-    if (typeof window === 'undefined') return;
-    Object.assign(window, {
-        navTo,
-        selectMobileSkin,
-        updateMobilePreview,
-        toggleMobileAIOLock,
-        setMService,
-        handleMobileApiKeyInput,
-        scheduleMobileDebridValidation,
-        updateStatus,
-        setLangMode,
-        checkWebPriorityVisibility,
-        updatePriorityLabel,
-        setSavedCloudMode,
-        toggleSavedCloud,
-        toggleScOptions,
-        toggleGate,
-        updateGateDisplay,
-        toggleSize,
-        updateSizeDisplay,
-        openApiPage,
-        setScQuality,
-        setSortMode,
-        updateGhostVisuals,
-        toggleModuleStyle,
-        toggleFilter,
-        pasteTo,
-        getMobileConfig,
-        getMobileManifestUrl,
-        updateLinkModalContent,
-        mobileInstall,
-        openLinkModal,
-        closeLinkModal,
-        copyFromModal,
-        copyFromSetupPanel
-    });
+    "undefined" != typeof window &&
+        Object.assign(window, {
+            navTo: navTo,
+            selectMobileSkin: selectMobileSkin,
+            updateMobilePreview: updateMobilePreview,
+            toggleMobileAIOLock: toggleMobileAIOLock,
+            setMService: setMService,
+            handleMobileApiKeyInput: handleMobileApiKeyInput,
+            scheduleMobileDebridValidation: scheduleMobileDebridValidation,
+            updateStatus: updateStatus,
+            setLangMode: setLangMode,
+            checkWebPriorityVisibility: checkWebPriorityVisibility,
+            updatePriorityLabel: updatePriorityLabel,
+            setSavedCloudMode: setSavedCloudMode,
+            toggleSavedCloud: toggleSavedCloud,
+            toggleScOptions: toggleScOptions,
+            toggleGate: toggleGate,
+            updateGateDisplay: updateGateDisplay,
+            toggleSize: toggleSize,
+            updateSizeDisplay: updateSizeDisplay,
+            openApiPage: openApiPage,
+            setScQuality: setScQuality,
+            setSortMode: setSortMode,
+            updateGhostVisuals: updateGhostVisuals,
+            toggleModuleStyle: toggleModuleStyle,
+            toggleFilter: toggleFilter,
+            pasteTo: pasteTo,
+            getMobileConfig: getMobileConfig,
+            getMobileManifestUrl: getMobileManifestUrl,
+            updateLinkModalContent: updateLinkModalContent,
+            mobileInstall: mobileInstall,
+            openLinkModal: openLinkModal,
+            closeLinkModal: closeLinkModal,
+            copyFromModal: copyFromModal,
+            copyFromSetupPanel: copyFromSetupPanel,
+        });
 }
-
 function startMobileInterfaceWhenReady() {
     exposeMobileInlineHandlers();
-    const start = () => initMobileInterface();
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', start, { once: true });
-    } else {
-        start();
-    }
+    const n = () => initMobileInterface();
+    "loading" === document.readyState
+        ? document.addEventListener("DOMContentLoaded", n, { once: !0 })
+        : n();
 }
-
-startMobileInterfaceWhenReady();
-
-(function ensureMobileMarkupVisible(){
-    try {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', ensureMobileMarkupVisible, { once: true });
-            return;
-        }
-        if (!document.getElementById('app-container')) {
-            document.body.innerHTML = mobileHTML;
-        }
-        document.body.classList.add('m-ui-ready');
-    } catch (_) {}
-})();
-
+(startMobileInterfaceWhenReady(),
+    (function n() {
+        try {
+            if ("loading" === document.readyState)
+                return void document.addEventListener("DOMContentLoaded", n, { once: !0 });
+            (document.getElementById("app-container") || (document.body.innerHTML = mobileHTML),
+                document.body.classList.add("m-ui-ready"));
+        } catch (n) {}
+    })());
