@@ -409,8 +409,23 @@ function resolveExtractorEntry(url) {
     return null;
 }
 
+const RESOLVE_DEFINITION_CACHE = new Map();
+const RESOLVE_DEFINITION_CACHE_MAX = 4096;
+
 function resolveExtractorDefinition(url) {
-    return resolveExtractorEntry(url)?.definition || null;
+    if (typeof url !== 'string' || !url) {
+        return resolveExtractorEntry(url)?.definition || null;
+    }
+
+    const cached = RESOLVE_DEFINITION_CACHE.get(url);
+    if (cached !== undefined) return cached;
+
+    const definition = resolveExtractorEntry(url)?.definition || null;
+    if (RESOLVE_DEFINITION_CACHE.size >= RESOLVE_DEFINITION_CACHE_MAX) {
+        RESOLVE_DEFINITION_CACHE.delete(RESOLVE_DEFINITION_CACHE.keys().next().value);
+    }
+    RESOLVE_DEFINITION_CACHE.set(url, definition);
+    return definition;
 }
 
 function getExtractorDefinitionByKey(key) {

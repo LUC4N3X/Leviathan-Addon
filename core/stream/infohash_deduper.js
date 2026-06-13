@@ -882,10 +882,12 @@ function dedupeByInfoHash(items = [], options = {}) {
 
   const dsu = new DSU(list.length);
   const keyToFirstIndex = new Map();
+  const keysByIndex = new Array(list.length);
   let keyGroups = 0;
 
   list.forEach((item, idx) => {
     const keys = buildDedupeKeys(item, options);
+    keysByIndex[idx] = keys;
     for (const key of keys) {
       const first = keyToFirstIndex.get(key);
       if (first === undefined) {
@@ -899,7 +901,7 @@ function dedupeByInfoHash(items = [], options = {}) {
 
   const groups = new Map();
   list.forEach((item, idx) => {
-    const keys = buildDedupeKeys(item, options);
+    const keys = keysByIndex[idx];
     if (keys.length === 0) {
       groups.set(`single:${idx}`, [idx]);
       return;

@@ -28,6 +28,9 @@ const SCHEMELESS_HOSTER_RE = HOSTER_DIRECT_LINK_PATTERN.startsWith(HOSTER_PATTER
     ? new RegExp(`(?:^|[^\\w@/.])((?:www\\.)?${HOSTER_DIRECT_LINK_PATTERN.slice(HOSTER_PATTERN_PREFIX.length)})`, 'gi')
     : null;
 
+const HOSTER_DIRECT_LINK_RE = new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig');
+const HOSTER_ESCAPED_DIRECT_LINK_RE = new RegExp(HOSTER_ESCAPED_DIRECT_LINK_PATTERN, 'ig');
+
 const SOURCE_SCORES = {
     iframe: 45,
     attribute: 34,
@@ -287,27 +290,27 @@ function extractEmbedCandidates(rawHtml, options = {}) {
     extractUrlsWithRegex(html, IFRAME_TAG_RE, baseUrl, candidates, 'iframe', 5);
     extractUrlsWithRegex(html, ATTR_URL_RE, baseUrl, candidates, 'attribute');
     extractUrlsWithRegex(html, JSONISH_URL_RE, baseUrl, candidates, 'jsonish');
-    extractUrlsWithRegex(html, new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig'), baseUrl, candidates, 'direct');
-    extractUrlsWithRegex(html, new RegExp(HOSTER_ESCAPED_DIRECT_LINK_PATTERN, 'ig'), baseUrl, candidates, 'escaped');
+    extractUrlsWithRegex(html, HOSTER_DIRECT_LINK_RE, baseUrl, candidates, 'direct');
+    extractUrlsWithRegex(html, HOSTER_ESCAPED_DIRECT_LINK_RE, baseUrl, candidates, 'escaped');
     extractUrlsWithRegex(html, URL_WIDE_RE, baseUrl, candidates, 'wide');
     extractSchemelessHosterUrls(html, baseUrl, candidates);
 
     for (const decoded of decodeBase64Payloads(html, maxBase64Payloads)) {
         extractUrlsWithRegex(decoded, URL_WIDE_RE, baseUrl, candidates, 'base64');
-        extractUrlsWithRegex(decoded, new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig'), baseUrl, candidates, 'base64', 8);
+        extractUrlsWithRegex(decoded, HOSTER_DIRECT_LINK_RE, baseUrl, candidates, 'base64', 8);
         extractSchemelessHosterUrls(decoded, baseUrl, candidates, 4);
     }
 
     for (const decoded of decodeCharCodeArrays(html)) {
         extractUrlsWithRegex(decoded, URL_WIDE_RE, baseUrl, candidates, 'charcode');
-        extractUrlsWithRegex(decoded, new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig'), baseUrl, candidates, 'charcode', 6);
+        extractUrlsWithRegex(decoded, HOSTER_DIRECT_LINK_RE, baseUrl, candidates, 'charcode', 6);
         extractSchemelessHosterUrls(decoded, baseUrl, candidates, 4);
     }
 
     if (CONCAT_HINT_RE.test(html)) {
         const joined = joinConcatenatedStrings(html);
         if (joined !== html) {
-            extractUrlsWithRegex(joined, new RegExp(HOSTER_DIRECT_LINK_PATTERN, 'ig'), baseUrl, candidates, 'concat', 4);
+            extractUrlsWithRegex(joined, HOSTER_DIRECT_LINK_RE, baseUrl, candidates, 'concat', 4);
             extractUrlsWithRegex(joined, URL_WIDE_RE, baseUrl, candidates, 'concat');
             extractSchemelessHosterUrls(joined, baseUrl, candidates, 2);
         }
