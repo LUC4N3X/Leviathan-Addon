@@ -210,5 +210,6 @@ function applySootioPriorityPolicy(items = [], meta = {}, config = {}) {
 
 module.exports = {
     analyzeSootioPriority,
-    applySootioPriorityPolicy
+    applySootioPriorityPolicy,
+    applyStreamPriorityPolicy: applySootioPriorityPolicy
 };
