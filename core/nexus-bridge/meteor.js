@@ -8,7 +8,7 @@ const {
     fetchConfiguredExternalAddon
 } = require('./shared');
 
-const METEOR_SUPPLEMENT_LIMIT = Math.max(1, Math.min(2, Number(process.env.METEOR_SUPPLEMENT_LIMIT || 2) || 2));
+const METEOR_SUPPLEMENT_LIMIT = Math.max(1, Math.min(12, Number(process.env.METEOR_SUPPLEMENT_LIMIT || 2) || 2));
 
 function resolveMeteorKeys(enabledAddons = null) {
     const requested = Array.isArray(enabledAddons) && enabledAddons.length > 0
@@ -58,7 +58,7 @@ function limitMeteorSupplement(streams, limit = METEOR_SUPPLEMENT_LIMIT) {
         .filter(Boolean)
         .sort((a, b) => scoreMeteorSupplement(b) - scoreMeteorSupplement(a));
 
-    return items.slice(0, Math.max(1, Math.min(2, Number(limit || METEOR_SUPPLEMENT_LIMIT) || METEOR_SUPPLEMENT_LIMIT)));
+    return items.slice(0, Math.max(1, Math.min(12, Number(limit || METEOR_SUPPLEMENT_LIMIT) || METEOR_SUPPLEMENT_LIMIT)));
 }
 
 async function fetchMeteorAddon(addonKey, type, id, options = {}) {
@@ -79,7 +79,7 @@ async function fetchMeteorAddons(type, id, options = {}) {
     const addonKeys = resolveMeteorKeys(options.enabledAddons);
     if (addonKeys.length === 0) return {};
 
-    infoLog(`[METEOR] Supplement active addons=${addonKeys.join(',')} limit=${Math.max(1, Math.min(2, Number(options.meteorLimit || METEOR_SUPPLEMENT_LIMIT) || METEOR_SUPPLEMENT_LIMIT))}`);
+    infoLog(`[METEOR] Supplement active addons=${addonKeys.join(',')} limit=${Math.max(1, Math.min(12, Number(options.meteorLimit || METEOR_SUPPLEMENT_LIMIT) || METEOR_SUPPLEMENT_LIMIT))}`);
 
     const settled = await Promise.allSettled(
         addonKeys.map(async (addonKey) => ({ addonKey, results: await fetchMeteorAddon(addonKey, type, id, options) }))
