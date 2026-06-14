@@ -52,6 +52,9 @@ const REGEX_MULTI_LANGUAGE = /\b(?:MULTI|DUAL\s*AUDIO|VOST)\b/i;
 const REGEX_STRONG_ITA_AUDIO = /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i;
 const REGEX_TORRENTIO_LOOSE_ITA = /(?:🇮🇹|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b)/i;
 const REGEX_TORRENTIO_LOOSE_IT_TOKEN = /(?:^|[^A-Za-z0-9])IT(?:[^A-Za-z0-9]|$)/;
+const REGEX_STRICT_GLOBAL_SOURCE = /(?:^|[\s._\-()\[\]|:⚙️])(?:THE\s*PIRATE\s*BAY|THEPIRATEBAY|PIRATEBAY|TPB|BEST\s*TORRENTS?|BESTTORRENTS?)(?:$|[\s._\-()\[\]|:])/i;
+const REGEX_STRICT_RELEASE_ITA_AUDIO = /(?:\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b(?:[\s._+\-/,:]{0,8}\b(?:ENG|ENGLISH|AUDIO|DUB|DUBBED|AAC|AC3|EAC3|DDP|DTS|TRUEHD|ATMOS|MULTI|DUAL)\b)?|\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b|\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b.*\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b.*\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b)/i;
+const REGEX_STRICT_UI_ITA_ONLY = /(?:🇮🇹|(?:^|[^A-Za-z0-9])IT(?:[^A-Za-z0-9]|$)|\bIT\s*[\/+,_\-. ]\s*(?:GB|UK|US|EN|ENG|ENGLISH)\b|\b(?:GB|UK|US|EN|ENG|ENGLISH)\s*[\/+,_\-. ]\s*IT\b)/i;
 const VIDEO_FILE_REGEX = /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|ts|m2ts)$/i;
 const SIZE_REGEX = /(?:📦|💾|💽|Size:?|Dimensione:?|File\s*Size:?|Peso:?)[\s:]*([\d.,]+)\s*(B|KB|MB|GB|TB|KIB|MIB|GIB|TIB)/i;
 const SEEDERS_REGEX = /(?:👤|👥|Seeders?:?|Peers?:?)\s*[:\-]?\s*(\d+)/i;
@@ -204,7 +207,51 @@ function normalizeForComparison(value) {
     return normalizeText(value).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
 }
 
+function isStrictGlobalProviderText(value) {
+    return REGEX_STRICT_GLOBAL_SOURCE.test(` ${normalizeForComparison(value)} `);
+}
+
+function getStrictProviderText(stream = {}) {
+    return [
+        stream?.externalProvider,
+        stream?.provider,
+        stream?.source,
+        stream?.tracker,
+        stream?.websiteTitle
+    ].filter(Boolean).join(' ');
+}
+
+function stripLanguageUiNoise(value) {
+    return normalizeText(value)
+        .replace(/(?:🌐|🗣️|🎧|🔊|🎵|👥|👤|📦|💾|⚙️|🧲|🔥|⚡|💿|🎞️|🏴‍☠️)/g, ' ')
+        .replace(/(?:^|\s)(?:IT|ITA|GB|UK|US|EN|ENG)\s*[\/+,_\-. ]\s*(?:IT|ITA|GB|UK|US|EN|ENG)(?=$|\s)/gi, ' ')
+        .replace(/🇮🇹|🇬🇧|🇺🇸/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function getReleaseLanguageText(stream = {}) {
+    return stripLanguageUiNoise([
+        stream?.filename,
+        stream?.fileName,
+        stream?.behaviorHints?.filename,
+        stream?.behaviorHints?.folderName,
+        stream?.packTitle,
+        stream?.title,
+        stream?.name
+    ].filter(Boolean).join(' '));
+}
+
+function hasStrictGlobalItalianAudioText(stream = {}) {
+    const releaseText = getReleaseLanguageText(stream);
+    if (!releaseText) return false;
+    if (REGEX_SUB_ITA.test(releaseText) && !REGEX_STRICT_RELEASE_ITA_AUDIO.test(releaseText)) return false;
+    if (REGEX_TRUSTED_ITA.test(releaseText) || REGEX_TORRENTHAN_BRAND.test(normalizeForComparison(releaseText))) return true;
+    return REGEX_STRICT_RELEASE_ITA_AUDIO.test(releaseText);
+}
+
 function getTorrentioLanguageEvidence(stream) {
+    const providerText = getStrictProviderText(stream);
     const raw = [
         stream?.title,
         stream?.name,
@@ -212,21 +259,30 @@ function getTorrentioLanguageEvidence(stream) {
         stream?.behaviorHints?.filename,
         stream?.behaviorHints?.folderName,
         stream?.filename,
-        stream?.provider
+        stream?.fileName,
+        stream?.packTitle,
+        providerText
     ].filter(Boolean).join(' ');
 
+    const strictGlobalSource = isStrictGlobalProviderText(providerText) || isStrictGlobalProviderText(raw);
+    const releaseText = getReleaseLanguageText(stream);
     const normalized = normalizeForComparison(raw);
+    const normalizedRelease = normalizeForComparison(releaseText || raw);
     const scanText = `${raw} ${normalized}`;
+    const releaseScanText = `${releaseText} ${normalizedRelease}`;
     const hasItalianFlag = /🇮🇹/.test(raw);
-    const hasItalianFlagPair = /(?:🇮🇹.*(?:🇬🇧|🇺🇸)|(?:🇬🇧|🇺🇸).*🇮🇹)/.test(raw);
-    const hasTextualItalian = /\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b/i.test(scanText);
-    const hasItalianAudioContext = /(?:\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i.test(scanText);
-    const hasItalianPair = /(?:\b(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\s*[\/+,_. -]\s*(?:ENG|EN|ENGLISH)\b|\b(?:ENG|EN|ENGLISH)\s*[\/+,_. -]\s*(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\b)/i.test(scanText);
-    const hasMultiItalian = /(?:\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b.*\b(?:ITA|ITALIAN|ITALIANO|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|IT)\b.*\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b)/i.test(scanText);
-    const hasTrustedItalian = REGEX_TORRENTHAN_BRAND.test(scanText) || REGEX_TRUSTED_ITA.test(scanText);
-    const hasItalianSubtitleOnly = REGEX_SUB_ITA.test(raw) && !(hasItalianAudioContext || hasItalianPair || hasMultiItalian || hasItalianFlagPair);
-    const hasLooseItalian = REGEX_TORRENTIO_LOOSE_ITA.test(raw) || REGEX_TORRENTIO_LOOSE_ITA.test(normalized) || REGEX_TORRENTIO_LOOSE_IT_TOKEN.test(raw);
-    const hasStrongItalian = Boolean(hasItalianAudioContext || hasItalianPair || hasMultiItalian || hasTrustedItalian || hasItalianFlagPair || hasTextualItalian);
+    const hasItalianFlagPair = !strictGlobalSource && /(?:🇮🇹.*(?:🇬🇧|🇺🇸)|(?:🇬🇧|🇺🇸).*🇮🇹)/.test(raw);
+    const hasTextualItalian = /\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b/i.test(strictGlobalSource ? releaseScanText : scanText);
+    const hasItalianAudioContext = /(?:\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i.test(strictGlobalSource ? releaseScanText : scanText);
+    const hasItalianPair = /(?:\b(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\s*[\/+,_. -]\s*(?:ENG|EN|ENGLISH)\b|\b(?:ENG|EN|ENGLISH)\s*[\/+,_. -]\s*(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\b)/i.test(strictGlobalSource ? releaseScanText : scanText);
+    const hasMultiItalian = /(?:\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b.*\b(?:ITA|ITALIAN|ITALIANO|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|IT)\b.*\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b)/i.test(strictGlobalSource ? releaseScanText : scanText);
+    const hasTrustedItalian = REGEX_TORRENTHAN_BRAND.test(normalizedRelease) || REGEX_TRUSTED_ITA.test(releaseText || raw);
+    const hasItalianSubtitleOnly = REGEX_SUB_ITA.test(releaseText || raw) && !(hasItalianAudioContext || hasItalianPair || hasMultiItalian || hasItalianFlagPair);
+    const hasLooseItalian = REGEX_TORRENTIO_LOOSE_ITA.test(releaseText || raw) || REGEX_TORRENTIO_LOOSE_ITA.test(normalizedRelease) || (!strictGlobalSource && REGEX_TORRENTIO_LOOSE_IT_TOKEN.test(raw));
+    const hasStrictGlobalItalian = strictGlobalSource ? hasStrictGlobalItalianAudioText(stream) : false;
+    const hasStrongItalian = strictGlobalSource
+        ? hasStrictGlobalItalian
+        : Boolean(hasItalianAudioContext || hasItalianPair || hasMultiItalian || hasTrustedItalian || hasItalianFlagPair || hasTextualItalian);
     const hasFlagOnlyItalian = Boolean(hasItalianFlag && !hasStrongItalian);
     const hasItalian = Boolean(hasStrongItalian && !hasItalianSubtitleOnly);
     const hasForeign = REGEX_NEGATIVE_LANGUAGE.test(raw) || REGEX_NEGATIVE_LANGUAGE.test(normalized);
@@ -240,7 +296,9 @@ function getTorrentioLanguageEvidence(stream) {
         hasLooseItalian,
         hasFlagOnlyItalian,
         hasItalianFlagPair,
-        hasStrongItalian
+        hasStrongItalian,
+        strictGlobalSource,
+        releaseText
     };
 }
 
@@ -271,6 +329,30 @@ function getStreamText(stream) {
 function analyzeItalianSignals(stream) {
     const fullText = normalizeForComparison(getStreamText(stream));
     if (!fullText) return { isItalian: false, hasAudioItalian: false, hasSubItalian: false, hasTrustedItalian: false, hasNegativeLanguage: false, hasEnglish: false, isMulti: false, detectedLanguages: [], displayLabel: '', confidence: 0, reason: 'empty' };
+
+    const providerText = getStrictProviderText(stream);
+    const strictGlobalSource = isStrictGlobalProviderText(providerText) || isStrictGlobalProviderText(getStreamText(stream));
+    if (strictGlobalSource) {
+        const evidence = getTorrentioLanguageEvidence(stream);
+        const hasNegativeLanguage = REGEX_NEGATIVE_LANGUAGE.test(fullText) || REGEX_TORRENTHAN_NEGATIVE.test(fullText);
+        const hasEnglish = REGEX_ENGLISH_LANGUAGE.test(fullText);
+        const hasMultiLanguage = REGEX_MULTI_LANGUAGE.test(fullText) || REGEX_TORRENTHAN_MULTI.test(fullText);
+        const hasSubItalian = REGEX_SUB_ITA.test(fullText) || REGEX_TORRENTHAN_SUB_ITA.test(fullText);
+        const isItalian = Boolean(evidence.hasItalian);
+        return {
+            isItalian,
+            hasAudioItalian: isItalian,
+            hasSubItalian,
+            hasTrustedItalian: false,
+            hasNegativeLanguage,
+            hasEnglish,
+            isMulti: hasMultiLanguage,
+            detectedLanguages: isItalian ? ['Italian'] : (hasEnglish ? ['English'] : (hasMultiLanguage ? ['Multi'] : [])),
+            displayLabel: isItalian ? '🇮🇹' : (hasEnglish ? '🇬🇧' : ''),
+            confidence: isItalian ? 98 : 0,
+            reason: isItalian ? 'strict_global_audio_ita' : (evidence.hasFlagOnlyItalian ? 'strict_global_flag_or_ui_rejected' : 'strict_global_no_ita_audio')
+        };
+    }
 
     if (REGEX_TORRENTHAN_BAD.test(fullText)) {
         return { isItalian: false, hasAudioItalian: false, hasSubItalian: false, hasTrustedItalian: false, hasNegativeLanguage: true, hasEnglish: false, isMulti: false, detectedLanguages: [], displayLabel: '', confidence: 0, reason: 'bad_release_token' };
@@ -711,7 +793,7 @@ function buildAddonCacheKey(addonKey, type, id, options = {}) {
     const service = conf.service || '';
     const token = getTorrentioCredential(conf, service) || getRealDebridToken(conf) || '';
     return JSON.stringify({
-        cache: 'raw-post-filter-v2',
+        cache: 'raw-post-filter-v3-lang-strict',
         addonKey,
         type: sanitizeFetchType(type, id),
         id: String(id || ''),
