@@ -100,7 +100,7 @@ const REGEX = {
     NOT_FOUND: /can't find the (?:file|video)|file not found|video not found/i,
     MIXDROP: /mixdr(?:op|p)|m1xdrop|mxcontent/i,
     STREAMHG: /dhcplay|vibuxer/i,
-    DIRECT_URL: /https?:\/\/(?:www\.)?(?:dropload|dr0pstream|mixdrop|mixdrp|m1xdrop|mxcontent|dhcplay|vibuxer)[^"'<>\s\\]+/ig,
+    DIRECT_URL: /https?:\/\/(?:www\.)?(?:dropload|dr0pstream|mixdrop|mixdrp|m1xdrop|mxcontent|dhcplay|vibuxer|deltabit|safego|clicka|loadm|uqload|supervideo|streamtape)[^"'<>\s\\]+/ig,
     IFRAME: /<iframe\b[^>]+src=["']([^"']+)["']/ig,
     DATA_LINK: /data-link=["']([^"']+)["']/ig,
     SRC_HREF: /(?:src|href)=["']([^"']+)["']/ig,
@@ -110,12 +110,26 @@ const REGEX = {
     SOURCES_ARRAY: /sources:\s*\[\s*["'](.*?)["']\s*\]/i
 };
 
-const ALLOWED_HOSTERS = new Set(['mixdrop', 'dropload', 'streamhg']);
+const ALLOWED_HOSTERS = new Set([
+    'deltabit',
+    'dropload',
+    'loadm',
+    'mixdrop',
+    'streamhg',
+    'streamtape',
+    'supervideo',
+    'uqload'
+]);
 
 const HOSTER_PRIORITY = {
+    deltabit: 0,
+    loadm: 0,
     dropload: 0,
     streamhg: 1,
-    mixdrop: 2,
+    supervideo: 2,
+    mixdrop: 3,
+    streamtape: 4,
+    uqload: 5,
     unknown: 9
 };
 
@@ -366,22 +380,39 @@ function normalizeHeaders(headers) {
 
 function hosterFromUrl(url) {
     const lower = safeText(url).toLowerCase();
+    const definition = resolveExtractorDefinition(url);
+    if (definition?.key && ALLOWED_HOSTERS.has(definition.key)) return definition.key;
 
     if (REGEX.MIXDROP.test(lower)) return 'mixdrop';
     if (lower.includes('dropload') || lower.includes('dr0pstream')) return 'dropload';
     if (REGEX.STREAMHG.test(lower)) return 'streamhg';
+    if (/deltabit|safego|clicka/.test(lower)) return 'deltabit';
+    if (lower.includes('loadm')) return 'loadm';
+    if (lower.includes('supervideo')) return 'supervideo';
+    if (lower.includes('streamtape')) return 'streamtape';
+    if (lower.includes('uqload')) return 'uqload';
 
     return 'unknown';
 }
 
 function hosterLabel(hoster) {
     switch (hoster) {
+        case 'deltabit':
+            return 'DeltaBit';
         case 'dropload':
             return 'DropLoad';
+        case 'loadm':
+            return 'LoadM';
         case 'mixdrop':
             return 'MixDrop';
         case 'streamhg':
             return 'StreamHG';
+        case 'streamtape':
+            return 'StreamTape';
+        case 'supervideo':
+            return 'SuperVideo';
+        case 'uqload':
+            return 'Uqload';
         default:
             return 'Hoster';
     }
@@ -872,6 +903,50 @@ function isUsefulEmbedUrl(url) {
     return ALLOWED_HOSTERS.has(hosterFromUrl(normalized));
 }
 
+function extractEmbedUrlsFromHtml(html, baseUrl) {
+    const $ = cheerio.load(safeText(html));
+    const links = [];
+    const seen = new Set();
+
+    const push = (raw) => {
+        const normalized = normalizeUrl(raw);
+        if (!isUsefulEmbedUrl(normalized)) return;
+
+        const key = embedDedupeKey(normalized);
+        if (seen.has(key)) return;
+
+        seen.add(key);
+        links.push(normalized);
+    };
+
+    $('iframe[src]').each((_, el) => push($(el).attr('src')));
+    $('li[data-link]').each((_, el) => push($(el).attr('data-link')));
+    $('a[href]').each((_, el) => push($(el).attr('href')));
+    $('source[src]').each((_, el) => push($(el).attr('src')));
+
+    for (const value of extractRegexAll(REGEX.IFRAME, html)) push(value);
+    for (const value of extractRegexAll(REGEX.DATA_LINK, html)) push(value);
+    for (const value of extractRegexAll(REGEX.SRC_HREF, html)) push(value);
+    for (const value of safeText(html).match(REGEX.DIRECT_URL) || []) push(value);
+
+    if (registryDirectLinkRegex) {
+        for (const value of safeText(html).match(registryDirectLinkRegex) || []) {
+            push(value);
+        }
+    }
+
+    const semanticEmbeds = extractResilientEmbeds(html, {
+        baseUrl,
+        maxCandidates: CONFIG.SCRAPER.MAX_EMBEDS
+    }) || [];
+
+    for (const semanticUrl of semanticEmbeds) {
+        push(semanticUrl);
+    }
+
+    return links.slice(0, CONFIG.SCRAPER.MAX_EMBEDS);
+}
+
 async function scrapeEmbedUrls(identity) {
     try {
         const endpoint = endpointForMedia(identity);
@@ -887,45 +962,7 @@ async function scrapeEmbedUrls(identity) {
         const html = responseText(response);
         if (!html || REGEX.NOT_FOUND.test(html)) return [];
 
-        const $ = cheerio.load(html);
-        const links = [];
-        const seen = new Set();
-
-        const push = (raw) => {
-            const normalized = normalizeUrl(raw);
-            if (!isUsefulEmbedUrl(normalized)) return;
-
-            const key = embedDedupeKey(normalized);
-            if (seen.has(key)) return;
-
-            seen.add(key);
-            links.push(normalized);
-        };
-
-        $('iframe[src]').each((_, el) => push($(el).attr('src')));
-        $('li[data-link]').each((_, el) => push($(el).attr('data-link')));
-        $('a[href]').each((_, el) => push($(el).attr('href')));
-        $('source[src]').each((_, el) => push($(el).attr('src')));
-
-        for (const value of extractRegexAll(REGEX.IFRAME, html)) push(value);
-        for (const value of extractRegexAll(REGEX.DATA_LINK, html)) push(value);
-        for (const value of extractRegexAll(REGEX.SRC_HREF, html)) push(value);
-        for (const value of safeText(html).match(REGEX.DIRECT_URL) || []) push(value);
-
-        if (registryDirectLinkRegex) {
-            for (const value of safeText(html).match(registryDirectLinkRegex) || []) {
-                push(value);
-            }
-        }
-
-        const semanticEmbeds = extractResilientEmbeds(html, {
-            baseUrl: endpoint,
-            maxCandidates: CONFIG.SCRAPER.MAX_EMBEDS
-        }) || [];
-
-        for (const semanticUrl of semanticEmbeds) {
-            push(semanticUrl);
-        }
+        const links = extractEmbedUrlsFromHtml(html, endpoint);
 
         debug('embeds scraped', {
             type: identity.mediaType,
@@ -1375,4 +1412,10 @@ async function searchGuardaHD(meta, config, reqHost = null) {
     });
 }
 
-module.exports = { searchGuardaHD };
+module.exports = {
+    searchGuardaHD,
+    __private: {
+        extractEmbedUrlsFromHtml,
+        hosterFromUrl
+    }
+};
