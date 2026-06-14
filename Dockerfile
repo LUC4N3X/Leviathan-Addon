@@ -30,7 +30,6 @@ COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci --omit=dev \
     && npm cache clean --force
 
-COPY --chown=node:node addon.js manifest.js worker.js ./
 COPY --chown=node:node core ./core
 COPY --chown=node:node providers ./providers
 COPY --chown=node:node public ./public
@@ -41,4 +40,4 @@ EXPOSE 7000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=5 \
     CMD node -e "fetch('http://127.0.0.1:7000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["node", "addon.js"]
+CMD ["node", "core/server/addon.js"]

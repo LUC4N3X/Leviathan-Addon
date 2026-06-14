@@ -1,7 +1,7 @@
 require('dotenv').config();
 
-const { logger, installConsoleBridge } = require('./core/utils/runtime');
-const { getLocalNodeId, maybeRunPrimaryCluster, shouldUseCluster } = require('./core/server/cluster_runtime');
+const { logger, installConsoleBridge } = require('../utils/runtime');
+const { getLocalNodeId, maybeRunPrimaryCluster, shouldUseCluster } = require('./cluster_runtime');
 
 installConsoleBridge(logger);
 
@@ -11,7 +11,7 @@ if (maybeRunPrimaryCluster()) {
 
 const express = require('express');
 const path = require('path');
-const runtimeState = require('./core/runtime_state');
+const runtimeState = require('../runtime_state');
 
 function envFlag(name, fallback = false) {
     const raw = process.env[name];
@@ -23,10 +23,10 @@ function shouldStartInlineBackgroundWorkers() {
     return envFlag('LEVIATHAN_API_BACKGROUND_WORKERS', false);
 }
 
-const dbHelper = require('./core/storage/db_repository');
+const dbHelper = require('../storage/db_repository');
 const { getManifest } = require('./manifest');
-const { handleVixSynthetic } = require('./providers/streamingcommunity/vix_proxy');
-const { handleCinemaCityProxy, CC_MANIFEST_ROUTE, CC_STREAM_ROUTE } = require('./providers/cinemacity/cc_proxy');
+const { handleVixSynthetic } = require('../../providers/streamingcommunity/vix_proxy');
+const { handleCinemaCityProxy, CC_MANIFEST_ROUTE, CC_STREAM_ROUTE } = require('../../providers/cinemacity/cc_proxy');
 const {
     Cache,
     LIMITERS,
@@ -43,19 +43,19 @@ const {
     recordProviderMetric,
     incrementMetric,
     streamInflight
-} = require('./core/utils');
-const { generateStream, resolveLazyStreamData, normalizeExternalCandidateForPipeline } = require('./core/stream_generator');
-const { createTorrentioTmdbScanner } = require('./core/prewarm/torrentio_tmdb_scanner');
-const { bootRealDebridAuditor } = require('./core/debrid/rd/audit/rd_auditor_boot');
-const { applyCommonMiddleware } = require('./core/server/middleware');
-const { applyEdgeGatewayGuard } = require('./core/server/edge_gateway');
-const { getRawStreamCacheStats } = require('./core/cache/raw_stream_cache');
-const { createAppServices } = require('./core/server/services/app_services');
-const { registerApiRoutes } = require('./core/server/routes/api_routes');
-const { registerPlaybackRoutes } = require('./core/server/routes/playback_routes');
-const { registerAdminRoutes } = require('./core/server/routes/admin_routes');
-const { registerStremioRoutes } = require('./core/server/routes/stremio_routes');
-const { registerEdgeRoutes } = require('./core/server/routes/edge_routes');
+} = require('../utils');
+const { generateStream, resolveLazyStreamData, normalizeExternalCandidateForPipeline } = require('../stream_generator');
+const { createTorrentioTmdbScanner } = require('../prewarm/torrentio_tmdb_scanner');
+const { bootRealDebridAuditor } = require('../debrid/rd/audit/rd_auditor_boot');
+const { applyCommonMiddleware } = require('./middleware');
+const { applyEdgeGatewayGuard } = require('./edge_gateway');
+const { getRawStreamCacheStats } = require('../cache/raw_stream_cache');
+const { createAppServices } = require('./services/app_services');
+const { registerApiRoutes } = require('./routes/api_routes');
+const { registerPlaybackRoutes } = require('./routes/playback_routes');
+const { registerAdminRoutes } = require('./routes/admin_routes');
+const { registerStremioRoutes } = require('./routes/stremio_routes');
+const { registerEdgeRoutes } = require('./routes/edge_routes');
 
 function startSharedStreamCacheCleanupJob({ dbHelper, logger, enabled }) {
     if (!enabled) return null;
@@ -148,7 +148,7 @@ function startSharedStreamCacheCleanupJob({ dbHelper, logger, enabled }) {
 
 function bootstrapServer() {
     const app = express();
-    const publicDir = path.join(__dirname, 'public');
+    const publicDir = path.join(__dirname, '..', '..', 'public');
     const isClusterWorker = String(process.env.LEVI_CLUSTER_HTTP || '0').toLowerCase() === '1';
     const isClusterLeader = String(process.env.LEVI_CLUSTER_LEADER || 'false').toLowerCase() === 'true';
     const clusterSlot = Number.parseInt(process.env.LEVI_CLUSTER_SLOT || '-1', 10);
