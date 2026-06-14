@@ -98,6 +98,12 @@ const SCRAPER_MODULES = [ require("../providers/engines") ];
 const TORRENTIO_MAIN_STRONG_STOP_MIN = 3;
 const TORRENTIO_TOTAL_STRONG_STOP_MIN = 5;
 
+// TorBox deve privilegiare la sicurezza cache, ma senza chiudere troppo presto
+// il bacino candidati: il DB può essere vecchio e TorBox può perdere cache dopo settimane.
+const TORBOX_DB_VERIFIED_SKIP_EXTERNAL_MIN = 10;
+const TORBOX_MOVIE_EXTERNAL_FILL_LIMIT = 120;
+const TORBOX_METEOR_SUPPLEMENT_LIMIT = 12;
+
 const DB_HEAVY_SERIES_PRIMARY_MIN = 2;
 const DB_HEAVY_SERIES_FALLBACK_LIMIT = 30;
 const DB_HEAVY_SERIES_EXTERNAL_FILL_LIMIT = 8;
@@ -106,7 +112,7 @@ const {
   logger, Cache, LIMITERS, CONFIG, REGEX_SUB_ONLY, REGEX_AUDIO_CONFIRM, REGEX_YEAR, EMPTY_STREAM_TTL, METADATA_CACHE_TTL,
   getLanguageInfo, parseTitleDetails, formatLanguageLabel, isSeasonPack, isGoodShortQueryMatch, chooseBestPackTitle, shouldUpdatePackTitle,
   extractSeasonEpisodeFromFilename, deduplicateResults, filterByQualityLimit, extractInfoHash,
-  withTimeout, normalizeSearchText, extractSeeders, extractSize, streamInflight, metadataInflight, withSharedPromise,
+  withTimeout, normalizeSearchText, stripFalseItalianDomainTokens, extractSeeders, extractSize, streamInflight, metadataInflight, withSharedPromise,
   incrementMetric, recordDuration, recordProviderMetric
 } = require("./utils");
 
@@ -753,10 +759,10 @@ function getMovieExternalFillLimit(filters = {}, dbPrimaryCount = 0) {
 function getMovieDbVerifiedSkipExternalMin(filters = {}, service = null) {
     const normalizedService = String(service || '').toLowerCase();
     const raw = normalizedService === 'tb'
-        ? (filters.tbDbVerifiedSkipExternalMin ?? '1')
+        ? (filters.tbDbVerifiedSkipExternalMin ?? String(TORBOX_DB_VERIFIED_SKIP_EXTERNAL_MIN))
         : (filters.movieDbVerifiedSkipExternalMin ?? process.env.MOVIE_DB_VERIFIED_SKIP_EXTERNAL_MIN ?? '3');
     const parsed = parseInt(raw, 10);
-    const fallback = normalizedService === 'tb' ? 1 : 3;
+    const fallback = normalizedService === 'tb' ? TORBOX_DB_VERIFIED_SKIP_EXTERNAL_MIN : 3;
     return Number.isFinite(parsed) ? Math.max(1, Math.min(20, parsed)) : fallback;
 }
 
@@ -775,7 +781,7 @@ function getTorboxDbFastPathMin(filters = {}) {
 function shouldTorboxSkipExternalOnDbCoverage(filters = {}) {
     const value = filters.tbSkipExternalOnDbCoverage;
     if (value !== undefined && value !== null && String(value).trim() !== '') return isTruthyConfigValue(value);
-    return true;
+    return false;
 }
 
 function getMovieDbExternalBypassMin(filters = {}) {
@@ -1053,10 +1059,14 @@ function buildGroupedFallbackCandidatePool({ localDbPool = [], networkResults = 
 
         if (dbPrimary.length > 0) {
             const fillPool = [...snapshotFill, ...externalFromNetwork];
-            const fillLimit = getMovieExternalFillLimit(filters, dbPrimary.length);
+            const normalizedService = getNormalizedDebridService(config);
+            const isTorboxService = normalizedService === 'tb';
+            const fillLimit = isTorboxService
+                ? Math.max(TORBOX_MOVIE_EXTERNAL_FILL_LIMIT, dbPrimary.length * 4)
+                : getMovieExternalFillLimit(filters, dbPrimary.length);
             const rdAuthorityFillMaxRaw = filters.rdTorrentioAuthorityFillMax ?? process.env.RD_TORRENTIO_AUTHORITY_FILL_MAX ?? '12';
             const rdAuthorityFillMax = Math.max(0, Math.min(30, parseInt(rdAuthorityFillMaxRaw, 10) || 12));
-            const isRdService = getNormalizedDebridService(config) === 'rd';
+            const isRdService = normalizedService === 'rd';
             const authorityFill = isRdService
                 ? fillPool.filter(isTorrentioRdAuthorityCandidate).slice(0, rdAuthorityFillMax)
                 : [];
@@ -1071,7 +1081,7 @@ function buildGroupedFallbackCandidatePool({ localDbPool = [], networkResults = 
                 seenFill.add(key);
                 externalFill.push(item);
             }
-            logger.info(`[GROUP FALLBACK] movie DB-primary wins | dbPrimary=${dbPrimary.length} local=${primaryFromDb.length} remote=${primaryFromNetwork.length} externalFill=${externalFill.length}/${fillPool.length}${isRdService ? ` rdAuthority=${authorityFill.length}` : ''}`);
+            logger.info(`[GROUP FALLBACK] movie DB-primary wins | dbPrimary=${dbPrimary.length} local=${primaryFromDb.length} remote=${primaryFromNetwork.length} externalFill=${externalFill.length}/${fillPool.length}${isRdService ? ` rdAuthority=${authorityFill.length}` : ''}${isTorboxService ? ` tbWideFill=${fillLimit}` : ''}`);
             return [
                 ...markFallbackGroup(dbPrimary, 'db_primary'),
                 ...markFallbackGroup(externalFill, 'external_fill')
@@ -4115,6 +4125,7 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
     logger.info(`[EXTERNAL] Start Parallel Fetch ids=${requestIds.join(',')}`);
 
     const onlyItalian = langMode === 'ita';
+    const torboxExternalMode = getNormalizedDebridService(config) === 'tb';
     const normalizeBatch = (settled, label) => {
         const mapped = [];
         for (const result of settled) {
@@ -4152,7 +4163,7 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
             onlyItalian: false,
             languageMode: langMode,
             enabledAddons,
-            meteorLimit: 2
+            meteorLimit: torboxExternalMode ? TORBOX_METEOR_SUPPLEMENT_LIMIT : 2
         })
             .then((items) => ({ id, items: Array.isArray(items) ? items : [] }))
             .catch((error) => ({ id, items: [], error })));
@@ -4167,15 +4178,19 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
     };
 
     const meteorRequestIds = selectMeteorRequestIds();
-    const meteorSupplementLimit = Math.max(1, Math.min(2, Number(process.env.METEOR_SUPPLEMENT_LIMIT || 2) || 2));
+    const meteorSupplementLimit = torboxExternalMode
+        ? TORBOX_METEOR_SUPPLEMENT_LIMIT
+        : Math.max(1, Math.min(2, Number(process.env.METEOR_SUPPLEMENT_LIMIT || 2) || 2));
     const meteorSupplementTimeout = Math.max(700, Math.min(
         Math.max(CONFIG.TIMEOUTS.EXTERNAL || 0, 2500),
         Number(process.env.EXT_METEOR_SUPPLEMENT_TIMEOUT || 1800) || 1800
     ));
-    const meteorJoinTimeout = Math.max(250, Math.min(
-        meteorSupplementTimeout,
-        Number(process.env.EXT_METEOR_FAST_JOIN_TIMEOUT || 900) || 900
-    ));
+    const meteorJoinTimeout = torboxExternalMode
+        ? Math.max(1200, Math.min(meteorSupplementTimeout, 2200))
+        : Math.max(250, Math.min(
+            meteorSupplementTimeout,
+            Number(process.env.EXT_METEOR_FAST_JOIN_TIMEOUT || 900) || 900
+        ));
 
     const pickMeteorSupplement = (items = [], base = []) => {
         const existing = new Set((Array.isArray(base) ? base : []).map((item) => `${String(item.hash || item.infoHash || '').toLowerCase()}:${Number.isInteger(item.fileIdx) ? item.fileIdx : -1}`));
@@ -4227,6 +4242,33 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
             return base;
         };
 
+        if (torboxExternalMode) {
+            const fanoutTimeout = Math.max(CONFIG.TIMEOUTS.EXTERNAL || 0, 5200);
+            const mediaFusionTimeout = Math.max(3200, Math.min(fanoutTimeout, 4800));
+            const [mainSettled, mirrorSettled, mediaFusionSettled] = await Promise.allSettled([
+                withTimeout(runBatch(['torrentio_main'], 'Torrentio Main'), fanoutTimeout, 'Torrentio Main TB Fanout'),
+                withTimeout(runBatch(['torrentio_mirror'], 'Torrentio Mirror'), fanoutTimeout, 'Torrentio Mirror TB Fanout'),
+                withTimeout(runBatch(['mediafusion'], 'MediaFusion'), mediaFusionTimeout, 'MediaFusion TB Fanout')
+            ]);
+
+            const torrentioMainResults = mainSettled.status === 'fulfilled' ? mainSettled.value : [];
+            const torrentioMirrorResults = mirrorSettled.status === 'fulfilled' ? mirrorSettled.value : [];
+            const mediaFusionResults = mediaFusionSettled.status === 'fulfilled' ? mediaFusionSettled.value : [];
+
+            if (mainSettled.status === 'rejected') logger.info(`[EXTERNAL] TB fanout Torrentio Main skipped: ${mainSettled.reason?.message || mainSettled.reason}`);
+            if (mirrorSettled.status === 'rejected') logger.info(`[EXTERNAL] TB fanout Torrentio Mirror skipped: ${mirrorSettled.reason?.message || mirrorSettled.reason}`);
+            if (mediaFusionSettled.status === 'rejected') logger.info(`[EXTERNAL] TB fanout MediaFusion skipped: ${mediaFusionSettled.reason?.message || mediaFusionSettled.reason}`);
+
+            const mergedExternalResults = dedupeExternalCandidates([
+                ...torrentioMainResults,
+                ...torrentioMirrorResults,
+                ...mediaFusionResults
+            ]);
+            const supplemented = await withMeteorSupplement(mergedExternalResults, 'TB parallel fanout');
+            logger.info(`[EXTERNAL] TB parallel fanout main=${torrentioMainResults.length} mirror=${torrentioMirrorResults.length} mediafusion=${mediaFusionResults.length} total=${supplemented.length} ids=${requestIds.length}`);
+            return supplemented;
+        }
+
         const torrentioMainResults = await withTimeout(
             runBatch(['torrentio_main'], 'Torrentio Main'),
             Math.max(CONFIG.TIMEOUTS.EXTERNAL, 4500),
@@ -4234,14 +4276,14 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
         );
         const torrentioMainStrong = countStrongTorrentioCachedResults(torrentioMainResults);
 
-        if (torrentioMainStrong >= TORRENTIO_MAIN_STRONG_STOP_MIN) {
+        if (!torboxExternalMode && torrentioMainStrong >= TORRENTIO_MAIN_STRONG_STOP_MIN) {
             logger.info(`[EXTERNAL] Torrentio main strong=${torrentioMainStrong}/${torrentioMainResults.length} >= ${TORRENTIO_MAIN_STRONG_STOP_MIN} ids=${requestIds.length} -> mirror/mediafusion SKIP`);
             const supplemented = await withMeteorSupplement(torrentioMainResults, 'with Torrentio main');
             logger.info(`[EXTERNAL] Trovati ${supplemented.length} risultati ids=${requestIds.length}`);
             return supplemented;
         }
 
-        logger.info(`[EXTERNAL] Torrentio main strong=${torrentioMainStrong}/${torrentioMainResults.length} < ${TORRENTIO_MAIN_STRONG_STOP_MIN} ids=${requestIds.length} -> mirror RUN`);
+        logger.info(`[EXTERNAL] Torrentio main strong=${torrentioMainStrong}/${torrentioMainResults.length}${torboxExternalMode ? ' TB fanout -> mirror RUN' : ` < ${TORRENTIO_MAIN_STRONG_STOP_MIN} ids=${requestIds.length} -> mirror RUN`}`);
         const torrentioMirrorResults = await withTimeout(
             runBatch(['torrentio_mirror'], 'Torrentio Mirror'),
             Math.max(CONFIG.TIMEOUTS.EXTERNAL, 4500),
@@ -4251,14 +4293,14 @@ async function fetchExternalResults(type, requestId, config, meta = {}, langMode
         const torrentioResults = dedupeExternalCandidates([...torrentioMainResults, ...torrentioMirrorResults]);
         const torrentioTotalStrong = countStrongTorrentioCachedResults(torrentioResults);
 
-        if (torrentioTotalStrong >= TORRENTIO_TOTAL_STRONG_STOP_MIN) {
+        if (!torboxExternalMode && torrentioTotalStrong >= TORRENTIO_TOTAL_STRONG_STOP_MIN) {
             logger.info(`[EXTERNAL] Torrentio total strong=${torrentioTotalStrong}/${torrentioResults.length} >= ${TORRENTIO_TOTAL_STRONG_STOP_MIN} ids=${requestIds.length} -> MediaFusion SKIP`);
             const supplemented = await withMeteorSupplement(torrentioResults, 'with Torrentio main+mirror');
             logger.info(`[EXTERNAL] Trovati ${supplemented.length} risultati ids=${requestIds.length}`);
             return supplemented;
         }
 
-        logger.info(`[EXTERNAL] Torrentio total strong=${torrentioTotalStrong}/${torrentioResults.length} < ${TORRENTIO_TOTAL_STRONG_STOP_MIN} ids=${requestIds.length} -> MediaFusion RD-check RUN`);
+        logger.info(`[EXTERNAL] Torrentio total strong=${torrentioTotalStrong}/${torrentioResults.length}${torboxExternalMode ? ' TB fanout' : ` < ${TORRENTIO_TOTAL_STRONG_STOP_MIN}`} ids=${requestIds.length} -> MediaFusion RD-check RUN`);
         const mediaFusionResults = await withTimeout(
             runBatch(['mediafusion'], 'MediaFusion'),
             Math.max(CONFIG.TIMEOUTS.EXTERNAL, 4500),
@@ -4405,7 +4447,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
                     const externalRequestIds = buildExternalAddonRequestIds(type, finalId, meta);
                     const externalConfigSig = crypto.createHash("sha1").update(JSON.stringify({ service: config?.service || "", rd: config?.rd || config?.realdebrid || "", tb: config?.tb || config?.torbox || "", key: config?.key || "" })).digest("hex").slice(0, 12);
-                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:global-post-filter:${externalConfigSig}:torrentioSmartFallbackNoEnvV19`;
+                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:global-post-filter:${externalConfigSig}:torrentioSmartFallbackNoEnvV21-tbFanoutImportFix`;
                     const createExternalPromise = () => disableLiveSources && !flags.useProviderCachedOnly
                         ? Promise.resolve([])
                         : Cache.fetchWithCache('ExternalAddons', externalCacheKey, 43200, () =>
@@ -4413,7 +4455,9 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
                                 guardedProviderCall(
                                     'ExternalAddons',
                                     LIMITERS.externalAddons,
-                                    Math.max(CONFIG.TIMEOUTS.EXTERNAL, 4500),
+                                    getNormalizedDebridService(config) === 'tb'
+                                        ? Math.max(CONFIG.TIMEOUTS.EXTERNAL || 0, 9000)
+                                        : Math.max(CONFIG.TIMEOUTS.EXTERNAL || 0, 4500),
                                     () => fetchExternalResults(type, externalRequestIds, config, meta, langMode),
                                     { meta }
                                 )
@@ -4575,7 +4619,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const streamCacheVersionParts = [];
-  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v24|movieDbPriorityVerifiedSkip=v3|tbDbFirst=v1|rdDirectNoLazy=v2|rdDownloadFallback=v1|torrentioSmartFallback=v1');
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v24|movieDbPriorityVerifiedSkip=v3|tbDbFirst=v1|tbVerifiedRescue=v3|rdDirectNoLazy=v2|rdDownloadFallback=v1|torrentioSmartFallback=v1');
   // Bust stale web-provider stream lists generated by the temporary MaxStream
   // .m3u8 route. This prevents Stremio/VLC from receiving old cached
   // /extractor/video.m3u8 URLs after the compatibility rollback.
