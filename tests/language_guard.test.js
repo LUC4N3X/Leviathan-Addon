@@ -45,3 +45,14 @@ test('solo ITA is extra strict for ThePirateBay and BestTorrents', () => {
   assert.equal(shouldKeepStrictItalianCandidate('Mercy 2026 1080p WEB-DL SUB ITA ENG x264', 'ThePirateBay'), false);
   assert.equal(shouldKeepStrictItalianCandidate('Mercy 2026 1080p WEB-DL ITA ENG AC3 x264', 'ThePirateBay'), true);
 });
+
+test('ThePirateBay rejects Torrentio flag-only 28 Years Later releases without textual ITA audio', () => {
+  assert.equal(shouldKeepStrictItalianCandidate('28 Years Later The Bone Temple 2025 2160p 4K WEB-DL DV AAC 🇮🇹', 'ThePirateBay'), false);
+  assert.equal(shouldKeepStrictItalianCandidate('28 Years Later The Bone Temple 2025 2160p REMUX H265 DV HDR Atmos TrueHD7.1 🇮🇹', 'ThePirateBay'), false);
+  assert.equal(hasStrictItalianEvidence('28 Years Later The Bone Temple 2025 2160p REMUX H265 DV HDR Atmos TrueHD7.1 🇮🇹', 'ThePirateBay'), false);
+});
+
+test('ThePirateBay still keeps real textual ITA audio markers', () => {
+  assert.equal(shouldKeepStrictItalianCandidate('28 Years Later The Bone Temple 2025 2160p WEB-DL ITA ENG AAC', 'ThePirateBay'), true);
+  assert.equal(shouldKeepStrictItalianCandidate('28 Years Later The Bone Temple 2025 2160p REMUX ITA AC3 Atmos TrueHD7.1', 'ThePirateBay'), true);
+});
