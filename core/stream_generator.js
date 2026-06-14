@@ -101,6 +101,7 @@ const TORRENTIO_TOTAL_STRONG_STOP_MIN = 5;
 // TorBox deve privilegiare la sicurezza cache, ma senza chiudere troppo presto
 // il bacino candidati: il DB può essere vecchio e TorBox può perdere cache dopo settimane.
 const TORBOX_DB_VERIFIED_SKIP_EXTERNAL_MIN = 10;
+const TORBOX_DB_FIRST_REAL_MIN = 5;
 const TORBOX_MOVIE_EXTERNAL_FILL_LIMIT = 120;
 const TORBOX_METEOR_SUPPLEMENT_LIMIT = 12;
 
@@ -839,10 +840,10 @@ function shouldBypassMovieExternalLive({ verifiedDbCount = 0, dbCandidateCount =
     const bypassMin = getMovieDbExternalBypassMinForService(filters, normalizedService);
 
     if (normalizedService === 'tb') {
-        // TorBox fa comunque checkcached/live resolve sulla ranked list: se il DB ha copertura,
-        // evitiamo di far vincere subito Torrentio/MediaFusion/Meteor live.
-        if (shouldTorboxSkipExternalOnDbCoverage(filters) && dbCandidateCount >= bypassMin) return true;
-        return verifiedDbCount >= verifiedMin && dbCandidateCount >= bypassMin;
+        // DB-first reale: prima controlliamo il nostro DB con checkcached TorBox.
+        // Torrentio/MediaFusion/Meteor entrano solo dopo, se i risultati TB verificati sono < 5.
+        if (dbCandidateCount > 0) return true;
+        return false;
     }
 
     if (verifiedDbCount < verifiedMin) return false;
@@ -1092,7 +1093,7 @@ function buildGroupedFallbackCandidatePool({ localDbPool = [], networkResults = 
             const normalizedService = getNormalizedDebridService(config);
             const isTorboxService = normalizedService === 'tb';
             const fillLimit = isTorboxService
-                ? Math.max(TORBOX_MOVIE_EXTERNAL_FILL_LIMIT, dbPrimary.length * 4)
+                ? 0
                 : getMovieExternalFillLimit(filters, dbPrimary.length);
             const rdAuthorityFillMaxRaw = filters.rdTorrentioAuthorityFillMax ?? process.env.RD_TORRENTIO_AUTHORITY_FILL_MAX ?? '12';
             const rdAuthorityFillMax = Math.max(0, Math.min(30, parseInt(rdAuthorityFillMaxRaw, 10) || 12));
@@ -1861,6 +1862,102 @@ async function resolveTorboxRankedList(rankedList, apiKey) {
     if (remainingItems.length > 0) TorboxAvailabilityCache.enrichCacheBackground(remainingItems, apiKey, dbHelper);
 
     return verifiedList;
+}
+
+function isTorboxMovieDbFirstRescueEligible({ type, meta, rankedList, dbPrimaryCoveragePool, config } = {}) {
+    if (getNormalizedDebridService(config) !== 'tb') return false;
+    if (!isMovieTypeForDbPriority(type, meta)) return false;
+    const currentReal = Array.isArray(rankedList) ? rankedList.length : 0;
+    if (currentReal >= TORBOX_DB_FIRST_REAL_MIN) return false;
+    return (Array.isArray(dbPrimaryCoveragePool) ? dbPrimaryCoveragePool : []).some((item) => isMovieDbPrimaryCandidate(item) || item?._myDb === true || item?._remoteDb === true);
+}
+
+function getCandidateDedupeKey(item = {}) {
+    const hash = getCandidateInfoHash(item);
+    const fileIdx = Number.isInteger(Number(item?.fileIdx)) ? Number(item.fileIdx) : -1;
+    if (hash) return `${hash.toLowerCase()}:${fileIdx}`;
+    const title = normalizeSearchText(String(item?.title || item?.name || item?.filename || '')).slice(0, 160);
+    const source = normalizeSearchText(String(item?.source || item?.externalProvider || item?.externalAddon || '')).slice(0, 80);
+    return title ? `${title}:${source}:${fileIdx}` : null;
+}
+
+function dropExistingCandidates(items = [], existingItems = []) {
+    const existing = new Set((Array.isArray(existingItems) ? existingItems : []).map(getCandidateDedupeKey).filter(Boolean));
+    const out = [];
+    for (const item of Array.isArray(items) ? items : []) {
+        const key = getCandidateDedupeKey(item);
+        if (key && existing.has(key)) continue;
+        if (key) existing.add(key);
+        out.push(item);
+    }
+    return out;
+}
+
+async function rescueTorboxMovieWithExternalFanout({ rankedList = [], type, finalId, meta, config, filters, langMode, aggressiveFilter, apiKey, dbPrimaryCoveragePool } = {}) {
+    const currentReal = Array.isArray(rankedList) ? rankedList.length : 0;
+    if (!isTorboxMovieDbFirstRescueEligible({ type, meta, rankedList, dbPrimaryCoveragePool, config })) return rankedList;
+
+    const requestIds = buildExternalAddonRequestIds(type, finalId, meta);
+    if (requestIds.length === 0) return rankedList;
+
+    logger.info(`[TB DB-FIRST] DB real=${currentReal}/${TORBOX_DB_FIRST_REAL_MIN} -> external rescue RUN ids=${requestIds.join(',')}`);
+
+    try {
+        const externalConfigSig = crypto.createHash('sha1').update(JSON.stringify({ service: config?.service || '', tb: config?.tb || config?.torbox || '', key: config?.key || '' })).digest('hex').slice(0, 12);
+        const rescueCacheKey = `${type}:${requestIds.join(',')}:tb-db-first-rescue:${externalConfigSig}:v1`;
+        const externalResults = await Cache.fetchWithCache('ExternalAddons', rescueCacheKey, 1800, () =>
+            scheduleRequestTask('provider-fast', `external-rescue:${rescueCacheKey}`, () =>
+                guardedProviderCall(
+                    'ExternalAddonsRescue',
+                    LIMITERS.externalAddons,
+                    Math.max(CONFIG.TIMEOUTS.EXTERNAL || 0, 9000),
+                    () => fetchExternalResults(type, requestIds, config, meta, langMode),
+                    { meta }
+                )
+            , { group: 'provider-fast' })
+        , { cacheOnly: false, bypassCache: false, emptyTtl: 300, errorTtl: 120 });
+
+        const protectedExternal = protectTorrentioExactMinimum(externalResults, aggressiveFilter, { meta, type, langMode, config });
+        let cleanExternal = await normalizeCandidateResults(
+            filterWithTorrentPackTrust(protectedExternal, aggressiveFilter, { meta, type, langMode }),
+            meta
+        );
+        cleanExternal = runFilterStage(cleanExternal, meta, filters, {
+            applyPackKnowledge,
+            applyConfiguredTorrentFilters,
+            logger
+        });
+        cleanExternal = dropExistingCandidates(cleanExternal, rankedList);
+
+        const seedHealthPass = applySeedHealthRanking(cleanExternal, { mode: 'debrid' });
+        let externalRanked = runSortStage(seedHealthPass.results, meta, config, {
+            rankAndFilterResults,
+            rerankCompositeResults,
+            applyPremiumRankingPolicy,
+            filterByQualityLimit
+        });
+        externalRanked = await reprioritizeRdRankedList(externalRanked, meta, config, true);
+        externalRanked = applyPremiumRankingPolicy(externalRanked, meta, config);
+        externalRanked = applyStreamPriorityPolicy(externalRanked, meta, config);
+        externalRanked = dedupeByInfoHash(externalRanked, getDedupeContext(meta, { stage: 'tb-external-rescue-ranked' }))?.results || externalRanked;
+        externalRanked = dropExistingCandidates(externalRanked, rankedList);
+
+        const verifiedExternal = dropExistingCandidates(await resolveTorboxRankedList(externalRanked, apiKey), rankedList);
+        const maxAdd = Math.max(0, (CONFIG.MAX_RESULTS || 12) - currentReal);
+        const additions = verifiedExternal.slice(0, maxAdd);
+
+        logger.info(`[TB DB-FIRST] external rescue raw=${Array.isArray(externalResults) ? externalResults.length : 0} clean=${cleanExternal.length} ranked=${externalRanked.length} verified=${verifiedExternal.length} added=${additions.length} final=${currentReal + additions.length}`);
+        if (additions.length === 0) return rankedList;
+
+        return [...rankedList, ...additions.map((item) => ({
+            ...item,
+            _tbExternalRescue: true,
+            _fallbackGroup: item?._fallbackGroup || 'tb_external_rescue'
+        }))];
+    } catch (error) {
+        logger.warn(`[TB DB-FIRST] external rescue failed: ${error?.message || error}`);
+        return rankedList;
+    }
 }
 
 function getServiceDisplayName(service) {
@@ -4483,7 +4580,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
                     const externalRequestIds = buildExternalAddonRequestIds(type, finalId, meta);
                     const externalConfigSig = crypto.createHash("sha1").update(JSON.stringify({ service: config?.service || "", rd: config?.rd || config?.realdebrid || "", tb: config?.tb || config?.torbox || "", key: config?.key || "" })).digest("hex").slice(0, 12);
-                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:global-post-filter:${externalConfigSig}:torrentioSmartFallbackNoEnvV21-tbFanoutImportFix`;
+                    const externalCacheKey = `${type}:${externalRequestIds.join(',')}:global-post-filter:${externalConfigSig}:torrentioSmartFallbackNoEnvV22-dbFirstRealRescue`;
                     const createExternalPromise = () => disableLiveSources && !flags.useProviderCachedOnly
                         ? Promise.resolve([])
                         : Cache.fetchWithCache('ExternalAddons', externalCacheKey, 43200, () =>
@@ -4964,6 +5061,22 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           }
 
           rankedList = preserveRdStatusList(rankedList, applyResolutionOrderingGuard(rankedList, { logger, meta, sortMode: getConfiguredSortMode(config) }), { logger, stage: 'resolution-guard' });
+
+          if (configuredDebridService === 'tb' && hasDebridKey) {
+              const beforeTorboxRescue = rankedList;
+              rankedList = preserveRdStatusList(beforeTorboxRescue, await rescueTorboxMovieWithExternalFanout({
+                  rankedList,
+                  type,
+                  finalId,
+                  meta,
+                  config,
+                  filters,
+                  langMode,
+                  aggressiveFilter,
+                  apiKey: debridApiKey,
+                  dbPrimaryCoveragePool
+              }), { logger, stage: 'tb-db-first-external-rescue' });
+          }
       } else {
           logger.info(`[TORRENT PIPELINE] Disabled for ${meta.title} (solo provider web attivi, nessuna key debrid e P2P off)`);
       }
