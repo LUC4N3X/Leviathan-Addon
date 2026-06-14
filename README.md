@@ -19,7 +19,7 @@
     <img alt="Language ITA / ENG" src="https://img.shields.io/badge/Language-ITA_/_ENG-93A8FF?style=for-the-badge&labelColor=0B1220&color=93A8FF" />
   </p>
 
-  <h3>馃敱 A clean stream intelligence layer for Stremio</h3>
+  <h3>A clean stream intelligence layer for Stremio</h3>
 
   <p>
     <strong>Leviathan unifies torrent engines, web providers, anime mapping, and RD/TorBox cloud</strong><br>
@@ -29,7 +29,7 @@
 
   <p>
     <sub>
-      Semantic matching 路 ITA-first ranking 路 Adaptive cache 路 Kitsu-aware anime logic 路 Kraken runtime 路 Clean Stremio output
+      Semantic matching | ITA-first ranking | Adaptive cache | Kitsu-aware anime logic | Kraken runtime | Clean Stremio output
     </sub>
   </p>
 
@@ -128,7 +128,7 @@ More fragile providers can be delegated to Kraken, allowing Leviathan to stay fo
 
 <div align="center">
   <h2>Saved Cloud Layer</h2>
-  <p><code>RD/TorBox cloud-aware 路 optional 路 zero duplicates</code></p>
+  <p><code>RD/TorBox cloud-aware · optional · zero duplicates</code></p>
 </div>
 
 The **Saved Cloud Layer** checks files already saved in the user's personal cloud on **Real-Debrid** or **TorBox** and integrates them cleanly into the stream list.
@@ -141,7 +141,7 @@ It works in three modes:
 - **fallback**: steps in mainly when the main pipeline is not enough.
 - **always**: always checks the cloud while still excluding duplicates.
 
-Cloud streams are marked with `鈽侊笍 RD` or `鈽侊笍 TB` and can use dedicated routes:
+Cloud streams are marked with `☁️ RD` or `☁️ TB` and can use dedicated routes:
 
 ```text
 /play_saved_cloud/rd/...
@@ -152,7 +152,7 @@ Cloud streams are marked with `鈽侊笍 RD` or `鈽侊笍 TB` and can use dedic
 
 <div align="center">
   <h2>Anime & Kitsu Intelligence</h2>
-  <p><code>Anime-first matching 路 Kitsu-aware context 路 episode collision control</code></p>
+  <p><code>Anime-first matching · Kitsu-aware context · episode collision control</code></p>
 </div>
 
 Leviathan includes dedicated logic for anime content and Kitsu-based flows.
@@ -180,7 +180,7 @@ Providers and engines aligned with the anime flow:
 
 <div align="center">
   <h2>Adaptive Cache Intelligence</h2>
-  <p><code>Volatility-aware 路 confidence-weighted 路 safer fresh releases</code></p>
+  <p><code>Volatility-aware · confidence-weighted · safer fresh releases</code></p>
 </div>
 
 Leviathan's cache does not behave like a passive container.
@@ -198,7 +198,7 @@ In practice:
 
 <div align="center">
   <h2>Cloudflare Session Store</h2>
-  <p><code>Redis-backed clearance sharing 路 fewer duplicate solves 路 better multi-worker behavior</code></p>
+  <p><code>Redis-backed clearance sharing · fewer duplicate solves · better multi-worker behavior</code></p>
 </div>
 
 Leviathan can share Cloudflare clearances, cookie jars, and browser fingerprints between the API, workers, and multiple instances through Redis.
@@ -228,7 +228,7 @@ CF_REDIS_LOCK_WAIT_MS=52000
 
 <div align="center">
   <h2>Kraken Runtime</h2>
-  <p><code>Leviathan-native companion 路 forward transport 路 hoster orchestration</code></p>
+  <p><code>Leviathan-native companion · forward transport · hoster orchestration</code></p>
 </div>
 
 **Kraken** is the recommended companion runtime for Leviathan.
@@ -259,20 +259,20 @@ FORWARD_PROXY=https://your-kraken-instance.example/forward
 
 <div align="center">
   <h2>Network Map</h2>
-  <p><code>Cloud 路 Web providers 路 Torrent engines 路 Hoster extractors</code></p>
+  <p><code>Cloud · Web providers · Torrent engines · Hoster extractors</code></p>
 </div>
 
 Leviathan uses multiple layers, but the flow remains linear:
 
 ```text
 Request Stremio
-鈫?metadata normalization
-鈫?provider / torrent / cloud discovery
-鈫?semantic matching
-鈫?deduplication
-鈫?ranking
-鈫?formatter
-鈫?clean stream output
+→ metadata normalization
+→ provider / torrent / cloud discovery
+→ semantic matching
+→ deduplication
+→ ranking
+→ formatter
+→ clean stream output
 ```
 
 **Cloud & Bridge**
@@ -384,50 +384,50 @@ http://localhost:7000
 <details>
 <summary><b>Saved Cloud Layer</b></summary>
 
-- `core/stream/debrid_saved_cloud.js` 鈥?RD/TorBox scanner and matching.
-- `debrid/realdebrid.js` 鈥?Real-Debrid cloud reading and resolving.
-- `debrid/torbox.js` 鈥?TorBox cloud reading and resolving.
-- `core/config/schema.js` 鈥?cloud options normalization.
-- `core/stream_generator.js` 鈥?cloud insertion into the stream pipeline.
-- `core/server/routes/playback_routes.js` 鈥?dedicated playback routes.
-- `core/lib/stream_formatter.js` 鈥?main formatter.
-- `public/index.html` and `public/smartphone.js` 鈥?desktop/mobile configurators.
+- `core/stream/debrid_saved_cloud.js` — RD/TorBox scanner and matching.
+- `debrid/realdebrid.js` — Real-Debrid cloud reading and resolving.
+- `debrid/torbox.js` — TorBox cloud reading and resolving.
+- `core/config/schema.js` — cloud options normalization.
+- `core/stream_generator.js` — cloud insertion into the stream pipeline.
+- `core/server/routes/playback_routes.js` — dedicated playback routes.
+- `core/lib/stream_formatter.js` — main formatter.
+- `public/index.html` and `public/smartphone.js` — desktop/mobile configurators.
 
 </details>
 
 <details>
 <summary><b>Provider & Runtime Layer</b></summary>
 
-- `providers/extractors/provider_registry.js` 鈥?central provider/extractor registry.
-- `providers/engines.js` 鈥?torrent engines.
-- `core/nexus-bridge/torrentio.js` 鈥?Torrentio bridge.
-- `core/nexus-bridge/mediafusion.js` 鈥?MediaFusion bridge.
-- `providers/extractors/bridge_resolver.js` 鈥?bridge page and iframe normalization.
-- `providers/extractors/hosters/` 鈥?local and Kraken-assisted hoster resolvers.
+- `providers/extractors/provider_registry.js` — central provider/extractor registry.
+- `providers/engines.js` — torrent engines.
+- `core/nexus-bridge/torrentio.js` — Torrentio bridge.
+- `core/nexus-bridge/mediafusion.js` — MediaFusion bridge.
+- `providers/extractors/bridge_resolver.js` — bridge page and iframe normalization.
+- `providers/extractors/hosters/` — local and Kraken-assisted hoster resolvers.
 
 </details>
 
 <details>
 <summary><b>Web Provider Modules</b></summary>
 
-- `providers/streamingcommunity/vix_handler.js` 鈥?StreamingCommunity / Vix.
-- `providers/altadefinizione/ads_handler.js` 鈥?Altadefinizione.
-- `providers/guardahd/ghd_handler.js` 鈥?GuardaHD.
-- `providers/guardoserie/gs_handler.js` 鈥?GuardoSerie.
-- `providers/guardaflix/gf_handler.js` 鈥?GuardaFlix.
-- `providers/eurostreaming/es_handler.js` 鈥?Eurostreaming, Safego/Clicka, DeltaBit, MixDrop, MaxStream.
-- `providers/toonitalia/toonitalia_handler.js` 鈥?ToonItalia.
-- `providers/onlineserietv/onlineserietv_handler.js` 鈥?OnlineSerieTV.
-- `providers/moflix/moflix_handler.js` 鈥?Moflix POC.
+- `providers/streamingcommunity/vix_handler.js` — StreamingCommunity / Vix.
+- `providers/altadefinizione/ads_handler.js` — Altadefinizione.
+- `providers/guardahd/ghd_handler.js` — GuardaHD.
+- `providers/guardoserie/gs_handler.js` — GuardoSerie.
+- `providers/guardaflix/gf_handler.js` — GuardaFlix.
+- `providers/eurostreaming/es_handler.js` — Eurostreaming, Safego/Clicka, DeltaBit, MixDrop, MaxStream.
+- `providers/toonitalia/toonitalia_handler.js` — ToonItalia.
+- `providers/onlineserietv/onlineserietv_handler.js` — OnlineSerieTV.
+- `providers/moflix/moflix_handler.js` — Moflix POC.
 
 </details>
 
 <details>
 <summary><b>Anime Sources</b></summary>
 
-- `providers/animeworld/aw_handler.js` 鈥?AnimeWorld, Kitsu/anime context, VidGuard handoff.
-- `providers/animeunity/au_handler.js` 鈥?AnimeUnity.
-- `providers/animesaturn/as_handler.js` 鈥?AnimeSaturn.
+- `providers/animeworld/aw_handler.js` — AnimeWorld, Kitsu/anime context, VidGuard handoff.
+- `providers/animeunity/au_handler.js` — AnimeUnity.
+- `providers/animesaturn/as_handler.js` — AnimeSaturn.
 
 </details>
 
@@ -456,7 +456,7 @@ The **Saved Cloud Layer** remains useful even in self-hosting because it depends
 
 <div align="center">
   <h2>Recommended Setup</h2>
-  <p><code>Clean install 路 balanced configuration 路 best results first</code></p>
+  <p><code>Clean install · balanced configuration · best results first</code></p>
 
   <img src="https://capsule-render.vercel.app/api?type=rect&color=0:06101F,50:00E7FF,100:06101F&height=1&section=header" width="58%" alt="setup divider" />
 </div>
@@ -497,7 +497,7 @@ For most users, the ideal setup is:
 
   <img src="https://capsule-render.vercel.app/api?type=transparent&height=58&section=header&text=%E2%9C%A6%20L%20U%20C%204%20N%203%20X%20%E2%9C%A6&fontSize=30&fontColor=FFFFFF&animation=fadeIn&fontAlignY=50" width="72%" alt="LUC4N3X" />
 
-  <h3>Founder 路 Core Architect 路 Lead Engineering</h3>
+  <h3>Founder · Core Architect · Lead Engineering</h3>
 
   <p>
     <b>Concept, architecture, and technical direction of Leviathan.</b><br>
