@@ -41,12 +41,7 @@ function createTorrentRepository({
     uncached: 6,
     error: 0.25
   });
-  const TB_VERIFIED_HARD_MAX_AGE_DAYS = clampInt(
-    process.env.TB_VERIFIED_HARD_MAX_AGE_DAYS,
-    21,
-    1,
-    29
-  );
+  const TB_VERIFIED_HARD_MAX_AGE_DAYS = 14;
   const TB_VERIFIED_HARD_MAX_AGE_MS = TB_VERIFIED_HARD_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
   const DB_AUTHORITY_DUAL_WRITE = String(process.env.DB_AUTHORITY_DUAL_WRITE || '1').trim() !== '0';
   const DB_AUTHORITY_READ = String(process.env.DB_AUTHORITY_READ || '1').trim() !== '0';
@@ -753,6 +748,28 @@ function createTorrentRepository({
     const imdbEpisode = toNullableInt(entry?.imdb_episode ?? entry?.episode);
     const isEpisode = Boolean(imdbId && imdbSeason !== null && imdbSeason > 0 && imdbEpisode !== null && imdbEpisode > 0);
     return { imdbId, imdbSeason, imdbEpisode, isEpisode };
+  }
+
+
+  async function clearEpisodeScopedTbOverrideRow(client, entry) {
+    const hash = normalizeInfoHash(entry?.hash || entry?.info_hash || entry?.infoHash);
+    const identity = normalizeEpisodeIdentity(entry);
+    if (!hash || !identity.isEpisode) return false;
+
+    await client.query(
+      `
+        UPDATE episode_file_overrides
+        SET tb_file_id = NULL,
+            tb_file_size = NULL,
+            updated_at = NOW()
+        WHERE info_hash_norm = $1
+          AND imdb_id = $2
+          AND imdb_season = $3
+          AND imdb_episode = $4
+      `,
+      [hash, identity.imdbId, identity.imdbSeason, identity.imdbEpisode]
+    );
+    return true;
   }
 
   async function upsertEpisodeScopedOverrideRow(client, entry) {
@@ -2378,6 +2395,13 @@ function createTorrentRepository({
               tb_file_id: row.fileId,
               tb_file_size: row.fileSize
             });
+          } else if (row.episode_scoped && row.tb_cache_state === 'uncached') {
+            await clearEpisodeScopedTbOverrideRow(client, {
+              hash: row.hash,
+              imdb_id: row.imdb_id,
+              imdb_season: row.imdb_season,
+              imdb_episode: row.imdb_episode
+            });
           }
 
           const globalFileId = row.episode_scoped ? null : row.fileId;
@@ -2426,10 +2450,12 @@ function createTorrentRepository({
                   tb_cache_check_failures = GREATEST(0, COALESCE($10::integer, 0)),
                   tb_next_cached_check = NOW() + make_interval(secs => GREATEST(60, CEIL(COALESCE($11::numeric, 1) * 3600)::integer)),
                   tb_file_id = CASE
+                    WHEN $3::text = 'uncached' THEN NULL
                     WHEN $6::integer IS NULL OR $6::integer < 0 THEN tb_file_id
                     ELSE $6::integer
                   END,
                   tb_file_size = CASE
+                    WHEN $3::text = 'uncached' THEN NULL
                     WHEN $7::bigint IS NULL OR $7::bigint <= 0 THEN tb_file_size
                     ELSE $7::bigint
                   END,
