@@ -305,6 +305,12 @@ function buildProxyUrl(config = {}, targetUrl, headers = {}, options = {}) {
         params.set(paramName, String(rawValue));
     }
 
+    const extraParams = options?.extraParams || options?.params || {};
+    for (const [name, value] of Object.entries(extraParams)) {
+        if (!name || value === undefined || value === null || value === '') continue;
+        params.set(String(name), String(value));
+    }
+
     const path = options.isHls ? '/proxy/hls/manifest.m3u8' : '/proxy/stream';
     const out = `${base}${path}?${params.toString()}`;
     mfpDebug('info', 'proxy url built', {
