@@ -1,8 +1,49 @@
 <div align="center">
 
-  <a href="https://leviathanaddon.dpdns.org" target="_blank">
-    <img src="assets/leviathan-hero.png" alt="Leviathan - ITA-first / ENG-ready Stremio Aggregation Engine" width="100%" />
-  </a>
+<br>
+
+<h1>LEVIATHAN</h1>
+
+<p>
+  <strong>ITA-first / ENG-ready Stremio Aggregation Engine</strong>
+</p>
+
+<table>
+  <tr>
+    <td align="center">
+      <strong>⬇ INSTALL</strong><br>
+      <sub>LEVIATHAN</sub>
+    </td>
+    <td align="center">
+      <strong>🧩 STREMIO</strong><br>
+      <sub>NATIVE ADDON</sub>
+    </td>
+    <td align="center">
+      <strong>🐙 RUNTIME</strong><br>
+      <sub>KRAKEN READY</sub>
+    </td>
+    <td align="center">
+      <strong>🌐 LANGUAGE</strong><br>
+      <sub>ITA / ENG</sub>
+    </td>
+  </tr>
+</table>
+
+<h3>🔱 A clean stream intelligence layer for Stremio</h3>
+
+<p>
+  <strong>Leviathan unifies torrent engines, web providers, anime mapping, and RD/TorBox cloud</strong><br>
+  into a fast, structured, deduplicated pipeline designed to prioritize real <strong>ITA</strong> results<br>
+  while keeping <strong>ENG</strong> support available when needed.
+</p>
+
+<p>
+  <sub>
+    Semantic matching · ITA-first ranking · Adaptive cache · Kitsu-aware anime logic · Kraken runtime · Clean Stremio output
+  </sub>
+</p>
+
+<br>
 
 </div>
 
