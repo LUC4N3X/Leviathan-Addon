@@ -10,7 +10,8 @@ const {
   parseTitleDetails,
   stripFalseItalianDomainTokens,
   getLanguageInfo,
-  isTrustedSource
+  isTrustedSource,
+  isStrictGlobalLanguageSource
 } = require('../utils/text');
 
 const REGEX_EXPLICIT_ENG = /(?:🇬🇧|🇺🇸|\b(?:ENG|ENGLISH|TRUE\s*ENGLISH|AUDIO\s*ENG|ENG\s*(?:AC3|AAC|DDP|DTS|TRUEHD)|ENG(?:LISH)?\s*ONLY|DUBBED\s*ENG)\b)/i;
@@ -45,6 +46,7 @@ function buildLanguageEvidence(title = '', sourceName = '', parsedInfo = null) {
   const multiItalian = REGEX_MULTI_ITA.test(scanCombined) || REGEX_ITA_ENG_PAIR.test(scanCombined);
   const trustedItalianGroup = REGEX_TRUSTED_GROUPS.test(combined);
   const trustedItalianSource = Boolean(rawSource && isTrustedSource(rawSource, null));
+  const strictGlobalSource = isStrictGlobalLanguageSource(rawSource);
   const subtitleOnlyItalian = REGEX_SUB_ONLY.test(scanTitle) && !REGEX_AUDIO_CONFIRM.test(scanCombined) && !REGEX_AUDIO_ITA_CONTEXT.test(scanCombined);
   const explicitEnglish = detected.has('English') || REGEX_EXPLICIT_ENG.test(scanCombined);
   const explicitOther = REGEX_EXPLICIT_OTHER.test(scanCombined);
@@ -63,6 +65,7 @@ function buildLanguageEvidence(title = '', sourceName = '', parsedInfo = null) {
     multiItalian,
     trustedItalianGroup,
     trustedItalianSource,
+    strictGlobalSource,
     subtitleOnlyItalian,
     explicitEnglish,
     explicitOther,
@@ -83,6 +86,7 @@ function shouldKeepStrictItalianCandidate(title = '', sourceName = '', parsedInf
   if (!evidence.hasItalianAudioEvidence) return false;
 
   const hasExplicitItaMarker = evidence.explicitItalian || evidence.multiItalian;
+  if (evidence.strictGlobalSource && !hasExplicitItaMarker && !evidence.trustedItalianGroup) return false;
   if ((evidence.explicitEnglish || evidence.explicitOther) && !hasExplicitItaMarker) return false;
   if (evidence.genericMulti && !hasExplicitItaMarker && !evidence.trustedItalianGroup && !evidence.trustedItalianSource) return false;
 
