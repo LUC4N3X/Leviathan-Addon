@@ -1340,18 +1340,31 @@ async function extractEmbedUrl(animeUrl, episodeNumber, isMovie = false, candida
     return setCached(cache.embed, key, null, NEGATIVE_TTL_MS, NEGATIVE_TTL_MS);
 }
 
-function buildMfpHlsUrl(config, sourceUrl, referer) {
+function syntheticVariantForAuQuality(quality) {
+    const normalized = String(quality || '').trim().toLowerCase();
+    if (normalized.includes('1080')) return '1080';
+    if (normalized.includes('720')) return '720';
+    return 'auto';
+}
+
+function buildMfpHlsUrl(config, sourceUrl, referer, quality = 'auto') {
     if (!getMediaflowBase(config) || !sourceUrl) return null;
     let origin = 'https://vixsrc.to';
     try { origin = new URL(referer || sourceUrl).origin; } catch {}
 
-    return buildMediaflowGatewayProxyUrl(config, sourceUrl, {
-        ...(referer ? { Referer: referer } : {}),
-        ...(origin ? { Origin: origin } : {}),
-        'User-Agent': USER_AGENT
-    }, {
+    const syntheticVariant = syntheticVariantForAuQuality(quality);
+    return buildMediaflowGatewayProxyUrl(config, sourceUrl, {}, {
         isHls: true,
-        allowCookie: false
+        allowCookie: false,
+        extraParams: {
+            playback_profile: 'VixCloud',
+            profile_referer: referer || 'https://vixsrc.to/',
+            profile_origin: origin || 'https://vixsrc.to',
+            profile_user_agent: 'chrome',
+            segment_route: 'hls',
+            synthetic_variant: syntheticVariant,
+            vix_variant: syntheticVariant
+        }
     });
 }
 
@@ -1369,8 +1382,8 @@ function languageRank(stream = {}) {
 function buildStream({ sourceUrl, referer, quality, title, langTag, emoji, reqHost, config, branch }) {
     const viaMfp = Boolean(getMediaflowBase(config)) && config?.filters?.animeUnityUseMfp !== false;
     const url = viaMfp
-        ? buildMfpHlsUrl(config, sourceUrl, referer)
-        : buildSyntheticUrl(sourceUrl, quality, referer, reqHost);
+        ? buildMfpHlsUrl(config, sourceUrl, referer, quality)
+        : buildSyntheticUrl(sourceUrl, quality, referer, reqHost, config);
     if (!url) return null;
 
     const filename = title;
