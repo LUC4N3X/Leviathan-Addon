@@ -87,3 +87,37 @@ test('onlyItalian external filter drops foreign and undeclared releases but keep
     assert.ok(kept[0].title.includes('ITA.ENG'), addonKey);
   }
 });
+
+test('Torrentio-style TPB UI language badges are not enough for ITA audio', () => {
+  const streams = [
+    {
+      title: '▶️ 28 Years Later The Bone Temple\n⚜️ 4K • WEB-DL • DV\n🌐 IT/GB | 🎵 AAC\n💾 12.20 GB | 👥 84\n⚙️ ThePirateBay',
+      name: 'Torrentio',
+      externalProvider: 'ThePirateBay',
+      infoHash: '0123456789abcdef0123456789abcdef01234567'
+    },
+    {
+      title: '▶️ 28 Years Later The Bone Temple\n⚜️ 4K • REMUX • H265 • DV+HDR\n🌐 IT/GB | 🎵 Atmos TrueHD7.1\n💾 64.28 GB | 👥 5\n⚙️ ThePirateBay | 🏷️ CINEPHILE',
+      name: 'Torrentio',
+      externalProvider: 'ThePirateBay',
+      infoHash: 'abcdef0123456789abcdef0123456789abcdef01'
+    }
+  ];
+
+  const kept = filterNormalizedExternalStreams(streams, 'torrentio_mirror', { onlyItalian: true });
+  assert.equal(kept.length, 0);
+});
+
+test('Torrentio-style TPB keeps real textual ITA audio releases', () => {
+  const streams = [
+    {
+      title: '▶️ 28.Years.Later.The.Bone.Temple.2025.1080p.WEB-DL.ITA.ENG.AC3.x264\n⚜️ 1080p • WEB-DL • H265\n💾 3.12 GB | 👥 22\n⚙️ ThePirateBay',
+      name: 'Torrentio',
+      externalProvider: 'ThePirateBay',
+      infoHash: '1111111111111111111111111111111111111111'
+    }
+  ];
+
+  const kept = filterNormalizedExternalStreams(streams, 'torrentio_mirror', { onlyItalian: true });
+  assert.equal(kept.length, 1);
+});
