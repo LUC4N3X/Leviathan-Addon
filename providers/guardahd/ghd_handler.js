@@ -460,10 +460,10 @@ function extractSize(...values) {
 }
 
 function generateRichDescription(title, quality = 'Unknown', size = 'N/A', hoster = '') {
-    const sizeTag = size && size !== 'N/A' ? `ðŸ’¾ ${size} â€¢ ` : '';
+    const sizeTag = size && size !== 'N/A' ? `💾 ${size} • ` : '';
     const hosterTag = hoster ? ` [${hoster}]` : '';
 
-    return `ðŸŽ¬ ${title}${hosterTag}\n${sizeTag}ðŸ“º ${quality || 'Unknown'} â€¢ ðŸ‡®ðŸ‡¹ ITA\nâš¡ GuardaHD`;
+    return `🎬 ${title}${hosterTag}\n${sizeTag}📺 ${quality || 'Unknown'} • 🇮🇹 ITA\n⚡ GuardaHD`;
 }
 
 async function fetchSmart(url, options = {}) {
@@ -1127,7 +1127,7 @@ async function finalizeRawStream(raw, displayTitle, embedUrl, config = {}) {
     const priority = raw.priority ?? HOSTER_PRIORITY[hoster] ?? 9;
 
     let stream = buildWebStream({
-        name: `ðŸ¦ GHD\nâš¡ ${label}`,
+        name: `🦁 GHD\n⚡ ${label}`,
         title: generateRichDescription(displayTitle, quality, size, label),
         url: playbackUrl,
         extractor: label,
