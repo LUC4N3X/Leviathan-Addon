@@ -115,9 +115,9 @@ test('TorBox getRuntimeTuning returns all required fields with correct types', (
   assert.equal(typeof tuning.apiTimeout, 'number');
 });
 
-test('TorBox getRuntimeTuning default syncLimit is 100', () => {
+test('TorBox getRuntimeTuning default syncLimit is 120', () => {
   const tuning = TorboxAvailabilityCache.__private.getRuntimeTuning();
-  assert.equal(tuning.defaultSyncLimit, 100);
+  assert.equal(tuning.defaultSyncLimit, 120);
 });
 
 test('TorBox getRuntimeTuning apiTimeout is 14000ms', () => {
@@ -135,4 +135,24 @@ test('TorBox getRuntimeTuning maxConcurrency is clamped between 1 and 12', () =>
   const tuning = TorboxAvailabilityCache.__private.getRuntimeTuning();
   assert.ok(tuning.maxConcurrency >= 1, 'maxConcurrency must be >= 1');
   assert.ok(tuning.maxConcurrency <= 12, 'maxConcurrency must be <= 12');
+});
+
+
+test('TorBox cached hits require live file proof in foreground parser', () => {
+  const { __private } = require('../core/debrid/tb/availability/torbox_availability_cache');
+  const hash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const [key, noFiles] = __private.parseHashResult(hash, { cached: true, name: 'Old expired cache', size: 2147483648 }, { isEpisodeRequest: false });
+  assert.equal(key, hash);
+  assert.equal(noFiles.state, 'likely_cached');
+  assert.equal(noFiles.cached, null);
+
+  const [, withFile] = __private.parseHashResult(hash, {
+    cached: true,
+    name: 'Mercy 2026 ITA ENG 1080p',
+    size: 2147483648,
+    files: [{ id: 0, name: 'Mercy.2026.ITA.ENG.1080p.mkv', size: 2147483648 }]
+  }, { isEpisodeRequest: false, title: 'Mercy', year: 2026 });
+  assert.equal(withFile.state, 'cached_verified');
+  assert.equal(withFile.cached, true);
+  assert.equal(withFile.file_id, 0);
 });
