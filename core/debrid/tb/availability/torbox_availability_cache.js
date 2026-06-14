@@ -13,21 +13,21 @@ const { matchTorboxFile, getFileId: getMatchedFileId, getFileName: getMatchedFil
 
 const TB_BASE_URL = "https://api.torbox.app/v1/api";
 
-const CHUNK_SIZE = Math.max(1, Math.min(100, parseInt(process.env.TB_CACHE_CHUNK_SIZE || '100', 10) || 100));
+const CHUNK_SIZE = 100;
 const API_TIMEOUT = 14000;
 const MAX_RETRIES = 4;
 const RETRY_DELAY_BASE = 1600;
-const MAX_CONCURRENCY = Math.max(1, Math.min(12, parseInt(process.env.TB_CACHE_MAX_CONCURRENCY || '8', 10) || 8));
-const DEFAULT_SYNC_LIMIT = Math.max(20, Math.min(300, parseInt(process.env.TB_CACHE_SYNC_LIMIT || '100', 10) || 100));
+const MAX_CONCURRENCY = 8;
+const DEFAULT_SYNC_LIMIT = 120;
 const MIN_VIDEO_SIZE = 50 * 1024 * 1024;
-const LOCAL_AVAILABILITY_MAX_ENTRIES = Math.max(500, Math.min(50000, parseInt(process.env.TB_LOCAL_AVAILABILITY_MAX_ENTRIES || process.env.LOCAL_AVAILABILITY_MAX_ENTRIES || '2500', 10) || 2500));
-const UNCACHED_TTL_SECONDS = Math.max(
-  15 * 60,
-  parseInt(process.env.TB_UNCACHED_TTL_SECONDS || String(2 * 60 * 60), 10) || 2 * 60 * 60
-);
+const LOCAL_AVAILABILITY_MAX_ENTRIES = 2500;
+const UNCACHED_TTL_SECONDS = 2 * 60 * 60;
+
+// TorBox cache hits are intentionally short lived. The visible list is always
+// live-verified below, while this cache only protects repeated/background scans.
 const AVAILABILITY_TTL_SECONDS = Object.freeze({
-  [TB_CACHE_STATES.CACHED_VERIFIED]: 24 * 60 * 60,
-  [TB_CACHE_STATES.LIKELY_CACHED]: 15 * 60,
+  [TB_CACHE_STATES.CACHED_VERIFIED]: 6 * 60 * 60,
+  [TB_CACHE_STATES.LIKELY_CACHED]: 10 * 60,
   [TB_CACHE_STATES.UNCERTAIN]: 5 * 60,
   [TB_CACHE_STATES.QUEUED]: 3 * 60,
   [TB_CACHE_STATES.UNCACHED]: UNCACHED_TTL_SECONDS,
@@ -722,7 +722,7 @@ async function checkChunk(entries, token) {
     const response = await fetchWithRetry(`${TB_BASE_URL}/torrents/checkcached`, {
       params: {
         hash: hashes.join(","),
-        format: "list",
+        format: "object",
         list_files: "true"
       },
       headers: {
@@ -872,22 +872,17 @@ async function checkCacheSync(items, token, dbHelper, limit = DEFAULT_SYNC_LIMIT
 
   if (entries.length === 0) return {};
 
-  const { hits: cachedHits, missing } = await readCachedAvailability(entries, dbHelper);
-  if (Object.keys(cachedHits).length > 0) {
-    logCacheEvent("torbox.cache.db.hit", {
-      hits: Object.keys(cachedHits).length,
-      missing: missing.length
-    });
-  }
-
-  const apiResults = missing.length > 0 ? await checkHashes(missing, token) : {};
-  await persistAvailabilityResults(missing, apiResults, dbHelper);
+  // Foreground streams must never trust an old DB "cached" flag.
+  // TorBox can expire cached material later, so the visible window is checked
+  // live with one batched `checkcached?list_files=true` pass before display.
+  const apiResults = await checkHashes(entries, token);
+  await persistAvailabilityResults(entries, apiResults, dbHelper);
 
   const results = {};
   const updates = [];
 
   for (const entry of entries) {
-    const apiRes = cachedHits[entry.hash] || apiResults[entry.hash] || makeCacheResult(TB_CACHE_STATES.UNCACHED, { match_reason: "not_returned" });
+    const apiRes = apiResults[entry.hash] || makeCacheResult(TB_CACHE_STATES.UNCACHED, { match_reason: "not_returned_live" });
     const state = normalizeTbCacheState(apiRes.state || apiRes.cache_state || (apiRes.cached === true ? TB_CACHE_STATES.CACHED_VERIFIED : (apiRes.cached === false ? TB_CACHE_STATES.UNCACHED : TB_CACHE_STATES.UNCERTAIN)));
     results[entry.hash] = {
       cached: state === TB_CACHE_STATES.CACHED_VERIFIED,
@@ -941,3 +936,4 @@ module.exports = {
     TB_CACHE_STATES
   }
 };
+
