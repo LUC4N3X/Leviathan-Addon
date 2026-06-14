@@ -665,6 +665,24 @@ function collectExternalReleaseLanguageEvidence(item = {}, preferredTitle = '') 
     return values.flatMap((value) => Array.isArray(value) ? value : [value]).filter(Boolean).join(' ');
 }
 
+function collectStrictGlobalReleaseLanguageEvidence(item = {}, preferredTitle = '') {
+    const hints = item?.behaviorHints && typeof item.behaviorHints === 'object' ? item.behaviorHints : {};
+    const values = [
+        preferredTitle,
+        item?.title,
+        item?.name,
+        item?.filename,
+        item?.file_title,
+        item?.websiteTitle,
+        item?.rawDescription,
+        item?.packTitle,
+        hints.filename,
+        hints.folderName,
+        item?.releaseGroup
+    ];
+    return values.flatMap((value) => Array.isArray(value) ? value : [value]).filter(Boolean).join(' ');
+}
+
 function getExternalStrictItalianSourceLabel(item = {}) {
     return [
         getExternalSourceLabel(item),
@@ -680,7 +698,7 @@ function isExternalStrictItalianCandidate(item = {}) {
     const strictGlobalSource = isStrictGlobalLanguageSource(source);
 
     if (strictGlobalSource) {
-        return hasStrictItalianEvidence(collectExternalReleaseLanguageEvidence(item, title), source);
+        return hasStrictItalianEvidence(collectStrictGlobalReleaseLanguageEvidence(item, title), source);
     }
 
     const audit = getExternalLanguageAudit(item);
@@ -1734,7 +1752,8 @@ function hasTrustedItalianEvidenceForTorrentPack(item = {}, meta = {}, langMode 
     const source = [item?.source, item?.provider, item?.externalProvider, item?.externalAddon, item?.releaseGroup, item?.language, item?.languages].filter(Boolean).join(' ');
     if (hasStrictItalianEvidence(title, source)) return true;
 
-    if (item?._torrentioExactGuard === true || item?._sourceGroup === 'external') return true;
+    if (item?._torrentioExactGuard === true) return true;
+    if (item?._sourceGroup === 'external') return false;
     return false;
 }
 
@@ -3922,14 +3941,15 @@ function normalizeExternalCandidateForPipeline(item, { type, meta = {}, langMode
     const currentDebridService = getNormalizedDebridService(config);
     const mediaFusionPassthroughUrl = currentDebridService === 'rd' ? getMediaFusionPassthroughUrl(item) : null;
     const externalSourceLabel = getExternalSourceLabel(item);
-    const strictGlobalTorrentioSource = isTorrentio && isStrictGlobalLanguageSource(getExternalStrictItalianSourceLabel(item));
-    const strictGlobalItalianEvidence = strictGlobalTorrentioSource
-        ? hasStrictItalianEvidence(collectExternalReleaseLanguageEvidence(item, title), externalSourceLabel)
+    const strictGlobalExternalSource = isStrictGlobalLanguageSource(getExternalStrictItalianSourceLabel(item));
+    const strictGlobalItalianEvidence = strictGlobalExternalSource
+        ? hasStrictItalianEvidence(collectStrictGlobalReleaseLanguageEvidence(item, title), externalSourceLabel)
         : false;
     const torrentioFlagOnlyItalianTrap = isTorrentioFlagOnlyItalianTrap(item);
     const torrentioLooseItalian = torrentioFlagOnlyItalianTrap ? false : hasTorrentioLooseItalianEvidence(item);
     const rawExternalLanguageOk = !torrentioFlagOnlyItalianTrap && Boolean(item.isItalian || item.hasItalianAudio || item.languageInfo?.isItalian || item.languageInfo?.hasAudioItalian || torrentioLooseItalian);
-    const externalLanguageOk = strictGlobalTorrentioSource ? strictGlobalItalianEvidence : rawExternalLanguageOk;
+    const externalLanguageOk = strictGlobalExternalSource ? strictGlobalItalianEvidence : rawExternalLanguageOk;
+    if (onlyItalian && strictGlobalExternalSource && !externalLanguageOk) return null;
     if (onlyItalian && isTorrentio && !externalLanguageOk) return null;
 
     const torrentioRdAuthority = torrentioDownloadMarker ? { trusted: false, direct: false, reason: 'torrentio_download_marker' } : getTorrentioRdAuthority(item, {
