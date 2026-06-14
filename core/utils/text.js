@@ -119,6 +119,13 @@ const LANGUAGE_PATTERNS = [
     { regex: /\b(?:multi|multilang(?:uage)?|dual[\s.-]?audio)\b/i, value: 'Multi' }
 ];
 
+
+const REGEX_STRICT_GLOBAL_LANGUAGE_SOURCE = /(?:^|[\s._\-()\[\]|:])(?:the\s*pirate\s*bay|thepiratebay|piratebay|tpb|best\s*torrents?|besttorrents?)(?:$|[\s._\-()\[\]|:])/i;
+
+function isStrictGlobalLanguageSource(source = '') {
+    return REGEX_STRICT_GLOBAL_LANGUAGE_SOURCE.test(` ${String(source || '')} `);
+}
+
 function detectFirstPatternValue(text, patterns, fallback = '') {
     for (const entry of patterns) {
         if (entry.regex.test(text)) return entry.value;
@@ -407,6 +414,7 @@ function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedI
     const trustedGroup = REGEX_TRUSTED_GROUPS.test(title);
     const titleMatched = italianMovieTitle ? isItalianByTitleMatch(title, italianMovieTitle, originalTitle) : false;
     const trustedSource = !!(source && isTrustedSource(source, null));
+    const strictGlobalSource = isStrictGlobalLanguageSource(source);
     const foreignDeclared = detectedLanguages.some((lang) => !NEUTRAL_LANGUAGE_TOKENS.has(lang)) && !detectedLanguages.includes('Italian');
 
     let hasIta = detectedLanguages.includes('Italian');
@@ -426,6 +434,7 @@ function getLanguageInfo(title, italianMovieTitle = null, source = null, parsedI
 
     if (foreignDeclared && !explicitIta && !audioConfirmedIta && !multiIta && !trustedGroup) confidence = Math.min(confidence, 2);
     if (subOnly && !audioConfirmedIta && !multiIta && !trustedGroup && !trustedSource && !titleMatched) confidence = Math.min(confidence, 2);
+    if (strictGlobalSource && !explicitIta && !audioConfirmedIta && !multiIta && !trustedGroup) confidence = Math.min(confidence, 2);
 
     hasIta = confidence >= 5;
     const isMaybeItalian = confidence >= 3;
@@ -555,6 +564,7 @@ module.exports = {
     languageMapping,
     normalizeLanguageName,
     stripFalseItalianDomainTokens,
+    isStrictGlobalLanguageSource,
     parseTitleDetails,
     stripVisualPrefixes,
     normalizeSearchText,
