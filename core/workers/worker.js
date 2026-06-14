@@ -1,13 +1,13 @@
 require('dotenv').config();
 
 const { randomUUID } = require('crypto');
-const runtimeState = require('./core/runtime_state');
-const { logger, installConsoleBridge } = require('./core/utils/runtime');
-const dbHelper = require('./core/storage/db_repository');
-const { Cache } = require('./core/utils');
-const { createTorrentioTmdbScanner } = require('./core/prewarm/torrentio_tmdb_scanner');
-const { normalizeExternalCandidateForPipeline } = require('./core/stream_generator');
-const trackerRegistry = require('./core/storage/tracker_registry');
+const runtimeState = require('../runtime_state');
+const { logger, installConsoleBridge } = require('../utils/runtime');
+const dbHelper = require('../storage/db_repository');
+const { Cache } = require('../utils');
+const { createTorrentioTmdbScanner } = require('../prewarm/torrentio_tmdb_scanner');
+const { normalizeExternalCandidateForPipeline } = require('../stream_generator');
+const trackerRegistry = require('../storage/tracker_registry');
 
 installConsoleBridge(logger);
 
