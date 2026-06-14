@@ -250,6 +250,41 @@ function hasStrictGlobalItalianAudioText(stream = {}) {
     return REGEX_STRICT_RELEASE_ITA_AUDIO.test(releaseText);
 }
 
+function isStrictGlobalStreamCandidate(stream = {}) {
+    const providerText = getStrictProviderText(stream);
+    return isStrictGlobalProviderText(providerText) || isStrictGlobalProviderText(getStreamText(stream));
+}
+
+function createStrictGlobalRejectedLanguageInfo(existing = {}, evidence = {}) {
+    const base = existing && typeof existing === 'object' ? existing : {};
+    return {
+        ...base,
+        isItalian: false,
+        hasAudioItalian: false,
+        isFlagOnlyItalian: Boolean(evidence.hasFlagOnlyItalian),
+        hasNegativeLanguage: Boolean(base.hasNegativeLanguage || evidence.hasForeign),
+        confidence: 0,
+        detectedLanguages: evidence.hasForeign ? (base.detectedLanguages || []) : [],
+        displayLabel: evidence.hasForeign ? (base.displayLabel || '') : '',
+        reason: evidence.hasFlagOnlyItalian ? 'strict_global_flag_or_ui_rejected' : 'strict_global_no_release_ita_audio'
+    };
+}
+
+function createStrictGlobalAcceptedLanguageInfo(existing = {}) {
+    const base = existing && typeof existing === 'object' ? existing : {};
+    return {
+        ...base,
+        isItalian: true,
+        hasAudioItalian: true,
+        isFlagOnlyItalian: false,
+        hasNegativeLanguage: false,
+        confidence: Math.max(Number(base.confidence || 0), 98),
+        detectedLanguages: Array.isArray(base.detectedLanguages) && base.detectedLanguages.includes('Italian') ? base.detectedLanguages : ['Italian'],
+        displayLabel: '🇮🇹',
+        reason: base.reason && base.reason !== 'none' ? `strict_global_release_ita_audio|${base.reason}` : 'strict_global_release_ita_audio'
+    };
+}
+
 function getTorrentioLanguageEvidence(stream) {
     const providerText = getStrictProviderText(stream);
     const raw = [
@@ -919,8 +954,15 @@ function normalizeExternalStream(stream, addonKey, mediaType = null) {
     const sizeInfo = extractSize(text, stream);
     const seeders = extractSeeders(text, stream);
     let languageInfo = analyzeItalianSignals(stream);
+    const strictGlobalExternalSource = isStrictGlobalStreamCandidate(stream);
+    const strictGlobalEvidence = strictGlobalExternalSource ? getTorrentioLanguageEvidence(stream) : null;
+    if (strictGlobalExternalSource) {
+        languageInfo = strictGlobalEvidence?.hasItalian
+            ? createStrictGlobalAcceptedLanguageInfo(languageInfo)
+            : createStrictGlobalRejectedLanguageInfo(languageInfo, strictGlobalEvidence || {});
+    }
     if (addonKey === 'torrentio_mirror') {
-        const evidence = getTorrentioLanguageEvidence(stream);
+        const evidence = strictGlobalEvidence || getTorrentioLanguageEvidence(stream);
         if (evidence.hasItalian) {
             languageInfo = {
                 ...languageInfo,
@@ -1089,6 +1131,12 @@ function filterNormalizedExternalStreams(streams, addonKey, options = {}) {
     const minimumConfidence = Number(options.minimumItalianConfidence || 35);
     return list.filter((stream) => {
         if (!stream) return false;
+        const strictGlobalSource = isStrictGlobalStreamCandidate(stream);
+        if (strictGlobalSource) {
+            const evidence = getTorrentioLanguageEvidence(stream);
+            if (evidence.hasItalian) return true;
+            return false;
+        }
         if (addonKey === 'torrentio_mirror') {
             const text = [stream.title, stream.filename, stream.fileName, stream.packTitle, stream.externalProvider, stream.source].filter(Boolean).join(' ');
             const evidence = getTorrentioLanguageEvidence({
