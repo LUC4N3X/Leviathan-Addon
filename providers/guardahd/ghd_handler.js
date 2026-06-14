@@ -16,7 +16,7 @@ const {
     decorateStreamWithPlaylistIntelligence,
     qualityRank
 } = require('../extractors/common');
-const { getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
+const { createMediaflowGateway, getMediaflowBase } = require('../../core/proxy/mediaflow_gateway');
 const {
     extractFromUrl,
     HOSTER_DIRECT_LINK_PATTERN,
@@ -64,6 +64,9 @@ const CONFIG = {
         MAX_CONCURRENT_EMBEDS: envInt('GUARDAHD_MAX_CONCURRENT_EMBEDS', 12, 1, 48),
         MAX_CONCURRENT_PLAYLIST_PROBES: envInt('GUARDAHD_MAX_CONCURRENT_PLAYLIST_PROBES', 4, 1, 16),
         PREFER_PLAYLIST_PROBE: envFlag('GUARDAHD_PREFER_PLAYLIST_PROBE', false),
+        MIXDROP_LOCAL_PROXY_FIRST: envFlag('GUARDAHD_MIXDROP_LOCAL_PROXY_FIRST', true),
+        KRAKEN_PROXY_DIRECT_STREAMS: envFlag('GUARDAHD_KRAKEN_PROXY_DIRECT_STREAMS', true),
+        KRAKEN_PROXY_COOKIES: envFlag('GUARDAHD_KRAKEN_PROXY_COOKIES', true),
         DEBUG: envFlag('GUARDAHD_DEBUG', false)
     }
 };
@@ -252,6 +255,93 @@ function originFromUrl(url) {
     }
 }
 
+
+function safeHost(value) {
+    try {
+        return new URL(String(value || '')).hostname.toLowerCase().replace(/^www\./i, '');
+    } catch (_) {
+        return '';
+    }
+}
+
+function safePath(value) {
+    try {
+        return new URL(String(value || '')).pathname || '/';
+    } catch (_) {
+        return '';
+    }
+}
+
+function isHlsStreamUrl(value) {
+    return /\.m3u8(?:$|[?#])/i.test(String(value || ''));
+}
+
+function isSameOrigin(first, second) {
+    const a = originFromUrl(first);
+    const b = originFromUrl(second);
+    return Boolean(a && b && a === b);
+}
+
+function isKrakenOrMediaflowUrl(config = {}, value) {
+    const base = getMediaflowBase(config);
+    if (!base || !value) return false;
+    return isSameOrigin(base, value);
+}
+
+function extractorHeadersFor(targetUrl, hoster = '') {
+    const normalized = normalizeUrl(targetUrl);
+    const origin = originFromUrl(normalized);
+    const headers = { 'User-Agent': CHROME_UA };
+
+    if (/mixdrop|m1xdrop|mxcontent/i.test(String(hoster || '') + ' ' + normalized)) {
+        headers.Referer = origin ? `${origin}/` : 'https://mixdrop.ag/';
+        headers.Origin = origin || 'https://mixdrop.ag';
+        return headers;
+    }
+
+    if (origin) {
+        headers.Referer = `${origin}/`;
+        headers.Origin = origin;
+    } else {
+        headers.Referer = CONFIG.SCRAPER.BASE_URL;
+    }
+
+    return headers;
+}
+
+function buildKrakenProxyUrl(config = {}, targetUrl, headers = {}, hoster = '') {
+    const base = getMediaflowBase(config);
+    const normalized = normalizeUrl(targetUrl);
+
+    if (!base || !normalized || isKrakenOrMediaflowUrl(config, normalized)) {
+        return normalized;
+    }
+
+    const gateway = createMediaflowGateway(config);
+    const requestHeaders = Object.keys(headers || {}).length
+        ? headers
+        : extractorHeadersFor(normalized, hoster);
+    const proxied = gateway.buildProxyUrl(normalized, requestHeaders, {
+        isHls: isHlsStreamUrl(normalized),
+        allowCookie: CONFIG.SCRAPER.KRAKEN_PROXY_COOKIES
+    });
+
+    if (proxied && proxied !== normalized) {
+        debug('kraken proxy url built', {
+            hoster,
+            sourceHost: safeHost(normalized),
+            sourcePath: safePath(normalized),
+            proxyHost: safeHost(proxied),
+            proxyPath: safePath(proxied),
+            isHls: isHlsStreamUrl(normalized),
+            headerNames: Object.keys(requestHeaders || {})
+        });
+        return proxied;
+    }
+
+    return normalized;
+}
+
 function normalizeHeaders(headers) {
     if (!headers || typeof headers !== 'object') return {};
 
@@ -370,10 +460,10 @@ function extractSize(...values) {
 }
 
 function generateRichDescription(title, quality = 'Unknown', size = 'N/A', hoster = '') {
-    const sizeTag = size && size !== 'N/A' ? `💾 ${size} • ` : '';
+    const sizeTag = size && size !== 'N/A' ? `ðŸ’¾ ${size} â€¢ ` : '';
     const hosterTag = hoster ? ` [${hoster}]` : '';
 
-    return `🎬 ${title}${hosterTag}\n${sizeTag}📺 ${quality || 'Unknown'} • 🇮🇹 ITA\n⚡ GuardaHD`;
+    return `ðŸŽ¬ ${title}${hosterTag}\n${sizeTag}ðŸ“º ${quality || 'Unknown'} â€¢ ðŸ‡®ðŸ‡¹ ITA\nâš¡ GuardaHD`;
 }
 
 async function fetchSmart(url, options = {}) {
@@ -911,13 +1001,24 @@ async function extractMixdropMediaflow(embedUrl, config) {
         size = extractSize(html, fileUrl);
     } catch (_) {}
 
-    const mediaflowUrl = buildMediaflowUrl(config, playerUrl, 'extractor', 'Mixdrop');
+    const mediaflowUrl = buildMediaflowUrl(config, playerUrl, 'extractor', 'Mixdrop', {
+        extractorPath: '/extractor/video.mp4',
+        redirectStream: true,
+        headers: extractorHeadersFor(playerUrl, 'mixdrop')
+    });
     if (!mediaflowUrl) return [];
+
+    debug('mixdrop kraken extractor fallback built', {
+        embedHost: safeHost(playerUrl),
+        embedPath: safePath(playerUrl),
+        krakenHost: safeHost(mediaflowUrl),
+        krakenPath: safePath(mediaflowUrl)
+    });
 
     return [{
         url: mediaflowUrl,
         headers: {},
-        behaviorHints: { notWebReady: true },
+        behaviorHints: { notWebReady: false },
         name: 'MixDrop',
         quality,
         size,
@@ -977,7 +1078,7 @@ function shouldNotWebReady(hoster, name) {
         text.includes('mxcontent');
 }
 
-async function finalizeRawStream(raw, displayTitle, embedUrl) {
+async function finalizeRawStream(raw, displayTitle, embedUrl, config = {}) {
     if (!raw?.url) return null;
 
     const streamUrl = normalizeUrl(raw.url);
@@ -990,20 +1091,30 @@ async function finalizeRawStream(raw, displayTitle, embedUrl) {
     const behaviorHints = { ...(raw.behaviorHints || {}) };
     const proxyHeaders = behaviorHints?.proxyHeaders?.request;
     const effectiveHeaders = Object.keys(headers).length ? headers : normalizeHeaders(proxyHeaders || {});
+    const shouldKrakenProxy = CONFIG.SCRAPER.KRAKEN_PROXY_DIRECT_STREAMS
+        && getMediaflowBase(config)
+        && !isKrakenOrMediaflowUrl(config, streamUrl);
+    const playbackUrl = shouldKrakenProxy
+        ? buildKrakenProxyUrl(config, streamUrl, effectiveHeaders, hoster)
+        : streamUrl;
+    const finalHeaders = playbackUrl !== streamUrl ? {} : effectiveHeaders;
 
-    if (Object.keys(effectiveHeaders).length) {
+    if (Object.keys(finalHeaders).length) {
         behaviorHints.proxyHeaders = behaviorHints.proxyHeaders || {};
-        behaviorHints.proxyHeaders.request = effectiveHeaders;
-        behaviorHints.headers = effectiveHeaders;
+        behaviorHints.proxyHeaders.request = finalHeaders;
+        behaviorHints.headers = finalHeaders;
+    } else {
+        delete behaviorHints.proxyHeaders;
+        delete behaviorHints.headers;
     }
 
     if (shouldNotWebReady(hoster, raw.name)) {
-        behaviorHints.notWebReady = true;
+        behaviorHints.notWebReady = playbackUrl === streamUrl && !isKrakenOrMediaflowUrl(config, playbackUrl);
     }
 
     const guessed = parseQuality(`${raw.quality || ''} ${raw.name || ''} ${raw.title || ''} ${embedUrl || ''} ${streamUrl}`);
-    const playlistIntel = await probePlaylistIntelligenceCached(streamUrl, effectiveHeaders);
-    const resolvedQuality = await resolveStreamQuality(streamUrl, effectiveHeaders, raw.quality || guessed, playlistIntel);
+    const playlistIntel = await probePlaylistIntelligenceCached(playbackUrl, finalHeaders);
+    const resolvedQuality = await resolveStreamQuality(playbackUrl, finalHeaders, raw.quality || guessed, playlistIntel);
     const quality = normalizeGuardaHdDisplayQuality(
         pickBetterQuality(playlistIntel?.quality || 'Unknown', resolvedQuality)
     );
@@ -1016,14 +1127,15 @@ async function finalizeRawStream(raw, displayTitle, embedUrl) {
     const priority = raw.priority ?? HOSTER_PRIORITY[hoster] ?? 9;
 
     let stream = buildWebStream({
-        name: `🦁 GHD\n⚡ ${label}`,
+        name: `ðŸ¦ GHD\nâš¡ ${label}`,
         title: generateRichDescription(displayTitle, quality, size, label),
-        url: streamUrl,
+        url: playbackUrl,
         extractor: label,
         provider: 'GuardaHD',
         providerCode: 'GHD',
         quality,
-        headers: Object.keys(effectiveHeaders).length ? effectiveHeaders : null,
+        headers: Object.keys(finalHeaders).length ? finalHeaders : null,
+        mediaflowUrl: getMediaflowBase(config) || null,
         extraBehaviorHints: {
             bingeWatching: true,
             ...behaviorHints
@@ -1102,7 +1214,17 @@ class GuardaHDScraper {
 
             let rawStreams = [];
 
-            if (hoster === 'mixdrop' && getMediaflowBase(this.#config)) {
+            if (hoster === 'mixdrop' && getMediaflowBase(this.#config) && CONFIG.SCRAPER.MIXDROP_LOCAL_PROXY_FIRST) {
+                rawStreams = await extractViaRegistry(normalized);
+                if (rawStreams.length) {
+                    debug('mixdrop local extraction success; proxying source through kraken', {
+                        embedHost: safeHost(normalized),
+                        streams: rawStreams.length
+                    });
+                }
+            }
+
+            if (!rawStreams.length && hoster === 'mixdrop' && getMediaflowBase(this.#config)) {
                 rawStreams = await extractMixdropMediaflow(normalized, this.#config);
             }
 
@@ -1136,7 +1258,7 @@ class GuardaHDScraper {
             const finalized = [];
 
             for (const raw of rawStreams) {
-                const stream = await finalizeRawStream(raw, displayTitle, normalized);
+                const stream = await finalizeRawStream(raw, displayTitle, normalized, this.#config);
                 if (stream) finalized.push(stream);
             }
 
