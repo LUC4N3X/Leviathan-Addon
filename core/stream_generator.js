@@ -592,13 +592,17 @@ function getTorrentioLanguageInfoObject(item = {}) {
 }
 
 function hasStrongTorrentioItalianAudioText(value = '') {
-    const text = String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, ' ');
-    return /(?:🇮🇹.*(?:🇬🇧|🇺🇸)|(?:🇬🇧|🇺🇸).*🇮🇹)/.test(text)
-        || /\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b/i.test(text)
-        || /(?:\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i.test(text)
-        || /(?:\b(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\s*[\/+,_. -]\s*(?:ENG|EN|ENGLISH)\b|\b(?:ENG|EN|ENGLISH)\s*[\/+,_. -]\s*(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\b)/i.test(text)
-        || /(?:\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b.*\b(?:ITA|ITALIAN|ITALIANO|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|IT)\b.*\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)?AUDIO)\b)/i.test(text)
-        || /\b(?:CORSARO|MIRCrew|iDN_CreW|DDN|TRIDIM|DARKSIDEMUX|LUX|MUX)\b/i.test(text);
+    const text = stripFalseItalianDomainTokens(String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, ' '));
+    const trustedItalianRelease = /\b(?:CORSARO|MIRCrew|iDN_CreW|DDN|TRIDIM|DARKSIDEMUX|LUX|MUX|Papeete|CoSmo)\b/i.test(text);
+    const explicitAudioContext = /(?:\b(?:AUDIO|DUB|DUBBED|LANG(?:UAGE)?|LINGUA|VOCE|TRACK)\s*[:._\-/ ]?\s*(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|ITALIANA|IT)\s*[:._\-/ ]?\s*(?:AUDIO|DUB|DUBBED|DDP|AAC|AC3|EAC3|ATMOS|TRUEHD|DTS(?:-?HD)?)\b)/i.test(text);
+    const explicitItaPair = /(?:\b(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\s*[\/+,_. -]\s*(?:ENG|EN|ENGLISH)\b|\b(?:ENG|EN|ENGLISH)\s*[\/+,_. -]\s*(?:ITA|IT|ITALIAN|ITALIANO|ITALIANA)\b)/i.test(text);
+    const explicitMultiIta = /(?:\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)AUDIO)\b.*\b(?:ITA|ITALIAN|ITALIANO|IT)\b|\b(?:ITA|ITALIAN|ITALIANO|IT)\b.*\b(?:MULTI|MULTI-AUDIO|DUAL(?:\s|-)AUDIO)\b)/i.test(text);
+    const flagPair = /(?:🇮🇹.*(?:🇬🇧|🇺🇸)|(?:🇬🇧|🇺🇸).*🇮🇹)/.test(text);
+    const subtitleOnly = /\b(?:sub|subs|subtitle|subbed|sottotitoli|napisy)\s*[-_. ]*(?:ita|it|italian|italiano)\b/i.test(text)
+        && !(explicitAudioContext || explicitItaPair || explicitMultiIta || trustedItalianRelease || flagPair);
+    if (subtitleOnly) return false;
+    return trustedItalianRelease || explicitAudioContext || explicitItaPair || explicitMultiIta || flagPair
+        || /\b(?:ITA|ITALIAN|ITALIANO|ITALIANA)\b/i.test(text);
 }
 
 function isTorrentioFlagOnlyItalianTrap(item = {}) {
@@ -749,7 +753,7 @@ function getMovieExternalFillLimit(filters = {}, dbPrimaryCount = 0) {
 function getMovieDbVerifiedSkipExternalMin(filters = {}, service = null) {
     const normalizedService = String(service || '').toLowerCase();
     const raw = normalizedService === 'tb'
-        ? (filters.tbDbVerifiedSkipExternalMin ?? process.env.TB_DB_VERIFIED_SKIP_EXTERNAL_MIN ?? process.env.TORBOX_DB_VERIFIED_SKIP_EXTERNAL_MIN ?? '1')
+        ? (filters.tbDbVerifiedSkipExternalMin ?? '1')
         : (filters.movieDbVerifiedSkipExternalMin ?? process.env.MOVIE_DB_VERIFIED_SKIP_EXTERNAL_MIN ?? '3');
     const parsed = parseInt(raw, 10);
     const fallback = normalizedService === 'tb' ? 1 : 3;
@@ -757,19 +761,19 @@ function getMovieDbVerifiedSkipExternalMin(filters = {}, service = null) {
 }
 
 function getTorboxDbCoverageSkipExternalMin(filters = {}) {
-    const raw = filters.tbDbCoverageSkipExternalMin ?? process.env.TB_DB_COVERAGE_SKIP_EXTERNAL_MIN ?? process.env.TORBOX_DB_COVERAGE_SKIP_EXTERNAL_MIN ?? '3';
+    const raw = filters.tbDbCoverageSkipExternalMin ?? '3';
     const parsed = parseInt(raw, 10);
     return Number.isFinite(parsed) ? Math.max(1, Math.min(30, parsed)) : 3;
 }
 
 function getTorboxDbFastPathMin(filters = {}) {
-    const raw = filters.tbDbFastPathMin ?? process.env.TB_DB_FAST_PATH_MIN ?? process.env.TORBOX_DB_FAST_PATH_MIN ?? '3';
+    const raw = filters.tbDbFastPathMin ?? '3';
     const parsed = parseInt(raw, 10);
     return Number.isFinite(parsed) ? Math.max(1, Math.min(30, parsed)) : 3;
 }
 
 function shouldTorboxSkipExternalOnDbCoverage(filters = {}) {
-    const value = filters.tbSkipExternalOnDbCoverage ?? process.env.TB_SKIP_EXTERNAL_ON_DB_COVERAGE ?? process.env.TORBOX_SKIP_EXTERNAL_ON_DB_COVERAGE;
+    const value = filters.tbSkipExternalOnDbCoverage;
     if (value !== undefined && value !== null && String(value).trim() !== '') return isTruthyConfigValue(value);
     return true;
 }
@@ -1774,14 +1778,7 @@ function applyTorboxCacheResultToItem(item, result = {}) {
 }
 
 function getTorboxProgressiveWindows() {
-    const raw = String(process.env.TB_CACHE_PROGRESSIVE_WINDOWS || '').trim();
-    const parsed = raw
-        .split(',')
-        .map((part) => Number.parseInt(part.trim(), 10))
-        .filter((value) => Number.isFinite(value) && value > 0)
-        .map((value) => Math.min(500, value));
-    const windows = parsed.length > 0 ? parsed : [100, 200, 300];
-    return [...new Set(windows)].sort((a, b) => a - b);
+    return [120, 240, 360];
 }
 
 async function resolveTorboxRankedList(rankedList, apiKey) {
