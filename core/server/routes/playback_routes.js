@@ -144,7 +144,7 @@ function getResolvedDbTtlSeconds(streamData = {}, fallback = 1800) {
         const ms = new Date(expiresAt).getTime() - Date.now() - 60000;
         if (Number.isFinite(ms) && ms > 0) return Math.max(60, Math.min(Math.floor(ms / 1000), 2 * 60 * 60));
     }
-    return Math.max(300, Math.min(Number(process.env.TB_RESOLVED_LINK_TTL_SECONDS || fallback) || fallback, 2 * 60 * 60));
+    return Math.max(300, Math.min(Number(fallback) || fallback, 2 * 60 * 60));
 }
 
 async function getPersistedResolvedLink(dbHelper, cacheKey) {
