@@ -6,6 +6,10 @@ const {
     buildForwardProxyUrl: buildSharedForwardProxyUrl,
     normalizeForwardProxyBase: normalizeSharedForwardProxyBase
 } = require('../../core/proxy/forward_proxy_config');
+const {
+    buildProxyUrl: buildMediaflowGatewayProxyUrl,
+    getMediaflowBase
+} = require('../../core/proxy/mediaflow_gateway');
 const mediaIdentity = require('../../core/intelligence/media_identity_resolver');
 const kitsuProvider = require('../animeworld/kitsu_provider');
 const animeProviderUtils = require('../anime/provider_utils');
@@ -992,7 +996,34 @@ function syntheticVariantForQuality(quality) {
     return 'auto';
 }
 
-function buildSyntheticUrl(masterSource, quality, referer, reqHost) {
+function buildKrakenSyntheticUrl(config, masterSource, quality, referer) {
+    if (!getMediaflowBase(config) || !masterSource) return '';
+
+    const syntheticVariant = syntheticVariantForQuality(quality);
+    const origin = (() => {
+        try { return new URL(referer || VIX_BASE).origin; }
+        catch { return VIX_BASE; }
+    })();
+
+    return buildMediaflowGatewayProxyUrl(config, masterSource, {}, {
+        isHls: true,
+        allowCookie: false,
+        extraParams: {
+            playback_profile: 'VixCloud',
+            profile_referer: referer || `${VIX_BASE}/`,
+            profile_origin: origin || VIX_BASE,
+            profile_user_agent: 'chrome',
+            segment_route: 'hls',
+            synthetic_variant: syntheticVariant,
+            vix_variant: syntheticVariant
+        }
+    });
+}
+
+function buildSyntheticUrl(masterSource, quality, referer, reqHost, config = {}) {
+    const krakenUrl = buildKrakenSyntheticUrl(config, masterSource, quality, referer);
+    if (krakenUrl) return krakenUrl;
+
     const addonBase = normalizeAddonBase(reqHost);
     const token = issueHlsTransitKey(masterSource, {
         kind: TRANSIT_KIND,
@@ -1085,12 +1116,12 @@ function sortStreams(streams) {
     return [...(streams || [])].sort((a, b) => {
         const baBranch = String(a?.behaviorHints?.vortexMeta?.branch || '').toLowerCase();
         const bbBranch = String(b?.behaviorHints?.vortexMeta?.branch || '').toLowerCase();
-        const aSafe = baBranch.includes('android-safe') ? 1 : 0;
-        const bSafe = bbBranch.includes('android-safe') ? 1 : 0;
-        if (bSafe !== aSafe) return bSafe - aSafe;
         const qa = qualityRank(inferQualityFromStream(a));
         const qb = qualityRank(inferQualityFromStream(b));
         if (qb !== qa) return qb - qa;
+        const aSafe = baBranch.includes('android-safe') ? 1 : 0;
+        const bSafe = bbBranch.includes('android-safe') ? 1 : 0;
+        if (bSafe !== aSafe) return bSafe - aSafe;
         const la = String(a?.language || '').toLowerCase() === 'ita' ? 1 : 0;
         const lb = String(b?.language || '').toLowerCase() === 'ita' ? 1 : 0;
         if (lb !== la) return lb - la;
@@ -1132,7 +1163,7 @@ async function fetchPlaylistQualityAndHeaders(streamUrl, pageUrl, qualityFilter)
     return { quality, headers, languageIntel, allowed: true };
 }
 
-async function extractFromCandidate(candidateUrl, cleanTitle, season, episode, qualityFilter, reqHost) {
+async function extractFromCandidate(candidateUrl, cleanTitle, season, episode, qualityFilter, reqHost, config = {}) {
     const { payload, referer } = await resolveCachedPayload(candidateUrl);
     if (!payload) return [];
 
@@ -1141,11 +1172,12 @@ async function extractFromCandidate(candidateUrl, cleanTitle, season, episode, q
     if (!sourceUrl) return [];
 
     return buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitle, season, episode, qualityFilter, reqHost, {
-        canPlayFHD: payload.canPlayFHD === true
+        canPlayFHD: payload.canPlayFHD === true,
+        config
     });
 }
 
-async function tryDirectVixsrcStream(pageUrl, cleanTitle, season, episode, qualityFilter) {
+async function tryDirectVixsrcStream(pageUrl, cleanTitle, season, episode, qualityFilter, reqHost, config = {}) {
     const cached = cacheGet(directPageCache, pageUrl);
     let status;
     let pageHtml;
@@ -1174,21 +1206,11 @@ async function tryDirectVixsrcStream(pageUrl, cleanTitle, season, episode, quali
     if (!streamUrl) return [];
 
     streamUrl = appendOrReplaceQuery(streamUrl, { lang: preferredVixLanguage() });
-    const { quality, headers, languageIntel, allowed } = await fetchPlaylistQualityAndHeaders(streamUrl, pageUrl, qualityFilter);
-    if (!allowed) return [];
-
-    const stream = decorateScStreamWithLanguageIntel({
-        name: 'SC Direct',
-        title: cleanTitle,
-        url: streamUrl,
-        quality,
-        behaviorHints: {
-            notWebReady: false,
-            proxyHeaders: { request: headers },
-            vortexMeta: { branch: 'direct-vixsrc', quality }
-        }
-    }, languageIntel);
-    return [stampScStream(stream, cleanTitle, season, episode)];
+    return buildSyntheticStreamsFromSource(streamUrl, pageUrl, cleanTitle, season, episode, qualityFilter, reqHost, {
+        config,
+        fastMode: false,
+        canPlayFHD: H_FLAG_RE.test(streamUrl)
+    });
 }
 
 function normalizeLookupTitle(value) {
@@ -1890,6 +1912,7 @@ async function buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitl
     const wants720 = normalizeQualityFilter(qualityFilter) !== '1080';
     const hintedFhd = options?.canPlayFHD === true || H_FLAG_RE.test(String(sourceUrl || ''));
     const fastMode = options?.fastMode === true;
+    const config = options?.config || {};
     const shouldProbeLanguages = !fastMode || String(process.env.SC_FAST_LANGUAGE_PROBE || '').trim() === '1';
 
     let inferredFhd = hintedFhd;
@@ -1912,7 +1935,7 @@ async function buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitl
         streams.push(makeStream({
             name: '🎬 StreamingCommunity\n🎥 1080p',
             title: cleanTitle,
-            url: buildSyntheticUrl(sourceUrl, '1080p', pageReferer, reqHost),
+            url: buildSyntheticUrl(sourceUrl, '1080p', pageReferer, reqHost, config),
             quality: '1080p',
             behaviorHints: {
                 notWebReady: false,
@@ -1925,7 +1948,7 @@ async function buildSyntheticStreamsFromSource(sourceUrl, pageReferer, cleanTitl
         streams.push(makeStream({
             name: '📱 StreamingCommunity\n🛡 Android/TV Safe 720p',
             title: cleanTitle,
-            url: buildSyntheticUrl(sourceUrl, '720p', pageReferer, reqHost),
+            url: buildSyntheticUrl(sourceUrl, '720p', pageReferer, reqHost, config),
             quality: '720p',
             behaviorHints: {
                 notWebReady: false,
@@ -2051,7 +2074,8 @@ async function resolveKitsuVix(meta, config = {}, reqHost, forcedKitsu = null) {
         reqHost,
         {
             fastMode: true,
-            canPlayFHD: manifest?.payload?.canPlayFHD === true
+            canPlayFHD: manifest?.payload?.canPlayFHD === true,
+            config
         }
     );
     kitsuDebug('done', `items=${streams.length}`);
@@ -2231,7 +2255,7 @@ async function searchVix(meta, config = {}, reqHost) {
         candidateUrls.push(pageUrl);
 
         for (const candidateUrl of [...new Set(candidateUrls.filter(Boolean))]) {
-            const out = await extractFromCandidate(candidateUrl, cleanTitle, season, episode, normalizedQuality, reqHost);
+            const out = await extractFromCandidate(candidateUrl, cleanTitle, season, episode, normalizedQuality, reqHost, config);
             if (out.length) {
                 console.log(`[WEB][StreamingCommunity] ok | tmdb=${finalTmdbId} | items=${out.length} | via=${candidateUrl === embedUrl ? 'api-src' : 'page'}`);
                 return out;
@@ -2239,7 +2263,7 @@ async function searchVix(meta, config = {}, reqHost) {
         }
 
         for (const candidateUrl of [...new Set(candidateUrls.filter(Boolean))]) {
-            const direct = await tryDirectVixsrcStream(candidateUrl, cleanTitle, season, episode, normalizedQuality);
+            const direct = await tryDirectVixsrcStream(candidateUrl, cleanTitle, season, episode, normalizedQuality, reqHost, config);
             if (direct.length) {
                 console.log(`[WEB][StreamingCommunity] direct-ok | tmdb=${finalTmdbId} | items=${direct.length}`);
                 return sortStreams(dedupeStreams(direct));
