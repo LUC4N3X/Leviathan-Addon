@@ -172,8 +172,11 @@ function createAppServices({
             const updated = await updateFn([isTb
                 ? {
                     hash: item.hash,
+                    state: 'uncached',
                     cached: false,
                     failures: 1,
+                    next_hours: 2,
+                    match_reason: reason,
                     ...scopedIdentity
                 }
                 : {
@@ -185,6 +188,44 @@ function createAppServices({
                     ...scopedIdentity
                 }
             ]);
+
+            if (isTb && typeof dbHelper?.setDebridAvailabilityCache === 'function') {
+                try {
+                    const hash = String(item.hash || '').trim().toUpperCase();
+                    const numericFileIdx = Number(item?.fileIdx);
+                    const fileIdx = Number.isInteger(numericFileIdx) && numericFileIdx >= 0 ? numericFileIdx : null;
+                    const mediaId = meta?.imdb_id
+                        ? (Number(meta?.season) > 0 && Number(meta?.episode) > 0 ? `${meta.imdb_id}:s${Number(meta.season)}:e${Number(meta.episode)}` : meta.imdb_id)
+                        : null;
+                    const baseKeys = [
+                        `tb:${hash}:${fileIdx === null ? 'auto' : fileIdx}${mediaId ? `:${mediaId}` : ''}`,
+                        `tb:${hash}:auto${mediaId ? `:${mediaId}` : ''}`
+                    ];
+                    const payload = {
+                        state: 'uncached',
+                        cached: false,
+                        confidence: 0,
+                        match_reason: reason,
+                        imdbId: meta?.imdb_id || null,
+                        season: Number(meta?.season) > 0 ? Number(meta.season) : null,
+                        episode: Number(meta?.episode) > 0 ? Number(meta.episode) : null,
+                        proofLevel: 'lazy_play_negative',
+                        ts: Date.now()
+                    };
+                    await dbHelper.setDebridAvailabilityCache([...new Set(baseKeys)].map((cacheKey) => ({
+                        cache_key: cacheKey,
+                        payload,
+                        ttlSeconds: 2 * 60 * 60,
+                        media_id: mediaId,
+                        imdb_id: meta?.imdb_id || null,
+                        season: Number(meta?.season) > 0 ? Number(meta.season) : null,
+                        episode: Number(meta?.episode) > 0 ? Number(meta.episode) : null,
+                        proof_level: 'lazy_play_negative'
+                    })));
+                } catch (availabilityErr) {
+                    logger.warn(`[LAZY PLAY] Impossibile scrivere cache negativa TB | hash=${item.hash} | error=${availabilityErr.message}`);
+                }
+            }
 
             await Cache.invalidateStreamsByHashes([item.hash], reason);
             if (meta?.imdb_id && Number.isInteger(meta?.season) && meta.season > 0 && Number.isInteger(meta?.episode) && meta.episode > 0 && typeof Cache.invalidateStreamsByEpisode === 'function') await Cache.invalidateStreamsByEpisode({ imdbId: meta.imdb_id, season: meta.season, episode: meta.episode }, reason);
