@@ -38,3 +38,10 @@ test('rankAndFilterResults removes ENG and global results in ita mode', () => {
 
   assert.deepEqual(ranked.map((item) => item.title), ['Apex 2026 1080p WEB x264 ITA AAC']);
 });
+
+
+test('solo ITA is extra strict for ThePirateBay and BestTorrents', () => {
+  assert.equal(shouldKeepStrictItalianCandidate('Mercy 2026 2160p MULTi WEB-DL DDP5.1 Atmos H265 K83', 'BestTorrents'), false);
+  assert.equal(shouldKeepStrictItalianCandidate('Mercy 2026 1080p WEB-DL SUB ITA ENG x264', 'ThePirateBay'), false);
+  assert.equal(shouldKeepStrictItalianCandidate('Mercy 2026 1080p WEB-DL ITA ENG AC3 x264', 'ThePirateBay'), true);
+});
