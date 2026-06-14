@@ -62,9 +62,6 @@ function limitMeteorSupplement(streams, limit = METEOR_SUPPLEMENT_LIMIT) {
 }
 
 async function fetchMeteorAddon(addonKey, type, id, options = {}) {
-    // Meteor-only trusted cache mode:
-    // the Meteor URL itself is configured with cachedOnly=true, so we trust that upstream filter
-    // and mark returned infoHash streams as RD-cached without doing Leviathan's live RD probe.
     const raw = await fetchConfiguredExternalAddon(addonKey, type, id, {
         ...options,
         requireRdCached: true
