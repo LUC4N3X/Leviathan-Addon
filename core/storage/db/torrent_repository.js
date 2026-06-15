@@ -1222,6 +1222,21 @@ function createTorrentRepository({
           UNION ALL
 
           SELECT
+            pack_hash_norm AS info_hash_norm,
+            file_index_norm,
+            file_index AS matched_file_index,
+            COALESCE(NULLIF(file_title, ''), NULLIF(file_path, ''), pack_hash_norm) AS matched_file_title,
+            file_size AS matched_file_size,
+            2 AS source_rank
+          FROM pack_files
+          WHERE imdb_id = $1
+            AND pack_hash_norm IS NOT NULL
+            AND (imdb_season IS NULL OR imdb_season = 0)
+            AND (imdb_episode IS NULL OR imdb_episode = 0)
+
+          UNION ALL
+
+          SELECT
             info_hash_norm,
             file_index_norm,
             matched_file_index,
@@ -1795,6 +1810,245 @@ function createTorrentRepository({
       _externalSnapshotSeenCount: toSafeNumber(row.seen_count, 0),
       _externalSnapshotLastSeenAt: row.last_seen_at || null
     };
+  }
+
+  function normalizeQuerySnapshotType(value, meta = {}) {
+    return normalizeExternalSnapshotType(value, meta);
+  }
+
+  function buildQuerySnapshotIdentity(meta = {}, options = {}) {
+    const imdbId = normalizeImdbId(meta?.imdb_id || meta?.imdbId);
+    const season = toNullableInt(meta?.season ?? meta?.imdb_season);
+    const episode = toNullableInt(meta?.episode ?? meta?.imdb_episode);
+    const kitsuId = sanitizeText(meta?.kitsu_id || meta?.kitsuId || options?.kitsu_id || options?.kitsuId).toLowerCase().slice(0, 96) || null;
+    if (!imdbId && !kitsuId) return null;
+    const normalizedSeason = season !== null && season > 0 ? season : null;
+    const normalizedEpisode = episode !== null && episode > 0 ? episode : null;
+    const mediaBase = imdbId || `kitsu:${kitsuId}`;
+    const mediaId = normalizedSeason && normalizedEpisode
+      ? `${mediaBase}:s${normalizedSeason}:e${normalizedEpisode}`
+      : mediaBase;
+    return {
+      imdbId,
+      season: normalizedSeason,
+      episode: normalizedEpisode,
+      kitsuId,
+      mediaId,
+      type: normalizeQuerySnapshotType(options.type || meta?.type || meta?.contentType, meta),
+      langMode: sanitizeText(options.langMode || options.lang_mode || 'any').toLowerCase().slice(0, 32) || 'any',
+      sourceSignature: sanitizeText(options.sourceSignature || options.source_signature || 'default').slice(0, 96) || 'default'
+    };
+  }
+
+  function buildQuerySnapshotKey(identity = {}) {
+    if (!identity?.mediaId) return null;
+    return crypto.createHash('sha1').update([identity.mediaId, identity.type || '', identity.langMode || '', identity.sourceSignature || ''].join('|')).digest('hex');
+  }
+
+  function getSnapshotItemHash(item = {}) {
+    return normalizeInfoHash(item.hash || item.infoHash || item.info_hash);
+  }
+
+  function normalizeQuerySnapshotItem(item = {}) {
+    const infoHash = getSnapshotItemHash(item);
+    if (!infoHash) return null;
+    const fileIdx = normalizeFileIndex(item.fileIdx ?? item.fileIndex ?? item.file_index ?? item.matched_file_index);
+    const size = Math.max(0, toSafeNumber(item.sizeBytes || item._size || item.mainFileSize || item.size || item.fileSize || item.file_size, 0));
+    const title = sanitizeText(item.title || item.name || item.filename || item.file_title || infoHash).slice(0, 600);
+    const source = sanitizeText(item.source || item.provider || item.externalProvider || item._externalAddon || item.externalAddon || 'QuerySnapshot').slice(0, 160) || 'QuerySnapshot';
+    const payload = {
+      hash: infoHash,
+      infoHash,
+      magnet: sanitizeText(item.magnet || item.magnetLink || trackerRegistry.buildMagnet(infoHash)).slice(0, 4096),
+      title,
+      name: sanitizeText(item.name || title).slice(0, 600),
+      filename: sanitizeText(item.filename || item.fileName || item.file_title || '').slice(0, 600) || undefined,
+      file_title: sanitizeText(item.file_title || item.matched_file_title || '').slice(0, 600) || undefined,
+      fileIdx,
+      fileIndex: fileIdx,
+      matched_file_index: normalizeFileIndex(item.matched_file_index),
+      matched_file_title: sanitizeText(item.matched_file_title || '').slice(0, 600) || undefined,
+      source,
+      provider: sanitizeText(item.provider || source).slice(0, 160),
+      externalProvider: sanitizeText(item.externalProvider || item.provider || source).slice(0, 160),
+      externalAddon: sanitizeText(item.externalAddon || item._externalAddon || item.addon || '').slice(0, 96) || undefined,
+      externalGroup: sanitizeText(item.externalGroup || item._externalGroup || item._sourceGroup || '').slice(0, 64) || undefined,
+      seeders: Math.max(0, toSafeNumber(item.seeders || item.max_seeders, 0)),
+      sizeBytes: size,
+      _size: size,
+      quality: sanitizeText(item.quality || item.resolution || item.quality_tag || '').slice(0, 80) || undefined,
+      resolution: sanitizeText(item.resolution || item.quality || item.quality_tag || '').slice(0, 80) || undefined,
+      languages: item.languages || item.language || item.lang || undefined,
+      language: item.language || item.lang || undefined,
+      isExternal: item.isExternal === true || undefined,
+      _externalSnapshot: item._externalSnapshot === true || undefined,
+      _fromQuerySnapshot: true,
+      _sourceGroup: 'query_snapshot',
+      _fallbackGroup: 'query_snapshot',
+      _formatterTitle: sanitizeText(item._formatterTitle || item.formatterTitle || item._externalFormatterTitle || '').slice(0, 700) || undefined,
+      formatterTitle: sanitizeText(item.formatterTitle || item._formatterTitle || '').slice(0, 700) || undefined,
+      cached_rd: typeof item.cached_rd === 'boolean' ? item.cached_rd : undefined,
+      _dbCachedRd: typeof item._dbCachedRd === 'boolean' ? item._dbCachedRd : undefined,
+      rdCacheState: sanitizeText(item.rdCacheState || item._rdCacheState || item.cacheState || '').slice(0, 64) || undefined,
+      _rdCacheState: sanitizeText(item._rdCacheState || item.rdCacheState || item.cacheState || '').slice(0, 64) || undefined,
+      tb_cache_state: sanitizeText(item.tb_cache_state || item._tbCacheStateRaw || '').slice(0, 64) || undefined,
+      _tbCacheStateRaw: sanitizeText(item._tbCacheStateRaw || item.tb_cache_state || '').slice(0, 64) || undefined,
+      tb_file_id: normalizeFileIndex(item.tb_file_id || item.file_id),
+      tb_file_size: Math.max(0, toSafeNumber(item.tb_file_size || item.file_size, 0)) || undefined,
+      releaseGroup: sanitizeText(item.releaseGroup || item.release_group || item.group || '').slice(0, 64) || undefined,
+      release_group: sanitizeText(item.release_group || item.releaseGroup || item.group || '').slice(0, 64) || undefined
+    };
+
+    for (const key of Object.keys(payload)) {
+      if (payload[key] === undefined || payload[key] === null || payload[key] === '') delete payload[key];
+    }
+    return payload;
+  }
+
+  function normalizeQuerySnapshotRow(row = {}) {
+    const payload = row?.payload_json && typeof row.payload_json === 'object' ? row.payload_json : {};
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    return items.map((item) => ({
+      ...item,
+      hash: normalizeInfoHash(item.hash || item.infoHash),
+      infoHash: normalizeInfoHash(item.infoHash || item.hash),
+      fileIdx: normalizeFileIndex(item.fileIdx ?? item.fileIndex ?? item.file_index),
+      source: item.source || item.provider || 'QuerySnapshot',
+      _querySnapshot: true,
+      _fromQuerySnapshot: true,
+      _sourceGroup: 'query_snapshot',
+      _fallbackGroup: item._fallbackGroup || 'query_snapshot',
+      _querySnapshotSeenCount: toSafeNumber(row.seen_count, 0),
+      _querySnapshotLastSeenAt: row.last_seen_at || null
+    })).filter((item) => item.hash);
+  }
+
+  function summarizeQuerySnapshotItems(items = []) {
+    const hashes = new Set();
+    const sourceMix = new Set();
+    let bestQuality = null;
+    let qualityScore = -1;
+    const qualityRank = { '4320p': 6, '2160p': 5, '4k': 5, '1080p': 4, '720p': 3, '576p': 2, '480p': 1 };
+    for (const item of items) {
+      const hash = getSnapshotItemHash(item);
+      if (hash) hashes.add(hash);
+      const source = sanitizeText(item.source || item.provider || item.externalProvider || item.externalAddon).slice(0, 80);
+      if (source) sourceMix.add(source);
+      const quality = sanitizeText(item.quality || item.resolution);
+      const rank = qualityRank[String(quality || '').toLowerCase()] || 0;
+      if (rank > qualityScore) {
+        qualityScore = rank;
+        bestQuality = quality || null;
+      }
+    }
+    return {
+      hashCount: hashes.size,
+      sourceMix: [...sourceMix].slice(0, 20),
+      bestQuality
+    };
+  }
+
+  async function upsertQueryCandidateSnapshot(meta = {}, items = [], options = {}) {
+    const pool = getPool();
+    if (!pool || !Array.isArray(items) || items.length === 0) return { processed: 0, upserted: 0 };
+    await awaitDatabaseOptimizations();
+
+    const identity = buildQuerySnapshotIdentity(meta, options);
+    const snapshotKey = buildQuerySnapshotKey(identity);
+    if (!identity || !snapshotKey) return { processed: 0, upserted: 0 };
+
+    const limit = clampInt(options.limit || process.env.QUERY_SNAPSHOT_WRITE_LIMIT || 220, 220, 10, 600);
+    const normalizedItems = items.map(normalizeQuerySnapshotItem).filter(Boolean).slice(0, limit);
+    if (normalizedItems.length === 0) return { processed: 0, upserted: 0 };
+
+    const summary = summarizeQuerySnapshotItems(normalizedItems);
+    const ttlSeconds = clampInt(options.ttlSeconds || process.env.QUERY_SNAPSHOT_TTL || 6 * 60 * 60, 6 * 60 * 60, 60, 3 * 24 * 60 * 60);
+    const confidenceScore = clampInt(options.confidenceScore || Math.min(100, 30 + normalizedItems.length + summary.hashCount), 60, 0, 100);
+    const payload = {
+      mediaId: identity.mediaId,
+      type: identity.type,
+      langMode: identity.langMode,
+      sourceSignature: identity.sourceSignature,
+      items: normalizedItems
+    };
+
+    try {
+      const result = await pool.query(
+        `
+          INSERT INTO query_candidate_snapshots (
+            snapshot_key, media_id, imdb_id, imdb_season, imdb_episode, kitsu_id, type, lang_mode, source_signature, payload_json,
+            result_count, hash_count, best_quality, source_mix, confidence_score, expires_at, first_seen_at, last_seen_at, seen_count, created_at, updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14::text[], $15, NOW() + make_interval(secs => $16), NOW(), NOW(), 1, NOW(), NOW())
+          ON CONFLICT (snapshot_key)
+          DO UPDATE SET
+            payload_json = EXCLUDED.payload_json,
+            result_count = EXCLUDED.result_count,
+            hash_count = EXCLUDED.hash_count,
+            best_quality = COALESCE(NULLIF(EXCLUDED.best_quality, ''), query_candidate_snapshots.best_quality),
+            source_mix = EXCLUDED.source_mix,
+            confidence_score = GREATEST(COALESCE(query_candidate_snapshots.confidence_score, 0), EXCLUDED.confidence_score),
+            expires_at = GREATEST(COALESCE(query_candidate_snapshots.expires_at, NOW()), EXCLUDED.expires_at),
+            last_seen_at = NOW(),
+            seen_count = GREATEST(COALESCE(query_candidate_snapshots.seen_count, 0), 0) + 1,
+            updated_at = NOW()
+        `,
+        [
+          snapshotKey,
+          identity.mediaId,
+          identity.imdbId,
+          identity.season,
+          identity.episode,
+          identity.kitsuId,
+          identity.type,
+          identity.langMode,
+          identity.sourceSignature,
+          JSON.stringify(payload),
+          normalizedItems.length,
+          summary.hashCount,
+          summary.bestQuality,
+          summary.sourceMix,
+          confidenceScore,
+          ttlSeconds
+        ]
+      );
+      return { processed: normalizedItems.length, upserted: Number(result.rowCount || 0) };
+    } catch (error) {
+      console.error(`❌ DB Error upsertQueryCandidateSnapshot: ${error.message}`);
+      return { processed: normalizedItems.length, upserted: 0, error: error.message };
+    }
+  }
+
+  async function getQueryCandidateSnapshot(meta = {}, options = {}) {
+    const pool = getPool();
+    if (!pool) return [];
+    await awaitDatabaseOptimizations();
+
+    const identity = buildQuerySnapshotIdentity(meta, options);
+    const snapshotKey = buildQuerySnapshotKey(identity);
+    if (!identity || !snapshotKey) return [];
+
+    const limit = clampInt(options.limit || process.env.QUERY_SNAPSHOT_READ_LIMIT || 160, 160, 1, 500);
+
+    try {
+      const res = await pool.query(
+        `
+          SELECT payload_json, seen_count, last_seen_at
+          FROM query_candidate_snapshots
+          WHERE snapshot_key = $1
+            AND expires_at > NOW()
+          ORDER BY confidence_score DESC, result_count DESC, last_seen_at DESC NULLS LAST
+          LIMIT 1
+        `,
+        [snapshotKey]
+      );
+      const row = res.rows?.[0];
+      if (!row) return [];
+      return normalizeQuerySnapshotRow(row).slice(0, limit);
+    } catch (error) {
+      console.error(`❌ DB Error getQueryCandidateSnapshot: ${error.message}`);
+      return [];
+    }
   }
 
   async function insertTorrent(meta, torrent) {
@@ -3444,6 +3698,8 @@ function createTorrentRepository({
     upsertExternalStreamSnapshots,
     getExternalStreamSnapshots,
     getExternalSnapshotStats,
+    upsertQueryCandidateSnapshot,
+    getQueryCandidateSnapshot,
     getAvailabilityCacheStats,
     getDebridAvailabilityCache,
     setDebridAvailabilityCache,
