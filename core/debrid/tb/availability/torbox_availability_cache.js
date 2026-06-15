@@ -239,26 +239,36 @@ function getNested(obj, path) {
 }
 
 function extractItemMeta(item) {
+  const sourceMeta = item?.meta || {};
   const hash = lower(item?.hash || item?.infoHash || item?.btih || item?.info_hash);
   const season = safeInt(
-    item?.season ?? item?.season_number ?? item?.meta?.season ?? getNested(item, ["series", "season"]),
+    item?.season ?? item?.season_number ?? sourceMeta?.season ?? getNested(item, ["series", "season"]),
     0
   );
   const episode = safeInt(
-    item?.episode ?? item?.episode_number ?? item?.meta?.episode ?? getNested(item, ["series", "episode"]),
+    item?.episode ?? item?.episode_number ?? sourceMeta?.episode ?? sourceMeta?.requested_kitsu_episode ?? getNested(item, ["series", "episode"]),
     0
   );
-  const type = lower(item?.type || item?.media_type || item?.meta?.type || "");
-  const title = String(item?.title || item?.name || item?.meta?.name || item?.meta?.title || "");
-  const imdbId = String(item?.imdb_id || item?.imdbId || item?.meta?.imdb_id || item?.meta?.imdbId || "").trim().toLowerCase();
+  const requestedKitsuEpisode = safeInt(item?.requested_kitsu_episode ?? sourceMeta?.requested_kitsu_episode, 0);
+  const type = lower(item?.type || item?.media_type || sourceMeta?.type || "");
+  const title = String(item?.title || item?.name || sourceMeta?.name || sourceMeta?.title || sourceMeta?.targetTitle || "");
+  const imdbId = String(item?.imdb_id || item?.imdbId || sourceMeta?.imdb_id || sourceMeta?.imdbId || "").trim().toLowerCase();
+  const titles = Array.isArray(sourceMeta?.titles) ? sourceMeta.titles.filter(Boolean) : [];
 
   return {
     hash,
     season,
     episode,
+    requestedKitsuEpisode,
     imdbId: /^tt\d+$/.test(imdbId) ? imdbId : null,
-    isEpisodeRequest: season > 0 || episode > 0 || type === "series" || type === "episode" || type === "anime",
-    title
+    isEpisodeRequest: season > 0 || episode > 0 || requestedKitsuEpisode > 0 || type === "series" || type === "episode" || type === "anime",
+    title,
+    targetTitle: sourceMeta?.targetTitle || title,
+    movieTitle: sourceMeta?.movieTitle || title,
+    originalTitle: sourceMeta?.originalTitle || sourceMeta?.original_title || null,
+    year: sourceMeta?.year || sourceMeta?.releaseYear || item?.year || item?.releaseYear || null,
+    titles,
+    kitsuId: sourceMeta?.kitsu_id || sourceMeta?.kitsuId || item?.kitsu_id || item?.kitsuId || null
   };
 }
 
@@ -622,7 +632,7 @@ function parseHashResult(hash, info, meta = null) {
     })];
   }
 
-  const match = matchTorboxFile(info.files, meta, { minVideoSize: MIN_VIDEO_SIZE });
+  const match = matchTorboxFile(info.files, meta, { minVideoSize: MIN_VIDEO_SIZE, title: meta?.title, targetTitle: meta?.targetTitle, movieTitle: meta?.movieTitle, originalTitle: meta?.originalTitle, year: meta?.year, titles: meta?.titles });
   const bestFile = match.file || null;
   const confidence = Number(match.confidence || 0) || 0;
   const score = match.score;
