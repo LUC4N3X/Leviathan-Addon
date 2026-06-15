@@ -717,7 +717,9 @@ const TB = {
         title: options.title || options.movieTitle || null,
         originalTitle: options.originalTitle || options.original_title || null,
         year: options.year || options.movieYear || null,
-        titles: options.titles || undefined
+        titles: options.titles || undefined,
+        requestedKitsuEpisode: options.requestedKitsuEpisode || options.requested_kitsu_episode || null,
+        absoluteEpisode: options.absoluteEpisode || options.animeAbsoluteEpisode || options.requestedKitsuEpisode || options.requested_kitsu_episode || null
       };
       let match = matchFileDetailed(files, season, episode, forcedFileIdx, matchOptions);
       let resolvedFileId = match.fileId;
