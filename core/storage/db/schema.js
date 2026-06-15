@@ -159,6 +159,29 @@ async function ensureDatabaseOptimizations(pool) {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`,
+    `CREATE TABLE IF NOT EXISTS query_candidate_snapshots (
+      snapshot_key TEXT PRIMARY KEY,
+      media_id TEXT NOT NULL,
+      imdb_id TEXT,
+      imdb_season INTEGER,
+      imdb_episode INTEGER,
+      kitsu_id TEXT,
+      type TEXT,
+      lang_mode TEXT,
+      source_signature TEXT,
+      payload_json JSONB NOT NULL,
+      result_count INTEGER DEFAULT 0,
+      hash_count INTEGER DEFAULT 0,
+      best_quality TEXT,
+      source_mix TEXT[] DEFAULT ARRAY[]::TEXT[],
+      confidence_score INTEGER DEFAULT 0,
+      expires_at TIMESTAMPTZ NOT NULL,
+      first_seen_at TIMESTAMPTZ DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ DEFAULT NOW(),
+      seen_count INTEGER DEFAULT 1,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
     `CREATE TABLE IF NOT EXISTS torrentio_tmdb_scan_queue (
       job_key TEXT PRIMARY KEY,
       media_type TEXT NOT NULL,
@@ -554,6 +577,26 @@ async function ensureDatabaseOptimizations(pool) {
     `ALTER TABLE external_stream_snapshots ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
     `ALTER TABLE external_stream_snapshots ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
     `ALTER TABLE external_stream_snapshots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS media_id TEXT`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS imdb_id TEXT`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS imdb_season INTEGER`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS imdb_episode INTEGER`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS kitsu_id TEXT`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS type TEXT`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS lang_mode TEXT`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS source_signature TEXT`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS payload_json JSONB`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS result_count INTEGER DEFAULT 0`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS hash_count INTEGER DEFAULT 0`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS best_quality TEXT`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS source_mix TEXT[] DEFAULT ARRAY[]::TEXT[]`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS confidence_score INTEGER DEFAULT 0`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ DEFAULT NOW()`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ DEFAULT NOW()`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS seen_count INTEGER DEFAULT 1`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
+    `ALTER TABLE query_candidate_snapshots ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
 
     `ALTER TABLE torrentio_tmdb_scan_queue ADD COLUMN IF NOT EXISTS job_key TEXT`,
     `ALTER TABLE torrentio_tmdb_scan_queue ADD COLUMN IF NOT EXISTS media_type TEXT`,
@@ -655,6 +698,8 @@ async function ensureDatabaseOptimizations(pool) {
     `UPDATE episode_file_overrides SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE external_stream_snapshots SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE external_stream_snapshots SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
+    `UPDATE query_candidate_snapshots SET media_id = COALESCE(NULLIF(media_id, ''), CONCAT(COALESCE(imdb_id, kitsu_id, snapshot_key), ':', COALESCE(imdb_season, 0), ':', COALESCE(imdb_episode, 0))) WHERE media_id IS NULL OR media_id = ''`,
+    `DELETE FROM query_candidate_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW() - INTERVAL '6 hours'`,
     `UPDATE debrid_availability_cache SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE debrid_availability_cache SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
 
@@ -1286,6 +1331,10 @@ async function ensureDatabaseOptimizations(pool) {
     `CREATE INDEX IF NOT EXISTS idx_external_snapshots_hash ON external_stream_snapshots (info_hash_norm, file_index_norm)`,
     `CREATE INDEX IF NOT EXISTS idx_external_snapshots_source ON external_stream_snapshots (addon_group, addon, provider, last_seen_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_external_snapshots_expires ON external_stream_snapshots (expires_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_query_candidate_snapshots_media ON query_candidate_snapshots (media_id, lang_mode, expires_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_query_candidate_snapshots_imdb ON query_candidate_snapshots (imdb_id, imdb_season, imdb_episode, lang_mode, expires_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_query_candidate_snapshots_kitsu ON query_candidate_snapshots (kitsu_id, lang_mode, expires_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_query_candidate_snapshots_expires ON query_candidate_snapshots (expires_at)`,
     `CREATE INDEX IF NOT EXISTS idx_torrentio_tmdb_scan_queue_next ON torrentio_tmdb_scan_queue (state, not_before, priority DESC, updated_at ASC)`,
     `CREATE INDEX IF NOT EXISTS idx_torrentio_tmdb_scan_queue_media ON torrentio_tmdb_scan_queue (media_type, imdb_id, imdb_season, imdb_episode)`,
     `CREATE INDEX IF NOT EXISTS idx_torrentio_tmdb_scan_queue_tmdb ON torrentio_tmdb_scan_queue (tmdb_id, tmdb_endpoint)`,
@@ -1380,6 +1429,7 @@ async function ensureDatabaseOptimizations(pool) {
     await pool.query(`UPDATE torrents SET next_cached_check = NOW() - make_interval(mins => 1), updated_at = NOW() WHERE cached_rd IS TRUE AND rd_cache_state = 'cached' AND next_cached_check >= TIMESTAMPTZ '9999-01-01 00:00:00+00'`);
     await pool.query(`DELETE FROM shared_stream_cache WHERE stale_until IS NOT NULL AND stale_until < NOW()`);
     await pool.query(`DELETE FROM external_stream_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
+    await pool.query(`DELETE FROM query_candidate_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
     await pool.query(`DELETE FROM debrid_availability_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
     await pool.query(`DELETE FROM debrid_resolved_link_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
     await pool.query(`DELETE FROM debrid_cache_check_markers WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
