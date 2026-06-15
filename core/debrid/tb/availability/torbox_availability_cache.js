@@ -6,6 +6,7 @@ const {
   toRdCacheState,
   shouldPersistNegativeTbState,
   shortTorboxHash,
+  tokenFingerprint,
   redactSecretsInText
 } = require("./torbox_cache_state");
 const { computeBackoffDelay, parseRetryAfterMs } = require("../../utils/backoff");
@@ -21,6 +22,7 @@ const MAX_CONCURRENCY = 8;
 const DEFAULT_SYNC_LIMIT = 120;
 const MIN_VIDEO_SIZE = 50 * 1024 * 1024;
 const LOCAL_AVAILABILITY_MAX_ENTRIES = 2500;
+const LIVE_CHECK_INFLIGHT_MAX_ENTRIES = Math.max(64, parseInt(process.env.TORBOX_LIVE_CHECK_INFLIGHT_MAX || "512", 10) || 512);
 const UNCACHED_TTL_SECONDS = 2 * 60 * 60;
 
 // TorBox cache hits are intentionally short lived. The visible list is always
@@ -35,6 +37,7 @@ const AVAILABILITY_TTL_SECONDS = Object.freeze({
 });
 
 const localAvailabilityCache = new Map();
+const liveCheckInflight = new Map();
 
 const VIDEO_EXTENSIONS = /\.(mkv|mp4|avi|mov|webm|iso|m4v|ts)$/i;
 const JUNK_PATTERN = /\b(sample|trailer|promo|preview|screens?|proof|nfo|cover|poster|thumb)\b/i;
@@ -632,7 +635,17 @@ function parseHashResult(hash, info, meta = null) {
     })];
   }
 
-  const match = matchTorboxFile(info.files, meta, { minVideoSize: MIN_VIDEO_SIZE, title: meta?.title, targetTitle: meta?.targetTitle, movieTitle: meta?.movieTitle, originalTitle: meta?.originalTitle, year: meta?.year, titles: meta?.titles });
+  const match = matchTorboxFile(info.files, meta, {
+    minVideoSize: MIN_VIDEO_SIZE,
+    title: meta?.title,
+    targetTitle: meta?.targetTitle,
+    movieTitle: meta?.movieTitle,
+    originalTitle: meta?.originalTitle,
+    year: meta?.year,
+    titles: meta?.titles,
+    requestedKitsuEpisode: meta?.requestedKitsuEpisode || meta?.requested_kitsu_episode,
+    absoluteEpisode: meta?.requestedKitsuEpisode || meta?.requested_kitsu_episode || meta?.animeAbsoluteEpisode || meta?.anime_absolute_episode
+  });
   const bestFile = match.file || null;
   const confidence = Number(match.confidence || 0) || 0;
   const score = match.score;
@@ -718,7 +731,36 @@ function summarizeStates(results) {
   return counts;
 }
 
-async function checkChunk(entries, token) {
+function buildLiveCheckKey(entries, token) {
+  const parts = (Array.isArray(entries) ? entries : [])
+    .map((entry) => {
+      const hash = normalizeHash(entry?.hash).toUpperCase();
+      if (!hash) return null;
+      const raw = entry?.raw || {};
+      const meta = entry?.meta || {};
+      const fileId = normalizeFileIdx(raw?.tb_file_id ?? raw?.file_id ?? raw?.fileIdx ?? raw?.fileIndex);
+      const media = normalizeMediaId(buildMediaId(meta)) || "global";
+      return `${hash}:${fileId === null ? "auto" : fileId}:${media}`;
+    })
+    .filter(Boolean)
+    .sort();
+  if (parts.length === 0) return null;
+  return `${tokenFingerprint(token)}:${parts.join("|")}`;
+}
+
+function rememberLiveCheck(key, promise) {
+  if (!key || !promise) return promise;
+  liveCheckInflight.set(key, promise);
+  while (liveCheckInflight.size > LIVE_CHECK_INFLIGHT_MAX_ENTRIES) {
+    const oldest = liveCheckInflight.keys().next().value;
+    if (oldest === undefined) break;
+    liveCheckInflight.delete(oldest);
+  }
+  promise.finally(() => liveCheckInflight.delete(key));
+  return promise;
+}
+
+async function checkChunkLive(entries, token) {
   const hashes = entries.map((entry) => entry.hash).filter(Boolean);
   const results = {};
   if (hashes.length === 0) return results;
@@ -796,6 +838,14 @@ async function checkChunk(entries, token) {
   }
 
   return results;
+}
+
+async function checkChunk(entries, token) {
+  const key = buildLiveCheckKey(entries, token);
+  if (!key) return {};
+  const pending = liveCheckInflight.get(key);
+  if (pending) return pending;
+  return rememberLiveCheck(key, checkChunkLive(entries, token));
 }
 
 function buildEntries(items, limit) {
@@ -882,9 +932,6 @@ async function checkCacheSync(items, token, dbHelper, limit = DEFAULT_SYNC_LIMIT
 
   if (entries.length === 0) return {};
 
-  // Foreground streams must never trust an old DB "cached" flag.
-  // TorBox can expire cached material later, so the visible window is checked
-  // live with one batched `checkcached?list_files=true` pass before display.
   const apiResults = await checkHashes(entries, token);
   await persistAvailabilityResults(entries, apiResults, dbHelper);
 
