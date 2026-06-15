@@ -507,7 +507,9 @@ async function resolveLazyStreamData(service, apiKey, item, meta) {
                         title: meta?.title || item.title || null,
                         originalTitle: meta?.originalTitle || meta?.original_title || item.originalTitle || null,
                         year: meta?.year || item.year || null,
-                        titles: [meta?.title, meta?.originalTitle, meta?.original_title, item.title, item.originalTitle].filter(Boolean)
+                        titles: [meta?.title, meta?.originalTitle, meta?.original_title, item.title, item.originalTitle].filter(Boolean),
+                        requestedKitsuEpisode: meta?.requested_kitsu_episode || item?.requested_kitsu_episode || null,
+                        absoluteEpisode: meta?.requested_kitsu_episode || meta?.anime_absolute_episode || item?.requested_kitsu_episode || null
                     }
                 )
             );
@@ -1851,8 +1853,27 @@ function applyTorboxCacheResultToItem(item, result = {}) {
     return state;
 }
 
-function getTorboxProgressiveWindows() {
-    return [120, 240, 360];
+function parseTorboxWindowList(value) {
+    const windows = String(value || '')
+        .split(/[,;|\s]+/)
+        .map((item) => Number.parseInt(item, 10))
+        .filter((item) => Number.isInteger(item) && item > 0)
+        .sort((a, b) => a - b);
+    return [...new Set(windows)];
+}
+
+function getTorboxProgressiveWindows(meta = {}, rankedList = []) {
+    const configured = parseTorboxWindowList(process.env.TORBOX_RESOLVE_WINDOWS);
+    if (configured.length > 0) return configured;
+    const total = Array.isArray(rankedList) ? rankedList.length : 0;
+    const isEpisode = Boolean(meta?.season || meta?.episode || meta?.requested_kitsu_episode || meta?.kitsu_id || meta?.isAnime || String(meta?.type || '').toLowerCase() === 'anime');
+    const dbBacked = (Array.isArray(rankedList) ? rankedList : []).filter((item) => isTorboxDbBackedCandidate(item)).length;
+    const base = isEpisode ? [120, 260, 520] : [96, 192, 360];
+    const dbWindow = dbBacked > 0 ? Math.min(Math.max(dbBacked + 32, base[0]), isEpisode ? 520 : 360) : 0;
+    const windows = [...base, dbWindow, total > 0 ? Math.min(total, isEpisode ? 640 : 420) : 0]
+        .filter((value) => Number.isInteger(value) && value > 0)
+        .sort((a, b) => a - b);
+    return [...new Set(windows)];
 }
 
 function collectTorboxMetaTitles(meta = {}, item = {}) {
@@ -1939,6 +1960,30 @@ function getTorboxDbCandidateScore(item = {}, meta = {}) {
     return score;
 }
 
+function getTorboxVerifiedQualityScore(item = {}, meta = {}) {
+    let score = getTorboxDbCandidateScore(item, meta);
+    const confidence = Math.max(0, Math.min(1, Number(item?._tbCacheConfidence || 0) || 0));
+    const reason = String(item?._tbCacheMatchReason || '').toLowerCase();
+    score += confidence * 600000;
+    if (item?._tbLiveChecked === true) score += 220000;
+    if (item?.fileIdx != null || item?.tb_file_id != null) score += 180000;
+    if (/forced|exact|confident|episode/.test(reason)) score += 160000;
+    if (/movie_file_match|file_verified/.test(reason)) score += 90000;
+    if (/single_video_uncertain|uncertain/.test(reason)) score -= 220000;
+    if (/sample|trailer|promo|preview|extra|featurette|recap/i.test(String(item?.file_title || item?.title || item?.name || ''))) score -= 900000;
+    if (meta?.season || meta?.episode || meta?.requested_kitsu_episode || meta?.kitsu_id) {
+        if (item?._dbEpisodeMapping === true || item?._episodeFileHint || item?.matched_file_index != null) score += 240000;
+    }
+    return score;
+}
+
+function sortTorboxVerifiedList(items = [], meta = {}) {
+    return (Array.isArray(items) ? items : [])
+        .map((item, index) => ({ item, index, score: getTorboxVerifiedQualityScore(item, meta) }))
+        .sort((a, b) => (b.score - a.score) || (a.index - b.index))
+        .map((entry) => entry.item);
+}
+
 function isTorboxDbBackedCandidate(item = {}) {
     const group = String(item?._sourceGroup || item?._fallbackGroup || item?.providerGroup || '').toLowerCase();
     return Boolean(
@@ -1976,7 +2021,9 @@ function prioritizeTorboxDbFirstRankedList(rankedList = [], meta = {}, filters =
 
 async function resolveTorboxRankedList(rankedList, apiKey, meta = {}) {
     const sourceRanked = Array.isArray(rankedList) ? rankedList.map((item) => attachTorboxRuntimeMeta(item, meta)) : [];
-    const progressiveWindows = getTorboxProgressiveWindows();
+    const progressiveWindows = getTorboxProgressiveWindows(meta, sourceRanked);
+    const cacheResultsByHash = {};
+    const checkedHashes = new Set();
     let verifiedList = [];
     let usedWindow = 0;
 
@@ -1984,21 +2031,35 @@ async function resolveTorboxRankedList(rankedList, apiKey, meta = {}) {
         const candidates = sourceRanked.slice(0, checkLimit);
         if (candidates.length === 0) break;
 
-        logger.info(`[torbox.cache.check.start] window=${candidates.length} sample=${candidates.slice(0, 3).map((item) => shortTorboxHash(item?.hash)).join(',')}`);
-        const cacheResults = await LIMITERS.tbResolve.schedule(() => TorboxAvailabilityCache.checkCacheSync(candidates, apiKey, dbHelper, checkLimit));
-        verifiedList = [];
-
+        const newCandidates = [];
+        const newHashes = new Set();
         for (const item of candidates) {
-            const hash = String(item?.hash || '').toLowerCase();
-            const result = cacheResults?.[hash] || { state: TB_CACHE_STATES.UNCACHED, cached: false };
-            const state = applyTorboxCacheResultToItem(item, result);
-            if (isTbVerified(state)) {
-                verifiedList.push(item);
+            const hash = String(item?.hash || '').trim().toLowerCase();
+            if (!hash || checkedHashes.has(hash) || newHashes.has(hash)) continue;
+            newCandidates.push(item);
+            newHashes.add(hash);
+        }
+
+        if (newCandidates.length > 0) {
+            logger.info(`[torbox.cache.check.start] window=${candidates.length} live=${newCandidates.length} sample=${newCandidates.slice(0, 3).map((item) => shortTorboxHash(item?.hash)).join(',')}`);
+            const cacheResults = await LIMITERS.tbResolve.schedule(() => TorboxAvailabilityCache.checkCacheSync(newCandidates, apiKey, dbHelper, newCandidates.length));
+            for (const hash of newHashes) {
+                cacheResultsByHash[hash] = cacheResults?.[hash] || { state: TB_CACHE_STATES.UNCACHED, cached: false, match_reason: 'not_returned_live' };
+                checkedHashes.add(hash);
             }
         }
 
+        verifiedList = [];
+        for (const item of candidates) {
+            const hash = String(item?.hash || '').trim().toLowerCase();
+            const result = cacheResultsByHash[hash] || { state: TB_CACHE_STATES.UNCACHED, cached: false };
+            const state = applyTorboxCacheResultToItem(item, result);
+            if (isTbVerified(state)) verifiedList.push(item);
+        }
+        verifiedList = sortTorboxVerifiedList(verifiedList, meta);
+
         const counts = summarizeTorboxCacheStates(candidates);
-        logger.info(`[torbox.cache.check.result] window=${candidates.length} verified=${counts.cached_verified} likely=${counts.likely_cached} uncertain=${counts.uncertain} queued=${counts.queued} uncached=${counts.uncached} error=${counts.error}`);
+        logger.info(`[torbox.cache.check.result] window=${candidates.length} live=${newCandidates.length} verified=${counts.cached_verified} likely=${counts.likely_cached} uncertain=${counts.uncertain} queued=${counts.queued} uncached=${counts.uncached} error=${counts.error}`);
         if (verifiedList.length > 0) {
             const topReason = verifiedList.slice(0, 3).map((item) => `${shortTorboxHash(item?.hash)}:${item?._tbCacheMatchReason || 'cached_verified'}`).join(',');
             logger.info(`[torbox.rank.reason] kept=${verifiedList.length} reason=cached_verified_only sample=${topReason}`);
@@ -2010,7 +2071,10 @@ async function resolveTorboxRankedList(rankedList, apiKey, meta = {}) {
 
     logger.info(`📦 [TB CLEANUP] Finestra usata: ${usedWindow} -> Rimasti: ${verifiedList.length}`);
 
-    const remainingItems = sourceRanked.slice(usedWindow);
+    const remainingItems = sourceRanked.filter((item) => {
+        const hash = String(item?.hash || '').trim().toLowerCase();
+        return hash && !checkedHashes.has(hash);
+    });
     if (remainingItems.length > 0) TorboxAvailabilityCache.enrichCacheBackground(remainingItems, apiKey, dbHelper);
 
     return verifiedList;
@@ -4905,7 +4969,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const streamCacheVersionParts = [];
-  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v24|movieDbPriorityVerifiedSkip=v3|tbDbFirst=v1|tbVerifiedRescue=v3|rdDirectNoLazy=v2|rdDownloadFallback=v1|torrentioSmartFallback=v1|torrentHealth=v1');
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v24|movieDbPriorityVerifiedSkip=v3|tbDbFirst=v2|tbVerifiedRescue=v4|rdDirectNoLazy=v2|rdDownloadFallback=v1|torrentioSmartFallback=v1|torrentHealth=v1');
   // Bust stale web-provider stream lists generated by the temporary MaxStream
   // .m3u8 route. This prevents Stremio/VLC from receiving old cached
   // /extractor/video.m3u8 URLs after the compatibility rollback.
