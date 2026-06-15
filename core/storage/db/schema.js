@@ -1306,6 +1306,8 @@ async function ensureDatabaseOptimizations(pool) {
     `CREATE INDEX IF NOT EXISTS idx_provider_observations_source ON provider_observations (provider_group, provider_name, addon_name, last_seen_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_authority_hash_file ON debrid_authority (service, info_hash_norm, file_index_norm, expires_at DESC NULLS LAST)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_authority_media ON debrid_authority (service, imdb_id, season, episode, state, expires_at DESC NULLS LAST)`,
+    `CREATE INDEX IF NOT EXISTS idx_debrid_authority_tb_media_checked ON debrid_authority (imdb_id, season, episode, checked_at DESC NULLS LAST) WHERE service = 'tb'`,
+    `CREATE INDEX IF NOT EXISTS idx_debrid_authority_tb_hash_media_checked ON debrid_authority (info_hash_norm, imdb_id, season, episode, checked_at DESC NULLS LAST) WHERE service = 'tb'`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_authority_due ON debrid_authority (service, next_check_at NULLS FIRST, failure_count ASC)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_authority_state ON debrid_authority (service, state, checked_at DESC NULLS LAST)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_resolved_link_expires ON debrid_resolved_link_cache (expires_at)`,
