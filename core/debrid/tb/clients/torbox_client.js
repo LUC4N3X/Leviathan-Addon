@@ -196,7 +196,6 @@ async function tbRequest(method, endpoint, key, { data = null, params = null, ti
   const circuitKey = stableKeyFingerprint(key);
   if (!tbCircuit.canRequest(circuitKey)) {
     logTorboxEvent("torbox.circuit.open", { op }, "warn");
-    // Synthetic transient response so callers keep their existing error handling.
     return { status: 503, data: { detail: "torbox_circuit_open" }, headers: {}, _circuitOpen: true };
   }
 
@@ -241,8 +240,7 @@ async function tbRequest(method, endpoint, key, { data = null, params = null, ti
         await sleep(getRetryDelay({ response }, attempt));
         continue;
       }
-      // Server answered (even with an error status) -> upstream is reachable.
-      // Only sustained 5xx counts against the breaker; 4xx/429 do not.
+
       if (response.status >= 500) tbCircuit.recordFailure(circuitKey);
       else tbCircuit.recordSuccess(circuitKey);
       return response;
@@ -442,7 +440,8 @@ function normalizeCheckcachedInfo(hash, info) {
       cached: true,
       state: TB_CACHE_STATES.CACHED_VERIFIED,
       cache_state: TB_CACHE_STATES.CACHED_VERIFIED,
-      confidence: 0.8
+      confidence: 0.8,
+      files: info.files
     };
   }
 
@@ -605,7 +604,7 @@ const TB = {
     const res = await tbRequest("GET", "/torrents/checkcached", key, {
       params: {
         hash: clean.join(","),
-        format: "list",
+        format: "object",
         list_files: "true"
       },
       timeout: 20000,
