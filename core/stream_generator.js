@@ -828,6 +828,19 @@ function getTorboxDbFastPathMin(filters = {}) {
     return Number.isFinite(parsed) ? Math.max(1, Math.min(30, parsed)) : 3;
 }
 
+function getTorboxDbFirstRealMin(filters = {}) {
+    const raw = filters.tbDbFirstRealMin ?? process.env.TORBOX_DB_FIRST_REAL_MIN ?? String(TORBOX_DB_FIRST_REAL_MIN);
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) ? Math.max(1, Math.min(30, parsed)) : TORBOX_DB_FIRST_REAL_MIN;
+}
+
+function getTorboxDbRescueLimit(filters = {}, meta = {}) {
+    const isEpisode = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0 || meta?.isAnime);
+    const raw = filters.tbDbRescueLimit ?? process.env.TORBOX_DB_RESCUE_LIMIT ?? (isEpisode ? '180' : String(TORBOX_MOVIE_EXTERNAL_FILL_LIMIT));
+    const parsed = parseInt(raw, 10);
+    return Number.isFinite(parsed) ? Math.max(0, Math.min(500, parsed)) : (isEpisode ? 180 : TORBOX_MOVIE_EXTERNAL_FILL_LIMIT);
+}
+
 function shouldTorboxSkipExternalOnDbCoverage(filters = {}) {
     const value = filters.tbSkipExternalOnDbCoverage;
     if (value !== undefined && value !== null && String(value).trim() !== '') return isTruthyConfigValue(value);
@@ -1842,8 +1855,127 @@ function getTorboxProgressiveWindows() {
     return [120, 240, 360];
 }
 
-async function resolveTorboxRankedList(rankedList, apiKey) {
-    const sourceRanked = Array.isArray(rankedList) ? [...rankedList] : [];
+function collectTorboxMetaTitles(meta = {}, item = {}) {
+    const titles = [];
+    const push = (value) => {
+        const text = String(value || '').trim();
+        if (text && !titles.some((entry) => entry.toLowerCase() === text.toLowerCase())) titles.push(text);
+    };
+    push(item?.title);
+    push(item?.name);
+    push(item?.filename);
+    push(item?.file_title);
+    push(meta?.title);
+    push(meta?.name);
+    push(meta?.originalTitle);
+    push(meta?.original_title);
+    push(meta?.englishTitle);
+    push(meta?.canonicalTitle);
+    push(meta?.romajiTitle);
+    if (Array.isArray(meta?.titles)) for (const title of meta.titles) push(title);
+    if (Array.isArray(meta?.aliases)) for (const title of meta.aliases) push(title);
+    if (meta?.kitsu?.attributes) {
+        const attrs = meta.kitsu.attributes;
+        push(attrs.canonicalTitle);
+        push(attrs?.titles?.en);
+        push(attrs?.titles?.en_jp);
+        push(attrs?.titles?.ja_jp);
+    }
+    return titles;
+}
+
+function attachTorboxRuntimeMeta(item = {}, meta = {}) {
+    if (!item || typeof item !== 'object') return item;
+    const season = Number(item?.season ?? item?.season_number ?? item?.meta?.season ?? meta?.season ?? 0) || 0;
+    const episode = Number(item?.episode ?? item?.episode_number ?? item?.meta?.episode ?? meta?.episode ?? meta?.requested_kitsu_episode ?? 0) || 0;
+    const titles = collectTorboxMetaTitles(meta, item);
+    const mergedMeta = {
+        ...(item?.meta || {}),
+        imdb_id: item?.imdb_id || item?.imdbId || item?.meta?.imdb_id || meta?.imdb_id || meta?.imdbId || null,
+        imdbId: item?.imdbId || item?.imdb_id || item?.meta?.imdbId || meta?.imdbId || meta?.imdb_id || null,
+        season,
+        episode,
+        requested_kitsu_episode: item?.requested_kitsu_episode || item?.meta?.requested_kitsu_episode || meta?.requested_kitsu_episode || null,
+        kitsu_id: item?.kitsu_id || item?.meta?.kitsu_id || meta?.kitsu_id || meta?.kitsuId || null,
+        type: item?.type || item?.media_type || meta?.type || (meta?.isAnime ? 'anime' : (meta?.isSeries || season > 0 || episode > 0 ? 'series' : 'movie')),
+        title: titles[0] || item?.title || meta?.title || '',
+        targetTitle: titles[0] || meta?.title || item?.title || '',
+        movieTitle: titles[0] || meta?.title || item?.title || '',
+        originalTitle: meta?.originalTitle || meta?.original_title || null,
+        year: item?.year || item?.releaseYear || meta?.year || meta?.releaseYear || null,
+        titles
+    };
+    return {
+        ...item,
+        season,
+        episode,
+        imdb_id: item?.imdb_id || item?.imdbId || mergedMeta.imdb_id,
+        imdbId: item?.imdbId || item?.imdb_id || mergedMeta.imdbId,
+        requested_kitsu_episode: mergedMeta.requested_kitsu_episode,
+        kitsu_id: item?.kitsu_id || mergedMeta.kitsu_id,
+        type: item?.type || mergedMeta.type,
+        meta: mergedMeta
+    };
+}
+
+function getTorboxDbCandidateScore(item = {}, meta = {}) {
+    const rawState = normalizeTbCacheState(item?._tbCacheState || item?.tb_cache_state || item?.tbCacheState || item?._tbCacheStateRaw || item?._tbDbCacheState);
+    let score = 0;
+    if (isTbVerified(rawState)) score += 1500000;
+    else if (rawState === TB_CACHE_STATES.LIKELY_CACHED) score += 900000;
+    else if (rawState === TB_CACHE_STATES.QUEUED) score += 650000;
+    else if (rawState === TB_CACHE_STATES.UNCERTAIN) score += 500000;
+    if (item?._tbDbCachedHint === true || item?.tb_cached === true || item?._tbCached === true) score += 550000;
+    if (item?._dbEpisodeMapping === true || item?._episodeFileHint || item?.matched_file_index != null || item?.fileIdx != null || item?.file_index != null) score += 420000;
+    if (item?._localDb === true) score += 220000;
+    if (item?._myDb === true || item?._dbPrimary === true) score += 180000;
+    if (item?._externalSnapshot === true || item?._remoteDb === true) score += 90000;
+    if (item?._tbDbLastCachedCheck || item?.tb_last_cached_check) score += 70000;
+    if (item?._tbDbNextCachedCheck || item?.tb_next_cached_check) score += 25000;
+    score += Math.min(Math.max(Number(item?.seeders || item?.max_seeders || 0) || 0, 0), 4000);
+    score += Math.min(Math.max(Number(item?.size || item?.file_size || 0) || 0, 0) / (1024 * 1024 * 1024), 80);
+    score += getDbCoverageScore(item) * 1000;
+    if (meta?.isAnime || item?.meta?.type === 'anime' || item?.type === 'anime') score += 45000;
+    return score;
+}
+
+function isTorboxDbBackedCandidate(item = {}) {
+    const group = String(item?._sourceGroup || item?._fallbackGroup || item?.providerGroup || '').toLowerCase();
+    return Boolean(
+        item?._localDb === true ||
+        item?._myDb === true ||
+        item?._remoteDb === true ||
+        item?._dbPrimary === true ||
+        item?._externalSnapshot === true ||
+        item?._dbEpisodeMapping === true ||
+        item?._tbDbCachedHint === true ||
+        item?._tbDbLastCachedCheck ||
+        item?._tbDbNextCachedCheck ||
+        item?.tb_last_cached_check ||
+        item?.tb_cache_state ||
+        group.includes('db') ||
+        group.includes('snapshot')
+    );
+}
+
+function prioritizeTorboxDbFirstRankedList(rankedList = [], meta = {}, filters = {}, config = {}) {
+    if (getNormalizedDebridService(config) !== 'tb') return Array.isArray(rankedList) ? rankedList : [];
+    const source = Array.isArray(rankedList) ? rankedList : [];
+    if (source.length <= 1) return source;
+    const dbFirst = [];
+    const rest = [];
+    source.forEach((item, index) => {
+        const wrapped = { item, index, score: getTorboxDbCandidateScore(item, meta) };
+        if (isTorboxDbBackedCandidate(item)) dbFirst.push(wrapped);
+        else rest.push(wrapped);
+    });
+    if (dbFirst.length === 0) return source;
+    dbFirst.sort((a, b) => (b.score - a.score) || (a.index - b.index));
+    return [...dbFirst, ...rest].map((entry) => entry.item);
+}
+
+async function resolveTorboxRankedList(rankedList, apiKey, meta = {}) {
+    const sourceRanked = Array.isArray(rankedList) ? rankedList.map((item) => attachTorboxRuntimeMeta(item, meta)) : [];
     const progressiveWindows = getTorboxProgressiveWindows();
     let verifiedList = [];
     let usedWindow = 0;
@@ -1884,12 +2016,11 @@ async function resolveTorboxRankedList(rankedList, apiKey) {
     return verifiedList;
 }
 
-function isTorboxMovieDbFirstRescueEligible({ type, meta, rankedList, dbPrimaryCoveragePool, config } = {}) {
+function isTorboxDbFirstRescueEligible({ rankedList, dbPrimaryCoveragePool, config, filters } = {}) {
     if (getNormalizedDebridService(config) !== 'tb') return false;
-    if (!isMovieTypeForDbPriority(type, meta)) return false;
     const currentReal = Array.isArray(rankedList) ? rankedList.length : 0;
-    if (currentReal >= TORBOX_DB_FIRST_REAL_MIN) return false;
-    return (Array.isArray(dbPrimaryCoveragePool) ? dbPrimaryCoveragePool : []).some((item) => isMovieDbPrimaryCandidate(item) || item?._myDb === true || item?._remoteDb === true);
+    if (currentReal >= getTorboxDbFirstRealMin(filters)) return false;
+    return (Array.isArray(dbPrimaryCoveragePool) ? dbPrimaryCoveragePool : []).some((item) => isTorboxDbBackedCandidate(item) || isMovieDbPrimaryCandidate(item) || shouldUseSeriesDbCoverageItem(item));
 }
 
 function getCandidateDedupeKey(item = {}) {
@@ -1913,18 +2044,19 @@ function dropExistingCandidates(items = [], existingItems = []) {
     return out;
 }
 
-async function rescueTorboxMovieWithExternalFanout({ rankedList = [], type, finalId, meta, config, filters, langMode, aggressiveFilter, apiKey, dbPrimaryCoveragePool } = {}) {
+async function rescueTorboxDbFirstWithExternalFanout({ rankedList = [], type, finalId, meta, config, filters, langMode, aggressiveFilter, apiKey, dbPrimaryCoveragePool } = {}) {
     const currentReal = Array.isArray(rankedList) ? rankedList.length : 0;
-    if (!isTorboxMovieDbFirstRescueEligible({ type, meta, rankedList, dbPrimaryCoveragePool, config })) return rankedList;
+    const minReal = getTorboxDbFirstRealMin(filters);
+    if (!isTorboxDbFirstRescueEligible({ rankedList, dbPrimaryCoveragePool, config, filters })) return rankedList;
 
     const requestIds = buildExternalAddonRequestIds(type, finalId, meta);
     if (requestIds.length === 0) return rankedList;
 
-    logger.info(`[TB DB-FIRST] DB real=${currentReal}/${TORBOX_DB_FIRST_REAL_MIN} -> external rescue RUN ids=${requestIds.join(',')}`);
+    logger.info(`[TB DB-FIRST] DB real=${currentReal}/${minReal} -> external rescue RUN ids=${requestIds.join(',')}`);
 
     try {
         const externalConfigSig = crypto.createHash('sha1').update(JSON.stringify({ service: config?.service || '', tb: config?.tb || config?.torbox || '', key: config?.key || '' })).digest('hex').slice(0, 12);
-        const rescueCacheKey = `${type}:${requestIds.join(',')}:tb-db-first-rescue:${externalConfigSig}:v1`;
+        const rescueCacheKey = `${type}:${requestIds.join(',')}:tb-db-first-rescue:${externalConfigSig}:v2`;
         const externalResults = await Cache.fetchWithCache('ExternalAddons', rescueCacheKey, 1800, () =>
             scheduleRequestTask('provider-fast', `external-rescue:${rescueCacheKey}`, () =>
                 guardedProviderCall(
@@ -1960,9 +2092,9 @@ async function rescueTorboxMovieWithExternalFanout({ rankedList = [], type, fina
         externalRanked = applyPremiumRankingPolicy(externalRanked, meta, config);
         externalRanked = applyStreamPriorityPolicy(externalRanked, meta, config);
         externalRanked = dedupeByInfoHash(externalRanked, getDedupeContext(meta, { stage: 'tb-external-rescue-ranked' }))?.results || externalRanked;
-        externalRanked = dropExistingCandidates(externalRanked, rankedList);
+        externalRanked = dropExistingCandidates(externalRanked, rankedList).slice(0, getTorboxDbRescueLimit(filters, meta));
 
-        const verifiedExternal = dropExistingCandidates(await resolveTorboxRankedList(externalRanked, apiKey), rankedList);
+        const verifiedExternal = dropExistingCandidates(await resolveTorboxRankedList(externalRanked, apiKey, meta), rankedList);
         const maxAdd = Math.max(0, (CONFIG.MAX_RESULTS || 12) - currentReal);
         const additions = verifiedExternal.slice(0, maxAdd);
 
@@ -5077,15 +5209,17 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           }
 
           if (configuredDebridService === 'tb' && hasDebridKey) {
+              const beforeTorboxDbPriority = rankedList;
+              rankedList = preserveRdStatusList(beforeTorboxDbPriority, prioritizeTorboxDbFirstRankedList(rankedList, meta, filters, config), { logger, stage: 'tb-db-priority' });
               const beforeTorboxResolve = rankedList;
-              rankedList = preserveRdStatusList(beforeTorboxResolve, await resolveTorboxRankedList(rankedList, debridApiKey), { logger, stage: 'tb-resolve' });
+              rankedList = preserveRdStatusList(beforeTorboxResolve, await resolveTorboxRankedList(rankedList, debridApiKey, meta), { logger, stage: 'tb-resolve' });
           }
 
           rankedList = preserveRdStatusList(rankedList, applyResolutionOrderingGuard(rankedList, { logger, meta, sortMode: getConfiguredSortMode(config) }), { logger, stage: 'resolution-guard' });
 
           if (configuredDebridService === 'tb' && hasDebridKey) {
               const beforeTorboxRescue = rankedList;
-              rankedList = preserveRdStatusList(beforeTorboxRescue, await rescueTorboxMovieWithExternalFanout({
+              rankedList = preserveRdStatusList(beforeTorboxRescue, await rescueTorboxDbFirstWithExternalFanout({
                   rankedList,
                   type,
                   finalId,
