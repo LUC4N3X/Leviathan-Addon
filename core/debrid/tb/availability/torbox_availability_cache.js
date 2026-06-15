@@ -25,8 +25,6 @@ const LOCAL_AVAILABILITY_MAX_ENTRIES = 2500;
 const LIVE_CHECK_INFLIGHT_MAX_ENTRIES = Math.max(64, parseInt(process.env.TORBOX_LIVE_CHECK_INFLIGHT_MAX || "512", 10) || 512);
 const UNCACHED_TTL_SECONDS = 2 * 60 * 60;
 
-// TorBox cache hits are intentionally short lived. The visible list is always
-// live-verified below, while this cache only protects repeated/background scans.
 const AVAILABILITY_TTL_SECONDS = Object.freeze({
   [TB_CACHE_STATES.CACHED_VERIFIED]: 6 * 60 * 60,
   [TB_CACHE_STATES.LIKELY_CACHED]: 10 * 60,
@@ -428,6 +426,134 @@ function getAvailabilityLookupKeys(entry) {
   return [...new Set(keys.filter(Boolean))];
 }
 
+function getTorboxFilePath(file = {}) {
+  return String(file.path || file.full_path || file.name || file.short_name || file.filename || '').trim();
+}
+
+function getTorboxFileIndex(file = {}) {
+  return normalizeFileIdx(file.id ?? file.file_id ?? file.fileIndex ?? file.file_index ?? file.index);
+}
+
+function parseTorboxFileEpisode(filePath = '', meta = {}) {
+  const text = String(filePath || '').replace(/[._-]+/g, ' ');
+  const fallbackSeason = safeInt(meta?.season, 0) || 1;
+  const explicit = text.match(/\bS(?:eason)?\s*0*(\d{1,2})\s*E(?:pisode)?\s*0*(\d{1,3})\b/i) || text.match(/\b0*(\d{1,2})x0*(\d{1,3})\b/i);
+  if (explicit) {
+    const season = safeInt(explicit[1], 0);
+    const episode = safeInt(explicit[2], 0);
+    if (season > 0 && episode > 0) return { season, episode };
+  }
+  const episodeOnly = text.match(/\b(?:episode|ep|e)\s*0*(\d{1,4})\b/i);
+  if (episodeOnly) {
+    const episode = safeInt(episodeOnly[1], 0);
+    if (episode > 0) return { season: fallbackSeason, episode };
+  }
+  const absolute = safeInt(meta?.requestedKitsuEpisode || meta?.requested_kitsu_episode || 0, 0);
+  if (absolute > 0) {
+    const re = new RegExp(`(?:^|\\D)0*${absolute}(?:\\D|$)`, 'i');
+    if (re.test(text)) return { season: fallbackSeason, episode: absolute };
+  }
+  return null;
+}
+
+function normalizeTorboxPackFileRows(entry = {}, result = {}) {
+  const meta = entry?.meta || {};
+  const hash = normalizeHash(entry?.hash).toUpperCase();
+  if (!/^[A-F0-9]{40}$/.test(hash)) return { packFiles: [], episodeFiles: [] };
+  const files = Array.isArray(result?.files) ? result.files : [];
+  const imdbId = meta?.imdbId || meta?.imdb_id || null;
+  if (!imdbId && !meta?.kitsuId) return { packFiles: [], episodeFiles: [] };
+
+  const packFiles = [];
+  const episodeFiles = [];
+  const pushFile = (file, forcedEpisode = null) => {
+    const path = getTorboxFilePath(file);
+    const fileIndex = getTorboxFileIndex(file);
+    const fileSize = getFileSize(file);
+    if (!path || fileIndex === null || fileSize < MIN_VIDEO_SIZE) return;
+    if (!isMatchedVideoFile(file, { minVideoSize: MIN_VIDEO_SIZE })) return;
+    const parsed = forcedEpisode || parseTorboxFileEpisode(path, meta);
+    const fileTitle = path.split('/').pop() || path;
+    const base = {
+      info_hash: hash,
+      file_index: fileIndex,
+      file_path: path,
+      file_title: fileTitle,
+      file_size: fileSize,
+      imdb_id: imdbId
+    };
+    if (parsed?.season && parsed?.episode) {
+      base.imdb_season = parsed.season;
+      base.imdb_episode = parsed.episode;
+      episodeFiles.push({
+        info_hash: hash,
+        file_index: fileIndex,
+        title: fileTitle,
+        size: fileSize,
+        imdb_id: imdbId,
+        imdb_season: parsed.season,
+        imdb_episode: parsed.episode
+      });
+    } else if (meta?.isEpisodeRequest && meta?.season && meta?.episode && result?.file_id === fileIndex && Number(result?.confidence || 0) >= 0.75) {
+      base.imdb_season = safeInt(meta.season, 0);
+      base.imdb_episode = safeInt(meta.episode, 0);
+      episodeFiles.push({
+        info_hash: hash,
+        file_index: fileIndex,
+        title: fileTitle,
+        size: fileSize,
+        imdb_id: imdbId,
+        imdb_season: base.imdb_season,
+        imdb_episode: base.imdb_episode
+      });
+    }
+    packFiles.push(base);
+  };
+
+  for (const file of files.slice(0, 300)) pushFile(file);
+
+  if (files.length === 0 && result?.file_id != null && result?.file_title && result?.file_size) {
+    pushFile({ id: result.file_id, name: result.file_title, size: result.file_size }, meta?.season && meta?.episode ? { season: safeInt(meta.season, 0), episode: safeInt(meta.episode, 0) } : null);
+  }
+
+  const keyFor = (row) => `${row.info_hash}:${row.file_index}:${row.imdb_season || 0}:${row.imdb_episode || 0}`;
+  const seenPack = new Set();
+  const seenEpisode = new Set();
+  return {
+    packFiles: packFiles.filter((row) => {
+      const key = keyFor(row);
+      if (seenPack.has(key)) return false;
+      seenPack.add(key);
+      return true;
+    }),
+    episodeFiles: episodeFiles.filter((row) => {
+      const key = keyFor(row);
+      if (seenEpisode.has(key)) return false;
+      seenEpisode.add(key);
+      return true;
+    })
+  };
+}
+
+async function persistTorboxPackFileRows(entries, results, dbHelper) {
+  if (!dbHelper || !Array.isArray(entries) || entries.length === 0) return;
+  const allPackFiles = [];
+  const allEpisodeFiles = [];
+  for (const entry of entries) {
+    const result = results?.[entry.hash];
+    if (!result) continue;
+    const rows = normalizeTorboxPackFileRows(entry, result);
+    if (rows.packFiles.length) allPackFiles.push(...rows.packFiles);
+    if (rows.episodeFiles.length) allEpisodeFiles.push(...rows.episodeFiles);
+  }
+  try {
+    if (allEpisodeFiles.length > 0 && typeof dbHelper.insertEpisodeFiles === 'function') await dbHelper.insertEpisodeFiles(allEpisodeFiles);
+  } catch (_) {}
+  try {
+    if (allPackFiles.length > 0 && typeof dbHelper.insertPackFiles === 'function') await dbHelper.insertPackFiles(allPackFiles);
+  } catch (_) {}
+}
+
 function pruneLocalAvailabilityCache() {
   if (localAvailabilityCache.size <= LOCAL_AVAILABILITY_MAX_ENTRIES) return;
   const now = Date.now();
@@ -665,7 +791,8 @@ function parseHashResult(hash, info, meta = null) {
       file_id: bestId,
       confidence,
       match_score: score,
-      match_reason: reason || "file_verified"
+      match_reason: reason || "file_verified",
+      files: info.files
     })];
   }
 
@@ -677,7 +804,8 @@ function parseHashResult(hash, info, meta = null) {
     file_id: null,
     confidence,
     match_score: score,
-    match_reason: reason || "file_match_uncertain"
+    match_reason: reason || "file_match_uncertain",
+    files: info.files
   })];
 }
 
@@ -934,6 +1062,7 @@ async function checkCacheSync(items, token, dbHelper, limit = DEFAULT_SYNC_LIMIT
 
   const apiResults = await checkHashes(entries, token);
   await persistAvailabilityResults(entries, apiResults, dbHelper);
+  await persistTorboxPackFileRows(entries, apiResults, dbHelper);
 
   const results = {};
   const updates = [];
@@ -972,6 +1101,7 @@ async function enrichCacheBackground(items, token, dbHelper) {
   const { hits, missing } = await readCachedAvailability(entries, dbHelper);
   const apiResults = missing.length > 0 ? await checkHashes(missing, token) : {};
   await persistAvailabilityResults(missing, apiResults, dbHelper);
+  await persistTorboxPackFileRows(missing, apiResults, dbHelper);
   const mergedResults = { ...hits, ...apiResults };
   const updates = entries.map((entry) => buildDbUpdate(entry.hash, mergedResults[entry.hash] || makeCacheResult(TB_CACHE_STATES.UNCACHED, { match_reason: "not_returned" }), entry.meta));
   await flushDbUpdates(dbHelper, updates);
