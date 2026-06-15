@@ -483,7 +483,9 @@ function registerPlaybackRoutes(app, {
                             matchReason: fastAvailability.matchReason,
                             title: playbackMeta?.title || item.title,
                             originalTitle: playbackMeta?.originalTitle || null,
-                            year: playbackMeta?.year || null
+                            year: playbackMeta?.year || null,
+                            requestedKitsuEpisode: playbackMeta?.requested_kitsu_episode || item?.requested_kitsu_episode || null,
+                            absoluteEpisode: playbackMeta?.requested_kitsu_episode || playbackMeta?.anime_absolute_episode || item?.requested_kitsu_episode || null
                         }
                     ));
                     if (streamData?.url) incrementMetric('lazyPlay.tbAvailabilityFastPath');
@@ -492,7 +494,7 @@ function registerPlaybackRoutes(app, {
 
             if (!streamData) {
                 streamData = await LIMITERS.lazyPlay.schedule(() =>
-                    resolveLazyStreamData(requestedService, apiKey, item, { ...(playbackMeta || {}), season: item.season, episode: item.episode, title: playbackMeta?.title || item.title, originalTitle: playbackMeta?.originalTitle || item.originalTitle || null, year: playbackMeta?.year || item.year || null })
+                    resolveLazyStreamData(requestedService, apiKey, item, { ...(playbackMeta || {}), season: item.season, episode: item.episode, title: playbackMeta?.title || item.title, originalTitle: playbackMeta?.originalTitle || item.originalTitle || null, year: playbackMeta?.year || item.year || null, requested_kitsu_episode: playbackMeta?.requested_kitsu_episode || item?.requested_kitsu_episode || null, anime_absolute_episode: playbackMeta?.anime_absolute_episode || null })
                 );
             }
 
