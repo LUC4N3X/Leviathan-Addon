@@ -977,12 +977,39 @@ function createTorrentRepository({
     const isSeriesEpisode = normalizedSeason !== null && normalizedSeason > 0 && normalizedEpisode !== null && normalizedEpisode > 0;
 
     const params = isSeriesEpisode
-      ? [normalizedImdb, normalizedSeason, normalizedEpisode, TB_VERIFIED_HARD_MAX_AGE_DAYS]
-      : [normalizedImdb, TB_VERIFIED_HARD_MAX_AGE_DAYS];
+      ? [normalizedImdb, normalizedSeason, normalizedEpisode, TB_VERIFIED_HARD_MAX_AGE_DAYS, DB_AUTHORITY_READ]
+      : [normalizedImdb, TB_VERIFIED_HARD_MAX_AGE_DAYS, DB_AUTHORITY_READ];
 
     const query = isSeriesEpisode
       ? `
-        WITH episode_matches AS (
+        WITH authority_matches AS (
+          SELECT
+            info_hash_norm AS hash_norm,
+            CASE
+              WHEN service_file_id IS NOT NULL AND service_file_id >= 0 THEN service_file_id
+              WHEN file_index IS NOT NULL THEN file_index
+              ELSE -1
+            END AS matched_file_index,
+            CASE
+              WHEN service_file_id IS NOT NULL AND service_file_id >= 0 THEN service_file_id
+              WHEN file_index IS NOT NULL THEN file_index
+              ELSE -1
+            END AS matched_file_index_norm,
+            COALESCE(NULLIF(payload_json->>'file_title', ''), NULLIF(payload_json->>'name', ''), info_hash_norm) AS matched_file_title,
+            service_file_size AS matched_file_size,
+            0 AS source_rank
+          FROM debrid_authority
+          WHERE $5::boolean IS TRUE
+            AND service = 'tb'
+            AND imdb_id = $1
+            AND season = $2
+            AND episode = $3
+            AND info_hash_norm IS NOT NULL
+            AND state IN ('cached_verified','likely_cached','queued','probing','uncertain')
+            AND (checked_at IS NULL OR checked_at >= NOW() - INTERVAL '90 days')
+            AND (expires_at IS NULL OR expires_at >= NOW() - INTERVAL '6 hours')
+        ),
+        episode_matches AS (
           SELECT
             info_hash_norm AS hash_norm,
             file_index AS matched_file_index,
@@ -1008,6 +1035,17 @@ function createTorrentRepository({
           WHERE imdb_id = $1
             AND imdb_season = $2
             AND imdb_episode = $3
+
+          UNION ALL
+
+          SELECT
+            hash_norm,
+            matched_file_index,
+            matched_file_index_norm,
+            matched_file_title,
+            matched_file_size,
+            source_rank
+          FROM authority_matches
         ),
         dedup_matches AS (
           SELECT DISTINCT ON (hash_norm, matched_file_index_norm)
@@ -1037,6 +1075,35 @@ function createTorrentRepository({
           WHERE imdb_id = $1
             AND imdb_season = $2
             AND imdb_episode = $3
+        ),
+        best_tb_authority AS (
+          SELECT DISTINCT ON (info_hash_norm)
+            info_hash_norm,
+            cached,
+            state,
+            confidence,
+            match_reason,
+            next_check_at,
+            failure_count,
+            service_file_id,
+            service_file_size,
+            checked_at
+          FROM debrid_authority
+          WHERE $5::boolean IS TRUE
+            AND service = 'tb'
+            AND imdb_id = $1
+            AND season = $2
+            AND episode = $3
+            AND info_hash_norm IS NOT NULL
+            AND state IN ('cached_verified','likely_cached','queued','probing','uncertain','uncached','uncached_terminal','error')
+            AND (checked_at IS NULL OR checked_at >= NOW() - INTERVAL '90 days')
+            AND (expires_at IS NULL OR expires_at >= NOW() - INTERVAL '6 hours')
+          ORDER BY
+            info_hash_norm,
+            CASE WHEN state = 'cached_verified' THEN 7 WHEN state = 'likely_cached' THEN 6 WHEN state IN ('queued','probing') THEN 5 WHEN state = 'uncertain' THEN 4 WHEN state IN ('uncached','uncached_terminal') THEN 2 WHEN state = 'error' THEN 1 ELSE 0 END DESC,
+            CASE WHEN proof_level = 'episode_exact' THEN 5 WHEN proof_level = 'file_exact' THEN 4 WHEN proof_level = 'file_list' THEN 3 ELSE 0 END DESC,
+            confidence DESC,
+            checked_at DESC NULLS LAST
         )
         SELECT DISTINCT ON (t.info_hash_norm, COALESCE(m.matched_file_index_norm, t.file_index_norm))
           t.title,
@@ -1061,10 +1128,10 @@ function createTorrentRepository({
           t.last_seen_at,
           t.seen_count,
           t.max_seeders,
-          COALESCE(m.matched_file_index, t.file_index) AS file_index,
-          m.matched_file_index,
+          COALESCE(m.matched_file_index, a.service_file_id, t.file_index) AS file_index,
+          COALESCE(m.matched_file_index, a.service_file_id) AS matched_file_index,
           m.matched_file_title,
-          m.matched_file_size,
+          COALESCE(m.matched_file_size, a.service_file_size) AS matched_file_size,
           t.cached_rd,
           t.rd_cache_state,
           COALESCE(o.rd_file_index, t.rd_file_index) AS rd_file_index,
@@ -1072,26 +1139,33 @@ function createTorrentRepository({
           t.last_cached_check,
           t.next_cached_check,
           t.cache_check_failures,
-          t.tb_cached,
-          t.tb_cache_state,
-          t.tb_cache_confidence,
-          t.tb_cache_match_reason,
-          t.tb_next_cached_check,
-          t.tb_cache_check_failures,
-          COALESCE(o.tb_file_id, t.tb_file_id) AS tb_file_id,
-          COALESCE(o.tb_file_size, t.tb_file_size) AS tb_file_size,
-          t.tb_last_cached_check
+          COALESCE(a.cached, t.tb_cached) AS tb_cached,
+          COALESCE(a.state, t.tb_cache_state) AS tb_cache_state,
+          GREATEST(COALESCE(a.confidence, 0), COALESCE(t.tb_cache_confidence, 0)) AS tb_cache_confidence,
+          COALESCE(NULLIF(a.match_reason, ''), t.tb_cache_match_reason) AS tb_cache_match_reason,
+          COALESCE(a.next_check_at, t.tb_next_cached_check) AS tb_next_cached_check,
+          GREATEST(COALESCE(a.failure_count, 0), COALESCE(t.tb_cache_check_failures, 0)) AS tb_cache_check_failures,
+          COALESCE(o.tb_file_id, a.service_file_id, t.tb_file_id) AS tb_file_id,
+          COALESCE(o.tb_file_size, a.service_file_size, t.tb_file_size) AS tb_file_size,
+          CASE
+            WHEN a.checked_at IS NULL THEN t.tb_last_cached_check
+            WHEN t.tb_last_cached_check IS NULL THEN a.checked_at
+            ELSE GREATEST(a.checked_at, t.tb_last_cached_check)
+          END AS tb_last_cached_check
         FROM dedup_matches m
         JOIN torrents t
           ON t.info_hash_norm = m.hash_norm
         LEFT JOIN episode_overrides o
           ON o.hash_norm = t.info_hash_norm
+        LEFT JOIN best_tb_authority a
+          ON a.info_hash_norm = t.info_hash_norm
         ORDER BY
           t.info_hash_norm,
           COALESCE(m.matched_file_index_norm, t.file_index_norm),
           CASE WHEN COALESCE(o.rd_file_index, t.rd_file_index) IS NOT NULL THEN 1 ELSE 0 END DESC,
           CASE WHEN t.cached_rd IS TRUE THEN 1 ELSE 0 END DESC,
-          CASE WHEN (t.tb_cache_state = 'cached_verified' OR t.tb_cached IS TRUE) AND t.tb_last_cached_check >= NOW() - ($4::integer * INTERVAL '1 day') THEN 1 ELSE 0 END DESC,
+          CASE WHEN (COALESCE(a.state, t.tb_cache_state) = 'cached_verified' OR COALESCE(a.cached, t.tb_cached) IS TRUE) AND COALESCE(a.checked_at, t.tb_last_cached_check) >= NOW() - ($4::integer * INTERVAL '1 day') THEN 1 ELSE 0 END DESC,
+          CASE WHEN m.source_rank = 0 THEN 1 ELSE 0 END DESC,
           CASE
             WHEN COALESCE(t.resolution, t.title) ~* '(4320p|8k)' THEN 5
             WHEN COALESCE(t.resolution, t.title) ~* '(2160p|4k|uhd)' THEN 4
@@ -1103,22 +1177,101 @@ function createTorrentRepository({
           GREATEST(COALESCE(t.seeders, 0), COALESCE(t.max_seeders, 0)) DESC,
           COALESCE(t.seen_count, 0) DESC,
           COALESCE(t.last_seen_at, t.updated_at, t.created_at) DESC NULLS LAST,
-          COALESCE(m.matched_file_size, t.folder_size, t.rd_file_size, t.size, 0) DESC
+          COALESCE(m.matched_file_size, a.service_file_size, t.folder_size, t.rd_file_size, t.size, 0) DESC
       `
       : `
-        WITH matched_files AS (
-          SELECT DISTINCT ON (info_hash_norm, file_index_norm)
+        WITH authority_matches AS (
+          SELECT
+            info_hash_norm,
+            CASE
+              WHEN service_file_id IS NOT NULL AND service_file_id >= 0 THEN service_file_id
+              WHEN file_index IS NOT NULL THEN file_index
+              ELSE -1
+            END AS file_index_norm,
+            CASE
+              WHEN service_file_id IS NOT NULL AND service_file_id >= 0 THEN service_file_id
+              WHEN file_index IS NOT NULL THEN file_index
+              ELSE -1
+            END AS matched_file_index,
+            COALESCE(NULLIF(payload_json->>'file_title', ''), NULLIF(payload_json->>'name', ''), info_hash_norm) AS matched_file_title,
+            service_file_size AS matched_file_size,
+            0 AS source_rank
+          FROM debrid_authority
+          WHERE $3::boolean IS TRUE
+            AND service = 'tb'
+            AND imdb_id = $1
+            AND (season IS NULL OR season = 0)
+            AND (episode IS NULL OR episode = 0)
+            AND info_hash_norm IS NOT NULL
+            AND state IN ('cached_verified','likely_cached','queued','probing','uncertain')
+            AND (checked_at IS NULL OR checked_at >= NOW() - INTERVAL '90 days')
+            AND (expires_at IS NULL OR expires_at >= NOW() - INTERVAL '6 hours')
+        ),
+        movie_matches AS (
+          SELECT
             info_hash_norm,
             file_index_norm,
             file_index AS matched_file_index,
             title AS matched_file_title,
-            size AS matched_file_size
+            size AS matched_file_size,
+            1 AS source_rank
           FROM files
           WHERE imdb_id = $1
             AND (imdb_season IS NULL OR imdb_season = 0)
-          ORDER BY info_hash_norm, file_index_norm, COALESCE(size, 0) DESC, LENGTH(COALESCE(title, '')) DESC
+
+          UNION ALL
+
+          SELECT
+            info_hash_norm,
+            file_index_norm,
+            matched_file_index,
+            matched_file_title,
+            matched_file_size,
+            source_rank
+          FROM authority_matches
+        ),
+        matched_files AS (
+          SELECT DISTINCT ON (info_hash_norm, file_index_norm)
+            info_hash_norm,
+            file_index_norm,
+            matched_file_index,
+            matched_file_title,
+            matched_file_size,
+            source_rank
+          FROM movie_matches
+          WHERE info_hash_norm IS NOT NULL
+          ORDER BY info_hash_norm, file_index_norm, source_rank ASC, COALESCE(matched_file_size, 0) DESC, LENGTH(COALESCE(matched_file_title, '')) DESC
+        ),
+        best_tb_authority AS (
+          SELECT DISTINCT ON (info_hash_norm)
+            info_hash_norm,
+            cached,
+            state,
+            confidence,
+            match_reason,
+            next_check_at,
+            failure_count,
+            service_file_id,
+            service_file_size,
+            checked_at
+          FROM debrid_authority
+          WHERE $3::boolean IS TRUE
+            AND service = 'tb'
+            AND imdb_id = $1
+            AND (season IS NULL OR season = 0)
+            AND (episode IS NULL OR episode = 0)
+            AND info_hash_norm IS NOT NULL
+            AND state IN ('cached_verified','likely_cached','queued','probing','uncertain','uncached','uncached_terminal','error')
+            AND (checked_at IS NULL OR checked_at >= NOW() - INTERVAL '90 days')
+            AND (expires_at IS NULL OR expires_at >= NOW() - INTERVAL '6 hours')
+          ORDER BY
+            info_hash_norm,
+            CASE WHEN state = 'cached_verified' THEN 7 WHEN state = 'likely_cached' THEN 6 WHEN state IN ('queued','probing') THEN 5 WHEN state = 'uncertain' THEN 4 WHEN state IN ('uncached','uncached_terminal') THEN 2 WHEN state = 'error' THEN 1 ELSE 0 END DESC,
+            CASE WHEN proof_level = 'episode_exact' THEN 5 WHEN proof_level = 'file_exact' THEN 4 WHEN proof_level = 'file_list' THEN 3 ELSE 0 END DESC,
+            confidence DESC,
+            checked_at DESC NULLS LAST
         )
-        SELECT DISTINCT ON (t.info_hash_norm, t.file_index_norm)
+        SELECT DISTINCT ON (t.info_hash_norm, COALESCE(f.file_index_norm, t.file_index_norm))
           t.title,
           TRIM(t.info_hash) AS info_hash,
           t.size,
@@ -1141,10 +1294,10 @@ function createTorrentRepository({
           t.last_seen_at,
           t.seen_count,
           t.max_seeders,
-          COALESCE(f.matched_file_index, t.file_index) AS file_index,
-          f.matched_file_index,
+          COALESCE(f.matched_file_index, a.service_file_id, t.file_index) AS file_index,
+          COALESCE(f.matched_file_index, a.service_file_id) AS matched_file_index,
           f.matched_file_title,
-          f.matched_file_size,
+          COALESCE(f.matched_file_size, a.service_file_size) AS matched_file_size,
           t.cached_rd,
           t.rd_cache_state,
           t.rd_file_index,
@@ -1152,27 +1305,30 @@ function createTorrentRepository({
           t.last_cached_check,
           t.next_cached_check,
           t.cache_check_failures,
-          t.tb_cached,
-          t.tb_cache_state,
-          t.tb_cache_confidence,
-          t.tb_cache_match_reason,
-          t.tb_next_cached_check,
-          t.tb_cache_check_failures,
-          t.tb_file_id,
-          t.tb_file_size,
-          t.tb_last_cached_check
+          COALESCE(a.cached, t.tb_cached) AS tb_cached,
+          COALESCE(a.state, t.tb_cache_state) AS tb_cache_state,
+          GREATEST(COALESCE(a.confidence, 0), COALESCE(t.tb_cache_confidence, 0)) AS tb_cache_confidence,
+          COALESCE(NULLIF(a.match_reason, ''), t.tb_cache_match_reason) AS tb_cache_match_reason,
+          COALESCE(a.next_check_at, t.tb_next_cached_check) AS tb_next_cached_check,
+          GREATEST(COALESCE(a.failure_count, 0), COALESCE(t.tb_cache_check_failures, 0)) AS tb_cache_check_failures,
+          COALESCE(a.service_file_id, t.tb_file_id) AS tb_file_id,
+          COALESCE(a.service_file_size, t.tb_file_size) AS tb_file_size,
+          CASE
+            WHEN a.checked_at IS NULL THEN t.tb_last_cached_check
+            WHEN t.tb_last_cached_check IS NULL THEN a.checked_at
+            ELSE GREATEST(a.checked_at, t.tb_last_cached_check)
+          END AS tb_last_cached_check
         FROM matched_files f
         JOIN torrents t
           ON t.info_hash_norm = f.info_hash_norm
-         AND (
-           f.file_index_norm = -1
-           OR t.file_index_norm = f.file_index_norm
-         )
+        LEFT JOIN best_tb_authority a
+          ON a.info_hash_norm = t.info_hash_norm
         ORDER BY
           t.info_hash_norm,
-          t.file_index_norm,
+          COALESCE(f.file_index_norm, t.file_index_norm),
           CASE WHEN t.cached_rd IS TRUE THEN 1 ELSE 0 END DESC,
-          CASE WHEN (t.tb_cache_state = 'cached_verified' OR t.tb_cached IS TRUE) AND t.tb_last_cached_check >= NOW() - ($2::integer * INTERVAL '1 day') THEN 1 ELSE 0 END DESC,
+          CASE WHEN (COALESCE(a.state, t.tb_cache_state) = 'cached_verified' OR COALESCE(a.cached, t.tb_cached) IS TRUE) AND COALESCE(a.checked_at, t.tb_last_cached_check) >= NOW() - ($2::integer * INTERVAL '1 day') THEN 1 ELSE 0 END DESC,
+          CASE WHEN f.source_rank = 0 THEN 1 ELSE 0 END DESC,
           CASE
             WHEN COALESCE(t.resolution, t.title) ~* '(4320p|8k)' THEN 5
             WHEN COALESCE(t.resolution, t.title) ~* '(2160p|4k|uhd)' THEN 4
@@ -1184,7 +1340,7 @@ function createTorrentRepository({
           GREATEST(COALESCE(t.seeders, 0), COALESCE(t.max_seeders, 0)) DESC,
           COALESCE(t.seen_count, 0) DESC,
           COALESCE(t.last_seen_at, t.updated_at, t.created_at) DESC NULLS LAST,
-          COALESCE(t.folder_size, t.size, 0) DESC
+          COALESCE(f.matched_file_size, a.service_file_size, t.folder_size, t.size, 0) DESC
       `;
 
     try {
@@ -2234,6 +2390,7 @@ function createTorrentRepository({
           next_hours: nextHours,
           permanent,
           title: sanitizeText(entry?.torrent_title || entry?.title),
+          fileTitle: sanitizeText(entry?.file_title || entry?.tb_file_title),
           size: Math.max(0, toSafeNumber(entry?.size, 0)),
           imdb_id: identity.imdbId,
           imdb_season: identity.imdbSeason,
@@ -2422,7 +2579,12 @@ function createTorrentRepository({
             title: row.title,
             size: row.size,
             confidence: row.tb_cache_confidence,
-            match_reason: row.tb_cache_match_reason || 'tb_cache_status_update'
+            match_reason: row.tb_cache_match_reason || 'tb_cache_status_update',
+            payload: {
+              file_title: row.fileTitle || null,
+              file_size: row.fileSize || null,
+              torrent_title: row.title || null
+            }
           });
 
           const result = await client.query(
