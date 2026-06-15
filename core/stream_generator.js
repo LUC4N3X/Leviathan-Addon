@@ -377,6 +377,18 @@ function isConfidentSeasonPackItem(item = {}, meta = {}, type = '') {
     return hasStrictSeasonPackCue(item, meta, type);
 }
 
+function isMovieCollectionPackCandidate(item = {}, meta = {}) {
+    if (!item || meta?.isSeries || meta?.season || meta?.episode) return false;
+    const hash = getCandidateInfoHash(item);
+    if (!hash) return false;
+    if (hasFolderSizeSeasonPackSignal(item)) return true;
+    const joined = collectCandidatePackTexts(item).join(' ');
+    if (!joined) return false;
+    if (/\b(?:collection|collezione|raccolta|trilogy|trilogia|quadrilogy|tetralogy|duology|saga|complete|completa|box\s*set|boxset|pack|film\s*pack)\b/i.test(joined)) return true;
+    const title = normalizeSearchText(meta?.title || meta?.name || '');
+    if (title && new RegExp(`${escapeRegExpLocal(title)}.{0,80}\\b(?:19\\d{2}|20\\d{2})\\b.{0,80}\\b(?:19\\d{2}|20\\d{2})\\b`, 'i').test(normalizeSearchText(joined))) return true;
+    return false;
+}
 function buildExternalAddonRequestIds(type, finalId, meta = {}) {
     const cleanType = String(type || '').toLowerCase() === 'anime' ? 'series' : String(type || '').toLowerCase();
     const rawFinalId = String(finalId || '').replace(/\.json$/i, '').trim();
@@ -1951,6 +1963,7 @@ function getTorboxDbCandidateScore(item = {}, meta = {}) {
     if (item?._localDb === true) score += 220000;
     if (item?._myDb === true || item?._dbPrimary === true) score += 180000;
     if (item?._externalSnapshot === true || item?._remoteDb === true) score += 90000;
+    if (item?._querySnapshot === true || item?._fromQuerySnapshot === true) score += 120000;
     if (item?._tbDbLastCachedCheck || item?.tb_last_cached_check) score += 70000;
     if (item?._tbDbNextCachedCheck || item?.tb_next_cached_check) score += 25000;
     score += Math.min(Math.max(Number(item?.seeders || item?.max_seeders || 0) || 0, 0), 4000);
@@ -1992,6 +2005,8 @@ function isTorboxDbBackedCandidate(item = {}) {
         item?._remoteDb === true ||
         item?._dbPrimary === true ||
         item?._externalSnapshot === true ||
+        item?._querySnapshot === true ||
+        item?._fromQuerySnapshot === true ||
         item?._dbEpisodeMapping === true ||
         item?._tbDbCachedHint === true ||
         item?._tbDbLastCachedCheck ||
@@ -1999,7 +2014,8 @@ function isTorboxDbBackedCandidate(item = {}) {
         item?.tb_last_cached_check ||
         item?.tb_cache_state ||
         group.includes('db') ||
-        group.includes('snapshot')
+        group.includes('snapshot') ||
+        group.includes('query')
     );
 }
 
@@ -2235,6 +2251,18 @@ function logBlockedTorrentioStyleBadRelease(item = {}, parseTitle = '', displayT
     logger.info(`[STREAM BLOCKED] skip | reason=torrentio_bad_release:${reason} stage=${stage} hash=${item?.hash || 'n/a'} fileIdx=${getResolvedFileIdx(item) ?? 'n/a'} title="${text || 'n/a'}"`);
 }
 
+
+function inferBingeReleaseGroup(item = {}, details = {}, title = '') {
+    const direct = item?.releaseGroup || item?.release_group || item?.group || item?.uploader || details?.releaseGroup || details?.release_group || details?.group;
+    if (direct) return String(direct).slice(0, 64);
+    const text = String(title || item?.title || item?.filename || item?.file_title || '').replace(/\.[a-z0-9]{2,5}$/i, ' ');
+    const bracket = text.match(/[\[\(]([A-Za-z0-9][A-Za-z0-9._-]{1,40})[\]\)]\s*$/);
+    if (bracket) return bracket[1];
+    const dash = text.match(/-\s*([A-Za-z0-9][A-Za-z0-9._]{1,40})\s*$/);
+    if (dash && !/^(ita|eng|multi|sub|subs|aac|ac3|eac3|dts|webrip|webdl|bluray|hdtv)$/i.test(dash[1])) return dash[1];
+    return '';
+}
+
 function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitle, sizeBytes, seeders, config, meta, isLazy = false, isPack = false }) {
     const normalizedService = String(service || '').toLowerCase();
     const isAIOActive = aioFormatter.isAIOStreamsEnabled(config);
@@ -2255,7 +2283,18 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
     const isSavedCloudStream = Boolean(item?.isSavedCloud || item?._savedCloud || item?.savedCloud);
     const formatterSource = item?.source;
     const displayLanguage = formatLanguageLabel(languageInfo, details.languages, getEffectiveLangMode(config, meta));
-    const qualityCompatibleBingeGroup = buildQualityCompatibleBingeGroup({ service: serviceLabel, quality, details, infoHash: item?.hash, releaseGroup: item?.releaseGroup || item?.group, language: displayLanguage });
+    const hasSeriesContext = Boolean(meta?.isSeries || meta?.isAnime || meta?.kitsu_id || Number(meta?.season || 0) > 0 || Number(meta?.episode || meta?.requested_kitsu_episode || 0) > 0);
+    const releaseGroupForBinge = inferBingeReleaseGroup(item, details, baseParseTitle);
+    const qualityCompatibleBingeGroup = buildQualityCompatibleBingeGroup({
+        service: serviceLabel,
+        quality,
+        details,
+        infoHash: item?.hash,
+        releaseGroup: releaseGroupForBinge,
+        language: displayLanguage,
+        source: formatterSource || item?.externalProvider || item?.provider,
+        isSeries: hasSeriesContext
+    });
     const rankExplainText = item?._leviathanExplainText || item?._leviathanExplain?.text || (Array.isArray(item?._leviathanScoreExplain) ? item._leviathanScoreExplain.join(' | ') : undefined);
     const rankScore = Number.isFinite(Number(item?._leviathanScore))
         ? Number(item._leviathanScore)
@@ -2301,7 +2340,6 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         };
     }
 
-    const hasSeriesContext = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
     const selectorConfig = {
         ...config,
         season: hasSeriesContext ? Number(meta?.season || 0) : 0,
@@ -2318,7 +2356,8 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         fileName: item?.episodeFileHint?.fileName || item?._episodeFileHint?.fileName || item?.filename || item?.fileName || item?.file_title || ''
     };
     const safeIsPack = Boolean(hasSeriesContext && isPack);
-    const { name, title, bingeGroup } = formatStreamSelector(baseParseTitle, formatterSource, sizeBytes, seeders, serviceLabel, selectorConfig, item?.hash, isLazy, safeIsPack, availabilityState);
+    const { name, title, bingeGroup: selectorBingeGroup } = formatStreamSelector(baseParseTitle, formatterSource, sizeBytes, seeders, serviceLabel, selectorConfig, item?.hash, isLazy, safeIsPack, availabilityState);
+    const finalBingeGroup = qualityCompatibleBingeGroup || selectorBingeGroup;
     return {
         name,
         title,
@@ -2328,8 +2367,8 @@ function buildPlayableStream({ service, item, streamUrl, displayTitle, parseTitl
         folderSize: getObservedFolderSizeBytes(item) || undefined,
         behaviorHints: {
             notWebReady: false,
-            bingeGroup,
-            bingieGroup: bingeGroup,
+            bingeGroup: finalBingeGroup,
+            bingieGroup: finalBingeGroup,
             infoHash: item?.hash,
             fileIdx: getResolvedFileIdx(item),
             folderSize: getObservedFolderSizeBytes(item) || undefined,
@@ -2716,11 +2755,11 @@ async function persistPackResolution(meta, item, resolved) {
 }
 
 function resolvePackNamesInBackground(meta, results, config, type = null) {
-    if (!meta || !meta.isSeries || !config || !Array.isArray(results) || results.length === 0) return;
+    if (!meta || !config || !Array.isArray(results) || results.length === 0) return;
     const effectiveType = String(type || meta?.type || meta?.contentType || (meta?.isSeries || meta?.season || meta?.episode ? 'series' : 'movie')).toLowerCase();
     const hasResolvableService = !!((config.service === 'rd' && (config.key || config.rd)) || (config.service === 'tb' && (config.key || config.rd || config.torbox || config.tb)));
     if (!hasResolvableService) return;
-    const allPackCandidates = results.filter(item => item && isConfidentSeasonPackItem(item, meta, effectiveType));
+    const allPackCandidates = results.filter(item => item && (isConfidentSeasonPackItem(item, meta, effectiveType) || isMovieCollectionPackCandidate(item, meta)));
     if (allPackCandidates.length === 0) return;
     const hasItaSignal = (item) => /\b(?:ita|italian|italiano|multi)\b|🇮🇹/i.test([item?.title, item?.name, item?.filename, item?.fileName, item?.packTitle, item?.source, item?.externalProvider].filter(Boolean).join(' '));
     const packCandidates = [...allPackCandidates]
@@ -2733,7 +2772,7 @@ function resolvePackNamesInBackground(meta, results, config, type = null) {
 
     LIMITERS.bgPackJobs.schedule(async () => {
         for (const item of packCandidates) {
-            const packKey = `${String(item?.hash || item?.infoHash || '').toLowerCase()}:${Number(meta?.season || 0)}:${Number(meta?.episode || 0)}`;
+            const packKey = `${String(item?.hash || item?.infoHash || '').toLowerCase()}:${Number(meta?.season || 0)}:${Number(meta?.episode || meta?.requested_kitsu_episode || 0)}:${effectiveType}`;
             if (!packKey || shouldSkipRecentWork(recentPackResolutionJobs, packKey, BACKGROUND_DB_SAVE_DEDUP_MS * 2)) continue;
             try {
                 await scheduleKeyed(
@@ -4716,6 +4755,93 @@ async function fetchExternalSnapshotResults(meta = {}, type = 'movie', langMode 
     }
 }
 
+
+function getQuerySnapshotSourceSignature(config = {}, type = '') {
+    const filters = config?.filters || {};
+    const service = getNormalizedDebridService(config) || String(config?.service || 'any').toLowerCase() || 'any';
+    const mode = String(filters.sourceMode || filters.source_mode || 'auto').toLowerCase();
+    const providers = Array.isArray(filters.providers) ? filters.providers.join(',') : String(filters.providers || 'default');
+    const mediaType = String(type || filters.type || 'any').toLowerCase();
+    return [service, mode, mediaType, providers]
+        .join('|')
+        .replace(/[^a-z0-9|,._-]+/gi, '-')
+        .slice(0, 96) || 'default';
+}
+
+function getQuerySnapshotTtlSeconds(meta = {}, type = '', items = []) {
+    const explicit = parseInt(process.env.QUERY_SNAPSHOT_TTL || '', 10);
+    if (Number.isFinite(explicit) && explicit > 0) return Math.max(60, Math.min(explicit, 3 * 24 * 60 * 60));
+    const isSeriesLike = Boolean(meta?.isSeries || meta?.isAnime || meta?.kitsu_id || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0 || String(type || '').toLowerCase() === 'series');
+    const count = Array.isArray(items) ? items.length : 0;
+    if (isSeriesLike) return count >= 12 ? 8 * 60 * 60 : 4 * 60 * 60;
+    return count >= 18 ? 12 * 60 * 60 : 6 * 60 * 60;
+}
+
+async function fetchQuerySnapshotResults(meta = {}, type = 'movie', langMode = 'ita', config = {}) {
+    if (!dbHelper || typeof dbHelper.getQueryCandidateSnapshot !== 'function') return [];
+    if (!meta?.imdb_id && !meta?.kitsu_id) return [];
+    try {
+        const rows = await dbHelper.getQueryCandidateSnapshot(meta, {
+            type,
+            langMode,
+            sourceSignature: getQuerySnapshotSourceSignature(config, type),
+            limit: config?.filters?.querySnapshotLimit || process.env.QUERY_SNAPSHOT_READ_LIMIT || 160
+        });
+        const normalized = (Array.isArray(rows) ? rows : [])
+            .map((item) => normalizeExternalCandidateForPipeline({
+                ...item,
+                _querySnapshot: true,
+                _fromQuerySnapshot: true,
+                _externalIdMatched: item?._externalIdMatched !== false,
+                _externalBatch: item?._externalBatch || 'QuerySnapshotDB'
+            }, { type, meta, langMode, config }))
+            .filter(Boolean)
+            .map((item) => ({
+                ...item,
+                _querySnapshot: true,
+                _fromQuerySnapshot: true,
+                _sourceGroup: 'query_snapshot',
+                _fallbackGroup: item._fallbackGroup || 'query_snapshot'
+            }));
+        if (normalized.length > 0) {
+            logger.info(`[QUERY SNAPSHOT] DB hit | id=${meta?.imdb_id || meta?.kitsu_id || 'n/a'} s=${meta?.season || '-'} e=${meta?.episode || meta?.requested_kitsu_episode || '-'} results=${normalized.length}`);
+        }
+        return dedupeExternalCandidates(normalized);
+    } catch (error) {
+        logger.warn(`[QUERY SNAPSHOT] read failed | id=${meta?.imdb_id || meta?.kitsu_id || 'n/a'} | error=${error.message}`);
+        return [];
+    }
+}
+
+function saveQuerySnapshotBackground(meta = {}, results = [], type = 'movie', langMode = 'ita', config = {}) {
+    if (!dbHelper || typeof dbHelper.upsertQueryCandidateSnapshot !== 'function') return;
+    if (!meta?.imdb_id && !meta?.kitsu_id) return;
+    const candidates = (Array.isArray(results) ? results : [])
+        .filter((item) => item && getCandidateInfoHash(item))
+        .slice(0, parseInt(process.env.QUERY_SNAPSHOT_WRITE_LIMIT || '220', 10) || 220);
+    if (candidates.length === 0) return;
+    const sourceSignature = getQuerySnapshotSourceSignature(config, type);
+    const saveKey = `${meta?.imdb_id || meta?.kitsu_id || 'n/a'}:${meta?.season || 0}:${meta?.episode || meta?.requested_kitsu_episode || 0}:${langMode}:${sourceSignature}:${buildResultsSignature(candidates)}`;
+    if (shouldSkipRecentWork(recentBackgroundDbSaves, `query_snapshot:${saveKey}`, BACKGROUND_DB_SAVE_DEDUP_MS)) return;
+    scheduleKeyed('db-save', `query_snapshot:${meta?.imdb_id || meta?.kitsu_id || 'media'}`, async () => {
+        try {
+            const result = await dbHelper.upsertQueryCandidateSnapshot(meta, candidates, {
+                type,
+                langMode,
+                sourceSignature,
+                ttlSeconds: getQuerySnapshotTtlSeconds(meta, type, candidates),
+                limit: process.env.QUERY_SNAPSHOT_WRITE_LIMIT || 220,
+                confidenceScore: Math.min(100, 45 + candidates.length)
+            });
+            if (result?.processed > 0) logger.info(`[QUERY SNAPSHOT] saved | processed=${result.processed} upserted=${result.upserted || 0} id=${meta?.imdb_id || meta?.kitsu_id || 'n/a'}`);
+        } catch (error) {
+            logger.warn(`[QUERY SNAPSHOT] save failed | id=${meta?.imdb_id || meta?.kitsu_id || 'n/a'} | error=${error.message}`);
+        }
+    }, { maxGroupPending: BACKGROUND_DB_SAVE_QUEUE_MAX }).catch((error) => {
+        if (!isQueueOverflowError(error)) logger.warn(`[QUERY SNAPSHOT] queue failed: ${error.message}`);
+    });
+}
+
 async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, config, dbOnlyMode, sourceModeFlags = null, torrentPipelineEnabled = true, langMode, aggressiveFilter, userTmdbKey, seedResults = [] }) {
     if (torrentPipelineEnabled !== true) {
         logger.info(`[TORRENT PIPELINE] Skipped title search for ${meta?.title || finalId} (web-only mode)`);
@@ -4969,7 +5095,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const streamCacheVersionParts = [];
-  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v24|movieDbPriorityVerifiedSkip=v3|tbDbFirst=v2|tbVerifiedRescue=v4|rdDirectNoLazy=v2|rdDownloadFallback=v1|torrentioSmartFallback=v1|torrentHealth=v1');
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v24|movieDbPriorityVerifiedSkip=v3|tbDbFirst=v2|tbVerifiedRescue=v4|rdDirectNoLazy=v2|rdDownloadFallback=v1|torrentioSmartFallback=v1|torrentHealth=v1|querySnapshot=v1|packFileLedger=v2|bingeContinuity=v1');
   // Bust stale web-provider stream lists generated by the temporary MaxStream
   // .m3u8 route. This prevents Stremio/VLC from receiving old cached
   // /extractor/video.m3u8 URLs after the compatibility rollback.
@@ -5081,6 +5207,15 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       const aggressiveFilter = createAggressiveResultFilter(meta, type, langMode);
 
       const localDbEnabled = sourceModeFlags.useLocalDb && torrentPipelineEnabled;
+      const querySnapshotResults = await trace.time('query-snapshots', () => (
+          localDbEnabled && !sourceModeFlags.liveOnlyMode
+              ? fetchQuerySnapshotResults(meta, type, langMode, config)
+              : []
+      ), (items) => ({
+          enabled: localDbEnabled && !sourceModeFlags.liveOnlyMode,
+          results: Array.isArray(items) ? items.length : 0
+      }));
+
       const localDbResults = await trace.time('local-db', () => localDbEnabled ? fetchLocalDbResults(meta) : [], (items) => ({
           enabled: localDbEnabled,
           results: Array.isArray(items) ? items.length : 0
@@ -5101,7 +5236,11 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           enabled: localDbEnabled && !sourceModeFlags.liveOnlyMode,
           results: Array.isArray(items) ? items.length : 0
       }));
-      const dbSeedResults = [...(Array.isArray(localDbResults) ? localDbResults : []), ...(Array.isArray(externalSnapshotResults) ? externalSnapshotResults : [])];
+      const dbSeedResults = [
+          ...(Array.isArray(querySnapshotResults) ? querySnapshotResults : []),
+          ...(Array.isArray(localDbResults) ? localDbResults : []),
+          ...(Array.isArray(externalSnapshotResults) ? externalSnapshotResults : [])
+      ];
       const isMovieDbPriorityPolicy = isMovieTypeForDbPriority(type, meta);
 
       let localDbFastPool = [];
@@ -5120,7 +5259,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           const localDbAssessment = assessFastResultQuality(localDbAssessmentPool, meta, langMode, config);
           localDbSatisfaction = evaluatePoolSatisfaction(localDbAssessment, meta);
           const localVerified = isMovieDbPriorityPolicy ? countMovieDbVerifiedCandidates(localDbPrimaryFastPool) : 0;
-          logger.info(`[DB READ] Trovati ${localDbFastPool.length}/${dbSeedResults.length} torrent/snapshot dal DB locale | torrents=${localDbResults.length} snapshots=${externalSnapshotResults.length} primary=${localDbPrimaryFastPool.length} verified=${localVerified} satisfied=${localDbSatisfaction.satisfied} reason=${localDbSatisfaction.reason}`);
+          logger.info(`[DB READ] Trovati ${localDbFastPool.length}/${dbSeedResults.length} torrent/snapshot dal DB locale | querySnapshots=${querySnapshotResults.length} torrents=${localDbResults.length} snapshots=${externalSnapshotResults.length} primary=${localDbPrimaryFastPool.length} verified=${localVerified} satisfied=${localDbSatisfaction.satisfied} reason=${localDbSatisfaction.reason}`);
           if (isMovieDbPriorityPolicy && localDbPrimaryFastPool.length === 0 && externalSnapshotResults.length > 0) {
               logger.info(`[DB FAST-PATH] movie snapshot-only ignored | snapshots=${externalSnapshotResults.length} -> Remote/Torrentio live required`);
           }
@@ -5186,6 +5325,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
               applyConfiguredTorrentFilters
           });
           trace.stage('torrent-filter', {
+              querySnapshots: querySnapshotResults.length,
               db: localDbResults.length,
               snapshots: externalSnapshotResults.length,
               network: networkResults.length,
@@ -5224,6 +5364,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           logger.info(`[TORRENT PIPELINE] Pool finale filtrato: ${cleanResults.length} risultati.`);
 
           if (!sourceModeFlags.dbOnlyMode && !sourceModeFlags.cacheOnlyMode && networkResults.length > 0) saveResultsToDbBackground(meta, cleanResults, config, type, { invalidateStreamCache: localDbResults.length === 0 });
+          if (localDbEnabled && !sourceModeFlags.liveOnlyMode && !sourceModeFlags.cacheOnlyMode && cleanResults.length > 0) saveQuerySnapshotBackground(meta, cleanResults, type, langMode, config);
 
           rankedList = runSortStage(cleanResults, meta, config, {
               rankAndFilterResults,
