@@ -80,18 +80,42 @@ function parseEpisodeRange(name) {
   return null;
 }
 
-function buildEpisodeRegexes(season, episode) {
-  const s = safeInt(season, 0);
-  const e = safeInt(episode, 0);
-  const e2 = String(e).padStart(2, '0');
-  return [
-    { score: 1600, regex: new RegExp(`\\bS(?:eason)?\\s*0*${s}\\s*[-_. ]*E(?:pisode)?\\s*0*${e}\\b`, 'i') },
-    { score: 1550, regex: new RegExp(`\\b0*${s}x0*${e}\\b`, 'i') },
-    { score: 1500, regex: new RegExp(`\\bS0*${s}[^a-z0-9]{0,4}E0*${e}\\b`, 'i') },
-    { score: 1380, regex: new RegExp(`(^|\\D)${s}${e2}(\\D|$)`, 'i') },
-    { score: 1320, regex: new RegExp(`\\bepisode\\s*0*${e}\\b|\\bep\\s*0*${e}\\b`, 'i') },
-    { score: 980, regex: new RegExp(`(?:^|[\\s._\\-\\[\\]()])0*${e}(?:$|[\\s._\\-\\]\\[()])`, 'i') }
+function getEpisodeTargets(episode, options = {}) {
+  const values = [
+    episode,
+    options?.episode,
+    options?.requestedKitsuEpisode,
+    options?.requested_kitsu_episode,
+    options?.absoluteEpisode,
+    options?.animeAbsoluteEpisode,
+    options?.anime_episode
   ];
+  const out = [];
+  for (const value of values) {
+    const parsed = safeInt(value, 0);
+    if (parsed > 0 && !out.includes(parsed)) out.push(parsed);
+  }
+  return out;
+}
+
+function buildEpisodeRegexes(season, episode, options = {}) {
+  const s = safeInt(season, 0);
+  const requestedEpisode = safeInt(episode, 0);
+  const targets = getEpisodeTargets(episode, options);
+  const out = [];
+  for (const e of targets) {
+    const e2 = String(e).padStart(2, '0');
+    if (s > 0) {
+      out.push({ score: e === requestedEpisode ? 1600 : 1540, regex: new RegExp(`\\bS(?:eason)?\\s*0*${s}\\s*[-_. ]*E(?:pisode)?\\s*0*${e}\\b`, 'i') });
+      out.push({ score: e === requestedEpisode ? 1550 : 1490, regex: new RegExp(`\\b0*${s}x0*${e}\\b`, 'i') });
+      out.push({ score: e === requestedEpisode ? 1500 : 1440, regex: new RegExp(`\\bS0*${s}[^a-z0-9]{0,4}E0*${e}\\b`, 'i') });
+      out.push({ score: e === requestedEpisode ? 1380 : 1280, regex: new RegExp(`(^|\\D)${s}${e2}(\\D|$)`, 'i') });
+    }
+    out.push({ score: e === requestedEpisode ? 1320 : 1400, regex: new RegExp(`\\bepisode\\s*0*${e}\\b|\\bep\\s*0*${e}\\b`, 'i') });
+    out.push({ score: e === requestedEpisode ? 1260 : 1460, regex: new RegExp(`\\bE0*${e}\\b`, 'i') });
+    out.push({ score: e === requestedEpisode ? 980 : 940, regex: new RegExp(`(?:^|[\\s._\\-\\[\\]()])0*${e}(?:$|[\\s._\\-\\]\\[()])`, 'i') });
+  }
+  return out;
 }
 
 function parseExplicitEpisodeHints(name) {
@@ -126,6 +150,17 @@ function hasConflictingExplicitEpisode(name, season, episode) {
   return true;
 }
 
+function hasConflictingExplicitEpisodeForTargets(name, season, episode, options = {}) {
+  const hints = parseExplicitEpisodeHints(name);
+  if (hints.size === 0) return false;
+  const s = safeInt(season, 0);
+  const targets = getEpisodeTargets(episode, options);
+  for (const hint of hints) {
+    const [hintSeason, hintEpisode] = hint.split(':').map((v) => safeInt(v, 0));
+    if (targets.includes(hintEpisode) && (hintSeason === 0 || hintSeason === s || s === 0)) return false;
+  }
+  return true;
+}
 
 const MOVIE_QUALITY_PATTERN = /\b(?:2160p|1080p|720p|480p|4k|uhd|hdr|dv|dolby|vision|bluray|blu[- ]?ray|bdrip|brrip|web[- ]?dl|webrip|web|remux|x264|x265|h264|h265|hevc|avc|aac|ac3|eac3|dts|ita|eng|sub(?:bed)?|multi|dual|proper|repack|extended|unrated|directors?|cut|hdrip|dvdrip|cam|ts|tc|md|ld)\b/gi;
 const MOVIE_STOPWORDS = new Set([
@@ -255,18 +290,18 @@ function buildMovieScore(file, options = {}) {
   return score;
 }
 
-function buildEpisodeScore(file, season, episode) {
+function buildEpisodeScore(file, season, episode, options = {}) {
   const rawName = getFileName(file);
   const name = normalizeName(rawName);
   const size = getFileSize(file);
   let score = 0;
   if (!isVideoFile(file)) return -Infinity;
   if (isExtraFile(file)) return -Infinity;
-  if (hasConflictingExplicitEpisode(rawName, season, episode)) return -Infinity;
+  if (hasConflictingExplicitEpisodeForTargets(rawName, season, episode, options)) return -Infinity;
   score += 300;
   score += Math.min(size / (1024 * 1024 * 50), 150);
   let matched = false;
-  for (const { score: bonus, regex } of buildEpisodeRegexes(season, episode)) {
+  for (const { score: bonus, regex } of buildEpisodeRegexes(season, episode, options)) {
     if (regex.test(rawName) || regex.test(name)) {
       score += bonus;
       matched = true;
@@ -290,7 +325,7 @@ function resolveForcedFileId(files, forcedFileIdx, season = 0, episode = 0, opti
   const byId = list.find((file) => getFileId(file) === raw);
   const selected = byId || (raw < list.length ? list[raw] : null);
   if (!selected) return null;
-  if (season > 0 && episode > 0 && hasConflictingExplicitEpisode(getFileName(selected), season, episode)) return null;
+  if ((season > 0 || getEpisodeTargets(episode, options).length > 0) && hasConflictingExplicitEpisodeForTargets(getFileName(selected), season, episode, options)) return null;
   if (!(season > 0 && episode > 0) && collectTargetMovieTitles(options).length > 0 && !isMovieFileCompatibleWithTarget(selected, options)) return null;
   return getFileId(selected);
 }
@@ -302,9 +337,9 @@ function rankCandidateFiles(files, season, episode, options = {}) {
   const candidates = videoFiles.length > 0 ? videoFiles : list;
   const s = safeInt(season, 0);
   const e = safeInt(episode, 0);
-  const isMovie = s <= 0 && e <= 0;
+  const isMovie = s <= 0 && e <= 0 && getEpisodeTargets(e, options).length === 0;
   return candidates
-    .map((file) => ({ file, score: isMovie ? buildMovieScore(file, options) : buildEpisodeScore(file, s, e), size: getFileSize(file) }))
+    .map((file) => ({ file, score: isMovie ? buildMovieScore(file, options) : buildEpisodeScore(file, s, e, options), size: getFileSize(file) }))
     .filter((item) => Number.isFinite(item.score))
     .sort((a, b) => (b.score - a.score) || (b.size - a.size));
 }
@@ -328,7 +363,7 @@ function matchFileDetailed(files, season, episode, forcedFileIdx = null, options
   if (list.length === 0) return { fileId: null, file: null, confidence: 0, reason: 'no_files', score: -Infinity, proofLevel: 'none' };
   const s = safeInt(season, 0);
   const e = safeInt(episode, 0);
-  const isSeries = s > 0 && e > 0;
+  const isSeries = (s > 0 && e > 0) || getEpisodeTargets(e, options).length > 0;
   const forced = resolveForcedFileId(list, forcedFileIdx, s, e, options);
   if (forced != null) {
     const forcedFile = getFileById(list, forced);
@@ -342,7 +377,7 @@ function matchFileDetailed(files, season, episode, forcedFileIdx = null, options
   }
   if (isSeries) {
     const videos = getVideoFiles(list, options);
-    if (videos.length === 1 && !hasConflictingExplicitEpisode(getFileName(videos[0]), s, e)) {
+    if (videos.length === 1 && !hasConflictingExplicitEpisodeForTargets(getFileName(videos[0]), s, e, options)) {
       return { fileId: getFileId(videos[0]), file: videos[0], confidence: 0.62, reason: 'single_video_uncertain', score: ranked[0]?.score ?? 0, proofLevel: 'file_list' };
     }
     return { fileId: null, file: null, confidence, reason: 'no_confident_episode_file', score: ranked[0]?.score ?? -Infinity, proofLevel: 'file_list' };
@@ -357,7 +392,7 @@ function matchFile(files, season, episode, forcedFileIdx = null, options = {}) {
 
 function matchTorboxFile(files, meta = {}, options = {}) {
   const season = safeInt(meta?.season ?? meta?.s, 0);
-  const episode = safeInt(meta?.episode ?? meta?.e, 0);
+  const episode = safeInt(meta?.episode ?? meta?.e ?? meta?.requestedKitsuEpisode ?? meta?.requested_kitsu_episode ?? meta?.absoluteEpisode, 0);
   const forcedFileIdx = meta?.forcedFileIdx ?? meta?.fileIdx ?? meta?.file_id ?? meta?.fileId ?? null;
   return matchFileDetailed(files, season, episode, forcedFileIdx, options);
 }
@@ -374,6 +409,7 @@ module.exports = {
   isExtraFile,
   getVideoFiles,
   hasConflictingExplicitEpisode,
+  hasConflictingExplicitEpisodeForTargets,
   isMovieNameCompatibleWithTarget,
   isMovieFileCompatibleWithTarget,
   rankCandidateFiles,
