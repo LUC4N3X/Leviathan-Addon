@@ -2,11 +2,11 @@ const MOBILE_LOGO_URL = "https://i.ibb.co/YTKfXc1z/logo.png",
     MOBILE_LOGO_HINTS_ID = "leviathan-mobile-logo-hints",
     MOBILE_LOGO_PRELOAD_ID = "leviathan-mobile-logo-preload",
     MOBILE_PERF = {
-        maxDpr: 1,
-        targetFps: 24,
-        lowFxFps: 14,
+        maxDpr: 0.85,
+        targetFps: 20,
+        lowFxFps: 12,
         keyboardDeltaPx: 110,
-        inputIdleMs: 420,
+        inputIdleMs: 260,
         viewportRaf: 0,
         inputIdleTimer: null,
     };
@@ -31,7 +31,16 @@ function ensureMobileLogoHints() {
             const t = document.createElement("link");
             ((t.rel = "dns-prefetch"),
                 (t.href = "https://i.ibb.co"),
-                n.appendChild(t),
+                n.appendChild(t));
+            const a = document.createElement("link");
+            ((a.rel = "preconnect"),
+                (a.href = "https://fonts.googleapis.com"),
+                n.appendChild(a));
+            const i = document.createElement("link");
+            ((i.rel = "preconnect"),
+                (i.href = "https://fonts.gstatic.com"),
+                (i.crossOrigin = "anonymous"),
+                n.appendChild(i),
                 document.head.appendChild(n));
         }
         if (!document.getElementById(MOBILE_LOGO_PRELOAD_ID)) {
@@ -53,7 +62,7 @@ function ensureMobileLogoHints() {
             ((n.id = "leviathan-mobile-fonts"),
                 (n.rel = "stylesheet"),
                 (n.href =
-                    "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&family=Rajdhani:wght@500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap"),
+                    "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@700;800&family=Outfit:wght@400;600;700;800&family=Rajdhani:wght@700;800&family=JetBrains+Mono:wght@400;700&display=swap"),
                 document.head.appendChild(n));
         }
     } catch (n) {}
@@ -71,11 +80,12 @@ function hydrateMobileLogo() {
     const e = () => {
         (n.classList.add("is-loaded"), n.removeAttribute("data-loading"));
     };
+    e();
     "complete" in n && n.complete
         ? e()
-        : (n.setAttribute("data-loading", "1"),
+        : (n.decoding = "async",
           n.addEventListener("load", e, { once: !0 }),
-          n.addEventListener("error", () => n.removeAttribute("data-loading"), { once: !0 }));
+          n.addEventListener("error", e, { once: !0 }));
 }
 const MOBILE_BRAND_LOCK_TEXT = "LEVIATHAN";
 function lockMobileBrandTitle() {
@@ -119,12 +129,14 @@ function applyMobilePerformanceMode() {
                 ),
                 i = isMobileCoarsePointer(),
                 o = a || (n && n <= 4) || (e && e <= 4) || t <= 360;
-            (document.body.classList.add("m-mf-lite", "m-mf-plus"),
-                document.body.classList.toggle("m-lowfx", !!o),
+            (document.body.classList.add("m-mf-lite", "m-mf-plus", "m-fluid-mobile"),
+                document.body.classList.toggle("m-lowfx", !!(o || i)),
                 document.body.classList.toggle("m-touch", !!i),
+                document.documentElement.classList.add("m-fluid-root"),
                 document.documentElement.style.setProperty("--m-vvh", `${window.innerHeight}px`));
         } catch (n) {
-            document.body.classList.add("m-mf-lite", "m-mf-plus");
+            document.body.classList.add("m-mf-lite", "m-mf-plus", "m-fluid-mobile", "m-lowfx");
+            document.documentElement.classList.add("m-fluid-root");
         }
 }
 function isMobileTextField(n = document.activeElement) {
@@ -2248,6 +2260,121 @@ body.m-lowfx .m-dock-container {
     letter-spacing: 1px !important;
 }
 
+
+.m-github-signature {
+    margin-top: 2px !important;
+    padding: 14px !important;
+    overflow: hidden !important;
+    position: relative !important;
+    background: linear-gradient(145deg, rgba(7, 17, 34, 0.78) 0%, rgba(3, 9, 22, 0.9) 62%, rgba(16, 28, 58, 0.82) 100%) !important;
+    border-color: rgba(34, 211, 238, 0.14) !important;
+    box-shadow: 0 14px 32px -18px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 22px -18px rgba(34, 211, 238, 0.6) !important;
+}
+.m-github-signature::before {
+    content: "" !important;
+    position: absolute !important;
+    inset: -40% -20% auto auto !important;
+    width: 170px !important;
+    height: 170px !important;
+    border-radius: 999px !important;
+    background: radial-gradient(circle, rgba(34, 211, 238, 0.18), rgba(155, 108, 255, 0.08) 42%, transparent 70%) !important;
+    pointer-events: none !important;
+}
+.m-github-signature .m-neural-header {
+    border-bottom-color: rgba(34, 211, 238, 0.08) !important;
+}
+.m-github-signature .m-nh-title {
+    color: rgba(213, 250, 255, 0.82) !important;
+    letter-spacing: 1.3px !important;
+}
+.m-github-signature .m-nh-id {
+    color: var(--neon-cyan) !important;
+    text-shadow: 0 0 10px rgba(34, 211, 238, 0.35) !important;
+}
+.m-github-signature .m-neural-grid {
+    display: block !important;
+}
+.m-github-card {
+    min-height: 82px !important;
+    padding: 12px 48px 12px 12px !important;
+    gap: 12px !important;
+    background: radial-gradient(circle at 18% 50%, rgba(34, 211, 238, 0.16), transparent 42%), linear-gradient(135deg, rgba(12, 28, 52, 0.78), rgba(5, 11, 24, 0.92)) !important;
+    border-color: rgba(34, 211, 238, 0.18) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 10px 22px -16px rgba(34, 211, 238, 0.45) !important;
+}
+.m-github-card::after {
+    content: "" !important;
+    position: absolute !important;
+    left: 12px !important;
+    right: 12px !important;
+    bottom: 0 !important;
+    height: 2px !important;
+    border-radius: 999px !important;
+    background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.85), rgba(155, 108, 255, 0.65), transparent) !important;
+    opacity: 0.72 !important;
+}
+.m-github-orb {
+    position: absolute !important;
+    left: 25px !important;
+    top: 50% !important;
+    width: 50px !important;
+    height: 50px !important;
+    transform: translateY(-50%) !important;
+    border-radius: 999px !important;
+    background: radial-gradient(circle, rgba(34, 211, 238, 0.22), transparent 68%) !important;
+    pointer-events: none !important;
+}
+.m-github-avatar {
+    width: 46px !important;
+    height: 46px !important;
+    border: 1px solid rgba(34, 211, 238, 0.5) !important;
+    box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.06), 0 0 18px -5px rgba(34, 211, 238, 0.75) !important;
+    position: relative !important;
+    z-index: 2 !important;
+}
+.m-github-data {
+    gap: 2px !important;
+    position: relative !important;
+    z-index: 2 !important;
+}
+.m-github-card .m-dev-role {
+    font-size: 0.58rem !important;
+    color: var(--neon-cyan) !important;
+}
+.m-github-card .m-dev-nick {
+    font-family: 'Rajdhani', sans-serif !important;
+    font-size: 1.02rem !important;
+    font-weight: 900 !important;
+    letter-spacing: 1.7px !important;
+}
+.m-github-sub {
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 0.62rem !important;
+    font-weight: 600 !important;
+    color: rgba(159, 180, 215, 0.78) !important;
+    letter-spacing: 0.2px !important;
+}
+.m-github-mark {
+    position: absolute !important;
+    right: 14px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    color: rgba(255, 255, 255, 0.13) !important;
+    font-size: 1.8rem !important;
+}
+.m-github-star {
+    height: 42px !important;
+    margin-top: 2px !important;
+    border-color: rgba(34, 211, 238, 0.24) !important;
+    background: linear-gradient(135deg, rgba(34, 211, 238, 0.14) 0%, rgba(21, 111, 148, 0.13) 44%, rgba(155, 108, 255, 0.12) 100%) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 10px 20px -18px rgba(34, 211, 238, 0.8) !important;
+}
+.m-github-star .spin-star {
+    animation: none !important;
+    color: #f8d66b !important;
+    text-shadow: 0 0 10px rgba(248, 214, 107, 0.42) !important;
+}
+
 .m-action-modal {
     position: fixed !important;
     inset: 0 !important;
@@ -2466,12 +2593,522 @@ body.m-lowfx .m-dock-container {
     box-shadow: 0 0 15px rgba(155, 108, 255, 0.3);
 }
 
+
+body.m-fluid-mobile {
+    --glass-blur: none;
+    text-rendering: optimizeSpeed;
+    -webkit-font-smoothing: antialiased;
+}
+
+body.m-fluid-mobile,
+body.m-fluid-mobile * {
+    -webkit-transform-style: flat !important;
+    transform-style: flat !important;
+}
+
+body.m-fluid-mobile .m-content {
+    scroll-behavior: auto !important;
+    transform: translate3d(0, 0, 0);
+    contain: layout paint style;
+}
+
+body.m-fluid-mobile .m-page.active {
+    animation: none !important;
+}
+
+body.m-fluid-mobile .m-dock-container,
+body.m-fluid-mobile .m-hypervisor,
+body.m-fluid-mobile .m-visual-core-v2,
+body.m-fluid-mobile .m-action-modal,
+body.m-fluid-mobile .m-am-card,
+body.m-fluid-mobile .m-toast {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+body.m-fluid-mobile .m-dock-container {
+    background: rgba(8, 17, 34, 0.94) !important;
+    transform: translate3d(-50%, 0, 0) !important;
+}
+
+body.m-fluid-mobile .m-hypervisor,
+body.m-fluid-mobile .m-visual-core-v2 {
+    background: rgba(10, 20, 38, 0.82) !important;
+}
+
+body.m-fluid-mobile .m-hero-panel::before,
+body.m-fluid-mobile .m-seacss-ray,
+body.m-fluid-mobile .logo-container .m-abyss-crown {
+    filter: none !important;
+}
+
+body.m-fluid-mobile .m-caustic-ray,
+body.m-fluid-mobile .m-seacss-caustic,
+body.m-fluid-mobile .m-seacss-ray,
+body.m-fluid-mobile .m-seacss-layer,
+body.m-fluid-mobile .logo-container,
+body.m-fluid-mobile .logo-container .m-abyss-crown,
+body.m-fluid-mobile .logo-image,
+body.m-fluid-mobile .logo-particle,
+body.m-fluid-mobile .m-v-dot,
+body.m-fluid-mobile .m-kofi-ico,
+body.m-fluid-mobile .spin-star,
+body.m-fluid-mobile .m-key-status.is-checking .m-key-status-dot,
+body.m-fluid-mobile .m-ptr.loading .m-ptr-icon {
+    animation: none !important;
+}
+
+body.m-fluid-mobile .logo-image {
+    opacity: 1 !important;
+    transition: none !important;
+}
+
+body.m-fluid-mobile .m-caustic {
+    opacity: 0.5 !important;
+}
+
+body.m-fluid-mobile .m-seacss-caustic {
+    opacity: 0.68 !important;
+    transform: none !important;
+}
+
+body.m-fluid-mobile .m-seacss-swell1,
+body.m-fluid-mobile .m-seacss-swell2,
+body.m-fluid-mobile .m-seacss-swell3 {
+    transform: translate3d(0, 0, 0) !important;
+}
+
+body.m-fluid-mobile .m-nav-item,
+body.m-fluid-mobile .m-nav-item .mf-nav-emoji,
+body.m-fluid-mobile .m-nav-item > span:last-child,
+body.m-fluid-mobile .m-reactor-module,
+body.m-fluid-mobile .m-provider-glyph,
+body.m-fluid-mobile .m-core-icon,
+body.m-fluid-mobile .m-cred-opt,
+body.m-fluid-mobile .m-flux-opt,
+body.m-fluid-mobile .m-lang-opt,
+body.m-fluid-mobile .m-act-btn,
+body.m-fluid-mobile .m-if-inner,
+body.m-fluid-mobile .m-if-action,
+body.m-fluid-mobile .m-paste-action,
+body.m-fluid-mobile .m-get-link,
+body.m-fluid-mobile .m-slider,
+body.m-fluid-mobile .m-slider::before {
+    transition-duration: 0.12s !important;
+}
+
+body.m-fluid-mobile .m-nav-item > span:last-child {
+    transition-property: opacity, margin-left, color !important;
+}
+
+body.m-fluid-mobile.m-switching .m-page,
+body.m-fluid-mobile.m-switching .m-reactor-module,
+body.m-fluid-mobile.m-switching .m-provider-glyph,
+body.m-fluid-mobile.m-switching .m-core-icon,
+body.m-fluid-mobile.m-switching .m-cred-opt,
+body.m-fluid-mobile.m-switching .m-flux-opt,
+body.m-fluid-mobile.m-switching .m-lang-opt,
+body.m-fluid-mobile.m-switching .m-slider,
+body.m-fluid-mobile.m-switching .m-slider::before {
+    transition: none !important;
+}
+
+body.m-fluid-mobile.m-typing .m-caustic,
+body.m-fluid-mobile.m-typing #m-sea-css,
+body.m-fluid-mobile.m-keyboard-open .m-caustic,
+body.m-fluid-mobile.m-keyboard-open #m-sea-css {
+    opacity: 0.35 !important;
+}
+
+@media (prefers-reduced-motion: reduce), (update: slow) {
+    .m-caustic-ray,
+    .m-seacss-caustic,
+    .m-seacss-ray,
+    .m-seacss-layer,
+    .logo-container,
+    .logo-container .m-abyss-crown,
+    .logo-image,
+    .logo-particle,
+    .m-v-dot,
+    .m-kofi-ico,
+    .spin-star {
+        animation: none !important;
+    }
+    .m-page.active {
+        animation: none !important;
+    }
+}
+
+
+body.m-fluid-mobile {
+    --glass-card: rgba(7, 16, 32, 0.78);
+    --glass-card-hover: rgba(10, 24, 46, 0.84);
+    --glass-border: rgba(151, 221, 255, 0.105);
+    --glass-border-glow: rgba(34, 211, 238, 0.18);
+    background:
+        radial-gradient(ellipse at 50% -8%, rgba(62, 218, 255, 0.24) 0%, rgba(21, 116, 170, 0.11) 28%, transparent 54%),
+        radial-gradient(circle at 12% 24%, rgba(64, 119, 255, 0.16) 0%, transparent 34%),
+        radial-gradient(circle at 92% 38%, rgba(143, 91, 255, 0.14) 0%, transparent 36%),
+        radial-gradient(ellipse at 50% 106%, rgba(25, 210, 235, 0.13) 0%, transparent 48%),
+        linear-gradient(180deg, #071d32 0%, #04152a 34%, #020b1b 66%, #00040d 100%) !important;
+    background-attachment: fixed !important;
+}
+
+body.m-fluid-mobile #m-sea-webgl,
+body.m-fluid-mobile #m-sea-canvas {
+    display: none !important;
+    opacity: 0 !important;
+}
+
+body.m-fluid-mobile #m-sea-css {
+    display: block !important;
+    opacity: 1 !important;
+    z-index: -8 !important;
+    background:
+        radial-gradient(ellipse at 50% -10%, rgba(48, 218, 255, 0.28) 0%, rgba(18, 93, 150, 0.10) 32%, transparent 58%),
+        radial-gradient(circle at 15% 22%, rgba(74, 113, 255, 0.16) 0%, transparent 36%),
+        radial-gradient(circle at 88% 34%, rgba(155, 108, 255, 0.15) 0%, transparent 38%),
+        radial-gradient(ellipse at 50% 112%, rgba(34, 211, 238, 0.11) 0%, transparent 52%),
+        linear-gradient(180deg, #071e34 0%, #041326 37%, #020918 72%, #00040d 100%) !important;
+    transform: translate3d(0, 0, 0) !important;
+    contain: strict !important;
+}
+
+body.m-fluid-mobile #m-sea-css::before {
+    opacity: 0.45 !important;
+    background-image:
+        linear-gradient(rgba(119, 230, 255, 0.026) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(119, 230, 255, 0.020) 1px, transparent 1px) !important;
+    background-size: 58px 58px !important;
+    mask-image: linear-gradient(180deg, transparent 0%, black 11%, black 78%, transparent 100%) !important;
+    -webkit-mask-image: linear-gradient(180deg, transparent 0%, black 11%, black 78%, transparent 100%) !important;
+}
+
+body.m-fluid-mobile #m-sea-css::after {
+    background:
+        radial-gradient(ellipse at 50% 16%, rgba(34, 211, 238, 0.115), transparent 48%),
+        radial-gradient(circle at 23% 58%, rgba(91, 141, 255, 0.075), transparent 42%),
+        radial-gradient(circle at 78% 66%, rgba(155, 108, 255, 0.070), transparent 46%),
+        linear-gradient(180deg, rgba(255,255,255,0.018), transparent 27%, rgba(0,0,0,0.19) 100%) !important;
+    opacity: 1 !important;
+}
+
+body.m-fluid-mobile .m-caustic,
+body.m-fluid-mobile .m-ocean-particles,
+body.m-fluid-mobile .m-seacss-caustic,
+body.m-fluid-mobile .m-seacss-ray {
+    display: none !important;
+}
+
+body.m-fluid-mobile .m-seacss-layer {
+    height: 142px !important;
+    opacity: 0.34 !important;
+    filter: none !important;
+    animation: none !important;
+    transform: translate3d(0, 0, 0) !important;
+}
+body.m-fluid-mobile .m-seacss-swell3 { bottom: -32px !important; opacity: 0.30 !important; }
+body.m-fluid-mobile .m-seacss-swell2 { bottom: -42px !important; opacity: 0.26 !important; }
+body.m-fluid-mobile .m-seacss-swell1 { bottom: -52px !important; opacity: 0.38 !important; }
+
+body.m-fluid-mobile .m-content {
+    background: transparent !important;
+    padding-top: calc(72px + var(--safe-top, 10px)) !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+    contain: layout paint style !important;
+}
+
+body.m-fluid-mobile .m-dock-container {
+    background: linear-gradient(180deg, rgba(8, 16, 31, 0.96), rgba(4, 10, 22, 0.94)) !important;
+    border-color: rgba(124, 221, 255, 0.14) !important;
+    box-shadow:
+        0 18px 38px -16px rgba(0, 0, 0, 0.72),
+        inset 0 1px 0 rgba(255, 255, 255, 0.075),
+        0 0 0 1px rgba(34, 211, 238, 0.045) !important;
+}
+
+body.m-fluid-mobile .m-nav-item.active {
+    background:
+        radial-gradient(circle at 20% 20%, rgba(107, 241, 255, 0.24), transparent 38%),
+        linear-gradient(135deg, rgba(34, 211, 238, 0.20), rgba(99, 102, 241, 0.17)) !important;
+    border-color: rgba(88, 224, 255, 0.34) !important;
+    box-shadow:
+        0 7px 18px -8px rgba(34, 211, 238, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.13) !important;
+}
+
+body.m-fluid-mobile .m-hero {
+    padding-top: 10px !important;
+}
+
+body.m-fluid-mobile .m-hero-panel {
+    max-width: 410px !important;
+    padding-top: 12px !important;
+}
+
+body.m-fluid-mobile .m-hero-panel::before {
+    width: min(410px, 96vw) !important;
+    height: 330px !important;
+    top: -2px !important;
+    background:
+        radial-gradient(ellipse at 50% 27%, rgba(34, 211, 238, 0.20), transparent 48%),
+        radial-gradient(circle at 50% 45%, rgba(99, 102, 241, 0.10), transparent 57%) !important;
+    filter: none !important;
+    opacity: 0.95 !important;
+}
+
+body.m-fluid-mobile .logo-container {
+    width: 134px !important;
+    height: 134px !important;
+    margin-bottom: 14px !important;
+    border: 1px solid rgba(103, 232, 249, 0.14) !important;
+    box-shadow:
+        0 0 0 1px rgba(34, 211, 238, 0.16),
+        0 20px 52px -24px rgba(34, 211, 238, 0.66),
+        0 16px 34px -22px rgba(2, 6, 23, 0.95) !important;
+}
+
+body.m-fluid-mobile .logo-container::before {
+    background:
+        radial-gradient(circle at 52% 34%, rgba(16, 43, 74, 0.94) 0%, rgba(3, 10, 24, 0.98) 70%),
+        linear-gradient(145deg, rgba(34,211,238,0.11), rgba(155,108,255,0.07)) !important;
+    border: 1px solid rgba(61, 217, 255, 0.74) !important;
+    box-shadow:
+        0 0 20px rgba(34, 211, 238, 0.21),
+        inset 0 0 24px rgba(34, 211, 238, 0.075),
+        inset 0 -18px 34px rgba(0, 0, 0, 0.32) !important;
+}
+
+body.m-fluid-mobile .logo-image {
+    max-width: 108px !important;
+    filter: drop-shadow(0 8px 16px rgba(0,0,0,0.48)) drop-shadow(0 0 6px rgba(34,211,238,0.18)) !important;
+}
+
+body.m-fluid-mobile .m-brand-title {
+    font-size: clamp(2.82rem, 13vw, 3.62rem) !important;
+    letter-spacing: 1.5px !important;
+    line-height: 0.88 !important;
+    filter: drop-shadow(0 0 10px rgba(34, 211, 238, 0.26)) !important;
+}
+
+body.m-fluid-mobile .m-brand-title::after {
+    width: 92px !important;
+    height: 2px !important;
+    margin-top: 10px !important;
+    opacity: 0.86 !important;
+    box-shadow: 0 0 12px rgba(34, 211, 238, 0.55) !important;
+}
+
+body.m-fluid-mobile .m-brand-sub {
+    margin-top: 11px !important;
+    font-size: clamp(0.64rem, 3vw, 0.80rem) !important;
+    letter-spacing: clamp(3px, 1.35vw, 5px) !important;
+    color: #4fe6ff !important;
+}
+
+body.m-fluid-mobile .m-hero-badges {
+    gap: 8px !important;
+    margin-top: 18px !important;
+}
+
+body.m-fluid-mobile .m-hero-badge,
+body.m-fluid-mobile .m-version-tag {
+    background: linear-gradient(180deg, rgba(8, 20, 38, 0.76), rgba(3, 10, 23, 0.72)) !important;
+    border-color: rgba(74, 222, 255, 0.20) !important;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.07),
+        0 10px 22px -18px rgba(34,211,238,0.60) !important;
+}
+
+body.m-fluid-mobile .m-version-tag {
+    margin-top: 11px !important;
+    margin-bottom: 12px !important;
+    padding: 5px 14px !important;
+    transform: translate3d(0, -3px, 0) !important;
+}
+
+body.m-fluid-mobile #page-setup > .m-hypervisor:first-child {
+    margin-top: 0 !important;
+}
+
+body.m-fluid-mobile .m-hypervisor,
+body.m-fluid-mobile .m-visual-core-v2,
+body.m-fluid-mobile .m-ghost-panel,
+body.m-fluid-mobile .m-cloud-mode-panel,
+body.m-fluid-mobile .m-gate-wrapper,
+body.m-fluid-mobile .m-flux-readout {
+    background:
+        linear-gradient(180deg, rgba(8, 17, 34, 0.90), rgba(3, 8, 20, 0.84)) !important;
+    border-color: rgba(148, 223, 255, 0.105) !important;
+    box-shadow:
+        0 18px 42px -26px rgba(0, 0, 0, 0.86),
+        inset 0 1px 0 rgba(255, 255, 255, 0.055) !important;
+}
+
+body.m-fluid-mobile .m-hypervisor,
+body.m-fluid-mobile .m-visual-core-v2 {
+    border-radius: 22px !important;
+    padding: 17px 17px 20px 17px !important;
+    overflow: hidden !important;
+}
+
+body.m-fluid-mobile .m-hypervisor::before,
+body.m-fluid-mobile .m-visual-core-v2::before {
+    content: "" !important;
+    position: absolute !important;
+    left: 18px !important;
+    right: 18px !important;
+    top: 0 !important;
+    height: 1px !important;
+    background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.58), rgba(155, 108, 255, 0.42), transparent) !important;
+    opacity: 0.78 !important;
+    pointer-events: none !important;
+}
+
+body.m-fluid-mobile .m-hyp-header {
+    border-bottom-color: rgba(144, 220, 255, 0.075) !important;
+}
+
+body.m-fluid-mobile .m-hyp-header span {
+    letter-spacing: 2.6px !important;
+    text-shadow: 0 2px 12px rgba(34, 211, 238, 0.10) !important;
+}
+
+body.m-fluid-mobile .m-panel-desc {
+    color: rgba(197, 213, 238, 0.78) !important;
+}
+
+body.m-fluid-mobile .m-cred-deck,
+body.m-fluid-mobile .m-flux-grid,
+body.m-fluid-mobile .m-lang-grid {
+    gap: 10px !important;
+}
+
+body.m-fluid-mobile .m-cred-opt,
+body.m-fluid-mobile .m-flux-opt,
+body.m-fluid-mobile .m-lang-opt {
+    background: linear-gradient(180deg, rgba(9, 20, 39, 0.74), rgba(3, 9, 22, 0.70)) !important;
+    border-color: rgba(144, 220, 255, 0.085) !important;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.055),
+        0 12px 26px -24px rgba(0, 0, 0, 0.9) !important;
+}
+
+body.m-fluid-mobile .m-cred-opt {
+    min-height: 108px !important;
+    padding: 12px 5px !important;
+    border-radius: 18px !important;
+}
+
+body.m-fluid-mobile .m-cred-icon {
+    font-size: 1.74rem !important;
+    margin-bottom: 3px !important;
+}
+
+body.m-fluid-mobile .m-cred-name {
+    max-width: 100% !important;
+    white-space: nowrap !important;
+    font-size: clamp(0.52rem, 2.24vw, 0.68rem) !important;
+    line-height: 1.05 !important;
+    letter-spacing: 0.55px !important;
+    transform: scale(0.96) !important;
+    transform-origin: center !important;
+}
+
+body.m-fluid-mobile .m-cred-opt.active,
+body.m-fluid-mobile .m-flux-opt.active-bal,
+body.m-fluid-mobile .m-flux-opt.active-res,
+body.m-fluid-mobile .m-flux-opt.active-size,
+body.m-fluid-mobile .m-lang-opt.active-it,
+body.m-fluid-mobile .m-lang-opt.active-en,
+body.m-fluid-mobile .m-lang-opt.active-both {
+    background:
+        radial-gradient(circle at 50% 0%, var(--opt-glow, rgba(34, 211, 238, 0.16)), transparent 56%),
+        linear-gradient(180deg, rgba(11, 27, 50, 0.88), rgba(3, 10, 23, 0.88)) !important;
+    box-shadow:
+        0 16px 30px -24px var(--opt-glow, rgba(34,211,238,0.45)),
+        inset 0 1px 0 rgba(255,255,255,0.08) !important;
+    transform: translate3d(0, -1px, 0) !important;
+}
+
+body.m-fluid-mobile .m-if-inner,
+body.m-fluid-mobile .m-input-box,
+body.m-fluid-mobile .m-select-box,
+body.m-fluid-mobile .m-custom-textarea,
+body.m-fluid-mobile .m-flux-input {
+    background: rgba(2, 8, 19, 0.62) !important;
+    border-color: rgba(144, 220, 255, 0.09) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.035) !important;
+}
+
+body.m-fluid-mobile .m-reactor-module,
+body.m-fluid-mobile .m-sys-row,
+body.m-fluid-mobile .m-cortex-chip,
+body.m-fluid-mobile .m-cloud-mode-btn {
+    background:
+        linear-gradient(150deg, rgba(10, 22, 42, 0.80), rgba(3, 8, 20, 0.78)) !important;
+    border-color: rgba(144, 220, 255, 0.085) !important;
+    box-shadow:
+        0 14px 30px -25px rgba(0, 0, 0, 0.94),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+body.m-fluid-mobile .m-reactor-module.active {
+    background:
+        radial-gradient(circle at 0 0, var(--glow-color-dim, rgba(34, 211, 238, 0.09)), transparent 46%),
+        linear-gradient(150deg, rgba(12, 28, 51, 0.86), rgba(3, 9, 22, 0.86)) !important;
+    box-shadow:
+        0 18px 34px -28px var(--glow-color, rgba(34, 211, 238, 0.55)),
+        inset 0 1px 0 rgba(255,255,255,0.065) !important;
+}
+
+body.m-fluid-mobile .m-provider-glyph,
+body.m-fluid-mobile .m-reactor-core .m-core-icon {
+    background: rgba(255,255,255,0.035) !important;
+    border-color: rgba(154, 226, 255, 0.08) !important;
+}
+
+body.m-fluid-mobile .m-reactor-title {
+    letter-spacing: 0.62px !important;
+}
+
+body.m-fluid-mobile .m-reactor-desc {
+    color: rgba(178, 196, 225, 0.75) !important;
+}
+
+body.m-fluid-mobile .m-slider {
+    background: rgba(255,255,255,0.065) !important;
+    border-color: rgba(148, 223, 255, 0.10) !important;
+}
+
+body.m-fluid-mobile .m-switch input:checked + .m-slider {
+    background: linear-gradient(135deg, var(--border-color, #22d3ee), #6366f1) !important;
+    box-shadow: 0 0 12px var(--glow-color-dim, rgba(34, 211, 238, 0.24)) !important;
+}
+
+body.m-fluid-mobile .m-page,
+body.m-fluid-mobile .m-hypervisor,
+body.m-fluid-mobile .m-reactor-module,
+body.m-fluid-mobile .m-cred-opt,
+body.m-fluid-mobile .m-flux-opt,
+body.m-fluid-mobile .m-lang-opt {
+    backface-visibility: hidden !important;
+}
+
+@supports (height: 100svh) {
+    body.m-fluid-mobile #m-sea-css,
+    body.m-fluid-mobile #app-container {
+        min-height: 100svh !important;
+    }
+}
+
 .m-input-fuselage.is-p2p {
     opacity: 0.45;
     pointer-events: none;
     filter: grayscale(0.85);
 }`,
-    mobileHTML = `\n<div id="m-sea-webgl" aria-hidden="true"></div>\n<div class="m-caustic" aria-hidden="true">\n    <div class="m-caustic-ray" style="--ray-x:8%;--ray-dur:14s;--ray-op:0.55;--ray-from:-12deg;--ray-to:6deg;width:50px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:28%;--ray-dur:11s;--ray-op:0.40;--ray-from:-6deg;--ray-to:14deg;width:35px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:50%;--ray-dur:16s;--ray-op:0.65;--ray-from:-10deg;--ray-to:8deg;width:65px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:68%;--ray-dur:9s;--ray-op:0.35;--ray-from:5deg;--ray-to:-12deg;width:40px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:85%;--ray-dur:13s;--ray-op:0.50;--ray-from:8deg;--ray-to:-6deg;width:55px;"></div>\n</div>\n<div class="m-ocean-particles" id="m-ocean-particles" aria-hidden="true"></div>\n<div id="app-container">\n    <div class="m-ptr" id="m-ptr-indicator"><i class="fas fa-arrow-down m-ptr-icon"></i></div>\n    <div class="m-content-wrapper">\n\n        <div class="m-content">\n            <div class="m-hero m-abyss-hero notranslate" aria-label="LEVIATHAN Kit" translate="no" data-no-translate="true">\n                <div class="m-hero-panel">\n                    <div class="logo-container m-abyss-logo">\n                        <span class="m-abyss-crown" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-tl" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-tr" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-bl" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-br" aria-hidden="true"></span>\n                        <img src="${MOBILE_LOGO_URL}" alt="LEVIATHAN Logo" class="logo-image notranslate" translate="no" data-no-translate="true" fetchpriority="high" decoding="sync" loading="eager" width="110" height="110">\n                        <div class="logo-particles" aria-hidden="true">\n                            <span class="logo-particle" style="left:18%; width:5px; height:5px; animation-delay:0s;"></span>\n                            <span class="logo-particle" style="left:38%; width:3px; height:3px; animation-delay:2.4s;"></span>\n                            <span class="logo-particle" style="left:63%; width:4px; height:4px; animation-delay:4.1s;"></span>\n                            <span class="logo-particle" style="left:78%; width:3px; height:3px; animation-delay:6.2s;"></span>\n                        </div>\n                    </div>\n                    <h1 class="m-brand-title m-abyss-title notranslate" translate="no" lang="zxx" data-brand-lock="LEVIATHAN" data-no-translate="true" aria-label="LEVIATHAN">LEVIATHAN</h1>\n                    <div class="m-brand-sub m-abyss-sub">Sovrano degli abissi</div>\n                    <div class="m-hero-badges">\n                        <span class="m-hero-badge">🐬 Real-Debrid</span>\n                        <span class="m-hero-badge">🧊 TorBox</span>\n                        <span class="m-hero-badge">🦈 P2P</span>\n                    </div>\n                    <div class="m-version-tag m-abyss-version" aria-label="Versione 3.2.0">\n                        <span class="m-v-dot" aria-hidden="true"></span>\n                        <span>v3.2.0</span>\n                    </div>\n                </div>\n            </div>\n\n            <div id="page-setup" class="m-page active">\n\n                <div class="m-hypervisor" style="margin-top:2px;">\n                    <div class="m-hyp-header">\n                        <span>🔑 ACCESSO & SERVIZI</span>\n                        <i class="fas fa-fingerprint m-hyp-icon"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Configura l'accesso</b> scegliendo Real-Debrid, TorBox o P2P. La verifica live ti conferma subito se la chiave è pronta ✨🔐.</p>\n\n                    <div class="m-cred-deck">\n                        <div class="m-cred-opt cred-rd m-srv-btn active" onclick="setMService('rd', this)">\n                            <div class="m-cred-icon">🐬</div>\n                            <div class="m-cred-name">🐬 REAL-DEBRID</div>\n                        </div>\n                        <div class="m-cred-opt cred-tb m-srv-btn" onclick="setMService('tb', this)">\n                            <div class="m-cred-icon">🧊</div>\n                            <div class="m-cred-name">🧊 TORBOX</div>\n                        </div>\n                        <div class="m-cred-opt cred-p2p m-srv-btn" onclick="setMService('p2p', this)">\n                            <div class="m-cred-icon">🦈</div>\n                            <div class="m-cred-name">🦈 P2P MODE</div>\n                        </div>\n                    </div>\n\n                    <div class="m-input-fuselage" id="box-apikey">\n                        <div class="m-if-label">🔑 API KEY</div>\n                        <div class="m-if-inner">\n                            <div class="m-if-icon"><i class="fas fa-key"></i></div>\n                            <input type="text" id="m-apiKey" class="m-if-field" placeholder="Incolla key" oninput="handleMobileApiKeyInput()">\n                            <div class="m-if-action" onclick="pasteTo('m-apiKey')"><i class="fas fa-paste"></i></div>\n                            <div class="m-get-link" onclick="openApiPage()">GET <i class="fas fa-external-link-alt"></i></div>\n                        </div>\n                        <div class="m-key-status idle" id="m-keyStatus" aria-live="polite" aria-atomic="true">\n                            <span class="m-key-status-dot"></span>\n                            <span id="m-keyStatusText">🐬 RD / 🧊 TB live check disponibile.</span>\n                        </div>\n                    </div>\n\n                    <div class="m-input-fuselage tmdb-box" id="box-tmdb">\n                        <div class="m-if-label opt">🎬 TMDB OPTIONAL</div>\n                        <div class="m-if-inner">\n                            <div class="m-if-icon"><i class="fas fa-film"></i></div>\n                            <input type="text" id="m-tmdb" class="m-if-field" placeholder="Personal key" oninput="updateLinkModalContent()">\n                            <div class="m-if-action" onclick="pasteTo('m-tmdb')"><i class="fas fa-paste"></i></div>\n                            <div class="m-get-link" style="color:var(--m-accent); border-color:var(--m-accent); background:rgba(155, 108, 255,0.05);" onclick="openApiPage('tmdb')">GET <i class="fas fa-external-link-alt"></i></div>\n                        </div>\n                    </div>\n\n                </div>\n\n                <div class="m-hypervisor">\n                     <div class="m-hyp-header">\n                        <span>🍿 PROVIDER STREAMS ✨</span>\n                        <i class="fas fa-cubes m-hyp-icon"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Scegli le sorgenti da attivare</b>: Leviathan unisce cinema, serie e anime italiani in un catalogo pulito, veloce e facile da controllare 🍿📺✨.</p>\n\n                    <div class="m-reactor-grid">\n\n                        <div class="m-reactor-module" id="mod-vix">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🍿</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🍿 StreamingCommunity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableVix" onchange="updateStatus('m-enableVix','st-vix'); toggleModuleStyle('m-enableVix', 'mod-vix');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV in italiano, catalogo ricco e player rapido 🍿.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n</div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-cc">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎟️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎟️ CinemaCity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableCc" onchange="updateStatus('m-enableCc','st-cc'); toggleModuleStyle('m-enableCc', 'mod-cc');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Catalogo Film e Serie TV via CloudflareBypass e proxy CCCDN/Kraken 🎟️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ghd">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎬 GuardaHD</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGhd" onchange="updateStatus('m-enableGhd','st-ghd'); toggleModuleStyle('m-enableGhd', 'mod-ghd');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV in alta definizione, nuove uscite e schede ordinate 🎬.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-gs">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📺</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">📺 GuardoSerie</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGs" onchange="updateStatus('m-enableGs','st-gs'); toggleModuleStyle('m-enableGs', 'mod-gs');">\n                                        <span class="m-slider m-slider-purple"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Serie TV italiane organizzate per stagioni ed episodi 📺.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-vidxgo">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎯</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎯 VidxGo</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableVidxgo" onchange="updateStatus('m-enableVidxgo','st-vidxgo'); toggleModuleStyle('m-enableVidxgo', 'mod-vidxgo');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Player diretto per film e serie TV, flusso risolto dal codice IMDb ⚡.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-es">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌍</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🌍 Eurostreaming</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableEs" onchange="updateStatus('m-enableEs','st-es'); toggleModuleStyle('m-enableEs', 'mod-es');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Portale italiano storico dedicato a serie TV e contenuti aggiornati ⭐.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-cb01">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎬 CB01</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableCb01" onchange="updateStatus('m-enableCb01','st-cb01'); toggleModuleStyle('m-enableCb01', 'mod-cb01');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Ampio catalogo di film e serie TV, tra i riferimenti più noti in Italia 🎞️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-onlineserietv">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🖥️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🖥️ OnlineSerieTV</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableOnlineserietv" onchange="updateStatus('m-enableOnlineserietv','st-onlineserietv'); toggleModuleStyle('m-enableOnlineserietv', 'mod-onlineserietv');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV italiani, risolti via uprot/MaxStream con forward proxy 🛰️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-aw">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">⛩️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">⛩️ AnimeWorld</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeWorld" onchange="updateStatus('m-enableAnimeWorld','st-aw'); toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime sub-ita e doppiati, con schede serie e catalogo ampio 🌸.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-au">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌊</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🌊 AnimeUnity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeUnity" onchange="updateStatus('m-enableAnimeUnity','st-au'); toggleModuleStyle('m-enableAnimeUnity', 'mod-au');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime, simulcast e doppiaggi con episodi aggiornati e ordinati 🪄.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-as">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🪐</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🪐 AnimeSaturn</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeSaturn" onchange="updateStatus('m-enableAnimeSaturn','st-as'); toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime classici e recenti, archivio ampio e consultazione rapida 🪐.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ti">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🐙</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🐙 ToonItalia</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableToonItalia" onchange="updateStatus('m-enableToonItalia','st-ti'); toggleModuleStyle('m-enableToonItalia', 'mod-ti');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Cartoon e anime in italiano, con resolver VOE, LoadM/RPMShare e MaxStream.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-gf">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎞️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎞️ GuardaFlix</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGf" onchange="updateStatus('m-enableGf','st-gf'); toggleModuleStyle('m-enableGf', 'mod-gf');">\n                                        <span class="m-slider m-slider-green"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film in streaming con raccolte per genere e ultime uscite 🎥.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ads">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📽️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">📽️ Altadefinizione</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAltadefinizione" onchange="updateStatus('m-enableAltadefinizione','st-ads'); toggleModuleStyle('m-enableAltadefinizione', 'mod-ads');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV con catalogo aggiornato e navigazione intuitiva 🎟️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n\n                    </div>\n                </div>\n\n                <div id="m-priority-panel" class="m-priority-wrapper">\n                    <div style="margin-top:5px; padding:15px; border-radius:16px; background:linear-gradient(90deg, rgba(155,108,255,0.1), transparent); border-left:4px solid var(--m-secondary);">\n                        <div style="display:flex; justify-content:space-between; align-items:center;">\n                            <div>\n                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">🚀 PRIORITÀ WEB</h5>\n                                <p id="priority-desc" style="margin:5px 0 0; font-size:0.8rem; color:var(--m-dim);">Mostra Web in cima</p>\n                            </div>\n                            <label class="m-switch">\n                                <input type="checkbox" id="m-vixLast" onchange="updatePriorityLabel()">\n                                <span class="m-slider" style="border-color:var(--m-secondary)"></span>\n                            </label>\n                        </div>\n                    </div>\n                </div>\n\n                <div class="m-setup-actions-panel" aria-label="Azioni configurazione">\n                    <div class="m-setup-action-row">\n                        <button class="m-setup-action m-setup-install" onclick="mobileInstall()" type="button">\n                            <span>INSTALLA</span>\n                            <i class="fas fa-radiation"></i>\n                        </button>\n                    </div>\n\n                    <div class="m-setup-mini-console" aria-label="Console copia link">\n                        <div class="m-setup-mini-console-head">\n                            <span class="m-setup-mini-console-title"><i class="fas fa-terminal"></i> LINK CONFIGURAZIONE</span>\n                            <button class="m-setup-mini-copy" onclick="copyFromSetupPanel()" type="button">\n                                <i class="fas fa-copy"></i>\n                                <span>COPIA</span>\n                            </button>\n                        </div>\n                        <div class="m-setup-mini-console-body">\n                            <textarea id="m-setupGeneratedUrlBox" class="m-setup-mini-url" readonly>/// WAITING FOR DATA ///</textarea>\n                        </div>\n                    </div>\n                </div>\n\n                <div class="m-credits-section">\n                    <div class="m-neural-frame">\n                        <div class="m-neural-header">\n                            <span class="m-nh-title">/// NEURAL SIGNATURE ///</span>\n                            <span class="m-nh-id">ID: L3V-2026</span>\n                        </div>\n\n                        <div class="m-neural-grid">\n                            <a href="https://github.com/LUC4N3X/stremio-leviathan-addon" target="_blank" class="m-dev-module">\n                                <img src="https://i.ibb.co/gLkrjxXT/Whats-App-Image-2026-01-12-at-20-15-37.jpg" alt="Dev" class="m-dev-img">\n                                <div class="m-dev-data">\n                                    <span class="m-dev-role">ARCHITECT</span>\n                                    <span class="m-dev-nick">LUC4N3X</span>\n                                </div>\n                                <i class="fab fa-github" style="position:absolute; right:10px; top:10px; color:rgba(255,255,255,0.1); font-size:1.5rem;"></i>\n                            </a>\n\n                            <a href="https://ko-fi.com/luc4n3x" target="_blank" class="m-support-module">\n                                <i class="fas fa-mug-hot m-kofi-ico"></i>\n                                <span class="m-support-txt">KO-FI</span>\n                            </a>\n                        </div>\n\n                        <a href="https://stremio-addons.net/addons/leviathan" target="_blank" class="m-star-btn">\n                            <i class="fas fa-star spin-star"></i>\n                            <span>LASCIAMI UNA STELLA</span>\n                            <i class="fas fa-star spin-star"></i>\n                        </a>\n\n                        <div class="m-neural-footer">LEVIATHAN SYSTEM v2.7.0</div>\n                    </div>\n                </div>\n            </div>\n\n            <div id="page-filters" class="m-page">\n\n                <div class="m-hypervisor">\n                    <div class="m-hyp-header">\n                        <span>⚙️ REGOLE STREAM</span>\n                        <i class="fas fa-microchip m-hyp-icon"></i>\n                    </div>\n\n                    <p class="m-panel-desc"><b>Controlla cosa mostra Leviathan</b>: ordina per qualità, scegli la lingua, limita i risultati e mantieni la lista pulita anche su smartphone 🎯📱.</p>\n\n                    <div class="m-flux-control">\n                        <div class="m-flux-grid">\n                            <div class="m-flux-opt active-bal" id="sort-balanced" onclick="setSortMode('balanced')">\n                                <i class="fas fa-dragon"></i>\n                                <span>🐉 SMART</span>\n                            </div>\n                            <div class="m-flux-opt" id="sort-resolution" onclick="setSortMode('resolution')">\n                                <i class="fas fa-gem"></i>\n                                <span>💎 QUALITY</span>\n                            </div>\n                            <div class="m-flux-opt" id="sort-size" onclick="setSortMode('size')">\n                                <i class="fas fa-hdd"></i>\n                                <span>💾 SIZE</span>\n                            </div>\n                        </div>\n\n                        <div class="m-flux-readout mode-bal" id="flux-readout-box">\n                            <i class="fas fa-info-circle m-fr-icon" id="flux-icon-display"></i>\n                            <div class="m-fr-text">\n                                <span class="m-fr-title" id="flux-title-display">STANDARD MODE</span>\n                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan ✨. Bilancia perfettamente qualita e velocita ⚡.</span>\n                            </div>\n                        </div>\n                    </div>\n\n                    <div class="m-hyp-header" style="margin-top:25px; border-top:none; padding-top:0; margin-bottom:10px;">\n                         <span>🗣️ AUDIO &amp; LINGUA</span>\n                         <i class="fas fa-globe-americas m-hyp-icon"></i>\n                    </div>\n\n                    <div class="m-lang-grid">\n                        <div class="m-lang-opt active-ita" id="lang-ita" onclick="setLangMode('ita')">\n                            <i class="fas fa-flag"></i>\n                            <span class="m-lang-txt">🇮🇹 ITA</span>\n                        </div>\n                        <div class="m-lang-opt" id="lang-all" onclick="setLangMode('all')">\n                            <i class="fas fa-comments"></i>\n                            <span class="m-lang-txt">🇮🇹+🇬🇧</span>\n                        </div>\n                        <div class="m-lang-opt" id="lang-eng" onclick="setLangMode('eng')">\n                            <i class="fas fa-flag-usa"></i>\n                            <span class="m-lang-txt">🇬🇧 ENG</span>\n                        </div>\n                    </div>\n\n                    <div id="lang-desc-container" style="background: rgba(0,0,0,0.2); border-radius: 8px; padding: 10px; margin-bottom: 25px; border-left: 3px solid var(--m-primary);">\n                        <p id="lang-description" style="margin:0; font-size: 0.7rem; color: var(--m-dim); line-height: 1.3; font-family:'Outfit';">\n                             Cerca solo contenuti in Italiano 🇮🇹. Ignora tutto il resto.\n                        </p>\n                    </div>\n\n                    <div class="m-hyp-label">📺 Resolution Filter</div>\n                    <p class="m-hyp-desc">Tocca per escludere qualità specifiche.</p>\n\n                    <div class="m-chip-grid">\n                        <div class="m-qual-chip" id="mq-4k" onclick="toggleFilter('mq-4k')">💎 4K</div>\n                        <div class="m-qual-chip" id="mq-1080" onclick="toggleFilter('mq-1080')">🎬 1080p</div>\n                        <div class="m-qual-chip" id="mq-720" onclick="toggleFilter('mq-720')">📺 720p <span class="mini-tag">HD</span></div>\n                        <div class="m-qual-chip" id="mq-sd" onclick="toggleFilter('mq-sd')">📼 CAM/SD</div>\n                    </div>\n\n                    <div class="m-sys-grid">\n                        <div class="m-sys-row">\n                            <div class="m-sys-info"><h4><i class="fas fa-layer-group" style="color:var(--m-accent)"></i> 🧩 AIO Mode <span class="m-status-text" id="st-aio">OFF</span></h4><p>Formatta per AIOStreams 🧩</p></div>\n                            <label class="m-switch"><input type="checkbox" id="m-aioMode" onchange="updateStatus('m-aioMode','st-aio')"><span class="m-slider m-slider-purple"></span></label>\n                        </div>\n                        <div class="m-sys-row">\n                            <div class="m-sys-info"><h4><i class="fas fa-cloud" style="color:var(--m-primary)"></i> ☁️ Debrid Cloud <span class="m-status-text" id="st-savedcloud">OFF</span></h4><p>File salvati RD/TorBox 📦. Duplicati sempre esclusi ✨.</p></div>\n                            <label class="m-switch"><input type="checkbox" id="m-enableSavedCloud" onchange="toggleSavedCloud()"><span class="m-slider"></span></label>\n                        </div>\n                        <div class="m-cloud-mode-panel" id="m-savedCloudPanel">\n                            <div class="m-cloud-mode-grid">\n                                <div class="m-cloud-mode-btn active" id="m-cloud-smart" onclick="setSavedCloudMode('smart')">SMART<span>utile e pulito ✨</span></div>\n                                <div class="m-cloud-mode-btn" id="m-cloud-fallback" onclick="setSavedCloudMode('fallback')">FALLBACK<span>solo se trova poco 🪄</span></div>\n                                <div class="m-cloud-mode-btn" id="m-cloud-always" onclick="setSavedCloudMode('always')">ALWAYS<span>sempre no doppioni ✅</span></div>\n                            </div>\n                            <p class="m-cloud-note">Usa solo Real-Debrid/TorBox configurati ☁️. Anche in ALWAYS, se Leviathan ha gia lo stesso hash/file, il Cloud non viene mostrato ✨.</p>\n                        </div>\n                    </div>\n\n                    <div class="m-row" style="border:none; padding: 5px 0;">\n                        <div class="m-label">\n                            <h4><i class="fas fa-compress-arrows-alt" style="color:var(--m-error)"></i> 🚦 Signal Gate <span class="m-status-text" id="st-gate">OFF</span></h4>\n                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro qualità • max risultati per risoluzione 🚦</p>\n                        </div>\n                        <label class="m-switch"><input type="checkbox" id="m-gateActive" onchange="toggleGate()"><span class="m-slider"></span></label>\n                    </div>\n                    <div id="m-gate-wrapper" class="m-gate-wrapper">\n                        <div class="m-gate-control">\n                            <span style="font-size:0.8rem; color:#666;">1</span>\n                            <input type="range" min="1" max="20" value="3" class="m-range" id="m-gateVal" oninput="updateGateDisplay(this.value)">\n                            <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.2rem; color:var(--m-primary); width:30px; text-align:center;" id="m-gate-display">3</span>\n                        </div>\n                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualita 🎯. Utile per dispositivi lenti 📱.</p>\n                    </div>\n\n                    <div class="m-row" style="border:none; padding: 5px 0;">\n                        <div class="m-label">\n                            <h4><i class="fas fa-weight-hanging" style="color:var(--m-amber)"></i> ⚖️ Size Limit <span class="m-status-text" id="st-size">OFF</span></h4>\n                            <p style="font-size:0.65rem; color:var(--m-amber);">Filtro peso massimo • GB ⚖️</p>\n                        </div>\n                        <label class="m-switch"><input type="checkbox" id="m-sizeActive" onchange="toggleSize()"><span class="m-slider m-slider-aqua"></span></label>\n                    </div>\n                     <div id="m-size-wrapper" class="m-gate-wrapper">\n                        <div class="m-gate-control">\n                            <span style="font-size:0.8rem; color:#666;">1GB</span>\n                            <input type="range" min="1" max="100" step="1" value="0" class="m-range" id="m-sizeVal" oninput="updateSizeDisplay(this.value)" style="background:linear-gradient(90deg, #ff9900, #333)">\n                            <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.1rem; color:var(--m-amber); width:45px; text-align:center;" id="m-size-display">INF</span>\n                        </div>\n                         <p class="m-range-desc">Nasconde automaticamente tutti i file che superano la dimensione selezionata 📦.</p>\n                    </div>\n\n                </div>\n            </div>\n\n            <div id="page-network" class="m-page">\n\n                <div class="m-hypervisor">\n                    <div class="m-hyp-header">\n                        <span>🌐 SERVER & PROXY ✨</span>\n                        <i class="fas fa-network-wired m-hyp-icon" style="color:var(--m-secondary); border-color:rgba(155,108,255,0.35); background:rgba(155,108,255,0.08);"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Imposta un proxy personalizzato</b> solo quando serve. Altrimenti Leviathan resta sulla configurazione standard, più semplice e pulita 🌊.</p>\n\n                    <div style="padding:0 5px;">\n                        <p style="font-size:0.8rem; color:var(--m-dim); margin-bottom:20px; line-height:1.4;">\n                            Configura un endpoint proxy solo se ti serve un bridge personalizzato per le sorgenti italiane 🌊. Lascia vuoto per usare la gestione standard di Leviathan ✨.\n                        </p>\n\n                        <div class="m-field-group">\n                            <div class="m-field-header"><span class="m-field-label">🌐 SERVER URL</span></div>\n                            <div class="m-input-box">\n                                <i class="fas fa-server m-input-ico"></i>\n                                <input type="text" id="m-mfUrl" class="m-input-tech" placeholder="https://tuo-proxy.com" oninput="updateLinkModalContent()">\n                                <div class="m-paste-action" onclick="pasteTo('m-mfUrl')"><i class="fas fa-paste"></i></div>\n                            </div>\n                        </div>\n\n                        <div class="m-field-group">\n                            <div class="m-field-header"><span class="m-field-label">🔒 PASSWORD</span></div>\n                            <div class="m-input-box">\n                                <i class="fas fa-lock m-input-ico"></i>\n                                <input type="password" id="m-mfPass" class="m-input-tech" placeholder="********" oninput="updateLinkModalContent()">\n                            </div>\n                        </div>\n\n                        <div class="m-ghost-panel" id="ghost-zone-box">\n                            <div class="m-ghost-head">\n                                <div class="m-ghost-title"><i class="fas fa-user-shield"></i> 👻 DEBRID GHOST</div>\n                                <div class="m-ghost-status" id="ghost-status-text">VISIBLE</div>\n                            </div>\n                            <div style="display:flex; justify-content:space-between; align-items:center;">\n                                <p style="margin:0; font-size:0.75rem; color:rgba(255,255,255,0.6); max-width:70%;">\n                                    Instrada il traffico Debrid attraverso il Proxy configurato.\n                                </p>\n                                <label class="m-switch">\n                                    <input type="checkbox" id="m-proxyDebrid" onchange="updateGhostVisuals(); updateLinkModalContent()">\n                                    <span class="m-slider m-slider-purple"></span>\n                                </label>\n                            </div>\n                        </div>\n                    </div>\n                </div>\n            </div>\n        </div>\n    </div>\n\n    <div class="m-dock-container">\n        <div class="m-dock-nav">\n            <div class="m-nav-item active" onclick="navTo('setup', this)">\n                <span class="mf-nav-emoji">🧩</span><i class="fas fa-sliders-h"></i><span>SETUP</span>\n            </div>\n            <div class="m-nav-item" onclick="navTo('filters', this)">\n                <span class="mf-nav-emoji">🎛️</span><i class="fas fa-filter"></i><span>FILTRI</span>\n            </div>\n            <div class="m-nav-item" onclick="navTo('network', this)">\n                <span class="mf-nav-emoji">🌐</span><i class="fas fa-globe"></i><span>NET</span>\n            </div>\n        </div>\n    </div>\n\n    <div class="m-action-modal" id="m-link-modal">\n        <div class="m-am-card">\n            <div class="m-am-title">🔗 LINK GENERATO</div>\n            <div class="m-am-subtitle">Installa, copia o condividi la configurazione pronta</div>\n\n            <div class="m-flux-terminal">\n                <div class="m-flux-header">\n                    <span>🌊 OCEAN LINK STREAM</span>\n                    <i class="fas fa-network-wired"></i>\n                </div>\n                <textarea id="m-generatedUrlBox" class="m-flux-input" readonly>/// WAITING FOR DATA ///</textarea>\n            </div>\n\n            <div class="m-act-btn m-act-copy" onclick="copyFromModal()">\n                <i class="fas fa-copy"></i> 📋 COPIA NEGLI APPUNTI\n            </div>\n\n            <div class="m-act-btn m-act-close" onclick="closeLinkModal()">\n                ✕ CHIUDI\n            </div>\n        </div>\n    </div>\n\n    <div class="m-toast-container" id="m-toast-area"></div>\n\n</div>\n`;
+    mobileHTML = `\n<div id="m-sea-webgl" aria-hidden="true"></div>\n<div class="m-caustic" aria-hidden="true">\n    <div class="m-caustic-ray" style="--ray-x:8%;--ray-dur:14s;--ray-op:0.55;--ray-from:-12deg;--ray-to:6deg;width:50px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:28%;--ray-dur:11s;--ray-op:0.40;--ray-from:-6deg;--ray-to:14deg;width:35px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:50%;--ray-dur:16s;--ray-op:0.65;--ray-from:-10deg;--ray-to:8deg;width:65px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:68%;--ray-dur:9s;--ray-op:0.35;--ray-from:5deg;--ray-to:-12deg;width:40px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:85%;--ray-dur:13s;--ray-op:0.50;--ray-from:8deg;--ray-to:-6deg;width:55px;"></div>\n</div>\n<div class="m-ocean-particles" id="m-ocean-particles" aria-hidden="true"></div>\n<div id="app-container">\n    <div class="m-ptr" id="m-ptr-indicator"><i class="fas fa-arrow-down m-ptr-icon"></i></div>\n    <div class="m-content-wrapper">\n\n        <div class="m-content">\n            <div class="m-hero m-abyss-hero notranslate" aria-label="LEVIATHAN Kit" translate="no" data-no-translate="true">\n                <div class="m-hero-panel">\n                    <div class="logo-container m-abyss-logo">\n                        <span class="m-abyss-crown" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-tl" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-tr" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-bl" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-br" aria-hidden="true"></span>\n                        <img src="${MOBILE_LOGO_URL}" alt="LEVIATHAN Logo" class="logo-image notranslate" translate="no" data-no-translate="true" fetchpriority="high" decoding="async" loading="eager" width="110" height="110">\n                        <div class="logo-particles" aria-hidden="true">\n                            <span class="logo-particle" style="left:18%; width:5px; height:5px; animation-delay:0s;"></span>\n                            <span class="logo-particle" style="left:38%; width:3px; height:3px; animation-delay:2.4s;"></span>\n                            <span class="logo-particle" style="left:63%; width:4px; height:4px; animation-delay:4.1s;"></span>\n                            <span class="logo-particle" style="left:78%; width:3px; height:3px; animation-delay:6.2s;"></span>\n                        </div>\n                    </div>\n                    <h1 class="m-brand-title m-abyss-title notranslate" translate="no" lang="zxx" data-brand-lock="LEVIATHAN" data-no-translate="true" aria-label="LEVIATHAN">LEVIATHAN</h1>\n                    <div class="m-brand-sub m-abyss-sub">Sovrano degli abissi</div>\n                    <div class="m-hero-badges">\n                        <span class="m-hero-badge">🐬 Real-Debrid</span>\n                        <span class="m-hero-badge">🧊 TorBox</span>\n                        <span class="m-hero-badge">🦈 P2P</span>\n                    </div>\n                    <div class="m-version-tag m-abyss-version" aria-label="Versione 3.2.0">\n                        <span class="m-v-dot" aria-hidden="true"></span>\n                        <span>v3.2.0</span>\n                    </div>\n                </div>\n            </div>\n\n            <div id="page-setup" class="m-page active">\n\n                <div class="m-hypervisor" style="margin-top:2px;">\n                    <div class="m-hyp-header">\n                        <span>🔑 ACCESSO & SERVIZI</span>\n                        <i class="fas fa-fingerprint m-hyp-icon"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Configura l'accesso</b> scegliendo Real-Debrid, TorBox o P2P. La verifica live ti conferma subito se la chiave è pronta ✨🔐.</p>\n\n                    <div class="m-cred-deck">\n                        <div class="m-cred-opt cred-rd m-srv-btn active" onclick="setMService('rd', this)">\n                            <div class="m-cred-icon">🐬</div>\n                            <div class="m-cred-name">🐬 REAL-DEBRID</div>\n                        </div>\n                        <div class="m-cred-opt cred-tb m-srv-btn" onclick="setMService('tb', this)">\n                            <div class="m-cred-icon">🧊</div>\n                            <div class="m-cred-name">🧊 TORBOX</div>\n                        </div>\n                        <div class="m-cred-opt cred-p2p m-srv-btn" onclick="setMService('p2p', this)">\n                            <div class="m-cred-icon">🦈</div>\n                            <div class="m-cred-name">🦈 P2P MODE</div>\n                        </div>\n                    </div>\n\n                    <div class="m-input-fuselage" id="box-apikey">\n                        <div class="m-if-label">🔑 API KEY</div>\n                        <div class="m-if-inner">\n                            <div class="m-if-icon"><i class="fas fa-key"></i></div>\n                            <input type="text" id="m-apiKey" class="m-if-field" placeholder="Incolla key" oninput="handleMobileApiKeyInput()">\n                            <div class="m-if-action" onclick="pasteTo('m-apiKey')"><i class="fas fa-paste"></i></div>\n                            <div class="m-get-link" onclick="openApiPage()">GET <i class="fas fa-external-link-alt"></i></div>\n                        </div>\n                        <div class="m-key-status idle" id="m-keyStatus" aria-live="polite" aria-atomic="true">\n                            <span class="m-key-status-dot"></span>\n                            <span id="m-keyStatusText">🐬 RD / 🧊 TB live check disponibile.</span>\n                        </div>\n                    </div>\n\n                    <div class="m-input-fuselage tmdb-box" id="box-tmdb">\n                        <div class="m-if-label opt">🎬 TMDB OPTIONAL</div>\n                        <div class="m-if-inner">\n                            <div class="m-if-icon"><i class="fas fa-film"></i></div>\n                            <input type="text" id="m-tmdb" class="m-if-field" placeholder="Personal key" oninput="updateLinkModalContent()">\n                            <div class="m-if-action" onclick="pasteTo('m-tmdb')"><i class="fas fa-paste"></i></div>\n                            <div class="m-get-link" style="color:var(--m-accent); border-color:var(--m-accent); background:rgba(155, 108, 255,0.05);" onclick="openApiPage('tmdb')">GET <i class="fas fa-external-link-alt"></i></div>\n                        </div>\n                    </div>\n\n                </div>\n\n                <div class="m-hypervisor">\n                     <div class="m-hyp-header">\n                        <span>🍿 PROVIDER STREAMS ✨</span>\n                        <i class="fas fa-cubes m-hyp-icon"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Scegli le sorgenti da attivare</b>: Leviathan unisce cinema, serie e anime italiani in un catalogo pulito, veloce e facile da controllare 🍿📺✨.</p>\n\n                    <div class="m-reactor-grid">\n\n                        <div class="m-reactor-module" id="mod-vix">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🍿</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🍿 StreamingCommunity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableVix" onchange="updateStatus('m-enableVix','st-vix'); toggleModuleStyle('m-enableVix', 'mod-vix');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV in italiano, catalogo ricco e player rapido 🍿.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n</div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-cc">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎟️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎟️ CinemaCity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableCc" onchange="updateStatus('m-enableCc','st-cc'); toggleModuleStyle('m-enableCc', 'mod-cc');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Catalogo Film e Serie TV via CloudflareBypass e proxy CCCDN/Kraken 🎟️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ghd">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎬 GuardaHD</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGhd" onchange="updateStatus('m-enableGhd','st-ghd'); toggleModuleStyle('m-enableGhd', 'mod-ghd');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV in alta definizione, nuove uscite e schede ordinate 🎬.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-gs">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📺</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">📺 GuardoSerie</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGs" onchange="updateStatus('m-enableGs','st-gs'); toggleModuleStyle('m-enableGs', 'mod-gs');">\n                                        <span class="m-slider m-slider-purple"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Serie TV italiane organizzate per stagioni ed episodi 📺.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-vidxgo">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎯</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎯 VidxGo</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableVidxgo" onchange="updateStatus('m-enableVidxgo','st-vidxgo'); toggleModuleStyle('m-enableVidxgo', 'mod-vidxgo');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Player diretto per film e serie TV, flusso risolto dal codice IMDb ⚡.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-es">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌍</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🌍 Eurostreaming</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableEs" onchange="updateStatus('m-enableEs','st-es'); toggleModuleStyle('m-enableEs', 'mod-es');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Portale italiano storico dedicato a serie TV e contenuti aggiornati ⭐.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-cb01">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎬 CB01</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableCb01" onchange="updateStatus('m-enableCb01','st-cb01'); toggleModuleStyle('m-enableCb01', 'mod-cb01');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Ampio catalogo di film e serie TV, tra i riferimenti più noti in Italia 🎞️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-onlineserietv">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🖥️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🖥️ OnlineSerieTV</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableOnlineserietv" onchange="updateStatus('m-enableOnlineserietv','st-onlineserietv'); toggleModuleStyle('m-enableOnlineserietv', 'mod-onlineserietv');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV italiani, risolti via uprot/MaxStream con forward proxy 🛰️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-aw">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">⛩️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">⛩️ AnimeWorld</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeWorld" onchange="updateStatus('m-enableAnimeWorld','st-aw'); toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime sub-ita e doppiati, con schede serie e catalogo ampio 🌸.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-au">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌊</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🌊 AnimeUnity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeUnity" onchange="updateStatus('m-enableAnimeUnity','st-au'); toggleModuleStyle('m-enableAnimeUnity', 'mod-au');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime, simulcast e doppiaggi con episodi aggiornati e ordinati 🪄.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-as">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🪐</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🪐 AnimeSaturn</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeSaturn" onchange="updateStatus('m-enableAnimeSaturn','st-as'); toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime classici e recenti, archivio ampio e consultazione rapida 🪐.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ti">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🐙</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🐙 ToonItalia</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableToonItalia" onchange="updateStatus('m-enableToonItalia','st-ti'); toggleModuleStyle('m-enableToonItalia', 'mod-ti');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Cartoon e anime in italiano, con resolver VOE, LoadM/RPMShare e MaxStream.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-gf">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎞️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎞️ GuardaFlix</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGf" onchange="updateStatus('m-enableGf','st-gf'); toggleModuleStyle('m-enableGf', 'mod-gf');">\n                                        <span class="m-slider m-slider-green"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film in streaming con raccolte per genere e ultime uscite 🎥.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ads">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📽️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">📽️ Altadefinizione</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAltadefinizione" onchange="updateStatus('m-enableAltadefinizione','st-ads'); toggleModuleStyle('m-enableAltadefinizione', 'mod-ads');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV con catalogo aggiornato e navigazione intuitiva 🎟️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n\n                    </div>\n                </div>\n\n                <div id="m-priority-panel" class="m-priority-wrapper">\n                    <div style="margin-top:5px; padding:15px; border-radius:16px; background:linear-gradient(90deg, rgba(155,108,255,0.1), transparent); border-left:4px solid var(--m-secondary);">\n                        <div style="display:flex; justify-content:space-between; align-items:center;">\n                            <div>\n                                <h5 style="margin:0; font-family:'Rajdhani'; color:#fff;">🚀 PRIORITÀ WEB</h5>\n                                <p id="priority-desc" style="margin:5px 0 0; font-size:0.8rem; color:var(--m-dim);">Mostra Web in cima</p>\n                            </div>\n                            <label class="m-switch">\n                                <input type="checkbox" id="m-vixLast" onchange="updatePriorityLabel()">\n                                <span class="m-slider" style="border-color:var(--m-secondary)"></span>\n                            </label>\n                        </div>\n                    </div>\n                </div>\n\n                <div class="m-setup-actions-panel" aria-label="Azioni configurazione">\n                    <div class="m-setup-action-row">\n                        <button class="m-setup-action m-setup-install" onclick="mobileInstall()" type="button">\n                            <span>INSTALLA</span>\n                            <i class="fas fa-radiation"></i>\n                        </button>\n                    </div>\n\n                    <div class="m-setup-mini-console" aria-label="Console copia link">\n                        <div class="m-setup-mini-console-head">\n                            <span class="m-setup-mini-console-title"><i class="fas fa-terminal"></i> LINK CONFIGURAZIONE</span>\n                            <button class="m-setup-mini-copy" onclick="copyFromSetupPanel()" type="button">\n                                <i class="fas fa-copy"></i>\n                                <span>COPIA</span>\n                            </button>\n                        </div>\n                        <div class="m-setup-mini-console-body">\n                            <textarea id="m-setupGeneratedUrlBox" class="m-setup-mini-url" readonly>/// WAITING FOR DATA ///</textarea>\n                        </div>\n                    </div>\n                </div>\n\n                <div class="m-credits-section">\n                    <div class="m-neural-frame m-github-signature">\n                        <div class="m-neural-header">\n                            <span class="m-nh-title">/// GITHUB SIGNATURE ///</span>\n                            <span class="m-nh-id">LUC4N3X</span>\n                        </div>\n\n                        <a href="https://github.com/LUC4N3X" target="_blank" rel="noopener" class="m-dev-module m-github-card" aria-label="Apri GitHub LUC4N3X">\n                            <span class="m-github-orb" aria-hidden="true"></span>\n                            <img src="https://github.com/LUC4N3X.png?size=160" alt="LUC4N3X GitHub" class="m-dev-img m-github-avatar" loading="lazy" decoding="async">\n                            <div class="m-dev-data m-github-data">\n                                <span class="m-dev-role">GITHUB</span>\n                                <span class="m-dev-nick">LUC4N3X</span>\n                                <span class="m-github-sub">Open source abyss lab</span>\n                            </div>\n                            <i class="fab fa-github m-github-mark" aria-hidden="true"></i>\n                        </a>\n\n                        <a href="https://github.com/LUC4N3X" target="_blank" rel="noopener" class="m-star-btn m-github-star">\n                            <i class="fas fa-star spin-star"></i>\n                            <span>LASCIAMI UNA STELLA</span>\n                        </a>\n                    </div>\n                </div>\n            </div>\n\n            <div id="page-filters" class="m-page">\n\n                <div class="m-hypervisor">\n                    <div class="m-hyp-header">\n                        <span>⚙️ REGOLE STREAM</span>\n                        <i class="fas fa-microchip m-hyp-icon"></i>\n                    </div>\n\n                    <p class="m-panel-desc"><b>Controlla cosa mostra Leviathan</b>: ordina per qualità, scegli la lingua, limita i risultati e mantieni la lista pulita anche su smartphone 🎯📱.</p>\n\n                    <div class="m-flux-control">\n                        <div class="m-flux-grid">\n                            <div class="m-flux-opt active-bal" id="sort-balanced" onclick="setSortMode('balanced')">\n                                <i class="fas fa-dragon"></i>\n                                <span>🐉 SMART</span>\n                            </div>\n                            <div class="m-flux-opt" id="sort-resolution" onclick="setSortMode('resolution')">\n                                <i class="fas fa-gem"></i>\n                                <span>💎 QUALITY</span>\n                            </div>\n                            <div class="m-flux-opt" id="sort-size" onclick="setSortMode('size')">\n                                <i class="fas fa-hdd"></i>\n                                <span>💾 SIZE</span>\n                            </div>\n                        </div>\n\n                        <div class="m-flux-readout mode-bal" id="flux-readout-box">\n                            <i class="fas fa-info-circle m-fr-icon" id="flux-icon-display"></i>\n                            <div class="m-fr-text">\n                                <span class="m-fr-title" id="flux-title-display">STANDARD MODE</span>\n                                <span class="m-fr-desc" id="flux-desc-display">L'algoritmo standard di Leviathan ✨. Bilancia perfettamente qualita e velocita ⚡.</span>\n                            </div>\n                        </div>\n                    </div>\n\n                    <div class="m-hyp-header" style="margin-top:25px; border-top:none; padding-top:0; margin-bottom:10px;">\n                         <span>🗣️ AUDIO &amp; LINGUA</span>\n                         <i class="fas fa-globe-americas m-hyp-icon"></i>\n                    </div>\n\n                    <div class="m-lang-grid">\n                        <div class="m-lang-opt active-ita" id="lang-ita" onclick="setLangMode('ita')">\n                            <i class="fas fa-flag"></i>\n                            <span class="m-lang-txt">🇮🇹 ITA</span>\n                        </div>\n                        <div class="m-lang-opt" id="lang-all" onclick="setLangMode('all')">\n                            <i class="fas fa-comments"></i>\n                            <span class="m-lang-txt">🇮🇹+🇬🇧</span>\n                        </div>\n                        <div class="m-lang-opt" id="lang-eng" onclick="setLangMode('eng')">\n                            <i class="fas fa-flag-usa"></i>\n                            <span class="m-lang-txt">🇬🇧 ENG</span>\n                        </div>\n                    </div>\n\n                    <div id="lang-desc-container" style="background: rgba(0,0,0,0.2); border-radius: 8px; padding: 10px; margin-bottom: 25px; border-left: 3px solid var(--m-primary);">\n                        <p id="lang-description" style="margin:0; font-size: 0.7rem; color: var(--m-dim); line-height: 1.3; font-family:'Outfit';">\n                             Cerca solo contenuti in Italiano 🇮🇹. Ignora tutto il resto.\n                        </p>\n                    </div>\n\n                    <div class="m-hyp-label">📺 Resolution Filter</div>\n                    <p class="m-hyp-desc">Tocca per escludere qualità specifiche.</p>\n\n                    <div class="m-chip-grid">\n                        <div class="m-qual-chip" id="mq-4k" onclick="toggleFilter('mq-4k')">💎 4K</div>\n                        <div class="m-qual-chip" id="mq-1080" onclick="toggleFilter('mq-1080')">🎬 1080p</div>\n                        <div class="m-qual-chip" id="mq-720" onclick="toggleFilter('mq-720')">📺 720p <span class="mini-tag">HD</span></div>\n                        <div class="m-qual-chip" id="mq-sd" onclick="toggleFilter('mq-sd')">📼 CAM/SD</div>\n                    </div>\n\n                    <div class="m-sys-grid">\n                        <div class="m-sys-row">\n                            <div class="m-sys-info"><h4><i class="fas fa-layer-group" style="color:var(--m-accent)"></i> 🧩 AIO Mode <span class="m-status-text" id="st-aio">OFF</span></h4><p>Formatta per AIOStreams 🧩</p></div>\n                            <label class="m-switch"><input type="checkbox" id="m-aioMode" onchange="updateStatus('m-aioMode','st-aio')"><span class="m-slider m-slider-purple"></span></label>\n                        </div>\n                        <div class="m-sys-row">\n                            <div class="m-sys-info"><h4><i class="fas fa-cloud" style="color:var(--m-primary)"></i> ☁️ Debrid Cloud <span class="m-status-text" id="st-savedcloud">OFF</span></h4><p>File salvati RD/TorBox 📦. Duplicati sempre esclusi ✨.</p></div>\n                            <label class="m-switch"><input type="checkbox" id="m-enableSavedCloud" onchange="toggleSavedCloud()"><span class="m-slider"></span></label>\n                        </div>\n                        <div class="m-cloud-mode-panel" id="m-savedCloudPanel">\n                            <div class="m-cloud-mode-grid">\n                                <div class="m-cloud-mode-btn active" id="m-cloud-smart" onclick="setSavedCloudMode('smart')">SMART<span>utile e pulito ✨</span></div>\n                                <div class="m-cloud-mode-btn" id="m-cloud-fallback" onclick="setSavedCloudMode('fallback')">FALLBACK<span>solo se trova poco 🪄</span></div>\n                                <div class="m-cloud-mode-btn" id="m-cloud-always" onclick="setSavedCloudMode('always')">ALWAYS<span>sempre no doppioni ✅</span></div>\n                            </div>\n                            <p class="m-cloud-note">Usa solo Real-Debrid/TorBox configurati ☁️. Anche in ALWAYS, se Leviathan ha gia lo stesso hash/file, il Cloud non viene mostrato ✨.</p>\n                        </div>\n                    </div>\n\n                    <div class="m-row" style="border:none; padding: 5px 0;">\n                        <div class="m-label">\n                            <h4><i class="fas fa-compress-arrows-alt" style="color:var(--m-error)"></i> 🚦 Signal Gate <span class="m-status-text" id="st-gate">OFF</span></h4>\n                            <p style="font-size:0.65rem; color:var(--m-error);">Filtro qualità • max risultati per risoluzione 🚦</p>\n                        </div>\n                        <label class="m-switch"><input type="checkbox" id="m-gateActive" onchange="toggleGate()"><span class="m-slider"></span></label>\n                    </div>\n                    <div id="m-gate-wrapper" class="m-gate-wrapper">\n                        <div class="m-gate-control">\n                            <span style="font-size:0.8rem; color:#666;">1</span>\n                            <input type="range" min="1" max="20" value="3" class="m-range" id="m-gateVal" oninput="updateGateDisplay(this.value)">\n                            <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.2rem; color:var(--m-primary); width:30px; text-align:center;" id="m-gate-display">3</span>\n                        </div>\n                        <p class="m-range-desc">Limita il numero di risultati mostrati per ogni qualita 🎯. Utile per dispositivi lenti 📱.</p>\n                    </div>\n\n                    <div class="m-row" style="border:none; padding: 5px 0;">\n                        <div class="m-label">\n                            <h4><i class="fas fa-weight-hanging" style="color:var(--m-amber)"></i> ⚖️ Size Limit <span class="m-status-text" id="st-size">OFF</span></h4>\n                            <p style="font-size:0.65rem; color:var(--m-amber);">Filtro peso massimo • GB ⚖️</p>\n                        </div>\n                        <label class="m-switch"><input type="checkbox" id="m-sizeActive" onchange="toggleSize()"><span class="m-slider m-slider-aqua"></span></label>\n                    </div>\n                     <div id="m-size-wrapper" class="m-gate-wrapper">\n                        <div class="m-gate-control">\n                            <span style="font-size:0.8rem; color:#666;">1GB</span>\n                            <input type="range" min="1" max="100" step="1" value="0" class="m-range" id="m-sizeVal" oninput="updateSizeDisplay(this.value)" style="background:linear-gradient(90deg, #ff9900, #333)">\n                            <span style="font-family:'Rajdhani'; font-weight:800; font-size:1.1rem; color:var(--m-amber); width:45px; text-align:center;" id="m-size-display">INF</span>\n                        </div>\n                         <p class="m-range-desc">Nasconde automaticamente tutti i file che superano la dimensione selezionata 📦.</p>\n                    </div>\n\n                </div>\n            </div>\n\n            <div id="page-network" class="m-page">\n\n                <div class="m-hypervisor">\n                    <div class="m-hyp-header">\n                        <span>🌐 SERVER & PROXY ✨</span>\n                        <i class="fas fa-network-wired m-hyp-icon" style="color:var(--m-secondary); border-color:rgba(155,108,255,0.35); background:rgba(155,108,255,0.08);"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Imposta un proxy personalizzato</b> solo quando serve. Altrimenti Leviathan resta sulla configurazione standard, più semplice e pulita 🌊.</p>\n\n                    <div style="padding:0 5px;">\n                        <p style="font-size:0.8rem; color:var(--m-dim); margin-bottom:20px; line-height:1.4;">\n                            Configura un endpoint proxy solo se ti serve un bridge personalizzato per le sorgenti italiane 🌊. Lascia vuoto per usare la gestione standard di Leviathan ✨.\n                        </p>\n\n                        <div class="m-field-group">\n                            <div class="m-field-header"><span class="m-field-label">🌐 SERVER URL</span></div>\n                            <div class="m-input-box">\n                                <i class="fas fa-server m-input-ico"></i>\n                                <input type="text" id="m-mfUrl" class="m-input-tech" placeholder="https://tuo-proxy.com" oninput="updateLinkModalContent()">\n                                <div class="m-paste-action" onclick="pasteTo('m-mfUrl')"><i class="fas fa-paste"></i></div>\n                            </div>\n                        </div>\n\n                        <div class="m-field-group">\n                            <div class="m-field-header"><span class="m-field-label">🔒 PASSWORD</span></div>\n                            <div class="m-input-box">\n                                <i class="fas fa-lock m-input-ico"></i>\n                                <input type="password" id="m-mfPass" class="m-input-tech" placeholder="********" oninput="updateLinkModalContent()">\n                            </div>\n                        </div>\n\n                        <div class="m-ghost-panel" id="ghost-zone-box">\n                            <div class="m-ghost-head">\n                                <div class="m-ghost-title"><i class="fas fa-user-shield"></i> 👻 DEBRID GHOST</div>\n                                <div class="m-ghost-status" id="ghost-status-text">VISIBLE</div>\n                            </div>\n                            <div style="display:flex; justify-content:space-between; align-items:center;">\n                                <p style="margin:0; font-size:0.75rem; color:rgba(255,255,255,0.6); max-width:70%;">\n                                    Instrada il traffico Debrid attraverso il Proxy configurato.\n                                </p>\n                                <label class="m-switch">\n                                    <input type="checkbox" id="m-proxyDebrid" onchange="updateGhostVisuals(); updateLinkModalContent()">\n                                    <span class="m-slider m-slider-purple"></span>\n                                </label>\n                            </div>\n                        </div>\n                    </div>\n                </div>\n            </div>\n        </div>\n    </div>\n\n    <div class="m-dock-container">\n        <div class="m-dock-nav">\n            <div class="m-nav-item active" onclick="navTo('setup', this)">\n                <span class="mf-nav-emoji">🧩</span><i class="fas fa-sliders-h"></i><span>SETUP</span>\n            </div>\n            <div class="m-nav-item" onclick="navTo('filters', this)">\n                <span class="mf-nav-emoji">🎛️</span><i class="fas fa-filter"></i><span>FILTRI</span>\n            </div>\n            <div class="m-nav-item" onclick="navTo('network', this)">\n                <span class="mf-nav-emoji">🌐</span><i class="fas fa-globe"></i><span>NET</span>\n            </div>\n        </div>\n    </div>\n\n    <div class="m-action-modal" id="m-link-modal">\n        <div class="m-am-card">\n            <div class="m-am-title">🔗 LINK GENERATO</div>\n            <div class="m-am-subtitle">Installa, copia o condividi la configurazione pronta</div>\n\n            <div class="m-flux-terminal">\n                <div class="m-flux-header">\n                    <span>🌊 OCEAN LINK STREAM</span>\n                    <i class="fas fa-network-wired"></i>\n                </div>\n                <textarea id="m-generatedUrlBox" class="m-flux-input" readonly>/// WAITING FOR DATA ///</textarea>\n            </div>\n\n            <div class="m-act-btn m-act-copy" onclick="copyFromModal()">\n                <i class="fas fa-copy"></i> 📋 COPIA NEGLI APPUNTI\n            </div>\n\n            <div class="m-act-btn m-act-close" onclick="closeLinkModal()">\n                ✕ CHIUDI\n            </div>\n        </div>\n    </div>\n\n    <div class="m-toast-container" id="m-toast-area"></div>\n\n</div>\n`;
 let mCurrentService = "rd",
     mScQuality = "1080",
     mSortMode = "balanced",
@@ -3535,42 +4172,46 @@ function installMobileInputPerformanceGuard() {
         ));
 }
 function installMobileNoFlickerGuard() {
-    let n = 0;
-    const e = () => {
-            (document.body.classList.add("m-switching"),
-                isMobileTextField(document.activeElement) ||
-                    (clearTimeout(MOBILE_PERF.inputIdleTimer),
-                    document.body.classList.remove(
-                        "m-typing",
-                        "m-input-active",
-                        "m-keyboard-open",
-                    )),
-                clearTimeout(n),
-                (n = setTimeout(() => document.body.classList.remove("m-switching"), 360)));
+    let n = 0,
+        e = 0,
+        t = 0;
+    const a = () => {
+            const a = performance.now();
+            if (a - e < 80) return;
+            e = a;
+            cancelAnimationFrame(t);
+            t = requestAnimationFrame(() => {
+                (document.body.classList.add("m-switching"),
+                    isMobileTextField(document.activeElement) ||
+                        (clearTimeout(MOBILE_PERF.inputIdleTimer),
+                        document.body.classList.remove(
+                            "m-typing",
+                            "m-input-active",
+                            "m-keyboard-open",
+                        )),
+                    clearTimeout(n),
+                    (n = setTimeout(() => document.body.classList.remove("m-switching"), 180)));
+            });
         },
-        t = (n) =>
+        i = (n) =>
             document.addEventListener(
                 n,
                 (n) => {
                     mClosest(
                         n.target,
                         '.m-switch, input[type="checkbox"], input[type="radio"], input[type="range"]',
-                    ) && e();
+                    ) && a();
                 },
                 { passive: !0 },
             );
-    (t("pointerdown"),
-        t("touchstart"),
-        t("input"),
-        t("change"),
-        requestAnimationFrame(() =>
-            requestAnimationFrame(() => document.body.classList.add("m-ui-ready")),
-        ));
+    (i("pointerdown"),
+        i("change"),
+        requestAnimationFrame(() => document.body.classList.add("m-ui-ready")));
 }
 function scheduleMobileAfterPaint(n) {
     "function" == typeof requestIdleCallback
-        ? requestIdleCallback(n, { timeout: 900 })
-        : setTimeout(n, 80);
+        ? requestIdleCallback(n, { timeout: 1400 })
+        : setTimeout(n, 180);
 }
 function syncMobileDockMetrics() {
     try {
@@ -3579,6 +4220,8 @@ function syncMobileDockMetrics() {
         if (!n || !e) return;
         const t = e.getBoundingClientRect(),
             a = Math.max(72, Math.ceil(t.height || e.offsetHeight || 76));
+        if (window.__leviathanLastDockH === a) return;
+        window.__leviathanLastDockH = a;
         n.style.setProperty("--m-dock-h", `${a}px`);
     } catch (n) {}
 }
@@ -3615,7 +4258,7 @@ function installMobileDockMetricsGuard() {
 function initMobileInterface() {
     if (!document.head || !document.body) return;
     if (window.__leviathanMobileInitialized) return;
-    ((window.__leviathanMobileInitialized = !0), ensureMobileLogoHints(), primeMobileLogo());
+    ((window.__leviathanMobileInitialized = !0), ensureMobileLogoHints(), primeMobileLogo(), applyMobilePerformanceMode());
     let n = document.getElementById("leviathan-mobile-style");
     (n ||
         ((n = document.createElement("style")),
@@ -3662,7 +4305,7 @@ function initPullToRefresh() {
                 if (!s) return;
                 const l = s.pageY - a;
                 if (l > 0 && n.scrollTop <= 0) {
-                    if (o) return;
+                    if (o || l < 6) return;
                     o = requestAnimationFrame(() => {
                         e.style.opacity = String(Math.min(l / 100, 1));
                         const n = Math.min(0.4 * l, 80);
@@ -3700,12 +4343,15 @@ function initPullToRefresh() {
         ));
 }
 function navTo(n, e) {
-    (document.querySelectorAll(".m-page").forEach((n) => n.classList.remove("active")),
-        document.querySelectorAll(".m-nav-item").forEach((n) => n.classList.remove("active")));
-    const t = document.getElementById("page-" + n);
-    (t && t.classList.add("active"), e && e.classList.add("active"));
-    const a = document.querySelector(".m-content");
-    (a && (a.scrollTop = 0), mVibrate(10));
+    requestAnimationFrame(() => {
+        (document.querySelectorAll(".m-page").forEach((n) => n.classList.remove("active")),
+            document.querySelectorAll(".m-nav-item").forEach((n) => n.classList.remove("active")));
+        const t = document.getElementById("page-" + n);
+        (t && t.classList.add("active"), e && e.classList.add("active"));
+        const a = document.querySelector(".m-content");
+        a && !isMobileTextField(document.activeElement) && (a.scrollTop = 0);
+        mVibrate(8);
+    });
 }
 function clearMobileDebridValidationTimer() {
     mDebridValidationState.timer &&
