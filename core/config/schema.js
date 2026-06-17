@@ -84,7 +84,6 @@ const BOOLEAN_FILTER_KEYS = [
   'enableAnimeUnity',
   'enableAnimeSaturn',
   'enableGf',
-  'enableCc',
   'enableAltadefinizione',
   'enableToonItalia',
   'enableMoflix',

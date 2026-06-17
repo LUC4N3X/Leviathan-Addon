@@ -138,147 +138,18 @@ test('dedupeStreamsByUrl keeps the first stream for duplicate URLs', () => {
     assert.equal(output[1].name, 'third');
 });
 
-test('provider registry exposes CinemaCity and CB01 metadata', () => {
-    const cinemaCity = getWebProviderDefinition('CinemaCity');
+
+
+
+
+
+
+test('provider registry exposes CB01 metadata', () => {
     const cb01 = getWebProviderDefinition('CB01');
 
-    assert.equal(cinemaCity?.key, 'cinemaCity');
-    assert.equal(cinemaCity?.limiterKey, 'webCc');
-    assert.equal(getWebProviderIcon('CinemaCity'), '🏙️');
     assert.equal(cb01?.key, 'cb01');
     assert.equal(cb01?.limiterKey, 'webCb01');
     assert.equal(getWebProviderIcon('CB01'), '🎬');
-});
-
-test('fetchWebProviderBuckets does not crash when CinemaCity limiter is missing', async () => {
-    const calls = [];
-    const tools = createWebProviderTools({
-        Cache: {
-            fetchWithCache: async (_name, _key, _ttl, factory) => factory()
-        },
-        LIMITERS: {},
-        CONFIG: { TIMEOUTS: { SCRAPER: 1 } },
-        guardedProviderCall: async (providerName, limiter) => {
-            calls.push({ providerName, hasLimiter: Boolean(limiter && typeof limiter.schedule === 'function') });
-            await limiter.schedule(() => Promise.resolve('scheduled'));
-            return [];
-        }
-    });
-
-    const buckets = await tools.fetchWebProviderBuckets({
-        type: 'movie',
-        originalId: 'tt33046197',
-        finalId: 'tt33046197',
-        meta: { title: 'Fratelli demolitori', type: 'movie' },
-        config: { filters: { enableCc: true } },
-        reqHost: null,
-        allowItalianWebProviders: true,
-        dbOnlyMode: false
-    });
-
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].providerName, 'CinemaCityV3');
-    assert.equal(calls[0].hasLimiter, true);
-    assert.deepEqual(buckets.cinemaCity, []);
-});
-
-test('web formatter keeps CinemaCity quality and avoids duplicate provider lines', () => {
-    const tools = createWebProviderTools({
-        Cache: {},
-        LIMITERS: {},
-        CONFIG: { TIMEOUTS: { SCRAPER: 0 } },
-        guardedProviderCall: async () => []
-    });
-
-    const formatted = tools.formatWebProviderBuckets({
-        cinemaCity: [{
-            name: '🏙️ CinemaCity | CCCDN',
-            title: 'Agente Zeta HD\n☁️ CCCDN • 🇮🇹 ITA',
-            url: 'https://example.com/master.m3u8',
-            quality: '1080p',
-            extractor: 'CCCDN',
-            behaviorHints: {
-                extractor: 'CCCDN',
-                vortexMeta: {
-                    quality: '1080p',
-                    extractor: 'CCCDN',
-                    provider: 'CinemaCity'
-                }
-            }
-        }]
-    }, { title: 'Agente Zeta HD', type: 'movie' }, { formatter: 'leviathan', filters: {} });
-
-    assert.equal(formatted.cinemaCity.length, 1);
-    assert.match(formatted.cinemaCity[0].name, /^🌊\s/i);
-    assert.match(formatted.cinemaCity[0].title, /1080/i);
-    assert.match(formatted.cinemaCity[0].title, /CCCDN/i);
-    assert.equal((formatted.cinemaCity[0].title.match(/CinemaCity/g) || []).length, 1);
-    assert.doesNotMatch(formatted.cinemaCity[0].title, /HLS Proxy/i);
-});
-
-test('web formatter normalizes legacy CinemaCity proxy labels to CCCDN', () => {
-    const tools = createWebProviderTools({
-        Cache: {},
-        LIMITERS: {},
-        CONFIG: { TIMEOUTS: { SCRAPER: 0 } },
-        guardedProviderCall: async () => []
-    });
-
-    const formatted = tools.formatWebProviderBuckets({
-        cinemaCity: [{
-            name: '🏙️ CinemaCity | MFP',
-            title: 'Agente Zeta HD\n☁️ Proxy • 🇮🇹 ITA',
-            url: 'https://example.com/master.m3u8',
-            quality: '1080p',
-            extractor: 'HLS Proxy',
-            behaviorHints: {
-                extractor: 'HLS Proxy',
-                vortexMeta: {
-                    quality: '1080p',
-                    extractor: 'HLS Proxy',
-                    provider: 'CinemaCity'
-                }
-            }
-        }]
-    }, { title: 'Agente Zeta HD', type: 'movie' }, { formatter: 'leviathan', filters: {} });
-
-    assert.equal(formatted.cinemaCity.length, 1);
-    assert.match(formatted.cinemaCity[0].title, /CCCDN/i);
-    assert.doesNotMatch(formatted.cinemaCity[0].title, /HLS Proxy/i);
-});
-
-test('web formatter shows multiple audio flags when provider streams expose them', () => {
-    const tools = createWebProviderTools({
-        Cache: {},
-        LIMITERS: {},
-        CONFIG: { TIMEOUTS: { SCRAPER: 0 } },
-        guardedProviderCall: async () => []
-    });
-
-    const formatted = tools.formatWebProviderBuckets({
-        cinemaCity: [{
-            name: '🏙️ CinemaCity | CCCDN',
-            title: 'The Rip\nCCCDN ITA ENG',
-            url: 'https://example.com/master.m3u8',
-            quality: '1080p',
-            extractor: 'CCCDN',
-            audioLanguages: ['ita', 'eng'],
-            behaviorHints: {
-                extractor: 'CCCDN',
-                vortexMeta: {
-                    quality: '1080p',
-                    extractor: 'CCCDN',
-                    provider: 'CinemaCity',
-                    audioLanguages: ['ita', 'eng']
-                }
-            }
-        }]
-    }, { title: 'The Rip', type: 'movie' }, { formatter: 'leviathan', filters: {} });
-
-    assert.equal(formatted.cinemaCity.length, 1);
-    assert.match(formatted.cinemaCity[0].name, /🇮🇹\/🇬🇧/);
-    assert.match(formatted.cinemaCity[0].title, /🗣️ 🇮🇹\/🇬🇧 \|/);
-    assert.equal(formatted.cinemaCity[0].behaviorHints.vortexMeta.language, 'MULTI ITA/ENG');
 });
 
 test('web formatter expands legacy multi audio markers to concrete ITA and ENG flags', () => {
