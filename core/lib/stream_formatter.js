@@ -1,57 +1,6 @@
 const { REGEX_TRUSTED_GROUPS } = require('../utils/text');
+const { parseTitle: parseReleaseTitle } = require('../intelligence/release_parser');
 const { renderTemplate } = require('./format_template_engine');
-function basicParseTitle(title) {
-  const source = String(title || '');
-  const cleaned = source
-    .replace(/\.(?:mkv|mp4|avi|iso|wmv|ts|flv|mov|m2ts|m4v|mpg|mpeg)$/i, '')
-    .replace(/[._]+/g, ' ')
-    .trim();
-
-  const titlePart = cleaned
-    .replace(/\b(?:2160p|1440p|1080p|1080i|720p|480p|x264|x265|h264|h265|hevc|av1|bluray|blu-ray|bdrip|brrip|webrip|web-dl|hdtv|ddp|aac|ac3|dts|truehd|atmos|dv|dovi|hdr10\+?|remux)\b.*$/i, '')
-    .trim();
-
-  const resolution = source.match(/\b(2160p|1440p|1080p|1080i|720p|480p)\b/i)?.[1] || '';
-  const codec = source.match(/\b(x265|x264|h265|h264|hevc|av1|vvc|h266)\b/i)?.[1] || '';
-  let releaseSource = '';
-  if (/\b(?:blu[-.\s]?ray|bd(?:rip)?|brrip)\b/i.test(source)) releaseSource = 'BluRay';
-  else if (/\bweb[-.\s]?dl\b|\bwebdl\b/i.test(source)) releaseSource = 'WEB-DL';
-  else if (/\bweb[-.\s]?rip\b|\bwebrip\b/i.test(source)) releaseSource = 'WEBRip';
-  else if (/\bhdtv\b/i.test(source)) releaseSource = 'HDTV';
-  else if (/\bweb\b/i.test(source)) releaseSource = 'WEB';
-  const group = source.match(/[-_]\s?([a-zA-Z0-9@.]+)$/)?.[1] || '';
-  const channels = source.match(/\b([1-7][ .][01])\b/i)?.[1]?.replace(' ', '.') || '';
-  const hdr = [];
-  if (/\b(?:dv|dovi|dolby\s*vision)\b/i.test(source)) hdr.push('DV');
-  if (/\b(?:hdr10\+|hdr10plus)\b/i.test(source)) hdr.push('HDR10+');
-  else if (/\bhdr\b/i.test(source)) hdr.push('HDR');
-
-  return {
-    title: titlePart || cleaned,
-    resolution,
-    codec,
-    group,
-    channels,
-    hdr,
-    source: releaseSource,
-    remux: /\bremux\b/i.test(source),
-    audio: source.match(/\b(?:ddp|aac|ac3|dts|truehd|opus|flac|pcm|lpcm|mp3)\b/i)?.[0] || '',
-  };
-}
-
-function loadTitleParser() {
-  try {
-    const parser = require('parse-torrent-title');
-    try {
-      require('./release_signal_engine');
-    } catch (_extError) {}
-    return parser;
-  } catch (_error) {
-    return { parse: basicParseTitle };
-  }
-}
-
-const titleParser = loadTitleParser();
 
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
 const LANG_SEP = ' / ';
@@ -340,7 +289,7 @@ function parseTitleCached(title) {
 
   let parsed;
   try {
-    parsed = titleParser.parse(key);
+    parsed = parseReleaseTitle(key);
   } catch (_error) {
     parsed = { title: key };
   }
