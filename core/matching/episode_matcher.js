@@ -149,8 +149,8 @@ function matchesTokenCoverage(candidateText, ctx) {
         const coverage = matched / queryTokens.length;
         if ((queryTokens.length <= 3 && coverage < 1) || (queryTokens.length > 3 && coverage < 0.8)) continue;
 
-        const extraTokens = candidateCore.filter((token) => !queryTokens.includes(token));
-        const nonStopwordExtras = extraTokens.filter((token) => !STOPWORDS.has(token));
+        const queryTokenSet = new Set(queryTokens);
+        const nonStopwordExtras = candidateCore.filter((token) => !queryTokenSet.has(token) && !STOPWORDS.has(token));
         if (queryTokens.length <= 2 && nonStopwordExtras.length > 0) continue;
         if (queryTokens.length <= 3 && nonStopwordExtras.length > 2) continue;
         if (nonStopwordExtras.length <= 8) return true;
