@@ -17,12 +17,8 @@ const html = `
 test('provider definition engine loads recipes and validates current web providers', () => {
     const engine = new ProviderDefinitionEngine();
     const ids = engine.listRecipes().map((recipe) => recipe.id);
-
-    assert.ok(ids.includes('cinemacity'));
     assert.ok(ids.includes('guardahd'));
     assert.ok(ids.includes('animeworld'));
-    assert.equal(engine.validateRecipe('cinemacity').ok, true);
-    assert.equal(engine.getRecipe('cinemaCity').id, 'cinemacity');
 });
 
 test('provider pipeline parses selector-based recipe with injected fetcher', async () => {

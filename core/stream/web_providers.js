@@ -142,8 +142,6 @@ function normalizeWebExtractorLabel(value) {
     if (/vidx\s*go|vidxgo/i.test(raw)) return 'VidxGo';
     if (/\b(?:adn|cdn)\b|altadefinizionestreaming\.com\/api\/player-sources/i.test(raw)) return 'ADN/CDN';
     if (/sweet\s*pixel|sweetpixel/i.test(raw)) return 'SweetPixel';
-    if (/cccdn/i.test(raw)) return 'CCCDN';
-    if (/^(?:city|cinemacity\s*city|kraken\s*city)$/i.test(raw)) return 'CCCDN';
     if (/mixdrop|m1xdrop|mxcontent/i.test(raw)) return 'MixDrop';
     if (/loadm/i.test(raw)) return 'LoadM';
     if (/supervideo/i.test(raw)) return 'SuperVideo';
@@ -162,7 +160,7 @@ function normalizeWebExtractorLabel(value) {
     if (/deltabit/i.test(raw)) return 'DeltaBit';
     if (/^(?:direct|direct\s+(?:link|stream|cdn))$/i.test(raw)) return 'Direct';
     if (/^(?:hls|direct)\s+proxy$/i.test(raw)) return '';
-    if (/^(?:mfp|cinemacity)$/i.test(raw)) return '';
+    if (/^(?:mfp)$/i.test(raw)) return '';
     if (/^https?:\/\//i.test(raw)) {
         try {
             const parsed = new URL(raw);
@@ -192,25 +190,13 @@ function normalizeWebExtractorLabel(value) {
         .trim();
 
     // Only trust free-form labels when they look like a hoster/extractor, not a media title.
-    return /^(?:web|hls|city|adn|cdn|adn\/cdn|loadm|deltabit|delta\s*bit|turbovid|vixcloud|vidxgo|sweetpixel|srv12|cccdn|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|uprot|dropload|dr0pstream|streamhg|dhcplay|vibuxer|uqload|upstream|vidoza|direct)$/i.test(cleaned)
+    return /^(?:web|hls|adn|cdn|adn\/cdn|loadm|deltabit|delta\s*bit|turbovid|vixcloud|vidxgo|sweetpixel|srv12|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|uprot|dropload|dr0pstream|streamhg|dhcplay|vibuxer|uqload|upstream|vidoza|direct)$/i.test(cleaned)
         ? cleaned
         : '';
 }
 
 function inferWebExtractorLabel(stream, sourceName) {
     const source = String(sourceName || '');
-    const cinemaCitySignals = [
-        source,
-        stream?.provider,
-        stream?.source,
-        stream?.site,
-        stream?.name,
-        stream?.behaviorHints?.vortexSource,
-        stream?.behaviorHints?.vortexMeta?.provider,
-        stream?.behaviorHints?.vortexMeta?.source,
-        stream?.behaviorHints?.vortexMeta?.site
-    ];
-    const isCinemaCity = cinemaCitySignals.some((value) => /cinemacity/i.test(String(value || '')));
     const directCandidates = [
         stream?.behaviorHints?.extractor,
         stream?.behaviorHints?.vortexExtractor,
@@ -222,21 +208,16 @@ function inferWebExtractorLabel(stream, sourceName) {
 
     for (const candidate of directCandidates) {
         const normalized = normalizeWebExtractorLabel(candidate);
-        if (!normalized) continue;
-        if (isCinemaCity && /^(?:direct|web|hls|proxy|mfp|cinemacity)$/i.test(normalized)) return 'CCCDN';
-        return normalized;
+        if (normalized) return normalized;
     }
 
     const textCandidates = [stream?.title, stream?.name, stream?.url].filter(Boolean);
     for (const candidate of textCandidates) {
         const normalized = normalizeWebExtractorLabel(candidate);
-        if (!normalized) continue;
-        if (isCinemaCity && /^(?:direct|web|hls|proxy|mfp|cinemacity)$/i.test(normalized)) return 'CCCDN';
-        return normalized;
+        if (normalized) return normalized;
     }
 
     if (/streamingcommunity|vix/i.test(source)) return 'VixCloud';
-    if (isCinemaCity || /cinemacity/i.test(source)) return 'CCCDN';
     return 'Web';
 }
 
@@ -265,7 +246,7 @@ function inferWebQuality(stream, sourceName) {
         if (normalized) return normalized;
     }
 
-    const textToCheck = `${stream?.title || ''} ${stream?.name || ''} ${stream?.filename || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|VIDXGO|STREAMINGCOMMUNITY|CINEMACITY|LEVIATHAN|VIX|GUARDAFLIX|CB01|ANIMEWORLD|ANIMEUNITY|ANIMESATURN/g, '');
+    const textToCheck = `${stream?.title || ''} ${stream?.name || ''} ${stream?.filename || ''}`.toUpperCase().replace(/GUARDAHD|GUARDOSERIE|GUARDASERIE|VIDXGO|STREAMINGCOMMUNITY|LEVIATHAN|VIX|GUARDAFLIX|CB01|ANIMEWORLD|ANIMEUNITY|ANIMESATURN/g, '');
     if (/\b(4K|2160P|UHD)\b/.test(textToCheck)) return '4K';
     if (/\b(1440P|2K|QHD)\b/.test(textToCheck)) return '1440p';
     if (/\b(1080P|FHD|FULLHD)\b/.test(textToCheck)) return '1080p';

@@ -13,19 +13,15 @@ const { searchAnimeUnity } = require('../animeunity/au_handler');
 const { searchAnimeSaturn } = require('../animesaturn/as_handler');
 const { searchGuardaFlix } = require('../guardaflix/gf_handler');
 const { searchAltadefinizione } = require('../altadefinizione/ads_handler');
-const { searchCinemaCity } = require('../cinemacity/cc_handler');
 const { searchMoflix, isMoflixRuntimeEnabled } = require('../moflix/moflix_handler');
 const { searchToonItalia, isToonItaliaRuntimeEnabled } = require('../toonitalia/toonitalia_handler');
 const { getProviderRecipe } = require('../engine/provider_definition_engine');
 
 const STREAMING_COMMUNITY_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.SC_PROVIDER_TIMEOUT || '16000', 10) || 16000);
 const ANIMEWORLD_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.AW_PROVIDER_TIMEOUT || '16000', 10) || 16000);
-const ALTADEFINIZIONE_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_TIMEOUT || process.env.CC_PROVIDER_TIMEOUT || '18000', 10) || 18000);
-const ALTADEFINIZIONE_EMPTY_TTL = Math.max(15, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_EMPTY_TTL || process.env.CC_PROVIDER_EMPTY_TTL || '60', 10) || 60);
-const ALTADEFINIZIONE_ERROR_TTL = Math.max(3, Math.min(ALTADEFINIZIONE_EMPTY_TTL, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_ERROR_TTL || process.env.CC_PROVIDER_ERROR_TTL || '10', 10) || 10));
-const CINEMACITY_MIN_TIMEOUT = Math.max(30000, parseInt(process.env.CC_PROVIDER_TIMEOUT || process.env.CINEMACITY_PROVIDER_TIMEOUT || '42000', 10) || 42000);
-const CINEMACITY_EMPTY_TTL = Math.max(15, parseInt(process.env.CC_PROVIDER_EMPTY_TTL || process.env.CINEMACITY_PROVIDER_EMPTY_TTL || '60', 10) || 60);
-const CINEMACITY_ERROR_TTL = Math.max(3, Math.min(CINEMACITY_EMPTY_TTL, parseInt(process.env.CC_PROVIDER_ERROR_TTL || process.env.CINEMACITY_PROVIDER_ERROR_TTL || '10', 10) || 10));
+const ALTADEFINIZIONE_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_TIMEOUT || '18000', 10) || 18000);
+const ALTADEFINIZIONE_EMPTY_TTL = Math.max(15, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_EMPTY_TTL || '60', 10) || 60);
+const ALTADEFINIZIONE_ERROR_TTL = Math.max(3, Math.min(ALTADEFINIZIONE_EMPTY_TTL, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_ERROR_TTL || '10', 10) || 10));
 const MOFLIX_MIN_TIMEOUT = Math.max(8000, parseInt(process.env.MOFLIX_PROVIDER_TIMEOUT || '14000', 10) || 14000);
 const TOONITALIA_MIN_TIMEOUT = Math.max(10000, parseInt(process.env.TOONITALIA_PROVIDER_TIMEOUT || '18000', 10) || 18000);
 const MOFLIX_EMPTY_TTL = Math.max(15, parseInt(process.env.MOFLIX_PROVIDER_EMPTY_TTL || '45', 10) || 45);
@@ -135,20 +131,6 @@ const WEB_PROVIDER_DEFINITIONS = [
         errorTtl: ALTADEFINIZIONE_ERROR_TTL,
         isEnabled: ({ filters }) => filters?.enableAltadefinizione === true,
         run: ({ originalId, finalId, meta, config, reqHost }) => searchAltadefinizione(originalId, finalId, meta, config, reqHost)
-    },
-    {
-        key: 'cinemaCity',
-        recipeId: 'cinemacity',
-        sourceName: 'CinemaCity',
-        cacheName: 'CinemaCityV3',
-        cacheKeyVersion: 'cccdn-native-proxy-v10',
-        icon: '🏙️',
-        limiterKey: 'webCc',
-        minTimeout: CINEMACITY_MIN_TIMEOUT,
-        emptyTtl: CINEMACITY_EMPTY_TTL,
-        errorTtl: CINEMACITY_ERROR_TTL,
-        isEnabled: ({ filters }) => filters?.enableCc === true,
-        run: ({ originalId, finalId, meta, config, reqHost }) => searchCinemaCity(originalId, finalId, meta, config, reqHost)
     },
     {
         key: 'guardaHD',

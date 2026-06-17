@@ -616,7 +616,6 @@
         }
 
         .control-row:has(#enableVix) { --lev-color: #7000ff; --lev-glow: rgba(112,0,255,0.45); --lev-dim: rgba(112,0,255,0.2); }
-        .control-row:has(#enableCc) { --lev-color: #ff4d6d; --lev-glow: rgba(255,77,109,0.45); --lev-dim: rgba(255,77,109,0.2); }
         .control-row:has(#enableGhd) { --lev-color: #00f2ff; --lev-glow: rgba(0,242,255,0.45); --lev-dim: rgba(0,242,255,0.2); }
         .control-row:has(#enableGs) { --lev-color: #7c3aed; --lev-glow: rgba(124,58,237,0.45); --lev-dim: rgba(124,58,237,0.2); }
         .control-row:has(#enableVidxgo) { --lev-color: #6366f1; --lev-glow: rgba(99,102,241,0.45); --lev-dim: rgba(99,102,241,0.2); }
@@ -2451,19 +2450,7 @@
                             <label class="switch mf-switch"><input type="checkbox" id="enableVix" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider w-14 h-7 inline-block rounded-full cursor-pointer"></span></label>
                         </div>
                         <div class="sc-quality-container hidden" id="scQualityContainer"></div>
-
-                        <div class="control-row p-4 mb-3 flex justify-between items-center" style="--lev-color: #ff4d6d; --lev-glow: rgba(255,77,109,0.45);">
-                            <div class="control-info">
-                                <div class="control-title font-bold flex items-center gap-2 text-white">
-                                    <span>🎟️</span> CinemaCity
-                                    <span class="proxy-tag tag-noproxy text-[10px] px-2.5 py-0.5 rounded-full font-mono">NO PROXY</span>
-                                </div>
-                                <span class="control-desc text-xs text-[#a3b6dd]/80 mt-1 block">Catalogo aggiornato di pellicole e serie italiane.</span>
-                            </div>
-                            <label class="switch mf-switch"><input type="checkbox" id="enableCc" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider w-14 h-7 inline-block rounded-full cursor-pointer"></span></label>
-                        </div>
-
-                        <div class="control-row p-4 mb-3 flex justify-between items-center" style="--lev-color: #f59e0b; --lev-glow: rgba(245,158,11,0.45);">
+<div class="control-row p-4 mb-3 flex justify-between items-center" style="--lev-color: #f59e0b; --lev-glow: rgba(245,158,11,0.45);">
                             <div class="control-info">
                                 <div class="control-title font-bold flex items-center gap-2 text-white">
                                     <i class="fas fa-film text-amber-500 text-lg"></i> GuardaHD
@@ -3782,11 +3769,10 @@
             const ti = document.getElementById('enableToonItalia')?.checked;
             const gf = document.getElementById('enableGf')?.checked;
             const ads = document.getElementById('enableAltadefinizione')?.checked;
-            const cc = document.getElementById('enableCc')?.checked;
 
             const pRow = document.getElementById('webPriorityRow');
             if(pRow) {
-                if(sc || ghd || gs || vidxgo || es || cb01 || onlineserietv || aw || au || as || ti || gf || ads || cc) {
+                if(sc || ghd || gs || vidxgo || es || cb01 || onlineserietv || aw || au || as || ti || gf || ads) {
                     pRow.style.display = 'flex';
                 } else {
                     pRow.style.display = 'none';
@@ -4005,12 +3991,11 @@
             const tiActive = document.getElementById('enableToonItalia')?.checked;
             const gfActive = document.getElementById('enableGf')?.checked;
             const adsActive = document.getElementById('enableAltadefinizione')?.checked;
-            const ccActive = document.getElementById('enableCc')?.checked;
             const isP2P = currentService === 'p2p';
             const sourceModeInput = document.getElementById('sourceMode');
             const sourceMode = sourceModeInput ? sourceModeInput.value : 'balanced';
 
-            const isWebEnabled = scActive || ghdActive || gsActive || vidxgoActive || esActive || cb01Active || onlineserietvActive || awActive || auActive || asActive || tiActive || gfActive || adsActive || ccActive || isP2P;
+            const isWebEnabled = scActive || ghdActive || gsActive || vidxgoActive || esActive || cb01Active || onlineserietvActive || awActive || auActive || asActive || tiActive || gfActive || adsActive || isP2P;
             const sourceModeBypassesKey = sourceMode === 'dbOnly' || sourceMode === 'globalCacheOnly';
 
             const el = document.getElementById('apiKey');
@@ -4060,7 +4045,6 @@
                     || document.getElementById('enableToonItalia')?.checked
                     || document.getElementById('enableGf')?.checked
                     || document.getElementById('enableAltadefinizione')?.checked
-                    || document.getElementById('enableCc')?.checked
                 )
             );
 
@@ -4137,7 +4121,6 @@
                     enableAnimeSaturn: document.getElementById('enableAnimeSaturn')?.checked || false,
                     enableToonItalia: document.getElementById('enableToonItalia')?.checked || false,
                     enableGf: document.getElementById('enableGf')?.checked || false,
-                    enableCc: document.getElementById('enableCc')?.checked || false,
                     enableAltadefinizione: document.getElementById('enableAltadefinizione')?.checked || false,
                     enableSavedCloud: document.getElementById('enableSavedCloud')?.checked || false,
                     savedCloudMode: document.getElementById('enableSavedCloud')?.checked ? document.getElementById('savedCloudMode')?.value : 'off',
@@ -4321,7 +4304,6 @@
 
                         const map = {
                             enableVix: 'enableVix',
-                            enableCc: 'enableCc',
                             enableGhd: 'enableGhd',
                             enableGs: 'enableGs',
                             enableVidxgo: 'enableVidxgo',

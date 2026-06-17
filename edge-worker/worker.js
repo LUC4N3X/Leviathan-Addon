@@ -78,7 +78,6 @@ function isPlaybackProxyPath(pathname) {
     || pathname.startsWith('/vixkey')
     || pathname.startsWith('/vixsubtitle')
     || pathname.startsWith('/vixmedia')
-    || pathname.startsWith('/ccproxy/')
     || pathname.startsWith('/proxy/')
     || pathname.startsWith('/mfp/')
     || pathname.startsWith('/mediaflow/')

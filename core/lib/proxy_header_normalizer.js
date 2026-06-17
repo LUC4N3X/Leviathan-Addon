@@ -49,7 +49,6 @@ const CANONICAL_HEADER_NAMES = new Map([
 ]);
 
 const PROXY_ROUTE_HINTS = [
-  '/ccproxy/',
   '/proxy/',
   '/proxy/stream',
   '/proxy/hls/',

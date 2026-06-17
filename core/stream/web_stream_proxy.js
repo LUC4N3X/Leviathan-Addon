@@ -12,8 +12,8 @@ function isHttpUrl(value) {
 
 function isAddonProxyUrl(value) {
     const text = String(value || '');
-    return /\/(?:lazy_extract|levi_proxy\/content|ccproxy|proxy\/hls|proxy\/stream)\//i.test(text)
-        || /\/(?:lazy_extract|levi_proxy\/content|ccproxy)(?:[/?#]|$)/i.test(text);
+    return /\/(?:lazy_extract|levi_proxy\/content|proxy\/hls|proxy\/stream)\//i.test(text)
+        || /\/(?:lazy_extract|levi_proxy\/content)(?:[/?#]|$)/i.test(text);
 }
 
 function isHlsUrl(value) {
