@@ -1,5 +1,5 @@
 const { formatStreamSelector, formatBytes } = require('../lib/stream_formatter');
-const ptt = require('parse-torrent-title');
+const { parseTitle: parseReleaseTitle } = require('../intelligence/release_parser');
 
 const DEFAULT_TRACKER_LIMIT = parsePositiveInt(process.env.LEVI_P2P_TRACKER_LIMIT, 24);
 const P2P_LOGS_ENABLED = String(process.env.LEVI_P2P_LOGS ?? '1').trim() !== '0';
@@ -192,7 +192,7 @@ function parseSafeTitle(rawTitle) {
   const original = String(rawTitle || 'Unknown Video').trim() || 'Unknown Video';
 
   try {
-    const parsed = ptt.parse(original);
+    const parsed = parseReleaseTitle(original);
     if (parsed?.title && String(parsed.title).trim().length > 2) {
       return String(parsed.title).trim();
     }
@@ -396,3 +396,4 @@ module.exports = {
   getRealSize,
   computeFileIdx
 };
+
