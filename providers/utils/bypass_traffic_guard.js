@@ -200,18 +200,21 @@ async function withBypassResponseCache(key, fn, options = {}) {
   const normalizedKey = String(key || '').trim();
   if (!normalizedKey || ttlMs <= 0) return withBypassRequestCoalescing(normalizedKey, fn, options);
 
+  const shouldCache = typeof options.shouldCache === 'function' ? options.shouldCache : null;
   const cached = getCachedBypassResponse(normalizedKey);
   if (cached && !cached.stale) return cached.value;
   if (cached?.stale && !inflight.has(normalizedKey)) {
     setImmediate(() => withBypassRequestCoalescing(normalizedKey, fn, options)
-      .then(value => setCachedBypassResponse(normalizedKey, value, options))
+      .then(value => {
+        if (!shouldCache || shouldCache(value)) setCachedBypassResponse(normalizedKey, value, options);
+      })
       .catch(() => {}));
     return cached.value;
   }
   if (cached?.stale && inflight.has(normalizedKey)) return cached.value;
 
   const value = await withBypassRequestCoalescing(normalizedKey, fn, options);
-  setCachedBypassResponse(normalizedKey, value, options);
+  if (!shouldCache || shouldCache(value)) setCachedBypassResponse(normalizedKey, value, options);
   return value;
 }
 

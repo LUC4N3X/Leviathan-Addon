@@ -226,7 +226,7 @@ function createCloudflareBypassServiceClient(options = {}) {
     const staleMs = Math.max(cacheTtlMs, Number(requestOptions.cacheStaleMs || process.env.BYPASS_COOKIE_RESPONSE_CACHE_STALE_MS || cacheTtlMs * 2) || cacheTtlMs * 2);
 
     const run = () => runWithBypassTrafficGuard(targetUrl, async () => {
-      const response = await requestWithRetry(() => httpClient.get(buildUrl(endpoint, '/cookies', { url: targetUrl, retries, proxy }), {
+      const response = await requestWithRetry(() => httpClient.get(buildUrl(endpoint, '/cookies', { url: targetUrl, retries, proxy, bypassCookieCache: bypassCookieCache ? 'true' : undefined }), {
         timeout,
         signal: requestOptions.signal,
         validateStatus: status => status >= 200 && status < 600,
@@ -256,7 +256,10 @@ function createCloudflareBypassServiceClient(options = {}) {
     return withBypassResponseCache(coalesceKey, run, {
       enabled: requestOptions.coalesce !== false,
       ttlMs: cacheTtlMs,
-      staleMs
+      staleMs,
+      // Never cache an empty cookie result on our side — caching it would just
+      // mirror the upstream poisoning we are trying to recover from.
+      shouldCache: result => Boolean(result && (result.cookieHeader || (Array.isArray(result.setCookie) && result.setCookie.length)))
     });
   }
 

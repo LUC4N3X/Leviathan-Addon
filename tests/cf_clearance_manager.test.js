@@ -200,6 +200,55 @@ test('clearance manager fails over CloudflareBypass-compatible endpoints', async
   assert.deepEqual(seenPayloads, ['/cookies']);
 });
 
+test('clearance manager recovers from an empty/poisoned cookie cache via a cache-busted re-solve', async (t) => {
+  const cookieCalls = [];
+  const endpoint = await listen(async (req, res) => {
+    const parsed = new URL(req.url, endpoint.url);
+    if (parsed.pathname === '/cache/stats') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+    const targetUrl = parsed.searchParams.get('url') || '';
+    cookieCalls.push(targetUrl);
+    // Simulate the upstream serving a cached empty result until the request
+    // arrives with a cache-busting query param, which forces a fresh solve.
+    const busted = targetUrl.includes('__cfcb=');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      solution: {
+        url: 'https://guardoserie.run/prova/',
+        status: 200,
+        userAgent: 'Mozilla/5.0 UnitTest',
+        cookies: busted ? [{ name: 'cf_clearance', value: 'fresh' }] : []
+      }
+    }));
+  });
+
+  t.after(async () => {
+    await endpoint.close();
+  });
+
+  const manager = createCfClearanceManager({
+    providerName: 'unit',
+    endpoints: [endpoint.url],
+    logger: noOpLogger(),
+    endpointFailureCooldownMs: 60_000,
+    solveTimeoutMs: 12_000
+  });
+
+  const session = await manager.solve('https://guardoserie.run/prova/', null, { force: true });
+
+  assert.ok(session, 'expected a usable session after the cache-busted retry');
+  assert.equal(session.cf_clearance, 'fresh');
+  assert.equal(cookieCalls.length, 2, 'expected one empty solve followed by one cache-busted re-solve');
+  assert.doesNotMatch(cookieCalls[0], /__cfcb=/);
+  assert.match(cookieCalls[1], /__cfcb=/);
+  // The stored session base must remain the canonical URL, never the busted one.
+  assert.doesNotMatch(String(session.url || ''), /__cfcb=/);
+});
+
 test('clearance manager coalesces concurrent solves with the same shared key', async (t) => {
   let calls = 0;
   const good = await listen(async (req, res) => {
