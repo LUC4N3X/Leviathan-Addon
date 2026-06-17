@@ -318,7 +318,7 @@ function createProviderHttpGuard(options = {}) {
 
   function isSessionFreshForUrl(session = activeSession, url = currentBaseUrl) {
     if (!isSessionFresh(session)) return false;
-    return Boolean(buildCookieHeaderFromSession(session, url || session.solvedUrl || session.url || currentBaseUrl));
+    return Boolean(buildCookieHeaderFromSession(session, url || session.solvedUrl || session.url || currentBaseUrl)) || session.noCookiesFallback === true;
   }
 
   function persistRedisSession(session, url = null, reason = 'store') {

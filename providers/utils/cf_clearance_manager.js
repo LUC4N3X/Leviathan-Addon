@@ -719,7 +719,7 @@ function createCfClearanceManager(options = {}) {
     if (!session || !session.userAgent || !session.timestamp) return false;
     if (Date.now() - Number(session.timestamp) >= sessionTtlMs) return false;
     const cookieHeader = buildCookieHeaderFromSession(session, session.solvedUrl || session.url);
-    return Boolean(cookieHeader);
+    return Boolean(cookieHeader) || session.noCookiesFallback === true;
   }
 
   function keyFor(url, sharedKey = null) {
@@ -878,7 +878,10 @@ function createCfClearanceManager(options = {}) {
             });
             const cookies = cookieState.cookies || joinCookieHeader(rawSolutionCookies || '');
 
-            if ((!cookies || !userAgent) || isLikelyChallengeHtml(solutionBody, solutionStatus)) {
+            const isChallenge = isLikelyChallengeHtml(solutionBody, solutionStatus);
+            const validWithoutCookies = !isChallenge && solutionStatus >= 200 && solutionStatus < 400;
+
+            if ((!cookies && !validWithoutCookies) || !userAgent || isChallenge) {
               logger.warn('solve empty', {
                 provider: providerName,
                 clearanceUrl,
@@ -886,7 +889,8 @@ function createCfClearanceManager(options = {}) {
                 status: solutionStatus,
                 cookies: Boolean(cookies),
                 userAgent: Boolean(userAgent),
-                challengeBody: isLikelyChallengeHtml(solutionBody, solutionStatus)
+                challengeBody: isChallenge,
+                validWithoutCookies
               });
               markEndpointFailure(selectedEndpoint);
               continue;
@@ -896,6 +900,7 @@ function createCfClearanceManager(options = {}) {
               providerName,
               userAgent,
               cookies,
+              noCookiesFallback: validWithoutCookies && !cookies,
               cookieJar: cookieState.cookieJar || null,
               cookieJarVersion: cookieState.cookieJar ? 2 : undefined,
               cf_clearance: cookieState.cf_clearance || readCookieValue(cookies, 'cf_clearance'),

@@ -64,13 +64,13 @@ const TTL_EPISODE            = 1000 * 60 * 30;
 const TTL_MOVIE              = 1000 * 60 * 30;
 const TTL_SERIES             = 1000 * 60 * 60 * 6;
 const CF_SESSION_TTL         = 1000 * 60 * 60 * 6;
-const PROVIDER_BUDGET_MS     = Math.max(15000, Math.min(45000, Number.parseInt(process.env.GUARDOSERIE_PROVIDER_BUDGET_MS || '32000', 10) || 32000));
+const PROVIDER_BUDGET_MS     = Math.max(15000, Math.min(60000, Number.parseInt(process.env.GUARDOSERIE_PROVIDER_BUDGET_MS || '45000', 10) || 45000));
 const GLOBAL_TIMEOUT_MS      = PROVIDER_BUDGET_MS;
 const SEARCH_QUERY_TIMEOUT_MS = 5000;
 
 const GS_TOP_SPEED = Object.freeze({
   cloudflareBypassEndpoint: process.env.CLOUDFLARE_BYPASS_URL || process.env.CF_BYPASS_URL || 'http://cloudflare-bypass:8000',
-  directFetchTimeoutMs: Math.max(2500, Math.min(8000, Number.parseInt(process.env.GUARDOSERIE_DIRECT_TIMEOUT_MS || '4200', 10) || 4200)),
+  directFetchTimeoutMs: Math.max(2500, Math.min(25000, Number.parseInt(process.env.GUARDOSERIE_DIRECT_TIMEOUT_MS || '14000', 10) || 14000)),
   sessionTimeoutFloorMs: 2600,
   postClearanceReplayTimeoutMs: Math.max(5000, Math.min(14000, Number.parseInt(process.env.GUARDOSERIE_POST_CLEARANCE_TIMEOUT_MS || '9000', 10) || 9000)),
   clearSessionOnTransportFailure: false,
@@ -94,7 +94,7 @@ const GS_TOP_SPEED = Object.freeze({
   backgroundTitlePrime: true,
   backgroundRefreshMs: 600_000,
   backgroundRefreshEarlyMs: 1_200_000,
-  backgroundPrimeTimeoutMs: 2200,
+  backgroundPrimeTimeoutMs: 14000,
   backgroundTitlePrimeMax: 8,
   prewarmStartDelayMs: 0,
   prewarmWaitMs: 250,
@@ -104,8 +104,8 @@ const GS_TOP_SPEED = Object.freeze({
   movieFastSlugMax: 6,
   seriesFastSlugMax: 12,
   movieMaxVerifyCandidates: 2,
-  movieHardBudgetMs: 12_000,
-  searchFastTimeoutMs: 5500,
+  movieHardBudgetMs: 25000,
+  searchFastTimeoutMs: 14000,
   parallelSearchQueries: 3,
   fastSlugConcurrency: 4,
   impitMaxAttempts: 2,
@@ -121,8 +121,8 @@ const GS_ENABLE_IMPIT_FALLBACK = GS_TOP_SPEED.enableImpitFallback;
 const GS_PREFER_IMPIT = GS_ENABLE_IMPIT_FALLBACK;
 const GS_CLEARANCE_BRIDGE_MODE = GS_TOP_SPEED.clearanceBridgeMode;
 const GS_IMPIT_BROWSER_FALLBACKS = Object.freeze(['chrome142', 'chrome136', 'chrome131', 'firefox144', 'firefox135', 'chrome125']);
-const GS_EXTRACTOR_DIRECT_TIMEOUT_MS = 3200;
-const GS_EXTRACTOR_IMPIT_TIMEOUT_MS = 1800;
+const GS_EXTRACTOR_DIRECT_TIMEOUT_MS = 10000;
+const GS_EXTRACTOR_IMPIT_TIMEOUT_MS = 8000;
 const GS_BACKGROUND_CLEARANCE_ENABLED = GS_TOP_SPEED.backgroundClearanceEnabled;
 const GS_BACKGROUND_PRIME_HOME = GS_TOP_SPEED.backgroundPrimeHome;
 const GS_BACKGROUND_TITLE_PRIME = GS_TOP_SPEED.backgroundTitlePrime;
