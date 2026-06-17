@@ -23,17 +23,14 @@ function isRetryableDbError(error) {
 }
 
 async function runMaintenanceQuery(executor, sql) {
-  let lastError = null;
   for (let attempt = 1; attempt <= DB_MAINTENANCE_RETRY_ATTEMPTS; attempt += 1) {
     try {
       return await executor(sql);
     } catch (error) {
-      lastError = error;
       if (!isRetryableDbError(error) || attempt === DB_MAINTENANCE_RETRY_ATTEMPTS) throw error;
       await maintenanceDelay(Math.min(2000, 150 * attempt * attempt));
     }
   }
-  throw lastError;
 }
 
 function buildMaintenanceClientConfig(pool) {
@@ -62,7 +59,9 @@ async function createMaintenanceRunner(pool) {
           try { await client.end(); } catch (_) {}
         }
       };
-    } catch (_) {}
+    } catch (error) {
+      console.warn(`⚠️ DB maintenance runner fell back to shared pool: ${error.message}`);
+    }
   }
   return {
     query: (sql) => runMaintenanceQuery((statement) => pool.query(statement), sql),
