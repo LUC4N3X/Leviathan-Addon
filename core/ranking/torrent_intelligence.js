@@ -1,18 +1,6 @@
 'use strict';
 
-let parseTorrentTitle = null;
-try {
-  parseTorrentTitle = require('parse-torrent-title');
-} catch (_) {
-  parseTorrentTitle = null;
-}
-
-let releaseSignals = null;
-try {
-  releaseSignals = require('../lib/release_signal_engine');
-} catch (_) {
-  releaseSignals = null;
-}
+const { parseTitle: parseReleaseTitle } = require('../intelligence/release_parser');
 
 const QUALITY_SCORE = Object.freeze({
   remux: 34,
@@ -60,11 +48,8 @@ function normalizeText(value = '') {
 }
 
 function parseTitle(title = '') {
-  if (!parseTorrentTitle) return null;
   try {
-    const parsed = typeof parseTorrentTitle === 'function'
-      ? parseTorrentTitle(title)
-      : (typeof parseTorrentTitle.parse === 'function' ? parseTorrentTitle.parse(title) : null);
+    const parsed = parseReleaseTitle(title);
     return parsed && typeof parsed === 'object' ? parsed : null;
   } catch (_) {
     return null;
@@ -199,10 +184,7 @@ function evaluateTorrentIntelligence(item = {}, meta = {}, options = {}) {
     item.behaviorHints?.filename,
     item.description
   ));
-  let parsed = parseTitle(text);
-  if (!parsed && releaseSignals && typeof releaseSignals.extractReleaseSignals === 'function') {
-    parsed = releaseSignals.extractReleaseSignals(text);
-  }
+  const parsed = parseTitle(text);
   const resolution = detectResolution(text, parsed);
   const quality = detectQuality(text, parsed);
   const codec = detectCodec(text);
