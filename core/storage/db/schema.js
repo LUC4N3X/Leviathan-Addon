@@ -6,6 +6,70 @@ function clampIntLocal(value, fallback, min, max) {
 
 const DB_AUTHORITY_BACKFILL_LIMIT = clampIntLocal(process.env.DB_AUTHORITY_BACKFILL_LIMIT, 50000, 0, 1000000);
 
+const { Client } = require('pg');
+
+const DB_MAINTENANCE_STATEMENT_TIMEOUT_MS = clampIntLocal(process.env.DB_MAINTENANCE_STATEMENT_TIMEOUT_MS, 180000, 15000, 600000);
+const DB_MAINTENANCE_LOCK_TIMEOUT_MS = clampIntLocal(process.env.DB_MAINTENANCE_LOCK_TIMEOUT_MS, 4000, 250, 60000);
+const DB_MAINTENANCE_RETRY_ATTEMPTS = clampIntLocal(process.env.DB_MAINTENANCE_RETRY_ATTEMPTS, 4, 1, 12);
+
+const RETRYABLE_DB_ERROR_CODES = new Set(['40P01', '55P03', '40001']);
+
+function maintenanceDelay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableDbError(error) {
+  return Boolean(error && RETRYABLE_DB_ERROR_CODES.has(error.code));
+}
+
+async function runMaintenanceQuery(executor, sql) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= DB_MAINTENANCE_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await executor(sql);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableDbError(error) || attempt === DB_MAINTENANCE_RETRY_ATTEMPTS) throw error;
+      await maintenanceDelay(Math.min(2000, 150 * attempt * attempt));
+    }
+  }
+  throw lastError;
+}
+
+function buildMaintenanceClientConfig(pool) {
+  const base = pool && pool.options ? pool.options : null;
+  if (!base) return null;
+  if (!(base.connectionString || base.host || base.database || base.user)) return null;
+  return {
+    ...base,
+    statement_timeout: DB_MAINTENANCE_STATEMENT_TIMEOUT_MS,
+    lock_timeout: DB_MAINTENANCE_LOCK_TIMEOUT_MS,
+    query_timeout: 0,
+    idle_in_transaction_session_timeout: 0,
+    application_name: 'leviathan-maintenance'
+  };
+}
+
+async function createMaintenanceRunner(pool) {
+  const config = buildMaintenanceClientConfig(pool);
+  if (config) {
+    try {
+      const client = new Client(config);
+      await client.connect();
+      return {
+        query: (sql) => runMaintenanceQuery((statement) => client.query(statement), sql),
+        async dispose() {
+          try { await client.end(); } catch (_) {}
+        }
+      };
+    } catch (_) {}
+  }
+  return {
+    query: (sql) => runMaintenanceQuery((statement) => pool.query(statement), sql),
+    async dispose() {}
+  };
+}
+
 async function ensureDatabaseOptimizations(pool) {
   if (!pool) return;
 
@@ -1375,20 +1439,22 @@ async function ensureDatabaseOptimizations(pool) {
     `CREATE INDEX IF NOT EXISTS idx_debrid_check_markers_expires ON debrid_cache_check_markers (expires_at)`
   ];
 
+  const runner = await createMaintenanceRunner(pool);
+
   for (const sql of statements.filter((statement) => typeof statement === 'string' && statement.trim())) {
     try {
-      await pool.query(sql);
+      await runner.query(sql);
     } catch (error) {
       console.warn(`⚠️ DB optimization skipped: ${error.message}`);
     }
   }
 
-  await deduplicateTableByKey(pool, 'torrents', 'info_hash_norm', 'file_index_norm');
-  await deduplicateTableByKey(pool, 'files', 'info_hash_norm', 'file_index_norm');
-  await deduplicateTableByKey(pool, 'pack_files', 'pack_hash_norm', 'file_index_norm');
+  await deduplicateTableByKey(runner, 'torrents', 'info_hash_norm', 'file_index_norm');
+  await deduplicateTableByKey(runner, 'files', 'info_hash_norm', 'file_index_norm');
+  await deduplicateTableByKey(runner, 'pack_files', 'pack_hash_norm', 'file_index_norm');
 
   try {
-    await pool.query(`
+    await runner.query(`
       WITH ranked AS (
         SELECT ctid,
                ROW_NUMBER() OVER (
@@ -1419,30 +1485,32 @@ async function ensureDatabaseOptimizations(pool) {
 
   for (const sql of uniqueStatements) {
     try {
-      await pool.query(sql);
+      await runner.query(sql);
     } catch (error) {
       console.warn(`⚠️ DB unique optimization skipped: ${error.message}`);
     }
   }
 
   try {
-    await pool.query(`UPDATE torrents SET next_cached_check = NOW() - make_interval(mins => 1), updated_at = NOW() WHERE cached_rd IS TRUE AND rd_cache_state = 'cached' AND next_cached_check >= TIMESTAMPTZ '9999-01-01 00:00:00+00'`);
-    await pool.query(`DELETE FROM shared_stream_cache WHERE stale_until IS NOT NULL AND stale_until < NOW()`);
-    await pool.query(`DELETE FROM external_stream_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
-    await pool.query(`DELETE FROM query_candidate_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
-    await pool.query(`DELETE FROM debrid_availability_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
-    await pool.query(`DELETE FROM debrid_resolved_link_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
-    await pool.query(`DELETE FROM debrid_cache_check_markers WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
-    await pool.query(`DELETE FROM debrid_account_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
-    await pool.query(`DELETE FROM torrent_rank_history WHERE created_at < NOW() - INTERVAL '30 days'`);
-    await pool.query(`DELETE FROM cache_metrics_history WHERE recorded_at < NOW() - INTERVAL '30 days'`);
+    await runner.query(`UPDATE torrents SET next_cached_check = NOW() - make_interval(mins => 1), updated_at = NOW() WHERE cached_rd IS TRUE AND rd_cache_state = 'cached' AND next_cached_check >= TIMESTAMPTZ '9999-01-01 00:00:00+00'`);
+    await runner.query(`DELETE FROM shared_stream_cache WHERE stale_until IS NOT NULL AND stale_until < NOW()`);
+    await runner.query(`DELETE FROM external_stream_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
+    await runner.query(`DELETE FROM query_candidate_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
+    await runner.query(`DELETE FROM debrid_availability_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
+    await runner.query(`DELETE FROM debrid_resolved_link_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
+    await runner.query(`DELETE FROM debrid_cache_check_markers WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
+    await runner.query(`DELETE FROM debrid_account_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
+    await runner.query(`DELETE FROM torrent_rank_history WHERE created_at < NOW() - INTERVAL '30 days'`);
+    await runner.query(`DELETE FROM cache_metrics_history WHERE recorded_at < NOW() - INTERVAL '30 days'`);
   } catch (error) {
     console.warn(`⚠️ DB optimization skipped: ${error.message}`);
   }
+
+  await runner.dispose();
 }
 
-async function deduplicateTableByKey(pool, tableName, hashColumn, fileIndexNormColumn) {
-  if (!pool) return;
+async function deduplicateTableByKey(db, tableName, hashColumn, fileIndexNormColumn) {
+  if (!db) return;
 
   const scoreExpr = tableName === 'pack_files'
     ? 'COALESCE(file_size, 0)'
@@ -1469,7 +1537,7 @@ async function deduplicateTableByKey(pool, tableName, hashColumn, fileIndexNormC
   `;
 
   try {
-    await pool.query(sql);
+    await db.query(sql);
   } catch (error) {
     console.warn(`⚠️ DB dedupe skipped (${tableName}): ${error.message}`);
   }
