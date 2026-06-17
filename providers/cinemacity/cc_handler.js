@@ -161,7 +161,7 @@ const FETCH_TIMEOUT = 10000;
 const TMDB_API_KEY = '68e094699525b18a70bab2f86b1fa706';
 const SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
 const SITEMAP_CACHE_MS = 60 * 60 * 1000;
-const WORKER_HOST = decodeB64Utf8('Y2MubGVhbmhodTA2MTIwNi53b3JrZXJzLmRldg==');
+const WORKER_HOST = decodeB64Utf8('Y2MucmVhbGJlc3RpYS5jb20=');
 const PROVIDER_LABEL = 'CinemaCity';
 const PROVIDER_CODE = 'CC';
 const EXTRACTOR_LABEL = 'CCCDN';
