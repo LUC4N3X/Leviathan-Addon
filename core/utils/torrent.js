@@ -20,6 +20,8 @@ function buildTrackerMagnet(hash, displayName = null) {
     return `magnet:?${params.join('&')}`;
 }
 
+const BTIH_REGEX = /btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})/i;
+
 function base32ToHex(base32) {
     const base32chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
     let bits = '';
@@ -35,7 +37,7 @@ function base32ToHex(base32) {
 
 function extractInfoHash(magnet) {
     if (!magnet) return null;
-    const match = String(magnet).match(/btih:([A-Fa-f0-9]{40}|[A-Za-z2-7]{32})/i);
+    const match = String(magnet).match(BTIH_REGEX);
     if (!match) return null;
     const hash = match[1];
     return hash.length === 32 ? base32ToHex(hash).toUpperCase() : hash.toUpperCase();
