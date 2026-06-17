@@ -200,6 +200,63 @@ test('clearance manager fails over CloudflareBypass-compatible endpoints', async
   assert.deepEqual(seenPayloads, ['/cookies']);
 });
 
+test('clearance manager recovers from an empty/poisoned cookie cache via cache clear + re-solve', async (t) => {
+  const cookieCalls = [];
+  let cacheCleared = false;
+  const endpoint = await listen(async (req, res) => {
+    const parsed = new URL(req.url, endpoint.url);
+    if (parsed.pathname === '/cache/stats') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+    if (parsed.pathname === '/cache/clear') {
+      cacheCleared = true;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', message: 'cleared' }));
+      return;
+    }
+    const targetUrl = parsed.searchParams.get('url') || '';
+    cookieCalls.push(targetUrl);
+    // Simulate the upstream serving a cached empty result until the cache has
+    // been cleared (the busted retry arrives carrying the cache-bust param).
+    const busted = targetUrl.includes('__cfcb=');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      solution: {
+        url: 'https://guardoserie.run/prova/',
+        status: 200,
+        userAgent: 'Mozilla/5.0 UnitTest',
+        cookies: busted ? [{ name: 'cf_clearance', value: 'fresh' }] : []
+      }
+    }));
+  });
+
+  t.after(async () => {
+    await endpoint.close();
+  });
+
+  const manager = createCfClearanceManager({
+    providerName: 'unit',
+    endpoints: [endpoint.url],
+    logger: noOpLogger(),
+    endpointFailureCooldownMs: 60_000,
+    solveTimeoutMs: 12_000
+  });
+
+  const session = await manager.solve('https://guardoserie.run/prova/', null, { force: true });
+
+  assert.ok(session, 'expected a usable session after the cache-busted retry');
+  assert.equal(session.cf_clearance, 'fresh');
+  assert.equal(cacheCleared, true, 'expected the upstream per-hostname cache to be purged');
+  assert.equal(cookieCalls.length, 2, 'expected one empty solve followed by one cache-busted re-solve');
+  assert.doesNotMatch(cookieCalls[0], /__cfcb=/);
+  assert.match(cookieCalls[1], /__cfcb=/);
+  // The stored session base must remain the canonical URL, never the busted one.
+  assert.doesNotMatch(String(session.url || ''), /__cfcb=/);
+});
+
 test('clearance manager coalesces concurrent solves with the same shared key', async (t) => {
   let calls = 0;
   const good = await listen(async (req, res) => {

@@ -475,6 +475,18 @@ function joinCookieHeader(cookies) {
   return out.join('; ');
 }
 
+function appendCacheBustParam(url, paramName = '__cfcb') {
+  const nonce = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const u = new URL(String(url));
+    u.searchParams.set(paramName, nonce);
+    return u.toString();
+  } catch (_) {
+    const sep = String(url || '').includes('?') ? '&' : '?';
+    return `${url || ''}${sep}${paramName}=${nonce}`;
+  }
+}
+
 function readCookieValue(cookieHeader, cookieName) {
   const name = String(cookieName || '').trim();
   if (!name) return null;
@@ -535,6 +547,18 @@ function createCfClearanceManager(options = {}) {
   const disableMedia = options.disableMedia !== false;
   const waitInSeconds = Math.max(0, Math.min(5, Number(options.waitInSeconds ?? 1) || 0));
   const sessionTtlMinutes = Math.max(1, Math.ceil(sessionTtlMs / 60000));
+  // When the bypass service replies 200 but with no cookies (a poisoned/empty
+  // cache entry keyed on the URL), retry once against the same endpoint with a
+  // cache-busting query param so the upstream solver is forced to re-run the
+  // browser challenge instead of serving the stale empty result forever.
+  const cacheBustOnEmpty = options.cacheBustOnEmpty !== false;
+  const cacheBustParam = String(options.cacheBustParam || '__cfcb');
+  // The upstream bypass service keys its cookie cache per-hostname (md5 of the
+  // host), ignoring path/query — so a URL nonce alone cannot evict a poisoned
+  // empty entry. When an empty result is seen we POST /cache/clear to purge it,
+  // throttled so a request storm cannot thrash the shared cache.
+  const clearUpstreamCacheOnEmpty = options.clearUpstreamCacheOnEmpty !== false;
+  const cacheClearMinIntervalMs = Math.max(2_000, Number(options.cacheClearMinIntervalMs || 15_000));
   const solveLimiter = createAsyncLimiter(options.solveConcurrency || 1, { maxQueue: solveMaxQueue });
   const httpAgent = options.httpAgent || undefined;
   const httpsAgent = options.httpsAgent || undefined;
@@ -546,6 +570,7 @@ function createCfClearanceManager(options = {}) {
 
   const inFlight = new Map();
   const cooldown = new Map();
+  const cacheClearCooldown = new Map();
   const endpointFailures = new Map();
   const endpointHealthOkUntil = new Map();
   let endpointCursor = 0;
@@ -620,6 +645,32 @@ function createCfClearanceManager(options = {}) {
       }));
     }
     return bypassClientCache.get(endpointKey);
+  }
+
+  async function clearEndpointCacheOnce(selectedEndpoint, signal = null) {
+    if (!clearUpstreamCacheOnEmpty) return false;
+    const now = Date.now();
+    const last = cacheClearCooldown.get(selectedEndpoint) || 0;
+    if (now - last < cacheClearMinIntervalMs) return false;
+    cacheClearCooldown.set(selectedEndpoint, now);
+    try {
+      const client = getBypassClient(selectedEndpoint);
+      if (typeof client.clearCache !== 'function') return false;
+      const result = await client.clearCache({ timeout: healthTimeoutMs, signal });
+      logger.warn('cache cleared', {
+        provider: providerName,
+        endpoint: selectedEndpoint,
+        message: result?.message || undefined
+      });
+      return true;
+    } catch (error) {
+      logger.warn('cache clear failed', {
+        provider: providerName,
+        endpoint: selectedEndpoint,
+        error: error?.message || String(error)
+      });
+      return false;
+    }
   }
 
   async function postFlareWithRetry(selectedEndpoint, payload, timeout, signal, label = 'request') {
@@ -820,6 +871,87 @@ function createCfClearanceManager(options = {}) {
       const candidates = getEndpointCandidates(Boolean(meta.force));
       let lastError = null;
 
+      // A single solve attempt against one endpoint. Returned as a closure so the
+      // empty/poisoned-cache path can transparently retry with a cache-busted URL
+      // (cf_clearance is domain-scoped, so the throwaway query param does not
+      // change the resulting cookie). Returns { session } on success or
+      // { empty, ... } when the bypass replied without usable cookies.
+      const attemptSolve = async (selectedEndpoint, attemptUrl, { bust = false, sessionBase = null } = {}) => {
+        const requestPayload = {
+          cmd: 'request.get',
+          url: attemptUrl,
+          maxTimeout,
+          session_ttl_minutes: sessionTtlMinutes,
+          disableMedia,
+          returnOnlyCookies: meta.wantResponse ? false : returnOnlyCookies
+        };
+        if (waitInSeconds) requestPayload.waitInSeconds = waitInSeconds;
+        if (cookieObjects.length) requestPayload.cookies = cookieObjects;
+        if (bust) {
+          requestPayload.force = true;
+          requestPayload.bypassCookieCache = true;
+        }
+
+        const response = await postFlareWithRetry(
+          selectedEndpoint,
+          requestPayload,
+          maxTimeout + 9000,
+          controller.signal,
+          `${requestPayload.cmd} ${providerName}`
+        );
+
+        const payload = response.data || {};
+        if (response.status >= 400) throw new Error(`http_${response.status}`);
+        if (payload.status && String(payload.status).toLowerCase() !== 'ok') {
+          throw new Error(payload.message || payload.error || `status_${payload.status}`);
+        }
+
+        const solution = payload.solution || {};
+        const rawSolutionCookies = firstCookieInput(solution.cookies, payload.cookies);
+        const userAgent = solution.userAgent || payload.userAgent || meta.userAgent || getFallbackUserAgent();
+        // Keep the canonical (un-busted) URL as the session base so the stored
+        // cookie domain is never tied to the throwaway cache-bust query param.
+        const solvedUrl = sessionBase || solution.url || attemptUrl;
+        const solutionStatus = solution.status || response.status;
+        const solutionBody = solution.response || payload.response || '';
+        const usefulSolutionHtml = isUsefulSolutionHtml(solutionBody, solutionStatus);
+        const cookieState = createCookieStateForUrl(solvedUrl || attemptUrl, rawSolutionCookies, {
+          cookies: inputCookies,
+          userAgent,
+          url: normalizeBaseUrl(solvedUrl) || normalizeBaseUrl(attemptUrl) || null
+        });
+        const cookies = cookieState.cookies || joinCookieHeader(rawSolutionCookies || '');
+
+        if ((!cookies || !userAgent) || isLikelyChallengeHtml(solutionBody, solutionStatus)) {
+          return {
+            empty: true,
+            status: solutionStatus,
+            cookies: Boolean(cookies),
+            userAgent: Boolean(userAgent),
+            challengeBody: isLikelyChallengeHtml(solutionBody, solutionStatus)
+          };
+        }
+
+        return {
+          session: {
+            providerName,
+            userAgent,
+            cookies,
+            cookieJar: cookieState.cookieJar || null,
+            cookieJarVersion: cookieState.cookieJar ? 2 : undefined,
+            cf_clearance: cookieState.cf_clearance || readCookieValue(cookies, 'cf_clearance'),
+            url: normalizeBaseUrl(solvedUrl) || normalizeBaseUrl(clearanceUrl) || null,
+            solvedUrl,
+            timestamp: Date.now(),
+            status: solutionStatus,
+            endpoint: selectedEndpoint,
+            solutionResponse: usefulSolutionHtml ? solutionBody : undefined,
+            solutionResponseUrl: usefulSolutionHtml ? solvedUrl : undefined,
+            solutionResponseStatus: usefulSolutionHtml ? solutionStatus : undefined
+          }
+        };
+      };
+
       try {
         for (const selectedEndpoint of candidates) {
           if (controller.signal.aborted) return null;
@@ -839,76 +971,47 @@ function createCfClearanceManager(options = {}) {
               sharedKey: sharedKey || undefined
             });
 
-            const requestPayload = {
-              cmd: 'request.get',
-              url: clearanceUrl,
-              maxTimeout,
-              session_ttl_minutes: sessionTtlMinutes,
-              disableMedia,
-              returnOnlyCookies: meta.wantResponse ? false : returnOnlyCookies
-            };
-            if (waitInSeconds) requestPayload.waitInSeconds = waitInSeconds;
-            if (cookieObjects.length) requestPayload.cookies = cookieObjects;
+            let result = await attemptSolve(selectedEndpoint, clearanceUrl);
 
-            const response = await postFlareWithRetry(
-              selectedEndpoint,
-              requestPayload,
-              maxTimeout + 9000,
-              controller.signal,
-              `${requestPayload.cmd} ${providerName}`
-            );
-
-            const payload = response.data || {};
-            if (response.status >= 400) throw new Error(`http_${response.status}`);
-            if (payload.status && String(payload.status).toLowerCase() !== 'ok') {
-              throw new Error(payload.message || payload.error || `status_${payload.status}`);
+            // The bypass replied 200 but without usable cookies — almost always a
+            // poisoned/empty entry served straight from the upstream URL-keyed
+            // cache ("Using cached cookies ... 0 cookies"). Force one re-solve with
+            // a cache-busted URL so the solver actually re-runs the challenge.
+            if (result.empty && cacheBustOnEmpty && !controller.signal.aborted) {
+              logger.warn('solve empty cache-bust retry', {
+                provider: providerName,
+                clearanceUrl,
+                endpoint: selectedEndpoint,
+                status: result.status,
+                cookies: result.cookies,
+                userAgent: result.userAgent,
+                challengeBody: result.challengeBody
+              });
+              // Purge the upstream per-hostname cache so the busted retry forces a
+              // fresh browser solve instead of replaying the poisoned empty entry.
+              await clearEndpointCacheOnce(selectedEndpoint, controller.signal);
+              result = await attemptSolve(
+                selectedEndpoint,
+                appendCacheBustParam(clearanceUrl, cacheBustParam),
+                { bust: true, sessionBase: clearanceUrl }
+              );
             }
 
-            const solution = payload.solution || {};
-            const rawSolutionCookies = firstCookieInput(solution.cookies, payload.cookies);
-            const userAgent = solution.userAgent || payload.userAgent || meta.userAgent || getFallbackUserAgent();
-            const solvedUrl = solution.url || clearanceUrl;
-            const solutionStatus = solution.status || response.status;
-            const solutionBody = solution.response || payload.response || '';
-            const usefulSolutionHtml = isUsefulSolutionHtml(solutionBody, solutionStatus);
-            const cookieState = createCookieStateForUrl(solvedUrl || clearanceUrl, rawSolutionCookies, {
-              cookies: inputCookies,
-              userAgent,
-              url: normalizeBaseUrl(solvedUrl) || normalizeBaseUrl(clearanceUrl) || null
-            });
-            const cookies = cookieState.cookies || joinCookieHeader(rawSolutionCookies || '');
-
-            if ((!cookies || !userAgent) || isLikelyChallengeHtml(solutionBody, solutionStatus)) {
+            if (result.empty) {
               logger.warn('solve empty', {
                 provider: providerName,
                 clearanceUrl,
                 endpoint: selectedEndpoint,
-                status: solutionStatus,
-                cookies: Boolean(cookies),
-                userAgent: Boolean(userAgent),
-                challengeBody: isLikelyChallengeHtml(solutionBody, solutionStatus)
+                status: result.status,
+                cookies: result.cookies,
+                userAgent: result.userAgent,
+                challengeBody: result.challengeBody
               });
               markEndpointFailure(selectedEndpoint);
               continue;
             }
 
-            const session = {
-              providerName,
-              userAgent,
-              cookies,
-              cookieJar: cookieState.cookieJar || null,
-              cookieJarVersion: cookieState.cookieJar ? 2 : undefined,
-              cf_clearance: cookieState.cf_clearance || readCookieValue(cookies, 'cf_clearance'),
-              url: normalizeBaseUrl(solvedUrl) || normalizeBaseUrl(clearanceUrl) || null,
-              solvedUrl,
-              timestamp: Date.now(),
-              status: solutionStatus,
-              endpoint: selectedEndpoint,
-              solutionResponse: usefulSolutionHtml ? solutionBody : undefined,
-              solutionResponseUrl: usefulSolutionHtml ? solvedUrl : undefined,
-              solutionResponseStatus: usefulSolutionHtml ? solutionStatus : undefined
-            };
-
+            const session = result.session;
             onSession(session);
             markEndpointSuccess(selectedEndpoint);
             clearProviderFailure();
