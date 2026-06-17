@@ -161,7 +161,17 @@ const FETCH_TIMEOUT = 10000;
 const TMDB_API_KEY = '68e094699525b18a70bab2f86b1fa706';
 const SITEMAP_URL = `${BASE_URL}/news_pages.xml`;
 const SITEMAP_CACHE_MS = 60 * 60 * 1000;
-const WORKER_HOST = decodeB64Utf8('Y2MucmVhbGJlc3RpYS5jb20=');
+function resolveCinemaCityWorkerHost() {
+    const configured = String(
+        process.env.CINEMACITY_WORKER_HOST
+        || process.env.CC_WORKER_HOST
+        || ''
+    ).trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    if (configured) return configured;
+    return decodeB64Utf8('Y2MucmVhbGJlc3RpYS5jb20=');
+}
+
+const WORKER_HOST = resolveCinemaCityWorkerHost();
 const PROVIDER_LABEL = 'CinemaCity';
 const PROVIDER_CODE = 'CC';
 const EXTRACTOR_LABEL = 'CCCDN';

@@ -1,0 +1,10 @@
+name = "cinemacity-proxy"
+main = "worker.js"
+compatibility_date = "2026-05-27"
+workers_dev = true
+
+[vars]
+CINEMACITY_ORIGIN = "https://cinemacity.cc"
+CINEMACITY_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+PROXY_SECRET = ""
+CINEMACITY_COOKIE = ""
