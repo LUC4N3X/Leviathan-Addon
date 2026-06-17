@@ -200,8 +200,9 @@ test('clearance manager fails over CloudflareBypass-compatible endpoints', async
   assert.deepEqual(seenPayloads, ['/cookies']);
 });
 
-test('clearance manager recovers from an empty/poisoned cookie cache via a cache-busted re-solve', async (t) => {
+test('clearance manager recovers from an empty/poisoned cookie cache via cache clear + re-solve', async (t) => {
   const cookieCalls = [];
+  let cacheCleared = false;
   const endpoint = await listen(async (req, res) => {
     const parsed = new URL(req.url, endpoint.url);
     if (parsed.pathname === '/cache/stats') {
@@ -209,10 +210,16 @@ test('clearance manager recovers from an empty/poisoned cookie cache via a cache
       res.end(JSON.stringify({ status: 'ok' }));
       return;
     }
+    if (parsed.pathname === '/cache/clear') {
+      cacheCleared = true;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', message: 'cleared' }));
+      return;
+    }
     const targetUrl = parsed.searchParams.get('url') || '';
     cookieCalls.push(targetUrl);
-    // Simulate the upstream serving a cached empty result until the request
-    // arrives with a cache-busting query param, which forces a fresh solve.
+    // Simulate the upstream serving a cached empty result until the cache has
+    // been cleared (the busted retry arrives carrying the cache-bust param).
     const busted = targetUrl.includes('__cfcb=');
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
@@ -242,6 +249,7 @@ test('clearance manager recovers from an empty/poisoned cookie cache via a cache
 
   assert.ok(session, 'expected a usable session after the cache-busted retry');
   assert.equal(session.cf_clearance, 'fresh');
+  assert.equal(cacheCleared, true, 'expected the upstream per-hostname cache to be purged');
   assert.equal(cookieCalls.length, 2, 'expected one empty solve followed by one cache-busted re-solve');
   assert.doesNotMatch(cookieCalls[0], /__cfcb=/);
   assert.match(cookieCalls[1], /__cfcb=/);

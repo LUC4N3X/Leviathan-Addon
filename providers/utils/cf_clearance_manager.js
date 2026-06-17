@@ -553,6 +553,12 @@ function createCfClearanceManager(options = {}) {
   // browser challenge instead of serving the stale empty result forever.
   const cacheBustOnEmpty = options.cacheBustOnEmpty !== false;
   const cacheBustParam = String(options.cacheBustParam || '__cfcb');
+  // The upstream bypass service keys its cookie cache per-hostname (md5 of the
+  // host), ignoring path/query — so a URL nonce alone cannot evict a poisoned
+  // empty entry. When an empty result is seen we POST /cache/clear to purge it,
+  // throttled so a request storm cannot thrash the shared cache.
+  const clearUpstreamCacheOnEmpty = options.clearUpstreamCacheOnEmpty !== false;
+  const cacheClearMinIntervalMs = Math.max(2_000, Number(options.cacheClearMinIntervalMs || 15_000));
   const solveLimiter = createAsyncLimiter(options.solveConcurrency || 1, { maxQueue: solveMaxQueue });
   const httpAgent = options.httpAgent || undefined;
   const httpsAgent = options.httpsAgent || undefined;
@@ -564,6 +570,7 @@ function createCfClearanceManager(options = {}) {
 
   const inFlight = new Map();
   const cooldown = new Map();
+  const cacheClearCooldown = new Map();
   const endpointFailures = new Map();
   const endpointHealthOkUntil = new Map();
   let endpointCursor = 0;
@@ -638,6 +645,32 @@ function createCfClearanceManager(options = {}) {
       }));
     }
     return bypassClientCache.get(endpointKey);
+  }
+
+  async function clearEndpointCacheOnce(selectedEndpoint, signal = null) {
+    if (!clearUpstreamCacheOnEmpty) return false;
+    const now = Date.now();
+    const last = cacheClearCooldown.get(selectedEndpoint) || 0;
+    if (now - last < cacheClearMinIntervalMs) return false;
+    cacheClearCooldown.set(selectedEndpoint, now);
+    try {
+      const client = getBypassClient(selectedEndpoint);
+      if (typeof client.clearCache !== 'function') return false;
+      const result = await client.clearCache({ timeout: healthTimeoutMs, signal });
+      logger.warn('cache cleared', {
+        provider: providerName,
+        endpoint: selectedEndpoint,
+        message: result?.message || undefined
+      });
+      return true;
+    } catch (error) {
+      logger.warn('cache clear failed', {
+        provider: providerName,
+        endpoint: selectedEndpoint,
+        error: error?.message || String(error)
+      });
+      return false;
+    }
   }
 
   async function postFlareWithRetry(selectedEndpoint, payload, timeout, signal, label = 'request') {
@@ -954,6 +987,9 @@ function createCfClearanceManager(options = {}) {
                 userAgent: result.userAgent,
                 challengeBody: result.challengeBody
               });
+              // Purge the upstream per-hostname cache so the busted retry forces a
+              // fresh browser solve instead of replaying the poisoned empty entry.
+              await clearEndpointCacheOnce(selectedEndpoint, controller.signal);
               result = await attemptSolve(
                 selectedEndpoint,
                 appendCacheBustParam(clearanceUrl, cacheBustParam),

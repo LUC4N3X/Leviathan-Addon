@@ -210,6 +210,16 @@ function createCloudflareBypassServiceClient(options = {}) {
     return true;
   }
 
+  async function clearCache({ timeout = 8000, signal = null } = {}) {
+    const response = await httpClient.post(buildUrl(endpoint, '/cache/clear'), null, {
+      timeout,
+      signal,
+      validateStatus: status => status >= 200 && status < 600
+    });
+    if (response.status >= 400) throw new Error(`cache_clear_http_${response.status}`);
+    return parseJsonMaybe(response.data) || { status: 'ok' };
+  }
+
   async function getCookies(url, requestOptions = {}) {
     const targetUrl = String(url || '').trim();
     if (!targetUrl) throw new Error('missing_target_url');
@@ -373,6 +383,7 @@ function createCloudflareBypassServiceClient(options = {}) {
   return {
     endpoint,
     health,
+    clearCache,
     getCookies,
     getHtml,
     mirror
