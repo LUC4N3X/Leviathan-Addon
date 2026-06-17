@@ -201,12 +201,23 @@ function mappingLocaleFromContext(providerContext = null) {
     return isEnabledConfigValue(providerContext?.easyCatalogsLangIt) ? 'it' : null;
 }
 
+function getCinemaCityProxySecret() {
+    return String(process.env.CINEMACITY_PROXY_SECRET || '').trim();
+}
+
+function withCinemaCityWorkerHeaders(headers = {}) {
+    const out = withCinemaCityAuthHeaders(headers);
+    const secret = getCinemaCityProxySecret();
+    if (secret) out['x-proxy-secret'] = secret;
+    return out;
+}
+
 async function fetchWithCinemaCityWorker(url) {
     const path = url.startsWith('http') ? new URL(url).pathname + new URL(url).search : url;
     const targetUrl = (`https://${WORKER_HOST}`).replace(/\/+$/, '') + (path.startsWith('/') ? path : `/${path}`);
     const response = await fetchWithTimeout(targetUrl, {
         timeout: FETCH_TIMEOUT,
-        headers: withCinemaCityAuthHeaders({ 'User-Agent': USER_AGENT })
+        headers: withCinemaCityWorkerHeaders({ 'User-Agent': USER_AGENT })
     });
     if (!response.ok) throw new Error(`Worker HTTP ${response.status}`);
     return await response.text();
@@ -453,7 +464,7 @@ async function loadCinemaCityCatalogSnapshot(providerContext = null) {
     console.log(`[CinemaCity] Fetching sitemap page 1 via CF Proxy: ${firstPageUrl}`);
     const firstResp = await fetchWithTimeout(firstPageUrl, {
         timeout: FETCH_TIMEOUT,
-        headers: withCinemaCityAuthHeaders({ 'User-Agent': USER_AGENT })
+        headers: withCinemaCityWorkerHeaders({ 'User-Agent': USER_AGENT })
     });
 
     if (firstResp.ok) {
@@ -470,7 +481,7 @@ async function loadCinemaCityCatalogSnapshot(providerContext = null) {
                     ? `${sitemapProxy.slice(0, -1)}${sitemapPath}?page=${p}&perPage=500`
                     : `${sitemapProxy}${sitemapPath}?page=${p}&perPage=500`;
                 pageFetches.push(
-                    fetchWithTimeout(pageUrl, { timeout: FETCH_TIMEOUT, headers: withCinemaCityAuthHeaders({ 'User-Agent': USER_AGENT }) })
+                    fetchWithTimeout(pageUrl, { timeout: FETCH_TIMEOUT, headers: withCinemaCityWorkerHeaders({ 'User-Agent': USER_AGENT }) })
                         .then((r) => (r.ok ? r.text() : ''))
                         .then((xml) => {
                             if (xml) allEntries = allEntries.concat(catalogRecordsFromSitemap(xml));
@@ -500,7 +511,7 @@ async function loadCinemaCityCatalogSnapshot(providerContext = null) {
     try {
         const response = await fetchWithTimeout(targetUrl, {
             timeout: FETCH_TIMEOUT,
-            headers: withCinemaCityAuthHeaders({ 'User-Agent': USER_AGENT })
+            headers: withCinemaCityWorkerHeaders({ 'User-Agent': USER_AGENT })
         });
         if (!response.ok) throw new Error(`Proxy HTTP ${response.status}`);
         xml = await response.text();

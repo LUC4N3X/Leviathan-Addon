@@ -32,13 +32,23 @@ function buildForwardHeaders(env) {
 function isAuthorized(request, env) {
   const expected = env && env.PROXY_SECRET ? String(env.PROXY_SECRET).trim() : '';
   if (!expected) return true;
-  const url = new URL(request.url);
-  const provided = request.headers.get('x-proxy-secret') || url.searchParams.get('secret') || '';
+  const provided = request.headers.get('x-proxy-secret') || '';
   return provided === expected;
 }
 
 export default {
   async fetch(request, env) {
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': 'x-proxy-secret',
+          'Access-Control-Max-Age': '86400'
+        }
+      });
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return new Response('Method Not Allowed', { status: 405 });
     }
