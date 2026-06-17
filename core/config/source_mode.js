@@ -44,7 +44,6 @@ const WEB_PROVIDER_FLAGS = Object.freeze([
     'enableAltadefinizione',
     'enableToonItalia',
     'enableMoflix',
-    'enableCc'
 ]);
 
 function normalizeSourceMode(value, fallback = SOURCE_MODES.BALANCED) {

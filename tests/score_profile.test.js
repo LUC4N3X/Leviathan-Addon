@@ -29,16 +29,16 @@ test('leviathan score profile explains resolution language rd seed provider and 
 test('leviathan score profile ranks stronger stream first', () => {
     const ranked = rankWithLeviathanScore([
         { title: 'FROM S01E07 720p ENG', source: 'DB', seeders: 0, _rdCacheState: 'unknown' },
-        { title: 'FROM S01E07 1080p ITA', source: 'CinemaCity', seeders: 12, _rdCacheState: 'likely_cached' }
+        { title: 'FROM S01E07 1080p ITA', source: 'Altadefinizione', seeders: 12, _rdCacheState: 'likely_cached' }
     ], { title: 'FROM', season: 1, episode: 7, isSeries: true });
 
-    assert.equal(ranked[0].source, 'CinemaCity');
+    assert.equal(ranked[0].source, 'Altadefinizione');
     assert.match(formatRankExplain(ranked[0]), /\[RANK EXPLAIN\]/);
 });
 
 test('leviathan score profile penalizes explicit episode mismatch', () => {
     const scored = evaluateLeviathanScore(
-        { title: 'FROM S01E04 1080p ITA', source: 'CinemaCity', seeders: 10, _rdCacheState: 'cached' },
+        { title: 'FROM S01E04 1080p ITA', source: 'Altadefinizione', seeders: 10, _rdCacheState: 'cached' },
         { title: 'FROM', season: 1, episode: 7, isSeries: true }
     );
 

@@ -11,7 +11,6 @@ const { validateConfig } = require('../core/config/schema');
 test('hasWebProvidersEnabled detects active web providers', () => {
   assert.equal(hasWebProvidersEnabled({}), false);
   assert.equal(hasWebProvidersEnabled({ enableAnimeWorld: true }), true);
-  assert.equal(hasWebProvidersEnabled({ enableCc: true }), true);
   assert.equal(hasWebProvidersEnabled({ enableCb01: true }), true);
   assert.equal(hasWebProvidersEnabled({ enableStreamingCommunity: true }), true);
   assert.equal(hasWebProvidersEnabled({ enableToonItalia: true }), true);
@@ -36,14 +35,12 @@ test('validateConfig preserves explicit web service', () => {
     service: 'web',
     filters: {
       enableAnimeWorld: true,
-      enableCc: true,
       enableCb01: true,
       enableToonItalia: true
     }
   });
 
   assert.equal(config.service, 'web');
-  assert.equal(config.filters.enableCc, true);
   assert.equal(config.filters.enableCb01, true);
   assert.equal(config.filters.enableToonItalia, true);
 });

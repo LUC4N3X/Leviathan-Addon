@@ -67,7 +67,7 @@ test('proxy header normalizer drops invalid header names and control values', ()
 });
 
 test('proxy header normalizer skips already proxied urls', () => {
-    const url = 'https://leviathan.example/ccproxy/stream?d=token';
+    const url = 'https://leviathan.example/proxy/stream?d=token';
     const decision = shouldProxyUrl(url, { addonBase: 'https://leviathan.example' });
 
     assert.equal(isAlreadyProxiedUrl(url, { addonBase: 'https://leviathan.example' }), true);

@@ -561,7 +561,7 @@ function streamCacheKey(media = {}) {
 }
 
 async function searchAltadefinizioneImpl(originalId, finalId, meta = {}, config = {}, reqHost = null) {
-    if (config?.filters && config.filters.enableCc !== true && config.filters.enableAltadefinizione !== true) return [];
+    if (config?.filters && config.filters.enableAltadefinizione !== true) return [];
 
     const media = await resolveMedia(meta, finalId || originalId, config);
     if (!media?.tmdbId) return [];
