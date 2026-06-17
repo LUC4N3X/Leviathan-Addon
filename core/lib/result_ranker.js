@@ -443,7 +443,7 @@ function computeTitleSimilarity(candidateTitle, expectedTitles = []) {
       if (expectedTokens.has(token)) intersection += 1;
     }
 
-    const union = new Set([...candidateTokens, ...expectedTokens]).size || 1;
+    const union = (candidateTokens.size + expectedTokens.size - intersection) || 1;
     const score = Math.max(intersection / union, intersection / expectedTokens.size);
 
     if (score > bestScore) {

@@ -19,6 +19,20 @@ function escapeRegex(value) {
     return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+const REGEX_CACHE_LIMIT = 512;
+const EPISODE_MARKER_CACHE = new Map();
+const SEASON_ONLY_CACHE = new Map();
+
+function getCachedRegex(cache, key, build) {
+    let value = cache.get(key);
+    if (value === undefined) {
+        if (cache.size >= REGEX_CACHE_LIMIT) cache.clear();
+        value = build();
+        cache.set(key, value);
+    }
+    return value;
+}
+
 function makeSeriesTitleRegex(title) {
     const normalized = normalizeForMatch(title);
     if (!normalized) return null;
@@ -74,18 +88,20 @@ function hasEpisodeMarker(value, season, episode) {
     if (!Number.isFinite(sNum) || !Number.isFinite(eNum) || eNum <= 0) return false;
 
     const text = String(value || '');
-    const s = String(sNum).padStart(2, '0');
-    const e = String(eNum).padStart(2, '0');
-    const eLoose = String(eNum);
 
-    const patterns = [
-        new RegExp(`[sS][\\W_]*0*${sNum}[\\W_]*[eE][\\W_]*0*${eNum}(?!\\d)`),
-        new RegExp(`\\b0*${sNum}[\\W_]*[xX][\\W_]*0*${eNum}\\b`),
-        new RegExp(`season[\\W_]*0*${sNum}[\\W_]+ep(?:isode)?[\\W_]*0*${eNum}\\b`, 'i'),
-        new RegExp(`stagione[\\W_]*0*${sNum}[\\W_]+episodio[\\W_]*0*${eNum}\\b`, 'i'),
-        new RegExp(`\\b[eE]p?\\.?[\\W_]*${eLoose}\\b`, 'i'),
-        new RegExp(`${s}[\\W_]*[eE][\\W_]*${e}`, 'i')
-    ];
+    const patterns = getCachedRegex(EPISODE_MARKER_CACHE, `${sNum}|${eNum}`, () => {
+        const s = String(sNum).padStart(2, '0');
+        const e = String(eNum).padStart(2, '0');
+        const eLoose = String(eNum);
+        return [
+            new RegExp(`[sS][\\W_]*0*${sNum}[\\W_]*[eE][\\W_]*0*${eNum}(?!\\d)`),
+            new RegExp(`\\b0*${sNum}[\\W_]*[xX][\\W_]*0*${eNum}\\b`),
+            new RegExp(`season[\\W_]*0*${sNum}[\\W_]+ep(?:isode)?[\\W_]*0*${eNum}\\b`, 'i'),
+            new RegExp(`stagione[\\W_]*0*${sNum}[\\W_]+episodio[\\W_]*0*${eNum}\\b`, 'i'),
+            new RegExp(`\\b[eE]p?\\.?[\\W_]*${eLoose}\\b`, 'i'),
+            new RegExp(`${s}[\\W_]*[eE][\\W_]*${e}`, 'i')
+        ];
+    });
     return patterns.some((rx) => rx.test(text));
 }
 
@@ -94,9 +110,12 @@ function hasSeasonOnlyMarker(value, season) {
     const sNum = Number(season);
     if (!Number.isFinite(sNum) || sNum <= 0) return false;
     const text = String(value || '');
-    return new RegExp('(?:^|[^a-z0-9])s\\s*0*' + sNum + '(?!\\s*[eE]\\s*\\d)', 'i').test(text)
-        || new RegExp('(?:^|[^a-z0-9])season\\s*0*' + sNum + '(?:\\b|\\D)', 'i').test(text)
-        || new RegExp('(?:^|[^a-z0-9])stagione\\s*0*' + sNum + '(?:\\b|\\D)', 'i').test(text);
+    const patterns = getCachedRegex(SEASON_ONLY_CACHE, String(sNum), () => [
+        new RegExp('(?:^|[^a-z0-9])s\\s*0*' + sNum + '(?!\\s*[eE]\\s*\\d)', 'i'),
+        new RegExp('(?:^|[^a-z0-9])season\\s*0*' + sNum + '(?:\\b|\\D)', 'i'),
+        new RegExp('(?:^|[^a-z0-9])stagione\\s*0*' + sNum + '(?:\\b|\\D)', 'i')
+    ]);
+    return patterns.some((rx) => rx.test(text));
 }
 
 module.exports = {

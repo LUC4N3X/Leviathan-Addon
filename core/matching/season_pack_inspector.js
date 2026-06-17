@@ -90,15 +90,31 @@ function normalizeVideoFiles(files) {
         .filter((file) => isVideoFilePath(file.filePath || file.fileName) || file.fileSize > 25 * 1024 * 1024);
 }
 
+const REGEX_CACHE_LIMIT = 512;
+const EPISODE_ONLY_CACHE = new Map();
+const SEASON_FOLDER_CACHE = new Map();
+
+function getCachedRegex(cache, key, build) {
+    let value = cache.get(key);
+    if (value === undefined) {
+        if (cache.size >= REGEX_CACHE_LIMIT) cache.clear();
+        value = build();
+        cache.set(key, value);
+    }
+    return value;
+}
+
 function hasEpisodeOnlyMarker(value, episode) {
     const ep = Number(episode);
     if (!Number.isFinite(ep) || ep <= 0) return false;
-    return new RegExp(`\\b(?:ep|episode|episodio|e)\\.?[\\W_]*0*${ep}(?!\\d)`, 'i').test(String(value || ''));
+    const rx = getCachedRegex(EPISODE_ONLY_CACHE, ep, () => new RegExp(`\\b(?:ep|episode|episodio|e)\\.?[\\W_]*0*${ep}(?!\\d)`, 'i'));
+    return rx.test(String(value || ''));
 }
 
 function hasSeasonFolderCue(value, season) {
-    return hasSeasonOnlyMarker(value, season)
-        || new RegExp(`(?:^|[\\/\\s._-])0*${Number(season)}(?:[\\/\\s._-]|$)`, 'i').test(String(value || ''));
+    if (hasSeasonOnlyMarker(value, season)) return true;
+    const rx = getCachedRegex(SEASON_FOLDER_CACHE, Number(season), () => new RegExp(`(?:^|[\\/\\s._-])0*${Number(season)}(?:[\\/\\s._-]|$)`, 'i'));
+    return rx.test(String(value || ''));
 }
 
 function isExplicitRequestedFile(file, requestedFileIdx) {
@@ -153,13 +169,13 @@ function findEpisodeFileHint(files, context = {}) {
         allowEpisodeOnly: Boolean(context.allowEpisodeOnly || context.kitsu_id || context.isAnime)
     };
 
+    const normalizedTitle = normalizeForMatch(context.title || context.seriesTitle || context.metaTitle || '');
     const candidates = [];
     for (const file of videoFiles) {
         const scored = scoreFileForEpisode(file, ctx);
         if (!scored) continue;
         const seasonFolderBonus = hasSeasonFolderCue(file.filePath, season) ? 8 : 0;
         const sizeBonus = Math.min(8, Math.floor(Math.log10(Math.max(file.fileSize, 1))));
-        const normalizedTitle = normalizeForMatch(context.title || context.seriesTitle || context.metaTitle || '');
         const normalizedPath = normalizeForMatch(file.filePath || file.fileName || '');
         const titleBonus = normalizedTitle && normalizedPath.includes(normalizedTitle) ? 4 : 0;
         candidates.push({
