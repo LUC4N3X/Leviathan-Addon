@@ -295,6 +295,36 @@ function isUsableCurlCffiResult(result) {
     return isUsableCinemaCityHtml(result.html);
 }
 
+function getCurlCffiMaxConcurrent() {
+    const parsed = Number.parseInt(String(process.env.CC_CURL_CFFI_MAX_CONCURRENT || ''), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 8) : 1;
+}
+
+function getImdbVerifyLimit() {
+    const parsed = Number.parseInt(String(process.env.CC_IMDB_VERIFY_LIMIT || ''), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 5) : 2;
+}
+
+let curlCffiActive = 0;
+const curlCffiWaiters = [];
+
+function acquireCurlCffiSlot() {
+    if (curlCffiActive < getCurlCffiMaxConcurrent()) {
+        curlCffiActive += 1;
+        return Promise.resolve();
+    }
+    return new Promise((resolve) => curlCffiWaiters.push(resolve));
+}
+
+function releaseCurlCffiSlot() {
+    const next = curlCffiWaiters.shift();
+    if (next) {
+        next();
+        return;
+    }
+    curlCffiActive = Math.max(0, curlCffiActive - 1);
+}
+
 async function fetchViaCurlCffi(url, options = {}) {
     const runner = getCurlCffiRunner();
     if (typeof runner !== 'function' || !isCurlCffiFallbackEnabled()) {
@@ -302,6 +332,7 @@ async function fetchViaCurlCffi(url, options = {}) {
     }
     const targetUrl = resolveCinemaCityUrl(BASE_URL, url);
     let result;
+    await acquireCurlCffiSlot();
     try {
         result = await runner(targetUrl, 'cinemacity', {
             headers: withCinemaCityAuthHeaders({ ...DEFAULT_STREAM_HEADERS, ...(options.headers || {}) }),
@@ -315,6 +346,8 @@ async function fetchViaCurlCffi(url, options = {}) {
             throw new Error('curl_cffi_unavailable');
         }
         throw error;
+    } finally {
+        releaseCurlCffiSlot();
     }
     if (!isUsableCurlCffiResult(result)) {
         throw new Error('curl_cffi_unusable');
@@ -660,7 +693,7 @@ async function resolveCinemaCityCatalogPage(id, providerType, providerContext = 
 
     if (expectedImdbId) {
         ranked.sort((a, b) => b.score - a.score);
-        const candidatesToVerify = ranked.slice(0, 3);
+        const candidatesToVerify = ranked.slice(0, getImdbVerifyLimit());
         for (const candidate of candidatesToVerify) {
             const candidateImdbId = await confirmImdbOnCandidatePage(candidate.entry.url, expectedImdbId);
             if (candidateImdbId === expectedImdbId) {
