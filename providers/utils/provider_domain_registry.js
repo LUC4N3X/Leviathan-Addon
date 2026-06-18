@@ -6,7 +6,6 @@ const path = require('path');
 const { normalizeProviderId } = require('../engine/provider_result_normalizer');
 
 const DEFAULT_PROVIDER_DOMAINS = Object.freeze({
-    altadefinizione: Object.freeze(['https://altadefinizionestreaming.com']),
     animeunity: Object.freeze(['https://www.animeunity.so']),
     animesaturn: Object.freeze(['https://www.animesaturn.cx']),
     animeworld: Object.freeze(['https://www.animeworld.ac']),
@@ -25,8 +24,6 @@ const DEFAULT_PROVIDER_DOMAINS = Object.freeze({
 });
 
 const PROVIDER_ALIASES = Object.freeze({
-    ads: 'altadefinizione',
-    altadefinizionestreaming: 'altadefinizione',
     anime_world: 'animeworld',
     animeunitytv: 'animeunity',
     as: 'animesaturn',
@@ -39,7 +36,6 @@ const PROVIDER_ALIASES = Object.freeze({
     ti: 'toonitalia',
     vix: 'streamingcommunity',
     vixsrc: 'streamingcommunity',
-    webads: 'altadefinizione',
     webaw: 'animeworld',
     webvix: 'streamingcommunity'
 });

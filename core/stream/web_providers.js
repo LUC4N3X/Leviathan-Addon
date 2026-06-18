@@ -140,7 +140,6 @@ function normalizeWebExtractorLabel(value) {
     if (/^(unknown|unknow|n\/a|null|undefined)$/i.test(raw)) return '';
     if (/vix(?:cloud|src)?/i.test(raw)) return 'VixCloud';
     if (/vidx\s*go|vidxgo/i.test(raw)) return 'VidxGo';
-    if (/\b(?:adn|cdn)\b|altadefinizionestreaming\.com\/api\/player-sources/i.test(raw)) return 'ADN/CDN';
     if (/sweet\s*pixel|sweetpixel/i.test(raw)) return 'SweetPixel';
     if (/mixdrop|m1xdrop|mxcontent/i.test(raw)) return 'MixDrop';
     if (/loadm/i.test(raw)) return 'LoadM';
@@ -168,7 +167,6 @@ function normalizeWebExtractorLabel(value) {
             const dataParam = parsed.searchParams.get('d') || parsed.searchParams.get('url') || '';
             const normalizedHostParam = hostParam ? normalizeWebExtractorLabel(hostParam) : '';
             if (normalizedHostParam) return normalizedHostParam;
-            if (/altadefinizionestreaming\.com\/api\/player-sources/i.test(dataParam)) return 'ADN/CDN';
             const hostname = parsed.hostname.replace(/^www\./i, '');
             const parts = hostname.split('.');
             // Check the second-level domain first (e.g. 'dropload' in direct123.dropload.io)
@@ -190,7 +188,7 @@ function normalizeWebExtractorLabel(value) {
         .trim();
 
     // Only trust free-form labels when they look like a hoster/extractor, not a media title.
-    return /^(?:web|hls|adn|cdn|adn\/cdn|loadm|deltabit|delta\s*bit|turbovid|vixcloud|vidxgo|sweetpixel|srv12|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|uprot|dropload|dr0pstream|streamhg|dhcplay|vibuxer|uqload|upstream|vidoza|direct)$/i.test(cleaned)
+    return /^(?:web|hls|loadm|deltabit|delta\s*bit|turbovid|vixcloud|vidxgo|sweetpixel|srv12|mixdrop|supervideo|maxstream|voe|streamtape|doodstream|filemoon|uprot|dropload|dr0pstream|streamhg|dhcplay|vibuxer|uqload|upstream|vidoza|direct)$/i.test(cleaned)
         ? cleaned
         : '';
 }

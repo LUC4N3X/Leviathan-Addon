@@ -76,7 +76,7 @@ const REGEX = Object.freeze({
     CLEAN_TITLE: /guardaflix|guardaplay|film streaming ita|film completo|streaming/gi,
     NON_ALNUM: /[^a-z0-9]+/g,
     YEAR: /\b(19\d{2}|20\d{2})\b/,
-    NOISE: /\b(altadefinizione|guardaflix|guardaplay|film|serie|streaming|sub(?:b?ita)?|ita|hd|fullhd|uhd|1080p|720p|4k)\b/gi,
+    NOISE: /\b(guardaflix|guardaplay|film|serie|streaming|sub(?:b?ita)?|ita|hd|fullhd|uhd|1080p|720p|4k)\b/gi,
     ACCEPTABLE_PATH: /\/(?:film|films|movie|movies|guarda|streaming|title|titles|watch)\//i,
     DIRECT_SLUG_PATH: /^\/[a-z0-9][a-z0-9-]{3,}\/?$/i,
     BAD_CANDIDATE_PATH: /\/(?:wp-admin|wp-content|wp-json|feed|category|tag|author|privacy|cookie|dmca|contatti|login|register|page|cast)\/?/i,

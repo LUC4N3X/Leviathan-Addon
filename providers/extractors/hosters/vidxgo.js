@@ -147,7 +147,7 @@ async function bypassAndExtract(playerUrl, referer, options = {}) {
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'none',
         DNT: '1',
-        Referer: referer || 'https://altadefinizione.you/',
+        Referer: referer || 'https://vidxgo.example/',
         Priority: 'u=0, i'
     };
 
@@ -175,7 +175,7 @@ async function extractVidxgo(url, options = {}) {
     if (!playerUrl || !isVidxgoUrl(playerUrl)) return null;
 
     const userAgent = String(options.userAgent || process.env.VIDXGO_USER_AGENT || DEFAULT_USER_AGENT);
-    const referer = String(options.requestReferer || options.referer || options.pageUrl || process.env.VIDXGO_REFERER || 'https://altadefinizione.you/');
+    const referer = String(options.requestReferer || options.referer || options.pageUrl || process.env.VIDXGO_REFERER || 'https://vidxgo.example/');
     const origin = getOrigin(playerUrl);
     const host = (() => {
         try { return new URL(playerUrl).hostname; } catch (_) { return 'v.vidxgo.co'; }
