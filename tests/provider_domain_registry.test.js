@@ -77,7 +77,7 @@ test('registry follows redirects and keeps cached domains when refresh fails', a
 test('default registry feeds recipe loader and provider lookups', () => {
     resetProviderDomainRegistryForTests({
         domains: {
-            altadefinizione: ['https://altadefinizione.cache'],
+            guardaflix: ['https://guardaflix.cache'],
             animeworld: ['https://www.animeworld.cache'],
             streamingcommunity: ['https://vixsrc.cache']
         }
@@ -91,12 +91,12 @@ test('default registry feeds recipe loader and provider lookups', () => {
         assert.ok(recipe.baseUrls.includes('https://www.animeworld.ac'));
 
         const recipeWithStaticBase = normalizeRecipe({
-            id: 'altadefinizione',
-            name: 'Altadefinizione',
-            baseUrl: 'https://altadefinizionestreaming.com'
+            id: 'guardaflix',
+            name: 'GuardaFlix',
+            baseUrl: 'https://guardaplay.xyz'
         });
-        assert.equal(recipeWithStaticBase.baseUrl, 'https://altadefinizione.cache');
-        assert.ok(recipeWithStaticBase.baseUrls.includes('https://altadefinizionestreaming.com'));
+        assert.equal(recipeWithStaticBase.baseUrl, 'https://guardaflix.cache');
+        assert.ok(recipeWithStaticBase.baseUrls.includes('https://guardaplay.xyz'));
 
         assert.equal(getProviderDomain('streamingcommunity'), 'https://vixsrc.cache');
         assert.ok(getProviderDomains('toonitalia').includes('https://toonitalia.xyz'));

@@ -41,7 +41,6 @@ const WEB_PROVIDER_FLAGS = Object.freeze([
     'enableAnimeUnity',
     'enableAnimeSaturn',
     'enableGf',
-    'enableAltadefinizione',
     'enableToonItalia',
     'enableMoflix',
 ]);

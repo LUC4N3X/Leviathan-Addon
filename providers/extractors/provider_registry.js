@@ -12,16 +12,12 @@ const { searchAnimeWorld } = require('../animeworld/aw_handler');
 const { searchAnimeUnity } = require('../animeunity/au_handler');
 const { searchAnimeSaturn } = require('../animesaturn/as_handler');
 const { searchGuardaFlix } = require('../guardaflix/gf_handler');
-const { searchAltadefinizione } = require('../altadefinizione/ads_handler');
 const { searchMoflix, isMoflixRuntimeEnabled } = require('../moflix/moflix_handler');
 const { searchToonItalia, isToonItaliaRuntimeEnabled } = require('../toonitalia/toonitalia_handler');
 const { getProviderRecipe } = require('../engine/provider_definition_engine');
 
 const STREAMING_COMMUNITY_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.SC_PROVIDER_TIMEOUT || '16000', 10) || 16000);
 const ANIMEWORLD_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.AW_PROVIDER_TIMEOUT || '16000', 10) || 16000);
-const ALTADEFINIZIONE_MIN_TIMEOUT = Math.max(12000, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_TIMEOUT || '18000', 10) || 18000);
-const ALTADEFINIZIONE_EMPTY_TTL = Math.max(15, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_EMPTY_TTL || '60', 10) || 60);
-const ALTADEFINIZIONE_ERROR_TTL = Math.max(3, Math.min(ALTADEFINIZIONE_EMPTY_TTL, parseInt(process.env.ALTADEFINIZIONE_PROVIDER_ERROR_TTL || '10', 10) || 10));
 const MOFLIX_MIN_TIMEOUT = Math.max(8000, parseInt(process.env.MOFLIX_PROVIDER_TIMEOUT || '14000', 10) || 14000);
 const TOONITALIA_MIN_TIMEOUT = Math.max(10000, parseInt(process.env.TOONITALIA_PROVIDER_TIMEOUT || '18000', 10) || 18000);
 const MOFLIX_EMPTY_TTL = Math.max(15, parseInt(process.env.MOFLIX_PROVIDER_EMPTY_TTL || '45', 10) || 45);
@@ -117,20 +113,6 @@ const WEB_PROVIDER_DEFINITIONS = [
         minTimeout: STREAMING_COMMUNITY_MIN_TIMEOUT,
         isEnabled: ({ filters }) => isStreamingCommunityEnabled(filters),
         run: ({ meta, config, reqHost }) => searchStreamingCommunity(meta, config, reqHost)
-    },
-    {
-        key: 'altadefinizione',
-        recipeId: 'altadefinizione',
-        sourceName: 'AltadefinizioneStreaming',
-        cacheName: 'AltadefinizioneStreaming',
-        cacheKeyVersion: 'ads-kraken-first-vidxgo-v2',
-        icon: '🎞️',
-        limiterKey: 'webAds',
-        minTimeout: ALTADEFINIZIONE_MIN_TIMEOUT,
-        emptyTtl: ALTADEFINIZIONE_EMPTY_TTL,
-        errorTtl: ALTADEFINIZIONE_ERROR_TTL,
-        isEnabled: ({ filters }) => filters?.enableAltadefinizione === true,
-        run: ({ originalId, finalId, meta, config, reqHost }) => searchAltadefinizione(originalId, finalId, meta, config, reqHost)
     },
     {
         key: 'guardaHD',

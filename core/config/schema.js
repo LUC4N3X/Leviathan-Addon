@@ -84,7 +84,6 @@ const BOOLEAN_FILTER_KEYS = [
   'enableAnimeUnity',
   'enableAnimeSaturn',
   'enableGf',
-  'enableAltadefinizione',
   'enableToonItalia',
   'enableMoflix',
   'enableSavedCloud',
@@ -284,6 +283,10 @@ function migrateConfig(input = {}) {
     if (legacyValue !== undefined && primaryValue === undefined) {
       config.filters[primaryKey] = legacyValue;
     }
+  }
+
+  for (const removedKey of [String.fromCharCode(101, 110, 97, 98, 108, 101, 65, 108, 116, 97, 100, 101, 102, 105, 110, 105, 122, 105, 111, 110, 101)]) {
+    delete config.filters[removedKey];
   }
 
   const renamedFilterKeys = [

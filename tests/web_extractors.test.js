@@ -161,18 +161,18 @@ test('web formatter expands legacy multi audio markers to concrete ITA and ENG f
     });
 
     const formatted = tools.formatWebProviderBuckets({
-        altadefinizione: [{
-            name: '🎞️ AltadefinizioneStreaming | ADN/CDN',
-            title: 'The Rip\nADN/CDN MULTI',
+        guardaFlix: [{
+            name: '🎬 GuardaFlix | MixDrop',
+            title: 'The Rip\nMixDrop MULTI',
             url: 'https://example.com/master.m3u8',
             quality: '1080p',
-            extractor: 'ADN/CDN',
+            extractor: 'MixDrop',
             behaviorHints: {
-                extractor: 'ADN/CDN',
+                extractor: 'MixDrop',
                 vortexMeta: {
                     quality: '1080p',
-                    extractor: 'ADN/CDN',
-                    provider: 'AltadefinizioneStreaming',
+                    extractor: 'MixDrop',
+                    provider: 'GuardaFlix',
                     language: 'MULTI',
                     audioLanguages: ['multi']
                 }
@@ -180,8 +180,8 @@ test('web formatter expands legacy multi audio markers to concrete ITA and ENG f
         }]
     }, { title: 'The Rip', type: 'movie' }, { formatter: 'leviathan', filters: {} });
 
-    assert.equal(formatted.altadefinizione.length, 1);
-    assert.match(formatted.altadefinizione[0].name, /🇮🇹\/🇬🇧/);
-    assert.match(formatted.altadefinizione[0].title, /🗣️ 🇮🇹\/🇬🇧 \|/);
-    assert.equal(formatted.altadefinizione[0].behaviorHints.vortexMeta.language, 'MULTI ITA/ENG');
+    assert.equal(formatted.guardaFlix.length, 1);
+    assert.match(formatted.guardaFlix[0].name, /🇮🇹\/🇬🇧/);
+    assert.match(formatted.guardaFlix[0].title, /🗣️ 🇮🇹\/🇬🇧 \|/);
+    assert.equal(formatted.guardaFlix[0].behaviorHints.vortexMeta.language, 'MULTI ITA/ENG');
 });

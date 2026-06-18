@@ -23,9 +23,6 @@ const PROVIDER_ICON = Object.freeze({
     gf: '🎬',
     guardaflix: '🎬',
     cc: '🎞️',
-    ads: '🎞️',
-    altadefinizione: '🎞️',
-    altadefinizionestreaming: '🎞️',
     gs: '📺',
     guardoserie: '📺',
     'guardo serie': '📺',
@@ -73,7 +70,6 @@ function humanizeProviderName(value) {
     const compact = clean.toLowerCase().replace(/[^a-z0-9]+/g, '');
     if (compact === 'guardahd') return 'GuardaHD';
     if (compact === 'guardaflix') return 'GuardaFlix';
-    if (compact === 'altadefinizione' || compact === 'altadefinizionestreaming') return 'AltadefinizioneStreaming';
     if (compact === 'guardoserie') return 'GuardoSerie';
     if (compact === 'animeunity') return 'AnimeUnity';
     if (compact === 'animesaturn') return 'AnimeSaturn';

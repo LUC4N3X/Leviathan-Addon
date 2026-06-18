@@ -2,7 +2,7 @@
 
 const STOPWORDS = new Set([
     'the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'for', 'to', 'con', 'di', 'de', 'del', 'della', 'il', 'lo', 'la', 'i', 'gli', 'le',
-    'un', 'una', 'serie', 'film', 'streaming', 'altadefinizione', 'cb01', 'guarda', 'guardare', 'download', 'ita', 'sub', 'hd'
+    'un', 'una', 'serie', 'film', 'streaming', 'cb01', 'guarda', 'guardare', 'download', 'ita', 'sub', 'hd'
 ]);
 
 function normalizeText(value = '') {

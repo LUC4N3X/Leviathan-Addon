@@ -285,7 +285,6 @@ Request Stremio
 **Web provider layer**
 
 - StreamingCommunity
-- Altadefinizione
 - GuardaHD
 - GuardoSerie
 - GuardaFlix
@@ -411,7 +410,6 @@ http://localhost:7000
 <summary><b>Web Provider Modules</b></summary>
 
 - `providers/streamingcommunity/vix_handler.js` — StreamingCommunity / Vix.
-- `providers/altadefinizione/ads_handler.js` — Altadefinizione.
 - `providers/guardahd/ghd_handler.js` — GuardaHD.
 - `providers/guardoserie/gs_handler.js` — GuardoSerie.
 - `providers/guardaflix/gf_handler.js` — GuardaFlix.
