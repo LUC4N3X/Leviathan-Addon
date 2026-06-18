@@ -573,6 +573,65 @@ async function searchAltadefinizioneImpl(originalId, finalId, meta = {}, config 
     const endpoint = buildPlayerSourcesEndpoint(media);
     if (!endpoint) return [];
 
+    const gateway = getKrakenGateway(config);
+    if (gateway) {
+        const requestHeaders = headersFor(endpoint, `${BASE_URL}/`);
+        const extractorPath = process.env.ALTADEFINIZIONE_KRAKEN_EXTRACTOR_PATH || '/extractor/video.mp4';
+        const url = gateway.buildExtractorUrl(endpoint, 'adn', {
+            extractorPath: extractorPath,
+            redirectStream: true,
+            headers: requestHeaders
+        });
+        if (url && url !== endpoint) {
+            const displayTitle = media.type === 'movie'
+                ? media.title
+                : `${media.title} S${String(media.season).padStart(2, '0')}E${String(media.episode).padStart(2, '0')}`;
+            
+            const languageLabel = 'ITA';
+            const audioLanguages = ['ita'];
+            const stream = buildWebStream({
+                name: `${PROVIDER_LABEL} | ADN/CDN Kraken`,
+                title: `${displayTitle}\nADN/CDN ${languageLabel}`,
+                url,
+                extractor: 'ADN/CDN',
+                provider: PROVIDER_LABEL,
+                providerCode: PROVIDER_CODE,
+                quality: '1080p',
+                headers: null,
+                mediaflowUrl: getMediaflowBase(config),
+                extraBehaviorHints: {
+                    bingeWatching: true,
+                    vortexMeta: {
+                        via: 'kraken-adn-proxy',
+                        resolver: 'kraken',
+                        streamKind: 'extractor',
+                        language: languageLabel,
+                        audioLanguages,
+                        sourceUrl: endpoint,
+                        sourceProvider: 'ADN/CDN'
+                    }
+                },
+                extra: { _priority: 10, _italian: true }
+            });
+            
+            const streams = [stream];
+            const normalized = normalizeStreams(streams.map((s) => {
+                delete s._priority;
+                delete s._italian;
+                return s;
+            }), {
+                provider: PROVIDER_ID,
+                providerLabel: PROVIDER_LABEL,
+                providerCode: PROVIDER_CODE,
+                sort: false,
+                debug: DEBUG
+            });
+            
+            cache.streams.set(cacheKey, normalized, normalized.length ? STREAM_TTL_MS : 60_000, normalized.length ? STREAM_TTL_MS : 60_000);
+            return normalized;
+        }
+    }
+
     const payload = await fetchJson(endpoint).catch((error) => {
         log('player source fetch failed', { error: error?.message || String(error), endpoint });
         return null;
