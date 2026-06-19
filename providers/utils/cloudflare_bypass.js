@@ -445,6 +445,85 @@ const activeScraplingBypasses = new Map();
 const activeCurlCffiBypasses = new Map();
 const DEFAULT_CURL_CFFI_SCRIPT = path.join(__dirname, 'cf_curl_cffi.py');
 
+const pythonBypassSessionCache = new Map();
+
+function getPythonSessionCacheKey(providerName, url, kind = 'any') {
+  const origin = normalizeOrigin(url) || String(url || '').trim();
+  return `${normalizeProviderName(providerName)}:${String(kind || 'any').toLowerCase()}:${origin}`;
+}
+
+function prunePythonBypassSessionCache(maxEntries = 300) {
+  const now = Date.now();
+  for (const [key, entry] of pythonBypassSessionCache.entries()) {
+    if (!entry || Number(entry.expiresAt || 0) <= now) pythonBypassSessionCache.delete(key);
+  }
+  while (pythonBypassSessionCache.size > maxEntries) {
+    const first = pythonBypassSessionCache.keys().next().value;
+    if (!first) break;
+    pythonBypassSessionCache.delete(first);
+  }
+}
+
+function rememberPythonBypassSession(providerName, url, session = {}, options = {}) {
+  if (!session || !session.cookies || !session.userAgent) return false;
+  if (options.enabled === false) return false;
+  const ttlMs = Math.max(60_000, Number(options.ttlMs || envNumber('CF_PYTHON_SESSION_CACHE_TTL_MS', 30 * 60_000, 60_000, 24 * 60 * 60_000)) || 30 * 60_000);
+  const maxEntries = Math.max(10, Number(options.maxEntries || envNumber('CF_PYTHON_SESSION_CACHE_MAX_ENTRIES', 300, 10, 10_000)) || 300);
+  const kind = options.kind || session.source || (session.curlCffi ? 'curl_cffi' : (session.scrapling ? 'scrapling' : 'python'));
+  const payload = {
+    ...session,
+    cachedAt: Date.now(),
+    timestamp: Number(session.timestamp || Date.now()),
+    source: session.source || kind
+  };
+  pythonBypassSessionCache.set(getPythonSessionCacheKey(providerName, url || session.solvedUrl || session.url, kind), {
+    session: payload,
+    expiresAt: Date.now() + ttlMs,
+    kind
+  });
+  pythonBypassSessionCache.set(getPythonSessionCacheKey(providerName, url || session.solvedUrl || session.url, 'any'), {
+    session: payload,
+    expiresAt: Date.now() + ttlMs,
+    kind
+  });
+  prunePythonBypassSessionCache(maxEntries);
+  return true;
+}
+
+function getCachedPythonBypassSession(providerName, url, options = {}) {
+  if (options.enabled === false) return null;
+  const kind = options.kind || 'any';
+  const maxAgeMs = Math.max(60_000, Number(options.ttlMs || envNumber('CF_PYTHON_SESSION_CACHE_TTL_MS', 30 * 60_000, 60_000, 24 * 60 * 60_000)) || 30 * 60_000);
+  const keys = [getPythonSessionCacheKey(providerName, url, kind)];
+  if (kind !== 'any') keys.push(getPythonSessionCacheKey(providerName, url, 'any'));
+  const now = Date.now();
+  for (const key of keys) {
+    const entry = pythonBypassSessionCache.get(key);
+    if (!entry?.session) continue;
+    if (Number(entry.expiresAt || 0) <= now) {
+      pythonBypassSessionCache.delete(key);
+      continue;
+    }
+    const age = now - Number(entry.session.timestamp || entry.session.cachedAt || 0);
+    if (!Number.isFinite(age) || age > maxAgeMs) {
+      pythonBypassSessionCache.delete(key);
+      continue;
+    }
+    return entry.session;
+  }
+  return null;
+}
+
+function getPythonBypassSessionCacheState() {
+  prunePythonBypassSessionCache(envNumber('CF_PYTHON_SESSION_CACHE_MAX_ENTRIES', 300, 10, 10_000));
+  const byKind = {};
+  for (const entry of pythonBypassSessionCache.values()) {
+    const kind = entry?.kind || 'unknown';
+    byKind[kind] = (byKind[kind] || 0) + 1;
+  }
+  return { entries: pythonBypassSessionCache.size, byKind };
+}
+
 function resolvePythonExecutable(preferredEnv = 'SCRAPLING_PYTHON') {
   const explicit = String(process.env[preferredEnv] || process.env.SCRAPLING_PYTHON || process.env.PYTHON_BIN || '').trim();
   if (explicit) return explicit;
@@ -465,38 +544,174 @@ function parseJsonFromStdout(stdout) {
   return null;
 }
 
-function execScraplingBypass(url, providerName = 'provider', options = {}) {
-  return new Promise((resolve, reject) => {
-    const method = String(options.method || (options.isPost ? 'POST' : 'GET')).toUpperCase();
-    const timeout = Math.max(5000, Number(options.timeout || options.timeoutMs || process.env.SCRAPLING_TIMEOUT_MS || 60_000) || 60_000);
-    const args = [
-      '-c',
-      SCRAPLING_PYTHON,
-      String(url),
-      '--timeout', String(timeout),
-      '--wait-until', String(options.waitUntil || process.env.SCRAPLING_WAIT_UNTIL || 'domcontentloaded')
-    ];
-    const requestBody = options.body ?? options.data;
-    if (method) args.push('--method', method);
-    if (requestBody != null) args.push('--data', String(requestBody));
-    if (options.headers) args.push('--headers', JSON.stringify(options.headers));
 
-    const child = spawn(resolvePythonExecutable(), args, { windowsHide: true });
+function clampBytes(value, fallback, min = 1024, max = 64 * 1024 * 1024) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < min) return fallback;
+  return Math.min(parsed, max);
+}
+
+function appendLimited(current, chunk, limit) {
+  const next = current + chunk.toString();
+  if (Buffer.byteLength(next) <= limit) return { value: next, truncated: false };
+  const buf = Buffer.from(next);
+  return { value: buf.subarray(Math.max(0, buf.length - limit)).toString('utf8'), truncated: true };
+}
+
+function killProcessTree(child, signal = 'SIGTERM') {
+  if (!child || !child.pid) return false;
+  try {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
+      return true;
+    }
+    try {
+      process.kill(-child.pid, signal);
+      return true;
+    } catch (_) {
+      child.kill(signal);
+      return true;
+    }
+  } catch (_) {
+    return false;
+  }
+}
+
+function execPythonBypass(config = {}) {
+  return new Promise((resolve, reject) => {
+    const label = String(config.label || 'python_bypass').trim() || 'python_bypass';
+    const timeoutMs = Math.max(1000, Number(config.timeoutMs || config.timeout || envNumber('PYTHON_BYPASS_PROCESS_TIMEOUT_MS', 90_000, 1000, 10 * 60_000)) || 90_000);
+    const graceMs = Math.max(250, Number(config.graceMs || envNumber('PYTHON_BYPASS_PROCESS_GRACE_MS', 2500, 250, 30_000)) || 2500);
+    const stdoutLimit = clampBytes(config.stdoutMaxBytes || process.env.PYTHON_BYPASS_STDOUT_MAX_BYTES, 8 * 1024 * 1024);
+    const stderrLimit = clampBytes(config.stderrMaxBytes || process.env.PYTHON_BYPASS_STDERR_MAX_BYTES, 1024 * 1024);
+    const python = config.python || resolvePythonExecutable(config.pythonEnv || 'SCRAPLING_PYTHON');
+    const extraArgs = Array.isArray(config.args) ? config.args.map(String) : [];
+    const args = config.inlineScript != null
+      ? ['-c', String(config.inlineScript), ...extraArgs]
+      : [String(config.scriptPath || config.script || ''), ...extraArgs];
+
+    if (!args[0]) return reject(new Error(`${label}_missing_script`));
+
+    let child = null;
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', chunk => { stdout += chunk.toString(); });
-    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
-    child.on('error', reject);
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
+    let finished = false;
+    let timedOut = false;
+    let aborted = false;
+    let hardTimer = null;
+
+    const cleanup = () => {
+      if (hardTimer) clearTimeout(hardTimer);
+      if (config.signal) config.signal.removeEventListener('abort', onAbort);
+    };
+
+    const failOnce = error => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      reject(error);
+    };
+
+    const softKill = reason => {
+      if (!child || finished) return;
+      if (reason === 'timeout') timedOut = true;
+      if (reason === 'abort') aborted = true;
+      killProcessTree(child, 'SIGTERM');
+      hardTimer = setTimeout(() => killProcessTree(child, 'SIGKILL'), graceMs);
+      if (hardTimer?.unref) hardTimer.unref();
+    };
+
+    function onAbort() {
+      softKill('abort');
+    }
+
+    if (config.signal?.aborted) return reject(new Error(`${label}_aborted`));
+
+    try {
+      child = spawn(python, args, {
+        cwd: config.cwd || process.cwd(),
+        env: { ...process.env, PYTHONUNBUFFERED: '1', ...(config.env || {}) },
+        windowsHide: true,
+        detached: process.platform !== 'win32',
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+    } catch (error) {
+      return reject(error);
+    }
+
+    const timeoutTimer = setTimeout(() => softKill('timeout'), timeoutMs);
+    if (timeoutTimer?.unref) timeoutTimer.unref();
+
+    const clearAll = () => {
+      clearTimeout(timeoutTimer);
+      cleanup();
+    };
+
+    if (config.signal) config.signal.addEventListener('abort', onAbort, { once: true });
+
+    child.stdout.on('data', chunk => {
+      const next = appendLimited(stdout, chunk, stdoutLimit);
+      stdout = next.value;
+      stdoutTruncated = stdoutTruncated || next.truncated;
+    });
+
+    child.stderr.on('data', chunk => {
+      const next = appendLimited(stderr, chunk, stderrLimit);
+      stderr = next.value;
+      stderrTruncated = stderrTruncated || next.truncated;
+    });
+
+    child.on('error', error => {
+      clearAll();
+      failOnce(error);
+    });
+
     child.on('close', code => {
+      if (finished) return;
+      finished = true;
+      clearAll();
       const payload = parseJsonFromStdout(stdout);
       if (payload?.status === 'ok') return resolve(payload);
-      if (payload?.status === 'error') return reject(new Error(payload.message || 'scrapling_error'));
-      if (code !== 0) return reject(new Error(stderr.trim() || `scrapling_exit_${code}`));
-      return reject(new Error('scrapling_invalid_output'));
+      if (payload?.status === 'error') return reject(new Error(payload.message || `${label}_error`));
+      if (aborted) return reject(new Error(`${label}_aborted`));
+      if (timedOut) return reject(new Error(`${label}_timeout:${timeoutMs}`));
+      if (code !== 0) {
+        const suffix = stderrTruncated ? ':stderr_truncated' : '';
+        return reject(new Error(stderr.trim() || `${label}_exit_${code}${suffix}`));
+      }
+      const suffix = stdoutTruncated ? ':stdout_truncated' : '';
+      return reject(new Error(`${label}_invalid_output${suffix}`));
     });
   });
 }
 
+function execScraplingBypass(url, providerName = 'provider', options = {}) {
+  const method = String(options.method || (options.isPost ? 'POST' : 'GET')).toUpperCase();
+  const timeout = Math.max(5000, Number(options.timeout || options.timeoutMs || process.env.SCRAPLING_TIMEOUT_MS || 60_000) || 60_000);
+  const watchdogMs = Math.max(timeout + 1000, Number(options.watchdogMs || options.processTimeoutMs || process.env.SCRAPLING_PROCESS_TIMEOUT_MS || timeout + 30_000) || timeout + 30_000);
+  const args = [
+    String(url),
+    '--timeout', String(timeout),
+    '--wait-until', String(options.waitUntil || process.env.SCRAPLING_WAIT_UNTIL || 'domcontentloaded')
+  ];
+  const requestBody = options.body ?? options.data;
+  if (method) args.push('--method', method);
+  if (requestBody != null) args.push('--data', String(requestBody));
+  if (options.headers) args.push('--headers', JSON.stringify(options.headers));
+
+  return execPythonBypass({
+    label: 'scrapling',
+    inlineScript: SCRAPLING_PYTHON,
+    args,
+    pythonEnv: 'SCRAPLING_PYTHON',
+    timeoutMs: watchdogMs,
+    graceMs: options.graceMs || process.env.SCRAPLING_PROCESS_GRACE_MS,
+    signal: options.signal,
+    env: options.env
+  });
+}
 async function runScraplingBypass(url, providerName = 'provider', options = {}) {
   const queue = options.queue || defaultScraplingQueue;
   const key = String(options.coalesceKey || providerName || 'provider');
@@ -561,77 +776,54 @@ function resolveCurlCffiScriptPath(options = {}) {
 }
 
 function execCurlCffiBypass(url, providerName = 'provider', options = {}) {
-  return new Promise((resolve, reject) => {
-    const scriptPath = resolveCurlCffiScriptPath(options);
-    try {
-      if (!fs.existsSync(scriptPath)) return reject(new Error(`curl_cffi_script_missing:${scriptPath}`));
-    } catch (error) {
-      return reject(error);
-    }
+  const scriptPath = resolveCurlCffiScriptPath(options);
+  if (!fs.existsSync(scriptPath)) return Promise.reject(new Error(`curl_cffi_script_missing:${scriptPath}`));
 
-    const method = String(options.method || (options.isPost ? 'POST' : 'GET')).toUpperCase();
-    const envPrefix = envPrefixFor(providerName, options.envPrefix);
-    const timeout = Math.max(1000, Number(options.timeout || options.timeoutMs || process.env[`${envPrefix}_CURL_CFFI_TIMEOUT_MS`] || process.env.CURL_CFFI_TIMEOUT_MS || CURL_CFFI_DEFAULTS.timeoutMs) || CURL_CFFI_DEFAULTS.timeoutMs);
-    const retries = Math.max(0, Math.min(5, Number(options.retries ?? process.env[`${envPrefix}_CURL_CFFI_RETRIES`] ?? process.env.CURL_CFFI_RETRIES ?? CURL_CFFI_DEFAULTS.retries) || 0));
-    const retryBackoffMs = Math.max(0, Math.min(5000, Number(options.retryBackoffMs ?? process.env[`${envPrefix}_CURL_CFFI_RETRY_BACKOFF_MS`] ?? process.env.CURL_CFFI_RETRY_BACKOFF_MS ?? CURL_CFFI_DEFAULTS.retryBackoffMs) || 0));
-    const warmupOrigin = options.warmupOrigin ?? envFlagNotFalse(`${envPrefix}_CURL_CFFI_WARMUP_ORIGIN`, envFlagNotFalse('CURL_CFFI_WARMUP_ORIGIN', CURL_CFFI_DEFAULTS.warmupOrigin));
-    const browserHeaders = options.browserHeaders ?? envFlagNotFalse(`${envPrefix}_CURL_CFFI_BROWSER_HEADERS`, envFlagNotFalse('CURL_CFFI_BROWSER_HEADERS', CURL_CFFI_DEFAULTS.browserHeaders));
-    const acceptLanguage = String(options.acceptLanguage || process.env[`${envPrefix}_CURL_CFFI_ACCEPT_LANGUAGE`] || process.env.CURL_CFFI_ACCEPT_LANGUAGE || CURL_CFFI_DEFAULTS.acceptLanguage).trim();
-    const args = [
-      scriptPath,
-      String(url),
-      '--timeout', String(timeout),
-      '--impersonate', String(options.impersonate || process.env[`${envPrefix}_CURL_CFFI_IMPERSONATE`] || process.env.CURL_CFFI_IMPERSONATE || CURL_CFFI_DEFAULTS.impersonate),
-      '--retries', String(retries),
-      '--retry-backoff', String(retryBackoffMs)
-    ];
-    const requestBody = options.body ?? options.data;
-    if (method) args.push('--method', method);
-    if (requestBody != null) args.push('--data', String(requestBody));
-    if (options.headers) args.push('--headers', JSON.stringify(options.headers));
-    if (options.cookiesJson) args.push('--cookies-json', JSON.stringify(options.cookiesJson));
-    if (options.signalsJson || options.signals) args.push('--signals-json', JSON.stringify(options.signalsJson || options.signals));
-    if (options.profileState === false) args.push('--no-profile-state');
-    if (options.profileStatePath) args.push('--profile-state-path', String(options.profileStatePath));
-    if (acceptLanguage) args.push('--accept-language', acceptLanguage);
-    if (options.referer) args.push('--referer', String(options.referer));
-    args.push(warmupOrigin ? '--warmup-origin' : '--no-warmup-origin');
-    args.push(browserHeaders ? '--browser-headers' : '--no-browser-headers');
-    const proxy = resolveCurlCffiProxy(providerName, options);
-    if (proxy) args.push('--proxy', proxy);
-    if (options.insecure || envFlag('CURL_CFFI_INSECURE', false)) args.push('--insecure');
+  const method = String(options.method || (options.isPost ? 'POST' : 'GET')).toUpperCase();
+  const envPrefix = envPrefixFor(providerName, options.envPrefix);
+  const timeout = Math.max(1000, Number(options.timeout || options.timeoutMs || process.env[`${envPrefix}_CURL_CFFI_TIMEOUT_MS`] || process.env.CURL_CFFI_TIMEOUT_MS || CURL_CFFI_DEFAULTS.timeoutMs) || CURL_CFFI_DEFAULTS.timeoutMs);
+  const retries = Math.max(0, Math.min(5, Number(options.retries ?? process.env[`${envPrefix}_CURL_CFFI_RETRIES`] ?? process.env.CURL_CFFI_RETRIES ?? CURL_CFFI_DEFAULTS.retries) || 0));
+  const retryBackoffMs = Math.max(0, Math.min(5000, Number(options.retryBackoffMs ?? process.env[`${envPrefix}_CURL_CFFI_RETRY_BACKOFF_MS`] ?? process.env.CURL_CFFI_RETRY_BACKOFF_MS ?? CURL_CFFI_DEFAULTS.retryBackoffMs) || 0));
+  const warmupOrigin = options.warmupOrigin ?? envFlagNotFalse(`${envPrefix}_CURL_CFFI_WARMUP_ORIGIN`, envFlagNotFalse('CURL_CFFI_WARMUP_ORIGIN', CURL_CFFI_DEFAULTS.warmupOrigin));
+  const browserHeaders = options.browserHeaders ?? envFlagNotFalse(`${envPrefix}_CURL_CFFI_BROWSER_HEADERS`, envFlagNotFalse('CURL_CFFI_BROWSER_HEADERS', CURL_CFFI_DEFAULTS.browserHeaders));
+  const acceptLanguage = String(options.acceptLanguage || process.env[`${envPrefix}_CURL_CFFI_ACCEPT_LANGUAGE`] || process.env.CURL_CFFI_ACCEPT_LANGUAGE || CURL_CFFI_DEFAULTS.acceptLanguage).trim();
+  const args = [
+    String(url),
+    '--timeout', String(timeout),
+    '--impersonate', String(options.impersonate || process.env[`${envPrefix}_CURL_CFFI_IMPERSONATE`] || process.env.CURL_CFFI_IMPERSONATE || CURL_CFFI_DEFAULTS.impersonate),
+    '--retries', String(retries),
+    '--retry-backoff', String(retryBackoffMs)
+  ];
+  const requestBody = options.body ?? options.data;
+  if (method) args.push('--method', method);
+  if (requestBody != null) args.push('--data', String(requestBody));
+  if (options.headers) args.push('--headers', JSON.stringify(options.headers));
+  if (options.cookiesJson) args.push('--cookies-json', JSON.stringify(options.cookiesJson));
+  if (options.signalsJson || options.signals) args.push('--signals-json', JSON.stringify(options.signalsJson || options.signals));
+  if (options.profileState === false) args.push('--no-profile-state');
+  if (options.profileStatePath) args.push('--profile-state-path', String(options.profileStatePath));
+  if (acceptLanguage) args.push('--accept-language', acceptLanguage);
+  if (options.referer) args.push('--referer', String(options.referer));
+  args.push(warmupOrigin ? '--warmup-origin' : '--no-warmup-origin');
+  args.push(browserHeaders ? '--browser-headers' : '--no-browser-headers');
+  const proxy = resolveCurlCffiProxy(providerName, options);
+  if (proxy) args.push('--proxy', proxy);
+  if (options.insecure || envFlag('CURL_CFFI_INSECURE', false)) args.push('--insecure');
 
-    const child = spawn(resolvePythonExecutable('CURL_CFFI_PYTHON'), args, {
-      windowsHide: true,
-      env: { ...process.env, PYTHONUNBUFFERED: '1' }
-    });
-    let stdout = '';
-    let stderr = '';
-    let killedByTimeout = false;
-    const killTimer = setTimeout(() => {
-      killedByTimeout = true;
-      try { child.kill('SIGKILL'); } catch (_) {}
-    }, Math.max(timeout + 1000, timeout * (retries + 1) + 3000));
-    if (killTimer?.unref) killTimer.unref();
+  const fallbackWatchdog = Math.max(timeout + 2500, timeout * (retries + 1) + retryBackoffMs * Math.max(1, retries) + 5000);
+  const watchdogMs = Math.max(timeout + 1000, Number(options.watchdogMs || options.processTimeoutMs || process.env[`${envPrefix}_CURL_CFFI_PROCESS_TIMEOUT_MS`] || process.env.CURL_CFFI_PROCESS_TIMEOUT_MS || fallbackWatchdog) || fallbackWatchdog);
 
-    child.stdout.on('data', chunk => { stdout += chunk.toString(); });
-    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
-    child.on('error', error => {
-      clearTimeout(killTimer);
-      reject(error);
-    });
-    child.on('close', code => {
-      clearTimeout(killTimer);
-      const payload = parseJsonFromStdout(stdout);
-      if (payload?.status === 'ok') return resolve(payload);
-      if (payload?.status === 'error') return reject(new Error(payload.message || 'curl_cffi_error'));
-      if (killedByTimeout) return reject(new Error(`curl_cffi_timeout:${timeout}`));
-      if (code !== 0) return reject(new Error(stderr.trim() || `curl_cffi_exit_${code}`));
-      return reject(new Error('curl_cffi_invalid_output'));
-    });
+  return execPythonBypass({
+    label: 'curl_cffi',
+    scriptPath,
+    args,
+    pythonEnv: 'CURL_CFFI_PYTHON',
+    timeoutMs: watchdogMs,
+    graceMs: options.graceMs || process.env[`${envPrefix}_CURL_CFFI_PROCESS_GRACE_MS`] || process.env.CURL_CFFI_PROCESS_GRACE_MS,
+    signal: options.signal,
+    env: options.env
   });
 }
-
 async function runCurlCffiBypass(url, providerName = 'provider', options = {}) {
   const queue = options.queue || defaultCurlCffiQueue;
   const key = String(options.coalesceKey || providerName || 'provider');
@@ -832,6 +1024,11 @@ function createCloudflareBypass(options = {}) {
   const useRustShield = options.useRustShield ?? envFlag(`${envPrefix}_RUST_SHIELD`, true);
   const useRustShieldForSession = options.useRustShieldForSession ?? useRustShield;
   const logger = options.logger || null;
+  const pythonSessionCacheEnabled = options.pythonSessionCacheEnabled ?? envFlagNotFalse(`${envPrefix}_PYTHON_SESSION_CACHE_ENABLED`, envFlagNotFalse('CF_PYTHON_SESSION_CACHE_ENABLED', true));
+  const pythonSessionCacheTtlMs = options.pythonSessionCacheTtlMs || envNumber(`${envPrefix}_PYTHON_SESSION_CACHE_TTL_MS`, envNumber('CF_PYTHON_SESSION_CACHE_TTL_MS', 30 * 60_000, 60_000, 24 * 60 * 60_000), 60_000, 24 * 60 * 60_000);
+  const pythonSessionCacheMaxEntries = options.pythonSessionCacheMaxEntries || envNumber(`${envPrefix}_PYTHON_SESSION_CACHE_MAX_ENTRIES`, envNumber('CF_PYTHON_SESSION_CACHE_MAX_ENTRIES', 300, 10, 10_000), 10, 10_000);
+  const sessionFirstFetchEnabled = options.sessionFirstFetchEnabled ?? envFlagNotFalse(`${envPrefix}_SESSION_FIRST_FETCH_ENABLED`, envFlagNotFalse('CF_SESSION_FIRST_FETCH_ENABLED', true));
+  const sessionFirstFetchTimeoutMs = options.sessionFirstFetchTimeoutMs || envNumber(`${envPrefix}_SESSION_FIRST_FETCH_TIMEOUT_MS`, envNumber('CF_SESSION_FIRST_FETCH_TIMEOUT_MS', 4500, 500, 30_000), 500, 30_000);
   const guard = options.guard || getProviderHttpGuardFactory()({
     ...options,
     providerName,
@@ -968,6 +1165,68 @@ function createCloudflareBypass(options = {}) {
     return session;
   }
 
+  function getFreshCachedPythonSessionForUrl(url, kind = 'any') {
+    return getCachedPythonBypassSession(providerName, url, {
+      enabled: pythonSessionCacheEnabled,
+      kind,
+      ttlMs: pythonSessionCacheTtlMs
+    });
+  }
+
+  function importReusableSessionToGuard(url, session, source = 'python_session_cache') {
+    if (!session || !session.cookies || !session.userAgent || typeof guard.importSession !== 'function') return false;
+    try {
+      guard.importSession({
+        ...session,
+        source: session.source || source,
+        timestamp: Number(session.timestamp || Date.now())
+      }, session.solvedUrl || url);
+      rememberNativeClearance(url, session, session.source || source);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function trySessionFirstFetch(url, fetchOptions = {}, runtime = {}) {
+    if (!sessionFirstFetchEnabled || fetchOptions.sessionFirstFetch === false || runtime.isPost) return null;
+    if (fetchOptions.skipGuard === true || typeof guard.smartFetch !== 'function') return null;
+    if (!isSameSiteUrl(url, baseUrl) || !isHtmlLikeUrl(url)) return null;
+
+    await hydrateCurlCffiSession(url, fetchOptions.reason ? `session-first-${fetchOptions.reason}` : 'session-first');
+    let session = getFreshGuardSessionForUrl(url);
+    if (!session) {
+      session = getFreshCachedPythonSessionForUrl(url, 'any');
+      if (session) importReusableSessionToGuard(url, session, session.source || 'python_session_cache');
+    }
+    if (!session) return null;
+
+    const timeout = Math.max(500, Math.min(Number(runtime.timeoutMs || sessionFirstFetchTimeoutMs) || sessionFirstFetchTimeoutMs, sessionFirstFetchTimeoutMs));
+    try {
+      const html = await guard.smartFetch(url, {
+        ...fetchOptions,
+        isPost: false,
+        body: null,
+        ttl: runtime.ttl || fetchOptions.ttl || 60_000,
+        allowCloudflareBypass: false,
+        timeoutMs: timeout,
+        sessionFirstFetch: true
+      });
+      if (isUsefulHtml(html, html ? 200 : 0)) {
+        debug('session-first fetch hit', {
+          url,
+          bytes: String(html || '').length,
+          source: session.source || session.solver || 'shared_session'
+        });
+        return html;
+      }
+      debug('session-first fetch miss', { url, bytes: String(html || '').length });
+    } catch (error) {
+      debug('session-first fetch failed', { url, error: error?.message || String(error) });
+    }
+    return null;
+  }
+
   function buildH2ReplaySeed(url, fetchOptions = {}) {
     const headers = fetchOptions.headers || {};
     let cookieHeader = fetchOptions.cookieHeader || getHeaderValue(headers, 'cookie');
@@ -1061,26 +1320,29 @@ function createCloudflareBypass(options = {}) {
     );
     const cookieItems = [];
 
-    if (sessionFresh) {
-      const sessionCookieItems = cookieItemsFromSession(session, url || session.solvedUrl || session.url || baseUrl);
+    const reusableSession = sessionFresh ? session : getFreshCachedPythonSessionForUrl(url, 'any');
+
+    if (reusableSession) {
+      if (!sessionFresh) importReusableSessionToGuard(url, reusableSession, reusableSession.source || 'python_session_cache');
+      const sessionCookieItems = cookieItemsFromSession(reusableSession, url || reusableSession.solvedUrl || reusableSession.url || baseUrl);
       cookieItems.push(...sessionCookieItems);
       const sessionCookie = cookieHeaderFromCurlItems(sessionCookieItems)
-        || buildCookieHeaderFromSession(session, url || session.solvedUrl || session.url || baseUrl)
-        || session.cookies
+        || buildCookieHeaderFromSession(reusableSession, url || reusableSession.solvedUrl || reusableSession.url || baseUrl)
+        || reusableSession.cookies
         || '';
       if (sessionCookie) {
         const existingCookie = getHeaderValue(headers, 'cookie');
         setHeaderValue(headers, 'Cookie', existingCookie ? mergeCookieHeaders(existingCookie, sessionCookie) : sessionCookie);
       }
-      const sessionUa = session.userAgent || session.ua || '';
+      const sessionUa = reusableSession.userAgent || reusableSession.ua || '';
       if (sessionUa && !getHeaderValue(headers, 'user-agent')) setHeaderValue(headers, 'User-Agent', sessionUa);
       if (sessionCookie || sessionUa || sessionCookieItems.length) {
-        debug('curl_cffi seeded from shared session', {
+        debug('curl_cffi seeded from reusable session', {
           url,
           hasCookie: Boolean(sessionCookie || sessionCookieItems.length),
           cookieCount: sessionCookieItems.length || undefined,
           hasUserAgent: Boolean(sessionUa),
-          source: session.source || session.solver || (session.curlCffi ? 'curl_cffi' : 'cloudflare-bypass')
+          source: reusableSession.source || reusableSession.solver || (reusableSession.curlCffi ? 'curl_cffi' : 'cloudflare-bypass')
         });
       }
     }
@@ -1121,7 +1383,14 @@ function createCloudflareBypass(options = {}) {
       coalesceKey: fetchOptions.curlCffiCoalesceKey || buildCurlCffiCoalesceKey(providerName, method, url, fetchOptions.body ?? fetchOptions.data ?? ''),
       envPrefix
     });
-    return normalizeCurlCffiResult(rawResult, providerName, url);
+    const session = normalizeCurlCffiResult(rawResult, providerName, url);
+    rememberPythonBypassSession(providerName, url, session, {
+      enabled: pythonSessionCacheEnabled,
+      kind: 'curl_cffi',
+      ttlMs: pythonSessionCacheTtlMs,
+      maxEntries: pythonSessionCacheMaxEntries
+    });
+    return session;
   }
 
   function shouldAttemptScrapling(url, fetchOptions = {}) {
@@ -1131,19 +1400,52 @@ function createCloudflareBypass(options = {}) {
     return true;
   }
 
+  function buildScraplingSeed(url, fetchOptions = {}) {
+    const headers = { ...(fetchOptions.headers || {}) };
+    const session = getFreshGuardSessionForUrl(url) || getFreshCachedPythonSessionForUrl(url, 'any');
+    if (!session) return { headers, session: null };
+    importReusableSessionToGuard(url, session, session.source || 'python_session_cache');
+    const sessionCookie = buildCookieHeaderFromSession(session, url || session.solvedUrl || session.url || baseUrl)
+      || session.cookies
+      || '';
+    if (sessionCookie) {
+      const existingCookie = getHeaderValue(headers, 'cookie');
+      setHeaderValue(headers, 'Cookie', existingCookie ? mergeCookieHeaders(existingCookie, sessionCookie) : sessionCookie);
+    }
+    const sessionUa = session.userAgent || session.ua || '';
+    if (sessionUa && !getHeaderValue(headers, 'user-agent')) setHeaderValue(headers, 'User-Agent', sessionUa);
+    if (sessionCookie || sessionUa) {
+      debug('scrapling seeded from reusable session', {
+        url,
+        hasCookie: Boolean(sessionCookie),
+        hasUserAgent: Boolean(sessionUa),
+        source: session.source || session.solver || 'shared_session'
+      });
+    }
+    return { headers, session };
+  }
+
   async function runScrapling(url, fetchOptions = {}) {
     const method = String(fetchOptions.method || (fetchOptions.isPost ? 'POST' : 'GET')).toUpperCase();
+    const scraplingSeed = buildScraplingSeed(url, fetchOptions);
     const rawResult = await runScraplingBypass(url, providerName, {
       ...fetchOptions,
       method,
       body: fetchOptions.body ?? fetchOptions.data ?? null,
       timeout: fetchOptions.scraplingTimeoutMs || fetchOptions.timeoutMs || fetchOptions.timeout,
-      headers: fetchOptions.headers || {},
+      headers: scraplingSeed.headers,
       runner: options.scraplingRunner,
       queue: options.scraplingQueue,
       coalesceKey: fetchOptions.scraplingCoalesceKey || providerName
     });
-    return normalizeScraplingResult(rawResult, providerName, url);
+    const session = normalizeScraplingResult(rawResult, providerName, url);
+    rememberPythonBypassSession(providerName, url, session, {
+      enabled: pythonSessionCacheEnabled,
+      kind: 'scrapling',
+      ttlMs: pythonSessionCacheTtlMs,
+      maxEntries: pythonSessionCacheMaxEntries
+    });
+    return session;
   }
 
   async function fetchHtml(url, fetchOptions = {}) {
@@ -1153,6 +1455,9 @@ function createCloudflareBypass(options = {}) {
     const timeoutMs = fetchOptions.timeoutMs || fetchOptions.timeout || guard.directFetchTimeoutMs;
     const allowCloudflareBypass = fetchOptions.allowCloudflareBypass !== false;
     const ttl = fetchOptions.ttl || 10 * 60 * 1000;
+
+    const sessionFirstHtml = await trySessionFirstFetch(url, fetchOptions, { isPost, body, ttl, timeoutMs });
+    if (sessionFirstHtml) return sessionFirstHtml;
 
     if (!isPost) {
       try {
@@ -1392,6 +1697,16 @@ function createCloudflareBypass(options = {}) {
         pool: typeof h2ReplayPool.state === 'function' ? h2ReplayPool.state() : undefined
       },
       curlCffi: defaultCurlCffiQueue.state(),
+      pythonSessionCache: {
+        enabled: pythonSessionCacheEnabled,
+        ttlMs: pythonSessionCacheTtlMs,
+        maxEntries: pythonSessionCacheMaxEntries,
+        state: getPythonBypassSessionCacheState()
+      },
+      sessionFirstFetch: {
+        enabled: sessionFirstFetchEnabled,
+        timeoutMs: sessionFirstFetchTimeoutMs
+      },
       scraplingEnabled,
       scrapling: defaultScraplingQueue.state(),
       centralBypass: true
@@ -1430,6 +1745,9 @@ module.exports = {
   createCloudflareBypass,
   createBlockedFallbackGuard,
   createBypassQueue,
+  execPythonBypass,
+  killProcessTree,
+  getPythonBypassSessionCacheState,
   buildCurlCffiCoalesceKey,
   runCurlCffiBypass,
   runScraplingBypass,
