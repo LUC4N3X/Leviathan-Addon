@@ -31,8 +31,8 @@ const PROVIDER = 'CB01';
 const PROVIDER_CODE = 'CB01';
 const ICON = '🎬';
 const SEARCH_TTL_FALLBACK_MS = 12_000;
-const SAFEGO_FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0';
-const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+const SAFEGO_FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0';
+const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 
 
 const CB01_CODE_DEFAULTS = Object.freeze({
@@ -69,7 +69,7 @@ const CB01_CODE_DEFAULTS = Object.freeze({
     CB01_IMPIT_INNER_RETRY: '0',
     CB01_IMPIT_RETRY_ON_CHALLENGE: '0',
     CB01_IMPIT_HTTP3: '0',
-    CB01_IMPIT_BROWSER: 'chrome125',
+    CB01_IMPIT_BROWSER: 'chrome142',
 
     CB01_CURL_CFFI_FALLBACK: '1',
     CB01_CURL_CFFI_IMPERSONATE: 'auto',
@@ -84,11 +84,11 @@ const CB01_CODE_DEFAULTS = Object.freeze({
 const CB_SIMPLE_UAS = Object.freeze([
     DESKTOP_UA,
     SAFEGO_FIREFOX_UA,
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15'
 ]);
 
-const CB_IMPIT_BROWSER_FALLBACKS = Object.freeze(['chrome142', 'chrome136', 'chrome131', 'chrome125', 'firefox144', 'firefox135']);
+const CB_IMPIT_BROWSER_FALLBACKS = Object.freeze(['chrome142', 'firefox144']);
 
 const CB_DEFAULT_PROXY_LIST = Object.freeze([
     'http://znvmriuj-rotate:bkpzeu8rhr24@p.webshare.io:80',
@@ -1065,9 +1065,9 @@ function toAxiosProxyConfig(proxyUrl) {
 
 function pickCbImpitBrowser(label = '') {
     const preferred = envString('CB01_IMPIT_BROWSER', '');
-    if (preferred) return normalizeImpitBrowser(preferred, 'chrome125');
-    if (label === 'search') return 'chrome125';
-    return normalizeImpitBrowser(CB_IMPIT_BROWSER_FALLBACKS[Math.floor(Math.random() * CB_IMPIT_BROWSER_FALLBACKS.length)], 'chrome125');
+    if (preferred) return normalizeImpitBrowser(preferred, 'chrome142');
+    if (label === 'search') return 'chrome142';
+    return normalizeImpitBrowser(CB_IMPIT_BROWSER_FALLBACKS[Math.floor(Math.random() * CB_IMPIT_BROWSER_FALLBACKS.length)], 'chrome142');
 }
 
 function impitResponseToText(response) {
