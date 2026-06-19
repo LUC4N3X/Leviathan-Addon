@@ -52,6 +52,18 @@ const CONFIG = {
     UINDEX_MAX_DETAIL_CANDIDATES: Number(process.env.UINDEX_MAX_DETAIL_CANDIDATES || 20),
     UINDEX_FRESH_TTL_MS: Number(process.env.UINDEX_FRESH_TTL_MS || 15 * 60 * 1000),
     UINDEX_STALE_TTL_MS: Number(process.env.UINDEX_STALE_TTL_MS || 12 * 60 * 60 * 1000),
+    KAT_QUERY_CONCURRENCY: Number(process.env.KAT_QUERY_CONCURRENCY || 2),
+    KAT_SEARCH_TIMEOUT_MS: Number(process.env.KAT_SEARCH_TIMEOUT_MS || 4500),
+    TORLOCK_QUERY_CONCURRENCY: Number(process.env.TORLOCK_QUERY_CONCURRENCY || 2),
+    TORLOCK_SEARCH_TIMEOUT_MS: Number(process.env.TORLOCK_SEARCH_TIMEOUT_MS || 5000),
+    TORLOCK_DETAIL_TIMEOUT_MS: Number(process.env.TORLOCK_DETAIL_TIMEOUT_MS || 3000),
+    TORLOCK_MAX_DETAIL_CANDIDATES: Number(process.env.TORLOCK_MAX_DETAIL_CANDIDATES || 14),
+    TORRENTDOWNLOADS_QUERY_CONCURRENCY: Number(process.env.TORRENTDOWNLOADS_QUERY_CONCURRENCY || 2),
+    TORRENTDOWNLOADS_SEARCH_TIMEOUT_MS: Number(process.env.TORRENTDOWNLOADS_SEARCH_TIMEOUT_MS || 5000),
+    THERARBG_QUERY_CONCURRENCY: Number(process.env.THERARBG_QUERY_CONCURRENCY || 2),
+    THERARBG_SEARCH_TIMEOUT_MS: Number(process.env.THERARBG_SEARCH_TIMEOUT_MS || 5000),
+    THERARBG_DETAIL_TIMEOUT_MS: Number(process.env.THERARBG_DETAIL_TIMEOUT_MS || 3000),
+    THERARBG_MAX_DETAIL_CANDIDATES: Number(process.env.THERARBG_MAX_DETAIL_CANDIDATES || 14),
     YTS_TIMEOUT_MS: Number(process.env.YTS_TIMEOUT_MS || 6000),
     YTS_FRESH_TTL_MS: Number(process.env.YTS_FRESH_TTL_MS || 30 * 60 * 1000),
     YTS_STALE_TTL_MS: Number(process.env.YTS_STALE_TTL_MS || 12 * 60 * 60 * 1000),
@@ -183,6 +195,10 @@ const SOURCE_WEIGHTS = {
     YTS: 22,
     EZTV: 22,
     SolidTorrents: 21,
+    KickassTorrents: 21,
+    TorLock: 20,
+    TheRarBG: 20,
+    TorrentDownloads: 18,
     "TPB Mirror": 18,
     TPB: 17,
     UIndex: 14
@@ -1257,6 +1273,220 @@ function parseUindexDetailPayload(html, candidate = {}) {
     };
 }
 
+function normalizeProviderBase(host) {
+    const value = String(host || '').trim().replace(/\/+$/, '');
+    if (!value) return '';
+    return /^https?:\/\//i.test(value) ? value : `https://${value}`;
+}
+
+async function requestProviderHtml(provider, hosts, pathBuilder, context, options = {}) {
+    const candidates = [...new Set((hosts || []).map(normalizeProviderBase).filter(Boolean))];
+    let lastError = null;
+
+    for (const baseUrl of candidates) {
+        const cooldownKey = `${provider}:${baseUrl}`;
+        if (isProviderOnCooldown(cooldownKey)) continue;
+
+        try {
+            const url = pathBuilder(baseUrl);
+            const response = await requestHtml(url, {
+                timeout: options.timeout || CONFIG.TIMEOUT,
+                langMode: context.langMode,
+                maxRedirects: options.maxRedirects ?? 3,
+                headers: options.headers || {},
+                skipCache: options.skipCache === true
+            });
+            const status = Number(response.status) || 0;
+            const data = response.data || '';
+            if (status === 429) {
+                lastError = new Error(`${baseUrl}: http_${status}`);
+                setProviderCooldown(cooldownKey, options.rateLimitCooldownMs || 90_000);
+                continue;
+            }
+            if (status === 403 || status >= 500 || !data || isCloudflareResponse(data)) {
+                lastError = new Error(`${baseUrl}: http_${status || 599}`);
+                setProviderCooldown(cooldownKey, options.cooldownMs || 60_000);
+                continue;
+            }
+            return { data, baseUrl, status };
+        } catch (error) {
+            lastError = error;
+            setProviderCooldown(cooldownKey, options.cooldownMs || 60_000);
+        }
+    }
+
+    if (lastError) console.log(`[${provider}] host fallback fallito: ${lastError.message}`);
+    return { data: '', baseUrl: '', status: 599 };
+}
+
+function pickBestTitleLink($, row, selectors = '') {
+    const $row = typeof row.find === 'function' ? row : $(row);
+    const preferred = selectors ? $row.find(selectors).filter((_, link) => normalizeSpaces($(link).text()).length > 3).first() : null;
+    if (preferred && preferred.length) return preferred;
+    return $row.find('a').filter((_, link) => {
+        const href = String($(link).attr('href') || '');
+        const text = normalizeSpaces($(link).text());
+        if (!text || text.length < 4) return false;
+        if (/^magnet:/i.test(href)) return false;
+        if (/^(download|magnet|torrent)$/i.test(text)) return false;
+        return true;
+    }).first();
+}
+
+function normalizeCandidateFromRow($, row, context, baseUrl, selectors = {}) {
+    const $row = typeof row.find === 'function' ? row : $(row);
+    const rowHtml = $row.html() || '';
+    const rowText = normalizeSpaces($row.text());
+    const directMagnet = extractFirstMagnet(rowHtml) || ($row.find('a[href^="magnet:"]').first().attr('href') || '');
+    const titleLink = pickBestTitleLink($, $row, selectors.title || '');
+    const href = titleLink.length ? buildAbsoluteUrl(baseUrl, titleLink.attr('href') || '') : '';
+    const title = normalizeSpaces(titleLink.text() || $row.find(selectors.titleFallback || 'td').first().text());
+    if (!title || !passesResultFilters(title, context)) return null;
+
+    const cells = $row.find('td').map((_, cell) => normalizeSpaces($(cell).text())).get();
+    const health = parsePeerHealthFromText(rowText);
+    const columnHealth = parsePeerColumns($, $row);
+    const hash = extractInfoHash(directMagnet) || extractInfoHashFromText(`${href} ${rowHtml} ${rowText}`);
+    const sizeCell = selectors.sizeIndex !== undefined && cells[selectors.sizeIndex] ? cells[selectors.sizeIndex] : '';
+    const size = parseSizeLabelFromText(sizeCell) || parseSizeLabelFromText(rowText);
+    const seedersCell = selectors.seedersIndex !== undefined && cells[selectors.seedersIndex] ? numberFromHumanInt(cells[selectors.seedersIndex]) : 0;
+    const leechersCell = selectors.leechersIndex !== undefined && cells[selectors.leechersIndex] ? numberFromHumanInt(cells[selectors.leechersIndex]) : 0;
+
+    return {
+        title,
+        detailUrl: /^https?:\/\//i.test(href) ? href : '',
+        magnet: directMagnet || (hash ? buildMagnetFromHash(hash, title) : ''),
+        size,
+        seeders: seedersCell || columnHealth.seeders || health.seeders || 0,
+        leechers: leechersCell || columnHealth.leechers || health.leechers || 0,
+        details: hash ? `${selectors.detailsPrefix || 'hash'}:${hash}` : ''
+    };
+}
+
+function parseKickassRows(html, context, baseUrl) {
+    if (!html) return [];
+    const $ = cheerio.load(html);
+    const items = [];
+    const seen = new Set();
+
+    $('tr.odd, tr.even, table tbody tr, table tr').each((_, row) => {
+        const candidate = normalizeCandidateFromRow($, row, context, baseUrl, {
+            title: 'a.cellMainLink, a[href*="/torrent/"], a[href*="/kat/"]',
+            sizeIndex: 1,
+            detailsPrefix: 'kat'
+        });
+        if (!candidate || !candidate.magnet) return;
+        const key = extractInfoHash(candidate.magnet) || candidate.detailUrl || candidate.title;
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        items.push(candidate);
+    });
+
+    return items;
+}
+
+function parseTorLockRows(html, context, baseUrl) {
+    if (!html) return [];
+    const $ = cheerio.load(html);
+    const items = [];
+    const seen = new Set();
+
+    $('table tbody tr, table tr, div.table-striped article').each((_, row) => {
+        const candidate = normalizeCandidateFromRow($, row, context, baseUrl, {
+            title: 'td:first-child a, a[href*="/torrent/"]',
+            sizeIndex: 2,
+            seedersIndex: 3,
+            leechersIndex: 4,
+            detailsPrefix: 'torlock'
+        });
+        if (!candidate || (!candidate.magnet && !candidate.detailUrl)) return;
+        const key = extractInfoHash(candidate.magnet) || candidate.detailUrl || candidate.title;
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        items.push(candidate);
+    });
+
+    return items;
+}
+
+function parseTorrentDownloadsRows(html, context, baseUrl) {
+    if (!html) return [];
+    const $ = cheerio.load(html);
+    const items = [];
+    const seen = new Set();
+
+    $('table.table2 tr, table tbody tr, table tr, div.grey_bar3').each((index, row) => {
+        const candidate = normalizeCandidateFromRow($, row, context, baseUrl, {
+            title: 'td:first-child a, a[href*="/torrent/"]',
+            sizeIndex: 1,
+            seedersIndex: 2,
+            leechersIndex: 3,
+            detailsPrefix: 'torrentdownloads'
+        });
+        if (!candidate || !candidate.magnet) return;
+        const key = extractInfoHash(candidate.magnet) || candidate.detailUrl || `${candidate.title}:${index}`;
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        items.push(candidate);
+    });
+
+    return items;
+}
+
+function parseTheRarBGSearchRows(html, context, baseUrl) {
+    if (!html) return [];
+    const $ = cheerio.load(html);
+    const items = [];
+    const seen = new Set();
+
+    $('table tbody tr, table tr').each((_, row) => {
+        const candidate = normalizeCandidateFromRow($, row, context, baseUrl, {
+            title: 'td:nth-child(2) a, a[href*="/post-detail/"], a[href*="/torrent/"]',
+            sizeIndex: 5,
+            seedersIndex: 6,
+            leechersIndex: 7,
+            detailsPrefix: 'therarbg'
+        });
+        if (!candidate || (!candidate.detailUrl && !candidate.magnet)) return;
+        const key = extractInfoHash(candidate.magnet) || candidate.detailUrl || candidate.title;
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        items.push(candidate);
+    });
+
+    return items;
+}
+
+async function enrichCandidateFromDetail(candidate, context, source, timeout) {
+    if (!candidate?.detailUrl) return candidate;
+    try {
+        const { data } = await requestHtml(candidate.detailUrl, {
+            timeout,
+            langMode: context.langMode,
+            maxRedirects: 3
+        });
+        if (!data) return candidate;
+        const $ = cheerio.load(data);
+        const pageText = normalizeSpaces($.text());
+        const magnet = extractFirstMagnet(data) || $('a[href^="magnet:"]').first().attr('href') || candidate.magnet || '';
+        const hash = extractInfoHash(magnet) || extractInfoHashFromText(pageText) || extractInfoHashFromText(data);
+        const health = parsePeerHealthFromText(pageText);
+        const title = normalizeSpaces($('h1').first().text() || $('title').first().text().replace(/\s*[-|].*$/g, '') || candidate.title);
+        const size = parseSizeLabelFromText(pageText) || candidate.size || '';
+        return {
+            ...candidate,
+            title: title || candidate.title,
+            magnet: magnet || (hash ? buildMagnetFromHash(hash, title || candidate.title || '') : candidate.magnet),
+            size,
+            seeders: health.seeders || candidate.seeders || 0,
+            leechers: health.leechers || candidate.leechers || 0,
+            details: hash ? `${String(source || 'detail').toLowerCase()}:${hash}` : candidate.details || ''
+        };
+    } catch {
+        return candidate;
+    }
+}
+
 async function searchCorsaro(context) {
     console.log(`[IlCorsaroNero] Avvio ricerca turbo per: ${context.title}...`);
     const cacheKey = buildEngineCacheKey('corsaro', context);
@@ -1984,6 +2214,131 @@ async function searchUindex(context) {
     }
 }
 
+async function searchKickassTorrents(context) {
+    console.log(`[KickassTorrents] Avvio ricerca per: ${context.title}...`);
+    try {
+        const hosts = getHostFallbackList('KAT_HOST', ['katcr.to', 'kickasstorrents.to', 'kickasstorrents.unblockit.download']);
+        const results = await collectQueryResultsParallel(context, async query => {
+            const { data, baseUrl } = await requestProviderHtml('KickassTorrents', hosts, base => `${base}/usearch/${encodeURIComponent(query)}/`, context, {
+                timeout: CONFIG.KAT_SEARCH_TIMEOUT_MS
+            });
+            return parseKickassRows(data, context, baseUrl);
+        }, {
+            maxQueries: Math.min(context.isAnime ? CONFIG.MAX_ANIME_QUERY_VARIANTS_PER_ENGINE : CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE, 4),
+            concurrency: CONFIG.KAT_QUERY_CONCURRENCY
+        });
+
+        const finalResults = dedupeResults(results.map(item => normalizeResult(item, context, 'KickassTorrents')).filter(Boolean))
+            .slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[KickassTorrents] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[KickassTorrents] Errore: ${error.message}`);
+        return [];
+    }
+}
+
+async function searchTorLock(context) {
+    console.log(`[TorLock] Avvio ricerca per: ${context.title}...`);
+    try {
+        const hosts = getHostFallbackList('TORLOCK_HOST', ['torlock2.com', 'torlock.com']);
+        const category = context.normalizedType === 'movie' ? 'movies' : 'television';
+        const candidates = await collectQueryResultsParallel(context, async query => {
+            const { data, baseUrl } = await requestProviderHtml('TorLock', hosts, base => `${base}/${category}/torrents/${encodeURIComponent(query)}.html`, context, {
+                timeout: CONFIG.TORLOCK_SEARCH_TIMEOUT_MS
+            });
+            return parseTorLockRows(data, context, baseUrl);
+        }, {
+            maxQueries: Math.min(context.isAnime ? CONFIG.MAX_ANIME_QUERY_VARIANTS_PER_ENGINE : CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE, 4),
+            concurrency: CONFIG.TORLOCK_QUERY_CONCURRENCY
+        });
+
+        const ranked = rankDetailCandidates(candidates, context, CONFIG.TORLOCK_MAX_DETAIL_CANDIDATES);
+        const directResults = ranked
+            .filter(candidate => candidate.magnet)
+            .map(candidate => normalizeResult(candidate, context, 'TorLock'))
+            .filter(Boolean);
+        const detailResults = await Promise.all(
+            ranked.filter(candidate => !candidate.magnet && candidate.detailUrl).map(candidate =>
+                detailLimit(async () => {
+                    const enriched = await enrichCandidateFromDetail(candidate, context, 'TorLock', CONFIG.TORLOCK_DETAIL_TIMEOUT_MS);
+                    return normalizeResult(enriched, context, 'TorLock');
+                })
+            )
+        );
+        const finalResults = dedupeResults([...directResults, ...detailResults.filter(Boolean)])
+            .slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[TorLock] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[TorLock] Errore: ${error.message}`);
+        return [];
+    }
+}
+
+async function searchTorrentDownloads(context) {
+    console.log(`[TorrentDownloads] Avvio ricerca per: ${context.title}...`);
+    try {
+        const hosts = getHostFallbackList('TORRENTDOWNLOADS_HOST', ['torrentdownload.info', 'torrentdownloads.pro']);
+        const category = context.normalizedType === 'movie' ? '4' : '8';
+        const results = await collectQueryResultsParallel(context, async query => {
+            const { data, baseUrl } = await requestProviderHtml('TorrentDownloads', hosts, base => `${base}/search/?search=${encodeURIComponent(query)}&cat=${category}`, context, {
+                timeout: CONFIG.TORRENTDOWNLOADS_SEARCH_TIMEOUT_MS
+            });
+            return parseTorrentDownloadsRows(data, context, baseUrl);
+        }, {
+            maxQueries: Math.min(context.isAnime ? CONFIG.MAX_ANIME_QUERY_VARIANTS_PER_ENGINE : CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE, 4),
+            concurrency: CONFIG.TORRENTDOWNLOADS_QUERY_CONCURRENCY
+        });
+
+        const finalResults = dedupeResults(results.map(item => normalizeResult(item, context, 'TorrentDownloads')).filter(Boolean))
+            .slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[TorrentDownloads] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[TorrentDownloads] Errore: ${error.message}`);
+        return [];
+    }
+}
+
+async function searchTheRarBG(context) {
+    console.log(`[TheRarBG] Avvio ricerca per: ${context.title}...`);
+    try {
+        const hosts = getHostFallbackList('THERARBG_HOST', ['therarbg.com']);
+        const category = context.normalizedType === 'movie' ? 'Movies' : 'TV';
+        const candidates = await collectQueryResultsParallel(context, async query => {
+            const { data, baseUrl } = await requestProviderHtml('TheRarBG', hosts, base => `${base}/get-posts/order:-se:category:${category}:keywords:${encodeURIComponent(query)}/`, context, {
+                timeout: CONFIG.THERARBG_SEARCH_TIMEOUT_MS
+            });
+            return parseTheRarBGSearchRows(data, context, baseUrl);
+        }, {
+            maxQueries: Math.min(context.isAnime ? CONFIG.MAX_ANIME_QUERY_VARIANTS_PER_ENGINE : CONFIG.MAX_QUERY_VARIANTS_PER_ENGINE, 4),
+            concurrency: CONFIG.THERARBG_QUERY_CONCURRENCY
+        });
+
+        const ranked = rankDetailCandidates(candidates, context, CONFIG.THERARBG_MAX_DETAIL_CANDIDATES);
+        const directResults = ranked
+            .filter(candidate => candidate.magnet)
+            .map(candidate => normalizeResult(candidate, context, 'TheRarBG'))
+            .filter(Boolean);
+        const detailResults = await Promise.all(
+            ranked.filter(candidate => !candidate.magnet && candidate.detailUrl).map(candidate =>
+                detailLimit(async () => {
+                    const enriched = await enrichCandidateFromDetail(candidate, context, 'TheRarBG', CONFIG.THERARBG_DETAIL_TIMEOUT_MS);
+                    return normalizeResult(enriched, context, 'TheRarBG');
+                })
+            )
+        );
+        const finalResults = dedupeResults([...directResults, ...detailResults.filter(Boolean)])
+            .slice(0, CONFIG.RESULT_LIMIT_PER_ENGINE);
+        console.log(`[TheRarBG] Trovati ${finalResults.length} risultati validi.`);
+        return finalResults;
+    } catch (error) {
+        console.log(`[TheRarBG] Errore: ${error.message}`);
+        return [];
+    }
+}
+
 async function searchSubsPlease(context) {
     if (!context.isAnime) return [];
     console.log(`[SubsPlease] Avvio ricerca per: ${context.title}...`);
@@ -2043,6 +2398,10 @@ const ACTIVE_ENGINES = [
     { name: "BitSearch", fn: searchBitSearch, timeout: CONFIG.ENGINE_TIMEOUT },
     { name: "LimeTorrents", fn: searchLime, timeout: CONFIG.ENGINE_TIMEOUT },
     { name: "RARBG", fn: searchRARBG, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "TheRarBG", fn: searchTheRarBG, timeout: CONFIG.ENGINE_TIMEOUT + 2000 },
+    { name: "KickassTorrents", fn: searchKickassTorrents, timeout: CONFIG.ENGINE_TIMEOUT },
+    { name: "TorLock", fn: searchTorLock, timeout: CONFIG.ENGINE_TIMEOUT + 1000 },
+    { name: "TorrentDownloads", fn: searchTorrentDownloads, timeout: CONFIG.ENGINE_TIMEOUT },
     { name: "UIndex", fn: searchUindex, timeout: CONFIG.ENGINE_TIMEOUT }
 ];
 
@@ -2174,3 +2533,4 @@ module.exports = {
         normalizeResult
     }
 };
+
