@@ -12,7 +12,7 @@ const {
 } = require('./stream_transit.js');
 
 const DEFAULT_REFERER = 'https://vixsrc.to/';
-const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 const MANIFEST_ROUTE = '/vixsynthetic.m3u8';
 const MEDIA_ROUTES = Object.freeze({
     ts: '/vixsegment.ts',

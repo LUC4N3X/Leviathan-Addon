@@ -34,7 +34,7 @@ const CINEMETA_BASE = 'https://v3-cinemeta.strem.io/meta';
 const DEFAULT_ADDON_URL = 'https://leviata96n.questoleviatanormio.dpdns.org';
 const TMDB_API_BASE = 'https://api.themoviedb.org/3';
 const TMDB_API_KEY = '5bae8d11f2a7bc7a95c6d040a31d2163';
-const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 const providerShield = createBlockedFallbackGuard({
     providerName: 'vixsrc',
     envPrefix: 'VIXSRC',
@@ -53,7 +53,7 @@ const PLAYLIST_CACHE_TTL_MS = 120 * 1000;
 const TMDB_META_CACHE_TTL_MS = 30 * 60 * 1000;
 const PREFERRED_LANG = 'it';
 const AU_BASE = getProviderDomain('animeunity', 'https://www.animeunity.so');
-const ANIME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
+const ANIME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 const HLS_PLAYBACK_TOKEN_TTL_MS = Math.max(10 * 60 * 1000, Number.parseInt(process.env.VIX_HLS_TOKEN_TTL_MS || String(2 * 60 * 60 * 1000), 10) || (2 * 60 * 60 * 1000));
 const VIX_STRICT_HOST_BINDING = String(process.env.VIX_STRICT_HOST_BINDING || '').trim() === '1';
 
@@ -2306,5 +2306,4 @@ module.exports = {
     normalizeQualityFilter,
     inferCanPlayFHDFromPlaylist
 };
-
 
