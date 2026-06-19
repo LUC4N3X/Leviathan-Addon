@@ -25,7 +25,8 @@ const { createBlockedFallbackGuard } = require('../utils/provider_blocked_fallba
 const {
     requestWithImpitRotating,
     getStickyFingerprintForUrl,
-    getImpitBrowserForFingerprint
+    getImpitBrowserForFingerprint,
+    buildContextHeaders
 } = require('../utils/bypass');
 const { getProviderDomain } = require('../utils/provider_domain_registry');
 
@@ -35,6 +36,14 @@ const DEFAULT_ADDON_URL = 'https://leviata96n.questoleviatanormio.dpdns.org';
 const TMDB_API_BASE = 'https://api.themoviedb.org/3';
 const TMDB_API_KEY = '5bae8d11f2a7bc7a95c6d040a31d2163';
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+const VIX_BROWSER_FINGERPRINT = Object.freeze({
+    userAgent: DEFAULT_UA,
+    browserType: 'chrome',
+    secChUa: '"Google Chrome";v="142", "Not A(Brand";v="8", "Chromium";v="142"',
+    secChUaMobile: '?0',
+    secChUaPlatform: '"Windows"',
+    acceptLanguage: 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
+});
 const providerShield = createBlockedFallbackGuard({
     providerName: 'vixsrc',
     envPrefix: 'VIXSRC',
@@ -240,23 +249,30 @@ function responseUrl(response, fallback) {
     return response?.request?.res?.responseUrl || response?.config?.url || fallback;
 }
 
-function buildHeaders(referer = null, kind = 'html') {
-    const headers = {
-        'User-Agent': DEFAULT_UA,
-        'Referer': referer || `${VIX_BASE}/`,
-        'Origin': VIX_BASE,
-        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
-    };
+function buildHeaders(referer = null, kind = 'html', targetUrl = null) {
+    const normalizedKind = String(kind || 'html').toLowerCase();
+    const context = normalizedKind === 'json'
+        ? 'json'
+        : normalizedKind === 'script'
+            ? 'script'
+            : normalizedKind === 'playlist'
+                ? 'playlist'
+                : normalizedKind === 'embed' || normalizedKind === 'iframe' || normalizedKind === 'player'
+                    ? 'iframe'
+                    : 'document';
+    const requestUrl = targetUrl || VIX_BASE;
+    const headers = buildContextHeaders(requestUrl, context, {
+        Referer: referer || `${VIX_BASE}/`,
+        'Sec-Fetch-Site': context === 'document' ? 'none' : referer ? 'same-origin' : 'none'
+    }, VIX_BROWSER_FINGERPRINT);
 
-    if (kind === 'script') {
-        headers.Accept = 'application/javascript,text/javascript,*/*;q=0.8';
-    } else if (kind === 'playlist') {
-        headers.Accept = 'application/vnd.apple.mpegurl, application/x-mpegURL, */*';
+    if (context === 'json' || context === 'script') {
+        delete headers.Origin;
+        delete headers.origin;
+    }
+
+    if (context === 'playlist') {
         headers['Accept-Encoding'] = 'identity';
-    } else if (kind === 'json') {
-        headers.Accept = 'application/json,text/plain,*/*';
-    } else {
-        headers.Accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
     }
 
     return headers;
@@ -412,7 +428,7 @@ async function getWithRetries(url, {
 }
 
 async function fetchText(url, referer = null, kind = 'html') {
-    const response = await getWithRetries(url, { headers: buildHeaders(referer, kind), kind });
+    const response = await getWithRetries(url, { headers: buildHeaders(referer, kind, url), kind });
     const status = Number(response?.status || 0);
     const text = responseText(response);
     if (status === 200 && text) {
@@ -977,7 +993,7 @@ async function resolveScEmbedUrl(tmdbId, pageUrl, season = null, episode = null)
     const apiBase = buildScApiUrl(tmdbId, season, episode);
     const candidates = [`${apiBase}?lang=${PREFERRED_LANG}`, apiBase];
     for (const apiUrl of candidates) {
-        const response = await getWithRetries(apiUrl, { headers: buildHeaders(pageUrl, 'json'), kind: 'json' });
+        const response = await getWithRetries(apiUrl, { headers: buildHeaders(pageUrl, 'json', apiUrl), kind: 'json' });
         if (Number(response?.status || 0) !== 200) continue;
 
         let payload = response?.data;
@@ -1190,7 +1206,7 @@ async function tryDirectVixsrcStream(pageUrl, cleanTitle, season, episode, quali
     if (cached) {
         ({ status, pageHtml } = cached);
     } else {
-        const response = await getWithRetries(pageUrl, { headers: buildHeaders(`${VIX_BASE}/`, 'html'), kind: 'html' });
+        const response = await getWithRetries(pageUrl, { headers: buildHeaders(`${VIX_BASE}/`, 'html', pageUrl), kind: 'html' });
         status = Number(response?.status || 0);
         pageHtml = responseText(response);
         if (status === 200 && pageHtml) {

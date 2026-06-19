@@ -10,9 +10,18 @@ const {
     TRANSIT_KIND,
     buildTransitUrl
 } = require('./stream_transit.js');
+const { buildContextHeaders } = require('../utils/bypass');
 
 const DEFAULT_REFERER = 'https://vixsrc.to/';
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+const VIX_BROWSER_FINGERPRINT = Object.freeze({
+    userAgent: DEFAULT_UA,
+    browserType: 'chrome',
+    secChUa: '"Google Chrome";v="142", "Not A(Brand";v="8", "Chromium";v="142"',
+    secChUaMobile: '?0',
+    secChUaPlatform: '"Windows"',
+    acceptLanguage: 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
+});
 const MANIFEST_ROUTE = '/vixsynthetic.m3u8';
 const MEDIA_ROUTES = Object.freeze({
     ts: '/vixsegment.ts',
@@ -506,21 +515,24 @@ function buildRequestHeaders(targetUrl, explicitReferer, overrides = null) {
     }
 
     const isPlaylist = isVixPlaylistUrl(targetUrl);
-
-    return normalizeRequestHeaders({
-        'User-Agent': DEFAULT_UA,
-        Accept: isPlaylist ? 'application/vnd.apple.mpegurl, application/x-mpegURL, */*' : 'video/mp2t, video/iso.segment, video/*, application/octet-stream, */*',
-        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+    const context = isPlaylist ? 'playlist' : STREAMABLE_MEDIA_URL_RE.test(String(targetUrl || '')) ? 'media' : 'media';
+    const headers = buildContextHeaders(targetUrl, context, {
         'Accept-Encoding': 'identity',
-        'Cache-Control': 'no-cache',
-        Pragma: 'no-cache',
-        'Sec-Fetch-Dest': isPlaylist ? 'empty' : 'video',
-        'Sec-Fetch-Mode': 'cors',
         'Sec-Fetch-Site': 'same-origin',
         ...cleanOverrides,
         Referer: referer,
         Origin: origin
-    });
+    }, VIX_BROWSER_FINGERPRINT);
+
+    if (isPlaylist) {
+        headers.Accept = 'application/vnd.apple.mpegurl, application/x-mpegURL, */*';
+        headers['Sec-Fetch-Dest'] = 'empty';
+    } else {
+        headers.Accept = cleanOverrides.Accept || cleanOverrides.accept || '*/*';
+        headers['Sec-Fetch-Dest'] = 'video';
+    }
+
+    return normalizeRequestHeaders(headers);
 }
 
 function isManifest(targetUrl, contentType) {
