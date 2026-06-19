@@ -3,10 +3,6 @@ const cheerio = require('cheerio');
 const he = require('he');
 const { HTTP_AGENT, HTTPS_AGENT } = require('../../core/utils/http');
 const {
-    buildForwardProxyUrl: buildSharedForwardProxyUrl,
-    normalizeForwardProxyBase: normalizeSharedForwardProxyBase
-} = require('../../core/proxy/forward_proxy_config');
-const {
     buildProxyUrl: buildMediaflowGatewayProxyUrl,
     getMediaflowBase
 } = require('../../core/proxy/mediaflow_gateway');
@@ -61,7 +57,6 @@ const ANIME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (
 const HLS_PLAYBACK_TOKEN_TTL_MS = Math.max(10 * 60 * 1000, Number.parseInt(process.env.VIX_HLS_TOKEN_TTL_MS || String(2 * 60 * 60 * 1000), 10) || (2 * 60 * 60 * 1000));
 const VIX_STRICT_HOST_BINDING = String(process.env.VIX_STRICT_HOST_BINDING || '').trim() === '1';
 
-const SC_FORWARD_PROXY_CONTEXT = 'streamingcommunity';
 
 function envFlag(name, fallback = false) {
     const raw = process.env[name];
@@ -76,53 +71,6 @@ function envInt(name, fallback, min = 0, max = Number.MAX_SAFE_INTEGER) {
     const parsed = Number.parseInt(String(process.env[name] || ''), 10);
     if (!Number.isFinite(parsed)) return fallback;
     return Math.max(min, Math.min(max, parsed));
-}
-
-function getScForwardProxyBase() {
-    const raw = String(
-        process.env.SC_FORWARD_PROXY
-        || process.env.STREAMINGCOMMUNITY_FORWARD_PROXY
-        || process.env.STREAMINGCOMMUNITY_FORWARD_PROXY_URL
-        || process.env.VIXSRC_FORWARD_PROXY
-        || process.env.VIX_FORWARD_PROXY
-        || process.env.FORWARD_PROXY
-        || ''
-    ).trim();
-
-    if (!raw) return '';
-    try {
-        return normalizeSharedForwardProxyBase(raw, SC_FORWARD_PROXY_CONTEXT);
-    } catch (error) {
-        console.error(`[WEB][StreamingCommunity] invalid forward proxy | ${error.message}`);
-        return '';
-    }
-}
-
-function isScForwardProxyEnabled(kind = 'page') {
-    const base = getScForwardProxyBase();
-    if (!base) return false;
-    if (!envFlag('SC_FORWARD_PROXY_ENABLED', envFlag('STREAMINGCOMMUNITY_FORWARD_PROXY_ENABLED', true))) return false;
-    if (kind === 'playlist') {
-        return envFlag('SC_FORWARD_PROXY_PLAYLISTS', envFlag('STREAMINGCOMMUNITY_FORWARD_PROXY_PLAYLISTS', true));
-    }
-    return true;
-}
-
-function shouldFallbackDirectAfterForward() {
-    return envFlag('SC_FORWARD_PROXY_DIRECT_FALLBACK', envFlag('STREAMINGCOMMUNITY_FORWARD_PROXY_DIRECT_FALLBACK', false));
-}
-
-function buildScForwardProxyUrl(targetUrl, kind = 'page') {
-    if (!isScForwardProxyEnabled(kind)) return null;
-    const base = getScForwardProxyBase();
-    if (!base) return null;
-    try {
-        const proxied = buildSharedForwardProxyUrl(targetUrl, { base, context: SC_FORWARD_PROXY_CONTEXT });
-        return proxied && proxied !== targetUrl ? proxied : null;
-    } catch (error) {
-        console.error(`[WEB][StreamingCommunity] forward proxy url build failed | kind=${kind} | ${error.message}`);
-        return null;
-    }
 }
 
 function safeLogHost(value) {
@@ -362,11 +310,9 @@ async function impitDirectRequest(url, { method = 'GET', headers = {}, timeout, 
 }
 
 async function performAttemptRequest(attempt, { method = 'GET', headers = {}, timeout, responseType, data, kind = 'page' } = {}) {
-    const requestTimeout = attempt.forwarded
-        ? envInt('SC_FORWARD_PROXY_TIMEOUT_MS', timeout || REQUEST_TIMEOUT, 1000, 60000)
-        : timeout;
+    const requestTimeout = timeout;
 
-    if (!attempt.forwarded && preferImpitForDirect(kind)) {
+    if (preferImpitForDirect(kind)) {
         const impitResponse = await impitDirectRequest(attempt.requestUrl, {
             method,
             headers,
@@ -403,14 +349,7 @@ async function getWithRetries(url, {
         }
     })();
 
-    const forwardUrl = buildScForwardProxyUrl(url, kind);
-    const attempts = [];
-    if (forwardUrl) {
-        attempts.push({ requestUrl: forwardUrl, forwarded: true, via: 'forward-proxy' });
-    }
-    if (!forwardUrl || shouldFallbackDirectAfterForward()) {
-        attempts.push({ requestUrl: url, forwarded: false, via: forwardUrl ? 'direct-fallback' : 'direct' });
-    }
+    const attempts = [{ requestUrl: url, forwarded: false, via: 'direct' }];
 
     let lastError = null;
     let lastResponse = null;
@@ -454,13 +393,11 @@ async function getWithRetries(url, {
             if (!RETRYABLE_STATUSES.has(status) || attempt === attempts[attempts.length - 1]) return response;
         } catch (error) {
             lastError = error;
-            if (!attempt.forwarded || !shouldFallbackDirectAfterForward()) break;
-            console.error(`[WEB][StreamingCommunity] forward proxy fallback direct | kind=${kind} | host=${safeLogHost(url)} | proxy=${safeLogHost(attempt.requestUrl)} | error=${error.message}`);
+            break;
         }
     }
 
-    const shieldFallbackAllowed = !forwardUrl || shouldFallbackDirectAfterForward();
-    if (shieldFallbackAllowed && providerShield.shouldUseShield({ url, error: lastError })) {
+    if (providerShield.shouldUseShield({ url, error: lastError })) {
         const shielded = await providerShield.fetchAxiosLike(url, {
             method,
             data,
@@ -2369,4 +2306,5 @@ module.exports = {
     normalizeQualityFilter,
     inferCanPlayFHDFromPlaylist
 };
+
 
