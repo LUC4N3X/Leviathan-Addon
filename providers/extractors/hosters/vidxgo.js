@@ -136,7 +136,7 @@ async function bypassAndExtract(playerUrl, referer, options = {}) {
         ? options.impitFetcher
         : requestWithImpitRotating;
     const headers = {
-        'User-Agent': String(process.env.VIDXGO_IMPIT_USER_AGENT || 'Mozilla/5.0 (X11; Linux x86_64; rv:150.0) Gecko/20100101 Firefox/150.0'),
+        'User-Agent': String(process.env.VIDXGO_IMPIT_USER_AGENT || 'Mozilla/5.0 (X11; Linux x86_64; rv:144.0) Gecko/20100101 Firefox/144.0'),
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
         'Sec-GPC': '1',
@@ -157,8 +157,8 @@ async function bypassAndExtract(playerUrl, referer, options = {}) {
         timeout: timeoutMs,
         totalTimeoutMs: timeoutMs + 1000,
         maxBrowserAttempts: Number.parseInt(process.env.VIDXGO_IMPIT_ATTEMPTS || '3', 10) || 3,
-        browser: process.env.VIDXGO_IMPIT_BROWSER || 'firefox139',
-        browserFallbacks: ['firefox139', 'chrome136', 'chrome131'],
+        browser: process.env.VIDXGO_IMPIT_BROWSER || 'firefox144',
+        browserFallbacks: ['firefox144', 'chrome142'],
         retryOnStatuses: [403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524],
         http3: /^(1|true|yes|on)$/i.test(String(process.env.VIDXGO_IMPIT_HTTP3 || '1')),
         failSoft: true

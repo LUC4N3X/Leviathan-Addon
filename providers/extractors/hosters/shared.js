@@ -8,7 +8,7 @@ const {
     probePlaylistQuality
 } = require('../common');
 
-const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 const DEAN_EDWARDS_RE = /eval\(function\(p,a,c,k,e,?[rd]?\).*?\}\('(.*?)',\s*(\d+),\s*(\d+),\s*'(.*?)'\.split\('(.*?)'\).*?\)\)/s;
 const DIRECT_MEDIA_RE = /(?:https?:\\?\/\\?\/|\/\/|\/)[^"'\s<>]+(?:\.m3u8|\.mp4|\/hls\/|\/playlist\/|\/master\.m3u8|\/get_video)[^"'\s<>]*/ig;
 const BASE64_RE = /(?:atob\(\s*|["'=:,\[]\s*)["']([A-Za-z0-9+/=]{28,})["']/g;
