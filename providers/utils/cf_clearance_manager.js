@@ -564,7 +564,7 @@ function createCfClearanceManager(options = {}) {
   const httpsAgent = options.httpsAgent || undefined;
   const getFallbackUserAgent = typeof options.getFallbackUserAgent === 'function'
     ? options.getFallbackUserAgent
-    : () => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
+    : () => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
   const onSession = typeof options.onSession === 'function' ? options.onSession : () => {};
   const isCanceledError = typeof options.isCanceledError === 'function' ? options.isCanceledError : () => false;
 

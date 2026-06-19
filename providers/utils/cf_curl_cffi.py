@@ -20,100 +20,35 @@ UA_BY_IMPERSONATE: Dict[str, str] = {
     "chrome": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/146.0.0.0 Safari/537.36"
-    ),
-    "firefox": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:147.0) "
-        "Gecko/20100101 Firefox/147.0"
-    ),
-    "safari": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-        "Version/26.0 Safari/605.1.15"
-    ),
-    "chrome146": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/146.0.0.0 Safari/537.36"
-    ),
-    "chrome145": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/145.0.0.0 Safari/537.36"
+        "Chrome/142.0.0.0 Safari/537.36"
     ),
     "chrome142": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/142.0.0.0 Safari/537.36"
     ),
-    "chrome138": (
+    "edge": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/138.0.0.0 Safari/537.36"
+        "Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0"
     ),
-    "chrome137": (
+    "edge142": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/137.0.0.0 Safari/537.36"
+        "Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0"
     ),
-    "chrome136": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/136.0.0.0 Safari/537.36"
-    ),
-    "chrome133a": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/133.0.0.0 Safari/537.36"
-    ),
-    "chrome133": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/133.0.0.0 Safari/537.36"
-    ),
-    "chrome131": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/131.0.0.0 Safari/537.36"
-    ),
-    "chrome124": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "chrome123": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/123.0.0.0 Safari/537.36"
-    ),
-    "chrome120": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "firefox147": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:147.0) "
-        "Gecko/20100101 Firefox/147.0"
+    "firefox": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) "
+        "Gecko/20100101 Firefox/144.0"
     ),
     "firefox144": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) "
         "Gecko/20100101 Firefox/144.0"
     ),
-    "firefox137": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) "
-        "Gecko/20100101 Firefox/137.0"
-    ),
-    "firefox135": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) "
-        "Gecko/20100101 Firefox/135.0"
-    ),
-    "firefox133": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) "
-        "Gecko/20100101 Firefox/133.0"
-    ),
-    "firefox128": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) "
-        "Gecko/20100101 Firefox/128.0"
+    "safari": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/26.0 Safari/605.1.15"
     ),
     "safari260": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -146,38 +81,21 @@ UA_BY_IMPERSONATE: Dict[str, str] = {
         "Version/18.2 Safari/605.1.15"
     ),
 }
-DEFAULT_FALLBACK_UA = UA_BY_IMPERSONATE["chrome146"]
+DEFAULT_FALLBACK_UA = UA_BY_IMPERSONATE["chrome142"]
 DEFAULT_IMPERSONATE_CHAIN = [
-    "chrome",
-    "chrome146",
-    "chrome145",
     "chrome142",
-    "firefox",
-    "firefox147",
+    "edge142",
     "firefox144",
-    "chrome138",
-    "firefox137",
-    "chrome136",
-    "firefox135",
-    "chrome133a",
-    "chrome131",
     "safari260",
     "safari260_ios",
     "safari184",
-    "chrome124",
-    "chrome120",
 ]
 
-# curl_cffi only accepts labels compiled into the installed package. Some UA profiles
-# are useful as logical browser headers even when their exact TLS target was skipped
-# upstream because the fingerprint did not materially change. These aliases keep the
-# chain fresh without crashing on unsupported targets such as chrome138/firefox137.
 IMPERSONATE_TLS_ALIASES: Dict[str, str] = {
-    "chrome138": "chrome136",
-    "chrome137": "chrome136",
-    "chrome133": "chrome133a",
-    "firefox137": "firefox135",
-    "firefox128": "firefox135",
+    "chrome": "chrome142",
+    "edge": "chrome142",
+    "edge142": "chrome142",
+    "firefox": "firefox144",
     "safari18_2": "safari184",
     "safari18_4": "safari184",
 }
@@ -377,27 +295,35 @@ def is_safari_based(impersonate: str, user_agent: str = "") -> bool:
 
 def chrome_major_from_ua(user_agent: str) -> str:
     match = re.search(r"Chrome/(\d+)", user_agent or "")
-    return match.group(1) if match else "138"
+    return match.group(1) if match else "142"
 
 
-def sec_ch_ua_for_chrome(major: str) -> str:
+def is_edge_user_agent(user_agent: str) -> bool:
+    return bool(re.search(r"\bEdg/\d+", user_agent or "", re.I))
+
+
+def sec_ch_ua_for_chromium(major: str, edge: bool = False) -> str:
     try:
         major_int = int(major)
     except (TypeError, ValueError):
-        major_int = 138
+        major_int = 142
+    if edge:
+        return f'"Microsoft Edge";v="{major}", "Chromium";v="{major}", "Not(A:Brand";v="8"'
     if major_int >= 131:
         return f'"Google Chrome";v="{major}", "Not A(Brand";v="8", "Chromium";v="{major}"'
     return f'"Google Chrome";v="{major}", "Chromium";v="{major}", "Not.A/Brand";v="99"'
 
 
-def sec_ch_ua_full_version_list_for_chrome(major: str) -> str:
+def sec_ch_ua_full_version_list_for_chromium(major: str, edge: bool = False) -> str:
     try:
         major_int = int(major)
     except (TypeError, ValueError):
-        major_int = 138
+        major_int = 142
     if major_int < 131:
         return ""
     full = f"{major}.0.0.0"
+    if edge:
+        return f'"Microsoft Edge";v="{full}", "Chromium";v="{full}", "Not(A:Brand";v="8.0.0.0"'
     return f'"Google Chrome";v="{full}", "Not A(Brand";v="8.0.0.0", "Chromium";v="{full}"'
 
 
@@ -525,10 +451,11 @@ def browser_ordered_headers(
 
     if is_chromium_based(impersonate, ua):
         chrome_major = chrome_major_from_ua(ua)
-        put_header(ordered, "sec-ch-ua", sec_ch_ua_for_chrome(chrome_major))
+        edge_ua = is_edge_user_agent(ua) or str(impersonate or "").lower().startswith("edge")
+        put_header(ordered, "sec-ch-ua", sec_ch_ua_for_chromium(chrome_major, edge_ua))
         put_header(ordered, "sec-ch-ua-mobile", "?1" if is_mobile_ua(ua) else "?0")
         put_header(ordered, "sec-ch-ua-platform", platform_label_from_ua(ua))
-        full_version = sec_ch_ua_full_version_list_for_chrome(chrome_major)
+        full_version = sec_ch_ua_full_version_list_for_chromium(chrome_major, edge_ua)
         if full_version:
             put_header(ordered, "sec-ch-ua-full-version-list", full_version)
 

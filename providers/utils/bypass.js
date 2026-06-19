@@ -7,8 +7,8 @@ const IMPIT_INSTANCE_CACHE = new Map();
 let impitModulePromise = null;
 
 const IMPIT_BROWSER_VERSIONS = Object.freeze({
-    chrome: Object.freeze([100, 101, 104, 107, 110, 116, 124, 125, 131, 136, 142]),
-    firefox: Object.freeze([128, 133, 135, 144]),
+    chrome: Object.freeze([142]),
+    firefox: Object.freeze([144]),
     okhttp: Object.freeze([3, 4, 5])
 });
 
@@ -19,44 +19,44 @@ const SUPPORTED_IMPIT_BROWSERS = new Set(Object.entries(IMPIT_BROWSER_VERSIONS).
 
 const DEFAULT_FINGERPRINT_POOL = Object.freeze([
     Object.freeze({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
         browserType: 'chrome',
-        secChUa: '"Google Chrome";v="138", "Not A(Brand";v="8", "Chromium";v="138"',
+        secChUa: '"Google Chrome";v="142", "Not A(Brand";v="8", "Chromium";v="142"',
         secChUaPlatform: '"Windows"',
         acceptLanguage: 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
     }),
     Object.freeze({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36 Edg/137.0.0.0',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0',
         browserType: 'edge',
-        secChUa: '"Microsoft Edge";v="137", "Chromium";v="137", "Not(A:Brand";v="8"',
+        secChUa: '"Microsoft Edge";v="142", "Chromium";v="142", "Not(A:Brand";v="8"',
         secChUaPlatform: '"Windows"',
         acceptLanguage: 'it-IT,it;q=0.9,en;q=0.8'
     }),
     Object.freeze({
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
         browserType: 'chrome',
-        secChUa: '"Google Chrome";v="138", "Not A(Brand";v="8", "Chromium";v="138"',
+        secChUa: '"Google Chrome";v="142", "Not A(Brand";v="8", "Chromium";v="142"',
         secChUaPlatform: '"macOS"',
         acceptLanguage: 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
     }),
     Object.freeze({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0',
         browserType: 'firefox',
         secChUa: null,
         secChUaPlatform: null,
         acceptLanguage: 'it-IT,it;q=0.8,en-US;q=0.5,en;q=0.3'
     }),
     Object.freeze({
-        userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
+        userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
         browserType: 'chrome',
-        secChUa: '"Google Chrome";v="137", "Not A(Brand";v="8", "Chromium";v="137"',
+        secChUa: '"Google Chrome";v="142", "Not A(Brand";v="8", "Chromium";v="142"',
         secChUaPlatform: '"Linux"',
         acceptLanguage: 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
     }),
     Object.freeze({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
         browserType: 'chrome',
-        secChUa: '"Google Chrome";v="137", "Not A(Brand";v="8", "Chromium";v="137"',
+        secChUa: '"Google Chrome";v="142", "Not A(Brand";v="8", "Chromium";v="142"',
         secChUaPlatform: '"Windows"',
         acceptLanguage: 'en-US,en;q=0.9,it;q=0.8'
     })
@@ -72,11 +72,7 @@ const DEFAULT_IMPIT_BROWSER_STICKY_TTL_MS = 45 * 60 * 1000;
 const DEFAULT_IMPIT_ROTATION_STATUSES = Object.freeze([403, 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
 const DEFAULT_IMPIT_BROWSER_FALLBACKS = Object.freeze([
     'chrome142',
-    'chrome136',
-    'chrome131',
     'firefox144',
-    'firefox135',
-    'chrome125',
     'okhttp4'
 ]);
 
@@ -346,13 +342,16 @@ function pickNearestImpitBrowser(prefix, version, fallback) {
     return `${prefix}${selected}`;
 }
 
-function normalizeImpitBrowser(browser, fallback = 'chrome136') {
+function normalizeImpitBrowser(browser, fallback = 'chrome142') {
     const value = safeString(browser).trim().toLowerCase();
     if (!value) return fallback;
     if (SUPPORTED_IMPIT_BROWSERS.has(value)) return value;
 
-    const match = value.match(/^(chrome|firefox|okhttp)(\d+)$/);
-    if (match) return pickNearestImpitBrowser(match[1], match[2], fallback);
+    const match = value.match(/^(chrome|edge|firefox|okhttp)(\d+)$/);
+    if (match) {
+        const family = match[1] === 'edge' ? 'chrome' : match[1];
+        return pickNearestImpitBrowser(family, match[2], fallback);
+    }
 
     return fallback;
 }
@@ -362,7 +361,7 @@ function getImpitBrowserForFingerprint(fp = null) {
     const userAgent = safeString(fp?.userAgent || fp?.ua).toLowerCase();
 
     if (browserType.includes('firefox') || userAgent.includes('firefox/')) {
-        return pickNearestImpitBrowser('firefox', userAgent.match(/firefox\/(\d+)/i)?.[1], 'firefox135');
+        return pickNearestImpitBrowser('firefox', userAgent.match(/firefox\/(\d+)/i)?.[1], 'firefox144');
     }
     if (browserType.includes('okhttp') || userAgent.includes('okhttp/')) {
         return pickNearestImpitBrowser('okhttp', userAgent.match(/okhttp\/(\d+)/i)?.[1], 'okhttp4');
@@ -371,7 +370,7 @@ function getImpitBrowserForFingerprint(fp = null) {
     const chromeVersion =
         userAgent.match(/(?:chrome|crios|chromium)\/(\d+)/i)?.[1] ||
         userAgent.match(/edg\/(\d+)/i)?.[1];
-    return pickNearestImpitBrowser('chrome', chromeVersion, 'chrome136');
+    return pickNearestImpitBrowser('chrome', chromeVersion, 'chrome142');
 }
 
 function normalizeBrowserList(list = []) {
@@ -441,7 +440,7 @@ function alignHeadersForImpitBrowser(headers = {}, browser = '') {
     const isMobile = /Mobile|Android/i.test(existingUa) ? '?1' : '?0';
 
     if (selected.startsWith('firefox')) {
-        const major = Number.isInteger(version) ? version : 138;
+        const major = Number.isInteger(version) ? version : 144;
         const ffPlatformToken = detected.platform === '"macOS"'
             ? 'Macintosh; Intel Mac OS X 10.15'
             : detected.platform === '"Linux"'
@@ -467,12 +466,18 @@ function alignHeadersForImpitBrowser(headers = {}, browser = '') {
         return compactHeaderObject(out);
     }
 
-    if (selected.startsWith('chrome')) {
-        const major = Number.isInteger(version) ? version : 138;
-        const brandStr = major >= 131
-            ? `"Google Chrome";v="${major}", "Not A(Brand";v="8", "Chromium";v="${major}"`
-            : `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not.A/Brand";v="99"`;
-        setHeaderCaseInsensitive(out, 'User-Agent', `Mozilla/5.0 (${detected.uaToken}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`);
+    if (selected.startsWith('chrome') || selected.startsWith('edge')) {
+        const major = Number.isInteger(version) ? version : 142;
+        const edgeLike = selected.startsWith('edge') || /\bEdg\//i.test(existingUa);
+        const brandStr = edgeLike
+            ? `"Microsoft Edge";v="${major}", "Chromium";v="${major}", "Not(A:Brand";v="8"`
+            : major >= 131
+                ? `"Google Chrome";v="${major}", "Not A(Brand";v="8", "Chromium";v="${major}"`
+                : `"Google Chrome";v="${major}", "Chromium";v="${major}", "Not.A/Brand";v="99"`;
+        const ua = edgeLike
+            ? `Mozilla/5.0 (${detected.uaToken}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36 Edg/${major}.0.0.0`
+            : `Mozilla/5.0 (${detected.uaToken}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+        setHeaderCaseInsensitive(out, 'User-Agent', ua);
         setHeaderCaseInsensitive(out, 'Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7');
         setHeaderCaseInsensitive(out, 'Accept-Language', out['Accept-Language'] || out['accept-language'] || 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7');
         setHeaderCaseInsensitive(out, 'Accept-Encoding', 'gzip, deflate, br, zstd');
@@ -540,7 +545,7 @@ async function loadImpitModule() {
 }
 
 function buildImpitClientKey(options = {}) {
-    const browser = normalizeImpitBrowser(options.browser || 'chrome136', 'chrome136');
+    const browser = normalizeImpitBrowser(options.browser || 'chrome142', 'chrome142');
     return JSON.stringify({
         browser,
         ignoreTlsErrors: options.ignoreTlsErrors === true,
@@ -554,7 +559,7 @@ function buildImpitClientKey(options = {}) {
 }
 
 async function getImpitClient(options = {}) {
-    const browser = normalizeImpitBrowser(options.browser || 'chrome136', 'chrome136');
+    const browser = normalizeImpitBrowser(options.browser || 'chrome142', 'chrome142');
     const clientOptions = {
         browser,
         ignoreTlsErrors: options.ignoreTlsErrors === true,
@@ -604,10 +609,7 @@ async function requestWithImpit(input, config = {}) {
 
     const timeout = resolveImpitTimeout(options.timeout);
     const method = safeString(options.method || 'GET').toUpperCase() || 'GET';
-    const selectedBrowser = normalizeImpitBrowser(options.browser || getImpitBrowserForFingerprint(options.fingerprint || options.fp), 'chrome136');
-    // Keep the advertised User-Agent (and Chromium client hints) consistent with the TLS
-    // ClientHello impit emits for `selectedBrowser`. Without this, a Chrome/138 UA can be sent
-    // over a chrome136 JA3/JA4 fingerprint, which Cloudflare flags as a UA/TLS mismatch.
+    const selectedBrowser = normalizeImpitBrowser(options.browser || getImpitBrowserForFingerprint(options.fingerprint || options.fp), 'chrome142');
     const requestHeaders = options.alignHeaders === false
         ? compactHeaderObject(headersToPlainObject(options.headers || {}))
         : compactHeaderObject(alignHeadersForImpitBrowser(headersToPlainObject(options.headers || {}), selectedBrowser));

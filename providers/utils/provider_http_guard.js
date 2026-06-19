@@ -239,7 +239,7 @@ function createProviderHttpGuard(options = {}) {
   let lastEmergencyClearanceAt = 0;
 
   function getProfileUserAgent(profile = null) {
-    const fallback = options.fallbackUserAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
+    const fallback = options.fallbackUserAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
     if (profile?.ua || profile?.userAgent) return profile.ua || profile.userAgent;
     const picked = pickProfile(profiles) || {};
     return picked.ua || picked.userAgent || fallback;

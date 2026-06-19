@@ -32,7 +32,7 @@ const CLEARANCE_EGRESS_KEY = String(
 const REDIS_NATIVE_TTL_SECONDS = Math.max(60, Math.floor(CLEARANCE_TTL_MS / 1000));
 
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-  + '(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
+  + '(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 
 const CF_CHALLENGE_MARKERS = [
   /just a moment/i,
