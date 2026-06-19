@@ -23,8 +23,8 @@ const PROVIDER = 'OnlineSerieTV';
 const PROVIDER_CODE = 'OST';
 const ICON = '🖥️';
 
-const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
-const FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0';
+const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+const FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0';
 
 const OST_CODE_DEFAULTS = Object.freeze({
     OST_BASE_URL: DEFAULT_BASE_URL,
@@ -55,12 +55,12 @@ const OST_CODE_DEFAULTS = Object.freeze({
     OST_IMPIT_INNER_RETRY: '0',
     OST_IMPIT_RETRY_ON_CHALLENGE: '0',
     OST_IMPIT_HTTP3: '0',
-    OST_IMPIT_BROWSER: 'chrome125',
+    OST_IMPIT_BROWSER: 'chrome142',
 
     OST_MAXSTREAM_HOST_TIMEOUT_MS: '20000'
 });
 
-const OST_BROWSER_FALLBACKS = Object.freeze(['chrome142', 'chrome136', 'chrome131', 'chrome125', 'firefox144', 'firefox135']);
+const OST_BROWSER_FALLBACKS = Object.freeze(['chrome142', 'firefox144']);
 
 const UPROT_MSF_RE = /https?:\/\/(?:www\.)?upro(?:t|at)\.(?:net|pro)\/msf\/[^\s"'<>\\)]+/i;
 const UPROT_ANY_RE = /https?:\/\/(?:www\.)?upro(?:t|at)\.(?:net|pro)\/[^\s"'<>\\)]+/i;
@@ -183,8 +183,8 @@ function buildOstForwardProxyUrl(targetUrl) {
 function pickOstBrowser(label = '') {
     const preferred = envString('OST_IMPIT_BROWSER', '');
     if (preferred) return preferred;
-    if (label === 'search') return 'chrome125';
-    return OST_BROWSER_FALLBACKS[Math.floor(Math.random() * OST_BROWSER_FALLBACKS.length)] || 'chrome125';
+    if (label === 'search') return 'chrome142';
+    return OST_BROWSER_FALLBACKS[Math.floor(Math.random() * OST_BROWSER_FALLBACKS.length)] || 'chrome142';
 }
 
 function userAgentForBrowser(browser = '') {
