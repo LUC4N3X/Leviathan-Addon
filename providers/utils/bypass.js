@@ -721,7 +721,7 @@ async function requestWithImpitRotating(input, config = {}) {
             const response = await requestWithImpit({
                 ...options,
                 browser,
-                headers: alignHeadersForImpitBrowser(options.headers || {}, browser),
+                headers: alignHeadersForImpitBrowser(headersToPlainObject(options.headers || {}), browser),
                 alignHeaders: false,
                 retry: options.innerRetry || { limit: 0 },
                 retries: 0
