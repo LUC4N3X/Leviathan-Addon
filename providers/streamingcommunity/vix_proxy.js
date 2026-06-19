@@ -4,10 +4,6 @@ const http = require('http');
 const https = require('https');
 const { getRequestOrigin, isSafeRemoteUrl } = require('../../core/utils/url');
 const {
-    buildForwardProxyUrl: buildSharedForwardProxyUrl,
-    normalizeForwardProxyBase: normalizeSharedForwardProxyBase
-} = require('../../core/proxy/forward_proxy_config');
-const {
     resolveTransitKey,
     issueHlsTransitKey,
     normalizeRequestHeaders,
@@ -68,7 +64,6 @@ const SC_HLS_SEGMENT_CACHE_MAX_BYTES = envInt('SC_HLS_SEGMENT_CACHE_MB', 192, 16
 const SC_HLS_SEGMENT_CACHE_MAX_ITEM_BYTES = envInt('SC_HLS_SEGMENT_CACHE_MAX_ITEM_MB', 24, 1, 128) * 1024 * 1024;
 const SC_HLS_SEGMENT_FOLLOWER_TTL_MS = envInt('SC_HLS_SEGMENT_FOLLOWER_TTL_MS', 20 * 60 * 1000, 60 * 1000, 2 * 60 * 60 * 1000);
 
-const SC_FORWARD_PROXY_CONTEXT = 'streamingcommunity-playback';
 
 function envFlag(name, fallback = false) {
     const raw = process.env[name];
@@ -138,53 +133,6 @@ function getManifestCacheControl() {
 
 function getMediaCacheControl() {
     return HLS_MEDIA_CACHE_CONTROL || 'public, max-age=300, stale-while-revalidate=120';
-}
-
-function getScForwardProxyBase() {
-    const raw = String(
-        process.env.SC_FORWARD_PROXY
-        || process.env.STREAMINGCOMMUNITY_FORWARD_PROXY
-        || process.env.STREAMINGCOMMUNITY_FORWARD_PROXY_URL
-        || process.env.VIXSRC_FORWARD_PROXY
-        || process.env.VIX_FORWARD_PROXY
-        || process.env.FORWARD_PROXY
-        || ''
-    ).trim();
-
-    if (!raw) return '';
-    try {
-        return normalizeSharedForwardProxyBase(raw, SC_FORWARD_PROXY_CONTEXT);
-    } catch (error) {
-        console.error(`[VIX PROXY] Invalid StreamingCommunity forward proxy: ${error.message}`);
-        return '';
-    }
-}
-
-function isScForwardProxyEnabled(kind = 'media') {
-    const base = getScForwardProxyBase();
-    if (!base) return false;
-    if (!envFlag('SC_FORWARD_PROXY_ENABLED', envFlag('STREAMINGCOMMUNITY_FORWARD_PROXY_ENABLED', true))) return false;
-    if (kind === 'media') {
-        return envFlag('SC_FORWARD_PROXY_STREAMS', envFlag('STREAMINGCOMMUNITY_FORWARD_PROXY_STREAMS', true));
-    }
-    return true;
-}
-
-function shouldFallbackDirectAfterForward() {
-    return envFlag('SC_FORWARD_PROXY_DIRECT_FALLBACK', envFlag('STREAMINGCOMMUNITY_FORWARD_PROXY_DIRECT_FALLBACK', false));
-}
-
-function buildScForwardProxyUrl(targetUrl, kind = 'media') {
-    if (!isScForwardProxyEnabled(kind)) return null;
-    const base = getScForwardProxyBase();
-    if (!base) return null;
-    try {
-        const proxied = buildSharedForwardProxyUrl(targetUrl, { base, context: SC_FORWARD_PROXY_CONTEXT });
-        return proxied && proxied !== targetUrl ? proxied : null;
-    } catch (error) {
-        console.error(`[VIX PROXY] Forward proxy url build failed: ${error.message}`);
-        return null;
-    }
 }
 
 function safeLogHost(value) {
@@ -366,10 +314,7 @@ async function fetchSegmentBufferForCache(targetUrl, referer, upstreamHeaders = 
     delete headers.Range;
     delete headers.range;
 
-    const forwardUrl = buildScForwardProxyUrl(targetUrl, 'media');
-    const attempts = [];
-    if (forwardUrl) attempts.push({ requestUrl: forwardUrl, forwarded: true });
-    if (!forwardUrl || shouldFallbackDirectAfterForward()) attempts.push({ requestUrl: targetUrl, forwarded: false });
+    const attempts = [{ requestUrl: targetUrl, forwarded: false }];
 
     let lastError = null;
     let lastResponse = null;
@@ -378,9 +323,7 @@ async function fetchSegmentBufferForCache(targetUrl, referer, upstreamHeaders = 
         try {
             const response = await axios.get(attempt.requestUrl, {
                 headers,
-                timeout: attempt.forwarded
-                    ? envInt('SC_FORWARD_PROXY_STREAM_TIMEOUT_MS', UPSTREAM_TIMEOUT_MS, 1000, 120000)
-                    : UPSTREAM_TIMEOUT_MS,
+                timeout: UPSTREAM_TIMEOUT_MS,
                 maxRedirects: MAX_UPSTREAM_REDIRECTS,
                 responseType: 'arraybuffer',
                 validateStatus: () => true,
@@ -399,10 +342,10 @@ async function fetchSegmentBufferForCache(targetUrl, referer, upstreamHeaders = 
 
             const status = Number(response?.status || 0);
             if (status >= 200 && status < 300) return response;
-            if (!attempt.forwarded || !UPSTREAM_RETRY_STATUSES.has(status) || !shouldFallbackDirectAfterForward()) return response;
+            if (!attempt.forwarded || !UPSTREAM_RETRY_STATUSES.has(status)) return response;
         } catch (error) {
             lastError = error;
-            if (!attempt.forwarded || !shouldFallbackDirectAfterForward()) throw error;
+            if (!attempt.forwarded) throw error;
         }
     }
 
@@ -816,10 +759,7 @@ async function fetchUpstreamOnce(targetUrl, referer, upstreamHeaders = null, req
     if (range && /^bytes=\d*-\d*(?:,\d*-\d*)*$/i.test(range)) headers.Range = range;
 
     const streamBody = shouldStreamUpstreamBody(targetUrl);
-    const forwardUrl = buildScForwardProxyUrl(targetUrl, 'media');
-    const attempts = [];
-    if (forwardUrl) attempts.push({ requestUrl: forwardUrl, forwarded: true });
-    if (!forwardUrl || shouldFallbackDirectAfterForward()) attempts.push({ requestUrl: targetUrl, forwarded: false });
+    const attempts = [{ requestUrl: targetUrl, forwarded: false }];
 
     let lastResponse = null;
     let lastError = null;
@@ -828,9 +768,7 @@ async function fetchUpstreamOnce(targetUrl, referer, upstreamHeaders = null, req
         try {
             const response = await axios.get(attempt.requestUrl, {
                 headers,
-                timeout: attempt.forwarded
-                    ? envInt('SC_FORWARD_PROXY_STREAM_TIMEOUT_MS', UPSTREAM_TIMEOUT_MS, 1000, 120000)
-                    : UPSTREAM_TIMEOUT_MS,
+                timeout: UPSTREAM_TIMEOUT_MS,
                 maxRedirects: MAX_UPSTREAM_REDIRECTS,
                 responseType: streamBody ? 'stream' : 'arraybuffer',
                 validateStatus: () => true,
@@ -847,13 +785,11 @@ async function fetchUpstreamOnce(targetUrl, referer, upstreamHeaders = null, req
             lastResponse = response;
 
             const status = Number(response?.status || 0);
-            if (!attempt.forwarded || !UPSTREAM_RETRY_STATUSES.has(status) || !shouldFallbackDirectAfterForward()) return response;
+            if (!attempt.forwarded || !UPSTREAM_RETRY_STATUSES.has(status)) return response;
             destroyUpstreamBody(response);
-            console.warn(`[VIX PROXY] Forward proxy retryable status ${status}; trying direct fallback for ${safeLogHost(targetUrl)}`);
         } catch (error) {
             lastError = error;
-            if (!attempt.forwarded || !shouldFallbackDirectAfterForward()) throw error;
-            console.warn(`[VIX PROXY] Forward proxy error; trying direct fallback for ${safeLogHost(targetUrl)} via=${safeLogHost(attempt.requestUrl)} error=${error.message}`);
+            if (!attempt.forwarded) throw error;
         }
     }
 
