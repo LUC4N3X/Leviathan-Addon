@@ -26,6 +26,11 @@ const {
     normalizeLanguage: normalizePlaylistLanguage
 } = require('../utils/playlist_intelligence');
 const { createBlockedFallbackGuard } = require('../utils/provider_blocked_fallback');
+const {
+    requestWithImpitRotating,
+    getStickyFingerprintForUrl,
+    getImpitBrowserForFingerprint
+} = require('../utils/bypass');
 const { getProviderDomain } = require('../utils/provider_domain_registry');
 
 const VIX_BASE = getProviderDomain('streamingcommunity', 'https://vixsrc.to');
@@ -309,6 +314,79 @@ function buildHeaders(referer = null, kind = 'html') {
     return headers;
 }
 
+// Cloudflare fingerprints the TLS ClientHello (JA3/JA4) of the first navigation request.
+// Raw axios uses Node's TLS stack, which never matches the Chrome User-Agent we advertise, so
+// the entry HTML page is routed through impit, which emits a real browser ClientHello and keeps
+// the User-Agent aligned with that fingerprint. JSON/playlist/script follow-ups keep their own
+// Accept semantics on the existing axios + shield path.
+const IMPIT_DIRECT_KINDS = new Set(['html', 'page']);
+
+function preferImpitForDirect(kind = 'page') {
+    if (!envFlag('SC_PREFER_IMPIT', envFlag('STREAMINGCOMMUNITY_PREFER_IMPIT', true))) return false;
+    return IMPIT_DIRECT_KINDS.has(String(kind || 'page'));
+}
+
+async function impitDirectRequest(url, { method = 'GET', headers = {}, timeout, responseType, data } = {}) {
+    try {
+        const fingerprint = getStickyFingerprintForUrl(url);
+        const response = await requestWithImpitRotating({
+            url,
+            method,
+            headers,
+            body: method === 'GET' || method === 'HEAD' ? undefined : data,
+            timeout,
+            fingerprint,
+            browser: getImpitBrowserForFingerprint(fingerprint),
+            responseType: responseType === 'arraybuffer' || responseType === 'buffer' ? 'arraybuffer' : 'text',
+            maxBrowserAttempts: 2,
+            retryOnChallenge: true,
+            followRedirect: true,
+            failSoft: true
+        });
+        if (!response) return null;
+
+        const finalUrl = response.url || url;
+        return {
+            status: Number(response.statusCode ?? response.status ?? 0),
+            headers: response.headers || {},
+            data: response.body ?? response.data,
+            config: { url },
+            request: { res: { responseUrl: finalUrl } },
+            _impit: true,
+            _impitBrowser: response.impitBrowser || null
+        };
+    } catch (error) {
+        // impit is an optional native dependency; fall back to axios when unavailable.
+        return null;
+    }
+}
+
+async function performAttemptRequest(attempt, { method = 'GET', headers = {}, timeout, responseType, data, kind = 'page' } = {}) {
+    const requestTimeout = attempt.forwarded
+        ? envInt('SC_FORWARD_PROXY_TIMEOUT_MS', timeout || REQUEST_TIMEOUT, 1000, 60000)
+        : timeout;
+
+    if (!attempt.forwarded && preferImpitForDirect(kind)) {
+        const impitResponse = await impitDirectRequest(attempt.requestUrl, {
+            method,
+            headers,
+            timeout: requestTimeout,
+            responseType,
+            data
+        });
+        if (impitResponse) return impitResponse;
+    }
+
+    return http.request({
+        url: attempt.requestUrl,
+        method,
+        headers,
+        timeout: requestTimeout,
+        responseType,
+        data
+    });
+}
+
 async function getWithRetries(url, {
     method = 'GET',
     headers = {},
@@ -340,16 +418,7 @@ async function getWithRetries(url, {
     for (const attempt of attempts) {
         try {
             const response = await requestBreaker.run(`${domain}:${attempt.via}`, async () => resilientCall(
-                async () => http.request({
-                    url: attempt.requestUrl,
-                    method,
-                    headers,
-                    timeout: attempt.forwarded
-                        ? envInt('SC_FORWARD_PROXY_TIMEOUT_MS', timeout || REQUEST_TIMEOUT, 1000, 60000)
-                        : timeout,
-                    responseType,
-                    data
-                }),
+                async () => performAttemptRequest(attempt, { method, headers, timeout, responseType, data, kind }),
                 {
                     attempts: MAX_FETCH_RETRIES,
                     shouldRetry: ({ error, status }) => (

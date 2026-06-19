@@ -605,6 +605,12 @@ async function requestWithImpit(input, config = {}) {
     const timeout = resolveImpitTimeout(options.timeout);
     const method = safeString(options.method || 'GET').toUpperCase() || 'GET';
     const selectedBrowser = normalizeImpitBrowser(options.browser || getImpitBrowserForFingerprint(options.fingerprint || options.fp), 'chrome136');
+    // Keep the advertised User-Agent (and Chromium client hints) consistent with the TLS
+    // ClientHello impit emits for `selectedBrowser`. Without this, a Chrome/138 UA can be sent
+    // over a chrome136 JA3/JA4 fingerprint, which Cloudflare flags as a UA/TLS mismatch.
+    const requestHeaders = options.alignHeaders === false
+        ? compactHeaderObject(headersToPlainObject(options.headers || {}))
+        : compactHeaderObject(alignHeadersForImpitBrowser(headersToPlainObject(options.headers || {}), selectedBrowser));
     const client = await getImpitClient({
         browser: selectedBrowser,
         ignoreTlsErrors: options.ignoreTlsErrors ?? options.https?.rejectUnauthorized === false,
@@ -628,7 +634,7 @@ async function requestWithImpit(input, config = {}) {
         try {
             const response = await client.fetch(String(url), {
                 method,
-                headers: compactHeaderObject(headersToPlainObject(options.headers || {})),
+                headers: requestHeaders,
                 body,
                 timeout,
                 forceHttp3: options.forceHttp3 === true,
@@ -715,7 +721,8 @@ async function requestWithImpitRotating(input, config = {}) {
             const response = await requestWithImpit({
                 ...options,
                 browser,
-                headers: alignHeadersForImpitBrowser(options.headers || {}, browser),
+                headers: alignHeadersForImpitBrowser(headersToPlainObject(options.headers || {}), browser),
+                alignHeaders: false,
                 retry: options.innerRetry || { limit: 0 },
                 retries: 0
             });
