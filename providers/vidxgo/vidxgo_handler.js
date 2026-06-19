@@ -83,7 +83,7 @@ const KITSU_LOOKUP_TIMEOUT_MS = positiveInt(process.env.VIDXGO_KITSU_LOOKUP_TIME
 const KITSU_MAPPING_TIMEOUT_MS = positiveInt(process.env.VIDXGO_KITSU_MAPPING_TIMEOUT_MS, 2600, 800);
 const KITSU_TMDB_TIMEOUT_MS = positiveInt(process.env.VIDXGO_KITSU_TMDB_TIMEOUT_MS, 2600, 800);
 const DEBUG = envFlag('VIDXGO_DEBUG', false);
-const USER_AGENT = String(process.env.VIDXGO_USER_AGENT || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36');
+const USER_AGENT = String(process.env.VIDXGO_USER_AGENT || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36');
 
 const http = axios.create({
     timeout: TIMEOUT_MS,
