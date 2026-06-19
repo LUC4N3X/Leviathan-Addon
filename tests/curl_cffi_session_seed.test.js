@@ -14,7 +14,7 @@ test('curl_cffi is seeded with hydrated CloudflareBypass/Redis session cookies',
       assert.equal(reason, 'curl-cffi-seed');
       session = {
         source: 'cloudflare-bypass',
-        userAgent: 'Mozilla/5.0 Test Chrome/138.0.0.0 Safari/537.36',
+        userAgent: 'Mozilla/5.0 Test Chrome/142.0.0.0 Safari/537.36',
         cookies: 'cf_clearance=abc123; guardoserie_sid=sid456',
         url: 'https://guardoserie.run',
         solvedUrl: 'https://guardoserie.run/',
@@ -50,7 +50,7 @@ test('curl_cffi is seeded with hydrated CloudflareBypass/Redis session cookies',
   const { options } = runnerCalls[0];
   assert.match(options.headers.Cookie, /cf_clearance=abc123/);
   assert.match(options.headers.Cookie, /guardoserie_sid=sid456/);
-  assert.equal(options.headers['User-Agent'], 'Mozilla/5.0 Test Chrome/138.0.0.0 Safari/537.36');
+  assert.equal(options.headers['User-Agent'], 'Mozilla/5.0 Test Chrome/142.0.0.0 Safari/537.36');
   assert.ok(Array.isArray(options.cookiesJson));
   assert.ok(options.cookiesJson.some(cookie => cookie.name === 'cf_clearance' && cookie.value === 'abc123'));
 });
