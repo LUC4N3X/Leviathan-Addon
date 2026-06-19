@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 
 const USER_AGENT = process.env.LEVIATHAN_USER_AGENT
-    || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
+    || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 
 const FETCH_TIMEOUT = positiveInt(process.env.LEVIATHAN_FETCH_TIMEOUT_MS, 10000);
 const DEFAULT_MAPPING_API = trimTrailingSlash(process.env.LEVIATHAN_MAPPING_API || 'https://anime.questoleviatanormio.dpdns.org');

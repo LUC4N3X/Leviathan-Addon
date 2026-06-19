@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36';
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 const FETCH_TIMEOUT = 10000;
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_HTTP_TTL = 5 * 60 * 1000;
