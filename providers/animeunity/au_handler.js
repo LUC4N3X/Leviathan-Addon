@@ -35,7 +35,7 @@ const PROVIDER_CODE = 'AU';
 const USER_AGENT = String(
     process.env.ANIMEUNITY_USER_AGENT
     || process.env.AU_USER_AGENT
-    || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36'
+    || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
 ).trim();
 const REQUEST_TIMEOUT = Math.max(3000, Number.parseInt(String(process.env.ANIMEUNITY_TIMEOUT_MS || process.env.AU_TIMEOUT_MS || '10000'), 10) || 10000);
 const SESSION_TTL_MS = 20 * 60 * 1000;
