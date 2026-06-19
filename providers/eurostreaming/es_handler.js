@@ -24,7 +24,7 @@ try { Tesseract = require('tesseract.js'); } catch (_) {}
 let setCookieParser = null;
 try { setCookieParser = require('set-cookie-parser'); } catch (_) {}
 
-const SAFEGO_FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0';
+const SAFEGO_FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0';
 
 const DEFAULT_BASE_URL = getProviderDomain('eurostreaming', 'https://eurostream.ing');
 const PROVIDER = 'Eurostreaming';
@@ -1297,7 +1297,7 @@ async function chaseToHosterPage(client, href, referer, options = {}) {
 
     const headers = {
         Referer: referer || getBaseUrl(),
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
     };
@@ -1420,7 +1420,7 @@ async function resolveDeltabitDirectStream(client, href, referer, options = {}, 
         esDebug('warn', 'deltabit source cache ignored non-playable', { pageHost: safeHost(pageUrl), pagePath: safePath(pageUrl), sourceHost: safeHost(cachedResolved.streamUrl), sourcePath: safePath(cachedResolved.streamUrl) });
     }
 
-    const userAgent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36';
+    const userAgent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
     let extractor = options.deltabitExtractor === 'Turbovid' ? 'Turbovid' : 'Deltabit';
 
     let deltabitCookies = {};
