@@ -45,10 +45,9 @@ function normalizeBaseUrl(value) {
     }
 }
 
-// vidsrc-embed.ru serves the cloudnestra /rcp/ iframe in static HTML and is reachable
-// over Kraken's direct egress (vidsrc.ru lacks the iframe; vidsrc.cc tends to time out
-// without a proxy). The Kraken extractor still falls back across known mirrors.
-const EMBED_BASE = normalizeBaseUrl(process.env.VIDSRC_EMBED_BASE || 'https://vidsrc-embed.ru') || 'https://vidsrc-embed.ru';
+// Official vidsrc.ru entry: /movie/{id} and /tv/{id}/{s}/{e} (TMDB or IMDb id).
+// The Kraken extractor reparses this and falls back across known mirrors.
+const EMBED_BASE = normalizeBaseUrl(process.env.VIDSRC_EMBED_BASE || 'https://vidsrc.ru') || 'https://vidsrc.ru';
 const DS_LANG = String(process.env.VIDSRC_DS_LANG || DEFAULT_DS_LANG).trim() || DEFAULT_DS_LANG;
 const STREAM_TTL_MS = positiveInt(process.env.VIDSRC_STREAM_TTL_MS, 10 * 60 * 1000, 60_000);
 const STALE_STREAM_TTL_MS = Math.max(STREAM_TTL_MS, positiveInt(process.env.VIDSRC_STALE_STREAM_TTL_MS, 45 * 60 * 1000, STREAM_TTL_MS));
@@ -130,14 +129,13 @@ async function resolveTmdbId(meta = {}, config = {}) {
     return tmdbId ? String(tmdbId) : null;
 }
 
-/** Build the vidsrc embed URL (ITA-first via ds_lang) for a movie or episode. */
+/** Build the official vidsrc.ru URL (/movie/{id} or /tv/{id}/{s}/{e}) for a movie or episode. */
 function buildEmbedUrl(tmdbId, { series = false, season = null, episode = null } = {}) {
     const base = EMBED_BASE;
     const path = series
-        ? `/embed/tv/${tmdbId}/${season}/${episode}`
-        : `/embed/movie/${tmdbId}`;
-    const query = DS_LANG ? `?ds_lang=${encodeURIComponent(DS_LANG)}` : '';
-    return `${base}${path}${query}`;
+        ? `/tv/${tmdbId}/${season}/${episode}`
+        : `/movie/${tmdbId}`;
+    return `${base}${path}`;
 }
 
 /** Extract a 4-digit release year from meta, or null. */
