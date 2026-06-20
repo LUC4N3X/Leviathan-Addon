@@ -17,18 +17,21 @@ const PROVIDER_CODE = 'VSR';
 // as Italian audio, consistent with the rest of Leviathan.
 const DEFAULT_DS_LANG = 'it';
 
+/** Read a boolean-ish env var, returning `fallback` when unset/empty. */
 function envFlag(name, fallback = false) {
     const value = process.env[name];
     if (value === undefined || value === null || value === '') return fallback;
     return /^(1|true|yes|on)$/i.test(String(value).trim());
 }
 
+/** Parse a positive integer, clamping to `fallback` when invalid or below `minimum`. */
 function positiveInt(value, fallback, minimum = 1) {
     const parsed = Number.parseInt(value, 10);
     if (!Number.isFinite(parsed) || parsed < minimum) return fallback;
     return parsed;
 }
 
+/** Normalise a value into a scheme-qualified origin URL without trailing slash, or null. */
 function normalizeBaseUrl(value) {
     const raw = String(value || '').trim();
     if (!raw) return null;
@@ -62,12 +65,14 @@ const cache = {
 
 const singleFlight = new SingleFlight('vidsrc');
 
+/** Debug logger gated by VIDSRC_DEBUG. */
 function log(message, meta = null) {
     if (!DEBUG) return;
     const suffix = meta ? ` ${JSON.stringify(meta)}` : '';
     console.log(`[VidSrc] ${message}${suffix}`);
 }
 
+/** Extract the first positive integer found in a value, or null. */
 function parsePositiveNumber(value) {
     if (value === null || value === undefined || value === '') return null;
     const match = String(value).match(/\d+/);
@@ -76,6 +81,7 @@ function parsePositiveNumber(value) {
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+/** Heuristically decide whether the request targets a TV series/episode. */
 function isSeriesRequest(meta = {}) {
     const type = String(meta.type || '').toLowerCase();
     const idHaystack = String(meta.id || meta.imdb_id || meta.imdbId || meta.stremioId || '');
@@ -86,6 +92,7 @@ function isSeriesRequest(meta = {}) {
         || /tt\d{5,12}:\d+:\d+/i.test(idHaystack);
 }
 
+/** Pull season/episode out of a packed Stremio id (e.g. ttID:1:2). */
 function episodeFromPackedId(value) {
     const match = String(value || '').match(/tt\d{5,12}:(\d{1,3}):(\d{1,4})/i)
         || String(value || '').match(/:(\d{1,3}):(\d{1,4})(?:$|[^\d])/);
@@ -96,6 +103,7 @@ function episodeFromPackedId(value) {
     };
 }
 
+/** Resolve {season, episode, valid} from explicit fields or a packed id. */
 function normalizeEpisodeInfo(meta = {}) {
     const packed = episodeFromPackedId(meta.id || meta.stremioId || meta.imdb_id || meta.imdbId);
     const season = parsePositiveNumber(meta.season ?? meta.seasonNumber) || packed.season;
@@ -107,6 +115,7 @@ function normalizeEpisodeInfo(meta = {}) {
     };
 }
 
+/** Resolve a TMDB id from meta, falling back to a TMDB lookup (vidsrc is TMDB-first). */
 async function resolveTmdbId(meta = {}, config = {}) {
     const direct = tmdbHelper.normalizeTmdbId(meta.tmdb_id || meta.tmdbId || meta.tmdb);
     if (direct) return String(direct);
@@ -118,6 +127,7 @@ async function resolveTmdbId(meta = {}, config = {}) {
     return tmdbId ? String(tmdbId) : null;
 }
 
+/** Build the vidsrc embed URL (ITA-first via ds_lang) for a movie or episode. */
 function buildEmbedUrl(tmdbId, { series = false, season = null, episode = null } = {}) {
     const base = EMBED_BASE;
     const path = series
@@ -127,11 +137,13 @@ function buildEmbedUrl(tmdbId, { series = false, season = null, episode = null }
     return `${base}${path}${query}`;
 }
 
+/** Extract a 4-digit release year from meta, or null. */
 function extractYear(meta = {}) {
     const match = String(meta.year || meta.releaseYear || meta.released || '').match(/\b(19\d{2}|20\d{2})\b/);
     return match ? match[1] : null;
 }
 
+/** Build the human-readable title shown in the stream (adds SxxExx or year). */
 function buildDisplayTitle(meta = {}, { series = false, season = null, episode = null } = {}) {
     const base = String(meta.title || meta.name || meta.originalTitle || PROVIDER_LABEL).trim();
     if (series) return `${base} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
@@ -139,14 +151,17 @@ function buildDisplayTitle(meta = {}, { series = false, season = null, episode =
     return year ? `${base} (${year})` : base;
 }
 
+/** Compose the two-line stream subtitle, tagging the ITA audio track. */
 function buildStreamTitle(displayTitle) {
     return [displayTitle, `${PROVIDER_LABEL} ITA`].filter(Boolean).join('\n');
 }
 
+/** Build the per-content cache key (movie vs season/episode). */
 function createContentKey(tmdbId, { series = false, season = null, episode = null } = {}) {
     return `${tmdbId || 'unknown'}:${series ? `s${season}e${episode}` : 'movie'}`;
 }
 
+/** Core search: resolve TMDB, build the embed, and return a Kraken-proxied ITA stream (cached). */
 async function searchVidsrcImpl(meta = {}, config = {}, reqHost = null) {
     if (!config?.filters?.enableVidsrc) return [];
 
@@ -239,6 +254,7 @@ async function searchVidsrcImpl(meta = {}, config = {}, reqHost = null) {
     });
 }
 
+/** Public entry point: run the VidSrc search under provider health/timeout guards. */
 async function searchVidsrc(meta = {}, config = {}, reqHost = null) {
     // Internal guard timeout (fires first). Kept distinct from VIDSRC_PROVIDER_TIMEOUT,
     // which the provider registry uses only for the outer orchestrator minimum.
