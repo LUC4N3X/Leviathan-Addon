@@ -51,6 +51,7 @@ function defaultPolicyForKind(kind = 'site', options = {}) {
     return {
       enabled,
       minIntervalMs: Number.isFinite(Number(options.minIntervalMs)) ? Number(options.minIntervalMs) : envNumber('BYPASS_SOLVE_MIN_INTERVAL_MS', 2500, 0, 120000),
+      jitterMs: Number.isFinite(Number(options.jitterMs)) ? Number(options.jitterMs) : envNumber('BYPASS_SOLVE_JITTER_MS', 1000, 0, 120000),
       maxConcurrency: Number.isFinite(Number(options.maxConcurrency)) ? Number(options.maxConcurrency) : envNumber('BYPASS_SOLVE_MAX_CONCURRENCY', 1, 1, 4),
       maxQueue: Number.isFinite(Number(options.maxQueue)) ? Number(options.maxQueue) : envNumber('BYPASS_SOLVE_MAX_QUEUE', 80, 0, 1000)
     };
@@ -60,6 +61,7 @@ function defaultPolicyForKind(kind = 'site', options = {}) {
     return {
       enabled,
       minIntervalMs: Number.isFinite(Number(options.minIntervalMs)) ? Number(options.minIntervalMs) : envNumber('BYPASS_SERVICE_MIN_INTERVAL_MS', 500, 0, 120000),
+      jitterMs: Number.isFinite(Number(options.jitterMs)) ? Number(options.jitterMs) : envNumber('BYPASS_SERVICE_JITTER_MS', 200, 0, 120000),
       maxConcurrency: Number.isFinite(Number(options.maxConcurrency)) ? Number(options.maxConcurrency) : envNumber('BYPASS_SERVICE_MAX_CONCURRENCY', 2, 1, 8),
       maxQueue: Number.isFinite(Number(options.maxQueue)) ? Number(options.maxQueue) : envNumber('BYPASS_SERVICE_MAX_QUEUE', 120, 0, 1000)
     };
@@ -68,9 +70,17 @@ function defaultPolicyForKind(kind = 'site', options = {}) {
   return {
     enabled,
     minIntervalMs: Number.isFinite(Number(options.minIntervalMs)) ? Number(options.minIntervalMs) : envNumber('BYPASS_SITE_MIN_INTERVAL_MS', 250, 0, 120000),
+    jitterMs: Number.isFinite(Number(options.jitterMs)) ? Number(options.jitterMs) : envNumber('BYPASS_SITE_JITTER_MS', 200, 0, 120000),
     maxConcurrency: Number.isFinite(Number(options.maxConcurrency)) ? Number(options.maxConcurrency) : envNumber('BYPASS_SITE_MAX_CONCURRENCY', 2, 1, 16),
     maxQueue: Number.isFinite(Number(options.maxQueue)) ? Number(options.maxQueue) : envNumber('BYPASS_SITE_MAX_QUEUE', 300, 0, 5000)
   };
+}
+
+function computeNextAt(policy) {
+  const base = Math.max(0, Number(policy.minIntervalMs) || 0);
+  const jitter = Math.max(0, Number(policy.jitterMs) || 0);
+  const extra = jitter > 0 ? Math.floor(Math.random() * (jitter + 1)) : 0;
+  return Date.now() + base + extra;
 }
 
 const limiterStates = new Map();
@@ -99,7 +109,7 @@ function pumpLimiter(key, policy) {
 
   const start = () => {
     state.active += 1;
-    state.nextAt = Date.now() + policy.minIntervalMs;
+    state.nextAt = computeNextAt(policy);
     Promise.resolve()
       .then(item.fn)
       .then(item.resolve, item.reject)
