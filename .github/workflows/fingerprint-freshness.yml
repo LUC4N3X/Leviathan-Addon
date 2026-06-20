@@ -1,0 +1,48 @@
+name: Fingerprint Freshness
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'core/security/browser_profiles.js'
+      - 'core/security/fingerprint_manifest.js'
+      - 'providers/utils/bypass.js'
+      - 'providers/utils/cf_curl_cffi.py'
+      - 'scripts/check_fingerprint_freshness.js'
+      - '.github/workflows/fingerprint-freshness.yml'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: fingerprint-freshness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  freshness:
+    name: Fingerprint coherence and freshness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check fingerprint coherence and freshness
+        run: node scripts/check_fingerprint_freshness.js --ci

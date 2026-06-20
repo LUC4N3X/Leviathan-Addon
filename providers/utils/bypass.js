@@ -2,15 +2,10 @@
 
 const axios = require('axios');
 const antibotSignatures = require('./antibot_signatures');
+const { IMPIT_BROWSER_VERSIONS } = require('../../core/security/fingerprint_manifest');
 
 const IMPIT_INSTANCE_CACHE = new Map();
 let impitModulePromise = null;
-
-const IMPIT_BROWSER_VERSIONS = Object.freeze({
-    chrome: Object.freeze([142]),
-    firefox: Object.freeze([144]),
-    okhttp: Object.freeze([3, 4, 5])
-});
 
 const SUPPORTED_IMPIT_BROWSERS = new Set(Object.entries(IMPIT_BROWSER_VERSIONS).flatMap(([prefix, versions]) => [
     prefix,
@@ -1127,6 +1122,7 @@ module.exports = {
     isCloudflareChallenge,
     responseText,
 
+    IMPIT_BROWSER_VERSIONS,
     buildContextHeaders,
     classifyBlockResponse,
     clearGoodImpitBrowser,

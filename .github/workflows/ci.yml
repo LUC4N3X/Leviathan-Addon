@@ -113,7 +113,8 @@ jobs:
             tests/source_mode.test.js \
             tests/title_parser.test.js \
             tests/language_guard.test.js \
-            tests/stream_quality_filters.test.js
+            tests/stream_quality_filters.test.js \
+            tests/fingerprint_coherence.test.js
 
   runtime:
     name: Runtime smoke · Node ${{ matrix.node-version }}
@@ -157,4 +158,5 @@ jobs:
             tests/source_mode.test.js \
             tests/title_parser.test.js \
             tests/language_guard.test.js \
-            tests/stream_quality_filters.test.js
+            tests/stream_quality_filters.test.js \
+            tests/fingerprint_coherence.test.js

@@ -10,7 +10,7 @@ const {
 } = require('../extractors/common');
 
 const MOFLIX_BASE = String(process.env.MOFLIX_BASE || 'https://moflix-stream.xyz').replace(/\/+$/, '');
-const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0';
+const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0';
 const REQUEST_TIMEOUT = Math.max(4000, Number.parseInt(process.env.MOFLIX_TIMEOUT_MS || '9000', 10) || 9000);
 const PLAYLIST_TIMEOUT = Math.max(2500, Number.parseInt(process.env.MOFLIX_PLAYLIST_TIMEOUT_MS || '4500', 10) || 4500);
 const MAX_SERVERS = Math.max(1, Math.min(12, Number.parseInt(process.env.MOFLIX_MAX_SERVERS || '6', 10) || 6));
