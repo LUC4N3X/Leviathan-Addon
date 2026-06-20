@@ -6,10 +6,15 @@ const path = require('node:path');
 const { IMPIT_CEILING } = require('../core/security/fingerprint_manifest');
 const { scanRepoUserAgents } = require('../core/security/fingerprint_scan');
 
+function intFromEnv(value, fallback) {
+    const parsed = Number.parseInt(String(value == null ? '' : value), 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 const REPO_ROOT = path.resolve(__dirname, '..');
 const CI_MODE = process.argv.includes('--ci');
-const DRIFT_LIMIT = Number.parseInt(process.env.FINGERPRINT_DRIFT_LIMIT || '2', 10);
-const FETCH_TIMEOUT_MS = Number.parseInt(process.env.FINGERPRINT_FETCH_TIMEOUT_MS || '8000', 10);
+const DRIFT_LIMIT = intFromEnv(process.env.FINGERPRINT_DRIFT_LIMIT, 2);
+const FETCH_TIMEOUT_MS = intFromEnv(process.env.FINGERPRINT_FETCH_TIMEOUT_MS, 8000);
 const STRICT = /^(1|true|yes|on)$/i.test(String(process.env.FINGERPRINT_FRESHNESS_STRICT || ''));
 
 const ENDOFLIFE = {
