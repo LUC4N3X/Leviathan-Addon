@@ -45,7 +45,9 @@ function normalizeBaseUrl(value) {
     }
 }
 
-const EMBED_BASE = normalizeBaseUrl(process.env.VIDSRC_EMBED_BASE || 'https://vidsrc.ru') || 'https://vidsrc.ru';
+// vidsrc.cc serves the cloudnestra /rcp/ iframe in static HTML (vidsrc.ru does not);
+// the Kraken extractor additionally falls back across known embed mirrors.
+const EMBED_BASE = normalizeBaseUrl(process.env.VIDSRC_EMBED_BASE || 'https://vidsrc.cc') || 'https://vidsrc.cc';
 const DS_LANG = String(process.env.VIDSRC_DS_LANG || DEFAULT_DS_LANG).trim() || DEFAULT_DS_LANG;
 const STREAM_TTL_MS = positiveInt(process.env.VIDSRC_STREAM_TTL_MS, 10 * 60 * 1000, 60_000);
 const STALE_STREAM_TTL_MS = Math.max(STREAM_TTL_MS, positiveInt(process.env.VIDSRC_STALE_STREAM_TTL_MS, 45 * 60 * 1000, STREAM_TTL_MS));
