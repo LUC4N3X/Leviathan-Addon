@@ -45,9 +45,10 @@ function normalizeBaseUrl(value) {
     }
 }
 
-// vidsrc.cc serves the cloudnestra /rcp/ iframe in static HTML (vidsrc.ru does not);
-// the Kraken extractor additionally falls back across known embed mirrors.
-const EMBED_BASE = normalizeBaseUrl(process.env.VIDSRC_EMBED_BASE || 'https://vidsrc.cc') || 'https://vidsrc.cc';
+// vidsrc-embed.ru serves the cloudnestra /rcp/ iframe in static HTML and is reachable
+// over Kraken's direct egress (vidsrc.ru lacks the iframe; vidsrc.cc tends to time out
+// without a proxy). The Kraken extractor still falls back across known mirrors.
+const EMBED_BASE = normalizeBaseUrl(process.env.VIDSRC_EMBED_BASE || 'https://vidsrc-embed.ru') || 'https://vidsrc-embed.ru';
 const DS_LANG = String(process.env.VIDSRC_DS_LANG || DEFAULT_DS_LANG).trim() || DEFAULT_DS_LANG;
 const STREAM_TTL_MS = positiveInt(process.env.VIDSRC_STREAM_TTL_MS, 10 * 60 * 1000, 60_000);
 const STALE_STREAM_TTL_MS = Math.max(STREAM_TTL_MS, positiveInt(process.env.VIDSRC_STALE_STREAM_TTL_MS, 45 * 60 * 1000, STREAM_TTL_MS));
