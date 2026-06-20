@@ -77,6 +77,7 @@ const BOOLEAN_FILTER_KEYS = [
   'enableGhd',
   'enableGs',
   'enableVidxgo',
+  'enableVidsrc',
   'enableEs',
   'enableCb01',
   'enableOnlineserietv',

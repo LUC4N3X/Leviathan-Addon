@@ -34,6 +34,7 @@ const WEB_PROVIDER_FLAGS = Object.freeze([
     'enableGhd',
     'enableGs',
     'enableVidxgo',
+    'enableVidsrc',
     'enableEs',
     'enableCb01',
     'enableOnlineserietv',
