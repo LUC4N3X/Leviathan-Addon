@@ -1,21 +1,16 @@
 #!/usr/bin/env node
 'use strict';
 
-const fs = require('node:fs');
 const path = require('node:path');
 
-const {
-    IMPIT_CEILING,
-    evaluateUserAgents
-} = require('../core/security/fingerprint_manifest');
-const { CANONICAL_BROWSER_PROFILES } = require('../core/security/browser_profiles');
+const { IMPIT_CEILING } = require('../core/security/fingerprint_manifest');
+const { scanRepoUserAgents } = require('../core/security/fingerprint_scan');
 
+const REPO_ROOT = path.resolve(__dirname, '..');
 const CI_MODE = process.argv.includes('--ci');
 const DRIFT_LIMIT = Number.parseInt(process.env.FINGERPRINT_DRIFT_LIMIT || '2', 10);
 const FETCH_TIMEOUT_MS = Number.parseInt(process.env.FINGERPRINT_FETCH_TIMEOUT_MS || '8000', 10);
 const STRICT = /^(1|true|yes|on)$/i.test(String(process.env.FINGERPRINT_FRESHNESS_STRICT || ''));
-
-const CURL_CFFI_PATH = path.resolve(__dirname, '../providers/utils/cf_curl_cffi.py');
 
 const ENDOFLIFE = {
     chrome: 'https://endoflife.date/api/chrome.json',
@@ -54,45 +49,17 @@ async function fetchLatestMajor(url) {
     }
 }
 
-function curlCffiViolations() {
-    let source = '';
-    try {
-        source = fs.readFileSync(CURL_CFFI_PATH, 'utf8');
-    } catch (_) {
-        return [];
-    }
-    const violations = [];
-    for (const match of source.matchAll(/Chrome\/(\d+)\.0\.0\.0/g)) {
-        const major = Number(match[1]);
-        if (major !== IMPIT_CEILING.chrome) {
-            violations.push({ family: 'curl_cffi:chrome', expected: IMPIT_CEILING.chrome, found: major });
-        }
-    }
-    for (const match of source.matchAll(/Firefox\/(\d+)\.0/g)) {
-        const major = Number(match[1]);
-        if (major !== IMPIT_CEILING.firefox) {
-            violations.push({ family: 'curl_cffi:firefox', expected: IMPIT_CEILING.firefox, found: major });
-        }
-    }
-    return violations;
-}
-
-function checkCoherence() {
-    const profiles = evaluateUserAgents(CANONICAL_BROWSER_PROFILES.map((profile) => profile.userAgent));
-    return [...profiles.violations, ...curlCffiViolations()];
-}
-
 async function main() {
-    const violations = checkCoherence();
+    const violations = scanRepoUserAgents(REPO_ROOT);
     const blocking = violations.length > 0;
 
     if (blocking) {
         warn('Fingerprint coherence violations:');
         for (const item of violations) {
-            warn(` - ${item.family}: expected ${item.expected}, found ${item.found}${item.userAgent ? ` (${item.userAgent})` : ''}`);
+            warn(` - ${item.file}: ${item.family} expected ${item.expected}, found ${item.found}`);
         }
     } else {
-        log('Coherence OK: browser profiles and curl_cffi are aligned with the impit tls ceiling.');
+        log('Coherence OK: every hardcoded user agent in core and providers matches the impit tls ceiling.');
     }
 
     const latest = {

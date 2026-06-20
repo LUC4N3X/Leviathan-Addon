@@ -2,7 +2,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
 
 const {
@@ -11,7 +10,10 @@ const {
     evaluateUserAgents,
     ceilingFromImpitVersions
 } = require('../core/security/fingerprint_manifest');
+const { scanRepoUserAgents } = require('../core/security/fingerprint_scan');
 const { CANONICAL_BROWSER_PROFILES } = require('../core/security/browser_profiles');
+
+const REPO_ROOT = path.resolve(__dirname, '..');
 
 test('impit ceiling is derived from the supported impit browser versions', () => {
     const derived = ceilingFromImpitVersions(IMPIT_BROWSER_VERSIONS);
@@ -22,20 +24,13 @@ test('impit ceiling is derived from the supported impit browser versions', () =>
 });
 
 test('canonical browser profiles never exceed the impit tls ceiling', () => {
-    const userAgents = CANONICAL_BROWSER_PROFILES.map((profile) => profile.userAgent);
-    const result = evaluateUserAgents(userAgents);
+    const result = evaluateUserAgents(CANONICAL_BROWSER_PROFILES.map((profile) => profile.userAgent));
     assert.deepEqual(result.violations, []);
     assert.ok(result.ok);
 });
 
-test('curl_cffi user agents stay aligned with the impit tls ceiling', () => {
-    const source = fs.readFileSync(path.resolve(__dirname, '../providers/utils/cf_curl_cffi.py'), 'utf8');
-    const chromeMajors = [...source.matchAll(/Chrome\/(\d+)\.0\.0\.0/g)].map((match) => Number(match[1]));
-    const firefoxMajors = [...source.matchAll(/Firefox\/(\d+)\.0/g)].map((match) => Number(match[1]));
-
-    assert.ok(chromeMajors.length > 0);
-    for (const major of chromeMajors) assert.equal(major, IMPIT_CEILING.chrome);
-
-    assert.ok(firefoxMajors.length > 0);
-    for (const major of firefoxMajors) assert.equal(major, IMPIT_CEILING.firefox);
+test('every hardcoded user agent in core and providers matches the impit tls ceiling', () => {
+    const violations = scanRepoUserAgents(REPO_ROOT);
+    const report = violations.map((item) => `${item.file}: ${item.family} expected ${item.expected}, found ${item.found}`);
+    assert.deepEqual(report, []);
 });
