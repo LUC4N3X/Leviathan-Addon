@@ -619,6 +619,7 @@
         .control-row:has(#enableGhd) { --lev-color: #00f2ff; --lev-glow: rgba(0,242,255,0.45); --lev-dim: rgba(0,242,255,0.2); }
         .control-row:has(#enableGs) { --lev-color: #7c3aed; --lev-glow: rgba(124,58,237,0.45); --lev-dim: rgba(124,58,237,0.2); }
         .control-row:has(#enableVidxgo) { --lev-color: #6366f1; --lev-glow: rgba(99,102,241,0.45); --lev-dim: rgba(99,102,241,0.2); }
+        .control-row:has(#enableVidsrc) { --lev-color: #ff5a5f; --lev-glow: rgba(255,90,95,0.45); --lev-dim: rgba(255,90,95,0.2); }
         .control-row:has(#enableEs) { --lev-color: #2dd4bf; --lev-glow: rgba(45,212,191,0.45); --lev-dim: rgba(45,212,191,0.2); }
         .control-row:has(#enableCb01) { --lev-color: #f59e0b; --lev-glow: rgba(245,158,11,0.45); --lev-dim: rgba(245,158,11,0.2); }
         .control-row:has(#enableOnlineserietv) { --lev-color: #38bdf8; --lev-glow: rgba(56,189,248,0.35); --lev-dim: rgba(56,189,248,0.2); }
@@ -2482,6 +2483,17 @@
                             <label class="switch mf-switch"><input type="checkbox" id="enableVidxgo" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider w-14 h-7 inline-block rounded-full cursor-pointer"></span></label>
                         </div>
 
+                        <div class="control-row p-4 mb-3 flex justify-between items-center" style="--lev-color: #ff5a5f; --lev-glow: rgba(255,90,95,0.45);">
+                            <div class="control-info">
+                                <div class="control-title font-bold flex items-center gap-2 text-white">
+                                    <i class="fas fa-clapperboard text-rose-400 text-lg"></i> VidSrc
+                                    <span class="proxy-tag tag-noproxy text-[10px] px-2.5 py-0.5 rounded-full font-mono">ITA · KRAKEN</span>
+                                </div>
+                                <span class="control-desc text-xs text-[#a3b6dd]/80 mt-1 block">Film e serie TV (TMDB) risolti interamente da Kraken, traccia ITA.</span>
+                            </div>
+                            <label class="switch mf-switch"><input type="checkbox" id="enableVidsrc" onchange="checkWebVisibility(); updateFluxStream()"><span class="slider w-14 h-7 inline-block rounded-full cursor-pointer"></span></label>
+                        </div>
+
                         <div class="control-row p-4 mb-3 flex justify-between items-center" style="--lev-color: #38bdf8; --lev-glow: rgba(56,189,248,0.45);">
                             <div class="control-info">
                                 <div class="control-title font-bold flex items-center gap-2 text-white">
@@ -3748,6 +3760,7 @@
             const ghd = document.getElementById('enableGhd')?.checked;
             const gs = document.getElementById('enableGs')?.checked;
             const vidxgo = document.getElementById('enableVidxgo')?.checked;
+            const vidsrc = document.getElementById('enableVidsrc')?.checked;
             const es = document.getElementById('enableEs')?.checked;
             const cb01 = document.getElementById('enableCb01')?.checked;
             const onlineserietv = document.getElementById('enableOnlineserietv')?.checked;
@@ -3759,7 +3772,7 @@
 
             const pRow = document.getElementById('webPriorityRow');
             if(pRow) {
-                if(sc || ghd || gs || vidxgo || es || cb01 || onlineserietv || aw || au || as || ti || gf) {
+                if(sc || ghd || gs || vidxgo || vidsrc || es || cb01 || onlineserietv || aw || au || as || ti || gf) {
                     pRow.style.display = 'flex';
                 } else {
                     pRow.style.display = 'none';
@@ -3969,6 +3982,7 @@
             const ghdActive = document.getElementById('enableGhd')?.checked;
             const gsActive = document.getElementById('enableGs')?.checked;
             const vidxgoActive = document.getElementById('enableVidxgo')?.checked;
+            const vidsrcActive = document.getElementById('enableVidsrc')?.checked;
             const esActive = document.getElementById('enableEs')?.checked;
             const cb01Active = document.getElementById('enableCb01')?.checked;
             const onlineserietvActive = document.getElementById('enableOnlineserietv')?.checked;
@@ -3981,7 +3995,7 @@
             const sourceModeInput = document.getElementById('sourceMode');
             const sourceMode = sourceModeInput ? sourceModeInput.value : 'balanced';
 
-            const isWebEnabled = scActive || ghdActive || gsActive || vidxgoActive || esActive || cb01Active || onlineserietvActive || awActive || auActive || asActive || tiActive || gfActiveActive || isP2P;
+            const isWebEnabled = scActive || ghdActive || gsActive || vidxgoActive || vidsrcActive || esActive || cb01Active || onlineserietvActive || awActive || auActive || asActive || tiActive || gfActiveActive || isP2P;
             const sourceModeBypassesKey = sourceMode === 'dbOnly' || sourceMode === 'globalCacheOnly';
 
             const el = document.getElementById('apiKey');
@@ -4022,6 +4036,7 @@
                     || document.getElementById('enableGhd')?.checked
                     || document.getElementById('enableGs')?.checked
                     || document.getElementById('enableVidxgo')?.checked
+                    || document.getElementById('enableVidsrc')?.checked
                     || document.getElementById('enableEs')?.checked
                     || document.getElementById('enableCb01')?.checked
                     || document.getElementById('enableOnlineserietv')?.checked
@@ -4098,6 +4113,7 @@
                     enableGhd: document.getElementById('enableGhd')?.checked || false,
                     enableGs: document.getElementById('enableGs')?.checked || false,
                     enableVidxgo: document.getElementById('enableVidxgo')?.checked || false,
+                    enableVidsrc: document.getElementById('enableVidsrc')?.checked || false,
                     enableEs: document.getElementById('enableEs')?.checked || false,
                     enableCb01: document.getElementById('enableCb01')?.checked || false,
                     enableOnlineserietv: document.getElementById('enableOnlineserietv')?.checked || false,
@@ -4291,6 +4307,7 @@
                             enableGhd: 'enableGhd',
                             enableGs: 'enableGs',
                             enableVidxgo: 'enableVidxgo',
+                            enableVidsrc: 'enableVidsrc',
                             enableEs: 'enableEs',
                             enableCb01: 'enableCb01',
                             enableOnlineserietv: 'enableOnlineserietv',

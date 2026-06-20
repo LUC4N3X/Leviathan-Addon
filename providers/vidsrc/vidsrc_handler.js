@@ -240,8 +240,10 @@ async function searchVidsrcImpl(meta = {}, config = {}, reqHost = null) {
 }
 
 async function searchVidsrc(meta = {}, config = {}, reqHost = null) {
+    // Internal guard timeout (fires first). Kept distinct from VIDSRC_PROVIDER_TIMEOUT,
+    // which the provider registry uses only for the outer orchestrator minimum.
     return withProviderHealth(PROVIDER_ID, () => searchVidsrcImpl(meta, config, reqHost), {
-        timeoutMs: positiveInt(process.env.VIDSRC_PROVIDER_TIMEOUT, 22_000, 8_000),
+        timeoutMs: positiveInt(process.env.VIDSRC_INTERNAL_TIMEOUT, 22_000, 8_000),
         swallowErrors: true,
         fallbackValue: []
     });
