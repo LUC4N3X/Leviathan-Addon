@@ -411,10 +411,23 @@ function applyTorrentHealthEngine(items = [], context = {}) {
     return { results, stats };
 }
 
+/**
+ * Formats the per-stage torrent health stats into a single `[TORRENT HEALTH]` log line.
+ *
+ * @param {object} stats - Stats produced by {@link applyTorrentHealthEngine}.
+ * @returns {string} The formatted log line.
+ */
 function buildHealthLogLine(stats = {}) {
     return `[TORRENT HEALTH] stage=${stats.stage || 'ranked'} in=${stats.in || 0} out=${stats.out || 0} dbReal=${stats.dbReal || 0} fakeItalian=${stats.droppedFakeItalian || 0} uncached=${stats.droppedUncached || 0} tbUnverified=${stats.droppedTbUnverified || 0} dbFirstExternalDrop=${stats.droppedExternalByDbFirst || 0}`;
 }
 
+/**
+ * Persists a snapshot of the final health-annotated candidates to the DB (best-effort).
+ *
+ * @param {Array<object>} items - Health-annotated candidates to snapshot.
+ * @param {object} context - Engine context (`dbHelper`, `service`, `meta`, `logger`).
+ * @returns {Promise<number>} The number of rows persisted (0 when disabled or on no-op).
+ */
 async function persistTorrentHealthSnapshot(items = [], context = {}) {
     const dbHelper = context.dbHelper;
     if (!dbHelper || !Array.isArray(items) || items.length === 0) return 0;
