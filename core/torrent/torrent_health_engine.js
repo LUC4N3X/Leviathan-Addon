@@ -302,6 +302,20 @@ function shouldDropByHealth(item = {}, context = {}) {
     return '';
 }
 
+/**
+ * Applies the DB-first precedence: once there are at least `dbFirstMin` "real" DB
+ * candidates, external addon results (Torrentio/MediaFusion/Meteor) are dropped.
+ *
+ * For Real-Debrid this precedence is counter-productive — external addons are the most
+ * reliable source of RD-cached torrents — so when `service === 'rd'` and
+ * `RD_EXTERNAL_ADDON_PRIORITY` is enabled (default) external candidates are kept.
+ * TorBox is unaffected.
+ *
+ * @param {Array<object>} items - Health-filtered candidates to order.
+ * @param {object} context - Engine context (`service`, `dbFirstMin`, classification flags).
+ * @returns {{ results: Array<object>, dbReal: number, externalDropped: number }}
+ *   The retained candidates plus the count of real DB and dropped external candidates.
+ */
 function applyDbFirstPolicy(items = [], context = {}) {
     const service = String(context.service || '').toLowerCase();
 
