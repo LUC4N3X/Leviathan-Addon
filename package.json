@@ -16,6 +16,7 @@
     "worker": "node core/workers/worker.js"
   },
   "dependencies": {
+    "@torbox/torbox-api": "^1.0.9",
     "axios": "^1.18.0",
     "bottleneck": "^2.19.5",
     "cheerio": "^1.0.0-rc.12",
