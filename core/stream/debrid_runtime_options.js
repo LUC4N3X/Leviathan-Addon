@@ -36,6 +36,12 @@ function shouldEnforceRdPlayableOnly(filters = {}) {
     return isTruthyConfigValue(explicit);
 }
 
+function shouldTrustTorrentioRdCached(filters = {}) {
+    const explicit = filters.rdTrustTorrentioCached ?? process.env.RD_TRUST_TORRENTIO_CACHED;
+    if (explicit === undefined || explicit === null || String(explicit).trim() === '') return true;
+    return isTruthyConfigValue(explicit);
+}
+
 function getRdDirectResolveLimit(filters = {}, rankedCount = 0, maxResults = 12) {
     const hardMax = Math.max(1, Math.min(maxResults || 12, RD_DIRECT_RESOLVE_MAX_RESULTS));
     const configured = filters.rdDirectMaxResults ?? process.env.RD_DIRECT_MAX_RESULTS ?? RD_DIRECT_RESOLVE_MAX_RESULTS;
@@ -86,6 +92,7 @@ module.exports = {
     parseBoundedInt,
     shouldAllowRdLazyStreams,
     shouldEnforceRdPlayableOnly,
+    shouldTrustTorrentioRdCached,
     shouldShowRdDownloadToDebrid,
     shouldShowRdUnknownRows
 };
