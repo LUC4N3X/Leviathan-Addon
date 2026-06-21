@@ -823,6 +823,13 @@ async function buildAdminHealthPayload({ Cache, dbHelper }) {
         cache = `degraded:${error.message}`;
     }
 
+    let torboxHealth = null;
+    try {
+        torboxHealth = await TorboxClient.health();
+    } catch (error) {
+        torboxHealth = { ok: false, code: 'health_exception', message: error.message };
+    }
+
     return {
         success: true,
         status: database === 'ok' ? 'ok' : 'degraded',
@@ -850,7 +857,8 @@ async function buildAdminHealthPayload({ Cache, dbHelper }) {
         },
         debrid: {
             rdConfigured: Boolean(process.env.RD_SCAN_TOKEN || process.env.RD_API_KEY || process.env.REALDEBRID_API_KEY),
-            torboxConfigured: Boolean(process.env.TORBOX_API_KEY || process.env.TB_API_KEY)
+            torboxConfigured: Boolean(process.env.TORBOX_API_KEY || process.env.TB_API_KEY),
+            torboxSdk: torboxHealth
         }
     };
 }
