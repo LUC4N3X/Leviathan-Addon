@@ -34,8 +34,13 @@ const http = axios.create({
     }
 });
 
+const ANIME_ALT_PREFIXES = new Set(['mal', 'anilist', 'anidb']);
+
 let mappingCache = {
     map: new Map(),
+    malMap: new Map(),
+    anilistMap: new Map(),
+    anidbMap: new Map(),
     lastFetch: 0,
     lastSuccessAt: null,
     isLoaded: false,
@@ -214,6 +219,9 @@ function buildFribbEntry(item = {}) {
         year: String(item.year || '').match(/^\d{4}$/)?.[0] || '',
         subtype: String(item.subtype || item.type || ''),
         episode_count: parsePositiveInt(item.episodeCount || item.episodes || null, null),
+        malId: String(item.mal_id || '').trim() || null,
+        anilistId: String(item.anilist_id || '').trim() || null,
+        anidbId: String(item.anidb_id || '').trim() || null,
         source: 'fribb'
     };
 }
@@ -277,6 +285,9 @@ async function updateCache(options = {}) {
 
     mappingCachePromise = (async () => {
         const tempMap = new Map();
+        const tempMalMap = new Map();
+        const tempAnilistMap = new Map();
+        const tempAnidbMap = new Map();
         const sources = {
             fribb: 0,
             thebeastlt: 0,
@@ -296,7 +307,12 @@ async function updateCache(options = {}) {
 
             for (const item of fribbRes.value.data) {
                 const entry = buildFribbEntry(item);
-                if (putEntry(tempMap, entry?.kitsuId, entry)) sources.fribb += 1;
+                if (putEntry(tempMap, entry?.kitsuId, entry)) {
+                    sources.fribb += 1;
+                    if (entry.malId) tempMalMap.set(entry.malId, entry);
+                    if (entry.anilistId) tempAnilistMap.set(entry.anilistId, entry);
+                    if (entry.anidbId) tempAnidbMap.set(entry.anidbId, entry);
+                }
             }
         } else if (fribbRes.status === 'rejected') {
             lastError = `fribb: ${fribbRes.reason?.message || 'unknown_error'}`;
@@ -318,13 +334,16 @@ async function updateCache(options = {}) {
 
         if (successfulSources > 0 && tempMap.size > 0) {
             mappingCache.map = tempMap;
+            mappingCache.malMap = tempMalMap;
+            mappingCache.anilistMap = tempAnilistMap;
+            mappingCache.anidbMap = tempAnidbMap;
             mappingCache.lastFetch = Date.now();
             mappingCache.lastSuccessAt = new Date().toISOString();
             mappingCache.isLoaded = true;
             mappingCache.lastError = null;
             mappingCache.sources = sources;
 
-            log(`🐉 [KITSU] Cache rigenerata. Totale anime: ${tempMap.size} | Fribb: ${sources.fribb} | TheBeastLT: ${sources.thebeastlt}`);
+            log(`🐉 [KITSU] Cache rigenerata. Totale anime: ${tempMap.size} | Fribb: ${sources.fribb} | TheBeastLT: ${sources.thebeastlt} | MAL: ${tempMalMap.size} | AniList: ${tempAnilistMap.size} | AniDB: ${tempAnidbMap.size}`);
             return mappingCache;
         }
 
@@ -447,11 +466,92 @@ async function kitsuHandler(kitsuID) {
     return buildResult(entry, parsedIdentifier);
 }
 
+function parseAnimeIdContext(rawValue) {
+    const value = String(rawValue || '').trim();
+    if (!value) return null;
+
+    const parts = value.split(':').map(p => String(p || '').trim());
+    if (parts.length < 2) return null;
+
+    const prefix = parts[0].toLowerCase();
+    if (!ANIME_ALT_PREFIXES.has(prefix)) return null;
+    if (!/^\d+$/.test(parts[1])) return null;
+
+    const animeId = parts[1];
+    let season = 1;
+    let episode = null;
+
+    if (parts.length === 3) {
+        episode = parsePositiveInt(parts[2], null);
+    } else if (parts.length >= 4) {
+        season = parsePositiveInt(parts[2], 1);
+        episode = parsePositiveInt(parts[3], null);
+    }
+
+    return {
+        raw: value,
+        prefix,
+        animeId,
+        kitsuId: null,
+        season,
+        episode,
+        isEpisode: Number.isInteger(episode) && episode > 0
+    };
+}
+
+async function resolveAnimeId(rawId) {
+    const value = String(rawId || '').trim();
+    if (!value) return null;
+
+    const parsedCtx = parseAnimeIdContext(value);
+    if (!parsedCtx) return kitsuHandler(value);
+
+    if (!mappingCache.isLoaded) {
+        try {
+            await updateCache();
+        } catch (error) {
+            warn(`⚠️ [KITSU] resolveAnimeId cache load failed: ${error.message}`);
+        }
+    } else {
+        refreshCacheInBackground();
+    }
+
+    const { prefix, animeId, season, episode, isEpisode } = parsedCtx;
+
+    let entry = null;
+    if (prefix === 'mal') entry = mappingCache.malMap.get(animeId);
+    else if (prefix === 'anilist') entry = mappingCache.anilistMap.get(animeId);
+    else if (prefix === 'anidb') entry = mappingCache.anidbMap.get(animeId);
+
+    if (!entry) {
+        warn(`⚠️ [KITSU] Alt-ID non risolto in cache: ${prefix}:${animeId}`);
+        return null;
+    }
+
+    return {
+        imdbID: entry.imdb_id,
+        kitsuId: entry.kitsuId,
+        season: isEpisode ? season : parsePositiveInt(entry.season, 1),
+        episode: isEpisode ? episode : parsePositiveInt(entry.episode, 1),
+        type: entry.type || 'series',
+        titles: uniqueStrings(entry.titles || entry.aliases || []),
+        aliases: uniqueStrings(entry.aliases || entry.titles || []),
+        year: entry.year || '',
+        subtype: entry.subtype || '',
+        episodeCount: parsePositiveInt(entry.episode_count, null),
+        source: entry.source || 'unknown',
+        resolvedFrom: `${prefix}:${animeId}`
+    };
+}
+
 function getCacheStats() {
     return {
         loaded: mappingCache.isLoaded,
         loading: mappingCache.isLoading,
         size: mappingCache.map.size,
+        malSize: mappingCache.malMap.size,
+        anilistSize: mappingCache.anilistMap.size,
+        anidbSize: mappingCache.anidbMap.size,
         lastFetch: mappingCache.lastFetch,
         lastSuccessAt: mappingCache.lastSuccessAt,
         lastError: mappingCache.lastError,
@@ -469,5 +569,7 @@ setImmediate(() => {
 module.exports = kitsuHandler;
 module.exports.kitsuHandler = kitsuHandler;
 module.exports.parseKitsuIdentifier = parseKitsuIdentifier;
+module.exports.parseAnimeIdContext = parseAnimeIdContext;
+module.exports.resolveAnimeId = resolveAnimeId;
 module.exports.updateCache = updateCache;
 module.exports.getCacheStats = getCacheStats;
