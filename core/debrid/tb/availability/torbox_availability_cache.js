@@ -11,6 +11,7 @@ const {
 } = require("./torbox_cache_state");
 const { computeBackoffDelay, parseRetryAfterMs } = require("../../utils/backoff");
 const { matchTorboxFile, getFileId: getMatchedFileId, getFileName: getMatchedFileName, getFileSize: getMatchedFileSize, isVideoFile: isMatchedVideoFile } = require("../matching/tb_file_match");
+const TorboxSdkAdapter = require("../clients/torbox_sdk_adapter");
 
 const TB_BASE_URL = "https://api.torbox.app/v1/api";
 
@@ -899,19 +900,42 @@ async function checkChunkLive(entries, token) {
   });
 
   try {
-    const response = await fetchWithRetry(`${TB_BASE_URL}/torrents/checkcached`, {
-      params: {
-        hash: hashes.join(","),
-        format: "object",
-        list_files: "true"
-      },
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-        "User-Agent": "Leviathan/2.0 (TB Cache)"
-      },
-      timeout: API_TIMEOUT
-    });
+    const requestParams = {
+      hash: hashes.join(","),
+      format: "object",
+      list_files: "true"
+    };
+
+    let response = null;
+    if (TorboxSdkAdapter.sdkEnabled() && TorboxSdkAdapter.isAvailable()) {
+      try {
+        response = await TorboxSdkAdapter.request("GET", "/torrents/checkcached", token, {
+          params: requestParams,
+          timeout: API_TIMEOUT,
+          timeoutMs: API_TIMEOUT,
+          op: "checkcached.cache"
+        });
+      } catch (error) {
+        if (!TorboxSdkAdapter.fallbackEnabled()) throw error;
+        logCacheEvent("torbox.cache.sdk.fallback", {
+          hashes: hashes.length,
+          status: error?.response?.status || error?.status || "n/a",
+          code: error?.code || "sdk_error"
+        }, "warn");
+      }
+    }
+
+    if (!response) {
+      response = await fetchWithRetry(`${TB_BASE_URL}/torrents/checkcached`, {
+        params: requestParams,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+          "User-Agent": "Leviathan/2.0 (TB Cache)"
+        },
+        timeout: API_TIMEOUT
+      });
+    }
 
     if (!response || response.status < 200 || response.status >= 300) {
       const errorInfo = errorStateForResponse(response, `http_${response?.status || "unknown"}`);
