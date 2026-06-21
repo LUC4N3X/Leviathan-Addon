@@ -347,6 +347,16 @@ function applyDbFirstPolicy(items = [], context = {}) {
     return { results, dbReal, externalDropped };
 }
 
+/**
+ * Runs the torrent health pass over a ranked candidate list: annotates each candidate,
+ * drops unhealthy ones (fake-Italian, known-uncached, unverified TorBox cache), applies
+ * the DB-first precedence (see {@link applyDbFirstPolicy}), and optionally re-sorts by
+ * health score.
+ *
+ * @param {Array<object>} items - Ranked candidates to evaluate.
+ * @param {object} context - Engine context (`service`, `langMode`, `stage`, cache flags, etc.).
+ * @returns {{ results: Array<object>, stats: object }} The surviving candidates and per-stage stats.
+ */
 function applyTorrentHealthEngine(items = [], context = {}) {
     const source = Array.isArray(items) ? items.filter(Boolean) : [];
     const stats = {
