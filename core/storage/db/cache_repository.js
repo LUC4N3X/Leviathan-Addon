@@ -124,6 +124,7 @@ function createCacheRepository({ getPool, withClient, awaitDatabaseOptimizations
         const deletedExternal = await client.query(`DELETE FROM external_stream_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
         const deletedAvailability = await client.query(`DELETE FROM debrid_availability_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
         const deletedLinks = await client.query(`DELETE FROM debrid_resolved_link_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
+        const deletedTrackProbe = await client.query(`DELETE FROM track_probe_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
         const deletedCloud = await client.query(`DELETE FROM debrid_account_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
         const deletedRank = await client.query(`DELETE FROM torrent_rank_history WHERE created_at < NOW() - ($1::int * INTERVAL '1 day')`, [historyTtlDays]);
 
@@ -134,6 +135,7 @@ function createCacheRepository({ getPool, withClient, awaitDatabaseOptimizations
             externalSnapshots: deletedExternal.rowCount || 0,
             debridAvailability: deletedAvailability.rowCount || 0,
             debridLinks: deletedLinks.rowCount || 0,
+            trackProbe: deletedTrackProbe.rowCount || 0,
             savedCloudSnapshots: deletedCloud.rowCount || 0,
             rankHistory: deletedRank.rowCount || 0
           }
