@@ -91,6 +91,7 @@ const {
   getRdVerifiedDbFallbackLimit,
   shouldAllowRdLazyStreams,
   shouldEnforceRdPlayableOnly,
+  shouldTrustTorrentioRdCached,
   shouldShowRdDownloadToDebrid,
   shouldShowRdUnknownRows
 } = require('./stream/debrid_runtime_options');
@@ -5582,13 +5583,33 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           if (rdVerifiedDbFallbackStreams.length > 0) {
               logger.info(`[RD DB FALLBACK] verified DB fallback streams=${rdVerifiedDbFallbackStreams.length} reason=rd_direct_fill resolved=${resolvedInstant.length}`);
           }
+          // Trust Torrentio's RD-cached assertion: candidates Torrentio flags as cached
+          // that did not resolve instantly (e.g. RD recheck timed out) are still shown as
+          // lazy streams instead of being dropped. This prevents the playable-only list
+          // from collapsing to a single result when the per-hash RD check is slow.
+          let trustedTorrentioLazyStreams = [];
+          if (rdPlayableOnly && configuredDebridService === 'rd' && shouldTrustTorrentioRdCached(filters)) {
+              const resolvedHashes = collectExistingTorrentHashes([], resolvedInstant);
+              const trustTarget = getRdDirectResolveLimit(filters, rdVisibleRanked.length, CONFIG.MAX_RESULTS || 12);
+              const trustLimit = Math.max(0, trustTarget - resolvedInstant.length);
+              trustedTorrentioLazyStreams = rdVisibleRanked
+                  .filter(isTorrentioRdAuthorityCandidate)
+                  .filter((item) => !resolvedHashes.has(String(item?.hash || item?.infoHash || extractInfoHash(item?.magnet) || '').toLowerCase()))
+                  .filter((item) => !isKnownRdUnavailableCandidate(item))
+                  .slice(0, trustLimit)
+                  .map((item) => generateLazyStream(createRuntimeItem(item, meta), resolverConfig, meta, reqHost, userConfStr, true))
+                  .filter(Boolean);
+              if (trustedTorrentioLazyStreams.length > 0) {
+                  logger.info(`[RD TORRENTIO TRUST] shown=${trustedTorrentioLazyStreams.length} resolved=${resolvedInstant.length} limit=${trustLimit} reason=torrentio_cached_no_recheck`);
+              }
+          }
           debridStreams = rdPlayableOnly
-              ? resolvedInstant
+              ? [...resolvedInstant, ...trustedTorrentioLazyStreams]
               : [...resolvedInstant, ...lazyStreams, ...rdDownloadFallbackStreams, ...rdVerifiedDbFallbackStreams];
           if (rdDirectOnly) {
               const rdAuthorityTotal = finalRanked.filter(isTorrentioRdAuthorityCandidate).length;
               const rdAuthorityAttempted = immediateCandidates.filter(isTorrentioRdAuthorityCandidate).length;
-              logger.info(`[RD DIRECT] playableOnly=${rdPlayableOnly} | candidates=${finalRanked.length} visible=${rdVisibleRanked.length} resolvePool=${immediatePool.length} resolved=${resolvedInstant.length} shown=${debridStreams.length} attempted=${immediateCandidates.length}/${TOP_LIMIT} downloadFallback=${rdDownloadFallbackStreams.length} dbVerifiedFallback=${rdVerifiedDbFallbackStreams.length} suppressed=${Math.max(0, rdVisibleRanked.length - immediateCandidates.length)} torrentioAuthority=${rdAuthorityTotal}/${rdAuthorityAttempted}`);
+              logger.info(`[RD DIRECT] playableOnly=${rdPlayableOnly} | candidates=${finalRanked.length} visible=${rdVisibleRanked.length} resolvePool=${immediatePool.length} resolved=${resolvedInstant.length} torrentioTrust=${trustedTorrentioLazyStreams.length} shown=${debridStreams.length} attempted=${immediateCandidates.length}/${TOP_LIMIT} downloadFallback=${rdDownloadFallbackStreams.length} dbVerifiedFallback=${rdVerifiedDbFallbackStreams.length} suppressed=${Math.max(0, rdVisibleRanked.length - immediateCandidates.length)} torrentioAuthority=${rdAuthorityTotal}/${rdAuthorityAttempted}`);
           } else {
               warmupLazyStreamsInBackground(resolverConfig, lazyCandidates, meta);
           }
