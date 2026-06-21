@@ -302,7 +302,33 @@ function shouldDropByHealth(item = {}, context = {}) {
     return '';
 }
 
+/**
+ * Applies the DB-first precedence: once there are at least `dbFirstMin` "real" DB
+ * candidates, external addon results (Torrentio/MediaFusion/Meteor) are dropped.
+ *
+ * For Real-Debrid this precedence is counter-productive — external addons are the most
+ * reliable source of RD-cached torrents — so when `service === 'rd'` and
+ * `RD_EXTERNAL_ADDON_PRIORITY` is enabled (default) external candidates are kept.
+ * TorBox is unaffected.
+ *
+ * @param {Array<object>} items - Health-filtered candidates to order.
+ * @param {object} context - Engine context (`service`, `dbFirstMin`, classification flags).
+ * @returns {{ results: Array<object>, dbReal: number, externalDropped: number }}
+ *   The retained candidates plus the count of real DB and dropped external candidates.
+ */
 function applyDbFirstPolicy(items = [], context = {}) {
+    const service = String(context.service || '').toLowerCase();
+
+    // External addons (Torrentio/MediaFusion/Meteor) are the most reliable source of
+    // Real-Debrid cached torrents. The DB-first precedence is a TorBox-oriented policy
+    // (see TORBOX_DB_FIRST_REAL_MIN): applied to RD it strips exactly the external
+    // results that RD is able to resolve, which is why RD returns almost nothing while
+    // TB is fine. For RD we keep (prioritize) external candidates so the RD direct
+    // resolver can turn them into playable streams. Opt out with RD_EXTERNAL_ADDON_PRIORITY=0.
+    if (service === 'rd' && toBool(process.env.RD_EXTERNAL_ADDON_PRIORITY ?? '1') !== false) {
+        return { results: items, dbReal: countRealDbCandidates(items, context), externalDropped: 0 };
+    }
+
     const dbFirstMin = readInt(context.dbFirstMin ?? process.env.TORRENT_HEALTH_DB_FIRST_MIN, DEFAULT_DB_FIRST_REAL_MIN);
     if (dbFirstMin <= 0) return { results: items, dbReal: 0, externalDropped: 0 };
 
@@ -321,6 +347,16 @@ function applyDbFirstPolicy(items = [], context = {}) {
     return { results, dbReal, externalDropped };
 }
 
+/**
+ * Runs the torrent health pass over a ranked candidate list: annotates each candidate,
+ * drops unhealthy ones (fake-Italian, known-uncached, unverified TorBox cache), applies
+ * the DB-first precedence (see {@link applyDbFirstPolicy}), and optionally re-sorts by
+ * health score.
+ *
+ * @param {Array<object>} items - Ranked candidates to evaluate.
+ * @param {object} context - Engine context (`service`, `langMode`, `stage`, cache flags, etc.).
+ * @returns {{ results: Array<object>, stats: object }} The surviving candidates and per-stage stats.
+ */
 function applyTorrentHealthEngine(items = [], context = {}) {
     const source = Array.isArray(items) ? items.filter(Boolean) : [];
     const stats = {
@@ -375,10 +411,23 @@ function applyTorrentHealthEngine(items = [], context = {}) {
     return { results, stats };
 }
 
+/**
+ * Formats the per-stage torrent health stats into a single `[TORRENT HEALTH]` log line.
+ *
+ * @param {object} stats - Stats produced by {@link applyTorrentHealthEngine}.
+ * @returns {string} The formatted log line.
+ */
 function buildHealthLogLine(stats = {}) {
     return `[TORRENT HEALTH] stage=${stats.stage || 'ranked'} in=${stats.in || 0} out=${stats.out || 0} dbReal=${stats.dbReal || 0} fakeItalian=${stats.droppedFakeItalian || 0} uncached=${stats.droppedUncached || 0} tbUnverified=${stats.droppedTbUnverified || 0} dbFirstExternalDrop=${stats.droppedExternalByDbFirst || 0}`;
 }
 
+/**
+ * Persists a snapshot of the final health-annotated candidates to the DB (best-effort).
+ *
+ * @param {Array<object>} items - Health-annotated candidates to snapshot.
+ * @param {object} context - Engine context (`dbHelper`, `service`, `meta`, `logger`).
+ * @returns {Promise<number>} The number of rows persisted (0 when disabled or on no-op).
+ */
 async function persistTorrentHealthSnapshot(items = [], context = {}) {
     const dbHelper = context.dbHelper;
     if (!dbHelper || !Array.isArray(items) || items.length === 0) return 0;
