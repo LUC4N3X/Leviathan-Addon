@@ -5219,7 +5219,9 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       const aggressiveFilter = createAggressiveResultFilter(meta, type, langMode);
 
       const localDbEnabled = sourceModeFlags.useLocalDb && torrentPipelineEnabled;
-      const querySnapshotResults = await trace.time('query-snapshots', () => (
+      // These three DB reads are independent (depend only on meta/type/langMode/config),
+      // so run them concurrently instead of serializing three round-trips on the hot path.
+      const querySnapshotResultsPromise = trace.time('query-snapshots', () => (
           localDbEnabled && !sourceModeFlags.liveOnlyMode
               ? fetchQuerySnapshotResults(meta, type, langMode, config)
               : []
@@ -5228,10 +5230,26 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           results: Array.isArray(items) ? items.length : 0
       }));
 
-      const localDbResults = await trace.time('local-db', () => localDbEnabled ? fetchLocalDbResults(meta) : [], (items) => ({
+      const localDbResultsPromise = trace.time('local-db', () => localDbEnabled ? fetchLocalDbResults(meta) : [], (items) => ({
           enabled: localDbEnabled,
           results: Array.isArray(items) ? items.length : 0
       }));
+
+      const externalSnapshotResultsPromise = trace.time('external-snapshots', () => (
+          localDbEnabled && !sourceModeFlags.liveOnlyMode
+              ? fetchExternalSnapshotResults(meta, type, langMode, config)
+              : []
+      ), (items) => ({
+          enabled: localDbEnabled && !sourceModeFlags.liveOnlyMode,
+          results: Array.isArray(items) ? items.length : 0
+      }));
+
+      const [querySnapshotResults, localDbResults, externalSnapshotResults] = await Promise.all([
+          querySnapshotResultsPromise,
+          localDbResultsPromise,
+          externalSnapshotResultsPromise
+      ]);
+
       for (const item of Array.isArray(localDbResults) ? localDbResults : []) {
           if (!item) continue;
           item._localDb = true;
@@ -5240,14 +5258,6 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           item._sourceGroup = item._sourceGroup || 'local_db';
       }
 
-      const externalSnapshotResults = await trace.time('external-snapshots', () => (
-          localDbEnabled && !sourceModeFlags.liveOnlyMode
-              ? fetchExternalSnapshotResults(meta, type, langMode, config)
-              : []
-      ), (items) => ({
-          enabled: localDbEnabled && !sourceModeFlags.liveOnlyMode,
-          results: Array.isArray(items) ? items.length : 0
-      }));
       const dbSeedResults = [
           ...(Array.isArray(querySnapshotResults) ? querySnapshotResults : []),
           ...(Array.isArray(localDbResults) ? localDbResults : []),

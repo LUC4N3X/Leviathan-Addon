@@ -15,7 +15,7 @@ const JUNK_RE = /\b(sample|trailer|extras?|featurettes?|behind[\s._-]?the[\s._-]
 const SERIES_MARKER_RE = /\b(?:s\d{1,2}\s*e\d{1,3}|\d{1,2}x\d{1,3}|season\s*\d{1,2}|stagione\s*\d{1,2})\b/i;
 
 const savedSearchCache = new Map();
-const DEBUG_ENABLED = String(process.env.SAVED_CLOUD_DEBUG || "1") !== "0";
+const DEBUG_ENABLED = /^(1|true|yes|y|on)$/i.test(String(process.env.SAVED_CLOUD_DEBUG || "").trim());
 const DEBUG_SAMPLE_LIMIT = Math.max(0, Math.min(12, parseInt(process.env.SAVED_CLOUD_DEBUG_SAMPLES || "5", 10) || 5));
 
 function debugLog(logger, message) {
