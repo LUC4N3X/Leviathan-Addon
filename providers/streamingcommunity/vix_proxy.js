@@ -10,7 +10,13 @@ const {
     TRANSIT_KIND,
     buildTransitUrl
 } = require('./stream_transit.js');
-const { buildContextHeaders } = require('../utils/bypass');
+const {
+    buildContextHeaders,
+    requestWithImpitRotating,
+    getStickyFingerprintForUrl,
+    getImpitBrowserForFingerprint,
+    classifyBlockResponse
+} = require('../utils/bypass');
 
 const DEFAULT_REFERER = 'https://vixsrc.to/';
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
@@ -41,6 +47,7 @@ const UPSTREAM_RETRY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const KEEP_ALIVE_HTTP_AGENT = new http.Agent({ keepAlive: true, maxSockets: 128, maxFreeSockets: 32, timeout: UPSTREAM_TIMEOUT_MS + 5000 });
 const KEEP_ALIVE_HTTPS_AGENT = new https.Agent({ keepAlive: true, maxSockets: 128, maxFreeSockets: 32, timeout: UPSTREAM_TIMEOUT_MS + 5000 });
 const VIX_STRICT_HOST_BINDING = String(process.env.VIX_STRICT_HOST_BINDING || '').trim() === '1';
+const VIX_IMPIT_FALLBACK_ENABLED = String(process.env.VIX_PROXY_IMPIT_FALLBACK ?? process.env.SC_PROXY_IMPIT_FALLBACK ?? '1').trim() !== '0';
 const MANIFEST_URL_RE = /\.m3u8(?:$|[?#])/i;
 const STREAMABLE_MEDIA_URL_RE = /\.(?:ts|m4s|mp4|m4v|m4a|aac|ac3|vtt|key)(?:$|[?#])/i;
 
@@ -809,21 +816,95 @@ async function fetchUpstreamOnce(targetUrl, referer, upstreamHeaders = null, req
     throw lastError || new Error('Vix upstream request failed');
 }
 
+function isCloudflareBlockedResponse(response) {
+    if (!response) return true;
+    const status = Number(response.status || 0);
+    if (status >= 200 && status < 400) return false;
+    if (status === 404 || status === 410) return false;
+
+    let body = '';
+    if (Buffer.isBuffer(response.data)) body = response.data.toString('utf8').slice(0, 8192);
+    else if (typeof response.data === 'string') body = response.data.slice(0, 8192);
+
+    const classification = classifyBlockResponse(body, status, response.headers || {});
+    return Boolean(classification?.blocked);
+}
+
+async function fetchUpstreamViaImpit(targetUrl, referer, upstreamHeaders = null, req = null) {
+    const headers = { ...(upstreamHeaders || buildRequestHeaders(targetUrl, referer)) };
+    const range = String(req?.headers?.range || '').trim();
+    if (range && /^bytes=\d*-\d*(?:,\d*-\d*)*$/i.test(range)) headers.Range = range;
+    else {
+        delete headers.Range;
+        delete headers.range;
+    }
+
+    const method = String(req?.method || 'GET').toUpperCase() === 'HEAD' ? 'HEAD' : 'GET';
+    const fingerprint = getStickyFingerprintForUrl(targetUrl);
+    const response = await requestWithImpitRotating({
+        url: targetUrl,
+        method,
+        headers,
+        timeout: UPSTREAM_TIMEOUT_MS,
+        fingerprint,
+        browser: getImpitBrowserForFingerprint(fingerprint),
+        responseType: 'arraybuffer',
+        maxBrowserAttempts: 2,
+        retryOnChallenge: true,
+        followRedirect: true,
+        failSoft: true
+    });
+    if (!response) return null;
+
+    const rawBody = response.body ?? response.data;
+    const buffer = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody || '');
+    return {
+        status: Number(response.statusCode ?? response.status ?? 0),
+        headers: response.headers || {},
+        data: buffer,
+        config: { url: targetUrl },
+        request: { res: { responseUrl: response.url || targetUrl } },
+        _scForwarded: false,
+        _scTargetUrl: targetUrl,
+        _scRequestUrl: targetUrl,
+        _scStreamedBody: false,
+        _impit: true
+    };
+}
+
 async function fetchUpstream(targetUrl, referer, upstreamHeaders = null, req = null) {
     let lastError = null;
+    let lastResponse = null;
 
     for (let attempt = 1; attempt <= 2; attempt += 1) {
         try {
             const upstream = await fetchUpstreamOnce(targetUrl, referer, upstreamHeaders, req);
-            if (!UPSTREAM_RETRY_STATUSES.has(Number(upstream.status || 0)) || attempt >= 2) return upstream;
+            lastResponse = upstream;
+            if (!UPSTREAM_RETRY_STATUSES.has(Number(upstream.status || 0)) || attempt >= 2) break;
             destroyUpstreamBody(upstream);
+            lastResponse = null;
             lastError = new Error(`retryable upstream status ${upstream.status}`);
         } catch (error) {
             lastError = error;
-            if (attempt >= 2) throw error;
+            lastResponse = null;
+            if (attempt >= 2) break;
         }
     }
 
+    if (VIX_IMPIT_FALLBACK_ENABLED && isAllowedVixHost(targetUrl) && isCloudflareBlockedResponse(lastResponse)) {
+        try {
+            const viaImpit = await fetchUpstreamViaImpit(targetUrl, referer, upstreamHeaders, req);
+            if (viaImpit && !isCloudflareBlockedResponse(viaImpit)) {
+                if (lastResponse) destroyUpstreamBody(lastResponse);
+                console.info(`[VIX PROXY] Cloudflare bypass via impit host=${safeLogHost(targetUrl)} status=${viaImpit.status}`);
+                return viaImpit;
+            }
+        } catch (error) {
+            console.warn(`[VIX PROXY] impit fallback failed host=${safeLogHost(targetUrl)} error=${error.message}`);
+        }
+    }
+
+    if (lastResponse) return lastResponse;
     throw lastError || new Error('Vix upstream request failed');
 }
 
