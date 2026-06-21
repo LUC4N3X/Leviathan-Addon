@@ -5,6 +5,7 @@ const { ensureDatabaseOptimizations } = require('./db/schema');
 const { createTorrentRepository } = require('./db/torrent_repository');
 const { createSharedStreamCacheRepository } = require('./db/shared_stream_cache_repository');
 const { createCacheRepository } = require('./db/cache_repository');
+const { createTrackProbeRepository } = require('./db/track_probe_repository');
 
 let pool = null;
 let databaseOptimizationsPromise = null;
@@ -475,6 +476,7 @@ const sharedDependencies = {
 const torrentRepository = createTorrentRepository(sharedDependencies);
 const sharedStreamCacheRepository = createSharedStreamCacheRepository(sharedDependencies);
 const cacheRepository = createCacheRepository(sharedDependencies);
+const trackProbeRepository = createTrackProbeRepository(sharedDependencies);
 
 module.exports = {
   initDatabase,
@@ -487,6 +489,7 @@ module.exports = {
   ...torrentRepository,
   ...sharedStreamCacheRepository,
   ...cacheRepository,
+  ...trackProbeRepository,
   updateTrackers: trackerRegistry.updateTrackers,
   getActiveTrackers: trackerRegistry.getActiveTrackers,
   buildMagnet: trackerRegistry.buildMagnet,
