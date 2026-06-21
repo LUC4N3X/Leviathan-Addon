@@ -21,10 +21,12 @@ const {
   isMovieFileCompatibleWithTarget
 } = require("../matching/tb_file_match");
 const { CircuitBreaker } = require("../../utils/circuit_breaker");
+const TorboxSdkAdapter = require("./torbox_sdk_adapter");
 
 const TB_BASE = "https://api.torbox.app/v1/api";
 const TB_TIMEOUT = 25000;
 const LIST_CACHE_TTL = 30000;
+const SMART_BYPASS_CACHE = !/^(0|false|no|off)$/i.test(String(process.env.TORBOX_SMART_BYPASS_CACHE || "true"));
 const MAX_RETRIES = 4;
 const MAX_INFO_POLLS = 4;
 const POLL_DELAYS = [600, 1100, 1800, 3000];
@@ -119,6 +121,33 @@ function pruneExpiredCache() {
   }
 }
 
+function shouldTrySdk(op) {
+  if (!TorboxSdkAdapter.sdkEnabled()) return false;
+  if (!TorboxSdkAdapter.isAvailable()) return false;
+  const raw = String(process.env.TORBOX_SDK_OPERATIONS || "mylist,checkcached,createtorrent,requestdl,controltorrent").trim();
+  if (!raw || raw === "*") return true;
+  const allowed = new Set(raw.split(/[\s,;|]+/).map((item) => item.trim().toLowerCase()).filter(Boolean));
+  const name = String(op || "").toLowerCase();
+  return allowed.has(name) || [...allowed].some((item) => item && name.includes(item));
+}
+
+function normalizeSdkResponseForCircuit(response) {
+  if (!response) return response;
+  return {
+    status: response.status,
+    data: response.data,
+    headers: response.headers || {},
+    _sdk: true,
+    _op: response._op || null
+  };
+}
+
+function getMyListBypassParam(extraParams = null, forceRefresh = false) {
+  if (!SMART_BYPASS_CACHE) return true;
+  if (extraParams?.id != null) return true;
+  return Boolean(forceRefresh);
+}
+
 function logTorboxEvent(event, payload = {}, level = "info") {
   const safePayload = {};
   for (const [key, value] of Object.entries(payload || {})) {
@@ -199,6 +228,25 @@ async function tbRequest(method, endpoint, key, { data = null, params = null, ti
     return { status: 503, data: { detail: "torbox_circuit_open" }, headers: {}, _circuitOpen: true };
   }
 
+  if (shouldTrySdk(op)) {
+    try {
+      const sdkResponse = await TorboxSdkAdapter.request(method, endpoint, key, { data, params, timeout, json, op, timeoutMs: timeout });
+      if (sdkResponse) {
+        const normalized = normalizeSdkResponseForCircuit(sdkResponse);
+        if (normalized.status >= 200 && normalized.status < 300) tbCircuit.recordSuccess(circuitKey);
+        else if (normalized.status >= 500) tbCircuit.recordFailure(circuitKey);
+        else tbCircuit.recordSuccess(circuitKey);
+        return normalized;
+      }
+    } catch (error) {
+      if (!TorboxSdkAdapter.fallbackEnabled()) {
+        if ((error?.response?.status || error?.status || 0) >= 500) tbCircuit.recordFailure(circuitKey);
+        throw mapTorboxError(error, op);
+      }
+      logTorboxEvent("torbox.sdk.fallback", { op, status: error?.response?.status || error?.status || "n/a", code: error?.code || "sdk_error" }, "warn");
+    }
+  }
+
   let lastResponse = null;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt += 1) {
     try {
@@ -261,9 +309,9 @@ async function tbRequest(method, endpoint, key, { data = null, params = null, ti
   return lastResponse;
 }
 
-async function fetchUserList(key, extraParams = null) {
+async function fetchUserList(key, extraParams = null, options = {}) {
   const res = await tbRequest("GET", "/torrents/mylist", key, {
-    params: { bypass_cache: true, ...(extraParams || {}) },
+    params: { bypass_cache: getMyListBypassParam(extraParams, Boolean(options.forceRefresh)), ...(extraParams || {}) },
     op: "mylist"
   });
   if (!res?.data?.data) return null;
@@ -285,7 +333,7 @@ async function getUserList(key, forceRefresh = false) {
   }
 
   entry.pending = (async () => {
-    const list = await fetchUserList(key);
+    const list = await fetchUserList(key, null, { forceRefresh });
     if (list) {
       entry.data = list;
       entry.timestamp = Date.now();
@@ -361,7 +409,7 @@ async function findTorrentByHash(key, hash) {
 
 async function refreshTorrentInfo(key, torrentId) {
   if (!torrentId) return null;
-  const list = await fetchUserList(key, { id: torrentId });
+  const list = await fetchUserList(key, { id: torrentId }, { forceRefresh: true });
   if (!list || list.length === 0) return null;
   return list.find((torrent) => safeInt(torrent?.id) === safeInt(torrentId)) || list[0] || null;
 }
@@ -380,6 +428,24 @@ async function waitForFiles(key, torrentId, initialFiles = null) {
 }
 
 async function createTorrent(key, magnet) {
+  const preflight = await TorboxSdkAdapter.preflightTorrent(key, magnet, { timeoutMs: 12000 });
+  if (preflight && preflight.ok === false) {
+    logTorboxEvent("torbox.preflight.rejected", { hash: shortTorboxHash(preflight.hash), reason: preflight.reason, files: preflight.files || 0 }, "warn");
+    return {
+      status: 422,
+      data: {
+        success: false,
+        detail: preflight.reason || "preflight_rejected",
+        error: preflight.reason || "preflight_rejected"
+      },
+      headers: {},
+      _preflightRejected: true
+    };
+  }
+  if (preflight && preflight.skipped === false) {
+    logTorboxEvent("torbox.preflight.ok", { hash: shortTorboxHash(preflight.hash), files: preflight.files || 0, videoFiles: preflight.videoFiles || 0, seeds: preflight.seeds || 0 });
+  }
+
   const postData = { magnet, seed: "1", allow_zip: "false" };
   let createRes = await tbRequest("POST", "/torrents/createtorrent", key, { data: postData, op: "createtorrent" });
 
@@ -796,7 +862,46 @@ const TB = {
     normalizeCheckcachedInfo,
     mapTorboxError,
     stableKeyFingerprint,
-    redactSecretsInText
+    redactSecretsInText,
+    shouldTrySdk,
+    getMyListBypassParam,
+    sdkStatus: TorboxSdkAdapter.status
+  },
+
+  health: async (key = null) => {
+    const status = TorboxSdkAdapter.status();
+    if (!status.enabled || !status.available) {
+      return { ok: false, sdk: status, code: status.enabled ? "sdk_unavailable" : "sdk_disabled" };
+    }
+    try {
+      const up = await TorboxSdkAdapter.getUpStatus({ timeoutMs: 8000 });
+      let tokenCheck = null;
+      const apiKey = String(key || process.env.TORBOX_API_KEY || process.env.TB_API_KEY || "").trim();
+      if (apiKey) {
+        const list = await tbRequest("GET", "/torrents/mylist", apiKey, {
+          params: { bypass_cache: false, limit: 1 },
+          timeout: 8000,
+          op: "mylist.health"
+        });
+        tokenCheck = {
+          ok: list?.status >= 200 && list.status < 300,
+          status: list?.status || null,
+          sdk: list?._sdk === true
+        };
+      }
+      return {
+        ok: true,
+        sdk: status,
+        torbox: {
+          upStatus: up?.status || null,
+          ok: up?.status >= 200 && up.status < 300
+        },
+        tokenCheck
+      };
+    } catch (error) {
+      const err = mapTorboxError(error, "health");
+      return { ok: false, sdk: status, code: err.code, status: err.status, message: err.safeMessage };
+    }
   }
 };
 
