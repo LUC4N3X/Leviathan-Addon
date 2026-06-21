@@ -3804,7 +3804,7 @@ ${note}`;
 function generateLazyStream(item, config, meta, reqHost, userConfStr, isLazy = false, options = {}) {
     const service = getNormalizedDebridService(config);
     if (!service) return null;
-    if (service === 'rd' && !options?.allowRdVerifiedDbFallback && !shouldAllowRdLazyStreams(config?.filters || {})) return null;
+    if (service === 'rd' && !options?.allowRdVerifiedDbFallback && !options?.allowRdTrustedTorrentio && !shouldAllowRdLazyStreams(config?.filters || {})) return null;
     const isSeries = Boolean(meta?.isSeries || Number(meta?.season || 0) > 0 || Number(meta?.episode || 0) > 0);
     const isPack = isSeries && isConfidentSeasonPackItem(item, meta, '');
     const runtimeItem = createRuntimeItem(item, meta);
@@ -5593,7 +5593,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
                   .filter((item) => !resolvedHashes.has(String(item?.hash || item?.infoHash || extractInfoHash(item?.magnet) || '').toLowerCase()))
                   .filter((item) => !isKnownRdUnavailableCandidate(item))
                   .slice(0, trustLimit)
-                  .map((item) => generateLazyStream(createRuntimeItem(item, meta), resolverConfig, meta, reqHost, userConfStr, true))
+                  .map((item) => generateLazyStream(createRuntimeItem(item, meta), resolverConfig, meta, reqHost, userConfStr, true, { allowRdTrustedTorrentio: true }))
                   .filter(Boolean);
               if (trustedTorrentioLazyStreams.length > 0) {
                   logger.info(`[RD TORRENTIO TRUST] shown=${trustedTorrentioLazyStreams.length} resolved=${resolvedInstant.length} limit=${trustLimit} reason=torrentio_cached_no_recheck`);
