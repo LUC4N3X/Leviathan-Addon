@@ -312,6 +312,26 @@ async function ensureDatabaseOptimizations(pool) {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`,
+    `CREATE TABLE IF NOT EXISTS track_probe_cache (
+      cache_key TEXT PRIMARY KEY,
+      service TEXT NOT NULL DEFAULT 'unknown',
+      info_hash TEXT,
+      info_hash_norm TEXT,
+      file_index INTEGER,
+      file_index_norm INTEGER DEFAULT -1,
+      file_size BIGINT,
+      filename TEXT,
+      url_hash TEXT,
+      status TEXT NOT NULL DEFAULT 'queued',
+      tracks_json JSONB,
+      normalized_json JSONB,
+      score_patch_json JSONB,
+      error_code TEXT,
+      attempts INTEGER DEFAULT 0,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`,
     `CREATE TABLE IF NOT EXISTS cache_maintenance_history (
       run_id TEXT PRIMARY KEY,
       started_at TIMESTAMPTZ DEFAULT NOW(),
@@ -740,6 +760,24 @@ async function ensureDatabaseOptimizations(pool) {
     `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS hit_count BIGINT DEFAULT 0`,
     `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
     `ALTER TABLE debrid_resolved_link_cache ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
+
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS service TEXT DEFAULT 'unknown'`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS info_hash TEXT`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS info_hash_norm TEXT`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS file_index INTEGER`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS file_index_norm INTEGER DEFAULT -1`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS file_size BIGINT`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS filename TEXT`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS url_hash TEXT`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'queued'`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS tracks_json JSONB`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS normalized_json JSONB`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS score_patch_json JSONB`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS error_code TEXT`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
+    `ALTER TABLE track_probe_cache ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
 
     `UPDATE torrents SET info_hash_norm = LOWER(TRIM(info_hash)) WHERE info_hash IS NOT NULL AND (info_hash_norm IS NULL OR info_hash_norm <> LOWER(TRIM(info_hash)))`,
     `UPDATE torrents SET file_index_norm = COALESCE(file_index, -1) WHERE file_index_norm IS DISTINCT FROM COALESCE(file_index, -1)`,
@@ -1425,6 +1463,9 @@ async function ensureDatabaseOptimizations(pool) {
     `CREATE INDEX IF NOT EXISTS idx_debrid_resolved_link_expires ON debrid_resolved_link_cache (expires_at)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_resolved_link_service_hash ON debrid_resolved_link_cache (service, token_fp, info_hash_norm, file_id, expires_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_debrid_resolved_link_saved ON debrid_resolved_link_cache (service, token_fp, torrent_id, file_id, expires_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_track_probe_cache_expires ON track_probe_cache (expires_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_track_probe_cache_hash_file ON track_probe_cache (service, info_hash_norm, file_index_norm, file_size, expires_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_track_probe_cache_status ON track_probe_cache (status, updated_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_cache_maintenance_started ON cache_maintenance_history (started_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_torrent_rank_history_media ON torrent_rank_history (imdb_id, imdb_season, imdb_episode, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_torrent_rank_history_hash ON torrent_rank_history (info_hash_norm, file_index_norm, created_at DESC)`,
@@ -1497,6 +1538,7 @@ async function ensureDatabaseOptimizations(pool) {
     await runner.query(`DELETE FROM query_candidate_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
     await runner.query(`DELETE FROM debrid_availability_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
     await runner.query(`DELETE FROM debrid_resolved_link_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
+    await runner.query(`DELETE FROM track_probe_cache WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
     await runner.query(`DELETE FROM debrid_cache_check_markers WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
     await runner.query(`DELETE FROM debrid_account_snapshots WHERE expires_at IS NOT NULL AND expires_at < NOW()`);
     await runner.query(`DELETE FROM torrent_rank_history WHERE created_at < NOW() - INTERVAL '30 days'`);
