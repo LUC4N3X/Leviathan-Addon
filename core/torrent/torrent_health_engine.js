@@ -303,6 +303,18 @@ function shouldDropByHealth(item = {}, context = {}) {
 }
 
 function applyDbFirstPolicy(items = [], context = {}) {
+    const service = String(context.service || '').toLowerCase();
+
+    // External addons (Torrentio/MediaFusion/Meteor) are the most reliable source of
+    // Real-Debrid cached torrents. The DB-first precedence is a TorBox-oriented policy
+    // (see TORBOX_DB_FIRST_REAL_MIN): applied to RD it strips exactly the external
+    // results that RD is able to resolve, which is why RD returns almost nothing while
+    // TB is fine. For RD we keep (prioritize) external candidates so the RD direct
+    // resolver can turn them into playable streams. Opt out with RD_EXTERNAL_ADDON_PRIORITY=0.
+    if (service === 'rd' && toBool(process.env.RD_EXTERNAL_ADDON_PRIORITY ?? '1') !== false) {
+        return { results: items, dbReal: countRealDbCandidates(items, context), externalDropped: 0 };
+    }
+
     const dbFirstMin = readInt(context.dbFirstMin ?? process.env.TORRENT_HEALTH_DB_FIRST_MIN, DEFAULT_DB_FIRST_REAL_MIN);
     if (dbFirstMin <= 0) return { results: items, dbReal: 0, externalDropped: 0 };
 
