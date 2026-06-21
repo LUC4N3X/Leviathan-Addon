@@ -34,7 +34,8 @@
     "pg": "^8.21.0",
     "set-cookie-parser": "^3.1.0",
     "tough-cookie": "^6.0.1",
-    "winston": "^3.17.0"
+    "winston": "^3.17.0",
+    "get-tracks-data": "^0.8.2"
   },
   "optionalDependencies": {
     "tesseract.js": "^7.0.0"
