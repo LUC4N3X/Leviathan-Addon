@@ -1380,6 +1380,56 @@ const STYLE_BUILDERS = {
   custom: (params, config) => styleCustom(params, config),
 };
 
+
+function normalizeTrackHintCodec(value) {
+  return normalizeSpaces(value).toUpperCase();
+}
+
+function normalizeTrackHintAudioTag(value) {
+  const codec = normalizeTrackHintCodec(value);
+  if (!codec) return '';
+  if (codec === 'ATMOS TRUEHD') return 'Atmos TrueHD';
+  if (codec === 'ATMOS DDP') return 'Atmos DDP';
+  if (codec === 'ATMOS') return 'Dolby Atmos';
+  if (codec === 'DDP' || codec === 'EAC3') return 'Dolby DDP';
+  if (codec === 'AC3') return 'Dolby Digital';
+  if (codec === 'TRUEHD') return 'TrueHD';
+  return codec;
+}
+
+function normalizeTrackHintLanguages(trackHints = {}) {
+  const fromFlags = compactLanguageLabel(trackHints.languageFlags || trackHints.lang || '').trim();
+  if (fromFlags) return fromFlags;
+  const audioLanguages = Array.isArray(trackHints.audioLanguages) ? trackHints.audioLanguages : [];
+  if (audioLanguages.length) return compactLanguageLabel(audioLanguages.join(' '));
+  const subtitleLanguages = Array.isArray(trackHints.subtitleLanguages) ? trackHints.subtitleLanguages : [];
+  if (subtitleLanguages.length) return compactLanguageLabel(subtitleLanguages.join(' '));
+  return '';
+}
+
+function normalizeTrackHints(trackHints = {}) {
+  if (!trackHints || typeof trackHints !== 'object') return null;
+  if (trackHints.source !== 'probe' && trackHints.confidence !== 100 && !trackHints.videoCodec && !trackHints.audioCodec && !trackHints.languageFlags) return null;
+  const lang = normalizeTrackHintLanguages(trackHints);
+  const videoCodec = normalizeTrackHintCodec(trackHints.videoCodec || trackHints.codec || '');
+  const audioCodec = normalizeTrackHintCodec(trackHints.audioCodec || '');
+  const audioTag = normalizeTrackHintAudioTag(audioCodec);
+  const audioChannels = normalizeSpaces(trackHints.audioChannels || trackHints.channels || '');
+  return {
+    lang,
+    videoCodec,
+    audioCodec,
+    audioTag,
+    audioChannels,
+    source: trackHints.source || 'probe',
+    hasItalianAudio: trackHints.hasItalianAudio === true,
+    hasItalianSubtitles: trackHints.hasItalianSubtitles === true,
+    hasMultiAudio: trackHints.hasMultiAudio === true,
+    scorePatch: trackHints.scorePatch || null,
+    raw: trackHints
+  };
+}
+
 function mergeParsedInfo(releaseInfo, fileInfo) {
   if (!fileInfo || typeof fileInfo !== 'object') return releaseInfo;
   if (!releaseInfo || typeof releaseInfo !== 'object') return fileInfo;
@@ -1406,7 +1456,11 @@ function mergeParsedInfo(releaseInfo, fileInfo) {
 
 function extractStreamInfo(title, source, config = {}) {
   const fileName = normalizeSpaces(config.fileName || config.fileTitle || '');
-  const cacheKey = JSON.stringify([title, source, config.season, config.episode, fileName]);
+  const trackHints = normalizeTrackHints(config.trackHints || config._trackHints || null);
+  const trackHintKey = trackHints
+    ? JSON.stringify([trackHints.lang, trackHints.videoCodec, trackHints.audioCodec, trackHints.audioChannels, trackHints.hasItalianAudio, trackHints.hasItalianSubtitles, trackHints.hasMultiAudio])
+    : '';
+  const cacheKey = JSON.stringify([title, source, config.season, config.episode, fileName, trackHintKey]);
   const cached = getCached(EXTRACT_CACHE, cacheKey);
   if (cached) return cached;
 
@@ -1431,11 +1485,17 @@ function extractStreamInfo(title, source, config = {}) {
     Array.isArray(parsed?.languages) ? parsed.languages.join(' ') : parsed?.languages,
     Array.isArray(parsed?.subtitleLanguages) ? parsed.subtitleLanguages.join(' ') : parsed?.subtitleLanguages,
   ].filter(Boolean).join(' ');
-  const lang = deriveLanguages(hasDistinctFile ? `${rawTitle} ${fileName}` : rawTitle, parsedLanguageContext);
-  const { codec, audioTag, audioChannels } = deriveAudio(parsed, upperTitle, quality, cleanTags);
+  const guessedLang = deriveLanguages(hasDistinctFile ? `${rawTitle} ${fileName}` : rawTitle, parsedLanguageContext);
+  const audioInfo = deriveAudio(parsed, upperTitle, quality, cleanTags);
   const releaseGroup = deriveReleaseGroup(rawTitle, parsed);
   const cleanName = cleanFilename(rawTitle);
   const epTag = getEpisodeTag(rawTitle, config);
+
+  const codec = trackHints?.videoCodec || audioInfo.codec;
+  const audioTag = trackHints?.audioTag || audioInfo.audioTag;
+  const audioChannels = trackHints?.audioChannels || audioInfo.audioChannels;
+  const lang = trackHints?.lang || guessedLang;
+  const rawInfo = trackHints ? { ...parsed, trackHints: trackHints.raw, trackProbe: true } : parsed;
 
   const result = {
     quality,
@@ -1447,10 +1507,11 @@ function extractStreamInfo(title, source, config = {}) {
     codec,
     audioTag,
     audioChannels,
-    rawInfo: parsed,
+    rawInfo,
     releaseGroup,
     cleanName,
     epTag,
+    trackHints: trackHints || null,
   };
 
   return setCached(EXTRACT_CACHE, cacheKey, result, EXTRACT_CACHE_LIMIT);
