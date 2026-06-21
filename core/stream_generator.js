@@ -118,7 +118,7 @@ const {
   incrementMetric, recordDuration, recordProviderMetric
 } = require("./utils");
 
-const { parseKitsuIdentifier } = kitsuHandler;
+const { parseKitsuIdentifier, resolveAnimeId, parseAnimeIdContext } = kitsuHandler;
 
 const languageFilterTools = createLanguageFilterTools({
   logger,
@@ -2832,6 +2832,11 @@ async function fetchTmdbEpisodeMeta(tmdbId, season, episode, userApiKey) {
     }
 }
 
+function isAnimeIdPrefix(id) {
+    const s = String(id || '').toLowerCase();
+    return s.startsWith('kitsu:') || s.startsWith('mal:') || s.startsWith('anilist:') || s.startsWith('anidb:');
+}
+
 async function getMetadata(id, type, config = {}) {
   const userTmdbKey = String(config?.tmdb || '');
   const metadataCacheKey = `${type}:${id}:${userTmdbKey}`;
@@ -2844,12 +2849,19 @@ async function getMetadata(id, type, config = {}) {
     let finalMeta = null;
 
     try {
-      if (type === 'anime' || id.toString().startsWith('kitsu:')) {
-          const parsedKitsu = parseKitsuIdentifier(id);
-          const kitsuId = parsedKitsu?.kitsuId || String(id || '').trim();
+      if (type === 'anime' || isAnimeIdPrefix(id)) {
+          const parsedAnimeCtx = parseAnimeIdContext(id);
+          const isNonKitsuAnime = Boolean(parsedAnimeCtx?.prefix && parsedAnimeCtx.prefix !== 'kitsu');
+          const resolvedAnimeEntry = isNonKitsuAnime ? await resolveAnimeId(id).catch(() => null) : null;
+          const parsedKitsu = isNonKitsuAnime
+              ? { kitsuId: resolvedAnimeEntry?.kitsuId || null, season: parsedAnimeCtx?.season || 1, episode: parsedAnimeCtx?.episode || 0, isEpisode: parsedAnimeCtx?.isEpisode || false, raw: id }
+              : parseKitsuIdentifier(id);
+          const kitsuId = parsedKitsu?.kitsuId || (isNonKitsuAnime ? null : String(id || '').trim());
           const season = parsedKitsu?.season || 1;
           const episode = parsedKitsu?.episode || 0;
-          const fallbackKitsuMeta = kitsuId ? await kitsuHandler(kitsuId).catch(() => null) : null;
+          const fallbackKitsuMeta = isNonKitsuAnime
+              ? resolvedAnimeEntry
+              : (kitsuId ? await kitsuHandler(kitsuId).catch(() => null) : null);
           const mappedKitsu = mapKitsuEpisodePosition(parsedKitsu, fallbackKitsuMeta);
 
           if (kitsuId) {
@@ -5049,7 +5061,7 @@ async function fetchTitleCandidatePool({ type, finalId, tmdbIdLookup, meta, conf
 
 function parseRdViewPageFromId(type, rawId, meta = {}, context = {}) {
   const raw = String(rawId || context?.requestPage?.id || '').replace(/\.json$/i, '').replace(/^ai-recs:/i, '').trim();
-  const match = raw.match(/^(kitsu:\d+|tmdb:\d+|tt\d+|\d+)(?::(\d+))?(?::(\d+))?$/i);
+  const match = raw.match(/^((?:kitsu|mal|anilist|anidb):\d+|tmdb:\d+|tt\d+|\d+)(?::(\d+))?(?::(\d+))?$/i);
   const seasonFromId = match?.[2] ? Number.parseInt(match[2], 10) : null;
   const episodeFromId = match?.[3] ? Number.parseInt(match[3], 10) : null;
   const isKitsuCompact = match && String(match[1] || '').toLowerCase().startsWith('kitsu:') && seasonFromId && !episodeFromId;
