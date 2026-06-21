@@ -5583,10 +5583,6 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
           if (rdVerifiedDbFallbackStreams.length > 0) {
               logger.info(`[RD DB FALLBACK] verified DB fallback streams=${rdVerifiedDbFallbackStreams.length} reason=rd_direct_fill resolved=${resolvedInstant.length}`);
           }
-          // Trust Torrentio's RD-cached assertion: candidates Torrentio flags as cached
-          // that did not resolve instantly (e.g. RD recheck timed out) are still shown as
-          // lazy streams instead of being dropped. This prevents the playable-only list
-          // from collapsing to a single result when the per-hash RD check is slow.
           let trustedTorrentioLazyStreams = [];
           if (rdPlayableOnly && configuredDebridService === 'rd' && shouldTrustTorrentioRdCached(filters)) {
               const resolvedHashes = collectExistingTorrentHashes([], resolvedInstant);

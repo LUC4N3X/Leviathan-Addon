@@ -36,10 +36,6 @@ function shouldEnforceRdPlayableOnly(filters = {}) {
     return isTruthyConfigValue(explicit);
 }
 
-// When enabled (default) Real-Debrid trusts Torrentio's RD-cached assertion: candidates
-// Torrentio flags as cached are shown directly (as lazy streams, resolved on click)
-// without the per-hash RD recheck that can time out and collapse the list to a single
-// result. Set RD_TRUST_TORRENTIO_CACHED=0 to restore the strict per-hash verification.
 function shouldTrustTorrentioRdCached(filters = {}) {
     const explicit = filters.rdTrustTorrentioCached ?? process.env.RD_TRUST_TORRENTIO_CACHED;
     if (explicit === undefined || explicit === null || String(explicit).trim() === '') return true;
