@@ -270,7 +270,8 @@ function registerPlaybackRoutes(app, {
         if (!/^magnet:\?/i.test(String(magnet || ''))) return null;
         const startedAt = Date.now();
         const { item, meta, season, episode, fileIdx } = buildRdDownloadPlaybackContext(req, hash, magnet);
-        const lazyCacheKey = `rd:${item.hash}:${season || 0}:${episode || 0}:${Number.isInteger(fileIdx) ? fileIdx : -1}`;
+        // The resolved RD link is bound to the forwarded client IP, so scope the cache by IP too.
+        const lazyCacheKey = `rd:${item.hash}:${season || 0}:${episode || 0}:${Number.isInteger(fileIdx) ? fileIdx : -1}:${req.ip || ''}`;
 
         try {
             const cachedLazy = await Cache.getLazyLink(lazyCacheKey);
@@ -289,7 +290,7 @@ function registerPlaybackRoutes(app, {
             }
 
             const streamData = await LIMITERS.lazyPlay.schedule(() =>
-                RD.getStreamLink(apiKey, magnet, season || 0, episode || 0, Number.isInteger(fileIdx) ? fileIdx : null)
+                RD.getStreamLink(apiKey, magnet, season || 0, episode || 0, Number.isInteger(fileIdx) ? fileIdx : null, { userIp: req.ip || null })
             );
 
             if (!streamData || !streamData.url) {
@@ -390,7 +391,7 @@ function registerPlaybackRoutes(app, {
                 logger.info(`[LAZY PLAY] TB series route fileIdx deferred to matcher | hash=${item.hash} | routeIdx=${routeFileIdx} | S${item.season}E${item.episode}`);
             }
 
-            const lazyCacheKey = `${requestedService}:${item.hash}:${item.season || 0}:${item.episode || 0}:${item.fileIdx !== undefined ? item.fileIdx : -1}`;
+            const lazyCacheKey = `${requestedService}:${item.hash}:${item.season || 0}:${item.episode || 0}:${item.fileIdx !== undefined ? item.fileIdx : -1}${requestedService === 'rd' ? `:${req.ip || ''}` : ''}`;
             if (!cachedPlaybackMeta && lazyCacheKey !== routeLazyCacheKey) {
                 cachedPlaybackMeta = await Cache.getLazyMeta(lazyCacheKey);
             }
@@ -444,7 +445,7 @@ function registerPlaybackRoutes(app, {
             }
 
             const tokenFp = tokenFingerprint(apiKey);
-            const persistedLazyKey = `lazy:${requestedService}:${tokenFp}:${item.hash}:${item.season || 0}:${item.episode || 0}:${item.fileIdx !== undefined ? item.fileIdx : -1}:${requestedService === 'tb' ? (req.ip || '') : ''}`;
+            const persistedLazyKey = `lazy:${requestedService}:${tokenFp}:${item.hash}:${item.season || 0}:${item.episode || 0}:${item.fileIdx !== undefined ? item.fileIdx : -1}:${(requestedService === 'tb' || requestedService === 'rd') ? (req.ip || '') : ''}`;
             const persistedLazy = await getPersistedResolvedLink(dbHelper, persistedLazyKey);
             if (persistedLazy && (persistedLazy.rawUrl || persistedLazy.url) && isLazyCacheCompatibleWithRequest(persistedLazy, item)) {
                 const cachedTargetUrl = persistedLazy.rawUrl || persistedLazy.url;
@@ -494,7 +495,7 @@ function registerPlaybackRoutes(app, {
 
             if (!streamData) {
                 streamData = await LIMITERS.lazyPlay.schedule(() =>
-                    resolveLazyStreamData(requestedService, apiKey, item, { ...(playbackMeta || {}), season: item.season, episode: item.episode, title: playbackMeta?.title || item.title, originalTitle: playbackMeta?.originalTitle || item.originalTitle || null, year: playbackMeta?.year || item.year || null, requested_kitsu_episode: playbackMeta?.requested_kitsu_episode || item?.requested_kitsu_episode || null, anime_absolute_episode: playbackMeta?.anime_absolute_episode || null })
+                    resolveLazyStreamData(requestedService, apiKey, item, { ...(playbackMeta || {}), season: item.season, episode: item.episode, title: playbackMeta?.title || item.title, originalTitle: playbackMeta?.originalTitle || item.originalTitle || null, year: playbackMeta?.year || item.year || null, requested_kitsu_episode: playbackMeta?.requested_kitsu_episode || item?.requested_kitsu_episode || null, anime_absolute_episode: playbackMeta?.anime_absolute_episode || null, clientIp: req.ip || null })
                 );
             }
 
@@ -567,7 +568,7 @@ function registerPlaybackRoutes(app, {
             if (!apiKey) return res.status(400).send('API Key mancante.');
 
             const tokenFp = tokenFingerprint(apiKey);
-            const savedIpPart = requestedService === 'tb' ? `:${req.ip || ''}` : '';
+            const savedIpPart = `:${req.ip || ''}`;
             const cacheKey = `saved:${requestedService}:${torrentId}:${fileId}`;
             const persistedCacheKey = `saved:${requestedService}:${tokenFp}:${torrentId}:${fileId}${savedIpPart}`;
             const cached = await Cache.getLazyLink(cacheKey);
@@ -600,7 +601,7 @@ function registerPlaybackRoutes(app, {
             const inflightKey = `saved:${requestedService}:${tokenFp}:${torrentId}:${fileId}${savedIpPart}`;
             const streamData = await withSharedPromise(savedCloudResolveInflight, inflightKey, () => (requestedService === 'tb'
                 ? LIMITERS.lazyPlay.schedule(() => TB.resolveSavedTorrentFile(apiKey, torrentId, fileId, req.ip || null))
-                : LIMITERS.lazyPlay.schedule(() => RD.resolveSavedTorrentFile(apiKey, torrentId, fileId))
+                : LIMITERS.lazyPlay.schedule(() => RD.resolveSavedTorrentFile(apiKey, torrentId, fileId, req.ip || null))
             ), { maxEntries: 2048 });
 
             if (!streamData?.url) {

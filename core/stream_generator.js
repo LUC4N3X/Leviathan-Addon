@@ -533,7 +533,8 @@ async function resolveLazyStreamData(service, apiKey, item, meta) {
                 item.magnet,
                 meta?.season || item.season || 0,
                 meta?.episode || item.episode || 0,
-                item.fileIdx
+                item.fileIdx,
+                { userIp: meta?.clientIp || null }
             )
         );
     }, boundedSharedPromiseOptions(LAZY_RESOLVE_INFLIGHT_MAX_ENTRIES, 'lazyResolve.inflight.evicted'));

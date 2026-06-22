@@ -24,6 +24,7 @@ const { hasWrongExplicitEpisodeMarker } = require('../../../matching/episode_mat
 const { scheduleRealDebridRequest } = require('../utils/rd_rate_limiter');
 const { withRealDebridMagnetLock } = require('../utils/rd_magnet_lock');
 const { scheduleRdProbe } = require('./rd_probe_coordinator');
+const { extractRdErrorCode, classifyRdErrorCode } = require('../utils/rd_error_codes');
 
 function isVideoFile(path) {
     return VIDEO_EXTENSIONS.test(path || '');
@@ -88,7 +89,7 @@ function readProbeResultCache(item = {}, token = '') {
 function writeProbeResultCache(item = {}, token = '', result = {}) {
     const key = getProbeCacheKey(item, token);
     if (!key || !result || !result.hash) return false;
-    const ttl = result.cached === true
+    const ttl = (result.cached === true || result.state === 'uncached_terminal')
         ? RD_PROBE_CACHE_HIT_TTL_MS
         : (result.deferred === true || result.state === 'probing' ? RD_PROBE_CACHE_DEFERRED_TTL_MS : RD_PROBE_CACHE_MISS_TTL_MS);
     probeResultCache.set(key, { result: cloneProbeResult(result), expiresAt: Date.now() + ttl });
@@ -115,6 +116,18 @@ function buildDeferredProbeResult(hash, status, reason = null) {
         deferred: true,
         state: 'probing',
         rd_status: normalizeStatus(status) || 'unknown',
+        ...(reason ? { error: reason } : {})
+    };
+}
+
+function buildTerminalUncachedProbeResult(hash, reason = null, errorCode = null) {
+    return {
+        hash: normalizeHash(hash),
+        cached: false,
+        deferred: false,
+        state: 'uncached_terminal',
+        rd_status: 'error',
+        ...(Number.isInteger(errorCode) ? { rd_error_code: errorCode } : {}),
         ...(reason ? { error: reason } : {})
     };
 }
@@ -210,7 +223,23 @@ async function rdRequestCore(method, url, token, data = null, options = {}) {
                     return null;
                 }
 
-                await safeJson(response);
+                const errorBody = await safeJson(response);
+                const errorCode = extractRdErrorCode(errorBody);
+                const errorClass = classifyRdErrorCode(errorCode);
+                if (errorClass === 'terminal_uncached') {
+                    // Infringing / too-big / invalid torrent: never going to become cached.
+                    return { _terminalUncached: true, _errorCode: errorCode, _reason: `rd_error_${errorCode}` };
+                }
+                if (errorClass === 'rate_limit') {
+                    // Throttling surfaced as a 4xx body code instead of an HTTP 429.
+                    if (deferOnTransient) return { _deferred: true, _reason: `rd_error_${errorCode}` };
+                    attempt += 1;
+                    if (attempt < maxAttempts) {
+                        await sleep(1000 + Math.random() * 1000);
+                        continue;
+                    }
+                    return null;
+                }
                 return null;
             }
 
@@ -390,10 +419,12 @@ async function selectFilesForProbe(request, token, torrentId, info, context = {}
     const selectedFiles = selection.files || 'all';
     const selectRes = await request('POST', `${RD_BASE_URL}/torrents/selectFiles/${torrentId}`, token, buildSelectFilesBody(selectedFiles));
     if (!selectRes) return { info: null, reason: 'select_failed', selection };
+    if (selectRes._terminalUncached) return { terminalUncached: true, errorCode: selectRes._errorCode, reason: selectRes._reason || 'select_terminal', selection };
     if (selectRes._deferred) return { deferred: true, reason: selectRes._reason || 'select_deferred', selection };
 
     const selectedInfo = await request('GET', `${RD_BASE_URL}/torrents/info/${torrentId}`, token);
     if (!selectedInfo) return { info: null, reason: 'info_after_select_failed', selection };
+    if (selectedInfo._terminalUncached) return { terminalUncached: true, errorCode: selectedInfo._errorCode, reason: selectedInfo._reason || 'info_after_select_terminal', selection };
     if (selectedInfo._deferred) return { deferred: true, reason: selectedInfo._reason || 'info_after_select_deferred', selection };
 
     return { info: selectedInfo, selection };
@@ -497,6 +528,7 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
     try {
         const addRes = await request('POST', `${RD_BASE_URL}/torrents/addMagnet`, token, buildMagnetBody(magnet));
         if (!addRes) return buildDeferredProbeResult(hash, null, 'Failed to add magnet');
+        if (addRes._terminalUncached) return buildTerminalUncachedProbeResult(hash, addRes._reason, addRes._errorCode);
         if (addRes._deferred) return buildDeferredProbeResult(hash, null, addRes._reason);
         if (!addRes.id) return buildDeferredProbeResult(hash, null, 'No torrent ID');
 
@@ -506,6 +538,10 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
         if (!info) {
             await cleanup();
             return buildDeferredProbeResult(hash, null, 'Failed to get torrent info');
+        }
+        if (info._terminalUncached) {
+            await cleanup();
+            return buildTerminalUncachedProbeResult(hash, info._reason, info._errorCode);
         }
         if (info._deferred) {
             await cleanup();
@@ -525,6 +561,10 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
                 };
                 await cleanup();
                 return result;
+            }
+            if (selectionResult?.terminalUncached) {
+                await cleanup();
+                return buildTerminalUncachedProbeResult(hash, selectionResult.reason, selectionResult.errorCode);
             }
             if (selectionResult?.deferred) {
                 await cleanup();
@@ -556,6 +596,10 @@ async function performAvailabilityProbe(infoHash, magnet, token, options = {}) {
             if (!latestInfo) {
                 await cleanup();
                 return buildDeferredProbeResult(hash, initialStatus, 'Failed to re-fetch info');
+            }
+            if (latestInfo._terminalUncached) {
+                await cleanup();
+                return buildTerminalUncachedProbeResult(hash, latestInfo._reason, latestInfo._errorCode);
             }
             if (latestInfo._deferred) {
                 await cleanup();
