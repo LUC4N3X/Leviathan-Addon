@@ -412,6 +412,7 @@ function normalizeSmartToken(value) {
   return String(value || '')
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/['\u2018\u2019\u02bc`\u00b4]+/g, '')
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim()
     .toLowerCase();
@@ -953,5 +954,6 @@ module.exports = {
   getFolderSizeBytes,
   buildDedupeKeys,
   buildSmartDedupeKey,
-  dedupeByInfoHash
+  dedupeByInfoHash,
+  normalizeSmartToken
 };
