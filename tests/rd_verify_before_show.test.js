@@ -40,6 +40,15 @@ test('Torrentio authority item is exempt (Torrentio over DB)', () => {
     });
 });
 
+test('Torrentio authority is NOT exempt when RD_TORRENTIO_OVER_DB is false', () => {
+    withEnv({ RD_VERIFY_BEFORE_SHOW: undefined, RD_TORRENTIO_OVER_DB: 'false' }, () => {
+        const item = { _localDb: true, _rdStalePositive: true, _rdCacheState: 'likely_cached', _torrentioRdAuthority: true };
+        // With Torrentio-over-DB disabled, the authority no longer grants an exemption.
+        assert.equal(isUnverifiedDbRdPositive(item), true);
+        assert.equal(getRdCandidateState(item), 'unknown');
+    });
+});
+
 test('fresh DB-verified positive is kept as-is', () => {
     withEnv({ RD_VERIFY_BEFORE_SHOW: undefined }, () => {
         const item = { _localDb: true, _dbCachedRd: true, _rdStalePositive: false, _rdCacheState: 'cached' };

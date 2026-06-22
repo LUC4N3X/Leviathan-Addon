@@ -814,7 +814,13 @@ function shouldUseDbSnapshotRescueItem(item = {}) {
     if (state === 'uncached_terminal' || state === 'likely_uncached') return false;
     if (item?._dbCachedRd === false || item?.cached_rd === false) return false;
     const seeders = parseInt(item?.seeders, 10) || 0;
-    const hasTrustedState = !isUnverifiedDbRdPositive(item) && (state === 'cached' || state === 'likely_cached' || item?._dbCachedRd === true || item?.cached_rd === true || item?._mediafusionRdAuthority === true || item?._torrentioRdAuthority === true);
+    const hasPositiveStateOrMarker = state === 'cached'
+        || state === 'likely_cached'
+        || item?._dbCachedRd === true
+        || item?.cached_rd === true
+        || item?._mediafusionRdAuthority === true
+        || item?._torrentioRdAuthority === true;
+    const hasTrustedState = !isUnverifiedDbRdPositive(item) && hasPositiveStateOrMarker;
     return hasTrustedState || seeders >= Number(process.env.MOVIE_DB_SNAPSHOT_RESCUE_MIN_SEEDERS || 3);
 }
 
