@@ -210,9 +210,10 @@ async function rdRequestCore(method, url, token, data = null, options = {}) {
             const response = await scheduleRealDebridRequest(token, () => fetch(url, buildRequestConfig(method, token, data, controller.signal)), `${method} ${url.replace(RD_BASE_URL, '')}`);
 
             if (response.status === 204 || response.status === 202) return { success: true, _status: response.status };
-            if (response.status === 403) return null;
 
             if (!response.ok) {
+                // 403 falls through so RD error_code bodies (terminal / rate) still get
+                // classified below; auth / unknown 403s end at the final `return null`.
                 if (response.status === 429 || response.status >= 500) {
                     if (deferOnTransient) return { _deferred: true, _reason: String(response.status) };
                     attempt += 1;

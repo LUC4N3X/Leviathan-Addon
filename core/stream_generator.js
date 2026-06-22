@@ -457,7 +457,11 @@ function getLazyCacheKey(service, item, meta) {
 
 function getLazyResolveInflightKey(service, apiKey, item, meta) {
     const tokenSig = crypto.createHash('sha1').update(String(apiKey || '')).digest('hex').slice(0, 12);
-    return `${String(service || 'rd').toLowerCase()}:${tokenSig}:${item.hash}:${meta?.season || item.season || 0}:${meta?.episode || item.episode || 0}:${item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : -1}`;
+    const normalizedService = String(service || 'rd').toLowerCase();
+    // RD links are bound to the forwarded client IP, so two viewers on different
+    // IPs must not share the same in-flight resolve promise (and its cached URL).
+    const clientIpPart = normalizedService === 'rd' ? `:${meta?.clientIp || ''}` : '';
+    return `${normalizedService}:${tokenSig}:${item.hash}:${meta?.season || item.season || 0}:${meta?.episode || item.episode || 0}:${item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : -1}${clientIpPart}`;
 }
 
 function maybeBuildContentProxyUrl(baseUrl, rawConf, targetUrl, config = {}, options = {}) {

@@ -44,7 +44,8 @@ function normalizeForwardableIp(ip) {
     if (value === "::1" || /^127\./.test(value)) return null;
     if (/^10\./.test(value) || /^192\.168\./.test(value) || /^169\.254\./.test(value)) return null;
     if (/^172\.(1[6-9]|2\d|3[01])\./.test(value)) return null;
-    if (/^(fc|fd|fe80:)/i.test(value)) return null;
+    if (/^(fc|fd)/i.test(value)) return null; // unique local IPv6 (fc00::/7)
+    if (/^fe[89ab][0-9a-f]:/i.test(value)) return null; // link-local IPv6 (fe80::/10)
     return value;
 }
 

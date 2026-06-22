@@ -569,7 +569,9 @@ function registerPlaybackRoutes(app, {
 
             const tokenFp = tokenFingerprint(apiKey);
             const savedIpPart = `:${req.ip || ''}`;
-            const cacheKey = `saved:${requestedService}:${torrentId}:${fileId}`;
+            // RD links are IP-bound, so the in-memory key must be IP-scoped too (TB unchanged).
+            const inMemoryIpPart = requestedService === 'rd' ? savedIpPart : '';
+            const cacheKey = `saved:${requestedService}:${torrentId}:${fileId}${inMemoryIpPart}`;
             const persistedCacheKey = `saved:${requestedService}:${tokenFp}:${torrentId}:${fileId}${savedIpPart}`;
             const cached = await Cache.getLazyLink(cacheKey);
             if (cached?.rawUrl || cached?.url) {

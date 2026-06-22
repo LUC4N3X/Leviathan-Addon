@@ -55,7 +55,9 @@ const RATE_LIMIT_ERROR_CODES = new Set([
 function extractRdErrorCode(body) {
     if (!body || typeof body !== 'object') return null;
     const raw = body.error_code ?? body.errorCode ?? body.code;
-    const parsed = Number.parseInt(raw, 10);
+    // Strict parse: reject coerced prefixes like "35x" that Number.parseInt would accept.
+    if (!/^\d+$/.test(String(raw ?? '').trim())) return null;
+    const parsed = Number(raw);
     return Number.isInteger(parsed) ? parsed : null;
 }
 
