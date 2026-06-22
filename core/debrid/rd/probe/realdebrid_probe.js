@@ -212,8 +212,6 @@ async function rdRequestCore(method, url, token, data = null, options = {}) {
             if (response.status === 204 || response.status === 202) return { success: true, _status: response.status };
 
             if (!response.ok) {
-                // 403 falls through so RD error_code bodies (terminal / rate) still get
-                // classified below; auth / unknown 403s end at the final `return null`.
                 if (response.status === 429 || response.status >= 500) {
                     if (deferOnTransient) return { _deferred: true, _reason: String(response.status) };
                     attempt += 1;
@@ -228,11 +226,9 @@ async function rdRequestCore(method, url, token, data = null, options = {}) {
                 const errorCode = extractRdErrorCode(errorBody);
                 const errorClass = classifyRdErrorCode(errorCode);
                 if (errorClass === 'terminal_uncached') {
-                    // Infringing / too-big / invalid torrent: never going to become cached.
                     return { _terminalUncached: true, _errorCode: errorCode, _reason: `rd_error_${errorCode}` };
                 }
                 if (errorClass === 'rate_limit') {
-                    // Throttling surfaced as a 4xx body code instead of an HTTP 429.
                     if (deferOnTransient) return { _deferred: true, _reason: `rd_error_${errorCode}` };
                     attempt += 1;
                     if (attempt < maxAttempts) {

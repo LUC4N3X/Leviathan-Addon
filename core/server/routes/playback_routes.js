@@ -270,7 +270,6 @@ function registerPlaybackRoutes(app, {
         if (!/^magnet:\?/i.test(String(magnet || ''))) return null;
         const startedAt = Date.now();
         const { item, meta, season, episode, fileIdx } = buildRdDownloadPlaybackContext(req, hash, magnet);
-        // The resolved RD link is bound to the forwarded client IP, so scope the cache by IP too.
         const lazyCacheKey = `rd:${item.hash}:${season || 0}:${episode || 0}:${Number.isInteger(fileIdx) ? fileIdx : -1}:${req.ip || ''}`;
 
         try {
@@ -569,7 +568,6 @@ function registerPlaybackRoutes(app, {
 
             const tokenFp = tokenFingerprint(apiKey);
             const savedIpPart = `:${req.ip || ''}`;
-            // RD links are IP-bound, so the in-memory key must be IP-scoped too (TB unchanged).
             const inMemoryIpPart = requestedService === 'rd' ? savedIpPart : '';
             const cacheKey = `saved:${requestedService}:${torrentId}:${fileId}${inMemoryIpPart}`;
             const persistedCacheKey = `saved:${requestedService}:${tokenFp}:${torrentId}:${fileId}${savedIpPart}`;

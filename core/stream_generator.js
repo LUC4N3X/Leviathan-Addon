@@ -160,52 +160,8 @@ function streamWebDebug(message, payload = null) {
 }
 
 
-function rdEnvFlagEnabled(name) {
-    // Default ON: only an explicit false/0/off/no disables it.
-    const raw = String(process.env[name] ?? '').trim().toLowerCase();
-    return raw !== 'false' && raw !== '0' && raw !== 'off' && raw !== 'no';
-}
-
-function rdVerifyBeforeShowEnabled() {
-    return rdEnvFlagEnabled('RD_VERIFY_BEFORE_SHOW');
-}
-
-function rdTorrentioOverDbEnabled() {
-    return rdEnvFlagEnabled('RD_TORRENTIO_OVER_DB');
-}
-
-// Verify-before-show + Torrentio-over-DB (RD only). True when an RD item is "positive"
-// only because of an unverified DB signal (stale DB positive or DB-derived likely_cached)
-// — i.e. it was NOT confirmed by a live probe and is NOT backed by a trusted Torrentio
-// cached marker. Such items must not be shown as cached until verified. Torrentio-authority
-// items are exempt when RD_TORRENTIO_OVER_DB is on, so Torrentio's signal wins over the DB.
-function isUnverifiedDbRdPositive(item = {}) {
-    if (!item || typeof item !== 'object') return false;
-    if (!rdVerifyBeforeShowEnabled()) return false;
-    if (rdTorrentioOverDbEnabled() && isTorrentioRdAuthorityCandidate(item)) return false;
-    // Already proven cached/playable by a live resolve or an exact DB episode mapping.
-    if (item.cached === true || item.isCached === true) return false;
-    if (item._dbCachedRd === true && item._rdStalePositive !== true) return false;
-    const dbOrigin = item._localDb === true
-        || String(item._sourceGroup || '').toLowerCase() === 'local_db'
-        || item._dbPrimary === true
-        || item._myDb === true
-        || item._remoteDb === true
-        || item._rdStalePositive === true;
-    if (!dbOrigin) return false;
-    const rawState = String(item._rdCacheState || item.rdCacheState || item.cacheState || item.rd_cache_state || '').toLowerCase().trim();
-    return rawState === 'likely_cached' || item._rdStalePositive === true;
-}
-
 function getRdCandidateState(item = {}) {
-    const rawState = String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || item?.rd_cache_state || '').toLowerCase().trim();
-    // Verify-before-show (RD only): a positive that exists only because of an unverified
-    // DB signal is reported as 'unknown' so it is routed through live verification instead
-    // of being presented as cached. Torrentio-authority items are exempt (Torrentio > DB).
-    if ((rawState === 'likely_cached' || item?._rdStalePositive === true) && isUnverifiedDbRdPositive(item)) {
-        return 'unknown';
-    }
-    return rawState;
+    return String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || item?.rd_cache_state || '').toLowerCase().trim();
 }
 
 function isRdUnknownCandidate(item = {}) {
@@ -502,8 +458,6 @@ function getLazyCacheKey(service, item, meta) {
 function getLazyResolveInflightKey(service, apiKey, item, meta) {
     const tokenSig = crypto.createHash('sha1').update(String(apiKey || '')).digest('hex').slice(0, 12);
     const normalizedService = String(service || 'rd').toLowerCase();
-    // RD links are bound to the forwarded client IP, so two viewers on different
-    // IPs must not share the same in-flight resolve promise (and its cached URL).
     const clientIpPart = normalizedService === 'rd' ? `:${meta?.clientIp || ''}` : '';
     return `${normalizedService}:${tokenSig}:${item.hash}:${meta?.season || item.season || 0}:${meta?.episode || item.episode || 0}:${item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : -1}${clientIpPart}`;
 }
@@ -814,13 +768,7 @@ function shouldUseDbSnapshotRescueItem(item = {}) {
     if (state === 'uncached_terminal' || state === 'likely_uncached') return false;
     if (item?._dbCachedRd === false || item?.cached_rd === false) return false;
     const seeders = parseInt(item?.seeders, 10) || 0;
-    const hasPositiveStateOrMarker = state === 'cached'
-        || state === 'likely_cached'
-        || item?._dbCachedRd === true
-        || item?.cached_rd === true
-        || item?._mediafusionRdAuthority === true
-        || item?._torrentioRdAuthority === true;
-    const hasTrustedState = !isUnverifiedDbRdPositive(item) && hasPositiveStateOrMarker;
+    const hasTrustedState = state === 'cached' || state === 'likely_cached' || item?._dbCachedRd === true || item?.cached_rd === true || item?._mediafusionRdAuthority === true || item?._torrentioRdAuthority === true;
     return hasTrustedState || seeders >= Number(process.env.MOVIE_DB_SNAPSHOT_RESCUE_MIN_SEEDERS || 3);
 }
 
@@ -3840,7 +3788,7 @@ function generateRdDownloadToDebridStream(item, config, meta, reqHost, userConfS
 
     if (!stream) return null;
     const note = isTorrentioRdAuthorityCandidate(item)
-        ? '⏳ Torrentio RD cached • se non parte, aggiungi al cloud e aggiorna'
+        ? '⚡ Torrentio RD cached • se non parte, aggiungi al cloud e aggiorna'
         : '⬇️ RD download • aggiungi al cloud, poi aggiorna';
     stream.title = `${stream.title || displayTitle || item.title}
 ${note}`;
@@ -5911,8 +5859,6 @@ module.exports = {
     protectTorrentioExactMinimum,
     __private: {
         buildRdVerifiedDbFallbackStreams,
-        isRdVerifiedDbFallbackCandidate,
-        isUnverifiedDbRdPositive,
-        getRdCandidateState
+        isRdVerifiedDbFallbackCandidate
     }
 };

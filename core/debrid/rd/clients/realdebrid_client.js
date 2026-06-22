@@ -30,11 +30,6 @@ function toInt(value, fallback = 0) {
     return Number.isFinite(n) ? n : fallback;
 }
 
-// Real-Debrid ties an unrestricted link to the requester IP. Forwarding the real
-// client IP (like Torrentio/MediaFusion and our TorBox path already do) keeps the
-// link playable when the server and the viewer are on different networks. We only
-// forward routable public IPs — sending a loopback/private address would bind the
-// link to an unreachable host and break playback.
 function normalizeForwardableIp(ip) {
     if (!ip) return null;
     let value = String(ip).trim();
@@ -44,8 +39,8 @@ function normalizeForwardableIp(ip) {
     if (value === "::1" || /^127\./.test(value)) return null;
     if (/^10\./.test(value) || /^192\.168\./.test(value) || /^169\.254\./.test(value)) return null;
     if (/^172\.(1[6-9]|2\d|3[01])\./.test(value)) return null;
-    if (/^(fc|fd)/i.test(value)) return null; // unique local IPv6 (fc00::/7)
-    if (/^fe[89ab][0-9a-f]:/i.test(value)) return null; // link-local IPv6 (fe80::/10)
+    if (/^(fc|fd)/i.test(value)) return null;
+    if (/^fe[89ab][0-9a-f]:/i.test(value)) return null;
     return value;
 }
 
