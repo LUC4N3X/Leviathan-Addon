@@ -237,10 +237,9 @@ function normalizeCacheState(cacheState, serviceTag) {
   return 'unknown';
 }
 
-function getCacheIcon(cacheState) {
-  // ⚡ solo per cache RD/TB confermata. likely_cached resta dubbio/probing per non ingannare l'utente.
+function getCacheIcon(cacheState, serviceTag) {
   if (cacheState === 'cached') return '⚡';
-  if (cacheState === 'likely_cached') return '⏳';
+  if (cacheState === 'likely_cached') return normalizeServiceTag(serviceTag) === 'RD' ? '⚡' : '⏳';
   if (cacheState === 'uncached_terminal') return '☁️';
   if (cacheState === 'probing') return '⏳';
   if (cacheState === 'likely_uncached') return '⏳';
@@ -249,7 +248,7 @@ function getCacheIcon(cacheState) {
 
 function getStatusIcon(cacheState, serviceTag) {
   if (normalizeServiceTag(serviceTag) === 'WEB') return '🌊';
-  return getCacheIcon(cacheState);
+  return getCacheIcon(cacheState, serviceTag);
 }
 
 function deterministicHash(value) {

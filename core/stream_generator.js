@@ -457,7 +457,9 @@ function getLazyCacheKey(service, item, meta) {
 
 function getLazyResolveInflightKey(service, apiKey, item, meta) {
     const tokenSig = crypto.createHash('sha1').update(String(apiKey || '')).digest('hex').slice(0, 12);
-    return `${String(service || 'rd').toLowerCase()}:${tokenSig}:${item.hash}:${meta?.season || item.season || 0}:${meta?.episode || item.episode || 0}:${item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : -1}`;
+    const normalizedService = String(service || 'rd').toLowerCase();
+    const clientIpPart = normalizedService === 'rd' ? `:${meta?.clientIp || ''}` : '';
+    return `${normalizedService}:${tokenSig}:${item.hash}:${meta?.season || item.season || 0}:${meta?.episode || item.episode || 0}:${item.fileIdx !== undefined && item.fileIdx !== null ? item.fileIdx : -1}${clientIpPart}`;
 }
 
 function maybeBuildContentProxyUrl(baseUrl, rawConf, targetUrl, config = {}, options = {}) {
@@ -533,7 +535,8 @@ async function resolveLazyStreamData(service, apiKey, item, meta) {
                 item.magnet,
                 meta?.season || item.season || 0,
                 meta?.episode || item.episode || 0,
-                item.fileIdx
+                item.fileIdx,
+                { userIp: meta?.clientIp || null }
             )
         );
     }, boundedSharedPromiseOptions(LAZY_RESOLVE_INFLIGHT_MAX_ENTRIES, 'lazyResolve.inflight.evicted'));
@@ -3785,7 +3788,7 @@ function generateRdDownloadToDebridStream(item, config, meta, reqHost, userConfS
 
     if (!stream) return null;
     const note = isTorrentioRdAuthorityCandidate(item)
-        ? '⏳ Torrentio RD cached • se non parte, aggiungi al cloud e aggiorna'
+        ? '⚡ Torrentio RD cached • se non parte, aggiungi al cloud e aggiorna'
         : '⬇️ RD download • aggiungi al cloud, poi aggiorna';
     stream.title = `${stream.title || displayTitle || item.title}
 ${note}`;

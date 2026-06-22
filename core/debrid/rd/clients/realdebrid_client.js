@@ -2,6 +2,7 @@ const axios = require("axios");
 const crypto = require("crypto");
 const { computeBackoffDelay, parseRetryAfterMs } = require("../../utils/backoff");
 const { CircuitBreaker } = require("../../utils/circuit_breaker");
+const { extractRdErrorCode, classifyRdErrorCode } = require("../utils/rd_error_codes");
 
 const RD_API_BASE = "https://api.real-debrid.com/rest/1.0";
 
@@ -27,6 +28,26 @@ function sleep(ms) {
 function toInt(value, fallback = 0) {
     const n = parseInt(value, 10);
     return Number.isFinite(n) ? n : fallback;
+}
+
+function normalizeForwardableIp(ip) {
+    if (!ip) return null;
+    let value = String(ip).trim();
+    if (!value) return null;
+    const mapped = value.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+    if (mapped) value = mapped[1];
+    if (value === "::1" || /^127\./.test(value)) return null;
+    if (/^10\./.test(value) || /^192\.168\./.test(value) || /^169\.254\./.test(value)) return null;
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(value)) return null;
+    if (/^(fc|fd)/i.test(value)) return null;
+    if (/^fe[89ab][0-9a-f]:/i.test(value)) return null;
+    return value;
+}
+
+function appendUnrestrictIp(body, userIp) {
+    const fwdIp = normalizeForwardableIp(userIp);
+    if (fwdIp) body.append("ip", fwdIp);
+    return body;
 }
 
 function isVideoFilePath(filePath) {
@@ -160,12 +181,23 @@ async function rdRequest(method, url, token, data = null) {
                 rdCircuit.recordSuccess(circuitKey);
                 return response.data;
             }
+
+            const errorCode = status >= 400 ? extractRdErrorCode(response.data) : null;
+            const errorClass = classifyRdErrorCode(errorCode);
+
             if (status === 401 || status === 403 || status === 404) {
                 rdCircuit.recordSuccess(circuitKey);
                 if (status === 401 || status === 403) {
                     const path = String(url).replace(RD_API_BASE, "");
-                    console.warn(`[RD] HTTP ${status} on ${method} ${path} — Real-Debrid rejected the API token (expired / regenerated / wrong account?). Regenerate it at https://real-debrid.com/apitoken`);
+                    console.warn(`[RD] HTTP ${status}${Number.isInteger(errorCode) ? ` (error_code=${errorCode})` : ""} on ${method} ${path} — Real-Debrid rejected the API token (expired / regenerated / wrong account?). Regenerate it at https://real-debrid.com/apitoken`);
                 }
+                return null;
+            }
+
+            if (errorClass === "terminal_uncached") {
+                rdCircuit.recordSuccess(circuitKey);
+                const path = String(url).replace(RD_API_BASE, "");
+                console.warn(`[RD] terminal error_code=${errorCode} on ${method} ${path} — torrent not cacheable (infringing / too big / invalid), skipping retries`);
                 return null;
             }
 
@@ -307,7 +339,7 @@ const RD = {
         return getTorrentInfo(token, torrentId);
     },
 
-    resolveSavedTorrentFile: async (token, torrentId, selectedFileId = null) => {
+    resolveSavedTorrentFile: async (token, torrentId, selectedFileId = null, userIp = null) => {
         const info = await getTorrentInfo(token, torrentId);
         if (!info || info.status !== "downloaded") return null;
         const selectedId = selectedFileId === null || selectedFileId === undefined || selectedFileId === ""
@@ -318,6 +350,7 @@ const RD = {
 
         const unBody = new URLSearchParams();
         unBody.append("link", linkToUnrestrict);
+        appendUnrestrictIp(unBody, userIp);
         const unrestrictRes = await rdRequest("POST", `${RD_API_BASE}/unrestrict/link`, token, unBody);
         if (!unrestrictRes || !unrestrictRes.download) return null;
 
@@ -435,8 +468,9 @@ const RD = {
         }
     },
 
-    getStreamLink: async (token, magnet, season = null, episode = null, forcedFileIdx = null) => {
+    getStreamLink: async (token, magnet, season = null, episode = null, forcedFileIdx = null, options = {}) => {
         let torrentId = null;
+        const userIp = options && typeof options === "object" ? (options.userIp || null) : null;
 
         try {
             const addBody = new URLSearchParams();
@@ -532,6 +566,7 @@ const RD = {
 
             const unBody = new URLSearchParams();
             unBody.append("link", linkToUnrestrict);
+            appendUnrestrictIp(unBody, userIp);
 
             const unrestrictRes = await rdRequest(
                 "POST",
