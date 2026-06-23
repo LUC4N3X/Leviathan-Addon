@@ -562,6 +562,7 @@ function createDebridAvailabilityTools({ Cache, logger, LIMITERS, CONFIG, increm
             if (item?._savedCloud === true || item?.isSavedCloud === true) return 'cached';
             if ((item?._tbCached === true || item?.tbCached === true || item?.tb_cached === true) && item?._tbLiveChecked === true) return 'cached';
             const explicitTbState = normalizeRdStateValue(item?._tbCacheState || item?.tbCacheState);
+            if (explicitTbState === 'cached' && item?._tbLiveChecked !== true) return 'likely_cached';
             return explicitTbState || (item?._tbDbCachedHint === true ? 'likely_cached' : 'unknown');
         }
 

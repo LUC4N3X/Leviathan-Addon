@@ -173,3 +173,18 @@ test('TorBox DB cache is only a hint until a foreground live check confirms it',
   assert.equal(tools.getRdAvailabilityState('tb', { _tbCached: true, _tbLiveChecked: true }), 'cached');
   assert.equal(tools.getRdAvailabilityState('tb', { _savedCloud: true }), 'cached');
 });
+
+test('TorBox explicit cached state is not visible proof without live verification', () => {
+  const tools = makeTools();
+
+  assert.equal(tools.getRdAvailabilityState('tb', {
+    _tbDbCachedHint: true,
+    _tbCacheState: 'likely_cached'
+  }), 'likely_cached');
+
+  assert.equal(tools.getRdAvailabilityState('tb', {
+    _tbCached: true,
+    _tbCacheState: 'cached',
+    _tbLiveChecked: false
+  }), 'likely_cached');
+});

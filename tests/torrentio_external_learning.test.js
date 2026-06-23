@@ -6,8 +6,10 @@ const {
   buildExternalAddonRequestIds,
   normalizeExternalCandidateForPipeline,
   getExternalSourceLabel,
-  protectTorrentioExactMovieMinimum
+  protectTorrentioExactMovieMinimum,
+  __private
 } = require('../core/stream_generator');
+const { shouldTrustTorrentioRdCached } = require('../core/stream/debrid_runtime_options');
 
 test('buildExternalAddonRequestIds fans out imdb, requested id, and tmdb for Torrentio fallback', () => {
   assert.deepEqual(
@@ -95,4 +97,23 @@ test('protectTorrentioExactMovieMinimum keeps at least two safe exact-id Torrent
 
   assert.equal(guarded.length, 2);
   assert.ok(guarded.some((item) => String(item.title).startsWith('They Will Kill You')));
+});
+
+test('RD does not treat instant markers as verified cache proof', () => {
+  assert.equal(__private.isMovieDbVerifiedCandidate({
+    _sourceGroup: 'local_db',
+    _localDb: true,
+    _rdCacheState: 'instant_available'
+  }), false);
+});
+
+test('RD trusted Torrentio cached lazy streams are disabled by default', () => {
+  const previous = process.env.RD_TRUST_TORRENTIO_CACHED;
+  delete process.env.RD_TRUST_TORRENTIO_CACHED;
+  try {
+    assert.equal(shouldTrustTorrentioRdCached({}), false);
+  } finally {
+    if (previous === undefined) delete process.env.RD_TRUST_TORRENTIO_CACHED;
+    else process.env.RD_TRUST_TORRENTIO_CACHED = previous;
+  }
 });

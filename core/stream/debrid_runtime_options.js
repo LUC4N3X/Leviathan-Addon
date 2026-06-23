@@ -38,7 +38,7 @@ function shouldEnforceRdPlayableOnly(filters = {}) {
 
 function shouldTrustTorrentioRdCached(filters = {}) {
     const explicit = filters.rdTrustTorrentioCached ?? process.env.RD_TRUST_TORRENTIO_CACHED;
-    if (explicit === undefined || explicit === null || String(explicit).trim() === '') return true;
+    if (explicit === undefined || explicit === null || String(explicit).trim() === '') return false;
     return isTruthyConfigValue(explicit);
 }
 
