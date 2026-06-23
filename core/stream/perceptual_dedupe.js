@@ -45,7 +45,9 @@ function envInt(name, fallback) {
 }
 
 function envFloat(name, fallback) {
-    const parsed = Number(process.env[name]);
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || String(raw).trim() === '') return fallback;
+    const parsed = Number(raw);
     return Number.isFinite(parsed) ? parsed : fallback;
 }
 
@@ -380,7 +382,7 @@ function applyPerceptualDedupe(items = [], options = {}) {
         clusters.get(root).push(idx);
     });
 
-    const minDistanceForCluster = (indices) => {
+    const maxDistanceForCluster = (indices) => {
         let best = 0;
         for (let i = 0; i < indices.length; i += 1) {
             for (let j = i + 1; j < indices.length; j += 1) {
@@ -391,24 +393,43 @@ function applyPerceptualDedupe(items = [], options = {}) {
     };
 
     const clusterGroups = [...clusters.values()].filter((indices) => indices.length > 1);
+    const analyses = [];
     for (const indices of clusterGroups) {
+        const group = indices.map((member) => list[member]);
+        const winner = chooseWinner(group);
+        const droppable = indices.filter((member) => (
+            list[member] !== winner
+            && compatibleIdentity(list[member], winner)
+            && compatibleSize(list[member], winner, cfg)
+        ));
+        if (droppable.length === 0) continue;
+        analyses.push({
+            winner,
+            winnerIndex: indices.find((member) => list[member] === winner),
+            droppable,
+            distance: maxDistanceForCluster(indices),
+            partition: entries[indices[0]].partition
+        });
         stats.groups += 1;
-        stats.merged += indices.length - 1;
+        stats.merged += droppable.length;
     }
 
     if (mode === 'audit') {
         const auditByIndex = new Map();
-        for (const indices of clusterGroups) {
-            const group = indices.map((member) => list[member]);
-            const winner = chooseWinner(group);
-            const distance = minDistanceForCluster(indices);
-            const partition = entries[indices[0]].partition;
-            for (const member of indices) {
+        for (const analysis of analyses) {
+            const groupSize = analysis.droppable.length + 1;
+            auditByIndex.set(analysis.winnerIndex, {
+                partition: analysis.partition,
+                groupSize,
+                distance: analysis.distance,
+                wouldKeep: true
+            });
+            for (const member of analysis.droppable) {
                 auditByIndex.set(member, {
-                    partition,
-                    groupSize: indices.length,
-                    distance,
-                    wouldKeep: list[member] === winner
+                    partition: analysis.partition,
+                    groupSize,
+                    distance: analysis.distance,
+                    wouldKeep: false
                 });
             }
         }
@@ -423,40 +444,23 @@ function applyPerceptualDedupe(items = [], options = {}) {
         return { items: list, stats };
     }
 
-    const consumed = new Set();
-    const out = [];
-
-    list.forEach((item, idx) => {
-        if (consumed.has(idx)) return;
-        if (!entries[idx]) {
-            out.push(item);
-            return;
-        }
-        const root = uf.find(idx);
-        const indices = clusters.get(root) || [idx];
-        if (indices.length <= 1) {
-            out.push(item);
-            return;
-        }
-
-        indices.forEach((member) => consumed.add(member));
-        const group = indices.map((member) => list[member]);
-        const distance = minDistanceForCluster(indices);
-        const winner = annotateWinner(chooseWinner(group), group, distance);
-        for (const member of group) {
-            if (member !== winner) {
-                member._filterExplainReason = 'perceptual_dedupe';
-                if (options.explain && typeof options.explain.remove === 'function') {
-                    options.explain.remove('perceptualDedupe', member, member._filterExplainReason, {
-                        distance,
-                        winner: winner.title || winner.name || winner.filename
-                    });
-                }
+    const dropIndices = new Set();
+    for (const analysis of analyses) {
+        annotateWinner(analysis.winner, [analysis.winner, ...analysis.droppable.map((member) => list[member])], analysis.distance);
+        for (const member of analysis.droppable) {
+            dropIndices.add(member);
+            const loser = list[member];
+            loser._filterExplainReason = 'perceptual_dedupe';
+            if (options.explain && typeof options.explain.remove === 'function') {
+                options.explain.remove('perceptualDedupe', loser, loser._filterExplainReason, {
+                    distance: analysis.distance,
+                    winner: analysis.winner.title || analysis.winner.name || analysis.winner.filename
+                });
             }
         }
-        out.push(winner);
-    });
+    }
 
+    const out = list.filter((_, idx) => !dropIndices.has(idx));
     stats.output = out.length;
 
     if (options.logger && typeof options.logger.info === 'function' && stats.merged > 0) {

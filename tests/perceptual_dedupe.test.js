@@ -7,7 +7,8 @@ const {
     applyPerceptualDedupe,
     simhash,
     hamming,
-    tokenize
+    tokenize,
+    resolveConfig
 } = require('../core/stream/perceptual_dedupe');
 
 function fp(item) {
@@ -92,7 +93,7 @@ test('size guardrail blocks merging releases that differ wildly in size', () => 
     assert.equal(out.length, 2);
 });
 
-test('saved-cloud and forced-keep entries are never merged away', () => {
+test('saved-cloud entries are never merged away', () => {
     const items = [
         { title: 'Tenet 2020 1080p WEB-DL ITA x264 GRP', sizeBytes: 5_000_000_000, source: 'A', isSavedCloud: true },
         { title: 'Tenet.2020.1080p.WEB-DL.iTA.x264-GRP', sizeBytes: 5_010_000_000, source: 'B' }
@@ -100,6 +101,44 @@ test('saved-cloud and forced-keep entries are never merged away', () => {
 
     const { items: out } = applyPerceptualDedupe(items, { mode: 'conservative' });
     assert.equal(out.length, 2);
+});
+
+test('forced-keep entries are never merged away', () => {
+    const guard = [
+        { title: 'Tenet 2020 1080p WEB-DL ITA x264 GRP', sizeBytes: 5_000_000_000, source: 'A', _torrentioExactGuard: true },
+        { title: 'Tenet.2020.1080p.WEB-DL.iTA.x264-GRP', sizeBytes: 5_010_000_000, source: 'B' }
+    ];
+    assert.equal(applyPerceptualDedupe(guard, { mode: 'conservative' }).items.length, 2);
+
+    const looseKeep = [
+        { title: 'Tenet 2020 1080p WEB-DL ITA x264 GRP', sizeBytes: 5_000_000_000, source: 'A', _torrentioLooseItForceKeep: true },
+        { title: 'Tenet.2020.1080p.WEB-DL.iTA.x264-GRP', sizeBytes: 5_010_000_000, source: 'B' }
+    ];
+    assert.equal(applyPerceptualDedupe(looseKeep, { mode: 'conservative' }).items.length, 2);
+});
+
+test('transitive clustering never drops items with conflicting infoHash', () => {
+    const items = [
+        { title: 'Heat 1995 1080p BluRay x264 GROUP ITA ENG', infoHash: 'a'.repeat(40), sizeBytes: 9_000_000_000, source: 'A' },
+        { title: 'Heat.1995.1080p.BluRay.x264-GROUP.iTA.ENG', sizeBytes: 9_010_000_000, source: 'B' },
+        { title: 'Heat 1995 1080p BluRay x264 GROUP ITA ENG', infoHash: 'c'.repeat(40), sizeBytes: 9_020_000_000, source: 'C' }
+    ];
+
+    const { items: out } = applyPerceptualDedupe(items, { mode: 'conservative' });
+    const hashes = out.map((item) => item.infoHash).filter(Boolean).sort();
+    assert.deepEqual(hashes, ['a'.repeat(40), 'c'.repeat(40)]);
+    assert.ok(out.length >= 2);
+});
+
+test('empty float env var falls back to default jaccard guard', () => {
+    const prev = process.env.LEVIATHAN_PERCEPTUAL_DEDUPE_JACCARD;
+    process.env.LEVIATHAN_PERCEPTUAL_DEDUPE_JACCARD = '';
+    try {
+        assert.equal(resolveConfig('conservative').minJaccard, 0.55);
+    } finally {
+        if (prev === undefined) delete process.env.LEVIATHAN_PERCEPTUAL_DEDUPE_JACCARD;
+        else process.env.LEVIATHAN_PERCEPTUAL_DEDUPE_JACCARD = prev;
+    }
 });
 
 test('audit mode reports groups without removing items', () => {
