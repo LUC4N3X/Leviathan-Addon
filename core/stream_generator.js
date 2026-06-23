@@ -207,9 +207,7 @@ function isRdVerifiedDbFallbackCandidate(item = {}) {
         item?._dbCachedRd === true ||
         item?.cached_rd === true ||
         state === 'cached' ||
-        state === 'rd_cached' ||
-        state === 'instant' ||
-        state === 'instant_available'
+        state === 'rd_cached'
     );
 }
 
@@ -910,9 +908,7 @@ function isMovieDbVerifiedCandidate(item = {}) {
         item?._dbCachedRd === true ||
         item?.cached_rd === true ||
         state === 'cached' ||
-        state === 'rd_cached' ||
-        state === 'instant' ||
-        state === 'instant_available'
+        state === 'rd_cached'
     );
 }
 
@@ -4113,8 +4109,8 @@ function hasTorrentioRdCachedMarker(item = {}) {
     const text = collectTorrentioRdAuthorityText(item);
     if (!text) return false;
     if (item?._dbCachedRd === true || item?.cached_rd === true || item?.isCached === true || item?.cached === true) return true;
-    if (/^(?:cached|rd_cached|instant|instant_available)$/i.test(String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || '').trim())) return true;
-    return /(?:⚡|\bRD\s*\+\b|\bRD\+\b|\bReal[-\s]?Debrid\s*(?:cached|instant|ready)\b|\binstant(?:ly)?\s*(?:available|ready)\b|\bcached\b)/i.test(text);
+    if (/^(?:cached|rd_cached)$/i.test(String(item?._rdCacheState || item?.rdCacheState || item?.cacheState || '').trim())) return true;
+    return /(?:⚡|\bRD\s*\+\b|\bRD\+\b|\bReal[-\s]?Debrid\s*(?:cached|ready)\b|\bcached\b)/i.test(text);
 }
 
 function getTorrentioRdAuthority(item = {}, { service = null, onlyItalian = false, externalLanguageOk = false, directUrl = null } = {}) {
@@ -4161,8 +4157,6 @@ function isTorrentioRdDownloadCandidate(item = {}) {
         proof === 'torrentio_passthrough_url' ||
         state === 'cached' ||
         state === 'rd_cached' ||
-        state === 'instant' ||
-        state === 'instant_available' ||
         state === 'likely_cached'
     );
     if (hasCachedAuthority) return false;
@@ -5859,6 +5853,7 @@ module.exports = {
     protectTorrentioExactMinimum,
     __private: {
         buildRdVerifiedDbFallbackStreams,
+        isMovieDbVerifiedCandidate,
         isRdVerifiedDbFallbackCandidate
     }
 };
