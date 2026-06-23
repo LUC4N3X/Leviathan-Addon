@@ -390,6 +390,39 @@ function applyPerceptualDedupe(items = [], options = {}) {
         return best;
     };
 
+    const clusterGroups = [...clusters.values()].filter((indices) => indices.length > 1);
+    for (const indices of clusterGroups) {
+        stats.groups += 1;
+        stats.merged += indices.length - 1;
+    }
+
+    if (mode === 'audit') {
+        const auditByIndex = new Map();
+        for (const indices of clusterGroups) {
+            const group = indices.map((member) => list[member]);
+            const winner = chooseWinner(group);
+            const distance = minDistanceForCluster(indices);
+            const partition = entries[indices[0]].partition;
+            for (const member of indices) {
+                auditByIndex.set(member, {
+                    partition,
+                    groupSize: indices.length,
+                    distance,
+                    wouldKeep: list[member] === winner
+                });
+            }
+        }
+        list.forEach((item, idx) => {
+            const audit = auditByIndex.get(idx);
+            if (audit) item._perceptualDedupeAudit = audit;
+        });
+        stats.output = list.length;
+        if (options.logger && typeof options.logger.info === 'function' && stats.merged > 0) {
+            options.logger.info(`[PERCEPTUAL DEDUPE] mode=${mode} input=${stats.input} output=${stats.output} groups=${stats.groups} merged=${stats.merged} pairs=${stats.confirmedPairs}/${stats.candidatePairs}`);
+        }
+        return { items: list, stats };
+    }
+
     const consumed = new Set();
     const out = [];
 
@@ -408,25 +441,7 @@ function applyPerceptualDedupe(items = [], options = {}) {
 
         indices.forEach((member) => consumed.add(member));
         const group = indices.map((member) => list[member]);
-        stats.groups += 1;
-        stats.merged += group.length - 1;
-
         const distance = minDistanceForCluster(indices);
-
-        if (mode === 'audit') {
-            const winner = chooseWinner(group);
-            group.forEach((member) => {
-                member._perceptualDedupeAudit = {
-                    partition: entries[indices[0]].partition,
-                    groupSize: group.length,
-                    distance,
-                    wouldKeep: member === winner
-                };
-                out.push(member);
-            });
-            return;
-        }
-
         const winner = annotateWinner(chooseWinner(group), group, distance);
         for (const member of group) {
             if (member !== winner) {

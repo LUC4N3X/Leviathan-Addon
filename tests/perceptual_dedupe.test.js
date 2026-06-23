@@ -114,6 +114,26 @@ test('audit mode reports groups without removing items', () => {
     assert.ok(out.every((item) => item._perceptualDedupeAudit));
 });
 
+test('audit mode preserves original order for non-contiguous clusters', () => {
+    const items = [
+        { title: 'Sicario 2015 1080p BluRay x264 GROUP ITA ENG', sizeBytes: 9_000_000_000, source: 'A' },
+        { title: 'A Completely Different Film 2018 1080p BluRay x264 OTHER ITA ENG', sizeBytes: 7_000_000_000, source: 'X' },
+        { title: 'Sicario.2015.1080p.BluRay.x264-GROUP.iTA.ENG', sizeBytes: 9_020_000_000, source: 'B' }
+    ];
+
+    const { items: out, stats } = applyPerceptualDedupe(items, { mode: 'audit' });
+    assert.equal(out.length, 3);
+    assert.equal(stats.groups, 1);
+    assert.equal(out[0].source, 'A');
+    assert.equal(out[1].source, 'X');
+    assert.equal(out[2].source, 'B');
+    assert.ok(out[0]._perceptualDedupeAudit);
+    assert.ok(out[2]._perceptualDedupeAudit);
+    assert.equal(out[1]._perceptualDedupeAudit, undefined);
+    const kept = out.filter((item) => item._perceptualDedupeAudit?.wouldKeep);
+    assert.equal(kept.length, 1);
+});
+
 test('off mode is a no-op passthrough', () => {
     const items = [
         { title: 'Same Movie 2020 1080p WEB-DL ITA x264 GRP', sizeBytes: 4_000_000_000, source: 'A' },
