@@ -4,10 +4,12 @@ const { getSourceState } = require('../debrid/rd/guards/rd_status_guard');
 const { createFilterExplain } = require('./filter_explain_engine');
 const { applyStreamPolicies } = require('../policies/stream_policy_engine');
 const { applySmartDeduperV2 } = require('../stream/smart_deduper_v2');
+const { applyPerceptualDedupe } = require('../stream/perceptual_dedupe');
 const { queueSelectedStreamPrecache } = require('../precache/precache_selector');
 
 const DEFAULT_STREAM_POLICY_MODE = 'audit';
 const DEFAULT_SMART_DEDUPE_MODE = 'conservative';
+const DEFAULT_PERCEPTUAL_DEDUPE_MODE = 'conservative';
 const DEFAULT_SORT_MODE = 'balanced';
 const DEFAULT_EXPLAIN_SAMPLE_LIMIT = 4;
 const MAX_EXPLAIN_SAMPLE_LIMIT = 20;
@@ -160,6 +162,10 @@ function getSmartDedupeMode(filters = {}) {
   return filters?.smartDedupeV2Mode || process.env.LEVIATHAN_SMART_DEDUPE_V2_MODE || DEFAULT_SMART_DEDUPE_MODE;
 }
 
+function getPerceptualDedupeMode(filters = {}) {
+  return filters?.perceptualDedupeMode || process.env.LEVIATHAN_PERCEPTUAL_DEDUPE_MODE || DEFAULT_PERCEPTUAL_DEDUPE_MODE;
+}
+
 function getSortMode(config = {}) {
   return config?.sort || config?.filters?.sort || DEFAULT_SORT_MODE;
 }
@@ -219,6 +225,20 @@ function runFilterStage(items, meta, filters, helpers = {}) {
 
   if (dedupeResult.stats?.merged > 0 || dedupeResult.stats?.groups > 0) {
     explain.note('smartDedupeV2', dedupeResult.stats);
+  }
+
+  const perceptualResult = applyPerceptualDedupe(list, {
+    meta,
+    filters: safeFilters,
+    explain,
+    logger: helpers.logger,
+    mode: getPerceptualDedupeMode(safeFilters)
+  });
+
+  list = normalizeList(perceptualResult.items);
+
+  if (perceptualResult.stats?.merged > 0 || perceptualResult.stats?.groups > 0) {
+    explain.note('perceptualDedupe', perceptualResult.stats);
   }
 
   explain.final(list, { stage: 'filter' });
