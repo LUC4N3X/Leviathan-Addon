@@ -127,7 +127,7 @@ test('transitive clustering never drops items with conflicting infoHash', () => 
     const { items: out } = applyPerceptualDedupe(items, { mode: 'conservative' });
     const hashes = out.map((item) => item.infoHash).filter(Boolean).sort();
     assert.deepEqual(hashes, ['a'.repeat(40), 'c'.repeat(40)]);
-    assert.ok(out.length >= 2);
+    assert.ok(out.length === 2 || out.length === 3, 'A and C must be preserved; the hash-less bridge item may or may not merge');
 });
 
 test('empty float env var falls back to default jaccard guard', () => {
