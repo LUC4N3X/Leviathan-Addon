@@ -12,6 +12,7 @@ const RECENT_STREAM_HINT_TTL_MS = 10 * 60 * 1000;
 const RECENT_STREAM_HINT_LIMIT = 256;
 const BINGE_WARMUP_DEDUPE_TTL_MS = 10 * 60 * 1000;
 const BINGE_WARMUP_DEDUPE_LIMIT = 512;
+const MANIFEST_CACHE_SECONDS = Math.max(0, Math.min(24 * 60 * 60, parseInt(process.env.MANIFEST_CACHE_SECONDS || '600', 10) || 600));
 const recentSeriesStreamHints = new Map();
 const recentBingeWarmups = new Map();
 
@@ -142,8 +143,33 @@ function isStremioEtagEnabled() {
     return ['1', 'true', 'yes', 'y', 'on'].includes(normalized);
 }
 
+function stableJsonStringify(value, seen = new WeakSet()) {
+    if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined;
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (seen.has(value)) return '"[Circular]"';
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+        const out = `[${value.map((entry) => stableJsonStringify(entry, seen) ?? 'null').join(',')}]`;
+        seen.delete(value);
+        return out;
+    }
+
+    const keys = Object.keys(value).sort();
+    const entries = keys
+        .map((key) => {
+            const encoded = stableJsonStringify(value[key], seen);
+            return encoded === undefined ? '' : `${JSON.stringify(key)}:${encoded}`;
+        })
+        .filter(Boolean);
+    const out = `{${entries
+        .join(',')}}`;
+    seen.delete(value);
+    return out;
+}
+
 function buildStremioPayloadEtag(payload) {
-    const stable = JSON.stringify(payload || {}, Object.keys(payload || {}).sort());
+    const stable = stableJsonStringify(payload || {});
     const hash = crypto.createHash('sha256').update(stable).digest('hex').slice(0, 24);
     return `W/"${hash}"`;
 }
@@ -155,6 +181,7 @@ function maybeSendNotModified(req, res, payload) {
     const etag = buildStremioPayloadEtag(payload);
     const clientEtag = String(req?.headers?.['if-none-match'] || '').trim();
     if (clientEtag !== etag) return false;
+    applyStremioStreamCacheHeaders(res, payload);
     res.status(304).end();
     return true;
 }
@@ -183,6 +210,23 @@ function applyStremioStreamCacheHeaders(res, payload) {
     } else {
         res.removeHeader('ETag');
     }
+}
+
+function applyStremioManifestHeaders(res) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    if (MANIFEST_CACHE_SECONDS <= 0) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        return;
+    }
+    res.removeHeader('Pragma');
+    res.removeHeader('Expires');
+    res.setHeader(
+        'Cache-Control',
+        `public, max-age=${MANIFEST_CACHE_SECONDS}, stale-while-revalidate=${Math.max(MANIFEST_CACHE_SECONDS, 3600)}`
+    );
 }
 
 function queueBingePredictionWarmup({
@@ -314,6 +358,7 @@ function registerStremioRoutes(app, {
     handleVixSynthetic,
     cloneManifest,
     getConfig,
+    isUnsupportedStreamRequestError,
     validateStreamRequest,
     generateStream,
     logger,
@@ -367,14 +412,12 @@ function registerStremioRoutes(app, {
     });
 
     app.get('/manifest.json', (req, res) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        applyStremioManifestHeaders(res);
         res.json(getManifest());
     });
 
     app.get('/:conf/manifest.json', (req, res) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        applyStremioManifestHeaders(res);
         const manifest = cloneManifest(getManifest());
         try {
             const config = getConfig(req.params.conf);
@@ -507,17 +550,28 @@ function registerStremioRoutes(app, {
             }
             res.json(result);
         } catch (err) {
+            const fallback = { streams: [], cacheMaxAge: 30, staleRevalidate: 60, staleError: 120 };
+            if (typeof isUnsupportedStreamRequestError === 'function' && isUnsupportedStreamRequestError(err)) {
+                logger.warn('Richiesta stream non supportata, risposta vuota valida', {
+                    error: err.message,
+                    type: req.params.type,
+                    id: req.params.id,
+                    confHash: getConfigFingerprint(req.params.conf)
+                });
+                applyStremioStreamCacheHeaders(res, fallback);
+                return res.status(200).json(fallback);
+            }
+
             logger.error('Validazione/Stream Fallito', {
                 error: err.message,
                 type: req.params.type,
                 id: req.params.id,
                 confHash: getConfigFingerprint(req.params.conf)
             });
-            const fallback = { streams: [], cacheMaxAge: 30, staleRevalidate: 60, staleError: 120 };
             applyStremioStreamCacheHeaders(res, fallback);
             return res.status(400).json(fallback);
         }
     });
 }
 
-module.exports = { registerStremioRoutes, applyStremioStreamCacheHeaders, buildStremioPayloadEtag, maybeSendNotModified };
+module.exports = { registerStremioRoutes, applyStremioManifestHeaders, applyStremioStreamCacheHeaders, buildStremioPayloadEtag, maybeSendNotModified };

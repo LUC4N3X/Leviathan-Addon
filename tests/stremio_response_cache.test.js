@@ -23,6 +23,7 @@ require.cache[runtimeResolved] = {
 };
 
 const {
+    applyStremioManifestHeaders,
     applyStremioStreamCacheHeaders,
     buildStremioPayloadEtag,
     maybeSendNotModified
@@ -71,6 +72,16 @@ test('stream cache headers keep ETag disabled by default', () => {
     assert.equal(res.getHeader('etag'), undefined);
 });
 
+test('manifest headers are public-cacheable and CORS-safe', () => {
+    const res = createResponse();
+
+    applyStremioManifestHeaders(res);
+
+    assert.equal(res.getHeader('access-control-allow-origin'), '*');
+    assert.equal(res.getHeader('content-type'), 'application/json; charset=utf-8');
+    assert.match(res.getHeader('cache-control'), /public, max-age=\d+/);
+});
+
 test('stream cache headers can attach a stable weak ETag without exposing config', () => {
     process.env.STREMIO_ETAG_ENABLED = 'true';
     const payload = { streams: [{ name: 'RD', title: 'Example 1080p' }], cacheMaxAge: 120 };
@@ -81,6 +92,19 @@ test('stream cache headers can attach a stable weak ETag without exposing config
     assert.equal(res.getHeader('etag'), buildStremioPayloadEtag(payload));
     assert.match(res.getHeader('etag'), /^W\/"[a-f0-9]{24}"$/);
     delete process.env.STREMIO_ETAG_ENABLED;
+});
+
+test('stream ETag changes when nested stream payload changes', () => {
+    const first = buildStremioPayloadEtag({
+        streams: [{ name: 'RD', title: 'Example 1080p', behaviorHints: { filename: 'a.mkv' } }],
+        cacheMaxAge: 120
+    });
+    const second = buildStremioPayloadEtag({
+        streams: [{ name: 'RD', title: 'Example 2160p', behaviorHints: { filename: 'a.mkv' } }],
+        cacheMaxAge: 120
+    });
+
+    assert.notEqual(first, second);
 });
 
 test('maybeSendNotModified returns 304 when client ETag matches', () => {
@@ -95,6 +119,8 @@ test('maybeSendNotModified returns 304 when client ETag matches', () => {
     assert.equal(matched, true);
     assert.equal(res.statusCode, 304);
     assert.equal(res.ended, true);
+    assert.equal(res.getHeader('access-control-allow-origin'), '*');
+    assert.equal(res.getHeader('etag'), etag);
     delete process.env.STREMIO_ETAG_ENABLED;
 });
 

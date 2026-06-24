@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { CURRENT_CONFIG_VERSION, validateConfig, decodeConfigBase64 } = require('../core/config/schema');
+const { getConfig } = require('../core/utils/config');
 const { encryptConfigObject } = require('../core/security/user_config_crypto');
 
 test('validateConfig migrates aliases and version', () => {
@@ -99,4 +100,20 @@ test('validateConfig normalizes saved cloud aggressive and torrent intelligence 
   assert.equal(config.ranking.useTorrentIntelligenceRanking, true);
   assert.equal(config.ranking.useQualityIntelligenceRanking, true);
   assert.equal(config.ranking.torrentIntelligenceWeight, 1.5);
+});
+
+test('getConfig returns isolated objects for cached config tokens', () => {
+  const token = JSON.stringify({
+    filters: {
+      language: 'ita',
+      enableGhd: true
+    }
+  });
+
+  const first = getConfig(token);
+  first.filters.language = 'eng';
+
+  const second = getConfig(token);
+  assert.equal(second.filters.language, 'ita');
+  assert.notEqual(first, second);
 });

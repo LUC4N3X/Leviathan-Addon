@@ -190,6 +190,12 @@ function firstPatternValue(text, patterns, fallback = '') {
   return fallback;
 }
 
+function detectSource(parsedSource, text) {
+  const parsed = safeString(parsedSource);
+  const detected = firstPatternValue(`${parsed} ${text}`, SOURCE_PATTERNS, '');
+  return detected || parsed;
+}
+
 function pushUnique(list, value) {
   const normalized = normalizeLanguageToken(value);
   if (normalized && !list.includes(normalized)) list.push(normalized);
@@ -376,7 +382,14 @@ function detectLanguages(text, parsed = {}, signals = {}) {
 
 function cleanTitleFromText(text, parsed = {}) {
   const parsedTitle = normalizeSpaces(parsed.title || parsed.name || '');
-  if (parsedTitle && parsedTitle.length > 1) return parsedTitle;
+  RELEASE_TOKEN_PATTERN.lastIndex = 0;
+  const dirtyParsedTitle = parsedTitle && (
+    /^\[[^\]]+\]/.test(parsedTitle)
+    || /\s+-\s+\d{1,4}(?:v\d+)?(?:\s|$|\[|\()/i.test(parsedTitle)
+    || RELEASE_TOKEN_PATTERN.test(parsedTitle)
+  );
+  RELEASE_TOKEN_PATTERN.lastIndex = 0;
+  if (parsedTitle && parsedTitle.length > 1 && !dirtyParsedTitle) return parsedTitle;
 
   return normalizeSpaces(
     safeString(text)
@@ -421,7 +434,7 @@ function parseTitle(title = '') {
   const signals = releaseSignals && typeof releaseSignals.extractReleaseSignals === 'function'
     ? releaseSignals.extractReleaseSignals(original)
     : {};
-  const source = safeString(parsed.source) || firstPatternValue(scan, SOURCE_PATTERNS, '');
+  const source = detectSource(parsed.source, scan);
   const resolution = normalizeResolution(parsed.resolution || parsed.quality, scan);
   const videoCodec = safeString(parsed.codec || parsed.videoCodec || parsed.video_codec).toUpperCase() || firstPatternValue(scan, VIDEO_CODEC_PATTERNS, '');
   const audioCodec = safeString(parsed.audio || parsed.audioCodec || parsed.audio_codec).toUpperCase() || firstPatternValue(scan, AUDIO_CODEC_PATTERNS, '');

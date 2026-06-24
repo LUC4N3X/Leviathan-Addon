@@ -477,6 +477,7 @@ function collectLanguageSignalText(item = {}) {
 function extractLanguageVariant(item = {}) {
   const text = collectLanguageSignalText(item);
   if (!text) return '';
+  if (!/(?:🇮🇹|🇯🇵|🇬🇧|🇺🇸|\b(?:ita|it|italian|italiano|dub|doppiat[oa]|jpn|jp|jap|ja|japanese|giapponese|eng|en|english|inglese|multi|dual|multiaudio|sub|vost|raw)\b)/i.test(text)) return '';
   if (/🇮🇹|\b(?:ita|it|italian|italiano|dub\s*ita|doppiat[oa])\b/i.test(text) && !/sub\s*ita|vost(?:it)?/i.test(text)) return 'ita';
   if (/🇯🇵|\b(?:jpn|jp|jap|ja|japanese|giapponese)\b|sub\s*ita|vost(?:it)?|raw/i.test(text)) return 'jpn';
   if (/🇬🇧|🇺🇸|\b(?:eng|en|english|inglese)\b/i.test(text)) return 'eng';
@@ -562,6 +563,13 @@ function buildSmartDedupeKey(item = {}, options = {}) {
   return sig ? `smartDetect:${sig}` : null;
 }
 
+function shouldBuildSmartKeyForHashedItem(isSeries, fileIdx, hintIdx) {
+  if (String(process.env.LEVIATHAN_SMART_DEDUPE_HASHED || '') === '1') return true;
+  if (!isSeries) return String(process.env.LEVIATHAN_SMART_DEDUPE_HASHED_MOVIES || '') === '1';
+  if (fileIdx !== null || hintIdx !== null) return false;
+  return String(process.env.LEVIATHAN_SMART_DEDUPE_HASHED_SERIES || '') === '1';
+}
+
 function buildDedupeKeys(item = {}, options = {}) {
   if (isForcedTorrentioKeep(item)) {
     const hash = extractInfoHash(item);
@@ -577,15 +585,17 @@ function buildDedupeKeys(item = {}, options = {}) {
   }
 
   const hash = extractInfoHash(item);
-  const smartKey = normalizeStoredSmartDedupeKey(item) || buildSmartDedupeKey(item, options);
-  if (!hash) return smartKey ? [smartKey] : [];
+  const storedSmartKey = normalizeStoredSmartDedupeKey(item);
+  if (!hash) {
+    const smartKey = storedSmartKey || buildSmartDedupeKey(item, options);
+    return smartKey ? [smartKey] : [];
+  }
 
   const keys = [];
   const isSeries = isSeriesContext(options);
   const fileIdx = extractFileIdx(item);
   const hintIdx = parseIntegerId(item?.episodeFileHint?.fileIdx ?? item?.episodeFileHint?.fileIndex ?? item?._episodeFileHint?.fileIdx ?? item?._episodeFileHint?.fileIndex);
   const episodeKey = getSeasonEpisodeKey(options);
-  const filenameKey = extractFilename(item);
   const languageVariant = extractLanguageVariant(item);
   const languageSuffix = languageVariant ? `:lang:${languageVariant}` : '';
 
@@ -601,11 +611,12 @@ function buildDedupeKeys(item = {}, options = {}) {
   }
 
 
-  if (isSeries && filenameKey && fileIdx === null && hintIdx === null) {
-    keys.push(`infoHashFilename:${hash}:${filenameKey}${languageSuffix}`);
+  if (isSeries && fileIdx === null && hintIdx === null) {
+    const filenameKey = extractFilename(item);
+    if (filenameKey) keys.push(`infoHashFilename:${hash}:${filenameKey}${languageSuffix}`);
   }
 
-
+  const smartKey = storedSmartKey || (shouldBuildSmartKeyForHashedItem(isSeries, fileIdx, hintIdx) ? buildSmartDedupeKey(item, options) : null);
   if (smartKey && (!isSeries || (fileIdx === null && hintIdx === null))) {
     keys.push(smartKey);
   }
