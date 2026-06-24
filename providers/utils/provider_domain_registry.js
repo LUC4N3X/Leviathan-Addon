@@ -9,11 +9,11 @@ const DEFAULT_PROVIDER_DOMAINS = Object.freeze({
     animeunity: Object.freeze(['https://www.animeunity.so']),
     animesaturn: Object.freeze(['https://www.animesaturn.cx']),
     animeworld: Object.freeze(['https://www.animeworld.ac']),
-    cb01: Object.freeze(['https://cb01uno.pics', 'https://cb01uno.pics']),
+    cb01: Object.freeze(['https://cb01uno.lol', 'https://cb01uno.lol']),
     eurostreaming: Object.freeze(['https://eurostream.ing']),
     guardaflix: Object.freeze(['https://guardaplay.xyz']),
     guardahd: Object.freeze(['https://guardahd.stream']),
-    guardoserie: Object.freeze(['https://guardoserie.living']),
+    guardoserie: Object.freeze(['https://guardoserie.courses']),
     streamingcommunity: Object.freeze(['https://vixsrc.to']),
     toonitalia: Object.freeze([
         'https://toonitalia.xyz',
