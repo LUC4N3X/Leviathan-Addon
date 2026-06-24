@@ -25,8 +25,8 @@ const {
 } = require('../utils/provider_toolkit');
 const { getProviderDomains } = require('../utils/provider_domain_registry');
 
-const DEFAULT_BASE_URLS = Object.freeze(getProviderDomains('cb01', ['https://cb01uno.pics']));
-const DEFAULT_BASE_URL = DEFAULT_BASE_URLS[0] || 'https://cb01uno.sbs';
+const DEFAULT_BASE_URLS = Object.freeze(getProviderDomains('cb01', ['https://cb01uno.lol']));
+const DEFAULT_BASE_URL = DEFAULT_BASE_URLS[0] || 'https://cb01uno.lol';
 const PROVIDER = 'CB01';
 const PROVIDER_CODE = 'CB01';
 const ICON = '🎬';
