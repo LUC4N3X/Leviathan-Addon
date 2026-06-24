@@ -51,6 +51,12 @@ function clampInt(value, fallback, min, max) {
     return Math.max(min, Math.min(max, n));
 }
 
+function boolOption(value, fallback = false) {
+    if (value === undefined || value === null || value === '') return fallback;
+    if (typeof value === 'boolean') return value;
+    return /^(1|true|yes|y|on)$/i.test(String(value).trim());
+}
+
 function safeText(value) {
     if (typeof value === 'string') return value;
     if (Buffer.isBuffer(value)) return value.toString('utf8');
@@ -281,6 +287,7 @@ function extractEmbedCandidates(rawHtml, options = {}) {
     const maxBlockLength = clampInt(options.maxBlockLength, DEFAULT_MAX_BLOCK_LENGTH, 2_000, 120_000);
     const maxCandidates = clampInt(options.maxCandidates, DEFAULT_MAX_CANDIDATES, 1, 200);
     const maxBase64Payloads = clampInt(options.maxBase64Payloads, DEFAULT_MAX_BASE64_PAYLOADS, 0, 50);
+    const entropyBlockScan = boolOption(options.entropyBlockScan, boolOption(process.env.SEMANTIC_ENTROPY_BLOCK_SCAN, false));
 
     const html = sanitizeHtml(rawHtml, maxHtmlLength);
     if (!html) return [];
@@ -316,10 +323,12 @@ function extractEmbedCandidates(rawHtml, options = {}) {
         }
     }
 
-    for (const block of splitSignalBlocks(html, maxBlockLength)) {
-        const entropy = calculateShannonEntropy(block);
-        const entropyBoost = entropy >= 4.2 ? 10 : entropy >= 3.2 ? 4 : 0;
-        extractUrlsWithRegex(block, URL_WIDE_RE, baseUrl, candidates, 'block', entropyBoost);
+    if (entropyBlockScan) {
+        for (const block of splitSignalBlocks(html, maxBlockLength)) {
+            const entropy = calculateShannonEntropy(block);
+            const entropyBoost = entropy >= 4.2 ? 10 : entropy >= 3.2 ? 4 : 0;
+            extractUrlsWithRegex(block, URL_WIDE_RE, baseUrl, candidates, 'block', entropyBoost);
+        }
     }
 
     for (const candidate of [...candidates.values()]) {

@@ -61,7 +61,7 @@ const { estimateVisualSize, estimateSeeders } = require('./media_estimates');
 const { extractSeasonEpisodeFromFilename } = require('./episode_parser');
 const { extractProvider, extractSeeders, extractSize, parseSize } = require('./result_parsing');
 const { deduplicateResults, filterByQualityLimit, isSafeForItalian } = require('./result_dedupe');
-const { validateStreamRequest, withTimeout } = require('./stream_request');
+const { isUnsupportedStreamRequestError, validateStreamRequest, withTimeout } = require('./stream_request');
 const sourceHealth = require('../lib/source_health');
 
 const CONFIG = {
@@ -166,6 +166,7 @@ module.exports = {
     deduplicateResults,
     filterByQualityLimit,
     isSafeForItalian,
+    isUnsupportedStreamRequestError,
     validateStreamRequest,
     withTimeout,
     safeCompare,
