@@ -198,38 +198,38 @@ function mVibrate(n) {
 }
 const mobileCSS = `
 :root {
-    --bg-dark: #020713;
-    --bg-deep: #00030a;
-    --text-main: #f0f7ff;
-    --text-dim: #9fb4d7;
-    --text-faint: rgba(159, 180, 215, 0.4);
+    --bg-dark: #030712;
+    --bg-deep: #020617;
+    --text-main: #f9fafb;
+    --text-dim: #9ca3af;
+    --text-faint: rgba(156, 163, 175, 0.4);
 
     --neon-cyan: #22d3ee;
-    --neon-cyan-glow: rgba(34, 211, 238, 0.4);
-    --neon-violet: #9b6cff;
-    --neon-violet-glow: rgba(155, 108, 255, 0.4);
-    --neon-green: #34e6ad;
-    --neon-green-glow: rgba(52, 230, 173, 0.4);
-    --neon-rose: #fb6573;
-    --neon-rose-glow: rgba(251, 101, 115, 0.4);
+    --neon-cyan-glow: rgba(34, 211, 238, 0.15);
+    --neon-violet: #a855f7;
+    --neon-violet-glow: rgba(168, 85, 247, 0.15);
+    --neon-green: #10b981;
+    --neon-green-glow: rgba(16, 185, 129, 0.15);
+    --neon-rose: #f43f5e;
+    --neon-rose-glow: rgba(244, 63, 94, 0.15);
     --neon-orange: #f59e0b;
-    --neon-orange-glow: rgba(245, 158, 11, 0.4);
+    --neon-orange-glow: rgba(245, 158, 11, 0.15);
 
     --primary: var(--neon-cyan);
     --primary-glow: var(--neon-cyan-glow);
     --secondary: var(--neon-violet);
     --secondary-glow: var(--neon-violet-glow);
 
-    --glass-card: rgba(10, 20, 38, 0.6);
-    --glass-card-hover: rgba(15, 28, 54, 0.7);
-    --glass-card-active: rgba(16, 32, 62, 0.85);
-    --glass-border: rgba(255, 255, 255, 0.08);
-    --glass-border-glow: rgba(34, 211, 238, 0.2);
+    --glass-card: rgba(10, 15, 30, 0.45);
+    --glass-card-hover: rgba(17, 24, 39, 0.55);
+    --glass-card-active: rgba(20, 30, 50, 0.65);
+    --glass-border: rgba(255, 255, 255, 0.05);
+    --glass-border-glow: rgba(34, 211, 238, 0.1);
     --glass-blur: blur(20px);
 
-    --radius-lg: 20px;
-    --radius-md: 14px;
-    --radius-sm: 10px;
+    --radius-lg: 12px;
+    --radius-md: 10px;
+    --radius-sm: 6px;
 
     --safe-bottom: env(safe-area-inset-bottom);
     --safe-top: env(safe-area-inset-top);
@@ -262,7 +262,7 @@ const mobileCSS = `
 
 body {
     margin: 0;
-    background: linear-gradient(180deg, rgba(72, 210, 235, 0.15) 0%, rgba(4, 28, 48, 0.9) 25%, #020713 60%, #00030a 100%), #00030a;
+    background: linear-gradient(180deg, rgba(34, 211, 238, 0.06) 0%, rgba(4, 12, 24, 0.9) 25%, #030712 60%, #020617 100%), #020617;
     font-family: 'Outfit', sans-serif;
     color: var(--text-main);
     width: 100%;
@@ -3137,23 +3137,25 @@ body {
         linear-gradient(180deg, #06182e 0%, #03101f 60%, #00060f 100%) !important;
 }
 
+
 :root {
-    --sv-panel: linear-gradient(180deg, rgba(16, 27, 46, 0.64) 0%, rgba(9, 16, 30, 0.60) 100%);
-    --sv-panel-soft: linear-gradient(180deg, rgba(19, 31, 52, 0.58) 0%, rgba(10, 18, 33, 0.56) 100%);
-    --sv-inset: rgba(5, 10, 20, 0.55);
-    --sv-hairline: rgba(150, 182, 224, 0.12);
-    --sv-hairline-strong: rgba(150, 182, 224, 0.22);
-    /* ── stacked elevation (Vercel-style, tuned for dark) ── */
+
+    --sv-panel: linear-gradient(180deg, rgba(10, 15, 30, 0.65) 0%, rgba(5, 8, 16, 0.6) 100%);
+    --sv-panel-soft: linear-gradient(180deg, rgba(13, 20, 40, 0.6) 0%, rgba(8, 12, 24, 0.55) 100%);
+    --sv-inset: rgba(3, 7, 18, 0.55);
+    --sv-hairline: rgba(255, 255, 255, 0.05);
+    --sv-hairline-strong: rgba(255, 255, 255, 0.12);
+
     --sv-ev-1: 0 1px 2px rgba(0, 0, 0, 0.20), 0 6px 16px -10px rgba(0, 0, 0, 0.50), inset 0 0 0 1px rgba(255, 255, 255, 0.045);
     --sv-ev-2: 0 1px 2px rgba(0, 0, 0, 0.22), 0 12px 30px -14px rgba(0, 0, 0, 0.58), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
-    /* ── text ── */
+
     --sv-ink: #f1f6ff;
     --sv-mute: rgba(166, 192, 226, 0.74);
     --sv-faint: rgba(150, 176, 212, 0.46);
-    /* ── type ── */
+
     --sv-sans: 'Plus Jakarta Sans', 'Outfit', system-ui, -apple-system, sans-serif;
     --sv-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-    /* ── aliases used inline in the HTML (were undefined) ── */
+
     --m-primary: var(--neon-cyan);
     --m-secondary: var(--neon-violet);
     --m-accent: var(--neon-violet);
@@ -3162,16 +3164,17 @@ body {
     --m-error: var(--neon-rose);
 }
 
+
 body {
     background:
-        radial-gradient(120% 70% at 50% -12%, rgba(34, 211, 238, 0.055), transparent 56%),
-        radial-gradient(90% 55% at 86% 10%, rgba(155, 108, 255, 0.05), transparent 56%),
-        radial-gradient(120% 85% at 50% 112%, rgba(13, 148, 180, 0.06), transparent 60%),
-        linear-gradient(180deg, #05131f 0%, #04111d 34%, #020c16 68%, #00060e 100%) !important;
+        radial-gradient(120% 70% at 50% -12%, rgba(34, 211, 238, 0.06), transparent 56%),
+        radial-gradient(90% 55% at 86% 10%, rgba(168, 85, 247, 0.04), transparent 56%),
+        radial-gradient(120% 85% at 50% 112%, rgba(34, 211, 238, 0.04), transparent 60%),
+        linear-gradient(180deg, #050b18 0%, #030712 100%) !important;
 }
 .m-hero-panel::before { opacity: 0.55 !important; filter: blur(26px) !important; }
 
-/* ════════ PANELS ════════ */
+
 .m-hypervisor,
 .m-visual-core-v2 {
     background: var(--sv-panel) !important;
@@ -3185,7 +3188,7 @@ body {
     border-color: var(--sv-hairline-strong) !important;
     box-shadow: var(--sv-ev-1), 0 0 0 1px rgba(34, 211, 238, 0.10) !important;
 }
-/* hairline accent at the panel head instead of a glowing bar */
+
 .m-hypervisor::before {
     left: 16px !important; right: 16px !important;
     height: 1px !important;
@@ -3210,6 +3213,7 @@ body {
 }
 .m-panel-desc { color: var(--sv-mute) !important; opacity: 1 !important; }
 .m-panel-desc b { color: #eaf2ff !important; font-weight: 700 !important; }
+
 
 .m-cred-opt {
     border: 1px solid color-mix(in srgb, var(--opt-color) 16%, var(--sv-hairline)) !important;
@@ -3270,13 +3274,14 @@ body {
 .m-cred-opt.active .m-cred-icon {
     background: color-mix(in srgb, var(--opt-color) 12%, rgba(255, 255, 255, 0.05)) !important;
     border-color: color-mix(in srgb, var(--opt-color) 40%, transparent) !important;
-    box-shadow: 
+    box-shadow:
         0 8px 20px -6px color-mix(in srgb, var(--opt-color) 45%, transparent),
         inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
     backdrop-filter: blur(4px) !important;
     -webkit-backdrop-filter: blur(4px) !important;
 }
 .m-cred-opt.active .m-cred-name { color: #fff !important; text-shadow: none !important; }
+
 
 .m-reactor-module {
     background: var(--sv-panel-soft) !important;
@@ -3286,7 +3291,7 @@ body {
 }
 
 .m-reactor-module::after { display: none !important; }
-/* keep the single tasteful left accent bar */
+
 .m-reactor-module::before {
     position: absolute !important;
     top: 0 !important;
@@ -3336,7 +3341,7 @@ body {
     background: linear-gradient(150deg, color-mix(in srgb, var(--prov) 25%, transparent), color-mix(in srgb, var(--prov) 12%, transparent)) !important;
     border-color: color-mix(in srgb, var(--prov) 45%, transparent) !important;
     color: #fff !important;
-    box-shadow: 
+    box-shadow:
         0 8px 20px -6px color-mix(in srgb, var(--prov) 35%, transparent),
         inset 0 1px 0 rgba(255, 255, 255, 0.16) !important;
     transform: scale(1.06) !important;
@@ -3359,6 +3364,7 @@ body {
     box-shadow: none !important;
 }
 
+
 .m-slider { background: rgba(255, 255, 255, 0.05) !important; border: 1px solid var(--sv-hairline) !important; }
 .m-switch input:checked + .m-slider {
     background: var(--border-color, var(--neon-cyan)) !important;
@@ -3366,6 +3372,7 @@ body {
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--border-color, var(--neon-cyan)) 30%, transparent) !important;
 }
 .m-switch input:checked + .m-slider::before { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45) !important; }
+
 
 .m-tech-tag {
     font-family: var(--sv-mono) !important;
@@ -3378,12 +3385,14 @@ body {
 .tag-noproxy { border-color: var(--sv-hairline) !important; color: var(--sv-faint) !important; background: rgba(255, 255, 255, 0.015) !important; }
 .tag-mfp     { border-color: rgba(155, 108, 255, 0.22) !important; color: rgba(196, 168, 255, 0.92) !important; background: rgba(155, 108, 255, 0.04) !important; }
 
+
 .m-if-label { font-family: var(--sv-mono) !important; font-weight: 700 !important; letter-spacing: 1.2px !important; color: rgba(180, 210, 240, 0.78) !important; }
 .m-if-label.opt { color: rgba(196, 168, 255, 0.8) !important; }
 .m-if-inner { background: var(--sv-inset) !important; border: 1px solid var(--sv-hairline) !important; }
 .m-if-field { font-family: var(--sv-sans) !important; }
 .m-get-link { font-family: var(--sv-mono) !important; font-weight: 700 !important; border-radius: 8px !important; }
 .m-key-status { background: rgba(0, 0, 0, 0.18) !important; border: 1px solid var(--sv-hairline) !important; }
+
 
 .m-setup-actions-panel { border: 1px solid var(--sv-hairline) !important; background: var(--sv-panel-soft) !important; box-shadow: var(--sv-ev-1) !important; padding: 14px !important; }
 .m-setup-action { font-family: var(--sv-sans) !important; font-weight: 800 !important; letter-spacing: 1.3px !important; }
@@ -3402,6 +3411,7 @@ body {
 .m-setup-mini-copy { font-family: var(--sv-mono) !important; font-weight: 700 !important; border-color: rgba(34, 211, 238, 0.28) !important; background: rgba(34, 211, 238, 0.06) !important; }
 .m-setup-mini-url { color: rgba(140, 196, 226, 0.85) !important; }
 
+
 .m-dock-container {
     background: rgba(8, 16, 30, 0.72) !important;
     border: 1px solid var(--sv-hairline) !important;
@@ -3413,6 +3423,7 @@ body {
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
 }
 .m-nav-item > span:last-child { font-family: var(--sv-sans) !important; }
+
 
 .logo-container::before { border: 1.5px solid rgba(34, 211, 238, 0.5) !important; box-shadow: 0 0 14px rgba(34, 211, 238, 0.14), inset 0 0 10px rgba(155, 108, 255, 0.10) !important; }
 .logo-image { filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.5)) !important; }
@@ -3430,6 +3441,7 @@ body {
 }
 .m-version-tag { background: rgba(10, 20, 38, 0.55) !important; border: 1px solid var(--sv-hairline) !important; box-shadow: none !important; }
 
+
 .m-cortex-chip, .m-qual-chip, .m-flux-opt, .m-lang-opt, .m-cloud-mode-btn {
     background: var(--sv-panel-soft) !important;
     border: 1px solid var(--sv-hairline) !important;
@@ -3439,6 +3451,7 @@ body {
     border-color: rgba(34, 211, 238, 0.30) !important;
     box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.18) !important;
 }
+
 
 .m-hero { padding: 4px 12px 0 !important; margin-bottom: 24px !important; }
 .m-hero-panel {
@@ -3456,6 +3469,7 @@ body {
     background: radial-gradient(circle at 50% 30%, rgba(34, 211, 238, 0.12), rgba(155, 108, 255, 0.07) 42%, transparent 72%) !important;
 }
 
+
 .logo-container, .m-abyss-logo {
     width: clamp(90px, 25vw, 110px) !important;
     height: clamp(90px, 25vw, 110px) !important;
@@ -3468,6 +3482,7 @@ body {
 }
 .m-abyss-crown { opacity: 0.65 !important; filter: blur(3px) !important; }
 .logo-image { max-width: 84px !important; }
+
 
 .m-brand-title, .m-abyss-title {
     font-size: clamp(2.25rem, 11.5vw, 2.95rem) !important;
@@ -3484,7 +3499,7 @@ body {
     box-shadow: none !important;
 }
 
-/* ── tagline ── */
+
 .m-brand-sub, .m-abyss-sub {
     font-size: clamp(0.6rem, 2.6vw, 0.72rem) !important;
     letter-spacing: clamp(2px, 1vw, 3.4px) !important;
@@ -3493,7 +3508,7 @@ body {
 }
 .m-brand-sub::before, .m-brand-sub::after { width: clamp(12px, 4vw, 18px) !important; }
 
-/* ── badges: ONE tidy fluid row ── */
+
 .m-hero-badges {
     gap: clamp(5px, 1.6vw, 7px) !important;
     margin-top: clamp(10px, 2.6vw, 14px) !important;
@@ -3512,7 +3527,7 @@ body {
     box-shadow: none !important;
 }
 
-/* ── version chip ── */
+
 .m-version-tag, .m-abyss-version {
     margin-top: clamp(8px, 2.2vw, 12px) !important;
     padding: 4px 12px !important;
@@ -3522,7 +3537,7 @@ body {
     box-shadow: none !important;
 }
 
-/* ── fluid entrance (smooth, gentle) ── */
+
 .m-abyss-logo  { animation: heroRise 0.62s cubic-bezier(0.22, 1, 0.36, 1) both, breathe 6s ease-in-out 0.62s infinite !important; }
 .m-abyss-title { animation: heroRise 0.62s cubic-bezier(0.22, 1, 0.36, 1) 0.06s both !important; }
 .m-abyss-sub,
@@ -3537,8 +3552,8 @@ body {
 }
 
 
-
 .m-hero-panel { position: relative !important; }
+
 
 .logo-container, .m-abyss-logo {
     width: clamp(120px, 33vw, 146px) !important;
@@ -3567,9 +3582,11 @@ body {
 .m-abyss-crown { opacity: 0.7 !important; }
 .logo-image { width: 80% !important; max-width: 118px !important; }
 
+
 .m-brand-title, .m-abyss-title { margin-top: 1px !important; }
 .m-brand-sub, .m-abyss-sub { margin-top: clamp(5px, 1.4vw, 8px) !important; }
 .m-hero-badges { margin-top: clamp(9px, 2.4vw, 13px) !important; }
+
 
 .m-version-tag.m-abyss-version {
     position: absolute !important;
@@ -3597,6 +3614,69 @@ body {
 }
 @media (prefers-reduced-motion: reduce) {
     .m-version-tag.m-abyss-version { animation: none !important; }
+}
+
+
+:root {
+    --bg-dark: #030712 !important;
+    --bg-deep: #020617 !important;
+    --text-main: #f9fafb !important;
+    --text-dim: #9ca3af !important;
+    --primary: #22d3ee !important;
+    --secondary: #a855f7 !important;
+    --accent: #22d3ee !important;
+    --glass-card: rgba(10, 15, 30, 0.45) !important;
+    --glass-border: rgba(255, 255, 255, 0.05) !important;
+}
+
+body {
+    background:
+        radial-gradient(120% 70% at 50% -12%, rgba(34, 211, 238, 0.06), transparent 56%),
+        radial-gradient(90% 55% at 86% 10%, rgba(168, 85, 247, 0.04), transparent 56%),
+        linear-gradient(180deg, #050b18 0%, #030712 100%) !important;
+}
+
+.m-hypervisor {
+    background: var(--glass-card) !important;
+    border: 1px solid var(--glass-border) !important;
+    border-radius: 12px !important;
+    backdrop-filter: blur(20px) saturate(130%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(130%) !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25) !important;
+}
+
+.m-cred-opt, .m-reactor-module {
+    background: rgba(255, 255, 255, 0.005) !important;
+    border: 1px solid rgba(255, 255, 255, 0.04) !important;
+    border-radius: 12px !important;
+    transition: transform 0.2s ease, border-color 0.2s ease, background-color 0.2s ease !important;
+    will-change: transform;
+}
+
+.m-cred-opt.active {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--opt-color) 6%, transparent), transparent 50%), rgba(255,255,255,0.002) !important;
+    border-color: color-mix(in srgb, var(--opt-color) 35%, transparent) !important;
+    box-shadow: 0 8px 24px -10px color-mix(in srgb, var(--opt-color) 20%, transparent) !important;
+}
+
+.m-reactor-module.active {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--prov) 6%, transparent), transparent 50%), rgba(255,255,255,0.002) !important;
+    border-color: color-mix(in srgb, var(--prov) 35%, transparent) !important;
+    box-shadow: 0 8px 24px -10px color-mix(in srgb, var(--prov) 20%, transparent) !important;
+}
+
+.m-cyber-corner, .m-abyss-crown, .logo-container::before, .logo-container::after {
+    display: none !important;
+}
+
+.logo-container, .m-abyss-logo {
+    box-shadow: none !important;
+    border: none !important;
+}
+
+
+.m-page {
+    -webkit-overflow-scrolling: touch;
 }
 `,
     mobileHTML = `\n<div id="m-sea-webgl" aria-hidden="true"></div>\n<div class="m-caustic" aria-hidden="true">\n    <div class="m-caustic-ray" style="--ray-x:8%;--ray-dur:14s;--ray-op:0.55;--ray-from:-12deg;--ray-to:6deg;width:50px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:28%;--ray-dur:11s;--ray-op:0.40;--ray-from:-6deg;--ray-to:14deg;width:35px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:50%;--ray-dur:16s;--ray-op:0.65;--ray-from:-10deg;--ray-to:8deg;width:65px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:68%;--ray-dur:9s;--ray-op:0.35;--ray-from:5deg;--ray-to:-12deg;width:40px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:85%;--ray-dur:13s;--ray-op:0.50;--ray-from:8deg;--ray-to:-6deg;width:55px;"></div>\n</div>\n<div class="m-ocean-particles" id="m-ocean-particles" aria-hidden="true"></div>\n<div id="app-container">\n    <div class="m-ptr" id="m-ptr-indicator"><i class="fas fa-arrow-down m-ptr-icon"></i></div>\n    <div class="m-content-wrapper">\n\n        <div class="m-content">\n            <div class="m-hero m-abyss-hero notranslate" aria-label="LEVIATHAN Kit" translate="no" data-no-translate="true">\n                <div class="m-hero-panel">\n                    <div class="logo-container m-abyss-logo">\n                        <span class="m-abyss-crown" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-tl" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-tr" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-bl" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-br" aria-hidden="true"></span>\n                        <img src="${MOBILE_LOGO_URL}" alt="LEVIATHAN Logo" class="logo-image notranslate" translate="no" data-no-translate="true" fetchpriority="high" decoding="sync" loading="eager" width="110" height="110">\n                        <div class="logo-particles" aria-hidden="true">\n                            <span class="logo-particle" style="left:18%; width:5px; height:5px; animation-delay:0s;"></span>\n                            <span class="logo-particle" style="left:38%; width:3px; height:3px; animation-delay:2.4s;"></span>\n                            <span class="logo-particle" style="left:63%; width:4px; height:4px; animation-delay:4.1s;"></span>\n                            <span class="logo-particle" style="left:78%; width:3px; height:3px; animation-delay:6.2s;"></span>\n                        </div>\n                    </div>\n                    <h1 class="m-brand-title m-abyss-title notranslate" translate="no" lang="zxx" data-brand-lock="LEVIATHAN" data-no-translate="true" aria-label="LEVIATHAN">LEVIATHAN</h1>\n                    <div class="m-brand-sub m-abyss-sub">Sovrano degli abissi</div>\n                    <div class="m-hero-badges">\n                        <span class="m-hero-badge">🐬 Real-Debrid</span>\n                        <span class="m-hero-badge">🧊 TorBox</span>\n                        <span class="m-hero-badge">🦈 P2P</span>\n                    </div>\n                    <div class="m-version-tag m-abyss-version" aria-label="Versione 3.2.0">\n                        <span class="m-v-dot" aria-hidden="true"></span>\n                        <span>v3.2.0</span>\n                    </div>\n                </div>\n            </div>\n\n            <div id="page-setup" class="m-page active">\n\n                <div class="m-hypervisor" style="margin-top:2px;">\n                    <div class="m-hyp-header">\n                        <span>🔑 ACCESSO & SERVIZI</span>\n                        <i class="fas fa-fingerprint m-hyp-icon"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Configura l'accesso</b> scegliendo Real-Debrid, TorBox o P2P. La verifica live ti conferma subito se la chiave è pronta ✨🔐.</p>\n\n                    <div class="m-cred-deck">\n                        <div class="m-cred-opt cred-rd m-srv-btn active" onclick="setMService('rd', this)">\n                            <div class="m-cred-icon">🐬</div>\n                            <div class="m-cred-name">REAL-DEBRID</div>\n                            <div class="m-cred-sub">PREMIUM</div>\n                        </div>\n                        <div class="m-cred-opt cred-tb m-srv-btn" onclick="setMService('tb', this)">\n                            <div class="m-cred-icon">🧊</div>\n                            <div class="m-cred-name">TORBOX</div>\n                            <div class="m-cred-sub">CLOUD</div>\n                        </div>\n                        <div class="m-cred-opt cred-p2p m-srv-btn" onclick="setMService('p2p', this)">\n                            <div class="m-cred-icon">🦈</div>\n                            <div class="m-cred-name">P2P MODE</div>\n                            <div class="m-cred-sub">NO KEY</div>\n                        </div>\n                    </div>\n\n                    <div class="m-input-fuselage" id="box-apikey">\n                        <div class="m-if-label">🔑 API KEY</div>\n                        <div class="m-if-inner">\n                            <div class="m-if-icon"><i class="fas fa-key"></i></div>\n                            <input type="text" id="m-apiKey" class="m-if-field" placeholder="Incolla key" oninput="handleMobileApiKeyInput()">\n                            <div class="m-if-action" onclick="pasteTo('m-apiKey')"><i class="fas fa-paste"></i></div>\n                            <div class="m-get-link" onclick="openApiPage()">GET <i class="fas fa-external-link-alt"></i></div>\n                        </div>\n                        <div class="m-key-status idle" id="m-keyStatus" aria-live="polite" aria-atomic="true">\n                            <span class="m-key-status-dot"></span>\n                            <span id="m-keyStatusText">🐬 RD / 🧊 TB live check disponibile.</span>\n                        </div>\n                    </div>\n\n                    <div class="m-input-fuselage tmdb-box" id="box-tmdb">\n                        <div class="m-if-label opt">🎬 TMDB OPTIONAL</div>\n                        <div class="m-if-inner">\n                            <div class="m-if-icon"><i class="fas fa-film"></i></div>\n                            <input type="text" id="m-tmdb" class="m-if-field" placeholder="Personal key" oninput="updateLinkModalContent()">\n                            <div class="m-if-action" onclick="pasteTo('m-tmdb')"><i class="fas fa-paste"></i></div>\n                            <div class="m-get-link" style="color:var(--m-accent); border-color:var(--m-accent); background:rgba(155, 108, 255,0.05);" onclick="openApiPage('tmdb')">GET <i class="fas fa-external-link-alt"></i></div>\n                        </div>\n                    </div>\n\n                </div>\n\n                <div class="m-hypervisor">\n                     <div class="m-hyp-header">\n                        <span>🍿 PROVIDER STREAMS ✨</span>\n                        <i class="fas fa-cubes m-hyp-icon"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Scegli le sorgenti da attivare</b>: Leviathan unisce cinema, serie e anime italiani in un catalogo pulito, veloce e facile da controllare 🍿📺✨.</p>\n\n                    <div class="m-reactor-grid">\n\n                        <div class="m-reactor-module" id="mod-vix">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🍿</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🍿 StreamingCommunity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableVix" onchange="updateStatus('m-enableVix','st-vix'); toggleModuleStyle('m-enableVix', 'mod-vix');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV in italiano, catalogo ricco e player rapido 🍿.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n</div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ghd">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎬 GuardaHD</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGhd" onchange="updateStatus('m-enableGhd','st-ghd'); toggleModuleStyle('m-enableGhd', 'mod-ghd');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV in qualità HD, nuove uscite e schede ordinate 🎬.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-gs">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📺</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">📺 GuardoSerie</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGs" onchange="updateStatus('m-enableGs','st-gs'); toggleModuleStyle('m-enableGs', 'mod-gs');">\n                                        <span class="m-slider m-slider-purple"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Serie TV italiane organizzate per stagioni ed episodi 📺.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-vidxgo">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎯</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎯 VidxGo</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableVidxgo" onchange="updateStatus('m-enableVidxgo','st-vidxgo'); toggleModuleStyle('m-enableVidxgo', 'mod-vidxgo');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Player diretto per film e serie TV, flusso risolto dal codice IMDb ⚡.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-es">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌍</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🌍 Eurostreaming</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableEs" onchange="updateStatus('m-enableEs','st-es'); toggleModuleStyle('m-enableEs', 'mod-es');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Portale italiano storico dedicato a serie TV e contenuti aggiornati ⭐.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-cb01">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎬 CB01</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableCb01" onchange="updateStatus('m-enableCb01','st-cb01'); toggleModuleStyle('m-enableCb01', 'mod-cb01');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Ampio catalogo di film e serie TV, tra i riferimenti più noti in Italia 🎞️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-onlineserietv">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🖥️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🖥️ OnlineSerieTV</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableOnlineserietv" onchange="updateStatus('m-enableOnlineserietv','st-onlineserietv'); toggleModuleStyle('m-enableOnlineserietv', 'mod-onlineserietv');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV italiani, risolti via uprot/MaxStream con forward proxy 🛰️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-aw">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">⛩️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">⛩️ AnimeWorld</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeWorld" onchange="updateStatus('m-enableAnimeWorld','st-aw'); toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime sub-ita e doppiati, con schede serie e catalogo ampio 🌸.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-au">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌊</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🌊 AnimeUnity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeUnity" onchange="updateStatus('m-enableAnimeUnity','st-au'); toggleModuleStyle('m-enableAnimeUnity', 'mod-au');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime, simulcast e doppiaggi con episodi aggiornati e ordinati 🪄.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-as">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🪐</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🪐 AnimeSaturn</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeSaturn" onchange="updateStatus('m-enableAnimeSaturn','st-as'); toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime classici e recenti, archivio ampio e consultazione rapida 🪐.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ti">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🐙</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🐙 ToonItalia</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableToonItalia" onchange="updateStatus('m-enableToonItalia','st-ti'); toggleModuleStyle('m-enableToonItalia', 'mod-ti');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Cartoon e anime in italiano, con resolver VOE, LoadM/RPMShare e MaxStream.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-gf">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎞️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎞️ GuardaFlix</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGf" onchange="updateStatus('m-enableGf','st-gf'); toggleModuleStyle('m-enableGf', 'mod-gf');">\n                                        <span class="m-slider m-slider-green"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film in streaming con raccolte per genere e ultime uscite 🎥.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n\n\n\n                    </div>\n\n                    <div class="m-priority-row" id="m-priority-panel">\n                        <div class="m-priority-info">\n                            <span class="m-priority-title">🚀 PRIORITÀ WEB</span>\n                            <span class="m-priority-desc" id="priority-desc">Mostra Web in cima</span>\n                        </div>\n                        <label class="m-switch">\n                            <input type="checkbox" id="m-vixLast" onchange="updatePriorityLabel()">\n                            <span class="m-slider"></span>\n                        </label>\n                    </div>\n                </div>\n\n                <div class="m-setup-actions-panel" aria-label="Azioni configurazione">\n                    <div class="m-setup-action-row">\n                        <button class="m-setup-action m-setup-install" onclick="mobileInstall()" type="button">\n                            <span>INSTALLA</span>\n                            <i class="fas fa-radiation"></i>\n                        </button>\n                    </div>\n\n                    <div class="m-setup-mini-console" aria-label="Console copia link">\n                        <div class="m-setup-mini-console-head">\n                            <span class="m-setup-mini-console-title"><i class="fas fa-terminal"></i> LINK CONFIGURAZIONE</span>\n                            <button class="m-setup-mini-copy" onclick="copyFromSetupPanel()" type="button">\n                                <i class="fas fa-copy"></i>\n                                <span>COPIA</span>\n                            </button>\n                        </div>\n                        <div class="m-setup-mini-console-body">\n                            <textarea id="m-setupGeneratedUrlBox" class="m-setup-mini-url" readonly>/// WAITING FOR DATA ///</textarea>\n                        </div>\n                    </div>\n                </div>\n\n                <div class="m-credits-section">
@@ -5603,9 +5683,9 @@ async function copyGeneratedLinkValue(n, e = !1) {
     if (!t) return !1;
     if (t.includes("WAITING FOR") || t.includes("SYSTEM OFFLINE"))
         return (showToast("CONFIGURA PRIMA L'ADDON", "error"), !1);
-    
+
     let copied = false;
-    // 1. Try modern clipboard API first
+
     if (navigator.clipboard && navigator.clipboard.writeText) {
         try {
             await navigator.clipboard.writeText(t);
@@ -5614,8 +5694,8 @@ async function copyGeneratedLinkValue(n, e = !1) {
             console.warn("Clipboard API failed, trying fallback:", err);
         }
     }
-    
-    // 2. Fallback to selection-based copy
+
+
     if (!copied) {
         try {
             const el = document.createElement("textarea");
@@ -5625,7 +5705,7 @@ async function copyGeneratedLinkValue(n, e = !1) {
             el.style.left = "-9999px";
             document.body.appendChild(el);
             el.select();
-            el.setSelectionRange(0, 99999); // support iOS selection
+            el.setSelectionRange(0, 99999); 
             const success = document.execCommand("copy");
             document.body.removeChild(el);
             if (success) {
@@ -5635,7 +5715,7 @@ async function copyGeneratedLinkValue(n, e = !1) {
             console.error("Fallback copy failed:", err);
         }
     }
-    
+
     if (copied) {
         return (e && closeLinkModal(), showToast("LINK COPIATO NEGLI APPUNTI", "success"), !0);
     } else {
