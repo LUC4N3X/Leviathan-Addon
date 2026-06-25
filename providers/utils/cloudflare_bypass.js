@@ -4,11 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { parse: parseSetCookie } = require('set-cookie-parser');
-const { RateLimiter } = require('./rate_limiter');
-const { logger } = require('./runtime');
 const { globalDaemonPool } = require('./cf_fast_daemon_pool');
-const { broadcastClearance, getLatestClearance } = require('../server/websocket_bridge');
 const { buildCookieHeaderFromSession, mergeCookieHeaders, cookieHeaderToObjects } = require('./cf_clearance_manager');
 const antibotSignatures = require('./antibot_signatures');
 const { createClearanceBroker } = require('./cf_clearance_broker');
@@ -829,7 +825,7 @@ function execCurlCffiBypass(url, providerName = 'provider', options = {}) {
       proxy: proxy,
       cookies: Array.isArray(options.cookiesJson) ? options.cookiesJson : []
     }).catch(err => {
-      logger.warn(`[FAST DAEMON] Errore: ${err.message}, fallback to standard python bypass...`);
+      console.warn(`[FAST DAEMON] Errore: ${err.message}, fallback to standard python bypass...`);
       return execPythonBypass({
         label: 'curl_cffi',
         scriptPath,
