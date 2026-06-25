@@ -1676,7 +1676,7 @@ async function findGsTargetPage(expectedTitles = [], targetYear = null, signal =
   let bestLoose = null;
 
   for (const result of allResults.slice(0, mediaType === 'movie' ? GS_MOVIE_MAX_VERIFY_CANDIDATES : allResults.length)) {
-    const titleScore = normalizeTitleScoreMany(result.title, expectedTitles);
+    const titleScore = result.score !== undefined ? result.score : normalizeTitleScoreMany(result.title, expectedTitles);
     if (titleScore < 1) continue;
 
     const html = result.html || await smartFetch(result.url, {
@@ -1796,13 +1796,19 @@ async function tryFastSlugTargets(expectedTitles = [], targetYear = null, signal
       }
 
       const titleScore = normalizeTitleScoreMany(pageTitle, expectedTitles);
-      if (titleScore < 2) return null;
+      const links = extractPlayerLinksFromHtml(html).length;
+      
+      let effectiveScore = titleScore;
+      if (links > 0 && titleScore < 2) {
+        effectiveScore = 2; // Forziamo l'accettazione se ha link validi
+      }
+
+      if (effectiveScore < 2) return null;
 
       const foundYear = readGsPageYear(html);
-      if (targetYearNumber && foundYear && !isYearCompatibleForGs(foundYear, targetYearNumber, titleScore)) return null;
+      if (targetYearNumber && foundYear && !isYearCompatibleForGs(foundYear, targetYearNumber, effectiveScore)) return null;
 
-      const links = extractPlayerLinksFromHtml(html).length;
-      return { url, html, title: pageTitle || url, mapped: true, fastSlug: true, score: titleScore, links };
+      return { url, html, title: pageTitle || url, mapped: true, fastSlug: true, score: effectiveScore, links };
     } catch (e) {
       if (isAbortLikeError(e) && signal?.aborted) throw e;
       gsDebug(`${mediaType} fast slug candidate failed`, { url, error: e?.message || String(e) });
