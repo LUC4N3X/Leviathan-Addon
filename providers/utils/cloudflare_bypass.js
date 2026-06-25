@@ -777,6 +777,44 @@ function resolveCurlCffiScriptPath(options = {}) {
 }
 
 function execCurlCffiBypass(url, providerName = 'provider', options = {}) {
+  const method = String(options.method || (options.isPost ? 'POST' : 'GET')).toUpperCase();
+  const timeout = Math.max(1000, Number(options.timeout || options.timeoutMs || process.env.CURL_CFFI_TIMEOUT_MS || CURL_CFFI_DEFAULTS.timeoutMs) || CURL_CFFI_DEFAULTS.timeoutMs);
+  
+  // USE FAST DAEMON POOL
+  if (globalDaemonPool && process.env.FAST_DAEMON_ENABLED !== 'false') {
+    return globalDaemonPool.request({
+      url,
+      method,
+      headers: options.headers || {},
+      impersonate: options.impersonate || 'chrome142',
+      timeout,
+      proxy: options.proxy || null,
+      cookies: Array.isArray(options.cookiesJson) ? options.cookiesJson : [],
+      data: options.body ?? options.data ?? null
+    }).then(payload => {
+      if (payload.status === 'ok') {
+        return {
+          status: payload.code || 200,
+          response: payload.html || '',
+          elapsedMs: 0,
+          cookies: payload.cookies || [],
+          headers: payload.headers || {},
+          challengeDetected: payload.challengeDetected === true
+        };
+      }
+      throw new Error(payload.message || 'daemon_error');
+    }).catch(err => {
+      if (err.message !== 'daemon_error' && !err.message.includes('timeout')) {
+        console.warn(`[FAST DAEMON] Errore: ${err.message}, fallback to standard python bypass...`);
+      }
+      return executeStandardCurlCffiBypass(url, providerName, options);
+    });
+  }
+
+  return executeStandardCurlCffiBypass(url, providerName, options);
+}
+
+function executeStandardCurlCffiBypass(url, providerName, options) {
   const scriptPath = resolveCurlCffiScriptPath(options);
   if (!fs.existsSync(scriptPath)) return Promise.reject(new Error(`curl_cffi_script_missing:${scriptPath}`));
 
@@ -813,31 +851,6 @@ function execCurlCffiBypass(url, providerName = 'provider', options = {}) {
 
   const fallbackWatchdog = Math.max(timeout + 2500, timeout * (retries + 1) + retryBackoffMs * Math.max(1, retries) + 5000);
   const watchdogMs = Math.max(timeout + 1000, Number(options.watchdogMs || options.processTimeoutMs || process.env[`${envPrefix}_CURL_CFFI_PROCESS_TIMEOUT_MS`] || process.env.CURL_CFFI_PROCESS_TIMEOUT_MS || fallbackWatchdog) || fallbackWatchdog);
-
-  // USE FAST DAEMON POOL
-  if (envFlag('FAST_DAEMON_ENABLED', true)) {
-    return globalDaemonPool.request({
-      url,
-      method,
-      headers: options.headers || {},
-      impersonate: options.impersonate || 'chrome142',
-      timeout: timeout,
-      proxy: proxy,
-      cookies: Array.isArray(options.cookiesJson) ? options.cookiesJson : []
-    }).catch(err => {
-      console.warn(`[FAST DAEMON] Errore: ${err.message}, fallback to standard python bypass...`);
-      return execPythonBypass({
-        label: 'curl_cffi',
-        scriptPath,
-        args,
-        pythonEnv: 'CURL_CFFI_PYTHON',
-        timeoutMs: watchdogMs,
-        graceMs: options.graceMs || process.env[`${envPrefix}_CURL_CFFI_PROCESS_GRACE_MS`] || process.env.CURL_CFFI_PROCESS_GRACE_MS,
-        signal: options.signal,
-        env: options.env
-      });
-    });
-  }
 
   return execPythonBypass({
     label: 'curl_cffi',

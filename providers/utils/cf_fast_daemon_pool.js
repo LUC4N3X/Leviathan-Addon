@@ -68,7 +68,8 @@ class FastDaemonPool {
                 headers: options.headers || {},
                 impersonate: options.impersonate || 'chrome120',
                 timeout: options.timeout || 15000,
-                cookies: options.cookies || []
+                cookies: options.cookies || [],
+                data: options.data || options.body || null
             };
 
             this.callbacks.set(reqId, { resolve, reject });
@@ -86,8 +87,6 @@ class FastDaemonPool {
             this.currentIdx = (this.currentIdx + 1) % this.daemons.length;
 
             try {
-                // Pass the reqId back from python? Ah wait, my python script doesn't echo reqId.
-                // We MUST update cf_fast_daemon.py to echo reqId!
                 child.stdin.write(JSON.stringify(payload) + '\n');
             } catch (e) {
                 reject(e);
