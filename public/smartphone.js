@@ -262,7 +262,7 @@ const mobileCSS = `
 
 body {
     margin: 0;
-    background: linear-gradient(180deg, rgba(34, 211, 238, 0.06) 0%, rgba(4, 12, 24, 0.9) 25%, #030712 60%, #020617 100%), #020617;
+    background: #02040a;
     font-family: 'Outfit', sans-serif;
     color: var(--text-main);
     width: 100%;
@@ -270,216 +270,67 @@ body {
     overscroll-behavior: none;
     overflow: hidden;
 }
-body::after {
-    content: " ";
-    display: block;
+
+.m-abyss-bg {
     position: fixed;
-    top: 0; left: 0; bottom: 0; right: 0;
-    background: radial-gradient(circle at 50% 16%, rgba(34, 211, 238, 0.08), transparent 45%),
-                radial-gradient(circle at 50% 100%, rgba(155, 108, 255, 0.06), transparent 50%);
-    z-index: -2;
-    pointer-events: none;
-}
-body::before {
-    content: '';
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    z-index: -3;
-    background-image: linear-gradient(rgba(34, 211, 238, 0.012) 1px, transparent 1px),
-                      linear-gradient(90deg, rgba(34, 211, 238, 0.012) 1px, transparent 1px);
-    background-size: 50px 50px;
-    pointer-events: none;
-    mask-image: radial-gradient(circle at 50% 25%, black 0%, transparent 80%);
-    -webkit-mask-image: radial-gradient(circle at 50% 25%, black 0%, transparent 80%);
-}
-
-.m-caustic {
-    position: fixed; top: 0; left: 0; width: 100%; height: 50%; pointer-events: none; z-index: -4; overflow: hidden;
-}
-.m-caustic-ray {
-    position: absolute; top: -10%; width: 50px; height: 110%;
-    background: linear-gradient(180deg, rgba(34, 211, 238, 0.08) 0%, rgba(155, 108, 255, 0.03) 50%, transparent 100%);
-    transform-origin: top center;
-    border-radius: 50%;
-    animation: causticSway var(--ray-dur, 12s) ease-in-out infinite alternate;
-    opacity: var(--ray-op, 0.6);
-    left: var(--ray-x, 30%);
-    will-change: transform;
-}
-@keyframes causticSway {
-    0% { transform: rotate(var(--ray-from, -8deg)) scaleX(1); }
-    100% { transform: rotate(var(--ray-to, 8deg)) scaleX(1.2); }
-}
-
-.m-ocean-particles {
-    position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: -5; overflow: hidden;
-}
-.m-ocean-particle {
-    position: absolute; bottom: -10px;
-    width: 3px; height: 3px; border-radius: 50%;
-    background: radial-gradient(circle, rgba(34, 211, 238, 0.9) 0%, transparent 100%);
-    box-shadow: 0 0 8px 1px rgba(34, 211, 238, 0.5);
-    opacity: 0;
-    animation: oceanFloat 16s linear infinite;
-    will-change: transform;
-}
-@keyframes oceanFloat {
-    0% { transform: translate3d(0, 0, 0) scale(0.6); opacity: 0; }
-    10% { opacity: 0.8; }
-    85% { opacity: 0.3; }
-    100% { transform: translate3d(var(--drift, 15px), -105vh, 0) scale(1.3); opacity: 0; }
-}
-
-#m-sea-canvas {
-    position: fixed; bottom: 0; left: 0; width: 100%;
-    pointer-events: none; z-index: -6;
-    display: block;
-    will-change: transform;
-}
-
-#m-sea-webgl {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100vw;
-    height: 100vh;
+    top: 0; left: 0; right: 0; bottom: 0;
     z-index: -10;
     pointer-events: none;
-    opacity: 0;
-    transition: opacity 1s cubic-bezier(0.22, 1, 0.36, 1);
-    will-change: opacity;
-}
-#m-sea-webgl.is-ready {
-    opacity: 1;
-}
-
-#m-sea-css {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100vw;
-    height: 100vh;
-    z-index: -1;
-    pointer-events: none;
     overflow: hidden;
-    background: linear-gradient(180deg, #041428 0%, #010814 60%, #00030a 100%);
+    background: radial-gradient(circle at 50% 0%, rgba(34, 211, 238, 0.05) 0%, transparent 50%),
+                radial-gradient(circle at 0% 100%, rgba(168, 85, 247, 0.03) 0%, transparent 40%),
+                radial-gradient(circle at 100% 100%, rgba(34, 211, 238, 0.02) 0%, transparent 40%),
+                #02040a;
+}
+.m-abyss-bg::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-image: radial-gradient(rgba(34, 211, 238, 0.015) 1px, transparent 1px);
+    background-size: 28px 28px;
+    mask-image: radial-gradient(circle at 50% 30%, black 0%, transparent 85%);
+    -webkit-mask-image: radial-gradient(circle at 50% 30%, black 0%, transparent 85%);
+}
+.m-abyss-bg::after {
+    content: "";
+    position: absolute;
+    top: -20%; left: -20%; right: -20%; bottom: -20%;
+    background: radial-gradient(circle at 30% 30%, rgba(34, 211, 238, 0.04) 0%, transparent 50%),
+                radial-gradient(circle at 70% 70%, rgba(168, 85, 247, 0.03) 0%, transparent 50%);
+    animation: abyssBreathe 18s ease-in-out infinite alternate;
+    will-change: transform, opacity;
+}
+@keyframes abyssBreathe {
+    0% { transform: scale(1) translate3d(0, 0, 0); opacity: 0.7; }
+    100% { transform: scale(1.08) translate3d(20px, -10px, 0); opacity: 1.0; }
+}
+
+.m-abyss-mote {
+    position: absolute;
+    width: 3px; height: 3px;
+    border-radius: 50%;
+    background: rgba(34, 211, 238, 0.4);
+    box-shadow: 0 0 10px 2px rgba(34, 211, 238, 0.2);
+    will-change: transform;
     opacity: 0;
-    transition: opacity 0.5s ease;
 }
-body.m-sea-fallback #m-sea-css {
-    opacity: 1;
+.m-abyss-mote-1 {
+    top: 25%; left: 20%;
+    animation: abyssFloat 24s linear infinite;
 }
-
-#m-sea-css::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    background-image: linear-gradient(rgba(34, 211, 238, 0.02) 1px, transparent 1px),
-                      linear-gradient(90deg, rgba(34, 211, 238, 0.02) 1px, transparent 1px);
-    background-size: 50px 50px;
-    pointer-events: none;
-    mask-image: radial-gradient(circle at 50% 25%, black 0%, transparent 80%);
-    -webkit-mask-image: radial-gradient(circle at 50% 25%, black 0%, transparent 80%);
-    z-index: 10;
+.m-abyss-mote-2 {
+    top: 60%; left: 75%;
+    animation: abyssFloat 32s linear infinite -10s;
 }
-#m-sea-css::after {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; bottom: 0; right: 0;
-    background: radial-gradient(circle at 50% 16%, rgba(34, 211, 238, 0.14), transparent 45%),
-                radial-gradient(circle at 50% 100%, rgba(155, 108, 255, 0.08), transparent 50%);
-    pointer-events: none;
-    z-index: 11;
+.m-abyss-mote-3 {
+    top: 45%; left: 85%;
+    animation: abyssFloat 28s linear infinite -5s;
 }
-
-.m-seacss-caustic {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    background: radial-gradient(circle at 50% -20%, rgba(34, 211, 238, 0.28) 0%, rgba(155, 108, 255, 0.12) 40%, transparent 75%);
-    animation: cssCausticPulse 8s ease-in-out infinite alternate;
-}
-@keyframes cssCausticPulse {
-    0% { opacity: 0.6; transform: scale(1); }
-    100% { opacity: 1; transform: scale(1.1); }
-}
-
-.m-seacss-ray {
-    position: absolute;
-    top: -30%;
-    width: 25vw;
-    height: 160%;
-    background: linear-gradient(180deg, rgba(34, 211, 238, 0.14) 0%, rgba(155, 108, 255, 0.04) 50%, transparent 100%);
-    transform-origin: top center;
-    filter: blur(25px);
-    will-change: transform;
-}
-.m-seacss-ray.r1 {
-    left: 10%;
-    animation: cssRaySway1 14s ease-in-out infinite alternate;
-}
-.m-seacss-ray.r2 {
-    left: 45%;
-    animation: cssRaySway2 18s ease-in-out infinite alternate;
-}
-.m-seacss-ray.r3 {
-    left: 80%;
-    animation: cssRaySway3 22s ease-in-out infinite alternate;
-}
-
-@keyframes cssRaySway1 {
-    0% { transform: rotate(-10deg) scaleX(0.9); }
-    100% { transform: rotate(4deg) scaleX(1.1); }
-}
-@keyframes cssRaySway2 {
-    0% { transform: rotate(-4deg) scaleX(1.15); }
-    100% { transform: rotate(10deg) scaleX(0.85); }
-}
-@keyframes cssRaySway3 {
-    0% { transform: rotate(-12deg) scaleX(0.8); }
-    100% { transform: rotate(2deg) scaleX(1.1); }
-}
-
-.m-seacss-layer {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 200%;
-    height: 160px;
-    background-repeat: repeat-x;
-    background-size: 50% 100%;
-    will-change: transform;
-}
-.m-seacss-swell3 {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 120' preserveAspectRatio='none'%3E%3Cpath d='M0,30 C150,75 350,20 500,55 C650,90 850,35 1000,65 C1150,95 1200,45 1200,45 L1200,120 L0,120 Z' fill='rgba(155, 108, 255, 0.16)'/%3E%3C/svg%3E");
-    animation: cssSwell3 20s linear infinite;
-    z-index: 1;
-    bottom: -5px;
-}
-.m-seacss-swell2 {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 120' preserveAspectRatio='none'%3E%3Cpath d='M0,50 C180,85 280,30 450,65 C600,100 750,40 950,70 C1100,100 1200,55 1200,55 L1200,120 L0,120 Z' fill='rgba(34, 211, 238, 0.12)'/%3E%3C/svg%3E");
-    animation: cssSwell2 14s linear infinite;
-    z-index: 2;
-    bottom: -15px;
-}
-.m-seacss-swell1 {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 120' preserveAspectRatio='none'%3E%3Cpath d='M0,70 C200,105 400,55 600,85 C800,115 1000,65 1200,85 L1200,120 L0,120 Z' fill='rgba(4, 20, 40, 0.75)'/%3E%3C/svg%3E");
-    animation: cssSwell1 10s linear infinite;
-    z-index: 3;
-    bottom: -25px;
-}
-
-@keyframes cssSwell3 {
-    0% { transform: translate3d(0, 0, 0); }
-    100% { transform: translate3d(-50%, 0, 0); }
-}
-@keyframes cssSwell2 {
-    0% { transform: translate3d(-50%, 0, 0); }
-    100% { transform: translate3d(0, 0, 0); }
-}
-@keyframes cssSwell1 {
-    0% { transform: translate3d(0, 0, 0); }
-    100% { transform: translate3d(-50%, 0, 0); }
+@keyframes abyssFloat {
+    0% { transform: translate3d(0, 40px, 0) scale(0.8); opacity: 0; }
+    20% { opacity: 0.6; }
+    80% { opacity: 0.6; }
+    100% { transform: translate3d(20px, -60px, 0) scale(1.2); opacity: 0; }
 }
 
 #app-container {
@@ -2715,13 +2566,14 @@ body.m-lowfx .m-dock-container {
     contain: layout paint style !important;
 }
 
-body.m-scrolling .m-caustic-ray,
+body.m-scrolling .m-abyss-bg::after,
+body.m-scrolling .m-abyss-mote,
 body.m-scrolling .logo-particle,
-body.m-scrolling .m-seacss-ray,
-body.m-scrolling .m-seacss-layer,
-body.m-typing .m-caustic-ray,
+body.m-typing .m-abyss-bg::after,
+body.m-typing .m-abyss-mote,
 body.m-typing .logo-particle,
-body.m-keyboard-open .m-caustic-ray,
+body.m-keyboard-open .m-abyss-bg::after,
+body.m-keyboard-open .m-abyss-mote,
 body.m-keyboard-open .logo-particle,
 body.m-page-hidden *,
 body.m-switching .m-page.active {
@@ -2740,17 +2592,13 @@ body.m-lowfx .m-dock-container {
     box-shadow: 0 8px 22px -8px rgba(0, 0, 0, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.055) !important;
 }
 
-body.m-lowfx .m-caustic-ray:nth-child(n+4),
-body.m-lowfx .logo-particle:nth-child(n+3),
-body.m-lowfx .m-seacss-ray.r3 {
+body.m-lowfx .m-abyss-mote,
+body.m-lowfx .logo-particle:nth-child(n+3) {
     display: none !important;
 }
 
-body.m-lowfx .m-seacss-caustic,
-body.m-lowfx .m-seacss-ray,
-body.m-lowfx .m-seacss-layer,
-body.m-midfx .m-seacss-layer {
-    animation-duration: 28s !important;
+body.m-lowfx .m-abyss-bg::after {
+    animation-duration: 36s !important;
 }
 
 body.m-lowfx .m-reactor-module,
@@ -3682,7 +3530,7 @@ body {
     -webkit-overflow-scrolling: touch;
 }
 `,
-    mobileHTML = `\n<div id="m-sea-webgl" aria-hidden="true"></div>\n<div class="m-caustic" aria-hidden="true">\n    <div class="m-caustic-ray" style="--ray-x:8%;--ray-dur:14s;--ray-op:0.55;--ray-from:-12deg;--ray-to:6deg;width:50px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:28%;--ray-dur:11s;--ray-op:0.40;--ray-from:-6deg;--ray-to:14deg;width:35px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:50%;--ray-dur:16s;--ray-op:0.65;--ray-from:-10deg;--ray-to:8deg;width:65px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:68%;--ray-dur:9s;--ray-op:0.35;--ray-from:5deg;--ray-to:-12deg;width:40px;"></div>\n    <div class="m-caustic-ray" style="--ray-x:85%;--ray-dur:13s;--ray-op:0.50;--ray-from:8deg;--ray-to:-6deg;width:55px;"></div>\n</div>\n<div class="m-ocean-particles" id="m-ocean-particles" aria-hidden="true"></div>\n<div id="app-container">\n    <div class="m-ptr" id="m-ptr-indicator"><i class="fas fa-arrow-down m-ptr-icon"></i></div>\n    <div class="m-content-wrapper">\n\n        <div class="m-content">\n            <div class="m-hero m-abyss-hero notranslate" aria-label="LEVIATHAN Kit" translate="no" data-no-translate="true">\n                <div class="m-hero-panel">\n                    <div class="logo-container m-abyss-logo">\n                        <span class="m-abyss-crown" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-tl" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-tr" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-bl" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-br" aria-hidden="true"></span>\n                        <img src="${MOBILE_LOGO_URL}" alt="LEVIATHAN Logo" class="logo-image notranslate" translate="no" data-no-translate="true" fetchpriority="high" decoding="sync" loading="eager" width="110" height="110">\n                        <div class="logo-particles" aria-hidden="true">\n                            <span class="logo-particle" style="left:18%; width:5px; height:5px; animation-delay:0s;"></span>\n                            <span class="logo-particle" style="left:38%; width:3px; height:3px; animation-delay:2.4s;"></span>\n                            <span class="logo-particle" style="left:63%; width:4px; height:4px; animation-delay:4.1s;"></span>\n                            <span class="logo-particle" style="left:78%; width:3px; height:3px; animation-delay:6.2s;"></span>\n                        </div>\n                    </div>\n                    <h1 class="m-brand-title m-abyss-title notranslate" translate="no" lang="zxx" data-brand-lock="LEVIATHAN" data-no-translate="true" aria-label="LEVIATHAN">LEVIATHAN</h1>\n                    <div class="m-brand-sub m-abyss-sub">Sovrano degli abissi</div>\n                    <div class="m-hero-badges">\n                        <span class="m-hero-badge">🐬 Real-Debrid</span>\n                        <span class="m-hero-badge">🧊 TorBox</span>\n                        <span class="m-hero-badge">🦈 P2P</span>\n                    </div>\n                    <div class="m-version-tag m-abyss-version" aria-label="Versione 3.2.0">\n                        <span class="m-v-dot" aria-hidden="true"></span>\n                        <span>v3.2.0</span>\n                    </div>\n                </div>\n            </div>\n\n            <div id="page-setup" class="m-page active">\n\n                <div class="m-hypervisor" style="margin-top:2px;">\n                    <div class="m-hyp-header">\n                        <span>🔑 ACCESSO & SERVIZI</span>\n                        <i class="fas fa-fingerprint m-hyp-icon"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Configura l'accesso</b> scegliendo Real-Debrid, TorBox o P2P. La verifica live ti conferma subito se la chiave è pronta ✨🔐.</p>\n\n                    <div class="m-cred-deck">\n                        <div class="m-cred-opt cred-rd m-srv-btn active" onclick="setMService('rd', this)">\n                            <div class="m-cred-icon">🐬</div>\n                            <div class="m-cred-name">REAL-DEBRID</div>\n                            <div class="m-cred-sub">PREMIUM</div>\n                        </div>\n                        <div class="m-cred-opt cred-tb m-srv-btn" onclick="setMService('tb', this)">\n                            <div class="m-cred-icon">🧊</div>\n                            <div class="m-cred-name">TORBOX</div>\n                            <div class="m-cred-sub">CLOUD</div>\n                        </div>\n                        <div class="m-cred-opt cred-p2p m-srv-btn" onclick="setMService('p2p', this)">\n                            <div class="m-cred-icon">🦈</div>\n                            <div class="m-cred-name">P2P MODE</div>\n                            <div class="m-cred-sub">NO KEY</div>\n                        </div>\n                    </div>\n\n                    <div class="m-input-fuselage" id="box-apikey">\n                        <div class="m-if-label">🔑 API KEY</div>\n                        <div class="m-if-inner">\n                            <div class="m-if-icon"><i class="fas fa-key"></i></div>\n                            <input type="text" id="m-apiKey" class="m-if-field" placeholder="Incolla key" oninput="handleMobileApiKeyInput()">\n                            <div class="m-if-action" onclick="pasteTo('m-apiKey')"><i class="fas fa-paste"></i></div>\n                            <div class="m-get-link" onclick="openApiPage()">GET <i class="fas fa-external-link-alt"></i></div>\n                        </div>\n                        <div class="m-key-status idle" id="m-keyStatus" aria-live="polite" aria-atomic="true">\n                            <span class="m-key-status-dot"></span>\n                            <span id="m-keyStatusText">🐬 RD / 🧊 TB live check disponibile.</span>\n                        </div>\n                    </div>\n\n                    <div class="m-input-fuselage tmdb-box" id="box-tmdb">\n                        <div class="m-if-label opt">🎬 TMDB OPTIONAL</div>\n                        <div class="m-if-inner">\n                            <div class="m-if-icon"><i class="fas fa-film"></i></div>\n                            <input type="text" id="m-tmdb" class="m-if-field" placeholder="Personal key" oninput="updateLinkModalContent()">\n                            <div class="m-if-action" onclick="pasteTo('m-tmdb')"><i class="fas fa-paste"></i></div>\n                            <div class="m-get-link" style="color:var(--m-accent); border-color:var(--m-accent); background:rgba(155, 108, 255,0.05);" onclick="openApiPage('tmdb')">GET <i class="fas fa-external-link-alt"></i></div>\n                        </div>\n                    </div>\n\n                </div>\n\n                <div class="m-hypervisor">\n                     <div class="m-hyp-header">\n                        <span>🍿 PROVIDER STREAMS ✨</span>\n                        <i class="fas fa-cubes m-hyp-icon"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Scegli le sorgenti da attivare</b>: Leviathan unisce cinema, serie e anime italiani in un catalogo pulito, veloce e facile da controllare 🍿📺✨.</p>\n\n                    <div class="m-reactor-grid">\n\n                        <div class="m-reactor-module" id="mod-vix">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🍿</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🍿 StreamingCommunity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableVix" onchange="updateStatus('m-enableVix','st-vix'); toggleModuleStyle('m-enableVix', 'mod-vix');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV in italiano, catalogo ricco e player rapido 🍿.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n</div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ghd">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎬 GuardaHD</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGhd" onchange="updateStatus('m-enableGhd','st-ghd'); toggleModuleStyle('m-enableGhd', 'mod-ghd');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV in qualità HD, nuove uscite e schede ordinate 🎬.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-gs">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📺</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">📺 GuardoSerie</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGs" onchange="updateStatus('m-enableGs','st-gs'); toggleModuleStyle('m-enableGs', 'mod-gs');">\n                                        <span class="m-slider m-slider-purple"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Serie TV italiane organizzate per stagioni ed episodi 📺.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-vidxgo">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎯</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎯 VidxGo</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableVidxgo" onchange="updateStatus('m-enableVidxgo','st-vidxgo'); toggleModuleStyle('m-enableVidxgo', 'mod-vidxgo');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Player diretto per film e serie TV, flusso risolto dal codice IMDb ⚡.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-es">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌍</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🌍 Eurostreaming</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableEs" onchange="updateStatus('m-enableEs','st-es'); toggleModuleStyle('m-enableEs', 'mod-es');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Portale italiano storico dedicato a serie TV e contenuti aggiornati ⭐.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-cb01">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎬 CB01</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableCb01" onchange="updateStatus('m-enableCb01','st-cb01'); toggleModuleStyle('m-enableCb01', 'mod-cb01');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Ampio catalogo di film e serie TV, tra i riferimenti più noti in Italia 🎞️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-onlineserietv">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🖥️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🖥️ OnlineSerieTV</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableOnlineserietv" onchange="updateStatus('m-enableOnlineserietv','st-onlineserietv'); toggleModuleStyle('m-enableOnlineserietv', 'mod-onlineserietv');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV italiani, risolti via uprot/MaxStream con forward proxy 🛰️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-aw">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">⛩️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">⛩️ AnimeWorld</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeWorld" onchange="updateStatus('m-enableAnimeWorld','st-aw'); toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime sub-ita e doppiati, con schede serie e catalogo ampio 🌸.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-au">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌊</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🌊 AnimeUnity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeUnity" onchange="updateStatus('m-enableAnimeUnity','st-au'); toggleModuleStyle('m-enableAnimeUnity', 'mod-au');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime, simulcast e doppiaggi con episodi aggiornati e ordinati 🪄.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-as">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🪐</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🪐 AnimeSaturn</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeSaturn" onchange="updateStatus('m-enableAnimeSaturn','st-as'); toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime classici e recenti, archivio ampio e consultazione rapida 🪐.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ti">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🐙</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🐙 ToonItalia</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableToonItalia" onchange="updateStatus('m-enableToonItalia','st-ti'); toggleModuleStyle('m-enableToonItalia', 'mod-ti');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Cartoon e anime in italiano, con resolver VOE, LoadM/RPMShare e MaxStream.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-gf">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎞️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎞️ GuardaFlix</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGf" onchange="updateStatus('m-enableGf','st-gf'); toggleModuleStyle('m-enableGf', 'mod-gf');">\n                                        <span class="m-slider m-slider-green"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film in streaming con raccolte per genere e ultime uscite 🎥.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n\n\n\n                    </div>\n\n                    <div class="m-priority-row" id="m-priority-panel">\n                        <div class="m-priority-info">\n                            <span class="m-priority-title">🚀 PRIORITÀ WEB</span>\n                            <span class="m-priority-desc" id="priority-desc">Mostra Web in cima</span>\n                        </div>\n                        <label class="m-switch">\n                            <input type="checkbox" id="m-vixLast" onchange="updatePriorityLabel()">\n                            <span class="m-slider"></span>\n                        </label>\n                    </div>\n                </div>\n\n                <div class="m-setup-actions-panel" aria-label="Azioni configurazione">\n                    <div class="m-setup-action-row">\n                        <button class="m-setup-action m-setup-install" onclick="mobileInstall()" type="button">\n                            <span>INSTALLA</span>\n                            <i class="fas fa-radiation"></i>\n                        </button>\n                    </div>\n\n                    <div class="m-setup-mini-console" aria-label="Console copia link">\n                        <div class="m-setup-mini-console-head">\n                            <span class="m-setup-mini-console-title"><i class="fas fa-terminal"></i> LINK CONFIGURAZIONE</span>\n                            <button class="m-setup-mini-copy" onclick="copyFromSetupPanel()" type="button">\n                                <i class="fas fa-copy"></i>\n                                <span>COPIA</span>\n                            </button>\n                        </div>\n                        <div class="m-setup-mini-console-body">\n                            <textarea id="m-setupGeneratedUrlBox" class="m-setup-mini-url" readonly>/// WAITING FOR DATA ///</textarea>\n                        </div>\n                    </div>\n                </div>\n\n                <div class="m-credits-section">
+    mobileHTML = `\n<div class="m-abyss-bg" aria-hidden="true">\n    <div class="m-abyss-mote m-abyss-mote-1"></div>\n    <div class="m-abyss-mote m-abyss-mote-2"></div>\n    <div class="m-abyss-mote m-abyss-mote-3"></div>\n</div>\n<div id="app-container">\n    <div class="m-ptr" id="m-ptr-indicator"><i class="fas fa-arrow-down m-ptr-icon"></i></div>\n    <div class="m-content-wrapper">\n\n        <div class="m-content">\n            <div class="m-hero m-abyss-hero notranslate" aria-label="LEVIATHAN Kit" translate="no" data-no-translate="true">\n                <div class="m-hero-panel">\n                    <div class="logo-container m-abyss-logo">\n                        <span class="m-abyss-crown" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-tl" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-tr" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-bl" aria-hidden="true"></span>\n                        <span class="m-cyber-corner cc-br" aria-hidden="true"></span>\n                        <img src="${MOBILE_LOGO_URL}" alt="LEVIATHAN Logo" class="logo-image notranslate" translate="no" data-no-translate="true" fetchpriority="high" decoding="sync" loading="eager" width="110" height="110">\n                        <div class="logo-particles" aria-hidden="true">\n                            <span class="logo-particle" style="left:18%; width:5px; height:5px; animation-delay:0s;"></span>\n                            <span class="logo-particle" style="left:38%; width:3px; height:3px; animation-delay:2.4s;"></span>\n                            <span class="logo-particle" style="left:63%; width:4px; height:4px; animation-delay:4.1s;"></span>\n                            <span class="logo-particle" style="left:78%; width:3px; height:3px; animation-delay:6.2s;"></span>\n                        </div>\n                    </div>\n                    <h1 class="m-brand-title m-abyss-title notranslate" translate="no" lang="zxx" data-brand-lock="LEVIATHAN" data-no-translate="true" aria-label="LEVIATHAN">LEVIATHAN</h1>\n                    <div class="m-brand-sub m-abyss-sub">Sovrano degli abissi</div>\n                    <div class="m-hero-badges">\n                        <span class="m-hero-badge">🐬 Real-Debrid</span>\n                        <span class="m-hero-badge">🧊 TorBox</span>\n                        <span class="m-hero-badge">🦈 P2P</span>\n                    </div>\n                    <div class="m-version-tag m-abyss-version" aria-label="Versione 3.2.0">\n                        <span class="m-v-dot" aria-hidden="true"></span>\n                        <span>v3.2.0</span>\n                    </div>\n                </div>\n            </div>\n\n            <div id="page-setup" class="m-page active">\n\n                <div class="m-hypervisor" style="margin-top:2px;">\n                    <div class="m-hyp-header">\n                        <span>🔑 ACCESSO & SERVIZI</span>\n                        <i class="fas fa-fingerprint m-hyp-icon"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Configura l'accesso</b> scegliendo Real-Debrid, TorBox o P2P. La verifica live ti conferma subito se la chiave è pronta ✨🔐.</p>\n\n                    <div class="m-cred-deck">\n                        <div class="m-cred-opt cred-rd m-srv-btn active" onclick="setMService('rd', this)">\n                            <div class="m-cred-icon">🐬</div>\n                            <div class="m-cred-name">REAL-DEBRID</div>\n                            <div class="m-cred-sub">PREMIUM</div>\n                        </div>\n                        <div class="m-cred-opt cred-tb m-srv-btn" onclick="setMService('tb', this)">\n                            <div class="m-cred-icon">🧊</div>\n                            <div class="m-cred-name">TORBOX</div>\n                            <div class="m-cred-sub">CLOUD</div>\n                        </div>\n                        <div class="m-cred-opt cred-p2p m-srv-btn" onclick="setMService('p2p', this)">\n                            <div class="m-cred-icon">🦈</div>\n                            <div class="m-cred-name">P2P MODE</div>\n                            <div class="m-cred-sub">NO KEY</div>\n                        </div>\n                    </div>\n\n                    <div class="m-input-fuselage" id="box-apikey">\n                        <div class="m-if-label">🔑 API KEY</div>\n                        <div class="m-if-inner">\n                            <div class="m-if-icon"><i class="fas fa-key"></i></div>\n                            <input type="text" id="m-apiKey" class="m-if-field" placeholder="Incolla key" oninput="handleMobileApiKeyInput()">\n                            <div class="m-if-action" onclick="pasteTo('m-apiKey')"><i class="fas fa-paste"></i></div>\n                            <div class="m-get-link" onclick="openApiPage()">GET <i class="fas fa-external-link-alt"></i></div>\n                        </div>\n                        <div class="m-key-status idle" id="m-keyStatus" aria-live="polite" aria-atomic="true">\n                            <span class="m-key-status-dot"></span>\n                            <span id="m-keyStatusText">🐬 RD / 🧊 TB live check disponibile.</span>\n                        </div>\n                    </div>\n\n                    <div class="m-input-fuselage tmdb-box" id="box-tmdb">\n                        <div class="m-if-label opt">🎬 TMDB OPTIONAL</div>\n                        <div class="m-if-inner">\n                            <div class="m-if-icon"><i class="fas fa-film"></i></div>\n                            <input type="text" id="m-tmdb" class="m-if-field" placeholder="Personal key" oninput="updateLinkModalContent()">\n                            <div class="m-if-action" onclick="pasteTo('m-tmdb')"><i class="fas fa-paste"></i></div>\n                            <div class="m-get-link" style="color:var(--m-accent); border-color:var(--m-accent); background:rgba(155, 108, 255,0.05);" onclick="openApiPage('tmdb')">GET <i class="fas fa-external-link-alt"></i></div>\n                        </div>\n                    </div>\n\n                </div>\n\n                <div class="m-hypervisor">\n                     <div class="m-hyp-header">\n                        <span>🍿 PROVIDER STREAMS ✨</span>\n                        <i class="fas fa-cubes m-hyp-icon"></i>\n                    </div>\n                    <p class="m-panel-desc"><b>Scegli le sorgenti da attivare</b>: Leviathan unisce cinema, serie e anime italiani in un catalogo pulito, veloce e facile da controllare 🍿📺✨.</p>\n\n                    <div class="m-reactor-grid">\n\n                        <div class="m-reactor-module" id="mod-vix">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🍿</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🍿 StreamingCommunity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableVix" onchange="updateStatus('m-enableVix','st-vix'); toggleModuleStyle('m-enableVix', 'mod-vix');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV in italiano, catalogo ricco e player rapido 🍿.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n</div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ghd">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎬 GuardaHD</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGhd" onchange="updateStatus('m-enableGhd','st-ghd'); toggleModuleStyle('m-enableGhd', 'mod-ghd');">\n                                        <span class="m-slider"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV in qualità HD, nuove uscite e schede ordinate 🎬.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-gs">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">📺</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">📺 GuardoSerie</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGs" onchange="updateStatus('m-enableGs','st-gs'); toggleModuleStyle('m-enableGs', 'mod-gs');">\n                                        <span class="m-slider m-slider-purple"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Serie TV italiane organizzate per stagioni ed episodi 📺.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-vidxgo">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎯</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎯 VidxGo</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableVidxgo" onchange="updateStatus('m-enableVidxgo','st-vidxgo'); toggleModuleStyle('m-enableVidxgo', 'mod-vidxgo');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Player diretto per film e serie TV, flusso risolto dal codice IMDb ⚡.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-es">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌍</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🌍 Eurostreaming</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableEs" onchange="updateStatus('m-enableEs','st-es'); toggleModuleStyle('m-enableEs', 'mod-es');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Portale italiano storico dedicato a serie TV e contenuti aggiornati ⭐.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-cb01">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎬</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎬 CB01</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableCb01" onchange="updateStatus('m-enableCb01','st-cb01'); toggleModuleStyle('m-enableCb01', 'mod-cb01');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Ampio catalogo di film e serie TV, tra i riferimenti più noti in Italia 🎞️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-onlineserietv">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🖥️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🖥️ OnlineSerieTV</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableOnlineserietv" onchange="updateStatus('m-enableOnlineserietv','st-onlineserietv'); toggleModuleStyle('m-enableOnlineserietv', 'mod-onlineserietv');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film e serie TV italiani, risolti via uprot/MaxStream con forward proxy 🛰️.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-aw">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">⛩️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">⛩️ AnimeWorld</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeWorld" onchange="updateStatus('m-enableAnimeWorld','st-aw'); toggleModuleStyle('m-enableAnimeWorld', 'mod-aw');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime sub-ita e doppiati, con schede serie e catalogo ampio 🌸.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-au">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🌊</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🌊 AnimeUnity</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeUnity" onchange="updateStatus('m-enableAnimeUnity','st-au'); toggleModuleStyle('m-enableAnimeUnity', 'mod-au');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime, simulcast e doppiaggi con episodi aggiornati e ordinati 🪄.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-as">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🪐</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🪐 AnimeSaturn</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableAnimeSaturn" onchange="updateStatus('m-enableAnimeSaturn','st-as'); toggleModuleStyle('m-enableAnimeSaturn', 'mod-as');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Anime classici e recenti, archivio ampio e consultazione rapida 🪐.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-ti">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🐙</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🐙 ToonItalia</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableToonItalia" onchange="updateStatus('m-enableToonItalia','st-ti'); toggleModuleStyle('m-enableToonItalia', 'mod-ti');">\n                                        <span class="m-slider m-slider-aqua"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Cartoon e anime in italiano, con resolver VOE, LoadM/RPMShare e MaxStream.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-kraken"><i class="fas fa-water"></i> KRAKEN</span>\n                                </div>\n                            </div>\n                        </div>\n\n                        <div class="m-reactor-module" id="mod-gf">\n                            <div class="m-reactor-core">\n                                <span class="m-provider-glyph m-core-icon" aria-hidden="true">🎞️</span>\n                            </div>\n                            <div class="m-reactor-body">\n                                <div class="m-reactor-top">\n                                    <span class="m-reactor-title">🎞️ GuardaFlix</span>\n                                    <label class="m-switch">\n                                        <input type="checkbox" id="m-enableGf" onchange="updateStatus('m-enableGf','st-gf'); toggleModuleStyle('m-enableGf', 'mod-gf');">\n                                        <span class="m-slider m-slider-green"></span>\n                                    </label>\n                                </div>\n                                <span class="m-reactor-desc">Film in streaming con raccolte per genere e ultime uscite 🎥.</span>\n                                <div class="m-tag-row">\n                                    <span class="m-tech-tag tag-noproxy"><i class="fas fa-unlink"></i> NO PROXY</span>\n                                </div>\n                            </div>\n                        </div>\n\n\n\n\n                    </div>\n\n                    <div class="m-priority-row" id="m-priority-panel">\n                        <div class="m-priority-info">\n                            <span class="m-priority-title">🚀 PRIORITÀ WEB</span>\n                            <span class="m-priority-desc" id="priority-desc">Mostra Web in cima</span>\n                        </div>\n                        <label class="m-switch">\n                            <input type="checkbox" id="m-vixLast" onchange="updatePriorityLabel()">\n                            <span class="m-slider"></span>\n                        </label>\n                    </div>\n                </div>\n\n                <div class="m-setup-actions-panel" aria-label="Azioni configurazione">\n                    <div class="m-setup-action-row">\n                        <button class="m-setup-action m-setup-install" onclick="mobileInstall()" type="button">\n                            <span>INSTALLA</span>\n                            <i class="fas fa-radiation"></i>\n                        </button>\n                    </div>\n\n                    <div class="m-setup-mini-console" aria-label="Console copia link">\n                        <div class="m-setup-mini-console-head">\n                            <span class="m-setup-mini-console-title"><i class="fas fa-terminal"></i> LINK CONFIGURAZIONE</span>\n                            <button class="m-setup-mini-copy" onclick="copyFromSetupPanel()" type="button">\n                                <i class="fas fa-copy"></i>\n                                <span>COPIA</span>\n                            </button>\n                        </div>\n                        <div class="m-setup-mini-console-body">\n                            <textarea id="m-setupGeneratedUrlBox" class="m-setup-mini-url" readonly>/// WAITING FOR DATA ///</textarea>\n                        </div>\n                    </div>\n                </div>\n\n                <div class="m-credits-section">
                     <div class="m-neural-frame">
                         <div class="m-neural-header">
                             <span class="m-nh-title">/// GITHUB SIGNATURE ///</span>
@@ -4357,300 +4205,10 @@ function createLogoParticles() {
         ((e.style.transform = `translateX(${a}px)`), n.appendChild(e));
     }
 }
-function createOceanParticles() {
-    const n = document.getElementById("m-ocean-particles");
-    n && (n.textContent = "");
-}
-const LEVIATHAN_SEA_SHADER = {
-    vertex: "\n        attribute vec2 a_position;\n        varying vec2 v_uv;\n        void main() {\n            v_uv = a_position * 0.5 + 0.5;\n            gl_Position = vec4(a_position, 0.0, 1.0);\n        }\n    ",
-    fragment:
-        "\n        precision mediump float;\n\n        uniform vec2 u_resolution;\n        uniform float u_time;\n        uniform float u_intensity;\n        varying vec2 v_uv;\n\n        float hash(vec2 p) {\n            p = fract(p * vec2(123.34, 456.21));\n            p += dot(p, p + 45.32);\n            return fract(p.x * p.y);\n        }\n\n        float noise(vec2 p) {\n            vec2 i = floor(p);\n            vec2 f = fract(p);\n            vec2 u = f * f * (3.0 - 2.0 * f);\n            return mix(\n                mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), u.x),\n                mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),\n                u.y\n            );\n        }\n\n        float fbm(vec2 p) {\n            float v = 0.0;\n            float a = 0.5;\n            mat2 r = mat2(0.80, -0.60, 0.60, 0.80);\n            for (int i = 0; i < 5; i++) {\n                v += a * noise(p);\n                p = r * p * 2.02 + 11.3;\n                a *= 0.53;\n            }\n            return v;\n        }\n\n        float caustic(vec2 p, float t) {\n            vec2 q = p;\n            q += 0.55 * vec2(fbm(p * 1.6 + vec2(t * 0.22, 0.0)), fbm(p * 1.6 + vec2(0.0, t * 0.18)));\n            float n1 = fbm(q * 2.4 - vec2(t * 0.12, t * 0.15));\n            float n2 = fbm(q * 4.1 + vec2(t * 0.10, -t * 0.08));\n            float ridge1 = 1.0 - abs(2.0 * n1 - 1.0);\n            float ridge2 = 1.0 - abs(2.0 * n2 - 1.0);\n            return pow(ridge1, 3.0) * 0.7 + pow(ridge2, 4.0) * 0.3;\n        }\n\n        void main() {\n            vec2 res = max(u_resolution.xy, vec2(1.0));\n            vec2 uv = gl_FragCoord.xy / res;\n            float aspect = res.x / max(res.y, 1.0);\n\n            vec2 autoOffset = vec2(sin(u_time * 0.25) * 0.06, cos(u_time * 0.18) * 0.03);\n            vec2 p = vec2((uv.x - 0.5) * aspect, uv.y) - autoOffset;\n\n            float t = u_time * 0.28;\n\n            float depth = uv.y;\n            vec3 deep = vec3(0.002, 0.015, 0.038);\n            vec3 surf = vec3(0.010, 0.070, 0.130);\n            vec3 col = mix(deep, surf, smoothstep(0.0, 1.0, depth));\n\n            float env = smoothstep(0.02, 0.85, depth);\n\n            vec2 cuv = p * 2.1 + vec2(0.0, -u_time * 0.012);\n            float c = caustic(cuv, t);\n            col += vec3(0.12, 0.48, 0.65) * c * env * 0.45;\n\n            float c2 = caustic(cuv * 0.58 + 8.0, t * 0.65);\n            col += vec3(0.07, 0.32, 0.48) * c2 * env * 0.25;\n\n            float rays = 0.0;\n            float autoSlope = sin(u_time * 0.15) * 0.22;\n            float rx = p.x * 0.75 + sin(u_time * 0.10) * 0.15 - p.y * autoSlope;\n\n            rays += smoothstep(0.55, 0.0, abs(rx + 0.25 + sin(u_time * 0.12) * 0.05));\n            rays += smoothstep(0.48, 0.0, abs(rx - 0.20 + sin(u_time * 0.10 + 1.6) * 0.04)) * 0.75;\n            rays += smoothstep(0.42, 0.0, abs(rx + 0.75 + sin(u_time * 0.08 + 3.2) * 0.03)) * 0.55;\n            rays *= smoothstep(0.05, 1.0, depth) * (0.42 + 0.58 * fbm(vec2(p.x * 2.2, u_time * 0.16)));\n            col += vec3(0.15, 0.46, 0.60) * rays * 0.095;\n\n            float motes = smoothstep(0.993, 1.0, hash(floor((p + vec2(0.0, u_time * 0.008)) * 110.0)));\n            col += vec3(0.25, 0.55, 0.70) * motes * 0.15;\n\n            col += vec3(0.060, 0.025, 0.110) * smoothstep(0.55, 1.0, uv.x) * 0.18;\n\n            float vign = smoothstep(1.35, 0.22, length((uv - 0.5) * vec2(aspect * 0.42, 1.0)));\n            col *= 0.75 + vign * 0.32;\n\n            col *= 0.85 + 0.15 * u_intensity;\n            col = pow(max(col, 0.0), vec3(0.88));\n            gl_FragColor = vec4(col, 1.0);\n        }\n    ",
-};
-function leviathanSeaShouldSkip() {
-    return !0;
-}
-function createSeaShaderProgram(n, e, t) {
-    const a = (e, t) => {
-            const a = n.createShader(e);
-            if (!a) throw new Error("shader allocation failed");
-            if (
-                (n.shaderSource(a, t),
-                n.compileShader(a),
-                !n.getShaderParameter(a, n.COMPILE_STATUS))
-            ) {
-                const e = n.getShaderInfoLog(a) || "shader compile failed";
-                throw (n.deleteShader(a), new Error(e));
-            }
-            return a;
-        },
-        i = a(n.VERTEX_SHADER, e),
-        o = a(n.FRAGMENT_SHADER, t),
-        r = n.createProgram();
-    if (!r) throw new Error("program allocation failed");
-    if (
-        (n.attachShader(r, i),
-        n.attachShader(r, o),
-        n.linkProgram(r),
-        n.deleteShader(i),
-        n.deleteShader(o),
-        !n.getProgramParameter(r, n.LINK_STATUS))
-    ) {
-        const e = n.getProgramInfoLog(r) || "program link failed";
-        throw (n.deleteProgram(r), new Error(e));
-    }
-    return r;
-}
-function getLeviathanSeaProfile() {
-    const n = navigator.hardwareConcurrency || 8,
-        e = Number(navigator.deviceMemory || 0),
-        t = !!document.body?.classList?.contains("m-lowfx"),
-        a = (e > 0 && e <= 2) || (n && n <= 2);
-    return a
-        ? { dpr: 0.72, fps: 18, intensity: 0.72 }
-        : t || a || (n && n <= 4) || (e && e <= 4)
-          ? { dpr: 0.88, fps: 24, intensity: 0.86 }
-          : { dpr: 1.15, fps: 30, intensity: 1 };
-}
-function startLeviathanSeaShader(n) {
-    if (!n || window.__leviathanSea) return;
-    const e = getLeviathanSeaProfile(),
-        t = document.createElement("canvas");
-    (t.setAttribute("aria-hidden", "true"),
-        (t.style.width = "100%"),
-        (t.style.height = "100%"),
-        (n.textContent = ""),
-        n.appendChild(t));
-    const a =
-        t.getContext("webgl", {
-            alpha: !0,
-            antialias: !1,
-            depth: !1,
-            stencil: !1,
-            preserveDrawingBuffer: !1,
-            powerPreference: "low-power",
-        }) || t.getContext("experimental-webgl");
-    if (!a)
-        return (
-            n.remove(),
-            (window.__leviathanSeaShaderBoot = !1),
-            void activateLeviathanSeaFallback()
-        );
-    let i = null,
-        o = null,
-        r = 0,
-        s = null,
-        l = !1,
-        m = !1;
-    try {
-        ((i = createSeaShaderProgram(
-            a,
-            LEVIATHAN_SEA_SHADER.vertex,
-            LEVIATHAN_SEA_SHADER.fragment,
-        )),
-            (o = a.createBuffer()),
-            a.bindBuffer(a.ARRAY_BUFFER, o),
-            a.bufferData(
-                a.ARRAY_BUFFER,
-                new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
-                a.STATIC_DRAW,
-            ));
-    } catch (e) {
-        try {
-            i && a.deleteProgram(i);
-        } catch (n) {}
-        try {
-            o && a.deleteBuffer(o);
-        } catch (n) {}
-        return (
-            n.remove(),
-            (window.__leviathanSeaShaderBoot = !1),
-            void activateLeviathanSeaFallback()
-        );
-    }
-    const d = a.getAttribLocation(i, "a_position"),
-        c = a.getUniformLocation(i, "u_resolution"),
-        p = a.getUniformLocation(i, "u_time"),
-        g = a.getUniformLocation(i, "u_intensity"),
-        u = Math.max(16, Math.round(1e3 / Math.max(12, e.fps || 24))),
-        b = performance.now(),
-        f = { raf: 0, lastFrame: 0, paused: !1, sync: null, cleanup: null },
-        v = () => {
-            if (l || m) return;
-            const i = n.getBoundingClientRect(),
-                o = Math.max(0.65, Math.min(window.devicePixelRatio || 1, e.dpr)),
-                r = Math.max(2, Math.floor((i.width || window.innerWidth || 390) * o)),
-                s = Math.max(2, Math.floor((i.height || window.innerHeight || 760) * o));
-            ((t.width === r && t.height === s) || ((t.width = r), (t.height = s)),
-                a.viewport(0, 0, r, s));
-        },
-        x = (n) => {
-            if (((f.raf = 0), !(l || m || f.paused)))
-                if (f.lastFrame && n - f.lastFrame < u) f.raf = requestAnimationFrame(x);
-                else {
-                    f.lastFrame = n;
-                    try {
-                        (v(),
-                            a.useProgram(i),
-                            a.bindBuffer(a.ARRAY_BUFFER, o),
-                            a.enableVertexAttribArray(d),
-                            a.vertexAttribPointer(d, 2, a.FLOAT, !1, 0, 0),
-                            a.uniform2f(c, t.width, t.height),
-                            a.uniform1f(p, 0.001 * (n - b)),
-                            a.uniform1f(g, e.intensity),
-                            a.disable(a.DEPTH_TEST),
-                            a.disable(a.CULL_FACE),
-                            a.enable(a.BLEND),
-                            a.blendFunc(a.SRC_ALPHA, a.ONE_MINUS_SRC_ALPHA),
-                            a.clearColor(0, 0, 0, 0),
-                            a.clear(a.COLOR_BUFFER_BIT),
-                            a.drawArrays(a.TRIANGLE_STRIP, 0, 4));
-                    } catch (n) {
-                        return (f.cleanup && f.cleanup(), void activateLeviathanSeaFallback());
-                    }
-                    f.raf = requestAnimationFrame(x);
-                }
-        },
-        h = () =>
-            document.hidden ||
-            document.body.classList.contains("m-typing") ||
-            document.body.classList.contains("m-keyboard-open") ||
-            document.body.classList.contains("m-page-hidden"),
-        y = () => {
-            f.paused ||
-                ((f.paused = !0),
-                f.raf && cancelAnimationFrame(f.raf),
-                (f.raf = 0),
-                n.classList.add("is-paused"));
-        };
-    let w = 0;
-    const k = () => {
-            w ||
-                l ||
-                (w = requestAnimationFrame(() => {
-                    ((w = 0),
-                        h()
-                            ? y()
-                            : (() => {
-                                  if (l || m || h()) return y();
-                                  (!f.paused && f.raf) ||
-                                      ((f.paused = !1),
-                                      (f.lastFrame = 0),
-                                      n.classList.remove("is-paused"),
-                                      (f.raf = requestAnimationFrame(x)));
-                              })());
-                }));
-        },
-        S = () => {
-            (r && cancelAnimationFrame(r),
-                (r = requestAnimationFrame(() => {
-                    ((r = 0), v());
-                })));
-        },
-        M = (e) => {
-            (e.preventDefault(), (m = !0), y(), n.classList.remove("is-ready"));
-        },
-        L = () => {
-            (f.cleanup && f.cleanup(),
-                (window.__leviathanSeaShaderBoot = !1),
-                requestAnimationFrame(createSeaCanvas));
-        };
-    ((f.cleanup = () => {
-        if (!l) {
-            ((l = !0),
-                w && cancelAnimationFrame(w),
-                r && cancelAnimationFrame(r),
-                f.raf && cancelAnimationFrame(f.raf),
-                document.removeEventListener("visibilitychange", k),
-                window.removeEventListener("resize", S),
-                window.removeEventListener("orientationchange", S),
-                t.removeEventListener("webglcontextlost", M),
-                t.removeEventListener("webglcontextrestored", L));
-            try {
-                s && s.disconnect();
-            } catch (n) {}
-            try {
-                a.deleteBuffer(o);
-            } catch (n) {}
-            try {
-                a.deleteProgram(i);
-            } catch (n) {}
-            (n.classList.remove("is-ready", "is-paused"),
-                (window.__leviathanSea = null),
-                (window.__leviathanSeaShaderBoot = !1));
-        }
-    }),
-        (f.sync = k),
-        (window.__leviathanSea = f),
-        (window.__leviathanSeaSync = k),
-        (window.__leviathanSeaCleanup = f.cleanup),
-        document.addEventListener("visibilitychange", k, { passive: !0 }),
-        window.addEventListener("resize", S, { passive: !0 }),
-        window.addEventListener("orientationchange", S, { passive: !0 }),
-        t.addEventListener("webglcontextlost", M, !1),
-        t.addEventListener("webglcontextrestored", L, !1));
-    try {
-        ((s = new MutationObserver(k)),
-            s.observe(document.body, { attributes: !0, attributeFilter: ["class"] }));
-    } catch (n) {}
-    (window.addEventListener("pagehide", f.cleanup, { once: !0 }),
-        v(),
-        requestAnimationFrame(() => {
-            (n.classList.add("is-ready"), deactivateLeviathanSeaFallback());
-        }),
-        k());
-}
-function installLeviathanSeaBfcacheRestart() {
-    window.__leviathanSeaBfcacheRestart ||
-        ((window.__leviathanSeaBfcacheRestart = !0),
-        window.addEventListener(
-            "pageshow",
-            (n) => {
-                n &&
-                    n.persisted &&
-                    (window.__leviathanSea && "function" == typeof window.__leviathanSea.sync
-                        ? window.__leviathanSea.sync()
-                        : ((window.__leviathanSeaShaderBoot = !1),
-                          requestAnimationFrame(createSeaCanvas)));
-            },
-            { passive: !0 },
-        ));
-}
-function activateLeviathanSeaFallback() {
-    if (document.body)
-        try {
-            let n = document.getElementById("m-sea-css");
-            (n ||
-                ((n = document.createElement("div")),
-                (n.id = "m-sea-css"),
-                n.setAttribute("aria-hidden", "true"),
-                (n.innerHTML =
-                    '<div class="m-seacss-caustic"></div><div class="m-seacss-ray r2"></div><div class="m-seacss-ray r1"></div><div class="m-seacss-ray r3"></div><div class="m-seacss-layer m-seacss-swell3"></div><div class="m-seacss-layer m-seacss-swell2"></div><div class="m-seacss-layer m-seacss-swell1"></div>'),
-                document.body.insertBefore(n, document.body.firstChild)),
-                document.body.classList.add("m-sea-fallback"));
-        } catch (n) {}
-}
-function deactivateLeviathanSeaFallback() {
-    try {
-        document.body.classList.remove("m-sea-fallback");
-    } catch (n) {}
-}
-function createSeaCanvas() {
-    installLeviathanSeaBfcacheRestart();
-    const n = document.getElementById("m-sea-canvas");
-    if ((n && n.remove(), window.__leviathanSeaShaderBoot)) return;
-    if (((window.__leviathanSeaShaderBoot = !0), leviathanSeaShouldSkip()))
-        return ((window.__leviathanSeaShaderBoot = !1), void activateLeviathanSeaFallback());
-    let e = document.getElementById("m-sea-webgl");
-    e ||
-        ((e = document.createElement("div")),
-        (e.id = "m-sea-webgl"),
-        e.setAttribute("aria-hidden", "true"),
-        document.body.insertBefore(e, document.body.firstChild));
-    const t = () => requestAnimationFrame(() => startLeviathanSeaShader(e));
-    "function" == typeof requestIdleCallback
-        ? requestIdleCallback(t, { timeout: 700 })
-        : setTimeout(t, 80);
-}
+function createOceanParticles() {}
+function activateLeviathanSeaFallback() {}
+function deactivateLeviathanSeaFallback() {}
+function createSeaCanvas() {}
 function initMobileViewportGuard() {
     const n = document.documentElement;
     let e = 0,
