@@ -6,7 +6,6 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { parse: parseSetCookie } = require('set-cookie-parser');
 const { RateLimiter } = require('./rate_limiter');
-const { getProviderHttpGuardFactory } = require('./provider_http_guard');
 const { logger } = require('./runtime');
 const { globalDaemonPool } = require('./cf_fast_daemon_pool');
 const { broadcastClearance, getLatestClearance } = require('../server/websocket_bridge');
