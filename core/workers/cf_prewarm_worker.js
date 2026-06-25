@@ -5,13 +5,7 @@ const { createCloudflareBypass } = require('../../providers/utils/cloudflare_byp
 const { globalDaemonPool } = require('../../providers/utils/cf_fast_daemon_pool');
 
 const PREWARM_TARGETS = [
-    { id: 'streamingcommunity', url: 'https://streamingcommunity.com/' },
-    { id: 'cb01', url: 'https://cb01.movie/' },
-    { id: 'guardahd', url: 'https://guardahd.stream/' },
-    { id: 'guardoserie', url: 'https://guardoserie.net/' },
-    { id: 'vidxgo', url: 'https://vidxgo.com/' },
-    { id: 'animeworld', url: 'https://www.animeworld.so/' },
-    { id: 'eurostreaming', url: 'https://eurostreaming.stream/' }
+    { id: 'guardoserie', url: 'https://guardoserie.courses/' }
 ];
 
 const PREWARM_INTERVAL_MS = Math.max(15 * 60 * 1000, parseInt(process.env.CF_PREWARM_INTERVAL_MS || '2700000', 10)); // 45 minutes default
