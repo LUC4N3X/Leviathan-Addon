@@ -54,6 +54,32 @@ function ttlSecondsFromSession(session, sessionTtlMs, fallbackSeconds) {
   return Math.max(1, fallbackSeconds);
 }
 
+function sessionExpiresAt(session = {}, sessionTtlMs) {
+  const explicit = Number(session?.expiresAt || 0);
+  if (explicit > 0) return explicit;
+  const timestamp = Number(session?.timestamp || 0);
+  if (timestamp <= 0) return 0;
+  const ttlMs = Math.max(60_000, Number(sessionTtlMs || 0));
+  return timestamp + ttlMs;
+}
+
+function secondsUntilSessionExpiry(session = {}, sessionTtlMs) {
+  const expiresAt = sessionExpiresAt(session, sessionTtlMs);
+  if (!expiresAt) return 0;
+  return Math.floor((expiresAt - Date.now()) / 1000);
+}
+
+function secondsUntilNativeExpiry(bundle = {}) {
+  const expiresAt = Number(bundle?.expiresAt || 0);
+  if (!expiresAt) return 0;
+  return Math.floor((expiresAt - Date.now()) / 1000);
+}
+
+function isExpiringSoon(secondsRemaining, leadSeconds) {
+  const lead = Math.max(0, Number(leadSeconds || 0));
+  return Number(secondsRemaining || 0) <= lead;
+}
+
 function stripVolatileSessionFields(session = {}) {
   const out = { ...(session || {}) };
   delete out.solutionResponse;
@@ -152,6 +178,21 @@ class CfRedisStore {
     return redisCache.del(this.sessionNamespace, key);
   }
 
+  async getProviderSessionMeta({ providerName, url, egressKey = 'direct', sessionTtlMs = null, leadSeconds = null } = {}) {
+    const ttlMs = Math.max(60_000, Number(sessionTtlMs || this.sessionTtlSeconds * 1000));
+    const session = await this.getProviderSession({ providerName, url, egressKey, sessionTtlMs: ttlMs });
+    if (!session) {
+      return { session: null, secondsRemaining: 0, expiresAt: 0, expiringSoon: true };
+    }
+    const secondsRemaining = Math.max(0, secondsUntilSessionExpiry(session, ttlMs));
+    return {
+      session,
+      secondsRemaining,
+      expiresAt: sessionExpiresAt(session, ttlMs),
+      expiringSoon: isExpiringSoon(secondsRemaining, leadSeconds == null ? 0 : leadSeconds)
+    };
+  }
+
   async getNativeClearance({ host, egressKey = 'direct' } = {}) {
     if (!this.isNativeEnabled()) return null;
     const key = this.nativeClearanceKey({ host, egressKey });
@@ -192,6 +233,20 @@ class CfRedisStore {
     if (!this.isNativeEnabled()) return 0;
     const key = this.nativeClearanceKey({ host, egressKey });
     return redisCache.del(this.nativeNamespace, key);
+  }
+
+  async getNativeClearanceMeta({ host, egressKey = 'direct', leadSeconds = null } = {}) {
+    const bundle = await this.getNativeClearance({ host, egressKey });
+    if (!bundle) {
+      return { bundle: null, secondsRemaining: 0, expiresAt: 0, expiringSoon: true };
+    }
+    const secondsRemaining = Math.max(0, secondsUntilNativeExpiry(bundle));
+    return {
+      bundle,
+      secondsRemaining,
+      expiresAt: Number(bundle.expiresAt || 0),
+      expiringSoon: isExpiringSoon(secondsRemaining, leadSeconds == null ? 0 : leadSeconds)
+    };
   }
 
   async acquireLock(key, { ttlMs = this.lockTtlMs, owner = null } = {}) {
@@ -240,5 +295,9 @@ module.exports = {
   CfRedisStore,
   normalizeOrigin,
   hashPart,
+  sessionExpiresAt,
+  secondsUntilSessionExpiry,
+  secondsUntilNativeExpiry,
+  isExpiringSoon,
   SCHEMA_VERSION
 };
