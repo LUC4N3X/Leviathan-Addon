@@ -4,6 +4,12 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { parse: parseSetCookie } = require('set-cookie-parser');
+const { RateLimiter } = require('./rate_limiter');
+const { getProviderHttpGuardFactory } = require('./provider_http_guard');
+const { logger } = require('./runtime');
+const { globalDaemonPool } = require('./cf_fast_daemon_pool');
+const { broadcastClearance, getLatestClearance } = require('../server/websocket_bridge');
 const { buildCookieHeaderFromSession, mergeCookieHeaders, cookieHeaderToObjects } = require('./cf_clearance_manager');
 const antibotSignatures = require('./antibot_signatures');
 const { createClearanceBroker } = require('./cf_clearance_broker');
@@ -812,6 +818,31 @@ function execCurlCffiBypass(url, providerName = 'provider', options = {}) {
 
   const fallbackWatchdog = Math.max(timeout + 2500, timeout * (retries + 1) + retryBackoffMs * Math.max(1, retries) + 5000);
   const watchdogMs = Math.max(timeout + 1000, Number(options.watchdogMs || options.processTimeoutMs || process.env[`${envPrefix}_CURL_CFFI_PROCESS_TIMEOUT_MS`] || process.env.CURL_CFFI_PROCESS_TIMEOUT_MS || fallbackWatchdog) || fallbackWatchdog);
+
+  // USE FAST DAEMON POOL
+  if (envFlag('FAST_DAEMON_ENABLED', true)) {
+    return globalDaemonPool.request({
+      url,
+      method,
+      headers: options.headers || {},
+      impersonate: options.impersonate || 'chrome142',
+      timeout: timeout,
+      proxy: proxy,
+      cookies: Array.isArray(options.cookiesJson) ? options.cookiesJson : []
+    }).catch(err => {
+      logger.warn(`[FAST DAEMON] Errore: ${err.message}, fallback to standard python bypass...`);
+      return execPythonBypass({
+        label: 'curl_cffi',
+        scriptPath,
+        args,
+        pythonEnv: 'CURL_CFFI_PYTHON',
+        timeoutMs: watchdogMs,
+        graceMs: options.graceMs || process.env[`${envPrefix}_CURL_CFFI_PROCESS_GRACE_MS`] || process.env.CURL_CFFI_PROCESS_GRACE_MS,
+        signal: options.signal,
+        env: options.env
+      });
+    });
+  }
 
   return execPythonBypass({
     label: 'curl_cffi',

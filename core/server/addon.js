@@ -47,6 +47,7 @@ const {
 const { generateStream, resolveLazyStreamData, normalizeExternalCandidateForPipeline } = require('../stream_generator');
 const { createTorrentioTmdbScanner } = require('../prewarm/torrentio_tmdb_scanner');
 const { bootRealDebridAuditor } = require('../debrid/rd/audit/rd_auditor_boot');
+const { startCfPrewarmJob } = require('../workers/cf_prewarm_worker');
 const { applyCommonMiddleware } = require('./middleware');
 const { applyEdgeGatewayGuard } = require('./edge_gateway');
 const { getRawStreamCacheStats } = require('../cache/raw_stream_cache');
@@ -188,6 +189,13 @@ function bootstrapServer() {
         logger.info('[WORKER] API background scanner disabled; use npm run worker / leviathan-worker for scraping outside HTTP requests');
     }
 
+    let cfPrewarmJob = null;
+    if (isClusterLeader || !shouldUseCluster()) {
+        cfPrewarmJob = startCfPrewarmJob({
+            enabled: envFlag('CF_PREWARM_ENABLED', true)
+        });
+    }
+
     const appServices = createAppServices({
         Cache,
         LIMITERS,
@@ -320,6 +328,9 @@ function bootstrapServer() {
 
         server.close(async () => {
             try {
+                if (cfPrewarmJob && typeof cfPrewarmJob.stop === 'function') {
+                    cfPrewarmJob.stop();
+                }
                 if (sharedStreamCleanupJob && typeof sharedStreamCleanupJob.stop === 'function') {
                     sharedStreamCleanupJob.stop();
                 }

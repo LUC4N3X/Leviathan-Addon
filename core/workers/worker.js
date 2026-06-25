@@ -8,6 +8,7 @@ const { Cache } = require('../utils');
 const { createTorrentioTmdbScanner } = require('../prewarm/torrentio_tmdb_scanner');
 const { normalizeExternalCandidateForPipeline } = require('../stream_generator');
 const trackerRegistry = require('../storage/tracker_registry');
+const { startCfPrewarmJob } = require('./cf_prewarm_worker');
 
 installConsoleBridge(logger);
 
@@ -50,6 +51,10 @@ async function bootstrapWorker() {
     logger.info('[WORKER] Torrentio/TMDB scanner disattivato da LEVIATHAN_WORKER_SCANNER_ENABLED=false');
   }
 
+  const cfPrewarmJob = startCfPrewarmJob({
+    enabled: envFlag('CF_PREWARM_ENABLED', true)
+  });
+
   runtimeState.markReady('worker_started');
   logger.info(`[WORKER] Leviathan background worker avviato | pid=${process.pid} node=${process.env.LEVI_NODE_ID}`);
 
@@ -67,6 +72,7 @@ async function bootstrapWorker() {
     forceTimer.unref();
 
     try {
+      if (cfPrewarmJob && typeof cfPrewarmJob.stop === 'function') cfPrewarmJob.stop();
       if (scanner && typeof scanner.stop === 'function') await scanner.stop();
       if (Cache && typeof Cache.stopInvalidationSync === 'function') await Cache.stopInvalidationSync();
       if (trackerRegistry && typeof trackerRegistry.shutdownTrackerRegistry === 'function') trackerRegistry.shutdownTrackerRegistry();
