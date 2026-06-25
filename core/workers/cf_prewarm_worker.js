@@ -2,6 +2,7 @@
 
 const { logger } = require('../utils/runtime');
 const { createCloudflareBypass } = require('../../providers/utils/cloudflare_bypass');
+const { globalDaemonPool } = require('../../providers/utils/cf_fast_daemon_pool');
 
 const PREWARM_TARGETS = [
     { id: 'streamingcommunity', url: 'https://streamingcommunity.com/' },
@@ -39,7 +40,7 @@ function startCfPrewarmJob(options = {}) {
         for (const target of PREWARM_TARGETS) {
             try {
                 logger.info(`[PREWARM] Warming target: ${target.id} (${target.url})`);
-                await bypasser.request({
+                await globalDaemonPool.request({
                     url: target.url,
                     method: 'GET',
                     headers: {
