@@ -3,7 +3,7 @@
 const { spawn } = require('child_process');
 const { randomUUID } = require('crypto');
 const path = require('path');
-const { logger } = require('../utils/runtime');
+const { logger } = require('../../core/utils/runtime');
 
 class FastDaemonPool {
     constructor(size = 3) {
