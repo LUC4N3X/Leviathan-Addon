@@ -19,7 +19,7 @@ class FastDaemonPool {
 
     _spawnDaemon(index) {
         const scriptPath = path.join(__dirname, 'cf_fast_daemon.py');
-        const pythonExec = process.env.SCRAPLING_PYTHON || process.env.CURL_CFFI_PYTHON || 'python';
+        const pythonExec = process.env.SCRAPLING_PYTHON || process.env.CURL_CFFI_PYTHON || process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
         
         const child = spawn(pythonExec, ['-u', scriptPath], {
             stdio: ['pipe', 'pipe', 'pipe']
