@@ -3166,11 +3166,14 @@ body {
 
 
 body {
-    background:
-        radial-gradient(120% 70% at 50% -12%, rgba(34, 211, 238, 0.06), transparent 56%),
-        radial-gradient(90% 55% at 86% 10%, rgba(168, 85, 247, 0.04), transparent 56%),
-        radial-gradient(120% 85% at 50% 112%, rgba(34, 211, 238, 0.04), transparent 60%),
-        linear-gradient(180deg, #050b18 0%, #030712 100%) !important;
+    background-color: #030712 !important;
+    background-image:
+        radial-gradient(circle at 50% -10%, rgba(34, 211, 238, 0.05) 0%, transparent 60%),
+        radial-gradient(circle at 80% 40%, rgba(168, 85, 247, 0.03) 0%, transparent 50%),
+        linear-gradient(rgba(255, 255, 255, 0.005) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.005) 1px, transparent 1px) !important;
+    background-size: 100% 100%, 100% 100%, 64px 64px, 64px 64px !important;
+    background-repeat: no-repeat, no-repeat, repeat, repeat !important;
 }
 .m-hero-panel::before { opacity: 0.55 !important; filter: blur(26px) !important; }
 
@@ -5705,7 +5708,7 @@ async function copyGeneratedLinkValue(n, e = !1) {
             el.style.left = "-9999px";
             document.body.appendChild(el);
             el.select();
-            el.setSelectionRange(0, 99999); 
+            el.setSelectionRange(0, 99999);
             const success = document.execCommand("copy");
             document.body.removeChild(el);
             if (success) {
