@@ -7,6 +7,7 @@ const {
   getConfiguredBypassEndpoints,
   createCloudflareBypassServiceClient
 } = require('./cf_bypass_service_client');
+const { globalDaemonPool } = require('./cf_fast_daemon_pool');
 
 let setCookieParser = null;
 try {
@@ -877,6 +878,53 @@ function createCfClearanceManager(options = {}) {
       // change the resulting cookie). Returns { session } on success or
       // { empty, ... } when the bypass replied without usable cookies.
       const attemptSolve = async (selectedEndpoint, attemptUrl, { bust = false, sessionBase = null } = {}) => {
+        // Fast path: try globalDaemonPool first if not cache busting
+        if (!bust && globalDaemonPool) {
+          try {
+            const fastRes = await globalDaemonPool.request({
+              providerName,
+              method: meta.method || 'GET',
+              url: attemptUrl,
+              cookies: cookieObjects,
+              userAgent: meta.userAgent || getFallbackUserAgent(),
+              timeoutMs: maxTimeout,
+              engine: 'auto'
+            });
+            if (fastRes && fastRes.cookies && fastRes.userAgent && fastRes.status < 400) {
+              const solvedUrl = fastRes.url || attemptUrl;
+              const cookieState = createCookieStateForUrl(solvedUrl, fastRes.cookies, {
+                cookies: inputCookies,
+                userAgent: fastRes.userAgent,
+                url: normalizeBaseUrl(solvedUrl) || normalizeBaseUrl(attemptUrl) || null
+              });
+              const cookiesOut = cookieState.cookies || joinCookieHeader(fastRes.cookies || '');
+              if (cookiesOut) {
+                logger.info('solve fast daemon hit', { provider: providerName, url: attemptUrl, engine: fastRes.engine || 'curl_cffi', ms: fastRes.elapsedMs });
+                return {
+                  session: {
+                    providerName,
+                    userAgent: fastRes.userAgent,
+                    cookies: cookiesOut,
+                    cookieJar: cookieState.cookieJar || null,
+                    cookieJarVersion: cookieState.cookieJar ? 2 : undefined,
+                    cf_clearance: cookieState.cf_clearance || readCookieValue(cookiesOut, 'cf_clearance'),
+                    url: normalizeBaseUrl(solvedUrl) || normalizeBaseUrl(clearanceUrl) || null,
+                    solvedUrl,
+                    timestamp: Date.now(),
+                    status: fastRes.status,
+                    endpoint: 'cf_fast_daemon',
+                    solutionResponse: fastRes.html,
+                    solutionResponseUrl: solvedUrl,
+                    solutionResponseStatus: fastRes.status
+                  }
+                };
+              }
+            }
+          } catch (fastErr) {
+            logger.debug('solve fast daemon failed, fallback to docker', { error: fastErr?.message || String(fastErr) });
+          }
+        }
+
         const requestPayload = {
           cmd: 'request.get',
           url: attemptUrl,
