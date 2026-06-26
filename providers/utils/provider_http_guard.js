@@ -1045,7 +1045,7 @@ function createProviderHttpGuard(options = {}) {
     return html;
   }
 
-  async function solveClearance(triggerUrl, { isPost = false, body = null, signal = null, force = true, ignoreProviderCooldown = false } = {}) {
+  async function solveClearance(triggerUrl, { isPost = false, body = null, signal = null, force = true, ignoreProviderCooldown = false, bustCache = false } = {}) {
     if (!force && isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
     await hydrateRedisSessionForUrl(triggerUrl, 'pre-solve');
     if (!force && isSessionFreshForUrl(activeSession, triggerUrl)) return activeSession;
@@ -1079,6 +1079,7 @@ function createProviderHttpGuard(options = {}) {
         triggerUrl,
         method: isPost ? 'POST' : 'GET',
         force,
+        bustCache,
         maxTimeout: clearanceTimeoutMs,
         sharedKey,
         wantResponse: !clearanceBridgeMode && sameDocumentUrl(primaryClearanceUrl, triggerUrl),
@@ -1110,6 +1111,7 @@ function createProviderHttpGuard(options = {}) {
           triggerUrl,
           method: isPost ? 'POST' : 'GET',
           force,
+          bustCache,
           fallback: true,
           maxTimeout: clearanceTimeoutMs,
           wantResponse: !clearanceBridgeMode && sameDocumentUrl(fallbackUrl, triggerUrl),
@@ -1255,42 +1257,53 @@ function createProviderHttpGuard(options = {}) {
 
     if (!allowCloudflareBypass || signal?.aborted) return null;
 
-    const session = await solveClearance(url, { isPost, body, signal, force: clearanceForce });
-    if (!isSessionFreshForUrl(session, url)) {
-      logger.warn('clearance no fresh session', { method, url, ms: Date.now() - startedAt });
-      return null;
-    }
-
-    const solutionHtml = clearanceBridgeMode ? null : getSolutionHtmlForUrl(session, url);
-    if (solutionHtml) {
-      logger.info('post-clearance solution html used', { method, url, bytes: solutionHtml.length, ms: Date.now() - startedAt });
-      return solutionHtml;
-    }
-
-    if (clearanceBridgeMode) {
-      logger.debug('post-clearance bridge replay start', { method, url, transport: 'axios', sessionFresh: isSessionFreshForUrl(activeSession, url), ms: Date.now() - startedAt });
-    }
-
-    try {
-      const html = await runWithBypassTrafficGuard(url, () => fetchWithSession(url, {
-        method,
-        body,
-        signal,
-        timeout: Math.max(hardFetchTimeout, postClearanceReplayTimeoutMs),
-        startedAt
-      }), {
-        ...siteTrafficGuardOptions,
-        signal
-      });
-      if (html) {
-        logger.info('post-clearance fetch ok', { method, url, transport: 'session-fastpath', sessionFresh: isSessionFreshForUrl(activeSession, url), ms: Date.now() - startedAt });
-        return html;
+    const attemptClearedFetch = async (bustCache) => {
+      const session = await solveClearance(url, { isPost, body, signal, force: clearanceForce, bustCache });
+      if (!isSessionFreshForUrl(session, url)) {
+        logger.warn('clearance no fresh session', { method, url, bustCache, ms: Date.now() - startedAt });
+        return null;
       }
-    } catch (error) {
-      if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
-      logger.debug('post-clearance fetch error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
-      clearSessionAfterTransportFailure(error, url, startedAt, 'post-clearance');
-    }
+
+      const solutionHtml = clearanceBridgeMode ? null : getSolutionHtmlForUrl(session, url);
+      if (solutionHtml) {
+        logger.info('post-clearance solution html used', { method, url, bytes: solutionHtml.length, ms: Date.now() - startedAt });
+        return solutionHtml;
+      }
+
+      if (clearanceBridgeMode) {
+        logger.debug('post-clearance bridge replay start', { method, url, transport: 'axios', sessionFresh: isSessionFreshForUrl(activeSession, url), bustCache, ms: Date.now() - startedAt });
+      }
+
+      try {
+        const html = await runWithBypassTrafficGuard(url, () => fetchWithSession(url, {
+          method,
+          body,
+          signal,
+          timeout: Math.max(hardFetchTimeout, postClearanceReplayTimeoutMs),
+          startedAt
+        }), {
+          ...siteTrafficGuardOptions,
+          signal
+        });
+        if (html) {
+          logger.info('post-clearance fetch ok', { method, url, transport: 'session-fastpath', sessionFresh: isSessionFreshForUrl(activeSession, url), bustCache, ms: Date.now() - startedAt });
+          return html;
+        }
+      } catch (error) {
+        if (isAbortLikeError(error, isCanceledError) && signal?.aborted) throw error;
+        logger.debug('post-clearance fetch error', { method, url, error: error?.message || String(error), code: error?.code, bustCache, ms: Date.now() - startedAt });
+        clearSessionAfterTransportFailure(error, url, startedAt, 'post-clearance');
+      }
+
+      return null;
+    };
+
+    const firstHtml = await attemptClearedFetch(false);
+    if (firstHtml) return firstHtml;
+    if (signal?.aborted) return null;
+
+    const retryHtml = await attemptClearedFetch(true);
+    if (retryHtml) return retryHtml;
 
     return null;
   }
