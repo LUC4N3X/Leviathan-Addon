@@ -47,8 +47,12 @@ function hasRuff() {
     return !probe.error && probe.status === 0;
 }
 
-function compile(python, file) {
-    return spawnSync(python, ['-m', 'py_compile', file], { cwd: ROOT, encoding: 'utf8' });
+function compile(python, file, cacheDir) {
+    return spawnSync(python, ['-m', 'py_compile', file], {
+        cwd: ROOT,
+        encoding: 'utf8',
+        env: { ...process.env, PYTHONPYCACHEPREFIX: cacheDir }
+    });
 }
 
 function lint(file) {
@@ -95,7 +99,7 @@ if (targets.length === 0) {
 const failures = [];
 
 for (const target of targets) {
-    const compiled = compile(python, target.file);
+    const compiled = compile(python, target.file, path.join(tmpDir, 'pycache'));
     if (compiled.status !== 0) {
         failures.push({ label: target.label, stage: 'compile', output: `${compiled.stdout || ''}${compiled.stderr || ''}`.trim() });
         continue;
