@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 logger = logging.getLogger("cf_checkbox_patch")
 
@@ -10,8 +11,10 @@ CHECKBOX_SELECTORS = (
     'label.cb-lb input',
 )
 
+COOKIE_TTL_MINUTES = max(1, int(os.environ.get("CF_COOKIE_TTL_MINUTES", "15") or "15"))
 
-def _install():
+
+def _install_checkbox_patch():
     from playwright_captcha.solvers.click.cloudflare.utils import dom_helpers
     from playwright_captcha.solvers.click.common.shadow_root import search_shadow_root_elements
 
@@ -111,7 +114,28 @@ def _install():
     logger.info("Cloudflare checkbox detection patch installed")
 
 
-try:
-    _install()
-except Exception as exc:
-    logging.getLogger("cf_checkbox_patch").warning("patch not installed: %s", exc)
+def _install_cookie_ttl_patch():
+    from cf_bypasser.cache.cookie_cache import CookieCache
+
+    original_set = CookieCache.set
+
+    def capped_set(self, *args, **kwargs):
+        if kwargs.get("ttl_minutes") is not None:
+            kwargs["ttl_minutes"] = min(int(kwargs["ttl_minutes"]), COOKIE_TTL_MINUTES)
+        elif len(args) >= 4 and args[3] is not None:
+            args = list(args)
+            args[3] = min(int(args[3]), COOKIE_TTL_MINUTES)
+            args = tuple(args)
+        else:
+            kwargs.setdefault("ttl_minutes", COOKIE_TTL_MINUTES)
+        return original_set(self, *args, **kwargs)
+
+    CookieCache.set = capped_set
+    logger.info("Cloudflare cookie cache TTL capped at %d minutes", COOKIE_TTL_MINUTES)
+
+
+for installer in (_install_checkbox_patch, _install_cookie_ttl_patch):
+    try:
+        installer()
+    except Exception as exc:
+        logger.warning("patch skipped (%s): %s", installer.__name__, exc)
