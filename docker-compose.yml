@@ -440,7 +440,7 @@ services:
         set -e
         mkdir -p /data
         chown -R ubuntu:ubuntu /data
-        exec su ubuntu -c "cd /data && /app/venv/bin/python3 /app/server.py"
+        exec su ubuntu -c "cd /data && PYTHONPATH=/opt/cf-patch /app/venv/bin/python3 /app/server.py"
 
     environment:
       WORKERS: "${CLOUDFLARE_BYPASS_WORKERS:-1}"
@@ -452,6 +452,7 @@ services:
 
     volumes:
       - cloudflare-bypass-cache:/data
+      - ./cloudflare-bypass/patch:/opt/cf-patch:ro
 
     shm_size: "${CLOUDFLARE_BYPASS_SHM_SIZE:-512m}"
     mem_limit: ${CLOUDFLARE_BYPASS_MEM_LIMIT:-1400m}
