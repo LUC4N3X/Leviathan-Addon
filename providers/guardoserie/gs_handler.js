@@ -263,7 +263,7 @@ async function fetchGsViaForwardProxy(url, { signal = null, timeoutMs = null, re
     if (!forwardUrl || forwardUrl === url) return null;
 
     const base = normalizeBaseUrl(getTargetDomain()) || INITIAL_GS_DOMAIN;
-    const timeout = Math.max(2000, Number(timeoutMs) || GS_FORWARD_TIMEOUT_MS);
+    const timeout = Math.max(GS_FORWARD_TIMEOUT_MS, Number(timeoutMs) || 0);
     const headers = {
         'User-Agent': GS_FORWARD_UA,
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
