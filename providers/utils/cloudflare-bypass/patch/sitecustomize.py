@@ -115,7 +115,8 @@ def _install_checkbox_patch():
 
 
 def _install_cookie_ttl_patch():
-    from cf_bypasser.cache.cookie_cache import CookieCache
+    from datetime import datetime, timedelta
+    from cf_bypasser.cache.cookie_cache import CookieCache, CachedCookies
 
     original_set = CookieCache.set
 
@@ -130,7 +131,18 @@ def _install_cookie_ttl_patch():
             kwargs.setdefault("ttl_minutes", COOKIE_TTL_MINUTES)
         return original_set(self, *args, **kwargs)
 
+    def capped_is_expired(self):
+        hard_expiry = self.expires_at
+        try:
+            capped = self.timestamp + timedelta(minutes=COOKIE_TTL_MINUTES)
+            if capped < hard_expiry:
+                hard_expiry = capped
+        except Exception:
+            pass
+        return datetime.now() >= hard_expiry
+
     CookieCache.set = capped_set
+    CachedCookies.is_expired = capped_is_expired
     logger.info("Cloudflare cookie cache TTL capped at %d minutes", COOKIE_TTL_MINUTES)
 
 
