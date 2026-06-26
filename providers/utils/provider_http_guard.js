@@ -1202,7 +1202,7 @@ function createProviderHttpGuard(options = {}) {
     return solveClearance(targetUrl, { isPost, body, signal, force, ignoreProviderCooldown });
   }
 
-  async function executeSmartFetch(url, isPost = false, body = null, signal = null, allowCloudflareBypass = true, timeoutMs = directFetchTimeoutMs) {
+  async function executeSmartFetch(url, isPost = false, body = null, signal = null, allowCloudflareBypass = true, timeoutMs = directFetchTimeoutMs, allowEmergencyClearance = true) {
     const startedAt = Date.now();
     const method = isPost ? 'POST' : 'GET';
     const hardFetchTimeout = Math.max(2500, Math.min(timeoutMs, directFetchTimeoutMs));
@@ -1238,7 +1238,7 @@ function createProviderHttpGuard(options = {}) {
       logger.debug('direct fetch error', { method, url, error: error?.message || String(error), code: error?.code, ms: Date.now() - startedAt });
     }
 
-    const canEmergencyClearance = emergencyClearanceAfterSessionFailure && clearanceManager.endpoint && hadFreshSessionAtStart && sessionFailureDetected;
+    const canEmergencyClearance = allowEmergencyClearance && emergencyClearanceAfterSessionFailure && clearanceManager.endpoint && hadFreshSessionAtStart && sessionFailureDetected;
     const emergencyCoolingDown = canEmergencyClearance && lastEmergencyClearanceAt && (Date.now() - lastEmergencyClearanceAt < emergencyClearanceMinIntervalMs);
     if (!allowCloudflareBypass && canEmergencyClearance && !emergencyCoolingDown && !signal?.aborted) {
       allowCloudflareBypass = true;
@@ -1295,7 +1295,7 @@ function createProviderHttpGuard(options = {}) {
     return null;
   }
 
-  async function smartFetch(url, { isPost = false, body = null, ttl = 30 * 60 * 1000, signal = null, allowCloudflareBypass = true, timeoutMs = directFetchTimeoutMs } = {}) {
+  async function smartFetch(url, { isPost = false, body = null, ttl = 30 * 60 * 1000, signal = null, allowCloudflareBypass = true, timeoutMs = directFetchTimeoutMs, allowEmergencyClearance = true } = {}) {
     const cacheKey = `${isPost ? 'POST' : 'GET'}:${url}:${body || ''}`;
     const cached = requestCache.get(cacheKey);
 
@@ -1311,7 +1311,7 @@ function createProviderHttpGuard(options = {}) {
 
     if (pendingRequests.has(cacheKey)) return pendingRequests.get(cacheKey);
 
-    const fetchPromise = executeSmartFetch(url, isPost, body, signal, allowCloudflareBypass, timeoutMs)
+    const fetchPromise = executeSmartFetch(url, isPost, body, signal, allowCloudflareBypass, timeoutMs, allowEmergencyClearance)
       .then(html => {
         if (html) {
           requestCache.set(cacheKey, {

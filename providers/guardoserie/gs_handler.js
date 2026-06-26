@@ -676,7 +676,8 @@ function primeGsUrlsInBackground(urls = [], options = {}) {
                 const html = await smartFetch(url, {
                     ttl,
                     allowCloudflareBypass: GS_CAN_SOLVE_CLEARANCE && (options.allowCloudflareBypass === true || allowGsFlareForReason(reason)),
-                    timeoutMs: GS_BACKGROUND_PRIME_TIMEOUT_MS
+                    timeoutMs: GS_BACKGROUND_PRIME_TIMEOUT_MS,
+                    allowEmergencyClearance: false
                 });
                 if (html)
                     ok += 1;
