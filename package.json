@@ -9,9 +9,10 @@
     "clean": "rm -rf node_modules && npm ci",
     "test": "node --test",
     "lint": "node scripts/lint.js",
+    "lint:python": "node scripts/check-python.js",
     "format": "node scripts/format.js",
     "format:check": "node scripts/format-check.js",
-    "check": "npm run lint && npm run format:check && npm test",
+    "check": "npm run lint && npm run lint:python && npm run format:check && npm test",
     "bench": "node scripts/benchmark.js",
     "worker": "node core/workers/worker.js"
   },

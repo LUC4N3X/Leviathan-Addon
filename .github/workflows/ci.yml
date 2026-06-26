@@ -114,7 +114,37 @@ jobs:
             tests/title_parser.test.js \
             tests/language_guard.test.js \
             tests/stream_quality_filters.test.js \
-            tests/fingerprint_coherence.test.js
+            tests/fingerprint_coherence.test.js \
+            tests/scrapling_python_contract.test.js
+
+  scrapling-python:
+    name: Scrapling bypass · Python validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: quality
+    if: needs.quality.outputs.source_changed == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python tooling
+        run: python -m pip install --upgrade ruff
+
+      - name: Validate Scrapling and curl_cffi Python sources
+        env:
+          PYTHON: python
+        run: node scripts/check-python.js
 
   runtime:
     name: Runtime smoke · Node ${{ matrix.node-version }}
