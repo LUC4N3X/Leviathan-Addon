@@ -16,6 +16,7 @@ const { buildLazyExtractorStream } = require('../extractors/lazy_extraction');
 const { extractResilientEmbeds } = require('../extractors/semantic_candidate_extractor');
 const { createCloudflareBypass, envFlag, envNumber } = require('../utils/cloudflare_bypass');
 const { buildForwardProxyUrl, normalizeForwardProxyBase } = require('../../core/proxy/forward_proxy_config');
+const { createCloudflareBypassServiceClient, getConfiguredBypassEndpoints } = require('../utils/cf_bypass_service_client');
 const { createLayeredFetchClient } = require('../utils/provider_fetch_orchestrator');
 const { getProviderDomain } = require('../utils/provider_domain_registry');
 const INITIAL_GS_DOMAIN = process.env.GUARDOSERIE_BASE_URL || process.env.GUARDOSERIE_DOMAIN || getProviderDomain('guardoserie', 'https://guardoserie.courses');
@@ -212,8 +213,55 @@ const GS_FORWARD_UA = process.env.GUARDOSERIE_IMPIT_USER_AGENT
     || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
 const GS_FORWARD_BROWSER = process.env.GUARDOSERIE_IMPIT_BROWSER || 'chrome142';
 const GS_FORWARD_STRATEGY = String(process.env.GUARDOSERIE_IMPIT_STRATEGY || 'forward-first').trim().toLowerCase();
-const GS_FORWARD_ENABLED = envFlag('GUARDOSERIE_IMPIT_FORWARD_ENABLED', true);
+const GS_FORWARD_ENABLED = envFlag('GUARDOSERIE_IMPIT_FORWARD_ENABLED', false);
 const GS_FORWARD_TIMEOUT_MS = envNumber('GUARDOSERIE_IMPIT_FORWARD_TIMEOUT_MS', 9500, 2000, 20000);
+
+const GS_BYPASS_HTML_ENABLED = envFlag('GUARDOSERIE_BYPASS_HTML', true);
+const GS_BYPASS_HTML_TIMEOUT_MS = envNumber('GUARDOSERIE_BYPASS_HTML_TIMEOUT_MS', 45000, 8000, 120000);
+let gsBypassHtmlClient = null;
+
+function getGsBypassHtmlClient() {
+    if (gsBypassHtmlClient !== null) return gsBypassHtmlClient || null;
+    const endpoints = getConfiguredBypassEndpoints();
+    if (!endpoints.length) {
+        gsBypassHtmlClient = false;
+        return null;
+    }
+    try {
+        gsBypassHtmlClient = createCloudflareBypassServiceClient({ endpoint: endpoints[0] });
+    } catch (error) {
+        gsDebug('bypass html client init failed', { error: error?.message || String(error) });
+        gsBypassHtmlClient = false;
+    }
+    return gsBypassHtmlClient || null;
+}
+
+async function fetchGsViaBypassHtml(url, { signal = null, timeoutMs = null, force = false } = {}) {
+    if (!GS_BYPASS_HTML_ENABLED) return null;
+    const client = getGsBypassHtmlClient();
+    if (!client) return null;
+
+    let result = null;
+    try {
+        result = await client.getHtml(url, {
+            signal,
+            timeout: Math.max(8000, Number(timeoutMs) || GS_BYPASS_HTML_TIMEOUT_MS),
+            bypassCache: Boolean(force),
+            providerName: PROVIDER_NAME,
+            coalesce: !force
+        });
+    } catch (error) {
+        if (isAbortLikeError(error)) throw error;
+        gsDebug('bypass html fetch error', { url, force, error: error?.message || String(error) });
+        return null;
+    }
+
+    const html = String(result?.html || '');
+    const status = Number(result?.status || 0);
+    const ok = Boolean(html) && !gsIsChallengeHtml(html, status) && gsHasUsableHtml(html);
+    gsDebug(ok ? 'bypass html fetch ok' : 'bypass html fetch miss', { url, force, status, bytes: html.length });
+    return ok ? html : null;
+}
 
 function getGsForwardProxyBase() {
     const raw = process.env.GUARDOSERIE_FORWARD_PROXY || process.env.FORWARD_PROXY;
@@ -345,6 +393,23 @@ async function smartFetch(url, fetchOptions = {}) {
             referer: fetchOptions.referer
         });
         if (forwardHtml) return forwardHtml;
+    }
+
+    if (!isPost && GS_BYPASS_HTML_ENABLED && fetchOptions.allowBypassHtml !== false && !fetchOptions.signal?.aborted) {
+        const bypassHtml = await fetchGsViaBypassHtml(url, {
+            signal: fetchOptions.signal,
+            timeoutMs: fetchOptions.timeoutMs
+        });
+        if (bypassHtml) return bypassHtml;
+
+        if (!fetchOptions.signal?.aborted) {
+            const bypassHtmlForced = await fetchGsViaBypassHtml(url, {
+                signal: fetchOptions.signal,
+                timeoutMs: fetchOptions.timeoutMs,
+                force: true
+            });
+            if (bypassHtmlForced) return bypassHtmlForced;
+        }
     }
 
     return html;
