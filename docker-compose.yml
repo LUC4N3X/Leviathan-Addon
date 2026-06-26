@@ -452,7 +452,7 @@ services:
 
     volumes:
       - cloudflare-bypass-cache:/data
-      - ./cloudflare-bypass/patch:/opt/cf-patch:ro
+      - ./providers/utils/cloudflare-bypass/patch:/opt/cf-patch:ro
 
     shm_size: "${CLOUDFLARE_BYPASS_SHM_SIZE:-512m}"
     mem_limit: ${CLOUDFLARE_BYPASS_MEM_LIMIT:-1400m}
