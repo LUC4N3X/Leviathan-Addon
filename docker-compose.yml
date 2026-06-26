@@ -7,16 +7,9 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     init: true
+
     ports:
       - "51377:7000"
-
-    mem_limit: ${LEVIATHAN_MEM_LIMIT:-700m}
-    memswap_limit: ${LEVIATHAN_MEMSWAP_LIMIT:-850m}
-    cpus: "${LEVIATHAN_CPUS:-1.5}"
-    pids_limit: 512
-
-    security_opt:
-      - no-new-privileges:true
 
     env_file:
       - .env
@@ -30,8 +23,10 @@ services:
       MALLOC_ARENA_MAX: "2"
       UV_THREADPOOL_SIZE: "8"
       NODE_OPTIONS: "--max-old-space-size=${LEVI_NODE_OLD_SPACE_MB:-384} --max-semi-space-size=16"
+
       LEVIATHAN_API_BACKGROUND_WORKERS: "false"
       LEVIATHAN_DEFER_LIVE_SCRAPE_TO_WORKER: "${LEVIATHAN_DEFER_LIVE_SCRAPE_TO_WORKER:-false}"
+
       LEVIATHAN_EDGE_ENABLED: "${LEVIATHAN_EDGE_ENABLED:-true}"
       LEVIATHAN_EDGE_SECRET: "${LEVIATHAN_EDGE_SECRET:-}"
       LEVIATHAN_EDGE_ALLOW_DIRECT: "${LEVIATHAN_EDGE_ALLOW_DIRECT:-true}"
@@ -47,6 +42,7 @@ services:
       LEVIATHAN_EDGE_STALE_FALLBACK_ENABLED: "${LEVIATHAN_EDGE_STALE_FALLBACK_ENABLED:-true}"
       LEVIATHAN_EDGE_STALE_FALLBACK_SECONDS: "${LEVIATHAN_EDGE_STALE_FALLBACK_SECONDS:-21600}"
       LEVIATHAN_EDGE_PREWARM_HINTS_ENABLED: "${LEVIATHAN_EDGE_PREWARM_HINTS_ENABLED:-true}"
+
       STREAM_CACHE_MAX_KEYS: "${STREAM_CACHE_MAX_KEYS:-3000}"
       RAW_CACHE_MAX_KEYS: "${RAW_CACHE_MAX_KEYS:-6000}"
       CLOUD_BUILD_CACHE_MAX_KEYS: "${CLOUD_BUILD_CACHE_MAX_KEYS:-2000}"
@@ -65,20 +61,24 @@ services:
       RD_CONCURRENCY: "${RD_CONCURRENCY:-4}"
       RD_STRICT_FAST_ENABLED: "${RD_STRICT_FAST_ENABLED:-true}"
       RD_FOREGROUND_PROBE_DEADLINE_MS: "${RD_FOREGROUND_PROBE_DEADLINE_MS:-3500}"
+
       TB_CACHE_CHUNK_SIZE: "${TB_CACHE_CHUNK_SIZE:-100}"
       TB_CACHE_SYNC_LIMIT: "${TB_CACHE_SYNC_LIMIT:-100}"
       TB_CACHE_MAX_CONCURRENCY: "${TB_CACHE_MAX_CONCURRENCY:-8}"
       TB_CACHE_PROGRESSIVE_WINDOWS: "${TB_CACHE_PROGRESSIVE_WINDOWS:-100,200,300}"
+
       TORBOX_SDK_ENABLED: "${TORBOX_SDK_ENABLED:-true}"
       TORBOX_SDK_FALLBACK_AXIOS: "${TORBOX_SDK_FALLBACK_AXIOS:-true}"
       TORBOX_SDK_TIMEOUT_MS: "${TORBOX_SDK_TIMEOUT_MS:-20000}"
       TORBOX_SDK_OPERATIONS: "${TORBOX_SDK_OPERATIONS:-mylist,checkcached,createtorrent,requestdl,controltorrent}"
       TORBOX_PREFLIGHT_TORRENTINFO: "${TORBOX_PREFLIGHT_TORRENTINFO:-true}"
       TORBOX_SMART_BYPASS_CACHE: "${TORBOX_SMART_BYPASS_CACHE:-true}"
+
       ENGINES_ENGINE_CONCURRENCY: "${ENGINES_ENGINE_CONCURRENCY:-3}"
       ENGINES_DETAIL_CONCURRENCY: "${ENGINES_DETAIL_CONCURRENCY:-5}"
       ENGINES_MAX_CONCURRENCY: "${ENGINES_MAX_CONCURRENCY:-8}"
       ENGINES_FINAL_RESULT_LIMIT: "${ENGINES_FINAL_RESULT_LIMIT:-180}"
+
       WEB_PROVIDER_DEBUG: "${WEB_PROVIDER_DEBUG:-false}"
 
       REDIS_ENABLED: "${REDIS_ENABLED:-true}"
@@ -89,6 +89,7 @@ services:
       REDIS_ERROR_COOLDOWN_MS: "${REDIS_ERROR_COOLDOWN_MS:-5000}"
       REDIS_LOCAL_HYDRATE_TTL: "${REDIS_LOCAL_HYDRATE_TTL:-120}"
       RAW_STREAM_REDIS_ENABLED: "${RAW_STREAM_REDIS_ENABLED:-true}"
+
       STREAM_REQUEST_COALESCING_ENABLED: "${STREAM_REQUEST_COALESCING_ENABLED:-true}"
       STREAM_REQUEST_DISTRIBUTED_LOCK_ENABLED: "${STREAM_REQUEST_DISTRIBUTED_LOCK_ENABLED:-true}"
       STREAM_REQUEST_COALESCER_LOCAL_MAX_ENTRIES: "${STREAM_REQUEST_COALESCER_LOCAL_MAX_ENTRIES:-4096}"
@@ -97,6 +98,7 @@ services:
       STREAM_REQUEST_LOCK_POLL_MS: "${STREAM_REQUEST_LOCK_POLL_MS:-350}"
       STREAM_REQUEST_RESULT_TTL_SECONDS: "${STREAM_REQUEST_RESULT_TTL_SECONDS:-90}"
       STREAM_REQUEST_COALESCING_LOGS: "${STREAM_REQUEST_COALESCING_LOGS:-false}"
+
       CF_REDIS_SESSION_ENABLED: "${CF_REDIS_SESSION_ENABLED:-true}"
       CF_REDIS_NATIVE_ENABLED: "${CF_REDIS_NATIVE_ENABLED:-true}"
       CF_REDIS_LOCK_ENABLED: "${CF_REDIS_LOCK_ENABLED:-true}"
@@ -153,6 +155,7 @@ services:
       CLOUDFLARE_BYPASS_URLS: "http://cloudflare-bypass:8000"
       CF_BYPASS_URL: "http://cloudflare-bypass:8000"
       CF_BYPASS_URLS: "http://cloudflare-bypass:8000"
+
       BYPASS_TRAFFIC_GUARD_ENABLED: "${BYPASS_TRAFFIC_GUARD_ENABLED:-true}"
       BYPASS_REQUEST_COALESCING_ENABLED: "${BYPASS_REQUEST_COALESCING_ENABLED:-true}"
       BYPASS_SITE_MIN_INTERVAL_MS: "${BYPASS_SITE_MIN_INTERVAL_MS:-250}"
@@ -173,17 +176,11 @@ services:
       GUARDOSERIE_FLARE_ENABLED: "${GUARDOSERIE_API_FLARE_ENABLED:-false}"
       GUARDOSERIE_BACKGROUND_OWNER_ROLE: "${GUARDOSERIE_BACKGROUND_OWNER_ROLE:-worker}"
       GUARDOSERIE_API_CLEARANCE_FALLBACK: "${GUARDOSERIE_API_CLEARANCE_FALLBACK:-false}"
-      # On-demand clearance: the API solves Cloudflare once on the first cold request (blocking
-      # within budget) and then reuses the cached cf_clearance cookie on every later request, so
-      # the stack works even without the background worker. Set to "false" for worker-only solving.
       GUARDOSERIE_ON_DEMAND_CLEARANCE: "${GUARDOSERIE_ON_DEMAND_CLEARANCE:-true}"
       GUARDOSERIE_EXTRACTOR_CLOUDFLARE_BYPASS: "true"
       GUARDOSERIE_EXTRACTOR_CLOUDFLARE_BYPASS_MIRROR_FALLBACK: "true"
 
-
       FORWARD_PROXY: "${FORWARD_PROXY:-}"
-
-
 
       EUROSTREAMING_URL: "${EUROSTREAMING_URL:-https://eurostream.ing}"
       EUROSTREAMING_DEBUG: "${EUROSTREAMING_DEBUG:-false}"
@@ -196,9 +193,11 @@ services:
       MEDIAFLOW_API_PASSWORD: "${MEDIAFLOW_API_PASSWORD:-}"
 
       EUROSTREAMING_DELTABIT_MFP_FALLBACK: "${EUROSTREAMING_DELTABIT_MFP_FALLBACK:-false}"
+
       UPROT_CLOUDFLARE_BYPASS_ENABLED: "${UPROT_CLOUDFLARE_BYPASS_ENABLED:-true}"
       EUROSTREAMING_UPROT_CLOUDFLARE_BYPASS_ENABLED: "${EUROSTREAMING_UPROT_CLOUDFLARE_BYPASS_ENABLED:-true}"
       UPROT_CLOUDFLARE_BYPASS_URL: "${UPROT_CLOUDFLARE_BYPASS_URL:-http://cloudflare-bypass:8000}"
+      UPROT_DEBUG: "${UPROT_DEBUG:-false}"
 
       CB01_BASE_URL: "${CB01_BASE_URL:-https://cb01uno.bar}"
       CB01_DEBUG: "${CB01_DEBUG:-0}"
@@ -224,13 +223,19 @@ services:
       CB01_IMPIT_HTTP3: "${CB01_IMPIT_HTTP3:-0}"
       CB01_IMPIT_BROWSER: "${CB01_IMPIT_BROWSER:-chrome142}"
 
-      UPROT_DEBUG: "${UPROT_DEBUG:-false}"
-
     depends_on:
       redis:
         condition: service_healthy
       cloudflare-bypass:
         condition: service_healthy
+
+    mem_limit: ${LEVIATHAN_MEM_LIMIT:-700m}
+    memswap_limit: ${LEVIATHAN_MEMSWAP_LIMIT:-850m}
+    cpus: "${LEVIATHAN_CPUS:-1.5}"
+    pids_limit: 512
+
+    security_opt:
+      - no-new-privileges:true
 
     stop_grace_period: 20s
 
@@ -247,19 +252,16 @@ services:
         max-size: "10m"
         max-file: "3"
 
-
   leviathan-worker:
     image: leviathan-addon:latest
     container_name: leviathan-worker
     build:
       context: .
       dockerfile: Dockerfile
-
     command: >
       sh -lc "echo '[WORKER] delayed start ${LEVIATHAN_WORKER_BOOT_DELAY_SECONDS:-45}s';
       sleep ${LEVIATHAN_WORKER_BOOT_DELAY_SECONDS:-45};
       npm run worker"
-
     restart: unless-stopped
     init: true
 
@@ -307,6 +309,7 @@ services:
       REDIS_CACHE_PREFIX: "${REDIS_CACHE_PREFIX:-leviathan:}"
       REDIS_TIMEOUT_MS: "${REDIS_TIMEOUT_MS:-150}"
       RAW_STREAM_REDIS_ENABLED: "${RAW_STREAM_REDIS_ENABLED:-true}"
+
       STREAM_REQUEST_COALESCING_ENABLED: "${STREAM_REQUEST_COALESCING_ENABLED:-true}"
       STREAM_REQUEST_DISTRIBUTED_LOCK_ENABLED: "${STREAM_REQUEST_DISTRIBUTED_LOCK_ENABLED:-true}"
       STREAM_REQUEST_COALESCER_LOCAL_MAX_ENTRIES: "${STREAM_REQUEST_COALESCER_LOCAL_MAX_ENTRIES:-4096}"
@@ -315,6 +318,7 @@ services:
       STREAM_REQUEST_LOCK_POLL_MS: "${STREAM_REQUEST_LOCK_POLL_MS:-350}"
       STREAM_REQUEST_RESULT_TTL_SECONDS: "${STREAM_REQUEST_RESULT_TTL_SECONDS:-90}"
       STREAM_REQUEST_COALESCING_LOGS: "${STREAM_REQUEST_COALESCING_LOGS:-false}"
+
       CF_REDIS_SESSION_ENABLED: "${CF_REDIS_SESSION_ENABLED:-true}"
       CF_REDIS_NATIVE_ENABLED: "${CF_REDIS_NATIVE_ENABLED:-true}"
       CF_REDIS_LOCK_ENABLED: "${CF_REDIS_LOCK_ENABLED:-true}"
@@ -330,6 +334,7 @@ services:
       CLOUDFLARE_BYPASS_URLS: "http://cloudflare-bypass:8000"
       CF_BYPASS_URL: "http://cloudflare-bypass:8000"
       CF_BYPASS_URLS: "http://cloudflare-bypass:8000"
+
       BYPASS_TRAFFIC_GUARD_ENABLED: "${BYPASS_TRAFFIC_GUARD_ENABLED:-true}"
       BYPASS_REQUEST_COALESCING_ENABLED: "${BYPASS_REQUEST_COALESCING_ENABLED:-true}"
       BYPASS_SITE_MIN_INTERVAL_MS: "${BYPASS_SITE_MIN_INTERVAL_MS:-250}"
@@ -376,7 +381,6 @@ services:
         max-size: "10m"
         max-file: "3"
 
-
   redis:
     image: redis:7-alpine
     container_name: leviathan-redis
@@ -421,7 +425,6 @@ services:
         max-size: "5m"
         max-file: "2"
 
-
   cloudflare-bypass:
     image: "${CLOUDFLARE_BYPASS_IMAGE:-ghcr.io/sarperavci/cloudflarebypassforscraping:latest}"
     container_name: cloudflare-bypass
@@ -429,6 +432,7 @@ services:
     init: true
     working_dir: /data
     user: "0:0"
+
     command:
       - sh
       - -lc
@@ -464,12 +468,6 @@ services:
 
     stop_grace_period: 20s
 
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
     healthcheck:
       test:
         - CMD-SHELL
@@ -490,12 +488,18 @@ services:
       retries: 5
       start_period: 90s
 
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   autoheal:
     image: willfarrell/autoheal:latest
     container_name: autoheal
     restart: unless-stopped
     init: true
+    network_mode: "none"
 
     environment:
       AUTOHEAL_CONTAINER_LABEL: "autoheal"
@@ -506,8 +510,6 @@ services:
 
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-
-    network_mode: "none"
 
     security_opt:
       - no-new-privileges:true
