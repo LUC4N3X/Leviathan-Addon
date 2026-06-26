@@ -696,13 +696,11 @@ function primeGsStaticPagesInBackground(reason = 'startup-static-prime') {
     primeGsUrlsInBackground([
         buildGsUrl('/'),
         buildGsUrl(GS_MOVIE_LIST_PATH),
-        buildGsUrl('/film/'),
-        buildGsUrl('/serie/'),
-        buildGsUrl('/serietv/')
+        buildGsUrl('/serie/')
     ], {
         ttl: TTL_SEARCH,
         reason,
-        max: 5
+        max: 3
     });
 }
 if (GS_BACKGROUND_CLEARANCE_ENABLED) {
