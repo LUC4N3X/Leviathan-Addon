@@ -56,7 +56,17 @@ function isGsBackgroundOwnerProcess() {
 
 const GS_PROCESS_ROLE = normalizeGsProcessRole();
 const GS_BACKGROUND_OWNER_PROCESS = isGsBackgroundOwnerProcess();
-const GS_API_CLEARANCE_FALLBACK = envFlag('GUARDOSERIE_API_CLEARANCE_FALLBACK', false);
+// TOP on-demand clearance: when a cloudflare-bypass endpoint is configured, let this process
+// (including the API role, which by default defers to a background worker) solve Cloudflare
+// clearance on-demand on the hot path and then ride the cached cf_clearance cookie via the
+// fast session path. Solves are coalesced across requests and processes (shared in-process
+// promise + Redis lock) and only run when no fresh session is available anywhere, so a
+// worker-owned deployment that hydrates the session from Redis keeps deferring to the worker
+// and is unaffected. This is what makes a single-container (API-only) stack work without a
+// worker: the first cold request blocks to solve, then every subsequent request reuses the
+// cookie and stays fast. Set GUARDOSERIE_ON_DEMAND_CLEARANCE=false to restore worker-only solving.
+const GS_ON_DEMAND_CLEARANCE = envFlag('GUARDOSERIE_ON_DEMAND_CLEARANCE', true);
+const GS_API_CLEARANCE_FALLBACK = envFlag('GUARDOSERIE_API_CLEARANCE_FALLBACK', false) || GS_ON_DEMAND_CLEARANCE;
 const GS_CAN_SOLVE_CLEARANCE = GS_BACKGROUND_OWNER_PROCESS || GS_API_CLEARANCE_FALLBACK;
 
 const TTL_SEARCH             = 1000 * 60 * 30;
@@ -99,7 +109,7 @@ const GS_TOP_SPEED = Object.freeze({
   prewarmStartDelayMs: 0,
   prewarmWaitMs: 250,
   requestClearanceWaitMs: Math.max(12000, Math.min(30000, Number.parseInt(process.env.GUARDOSERIE_REQUEST_CLEARANCE_WAIT_MS || '22000', 10) || 22000)),
-  hotpathFlareFallback: envFlag('GUARDOSERIE_HOTPATH_FLARE_FALLBACK', false),
+  hotpathFlareFallback: envFlag('GUARDOSERIE_HOTPATH_FLARE_FALLBACK', false) || GS_ON_DEMAND_CLEARANCE,
   backgroundStaticPrime: envFlag('GUARDOSERIE_STATIC_PRIME', true),
   movieFastSlugMax: 6,
   seriesFastSlugMax: 12,
@@ -290,7 +300,9 @@ function getGsShieldSnapshot() {
     backgroundEnabled: GS_BACKGROUND_CLEARANCE_ENABLED,
     processRole: GS_PROCESS_ROLE,
     backgroundOwner: GS_BACKGROUND_OWNER_PROCESS,
-    apiClearanceFallback: GS_API_CLEARANCE_FALLBACK
+    apiClearanceFallback: GS_API_CLEARANCE_FALLBACK,
+    onDemandClearance: GS_ON_DEMAND_CLEARANCE,
+    canSolveClearance: GS_CAN_SOLVE_CLEARANCE
   };
 }
 
@@ -734,11 +746,17 @@ if (GS_BACKGROUND_CLEARANCE_ENABLED) {
   });
   primeGsStaticPagesInBackground('startup-static-prime');
 } else {
-  gsDebug('background clearance daemon disabled for process role', {
+  gsInfo('background clearance daemon disabled for process role', {
     role: GS_PROCESS_ROLE,
     ownerRole: process.env.GUARDOSERIE_BACKGROUND_OWNER_ROLE || 'worker',
     backgroundOwner: GS_BACKGROUND_OWNER_PROCESS,
-    apiClearanceFallback: GS_API_CLEARANCE_FALLBACK
+    apiClearanceFallback: GS_API_CLEARANCE_FALLBACK,
+    onDemandClearance: GS_ON_DEMAND_CLEARANCE,
+    canSolveClearance: GS_CAN_SOLVE_CLEARANCE,
+    // When on-demand is active the API no longer needs the polling daemon: the first cold
+    // request solves clearance inline (blocking within budget) and caches the cf_clearance,
+    // and every subsequent request reuses it via the fast session path.
+    mode: GS_ON_DEMAND_CLEARANCE ? 'on-demand-clearance' : 'worker-only'
   });
 }
 
