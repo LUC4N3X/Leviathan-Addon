@@ -60,6 +60,7 @@ const { applyTorrentHealthEngine, buildHealthLogLine, persistTorrentHealthSnapsh
 const { isTruthyConfigValue } = require('./config/config_flags');
 const { applyAnimeUnityKitsuBackCompat } = require('./stream/anime_unity_backcompat');
 const { buildQualityCompatibleBingeGroup } = require('./stream/binge_group');
+const { normalizeClientCompatibleStreams } = require('./stream/client_compatibility');
 const { buildClientCacheMetadata } = require('./stream/client_cache_metadata');
 const {
   TIMED_CACHE_MAX_ENTRIES,
@@ -5107,7 +5108,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
   if (!hasDebridKey && !isWebEnabled && !isP2PEnabled) return { streams: [{ name: 'CONFIG', title: 'Inserisci API Key, attiva P2P o attiva una sorgente Web' }] };
 
   const streamCacheVersionParts = [];
-  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v24|movieDbPriorityVerifiedSkip=v3|tbDbFirst=v2|tbVerifiedRescue=v4|rdDirectNoLazy=v2|rdDownloadFallback=v1|torrentioSmartFallback=v1|torrentHealth=v1|querySnapshot=v1|packFileLedger=v2|bingeContinuity=v1');
+  if (torrentPipelineEnabled) streamCacheVersionParts.push('torrentioItPreserve=v24|movieDbPriorityVerifiedSkip=v3|tbDbFirst=v2|tbVerifiedRescue=v4|rdDirectNoLazy=v2|rdDownloadFallback=v1|torrentioSmartFallback=v1|torrentHealth=v1|querySnapshot=v1|packFileLedger=v2|bingeContinuity=v1|clientCompat=v1');
   if (isWebEnabled) streamCacheVersionParts.push('webProviderMfpRoute=mfpExtractorHeadersV5|cb01DebugHooks=v2|cb01DomainCache=v1|lazyNoProxy=v1');
   const baseHashInput = backCompat.autoAnimeUnity ? `${userConfStr || 'no-conf'}|autoAnimeUnityKitsu=v2` : (userConfStr || 'no-conf');
   const hashInput = streamCacheVersionParts.length > 0 ? `${baseHashInput}|${streamCacheVersionParts.join('|')}` : baseHashInput;
@@ -5698,6 +5699,7 @@ async function generateStream(type, id, config, userConfStr, reqHost, runtimeCon
       const resolutionCap = applyMaxPerResolutionPolicy(finalStreams, config, { logger });
       finalStreams = resolutionCap.results;
       finalStreams = applyFinalStreamUserSort(finalStreams, config);
+      finalStreams = normalizeClientCompatibleStreams(finalStreams, { type, id: finalId, meta });
       trace.stage('final-merge', {
           debrid: debridStreams.length,
           web: webStreams.length,
